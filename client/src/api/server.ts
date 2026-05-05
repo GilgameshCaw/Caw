@@ -202,6 +202,7 @@ export function createApp() {
   app.use('/api/upload', uploadRouter)
   app.use('/api/users', usersRouter)
   app.use('/api/users', cawActivityRouter) // Mounts GET /:tokenId/caw-activity under /api/users
+  app.use('/api/system', cawActivityRouter) // Mounts GET /caw-activity-all under /api/system
   app.use('/api/txqueue', txQueueRouter)
   app.use('/api/views', viewsRouter)
   app.use('/api/search', searchRouter)

@@ -486,4 +486,291 @@ router.get('/:tokenId/caw-activity', limiter, async (req, res): Promise<void> =>
   }
 })
 
+// ===================================================================
+// System-wide All Stats endpoint. NOT user-scoped — answers "how is
+// the protocol doing" rather than "what did I do." Mounted under
+// /api/system so the path lands at /api/system/caw-activity-all.
+// ===================================================================
+const allStatsLimiter = rateLimit({
+  windowMs: 60 * 1000,
+  max: 30,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { error: 'Too many activity requests, try again in a minute.' },
+})
+
+// Shared cache for system-wide responses. Keyed only by
+// (interval, tz, from, to) — the same data for every viewer, so a
+// single cache entry serves the whole world. Same TTL as the user
+// route to stay coherent across the page.
+interface SystemCacheEntry {
+  expiresAt: number
+  body: any
+  inFlight?: Promise<any>
+}
+const systemResponseCache = new Map<string, SystemCacheEntry>()
+const systemCacheKeyOf = (
+  interval: Interval,
+  tz: string,
+  fromIso: string,
+  toIso: string,
+): string => `system|${interval}|${tz}|${fromIso}|${toIso}`
+
+router.get('/caw-activity-all', allStatsLimiter, async (req, res): Promise<void> => {
+  let cacheKey: string | null = null
+  let resolveInFlight: (body: any) => void = () => {}
+  let rejectInFlight: (err: any) => void = () => {}
+  try {
+    const interval = ((req.query.interval as string) || 'day') as Interval
+    if (!VALID_INTERVALS.includes(interval)) {
+      res.status(400).json({ error: 'interval must be hour, 6hour, day, or week' }); return
+    }
+    const tz = (req.query.tz as string) || 'UTC'
+    if (!/^[A-Za-z_/+-]+$/.test(tz)) {
+      res.status(400).json({ error: 'invalid timezone' }); return
+    }
+    const tzLiteral = tz.replace(/'/g, "''")
+
+    const from = req.query.from ? new Date(req.query.from as string) : new Date(Date.now() - 30 * 86400000)
+    const to = req.query.to ? new Date(req.query.to as string) : new Date()
+    if (isNaN(from.getTime()) || isNaN(to.getTime())) {
+      res.status(400).json({ error: 'invalid from/to' }); return
+    }
+    const fromIso = from.toISOString()
+    const toIso = to.toISOString()
+
+    cacheKey = systemCacheKeyOf(interval, tz, fromIso, toIso)
+    const cached = systemResponseCache.get(cacheKey)
+    const now = Date.now()
+    if (cached) {
+      if (cached.inFlight) {
+        try {
+          const body = await cached.inFlight
+          res.json(body); return
+        } catch {
+          systemResponseCache.delete(cacheKey)
+        }
+      } else if (cached.expiresAt > now) {
+        res.json(cached.body); return
+      } else {
+        systemResponseCache.delete(cacheKey)
+      }
+    }
+    const inFlight = new Promise<any>((resolve, reject) => {
+      resolveInFlight = resolve
+      rejectInFlight = reject
+    })
+    systemResponseCache.set(cacheKey, { expiresAt: 0, body: null, inFlight })
+
+    const bucketExpr = (col: string) =>
+      interval === '6hour'
+        ? `date_trunc('day', ${col} AT TIME ZONE '${tzLiteral}') + (FLOOR(EXTRACT(HOUR FROM ${col} AT TIME ZONE '${tzLiteral}') / 6) * INTERVAL '6 hours')`
+        : `date_trunc('${interval}', ${col} AT TIME ZONE '${tzLiteral}')`
+
+    // ---------------------------------------------------------------
+    // System-wide rows from CawOwnershipSnapshot. No tokenId filter.
+    // One scan over the window covers rewards, spend, deposits,
+    // withdrawals, AND counts.
+    // ---------------------------------------------------------------
+    const allRows: any[] = await prisma.$queryRawUnsafe(`
+      SELECT
+        TO_CHAR(${bucketExpr('"blockTimestamp"')}, 'YYYY-MM-DD"T"HH24:MI:SS') as bucket,
+        "reason",
+        "actionType",
+        COUNT(*)::int as count_n,
+        SUM(CASE WHEN CAST("delta" AS NUMERIC) > 0 THEN CAST("delta" AS NUMERIC) ELSE 0 END) as earned,
+        SUM(CASE WHEN CAST("delta" AS NUMERIC) < 0 THEN -CAST("delta" AS NUMERIC) ELSE 0 END) as spent
+      FROM "CawOwnershipSnapshot"
+      WHERE "blockTimestamp" >= '${fromIso}'::timestamptz
+        AND "blockTimestamp" <= '${toIso}'::timestamptz
+      GROUP BY bucket, "reason", "actionType"
+      ORDER BY bucket ASC
+    `)
+
+    // ---------------------------------------------------------------
+    // System-wide CAW distributed to all stakers per bucket, by
+    // actionType. Already system-scoped (RewardMultiplierSnapshot
+    // is global state).
+    // ---------------------------------------------------------------
+    const distributionRows: any[] = await prisma.$queryRawUnsafe(`
+      SELECT
+        TO_CHAR(${bucketExpr('"blockTimestamp"')}, 'YYYY-MM-DD"T"HH24:MI:SS') as bucket,
+        "actionType",
+        SUM(CAST("communalAmount" AS NUMERIC)) as total
+      FROM "RewardMultiplierSnapshot"
+      WHERE "blockTimestamp" >= '${fromIso}'::timestamptz
+        AND "blockTimestamp" <= '${toIso}'::timestamptz
+      GROUP BY bucket, "actionType"
+      ORDER BY bucket ASC
+    `)
+
+    const toBig = (v: any): bigint => {
+      if (v == null) return 0n
+      if (typeof v === 'bigint') return v
+      const s = v.toString()
+      if (s.includes('.') || s.includes('e') || s.includes('E')) {
+        return BigInt(Math.trunc(Number(s)))
+      }
+      return BigInt(s)
+    }
+
+    interface SystemBucket {
+      // All rewards as one number (we only break out the action-type
+      // counts for the mini charts, not the value stack).
+      rewardsByType: Record<string, bigint>
+      rewardsCountsByType: Record<string, number>
+      spendByType: Record<string, bigint>
+      spendCountsByType: Record<string, number>
+      deposits: bigint
+      withdrawals: bigint
+      distributionByType: Record<string, bigint>
+    }
+    const newBucket = (): SystemBucket => ({
+      rewardsByType: {},
+      rewardsCountsByType: {},
+      spendByType: {},
+      spendCountsByType: {},
+      deposits: 0n,
+      withdrawals: 0n,
+      distributionByType: {},
+    })
+
+    const bucketKeys = new Set<string>()
+    for (const r of allRows) bucketKeys.add(r.bucket)
+    for (const r of distributionRows) bucketKeys.add(r.bucket)
+    const sortedBuckets = Array.from(bucketKeys).sort()
+    const buckets = new Map<string, SystemBucket>()
+    for (const b of sortedBuckets) buckets.set(b, newBucket())
+
+    for (const r of allRows) {
+      const acc = buckets.get(r.bucket)
+      if (!acc) continue
+      const earned = toBig(r.earned)
+      const spent = toBig(r.spent)
+      const reason = r.reason as string
+      const actionType = (r.actionType as string | null) || 'OTHER'
+      const count = Number(r.count_n ?? 0)
+      switch (reason) {
+        case 'DEPOSIT':
+          acc.deposits += earned
+          break
+        case 'WITHDRAW':
+          acc.withdrawals += spent
+          break
+        case 'ACTION_SPEND_BASE':
+          if (actionType === 'WITHDRAW') {
+            acc.withdrawals += spent
+          } else {
+            acc.spendByType[actionType] = (acc.spendByType[actionType] || 0n) + spent
+            acc.spendCountsByType[actionType] = (acc.spendCountsByType[actionType] || 0) + count
+          }
+          break
+        case 'ACTION_RECIPIENT':
+          acc.rewardsByType[actionType] = (acc.rewardsByType[actionType] || 0n) + earned
+          acc.rewardsCountsByType[actionType] = (acc.rewardsCountsByType[actionType] || 0) + count
+          break
+        // ACTION_SPEND_TIP, ACTION_SPEND_VALIDATOR_TIP, ACTION_VALIDATOR
+        // are intentionally not surfaced separately on the system view —
+        // they double-count flows already represented elsewhere.
+      }
+    }
+    for (const r of distributionRows) {
+      const acc = buckets.get(r.bucket)
+      if (!acc) continue
+      const actionType = (r.actionType as string | null) || 'OTHER'
+      acc.distributionByType[actionType] =
+        (acc.distributionByType[actionType] || 0n) + toBig(r.total)
+    }
+
+    // ---------------------------------------------------------------
+    // System-wide cumulative totalCaw over time. We have current
+    // totalCaw on StakeLedgerState. Walk backward through buckets
+    // subtracting (deposits + distributedToStakers − withdrawals)
+    // to get totalCaw at the END of each prior bucket.
+    //
+    // Why this works: contract math says totalCaw only changes via
+    // deposits (+) and withdrawals (−). The action-driven communal
+    // distribution INFLATES rewardMultiplier but does NOT change
+    // totalCaw — so we should NOT include distribution sums here.
+    // ---------------------------------------------------------------
+    const stateRow = await prisma.stakeLedgerState.findFirst({
+      orderBy: { updatedAt: 'desc' },
+    })
+    const currentTotalCaw = stateRow ? toBig(stateRow.totalCaw) : 0n
+    // Build totalCaw series. Index N = totalCaw at end of bucket N.
+    // We work forward from a starting anchor: totalCaw_at_start =
+    // current − sum(deposits − withdrawals across all buckets).
+    let drift = 0n
+    for (const b of sortedBuckets) {
+      const acc = buckets.get(b)!
+      drift += acc.deposits - acc.withdrawals
+    }
+    const totalCawAtStart = currentTotalCaw - drift
+    const totalCawSeries: Record<string, string> = {}
+    let running = totalCawAtStart
+    for (const b of sortedBuckets) {
+      const acc = buckets.get(b)!
+      running += acc.deposits - acc.withdrawals
+      totalCawSeries[b] = running.toString()
+    }
+
+    // ---------------------------------------------------------------
+    // Summary integrals.
+    // ---------------------------------------------------------------
+    let totalDeposits = 0n
+    let totalWithdrawals = 0n
+    let totalStakingRewards = 0n
+    let totalRewards = 0n
+    let totalSpend = 0n
+    for (const acc of buckets.values()) {
+      totalDeposits += acc.deposits
+      totalWithdrawals += acc.withdrawals
+      for (const v of Object.values(acc.distributionByType)) totalStakingRewards += v
+      for (const v of Object.values(acc.rewardsByType)) totalRewards += v
+      for (const v of Object.values(acc.spendByType)) totalSpend += v
+    }
+
+    const mapToObj = (m: Record<string, bigint>): Record<string, string> =>
+      Object.fromEntries(Object.entries(m).map(([k, v]) => [k, v.toString()]))
+
+    const body = {
+      interval,
+      summary: {
+        deposits: totalDeposits.toString(),
+        withdrawals: totalWithdrawals.toString(),
+        net: (totalDeposits - totalWithdrawals).toString(),
+        totalStakingRewards: totalStakingRewards.toString(),
+        totalRewards: totalRewards.toString(),
+        totalSpend: totalSpend.toString(),
+        currentTotalCaw: currentTotalCaw.toString(),
+      },
+      chart: sortedBuckets.map(b => {
+        const acc = buckets.get(b)!
+        return {
+          bucket: b,
+          rewardsByType: mapToObj(acc.rewardsByType),
+          rewardsCountsByType: acc.rewardsCountsByType,
+          spendByType: mapToObj(acc.spendByType),
+          spendCountsByType: acc.spendCountsByType,
+          distributionByType: mapToObj(acc.distributionByType),
+          deposits: acc.deposits.toString(),
+          withdrawals: acc.withdrawals.toString(),
+          totalCaw: totalCawSeries[b] ?? null,
+        }
+      }),
+    }
+
+    if (cacheKey) {
+      systemResponseCache.set(cacheKey, { expiresAt: Date.now() + TTL_MS, body, inFlight: undefined })
+    }
+    resolveInFlight(body)
+    res.json(body)
+  } catch (err: any) {
+    console.error('[caw-activity-all] error:', err)
+    if (cacheKey) systemResponseCache.delete(cacheKey)
+    rejectInFlight(err)
+    res.status(500).json({ error: 'Internal server error' })
+  }
+})
+
 export default router

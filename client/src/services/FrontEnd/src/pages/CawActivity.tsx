@@ -205,6 +205,10 @@ const CawActivity: React.FC = () => {
   const [hoveredBar, setHoveredBar] = useState<number | null>(null)
 
   const rangeKey = searchParams.get('range') || '30d'
+  // Tab state. 'my' = user-scoped activity (default). 'all' =
+  // system-wide stats. Persisted in the URL so a deep link returns to
+  // the correct view.
+  const tab = (searchParams.get('tab') === 'all' ? 'all' : 'my') as 'my' | 'all'
   const range = RANGES.find(r => r.key === rangeKey) ?? RANGES[2]
 
   // Disabled-segment sets per side, persisted in URL. We store the
@@ -407,6 +411,35 @@ const CawActivity: React.FC = () => {
           </div>
         </div>
 
+        {/* Tab switcher: My Stats vs All Stats. Only shown to a
+            signed-in viewer of their own page (otherwise "My Stats"
+            wouldn't refer to the visitor — it'd refer to the
+            profile being viewed). For viewers of someone else's
+            profile we hide the switcher and stay on My Stats. */}
+        {isViewingSelf && (
+          <div className={`inline-flex p-1 rounded-xl mb-4 ${isDark ? 'bg-white/10' : 'bg-gray-200'}`}>
+            {(['my', 'all'] as const).map(t => (
+              <button
+                key={t}
+                type="button"
+                onClick={() => setSearchParams(prev => {
+                  const next = new URLSearchParams(prev)
+                  if (t === 'my') next.delete('tab')
+                  else next.set('tab', t)
+                  return next
+                })}
+                className={`px-4 py-1.5 rounded-lg text-xs font-semibold transition-colors cursor-pointer ${
+                  tab === t
+                    ? (isDark ? 'bg-black text-white' : 'bg-white text-black shadow-sm')
+                    : (isDark ? 'text-white/60 hover:text-white' : 'text-gray-600 hover:text-black')
+                }`}
+              >
+                {t === 'my' ? 'My Stats' : 'All Stats'}
+              </button>
+            ))}
+          </div>
+        )}
+
         {/* Time range chips */}
         <div className="flex gap-2 mb-4">
           {RANGES.map(r => (
@@ -429,6 +462,8 @@ const CawActivity: React.FC = () => {
           ))}
         </div>
 
+        {tab === 'my' && (
+        <>
         {/* Count mini-charts. Half-width grid showing the number of
             incoming events per bucket for the four social action
             types. Pure counts, not CAW values — the headline chart
@@ -1161,121 +1196,8 @@ const CawActivity: React.FC = () => {
           )
         })()}
 
-        {/* System-wide distribution to stakers, broken down by action
-            type. NOT user-scoped — answers "how much did the protocol
-            pay out to all stakers" rather than "what did I get." */}
-        {data && data.chart.length > 0 && (() => {
-          const distTypes = [
-            { key: 'CAW',    label: 'Posts',   color: '#5b7a99' },
-            { key: 'LIKE',   label: 'Likes',   color: '#d96d72' },
-            { key: 'RECAW',  label: 'Recaws',  color: '#a373c8' },
-            { key: 'FOLLOW', label: 'Follows', color: '#e08a4a' },
-          ]
-          // Per-bucket totals across all action types.
-          const totals = data.chart.map(b =>
-            distTypes.reduce((s, t) => s + weiToCaw(b.distribution?.[t.key] ?? '0'), 0),
-          )
-          const max = Math.max(...totals, 0)
-          if (max <= 0) return null
-          // Window total per type for the header.
-          const windowTotals: Record<string, number> = {}
-          for (const t of distTypes) {
-            windowTotals[t.key] = data.chart.reduce(
-              (s, b) => s + weiToCaw(b.distribution?.[t.key] ?? '0'),
-              0,
-            )
-          }
-          const grandTotal = Object.values(windowTotals).reduce((a, v) => a + v, 0)
-          const CHART_H = 140
-          return (
-            <div className={`${cardClass} mb-4`}>
-              <div className="flex items-baseline justify-between mb-1">
-                <h2 className={`text-sm font-semibold ${isDark ? 'text-white/60' : 'text-gray-500'}`}>
-                  CAW distributed to stakers
-                </h2>
-                <div className="flex items-baseline gap-2">
-                  <span className="text-lg font-bold tabular-nums" style={{ color: '#ebc046' }}>
-                    {fmtNumberCaw(grandTotal)}
-                  </span>
-                  <span className={`text-[10px] ${isDark ? 'text-white/40' : 'text-gray-400'}`}>CAW total</span>
-                </div>
-              </div>
-              {/* Mini-legend across the top */}
-              <div className="flex flex-wrap gap-3 mb-2 text-[10px]">
-                {distTypes.map(t =>
-                  windowTotals[t.key] > 0 ? (
-                    <span key={t.key} className="flex items-center gap-1.5">
-                      <span className="inline-block w-2.5 h-2.5 rounded-sm" style={{ backgroundColor: t.color }} />
-                      <span className={isDark ? 'text-white/60' : 'text-gray-600'}>
-                        {t.label} <span className={isDark ? 'text-white/40' : 'text-gray-400'}>{fmtNumberCaw(windowTotals[t.key])}</span>
-                      </span>
-                    </span>
-                  ) : null,
-                )}
-              </div>
-              <div className="flex" onMouseLeave={() => setHoveredBar(null)}>
-                {/* Y-axis */}
-                <div
-                  className="flex-shrink-0 flex flex-col justify-between text-[10px] tabular-nums select-none"
-                  style={{ width: 56, height: CHART_H, paddingRight: 8 }}
-                >
-                  <div className={axisLabelClass} style={{ textAlign: 'right' }}>
-                    {fmtNumberCaw(max)}
-                  </div>
-                  <div className={axisLabelClass} style={{ textAlign: 'right' }}>0</div>
-                </div>
-                {/* Plot */}
-                <div className="relative flex-1" style={{ height: CHART_H }}>
-                  {/* Top + bottom gridlines */}
-                  <div
-                    className="absolute left-0 right-0 h-px pointer-events-none"
-                    style={{ top: 0, backgroundColor: isDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.08)' }}
-                  />
-                  <div
-                    className="absolute left-0 right-0 h-px pointer-events-none"
-                    style={{ bottom: 0, backgroundColor: isDark ? 'rgba(255,255,255,0.25)' : 'rgba(0,0,0,0.2)' }}
-                  />
-                  <div className="flex items-stretch gap-0.5 absolute inset-0">
-                    {data.chart.map((b, i) => {
-                      const segments = distTypes.map(t => ({
-                        key: t.key,
-                        color: t.color,
-                        value: weiToCaw(b.distribution?.[t.key] ?? '0'),
-                      }))
-                      const sum = segments.reduce((a, s) => a + s.value, 0)
-                      const pct = max > 0 ? (sum / max) * 94 : 0 // 6% breathing room
-                      return (
-                        <div key={i} className="flex-1 flex flex-col">
-                          {/* Spacer pushes the stack to the bottom of
-                              the column so bars grow up from the
-                              baseline. */}
-                          <div style={{ flex: '1 1 auto' }} />
-                          <div className="flex flex-col-reverse" style={{ height: `${pct}%` }}>
-                            {segments.map(s => {
-                              const segPct = sum > 0 ? (s.value / sum) * 100 : 0
-                              if (segPct <= 0) return null
-                              return (
-                                <div
-                                  key={s.key}
-                                  className="w-full"
-                                  style={{
-                                    height: `${segPct}%`,
-                                    minHeight: 1,
-                                    backgroundColor: s.color,
-                                  }}
-                                />
-                              )
-                            })}
-                          </div>
-                        </div>
-                      )
-                    })}
-                  </div>
-                </div>
-              </div>
-            </div>
-          )
-        })()}
+        {/* CAW distributed to stakers chart moved to the All Stats
+            tab (it's system-wide, not user-scoped). */}
 
         {/* Legend with toggles */}
         {data && buckets.length > 0 && (
@@ -1345,8 +1267,434 @@ const CawActivity: React.FC = () => {
             <div className={isDark ? 'text-white/60' : 'text-gray-500'}>Loading…</div>
           </div>
         )}
+        </>
+        )}
+
+        {tab === 'all' && <AllStatsView range={range} />}
       </div>
     </MainLayout>
+  )
+}
+
+// ===================================================================
+// All Stats view — system-wide protocol activity. Lives in the same
+// file as the My Stats view because they share many helpers (theme,
+// formatters, palette). Fetches /api/system/caw-activity-all and
+// renders an analogous shape: 5 stat cards, balance line chart, 4
+// mini count charts, distribution chart.
+// ===================================================================
+interface SystemBucketIn {
+  bucket: string
+  rewardsByType: Record<string, string>
+  rewardsCountsByType: Record<string, number>
+  spendByType: Record<string, string>
+  spendCountsByType: Record<string, number>
+  distributionByType: Record<string, string>
+  deposits: string
+  withdrawals: string
+  totalCaw: string | null
+}
+
+interface SystemActivityResponse {
+  interval: string
+  summary: {
+    deposits: string
+    withdrawals: string
+    net: string
+    totalStakingRewards: string
+    totalRewards: string
+    totalSpend: string
+    currentTotalCaw: string
+  }
+  chart: SystemBucketIn[]
+}
+
+interface AllStatsViewProps {
+  range: { key: string; label: string; days: number; interval: 'hour' | '6hour' | 'day' | 'week' }
+}
+
+const AllStatsView: React.FC<AllStatsViewProps> = ({ range }) => {
+  const { isDark } = useTheme()
+  const cawUsdPrice = usePriceStore(s => s.priceMap['a-hunters-dream'] ?? 0)
+  const [data, setData] = useState<SystemActivityResponse | null>(null)
+  const [loading, setLoading] = useState(true)
+  const [error, setError] = useState<string | null>(null)
+
+  useEffect(() => {
+    let cancelled = false
+    setLoading(true)
+    setError(null)
+    const tz = Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC'
+    const from = new Date(Date.now() - range.days * 86400000).toISOString()
+    const to = new Date().toISOString()
+    const url = `/api/system/caw-activity-all?interval=${range.interval}&from=${encodeURIComponent(from)}&to=${encodeURIComponent(to)}&tz=${encodeURIComponent(tz)}`
+    apiFetch<SystemActivityResponse>(url)
+      .then(res => { if (!cancelled) setData(res) })
+      .catch(err => {
+        if (cancelled) return
+        const msg = err?.message || ''
+        if (msg.includes('Unexpected token') && msg.includes('<')) {
+          setError("Couldn't reach the API. Is the server running?")
+        } else {
+          setError(msg || 'Failed to load activity')
+        }
+      })
+      .finally(() => { if (!cancelled) setLoading(false) })
+    return () => { cancelled = true }
+  }, [range.interval, range.days])
+
+  const cardClass = `rounded-2xl p-4 ${isDark ? 'bg-white/5 border border-white/10' : 'bg-white border border-gray-200'}`
+
+  // Local formatters — keep parity with My Stats but standalone.
+  const fmtNumberCaw = (n: number): string => {
+    const abs = Math.abs(n)
+    if (abs === 0) return '0'
+    if (abs < 1) return n.toFixed(2)
+    if (abs < 1_000) return n.toFixed(0)
+    if (abs < 1_000_000) return `${(n / 1_000).toFixed(1)}K`
+    if (abs < 1_000_000_000) return `${(n / 1_000_000).toFixed(2)}M`
+    return `${(n / 1_000_000_000).toFixed(2)}B`
+  }
+  const fmtUsd = (cawAmount: number): string | null => {
+    if (!cawUsdPrice || cawUsdPrice <= 0) return null
+    const usd = cawAmount * cawUsdPrice
+    const abs = Math.abs(usd)
+    if (abs === 0) return '$0.00'
+    if (abs < 0.01) return `$${usd.toFixed(4)}`
+    if (abs < 1_000) return `$${usd.toFixed(2)}`
+    if (abs < 1_000_000) return `$${(usd / 1_000).toFixed(1)}K`
+    if (abs < 1_000_000_000) return `$${(usd / 1_000_000).toFixed(2)}M`
+    return `$${(usd / 1_000_000_000).toFixed(2)}B`
+  }
+  const axisLabelClass = isDark ? 'text-white/40' : 'text-gray-500'
+
+  if (error) {
+    return (
+      <div className={`mb-4 rounded-lg px-3 py-2 text-sm ${isDark ? 'bg-red-500/10 text-red-300' : 'bg-red-50 text-red-700'}`}>
+        {error}
+      </div>
+    )
+  }
+  if (loading && !data) {
+    return (
+      <div className={`${cardClass} text-center py-8`}>
+        <div className={isDark ? 'text-white/60' : 'text-gray-500'}>Loading…</div>
+      </div>
+    )
+  }
+  if (!data) return null
+
+  const renderCawCard = (label: string, cawAmount: number, color: string, sublabel?: string) => {
+    const usd = fmtUsd(cawAmount)
+    return (
+      <div className={`${cardClass} text-center`}>
+        <div className={`text-[10px] uppercase tracking-wide font-semibold ${isDark ? 'text-white/50' : 'text-gray-500'}`}>
+          {label}
+        </div>
+        {usd ? (
+          <>
+            <div className="text-xl font-bold mt-1" style={{ color }}>{usd}</div>
+            <div className={`text-[10px] mt-0.5 tabular-nums ${isDark ? 'text-white/40' : 'text-gray-400'}`}>
+              {fmtNumberCaw(cawAmount)} CAW
+            </div>
+          </>
+        ) : (
+          <>
+            <div className="text-xl font-bold mt-1" style={{ color }}>{fmtNumberCaw(cawAmount)}</div>
+            <div className={`text-[10px] mt-0.5 ${isDark ? 'text-white/40' : 'text-gray-400'}`}>
+              {sublabel || 'CAW'}
+            </div>
+          </>
+        )}
+      </div>
+    )
+  }
+
+  const weiToCawNum = (wei: string | null | undefined): number => {
+    if (!wei || wei === '0') return 0
+    try { return Number(BigInt(wei)) / 1e18 } catch { return 0 }
+  }
+
+  const deposits = weiToCawNum(data.summary.deposits)
+  const withdrawals = weiToCawNum(data.summary.withdrawals)
+  const net = weiToCawNum(data.summary.net)
+  const totalStakingRewards = weiToCawNum(data.summary.totalStakingRewards)
+  const currentTotalCaw = weiToCawNum(data.summary.currentTotalCaw)
+
+  // Balance line — `totalCaw` per bucket. Carry-forward not needed
+  // (server fills every bucket).
+  const balancePoints = data.chart.map(b => weiToCawNum(b.totalCaw))
+  const hasBalance = balancePoints.some(v => v > 0)
+
+  // Mini count charts: system-wide.
+  const countTypes = [
+    { key: 'CAW',    label: 'Posts',   color: '#5b7a99', source: 'spend' as const },
+    { key: 'LIKE',   label: 'Likes',   color: '#d96d72', source: 'rewards' as const },
+    { key: 'RECAW',  label: 'Recaws',  color: '#a373c8', source: 'rewards' as const },
+    { key: 'FOLLOW', label: 'Follows', color: '#e08a4a', source: 'rewards' as const },
+  ]
+
+  // Distribution chart: per-bucket CAW distributed to stakers,
+  // stacked by action type.
+  const distTypes = [
+    { key: 'CAW',    label: 'Posts',   color: '#5b7a99' },
+    { key: 'LIKE',   label: 'Likes',   color: '#d96d72' },
+    { key: 'RECAW',  label: 'Recaws',  color: '#a373c8' },
+    { key: 'FOLLOW', label: 'Follows', color: '#e08a4a' },
+  ]
+  const distTotals = data.chart.map(b =>
+    distTypes.reduce((s, t) => s + weiToCawNum(b.distributionByType[t.key]), 0),
+  )
+  const distMax = Math.max(...distTotals, 0)
+
+  // Balance line chart geometry.
+  const LINE_H = 120
+  const minBal = balancePoints.length > 0 ? Math.min(...balancePoints) : 0
+  const maxBal = balancePoints.length > 0 ? Math.max(...balancePoints) : 0
+  const valueRange = Math.max(maxBal - minBal, 1)
+  const padTop = maxBal + valueRange * 0.1
+  const padBot = Math.max(0, minBal - valueRange * 0.1)
+  const span = padTop - padBot || 1
+  const padX = 4
+  const yFor = (v: number) => LINE_H - ((v - padBot) / span) * LINE_H
+  const xFor = (i: number) =>
+    balancePoints.length === 1
+      ? 50
+      : padX + (i / (balancePoints.length - 1)) * (100 - 2 * (padX / 100) * 100)
+  const balPathD = balancePoints
+    .map((v, i) => `${i === 0 ? 'M' : 'L'} ${xFor(i).toFixed(3)} ${yFor(v).toFixed(3)}`)
+    .join(' ')
+  const balAreaD = balancePoints.length > 0
+    ? `M ${xFor(0).toFixed(3)} ${LINE_H} ` +
+      balancePoints.map((v, i) => `L ${xFor(i).toFixed(3)} ${yFor(v).toFixed(3)}`).join(' ') +
+      ` L ${xFor(balancePoints.length - 1).toFixed(3)} ${LINE_H} Z`
+    : ''
+  const xLabelEvery = Math.max(1, Math.ceil(data.chart.length / 6))
+
+  return (
+    <>
+      {/* 5 stat squares — same shape as My Stats. */}
+      <div className="grid grid-cols-3 md:grid-cols-3 gap-3 mb-3">
+        {renderCawCard('Deposits', deposits, '#7cb958')}
+        {renderCawCard('Withdrawals', withdrawals, '#b04f56')}
+        {renderCawCard('Net', net, net >= 0 ? '#7cb958' : '#b04f56')}
+      </div>
+      <div className="grid grid-cols-2 gap-3 mb-6">
+        {renderCawCard('Total staking rewards', totalStakingRewards, '#ebc046')}
+        {renderCawCard('Total CAW staked', currentTotalCaw, '#ebc046', 'CAW currently staked')}
+      </div>
+
+      {/* Balance line chart — system totalCaw over time. */}
+      {hasBalance && (
+        <div className={`${cardClass} mb-4`}>
+          <div className="flex items-baseline justify-between mb-1">
+            <h2 className={`text-sm font-semibold ${isDark ? 'text-white/60' : 'text-gray-500'}`}>
+              Total CAW staked across the protocol
+            </h2>
+            <div className="flex items-baseline gap-2">
+              <span className="text-lg font-bold tabular-nums" style={{ color: '#ebc046' }}>
+                {fmtNumberCaw(currentTotalCaw)}
+              </span>
+              <span className={`text-[10px] ${isDark ? 'text-white/40' : 'text-gray-400'}`}>CAW total</span>
+            </div>
+          </div>
+          <div className="flex">
+            <div
+              className="flex-shrink-0 flex flex-col justify-between text-[10px] tabular-nums select-none"
+              style={{ width: 56, height: LINE_H, paddingRight: 8 }}
+            >
+              <div className={axisLabelClass} style={{ textAlign: 'right' }}>{fmtNumberCaw(padTop)}</div>
+              <div className={axisLabelClass} style={{ textAlign: 'right' }}>{fmtNumberCaw(padBot)}</div>
+            </div>
+            <div className="relative flex-1" style={{ height: LINE_H }}>
+              <svg
+                viewBox={`0 0 100 ${LINE_H}`}
+                preserveAspectRatio="none"
+                className="absolute inset-0 w-full h-full"
+              >
+                <path d={balAreaD} fill="rgba(235, 192, 70, 0.12)" />
+                <path
+                  d={balPathD}
+                  stroke="#ebc046"
+                  strokeWidth={1.5}
+                  fill="none"
+                  vectorEffect="non-scaling-stroke"
+                />
+              </svg>
+              <div className="absolute inset-0 pointer-events-none">
+                {balancePoints.map((v, i) => (
+                  <div
+                    key={i}
+                    className="absolute rounded-full"
+                    style={{
+                      left: `${xFor(i)}%`,
+                      top: `${yFor(v)}px`,
+                      width: 5,
+                      height: 5,
+                      backgroundColor: '#ebc046',
+                      transform: 'translate(-50%, -50%)',
+                    }}
+                  />
+                ))}
+              </div>
+            </div>
+          </div>
+          <div className="flex" style={{ paddingLeft: 56 }}>
+            <div className="flex-1 flex gap-0.5 text-[10px] tabular-nums select-none">
+              {data.chart.map((b, i) => (
+                <div
+                  key={i}
+                  className={`flex-1 text-center mt-1 ${axisLabelClass}`}
+                  style={{ visibility: i % xLabelEvery === 0 ? 'visible' : 'hidden' }}
+                >
+                  {(() => {
+                    const d = new Date(b.bucket)
+                    if (range.interval === 'hour') return d.toLocaleString(undefined, { hour: 'numeric' })
+                    return d.toLocaleString(undefined, { month: 'short', day: 'numeric' })
+                  })()}
+                </div>
+              ))}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Mini count charts: system-wide event counts per actionType. */}
+      <div className="grid grid-cols-2 gap-3 mb-4">
+        {countTypes.map(t => {
+          const counts = data.chart.map(b => {
+            const src = t.source === 'spend' ? b.spendCountsByType : b.rewardsCountsByType
+            return src[t.key] ?? 0
+          })
+          const total = counts.reduce((a, v) => a + v, 0)
+          const max = Math.max(...counts, 1)
+          const MINI_H = 40
+          return (
+            <div key={t.key} className={cardClass}>
+              <div className="flex items-baseline justify-between mb-1.5">
+                <div className="text-[10px] uppercase tracking-wide font-semibold" style={{ color: t.color }}>
+                  {t.label}
+                </div>
+                <div className="text-sm font-bold tabular-nums" style={{ color: t.color }}>
+                  {total.toLocaleString()}
+                </div>
+              </div>
+              <div
+                className="flex items-end gap-px"
+                style={{
+                  height: MINI_H,
+                  borderBottom: `1px solid ${isDark ? 'rgba(255,255,255,0.15)' : 'rgba(0,0,0,0.15)'}`,
+                }}
+              >
+                {counts.map((v, i) => (
+                  <div
+                    key={i}
+                    className="flex-1"
+                    style={{
+                      height: `${(v / max) * 100}%`,
+                      minHeight: v > 0 ? 1 : 0,
+                      backgroundColor: t.color,
+                      opacity: v > 0 ? 1 : 0,
+                    }}
+                    title={`${v.toLocaleString()} on ${new Date(data.chart[i].bucket).toLocaleDateString()}`}
+                  />
+                ))}
+              </div>
+            </div>
+          )
+        })}
+      </div>
+
+      {/* CAW distributed to stakers — moved here from My Stats. */}
+      {distMax > 0 && (
+        <div className={`${cardClass} mb-4`}>
+          <div className="flex items-baseline justify-between mb-1">
+            <h2 className={`text-sm font-semibold ${isDark ? 'text-white/60' : 'text-gray-500'}`}>
+              CAW distributed to stakers
+            </h2>
+            <div className="flex items-baseline gap-2">
+              <span className="text-lg font-bold tabular-nums" style={{ color: '#ebc046' }}>
+                {fmtNumberCaw(totalStakingRewards)}
+              </span>
+              <span className={`text-[10px] ${isDark ? 'text-white/40' : 'text-gray-400'}`}>CAW total</span>
+            </div>
+          </div>
+          <div className="flex flex-wrap gap-3 mb-2 text-[10px]">
+            {distTypes.map(t => {
+              const total = data.chart.reduce((s, b) => s + weiToCawNum(b.distributionByType[t.key]), 0)
+              return total > 0 ? (
+                <span key={t.key} className="flex items-center gap-1.5">
+                  <span className="inline-block w-2.5 h-2.5 rounded-sm" style={{ backgroundColor: t.color }} />
+                  <span className={isDark ? 'text-white/60' : 'text-gray-600'}>
+                    {t.label} <span className={isDark ? 'text-white/40' : 'text-gray-400'}>{fmtNumberCaw(total)}</span>
+                  </span>
+                </span>
+              ) : null
+            })}
+          </div>
+          <div className="flex">
+            <div
+              className="flex-shrink-0 flex flex-col justify-between text-[10px] tabular-nums select-none"
+              style={{ width: 56, height: 140, paddingRight: 8 }}
+            >
+              <div className={axisLabelClass} style={{ textAlign: 'right' }}>{fmtNumberCaw(distMax)}</div>
+              <div className={axisLabelClass} style={{ textAlign: 'right' }}>0</div>
+            </div>
+            <div className="relative flex-1" style={{ height: 140 }}>
+              <div
+                className="absolute left-0 right-0 h-px pointer-events-none"
+                style={{ top: 0, backgroundColor: isDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.08)' }}
+              />
+              <div
+                className="absolute left-0 right-0 h-px pointer-events-none"
+                style={{ bottom: 0, backgroundColor: isDark ? 'rgba(255,255,255,0.25)' : 'rgba(0,0,0,0.2)' }}
+              />
+              <div className="flex items-stretch gap-0.5 absolute inset-0">
+                {data.chart.map((b, i) => {
+                  const segments = distTypes.map(t => ({
+                    key: t.key,
+                    color: t.color,
+                    value: weiToCawNum(b.distributionByType[t.key]),
+                  }))
+                  const sum = segments.reduce((a, s) => a + s.value, 0)
+                  const pct = distMax > 0 ? (sum / distMax) * 94 : 0
+                  return (
+                    <div key={i} className="flex-1 flex flex-col">
+                      <div style={{ flex: '1 1 auto' }} />
+                      <div className="flex flex-col-reverse" style={{ height: `${pct}%` }}>
+                        {segments.map(s => {
+                          const segPct = sum > 0 ? (s.value / sum) * 100 : 0
+                          if (segPct <= 0) return null
+                          return (
+                            <div
+                              key={s.key}
+                              className="w-full"
+                              style={{
+                                height: `${segPct}%`,
+                                minHeight: 1,
+                                backgroundColor: s.color,
+                              }}
+                            />
+                          )
+                        })}
+                      </div>
+                    </div>
+                  )
+                })}
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {data.chart.length === 0 && (
+        <div className={`${cardClass} text-center py-8`}>
+          <div className={isDark ? 'text-white/60' : 'text-gray-500'}>
+            No protocol activity yet in this window.
+          </div>
+        </div>
+      )}
+    </>
   )
 }
 
