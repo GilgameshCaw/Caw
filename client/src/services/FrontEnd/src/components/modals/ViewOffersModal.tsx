@@ -19,6 +19,7 @@ import UsernameSvg from '~/components/UsernameSvg'
 import LiveCountdown from '~/components/marketplace/LiveCountdown'
 import { apiFetch } from '~/api/client'
 import { wagmiConfig } from '~/config/Web3Provider'
+import { useOffersUnreadStore } from '~/store/offersUnreadStore'
 
 const DECIMALS: Record<string, number> = { USDC: 6, USDT: 6 }
 
@@ -157,6 +158,11 @@ const ViewOffersModal: React.FC = () => {
         method: 'POST',
         body: JSON.stringify({ txHash: actionHash, buyer: offer.offerer }),
       }).catch(() => {})
+      // Optimistic badge decrement — accepting deactivates this offer
+      // server-side, but useBadgeSync's 30s poll means the badge would
+      // otherwise lag the action. The next poll re-asserts the
+      // authoritative count, so any divergence self-heals.
+      useOffersUnreadStore.getState().optimisticDecrement()
       // Backoff-poll for the chooser to reflect the new ownership.
       // Server only flips offer status here; User.address is updated
       // by MarketplaceIndexerService on the next L2 poll.
@@ -205,6 +211,10 @@ const ViewOffersModal: React.FC = () => {
   const handleDenyOffer = (offer: MarketplaceOffer) => {
     // Remove from local list immediately
     setOffers(prev => prev.filter(o => o.offerId !== offer.offerId))
+    // Optimistic badge decrement — dismissal subtracts from the count
+    // server-side too, but the badge poll runs every 30s. Same self-
+    // healing pattern as the accept-success branch.
+    useOffersUnreadStore.getState().optimisticDecrement()
     // Hide the associated notifications server-side
     apiFetch(`/api/marketplace/offers/${offer.id}/dismiss`, {
       method: 'POST',
