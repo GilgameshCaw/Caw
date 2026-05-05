@@ -438,6 +438,11 @@ const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess, placehol
   const [isSubmitting, setIsSubmitting] = useState(false)
   const [signingProgress, setSigningProgress] = useState<{ current: number; total: number } | null>(null)
   const signingTotal = signingProgress?.total ?? 0
+  // Pre-signing phase progress: media compression + upload. Without this
+  // the submit button reads "Signing..." while we're actually still
+  // uploading a 30s-transcoding video, which is misleading. Cleared
+  // before the signing loop starts.
+  const [uploadProgress, setUploadProgress] = useState<string | null>(null)
   // Refs to the count-up <span>s inside each submit button variant. We write
   // textContent directly to avoid re-rendering the whole form on every tick —
   // signing is main-thread heavy, and React reconciliation would starve it.
@@ -650,14 +655,19 @@ const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess, placehol
   // route through uploadFeedImage so each one gets a 2048px lightbox
   // variant alongside the 1024px inline display file. Videos go through
   // the generic uploadMedia helper unchanged.
-  const uploadMedia = async (files: File[], type: 'image' | 'video', tokenId: number) => {
+  const uploadMedia = async (
+    files: File[],
+    type: 'image' | 'video',
+    tokenId: number,
+    onProgress?: (msg: string) => void,
+  ) => {
     if (type === 'image') {
       const { uploadFeedImage } = await import('~/api/upload')
       const urls = await Promise.all(files.map(f => uploadFeedImage(f, tokenId)))
       return { success: true, urls }
     }
     const { uploadMedia: sharedUpload } = await import('~/api/upload')
-    const urls = await sharedUpload(files, tokenId, 'feed')
+    const urls = await sharedUpload(files, tokenId, 'feed', onProgress)
     return { success: true, urls }
   }
 
@@ -972,6 +982,7 @@ const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess, placehol
     // Upload off-chain images
     if (offChainImages.length > 0) {
       try {
+        setUploadProgress(t('post_form.button.uploading'))
         const imageFiles = offChainImages.map(({ media }) => media.file)
         const uploadResult = await uploadMedia(imageFiles, 'image', effectiveTokenId)
 
@@ -981,18 +992,29 @@ const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess, placehol
             uploadedUrls.set(index, uploadResult.urls![i])
           })
         } else {
+          setUploadProgress(null)
           return
         }
       } catch (error) {
+        setUploadProgress(null)
         return
       }
     }
 
-    // Upload videos
+    // Upload videos. The shared helper drives onProgress through the
+    // compress-then-upload pipeline so the button can read "Compressing
+    // video…" during MediaRecorder transcoding (slow — roughly real-time
+    // on the source's duration) before flipping back to a generic
+    // "Uploading…" while the network upload runs.
     if (videos.length > 0) {
       try {
         const videoFiles = videos.map(({ media }) => media.file)
-        const uploadResult = await uploadMedia(videoFiles, 'video', effectiveTokenId)
+        const uploadResult = await uploadMedia(
+          videoFiles,
+          'video',
+          effectiveTokenId,
+          msg => setUploadProgress(msg),
+        )
 
         if (uploadResult.success && uploadResult.urls) {
           // Map URLs back to their original positions
@@ -1000,12 +1022,17 @@ const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess, placehol
             uploadedUrls.set(index, uploadResult.urls![i])
           })
         } else {
+          setUploadProgress(null)
           return
         }
       } catch (error) {
+        setUploadProgress(null)
         return
       }
     }
+    // Clear before the signing phase begins so the button can flip to
+    // "Signing…" without a stale upload string lingering underneath.
+    setUploadProgress(null)
 
     // Now build the media URLs list in order
     const mediaUrls: string[] = []
@@ -1411,6 +1438,7 @@ const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess, placehol
     } finally {
       setIsSubmitting(false)
       setSigningProgress(null)
+      setUploadProgress(null)
     }
   }
 
@@ -1745,7 +1773,7 @@ const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess, placehol
                     disabled={isDisabled}
                     onClick={handleSubmit}
                   >
-                    {wrongWallet ? t('post_form.button.wrong_wallet') : signingProgress ? <>{t('post_form.button.signing_progress')} <span ref={signingCountRef1}>1</span>/{signingProgress.total}...</> : isSubmitting ? t('post_form.button.signing') : isThreadMode ? t('post_form.button.thread', { count: chunkCount }) : replyTo ? t('post_form.button.reply') : t('post_form.button.post')}
+                    {wrongWallet ? t('post_form.button.wrong_wallet') : uploadProgress ? uploadProgress : signingProgress ? <>{t('post_form.button.signing_progress')} <span ref={signingCountRef1}>1</span>/{signingProgress.total}...</> : isSubmitting ? t('post_form.button.signing') : isThreadMode ? t('post_form.button.thread', { count: chunkCount }) : replyTo ? t('post_form.button.reply') : t('post_form.button.post')}
                   </button>
                 )
                 return tooltipText ? <Tooltip text={tooltipText}>{btn}</Tooltip> : btn
@@ -2256,7 +2284,7 @@ const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess, placehol
                     disabled={isDisabled2}
                     onClick={handleSubmit}
                   >
-                    {wrongWallet2 ? t('post_form.button.wrong_wallet') : hasNoToken ? t('post_form.button.create_account') : signingProgress ? <>{t('post_form.button.signing_progress')} <span ref={signingCountRef2}>1</span>/{signingProgress.total}...</> : isSubmitting ? t('post_form.button.signing') : isThreadMode ? t('post_form.button.thread', { count: chunkCount }) : replyTo ? t('post_form.button.reply') : t('post_form.button.post')}
+                    {wrongWallet2 ? t('post_form.button.wrong_wallet') : hasNoToken ? t('post_form.button.create_account') : uploadProgress ? uploadProgress : signingProgress ? <>{t('post_form.button.signing_progress')} <span ref={signingCountRef2}>1</span>/{signingProgress.total}...</> : isSubmitting ? t('post_form.button.signing') : isThreadMode ? t('post_form.button.thread', { count: chunkCount }) : replyTo ? t('post_form.button.reply') : t('post_form.button.post')}
                   </button>
                 )
                 return tooltipText2 ? <Tooltip text={tooltipText2}>{btn2}</Tooltip> : btn2

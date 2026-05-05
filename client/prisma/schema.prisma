@@ -572,7 +572,7 @@ model WithdrawalRequest {
 
 model ShortUrl {
   id          Int      @id @default(autoincrement())
-  code        String   @unique @db.VarChar(10)
+  code        String   @unique @db.VarChar(16)
   originalUrl String
   title       String?  @db.VarChar(255)
   description String?

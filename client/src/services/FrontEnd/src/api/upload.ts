@@ -76,6 +76,11 @@ export async function uploadMedia(
   compressed.forEach(file => formData.append('media', file))
   formData.append('tokenId', String(tokenId))
 
+  // Flip the progress indicator from "Compressing…" (or whatever the
+  // previous stage was) to a generic upload state for the network leg.
+  // PostForm reads this to keep the submit button honest while the
+  // multipart body streams to the server.
+  onProgress?.('Uploading…')
   const res = await fetch('/api/upload', {
     method: 'POST',
     headers: getAuthHeaders(),

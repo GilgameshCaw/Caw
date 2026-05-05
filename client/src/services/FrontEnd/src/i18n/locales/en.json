@@ -171,6 +171,7 @@
   "post_form.button.reply": "Reply",
   "post_form.button.signing": "Signing...",
   "post_form.button.signing_progress": "Signing",
+  "post_form.button.uploading": "Uploading...",
   "post_form.button.thread": "Thread ({{count}})",
   "post_form.button.wrong_wallet": "Wrong Wallet",
   "post_form.button.create_account": "Create Account",
