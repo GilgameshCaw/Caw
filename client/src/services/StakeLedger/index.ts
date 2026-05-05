@@ -463,6 +463,14 @@ export async function recordDeposit(
   if (s.halted) return
   const { tokenId, amountWei, blockNumber, blockTimestamp, txHash, logIndex } = params
 
+  // Dedup: a watcher restart catching up may replay the same Deposited
+  // log. (txHash, logIndex) uniquely identifies the source event.
+  const existing = await tx.cawOwnershipSnapshot.findFirst({
+    where: { txHash, logIndex, reason: 'DEPOSIT' },
+    select: { id: true },
+  })
+  if (existing) return
+
   s.totalCaw += amountWei
   const own = ownershipOf(s, tokenId)
   const startingBalance = balanceOf(own, s.multiplier)

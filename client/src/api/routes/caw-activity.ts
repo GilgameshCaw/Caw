@@ -14,6 +14,7 @@
 // Public — every input here is on-chain anyway.
 
 import { Router } from 'express'
+import rateLimit from 'express-rate-limit'
 import { prisma } from '../../prismaClient'
 
 const router = Router()
@@ -21,29 +22,117 @@ const router = Router()
 const VALID_INTERVALS = ['hour', '6hour', 'day', 'week'] as const
 type Interval = (typeof VALID_INTERVALS)[number]
 
-router.get('/:tokenId/caw-activity', async (req, res) => {
+// In-memory response cache.
+//
+// Purpose: protect the DB from request bursts. The lateral-join SQL
+// for communal earnings is the most expensive query on this route —
+// once per ActionsProcessed event in the window, ~10K events on a
+// 30d window in a busy network. Without caching, a popular user's
+// page reload + auto-refresh from many viewers would multiply that
+// cost linearly.
+//
+// 30s TTL: the chart data is bucketed by hour at finest, so 30s of
+// staleness is invisible to the user but cuts duplicate-request load
+// by orders of magnitude. In-flight coalescing means N simultaneous
+// requests for the same key share the same DB roundtrip.
+//
+// Per-process state — fine for now (one API process per host) and
+// avoids needing Redis on a feature that's not yet load-bearing. Move
+// to Redis if we shard the API.
+interface CacheEntry {
+  expiresAt: number
+  body: any           // resolved JSON (also used for cache hits)
+  inFlight?: Promise<any> // promise that resolves to `body` while still computing
+}
+const TTL_MS = 30_000
+const CACHE_MAX = 1024 // bound memory; LRU-ish via oldest-key eviction
+const responseCache = new Map<string, CacheEntry>()
+const evictExpired = () => {
+  const now = Date.now()
+  for (const [k, v] of responseCache) {
+    if (v.expiresAt < now && !v.inFlight) responseCache.delete(k)
+  }
+}
+const cacheKeyOf = (
+  tokenId: number,
+  interval: Interval,
+  tz: string,
+  fromIso: string,
+  toIso: string,
+): string => `${tokenId}|${interval}|${tz}|${fromIso}|${toIso}`
+
+// Rate limit: protects the DB from a single IP hammering the route.
+// 30 rpm/IP is generous for human use (page load + auto-refresh +
+// range-toggle clicks) and tight enough that a script can't blow up
+// the lateral-join SQL. Cache hits don't count against the limit
+// because the limit middleware runs BEFORE the route handler — so
+// the cap is per-incoming-request regardless of cache state.
+const limiter = rateLimit({
+  windowMs: 60 * 1000,
+  max: 30,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { error: 'Too many activity requests, try again in a minute.' },
+})
+
+router.get('/:tokenId/caw-activity', limiter, async (req, res): Promise<void> => {
+  // Holders for the cache machinery — populated once we have a valid
+  // (tokenId, interval, tz, from, to). Used by both the success and
+  // error paths so the coalesced waiters always get a resolution.
+  let cacheKey: string | null = null
+  let resolveInFlightOuter: (body: any) => void = () => {}
+  let rejectInFlightOuter: (err: any) => void = () => {}
   try {
     const tokenId = Number(req.params.tokenId)
     if (!Number.isFinite(tokenId) || tokenId <= 0 || !Number.isInteger(tokenId)) {
-      return res.status(400).json({ error: 'tokenId must be a positive integer' })
+      res.status(400).json({ error: 'tokenId must be a positive integer' }); return
     }
     const interval = ((req.query.interval as string) || 'day') as Interval
     if (!VALID_INTERVALS.includes(interval)) {
-      return res.status(400).json({ error: 'interval must be hour, 6hour, day, or week' })
+      res.status(400).json({ error: 'interval must be hour, 6hour, day, or week' }); return
     }
     const tz = (req.query.tz as string) || 'UTC'
     if (!/^[A-Za-z_/+-]+$/.test(tz)) {
-      return res.status(400).json({ error: 'invalid timezone' })
+      res.status(400).json({ error: 'invalid timezone' }); return
     }
     const tzLiteral = tz.replace(/'/g, "''")
 
     const from = req.query.from ? new Date(req.query.from as string) : new Date(Date.now() - 30 * 86400000)
     const to = req.query.to ? new Date(req.query.to as string) : new Date()
     if (isNaN(from.getTime()) || isNaN(to.getTime())) {
-      return res.status(400).json({ error: 'invalid from/to' })
+      res.status(400).json({ error: 'invalid from/to' }); return
     }
     const fromIso = from.toISOString()
     const toIso = to.toISOString()
+
+    // Cache hit / coalesce. A 30s TTL is invisible at chart bucket
+    // resolution and folds bursty reloads into a single DB roundtrip.
+    cacheKey = cacheKeyOf(tokenId, interval, tz, fromIso, toIso)
+    const cached = responseCache.get(cacheKey)
+    const now = Date.now()
+    if (cached) {
+      if (cached.inFlight) {
+        try {
+          const body = await cached.inFlight
+          res.json(body); return
+        } catch {
+          // Original computation failed; fall through and recompute.
+          responseCache.delete(cacheKey)
+        }
+      } else if (cached.expiresAt > now) {
+        res.json(cached.body); return
+      } else {
+        responseCache.delete(cacheKey)
+      }
+    }
+    if (responseCache.size >= CACHE_MAX) evictExpired()
+
+    // Mark in-flight so concurrent identical requests share the work.
+    const inFlight = new Promise<any>((resolve, reject) => {
+      resolveInFlightOuter = resolve
+      rejectInFlightOuter = reject
+    })
+    responseCache.set(cacheKey, { expiresAt: 0, body: null, inFlight })
 
     const bucketExpr = (col: string) =>
       interval === '6hour'
@@ -337,7 +426,7 @@ router.get('/:tokenId/caw-activity', async (req, res) => {
       balanceByBucket.set(String(r.bucket), String(r.balance))
     }
 
-    res.json({
+    const body = {
       interval,
       balanceBeforeWindow,
       summary: {
@@ -379,9 +468,20 @@ router.get('/:tokenId/caw-activity', async (req, res) => {
           distribution: mapToObj(distributionByBucket.get(b) || {}),
         }
       }),
-    })
+    }
+    // Cache the body for the TTL window. Resolve in-flight waiters so
+    // they get the same payload without re-running the SQL.
+    if (cacheKey) {
+      responseCache.set(cacheKey, { expiresAt: Date.now() + TTL_MS, body, inFlight: undefined })
+    }
+    resolveInFlightOuter?.(body)
+    res.json(body)
   } catch (err: any) {
     console.error('[caw-activity] error:', err)
+    // Drop the failed cache entry and reject any coalesced waiters
+    // so they retry on the next request rather than getting stuck.
+    if (cacheKey) responseCache.delete(cacheKey)
+    rejectInFlightOuter?.(err)
     res.status(500).json({ error: 'Internal server error' })
   }
 })

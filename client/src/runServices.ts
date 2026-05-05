@@ -13,6 +13,7 @@ import { chainSyncService } from './services/ChainSyncService';
 import { marketplaceIndexerService } from './services/MarketplaceIndexerService';
 import { nftTransferWatcherService } from './services/NftTransferWatcher';
 import { stakeLedgerReconcilerService } from './services/StakeLedger/service';
+import { depositWatcherService } from './services/DepositWatcher';
 
 import delay from './tools/delay';
 
@@ -54,6 +55,7 @@ const availableServiceList: Service[] = [
   marketplaceIndexerService,
   nftTransferWatcherService,
   stakeLedgerReconcilerService,
+  depositWatcherService,
 ];
 
 const availableServices = new Map<string, Service>();
