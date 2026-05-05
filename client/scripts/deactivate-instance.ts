@@ -18,6 +18,7 @@ import 'dotenv/config'
 import { ethers } from 'ethers'
 import { CLIENT_MANAGER_ADDRESS } from '../src/abi/addresses'
 import { cawClientManagerAbi } from '../src/abi/generated'
+import { makeJsonRpcProvider, getL1HttpRpcUrl } from '../src/utils/rpcProvider'
 
 async function main() {
   const args = process.argv.slice(2)
@@ -30,12 +31,16 @@ async function main() {
     return n
   })
 
-  const rpc = process.env.L1_RPC_URL_HTTP || process.env.L1_RPC_URL
+  // Use the project's auth-aware RPC helpers — Infura requires the
+  // L1_RPC_SECRET as a basic-auth header (not embedded in the URL),
+  // so a plain `new JsonRpcProvider(url)` returns 403 Forbidden on
+  // every project that has secrets enabled.
+  const rpc = getL1HttpRpcUrl()
   const pk = process.env.VALIDATOR_PRIVATE_KEY
-  if (!rpc) throw new Error('L1_RPC_URL_HTTP (or L1_RPC_URL) not set')
+  if (!rpc) throw new Error('L1_RPC_URL_HTTP / L1_RPC_URL not set')
   if (!pk) throw new Error('VALIDATOR_PRIVATE_KEY not set')
 
-  const provider = new ethers.JsonRpcProvider(rpc)
+  const provider = makeJsonRpcProvider(rpc)
   const wallet = new ethers.Wallet(pk, provider)
   const ccm = new ethers.Contract(CLIENT_MANAGER_ADDRESS, cawClientManagerAbi as any, wallet)
 
