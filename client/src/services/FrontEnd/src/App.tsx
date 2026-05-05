@@ -10,6 +10,8 @@ import { useBadgeSync } from '~/hooks/useBadgeSync'
 import { useBlockedUsersStore } from '~/store/blockedUsersStore'
 import { useTokenDataStore } from '~/store/tokenDataStore'
 import { useActionErrorStore } from '~/store/actionErrorStore'
+import { useInstanceStore } from '~/store/instanceStore'
+import { CLIENT_ID } from '~/api/actions'
 import ModalWrapper from '~/components/modals/ModalWrapper'
 import { I18nProvider } from '~/i18n/I18nProvider'
 
@@ -71,6 +73,26 @@ function App() {
   useSessionKeyWalletGuard();
   useSessionSpendSync(); // Sync on-chain session spending on load
   useBadgeSync(); // Combined poll for sidebar badge counts (DMs, notifications, offers)
+
+  // Discover peer instances on boot + every 5 min. Without this call,
+  // useInstanceStore stays empty and getApiHosts() returns just the
+  // local primary — meaning every redundancy-broadcast site
+  // (signAndSubmit, DM relay, host verification) silently no-ops
+  // because there are no peers to talk to. Gated on a valid CLIENT_ID
+  // so a misconfigured FE doesn't make a chain-scan request with NaN.
+  // The 5-min refresh is mostly free: fetchInstances skips if it
+  // refreshed within FRESH_THRESHOLD_MS (10 min); the schedule just
+  // ensures a long-running session picks up newly-registered peers
+  // without a hard reload.
+  const fetchInstances = useInstanceStore(s => s.fetchInstances)
+  useEffect(() => {
+    if (!Number.isFinite(CLIENT_ID) || CLIENT_ID <= 0) return
+    fetchInstances(CLIENT_ID).catch(() => { /* fetchInstances logs internally */ })
+    const id = setInterval(() => {
+      fetchInstances(CLIENT_ID).catch(() => {})
+    }, 5 * 60 * 1000)
+    return () => clearInterval(id)
+  }, [fetchInstances])
 
   // Fetch blocked users from server on init
   const activeTokenId = useTokenDataStore(s => s.activeTokenId)
