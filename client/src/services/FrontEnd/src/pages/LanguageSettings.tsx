@@ -8,6 +8,7 @@ import { apiFetch } from '~/api/client'
 import { useUserByToken } from '~/hooks/useUserData'
 import { useActiveToken } from '~/store/tokenDataStore'
 import { useT } from '~/i18n/I18nProvider'
+import ThemedListbox from '~/components/forms/ThemedListbox'
 
 const LanguageSettings: React.FC = () => {
   const { isDark } = useTheme()
@@ -70,7 +71,7 @@ const LanguageSettings: React.FC = () => {
   )
 
   return (
-      <div className="max-w-2xl mx-auto px-6 py-4">
+      <div className="max-w-2xl mx-auto px-3 sm:px-6 py-4">
         <div className="flex items-center gap-4 mb-6">
           <Link
             to="/settings"
@@ -109,22 +110,19 @@ const LanguageSettings: React.FC = () => {
                 <p className={`text-sm mb-3 ${isDark ? 'text-white/50' : 'text-gray-500'}`}>
                   {t('language_settings.your_language.description')}
                 </p>
-                <select
+                <ThemedListbox
+                  isDark={isDark}
                   value={preferredLanguage}
-                  onChange={(e) => onLanguageChange(e.target.value)}
-                  className={`w-full max-w-xs px-3 py-2 rounded-lg border transition-colors cursor-pointer ${
-                    isDark
-                      ? 'bg-black border-white/20 text-white hover:border-white/40'
-                      : 'bg-white border-gray-300 text-gray-900 hover:border-gray-500'
-                  }`}
-                >
-                  <option value="">{t('language_settings.browser_default')}</option>
-                  {LANGUAGES.map(l => (
-                    <option key={l.code} value={l.code}>
-                      {l.name}{l.name !== l.native ? ` (${l.native})` : ''}
-                    </option>
-                  ))}
-                </select>
+                  onChange={onLanguageChange}
+                  className="max-w-xs"
+                  options={[
+                    { value: '', label: t('language_settings.browser_default') },
+                    ...LANGUAGES.map(l => ({
+                      value: l.code,
+                      label: l.name + (l.name !== l.native ? ` (${l.native})` : ''),
+                    })),
+                  ]}
+                />
               </div>
             </div>
           </div>

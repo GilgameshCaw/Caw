@@ -26,6 +26,7 @@ import {
   HiOutlineX
 } from 'react-icons/hi'
 import Recaw from '~/assets/images/recaw.svg?react';
+import UserHoverCard from './UserHoverCard';
 import Pencil from '~/assets/images/pencil.svg?react';
 import Bookmark from '~/assets/images/bookmark.svg?react';
 import Share from '~/assets/images/share.svg?react';
@@ -1194,14 +1195,16 @@ const FeedItem: React.FC<{ item: CawItem; isMainPost?: boolean; isReply?: boolea
 
                   {/* First line: Display name, username, time, and status badges */}
                   <div className="flex items-center space-x-2 mb-0.5">
-                    <Link
-                      to={`/users/${useItem.user.username}`}
-                      className={`font-semibold transition-colors duration-300 cursor-pointer hover:underline ${
-                        isDark ? 'text-white' : 'text-black'
-                      }`}
-                    >
-                      {useItem.user.displayName || useItem.user.username}
-                    </Link>
+                    <UserHoverCard username={useItem.user.username}>
+                      <Link
+                        to={`/users/${useItem.user.username}`}
+                        className={`font-semibold transition-colors duration-300 cursor-pointer hover:underline ${
+                          isDark ? 'text-white' : 'text-black'
+                        }`}
+                      >
+                        {useItem.user.displayName || useItem.user.username}
+                      </Link>
+                    </UserHoverCard>
                     <XBadge xHandle={useItem.user.xHandle} xFollowerBucket={useItem.user.xFollowerBucket} />
 
                     <span className={`text-sm transition-colors duration-300 ${

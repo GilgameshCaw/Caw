@@ -26,7 +26,7 @@ export default function ThemedListbox<T extends string | number>({
 }: Props<T>) {
   const selected = useMemo(() => options.find(o => o.value === value), [options, value])
 
-  const buttonClass = `w-full px-3 py-2 rounded-lg text-sm border outline-none transition cursor-pointer flex items-center justify-between ${themeInput(isDark)} ${themeBorder(isDark)}`
+  const buttonClass = `w-full px-3 py-4 rounded-lg text-sm outline-none focus:outline-none focus-visible:outline-none focus:ring-0 focus-visible:ring-0 transition cursor-pointer flex items-center justify-between ${themeInput(isDark)}`
   const panelClass = `absolute mt-1 w-full rounded-xl border shadow-lg z-[60] overflow-hidden ${
     isDark ? 'bg-neutral-900' : 'bg-white'
   } ${themeBorder(isDark)}`

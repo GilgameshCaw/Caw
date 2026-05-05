@@ -10,7 +10,7 @@ import { useEnsureWallet } from '~/hooks/useEnsureWallet'
 import { formatWalletError } from '~/utils/errorMessage'
 import { useActiveToken } from '~/store/tokenDataStore'
 import { useModalStore } from '~/store/modalStore'
-import { HiPencil, HiX, HiCamera, HiGlobe, HiLink, HiLocationMarker, HiOutlineMail, HiDotsHorizontal, HiOutlineCurrencyDollar, HiOutlineLockClosed } from 'react-icons/hi'
+import { HiPencil, HiX, HiCamera, HiGlobe, HiLink, HiLocationMarker, HiOutlineMail, HiDotsHorizontal, HiOutlineCurrencyDollar, HiOutlineLockClosed, HiArrowLeft } from 'react-icons/hi'
 import CopyAddressButton from '~/components/CopyAddressButton'
 import XBadge from '~/components/XBadge'
 import { apiFetch, retryOnIndexing } from '~/api/client'
@@ -889,6 +889,20 @@ export const Profile: React.FC = () => {
               style={isDark ? undefined : { background: 'linear-gradient(to bottom, white, #282828, white)' }}
             />
           )}
+          <button
+            type="button"
+            aria-label="Back"
+            onClick={() => {
+              if (window.history.state && window.history.state.idx > 0) {
+                navigate(-1)
+              } else {
+                navigate('/home')
+              }
+            }}
+            className="absolute top-3 left-3 z-10 w-9 h-9 rounded-full flex items-center justify-center bg-black/40 hover:bg-black/60 text-white backdrop-blur-sm transition-colors cursor-pointer"
+          >
+            <HiArrowLeft className="w-5 h-5" />
+          </button>
         </div>
 
         {/* Profile Picture - Positioned within max-w-2xl bounds */}

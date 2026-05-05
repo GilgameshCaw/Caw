@@ -8,10 +8,13 @@ import BugIcon from "~/components/icons/BugIcon";
 import { useTheme } from "~/hooks/useTheme";
 import Tooltip from "~/components/Tooltip";
 import { useT } from "~/i18n/I18nProvider";
-import { useState, lazy, Suspense } from "react";
-import { HiOutlineMenu, HiOutlineX, HiOutlinePencilAlt } from "react-icons/hi";
+import { useState, useEffect, useRef, lazy, Suspense } from "react";
+import { HiOutlineMenu, HiOutlineX, HiOutlinePencilAlt, HiOutlineHome, HiOutlineSearch, HiOutlineColorSwatch, HiOutlineBell, HiOutlineUser, HiOutlineChat } from "react-icons/hi";
 import { Link, useLocation } from "react-router-dom";
 import { useModalStore } from "~/store";
+import { useDmUnreadStore } from "~/store/dmUnreadStore";
+import { useNotificationUnreadStore } from "~/store/notificationUnreadStore";
+import { useOffersUnreadStore } from "~/store/offersUnreadStore";
 import { useActiveToken } from "~/store/tokenDataStore";
 import { useLayoutStore } from "~/store/layoutStore";
 import { useConnectModal } from "@rainbow-me/rainbowkit";
@@ -36,6 +39,26 @@ const MainLayout = ({ children, hideSidebars: hideSidebarsProp }: MainLayoutProp
   const { isConnected } = useAccount()
   const { openConnectModal } = useConnectModal()
   const openModal = useModalStore(s => s.openModal)
+  const dmUnreadCount = useDmUnreadStore(s => s.totalUnread)
+  const notifUnreadCount = useNotificationUnreadStore(s => s.unreadCount)
+  const offersUnreadCount = useOffersUnreadStore(s => s.unreadCount)
+
+  // Bottom-nav transparency while scrolling: solid when idle, translucent
+  // while the user actively scrolls so feed content can peek through.
+  const [isScrolling, setIsScrolling] = useState(false)
+  const scrollIdleTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
+  useEffect(() => {
+    const onScroll = () => {
+      setIsScrolling(true)
+      if (scrollIdleTimer.current) clearTimeout(scrollIdleTimer.current)
+      scrollIdleTimer.current = setTimeout(() => setIsScrolling(false), 180)
+    }
+    window.addEventListener('scroll', onScroll, { passive: true })
+    return () => {
+      window.removeEventListener('scroll', onScroll)
+      if (scrollIdleTimer.current) clearTimeout(scrollIdleTimer.current)
+    }
+  }, [])
 
   // Captive mode: no username and on a public page like /help/*
   const isCaptive = !activeToken?.username
@@ -80,6 +103,23 @@ const MainLayout = ({ children, hideSidebars: hideSidebarsProp }: MainLayoutProp
           >
             {isMobileMenuOpen ? <HiOutlineX className="w-6 h-6" /> : <HiOutlineMenu className="w-6 h-6" />}
           </button>
+
+          <Link
+            to="/messages"
+            aria-label="Messages"
+            className={`absolute right-4 p-2 rounded-lg transition-colors duration-200 ${
+              isDark ? 'text-white hover:bg-white/10' : 'text-black hover:bg-gray-100'
+            }`}
+          >
+            <span className="relative inline-flex">
+              <HiOutlineChat className="w-8 h-8" />
+              {dmUnreadCount > 0 && (
+                <span className={`absolute -top-1 -right-1 min-w-[18px] h-[18px] flex items-center justify-center text-[11px] font-bold rounded-full bg-yellow-500 text-black px-1 border-2 ${isDark ? 'border-black' : 'border-white'}`}>
+                  {dmUnreadCount > 99 ? '99+' : dmUnreadCount}
+                </span>
+              )}
+            </span>
+          </Link>
 
           <Link to="/home" className="caw-logo-lockup flex items-center justify-center w-full">
             <img
@@ -216,6 +256,45 @@ const MainLayout = ({ children, hideSidebars: hideSidebarsProp }: MainLayoutProp
         </div>
       )}
 
+      {/* Mobile bottom nav */}
+      {!hideSidebars && !isCaptive && (
+        <nav className={`md:hidden fixed bottom-0 left-0 right-0 z-[55] flex items-center justify-around h-14 pb-[env(safe-area-inset-bottom)] [height:calc(theme(height.14)+env(safe-area-inset-bottom))] border-t transition-opacity duration-200 ${
+          isScrolling ? 'opacity-30' : 'opacity-100'
+        } ${
+          isDark ? 'bg-black border-white/10' : 'bg-white border-gray-200'
+        }`}>
+          {[
+            { to: '/home', icon: HiOutlineHome, match: '/home', badge: 0 },
+            { to: '/explore', icon: HiOutlineSearch, match: '/explore', badge: 0 },
+            { to: '/usernames', icon: HiOutlineColorSwatch, match: '/usernames', badge: offersUnreadCount },
+            { to: '/notifications', icon: HiOutlineBell, match: '/notifications', badge: notifUnreadCount },
+            { to: activeToken?.username ? `/users/${activeToken.username}` : '/welcome', icon: HiOutlineUser, match: activeToken?.username ? `/users/${activeToken.username}` : '/welcome', badge: 0 },
+          ].map(({ to, icon: Icon, match, badge }) => {
+            const active = location.pathname === match || location.pathname.startsWith(match + '/')
+            return (
+              <Link
+                key={to}
+                to={to}
+                className={`flex-1 h-full flex items-center justify-center transition-colors ${
+                  active
+                    ? (isDark ? 'text-yellow-500' : 'text-yellow-600')
+                    : (isDark ? 'text-white/70 hover:text-white' : 'text-gray-600 hover:text-black')
+                }`}
+              >
+                <span className="relative inline-flex">
+                  <Icon className="w-7 h-7" />
+                  {badge > 0 && (
+                    <span className={`absolute -top-1 -right-1 min-w-[18px] h-[18px] flex items-center justify-center text-[11px] font-bold rounded-full bg-yellow-500 text-black px-1 border-2 ${isDark ? 'border-black' : 'border-white'}`}>
+                      {badge > 99 ? '99+' : badge}
+                    </span>
+                  )}
+                </span>
+              </Link>
+            )
+          })}
+        </nav>
+      )}
+
       {/* Mobile compose FAB */}
       {!hideSidebars && !isCaptive && !(
         location.pathname.startsWith('/messages') ||
@@ -226,7 +305,7 @@ const MainLayout = ({ children, hideSidebars: hideSidebarsProp }: MainLayoutProp
         <button
           onClick={() => openModal('post')}
           aria-label={t('main_layout.post_aria')}
-          className="md:hidden fixed right-10 bottom-12 z-[60] w-16 h-16 rounded-full bg-yellow-500 hover:bg-yellow-400 active:bg-yellow-600 text-black flex items-center justify-center shadow-lg shadow-black/30 transition-all cursor-pointer"
+          className="md:hidden fixed right-6 bottom-20 z-[60] w-14 h-14 rounded-full bg-yellow-500 hover:bg-yellow-400 active:bg-yellow-600 text-black flex items-center justify-center shadow-lg shadow-black/30 transition-all cursor-pointer"
         >
           <HiOutlinePencilAlt className="w-8 h-8" />
         </button>
