@@ -1224,6 +1224,62 @@ const CawActivity: React.FC = () => {
           const TIPS_H = 200
           const TIPS_HALF = TIPS_H / 2
 
+          // Shared-step interior gridlines, same algorithm as the
+          // main flow chart. Smaller side drives Δ; larger side gets
+          // floor(largerMax / Δ) lines, capped at 30. Falls back to
+          // 20 evenly-spaced lines on the larger side if the ratio
+          // is too extreme to share Δ.
+          let tipInTicks: number[] = []
+          let tipOutTicks: number[] = []
+          if (maxTipIn > 0 && maxTipOut > 0) {
+            const smallerMax = Math.min(maxTipIn, maxTipOut)
+            const largerMax = Math.max(maxTipIn, maxTipOut)
+            const TIP_MAX_LINES = 30
+            let smallerCount = 1
+            for (let c = 1; c <= TIP_MAX_LINES; c++) {
+              const step = smallerMax / c
+              const largerCount = Math.floor(largerMax / step)
+              if (largerCount > TIP_MAX_LINES) break
+              smallerCount = c
+            }
+            const step = smallerMax / smallerCount
+            const inIsLarger = maxTipIn >= maxTipOut
+            let tipInCount = inIsLarger ? Math.floor(maxTipIn / step) : smallerCount
+            let tipOutCount = inIsLarger ? smallerCount : Math.floor(maxTipOut / step)
+            const ratioBlewCap = (inIsLarger ? tipInCount : tipOutCount) > TIP_MAX_LINES
+            if (ratioBlewCap) {
+              if (inIsLarger) {
+                tipInCount = TIP_MAX_LINES
+                const inStep = maxTipIn / (TIP_MAX_LINES + 1)
+                for (let i = 1; i <= tipInCount; i++) tipInTicks.push(inStep * i)
+                tipOutCount = 1
+                tipOutTicks.push(maxTipOut / 2)
+              } else {
+                tipOutCount = TIP_MAX_LINES
+                const outStep = maxTipOut / (TIP_MAX_LINES + 1)
+                for (let i = 1; i <= tipOutCount; i++) tipOutTicks.push(outStep * i)
+                tipInCount = 1
+                tipInTicks.push(maxTipIn / 2)
+              }
+            } else {
+              for (let i = 1; i <= tipInCount; i++) {
+                const v = step * i
+                if (v < maxTipIn) tipInTicks.push(v)
+              }
+              for (let i = 1; i <= tipOutCount; i++) {
+                const v = step * i
+                if (v < maxTipOut) tipOutTicks.push(v)
+              }
+            }
+          } else if (maxTipIn > 0) {
+            for (let i = 1; i <= 4; i++) tipInTicks.push((maxTipIn / 4) * i)
+            tipInTicks = tipInTicks.slice(0, -1)
+          } else if (maxTipOut > 0) {
+            for (let i = 1; i <= 4; i++) tipOutTicks.push((maxTipOut / 4) * i)
+            tipOutTicks = tipOutTicks.slice(0, -1)
+          }
+          const tipGridColor = isDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.08)'
+
           return (
             <div className={`${cardClass} mb-4`}>
               <div className="flex items-baseline justify-between mb-1">
@@ -1287,6 +1343,27 @@ const CawActivity: React.FC = () => {
                       style={{ bottom: 0, backgroundColor: isDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.08)' }}
                     />
                   )}
+                  {/* Interior tick gridlines, shared step. */}
+                  {tipInTicks.map(v => (
+                    <div
+                      key={`tipin-${v}`}
+                      className="absolute left-0 right-0 h-px pointer-events-none"
+                      style={{
+                        top: TIPS_HALF - TIPS_HALF * (v / maxTipIn),
+                        backgroundColor: tipGridColor,
+                      }}
+                    />
+                  ))}
+                  {tipOutTicks.map(v => (
+                    <div
+                      key={`tipout-${v}`}
+                      className="absolute left-0 right-0 h-px pointer-events-none"
+                      style={{
+                        top: TIPS_HALF + TIPS_HALF * (v / maxTipOut),
+                        backgroundColor: tipGridColor,
+                      }}
+                    />
+                  ))}
                   {/* Midline */}
                   <div
                     className="absolute left-0 right-0 h-px pointer-events-none"
@@ -1841,7 +1918,9 @@ const AllStatsView: React.FC<AllStatsViewProps> = ({ range }) => {
         </div>
       )}
 
-      {/* CAW distributed to stakers — respects the same toggles. */}
+      {/* CAW distributed to stakers — respects the same toggles.
+          Y-axis in $ (with CAW as the secondary read in the
+          headline) for parity with the cumulative line above. */}
       {filteredDistMax > 0 && (
         <div className={`${cardClass} mb-4`}>
           <div className="flex items-baseline justify-between mb-1">
@@ -1850,9 +1929,11 @@ const AllStatsView: React.FC<AllStatsViewProps> = ({ range }) => {
             </h2>
             <div className="flex items-baseline gap-2">
               <span className="text-lg font-bold tabular-nums" style={{ color: '#ebc046' }}>
-                {fmtNumberCaw(filteredStakingRewards)}
+                {fmtUsd(filteredStakingRewards) ?? fmtNumberCaw(filteredStakingRewards)}
               </span>
-              <span className={`text-[10px] ${isDark ? 'text-white/40' : 'text-gray-400'}`}>CAW total</span>
+              <span className={`text-[10px] ${isDark ? 'text-white/40' : 'text-gray-400'}`}>
+                {fmtUsd(filteredStakingRewards) ? `${fmtNumberCaw(filteredStakingRewards)} CAW` : 'CAW total'}
+              </span>
             </div>
           </div>
           <div className="flex">
@@ -1860,7 +1941,7 @@ const AllStatsView: React.FC<AllStatsViewProps> = ({ range }) => {
               className="flex-shrink-0 flex flex-col justify-between text-[10px] tabular-nums select-none"
               style={{ width: 56, height: 140, paddingRight: 8 }}
             >
-              <div className={axisLabelClass} style={{ textAlign: 'right' }}>{fmtNumberCaw(filteredDistMax)}</div>
+              <div className={axisLabelClass} style={{ textAlign: 'right' }}>{fmtAxisUsd(filteredDistMax)}</div>
               <div className={axisLabelClass} style={{ textAlign: 'right' }}>0</div>
             </div>
             <div className="relative flex-1" style={{ height: 140 }}>
