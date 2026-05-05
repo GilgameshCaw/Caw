@@ -171,6 +171,8 @@ const MessagesPage: React.FC = () => {
   const [attemptedConversations, setAttemptedConversations] = useState<Set<string>>(new Set())
   const messagesContainerRef = useRef<HTMLDivElement>(null)
   const composerTextareaRef = useRef<HTMLTextAreaElement>(null)
+  const [composerChrome, setComposerChrome] = useState<{ isExpanded: boolean; padBottom: number }>({ isExpanded: false, padBottom: 80 })
+  const composerBarRef = useRef<HTMLDivElement>(null)
 
   // Auth state
   const { verify, isVerifying, error: verifyError } = useVerifyWallet()
@@ -511,6 +513,15 @@ const MessagesPage: React.FC = () => {
     // Reset composer height after clearing content (mobile multiline can
     // leave the inline style stuck at the previous scrollHeight).
     if (composerTextareaRef.current) composerTextareaRef.current.style.height = 'auto'
+    // Recompute scroll padding so the last bubble stays visible.
+    requestAnimationFrame(() => {
+      const barH = composerBarRef.current?.getBoundingClientRect().height
+      setComposerChrome(prev => {
+        const padBottom = barH ? Math.ceil(barH + 16) : prev.padBottom
+        if (padBottom === prev.padBottom && prev.isExpanded === false) return prev
+        return { padBottom, isExpanded: false }
+      })
+    })
     const replyTo = replyingToId
     setReplyingToId(null)
 
@@ -1477,8 +1488,12 @@ const MessagesPage: React.FC = () => {
             {/* Chat Messages — fixed height so overflow scrolling works, fade in when ready */}
             <div
               ref={messagesContainerRef}
-              className="flex-1 min-h-0 overflow-y-auto overscroll-contain custom-scrollbar-alt p-4 md:p-4 pt-4 pb-20 md:pb-4 transition-opacity duration-300"
-              style={{ opacity: chatReady ? 1 : 0 }}
+              className="flex-1 min-h-0 overflow-y-auto overscroll-contain custom-scrollbar-alt p-4 md:p-4 pt-4 md:pb-4 transition-opacity duration-300"
+              style={{
+                opacity: chatReady ? 1 : 0,
+                // Keep the last bubble visible above the fixed composer.
+                paddingBottom: window.innerWidth < 768 ? composerChrome.padBottom : undefined,
+              }}
               onScroll={(e) => {
                 const el = e.currentTarget
                 // Load older messages when scrolled near the top
@@ -2183,7 +2198,7 @@ const MessagesPage: React.FC = () => {
             )}
 
             {/* Bottom bar — anchored to bottom, doesn't scroll with messages */}
-            <div className={`flex-shrink-0 fixed md:sticky bottom-0 left-0 right-0 z-20 ${isDark ? 'bg-black' : 'bg-white'}`}>
+              <div className={`flex-shrink-0 fixed md:sticky bottom-0 left-0 right-0 z-20 ${isDark ? 'bg-black' : 'bg-white'}`}>
 
               {/* Unlock banner — replaces input when keys need derivation */}
               {needsKeyDerivation && !identityLoading ? (
@@ -2338,14 +2353,14 @@ const MessagesPage: React.FC = () => {
               })()}
 
               {/* Message Input */}
-              <div className="border-t border-white/10 p-2 md:p-4">
-              <div className={`flex items-center rounded-full border transition-all duration-300 focus-within:ring-2 focus-within:ring-gray-500/30 ${
-                isDark
-                  ? 'bg-black border-white/20'
-                  : 'bg-white border-gray-300'
-              }`}>
+               <div ref={composerBarRef} className="border-t border-white/10 p-2 md:p-4">
+               <div className={`flex ${composerChrome.isExpanded ? 'items-end rounded-2xl' : 'items-center rounded-full'} border transition-all duration-300 focus-within:ring-2 focus-within:ring-gray-500/30 ${
+                 isDark
+                   ? 'bg-black border-white/20'
+                   : 'bg-white border-gray-300'
+               }`}>
                 {/* Left side icons - fixed area */}
-                <div className="flex items-center space-x-3 px-3 py-3">
+                <div className={`flex items-center space-x-3 px-3 ${composerChrome.isExpanded ? 'py-2' : 'py-3'}`}>
                   {/* Encrypted image upload */}
                     <label title="Send encrypted image" className={`p-1 rounded-full transition-all duration-200 cursor-pointer ${
                       isDark
@@ -2417,7 +2432,20 @@ const MessagesPage: React.FC = () => {
                     // Auto-resize
                     const el = e.currentTarget
                     el.style.height = 'auto'
-                    el.style.height = Math.min(el.scrollHeight, 128) + 'px'
+                    const nextH = Math.min(el.scrollHeight, 96)
+                    el.style.height = nextH + 'px'
+
+                    // Keep message list bottom padding in sync with the
+                    // fixed composer height (X-style: grow a bit, then scroll).
+                    requestAnimationFrame(() => {
+                      const barH = composerBarRef.current?.getBoundingClientRect().height
+                      const isExpanded = nextH > 44
+                      setComposerChrome(prev => {
+                        const padBottom = barH ? Math.ceil(barH + 16) : prev.padBottom
+                        if (padBottom === prev.padBottom && isExpanded === prev.isExpanded) return prev
+                        return { padBottom, isExpanded }
+                      })
+                    })
                   }}
                   onKeyDown={(e) => {
                     if (e.key === 'Enter' && !e.shiftKey) {
@@ -2434,12 +2462,12 @@ const MessagesPage: React.FC = () => {
                     }
                   }}
                   rows={1}
-                  className={`flex-1 min-w-0 py-3 px-3 bg-transparent border-none outline-none resize-none text-left ${
+                  className={`flex-1 min-w-0 px-3 bg-transparent border-none outline-none resize-none text-left text-base md:text-[15px] overflow-y-auto ${
                     isDark
                       ? 'text-white placeholder-gray-500'
                       : 'text-black placeholder-gray-500'
                   }`}
-                  style={{ maxHeight: '128px' }}
+                  style={{ maxHeight: '96px' }}
                 />
 
                 {/* Send button */}
@@ -2699,7 +2727,7 @@ const MessagesPage: React.FC = () => {
                     value={messageText}
                     onChange={(e) => setMessageText(e.target.value)}
                     placeholder={t('messages.composer.placeholder')}
-                    className={`w-full h-32 px-4 py-3 rounded-lg border resize-none transition-all duration-300 focus:outline-none focus:ring-2 focus:ring-yellow-500/30 ${
+                    className={`w-full h-32 px-4 py-3 rounded-lg border resize-none text-base md:text-[15px] transition-all duration-300 focus:outline-none focus:ring-2 focus:ring-yellow-500/30 ${
                       isDark
                         ? 'bg-black border-gray-600 text-white placeholder-gray-500'
                         : 'bg-white border-gray-300 text-black placeholder-gray-400'

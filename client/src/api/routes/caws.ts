@@ -492,6 +492,42 @@ router.get('/:id', async (req, res) => {
   })
 })
 
+// GET /api/caws/:id/likes — public list of users who liked this caw.
+// Likes are already public (likeCount, profile-likes feed); this just
+// surfaces the list. Pending likes excluded; blocked users filtered out
+// for the requester if they're signed in.
+router.get('/:id/likes', async (req, res) => {
+  const cawId = Number(req.params.id)
+  if (!Number.isFinite(cawId)) return res.status(400).json({ error: 'Invalid caw ID' })
+
+  const userIdHeader = req.header('x-user-id')
+  const currentUserId = userIdHeader ? Number(userIdHeader) : undefined
+  const blockedIds = currentUserId ? await getBlockedUserIds(currentUserId) : []
+
+  const rawLikes = await prisma.like.findMany({
+    where: {
+      cawId,
+      pending: false,
+      ...(blockedIds.length > 0 ? { userId: { notIn: blockedIds } } : {}),
+    },
+    take: 500,
+    orderBy: { createdAt: 'asc' },
+    select: {
+      id: true,
+      createdAt: true,
+      user: { select: { tokenId: true, username: true, displayName: true, avatarUrl: true, image: true, defaultAvatarId: true } },
+    },
+  })
+
+  const likes = rawLikes.map(l => ({
+    id: l.id.toString(),
+    timestamp: l.createdAt.toISOString(),
+    user: l.user,
+  }))
+
+  res.json({ likes })
+})
+
 
 /**
  * POST /api/caws/:id/dismiss

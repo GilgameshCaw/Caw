@@ -13,6 +13,7 @@ import ModalWrapper from '~/components/modals/ModalWrapper'
 import Tooltip from '~/components/Tooltip'
 import { getUserAvatar } from '~/utils/defaultAvatar'
 import Avatar from '~/components/Avatar'
+import XLogo from '~/components/icons/x-logo.svg?react'
 import { apiFetch, API_HOST, AuthError } from '~/api/client'
 import { useFollowerCounts } from '~/hooks/useFollowerCounts'
 import { usePinnedProfilesStore } from '~/store/pinnedProfilesStore'
@@ -283,14 +284,14 @@ const ConnectedAccountsSection: React.FC<{ isDark: boolean; tokenId: number }> =
         Connected Accounts
       </h2>
       <div className={`p-4 rounded-lg ${isDark ? 'bg-white/5 border border-white/10' : 'bg-gray-50 border border-gray-100'}`}>
-        <div className="flex items-center justify-between gap-3 flex-wrap">
-          <div className="flex items-center gap-3 min-w-0">
-            <div className={`w-10 h-10 rounded-full flex items-center justify-center font-bold ${isDark ? 'bg-black text-white' : 'bg-black text-white'}`}>
-              X
+        <div className="flex items-center justify-between gap-3">
+          <div className="flex items-center gap-3 min-w-0 flex-1">
+            <div className={`w-10 h-10 rounded-full flex items-center justify-center ${isDark ? 'bg-black text-white' : 'bg-black text-white'}`}>
+              <XLogo className="w-5 h-5" />
             </div>
             <div className="min-w-0">
               <p className={`font-medium ${isDark ? 'text-white' : 'text-gray-900'}`}>X (Twitter)</p>
-              <p className={`text-sm truncate ${isDark ? 'text-white/50' : 'text-gray-500'}`}>
+              <p className={`text-xs ${isDark ? 'text-white/50' : 'text-gray-500'}`}>
                 {loading
                   ? 'Loading…'
                   : link
@@ -328,11 +329,11 @@ const ConnectedAccountsSection: React.FC<{ isDark: boolean; tokenId: number }> =
                 type="button"
                 onClick={startOAuth}
                 disabled={busy || loading}
-                className={`px-4 py-1.5 text-sm font-medium rounded-full transition-colors bg-yellow-500 hover:bg-yellow-400 text-black ${
+                className={`px-5 py-1.5 text-sm font-semibold rounded-full transition-colors bg-yellow-500 hover:bg-yellow-400 text-black ${
                   busy || loading ? 'opacity-50 cursor-not-allowed' : 'cursor-pointer'
                 }`}
               >
-                {busy ? 'Connecting…' : 'Connect X'}
+                {busy ? 'Connecting…' : 'Connect'}
               </button>
             )}
           </div>

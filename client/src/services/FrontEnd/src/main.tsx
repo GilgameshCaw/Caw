@@ -1,6 +1,11 @@
 import './instrument';
 import './utils/polyfills';
 import { StrictMode } from "react";
+
+// We manage scroll restoration ourselves (per-feed anchors in Feed.tsx).
+// Disable the browser's default so it doesn't fight our restore on back/fwd.
+if ('scrollRestoration' in history) history.scrollRestoration = 'manual'
+
 import { createRoot } from "react-dom/client";
 import * as Sentry from '@sentry/react';
 
