@@ -39,25 +39,34 @@ interface Segment {
   side: Side
 }
 
-// Colour palette tuned so similar concepts get visually-related hues
-// across both sides (e.g. LIKE pink in both, RECAW purple in both).
+// Brand-aligned palette. Rewards use a warm/positive family anchored
+// on the CAW yellow (#ebc046) + lime (#aceb3f, --color-primary-100);
+// spend uses a cooler/desaturated family (slates + teals) so the eye
+// instantly knows which side is which without reading labels. Hues
+// within each side are spaced ~60° apart on the wheel for separability.
+//
+// Inline hex (not Tailwind classes) so the palette is definitive and
+// theme-stable — Tailwind's *-500/*-600 shades shift across versions.
 const SEGMENTS: Segment[] = [
-  // INCOMING (rewards) — stacked above the x-axis.
-  { key: 'in.staking',  label: 'Staking rewards', color: 'bg-yellow-500', textColor: 'text-yellow-500', side: 'in' },
-  { key: 'in.LIKE',     label: 'Likes received',  color: 'bg-pink-500',   textColor: 'text-pink-400',   side: 'in' },
-  { key: 'in.RECAW',    label: 'Recaws received', color: 'bg-purple-500', textColor: 'text-purple-400', side: 'in' },
-  { key: 'in.FOLLOW',   label: 'Follows received',color: 'bg-green-500',  textColor: 'text-green-400',  side: 'in' },
-  { key: 'in.TIP',      label: 'Tips received',   color: 'bg-emerald-400',textColor: 'text-emerald-400',side: 'in' },
-  { key: 'in.validator',label: 'Validator fees',  color: 'bg-cyan-500',   textColor: 'text-cyan-400',   side: 'in' },
-  // OUTGOING (spend) — stacked below the x-axis. Cooler/red palette.
-  { key: 'out.CAW',      label: 'Posts',         color: 'bg-blue-500',    textColor: 'text-blue-400',    side: 'out' },
-  { key: 'out.LIKE',     label: 'Likes given',   color: 'bg-pink-600',    textColor: 'text-pink-300',    side: 'out' },
-  { key: 'out.RECAW',    label: 'Recaws given',  color: 'bg-purple-600',  textColor: 'text-purple-300',  side: 'out' },
-  { key: 'out.FOLLOW',   label: 'Follows given', color: 'bg-green-600',   textColor: 'text-green-300',   side: 'out' },
-  { key: 'out.TIP',      label: 'Tips given',    color: 'bg-emerald-600', textColor: 'text-emerald-300', side: 'out' },
-  { key: 'out.OTHER',    label: 'Other',         color: 'bg-slate-500',   textColor: 'text-slate-400',   side: 'out' },
-  { key: 'out.WITHDRAW', label: 'Withdrawals',   color: 'bg-amber-600',   textColor: 'text-amber-400',   side: 'out' },
-  { key: 'out.validator',label: 'Validator fees',color: 'bg-cyan-700',    textColor: 'text-cyan-300',    side: 'out' },
+  // INCOMING (rewards) — warm, on-brand. Staking rewards gets the
+  // signature brand yellow because it's the headline metric.
+  { key: 'in.staking',   label: 'Staking rewards', color: '#ebc046', textColor: '#ebc046', side: 'in' },
+  { key: 'in.TIP',       label: 'Tips received',   color: '#aceb3f', textColor: '#aceb3f', side: 'in' },
+  { key: 'in.RECAW',     label: 'Recaws received', color: '#f59e0b', textColor: '#f59e0b', side: 'in' },
+  { key: 'in.FOLLOW',    label: 'Follows received',color: '#fb923c', textColor: '#fb923c', side: 'in' },
+  { key: 'in.LIKE',      label: 'Likes received',  color: '#f472b6', textColor: '#f472b6', side: 'in' },
+  { key: 'in.validator', label: 'Validator fees',  color: '#a3e635', textColor: '#a3e635', side: 'in' },
+  // OUTGOING (spend) — cool, muted. Same hue families on the wheel as
+  // their incoming counterparts where the concept matches (TIP↔TIP),
+  // shifted toward blue/slate so spend reads as "cost" at a glance.
+  { key: 'out.CAW',      label: 'Posts',          color: '#60a5fa', textColor: '#60a5fa', side: 'out' },
+  { key: 'out.RECAW',    label: 'Recaws given',   color: '#818cf8', textColor: '#818cf8', side: 'out' },
+  { key: 'out.LIKE',     label: 'Likes given',    color: '#a78bfa', textColor: '#a78bfa', side: 'out' },
+  { key: 'out.FOLLOW',   label: 'Follows given',  color: '#22d3ee', textColor: '#22d3ee', side: 'out' },
+  { key: 'out.TIP',      label: 'Tips given',     color: '#2dd4bf', textColor: '#2dd4bf', side: 'out' },
+  { key: 'out.OTHER',    label: 'Other',          color: '#94a3b8', textColor: '#94a3b8', side: 'out' },
+  { key: 'out.WITHDRAW', label: 'Withdrawals',    color: '#fb7185', textColor: '#fb7185', side: 'out' },
+  { key: 'out.validator',label: 'Validator fees', color: '#0891b2', textColor: '#0891b2', side: 'out' },
 ]
 
 // -----------------------------------------------------------------
@@ -377,25 +386,28 @@ const CawActivity: React.FC = () => {
         {data && (
           <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-6">
             <div className={cardClass}>
-              <div className={`text-[10px] uppercase tracking-wide font-semibold ${isDark ? 'text-white/50' : 'text-gray-500'}`}>Rewards</div>
-              <div className="text-xl font-bold text-green-500 mt-1">{fmtNumberCaw(visibleRewardsTotal)}</div>
+              <div className={`text-[10px] uppercase tracking-wide font-semibold ${isDark ? 'text-white/50' : 'text-gray-500'}`}>Incoming</div>
+              <div className="text-xl font-bold mt-1" style={{ color: '#aceb3f' }}>{fmtNumberCaw(visibleRewardsTotal)}</div>
               <div className={`text-[10px] mt-0.5 ${isDark ? 'text-white/40' : 'text-gray-400'}`}>CAW</div>
             </div>
             <div className={cardClass}>
-              <div className={`text-[10px] uppercase tracking-wide font-semibold ${isDark ? 'text-white/50' : 'text-gray-500'}`}>Spend</div>
-              <div className="text-xl font-bold text-red-500 mt-1">{fmtNumberCaw(visibleSpendTotal)}</div>
+              <div className={`text-[10px] uppercase tracking-wide font-semibold ${isDark ? 'text-white/50' : 'text-gray-500'}`}>Outgoing</div>
+              <div className="text-xl font-bold mt-1" style={{ color: '#fb7185' }}>{fmtNumberCaw(visibleSpendTotal)}</div>
               <div className={`text-[10px] mt-0.5 ${isDark ? 'text-white/40' : 'text-gray-400'}`}>CAW</div>
             </div>
             <div className={cardClass}>
               <div className={`text-[10px] uppercase tracking-wide font-semibold ${isDark ? 'text-white/50' : 'text-gray-500'}`}>Net</div>
-              <div className={`text-xl font-bold mt-1 ${visibleRewardsTotal - visibleSpendTotal >= 0 ? 'text-green-500' : 'text-red-500'}`}>
+              <div
+                className="text-xl font-bold mt-1"
+                style={{ color: visibleRewardsTotal - visibleSpendTotal >= 0 ? '#aceb3f' : '#fb7185' }}
+              >
                 {visibleRewardsTotal - visibleSpendTotal >= 0 ? '+' : ''}{fmtNumberCaw(visibleRewardsTotal - visibleSpendTotal)}
               </div>
               <div className={`text-[10px] mt-0.5 ${isDark ? 'text-white/40' : 'text-gray-400'}`}>CAW</div>
             </div>
             <div className={cardClass}>
               <div className={`text-[10px] uppercase tracking-wide font-semibold ${isDark ? 'text-white/50' : 'text-gray-500'}`}>Stake share</div>
-              <div className="text-xl font-bold text-yellow-500 mt-1">
+              <div className="text-xl font-bold mt-1" style={{ color: '#ebc046' }}>
                 {(data.summary.stakeShare * 100).toFixed(3)}%
               </div>
               <div className={`text-[10px] mt-0.5 ${isDark ? 'text-white/40' : 'text-gray-400'}`}>of total CAW staked</div>
@@ -404,140 +416,269 @@ const CawActivity: React.FC = () => {
         )}
 
         {/* Chart */}
-        {data && buckets.length > 0 && (
-          <div className={`${cardClass} mb-4`}>
-            <h2 className={`text-sm font-semibold mb-3 ${isDark ? 'text-white/60' : 'text-gray-500'}`}>
-              {range.interval === 'hour' ? 'Hourly' : range.interval === '6hour' ? '6-hour' : 'Daily'} flow
-            </h2>
-            <div className="relative" onMouseLeave={() => setHoveredBar(null)}>
-              <div className="flex items-stretch gap-0.5" style={{ height: 280 }}>
-                {buckets.map((b, i) => {
-                  const inActive = b.in.segments.filter(s => isEnabled(s.key))
-                  const outActive = b.out.segments.filter(s => isEnabled(s.key))
-                  const inSum = inActive.reduce((a, s) => a + s.value, 0)
-                  const outSum = outActive.reduce((a, s) => a + s.value, 0)
-                  const inPct = (inSum / maxIn) * 50  // top half max = 50%
-                  const outPct = (outSum / maxOut) * 50
-                  const dim = hoveredBar !== null && hoveredBar !== i
-                  return (
-                    <div
-                      key={i}
-                      className="flex-1 flex flex-col cursor-pointer"
-                      onMouseEnter={() => setHoveredBar(i)}
-                    >
-                      {/* Top half: stack incoming bottom-up */}
-                      <div className="flex flex-col-reverse" style={{ height: '50%' }}>
-                        {inActive.map(s => {
-                          const seg = SEGMENTS.find(x => x.key === s.key)!
-                          const pct = inSum > 0 ? (s.value / inSum) * inPct * 2 : 0
-                          if (pct <= 0) return null
-                          return (
-                            <div
-                              key={s.key}
-                              className={`w-full ${seg.color} ${dim ? 'opacity-40' : ''} transition-opacity`}
-                              style={{ height: `${pct}%`, minHeight: 1 }}
-                            />
-                          )
-                        })}
-                      </div>
-                      {/* Midline */}
-                      <div className={`w-full h-px ${isDark ? 'bg-white/20' : 'bg-gray-300'}`} />
-                      {/* Bottom half: stack outgoing top-down */}
-                      <div className="flex flex-col" style={{ height: '50%' }}>
-                        {outActive.map(s => {
-                          const seg = SEGMENTS.find(x => x.key === s.key)!
-                          const pct = outSum > 0 ? (s.value / outSum) * outPct * 2 : 0
-                          if (pct <= 0) return null
-                          return (
-                            <div
-                              key={s.key}
-                              className={`w-full ${seg.color} ${dim ? 'opacity-40' : ''} transition-opacity`}
-                              style={{ height: `${pct}%`, minHeight: 1 }}
-                            />
-                          )
-                        })}
-                      </div>
+        {data && buckets.length > 0 && (() => {
+          const CHART_H = 280
+          const HALF_H = CHART_H / 2
+          // Y-axis tick: pick a round number close to 50% of the max so
+          // we get one mid-line gridline per side. niceTick rounds down
+          // to the nearest 1/2/5×10^n (the standard "nice number" pick).
+          const niceTick = (max: number): number => {
+            if (max <= 0) return 0
+            const half = max / 2
+            const exp = Math.floor(Math.log10(half))
+            const base = Math.pow(10, exp)
+            const norm = half / base
+            const candidate = norm < 1.5 ? 1 : norm < 3.5 ? 2 : norm < 7.5 ? 5 : 10
+            return candidate * base
+          }
+          const inTick = niceTick(maxIn)
+          const outTick = niceTick(maxOut)
+          // Position from midline as a percent of the half height.
+          const inTickPct = maxIn > 0 ? (inTick / maxIn) * 100 : 0
+          const outTickPct = maxOut > 0 ? (outTick / maxOut) * 100 : 0
+          // Sparse x-axis labels: ~6 ticks across, regardless of bucket count.
+          const xLabelEvery = Math.max(1, Math.ceil(buckets.length / 6))
+          const fmtBucketLabel = (iso: string): string => {
+            const d = new Date(iso)
+            if (range.interval === 'hour') {
+              return d.toLocaleString(undefined, { hour: 'numeric' })
+            }
+            if (range.interval === '6hour') {
+              return d.toLocaleString(undefined, { month: 'short', day: 'numeric' })
+            }
+            return d.toLocaleString(undefined, { month: 'short', day: 'numeric' })
+          }
+          const axisLabelClass = isDark ? 'text-white/40' : 'text-gray-500'
+          const gridlineColor = isDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.08)'
+          const midlineColor = isDark ? 'rgba(255,255,255,0.25)' : 'rgba(0,0,0,0.2)'
+
+          return (
+            <div className={`${cardClass} mb-4`}>
+              <h2 className={`text-sm font-semibold mb-3 ${isDark ? 'text-white/60' : 'text-gray-500'}`}>
+                {range.interval === 'hour' ? 'Hourly' : range.interval === '6hour' ? '6-hour' : 'Daily'} flow
+              </h2>
+
+              <div className="flex" onMouseLeave={() => setHoveredBar(null)}>
+                {/* Y-axis labels (left gutter). Two halves each get one
+                    mid-tick + the top/bottom edges. */}
+                <div
+                  className="flex-shrink-0 flex flex-col text-[10px] tabular-nums select-none"
+                  style={{ width: 52, height: CHART_H }}
+                >
+                  <div className="relative" style={{ height: HALF_H }}>
+                    <div className={`absolute right-2 top-0 -translate-y-1/2 ${axisLabelClass} font-semibold uppercase tracking-wide text-[9px]`}>
+                      In
                     </div>
-                  )
-                })}
+                    {inTick > 0 && (
+                      <div
+                        className={`absolute right-2 ${axisLabelClass}`}
+                        style={{ bottom: `${inTickPct}%`, transform: 'translateY(50%)' }}
+                      >
+                        +{fmtNumberCaw(inTick)}
+                      </div>
+                    )}
+                    <div className={`absolute right-2 bottom-0 translate-y-1/2 ${axisLabelClass}`}>0</div>
+                  </div>
+                  <div className="relative" style={{ height: HALF_H }}>
+                    {outTick > 0 && (
+                      <div
+                        className={`absolute right-2 ${axisLabelClass}`}
+                        style={{ top: `${outTickPct}%`, transform: 'translateY(-50%)' }}
+                      >
+                        −{fmtNumberCaw(outTick)}
+                      </div>
+                    )}
+                    <div className={`absolute right-2 bottom-0 translate-y-1/2 ${axisLabelClass} font-semibold uppercase tracking-wide text-[9px]`}>
+                      Out
+                    </div>
+                  </div>
+                </div>
+
+                {/* Plot area */}
+                <div className="relative flex-1" style={{ height: CHART_H }}>
+                  {/* Gridlines (in mid-tick + outline + out mid-tick) */}
+                  {inTick > 0 && (
+                    <div
+                      className="absolute left-0 right-0 h-px pointer-events-none"
+                      style={{ top: HALF_H - (HALF_H * inTickPct) / 100, backgroundColor: gridlineColor }}
+                    />
+                  )}
+                  {outTick > 0 && (
+                    <div
+                      className="absolute left-0 right-0 h-px pointer-events-none"
+                      style={{ top: HALF_H + (HALF_H * outTickPct) / 100, backgroundColor: gridlineColor }}
+                    />
+                  )}
+                  {/* Midline */}
+                  <div
+                    className="absolute left-0 right-0 h-px pointer-events-none"
+                    style={{ top: HALF_H, backgroundColor: midlineColor }}
+                  />
+
+                  {/* Bars */}
+                  <div className="flex items-stretch gap-0.5 absolute inset-0">
+                    {buckets.map((b, i) => {
+                      const inActive = b.in.segments.filter(s => isEnabled(s.key))
+                      const outActive = b.out.segments.filter(s => isEnabled(s.key))
+                      const inSum = inActive.reduce((a, s) => a + s.value, 0)
+                      const outSum = outActive.reduce((a, s) => a + s.value, 0)
+                      const inPct = (inSum / maxIn) * 50
+                      const outPct = (outSum / maxOut) * 50
+                      const dim = hoveredBar !== null && hoveredBar !== i
+                      return (
+                        <div
+                          key={i}
+                          className="flex-1 flex flex-col cursor-pointer"
+                          onMouseEnter={() => setHoveredBar(i)}
+                        >
+                          {/* Top half: stack incoming bottom-up */}
+                          <div className="flex flex-col-reverse" style={{ height: '50%' }}>
+                            {inActive.map(s => {
+                              const seg = SEGMENTS.find(x => x.key === s.key)!
+                              const pct = inSum > 0 ? (s.value / inSum) * inPct * 2 : 0
+                              if (pct <= 0) return null
+                              return (
+                                <div
+                                  key={s.key}
+                                  className="w-full transition-opacity"
+                                  style={{
+                                    height: `${pct}%`,
+                                    minHeight: 1,
+                                    backgroundColor: seg.color,
+                                    opacity: dim ? 0.4 : 1,
+                                  }}
+                                />
+                              )
+                            })}
+                          </div>
+                          <div style={{ height: 0 }} />
+                          {/* Bottom half: stack outgoing top-down */}
+                          <div className="flex flex-col" style={{ height: '50%' }}>
+                            {outActive.map(s => {
+                              const seg = SEGMENTS.find(x => x.key === s.key)!
+                              const pct = outSum > 0 ? (s.value / outSum) * outPct * 2 : 0
+                              if (pct <= 0) return null
+                              return (
+                                <div
+                                  key={s.key}
+                                  className="w-full transition-opacity"
+                                  style={{
+                                    height: `${pct}%`,
+                                    minHeight: 1,
+                                    backgroundColor: seg.color,
+                                    opacity: dim ? 0.4 : 1,
+                                  }}
+                                />
+                              )
+                            })}
+                          </div>
+                        </div>
+                      )
+                    })}
+                  </div>
+
+                  {/* Hover tooltip */}
+                  {hoveredBar !== null && buckets[hoveredBar] && (() => {
+                    const b = buckets[hoveredBar]
+                    const inEntries = b.in.segments.filter(s => isEnabled(s.key) && s.value > 0)
+                    const outEntries = b.out.segments.filter(s => isEnabled(s.key) && s.value > 0)
+                    const inSum = inEntries.reduce((a, s) => a + s.value, 0)
+                    const outSum = outEntries.reduce((a, s) => a + s.value, 0)
+                    return (
+                      <div
+                        className={`absolute z-10 rounded-lg border p-3 text-xs shadow-lg pointer-events-none ${
+                          isDark ? 'bg-gray-900 border-white/10' : 'bg-white border-gray-200'
+                        }`}
+                        style={{
+                          top: 0,
+                          left: `${Math.min(Math.max((hoveredBar / buckets.length) * 100, 5), 60)}%`,
+                          minWidth: 200,
+                        }}
+                      >
+                        <div className={`font-semibold mb-1.5 ${isDark ? 'text-white' : 'text-gray-900'}`}>
+                          {new Date(b.bucket).toLocaleString(undefined, {
+                            month: 'short', day: 'numeric',
+                            hour: range.interval === 'hour' || range.interval === '6hour' ? 'numeric' : undefined,
+                          })}
+                        </div>
+                        {inEntries.length > 0 && (
+                          <div className="mb-1.5">
+                            <div className={`text-[10px] uppercase tracking-wide mb-0.5 ${isDark ? 'text-white/40' : 'text-gray-400'}`}>Incoming</div>
+                            {inEntries.map(s => {
+                              const seg = SEGMENTS.find(x => x.key === s.key)!
+                              return (
+                                <div key={s.key} className="flex items-center justify-between gap-3">
+                                  <span className="flex items-center gap-1.5">
+                                    <span
+                                      className="inline-block w-2 h-2 rounded-sm"
+                                      style={{ backgroundColor: seg.color }}
+                                    />
+                                    <span className={isDark ? 'text-white/70' : 'text-gray-700'}>{seg.label}</span>
+                                  </span>
+                                  <span style={{ color: seg.textColor }}>+{fmtNumberCaw(s.value)}</span>
+                                </div>
+                              )
+                            })}
+                          </div>
+                        )}
+                        {outEntries.length > 0 && (
+                          <div className="mb-1">
+                            <div className={`text-[10px] uppercase tracking-wide mb-0.5 ${isDark ? 'text-white/40' : 'text-gray-400'}`}>Outgoing</div>
+                            {outEntries.map(s => {
+                              const seg = SEGMENTS.find(x => x.key === s.key)!
+                              return (
+                                <div key={s.key} className="flex items-center justify-between gap-3">
+                                  <span className="flex items-center gap-1.5">
+                                    <span
+                                      className="inline-block w-2 h-2 rounded-sm"
+                                      style={{ backgroundColor: seg.color }}
+                                    />
+                                    <span className={isDark ? 'text-white/70' : 'text-gray-700'}>{seg.label}</span>
+                                  </span>
+                                  <span style={{ color: seg.textColor }}>−{fmtNumberCaw(s.value)}</span>
+                                </div>
+                              )
+                            })}
+                          </div>
+                        )}
+                        <div className={`mt-1 pt-1 border-t flex items-center justify-between ${isDark ? 'border-white/10' : 'border-gray-200'}`}>
+                          <span className={isDark ? 'text-white/60' : 'text-gray-600'}>Net</span>
+                          <span
+                            className="font-semibold"
+                            style={{ color: inSum - outSum >= 0 ? '#aceb3f' : '#fb7185' }}
+                          >
+                            {inSum - outSum >= 0 ? '+' : ''}{fmtNumberCaw(inSum - outSum)}
+                          </span>
+                        </div>
+                        {(b.deposits > 0 || b.withdrawals > 0) && (
+                          <div className={`mt-1 pt-1 border-t text-[10px] ${isDark ? 'border-white/10 text-white/40' : 'border-gray-200 text-gray-400'}`}>
+                            {b.deposits > 0 && <div>Deposit: +{fmtNumberCaw(b.deposits)}</div>}
+                            {b.withdrawals > 0 && <div>Withdraw: −{fmtNumberCaw(b.withdrawals)}</div>}
+                          </div>
+                        )}
+                      </div>
+                    )
+                  })()}
+                </div>
               </div>
 
-              {/* Hover tooltip */}
-              {hoveredBar !== null && buckets[hoveredBar] && (() => {
-                const b = buckets[hoveredBar]
-                const inEntries = b.in.segments.filter(s => isEnabled(s.key) && s.value > 0)
-                const outEntries = b.out.segments.filter(s => isEnabled(s.key) && s.value > 0)
-                const inSum = inEntries.reduce((a, s) => a + s.value, 0)
-                const outSum = outEntries.reduce((a, s) => a + s.value, 0)
-                return (
-                  <div
-                    className={`absolute z-10 rounded-lg border p-3 text-xs shadow-lg pointer-events-none ${
-                      isDark ? 'bg-gray-900 border-white/10' : 'bg-white border-gray-200'
-                    }`}
-                    style={{
-                      top: 0,
-                      left: `${Math.min(Math.max((hoveredBar / buckets.length) * 100, 5), 60)}%`,
-                      minWidth: 200,
-                    }}
-                  >
-                    <div className={`font-semibold mb-1.5 ${isDark ? 'text-white' : 'text-gray-900'}`}>
-                      {new Date(b.bucket).toLocaleString(undefined, {
-                        month: 'short', day: 'numeric',
-                        hour: range.interval === 'hour' || range.interval === '6hour' ? 'numeric' : undefined,
-                      })}
+              {/* X-axis date labels under the bars (sparse). */}
+              <div className="flex" style={{ paddingLeft: 52 }}>
+                <div className="flex-1 flex gap-0.5 text-[10px] tabular-nums select-none">
+                  {buckets.map((b, i) => (
+                    <div
+                      key={i}
+                      className={`flex-1 text-center mt-1 ${axisLabelClass}`}
+                      style={{ visibility: i % xLabelEvery === 0 || i === buckets.length - 1 ? 'visible' : 'hidden' }}
+                    >
+                      {fmtBucketLabel(b.bucket)}
                     </div>
-                    {inEntries.length > 0 && (
-                      <div className="mb-1.5">
-                        <div className={`text-[10px] uppercase tracking-wide mb-0.5 ${isDark ? 'text-white/40' : 'text-gray-400'}`}>Rewards</div>
-                        {inEntries.map(s => {
-                          const seg = SEGMENTS.find(x => x.key === s.key)!
-                          return (
-                            <div key={s.key} className="flex items-center justify-between gap-3">
-                              <span className="flex items-center gap-1.5">
-                                <span className={`inline-block w-2 h-2 rounded-sm ${seg.color}`} />
-                                <span className={isDark ? 'text-white/70' : 'text-gray-700'}>{seg.label}</span>
-                              </span>
-                              <span className={seg.textColor}>+{fmtNumberCaw(s.value)}</span>
-                            </div>
-                          )
-                        })}
-                      </div>
-                    )}
-                    {outEntries.length > 0 && (
-                      <div className="mb-1">
-                        <div className={`text-[10px] uppercase tracking-wide mb-0.5 ${isDark ? 'text-white/40' : 'text-gray-400'}`}>Spend</div>
-                        {outEntries.map(s => {
-                          const seg = SEGMENTS.find(x => x.key === s.key)!
-                          return (
-                            <div key={s.key} className="flex items-center justify-between gap-3">
-                              <span className="flex items-center gap-1.5">
-                                <span className={`inline-block w-2 h-2 rounded-sm ${seg.color}`} />
-                                <span className={isDark ? 'text-white/70' : 'text-gray-700'}>{seg.label}</span>
-                              </span>
-                              <span className={seg.textColor}>−{fmtNumberCaw(s.value)}</span>
-                            </div>
-                          )
-                        })}
-                      </div>
-                    )}
-                    <div className={`mt-1 pt-1 border-t flex items-center justify-between ${isDark ? 'border-white/10' : 'border-gray-200'}`}>
-                      <span className={isDark ? 'text-white/60' : 'text-gray-600'}>Net</span>
-                      <span className={`font-semibold ${inSum - outSum >= 0 ? 'text-green-500' : 'text-red-500'}`}>
-                        {inSum - outSum >= 0 ? '+' : ''}{fmtNumberCaw(inSum - outSum)}
-                      </span>
-                    </div>
-                    {(b.deposits > 0 || b.withdrawals > 0) && (
-                      <div className={`mt-1 pt-1 border-t text-[10px] ${isDark ? 'border-white/10 text-white/40' : 'border-gray-200 text-gray-400'}`}>
-                        {b.deposits > 0 && <div>Deposit: +{fmtNumberCaw(b.deposits)}</div>}
-                        {b.withdrawals > 0 && <div>Withdraw: −{fmtNumberCaw(b.withdrawals)}</div>}
-                      </div>
-                    )}
-                  </div>
-                )
-              })()}
+                  ))}
+                </div>
+              </div>
             </div>
-          </div>
-        )}
+          )
+        })()}
 
         {/* Legend with toggles */}
         {data && buckets.length > 0 && (
@@ -549,7 +690,7 @@ const CawActivity: React.FC = () => {
                 return (
                   <div key={side}>
                     <div className={`text-[10px] uppercase tracking-wide font-semibold mb-2 ${isDark ? 'text-white/50' : 'text-gray-500'}`}>
-                      {side === 'in' ? 'Rewards' : 'Spend'}
+                      {side === 'in' ? 'Incoming' : 'Outgoing'}
                     </div>
                     <div className="flex flex-wrap gap-1.5">
                       {segs.map(s => {
@@ -566,8 +707,8 @@ const CawActivity: React.FC = () => {
                             }`}
                           >
                             <span
-                              className={`inline-block w-2.5 h-2.5 rounded-sm ${s.color} transition-opacity`}
-                              style={{ opacity: enabled ? 1 : 0.3 }}
+                              className="inline-block w-2.5 h-2.5 rounded-sm transition-opacity"
+                              style={{ backgroundColor: s.color, opacity: enabled ? 1 : 0.3 }}
                             />
                             {s.label}
                           </button>
