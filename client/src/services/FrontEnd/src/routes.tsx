@@ -57,14 +57,13 @@ const AddressTokens = lazy(() => import("./pages/AddressTokens"));
 // remount, killing the brief avatar-flash on every nav. Bare routes
 // (captive splash, welcome, admin shell) render outside the layout.
 //
-// `handle.hideSidebars: true` opts a layoutRoute into MainLayout's
-// no-chrome rendering (was a per-page prop pre-hoist). MainLayout reads
-// this via useMatches().
+// Transient per-page chrome suppression (e.g. /usernames/new mid-mint)
+// is done via useLayoutStore, not route handles — <BrowserRouter> isn't
+// a data router so useMatches() can't be used inside MainLayout.
 
 export interface RouteDef {
   path: string;
   component: React.ReactNode;
-  handle?: { hideSidebars?: boolean };
 }
 
 export const layoutRoutes: RouteDef[] = [

@@ -10,7 +10,7 @@ import Tooltip from "~/components/Tooltip";
 import { useT } from "~/i18n/I18nProvider";
 import { useState, lazy, Suspense } from "react";
 import { HiOutlineMenu, HiOutlineX, HiOutlinePencilAlt } from "react-icons/hi";
-import { Link, useLocation, useMatches } from "react-router-dom";
+import { Link, useLocation } from "react-router-dom";
 import { useModalStore } from "~/store";
 import { useActiveToken } from "~/store/tokenDataStore";
 import { useLayoutStore } from "~/store/layoutStore";
@@ -32,7 +32,6 @@ const MainLayout = ({ children, hideSidebars: hideSidebarsProp }: MainLayoutProp
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false)
   const [showBugReport, setShowBugReport] = useState(false)
   const location = useLocation()
-  const matches = useMatches()
   const activeToken = useActiveToken()
   const { isConnected } = useAccount()
   const { openConnectModal } = useConnectModal()
@@ -41,15 +40,19 @@ const MainLayout = ({ children, hideSidebars: hideSidebarsProp }: MainLayoutProp
   // Captive mode: no username and on a public page like /help/*
   const isCaptive = !activeToken?.username
   // hideSidebars resolution order (any one truthy wins):
-  //   1. Per-route handle metadata (preferred — set in routes.tsx). This
-  //      is how `/usernames/new` opts out of the chrome post-hoist.
+  //   1. Imperative override via useLayoutStore — used for transient
+  //      states inside a layout-wrapped route (e.g. /usernames/new
+  //      mid-mint shows a fullscreen takeover).
   //   2. The legacy prop (kept for back-compat with any straggling page
-  //      that hasn't moved to handle metadata yet).
+  //      that wraps with <MainLayout hideSidebars> — none today, but it
+  //      costs nothing to keep working).
   //   3. Captive + public-page heuristic (unauthenticated user on /help,
   //      /usernames, or /faucet — show captive banner instead).
-  const hideFromHandle = matches.some(m => (m.handle as { hideSidebars?: boolean } | undefined)?.hideSidebars)
+  // useMatches() / route handles aren't used here: <BrowserRouter> isn't
+  // a data router, so useMatches throws. The override store covers the
+  // one dynamic case we actually have.
   const hideChromeOverride = useLayoutStore(s => s.hideChromeOverride)
-  const hideSidebars = hideFromHandle || hideChromeOverride || hideSidebarsProp || (isCaptive && (location.pathname.startsWith('/help') || location.pathname.startsWith('/usernames') || location.pathname.startsWith('/faucet')))
+  const hideSidebars = hideChromeOverride || hideSidebarsProp || (isCaptive && (location.pathname.startsWith('/help') || location.pathname.startsWith('/usernames') || location.pathname.startsWith('/faucet')))
 
   return (
     <>

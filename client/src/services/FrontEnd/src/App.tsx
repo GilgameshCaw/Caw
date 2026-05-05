@@ -56,11 +56,11 @@ function AppRoutes() {
         {/* Layout-wrapped routes: MainLayout stays mounted across nav
             between these, so Sidebar / ProfileChooser / Avatar don't
             remount and the avatar no longer flashes on every page change.
-            Per-route `handle.hideSidebars` opts a route into the
-            no-chrome rendering — read by MainLayout via useMatches(). */}
+            Pages that need to suppress the chrome for a transient state
+            (e.g. /usernames/new mid-mint) flip useLayoutStore. */}
         <Route element={<MainLayout><Outlet /></MainLayout>}>
           {layoutRoutes.map((route) => (
-            <Route key={route.path} path={route.path} element={route.component} handle={route.handle} />
+            <Route key={route.path} path={route.path} element={route.component} />
           ))}
         </Route>
 
