@@ -27,8 +27,21 @@ const transportOptions = {
   retryDelay: 1_000,
 }
 
+// RainbowKit forwards appName/appDescription/appUrl/appIcon into the
+// WalletConnect `metadata` object on every pairing request. Some wallets
+// (notably Zerion mobile) treat a sparse / missing metadata payload as a
+// signal that the dApp is on the legacy WalletConnect v1 protocol, and
+// surface a misleading "DApp uses WalletConnect v1.0 which is outdated"
+// warning. Populating all four fields makes the dApp render correctly
+// in every wallet's pairing UI AND silences the false-positive v1 alert.
+const APP_URL = (typeof window !== 'undefined' && window.location?.origin)
+  || 'https://caw.social'
+
 export const wagmiConfig = getDefaultConfig({
   appName: "CAW",
+  appDescription: "A trustless and decentralized social clearing-house committed to making freedom of speech unstoppable.",
+  appUrl: APP_URL,
+  appIcon: `${APP_URL}/logo.jpeg`,
   projectId: import.meta.env.VITE_PROJECT_ID || "your_project_id_here",
   chains: [sepolia, baseSepolia],
   transports: {
