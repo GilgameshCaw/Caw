@@ -1369,7 +1369,7 @@ const FeedItem: React.FC<{ item: CawItem; isMainPost?: boolean; isReply?: boolea
                                 <img
                                   src={url}
                                   alt="Caw image"
-                                  className="block w-full max-h-96 h-auto cursor-pointer hover:opacity-90 transition-opacity"
+                                  className="block max-w-full max-h-96 w-auto h-auto mx-auto cursor-pointer hover:opacity-90 transition-opacity"
                                   onClick={(e) => {
                                     e.preventDefault()
                                     e.stopPropagation()
@@ -1435,7 +1435,7 @@ const FeedItem: React.FC<{ item: CawItem; isMainPost?: boolean; isReply?: boolea
                                 <img
                                   src={`data:image/jpeg;base64,${imageBase64}`}
                                   alt="Caw image"
-                                  className="block w-full max-h-96 h-auto cursor-pointer hover:opacity-90 transition-opacity"
+                                  className="block max-w-full max-h-96 w-auto h-auto mx-auto cursor-pointer hover:opacity-90 transition-opacity"
                                   onClick={(e) => {
                                     e.preventDefault()
                                     e.stopPropagation()
@@ -1499,7 +1499,7 @@ const FeedItem: React.FC<{ item: CawItem; isMainPost?: boolean; isReply?: boolea
                       <img
                         src={useItem.imageUrl}
                         alt="Caw image"
-                        className="block w-full max-h-96 h-auto cursor-pointer hover:opacity-90 transition-opacity"
+                        className="block max-w-full max-h-96 w-auto h-auto mx-auto cursor-pointer hover:opacity-90 transition-opacity"
                         onClick={(e) => {
                           e.preventDefault()
                           e.stopPropagation()
