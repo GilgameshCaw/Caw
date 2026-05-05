@@ -12,8 +12,11 @@ import Tooltip from '~/components/Tooltip'
 import { useHasActiveSession } from '~/hooks/useHasActiveSession'
 import { useT } from '~/i18n/I18nProvider'
 
-const PRESET_USD_AMOUNTS = [0.01, 0.10, 1.00, 5.00]
-const MIN_TIP_AMOUNT = 1
+const PRESET_USD_AMOUNTS = [1, 5, 10, 20]
+// Floor in USD (not CAW) so the gate matches the user-facing input
+// regardless of CAW price. Previously this was a CAW floor of 1, which
+// was effectively no floor at all when CAW was a fraction of a cent.
+const MIN_TIP_USD = 1
 
 const formatUsd = (n: number): string =>
   n < 1 ? `$${n.toFixed(2)}` : `$${n.toLocaleString(undefined, { maximumFractionDigits: 2 })}`
@@ -85,7 +88,7 @@ const TipModal: React.FC<TipModalProps> = ({
   const tipAmount = usdToCaw(usdAmount, cawPrice)
   const validatorTip = getValidatorTip()
   const totalCost = BigInt(tipAmount + Number(validatorTip)) * 10n**18n
-  const isValid = priceReady && usdAmount > 0 && tipAmount >= MIN_TIP_AMOUNT
+  const isValid = priceReady && usdAmount >= MIN_TIP_USD && tipAmount > 0
 
   const handleSubmit = async () => {
     if (!isValid) return
@@ -198,8 +201,8 @@ const TipModal: React.FC<TipModalProps> = ({
                   <span className={`absolute left-3 top-1/2 -translate-y-1/2 text-sm ${themeTextMuted(isDark)}`}>$</span>
                   <input
                     type="number"
-                    min={0}
-                    step="0.01"
+                    min={MIN_TIP_USD}
+                    step="1"
                     value={usdInput}
                     onChange={e => {
                       setUsdInput(e.target.value)
