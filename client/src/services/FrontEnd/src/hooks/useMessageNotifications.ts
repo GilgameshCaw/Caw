@@ -3,15 +3,17 @@ import { useQueryClient } from '@tanstack/react-query'
 import { io, Socket } from 'socket.io-client'
 import { useAuthStore } from '~/store/authStore'
 import { useInstanceStore } from '~/store/instanceStore'
+import { API_HOST } from '~/api/client'
 
 // Resolve at connect time so we pick up the registered API host even if the
 // page is served from a separate FE-only node (origin would be the FE host,
-// not the API). getApiHosts() prioritizes VITE_API_HOST when set; otherwise
-// returns the discovered active instances. Falls back to window.origin only
-// if neither is available (cold dev / pre-discovery).
+// not the API). Single-host: socket connections aren't failover-able anyway
+// (the server tracks per-socket session state), so we want the same host
+// apiFetch is talking to. Falls back to window.origin if neither is set.
 function resolveSocketUrl(): string {
-  const hosts = useInstanceStore.getState().getApiHosts()
-  if (hosts.length > 0) return hosts[0]
+  const active = useInstanceStore.getState().activeApiHost
+  if (active) return active
+  if (API_HOST) return API_HOST
   return typeof window !== 'undefined' ? window.location.origin : ''
 }
 
