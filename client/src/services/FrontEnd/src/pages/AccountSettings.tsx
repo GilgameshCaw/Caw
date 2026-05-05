@@ -600,18 +600,44 @@ const AccountSettings: React.FC = () => {
     // Cookies — including the admin HttpOnly cookie, where possible.
     // document.cookie can't reach HttpOnly cookies (that's the point),
     // but it can clear the rest. Set every cookie's expiry to the past.
+    //
+    // A cookie can only be cleared by sending a Set-Cookie with the
+    // SAME domain attribute it was set with. We don't know how each one
+    // was set, so we try every possibility a cookie on this host could
+    // have used: no domain attr (host-only), exact host, registrable
+    // parent (e.g. caw.social), and leading-dot variants of both.
+    // Covers test.caw.social, caw.social, and localhost equally.
     try {
+      const hostname = window.location.hostname
+      const parts = hostname.split('.')
+      const domainCandidates = new Set<string>()
+      // Exact host (no leading dot) plus the leading-dot variant —
+      // older Safari treats `domain=caw.social` and `domain=.caw.social`
+      // as separate cookie keys, so we emit both.
+      domainCandidates.add(hostname)
+      domainCandidates.add('.' + hostname)
+      // Walk up the host tree adding each suffix of length >= 2 as a
+      // candidate parent domain (and its leading-dot variant). For
+      // test.caw.social: adds caw.social + .caw.social. For caw.social:
+      // adds nothing new (the loop body exits because there are no
+      // intermediate suffixes). For localhost: skipped (1 part).
+      for (let i = 1; i < parts.length - 1; i++) {
+        const suffix = parts.slice(i).join('.')
+        domainCandidates.add(suffix)
+        domainCandidates.add('.' + suffix)
+      }
+
       for (const c of document.cookie.split(';')) {
         const eq = c.indexOf('=')
         const name = (eq > -1 ? c.slice(0, eq) : c).trim()
         if (!name) continue
-        // Try the current path AND the root path, current host AND parent
-        // host (for the admin cookie scoped to .caw.social etc).
+        // Host-only sweep — no domain attribute. Required because cookies
+        // set without a Domain attr can ONLY be cleared without one.
         document.cookie = `${name}=; expires=Thu, 01 Jan 1970 00:00:00 GMT; path=/`
-        document.cookie = `${name}=; expires=Thu, 01 Jan 1970 00:00:00 GMT; path=/; domain=${window.location.hostname}`
-        const parts = window.location.hostname.split('.')
-        if (parts.length > 2) {
-          document.cookie = `${name}=; expires=Thu, 01 Jan 1970 00:00:00 GMT; path=/; domain=.${parts.slice(-2).join('.')}`
+        // Each candidate domain. The browser silently ignores invalid
+        // domain attrs (e.g. setting `.localhost`), so iterating is safe.
+        for (const d of domainCandidates) {
+          document.cookie = `${name}=; expires=Thu, 01 Jan 1970 00:00:00 GMT; path=/; domain=${d}`
         }
       }
     } catch {}
