@@ -48,6 +48,7 @@ import MuteConfirmModal from '~/components/modals/MuteConfirmModal'
 import ConfirmModal, { wasAcknowledged } from '~/components/modals/ConfirmModal'
 import ReportUserModal from '~/components/modals/ReportUserModal'
 import { translateText } from '~/utils/translate'
+import { linkifyText } from '~/utils/linkifyText'
 import { FollowButton } from '~/components/FollowButton'
 import { useT } from '~/i18n/I18nProvider'
 import {
@@ -1631,7 +1632,7 @@ const MessagesPage: React.FC = () => {
                                 ? 'bg-gray-700 text-white'
                                 : 'bg-gray-200 text-black'
                             }`}>
-                              <p className="text-sm whitespace-pre-wrap">{entry.content}</p>
+                              <p className="text-sm whitespace-pre-wrap">{linkifyText(entry.content)}</p>
                             </div>
                             </Tooltip>
                           </div>
@@ -1888,7 +1889,7 @@ const MessagesPage: React.FC = () => {
 
                             return (
                               <div className={`${emojiOnlyTextClass(messageContent)} whitespace-pre-wrap break-words min-w-0`}>
-                                {messageContent}
+                                {linkifyText(messageContent)}
                                 {bubbleTime && (
                                   <span className={`float-right ml-2 mt-1 text-[11px] font-medium whitespace-nowrap inline-flex items-center gap-1 ${bubbleTimeTextClass}`}>
                                     {bubbleTime}
@@ -1914,7 +1915,7 @@ const MessagesPage: React.FC = () => {
                               isDark ? 'bg-white/5 text-white/80' : 'bg-black/5 text-black/80'
                             }`}>
                               <div className="text-[10px] uppercase tracking-wide opacity-50 mb-0.5">Translated</div>
-                              {translations[message.id]}
+                              {linkifyText(translations[message.id])}
                             </div>
                           )}
 
