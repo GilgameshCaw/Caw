@@ -1,5 +1,5 @@
 import { WagmiProvider, http } from "wagmi";
-import { sepolia, baseSepolia } from "wagmi/chains";
+import { mainnet, sepolia, baseSepolia } from "wagmi/chains";
 import { getDefaultConfig, RainbowKitProvider, darkTheme } from "@rainbow-me/rainbowkit";
 import { QueryClientProvider, QueryClient } from "@tanstack/react-query";
 
@@ -37,16 +37,30 @@ const transportOptions = {
 const APP_URL = (typeof window !== 'undefined' && window.location?.origin)
   || 'https://caw.social'
 
+// Mainnet is included in the chain tuple ONLY to satisfy mobile wallets'
+// CAIP-25 namespace check during WalletConnect v2 pairing. Rainbow Mobile
+// (and others) reject the session proposal with "No accounts found in
+// approved namespaces" when the dApp's required chains are testnet-only
+// — those wallets ship without testnet accounts by default and have no
+// surfaced toggle to add them. Listing mainnet (which every EVM wallet
+// always has accounts on) makes the namespace match and the wallet
+// approves the session. We never read or write mainnet — all our RPC
+// transports stay testnet — so this is a connection-handshake placeholder,
+// not a real chain in the app. Sepolia is first so wagmi's default-chain
+// selection still lands the user on the L1 testnet.
 export const wagmiConfig = getDefaultConfig({
   appName: "CAW",
   appDescription: "A trustless and decentralized social clearing-house committed to making freedom of speech unstoppable.",
   appUrl: APP_URL,
   appIcon: `${APP_URL}/logo.jpeg`,
   projectId: import.meta.env.VITE_PROJECT_ID || "your_project_id_here",
-  chains: [sepolia, baseSepolia],
+  chains: [sepolia, baseSepolia, mainnet],
   transports: {
     [sepolia.id]: http(L1_RPC, transportOptions),
     [baseSepolia.id]: http(L2_RPC, transportOptions),
+    // Mainnet transport is unused — see chains comment above. Public
+    // RPC is fine here; no eth_calls flow through it under normal use.
+    [mainnet.id]: http("https://ethereum-rpc.publicnode.com", transportOptions),
   },
 });
 
