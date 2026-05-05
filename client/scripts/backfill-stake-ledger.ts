@@ -309,10 +309,47 @@ async function seedFromChain() {
       create: { tokenId: u.tokenId, ownership: chainOwn.toString() },
       update: { ownership: chainOwn.toString(), updatedAt: new Date() },
     })
+
+    // Reverse-walk this user's ledger rows so each row records its
+    // post-action balance (the LIVE field the chart's line graph
+    // reads). We start from chain-current `balance = chainOwn ×
+    // multiplier / 1e18` and work backwards: each prior row's balance
+    // is the next row's balance MINUS the next row's delta. Activity-
+    // driven trajectory only — passive multiplier inflation between
+    // actions isn't accounted for here, but for a daily-bucket line
+    // it's more than close enough.
+    const balanceNow = (chainOwn * multiplier) / PRECISION
+    const userRows = await prisma.cawOwnershipSnapshot.findMany({
+      where: { tokenId: u.tokenId },
+      orderBy: [{ blockTimestamp: 'desc' }, { id: 'desc' }],
+      select: { id: true, delta: true },
+    })
+    let running = balanceNow
+    // Update in chunks for sanity. Each row gets its post-state
+    // balance = running, then we subtract its delta to get the
+    // pre-state for the next-older row.
+    const updates: Array<{ id: bigint; balance: string }> = []
+    for (const r of userRows) {
+      updates.push({ id: r.id, balance: running.toString() })
+      try { running -= BigInt(r.delta) } catch { /* shouldn't happen — TEXT round-trip */ }
+    }
+    // Batch in chunks of 500 to keep individual transactions small.
+    for (let i = 0; i < updates.length; i += 500) {
+      const chunk = updates.slice(i, i + 500)
+      await prisma.$transaction(async (tx) => {
+        for (const c of chunk) {
+          await tx.cawOwnershipSnapshot.update({
+            where: { id: c.id },
+            data: { balance: c.balance },
+          })
+        }
+      })
+    }
+
     read++
-    if (read % 50 === 0) logProgress(`  ${read}/${users.length} users seeded`)
+    if (read % 50 === 0) logProgress(`  ${read}/${users.length} users seeded (+balance trajectory)`)
   }
-  logProgress(`seeded ownership for ${read}/${users.length} users`)
+  logProgress(`seeded ownership + balance trajectory for ${read}/${users.length} users`)
 
   await prisma.stakeLedgerState.upsert({
     where: { clientId: CAW_CLIENT_ID },

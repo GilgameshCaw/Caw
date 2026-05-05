@@ -379,6 +379,7 @@ export async function recordAction(
         multiplierBefore: e.before.toString(),
         multiplierAfter: e.after.toString(),
         communalAmount: e.communal.toString(),
+        actionType: displayActionType,
       })),
       skipDuplicates: true,
     })

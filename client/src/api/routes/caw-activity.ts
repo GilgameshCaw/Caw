@@ -62,6 +62,7 @@ router.get('/:tokenId/caw-activity', async (req, res) => {
         TO_CHAR(${bucketExpr('"blockTimestamp"')}, 'YYYY-MM-DD"T"HH24:MI:SS') as bucket,
         "reason",
         "actionType",
+        COUNT(*)::int as count_n,
         SUM(CASE WHEN CAST("delta" AS NUMERIC) > 0 THEN CAST("delta" AS NUMERIC) ELSE 0 END) as earned,
         SUM(CASE WHEN CAST("delta" AS NUMERIC) < 0 THEN -CAST("delta" AS NUMERIC) ELSE 0 END) as spent
       FROM "CawOwnershipSnapshot"
@@ -100,6 +101,65 @@ router.get('/:tokenId/caw-activity', async (req, res) => {
       ORDER BY bucket ASC
     `)
 
+    // ---------------------------------------------------------------
+    // System-wide communal distribution (NOT user-scoped). Total CAW
+    // distributed to all stakers per bucket, broken down by action
+    // type. Same value for every viewer — answers "how much did the
+    // protocol pay out" rather than "what did I get."
+    // ---------------------------------------------------------------
+    const distributionRows: any[] = await prisma.$queryRawUnsafe(`
+      SELECT
+        TO_CHAR(${bucketExpr('"blockTimestamp"')}, 'YYYY-MM-DD"T"HH24:MI:SS') as bucket,
+        "actionType",
+        SUM(CAST("communalAmount" AS NUMERIC)) as total
+      FROM "RewardMultiplierSnapshot"
+      WHERE "blockTimestamp" >= '${fromIso}'::timestamptz
+        AND "blockTimestamp" <= '${toIso}'::timestamptz
+      GROUP BY bucket, "actionType"
+      ORDER BY bucket ASC
+    `)
+
+    // ---------------------------------------------------------------
+    // Per-bucket end-of-period balance. For each bucket, take the
+    // LAST CawOwnershipSnapshot.balance the user had in that bucket —
+    // this is the chain-truth balance at the moment the bucket
+    // closed. Buckets with no activity get null; the FE carries
+    // forward from the prior bucket so the line stays continuous.
+    // ---------------------------------------------------------------
+    const balanceRows: any[] = await prisma.$queryRawUnsafe(`
+      SELECT bucket, "balance"
+      FROM (
+        SELECT
+          TO_CHAR(${bucketExpr('"blockTimestamp"')}, 'YYYY-MM-DD"T"HH24:MI:SS') as bucket,
+          "balance",
+          ROW_NUMBER() OVER (
+            PARTITION BY ${bucketExpr('"blockTimestamp"')}
+            ORDER BY "blockTimestamp" DESC, "id" DESC
+          ) as rn
+        FROM "CawOwnershipSnapshot"
+        WHERE "tokenId" = ${tokenId}
+          AND "blockTimestamp" >= '${fromIso}'::timestamptz
+          AND "blockTimestamp" <= '${toIso}'::timestamptz
+      ) ranked
+      WHERE rn = 1
+      ORDER BY bucket ASC
+    `)
+
+    // For buckets BEFORE the user's first ledger event in the window,
+    // OR if no ledger rows exist in the window at all, we still want
+    // a starting point: the most recent balance row at-or-before the
+    // window start. Drives the leftmost point of the line graph.
+    const priorBalanceRows: any[] = await prisma.$queryRawUnsafe(`
+      SELECT "balance"
+      FROM "CawOwnershipSnapshot"
+      WHERE "tokenId" = ${tokenId}
+        AND "blockTimestamp" < '${fromIso}'::timestamptz
+      ORDER BY "blockTimestamp" DESC, "id" DESC
+      LIMIT 1
+    `)
+    const balanceBeforeWindow: string | null =
+      priorBalanceRows.length > 0 ? String(priorBalanceRows[0].balance) : null
+
     // pg NUMERIC sometimes comes back as a string, sometimes as a
     // JS number in exponential notation. toBig coerces both.
     const toBig = (v: any): bigint => {
@@ -116,6 +176,9 @@ router.get('/:tokenId/caw-activity', async (req, res) => {
       // rewards (incoming): per-actionType direct credits + validator
       // fees received + staking rewards (communal).
       rewardsDirect: Record<string, bigint>
+      // Per-actionType count of incoming events (used for the
+      // count-bar mini charts).
+      rewardsDirectCounts: Record<string, number>
       rewardsValidatorFees: bigint
       rewardsStaking: bigint
       // spend (outgoing): per-actionType base costs, tips paid, and
@@ -129,6 +192,7 @@ router.get('/:tokenId/caw-activity', async (req, res) => {
     }
     const newAccum = (): BucketAccum => ({
       rewardsDirect: {},
+      rewardsDirectCounts: {},
       rewardsValidatorFees: 0n,
       rewardsStaking: 0n,
       spendBase: {},
@@ -144,7 +208,21 @@ router.get('/:tokenId/caw-activity', async (req, res) => {
     const bucketKeys = new Set<string>()
     for (const r of directRows) bucketKeys.add(r.bucket)
     for (const r of communalRows) bucketKeys.add(r.bucket)
+    for (const r of distributionRows) bucketKeys.add(r.bucket)
     const sortedBuckets = Array.from(bucketKeys).sort()
+
+    // System-wide distribution per bucket, by actionType. Same value
+    // for every viewer — answers "how much did the protocol pay out
+    // to all stakers" rather than "what did I personally get."
+    const distributionByBucket = new Map<string, Record<string, bigint>>()
+    for (const r of distributionRows) {
+      const bucket = String(r.bucket)
+      const actionType = (r.actionType as string | null) || 'OTHER'
+      const total = toBig(r.total)
+      const m = distributionByBucket.get(bucket) || {}
+      m[actionType] = (m[actionType] || 0n) + total
+      distributionByBucket.set(bucket, m)
+    }
 
     const buckets = new Map<string, BucketAccum>()
     for (const b of sortedBuckets) buckets.set(b, newAccum())
@@ -185,6 +263,8 @@ router.get('/:tokenId/caw-activity', async (req, res) => {
           break
         case 'ACTION_RECIPIENT':
           bumpMap(acc.rewardsDirect, actionType, earned)
+          acc.rewardsDirectCounts[actionType] =
+            (acc.rewardsDirectCounts[actionType] || 0) + Number(r.count_n ?? 0)
           break
         case 'ACTION_VALIDATOR':
           acc.rewardsValidatorFees += earned
@@ -249,8 +329,17 @@ router.get('/:tokenId/caw-activity', async (req, res) => {
     const mapToObj = (m: Record<string, bigint>): Record<string, string> =>
       Object.fromEntries(Object.entries(m).map(([k, v]) => [k, v.toString()]))
 
+    // Bucket -> end-of-period balance string. The chart consumer
+    // carries forward through nulls so the line stays continuous in
+    // quiet days.
+    const balanceByBucket = new Map<string, string>()
+    for (const r of balanceRows) {
+      balanceByBucket.set(String(r.bucket), String(r.balance))
+    }
+
     res.json({
       interval,
+      balanceBeforeWindow,
       summary: {
         rewards: {
           total: summary.rewardsTotal.toString(),
@@ -275,6 +364,7 @@ router.get('/:tokenId/caw-activity', async (req, res) => {
           bucket: b,
           rewards: {
             direct: mapToObj(acc.rewardsDirect),
+            directCounts: acc.rewardsDirectCounts,
             validatorFees: acc.rewardsValidatorFees.toString(),
             stakingRewards: acc.rewardsStaking.toString(),
           },
@@ -285,6 +375,8 @@ router.get('/:tokenId/caw-activity', async (req, res) => {
           },
           deposits: acc.deposits.toString(),
           withdrawals: acc.withdrawals.toString(),
+          balance: balanceByBucket.get(b) ?? null,
+          distribution: mapToObj(distributionByBucket.get(b) || {}),
         }
       }),
     })

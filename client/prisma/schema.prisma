@@ -1114,6 +1114,11 @@ model RewardMultiplierSnapshot {
   multiplierBefore String
   multiplierAfter  String
   communalAmount   String
+  /// Resolved action type that triggered this distribution (CAW,
+  /// LIKE, RECAW, FOLLOW, TIP, OTHER). Lets the activity chart break
+  /// down "CAW distributed to stakers" by action type at the system
+  /// level. Nullable for legacy rows from before this column existed.
+  actionType       String?
 
   @@id([blockNumber, logIndex, actionIndex])
   @@index([blockTimestamp])
