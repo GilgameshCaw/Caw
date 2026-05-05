@@ -495,20 +495,21 @@ router.post('/', async (req, res) => {
         // User was already verified above (sender.address is set); no need to
         // call findOrCreateUser again — the redundant lookup was adding ~10ms.
 
-        // Extract image URLs if present
+        // Extract image and video URLs if present. Bare URL match — no
+        // `video:` prefix — because no client emits one. (See the parallel
+        // path in ActionProcessor/actionHandlers.ts; same fix.)
         const imageUrlRegex = /(https?:\/\/[^\s]+\/uploads\/images\/[^\s]+\.(jpg|jpeg|png|gif|webp))/gi
         const imageUrls = plaintext.match(imageUrlRegex) || []
-        const videoUrlRegex = /video:(https?:\/\/[^\s]+\/uploads\/videos\/[^\s]+\.(mp4|webm|mov|avi|mkv|ogg|ogv))/gi
-        const videoMatches = [...plaintext.matchAll(videoUrlRegex)]
-        const videoUrls = videoMatches.map((match: RegExpMatchArray) => match[1])
+        const videoUrlRegex = /(https?:\/\/[^\s]+\/uploads\/videos\/[^\s]+\.(mp4|webm|mov|avi|mkv|ogg|ogv))/gi
+        const videoUrls = plaintext.match(videoUrlRegex) || []
 
         // Remove URLs from text content
         let textContent = plaintext
         imageUrls.forEach((url: string) => {
           textContent = textContent.replace(url, '').trim()
         })
-        videoMatches.forEach((match: RegExpMatchArray) => {
-          textContent = textContent.replace(match[0], '').trim()
+        videoUrls.forEach((url: string) => {
+          textContent = textContent.replace(url, '').trim()
         })
         textContent = textContent.replace(/\n{3,}/g, '\n\n').trim()
 
@@ -1426,12 +1427,11 @@ router.post('/batch', async (req, res) => {
           const isQuote = isRecaw && !!dPlain
           const imageUrlRegex = /(https?:\/\/[^\s]+\/uploads\/images\/[^\s]+\.(jpg|jpeg|png|gif|webp))/gi
           const imageUrls = dPlain.match(imageUrlRegex) || []
-          const videoUrlRegex = /video:(https?:\/\/[^\s]+\/uploads\/videos\/[^\s]+\.(mp4|webm|mov|avi|mkv|ogg|ogv))/gi
-          const videoMatches = [...dPlain.matchAll(videoUrlRegex)]
-          const videoUrls = videoMatches.map((m: RegExpMatchArray) => m[1])
+          const videoUrlRegex = /(https?:\/\/[^\s]+\/uploads\/videos\/[^\s]+\.(mp4|webm|mov|avi|mkv|ogg|ogv))/gi
+          const videoUrls = dPlain.match(videoUrlRegex) || []
           let textContent = dPlain
           imageUrls.forEach((url: string) => { textContent = textContent.replace(url, '').trim() })
-          videoMatches.forEach((m: RegExpMatchArray) => { textContent = textContent.replace(m[0], '').trim() })
+          videoUrls.forEach((url: string) => { textContent = textContent.replace(url, '').trim() })
           textContent = textContent.replace(/\n{3,}/g, '\n\n').trim()
 
           // Resolve parent cawonce → cawId. Check this-batch map first, then DB.

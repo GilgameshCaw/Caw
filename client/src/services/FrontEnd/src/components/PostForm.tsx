@@ -997,7 +997,8 @@ const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess, placehol
       if (media.type === 'image') {
         url = uploadedUrls.get(index)
       } else if (media.type === 'video') {
-        // Video - use the uploaded URL (already has video: prefix)
+        // Bare URL — backend video extraction matches /uploads/videos/<file>
+        // without any prefix, in lockstep with the image extractor.
         url = uploadedUrls.get(index)
       } else if (media.type === 'gif') {
         // GIF - prefer shortUrl if available, otherwise use url

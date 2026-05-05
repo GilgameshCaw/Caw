@@ -53,20 +53,17 @@ export async function handleCawAction(
   authorId: number,
   parentCawId?: number
 ): Promise<void> {
-  // Extract image and video URLs from text if present
-  // Match URLs like http://localhost:4000/uploads/... or any domain with /uploads/
+  // Extract image and video URLs from text if present.
+  // Match any /uploads/<kind>/<file> URL regardless of host (works across
+  // mirrors: s.caw.social, test.caw.social, http://localhost:4000, etc.).
+  // Bare URL — no `video:` prefix — because no client (PostForm,
+  // /api/actions, scripts) prepends one. The previous prefix-required
+  // regex silently dropped every video into raw text, leaving hasVideo=false.
   const imageUrlRegex = /(https?:\/\/[^\s]+\/uploads\/images\/[^\s]+\.(jpg|jpeg|png|gif|webp))/gi
   const imageUrls = rawAction.text?.match(imageUrlRegex) || []
 
-  // Extract video URLs (prefixed with 'video:')
-  const videoUrlRegex = /video:(https?:\/\/[^\s]+\/uploads\/videos\/[^\s]+\.(mp4|webm|mov|avi|mkv|ogg|ogv))/gi
-  const videoMatches = [...(rawAction.text?.matchAll(videoUrlRegex) || [])]
-  const videoUrls = videoMatches.map((match: RegExpMatchArray) => match[1]) // Extract just the URL without 'video:' prefix
-
-  // Debug logging
-  if (videoMatches.length > 0) {
-    console.log('Found video URLs in text:', videoUrls)
-  }
+  const videoUrlRegex = /(https?:\/\/[^\s]+\/uploads\/videos\/[^\s]+\.(mp4|webm|mov|avi|mkv|ogg|ogv))/gi
+  const videoUrls = rawAction.text?.match(videoUrlRegex) || []
 
   // Remove image and video URLs from the text content for cleaner display
   let textContent = rawAction.text
@@ -76,8 +73,8 @@ export async function handleCawAction(
     })
   }
   if (videoUrls.length > 0) {
-    videoMatches.forEach((match: RegExpMatchArray) => {
-      textContent = textContent.replace(match[0], '').trim() // Remove the full 'video:URL' string
+    videoUrls.forEach((url: string) => {
+      textContent = textContent.replace(url, '').trim()
     })
   }
   // Clean up any extra newlines left behind
