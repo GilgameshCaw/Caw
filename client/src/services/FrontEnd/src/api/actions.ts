@@ -983,16 +983,41 @@ export function useSignAndSubmitAction() {
       unlike: 0n, unfollow: 0n, other: 0n, withdraw: 0n,
     }
 
-    // Check spend limit before signing with session key
+    // Check spend limit before signing with session key.
+    //
+    // For 'caw'/'like'/'recaw'/'follow' the cost is the fixed protocol
+    // fee (ACTION_COSTS) plus the validator tip — both whole CAW.
+    //
+    // For 'other' (tips, image uploads, votes, etc.) and 'withdraw',
+    // the real cost lives in params.amounts. Tip actions carry
+    // [tipAmount, validatorTip] (TipModal.tsx); withdraws carry
+    // [withdrawAmount]; image uploads carry [cawCost]; etc. — all
+    // whole CAW. We sum them so the gate matches what actually gets
+    // spent on chain. Without this, a $20 tip with a $10 session limit
+    // sails past the pre-check (protocolCost=0 for 'other', tip alone
+    // is small) and only fails minutes later when the validator
+    // rejects on settlement and useTxQueueMonitor pops the renew modal
+    // late.
+    //
+    // For 'other', buildTypedData does NOT append the validator tip
+    // when amounts is non-empty (the caller already wove it in), so we
+    // skip adding effectiveTip again here — that would double-count.
     if (canUseSession) {
       const limit = BigInt(activeSession.spendLimit || '0')
       if (limit > 0n) {
         const spent = BigInt(rawSession?.spent || '0')
-        const tip = effectiveTip
         const protocolCost = ACTION_COSTS[params.actionType] || 0n
-        const totalCost = protocolCost + tip
+        let extraAmountsWhole = 0n
+        if ((params.actionType === 'other' || params.actionType === 'withdraw') &&
+            params.amounts && params.amounts.length > 0) {
+          for (const amt of params.amounts) {
+            try { extraAmountsWhole += BigInt(amt as any) } catch {}
+          }
+        }
+        const tipForCalc = params.actionType === 'other' ? 0n : effectiveTip
+        const totalCost = protocolCost + extraAmountsWhole + tipForCalc
         const remaining = limit - spent
-        console.log(`[QuickSign] Spend limit: ${limit}, spent: ${spent}, remaining: ${remaining}, actionCost: ${protocolCost}, tip: ${tip}, totalCost: ${totalCost}`)
+        console.log(`[QuickSign] Spend limit: ${limit}, spent: ${spent}, remaining: ${remaining}, actionCost: ${protocolCost}, extraAmounts: ${extraAmountsWhole}, tip: ${tipForCalc}, totalCost: ${totalCost}`)
         if (spent + totalCost > limit) {
           return new Promise((resolve, reject) => {
             useQuickSignRenewStore.getState().show('spend_limit', async () => {
