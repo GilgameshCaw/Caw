@@ -157,6 +157,15 @@ contract CawActions is Ownable {
 
     require(c.actionsSeen == actionCount, "Sigs don't cover all actions");
 
+    // Flush the in-memory hash chain back to storage — one SSTORE pair
+    // total instead of one per action. clientHashLoaded is the latch:
+    // false means no actions were applied (impossible past the actionCount
+    // > 0 check above, but defensive against future refactors).
+    if (c.clientHashLoaded) {
+      clientCurrentHash[c.firstClientId] = c.clientHash;
+      clientActionCount[c.firstClientId] = c.clientActionCount;
+    }
+
     // Credit the validator with the sum of implicit per-action session tips
     // accumulated across the batch. One SSTORE total instead of one per
     // session-key action — the meaningful gas-saving leg of the empty-amounts
@@ -183,6 +192,13 @@ contract CawActions is Ownable {
 
   /// @dev Bookkeeping passed through the group-processing loop by reference.
   ///      Avoids returning a 6-tuple from internal helpers.
+  ///
+  ///      `clientHash` / `clientActionCount` are the in-memory hash-chain
+  ///      accumulators. We load `clientCurrentHash[firstClientId]` and
+  ///      `clientActionCount[firstClientId]` lazily on the first action,
+  ///      mutate them per action in memory, and write back once at the end
+  ///      of the batch — replacing N SLOAD/SSTORE pairs with one of each.
+  ///      `clientHashLoaded` is the lazy-load latch.
   struct BatchCursor {
     uint256 pos;             // current offset into packedActions
     uint256 sigPos;          // current offset into sigs
@@ -191,6 +207,9 @@ contract CawActions is Ownable {
     uint16  withdrawCount;
     uint256 withdrawBitmap;
     uint256 implicitTipOwed; // sum of session-key per-action tips, credited once at batch end
+    bytes32 clientHash;          // in-memory mirror of clientCurrentHash[firstClientId]
+    uint256 clientActionCount;   // in-memory mirror of clientActionCount[firstClientId]
+    bool    clientHashLoaded;    // false until first action loads from storage
   }
 
   /// @dev Read a sig group header from `sigs` at `sigPos` and advance.
@@ -249,7 +268,7 @@ contract CawActions is Ownable {
       ba.owner = cawProfile.ownerOf(action.senderId);
       (, ba.scopeBitmap, ba.spendLimit, ba.perActionTipRate) = cawProfile.sessions(ba.owner, ba.signer);
     }
-    c.implicitTipOwed += _applyAction(validatorId, action, ba, packedActions[actionStart:nextPos]);
+    c.implicitTipOwed += _applyAction(validatorId, action, ba, packedActions[actionStart:nextPos], c);
     c.actionsSeen += 1;
   }
 
@@ -362,7 +381,7 @@ contract CawActions is Ownable {
       if (ba.isSessionKey) {
         require((ba.scopeBitmap & (1 << uint8(action.actionType))) != 0, "Action not in session scope");
       }
-      owed += _applyAction(validatorId, action, ba, packedActions[sliceStarts[i]:sliceEnds[i]]);
+      owed += _applyAction(validatorId, action, ba, packedActions[sliceStarts[i]:sliceEnds[i]], c);
       unchecked { ++i; }
     }
     c.implicitTipOwed += owed;
@@ -589,12 +608,17 @@ contract CawActions is Ownable {
 
     // Reuse _applyBatch's loop so processActions and safeProcessActions share
     // a single per-action application path (and one stack frame depth, which
-    // matters for the via-IR optimizer's reach). In safe mode the implicit-tip
-    // accumulator lives in a local cursor and is flushed once at group end —
-    // safe mode can't amortize across groups (each group runs in its own
-    // external call so reverts roll back independently).
+    // matters for the via-IR optimizer's reach). In safe mode the cursor
+    // lives in a local frame and is flushed once at group end — safe mode
+    // can't amortize across groups (each group runs in its own external
+    // call so reverts roll back independently).
     BatchCursor memory localCursor;
+    localCursor.firstClientId = firstClientId;
     _applyBatch(validatorId, groupBytes, groupActions, sliceStarts, sliceEnds, ba, localCursor);
+    if (localCursor.clientHashLoaded) {
+      clientCurrentHash[firstClientId] = localCursor.clientHash;
+      clientActionCount[firstClientId] = localCursor.clientActionCount;
+    }
     if (localCursor.implicitTipOwed > 0) {
       cawProfile.addToBalance(validatorId, localCursor.implicitTipOwed * 10**18);
     }
@@ -629,7 +653,22 @@ contract CawActions is Ownable {
     ba.signer = signer;
     ba.isSessionKey = isSessionKey;
     ba.r = r;
-    _applyAction(validatorId, action, ba, packedSlice);
+    if (isSessionKey) {
+      ba.owner = cawProfile.ownerOf(action.senderId);
+      (, ba.scopeBitmap, ba.spendLimit, ba.perActionTipRate) = cawProfile.sessions(ba.owner, ba.signer);
+    }
+    BatchCursor memory localCursor;
+    localCursor.firstClientId = action.clientId;
+    uint256 owed = _applyAction(validatorId, action, ba, packedSlice, localCursor);
+    // Single-action external entry: flush back immediately (no batch to
+    // amortize across).
+    if (localCursor.clientHashLoaded) {
+      clientCurrentHash[action.clientId] = localCursor.clientHash;
+      clientActionCount[action.clientId] = localCursor.clientActionCount;
+    }
+    if (owed > 0) {
+      cawProfile.addToBalance(validatorId, owed * 10**18);
+    }
   }
 
   /// @dev Apply a single already-authenticated action: protocol costs,
@@ -645,7 +684,8 @@ contract CawActions is Ownable {
     uint32 validatorId,
     ActionData memory action,
     BatchAuth memory ba,
-    bytes calldata packedSlice
+    bytes calldata packedSlice,
+    BatchCursor memory c
   ) internal returns (uint256 implicitTipOwed) {
     require(!isCawonceUsed(action.senderId, action.cawonce), "Cawonce already used");
     require(cawProfile.authenticated(action.clientId, action.senderId), "User has not authenticated with this client");
@@ -696,17 +736,28 @@ contract CawActions is Ownable {
 
     useCawonce(action.senderId, action.cawonce);
 
-    // Checkpoint hash — hash the PACKED slice directly (no abi.encode overhead).
-    // r is the recovering signature's r (single-sig: per-action r; batch-sig:
-    // shared across the group). Either way, the chain still extends with a
-    // unique actionHash per action so links are non-degenerate.
-    uint32 clientId = action.clientId;
+    // Checkpoint hash — accumulated in memory across the batch and flushed
+    // once at the end of processActions / processGroupSingle. Lazy-load
+    // from storage on the first action of the batch (one SLOAD instead of
+    // N). r is the recovering signature's r; actionHash is keccak of the
+    // packed slice (no abi.encode overhead). The chain still extends with
+    // a unique actionHash per action so links are non-degenerate.
+    if (!c.clientHashLoaded) {
+      c.clientHash = clientCurrentHash[c.firstClientId];
+      c.clientActionCount = clientActionCount[c.firstClientId];
+      c.clientHashLoaded = true;
+    }
     bytes32 actionHash = keccak256(packedSlice);
-    clientCurrentHash[clientId] = keccak256(abi.encodePacked(clientCurrentHash[clientId], ba.r, actionHash));
-    clientActionCount[clientId]++;
+    c.clientHash = keccak256(abi.encodePacked(c.clientHash, ba.r, actionHash));
+    unchecked { c.clientActionCount++; }
 
-    if (clientActionCount[clientId] % CHECKPOINT_INTERVAL == 0)
-      clientHashAtCheckpoint[clientId][clientActionCount[clientId] / CHECKPOINT_INTERVAL] = clientCurrentHash[clientId];
+    // Per-32-action checkpoint commitment must still hit storage — the
+    // archive challenge protocol relies on indexed checkpoint hashes being
+    // queryable at any time. The flush at batch end won't always cover
+    // these because not every batch is a multiple of CHECKPOINT_INTERVAL.
+    if (c.clientActionCount % CHECKPOINT_INTERVAL == 0) {
+      clientHashAtCheckpoint[c.firstClientId][c.clientActionCount / CHECKPOINT_INTERVAL] = c.clientHash;
+    }
   }
 
   // ============================================
