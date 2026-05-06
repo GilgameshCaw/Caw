@@ -16,6 +16,9 @@ import {
 } from '~/services/DmCryptoService'
 import { useDmUnreadStore } from '~/store/dmUnreadStore'
 
+export type UiConversationStatus = 'ACCEPTED' | 'REQUEST' | 'BLOCKED'
+export type UiInbox = 'main' | 'requests'
+
 type UiConversation = {
   id: string
   type: 'DM'
@@ -35,6 +38,11 @@ type UiConversation = {
   lastMessagePreview?: string // decrypted preview of last message
   lastMessageSenderId?: number
   unreadCount: number
+  /** This user's participant.status — surfaces the "Accept" CTA in the
+   *  conversation header for REQUEST conversations the recipient hasn't
+   *  accepted yet. Pre-relay rows default to ACCEPTED (per the migration
+   *  default), so this is always populated. */
+  myStatus: UiConversationStatus
 }
 
 export type UiReaction = {
@@ -141,6 +149,8 @@ export function useDmClient(tokenId?: number, username?: string) {
   }, [tokenId])
 
   const [hasMoreConversations, setHasMoreConversations] = useState(false)
+  const [inbox, setInbox] = useState<UiInbox>('main')
+  const [requestCount, setRequestCount] = useState<number>(0)
 
   const loadConversations = useCallback(async (loadMore = false) => {
     if (!tokenId) return
@@ -148,7 +158,7 @@ export function useDmClient(tokenId?: number, username?: string) {
     setConversationsLoading(true)
     try {
       const offset = loadMore ? conversations.length : 0
-      const data = await apiFetch<{ conversations: any[]; hasMore?: boolean }>(`/api/dm/conversations?userId=${tokenId}&limit=50&offset=${offset}`)
+      const data = await apiFetch<{ conversations: any[]; hasMore?: boolean }>(`/api/dm/conversations?userId=${tokenId}&limit=50&offset=${offset}&inbox=${inbox}`)
 
       // The conversations response now includes each participant's DM
       // publicKey alongside their user fields, so seed the cache from
@@ -231,7 +241,8 @@ export function useDmClient(tokenId?: number, username?: string) {
             lastMessageAt: conv.lastMessageAt,
             lastMessagePreview,
             lastMessageSenderId,
-            unreadCount: conv.unreadCount || 0
+            unreadCount: conv.unreadCount || 0,
+            myStatus: (conv.myStatus as UiConversationStatus) || 'ACCEPTED',
           }
         })
       )
@@ -258,7 +269,55 @@ export function useDmClient(tokenId?: number, username?: string) {
     } finally {
       setConversationsLoading(false)
     }
-  }, [tokenId, conversations.length])
+  }, [tokenId, conversations.length, inbox])
+
+  // Re-fetch when the inbox tab toggles. Don't include conversations.length
+  // — that would re-fetch on every load-more or live-update tick.
+  useEffect(() => {
+    if (!tokenId) return
+    setConversations([])
+    setConversationsLoaded(false)
+    loadConversations()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tokenId, inbox])
+
+  // Badge count for the Requests tab. Polled alongside the unread sync
+  // (cheap covered query). Refresh on conversation list reload too so
+  // accepting a request decrements it without waiting for the next poll.
+  const refreshRequestCount = useCallback(async () => {
+    if (!tokenId) return
+    try {
+      const res = await apiFetch<{ count: number }>(`/api/dm/conversations/request-count?userId=${tokenId}`)
+      setRequestCount(res.count || 0)
+    } catch (err) {
+      // Non-fatal — leave the previous count visible.
+      console.warn('[DM] request-count fetch failed:', err)
+    }
+  }, [tokenId])
+
+  useEffect(() => {
+    refreshRequestCount()
+  }, [refreshRequestCount, conversations.length])
+
+  // Flip a REQUEST conversation to ACCEPTED. The conversation list is
+  // refetched after — under inbox=requests it disappears; under
+  // inbox=main it appears.
+  const acceptConversation = useCallback(async (conversationId: string) => {
+    if (!tokenId) return
+    try {
+      await apiFetch(`/api/dm/conversations/${conversationId}/accept`, {
+        method: 'POST',
+        body: JSON.stringify({ userId: tokenId }),
+        headers: { 'Content-Type': 'application/json' },
+      })
+      // Reload current view + badge.
+      await loadConversations()
+      refreshRequestCount()
+    } catch (err) {
+      console.error('[DM] accept conversation failed:', err)
+      throw err
+    }
+  }, [tokenId, loadConversations, refreshRequestCount])
 
   const initializeClient = useCallback(async () => {
     console.log('[DM] initializeClient called, walletClient:', !!walletClient, 'tokenId:', tokenId)
@@ -480,7 +539,13 @@ export function useDmClient(tokenId?: number, username?: string) {
     loadMoreConversations: () => loadConversations(true),
     startConversation,
     clearUnreadCount,
-    refreshConversations: loadConversations
+    refreshConversations: loadConversations,
+    // Inbox tabs (Main / Requests).
+    inbox,
+    setInbox,
+    requestCount,
+    refreshRequestCount,
+    acceptConversation,
   }
 }
 

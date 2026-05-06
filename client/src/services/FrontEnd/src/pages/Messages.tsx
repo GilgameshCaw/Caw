@@ -217,7 +217,11 @@ const MessagesPage: React.FC = () => {
     error: dmError,
     startConversation: dmStartConversation,
     refreshConversations,
-    clearUnreadCount
+    clearUnreadCount,
+    inbox,
+    setInbox,
+    requestCount,
+    acceptConversation: dmAcceptConversation,
   } = useDmClient(currentUser?.id, currentUser?.username)
   // Keep a ref to the latest initializeClient so the action passed into
   // ensureWallet (which runs asynchronously after connect) always calls
@@ -1110,6 +1114,39 @@ const MessagesPage: React.FC = () => {
                     <span>End-to-end encrypted · AES-256-GCM</span>
                   </div>
                 )}
+                {currentView === 'inbox' && (
+                  <div className="flex items-center gap-1 mt-3">
+                    <button
+                      onClick={() => setInbox('main')}
+                      className={`px-3 py-1.5 rounded-full text-sm font-medium transition-colors ${
+                        inbox === 'main'
+                          ? (isDark ? 'bg-white text-black' : 'bg-black text-white')
+                          : (isDark ? 'text-gray-400 hover:bg-white/10' : 'text-gray-500 hover:bg-black/5')
+                      }`}
+                    >
+                      Inbox
+                    </button>
+                    <button
+                      onClick={() => setInbox('requests')}
+                      className={`px-3 py-1.5 rounded-full text-sm font-medium transition-colors flex items-center gap-1.5 ${
+                        inbox === 'requests'
+                          ? (isDark ? 'bg-white text-black' : 'bg-black text-white')
+                          : (isDark ? 'text-gray-400 hover:bg-white/10' : 'text-gray-500 hover:bg-black/5')
+                      }`}
+                    >
+                      Requests
+                      {requestCount > 0 && (
+                        <span className={`text-xs px-1.5 py-0.5 rounded-full ${
+                          inbox === 'requests'
+                            ? (isDark ? 'bg-black/20 text-black' : 'bg-white/20 text-white')
+                            : (isDark ? 'bg-yellow-500/20 text-yellow-300' : 'bg-yellow-500/20 text-yellow-700')
+                        }`}>
+                          {requestCount}
+                        </span>
+                      )}
+                    </button>
+                  </div>
+                )}
               </div>
             </div>
             {currentView === 'chat' && (
@@ -1484,6 +1521,34 @@ const MessagesPage: React.FC = () => {
                 </span>
               </div>
             </div>
+
+            {/* Request banner: shown when this user opened a REQUEST
+                conversation (someone DM'd them without a consent
+                baseline — no follow either way, no prior outbound
+                from this user). Replying auto-accepts; this CTA is
+                for users who want to accept without replying. */}
+            {selectedConversation?.myStatus === 'REQUEST' && (
+              <div className={`flex-shrink-0 w-full flex items-center justify-between py-3 px-6 gap-3 ${
+                isDark ? 'bg-yellow-900/20 border-b border-yellow-800/30' : 'bg-yellow-50 border-b border-yellow-200'
+              }`}>
+                <div className={`text-sm ${isDark ? 'text-yellow-200' : 'text-yellow-900'}`}>
+                  <span className="font-medium">Message request</span>
+                  <span className={`ml-2 ${isDark ? 'text-yellow-200/80' : 'text-yellow-800/80'}`}>
+                    Replying will accept this conversation.
+                  </span>
+                </div>
+                <button
+                  onClick={() => dmAcceptConversation(selectedConversationId)}
+                  className={`px-3 py-1.5 rounded-full text-sm font-medium transition-colors ${
+                    isDark
+                      ? 'bg-yellow-500 text-black hover:bg-yellow-400'
+                      : 'bg-yellow-500 text-white hover:bg-yellow-600'
+                  }`}
+                >
+                  Accept
+                </button>
+              </div>
+            )}
 
             {/* Chat Messages — fixed height so overflow scrolling works, fade in when ready */}
             <div
