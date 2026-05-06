@@ -75,6 +75,20 @@ export class CawonceCollisionError extends Error {
   }
 }
 
+/** Thrown by apiFetch on HTTP 410 from /api/caws/:id when the caw was
+ *  hidden by its author. Distinct from a 404 (which is "doesn't exist or
+ *  not visible") so the caller can render a "removed by author"
+ *  tombstone with the author's handle attached. */
+export class RemovedCawError extends Error {
+  constructor(
+    message: string,
+    public author: string | null,
+  ) {
+    super(message)
+    this.name = 'RemovedCawError'
+  }
+}
+
 /**
  * Retry an apiFetch (or anything that throws IndexingError) with exponential
  * backoff. Honors the server's retryAfterSeconds hint as the first delay.
@@ -241,11 +255,23 @@ export async function apiFetch<T = any>(
   }
 
   if (!res.ok) {
+    let body: any = {}
     let detail = ''
     try {
-      const body = await res.json()
+      body = await res.json()
       detail = body?.error || body?.message || ''
     } catch {}
+
+    // 410 Gone — currently emitted by /api/caws/:id when the caw was
+    // hidden by its author. Throw a typed error so CawPage can render a
+    // tombstone instead of the generic "Could not load post" path.
+    if (res.status === 410 && body?.removed) {
+      throw new RemovedCawError(
+        detail || 'caw removed by author',
+        typeof body.author === 'string' ? body.author : null,
+      )
+    }
+
     throw new Error(detail ? `API ${res.status}: ${detail}` : `API ${res.status} ${res.statusText}`)
   }
 

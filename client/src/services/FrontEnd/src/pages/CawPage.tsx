@@ -4,7 +4,7 @@ import { useT } from '~/i18n/I18nProvider'
 import PostForm from "~/components/PostForm";
 import FeedItem from '~/components/FeedItem'
 import Avatar from '~/components/Avatar'
-import { apiFetch } from '~/api/client'
+import { apiFetch, RemovedCawError } from '~/api/client'
 import type { CawItem } from '~/types'
 import { useTheme } from '~/hooks/useTheme'
 import { useTokenDataStore, useActiveToken } from '~/store/tokenDataStore'
@@ -73,6 +73,10 @@ export const CawPage: React.FC = () => {
   const [loading, setLoading]   = useState(!seededCaw)
   const [commentsLoading, setCommentsLoading] = useState(true)
   const [error, setError]       = useState<string | null>(null)
+  // Set when /api/caws/:id returned 410 (caw hidden by author). Null on
+  // every other status. Author handle is `null` when the server couldn't
+  // resolve it (rare — author rows are populated by the indexer).
+  const [removedBy, setRemovedBy] = useState<{ author: string | null } | null>(null)
   const [hasMoreComments, setHasMoreComments] = useState(false)
   const [commentCursor, setCommentCursor] = useState<number | undefined>(undefined)
   const [loadingMore, setLoadingMore] = useState(false)
@@ -288,6 +292,7 @@ export const CawPage: React.FC = () => {
   const loadCaw = async () => {
     try {
       setError(null)
+      setRemovedBy(null)
 
       const data = await apiFetch<{ caw: CawItem; comments: CawItem[]; recaws?: RecawIndicator[]; tips?: TipIndicator[]; hasMoreComments?: boolean; nextCommentCursor?: number }>(`/api/caws/${id}`)
       setCaw(data.caw)
@@ -297,8 +302,16 @@ export const CawPage: React.FC = () => {
       setHasMoreComments(!!data.hasMoreComments)
       setCommentCursor(data.nextCommentCursor)
     } catch (err) {
-      console.error('Error loading caw:', err)
-      setError(t('caw_page.could_not_load_post'))
+      // 410 → caw was hidden by its author. Render a tombstone instead
+      // of the generic "could not load" path so deep-links from old
+      // notifications / shares are at least informative.
+      if (err instanceof RemovedCawError) {
+        setRemovedBy({ author: err.author })
+        setCaw(null)
+      } else {
+        console.error('Error loading caw:', err)
+        setError(t('caw_page.could_not_load_post'))
+      }
     } finally {
       setLoading(false)
       setCommentsLoading(false)
@@ -333,6 +346,27 @@ export const CawPage: React.FC = () => {
   // below the post (gated on commentsLoading) covers the API leg.
   if (loading && !caw) return <><div className={`flex items-center justify-center h-64 ${isDark ? 'text-white' : 'text-gray-900'}`}>{t('common.loading')}</div></>
   if (error && !caw) return errorView(error)
+  // Removed-by-author tombstone. Distinct from a generic "not found"
+  // so the deep-link from a stale notification is at least informative
+  // about WHY the page is blank.
+  if (removedBy) {
+    return (
+      <div className="flex flex-col items-center justify-center py-16 px-6 text-center">
+        <div className={`w-12 h-12 mb-4 rounded-full flex items-center justify-center ${
+          isDark ? 'bg-white/5 text-white/40' : 'bg-gray-100 text-gray-400'
+        }`}>
+          <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6M1 7h22M9 7V3.5A1.5 1.5 0 0110.5 2h3A1.5 1.5 0 0115 3.5V7" />
+          </svg>
+        </div>
+        <p className={`text-sm ${isDark ? 'text-gray-400' : 'text-gray-600'}`}>
+          {removedBy.author
+            ? `This post has been removed by its author (@${removedBy.author}).`
+            : 'This post has been removed by its author.'}
+        </p>
+      </div>
+    )
+  }
   if (!caw) return errorView(t('caw_page.could_not_load_post'))
 
   const viewerTokenId = activeTokenId ?? activeToken?.tokenId

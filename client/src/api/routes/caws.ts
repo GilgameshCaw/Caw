@@ -372,8 +372,22 @@ router.get('/:id', async (req, res) => {
   //  - FAILED: creator-only. Failure surfaces signing/validation
   //    error context the author probably doesn't want world-readable
   //    even briefly.
-  //  - HIDDEN: nobody (the caw is intentionally suppressed).
-  if (raw.status === 'HIDDEN') return res.status(404).end()
+  //  - HIDDEN: 410 Gone with a small "removed by author" envelope so the
+  //    FE can render a tombstone instead of treating the deep-link as a
+  //    404. We do NOT include the original content / images / replies
+  //    even though they're in `raw` — the author intentionally suppressed
+  //    them, so we drop everything except the bare existence + author
+  //    handle (so the FE can say "removed by @<username>" rather than
+  //    a generic message).
+  //  - FAILED: creator-only. Failure surfaces signing/validation
+  //    error context the author probably doesn't want world-readable
+  //    even briefly.
+  if (raw.status === 'HIDDEN') {
+    return res.status(410).json({
+      removed: true,
+      author: raw.user?.username ?? null,
+    })
+  }
   if (raw.status === 'FAILED' && raw.userId !== currentUserId) {
     return res.status(404).end()
   }
