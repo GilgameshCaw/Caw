@@ -156,3 +156,45 @@ export async function scanLogsBackward(
   }
   return logs
 }
+
+/**
+ * Binary-search the earliest block at which `address` has bytecode.
+ * Used by backfill scripts to skip the dead range from genesis to the
+ * contract's deployment block — on chains with deep history that's a
+ * 10M+ block range of empty getLogs calls.
+ *
+ * Cost: ~log2(head) `eth_getCode` calls (24-25 on Sepolia today).
+ * Cheap relative to even a single chunked getLogs scan, and a one-shot
+ * cost amortized across the rest of the backfill.
+ *
+ * Returns 0 if the contract has no code at `head` (never deployed),
+ * or the lowest block number where `eth_getCode != 0x`.
+ *
+ * Caller can override via env (`L1_DEPLOY_BLOCK_HINT` etc.) or CLI flag
+ * — this helper is the fallback when no hint is provided.
+ */
+export async function findContractDeployBlock(
+  provider: AbstractProvider,
+  address: string,
+  head: number,
+): Promise<number> {
+  // Sanity check: contract must currently have code. If it doesn't, the
+  // address was never deployed (or self-destructed) — return 0 so the
+  // caller can decide what to do.
+  const headCode = await provider.getCode(address, head)
+  if (!headCode || headCode === '0x') return 0
+
+  // Standard binary search for the leftmost block where code !== '0x'.
+  // Invariant: code(lo) == 0x AND code(hi) != 0x. We know hi=head holds
+  // from above; lo=0 is conservatively assumed to have no contract
+  // (genesis is 0x for any address that wasn't pre-funded with code).
+  let lo = 0
+  let hi = head
+  while (lo + 1 < hi) {
+    const mid = lo + Math.floor((hi - lo) / 2)
+    const code = await provider.getCode(address, mid)
+    if (code && code !== '0x') hi = mid
+    else lo = mid
+  }
+  return hi
+}

@@ -29,18 +29,24 @@
 // already exists. Safe to re-run.
 //
 // Usage:
-//   npx tsx scripts/backfill-mint-and-deposits.ts                # contract genesis → head
+//   npx tsx scripts/backfill-mint-and-deposits.ts                # auto-detect deploy block → head
 //   npx tsx scripts/backfill-mint-and-deposits.ts --from 7900000 # specific start
 //   npx tsx scripts/backfill-mint-and-deposits.ts --to 8200000   # specific end
 //   npx tsx scripts/backfill-mint-and-deposits.ts --chunk 5000   # smaller eth_getLogs windows
 //   npx tsx scripts/backfill-mint-and-deposits.ts --dry-run      # report counts, write nothing
+//
+// Start-block resolution: --from > $L1_DEPLOY_BLOCK > binary-search
+// eth_getCode. Pass an explicit hint when you know it (saves ~25 RPC
+// calls); omit and let the script find it. The chain's genesis block is
+// almost always wrong as a default — backfill scripts should never scan
+// the empty pre-deploy range.
 
 import 'dotenv/config'
 import { ethers } from 'ethers'
 import { prisma } from '../src/prismaClient'
 import { CAW_ADDRESS, CAW_NAMES_ADDRESS } from '../src/abi/addresses'
 import { makeJsonRpcProvider, getL1HttpRpcUrl } from '../src/utils/rpcProvider'
-import { scanLogsForward } from '../src/utils/chunkedLogs'
+import { scanLogsForward, findContractDeployBlock } from '../src/utils/chunkedLogs'
 
 const args = process.argv.slice(2)
 const argFrom = args.indexOf('--from') >= 0 ? Number(args[args.indexOf('--from') + 1]) : undefined
@@ -70,7 +76,29 @@ async function main() {
   const provider = makeJsonRpcProvider(rpcUrl, L1_CHAIN_ID)
 
   const head = await provider.getBlockNumber()
-  const fromBlock = argFrom ?? 0
+
+  // Pick fromBlock in priority order: explicit --from > L1_DEPLOY_BLOCK env >
+  // auto-detect via binary-search eth_getCode. The auto-detect is one-shot
+  // (~25 RPC calls on Sepolia) and amortizes against multi-million-block
+  // dead range that defaulting to 0 would otherwise scan empty.
+  let fromBlock: number
+  if (argFrom !== undefined) {
+    fromBlock = argFrom
+  } else if (process.env.L1_DEPLOY_BLOCK) {
+    fromBlock = Number(process.env.L1_DEPLOY_BLOCK)
+    if (!Number.isFinite(fromBlock)) {
+      console.error(`[mintAndDeposit-backfill] L1_DEPLOY_BLOCK="${process.env.L1_DEPLOY_BLOCK}" is not a number`)
+      process.exit(1)
+    }
+  } else {
+    logProgress('detecting CawProfile deployment block via binary search…')
+    fromBlock = await findContractDeployBlock(provider, CAW_NAMES_ADDRESS, head)
+    if (fromBlock === 0) {
+      console.error(`[mintAndDeposit-backfill] CawProfile (${CAW_NAMES_ADDRESS}) has no code at head — wrong RPC chain?`)
+      process.exit(1)
+    }
+    logProgress(`detected deployment at block ${fromBlock}`)
+  }
   const toBlock = argTo ?? head
   if (fromBlock > toBlock) {
     console.error(`[mintAndDeposit-backfill] fromBlock (${fromBlock}) > toBlock (${toBlock})`)

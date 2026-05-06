@@ -11,17 +11,21 @@
 // project_free_rpc_50k_block_cap.md, NEVER queryFilter(0, 'latest').
 //
 // Usage:
-//   npx tsx scripts/backfill-l1-deposits.ts                       # from contract genesis
+//   npx tsx scripts/backfill-l1-deposits.ts                       # auto-detect deploy block → head
 //   npx tsx scripts/backfill-l1-deposits.ts --from 7900000        # from a specific block
 //   npx tsx scripts/backfill-l1-deposits.ts --to 8200000          # up to a specific block
 //   npx tsx scripts/backfill-l1-deposits.ts --chunk 5000          # smaller chunks for picky RPCs
+//
+// Start-block resolution: --from > $L1_DEPLOY_BLOCK > binary-search
+// eth_getCode. The fallback auto-detect costs ~25 RPC calls; supply a
+// hint when you know the deploy block.
 
 import 'dotenv/config'
 import { ethers } from 'ethers'
 import { prisma } from '../src/prismaClient'
 import { CAW_NAMES_ADDRESS } from '../src/abi/addresses'
 import { makeJsonRpcProvider, getL1HttpRpcUrl } from '../src/utils/rpcProvider'
-import { scanLogsForward } from '../src/utils/chunkedLogs'
+import { scanLogsForward, findContractDeployBlock } from '../src/utils/chunkedLogs'
 
 const args = process.argv.slice(2)
 const argFrom = args.indexOf('--from') >= 0 ? Number(args[args.indexOf('--from') + 1]) : undefined
@@ -57,7 +61,28 @@ async function main() {
   const contract = new ethers.Contract(CAW_NAMES_ADDRESS, DEPOSITED_ABI, provider)
 
   const head = await provider.getBlockNumber()
-  const fromBlock = argFrom ?? 0
+
+  // Pick fromBlock in priority order: explicit --from > L1_DEPLOY_BLOCK env >
+  // auto-detect via binary-search eth_getCode. Defaulting to genesis would
+  // scan ~10M empty blocks before the contract was even deployed.
+  let fromBlock: number
+  if (argFrom !== undefined) {
+    fromBlock = argFrom
+  } else if (process.env.L1_DEPLOY_BLOCK) {
+    fromBlock = Number(process.env.L1_DEPLOY_BLOCK)
+    if (!Number.isFinite(fromBlock)) {
+      console.error(`[deposit-backfill] L1_DEPLOY_BLOCK="${process.env.L1_DEPLOY_BLOCK}" is not a number`)
+      process.exit(1)
+    }
+  } else {
+    logProgress('detecting CawProfile deployment block via binary search…')
+    fromBlock = await findContractDeployBlock(provider, CAW_NAMES_ADDRESS, head)
+    if (fromBlock === 0) {
+      console.error(`[deposit-backfill] CawProfile (${CAW_NAMES_ADDRESS}) has no code at head — wrong RPC chain?`)
+      process.exit(1)
+    }
+    logProgress(`detected deployment at block ${fromBlock}`)
+  }
   const toBlock = argTo ?? head
   if (fromBlock > toBlock) {
     console.error(`[deposit-backfill] fromBlock (${fromBlock}) > toBlock (${toBlock})`)
