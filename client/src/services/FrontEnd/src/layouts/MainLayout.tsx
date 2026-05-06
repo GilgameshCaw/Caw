@@ -355,7 +355,7 @@ const MainLayout = ({ children, hideSidebars: hideSidebarsProp }: MainLayoutProp
       )}
 
       {/* Floating feedback button */}
-      <div className={`fixed z-[51] left-[5px] bottom-[5px]`}>
+      <div className="fixed z-[51] left-[5px] bottom-[calc(var(--bottom-nav-h,0px)+5px)]">
       <Tooltip text={t('bug_report.title')} position="top">
         <button
           onClick={() => setShowBugReport(true)}

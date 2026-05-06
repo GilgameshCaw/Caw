@@ -24,7 +24,7 @@ import { useComposeDraftStore } from '~/store/composeDraftStore'
 import { useUserByUsername } from '~/hooks/useUserData'
 import Tooltip from '~/components/Tooltip'
 import { apiFetch } from '~/api/client'
-import { HiCalendar, HiClock } from 'react-icons/hi'
+import { HiCalendar, HiClock, HiX } from 'react-icons/hi'
 import MentionAutocomplete from './MentionAutocomplete'
 import GifPicker from './GifPicker'
 import PollComposer from './PollComposer'
@@ -1558,7 +1558,21 @@ const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess, placehol
   const isOverLimit = false // Thread mode handles overflow by splitting
 
   return (
-      <div className={`${replyTo ? 'p-2' : 'p-4'} transition-all duration-300 ${isDark ? 'bg-black' : 'bg-white'}`}>
+      <div className={`${replyTo ? 'p-2' : 'p-4'} transition-all duration-300 ${isDark ? 'bg-black' : 'bg-white'} ${
+        hasInlineFeedDraft ? 'md:static md:p-4 md:pt-4 fixed left-0 right-0 bottom-0 top-16 z-[60] overflow-y-auto pt-14' : ''
+      }`}>
+      {hasInlineFeedDraft && (
+        <button
+          type="button"
+          aria-label="Close"
+          onClick={() => { setText(''); setSelectedMedia([]) }}
+          className={`md:hidden absolute left-3 top-3 p-2 rounded-full transition-colors cursor-pointer ${
+            isDark ? 'hover:bg-white/10 text-white' : 'hover:bg-gray-100 text-black'
+          }`}
+        >
+          <HiX className="w-6 h-6" />
+        </button>
+      )}
       {/* Hidden file input for media selection */}
       <input
         ref={fileInputRef}
