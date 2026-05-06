@@ -739,7 +739,15 @@ const Notifications: React.FC = () => {
       }
       return
     }
+    // No cache hit — drop whatever's on screen before fetching so the
+    // loader gate (`loading && notifications.length === 0`) trips and the
+    // user sees a spinner instead of stale notifications from the
+    // previous profile / tab while the new fetch is in flight.
+    setNotifications([])
+    setUnreadCount(0)
+    setHasMore(false)
     setOffset(0)
+    setLoading(true)
     fetchNotifications(true)
   }, [activeTab, activeToken?.tokenId])
 
