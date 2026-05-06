@@ -766,11 +766,22 @@ const FeedItem: React.FC<{ item: CawItem; isMainPost?: boolean; isReply?: boolea
   // it) gates the inline button correctly without a remount. This effect
   // never overwrites a tighter guess we already have from a successful
   // local translation.
+  //
+  // Fallback: if the caw has no detected sourceLanguage yet (older posts
+  // never translated by anyone), use the AUTHOR's preferredLanguage as a
+  // best guess. Authors who set their own UI language to e.g. Japanese
+  // overwhelmingly write in Japanese. This is a presumption — the user
+  // can still hit the inline Translate button to force a real gtx detect,
+  // which writes back to Caw.sourceLanguage and corrects the guess for
+  // future viewers.
   useEffect(() => {
-    if (useItem.sourceLanguage && !knownSourceLanguage) {
+    if (knownSourceLanguage) return
+    if (useItem.sourceLanguage) {
       setKnownSourceLanguage(useItem.sourceLanguage)
+    } else if (useItem.user?.preferredLanguage) {
+      setKnownSourceLanguage(useItem.user.preferredLanguage)
     }
-  }, [useItem.sourceLanguage, knownSourceLanguage])
+  }, [useItem.sourceLanguage, useItem.user?.preferredLanguage, knownSourceLanguage])
 
   // Translate the post and (if gtx returned a confident detection) cache
   // the source language back to the server. The 2nd parameter to

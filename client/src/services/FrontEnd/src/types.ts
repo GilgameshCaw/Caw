@@ -40,7 +40,7 @@ export type CawItem = {
   action?: string
   isQuote?: boolean
   timestamp: string
-  user: { id: number; tokenId: number; username: string; displayName?: string; image?: string; avatarUrl?: string; xHandle?: string | null; xFollowerBucket?: number | null }
+  user: { id: number; tokenId: number; username: string; displayName?: string; image?: string; avatarUrl?: string; xHandle?: string | null; xFollowerBucket?: number | null; preferredLanguage?: string | null }
   parent: CawItem
   likeCount: number
   viewCount: number

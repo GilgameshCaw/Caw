@@ -6,7 +6,7 @@ export interface CawRaw {
   content: string
   action?: string
   createdAt: Date
-  user: { id: number; tokenId: number; username: string; displayName?: string; image?: string; avatarUrl?: string; address?: string | null; xBadgeVisible?: boolean; xHandle?: string | null; xFollowerBucket?: number | null }
+  user: { id: number; tokenId: number; username: string; displayName?: string; image?: string; avatarUrl?: string; address?: string | null; xBadgeVisible?: boolean; xHandle?: string | null; xFollowerBucket?: number | null; preferredLanguage?: string | null }
   _count?: { likes: number; recaws: number }
   likes?: Array<{ userId: number; pending?: boolean }>
   recaws?: Array<{ id: number; status?: 'SUCCESS' | 'PENDING' | 'FAILED'; action?: string; content?: string }>
@@ -66,7 +66,7 @@ export interface ShapedCaw {
   action?: string
   isQuote?: boolean
   timestamp: string
-  user: { id: number; tokenId: number; username: string; displayName?: string; image?: string; avatarUrl?: string; address?: string | null; xBadgeVisible?: boolean; xHandle?: string | null; xFollowerBucket?: number | null }
+  user: { id: number; tokenId: number; username: string; displayName?: string; image?: string; avatarUrl?: string; address?: string | null; xBadgeVisible?: boolean; xHandle?: string | null; xFollowerBucket?: number | null; preferredLanguage?: string | null }
   likeCount: number
   viewCount: number
   hasLiked: boolean
@@ -221,7 +221,7 @@ export interface CawQueryOptions {
 const cawUserSelect = {
   id: true, tokenId: true, username: true, displayName: true,
   image: true, avatarUrl: true, defaultAvatarId: true,
-  address: true, xBadgeVisible: true,
+  address: true, xBadgeVisible: true, preferredLanguage: true,
 } as const
 
 export function getCawIncludeConfig(options: CawQueryOptions = {}) {
