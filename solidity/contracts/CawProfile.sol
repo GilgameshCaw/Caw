@@ -113,6 +113,11 @@ contract CawProfile is
   event TransferPendingSync(uint32 indexed tokenId, address indexed from, address indexed to);
   event L2PeerSet(uint32 indexed eid, address indexed peer);
   event Deposited(uint32 indexed cawClientId, uint32 indexed tokenId, uint256 amount, uint32 indexed lzDestId, address depositor);
+  // NOTE: no L1-side `Withdrawn` event. The CAW token's ERC20 Transfer
+  // (cawProfile → recipient) inside `withdrawTo` is already observable
+  // and uniquely identifies withdrawals — we can spend the contract-size
+  // budget on more useful events. The L2 side has its own `Withdrawn`
+  // for the totalCaw decrement, which has no equivalent observable.
 
   CawClientManager public clientManager;
   CawBuyAndBurn public buyAndBurn;
@@ -334,6 +339,12 @@ contract CawProfile is
       }
       lzSend(cawClientId, lzDestId, sel, tokenIds.length, payload, lzEthAmount, lzTokenAmount);
     }
+
+    // Emit Deposited so indexers can reconstruct totalCaw inflows symmetrically with
+    // the standalone `depositFor` path. Without this, every onboarding deposit (every
+    // wallet that mints + deposits in one tx) is invisible to the L1 watcher and the
+    // activity ledger, causing totalCaw on chain to drift above sum-of-recorded-deposits.
+    emit Deposited(cawClientId, newId, depositAmount, lzDestId, _msgSender());
   }
 
   /// @notice Accrued fees available for withdrawal (pull pattern to prevent DOS)
@@ -544,6 +555,9 @@ contract CawProfile is
 
     CAW.transfer(recipient, amount);
     _updateNewOwners(peerWithMaxPendingTransfers(), lzEthAmount, lzTokenAmount);
+    // Withdraw is observable via the ERC20 Transfer fired by CAW.transfer
+    // above (from = address(this), to = recipient). No bespoke event
+    // needed — see event-declarations comment near `Deposited`.
   }
 
   /**

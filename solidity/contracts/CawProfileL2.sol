@@ -89,6 +89,14 @@ contract CawProfileL2 is
   event CawActionsSet(address cawActions);
   event SessionCreated(address indexed owner, address indexed sessionKey, uint64 expiry, uint8 scopeBitmap, uint256 spendLimit);
   event SessionRevoked(address indexed owner, address indexed sessionKey);
+  /// @notice Emitted when CawActions burns L2 stake on behalf of a token (withdraw flow).
+  /// @dev Counterpart to L1 `CawProfile.Withdrawn`. The L2-side decrement of `totalCaw`
+  ///      happens here; the L1 setWithdrawable LZ message carries the amounts back to
+  ///      L1 where the user eventually receives the underlying CAW. Indexers that
+  ///      reconstruct net stake-flow from chain events need both sides — without this,
+  ///      the L2 decrement is invisible and `cawProfileL2.totalCaw()` drifts below
+  ///      sum-of-deposits-minus-recorded-withdrawals.
+  event Withdrawn(uint32 indexed tokenId, uint256 amount);
 
   bytes4 public setWithdrawableSelector = bytes4(keccak256("setWithdrawable(uint32[],uint256[])"));
 
@@ -829,6 +837,11 @@ contract CawProfileL2 is
 
     totalCaw -= amount;
     setCawBalance(tokenId, balance - amount);
+
+    // Emit so L2 watchers can reconstruct net totalCaw flow without
+    // having to derive it from CawActions.processActions.WITHDRAW
+    // sub-events. See `Withdrawn` event docstring.
+    emit Withdrawn(tokenId, amount);
   }
 
   /// @notice Send withdrawable amounts to L1 via LayerZero (or directly in co-deployment mode).

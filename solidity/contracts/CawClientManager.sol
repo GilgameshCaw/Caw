@@ -62,6 +62,11 @@ contract CawClientManager {
   event ClientFeesLocked(uint32 indexed clientId);
   event ClientOwnershipLocked(uint32 indexed clientId);
   event ClientGasOverrideSet(uint32 indexed clientId, bytes4 indexed selector, uint128 newAmount);
+  /// @notice Emitted on every per-fee setter (setWithdrawFee/setDepositFee/setAuthFee/
+  ///         setMintFee). `feeType` is a stable string label so a single event can carry
+  ///         every fee category — cheaper than four separate events for an admin-only
+  ///         path that fires rarely. setFeeAddress has its own event (FeeAddressUpdated).
+  event ClientFeeUpdated(uint32 indexed clientId, string feeType, uint256 newFee);
 
   // ============================================
   // INSTANCE REGISTRY
@@ -204,6 +209,7 @@ contract CawClientManager {
       */
   function setWithdrawFee(uint32 clientId, uint256 fee) public onlyClientOwnerNotFeeLocked(clientId) {
     clients[clientId].withdrawFee = fee;
+    emit ClientFeeUpdated(clientId, "withdraw", fee);
   }
 
   /**
@@ -213,6 +219,7 @@ contract CawClientManager {
    */
   function setAuthFee(uint32 clientId, uint256 fee) public onlyClientOwnerNotFeeLocked(clientId) {
     clients[clientId].authFee = fee;
+    emit ClientFeeUpdated(clientId, "auth", fee);
   }
 
   /**
@@ -222,10 +229,12 @@ contract CawClientManager {
    */
   function setDepositFee(uint32 clientId, uint256 fee) public onlyClientOwnerNotFeeLocked(clientId) {
     clients[clientId].depositFee = fee;
+    emit ClientFeeUpdated(clientId, "deposit", fee);
   }
 
   function setMintFee(uint32 clientId, uint256 fee) public onlyClientOwnerNotFeeLocked(clientId) {
     clients[clientId].mintFee = fee;
+    emit ClientFeeUpdated(clientId, "mint", fee);
   }
 
   /**
@@ -243,6 +252,12 @@ contract CawClientManager {
     client.depositFee = depositFee;
     client.authFee = authFee;
     client.mintFee = mintFee;
+    // One event per category — same shape as the per-fee setters so indexers
+    // can treat setFees and setWithdrawFee/setAuthFee/etc. uniformly.
+    emit ClientFeeUpdated(clientId, "withdraw", withdrawFee);
+    emit ClientFeeUpdated(clientId, "deposit", depositFee);
+    emit ClientFeeUpdated(clientId, "auth", authFee);
+    emit ClientFeeUpdated(clientId, "mint", mintFee);
   }
 
   function setFeeAddress(uint32 clientId, address feeAddress) public onlyClientOwnerNotFeeLocked(clientId) {
