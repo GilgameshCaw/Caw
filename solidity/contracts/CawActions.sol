@@ -172,7 +172,7 @@ contract CawActions is Ownable {
     // optimization. Manual-sign and explicit-tip actions credited inline via
     // _distributeAmountsMem and don't contribute here.
     if (c.implicitTipOwed > 0) {
-      cawProfile.addToBalance(validatorId, c.implicitTipOwed * 10**18);
+      cawProfile.addTokensToBalance(validatorId, c.implicitTipOwed);
     }
 
     emit ActionsProcessed(
@@ -636,7 +636,7 @@ contract CawActions is Ownable {
       clientActionCount[firstClientId] = localCursor.clientActionCount;
     }
     if (localCursor.implicitTipOwed > 0) {
-      cawProfile.addToBalance(validatorId, localCursor.implicitTipOwed * 10**18);
+      cawProfile.addTokensToBalance(validatorId, localCursor.implicitTipOwed);
     }
   }
 
@@ -684,7 +684,7 @@ contract CawActions is Ownable {
     }
     if (ba.groupSpentLoaded) sessionSpent[ba.owner][ba.signer] = ba.groupSpent;
     if (owed > 0) {
-      cawProfile.addToBalance(validatorId, owed * 10**18);
+      cawProfile.addTokensToBalance(validatorId, owed);
     }
   }
 
@@ -724,7 +724,7 @@ contract CawActions is Ownable {
       cawProfile.spendDistributeAndAddTokensToBalance(action.senderId, 30000, 6000, action.receiverId, 24000);
       actionCost = 30000;
     } else if (action.actionType == ActionType.WITHDRAW) {
-      cawProfile.withdraw(action.senderId, uint256(action.amounts[0]) * 10**18);
+      cawProfile.withdrawTokens(action.senderId, uint256(action.amounts[0]));
     } else if (action.actionType != ActionType.UNLIKE &&
                action.actionType != ActionType.UNFOLLOW &&
                action.actionType != ActionType.OTHER) {
@@ -958,26 +958,25 @@ contract CawActions is Ownable {
     bool isWithdrawal = action.actionType == ActionType.WITHDRAW;
     uint256 startIndex = isWithdrawal ? 1 : 0;
 
-    uint256 amountTotal;
     if (hasExplicitTip) {
-      amountTotal = uint256(action.amounts[numAmounts - 1]) * 10**18;
       totalWholeTokens = uint256(action.amounts[numAmounts - 1]);
     }
 
     for (uint256 i = startIndex; i < numRecipients; ) {
-      uint256 amountWei = uint256(action.amounts[i]) * 10**18;
-      cawProfile.addToBalance(action.recipients[i], amountWei);
-      amountTotal += amountWei;
-      totalWholeTokens += uint256(action.amounts[i]);
+      uint256 amt = uint256(action.amounts[i]);
+      cawProfile.addTokensToBalance(action.recipients[i], amt);
+      totalWholeTokens += amt;
       unchecked { ++i; }
     }
 
-    cawProfile.spendAndDistribute(action.senderId, amountTotal, 0);
+    // Single 10**18 multiplication at the boundary instead of one per
+    // recipient + one for the tip. spendAndDistribute takes wei.
+    cawProfile.spendAndDistribute(action.senderId, totalWholeTokens * 10**18, 0);
 
     if (hasExplicitTip) {
       // Manual-sign / legacy: per-action SSTORE. (Session-key actions are
       // expected to use the empty-tip-slot path and amortize via batch end.)
-      cawProfile.addToBalance(validatorId, uint256(action.amounts[numAmounts - 1]) * 10**18);
+      cawProfile.addTokensToBalance(validatorId, uint256(action.amounts[numAmounts - 1]));
     } else if (ba.isSessionKey && ba.perActionTipRate > 0) {
       // Recipient distribution + implicit session tip — defer the validator
       // credit to the batch-end accumulator.

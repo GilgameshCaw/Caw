@@ -870,8 +870,10 @@ contract CawProfileL2 is
 
   /// @notice Subtract CAW from a token's balance (used during withdraw flows). CawActions only.
   /// @dev This decrements the L2-side bookkeeping; the actual L1 withdrawal credit is sent
-  ///      via `setWithdrawable` over LayerZero.
-  function withdraw(uint32 tokenId, uint256 amount) external {
+  ///      via `setWithdrawable` over LayerZero. Wei-precision input — there's a
+  ///      `withdrawTokens` whole-token-input wrapper alongside, matching the
+  ///      `addTokensToBalance` / `spendAndDistributeTokens` convention.
+  function withdraw(uint32 tokenId, uint256 amount) public {
     require(address(cawActions) == _msgSender(), "caller is not the cawActions contract");
 
     uint256 balance = cawBalanceOf(tokenId);
@@ -884,6 +886,14 @@ contract CawProfileL2 is
     // having to derive it from CawActions.processActions.WITHDRAW
     // sub-events. See `Withdrawn` event docstring.
     emit Withdrawn(tokenId, amount);
+  }
+
+  /// @notice Whole-token wrapper around `withdraw` — scales by 10**18.
+  /// @dev Pairs with `addTokensToBalance` / `spendAndDistributeTokens` so
+  ///      CawActions can stop multiplying by 10**18 at every callsite. The
+  ///      access control is enforced inside `withdraw`, not here.
+  function withdrawTokens(uint32 tokenId, uint256 amount) external {
+    withdraw(tokenId, amount * 10**18);
   }
 
   /// @notice Send withdrawable amounts to L1 via LayerZero (or directly in co-deployment mode).
