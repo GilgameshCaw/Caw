@@ -1,7 +1,15 @@
 <!doctype html>
-<html lang="en" style="background-color: #0A0A0A; color-scheme: dark">
+<html lang="en" translate="no" class="notranslate" style="background-color: #0A0A0A; color-scheme: dark">
   <head>
     <meta charset="UTF-8" />
+    <!--
+      Disable browser-level page translation (Chrome / Edge / Safari).
+      Chrome's translator mutates DOM text nodes inside React-owned
+      elements, breaking input handling and causing posts/typing to
+      silently fail. Our own per-post translation (Settings → Language
+      + the inline Translate button) is the supported path.
+    -->
+    <meta name="google" content="notranslate" />
     <!--
       Favicons + add-to-home-screen icons. Without the apple-touch-icon
       link, iOS scrapes the page for the largest image it can find and

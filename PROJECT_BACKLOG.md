@@ -878,6 +878,8 @@ One-liner install: `curl -fsSL https://raw.githubusercontent.com/.../install.sh 
 
 - **Multilingual SEO / discoverability.** UI is now translated into 19 locales but the translations are runtime-only — Google's crawler always sees the English shell. A user searching in Spanish/Hindi/etc. won't find CAW pages because: (1) SPA renders English first, locale catalog loads after user picks one; (2) no `<html lang>` swap; (3) no `hreflang` tags; (4) no per-locale URLs; (5) `<title>` and `<meta description>` aren't going through `t()` either. To fix: bolt onto the existing OG-card prerender pipeline (nginx UA → API catch-all → satori for bots) — add per-locale variants that emit translated `<title>`, `<meta description>`, `<html lang>`, and `hreflang` alternates. URL strategy options: `/es/...` path prefix (cleanest, requires routing changes), `?lang=es` query param (cheaper, weaker signal to Google), or `Accept-Language`-driven (no shareable URL per-language, worst SEO). Recommendation: path prefix for the /caws/, /users/, /hashtags/ public surface; leave authenticated app routes locale-detected client-side as today.
 
+- **Pre-auth Language Settings.** `/settings/language` is currently `AuthGate`-wrapped, so users without a profile can't change UI language. Combined with the new `<meta name="google" content="notranslate">` (which disables Chrome's page translator to fix a React-DOM corruption bug), this means a Japanese visitor on the captive splash sees English and has no way to switch. Move language preference into a localStorage-backed setting that's available pre-auth, then merge into the User row when they create a profile. The Captive footer / splash should also surface a tiny language picker (globe icon) so visitors discover it.
+
 
 
 
