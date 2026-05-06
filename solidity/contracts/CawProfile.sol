@@ -417,33 +417,13 @@ contract CawProfile is
     return uint32(usernames.length) + 1;
   }
 
-  function tokens(address user) external view returns (Token[] memory) {
-    uint32 tokenId;
-    uint256 balance = balanceOf(user);
-    Token[] memory userTokens = new Token[](balance);
-    for (uint32 i = 0; i < balance; i++) {
-      tokenId = uint32(tokenOfOwnerByIndex(user, i));
-
-      userTokens[i].withdrawable = withdrawable[tokenId];
-      userTokens[i].username = usernames[tokenId - 1];
-      userTokens[i].ownerBalance = CAW.balanceOf(user);
-      userTokens[i].tokenId = tokenId;
-      userTokens[i].owner = user;
-    }
-    return userTokens;
-  }
-
-  function token(uint32 tokenId) external view returns (Token memory) {
-    Token memory token = Token({
-      ownerBalance: CAW.balanceOf(ownerOf(tokenId)),
-      withdrawable: withdrawable[tokenId],
-      username: usernames[tokenId - 1],
-      owner: ownerOf(tokenId),
-      tokenId: tokenId
-    });
-
-    return token;
-  }
+  // `tokens(address)` and `token(uint32)` convenience views were removed to
+  // claw back ~250 bytes of bytecode and keep CawProfile under the EIP-170
+  // deployable cap. The same data is available via the standard ERC-721
+  // enumerable interface (balanceOf + tokenOfOwnerByIndex) plus the `usernames`,
+  // `withdrawable`, and `CAW.balanceOf` getters; off-chain consumers can
+  // multiplex those, or read it from CawProfileQuoter, or add a new sibling
+  // helper view contract later.
 
   /**
   * @dev See {IERC165-supportsInterface}.

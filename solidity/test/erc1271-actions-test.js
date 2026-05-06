@@ -172,7 +172,7 @@ function signActionBatch(signer, actions, domain) {
   return splitSig(sig);
 }
 
-async function registerSessionFor(setup, owner, sessionKey, scopeBitmap, spendLimit, expiry) {
+async function registerSessionFor(setup, owner, sessionKey, scopeBitmap, spendLimit, expiry, perActionTipRate = 0) {
   const nonce = Number(await setup.cawProfileL2.sessionNonce(owner));
   const chainId = await web3.eth.getChainId();
   const data = {
@@ -185,14 +185,15 @@ async function registerSessionFor(setup, owner, sessionKey, scopeBitmap, spendLi
         { name: 'expiry', type: 'uint64' },
         { name: 'scopeBitmap', type: 'uint8' },
         { name: 'spendLimit', type: 'uint256' },
+        { name: 'perActionTipRate', type: 'uint64' },
         { name: 'nonce', type: 'uint256' },
       ],
     },
-    message: { sessionKey, expiry, scopeBitmap, spendLimit, nonce },
+    message: { sessionKey, expiry, scopeBitmap, spendLimit, perActionTipRate, nonce },
   };
   const sigHex = signTypedData({ data, privateKey: privFor(owner), version: SignTypedDataVersion.V4 });
   const { v, r, s } = splitSig(sigHex);
-  await setup.cawProfileL2.registerSession(sessionKey, expiry, scopeBitmap, spendLimit, nonce, v, r, s);
+  await setup.cawProfileL2.registerSession(sessionKey, expiry, scopeBitmap, spendLimit, perActionTipRate, nonce, v, r, s);
 }
 
 let setup;

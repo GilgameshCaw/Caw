@@ -379,7 +379,7 @@ contract("CawProfileMinter — ZAP (pay-with-ETH) flows", function(accounts) {
 
       await minter.mintAndDepositAndQuickSignZap(
         l2ClientId, 'zapqsname', swapEth, minCawOut.toString(),
-        sessionKey, expiry, spendLimit,
+        sessionKey, expiry, spendLimit, 0, // perActionTipRate
         l2, 0,
         { from: owner, value: totalValue.toString() }
       );
@@ -414,7 +414,7 @@ contract("CawProfileMinter — ZAP (pay-with-ETH) flows", function(accounts) {
 
       await minter.mintAndDepositAndQuickSignZap(
         l1ClientId, 'zapqstwoa', swapEth, minCawOut.toString(),
-        sessionKey, expiry, spendLimit,
+        sessionKey, expiry, spendLimit, 0, // perActionTipRate
         l1, 0,
         { from: owner, value: totalValue.toString() }
       );
@@ -440,7 +440,7 @@ contract("CawProfileMinter — ZAP (pay-with-ETH) flows", function(accounts) {
       try {
         await minter.mintAndDepositAndQuickSignZap(
           l2ClientId, 'zapqs3', swapEth, '0',
-          '0x0000000000000000000000000000000000000000', 0, 0,
+          '0x0000000000000000000000000000000000000000', 0, 0, 0, // perActionTipRate
           l2, 0,
           { from: owner, value: totalValue.toString() }
         );

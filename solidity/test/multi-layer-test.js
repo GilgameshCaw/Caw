@@ -669,8 +669,10 @@ contract('CawProfiles', function(accounts, x) {
     var u1 = await cawProfiles.usernames(0);
     expect(u1).to.equal(name);
 
-    var nft = await cawProfiles.token(1);
-    console.log("First token: ", nft);
+    // `token(uint32)` view was removed from CawProfile to fit under the
+    // EIP-170 cap. Reconstruct the same shape from primitives for logging.
+    var nftOwner = await cawProfiles.ownerOf(1);
+    console.log("First token: ", { tokenId: 1, username: u1, owner: nftOwner });
 
 
     try {
@@ -979,10 +981,14 @@ contract('CawProfiles', function(accounts, x) {
     truffleAssert.eventEmitted(result.tx, 'ActionsProcessed')
 
     console.log("checking tokens");
-    var tokens = await cawProfiles.tokens(accounts[2]);
-    console.log("TOKENS:", tokens);
-
-    tokenIds = tokens.map((token) => token.tokenId)
+    // `tokens(address)` view was removed from CawProfile; reconstruct the
+    // tokenId list via the standard ERC-721 enumerable interface.
+    var balance = Number(await cawProfiles.balanceOf(accounts[2]));
+    tokenIds = [];
+    for (var ti = 0; ti < balance; ti++) {
+      tokenIds.push(Number(await cawProfiles.tokenOfOwnerByIndex(accounts[2], ti)));
+    }
+    console.log("TOKEN IDs:", tokenIds);
     console.log("checking tokens on L2", tokenIds);
     var tokens = await cawProfilesL2.getTokens(tokenIds);
     console.log("TOKENS:", tokens);
@@ -2805,6 +2811,7 @@ contract("CawProfileMinter - Bundled Quick Sign", function(accounts) {
     var owner = accounts[1];
     var sessionKey = accounts[5];
     var spendLimit = web3.utils.toWei('5000000', 'ether'); // 5M CAW
+    var perActionTipRate = 1000; // 1000 CAW per session-signed action
     var expiry = await futureExpiry(30 * 24 * 60 * 60); // 30d
 
     var depositAmount = web3.utils.toWei('100000', 'ether');
@@ -2812,7 +2819,7 @@ contract("CawProfileMinter - Bundled Quick Sign", function(accounts) {
 
     await localMinter.mintAndDepositAndQuickSign(
       l2ClientId, 'qsdep1', depositAmount, l2, 0,
-      sessionKey, expiry, spendLimit,
+      sessionKey, expiry, spendLimit, perActionTipRate,
       { from: owner, value: (BigInt(quote.nativeFee)).toString() }
     );
 
@@ -2829,6 +2836,7 @@ contract("CawProfileMinter - Bundled Quick Sign", function(accounts) {
     expect(stored.expiry.toString()).to.equal(expiry.toString());
     expect(stored.scopeBitmap.toString()).to.equal('191'); // 0xBF
     expect(stored.spendLimit.toString()).to.equal(spendLimit.toString());
+    expect(stored.perActionTipRate.toString()).to.equal(perActionTipRate.toString());
 
     console.log("mintAndDepositAndQuickSign (LZ) test passed");
   });
@@ -2868,7 +2876,7 @@ contract("CawProfileMinter - Bundled Quick Sign", function(accounts) {
 
     await localMinter.mintAndDepositAndQuickSign(
       l1ClientId, 'bypassqs1', depositAmount, l1, 0,
-      sessionKey, expiry, spendLimit,
+      sessionKey, expiry, spendLimit, 0, // perActionTipRate
       { from: owner, value: (BigInt(quote.nativeFee)).toString() }
     );
 
@@ -2897,7 +2905,7 @@ contract("CawProfileMinter - Bundled Quick Sign", function(accounts) {
 
     await localMinter.mintAndAuthAndQuickSign(
       l2ClientId, 'qsauth1', l2, 0,
-      sessionKey, expiry, spendLimit,
+      sessionKey, expiry, spendLimit, 0, // perActionTipRate
       { from: owner, value: (BigInt(quote.nativeFee)).toString() }
     );
 
@@ -2927,7 +2935,7 @@ contract("CawProfileMinter - Bundled Quick Sign", function(accounts) {
 
     await localMinter.mintAndAuthAndQuickSign(
       l1ClientId, 'qsauth2', l1, 0,
-      sessionKey, expiry, spendLimit,
+      sessionKey, expiry, spendLimit, 0, // perActionTipRate
       { from: owner, value: (BigInt(quote.nativeFee)).toString() }
     );
 
@@ -2980,7 +2988,7 @@ contract("CawProfileMinter - Bundled Quick Sign", function(accounts) {
 
     await localMinter.mintAndDepositAndQuickSign(
       l2ClientId, 'qsexp1', depositAmount, l2, 0,
-      sessionKey, pastExpiry, web3.utils.toWei('1000', 'ether'),
+      sessionKey, pastExpiry, web3.utils.toWei('1000', 'ether'), 0, // perActionTipRate
       { from: owner, value: (BigInt(quote.nativeFee)).toString() }
     );
 
@@ -3004,7 +3012,7 @@ contract("CawProfileMinter - Bundled Quick Sign", function(accounts) {
     await expectRevert(
       localMinter.mintAndAuthAndQuickSign(
         l1ClientId, 'qsexp2', l1, 0,
-        sessionKey, pastExpiry, web3.utils.toWei('1000', 'ether'),
+        sessionKey, pastExpiry, web3.utils.toWei('1000', 'ether'), 0, // perActionTipRate
         { from: accounts[1], value: (BigInt(quote.nativeFee)).toString() }
       ),
       "Session already expired"
@@ -3024,7 +3032,7 @@ contract("CawProfileMinter - Bundled Quick Sign", function(accounts) {
       localMinter.mintAndDepositAndQuickSign(
         l2ClientId, 'qszero', depositAmount, l2, 0,
         '0x0000000000000000000000000000000000000000',
-        farFutureExpiry, web3.utils.toWei('1000', 'ether'),
+        farFutureExpiry, web3.utils.toWei('1000', 'ether'), 0, // perActionTipRate
         { from: accounts[1], value: (BigInt(quote.nativeFee)).toString() }
       ),
       "Zero session key"
@@ -3048,7 +3056,7 @@ contract("CawProfileMinter - Bundled Quick Sign", function(accounts) {
 
     await localMinter.mintAndDepositAndQuickSign(
       l2ClientId, 'qspost1', depositAmount, l2, 0,
-      sessionKey, expiry, spendLimit,
+      sessionKey, expiry, spendLimit, 0, // perActionTipRate
       { from: owner, value: (BigInt(quote.nativeFee)).toString() }
     );
 
