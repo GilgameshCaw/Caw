@@ -138,8 +138,24 @@ const BugReportsAdmin: React.FC = () => {
 
                 {/* User info */}
                 {report.username && (
-                  <div className={`text-xs mt-2 ${isDark ? 'text-white/30' : 'text-gray-400'}`}>
-                    @{report.username} {report.stakedAmount && `(staked: ${report.stakedAmount})`}
+                  <div className={`text-xs mt-2 flex items-center gap-2 ${isDark ? 'text-white/30' : 'text-gray-400'}`}>
+                    <span>
+                      @{report.username} {report.stakedAmount && `(staked: ${report.stakedAmount})`}
+                    </span>
+                    {/* New-tab DM so the admin can follow up without
+                        losing their place in the bug list. */}
+                    <a
+                      href={`/messages/${report.username}`}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className={`px-2 py-0.5 rounded-full text-[10px] font-semibold transition-colors ${
+                        isDark
+                          ? 'bg-white/10 text-white/70 hover:bg-white/20'
+                          : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
+                      }`}
+                    >
+                      DM
+                    </a>
                   </div>
                 )}
 
