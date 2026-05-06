@@ -190,6 +190,21 @@ export function createApp() {
     message: { error: 'Too many requests, try again later' }
   }))
 
+  // Cross-node DM relay: per-source-IP rate limit. Outer ring against a
+  // misbehaving peer node hammering us regardless of which user wallets
+  // it claims to be relaying for. The per-(senderId, recipientId)
+  // bucket is enforced by the source instance on its send path; this
+  // is the receiver's coarse safety net. 1000 req/min covers a busy
+  // mirror; bump via env if the threshold becomes real-world tight.
+  const dmRelayMax = Number(process.env.DM_RELAY_RATE_LIMIT_PER_MIN) || 1000
+  app.use('/api/dm/relay', rateLimit({
+    windowMs: 60 * 1000,
+    max: dmRelayMax,
+    standardHeaders: true,
+    legacyHeaders: false,
+    message: { error: 'Too many relay requests, slow down' }
+  }))
+
   // Health check — used by the watchdog's HTTP probe
   app.get('/api/health', (_req, res) => { res.json({ status: 'ok' }) })
 

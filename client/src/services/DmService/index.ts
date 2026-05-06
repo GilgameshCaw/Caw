@@ -115,8 +115,14 @@ export class DmService {
     encryptedPayload: string
     contentType?: string
     replyToMessageId?: string
+    /**
+     * Cross-instance relay dedup key. Set by the API route so the local
+     * row and any relay echoes share an id; the partial unique index on
+     * Message.relayId catches a peer fanning the message back to us.
+     */
+    relayId?: string
   }) {
-    const { conversationId, senderId, encryptedPayload, contentType = 'text', replyToMessageId } = params
+    const { conversationId, senderId, encryptedPayload, contentType = 'text', replyToMessageId, relayId } = params
 
     // Verify sender is a participant
     const participant = await prisma.conversationParticipant.findUnique({
@@ -144,6 +150,7 @@ export class DmService {
         encryptedPayload,
         contentType,
         replyToMessageId: replyToMessageId || null,
+        relayId: relayId || null,
       },
       include: {
         sender: {

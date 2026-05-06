@@ -4,6 +4,9 @@ import dmService from '../../services/DmService'
 import dmWebSocketService from '../../services/DmService/websocket'
 import { requireAuth } from '../middleware/auth'
 import { isBlockedEitherDirection, getBlockedUserIds } from '../shared/blockUtils'
+import { relayDmToPeers } from '../../services/DmRelayService'
+import { checkDmRate } from '../dmRateLimit'
+import crypto from 'crypto'
 
 const router = Router()
 
@@ -291,16 +294,64 @@ router.post('/messages',
         console.log(`[DM] No peer found in conversation — skipping privacy check`)
       }
 
+      // Per-(sender, recipient) anti-spam bucket. Applies on the
+      // allowed-to-send path only — shadow-blocked sends short-circuit
+      // above and don't consume budget. Cold senders (no consent
+      // baseline) get 10/h; warm (replied-to / mutual-follow) get 100/h.
+      // Failure mode is fail-open if Redis is unreachable; the
+      // per-source-IP cap on /api/dm/relay still applies on the
+      // receiver side.
+      if (peer) {
+        const rate = await checkDmRate(Number(senderId), peer.userId)
+        if (!rate.allowed) {
+          console.log(`[DM] Rate limit hit: ${senderId} → ${peer.userId} (warm=${rate.warm}, limit=${rate.limit})`)
+          res.set('Retry-After', String(rate.resetSeconds))
+          return res.status(429).json({
+            error: 'DM_RATE_LIMIT',
+            limit: rate.limit,
+            warm: rate.warm,
+            resetSeconds: rate.resetSeconds,
+            message: rate.warm
+              ? `You're sending DMs too quickly. Try again in ${Math.ceil(rate.resetSeconds / 60)} minutes.`
+              : `New conversations are rate-limited to ${rate.limit}/hour. Reach out via a public reply if it's urgent.`,
+          })
+        }
+      }
+
+      // Generate a relayId up front so the same id can be used both for
+      // the local row AND the cross-instance relay. If the relay loops
+      // back (peer fans out, our /api/dm/relay sees the same id), the
+      // unique partial index dedupes cleanly.
+      const relayId = crypto.randomUUID()
+
       const message = await dmService.sendMessage({
         conversationId,
         senderId: Number(senderId),
         encryptedPayload,
         contentType,
         replyToMessageId,
+        relayId,
       })
 
       // Broadcast via WebSocket
       dmWebSocketService.broadcastMessage(message)
+
+      // Cross-instance relay. Fire-and-forget; relay failures must not
+      // block the user's send — the message is already persisted locally
+      // and the WebSocket already pushed it to anyone connected here.
+      // Skipped silently on solo nodes (no peers, or no validator key).
+      if (peer) {
+        relayDmToPeers({
+          encryptedPayload,
+          senderId: Number(senderId),
+          recipientId: peer.userId,
+          conversationId,
+          contentType: contentType || 'text',
+          relayId,
+        }).catch(err => {
+          console.warn('[DM] relay failed (continuing):', err?.message || err)
+        })
+      }
 
       return res.json(message)
     } catch (error: any) {
