@@ -270,6 +270,11 @@ contract CawActions is Ownable {
     }
     c.implicitTipOwed += _applyAction(validatorId, action, ba, packedActions[actionStart:nextPos], c);
     c.actionsSeen += 1;
+
+    // Flush single-sig group's sessionSpent. Same shape as the batch-sig
+    // flush in _applyBatch — keeping them parallel even for groupSize==1
+    // (where there's nothing to amortize) avoids a special case.
+    if (ba.groupSpentLoaded) sessionSpent[ba.owner][ba.signer] = ba.groupSpent;
   }
 
   /// @dev Batch-sig path: one signature over ACTIONBATCH_TYPEHASH covering
@@ -359,6 +364,12 @@ contract CawActions is Ownable {
     address owner;             // cawProfile.ownerOf(senderId), only when isSessionKey
     uint256 spendLimit;        // session.spendLimit, only when isSessionKey
     uint64  perActionTipRate;  // implicit validator tip per action, only when isSessionKey
+    /// In-memory accumulator for sessionSpent[owner][signer] over the lifetime
+    /// of a sig group. Lazy-loaded from storage on the first cost-bearing
+    /// session action; flushed once at group end (one SSTORE per group instead
+    /// of one per action). `_groupSpentLoaded` is the lazy-load latch.
+    uint256 groupSpent;
+    bool    groupSpentLoaded;
   }
 
   /// @dev Apply each action in a verified batch group, doing the per-action
@@ -385,6 +396,11 @@ contract CawActions is Ownable {
       unchecked { ++i; }
     }
     c.implicitTipOwed += owed;
+
+    // Flush per-group sessionSpent. (owner, signer) is constant within a
+    // sig group, so one SSTORE replaces N. Lazy-loaded inside _applyAction
+    // on the first cost-bearing action.
+    if (ba.groupSpentLoaded) sessionSpent[ba.owner][ba.signer] = ba.groupSpent;
   }
 
   /// @dev Single-client invariant + withdraw bookkeeping per action.
@@ -666,6 +682,7 @@ contract CawActions is Ownable {
       clientCurrentHash[action.clientId] = localCursor.clientHash;
       clientActionCount[action.clientId] = localCursor.clientActionCount;
     }
+    if (ba.groupSpentLoaded) sessionSpent[ba.owner][ba.signer] = ba.groupSpent;
     if (owed > 0) {
       cawProfile.addToBalance(validatorId, owed * 10**18);
     }
@@ -719,18 +736,22 @@ contract CawActions is Ownable {
     (wholeTokens, implicitTipOwed) = _distributeAmountsMem(validatorId, action, ba);
     actionCost += wholeTokens;
 
-    // Session spend limit. Use cached (owner, spendLimit) when the caller
-    // already resolved them (batch path); otherwise fetch lazily.
+    // Session spend limit. Accumulated in BatchAuth.groupSpent across the
+    // sig group and flushed to storage once at group end — saves N-1 SSTOREs
+    // per group. Lazy-load on first cost-bearing action: lookup owner if
+    // not yet cached, then SLOAD sessionSpent[owner][signer] once.
     if (ba.isSessionKey && actionCost > 0) {
-      address owner = ba.owner;
-      uint256 spendLimit = ba.spendLimit;
-      if (owner == address(0)) {
-        owner = cawProfile.ownerOf(action.senderId);
-        (,, spendLimit,) = cawProfile.sessions(owner, ba.signer);
+      if (ba.owner == address(0)) {
+        ba.owner = cawProfile.ownerOf(action.senderId);
+        (,, ba.spendLimit, ba.perActionTipRate) = cawProfile.sessions(ba.owner, ba.signer);
       }
-      if (spendLimit > 0) {
-        sessionSpent[owner][ba.signer] += actionCost;
-        require(sessionSpent[owner][ba.signer] <= spendLimit, "Session spend limit exceeded");
+      if (ba.spendLimit > 0) {
+        if (!ba.groupSpentLoaded) {
+          ba.groupSpent = sessionSpent[ba.owner][ba.signer];
+          ba.groupSpentLoaded = true;
+        }
+        ba.groupSpent += actionCost;
+        require(ba.groupSpent <= ba.spendLimit, "Session spend limit exceeded");
       }
     }
 
