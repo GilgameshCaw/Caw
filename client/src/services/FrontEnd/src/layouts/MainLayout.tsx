@@ -258,8 +258,8 @@ const MainLayout = ({ children, hideSidebars: hideSidebarsProp }: MainLayoutProp
         </div>
       )}
 
-      {/* Mobile bottom nav */}
-      {!hideSidebars && !isCaptive && (
+      {/* Mobile bottom nav — hidden inside an open conversation (/messages/<id>) so it doesn't cover the chat input. List view (/messages) keeps it. */}
+      {!hideSidebars && !isCaptive && !location.pathname.startsWith('/messages/') && (
         <nav className={`md:hidden fixed bottom-0 left-0 right-0 z-[55] flex items-center justify-around h-14 pb-[env(safe-area-inset-bottom)] [height:calc(theme(height.14)+env(safe-area-inset-bottom))] border-t transition-all duration-200 ${
           hasInlineDraft ? 'opacity-0 translate-y-full pointer-events-none' : isScrolling ? 'opacity-30' : 'opacity-100'
         } ${
