@@ -19,6 +19,17 @@ export interface ResolvedUsers {
   receiverId?: number
 }
 
+// Our scoped clientId. Resolved once at module load — config never changes
+// at runtime. RawEvent ingest persists every client's actions (multiplier
+// is global, cross-client likes/follows/tips on caws we already have need
+// to land too), but new content (CAW + RECAW = new Caw rows) is gated to
+// our client so the local feed stays scoped.
+const OUR_CLIENT_ID = (() => {
+  const raw = process.env.CLIENT_ID
+  const n = raw === undefined || raw === null ? NaN : Number(raw)
+  return Number.isFinite(n) && n > 0 ? n : null
+})()
+
 /**
  * Resolve every user that the inside-tx code path might need BEFORE the
  * interactive transaction opens. Prevents findOrCreateUser from eating
@@ -91,13 +102,24 @@ export async function processDomainEffects(
     }
   }
 
+  // Cross-client gate: CAW + RECAW create new content rows in our DB,
+  // and we want our local feed to only contain content posted via THIS
+  // client. Other action types (likes, follows, tips, etc.) operate on
+  // existing targets and need to land regardless of submitting client —
+  // a like from a user authed to both clients should bump our like-count
+  // either way; if the target isn't ours, the natural CawNotFoundError
+  // path skips quietly.
+  const isOurClient = OUR_CLIENT_ID === null || Number(rawAction.clientId) === OUR_CLIENT_ID
+
   // Delegate to specific handlers based on action type
   switch (action.actionType) {
     case 'CAW':
+      if (!isOurClient) return
       await handleCawAction(tx, action, rawAction, authorId, parentCawId)
       break
 
     case 'RECAW':
+      if (!isOurClient) return
       await handleRecawAction(tx, action, rawAction, parentCawId)
       break
 

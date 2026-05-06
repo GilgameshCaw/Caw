@@ -130,14 +130,18 @@ export default async function listenForRawEvents(
 
       // Build the full batch in one pass. parentHash must chain sequentially,
       // but the inserts themselves don't need to.
+      //
+      // Cross-client ingest: we persist EVERY client's actions, not just our
+      // own. RewardMultiplier inflation is a global on-chain fact (any client
+      // calling CawActions ticks it up for all stakers), so the activity
+      // chart needs the full action stream to attribute staking rewards
+      // correctly. Cross-client likes/follows/tips on caws we have indexed
+      // also need to land in our domain rows. The CAW/RECAW domain handlers
+      // gate on clientId so we don't pollute our feed with other clients'
+      // posts — see domainProcessor.ts.
       const batch: RawEventInput[] = []
       for (let i = 0; i < actions.length; i++) {
         const a = actions[i]
-        // Skip actions for other clients — this instance is scoped to
-        // config.clientId. Do this BEFORE hashNext so the parentHash chain
-        // contains only actions we actually store. Mixing in other clients'
-        // actions would make the chain unverifiable on reindex.
-        if (Number(a.clientId) !== config.clientId) continue
         const action = {
           actionType:      a.actionType,
           senderId:        a.senderId,
@@ -243,8 +247,7 @@ export default async function listenForRawEvents(
           const batch: RawEventInput[] = []
           for (let i = 0; i < wsActions.length; i++) {
             const a = wsActions[i]
-            // Scope to our client — see processEvents() for rationale.
-            if (Number(a.clientId) !== config.clientId) continue
+            // Cross-client ingest — see processEvents() for rationale.
             const action = {
               actionType:      a.actionType,
               senderId:        a.senderId,
