@@ -5,6 +5,7 @@ import tailwindcss from "@tailwindcss/vite";
 import react from "@vitejs/plugin-react-swc";
 import svgr from "vite-plugin-svgr";
 import commonjs from '@rollup/plugin-commonjs';
+import { VitePWA } from 'vite-plugin-pwa';
 
 import tsconfigPaths from "vite-tsconfig-paths";
 
@@ -135,6 +136,55 @@ export default defineConfig({
     react(),
     svgr(),
     tsconfigPaths(),
+    // PWA: makes the app installable ("Add to Home Screen" on Chrome
+    // Android + desktop, plus richer iOS Safari install support).
+    //
+    // Chrome's install prompt requires (a) a valid web manifest and (b)
+    // a registered service worker with a fetch handler. The manifest at
+    // public/site.webmanifest stays authoritative — `manifest: false`
+    // tells vite-plugin-pwa not to emit its own competing one or
+    // re-link it from index.html.
+    //
+    // registerType: 'autoUpdate' = new SW takes control on next page
+    // load instead of stalling on a "waiting" state. Combined with
+    // skipWaiting + clientsClaim, this avoids the classic PWA
+    // problem where every deploy strands users on the previous bundle
+    // until they manually close every tab.
+    //
+    // navigateFallback: SPA shell fallback for offline navigation.
+    // navigateFallbackDenylist excludes API + uploads + the OG/short-URL
+    // routes so requests for those don't get the index.html shell back.
+    VitePWA({
+      registerType: 'autoUpdate',
+      injectRegister: 'auto',
+      manifest: false,
+      includeAssets: [
+        'favicon.ico',
+        'favicon/*.png',
+        'apple-touch-icon.png',
+        'site.webmanifest',
+      ],
+      workbox: {
+        globPatterns: ['**/*.{js,css,html,svg,png,ico,webp,woff2}'],
+        navigateFallback: '/index.html',
+        navigateFallbackDenylist: [
+          /^\/api\//,
+          /^\/uploads\//,
+          /^\/s\//,
+        ],
+        cleanupOutdatedCaches: true,
+        clientsClaim: true,
+        skipWaiting: true,
+        // Bump for large vendor chunks (rainbowkit ~1.8MB) so they get
+        // precached instead of skipped with a "size exceeded" warning.
+        maximumFileSizeToCacheInBytes: 5 * 1024 * 1024,
+      },
+      devOptions: {
+        // Don't register the SW in dev — Vite HMR + workbox precache
+        // fight each other and serve stale assets across reloads.
+        enabled: false,
+      },
+    }),
   ],
   resolve: {
     alias: [
