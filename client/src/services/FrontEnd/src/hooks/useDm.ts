@@ -92,12 +92,19 @@ export function useDmClient(tokenId?: number, username?: string) {
 
   // Check if already initialized on mount or when tokenId changes
   useEffect(() => {
-    // Reset state for new account
+    // Reset state for new account. Critical: also clear conversationsLoaded
+    // / conversationsLoading so the inbox loader gate trips for the new
+    // profile. Without this, conversationsLoaded carries over from the
+    // previous profile, conversations is cleared to [], and the UI
+    // briefly renders "No conversations yet" while the new profile's
+    // inbox is in flight.
     checkedTokenIdRef.current = tokenId
     setIsInitialized(false)
     setNeedsKeyDerivation(false)
     setIsLoading(true)
     setConversations([])
+    setConversationsLoaded(false)
+    setConversationsLoading(false)
 
     if (!tokenId) {
       setIsLoading(false)
