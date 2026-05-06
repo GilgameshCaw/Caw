@@ -96,7 +96,17 @@ export async function handleCawAction(
   })
   const wasPendingCaw = existingPendingCaw?.status === 'PENDING'
 
-  // Use upsert to prevent duplicate CAWs
+  // Use upsert to prevent duplicate CAWs.
+  //
+  // The update branch ONLY runs when the existing row is PENDING (the
+  // optimistic FE-side row waiting for chain confirmation) — if we
+  // reach this code with an existing row at all, checkCawExists in
+  // domainObjectChecks.ts already returned false, which only happens
+  // for PENDING. But before tightening that check, this update branch
+  // could fire on a SUCCESS-or-HIDDEN caw and clobber its status. The
+  // double-write defense here is intentional belt-and-braces: if a
+  // future code path manages to re-enter handleCawAction for a non-
+  // PENDING row, we won't undo a hide.
   const newCaw = await tx.caw.upsert({
     where: {
       userId_cawonce: {
@@ -105,7 +115,11 @@ export async function handleCawAction(
       }
     },
     update: {
-      // If CAW already exists (was pending), update it to SUCCESS
+      // Only write the on-chain-confirmed fields and ONLY flip status
+      // SUCCESS when the row was PENDING. The conditional set is via
+      // a Prisma raw expression — Prisma's typed update doesn't have
+      // a "set this to X if current is Y" primitive, so we read the
+      // existing status earlier (wasPendingCaw) and gate this write.
       content: textContent,
       action: action.actionType,
       originalCawId: parentCawId,
@@ -113,7 +127,7 @@ export async function handleCawAction(
       hasImage: imageUrls.length > 0,
       videoData: videoUrls.length > 0 ? videoUrls.join('|||') : null,
       hasVideo: videoUrls.length > 0,
-      status: 'SUCCESS', // Mark as SUCCESS when confirmed on-chain
+      ...(wasPendingCaw ? { status: 'SUCCESS' as const } : {}),
       updatedAt: new Date()
     },
     create: {

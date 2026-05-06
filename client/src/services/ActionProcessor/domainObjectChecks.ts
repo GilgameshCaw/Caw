@@ -42,8 +42,20 @@ export async function checkDomainObjectExists(
 }
 
 /**
- * Check if a caw already exists AND has been fully processed
- * Returns false for PENDING caws so ActionProcessor still handles them
+ * Check if a caw already exists AND has been fully processed.
+ *
+ * "Fully processed" means any terminal status — SUCCESS, HIDDEN, or
+ * FAILED — NOT just SUCCESS. Earlier this gated only on SUCCESS, which
+ * caused a feedback loop: when a user hides their caw (status flips
+ * SUCCESS → HIDDEN), the next ActionProcessor poll saw "not SUCCESS"
+ * and treated the action as un-processed — re-running handleCawAction,
+ * which clobbered HIDDEN back to SUCCESS in its upsert.update branch,
+ * which the next handleHideAction flipped back to HIDDEN, and so on.
+ * 59 mention-spam notifications fired across 59 minutes for a single
+ * already-hidden caw before we noticed.
+ *
+ * PENDING is the only status that should re-enter — that's the
+ * optimistic FE-side row waiting for chain confirmation.
  */
 async function checkCawExists(
   tx: PrismaTransactionClient,
@@ -57,8 +69,10 @@ async function checkCawExists(
       action: 'CAW'
     }
   })
-  // Only skip if caw exists AND is already SUCCESS (fully processed)
-  return existingCaw?.status === 'SUCCESS'
+  if (!existingCaw) return false
+  // Any terminal status counts as "already processed" — only PENDING
+  // re-enters domain processing.
+  return existingCaw.status !== 'PENDING'
 }
 
 /**

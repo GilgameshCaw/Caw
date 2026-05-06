@@ -99,13 +99,37 @@ export class NotificationService {
       }
     }
 
-    // Create notifications for each mentioned user
-    const notifications = filteredUsers.map(user => ({
-      userId: user.tokenId,
-      actorId,
-      type: NotificationType.MENTION,
-      cawId
-    }))
+    // Idempotency dedupe via groupKey. If this function gets called
+    // again for the same caw (action reprocess loop, retry path,
+    // cross-mirror relay), each mentioned user already has a row
+    // with this groupKey, so we skip — no notification spam. Same
+    // pattern as MarketplaceIndexerService SALE_SOLD/SALE_BOUGHT
+    // (commit 82831d6).
+    //
+    // Pre-fix: a single hidden-caw reprocess loop fired 59 mention
+    // notifications in 59 minutes for the same caw on test.caw.social
+    // before the underlying status-flip-loop was caught.
+    const groupKey = `mention_${cawId}`
+    if (filteredUsers.length === 0) return
+
+    const existing = await client.notification.findMany({
+      where: {
+        type: NotificationType.MENTION,
+        groupKey,
+        userId: { in: filteredUsers.map(u => u.tokenId) },
+      },
+      select: { userId: true },
+    })
+    const alreadyNotified = new Set(existing.map(n => n.userId))
+    const notifications = filteredUsers
+      .filter(user => !alreadyNotified.has(user.tokenId))
+      .map(user => ({
+        userId: user.tokenId,
+        actorId,
+        type: NotificationType.MENTION,
+        cawId,
+        groupKey,
+      }))
 
     if (notifications.length > 0) {
       await client.notification.createMany({
