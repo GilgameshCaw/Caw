@@ -3,20 +3,81 @@
 // Cross-instance DM relay endpoint. Other instances POST encrypted DM
 // payloads here so messages reach users regardless of which instance
 // they're connected to.
+//
+// Trust model: server-to-server with validator-key signatures. The
+// source instance's home node signs the relay envelope with its
+// VALIDATOR_PRIVATE_KEY (same key it uses for on-chain submissions);
+// receivers verify against the source's registered validatorAddress
+// from CawClientManager via instanceRegistryService.getPeers(). This
+// authenticates which node operator emitted a relay — DM body
+// confidentiality is independent of the relay layer (AES-GCM
+// auth-tag rejection means a malicious relayer can never put words
+// in a user's mouth, only surface phantom conversation entries).
+//
+// Spam controls:
+//   - Per-source-IP rate limit mounted at the route level (server.ts).
+//   - Per-(senderId, recipientId) bucket applied in dm.ts on the SEND
+//     path; the receiver here trusts that the source instance enforced
+//     it. A misbehaving source surfaces as repeated rejections / 429s
+//     and gets blacklisted at the host-trust layer (future work).
 
 import { Router } from 'express'
-import { verifyMessage } from 'ethers'
+import { secp256k1 } from '@noble/curves/secp256k1'
+import { sha256 } from '@noble/hashes/sha256'
 import dmWebSocketService from '../../services/DmService/websocket'
 import { prisma } from '../../prismaClient'
+import { getPeers } from '../../services/InstanceRegistryService'
 
 const router = Router()
 
+const CLIENT_ID = (() => {
+  const raw = process.env.CLIENT_ID
+  const n = raw ? Number(raw) : NaN
+  if (!Number.isFinite(n) || n <= 0) {
+    throw new Error('dm-relay: CLIENT_ID is required (set it in client/.env)')
+  }
+  return n
+})()
+
 /**
- * POST /api/dm/relay
- *
- * Accept a relayed DM from another instance.
- * The message is already E2E encrypted — we just store it and notify via WebSocket.
+ * Canonical byte form of the relay envelope. Both signing (DmRelayService
+ * on the source) and verification (this route) compute the same SHA-256
+ * over this exact serialization. Field order is fixed; JSON.stringify
+ * with the exact key order below produces a stable canonical bytes.
  */
+export interface RelayEnvelope {
+  encryptedPayload: string
+  senderId: number
+  recipientId: number
+  conversationId: string
+  contentType: string
+  timestamp: number
+  relayId: string
+  sourceInstanceId: number
+}
+
+export function canonicalizeEnvelope(env: RelayEnvelope): string {
+  return JSON.stringify({
+    encryptedPayload: env.encryptedPayload,
+    senderId: env.senderId,
+    recipientId: env.recipientId,
+    conversationId: env.conversationId,
+    contentType: env.contentType,
+    timestamp: env.timestamp,
+    relayId: env.relayId,
+    sourceInstanceId: env.sourceInstanceId,
+  })
+}
+
+function hexToBytes(hex: string): Uint8Array {
+  const clean = hex.startsWith('0x') ? hex.slice(2) : hex
+  const out = new Uint8Array(clean.length / 2)
+  for (let i = 0; i < out.length; i++) {
+    out[i] = parseInt(clean.substr(i * 2, 2), 16)
+  }
+  return out
+}
+
 router.post('/', async (req, res) => {
   try {
     const {
@@ -26,42 +87,85 @@ router.post('/', async (req, res) => {
       conversationId,
       contentType = 'text',
       timestamp,
+      relayId,
+      sourceInstanceId,
       signature,
-      senderAddress,
     } = req.body
 
-    // Basic validation
-    if (!encryptedPayload || !senderId || !recipientId || !conversationId || !timestamp || !signature || !senderAddress) {
+    if (
+      !encryptedPayload || senderId == null || recipientId == null ||
+      !conversationId || !timestamp || !relayId || sourceInstanceId == null || !signature
+    ) {
       return res.status(400).json({ error: 'Missing required fields' })
     }
 
-    // Verify the message isn't too old (5 minute window to prevent replay)
-    const age = Date.now() - timestamp
+    // Replay window. ±5min covers clock skew between operators; -1min
+    // tolerance also accepts envelopes timestamped slightly in the
+    // future (NTP drift) without going crazy.
+    const age = Date.now() - Number(timestamp)
     if (age > 5 * 60 * 1000 || age < -60 * 1000) {
       return res.status(400).json({ error: 'Message timestamp out of range' })
     }
 
-    // Verify signature to prevent spam injection
-    const message = `dm-relay:${senderId}:${recipientId}:${timestamp}`
-    try {
-      const recovered = verifyMessage(message, signature)
-      if (recovered.toLowerCase() !== senderAddress.toLowerCase()) {
-        return res.status(403).json({ error: 'Invalid signature' })
-      }
-    } catch {
-      return res.status(403).json({ error: 'Signature verification failed' })
-    }
-
-    // Validate deterministic conversation ID format
+    // Deterministic conversationId. Both sides compute it the same way,
+    // so a mismatch means the source got the senders/recipients wrong
+    // (or is trying to inject into the wrong conversation).
     const minId = Math.min(Number(senderId), Number(recipientId))
     const maxId = Math.max(Number(senderId), Number(recipientId))
     const expectedConvId = `dm:${minId}:${maxId}`
-
     if (conversationId !== expectedConvId) {
       return res.status(400).json({ error: 'Invalid conversation ID format' })
     }
 
-    // Check if recipient has blocked the sender
+    // Look up the source instance's registered validator address from
+    // the on-chain registry cache. We require an active registration —
+    // a deactivated instance loses relay privileges immediately.
+    const peers = getPeers(CLIENT_ID)
+    const source = peers.find(p => p.instanceId === Number(sourceInstanceId))
+    if (!source || !source.active) {
+      return res.status(403).json({ error: 'Unknown or inactive source instance' })
+    }
+
+    // Verify the secp256k1 signature against the source's validator
+    // address. The address is keccak256(pubkey)[12:] so we can't directly
+    // verify against an address with secp256k1.verify — we instead
+    // ecrecover-style derive the signing pubkey and compare. ethers'
+    // SigningKey.recoverPublicKey works against a hashed message; we
+    // sign and verify a SHA-256 of the canonical envelope.
+    const envelope: RelayEnvelope = {
+      encryptedPayload, senderId: Number(senderId), recipientId: Number(recipientId),
+      conversationId, contentType, timestamp: Number(timestamp),
+      relayId, sourceInstanceId: Number(sourceInstanceId),
+    }
+    const envelopeHash = sha256(new TextEncoder().encode(canonicalizeEnvelope(envelope)))
+
+    // Signature format: 65-byte hex (r || s || v). v is 0/1 for recovery.
+    const sigBytes = hexToBytes(signature)
+    if (sigBytes.length !== 65) {
+      return res.status(400).json({ error: 'Signature must be 65 bytes (r,s,v)' })
+    }
+    const r = sigBytes.slice(0, 32)
+    const s = sigBytes.slice(32, 64)
+    const v = sigBytes[64]
+    let recoveredAddr: string
+    try {
+      const sigObj = secp256k1.Signature.fromCompact(new Uint8Array([...r, ...s])).addRecoveryBit(v % 2)
+      const pubKey = sigObj.recoverPublicKey(envelopeHash).toRawBytes(false) // uncompressed (65 bytes)
+      // Address = keccak256(pubKey[1:])[12:]. Import keccak from ethers
+      // to avoid pulling another hash lib in.
+      const { keccak256 } = await import('ethers')
+      const addrBytes = hexToBytes(keccak256(pubKey.slice(1))).slice(-20)
+      recoveredAddr = '0x' + Array.from(addrBytes).map(b => b.toString(16).padStart(2, '0')).join('')
+    } catch (err: any) {
+      return res.status(403).json({ error: 'Signature verification failed', detail: err.message })
+    }
+    if (recoveredAddr.toLowerCase() !== source.validatorAddress.toLowerCase()) {
+      return res.status(403).json({ error: 'Signature does not match source instance validator' })
+    }
+
+    // Block check (either direction). If the recipient blocked the sender
+    // they shouldn't see the message; if the sender blocked the recipient
+    // we still drop it on this side since cross-block is a hard wall.
     const blocked = await prisma.block.findFirst({
       where: {
         OR: [
@@ -74,42 +178,67 @@ router.post('/', async (req, res) => {
       return res.status(403).json({ error: 'Blocked' })
     }
 
-    // Check recipient's DM privacy settings
+    // Privacy gate. EVERYONE accepts; FOLLOWERS / FOLLOWING only accept
+    // if the consent baseline is met. Once a conversation exists, the
+    // recipient already accepted (or replied), so privacy reduces to
+    // first-contact rules only.
     const recipientIdentity = await prisma.dmIdentity.findUnique({
       where: { userId: Number(recipientId) }
     })
-    if (recipientIdentity?.dmPrivacy && recipientIdentity.dmPrivacy !== 'EVERYONE') {
-      // Check if an existing conversation exists — if so, they've already accepted
-      const existingConv = await prisma.conversation.findUnique({
-        where: { id: conversationId }
-      })
-      if (!existingConv) {
-        // New conversation — check privacy rules
-        if (recipientIdentity.dmPrivacy === 'FOLLOWERS') {
-          // Recipient only accepts DMs from people they follow
-          const follows = await prisma.follow.findFirst({
-            where: { followerId: Number(recipientId), followingId: Number(senderId), action: 'FOLLOW' }
-          })
-          if (!follows) {
-            return res.status(403).json({ error: 'DM_PRIVACY', reason: 'FOLLOWERS' })
-          }
-        } else if (recipientIdentity.dmPrivacy === 'FOLLOWING') {
-          // Recipient only accepts DMs from their followers
-          const follower = await prisma.follow.findFirst({
-            where: { followerId: Number(senderId), followingId: Number(recipientId), action: 'FOLLOW' }
-          })
-          if (!follower) {
-            return res.status(403).json({ error: 'DM_PRIVACY', reason: 'FOLLOWING' })
-          }
-        }
+    const existingConv = await prisma.conversation.findUnique({
+      where: { id: conversationId }
+    })
+    const isFirstContact = !existingConv
+    if (recipientIdentity?.dmPrivacy && recipientIdentity.dmPrivacy !== 'EVERYONE' && isFirstContact) {
+      if (recipientIdentity.dmPrivacy === 'FOLLOWERS') {
+        const follows = await prisma.follow.findFirst({
+          where: { followerId: Number(recipientId), followingId: Number(senderId), action: 'FOLLOW' }
+        })
+        if (!follows) return res.status(403).json({ error: 'DM_PRIVACY', reason: 'FOLLOWERS' })
+      } else if (recipientIdentity.dmPrivacy === 'FOLLOWING') {
+        const follower = await prisma.follow.findFirst({
+          where: { followerId: Number(senderId), followingId: Number(recipientId), action: 'FOLLOW' }
+        })
+        if (!follower) return res.status(403).json({ error: 'DM_PRIVACY', reason: 'FOLLOWING' })
       }
     }
 
-    // Get or create conversation
-    let conversation = await prisma.conversation.findUnique({
-      where: { id: conversationId }
+    // Dedup. Message.relayId is partial-unique; the same envelope
+    // arriving twice (legitimate retry, or a malicious replay inside
+    // the 5-min window) hits the unique index and we 200-noop with
+    // the existing message id. The caller treats both the same way.
+    const existing = await prisma.message.findUnique({
+      where: { relayId },
+      select: { id: true },
     })
+    if (existing) {
+      return res.json({ status: 'duplicate', messageId: existing.id })
+    }
 
+    // Determine the recipient's inbox status for this conversation:
+    //   - First contact + sender doesn't follow recipient + recipient
+    //     doesn't follow sender → REQUEST. Lands in the Requests tab.
+    //   - Otherwise (existing conversation, or mutual-follow baseline) →
+    //     ACCEPTED. The send-side participant always gets ACCEPTED.
+    let recipientStatus: 'ACCEPTED' | 'REQUEST' = 'ACCEPTED'
+    if (isFirstContact) {
+      const [senderFollowsRecipient, recipientFollowsSender] = await Promise.all([
+        prisma.follow.findFirst({
+          where: { followerId: Number(senderId), followingId: Number(recipientId), action: 'FOLLOW' }
+        }),
+        prisma.follow.findFirst({
+          where: { followerId: Number(recipientId), followingId: Number(senderId), action: 'FOLLOW' }
+        }),
+      ])
+      if (!senderFollowsRecipient && !recipientFollowsSender) {
+        recipientStatus = 'REQUEST'
+      }
+    }
+
+    // Get-or-create the conversation. On first contact we set the
+    // recipient's participant.status per the rule above; the sender's
+    // is always ACCEPTED.
+    let conversation = existingConv
     if (!conversation) {
       conversation = await prisma.conversation.create({
         data: {
@@ -118,51 +247,65 @@ router.post('/', async (req, res) => {
           creatorId: Number(senderId),
           participants: {
             create: [
-              { userId: Number(senderId) },
-              { userId: Number(recipientId) },
+              { userId: Number(senderId), status: 'ACCEPTED' },
+              { userId: Number(recipientId), status: recipientStatus },
             ]
           }
         }
       })
+    } else {
+      // Existing conversation — make sure the sender is a participant.
+      // Idempotent upsert; status only set on insert.
+      await prisma.conversationParticipant.upsert({
+        where: { conversationId_userId: { conversationId, userId: Number(senderId) } },
+        create: { conversationId, userId: Number(senderId), status: 'ACCEPTED' },
+        update: {},
+      })
     }
 
-    // Ensure sender is a participant
-    await prisma.conversationParticipant.upsert({
-      where: { conversationId_userId: { conversationId, userId: Number(senderId) } },
-      create: { conversationId, userId: Number(senderId) },
-      update: {},
-    })
-
-    // Store the message
-    const messageRecord = await prisma.message.create({
-      data: {
-        conversationId,
-        senderId: Number(senderId),
-        encryptedPayload,
-        contentType,
-      },
-      include: {
-        sender: {
-          include: {
-            user: { select: { username: true, displayName: true, avatarUrl: true, defaultAvatarId: true, tokenId: true } }
+    // Write the message. relayId is the dedup key; on race (concurrent
+    // duplicate inbound) Postgres rejects with P2002, we catch and
+    // re-fetch.
+    let messageRecord
+    try {
+      messageRecord = await prisma.message.create({
+        data: {
+          conversationId,
+          senderId: Number(senderId),
+          encryptedPayload,
+          contentType,
+          relayId,
+        },
+        include: {
+          sender: {
+            include: {
+              user: { select: { username: true, displayName: true, avatarUrl: true, defaultAvatarId: true, tokenId: true } }
+            }
           }
         }
+      })
+    } catch (err: any) {
+      if (err?.code === 'P2002') {
+        const existingAfterRace = await prisma.message.findUnique({ where: { relayId }, select: { id: true } })
+        return res.json({ status: 'duplicate', messageId: existingAfterRace?.id })
       }
-    })
+      throw err
+    }
 
-    // Update conversation metadata
+    // Conversation metadata + recipient unread count.
     await prisma.conversation.update({
       where: { id: conversationId },
       data: { lastMessageAt: messageRecord.createdAt, lastMessageId: messageRecord.id }
     })
-
-    // Increment unread count for the recipient
     await prisma.conversationParticipant.updateMany({
       where: { conversationId, userId: Number(recipientId) },
       data: { unreadCount: { increment: 1 } }
     })
 
-    // Broadcast via WebSocket to connected users
+    // WS push to anyone connected to this node's `conversation:${id}`
+    // room. Cross-node WS bridging is a separate problem (deferred);
+    // recipients connected to a different node will see the message
+    // when their FE next polls / refetches.
     dmWebSocketService.broadcastMessage(messageRecord)
 
     return res.json({ status: 'relayed', messageId: messageRecord.id })

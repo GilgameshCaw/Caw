@@ -61,6 +61,21 @@ export function getPeers(clientId: number): PeerInstance[] {
   return [...m.values()].sort((a, b) => a.instanceId - b.instanceId)
 }
 
+// Resolved during selfRegister(); other modules read it via getOwnInstanceId
+// to identify themselves in cross-instance envelopes (e.g. the DM relay).
+let ownInstanceId: number | null = null
+
+/**
+ * Returns this node's on-chain instanceId, or null if self-registration
+ * hasn't happened yet (e.g. peer-discovery-only nodes without a validator
+ * key, or during the first few seconds of startup before the on-chain
+ * registerInstance tx has confirmed). Callers that need a stable id at
+ * boot should retry — the value is set once and never cleared.
+ */
+export function getOwnInstanceId(): number | null {
+  return ownInstanceId
+}
+
 // Apply event scan results into the cache, returning the diff so the
 // caller can log "new peer joined" / "peer URL changed" without keeping
 // before-state on hand.
@@ -296,6 +311,7 @@ export const instanceRegistryService: Service = {
       try {
         if (existingInstanceId !== null && existingPeer) {
           instanceId = existingInstanceId
+          ownInstanceId = existingInstanceId
           console.log(`[InstanceRegistry] Already registered as instance #${instanceId} for this URL`)
           if (existingPeer.validatorAddress.toLowerCase() !== validatorAddress.toLowerCase()) {
             console.log(`[InstanceRegistry] Updating validator address on instance #${instanceId}`)
@@ -313,6 +329,7 @@ export const instanceRegistryService: Service = {
               const parsed = iface.parseLog(log)
               if (parsed?.name === 'InstanceRegistered') {
                 instanceId = Number(parsed.args.instanceId)
+                ownInstanceId = instanceId
                 break
               }
             } catch { /* not our event */ }
