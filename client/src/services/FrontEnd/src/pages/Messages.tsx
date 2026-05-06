@@ -1556,8 +1556,12 @@ const MessagesPage: React.FC = () => {
               className="flex-1 min-h-0 overflow-y-auto overscroll-contain custom-scrollbar-alt p-4 md:p-4 pt-4 md:pb-4 transition-opacity duration-300"
               style={{
                 opacity: chatReady ? 1 : 0,
-                // Keep the last bubble visible above the fixed composer.
-                paddingBottom: window.innerWidth < 768 ? composerChrome.padBottom : undefined,
+                // Keep the last bubble visible above the fixed composer AND
+                // the bottom nav (composer sits at `var(--bottom-nav-h)`,
+                // not at `0`). On desktop both terms are 0/undefined.
+                paddingBottom: window.innerWidth < 768
+                  ? `calc(${composerChrome.padBottom}px + var(--bottom-nav-h, 0px))`
+                  : undefined,
               }}
               onScroll={(e) => {
                 const el = e.currentTarget
@@ -2262,8 +2266,14 @@ const MessagesPage: React.FC = () => {
               </>
             )}
 
-            {/* Bottom bar — anchored to bottom, doesn't scroll with messages */}
-              <div className={`flex-shrink-0 fixed md:sticky bottom-0 left-0 right-0 z-20 ${isDark ? 'bg-black' : 'bg-white'}`}>
+            {/* Bottom bar — anchored to bottom, doesn't scroll with messages.
+                On mobile, sit above the bottom nav using the --bottom-nav-h
+                CSS variable published by MainLayout (resolves to 0px on
+                desktop or when the nav is hidden). */}
+              <div
+                className={`flex-shrink-0 fixed md:sticky left-0 right-0 z-20 md:bottom-0 ${isDark ? 'bg-black' : 'bg-white'}`}
+                style={{ bottom: 'var(--bottom-nav-h, 0px)' }}
+              >
 
               {/* Unlock banner — replaces input when keys need derivation */}
               {needsKeyDerivation && !identityLoading ? (

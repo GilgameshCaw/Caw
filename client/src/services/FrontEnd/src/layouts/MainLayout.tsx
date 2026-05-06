@@ -62,6 +62,10 @@ const MainLayout = ({ children, hideSidebars: hideSidebarsProp }: MainLayoutProp
     }
   }, [])
 
+  // Ref for the bottom-nav-height CSS variable plumbing below. Effect
+  // lives further down (after hideSidebars/isCaptive are computed).
+  const bottomNavRef = useRef<HTMLElement | null>(null)
+
   // Captive mode: no username and on a public page like /help/*
   const isCaptive = !activeToken?.username
   // hideSidebars resolution order (any one truthy wins):
@@ -78,6 +82,38 @@ const MainLayout = ({ children, hideSidebars: hideSidebarsProp }: MainLayoutProp
   // one dynamic case we actually have.
   const hideChromeOverride = useLayoutStore(s => s.hideChromeOverride)
   const hideSidebars = hideChromeOverride || hideSidebarsProp || (isCaptive && (location.pathname.startsWith('/help') || location.pathname.startsWith('/usernames') || location.pathname.startsWith('/faucet')))
+
+  // Publish the bottom-nav height as a CSS variable so pages with their own
+  // fixed-bottom UI (e.g. DM composer in /messages/<id>) can sit above the
+  // nav instead of being covered by it. Resolves to "0px" whenever the nav
+  // isn't rendered, is `md:hidden` on desktop, or is translated off-screen
+  // by the inline-draft state.
+  const showBottomNav = !hideSidebars && !isCaptive
+  useEffect(() => {
+    const root = document.documentElement
+    if (!showBottomNav || hasInlineDraft) {
+      root.style.setProperty('--bottom-nav-h', '0px')
+      return () => { root.style.removeProperty('--bottom-nav-h') }
+    }
+    const node = bottomNavRef.current
+    if (!node) return
+    const sync = () => {
+      // offsetHeight is 0 under `md:hidden` on desktop — exactly what
+      // consumers want. Includes safe-area-inset-bottom on iOS.
+      root.style.setProperty('--bottom-nav-h', `${node.offsetHeight}px`)
+    }
+    sync()
+    const ro = new ResizeObserver(sync)
+    ro.observe(node)
+    // Viewport changes (rotation, devtools resize) flip `md:hidden` without
+    // resizing the node itself, so listen for window resizes too.
+    window.addEventListener('resize', sync)
+    return () => {
+      ro.disconnect()
+      window.removeEventListener('resize', sync)
+      root.style.removeProperty('--bottom-nav-h')
+    }
+  }, [showBottomNav, hasInlineDraft])
 
   return (
     <>
@@ -260,11 +296,14 @@ const MainLayout = ({ children, hideSidebars: hideSidebarsProp }: MainLayoutProp
 
       {/* Mobile bottom nav */}
       {!hideSidebars && !isCaptive && (
-        <nav className={`md:hidden fixed bottom-0 left-0 right-0 z-[55] flex items-center justify-around h-14 pb-[env(safe-area-inset-bottom)] [height:calc(theme(height.14)+env(safe-area-inset-bottom))] border-t transition-all duration-200 ${
-          hasInlineDraft ? 'opacity-0 translate-y-full pointer-events-none' : isScrolling ? 'opacity-30' : 'opacity-100'
-        } ${
-          isDark ? 'bg-black border-white/10' : 'bg-white border-gray-200'
-        }`}>
+        <nav
+          ref={bottomNavRef}
+          className={`md:hidden fixed bottom-0 left-0 right-0 z-[55] flex items-center justify-around h-14 pb-[env(safe-area-inset-bottom)] [height:calc(theme(height.14)+env(safe-area-inset-bottom))] border-t transition-all duration-200 ${
+            hasInlineDraft ? 'opacity-0 translate-y-full pointer-events-none' : isScrolling ? 'opacity-30' : 'opacity-100'
+          } ${
+            isDark ? 'bg-black border-white/10' : 'bg-white border-gray-200'
+          }`}
+        >
           {[
             { to: '/home', icon: HiOutlineHome, match: '/home', badge: 0 },
             { to: '/explore', icon: HiOutlineSearch, match: '/explore', badge: 0 },
