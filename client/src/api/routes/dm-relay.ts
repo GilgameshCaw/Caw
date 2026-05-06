@@ -22,11 +22,10 @@
 //     and gets blacklisted at the host-trust layer (future work).
 
 import { Router } from 'express'
-import { secp256k1 } from '@noble/curves/secp256k1'
-import { sha256 } from '@noble/hashes/sha256'
 import dmWebSocketService from '../../services/DmService/websocket'
 import { prisma } from '../../prismaClient'
 import { getPeers } from '../../services/InstanceRegistryService'
+import { recoverAddressFromCanonical } from '../../services/InstanceRegistryService/envelopeCrypto'
 
 const router = Router()
 
@@ -67,15 +66,6 @@ export function canonicalizeEnvelope(env: RelayEnvelope): string {
     relayId: env.relayId,
     sourceInstanceId: env.sourceInstanceId,
   })
-}
-
-function hexToBytes(hex: string): Uint8Array {
-  const clean = hex.startsWith('0x') ? hex.slice(2) : hex
-  const out = new Uint8Array(clean.length / 2)
-  for (let i = 0; i < out.length; i++) {
-    out[i] = parseInt(clean.substr(i * 2, 2), 16)
-  }
-  return out
 }
 
 router.post('/', async (req, res) => {
@@ -126,36 +116,17 @@ router.post('/', async (req, res) => {
       return res.status(403).json({ error: 'Unknown or inactive source instance' })
     }
 
-    // Verify the secp256k1 signature against the source's validator
-    // address. The address is keccak256(pubkey)[12:] so we can't directly
-    // verify against an address with secp256k1.verify — we instead
-    // ecrecover-style derive the signing pubkey and compare. ethers'
-    // SigningKey.recoverPublicKey works against a hashed message; we
-    // sign and verify a SHA-256 of the canonical envelope.
+    // Verify the validator-key signature against the source's
+    // registered address. ecrecover-style: recover the signing address
+    // from (r,s,v) over SHA-256(canonical envelope), then compare.
     const envelope: RelayEnvelope = {
       encryptedPayload, senderId: Number(senderId), recipientId: Number(recipientId),
       conversationId, contentType, timestamp: Number(timestamp),
       relayId, sourceInstanceId: Number(sourceInstanceId),
     }
-    const envelopeHash = sha256(new TextEncoder().encode(canonicalizeEnvelope(envelope)))
-
-    // Signature format: 65-byte hex (r || s || v). v is 0/1 for recovery.
-    const sigBytes = hexToBytes(signature)
-    if (sigBytes.length !== 65) {
-      return res.status(400).json({ error: 'Signature must be 65 bytes (r,s,v)' })
-    }
-    const r = sigBytes.slice(0, 32)
-    const s = sigBytes.slice(32, 64)
-    const v = sigBytes[64]
     let recoveredAddr: string
     try {
-      const sigObj = secp256k1.Signature.fromCompact(new Uint8Array([...r, ...s])).addRecoveryBit(v % 2)
-      const pubKey = sigObj.recoverPublicKey(envelopeHash).toRawBytes(false) // uncompressed (65 bytes)
-      // Address = keccak256(pubKey[1:])[12:]. Import keccak from ethers
-      // to avoid pulling another hash lib in.
-      const { keccak256 } = await import('ethers')
-      const addrBytes = hexToBytes(keccak256(pubKey.slice(1))).slice(-20)
-      recoveredAddr = '0x' + Array.from(addrBytes).map(b => b.toString(16).padStart(2, '0')).join('')
+      recoveredAddr = await recoverAddressFromCanonical(canonicalizeEnvelope(envelope), signature)
     } catch (err: any) {
       return res.status(403).json({ error: 'Signature verification failed', detail: err.message })
     }

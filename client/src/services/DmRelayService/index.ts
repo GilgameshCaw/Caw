@@ -20,9 +20,8 @@
 // scan anymore.
 
 import 'dotenv/config'
-import { secp256k1 } from '@noble/curves/secp256k1'
-import { sha256 } from '@noble/hashes/sha256'
 import { getPeers, getOwnInstanceId } from '../InstanceRegistryService'
+import { signCanonical, hexToBytes } from '../InstanceRegistryService/envelopeCrypto'
 import type { RelayEnvelope } from '../../api/routes/dm-relay'
 import { canonicalizeEnvelope } from '../../api/routes/dm-relay'
 import crypto from 'crypto'
@@ -36,37 +35,6 @@ function requireClientId(): number {
   return n
 }
 
-function hexToBytes(hex: string): Uint8Array {
-  const clean = hex.startsWith('0x') ? hex.slice(2) : hex
-  const out = new Uint8Array(clean.length / 2)
-  for (let i = 0; i < out.length; i++) {
-    out[i] = parseInt(clean.substr(i * 2, 2), 16)
-  }
-  return out
-}
-
-function bytesToHex(bytes: Uint8Array): string {
-  return Array.from(bytes).map(b => b.toString(16).padStart(2, '0')).join('')
-}
-
-/**
- * Sign a relay envelope with this node's VALIDATOR_PRIVATE_KEY, returning
- * a 65-byte (r || s || v) hex string compatible with the receiver's
- * recovery path. Mirrors ecrecover semantics over a SHA-256 hash of the
- * canonical envelope.
- */
-function signEnvelope(env: RelayEnvelope, privateKey: Uint8Array): string {
-  const hash = sha256(new TextEncoder().encode(canonicalizeEnvelope(env)))
-  const sig = secp256k1.sign(hash, privateKey)
-  // Compact = r || s (64 bytes); recovery bit is sig.recovery (0 or 1).
-  // Postfix it so the receiver gets r||s||v in one buffer.
-  const compact = sig.toCompactRawBytes()
-  const v = (sig.recovery ?? 0) & 1
-  const out = new Uint8Array(65)
-  out.set(compact, 0)
-  out[64] = v
-  return '0x' + bytesToHex(out)
-}
 
 interface RelayParams {
   encryptedPayload: string
@@ -136,7 +104,7 @@ export async function relayDmToPeers(params: RelayParams): Promise<{ attempted: 
 
   let signature: string
   try {
-    signature = signEnvelope(envelope, privateKey)
+    signature = signCanonical(canonicalizeEnvelope(envelope), privateKey)
   } catch (err: any) {
     console.error('[DmRelay] Signing failed (continuing without relay):', err.message)
     return { attempted: 0 }
