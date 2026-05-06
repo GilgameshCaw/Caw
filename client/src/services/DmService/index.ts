@@ -240,9 +240,20 @@ export class DmService {
   }
 
   /**
-   * Get conversations for a user with unread counts
+   * Get conversations for a user with unread counts.
+   *
+   * `inbox` filters by THIS user's participant.status:
+   *   - 'main'     → ACCEPTED (the standard inbox)
+   *   - 'requests' → REQUEST  (first-contact DMs awaiting accept)
+   *   - 'all'      → no filter; used for badges + sync paths that need
+   *                   the full set
    */
-  async getConversations(userId: number, limit = 50, offset = 0) {
+  async getConversations(
+    userId: number,
+    limit = 50,
+    offset = 0,
+    inbox: 'main' | 'requests' | 'all' = 'main',
+  ) {
     // Filter out conversations that haven't seen any messages yet — when
     // someone "starts" a conversation by tapping a username, we create the
     // row eagerly so the encrypted handshake can land, but the inbox
@@ -253,9 +264,15 @@ export class DmService {
     // Each peer's DM publicKey rides along on the participant's identity
     // — the frontend uses it to compute the shared secret for the
     // last-message preview without a follow-up /api/dm/identity request.
+    const statusFilter =
+      inbox === 'main'     ? { status: 'ACCEPTED' as const } :
+      inbox === 'requests' ? { status: 'REQUEST'  as const } :
+      {}
+
     const participations = await prisma.conversationParticipant.findMany({
       where: {
         userId,
+        ...statusFilter,
         conversation: {
           messages: { some: {} },
         },
@@ -303,10 +320,41 @@ export class DmService {
     const conversations = participations.map(p => ({
       ...p.conversation,
       lastMessage: p.conversation.messages[0] || null,
-      unreadCount: p.unreadCount
+      unreadCount: p.unreadCount,
+      // Surface this user's participant.status so the FE can render the
+      // "Accept request" CTA on REQUEST conversations without a second
+      // round-trip.
+      myStatus: p.status,
     }))
 
     return { conversations, hasMore }
+  }
+
+  /**
+   * Get the count of REQUEST conversations for the inbox tab badge.
+   * Cheap — covers the (userId, status) index added in the same
+   * migration as the column.
+   */
+  async getRequestCount(userId: number): Promise<number> {
+    return prisma.conversationParticipant.count({
+      where: {
+        userId,
+        status: 'REQUEST',
+        conversation: { messages: { some: {} } },
+      },
+    })
+  }
+
+  /**
+   * Flip a REQUEST conversation to ACCEPTED. No-op if already accepted.
+   * Called explicitly via the accept CTA, AND implicitly on first
+   * outbound reply (the act of replying = consent).
+   */
+  async acceptConversation(conversationId: string, userId: number): Promise<void> {
+    await prisma.conversationParticipant.updateMany({
+      where: { conversationId, userId, status: 'REQUEST' },
+      data: { status: 'ACCEPTED' },
+    })
   }
 
   /**

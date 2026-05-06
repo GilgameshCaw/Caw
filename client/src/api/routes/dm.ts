@@ -292,8 +292,11 @@ router.get('/conversations',
 
       const limit = Math.min(Number(req.query.limit) || 50, 100)
       const offset = Number(req.query.offset) || 0
+      const inboxParam = String(req.query.inbox || 'main')
+      const inbox: 'main' | 'requests' | 'all' =
+        inboxParam === 'requests' || inboxParam === 'all' ? inboxParam : 'main'
 
-      const { conversations, hasMore } = await dmService.getConversations(userId, limit, offset)
+      const { conversations, hasMore } = await dmService.getConversations(userId, limit, offset, inbox)
 
       // Filter out conversations with blocked users
       const blockedIds = await getBlockedUserIds(userId)
@@ -306,6 +309,48 @@ router.get('/conversations',
       return res.json({ conversations: filtered, hasMore })
     } catch (error: any) {
       console.error('GET /api/dm/conversations error:', error)
+      return res.status(500).json({ error: error.message })
+    }
+  }
+)
+
+// Request-inbox badge count. Single integer for the tab indicator.
+router.get('/conversations/request-count',
+  requireAuth({ lookup: async (req) => {
+    const userId = req.query.userId
+    return userId ? Number(userId) : undefined
+  }, verifyOwnership: true }),
+  async (req: Request, res: Response) => {
+    try {
+      const userId = Number(req.query.userId)
+      if (isNaN(userId)) {
+        return res.status(400).json({ error: 'userId query parameter is required' })
+      }
+      const count = await dmService.getRequestCount(userId)
+      return res.json({ count })
+    } catch (error: any) {
+      console.error('GET /api/dm/conversations/request-count error:', error)
+      return res.status(500).json({ error: error.message })
+    }
+  }
+)
+
+// Flip a REQUEST conversation to ACCEPTED on the caller's side. No-op
+// if already accepted (e.g. the user already replied, which auto-
+// accepts via the send path). Idempotent.
+router.post('/conversations/:id/accept',
+  requireAuth({ field: 'userId', verifyOwnership: true }),
+  async (req: Request, res: Response) => {
+    try {
+      const conversationId = String(req.params.id)
+      const userId = Number(req.body.userId)
+      if (!conversationId || !Number.isInteger(userId)) {
+        return res.status(400).json({ error: 'conversationId and userId required' })
+      }
+      await dmService.acceptConversation(conversationId, userId)
+      return res.json({ status: 'accepted', conversationId })
+    } catch (error: any) {
+      console.error('POST /api/dm/conversations/:id/accept error:', error)
       return res.status(500).json({ error: error.message })
     }
   }
@@ -441,6 +486,14 @@ router.post('/messages',
         contentType,
         replyToMessageId,
         relayId,
+      })
+
+      // Implicit accept-on-reply. When the sender's own participant.status
+      // is REQUEST, the act of sending a message is consent — flip their
+      // side to ACCEPTED so the conversation moves out of their Requests
+      // tab on next refetch. No-op when already ACCEPTED.
+      dmService.acceptConversation(conversationId, Number(senderId)).catch(err => {
+        console.warn('[DM] auto-accept on reply failed (non-fatal):', err?.message || err)
       })
 
       // Broadcast via WebSocket
