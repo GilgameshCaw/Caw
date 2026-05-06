@@ -7,7 +7,7 @@ import { useT } from '~/i18n/I18nProvider'
 import { useState, useEffect, useRef, lazy, Suspense } from 'react'
 import BoidsBg from '~/components/BoidsBg'
 
-const CawCoin3D = lazy(() => import('~/components/CawCoin3D'))
+const Caw3D = lazy(() => import('~/components/Caw3D'))
 
 const KEYWORD_KEYS = [
   'captive_splash.kw.permissionless',
@@ -51,7 +51,7 @@ export default function CaptiveSplash() {
         <Suspense fallback={
           <div className="my-1 w-64 h-64 md:w-80 md:h-72" />
         }>
-          <CawCoin3D className="my-1 w-64 h-64 md:w-80 md:h-72" isDark={isDark} />
+          <Caw3D className="my-1 w-64 h-64 md:w-80 md:h-72" isDark={isDark} />
         </Suspense>
 
         {/* Tagline */}

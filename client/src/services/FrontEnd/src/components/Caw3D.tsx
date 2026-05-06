@@ -256,7 +256,7 @@ function CrowMesh({ isDark }: { isDark: boolean }) {
   )
 }
 
-export default function CawCoin3D({ className, isDark = true }: { className?: string; isDark?: boolean }) {
+export default function Caw3D({ className, isDark = true }: { className?: string; isDark?: boolean }) {
   return (
     <div className={className} style={{ cursor: 'grab' }}>
       <Canvas
