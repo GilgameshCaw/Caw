@@ -20,7 +20,7 @@ const QuickSignUnlock: React.FC = () => {
   const activeWallet = useSessionKeyStore(s => s.activeWallet)
   const sessions = useSessionKeyStore(s => s.sessions)
   const { signMessageAsync } = useSignMessage()
-  const { isConnected } = useAccount()
+  const { isConnected, address: connectedAddress } = useAccount()
   const { isDark } = useTheme()
   const t = useT()
   const [loading, setLoading] = useState(false)
@@ -47,6 +47,17 @@ const QuickSignUnlock: React.FC = () => {
 
     setLoading(true)
     setError(null)
+    // Refuse to ask for the unlock signature if the wallet is currently
+    // connected as a different account than the one that encrypted the
+    // session — the resulting signature would be derived from the wrong
+    // wallet and decryption would silently fail with a generic error.
+    if (connectedAddress && connectedAddress.toLowerCase() !== activeWallet.toLowerCase()) {
+      setError(
+        `Wrong wallet connected. Switch to ${activeWallet.slice(0, 6)}…${activeWallet.slice(-4)} in your wallet to unlock.`
+      )
+      setLoading(false)
+      return
+    }
     try {
       const walletSig = await signMessageAsync({ message: getEncryptionSignMessage() })
       const privateKey = await decryptPrivateKey(session.encryptedKey, walletSig)
@@ -63,7 +74,7 @@ const QuickSignUnlock: React.FC = () => {
     } finally {
       setLoading(false)
     }
-  }, [activeWallet, sessions, signMessageAsync])
+  }, [activeWallet, sessions, signMessageAsync, connectedAddress])
 
   if (!needsUnlock || !isConnected) return null
 

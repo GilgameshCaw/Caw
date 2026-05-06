@@ -105,11 +105,27 @@ export function useCreateSession() {
   const { openConnectModal } = useConnectModal()
   const chainId = useChainId()
   const setSession = useSessionKeyStore(s => s.setSession)
+  const activeToken = useActiveToken()
 
   return useCallback(async (onProgress?: (status: string) => void, spendLimit: bigint = DEFAULT_SPEND_LIMIT, durationSeconds: number = DEFAULT_SESSION_DURATION, encryptWithWallet: boolean = false, tipCeiling: bigint = 0n) => {
     if (!isConnected) {
       openConnectModal?.()
       return null as any // User will retry after connecting
+    }
+
+    // Wallet may have switched accounts (or unlocked into a different one)
+    // since the user opened this profile. Refuse to ask for a signature
+    // from the wrong address — the resulting session would be bound to a
+    // wallet that doesn't own this token, and the user gets a confusing
+    // wallet popup for an account they didn't expect.
+    const expectedOwner = activeToken?.owner?.toLowerCase()
+    const actualOwner = connectedAddress?.toLowerCase()
+    if (expectedOwner && actualOwner && expectedOwner !== actualOwner) {
+      throw new Error(
+        `Wrong wallet connected. This profile is owned by ${activeToken!.owner!.slice(0, 6)}…${activeToken!.owner!.slice(-4)}, ` +
+        `but your wallet is connected as ${connectedAddress!.slice(0, 6)}…${connectedAddress!.slice(-4)}. ` +
+        `Switch accounts in your wallet and try again.`
+      )
     }
 
     // Ensure wallet is on Base Sepolia (where CawProfileL2 lives)
@@ -212,7 +228,7 @@ export function useCreateSession() {
     }
 
     return { address: sessionAccount.address, expiry }
-  }, [isConnected, connectedAddress, openConnectModal, chainId, signMessageAsync, switchChainAsync, setSession])
+  }, [isConnected, connectedAddress, openConnectModal, chainId, signMessageAsync, switchChainAsync, setSession, activeToken])
 }
 
 export function useRevokeSession() {
