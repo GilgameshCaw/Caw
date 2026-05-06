@@ -68,6 +68,7 @@ function applyToCache(
   clientId: number,
   registered: { instanceId: number; clientId: number; owner: string; apiUrl: string; validatorAddress: string }[],
   updates:    { instanceId: number; apiUrl: string; validatorAddress: string }[],
+  activations: { instanceId: number; active: boolean }[],
 ): { added: PeerInstance[]; changed: PeerInstance[] } {
   const cur = peerCache.get(clientId) ?? new Map<number, PeerInstance>()
   const added: PeerInstance[] = []
@@ -96,6 +97,24 @@ function applyToCache(
     }
   }
 
+  // Apply activation toggles — most-recent event wins per instance, so
+  // sort here BEFORE applying. The caller passes events in chain order;
+  // this keeps applyToCache independent of caller ordering. A deactivate
+  // followed by an activate (or vice versa) leaves the instance in the
+  // last state we saw.
+  if (activations.length > 0) {
+    const lastByInstance = new Map<number, boolean>()
+    for (const a of activations) lastByInstance.set(a.instanceId, a.active)
+    for (const [instanceId, active] of lastByInstance) {
+      const existing = cur.get(instanceId)
+      if (!existing) continue
+      if (existing.active !== active) {
+        existing.active = active
+        changed.push(existing)
+      }
+    }
+  }
+
   peerCache.set(clientId, cur)
   return { added, changed }
 }
@@ -120,14 +139,20 @@ async function refreshPeers(
   const iface = new Interface(cawClientManagerAbi)
   const regSig = iface.getEvent('InstanceRegistered')!.topicHash
   const updSig = iface.getEvent('InstanceUpdated')!.topicHash
+  const deactSig = iface.getEvent('InstanceDeactivated')!.topicHash
+  const actSig = iface.getEvent('InstanceActivated')!.topicHash
   const clientIdTopic = '0x' + clientId.toString(16).padStart(64, '0')
 
   // Filter on (sig, instanceId=ANY, clientId). InstanceRegistered indexes
   // (instanceId, clientId, owner) so we can pin the second topic.
   const regLogs = await scanLogsBackward(provider, clientManagerAddress, [regSig, null, clientIdTopic])
-  // InstanceUpdated isn't clientId-indexed (only instanceId is), so we
-  // pull all updates and filter client-side.
+  // InstanceUpdated / InstanceDeactivated / InstanceActivated aren't
+  // clientId-indexed (only instanceId is), so we pull all and filter
+  // client-side via the cache: if the instanceId isn't in our cache for
+  // this clientId, applyToCache ignores the event.
   const updLogs = await scanLogsBackward(provider, clientManagerAddress, [updSig])
+  const deactLogs = await scanLogsBackward(provider, clientManagerAddress, [deactSig])
+  const actLogs = await scanLogsBackward(provider, clientManagerAddress, [actSig])
 
   const registered: any[] = []
   for (const log of regLogs) {
@@ -153,7 +178,37 @@ async function refreshPeers(
     })
   }
 
-  return applyToCache(clientId, registered, updates)
+  // Build the activations list in chain order (oldest → newest) by
+  // sorting the union of activate + deactivate logs by (block, log idx).
+  // applyToCache then keeps the last-seen state per instance.
+  type ChainOrder = { blockNumber: number; logIndex: number; instanceId: number; active: boolean }
+  const ordered: ChainOrder[] = []
+  for (const log of deactLogs) {
+    const parsed = iface.parseLog(log)
+    if (!parsed) continue
+    ordered.push({
+      blockNumber: Number((log as any).blockNumber),
+      logIndex: Number((log as any).logIndex),
+      instanceId: Number(parsed.args.instanceId),
+      active: false,
+    })
+  }
+  for (const log of actLogs) {
+    const parsed = iface.parseLog(log)
+    if (!parsed) continue
+    ordered.push({
+      blockNumber: Number((log as any).blockNumber),
+      logIndex: Number((log as any).logIndex),
+      instanceId: Number(parsed.args.instanceId),
+      active: true,
+    })
+  }
+  ordered.sort((a, b) =>
+    a.blockNumber !== b.blockNumber ? a.blockNumber - b.blockNumber : a.logIndex - b.logIndex
+  )
+  const activations = ordered.map(o => ({ instanceId: o.instanceId, active: o.active }))
+
+  return applyToCache(clientId, registered, updates, activations)
 }
 
 // =====================================================================
