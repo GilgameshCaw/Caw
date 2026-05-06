@@ -3,26 +3,30 @@
 // After a DM is stored locally, relay it to other instances serving the
 // same client so the message reaches users regardless of which instance
 // they're connected to. Fire-and-forget — best effort delivery.
+//
+// Trust model: server-to-server with validator-key signatures.
+//   - This node signs the relay envelope with VALIDATOR_PRIVATE_KEY
+//     using the same secp256k1 curve and (r,s,v) recovery format as
+//     Ethereum, but over a SHA-256 of the canonical envelope (not the
+//     ethers eth-personal-sign prefix — avoids the "this looks like a
+//     wallet message to a user" surface).
+//   - Receiver verifies against this node's registered validatorAddress
+//     in CawClientManager, looked up via the sourceInstanceId field
+//     and the receiver's instanceRegistryService.getPeers cache.
+//
+// Peers come from instanceRegistryService.getPeers — same cache the
+// /api/instances HTTP route reads from, so deactivations on chain
+// flow through (per commit 26b1e60). We don't maintain a duplicate
+// scan anymore.
 
 import 'dotenv/config'
-import { Contract } from 'ethers'
-import { makeJsonRpcProvider, getL1HttpRpcUrl } from '../../utils/rpcProvider'
-import { cawClientManagerAbi } from '../../abi/generated'
-import { CLIENT_MANAGER_ADDRESS } from '../../abi/addresses'
+import { secp256k1 } from '@noble/curves/secp256k1'
+import { sha256 } from '@noble/hashes/sha256'
+import { getPeers, getOwnInstanceId } from '../InstanceRegistryService'
+import type { RelayEnvelope } from '../../api/routes/dm-relay'
+import { canonicalizeEnvelope } from '../../api/routes/dm-relay'
+import crypto from 'crypto'
 
-interface PeerInstance {
-  instanceId: number
-  apiUrl: string
-  validatorAddress: string
-}
-
-let peerInstances: PeerInstance[] = []
-let lastRefresh = 0
-const REFRESH_INTERVAL = 10 * 60 * 1000 // 10 minutes
-
-// CLIENT_ID is required at runtime — silently defaulting to 1 would
-// route this node's DM relay traffic to the wrong client's instance pool.
-// Resolved lazily so module import still works in test environments.
 function requireClientId(): number {
   const raw = process.env.CLIENT_ID
   const n = raw ? Number(raw) : NaN
@@ -31,102 +35,130 @@ function requireClientId(): number {
   }
   return n
 }
-// Lazy: read on first use so dotenv has finished loading and so any operator
-// edits to .env between restarts take effect without rebuilding.
-const l1RpcUrl = () => getL1HttpRpcUrl()
-const ownApiUrl = process.env.INSTANCE_API_URL || ''
 
-/**
- * Refresh the list of peer instances from on-chain events.
- */
-async function refreshPeerInstances(): Promise<void> {
-  const url = l1RpcUrl()
-  if (!url) return
-  if (Date.now() - lastRefresh < REFRESH_INTERVAL) return
-
-  try {
-    const clientId = requireClientId()
-    const provider = makeJsonRpcProvider(url, 11155111)
-    const clientManager = new Contract(CLIENT_MANAGER_ADDRESS, cawClientManagerAbi, provider)
-
-    // Fetch InstanceRegistered events for our clientId
-    const filter = clientManager.filters.InstanceRegistered(null, clientId)
-    const logs = await clientManager.queryFilter(filter, 0, 'latest')
-
-    const instanceMap = new Map<number, PeerInstance>()
-    for (const log of logs) {
-      const args = (log as any).args
-      instanceMap.set(Number(args.instanceId), {
-        instanceId: Number(args.instanceId),
-        apiUrl: args.apiUrl,
-        validatorAddress: args.validatorAddress,
-      })
-    }
-
-    // Apply updates
-    const updateFilter = clientManager.filters.InstanceUpdated()
-    const updateLogs = await clientManager.queryFilter(updateFilter, 0, 'latest')
-    for (const log of updateLogs) {
-      const args = (log as any).args
-      const id = Number(args.instanceId)
-      const existing = instanceMap.get(id)
-      if (existing) {
-        existing.apiUrl = args.apiUrl
-        existing.validatorAddress = args.validatorAddress
-      }
-    }
-
-    // Check active state
-    for (const [id, instance] of instanceMap) {
-      try {
-        const isActive = await clientManager.instanceActive(id)
-        if (!isActive) instanceMap.delete(id)
-      } catch {
-        // If read fails, keep it
-      }
-    }
-
-    // Filter out ourselves
-    peerInstances = Array.from(instanceMap.values()).filter(i =>
-      i.apiUrl !== ownApiUrl
-    )
-
-    lastRefresh = Date.now()
-    console.log(`[DmRelay] Refreshed peer instances: ${peerInstances.length} peers`)
-  } catch (err: any) {
-    console.error('[DmRelay] Failed to refresh peer instances:', err.message)
+function hexToBytes(hex: string): Uint8Array {
+  const clean = hex.startsWith('0x') ? hex.slice(2) : hex
+  const out = new Uint8Array(clean.length / 2)
+  for (let i = 0; i < out.length; i++) {
+    out[i] = parseInt(clean.substr(i * 2, 2), 16)
   }
+  return out
+}
+
+function bytesToHex(bytes: Uint8Array): string {
+  return Array.from(bytes).map(b => b.toString(16).padStart(2, '0')).join('')
 }
 
 /**
- * Relay a DM message to all peer instances. Fire-and-forget.
+ * Sign a relay envelope with this node's VALIDATOR_PRIVATE_KEY, returning
+ * a 65-byte (r || s || v) hex string compatible with the receiver's
+ * recovery path. Mirrors ecrecover semantics over a SHA-256 hash of the
+ * canonical envelope.
  */
-export async function relayDmToPeers(params: {
+function signEnvelope(env: RelayEnvelope, privateKey: Uint8Array): string {
+  const hash = sha256(new TextEncoder().encode(canonicalizeEnvelope(env)))
+  const sig = secp256k1.sign(hash, privateKey)
+  // Compact = r || s (64 bytes); recovery bit is sig.recovery (0 or 1).
+  // Postfix it so the receiver gets r||s||v in one buffer.
+  const compact = sig.toCompactRawBytes()
+  const v = (sig.recovery ?? 0) & 1
+  const out = new Uint8Array(65)
+  out.set(compact, 0)
+  out[64] = v
+  return '0x' + bytesToHex(out)
+}
+
+interface RelayParams {
   encryptedPayload: string
   senderId: number
   recipientId: number
   conversationId: string
   contentType?: string
-  timestamp: number
-  signature: string
-  senderAddress: string
-}): Promise<void> {
-  await refreshPeerInstances()
+  /**
+   * Optional caller-supplied relayId. Defaults to a fresh UUID. Pass
+   * one through if the caller wants to dedupe their own retries.
+   */
+  relayId?: string
+}
 
-  if (peerInstances.length === 0) return
+let cachedPrivateKey: Uint8Array | null = null
+function getPrivateKey(): Uint8Array | null {
+  if (cachedPrivateKey) return cachedPrivateKey
+  const raw = process.env.VALIDATOR_PRIVATE_KEY
+  if (!raw) return null
+  try {
+    cachedPrivateKey = hexToBytes(raw)
+    return cachedPrivateKey
+  } catch {
+    console.error('[DmRelay] VALIDATOR_PRIVATE_KEY is not a valid hex string')
+    return null
+  }
+}
 
-  const body = JSON.stringify(params)
+/**
+ * Relay a DM message to all peer instances. Fire-and-forget.
+ *
+ * Returns a count of attempted relays. Errors per peer are logged but
+ * do not throw — the local message is already persisted, and the relay
+ * is best-effort. If we don't yet know our own instanceId (registry
+ * service hasn't finished selfRegister), we skip the relay; the next
+ * message will pick it up.
+ */
+export async function relayDmToPeers(params: RelayParams): Promise<{ attempted: number }> {
+  const privateKey = getPrivateKey()
+  if (!privateKey) {
+    // No validator key — can't sign envelopes. Silent skip; this
+    // matches frontend-only / api-only-without-validator nodes that
+    // simply don't relay.
+    return { attempted: 0 }
+  }
 
-  for (const peer of peerInstances) {
-    // Fire-and-forget — don't await, don't throw
+  const sourceInstanceId = getOwnInstanceId()
+  if (sourceInstanceId == null) {
+    console.warn('[DmRelay] Skipping relay — own instanceId not yet resolved (registry still booting?)')
+    return { attempted: 0 }
+  }
+
+  const clientId = requireClientId()
+  const peers = getPeers(clientId).filter(p => p.active && p.instanceId !== sourceInstanceId)
+  if (peers.length === 0) return { attempted: 0 }
+
+  const envelope: RelayEnvelope = {
+    encryptedPayload: params.encryptedPayload,
+    senderId: params.senderId,
+    recipientId: params.recipientId,
+    conversationId: params.conversationId,
+    contentType: params.contentType ?? 'text',
+    timestamp: Date.now(),
+    relayId: params.relayId ?? crypto.randomUUID(),
+    sourceInstanceId,
+  }
+
+  let signature: string
+  try {
+    signature = signEnvelope(envelope, privateKey)
+  } catch (err: any) {
+    console.error('[DmRelay] Signing failed (continuing without relay):', err.message)
+    return { attempted: 0 }
+  }
+
+  const body = JSON.stringify({ ...envelope, signature })
+
+  for (const peer of peers) {
     fetch(`${peer.apiUrl}/api/dm/relay`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body,
     }).catch(err => {
-      console.warn(`[DmRelay] Failed to relay to ${peer.apiUrl}:`, err.message)
+      // Fire-and-forget. Network errors are routine (peer down,
+      // unreachable). Don't spam the log on every failure.
+      if (process.env.DM_RELAY_VERBOSE === '1') {
+        console.warn(`[DmRelay] Failed to relay to ${peer.apiUrl}:`, err.message)
+      }
     })
   }
+
+  return { attempted: peers.length }
 }
 
 /**
