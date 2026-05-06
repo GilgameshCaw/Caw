@@ -31,7 +31,7 @@ import Pencil from '~/assets/images/pencil.svg?react';
 import Bookmark from '~/assets/images/bookmark.svg?react';
 import Share from '~/assets/images/share.svg?react';
 import { useTokenDataStore } from '~/store/tokenDataStore'
-import { translateTextDetailed } from '~/utils/translate'
+import { translateTextDetailed, detectScript } from '~/utils/translate'
 import { useViewerLanguage } from '~/hooks/useViewerLanguage'
 import { languageName } from '~/constants/languages'
 import { useT } from '~/i18n/I18nProvider'
@@ -780,8 +780,16 @@ const FeedItem: React.FC<{ item: CawItem; isMainPost?: boolean; isReply?: boolea
       setKnownSourceLanguage(useItem.sourceLanguage)
     } else if (useItem.user?.preferredLanguage) {
       setKnownSourceLanguage(useItem.user.preferredLanguage)
+    } else {
+      // Cheap script-based fallback: catches ja/ko/zh/ru/he/ar/hi/th
+      // posts whose author never set their preferredLanguage. Returns
+      // null for Latin-script content (mostly English / European
+      // languages share the script too closely to disambiguate without
+      // gtx), in which case the inline Translate button still works.
+      const scriptGuess = detectScript(useItem.content)
+      if (scriptGuess) setKnownSourceLanguage(scriptGuess)
     }
-  }, [useItem.sourceLanguage, useItem.user?.preferredLanguage, knownSourceLanguage])
+  }, [useItem.sourceLanguage, useItem.user?.preferredLanguage, useItem.content, knownSourceLanguage])
 
   // Translate the post and (if gtx returned a confident detection) cache
   // the source language back to the server. The 2nd parameter to

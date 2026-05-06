@@ -26,6 +26,70 @@ export function getTargetLanguage(): string {
   return locale.split('-')[0] || 'en'
 }
 
+/**
+ * Cheap script-based source-language guess. Returns a BCP-47 primary
+ * subtag if we can identify the writing system unambiguously, else null.
+ *
+ * Used as a free fallback when neither Caw.sourceLanguage nor the
+ * author's preferredLanguage is set — saves a gtx detect call for posts
+ * written in non-Latin scripts.
+ *
+ * Conservative by design: scripts shared by multiple languages (Cyrillic,
+ * Latin, Arabic-script Persian-vs-Arabic, Hangul-vs-Hanja-vs-Hiragana
+ * mixed CJK) get the dominant guess. The user's manual Translate button
+ * still calls real gtx detect, which writes the correct code back to
+ * Caw.sourceLanguage and corrects any miss.
+ *
+ * Counts script-bearing characters; ignores digits, punctuation, URLs,
+ * and ASCII letters (which would otherwise dominate any post that
+ * contains a single Latin-script @mention or hashtag).
+ */
+export function detectScript(text: string): string | null {
+  if (!text) return null
+
+  const counts: Record<string, number> = {}
+  // Walk codepoints (post text may include emoji & surrogate pairs).
+  for (const ch of text) {
+    const cp = ch.codePointAt(0)
+    if (cp === undefined) continue
+    // CJK ideographs (Han) — used by zh + part of ja/ko, but if no
+    // hiragana/katakana/hangul accompanies it, default to Chinese.
+    if (cp >= 0x4E00 && cp <= 0x9FFF) counts.zh = (counts.zh ?? 0) + 1
+    // Hiragana + Katakana → unambiguously Japanese.
+    else if ((cp >= 0x3040 && cp <= 0x309F) || (cp >= 0x30A0 && cp <= 0x30FF)) counts.ja = (counts.ja ?? 0) + 1
+    // Hangul Syllables + Jamo → unambiguously Korean.
+    else if ((cp >= 0xAC00 && cp <= 0xD7AF) || (cp >= 0x1100 && cp <= 0x11FF) || (cp >= 0x3130 && cp <= 0x318F)) counts.ko = (counts.ko ?? 0) + 1
+    // Cyrillic → assume Russian (covers Russian/Ukrainian/Belarusian/Bulgarian
+    // — all share the script; ru is the safe majority guess).
+    else if ((cp >= 0x0400 && cp <= 0x04FF) || (cp >= 0x0500 && cp <= 0x052F)) counts.ru = (counts.ru ?? 0) + 1
+    // Hebrew block.
+    else if (cp >= 0x0590 && cp <= 0x05FF) counts.he = (counts.he ?? 0) + 1
+    // Arabic block (covers Arabic, Persian, Urdu — all overlap; default
+    // to Arabic since fa/ur add specific letters but Arabic-only is
+    // detectable by absence of those, which we don't bother with here).
+    else if (cp >= 0x0600 && cp <= 0x06FF) counts.ar = (counts.ar ?? 0) + 1
+    // Devanagari → Hindi.
+    else if (cp >= 0x0900 && cp <= 0x097F) counts.hi = (counts.hi ?? 0) + 1
+    // Thai block.
+    else if (cp >= 0x0E00 && cp <= 0x0E7F) counts.th = (counts.th ?? 0) + 1
+  }
+
+  // Japanese check first: any kana presence trumps Chinese, since
+  // Chinese never uses kana but Japanese mixes kanji + kana.
+  if (counts.ja && counts.ja > 0) return 'ja'
+
+  // Otherwise pick the script with the most matching characters.
+  let best: string | null = null
+  let bestCount = 0
+  for (const [lang, n] of Object.entries(counts)) {
+    if (n > bestCount) { bestCount = n; best = lang }
+  }
+  // Require at least 3 script-bearing characters before committing —
+  // a single emoji-adjacent CJK character in an otherwise-English post
+  // shouldn't flip the language.
+  return bestCount >= 3 ? best : null
+}
+
 export interface TranslationResult {
   /** Final translated text. */
   text: string
