@@ -57,7 +57,7 @@ contract CawProfileMinter is Context {
   ///      (scopeBitmap hard-wired to 0xBF on L2).
   function mintAndDepositAndQuickSign(
     uint32 clientId, string memory username, uint256 depositAmount, uint32 lzDestId, uint256 lzTokenAmount,
-    address sessionKey, uint64 expiry, uint256 spendLimit
+    address sessionKey, uint64 expiry, uint256 spendLimit, uint64 perActionTipRate
   ) public payable {
     require(sessionKey != address(0), "Zero session key");
     uint32 newId = _burnAndAssignId(username, depositAmount);
@@ -65,7 +65,7 @@ contract CawProfileMinter is Context {
       CAW.transferFrom(_msgSender(), address(this), depositAmount);
       CAW.approve(address(CawProfile), depositAmount);
     }
-    bytes memory sessionExtra = abi.encode(sessionKey, expiry, spendLimit);
+    bytes memory sessionExtra = abi.encode(sessionKey, expiry, spendLimit, perActionTipRate);
     CawProfile.mintAndDeposit{value: msg.value}(
       clientId, msg.sender, username, newId, depositAmount, lzDestId, lzTokenAmount, sessionExtra
     );
@@ -75,11 +75,11 @@ contract CawProfileMinter is Context {
   ///         the security note on `mintAndDepositAndQuickSign`.
   function mintAndAuthAndQuickSign(
     uint32 clientId, string memory username, uint32 lzDestId, uint256 lzTokenAmount,
-    address sessionKey, uint64 expiry, uint256 spendLimit
+    address sessionKey, uint64 expiry, uint256 spendLimit, uint64 perActionTipRate
   ) public payable {
     require(sessionKey != address(0), "Zero session key");
     uint32 newId = _burnAndAssignId(username, 0);
-    bytes memory sessionExtra = abi.encode(sessionKey, expiry, spendLimit);
+    bytes memory sessionExtra = abi.encode(sessionKey, expiry, spendLimit, perActionTipRate);
     CawProfile.mintAndAuth{value: msg.value}(
       clientId, msg.sender, username, newId, lzDestId, lzTokenAmount, sessionExtra
     );
@@ -230,6 +230,7 @@ contract CawProfileMinter is Context {
     address sessionKey,
     uint64 expiry,
     uint256 spendLimit,
+    uint64 perActionTipRate,
     uint32 lzDestId,
     uint256 lzTokenAmount
   ) public payable {
@@ -249,7 +250,7 @@ contract CawProfileMinter is Context {
     idByUsername[username] = newId;
 
     CAW.approve(address(CawProfile), depositAmount);
-    bytes memory sessionExtra = abi.encode(sessionKey, expiry, spendLimit);
+    bytes memory sessionExtra = abi.encode(sessionKey, expiry, spendLimit, perActionTipRate);
     CawProfile.mintAndDeposit{value: msg.value - swapEthAmount}(
       clientId, msg.sender, username, newId, depositAmount, lzDestId, lzTokenAmount, sessionExtra
     );

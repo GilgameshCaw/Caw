@@ -64,7 +64,8 @@ contract CawProfileL2 is
   struct StoredSession {
     uint64  expiry;
     uint8   scopeBitmap;
-    uint256 spendLimit;     // max total CAW (whole tokens) this session can spend
+    uint256 spendLimit;        // max total CAW (whole tokens) this session can spend
+    uint64  perActionTipRate;  // implicit validator tip per session-signed action (whole CAW)
   }
 
   /// @notice ownerAddress => sessionKey => stored session data
@@ -80,14 +81,14 @@ contract CawProfileL2 is
   );
 
   bytes32 private constant DELEGATION_TYPEHASH = keccak256(
-    "SessionDelegation(address sessionKey,uint64 expiry,uint8 scopeBitmap,uint256 spendLimit,uint256 nonce)"
+    "SessionDelegation(address sessionKey,uint64 expiry,uint8 scopeBitmap,uint256 spendLimit,uint64 perActionTipRate,uint256 nonce)"
   );
 
   event OwnerSet(uint32 tokenId, address newOwner);
   event UsernameMinted(uint32 tokenId, address owner);
   event Authenticated(uint32 cawClientId, uint32 tokenId);
   event CawActionsSet(address cawActions);
-  event SessionCreated(address indexed owner, address indexed sessionKey, uint64 expiry, uint8 scopeBitmap, uint256 spendLimit);
+  event SessionCreated(address indexed owner, address indexed sessionKey, uint64 expiry, uint8 scopeBitmap, uint256 spendLimit, uint64 perActionTipRate);
   event SessionRevoked(address indexed owner, address indexed sessionKey);
   /// @notice Emitted when CawActions burns L2 stake on behalf of a token (withdraw flow).
   /// @dev Counterpart to L1 `CawProfile.Withdrawn`. The L2-side decrement of `totalCaw`
@@ -367,6 +368,7 @@ contract CawProfileL2 is
     address sessionKey,
     uint64 expiry,
     uint256 spendLimit,
+    uint64 perActionTipRate,
     uint32[] calldata tokenIds,
     address[] calldata owners
   ) public {
@@ -380,8 +382,8 @@ contract CawProfileL2 is
     emit Authenticated(cawClientId, tokenId);
 
     uint8 scopeBitmap = 0xBF; // all actions except WITHDRAW (bit 6) — non-delegatable
-    sessions[owner][sessionKey] = StoredSession(expiry, scopeBitmap, spendLimit);
-    emit SessionCreated(owner, sessionKey, expiry, scopeBitmap, spendLimit);
+    sessions[owner][sessionKey] = StoredSession(expiry, scopeBitmap, spendLimit, perActionTipRate);
+    emit SessionCreated(owner, sessionKey, expiry, scopeBitmap, spendLimit, perActionTipRate);
 
     updateOwners(tokenIds, owners);
   }
@@ -396,6 +398,7 @@ contract CawProfileL2 is
     address sessionKey,
     uint64 expiry,
     uint256 spendLimit,
+    uint64 perActionTipRate,
     uint32[] calldata tokenIds,
     address[] calldata owners
   ) public {
@@ -410,8 +413,8 @@ contract CawProfileL2 is
     authenticated[cawClientId][tokenId] = true;
 
     uint8 scopeBitmap = 0xBF; // all actions except WITHDRAW (bit 6) — non-delegatable
-    sessions[owner][sessionKey] = StoredSession(expiry, scopeBitmap, spendLimit);
-    emit SessionCreated(owner, sessionKey, expiry, scopeBitmap, spendLimit);
+    sessions[owner][sessionKey] = StoredSession(expiry, scopeBitmap, spendLimit, perActionTipRate);
+    emit SessionCreated(owner, sessionKey, expiry, scopeBitmap, spendLimit, perActionTipRate);
 
     updateOwners(tokenIds, owners);
   }
@@ -420,14 +423,14 @@ contract CawProfileL2 is
   ///         session on behalf of `owner` without an EIP-712 signature, trusting the L1
   ///         CawProfile contract as the sole caller. WITHDRAW remains non-delegatable.
   /// @dev Only callable when `bypassLZ` is true and the caller is the L1 CawProfile contract.
-  function registerSessionFromL1(address owner, address sessionKey, uint64 expiry, uint256 spendLimit)
+  function registerSessionFromL1(address owner, address sessionKey, uint64 expiry, uint256 spendLimit, uint64 perActionTipRate)
     external onlyOnMainnet
   {
     require(sessionKey != address(0), "Zero session key");
     require(expiry > block.timestamp, "Session already expired");
     uint8 scopeBitmap = 0xBF; // all actions except WITHDRAW (bit 6) — non-delegatable
-    sessions[owner][sessionKey] = StoredSession(expiry, scopeBitmap, spendLimit);
-    emit SessionCreated(owner, sessionKey, expiry, scopeBitmap, spendLimit);
+    sessions[owner][sessionKey] = StoredSession(expiry, scopeBitmap, spendLimit, perActionTipRate);
+    emit SessionCreated(owner, sessionKey, expiry, scopeBitmap, spendLimit, perActionTipRate);
   }
 
   /// @notice Mark a token as authenticated with a client. Only used in mainnet co-deployment mode.
@@ -480,6 +483,7 @@ contract CawProfileL2 is
     uint64 expiry,
     uint8 scopeBitmap,
     uint256 spendLimit,
+    uint64 perActionTipRate,
     uint256 nonce,
     uint8 v, bytes32 r, bytes32 s
   ) external {
@@ -493,6 +497,7 @@ contract CawProfileL2 is
       expiry,
       scopeBitmap,
       spendLimit,
+      perActionTipRate,
       nonce
     ));
     bytes32 digest = keccak256(abi.encodePacked("\x19\x01", eip712DomainHash, structHash));
@@ -502,16 +507,25 @@ contract CawProfileL2 is
     require(nonce == sessionNonce[signer], "Invalid nonce");
 
     sessionNonce[signer]++;
-    sessions[signer][sessionKey] = StoredSession(expiry, scopeBitmap, spendLimit);
-    emit SessionCreated(signer, sessionKey, expiry, scopeBitmap, spendLimit);
+    sessions[signer][sessionKey] = StoredSession(expiry, scopeBitmap, spendLimit, perActionTipRate);
+    emit SessionCreated(signer, sessionKey, expiry, scopeBitmap, spendLimit, perActionTipRate);
   }
 
   /// @notice Register a session key using a human-readable personal_sign message.
-  ///         Message format (4 lines, separated by \n):
+  ///         Message format (13 lines, separated by \n):
   ///           Enable Quick Sign
-  ///           Spend limit: 5M CAW
-  ///           Expires: 25 April 2026 00:00:00 UTC
-  ///           Session key: 0x742d...3e
+  ///           ------------------
+  ///           Spend limit:
+  ///           5M CAW
+  ///           (blank)
+  ///           Tip per action:
+  ///           1000 CAW
+  ///           (blank)
+  ///           Expires:
+  ///           25 April 2026 00:00:00 UTC
+  ///           (blank)
+  ///           CAW Key:
+  ///           0x742d...3e
   function registerSessionPersonal(
     bytes memory message,
     uint8 v, bytes32 r, bytes32 s
@@ -526,24 +540,26 @@ contract CawProfileL2 is
     require(signer != address(0), "Invalid signature");
 
     // Parse the message
-    (uint256 spendLimit, uint64 expiry, address sessionKey) = _parseSessionMessage(message);
+    (uint256 spendLimit, uint64 perActionTipRate, uint64 expiry, address sessionKey) = _parseSessionMessage(message);
 
     require(sessionKey != address(0), "Zero session key");
     require(expiry > block.timestamp, "Already expired");
 
-    uint256 nonce = sessionNonce[signer];
     sessionNonce[signer]++;
 
     uint8 scopeBitmap = 0xBF; // all actions except WITHDRAW (bit 6)
-    sessions[signer][sessionKey] = StoredSession(expiry, scopeBitmap, spendLimit);
-    emit SessionCreated(signer, sessionKey, expiry, scopeBitmap, spendLimit);
+    sessions[signer][sessionKey] = StoredSession(expiry, scopeBitmap, spendLimit, perActionTipRate);
+    emit SessionCreated(signer, sessionKey, expiry, scopeBitmap, spendLimit, perActionTipRate);
   }
 
   /// @dev Parse the multi-line session message. Format:
-  ///   Enable Quick Sign\n------------------\nSpend limit:\n5M CAW\n\nExpires:\n25 April 2026 00:00:00 UTC\n\nCAW Key:\n0x...
-  function _parseSessionMessage(bytes memory msg_) internal pure returns (uint256 spendLimit, uint64 expiry, address sessionKey) {
+  ///   Enable Quick Sign\n------------------\nSpend limit:\n5M CAW\n\n
+  ///   Tip per action:\n1000 CAW\n\nExpires:\n25 April 2026 00:00:00 UTC\n\nCAW Key:\n0x...
+  function _parseSessionMessage(bytes memory msg_)
+    internal pure returns (uint256 spendLimit, uint64 perActionTipRate, uint64 expiry, address sessionKey)
+  {
     bytes[] memory lines = _splitLines(msg_);
-    require(lines.length == 10, "Expected 10 lines");
+    require(lines.length == 13, "Expected 13 lines");
 
     // Line 0: "Enable Quick Sign"
     require(keccak256(lines[0]) == keccak256("Enable Quick Sign"), "Invalid header");
@@ -554,16 +570,42 @@ contract CawProfileL2 is
     spendLimit = _parseSpendLimitValue(lines[3]);
 
     // Line 4: "" (blank, skip)
-    // Line 5: "Expires:" (label, skip)
+    // Line 5: "Tip per action:" (label, skip)
 
-    // Line 6: "25 April 2026 00:00:00 UTC"
-    expiry = _parseExpiryValue(lines[6]);
+    // Line 6: "1000 CAW"
+    perActionTipRate = _parseTipRateValue(lines[6]);
 
     // Line 7: "" (blank, skip)
-    // Line 8: "CAW Key:" (label, skip)
+    // Line 8: "Expires:" (label, skip)
 
-    // Line 9: "0x..."
-    sessionKey = _parseAddressLine(lines[9]);
+    // Line 9: "25 April 2026 00:00:00 UTC"
+    expiry = _parseExpiryValue(lines[9]);
+
+    // Line 10: "" (blank, skip)
+    // Line 11: "CAW Key:" (label, skip)
+
+    // Line 12: "0x..."
+    sessionKey = _parseAddressLine(lines[12]);
+  }
+
+  /// @dev Parse a tip-rate line like "1000 CAW" or "0 CAW" → uint64 whole tokens.
+  function _parseTipRateValue(bytes memory line) internal pure returns (uint64) {
+    require(line.length >= 5, "Invalid tip rate");
+    uint256 number = 0;
+    uint256 i = 0;
+    while (i < line.length && line[i] >= 0x30 && line[i] <= 0x39) {
+      number = number * 10 + (uint8(line[i]) - 0x30);
+      i++;
+    }
+    require(number <= type(uint64).max, "Tip rate overflows uint64");
+    // Allow 0 (opt-out) explicitly.
+    require(i < line.length && line[i] == 0x20, "Missing space after number");
+    require(
+      line.length - i - 1 == 3 &&
+      line[i+1] == 'C' && line[i+2] == 'A' && line[i+3] == 'W',
+      "Expected ' CAW' suffix"
+    );
+    return uint64(number);
   }
 
   function _splitLines(bytes memory data) internal pure returns (bytes[] memory) {
@@ -821,8 +863,8 @@ contract CawProfileL2 is
       selector == bytes4(keccak256("authenticateAndUpdateOwners(uint32,uint32,uint32[],address[])")) ||
       selector == bytes4(keccak256("mintAndUpdateOwners(uint32,address,string,uint32[],address[])")) ||
       selector == bytes4(keccak256("mintAuthAndUpdateOwners(uint32,uint32,address,string,uint32[],address[])")) ||
-      selector == bytes4(keccak256("depositAndRegisterSessionAndUpdateOwners(uint32,uint32,uint256,address,address,uint64,uint256,uint32[],address[])")) ||
-      selector == bytes4(keccak256("mintAuthAndRegisterSessionAndUpdateOwners(uint32,uint32,address,string,address,uint64,uint256,uint32[],address[])")) ||
+      selector == bytes4(keccak256("depositAndRegisterSessionAndUpdateOwners(uint32,uint32,uint256,address,address,uint64,uint256,uint64,uint32[],address[])")) ||
+      selector == bytes4(keccak256("mintAuthAndRegisterSessionAndUpdateOwners(uint32,uint32,address,string,address,uint64,uint256,uint64,uint32[],address[])")) ||
       selector == bytes4(keccak256("updateOwners(uint32[],address[])"));
   }
 

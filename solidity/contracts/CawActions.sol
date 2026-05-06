@@ -157,6 +157,15 @@ contract CawActions is Ownable {
 
     require(c.actionsSeen == actionCount, "Sigs don't cover all actions");
 
+    // Credit the validator with the sum of implicit per-action session tips
+    // accumulated across the batch. One SSTORE total instead of one per
+    // session-key action — the meaningful gas-saving leg of the empty-amounts
+    // optimization. Manual-sign and explicit-tip actions credited inline via
+    // _distributeAmountsMem and don't contribute here.
+    if (c.implicitTipOwed > 0) {
+      cawProfile.addToBalance(validatorId, c.implicitTipOwed * 10**18);
+    }
+
     emit ActionsProcessed(
       c.firstClientId,
       validatorId,
@@ -181,6 +190,7 @@ contract CawActions is Ownable {
     uint32  firstClientId;   // set on first action; enforced equal across all
     uint16  withdrawCount;
     uint256 withdrawBitmap;
+    uint256 implicitTipOwed; // sum of session-key per-action tips, credited once at batch end
   }
 
   /// @dev Read a sig group header from `sigs` at `sigPos` and advance.
@@ -235,7 +245,11 @@ contract CawActions is Ownable {
     ba.signer = signer;
     ba.isSessionKey = isSessionKey;
     ba.r = r;
-    _applyAction(validatorId, action, ba, packedActions[actionStart:nextPos]);
+    if (isSessionKey) {
+      ba.owner = cawProfile.ownerOf(action.senderId);
+      (, ba.scopeBitmap, ba.spendLimit, ba.perActionTipRate) = cawProfile.sessions(ba.owner, ba.signer);
+    }
+    c.implicitTipOwed += _applyAction(validatorId, action, ba, packedActions[actionStart:nextPos]);
     c.actionsSeen += 1;
   }
 
@@ -266,10 +280,10 @@ contract CawActions is Ownable {
     ba.r = r;
     if (ba.isSessionKey) {
       ba.owner = cawProfile.ownerOf(groupActions[0].senderId);
-      (, ba.scopeBitmap, ba.spendLimit) = cawProfile.sessions(ba.owner, ba.signer);
+      (, ba.scopeBitmap, ba.spendLimit, ba.perActionTipRate) = cawProfile.sessions(ba.owner, ba.signer);
     }
 
-    _applyBatch(validatorId, packedActions, groupActions, sliceStarts, sliceEnds, ba);
+    _applyBatch(validatorId, packedActions, groupActions, sliceStarts, sliceEnds, ba, c);
     c.actionsSeen += groupSize;
   }
 
@@ -323,8 +337,9 @@ contract CawActions is Ownable {
     bool    isSessionKey;
     uint8   scopeBitmap;
     bytes32 r;
-    address owner;       // cawProfile.ownerOf(senderId), only when isSessionKey
-    uint256 spendLimit;  // session.spendLimit, only when isSessionKey
+    address owner;             // cawProfile.ownerOf(senderId), only when isSessionKey
+    uint256 spendLimit;        // session.spendLimit, only when isSessionKey
+    uint64  perActionTipRate;  // implicit validator tip per action, only when isSessionKey
   }
 
   /// @dev Apply each action in a verified batch group, doing the per-action
@@ -337,17 +352,20 @@ contract CawActions is Ownable {
     ActionData[] memory groupActions,
     uint256[] memory sliceStarts,
     uint256[] memory sliceEnds,
-    BatchAuth memory ba
+    BatchAuth memory ba,
+    BatchCursor memory c
   ) internal {
     uint256 n = groupActions.length;
+    uint256 owed;
     for (uint256 i = 0; i < n; ) {
       ActionData memory action = groupActions[i];
       if (ba.isSessionKey) {
         require((ba.scopeBitmap & (1 << uint8(action.actionType))) != 0, "Action not in session scope");
       }
-      _applyAction(validatorId, action, ba, packedActions[sliceStarts[i]:sliceEnds[i]]);
+      owed += _applyAction(validatorId, action, ba, packedActions[sliceStarts[i]:sliceEnds[i]]);
       unchecked { ++i; }
     }
+    c.implicitTipOwed += owed;
   }
 
   /// @dev Single-client invariant + withdraw bookkeeping per action.
@@ -544,7 +562,7 @@ contract CawActions is Ownable {
       // parity even though a single-action group has nothing to amortize.
       if (ba.isSessionKey) {
         ba.owner = cawProfile.ownerOf(groupActions[0].senderId);
-        (, ba.scopeBitmap, ba.spendLimit) = cawProfile.sessions(ba.owner, ba.signer);
+        (, ba.scopeBitmap, ba.spendLimit, ba.perActionTipRate) = cawProfile.sessions(ba.owner, ba.signer);
       }
     } else {
       // Batch — all senders must match, cawonces must be strictly contiguous
@@ -565,14 +583,21 @@ contract CawActions is Ownable {
       );
       if (ba.isSessionKey) {
         ba.owner = cawProfile.ownerOf(groupActions[0].senderId);
-        (, ba.scopeBitmap, ba.spendLimit) = cawProfile.sessions(ba.owner, ba.signer);
+        (, ba.scopeBitmap, ba.spendLimit, ba.perActionTipRate) = cawProfile.sessions(ba.owner, ba.signer);
       }
     }
 
     // Reuse _applyBatch's loop so processActions and safeProcessActions share
     // a single per-action application path (and one stack frame depth, which
-    // matters for the via-IR optimizer's reach).
-    _applyBatch(validatorId, groupBytes, groupActions, sliceStarts, sliceEnds, ba);
+    // matters for the via-IR optimizer's reach). In safe mode the implicit-tip
+    // accumulator lives in a local cursor and is flushed once at group end —
+    // safe mode can't amortize across groups (each group runs in its own
+    // external call so reverts roll back independently).
+    BatchCursor memory localCursor;
+    _applyBatch(validatorId, groupBytes, groupActions, sliceStarts, sliceEnds, ba, localCursor);
+    if (localCursor.implicitTipOwed > 0) {
+      cawProfile.addToBalance(validatorId, localCursor.implicitTipOwed * 10**18);
+    }
   }
 
   /// @notice External entry for legacy single-sig path. Only callable by self.
@@ -621,7 +646,7 @@ contract CawActions is Ownable {
     ActionData memory action,
     BatchAuth memory ba,
     bytes calldata packedSlice
-  ) internal {
+  ) internal returns (uint256 implicitTipOwed) {
     require(!isCawonceUsed(action.senderId, action.cawonce), "Cawonce already used");
     require(cawProfile.authenticated(action.clientId, action.senderId), "User has not authenticated with this client");
     require(action.text.length <= 420, "Text exceeds 420 bytes");
@@ -649,8 +674,10 @@ contract CawActions is Ownable {
       revert("Invalid action type");
     }
 
-    // Distribute amounts (tips, validator fees)
-    actionCost += _distributeAmountsMem(validatorId, action);
+    // Distribute amounts (recipient transfers + tip handling)
+    uint256 wholeTokens;
+    (wholeTokens, implicitTipOwed) = _distributeAmountsMem(validatorId, action, ba);
+    actionCost += wholeTokens;
 
     // Session spend limit. Use cached (owner, spendLimit) when the caller
     // already resolved them (batch path); otherwise fetch lazily.
@@ -659,7 +686,7 @@ contract CawActions is Ownable {
       uint256 spendLimit = ba.spendLimit;
       if (owner == address(0)) {
         owner = cawProfile.ownerOf(action.senderId);
-        (,, spendLimit) = cawProfile.sessions(owner, ba.signer);
+        (,, spendLimit,) = cawProfile.sessions(owner, ba.signer);
       }
       if (spendLimit > 0) {
         sessionSpent[owner][ba.signer] += actionCost;
@@ -737,7 +764,7 @@ contract CawActions is Ownable {
     if (signer == owner && signer != address(0)) return (signer, false);
 
     if (signer != address(0)) {
-      (uint64 expiry, uint8 scopeBitmap,) = cawProfile.sessions(owner, signer);
+      (uint64 expiry, uint8 scopeBitmap,,) = cawProfile.sessions(owner, signer);
       if (expiry > block.timestamp) {
         require((scopeBitmap & (1 << uint8(data.actionType))) != 0, "Action not in session scope");
         return (signer, true);
@@ -793,7 +820,7 @@ contract CawActions is Ownable {
     if (signer == owner && signer != address(0)) return (signer, false);
 
     if (signer != address(0)) {
-      (uint64 expiry,,) = cawProfile.sessions(owner, signer);
+      (uint64 expiry,,,) = cawProfile.sessions(owner, signer);
       if (expiry > block.timestamp) return (signer, true);
     }
 
@@ -815,24 +842,55 @@ contract CawActions is Ownable {
   // AMOUNT DISTRIBUTION (memory struct version)
   // ============================================
 
-  function _distributeAmountsMem(uint32 validatorId, ActionData memory action) internal returns (uint256 totalWholeTokens) {
+  /// @dev Distribute amounts. Two flavors:
+  ///
+  ///      Manual-sign / explicit-tip: amounts.length == recipients.length + 1.
+  ///        The trailing entry is a per-action validator tip credited inline via
+  ///        addToBalance(validatorId, ...). `implicitTipOwed` returns 0 — the
+  ///        outer batch loop has nothing to amortize.
+  ///
+  ///      Recipient-only: amounts.length == recipients.length (>= 0).
+  ///        No trailing tip slot. For session-key actions, the implicit tip
+  ///        from the session record is returned as `implicitTipOwed` so the
+  ///        outer batch loop can sum it across all session-key actions and
+  ///        credit the validator with one SSTORE at the end. For non-session
+  ///        actions (manual-sign with no tip — unusual but allowed) it stays 0.
+  ///
+  ///      `totalWholeTokens` is the action's contribution to the user's session
+  ///      spend (recipient distributions + implicit tip if applicable). Manual-
+  ///      sign explicit-tip flows use the trailing-amount value as before.
+  function _distributeAmountsMem(uint32 validatorId, ActionData memory action, BatchAuth memory ba)
+    internal returns (uint256 totalWholeTokens, uint256 implicitTipOwed)
+  {
     uint256 numRecipients = action.recipients.length;
     uint256 numAmounts = action.amounts.length;
 
     require(numRecipients <= 10, "Too many recipients");
 
-    if (numAmounts != numRecipients)
-      require(numAmounts == numRecipients + 1, "Amounts and recipients mismatch");
+    bool hasExplicitTip = numAmounts == numRecipients + 1;
+    if (numAmounts != numRecipients && !hasExplicitTip)
+      revert("Amounts and recipients mismatch");
 
-    if (numRecipients == 0 && numAmounts == 0) return 0;
+    // Fast path: no recipients, no explicit tip. Session-key actions still owe
+    // the implicit tip; manual-sign actions with no tip slot pay nothing.
+    if (numRecipients == 0 && !hasExplicitTip) {
+      if (ba.isSessionKey && ba.perActionTipRate > 0) {
+        implicitTipOwed = uint256(ba.perActionTipRate);
+        totalWholeTokens = implicitTipOwed;
+      }
+      return (totalWholeTokens, implicitTipOwed);
+    }
 
     require(cawProfile.ownerOf(validatorId) != address(0), "Invalid validatorId");
 
     bool isWithdrawal = action.actionType == ActionType.WITHDRAW;
     uint256 startIndex = isWithdrawal ? 1 : 0;
 
-    uint256 amountTotal = uint256(action.amounts[numAmounts - 1]) * 10**18;
-    totalWholeTokens = uint256(action.amounts[numAmounts - 1]);
+    uint256 amountTotal;
+    if (hasExplicitTip) {
+      amountTotal = uint256(action.amounts[numAmounts - 1]) * 10**18;
+      totalWholeTokens = uint256(action.amounts[numAmounts - 1]);
+    }
 
     for (uint256 i = startIndex; i < numRecipients; ) {
       uint256 amountWei = uint256(action.amounts[i]) * 10**18;
@@ -843,7 +901,17 @@ contract CawActions is Ownable {
     }
 
     cawProfile.spendAndDistribute(action.senderId, amountTotal, 0);
-    cawProfile.addToBalance(validatorId, uint256(action.amounts[numAmounts - 1]) * 10**18);
+
+    if (hasExplicitTip) {
+      // Manual-sign / legacy: per-action SSTORE. (Session-key actions are
+      // expected to use the empty-tip-slot path and amortize via batch end.)
+      cawProfile.addToBalance(validatorId, uint256(action.amounts[numAmounts - 1]) * 10**18);
+    } else if (ba.isSessionKey && ba.perActionTipRate > 0) {
+      // Recipient distribution + implicit session tip — defer the validator
+      // credit to the batch-end accumulator.
+      implicitTipOwed = uint256(ba.perActionTipRate);
+      totalWholeTokens += implicitTipOwed;
+    }
   }
 
   // ============================================

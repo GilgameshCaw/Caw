@@ -157,7 +157,7 @@ contract CawProfileQuoter {
       selector = cawProfile.depositRegisterSessionSelector();
       payload = abi.encodeWithSelector(
         selector, clientId, uint32(0), depositAmount, msg.sender,
-        sessionKey, uint64(0), uint256(0), tokenIds, owners
+        sessionKey, uint64(0), uint256(0), uint64(0), tokenIds, owners
       );
     }
 
@@ -193,7 +193,7 @@ contract CawProfileQuoter {
       selector = cawProfile.mintAuthRegisterSessionSelector();
       payload = abi.encodeWithSelector(
         selector, clientId, uint32(0), msg.sender, "placeholdr",
-        sessionKey, uint64(0), uint256(0), tokenIds, owners
+        sessionKey, uint64(0), uint256(0), uint64(0), tokenIds, owners
       );
     }
 

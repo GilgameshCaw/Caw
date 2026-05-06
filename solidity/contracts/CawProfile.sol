@@ -60,11 +60,11 @@ contract CawProfile is
   ///         mintAndDepositAndQuickSign flow so a fresh user mints+deposits+auths+quicksigns
   ///         in a single L1 transaction. The L2 receiver hard-wires scopeBitmap = 0xBF —
   ///         WITHDRAW is permanently non-delegatable.
-  bytes4 public depositRegisterSessionSelector = bytes4(keccak256("depositAndRegisterSessionAndUpdateOwners(uint32,uint32,uint256,address,address,uint64,uint256,uint32[],address[])"));
+  bytes4 public depositRegisterSessionSelector = bytes4(keccak256("depositAndRegisterSessionAndUpdateOwners(uint32,uint32,uint256,address,address,uint64,uint256,uint64,uint32[],address[])"));
 
   /// @notice Selector for the bundled mint+auth + register-session L2 handler. Used by the
   ///         mintAndAuthAndQuickSign flow (no deposit). Same 0xBF scope hard-wire on L2.
-  bytes4 public mintAuthRegisterSessionSelector = bytes4(keccak256("mintAuthAndRegisterSessionAndUpdateOwners(uint32,uint32,address,string,address,uint64,uint256,uint32[],address[])"));
+  bytes4 public mintAuthRegisterSessionSelector = bytes4(keccak256("mintAuthAndRegisterSessionAndUpdateOwners(uint32,uint32,address,string,address,uint64,uint256,uint64,uint32[],address[])"));
 
   /// @dev Per-selector base gas limit (the constant component; per-update overhead is added
   ///      separately in `gasLimitFor`). Initialized in the constructor. An unset selector
@@ -253,8 +253,8 @@ contract CawProfile is
     if (lzDestId == mainnetLzId) {
       cawProfileL2.mintAndAuth(newId, owner, username, cawClientId);
       if (sessionExtra.length > 0) {
-        (address sk, uint64 ex, uint256 sl) = abi.decode(sessionExtra, (address, uint64, uint256));
-        cawProfileL2.registerSessionFromL1(owner, sk, ex, sl);
+        (address sk, uint64 ex, uint256 sl, uint64 tr) = abi.decode(sessionExtra, (address, uint64, uint256, uint64));
+        cawProfileL2.registerSessionFromL1(owner, sk, ex, sl, tr);
       }
     } else {
       uint32[] memory tokenIds;
@@ -266,9 +266,9 @@ contract CawProfile is
         sel = mintAuthSelector;
         payload = abi.encodeWithSelector(sel, cawClientId, newId, owner, username, tokenIds, owners);
       } else {
-        (address sk, uint64 ex, uint256 sl) = abi.decode(sessionExtra, (address, uint64, uint256));
+        (address sk, uint64 ex, uint256 sl, uint64 tr) = abi.decode(sessionExtra, (address, uint64, uint256, uint64));
         sel = mintAuthRegisterSessionSelector;
-        payload = abi.encodeWithSelector(sel, cawClientId, newId, owner, username, sk, ex, sl, tokenIds, owners);
+        payload = abi.encodeWithSelector(sel, cawClientId, newId, owner, username, sk, ex, sl, tr, tokenIds, owners);
       }
       lzSend(cawClientId, lzDestId, sel, tokenIds.length, payload, lzEthAmount, lzTokenAmount);
     }
@@ -320,8 +320,8 @@ contract CawProfile is
     if (lzDestId == mainnetLzId) {
       cawProfileL2.deposit(cawClientId, newId, depositAmount);
       if (sessionExtra.length > 0) {
-        (address sk, uint64 ex, uint256 sl) = abi.decode(sessionExtra, (address, uint64, uint256));
-        cawProfileL2.registerSessionFromL1(owner, sk, ex, sl);
+        (address sk, uint64 ex, uint256 sl, uint64 tr) = abi.decode(sessionExtra, (address, uint64, uint256, uint64));
+        cawProfileL2.registerSessionFromL1(owner, sk, ex, sl, tr);
       }
     } else {
       uint32[] memory tokenIds;
@@ -333,9 +333,9 @@ contract CawProfile is
         sel = addToBalanceSelector;
         payload = abi.encodeWithSelector(sel, cawClientId, newId, depositAmount, tokenIds, owners);
       } else {
-        (address sk, uint64 ex, uint256 sl) = abi.decode(sessionExtra, (address, uint64, uint256));
+        (address sk, uint64 ex, uint256 sl, uint64 tr) = abi.decode(sessionExtra, (address, uint64, uint256, uint64));
         sel = depositRegisterSessionSelector;
-        payload = abi.encodeWithSelector(sel, cawClientId, newId, depositAmount, owner, sk, ex, sl, tokenIds, owners);
+        payload = abi.encodeWithSelector(sel, cawClientId, newId, depositAmount, owner, sk, ex, sl, tr, tokenIds, owners);
       }
       lzSend(cawClientId, lzDestId, sel, tokenIds.length, payload, lzEthAmount, lzTokenAmount);
     }
