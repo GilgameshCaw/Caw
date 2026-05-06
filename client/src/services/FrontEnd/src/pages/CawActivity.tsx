@@ -4,6 +4,7 @@ import { apiFetch } from '~/api/client'
 import { useTheme } from '~/hooks/useTheme'
 import { Tabs, TabItem } from '~/components/Tabs'
 import { useActiveToken, usePriceStore } from '~/store/tokenDataStore'
+import { useT } from '~/i18n/I18nProvider'
 
 // Wei -> CAW for display
 function weiToCaw(wei: string | number | null | undefined): number {
@@ -55,21 +56,23 @@ interface Segment {
 // tip can dwarf a month of action activity), so they get their own
 // dedicated chart below the main flow. Keeping them in this stack
 // flattens everything else into invisibility.
+// Note: `label` holds an i18n key (resolved via t() at render). Stable
+// across locale switches; brand-friendly even in non-Latin scripts.
 const SEGMENTS: Segment[] = [
   // INCOMING
-  { key: 'in.staking',   label: 'Staking rewards', color: '#ebc046', textColor: '#ebc046', side: 'in' }, // brand gold
-  { key: 'in.RECAW',     label: 'Recaws received', color: '#a373c8', textColor: '#a373c8', side: 'in' }, // dusty violet
-  { key: 'in.FOLLOW',    label: 'Follows received',color: '#e08a4a', textColor: '#e08a4a', side: 'in' }, // burnt orange
-  { key: 'in.LIKE',      label: 'Likes received',  color: '#d96d72', textColor: '#d96d72', side: 'in' }, // washed rose
-  { key: 'in.validator', label: 'Validator fees',  color: '#4fb3a9', textColor: '#4fb3a9', side: 'in' }, // muted teal
+  { key: 'in.staking',   label: 'staking.activity.segment.in.staking',   color: '#ebc046', textColor: '#ebc046', side: 'in' }, // brand gold
+  { key: 'in.RECAW',     label: 'staking.activity.segment.in.recaw',     color: '#a373c8', textColor: '#a373c8', side: 'in' }, // dusty violet
+  { key: 'in.FOLLOW',    label: 'staking.activity.segment.in.follow',    color: '#e08a4a', textColor: '#e08a4a', side: 'in' }, // burnt orange
+  { key: 'in.LIKE',      label: 'staking.activity.segment.in.like',      color: '#d96d72', textColor: '#d96d72', side: 'in' }, // washed rose
+  { key: 'in.validator', label: 'staking.activity.segment.in.validator', color: '#4fb3a9', textColor: '#4fb3a9', side: 'in' }, // muted teal
   // OUTGOING — same hue families, deeper + cooler shift.
-  { key: 'out.CAW',      label: 'Posts',          color: '#4a78b8', textColor: '#4a78b8', side: 'out' }, // dusty cobalt
-  { key: 'out.RECAW',    label: 'Recaws given',   color: '#7d5ba6', textColor: '#7d5ba6', side: 'out' }, // deeper violet
-  { key: 'out.LIKE',     label: 'Likes given',    color: '#b04f56', textColor: '#b04f56', side: 'out' }, // brick rose
-  { key: 'out.FOLLOW',   label: 'Follows given',  color: '#b8743a', textColor: '#b8743a', side: 'out' }, // burnt sienna
-  { key: 'out.OTHER',    label: 'Other',          color: '#7a7e85', textColor: '#7a7e85', side: 'out' }, // smoke
-  { key: 'out.WITHDRAW', label: 'Withdrawals',    color: '#c89149', textColor: '#c89149', side: 'out' }, // amber
-  { key: 'out.validator',label: 'Validator fees', color: '#3a8580', textColor: '#3a8580', side: 'out' }, // pine teal
+  { key: 'out.CAW',      label: 'staking.activity.segment.out.caw',       color: '#4a78b8', textColor: '#4a78b8', side: 'out' }, // dusty cobalt
+  { key: 'out.RECAW',    label: 'staking.activity.segment.out.recaw',     color: '#7d5ba6', textColor: '#7d5ba6', side: 'out' }, // deeper violet
+  { key: 'out.LIKE',     label: 'staking.activity.segment.out.like',      color: '#b04f56', textColor: '#b04f56', side: 'out' }, // brick rose
+  { key: 'out.FOLLOW',   label: 'staking.activity.segment.out.follow',    color: '#b8743a', textColor: '#b8743a', side: 'out' }, // burnt sienna
+  { key: 'out.OTHER',    label: 'staking.activity.segment.out.other',     color: '#7a7e85', textColor: '#7a7e85', side: 'out' }, // smoke
+  { key: 'out.WITHDRAW', label: 'staking.activity.segment.out.withdraw',  color: '#c89149', textColor: '#c89149', side: 'out' }, // amber
+  { key: 'out.validator',label: 'staking.activity.segment.out.validator', color: '#3a8580', textColor: '#3a8580', side: 'out' }, // pine teal
 ]
 
 // -----------------------------------------------------------------
@@ -201,6 +204,7 @@ function projectBucket(b: BucketIn): BucketView {
 }
 
 const CawActivity: React.FC = () => {
+  const t = useT()
   const { isDark } = useTheme()
   const activeToken = useActiveToken()
   // CAW USD price (≈ 0 while still loading; cards fall back to CAW
@@ -257,7 +261,7 @@ const CawActivity: React.FC = () => {
       apiFetch<ProfileLite>(`/api/users/${routeUsername}`)
         .then(p => { if (!cancelled) setProfile(p) })
         .catch(err => {
-          if (!cancelled) setError(err?.message?.includes('404') ? 'User not found' : 'Failed to load user')
+          if (!cancelled) setError(err?.message?.includes('404') ? t('staking.activity.error.user_not_found') : t('staking.activity.error.user_load_failed'))
         })
     } else if (activeToken?.tokenId && activeToken?.username) {
       setProfile({
@@ -295,9 +299,9 @@ const CawActivity: React.FC = () => {
         // dev-server returns index.html for unknown paths). Friendlier
         // message than the raw JSON parse error.
         if (msg.includes('Unexpected token') && msg.includes('<')) {
-          setError("Couldn't reach the API. Is the server running?")
+          setError(t('staking.activity.error.api_unreachable'))
         } else {
-          setError(msg || 'Failed to load activity')
+          setError(msg || t('staking.activity.error.load_failed'))
         }
       })
       .finally(() => { if (!cancelled) setLoading(false) })
@@ -410,17 +414,17 @@ const CawActivity: React.FC = () => {
         <div className="flex items-center justify-between mb-4">
           <div>
             <h1 className={`text-2xl font-bold ${isDark ? 'text-white' : 'text-black'}`}>
-              {isViewingSelf ? 'CAW Activity' : (
+              {isViewingSelf ? t('staking.activity.title') : (
                 <>
                   <Link to={`/users/${profile?.username ?? ''}`} className="hover:underline">
                     {profile?.displayName || profile?.username || '…'}
                   </Link>
-                  <span className={isDark ? 'text-white/40 font-normal' : 'text-gray-500 font-normal'}> · CAW Activity</span>
+                  <span className={isDark ? 'text-white/40 font-normal' : 'text-gray-500 font-normal'}> · {t('staking.activity.title')}</span>
                 </>
               )}
             </h1>
             <p className={`text-xs mt-0.5 ${isDark ? 'text-white/40' : 'text-gray-500'}`}>
-              Daily flow: rewards above, spend below. Click legend items to toggle.
+              {t('staking.activity.subtitle')}
             </p>
           </div>
         </div>
@@ -435,14 +439,14 @@ const CawActivity: React.FC = () => {
           <div className="-mx-6 mb-4">
             <Tabs<'my' | 'all'>
               tabs={[
-                { id: 'my', label: 'My Stats' },
-                { id: 'all', label: 'All Stats' },
+                { id: 'my', label: t('staking.activity.tab.my') },
+                { id: 'all', label: t('staking.activity.tab.all') },
               ] as TabItem<'my' | 'all'>[]}
               active={tab}
-              onChange={t => setSearchParams(prev => {
+              onChange={newTab => setSearchParams(prev => {
                 const next = new URLSearchParams(prev)
-                if (t === 'my') next.delete('tab')
-                else next.set('tab', t)
+                if (newTab === 'my') next.delete('tab')
+                else next.set('tab', newTab)
                 return next
               })}
             />
@@ -479,37 +483,37 @@ const CawActivity: React.FC = () => {
             below already covers value. */}
         {data && data.chart.length > 0 && (() => {
           const types = [
-            { key: 'LIKE',   label: 'Likes',   color: '#d96d72' },
-            { key: 'RECAW',  label: 'Recaws',  color: '#a373c8' },
-            { key: 'FOLLOW', label: 'Follows', color: '#e08a4a' },
-            { key: 'TIP',    label: 'Tips',    color: '#7cb958' },
+            { key: 'LIKE',   label: t('staking.activity.action.likes'),   color: '#d96d72' },
+            { key: 'RECAW',  label: t('staking.activity.action.recaws'),  color: '#a373c8' },
+            { key: 'FOLLOW', label: t('staking.activity.action.follows'), color: '#e08a4a' },
+            { key: 'TIP',    label: t('staking.activity.action.tips'),    color: '#7cb958' },
           ]
           // Each type's per-bucket count series.
           const countsByType: Record<string, number[]> = {}
           let anyNonZero = false
-          for (const t of types) {
-            const series = data.chart.map(b => b.rewards.directCounts?.[t.key] ?? 0)
-            countsByType[t.key] = series
+          for (const tt of types) {
+            const series = data.chart.map(b => b.rewards.directCounts?.[tt.key] ?? 0)
+            countsByType[tt.key] = series
             if (series.some(v => v > 0)) anyNonZero = true
           }
           if (!anyNonZero) return null
           return (
             <div className="grid grid-cols-2 gap-3 mb-4">
-              {types.map(t => {
-                const counts = countsByType[t.key]
+              {types.map(tt => {
+                const counts = countsByType[tt.key]
                 const total = counts.reduce((a, v) => a + v, 0)
                 const max = Math.max(...counts, 1)
                 const MINI_H = 40
                 return (
-                  <div key={t.key} className={cardClass}>
+                  <div key={tt.key} className={cardClass}>
                     <div className="flex items-baseline justify-between mb-1.5">
                       <div
                         className="text-[10px] uppercase tracking-wide font-semibold"
-                        style={{ color: t.color }}
+                        style={{ color: tt.color }}
                       >
-                        {t.label}
+                        {tt.label}
                       </div>
-                      <div className="text-sm font-bold tabular-nums" style={{ color: t.color }}>
+                      <div className="text-sm font-bold tabular-nums" style={{ color: tt.color }}>
                         {total.toLocaleString()}
                       </div>
                     </div>
@@ -527,10 +531,10 @@ const CawActivity: React.FC = () => {
                           style={{
                             height: `${(v / max) * 100}%`,
                             minHeight: v > 0 ? 1 : 0,
-                            backgroundColor: t.color,
+                            backgroundColor: tt.color,
                             opacity: v > 0 ? 1 : 0,
                           }}
-                          title={`${v.toLocaleString()} on ${new Date(data.chart[i].bucket).toLocaleDateString()}`}
+                          title={t('staking.activity.mini.tooltip', { count: v, date: new Date(data.chart[i].bucket).toLocaleDateString() })}
                         />
                       ))}
                     </div>
@@ -587,10 +591,10 @@ const CawActivity: React.FC = () => {
           return (
           <>
             <div className="grid grid-cols-3 md:grid-cols-3 gap-3 mb-3">
-              {renderCawCard('Incoming', visibleRewardsTotal, '#7cb958')}
-              {renderCawCard('Outgoing', visibleSpendTotal, '#b04f56')}
+              {renderCawCard(t('staking.activity.card.incoming'), visibleRewardsTotal, '#7cb958')}
+              {renderCawCard(t('staking.activity.card.outgoing'), visibleSpendTotal, '#b04f56')}
               {renderCawCard(
-                'Net',
+                t('staking.activity.card.net'),
                 netAmount,
                 netAmount >= 0 ? '#7cb958' : '#b04f56',
                 { sign: true },
@@ -598,16 +602,16 @@ const CawActivity: React.FC = () => {
             </div>
             <div className="grid grid-cols-2 gap-3 mb-6">
               {renderCawCard(
-                'Staking rewards',
+                t('staking.activity.card.staking_rewards'),
                 weiToCaw(data.summary.rewards.stakingRewards),
                 '#ebc046',
               )}
               <div className={`${cardClass} text-center`}>
-                <div className={`text-[10px] uppercase tracking-wide font-semibold ${isDark ? 'text-white/50' : 'text-gray-500'}`}>Stake share</div>
+                <div className={`text-[10px] uppercase tracking-wide font-semibold ${isDark ? 'text-white/50' : 'text-gray-500'}`}>{t('staking.activity.card.stake_share')}</div>
                 <div className="text-xl font-bold mt-1" style={{ color: '#ebc046' }}>
                   {(data.summary.stakeShare * 100).toFixed(6)}%
                 </div>
-                <div className={`text-[10px] mt-0.5 ${isDark ? 'text-white/40' : 'text-gray-400'}`}>of total CAW staked</div>
+                <div className={`text-[10px] mt-0.5 ${isDark ? 'text-white/40' : 'text-gray-400'}`}>{t('staking.activity.card.stake_share_sub')}</div>
               </div>
             </div>
           </>
@@ -682,7 +686,7 @@ const CawActivity: React.FC = () => {
             <div className={`${cardClass} mb-4`}>
               <div className="flex items-baseline justify-between mb-1">
                 <h2 className={`text-sm font-semibold ${isDark ? 'text-white/60' : 'text-gray-500'}`}>
-                  Total CAW balance
+                  {t('staking.activity.balance.title')}
                 </h2>
                 <div className="flex items-baseline gap-2">
                   <span className="text-lg font-bold tabular-nums" style={{ color: '#ebc046' }}>
@@ -695,7 +699,7 @@ const CawActivity: React.FC = () => {
               <div className="flex gap-3 mb-2 text-[10px]">
                 <span className="flex items-center gap-1.5">
                   <span className="inline-block w-4 h-px" style={{ backgroundColor: lineColor, height: 2 }} />
-                  <span className={isDark ? 'text-white/60' : 'text-gray-600'}>balance</span>
+                  <span className={isDark ? 'text-white/60' : 'text-gray-600'}>{t('staking.activity.balance.legend.balance')}</span>
                 </span>
                 <span className="flex items-center gap-1.5">
                   <span
@@ -706,7 +710,7 @@ const CawActivity: React.FC = () => {
                       borderTop: `2px dashed ${activityColor}`,
                     }}
                   />
-                  <span className={isDark ? 'text-white/60' : 'text-gray-600'}>visible activity (cumulative)</span>
+                  <span className={isDark ? 'text-white/60' : 'text-gray-600'}>{t('staking.activity.balance.legend.activity')}</span>
                 </span>
               </div>
               <div className="flex">
@@ -802,7 +806,7 @@ const CawActivity: React.FC = () => {
                             }`}
                             style={{ zIndex: 20 }}
                           >
-                            {ev.kind === 'deposit' ? '+' : '−'}{fmtNumberCaw(ev.amount)} {ev.kind}
+                            {ev.kind === 'deposit' ? '+' : '−'}{fmtNumberCaw(ev.amount)} {ev.kind === 'deposit' ? t('staking.activity.event.deposit') : t('staking.activity.event.withdraw')}
                           </div>
                         </div>
                       ))
@@ -944,7 +948,11 @@ const CawActivity: React.FC = () => {
           return (
             <div className={`${cardClass} mb-4`}>
               <h2 className={`text-sm font-semibold mb-3 ${isDark ? 'text-white/60' : 'text-gray-500'}`}>
-                {range.interval === 'hour' ? 'Hourly' : range.interval === '6hour' ? '6-hour' : 'Daily'} CAW flow
+                {range.interval === 'hour'
+                  ? t('staking.activity.flow.title.hourly')
+                  : range.interval === '6hour'
+                    ? t('staking.activity.flow.title.6hour')
+                    : t('staking.activity.flow.title.daily')}
               </h2>
 
               <div className="flex" onMouseLeave={() => setHoveredBar(null)}>
@@ -968,7 +976,7 @@ const CawActivity: React.FC = () => {
                       className={`absolute left-2 font-bold uppercase tracking-wide text-[10px] ${isDark ? 'text-white' : 'text-black'}`}
                       style={{ top: '50%', transform: 'translateY(-50%)' }}
                     >
-                      In
+                      {t('staking.activity.axis.in')}
                     </div>
                     {/* 0 sits on the midline */}
                     <div className={`absolute right-2 bottom-0 translate-y-1/2 ${axisLabelClass}`}>0</div>
@@ -979,7 +987,7 @@ const CawActivity: React.FC = () => {
                       className={`absolute left-2 font-bold uppercase tracking-wide text-[10px] ${isDark ? 'text-white' : 'text-black'}`}
                       style={{ top: '50%', transform: 'translateY(-50%)' }}
                     >
-                      Out
+                      {t('staking.activity.axis.out')}
                     </div>
                     {/* Max outgoing at the bottom edge */}
                     {maxOut > 0 && (
@@ -1128,7 +1136,7 @@ const CawActivity: React.FC = () => {
                         </div>
                         {inEntries.length > 0 && (
                           <div className="mb-1.5">
-                            <div className={`text-[10px] uppercase tracking-wide mb-0.5 ${isDark ? 'text-white/40' : 'text-gray-400'}`}>Incoming</div>
+                            <div className={`text-[10px] uppercase tracking-wide mb-0.5 ${isDark ? 'text-white/40' : 'text-gray-400'}`}>{t('staking.activity.tooltip.incoming')}</div>
                             {inEntries.map(s => {
                               const seg = SEGMENTS.find(x => x.key === s.key)!
                               return (
@@ -1138,7 +1146,7 @@ const CawActivity: React.FC = () => {
                                       className="inline-block w-2 h-2 rounded-sm"
                                       style={{ backgroundColor: seg.color }}
                                     />
-                                    <span className={isDark ? 'text-white/70' : 'text-gray-700'}>{seg.label}</span>
+                                    <span className={isDark ? 'text-white/70' : 'text-gray-700'}>{t(seg.label)}</span>
                                   </span>
                                   <span style={{ color: seg.textColor }}>+{fmtNumberCaw(s.value)}</span>
                                 </div>
@@ -1148,7 +1156,7 @@ const CawActivity: React.FC = () => {
                         )}
                         {outEntries.length > 0 && (
                           <div className="mb-1">
-                            <div className={`text-[10px] uppercase tracking-wide mb-0.5 ${isDark ? 'text-white/40' : 'text-gray-400'}`}>Outgoing</div>
+                            <div className={`text-[10px] uppercase tracking-wide mb-0.5 ${isDark ? 'text-white/40' : 'text-gray-400'}`}>{t('staking.activity.tooltip.outgoing')}</div>
                             {outEntries.map(s => {
                               const seg = SEGMENTS.find(x => x.key === s.key)!
                               return (
@@ -1158,7 +1166,7 @@ const CawActivity: React.FC = () => {
                                       className="inline-block w-2 h-2 rounded-sm"
                                       style={{ backgroundColor: seg.color }}
                                     />
-                                    <span className={isDark ? 'text-white/70' : 'text-gray-700'}>{seg.label}</span>
+                                    <span className={isDark ? 'text-white/70' : 'text-gray-700'}>{t(seg.label)}</span>
                                   </span>
                                   <span style={{ color: seg.textColor }}>−{fmtNumberCaw(s.value)}</span>
                                 </div>
@@ -1167,7 +1175,7 @@ const CawActivity: React.FC = () => {
                           </div>
                         )}
                         <div className={`mt-1 pt-1 border-t flex items-center justify-between ${isDark ? 'border-white/10' : 'border-gray-200'}`}>
-                          <span className={isDark ? 'text-white/60' : 'text-gray-600'}>Net</span>
+                          <span className={isDark ? 'text-white/60' : 'text-gray-600'}>{t('staking.activity.tooltip.net')}</span>
                           <span
                             className="font-semibold"
                             style={{ color: inSum - outSum >= 0 ? '#7cb958' : '#b04f56' }}
@@ -1177,8 +1185,8 @@ const CawActivity: React.FC = () => {
                         </div>
                         {(b.deposits > 0 || b.withdrawals > 0) && (
                           <div className={`mt-1 pt-1 border-t text-[10px] ${isDark ? 'border-white/10 text-white/40' : 'border-gray-200 text-gray-400'}`}>
-                            {b.deposits > 0 && <div>Deposit: +{fmtNumberCaw(b.deposits)}</div>}
-                            {b.withdrawals > 0 && <div>Withdraw: −{fmtNumberCaw(b.withdrawals)}</div>}
+                            {b.deposits > 0 && <div>{t('staking.activity.tooltip.deposit_label')} +{fmtNumberCaw(b.deposits)}</div>}
+                            {b.withdrawals > 0 && <div>{t('staking.activity.tooltip.withdraw_label')} −{fmtNumberCaw(b.withdrawals)}</div>}
                           </div>
                         )}
                       </div>
@@ -1284,14 +1292,14 @@ const CawActivity: React.FC = () => {
             <div className={`${cardClass} mb-4`}>
               <div className="flex items-baseline justify-between mb-1">
                 <h2 className={`text-sm font-semibold ${isDark ? 'text-white/60' : 'text-gray-500'}`}>
-                  Tips
+                  {t('staking.activity.tips.title')}
                 </h2>
                 <div className="flex items-baseline gap-3 text-[11px] tabular-nums">
                   <span style={{ color: TIP_IN_COLOR }}>
-                    +{fmtUsd(totalTipsIn) ?? `${fmtNumberCaw(totalTipsIn)} CAW`} in
+                    {t('staking.activity.tips.in_summary', { amount: fmtUsd(totalTipsIn) ?? `${fmtNumberCaw(totalTipsIn)} CAW` })}
                   </span>
                   <span style={{ color: TIP_OUT_COLOR }}>
-                    −{fmtUsd(totalTipsOut) ?? `${fmtNumberCaw(totalTipsOut)} CAW`} out
+                    {t('staking.activity.tips.out_summary', { amount: fmtUsd(totalTipsOut) ?? `${fmtNumberCaw(totalTipsOut)} CAW` })}
                   </span>
                 </div>
               </div>
@@ -1311,7 +1319,7 @@ const CawActivity: React.FC = () => {
                       className={`absolute left-2 font-bold uppercase tracking-wide text-[10px] ${isDark ? 'text-white' : 'text-black'}`}
                       style={{ top: '50%', transform: 'translateY(-50%)' }}
                     >
-                      In
+                      {t('staking.activity.axis.in')}
                     </div>
                     <div className={`absolute right-2 bottom-0 translate-y-1/2 ${axisLabelClass}`}>0</div>
                   </div>
@@ -1320,7 +1328,7 @@ const CawActivity: React.FC = () => {
                       className={`absolute left-2 font-bold uppercase tracking-wide text-[10px] ${isDark ? 'text-white' : 'text-black'}`}
                       style={{ top: '50%', transform: 'translateY(-50%)' }}
                     >
-                      Out
+                      {t('staking.activity.axis.out')}
                     </div>
                     {maxTipOut > 0 && (
                       <div className={`absolute right-2 bottom-0 ${axisLabelClass}`}>
@@ -1420,7 +1428,7 @@ const CawActivity: React.FC = () => {
                 return (
                   <div key={side}>
                     <div className={`text-[10px] uppercase tracking-wide font-semibold mb-2 ${isDark ? 'text-white/50' : 'text-gray-500'}`}>
-                      {side === 'in' ? 'Incoming' : 'Outgoing'}
+                      {side === 'in' ? t('staking.activity.legend.incoming') : t('staking.activity.legend.outgoing')}
                     </div>
                     <div className="flex flex-wrap gap-1.5">
                       {segs.map(s => {
@@ -1440,7 +1448,7 @@ const CawActivity: React.FC = () => {
                               className="inline-block w-2.5 h-2.5 rounded-sm transition-opacity"
                               style={{ backgroundColor: s.color, opacity: enabled ? 1 : 0.3 }}
                             />
-                            {s.label}
+                            {t(s.label)}
                           </button>
                         )
                       })}
@@ -1455,27 +1463,27 @@ const CawActivity: React.FC = () => {
         {data && (data.summary.deposits !== '0' || data.summary.withdrawals !== '0') && (
           <div className={`${cardClass} mb-6 flex items-center justify-between`}>
             <div className={`text-xs ${isDark ? 'text-white/60' : 'text-gray-600'}`}>
-              <span className="font-semibold">Bridge activity:</span>
+              <span className="font-semibold">{t('staking.activity.bridge.label')}</span>
               {' '}
-              <span className={isDark ? 'text-amber-400' : 'text-amber-700'}>+{fmtCaw(data.summary.deposits)} deposited</span>
+              <span className={isDark ? 'text-amber-400' : 'text-amber-700'}>{t('staking.activity.bridge.deposited', { amount: fmtCaw(data.summary.deposits) })}</span>
               {' · '}
-              <span className={isDark ? 'text-amber-400' : 'text-amber-700'}>−{fmtCaw(data.summary.withdrawals)} withdrawn</span>
+              <span className={isDark ? 'text-amber-400' : 'text-amber-700'}>{t('staking.activity.bridge.withdrawn', { amount: fmtCaw(data.summary.withdrawals) })}</span>
             </div>
-            <div className={`text-[10px] ${isDark ? 'text-white/40' : 'text-gray-400'}`}>kept off-chart for scale</div>
+            <div className={`text-[10px] ${isDark ? 'text-white/40' : 'text-gray-400'}`}>{t('staking.activity.bridge.aside')}</div>
           </div>
         )}
 
         {!loading && data && buckets.length === 0 && (
           <div className={`${cardClass} text-center py-8`}>
             <div className={isDark ? 'text-white/60' : 'text-gray-500'}>
-              No activity yet in this window.
+              {t('staking.activity.empty.window')}
             </div>
           </div>
         )}
 
         {loading && !data && (
           <div className={`${cardClass} text-center py-8`}>
-            <div className={isDark ? 'text-white/60' : 'text-gray-500'}>Loading…</div>
+            <div className={isDark ? 'text-white/60' : 'text-gray-500'}>{t('staking.activity.loading')}</div>
           </div>
         )}
         </>
@@ -1524,6 +1532,7 @@ interface AllStatsViewProps {
 }
 
 const AllStatsView: React.FC<AllStatsViewProps> = ({ range }) => {
+  const t = useT()
   const { isDark } = useTheme()
   const cawUsdPrice = usePriceStore(s => s.priceMap['a-hunters-dream'] ?? 0)
   const [searchParams, setSearchParams] = useSearchParams()
@@ -1565,9 +1574,9 @@ const AllStatsView: React.FC<AllStatsViewProps> = ({ range }) => {
         if (cancelled) return
         const msg = err?.message || ''
         if (msg.includes('Unexpected token') && msg.includes('<')) {
-          setError("Couldn't reach the API. Is the server running?")
+          setError(t('staking.activity.error.api_unreachable'))
         } else {
-          setError(msg || 'Failed to load activity')
+          setError(msg || t('staking.activity.error.load_failed'))
         }
       })
       .finally(() => { if (!cancelled) setLoading(false) })
@@ -1614,7 +1623,7 @@ const AllStatsView: React.FC<AllStatsViewProps> = ({ range }) => {
   if (loading && !data) {
     return (
       <div className={`${cardClass} text-center py-8`}>
-        <div className={isDark ? 'text-white/60' : 'text-gray-500'}>Loading…</div>
+        <div className={isDark ? 'text-white/60' : 'text-gray-500'}>{t('staking.activity.loading')}</div>
       </div>
     )
   }
@@ -1658,19 +1667,19 @@ const AllStatsView: React.FC<AllStatsViewProps> = ({ range }) => {
 
   // Mini count charts: system-wide.
   const countTypes = [
-    { key: 'CAW',    label: 'Posts',   color: '#5b7a99', source: 'spend' as const },
-    { key: 'LIKE',   label: 'Likes',   color: '#d96d72', source: 'rewards' as const },
-    { key: 'RECAW',  label: 'Recaws',  color: '#a373c8', source: 'rewards' as const },
-    { key: 'FOLLOW', label: 'Follows', color: '#e08a4a', source: 'rewards' as const },
+    { key: 'CAW',    label: t('staking.activity.action.posts'),   color: '#5b7a99', source: 'spend' as const },
+    { key: 'LIKE',   label: t('staking.activity.action.likes'),   color: '#d96d72', source: 'rewards' as const },
+    { key: 'RECAW',  label: t('staking.activity.action.recaws'),  color: '#a373c8', source: 'rewards' as const },
+    { key: 'FOLLOW', label: t('staking.activity.action.follows'), color: '#e08a4a', source: 'rewards' as const },
   ]
 
   // Distribution chart: per-bucket CAW distributed to stakers,
   // stacked by action type.
   const distTypes = [
-    { key: 'CAW',    label: 'Posts',   color: '#5b7a99' },
-    { key: 'LIKE',   label: 'Likes',   color: '#d96d72' },
-    { key: 'RECAW',  label: 'Recaws',  color: '#a373c8' },
-    { key: 'FOLLOW', label: 'Follows', color: '#e08a4a' },
+    { key: 'CAW',    label: t('staking.activity.action.posts'),   color: '#5b7a99' },
+    { key: 'LIKE',   label: t('staking.activity.action.likes'),   color: '#d96d72' },
+    { key: 'RECAW',  label: t('staking.activity.action.recaws'),  color: '#a373c8' },
+    { key: 'FOLLOW', label: t('staking.activity.action.follows'), color: '#e08a4a' },
   ]
 
   // ----- Toggle-aware totals -----
@@ -1678,9 +1687,9 @@ const AllStatsView: React.FC<AllStatsViewProps> = ({ range }) => {
   // chart and the cumulative-distribution headline line hide
   // disabled types entirely. Recomputed from `data.chart` on every
   // render so a toggle click flows through.
-  const visibleDistTypes = distTypes.filter(t => isEnabled(t.key))
+  const visibleDistTypes = distTypes.filter(tt => isEnabled(tt.key))
   const filteredDistTotalsByBucket = data.chart.map(b =>
-    visibleDistTypes.reduce((s, t) => s + weiToCawNum(b.distributionByType[t.key]), 0),
+    visibleDistTypes.reduce((s, tt) => s + weiToCawNum(b.distributionByType[tt.key]), 0),
   )
   const filteredDistMax = Math.max(...filteredDistTotalsByBucket, 0)
   const filteredStakingRewards = filteredDistTotalsByBucket.reduce((a, v) => a + v, 0)
@@ -1726,10 +1735,10 @@ const AllStatsView: React.FC<AllStatsViewProps> = ({ range }) => {
   // toggleable chart on this tab. Posts/Likes/Recaws/Follows match
   // both count charts and the distribution stack hue families.
   const legendTypes = [
-    { key: 'CAW',    label: 'Posts',   color: '#5b7a99' },
-    { key: 'LIKE',   label: 'Likes',   color: '#d96d72' },
-    { key: 'RECAW',  label: 'Recaws',  color: '#a373c8' },
-    { key: 'FOLLOW', label: 'Follows', color: '#e08a4a' },
+    { key: 'CAW',    label: t('staking.activity.action.posts'),   color: '#5b7a99' },
+    { key: 'LIKE',   label: t('staking.activity.action.likes'),   color: '#d96d72' },
+    { key: 'RECAW',  label: t('staking.activity.action.recaws'),  color: '#a373c8' },
+    { key: 'FOLLOW', label: t('staking.activity.action.follows'), color: '#e08a4a' },
   ]
 
   // Format CAW amount as USD for the protocol-balance y-axis. When
@@ -1748,25 +1757,25 @@ const AllStatsView: React.FC<AllStatsViewProps> = ({ range }) => {
           squares. Each card respects the legend toggles below the
           grid. */}
       <div className="grid grid-cols-2 gap-3 mb-3">
-        {countTypes.map(t => {
-          const enabled = isEnabled(t.key)
+        {countTypes.map(tt => {
+          const enabled = isEnabled(tt.key)
           const counts = data.chart.map(b => {
-            const src = t.source === 'spend' ? b.spendCountsByType : b.rewardsCountsByType
-            return src[t.key] ?? 0
+            const src = tt.source === 'spend' ? b.spendCountsByType : b.rewardsCountsByType
+            return src[tt.key] ?? 0
           })
           const total = counts.reduce((a, v) => a + v, 0)
           const max = Math.max(...counts, 1)
           const MINI_H = 40
           return (
             <div
-              key={t.key}
+              key={tt.key}
               className={`${cardClass} ${enabled ? '' : 'opacity-40'} transition-opacity`}
             >
               <div className="flex items-baseline justify-between mb-1.5">
-                <div className="text-[10px] uppercase tracking-wide font-semibold" style={{ color: t.color }}>
-                  {t.label}
+                <div className="text-[10px] uppercase tracking-wide font-semibold" style={{ color: tt.color }}>
+                  {tt.label}
                 </div>
-                <div className="text-sm font-bold tabular-nums" style={{ color: t.color }}>
+                <div className="text-sm font-bold tabular-nums" style={{ color: tt.color }}>
                   {total.toLocaleString()}
                 </div>
               </div>
@@ -1784,10 +1793,10 @@ const AllStatsView: React.FC<AllStatsViewProps> = ({ range }) => {
                     style={{
                       height: `${(v / max) * 100}%`,
                       minHeight: v > 0 ? 1 : 0,
-                      backgroundColor: t.color,
+                      backgroundColor: tt.color,
                       opacity: v > 0 ? 1 : 0,
                     }}
-                    title={`${v.toLocaleString()} on ${new Date(data.chart[i].bucket).toLocaleDateString()}`}
+                    title={t('staking.activity.mini.tooltip', { count: v, date: new Date(data.chart[i].bucket).toLocaleDateString() })}
                   />
                 ))}
               </div>
@@ -1800,16 +1809,16 @@ const AllStatsView: React.FC<AllStatsViewProps> = ({ range }) => {
           chart below. Persisted in URL via ?allHide=. */}
       <div className={`${cardClass} mb-6`}>
         <div className={`text-[10px] uppercase tracking-wide font-semibold mb-2 ${isDark ? 'text-white/50' : 'text-gray-500'}`}>
-          Action types
+          {t('staking.activity.all.action_types')}
         </div>
         <div className="flex flex-wrap gap-1.5">
-          {legendTypes.map(t => {
-            const enabled = isEnabled(t.key)
+          {legendTypes.map(tt => {
+            const enabled = isEnabled(tt.key)
             return (
               <button
-                key={t.key}
+                key={tt.key}
                 type="button"
-                onClick={() => toggleType(t.key)}
+                onClick={() => toggleType(tt.key)}
                 className={`flex items-center gap-1.5 px-2 py-1 rounded-full text-[11px] font-medium transition-all cursor-pointer ${
                   enabled
                     ? (isDark ? 'bg-white/10 text-white' : 'bg-gray-100 text-gray-800')
@@ -1818,9 +1827,9 @@ const AllStatsView: React.FC<AllStatsViewProps> = ({ range }) => {
               >
                 <span
                   className="inline-block w-2.5 h-2.5 rounded-sm transition-opacity"
-                  style={{ backgroundColor: t.color, opacity: enabled ? 1 : 0.3 }}
+                  style={{ backgroundColor: tt.color, opacity: enabled ? 1 : 0.3 }}
                 />
-                {t.label}
+                {tt.label}
               </button>
             )
           })}
@@ -1829,13 +1838,13 @@ const AllStatsView: React.FC<AllStatsViewProps> = ({ range }) => {
 
       {/* Stat squares. */}
       <div className="grid grid-cols-3 md:grid-cols-3 gap-3 mb-3">
-        {renderCawCard('Deposits', deposits, '#7cb958')}
-        {renderCawCard('Withdrawals', withdrawals, '#b04f56')}
-        {renderCawCard('Net', net, net >= 0 ? '#7cb958' : '#b04f56')}
+        {renderCawCard(t('staking.activity.all.card.deposits'), deposits, '#7cb958')}
+        {renderCawCard(t('staking.activity.all.card.withdrawals'), withdrawals, '#b04f56')}
+        {renderCawCard(t('staking.activity.card.net'), net, net >= 0 ? '#7cb958' : '#b04f56')}
       </div>
       <div className="grid grid-cols-3 md:grid-cols-3 gap-3 mb-6">
-        {renderCawCard('Total staking rewards', filteredStakingRewards, '#ebc046')}
-        {renderCawCard('Total CAW staked', currentTotalCaw, '#ebc046', 'CAW currently staked')}
+        {renderCawCard(t('staking.activity.all.card.total_rewards'), filteredStakingRewards, '#ebc046')}
+        {renderCawCard(t('staking.activity.all.card.total_staked'), currentTotalCaw, '#ebc046', t('staking.activity.all.card.currently_staked'))}
         {/* APR card: window rewards / current stake, annualized by the
             window length. Naive forward-projection — assumes the next
             365 days look like the selected range, which is the same
@@ -1853,11 +1862,11 @@ const AllStatsView: React.FC<AllStatsViewProps> = ({ range }) => {
           return (
             <div className={`${cardClass} text-center`}>
               <div className={`text-[10px] uppercase tracking-wide font-semibold ${isDark ? 'text-white/50' : 'text-gray-500'}`}>
-                APR
+                {t('staking.activity.all.card.apr')}
               </div>
               <div className="text-xl font-bold mt-1" style={{ color: '#ebc046' }}>{aprStr}</div>
               <div className={`text-[10px] mt-0.5 ${isDark ? 'text-white/40' : 'text-gray-400'}`}>
-                Annualized from {range.label}
+                {t('staking.activity.all.card.apr_sub', { range: range.label })}
               </div>
             </div>
           )
@@ -1872,14 +1881,14 @@ const AllStatsView: React.FC<AllStatsViewProps> = ({ range }) => {
         <div className={`${cardClass} mb-4`}>
           <div className="flex items-baseline justify-between mb-1">
             <h2 className={`text-sm font-semibold ${isDark ? 'text-white/60' : 'text-gray-500'}`}>
-              Cumulative CAW distributed to stakers
+              {t('staking.activity.all.cumulative_title')}
             </h2>
             <div className="flex items-baseline gap-2">
               <span className="text-lg font-bold tabular-nums" style={{ color: '#ebc046' }}>
                 {fmtUsd(filteredStakingRewards) ?? fmtNumberCaw(filteredStakingRewards)}
               </span>
               <span className={`text-[10px] ${isDark ? 'text-white/40' : 'text-gray-400'}`}>
-                {fmtUsd(filteredStakingRewards) ? `${fmtNumberCaw(filteredStakingRewards)} CAW` : 'CAW total'}
+                {fmtUsd(filteredStakingRewards) ? `${fmtNumberCaw(filteredStakingRewards)} CAW` : t('staking.activity.all.caw_total')}
               </span>
             </div>
           </div>
@@ -1951,14 +1960,14 @@ const AllStatsView: React.FC<AllStatsViewProps> = ({ range }) => {
         <div className={`${cardClass} mb-4`}>
           <div className="flex items-baseline justify-between mb-1">
             <h2 className={`text-sm font-semibold ${isDark ? 'text-white/60' : 'text-gray-500'}`}>
-              CAW distributed to stakers
+              {t('staking.activity.all.distribution_title')}
             </h2>
             <div className="flex items-baseline gap-2">
               <span className="text-lg font-bold tabular-nums" style={{ color: '#ebc046' }}>
                 {fmtUsd(filteredStakingRewards) ?? fmtNumberCaw(filteredStakingRewards)}
               </span>
               <span className={`text-[10px] ${isDark ? 'text-white/40' : 'text-gray-400'}`}>
-                {fmtUsd(filteredStakingRewards) ? `${fmtNumberCaw(filteredStakingRewards)} CAW` : 'CAW total'}
+                {fmtUsd(filteredStakingRewards) ? `${fmtNumberCaw(filteredStakingRewards)} CAW` : t('staking.activity.all.caw_total')}
               </span>
             </div>
           </div>
@@ -1981,10 +1990,10 @@ const AllStatsView: React.FC<AllStatsViewProps> = ({ range }) => {
               />
               <div className="flex items-stretch gap-0.5 absolute inset-0">
                 {data.chart.map((b, i) => {
-                  const segments = visibleDistTypes.map(t => ({
-                    key: t.key,
-                    color: t.color,
-                    value: weiToCawNum(b.distributionByType[t.key]),
+                  const segments = visibleDistTypes.map(tt => ({
+                    key: tt.key,
+                    color: tt.color,
+                    value: weiToCawNum(b.distributionByType[tt.key]),
                   }))
                   const sum = segments.reduce((a, s) => a + s.value, 0)
                   const pct = filteredDistMax > 0 ? (sum / filteredDistMax) * 94 : 0
@@ -2020,7 +2029,7 @@ const AllStatsView: React.FC<AllStatsViewProps> = ({ range }) => {
       {data.chart.length === 0 && (
         <div className={`${cardClass} text-center py-8`}>
           <div className={isDark ? 'text-white/60' : 'text-gray-500'}>
-            No protocol activity yet in this window.
+            {t('staking.activity.all.empty')}
           </div>
         </div>
       )}
