@@ -137,3 +137,87 @@ export function deterministicConversationId(userA: number, userB: number): strin
   const max = Math.max(userA, userB)
   return `dm:${min}:${max}`
 }
+
+/**
+ * Identity-relay envelope. The DmIdentity row contents (userId,
+ * walletAddress, publicKey) are non-secret — anyone can fetch them
+ * via /api/dm/identity/:userId — but the cross-instance relay still
+ * needs validator-key authentication so a peer can't spoof someone
+ * else's pubkey across the network. Receivers verify the sig matches
+ * the source's registered validatorAddress AND that the relayed
+ * walletAddress matches User.address[userId] in the receiver's DB
+ * (the same wallet-binding check the local register endpoint applies).
+ */
+export interface IdentityRelayEnvelope {
+  userId: number
+  walletAddress: string
+  publicKey: string
+  timestamp: number
+  sourceInstanceId: number
+}
+
+export function canonicalizeIdentityEnvelope(env: IdentityRelayEnvelope): string {
+  return JSON.stringify({
+    userId: env.userId,
+    walletAddress: env.walletAddress,
+    publicKey: env.publicKey,
+    timestamp: env.timestamp,
+    sourceInstanceId: env.sourceInstanceId,
+  })
+}
+
+/**
+ * Fan out a freshly-registered DmIdentity to peer instances. Mirrors
+ * relayDmToPeers but for the identity row instead of the message body.
+ * Fire-and-forget; failures don't block the user's local registration.
+ */
+export async function relayDmIdentityToPeers(params: {
+  userId: number
+  walletAddress: string
+  publicKey: string
+}): Promise<{ attempted: number }> {
+  const privateKey = getPrivateKey()
+  if (!privateKey) return { attempted: 0 }
+
+  const sourceInstanceId = getOwnInstanceId()
+  if (sourceInstanceId == null) {
+    console.warn('[DmRelay] Skipping identity relay — own instanceId not yet resolved')
+    return { attempted: 0 }
+  }
+
+  const clientId = requireClientId()
+  const peers = getPeers(clientId).filter(p => p.active && p.instanceId !== sourceInstanceId)
+  if (peers.length === 0) return { attempted: 0 }
+
+  const envelope: IdentityRelayEnvelope = {
+    userId: params.userId,
+    walletAddress: params.walletAddress,
+    publicKey: params.publicKey,
+    timestamp: Date.now(),
+    sourceInstanceId,
+  }
+
+  let signature: string
+  try {
+    signature = signCanonical(canonicalizeIdentityEnvelope(envelope), privateKey)
+  } catch (err: any) {
+    console.error('[DmRelay] Identity signing failed (continuing without relay):', err.message)
+    return { attempted: 0 }
+  }
+
+  const body = JSON.stringify({ ...envelope, signature })
+
+  for (const peer of peers) {
+    fetch(`${peer.apiUrl}/api/dm/identity/relay`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body,
+    }).catch(err => {
+      if (process.env.DM_RELAY_VERBOSE === '1') {
+        console.warn(`[DmRelay] Failed to relay identity to ${peer.apiUrl}:`, err.message)
+      }
+    })
+  }
+
+  return { attempted: peers.length }
+}

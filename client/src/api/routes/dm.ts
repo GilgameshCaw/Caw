@@ -4,9 +4,24 @@ import dmService from '../../services/DmService'
 import dmWebSocketService from '../../services/DmService/websocket'
 import { requireAuth } from '../middleware/auth'
 import { isBlockedEitherDirection, getBlockedUserIds } from '../shared/blockUtils'
-import { relayDmToPeers } from '../../services/DmRelayService'
+import {
+  relayDmToPeers,
+  relayDmIdentityToPeers,
+  canonicalizeIdentityEnvelope,
+} from '../../services/DmRelayService'
+import { recoverAddressFromCanonical } from '../../services/InstanceRegistryService/envelopeCrypto'
+import { getPeers } from '../../services/InstanceRegistryService'
 import { checkDmRate } from '../dmRateLimit'
 import crypto from 'crypto'
+
+const CLIENT_ID = (() => {
+  const raw = process.env.CLIENT_ID
+  const n = raw ? Number(raw) : NaN
+  if (!Number.isFinite(n) || n <= 0) {
+    throw new Error('dm route: CLIENT_ID is required (set it in client/.env)')
+  }
+  return n
+})()
 
 const router = Router()
 
@@ -27,6 +42,22 @@ router.post('/identity',
       }
 
       const identity = await dmService.registerIdentity(Number(userId), walletAddress, publicKey)
+
+      // Fan out to peer instances so other nodes' DmIdentity tables stay
+      // in sync. Mirrors are otherwise blind to a user's DM-enable until
+      // that user happens to interact with the mirror — UX cost: search
+      // results show "DMs not enabled" on every other mirror, and the
+      // first cross-node message can't be encrypted because the sender's
+      // home node doesn't know the recipient's pubkey. Fire-and-forget;
+      // failures don't block local registration.
+      relayDmIdentityToPeers({
+        userId: Number(userId),
+        walletAddress,
+        publicKey,
+      }).catch(err => {
+        console.warn('[DM] identity relay failed (continuing):', err?.message || err)
+      })
+
       return res.json(identity)
     } catch (error: any) {
       console.error('POST /api/dm/identity error:', error)
@@ -34,6 +65,85 @@ router.post('/identity',
     }
   }
 )
+
+// POST /api/dm/identity/relay — peer-to-peer sync of DmIdentity rows.
+// Mirrors the dm-relay.ts pattern: source instance signs the envelope
+// with its validator key, receiver verifies against the registered
+// validatorAddress in CawClientManager. The relayed publicKey is then
+// upserted locally so this node's lookup endpoints see the same data
+// every other peer sees.
+//
+// MUST be registered before /identity/:userId so Express's declaration-
+// order matching doesn't capture "relay" as a userId.
+router.post('/identity/relay', async (req: Request, res: Response) => {
+  try {
+    const { userId, walletAddress, publicKey, timestamp, sourceInstanceId, signature } = req.body
+    if (
+      userId == null || !walletAddress || !publicKey ||
+      !timestamp || sourceInstanceId == null || !signature
+    ) {
+      return res.status(400).json({ error: 'Missing required fields' })
+    }
+
+    // Replay window. Same ±5min as the message relay.
+    const age = Date.now() - Number(timestamp)
+    if (age > 5 * 60 * 1000 || age < -60 * 1000) {
+      return res.status(400).json({ error: 'Identity timestamp out of range' })
+    }
+
+    // Source instance must be active in our registry cache.
+    const peers = getPeers(CLIENT_ID)
+    const source = peers.find(p => p.instanceId === Number(sourceInstanceId))
+    if (!source || !source.active) {
+      return res.status(403).json({ error: 'Unknown or inactive source instance' })
+    }
+
+    // Recover the signing address; must match the source's validator.
+    let recoveredAddr: string
+    try {
+      recoveredAddr = await recoverAddressFromCanonical(
+        canonicalizeIdentityEnvelope({
+          userId: Number(userId),
+          walletAddress,
+          publicKey,
+          timestamp: Number(timestamp),
+          sourceInstanceId: Number(sourceInstanceId),
+        }),
+        signature,
+      )
+    } catch (err: any) {
+      return res.status(403).json({ error: 'Signature verification failed', detail: err.message })
+    }
+    if (recoveredAddr.toLowerCase() !== source.validatorAddress.toLowerCase()) {
+      return res.status(403).json({ error: 'Signature does not match source instance validator' })
+    }
+
+    // Wallet binding: the relayed walletAddress must match this node's
+    // User.address[userId]. Without the check, a malicious node could
+    // assert "user 42's wallet is 0xATTACKER" and overwrite the local
+    // pubkey — receivers would then encrypt to a key the attacker
+    // generated, breaking 42's DMs. If the local User row doesn't
+    // exist yet (indexer lag), accept tentatively — the indexer will
+    // populate User.address from on-chain Transfer events shortly,
+    // and any subsequent re-relay will face the strict check.
+    const localUser = await prisma.user.findUnique({
+      where: { tokenId: Number(userId) },
+      select: { address: true },
+    })
+    if (localUser && localUser.address && localUser.address.toLowerCase() !== walletAddress.toLowerCase()) {
+      return res.status(403).json({
+        error: 'Wallet address mismatch with local User row',
+        userId: Number(userId),
+      })
+    }
+
+    await dmService.registerIdentity(Number(userId), walletAddress, publicKey)
+    return res.json({ status: 'synced', userId: Number(userId) })
+  } catch (error: any) {
+    console.error('[DM Identity Relay] Error:', error.message)
+    return res.status(500).json({ error: 'Identity relay failed' })
+  }
+})
 
 // GET /api/dm/identity/batch?userIds=1,2,3
 // Read-only bulk lookup of DM identities — replaces the per-user

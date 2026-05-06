@@ -204,6 +204,16 @@ export function createApp() {
     legacyHeaders: false,
     message: { error: 'Too many relay requests, slow down' }
   }))
+  // Identity relay: lower cap. A user re-registering 100/min is already
+  // anomalous; the steady-state load is "every new DM-enable + every
+  // wallet transfer". 60/min per source IP is generous.
+  app.use('/api/dm/identity/relay', rateLimit({
+    windowMs: 60 * 1000,
+    max: Number(process.env.DM_IDENTITY_RELAY_RATE_LIMIT_PER_MIN) || 60,
+    standardHeaders: true,
+    legacyHeaders: false,
+    message: { error: 'Too many identity relay requests, slow down' }
+  }))
 
   // Health check — used by the watchdog's HTTP probe
   app.get('/api/health', (_req, res) => { res.json({ status: 'ok' }) })
