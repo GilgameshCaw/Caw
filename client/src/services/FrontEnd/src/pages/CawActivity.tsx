@@ -1833,9 +1833,35 @@ const AllStatsView: React.FC<AllStatsViewProps> = ({ range }) => {
         {renderCawCard('Withdrawals', withdrawals, '#b04f56')}
         {renderCawCard('Net', net, net >= 0 ? '#7cb958' : '#b04f56')}
       </div>
-      <div className="grid grid-cols-2 gap-3 mb-6">
+      <div className="grid grid-cols-3 md:grid-cols-3 gap-3 mb-6">
         {renderCawCard('Total staking rewards', filteredStakingRewards, '#ebc046')}
         {renderCawCard('Total CAW staked', currentTotalCaw, '#ebc046', 'CAW currently staked')}
+        {/* APR card: window rewards / current stake, annualized by the
+            window length. Naive forward-projection — assumes the next
+            365 days look like the selected range, which is the same
+            assumption every "APR over the last N days" surface makes.
+            Hidden when staked is 0 (no denominator) and clamped to 0
+            on negative inputs (shouldn't happen, defense against
+            future bug). */}
+        {(() => {
+          const apr = currentTotalCaw > 0 && range.days > 0
+            ? (filteredStakingRewards / currentTotalCaw) * (365 / range.days) * 100
+            : 0
+          const aprStr = apr >= 1000
+            ? apr.toLocaleString(undefined, { maximumFractionDigits: 0 }) + '%'
+            : apr.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 }) + '%'
+          return (
+            <div className={`${cardClass} text-center`}>
+              <div className={`text-[10px] uppercase tracking-wide font-semibold ${isDark ? 'text-white/50' : 'text-gray-500'}`}>
+                APR
+              </div>
+              <div className="text-xl font-bold mt-1" style={{ color: '#ebc046' }}>{aprStr}</div>
+              <div className={`text-[10px] mt-0.5 ${isDark ? 'text-white/40' : 'text-gray-400'}`}>
+                Annualized from {range.label}
+              </div>
+            </div>
+          )
+        })()}
       </div>
 
       {/* Balance line chart — system totalCaw over time. Y-axis in
