@@ -1,5 +1,38 @@
-import { lazy } from "react";
+import { lazy, type ComponentType } from "react";
 import { Navigate } from "react-router-dom";
+
+// Reload-on-chunk-404 wrapper around React.lazy.
+//
+// After a deploy, Vite emits new hash-named chunks and the old ones 404.
+// A still-loaded tab navigating to a lazy page tries to fetch the old
+// chunk, the dynamic import rejects, and the app's top-level Sentry
+// boundary catches it as "Something went wrong. The error has been
+// reported." — confusing for users and noisy in Sentry.
+//
+// First failure: we set a sessionStorage flag and reload(). The new
+// bundle takes over and the user lands on the page they wanted (router
+// state survives reload). If we've ALREADY reloaded once and the chunk
+// STILL fails (real outage, blocked by extension, etc.), we let the
+// error propagate so Sentry reports a real bug instead of looping.
+const RELOADED_KEY = 'caw:chunk-reloaded'
+function lazyWithReload<T extends ComponentType<any>>(
+  loader: () => Promise<{ default: T }>
+): ReturnType<typeof lazy<T>> {
+  return lazy(() =>
+    loader().catch((err: unknown) => {
+      const msg = err instanceof Error ? err.message : String(err)
+      const isChunkError = /Failed to fetch dynamically imported module|Loading chunk|ChunkLoadError|error loading dynamically imported module/i.test(msg)
+      if (isChunkError && !sessionStorage.getItem(RELOADED_KEY)) {
+        sessionStorage.setItem(RELOADED_KEY, '1')
+        window.location.reload()
+        // Return a never-resolving promise so React stays in <Suspense>
+        // until the reload kicks in.
+        return new Promise<never>(() => {})
+      }
+      throw err
+    })
+  )
+}
 
 // Critical-path pages stay eagerly imported. Everything below this block
 // is `React.lazy` so it splits into its own chunk and is fetched only
@@ -23,33 +56,33 @@ import AdminGate from "./components/AdminGate";
 // (Marketplace-<hash>.js, Messages-<hash>.js, etc.). The two `.then`
 // adapters below convert named exports to React.lazy's required
 // `{ default }` shape.
-const NewProfile = lazy(() => import("./pages/Profile/New"));
-const Staking = lazy(() => import("./pages/Staking").then(m => ({ default: m.Staking })));
-const NotificationsPage = lazy(() => import("./pages/NotificationsPage"));
-const SettingsPage = lazy(() => import("./pages/Settings").then(m => ({ default: m.SettingsPage })));
-const MutedContentPage = lazy(() => import("./pages/MutedContent"));
-const NotificationSettings = lazy(() => import("./pages/NotificationSettings"));
-const LanguageSettings = lazy(() => import("./pages/LanguageSettings"));
-const AccountSettings = lazy(() => import("./pages/AccountSettings"));
-const SessionKeySettings = lazy(() => import("./pages/SessionKeySettings"));
-const HelpPage = lazy(() => import("./pages/HelpPage"));
-const MessagesPage = lazy(() => import("./pages/Messages"));
-const BookmarksPage = lazy(() => import("./pages/Bookmarks"));
-const ExplorePage = lazy(() => import("./pages/Explore"));
-const ScheduledPage = lazy(() => import("./pages/Scheduled"));
-const HashtagPage = lazy(() => import("./pages/HashtagPage"));
-const SearchResultsPage = lazy(() => import("./pages/SearchResultsPage"));
-const FaucetPage = lazy(() => import("./pages/FaucetPage"));
-const CawActivity = lazy(() => import("./pages/CawActivity"));
-const BugReportsAdmin = lazy(() => import("./pages/BugReportsAdmin"));
-const ReportsAdmin = lazy(() => import("./pages/ReportsAdmin"));
-const ValidatorAnalytics = lazy(() => import("./pages/ValidatorAnalytics"));
-const ValidatorSettings = lazy(() => import("./pages/ValidatorSettings"));
-const DatabaseAdmin = lazy(() => import("./pages/DatabaseAdmin"));
-const Admin = lazy(() => import("./pages/Admin"));
-const WelcomePage = lazy(() => import("./pages/WelcomePage"));
-const Marketplace = lazy(() => import("./pages/Marketplace"));
-const AddressTokens = lazy(() => import("./pages/AddressTokens"));
+const NewProfile = lazyWithReload(() => import("./pages/Profile/New"));
+const Staking = lazyWithReload(() => import("./pages/Staking").then(m => ({ default: m.Staking })));
+const NotificationsPage = lazyWithReload(() => import("./pages/NotificationsPage"));
+const SettingsPage = lazyWithReload(() => import("./pages/Settings").then(m => ({ default: m.SettingsPage })));
+const MutedContentPage = lazyWithReload(() => import("./pages/MutedContent"));
+const NotificationSettings = lazyWithReload(() => import("./pages/NotificationSettings"));
+const LanguageSettings = lazyWithReload(() => import("./pages/LanguageSettings"));
+const AccountSettings = lazyWithReload(() => import("./pages/AccountSettings"));
+const SessionKeySettings = lazyWithReload(() => import("./pages/SessionKeySettings"));
+const HelpPage = lazyWithReload(() => import("./pages/HelpPage"));
+const MessagesPage = lazyWithReload(() => import("./pages/Messages"));
+const BookmarksPage = lazyWithReload(() => import("./pages/Bookmarks"));
+const ExplorePage = lazyWithReload(() => import("./pages/Explore"));
+const ScheduledPage = lazyWithReload(() => import("./pages/Scheduled"));
+const HashtagPage = lazyWithReload(() => import("./pages/HashtagPage"));
+const SearchResultsPage = lazyWithReload(() => import("./pages/SearchResultsPage"));
+const FaucetPage = lazyWithReload(() => import("./pages/FaucetPage"));
+const CawActivity = lazyWithReload(() => import("./pages/CawActivity"));
+const BugReportsAdmin = lazyWithReload(() => import("./pages/BugReportsAdmin"));
+const ReportsAdmin = lazyWithReload(() => import("./pages/ReportsAdmin"));
+const ValidatorAnalytics = lazyWithReload(() => import("./pages/ValidatorAnalytics"));
+const ValidatorSettings = lazyWithReload(() => import("./pages/ValidatorSettings"));
+const DatabaseAdmin = lazyWithReload(() => import("./pages/DatabaseAdmin"));
+const Admin = lazyWithReload(() => import("./pages/Admin"));
+const WelcomePage = lazyWithReload(() => import("./pages/WelcomePage"));
+const Marketplace = lazyWithReload(() => import("./pages/Marketplace"));
+const AddressTokens = lazyWithReload(() => import("./pages/AddressTokens"));
 
 // Routes are split into two groups so `<MainLayout>` can be hoisted to a
 // single shared parent route. The layout stays mounted across navigation

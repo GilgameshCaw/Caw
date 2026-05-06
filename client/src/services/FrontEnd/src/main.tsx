@@ -6,6 +6,12 @@ import { StrictMode } from "react";
 // Disable the browser's default so it doesn't fight our restore on back/fwd.
 if ('scrollRestoration' in history) history.scrollRestoration = 'manual'
 
+// Reaching this line means the main bundle loaded successfully — clear
+// the chunk-reload flag so a future post-deploy chunk-404 gets its
+// own one-shot reload rather than being silently let through.
+// See lazyWithReload in routes.tsx.
+try { sessionStorage.removeItem('caw:chunk-reloaded') } catch {}
+
 import { createRoot } from "react-dom/client";
 import * as Sentry from '@sentry/react';
 
