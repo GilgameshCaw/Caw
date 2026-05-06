@@ -8,7 +8,7 @@ import { useQuickSignRenewStore } from '~/components/modals/QuickSignRenewModal'
 import { useSessionKeyStore } from '~/store/sessionKeyStore'
 import { privateKeyToAccount } from 'viem/accounts'
 import { useAutoRetryStore } from '~/store/autoRetryStore'
-import { TYPES, DOMAIN } from '~/api/actions'
+import { TYPES, DOMAIN, allocateCawonces } from '~/api/actions'
 
 // Track retry counts per TxQueue ID to prevent infinite loops.
 // Persisted to sessionStorage so retries don't reset on page refresh.
@@ -133,12 +133,21 @@ export function useTxQueueMonitor() {
                     const originalData = status.payload?.data
                     if (!senderId || !originalData) return
 
-                    // Get fresh cawonce
-                    const cawonceRes = await apiFetch(`/api/users/min-cawonce/${senderId}`)
-                    const freshCawonce = cawonceRes.minSafeCawonce
+                    // Allocate a fresh cawonce via the same allocator
+                    // the original-submission path uses. /api/users/
+                    // min-cawonce only sees pending/processing/scheduled
+                    // rows — when multiple failed retries fire in
+                    // parallel right after a deposit lands, each one
+                    // sees the same picture and gets the same cawonce.
+                    // allocateCawonces uses chain.nextCawonce + a
+                    // per-tab promise chain + Web Lock + BroadcastChannel
+                    // high-watermark, so concurrent retries within or
+                    // across tabs each get a unique value.
+                    const [freshCawonce] = await allocateCawonces(senderId, 1)
                     if (freshCawonce == null) return
 
-                    // Update local cawonce
+                    // Mirror to tokenDataStore so any UI reading from it
+                    // sees the new high watermark.
                     useTokenDataStore.getState().setCawonce(senderId, freshCawonce + 1)
 
                     // Find the session key for the token owner
@@ -309,19 +318,27 @@ export function useTxQueueMonitor() {
           return
         }
 
-        const cawonceRes = await apiFetch(`/api/users/min-cawonce/${senderId}`)
-        let nextCawonce = cawonceRes?.minSafeCawonce
-        if (nextCawonce == null) return
+        // Allocate a contiguous block of cawonces for the whole batch
+        // via the shared allocator (same path as the original
+        // submission). This both protects against the parallel-retry
+        // race AND ensures another tab signing during this loop won't
+        // collide with our reservations.
+        const candidates = entries.filter((e: any) => !processedIds.current.has(e.id) && e.payload?.data)
+        if (candidates.length === 0) return
+        const allocated = await allocateCawonces(senderId, candidates.length)
+        if (allocated.length === 0) return
 
         const sessionAccount = privateKeyToAccount(session.privateKey)
+        let allocIdx = 0
 
         for (const entry of entries) {
           if (processedIds.current.has(entry.id)) continue
           const originalData = entry.payload?.data
           if (!originalData) continue
 
-          const freshCawonce = nextCawonce++
-          useTokenDataStore.getState().setCawonce(senderId, nextCawonce)
+          const freshCawonce = allocated[allocIdx++]
+          if (freshCawonce == null) break
+          useTokenDataStore.getState().setCawonce(senderId, freshCawonce + 1)
           useAutoRetryStore.getState().startRetry(entry.id)
 
           try {
