@@ -467,18 +467,31 @@ model Conversation {
 }
 
 model ConversationParticipant {
-  id             Int          @id @default(autoincrement())
+  id             Int                           @id @default(autoincrement())
   conversationId String
   userId         Int
-  joinedAt       DateTime     @default(now())
+  joinedAt       DateTime                      @default(now())
   lastReadAt     DateTime?
-  unreadCount    Int          @default(0)
-  conversation   Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
-  identity       DmIdentity   @relation(fields: [userId], references: [userId])
+  unreadCount    Int                           @default(0)
+  // Inbox segregation. ACCEPTED for existing rows + for participants who
+  // initiated the conversation; REQUEST for an inbound DM where the
+  // recipient has no consent baseline (no prior outbound, no follow
+  // either way) — those land in the Requests tab. Flips to ACCEPTED on
+  // first reply or explicit accept. BLOCKED mirrors Block table.
+  status         ConversationParticipantStatus @default(ACCEPTED)
+  conversation   Conversation                  @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  identity       DmIdentity                    @relation(fields: [userId], references: [userId])
 
   @@unique([conversationId, userId])
   @@index([userId])
   @@index([conversationId])
+  @@index([userId, status])
+}
+
+enum ConversationParticipantStatus {
+  ACCEPTED
+  REQUEST
+  BLOCKED
 }
 
 model Message {
@@ -490,6 +503,10 @@ model Message {
   editHistory      String? // encrypted JSON array of previous versions
   status           MessageStatus     @default(SENT)
   shadowBlocked    Boolean           @default(false) // hidden from recipient, visible to sender
+  // Cross-node relay dedup. Home node generates a UUID per relayed
+  // message; receivers reject replays via the partial unique index
+  // (NULL for any message that was never relayed, e.g. pre-relay rows).
+  relayId          String?           @unique
   // Self-reference for replies. SetNull (not Cascade) so deleting a parent
   // doesn't delete every reply — replies just lose their thread anchor and
   // the UI falls back to "Original message unavailable".
