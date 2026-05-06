@@ -591,6 +591,20 @@ export const CawPage: React.FC = () => {
           <>
             {/* Main Post - Expanded View */}
             <div className="mb-6 relative">
+              {/* Pending indicator. Visible to anyone who deep-links to a
+                  caw before its on-chain confirmation lands. The page's
+                  pending-poll loop (above) flips this off automatically
+                  when the status changes — no reload needed. */}
+              {caw.status === 'PENDING' && (
+                <div className={`mb-3 flex items-center gap-2 px-3 py-1.5 rounded-md text-xs font-medium ${
+                  isDark
+                    ? 'bg-yellow-500/10 text-yellow-300 border border-yellow-500/20'
+                    : 'bg-yellow-50 text-yellow-800 border border-yellow-200'
+                }`}>
+                  <span className="inline-block w-1.5 h-1.5 rounded-full bg-yellow-500 animate-pulse" />
+                  <span>Pending — waiting for on-chain confirmation</span>
+                </div>
+              )}
               <div className="relative z-10">
                 <FeedItem
                   item={caw}

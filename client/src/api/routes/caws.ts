@@ -361,8 +361,20 @@ router.get('/:id', async (req, res) => {
 
   if (!raw) return res.status(404).end()
 
-  // Check if user is allowed to see this caw (PENDING/FAILED only visible to creator)
-  if (raw.status !== 'SUCCESS' && raw.userId !== currentUserId) {
+  // Visibility rules:
+  //  - SUCCESS: public (the normal case).
+  //  - PENDING: public too. The author already chose to publish; the
+  //    only difference vs SUCCESS is on-chain confirmation lag. A
+  //    deep-link to /caws/:id from a notification or share should
+  //    render with a small "pending" badge instead of 404'ing for
+  //    the 5-60s window before confirmation. The FE polls on PENDING
+  //    and re-renders once status flips.
+  //  - FAILED: creator-only. Failure surfaces signing/validation
+  //    error context the author probably doesn't want world-readable
+  //    even briefly.
+  //  - HIDDEN: nobody (the caw is intentionally suppressed).
+  if (raw.status === 'HIDDEN') return res.status(404).end()
+  if (raw.status === 'FAILED' && raw.userId !== currentUserId) {
     return res.status(404).end()
   }
 
