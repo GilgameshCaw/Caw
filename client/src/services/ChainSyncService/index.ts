@@ -520,7 +520,7 @@ export async function getClient(clientId: number) {
 
 // CawProfileL2 ABI fragments for event indexing
 const CAW_NAME_L2_EVENT_ABI = [
-  'event SessionCreated(address indexed owner, address indexed sessionKey, uint64 expiry, uint8 scopeBitmap, uint256 spendLimit)',
+  'event SessionCreated(address indexed owner, address indexed sessionKey, uint64 expiry, uint8 scopeBitmap, uint256 spendLimit, uint64 perActionTipRate)',
   'event SessionRevoked(address indexed owner, address indexed sessionKey)',
   'event Authenticated(uint32 cawClientId, uint32 tokenId)',
 ] as const
@@ -554,6 +554,7 @@ async function handleSessionCreated(args: any) {
   const expiry = BigInt(args.expiry?.toString() || '0')
   const scopeBitmap = Number(args.scopeBitmap)
   const spendLimit = String(args.spendLimit?.toString() || '0')
+  const perActionTipRate = String(args.perActionTipRate?.toString() || '0')
 
   try {
     await prisma.sessionKey.upsert({
@@ -562,6 +563,7 @@ async function handleSessionCreated(args: any) {
         expiry,
         scopeBitmap,
         spendLimit,
+        perActionTipRate,
         revokedAt: null,      // re-creating a session clears any prior revocation
         spent: '0',           // new session starts with zero spent
         lastSyncedAt: new Date(),
@@ -572,6 +574,7 @@ async function handleSessionCreated(args: any) {
         expiry,
         scopeBitmap,
         spendLimit,
+        perActionTipRate,
         lastSyncedAt: new Date(),
       },
     })

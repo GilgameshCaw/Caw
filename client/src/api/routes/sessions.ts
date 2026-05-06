@@ -125,6 +125,13 @@ function parseSpendLimitFromMessage(line: string): bigint {
   return BigInt(num) * multiplier
 }
 
+function parseTipRateFromMessage(line: string): bigint {
+  // "1000 CAW" — bare integer + " CAW", no K/M/B suffix; uint64-bounded
+  const match = line.match(/^(\d+) CAW$/)
+  if (!match) return 0n
+  return BigInt(match[1])
+}
+
 /**
  * Background: submit session registration tx, record rate limit only on success
  */
@@ -163,12 +170,16 @@ async function processSessionRequest(
       { gasLimit }
     )
 
-    // Parse values from message for DB pre-population
+    // Parse values from message for DB pre-population. Line layout (post
+    // perActionTipRate addition): 0 header, 1 sep, 2 spend label, 3 spend
+    // value, 4 blank, 5 tip label, 6 tip value, 7 blank, 8 expires label,
+    // 9 expires value, 10 blank, 11 key label, 12 key value.
     const lines = message.split('\n')
-    const sessionKey = (lines[9] || '').trim()
-    const expiry = parseExpiryFromMessage(lines[6] || '')
+    const sessionKey = (lines[12] || '').trim()
+    const expiry = parseExpiryFromMessage(lines[9] || '')
     const scopeBitmap = 0xBF
     const spendLimit = parseSpendLimitFromMessage(lines[3] || '')
+    const perActionTipRate = parseTipRateFromMessage(lines[6] || '')
 
     console.log(`[Sessions] Submitted tx: ${tx.hash}`)
     await setSessionRequest(requestId, { status: 'pending', txHash: tx.hash })
@@ -191,6 +202,7 @@ async function processSessionRequest(
           expiry: BigInt(expiry),
           scopeBitmap: Number(scopeBitmap),
           spendLimit: BigInt(spendLimit).toString(),
+          perActionTipRate: perActionTipRate.toString(),
           spent: '0',             // fresh session starts at zero
           revokedAt: null,        // re-creating clears any prior revocation
           lastSyncedAt: new Date(),
@@ -201,6 +213,7 @@ async function processSessionRequest(
           expiry: BigInt(expiry),
           scopeBitmap: Number(scopeBitmap),
           spendLimit: BigInt(spendLimit).toString(),
+          perActionTipRate: perActionTipRate.toString(),
           lastSyncedAt: new Date(),
         },
       })
@@ -274,16 +287,20 @@ router.post('/', async (req: any, res: any) => {
       return res.status(400).json({ error: 'Missing required fields: message and signature' })
     }
 
-    // Validate message format (10 lines)
+    // Validate message format (13 lines after perActionTipRate addition)
     const lines = (message as string).split('\n')
-    if (lines.length !== 10 || lines[0] !== 'Enable Quick Sign') {
+    if (lines.length !== 13 || lines[0] !== 'Enable Quick Sign') {
       return res.status(400).json({ error: 'Invalid message format' })
     }
 
-    // Parse values: line 3 = spend limit value, line 6 = expiry value, line 9 = address
+    // Parse values:
+    //   line 3  = spend limit value (e.g. "5M CAW")
+    //   line 6  = tip rate value (e.g. "1000 CAW")
+    //   line 9  = expiry value
+    //   line 12 = session key address
     const spendLimit = parseSpendLimitFromMessage(lines[3])
-    const expiry = parseExpiryFromMessage(lines[6])
-    const sessionKey = lines[9]?.trim()
+    const expiry = parseExpiryFromMessage(lines[9])
+    const sessionKey = lines[12]?.trim()
 
     if (!sessionKey || !expiry) {
       return res.status(400).json({ error: 'Could not parse session parameters from message' })

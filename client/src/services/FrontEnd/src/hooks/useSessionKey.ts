@@ -68,7 +68,7 @@ function formatSpendLimitForMessage(spendLimit: bigint): string {
   return `${Math.ceil(n / 1_000_000)}M`
 }
 
-function buildSessionMessage(sessionKeyAddress: string, spendLimit: bigint, expiryTimestamp: number): string {
+function buildSessionMessage(sessionKeyAddress: string, spendLimit: bigint, perActionTipRate: bigint, expiryTimestamp: number): string {
   const d = new Date(expiryTimestamp * 1000)
   const day = d.getUTCDate()
   const month = MONTHS[d.getUTCMonth()]
@@ -82,6 +82,9 @@ function buildSessionMessage(sessionKeyAddress: string, spendLimit: bigint, expi
     '------------------',
     'Spend limit:',
     `${formatSpendLimitForMessage(spendLimit)} CAW`,
+    '',
+    'Tip per action:',
+    `${perActionTipRate.toString()} CAW`,
     '',
     'Expires:',
     `${day} ${month} ${year} ${hh}:${mm}:${ss} UTC`,
@@ -142,7 +145,11 @@ export function useCreateSession() {
     const privateKey = generatePrivateKey()
     const sessionAccount = privateKeyToAccount(privateKey)
 
-    const message = buildSessionMessage(sessionAccount.address, spendLimit, expiry)
+    // tipCeiling is the user-agreed maximum per-action validator tip — that's
+    // exactly what the contract stores as perActionTipRate on the session.
+    // The validator credits this amount per session-signed action and the
+    // user has already authorized it via this signature.
+    const message = buildSessionMessage(sessionAccount.address, spendLimit, tipCeiling, expiry)
 
     console.log('[QuickSign] message:', message)
 

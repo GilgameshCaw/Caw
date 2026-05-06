@@ -624,7 +624,7 @@ export type ActionParams = {
  *                    market rate. Used by Quick Sign to enforce per-session tip ceilings.
  *                    Pass `0n` for explicit no-tip (opt-out).
  */
-export function buildTypedData(params: ActionParams, tipOverride?: bigint) {
+export function buildTypedData(params: ActionParams, tipOverride?: bigint, opts?: { sessionKeySigning?: boolean }) {
   const code = ActionTypeMap[params.actionType]
   if (code === undefined) {
     throw new Error(`Unknown actionType "${params.actionType}"`)
@@ -632,10 +632,23 @@ export function buildTypedData(params: ActionParams, tipOverride?: bigint) {
   // Clone the amounts array to avoid mutating the original
   const amounts = [...(params.amounts ?? [])];
 
-  // For OTHER actions with amounts already provided, don't add validator tip
-  // (the amount already includes the tip plus any additional costs)
-  // For all other cases, add the validator tip (dynamic based on replication chains)
-  if (params.actionType !== 'other' || amounts.length === 0) {
+  // Three cases for the tip slot:
+  //
+  //  1) Session-key signing: don't add a tip slot. The contract reads the
+  //     per-action tip rate from the session record and credits the
+  //     validator once at batch end (gas optimization). amounts only carries
+  //     user-to-user transfers (recipients × amounts) when present.
+  //
+  //  2) OTHER actions with caller-provided amounts: caller already wove the
+  //     validator tip into amounts (e.g. tip-action format [tipAmt, valTip]).
+  //     Don't add another or it'd double-count.
+  //
+  //  3) Everything else (manual wallet sign, no caller amounts): append the
+  //     current validator tip as the trailing amounts entry.
+  const sessionKeySigning = opts?.sessionKeySigning ?? false
+  if (sessionKeySigning) {
+    // case 1 — leave amounts as-is
+  } else if (params.actionType !== 'other' || amounts.length === 0) {
     amounts.push(tipOverride !== undefined ? tipOverride : getValidatorTip());
   }
 
@@ -1231,7 +1244,11 @@ export function useSignAndSubmitAction() {
       effectiveTip = getValidatorTip()
     }
 
-    const { domain, types, primaryType, message } = buildTypedData({...params, cawonce: useCawonce}, effectiveTip)
+    const { domain, types, primaryType, message } = buildTypedData(
+      { ...params, cawonce: useCawonce },
+      effectiveTip,
+      { sessionKeySigning: !!canUseSession },
+    )
 
     // Fixed protocol costs per action type (whole CAW tokens) — must match CawActions.sol
     const ACTION_COSTS: Record<string, bigint> = {
@@ -1702,7 +1719,10 @@ export function useSignAndSubmitAction() {
     const typedItems: Array<{ params: ActionParams; data: any; domain: any; types: any }> = []
     for (let i = 0; i < allParams.length; i++) {
       const p = allParams[i]
-      const { domain, types, message } = buildTypedData(p, effectiveTip)
+      // Batch-sig path is by definition session-key signing — omit the tip
+      // slot so the contract uses the implicit per-action rate from the
+      // session record.
+      const { domain, types, message } = buildTypedData(p, effectiveTip, { sessionKeySigning: true })
       typedItems.push({ params: p, data: message, domain, types })
     }
 

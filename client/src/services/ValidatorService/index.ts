@@ -724,20 +724,47 @@ function isPriorityAction(action: any): boolean {
 }
 
 /**
- * Validate that an action's tip is sufficient for the client's replication count
- * @param action - The action data
- * @param l2RpcUrl - L2 RPC URL for contract query
- * @returns Validation result with details
+ * Validate that an action's tip is sufficient for the client's replication count.
+ *
+ * Two paths:
+ *
+ *   Manual-sign / explicit-tip: amounts.length > 0 → tip is the last entry.
+ *
+ *   Session-key with empty amounts[] (Quick-Sign default): the contract
+ *     reads the tip rate from the session record on-chain. The TxQueue row
+ *     pre-resolves it as `entryImplicitTip` at submission time so we don't
+ *     need a per-action DB lookup here.
+ *
+ * @param action            The action data
+ * @param entryImplicitTip  Pre-resolved implicit tip from TxQueue.implicitTip.
+ *                          BigInt for session-signed actions; null for owner
+ *                          sigs (which always carry an explicit tip if they
+ *                          tip at all).
  */
 async function validateActionTip(
   action: any,
+  entryImplicitTip?: bigint | null,
 ): Promise<{ valid: boolean; reason?: string; required?: bigint; provided?: bigint }> {
   const requiredTip = calculateMinimumTip()
 
   // Get the tip from the action's amounts array (last element is the tip)
   const amounts = action.amounts || []
   if (amounts.length === 0) {
-    // No amounts at all — only acceptable if this validator opts into zero-tip processing.
+    // Session-key fast path — implicit tip pre-resolved at submission.
+    if (entryImplicitTip !== null && entryImplicitTip !== undefined) {
+      if (entryImplicitTip === 0n && liveSettings.acceptZeroTip) return { valid: true }
+      if (entryImplicitTip < requiredTip) {
+        return {
+          valid: false,
+          reason: `Insufficient implicit session tip: ${entryImplicitTip.toString()} < ${requiredTip.toString()} CAW`,
+          required: requiredTip,
+          provided: entryImplicitTip,
+        }
+      }
+      return { valid: true, required: requiredTip, provided: entryImplicitTip }
+    }
+    // No amounts and no implicit tip — only acceptable if this validator
+    // opts into zero-tip processing.
     if (liveSettings.acceptZeroTip) {
       return { valid: true }
     }
@@ -2352,8 +2379,13 @@ console.log("succeededKeys", succeededKeys)
             continue
           }
 
-          // Then, validate the tip is sufficient for replication costs
-          const tipValidation = await validateActionTip(action)
+          // Then, validate the tip is sufficient for replication costs.
+          // Session-signed entries carry the implicit tip pre-resolved by
+          // /api/actions; owner-signed entries don't have one and rely on
+          // the explicit tip in amounts[].
+          const stampedImplicit = (entry as any).implicitTip
+          const implicitTip = stampedImplicit != null ? BigInt(stampedImplicit) : null
+          const tipValidation = await validateActionTip(action, implicitTip)
           if (!tipValidation.valid) {
             underpricedEntries.push({
               entry,

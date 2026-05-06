@@ -115,6 +115,10 @@ function getReadContract(): Contract {
 interface SessionKeyCheck {
   valid: boolean
   reason?: string
+  /// Per-action validator tip baked into the session at registration. The
+  /// validator credits this once per session-signed action via the batch-end
+  /// implicitTip accumulator on CawActions. Whole CAW tokens.
+  perActionTipRate?: bigint
 }
 
 /**
@@ -160,7 +164,7 @@ async function checkSessionKeyOnChain(
       const spent = BigInt(row.spent || '0')
       if (spent >= spendLimit) return { valid: false, reason: 'Session key spend limit reached' }
     }
-    return { valid: true }
+    return { valid: true, perActionTipRate: BigInt((row as any).perActionTipRate || '0') }
   }
 
   // --- Slow path: not in DB yet (brand-new session, or indexer catching up).
@@ -171,6 +175,7 @@ async function checkSessionKeyOnChain(
     const expirySec = Number(session.expiry)
     const scopeBitmap = Number(session.scopeBitmap)
     const spendLimit = BigInt(session.spendLimit?.toString() || '0')
+    const perActionTipRate = BigInt(session.perActionTipRate?.toString() || '0')
 
     if (expirySec === 0) return { valid: false, reason: 'Session key not registered' }
 
@@ -182,6 +187,7 @@ async function checkSessionKeyOnChain(
           expiry: BigInt(expirySec),
           scopeBitmap,
           spendLimit: spendLimit.toString(),
+          perActionTipRate: perActionTipRate.toString(),
           revokedAt: null,
           lastSyncedAt: new Date(),
         },
@@ -191,6 +197,7 @@ async function checkSessionKeyOnChain(
           expiry: BigInt(expirySec),
           scopeBitmap,
           spendLimit: spendLimit.toString(),
+          perActionTipRate: perActionTipRate.toString(),
           lastSyncedAt: new Date(),
         },
       })
@@ -200,7 +207,7 @@ async function checkSessionKeyOnChain(
     if (actionType !== undefined && actionType <= 7 && (scopeBitmap & (1 << actionType)) === 0) {
       return { valid: false, reason: 'Action type not in session scope' }
     }
-    return { valid: true }
+    return { valid: true, perActionTipRate }
   } catch (err) {
     // RPC failure — allow through; contract will enforce at submission.
     console.warn('[Actions] Session key DB miss + RPC failed (allowing action):', (err as any)?.message)
@@ -320,6 +327,14 @@ router.post('/', async (req, res) => {
 
     const isOwner = recoveredAddress === ownerAddress
 
+    // Resolve the implicit tip the validator should credit per session-signed
+    // action. Owner-signed actions keep the legacy explicit-tip path (tip is
+    // amounts[last]); session-signed actions sign with empty amounts and the
+    // contract reads the tip rate from the session record at submission time.
+    // We capture it here so the validator can sum it across the batch without
+    // a second DB read per action. perActionTipRate is null for owner sigs.
+    let perActionTipRate: bigint | null = null
+
     if (!isOwner) {
       // Check if signer is a valid session key for this owner
       const actionType = typeof data.actionType === 'number' ? data.actionType : undefined
@@ -329,6 +344,7 @@ router.post('/', async (req, res) => {
         console.warn(`[Actions] Rejected: signer ${recoveredAddress} not authorized for owner ${ownerAddress}: ${sessionCheck.reason}`)
         return res.status(403).json({ error: sessionCheck.reason || 'Signer is not authorized for this token' })
       }
+      perActionTipRate = sessionCheck.perActionTipRate ?? 0n
     }
     mark('sessionCheck')
 
@@ -1344,6 +1360,8 @@ router.post('/', async (req, res) => {
             pendingDepositTxHash: sanitizedPendingDepositTxHash,
             clientVersion: provenance.clientVersion,
             clientOrigin: provenance.clientOrigin,
+            signerKind: isOwner ? 'owner' : 'session',
+            implicitTip: perActionTipRate !== null ? perActionTipRate.toString() : null,
           }
         })
         return created

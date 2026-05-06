@@ -362,6 +362,18 @@ model TxQueue {
   clientVersion String?
   clientOrigin  String?
 
+  /// Signer kind — "owner" for manual wallet-signed actions (tip is the
+  /// last entry of payload.data.amounts), "session" for Quick-Sign actions
+  /// (amounts has no tip slot; the implicit per-action tip lives in the
+  /// session record). Stamped at submission time so the validator's
+  /// gas-coverage check doesn't have to re-recover the signer per action.
+  signerKind String @default("owner")
+  /// Implicit per-action validator tip (whole CAW) for session-signed
+  /// actions. Pre-resolved from the SessionKey row at submission time so
+  /// the validator can sum it across the batch without an extra DB read.
+  /// 0 / null for owner-signed actions.
+  implicitTip String?
+
   @@index([senderId, status])
   @@index([batchId])
   @@index([signedTx])
@@ -1281,17 +1293,22 @@ model PinnedCaw {
 /// on L2. Read by /api/actions to validate session-key-signed submissions
 /// without a live RPC call per action.
 model SessionKey {
-  id             Int       @id @default(autoincrement())
-  ownerAddress   String // lowercase owner (token owner)
-  sessionAddress String // lowercase session key address
-  expiry         BigInt // unix seconds, matches contract uint64
-  scopeBitmap    Int // contract uint8, bit i = action type i allowed
-  spendLimit     String // bigint as string (whole CAW tokens, not wei)
-  spent          String    @default("0") // locally-tracked spend total
-  revokedAt      DateTime? // set when SessionRevoked event indexed
-  lastSyncedAt   DateTime  @default(now())
-  createdAt      DateTime  @default(now())
-  updatedAt      DateTime  @updatedAt
+  id               Int       @id @default(autoincrement())
+  ownerAddress     String // lowercase owner (token owner)
+  sessionAddress   String // lowercase session key address
+  expiry           BigInt // unix seconds, matches contract uint64
+  scopeBitmap      Int // contract uint8, bit i = action type i allowed
+  spendLimit       String // bigint as string (whole CAW tokens, not wei)
+  /// Implicit per-action validator tip baked into the session at registration.
+  /// Session-signed actions sign with empty `amounts[]` (no per-action tip slot)
+  /// and the contract credits this rate × N once at batch end. Whole CAW tokens,
+  /// uint64-bounded.
+  perActionTipRate String    @default("0")
+  spent            String    @default("0") // locally-tracked spend total
+  revokedAt        DateTime? // set when SessionRevoked event indexed
+  lastSyncedAt     DateTime  @default(now())
+  createdAt        DateTime  @default(now())
+  updatedAt        DateTime  @updatedAt
 
   @@unique([ownerAddress, sessionAddress])
   @@index([ownerAddress])
