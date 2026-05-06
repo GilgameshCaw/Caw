@@ -793,13 +793,15 @@ export const Profile: React.FC = () => {
     return count.toString()
   }
 
-  // define our four tabs with counts
-  const tabCount = (n: number | undefined) => n ? ` (${formatStat(n)})` : ''
+  // define our four tabs with counts. count is shown only on sm+ — on
+  // mobile the bare label has to fit even for long translations
+  // ("Publicaciones", "Respuestas").
+  const tabCount = (n: number | undefined) => n ? formatStat(n) : undefined
   const profileTabs: TabItem<ProfileTab>[] = [
-    { id: 'posts',   label: `${t('profile.tab.posts')}${tabCount(profileData?.cawCount)}`     },
-    { id: 'replies', label: `${t('profile.tab.replies')}${tabCount(profileData?.replyCount)}` },
-    { id: 'media',   label: `${t('profile.tab.media')}${tabCount(profileData?.mediaCount)}`   },
-    { id: 'likes',   label: `${t('profile.tab.likes')}${tabCount(profileData?.likedCount)}`   },
+    { id: 'posts',   label: t('profile.tab.posts'),   count: tabCount(profileData?.cawCount)   },
+    { id: 'replies', label: t('profile.tab.replies'), count: tabCount(profileData?.replyCount) },
+    { id: 'media',   label: t('profile.tab.media'),   count: tabCount(profileData?.mediaCount) },
+    { id: 'likes',   label: t('profile.tab.likes'),   count: tabCount(profileData?.likedCount) },
   ]
 
   // Profile not in our DB — check on-chain availability for better UX

@@ -5,6 +5,11 @@ import { useTheme } from '~/hooks/useTheme'
 export interface TabItem<T extends string> {
   id:    T
   label: string
+  /** Optional count badge. Rendered as " (count)" suffix on sm+ screens
+   * only — hidden below sm so long translations don't blow out the row.
+   * Pass the already-formatted string (e.g. "1.2K") since you control the
+   * formatter. Empty string / undefined hides the suffix entirely. */
+  count?: string
 }
 
 type Props<T extends string> = {
@@ -17,26 +22,27 @@ export function Tabs<T extends string>({ tabs, active, onChange }: Props<T>) {
   const { isDark } = useTheme()
   
   return (
-    <div className={`flex justify-center sm:justify-center border-b transition-all duration-300 ${
+    <div className={`flex justify-stretch sm:justify-between border-b transition-all duration-300 overflow-x-auto thin-scrollbar ${
       isDark ? 'border-white/20' : 'border-gray-300'
     }`}>
       {tabs.map(t => (
         <button
           key={t.id}
           onClick={() => onChange(t.id)}
-          className={`py-4 px-2 sm:px-8 flex-1 text-center font-medium text-lg transition-all duration-200 cursor-pointer whitespace-nowrap ${
+          className={`py-3 px-1.5 sm:px-2.5 flex-1 sm:flex-initial text-center font-medium text-base transition-all duration-200 cursor-pointer whitespace-nowrap ${
             t.id === active
-              ? `${isDark 
-                  ? 'text-white border-white' 
+              ? `${isDark
+                  ? 'text-white border-white'
                   : 'text-black border-black'
                 } border-b-2`
-              : `${isDark 
-                  ? 'text-gray-400 hover:text-white hover:bg-white/5' 
+              : `${isDark
+                  ? 'text-gray-400 hover:text-white hover:bg-white/5'
                   : 'text-gray-600 hover:text-black hover:bg-gray-100'
                 }`
           }`}
         >
           {t.label}
+          {t.count && <span className="hidden sm:inline"> ({t.count})</span>}
         </button>
       ))}
     </div>
