@@ -69,6 +69,34 @@ const RETRY_ATTEMPTS = 5;
 const RETRY_DELAY_MS = 3000;
 const STATE_FILE = path.join(__dirname, '../.deploy-state.json');
 
+// Phase 7 (renounce / additions-only) is opt-in. With this off, the
+// deployer EOA stays the owner of every contract — useful during active
+// dev when we may need to redeploy or rewire. Flip on for the
+// trustlessness-finalizing run:
+//   RENOUNCE_ON_DEPLOY=1 node scripts/deploy.js
+//
+// What phase 7 does:
+//   1. Deploys one PathwayExpander per chain (owned by the deployer EOA).
+//   2. Transfers ownership of every LZ OApp on that chain to its expander
+//      (CawProfile + CawProfileL2_* on L1; CawProfileL2_<L>,
+//      CawActionsArchive_<L>, CawChallengeRelay_<L> on each L2).
+//   3. Renounces ownership on every other Ownable contract on that chain
+//      (CawActions_<L>, CawProfileURI on L1).
+//
+// After phase 7, the only residual owner authority on the system is:
+//   - PathwayExpander.owner (= deployer EOA), which can ONLY call addPeer
+//     for not-yet-set eids on the OApps it owns. Cannot reconfigure
+//     existing peers, cannot rotate delegate, cannot transfer the OApps'
+//     ownership away.
+//   - LZ EndpointV2.delegates(oapp) (= deployer EOA at time of writing),
+//     which controls DVN/library config on each pathway. Phase 7 does
+//     NOT touch the delegate by design — DVN config flexibility is the
+//     last operational lever we leave open. To finalize that surface
+//     too, run a separate one-shot or call `setDelegate(0)` on each
+//     OApp via the expander before transferring ownership (which we do
+//     not do today; the additions-only design is for peers, not delegates).
+const RENOUNCE_ON_DEPLOY = process.env.RENOUNCE_ON_DEPLOY === '1';
+
 // The deployer wallet address (for verification)
 const EXPECTED_DEPLOYER = '0xF71338f3eAa483aA66125598B09BA1988e694a95';
 
@@ -321,6 +349,19 @@ const CONTRACTS = {
     dependencies: ['CawProfileL2_L1'],
     constructorArgs: (state) => [state.addresses.CawProfileL2_L1],
   },
+  // Phase 7: PathwayExpander on L1. Becomes the owner of CawProfile +
+  // CawProfileL2_L1 in the linking step that follows. Owner of the
+  // expander itself is the deployer EOA (constructor arg below);
+  // transfer this to a multisig later if desired before the deployer
+  // walks away completely.
+  PathwayExpander_L1: {
+    artifact: 'PathwayExpander',
+    chain: 'L1',
+    phase: 7,
+    dependencies: [],
+    constructorArgs: (state) => [state.deployerAddress],
+    condition: () => RENOUNCE_ON_DEPLOY,
+  },
 };
 
 // Per-L2 contracts: for each L2 in L2_CHAIN_KEYS, expand to four entries:
@@ -365,6 +406,17 @@ for (const L of L2_CHAIN_KEYS) {
       CHAINS[chain].lzEndpoint,
       state.addresses[`CawActions_${L}`],
     ],
+  };
+  // Phase 7: per-L2 PathwayExpander. Becomes the owner of the three LZ
+  // OApps on this chain (CawProfileL2_<L>, CawActionsArchive_<L>,
+  // CawChallengeRelay_<L>).
+  CONTRACTS[`PathwayExpander_${L}`] = {
+    artifact: 'PathwayExpander',
+    chain: L,
+    phase: 7,
+    dependencies: [],
+    constructorArgs: (state) => [state.deployerAddress],
+    condition: () => RENOUNCE_ON_DEPLOY,
   };
 }
 
@@ -514,6 +566,91 @@ const LINKING_STEPS = [
       await configureLzDvns(state, deployer, chainConfig, CHAINS, L2_CHAIN_KEYS);
     },
   },
+
+  // -----------------------------------------------------------------
+  // Phase 7: renounce / additions-only finalization
+  // -----------------------------------------------------------------
+  // Every step is gated on RENOUNCE_ON_DEPLOY. With it off, deployment
+  // ends after phase 6 and the deployer remains owner of everything.
+  //
+  // Step style:
+  //   - LZ OApps: transferOwnership(PathwayExpander_<chain>). The
+  //     expander's addPeer is the only future write path (and even
+  //     that's blocked by per-eid OnlyOnce on the OApps themselves).
+  //   - Plain Ownables (CawActions_<chain>, CawProfileURI on L1):
+  //     renounceOwnership(). No future admin operations needed.
+  //
+  // Each step has a skipIf that compares the live owner to the target
+  // (expander address for transfers, address(0) for renounces), so a
+  // re-run with RENOUNCE_ON_DEPLOY=1 is idempotent — the second run
+  // sees "already done" and exits the step without sending a tx.
+  // -----------------------------------------------------------------
+  {
+    name: '[Phase 7] Transfer CawProfile ownership → PathwayExpander_L1',
+    chain: 'L1',
+    phase: 7,
+    contract: 'CawProfile',
+    method: 'transferOwnership',
+    args: (state) => [state.addresses.PathwayExpander_L1],
+    condition: (state) => RENOUNCE_ON_DEPLOY
+      && state.addresses.CawProfile
+      && state.addresses.PathwayExpander_L1,
+    skipIf: async (state, deployer) => {
+      const c = deployer.getContract('CawProfile');
+      if (!c) return false;
+      const owner = await c.owner();
+      return owner.toLowerCase() === state.addresses.PathwayExpander_L1.toLowerCase();
+    },
+  },
+  {
+    name: '[Phase 7] Transfer CawProfileL2_L1 ownership → PathwayExpander_L1',
+    chain: 'L1',
+    phase: 7,
+    contract: 'CawProfileL2_L1',
+    method: 'transferOwnership',
+    args: (state) => [state.addresses.PathwayExpander_L1],
+    condition: (state) => RENOUNCE_ON_DEPLOY
+      && state.addresses.CawProfileL2_L1
+      && state.addresses.PathwayExpander_L1,
+    skipIf: async (state, deployer) => {
+      const c = deployer.getContract('CawProfileL2_L1');
+      if (!c) return false;
+      const owner = await c.owner();
+      return owner.toLowerCase() === state.addresses.PathwayExpander_L1.toLowerCase();
+    },
+  },
+  {
+    name: '[Phase 7] Renounce CawActions_L1',
+    chain: 'L1',
+    phase: 7,
+    contract: 'CawActions_L1',
+    method: 'renounceOwnership',
+    args: () => [],
+    condition: (state) => RENOUNCE_ON_DEPLOY && state.addresses.CawActions_L1,
+    skipIf: async (state, deployer) => {
+      const c = deployer.getContract('CawActions_L1');
+      if (!c) return false;
+      const owner = await c.owner();
+      return owner === '0x0000000000000000000000000000000000000000';
+    },
+  },
+  {
+    name: '[Phase 7] Renounce CawProfileURI',
+    chain: 'L1',
+    phase: 7,
+    contract: 'CawProfileURI',
+    method: 'renounceOwnership',
+    args: () => [],
+    condition: (state) => RENOUNCE_ON_DEPLOY && state.addresses.CawProfileURI,
+    skipIf: async (state, deployer) => {
+      const c = deployer.getContract('CawProfileURI');
+      if (!c) return false;
+      const owner = await c.owner();
+      return owner === '0x0000000000000000000000000000000000000000';
+    },
+  },
+  // Per-L2 phase-7 entries (transfers + renounces) are appended below
+  // from L2_CHAIN_KEYS — same pattern as phases 3/5.
 ];
 
 // =============================================================================
@@ -627,6 +764,50 @@ for (const L of L2_CHAIN_KEYS) {
       },
     });
   }
+
+  // -----------------------------------------------------------------
+  // Phase 7 per-L2 entries (mirror the L1 block's pattern).
+  // -----------------------------------------------------------------
+  // OApps owned by the per-L2 expander:
+  //   CawProfileL2_<L>, CawActionsArchive_<L>, CawChallengeRelay_<L>
+  // Plain Ownables to renounce on this chain:
+  //   CawActions_<L>
+  // -----------------------------------------------------------------
+  for (const oapp of [`CawProfileL2_${L}`, `CawActionsArchive_${L}`, `CawChallengeRelay_${L}`]) {
+    LINKING_STEPS.push({
+      name: `[Phase 7] Transfer ${oapp} ownership → PathwayExpander_${L}`,
+      chain: L,
+      phase: 7,
+      contract: oapp,
+      method: 'transferOwnership',
+      args: (state) => [state.addresses[`PathwayExpander_${L}`]],
+      condition: (state) => RENOUNCE_ON_DEPLOY
+        && state.addresses[oapp]
+        && state.addresses[`PathwayExpander_${L}`],
+      skipIf: async (state, deployer) => {
+        const c = deployer.getContract(oapp);
+        if (!c) return false;
+        const owner = await c.owner();
+        return owner.toLowerCase() === state.addresses[`PathwayExpander_${L}`].toLowerCase();
+      },
+    });
+  }
+
+  LINKING_STEPS.push({
+    name: `[Phase 7] Renounce CawActions_${L}`,
+    chain: L,
+    phase: 7,
+    contract: `CawActions_${L}`,
+    method: 'renounceOwnership',
+    args: () => [],
+    condition: (state) => RENOUNCE_ON_DEPLOY && state.addresses[`CawActions_${L}`],
+    skipIf: async (state, deployer) => {
+      const c = deployer.getContract(`CawActions_${L}`);
+      if (!c) return false;
+      const owner = await c.owner();
+      return owner === '0x0000000000000000000000000000000000000000';
+    },
+  });
 }
 
 // ============================================
@@ -1011,9 +1192,12 @@ class MultiChainDeployer {
     console.log(`PHASE ${phase}`);
     console.log(`${'='.repeat(50)}`);
 
-    // Get contracts for this phase
+    // Get contracts for this phase. A `condition` predicate on a
+    // CONTRACTS entry lets us gate it on env / flags (e.g. phase 7's
+    // PathwayExpander is only deployed when RENOUNCE_ON_DEPLOY=1).
     const phaseContracts = Object.entries(CONTRACTS)
       .filter(([_, config]) => config.phase === phase)
+      .filter(([_, config]) => !config.condition || config.condition(this.state, this, this.env))
       .map(([key, _]) => key);
 
     // Deploy in dependency order. Contracts on DIFFERENT chains whose deps are
@@ -1105,8 +1289,11 @@ class MultiChainDeployer {
     }
 
     // Deploy in phases. Phase 6 is LZ DVN reconciliation (mainnet only,
-    // no-op on testnet/dev environments).
-    for (const phase of [1, 2, 3, 4, 5, 6]) {
+    // no-op on testnet/dev environments). Phase 7 is the renounce/
+    // additions-only finalization (opt-in via RENOUNCE_ON_DEPLOY=1, and
+    // a no-op when off so re-runs during dev don't accidentally lock
+    // out the deployer).
+    for (const phase of [1, 2, 3, 4, 5, 6, 7]) {
       await this.deployPhase(phase);
     }
 
@@ -1240,8 +1427,9 @@ class MultiChainDeployer {
       3: `${l2List} CawActions (Phase 3)`,
       4: `${l2List} CawActionsArchive + CawChallengeRelay (Phase 4 — full mesh)`,
       5: 'Cross-chain peer wiring (Phase 5)',
+      7: 'Renounce / additions-only (Phase 7 — opt-in via RENOUNCE_ON_DEPLOY=1)',
     };
-    for (const phase of [1, 2, 3, 4, 5]) {
+    for (const phase of [1, 2, 3, 4, 5, 7]) {
       const phaseContracts = Object.entries(CONTRACTS).filter(([_, c]) => c.phase === phase);
       if (phaseContracts.length > 0) {
         console.log(`\n  ${phases[phase]}:`);
