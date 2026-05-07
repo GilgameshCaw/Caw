@@ -1,4 +1,5 @@
 import { prisma } from '../../prismaClient'
+import { deterministicConversationId } from '../DmRelayService'
 
 export class DmService {
   /**
@@ -78,9 +79,17 @@ export class DmService {
 
     if (existing) return existing
 
-    // Create new conversation with both participants
+    // DM conversations use a deterministic id derived from the
+    // (min, max) participant pair, so cross-instance relay can target
+    // the same conversation regardless of which side wrote first.
+    // Group conversations (future) keep the schema's UUID default.
+    // The receive-side relay handler enforces this exact format
+    // (dm-relay.ts), so any drift here breaks federation.
+    const id = deterministicConversationId(userIdA, userIdB)
+
     return prisma.conversation.create({
       data: {
+        id,
         type: 'DM',
         creatorId: userIdA,
         participants: {
@@ -180,20 +189,25 @@ export class DmService {
   }
 
   /**
-   * Get messages for a conversation (encrypted — client decrypts)
+   * Get messages for a conversation (encrypted — client decrypts).
+   * Group rows: Message.encryptedPayload is null on disk; we splice in
+   * the caller's per-recipient ciphertext so the FE shape stays stable.
    */
   async getMessages(conversationId: string, userId: number, limit = 50, before?: string) {
-    // Verify user is a participant
     const participant = await prisma.conversationParticipant.findUnique({
       where: { conversationId_userId: { conversationId, userId } }
     })
     if (!participant) throw new Error('Not a participant in this conversation')
 
+    const conversation = await prisma.conversation.findUnique({
+      where: { id: conversationId },
+      select: { type: true },
+    })
+    const isGroup = conversation?.type === 'GROUP'
+
     const where: any = {
       conversationId,
-      // Exclude messages the user has hidden ("delete for me")
       deletions: { none: { userId } },
-      // Shadow-blocked messages: sender sees them, recipient doesn't
       OR: [
         { shadowBlocked: false },
         { shadowBlocked: true, senderId: userId }
@@ -206,10 +220,6 @@ export class DmService {
       }
     }
 
-    // Fetch newest messages first, then reverse for chronological display.
-    // Reactions ride along on the message row so the inbox doesn't need a
-    // follow-up request to render the reaction strip — same rationale as
-    // bundling peer publicKey on the conversation list.
     const messages = await prisma.message.findMany({
       where,
       orderBy: { createdAt: 'desc' },
@@ -224,19 +234,36 @@ export class DmService {
           select: { id: true, userId: true, emoji: true, createdAt: true },
           orderBy: { createdAt: 'asc' },
         },
+        ...(isGroup ? {
+          recipientPayloads: {
+            where: { recipientUserId: userId },
+            select: { encryptedPayload: true },
+          },
+        } : {}),
       }
     })
     messages.reverse()
 
-    // Get the other participant's lastReadAt for seen indicator
-    const otherParticipant = await prisma.conversationParticipant.findFirst({
-      where: { conversationId, userId: { not: userId } }
-    })
-
-    return {
-      messages,
-      peerLastReadAt: otherParticipant?.lastReadAt?.toISOString() || null
+    let shaped: any[] = messages
+    if (isGroup) {
+      shaped = messages.map((m: any) => {
+        const payload = m.recipientPayloads?.[0]?.encryptedPayload ?? null
+        const { recipientPayloads, ...rest } = m
+        return { ...rest, encryptedPayload: payload }
+      })
     }
+
+    // peerLastReadAt is meaningful only for DMs. Groups would need a
+    // per-pair shape; the FE skips the seen indicator there.
+    let peerLastReadAt: string | null = null
+    if (!isGroup) {
+      const otherParticipant = await prisma.conversationParticipant.findFirst({
+        where: { conversationId, userId: { not: userId } }
+      })
+      peerLastReadAt = otherParticipant?.lastReadAt?.toISOString() || null
+    }
+
+    return { messages: shaped, peerLastReadAt }
   }
 
   /**
@@ -272,6 +299,9 @@ export class DmService {
     const participations = await prisma.conversationParticipant.findMany({
       where: {
         userId,
+        // Hide rows where the caller has left/been removed — they no
+        // longer see the conversation in their inbox.
+        leftAt: null,
         ...statusFilter,
         conversation: {
           messages: { some: {} },
@@ -304,8 +334,14 @@ export class DmService {
               orderBy: { createdAt: 'desc' },
               take: 1,
               select: {
+                id: true,
                 encryptedPayload: true,
                 senderId: true,
+                contentType: true,
+                recipientPayloads: {
+                  where: { recipientUserId: userId },
+                  select: { encryptedPayload: true },
+                },
               }
             }
           }
@@ -317,15 +353,22 @@ export class DmService {
     const hasMore = participations.length > limit
     if (hasMore) participations.pop()
 
-    const conversations = participations.map(p => ({
-      ...p.conversation,
-      lastMessage: p.conversation.messages[0] || null,
-      unreadCount: p.unreadCount,
-      // Surface this user's participant.status so the FE can render the
-      // "Accept request" CTA on REQUEST conversations without a second
-      // round-trip.
-      myStatus: p.status,
-    }))
+    const conversations = participations.map((p: any) => {
+      const last = p.conversation.messages[0] || null
+      let shapedLast = last
+      if (last && p.conversation.type === 'GROUP') {
+        const payload = last.recipientPayloads?.[0]?.encryptedPayload ?? null
+        const { recipientPayloads, ...rest } = last
+        shapedLast = { ...rest, encryptedPayload: payload }
+      }
+      return {
+        ...p.conversation,
+        lastMessage: shapedLast,
+        unreadCount: p.unreadCount,
+        myStatus: p.status,
+        myRole: p.role,
+      }
+    })
 
     return { conversations, hasMore }
   }
