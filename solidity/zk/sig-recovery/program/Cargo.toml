@@ -1,0 +1,9 @@
+[package]
+version = "0.1.0"
+name = "sig-recovery-program"
+edition = "2021"
+
+[dependencies]
+alloy-sol-types = { workspace = true }
+sp1-zkvm = { version = "6.0.1" }
+sig-recovery-lib = { path = "../lib" }
