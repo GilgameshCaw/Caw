@@ -12,6 +12,14 @@ import { CawNotFoundError } from './actionHandlers'
 import { CAW_ACTIONS_ADDRESS } from '../../abi/addresses'
 import { span } from '../../utils/trace'
 import getActionType from '../../abi/getActionType'
+// Static imports — were previously dynamic (`await import('../StakeLedger')`)
+// inside hot-path try/catches. The dynamic form trips
+// ERR_UNSUPPORTED_DIR_IMPORT under Node 22 + tsx/cjs because Node's runtime
+// resolver doesn't probe `index.ts` for directory imports the way tsx's
+// rewriter does for static imports. No circular-import risk: StakeLedger
+// only `type`-imports from ActionProcessor/types (erased at compile time).
+// Reported by Zin running the standard .nvmrc environment.
+import { verifyMultiplier, recordAction } from '../StakeLedger'
 
 const Config = z.object({
   redisUrl: z.string().optional().default('redis://127.0.0.1:6379'),
@@ -159,7 +167,6 @@ async function handleRawEvent(raw: { id: number, chainId: number, data: any, blo
   // timeout. Best-effort: a transient RPC failure logs a warn and
   // skips the check; the daily reconciler is the deeper safety net.
   try {
-    const { verifyMultiplier } = await import('../StakeLedger')
     await verifyMultiplier()
   } catch (err) {
     console.warn('[ActionProcessor] StakeLedger verifyMultiplier failed:', err)
@@ -267,7 +274,6 @@ async function handleRawAction(raw: { id: number, chainId: number, blockNumber: 
     // checksum in handleRawEvent will halt the writer if state has
     // drifted.
     try {
-      const { recordAction } = await import('../StakeLedger')
       await prisma.$transaction(async (tx) => {
         await recordAction(tx, {
           rawAction,
