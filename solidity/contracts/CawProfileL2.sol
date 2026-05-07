@@ -74,6 +74,15 @@ contract CawProfileL2 is
   /// @notice Per-address nonce for session delegation signatures (prevents replay after revocation)
   mapping(address => uint256) public sessionNonce;
 
+  /// @notice Set of session-delegation message digests that have already been
+  ///         consumed by `registerSessionPersonal`. The personal-sign message
+  ///         format does NOT carry a nonce (it's a fixed-shape human-readable
+  ///         string), so the only thing preventing replay is the user's
+  ///         signature being one-shot. Without this, an attacker holding a
+  ///         user's signed message could re-register a revoked session at
+  ///         any time before the message's expiry. Audit fix 2026-05-08.
+  mapping(bytes32 => bool) public consumedSessionMessage;
+
   bytes32 public immutable eip712DomainHash;
 
   bytes32 private constant EIP712_DOMAIN_TYPEHASH = keccak256(
@@ -548,6 +557,13 @@ contract CawProfileL2 is
     address signer = ecrecover(digest, v, r, s);
     require(signer != address(0), "Invalid signature");
 
+    // Replay protection: the personal-sign message format doesn't carry a
+    // nonce, so a held signature could otherwise be re-submitted to undo a
+    // revocation. Mark the digest consumed; reject duplicates. Audit fix
+    // 2026-05-08.
+    require(!consumedSessionMessage[digest], "Message already consumed");
+    consumedSessionMessage[digest] = true;
+
     // Parse the message
     (uint256 spendLimit, uint64 perActionTipRate, uint64 expiry, address sessionKey) = _parseSessionMessage(message);
 
@@ -959,9 +975,14 @@ contract CawProfileL2 is
   /// @param lzTokenAmount LayerZero ZRO token amount (0 to pay in native gas)
   function setWithdrawable(uint32[] memory tokenIds, uint256[] memory amounts, uint256 lzTokenAmount) external payable {
     require(address(cawActions) == _msgSender(), "caller is not CawActions");
-    if (bypassLZ)
+    if (bypassLZ) {
+      // bypassLZ mode does no LayerZero send, so any forwarded native fee
+      // would be stuck in this contract permanently (there's no sweep path).
+      // Reject explicitly so a misconfigured validator quote doesn't silently
+      // brick funds. Audit fix 2026-05-08.
+      require(msg.value == 0, "bypassLZ takes no fee");
       cawProfile.setWithdrawable(tokenIds, amounts);
-    else {
+    } else {
       bytes memory payload = abi.encodeWithSelector(setWithdrawableSelector, tokenIds, amounts);
       lzSend(setWithdrawableSelector, tokenIds.length, payload, lzTokenAmount);
     }
