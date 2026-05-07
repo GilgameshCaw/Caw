@@ -1,8 +1,9 @@
 import { useTheme } from '~/hooks/useTheme'
 import { useState } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { HiUser, HiBell, HiVolumeOff, HiLightningBolt, HiTranslate } from 'react-icons/hi'
+import { HiUser, HiBell, HiVolumeOff, HiLightningBolt, HiTranslate, HiOutlineShieldCheck } from 'react-icons/hi'
 import { useT } from '~/i18n/I18nProvider'
+import { useMyRole } from '~/hooks/useMyRole'
 
 // Settings page component with clean, modern design
 export const SettingsPage: React.FC = () => {
@@ -10,6 +11,7 @@ export const SettingsPage: React.FC = () => {
   const t = useT()
   const [searchQuery, setSearchQuery] = useState('')
   const navigate = useNavigate()
+  const { isModerator } = useMyRole()
 
   // Settings menu items in the specified order
   const settingsItems = [
@@ -52,7 +54,15 @@ export const SettingsPage: React.FC = () => {
       icon: <HiVolumeOff className="w-5 h-5" />,
       hasArrow: true,
       onClick: () => navigate('/settings/muted')
-    }
+    },
+    ...(isModerator ? [{
+      id: 'moderation',
+      title: 'Moderation',
+      description: 'Review reports and hide caws on this server',
+      icon: <HiOutlineShieldCheck className="w-5 h-5" />,
+      hasArrow: true,
+      onClick: () => navigate('/moderation/reports')
+    }] : [])
   ]
 
   // Filter settings based on search query

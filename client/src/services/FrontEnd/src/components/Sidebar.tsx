@@ -6,7 +6,6 @@ import { fetchTxPage }          from '../api/txs'
 import { useTokenDataStore, useActiveToken, usePriceStore } from "~/store/tokenDataStore";
 import { useTheme } from "~/hooks/useTheme";
 import { useDmIdentity } from "~/hooks/useDmIdentity";
-import { useMyRole } from "~/hooks/useMyRole";
 import { useDmUnreadStore } from "~/store/dmUnreadStore";
 import { useNotificationUnreadStore } from "~/store/notificationUnreadStore";
 import { useOffersUnreadStore } from "~/store/offersUnreadStore";
@@ -22,7 +21,6 @@ import {
   HiOutlineChat,
   HiOutlineBookmark,
   HiOutlineCog,
-  HiOutlineShieldCheck,
   HiOutlineUserAdd,
   HiOutlineColorSwatch,
   HiOutlineUser,
@@ -118,7 +116,6 @@ const Sidebar: React.FC<SidebarProps> = ({ onNavigate }) => {
   const dmUnreadCount = useDmUnreadStore(s => s.totalUnread)
   const notifUnreadCount = useNotificationUnreadStore(s => s.unreadCount)
   const offersUnreadCount = useOffersUnreadStore(s => s.unreadCount)
-  const { isModerator } = useMyRole()
   const navigate = useNavigate()
   const location = useLocation()
   const showSignIn = useSignInModalStore(s => s.show)
@@ -330,19 +327,6 @@ const Sidebar: React.FC<SidebarProps> = ({ onNavigate }) => {
             <HiOutlineUser className="w-5 h-5 sm:w-6 sm:h-6 shrink-0" />
             <span className="font-medium text-base sm:text-lg min-w-0 truncate">{t('nav.profile')}</span>
            </NavLink>
-
-           {isModerator && (
-             <NavLink
-               to="/moderation/reports"
-               onClick={guardClick}
-               className={({ isActive }) =>
-                 `relative flex items-center gap-3 px-4 py-3.5 sm:gap-3 sm:px-3 sm:py-3.5 rounded-2xl transition-colors duration-200 min-w-0 ${getNavLinkClasses(isActive)}`
-               }
-             >
-              <HiOutlineShieldCheck className="w-5 h-5 sm:w-6 sm:h-6 shrink-0" />
-              <span className="font-medium text-base sm:text-lg min-w-0 truncate">Moderation</span>
-             </NavLink>
-           )}
 
            <NavLink
              to="/settings"
