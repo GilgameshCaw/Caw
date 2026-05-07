@@ -188,6 +188,10 @@ contract CawProfileL2 is
     super.setPeer(_eid, _peer);
   }
 
+  /// @dev SECURITY NOTE — setDelegate hardening: the inherited setDelegate
+  ///      is non-virtual; rely on owner renouncement post-deploy. See
+  ///      CawActionsArchive.sol for full reasoning.
+
   /// @notice Set the CawActions contract address. Owner-only, one-shot.
   /// @dev CawActions is the only contract authorized to call spend/balance functions here.
   function setCawActions(address _cawActions)
@@ -709,6 +713,21 @@ contract CawProfileL2 is
     uint256 minute = (uint8(line[i+3]) - 0x30) * 10 + (uint8(line[i+4]) - 0x30);
     uint256 second = (uint8(line[i+6]) - 0x30) * 10 + (uint8(line[i+7]) - 0x30);
 
+    // Validate ranges so silent rollover can't extend the user's intended
+    // expiry. Without these: "Feb 31" parses fine and rolls into March, or
+    // "30:99:99" parses and rolls into the next day + extra hours/minutes.
+    // Audit fix 2026-05-08 (L2 M-4).
+    require(hour < 24, "Invalid hour");
+    require(minute < 60, "Invalid minute");
+    require(second < 60, "Invalid second");
+    // Month-aware day bound. 28-day Feb default; +1 for leap years.
+    uint8[12] memory daysInMonth = [31,28,31,30,31,30,31,31,30,31,30,31];
+    if (_isLeapYear(year)) daysInMonth[1] = 29;
+    require(day <= uint256(daysInMonth[month - 1]), "Invalid day for month");
+    // Sanity cap on year so the for-loop in _toUnixTimestamp can't be
+    // weaponized into a 30M-gas DoS (~10K iterations max from 1970).
+    require(year <= 2200, "Year out of range");
+
     return uint64(_toUnixTimestamp(year, month, day, hour, minute, second));
   }
 
@@ -857,6 +876,20 @@ contract CawProfileL2 is
 
     delete sessions[owner][sessionKey];
     emit SessionRevoked(owner, sessionKey);
+  }
+
+  /// @notice Enforces strict in-order LZ delivery from L1. Without this,
+  ///         LZ V2 delivers ownership-update messages out-of-order; e.g.
+  ///         A→B→C transfers could land on L2 in B-first then C-second
+  ///         vs C-first then B-second order. The latter leaves L2 stuck
+  ///         showing B as owner even after L1 has Carol — and B's
+  ///         pre-transfer session keys then keep authorizing actions on
+  ///         the token's L2 balance until someone manually re-syncs.
+  ///         Returning `inboundNonce + 1` tells the LZ executor to only
+  ///         deliver the next-in-sequence message; out-of-order messages
+  ///         are queued. Audit fix 2026-05-08 (L2 M-1).
+  function nextNonce(uint32 _srcEid, bytes32 _sender) public view virtual override returns (uint64) {
+    return endpoint.inboundNonce(address(this), _srcEid, _sender) + 1;
   }
 
   /// @notice OApp callback for receiving cross-chain messages from L1.

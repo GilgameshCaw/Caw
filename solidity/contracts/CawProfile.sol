@@ -175,6 +175,10 @@ contract CawProfile is
     super.setPeer(_eid, _peer);
   }
 
+  /// @dev SECURITY NOTE — setDelegate hardening: the inherited setDelegate
+  ///      is non-virtual; rely on owner renouncement post-deploy. See
+  ///      CawActionsArchive.sol for full reasoning.
+
   function setMinter(address _minter)
     external
     onlyOwner
@@ -256,6 +260,7 @@ contract CawProfile is
         (address sk, uint64 ex, uint256 sl, uint64 tr) = abi.decode(sessionExtra, (address, uint64, uint256, uint64));
         cawProfileL2.registerSessionFromL1(owner, sk, ex, sl, tr);
       }
+      _refundUnusedLzEth(lzEthAmount);
     } else {
       uint32[] memory tokenIds;
       address[] memory owners;
@@ -323,6 +328,7 @@ contract CawProfile is
         (address sk, uint64 ex, uint256 sl, uint64 tr) = abi.decode(sessionExtra, (address, uint64, uint256, uint64));
         cawProfileL2.registerSessionFromL1(owner, sk, ex, sl, tr);
       }
+      _refundUnusedLzEth(lzEthAmount);
     } else {
       uint32[] memory tokenIds;
       address[] memory owners;
@@ -370,6 +376,17 @@ contract CawProfile is
       emit FeesAccrued(address(buyAndBurn), fee);
     }
     return fee * 2;
+  }
+
+  /// @dev Refund any unused LZ ETH back to the caller. Called from the
+  ///      bypassLZ / no-pending-queue branches that don't actually send
+  ///      a LayerZero message; without this the over-paid `lzEthAmount`
+  ///      sits in the contract permanently (no sweep path). Audit fix
+  ///      2026-05-08 (L1 M-1).
+  function _refundUnusedLzEth(uint256 amount) internal {
+    if (amount == 0) return;
+    (bool ok, ) = msg.sender.call{value: amount}("");
+    require(ok, "Refund failed");
   }
 
   /// @notice Withdraw accrued fees as CAW. Swaps the client's ETH fees + the matching protocol
@@ -455,9 +472,10 @@ contract CawProfile is
     // 2026-05-08 (H-1, CawProfile-agent finding).
     chosenChainIds[tokenId].add(uint256(lzDestId));
 
-    if (lzDestId == mainnetLzId)
+    if (lzDestId == mainnetLzId) {
       cawProfileL2.auth(tokenId, cawClientId);
-    else {
+      _refundUnusedLzEth(lzEthAmount);
+    } else {
       uint32[] memory tokenIds;
       address[] memory owners;
       (tokenIds, owners) = extractPendingTransferUpdates(lzDestId, msg.sender, tokenId);
@@ -493,9 +511,10 @@ contract CawProfile is
 
     uint256 lzEthAmount = msg.value - payFee(fee, feeAddress);
 
-    if (lzDestId == mainnetLzId)
+    if (lzDestId == mainnetLzId) {
       cawProfileL2.deposit(cawClientId, tokenId, amount);
-    else {
+      _refundUnusedLzEth(lzEthAmount);
+    } else {
       uint32[] memory tokenIds;
       address[] memory owners;
       (tokenIds, owners) = extractPendingTransferUpdates(lzDestId, owner, tokenId);

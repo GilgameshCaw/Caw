@@ -159,6 +159,19 @@ contract CawActionsArchive is Ownable, ReentrancyGuard, OnlyOnce, OApp {
     super.setPeer(_eid, _peer);
   }
 
+  /// @dev SECURITY NOTE — setDelegate hardening (Audit 2026-05-08 MED-3):
+  ///      The inherited `setDelegate` (OAppCore) is `onlyOwner` but NOT
+  ///      `virtual`, so it cannot be wrapped with OnlyOnce here. The
+  ///      protocol relies on the deployer renouncing ownership via the
+  ///      Ownable.renounceOwnership() path immediately after deploy
+  ///      (or transferring to PathwayExpander, which has no setDelegate
+  ///      surface). Until renouncement, a compromised owner key COULD
+  ///      rotate the LZ delegate. This is documented in the deploy
+  ///      checklist and in PathwayExpander.sol's natspec. The setPeer
+  ///      OnlyOnce lock is still tight on its own — the delegate path
+  ///      affects LZ side-channel configs (DVN, nonce skipping) but
+  ///      cannot directly forge messages.
+
   // ============================================
   // STAKING
   // ============================================

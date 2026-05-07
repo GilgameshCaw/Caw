@@ -408,6 +408,23 @@ contract CawProfileMarketplace is ReentrancyGuard {
      * @notice Withdraw outbid funds from an English auction (pull pattern).
      */
     function withdrawBid(uint256 listingId) external nonReentrant {
+        _withdrawBidTo(listingId, msg.sender);
+    }
+
+    /**
+     * @notice Withdraw outbid funds to a recipient of the bidder's choosing.
+     *         Required for tokens with admin blocklists (e.g., USDC): if
+     *         the bidder ends up blocklisted post-bid, transferring the
+     *         refund directly to them reverts forever — they can use this
+     *         function to redirect to a non-blocklisted address they
+     *         control. Audit fix 2026-05-08 (Marketplace M-1).
+     */
+    function withdrawBidTo(uint256 listingId, address recipient) external nonReentrant {
+        require(recipient != address(0), "Zero address");
+        _withdrawBidTo(listingId, recipient);
+    }
+
+    function _withdrawBidTo(uint256 listingId, address recipient) internal {
         uint256 amount = pendingReturns[msg.sender][listingId];
         require(amount > 0, "Nothing to withdraw");
 
@@ -415,10 +432,10 @@ contract CawProfileMarketplace is ReentrancyGuard {
 
         Listing storage listing = listings[listingId];
         if (listing.paymentToken == address(0)) {
-            (bool sent,) = msg.sender.call{value: amount}("");
+            (bool sent,) = recipient.call{value: amount}("");
             require(sent, "ETH transfer failed");
         } else {
-            IERC20(listing.paymentToken).safeTransfer(msg.sender, amount);
+            IERC20(listing.paymentToken).safeTransfer(recipient, amount);
         }
 
         emit BidWithdrawn(listingId, msg.sender, amount);
@@ -547,18 +564,36 @@ contract CawProfileMarketplace is ReentrancyGuard {
             offer.offerer == msg.sender || block.timestamp > offer.expiry,
             "Only offerer can cancel before expiry"
         );
+        _refundOffer(offer, offer.offerer);
+        emit OfferCancelled(offerId);
+    }
 
+    /**
+     * @notice Cancel an active offer and refund to a recipient of the
+     *         offerer's choosing. Same blocklist-token rationale as
+     *         withdrawBidTo: if the offerer becomes blocklisted on the
+     *         payment token (USDC etc.), they need a way to redirect
+     *         the refund. Audit fix 2026-05-08 (Marketplace M-1).
+     *         Only the offerer can use this — callable any time before
+     *         the natural cancel-by-anyone window opens at expiry.
+     */
+    function cancelOfferTo(uint256 offerId, address recipient) external nonReentrant {
+        Offer storage offer = offers[offerId];
+        require(offer.active, "Offer not active");
+        require(offer.offerer == msg.sender, "Only offerer");
+        require(recipient != address(0), "Zero address");
+        _refundOffer(offer, recipient);
+        emit OfferCancelled(offerId);
+    }
+
+    function _refundOffer(Offer storage offer, address recipient) internal {
         offer.active = false;
-
-        // Refund escrowed funds
         if (offer.paymentToken == address(0)) {
-            (bool sent,) = offer.offerer.call{value: offer.amount}("");
+            (bool sent,) = recipient.call{value: offer.amount}("");
             require(sent, "ETH refund failed");
         } else {
-            IERC20(offer.paymentToken).safeTransfer(offer.offerer, offer.amount);
+            IERC20(offer.paymentToken).safeTransfer(recipient, offer.amount);
         }
-
-        emit OfferCancelled(offerId);
     }
 
     // ============================================

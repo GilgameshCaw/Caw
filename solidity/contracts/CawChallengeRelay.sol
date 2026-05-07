@@ -65,6 +65,10 @@ contract CawChallengeRelay is OnlyOnce, OApp {
     super.setPeer(_eid, _peer);
   }
 
+  /// @dev SECURITY NOTE — setDelegate hardening (Audit 2026-05-08 MED-3):
+  ///      The inherited setDelegate is non-virtual; rely on owner renouncement
+  ///      post-deploy. See CawActionsArchive.sol for the full note.
+
   /// @notice Relay one or more checkpoint hashes to an archive chain as a
   ///         fraud proof. Anyone can call this. Correct hashes are read from
   ///         CawActions (this chain) and sent via LZ to the archive.
@@ -159,9 +163,15 @@ contract CawChallengeRelay is OnlyOnce, OApp {
     revert("ChallengeRelay does not receive");
   }
 
-  // Overriding to allow the caller to receive LZ refunds
+  // Overriding so callers can over-pay; the LZ endpoint refunds the excess
+  // to the _refundAddress passed in _lzSend (msg.sender). Audit fix
+  // 2026-05-08 (Archive MED-1): the previous version returned _nativeFee,
+  // which trapped the over-paid (msg.value - _nativeFee) ETH in this
+  // contract permanently (no withdraw path). Returning msg.value forwards
+  // the full balance to the endpoint, which uses _nativeFee for the
+  // message and refunds the rest.
   function _payNative(uint256 _nativeFee) internal virtual override returns (uint256) {
     if (msg.value < _nativeFee) revert NotEnoughNative(msg.value);
-    return _nativeFee;
+    return msg.value;
   }
 }
