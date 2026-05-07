@@ -783,7 +783,13 @@ const Notifications: React.FC = () => {
   }
 
   return (
-    <div className="max-w-2xl mx-auto px-6 py-4">
+    <div
+      className="max-w-2xl mx-auto px-6 py-4"
+      // Reserve space below the list so the trailing "Load more" button
+      // (and any final notification row) clears the mobile bottom nav.
+      // Resolves to 0 on desktop / when the nav isn't rendered.
+      style={{ paddingBottom: 'calc(1rem + var(--bottom-nav-h, 0px))' }}
+    >
       {/* Header */}
       <div className="flex items-center justify-between mb-6">
         <h1 className={`text-2xl font-bold ${isDark ? 'text-white' : 'text-gray-900'}`}>
