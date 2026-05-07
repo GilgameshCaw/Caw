@@ -82,10 +82,21 @@ router.post('/', async (req, res) => {
       signature,
     } = req.body
 
+    // Single source-IP for diagnostic purposes — every 400 below logs
+    // this so operators can grep nginx → app logs by source.
+    const remote = req.ip || req.headers['x-real-ip'] || 'unknown'
+
     if (
       !encryptedPayload || senderId == null || recipientId == null ||
       !conversationId || !timestamp || !relayId || sourceInstanceId == null || !signature
     ) {
+      const present = {
+        encryptedPayload: !!encryptedPayload, senderId: senderId != null,
+        recipientId: recipientId != null, conversationId: !!conversationId,
+        timestamp: !!timestamp, relayId: !!relayId,
+        sourceInstanceId: sourceInstanceId != null, signature: !!signature,
+      }
+      console.warn(`[DM Relay] 400 missing fields from ${remote}:`, JSON.stringify(present))
       return res.status(400).json({ error: 'Missing required fields' })
     }
 
@@ -94,6 +105,7 @@ router.post('/', async (req, res) => {
     // future (NTP drift) without going crazy.
     const age = Date.now() - Number(timestamp)
     if (age > 5 * 60 * 1000 || age < -60 * 1000) {
+      console.warn(`[DM Relay] 400 timestamp out of range from ${remote} (sourceInstance=${sourceInstanceId}): age=${age}ms (envelope ts=${timestamp}, now=${Date.now()})`)
       return res.status(400).json({ error: 'Message timestamp out of range' })
     }
 
@@ -104,6 +116,7 @@ router.post('/', async (req, res) => {
     const maxId = Math.max(Number(senderId), Number(recipientId))
     const expectedConvId = `dm:${minId}:${maxId}`
     if (conversationId !== expectedConvId) {
+      console.warn(`[DM Relay] 400 invalid conversationId from ${remote} (sourceInstance=${sourceInstanceId}): got=${conversationId} expected=${expectedConvId} (sender=${senderId}, recipient=${recipientId})`)
       return res.status(400).json({ error: 'Invalid conversation ID format' })
     }
 
@@ -113,6 +126,7 @@ router.post('/', async (req, res) => {
     const peers = getPeers(CLIENT_ID)
     const source = peers.find(p => p.instanceId === Number(sourceInstanceId))
     if (!source || !source.active) {
+      console.warn(`[DM Relay] 403 unknown/inactive source from ${remote}: sourceInstance=${sourceInstanceId} (active peers: ${peers.filter(p => p.active).map(p => p.instanceId).join(',') || 'none'})`)
       return res.status(403).json({ error: 'Unknown or inactive source instance' })
     }
 
@@ -128,9 +142,11 @@ router.post('/', async (req, res) => {
     try {
       recoveredAddr = await recoverAddressFromCanonical(canonicalizeEnvelope(envelope), signature)
     } catch (err: any) {
+      console.warn(`[DM Relay] 403 sig recover failed from ${remote} (sourceInstance=${sourceInstanceId}): ${err.message}`)
       return res.status(403).json({ error: 'Signature verification failed', detail: err.message })
     }
     if (recoveredAddr.toLowerCase() !== source.validatorAddress.toLowerCase()) {
+      console.warn(`[DM Relay] 403 sig mismatch from ${remote} (sourceInstance=${sourceInstanceId}): recovered=${recoveredAddr} expected=${source.validatorAddress}`)
       return res.status(403).json({ error: 'Signature does not match source instance validator' })
     }
 
