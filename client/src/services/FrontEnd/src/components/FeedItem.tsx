@@ -23,7 +23,8 @@ import {
   HiOutlineExclamation,
   HiOutlineCheck,
   HiOutlineRefresh,
-  HiOutlineX
+  HiOutlineX,
+  HiOutlineShieldCheck,
 } from 'react-icons/hi'
 import Recaw from '~/assets/images/recaw.svg?react';
 import UserHoverCard from './UserHoverCard';
@@ -33,6 +34,7 @@ import Share from '~/assets/images/share.svg?react';
 import { useTokenDataStore } from '~/store/tokenDataStore'
 import { translateTextDetailed, detectScript } from '~/utils/translate'
 import { useViewerLanguage } from '~/hooks/useViewerLanguage'
+import { useMyRole } from '~/hooks/useMyRole'
 import { languageName } from '~/constants/languages'
 import { useT } from '~/i18n/I18nProvider'
 import { useBlockedUsersStore } from '~/store/blockedUsersStore'
@@ -759,6 +761,36 @@ const FeedItem: React.FC<{ item: CawItem; isMainPost?: boolean; isReply?: boolea
       e.stopPropagation()
     }
     setShowOptionsMenu(!showOptionsMenu)
+  }
+
+  // Moderator hide. Hits the audit-logged moderation endpoint and
+  // updates the local item so it renders the "removed by poster" stub
+  // shape (same path as on-chain HIDDEN). Best-effort optimism — if
+  // the request fails we surface a small alert and the UI snaps back.
+  const { isModerator } = useMyRole()
+  const handleModHide = async () => {
+    const reason = window.prompt(
+      `Hide @${useItem.user?.username}'s caw as a moderator?\n\nOptional: reason for the audit log.`,
+      ''
+    )
+    // null === user cancelled. Empty string === confirmed without a reason.
+    if (reason === null) return
+    try {
+      await apiFetch(`/api/moderation/caws/${useItem.id}/hide`, {
+        method: 'POST',
+        body: JSON.stringify({ reason: reason || null }),
+      })
+      // Optimistic local hide so the post visibly disappears without a
+      // refetch. The next feed render will reflect status='HIDDEN' from
+      // the server too.
+      ;(useItem as any).status = 'HIDDEN'
+      // Force a re-render of the parent list. We don't have a dedicated
+      // signal, so a window event is fine — Feed listens to it.
+      window.dispatchEvent(new CustomEvent('caw-hidden', { detail: { id: useItem.id } }))
+    } catch (err: any) {
+      console.error('[Moderation] hide failed:', err)
+      window.alert('Failed to hide caw. ' + (err?.message ?? ''))
+    }
   }
 
   // Mirror useItem.sourceLanguage into local state so a feed refetch that
@@ -2042,6 +2074,31 @@ const FeedItem: React.FC<{ item: CawItem; isMainPost?: boolean; isReply?: boolea
                 <HiOutlineExclamation className="w-5 h-5" />
                 {t('post.menu.report')}
               </button>
+
+              {/* Moderator-only actions: hide-as-mod. Visible to anyone
+                  with role MODERATOR or ADMIN, on caws they don't own
+                  (owners use the regular delete affordance below). */}
+              {isModerator && useItem.user.tokenId !== (activeTokenId || activeToken?.tokenId) && useItem.status !== 'HIDDEN' && (
+                <>
+                  <div className={`border-t my-1 ${
+                    isDark ? 'border-white/20' : 'border-gray-200'
+                  }`}></div>
+                  <button
+                    onMouseDown={(e) => {
+                      e.preventDefault()
+                      e.stopPropagation()
+                      setShowOptionsMenu(false)
+                      handleModHide()
+                    }}
+                    className={`w-full px-4 py-3 text-left text-sm transition-colors duration-200 flex items-center gap-3 cursor-pointer ${
+                      isDark ? 'hover:bg-white/10 text-amber-400' : 'hover:bg-amber-50 text-amber-700'
+                    }`}
+                  >
+                    <HiOutlineShieldCheck className="w-5 h-5" />
+                    Hide as moderator
+                  </button>
+                </>
+              )}
 
               {/* Owner-only actions: pin and delete. Top-level posts only
                   (no recaws / replies) — Twitter parity, plus pinning a

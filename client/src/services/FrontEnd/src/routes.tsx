@@ -81,6 +81,7 @@ const ReportsAdmin = lazyWithReload(() => import("./pages/ReportsAdmin"));
 const ValidatorAnalytics = lazyWithReload(() => import("./pages/ValidatorAnalytics"));
 const ValidatorSettings = lazyWithReload(() => import("./pages/ValidatorSettings"));
 const DatabaseAdmin = lazyWithReload(() => import("./pages/DatabaseAdmin"));
+const ModeratorsAdmin = lazyWithReload(() => import("./pages/ModeratorsAdmin"));
 const Admin = lazyWithReload(() => import("./pages/Admin"));
 const WelcomePage = lazyWithReload(() => import("./pages/WelcomePage"));
 const Marketplace = lazyWithReload(() => import("./pages/Marketplace"));
@@ -161,6 +162,7 @@ export const bareRoutes: RouteDef[] = [
   { path: "/admin/validator", component: <AdminGate><ValidatorAnalytics /></AdminGate> },
   { path: "/admin/validator/settings", component: <AdminGate><ValidatorSettings /></AdminGate> },
   { path: "/admin/database", component: <AdminGate><DatabaseAdmin /></AdminGate> },
+  { path: "/admin/moderators", component: <AdminGate><ModeratorsAdmin /></AdminGate> },
   // Moderator-tier mirrors of the admin moderation pages. Same components,
   // wallet-session-gated instead of admin-cookie-gated. Admins land here too
   // because requireModerator accepts the admin cookie as a superset.

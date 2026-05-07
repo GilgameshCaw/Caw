@@ -83,6 +83,19 @@ const adminPages = [
       </svg>
     ),
   },
+  {
+    path: '/admin/moderators',
+    title: 'Moderators',
+    description: 'Grant or revoke moderator and admin roles',
+    color: 'from-amber-500/20 to-amber-600/10',
+    iconColor: 'text-amber-400',
+    icon: (
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" className="w-6 h-6">
+        <path d="M12 2l8 4v6c0 5-3.5 9.5-8 10-4.5-.5-8-5-8-10V6l8-4z" />
+        <path d="M9 12l2 2 4-4" />
+      </svg>
+    ),
+  },
 ]
 
 const Admin: React.FC = () => {
