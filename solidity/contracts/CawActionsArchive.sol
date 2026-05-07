@@ -358,6 +358,13 @@ contract CawActionsArchive is Ownable, ReentrancyGuard, OnlyOnce, OApp {
     address,
     bytes calldata
   ) internal override {
+    // Defense-in-depth: today's CawChallengeRelay sends with nativeDrop=0 in
+    // the LZ options, so msg.value here is always 0. If a future peer is
+    // ever added with a non-zero nativeDrop, the ETH would be silently
+    // absorbed into the contract balance with no credit path. Reject so a
+    // misconfigured peer surfaces immediately. Audit fix 2026-05-08
+    // (Round 4 LZ agent LOW-3).
+    require(msg.value == 0, "no native drop");
     try this._processChallenge(payload) {
       // ok
     } catch (bytes memory reason) {

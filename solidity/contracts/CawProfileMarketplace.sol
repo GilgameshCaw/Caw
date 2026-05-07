@@ -359,6 +359,29 @@ contract CawProfileMarketplace is ReentrancyGuard {
      *         active English auction, the highest bidder (or anyone) can call this to
      *         refund the highest bidder and cancel the listing.
      */
+    /**
+     * @notice Anyone can clear a stale listing for a token whose seller no
+     *         longer owns it. Covers FIXED, DUTCH, and English-with-no-bids
+     *         (English-with-bids must use reclaimBid so the bidder is refunded).
+     *         Without this, a user who transferred an NFT off-marketplace
+     *         while a listing was open is soft-DoSed: createListing reverts
+     *         with "Token already listed" and only the original seller can
+     *         cancelListing. Audit fix 2026-05-08 (Round 4 marketplace MED-1).
+     */
+    function reclaimListing(uint256 listingId) external nonReentrant {
+        Listing storage listing = listings[listingId];
+        require(listing.active, "Listing not active");
+        require(cawProfile.ownerOf(listing.tokenId) != listing.seller, "Seller still owns NFT");
+        require(
+            listing.listingType != ListingType.ENGLISH_AUCTION || listing.highestBidder == address(0),
+            "Use reclaimBid"
+        );
+
+        listing.active = false;
+        listingByTokenId[listing.tokenId] = 0;
+        emit ListingCancelled(listingId);
+    }
+
     function reclaimBid(uint256 listingId) external nonReentrant {
         Listing storage listing = listings[listingId];
         require(listing.active, "Listing not active");

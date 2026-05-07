@@ -1011,7 +1011,12 @@ contract CawProfileL2 is
       payload, // Encoded message payload being sent.
       _options, // Message execution options (e.g., gas to use on destination).
       MessagingFee(msg.value, lzTokenAmount), // Fee struct containing native gas and ZRO token.
-      payable(msg.sender) // The refund address in case the send call reverts.
+      // Refund excess LZ fee to the tx originator EOA, NOT msg.sender:
+      // msg.sender here is CawActions which has no receive(), so an LZ-fee
+      // overpay would fail the endpoint's refund call and revert the whole
+      // batch. Mirrors CawProfile.lzSend. Audit fix 2026-05-08 (Round 4 LZ
+      // agent MED-1).
+      payable(tx.origin)
     );
   }
 

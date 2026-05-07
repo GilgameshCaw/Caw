@@ -242,6 +242,12 @@ contract CawActions is Ownable {
     // optimization. Manual-sign and explicit-tip actions credited inline via
     // _distributeAmountsMem and don't contribute here.
     if (c.implicitTipOwed > 0) {
+      // Validate validatorId here too: the empty-recipients fast path in
+      // _distributeAmountsMem skips the ownerOf check that the recipient
+      // path enforces. Without this, an FE bug submitting a stale/wrong
+      // validatorId silently burns the tip into a no-owner cawOwnership
+      // slot. Audit fix 2026-05-08 (Round 4 CawActions LOW-1).
+      _requireValidatorExists(validatorId);
       cawProfile.addTokensToBalance(validatorId, c.implicitTipOwed);
     }
 
@@ -354,6 +360,8 @@ contract CawActions is Ownable {
       clientActionCount[c.firstClientId] = c.clientActionCount;
     }
     if (c.implicitTipOwed > 0) {
+      // See processActions for the validatorId rationale.
+      _requireValidatorExists(validatorId);
       cawProfile.addTokensToBalance(validatorId, c.implicitTipOwed);
     }
 
@@ -972,6 +980,8 @@ contract CawActions is Ownable {
       clientActionCount[firstClientId] = localCursor.clientActionCount;
     }
     if (localCursor.implicitTipOwed > 0) {
+      // See processActions for the validatorId rationale.
+      _requireValidatorExists(validatorId);
       cawProfile.addTokensToBalance(validatorId, localCursor.implicitTipOwed);
     }
   }
@@ -1020,6 +1030,8 @@ contract CawActions is Ownable {
     }
     if (ba.groupSpentLoaded) sessionSpent[ba.owner][ba.signer] = ba.groupSpent;
     if (owed > 0) {
+      // See processActions for the validatorId rationale.
+      _requireValidatorExists(validatorId);
       cawProfile.addTokensToBalance(validatorId, owed);
     }
   }
@@ -1416,7 +1428,7 @@ contract CawActions is Ownable {
       return (totalWholeTokens, implicitTipOwed);
     }
 
-    require(cawProfile.ownerOf(validatorId) != address(0), "Invalid validatorId");
+    _requireValidatorExists(validatorId);
 
     uint256 startIndex = isWithdrawal ? 1 : 0;
 
@@ -1615,6 +1627,13 @@ contract CawActions is Ownable {
   // ============================================
   // EXISTING UTILITIES (unchanged)
   // ============================================
+
+  /// @dev Reverts when validatorId doesn't correspond to a minted token.
+  ///      Hoisted from inline call sites so the require body bytecode is
+  ///      shared. Audit fix 2026-05-08 (Round 4 CawActions LOW-1).
+  function _requireValidatorExists(uint32 validatorId) internal view {
+    require(cawProfile.ownerOf(validatorId) != address(0), "Invalid validatorId");
+  }
 
   function useCawonce(uint32 senderId, uint256 cawonce) internal {
     uint256 word = cawonce >> 8;
