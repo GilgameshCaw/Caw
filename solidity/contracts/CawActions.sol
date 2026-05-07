@@ -416,42 +416,71 @@ contract CawActions is Ownable {
 
     // Apply each action with skip-don't-revert on cawonce conflicts.
     for (uint256 i = 0; i < groupSize; ) {
-      uint256 actionStart = c.pos;
-      (ActionData memory action, uint256 nextPos) = _unpackAction(packedActions, c.pos);
-      c.pos = nextPos;
-      _trackClientAndWithdraw(c, action, c.actionsSeen);
-
-      // Race-loss check: if some other tx consumed this cawonce between
-      // proof generation and now, skip the slot. This is the whole point
-      // of the ZK path — partial batches survive. Bit stays unset in the
-      // executedBitmap.
-      if (isCawonceUsed(action.senderId, action.cawonce)) {
-        // Still advance counters so we keep walking the calldata correctly.
-        unchecked {
-          ++i;
-          ++c.actionsSeen;
-        }
-        continue;
-      }
-
-      // Session scope check (for session-key signers). Owner-signed actions
-      // bypass scope.
-      if (ba.isSessionKey) {
-        require(
-          (ba.scopeBitmap & (1 << uint8(action.actionType))) != 0,
-          "Action not in session scope"
-        );
-      }
-
-      _applyAction(validatorId, action, ba, packedActions[actionStart:nextPos], c);
-      executedBitmap |= (1 << (c.actionsSeen));
-      unchecked {
-        ++i;
-        ++c.actionsSeen;
-      }
+      executedBitmap = _zkApplyOne(validatorId, packedActions, c, ba, executedBitmap);
+      unchecked { ++i; }
     }
 
     if (ba.groupSpentLoaded) sessionSpent[ba.owner][ba.signer] = ba.groupSpent;
+    return executedBitmap;
+  }
+
+  /// @dev Single-action arm of the ZK group walk. Split out of the main loop
+  ///      to keep the via-IR optimizer's stack shallow enough.
+  ///
+  ///      Skip-don't-revert semantics: if the cawonce was consumed between
+  ///      proof generation and submission, we DROP the slot entirely — no
+  ///      `withdrawBitmap` bit set (so no L1 `setWithdrawable` for a WITHDRAW
+  ///      that didn't debit on L2), no `implicitTipOwed` credit (validator
+  ///      gets nothing for skipped work), no `clientHash` extension (that
+  ///      lives inside `_applyAction`). Only the cursor advances.
+  function _zkApplyOne(
+    uint32 validatorId,
+    bytes calldata packedActions,
+    BatchCursor memory c,
+    BatchAuth memory ba,
+    uint256 executedBitmap
+  ) internal returns (uint256) {
+    uint256 actionStart = c.pos;
+    (ActionData memory action, uint256 nextPos) = _unpackAction(packedActions, c.pos);
+    c.pos = nextPos;
+
+    // Client-id invariant must hold across the whole batch even if some
+    // actions are skipped. firstClientId is set on the very first action
+    // (index 0) and every subsequent action must match it.
+    if (c.actionsSeen == 0) {
+      c.firstClientId = action.clientId;
+    } else {
+      require(action.clientId == c.firstClientId, "All actions must belong to the same client");
+    }
+
+    // Race-loss check.
+    if (isCawonceUsed(action.senderId, action.cawonce)) {
+      unchecked { ++c.actionsSeen; }
+      return executedBitmap;
+    }
+
+    // Action is going to execute. NOW we mark it as a withdraw if applicable
+    // — this matches the sig path's invariant that withdrawBitmap only
+    // contains EXECUTED WITHDRAWs.
+    if (action.actionType == ActionType.WITHDRAW) {
+      c.withdrawBitmap |= (1 << c.actionsSeen);
+      unchecked { ++c.withdrawCount; }
+    }
+
+    // Session scope check (session-key signers only).
+    if (ba.isSessionKey) {
+      require(
+        (ba.scopeBitmap & (1 << uint8(action.actionType))) != 0,
+        "Action not in session scope"
+      );
+    }
+
+    // Capture implicitTipOwed exactly like the sig path does in
+    // _processSingleSig. Without this the validator runs the tx but never
+    // gets credited the per-action session tip.
+    c.implicitTipOwed += _applyAction(validatorId, action, ba, packedActions[actionStart:nextPos], c);
+    executedBitmap |= (1 << c.actionsSeen);
+    unchecked { ++c.actionsSeen; }
     return executedBitmap;
   }
 

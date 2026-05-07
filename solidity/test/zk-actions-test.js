@@ -88,7 +88,7 @@ const dataTypes = {
   ],
 };
 
-const ACTION_TYPE = { caw: 0, like: 1, recaw: 3, follow: 4, other: 7 };
+const ACTION_TYPE = { caw: 0, like: 1, recaw: 3, follow: 4, withdraw: 6, other: 7 };
 
 // ============================================================================
 // Pack helpers (same as batched-actions-test)
@@ -475,5 +475,111 @@ contract('CawActions — processActionsWithZkSigs', function (accounts) {
       expect((err.message || '').toLowerCase()).to.include('zk path not configured');
     }
     expect(reverted, 'expected revert when verifier address is zero').to.equal(true);
+  });
+
+  // --------------------------------------------
+  // 7. Regression: skipped WITHDRAW must NOT trigger setWithdrawable on L1.
+  //
+  // Race scenario:
+  //   - User signs a WITHDRAW action at cawonce K.
+  //   - Validator A submits via the sig path, succeeds. L2 debits 100 CAW;
+  //     L1 sets 100 CAW withdrawable.
+  //   - Validator B submits via the ZK path. Their proof was generated
+  //     before A's sig-path tx landed, so the proof commits to including
+  //     this WITHDRAW. In-flight, the proof's domainSeparator etc. are
+  //     valid; the cawonce check at execution time reveals the conflict.
+  //
+  // Bug fixed in this iteration: in the buggy version, B's tx would skip
+  // the WITHDRAW (no second L2 debit) but `withdrawBitmap` had been set
+  // unconditionally during _trackClientAndWithdraw — so setWithdrawable
+  // would fire for the same amount AGAIN, double-crediting on L1.
+  //
+  // After fix: if a WITHDRAW is skipped, withdrawBitmap stays clear and
+  // setWithdrawable is NOT called for that slot. We assert the L2 balance
+  // delta is exactly the one debit (sig path) and ZERO on the ZK path.
+  // --------------------------------------------
+  it('regression: skipped WITHDRAW does not double-credit on L1 (bitmap stays clear)', async function () {
+    const start = Number(await setup.cawActions.nextCawonce(userATokenId));
+    const cawonceK = start;
+    const withdrawAmountWhole = 100; // 100 whole CAW
+
+    const buildAction = (cawonce) => ({
+      actionType: ACTION_TYPE.withdraw, senderId: userATokenId, receiverId: 0, receiverCawonce: 0,
+      clientId: setup.clientId, cawonce,
+      recipients: [], amounts: [withdrawAmountWhole],
+      text: '0x',
+    });
+
+    // Step 1: sig-path consumes cawonce K with the WITHDRAW.
+    const sigAction = buildAction(cawonceK);
+    const sig = signActionData(userA, sigAction, domain);
+    const { hex: sigHex } = packActions([sigAction]);
+    const sigSigsHex = packGroupedSigs([{ groupSize: 1, ...sig }]);
+    await setup.cawActions.processActions(validatorTokenId, sigHex, sigSigsHex, 0, 0);
+    expect(await setup.cawActions.isCawonceUsed(userATokenId, cawonceK)).to.equal(true);
+
+    // Step 2: ZK path tries to submit a 3-action batch where action[1]
+    // reuses cawonce K (the now-conflicted slot). Actions 0 and 2 are CAWs
+    // at fresh cawonces. We expect:
+    //   - actions 0 and 2 execute
+    //   - action 1 (WITHDRAW with conflicted cawonce) is skipped
+    //   - executedBitmap == 0b101
+    //   - NO additional setWithdrawable / withdraw effect happens on chain
+    const action0 = {
+      actionType: ACTION_TYPE.caw, senderId: userATokenId, receiverId: 0, receiverCawonce: 0,
+      clientId: setup.clientId, cawonce: cawonceK + 1,
+      recipients: [], amounts: [0], text: '0x',
+    };
+    const action1 = buildAction(cawonceK); // conflict
+    const action2 = {
+      actionType: ACTION_TYPE.caw, senderId: userATokenId, receiverId: 0, receiverCawonce: 0,
+      clientId: setup.clientId, cawonce: cawonceK + 2,
+      recipients: [], amounts: [0], text: '0x',
+    };
+    const zkActions = [action0, action1, action2];
+    const sigs = zkActions.map(a => signActionData(userA, a, domain));
+    const sigsHexZk = packGroupedSigs(sigs.map(s => ({ groupSize: 1, ...s })));
+    const signersHex = packSigners([userA, userA, userA]);
+    const { hex: zkHex } = packActions(zkActions);
+    const dummyProof = "0x" + "ab".repeat(32);
+
+    // Step 1's sig-path WITHDRAW for 100 CAW already deposited on L1 via
+    // the mock LZ delivery (withdrawFee was zero, so the cross-chain message
+    // wasn't actually sent — but for this test we only care about the ZK path
+    // attempting to send a SECOND one).
+    const withdrawableBefore = BigInt((await setup.cawProfile.withdrawable(userATokenId)).toString());
+
+    // CRITICAL: pass a real withdrawFee so _executeWithdrawals actually fires
+    // the LZ message. With withdrawFee=0, _executeWithdrawals is gated out
+    // entirely (see line 365 in CawActions.sol) — the bug we're testing for
+    // (a polluted withdrawBitmap from a skipped slot) only becomes exploitable
+    // when withdrawFee is non-zero, which is the production case.
+    const quote = await setup.cawActions.withdrawQuote(
+      [userATokenId],
+      [BigInt(withdrawAmountWhole) * (10n ** 18n)],
+      false
+    );
+
+    const tx = await setup.cawActions.processActionsWithZkSigs(
+      validatorTokenId, zkHex, sigsHexZk, signersHex, dummyProof, quote.nativeFee, 0,
+      { value: quote.nativeFee.toString() }
+    );
+
+    // Verify executedBitmap == 0b101 (bit 1 clear → action 1 skipped).
+    const evt = tx.logs.find(l => l.event === 'ActionsProcessedZk');
+    expect(evt, 'ActionsProcessedZk emitted').to.exist;
+    expect(Number(evt.args.actionsExecutedBitmap)).to.equal(0b101);
+
+    // The deciding assertion: L1 `withdrawable[userATokenId]` must NOT have
+    // increased. If the buggy version of the ZK path had run, the skipped
+    // WITHDRAW's bit would still be set in withdrawBitmap, _handleWithdrawals
+    // would have re-invoked setWithdrawable for 100 CAW, and the L1 mapping
+    // would be 200 CAW total instead of 100.
+    const withdrawableAfter = BigInt((await setup.cawProfile.withdrawable(userATokenId)).toString());
+    expect(
+      withdrawableAfter.toString(),
+      `L1 withdrawable must not increase from a skipped WITHDRAW — ` +
+      `before=${withdrawableBefore}, after=${withdrawableAfter}, delta=${withdrawableAfter - withdrawableBefore}`
+    ).to.equal(withdrawableBefore.toString());
   });
 });
