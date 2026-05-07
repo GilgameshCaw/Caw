@@ -184,15 +184,37 @@ function runCapture(cmd, opts = {}) {
  *
  * SUDO_USER tells us who originally ran sudo. If we're running as root and
  * SUDO_USER is set, drop to that user via `sudo -u`. Otherwise just exec.
+ *
+ * Why the explicit HOME=: `-E` preserves root's HOME (e.g. /root), and
+ * yarn then tries to read /root/.config/yarn as the unprivileged user
+ * and fails with EACCES. Look up the target user's real home via getent
+ * and override.
  */
 function runAsInstallUser(cmd, opts = {}) {
   const isRoot = process.getuid && process.getuid() === 0
   const installUser = process.env.SUDO_USER || 'caw'
   if (isRoot && installUser !== 'root') {
-    // -E preserves env (so DATABASE_URL flows to prisma); cwd flag still applies.
-    return run(`sudo -u ${installUser} -E ${cmd}`, opts)
+    const home = userHome(installUser)
+    // -E preserves env (so DATABASE_URL flows to prisma); HOME= override
+    // points yarn / npm / git at the target user's config dir.
+    return run(`sudo -u ${installUser} -E env HOME=${home} ${cmd}`, opts)
   }
   return run(cmd, opts)
+}
+
+/**
+ * Resolve a system user's home directory via getent. Falls back to
+ * /home/<user> if getent isn't available or the user has no entry —
+ * the latter shouldn't happen for the install user but the fallback
+ * keeps the CLI from crashing on exotic environments.
+ */
+function userHome(user) {
+  try {
+    const out = execSync(`getent passwd ${user}`, { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }).trim()
+    const parts = out.split(':')
+    if (parts.length >= 6 && parts[5]) return parts[5]
+  } catch {}
+  return `/home/${user}`
 }
 
 /**
@@ -480,12 +502,12 @@ function deployMigrations(clientDir) {
   // Capture stdout/stderr so we can pattern-match P3005 above. We still
   // print the output to the operator on success so they see what got
   // applied — not silent.
-  const out = execSync(
-    process.getuid && process.getuid() === 0 && (process.env.SUDO_USER || 'caw') !== 'root'
-      ? `sudo -u ${process.env.SUDO_USER || 'caw'} -E npx prisma migrate deploy`
-      : `npx prisma migrate deploy`,
-    { cwd: clientDir, encoding: 'utf8', stdio: ['pipe', 'pipe', 'pipe'] },
-  )
+  const installUser = process.env.SUDO_USER || 'caw'
+  const sudoNeeded = process.getuid && process.getuid() === 0 && installUser !== 'root'
+  const cmd = sudoNeeded
+    ? `sudo -u ${installUser} -E env HOME=${userHome(installUser)} npx prisma migrate deploy`
+    : `npx prisma migrate deploy`
+  const out = execSync(cmd, { cwd: clientDir, encoding: 'utf8', stdio: ['pipe', 'pipe', 'pipe'] })
   if (out) for (const line of out.split('\n')) if (line.trim()) console.log(dim(`    ${line}`))
 }
 
