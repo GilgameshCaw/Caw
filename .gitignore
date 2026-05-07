@@ -95,3 +95,10 @@ client/src/abi/addresses.ts
 # spurious diffs every CI run. The Hardhat test regenerates on each run.
 solidity/test/zk-digest-fixtures.json
 
+# Claude Code per-user state. settings.local.json holds machine-specific
+# permission allow-lists; scheduled_tasks.lock is a PID lockfile;
+# worktrees/ are agent-local git worktrees with absolute gitdir paths.
+# None of it is portable. If we ever want team-wide Claude Code config,
+# add a separate `.claude/settings.json` (no .local) explicitly.
+.claude/
+
