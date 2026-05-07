@@ -7,6 +7,7 @@ import "@openzeppelin/contracts/utils/Strings.sol";
 import "@openzeppelin/contracts/interfaces/IERC1271.sol";
 
 import "./CawProfileL2.sol";
+import { ISP1Verifier } from "./IZKActionsVerifier.sol";
 import { MessagingFee } from "@layerzerolabs/lz-evm-oapp-v2/contracts/oapp/OApp.sol";
 
 contract CawActions is Ownable {
@@ -88,10 +89,43 @@ contract CawActions is Ownable {
   uint256 private constant ERC1271_GAS_LIMIT = 50_000;
   bytes4  private constant ERC1271_MAGIC_VALUE = 0x1626ba7e;
 
-  constructor(address _cawProfiles) {
+  // ============================================
+  // ZK SIG-RECOVERY PATH (immutable hooks)
+  // ============================================
+
+  /// @notice Address of Succinct's canonical SP1Verifier on this chain.
+  ///         Set at construction; immutable thereafter — there is no
+  ///         "set verifier" path. To use a different verifier, deploy a
+  ///         brand-new CawActions sibling.
+  ISP1Verifier public immutable zkVerifier;
+
+  /// @notice The verifying key digest (bytes32) of the sig-recovery circuit.
+  ///         Bound at deploy, immutable. Re-running `cargo run --bin vkey`
+  ///         in solidity/zk/sig-recovery/script after a circuit change
+  ///         produces the new digest — and changing the circuit means
+  ///         deploying a new CawActions because this is immutable.
+  bytes32 public immutable zkProgramVKey;
+
+  /// @notice Emitted once per `processActionsWithZkSigs` call. The bitmap
+  ///         marks which slots in the supplied batch actually executed
+  ///         (skip-don't-revert on cawonce conflicts: bit i = 0 means
+  ///         action i was skipped because its cawonce was already used).
+  ///         Indexers reconstructing the chain need this to know which
+  ///         slice of the calldata to re-derive state from.
+  event ActionsProcessedZk(
+    uint32 indexed clientId,
+    uint32 indexed validatorId,
+    uint16 actionCount,
+    uint256 actionsExecutedBitmap,
+    bytes32 batchHash
+  );
+
+  constructor(address _cawProfiles, address _zkVerifier, bytes32 _zkProgramVKey) {
     eip712DomainHash = generateDomainHash();
     externalSelf = CawActions(this);
     cawProfile = CawProfileL2(_cawProfiles);
+    zkVerifier = ISP1Verifier(_zkVerifier);
+    zkProgramVKey = _zkProgramVKey;
   }
 
   // ============================================
@@ -187,6 +221,218 @@ contract CawActions is Ownable {
     }
     if (c.withdrawCount > 0 && withdrawFee > 0) {
       _executeWithdrawals(withdrawFee, withdrawLzTokenAmount);
+    }
+  }
+
+  /// @notice Process a batch of actions using a ZK proof of signature recovery
+  ///         instead of on-chain ecrecover per action.
+  ///
+  /// @dev    The proof attests "I correctly recovered the signers of every
+  ///         action — they are the addresses committed to by signersHash."
+  ///         The proof DOES NOT commit to chain state (cawonces, balances,
+  ///         hash chain), so it's race-safe: a competing tx between proof
+  ///         generation and submission only causes the affected slots to be
+  ///         skipped, not the whole batch to be lost.
+  ///
+  ///         Two contracts of difference vs `processActions`:
+  ///         1. Per-action ecrecover is replaced with one constant-cost
+  ///            verifier call (~250K gas) plus a 20-byte read from `signers`
+  ///            for each action.
+  ///         2. Cawonce conflicts SKIP rather than REVERT — see the
+  ///            ActionsProcessedZk event's `actionsExecutedBitmap` for which
+  ///            slots actually ran. The sig path keeps the all-or-nothing
+  ///            semantic so existing simulate/estimate flows aren't broken.
+  ///
+  /// @param  validatorId           Submitting validator's profile id
+  /// @param  packedActions         Same byte layout as `processActions`
+  /// @param  packedSigs            Same byte layout — the proof commits to
+  ///                               keccak256(packedSigs), and the contract
+  ///                               still walks groups to read each group's
+  ///                               r value (used as the hash-chain anchor)
+  /// @param  signers               Concatenated 20-byte signer addresses,
+  ///                               one per action position. The proof commits
+  ///                               to keccak256(signers) so this can't be
+  ///                               substituted post-prove.
+  /// @param  proof                 Groth16 proof bytes from SP1
+  function processActionsWithZkSigs(
+    uint32 validatorId,
+    bytes calldata packedActions,
+    bytes calldata packedSigs,
+    bytes calldata signers,
+    bytes calldata proof,
+    uint256 withdrawFee,
+    uint256 withdrawLzTokenAmount
+  ) external payable {
+    require(address(zkVerifier) != address(0), "ZK path not configured");
+
+    uint256 actionCount;
+    assembly { actionCount := shr(240, calldataload(packedActions.offset)) }
+    require(actionCount > 0, "No actions");
+    require(actionCount <= 256, "Too many actions");
+    require(signers.length == actionCount * 20, "signers length mismatch");
+
+    // Verify the proof. The verifier reverts on failure; on success the
+    // proof has attested:
+    //   keccak256(packedActions) == public_input[0]
+    //   keccak256(packedSigs)    == public_input[1]
+    //   keccak256(signers)       == public_input[2]
+    //   eip712DomainHash         == public_input[3]
+    bytes memory publicValues = abi.encode(
+      keccak256(packedActions),
+      keccak256(packedSigs),
+      keccak256(signers),
+      eip712DomainHash
+    );
+    zkVerifier.verifyProof(zkProgramVKey, publicValues, proof);
+
+    // Walk groups to track per-group state (the r anchor for the hash chain
+    // is the same r the prover signed against, which we read from packedSigs;
+    // the proof guarantees signers[i] is the correct recovered address).
+    BatchCursor memory c;
+    c.pos = 2;
+    c.sigPos = 2;
+
+    uint256 numGroups;
+    assembly { numGroups := shr(240, calldataload(packedSigs.offset)) }
+    require(numGroups > 0 && numGroups <= actionCount, "Bad sig group count");
+
+    uint256 actionsExecutedBitmap;
+
+    for (uint256 g = 0; g < numGroups; ) {
+      actionsExecutedBitmap = _zkProcessOneGroup(
+        validatorId, packedActions, packedSigs, signers, c, actionCount, actionsExecutedBitmap
+      );
+      unchecked { ++g; }
+    }
+
+    require(c.actionsSeen == actionCount, "Sigs don't cover all actions");
+
+    if (c.clientHashLoaded) {
+      clientCurrentHash[c.firstClientId] = c.clientHash;
+      clientActionCount[c.firstClientId] = c.clientActionCount;
+    }
+    if (c.implicitTipOwed > 0) {
+      cawProfile.addTokensToBalance(validatorId, c.implicitTipOwed);
+    }
+
+    emit ActionsProcessedZk(
+      c.firstClientId,
+      validatorId,
+      uint16(actionCount),
+      actionsExecutedBitmap,
+      keccak256(packedActions)
+    );
+
+    if (c.withdrawCount > 0) {
+      _handleWithdrawals(c.withdrawBitmap, c.withdrawCount, actionCount, packedActions);
+    }
+    if (c.withdrawCount > 0 && withdrawFee > 0) {
+      _executeWithdrawals(withdrawFee, withdrawLzTokenAmount);
+    }
+  }
+
+  /// @dev ZK-path equivalent of _processOneGroup. Reads (groupSize, v, r, s)
+  ///      from packedSigs like the sig path does, but trusts the verified
+  ///      `signers` array instead of running ecrecover. Returns the updated
+  ///      executed-bitmap (bit i set = action i ran).
+  function _zkProcessOneGroup(
+    uint32 validatorId,
+    bytes calldata packedActions,
+    bytes calldata packedSigs,
+    bytes calldata signers,
+    BatchCursor memory c,
+    uint256 actionCount,
+    uint256 executedBitmap
+  ) internal returns (uint256) {
+    (uint256 groupSize, , bytes32 r, ) = _readSigGroup(packedSigs, c.sigPos);
+    require(groupSize > 0, "Empty group");
+    require(c.actionsSeen + groupSize <= actionCount, "Group overflows actions");
+    c.sigPos += 67;
+
+    // Read the verified signer for the FIRST action in this group. Within
+    // a sig group every action shares one signer (single-sig group: 1
+    // action = 1 signer; batch-sig group: N actions all signed once), and
+    // the prover's signers[] array reflects that — same address repeated
+    // groupSize times. We read once and reuse, but we ALSO require the
+    // remaining slots in signers to match the first (so a malicious prover
+    // can't slip a different signer onto a batched action).
+    address signer = _readSigner(signers, c.actionsSeen);
+    for (uint256 i = 1; i < groupSize; ) {
+      require(_readSigner(signers, c.actionsSeen + i) == signer, "Signer mismatch within group");
+      unchecked { ++i; }
+    }
+
+    // For session keys vs owner: same logic as _verifySignatureMem, just
+    // without the ecrecover (the proof gave us `signer` directly).
+    BatchAuth memory ba;
+    ba.signer = signer;
+    ba.r = r;
+    address owner = cawProfile.ownerOf(_peekSenderId(packedActions, c.pos));
+    if (signer == owner) {
+      ba.isSessionKey = false;
+    } else {
+      ba.isSessionKey = true;
+      ba.owner = owner;
+      (, ba.scopeBitmap, ba.spendLimit, ba.perActionTipRate) = cawProfile.sessions(owner, signer);
+      // Caller is on the hook for session validity (expiry / scope) being
+      // honored — the proof doesn't attest to those. We re-check below.
+    }
+
+    // Apply each action with skip-don't-revert on cawonce conflicts.
+    for (uint256 i = 0; i < groupSize; ) {
+      uint256 actionStart = c.pos;
+      (ActionData memory action, uint256 nextPos) = _unpackAction(packedActions, c.pos);
+      c.pos = nextPos;
+      _trackClientAndWithdraw(c, action, c.actionsSeen);
+
+      // Race-loss check: if some other tx consumed this cawonce between
+      // proof generation and now, skip the slot. This is the whole point
+      // of the ZK path — partial batches survive. Bit stays unset in the
+      // executedBitmap.
+      if (isCawonceUsed(action.senderId, action.cawonce)) {
+        // Still advance counters so we keep walking the calldata correctly.
+        unchecked {
+          ++i;
+          ++c.actionsSeen;
+        }
+        continue;
+      }
+
+      // Session scope check (for session-key signers). Owner-signed actions
+      // bypass scope.
+      if (ba.isSessionKey) {
+        require(
+          (ba.scopeBitmap & (1 << uint8(action.actionType))) != 0,
+          "Action not in session scope"
+        );
+      }
+
+      _applyAction(validatorId, action, ba, packedActions[actionStart:nextPos], c);
+      executedBitmap |= (1 << (c.actionsSeen));
+      unchecked {
+        ++i;
+        ++c.actionsSeen;
+      }
+    }
+
+    if (ba.groupSpentLoaded) sessionSpent[ba.owner][ba.signer] = ba.groupSpent;
+    return executedBitmap;
+  }
+
+  /// @dev Read the 20-byte signer at index `idx` from the concat'd `signers` blob.
+  function _readSigner(bytes calldata signers, uint256 idx) internal pure returns (address signer) {
+    assembly {
+      // address occupies the high 20 bytes of a 32-byte word; load 32, shift right 96.
+      signer := shr(96, calldataload(add(signers.offset, mul(idx, 20))))
+    }
+  }
+
+  /// @dev Read just the senderId (4 bytes at offset+1) of the action at `packedActions[pos:]`.
+  ///      Used to look up the owner for session-key resolution before fully unpacking.
+  function _peekSenderId(bytes calldata packedActions, uint256 pos) internal pure returns (uint32 senderId) {
+    assembly {
+      // skip 1 byte actionType, then load 4 bytes BE → shift to low 32 bits
+      senderId := and(shr(216, calldataload(add(packedActions.offset, add(pos, 1)))), 0xFFFFFFFF)
     }
   }
 

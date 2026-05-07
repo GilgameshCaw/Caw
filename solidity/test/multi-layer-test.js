@@ -628,12 +628,12 @@ contract('CawProfiles', function(accounts, x) {
 
     quoter = quoter || await CawProfileQuoter.new(cawProfiles.address);
     // CawActions requires (cawProfilesL2Address) - replicator can be set later via setReplicator()
-    cawActions = cawActions || await CawActions.new(cawProfilesL2.address);
+    cawActions = cawActions || await CawActions.new(cawProfilesL2.address, "0x0000000000000000000000000000000000000000", "0x0000000000000000000000000000000000000000000000000000000000000000");
 
     await cawProfilesL2.setCawActions(cawActions.address);
 
 
-    cawActionsMainnet = cawActionsMainnet || await CawActions.new(cawProfilesL2Mainnet.address);
+    cawActionsMainnet = cawActionsMainnet || await CawActions.new(cawProfilesL2Mainnet.address, "0x0000000000000000000000000000000000000000", "0x0000000000000000000000000000000000000000000000000000000000000000");
     await cawProfilesL2Mainnet.setCawActions(cawActions.address);
   });
 
@@ -1664,9 +1664,9 @@ contract("CawProfileMinter - mintAndAuth", function(accounts) {
     await localCawProfiles.setL2Peer(l1, localCawProfilesL2Mainnet.address);
 
     // CawActions on each L2 to exercise the "can't post without balance" check
-    localCawActions = await CawActions.new(localCawProfilesL2.address);
+    localCawActions = await CawActions.new(localCawProfilesL2.address, "0x0000000000000000000000000000000000000000", "0x0000000000000000000000000000000000000000000000000000000000000000");
     await localCawProfilesL2.setCawActions(localCawActions.address);
-    localCawActionsMainnet = await CawActions.new(localCawProfilesL2Mainnet.address);
+    localCawActionsMainnet = await CawActions.new(localCawProfilesL2Mainnet.address, "0x0000000000000000000000000000000000000000", "0x0000000000000000000000000000000000000000000000000000000000000000");
     await localCawProfilesL2Mainnet.setCawActions(localCawActionsMainnet.address);
 
     // Two clients: one L2-storage, one L1-storage (so we cover both branches)
@@ -2306,7 +2306,7 @@ contract("CawProfile - locked withdraw fee + fee withdrawal", function(accounts)
       // helpers which use module-level globals. Wire those up to THIS block's
       // contracts and deploy a fresh CawActions.
       var CawActions = artifacts.require("CawActions");
-      cawActions = await CawActions.new(localCawProfilesL2.address);
+      cawActions = await CawActions.new(localCawProfilesL2.address, "0x0000000000000000000000000000000000000000", "0x0000000000000000000000000000000000000000000000000000000000000000");
       await localCawProfilesL2.setCawActions(cawActions.address);
 
       cawProfiles = localCawProfiles;

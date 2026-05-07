@@ -13,7 +13,7 @@ import "../CawActions.sol";
 ///         functions just forward to the parent's internal logic — no new
 ///         state, no new code paths.
 contract CawActionsDigestExposer is CawActions {
-    constructor(address _cawProfileL2) CawActions(_cawProfileL2) {}
+    constructor(address _cawProfileL2) CawActions(_cawProfileL2, address(0), bytes32(0)) {}
 
     /// @notice Public access to `_computeStructHash` for digest equivalence
     ///         testing against the Rust circuit.
