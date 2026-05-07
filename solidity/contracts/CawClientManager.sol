@@ -261,6 +261,12 @@ contract CawClientManager {
   }
 
   function setFeeAddress(uint32 clientId, address feeAddress) public onlyClientOwnerNotFeeLocked(clientId) {
+    // createClient enforces non-zero feeAddress; mirror it here so a
+    // client owner can't accidentally (or maliciously) zero it out and
+    // break payFee accounting (CAW.transfer to address(0) reverts on
+    // standard ERC-20s, stranding the client's accrued fees forever).
+    // Audit fix 2026-05-08 (CCM-1).
+    require(feeAddress != address(0), "Fee address required");
     clients[clientId].feeAddress = feeAddress;
   }
 

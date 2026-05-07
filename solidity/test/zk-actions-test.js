@@ -532,7 +532,10 @@ contract('CawActions — processActionsWithZkSigs', function (accounts) {
     const buildAction = (cawonce) => ({
       actionType: ACTION_TYPE.withdraw, senderId: userATokenId, receiverId: 0, receiverCawonce: 0,
       clientId: setup.clientId, cawonce,
-      recipients: [], amounts: [withdrawAmountWhole],
+      // Canonical WITHDRAW shape: recipients=[senderId] as a marker (the
+      // first slot is unused, just there to make hasExplicitTip resolve
+      // correctly per the H-2 fix). amounts=[X] is the withdraw target.
+      recipients: [userATokenId], amounts: [withdrawAmountWhole],
       text: '0x',
     });
 

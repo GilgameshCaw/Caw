@@ -254,9 +254,12 @@ contract CawActions is Ownable {
 
     if (c.withdrawCount > 0) {
       _handleWithdrawals(c.withdrawBitmap, c.withdrawCount, actionCount, packedActions);
-    }
-    if (c.withdrawCount > 0 && withdrawFee > 0) {
-      _executeWithdrawals(withdrawFee, withdrawLzTokenAmount);
+      // bypassLZ mode legitimately needs zero LZ fee but still requires
+      // the L1 credit to fire. LZ mode requires a non-zero fee for the
+      // cross-chain message. Audit fix 2026-05-08 (C-1).
+      if (withdrawFee > 0 || cawProfile.bypassLZ()) {
+        _executeWithdrawals(withdrawFee, withdrawLzTokenAmount);
+      }
     }
   }
 
@@ -364,9 +367,10 @@ contract CawActions is Ownable {
 
     if (c.withdrawCount > 0) {
       _handleWithdrawals(c.withdrawBitmap, c.withdrawCount, actionCount, packedActions);
-    }
-    if (c.withdrawCount > 0 && withdrawFee > 0) {
-      _executeWithdrawals(withdrawFee, withdrawLzTokenAmount);
+      // See processActions for the bypassLZ rationale.
+      if (withdrawFee > 0 || cawProfile.bypassLZ()) {
+        _executeWithdrawals(withdrawFee, withdrawLzTokenAmount);
+      }
     }
   }
 
@@ -800,9 +804,10 @@ contract CawActions is Ownable {
     // tradeoff for fee-less LZ deployments).
     if (sc.withdrawCount > 0) {
       _handleWithdrawals(sc.withdrawBitmap, sc.withdrawCount, actionCount, packedActions);
-    }
-    if (sc.withdrawCount > 0 && withdrawFee > 0) {
-      _executeWithdrawals(withdrawFee, withdrawLzTokenAmount);
+      // See processActions for the bypassLZ rationale.
+      if (withdrawFee > 0 || cawProfile.bypassLZ()) {
+        _executeWithdrawals(withdrawFee, withdrawLzTokenAmount);
+      }
     }
   }
 
@@ -1371,6 +1376,20 @@ contract CawActions is Ownable {
     if (numAmounts != numRecipients && !hasExplicitTip)
       revert("Amounts and recipients mismatch");
 
+    // For WITHDRAW with `recipients=[]` and `amounts=[X]`, the shape would
+    // be misread as hasExplicitTip (numAmounts == 0+1), which would BOTH
+    // (a) re-spend X via spendAndDistribute AND (b) credit X to the
+    // validator as a "tip" — double-debiting the user and silently paying
+    // the validator a free tip. The legitimate empty-recipients-WITHDRAW
+    // shape is "amounts==[X]" with no tip slot; reject the ambiguity by
+    // requiring at least one recipient when amounts has length 1 for a
+    // WITHDRAW. Audit fix 2026-05-08 (H-2, CawActions agent finding).
+    bool isWithdrawal = action.actionType == ActionType.WITHDRAW;
+    require(
+      !(isWithdrawal && numRecipients == 0 && hasExplicitTip),
+      "WITHDRAW with empty recipients must use amounts=[X] only, no tip slot"
+    );
+
     // Fast path: no recipients, no explicit tip. Session-key actions still owe
     // the implicit tip; manual-sign actions with no tip slot pay nothing.
     if (numRecipients == 0 && !hasExplicitTip) {
@@ -1383,7 +1402,6 @@ contract CawActions is Ownable {
 
     require(cawProfile.ownerOf(validatorId) != address(0), "Invalid validatorId");
 
-    bool isWithdrawal = action.actionType == ActionType.WITHDRAW;
     uint256 startIndex = isWithdrawal ? 1 : 0;
 
     if (hasExplicitTip) {

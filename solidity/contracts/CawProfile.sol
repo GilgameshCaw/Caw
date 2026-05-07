@@ -446,6 +446,15 @@ contract CawProfile is
     authenticated[cawClientId][tokenId] = true;
     _lockWithdrawFeeIfNeeded(cawClientId, tokenId);
 
+    // Subscribe this token to lzDestId so future _afterTokenTransfer
+    // pushes the new owner there. Without this, a token authenticated to
+    // chain X via this function (rather than mintAndAuth/mintAndDeposit
+    // which DO subscribe) would never receive ownership-sync messages on
+    // chain X after a future transfer — the previous owner could keep
+    // posting as the username on chain X indefinitely. Audit fix
+    // 2026-05-08 (H-1, CawProfile-agent finding).
+    chosenChainIds[tokenId].add(uint256(lzDestId));
+
     if (lzDestId == mainnetLzId)
       cawProfileL2.auth(tokenId, cawClientId);
     else {
@@ -462,6 +471,13 @@ contract CawProfile is
   ///         This allows router contracts to collect CAW from the user and deposit in one flow.
   function depositFor(uint32 cawClientId, uint32 tokenId, uint256 amount, uint32 lzDestId, uint256 lzTokenAmount) public payable {
     address owner = ownerOf(tokenId);
+
+    // depositFor is intentionally permissionless (routers pay-on-behalf-of),
+    // but a zero-amount call lets a third party permanently mark a token
+    // as subscribed to chains the owner never opted into, plus auth them
+    // to clients they didn't pick. Require a non-zero deposit so the caller
+    // at least has economic skin in the game. Audit fix 2026-05-08 (M-2).
+    require(amount > 0, "Zero deposit amount");
 
     chosenChainIds[tokenId].add(uint256(lzDestId));
     CAW.transferFrom(msg.sender, address(this), amount);
@@ -496,6 +512,14 @@ contract CawProfile is
   }
 
   function peerWithMaxPendingTransfers() public view returns (uint32) {
+    // Empty peerIds set — no L2 peers configured (single-chain mainnet
+    // co-deploy). EnumerableSet.at(0) panics on empty set, which would
+    // brick mint() / withdrawTo() / transferAndSync() since they all
+    // call _updateNewOwners(peerWithMaxPendingTransfers(), ...). Return
+    // sentinel 0 and treat it as "nothing to flush" downstream.
+    // Audit fix 2026-05-08 (M-3, CawProfile-agent finding).
+    if (peerIds.length() == 0) return 0;
+
     uint256 updatesNeeded;
     uint256 peer = peerIds.at(0);
     uint256 max = updatesNeededForPeer(uint32(peer));
@@ -588,7 +612,19 @@ contract CawProfile is
   ///      fail. Both contracts are immutable post-deployment, so the construction invariant
   ///      cannot be broken by future code changes.
   function setWithdrawable(uint32[] memory tokenIds, uint256[] memory amounts) external {
-    require(fromLZ, "Only LZ");
+    // Two acceptable callers:
+    //   1. The LZ delivery path (fromLZ flag set inside _lzReceive)
+    //   2. The bypassLZ co-deployed L2 mirror calling directly. Without
+    //      this branch, withdrawals on L1-storage (bypassLZ) clients
+    //      silently lose CAW: L2's setWithdrawable bypassLZ branch calls
+    //      this function directly, but a fromLZ-only gate would always
+    //      revert and the WITHDRAW action's L2 debit (which already
+    //      happened in CawActions._applyAction.withdrawTokens) would
+    //      have no L1 counterpart. Audit fix 2026-05-08 (C-1).
+    require(
+      fromLZ || msg.sender == address(cawProfileL2),
+      "Only LZ or co-deployed L2 mirror"
+    );
     for (uint256 i = 0; i < tokenIds.length; i++)
       withdrawable[tokenIds[i]] += amounts[i];
   }
@@ -675,6 +711,10 @@ contract CawProfile is
   ///      unless a future amendment adds a controlled path. Acceptable: the
   ///      updateOwners handler is the lowest-risk one in the system.
   function _updateNewOwners(uint32 lzDestId, uint256 lzEthAmount, uint256 lzTokenAmount) internal {
+    // Sentinel 0 from peerWithMaxPendingTransfers means "no peers
+    // configured" — nothing to flush. See M-3 fix above.
+    if (lzDestId == 0) return;
+
     uint32[] memory tokenIds;
     address[] memory owners;
 
