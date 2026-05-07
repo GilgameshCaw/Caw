@@ -403,6 +403,12 @@ contract CawActions is Ownable {
 
     // For session keys vs owner: same logic as _verifySignatureMem, just
     // without the ecrecover (the proof gave us `signer` directly).
+    //
+    // The ZK path does NOT support ERC-1271 / contract-owned profiles. The
+    // proof commits to the EOA-recovered signer; for a Safe-owned profile
+    // there's no EOA to recover. Validators MUST route those batches through
+    // processActions instead. The non-owner branch below requires a valid
+    // session record OR reverts — there's no 1271 fallback, by design.
     BatchAuth memory ba;
     ba.signer = signer;
     ba.r = r;
@@ -410,11 +416,20 @@ contract CawActions is Ownable {
     if (signer == owner) {
       ba.isSessionKey = false;
     } else {
+      // Session-key path: load the full session record from storage and
+      // re-validate expiry on-chain. The proof attests "this address signed
+      // these actions" — it does NOT attest that the address is currently
+      // an authorized session key. Without an explicit expiry check here,
+      // an expired or revoked session would still authorize actions in the
+      // ZK path. (Audit finding 2026-05-08, Issue B.)
+      (uint64 expiry, uint8 scopeBitmap, uint256 spendLimit, uint64 perActionTipRate) =
+        cawProfile.sessions(owner, signer);
+      require(expiry > block.timestamp, "Session expired or not found");
       ba.isSessionKey = true;
       ba.owner = owner;
-      (, ba.scopeBitmap, ba.spendLimit, ba.perActionTipRate) = cawProfile.sessions(owner, signer);
-      // Caller is on the hook for session validity (expiry / scope) being
-      // honored — the proof doesn't attest to those. We re-check below.
+      ba.scopeBitmap = scopeBitmap;
+      ba.spendLimit = spendLimit;
+      ba.perActionTipRate = perActionTipRate;
     }
 
     // Apply each action with skip-don't-revert on cawonce conflicts.

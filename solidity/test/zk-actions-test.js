@@ -55,6 +55,7 @@ const testKeys = {
   '0xf39fd6e51aad88f6f4ce6ab8827279cfffb92266': Buffer.from('ac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80', 'hex'),
   '0x70997970c51812dc3a010c7d01b50e0d17dc79c8': Buffer.from('59c6995e998f97a5a0044966f0945389dc9e86dae88c7a8412f4603b6b78690d', 'hex'),
   '0x3c44cdddb6a900fa2b585dd299e03d12fa4293bc': Buffer.from('5de4111afa1a4b94908f83103eb1f1706367c2e68ca870fc3fb9a804cdab365a', 'hex'),
+  '0x90f79bf6eb2c4f870365e785982e1f101e93b906': Buffer.from('7c852118294e51e653712a81e05800f419141751be58f605c371e15141b007a6', 'hex'),
 };
 function privFor(addr) {
   const key = testKeys[addr.toLowerCase()];
@@ -236,6 +237,30 @@ async function depositAndAuth(user, tokenId, amountWholeCaw) {
   });
 }
 
+async function registerSessionFor(owner, sessionKey, scopeBitmap, spendLimit, expiry, perActionTipRate = 0) {
+  const nonce = Number(await setup.cawProfileL2.sessionNonce(owner));
+  const chainId = await web3.eth.getChainId();
+  const data = {
+    primaryType: 'SessionDelegation',
+    domain: { name: 'CawProfileL2', version: '1', chainId, verifyingContract: setup.cawProfileL2.address },
+    types: {
+      EIP712Domain: dataTypes.EIP712Domain,
+      SessionDelegation: [
+        { name: 'sessionKey', type: 'address' },
+        { name: 'expiry', type: 'uint64' },
+        { name: 'scopeBitmap', type: 'uint8' },
+        { name: 'spendLimit', type: 'uint256' },
+        { name: 'perActionTipRate', type: 'uint64' },
+        { name: 'nonce', type: 'uint256' },
+      ],
+    },
+    message: { sessionKey, expiry, scopeBitmap, spendLimit, perActionTipRate, nonce },
+  };
+  const sigHex = signTypedData({ data, privateKey: privFor(owner), version: SignTypedDataVersion.V4 });
+  const { v, r, s } = splitSig(sigHex);
+  await setup.cawProfileL2.registerSession(sessionKey, expiry, scopeBitmap, spendLimit, perActionTipRate, nonce, v, r, s);
+}
+
 // ============================================================================
 // Tests
 // ============================================================================
@@ -243,6 +268,7 @@ contract('CawActions — processActionsWithZkSigs', function (accounts) {
   const validatorOwner = accounts[0];
   const userA = accounts[1];
   const userB = accounts[2];
+  const sessionKeyEoa = accounts[3];
 
   let validatorTokenId, userATokenId, userBTokenId, domain;
 
@@ -581,5 +607,64 @@ contract('CawActions — processActionsWithZkSigs', function (accounts) {
       `L1 withdrawable must not increase from a skipped WITHDRAW — ` +
       `before=${withdrawableBefore}, after=${withdrawableAfter}, delta=${withdrawableAfter - withdrawableBefore}`
     ).to.equal(withdrawableBefore.toString());
+  });
+
+  // --------------------------------------------
+  // 8. Regression: ZK path rejects expired session keys (Issue B from
+  //    audit 2026-05-08). The earlier ZK path implementation read the
+  //    full session record but never checked `expiry > block.timestamp`,
+  //    so an expired session key still authorized actions in the ZK path
+  //    even though it would have been rejected by processActions.
+  //
+  //    Setup:
+  //      - Register sessionKeyEoa for userA with expiry just past `now`.
+  //      - Use evm_increaseTime to push past expiry.
+  //      - Submit a ZK batch signed by sessionKeyEoa.
+  //    Expected: revert with "Session expired or not found".
+  // --------------------------------------------
+  it('regression: rejects expired session key in ZK path', async function () {
+    // Register a session that expires in 2 seconds, then jump 1 hour ahead.
+    const now = (await web3.eth.getBlock('latest')).timestamp;
+    const expiry = now + 2;
+    const scopeBitmap = 0xBF; // all action types except WITHDRAW (bit 6)
+    const spendLimit = 0;     // unlimited spend
+    await registerSessionFor(userA, sessionKeyEoa, scopeBitmap, spendLimit, expiry);
+
+    // Advance time past expiry.
+    await new Promise((resolve, reject) => {
+      web3.currentProvider.send(
+        { jsonrpc: '2.0', method: 'evm_increaseTime', params: [3600], id: 0 },
+        (err) => err ? reject(err) : web3.currentProvider.send(
+          { jsonrpc: '2.0', method: 'evm_mine', params: [], id: 1 },
+          (e2) => e2 ? reject(e2) : resolve()
+        )
+      );
+    });
+
+    const start = Number(await setup.cawActions.nextCawonce(userATokenId));
+    const action = {
+      actionType: ACTION_TYPE.like, senderId: userATokenId, receiverId: userBTokenId, receiverCawonce: 0,
+      clientId: setup.clientId, cawonce: start,
+      recipients: [], amounts: [], text: '0x',
+    };
+    const { hex } = packActions([action]);
+    // Session key signs; the proof would commit to that signer.
+    const sig = signActionData(sessionKeyEoa, action, domain);
+    const sigsHex = packGroupedSigs([{ groupSize: 1, ...sig }]);
+    const signersHex = packSigners([sessionKeyEoa]);
+    const dummyProof = "0x" + "ab".repeat(32);
+
+    let reverted = false;
+    let reason = '';
+    try {
+      await setup.cawActions.processActionsWithZkSigs(
+        validatorTokenId, hex, sigsHex, signersHex, dummyProof, 0, 0
+      );
+    } catch (err) {
+      reverted = true;
+      reason = (err.message || '').toLowerCase();
+    }
+    expect(reverted, 'expected revert when session is expired').to.equal(true);
+    expect(reason).to.include('session expired or not found');
   });
 });
