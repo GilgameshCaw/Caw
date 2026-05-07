@@ -1023,8 +1023,7 @@ checksum = "43da5946c66ffcc7745f48db692ffbb10a83bfe0afd96235c5c2a4fb23994929"
 [[package]]
 name = "crypto-bigint"
 version = "0.5.5"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "0dc92fb57ca44df6db8059111ab3af99a63d5d0f8375d9972e319a379c6bab76"
+source = "git+https://github.com/sp1-patches/RustCrypto-bigint?tag=patch-0.5.5-sp1-4.0.0#d421029772fb604022defd4cae5fffb269ad5155"
 dependencies = [
  "generic-array 0.14.7",
  "rand_core 0.6.4",
@@ -4071,8 +4070,7 @@ checksum = "bbfa15b3dddfee50a0fff136974b3e1bde555604ba463834a7eb7deb6417705d"
 [[package]]
 name = "sha2"
 version = "0.10.8"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "793db75ad2bcafc3ffa7c68b215fee268f537982cd901d132f89c6343f3a3dc8"
+source = "git+https://github.com/sp1-patches/RustCrypto-hashes?tag=patch-sha2-0.10.8-sp1-4.0.0#1f224388fdede7cef649bce0d63876d1a9e3f515"
 dependencies = [
  "cfg-if",
  "cpufeatures",
@@ -4119,6 +4117,8 @@ name = "sig-recovery-lib"
 version = "0.1.0"
 dependencies = [
  "alloy-sol-types",
+ "serde",
+ "tiny-keccak",
 ]
 
 [[package]]
@@ -4126,8 +4126,12 @@ name = "sig-recovery-program"
 version = "0.1.0"
 dependencies = [
  "alloy-sol-types",
+ "bincode",
+ "k256",
+ "serde",
  "sig-recovery-lib",
  "sp1-zkvm",
+ "tiny-keccak",
 ]
 
 [[package]]
@@ -4138,11 +4142,13 @@ dependencies = [
  "clap",
  "dotenv",
  "hex",
+ "k256",
  "serde",
  "serde_json",
  "sig-recovery-lib",
  "sp1-build",
  "sp1-sdk",
+ "tiny-keccak",
  "tracing",
 ]
 
@@ -5498,9 +5504,9 @@ dependencies = [
 [[package]]
 name = "tiny-keccak"
 version = "2.0.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "2c9d3793400a45f954c52e73d068316d76b6f4e36977e3fcebb13a2721e80237"
+source = "git+https://github.com/sp1-patches/tiny-keccak?tag=patch-2.0.2-sp1-4.0.0#d2ffd330259c8f290b07d99cc1ef1f74774382c2"
 dependencies = [
+ "cfg-if",
  "crunchy",
 ]
 

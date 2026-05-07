@@ -4,3 +4,12 @@ resolver = "2"
 
 [workspace.dependencies]
 alloy-sol-types = "*"
+
+# SP1 patched-crates pattern. Same crate names, audited APIs, but heavy
+# crypto ops route to the zkVM's precompiles (keccak_round, secp256k1
+# ecdsa_recover, sha256, big-int mul). Pinned tags to keep proofs
+# reproducible across team machines.
+[patch.crates-io]
+tiny-keccak = { git = "https://github.com/sp1-patches/tiny-keccak", tag = "patch-2.0.2-sp1-4.0.0" }
+sha2 = { git = "https://github.com/sp1-patches/RustCrypto-hashes", package = "sha2", tag = "patch-sha2-0.10.8-sp1-4.0.0" }
+crypto-bigint = { git = "https://github.com/sp1-patches/RustCrypto-bigint", tag = "patch-0.5.5-sp1-4.0.0" }

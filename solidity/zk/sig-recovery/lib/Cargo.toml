@@ -3,5 +3,14 @@ name = "sig-recovery-lib"
 version = "0.1.0"
 edition = "2021"
 
+[features]
+default = []
+# Enables a tiny_keccak-backed Keccak implementation for host-side use
+# (the script crate enables this; the program/circuit uses SP1's keccak
+# precompile via a different impl, defined inside program/src/main.rs).
+std = ["dep:tiny-keccak"]
+
 [dependencies]
 alloy-sol-types = { workspace = true }
+serde = { version = "1", default-features = false, features = ["derive", "alloc"] }
+tiny-keccak = { version = "2.0", features = ["keccak"], optional = true }

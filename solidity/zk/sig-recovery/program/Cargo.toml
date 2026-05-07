@@ -6,4 +6,16 @@ edition = "2021"
 [dependencies]
 alloy-sol-types = { workspace = true }
 sp1-zkvm = { version = "6.0.1" }
-sig-recovery-lib = { path = "../lib" }
+sig-recovery-lib = { path = "../lib", default-features = false }
+serde = { version = "1", default-features = false, features = ["derive", "alloc"] }
+bincode = { version = "1.3", default-features = false }
+
+# tiny_keccak in the program goes through SP1's keccak precompile thanks to
+# the patched dependency in the workspace root — same crate signature, much
+# faster inside the zkVM.
+tiny-keccak = { version = "2.0", features = ["keccak"] }
+
+# k256 has an audit history (NCC Group) and SP1 patches it (in the workspace
+# root) to use the zkVM's secp256k1 precompile for ECDSA — same API, vastly
+# cheaper to prove.
+k256 = { version = "0.13", features = ["ecdsa"], default-features = false }
