@@ -517,7 +517,10 @@ const FeedItem: React.FC<{ item: CawItem; isMainPost?: boolean; isReply?: boolea
       console.log('[FeedItem] Retry result:', result)
 
       if (result) {
-        // Add a pending post to the feed so the user sees it immediately
+        // Add a pending post to the feed so the user sees it immediately.
+        // parent + replyToId carry the reply context forward so a *second*
+        // failure (e.g. cawonce-collision retry that itself fails) doesn't
+        // strand a reply as a top-level caw on the next retry click.
         const { addPendingPost, updatePostWithTxQueueId } = usePendingPostsStore.getState()
         const tempId = addPendingPost({
           content: useItem.content || '',
@@ -527,6 +530,8 @@ const FeedItem: React.FC<{ item: CawItem; isMainPost?: boolean; isReply?: boolea
           image: item.user?.image,
           avatarUrl: getUserAvatar(item.user),
           cawonce: result.cawonce,
+          parent: item.parent,
+          replyToId: item.parent?.id,
         })
         if (result.txQueueId) {
           updatePostWithTxQueueId(tempId, result.txQueueId)
