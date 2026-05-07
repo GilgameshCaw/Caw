@@ -60,7 +60,7 @@ Full options, requirements, and env-var overrides are in [Run a Node](#-run-a-no
 - **[Direct Messaging](./docs/DIRECT_MESSAGING.md)** - E2E encrypted DM system (ECDH + AES-256-GCM)
 - **[Profile Marketplace](./docs/MARKETPLACE.md)** - Trustless zero-fee profile NFT trading (fixed sales, Dutch auctions, English auctions, and purchase offers)
 - **[Session Keys (Quick Sign)](./docs/SESSION_KEYS.md)** - Scoped, spend-capped key delegation for gasless UX
-- **[ZK Sig-Only Path](./docs/ZK_SIG_PATH.md)** - Optional Groth16-verified action batching; ~265K-gas verifier replaces per-action ecrecover, ~57-action break-even
+- **[ZK Sig-Only Path](./docs/ZK_SIG_PATH.md)** - Optional Groth16-verified action batching; 265K-gas verifier replaces per-action ecrecover. Break-even at n≈70 actions/batch; current prod batch sizes (n=20–30) are MORE expensive on the ZK path.
 
 ### Standards
 - **[UI Consistency Standards](./docs/UI_CONSISTENCY_STANDARD.md)** - Frontend development guidelines

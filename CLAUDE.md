@@ -70,10 +70,10 @@ Flow:
 3. Validator submits `processActionsWithZkSigs(validatorId, packedActions, packedSigs, signers, proof, …)`. Contract calls `zkVerifier.verifyProof()` once, then walks the signers array (no ecrecover per action) to advance state.
 4. Cawonce conflicts (someone else used the same slot mid-flight) SKIP that action rather than reverting the whole batch. The `ActionsProcessedZk(packedActions, actionsExecutedBitmap)` event tells indexers which slots ran.
 
-Trade-off:
-- Verifier costs ~265K gas (canonical SP1Verifier on Base Sepolia: `0x397A5f7f3dBd538f23DE225B51f532c34448dA9B`).
-- Per-action savings ~4,630 gas (no ecrecover, no in-EVM EIP-712 hashing).
-- Break-even vs sig path: **n ≥ ~57 actions per batch**.
+Trade-off (measured numbers):
+- Verifier costs ~265K gas (canonical SP1Verifier on Base Sepolia: `0x397A5f7f3dBd538f23DE225B51f532c34448dA9B`, measured on a fork against the real bytecode).
+- Per-action savings only kick in at large batch sizes — at n=20–30 (typical real prod batches on test.caw.social), the ZK path is **+25% more expensive** than the sig path.
+- Break-even vs sig path: **n ≈ 70 actions per batch**. ZK only pays off when validators can sustainably coalesce well above that.
 
 Local proving requires ~16 GB peak RAM during the Groth16 wrap stage — fine on a dev Mac, OOM-kills a 5.9 GB VPS. Hosted SP1 prover network (~10s/proof) is the path for low-RAM hosts.
 

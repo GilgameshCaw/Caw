@@ -22,10 +22,11 @@ pragma solidity ^0.8.20;
 //                                the rest of the batch runs.
 //
 // Why both: the ZK path is cheaper per action but pays a fixed verifier cost
-// (~265K gas on Base Sepolia). The break-even versus the sig path is around
-// **n ≥ 57 actions per batch** today. Below that, the sig path wins; above
-// that, the ZK path wins. Validators free to use either at their discretion;
-// the on-chain state transitions are identical.
+// (~265K gas on Base Sepolia, measured). The break-even versus the sig path
+// is around **n ≈ 70 actions per batch** today (singleton sig groups, real
+// prod conditions). Below that, the sig path wins; above that, the ZK path
+// wins. Validators free to use either at their discretion; the on-chain
+// state transitions are identical.
 //
 // The ZK path is OPTIONAL — an installation can deploy with `_zkVerifier =
 // address(0)` and `processActionsWithZkSigs` reverts with "ZK path not

@@ -13,9 +13,14 @@ different about the ZK path, when to use it, what it costs, and how to run it.
 ## TL;DR
 
 - The ZK path replaces per-action `ecrecover` with one constant-cost
-  `verifyProof` call (~**265K gas** on Base Sepolia).
-- **Break-even vs the sig path: ~n ≥ 57 actions per batch.** Below that, sig
-  path is cheaper. Above that, ZK path is cheaper, and the gap grows with `n`.
+  `verifyProof` call (~**265K gas** on Base Sepolia, measured directly
+  against the canonical bytecode on a fork).
+- **Break-even vs the sig path: ~n ≥ 70 actions per batch** (singleton sig
+  groups, mixed-signer batches — what real prod batches look like). Below
+  that, sig path is cheaper; above that, ZK path is cheaper.
+- **Real prod batches today (n=20–30) are MORE expensive on the ZK path
+  by 167K–209K gas (~+25%).** ZK is not a savings at current batch sizes;
+  it only pays off if a validator can sustainably batch ≥70 actions per tx.
 - Cawonce conflicts SKIP the affected slots (don't revert the batch). The
   sig path keeps the all-or-nothing semantic.
 - The path is optional. An install with `zkVerifier == address(0)` simply
@@ -30,8 +35,8 @@ different about the ZK path, when to use it, what it costs, and how to run it.
 
 | Situation | Path | Why |
 |-----------|------|-----|
-| Small batches (≤ 56 actions) | sig | Verifier's fixed cost dominates the ecrecover savings. |
-| Large batches (≥ 57 actions) | ZK | Per-action savings beat the verifier's fixed cost. |
+| Small batches (≤ 69 actions) | sig | Verifier's fixed cost dominates the ecrecover savings. |
+| Large batches (≥ 70 actions) | ZK | Per-action savings beat the verifier's fixed cost. |
 | Race-prone slots (cawonce already used) | ZK | Skip-don't-revert keeps the rest of the batch running. |
 | Simulation / estimateGas | sig | Existing tooling assumes all-or-nothing semantics. |
 | ZK prover unavailable | sig | Always works, never blocks on a worker. |
@@ -45,30 +50,44 @@ worker yet = always sig path. See "Validator integration" below.
 
 ## Break-even, by the numbers
 
-From `solidity/test/zk-gas-compare-test.js` (mock verifier, plus the real
-verifier cost from `solidity/test-fork/zk-fork-test.js`):
+All numbers below are MEASURED, not extrapolated. Sig and ZK rows come from
+`solidity/test/zk-gas-compare-test.js` (real on-chain `processActions`
+behavior with a mock verifier). The +265K verifier cost was measured
+separately on a Base Sepolia fork against the canonical bytecode at
+`0x397A5f7f3dBd538f23DE225B51f532c34448dA9B` (`SP1VerifierGateway`,
+`solidity/test-fork/zk-fork-test.js`) and added to every ZK row to give
+the realistic on-chain total.
 
-| n  | sig gas | zk gas (real) | Δ          | Δ/action |
-|----|---------|---------------|------------|----------|
-| 1  | 150K    | ~370K         | +220K      | +220K    |
-| 3  | 156K    | ~420K         | +264K      | +88K     |
-| 8  | 300K    | ~544K         | +244K      | +30K     |
-| 16 | 553K    | ~744K         | +191K      | +12K     |
-| 57 | ~1.55M  | ~1.55M        | ~0         | 0        |
-| 64 | ~1.7M   | ~1.65M        | -50K       | -780     |
-| 128| ~3.3M   | ~3.0M         | -300K      | -2.3K    |
+Group structure: SINGLETON (n groups of 1 — one sig per action). This is
+what real prod batches look like on test.caw.social, since LIKE/FOLLOW/CAW
+from many different signers each get their own group.
 
-The mock-verifier numbers are exact; the real-verifier numbers add the 265K
-overhead measured against the canonical Base Sepolia bytecode at
-`0x397A5f7f3dBd538f23DE225B51f532c34448dA9B` (`SP1VerifierGateway`). The
-break-even has been verified by direct measurement at n=16 and extrapolated
-linearly — the per-action sig-path cost is roughly constant once warm.
+| n   | sig gas    | zk gas (real) | Δ vs sig | Δ/action |
+|-----|------------|---------------|----------|----------|
+| 1   | 150,205    | 369,751       | +219,546 | +219,546 |
+| 3   | 156,410    | 419,544       | +263,134 | +87,711  |
+| 8   | 300,263    | 544,201       | +243,938 | +30,492  |
+| 16  | 553,147    | 744,076       | +190,929 | +11,933  |
+| **20** | **668,520** | **866,414**   | **+197,894** | **+9,895** |
+| **23** | **732,943** | **941,624**   | **+208,681** | **+9,073** |
+| **28** | **899,743** | **1,066,783** | **+167,040** | **+5,966** |
+| **30** | **957,453** | **1,160,992** | **+203,539** | **+6,785** |
+| 64  | 1,968,268  | 1,995,826     | +27,558  | +431     |
+| 128 | 3,918,898  | 3,668,409     | -250,489 | -1,957   |
+
+**Break-even (linear interpolation between n=64 and n=128): n ≈ 70.3
+actions per batch.**
+
+The bolded rows match real prod batch sizes sampled from test.caw.social
+on 2026-05-07 (`ValidatorTx` table). At those sizes the ZK path costs
+~25% MORE than the sig path. Validators considering the ZK path need to
+sustainably coalesce batches well above n=70 for it to pay off.
 
 Reproducing locally:
 ```bash
 cd solidity
-npx truffle test test/zk-gas-compare-test.js          # mock-verifier deltas
-npx hardhat test test-fork/zk-fork-test.js            # real verifier gas
+npx truffle test test/zk-gas-compare-test.js          # measures both paths, prints table
+npx hardhat test test-fork/zk-fork-test.js            # measures real verifier gas (265K)
 ```
 The fork test needs `RPC_BASE_SEPOLIA` (or `L2_RPC_URL`) in `solidity/.env`.
 

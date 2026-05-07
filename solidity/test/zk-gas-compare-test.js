@@ -208,58 +208,87 @@ contract('CawActions — gas comparison: sig path vs zk path (mock verifier)', f
     domain = { chainId, name: 'Caw Protocol', version: '1', verifyingContract: setup.cawActions.address };
   });
 
-  it('measures gas for matched batches, n ∈ {1, 3, 8, 16}', async function () {
-    this.timeout(180000);
-    const sizes = [1, 3, 8, 16];
+  // Real verifier gas, measured against the canonical SP1VerifierGateway on
+  // Base Sepolia (test-fork/zk-fork-test.js). Added to every ZK row to give
+  // the realistic on-chain total.
+  const REAL_VERIFIER_GAS = 265_000;
+
+  async function measureBatch(n) {
+    let start = Number(await setup.cawActions.nextCawonce(userATokenId));
+    const buildActions = () => Array.from({ length: n }, (_, i) => ({
+      actionType: 0, senderId: userATokenId, receiverId: 0, receiverCawonce: 0,
+      clientId: setup.clientId, cawonce: start + i,
+      recipients: [], amounts: [0], text: '0x',
+    }));
+
+    // ----- sig path -----
+    // SINGLETON groups (one per action) — this is what mixed-signer prod
+    // batches actually look like, since LIKE/FOLLOW/CAW from many different
+    // users each get their own group.
+    const sigActions = buildActions();
+    const sigHex = packActions(sigActions);
+    const sigSigs = sigActions.map(a => signActionData(userA, a, domain));
+    const sigSigsHex = packGroupedSigs(sigSigs.map(s => ({ groupSize: 1, ...s })));
+    const sigTx = await setup.cawActions.processActions(
+      validatorTokenId, sigHex, sigSigsHex, 0, 0
+    );
+
+    // ----- zk path (mock verifier accepts) -----
+    start = Number(await setup.cawActions.nextCawonce(userATokenId));
+    const zkActions = buildActions();
+    const zkHex = packActions(zkActions);
+    const zkSigs = zkActions.map(a => signActionData(userA, a, domain));
+    const zkSigsHex = packGroupedSigs(zkSigs.map(s => ({ groupSize: 1, ...s })));
+    const signersHex = packSigners(Array(n).fill(userA));
+    const dummyProof = "0x" + "ab".repeat(32);
+    const zkTx = await setup.cawActions.processActionsWithZkSigs(
+      validatorTokenId, zkHex, zkSigsHex, signersHex, dummyProof, 0, 0
+    );
+
+    return {
+      n,
+      sigGas: sigTx.receipt.gasUsed,
+      zkMockGas: zkTx.receipt.gasUsed,
+      zkRealGas: zkTx.receipt.gasUsed + REAL_VERIFIER_GAS,
+    };
+  }
+
+  it('measures gas across realistic batch sizes (1..128)', async function () {
+    this.timeout(900_000);
+    // Sizes include real prod batch sizes from test.caw.social
+    // (sampled 2026-05-07: n in [17..30]).
+    const sizes = [1, 3, 8, 16, 20, 23, 28, 30, 64, 128];
     const rows = [];
+    for (const n of sizes) rows.push(await measureBatch(n));
 
-    for (const n of sizes) {
-      // ----- sig path -----
-      let start = Number(await setup.cawActions.nextCawonce(userATokenId));
-      const sigActions = Array.from({ length: n }, (_, i) => ({
-        actionType: 0, senderId: userATokenId, receiverId: 0, receiverCawonce: 0,
-        clientId: setup.clientId, cawonce: start + i,
-        recipients: [], amounts: [0], text: '0x',
-      }));
-      const sigHex = packActions(sigActions);
-      const sigSigs = sigActions.map(a => signActionData(userA, a, domain));
-      const sigSigsHex = packGroupedSigs(sigSigs.map(s => ({ groupSize: 1, ...s })));
-      const sigTx = await setup.cawActions.processActions(
-        validatorTokenId, sigHex, sigSigsHex, 0, 0
-      );
-
-      // ----- zk path (mock verifier accepts) -----
-      start = Number(await setup.cawActions.nextCawonce(userATokenId));
-      const zkActions = Array.from({ length: n }, (_, i) => ({
-        actionType: 0, senderId: userATokenId, receiverId: 0, receiverCawonce: 0,
-        clientId: setup.clientId, cawonce: start + i,
-        recipients: [], amounts: [0], text: '0x',
-      }));
-      const zkHex = packActions(zkActions);
-      const zkSigs = zkActions.map(a => signActionData(userA, a, domain));
-      const zkSigsHex = packGroupedSigs(zkSigs.map(s => ({ groupSize: 1, ...s })));
-      const signersHex = packSigners(Array(n).fill(userA));
-      const dummyProof = "0x" + "ab".repeat(32);
-      const zkTx = await setup.cawActions.processActionsWithZkSigs(
-        validatorTokenId, zkHex, zkSigsHex, signersHex, dummyProof, 0, 0
-      );
-
-      rows.push({
-        n,
-        sigGas: sigTx.receipt.gasUsed,
-        zkGas: zkTx.receipt.gasUsed,
-        deltaPerAction: Math.round((zkTx.receipt.gasUsed - sigTx.receipt.gasUsed) / n),
-      });
+    // Find the realistic break-even by linear interpolation on the
+    // (n, zkRealGas - sigGas) curve.
+    let breakEven = null;
+    for (let i = 0; i < rows.length - 1; i++) {
+      const a = rows[i], b = rows[i + 1];
+      const da = a.zkRealGas - a.sigGas;
+      const db = b.zkRealGas - b.sigGas;
+      if (da > 0 && db < 0) {
+        breakEven = a.n + (b.n - a.n) * (da / (da - db));
+        break;
+      }
     }
 
-    console.log('\nGas comparison — processActions (sig) vs processActionsWithZkSigs (zk, mock):');
-    console.log('  Caveat: real SP1Verifier adds ~300K gas to every zk row.');
+    console.log('\nGas comparison — processActions (sig) vs processActionsWithZkSigs (zk):');
+    console.log('  ZK rows include +265K for the canonical SP1Verifier (measured on the fork).');
+    console.log('  Group structure: SINGLETON (n groups of 1 — matches real prod batches).');
     console.table(rows.map(r => ({
       'n': r.n,
       'sig gas': r.sigGas.toLocaleString(),
-      'zk gas (mock)': r.zkGas.toLocaleString(),
-      'Δ': (r.zkGas - r.sigGas).toLocaleString(),
-      'Δ/action': r.deltaPerAction.toLocaleString(),
+      'zk gas (mock)': r.zkMockGas.toLocaleString(),
+      'zk gas (real)': r.zkRealGas.toLocaleString(),
+      'Δ vs sig': (r.zkRealGas - r.sigGas).toLocaleString(),
+      'Δ/action': Math.round((r.zkRealGas - r.sigGas) / r.n).toLocaleString(),
     })));
+    if (breakEven) {
+      console.log(`\n  Break-even (interpolated): n ≈ ${breakEven.toFixed(1)} actions per batch.`);
+    } else {
+      console.log('\n  No break-even in the tested range — increase max size or verifier dominates.');
+    }
   });
 });
