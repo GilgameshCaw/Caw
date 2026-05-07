@@ -21,6 +21,7 @@ Welcome to the documentation for the CAW Protocol — a trustless and decentrali
 - **[Direct Messaging](./DIRECT_MESSAGING.md)** - E2E encrypted DM system (ECDH + AES-256-GCM)
 - **[Profile Marketplace](./MARKETPLACE.md)** - Trustless 0% fee NFT trading (fixed, Dutch, English auctions + offers)
 - **[Session Keys (Quick Sign)](./SESSION_KEYS.md)** - Scoped, spend-capped key delegation for gasless UX
+- **[ZK Sig-Only Path](./ZK_SIG_PATH.md)** - Optional Groth16-verified signature batching; ~57-action break-even vs the sig path
 
 ### Standards
 - **[UI Consistency Standards](./UI_CONSISTENCY_STANDARD.md)** - Frontend development guidelines

@@ -164,7 +164,74 @@ export async function collectValidatorConfig(nodeType, installDir, ctx = {}) {
   // (CAW_TX_POLL_INTERVAL) for the rare case someone genuinely needs to tune it.
   const checkInterval = Number(process.env.CAW_TX_POLL_INTERVAL) || 3000
 
-  return { validatorPrivateKey: privateKey, validatorId, validatorUsername, checkInterval }
+  // Optional: ZK sig-only path. Off by default — defaulting to on-chain
+  // ecrecover is the right call until the operator has either a hosted
+  // prover account or a high-RAM host with the SP1 toolchain installed.
+  // Even with the flag flipped on, the validator silently falls back to
+  // the sig path on every batch where no proof is staged in zkProofCache;
+  // i.e. ZK_PROVER_ENABLED=1 alone is harmless.
+  const zkProverEnabled = await collectZkProverConfig()
+
+  return {
+    validatorPrivateKey: privateKey,
+    validatorId,
+    validatorUsername,
+    checkInterval,
+    zkProverEnabled,
+  }
+}
+
+/**
+ * Ask whether to enable the ZK sig-only path. Honest about the prerequisites
+ * so the operator doesn't enable it expecting it to "just work":
+ *  - the dormant prover worker (TODO: not wired yet)
+ *  - 16+ GB RAM for local proving, OR a hosted SP1 prover endpoint
+ *
+ * Reads CAW_ZK_PROVER_ENABLED from --env preload to skip the prompt on
+ * automated reinstalls.
+ */
+async function collectZkProverConfig() {
+  const preload = process.env.CAW_ZK_PROVER_ENABLED
+  if (preload === '1' || preload === 'true') {
+    console.log(dim('  ZK prover enabled via --env preload (CAW_ZK_PROVER_ENABLED=1).'))
+    return true
+  }
+  if (preload === '0' || preload === 'false') {
+    console.log(dim('  ZK prover disabled via --env preload (CAW_ZK_PROVER_ENABLED=0).'))
+    return false
+  }
+
+  console.log()
+  tipBlock([
+    `${brand('ZK sig-only path (optional, advanced).')}`,
+    '',
+    'Replaces per-action ecrecover with one Groth16 verifier call (~265K gas)',
+    'on-chain. Cheaper for batches of 57+ actions; more expensive below that.',
+    'Cawonce conflicts in the ZK path skip the affected slots rather than',
+    'reverting the whole batch.',
+    '',
+    `${warn('What you need before this is useful:')}`,
+    '  • A wired-up proof generator. The validator reads from a proof cache;',
+    '    a worker that fills the cache is not yet implemented (see',
+    '    docs/ZK_SIG_PATH.md).',
+    '  • Local proving needs ~16 GB RAM during the wrap stage. A 5.9 GB VPS',
+    '    will OOM-kill itself.',
+    '  • Hosted proving (SP1\'s prover network, ~10s/proof) is the realistic',
+    '    path for low-RAM hosts; needs an account.',
+    '',
+    `${dim('Setting ZK_PROVER_ENABLED=1 alone is harmless — without proofs in')}`,
+    `${dim('the cache, every batch falls through to the sig path.')}`,
+  ])
+
+  const { enabled } = await inquirer.prompt([
+    {
+      type: 'confirm',
+      name: 'enabled',
+      message: 'Enable the ZK sig-only path? (sets ZK_PROVER_ENABLED=1)',
+      default: false,
+    },
+  ])
+  return enabled
 }
 
 /**

@@ -60,6 +60,27 @@ The archive chain is **not** a pass-through replica of every action. The flow is
 
 The action *bytes* live in the submitter-supplied calldata (committed to via `dataCommitment`), not in long-term contract storage.
 
+### ZK sig-only path (optional)
+
+CawActions has a second entry point — `processActionsWithZkSigs` — that takes a Groth16 proof attesting "I correctly recovered every signer off-chain" instead of running ecrecover per action on-chain. The path is opt-in: deploy with `_zkVerifier = address(0)` and `processActionsWithZkSigs` reverts. Both `_zkVerifier` and `_zkProgramVKey` are immutable so the verification trust root is tamper-evident.
+
+Flow:
+1. Validator builds a batch (same `packedActions` + `packedSigs` bytes as the sig path).
+2. Off-chain prover (SP1 zkVM, Rust crate at `solidity/zk/sig-recovery/`) recovers the signer of each action and emits a Groth16 proof committing to four hashes: `keccak256(packedActions)`, `keccak256(packedSigs)`, `keccak256(signers)`, and `eip712DomainHash`. The proof commits to **no chain state** — that's what makes it race-safe.
+3. Validator submits `processActionsWithZkSigs(validatorId, packedActions, packedSigs, signers, proof, …)`. Contract calls `zkVerifier.verifyProof()` once, then walks the signers array (no ecrecover per action) to advance state.
+4. Cawonce conflicts (someone else used the same slot mid-flight) SKIP that action rather than reverting the whole batch. The `ActionsProcessedZk(packedActions, actionsExecutedBitmap)` event tells indexers which slots ran.
+
+Trade-off:
+- Verifier costs ~265K gas (canonical SP1Verifier on Base Sepolia: `0x397A5f7f3dBd538f23DE225B51f532c34448dA9B`).
+- Per-action savings ~4,630 gas (no ecrecover, no in-EVM EIP-712 hashing).
+- Break-even vs sig path: **n ≥ ~57 actions per batch**.
+
+Local proving requires ~16 GB peak RAM during the Groth16 wrap stage — fine on a dev Mac, OOM-kills a 5.9 GB VPS. Hosted SP1 prover network (~10s/proof) is the path for low-RAM hosts.
+
+`ValidatorService/index.ts` reads `process.env.ZK_PROVER_ENABLED` plus an in-memory `zkProofCache`; cache miss = sig path, so the env flag is harmless without a producer wired in. The producer (background worker that calls `stageZkProof()`) is intentionally dormant until the queueing strategy is decided.
+
+Detailed write-up: `docs/ZK_SIG_PATH.md`. Crate: `solidity/zk/sig-recovery/README.md`.
+
 ### Backend Services (client/src/services/)
 - **ActionProcessor** - Processes and indexes blockchain events
 - **Api** - REST API server

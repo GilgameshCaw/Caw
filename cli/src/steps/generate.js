@@ -394,6 +394,11 @@ function buildEnvVars(nodeType, config) {
   if (config.validatorPrivateKey) env.VALIDATOR_PRIVATE_KEY = config.validatorPrivateKey
   if (config.validatorId) env.VALIDATOR_ID = String(config.validatorId)
   if (config.validatorUsername) env.VALIDATOR_USERNAME = config.validatorUsername
+  // ZK sig-only path. The validator hot-path checks this on every batch;
+  // when the cache is empty (no proof worker wired yet), it falls through
+  // to the sig path, so writing this is safe even on hosts that can't
+  // actually run a prover. See docs/ZK_SIG_PATH.md.
+  if (config.zkProverEnabled) env.ZK_PROVER_ENABLED = '1'
   if (config.adminPassword) env.ADMIN_PASSWORD = config.adminPassword
 
   // Giphy API key for the /api/giphy proxy that backs the GIF picker. No

@@ -2,6 +2,41 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.20;
 
+// =============================================================================
+// CawActions — two paths into the same state machine
+// =============================================================================
+//
+// `processActions`               sig path. Validator submits packed actions +
+//                                grouped sigs; the contract recovers each
+//                                signer with ecrecover and runs the EIP-712
+//                                check inline. All-or-nothing: any bad sig or
+//                                used cawonce reverts the whole batch.
+//
+// `processActionsWithZkSigs`     ZK path. The same packed actions + grouped
+//                                sigs, plus a Groth16 proof that the off-chain
+//                                prover already recovered every signer
+//                                correctly. The contract trusts the proof's
+//                                signersHash commitment and skips ecrecover.
+//                                Skip-don't-revert: cawonce conflicts at
+//                                runtime drop just the conflicting slots,
+//                                the rest of the batch runs.
+//
+// Why both: the ZK path is cheaper per action but pays a fixed verifier cost
+// (~265K gas on Base Sepolia). The break-even versus the sig path is around
+// **n ≥ 57 actions per batch** today. Below that, the sig path wins; above
+// that, the ZK path wins. Validators free to use either at their discretion;
+// the on-chain state transitions are identical.
+//
+// The ZK path is OPTIONAL — an installation can deploy with `_zkVerifier =
+// address(0)` and `processActionsWithZkSigs` reverts with "ZK path not
+// configured". Both `_zkVerifier` and `_zkProgramVKey` are immutable; rotating
+// either requires a fresh CawActions deployment, which is by design — they're
+// part of the verification trust root.
+//
+// Detailed write-up: docs/ZK_SIG_PATH.md.
+// Circuit + prover infrastructure: solidity/zk/sig-recovery/.
+// =============================================================================
+
 import "@openzeppelin/contracts/access/Ownable.sol";
 import "@openzeppelin/contracts/utils/Strings.sol";
 import "@openzeppelin/contracts/interfaces/IERC1271.sol";
