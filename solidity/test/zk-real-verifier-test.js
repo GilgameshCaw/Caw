@@ -46,10 +46,16 @@ describeOrSkip('CawActions — real Groth16 proof (v6.1.0)', function () {
     sp1 = await SP1Verifier.new()
   })
 
+  // SP1Verifier inherits Groth16Verifier, which has its own verifyProof
+  // overload (uint256[8], uint256[5]). Truffle's default method dispatcher
+  // picks the wrong one when both are visible, so we call the SP1 variant
+  // by its full ABI signature.
+  const SP1_VERIFY_SIG = 'verifyProof(bytes32,bytes,bytes)'
+
   it('SP1Verifier.verifyProof accepts the fixture proof', async () => {
     // Direct verifier call — the contract we'd point CawActions at.
     // Should not revert. Returns nothing (just throws on invalid).
-    await sp1.verifyProof(fixture.vkey, fixture.publicValues, fixture.proof)
+    await sp1.methods[SP1_VERIFY_SIG](fixture.vkey, fixture.publicValues, fixture.proof)
   })
 
   it('SP1Verifier rejects when proof bytes are tampered', async () => {
@@ -59,7 +65,7 @@ describeOrSkip('CawActions — real Groth16 proof (v6.1.0)', function () {
       : '00' + fixture.proof.slice(4))
     let threw = false
     try {
-      await sp1.verifyProof(fixture.vkey, fixture.publicValues, tampered)
+      await sp1.methods[SP1_VERIFY_SIG](fixture.vkey, fixture.publicValues, tampered)
     } catch (e) {
       threw = true
     }
