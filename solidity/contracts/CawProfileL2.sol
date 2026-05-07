@@ -381,6 +381,11 @@ contract CawProfileL2 is
     authenticated[cawClientId][tokenId] = true;
     emit Authenticated(cawClientId, tokenId);
 
+    // Bump sessionNonce for cross-path coherence: any pending registerSession-by-sig
+    // payload the user signed (and never submitted) is invalidated by this on-chain
+    // session write. Without this, an old by-sig payload could be submitted later by
+    // anyone to register an additional, unintended session under the same owner.
+    sessionNonce[owner]++;
     uint8 scopeBitmap = 0xBF; // all actions except WITHDRAW (bit 6) — non-delegatable
     sessions[owner][sessionKey] = StoredSession(expiry, scopeBitmap, spendLimit, perActionTipRate);
     emit SessionCreated(owner, sessionKey, expiry, scopeBitmap, spendLimit, perActionTipRate);
@@ -412,6 +417,8 @@ contract CawProfileL2 is
     ownerOf[tokenId] = owner;
     authenticated[cawClientId][tokenId] = true;
 
+    // Same nonce-bump rationale as depositAndRegisterSessionAndUpdateOwners.
+    sessionNonce[owner]++;
     uint8 scopeBitmap = 0xBF; // all actions except WITHDRAW (bit 6) — non-delegatable
     sessions[owner][sessionKey] = StoredSession(expiry, scopeBitmap, spendLimit, perActionTipRate);
     emit SessionCreated(owner, sessionKey, expiry, scopeBitmap, spendLimit, perActionTipRate);
@@ -428,6 +435,8 @@ contract CawProfileL2 is
   {
     require(sessionKey != address(0), "Zero session key");
     require(expiry > block.timestamp, "Session already expired");
+    // Same nonce-bump rationale as depositAndRegisterSessionAndUpdateOwners.
+    sessionNonce[owner]++;
     uint8 scopeBitmap = 0xBF; // all actions except WITHDRAW (bit 6) — non-delegatable
     sessions[owner][sessionKey] = StoredSession(expiry, scopeBitmap, spendLimit, perActionTipRate);
     emit SessionCreated(owner, sessionKey, expiry, scopeBitmap, spendLimit, perActionTipRate);
@@ -765,6 +774,46 @@ contract CawProfileL2 is
   function revokeSession(address sessionKey) external {
     delete sessions[msg.sender][sessionKey];
     emit SessionRevoked(msg.sender, sessionKey);
+  }
+
+  /// @notice Register a session via an OTHER action (qs:) submitted by CawActions.
+  /// @dev    Auth: msg.sender must be the linked CawActions contract. CawActions has
+  ///         already verified that the action's outer EIP-712 signature came from the
+  ///         token owner (NOT a session key — session keys cannot escalate by
+  ///         registering new sessions). The owner's tokenId is resolved on the
+  ///         CawActions side via ownerOf(senderId), and that owner is what we
+  ///         persist here.
+  ///
+  ///         Bumps sessionNonce so any in-flight registerSession-by-sig with the
+  ///         same nonce is invalidated — keeps the off-chain action path and the
+  ///         on-chain sig path coherent.
+  ///
+  ///         WITHDRAW remains non-delegatable (scopeBitmap forced to 0xBF), matching
+  ///         every other "trusted-caller" register path in this contract.
+  function registerSessionFromActions(
+    address owner,
+    address sessionKey,
+    uint64 expiry,
+    uint256 spendLimit,
+    uint64 perActionTipRate
+  ) external {
+    require(msg.sender == address(cawActions), "Only CawActions");
+    require(owner != address(0), "Zero owner");
+    require(sessionKey != address(0), "Zero session key");
+    require(expiry > block.timestamp, "Already expired");
+
+    sessionNonce[owner]++;
+    uint8 scopeBitmap = 0xBF; // all actions except WITHDRAW (bit 6)
+    sessions[owner][sessionKey] = StoredSession(expiry, scopeBitmap, spendLimit, perActionTipRate);
+    emit SessionCreated(owner, sessionKey, expiry, scopeBitmap, spendLimit, perActionTipRate);
+  }
+
+  /// @notice Revoke a session via an OTHER action (qx:) submitted by CawActions.
+  /// @dev    Same auth gate + threat model as registerSessionFromActions.
+  function revokeSessionFromActions(address owner, address sessionKey) external {
+    require(msg.sender == address(cawActions), "Only CawActions");
+    delete sessions[owner][sessionKey];
+    emit SessionRevoked(owner, sessionKey);
   }
 
   /// @notice Revoke a session key using a signature from the session key itself.

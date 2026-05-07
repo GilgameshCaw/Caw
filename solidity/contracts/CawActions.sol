@@ -1009,9 +1009,19 @@ contract CawActions is Ownable {
       actionCost = 30000;
     } else if (action.actionType == ActionType.WITHDRAW) {
       cawProfile.withdrawTokens(action.senderId, uint256(action.amounts[0]));
+    } else if (action.actionType == ActionType.OTHER) {
+      // OTHER actions are usually off-chain-interpreted (p:, tip:, vote:, hide:,
+      // pi:, xpi:) and the contract treats them as no-ops here. Two prefixes are
+      // *on-chain* state mutations:
+      //   "qs:" — Quick Sign session register
+      //   "qx:" — Quick Sign session revoke
+      // Both are bundleable into normal action batches, so the validator gets
+      // paid via the same `amounts[]` tip mechanism every other action uses.
+      // Only the wallet owner's own signature can register/revoke a session —
+      // a session key (ba.isSessionKey) cannot escalate by writing more sessions.
+      _handleSessionAction(action, ba);
     } else if (action.actionType != ActionType.UNLIKE &&
-               action.actionType != ActionType.UNFOLLOW &&
-               action.actionType != ActionType.OTHER) {
+               action.actionType != ActionType.UNFOLLOW) {
       revert("Invalid action type");
     }
 
@@ -1062,6 +1072,70 @@ contract CawActions is Ownable {
     // these because not every batch is a multiple of CHECKPOINT_INTERVAL.
     if (c.clientActionCount % CHECKPOINT_INTERVAL == 0) {
       clientHashAtCheckpoint[c.firstClientId][c.clientActionCount / CHECKPOINT_INTERVAL] = c.clientHash;
+    }
+  }
+
+  // ============================================
+  // QUICK SIGN SESSION DISPATCH (OTHER subtypes)
+  // ============================================
+
+  /// @dev Dispatch on-chain qs: / qx: session actions. Called from _applyAction
+  ///      for any OTHER action; returns silently for any other OTHER text so
+  ///      the existing off-chain subtypes (p:, tip:, vote:, hide:, pi:, xpi:)
+  ///      remain no-ops at the contract level.
+  ///
+  ///      Encoding (binary, packed in action.text):
+  ///        qs: 0x71 0x73 0x3a + addr(20) + expiry(8 BE) + spendLimit(32 BE) + tipRate(8 BE) = 71 bytes
+  ///        qx: 0x71 0x78 0x3a + addr(20)                                                    = 23 bytes
+  ///
+  ///      Auth: the action's outer EIP-712 sig must come from the wallet owner
+  ///      (NOT a session key). Session keys can't register or revoke sessions,
+  ///      otherwise a compromised session could escalate.
+  function _handleSessionAction(ActionData memory action, BatchAuth memory ba) internal {
+    bytes memory t = action.text;
+    if (t.length < 3) return;
+    if (t[0] != 0x71 || t[2] != 0x3a) return; // first char 'q', third ':'
+    bytes1 op = t[1];
+    if (op != 0x73 && op != 0x78) return; // 's' or 'x'
+
+    // Wallet-owner sig only. Session keys cannot escalate.
+    require(!ba.isSessionKey, "Session keys cannot register sessions");
+
+    // Resolve the wallet owner from the senderId. Cache on the BatchAuth
+    // so subsequent actions in the same group avoid re-reading.
+    if (ba.owner == address(0)) {
+      ba.owner = cawProfile.ownerOf(action.senderId);
+    }
+    require(ba.owner != address(0), "Unknown owner");
+
+    if (op == 0x73) { // 's' — register
+      require(t.length == 71, "qs: invalid length");
+      address sessionKey = _readAddress(t, 3);
+      uint64 expiry = uint64(_readUint(t, 23, 8));
+      uint256 spendLimit = _readUint(t, 31, 32);
+      uint64 perActionTipRate = uint64(_readUint(t, 63, 8));
+      cawProfile.registerSessionFromActions(ba.owner, sessionKey, expiry, spendLimit, perActionTipRate);
+    } else { // 'x' — revoke
+      require(t.length == 23, "qx: invalid length");
+      address sessionKey = _readAddress(t, 3);
+      cawProfile.revokeSessionFromActions(ba.owner, sessionKey);
+    }
+  }
+
+  /// @dev Read a 20-byte address starting at offset `o` in `b`.
+  function _readAddress(bytes memory b, uint256 o) internal pure returns (address a) {
+    assembly {
+      // bytes layout: [length(32)][data...]. data starts at b+0x20.
+      // Load 32 bytes starting at b+0x20+o, then shift right 12 bytes
+      // (96 bits) to align the 20-byte address in the low bits.
+      a := shr(96, mload(add(add(b, 0x20), o)))
+    }
+  }
+
+  /// @dev Read a big-endian uint of `len` bytes (1..32) starting at offset `o`.
+  function _readUint(bytes memory b, uint256 o, uint256 len) internal pure returns (uint256 v) {
+    assembly {
+      v := shr(sub(256, mul(8, len)), mload(add(add(b, 0x20), o)))
     }
   }
 
