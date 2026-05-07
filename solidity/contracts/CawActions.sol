@@ -313,8 +313,11 @@ contract CawActions is Ownable {
     //   keccak256(packedSigs)    == public_input[1]
     //   keccak256(signers)       == public_input[2]
     //   eip712DomainHash         == public_input[3]
+    // packedActionsHash is reused at event-emit time below — caching saves
+    // ~6 gas/byte of packedActions (one redundant keccak avoided).
+    bytes32 packedActionsHash = keccak256(packedActions);
     bytes memory publicValues = abi.encode(
-      keccak256(packedActions),
+      packedActionsHash,
       keccak256(packedSigs),
       keccak256(signers),
       eip712DomainHash
@@ -356,7 +359,7 @@ contract CawActions is Ownable {
       validatorId,
       uint16(actionCount),
       actionsExecutedBitmap,
-      keccak256(packedActions)
+      packedActionsHash
     );
 
     if (c.withdrawCount > 0) {
@@ -1091,8 +1094,31 @@ contract CawActions is Ownable {
       c.clientActionCount = clientActionCount[c.firstClientId];
       c.clientHashLoaded = true;
     }
-    bytes32 actionHash = keccak256(packedSlice);
-    c.clientHash = keccak256(abi.encodePacked(c.clientHash, ba.r, actionHash));
+    // c.clientHash = keccak256(c.clientHash || ba.r || keccak256(packedSlice))
+    // Assembly avoids the memory allocation Solidity would emit for
+    // abi.encodePacked of three bytes32s; we just write the three slots
+    // into scratch space (0x00..0x60) and hash. Memory-safe: scratch is
+    // guaranteed-free for the duration of this hash.
+    bytes32 prevHash = c.clientHash;
+    bytes32 sigR = ba.r;
+    bytes32 newHash;
+    assembly ("memory-safe") {
+      // scratch slot 0 (0x00): prev hash
+      mstore(0x00, prevHash)
+      // scratch slot 1 (0x20): sig r
+      mstore(0x20, sigR)
+      // hash the slice in calldata into scratch slot 2 (0x40)
+      let len := packedSlice.length
+      let m := mload(0x40)
+      // copy slice to free memory, hash, write digest to 0x40
+      calldatacopy(m, packedSlice.offset, len)
+      mstore(0x40, keccak256(m, len))
+      // hash the 96-byte chain commitment
+      newHash := keccak256(0x00, 0x60)
+      // restore the free-memory pointer (we used it as scratch but never advanced)
+      mstore(0x40, m)
+    }
+    c.clientHash = newHash;
     unchecked { c.clientActionCount++; }
 
     // Per-32-action checkpoint commitment must still hit storage — the
@@ -1544,8 +1570,12 @@ contract CawActions is Ownable {
   function useCawonce(uint32 senderId, uint256 cawonce) internal {
     uint256 word = cawonce >> 8;
     uint256 bit = cawonce & 0xff;
-    usedCawonce[senderId][word] |= (1 << bit);
-    if (usedCawonce[senderId][word] == type(uint256).max) {
+    // Compute new word locally and check completeness off the freshly-computed
+    // value — saves a redundant warm SLOAD of usedCawonce[senderId][word]
+    // versus the older reload-after-write pattern.
+    uint256 newWord = usedCawonce[senderId][word] | (1 << bit);
+    usedCawonce[senderId][word] = newWord;
+    if (newWord == type(uint256).max) {
       currentCawonceMap[senderId] = word + 1;
     }
   }
