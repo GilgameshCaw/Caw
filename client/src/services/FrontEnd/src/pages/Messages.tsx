@@ -25,7 +25,8 @@ import {
   HiOutlineCheckCircle,
   HiOutlinePaperClip,
   HiOutlinePlus,
-  HiOutlineReply
+  HiOutlineReply,
+  HiOutlineUserGroup
 } from 'react-icons/hi'
 import { useActiveToken } from '~/store/tokenDataStore'
 import { useAuthStore } from '~/store/authStore'
@@ -58,6 +59,8 @@ import {
   CustomizeReactionsModal,
   DEFAULT_DM_REACTIONS,
 } from '~/components/dm/MessageReactions'
+import CreateGroupModal from '~/components/dm/CreateGroupModal'
+import GroupMembersPanel from '~/components/dm/GroupMembersPanel'
 
 const MessagesPage: React.FC = () => {
   const { isDark } = useTheme()
@@ -68,6 +71,10 @@ const MessagesPage: React.FC = () => {
   const { username: urlUsername } = useParams<{ username?: string }>()
   const navigate = useNavigate()
   const [isNewMessageModalOpen, setIsNewMessageModalOpen] = useState(false)
+  const [isCreateGroupModalOpen, setIsCreateGroupModalOpen] = useState(false)
+  const [isNewMenuOpen, setIsNewMenuOpen] = useState(false)
+  const [showMembersPanel, setShowMembersPanel] = useState(false)
+  const newMenuRef = useRef<HTMLDivElement>(null)
   const [isSettingsModalOpen, setIsSettingsModalOpen] = useState(false)
   const [searchQuery, setSearchQuery] = useState('')
   const [dmPrivacy, setDmPrivacy] = useState<'EVERYONE' | 'FOLLOWERS' | 'FOLLOWING'>('EVERYONE')
@@ -224,6 +231,14 @@ const MessagesPage: React.FC = () => {
     setInbox,
     requestCount,
     acceptConversation: dmAcceptConversation,
+    createGroup: dmCreateGroup,
+    addMembers: dmAddMembers,
+    removeMember: dmRemoveMember,
+    leaveGroup: dmLeaveGroup,
+    renameGroup: dmRenameGroup,
+    mintInvite: dmMintInvite,
+    revokeInvite: dmRevokeInvite,
+    listInvites: dmListInvites,
   } = useDmClient(currentUser?.id, currentUser?.username)
   // Keep a ref to the latest initializeClient so the action passed into
   // ensureWallet (which runs asynchronously after connect) always calls
@@ -244,7 +259,15 @@ const MessagesPage: React.FC = () => {
     if (!c || c.type !== 'DM') return undefined
     return c.participants.find(p => p.userId !== currentUser?.id)?.userId
   })()
-  const { messages, isLoadingOlder, hasMoreMessages, loadOlderMessages, sendMessage: dmSendMessage, editMessage: dmEditMessage, deleteForMe: dmDeleteForMe, deleteForEveryone: dmDeleteForEveryone, isSending, markAsRead, addIncomingMessage, peerLastReadAt, getSharedSecret, toggleReaction: dmToggleReaction, applyReactionEvent } = useDmMessages(selectedConversationId || '', currentUser?.id, selectedPeerUserId)
+  const groupContext = useMemo(() => {
+    const c = conversations.find(cv => cv.id === selectedConversationId)
+    if (!c || c.type !== 'GROUP') return undefined
+    const members = c.participants
+      .filter(p => !!p.publicKey)
+      .map(p => ({ userId: p.userId, publicKey: p.publicKey as string }))
+    return { isGroup: true, members }
+  }, [conversations, selectedConversationId])
+  const { messages, isLoadingOlder, hasMoreMessages, loadOlderMessages, sendMessage: dmSendMessage, editMessage: dmEditMessage, deleteForMe: dmDeleteForMe, deleteForEveryone: dmDeleteForEveryone, isSending, markAsRead, addIncomingMessage, peerLastReadAt, getSharedSecret, toggleReaction: dmToggleReaction, applyReactionEvent } = useDmMessages(selectedConversationId || '', currentUser?.id, selectedPeerUserId, groupContext)
   const { uploadEncryptedFile, isUploading, uploadProgress } = useDmFileUpload()
 
   // Scroll to bottom of messages
@@ -955,6 +978,35 @@ const MessagesPage: React.FC = () => {
     return () => document.removeEventListener('mousedown', handleClickOutside)
   }, [showChatOptionsMenu])
 
+  useEffect(() => {
+    if (!isNewMenuOpen) return
+    function handleClickOutside(event: MouseEvent) {
+      if (newMenuRef.current && !newMenuRef.current.contains(event.target as Node)) {
+        setIsNewMenuOpen(false)
+      }
+    }
+    document.addEventListener('mousedown', handleClickOutside)
+    return () => document.removeEventListener('mousedown', handleClickOutside)
+  }, [isNewMenuOpen])
+
+  // System messages don't carry encrypted payload; the sidebar preview and
+  // the in-thread row both render the same human stub from contentType +
+  // (where present) the actor's username.
+  const renderSystemPreview = useCallback((m: { contentType?: string; sender?: { user: { username: string } } } | undefined): string => {
+    if (!m?.contentType?.startsWith('system:')) return ''
+    const who = m.sender?.user?.username ? `@${m.sender.user.username}` : 'Someone'
+    switch (m.contentType) {
+      case 'system:created':         return `${who} created the group`
+      case 'system:added':           return `${who} added a member`
+      case 'system:removed':         return `${who} removed a member`
+      case 'system:left':            return `${who} left the group`
+      case 'system:renamed':         return `${who} renamed the group`
+      case 'system:avatarChanged':   return `${who} updated the group avatar`
+      case 'system:ownerTransferred':return `${who} transferred ownership`
+      default:                       return 'Group update'
+    }
+  }, [])
+
   // Translate a DM message inline. The text is already-decrypted plaintext
   // (the message bubble shows it), so this just hands it to the shared
   // translateText util and stores the result for inline rendering.
@@ -1084,6 +1136,21 @@ const MessagesPage: React.FC = () => {
                   />
                 </a>
               )}
+              {currentView === 'chat' && selectedConversation?.type === 'GROUP' && (
+                <button
+                  onClick={() => setShowMembersPanel(true)}
+                  className="w-8 h-8 rounded-full overflow-hidden flex-shrink-0 cursor-pointer"
+                  title="Group members"
+                >
+                  {selectedConversation.avatarUrl ? (
+                    <img src={selectedConversation.avatarUrl} alt="" className="w-full h-full object-cover" />
+                  ) : (
+                    <span className={`w-full h-full flex items-center justify-center ${isDark ? 'bg-white/10' : 'bg-gray-200'}`}>
+                      <HiOutlineUserGroup className={`w-5 h-5 ${isDark ? 'text-white/70' : 'text-gray-600'}`} />
+                    </span>
+                  )}
+                </button>
+              )}
               <div className="flex flex-col">
                 {currentView === 'chat' && otherParticipant ? (
                   <a
@@ -1099,6 +1166,26 @@ const MessagesPage: React.FC = () => {
                   >
                     {otherParticipant.identity.user.displayName || otherParticipant.identity.user.username || 'Chat'}
                   </a>
+                ) : currentView === 'chat' && selectedConversation?.type === 'GROUP' ? (
+                  <button
+                    type="button"
+                    onClick={() => setShowMembersPanel(true)}
+                    className={`text-left transition-colors duration-300 cursor-pointer hover:underline ${
+                      isDark ? 'text-white' : 'text-black'
+                    }`}
+                  >
+                    <div className="text-2xl font-bold leading-tight truncate max-w-[60vw]">
+                      {selectedConversation.name?.trim()
+                        || selectedConversation.participants
+                            .filter(p => p.userId !== currentUser?.id)
+                            .map(p => p.identity.user.displayName || p.identity.user.username)
+                            .join(', ')
+                        || 'Group chat'}
+                    </div>
+                    <div className={`text-xs ${isDark ? 'text-gray-400' : 'text-gray-500'}`}>
+                      {selectedConversation.participants.length} {selectedConversation.participants.length === 1 ? 'member' : 'members'}
+                    </div>
+                  </button>
                 ) : (
                   <h1
                     className={`text-2xl font-bold transition-colors duration-300 ${
@@ -1178,15 +1265,28 @@ const MessagesPage: React.FC = () => {
                       }`}
                     >
                       <div className="py-2">
-                        <button
-                          onClick={() => handleChatMenuAction('block-user')}
-                          className={`w-full flex items-center px-4 py-3 text-left transition-all duration-200 hover:bg-gray-500/10 ${
-                            isDark ? 'text-white' : 'text-black'
-                          }`}
-                        >
-                          <HiOutlineUserRemove className="w-5 h-5 mr-3" />
-                          <span className="text-sm font-medium">Block user</span>
-                        </button>
+                        {selectedConversation?.type === 'GROUP' && (
+                          <button
+                            onClick={() => { setShowChatOptionsMenu(false); setShowMembersPanel(true) }}
+                            className={`w-full flex items-center px-4 py-3 text-left transition-all duration-200 hover:bg-gray-500/10 ${
+                              isDark ? 'text-white' : 'text-black'
+                            }`}
+                          >
+                            <HiOutlineUserGroup className="w-5 h-5 mr-3" />
+                            <span className="text-sm font-medium">Group members</span>
+                          </button>
+                        )}
+                        {selectedConversation?.type !== 'GROUP' && (
+                          <button
+                            onClick={() => handleChatMenuAction('block-user')}
+                            className={`w-full flex items-center px-4 py-3 text-left transition-all duration-200 hover:bg-gray-500/10 ${
+                              isDark ? 'text-white' : 'text-black'
+                            }`}
+                          >
+                            <HiOutlineUserRemove className="w-5 h-5 mr-3" />
+                            <span className="text-sm font-medium">Block user</span>
+                          </button>
+                        )}
 
                         <button
                           onClick={() => handleChatMenuAction('mute-notifications')}
@@ -1200,15 +1300,17 @@ const MessagesPage: React.FC = () => {
                           </span>
                         </button>
 
-                        <button
-                          onClick={() => handleChatMenuAction('report')}
-                          className={`w-full flex items-center px-4 py-3 text-left transition-all duration-200 hover:bg-gray-500/10 ${
-                            isDark ? 'text-white' : 'text-black'
-                          }`}
-                        >
-                          <HiOutlineExclamation className="w-5 h-5 mr-3" />
-                          <span className="text-sm font-medium">Report</span>
-                        </button>
+                        {selectedConversation?.type !== 'GROUP' && (
+                          <button
+                            onClick={() => handleChatMenuAction('report')}
+                            className={`w-full flex items-center px-4 py-3 text-left transition-all duration-200 hover:bg-gray-500/10 ${
+                              isDark ? 'text-white' : 'text-black'
+                            }`}
+                          >
+                            <HiOutlineExclamation className="w-5 h-5 mr-3" />
+                            <span className="text-sm font-medium">Report</span>
+                          </button>
+                        )}
                       </div>
                     </div>
                   </>
@@ -1232,20 +1334,50 @@ const MessagesPage: React.FC = () => {
                   )}
                 </button>
 
-                {/* New Message Button */}
-                <button
-                  onClick={() => setIsNewMessageModalOpen(true)}
-                  className={`relative p-2 rounded-full transition-all duration-300 hover:bg-gray-500/20 cursor-pointer ${
-                    isDark ? '' : ''
-                  }`}
-                >
-                  <HiOutlineMail className={`w-5 h-5 transition-colors duration-300 ${
-                    isDark ? 'text-white' : 'text-black'
-                  }`} />
-                  <HiOutlinePlus className={`absolute -top-0.5 -right-0.5 w-3 h-3 transition-colors duration-300 ${
-                    isDark ? 'text-yellow-500' : 'text-yellow-600'
-                  }`} />
-                </button>
+                {/* New Message / New Group menu */}
+                <div className="relative" ref={newMenuRef}>
+                  <button
+                    onClick={() => setIsNewMenuOpen(v => !v)}
+                    className={`relative p-2 rounded-full transition-all duration-300 hover:bg-gray-500/20 cursor-pointer ${
+                      isDark ? '' : ''
+                    }`}
+                  >
+                    <HiOutlineMail className={`w-5 h-5 transition-colors duration-300 ${
+                      isDark ? 'text-white' : 'text-black'
+                    }`} />
+                    <HiOutlinePlus className={`absolute -top-0.5 -right-0.5 w-3 h-3 transition-colors duration-300 ${
+                      isDark ? 'text-yellow-500' : 'text-yellow-600'
+                    }`} />
+                  </button>
+                  {isNewMenuOpen && (
+                    <div
+                      className={`absolute right-0 top-12 w-56 rounded-xl shadow-lg border z-50 ${
+                        isDark ? 'bg-black border-white/20' : 'bg-white border-gray-200'
+                      }`}
+                    >
+                      <div className="py-2">
+                        <button
+                          onClick={() => { setIsNewMenuOpen(false); setIsNewMessageModalOpen(true) }}
+                          className={`w-full flex items-center px-4 py-3 text-left transition-all duration-200 hover:bg-gray-500/10 ${
+                            isDark ? 'text-white' : 'text-black'
+                          }`}
+                        >
+                          <HiOutlineMail className="w-5 h-5 mr-3" />
+                          <span className="text-sm font-medium">New direct message</span>
+                        </button>
+                        <button
+                          onClick={() => { setIsNewMenuOpen(false); setIsCreateGroupModalOpen(true) }}
+                          className={`w-full flex items-center px-4 py-3 text-left transition-all duration-200 hover:bg-gray-500/10 ${
+                            isDark ? 'text-white' : 'text-black'
+                          }`}
+                        >
+                          <HiOutlineUserGroup className="w-5 h-5 mr-3" />
+                          <span className="text-sm font-medium">New group chat</span>
+                        </button>
+                      </div>
+                    </div>
+                  )}
+                </div>
               </div>
             )}
           </div>
@@ -1422,14 +1554,37 @@ const MessagesPage: React.FC = () => {
               </div>
             ) : (
               conversations.filter((conversation) => {
-                // Hide conversations with blocked users
+                // Hide conversations with blocked users (DM only — groups
+                // can have many members, blocking one shouldn't hide the
+                // whole group).
+                if (conversation.type !== 'DM') return true
                 const blockedIds = getBlockedUserIds()
                 const peer = conversation.participants.find(p => p.userId !== currentUser?.id)
                 return !peer || !blockedIds.includes(peer.userId)
               }).map((conversation) => {
-                const otherUser = conversation.type === 'DM'
+                const isGroup = conversation.type === 'GROUP'
+                const otherUser = !isGroup
                   ? conversation.participants.find(p => p.userId !== currentUser?.id)
                   : null
+                const otherMembers = isGroup
+                  ? conversation.participants.filter(p => p.userId !== currentUser?.id)
+                  : []
+                const groupTitle = isGroup
+                  ? (conversation.name?.trim()
+                      || otherMembers.map(p => p.identity.user.displayName || p.identity.user.username).join(', ')
+                      || 'Group chat')
+                  : (otherUser?.identity.user.displayName || otherUser?.identity.user.username || 'Unknown')
+                const isSystem = conversation.lastMessagePreview != null
+                  && conversations.find(c => c.id === conversation.id) === conversation
+                  // The hook already runs lastMessage.contentType through its
+                  // own renderSystemPreview when contentType startsWith
+                  // 'system:' — no further dispatch needed here. The sidebar
+                  // gets the human stub directly via lastMessagePreview.
+                  && false
+                void isSystem
+                const senderUsername = isGroup
+                  ? conversation.participants.find(p => p.userId === conversation.lastMessageSenderId)?.identity.user.username
+                  : undefined
 
                 return (
                   <div
@@ -1440,7 +1595,21 @@ const MessagesPage: React.FC = () => {
                     <div className="flex items-center justify-between">
                       <div className="flex items-start space-x-3 flex-1">
                         <div className="flex-shrink-0">
-                          {otherUser?.identity.user ? (
+                          {isGroup ? (
+                            conversation.avatarUrl ? (
+                              <img
+                                src={conversation.avatarUrl}
+                                alt=""
+                                className="w-10 h-10 rounded-full object-cover"
+                              />
+                            ) : (
+                              <div className={`w-10 h-10 rounded-full flex items-center justify-center ${
+                                isDark ? 'bg-white/10' : 'bg-gray-200'
+                              }`}>
+                                <HiOutlineUserGroup className={`w-5 h-5 ${isDark ? 'text-white/70' : 'text-gray-600'}`} />
+                              </div>
+                            )
+                          ) : otherUser?.identity.user ? (
                             <Avatar
                               src={getUserAvatar(otherUser.identity.user)}
                               alt={otherUser.identity.user.username}
@@ -1456,10 +1625,10 @@ const MessagesPage: React.FC = () => {
 
                         <div className="flex-1 min-w-0">
                           <div className="flex items-center space-x-2 mb-1">
-                            <h3 className={`font-semibold text-base transition-colors duration-300 ${
+                            <h3 className={`font-semibold text-base transition-colors duration-300 truncate ${
                               isDark ? 'text-white' : 'text-black'
                             }`}>
-                              {otherUser?.identity.user.displayName || otherUser?.identity.user.username || 'Unknown'}
+                              {groupTitle}
                             </h3>
                             {conversation.unreadCount > 0 && (
                               <span className="px-2 py-0.5 text-xs font-medium bg-yellow-500 text-black rounded-full">
@@ -1471,7 +1640,13 @@ const MessagesPage: React.FC = () => {
                             isDark ? 'text-gray-300' : 'text-gray-700'
                           }`}>
                             {conversation.lastMessagePreview
-                              ? (conversation.lastMessageSenderId === currentUser?.id ? 'You: ' : '') + conversation.lastMessagePreview
+                              ? (
+                                  isGroup
+                                    ? (conversation.lastMessageSenderId === currentUser?.id
+                                        ? 'You: '
+                                        : senderUsername ? `${senderUsername}: ` : '')
+                                    : (conversation.lastMessageSenderId === currentUser?.id ? 'You: ' : '')
+                                ) + conversation.lastMessagePreview
                               : conversation.lastMessageAt ? t('messages.preview.encrypted') : t('messages.preview.start')}
                           </p>
                         </div>
@@ -1681,14 +1856,27 @@ const MessagesPage: React.FC = () => {
                         </div>
                       )}
 
-                      <div className={`flex flex-col ${message.isFromCurrentUser ? 'items-end' : 'items-start'}`}>
-                        {/* Tombstone for deleted messages */}
-                        {message.contentType === 'deleted' ? (
+                      <div className={`flex flex-col ${message.isFromCurrentUser ? 'items-end' : 'items-start'} ${message.contentType?.startsWith('system:') ? '!items-center' : ''}`}>
+                        {/* System messages — centered pill, no avatar / sender / reactions */}
+                        {message.contentType?.startsWith('system:') ? (
+                          <div className={`px-3 py-1 rounded-full text-xs italic ${isDark ? 'bg-white/5 text-white/50' : 'bg-black/5 text-black/50'}`}>
+                            {renderSystemPreview(message)}
+                          </div>
+                        ) : message.contentType === 'deleted' ? (
+                          /* Tombstone for deleted messages */
                           <div className="px-4 py-2 italic text-white/30 text-sm">
                             [Message deleted]
                           </div>
                         ) : (
                         <>
+                        {/* Sender username — for groups only, on non-self messages */}
+                        {selectedConversation?.type === 'GROUP' && !message.isFromCurrentUser && (
+                          <div className={`text-xs mb-1 ml-2 ${isDark ? 'text-white/60' : 'text-gray-500'}`}>
+                            @{message.sender?.user.username
+                              || selectedConversation.participants.find(p => p.userId === message.senderId)?.identity.user.username
+                              || 'unknown'}
+                          </div>
+                        )}
                         {/* Previous versions — shown as separate bubbles when "edited" is clicked */}
                         {editHistoryMessageId === message.id && message.editHistory?.map((entry, idx) => (
                           <div key={`edit-${idx}`} className={`flex ${message.isFromCurrentUser ? 'justify-end' : 'justify-start'} mb-1`}>
@@ -2627,6 +2815,47 @@ const MessagesPage: React.FC = () => {
           onClose={() => setShowReportUser(false)}
           userId={otherParticipant.userId}
           username={otherParticipant.identity.user.username}
+        />
+      )}
+
+      {/* New Group Modal */}
+      {currentUser && (
+        <CreateGroupModal
+          isOpen={isCreateGroupModalOpen}
+          onClose={() => setIsCreateGroupModalOpen(false)}
+          currentUserId={currentUser.id}
+          onCreate={async (params) => {
+            const conv = await dmCreateGroup(params)
+            if (conv?.id) {
+              handleConversationSelect(conv.id)
+            }
+            return conv
+          }}
+        />
+      )}
+
+      {/* Group Members Panel */}
+      {currentUser && selectedConversation?.type === 'GROUP' && (
+        <GroupMembersPanel
+          isOpen={showMembersPanel}
+          onClose={() => setShowMembersPanel(false)}
+          conversationId={selectedConversation.id}
+          conversationName={selectedConversation.name}
+          members={selectedConversation.participants}
+          currentUserId={currentUser.id}
+          myRole={selectedConversation.myRole}
+          onAddMembers={dmAddMembers}
+          onRemoveMember={dmRemoveMember}
+          onLeaveGroup={async (id) => {
+            const out = await dmLeaveGroup(id)
+            // After leaving, the group is gone for this user — pop back to inbox.
+            goBackToInbox()
+            return out
+          }}
+          onRenameGroup={dmRenameGroup}
+          onMintInvite={dmMintInvite}
+          onRevokeInvite={dmRevokeInvite}
+          onListInvites={dmListInvites}
         />
       )}
 
