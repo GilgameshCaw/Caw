@@ -333,10 +333,18 @@ async function fetchFailedRetries(tokenId: number) {
  * BOOTSTRAP_ADMIN_TOKEN_IDS env var is honored here too — promotes
  * matching tokenIds to ADMIN even if their User row says USER.
  */
-const BOOTSTRAP_ADMIN_TOKEN_IDS = (process.env.BOOTSTRAP_ADMIN_TOKEN_IDS ?? '')
-  .split(',')
-  .map(s => Number(s.trim()))
-  .filter(n => Number.isFinite(n) && n > 0)
+// Mirrors the resolution in middleware/auth.ts: explicit env list wins;
+// VALIDATOR_ID is the default so a fresh install has the node operator
+// as admin without any extra moderation env config.
+const BOOTSTRAP_ADMIN_TOKEN_IDS = (() => {
+  const explicit = (process.env.BOOTSTRAP_ADMIN_TOKEN_IDS ?? '')
+    .split(',')
+    .map(s => Number(s.trim()))
+    .filter(n => Number.isFinite(n) && n > 0)
+  if (explicit.length > 0) return explicit
+  const validatorId = Number(process.env.VALIDATOR_ID)
+  return Number.isFinite(validatorId) && validatorId > 0 ? [validatorId] : []
+})()
 
 router.get('/role', async (req, res) => {
   try {

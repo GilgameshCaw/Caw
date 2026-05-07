@@ -140,14 +140,25 @@ export function requireAdmin(req: Request, res: Response, next: NextFunction): v
 // the role (NULL when authorized via cookie). Audit-log writers should
 // use it as the actor.
 //
-// One env-var bootstrap escape hatch: BOOTSTRAP_ADMIN_TOKEN_IDS — comma-
-// separated list of tokenIds treated as ADMIN even if their User.role
-// is still 'USER' in the DB. Lets a fresh deploy promote the first
-// admin without a manual SQL update.
-const BOOTSTRAP_ADMIN_TOKEN_IDS = (process.env.BOOTSTRAP_ADMIN_TOKEN_IDS ?? '')
-  .split(',')
-  .map(s => Number(s.trim()))
-  .filter(n => Number.isFinite(n) && n > 0)
+// Bootstrap admins — comma-separated list of tokenIds treated as ADMIN
+// even if their User.role is still 'USER' in the DB. Lets a fresh
+// deploy promote the first admin without a manual SQL update.
+//
+// Default: VALIDATOR_ID. The operator running the validator is the
+// natural "node-runner" identity, so on a fresh install they're admin
+// without any extra config. Override with BOOTSTRAP_ADMIN_TOKEN_IDS
+// when you want a different person (or additional people) bootstrapped
+// — e.g. the operator runs the node but a separate account does the
+// moderation.
+const BOOTSTRAP_ADMIN_TOKEN_IDS = (() => {
+  const explicit = (process.env.BOOTSTRAP_ADMIN_TOKEN_IDS ?? '')
+    .split(',')
+    .map(s => Number(s.trim()))
+    .filter(n => Number.isFinite(n) && n > 0)
+  if (explicit.length > 0) return explicit
+  const validatorId = Number(process.env.VALIDATOR_ID)
+  return Number.isFinite(validatorId) && validatorId > 0 ? [validatorId] : []
+})()
 
 export async function requireModerator(req: Request, res: Response, next: NextFunction): Promise<void> {
   // Admin password path first — cheaper than a DB read.
