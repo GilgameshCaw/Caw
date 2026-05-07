@@ -191,21 +191,32 @@ pub fn unpack_sig_group(sigs: &[u8], pos: usize) -> (SigGroup, usize) {
 // in CawActions.sol exactly.
 // ============================================================================
 
-/// abi.encode the recipients (uint32[]) — each element is left-padded to 32 bytes.
-/// (NOTE: CawActions uses `abi.encodePacked` which packs to 4 bytes/elem.
-///  We match that — see `pack_u32_array`.)
+/// Solidity `abi.encodePacked(uint32[])` and `abi.encodePacked(uint64[])`
+/// each pad ELEMENTS of dynamic arrays to 32 bytes (this is Solidity's
+/// abi.encodePacked behavior for *dynamic* arrays: it falls back to the
+/// abi-encoding rules for elements rather than the "natural width"
+/// behavior used for non-array value types).
+///
+/// We learned this the hard way via the digest equivalence fuzz test —
+/// Rust originally wrote 4-byte / 8-byte natural widths and digests
+/// silently diverged from Solidity. Don't change without re-running
+/// `test/zk-digest-equivalence-test.js`.
 fn pack_u32_array(arr: &[u32]) -> Vec<u8> {
-    let mut buf = Vec::with_capacity(arr.len() * 4);
+    let mut buf = Vec::with_capacity(arr.len() * 32);
     for &x in arr {
-        buf.extend_from_slice(&x.to_be_bytes());
+        let mut padded = [0u8; 32];
+        padded[28..].copy_from_slice(&x.to_be_bytes());
+        buf.extend_from_slice(&padded);
     }
     buf
 }
 
 fn pack_u64_array(arr: &[u64]) -> Vec<u8> {
-    let mut buf = Vec::with_capacity(arr.len() * 8);
+    let mut buf = Vec::with_capacity(arr.len() * 32);
     for &x in arr {
-        buf.extend_from_slice(&x.to_be_bytes());
+        let mut padded = [0u8; 32];
+        padded[24..].copy_from_slice(&x.to_be_bytes());
+        buf.extend_from_slice(&padded);
     }
     buf
 }
