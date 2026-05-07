@@ -360,6 +360,77 @@ async function doFindOrCreateUser(
 
 
 /**
+ * Returns true if the User row looks like a placeholder created by an
+ * eager-FK write (e.g. actions.ts upsert path that needs the FK to point
+ * somewhere before the indexer has resolved the real Mint event). The
+ * shape is `username='user_<tokenId>'` AND `address=''` — both deliberate
+ * sentinels. We use this to distinguish "row stale, please refresh from
+ * chain" from "row real, address just happens to be empty for some other
+ * reason" (which shouldn't happen but a strict check makes it safer to
+ * automatically overwrite).
+ */
+export function isPlaceholderUser(u: { tokenId: number; username: string; address: string }): boolean {
+  return u.address === '' && u.username === `user_${u.tokenId}`
+}
+
+/**
+ * Re-read the chain for tokenId and overwrite the local User row's
+ * username + address with the canonical values. Called by the DataCleaner
+ * sweep on rows that match isPlaceholderUser. Throws StaleTokenError if
+ * the token doesn't exist on the current L1 contract (e.g. event from a
+ * pre-redeploy era); the caller should mark the row so the sweep skips
+ * it next time.
+ *
+ * Pre-existing comment in doFindOrCreateUser: `usernames` array is 0-indexed
+ * but tokenIds are 1-indexed, hence `tokenId - 1`. Same convention here.
+ */
+export async function refreshUserFromChain(tokenId: number): Promise<{ tokenId: number; username: string; address: string }> {
+  const { contract: l1Contract } = await getL1Provider()
+  let owner: string
+  let username: string
+  try {
+    ;[owner, username] = await Promise.all([
+      l1Contract.ownerOf(tokenId),
+      l1Contract.usernames(tokenId - 1),
+    ])
+  } catch (err: any) {
+    if (err?.reason?.includes('invalid token ID') || err?.code === 'CALL_EXCEPTION') {
+      throw new StaleTokenError(`Token ${tokenId} does not exist on L1 contract`)
+    }
+    // Try HTTP fallback if WS read flaked (mirrors the doFindOrCreateUser
+    // pattern). Less elaborate retry chain since the caller is a periodic
+    // background sweep — if HTTP also fails we just retry next tick.
+    const httpUrl = getL1HttpRpcUrl()
+    if (!httpUrl) throw err
+    const httpProvider = makeJsonRpcProvider(httpUrl, 11155111)
+    const httpContract = new Contract(CAW_NAMES_ADDRESS, CawProfileL1Abi, httpProvider)
+    ;[owner, username] = await Promise.all([
+      httpContract.ownerOf(tokenId),
+      httpContract.usernames(tokenId - 1),
+    ])
+    l1Provider = null
+    l1NameContract = null
+  }
+  if (!username || username.trim() === '') {
+    throw new Error(`Empty username for tokenId ${tokenId} on L1 contract — refusing to overwrite placeholder`)
+  }
+  const updated = await prisma.user.update({
+    where: { tokenId },
+    data: {
+      username: username.trim(),
+      address: owner.toLowerCase(),
+    },
+    select: { tokenId: true, username: true, address: true },
+  })
+  // The cached findOrCreateUser entry for this tokenId may now hold a
+  // promise that resolved against the placeholder state; drop it so the
+  // next call re-reads the fresh row.
+  userCache.delete(tokenId)
+  console.log(`[UserService] Refreshed stale user tokenId=${tokenId} → username=${updated.username} owner=${updated.address}`)
+  return updated
+}
+
+/**
  * syncTokensOwnedByWallet
  * Looks up tokens owned by a specific wallet via L1 balanceOf +
  * tokenOfOwnerByIndex. O(tokensOwned) instead of scanning every user row.

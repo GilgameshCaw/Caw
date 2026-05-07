@@ -10,6 +10,7 @@ import { checkDomainObjectExists } from '../ActionProcessor/domainObjectChecks'
 import { processDomainEffects, resolveActionUsers } from '../ActionProcessor/domainProcessor'
 import { CawNotFoundError } from '../ActionProcessor/actionHandlers'
 import type { RawAction } from '../ActionProcessor/types'
+import { refreshUserFromChain, StaleTokenError } from '../UserService'
 
 // Lazy-initialized L2 read provider for the pending-mint-deposit watcher.
 // Reused across ticks so we don't churn sockets.
@@ -883,6 +884,78 @@ async function cleanupOrphanActions() {
  *
  * Cost per tick: one L2 RPC call per unique waiting sender. Typically 0-5 calls.
  */
+
+/**
+ * Refresh User rows that look like FK-eager placeholders.
+ *
+ * Multiple write paths upsert a User with `username='user_<id>'` and
+ * `address=''` when an action references a tokenId we don't have a real
+ * row for yet (actions.ts upsert paths around lines 793/798/866/871/939,
+ * ScheduledPostProcessor:83). The intent is "create a placeholder so the
+ * FK has somewhere to point; the indexer will fill in real values when
+ * the Mint event lands." But if the Mint event was already processed
+ * (or will never arrive — e.g. cross-client mints, or events from
+ * pre-redeploy contracts), nothing comes back to fix the row, and the
+ * tokenId is stuck visible as `user_<id>` forever.
+ *
+ * This sweep finds those rows once a minute and reads canonical values
+ * straight from L1. Each tick is bounded (max 50/run) so a backlog
+ * doesn't take the cleaner offline. StaleTokenErrors (token doesn't
+ * exist on the live contract) are logged once and skipped — those rows
+ * are debris from the pre-redeploy era and can't be repaired.
+ */
+const PLACEHOLDER_REFRESH_MAX_PER_TICK = 50
+async function cleanupPlaceholderUsers() {
+  try {
+    // Postgres regex on (username) — uses the existing username unique
+    // index for the equality optimization, then filters address. Cheap
+    // even on large tables since `user_<int>` is a narrow class.
+    const stale = await prisma.user.findMany({
+      where: {
+        address: '',
+        username: { startsWith: 'user_' },
+      },
+      select: { tokenId: true, username: true, address: true },
+      take: PLACEHOLDER_REFRESH_MAX_PER_TICK,
+    })
+
+    if (stale.length === 0) return
+
+    let refreshed = 0
+    let skipped = 0
+    for (const row of stale) {
+      // Defensive: the startsWith filter catches `user_anything`; verify
+      // the strict shape before triggering an L1 read.
+      if (row.username !== `user_${row.tokenId}`) continue
+      try {
+        await refreshUserFromChain(row.tokenId)
+        refreshed++
+      } catch (err: any) {
+        if (err instanceof StaleTokenError) {
+          // Mark with a non-placeholder username so we stop re-trying
+          // every minute. Choose a sentinel the FE knows to render as
+          // "this token doesn't exist on the current contract."
+          await prisma.user.update({
+            where: { tokenId: row.tokenId },
+            data: { username: `stale_${row.tokenId}` },
+          }).catch(() => { /* row may have been deleted concurrently */ })
+          logger.log(`Placeholder refresh: token ${row.tokenId} is stale on L1, marked stale_${row.tokenId}`)
+          skipped++
+          continue
+        }
+        // Transient errors (RPC blip) — leave the row as-is and retry next tick.
+        logger.error(`Placeholder refresh failed for token ${row.tokenId}:`, err?.message || err)
+      }
+    }
+
+    if (refreshed > 0 || skipped > 0) {
+      logger.log(`Placeholder user refresh: refreshed=${refreshed} skipped(stale)=${skipped} of ${stale.length} candidates`)
+    }
+  } catch (err) {
+    logger.error('Fatal error during placeholder-user refresh:', err)
+  }
+}
+
 async function cleanupPendingMintDeposits() {
   try {
     const waitingRows = await prisma.txQueue.findMany({
@@ -1036,6 +1109,11 @@ async function runDataCleanup() {
   // Recover Action rows whose domain side-effects never landed (e.g. pm2
   // crash between Tx1 and Tx2). Bounded to last hour, max 100 per tick.
   await cleanupOrphanActions()
+
+  // Refresh `user_<id>`/`address=''` placeholder rows that the action
+  // upsert paths created when the Mint event hadn't yet been indexed.
+  // Bounded to 50 per tick so a backlog doesn't dominate the loop.
+  await cleanupPlaceholderUsers()
 
   // Clean up failed txqueue records and update associated caws
   await cleanupFailedTxQueue()

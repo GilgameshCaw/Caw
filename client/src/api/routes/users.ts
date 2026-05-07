@@ -14,6 +14,7 @@ import { ActionType } from '@prisma/client'
 import { getBlockedUserIds } from '../shared/blockUtils'
 import { requireAuth } from '../middleware/auth'
 import { markOrphan, markOrphanWithVariants } from '../util/orphanedMedia'
+import { isPlaceholderUser } from '../../services/UserService'
 
 // Validation limits for profile fields (must match ActionProcessor)
 const PROFILE_FIELD_LIMITS: Record<string, number> = {
@@ -65,6 +66,22 @@ router.post('/ensure', async (req, res) => {
       return res.status(202).json({
         error: 'user not yet indexed',
         retryAfterSeconds: 3,
+      })
+    }
+
+    // Placeholder rows (username=`user_<id>`, address='') exist when an
+    // action eager-FK'd against this tokenId before its Mint event was
+    // indexed locally — see actions.ts upsert paths. The DataCleaner
+    // sweep refreshes them in the background; from the FE's perspective
+    // it's the same "not yet indexed" state, so we return 202 and let
+    // it poll. Once the sweep populates real values, the next /ensure
+    // returns 200 and the profile renders.
+    if (isPlaceholderUser(user)) {
+      console.log(`[/api/users/ensure] tokenId=${numericTokenId} placeholder row, awaiting refresh`)
+      res.setHeader('Retry-After', '5')
+      return res.status(202).json({
+        error: 'user pending chain refresh',
+        retryAfterSeconds: 5,
       })
     }
 
