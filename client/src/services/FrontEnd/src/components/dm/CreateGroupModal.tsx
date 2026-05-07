@@ -2,12 +2,14 @@ import { useEffect, useState } from 'react'
 import ModalWrapper from '~/components/modals/ModalWrapper'
 import { apiFetch } from '~/api/client'
 import { useTheme } from '~/hooks/useTheme'
+import { getUserAvatar } from '~/utils/defaultAvatar'
 
 type SearchUser = {
   tokenId: number
   username: string
   displayName?: string
   avatarUrl?: string
+  defaultAvatarId?: number | null
   hasDmIdentity?: boolean
 }
 
@@ -138,7 +140,7 @@ export default function CreateGroupModal({ isOpen, onClose, currentUserId, onCre
                   disabled={!u.hasDmIdentity}
                   className={`w-full flex items-center gap-2 px-3 py-2 text-left text-sm ${isDark ? 'hover:bg-zinc-800' : 'hover:bg-zinc-100'} ${u.hasDmIdentity ? '' : 'opacity-50 cursor-not-allowed'}`}
                 >
-                  {u.avatarUrl && <img src={u.avatarUrl} alt="" className="w-7 h-7 rounded-full" />}
+                  <img src={getUserAvatar(u)} alt="" className="w-7 h-7 rounded-full" />
                   <div className="flex-1">
                     <div>{u.displayName || u.username}</div>
                     <div className={`text-xs ${muted}`}>@{u.username}{!u.hasDmIdentity ? ' — DMs not enabled' : ''}</div>

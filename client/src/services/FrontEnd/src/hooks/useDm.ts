@@ -30,6 +30,8 @@ export type UiParticipant = {
       username: string
       displayName?: string
       image?: string
+      avatarUrl?: string | null
+      defaultAvatarId?: number | null
       address?: string
       tokenId: number
     }
@@ -271,7 +273,9 @@ export function useDmClient(tokenId?: number, username?: string) {
               user: {
                 username: p.identity?.user?.username || 'Unknown',
                 displayName: p.identity?.user?.displayName,
-                image: p.identity?.user?.avatarUrl,
+                image: p.identity?.user?.avatarUrl ?? p.identity?.user?.image,
+                avatarUrl: p.identity?.user?.avatarUrl ?? null,
+                defaultAvatarId: p.identity?.user?.defaultAvatarId ?? null,
                 address: p.identity?.user?.address,
                 tokenId: p.userId,
               },

@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import { apiFetch } from '~/api/client'
 import { useTheme } from '~/hooks/useTheme'
 import type { UiParticipant } from '~/hooks/useDm'
+import { getUserAvatar } from '~/utils/defaultAvatar'
 
 type Invite = {
   id: string
@@ -41,7 +42,7 @@ export default function GroupMembersPanel(props: Props) {
   const [nameDraft, setNameDraft] = useState(conversationName || '')
   const [adding, setAdding] = useState(false)
   const [addQuery, setAddQuery] = useState('')
-  const [addResults, setAddResults] = useState<Array<{ tokenId: number; username: string; displayName?: string; avatarUrl?: string; hasDmIdentity?: boolean }>>([])
+  const [addResults, setAddResults] = useState<Array<{ tokenId: number; username: string; displayName?: string; avatarUrl?: string; defaultAvatarId?: number | null; hasDmIdentity?: boolean }>>([])
   const [invites, setInvites] = useState<Invite[]>([])
   const [inviteExpiryHours, setInviteExpiryHours] = useState(24)
   const [inviteMaxUses, setInviteMaxUses] = useState(5)
@@ -173,7 +174,7 @@ export default function GroupMembersPanel(props: Props) {
         <ul className="space-y-2 mb-6">
           {members.map(m => (
             <li key={m.userId} className="flex items-center gap-2">
-              {m.identity.user.image && <img src={m.identity.user.image} alt="" className="w-8 h-8 rounded-full" />}
+              <img src={getUserAvatar(m.identity.user)} alt="" className="w-8 h-8 rounded-full" />
               <div className="flex-1">
                 <div className="text-sm">{m.identity.user.displayName || m.identity.user.username}</div>
                 <div className={`text-xs ${muted}`}>@{m.identity.user.username}{m.role === 'OWNER' ? ' • owner' : ''}</div>
@@ -207,7 +208,8 @@ export default function GroupMembersPanel(props: Props) {
                         disabled={!u.hasDmIdentity || busy}
                         className={`w-full flex items-center gap-2 px-3 py-2 text-left text-sm ${u.hasDmIdentity ? (isDark ? 'hover:bg-zinc-800' : 'hover:bg-zinc-100') : 'opacity-50 cursor-not-allowed'}`}
                       >
-                        @{u.username}{!u.hasDmIdentity ? ' (no DMs)' : ''}
+                        <img src={getUserAvatar(u)} alt="" className="w-7 h-7 rounded-full" />
+                        <span>@{u.username}{!u.hasDmIdentity ? ' (no DMs)' : ''}</span>
                       </button>
                     ))}
                   </div>
