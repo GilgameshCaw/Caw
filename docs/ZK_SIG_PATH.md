@@ -64,19 +64,26 @@ from many different signers each get their own group.
 
 | n   | sig gas    | zk gas (real) | Δ vs sig | Δ/action |
 |-----|------------|---------------|----------|----------|
-| 1   | 150,205    | 369,751       | +219,546 | +219,546 |
-| 3   | 156,410    | 419,544       | +263,134 | +87,711  |
-| 8   | 300,263    | 544,201       | +243,938 | +30,492  |
-| 16  | 553,147    | 744,076       | +190,929 | +11,933  |
-| **20** | **668,520** | **866,414**   | **+197,894** | **+9,895** |
-| **23** | **732,943** | **941,624**   | **+208,681** | **+9,073** |
-| **28** | **899,743** | **1,066,783** | **+167,040** | **+5,966** |
-| **30** | **957,453** | **1,160,992** | **+203,539** | **+6,785** |
-| 64  | 1,968,268  | 1,995,826     | +27,558  | +431     |
-| 128 | 3,918,898  | 3,668,409     | -250,489 | -1,957   |
+| 1   | 149,747    | 368,982       | +219,235 | +219,235 |
+| 3   | 155,028    | 418,111       | +263,083 | +87,694  |
+| 8   | 296,563    | 541,054       | +244,491 | +30,561  |
+| 16  | 545,572    | 738,048       | +192,476 | +12,030  |
+| **20** | **658,983** | **858,938**   | **+199,955** | **+9,998** |
+| **23** | **721,905** | **932,979**   | **+211,074** | **+9,177** |
+| **28** | **886,103** | **1,056,243** | **+170,140** | **+6,076** |
+| **30** | **942,914** | **1,149,618** | **+206,704** | **+6,890** |
+| 64  | 1,934,957  | 1,969,864     | +34,907  | +545     |
+| 128 | 3,843,973  | 3,608,391     | -235,582 | -1,840   |
 
-**Break-even (linear interpolation between n=64 and n=128): n ≈ 70.3
+**Break-even (linear interpolation between n=64 and n=128): n ≈ 72.3
 actions per batch.**
+
+(Numbers reflect the post-`148b021` per-action optimizations:
+useCawonce SLOAD fold, inline-asm clientHash chain, and
+ZK-path packedActions-hash dedup. The original measurement
+hovered around 70 — the small bump in break-even comes from
+the sig path picking up larger per-action savings than the ZK
+path did.)
 
 The bolded rows match real prod batch sizes sampled from test.caw.social
 on 2026-05-07 (`ValidatorTx` table). At those sizes the ZK path costs
