@@ -431,8 +431,10 @@ contract CawActions is Ownable {
   ///      Used to look up the owner for session-key resolution before fully unpacking.
   function _peekSenderId(bytes calldata packedActions, uint256 pos) internal pure returns (uint32 senderId) {
     assembly {
-      // skip 1 byte actionType, then load 4 bytes BE → shift to low 32 bits
-      senderId := and(shr(216, calldataload(add(packedActions.offset, add(pos, 1)))), 0xFFFFFFFF)
+      // calldataload reads 32 bytes; pos+1 lands on senderId's first byte;
+      // senderId occupies bytes [0..4) of the loaded word, so shift right
+      // by 28 bytes (224 bits) to land it in the low 32 bits.
+      senderId := and(shr(224, calldataload(add(packedActions.offset, add(pos, 1)))), 0xFFFFFFFF)
     }
   }
 

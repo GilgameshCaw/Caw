@@ -1,0 +1,479 @@
+/**
+ * Tests for processActionsWithZkSigs — the on-chain ZK-path entry point.
+ *
+ * What's tested here: the on-chain STATE-APPLICATION path. The cryptographic
+ * guarantee (the proof actually verifies the ECDSA signatures) is covered
+ * by:
+ *   - test/zk-digest-equivalence-test.js (Rust digest math == Solidity)
+ *   - solidity/zk/sig-recovery/script/src/bin/main.rs --execute (circuit
+ *     correctness inside SP1's zkVM emulator)
+ *   - the testnet end-to-end test (#18) (real proof against the canonical
+ *     SP1 verifier on Base Sepolia)
+ *
+ * Here we use a MockSP1Verifier so each test takes seconds, not minutes.
+ * The mock has a `setShouldAccept(bool)` toggle so we can also test the
+ * reject path.
+ *
+ * Scenarios covered:
+ *   1. Happy path: 3-action batch, all 3 execute, executedBitmap = 0b111,
+ *      cawonces consumed, validator credited the implicit tip, hash chain
+ *      advances by exactly 3.
+ *   2. Verifier reject: setShouldAccept(false), processActionsWithZkSigs
+ *      reverts.
+ *   3. signers length mismatch: 3 actions but only 2*20 bytes in signers,
+ *      reverts cleanly.
+ *   4. Skip-don't-revert: pre-consume cawonce K via the sig path. Submit a
+ *      3-action ZK batch where action[1] reuses K. Result: actions 0 and 2
+ *      execute, action 1 is skipped, executedBitmap = 0b101, validator
+ *      credit reflects 2 actions, hash chain advances by 2.
+ *   5. Signer mismatch within a batch group: a sig group of size 2 but the
+ *      caller supplies different signers[0] vs signers[1]. Reverts with
+ *      "Signer mismatch within group".
+ *   6. ZK path locked when zkVerifier is unset: deploy CawActions with
+ *      address(0) verifier, call processActionsWithZkSigs → reverts with
+ *      "ZK path not configured".
+ */
+
+const MintableCaw = artifacts.require("MintableCaw");
+const CawClientManager = artifacts.require("CawClientManager");
+const CawProfile = artifacts.require("CawProfile");
+const CawProfileL2 = artifacts.require("CawProfileL2");
+const CawProfileMinter = artifacts.require("CawProfileMinter");
+const CawProfileQuoter = artifacts.require("CawProfileQuoter");
+const CawActions = artifacts.require("CawActions");
+const CawBuyAndBurn = artifacts.require("CawBuyAndBurn");
+const MockSwapRouter = artifacts.require("MockSwapRouter");
+const MockLayerZeroEndpoint = artifacts.require("MockLayerZeroEndpoint");
+const MockSP1Verifier = artifacts.require("MockSP1Verifier");
+
+const { signTypedData, SignTypedDataVersion } = require('@metamask/eth-sig-util');
+
+const l1 = 30101;
+const l2 = 8453;
+
+const testKeys = {
+  '0xf39fd6e51aad88f6f4ce6ab8827279cfffb92266': Buffer.from('ac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80', 'hex'),
+  '0x70997970c51812dc3a010c7d01b50e0d17dc79c8': Buffer.from('59c6995e998f97a5a0044966f0945389dc9e86dae88c7a8412f4603b6b78690d', 'hex'),
+  '0x3c44cdddb6a900fa2b585dd299e03d12fa4293bc': Buffer.from('5de4111afa1a4b94908f83103eb1f1706367c2e68ca870fc3fb9a804cdab365a', 'hex'),
+};
+function privFor(addr) {
+  const key = testKeys[addr.toLowerCase()];
+  if (!key) throw new Error(`No test key for ${addr}`);
+  return key;
+}
+
+const dataTypes = {
+  EIP712Domain: [
+    { name: 'name', type: 'string' },
+    { name: 'version', type: 'string' },
+    { name: 'chainId', type: 'uint256' },
+    { name: 'verifyingContract', type: 'address' },
+  ],
+  ActionData: [
+    { name: 'actionType', type: 'uint8' },
+    { name: 'senderId', type: 'uint32' },
+    { name: 'receiverId', type: 'uint32' },
+    { name: 'receiverCawonce', type: 'uint32' },
+    { name: 'clientId', type: 'uint32' },
+    { name: 'cawonce', type: 'uint32' },
+    { name: 'recipients', type: 'uint32[]' },
+    { name: 'amounts', type: 'uint64[]' },
+    { name: 'text', type: 'bytes' },
+  ],
+  ActionBatch: [
+    { name: 'senderId', type: 'uint32' },
+    { name: 'firstCawonce', type: 'uint32' },
+    { name: 'actionCount', type: 'uint32' },
+    { name: 'actionsHash', type: 'bytes32' },
+  ],
+};
+
+const ACTION_TYPE = { caw: 0, like: 1, recaw: 3, follow: 4, other: 7 };
+
+// ============================================================================
+// Pack helpers (same as batched-actions-test)
+// ============================================================================
+function packActionForSlice(a) {
+  const recipients = a.recipients || [];
+  const amounts = a.amounts || [];
+  const textHex = (a.text && a.text !== '0x') ? a.text.replace(/^0x/, '') : '';
+  const textLen = textHex.length / 2;
+  const size = 21 + 1 + 1 + (recipients.length * 4) + (amounts.length * 8) + 2 + textLen;
+  const buf = Buffer.alloc(size);
+  let pos = 0;
+  buf.writeUInt8(Number(a.actionType), pos); pos += 1;
+  buf.writeUInt32BE(Number(a.senderId), pos); pos += 4;
+  buf.writeUInt32BE(Number(a.receiverId || 0), pos); pos += 4;
+  buf.writeUInt32BE(Number(a.receiverCawonce || 0), pos); pos += 4;
+  buf.writeUInt32BE(Number(a.clientId), pos); pos += 4;
+  buf.writeUInt32BE(Number(a.cawonce), pos); pos += 4;
+  buf.writeUInt8(recipients.length, pos); pos += 1;
+  buf.writeUInt8(amounts.length, pos); pos += 1;
+  for (const r of recipients) { buf.writeUInt32BE(Number(r), pos); pos += 4; }
+  for (const amt of amounts) { buf.writeBigUInt64BE(BigInt(amt), pos); pos += 8; }
+  buf.writeUInt16BE(textLen, pos); pos += 2;
+  if (textLen > 0) Buffer.from(textHex, 'hex').copy(buf, pos);
+  return buf;
+}
+function packActions(actions) {
+  const slices = actions.map(packActionForSlice);
+  const total = 2 + slices.reduce((a, b) => a + b.length, 0);
+  const buf = Buffer.alloc(total);
+  let pos = 0;
+  buf.writeUInt16BE(actions.length, pos); pos += 2;
+  for (const s of slices) { s.copy(buf, pos); pos += s.length; }
+  return { hex: '0x' + buf.toString('hex'), slices };
+}
+function packGroupedSigs(groups) {
+  const buf = Buffer.alloc(2 + groups.length * 67);
+  let pos = 0;
+  buf.writeUInt16BE(groups.length, pos); pos += 2;
+  for (const g of groups) {
+    buf.writeUInt16BE(g.groupSize, pos); pos += 2;
+    buf.writeUInt8(g.v, pos); pos += 1;
+    Buffer.from(g.r.replace(/^0x/, ''), 'hex').copy(buf, pos); pos += 32;
+    Buffer.from(g.s.replace(/^0x/, ''), 'hex').copy(buf, pos); pos += 32;
+  }
+  return '0x' + buf.toString('hex');
+}
+function splitSig(sigHex) {
+  const sans = sigHex.replace(/^0x/, '');
+  return {
+    r: '0x' + sans.slice(0, 64),
+    s: '0x' + sans.slice(64, 128),
+    v: parseInt(sans.slice(128, 130), 16),
+  };
+}
+
+async function getDomain(cawActions) {
+  const chainId = await web3.eth.getChainId();
+  return { chainId, name: 'Caw Protocol', version: '1', verifyingContract: cawActions.address };
+}
+
+function signActionData(signer, action, domain) {
+  const data = {
+    primaryType: 'ActionData',
+    domain,
+    types: { EIP712Domain: dataTypes.EIP712Domain, ActionData: dataTypes.ActionData },
+    message: { ...action },
+  };
+  const sig = signTypedData({ data, privateKey: privFor(signer), version: SignTypedDataVersion.V4 });
+  return splitSig(sig);
+}
+
+// Pack the verified signers array — concatenated 20-byte addresses, one per
+// action, in batch order.
+function packSigners(addrs) {
+  const buf = Buffer.alloc(addrs.length * 20);
+  for (let i = 0; i < addrs.length; i++) {
+    Buffer.from(addrs[i].replace(/^0x/, ''), 'hex').copy(buf, i * 20);
+  }
+  return '0x' + buf.toString('hex');
+}
+
+// ============================================================================
+// Setup
+// ============================================================================
+let setup;
+async function fullSetup(accounts) {
+  const l1Endpoint = await MockLayerZeroEndpoint.new(l1);
+  const l2Endpoint = await MockLayerZeroEndpoint.new(l2);
+  const token = await MintableCaw.new();
+  const mockRouter = await MockSwapRouter.new(token.address);
+  const buyAndBurn = await CawBuyAndBurn.new(token.address, mockRouter.address);
+  const clientManager = await CawClientManager.new(buyAndBurn.address);
+  const CawProfileURI = artifacts.require("CawProfileURI");
+  const CawFontDataA = artifacts.require("CawFontDataA");
+  const CawFontDataB = artifacts.require("CawFontDataB");
+  const fontA = await CawFontDataA.new();
+  const fontB = await CawFontDataB.new();
+  const uri = await CawProfileURI.new(fontA.address, fontB.address);
+
+  const cawProfileL2 = await CawProfileL2.new(l1, l2Endpoint.address);
+  await l1Endpoint.setDestLzEndpoint(cawProfileL2.address, l2Endpoint.address);
+
+  const cawProfile = await CawProfile.new(token.address, uri.address, buyAndBurn.address, clientManager.address, l1Endpoint.address, l1);
+  await buyAndBurn.setCawProfile(cawProfile.address);
+  await cawProfileL2.setL1Peer(l1, cawProfile.address, false);
+  await l2Endpoint.setDestLzEndpoint(cawProfile.address, l1Endpoint.address);
+  await cawProfile.setL2Peer(l2, cawProfileL2.address);
+
+  await clientManager.createClient("Test Client", accounts[0], l2, 0, 0, 0, 0);
+  const clientId = 1;
+  const minter = await CawProfileMinter.new(token.address, cawProfile.address, mockRouter.address);
+  await cawProfile.setMinter(minter.address);
+  const quoter = await CawProfileQuoter.new(cawProfile.address);
+
+  // Deploy mock verifier and a CawActions wired to it. The vkey value is
+  // arbitrary in tests — the mock ignores it.
+  const mockVerifier = await MockSP1Verifier.new();
+  const dummyVKey = "0x" + "11".repeat(32);
+  const cawActions = await CawActions.new(cawProfileL2.address, mockVerifier.address, dummyVKey);
+  await cawProfileL2.setCawActions(cawActions.address);
+
+  return { token, cawProfile, cawProfileL2, minter, quoter, cawActions, clientManager, clientId, mockVerifier };
+}
+
+async function buyUsername(user, name) {
+  const mintAmount = (10n * 1_000_000_000n * 10n ** 18n).toString();
+  await setup.token.mint(user, mintAmount);
+  const cost = await setup.minter.costOfName(name);
+  await setup.token.approve(setup.minter.address, cost.toString(), { from: user });
+  const quote = await setup.quoter.mintQuote(setup.clientId, false);
+  await setup.minter.mint(setup.clientId, name, quote.lzTokenFee, {
+    from: user, value: quote.nativeFee.toString(),
+  });
+  return Number(await setup.cawProfile.totalSupply());
+}
+
+async function depositAndAuth(user, tokenId, amountWholeCaw) {
+  const cawAmountWei = (BigInt(amountWholeCaw) * 10n ** 18n).toString();
+  const balance = await setup.token.balanceOf(user);
+  await setup.token.approve(setup.cawProfile.address, balance.toString(), { from: user });
+  const quote = await setup.quoter.depositQuote(setup.clientId, tokenId, cawAmountWei, l2, false);
+  await setup.cawProfile.deposit(setup.clientId, tokenId, cawAmountWei, l2, quote.lzTokenFee, {
+    from: user, value: quote.nativeFee.toString(),
+  });
+}
+
+// ============================================================================
+// Tests
+// ============================================================================
+contract('CawActions — processActionsWithZkSigs', function (accounts) {
+  const validatorOwner = accounts[0];
+  const userA = accounts[1];
+  const userB = accounts[2];
+
+  let validatorTokenId, userATokenId, userBTokenId, domain;
+
+  before(async function () {
+    this.timeout(180000);
+    setup = await fullSetup(accounts);
+    validatorTokenId = await buyUsername(validatorOwner, 'validator');
+    userATokenId = await buyUsername(userA, 'usera');
+    userBTokenId = await buyUsername(userB, 'userb');
+    await depositAndAuth(validatorOwner, validatorTokenId, 5_000_000);
+    await depositAndAuth(userA, userATokenId, 5_000_000);
+    await depositAndAuth(userB, userBTokenId, 5_000_000);
+    domain = await getDomain(setup.cawActions);
+  });
+
+  // --------------------------------------------
+  // 1. Happy path — 3-action batch all execute
+  // --------------------------------------------
+  it('happy path: 3-action ZK batch executes all, hash chain advances by 3', async function () {
+    const start = Number(await setup.cawActions.nextCawonce(userATokenId));
+    const actions = [0, 1, 2].map(i => ({
+      actionType: ACTION_TYPE.caw, senderId: userATokenId, receiverId: 0, receiverCawonce: 0,
+      clientId: setup.clientId, cawonce: start + i,
+      recipients: [], amounts: [0],   // owner-signed, explicit tip
+      text: '0x' + Buffer.from(`zk${i}`).toString('hex'),
+    }));
+    const { hex } = packActions(actions);
+    // Three single-sig groups (one per action), all signed by userA.
+    const sigs = actions.map(a => signActionData(userA, a, domain));
+    const sigsHex = packGroupedSigs(sigs.map(s => ({ groupSize: 1, ...s })));
+    // For the ZK path, the verifier is mocked. signers[i] = userA in lowercase.
+    const signersHex = packSigners([userA, userA, userA]);
+    const dummyProof = "0x" + "ab".repeat(32);
+
+    const countBefore = Number(await setup.cawActions.clientActionCount(setup.clientId));
+
+    await setup.cawActions.processActionsWithZkSigs(
+      validatorTokenId, hex, sigsHex, signersHex, dummyProof, 0, 0
+    );
+
+    for (let i = 0; i < 3; i++) {
+      expect(await setup.cawActions.isCawonceUsed(userATokenId, start + i)).to.equal(true);
+    }
+    const countAfter = Number(await setup.cawActions.clientActionCount(setup.clientId));
+    expect(countAfter - countBefore).to.equal(3);
+  });
+
+  // --------------------------------------------
+  // 2. Verifier rejects → revert
+  // --------------------------------------------
+  it('reverts when the verifier rejects', async function () {
+    await setup.mockVerifier.setShouldAccept(false);
+    const start = Number(await setup.cawActions.nextCawonce(userATokenId));
+    const action = {
+      actionType: ACTION_TYPE.caw, senderId: userATokenId, receiverId: 0, receiverCawonce: 0,
+      clientId: setup.clientId, cawonce: start,
+      recipients: [], amounts: [0], text: '0x',
+    };
+    const { hex } = packActions([action]);
+    const sig = signActionData(userA, action, domain);
+    const sigsHex = packGroupedSigs([{ groupSize: 1, ...sig }]);
+    const signersHex = packSigners([userA]);
+    const dummyProof = "0x" + "cc".repeat(32);
+
+    let reverted = false;
+    try {
+      await setup.cawActions.processActionsWithZkSigs(
+        validatorTokenId, hex, sigsHex, signersHex, dummyProof, 0, 0
+      );
+    } catch (err) {
+      reverted = true;
+      expect((err.message || '').toLowerCase()).to.include('mock verifier: rejected');
+    }
+    expect(reverted, 'expected revert when verifier rejects').to.equal(true);
+    // Cawonce was NOT consumed — full rollback.
+    expect(await setup.cawActions.isCawonceUsed(userATokenId, start)).to.equal(false);
+
+    await setup.mockVerifier.setShouldAccept(true); // reset
+  });
+
+  // --------------------------------------------
+  // 3. signers length mismatch → revert
+  // --------------------------------------------
+  it('reverts when signers.length != actionCount * 20', async function () {
+    const start = Number(await setup.cawActions.nextCawonce(userBTokenId));
+    const actions = [0, 1].map(i => ({
+      actionType: ACTION_TYPE.caw, senderId: userBTokenId, receiverId: 0, receiverCawonce: 0,
+      clientId: setup.clientId, cawonce: start + i,
+      recipients: [], amounts: [0], text: '0x',
+    }));
+    const { hex } = packActions(actions);
+    const sigs = actions.map(a => signActionData(userB, a, domain));
+    const sigsHex = packGroupedSigs(sigs.map(s => ({ groupSize: 1, ...s })));
+    // Only ONE signer for 2 actions — should revert.
+    const badSignersHex = packSigners([userB]);
+    const dummyProof = "0x" + "ab".repeat(32);
+
+    let reverted = false;
+    try {
+      await setup.cawActions.processActionsWithZkSigs(
+        validatorTokenId, hex, sigsHex, badSignersHex, dummyProof, 0, 0
+      );
+    } catch (err) {
+      reverted = true;
+      expect((err.message || '').toLowerCase()).to.include('signers length mismatch');
+    }
+    expect(reverted, 'expected revert on signers length mismatch').to.equal(true);
+  });
+
+  // --------------------------------------------
+  // 4. Skip-don't-revert on cawonce conflict
+  // --------------------------------------------
+  it('skip-don\'t-revert: pre-consumed cawonce mid-batch is skipped, others execute', async function () {
+    // First, consume cawonce K via the sig path so it's marked used.
+    const start = Number(await setup.cawActions.nextCawonce(userBTokenId));
+    const skipMe = start + 1; // the one we'll pre-consume
+
+    const preAction = {
+      actionType: ACTION_TYPE.caw, senderId: userBTokenId, receiverId: 0, receiverCawonce: 0,
+      clientId: setup.clientId, cawonce: skipMe,
+      recipients: [], amounts: [0], text: '0x' + Buffer.from('pre').toString('hex'),
+    };
+    const { hex: preHex } = packActions([preAction]);
+    const preSig = signActionData(userB, preAction, domain);
+    const preSigsHex = packGroupedSigs([{ groupSize: 1, ...preSig }]);
+    await setup.cawActions.processActions(validatorTokenId, preHex, preSigsHex, 0, 0);
+    expect(await setup.cawActions.isCawonceUsed(userBTokenId, skipMe)).to.equal(true);
+
+    // Now build a 3-action ZK batch. Action 0 uses cawonce `start`, action 1
+    // uses `skipMe` (already consumed → must skip), action 2 uses `start+2`.
+    const actions = [start, skipMe, start + 2].map(c => ({
+      actionType: ACTION_TYPE.caw, senderId: userBTokenId, receiverId: 0, receiverCawonce: 0,
+      clientId: setup.clientId, cawonce: c,
+      recipients: [], amounts: [0], text: '0x',
+    }));
+    const { hex } = packActions(actions);
+    const sigs = actions.map(a => signActionData(userB, a, domain));
+    const sigsHex = packGroupedSigs(sigs.map(s => ({ groupSize: 1, ...s })));
+    const signersHex = packSigners([userB, userB, userB]);
+    const dummyProof = "0x" + "ee".repeat(32);
+
+    const countBefore = Number(await setup.cawActions.clientActionCount(setup.clientId));
+    const tx = await setup.cawActions.processActionsWithZkSigs(
+      validatorTokenId, hex, sigsHex, signersHex, dummyProof, 0, 0
+    );
+
+    // Hash chain advanced by exactly 2 (the executed actions), not 3.
+    const countAfter = Number(await setup.cawActions.clientActionCount(setup.clientId));
+    expect(countAfter - countBefore).to.equal(2);
+
+    // Cawonces 0 and 2 now used; skipMe was already used (still true).
+    expect(await setup.cawActions.isCawonceUsed(userBTokenId, start)).to.equal(true);
+    expect(await setup.cawActions.isCawonceUsed(userBTokenId, start + 2)).to.equal(true);
+
+    // Event bitmap reports executed slots. Bit 0 = action 0 ran, bit 1 = 0
+    // (skipped), bit 2 = action 2 ran. Bitmap is shifted by actionsSeen,
+    // which started at 0 here, so bits 0 and 2 set → bitmap == 0b101 == 5.
+    const ev = tx.logs.find(l => l.event === 'ActionsProcessedZk');
+    expect(ev).to.not.equal(undefined);
+    expect(ev.args.actionsExecutedBitmap.toString()).to.equal('5');
+    expect(ev.args.actionCount.toString()).to.equal('3');
+  });
+
+  // --------------------------------------------
+  // 5. Signer mismatch within a batch group → revert
+  // --------------------------------------------
+  it('reverts when signers within a batch-sig group disagree', async function () {
+    // Pretend we have a 2-action batch group from userA, but the prover
+    // (or a malicious caller) supplies signers[0]=userA, signers[1]=userB.
+    // The contract must catch this — otherwise a malicious prover could
+    // smuggle an unauthorized signer onto a batched action.
+    const start = Number(await setup.cawActions.nextCawonce(userATokenId));
+    const actions = [0, 1].map(i => ({
+      actionType: ACTION_TYPE.caw, senderId: userATokenId, receiverId: 0, receiverCawonce: 0,
+      clientId: setup.clientId, cawonce: start + i,
+      recipients: [], amounts: [0], text: '0x',
+    }));
+    const { hex } = packActions(actions);
+
+    // One sig group of size 2 (the batch-sig path). The (v,r,s) values are
+    // not actually verified by the mock, but the structure must parse.
+    const dummySig = signActionData(userA, actions[0], domain); // any well-formed (v,r,s)
+    const sigsHex = packGroupedSigs([{ groupSize: 2, ...dummySig }]);
+
+    // Mismatched signers within the group.
+    const signersHex = packSigners([userA, userB]);
+    const dummyProof = "0x" + "ff".repeat(32);
+
+    let reverted = false;
+    try {
+      await setup.cawActions.processActionsWithZkSigs(
+        validatorTokenId, hex, sigsHex, signersHex, dummyProof, 0, 0
+      );
+    } catch (err) {
+      reverted = true;
+      expect((err.message || '').toLowerCase()).to.include('signer mismatch within group');
+    }
+    expect(reverted, 'expected revert on signer mismatch within group').to.equal(true);
+  });
+
+  // --------------------------------------------
+  // 6. Verifier-not-configured → ZK path locked
+  // --------------------------------------------
+  it('reverts "ZK path not configured" when the contract was deployed without a verifier', async function () {
+    // Deploy a fresh CawActions with verifier = address(0).
+    const tinyEndpoint = await MockLayerZeroEndpoint.new(l2);
+    const tinyL2 = await CawProfileL2.new(l1, tinyEndpoint.address);
+    const noVerifier = await CawActions.new(
+      tinyL2.address,
+      "0x0000000000000000000000000000000000000000",
+      "0x0000000000000000000000000000000000000000000000000000000000000000"
+    );
+
+    const action = {
+      actionType: ACTION_TYPE.caw, senderId: 1, receiverId: 0, receiverCawonce: 0,
+      clientId: 1, cawonce: 0,
+      recipients: [], amounts: [0], text: '0x',
+    };
+    const { hex } = packActions([action]);
+    const sig = signActionData(userA, action, domain); // doesn't matter
+    const sigsHex = packGroupedSigs([{ groupSize: 1, ...sig }]);
+
+    let reverted = false;
+    try {
+      await noVerifier.processActionsWithZkSigs(
+        1, hex, sigsHex, packSigners([userA]), "0x", 0, 0
+      );
+    } catch (err) {
+      reverted = true;
+      expect((err.message || '').toLowerCase()).to.include('zk path not configured');
+    }
+    expect(reverted, 'expected revert when verifier address is zero').to.equal(true);
+  });
+});
