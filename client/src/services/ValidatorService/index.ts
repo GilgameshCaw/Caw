@@ -23,10 +23,105 @@ import { span } from '../../utils/trace'
 const PACKED_ABI = [
   'function processActions(uint32 validatorId, bytes packedActions, bytes sigs, uint256 withdrawFee, uint256 withdrawLzTokenAmount) payable',
   'function safeProcessActions(uint32 validatorId, bytes packedActions, bytes sigs, uint256 withdrawFee, uint256 withdrawLzTokenAmount) payable returns (uint256 successCount, string[] rejections)',
+  // ZK path. Only used when ZK_PROVER_ENABLED=1 AND a proof for this exact
+  // (packedActions, packedSigs) tuple has been pre-staged in zkProofCache.
+  // Falls back to processActions transparently if no proof is ready.
+  'function processActionsWithZkSigs(uint32 validatorId, bytes packedActions, bytes packedSigs, bytes signers, bytes proof, uint256 withdrawFee, uint256 withdrawLzTokenAmount) payable',
   'event ActionsProcessed(bytes packedActions)',
+  'event ActionsProcessedZk(bytes packedActions, uint256 actionsExecutedBitmap)',
   'event ActionRejected(uint32 senderId, uint32 cawonce, string reason)',
 ]
 const packedIface = new Interface(PACKED_ABI)
+
+// In-memory cache of pre-generated proofs, keyed by keccak256(packedActions || packedSigs).
+// A separate background worker (not yet wired) is the producer. The validator's
+// hot path reads from this cache to decide whether to submit via the ZK entry
+// point. Misses fall through to the sig path with no behavior change.
+//
+// Why in-memory rather than a persisted store: a stale proof would be useless
+// — proofs commit to specific packedActions bytes, and the validator rebuilds
+// those every batch. If the process restarts, in-flight proofs are lost; that's
+// fine, the next sig-path submit is the recovery.
+interface StagedZkProof {
+  packedActions: string
+  packedSigs: string
+  signers: string         // packed 20-byte addresses, 0x-prefixed hex
+  proof: string           // Groth16 proof bytes, 0x-prefixed hex
+  domainSeparator: string // sanity-check field; mismatch here is a bug
+}
+const zkProofCache = new Map<string, StagedZkProof>()
+
+/** Cache key for a (packedActions, packedSigs) tuple. */
+function zkCacheKey(packedActions: string, packedSigs: string): string {
+  return keccak256(solidityPacked(['bytes', 'bytes'], [packedActions, packedSigs]))
+}
+
+/**
+ * Stage a proof for a batch the validator will submit later. Producer side
+ * of the cache. Called from the (still dormant) background prover.
+ */
+export function stageZkProof(p: StagedZkProof): void {
+  zkProofCache.set(zkCacheKey(p.packedActions, p.packedSigs), p)
+}
+
+/** Non-mutating: returns the staged proof if any. */
+function peekZkProof(packedActions: string, packedSigs: string): StagedZkProof | null {
+  return zkProofCache.get(zkCacheKey(packedActions, packedSigs)) ?? null
+}
+
+/** Single-use: reads + deletes. Caller must be the one actually submitting. */
+function consumeZkProof(packedActions: string, packedSigs: string): StagedZkProof | null {
+  const key = zkCacheKey(packedActions, packedSigs)
+  const p = zkProofCache.get(key)
+  if (!p) return null
+  zkProofCache.delete(key)
+  return p
+}
+
+function isZkProverEnabled(): boolean {
+  return process.env.ZK_PROVER_ENABLED === '1'
+}
+
+/**
+ * Pick the right CawActions calldata for this batch.
+ *
+ * Returns ZK-path calldata if (a) the env flag is on AND (b) a matching
+ * proof is staged in the cache. Otherwise returns the sig-path calldata
+ * exactly as before (the cache miss is the no-op fallback). Callers don't
+ * branch on the result — they just send the bytes.
+ */
+function encodeProcessActionsCalldata(
+  validatorId: number,
+  multiData: { packedActions: string; packedSigs: string },
+  quote: { withdrawFee: bigint; withdrawLzTokenAmount: bigint },
+  opts: { consume: boolean },
+): { calldata: string; isZk: boolean } {
+  if (isZkProverEnabled()) {
+    const staged = opts.consume
+      ? consumeZkProof(multiData.packedActions, multiData.packedSigs)
+      : peekZkProof(multiData.packedActions, multiData.packedSigs)
+    if (staged) {
+      const calldata = packedIface.encodeFunctionData('processActionsWithZkSigs', [
+        validatorId,
+        multiData.packedActions,
+        multiData.packedSigs,
+        staged.signers,
+        staged.proof,
+        quote.withdrawFee,
+        quote.withdrawLzTokenAmount,
+      ])
+      return { calldata, isZk: true }
+    }
+  }
+  const calldata = packedIface.encodeFunctionData('processActions', [
+    validatorId,
+    multiData.packedActions,
+    multiData.packedSigs,
+    quote.withdrawFee,
+    quote.withdrawLzTokenAmount,
+  ])
+  return { calldata, isZk: false }
+}
 
 // Thin wrapper so this service's existing callers don't need to pass prisma
 // on every invocation. Shared helper lives in utils/txQueueFailure so it can
@@ -1059,20 +1154,20 @@ export const validatorService: Service = {
       multiData: { actions: any[]; v: number[]; r: string[]; s: string[]; packedActions: string; packedSigs: string },
       quote: { nativeFee: bigint; withdrawFee: bigint; withdrawLzTokenAmount: bigint }
     ): Promise<bigint> {
-      // 1) ABI-encode the same calldata you'd send on-chain
-      const calldata = packedIface.encodeFunctionData('processActions', [
-        validatorId,
-        multiData.packedActions,
-        multiData.packedSigs,
-        quote.withdrawFee,
-        quote.withdrawLzTokenAmount,
-      ]);
+      // Peek at the ZK cache (don't consume here — the actual submit happens
+      // later in submitProcessActions). The estimate just needs to know which
+      // path we'll take so the gas budget is right.
+      const { isZk } = encodeProcessActionsCalldata(validatorId, multiData, quote, { consume: false });
 
       // Calculate gas limit from action count instead of estimateGas.
       // Infura's estimateGas fails with "missing revert data" on large calldata
-      // even when eth_call succeeds. ~50K gas/action + 100K base, 30% buffer.
+      // even when eth_call succeeds. Sig path: ~50K gas/action + 100K base.
+      // ZK path: ~300K verifier + 30K/action + 100K base (verifier dominates
+      // at small batches, per-action cost is lower because no in-EVM ecrecover).
       const actionCount = multiData.actions.length
-      return BigInt(Math.ceil((100_000 + actionCount * 50_000) * 1.3));
+      const base = isZk ? 400_000 : 100_000
+      const perAction = isZk ? 30_000 : 50_000
+      return BigInt(Math.ceil((base + actionCount * perAction) * 1.3));
     }
 
 
@@ -1103,14 +1198,16 @@ export const validatorService: Service = {
       }
 
       try {
-        // Encode calldata and validate before sending
-        const txData = packedIface.encodeFunctionData('processActions', [
+        // Encode calldata. Picks the ZK path when ZK_PROVER_ENABLED=1 AND a
+        // proof is staged for this exact tuple; otherwise sig path. The proof
+        // is consumed here (single-use) so a retry doesn't accidentally reuse
+        // a stale proof — retries fall back to sig path automatically.
+        const { calldata: txData, isZk } = encodeProcessActionsCalldata(
           validatorId,
-          multiData.packedActions,
-          multiData.packedSigs,
-          quote.withdrawFee,
-          quote.withdrawLzTokenAmount,
-        ])
+          multiData,
+          quote,
+          { consume: true },
+        )
 
         if (!txData || txData === '0x' || txData.length < 10) {
           console.error('[submitProcessActions] CRITICAL: encodeFunctionData returned empty/invalid data:', {
@@ -1121,6 +1218,9 @@ export const validatorService: Service = {
             withdrawLzTokenAmount: quote.withdrawLzTokenAmount.toString(),
           })
           throw new Error(`encodeFunctionData produced invalid calldata: "${txData}"`)
+        }
+        if (isZk) {
+          console.log(`[submitProcessActions] ZK path: ${multiData.actions.length} action(s) with staged proof`)
         }
 
         // All params pre-populated so ethers makes exactly 1 RPC call (eth_sendRawTransaction)
@@ -1139,25 +1239,41 @@ export const validatorService: Service = {
 
         const receipt = await tx.wait()
 
+        // ZK path emits ActionsProcessedZk(bytes packedActions, uint256 actionsExecutedBitmap);
+        // sig path emits ActionsProcessed(bytes packedActions). Either covers
+        // what the indexer needs (the packedActions blob is the source of truth).
         const evt = receipt?.logs
           ?.map(log => { try { return iface.parseLog(log) } catch { return null } })
-          ?.find(x => x?.name === 'ActionsProcessed')
+          ?.find(x => x?.name === 'ActionsProcessed' || x?.name === 'ActionsProcessedZk')
 
         if (!evt) {
-          console.error("[submitProcessActions] ActionsProcessed event missing from receipt!")
+          console.error("[submitProcessActions] ActionsProcessed[Zk] event missing from receipt!")
           console.error("[submitProcessActions] Receipt logs:", receipt?.logs)
           throw new Error('ActionsProcessed event missing')
         }
 
-        // Decode packed bytes from ActionsProcessed(bytes packedActions) event
+        // Decode packed bytes from ActionsProcessed*(bytes packedActions, …) event
         const packedHex = evt.args.packedActions as string
         const packedBuf = new Uint8Array((packedHex.startsWith('0x') ? packedHex.slice(2) : packedHex).match(/.{2}/g)!.map(b => parseInt(b, 16)))
         const decoded = unpackActions(packedBuf)
-        const processed = decoded.map(a => ({
-          senderId:     Number(a.senderId),
-          cawonce:      Number(a.cawonce)
-        }))
-        console.log(`[submitProcessActions] Confirmed in block ${receipt?.blockNumber} (${processed.length} action(s))`)
+
+        // ZK path: filter by actionsExecutedBitmap. A 0 bit means the action
+        // was skip-don't-revert'd (e.g. cawonce already used by a competing
+        // sig-path tx). Only the executed actions should flow downstream as
+        // 'processed' — the others will be retried via the normal lifecycle.
+        const bitmap: bigint = evt.name === 'ActionsProcessedZk'
+          ? BigInt(evt.args.actionsExecutedBitmap?.toString() ?? '0')
+          : ((1n << BigInt(decoded.length)) - 1n)
+        const processed = decoded
+          .map((a, i) => ({ a, executed: (bitmap & (1n << BigInt(i))) !== 0n }))
+          .filter(x => x.executed)
+          .map(x => ({
+            senderId: Number(x.a.senderId),
+            cawonce:  Number(x.a.cawonce),
+          }))
+        const skipped = decoded.length - processed.length
+        const skipNote = skipped > 0 ? ` [zk-skipped ${skipped}]` : ''
+        console.log(`[submitProcessActions] Confirmed in block ${receipt?.blockNumber} (${processed.length} action(s))${skipNote}`)
         return { processed, receipt }
       } catch (err: any) {
         // Handle "oversized data" — tx calldata exceeds the 128KB protocol limit.
