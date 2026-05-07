@@ -1183,15 +1183,20 @@ contract CawActions is Ownable {
     }
     require(ba.owner != address(0), "Unknown owner");
 
+    // Malformed payloads silently no-op instead of reverting. Reverting
+    // here would let one malicious user tank the whole batch (sig path
+    // all-or-nothing, ZK path also reverts whole). The qs:/qx: subtypes
+    // are advisory: a malformed payload from one user shouldn't halt
+    // unrelated users' actions. Audit fix 2026-05-08 (CawActions M-3).
     if (op == 0x73) { // 's' — register
-      require(t.length == 71, "qs: invalid length");
+      if (t.length != 71) return;
       address sessionKey = _readAddress(t, 3);
       uint64 expiry = uint64(_readUint(t, 23, 8));
       uint256 spendLimit = _readUint(t, 31, 32);
       uint64 perActionTipRate = uint64(_readUint(t, 63, 8));
       cawProfile.registerSessionFromActions(ba.owner, sessionKey, expiry, spendLimit, perActionTipRate);
     } else { // 'x' — revoke
-      require(t.length == 23, "qx: invalid length");
+      if (t.length != 23) return;
       address sessionKey = _readAddress(t, 3);
       cawProfile.revokeSessionFromActions(ba.owner, sessionKey);
     }
@@ -1274,6 +1279,13 @@ contract CawActions is Ownable {
         require((scopeBitmap & (1 << uint8(data.actionType))) != 0, "Action not in session scope");
         return (signer, true);
       }
+      // Session record exists but is expired. Don't fall through to the
+      // ERC-1271 path — for a contract-owned profile (Safe etc.) where the
+      // signer is a Safe-validated key that ALSO had a session record, the
+      // 1271 fallback would silently elevate the expired session to full
+      // owner authority. Explicit revert keeps the intent the user signed.
+      // Audit fix 2026-05-08 (CawActions M-1).
+      if (expiry != 0) revert("Session expired");
     }
 
     // Cold path: contract-owned profile, ERC-1271 fallback. The 1271 contract
@@ -1327,6 +1339,10 @@ contract CawActions is Ownable {
     if (signer != address(0)) {
       (uint64 expiry,,,) = cawProfile.sessions(owner, signer);
       if (expiry > block.timestamp) return (signer, true);
+      // See _verifySignatureMem for the rationale — don't let an expired
+      // session fall through to ERC-1271, which would silently elevate it
+      // to owner authority. Audit fix 2026-05-08 (CawActions M-1).
+      if (expiry != 0) revert("Session expired");
     }
 
     // Cold path: contract-owned profile, ERC-1271 fallback. Same digest the

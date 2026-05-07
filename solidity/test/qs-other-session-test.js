@@ -417,9 +417,15 @@ contract('CawActions — qs: / qx: OTHER session register/revoke', function (acc
   });
 
   // --------------------------------------------
-  // Malformed qs: text — wrong length
+  // Malformed qs: text — silent no-op (audit fix 2026-05-08, M-3).
+  // The old behavior was `require(t.length == 71)` reverting the whole
+  // batch. That's an unacceptable cross-user grief vector: one malicious
+  // user could include a malformed qs: action and tank the entire
+  // batch's other (unrelated) actions. New behavior: silently skip the
+  // session-register, treat the OTHER action as a no-op (which is the
+  // off-chain interpretation for unrecognised OTHER subtypes anyway).
   // --------------------------------------------
-  it('reverts on malformed qs: payload (wrong length)', async function () {
+  it('malformed qs: payload silently no-ops (does not revert)', async function () {
     const cawonce = Number(await setup.cawActions.nextCawonce(userATokenId));
     // Truncated payload — only 40 bytes instead of 71.
     const text = '0x' + Buffer.concat([Buffer.from('qs:', 'ascii'), Buffer.alloc(37)]).toString('hex');
@@ -431,10 +437,12 @@ contract('CawActions — qs: / qx: OTHER session register/revoke', function (acc
     const sig = signActionData(userA, action, domain);
     const sigsHex = packGroupedSigs([{ groupSize: 1, ...sig }]);
 
-    await truffleAssert.reverts(
-      setup.cawActions.processActions(validatorTokenId, hex, sigsHex, 0, 0),
-      "qs: invalid length"
-    );
+    // Should NOT revert.
+    await setup.cawActions.processActions(validatorTokenId, hex, sigsHex, 0, 0);
+
+    // And the cawonce should be consumed (the OTHER action was processed
+    // as a no-op; nothing was registered).
+    expect(await setup.cawActions.isCawonceUsed(userATokenId, cawonce)).to.equal(true);
   });
 
   // --------------------------------------------
