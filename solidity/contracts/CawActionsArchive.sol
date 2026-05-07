@@ -71,8 +71,21 @@ contract CawActionsArchive is Ownable, ReentrancyGuard, OnlyOnce, OApp {
   /// @notice Count of pending (unfinalized, unslashed) submissions per validator
   mapping(address => uint256) public pendingCount;
 
-  /// @notice Submission IDs belonging to a validator (for bulk invalidation on slash)
+  /// @notice PENDING submission IDs belonging to a validator (for bulk
+  ///         invalidation on slash). Pruned on finalize via swap-and-pop so
+  ///         the array stays bounded by `pendingCount[validator]` rather
+  ///         than growing with every historical submission. Without this,
+  ///         a long-tenured validator with thousands of finalized
+  ///         submissions could cause the slash-loop to OOG, blocking
+  ///         legitimate fraud resolution. Audit fix 2026-05-08 (ARC-3).
   mapping(address => uint256[]) public validatorSubmissions;
+
+  /// @notice 1-based index into validatorSubmissions[submitter] where this
+  ///         submission lives. 0 means "not in the array" (already
+  ///         finalized or slashed). Stored separately so the Submission
+  ///         struct's storage layout doesn't change and existing tests +
+  ///         off-chain readers keep working.
+  mapping(uint256 => uint256) internal validatorSubmissionsIndexPlusOne;
 
   /// @notice clientId => checkpointId => submissionId that covers it
   mapping(uint32 => mapping(uint256 => uint256)) public checkpointClaimed;
@@ -240,6 +253,8 @@ contract CawActionsArchive is Ownable, ReentrancyGuard, OnlyOnce, OApp {
 
     pendingCount[msg.sender]++;
     validatorSubmissions[msg.sender].push(submissionId);
+    // Record (length) — i.e. one past the index — so default 0 means "not in array".
+    validatorSubmissionsIndexPlusOne[submissionId] = validatorSubmissions[msg.sender].length;
 
     emit SubmissionCreated(submissionId, msg.sender, clientId, startCheckpointId, endCheckpointId, merkleRoot);
     // Emit a *commitment* to the submitter-supplied data. The full
@@ -264,7 +279,29 @@ contract CawActionsArchive is Ownable, ReentrancyGuard, OnlyOnce, OApp {
 
     sub.status = Status.FINALIZED;
     pendingCount[sub.submitter]--;
+
+    // Prune from validatorSubmissions via swap-and-pop. Without this, a
+    // validator with thousands of finalized submissions in their history
+    // would cause the slash loop to OOG, blocking legitimate slashing.
+    _removeFromValidatorSubmissions(sub.submitter, submissionId);
+
     emit SubmissionFinalized(submissionId);
+  }
+
+  /// @dev Swap-and-pop helper. Idempotent for already-removed entries.
+  function _removeFromValidatorSubmissions(address validator, uint256 submissionId) internal {
+    uint256 idxPlusOne = validatorSubmissionsIndexPlusOne[submissionId];
+    if (idxPlusOne == 0) return; // not in the array (already finalized/slashed)
+    uint256[] storage arr = validatorSubmissions[validator];
+    uint256 idx = idxPlusOne - 1;
+    uint256 last = arr.length - 1;
+    if (idx != last) {
+      uint256 lastSubId = arr[last];
+      arr[idx] = lastSubId;
+      validatorSubmissionsIndexPlusOne[lastSubId] = idxPlusOne; // moved into idx, so plusOne stays
+    }
+    arr.pop();
+    validatorSubmissionsIndexPlusOne[submissionId] = 0;
   }
 
   // ============================================
