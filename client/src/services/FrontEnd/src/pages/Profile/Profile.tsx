@@ -30,6 +30,7 @@ import { useFollowButton } from '~/hooks/useFollowButton'
 import { useT } from '~/i18n/I18nProvider'
 import { useBlockedUsersStore } from '~/store/blockedUsersStore'
 import TipModal from '~/components/modals/TipModal'
+import { ShareProfileCardModal } from '~/components/modals/ShareProfileCardModal'
 import { useTransferModalStore } from '~/store/transferModalStore'
 import { useMarketplaceStore, MarketplaceListing, MarketplaceOffer } from '~/store/marketplaceStore'
 import { CAW_NAME_MARKETPLACE_ADDRESS } from '~/../../../abi/addresses'
@@ -177,6 +178,7 @@ export const Profile: React.FC = () => {
   // Options menu state (mute/block for other profiles, manage for own profile)
   const [showOptionsMenu, setShowOptionsMenu] = useState(false)
   const [showOwnProfileMenu, setShowOwnProfileMenu] = useState(false)
+  const [showShareProfileCard, setShowShareProfileCard] = useState(false)
   const [isMuted, setIsMuted] = useState(false)
   const [showBlockConfirmModal, setShowBlockConfirmModal] = useState(false)
   const [showCostExplanation, setShowCostExplanation] = useState(false)
@@ -1201,11 +1203,22 @@ export const Profile: React.FC = () => {
                             <button
                               onClick={() => {
                                 setShowOwnProfileMenu(false)
+                                setShowShareProfileCard(true)
+                              }}
+                              className={`w-full px-4 py-3 text-left text-sm transition-colors cursor-pointer ${
+                                isDark ? 'hover:bg-white/10 text-white' : 'hover:bg-gray-100 text-gray-900'
+                              }`}
+                            >
+                              Share profile
+                            </button>
+                            <button
+                              onClick={() => {
+                                setShowOwnProfileMenu(false)
                                 if (profileData?.tokenId !== undefined && profileData?.username) {
                                   useMarketplaceStore.getState().openCreateListing(profileData.tokenId, profileData.username)
                                 }
                               }}
-                              className={`w-full px-4 py-3 text-left text-sm transition-colors ${
+                              className={`w-full px-4 py-3 text-left text-sm transition-colors cursor-pointer ${
                                 isDark ? 'hover:bg-white/10 text-yellow-500' : 'hover:bg-gray-100 text-yellow-600'
                               }`}
                             >
@@ -1218,7 +1231,7 @@ export const Profile: React.FC = () => {
                                   useMarketplaceStore.getState().openViewOffers(profileData.tokenId, profileData.username)
                                 }
                               }}
-                              className={`w-full px-4 py-3 text-left text-sm transition-colors ${
+                              className={`w-full px-4 py-3 text-left text-sm transition-colors cursor-pointer ${
                                 isDark ? 'hover:bg-white/10 text-yellow-500' : 'hover:bg-gray-100 text-yellow-600'
                               }`}
                             >
@@ -1231,7 +1244,7 @@ export const Profile: React.FC = () => {
                                   useTransferModalStore.getState().show(profileData.tokenId, profileData.username)
                                 }
                               }}
-                              className={`w-full px-4 py-3 text-left text-sm transition-colors ${
+                              className={`w-full px-4 py-3 text-left text-sm transition-colors cursor-pointer ${
                                 isDark ? 'hover:bg-red-500/20 text-red-400' : 'hover:bg-red-50 text-red-500'
                               }`}
                             >
@@ -1589,6 +1602,15 @@ export const Profile: React.FC = () => {
       )}
 
       {/* Tip Modal */}
+      <ShareProfileCardModal
+        isOpen={showShareProfileCard}
+        onClose={() => setShowShareProfileCard(false)}
+        username={profileData?.username || displayUsername}
+        displayName={profileData?.displayName}
+        avatarSrc={getUserAvatar(profileData ?? { tokenId: activeTokenId || 1 })}
+        profilePath={`/users/${profileData?.username || displayUsername}`}
+      />
+
       {profileData && (
         <TipModal
           isOpen={showTipModal}

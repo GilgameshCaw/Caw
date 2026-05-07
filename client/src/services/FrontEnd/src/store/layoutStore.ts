@@ -8,9 +8,16 @@ import { create } from 'zustand'
 interface LayoutState {
   hideChromeOverride: boolean
   setHideChromeOverride: (v: boolean) => void
+
+  /** Mobile-only: hide bottom nav + compose FAB without killing headers/sidebars. */
+  hideMobileNavOverride: boolean
+  setHideMobileNavOverride: (v: boolean) => void
 }
 
 export const useLayoutStore = create<LayoutState>((set) => ({
   hideChromeOverride: false,
   setHideChromeOverride: (v) => set({ hideChromeOverride: v }),
+
+  hideMobileNavOverride: false,
+  setHideMobileNavOverride: (v) => set({ hideMobileNavOverride: v }),
 }))
