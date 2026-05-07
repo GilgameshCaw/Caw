@@ -140,6 +140,37 @@ rather lose one slot than the whole batch.
 
 ---
 
+## Known issues found and fixed during review
+
+A systematic attack-surface review on 2026-05-07 turned up two bugs in the
+skip-don't-revert path. Both are fixed in commit `5e2bc20`. Documented here
+for the audit trail.
+
+  1. **Skipped WITHDRAW double-credit on L1 (security).** `_trackClientAndWithdraw`
+     was called BEFORE the cawonce-skip check, so a skipped WITHDRAW slot
+     still set its bit in `withdrawBitmap`. The trailing `_handleWithdrawals`
+     pass would then queue a `setWithdrawable` LZ message for an action that
+     never actually debited L2. Result: with a competing sig-path tx
+     consuming the same cawonce first, the user got their withdraw amount
+     credited on L1 *twice* for one L2 debit. Fix: defer the bitmap update
+     to after the skip check. Regression test:
+     `solidity/test/zk-actions-test.js` "regression: skipped WITHDRAW does
+     not double-credit on L1".
+  2. **`implicitTipOwed` never accumulated (validator economics).** The ZK
+     path called `_applyAction(...)` and discarded its return value, while
+     the sig path's `_processSingleSig` writes
+     `c.implicitTipOwed += _applyAction(...)`. Validators running the ZK
+     path on session-key-signed batches were silently never credited the
+     per-action tips. Not exploitable by users — just a financial bug
+     against the validator. Fix: capture the return value, same as the
+     sig path. (Caught by code reading, no exploit-style test added because
+     the fix is a single character `+=` matching the sig path's pattern.)
+
+There may be other bugs we haven't found yet. The path is **not audited**.
+The on-chain state-application code is small (~150 lines under the
+`processActionsWithZkSigs` entry point) and mirrors `processActions` for
+its non-ZK parts; an audit before mainnet ZK deployment is recommended.
+
 ## Trust model
 
 The ZK path **adds** to the verification surface; it doesn't replace any
