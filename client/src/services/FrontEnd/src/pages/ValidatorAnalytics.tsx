@@ -21,10 +21,22 @@ const fmtUsd = (amount: number) => {
   if (Math.abs(amount) < 0.01 && amount !== 0) return `$${amount.toFixed(6)}`
   return `$${amount.toFixed(2)}`
 }
+// 6-decimal variant for per-row cells in the transactions table, where the
+// dynamic-precision fmtUsd ends up showing $0.04 next to $0.000123 and the
+// row-to-row comparison loses fidelity.
+const fmtUsdPrecise = (amount: number) => {
+  if (amount === 0) return '$0.00'
+  return `$${amount.toFixed(6)}`
+}
 const weiToUsd = (wei: string | undefined, ethUsd: number) => fmtUsd(weiToEth(wei) * ethUsd)
+const weiToUsdPrecise = (wei: string | undefined, ethUsd: number) => fmtUsdPrecise(weiToEth(wei) * ethUsd)
 const cawToUsd = (caw: string | undefined, cawUsd: number) => {
   if (!caw || caw === '0') return '$0.00'
   try { return fmtUsd(Number(BigInt(caw)) * cawUsd) } catch { return '$0.00' }
+}
+const cawToUsdPrecise = (caw: string | undefined, cawUsd: number) => {
+  if (!caw || caw === '0') return '$0.00'
+  try { return fmtUsdPrecise(Number(BigInt(caw)) * cawUsd) } catch { return '$0.00' }
 }
 
 const fmtDate = (d: string) => new Date(d).toLocaleString()
@@ -828,26 +840,26 @@ const ValidatorAnalytics: React.FC = () => {
                         )}
                       </td>
                       <td className="p-2 text-right font-mono" title={`${fmtEth(tx.gasEth)} ETH`}>
-                        {weiToUsd(tx.gasEth, p.ethUsd)}
+                        {weiToUsdPrecise(tx.gasEth, p.ethUsd)}
                       </td>
                       <td className="p-2 text-right font-mono" title={tx.actions > 0 ? `${fmtEth((BigInt(tx.gasEth || '0') / BigInt(tx.actions)).toString())} ETH/action` : ''}>
                         {tx.actions > 0
-                          ? weiToUsd((BigInt(tx.gasEth || '0') / BigInt(tx.actions)).toString(), p.ethUsd)
+                          ? weiToUsdPrecise((BigInt(tx.gasEth || '0') / BigInt(tx.actions)).toString(), p.ethUsd)
                           : '—'}
                       </td>
                       <td className="p-2 text-right font-mono" title={`${fmtCaw(tx.tipCaw)} CAW`}>
-                        {cawToUsd(tx.tipCaw, p.cawUsd)}
+                        {cawToUsdPrecise(tx.tipCaw, p.cawUsd)}
                       </td>
                       <td
                         className="p-2 text-right font-mono"
                         title={tx.actions > 0 ? `${fmtCaw((BigInt(tx.tipCaw || '0') / BigInt(tx.actions)).toString())} CAW/action` : ''}
                       >
                         {tx.actions > 0
-                          ? cawToUsd((BigInt(tx.tipCaw || '0') / BigInt(tx.actions)).toString(), p.cawUsd)
+                          ? cawToUsdPrecise((BigInt(tx.tipCaw || '0') / BigInt(tx.actions)).toString(), p.cawUsd)
                           : '—'}
                       </td>
                       <td className={`p-2 text-right font-mono ${profitNeg ? 'text-red-500' : 'text-green-500'}`} title={`${fmtEth(tx.profitEth)} ETH`}>
-                        {weiToUsd(tx.profitEth, p.ethUsd)}
+                        {weiToUsdPrecise(tx.profitEth, p.ethUsd)}
                       </td>
                       <td className="p-2 text-right">{tx.waitSeconds.toFixed(1)}s</td>
                       <td className="p-2">
