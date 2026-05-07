@@ -38,6 +38,7 @@ import { cawProfileMarketplaceAbi } from '~/../../../abi/generated'
 import Tooltip from '~/components/Tooltip'
 import { useSignInModalStore } from '~/store/signInModalStore'
 import ProfileEditForm from '~/components/ProfileEditForm'
+import ImageLightbox from '~/components/ImageLightbox'
 
 type ProfileTab = 'posts' | 'likes' | 'replies' | 'media'
 
@@ -179,6 +180,8 @@ export const Profile: React.FC = () => {
   const [showOptionsMenu, setShowOptionsMenu] = useState(false)
   const [showOwnProfileMenu, setShowOwnProfileMenu] = useState(false)
   const [showShareProfileCard, setShowShareProfileCard] = useState(false)
+  const [showAvatarModal, setShowAvatarModal] = useState(false)
+  const [showCoverModal, setShowCoverModal] = useState(false)
   const [isMuted, setIsMuted] = useState(false)
   const [showBlockConfirmModal, setShowBlockConfirmModal] = useState(false)
   const [showCostExplanation, setShowCostExplanation] = useState(false)
@@ -885,7 +888,8 @@ export const Profile: React.FC = () => {
             <img
               src={profileData.coverPhotoUrl}
               alt="Cover photo"
-              className="w-full h-full object-cover"
+              className="w-full h-full object-cover cursor-pointer"
+              onClick={() => setShowCoverModal(true)}
             />
           ) : (
             <div
@@ -912,7 +916,11 @@ export const Profile: React.FC = () => {
         {/* Profile Picture - Positioned within max-w-2xl bounds */}
         <div className="max-w-2xl mx-auto relative">
           <div className="absolute -top-20 left-6">
-            <div className={`w-40 h-40 rounded-full border-4 overflow-hidden transition-all duration-300 ${
+            <button
+              type="button"
+              aria-label="View profile photo"
+              onClick={() => setShowAvatarModal(true)}
+              className={`w-40 h-40 rounded-full border-4 overflow-hidden transition-all duration-300 cursor-pointer ${
               isDark ? 'border-black bg-black' : 'border-white bg-gray-200'
             }`}>
               {profileData && (
@@ -922,7 +930,7 @@ export const Profile: React.FC = () => {
                   className="w-full h-full rounded-full"
                 />
               )}
-            </div>
+            </button>
           </div>
         </div>
       </div>
@@ -1610,6 +1618,27 @@ export const Profile: React.FC = () => {
         avatarSrc={getUserAvatar(profileData ?? { tokenId: activeTokenId || 1 })}
         profilePath={`/users/${profileData?.username || displayUsername}`}
       />
+
+      {/* Avatar / Cover lightboxes */}
+      {profileData && (
+        <>
+          <ImageLightbox
+            isOpen={showAvatarModal}
+            onClose={() => setShowAvatarModal(false)}
+            src={optimisticAvatar || getUserAvatar(profileData)}
+            alt={`${profileData.username || displayUsername} avatar`}
+            imgClassName="rounded-full w-[70vmin] h-[70vmin] max-w-[420px] max-h-[420px] object-cover"
+          />
+          {profileData.coverPhotoUrl && (
+            <ImageLightbox
+              isOpen={showCoverModal}
+              onClose={() => setShowCoverModal(false)}
+              src={profileData.coverPhotoUrl}
+              alt="Cover photo"
+            />
+          )}
+        </>
+      )}
 
       {profileData && (
         <TipModal
