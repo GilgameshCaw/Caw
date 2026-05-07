@@ -50,6 +50,7 @@ import { CawPage } from "./pages/CawPage";
 import CaptiveSplash from "./pages/CaptiveSplash";
 import AuthGate from "./components/AuthGate";
 import AdminGate from "./components/AdminGate";
+import ModeratorGate from "./components/ModeratorGate";
 
 // Lazy. Each line below produces a separate chunk named after the
 // imported file's basename, so dist/ stays legible
@@ -67,6 +68,7 @@ const AccountSettings = lazyWithReload(() => import("./pages/AccountSettings"));
 const SessionKeySettings = lazyWithReload(() => import("./pages/SessionKeySettings"));
 const HelpPage = lazyWithReload(() => import("./pages/HelpPage"));
 const MessagesPage = lazyWithReload(() => import("./pages/Messages"));
+const InviteRedeemPage = lazyWithReload(() => import("./pages/InviteRedeemPage"));
 const BookmarksPage = lazyWithReload(() => import("./pages/Bookmarks"));
 const ExplorePage = lazyWithReload(() => import("./pages/Explore"));
 const ScheduledPage = lazyWithReload(() => import("./pages/Scheduled"));
@@ -123,6 +125,7 @@ export const layoutRoutes: RouteDef[] = [
   { path: "/notifications", component: <AuthGate><NotificationsPage /></AuthGate> },
   { path: "/messages", component: <AuthGate><MessagesPage /></AuthGate> },
   { path: "/messages/:username", component: <AuthGate><MessagesPage /></AuthGate> },
+  { path: "/dm/invite/:token", component: <AuthGate><InviteRedeemPage /></AuthGate> },
   { path: "/settings", component: <AuthGate><SettingsPage /></AuthGate> },
   { path: "/settings/muted", component: <AuthGate><MutedContentPage /></AuthGate> },
   { path: "/settings/notifications", component: <AuthGate><NotificationSettings /></AuthGate> },
@@ -158,6 +161,11 @@ export const bareRoutes: RouteDef[] = [
   { path: "/admin/validator", component: <AdminGate><ValidatorAnalytics /></AdminGate> },
   { path: "/admin/validator/settings", component: <AdminGate><ValidatorSettings /></AdminGate> },
   { path: "/admin/database", component: <AdminGate><DatabaseAdmin /></AdminGate> },
+  // Moderator-tier mirrors of the admin moderation pages. Same components,
+  // wallet-session-gated instead of admin-cookie-gated. Admins land here too
+  // because requireModerator accepts the admin cookie as a superset.
+  { path: "/moderation/bugs", component: <ModeratorGate><BugReportsAdmin /></ModeratorGate> },
+  { path: "/moderation/reports", component: <ModeratorGate><ReportsAdmin /></ModeratorGate> },
 ];
 
 // Back-compat default export — old shape, all routes flat. Kept so any

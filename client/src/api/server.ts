@@ -17,6 +17,7 @@ import scheduledRouter from './routes/scheduled'
 import notificationsRouter from './routes/notifications'
 import withdrawalsRouter from './routes/withdrawals'
 import dmRouter from './routes/dm'
+import dmGroupsRouter from './routes/dm-groups'
 import dmRelayRouter from './routes/dm-relay'
 import giphyRouter from './routes/giphy'
 import statsRouter from './routes/stats'
@@ -37,6 +38,8 @@ import pinsRouter from './routes/pins'
 import meRouter from './routes/me'
 import verifyRouter from './routes/verify'
 import adminDbRouter from './routes/admin-db'
+import adminUsersRouter from './routes/admin-users'
+import moderationRouter from './routes/moderation'
 import ogRouter from './routes/og'
 import { spaPrerender } from './util/spaPrerender'
 import { getSession } from './sessionStore'
@@ -234,6 +237,9 @@ export function createApp() {
   app.use('/api/scheduled', scheduledRouter)
   app.use('/api/notifications', notificationsRouter)
   app.use('/api/withdrawals', withdrawalsRouter)
+  // Group-chat sub-router mounted BEFORE the main DM router so its
+  // /groups/* paths match before any catchier route in dm.ts.
+  app.use('/api/dm', dmGroupsRouter)
   app.use('/api/dm', dmRouter)
   app.use('/api/dm/relay', dmRelayRouter)
   app.use('/api/giphy', giphyRouter)
@@ -253,6 +259,8 @@ export function createApp() {
   app.use('/api/me', meRouter)
   app.use('/api/verify', verifyRouter)
   app.use('/api/admin/db', adminDbRouter)
+  app.use('/api/admin/users', adminUsersRouter)
+  app.use('/api/moderation', moderationRouter)
   app.use('/api/og', ogRouter)
 
   app.get('/api/__sentry-test', (_req, _res) => {

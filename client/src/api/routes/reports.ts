@@ -1,7 +1,7 @@
 import { Router } from 'express'
 import { prisma } from '../../prismaClient'
 import { ReportReason, ReportStatus } from '@prisma/client'
-import { requireAdmin, requireAuth } from '../middleware/auth'
+import { requireAuth, requireModerator } from '../middleware/auth'
 
 const router = Router()
 
@@ -82,7 +82,7 @@ router.post('/', requireAuth({ field: 'reporterId', verifyOwnership: true }), as
  * GET /api/reports
  * Get reports (admin only)
  */
-router.get('/', requireAdmin, async (req, res) => {
+router.get('/', requireModerator, async (req, res) => {
   try {
     const { status, reason, limit = 50, offset = 0 } = req.query
 
@@ -114,7 +114,7 @@ router.get('/', requireAdmin, async (req, res) => {
  * PATCH /api/reports/:id
  * Update report status (admin only)
  */
-router.patch('/:id', requireAdmin, async (req, res) => {
+router.patch('/:id', requireModerator, async (req, res) => {
   try {
     const { id } = req.params
     const { status, resolution, reviewedBy } = req.body

@@ -15,6 +15,15 @@ declare global {
       // current owner of the requested token. Handlers can use it
       // directly instead of re-querying.
       tokenOwnerAddress?: string
+      // Set by requireModerator on success. Identifies WHICH of the
+      // user's authorized tokens holds the moderator role, so audit
+      // logs can attribute the action. NULL means the request was
+      // authorized via the admin password cookie (no wallet identity).
+      moderatorActorTokenId?: number | null
+      // Set by requireModerator. True iff the request was authorized
+      // via the admin password cookie. Used by handlers that gate
+      // certain actions to admins only (e.g. role assignment).
+      isAdminCookie?: boolean
     }
   }
 }
@@ -113,6 +122,129 @@ export function requireAdmin(req: Request, res: Response, next: NextFunction): v
     return
   }
 
+  // Mark this request as admin-cookie-authed so downstream handlers can
+  // gate ADMIN-only operations (role assignment, etc.) without a second
+  // pass.
+  req.isAdminCookie = true
+  next()
+}
+
+// --- Wallet-bound moderator auth ---
+//
+// Accepts EITHER:
+//   1) a valid admin password cookie (admins remain superusers), OR
+//   2) a wallet session whose authorizedTokenIds includes a User with
+//      role MODERATOR or ADMIN.
+//
+// On success, sets req.moderatorActorTokenId to the tokenId that holds
+// the role (NULL when authorized via cookie). Audit-log writers should
+// use it as the actor.
+//
+// One env-var bootstrap escape hatch: BOOTSTRAP_ADMIN_TOKEN_IDS — comma-
+// separated list of tokenIds treated as ADMIN even if their User.role
+// is still 'USER' in the DB. Lets a fresh deploy promote the first
+// admin without a manual SQL update.
+const BOOTSTRAP_ADMIN_TOKEN_IDS = (process.env.BOOTSTRAP_ADMIN_TOKEN_IDS ?? '')
+  .split(',')
+  .map(s => Number(s.trim()))
+  .filter(n => Number.isFinite(n) && n > 0)
+
+export async function requireModerator(req: Request, res: Response, next: NextFunction): Promise<void> {
+  // Admin password path first — cheaper than a DB read.
+  const adminToken = extractAdminToken(req)
+  if (adminToken) {
+    const expiry = adminTokens.get(adminToken)
+    if (expiry && Date.now() <= expiry) {
+      req.moderatorActorTokenId = null
+      req.isAdminCookie = true
+      next()
+      return
+    }
+    if (expiry) adminTokens.delete(adminToken)
+  }
+
+  // Wallet session path.
+  await extractSession(req)
+  if (!req.sessionData) {
+    res.status(401).json({ error: 'AUTH_REQUIRED', message: 'Session token required' })
+    return
+  }
+
+  const authorized = req.sessionData.authorizedTokenIds || []
+  if (authorized.length === 0) {
+    res.status(403).json({ error: 'NOT_MODERATOR', message: 'Account is not authorized to moderate' })
+    return
+  }
+
+  // Bootstrap fast path: BOOTSTRAP_ADMIN_TOKEN_IDS skips the DB read.
+  const bootstrapHit = authorized.find(id => BOOTSTRAP_ADMIN_TOKEN_IDS.includes(id))
+  if (bootstrapHit !== undefined) {
+    req.moderatorActorTokenId = bootstrapHit
+    req.isAdminCookie = false
+    next()
+    return
+  }
+
+  // Find any authorized token whose User has role MODERATOR or ADMIN.
+  // tokenId is unique on User, so a tokenId-in list query is the right
+  // shape — no separate by-tokenId lookups.
+  const elevated = await prisma.user.findFirst({
+    where: { tokenId: { in: authorized }, role: { in: ['MODERATOR', 'ADMIN'] } },
+    select: { tokenId: true },
+  })
+  if (!elevated) {
+    res.status(403).json({ error: 'NOT_MODERATOR', message: 'Account is not authorized to moderate' })
+    return
+  }
+
+  req.moderatorActorTokenId = elevated.tokenId
+  req.isAdminCookie = false
+  next()
+}
+
+// Stricter sibling: same flow, but rejects MODERATOR — wallet must have
+// role=ADMIN, OR the request is admin-cookie-authed. Used for role
+// assignment and other admin-only knobs.
+export async function requireWalletAdmin(req: Request, res: Response, next: NextFunction): Promise<void> {
+  // Admin cookie still satisfies.
+  const adminToken = extractAdminToken(req)
+  if (adminToken) {
+    const expiry = adminTokens.get(adminToken)
+    if (expiry && Date.now() <= expiry) {
+      req.moderatorActorTokenId = null
+      req.isAdminCookie = true
+      next()
+      return
+    }
+    if (expiry) adminTokens.delete(adminToken)
+  }
+
+  await extractSession(req)
+  if (!req.sessionData) {
+    res.status(401).json({ error: 'AUTH_REQUIRED', message: 'Session token required' })
+    return
+  }
+
+  const authorized = req.sessionData.authorizedTokenIds || []
+  const bootstrapHit = authorized.find(id => BOOTSTRAP_ADMIN_TOKEN_IDS.includes(id))
+  if (bootstrapHit !== undefined) {
+    req.moderatorActorTokenId = bootstrapHit
+    req.isAdminCookie = false
+    next()
+    return
+  }
+
+  const elevated = await prisma.user.findFirst({
+    where: { tokenId: { in: authorized }, role: 'ADMIN' },
+    select: { tokenId: true },
+  })
+  if (!elevated) {
+    res.status(403).json({ error: 'NOT_ADMIN', message: 'Account is not authorized for this action' })
+    return
+  }
+
+  req.moderatorActorTokenId = elevated.tokenId
+  req.isAdminCookie = false
   next()
 }
 

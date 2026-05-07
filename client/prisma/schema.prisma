@@ -102,9 +102,16 @@ model User {
   pinnedCawCount        Int                         @default(0)
   votes                 Vote[]
   offerDismissals       MarketplaceOfferDismissal[]
+  // Moderation tier. USER is the default. MODERATOR can hide caws and
+  // triage reports; ADMIN can do everything plus assign roles, validator
+  // settings, RPC config, DB admin. Promotions go through
+  // POST /api/admin/users/:tokenId/role.
+  role                  UserRole                    @default(USER)
+  moderatorActions      ModeratorAction[]           @relation("ModeratorActor")
 
   @@index([address])
   @@index([cawCount, followerCount])
+  @@index([role])
 }
 
 model Caw {
@@ -727,6 +734,37 @@ model Report {
   @@index([reporterId, postId])
   @@index([postAuthorId])
   @@index([createdAt])
+}
+
+enum UserRole {
+  USER
+  MODERATOR
+  ADMIN
+}
+
+/// Audit trail for moderator-tier mutations (hide caw, ban user, etc.).
+/// Append-only — never updated, never deleted. Lets admins answer "who
+/// hid this caw and why" without grep-archaeology of server logs.
+model ModeratorAction {
+  id              Int      @id @default(autoincrement())
+  /// Tokenid of the moderator who performed the action. NULL means the
+  /// action was taken by the password-cookie admin (no wallet identity
+  /// available in that path).
+  actorTokenId    Int?
+  /// Free-form action verb: "hide_caw", "unhide_caw", "ban_user", etc.
+  /// Kept as a string instead of an enum so we can add new verbs without
+  /// migrations during early iteration.
+  type            String
+  targetCawId     Int?
+  targetUserId    Int?
+  reason          String?
+  createdAt       DateTime @default(now())
+  actor           User?    @relation("ModeratorActor", fields: [actorTokenId], references: [tokenId], onDelete: SetNull)
+
+  @@index([actorTokenId, createdAt])
+  @@index([type, createdAt])
+  @@index([targetCawId])
+  @@index([targetUserId])
 }
 
 enum ReportReason {

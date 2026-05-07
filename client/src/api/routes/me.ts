@@ -319,4 +319,58 @@ async function fetchFailedRetries(tokenId: number) {
   }
 }
 
+/**
+ * GET /api/me/role
+ * Highest role across the session's authorized tokens. Lightweight —
+ * the FE polls this on app load to decide whether to surface the
+ * Moderation entry in the sidebar / mount the ModeratorGate.
+ *
+ * Returns { role: 'USER' | 'MODERATOR' | 'ADMIN', actorTokenId: number | null }.
+ * actorTokenId is the tokenId that holds the highest role (so the FE
+ * can show a "moderating as @<username>" hint), or null when the
+ * answer was 'USER'.
+ *
+ * BOOTSTRAP_ADMIN_TOKEN_IDS env var is honored here too — promotes
+ * matching tokenIds to ADMIN even if their User row says USER.
+ */
+const BOOTSTRAP_ADMIN_TOKEN_IDS = (process.env.BOOTSTRAP_ADMIN_TOKEN_IDS ?? '')
+  .split(',')
+  .map(s => Number(s.trim()))
+  .filter(n => Number.isFinite(n) && n > 0)
+
+router.get('/role', async (req, res) => {
+  try {
+    await extractSession(req)
+    if (!req.sessionData) {
+      return res.json({ role: 'USER', actorTokenId: null })
+    }
+    const authorized = req.sessionData.authorizedTokenIds || []
+    if (authorized.length === 0) {
+      return res.json({ role: 'USER', actorTokenId: null })
+    }
+
+    const bootstrapHit = authorized.find(id => BOOTSTRAP_ADMIN_TOKEN_IDS.includes(id))
+    if (bootstrapHit !== undefined) {
+      return res.json({ role: 'ADMIN', actorTokenId: bootstrapHit })
+    }
+
+    // Pick the elevated tokenId with the highest rank. A single query
+    // with two passes is fine; the row count is tiny.
+    const elevated = await prisma.user.findMany({
+      where: { tokenId: { in: authorized }, role: { in: ['MODERATOR', 'ADMIN'] } },
+      select: { tokenId: true, role: true },
+    })
+    if (elevated.length === 0) {
+      return res.json({ role: 'USER', actorTokenId: null })
+    }
+    const admin = elevated.find(u => u.role === 'ADMIN')
+    if (admin) return res.json({ role: 'ADMIN', actorTokenId: admin.tokenId })
+    const mod = elevated[0]
+    return res.json({ role: 'MODERATOR', actorTokenId: mod.tokenId })
+  } catch (err: any) {
+    console.error('GET /api/me/role error:', err)
+    return res.status(500).json({ error: 'Internal server error' })
+  }
+})
+
 export default router

@@ -2,6 +2,7 @@ import { Router } from 'express'
 import { prisma } from '../../prismaClient'
 import {
   requireAdmin,
+  requireModerator,
   loginAdmin,
   revokeAdminToken,
   extractAdminToken,
@@ -88,7 +89,7 @@ router.post('/', async (req, res): Promise<void> => {
  * GET /api/bug-reports
  * List bug reports (admin only)
  */
-router.get('/', requireAdmin, async (req, res) => {
+router.get('/', requireModerator, async (req, res) => {
   try {
     const status = req.query.status as string | undefined
     const limit = Math.min(parseInt(req.query.limit as string) || 50, 100)
@@ -118,7 +119,7 @@ router.get('/', requireAdmin, async (req, res) => {
  * PATCH /api/bug-reports/:id
  * Update a bug report status (admin only)
  */
-router.patch('/:id', requireAdmin, async (req, res) => {
+router.patch('/:id', requireModerator, async (req, res) => {
   try {
     const id = parseInt(req.params.id)
     const { status, resolution } = req.body
