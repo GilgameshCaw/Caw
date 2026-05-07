@@ -1,8 +1,12 @@
 import { secp256k1 } from '@noble/curves/secp256k1'
 import { requireSecureCrypto } from '~/utils/secureContext'
 
-// Key cache: conversationId -> shared secret (CryptoKey)
-const sharedSecretCache = new Map<string, CryptoKey>()
+// Shared-secret cache. Keyed by peerUserId so the same key can be reused
+// across multiple conversations that share that peer (e.g. a DM with X
+// and a group with X — the per-pair ECDH key is identical). Pre-launch
+// testnet, so we drop the legacy conversationId-keyed cache wholesale
+// rather than dual-write.
+const sharedSecretByPeer = new Map<number, CryptoKey>()
 
 const DM_KEYS_STORAGE_KEY = 'caw-dm-keys'
 
@@ -71,7 +75,7 @@ export async function deriveKeyPair(
     cachedPrivateKey = null
     cachedPublicKey = null
     cachedTokenId = null
-    sharedSecretCache.clear()
+    sharedSecretByPeer.clear()
   }
 
   // Try restoring from localStorage before requesting a signature
@@ -135,7 +139,7 @@ export function clearKeyCache(tokenId?: number) {
   cachedPrivateKey = null
   cachedPublicKey = null
   cachedTokenId = null
-  sharedSecretCache.clear()
+  sharedSecretByPeer.clear()
   // Clear from localStorage
   if (tokenId !== undefined) {
     try {
@@ -147,22 +151,20 @@ export function clearKeyCache(tokenId?: number) {
 }
 
 /**
- * Compute a shared secret via ECDH, then derive an AES-256-GCM key.
- * Result is cached by conversationId.
+ * Compute a shared secret via ECDH for a given peer, then derive an
+ * AES-256-GCM key. Result is cached by peerUserId so a DM and a group
+ * that both involve the same peer reuse the key.
  */
-export async function computeSharedSecret(
+export async function computeSharedSecretForPeer(
   myPrivateKey: Uint8Array,
+  peerUserId: number,
   theirPublicKeyHex: string,
-  conversationId: string
 ): Promise<CryptoKey> {
-  const cached = sharedSecretCache.get(conversationId)
+  const cached = sharedSecretByPeer.get(peerUserId)
   if (cached) return cached
 
-  // ECDH: shared point
   const theirPublicKeyBytes = hexToBytes(theirPublicKeyHex)
   const sharedPoint = secp256k1.getSharedSecret(myPrivateKey, theirPublicKeyBytes)
-
-  // SHA-256 of the shared point → 32-byte AES key
   const hashBuffer = await crypto.subtle.digest('SHA-256', sharedPoint)
 
   const aesKey = await crypto.subtle.importKey(
@@ -173,8 +175,50 @@ export async function computeSharedSecret(
     ['encrypt', 'decrypt']
   )
 
-  sharedSecretCache.set(conversationId, aesKey)
+  sharedSecretByPeer.set(peerUserId, aesKey)
   return aesKey
+}
+
+/**
+ * Backwards-compatible wrapper that takes a conversationId for the cache
+ * tag — kept so DM call sites don't all change shape at once. Internally
+ * still keys by peer so groups + DMs share AES keys correctly.
+ *
+ * peerUserId is now required; callers that previously omitted it must
+ * supply it (the inbox has it; brand-new conversations seed it via the
+ * conversationPeerCache in useDm).
+ */
+export async function computeSharedSecret(
+  myPrivateKey: Uint8Array,
+  theirPublicKeyHex: string,
+  peerUserId: number,
+  _conversationIdHint?: string,
+): Promise<CryptoKey> {
+  void _conversationIdHint
+  return computeSharedSecretForPeer(myPrivateKey, peerUserId, theirPublicKeyHex)
+}
+
+/**
+ * Encrypt the same plaintext once per recipient using per-pair ECDH.
+ * Returns { [recipientUserId]: cipher } ready to be POSTed as
+ * `recipientPayloads`. Sender's own row is included so they can decrypt
+ * their own messages on reload.
+ *
+ * Self-encryption uses the sender's own publicKey — ECDH(priv, pub) on
+ * the same keypair yields a deterministic but valid shared point, so
+ * the cipher is recoverable on reload using the same code path.
+ */
+export async function encryptForRecipients(
+  plaintext: string,
+  myPrivateKey: Uint8Array,
+  members: { userId: number; publicKey: string }[],
+): Promise<Record<number, string>> {
+  const out: Record<number, string> = {}
+  for (const m of members) {
+    const key = await computeSharedSecretForPeer(myPrivateKey, m.userId, m.publicKey)
+    out[m.userId] = await encrypt(plaintext, key)
+  }
+  return out
 }
 
 /**

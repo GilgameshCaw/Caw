@@ -31,15 +31,20 @@ interface UseDmWebSocketParams {
   enabled?: boolean
   onNewMessage?: (message: any) => void
   onReaction?: (event: DmReactionEvent) => void
+  /** Group-chat lifecycle events. Each kind triggers a refresh of the
+   *  active conversation participants/metadata in the inbox store. */
+  onGroupEvent?: (event: { conversationId: string; kind: string; payload?: any }) => void
 }
 
-export function useDmWebSocket({ userId, username, enabled = true, onNewMessage, onReaction }: UseDmWebSocketParams) {
+export function useDmWebSocket({ userId, username, enabled = true, onNewMessage, onReaction, onGroupEvent }: UseDmWebSocketParams) {
   const socketRef = useRef<Socket | null>(null)
   const queryClient = useQueryClient()
   const onNewMessageRef = useRef(onNewMessage)
   onNewMessageRef.current = onNewMessage
   const onReactionRef = useRef(onReaction)
   onReactionRef.current = onReaction
+  const onGroupEventRef = useRef(onGroupEvent)
+  onGroupEventRef.current = onGroupEvent
 
   const connect = useCallback(() => {
     if (!userId || !username || !enabled) return
@@ -75,7 +80,14 @@ export function useDmWebSocket({ userId, username, enabled = true, onNewMessage,
       queryClient.invalidateQueries({ queryKey: ['conversations', userId] })
     })
 
-    socket.on('conversation-update', () => {
+    socket.on('conversation-update', (data: any) => {
+      // Group lifecycle events ride this channel — kind: 'member-added' |
+      // 'member-removed' | 'conversation-updated'. Handler caller is
+      // responsible for refetching the active conversation; the inbox
+      // refreshes via the queryClient invalidation regardless.
+      if (data?.kind) {
+        onGroupEventRef.current?.({ conversationId: data.conversationId || '', kind: data.kind, payload: data })
+      }
       queryClient.invalidateQueries({ queryKey: ['conversations', userId] })
     })
 

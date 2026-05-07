@@ -2,6 +2,7 @@ import { Router, Request, Response } from 'express'
 import { prisma } from '../../prismaClient'
 import dmService from '../../services/DmService'
 import dmWebSocketService from '../../services/DmService/websocket'
+import groupService, { GroupServiceError } from '../../services/DmService/groupService'
 import { requireAuth } from '../middleware/auth'
 import { isBlockedEitherDirection, getBlockedUserIds } from '../shared/blockUtils'
 import {
@@ -361,12 +362,46 @@ router.post('/messages',
   requireAuth({ field: 'senderId', verifyOwnership: true }),
   async (req: Request, res: Response) => {
     try {
-      const { conversationId, senderId, encryptedPayload, contentType, replyToMessageId } = req.body
-      if (!conversationId || !senderId || !encryptedPayload) {
-        return res.status(400).json({ error: 'conversationId, senderId, and encryptedPayload are required' })
+      const { conversationId, senderId, encryptedPayload, recipientPayloads, contentType, replyToMessageId } = req.body
+      if (!conversationId || !senderId) {
+        return res.status(400).json({ error: 'conversationId and senderId are required' })
       }
 
-      // Check if either user has blocked the other
+      // Group branch — sealed-per-recipient ciphertext, single-node only,
+      // no relay, no DM-style privacy / rate / shadow-block paths.
+      const convType = await prisma.conversation.findUnique({
+        where: { id: conversationId },
+        select: { type: true },
+      })
+      if (!convType) return res.status(404).json({ error: 'Conversation not found' })
+
+      if (convType.type === 'GROUP') {
+        if (!recipientPayloads || typeof recipientPayloads !== 'object' || Array.isArray(recipientPayloads)) {
+          return res.status(400).json({ error: 'recipientPayloads object required for group messages' })
+        }
+        try {
+          const message = await groupService.sendGroupMessage({
+            conversationId,
+            senderId: Number(senderId),
+            recipientPayloads,
+            contentType,
+            replyToMessageId,
+          })
+          dmWebSocketService.broadcastMessage(message)
+          return res.json(message)
+        } catch (error: any) {
+          if (error instanceof GroupServiceError) {
+            return res.status(error.status).json({ error: error.code, message: error.message, ...(error.payload ? { detail: error.payload } : {}) })
+          }
+          throw error
+        }
+      }
+
+      if (!encryptedPayload) {
+        return res.status(400).json({ error: 'encryptedPayload required for DM messages' })
+      }
+
+      // DM branch from here down.
       const conv = await prisma.conversation.findUnique({
         where: { id: conversationId },
         include: { participants: true }
@@ -581,28 +616,65 @@ router.patch('/messages/:messageId',
   async (req: Request, res: Response) => {
     try {
       const { messageId } = req.params
-      const { encryptedPayload, previousEncryptedPayload } = req.body
+      const { encryptedPayload, previousEncryptedPayload, recipientPayloads } = req.body
 
-      if (!encryptedPayload) {
-        return res.status(400).json({ error: 'encryptedPayload is required' })
-      }
-
-      const message = await prisma.message.findUnique({ where: { id: messageId } })
+      const message = await prisma.message.findUnique({
+        where: { id: messageId },
+        include: { conversation: { select: { type: true } } },
+      })
       if (!message) return res.status(404).json({ error: 'Message not found' })
       if (message.contentType === 'deleted') return res.status(400).json({ error: 'Cannot edit a deleted message' })
 
-      // Check 15-minute window
       const elapsed = Date.now() - message.createdAt.getTime()
       if (elapsed > EDIT_WINDOW_MS) {
         return res.status(403).json({ error: 'Edit window has expired (15 minutes)' })
       }
 
-      // Build edit history — append the previous version
+      const isGroup = message.conversation.type === 'GROUP'
+
+      if (isGroup) {
+        // Group edit: replace per-recipient ciphertext set in place. v1
+        // doesn't keep per-recipient edit history (the spec calls for
+        // "just replace ciphertexts on edit").
+        if (!recipientPayloads || typeof recipientPayloads !== 'object' || Array.isArray(recipientPayloads)) {
+          return res.status(400).json({ error: 'recipientPayloads object required for group edit' })
+        }
+        const active = await prisma.conversationParticipant.findMany({
+          where: { conversationId: message.conversationId, leftAt: null },
+          select: { userId: true },
+        })
+        const activeIds = active.map(a => a.userId).sort((a, b) => a - b)
+        const submittedIds = Object.keys(recipientPayloads).map(k => Number(k)).sort((a, b) => a - b)
+        if (
+          submittedIds.length !== activeIds.length ||
+          submittedIds.some((id, i) => id !== activeIds[i])
+        ) {
+          return res.status(400).json({ error: 'recipientPayloads keys must match active members', expected: activeIds, got: submittedIds })
+        }
+
+        await prisma.$transaction(async tx => {
+          await tx.messageRecipientPayload.deleteMany({ where: { messageId } })
+          await tx.messageRecipientPayload.createMany({
+            data: activeIds.map(uid => ({
+              messageId,
+              recipientUserId: uid,
+              encryptedPayload: recipientPayloads[uid],
+            })),
+          })
+        })
+
+        dmWebSocketService.notifyMessageEdited(message.conversationId, messageId, message.senderId)
+        return res.json({ success: true })
+      }
+
+      if (!encryptedPayload) {
+        return res.status(400).json({ error: 'encryptedPayload is required' })
+      }
+
       let history: string[] = []
       if (message.editHistory) {
         try { history = JSON.parse(message.editHistory) } catch {}
       }
-      // Store the previous encrypted payload with timestamp
       history.push(JSON.stringify({
         encryptedPayload: previousEncryptedPayload || message.encryptedPayload,
         editedAt: new Date().toISOString()
@@ -616,7 +688,6 @@ router.patch('/messages/:messageId',
         }
       })
 
-      // Notify via WebSocket
       dmWebSocketService.notifyMessageEdited(message.conversationId, messageId, message.senderId)
 
       return res.json({ success: true, message: updated })
@@ -759,12 +830,13 @@ router.get('/settings',
 
       const identity = await prisma.dmIdentity.findUnique({
         where: { userId },
-        select: { dmPrivacy: true, defaultDmReactions: true }
+        select: { dmPrivacy: true, defaultDmReactions: true, allowGroupInvites: true }
       })
 
       res.json({
         dmPrivacy: identity?.dmPrivacy || 'EVERYONE',
         defaultDmReactions: identity?.defaultDmReactions ?? [],
+        allowGroupInvites: identity?.allowGroupInvites ?? true,
       })
     } catch (error: any) {
       console.error('GET /api/dm/settings error:', error)

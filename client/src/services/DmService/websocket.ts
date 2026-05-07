@@ -181,7 +181,9 @@ export class DmWebSocketService {
   }
 
   broadcastConversationUpdate(conversationId: string, update: any) {
-    this.emitToConversation(conversationId, 'conversation-update', update)
+    // Splice in conversationId so receivers can route by conversation
+    // without joining every event to its room context.
+    this.emitToConversation(conversationId, 'conversation-update', { conversationId, ...update })
   }
 
   notifyNewConversation(userId: number, conversation: any) {

@@ -7,7 +7,9 @@ import { useActiveToken } from '~/store/tokenDataStore'
 import {
   deriveKeyPair,
   computeSharedSecret,
+  computeSharedSecretForPeer,
   encrypt,
+  encryptForRecipients,
   decrypt,
   hasCachedKeyPair,
   getCachedPrivateKey,
@@ -19,21 +21,29 @@ import { useDmUnreadStore } from '~/store/dmUnreadStore'
 export type UiConversationStatus = 'ACCEPTED' | 'REQUEST' | 'BLOCKED'
 export type UiInbox = 'main' | 'requests'
 
+export type UiParticipant = {
+  userId: number
+  publicKey?: string | null
+  role?: 'OWNER' | 'MEMBER'
+  identity: {
+    user: {
+      username: string
+      displayName?: string
+      image?: string
+      address?: string
+      tokenId: number
+    }
+  }
+}
+
 type UiConversation = {
   id: string
-  type: 'DM'
-  participants: Array<{
-    userId: number
-    identity: {
-      user: {
-        username: string
-        displayName?: string
-        image?: string
-        address?: string
-        tokenId: number
-      }
-    }
-  }>
+  type: 'DM' | 'GROUP'
+  // Group metadata; null on DMs.
+  name?: string | null
+  avatarUrl?: string | null
+  myRole?: 'OWNER' | 'MEMBER'
+  participants: UiParticipant[]
   lastMessageAt?: string
   lastMessagePreview?: string // decrypted preview of last message
   lastMessageSenderId?: number
@@ -178,8 +188,11 @@ export function useDmClient(tokenId?: number, username?: string) {
 
       const uiConversations: UiConversation[] = await Promise.all(
         (data.conversations || []).map(async (conv: any) => {
-          const otherParticipants = conv.participants.filter(
-            (p: any) => p.userId !== tokenId
+          const isGroup = conv.type === 'GROUP'
+          // For groups, "otherParticipants" still excludes self; for the
+          // header pill / sidebar fallback name, the FE uses conv.name.
+          const otherParticipants = (conv.participants || []).filter(
+            (p: any) => p.userId !== tokenId,
           )
 
           // Try to decrypt last message preview
@@ -188,13 +201,33 @@ export function useDmClient(tokenId?: number, username?: string) {
           if (conv.lastMessage?.contentType === 'deleted') {
             lastMessageSenderId = conv.lastMessage.senderId
             lastMessagePreview = '[Message deleted]'
+          } else if (conv.lastMessage?.contentType?.startsWith('system:')) {
+            lastMessageSenderId = conv.lastMessage.senderId
+            lastMessagePreview = renderSystemPreview(conv.lastMessage.contentType)
           } else if (conv.lastMessage?.encryptedPayload && privateKeyRef) {
             lastMessageSenderId = conv.lastMessage.senderId
             try {
-              // Pass the peer userId we already have on `conv` so the helper
-              // doesn't re-fetch /api/dm/conversations for every preview.
-              const peerId = otherParticipants[0]?.userId
-              const sharedSecret = await getOrComputeSharedSecret(conv.id, tokenId, peerId)
+              let sharedSecret: CryptoKey | null = null
+              if (isGroup) {
+                // Group: decrypt with the per-pair key derived against
+                // the SENDER's pubkey (not "the peer's"). Sender of
+                // own messages is self; ECDH self-on-self is valid and
+                // deterministic.
+                const senderParticipant = (conv.participants || []).find(
+                  (p: any) => p.userId === conv.lastMessage.senderId,
+                )
+                const senderPub = senderParticipant?.identity?.publicKey
+                if (senderPub && privateKeyRef) {
+                  sharedSecret = await computeSharedSecretForPeer(
+                    privateKeyRef,
+                    conv.lastMessage.senderId,
+                    senderPub,
+                  )
+                }
+              } else {
+                const peerId = otherParticipants[0]?.userId
+                sharedSecret = await getOrComputeSharedSecret(conv.id, tokenId, peerId)
+              }
               if (sharedSecret) {
                 const decrypted = await decrypt(conv.lastMessage.encryptedPayload, sharedSecret)
 
@@ -223,21 +256,35 @@ export function useDmClient(tokenId?: number, username?: string) {
             }
           }
 
+          // For groups, surface ALL active participants (incl. self) so
+          // the members panel + sender-username row can resolve names
+          // without a follow-up fetch. For DMs, keep the legacy
+          // "others only" shape.
+          const visibleParticipants: UiParticipant[] = (isGroup
+            ? (conv.participants || []).filter((p: any) => p.leftAt == null)
+            : otherParticipants
+          ).map((p: any) => ({
+            userId: p.userId,
+            publicKey: p.identity?.publicKey ?? null,
+            role: (p.role as 'OWNER' | 'MEMBER') ?? 'MEMBER',
+            identity: {
+              user: {
+                username: p.identity?.user?.username || 'Unknown',
+                displayName: p.identity?.user?.displayName,
+                image: p.identity?.user?.avatarUrl,
+                address: p.identity?.user?.address,
+                tokenId: p.userId,
+              },
+            },
+          }))
+
           return {
             id: conv.id,
-            type: 'DM' as const,
-            participants: otherParticipants.map((p: any) => ({
-              userId: p.userId,
-              identity: {
-                user: {
-                  username: p.identity?.user?.username || 'Unknown',
-                  displayName: p.identity?.user?.displayName,
-                  image: p.identity?.user?.avatarUrl,
-                  address: p.identity?.user?.address,
-                  tokenId: p.userId
-                }
-              }
-            })),
+            type: (isGroup ? 'GROUP' : 'DM') as 'DM' | 'GROUP',
+            name: isGroup ? (conv.name || null) : null,
+            avatarUrl: isGroup ? (conv.avatarUrl || null) : null,
+            myRole: conv.myRole as 'OWNER' | 'MEMBER' | undefined,
+            participants: visibleParticipants,
             lastMessageAt: conv.lastMessageAt,
             lastMessagePreview,
             lastMessageSenderId,
@@ -500,9 +547,11 @@ export function useDmClient(tokenId?: number, username?: string) {
     if (peerData.publicKey) {
       peerPublicKeyCache.set(peerUserId, peerData.publicKey)
     }
-    // Compute shared secret for this conversation if we have the private key
+    // Compute shared secret for this peer if we have the private key.
+    // The cache key is peerUserId (per-pair ECDH) so the same key serves
+    // any future DM-or-group conversation with this peer.
     if (privateKeyRef && peerData.publicKey) {
-      await computeSharedSecret(privateKeyRef, peerData.publicKey, conversation.id)
+      await computeSharedSecret(privateKeyRef, peerData.publicKey, peerUserId, conversation.id)
     }
 
     // Reload conversations to get updated list. This *won't* include the
@@ -526,6 +575,124 @@ export function useDmClient(tokenId?: number, username?: string) {
     })
   }, [])
 
+  // ---------- group operations ----------
+  const createGroup = useCallback(async (params: {
+    memberUserIds: number[]
+    name?: string
+    avatarUrl?: string
+  }) => {
+    if (!tokenId) throw new Error('Not initialized')
+    const conv = await apiFetch<any>('/api/dm/groups', {
+      method: 'POST',
+      body: JSON.stringify({ userId: tokenId, ...params }),
+      headers: { 'Content-Type': 'application/json' },
+    })
+    await loadConversations()
+    return conv
+  }, [tokenId, loadConversations])
+
+  const addMembers = useCallback(async (conversationId: string, targetUserIds: number[]) => {
+    if (!tokenId) throw new Error('Not initialized')
+    const conv = await apiFetch<any>(`/api/dm/groups/${conversationId}/members`, {
+      method: 'POST',
+      body: JSON.stringify({ userId: tokenId, targetUserIds }),
+      headers: { 'Content-Type': 'application/json' },
+    })
+    await loadConversations()
+    return conv
+  }, [tokenId, loadConversations])
+
+  const removeMember = useCallback(async (conversationId: string, targetUserId: number) => {
+    if (!tokenId) throw new Error('Not initialized')
+    const conv = await apiFetch<any>(`/api/dm/groups/${conversationId}/members/${targetUserId}`, {
+      method: 'DELETE',
+      body: JSON.stringify({ actorUserId: tokenId }),
+      headers: { 'Content-Type': 'application/json' },
+    })
+    await loadConversations()
+    return conv
+  }, [tokenId, loadConversations])
+
+  const leaveGroup = useCallback(async (conversationId: string) => {
+    if (!tokenId) throw new Error('Not initialized')
+    const out = await apiFetch<any>(`/api/dm/groups/${conversationId}/leave`, {
+      method: 'POST',
+      body: JSON.stringify({ userId: tokenId }),
+      headers: { 'Content-Type': 'application/json' },
+    })
+    await loadConversations()
+    return out
+  }, [tokenId, loadConversations])
+
+  const renameGroup = useCallback(async (conversationId: string, name: string) => {
+    if (!tokenId) throw new Error('Not initialized')
+    const out = await apiFetch<any>(`/api/dm/groups/${conversationId}`, {
+      method: 'PATCH',
+      body: JSON.stringify({ userId: tokenId, name }),
+      headers: { 'Content-Type': 'application/json' },
+    })
+    await loadConversations()
+    return out
+  }, [tokenId, loadConversations])
+
+  const updateGroupAvatar = useCallback(async (conversationId: string, avatarUrl: string | null) => {
+    if (!tokenId) throw new Error('Not initialized')
+    const out = await apiFetch<any>(`/api/dm/groups/${conversationId}`, {
+      method: 'PATCH',
+      body: JSON.stringify({ userId: tokenId, avatarUrl }),
+      headers: { 'Content-Type': 'application/json' },
+    })
+    await loadConversations()
+    return out
+  }, [tokenId, loadConversations])
+
+  const mintInvite = useCallback(async (conversationId: string, params: { expiresAt: string; maxUses: number }) => {
+    if (!tokenId) throw new Error('Not initialized')
+    return apiFetch<any>(`/api/dm/groups/${conversationId}/invites`, {
+      method: 'POST',
+      body: JSON.stringify({ userId: tokenId, ...params }),
+      headers: { 'Content-Type': 'application/json' },
+    })
+  }, [tokenId])
+
+  const revokeInvite = useCallback(async (conversationId: string, inviteId: string) => {
+    if (!tokenId) throw new Error('Not initialized')
+    return apiFetch<any>(`/api/dm/groups/${conversationId}/invites/${inviteId}`, {
+      method: 'DELETE',
+      body: JSON.stringify({ userId: tokenId }),
+      headers: { 'Content-Type': 'application/json' },
+    })
+  }, [tokenId])
+
+  const listInvites = useCallback(async (conversationId: string) => {
+    if (!tokenId) throw new Error('Not initialized')
+    return apiFetch<{ invites: any[] }>(`/api/dm/groups/${conversationId}/invites?userId=${tokenId}`)
+  }, [tokenId])
+
+  const previewInvite = useCallback(async (token: string) => {
+    return apiFetch<any>(`/api/dm/groups/join/${encodeURIComponent(token)}`)
+  }, [])
+
+  const redeemInvite = useCallback(async (token: string) => {
+    if (!tokenId) throw new Error('Not initialized')
+    const out = await apiFetch<any>(`/api/dm/groups/join/${encodeURIComponent(token)}`, {
+      method: 'POST',
+      body: JSON.stringify({ userId: tokenId }),
+      headers: { 'Content-Type': 'application/json' },
+    })
+    await loadConversations()
+    return out
+  }, [tokenId, loadConversations])
+
+  const setAllowGroupInvites = useCallback(async (allow: boolean) => {
+    if (!tokenId) throw new Error('Not initialized')
+    return apiFetch<{ allowGroupInvites: boolean }>('/api/dm/groups/settings', {
+      method: 'PUT',
+      body: JSON.stringify({ userId: tokenId, allowGroupInvites: allow }),
+      headers: { 'Content-Type': 'application/json' },
+    })
+  }, [tokenId])
+
   return {
     isInitialized,
     needsKeyDerivation: needsKeyDerivation && checkedTokenIdRef.current === tokenId,
@@ -546,10 +713,37 @@ export function useDmClient(tokenId?: number, username?: string) {
     requestCount,
     refreshRequestCount,
     acceptConversation,
+    // Group operations.
+    createGroup,
+    addMembers,
+    removeMember,
+    leaveGroup,
+    renameGroup,
+    updateGroupAvatar,
+    mintInvite,
+    revokeInvite,
+    listInvites,
+    previewInvite,
+    redeemInvite,
+    setAllowGroupInvites,
   }
 }
 
-export function useDmMessages(conversationId: string, tokenId?: number, peerUserId?: number) {
+export type DmMessagesGroupContext = {
+  /** True when conversation.type === 'GROUP'. Drives encryption keyset
+   *  on send + per-sender ECDH on decrypt. */
+  isGroup: boolean
+  /** Active members (incl. self), with publicKey. Sender uses these to
+   *  fan out sealed-per-recipient ciphertext on POST /api/dm/messages. */
+  members: Array<{ userId: number; publicKey: string }>
+}
+
+export function useDmMessages(
+  conversationId: string,
+  tokenId?: number,
+  peerUserId?: number,
+  groupContext?: DmMessagesGroupContext,
+) {
   const [messages, setMessages] = useState<UiMessage[]>([])
   const [isLoading, setIsLoading] = useState(false)
   const [isLoadingOlder, setIsLoadingOlder] = useState(false)
@@ -581,10 +775,13 @@ export function useDmMessages(conversationId: string, tokenId?: number, peerUser
 
         setPeerLastReadAt(data.peerLastReadAt || null)
 
-        // Get peer's public key for this conversation
-        const sharedSecret = await getOrComputeSharedSecret(conversationId, tokenId, peerUserId)
+        // For DMs, one shared secret covers every message. For groups,
+        // we resolve per-sender on the fly inside the loop below.
+        const sharedSecret = groupContext?.isGroup
+          ? null
+          : await getOrComputeSharedSecret(conversationId, tokenId, peerUserId)
 
-        if (!sharedSecret) {
+        if (!groupContext?.isGroup && !sharedSecret) {
           // Can't decrypt yet — show encrypted messages as-is
           setMessages(data.messages.map((msg: any) => ({
             id: msg.id,
@@ -636,23 +833,39 @@ export function useDmMessages(conversationId: string, tokenId?: number, peerUser
             continue
           }
 
+          // Resolve the AES key for THIS message — per-sender for groups,
+          // single conversation key for DMs.
+          let key: CryptoKey | null = sharedSecret
+          if (groupContext?.isGroup && privateKeyRef) {
+            const sender = groupContext.members.find(m => m.userId === msg.senderId)
+            if (sender) {
+              key = await computeSharedSecretForPeer(privateKeyRef, sender.userId, sender.publicKey)
+            } else {
+              key = null
+            }
+          }
+
           let content: string
-          try {
-            content = await decrypt(msg.encryptedPayload, sharedSecret)
-          } catch {
+          if (!key) {
             content = '[Unable to decrypt]'
+          } else {
+            try {
+              content = await decrypt(msg.encryptedPayload, key)
+            } catch {
+              content = '[Unable to decrypt]'
+            }
           }
 
           // Decrypt edit history if present
           let editHistory: Array<{ content: string; editedAt: string }> | undefined
-          if (msg.editHistory) {
+          if (msg.editHistory && key) {
             try {
               const historyEntries = JSON.parse(msg.editHistory)
               editHistory = []
               for (const entry of historyEntries) {
                 const parsed = JSON.parse(entry)
                 try {
-                  const decryptedContent = await decrypt(parsed.encryptedPayload, sharedSecret)
+                  const decryptedContent = await decrypt(parsed.encryptedPayload, key)
                   editHistory.push({ content: decryptedContent, editedAt: parsed.editedAt })
                 } catch {
                   editHistory.push({ content: '[Unable to decrypt]', editedAt: parsed.editedAt })
@@ -704,10 +917,35 @@ export function useDmMessages(conversationId: string, tokenId?: number, peerUser
 
     setIsSending(true)
     try {
-      const sharedSecret = await getOrComputeSharedSecret(conversationId, tokenId, peerUserId)
-      if (!sharedSecret) throw new Error('Cannot encrypt: encryption key not available. Try re-enabling DMs.')
-
-      const encryptedPayload = await encrypt(content, sharedSecret)
+      let body: Record<string, any>
+      if (groupContext?.isGroup) {
+        if (!privateKeyRef) {
+          throw new Error('Cannot encrypt: keys not derived. Try re-enabling DMs.')
+        }
+        const recipientPayloads = await encryptForRecipients(
+          content,
+          privateKeyRef,
+          groupContext.members,
+        )
+        body = {
+          conversationId,
+          senderId: tokenId,
+          recipientPayloads,
+          contentType: 'text',
+          ...(replyToMessageId ? { replyToMessageId } : {}),
+        }
+      } else {
+        const sharedSecret = await getOrComputeSharedSecret(conversationId, tokenId, peerUserId)
+        if (!sharedSecret) throw new Error('Cannot encrypt: encryption key not available. Try re-enabling DMs.')
+        const encryptedPayload = await encrypt(content, sharedSecret)
+        body = {
+          conversationId,
+          senderId: tokenId,
+          encryptedPayload,
+          contentType: 'text',
+          ...(replyToMessageId ? { replyToMessageId } : {}),
+        }
+      }
 
       // Use direct fetch instead of apiFetch so we can parse structured error bodies
       const res = await fetch('/api/dm/messages', {
@@ -717,13 +955,7 @@ export function useDmMessages(conversationId: string, tokenId?: number, peerUser
           ...getAuthHeaders(),
           ...(tokenId ? { 'x-user-id': String(tokenId) } : {})
         },
-        body: JSON.stringify({
-          conversationId,
-          senderId: tokenId,
-          encryptedPayload,
-          contentType: 'text',
-          ...(replyToMessageId ? { replyToMessageId } : {}),
-        })
+        body: JSON.stringify(body)
       })
 
       const msg = await res.json()
@@ -788,11 +1020,54 @@ export function useDmMessages(conversationId: string, tokenId?: number, peerUser
     if (encryptedMsg.senderId === tokenId) return // Skip own messages
 
     try {
-      const sharedSecret = await getOrComputeSharedSecret(conversationId, tokenId!, peerUserId)
-      let content = '[Encrypted]'
-      if (sharedSecret) {
+      // System events arrive without payloads — surface a marker row
+      // and skip the decrypt path entirely.
+      if (encryptedMsg.contentType?.startsWith('system:')) {
+        setMessages(prev => {
+          if (prev.some(m => m.id === encryptedMsg.id)) return prev
+          return [...prev, {
+            id: encryptedMsg.id,
+            content: renderSystemPreview(encryptedMsg.contentType),
+            contentType: encryptedMsg.contentType,
+            senderId: encryptedMsg.senderId,
+            createdAt: encryptedMsg.createdAt,
+            status: encryptedMsg.status || 'SENT',
+            conversationId: encryptedMsg.conversationId,
+            isFromCurrentUser: false,
+            replyToMessageId: null,
+          }]
+        })
+        return
+      }
+
+      // For group messages, the FE only receives the system-level
+      // broadcast with no per-recipient ciphertext; we hop to the REST
+      // GET to pull THIS user's row for that message. Cheap; runs once
+      // per inbound group message. For DMs, the WS payload already
+      // carries encryptedPayload so we decrypt directly.
+      let cipher = encryptedMsg.encryptedPayload as string | undefined
+      if (groupContext?.isGroup && !cipher && tokenId) {
         try {
-          content = await decrypt(encryptedMsg.encryptedPayload, sharedSecret)
+          const fresh = await apiFetch<{ messages: any[] }>(
+            `/api/dm/conversations/${conversationId}/messages?userId=${tokenId}&limit=1`,
+          )
+          const match = fresh.messages?.find((m: any) => m.id === encryptedMsg.id)
+          cipher = match?.encryptedPayload
+        } catch { /* leave cipher undefined */ }
+      }
+
+      let key: CryptoKey | null = null
+      if (groupContext?.isGroup && privateKeyRef) {
+        const sender = groupContext.members.find(m => m.userId === encryptedMsg.senderId)
+        if (sender) key = await computeSharedSecretForPeer(privateKeyRef, sender.userId, sender.publicKey)
+      } else {
+        key = await getOrComputeSharedSecret(conversationId, tokenId!, peerUserId)
+      }
+
+      let content = '[Encrypted]'
+      if (key && cipher) {
+        try {
+          content = await decrypt(cipher, key)
         } catch {
           content = '[Unable to decrypt]'
         }
@@ -844,8 +1119,10 @@ export function useDmMessages(conversationId: string, tokenId?: number, peerUser
         setHasMoreMessages(false)
       }
 
-      const sharedSecret = await getOrComputeSharedSecret(conversationId, tokenId, peerUserId)
-      if (!sharedSecret) return
+      const sharedSecret = groupContext?.isGroup
+        ? null
+        : await getOrComputeSharedSecret(conversationId, tokenId, peerUserId)
+      if (!groupContext?.isGroup && !sharedSecret) return
 
       const decrypted: UiMessage[] = []
       for (const msg of data.messages) {
@@ -860,17 +1137,24 @@ export function useDmMessages(conversationId: string, tokenId?: number, peerUser
           continue
         }
 
+        let key: CryptoKey | null = sharedSecret
+        if (groupContext?.isGroup && privateKeyRef) {
+          const sender = groupContext.members.find(m => m.userId === msg.senderId)
+          key = sender ? await computeSharedSecretForPeer(privateKeyRef, sender.userId, sender.publicKey) : null
+        }
+
         let content: string
-        try { content = await decrypt(msg.encryptedPayload, sharedSecret) } catch { content = '[Unable to decrypt]' }
+        if (!key) content = '[Unable to decrypt]'
+        else { try { content = await decrypt(msg.encryptedPayload, key) } catch { content = '[Unable to decrypt]' } }
 
         let editHistory: Array<{ content: string; editedAt: string }> | undefined
-        if (msg.editHistory) {
+        if (msg.editHistory && key) {
           try {
             const entries = JSON.parse(msg.editHistory)
             editHistory = []
             for (const entry of entries) {
               const parsed = JSON.parse(entry)
-              try { editHistory.push({ content: await decrypt(parsed.encryptedPayload, sharedSecret), editedAt: parsed.editedAt }) }
+              try { editHistory.push({ content: await decrypt(parsed.encryptedPayload, key), editedAt: parsed.editedAt }) }
               catch { editHistory.push({ content: '[Unable to decrypt]', editedAt: parsed.editedAt }) }
             }
           } catch {}
@@ -901,6 +1185,23 @@ export function useDmMessages(conversationId: string, tokenId?: number, peerUser
 
   const editMessage = useCallback(async (messageId: string, newContent: string) => {
     if (!conversationId || !tokenId) return
+
+    if (groupContext?.isGroup) {
+      // v1 group edits replace the per-recipient ciphertext set wholesale —
+      // no per-recipient edit history. Sender re-encrypts to ALL active
+      // members and PATCH'es the message; the route layer accepts a
+      // recipientPayloads map alongside encryptedPayload (DM-only field).
+      if (!privateKeyRef) throw new Error('Cannot encrypt: keys not derived')
+      const recipientPayloads = await encryptForRecipients(newContent, privateKeyRef, groupContext.members)
+      await apiFetch(`/api/dm/messages/${messageId}`, {
+        method: 'PATCH',
+        body: JSON.stringify({ recipientPayloads }),
+      })
+      setMessages(prev => prev.map(m =>
+        m.id === messageId ? { ...m, content: newContent } : m,
+      ))
+      return
+    }
 
     const sharedSecret = await getOrComputeSharedSecret(conversationId, tokenId, peerUserId)
     if (!sharedSecret) throw new Error('Cannot encrypt')
@@ -1037,6 +1338,19 @@ export function useDmMessages(conversationId: string, tokenId?: number, peerUser
   return { messages, isLoading, isLoadingOlder, hasMoreMessages, loadOlderMessages, isSending, sendMessage, editMessage, deleteForMe, deleteForEveryone, markAsRead, addIncomingMessage, peerLastReadAt, getSharedSecret, toggleReaction, applyReactionEvent }
 }
 
+function renderSystemPreview(contentType: string): string {
+  switch (contentType) {
+    case 'system:created':         return 'Group created'
+    case 'system:added':           return 'New member added'
+    case 'system:removed':         return 'A member was removed'
+    case 'system:left':            return 'A member left'
+    case 'system:renamed':         return 'Group renamed'
+    case 'system:avatarChanged':   return 'Group avatar updated'
+    case 'system:ownerTransferred':return 'Group ownership transferred'
+    default:                       return ''
+  }
+}
+
 // Module-scoped cache for peer DM public keys. The conversation list refresh
 // pulls a key per peer; without caching, switching tabs / reloading kicks N
 // requests for the same N peers we already saw last second. Keys are stable
@@ -1096,7 +1410,7 @@ async function getOrComputeSharedSecret(
     const publicKey = await getPeerPublicKey(resolvedPeerId!)
     if (!publicKey) return null
 
-    return computeSharedSecret(privateKeyRef, publicKey, conversationId)
+    return computeSharedSecret(privateKeyRef, publicKey, resolvedPeerId!, conversationId)
   } catch (err) {
     console.error('[DM] Failed to compute shared secret:', err)
     return null

@@ -71,6 +71,7 @@ const MessagesPage: React.FC = () => {
   const [isSettingsModalOpen, setIsSettingsModalOpen] = useState(false)
   const [searchQuery, setSearchQuery] = useState('')
   const [dmPrivacy, setDmPrivacy] = useState<'EVERYONE' | 'FOLLOWERS' | 'FOLLOWING'>('EVERYONE')
+  const [allowGroupInvites, setAllowGroupInvitesState] = useState<boolean>(true)
   const [dmPrivacyLoaded, setDmPrivacyLoaded] = useState(false)
   const [dmPrivacyError, setDmPrivacyError] = useState<{ message: string; reason: string; peer: any } | null>(null)
   // User's customized 5-emoji default reaction strip. Empty = use the
@@ -194,11 +195,12 @@ const MessagesPage: React.FC = () => {
   // Load DM privacy setting
   useEffect(() => {
     if (!currentUser?.id || dmPrivacyLoaded) return
-    apiFetch<{ dmPrivacy: 'EVERYONE' | 'FOLLOWERS' | 'FOLLOWING'; defaultDmReactions?: string[] }>(
+    apiFetch<{ dmPrivacy: 'EVERYONE' | 'FOLLOWERS' | 'FOLLOWING'; defaultDmReactions?: string[]; allowGroupInvites?: boolean }>(
       `/api/dm/settings?userId=${currentUser.id}`
     ).then(data => {
       setDmPrivacy(data.dmPrivacy)
       setDefaultReactions(data.defaultDmReactions || [])
+      if (typeof data.allowGroupInvites === 'boolean') setAllowGroupInvitesState(data.allowGroupInvites)
       setDmPrivacyLoaded(true)
     }).catch(() => setDmPrivacyLoaded(true))
   }, [currentUser?.id, dmPrivacyLoaded])
@@ -2877,6 +2879,31 @@ const MessagesPage: React.FC = () => {
               ))}
             </div>
           </div>
+          {/* Allow direct adds to group chats. Invite-URL redemption is
+              treated as explicit consent and bypasses this toggle. */}
+          <label className={`flex items-start gap-3 p-3 rounded-lg cursor-pointer ${isDark ? 'bg-white/5 hover:bg-white/10' : 'bg-gray-50 hover:bg-gray-100'}`}>
+            <input
+              type="checkbox"
+              checked={allowGroupInvites}
+              onChange={e => {
+                const next = e.target.checked
+                setAllowGroupInvitesState(next)
+                if (currentUser?.id) {
+                  apiFetch('/api/dm/groups/settings', {
+                    method: 'PUT',
+                    body: JSON.stringify({ userId: currentUser.id, allowGroupInvites: next }),
+                  }).catch(err => console.error('Failed to save group invite setting:', err))
+                }
+              }}
+              className="mt-1 accent-yellow-500"
+            />
+            <div>
+              <p className={`text-sm font-medium ${isDark ? 'text-white' : 'text-gray-900'}`}>Allow direct group adds</p>
+              <p className={`text-xs ${isDark ? 'text-white/40' : 'text-gray-400'}`}>
+                When off, others can't drop you into a group without an invite link.
+              </p>
+            </div>
+          </label>
           <button
             onClick={() => setIsSettingsModalOpen(false)}
             className={`w-full py-2.5 rounded-lg text-sm font-medium transition-colors cursor-pointer ${

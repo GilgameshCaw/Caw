@@ -448,11 +448,16 @@ model DmIdentity {
   // Empty array = use server defaults; otherwise expected to hold exactly
   // five emojis. We don't enforce length at the column level — UI clamps.
   defaultDmReactions String[]                  @default([])
+  // Opt-out for direct add-to-group. Hitting an invite URL is explicit
+  // consent and bypasses this gate.
+  allowGroupInvites  Boolean                   @default(true)
   createdAt          DateTime                  @default(now())
   updatedAt          DateTime                  @updatedAt
   conversations      ConversationParticipant[]
   sentMessages       Message[]                 @relation("MessageSender")
   reactions          MessageReaction[]
+  recipientPayloads  MessageRecipientPayload[]
+  invitesCreated     GroupInvite[]             @relation("GroupInviteCreator")
   user               User                      @relation(fields: [userId], references: [tokenId])
 
   @@index([walletAddress])
@@ -462,12 +467,16 @@ model Conversation {
   id            String                    @id @default(uuid())
   type          ConversationType          @default(DM)
   creatorId     Int
+  // Group-only metadata. Both null on DM rows.
+  name          String?
+  avatarUrl     String?
   lastMessageAt DateTime?
   lastMessageId String?
   createdAt     DateTime                  @default(now())
   updatedAt     DateTime                  @updatedAt
   participants  ConversationParticipant[]
   messages      Message[]
+  invites       GroupInvite[]
 
   @@index([lastMessageAt])
   @@index([creatorId])
@@ -486,6 +495,14 @@ model ConversationParticipant {
   // either way) — those land in the Requests tab. Flips to ACCEPTED on
   // first reply or explicit accept. BLOCKED mirrors Block table.
   status         ConversationParticipantStatus @default(ACCEPTED)
+  // Group role. OWNER = can add/remove/rename/mint-invite. Cap of 1
+  // owner per group enforced at the service layer (transfer on leave).
+  role           ConversationParticipantRole   @default(MEMBER)
+  // Removed-or-left timestamp. NULL = active. The participant lookup
+  // for write paths MUST add `leftAt IS NULL` so removed members
+  // can't send/react/edit. Keeping the row preserves system-message
+  // attribution and unread-count history.
+  leftAt         DateTime?
   conversation   Conversation                  @relation(fields: [conversationId], references: [id], onDelete: Cascade)
   identity       DmIdentity                    @relation(fields: [userId], references: [userId])
 
@@ -493,6 +510,7 @@ model ConversationParticipant {
   @@index([userId])
   @@index([conversationId])
   @@index([userId, status])
+  @@index([conversationId, leftAt])
 }
 
 enum ConversationParticipantStatus {
@@ -502,35 +520,74 @@ enum ConversationParticipantStatus {
 }
 
 model Message {
-  id               String            @id @default(uuid())
-  conversationId   String
-  senderId         Int
-  encryptedPayload String? // null when deleted for everyone (tombstone)
-  contentType      String            @default("text") // "text", "deleted"
-  editHistory      String? // encrypted JSON array of previous versions
-  status           MessageStatus     @default(SENT)
-  shadowBlocked    Boolean           @default(false) // hidden from recipient, visible to sender
+  id                String                    @id @default(uuid())
+  conversationId    String
+  senderId          Int
+  // null on group rows (per-recipient ciphertext lives in
+  // MessageRecipientPayload), null on system rows, null when deleted
+  // for everyone (tombstone), set on DM rows.
+  encryptedPayload  String?
+  contentType       String                    @default("text") // "text", "deleted", "system:created", "system:added", "system:removed", "system:left", "system:renamed", "system:avatarChanged", "system:ownerTransferred"
+  editHistory       String? // encrypted JSON array of previous versions
+  // System-event metadata (added/removed userIds, oldName/newName, ...).
+  // Null on every non-system row.
+  systemPayload     Json?
+  status            MessageStatus             @default(SENT)
+  shadowBlocked     Boolean                   @default(false) // hidden from recipient, visible to sender
   // Cross-node relay dedup. Home node generates a UUID per relayed
   // message; receivers reject replays via the partial unique index
   // (NULL for any message that was never relayed, e.g. pre-relay rows).
-  relayId          String?           @unique
+  relayId           String?                   @unique
   // Self-reference for replies. SetNull (not Cascade) so deleting a parent
   // doesn't delete every reply — replies just lose their thread anchor and
   // the UI falls back to "Original message unavailable".
-  replyToMessageId String?
-  replyTo          Message?          @relation("MessageReplies", fields: [replyToMessageId], references: [id], onDelete: SetNull)
-  replies          Message[]         @relation("MessageReplies")
-  createdAt        DateTime          @default(now())
-  updatedAt        DateTime          @updatedAt
-  conversation     Conversation      @relation(fields: [conversationId], references: [id], onDelete: Cascade)
-  sender           DmIdentity        @relation("MessageSender", fields: [senderId], references: [userId])
-  receipts         MessageReceipt[]
-  deletions        MessageDeletion[]
-  reactions        MessageReaction[]
+  replyToMessageId  String?
+  replyTo           Message?                  @relation("MessageReplies", fields: [replyToMessageId], references: [id], onDelete: SetNull)
+  replies           Message[]                 @relation("MessageReplies")
+  createdAt         DateTime                  @default(now())
+  updatedAt         DateTime                  @updatedAt
+  conversation      Conversation              @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  sender            DmIdentity                @relation("MessageSender", fields: [senderId], references: [userId])
+  receipts          MessageReceipt[]
+  deletions         MessageDeletion[]
+  reactions         MessageReaction[]
+  recipientPayloads MessageRecipientPayload[]
 
   @@index([conversationId, createdAt])
   @@index([senderId])
   @@index([replyToMessageId])
+}
+
+// Sealed-per-recipient ciphertext for group messages. One row per
+// (message, active recipient including sender). For DM rows this table
+// is unused — DM ciphertext stays on Message.encryptedPayload.
+model MessageRecipientPayload {
+  id               BigInt     @id @default(autoincrement())
+  messageId        String
+  recipientUserId  Int
+  encryptedPayload String
+  createdAt        DateTime   @default(now())
+  message          Message    @relation(fields: [messageId], references: [id], onDelete: Cascade)
+  recipient        DmIdentity @relation(fields: [recipientUserId], references: [userId], onDelete: Cascade)
+
+  @@unique([messageId, recipientUserId])
+  @@index([recipientUserId])
+}
+
+model GroupInvite {
+  id              String       @id @default(uuid())
+  token           String       @unique
+  conversationId  String
+  createdByUserId Int
+  createdAt       DateTime     @default(now())
+  expiresAt       DateTime
+  maxUses         Int
+  useCount        Int          @default(0)
+  revokedAt       DateTime?
+  conversation    Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  creator         DmIdentity   @relation("GroupInviteCreator", fields: [createdByUserId], references: [userId])
+
+  @@index([conversationId])
 }
 
 // Plaintext reactions on a DM. Unlike the message body, the emoji isn't
@@ -675,6 +732,12 @@ enum MessageStatus {
 
 enum ConversationType {
   DM
+  GROUP
+}
+
+enum ConversationParticipantRole {
+  OWNER
+  MEMBER
 }
 
 enum DmPrivacy {
@@ -746,20 +809,20 @@ enum UserRole {
 /// Append-only — never updated, never deleted. Lets admins answer "who
 /// hid this caw and why" without grep-archaeology of server logs.
 model ModeratorAction {
-  id              Int      @id @default(autoincrement())
+  id           Int      @id @default(autoincrement())
   /// Tokenid of the moderator who performed the action. NULL means the
   /// action was taken by the password-cookie admin (no wallet identity
   /// available in that path).
-  actorTokenId    Int?
+  actorTokenId Int?
   /// Free-form action verb: "hide_caw", "unhide_caw", "ban_user", etc.
   /// Kept as a string instead of an enum so we can add new verbs without
   /// migrations during early iteration.
-  type            String
-  targetCawId     Int?
-  targetUserId    Int?
-  reason          String?
-  createdAt       DateTime @default(now())
-  actor           User?    @relation("ModeratorActor", fields: [actorTokenId], references: [tokenId], onDelete: SetNull)
+  type         String
+  targetCawId  Int?
+  targetUserId Int?
+  reason       String?
+  createdAt    DateTime @default(now())
+  actor        User?    @relation("ModeratorActor", fields: [actorTokenId], references: [tokenId], onDelete: SetNull)
 
   @@index([actorTokenId, createdAt])
   @@index([type, createdAt])
@@ -1147,8 +1210,8 @@ model CawOwnershipSnapshot {
   multiplier          String
   balance             String
   delta               String
-  reason              String   // ACTION_SENDER | ACTION_RECIPIENT | DEPOSIT | WITHDRAW
-  actionType          String?  // CAW | LIKE | RECAW | FOLLOW | TIP | null for deposit/withdraw
+  reason              String // ACTION_SENDER | ACTION_RECIPIENT | DEPOSIT | WITHDRAW
+  actionType          String? // CAW | LIKE | RECAW | FOLLOW | TIP | null for deposit/withdraw
   counterpartyTokenId Int?
   createdAt           DateTime @default(now())
 
