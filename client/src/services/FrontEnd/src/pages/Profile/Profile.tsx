@@ -1421,6 +1421,7 @@ export const Profile: React.FC = () => {
             tabs={profileTabs}
             active={activeTab}
             onChange={setActiveTab}
+            density="compact"
           />
         </div>
 

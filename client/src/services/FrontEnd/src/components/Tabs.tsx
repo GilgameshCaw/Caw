@@ -16,20 +16,42 @@ type Props<T extends string> = {
   tabs:   TabItem<T>[]
   active: T
   onChange: (tab: T) => void
+  /**
+   * Layout density.
+   *   'default' — equal-width tabs centered across the row, generous
+   *               padding and text-lg labels. The right call for short,
+   *               low-count tab sets like Home (For You / Following) or
+   *               Explore.
+   *   'compact' — text-base, tighter padding, sm+ tabs distribute via
+   *               justify-between with overflow-x-auto as a safety net.
+   *               Use when labels can grow long under translation
+   *               (e.g. Profile's Publicaciones / Respuestas / Medios /
+   *               Me gusta) and would otherwise clip or wrap.
+   * Default is 'default' so existing callers stay untouched.
+   */
+  density?: 'default' | 'compact'
 }
 
-export function Tabs<T extends string>({ tabs, active, onChange }: Props<T>) {
+export function Tabs<T extends string>({ tabs, active, onChange, density = 'default' }: Props<T>) {
   const { isDark } = useTheme()
-  
+
+  const containerClasses = density === 'compact'
+    ? 'flex justify-stretch sm:justify-between border-b transition-all duration-300 overflow-x-auto thin-scrollbar'
+    : 'flex justify-center sm:justify-center border-b transition-all duration-300'
+
+  const buttonLayoutClasses = density === 'compact'
+    ? 'py-3 px-1.5 sm:px-2.5 flex-1 sm:flex-initial text-center font-medium text-base'
+    : 'py-4 px-2 sm:px-8 flex-1 text-center font-medium text-lg'
+
   return (
-    <div className={`flex justify-stretch sm:justify-between border-b transition-all duration-300 overflow-x-auto thin-scrollbar ${
+    <div className={`${containerClasses} ${
       isDark ? 'border-white/20' : 'border-gray-300'
     }`}>
       {tabs.map(t => (
         <button
           key={t.id}
           onClick={() => onChange(t.id)}
-          className={`py-3 px-1.5 sm:px-2.5 flex-1 sm:flex-initial text-center font-medium text-base transition-all duration-200 cursor-pointer whitespace-nowrap ${
+          className={`${buttonLayoutClasses} transition-all duration-200 cursor-pointer whitespace-nowrap ${
             t.id === active
               ? `${isDark
                   ? 'text-white border-white'
