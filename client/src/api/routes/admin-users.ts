@@ -80,13 +80,18 @@ router.post('/:tokenId/role', requireWalletAdmin, async (req, res) => {
 
     const trimmedReason = typeof reason === 'string' ? reason.slice(0, 500) : null
 
-    const [updated] = await prisma.$transaction([
-      prisma.user.update({
+    // Interactive form, not the array form — OpenTelemetry's Prisma
+    // instrumentation wraps the per-call promises and the array variant
+    // sometimes rejects with "All elements of the array need to be
+    // Prisma Client promises" depending on how the wrapper is layered.
+    // The callback form accepts the wrapped client transparently.
+    const updated = await prisma.$transaction(async (tx) => {
+      const u = await tx.user.update({
         where: { tokenId },
         data: { role: role as any },
         select: { tokenId: true, username: true, role: true },
-      }),
-      prisma.moderatorAction.create({
+      })
+      await tx.moderatorAction.create({
         data: {
           actorTokenId: req.moderatorActorTokenId ?? null,
           type: 'set_role',
@@ -95,8 +100,9 @@ router.post('/:tokenId/role', requireWalletAdmin, async (req, res) => {
             ? `${target.role} → ${role}: ${trimmedReason}`
             : `${target.role} → ${role}`,
         },
-      }),
-    ])
+      })
+      return u
+    })
 
     return res.json({ success: true, user: updated })
   } catch (err: any) {

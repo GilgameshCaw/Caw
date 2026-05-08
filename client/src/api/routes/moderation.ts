@@ -37,12 +37,10 @@ router.post('/caws/:id/hide', requireModerator, async (req, res) => {
     })
     if (!caw) return res.status(404).json({ error: 'Caw not found' })
 
-    await prisma.$transaction([
-      prisma.caw.update({
-        where: { id },
-        data: { status: 'HIDDEN' },
-      }),
-      prisma.moderatorAction.create({
+    // Callback form — see admin-users.ts for why we don't use the array form.
+    await prisma.$transaction(async (tx) => {
+      await tx.caw.update({ where: { id }, data: { status: 'HIDDEN' } })
+      await tx.moderatorAction.create({
         data: {
           actorTokenId: req.moderatorActorTokenId ?? null,
           type: 'hide_caw',
@@ -50,8 +48,8 @@ router.post('/caws/:id/hide', requireModerator, async (req, res) => {
           targetUserId: caw.userId,
           reason,
         },
-      }),
-    ])
+      })
+    })
 
     return res.json({ success: true })
   } catch (err: any) {
@@ -93,12 +91,9 @@ router.post('/caws/:id/unhide', requireModerator, async (req, res) => {
       return res.status(409).json({ error: 'Caw was not hidden by a moderator; refusing to unhide' })
     }
 
-    await prisma.$transaction([
-      prisma.caw.update({
-        where: { id },
-        data: { status: 'SUCCESS' },
-      }),
-      prisma.moderatorAction.create({
+    await prisma.$transaction(async (tx) => {
+      await tx.caw.update({ where: { id }, data: { status: 'SUCCESS' } })
+      await tx.moderatorAction.create({
         data: {
           actorTokenId: req.moderatorActorTokenId ?? null,
           type: 'unhide_caw',
@@ -106,8 +101,8 @@ router.post('/caws/:id/unhide', requireModerator, async (req, res) => {
           targetUserId: caw.userId,
           reason,
         },
-      }),
-    ])
+      })
+    })
 
     return res.json({ success: true })
   } catch (err: any) {
