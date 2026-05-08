@@ -386,6 +386,41 @@ router.post('/', async (req, res) => {
     }
     mark('passiveAuth')
 
+    // Pre-flight gates that decide whether we'll create a TxQueue row at
+    // all. Run them BEFORE any optimistic write so a fail-fast can't
+    // leave orphan rows behind (PENDING Caw / Reply / Like / Follow /
+    // Poll with no TxQueue counterpart). The corresponding TxQueue
+    // create down at the bottom of this handler is kept for the
+    // happy-path; if these gates would have tripped there, we'd have
+    // already written ~5 optimistic rows that would never get
+    // confirmed and would surface as ghost-FAILED state in the UI
+    // ~30 minutes later when the DataCleaner sweep ran. (See the caw
+    // 8297 / cawonce 461 incident — orphaned PENDING reply with no
+    // TxQueue, flipped to FAILED by cleanupPendingReplies.)
+    //
+    // The actual TxQueue row is still written at the original site
+    // below — these are just early-out checks with the same exit
+    // semantics. If a third gate gets added later, follow the same
+    // pattern: bail HERE, not after the optimistic block.
+    if (sanitizedPendingDepositTxHash) {
+      const existingWaiting = await prisma.txQueue.count({
+        where: { senderId: data.senderId, status: 'waiting_for_deposit' }
+      })
+      if (existingWaiting >= 10) {
+        return res.status(429).json({ error: 'Too many actions waiting for deposit. Please wait for them to process.' })
+      }
+    }
+    {
+      const dup = await prisma.txQueue.findFirst({
+        where: { signedTx: signature, batchId: null },
+        orderBy: { id: 'asc' },
+      })
+      if (dup) {
+        console.log(`Duplicate submission for txQueue ${dup.id}, returning existing entry`)
+        return res.json({ txQueueId: dup.id, status: dup.status })
+      }
+    }
+
     // Handle hide actions optimistically — hide the caw or delete the recaw immediately
     if ((data.actionType === 7 || data.actionType === 'other') && plaintext?.startsWith('hide:')) {
       try {
