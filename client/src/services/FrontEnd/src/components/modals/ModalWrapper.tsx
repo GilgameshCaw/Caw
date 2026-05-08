@@ -2,6 +2,47 @@ import React, { useEffect, useCallback, useRef } from 'react'
 import { createPortal } from 'react-dom'
 import { useTheme } from '~/hooks/useTheme'
 
+// Module-level scroll-lock state so nested modals don't fight: only
+// the first modal to open applies the lock + snapshots scrollY, and
+// only the last to close restores. Without this, opening modal-B
+// while modal-A is open would re-snapshot scrollY=0 (body is
+// position:fixed so window.scrollY reads 0), and closing B would
+// leave A holding the wrong restore target.
+let scrollLockCount = 0
+let savedScrollY = 0
+let savedStyles: { overflow: string; position: string; top: string; width: string } | null = null
+
+function applyScrollLock() {
+  if (scrollLockCount === 0) {
+    savedScrollY = window.scrollY
+    const body = document.body
+    savedStyles = {
+      overflow: body.style.overflow,
+      position: body.style.position,
+      top: body.style.top,
+      width: body.style.width,
+    }
+    body.style.overflow = 'hidden'
+    body.style.position = 'fixed'
+    body.style.top = `-${savedScrollY}px`
+    body.style.width = '100%'
+  }
+  scrollLockCount++
+}
+
+function releaseScrollLock() {
+  scrollLockCount = Math.max(0, scrollLockCount - 1)
+  if (scrollLockCount === 0 && savedStyles) {
+    const body = document.body
+    body.style.overflow = savedStyles.overflow
+    body.style.position = savedStyles.position
+    body.style.top = savedStyles.top
+    body.style.width = savedStyles.width
+    savedStyles = null
+    window.scrollTo(0, savedScrollY)
+  }
+}
+
 interface ModalWrapperProps {
   isOpen: boolean
   onClose: () => void
@@ -61,19 +102,18 @@ const ModalWrapper: React.FC<ModalWrapperProps> = ({
     }
   }
 
-  // Add/remove event listener and prevent body scroll
+  // Add/remove event listener and prevent body scroll. iOS Safari
+  // ignores body { overflow: hidden } — only position:fixed + a
+  // negative top reliably stops the page scrolling under the modal.
   useEffect(() => {
     if (!isOpen) return
 
     document.addEventListener('keydown', handleKeyDown)
-
-    // Prevent body scroll when modal is open
-    const originalOverflow = document.body.style.overflow
-    document.body.style.overflow = 'hidden'
+    applyScrollLock()
 
     return () => {
       document.removeEventListener('keydown', handleKeyDown)
-      document.body.style.overflow = originalOverflow
+      releaseScrollLock()
     }
   }, [isOpen, handleKeyDown])
 
