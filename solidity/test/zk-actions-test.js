@@ -544,7 +544,16 @@ contract('CawActions — processActionsWithZkSigs', function (accounts) {
     const sig = signActionData(userA, sigAction, domain);
     const { hex: sigHex } = packActions([sigAction]);
     const sigSigsHex = packGroupedSigs([{ groupSize: 1, ...sig }]);
-    await setup.cawActions.processActions(validatorTokenId, sigHex, sigSigsHex, 0, 0);
+    // Need a non-zero withdrawFee — non-bypassLZ mode requires it (Round 3 fix).
+    const step1Quote = await setup.cawActions.withdrawQuote(
+      [userATokenId],
+      [BigInt(withdrawAmountWhole) * (10n ** 18n)],
+      false
+    );
+    await setup.cawActions.processActions(
+      validatorTokenId, sigHex, sigSigsHex, step1Quote.nativeFee, 0,
+      { value: step1Quote.nativeFee.toString() }
+    );
     expect(await setup.cawActions.isCawonceUsed(userATokenId, cawonceK)).to.equal(true);
 
     // Step 2: ZK path tries to submit a 3-action batch where action[1]

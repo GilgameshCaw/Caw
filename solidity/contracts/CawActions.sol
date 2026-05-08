@@ -226,6 +226,11 @@ contract CawActions is Ownable {
     }
 
     require(c.actionsSeen == actionCount, "Sigs don't cover all actions");
+    // Reject trailing bytes after the consumed actions. Without this, two
+    // semantically-identical batches with different trailing-byte content
+    // emit different `batchHash` fields, confusing indexers that dedupe by
+    // batchHash. Audit fix 2026-05-08 (Round 3 CawActions adversarial agent).
+    require(c.pos == packedActions.length, "Trailing bytes in packedActions");
 
     // Flush the in-memory hash chain back to storage — one SSTORE pair
     // total instead of one per action. clientHashLoaded is the latch:
@@ -262,10 +267,13 @@ contract CawActions is Ownable {
       _handleWithdrawals(c.withdrawBitmap, c.withdrawCount, actionCount, packedActions);
       // bypassLZ mode legitimately needs zero LZ fee but still requires
       // the L1 credit to fire. LZ mode requires a non-zero fee for the
-      // cross-chain message. Audit fix 2026-05-08 (C-1).
-      if (withdrawFee > 0 || cawProfile.bypassLZ()) {
-        _executeWithdrawals(withdrawFee, withdrawLzTokenAmount);
-      }
+      // cross-chain message. A zero fee in non-bypassLZ mode would skip
+      // _executeWithdrawals after the L2 debit already ran — silent fund
+      // loss. Revert instead so a misconfigured validator surfaces. Audit
+      // fix 2026-05-08 (C-1; tightened in Round 3).
+      require(withdrawFee > 0 || cawProfile.bypassLZ(),
+              "withdrawFee required in non-bypassLZ mode");
+      _executeWithdrawals(withdrawFee, withdrawLzTokenAmount);
     }
   }
 
@@ -354,6 +362,8 @@ contract CawActions is Ownable {
     }
 
     require(c.actionsSeen == actionCount, "Sigs don't cover all actions");
+    // See processActions for the trailing-bytes rationale.
+    require(c.pos == packedActions.length, "Trailing bytes in packedActions");
 
     if (c.clientHashLoaded) {
       clientCurrentHash[c.firstClientId] = c.clientHash;
@@ -376,9 +386,9 @@ contract CawActions is Ownable {
     if (c.withdrawCount > 0) {
       _handleWithdrawals(c.withdrawBitmap, c.withdrawCount, actionCount, packedActions);
       // See processActions for the bypassLZ rationale.
-      if (withdrawFee > 0 || cawProfile.bypassLZ()) {
-        _executeWithdrawals(withdrawFee, withdrawLzTokenAmount);
-      }
+      require(withdrawFee > 0 || cawProfile.bypassLZ(),
+              "withdrawFee required in non-bypassLZ mode");
+      _executeWithdrawals(withdrawFee, withdrawLzTokenAmount);
     }
   }
 
@@ -790,6 +800,8 @@ contract CawActions is Ownable {
     }
 
     require(sc.actionsSeen == actionCount, "Sigs don't cover all actions");
+    // See processActions for the trailing-bytes rationale.
+    require(sc.pos == packedActions.length, "Trailing bytes in packedActions");
     successCount = sc.successCount;
 
     // NOTE (audited 2026-04-20): the calldata referenced by `batchHash` is the
@@ -806,16 +818,14 @@ contract CawActions is Ownable {
 
     // Mirror processActions: _handleWithdrawals always runs when there are
     // withdraws so the per-action withdraw bookkeeping isn't lost; the
-    // _executeWithdrawals call is gated on a non-zero LZ fee (zero-fee
-    // clients in bypassLZ mode currently still skip the L1 hop here — see
-    // the matching note in processActions about that being a known
-    // tradeoff for fee-less LZ deployments).
+    // _executeWithdrawals call requires either a positive LZ fee or the
+    // bypassLZ co-deployment shortcut.
     if (sc.withdrawCount > 0) {
       _handleWithdrawals(sc.withdrawBitmap, sc.withdrawCount, actionCount, packedActions);
       // See processActions for the bypassLZ rationale.
-      if (withdrawFee > 0 || cawProfile.bypassLZ()) {
-        _executeWithdrawals(withdrawFee, withdrawLzTokenAmount);
-      }
+      require(withdrawFee > 0 || cawProfile.bypassLZ(),
+              "withdrawFee required in non-bypassLZ mode");
+      _executeWithdrawals(withdrawFee, withdrawLzTokenAmount);
     }
   }
 
@@ -1062,9 +1072,17 @@ contract CawActions is Ownable {
       cawProfile.spendAndDistributeTokens(action.senderId, 5000, 5000);
       actionCost = 5000;
     } else if (action.actionType == ActionType.LIKE) {
+      // NOTE: self-LIKE (senderId == receiverId) is permitted on-chain.
+      // Adding a `revert` would let one bad action tank the whole batch
+      // (DoS surface), and an early-return would skip useCawonce below
+      // (replay surface). Indexers filter self-LIKEs to avoid inflated
+      // counters; the on-chain economic discount (~75% of fee returns to
+      // self) is small enough not to be worth either trade. See Round 3
+      // audit findings (CawActions adversarial agent, MED).
       cawProfile.spendDistributeAndAddTokensToBalance(action.senderId, 2000, 400, action.receiverId, 1600);
       actionCost = 2000;
     } else if (action.actionType == ActionType.RECAW) {
+      // Self-RECAW permitted on-chain — same rationale as self-LIKE above.
       cawProfile.spendDistributeAndAddTokensToBalance(action.senderId, 4000, 2000, action.receiverId, 2000);
       actionCost = 4000;
     } else if (action.actionType == ActionType.FOLLOW) {
@@ -1185,8 +1203,12 @@ contract CawActions is Ownable {
     bytes1 op = t[1];
     if (op != 0x73 && op != 0x78) return; // 's' or 'x'
 
-    // Wallet-owner sig only. Session keys cannot escalate.
-    require(!ba.isSessionKey, "Session keys cannot register sessions");
+    // Session keys cannot register/revoke (would escalate a compromised
+    // key). Silent no-op instead of revert so one malicious session-key
+    // user can't tank the whole batch — same rationale as the
+    // malformed-payload returns below. Audit fix 2026-05-08 (Round 3
+    // CawActions adversarial agent finding).
+    if (ba.isSessionKey) return;
 
     // Resolve the wallet owner from the senderId. Cache on the BatchAuth
     // so subsequent actions in the same group avoid re-reading.

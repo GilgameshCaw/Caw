@@ -306,9 +306,11 @@ contract('CawActions — qs: / qx: OTHER session register/revoke', function (acc
   });
 
   // --------------------------------------------
-  // Session keys cannot register sessions via qs:
+  // Session keys cannot register sessions via qs: — but it's a SILENT no-op
+  // (not a revert), so one bad session-key user can't tank a whole batch.
+  // Round 3 audit fix.
   // --------------------------------------------
-  it('rejects qs: when the action is signed by a session key', async function () {
+  it('silently no-ops qs: when the action is signed by a session key', async function () {
     // First, register a session for userA so we have a session key to
     // attempt the escalation with. Use the on-chain by-sig path so the
     // session is in place before the test action.
@@ -349,12 +351,11 @@ contract('CawActions — qs: / qx: OTHER session register/revoke', function (acc
     const sig = signActionData(sessionKey, action, domain);
     const sigsHex = packGroupedSigs([{ groupSize: 1, ...sig }]);
 
-    await truffleAssert.reverts(
-      setup.cawActions.processActions(validatorTokenId, hex, sigsHex, 0, 0),
-      "Session keys cannot register sessions"
-    );
+    // Should NOT revert — silently no-ops.
+    await setup.cawActions.processActions(validatorTokenId, hex, sigsHex, 0, 0);
 
-    // The evil key was NOT registered.
+    // Cawonce was burned (action consumed) but the evil key was NOT registered.
+    expect(await setup.cawActions.isCawonceUsed(userATokenId, cawonce)).to.equal(true);
     expect(Number((await setup.cawProfileL2.sessions(userA, evilSessionKey)).expiry)).to.equal(0);
   });
 
