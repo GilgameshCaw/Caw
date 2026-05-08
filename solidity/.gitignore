@@ -6,6 +6,11 @@ artifacts/
 cache/
 build/
 
+# Foundry
+foundry-out/
+cache-foundry/
+lib/forge-std/
+
 # Environment
 .env
 .env.local

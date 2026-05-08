@@ -1,0 +1,23 @@
+[profile.default]
+src = "contracts"
+test = "test-foundry"
+out = "foundry-out"
+cache_path = "cache-foundry"
+libs = ["lib", "node_modules"]
+solc_version = "0.8.22"
+optimizer = true
+optimizer_runs = 1
+via_ir = true
+# We don't want Foundry to compile the Truffle JS tests or scripts.
+# Match the Truffle/Hardhat target: only the contracts/ tree + the new test-foundry/ tree.
+auto_detect_remappings = false
+fs_permissions = [{ access = "read", path = "./" }]
+
+[fuzz]
+# Tight memory budget on the dev machine; 1000 runs per fuzz test by default.
+runs = 1000
+
+[invariant]
+runs = 64
+depth = 32
+fail_on_revert = false
