@@ -1,5 +1,6 @@
 import React, { useEffect, useState } from 'react'
 import { decryptBinary } from '~/services/DmCryptoService'
+import { isCanonicalEncryptedUploadUrl } from '~/utils/uploadUrl'
 import ImageLightbox from './ImageLightbox'
 
 interface EncryptedImageProps {
@@ -39,24 +40,17 @@ const EncryptedImage: React.FC<EncryptedImageProps> = ({ url, sharedSecret, mime
     const fetchAndDecrypt = async () => {
       try {
         // Validate the URL by PATH SHAPE before fetching: encrypted DM
-        // attachments are stored under /uploads/encrypted/<8hex>(.<ext>)?
-        // by the upload pipeline. Without this gate, a malicious DM
-        // sender could embed any URL (https://attacker.tld/track,
-        // http://192.168.1.1/admin, etc.) and the receiver's browser
-        // would emit a GET that leaks IP/UA or probes their LAN. Mirrors
-        // the project-wide URL sanitizer convention (validate by path
-        // shape, not host equality). Audit fix 2026-05-09 (Round 5
-        // FE/DM CRITICAL-3).
-        let parsed: URL
-        try {
-          parsed = new URL(url, window.location.origin)
-        } catch {
-          throw new Error('Invalid URL')
-        }
-        if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
-          throw new Error('Unsupported URL scheme')
-        }
-        if (!/^\/uploads\/encrypted\/[0-9a-f]{8}(\.[a-z0-9]{1,8})?$/i.test(parsed.pathname)) {
+        // attachments are stored under /uploads/encrypted/<16hex>(.<ext>)?
+        // by the upload pipeline (randomBytes(8).toString('hex')). Without
+        // this gate, a malicious DM sender could embed any URL
+        // (https://attacker.tld/track, http://192.168.1.1/admin, etc.)
+        // and the receiver's browser would emit a GET that leaks IP/UA
+        // or probes their LAN. Mirrors the project-wide URL sanitizer
+        // convention (validate by path shape, not host equality). Audit
+        // fix 2026-05-09 (Round 5 FE/DM CRITICAL-3; Round 6 corrects
+        // the filename width which was incorrectly `{8}` and rejected
+        // every legitimate encrypted attachment).
+        if (!isCanonicalEncryptedUploadUrl(url)) {
           throw new Error('URL does not match the canonical encrypted-upload shape')
         }
 

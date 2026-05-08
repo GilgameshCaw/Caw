@@ -3,7 +3,7 @@ import { randomBytes } from 'crypto'
 import multer from 'multer'
 import { requireAuth } from '../middleware/auth'
 import { mediaStorage } from '../util/mediaStorage'
-import { canUpload, recordUsage } from '../util/uploadQuota'
+import { reserveUpload, refundReservation } from '../util/uploadQuota'
 
 const router = Router()
 
@@ -68,25 +68,36 @@ router.post('/', upload.array('media', 10), requireAuth({ field: 'tokenId', veri
     // Per-user daily POST upload quota (storage cost ceiling against
     // bots / runaway clients). DM uploads count against a separate,
     // tighter budget — see /encrypted route.
+    //
+    // Atomic reserve-and-check: 50 parallel uploads from one tokenId
+    // can't all read used=0 and collectively commit 50× the quota
+    // (Round 6 economic agent HIGH-2 fix). Reservation rolls back
+    // automatically if the storage put() fails.
     const totalBytes = files.reduce((sum, f) => sum + f.size, 0)
-    const quota = await canUpload('post', Number(tokenId), totalBytes)
-    if (!quota.allowed) {
+    const reservation = await reserveUpload('post', Number(tokenId), totalBytes)
+    if (!reservation.ok) {
       return res.status(429).json({
-        error: `Daily post upload quota exceeded. Used ${(quota.used / 1024 / 1024).toFixed(1)}MB of ${(quota.quota / 1024 / 1024).toFixed(0)}MB. Try again later.`,
-        used: quota.used,
-        quota: quota.quota,
+        error: `Daily post upload quota exceeded. Used ${(reservation.used / 1024 / 1024).toFixed(1)}MB of ${(reservation.quota / 1024 / 1024).toFixed(0)}MB. Try again later.`,
+        used: reservation.used,
+        quota: reservation.quota,
       })
     }
 
     const storage = mediaStorage()
-    const urls = await Promise.all(files.map(async file => {
-      const isVideo = file.mimetype.startsWith('video/')
-      const kind = isVideo ? 'videos' : 'images'
-      const filename = generateFilename(file.mimetype)
-      return storage.put(kind, filename, file.buffer, file.mimetype)
-    }))
-    // Record AFTER successful uploads — failed uploads shouldn't count.
-    await recordUsage('post', Number(tokenId), totalBytes)
+    let urls: string[]
+    try {
+      urls = await Promise.all(files.map(async file => {
+        const isVideo = file.mimetype.startsWith('video/')
+        const kind = isVideo ? 'videos' : 'images'
+        const filename = generateFilename(file.mimetype)
+        return storage.put(kind, filename, file.buffer, file.mimetype)
+      }))
+    } catch (storageErr) {
+      // Storage failed — refund the reservation so the user isn't
+      // permanently penalized for a transient failure.
+      await refundReservation('post', Number(tokenId), totalBytes)
+      throw storageErr
+    }
 
     res.json({ success: true, urls, count: files.length })
   } catch (error) {
@@ -183,21 +194,26 @@ router.post('/encrypted', requireAuth({ lookup: async (req) => {
     if (!rateCheck.allowed) return res.status(429).json({ error: rateCheck.reason })
 
     // DM-specific daily quota (separate from posts and tighter — DMs
-    // reach 1 person, post storage cost is more justified). The 50-files
-    // / 100MB in-memory limiter above is the spam-protection layer; this
-    // is the storage-cost ceiling.
-    const quota = await canUpload('dm', tokenId, data.length)
-    if (!quota.allowed) {
+    // reach 1 person, post storage cost is more justified). Atomic
+    // reserve-and-rollback closes the concurrent-upload race (Round 6
+    // economic agent HIGH-2 fix).
+    const reservation = await reserveUpload('dm', tokenId, data.length)
+    if (!reservation.ok) {
       return res.status(429).json({
-        error: `Daily DM upload quota exceeded. Used ${(quota.used / 1024 / 1024).toFixed(1)}MB of ${(quota.quota / 1024 / 1024).toFixed(0)}MB. Posts have a separate, larger budget if you need to share something bigger.`,
+        error: `Daily DM upload quota exceeded. Used ${(reservation.used / 1024 / 1024).toFixed(1)}MB of ${(reservation.quota / 1024 / 1024).toFixed(0)}MB. Posts have a separate, larger budget if you need to share something bigger.`,
       })
     }
 
     const filename = `${randomBytes(8).toString('hex')}.enc`
-    const url = await mediaStorage().put('encrypted', filename, data, 'application/octet-stream')
+    let url: string
+    try {
+      url = await mediaStorage().put('encrypted', filename, data, 'application/octet-stream')
+    } catch (storageErr) {
+      await refundReservation('dm', tokenId, data.length)
+      throw storageErr
+    }
 
     recordEncUpload(tokenId, data.length)
-    await recordUsage('dm', tokenId, data.length)
     res.json({ success: true, url })
   } catch (error) {
     console.error('Encrypted upload error:', error)

@@ -1,5 +1,6 @@
 import { PrismaClient } from '@prisma/client'
 import { countManager } from '../services/CountManager'
+import { decompressActionText } from './decompressActionText'
 
 /**
  * THE single choke point for marking a TxQueue row as failed.
@@ -142,34 +143,40 @@ async function cleanupOptimisticRows(
       }
     }
 
-    // TIP (actionType 7 with tip: prefix): the pending Tip row should be
-    // removed. Other OTHER-type actions (image uploads, profile updates)
-    // each have their own cleanup patterns which we don't consolidate here
-    // yet — Session C material if it becomes a problem.
-    if (actionType === 7 && typeof actionData?.text === 'string' && actionData.text.startsWith('tip:') && cawonce != null) {
-      await prisma.tip.deleteMany({
-        where: { senderId, cawonce, pending: true }
-      })
-    }
-
-    // VOTE (actionType 7 with vote: prefix): drop the pending Vote row the
-    // optimistic API path wrote. The cawonce on a Vote row is the OTHER
-    // action's cawonce — the same cawonce we have here — so this scopes
-    // exactly to the failed submission and won't touch a confirmed prior
-    // vote by the same user.
-    if (actionType === 7 && typeof actionData?.text === 'string' && actionData.text.startsWith('vote:') && cawonce != null) {
-      await prisma.vote.deleteMany({
-        where: { voterId: senderId, cawonce, pending: true }
-      })
-    }
-
-    // PIN / UNPIN (actionType 7 with pi: / xpi: prefix). Symmetric rollback:
-    //   pi:  optimistic insert wrote a pending row → delete it.
-    //   xpi: optimistic write only flipped pending=true on an EXISTING
-    //        confirmed row → flip it back to pending=false. The original
-    //        pin survives the failed unpin attempt.
+    // OTHER actions (actionType 7): the signed `text` is smltxt-compressed
+    // hex bytes (the on-chain payload). The OTHER-subtype prefix lives in
+    // the *decompressed* plaintext, NOT in the compressed bytes. Earlier
+    // versions of this code tested actionData.text.startsWith('tip:') /
+    // 'vote:' / 'pi:' etc. against the compressed hex, which never matched
+    // — every OTHER-subtype failure left a phantom optimistic row behind
+    // (pending Tip / Vote / PinnedCaw forever). Audit fix 2026-05-09
+    // (Round 6 cross-layer agent CL-1).
     if (actionType === 7 && typeof actionData?.text === 'string') {
-      const text: string = actionData.text
+      const text: string = decompressActionText(actionData.text)
+
+      // TIP (tip: prefix): the pending Tip row should be removed.
+      if (text.startsWith('tip:') && cawonce != null) {
+        await prisma.tip.deleteMany({
+          where: { senderId, cawonce, pending: true }
+        })
+      }
+
+      // VOTE (vote: prefix): drop the pending Vote row the optimistic
+      // API path wrote. The cawonce on a Vote row is the OTHER action's
+      // cawonce — the same cawonce we have here — so this scopes exactly
+      // to the failed submission and won't touch a confirmed prior vote
+      // by the same user.
+      if (text.startsWith('vote:') && cawonce != null) {
+        await prisma.vote.deleteMany({
+          where: { voterId: senderId, cawonce, pending: true }
+        })
+      }
+
+      // PIN / UNPIN (pi: / xpi: prefix). Symmetric rollback:
+      //   pi:  optimistic insert wrote a pending row → delete it.
+      //   xpi: optimistic write only flipped pending=true on an EXISTING
+      //        confirmed row → flip it back to pending=false. The original
+      //        pin survives the failed unpin attempt.
       if (text.startsWith('pi:')) {
         const cawId = parseInt(text.replace('pi:', '').trim())
         if (!isNaN(cawId) && cawId > 0) {

@@ -916,17 +916,31 @@ async function handleTipAction(
   const recipientId = await findOrCreateUser(recipientTokenId)
 
   // Parse target caw from text: "tip:userId:cawonce"
+  //
+  // SECURITY: only attribute the tip to a Caw if the on-chain recipient
+  // (recipients[0]) matches the targetUserId in the text. Without this
+  // check, anyone could post `text="tip:famousUser:0"` with
+  // recipients=[ownAttackerToken], pay themselves 1 wei, and inflate
+  // famousUser's per-caw `tipCount` / `totalTipped` counters. The
+  // text-derived cawId is unauthenticated; only the (recipientId,
+  // amount) pair on chain is. Audit fix 2026-05-09 (Round 6 cross-layer
+  // agent CL-5).
   let cawId: number | null = null
   const parts = rawAction.text.replace('tip:', '').split(':')
   if (parts.length >= 2 && parts[0] && parts[1]) {
     const targetUserId = parseInt(parts[0])
     const targetCawonce = parseInt(parts[1])
-    if (!isNaN(targetUserId) && !isNaN(targetCawonce)) {
+    if (!isNaN(targetUserId) && !isNaN(targetCawonce) && targetUserId === recipientTokenId) {
       try {
         cawId = await findCawId(targetCawonce, targetUserId)
       } catch (err) {
         console.warn('[handleTipAction] Could not find target caw:', err)
       }
+    } else if (!isNaN(targetUserId) && targetUserId !== recipientTokenId) {
+      console.warn(
+        `[handleTipAction] tip text targetUserId (${targetUserId}) !== recipients[0] (${recipientTokenId}); ` +
+        `not attributing to any caw to prevent metadata forgery`
+      )
     }
   }
 

@@ -13,6 +13,8 @@ import { packActions, packSignatures, packGroupedSignatures, bytesToHex, getPack
 import { buildCheckpointMerkleTree } from '../../utils/checkpointMerkle'
 import { tryClaimChallengeLock, releaseChallengeLock } from '../../utils/challengeLock'
 import { foldCheckpointHashes } from '../../utils/foldCheckpointHashes'
+import { scanLogsForward } from '../../utils/chunkedLogs'
+import { decompressActionText } from '../../utils/decompressActionText'
 import { makeJsonRpcProvider, makeFallbackJsonRpcProvider, makeWebSocketProvider, getL2HttpRpcUrl, getL2HttpRpcUrls, getL2WsRpcUrl, getL2WsSecret, getEthMainnetHttpRpcUrl, getReplicationHttpRpcUrl } from '../../utils/rpcProvider'
 import { cawToEthCached, isPriceFresh } from '../ChainSyncService'
 import { markTxQueueFailed as sharedMarkTxQueueFailed } from '../../utils/txQueueFailure'
@@ -165,11 +167,19 @@ async function resolveCawonceUsed(data: any, firstSeenAt?: Date): Promise<'done'
   })
   if (existingAction) {
     const ex = existingAction.data as any
+    // ex.text is plaintext (decompressed by RawEventsGatherer before being
+    // written to the Action row); data.text is the smltxt-compressed hex
+    // we signed for on-chain submission. Comparing them directly always
+    // returned false, which made the `same-action` check spuriously
+    // 'failed' for the legitimate same-cawonce-already-landed case.
+    // Decompress data.text for the comparison. Audit fix 2026-05-09
+    // (Round 6 cross-layer agent CL-1 bonus).
+    const dataTextPlain = decompressActionText(data.text)
     const sameAction =
       Number(ex?.actionType ?? -1) === Number(data.actionType) &&
       Number(ex?.receiverId ?? -1) === Number(data.receiverId ?? 0) &&
       Number(ex?.receiverCawonce ?? -1) === Number(data.receiverCawonce ?? 0) &&
-      (ex?.text ?? '') === (data.text ?? '')
+      (ex?.text ?? '') === dataTextPlain
     return sameAction ? 'done' : 'failed'
   }
   // No Action row yet. Either the indexer hasn't caught up, or the cawonce
@@ -3368,6 +3378,51 @@ console.log("succeededKeys", succeededKeys)
     }
 
     /**
+     * Chunked event scanner: free RPCs cap eth_getLogs at 50K blocks, but
+     * the monitor/finalize cycles look back 86K-115K blocks. Bare
+     * archive.queryFilter() over those ranges silently returns empty on
+     * publicnode + free Sepolia RPCs, which would let a fraudulent
+     * submission slip past the challenge window. Route every wide-range
+     * query through scanLogsForward so we always see every event.
+     * Audit fix 2026-05-09 (Round 5 backend HIGH-3).
+     *
+     * Returns parsed events with `.args` shaped like archive.queryFilter
+     * results, so callsites are a drop-in swap.
+     */
+    async function scanArchiveEvents(
+      archive: Contract,
+      provider: any,
+      filter: any,
+      fromBlock: number,
+      toBlock: number,
+    ) {
+      const target = await filter
+      const rawLogs = await scanLogsForward(
+        provider,
+        target.address ?? archive.target,
+        target.topics ?? [],
+        fromBlock,
+        toBlock,
+      )
+      return rawLogs
+        .map(log => {
+          try {
+            const parsed = archive.interface.parseLog({ topics: log.topics as string[], data: log.data })
+            if (!parsed) return null
+            return {
+              args: parsed.args,
+              blockNumber: log.blockNumber,
+              transactionHash: log.transactionHash,
+              logIndex: log.index,
+            }
+          } catch {
+            return null
+          }
+        })
+        .filter((e): e is NonNullable<typeof e> => e !== null)
+    }
+
+    /**
      * Finalize submissions whose challenge period has expired.
      *
      * Uses a ChainData checkpoint so each tick scans only NEW blocks since
@@ -3399,14 +3454,16 @@ console.log("succeededKeys", succeededKeys)
           return
         }
 
-        const events = await archive.queryFilter(
+        const events = await scanArchiveEvents(
+          archive,
+          provider,
           archive.filters.SubmissionCreated(null, w.address),
           fromBlock,
-          latestBlock
+          latestBlock,
         )
 
         for (const ev of events) {
-          const args: any = (ev as any).args
+          const args: any = ev.args
           if (!args) continue
           const submissionId = Number(args[0] || args.submissionId)
 
@@ -3487,10 +3544,12 @@ console.log("succeededKeys", succeededKeys)
         const fromBlock = Math.max(0, latestBlock - 28800 * 3)
 
         // Query ALL SubmissionCreated events (not just ours)
-        const events = await archive.queryFilter(
+        const events = await scanArchiveEvents(
+          archive,
+          provider,
           archive.filters.SubmissionCreated(),
           fromBlock,
-          latestBlock
+          latestBlock,
         )
 
         const httpProvider = replicationHttpProvider
@@ -3498,7 +3557,7 @@ console.log("succeededKeys", succeededKeys)
         const actionsView = new Contract(CAW_ACTIONS_ADDRESS, hashCheckAbi, httpProvider)
 
         for (const ev of events) {
-          const args: any = (ev as any).args
+          const args: any = ev.args
           if (!args) continue
 
           const submissionId = Number(args[0] || args.submissionId)
@@ -3546,11 +3605,13 @@ console.log("succeededKeys", succeededKeys)
           let modeA = false
           try {
             const numCp = endCp - startCp + 1
-            const archivedEvents = await archive.queryFilter(
+            const archivedEvents = await scanArchiveEvents(
+              archive,
+              provider,
               archive.filters.ActionsArchived(submissionId),
               fromBlock, latestBlock,
             )
-            const archivedArgs: any = (archivedEvents[0] as any)?.args
+            const archivedArgs: any = archivedEvents[0]?.args
             if (!archivedArgs) throw new Error('ActionsArchived event missing')
             const submitterPackedHex = archivedArgs[2] as string
             const submitterR = (archivedArgs[3] as string[]).map(x => String(x))
@@ -3701,11 +3762,13 @@ console.log("succeededKeys", succeededKeys)
               try {
                 // Fetch submitter's packedActions + r from ActionsArchived
                 // (we already did this above; re-use the captured values).
-                const archivedEvents = await archive.queryFilter(
+                const archivedEvents = await scanArchiveEvents(
+                  archive,
+                  provider,
                   archive.filters.ActionsArchived(submissionId),
                   fromBlock, latestBlock,
                 )
-                const archivedArgs: any = (archivedEvents[0] as any)?.args
+                const archivedArgs: any = archivedEvents[0]?.args
                 const submitterPackedHex = archivedArgs[2] as string
                 const submitterR = (archivedArgs[3] as string[]).map((x: string) => String(x))
 

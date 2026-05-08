@@ -255,6 +255,20 @@ router.get('/x/callback', async (req, res) => {
     const { tokenId, address, codeVerifier, redirectUri } = parsed
     returnTo = parsed.returnTo || null
 
+    // Re-verify ownership at callback time. The OAuth round-trip lasts
+    // up to 10 min (state TTL); during that window the user can transfer
+    // the NFT to a buyer. Without this check, the seller's X verification
+    // would land on the BUYER's profile (xBadgeVisible=true is force-set
+    // on the captured tokenId regardless of who owns it now). Audit fix
+    // 2026-05-09 (Round 6 cross-layer agent CL-3).
+    const currentOwner = await prisma.user.findUnique({
+      where: { tokenId },
+      select: { address: true },
+    })
+    if (!currentOwner?.address || currentOwner.address.toLowerCase() !== address.toLowerCase()) {
+      return respond({ ok: false, error: 'token_owner_changed_during_oauth' })
+    }
+
     const clientId     = envOrThrow('X_OAUTH_CLIENT_ID')
     const clientSecret = envOrThrow('X_OAUTH_CLIENT_SECRET')
 

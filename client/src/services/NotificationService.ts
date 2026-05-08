@@ -53,7 +53,20 @@ export class NotificationService {
   }
 
   /**
-   * Extract @mentions from a caw content
+   * Maximum distinct @mentions we'll notify on per caw.
+   *
+   * On-chain `text` caps at 420 bytes; an attacker can fit ~210 distinct
+   * 1-char mentions (`@a @b ...`) and force 210 notification rows + 210
+   * push events from one signed action. The realistic conversation
+   * pattern is well under 10 mentions; cap there to bound write
+   * amplification under attack. Audit fix 2026-05-09 (Round 6 economic
+   * agent HIGH-3).
+   */
+  static readonly MAX_MENTIONS_PER_CAW = 10
+
+  /**
+   * Extract @mentions from a caw content. Deduplicated, capped at
+   * MAX_MENTIONS_PER_CAW.
    */
   static extractMentions(content: string): string[] {
     const mentionRegex = /@(\w+)/g
@@ -64,7 +77,8 @@ export class NotificationService {
       mentions.push(match[1])
     }
 
-    return [...new Set(mentions)] // Remove duplicates
+    const unique = [...new Set(mentions)]
+    return unique.slice(0, NotificationService.MAX_MENTIONS_PER_CAW)
   }
 
   /**
