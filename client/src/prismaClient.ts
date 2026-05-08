@@ -33,8 +33,22 @@ async function reconnectOnce() {
   }
 }
 
-function wrapModelMethod(fn: Function, thisArg: any) {
+function wrapModelMethod(fn: Function, thisArg: any, modelName?: string, methodName?: string) {
   return async (...args: any[]) => {
+    // Trace TxQueue deletes. Every disappearance of a TxQueue row should be
+    // explainable — orphaned PENDING Caw rows traced back to "where did the
+    // TxQueue row go?" with no answer in the codebase audit. Log every
+    // delete with a stack trace so the next occurrence pins the call site.
+    // Cheap (one stack capture per delete) and high signal.
+    if (
+      modelName === 'txQueue' &&
+      typeof methodName === 'string' &&
+      (methodName === 'delete' || methodName === 'deleteMany')
+    ) {
+      const where = (args?.[0] as any)?.where
+      const stack = new Error().stack?.split('\n').slice(2, 8).join('\n') ?? '(no stack)'
+      console.warn(`[Prisma trace] TxQueue.${methodName} where=${JSON.stringify(where)}\n${stack}`)
+    }
     try {
       return await fn.apply(thisArg, args)
     } catch (err: any) {
@@ -72,11 +86,13 @@ export const prisma = new Proxy(basePrisma, {
     // Model delegates (prisma.user, prisma.txQueue, ...) are objects whose
     // methods (findMany, create, update, ...) can throw "Engine is not yet
     // connected" after a network blip. Wrap each method to auto-reconnect.
+    const modelName = typeof prop === 'string' ? prop : undefined
     return new Proxy(value, {
       get(modelTarget: any, modelProp: any) {
         const modelValue = modelTarget[modelProp]
         if (typeof modelValue !== 'function') return modelValue
-        return wrapModelMethod(modelValue, modelTarget)
+        const methodName = typeof modelProp === 'string' ? modelProp : undefined
+        return wrapModelMethod(modelValue, modelTarget, modelName, methodName)
       },
     })
   },
