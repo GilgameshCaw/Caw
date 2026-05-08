@@ -439,6 +439,13 @@ contract CawActionsArchive is Ownable, ReentrancyGuard, OnlyOnce, OApp {
     require(correctHash != claimedHash, "Hashes match, no fraud");
 
     address validator = sub.submitter;
+    // Block self-slash: a fraudulent validator could otherwise watch the
+    // mempool for an honest challenger's resolveChallenge tx and front-run
+    // it with the same call to recover their own stake — destroying the
+    // economic incentive to challenge fraud. Audit fix 2026-05-08
+    // (cross-contract agent HIGH-1).
+    require(msg.sender != validator, "Self-slash forbidden");
+
     uint256 reward = stakes[validator];
     stakes[validator] = 0;
 
@@ -542,6 +549,8 @@ contract CawActionsArchive is Ownable, ReentrancyGuard, OnlyOnce, OApp {
 
     // Same slash flow as resolveChallenge.
     address validator = sub.submitter;
+    // Block self-slash — see resolveChallenge for the rationale.
+    require(msg.sender != validator, "Self-slash forbidden");
     uint256 reward = stakes[validator];
     stakes[validator] = 0;
 

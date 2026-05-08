@@ -859,16 +859,25 @@ contract CawProfileL2 is
     address sessionKey,
     uint8 v, bytes32 r, bytes32 s
   ) external {
-    require(sessions[owner][sessionKey].expiry != 0, "Session not found");
+    StoredSession memory session = sessions[owner][sessionKey];
+    require(session.expiry != 0, "Session not found");
 
-    // Verify the session key signed a revocation message
+    // Verify the session key signed a revocation message that's BOUND to
+    // the current session's expiry. Without binding, a previously-signed
+    // revocation could be replayed if the user later re-registers the
+    // same sessionKey under the same owner — letting an attacker who held
+    // the old signature revoke the freshly-registered session at any
+    // time. Each register fixes a unique expiry, so a fresh expiry
+    // invalidates old revocation sigs. Audit fix 2026-05-08
+    // (cross-contract MED-5).
     bytes32 digest = keccak256(abi.encodePacked(
       "\x19\x01",
       eip712DomainHash,
       keccak256(abi.encode(
-        keccak256("RevokeSession(address owner,address sessionKey)"),
+        keccak256("RevokeSession(address owner,address sessionKey,uint64 expiry)"),
         owner,
-        sessionKey
+        sessionKey,
+        session.expiry
       ))
     ));
     address signer = ecrecover(digest, v, r, s);
@@ -876,20 +885,6 @@ contract CawProfileL2 is
 
     delete sessions[owner][sessionKey];
     emit SessionRevoked(owner, sessionKey);
-  }
-
-  /// @notice Enforces strict in-order LZ delivery from L1. Without this,
-  ///         LZ V2 delivers ownership-update messages out-of-order; e.g.
-  ///         A→B→C transfers could land on L2 in B-first then C-second
-  ///         vs C-first then B-second order. The latter leaves L2 stuck
-  ///         showing B as owner even after L1 has Carol — and B's
-  ///         pre-transfer session keys then keep authorizing actions on
-  ///         the token's L2 balance until someone manually re-syncs.
-  ///         Returning `inboundNonce + 1` tells the LZ executor to only
-  ///         deliver the next-in-sequence message; out-of-order messages
-  ///         are queued. Audit fix 2026-05-08 (L2 M-1).
-  function nextNonce(uint32 _srcEid, bytes32 _sender) public view virtual override returns (uint64) {
-    return endpoint.inboundNonce(address(this), _srcEid, _sender) + 1;
   }
 
   /// @notice OApp callback for receiving cross-chain messages from L1.

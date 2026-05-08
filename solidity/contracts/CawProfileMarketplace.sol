@@ -452,6 +452,7 @@ contract CawProfileMarketplace is ReentrancyGuard {
      * @param duration How long the offer is valid (seconds)
      */
     function createOfferETH(uint32 tokenId, uint64 duration) external payable nonReentrant returns (uint256 offerId) {
+        require(tokenId > 0, "Invalid tokenId"); // CAW token IDs start at 1
         require(msg.value > 0, "Offer must be > 0");
         require(duration > 0, "Duration must be > 0");
         require(allowedPaymentTokens[address(0)], "ETH not allowed");
@@ -483,6 +484,7 @@ contract CawProfileMarketplace is ReentrancyGuard {
         uint256 amount,
         uint64 duration
     ) external nonReentrant returns (uint256 offerId) {
+        require(tokenId > 0, "Invalid tokenId"); // CAW token IDs start at 1
         require(amount > 0, "Offer must be > 0");
         require(duration > 0, "Duration must be > 0");
         require(paymentToken != address(0), "Use createOfferETH for ETH");
