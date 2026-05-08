@@ -1,32 +1,39 @@
+import { useEffect, useState } from 'react'
 import { useActiveToken } from '~/store/tokenDataStore'
 import { useUserByToken } from '~/hooks/useUserData'
 import { getTargetLanguage } from '~/utils/translate'
+import { getStoredViewerLanguage } from '~/components/LanguageSwitcher'
 
 export interface ViewerLanguage {
-  /** The viewer's chosen language (BCP-47 primary subtag), or the
-   * browser-locale fallback when no per-user pref is set. Always a
-   * non-empty string so callers can compare directly against
-   * Caw.sourceLanguage. */
   preferredLanguage: string
-  /** When true, FeedItem auto-runs translation on caws whose detected
-   * source language differs from preferredLanguage. Default false. */
   autoTranslate: boolean
 }
 
-/**
- * Reads the active viewer's language preferences (set on the User row
- * via Settings → Language). Falls back to the browser locale + auto-off
- * for unauthenticated viewers or while userByToken is in flight.
- *
- * Single source of truth for "what language do we translate INTO" —
- * FeedItem reads this once per render so toggling the setting takes
- * effect on the next paint via React Query's cache.
- */
+// Resolution order (first non-empty wins):
+//   1. User.preferredLanguage   (post-mint, server-persisted)
+//   2. localStorage caw:viewer-lang  (pre-mint or signed-out choice)
+//   3. browser locale via getTargetLanguage()
+//
+// Listening to the custom event lets LanguageSwitcher push changes
+// without forcing every consumer to re-mount.
 export function useViewerLanguage(): ViewerLanguage {
   const activeToken = useActiveToken()
   const { data: user } = useUserByToken(activeToken?.tokenId)
+  const [stored, setStored] = useState<string>(() => getStoredViewerLanguage())
+
+  useEffect(() => {
+    const onChange = () => setStored(getStoredViewerLanguage())
+    window.addEventListener('caw:viewer-lang-changed', onChange)
+    window.addEventListener('storage', onChange)
+    return () => {
+      window.removeEventListener('caw:viewer-lang-changed', onChange)
+      window.removeEventListener('storage', onChange)
+    }
+  }, [])
+
   return {
-    preferredLanguage: (user?.preferredLanguage as string | undefined) || getTargetLanguage(),
-    autoTranslate:    !!user?.autoTranslate,
+    preferredLanguage:
+      (user?.preferredLanguage as string | undefined) || stored || getTargetLanguage(),
+    autoTranslate: !!user?.autoTranslate,
   }
 }

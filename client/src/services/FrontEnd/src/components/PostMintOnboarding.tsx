@@ -42,6 +42,7 @@ import cawLogo from '~/assets/images/caw-logo.png'
 import { getUserAvatar } from '~/utils/defaultAvatar'
 import Avatar from '~/components/Avatar'
 import BoidsBg from '~/components/BoidsBg'
+import LanguageSwitcher from '~/components/LanguageSwitcher'
 import UsernameSvg from '~/components/UsernameSvg'
 import ProfileEditForm from '~/components/ProfileEditForm'
 import {
@@ -782,6 +783,12 @@ const PostMintOnboarding: React.FC<PostMintOnboardingProps> = ({ username, token
   return (
     <div className={`fixed inset-0 z-[100] overflow-y-auto overflow-x-hidden ${tc.outerBg}`}>
       <BoidsBg isDark={isDark} />
+      {/* Language picker — top-right, visible across every onboarding
+          step. Pre-mint visitors will have already chosen on the splash;
+          this lets first-time users who land here directly still pick. */}
+      <div className="absolute top-3 right-3 z-[110] w-44 sm:w-56">
+        <LanguageSwitcher />
+      </div>
       <div className="min-h-full flex flex-col pb-[50px] relative z-[2]">
 
         {/* Stepper — above columns on desktop, inline on mobile */}

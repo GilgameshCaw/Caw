@@ -6,6 +6,7 @@ import { useTheme } from '~/hooks/useTheme'
 import { useT } from '~/i18n/I18nProvider'
 import { useState, useEffect, useRef, lazy, Suspense } from 'react'
 import BoidsBg from '~/components/BoidsBg'
+import LanguageSwitcher from '~/components/LanguageSwitcher'
 
 const Caw3D = lazy(() => import('~/components/Caw3D'))
 
@@ -45,6 +46,12 @@ export default function CaptiveSplash() {
   return (
     <div className={`min-h-screen flex flex-col relative overflow-hidden ${isDark ? 'bg-black text-white' : 'bg-white text-black'}`}>
       <BoidsBg isDark={isDark} />
+      {/* Language picker — top-right so a non-English visitor can pick
+          their language before reading anything else. Persisted in
+          localStorage; promoted to User.preferredLanguage post-mint. */}
+      <div className="absolute top-3 right-3 z-20 w-44 sm:w-56">
+        <LanguageSwitcher />
+      </div>
       {/* Main content - centered */}
       <div className="flex-1 flex flex-col items-center justify-center px-6 pb-6 relative z-10">
         {/* 3D Crow shape — lazy loaded */}
