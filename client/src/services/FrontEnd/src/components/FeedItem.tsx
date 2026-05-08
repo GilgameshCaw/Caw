@@ -1250,7 +1250,7 @@ const FeedItem: React.FC<{ item: CawItem; isMainPost?: boolean; isReply?: boolea
                   )}
 
                   {/* First line: Display name, username, time, and status badges */}
-                  <div className="flex items-center space-x-2 mb-0.5">
+                  <div className="flex flex-wrap items-center gap-x-2 gap-y-1 mb-0.5">
                     <UserHoverCard username={useItem.user.username}>
                       <Link
                         to={`/users/${useItem.user.username}`}
@@ -1275,7 +1275,7 @@ const FeedItem: React.FC<{ item: CawItem; isMainPost?: boolean; isReply?: boolea
                       · {formatTimeAgo(useItem.timestamp)}
                     </span>
                     {item.status === 'FAILED' && (
-                      <>
+                      <div className="flex flex-wrap items-center gap-1">
                         <span className="relative group">
                           <span className="px-2 py-0.5 text-xs bg-red-500/20 text-red-600 dark:text-red-400 rounded-full cursor-help">
                             {t('post.failed')}
@@ -1288,7 +1288,7 @@ const FeedItem: React.FC<{ item: CawItem; isMainPost?: boolean; isReply?: boolea
                       <button
                         onClick={handleRetry}
                         disabled={isRetrying}
-                        className="ml-2 px-2 py-0.5 text-xs bg-blue-500/20 text-blue-600 dark:text-blue-400 rounded-full hover:bg-blue-500/30 transition-colors flex items-center gap-1 cursor-pointer"
+                        className="px-2 py-0.5 text-xs bg-blue-500/20 text-blue-600 dark:text-blue-400 rounded-full hover:bg-blue-500/30 transition-colors flex items-center gap-1 cursor-pointer"
                       >
                         <HiOutlineRefresh className={`w-3 h-3 ${isRetrying ? 'animate-spin' : ''}`} />
                         {isRetrying ? t('post.retrying') : t('post.retry')}
@@ -1300,12 +1300,12 @@ const FeedItem: React.FC<{ item: CawItem; isMainPost?: boolean; isReply?: boolea
                           setRetrySucceeded(true)
                           apiFetch(`/api/caws/${item.id}/dismiss`, { method: 'POST' }).catch(() => {})
                         }}
-                        className="ml-1 px-2 py-0.5 text-xs bg-gray-500/20 text-gray-500 dark:text-gray-400 rounded-full hover:bg-gray-500/30 transition-colors flex items-center gap-1 cursor-pointer"
+                        className="px-2 py-0.5 text-xs bg-gray-500/20 text-gray-500 dark:text-gray-400 rounded-full hover:bg-gray-500/30 transition-colors flex items-center gap-1 cursor-pointer"
                       >
                         <HiOutlineX className="w-3 h-3" />
                         {t('post.hide')}
                       </button>
-                    </>
+                    </div>
                     )}
                   </div>
                 </div>
