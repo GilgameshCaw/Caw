@@ -914,7 +914,7 @@ export function useDmMessages(
 
     load()
     return () => { cancelled = true }
-  }, [conversationId, tokenId])
+  }, [conversationId, tokenId, peerUserId, groupContext])
 
   const sendMessage = useCallback(async (content: string, replyToMessageId?: string) => {
     if (!conversationId || !tokenId) return
@@ -997,7 +997,7 @@ export function useDmMessages(
     } finally {
       setIsSending(false)
     }
-  }, [conversationId, tokenId])
+  }, [conversationId, tokenId, peerUserId, groupContext])
 
   const markAsRead = useCallback(async () => {
     if (!tokenId || messages.length === 0) return
@@ -1101,7 +1101,7 @@ export function useDmMessages(
     } catch (err) {
       console.error('[DM] Failed to process incoming message:', err)
     }
-  }, [conversationId, tokenId])
+  }, [conversationId, tokenId, peerUserId, groupContext])
 
   const loadOlderMessages = useCallback(async () => {
     if (!conversationId || !tokenId || isLoadingOlder || !hasMoreMessages || messages.length === 0) return
@@ -1180,12 +1180,12 @@ export function useDmMessages(
     } finally {
       setIsLoadingOlder(false)
     }
-  }, [conversationId, tokenId, isLoadingOlder, hasMoreMessages, messages])
+  }, [conversationId, tokenId, peerUserId, groupContext, isLoadingOlder, hasMoreMessages, messages])
 
   const getSharedSecret = useCallback(async (): Promise<CryptoKey | null> => {
     if (!conversationId || !tokenId) return null
     return getOrComputeSharedSecret(conversationId, tokenId, peerUserId)
-  }, [conversationId, tokenId])
+  }, [conversationId, tokenId, peerUserId])
 
   const editMessage = useCallback(async (messageId: string, newContent: string) => {
     if (!conversationId || !tokenId) return
@@ -1227,7 +1227,7 @@ export function useDmMessages(
         ? { ...m, content: newContent, editHistory: [...(m.editHistory || []), { content: m.content, editedAt: new Date().toISOString() }] }
         : m
     ))
-  }, [conversationId, tokenId, messages])
+  }, [conversationId, tokenId, peerUserId, groupContext, messages])
 
   const deleteForMe = useCallback(async (messageId: string) => {
     if (!tokenId) return
