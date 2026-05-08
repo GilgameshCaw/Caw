@@ -2864,7 +2864,7 @@ const MessagesPage: React.FC = () => {
         isOpen={isNewMessageModalOpen}
         onClose={closeModal}
         maxWidth="max-w-md"
-        className="max-h-[80vh] flex flex-col"
+        className="max-h-[80vh] max-h-[80dvh] flex flex-col"
       >
             {/* Header */}
             <div className="flex items-center justify-between p-4 border-b border-white/20">
@@ -2915,7 +2915,7 @@ const MessagesPage: React.FC = () => {
                 </div>
 
                 {/* User List */}
-                <div className="flex-1 overflow-y-auto">
+                <div className="flex-1 overflow-y-auto overscroll-contain">
                   {isSearching ? (
                     <div className="flex justify-center py-8">
                       <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-yellow-500"></div>

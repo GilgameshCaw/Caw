@@ -124,7 +124,7 @@ const FollowListModal: React.FC<Props> = ({ type }) => {
       isOpen={isOpen}
       onClose={closeModal}
       maxWidth="max-w-lg"
-      className="max-h-[80vh] overflow-hidden"
+      className="max-h-[80vh] max-h-[80dvh] overflow-hidden"
     >
       <ModalHeader
         title={type === 'following' ? t('profile.stats.following') : t('profile.stats.followers')}
@@ -132,7 +132,7 @@ const FollowListModal: React.FC<Props> = ({ type }) => {
       />
 
       {/* Content */}
-      <div className="overflow-y-auto max-h-[calc(80vh-4rem)]">
+      <div className="overflow-y-auto overscroll-contain max-h-[calc(80vh-4rem)] max-h-[calc(80dvh-4rem)]">
         {loading && users.length === 0 ? (
           <div className="p-8 text-center">
             <div className="animate-spin text-2xl">⌛</div>
