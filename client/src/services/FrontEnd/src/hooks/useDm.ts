@@ -566,7 +566,7 @@ export function useDmMessages(conversationId: string, tokenId?: number, peerUser
 
   // Load and decrypt messages
   useEffect(() => {
-    if (!conversationId || !tokenId) return
+    if (!conversationId || !tokenId || peerUserId === undefined) return
 
     let cancelled = false
 
@@ -697,7 +697,7 @@ export function useDmMessages(conversationId: string, tokenId?: number, peerUser
 
     load()
     return () => { cancelled = true }
-  }, [conversationId, tokenId])
+  }, [conversationId, tokenId, peerUserId])
 
   const sendMessage = useCallback(async (content: string, replyToMessageId?: string) => {
     if (!conversationId || !tokenId) return
