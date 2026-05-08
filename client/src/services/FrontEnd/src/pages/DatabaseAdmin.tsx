@@ -238,6 +238,40 @@ const DatabaseAdmin: React.FC = () => {
     }
   }, [activeModel])
 
+  // Hydrate from URL: when ?detail=… is present at load (or after a
+  // tab-restore / Cmd+click into a new tab), pull the record so the
+  // detail panel renders without a row click.
+  useEffect(() => {
+    if (!detailId || !activeModel || detailRecord) return
+    fetchDetail(detailId)
+  }, [detailId, activeModel, detailRecord, fetchDetail])
+
+  // Build the URL that represents a given (model, detailId). Used both
+  // as the href for native browser middle-click / Cmd+click and to
+  // open new tabs programmatically when a click handler intercepts.
+  const buildUrl = useCallback((model: string, detail?: string | null) => {
+    const params = new URLSearchParams()
+    if (model) params.set('model', model)
+    if (detail) params.set('detail', detail)
+    const qs = params.toString()
+    return qs ? `/admin/db?${qs}` : '/admin/db'
+  }, [])
+
+  // Cmd/Ctrl/middle-click → new tab; plain click → in-page handler.
+  // Returning true means "the click was handled as a new-tab open;
+  // caller should not run its in-page logic."
+  const openNewTabIfModified = (
+    e: React.MouseEvent,
+    url: string,
+  ): boolean => {
+    if (e.metaKey || e.ctrlKey || e.button === 1 || e.shiftKey) {
+      e.preventDefault()
+      window.open(url, '_blank', 'noopener,noreferrer')
+      return true
+    }
+    return false
+  }
+
   // Save edits
   const saveRecord = async () => {
     if (!detailId || !activeModel) return
@@ -433,17 +467,22 @@ const DatabaseAdmin: React.FC = () => {
           </Link>
           <h2 className={`text-xs font-bold px-3 mb-2 ${muted}`}>Tables</h2>
           {models.map(m => (
-            <button
+            <a
               key={m.name}
-              onClick={() => setActiveModel(m.name)}
-              className={`w-full text-left px-3 py-1.5 rounded-lg text-sm mb-0.5 transition-colors ${
+              href={buildUrl(m.name)}
+              onClick={(e) => {
+                if (openNewTabIfModified(e, buildUrl(m.name))) return
+                e.preventDefault()
+                setActiveModel(m.name)
+              }}
+              className={`block w-full text-left px-3 py-1.5 rounded-lg text-sm mb-0.5 transition-colors ${
                 activeModel === m.name
                   ? (isDark ? 'bg-white/10 text-white font-medium' : 'bg-blue-50 text-blue-700 font-medium')
                   : `${text} ${hover}`
               }`}
             >
               {m.label}
-            </button>
+            </a>
           ))}
         </div>
 
@@ -558,7 +597,13 @@ const DatabaseAdmin: React.FC = () => {
                   return (
                     <tr
                       key={id ?? i}
-                      onClick={() => fetchDetail(String(id))}
+                      onClick={(e) => {
+                        if (openNewTabIfModified(e, buildUrl(activeModel, String(id)))) return
+                        fetchDetail(String(id))
+                      }}
+                      onAuxClick={(e) => {
+                        if (e.button === 1) openNewTabIfModified(e, buildUrl(activeModel, String(id)))
+                      }}
                       className={`cursor-pointer ${hover} transition-colors`}
                     >
                       {columns.map(col => {
