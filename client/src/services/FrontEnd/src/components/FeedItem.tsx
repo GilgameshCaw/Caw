@@ -985,12 +985,11 @@ const FeedItem: React.FC<{ item: CawItem; isMainPost?: boolean; isReply?: boolea
     if (target.closest('a') || target.closest('button')) {
       return
     }
-    // Don't navigate for pending or failed posts (they have tempIds, not real IDs)
+    // Don't navigate for failed posts — there's nothing useful to render at
+    // the dedicated page (no replies, can't be linked to). Pending posts DO
+    // navigate: CawPage seeds the post from location.state and skips API
+    // fetches until the tempId resolves to a real DB id.
     if (item.status === 'FAILED') {
-      return
-    }
-    // Don't navigate to pending posts (they don't have a real ID yet)
-    if (item.status === 'PENDING' || String(useItem.id).startsWith('pending-')) {
       return
     }
     const url = `/caws/${useItem.id}`

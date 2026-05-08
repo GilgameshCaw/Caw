@@ -58,6 +58,12 @@ export const CawPage: React.FC = () => {
   const [caw, setCaw]           = useState<CawItem | null>(
     seededCaw && String(seededCaw.id) === id ? seededCaw : null,
   )
+  // Tempo-id route — the user clicked a pending caw whose id is still a
+  // FE-only `pending-<timestamp>-<random>` tempId. There is no row at
+  // /api/caws/<tempId> yet (the server would 404), so we rely entirely on
+  // the seed + pendingPostsStore until the on-chain confirmation flips
+  // the tempId to a real numeric DB id (see redirect effect below).
+  const isTempIdRoute = !!id && id.startsWith('pending-')
   const [comments, setComments] = useState<CawItem[]>([])
   const [recaws, setRecaws]     = useState<RecawIndicator[]>([])
   const [tips, setTips]         = useState<TipIndicator[]>([])
@@ -207,9 +213,12 @@ export const CawPage: React.FC = () => {
     }
   }
 
-  // Poll for updates when caw is pending
+  // Poll for updates when caw is pending. Skip on tempId routes — there's
+  // no DB row to fetch yet; the redirect effect above will move us to the
+  // real id as soon as the pending-posts store learns it.
   useEffect(() => {
     if (!caw || caw.status !== 'PENDING') return
+    if (isTempIdRoute) return
 
     const interval = setInterval(async () => {
       try {
@@ -318,8 +327,30 @@ export const CawPage: React.FC = () => {
     }
   }
   useEffect(() => {
+    if (isTempIdRoute) {
+      // Render-from-seed only. Flip loading off so the spinner doesn't
+      // hang; the redirect effect below will swap us to the real id once
+      // the confirmation lands.
+      setLoading(false)
+      setCommentsLoading(false)
+      return
+    }
     loadCaw()
   }, [id, activeTokenId])
+
+  // Redirect from /caws/pending-<tempId> to /caws/<realId> the moment the
+  // pending-posts store flips the matching post's id to its real numeric
+  // DB id (happens when the indexer confirms the action). We match by
+  // tempId to avoid colliding with unrelated pending posts.
+  useEffect(() => {
+    if (!isTempIdRoute) return
+    const matched = allPendingPosts.find(p => p.tempId === id)
+    if (!matched) return
+    const realId = matched.id
+    if (typeof realId === 'string' && realId.startsWith('pending-')) return
+    if (String(realId) === id) return
+    navigate(`/caws/${realId}`, { replace: true, state: { caw: matched } })
+  }, [allPendingPosts, id, isTempIdRoute, navigate])
 
   const errorView = (message: string) => (
       <div className="flex flex-col items-center justify-center py-16 px-6 text-center">
