@@ -1,13 +1,17 @@
 import { Router } from 'express'
 import { prisma } from '../../prismaClient'
+import { requireAuth } from '../middleware/auth'
 
 const router = Router()
 
 /**
  * GET /api/withdrawals/:userId
- * Fetch withdrawal requests for a specific user
+ * Fetch withdrawal requests for a specific user. Auth: caller must be
+ * authorized for tokenId == userId. Without this, anyone could enumerate
+ * every user's withdrawal history (amounts, txHashes, status). Audit
+ * fix 2026-05-09 (Round 5 API HIGH-5).
  */
-router.get('/:userId', async (req, res) => {
+router.get('/:userId', requireAuth({ lookup: async (req) => Number(req.params.userId), verifyOwnership: true }), async (req, res) => {
   try {
     const userId = parseInt(req.params.userId)
 

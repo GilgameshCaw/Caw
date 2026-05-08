@@ -8,6 +8,7 @@ import { useCachedFetch } from '~/hooks/useCachedFetch'
 import { useTheme } from '~/hooks/useTheme'
 import { useT } from '~/i18n/I18nProvider'
 import { feedImageLargeUrl } from '~/utils/imageVariants'
+import { isCanonicalUploadUrl } from '~/utils/uploadUrl'
 import { TAG_CHAR_CLASS } from '~/../../../tools/hashtagRegex'
 
 // Caches. Keyed by `${host}|${code}` so cross-node short URLs with the
@@ -413,6 +414,13 @@ const ContentWithHashtags: React.FC<Props> = ({ content, className = '', postId,
       while ((match = imageUrlPattern.exec(text)) !== null) {
         // Skip if it's a short URL (already handled)
         if (match[0].includes('/s/')) continue
+        // Reject URLs that don't match the canonical upload-pipeline
+        // path shape. Without this filter, a malicious poster could
+        // embed https://attacker.tld/track.png in a popular caw and
+        // every viewer's IP+UA hits attacker logs (passive deanon).
+        // External-host images flow through LinkPreview / explicit
+        // unfurling instead. Audit fix 2026-05-09 (Round 5 FE/DM HIGH-1).
+        if (!isCanonicalUploadUrl(match[0])) continue
         mediaMatches.push({
           type: 'image',
           data: match[0],

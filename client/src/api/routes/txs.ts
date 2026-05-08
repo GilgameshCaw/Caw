@@ -1,6 +1,7 @@
 // src/api/routes/txs.ts
 import { Router } from 'express'
 import { prisma }  from '../../prismaClient'
+import { requireAuth } from '../middleware/auth'
 
 const router = Router()
 
@@ -10,8 +11,13 @@ const router = Router()
  *   { pendingActionIds, actions, users }
  * where
  *   actions: Array<{ id, createdAt, actionType, senderId, receiverId?, recipients?, amounts?, text? }>
+ *
+ * Auth: senderId must be one of the caller's authorized tokens. Without
+ * this, anyone could enumerate every user's pending action data
+ * (recipients, amounts, scheduled tips, withdraw amounts, post text).
+ * Audit fix 2026-05-09 (Round 5 API CRITICAL-2).
  */
-router.get('/', async (req, res) => {
+router.get('/', requireAuth({ field: 'senderId', verifyOwnership: true }), async (req, res) => {
   try {
 
 

@@ -52,6 +52,19 @@ import { Sentry, sentryEnabled } from '../sentry'
 export function createApp() {
   const app = express()
 
+  // We sit behind nginx on the VPS — trust the X-Forwarded-For from the
+  // immediate upstream so express-rate-limit (and any req.ip consumer)
+  // sees the real client IP. Without this, every per-IP rate-limiter
+  // collapses to a single 127.0.0.1 bucket and emits
+  // ERR_ERL_UNEXPECTED_X_FORWARDED_FOR validation errors. Audit fix
+  // 2026-05-09 (Round 5 VPS H-2). 'loopback' = trust 127.0.0.1, ::1
+  // only — safe; the value won't be honored from public clients.
+  app.set('trust proxy', 'loopback')
+
+  // Don't advertise Express. Free fingerprinting for attackers
+  // otherwise. Audit fix 2026-05-09 (Round 5 VPS M-4).
+  app.disable('x-powered-by')
+
   const raw = process.env.ALLOWED_ORIGINS ?? ''
   const allowed = raw
     ? raw.split(',').map(s => s.trim())
@@ -120,6 +133,22 @@ export function createApp() {
 
       if (!shortUrl) {
         return res.status(404).send('Short URL not found')
+      }
+
+      // Defense-in-depth: re-validate the stored URL is http(s) before
+      // redirecting. Both the create endpoints (POST /api/shorturl and
+      // /bulk) gate on this, but legacy rows may exist and storing
+      // `javascript:` / `data:` / `file:` here would let a redirect
+      // surface the unsafe scheme. Audit fix 2026-05-09 (Round 5 API
+      // HIGH-1).
+      let safe: URL
+      try {
+        safe = new URL(shortUrl.originalUrl)
+      } catch {
+        return res.status(400).send('Invalid stored URL')
+      }
+      if (safe.protocol !== 'http:' && safe.protocol !== 'https:') {
+        return res.status(400).send('Unsupported URL scheme')
       }
 
       // Increment click count (fire and forget)

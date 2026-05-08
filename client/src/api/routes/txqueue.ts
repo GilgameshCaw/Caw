@@ -5,9 +5,15 @@ import { requireAuth } from '../middleware/auth'
 const router = Router()
 
 /**
- * Get status of specific txQueue entries
+ * Get status of specific txQueue entries.
+ *
+ * Auth: the caller's session must include each entry's senderId in
+ * authorizedTokenIds. Without this, anyone could enumerate sequential
+ * txQueue ids and dump signed-action payloads (incl. recipients,
+ * amounts, scheduled tips) for failed entries. Audit fix 2026-05-09
+ * (Round 5 API MED-1).
  */
-router.get('/status', async (req, res) => {
+router.get('/status', requireAuth({ anySession: true }), async (req, res) => {
   try {
     const { ids } = req.query
 
@@ -20,6 +26,8 @@ router.get('/status', async (req, res) => {
     if (txQueueIds.length === 0) {
       return res.status(400).json({ error: 'No valid IDs provided' })
     }
+
+    const authorized = new Set((req.sessionData?.authorizedTokenIds || []) as number[])
 
     const txQueueEntries = await prisma.txQueue.findMany({
       where: {
@@ -35,13 +43,15 @@ router.get('/status', async (req, res) => {
     })
 
     res.json({
-      statuses: txQueueEntries.map(entry => ({
-        id: entry.id,
-        status: entry.status,
-        reason: entry.reason,
-        // Include senderId and payload for failed entries so the client can auto-retry
-        ...(entry.status === 'failed' ? { senderId: entry.senderId, payload: entry.payload } : {}),
-      }))
+      statuses: txQueueEntries
+        .filter(entry => authorized.has(entry.senderId))
+        .map(entry => ({
+          id: entry.id,
+          status: entry.status,
+          reason: entry.reason,
+          // Include senderId and payload for failed entries so the client can auto-retry
+          ...(entry.status === 'failed' ? { senderId: entry.senderId, payload: entry.payload } : {}),
+        }))
     })
   } catch (err: any) {
     console.error('GET /api/txqueue/status error', err)

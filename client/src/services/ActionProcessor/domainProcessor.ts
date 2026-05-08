@@ -124,15 +124,13 @@ export async function processDomainEffects(
       break
 
     case 'LIKE':
-      // For likes, we need to find the caw being liked
-      if (!parentCawId && rawAction.receiverCawonce) {
-        // The receiverId in a like might be 0, so we search by cawonce only
-        const targetCaw = await tx.caw.findFirst({
-          where: { cawonce: rawAction.receiverCawonce },
-          orderBy: { createdAt: 'asc' }
-        })
-        parentCawId = targetCaw?.id
-      }
+      // For likes, we need to find the caw being liked. cawonce is
+      // per-user, so a search by cawonce alone resolved to the
+      // chronologically-OLDEST caw with that cawonce (typically a
+      // low-userId user's first post) — completely wrong attribution.
+      // Audit fix 2026-05-09 (Round 5 backend HIGH-2): drop the fallback.
+      // A LIKE without a valid (receiverId, receiverCawonce) is malformed
+      // and should be skipped at the handler layer.
       await handleLikeAction(tx, action, rawAction, parentCawId)
       break
 

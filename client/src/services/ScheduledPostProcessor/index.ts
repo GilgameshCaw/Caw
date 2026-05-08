@@ -51,21 +51,33 @@ async function processScheduledPost(scheduledPost: any): Promise<boolean> {
       return false
     }
 
-    // Validate and sanitize amounts field
-    if (data.amounts && Array.isArray(data.amounts)) {
-      data.amounts = data.amounts.map((amt: any) => {
-        if (amt === null || amt === undefined || amt === '') {
-          return '0'
-        }
-        const strAmt = String(amt)
-        if (strAmt === 'NaN' || isNaN(Number(strAmt))) {
-          logger.warn(`Invalid amount value in scheduled post ${scheduledPost.id}: ${amt}, defaulting to 0`)
-          return '0'
-        }
-        return strAmt
+    // DO NOT MUTATE data.amounts here. Per feedback_validator_amounts_padding,
+    // any change to a signed payload between sign-time and submit-time
+    // flips the EIP-712 struct hash, breaks ecrecover, and surfaces as a
+    // misleading "Session expired or not found" revert. The FE must
+    // produce canonical-shaped amounts BEFORE signing.
+    //
+    // Fail loudly here on a malformed shape rather than silently fixing
+    // it. Audit fix 2026-05-09 (Round 5 backend HIGH-1).
+    if (data.amounts !== undefined && !Array.isArray(data.amounts)) {
+      logger.error(`Scheduled post ${scheduledPost.id} has non-array amounts; rejecting`)
+      await prisma.scheduledCaw.update({
+        where: { id: scheduledPost.id },
+        data: { status: 'failed' }
       })
-    } else {
-      data.amounts = []
+      return false
+    }
+    if (Array.isArray(data.amounts)) {
+      for (const amt of data.amounts) {
+        if (typeof amt !== 'string' || amt === '' || amt === 'NaN' || isNaN(Number(amt))) {
+          logger.error(`Scheduled post ${scheduledPost.id} has invalid amount entry: ${JSON.stringify(amt)}; rejecting`)
+          await prisma.scheduledCaw.update({
+            where: { id: scheduledPost.id },
+            data: { status: 'failed' }
+          })
+          return false
+        }
+      }
     }
 
     // Create optimistic pending caw (same logic as actions.ts)

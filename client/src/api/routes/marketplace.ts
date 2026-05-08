@@ -242,36 +242,18 @@ router.post('/listings/:id/sold', requireAuth({ anySession: true }), async (req,
 
     const listing = await prisma.marketplaceListing.findUnique({ where: { id } })
     if (!listing) return res.status(404).json({ error: 'Listing not found' })
-    if (listing.status !== 'ACTIVE') return res.json({ ok: true }) // already updated
 
-    await prisma.marketplaceListing.update({
-      where: { id },
-      data: { status: 'SOLD' },
-    })
-
-    // Also create a sale record so it shows up immediately
-    await prisma.marketplaceSale.upsert({
-      where: { listingId: listing.id },
-      update: {},
-      create: {
-        listingId: listing.id,
-        buyer: buyerLc,
-        seller: listing.seller,
-        tokenId: listing.tokenId,
-        price: listing.startPrice,
-        paymentToken: listing.paymentToken,
-        username: listing.username,
-        txHash,
-      },
-    })
-
-    // NOTE: We deliberately do NOT update User.address here. The caller
-    // is unverified at the chain level — we only know the session is
-    // signed in as the claimed buyer, not that the buy tx actually
-    // landed. NftTransferWatcher (or this instance's MarketplaceIndexer)
-    // updates User.address from the on-chain event within ~60s.
-    console.log(`[marketplace] Listing ${id} marked as sold by ${buyerLc} (status only; ownership update deferred to indexer, tx: ${txHash})`)
-    res.json({ ok: true })
+    // Audit fix 2026-05-09 (Round 5 API HIGH-3): we used to optimistically
+    // flip listing.status -> SOLD and upsert a MarketplaceSale row using
+    // listing.startPrice (wrong for English auctions) and the user-supplied
+    // txHash (unverified). That violated `project_chain_mirrored_status.md`
+    // (soft state in chain-mirrored enum) and let any signed-in buyer DoS
+    // active listings by falsely marking them sold. Now this endpoint is a
+    // logging breadcrumb only; MarketplaceIndexerService handles the real
+    // status flip and Sale row insertion from the on-chain Sale event
+    // within ~60s.
+    console.log(`[marketplace] mark-sold breadcrumb: listing=${id} buyer=${buyerLc} tx=${txHash} (status flip deferred to indexer)`)
+    res.json({ ok: true, deferred: true })
   } catch (err: any) {
     console.error('[marketplace] mark sold error:', err)
     res.status(500).json({ error: 'Internal server error' })

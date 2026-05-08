@@ -1,6 +1,6 @@
 import { Request, Response, NextFunction } from 'express'
 import jwt from 'jsonwebtoken'
-import { randomBytes } from 'crypto'
+import { randomBytes, timingSafeEqual, createHash } from 'crypto'
 import { getSession, SessionData } from '../sessionStore'
 import { prisma } from '../../prismaClient'
 
@@ -48,9 +48,17 @@ export function generateAdminToken(): string {
 
 /**
  * Verify the password and create a session. Returns the token (for cookie) and its expiry.
+ *
+ * Constant-time compare via SHA-256 hashing both sides to fixed-length
+ * 32-byte buffers — `password !== ADMIN_PASSWORD` leaks length and a
+ * prefix-match timing signal. Audit fix 2026-05-09 (Round 5 VPS M-9).
  */
 export function loginAdmin(password: string): { token: string; expiresAt: number } | null {
-  if (!ADMIN_PASSWORD || password !== ADMIN_PASSWORD) return null
+  if (!ADMIN_PASSWORD) return null
+  if (typeof password !== 'string') return null
+  const a = createHash('sha256').update(password).digest()
+  const b = createHash('sha256').update(ADMIN_PASSWORD).digest()
+  if (!timingSafeEqual(a, b)) return null
   const token = generateAdminToken()
   const expiresAt = Date.now() + ADMIN_TOKEN_TTL
   adminTokens.set(token, expiresAt)

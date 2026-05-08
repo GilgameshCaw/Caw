@@ -328,13 +328,54 @@ router.get('/status/:requestId', async (req: any, res: any) => {
  * Revoke a session key on-chain using a signature from the session key itself.
  * The session key signs an EIP-712 RevokeSession message, and the validator
  * submits it on-chain via revokeSessionBySig.
+ *
+ * Auth/spam guard: gated behind a Redis-backed per-IP rate limit AND a
+ * per-(owner) rate limit. Without these, anyone could fish a leaked
+ * revocation signature out of another node's logs and replay it N times,
+ * draining the validator's ETH balance one failed-revert tx at a time.
+ * The on-chain contract enforces signature correctness; this gate just
+ * prevents calldata-replay grief. Audit fix 2026-05-09 (Round 5 API
+ * CRITICAL-1).
  */
+const REVOKE_IP_LIMIT = 30        // per 24h
+const REVOKE_OWNER_LIMIT = 10     // per 24h
+const REVOKE_WINDOW = 24 * 60 * 60
+
+async function checkRevokeRateLimit(scope: string, key: string, max: number): Promise<boolean> {
+  const k = `revoke_ratelimit:${scope}:${key}`
+  const count = await redis.llen(k)
+  if (count >= max) return false
+  await redis.rpush(k, Date.now().toString())
+  await redis.expire(k, REVOKE_WINDOW)
+  return true
+}
+
 router.delete('/', async (req: any, res: any) => {
   try {
     const { owner, sessionKey, signature } = req.body
 
     if (!owner || !sessionKey || !signature) {
       return res.status(400).json({ error: 'Missing required fields: owner, sessionKey, signature' })
+    }
+
+    if (typeof owner !== 'string' || !/^0x[0-9a-fA-F]{40}$/.test(owner)) {
+      return res.status(400).json({ error: 'Invalid owner address' })
+    }
+    if (typeof sessionKey !== 'string' || !/^0x[0-9a-fA-F]{40}$/.test(sessionKey)) {
+      return res.status(400).json({ error: 'Invalid sessionKey address' })
+    }
+    if (typeof signature !== 'string' || !/^0x[0-9a-fA-F]{130}$/.test(signature)) {
+      return res.status(400).json({ error: 'Invalid signature shape' })
+    }
+
+    const ip = (req.headers['x-forwarded-for'] as string | undefined)?.split(',')[0]?.trim()
+      || req.socket?.remoteAddress
+      || 'unknown'
+    if (!(await checkRevokeRateLimit('ip', ip, REVOKE_IP_LIMIT))) {
+      return res.status(429).json({ error: 'Rate limit: too many revocation requests from this IP' })
+    }
+    if (!(await checkRevokeRateLimit('owner', owner.toLowerCase(), REVOKE_OWNER_LIMIT))) {
+      return res.status(429).json({ error: 'Rate limit: too many revocation requests for this owner' })
     }
 
     const cawProfileL2 = getContract()

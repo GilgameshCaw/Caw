@@ -269,10 +269,16 @@ router.post('/bulk', async (req, res) => {
     for (const url of urls) {
       if (typeof url !== 'string') continue
 
+      // Restrict to http(s) — without this, javascript: / data: / file:
+      // / chrome-extension: URLs would be stored and served via /s/:code
+      // (open-redirect vector). The single POST /api/shorturl path
+      // already enforces this; bulk needs the same guard. Audit fix
+      // 2026-05-09 (Round 5 API HIGH-1).
       try {
-        new URL(url) // Validate URL
+        const parsed = new URL(url)
+        if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') continue
       } catch {
-        continue // Skip invalid URLs
+        continue
       }
 
       // If the URL is already one of our short URLs, reuse the existing
