@@ -6,6 +6,7 @@ import { useSignAndSubmitAction } from '~/api/actions'
 import { useTokenDataStore } from '~/store/tokenDataStore'
 import InsufficientStakeModal from '~/components/modals/InsufficientStakeModal'
 import AvatarCropperModal from '~/components/modals/AvatarCropperModal'
+import CoverCropperModal from '~/components/modals/CoverCropperModal'
 import { getUserAvatar } from '~/utils/defaultAvatar'
 import { useT } from '~/i18n/I18nProvider'
 
@@ -115,6 +116,7 @@ const ProfileEditForm: React.FC<ProfileEditFormProps> = ({
   const [showCostExplanation, setShowCostExplanation] = useState(false)
   const [showInsufficientStake, setShowInsufficientStake] = useState(false)
   const [cropperFile, setCropperFile] = useState<File | null>(null)
+  const [coverCropperFile, setCoverCropperFile] = useState<File | null>(null)
 
   const triggerFileInput = (type: 'avatar' | 'cover') => {
     setTimeout(() => {
@@ -137,30 +139,14 @@ const ProfileEditForm: React.FC<ProfileEditFormProps> = ({
       setAvatarUrl(imageUrl)
     } catch (err) {
       console.error('Failed to upload image:', err)
-      setProfileError('Failed to upload image. Please try again.')
+      setProfileError(err instanceof Error ? err.message : 'Failed to upload image. Please try again.')
     } finally {
       setIsUploading(false)
     }
   }
 
-  const processImageFile = async (type: 'avatar' | 'cover', file: File) => {
-    if (!file.type.startsWith('image/')) {
-      setProfileError('Please select a valid image file')
-      return
-    }
-    if (file.size > 5 * 1024 * 1024) {
-      setProfileError('Image size must be less than 5MB')
-      return
-    }
+  const uploadCroppedCover = async (file: File) => {
     setProfileError(null)
-
-    // Avatars: open the cropper modal — user picks the square crop window
-    // before upload. Covers go straight to upload with the 'cover' preset.
-    if (type === 'avatar') {
-      setCropperFile(file)
-      return
-    }
-
     setIsUploading(true)
     try {
       const { uploadMedia } = await import('~/api/upload')
@@ -172,9 +158,31 @@ const ProfileEditForm: React.FC<ProfileEditFormProps> = ({
       setCoverUrl(imageUrl)
     } catch (err) {
       console.error('Failed to upload image:', err)
-      setProfileError('Failed to upload image. Please try again.')
+      setProfileError(err instanceof Error ? err.message : 'Failed to upload image. Please try again.')
     } finally {
       setIsUploading(false)
+    }
+  }
+
+  const processImageFile = async (type: 'avatar' | 'cover', file: File) => {
+    if (!file.type.startsWith('image/')) {
+      setProfileError('Please select a valid image file')
+      return
+    }
+    // No raw-input size cap: the cropper renders to a fixed canvas size
+    // and the downstream compressor enforces the real byte budget. A
+    // huge phone photo just gets resampled. The previous 5MB pre-check
+    // silently rejected normal-sized phone photos with no user-visible
+    // error path.
+    setProfileError(null)
+
+    // Both surfaces go through a cropper: square for avatar, ~3:1 rect
+    // for cover. The cropper output is what gets uploaded, so the user
+    // sees what they're about to commit before the network round-trip.
+    if (type === 'avatar') {
+      setCropperFile(file)
+    } else {
+      setCoverCropperFile(file)
     }
   }
 
@@ -771,6 +779,16 @@ const ProfileEditForm: React.FC<ProfileEditFormProps> = ({
         onCrop={(cropped) => {
           setCropperFile(null)
           uploadCroppedAvatar(cropped)
+        }}
+      />
+
+      <CoverCropperModal
+        isOpen={!!coverCropperFile}
+        file={coverCropperFile}
+        onClose={() => setCoverCropperFile(null)}
+        onCrop={(cropped) => {
+          setCoverCropperFile(null)
+          uploadCroppedCover(cropped)
         }}
       />
     </div>

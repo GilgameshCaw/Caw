@@ -1137,6 +1137,9 @@
   "avatar_cropper.title": "Crop your avatar",
   "avatar_cropper.zoom": "Zoom",
   "avatar_cropper.btn.save": "Save",
+  "cover_cropper.title": "Crop your cover photo",
+  "cover_cropper.zoom": "Zoom",
+  "cover_cropper.btn.save": "Save",
 
   "verify_wallet.title": "Verify Wallet Ownership",
   "verify_wallet.body": "To perform this action, please verify you own this wallet by signing a message. This is free and does not create a transaction.",
