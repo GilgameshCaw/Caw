@@ -362,9 +362,57 @@ router.post('/messages',
   requireAuth({ field: 'senderId', verifyOwnership: true }),
   async (req: Request, res: Response) => {
     try {
-      const { conversationId, senderId, encryptedPayload, recipientPayloads, contentType, replyToMessageId } = req.body
+      const { conversationId, senderId, encryptedPayload, recipientPayloads, contentType, replyToMessageId, senderSig, timestamp } = req.body
       if (!conversationId || !senderId) {
         return res.status(400).json({ error: 'conversationId and senderId are required' })
+      }
+
+      // Verify the inner sender sig against DmIdentity.publicKey for
+      // senderId. Audit fix 2026-05-09 (Round 7 #1b). Sig is OPTIONAL
+      // during the migration window — a missing sig leaves
+      // verifiedSender = NULL on the row; the FE filters the badge by
+      // verifiedSender = true. After ~30 days we can flip this to
+      // require the sig and reject unsigned messages outright.
+      let verifiedSender: boolean | null = null
+      if (senderSig && typeof senderSig === 'string' && typeof timestamp === 'number') {
+        const senderIdentity = await prisma.dmIdentity.findUnique({
+          where: { userId: Number(senderId) },
+          select: { publicKey: true },
+        })
+        if (senderIdentity?.publicKey) {
+          // For groups we sign over the sender's self-payload (which the
+          // FE always includes in recipientPayloads under their own
+          // userId). For DMs we sign over the lone encryptedPayload.
+          const ciphertextForSig = (typeof encryptedPayload === 'string' && encryptedPayload)
+            ? encryptedPayload
+            : (recipientPayloads && typeof recipientPayloads === 'object' && recipientPayloads[Number(senderId)]) || ''
+          // The FE may have signed with peerUserId; we can't know the
+          // exact peer here without a conversation lookup. Try both
+          // forms (0 for groups + peer for DMs) and accept either to
+          // tolerate the small ambiguity. The cost is one extra
+          // recovery; safer than rejecting legitimate sigs over a
+          // shape mismatch.
+          const { verifyDmSenderSig } = await import('../dmSenderSig')
+          const tryGroup = verifyDmSenderSig(
+            { encryptedPayload: ciphertextForSig, senderId: Number(senderId), recipientId: 0,
+              conversationId, contentType: contentType || 'text', timestamp },
+            senderSig, senderIdentity.publicKey,
+          )
+          let okPeer = false
+          if (!tryGroup) {
+            // DM path: look up the peer from the conversation
+            const conv = await prisma.conversation.findUnique({
+              where: { id: conversationId }, include: { participants: { select: { userId: true } } }
+            })
+            const peerId = conv?.participants.find((p: any) => p.userId !== Number(senderId))?.userId ?? 0
+            okPeer = verifyDmSenderSig(
+              { encryptedPayload: ciphertextForSig, senderId: Number(senderId), recipientId: peerId,
+                conversationId, contentType: contentType || 'text', timestamp },
+              senderSig, senderIdentity.publicKey,
+            )
+          }
+          verifiedSender = tryGroup || okPeer
+        }
       }
 
       // Group branch — sealed-per-recipient ciphertext, single-node only,
@@ -423,6 +471,8 @@ router.post('/messages',
             contentType: contentType || 'text',
             shadowBlocked: true,
             replyToMessageId: replyToMessageId || null,
+            senderSig: senderSig || null,
+            verifiedSender,
           }
         })
         return res.json(message)
@@ -521,6 +571,8 @@ router.post('/messages',
         contentType,
         replyToMessageId,
         relayId,
+        senderSig: senderSig || null,
+        verifiedSender,
       })
 
       // Implicit accept-on-reply. When the sender's own participant.status
@@ -546,6 +598,11 @@ router.post('/messages',
           conversationId,
           contentType: contentType || 'text',
           relayId,
+          // Forward the inner sender sig + the timestamp it committed to.
+          // Without these, peer mirrors can't verify and would mark the
+          // relayed copy `verifiedSender = null`.
+          senderSig: senderSig || null,
+          timestamp: typeof timestamp === 'number' ? timestamp : undefined,
         }).catch(err => {
           console.warn('[DM] relay failed (continuing):', err?.message || err)
         })

@@ -443,6 +443,15 @@ model DmIdentity {
   userId             Int                       @unique
   walletAddress      String
   publicKey          String // hex-encoded secp256k1 public key
+  // Wallet-signed proof that walletAddress authorized publicKey as its
+  // DM signing key. The wallet personal_signs:
+  //   "CAW DM identity\nuserId:<id>\npublicKey:<hex>"
+  // and the result lives here. Cross-instance identity-relay forwards
+  // this so peer mirrors can verify the (userId, publicKey, walletAddress)
+  // triple without trusting the source instance's claim. Optional during
+  // the migration window; required for newly-registered identities once
+  // the FE update lands.
+  walletProof        String?
   dmPrivacy          DmPrivacy                 @default(EVERYONE)
   // Per-user customization for the 5-emoji quick-reaction strip on DMs.
   // Empty array = use server defaults; otherwise expected to hold exactly
@@ -534,6 +543,23 @@ model Message {
   systemPayload     Json?
   status            MessageStatus             @default(SENT)
   shadowBlocked     Boolean                   @default(false) // hidden from recipient, visible to sender
+  // Inner sender signature over the message envelope. The FE signs
+  //   keccak256(encryptedPayload || senderId || recipientId
+  //             || conversationId || contentType || timestamp)
+  // with the user's DmIdentity secp256k1 private key (which is itself
+  // wallet-derived). Receivers recover the address and check it matches
+  // DmIdentity.walletAddress for senderId — closes the cross-instance
+  // forgery vector where any registered relay node could put words in
+  // any user's mouth. NULL on legacy rows + the FE migration window;
+  // verifiedSender below tracks the outcome so renderers don't have to
+  // re-recover.
+  senderSig         String?
+  // Whether the inner sig recovered to the wallet address registered
+  // for senderId on receive. Indexed messages without senderSig (legacy
+  // / migration window) get verifiedSender = null. Receivers stamp this
+  // on the way in (both /api/dm/messages and /api/dm/relay) so badge +
+  // thread-render decisions don't redo the recovery on every read.
+  verifiedSender    Boolean?
   // Cross-node relay dedup. Home node generates a UUID per relayed
   // message; receivers reject replays via the partial unique index
   // (NULL for any message that was never relayed, e.g. pre-relay rows).

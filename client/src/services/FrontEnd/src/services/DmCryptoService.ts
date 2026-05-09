@@ -133,6 +133,65 @@ export function getCachedPrivateKey(): Uint8Array | null {
 }
 
 /**
+ * Canonical envelope bytes that the SENDER signs over per-message. The
+ * receiver reproduces the exact same canonicalization and verifies the
+ * recovered address matches DmIdentity.walletAddress for senderId.
+ *
+ * Field order is fixed; JSON.stringify with this exact key order is the
+ * canonical form. NO room for senderSig itself in the canonical bytes
+ * (it'd be self-referential). The shape is a STRICT SUBSET of what the
+ * relay envelope has — relayId / sourceInstanceId / etc are routing
+ * metadata that don't belong in a wallet-scoped sig.
+ */
+export interface SenderEnvelope {
+  encryptedPayload: string
+  senderId: number
+  recipientId: number
+  conversationId: string
+  contentType: string
+  timestamp: number
+}
+
+export function canonicalizeSenderEnvelope(env: SenderEnvelope): string {
+  return JSON.stringify({
+    encryptedPayload: env.encryptedPayload,
+    senderId:         env.senderId,
+    recipientId:      env.recipientId,
+    conversationId:   env.conversationId,
+    contentType:      env.contentType,
+    timestamp:        env.timestamp,
+  })
+}
+
+/**
+ * Sign a SenderEnvelope with the user's DmIdentity secp256k1 private
+ * key. Returns 65-byte (r || s || v) hex prefixed with `0x`. Hash is
+ * keccak256 over the UTF-8 bytes of the canonical string — matches the
+ * server-side verifier which uses ethers `recoverAddress(keccak256(...),
+ * sig)` to recover the wallet-derived address.
+ *
+ * Round 7 audit fix #1b: closes the cross-instance forgery vector
+ * where any registered relay node could put words in any user's mouth.
+ */
+export async function signSenderEnvelope(
+  env: SenderEnvelope,
+  privateKey: Uint8Array,
+): Promise<string> {
+  const { keccak256, toUtf8Bytes } = await import('ethers')
+  const canonical = canonicalizeSenderEnvelope(env)
+  const hashHex = keccak256(toUtf8Bytes(canonical))
+  // Strip 0x for noble's expected form
+  const hashBytes = hexToBytes(hashHex)
+  const sig = secp256k1.sign(hashBytes, privateKey)
+  const compact = sig.toCompactRawBytes()
+  const v = (sig.recovery ?? 0) & 1
+  const out = new Uint8Array(65)
+  out.set(compact, 0)
+  out[64] = v
+  return '0x' + bytesToHex(out)
+}
+
+/**
  * Clear cached keys (e.g., on disconnect)
  */
 export function clearKeyCache(tokenId?: number) {

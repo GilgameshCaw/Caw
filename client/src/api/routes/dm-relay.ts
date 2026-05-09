@@ -80,6 +80,7 @@ router.post('/', async (req, res) => {
       relayId,
       sourceInstanceId,
       signature,
+      senderSig,
     } = req.body
 
     // Single source-IP for diagnostic purposes — every 400 below logs
@@ -250,6 +251,28 @@ router.post('/', async (req, res) => {
       })
     }
 
+    // Verify the inner sender sig (Round 7 #1b). The sig is signed
+    // over the canonical envelope by the user's DmIdentity secp256k1
+    // private key, which itself is wallet-derived. We look up the
+    // recipient's record of senderId's publicKey — if it doesn't
+    // exist (e.g. cross-instance identity not yet relayed), we leave
+    // `verifiedSender = null` and the FE filters it out of the badge.
+    let verifiedSender: boolean | null = null
+    if (senderSig && typeof senderSig === 'string') {
+      const senderIdentity = await prisma.dmIdentity.findUnique({
+        where: { userId: Number(senderId) },
+        select: { publicKey: true },
+      })
+      if (senderIdentity?.publicKey) {
+        const { verifyDmSenderSig } = await import('../dmSenderSig')
+        verifiedSender = verifyDmSenderSig(
+          { encryptedPayload, senderId: Number(senderId), recipientId: Number(recipientId),
+            conversationId, contentType, timestamp: Number(timestamp) },
+          senderSig, senderIdentity.publicKey,
+        )
+      }
+    }
+
     // Write the message. relayId is the dedup key; on race (concurrent
     // duplicate inbound) Postgres rejects with P2002, we catch and
     // re-fetch.
@@ -262,6 +285,8 @@ router.post('/', async (req, res) => {
           encryptedPayload,
           contentType,
           relayId,
+          senderSig: senderSig || null,
+          verifiedSender,
         },
         include: {
           sender: {

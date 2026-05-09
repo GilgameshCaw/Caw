@@ -47,6 +47,21 @@ interface RelayParams {
    * one through if the caller wants to dedupe their own retries.
    */
   relayId?: string
+  /**
+   * Inner sender sig forwarded to peer mirrors. Distinct from the
+   * outer relay sig (which authenticates this NODE). The senderSig
+   * authenticates the ORIGINAL SENDER's wallet — it travels through
+   * relay hops unchanged so peer mirrors can verify against their
+   * cached DmIdentity.publicKey for senderId. Audit fix 2026-05-09
+   * (Round 7 #1b).
+   */
+  senderSig?: string | null
+  /**
+   * Caller-supplied timestamp, MUST match what was passed to the FE
+   * canonicalizer. We don't generate it here — it's part of the
+   * canonical envelope the user signed.
+   */
+  timestamp?: number
 }
 
 let cachedPrivateKey: Uint8Array | null = null
@@ -97,7 +112,10 @@ export async function relayDmToPeers(params: RelayParams): Promise<{ attempted: 
     recipientId: params.recipientId,
     conversationId: params.conversationId,
     contentType: params.contentType ?? 'text',
-    timestamp: Date.now(),
+    // Use the caller's timestamp if supplied — that's the timestamp
+    // the inner sender sig commits to. Falling back to Date.now() is
+    // the legacy path where senderSig is missing.
+    timestamp: params.timestamp ?? Date.now(),
     relayId: params.relayId ?? crypto.randomUUID(),
     sourceInstanceId,
   }
@@ -110,7 +128,11 @@ export async function relayDmToPeers(params: RelayParams): Promise<{ attempted: 
     return { attempted: 0 }
   }
 
-  const body = JSON.stringify({ ...envelope, signature })
+  const body = JSON.stringify({
+    ...envelope,
+    signature,
+    senderSig: params.senderSig ?? null,
+  })
 
   for (const peer of peers) {
     fetch(`${peer.apiUrl}/api/dm/relay`, {

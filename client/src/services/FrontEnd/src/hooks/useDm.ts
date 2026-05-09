@@ -14,7 +14,9 @@ import {
   hasCachedKeyPair,
   getCachedPrivateKey,
   getCachedPublicKeyHex,
-  clearKeyCache
+  clearKeyCache,
+  signSenderEnvelope,
+  type SenderEnvelope,
 } from '~/services/DmCryptoService'
 import { useDmUnreadStore } from '~/store/dmUnreadStore'
 
@@ -90,6 +92,25 @@ export type UiMessage = {
       tokenId: number
     }
   }
+  /**
+   * Receiver's verdict from verifying the inner sender sig:
+   *   - true  → sig recovered to the wallet that owns DmIdentity[senderId].
+   *             Trust the message attribution.
+   *   - false → sig was present but didn't recover. The message was forged
+   *             by a malicious instance — hide from the badge counter,
+   *             collapse behind a "X unverifiable messages" disclosure.
+   *   - null  → no sig was supplied (legacy / migration window). Show the
+   *             message as before, but don't make trust claims.
+   * Audit fix 2026-05-09 (Round 7 #1a/#1b).
+   */
+  verifiedSender?: boolean | null
+  /**
+   * Did decryption succeed? Falls to false when the AES key wasn't
+   * available or the auth-tag rejected. The badge counter should
+   * exclude undecryptable messages — those count toward the
+   * "unverifiable" disclosure instead.
+   */
+  decryptOk?: boolean
 }
 
 // Module-level private key reference (never in state to avoid serialization)
@@ -885,11 +906,13 @@ export function useDmMessages(
           }
 
           let content: string
+          let decryptOk = false
           if (!key) {
             content = '[Unable to decrypt]'
           } else {
             try {
               content = await decrypt(msg.encryptedPayload, key)
+              decryptOk = true
             } catch {
               content = '[Unable to decrypt]'
             }
@@ -925,6 +948,8 @@ export function useDmMessages(
             isFromCurrentUser: msg.senderId === tokenId,
             reactions: msg.reactions || [],
             replyToMessageId: msg.replyToMessageId || null,
+            verifiedSender: msg.verifiedSender ?? null,
+            decryptOk,
             sender: msg.sender ? {
               user: {
                 username: msg.sender.user?.username || 'Unknown',
@@ -956,6 +981,16 @@ export function useDmMessages(
 
     setIsSending(true)
     try {
+      // Inner sender sig over the message envelope. Receivers verify
+      // against DmIdentity.walletAddress for senderId — closes the
+      // cross-instance forgery vector. Same canonicalization for DM
+      // and group messages: recipientId is 0 for groups (no single
+      // recipient), so the sig binds (senderId, conversationId,
+      // contentType, encryptedPayload, timestamp). Audit fix
+      // 2026-05-09 (Round 7 #1b).
+      const timestamp = Math.floor(Date.now() / 1000)
+      const contentType = 'text'
+
       let body: Record<string, any>
       if (groupContext?.isGroup) {
         if (!privateKeyRef) {
@@ -966,22 +1001,53 @@ export function useDmMessages(
           privateKeyRef,
           groupContext.members,
         )
+        // For groups, sign over the ciphertext encrypted to the
+        // sender's OWN identity key (which they always include). Every
+        // group member also receives a per-recipient ciphertext, but
+        // the sig binds to one canonical bytestring everyone can find
+        // — the sender's self-payload (recipientPayloads[tokenId]).
+        const senderPayload = recipientPayloads[tokenId]
+          ?? Object.values(recipientPayloads)[0]
+          ?? ''
+        const envelopeForSig: SenderEnvelope = {
+          encryptedPayload: senderPayload,
+          senderId: tokenId,
+          recipientId: 0,
+          conversationId,
+          contentType,
+          timestamp,
+        }
+        const senderSig = await signSenderEnvelope(envelopeForSig, privateKeyRef)
         body = {
           conversationId,
           senderId: tokenId,
           recipientPayloads,
-          contentType: 'text',
+          contentType,
+          timestamp,
+          senderSig,
           ...(replyToMessageId ? { replyToMessageId } : {}),
         }
       } else {
         const sharedSecret = await getOrComputeSharedSecret(conversationId, tokenId, peerUserId)
         if (!sharedSecret) throw new Error('Cannot encrypt: encryption key not available. Try re-enabling DMs.')
+        if (!privateKeyRef) throw new Error('Cannot sign: DM identity key not available.')
         const encryptedPayload = await encrypt(content, sharedSecret)
+        const envelopeForSig: SenderEnvelope = {
+          encryptedPayload,
+          senderId: tokenId,
+          recipientId: peerUserId ?? 0,
+          conversationId,
+          contentType,
+          timestamp,
+        }
+        const senderSig = await signSenderEnvelope(envelopeForSig, privateKeyRef)
         body = {
           conversationId,
           senderId: tokenId,
           encryptedPayload,
-          contentType: 'text',
+          contentType,
+          timestamp,
+          senderSig,
           ...(replyToMessageId ? { replyToMessageId } : {}),
         }
       }

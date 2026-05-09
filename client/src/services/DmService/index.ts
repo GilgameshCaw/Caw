@@ -130,8 +130,18 @@ export class DmService {
      * Message.relayId catches a peer fanning the message back to us.
      */
     relayId?: string
+    /**
+     * Inner sender sig over the canonical envelope (encryptedPayload,
+     * senderId, recipientId, conversationId, contentType, timestamp)
+     * by the user's DmIdentity secp256k1 private key. Audit fix
+     * 2026-05-09 (Round 7 #1b). Verifier in /api/dm/messages already
+     * resolved this against DmIdentity.publicKey for senderId; the
+     * verdict rides through here as `verifiedSender`.
+     */
+    senderSig?: string | null
+    verifiedSender?: boolean | null
   }) {
-    const { conversationId, senderId, encryptedPayload, contentType = 'text', replyToMessageId, relayId } = params
+    const { conversationId, senderId, encryptedPayload, contentType = 'text', replyToMessageId, relayId, senderSig, verifiedSender } = params
 
     // Verify sender is a participant
     const participant = await prisma.conversationParticipant.findUnique({
@@ -160,6 +170,8 @@ export class DmService {
         contentType,
         replyToMessageId: replyToMessageId || null,
         relayId: relayId || null,
+        senderSig: senderSig ?? null,
+        verifiedSender: verifiedSender ?? null,
       },
       include: {
         sender: {
