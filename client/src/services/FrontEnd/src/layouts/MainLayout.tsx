@@ -160,7 +160,16 @@ const MainLayout = ({ children, hideSidebars: hideSidebarsProp }: MainLayoutProp
             </span>
           </Link>
 
-          <Link to="/home" className="caw-logo-lockup flex items-center justify-center w-full">
+          <Link
+            to="/home"
+            onClick={(e) => {
+              if (location.pathname === '/home') {
+                e.preventDefault()
+                window.scrollTo({ top: 0, behavior: 'smooth' })
+              }
+            }}
+            className="caw-logo-lockup flex items-center justify-center w-full"
+          >
             <img
               src={cawLogo}
               alt={t('main_layout.caw_logo_alt')}
@@ -326,6 +335,16 @@ const MainLayout = ({ children, hideSidebars: hideSidebarsProp }: MainLayoutProp
               <Link
                 key={to}
                 to={to}
+                onClick={(e) => {
+                  // Tapping a tab while already on it scrolls the page
+                  // back to top (Twitter/X behavior). Without this,
+                  // React Router treats the click as a no-op and
+                  // leaves the user wherever they were scrolled.
+                  if (active) {
+                    e.preventDefault()
+                    window.scrollTo({ top: 0, behavior: 'smooth' })
+                  }
+                }}
                 className={`flex-1 h-full flex items-center justify-center transition-colors ${
                   active
                     ? (isDark ? 'text-yellow-500' : 'text-yellow-600')

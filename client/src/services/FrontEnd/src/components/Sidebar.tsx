@@ -126,10 +126,20 @@ const Sidebar: React.FC<SidebarProps> = ({ onNavigate }) => {
   // Always call onNavigate (even when we preventDefault for the sign-in
   // intercept) — the mobile drawer should close either way; the sign-in
   // modal renders above everything so the user still sees it.
+  //
+  // Twitter-style same-tab scroll-to-top: tapping a nav link while
+  // already on its route scrolls back to the page top instead of
+  // doing a no-op navigation.
   const guardClick = (e: React.MouseEvent) => {
     if (isCaptive) {
       e.preventDefault()
       showSignIn()
+    } else {
+      const targetHref = (e.currentTarget as HTMLAnchorElement).getAttribute('href') || ''
+      if (targetHref && location.pathname === targetHref) {
+        e.preventDefault()
+        window.scrollTo({ top: 0, behavior: 'smooth' })
+      }
     }
     onNavigate?.()
   }
