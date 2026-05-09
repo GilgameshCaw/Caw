@@ -30,6 +30,7 @@ import { useFollowButton } from '~/hooks/useFollowButton'
 import { useT } from '~/i18n/I18nProvider'
 import { useBlockedUsersStore } from '~/store/blockedUsersStore'
 import TipModal from '~/components/modals/TipModal'
+import { ShareProfileCardModal } from '~/components/modals/ShareProfileCardModal'
 import { useTransferModalStore } from '~/store/transferModalStore'
 import { useMarketplaceStore, MarketplaceListing, MarketplaceOffer } from '~/store/marketplaceStore'
 import { CAW_NAME_MARKETPLACE_ADDRESS } from '~/../../../abi/addresses'
@@ -37,6 +38,7 @@ import { cawProfileMarketplaceAbi } from '~/../../../abi/generated'
 import Tooltip from '~/components/Tooltip'
 import { useSignInModalStore } from '~/store/signInModalStore'
 import ProfileEditForm from '~/components/ProfileEditForm'
+import ImageLightbox from '~/components/ImageLightbox'
 
 type ProfileTab = 'posts' | 'likes' | 'replies' | 'media'
 
@@ -200,6 +202,9 @@ export const Profile: React.FC = () => {
   // Options menu state (mute/block for other profiles, manage for own profile)
   const [showOptionsMenu, setShowOptionsMenu] = useState(false)
   const [showOwnProfileMenu, setShowOwnProfileMenu] = useState(false)
+  const [showShareProfileCard, setShowShareProfileCard] = useState(false)
+  const [showAvatarModal, setShowAvatarModal] = useState(false)
+  const [showCoverModal, setShowCoverModal] = useState(false)
   const [isMuted, setIsMuted] = useState(false)
   const [showBlockConfirmModal, setShowBlockConfirmModal] = useState(false)
   const [showCostExplanation, setShowCostExplanation] = useState(false)
@@ -915,7 +920,8 @@ export const Profile: React.FC = () => {
             <img
               src={profileData.coverPhotoUrl}
               alt="Cover photo"
-              className="w-full h-full object-cover"
+              className="w-full h-full object-cover cursor-pointer"
+              onClick={() => setShowCoverModal(true)}
             />
           ) : (
             <div
@@ -942,7 +948,11 @@ export const Profile: React.FC = () => {
         {/* Profile Picture - Positioned within max-w-2xl bounds */}
         <div className="max-w-2xl mx-auto relative">
           <div className="absolute -top-20 left-6">
-            <div className={`w-40 h-40 rounded-full border-4 overflow-hidden transition-all duration-300 ${
+            <button
+              type="button"
+              aria-label="View profile photo"
+              onClick={() => setShowAvatarModal(true)}
+              className={`w-40 h-40 rounded-full border-4 overflow-hidden transition-all duration-300 cursor-pointer ${
               isDark ? 'border-black bg-black' : 'border-white bg-gray-200'
             }`}>
               {profileData && (
@@ -952,7 +962,7 @@ export const Profile: React.FC = () => {
                   className="w-full h-full rounded-full"
                 />
               )}
-            </div>
+            </button>
           </div>
         </div>
       </div>
@@ -1233,11 +1243,22 @@ export const Profile: React.FC = () => {
                             <button
                               onClick={() => {
                                 setShowOwnProfileMenu(false)
+                                setShowShareProfileCard(true)
+                              }}
+                              className={`w-full px-4 py-3 text-left text-sm transition-colors cursor-pointer ${
+                                isDark ? 'hover:bg-white/10 text-white' : 'hover:bg-gray-100 text-gray-900'
+                              }`}
+                            >
+                              Share profile
+                            </button>
+                            <button
+                              onClick={() => {
+                                setShowOwnProfileMenu(false)
                                 if (profileData?.tokenId !== undefined && profileData?.username) {
                                   useMarketplaceStore.getState().openCreateListing(profileData.tokenId, profileData.username)
                                 }
                               }}
-                              className={`w-full px-4 py-3 text-left text-sm transition-colors ${
+                              className={`w-full px-4 py-3 text-left text-sm transition-colors cursor-pointer ${
                                 isDark ? 'hover:bg-white/10 text-yellow-500' : 'hover:bg-gray-100 text-yellow-600'
                               }`}
                             >
@@ -1250,7 +1271,7 @@ export const Profile: React.FC = () => {
                                   useMarketplaceStore.getState().openViewOffers(profileData.tokenId, profileData.username)
                                 }
                               }}
-                              className={`w-full px-4 py-3 text-left text-sm transition-colors ${
+                              className={`w-full px-4 py-3 text-left text-sm transition-colors cursor-pointer ${
                                 isDark ? 'hover:bg-white/10 text-yellow-500' : 'hover:bg-gray-100 text-yellow-600'
                               }`}
                             >
@@ -1263,7 +1284,7 @@ export const Profile: React.FC = () => {
                                   useTransferModalStore.getState().show(profileData.tokenId, profileData.username)
                                 }
                               }}
-                              className={`w-full px-4 py-3 text-left text-sm transition-colors ${
+                              className={`w-full px-4 py-3 text-left text-sm transition-colors cursor-pointer ${
                                 isDark ? 'hover:bg-red-500/20 text-red-400' : 'hover:bg-red-50 text-red-500'
                               }`}
                             >
@@ -1622,6 +1643,36 @@ export const Profile: React.FC = () => {
       )}
 
       {/* Tip Modal */}
+      <ShareProfileCardModal
+        isOpen={showShareProfileCard}
+        onClose={() => setShowShareProfileCard(false)}
+        username={profileData?.username || displayUsername}
+        displayName={profileData?.displayName}
+        avatarSrc={getUserAvatar(profileData ?? { tokenId: activeTokenId || 1 })}
+        profilePath={`/users/${profileData?.username || displayUsername}`}
+      />
+
+      {/* Avatar / Cover lightboxes */}
+      {profileData && (
+        <>
+          <ImageLightbox
+            isOpen={showAvatarModal}
+            onClose={() => setShowAvatarModal(false)}
+            src={optimisticAvatar || getUserAvatar(profileData)}
+            alt={`${profileData.username || displayUsername} avatar`}
+            imgClassName="rounded-full w-[70vmin] h-[70vmin] max-w-[420px] max-h-[420px] object-cover"
+          />
+          {profileData.coverPhotoUrl && (
+            <ImageLightbox
+              isOpen={showCoverModal}
+              onClose={() => setShowCoverModal(false)}
+              src={profileData.coverPhotoUrl}
+              alt="Cover photo"
+            />
+          )}
+        </>
+      )}
+
       {profileData && (
         <TipModal
           isOpen={showTipModal}

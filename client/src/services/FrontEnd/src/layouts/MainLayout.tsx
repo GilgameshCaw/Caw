@@ -81,6 +81,7 @@ const MainLayout = ({ children, hideSidebars: hideSidebarsProp }: MainLayoutProp
   // a data router, so useMatches throws. The override store covers the
   // one dynamic case we actually have.
   const hideChromeOverride = useLayoutStore(s => s.hideChromeOverride)
+  const hideMobileNavOverride = useLayoutStore(s => s.hideMobileNavOverride)
   const hideSidebars = hideChromeOverride || hideSidebarsProp || (isCaptive && (location.pathname.startsWith('/help') || location.pathname.startsWith('/usernames') || location.pathname.startsWith('/faucet')))
 
   // Publish the bottom-nav height as a CSS variable so pages with their own
@@ -88,7 +89,7 @@ const MainLayout = ({ children, hideSidebars: hideSidebarsProp }: MainLayoutProp
   // nav instead of being covered by it. Resolves to "0px" whenever the nav
   // isn't rendered, is `md:hidden` on desktop, or is translated off-screen
   // by the inline-draft state.
-  const showBottomNav = !hideSidebars && !isCaptive
+  const showBottomNav = !hideSidebars && !isCaptive && !hideMobileNavOverride
   useEffect(() => {
     const root = document.documentElement
     if (!showBottomNav || hasInlineDraft) {
@@ -295,7 +296,7 @@ const MainLayout = ({ children, hideSidebars: hideSidebarsProp }: MainLayoutProp
       )}
 
       {/* Mobile bottom nav */}
-      {!hideSidebars && !isCaptive && (
+      {!hideSidebars && !isCaptive && !hideMobileNavOverride && (
         <nav
           ref={bottomNavRef}
           className={`md:hidden fixed bottom-0 left-0 right-0 z-[55] flex items-center justify-around h-14 pb-[env(safe-area-inset-bottom)] [height:calc(theme(height.14)+env(safe-area-inset-bottom))] border-t transition-all duration-200 ${
@@ -337,7 +338,7 @@ const MainLayout = ({ children, hideSidebars: hideSidebarsProp }: MainLayoutProp
       )}
 
       {/* Mobile compose FAB */}
-      {!hideSidebars && !isCaptive && !(
+      {!hideSidebars && !isCaptive && !hideMobileNavOverride && !(
         location.pathname.startsWith('/messages') ||
         location.pathname.startsWith('/usernames') ||
         location.pathname.startsWith('/staking') ||

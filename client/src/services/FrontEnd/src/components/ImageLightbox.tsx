@@ -13,6 +13,8 @@ interface ImageLightboxProps {
   alt?: string
   isOpen: boolean
   onClose: () => void
+  /** Optional extra classes applied to the <img>. */
+  imgClassName?: string
 }
 
 /**
@@ -30,7 +32,7 @@ interface ImageLightboxProps {
  * Lightbox renders via portal so it's never clipped by post / feed-item
  * overflow rules.
  */
-const ImageLightbox: React.FC<ImageLightboxProps> = ({ src, largeSrc, alt = '', isOpen, onClose }) => {
+const ImageLightbox: React.FC<ImageLightboxProps> = ({ src, largeSrc, alt = '', isOpen, onClose, imgClassName }) => {
   // Start with the small src so the modal has something to show
   // immediately, then swap to largeSrc once it's available. If largeSrc
   // 404s the onError handler keeps us on `src`.
@@ -105,7 +107,10 @@ const ImageLightbox: React.FC<ImageLightboxProps> = ({ src, largeSrc, alt = '', 
       <img
         src={currentSrc}
         alt={alt}
-        className="max-w-[95vw] max-h-[95vh] object-contain rounded"
+        className={[
+          'max-w-[95vw] max-h-[95vh] object-contain',
+          imgClassName ?? 'rounded'
+        ].join(' ')}
         onClick={e => e.stopPropagation()}
         onError={() => {
           // Large variant 404? Drop to the inline `src` once and stay there.

@@ -799,7 +799,7 @@ export function useDmMessages(
 
   // Load and decrypt messages
   useEffect(() => {
-    if (!conversationId || !tokenId) return
+    if (!conversationId || !tokenId || peerUserId === undefined) return
 
     let cancelled = false
 
