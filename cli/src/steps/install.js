@@ -215,6 +215,33 @@ export async function runInstall(nodeType, config, installDir) {
     }
   }
 
+  // 5b. Install + configure pm2-logrotate so caw-server logs don't grow
+  // unbounded. Operators on small VPSes (5.9GB-RAM, 0-swap test box)
+  // had multi-hundred-MB out.log + error.log files surfaced by the
+  // 2026-05-09 audit. Idempotent: pm2 install of a module is a no-op
+  // when already installed; pm2 set commits the keep/size knobs every
+  // time so config drift gets re-corrected on each `caw install` run.
+  const spinner5b = ora('Configuring pm2-logrotate...').start()
+  try {
+    execSync('pm2 install pm2-logrotate', { stdio: 'pipe' })
+    // Knobs:
+    //   max_size    — rotate at 10MB (default 10K is too aggressive,
+    //                 100MB too lax for a 5.9GB-RAM box).
+    //   retain      — keep 7 rotated files (≈70MB headroom per stream
+    //                 at 10MB cap).
+    //   compress    — gzip rotated files.
+    //   rotateInterval — daily at midnight as a fallback when files
+    //                 stay under max_size.
+    execSync('pm2 set pm2-logrotate:max_size 10M', { stdio: 'pipe' })
+    execSync('pm2 set pm2-logrotate:retain 7', { stdio: 'pipe' })
+    execSync('pm2 set pm2-logrotate:compress true', { stdio: 'pipe' })
+    execSync('pm2 set pm2-logrotate:rotateInterval "0 0 * * *"', { stdio: 'pipe' })
+    spinner5b.succeed('pm2-logrotate configured (10MB cap, retain 7, gzip)')
+  } catch (e) {
+    spinner5b.warn(`pm2-logrotate setup non-fatal: ${e.message}`)
+    console.log(warn('  Run manually: pm2 install pm2-logrotate'))
+  }
+
   console.log()
   console.log(success.bold('  All dependencies installed!'))
 }
