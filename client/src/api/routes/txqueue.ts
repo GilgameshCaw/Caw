@@ -1,6 +1,7 @@
 import { Router } from 'express'
 import { prisma } from '../../prismaClient'
 import { requireAuth } from '../middleware/auth'
+import { countManager } from '../../services/CountManager'
 
 const router = Router()
 
@@ -106,5 +107,89 @@ router.get('/failed-cawonce/:senderId',
     res.status(500).json({ error: 'Internal error' })
   }
 })
+
+/**
+ * POST /api/txqueue/:id/cancel — try to cancel an in-flight action
+ * before the validator picks it up.
+ *
+ * The race window is small: the validator polls every couple of
+ * seconds, then atomically flips a batch of rows from 'pending' to
+ * 'processing'. Our cancel uses the same conditional-where pattern
+ * (`updateMany where: { status: 'pending' }`) so exactly one of cancel
+ * vs validator-pickup wins. If we lose the race we return 409 and
+ * the caller falls back to letting the action go through.
+ *
+ * On a successful cancel we also unwind the optimistic API-side row
+ * the original /api/actions handler wrote (currently only Like —
+ * other action types either don't write optimistic rows or already
+ * have their own rollback path on the failure side).
+ */
+router.post(
+  '/:id/cancel',
+  requireAuth({ anySession: true }),
+  async (req, res) => {
+    try {
+      const id = parseInt(req.params.id, 10)
+      if (!id || isNaN(id)) return res.status(400).json({ error: 'Invalid id' })
+
+      const entry = await prisma.txQueue.findUnique({
+        where: { id },
+        select: { id: true, senderId: true, status: true, payload: true },
+      })
+      if (!entry) return res.status(404).json({ error: 'TxQueue entry not found' })
+
+      const authorized = new Set((req.sessionData?.authorizedTokenIds || []) as number[])
+      if (!authorized.has(entry.senderId)) {
+        return res.status(403).json({ error: 'Forbidden' })
+      }
+
+      // Atomic flip: only succeeds if the row is still 'pending'. Any
+      // other status (processing, validated, included, failed, …) means
+      // we lost the race and the caller should treat the action as
+      // committed.
+      const flipped = await prisma.txQueue.updateMany({
+        where: { id, status: 'pending' },
+        data: { status: 'cancelled', reason: 'Cancelled by sender' },
+      })
+      if (flipped.count === 0) {
+        return res.status(409).json({ error: 'too_late', message: 'Action already picked up by validator' })
+      }
+
+      // Roll back the optimistic Like row /api/actions wrote when this
+      // was a 'like' action. Other action types either don't have an
+      // optimistic API-side row or have their own teardown elsewhere
+      // (caw rows live in pending/failed status that the indexer
+      // reconciles; pin rows are handled by the Pin lifecycle).
+      const data = (entry.payload as any)?.data || {}
+      const actionType = Number(data.actionType)
+      if (actionType === 1 /* LIKE */) {
+        const targetCaw = await prisma.caw.findFirst({
+          where: { userId: data.receiverId, cawonce: data.receiverCawonce },
+          select: { id: true },
+        })
+        if (targetCaw) {
+          await prisma.$transaction(async (tx: any) => {
+            const existing = await tx.like.findUnique({
+              where: { userId_cawId: { userId: entry.senderId, cawId: targetCaw.id } },
+              select: { id: true, pending: true },
+            })
+            // Only undo if the row is still pending — a confirmed like
+            // for the same (user, caw) means the indexer raced ahead
+            // and we should leave it alone.
+            if (existing && existing.pending) {
+              await tx.like.delete({ where: { id: existing.id } })
+              await countManager.onLikeRemoved(tx, { cawId: targetCaw.id, userId: entry.senderId })
+            }
+          })
+        }
+      }
+
+      return res.json({ ok: true })
+    } catch (err: any) {
+      console.error('POST /api/txqueue/:id/cancel error', err)
+      res.status(500).json({ error: 'Internal error' })
+    }
+  }
+)
 
 export default router

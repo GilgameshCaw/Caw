@@ -180,6 +180,10 @@ const FeedItem: React.FC<{ item: CawItem; isMainPost?: boolean; isReply?: boolea
   }
   const [busyLike, setBusyLike]     = useState(false)
   const [busyRecaw, setBusyRecaw]   = useState(false)
+  // Cleared when the optimistic-like row is removed (success or fail).
+  // Used to drive the in-flight cancel UX: while non-null, the heart
+  // tap calls /api/txqueue/:id/cancel instead of being inert.
+  const [pendingLikeTxQueueId, setPendingLikeTxQueueId] = useState<number | null>(null)
   const [pendingLikeAction, setPendingLikeAction] = useState<{ receiverId: number, receiverCawonce: number, actionType: 'like' | 'unlike' } | null>(null) // Track pending like data
   const [wrongWalletError, setWrongWalletError] = useState(false) // Track if wrong wallet is connected
   const signAndSubmit     = useSignAndSubmitAction()
@@ -334,6 +338,7 @@ const FeedItem: React.FC<{ item: CawItem; isMainPost?: boolean; isReply?: boolea
       if (tempLikeId && response?.txQueueId) {
         updateLikeWithTxQueueId(tempLikeId, response.txQueueId);
       }
+      if (response?.txQueueId) setPendingLikeTxQueueId(response.txQueueId)
       setLikePending(true);
 
       // Notify parent component about like state change
@@ -353,7 +358,11 @@ const FeedItem: React.FC<{ item: CawItem; isMainPost?: boolean; isReply?: boolea
   // For plain recaws, sync from the parent (stateSource) since actions target the original post.
   useEffect(() => {
     setLikePending(stateSource.likePending || false)
-    if (!stateSource.likePending) { setLikeCountAdj(0); setLikeCountBase(null) }
+    if (!stateSource.likePending) {
+      setLikeCountAdj(0)
+      setLikeCountBase(null)
+      setPendingLikeTxQueueId(null)
+    }
   }, [stateSource.likePending])
 
   useEffect(() => {
@@ -469,6 +478,7 @@ const FeedItem: React.FC<{ item: CawItem; isMainPost?: boolean; isReply?: boolea
       }
       setLikeCountBase(useItem.likeCount)
       setLikePending(true)
+      if (response?.txQueueId) setPendingLikeTxQueueId(response.txQueueId)
       if (onLikeStateChange) onLikeStateChange(useItem.id, true)
     } catch (err) {
       console.error('Like failed', err)
@@ -477,6 +487,33 @@ const FeedItem: React.FC<{ item: CawItem; isMainPost?: boolean; isReply?: boolea
       setLikeCountBase(null)
       if (tempLikeId) useOptimisticLikesStore.getState().removeOptimisticLike(tempLikeId)
       if (onLikeStateChange) onLikeStateChange(useItem.id, false)
+    } finally {
+      setBusyLike(false)
+    }
+  }
+
+  // Cancel an in-flight like before the validator picks it up. Server
+  // returns 409 when we lose the race (validator already grabbed the
+  // batch), in which case we leave the optimistic state alone — the
+  // action will go through and surface as a confirmed like shortly.
+  const handleCancelLike = async () => {
+    if (!pendingLikeTxQueueId) return
+    setBusyLike(true)
+    try {
+      await apiFetch(`/api/txqueue/${pendingLikeTxQueueId}/cancel`, { method: 'POST' })
+      setLikePending(false)
+      setLikeCountAdj(0)
+      setLikeCountBase(null)
+      useOptimisticLikesStore.getState().removeOptimisticLikeByTxQueueId(pendingLikeTxQueueId)
+      setPendingLikeTxQueueId(null)
+      if (onLikeStateChange) onLikeStateChange(useItem.id, false)
+    } catch (err: any) {
+      // 409 = too late, validator already picked it up. Leave the
+      // optimistic state intact — the action will confirm and the
+      // pending flag clears via the polling effect.
+      if (!String(err?.message || '').includes('409')) {
+        console.error('Cancel like failed', err)
+      }
     } finally {
       setBusyLike(false)
     }
@@ -1778,7 +1815,14 @@ const FeedItem: React.FC<{ item: CawItem; isMainPost?: boolean; isReply?: boolea
               </div>
 
               {/* Likes */}
-              <Tooltip text={(likePending || stateSource.likePending) ? t('post.processing') : t('post.like')} disabled={item.status === 'FAILED'}><button
+              <Tooltip
+                text={
+                  (likePending || stateSource.likePending)
+                    ? (pendingLikeTxQueueId ? t('post.cancel_like') : t('post.processing'))
+                    : t('post.like')
+                }
+                disabled={item.status === 'FAILED'}
+              ><button
                 className={`flex items-center space-x-2 transition-colors duration-300 ${
                   (item.status === 'FAILED')
                     ? 'cursor-not-allowed opacity-50'
@@ -1788,8 +1832,21 @@ const FeedItem: React.FC<{ item: CawItem; isMainPost?: boolean; isReply?: boolea
                     ? `text-red-500 ${(likePending || stateSource.likePending) ? 'opacity-90' : ''}`
                     : isDark ? 'text-gray-400' : 'text-gray-600'
                 }`}
-                onClick={handleLike}
-                disabled={busyLike || likePending || item.status === 'FAILED'}
+                onClick={(e) => {
+                  // While a like is in-flight (we still hold its
+                  // txQueueId), tapping the heart cancels instead of
+                  // being inert. Useful for accidental likes — the
+                  // validator polls every couple of seconds, so the
+                  // window is generous.
+                  if (likePending && pendingLikeTxQueueId) {
+                    e.preventDefault()
+                    e.stopPropagation()
+                    handleCancelLike()
+                    return
+                  }
+                  handleLike(e)
+                }}
+                disabled={busyLike || (likePending && !pendingLikeTxQueueId) || item.status === 'FAILED'}
               >
                 {busyLike ? (
                   <div className="relative w-5 h-5">
