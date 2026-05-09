@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useMemo, useCallback, useRef } from 'react'
 import Tooltip from '~/components/Tooltip'
 import { useAccount, useConnections, useSwitchChain, useReadContract } from 'wagmi'
-import { useConnectModal } from '@rainbow-me/rainbowkit'
+import { ConnectButton, useConnectModal } from '@rainbow-me/rainbowkit'
 import { useEnsureWallet } from '~/hooks/useEnsureWallet'
 import { formatWalletError } from '~/utils/errorMessage'
 import { maxUint256, parseUnits, formatUnits, erc20Abi } from 'viem'
@@ -788,6 +788,13 @@ const PostMintOnboarding: React.FC<PostMintOnboardingProps> = ({ username, token
           this lets first-time users who land here directly still pick. */}
       <div className="absolute top-3 right-3 z-[110] w-44 sm:w-56">
         <LanguageSwitcher />
+      </div>
+      {/* Wallet pill — top-left, mirrors the splash. The onboarding
+          overlay is fixed inset-0 with no other chrome, so without this
+          a user who connected the wrong wallet (or wants to switch) has
+          no way out. */}
+      <div className="absolute top-3 left-3 z-[110]">
+        <ConnectButton accountStatus="avatar" chainStatus="none" showBalance={false} />
       </div>
       <div className="min-h-full flex flex-col pb-[50px] relative z-[2]">
 

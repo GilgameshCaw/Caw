@@ -18,7 +18,7 @@ import { useOffersUnreadStore } from "~/store/offersUnreadStore";
 import { useComposeDraftStore } from "~/store/composeDraftStore";
 import { useActiveToken } from "~/store/tokenDataStore";
 import { useLayoutStore } from "~/store/layoutStore";
-import { useConnectModal } from "@rainbow-me/rainbowkit";
+import { ConnectButton, useConnectModal } from "@rainbow-me/rainbowkit";
 import { useAccount } from "wagmi";
 import cawLogo from '~/assets/images/caw-logo.png';
 import { themeLayoutShell } from '~/utils/theme'
@@ -265,32 +265,41 @@ const MainLayout = ({ children, hideSidebars: hideSidebarsProp }: MainLayoutProp
                 CAW
               </span>
             </Link>
-            {location.pathname.startsWith('/usernames') ? (
-              <Link
-                to="/help/faq"
-                className={`px-6 py-2.5 font-semibold text-base rounded-full border transition-all ${
-                  isDark
-                    ? 'border-white/20 text-white/80 hover:bg-white/10'
-                    : 'border-gray-300 text-gray-700 hover:bg-gray-100'
-                }`}
-              >
-                {t('main_layout.learn_more')}
-              </Link>
-            ) : !isConnected ? (
-              <button
-                onClick={openConnectModal}
-                className="px-6 py-2.5 bg-yellow-500 text-black font-bold text-base rounded-full hover:bg-yellow-400 transition-all shadow-lg cursor-pointer"
-              >
-                {t('common.sign_in')}
-              </button>
-            ) : (
-              <Link
-                to="/usernames/new"
-                className="px-6 py-2.5 bg-yellow-500 text-black font-bold text-base rounded-full hover:bg-yellow-400 transition-all shadow-lg"
-              >
-                {t('main_layout.create_profile')}
-              </Link>
-            )}
+            <div className="flex items-center gap-2">
+              {/* Wallet pill — gives connected captive users a path to
+                  the account modal (and Disconnect). RainbowKit hides
+                  itself when not connected, so the primary CTA below
+                  still leads the unconnected case. */}
+              {isConnected && (
+                <ConnectButton accountStatus="avatar" chainStatus="none" showBalance={false} />
+              )}
+              {location.pathname.startsWith('/usernames') ? (
+                <Link
+                  to="/help/faq"
+                  className={`px-6 py-2.5 font-semibold text-base rounded-full border transition-all ${
+                    isDark
+                      ? 'border-white/20 text-white/80 hover:bg-white/10'
+                      : 'border-gray-300 text-gray-700 hover:bg-gray-100'
+                  }`}
+                >
+                  {t('main_layout.learn_more')}
+                </Link>
+              ) : !isConnected ? (
+                <button
+                  onClick={openConnectModal}
+                  className="px-6 py-2.5 bg-yellow-500 text-black font-bold text-base rounded-full hover:bg-yellow-400 transition-all shadow-lg cursor-pointer"
+                >
+                  {t('common.sign_in')}
+                </button>
+              ) : (
+                <Link
+                  to="/usernames/new"
+                  className="px-6 py-2.5 bg-yellow-500 text-black font-bold text-base rounded-full hover:bg-yellow-400 transition-all shadow-lg"
+                >
+                  {t('main_layout.create_profile')}
+                </Link>
+              )}
+            </div>
           </div>
         </div>
       )}

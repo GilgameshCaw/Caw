@@ -1,5 +1,5 @@
 import { Link } from 'react-router-dom'
-import { useConnectModal } from '@rainbow-me/rainbowkit'
+import { ConnectButton, useConnectModal } from '@rainbow-me/rainbowkit'
 import { useAccount } from 'wagmi'
 import { useActiveToken } from '~/store/tokenDataStore'
 import { useTheme } from '~/hooks/useTheme'
@@ -51,6 +51,13 @@ export default function CaptiveSplash() {
           localStorage; promoted to User.preferredLanguage post-mint. */}
       <div className="absolute top-3 right-3 z-20 w-44 sm:w-56">
         <LanguageSwitcher />
+      </div>
+      {/* Wallet pill — top-left. Lets a connected user reach the account
+          modal (and Disconnect) when no other chrome is rendered on this
+          captive page. RainbowKit shows "Connect Wallet" when not yet
+          connected, the account pill when connected. */}
+      <div className="absolute top-3 left-3 z-20">
+        <ConnectButton accountStatus="avatar" chainStatus="none" showBalance={false} />
       </div>
       {/* Main content - centered */}
       <div className="flex-1 flex flex-col items-center justify-center px-6 pb-6 relative z-10">
