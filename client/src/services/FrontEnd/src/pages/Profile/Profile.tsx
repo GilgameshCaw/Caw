@@ -205,6 +205,11 @@ export const Profile: React.FC = () => {
   const [showShareProfileCard, setShowShareProfileCard] = useState(false)
   const [showAvatarModal, setShowAvatarModal] = useState(false)
   const [showCoverModal, setShowCoverModal] = useState(false)
+  // Falls back to the default gradient cover when the stored URL 404s
+  // or otherwise fails to load. Reset whenever the URL itself changes
+  // so a re-uploaded cover gets a fresh chance to load.
+  const [coverImgFailed, setCoverImgFailed] = useState(false)
+  useEffect(() => { setCoverImgFailed(false) }, [profileData?.coverPhotoUrl])
   const [isMuted, setIsMuted] = useState(false)
   const [showBlockConfirmModal, setShowBlockConfirmModal] = useState(false)
   const [showCostExplanation, setShowCostExplanation] = useState(false)
@@ -916,12 +921,13 @@ export const Profile: React.FC = () => {
       {/* Cover Photo - Full Width */}
       <div className="relative transition-all duration-300">
         <div className="h-48 w-full relative overflow-hidden">
-          {profileData?.coverPhotoUrl ? (
+          {profileData?.coverPhotoUrl && !coverImgFailed ? (
             <img
               src={profileData.coverPhotoUrl}
               alt="Cover photo"
               className="w-full h-full object-cover cursor-pointer"
               onClick={() => setShowCoverModal(true)}
+              onError={() => setCoverImgFailed(true)}
             />
           ) : (
             <div

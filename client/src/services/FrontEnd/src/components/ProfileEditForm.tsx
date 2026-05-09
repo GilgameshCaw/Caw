@@ -85,6 +85,13 @@ const ProfileEditForm: React.FC<ProfileEditFormProps> = ({
   const [coverPreview, setCoverPreview] = useState<string | undefined>(undefined)
   const [avatarUrl, setAvatarUrl] = useState<string | undefined>(undefined)
   const [coverUrl, setCoverUrl] = useState<string | undefined>(undefined)
+  // Falls back to the default avatar / hides the cover bg when the
+  // stored URL fails to load. Resets when the URL changes so a fresh
+  // upload gets a chance to render.
+  const [avatarImgFailed, setAvatarImgFailed] = useState(false)
+  const [coverImgFailed, setCoverImgFailed] = useState(false)
+  useEffect(() => { setAvatarImgFailed(false) }, [profileData?.avatarUrl, avatarPreview, avatarUrl])
+  useEffect(() => { setCoverImgFailed(false) }, [profileData?.coverPhotoUrl, coverPreview])
 
   // Default avatar cycling — changes defaultAvatarId, not avatarUrl.
   // Start with a random one if the user doesn't have one assigned yet.
@@ -407,9 +414,14 @@ const ProfileEditForm: React.FC<ProfileEditFormProps> = ({
                 <div className="relative w-full h-full">
                   <div className="w-full h-full overflow-hidden rounded-full">
                     <img
-                      src={hasCustomAvatar ? (avatarPreview || avatarUrl || profileData?.avatarUrl || '') : `/images/avatars/${currentDefaultId}.png`}
+                      src={
+                        hasCustomAvatar && !avatarImgFailed
+                          ? (avatarPreview || avatarUrl || profileData?.avatarUrl || `/images/avatars/${currentDefaultId}.png`)
+                          : `/images/avatars/${currentDefaultId}.png`
+                      }
                       alt=""
                       className="w-full h-full object-cover"
+                      onError={() => setAvatarImgFailed(true)}
                     />
                   </div>
                   {/* Pencil badge floats OUTSIDE overflow-hidden so it isn't clipped */}
@@ -464,21 +476,31 @@ const ProfileEditForm: React.FC<ProfileEditFormProps> = ({
             >
               <div className="absolute inset-0 flex items-center justify-center overflow-hidden rounded-lg">
                 {coverPreview ? (
-                  <img src={coverPreview} alt="Cover preview" className="w-full h-full object-cover" />
+                  <img
+                    src={coverPreview}
+                    alt="Cover preview"
+                    className="w-full h-full object-cover"
+                    onError={() => setCoverImgFailed(true)}
+                  />
                 ) : (
                   <>
-                    {profileData?.coverPhotoUrl && (
+                    {profileData?.coverPhotoUrl && !coverImgFailed && (
                       <>
-                        <img src={profileData.coverPhotoUrl} alt="" className="absolute inset-0 w-full h-full object-cover" />
+                        <img
+                          src={profileData.coverPhotoUrl}
+                          alt=""
+                          className="absolute inset-0 w-full h-full object-cover"
+                          onError={() => setCoverImgFailed(true)}
+                        />
                         <div className="absolute inset-0 bg-black/50" />
                       </>
                     )}
                     <div className="relative text-center">
                       <HiCamera className={`w-6 h-6 mx-auto mb-1 ${
-                        profileData?.coverPhotoUrl ? 'text-white' : (isDark ? 'text-gray-400' : 'text-gray-500')
+                        profileData?.coverPhotoUrl && !coverImgFailed ? 'text-white' : (isDark ? 'text-gray-400' : 'text-gray-500')
                       }`} />
                       <p className={`text-xs ${
-                        profileData?.coverPhotoUrl ? 'text-white/90' : (isDark ? 'text-gray-400' : 'text-gray-500')
+                        profileData?.coverPhotoUrl && !coverImgFailed ? 'text-white/90' : (isDark ? 'text-gray-400' : 'text-gray-500')
                       }`}>
                         Click or drag to upload
                       </p>
