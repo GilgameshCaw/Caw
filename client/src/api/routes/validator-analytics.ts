@@ -260,11 +260,13 @@ router.get('/chart', async (req, res) => {
 
 // Valid config keys (whitelist)
 const VALID_SETTINGS = [
-  'validatorBaseTip',       // CAW per action
+  'validatorBaseTip',       // CAW per action — minimum tip to accept
+  'priorityTip',            // CAW per action — actions ≥ this skip the batch wait
   'checkInterval',          // ms between polls
   'minActionsPerBatch',     // min actions before submitting
   'maxWaitTime',            // ms before force-submitting
   'replicationInterval',    // ms between replication checks
+  'acceptZeroTip',          // boolean — opt into processing zero-tip actions
 ]
 
 /**
@@ -292,6 +294,35 @@ router.patch('/settings', async (req, res) => {
     }
     if (!VALID_SETTINGS.includes(key)) {
       return res.status(400).json({ error: `Invalid setting key. Valid: ${VALID_SETTINGS.join(', ')}` })
+    }
+
+    // Cross-key invariant: priorityTip must be >= validatorBaseTip. The FE
+    // tier picker (Quick Sign Cheap vs Fast) signs actions at a tip that's
+    // "at base for cheap, at priority for fast." If priority < base, every
+    // Fast-tier action gets rejected as underpriced even though the user
+    // explicitly opted into the higher cost — and worse, the cawonce can
+    // get reused by a subsequent retry, leaving the original stranded.
+    // Reported by Zin (2026-05-09).
+    if (key === 'validatorBaseTip' || key === 'priorityTip') {
+      const other = key === 'validatorBaseTip' ? 'priorityTip' : 'validatorBaseTip'
+      const otherRow = await prisma.validatorSetting.findUnique({ where: { key: other } })
+      if (otherRow) {
+        try {
+          const newVal = BigInt(value)
+          const otherVal = BigInt(otherRow.value)
+          const base = key === 'validatorBaseTip' ? newVal : otherVal
+          const priority = key === 'priorityTip' ? newVal : otherVal
+          if (priority < base) {
+            return res.status(400).json({
+              error: 'priority_below_base',
+              message: `Priority Tip (${priority}) must be ≥ Base Validator Tip (${base}). The Fast-tier price can't be cheaper than the minimum the validator accepts.`,
+            })
+          }
+        } catch {
+          // BigInt parse failed; fall through and let the normal upsert
+          // either store the bad value (and the FE will notice) or 500.
+        }
+      }
     }
 
     await prisma.validatorSetting.upsert({

@@ -59,7 +59,34 @@ const ValidatorSettings: React.FC = () => {
     fetchSettings()
   }, [fetchSettings])
 
+  // Pre-flight check: enforce priorityTip >= validatorBaseTip on the client
+  // so the user gets instant feedback before the round-trip. Server enforces
+  // the same invariant (validator-analytics.ts) — this is just UX polish.
+  // Returns null when the save is OK, or a user-facing error string.
+  function preflightTipOrdering(key: string, raw: string): string | null {
+    if (key !== 'validatorBaseTip' && key !== 'priorityTip') return null
+    let nextVal: bigint
+    try { nextVal = BigInt(raw) } catch { return null }  // let server reject as malformed
+    const otherKey = key === 'validatorBaseTip' ? 'priorityTip' : 'validatorBaseTip'
+    const otherRaw = values[otherKey]
+    if (otherRaw == null || otherRaw === '') return null
+    let otherVal: bigint
+    try { otherVal = BigInt(otherRaw) } catch { return null }
+    const base = key === 'validatorBaseTip' ? nextVal : otherVal
+    const priority = key === 'priorityTip' ? nextVal : otherVal
+    if (priority < base) {
+      return `Priority Tip (${priority}) must be ≥ Base Validator Tip (${base}). Fast-tier price can't be cheaper than the minimum the validator accepts.`
+    }
+    return null
+  }
+
   const saveSetting = async (key: string) => {
+    const localErr = preflightTipOrdering(key, values[key])
+    if (localErr) {
+      setError(localErr)
+      return
+    }
+    setError('')
     setSaving(prev => ({ ...prev, [key]: true }))
     setSaved(prev => ({ ...prev, [key]: false }))
     try {
@@ -69,8 +96,15 @@ const ValidatorSettings: React.FC = () => {
       })
       setSaved(prev => ({ ...prev, [key]: true }))
       setTimeout(() => setSaved(prev => ({ ...prev, [key]: false })), 2000)
-    } catch {
-      setError(`Failed to save ${key}`)
+    } catch (err: any) {
+      // Surface the server's error code/message when present (e.g. the
+      // priority-below-base guard); fall back to a generic blurb otherwise.
+      const msg = String(err?.message || '')
+      if (msg.includes('priority_below_base')) {
+        setError(`Priority Tip must be ≥ Base Validator Tip. Adjust one and retry.`)
+      } else {
+        setError(`Failed to save ${key}${msg ? `: ${msg}` : ''}`)
+      }
     } finally {
       setSaving(prev => ({ ...prev, [key]: false }))
     }
