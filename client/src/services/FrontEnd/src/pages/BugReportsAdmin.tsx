@@ -1,7 +1,9 @@
-import React, { useState, useEffect } from 'react'
+import React, { useState, useEffect, useRef, useCallback } from 'react'
 import { useTheme } from '~/hooks/useTheme'
 import { apiFetch } from '~/api/client'
 import { Link } from 'react-router-dom'
+
+const PAGE_SIZE = 50
 
 interface BugReport {
   id: number
@@ -30,42 +32,80 @@ const BugReportsAdmin: React.FC = () => {
   const [reports, setReports] = useState<BugReport[]>([])
   const [total, setTotal] = useState(0)
   const [loading, setLoading] = useState(false)
+  const [loadingMore, setLoadingMore] = useState(false)
+  const [hasMore, setHasMore] = useState(false)
   const [, setError] = useState('')
   const [statusFilter, setStatusFilter] = useState('')
   const [expandedId, setExpandedId] = useState<number | null>(null)
+  const sentinelRef = useRef<HTMLDivElement | null>(null)
 
-  const fetchReports = async () => {
-    setLoading(true)
+  // Single-flight fetch. `mode === 'reset'` replaces the list (initial
+  // load + filter change). `mode === 'append'` paginates from the
+  // current list length. Tracks hasMore via "got fewer than PAGE_SIZE".
+  const fetchPage = useCallback(async (mode: 'reset' | 'append') => {
+    if (mode === 'reset') setLoading(true)
+    else setLoadingMore(true)
     setError('')
     try {
       const params = new URLSearchParams()
       if (statusFilter) params.set('status', statusFilter)
-      const data = await apiFetch(`/api/bug-reports?${params}`)
-      setReports(data.reports)
+      params.set('limit', String(PAGE_SIZE))
+      const offset = mode === 'append' ? reports.length : 0
+      params.set('offset', String(offset))
+      const data = await apiFetch<{ reports: BugReport[]; total: number }>(`/api/bug-reports?${params}`)
+      setReports(prev => (mode === 'append' ? [...prev, ...data.reports] : data.reports))
       setTotal(data.total)
+      setHasMore(data.reports.length === PAGE_SIZE)
     } catch {
       setError('Failed to load reports')
     } finally {
-      setLoading(false)
+      if (mode === 'reset') setLoading(false)
+      else setLoadingMore(false)
     }
-  }
+  }, [statusFilter, reports.length])
 
+  // Mutations re-fetch the current page from offset 0 to pull in any
+  // status changes in one go. Avoids splicing local state and risking
+  // drift from server-side reordering.
   const updateStatus = async (id: number, status: string, resolution?: string) => {
     try {
       await apiFetch(`/api/bug-reports/${id}`, {
         method: 'PATCH',
         body: JSON.stringify({ status, resolution })
       })
-      fetchReports()
+      fetchPage('reset')
     } catch {
       setError('Failed to update')
     }
   }
 
+  // Filter change → reset list. fetchPage closes over reports.length so
+  // we deliberately call the reset path with a fresh `reports.length=0`
+  // — useCallback's dep on reports.length is fine because reset doesn't
+  // read it (offset is hard-coded to 0 in 'reset' mode).
   useEffect(() => {
-    fetchReports()
+    setReports([])
+    fetchPage('reset')
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [statusFilter])
+
+  // Infinite scroll: observe a sentinel node at the end of the list.
+  // When it intersects the viewport (with 200px margin so we kick off
+  // fetching before the user actually hits the bottom), load the next
+  // page. Skip if we're already loading or know there's no more.
+  useEffect(() => {
+    const node = sentinelRef.current
+    if (!node) return
+    if (!hasMore || loading || loadingMore) return
+    const obs = new IntersectionObserver(
+      entries => {
+        if (entries.some(e => e.isIntersecting)) fetchPage('append')
+      },
+      { rootMargin: '200px' }
+    )
+    obs.observe(node)
+    return () => obs.disconnect()
+  }, [hasMore, loading, loadingMore, fetchPage])
 
   const formatDate = (d: string) => new Date(d).toLocaleString()
 
@@ -222,6 +262,21 @@ const BugReportsAdmin: React.FC = () => {
                 )}
               </div>
             ))}
+            {/* Infinite-scroll sentinel + load-more affordance. The
+                sentinel exists even when !hasMore so the IntersectionObserver
+                can attach immediately on first render; the effect short-
+                circuits when we know there's nothing more to fetch. */}
+            <div ref={sentinelRef} className="h-4" />
+            {loadingMore && (
+              <p className={`text-center text-sm py-2 ${isDark ? 'text-white/40' : 'text-gray-400'}`}>
+                Loading more…
+              </p>
+            )}
+            {!hasMore && reports.length > 0 && reports.length >= total && (
+              <p className={`text-center text-xs py-2 ${isDark ? 'text-white/30' : 'text-gray-400'}`}>
+                End of list ({total} total)
+              </p>
+            )}
           </div>
         )}
       </div>

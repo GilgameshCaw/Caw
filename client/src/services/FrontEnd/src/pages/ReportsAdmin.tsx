@@ -1,7 +1,9 @@
-import React, { useState, useEffect } from 'react'
+import React, { useState, useEffect, useRef, useCallback } from 'react'
 import { useTheme } from '~/hooks/useTheme'
 import { apiFetch } from '~/api/client'
 import { Link } from 'react-router-dom'
+
+const PAGE_SIZE = 50
 
 interface Report {
   id: number
@@ -44,44 +46,78 @@ const ReportsAdmin: React.FC = () => {
   const [reports, setReports] = useState<Report[]>([])
   const [total, setTotal] = useState(0)
   const [loading, setLoading] = useState(false)
+  const [loadingMore, setLoadingMore] = useState(false)
+  const [hasMore, setHasMore] = useState(false)
   const [, setError] = useState('')
   const [statusFilter, setStatusFilter] = useState('')
   const [reasonFilter, setReasonFilter] = useState('')
   const [expandedId, setExpandedId] = useState<number | null>(null)
+  const sentinelRef = useRef<HTMLDivElement | null>(null)
 
-  const fetchReports = async () => {
-    setLoading(true)
+  // Single-flight fetch. `mode === 'reset'` replaces the list (initial
+  // load + filter change). `mode === 'append'` paginates from the
+  // current list length. Tracks hasMore via "got fewer than PAGE_SIZE".
+  const fetchPage = useCallback(async (mode: 'reset' | 'append') => {
+    if (mode === 'reset') setLoading(true)
+    else setLoadingMore(true)
     setError('')
     try {
       const params = new URLSearchParams()
       if (statusFilter) params.set('status', statusFilter)
       if (reasonFilter) params.set('reason', reasonFilter)
-      const data = await apiFetch(`/api/reports?${params}`)
-      setReports(data.reports)
+      params.set('limit', String(PAGE_SIZE))
+      const offset = mode === 'append' ? reports.length : 0
+      params.set('offset', String(offset))
+      const data = await apiFetch<{ reports: Report[]; total: number }>(`/api/reports?${params}`)
+      setReports(prev => (mode === 'append' ? [...prev, ...data.reports] : data.reports))
       setTotal(data.total)
+      setHasMore(data.reports.length === PAGE_SIZE)
     } catch {
       setError('Failed to load reports')
     } finally {
-      setLoading(false)
+      if (mode === 'reset') setLoading(false)
+      else setLoadingMore(false)
     }
-  }
+  }, [statusFilter, reasonFilter, reports.length])
 
+  // Mutations re-fetch from offset 0 to pull in any status changes.
+  // Avoids splicing local state and risking drift from server-side
+  // reordering.
   const updateStatus = async (id: number, status: string, resolution?: string) => {
     try {
       await apiFetch(`/api/reports/${id}`, {
         method: 'PATCH',
         body: JSON.stringify({ status, resolution })
       })
-      fetchReports()
+      fetchPage('reset')
     } catch {
       setError('Failed to update')
     }
   }
 
+  // Filter change → reset list.
   useEffect(() => {
-    fetchReports()
+    setReports([])
+    fetchPage('reset')
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [statusFilter, reasonFilter])
+
+  // Infinite scroll: observe a sentinel node at the end of the list.
+  // 200px rootMargin so we kick off fetching before the user actually
+  // hits the bottom. Skip if already loading or known-exhausted.
+  useEffect(() => {
+    const node = sentinelRef.current
+    if (!node) return
+    if (!hasMore || loading || loadingMore) return
+    const obs = new IntersectionObserver(
+      entries => {
+        if (entries.some(e => e.isIntersecting)) fetchPage('append')
+      },
+      { rootMargin: '200px' }
+    )
+    obs.observe(node)
+    return () => obs.disconnect()
+  }, [hasMore, loading, loadingMore, fetchPage])
 
   const formatDate = (d: string) => new Date(d).toLocaleString()
 
@@ -245,6 +281,18 @@ const ReportsAdmin: React.FC = () => {
                 )}
               </div>
             ))}
+            {/* Infinite-scroll sentinel + load-more affordance. */}
+            <div ref={sentinelRef} className="h-4" />
+            {loadingMore && (
+              <p className={`text-center text-sm py-2 ${isDark ? 'text-white/40' : 'text-gray-400'}`}>
+                Loading more…
+              </p>
+            )}
+            {!hasMore && reports.length > 0 && reports.length >= total && (
+              <p className={`text-center text-xs py-2 ${isDark ? 'text-white/30' : 'text-gray-400'}`}>
+                End of list ({total} total)
+              </p>
+            )}
           </div>
         )}
       </div>

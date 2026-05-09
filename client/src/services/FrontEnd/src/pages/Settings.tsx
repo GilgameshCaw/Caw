@@ -58,10 +58,10 @@ export const SettingsPage: React.FC = () => {
     ...(isModerator ? [{
       id: 'moderation',
       title: 'Moderation',
-      description: 'Review reports and hide caws on this server',
+      description: 'Review bug reports and content reports on this server',
       icon: <HiOutlineShieldCheck className="w-5 h-5" />,
       hasArrow: true,
-      onClick: () => navigate('/moderation/reports')
+      onClick: () => navigate('/moderation')
     }] : [])
   ]
 
