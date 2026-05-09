@@ -81,9 +81,23 @@ type ProfileData = {
   updatedAt: string
 }
 
+// CAW usernames are constrained to [a-z0-9] on-chain. URLs are
+// case-insensitive (A-Z works), but anything outside that charset means
+// the URL is malformed — strip the bad chars and redirect to the cleaned
+// path so users don't see a "Claim @<garbage>" CTA. If cleanup leaves
+// nothing, render the not-found path without the claim CTA.
+const sanitizeUsername = (raw: string): string => raw.replace(/[^a-zA-Z0-9]/g, '')
+
 export const Profile: React.FC = () => {
   const t = useT()
-  const { username } = useParams<{ username: string }>()
+  const { username: rawUsername } = useParams<{ username: string }>()
+  // After sanitization, "" means the URL contained no valid chars at all.
+  const cleanedUsername = rawUsername ? sanitizeUsername(rawUsername) : undefined
+  const usernameWasMangled = !!rawUsername && cleanedUsername !== rawUsername
+  const usernameIsEmpty = rawUsername !== undefined && cleanedUsername === ''
+  // Use the cleaned form everywhere downstream — avoids API calls and
+  // on-chain reads with garbage characters.
+  const username = cleanedUsername || undefined
   const [searchParams, setSearchParams] = useSearchParams()
   const tabParam = searchParams.get('tab') as ProfileTab | null
   const [activeTab, setActiveTab] = useState<ProfileTab>(
@@ -126,6 +140,15 @@ export const Profile: React.FC = () => {
   const activeTokenId = useTokenDataStore(s => s.activeTokenId)
   const [isSaving, setIsSaving] = useState(false)
   const [updateCost, setUpdateCost] = useState(0)
+
+  // If the URL contained chars outside [a-zA-Z0-9], redirect to the
+  // sanitized form so we don't pollute the API/contract with garbage and
+  // so the user can't bookmark/share the broken URL. Empty cleanup (e.g.
+  // /users/!@#) falls through to the not-found render below.
+  useEffect(() => {
+    if (!usernameWasMangled || !cleanedUsername) return
+    navigate(`/users/${cleanedUsername}`, { replace: true })
+  }, [usernameWasMangled, cleanedUsername, navigate])
 
   const isOnCorrectChain = currentChainId === chains.l2.chainId
 
@@ -233,8 +256,11 @@ export const Profile: React.FC = () => {
   const { blockUser, unblockUser, isBlocked: checkIsBlocked } = useBlockedUsersStore()
   const isBlocked = profileData?.tokenId ? checkIsBlocked(profileData.tokenId) : false
 
-  // Use username from params or fallback to activeToken's username
-  const displayUsername = username || activeToken?.username || 'user'
+  // Use username from params or fallback to activeToken's username.
+  // Fallback only applies when the URL had no username segment at all —
+  // an explicit but invalid URL (e.g. /users/!@#) should not silently
+  // redirect the viewer to their own profile.
+  const displayUsername = username || (rawUsername === undefined ? (activeToken?.username || 'user') : 'user')
 
   // Fetch profile data
   useEffect(() => {
@@ -804,8 +830,10 @@ export const Profile: React.FC = () => {
     { id: 'likes',   label: t('profile.tab.likes'),   count: tabCount(profileData?.likedCount) },
   ]
 
-  // Profile not in our DB — check on-chain availability for better UX
-  if (dbNotFound) {
+  // Profile not in our DB — check on-chain availability for better UX.
+  // Also handle the edge case where the URL contained only non-alphanumeric
+  // chars and sanitization left us with nothing to look up.
+  if (dbNotFound || usernameIsEmpty) {
     return (
         <div className="max-w-2xl mx-auto px-6 py-16 text-center">
           <div className={`mb-6 w-24 h-24 mx-auto rounded-full flex items-center justify-center ${
@@ -818,7 +846,11 @@ export const Profile: React.FC = () => {
           <h2 className={`text-xl font-bold mb-2 ${isDark ? 'text-white' : 'text-black'}`}>
             This profile doesn't exist
           </h2>
-          {checkingOnChain ? (
+          {usernameIsEmpty ? (
+            <p className={`mb-6 ${isDark ? 'text-gray-400' : 'text-gray-600'}`}>
+              That URL doesn't look like a valid username. Usernames are letters and numbers only.
+            </p>
+          ) : checkingOnChain ? (
             <p className={`mb-6 ${isDark ? 'text-gray-400' : 'text-gray-600'}`}>
               Checking availability...
             </p>
