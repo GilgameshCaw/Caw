@@ -1071,7 +1071,7 @@ contract('CawProfiles', function(accounts, x) {
     truffleAssert.eventEmitted(result.tx, 'ActionRejected', (args) => {
       return args.cawonce == result.signedActions[0].data.message.cawonce &&
 				args.senderId == result.signedActions[0].data.message.senderId &&
-        args.reason == 'Session expired or not found';
+        args.reason == 'Session invalid';
     });
 
     console.log("PENDING TRANSFERS:", await cawProfiles.pendingTransferUpdates(l2));
@@ -1104,7 +1104,7 @@ contract('CawProfiles', function(accounts, x) {
     // (the OLD owner of token 1), but ownership was already synced to L2 to
     // accounts[3] above. So the signature recovers a non-owner, the contract
     // falls through to session-key lookup against accounts[3], finds none,
-    // and reverts with "Session expired or not found" — BEFORE the cawonce
+    // and reverts with "Session invalid" — BEFORE the cawonce
     // check ever fires. The test's job here is to confirm the action is
     // rejected; the reason just reflects which check fires first.
     var actionsToProcess = [{
@@ -1124,7 +1124,7 @@ contract('CawProfiles', function(accounts, x) {
       console.log(args);
       return args.cawonce == result.signedActions[0].data.message.cawonce &&
 				args.senderId == result.signedActions[0].data.message.senderId &&
-        args.reason == 'Session expired or not found';
+        args.reason == 'Session invalid';
     });
 
 
@@ -1151,7 +1151,7 @@ contract('CawProfiles', function(accounts, x) {
       console.log(args);
       return args.cawonce == result.signedActions[0].data.message.cawonce &&
 				args.senderId == result.signedActions[0].data.message.senderId &&
-        args.reason == 'User has not authenticated with this client';
+        args.reason == 'User not authenticated';
     });
 
     var quote = await quoter.authenticateQuote(2, 1, l2, false);
@@ -1190,7 +1190,7 @@ contract('CawProfiles', function(accounts, x) {
       console.log(args);
       return args.cawonce == result.signedActions[0].data.message.cawonce &&
 				args.senderId == result.signedActions[0].data.message.senderId &&
-        args.reason == 'User has not authenticated with this client';
+        args.reason == 'User not authenticated';
     });
 
     // depositing and specifying a new client ID is another way to authenticate with that client.

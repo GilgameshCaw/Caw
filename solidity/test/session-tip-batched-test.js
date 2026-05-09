@@ -723,7 +723,7 @@ contract('CawActions — session-tip + batched-accumulator integration', functio
       await setup.cawActions.processActions(validatorTokenId, hex, sigsHex, 0, 0);
     } catch (err) {
       reverted = true;
-      expect((err.message || '').toLowerCase()).to.include('session spend limit exceeded');
+      expect((err.message || '').toLowerCase()).to.include('session limit');
     }
     expect(reverted, 'expected batch to revert with spend-limit error').to.equal(true);
 

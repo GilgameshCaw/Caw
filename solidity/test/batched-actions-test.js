@@ -478,14 +478,14 @@ contract('CawActions — batched signatures', function (accounts) {
 
     // The duplicate cawonce is also non-contiguous (the second action's
     // cawonce is `start` but should be `start + 1`), so the contract reverts
-    // earlier with the cleaner "Non-contiguous cawonces in batch" message
+    // earlier with the cleaner "Non-contiguous cawonces" message
     // before useCawonce ever runs. That's the desired behavior — the batch
     // sig now commits to a strictly ascending cawonce sequence.
     let reverted = false;
     try {
       await setup.cawActions.processActions(validatorTokenId, hex, sigsHex, 0, 0);
     } catch (e) {
-      reverted = e.message.includes('Non-contiguous cawonces in batch');
+      reverted = e.message.includes('Non-contiguous cawonces');
     }
     expect(reverted).to.equal(true);
   });
@@ -515,9 +515,9 @@ contract('CawActions — batched signatures', function (accounts) {
     try {
       await setup.cawActions.processActions(validatorTokenId, hex, sigsHex, 0, 0);
     } catch (e) {
-      reverted = e.message.includes('Non-contiguous cawonces in batch');
+      reverted = e.message.includes('Non-contiguous cawonces');
     }
-    expect(reverted).to.equal(true, 'expected revert with "Non-contiguous cawonces in batch"');
+    expect(reverted).to.equal(true, 'expected revert with "Non-contiguous cawonces"');
   });
 
   // --------------------------------------------
@@ -591,7 +591,7 @@ contract('CawActions — batched signatures', function (accounts) {
     if (!revertReason) {
       throw new Error('Expected a revert but the call succeeded');
     }
-    expect(revertReason).to.include('Action not in session scope');
+    expect(revertReason).to.include('Out of scope');
   });
 
   // --------------------------------------------
@@ -657,7 +657,7 @@ contract('CawActions — batched signatures', function (accounts) {
       revertReason = e.message;
     }
     expect(revertReason).to.not.equal(null, 'expected revert on exceeded spend limit');
-    expect(revertReason).to.include('Session spend limit exceeded');
+    expect(revertReason).to.include('Session limit');
     // None of the batch's cawonces should have been consumed (full rollback).
     expect(Number(await setup.cawActions.nextCawonce(userATokenId))).to.equal(start);
   });
@@ -708,13 +708,13 @@ contract('CawActions — batched signatures', function (accounts) {
     } catch (e) {
       revertReason = e.message;
     }
-    expect(revertReason).to.include('Session spend limit exceeded');
+    expect(revertReason).to.include('Session limit');
   });
 
   // --------------------------------------------
   // Tampered batch reverts with the new clear message (not "Session expired")
   // --------------------------------------------
-  it('reverts with "Batch signature did not recover a valid signer" when the submitted actions differ from the signed actions', async function () {
+  it('reverts with "Batch sig invalid" when the submitted actions differ from the signed actions', async function () {
     // Sign a 3-action batch, then submit only 2 of them under the same sig.
     // The contract recomputes actionsHash over those 2 actions, gets a
     // different hash than what was signed, ecrecover returns a wrong
@@ -744,7 +744,7 @@ contract('CawActions — batched signatures', function (accounts) {
     if (!revertReason) {
       throw new Error('Expected a revert but the call succeeded');
     }
-    expect(revertReason).to.include('Batch signature did not recover a valid signer');
+    expect(revertReason).to.include('Batch sig invalid');
     // And critically, NOT the misleading message:
     expect(revertReason).to.not.include('Session expired');
   });

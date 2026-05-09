@@ -225,12 +225,12 @@ contract CawActions is Ownable {
       unchecked { ++g; }
     }
 
-    require(c.actionsSeen == actionCount, "Sigs don't cover all actions");
+    require(c.actionsSeen == actionCount, "Sigs incomplete");
     // Reject trailing bytes after the consumed actions. Without this, two
     // semantically-identical batches with different trailing-byte content
     // emit different `batchHash` fields, confusing indexers that dedupe by
     // batchHash. Audit fix 2026-05-08 (Round 3 CawActions adversarial agent).
-    require(c.pos == packedActions.length, "Trailing bytes in packedActions");
+    require(c.pos == packedActions.length, "Trailing bytes");
 
     // Flush the in-memory hash chain back to storage — one SSTORE pair
     // total instead of one per action. clientHashLoaded is the latch:
@@ -272,7 +272,7 @@ contract CawActions is Ownable {
       // loss. Revert instead so a misconfigured validator surfaces. Audit
       // fix 2026-05-08 (C-1; tightened in Round 3).
       require(withdrawFee > 0 || cawProfile.bypassLZ(),
-              "withdrawFee required in non-bypassLZ mode");
+              "withdrawFee required");
       _executeWithdrawals(withdrawFee, withdrawLzTokenAmount);
     }
   }
@@ -361,9 +361,9 @@ contract CawActions is Ownable {
       unchecked { ++g; }
     }
 
-    require(c.actionsSeen == actionCount, "Sigs don't cover all actions");
+    require(c.actionsSeen == actionCount, "Sigs incomplete");
     // See processActions for the trailing-bytes rationale.
-    require(c.pos == packedActions.length, "Trailing bytes in packedActions");
+    require(c.pos == packedActions.length, "Trailing bytes");
 
     if (c.clientHashLoaded) {
       clientCurrentHash[c.firstClientId] = c.clientHash;
@@ -387,7 +387,7 @@ contract CawActions is Ownable {
       _handleWithdrawals(c.withdrawBitmap, c.withdrawCount, actionCount, packedActions);
       // See processActions for the bypassLZ rationale.
       require(withdrawFee > 0 || cawProfile.bypassLZ(),
-              "withdrawFee required in non-bypassLZ mode");
+              "withdrawFee required");
       _executeWithdrawals(withdrawFee, withdrawLzTokenAmount);
     }
   }
@@ -419,7 +419,7 @@ contract CawActions is Ownable {
     // can't slip a different signer onto a batched action).
     address signer = _readSigner(signers, c.actionsSeen);
     for (uint256 i = 1; i < groupSize; ) {
-      require(_readSigner(signers, c.actionsSeen + i) == signer, "Signer mismatch within group");
+      require(_readSigner(signers, c.actionsSeen + i) == signer, "Signer mismatch");
       unchecked { ++i; }
     }
 
@@ -446,7 +446,7 @@ contract CawActions is Ownable {
       // ZK path. (Audit finding 2026-05-08, Issue B.)
       (uint64 expiry, uint8 scopeBitmap, uint256 spendLimit, uint64 perActionTipRate) =
         cawProfile.sessions(owner, signer);
-      require(expiry > block.timestamp, "Session expired or not found");
+      require(expiry > block.timestamp, "Session invalid");
       ba.isSessionKey = true;
       ba.owner = owner;
       ba.scopeBitmap = scopeBitmap;
@@ -490,7 +490,7 @@ contract CawActions is Ownable {
     if (c.actionsSeen == 0) {
       c.firstClientId = action.clientId;
     } else {
-      require(action.clientId == c.firstClientId, "All actions must belong to the same client");
+      require(action.clientId == c.firstClientId, "Mixed clients in batch");
     }
 
     // Race-loss check.
@@ -511,7 +511,7 @@ contract CawActions is Ownable {
     if (ba.isSessionKey) {
       require(
         (ba.scopeBitmap & (1 << uint8(action.actionType))) != 0,
-        "Action not in session scope"
+        "Out of scope"
       );
     }
 
@@ -693,7 +693,7 @@ contract CawActions is Ownable {
       // the signed semantics.
       if (i > 0) {
         require(action.senderId == groupActions[0].senderId, "Mixed senders in batch");
-        require(action.cawonce == groupActions[0].cawonce + i, "Non-contiguous cawonces in batch");
+        require(action.cawonce == groupActions[0].cawonce + i, "Non-contiguous cawonces");
       }
 
       groupActions[i] = action;
@@ -743,7 +743,7 @@ contract CawActions is Ownable {
     for (uint256 i = 0; i < n; ) {
       ActionData memory action = groupActions[i];
       if (ba.isSessionKey) {
-        require((ba.scopeBitmap & (1 << uint8(action.actionType))) != 0, "Action not in session scope");
+        require((ba.scopeBitmap & (1 << uint8(action.actionType))) != 0, "Out of scope");
       }
       owed += _applyAction(validatorId, action, ba, packedActions[sliceStarts[i]:sliceEnds[i]], c);
       unchecked { ++i; }
@@ -761,7 +761,7 @@ contract CawActions is Ownable {
     if (actionIndex == 0) {
       c.firstClientId = action.clientId;
     } else {
-      require(action.clientId == c.firstClientId, "All actions must belong to the same client");
+      require(action.clientId == c.firstClientId, "Mixed clients in batch");
     }
     if (action.actionType == ActionType.WITHDRAW) {
       c.withdrawBitmap |= (1 << actionIndex);
@@ -799,9 +799,9 @@ contract CawActions is Ownable {
       unchecked { ++g; }
     }
 
-    require(sc.actionsSeen == actionCount, "Sigs don't cover all actions");
+    require(sc.actionsSeen == actionCount, "Sigs incomplete");
     // See processActions for the trailing-bytes rationale.
-    require(sc.pos == packedActions.length, "Trailing bytes in packedActions");
+    require(sc.pos == packedActions.length, "Trailing bytes");
     successCount = sc.successCount;
 
     // NOTE (audited 2026-04-20): the calldata referenced by `batchHash` is the
@@ -824,7 +824,7 @@ contract CawActions is Ownable {
       _handleWithdrawals(sc.withdrawBitmap, sc.withdrawCount, actionCount, packedActions);
       // See processActions for the bypassLZ rationale.
       require(withdrawFee > 0 || cawProfile.bypassLZ(),
-              "withdrawFee required in non-bypassLZ mode");
+              "withdrawFee required");
       _executeWithdrawals(withdrawFee, withdrawLzTokenAmount);
     }
   }
@@ -932,7 +932,7 @@ contract CawActions is Ownable {
       (ActionData memory action, uint256 nextPos) = _unpackAction(groupBytes, pos);
       pos = nextPos;
       if (i == 0) firstClientId = action.clientId;
-      else require(action.clientId == firstClientId, "All actions must belong to the same client");
+      else require(action.clientId == firstClientId, "Mixed clients in batch");
       groupActions[i] = action;
       sliceStarts[i] = sliceStart;
       sliceEnds[i] = nextPos;
@@ -960,7 +960,7 @@ contract CawActions is Ownable {
       // exactly so safeProcessActions's pre-flight catches the same bad batches.
       for (uint256 i = 1; i < groupSize; ) {
         require(groupActions[i].senderId == groupActions[0].senderId, "Mixed senders in batch");
-        require(groupActions[i].cawonce == groupActions[0].cawonce + i, "Non-contiguous cawonces in batch");
+        require(groupActions[i].cawonce == groupActions[0].cawonce + i, "Non-contiguous cawonces");
         unchecked { ++i; }
       }
       (ba.signer, ba.isSessionKey) = _verifyBatchSignature(
@@ -1063,7 +1063,7 @@ contract CawActions is Ownable {
     BatchCursor memory c
   ) internal returns (uint256 implicitTipOwed) {
     require(!isCawonceUsed(action.senderId, action.cawonce), "Cawonce already used");
-    require(cawProfile.authenticated(action.clientId, action.senderId), "User has not authenticated with this client");
+    require(cawProfile.authenticated(action.clientId, action.senderId), "User not authenticated");
     require(action.text.length <= 420, "Text exceeds 420 bytes");
 
     // Fixed protocol costs per action type (in whole CAW tokens)
@@ -1132,7 +1132,7 @@ contract CawActions is Ownable {
           ba.groupSpentLoaded = true;
         }
         ba.groupSpent += actionCost;
-        require(ba.groupSpent <= ba.spendLimit, "Session spend limit exceeded");
+        require(ba.groupSpent <= ba.spendLimit, "Session limit");
       }
     }
 
@@ -1315,7 +1315,7 @@ contract CawActions is Ownable {
     if (signer != address(0)) {
       (uint64 expiry, uint8 scopeBitmap,,) = cawProfile.sessions(owner, signer);
       if (expiry > block.timestamp) {
-        require((scopeBitmap & (1 << uint8(data.actionType))) != 0, "Action not in session scope");
+        require((scopeBitmap & (1 << uint8(data.actionType))) != 0, "Out of scope");
         return (signer, true);
       }
       // Session record exists but is expired. Don't fall through to the
@@ -1337,7 +1337,7 @@ contract CawActions is Ownable {
     }
 
     require(signer != address(0), "Invalid signature");
-    revert("Session expired or not found");
+    revert("Session invalid");
   }
 
   /// @dev Recover the signer of an ActionBatch signature. Performs the same
@@ -1347,7 +1347,7 @@ contract CawActions is Ownable {
   ///
   /// @dev On the no-valid-signer path this reverts with "Batch signature did
   ///      not recover a valid signer" rather than the single-sig path's
-  ///      "Session expired or not found". For batch sigs, the failure is
+  ///      "Session invalid". For batch sigs, the failure is
   ///      most often that the validator submitted a different actionsHash
   ///      than what the user signed (e.g. the group was truncated across
   ///      txs) — ecrecover returns a random non-zero address that has no
@@ -1390,12 +1390,12 @@ contract CawActions is Ownable {
       bytes32 digest = keccak256(abi.encodePacked("\x19\x01", eip712DomainHash, structHash));
       require(
         _checkERC1271(owner, digest, v, r, s),
-        "Batch signature did not recover a valid signer"
+        "Batch sig invalid"
       );
       return (owner, false);
     }
 
-    revert("Batch signature did not recover a valid signer");
+    revert("Batch sig invalid");
   }
 
   // ============================================
@@ -1442,15 +1442,25 @@ contract CawActions is Ownable {
     bool isWithdrawal = action.actionType == ActionType.WITHDRAW;
     require(
       !(isWithdrawal && numRecipients == 0 && hasExplicitTip),
-      "WITHDRAW with empty recipients must use amounts=[X] only, no tip slot"
+      "WITHDRAW shape ambiguous"
     );
 
-    // Fast path: no recipients, no explicit tip. Session-key actions still owe
-    // the implicit tip; manual-sign actions with no tip slot pay nothing.
+    // Fast path: no recipients, no explicit tip. Session-key actions
+    // owe the implicit tip; OTHER actions with no tip mechanism firing
+    // pay a 1000 CAW floor so validators aren't griefed by free
+    // submissions (vote:, pi:, p:, hide:, qs:/qx: with empty amounts —
+    // every OTHER subtype that doesn't otherwise pay). Other action
+    // types either have a fixed protocol-cost (CAW/LIKE/RECAW/FOLLOW)
+    // or their own floor (UNLIKE/UNFOLLOW). Audit fix 2026-05-09
+    // (Round 7 econ HIGH-1 extension to OTHER).
     if (numRecipients == 0 && !hasExplicitTip) {
       if (ba.isSessionKey && ba.perActionTipRate > 0) {
         implicitTipOwed = uint256(ba.perActionTipRate);
         totalWholeTokens = implicitTipOwed;
+      } else if (action.actionType == ActionType.OTHER) {
+        _requireValidatorExists(validatorId);
+        cawProfile.spendDistributeAndAddTokensToBalance(action.senderId, 1000, 0, validatorId, 1000);
+        totalWholeTokens = 1000;
       }
       return (totalWholeTokens, implicitTipOwed);
     }

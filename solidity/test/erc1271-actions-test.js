@@ -7,7 +7,7 @@
  *   - The same path works for batch sigs (groupSize>1).
  *   - When the contract returns 0xffffffff, the call reverts with
  *     "Invalid signature" (single) or
- *     "Batch signature did not recover a valid signer" (batch).
+ *     "Batch sig invalid" (batch).
  *   - Existing EOA-owned profiles (happy path + session-key path) are
  *     unchanged by the 1271 fallback.
  */
@@ -437,6 +437,6 @@ contract('CawActions — ERC-1271 contract-owner signatures', function (accounts
     await mockOwner.setAlwaysReject(false);
 
     if (!revertReason) throw new Error('Expected a revert but the call succeeded');
-    expect(revertReason).to.include('Batch signature did not recover a valid signer');
+    expect(revertReason).to.include('Batch sig invalid');
   });
 });

@@ -28,7 +28,7 @@
  *      credit reflects 2 actions, hash chain advances by 2.
  *   5. Signer mismatch within a batch group: a sig group of size 2 but the
  *      caller supplies different signers[0] vs signers[1]. Reverts with
- *      "Signer mismatch within group".
+ *      "Signer mismatch".
  *   6. ZK path locked when zkVerifier is unset: deploy CawActions with
  *      address(0) verifier, call processActionsWithZkSigs → reverts with
  *      "ZK path not configured".
@@ -464,9 +464,9 @@ contract('CawActions — processActionsWithZkSigs', function (accounts) {
       );
     } catch (err) {
       reverted = true;
-      expect((err.message || '').toLowerCase()).to.include('signer mismatch within group');
+      expect((err.message || '').toLowerCase()).to.include('signer mismatch');
     }
-    expect(reverted, 'expected revert on signer mismatch within group').to.equal(true);
+    expect(reverted, 'expected revert on signer mismatch').to.equal(true);
   });
 
   // --------------------------------------------
@@ -632,7 +632,7 @@ contract('CawActions — processActionsWithZkSigs', function (accounts) {
   //      - Register sessionKeyEoa for userA with expiry just past `now`.
   //      - Use evm_increaseTime to push past expiry.
   //      - Submit a ZK batch signed by sessionKeyEoa.
-  //    Expected: revert with "Session expired or not found".
+  //    Expected: revert with "Session invalid".
   // --------------------------------------------
   it('regression: rejects expired session key in ZK path', async function () {
     // Register a session that expires in 2 seconds, then jump 1 hour ahead.
@@ -677,6 +677,6 @@ contract('CawActions — processActionsWithZkSigs', function (accounts) {
       reason = (err.message || '').toLowerCase();
     }
     expect(reverted, 'expected revert when session is expired').to.equal(true);
-    expect(reason).to.include('session expired or not found');
+    expect(reason).to.include('session invalid');
   });
 });
