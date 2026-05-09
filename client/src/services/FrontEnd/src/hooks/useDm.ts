@@ -558,14 +558,49 @@ export function useDmClient(tokenId?: number, username?: string) {
       await computeSharedSecret(privateKeyRef, peerData.publicKey, peerUserId, conversation.id)
     }
 
-    // Reload conversations to get updated list. This *won't* include the
-    // brand-new empty conversation we just created (the API filters them
-    // out), but the peer-key cache seed above keeps sendMessage working
-    // until the first message lands and the conversation joins the inbox.
-    await loadConversations()
+    // Optimistically prepend the conversation to local state so the chat
+    // header (selectedConversation.participants[].identity.user) resolves
+    // immediately. Without this the header shows blank avatar/username
+    // until the user sends a message and the conversation lands in the
+    // inbox query (the API filters out empty conversations from
+    // /api/dm/conversations, so a plain loadConversations() reload won't
+    // surface it). Skip if we already have it (existing conversation, or
+    // a websocket NEW_CONVERSATION race added it first).
+    setConversations(prev => {
+      if (prev.some(c => c.id === conversation.id)) return prev
+      const otherParticipants = (conversation.participants || []).filter(
+        (p: any) => p.userId !== tokenId
+      )
+      const visibleParticipants: UiParticipant[] = otherParticipants.map((p: any) => ({
+        userId: p.userId,
+        publicKey: p.identity?.publicKey ?? null,
+        role: (p.role as 'OWNER' | 'MEMBER') ?? 'MEMBER',
+        identity: {
+          user: {
+            username: p.identity?.user?.username || 'Unknown',
+            displayName: p.identity?.user?.displayName,
+            image: p.identity?.user?.avatarUrl ?? p.identity?.user?.image,
+            avatarUrl: p.identity?.user?.avatarUrl ?? null,
+            defaultAvatarId: p.identity?.user?.defaultAvatarId ?? null,
+            address: p.identity?.user?.address,
+            tokenId: p.userId,
+          },
+        },
+      }))
+      const optimistic: UiConversation = {
+        id: conversation.id,
+        type: 'DM',
+        name: null,
+        avatarUrl: null,
+        participants: visibleParticipants,
+        unreadCount: 0,
+        myStatus: 'ACCEPTED',
+      }
+      return [optimistic, ...prev]
+    })
 
     return conversation
-  }, [tokenId, loadConversations])
+  }, [tokenId])
 
   const clearUnreadCount = useCallback((conversationId: string) => {
     setConversations(prev => {
