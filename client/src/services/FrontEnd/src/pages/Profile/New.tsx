@@ -625,7 +625,10 @@ console.log("BALANCE:", balance)
   }
 
   return (
-      <div className={`${isCaptive ? 'max-w-4xl' : 'max-w-md'} mx-auto p-6 ${isCaptive ? '' : 'space-y-4 mt-8'}`}>
+      <div
+        className={`${isCaptive ? 'max-w-4xl' : 'max-w-md'} mx-auto p-6 ${isCaptive ? '' : 'space-y-4 mt-8'}`}
+        style={isCaptive ? undefined : { paddingBottom: 'calc(var(--bottom-nav-h, 0px) + 24px)' }}
+      >
         <div className={isCaptive ? 'flex flex-col md:flex-row gap-8 md:gap-0 items-start md:divide-x md:divide-white/10 pt-12 md:pt-20' : ''}>
           {/* Left column (captive) or full-width header (normal) */}
           <div className={isCaptive ? 'w-full md:w-[45%] md:sticky md:top-8 md:pr-8' : ''}>
@@ -644,27 +647,20 @@ console.log("BALANCE:", balance)
                   </div>
               </div>
               <div className="text-center">
-                <a
-                  href="https://app.uniswap.org/#/swap?inputCurrency=ETH&outputCurrency=0xf3b9569F82B18aEf890De263B84189bd33EBe452"
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="text-sm text-yellow-500/70 hover:text-yellow-500 transition-colors cursor-pointer"
+                {/* Pre-launch testnet: the only way to get mCAW is the
+                    faucet. The "Buy on Uniswap" link pointed at mainnet
+                    CAW which testnet wallets can't acquire — confused
+                    users into a dead end. Remove until launch. */}
+                <Link
+                  to="/faucet"
+                  className={`inline-flex items-center justify-center px-4 py-2 rounded-full text-sm font-semibold transition-colors cursor-pointer ${
+                    isDark
+                      ? 'bg-yellow-500/15 text-yellow-400 hover:bg-yellow-500/25'
+                      : 'bg-yellow-100 text-yellow-800 hover:bg-yellow-200'
+                  }`}
                 >
-                  {t('new_profile.need_more_caw')}
-                </a>
-
-                <div className="mt-3">
-                  <Link
-                    to="/faucet"
-                    className={`inline-flex items-center justify-center px-4 py-2 rounded-full text-sm font-semibold transition-colors cursor-pointer ${
-                      isDark
-                        ? 'bg-yellow-500/15 text-yellow-400 hover:bg-yellow-500/25'
-                        : 'bg-yellow-100 text-yellow-800 hover:bg-yellow-200'
-                    }`}
-                  >
-                    {t('new_profile.claim_mcaw')}
-                  </Link>
-                </div>
+                  {t('new_profile.claim_mcaw')}
+                </Link>
 
                 <Link to="/usernames" className="block mt-2 text-sm text-gray-400 hover:text-gray-300 transition-colors">
                   {t('new_profile.marketplace_link')}

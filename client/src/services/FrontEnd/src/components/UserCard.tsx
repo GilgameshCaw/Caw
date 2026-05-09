@@ -6,6 +6,7 @@ import { FollowButton } from './FollowButton'
 import Avatar from '~/components/Avatar'
 import { getUserAvatar } from '~/utils/defaultAvatar'
 import { useT } from '~/i18n/I18nProvider'
+import { useTokenDataStore } from '~/store/tokenDataStore'
 
 export interface UserCardUser {
   tokenId: number
@@ -52,6 +53,15 @@ const UserCard: React.FC<UserCardProps> = ({
 }) => {
   const { isDark } = useTheme()
   const t = useT()
+  // Suppress the Follow button when the card represents one of the
+  // viewer's own tokens — there's nothing useful to do, and the follow
+  // action would just bounce off the contract's self-action guard.
+  const isSelf = useTokenDataStore(s => {
+    for (const tokens of Object.values(s.tokensByAddress)) {
+      for (const t of tokens) if (t.tokenId === user.tokenId) return true
+    }
+    return false
+  })
 
   const carouselStyle: React.CSSProperties = layout === 'carousel'
     ? {
@@ -109,15 +119,17 @@ const UserCard: React.FC<UserCardProps> = ({
         </div>
       </Link>
 
-      <div className="mt-3 flex justify-center">
-        <FollowButton
-          targetUserId={user.tokenId}
-          initialIsFollowing={user.isFollowing ?? false}
-          initialIsPending={user.followPending}
-          size="small"
-          onFollowConfirmed={onFollowConfirmed ? () => onFollowConfirmed(user.tokenId) : undefined}
-        />
-      </div>
+      {!isSelf && (
+        <div className="mt-3 flex justify-center">
+          <FollowButton
+            targetUserId={user.tokenId}
+            initialIsFollowing={user.isFollowing ?? false}
+            initialIsPending={user.followPending}
+            size="small"
+            onFollowConfirmed={onFollowConfirmed ? () => onFollowConfirmed(user.tokenId) : undefined}
+          />
+        </div>
+      )}
     </div>
   )
 }

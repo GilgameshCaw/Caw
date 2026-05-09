@@ -33,6 +33,19 @@ router.get('/listings', async (req, res) => {
       where.paymentToken = paymentToken
     }
 
+    // Hide ended auctions from the active feed even though their on-chain
+    // status hasn't flipped yet (the seller / winner needs to claim before
+    // the contract emits the finalize event the indexer keys off). Without
+    // this filter, an auction that ended a week ago with a winning bid
+    // keeps appearing in "active listings" because nobody settled it.
+    if (status === 'ACTIVE') {
+      where.OR = [
+        { listingType: { not: 'ENGLISH_AUCTION' } },
+        { endTime: null },
+        { endTime: { gt: new Date() } },
+      ]
+    }
+
     let orderBy: any = { createdAt: 'desc' }
     switch (sort) {
       case 'price_asc':  orderBy = { startPrice: 'asc' }; break
