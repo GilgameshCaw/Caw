@@ -1102,8 +1102,13 @@ contract CawActions is Ownable {
       // Only the wallet owner's own signature can register/revoke a session —
       // a session key (ba.isSessionKey) cannot escalate by writing more sessions.
       _handleSessionAction(action, ba);
-    } else if (action.actionType != ActionType.UNLIKE &&
-               action.actionType != ActionType.UNFOLLOW) {
+    } else if (action.actionType == ActionType.UNLIKE || action.actionType == ActionType.UNFOLLOW) {
+      // Floor charge: 1000 CAW from sender to validator. Without this,
+      // UNLIKE/UNFOLLOW are pure validator-gas griefing. Audit fix
+      // 2026-05-09 (Round 7 econ HIGH-1).
+      cawProfile.spendDistributeAndAddTokensToBalance(action.senderId, 1000, 0, validatorId, 1000);
+      actionCost = 1000;
+    } else {
       revert("Invalid action type");
     }
 

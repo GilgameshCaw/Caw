@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { useSignMessage, useAccount } from 'wagmi'
+import { useSignMessage, useAccount, useChainId } from 'wagmi'
 import { useConnectModal } from '@rainbow-me/rainbowkit'
 import { useAuthStore } from '~/store/authStore'
 import { apiFetch, retryOnIndexing } from '~/api/client'
@@ -8,6 +8,7 @@ export function useVerifyWallet() {
   const { sessionToken, setSession, addAuthorization } = useAuthStore()
   const { signMessageAsync } = useSignMessage()
   const { isConnected } = useAccount()
+  const chainId = useChainId()
   const { openConnectModal } = useConnectModal()
   const [isVerifying, setIsVerifying] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -23,7 +24,16 @@ export function useVerifyWallet() {
 
     try {
       const timestamp = Math.floor(Date.now() / 1000)
-      const message = `Verify wallet ownership for CAW\nTimestamp: ${timestamp}`
+      // Domain-bind the message to (host + chainId) so a sig produced
+      // for mirror A is not replayable on mirror B, and a sig produced
+      // on testnet is not replayable on mainnet. Audit fix 2026-05-09
+      // (Round 7 FE/DM CRITICAL-2). The API enforces matching `Host`.
+      const host = window.location.host.toLowerCase()
+      const message =
+        `Verify wallet ownership for CAW\n` +
+        `Host: ${host}\n` +
+        `ChainId: ${chainId}\n` +
+        `Timestamp: ${timestamp}`
 
       const signature = await signMessageAsync({ message })
 

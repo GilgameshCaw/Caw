@@ -13,7 +13,22 @@ import dmService from '../../services/DmService'
 
 const router = Router()
 
-const MESSAGE_PREFIX = 'Verify wallet ownership for CAW\nTimestamp: '
+// Wallet-verify message format:
+//   Verify wallet ownership for CAW
+//   Host: <api-origin-host>
+//   ChainId: <chainid>
+//   Timestamp: <unix>
+//
+// Binding to host + chainId blocks cross-mirror and cross-dApp replay:
+// a sig produced for mirror A doesn't authenticate against mirror B,
+// and a sig produced on testnet doesn't authenticate against mainnet.
+// Audit fix 2026-05-09 (Round 7 FE/DM CRITICAL-2).
+//
+// Legacy clients that still send the old prefix-only message are
+// rejected — there's no migration window because the old message has
+// active cross-replay surface and the FE updates atomically with this
+// change.
+const MESSAGE_PREFIX = 'Verify wallet ownership for CAW\n'
 const DM_MESSAGE_PREFIX = 'CAW Protocol\nEnable DMs\n@'
 const MAX_MESSAGE_AGE_MS = 5 * 60 * 1000 // 5 minutes
 
@@ -31,14 +46,56 @@ router.post('/verify', async (req, res) => {
       return
     }
 
-    // Validate message format
-    if (!message.startsWith(MESSAGE_PREFIX)) {
+    // Validate message format. Expected:
+    //   Verify wallet ownership for CAW
+    //   Host: <host>
+    //   ChainId: <chainid>
+    //   Timestamp: <unix>
+    if (typeof message !== 'string' || !message.startsWith(MESSAGE_PREFIX)) {
       res.status(400).json({ error: 'Invalid message format' })
       return
     }
 
+    const lines = message.split('\n')
+    if (lines.length < 4) {
+      res.status(400).json({ error: 'Invalid message format (missing fields)' })
+      return
+    }
+    const hostLine = lines[1] || ''
+    const chainIdLine = lines[2] || ''
+    const timestampLine = lines[3] || ''
+    if (!hostLine.startsWith('Host: ') || !chainIdLine.startsWith('ChainId: ') || !timestampLine.startsWith('Timestamp: ')) {
+      res.status(400).json({ error: 'Invalid message format (bad field shapes)' })
+      return
+    }
+
+    // Host binding: the message must claim THIS API's host. Otherwise a
+    // sig produced for mirror A is replayable on mirror B. The host
+    // string is taken from the request's Host header (req.headers.host
+    // includes port; matches the FE's window.location.host). We sit
+    // behind nginx with a fixed server_name and Express trust-proxy
+    // resolves the real client-facing host correctly.
+    //
+    // In development the FE and API run on different ports
+    // (Vite at :5173, API at :4000) — the FE proxies requests through
+    // Vite's dev server, so req.headers.host on the API side is the
+    // FE's host:port. The wallet sees window.location.host which is
+    // the same. They line up.
+    const claimedHost = hostLine.slice('Host: '.length).trim().toLowerCase()
+    const expectedHost = ((req.headers.host as string | undefined) || '').toLowerCase()
+    if (!expectedHost || claimedHost !== expectedHost) {
+      res.status(400).json({ error: 'Message host does not match this API origin' })
+      return
+    }
+
+    const claimedChainId = chainIdLine.slice('ChainId: '.length).trim()
+    if (!/^\d+$/.test(claimedChainId)) {
+      res.status(400).json({ error: 'Invalid chainId in message' })
+      return
+    }
+
     // Validate timestamp freshness
-    const timestampStr = message.slice(MESSAGE_PREFIX.length)
+    const timestampStr = timestampLine.slice('Timestamp: '.length).trim()
     const timestamp = parseInt(timestampStr)
     if (isNaN(timestamp)) {
       res.status(400).json({ error: 'Invalid timestamp in message' })
