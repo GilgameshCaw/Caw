@@ -2184,7 +2184,7 @@ const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess, placehol
                     />
                   </div>
                   <div
-                    className={`hidden md:block absolute z-50 right-0 ${replyTo ? 'bottom-full mb-2' : 'top-full mt-2'}`}
+                    className={`hidden md:block absolute z-50 ${replyTo ? 'bottom-full mb-2' : 'top-full mt-2'}`}
                     style={{ width: 'min(520px, calc(100vw - 2rem))' }}
                   >
                     <GifPicker
@@ -2257,7 +2257,7 @@ const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess, placehol
                           {grid}
                         </div>
                         <div
-                          className={`hidden md:block absolute z-50 right-0 p-3 border rounded-xl shadow-2xl ${
+                          className={`hidden md:block absolute z-50 p-3 border rounded-xl shadow-2xl ${
                             replyTo ? 'bottom-full mb-2' : 'top-full mt-2'
                           } ${
                             isDark ? 'border-white/10 bg-black' : 'border-gray-200 bg-white'
