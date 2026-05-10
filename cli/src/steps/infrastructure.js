@@ -262,6 +262,11 @@ export async function collectInfraLate(nodeType) {
     return {}
   }
 
+  // ffmpeg is needed by the API for first-frame video previews on OG
+  // share cards. Best-effort install — silently degrades to the avatar
+  // fallback if the install fails or we're not on apt.
+  ensureFfmpegInstalled()
+
   // Infra mode is set by install.sh before we run; we just honor it here.
   // Map the shell's three modes into the legacy `useDocker` value the rest
   // of the CLI passes around.
@@ -873,6 +878,35 @@ function installDockerApt(apt) {
     }
   }
   console.log(success('  Docker installed.'))
+}
+
+// Make sure ffmpeg is available — the OG-card renderer uses it to
+// extract a first frame from caw videos for the share-card thumbnail.
+// Skips silently when:
+//   • we're not on an apt-based distro (e.g. macOS in dev — operator's
+//     own brew install handles it), OR
+//   • ffmpeg is already installed.
+// Best-effort: a failure here only degrades video previews to the
+// avatar fallback, so we log a warn and keep going rather than aborting
+// the install.
+function ensureFfmpegInstalled() {
+  if (spawnSync('ffmpeg', ['-version'], { stdio: 'ignore' }).status === 0) return
+  const apt = detectApt()
+  if (!apt) {
+    if (process.platform === 'darwin') {
+      console.log(dim('  ffmpeg not found — video first-frame previews on share cards will fall back to the avatar.'))
+      console.log(dim('  Install with: brew install ffmpeg'))
+    }
+    return
+  }
+  console.log(dim('  Installing ffmpeg (used for video first-frame previews on share cards)…'))
+  try {
+    execSync(`${apt.sudoPrefix}apt-get install -y -qq ffmpeg`, { stdio: 'pipe', shell: '/bin/bash' })
+    console.log(success('  ffmpeg installed.'))
+  } catch (e) {
+    console.log(warn(`  ffmpeg install failed: ${e.message?.slice(0, 200) || e}`))
+    console.log(dim('  Video share cards will fall back to the avatar. You can install manually with: sudo apt-get install -y ffmpeg'))
+  }
 }
 
 // Auto-derive a service name from the operator's identity so multiple CAW
