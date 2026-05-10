@@ -123,7 +123,14 @@ async function cawMeta(idStr: string): Promise<Meta | null> {
     where: { id },
     select: { id: true, status: true },
   })
-  if (!caw || caw.status !== 'SUCCESS') return null
+  // PENDING is publicly visible (the FE shows pending posts in author
+  // feeds and the share button surfaces them right after submit), so
+  // OG crawlers must see them too. The /api/og/image/caw/:id route
+  // already renders PENDING — this gate was the missing piece, which
+  // caused fresh caws to fall through to the default share image
+  // until the indexer flipped them to SUCCESS minutes later.
+  // FAILED / HIDDEN stay private (return null → default meta).
+  if (!caw || (caw.status !== 'SUCCESS' && caw.status !== 'PENDING')) return null
   return {
     title: BRAND_TITLE,
     description: '',
