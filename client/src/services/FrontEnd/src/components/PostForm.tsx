@@ -2203,19 +2203,30 @@ const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess, placehol
                     const rect = gifButtonRef.current?.getBoundingClientRect()
                     if (!rect) return null
                     const popoverW = Math.min(520, window.innerWidth - 32)
-                    // Anchor popover left edge to button left edge, but
-                    // clamp inside the viewport with 16px margin on
-                    // either side.
-                    const left = Math.max(16, Math.min(rect.left, window.innerWidth - popoverW - 16))
-                    return createPortal(
-                      <div
-                        className="hidden md:block fixed z-[100]"
-                        style={{
-                          left,
+                    // Approximate popover height for fit-test. GifPicker
+                    // is ~480px tall in its full layout — close enough
+                    // to decide between hanging-down vs centered. If
+                    // hanging down would clip the bottom, center on the
+                    // viewport instead (covers the modal-near-bottom
+                    // case where rect.bottom is already near viewport).
+                    const POPOVER_H = 480
+                    const overflowsBottom = rect.bottom + 8 + POPOVER_H > window.innerHeight - 16
+                    const style: React.CSSProperties = overflowsBottom
+                      ? {
+                          left: '50%',
+                          top: '50%',
+                          transform: 'translate(-50%, -50%)',
+                          width: popoverW,
+                          maxHeight: 'calc(100vh - 32px)',
+                          overflowY: 'auto',
+                        }
+                      : {
+                          left: Math.max(16, Math.min(rect.left, window.innerWidth - popoverW - 16)),
                           top: rect.bottom + 8,
                           width: popoverW,
-                        }}
-                      >
+                        }
+                    return createPortal(
+                      <div className="hidden md:block fixed z-[100]" style={style}>
                         <GifPicker
                           initialQuery={gifSearchQuery(text)}
                           onSelect={handleGifSelected}
@@ -2282,7 +2293,23 @@ const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess, placehol
                     )
                     const rect = emojiButtonRef.current?.getBoundingClientRect()
                     const popoverW = Math.min(420, typeof window !== 'undefined' ? window.innerWidth - 32 : 420)
-                    const left = rect ? Math.max(16, Math.min(rect.left, window.innerWidth - popoverW - 16)) : 0
+                    // Emoji picker is short (~220px), but mirror the
+                    // GifPicker fit-test for consistency: if hanging
+                    // down would clip, center it instead.
+                    const POPOVER_H = 220
+                    const overflowsBottom = !!rect && rect.bottom + 8 + POPOVER_H > window.innerHeight - 16
+                    const desktopStyle: React.CSSProperties = overflowsBottom
+                      ? {
+                          left: '50%',
+                          top: '50%',
+                          transform: 'translate(-50%, -50%)',
+                          width: popoverW,
+                        }
+                      : {
+                          left: rect ? Math.max(16, Math.min(rect.left, window.innerWidth - popoverW - 16)) : 0,
+                          top: rect ? rect.bottom + 8 : 0,
+                          width: popoverW,
+                        }
                     return (
                       <>
                         <div
@@ -2297,11 +2324,7 @@ const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess, placehol
                             className={`hidden md:block fixed z-[100] p-3 border rounded-xl shadow-2xl ${
                               isDark ? 'border-white/10 bg-black' : 'border-gray-200 bg-white'
                             }`}
-                            style={{
-                              left,
-                              top: rect.bottom + 8,
-                              width: popoverW,
-                            }}
+                            style={desktopStyle}
                           >
                             {grid}
                           </div>,
