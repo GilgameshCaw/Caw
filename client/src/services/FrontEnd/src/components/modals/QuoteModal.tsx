@@ -1,10 +1,9 @@
-import { getUserAvatar } from "~/utils/defaultAvatar"
 // src/components/QuoteModal.tsx
 import React from 'react'
 import PostForm from '~/components/PostForm'
 import ContentWithHashtags from '~/components/ContentWithHashtags'
 import PollMiniResults from '~/components/PollMiniResults'
-import Avatar from '~/components/Avatar'
+import { UserAvatar } from '~/components/Avatar'
 import type { CawItem } from '~/types'
 import ModalWrapper from './ModalWrapper'
 import ModalHeader from './ModalHeader'
@@ -89,8 +88,8 @@ export const QuoteModal: React.FC<QuoteModalProps> = ({ isOpen, caw, onClose, on
           {/* User info row */}
           <div className="flex items-center gap-3 mb-3">
             {/* Avatar */}
-            <Avatar
-              src={getUserAvatar(caw.user)}
+            <UserAvatar
+              user={caw.user}
               alt={`${caw.user.username} avatar`}
               className="w-10 h-10 rounded-full"
               size="small"

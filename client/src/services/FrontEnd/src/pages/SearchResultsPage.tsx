@@ -5,8 +5,7 @@ import Feed from '~/components/Feed'
 import { useTheme } from '~/hooks/useTheme'
 import { HiUsers, HiHashtag, HiCollection } from 'react-icons/hi'
 import { useMutePreferences } from '~/hooks/useMutePreferences'
-import { getUserAvatar } from '~/utils/defaultAvatar'
-import Avatar from '~/components/Avatar'
+import { UserAvatar } from '~/components/Avatar'
 import { useT } from '~/i18n/I18nProvider'
 
 interface SearchResults {
@@ -193,8 +192,8 @@ const SearchResultsPage: React.FC<SearchResultsPageProps> = ({ defaultTab = 'all
                     }`}
                   >
                     <div className="flex items-center space-x-3">
-                      <Avatar
-                        src={getUserAvatar(user)}
+                      <UserAvatar
+                        user={user}
                         alt={user.username}
                         className="w-10 h-10 rounded-full"
                         size="small"

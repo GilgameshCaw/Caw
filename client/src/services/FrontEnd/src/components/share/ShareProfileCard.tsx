@@ -8,10 +8,14 @@ export type ShareProfileCardProps = {
   username: string
   displayName?: string
   avatarSrc: string
+  /** See <Avatar fallbackSrc> — the deterministic default avatar URL
+   *  used when the custom upload 404s, so the share card never shows
+   *  the generic silhouette. */
+  avatarFallbackSrc?: string
   profilePath: string
 }
 
-export const ShareProfileCard: React.FC<ShareProfileCardProps> = ({ username, displayName, avatarSrc, profilePath }) => {
+export const ShareProfileCard: React.FC<ShareProfileCardProps> = ({ username, displayName, avatarSrc, avatarFallbackSrc, profilePath }) => {
   const { isDark } = useTheme()
   const [qrDataUrl, setQrDataUrl] = React.useState<string | null>(null)
   const profileUrl = `${window.location.origin}${profilePath}`
@@ -120,7 +124,7 @@ export const ShareProfileCard: React.FC<ShareProfileCardProps> = ({ username, di
 
           <div className="flex flex-col items-center">
             <div className="w-20 h-20 rounded-full overflow-hidden">
-              <Avatar src={avatarSrc} alt={displayName ?? username} className="w-full h-full" size="small" />
+              <Avatar src={avatarSrc} fallbackSrc={avatarFallbackSrc} alt={displayName ?? username} className="w-full h-full" size="small" />
             </div>
             <p className={['mt-4 text-3xl font-black tracking-tight text-center', isDark ? 'text-white' : 'text-gray-900'].join(' ')}>
               {displayName ?? `@${username}`}

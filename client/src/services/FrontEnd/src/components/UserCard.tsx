@@ -3,8 +3,7 @@ import { Link } from 'react-router-dom'
 import { HiOutlineX } from 'react-icons/hi'
 import { useTheme } from '~/hooks/useTheme'
 import { FollowButton } from './FollowButton'
-import Avatar from '~/components/Avatar'
-import { getUserAvatar } from '~/utils/defaultAvatar'
+import { UserAvatar } from '~/components/Avatar'
 import { useT } from '~/i18n/I18nProvider'
 import { useTokenDataStore } from '~/store/tokenDataStore'
 
@@ -100,7 +99,7 @@ const UserCard: React.FC<UserCardProps> = ({
 
       <Link to={`/users/${user.username}`} className="block text-center">
         <div className="w-16 h-16 rounded-full mx-auto mb-1 overflow-hidden">
-          <Avatar src={getUserAvatar(user)} alt={user.username} size="small" />
+          <UserAvatar user={user} alt={user.username} size="small" />
         </div>
 
         <p className={`font-medium truncate ${isDark ? 'text-white' : 'text-gray-900'}`}>

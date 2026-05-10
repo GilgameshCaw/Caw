@@ -11,6 +11,9 @@ type ShareProfileCardModalProps = {
   username: string
   displayName?: string
   avatarSrc: string
+  /** Pass the user's deterministic default avatar URL so the share
+   *  card never surfaces the broken-image silhouette. */
+  avatarFallbackSrc?: string
   profilePath: string
 }
 
@@ -20,6 +23,7 @@ export const ShareProfileCardModal: React.FC<ShareProfileCardModalProps> = ({
   username,
   displayName,
   avatarSrc,
+  avatarFallbackSrc,
   profilePath
 }) => {
   const { isDark } = useTheme()
@@ -74,6 +78,7 @@ export const ShareProfileCardModal: React.FC<ShareProfileCardModalProps> = ({
               username={username}
               displayName={displayName}
               avatarSrc={avatarSrc}
+              avatarFallbackSrc={avatarFallbackSrc}
               profilePath={profilePath}
             />
           </div>

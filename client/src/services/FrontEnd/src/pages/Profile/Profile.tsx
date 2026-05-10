@@ -1,4 +1,4 @@
-import { getUserAvatar } from "~/utils/defaultAvatar"
+import { getUserAvatar, getDefaultAvatarForUser } from "~/utils/defaultAvatar"
 import Avatar from "~/components/Avatar"
 // src/pages/ProfilePage.tsx
 import React, { useState, useEffect, useRef } from 'react'
@@ -964,6 +964,7 @@ export const Profile: React.FC = () => {
               {profileData && (
                 <Avatar
                   src={optimisticAvatar || getUserAvatar(profileData)}
+                  fallbackSrc={getDefaultAvatarForUser(profileData)}
                   alt={`${profileData.username || displayUsername} avatar`}
                   className="w-full h-full rounded-full"
                 />
@@ -1655,6 +1656,7 @@ export const Profile: React.FC = () => {
         username={profileData?.username || displayUsername}
         displayName={profileData?.displayName}
         avatarSrc={getUserAvatar(profileData ?? { tokenId: activeTokenId || 1 })}
+        avatarFallbackSrc={getDefaultAvatarForUser(profileData ?? { tokenId: activeTokenId || 1 })}
         profilePath={`/users/${profileData?.username || displayUsername}`}
       />
 

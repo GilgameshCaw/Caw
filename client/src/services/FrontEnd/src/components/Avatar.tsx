@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react'
 import { useTheme } from '~/hooks/useTheme'
 import { avatarThumbUrl } from '~/utils/imageVariants'
+import { getUserAvatar, getDefaultAvatarForUser } from '~/utils/defaultAvatar'
 
 interface AvatarProps {
   src: string
@@ -17,13 +18,25 @@ interface AvatarProps {
    * callsite to "small" is opt-in.
    */
   size?: 'small' | 'large'
+  /**
+   * Optional second-tier fallback. When `src` (and its thumb) both 404 we
+   * try this URL once before giving up to the silhouette. Use it to point
+   * at the user's deterministic default avatar (per-user `defaultAvatarId`
+   * picture) so a broken custom upload never surfaces the generic
+   * silhouette in feed items / comments / lists.
+   *
+   * Skipped if equal to `src` (avoids an infinite retry on a default
+   * avatar that's itself missing — e.g. early dev with no /images/avatars
+   * payload).
+   */
+  fallbackSrc?: string
 }
 
 /**
  * Avatar image with broken-image fallback.
  * Shows a user-silhouette icon if the image fails to load.
  */
-const Avatar: React.FC<AvatarProps> = ({ src, alt = '', className = 'w-full h-full', size = 'large' }) => {
+const Avatar: React.FC<AvatarProps> = ({ src, alt = '', className = 'w-full h-full', size = 'large', fallbackSrc }) => {
   // Resolve the URL we WANT to render (thumb or main) up-front, then track
   // a "fell back to main" state so an onError on the thumb reroutes to the
   // main URL exactly once before showing the broken-state silhouette.
@@ -56,12 +69,60 @@ const Avatar: React.FC<AvatarProps> = ({ src, alt = '', className = 'w-full h-fu
       loading="eager"
       className={`${className} object-cover`}
       onError={() => {
-        // Thumb missing? Try the main URL once before giving up.
-        if (currentSrc !== src) setCurrentSrc(src)
-        else setBroken(true)
+        // Two-step recovery before the silhouette:
+        //   1. If we're rendering the thumb variant, try the main URL.
+        //   2. If the main URL ALSO 404s and a fallbackSrc is provided
+        //      (and isn't already what we tried), use it.
+        // Only after both fail do we render the broken-state silhouette.
+        if (currentSrc !== src) {
+          setCurrentSrc(src)
+          return
+        }
+        if (fallbackSrc && fallbackSrc !== src) {
+          setCurrentSrc(fallbackSrc)
+          return
+        }
+        setBroken(true)
       }}
     />
   )
 }
+
+interface UserAvatarProps {
+  user?: {
+    avatarUrl?: string | null
+    image?: string | null
+    defaultAvatarId?: number | null
+    tokenId?: number
+    username?: string
+  } | null
+  alt?: string
+  className?: string
+  size?: 'small' | 'large'
+}
+
+/**
+ * User-aware Avatar wrapper. Resolves src + fallbackSrc from the user
+ * record so a broken custom upload silently degrades to the user's
+ * deterministic default avatar instead of the generic silhouette.
+ *
+ * Prefer this over `<Avatar src=...>` for any feed/list/comment/profile
+ * surface that renders a known user. Use raw <Avatar> only when the
+ * user identity isn't available (e.g. share-card preview from a URL).
+ */
+export const UserAvatar: React.FC<UserAvatarProps> = ({
+  user,
+  alt,
+  className,
+  size,
+}) => (
+  <Avatar
+    src={getUserAvatar(user)}
+    fallbackSrc={getDefaultAvatarForUser(user)}
+    alt={alt ?? (user?.username ? `${user.username} avatar` : '')}
+    className={className}
+    size={size}
+  />
+)
 
 export default Avatar

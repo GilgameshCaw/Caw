@@ -39,8 +39,7 @@ import { useTheme } from '~/hooks/useTheme'
 import { HiInformationCircle } from 'react-icons/hi'
 import { FollowButton } from '~/components/FollowButton'
 import cawLogo from '~/assets/images/caw-logo.png'
-import { getUserAvatar } from '~/utils/defaultAvatar'
-import Avatar from '~/components/Avatar'
+import { UserAvatar } from '~/components/Avatar'
 import BoidsBg from '~/components/BoidsBg'
 import LanguageSwitcher from '~/components/LanguageSwitcher'
 import UsernameSvg from '~/components/UsernameSvg'
@@ -1288,8 +1287,8 @@ const PostMintOnboarding: React.FC<PostMintOnboardingProps> = ({ username, token
                     >
                       <a href={`/users/${user.username}`} onClick={(e) => { e.preventDefault(); onComplete?.(); window.location.href = `/users/${user.username}` }} className="block text-center cursor-pointer">
                         <div className={`w-14 h-14 rounded-full mx-auto mb-2 overflow-hidden border ${tc.avatarBorder}`}>
-                          <Avatar
-                            src={getUserAvatar(user)}
+                          <UserAvatar
+                            user={user}
                             alt={user.username}
                             className="w-full h-full"
                             size="small"

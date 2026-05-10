@@ -1,11 +1,10 @@
-import { getUserAvatar } from "~/utils/defaultAvatar"
 // src/components/CommentModal.tsx
 import React from 'react'
 import type { CawItem } from '~/types'
 import PostForm from '~/components/PostForm'
 import ContentWithHashtags from '~/components/ContentWithHashtags'
 import PollMiniResults from '~/components/PollMiniResults'
-import Avatar from '~/components/Avatar'
+import { UserAvatar } from '~/components/Avatar'
 import { useTheme } from '~/hooks/useTheme'
 import { useT } from '~/i18n/I18nProvider'
 import ModalWrapper from './ModalWrapper'
@@ -41,8 +40,8 @@ export const CommentModal: React.FC<CommentModalProps> = ({ isOpen, caw, onClose
       {/* Original Caw */}
       <div className={`px-4 pt-4 ${isDark ? 'text-white' : 'text-black'}`}>
         <div className="flex items-start space-x-3">
-          <Avatar
-            src={getUserAvatar(caw.user)}
+          <UserAvatar
+            user={caw.user}
             alt={`${caw.user.username} avatar`}
             className="w-10 h-10 rounded-full"
             size="small"

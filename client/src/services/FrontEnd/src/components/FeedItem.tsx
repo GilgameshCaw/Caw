@@ -1,4 +1,4 @@
-import { getUserAvatar } from "~/utils/defaultAvatar"
+import { getUserAvatar, getDefaultAvatarForUser } from "~/utils/defaultAvatar"
 import Avatar from "~/components/Avatar"
 import { ThumbtackIcon } from "~/components/icons/ThumbtackIcon"
 // src/components/FeedItem.tsx - UPDATED FOR CONSISTENCY
@@ -1235,6 +1235,7 @@ const FeedItem: React.FC<{ item: CawItem; isMainPost?: boolean; isReply?: boolea
               >
                 <Avatar
                   src={getUserAvatar(useItem.user)}
+                  fallbackSrc={getDefaultAvatarForUser(useItem.user)}
                   alt={`${useItem.user.username} avatar`}
                   className="w-full h-full rounded-full hover:opacity-80 transition-opacity duration-200"
                   size="small"
@@ -1642,6 +1643,7 @@ const FeedItem: React.FC<{ item: CawItem; isMainPost?: boolean; isReply?: boolea
                 <div className="flex items-center gap-2 mb-1.5">
                   <Avatar
                     src={getUserAvatar(item.parent.user)}
+                    fallbackSrc={getDefaultAvatarForUser(item.parent.user)}
                     className="w-5 h-5 rounded-full border border-gray-700"
                     size="small"
                   />

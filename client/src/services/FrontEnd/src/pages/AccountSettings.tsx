@@ -10,8 +10,7 @@ import { HiArrowLeft, HiClipboard, HiCheck, HiExternalLink, HiCurrencyDollar, Hi
 import { formatCAWAmount } from '~/utils/numberFormat'
 import ModalWrapper from '~/components/modals/ModalWrapper'
 import Tooltip from '~/components/Tooltip'
-import { getUserAvatar } from '~/utils/defaultAvatar'
-import Avatar from '~/components/Avatar'
+import { UserAvatar } from '~/components/Avatar'
 import XLogo from '~/components/icons/x-logo.svg?react'
 import { apiFetch, API_HOST, AuthError } from '~/api/client'
 import { useFollowerCounts } from '~/hooks/useFollowerCounts'
@@ -777,8 +776,8 @@ const AccountSettings: React.FC = () => {
                           aria-current={isActive ? 'true' : undefined}
                           className={`flex items-center gap-3 flex-1 text-left ${isActive ? 'cursor-default' : 'cursor-pointer'}`}
                         >
-                          <Avatar
-                            src={getUserAvatar(token)}
+                          <UserAvatar
+                            user={token}
                             alt={token.username}
                             className="w-10 h-10 rounded-full"
                             size="small"

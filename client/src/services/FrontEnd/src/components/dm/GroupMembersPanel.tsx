@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react'
 import { apiFetch } from '~/api/client'
 import { useTheme } from '~/hooks/useTheme'
 import type { UiParticipant } from '~/hooks/useDm'
-import { getUserAvatar } from '~/utils/defaultAvatar'
+import { UserAvatar } from '~/components/Avatar'
 
 type Invite = {
   id: string
@@ -174,7 +174,7 @@ export default function GroupMembersPanel(props: Props) {
         <ul className="space-y-2 mb-6">
           {members.map(m => (
             <li key={m.userId} className="flex items-center gap-2">
-              <img src={getUserAvatar(m.identity.user)} alt="" className="w-8 h-8 rounded-full" />
+              <UserAvatar user={m.identity.user} className="w-8 h-8 rounded-full" size="small" />
               <div className="flex-1">
                 <div className="text-sm">{m.identity.user.displayName || m.identity.user.username}</div>
                 <div className={`text-xs ${muted}`}>@{m.identity.user.username}{m.role === 'OWNER' ? ' • owner' : ''}</div>
@@ -208,7 +208,7 @@ export default function GroupMembersPanel(props: Props) {
                         disabled={!u.hasDmIdentity || busy}
                         className={`w-full flex items-center gap-2 px-3 py-2 text-left text-sm ${u.hasDmIdentity ? (isDark ? 'hover:bg-zinc-800' : 'hover:bg-zinc-100') : 'opacity-50 cursor-not-allowed'}`}
                       >
-                        <img src={getUserAvatar(u)} alt="" className="w-7 h-7 rounded-full" />
+                        <UserAvatar user={u} className="w-7 h-7 rounded-full" size="small" />
                         <span>@{u.username}{!u.hasDmIdentity ? ' (no DMs)' : ''}</span>
                       </button>
                     ))}

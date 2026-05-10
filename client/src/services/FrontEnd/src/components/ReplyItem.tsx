@@ -8,7 +8,7 @@ import Pencil from '~/assets/images/pencil.svg?react';
 import Bookmark from '~/assets/images/bookmark.svg?react';
 import Share from '~/assets/images/share.svg?react';
 import Avatar from '~/components/Avatar';
-import { getUserAvatar } from '~/utils/defaultAvatar';
+import { getUserAvatar, getDefaultAvatarForUser } from '~/utils/defaultAvatar';
 import { useTokenDataStore } from '~/store/tokenDataStore'
 import { useModalStore } from '~/store/modalStore'
 import { Link } from 'react-router-dom'
@@ -171,6 +171,7 @@ const ReplyItem: React.FC<{ item: CawItem; onLikeStateChange?: (cawId: string, l
           >
             <Avatar
               src={getUserAvatar(item.user)}
+              fallbackSrc={getDefaultAvatarForUser(item.user)}
               alt={`${item.user.username} avatar`}
               className="w-full h-full rounded-full hover:opacity-80 transition-opacity duration-200"
               size="small"

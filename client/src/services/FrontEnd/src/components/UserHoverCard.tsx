@@ -3,8 +3,7 @@ import { Link } from 'react-router-dom'
 import { useUserByUsername } from '~/hooks/useUserData'
 import { useTheme } from '~/hooks/useTheme'
 import { useActiveToken } from '~/store/tokenDataStore'
-import { getUserAvatar } from '~/utils/defaultAvatar'
-import Avatar from './Avatar'
+import { UserAvatar } from './Avatar'
 import { FollowButton } from './FollowButton'
 
 const SHOW_DELAY = 300
@@ -57,7 +56,7 @@ const UserHoverCard: React.FC<Props> = ({ username, children }) => {
               <div className="flex items-start justify-between gap-2 mb-2">
                 <Link to={`/users/${user.username}`} className="block flex-shrink-0">
                   <div className="w-12 h-12 rounded-full overflow-hidden border border-gray-700">
-                    <Avatar src={getUserAvatar(user)} alt={user.username} size="small" className="w-full h-full rounded-full" />
+                    <UserAvatar user={user} alt={user.username} size="small" className="w-full h-full rounded-full" />
                   </div>
                 </Link>
                 {!isSelf && (

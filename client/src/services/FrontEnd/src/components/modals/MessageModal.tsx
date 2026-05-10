@@ -5,8 +5,7 @@ import ModalHeader from './ModalHeader'
 import { useTokenDataStore } from "~/store/tokenDataStore"
 import { useAccount } from "wagmi"
 import ModalWrapper from './ModalWrapper'
-import { getUserAvatar } from '~/utils/defaultAvatar'
-import Avatar from '~/components/Avatar'
+import { UserAvatar } from '~/components/Avatar'
 import { useT } from '~/i18n/I18nProvider'
 
 interface MessageModalProps {
@@ -67,8 +66,8 @@ export const MessageModal: React.FC<MessageModalProps> = ({ isOpen, recipient, o
 
       {/* Recipient Info */}
       <div className="flex items-center space-x-3 mb-6">
-        <Avatar
-          src={getUserAvatar({ tokenId: recipient.tokenId ?? Number(recipient.id) })}
+        <UserAvatar
+          user={{ tokenId: recipient.tokenId ?? Number(recipient.id), username: recipient.username }}
           alt={recipient.username}
           className="w-10 h-10 rounded-full"
           size="small"

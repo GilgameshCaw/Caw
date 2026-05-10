@@ -13,7 +13,7 @@ import { apiFetch } from "~/api/client";
 import { useHasActiveSession } from '~/hooks/useHasActiveSession';
 import { usePendingSpendStore } from '~/store/pendingSpendStore';
 import { useUserByUsername, useUserByToken } from '~/hooks/useUserData';
-import { getUserAvatar } from '~/utils/defaultAvatar';
+import { getUserAvatar, getDefaultAvatarForUser } from '~/utils/defaultAvatar';
 import Avatar from '~/components/Avatar';
 import { useQuickSignPromptStore } from '~/components/modals/QuickSignModal';
 import { useFollowerCounts } from '~/hooks/useFollowerCounts';
@@ -412,7 +412,11 @@ const ProfileChooser: React.FC<{ compact?: boolean }> = ({ compact = false }) =>
         className={`flex items-center cursor-pointer w-full min-w-0 ${compact ? 'px-1 py-0.5' : 'p-1'}`}
       >
         <div className={`rounded-full overflow-hidden border border-gray-700 flex-shrink-0 aspect-square ${compact ? 'w-11 h-11 mr-3' : 'w-[50px] h-[50px] m-3'}`}>
-          <Avatar src={avatars[selectedToken.tokenId] || getUserAvatar({ tokenId: selectedToken.tokenId })} size="small" />
+          <Avatar
+            src={avatars[selectedToken.tokenId] || getUserAvatar({ tokenId: selectedToken.tokenId })}
+            fallbackSrc={getDefaultAvatarForUser({ tokenId: selectedToken.tokenId })}
+            size="small"
+          />
         </div>
         <div className="text-left flex-1 min-w-0">
           <div className={compact ? 'h-1' : 'm-5'}>
@@ -564,7 +568,12 @@ const ProfileChooser: React.FC<{ compact?: boolean }> = ({ compact = false }) =>
                     >
                       <div className="flex items-center min-w-0">
                         <div className="rounded-full overflow-hidden w-8 h-8 mr-3 border border-gray-700 flex-shrink-0">
-                          <Avatar src={avatars[token.tokenId] || getUserAvatar({ tokenId: token.tokenId })} alt={token.username} size="small" />
+                          <Avatar
+                            src={avatars[token.tokenId] || getUserAvatar({ tokenId: token.tokenId })}
+                            fallbackSrc={getDefaultAvatarForUser({ tokenId: token.tokenId })}
+                            alt={token.username}
+                            size="small"
+                          />
                         </div>
                         <div className="min-w-0">
                           <div className="font-bold truncate">{token.username}</div>
@@ -629,7 +638,12 @@ const ProfileChooser: React.FC<{ compact?: boolean }> = ({ compact = false }) =>
                                 >
                                   <div className="flex items-center min-w-0">
                                     <div className="rounded-full overflow-hidden w-8 h-8 mr-3 border border-gray-700 flex-shrink-0">
-                                      <Avatar src={avatars[token.tokenId] || getUserAvatar({ tokenId: token.tokenId })} alt={token.username} size="small" />
+                                      <Avatar
+                                        src={avatars[token.tokenId] || getUserAvatar({ tokenId: token.tokenId })}
+                                        fallbackSrc={getDefaultAvatarForUser({ tokenId: token.tokenId })}
+                                        alt={token.username}
+                                        size="small"
+                                      />
                                     </div>
                                     <div className="min-w-0">
                                       <div className="font-bold truncate">{token.username}</div>

@@ -22,8 +22,7 @@ import { chains } from '~/config/chains'
 import { useTheme } from '~/hooks/useTheme'
 import { HiOutlineTrendingUp, HiOutlineTrendingDown, HiOutlineInformationCircle, HiQuestionMarkCircle } from 'react-icons/hi'
 import Tooltip from '~/components/Tooltip'
-import Avatar from '~/components/Avatar'
-import { getUserAvatar } from '~/utils/defaultAvatar'
+import { UserAvatar } from '~/components/Avatar'
 import QuickSignModal from '~/components/modals/QuickSignModal'
 import LayerZeroStatus from '~/components/LayerZeroStatus'
 import StakingRewardsInfo from '~/components/StakingRewardsInfo'
@@ -1053,8 +1052,8 @@ const Staking = () => {
               }`}
             >
               <div className="w-7 h-7 rounded-full overflow-hidden flex-shrink-0">
-                <Avatar
-                  src={getUserAvatar(activeProfile || { username: mockData.username, tokenId: mockData.tokenId })}
+                <UserAvatar
+                  user={activeProfile || { username: mockData.username, tokenId: mockData.tokenId }}
                   alt={mockData.username}
                   className="w-full h-full"
                   size="small"

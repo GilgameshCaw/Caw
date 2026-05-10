@@ -31,3 +31,19 @@ export function getUserAvatar(user?: {
 export function isDefaultAvatar(user?: { avatarUrl?: string | null } | null): boolean {
   return !user?.avatarUrl
 }
+
+/**
+ * Returns the user's deterministic default avatar URL, ignoring any
+ * custom avatarUrl/image. Use as `fallbackSrc` on <Avatar> so a broken
+ * custom upload falls through to the per-user default picture instead
+ * of the generic silhouette. Same resolution order as getUserAvatar
+ * minus the custom-URL branches.
+ */
+export function getDefaultAvatarForUser(user?: {
+  defaultAvatarId?: number | null
+  tokenId?: number
+} | null): string {
+  if (user?.defaultAvatarId) return getDefaultAvatarUrl(user.defaultAvatarId)
+  const id = user?.tokenId ? (user.tokenId % 100) + 1 : 1
+  return getDefaultAvatarUrl(id)
+}

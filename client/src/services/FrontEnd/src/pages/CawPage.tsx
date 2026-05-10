@@ -3,7 +3,7 @@ import { useParams, Link, useSearchParams, useNavigate, useLocation } from 'reac
 import { useT } from '~/i18n/I18nProvider'
 import PostForm from "~/components/PostForm";
 import FeedItem from '~/components/FeedItem'
-import Avatar from '~/components/Avatar'
+import { UserAvatar } from '~/components/Avatar'
 import { apiFetch, RemovedCawError } from '~/api/client'
 import type { CawItem } from '~/types'
 import { useTheme } from '~/hooks/useTheme'
@@ -11,7 +11,6 @@ import { useTokenDataStore, useActiveToken } from '~/store/tokenDataStore'
 import { HiArrowLeft, HiChevronRight } from 'react-icons/hi'
 import SignInModal from '~/components/modals/SignInModal'
 import { usePendingPostsStore } from '~/store/pendingPostsStore'
-import { getUserAvatar } from '~/utils/defaultAvatar'
 import { formatTimeAgo } from '~/utils/formatTimeAgo'
 
 type IndicatorUser = {
@@ -525,7 +524,7 @@ export const CawPage: React.FC = () => {
                             className="flex items-center gap-3 hover:underline"
                           >
                             <div className="w-9 h-9 rounded-full overflow-hidden flex-shrink-0 border border-gray-700">
-                              <Avatar src={getUserAvatar(l.user)} alt={t('caw_page.user_avatar_alt', { username: l.user.username })} className="w-full h-full rounded-full" size="small" />
+                              <UserAvatar user={l.user} alt={t('caw_page.user_avatar_alt', { username: l.user.username })} className="w-full h-full rounded-full" size="small" />
                             </div>
                             <div className="min-w-0">
                               <div className={`text-sm font-semibold truncate ${isDark ? 'text-white' : 'text-black'}`}>
@@ -580,7 +579,7 @@ export const CawPage: React.FC = () => {
                             className="flex items-center gap-3 hover:underline"
                           >
                             <div className="w-9 h-9 rounded-full overflow-hidden flex-shrink-0 border border-gray-700">
-                              <Avatar src={getUserAvatar(r.user)} alt={t('caw_page.user_avatar_alt', { username: r.user.username })} className="w-full h-full rounded-full" size="small" />
+                              <UserAvatar user={r.user} alt={t('caw_page.user_avatar_alt', { username: r.user.username })} className="w-full h-full rounded-full" size="small" />
                             </div>
                             <div className="min-w-0">
                               <div className={`text-sm font-semibold truncate ${isDark ? 'text-white' : 'text-black'}`}>
@@ -633,7 +632,7 @@ export const CawPage: React.FC = () => {
                             className="flex items-center gap-3 hover:underline"
                           >
                             <div className="w-9 h-9 rounded-full overflow-hidden flex-shrink-0 border border-gray-700">
-                              <Avatar src={getUserAvatar(tp.user)} alt={t('caw_page.user_avatar_alt', { username: tp.user.username })} className="w-full h-full rounded-full" size="small" />
+                              <UserAvatar user={tp.user} alt={t('caw_page.user_avatar_alt', { username: tp.user.username })} className="w-full h-full rounded-full" size="small" />
                             </div>
                             <div className="min-w-0 flex-1">
                               <div className={`text-sm font-semibold truncate ${isDark ? 'text-white' : 'text-black'}`}>
