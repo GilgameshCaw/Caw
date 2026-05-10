@@ -13,7 +13,7 @@ import {
 import { recoverAddressFromCanonical } from '../../services/InstanceRegistryService/envelopeCrypto'
 import { getPeers } from '../../services/InstanceRegistryService'
 import { checkDmRate } from '../dmRateLimit'
-import { verifyDmIdentityProof, verifyDmSenderSig } from '../dmSenderSig'
+import { verifyDmSenderSig } from '../dmSenderSig'
 import crypto from 'crypto'
 
 const CLIENT_ID = (() => {
@@ -32,7 +32,7 @@ router.post('/identity',
   requireAuth({ field: 'userId', verifyOwnership: true }),
   async (req: Request, res: Response) => {
     try {
-      const { userId, walletAddress, publicKey, walletProof } = req.body
+      const { userId, walletAddress, publicKey } = req.body
       if (!userId || !walletAddress || !publicKey) {
         return res.status(400).json({ error: 'userId, walletAddress, and publicKey are required' })
       }
@@ -43,22 +43,7 @@ router.post('/identity',
         return res.status(403).json({ error: 'Wallet address does not match the owner of this token' })
       }
 
-      // Verify the wallet-signed proof of (userId, publicKey, walletAddress).
-      // This ride-along proof gets forwarded to peer mirrors so they can
-      // verify directly against the wallet rather than trusting the
-      // source instance's claim. Optional during the FE migration window
-      // — a missing proof persists null and downstream verifiers treat
-      // the identity as unproven. Audit fix 2026-05-09 (Round 7 #1c).
-      let validatedProof: string | null = null
-      if (walletProof && typeof walletProof === 'string') {
-        const ok = await verifyDmIdentityProof(Number(userId), publicKey, walletAddress, walletProof)
-        if (!ok) {
-          return res.status(400).json({ error: 'walletProof did not recover to walletAddress' })
-        }
-        validatedProof = walletProof
-      }
-
-      const identity = await dmService.registerIdentity(Number(userId), walletAddress, publicKey, validatedProof)
+      const identity = await dmService.registerIdentity(Number(userId), walletAddress, publicKey)
 
       // Fan out to peer instances so other nodes' DmIdentity tables stay
       // in sync. Mirrors are otherwise blind to a user's DM-enable until
@@ -71,7 +56,6 @@ router.post('/identity',
         userId: Number(userId),
         walletAddress,
         publicKey,
-        walletProof: validatedProof,
       }).catch(err => {
         console.warn('[DM] identity relay failed (continuing):', err?.message || err)
       })
@@ -95,7 +79,7 @@ router.post('/identity',
 // order matching doesn't capture "relay" as a userId.
 router.post('/identity/relay', async (req: Request, res: Response) => {
   try {
-    const { userId, walletAddress, publicKey, walletProof, timestamp, sourceInstanceId, signature } = req.body
+    const { userId, walletAddress, publicKey, timestamp, sourceInstanceId, signature } = req.body
     if (
       userId == null || !walletAddress || !publicKey ||
       !timestamp || sourceInstanceId == null || !signature
@@ -155,40 +139,7 @@ router.post('/identity/relay', async (req: Request, res: Response) => {
       })
     }
 
-    // Verify the relayed walletProof against the claimed
-    // (userId, publicKey, walletAddress) — this is the strong check
-    // that defeats CL-2 (permissionless instance forging identity).
-    // Without proof, a malicious source could still pre-register a
-    // pubkey for any userId before the legitimate user does. With
-    // proof, the receiver verifies directly against the wallet, not
-    // the source instance. Optional during the FE migration window
-    // — a missing proof persists null and message-verify falls back
-    // to the lower-trust path. Audit fix 2026-05-09 (Round 7 #1c).
-    let validatedProof: string | null = null
-    if (walletProof && typeof walletProof === 'string') {
-      const ok = await verifyDmIdentityProof(Number(userId), publicKey, walletAddress, walletProof)
-      if (!ok) {
-        return res.status(400).json({ error: 'walletProof did not recover to walletAddress' })
-      }
-      validatedProof = walletProof
-    }
-
-    // Defense-in-depth: refuse to OVERWRITE a row that already has a
-    // valid walletProof with a row that doesn't (downgrade attack).
-    // Once a user has registered a wallet-proven identity, no
-    // unauthenticated relay can clobber it.
-    const existing = await prisma.dmIdentity.findUnique({
-      where: { userId: Number(userId) },
-      select: { walletProof: true, publicKey: true },
-    })
-    if (existing?.walletProof && !validatedProof && existing.publicKey !== publicKey) {
-      return res.status(403).json({
-        error: 'Cannot overwrite proven identity with unproven relay',
-        userId: Number(userId),
-      })
-    }
-
-    await dmService.registerIdentity(Number(userId), walletAddress, publicKey, validatedProof)
+    await dmService.registerIdentity(Number(userId), walletAddress, publicKey)
     return res.json({ status: 'synced', userId: Number(userId) })
   } catch (error: any) {
     console.error('[DM Identity Relay] Error:', error.message)

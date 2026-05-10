@@ -93,51 +93,6 @@ export function verifyDmSenderSig(
 }
 
 /**
- * Canonical message a wallet personal_signs to authorize a publicKey
- * as its DM signing key. Cross-instance identity-relay forwards the
- * proof unchanged so peer mirrors can verify against the wallet
- * directly — they don't have to trust the source instance's claim.
- *
- * The message is intentionally simple (no chainId/timestamp/origin
- * binding): a CAW DM identity is meant to be portable across mirrors
- * and chains by design, so binding to a specific instance would defeat
- * the cross-mirror UX. The replay surface is bounded — the only thing
- * an attacker can do with a captured proof is re-register the same
- * (userId, publicKey) tuple, which is already what the legitimate
- * owner did.
- *
- * Audit fix 2026-05-09 (Round 7 #1c).
- */
-export function canonicalDmIdentityProofMessage(userId: number, publicKey: string): string {
-  const cleanPub = publicKey.startsWith('0x') ? publicKey.slice(2) : publicKey
-  return `CAW DM identity\nuserId:${userId}\npublicKey:${cleanPub.toLowerCase()}`
-}
-
-/**
- * Verify the wallet-signed proof of a DmIdentity registration. Returns
- * true iff the proof recovers to walletAddress for the given (userId,
- * publicKey) tuple. Used both at the local register entry point AND on
- * cross-instance identity-relay receive — the same proof travels
- * through unchanged so every mirror checks against the wallet, not the
- * source instance.
- */
-export async function verifyDmIdentityProof(
-  userId: number,
-  publicKey: string,
-  walletAddress: string,
-  proof: string,
-): Promise<boolean> {
-  if (!proof || !walletAddress) return false
-  try {
-    const { verifyMessage } = await import('ethers')
-    const recovered = verifyMessage(canonicalDmIdentityProofMessage(userId, publicKey), proof).toLowerCase()
-    return recovered === walletAddress.toLowerCase()
-  } catch {
-    return false
-  }
-}
-
-/**
  * Derive an Ethereum address from a compressed secp256k1 public key
  * (33 bytes, hex-encoded). Matches the DmIdentity.publicKey shape that
  * DmCryptoService produces via secp256k1.getPublicKey(privKey, true).

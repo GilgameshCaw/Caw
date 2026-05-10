@@ -197,14 +197,6 @@ export async function relayDmIdentityToPeers(params: {
   userId: number
   walletAddress: string
   publicKey: string
-  /**
-   * Wallet-signed proof of the (userId, publicKey, walletAddress)
-   * triple. Forwarded unchanged so peer mirrors can verify directly
-   * against the wallet rather than trusting THIS node's relay-sig
-   * claim. Optional during the FE migration window. Audit fix
-   * 2026-05-09 (Round 7 #1c).
-   */
-  walletProof?: string | null
 }): Promise<{ attempted: number }> {
   const privateKey = getPrivateKey()
   if (!privateKey) return { attempted: 0 }
@@ -235,7 +227,7 @@ export async function relayDmIdentityToPeers(params: {
     return { attempted: 0 }
   }
 
-  const body = JSON.stringify({ ...envelope, signature, walletProof: params.walletProof ?? null })
+  const body = JSON.stringify({ ...envelope, signature })
 
   for (const peer of peers) {
     fetch(`${peer.apiUrl}/api/dm/identity/relay`, {
