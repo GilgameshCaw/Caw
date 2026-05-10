@@ -23,7 +23,7 @@ import 'dotenv/config'
 import { z } from 'zod'
 import { ethers } from 'ethers'
 import Redis from 'ioredis'
-import { makeJsonRpcProvider, getL1HttpRpcUrl } from '../../utils/rpcProvider'
+import { makeJsonRpcProvider, getL1HttpRpcUrl, redactRpcUrl } from '../../utils/rpcProvider'
 import { Service } from '../../Service'
 import { prisma } from '../../prismaClient'
 import { CAW_NAMES_ADDRESS } from '../../abi/addresses'
@@ -90,7 +90,7 @@ export const depositWatcherService: Service = {
 
       const provider = makeJsonRpcProvider(rpcUrl, cfg.chainId)
       const contract = new ethers.Contract(contractAddress, DEPOSITED_ABI, provider)
-      console.log(`[DepositWatcher] Started — clientId=${CAW_CLIENT_ID}, contract=${contractAddress}, chainId=${cfg.chainId}, rpc=${rpcUrl.slice(0, 40)}...`)
+      console.log(`[DepositWatcher] Started — clientId=${CAW_CLIENT_ID}, contract=${contractAddress}, chainId=${cfg.chainId}, rpc=${redactRpcUrl(rpcUrl)}`)
 
       const cpKey = checkpointKey(cfg.chainId, contractAddress)
       let lastBlock: number

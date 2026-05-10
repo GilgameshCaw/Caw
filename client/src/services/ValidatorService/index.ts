@@ -15,7 +15,7 @@ import { tryClaimChallengeLock, releaseChallengeLock } from '../../utils/challen
 import { foldCheckpointHashes } from '../../utils/foldCheckpointHashes'
 import { scanLogsForward } from '../../utils/chunkedLogs'
 import { decompressActionText } from '../../utils/decompressActionText'
-import { makeJsonRpcProvider, makeFallbackJsonRpcProvider, makeWebSocketProvider, getL2HttpRpcUrl, getL2HttpRpcUrls, getL2WsRpcUrl, getL2WsSecret, getEthMainnetHttpRpcUrl, getReplicationHttpRpcUrl } from '../../utils/rpcProvider'
+import { makeJsonRpcProvider, makeFallbackJsonRpcProvider, makeWebSocketProvider, getL2HttpRpcUrl, getL2HttpRpcUrls, getL2WsRpcUrl, getL2WsSecret, getEthMainnetHttpRpcUrl, getReplicationHttpRpcUrl, redactRpcUrl } from '../../utils/rpcProvider'
 import { cawToEthCached, isPriceFresh } from '../ChainSyncService'
 import { markTxQueueFailed as sharedMarkTxQueueFailed } from '../../utils/txQueueFailure'
 import { incrementSessionSpent } from '../../utils/sessionSpendTracker'
@@ -485,9 +485,9 @@ export const validatorService: Service = {
     // the provider in place — see rebuildHttpProvider below for why.
     let httpProvider = makeFallbackJsonRpcProvider(l2HttpRpcUrls, 84532)
     if (l2HttpRpcUrls.length > 1) {
-      console.log(`[Validator] HTTP RPC (with ${l2HttpRpcUrls.length - 1} fallback(s)): ${l2HttpRpcUrls[0].slice(0, 50)}...`)
+      console.log(`[Validator] HTTP RPC (with ${l2HttpRpcUrls.length - 1} fallback(s)): ${redactRpcUrl(l2HttpRpcUrls[0])}`)
     } else {
-      console.log(`[Validator] HTTP RPC (for eth_call / gas): ${l2HttpRpcUrls[0]?.slice(0, 50)}...`)
+      console.log(`[Validator] HTTP RPC (for eth_call / gas): ${redactRpcUrl(l2HttpRpcUrls[0])}`)
     }
 
     /**
@@ -2704,7 +2704,7 @@ console.log("succeededKeys", succeededKeys)
     // for the bulk data fetching the reconstruction needs.
     const replicationHttpRpcUrl = getL2HttpRpcUrl(l2RpcUrl)
     const replicationHttpProvider = makeJsonRpcProvider(replicationHttpRpcUrl, 84532)
-    console.log(`[Replication] HTTP RPC: ${replicationHttpRpcUrl.slice(0, 50)}...`)
+    console.log(`[Replication] HTTP RPC: ${redactRpcUrl(replicationHttpRpcUrl)}`)
 
 
     // ================================================================
@@ -2837,7 +2837,7 @@ console.log("succeededKeys", succeededKeys)
       archiveRead = new Contract(OPTIMISTIC_ARCHIVE_ADDRESS, archiveAbi, l2bProvider)
       archiveWrite = new Contract(OPTIMISTIC_ARCHIVE_ADDRESS, archiveAbi, l2bWallet)
 
-      console.log(`[OptimisticReplication] L2b RPC: ${l2bRpcUrl.slice(0, 50)}...`)
+      console.log(`[OptimisticReplication] L2b RPC: ${redactRpcUrl(l2bRpcUrl)}`)
       console.log(`[OptimisticReplication] Archive: ${OPTIMISTIC_ARCHIVE_ADDRESS}`)
       console.log(`[OptimisticReplication] Submitter: ${l2bWallet.address}${REPLICATOR_PRIVATE_KEY ? ' (REPLICATOR test key)' : ''}`)
       console.log(`[OptimisticReplication] Monitor:   ${l2bMonitorWallet.address}`)
@@ -3915,9 +3915,9 @@ console.log("succeededKeys", succeededKeys)
     }).then(() => {
       const httpRpcUrlForLog = getL2HttpRpcUrl(l2RpcUrl)
       console.log(`[Validator] Starting validator service with:`);
-      console.log(`  - L2 WS RPC: ${l2RpcUrl.slice(0, 50)}...`);
-      console.log(`  - L2 HTTP RPC: ${httpRpcUrlForLog.slice(0, 50)}...`);
-      console.log(`  - L1 RPC (mainnet): ${ethMainnetRpcUrl?.slice(0, 50) || 'NOT SET'}...`);
+      console.log(`  - L2 WS RPC: ${redactRpcUrl(l2RpcUrl)}`);
+      console.log(`  - L2 HTTP RPC: ${redactRpcUrl(httpRpcUrlForLog)}`);
+      console.log(`  - L1 RPC (mainnet): ${redactRpcUrl(ethMainnetRpcUrl)}`);
       console.log(`  - Validator ID: ${validatorId}`);
       console.log(`  - Check Interval: ${liveSettings.checkInterval}ms`);
       console.log(`  - Base Tip: ${liveSettings.validatorBaseTip} CAW`);

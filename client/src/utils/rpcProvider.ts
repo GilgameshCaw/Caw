@@ -1,5 +1,26 @@
 import { JsonRpcProvider, WebSocketProvider, Network, FallbackProvider, AbstractProvider, FetchRequest } from 'ethers'
 
+/**
+ * Redact userinfo (basic-auth credentials) from an RPC URL for safe
+ * logging. Many RPC providers embed the API key as the password in the
+ * URL: `https://:<token>@host/path`. Naive `.slice(0, 30)` truncation
+ * keeps the token and chops the host — exactly backwards. This parses
+ * the URL, drops userinfo, and returns just the safe `https://host/...`
+ * portion (the path can also embed keys; we keep only the first segment
+ * for context, then `/…`).
+ */
+export function redactRpcUrl(url: string | undefined | null): string {
+  if (!url) return 'NOT SET'
+  try {
+    const u = new URL(url)
+    const firstSeg = u.pathname.split('/').filter(Boolean)[0]
+    const path = firstSeg ? `/${firstSeg}/…` : ''
+    return `${u.protocol}//${u.host}${path}`
+  } catch {
+    return '<unparseable>'
+  }
+}
+
 // ============================================
 // GLOBAL RPC THROTTLE
 // ============================================

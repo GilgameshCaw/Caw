@@ -10,7 +10,7 @@ import 'dotenv/config'
 import { z } from 'zod'
 import { ethers } from 'ethers'
 import Redis from 'ioredis'
-import { makeJsonRpcProvider, getL1HttpRpcUrl } from '../../utils/rpcProvider'
+import { makeJsonRpcProvider, getL1HttpRpcUrl, redactRpcUrl } from '../../utils/rpcProvider'
 import { Service } from '../../Service'
 import { prisma } from '../../prismaClient'
 import { CAW_NAMES_ADDRESS } from '../../abi/addresses'
@@ -156,7 +156,7 @@ export const nftTransferWatcherService: Service = {
 
       const provider = makeJsonRpcProvider(rpcUrl, cfg.chainId)
       const contract = new ethers.Contract(contractAddress, TRANSFER_ABI, provider)
-      console.log(`[NftTransferWatcher] Started — contract=${contractAddress}, chainId=${cfg.chainId}, rpc=${rpcUrl.slice(0, 40)}...`)
+      console.log(`[NftTransferWatcher] Started — contract=${contractAddress}, chainId=${cfg.chainId}, rpc=${redactRpcUrl(rpcUrl)}`)
 
       // Resolve start block from checkpoint, then configured startBlock, then
       // current head (never scan from 0 — blockchain-wide scans are never

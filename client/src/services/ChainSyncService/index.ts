@@ -3,7 +3,7 @@
 
 import { prisma } from '../../prismaClient'
 import { JsonRpcProvider, Contract } from 'ethers'
-import { makeJsonRpcProvider, getL1HttpRpcUrl, getL2HttpRpcUrl, getEthMainnetHttpRpcUrl } from '../../utils/rpcProvider'
+import { makeJsonRpcProvider, getL1HttpRpcUrl, getL2HttpRpcUrl, getEthMainnetHttpRpcUrl, redactRpcUrl } from '../../utils/rpcProvider'
 import { cawClientManagerAbi } from '../../abi/generated'
 import { CLIENT_MANAGER_ADDRESS, CAW_NAMES_L2_ADDRESS } from '../../abi/addresses'
 
@@ -80,9 +80,9 @@ let ethPriceCache: CachedEthPrice | null = null
 
 function initializeProviders(config: ChainSyncConfig) {
   console.log('[ChainSync] Initializing providers with config:', {
-    l1RpcUrl: config.l1RpcUrl ? config.l1RpcUrl.slice(0, 30) + '...' : 'NOT SET',
-    l2RpcUrl: config.l2RpcUrl ? config.l2RpcUrl.slice(0, 30) + '...' : 'NOT SET',
-    ethMainnetRpcUrl: config.ethMainnetRpcUrl ? config.ethMainnetRpcUrl.slice(0, 30) + '...' : 'NOT SET',
+    l1RpcUrl: redactRpcUrl(config.l1RpcUrl),
+    l2RpcUrl: redactRpcUrl(config.l2RpcUrl),
+    ethMainnetRpcUrl: redactRpcUrl(config.ethMainnetRpcUrl),
   })
 
   if (!l1Provider && config.l1RpcUrl) {
@@ -99,7 +99,7 @@ function initializeProviders(config: ChainSyncConfig) {
   }
 
   if (!mainnetProvider && config.ethMainnetRpcUrl) {
-    console.log('[ChainSync] Mainnet provider URL:', config.ethMainnetRpcUrl.slice(0, 40) + '...')
+    console.log('[ChainSync] Mainnet provider URL:', redactRpcUrl(config.ethMainnetRpcUrl))
     mainnetProvider = makeJsonRpcProvider(config.ethMainnetRpcUrl, 1)
     uniswapRouter = new Contract(UNISWAP_V2_ROUTER, UNISWAP_V2_ROUTER_ABI, mainnetProvider)
   }
@@ -737,9 +737,9 @@ export const chainSyncService = {
     if (resolvedCfg.ethMainnetRpcUrl?.includes('${')) resolvedCfg.ethMainnetRpcUrl = undefined
 
     console.log('[ChainSync] Resolved config:', {
-      l1RpcUrl: resolvedCfg.l1RpcUrl ? resolvedCfg.l1RpcUrl.slice(0, 40) + '...' : 'NOT SET',
-      l2RpcUrl: resolvedCfg.l2RpcUrl ? resolvedCfg.l2RpcUrl.slice(0, 40) + '...' : 'NOT SET',
-      ethMainnetRpcUrl: resolvedCfg.ethMainnetRpcUrl ? resolvedCfg.ethMainnetRpcUrl.slice(0, 40) + '...' : 'NOT SET',
+      l1RpcUrl: redactRpcUrl(resolvedCfg.l1RpcUrl),
+      l2RpcUrl: redactRpcUrl(resolvedCfg.l2RpcUrl),
+      ethMainnetRpcUrl: redactRpcUrl(resolvedCfg.ethMainnetRpcUrl),
     })
 
     // Initialize providers
