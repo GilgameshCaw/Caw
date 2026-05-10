@@ -2104,7 +2104,7 @@ const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess, placehol
             the textarea above scrolls. Wraps the toolbar + thread info
             + shorten-URLs toggle so the user can always reach Post and
             see thread/URL controls without dismissing the keyboard. */}
-        <div className={composeMode ? `shrink-0 px-4 pt-2 pb-[max(env(safe-area-inset-bottom),0.5rem)] border-t md:p-0 md:border-0 md:pb-0 ${isDark ? 'bg-black border-white/10' : 'bg-white border-gray-200'}` : ''}>
+        <div className={composeMode ? `shrink-0 px-2 pt-2 pb-[max(env(safe-area-inset-bottom),0.5rem)] border-t md:p-0 md:border-0 md:pb-0 ${isDark ? 'bg-black border-white/10' : 'bg-white border-gray-200'}` : ''}>
 
         {/* Functionality Icons */}
         <div className={`flex items-center justify-between gap-2 ${replyTo ? 'mt-1.5' : 'mt-4'} ${
