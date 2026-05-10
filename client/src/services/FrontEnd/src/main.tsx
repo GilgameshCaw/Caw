@@ -22,11 +22,24 @@ import Web3Provider from "./config/Web3Provider";
 import StateProvider from "./config/StateProvider.tsx";
 import { QueryClient } from '@tanstack/react-query'
 
+// staleTime tuned for L2 chain reads + API responses. wagmi's
+// useReadContract uses this same client, so bumping staleTime cuts
+// every duplicate eth_call across components. 5min covers a typical
+// session of activity without making fresh data feel old; mutations
+// still invalidate the right keys to refresh on demand.
+//
+// gcTime keeps cached values around for 30min so a return-trip to a
+// page (e.g. /home → /caws/1 → /home) reuses the prior fetch.
+//
+// 30s was burning ~20× the RPC quota an actual user needs.
 const queryClient = new QueryClient({
   defaultOptions: {
     queries: {
-      staleTime: 30 * 1000,       // 30s before data is considered stale
-      refetchOnWindowFocus: false, // don't refetch on tab switch
+      staleTime: 5 * 60 * 1000,
+      gcTime: 30 * 60 * 1000,
+      refetchOnWindowFocus: false,
+      refetchOnMount: false,
+      refetchOnReconnect: false,
     },
   },
 });

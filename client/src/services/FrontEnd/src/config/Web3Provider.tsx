@@ -48,6 +48,13 @@ const APP_URL = (typeof window !== 'undefined' && window.location?.origin)
 // transports stay testnet — so this is a connection-handshake placeholder,
 // not a real chain in the app. Sepolia is first so wagmi's default-chain
 // selection still lands the user on the L1 testnet.
+// wagmi auto-polls eth_blockNumber to invalidate stale queries.
+// Default is ~4s, which is ~3,600/hour just from one open tab — was
+// the single biggest contributor to RPC quota burn. We don't need
+// near-real-time block tracking on the FE; almost every read can
+// tolerate a 30s lag. Cuts blockNumber polling by ~7×.
+const BLOCK_POLLING_INTERVAL_MS = 30_000
+
 export const wagmiConfig = getDefaultConfig({
   appName: "CAW",
   appDescription: "A trustless and decentralized social clearing-house committed to making freedom of speech unstoppable.",
@@ -55,6 +62,7 @@ export const wagmiConfig = getDefaultConfig({
   appIcon: `${APP_URL}/logo.jpeg`,
   projectId: import.meta.env.VITE_PROJECT_ID || "your_project_id_here",
   chains: [sepolia, baseSepolia, mainnet],
+  pollingInterval: BLOCK_POLLING_INTERVAL_MS,
   transports: {
     [sepolia.id]: http(L1_RPC, transportOptions),
     [baseSepolia.id]: http(L2_RPC, transportOptions),

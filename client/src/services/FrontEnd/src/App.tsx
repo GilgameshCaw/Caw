@@ -102,9 +102,14 @@ function App() {
   useEffect(() => {
     if (!Number.isFinite(CLIENT_ID) || CLIENT_ID <= 0) return
     fetchInstances(CLIENT_ID).catch(() => { /* fetchInstances logs internally */ })
+    // 30 min between refreshes. Per-instance change events arrive via
+    // the API tier when peers register/update — the chain-fallback
+    // path only runs if the API tier is dead, and that path issues
+    // ~140 eth_getLogs per call (chunked back to genesis on free
+    // RPCs). 5min was burning thousands of getLogs/hr per browser.
     const id = setInterval(() => {
       fetchInstances(CLIENT_ID).catch(() => {})
-    }, 5 * 60 * 1000)
+    }, 30 * 60 * 1000)
     return () => clearInterval(id)
   }, [fetchInstances])
 
