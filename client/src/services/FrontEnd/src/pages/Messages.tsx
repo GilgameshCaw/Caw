@@ -294,6 +294,25 @@ const MessagesPage: React.FC = () => {
     setChatReady(false)
   }, [selectedConversationId])
 
+  // Focus the composer when a conversation opens. Desktop only — on mobile,
+  // popping the keyboard before the user has even read the thread is hostile.
+  // Skip if the user is already typing somewhere else (e.g. the conversation
+  // search box) so we don't yank focus mid-flow.
+  useEffect(() => {
+    if (!selectedConversationId) return
+    if (typeof window === 'undefined') return
+    if (!window.matchMedia('(hover: hover)').matches) return
+    const ae = document.activeElement
+    const userIsTyping = ae && ae !== document.body && (
+      ae.tagName === 'INPUT' || ae.tagName === 'TEXTAREA' || (ae as HTMLElement).isContentEditable
+    )
+    if (userIsTyping) return
+    const id = window.setTimeout(() => {
+      composerTextareaRef.current?.focus()
+    }, 50)
+    return () => window.clearTimeout(id)
+  }, [selectedConversationId])
+
   // Auto-scroll when messages change
   useEffect(() => {
     if (!chatReady && messages.length > 0) {
