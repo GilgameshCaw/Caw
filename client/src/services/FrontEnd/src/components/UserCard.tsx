@@ -5,7 +5,6 @@ import { useTheme } from '~/hooks/useTheme'
 import { FollowButton } from './FollowButton'
 import { UserAvatar } from '~/components/Avatar'
 import { useT } from '~/i18n/I18nProvider'
-import { useAuthStore } from '~/store/authStore'
 
 export interface UserCardUser {
   tokenId: number
@@ -52,13 +51,6 @@ const UserCard: React.FC<UserCardProps> = ({
 }) => {
   const { isDark } = useTheme()
   const t = useT()
-  // Suppress the Follow button when the card represents one of the
-  // viewer's own currently-authorized tokens. Use authStore (the set
-  // of tokens this session is signed in for), NOT tokenDataStore —
-  // the latter persists tokens from old wallets we've connected to
-  // before, so a card for a stranger could falsely match an old
-  // tokenId we no longer control and lose its Follow button.
-  const isSelf = useAuthStore(s => s.authorizedTokenIds.includes(user.tokenId))
 
   const carouselStyle: React.CSSProperties = layout === 'carousel'
     ? {
@@ -116,17 +108,15 @@ const UserCard: React.FC<UserCardProps> = ({
         </div>
       </Link>
 
-      {!isSelf && (
-        <div className="mt-3 flex justify-center">
-          <FollowButton
-            targetUserId={user.tokenId}
-            initialIsFollowing={user.isFollowing ?? false}
-            initialIsPending={user.followPending}
-            size="small"
-            onFollowConfirmed={onFollowConfirmed ? () => onFollowConfirmed(user.tokenId) : undefined}
-          />
-        </div>
-      )}
+      <div className="mt-3 flex justify-center">
+        <FollowButton
+          targetUserId={user.tokenId}
+          initialIsFollowing={user.isFollowing ?? false}
+          initialIsPending={user.followPending}
+          size="small"
+          onFollowConfirmed={onFollowConfirmed ? () => onFollowConfirmed(user.tokenId) : undefined}
+        />
+      </div>
     </div>
   )
 }
