@@ -18,8 +18,9 @@ import { useOffersUnreadStore } from "~/store/offersUnreadStore";
 import { useComposeDraftStore } from "~/store/composeDraftStore";
 import { useActiveToken } from "~/store/tokenDataStore";
 import { useLayoutStore } from "~/store/layoutStore";
-import { ConnectButton, useConnectModal } from "@rainbow-me/rainbowkit";
+import { useConnectModal } from "@rainbow-me/rainbowkit";
 import { useAccount } from "wagmi";
+import WalletAccountButton from "~/components/buttons/WalletAccountButton";
 import cawLogo from '~/assets/images/caw-logo.png';
 import { themeLayoutShell } from '~/utils/theme'
 
@@ -276,12 +277,9 @@ const MainLayout = ({ children, hideSidebars: hideSidebarsProp }: MainLayoutProp
             </Link>
             <div className="flex items-center gap-2">
               {/* Wallet pill — gives connected captive users a path to
-                  the account modal (and Disconnect). RainbowKit hides
-                  itself when not connected, so the primary CTA below
-                  still leads the unconnected case. */}
-              {isConnected && (
-                <ConnectButton accountStatus="avatar" chainStatus="none" showBalance={false} />
-              )}
+                  the account modal (and Disconnect). Hidden when not
+                  connected; the primary CTA below leads that case. */}
+              <WalletAccountButton />
               {location.pathname.startsWith('/usernames') ? (
                 <Link
                   to="/help/faq"

@@ -1,7 +1,8 @@
 import React, { useState, useEffect, useMemo, useCallback, useRef } from 'react'
 import Tooltip from '~/components/Tooltip'
 import { useAccount, useConnections, useSwitchChain, useReadContract } from 'wagmi'
-import { ConnectButton, useConnectModal } from '@rainbow-me/rainbowkit'
+import { useConnectModal } from '@rainbow-me/rainbowkit'
+import WalletAccountButton from '~/components/buttons/WalletAccountButton'
 import { useEnsureWallet } from '~/hooks/useEnsureWallet'
 import { formatWalletError } from '~/utils/errorMessage'
 import { maxUint256, parseUnits, formatUnits, erc20Abi } from 'viem'
@@ -785,7 +786,7 @@ const PostMintOnboarding: React.FC<PostMintOnboardingProps> = ({ username, token
       {/* Language picker — top-right, visible across every onboarding
           step. Pre-mint visitors will have already chosen on the splash;
           this lets first-time users who land here directly still pick. */}
-      <div className="absolute top-3 right-3 z-[110] w-44 sm:w-56">
+      <div className="absolute top-3 right-3 z-[110]">
         <LanguageSwitcher />
       </div>
       {/* Wallet pill — top-left, mirrors the splash. The onboarding
@@ -793,7 +794,7 @@ const PostMintOnboarding: React.FC<PostMintOnboardingProps> = ({ username, token
           a user who connected the wrong wallet (or wants to switch) has
           no way out. */}
       <div className="absolute top-3 left-3 z-[110]">
-        <ConnectButton accountStatus="avatar" chainStatus="none" showBalance={false} />
+        <WalletAccountButton />
       </div>
       <div className="min-h-full flex flex-col pb-[50px] relative z-[2]">
 

@@ -1,5 +1,5 @@
 import { Link } from 'react-router-dom'
-import { ConnectButton, useConnectModal } from '@rainbow-me/rainbowkit'
+import { useConnectModal } from '@rainbow-me/rainbowkit'
 import { useAccount } from 'wagmi'
 import { useActiveToken } from '~/store/tokenDataStore'
 import { useTheme } from '~/hooks/useTheme'
@@ -7,6 +7,7 @@ import { useT } from '~/i18n/I18nProvider'
 import { useState, useEffect, useRef, lazy, Suspense } from 'react'
 import BoidsBg from '~/components/BoidsBg'
 import LanguageSwitcher from '~/components/LanguageSwitcher'
+import WalletAccountButton from '~/components/buttons/WalletAccountButton'
 
 const Caw3D = lazy(() => import('~/components/Caw3D'))
 
@@ -49,15 +50,15 @@ export default function CaptiveSplash() {
       {/* Language picker — top-right so a non-English visitor can pick
           their language before reading anything else. Persisted in
           localStorage; promoted to User.preferredLanguage post-mint. */}
-      <div className="absolute top-3 right-3 z-20 w-44 sm:w-56">
+      <div className="absolute top-3 right-3 z-20">
         <LanguageSwitcher />
       </div>
       {/* Wallet pill — top-left. Lets a connected user reach the account
           modal (and Disconnect) when no other chrome is rendered on this
-          captive page. RainbowKit shows "Connect Wallet" when not yet
-          connected, the account pill when connected. */}
+          captive page. Hidden when no wallet connected — the page's own
+          "Sign In" CTA leads that case. */}
       <div className="absolute top-3 left-3 z-20">
-        <ConnectButton accountStatus="avatar" chainStatus="none" showBalance={false} />
+        <WalletAccountButton />
       </div>
       {/* Main content - centered */}
       <div className="flex-1 flex flex-col items-center justify-center px-6 pb-6 relative z-10">
