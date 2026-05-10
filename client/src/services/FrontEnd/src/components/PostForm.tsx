@@ -1778,9 +1778,13 @@ const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess, placehol
                 className={`p-1 rounded-full transition-all duration-200 cursor-pointer ${
                   pollEnabled
                     ? 'text-yellow-500 bg-yellow-400/10'
-                    : (isDark
-                      ? 'text-yellow-400/70 hover:text-yellow-400 hover:bg-yellow-400/10'
-                      : 'text-yellow-600/70 hover:text-yellow-600 hover:bg-yellow-200/50')
+                    : text.trim()
+                      ? (isDark
+                          ? 'text-yellow-400 hover:text-yellow-300 hover:bg-yellow-400/10'
+                          : 'text-yellow-600 hover:text-yellow-500 hover:bg-yellow-200/50')
+                      : (isDark
+                          ? 'text-yellow-400/70 hover:text-yellow-400 hover:bg-yellow-400/10'
+                          : 'text-yellow-600/70 hover:text-yellow-600 hover:bg-yellow-200/50')
                 }`}
               >
                 <HiOutlineChartBar className="w-5 h-5" />
@@ -2376,8 +2380,13 @@ const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess, placehol
               className={`p-2 rounded-full transition-all duration-200 cursor-pointer ${
                 pollEnabled
                   ? (isDark ? 'text-yellow-400 bg-yellow-400/10' : 'text-yellow-600 bg-yellow-200/50')
-                  : (isDark ? 'text-yellow-400/70 hover:text-yellow-400 hover:bg-yellow-400/10'
-                            : 'text-yellow-600/70 hover:text-yellow-600 hover:bg-yellow-200/50')
+                  : text.trim()
+                    ? (isDark
+                        ? 'text-yellow-400 hover:text-yellow-300 hover:bg-yellow-400/10'
+                        : 'text-yellow-600 hover:text-yellow-500 hover:bg-yellow-200/50')
+                    : (isDark
+                        ? 'text-yellow-400/70 hover:text-yellow-400 hover:bg-yellow-400/10'
+                        : 'text-yellow-600/70 hover:text-yellow-600 hover:bg-yellow-200/50')
               }`}
             >
               <HiOutlineChartBar className="w-6 h-6" />
