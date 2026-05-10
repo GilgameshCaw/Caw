@@ -1593,10 +1593,15 @@ const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess, placehol
 
       {/* Mobile Layout - Input + Button */}
       <div className={`${composeMode ? 'hidden' : 'md:hidden'} flex flex-col ${replyTo ? 'space-y-1' : 'space-y-2'}`}>
-          {/* Input and Reply Button Row */}
-          <div className="flex items-center space-x-3">
+          {/* Input and Reply Button Row.
+              min-w-0 on the input flex item is critical — without it
+              the textarea's intrinsic min-content (1 line of text)
+              prevents flex-1 from shrinking, so on a narrow viewport
+              the input collapses to its smallest visible size and
+              everything else takes the rest of the row. */}
+          <div className="flex items-center space-x-3 w-full">
             {/* Input */}
-            <div className="flex-1 relative">
+            <div className="flex-1 min-w-0 relative">
               <HighlightedTextarea
                  value={text}
                  onChange={handleTextChange}
