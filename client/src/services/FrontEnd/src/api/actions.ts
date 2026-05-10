@@ -806,7 +806,7 @@ export function useSignAndSubmitAction() {
         // 2. If backend says no, verify via live RPC before showing the modal.
         //    The backend might just be behind the indexer.
         //
-        // Retry the RPC up to 3 times with exponential backoff — cold-start
+        // Retry the RPC up to 5 times with exponential backoff — cold-start
         // transport races and transient 429s routinely make the first call
         // return "0x" (AbiDecodingZeroDataError) or throw. A few hundred ms
         // later the same call succeeds, so silent retries are far better UX
@@ -814,7 +814,7 @@ export function useSignAndSubmitAction() {
         if (!isAuthed) {
           let rpcFailed = false
           let lastErr: any = null
-          const RETRY_SCHEDULE_MS = [0, 500, 1500]
+          const RETRY_SCHEDULE_MS = [0, 400, 1000, 2500, 5000]
           for (let attempt = 0; attempt < RETRY_SCHEDULE_MS.length; attempt++) {
             if (RETRY_SCHEDULE_MS[attempt] > 0) {
               await new Promise(r => setTimeout(r, RETRY_SCHEDULE_MS[attempt]))
@@ -839,9 +839,16 @@ export function useSignAndSubmitAction() {
           }
 
           if (!isAuthed && rpcFailed) {
-            console.warn('[Actions] RPC client-auth fallback failed after retries:', lastErr)
-            toast.error('Network hiccup — please try again in a moment.')
-            return null as any
+            // RPC is the wrong place to hard-fail the post — this is a
+            // permission pre-flight, not a money-moving call. The validator
+            // re-checks authorization on chain when the action is included,
+            // so optimistically letting it through is safe: if the user
+            // genuinely isn't authorized the validator rejects with a clear
+            // reason. If we hard-fail here, transient RPC blips kill posts
+            // for fully-authorized users (saw this bug 2026-05-11). Log
+            // loudly and proceed.
+            console.warn('[Actions] RPC client-auth fallback failed after retries — proceeding optimistically:', lastErr)
+            isAuthed = true
           }
         }
 
