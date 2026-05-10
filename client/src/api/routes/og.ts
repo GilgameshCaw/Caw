@@ -39,6 +39,7 @@ let fontRegular: Buffer | null = null
 let fontBold: Buffer | null = null
 let fontJpRegular: Buffer | null = null
 let fontJpBold: Buffer | null = null
+let fontEmoji: Buffer | null = null
 function loadFonts() {
   if (!fontRegular) fontRegular = fs.readFileSync(path.join(FONTS_DIR, 'Inter-Regular.ttf'))
   if (!fontBold) fontBold = fs.readFileSync(path.join(FONTS_DIR, 'Inter-Bold.ttf'))
@@ -52,6 +53,10 @@ function loadFonts() {
   if (fontJpBold === null) {
     try { fontJpBold = fs.readFileSync(path.join(FONTS_DIR, 'NotoSansJP-Bold.otf')) } catch { /* logged above */ }
   }
+  // (No emoji font in the regular fallback list — satori doesn't
+  // support COLR/COLRv1 color tables, only solid-color glyphs. We
+  // handle emoji via renderToPng's loadAdditionalAsset callback,
+  // which serves Twemoji SVGs per codepoint.)
   const fonts = [
     { name: 'Inter', data: fontRegular, weight: 400 as const, style: 'normal' as const },
     { name: 'Inter', data: fontBold, weight: 700 as const, style: 'normal' as const },
@@ -84,7 +89,7 @@ const CAW_GOLD = '#ebc046'
 // Subtle background variants — caw_id mod 4 picks one. Differences are
 // only visible side-by-side; keeps every card looking like CAW while
 // breaking up grid monotony when several share to the same channel.
-const CARD_BG_VARIANTS = ['#0E0E0E', '#180A0A', '#0E0E18', '#150E15']
+const CARD_BG_VARIANTS = ['#030d14', '#180A0A', '#0E0E18', '#150E15', '#140314', '#040c07', '#151001']
 function cardBgFor(cawId: number): string {
   return CARD_BG_VARIANTS[Math.abs(cawId) % CARD_BG_VARIANTS.length]
 }
@@ -370,9 +375,44 @@ async function fetchImageDataUri(rawUrl: string): Promise<string | null> {
     const buf = Buffer.from(await res.arrayBuffer())
     // Magic-byte check rejects HTML "soft 404s" served with image/*.
     if (!looksLikeImage(buf)) return null
+    // Satori can't decode WebP — converts crash with "u is not
+    // iterable" inside its image preprocessor. Re-encode to PNG via
+    // ffmpeg before handing off; same dep we already use for video
+    // first-frame extraction so no extra install burden.
+    if (ct.includes('webp') || (buf[0] === 0x52 && buf[1] === 0x49 && buf[2] === 0x46 && buf[3] === 0x46)) {
+      const png = await transcodeWebpToPng(buf)
+      if (!png) return null
+      return `data:image/png;base64,${png.toString('base64')}`
+    }
     return `data:${ct};base64,${buf.toString('base64')}`
   } catch {
     return null
+  }
+}
+
+// Re-encode a WebP buffer to PNG via ffmpeg. Returns null if ffmpeg
+// is missing or the conversion fails. Caller falls back to next tier.
+async function transcodeWebpToPng(webpBuf: Buffer): Promise<Buffer | null> {
+  const { execFile } = await import('child_process')
+  const { promisify } = await import('util')
+  const exec = promisify(execFile)
+  const key = crypto.createHash('sha1').update(webpBuf).digest('hex').slice(0, 16)
+  const tmpIn = path.join(VIDEO_FRAME_CACHE, `${key}.webp`)
+  const tmpOut = path.join(VIDEO_FRAME_CACHE, `${key}.png`)
+  try {
+    if (fs.existsSync(tmpOut)) return fs.readFileSync(tmpOut)
+    fs.writeFileSync(tmpIn, webpBuf)
+    await exec('ffmpeg', ['-y', '-i', tmpIn, tmpOut], { timeout: 6000 })
+    if (!fs.existsSync(tmpOut)) return null
+    return fs.readFileSync(tmpOut)
+  } catch (err: any) {
+    if (err?.code === 'ENOENT' && !ffmpegMissingLogged) {
+      console.warn('[og] ffmpeg not on PATH — webp images will be skipped from share cards.')
+      ffmpegMissingLogged = true
+    }
+    return null
+  } finally {
+    try { fs.unlinkSync(tmpIn) } catch { /* ignore */ }
   }
 }
 
@@ -408,6 +448,75 @@ async function resolveAvatarDataUri(user: {
 
 // Quick magic-byte check — covers the formats browsers/satori actually
 // render (PNG, JPEG, GIF, WebP). Cheap and correct enough for our purposes.
+// Decode an image's intrinsic dimensions from its bytes — used to
+// preserve aspect ratio on image-only cards (so a landscape photo
+// doesn't get center-cropped to a square). Supports PNG, JPEG, GIF,
+// WebP. Returns null on any decode failure (caller falls back to a
+// square render).
+function imageDimensionsFromBuf(buf: Buffer): { w: number; h: number } | null {
+  if (buf.length < 24) return null
+  // PNG: 89 50 4E 47 0D 0A 1A 0A then IHDR chunk at byte 16
+  // (length=4) with width @ 16 and height @ 20 (big-endian uint32).
+  if (buf[0] === 0x89 && buf[1] === 0x50 && buf[2] === 0x4e && buf[3] === 0x47) {
+    return { w: buf.readUInt32BE(16), h: buf.readUInt32BE(20) }
+  }
+  // JPEG: scan for SOFn marker (FF C0..FF C3 / FF C5..FF C7 / etc.).
+  // Marker payload starts with 2 bytes length, 1 byte precision, then
+  // height (16-bit BE), then width.
+  if (buf[0] === 0xff && buf[1] === 0xd8) {
+    let i = 2
+    while (i < buf.length - 8) {
+      if (buf[i] !== 0xff) { i++; continue }
+      const marker = buf[i + 1]
+      // SOFn markers (excluding DHT C4, JPG C8, DAC CC).
+      if ((marker >= 0xc0 && marker <= 0xcf) && marker !== 0xc4 && marker !== 0xc8 && marker !== 0xcc) {
+        const h = buf.readUInt16BE(i + 5)
+        const w = buf.readUInt16BE(i + 7)
+        return { w, h }
+      }
+      // Skip to next marker. Length includes the 2 length bytes.
+      const segLen = buf.readUInt16BE(i + 2)
+      i += 2 + segLen
+    }
+    return null
+  }
+  // GIF: width @ 6, height @ 8 (little-endian uint16).
+  if (buf[0] === 0x47 && buf[1] === 0x49 && buf[2] === 0x46) {
+    return { w: buf.readUInt16LE(6), h: buf.readUInt16LE(8) }
+  }
+  // WebP (VP8 / VP8L / VP8X) — RIFF...WEBP.
+  if (buf[0] === 0x52 && buf[1] === 0x49 && buf[2] === 0x46 && buf[3] === 0x46
+      && buf[8] === 0x57 && buf[9] === 0x45 && buf[10] === 0x42 && buf[11] === 0x50) {
+    // VP8X (lossy/lossless extended): width-1 @ 24..26, height-1 @ 27..29 (LE 24-bit)
+    if (buf[12] === 0x56 && buf[13] === 0x50 && buf[14] === 0x38 && buf[15] === 0x58) {
+      const w = 1 + (buf[24] | (buf[25] << 8) | (buf[26] << 16))
+      const h = 1 + (buf[27] | (buf[28] << 8) | (buf[29] << 16))
+      return { w, h }
+    }
+    // VP8 (lossy) — first 3 bytes of frame are sync, then 7-bit width @ 26, 7-bit height @ 28
+    if (buf[12] === 0x56 && buf[13] === 0x50 && buf[14] === 0x38 && buf[15] === 0x20) {
+      const w = buf.readUInt16LE(26) & 0x3fff
+      const h = buf.readUInt16LE(28) & 0x3fff
+      return { w, h }
+    }
+  }
+  return null
+}
+
+// Decode dimensions from a `data:image/...;base64,<bytes>` URI. Returns
+// null when the URI isn't a base64 data URL we can decode.
+function dataUriDimensions(uri: string): { w: number; h: number } | null {
+  try {
+    const m = uri.match(/^data:[^;,]+;base64,(.+)$/)
+    if (!m) return null
+    // Only need the first ~40 bytes for dimension headers — decode a
+    // small prefix to keep it cheap on big images.
+    const prefix = m[1].slice(0, 80)
+    const buf = Buffer.from(prefix, 'base64')
+    return imageDimensionsFromBuf(buf)
+  } catch { return null }
+}
+
 function looksLikeImage(buf: Buffer): boolean {
   if (buf.length < 12) return false
   // PNG: 89 50 4E 47 0D 0A 1A 0A
@@ -678,23 +787,23 @@ function approxCharsPerPx(fontSize: number, widthPx: number): number {
 // (en-dash, em-dash, curly quotes, ellipsis). Anything else gets dropped.
 function stripUnrenderable(s: string): string {
   if (!s) return ''
-  // Denylist approach: drop only chars we KNOW satori can't render
-  // with the loaded fonts. Everything else passes through — Inter
-  // handles Latin / punctuation; Noto Sans JP handles CJK (see
-  // loadFonts). What we strip:
-  //   * Emoji + dingbats + symbols (Inter and Noto JP have no glyphs
-  //     for these; satori draws "NO GLYPH" boxes). Covers the main
-  //     emoji blocks plus common modifiers / joiners / variation
-  //     selectors.
-  //   * Zero-width / formatting / control chars that look invisible
-  //     but mess up wrap counts.
-  // Pictographs span several Unicode ranges; the regex below covers
-  // the bulk: emoticons, misc symbols, transport, dingbats, regional
-  // indicators, supplemental symbols, and the ZWJ/VS plumbing.
-  const EMOJI_AND_INVISIBLE = /[\u200B-\u200F\u202A-\u202E\u2060-\u206F\uFE00-\uFE0F\u{1F000}-\u{1FFFF}\u{2600}-\u{27BF}\u{1F300}-\u{1F9FF}\u{1FA00}-\u{1FAFF}\u{1F1E6}-\u{1F1FF}\u{1F900}-\u{1F9FF}]/gu
-  const cleaned = s.replace(EMOJI_AND_INVISIBLE, '')
-  // Collapse runs of whitespace that may have opened up after stripping
-  // emoji on either side of a space; preserve explicit newlines.
+  // Emoji are rendered via satori's loadAdditionalAsset -> Twemoji
+  // SVGs (see renderToPng). Inter / Noto JP don't have the glyphs
+  // and satori doesn't read COLR fonts, so this asset path is the
+  // one that produces real images. We keep emoji codepoints in the
+  // text and let satori swap them for SVGs at render time.
+  // Only drop invisibles that mess up wrap counts (zero-width
+  // space / formatting / variation selectors / control chars).
+  const INVISIBLE = /[\u200B-\u200F\u202A-\u202E\u2060-\u206F\uFE00-\uFE0F]/g
+  let cleaned = s.replace(INVISIBLE, '')
+  // Insert a hair-space between consecutive emoji so they don't
+  // render touching. Satori inlines Twemoji SVGs with no horizontal
+  // margin and Twemoji glyphs already fill their bounding box, so
+  // back-to-back emoji read as one smushed blob ("\u{1F4AF}\u{1F4AF}\u{1F4AF}"
+  // -> "100100100"). U+200A is narrow enough not to perceptibly
+  // affect Latin text spacing.
+  cleaned = cleaned.replace(/(\p{Extended_Pictographic})(?=\p{Extended_Pictographic})/gu, '$1\u200A')
+  // Collapse runs of whitespace; preserve explicit newlines.
   return cleaned.replace(/[ \t]+/g, ' ').replace(/ ?\n ?/g, '\n').trim()
 }
 
@@ -738,25 +847,39 @@ function padTaggedTokens(s: string): string {
 // honest. Tokenizing at the document level would let a token straddle
 // a wrap boundary and the budget calc would need to know about token
 // widths during wrap — way more state for marginal benefit.
-const LINE_TOKEN_RE = /(#[\w-]+|\$[A-Za-z][A-Za-z0-9_]{0,9}|https?:\/\/[^\s]+)/g
+// Tokens that get inline gold color: hashtags, $cashtags, links.
+// Emoji also get split into their own segments (color stays default)
+// so satori's loadAdditionalAsset path fires reliably for each one;
+// emoji buried inside a long Latin run sometimes don't get
+// substituted otherwise.
+const LINE_TOKEN_RE = /(#[\w-]+|\$[A-Za-z][A-Za-z0-9_]{0,9}|https?:\/\/[^\s]+|\p{Extended_Pictographic})/gu
 interface LineSegment { text: string; color: 'default' | 'gold' }
 function tokenizeLine(line: string): LineSegment[] {
   if (!line) return []
   const segments: LineSegment[] = []
   let last = 0
+  const PICTO = /^\p{Extended_Pictographic}$/u
   for (const m of line.matchAll(LINE_TOKEN_RE)) {
     const start = m.index ?? 0
     if (start > last) segments.push({ text: line.slice(last, start), color: 'default' })
-    segments.push({ text: m[0], color: 'gold' })
+    // Emoji match the same regex (so they get split into their own
+    // segments) but stay default-colored — only #/$/links go gold.
+    const isEmoji = PICTO.test(m[0])
+    segments.push({ text: m[0], color: isEmoji ? 'default' : 'gold' })
     last = start + m[0].length
   }
   if (last < line.length) segments.push({ text: line.slice(last), color: 'default' })
   // Merge runs of same-color segments so satori doesn't break a
-  // continuous gray stretch into multiple inline blocks.
+  // continuous gray stretch into multiple inline blocks. Emoji
+  // segments stay UNMERGED — each emoji needs its own segment so
+  // satori's loadAdditionalAsset substitutes one Twemoji SVG per
+  // codepoint cleanly.
   const merged: LineSegment[] = []
   for (const seg of segments) {
+    const isEmoji = PICTO.test(seg.text)
     const prev = merged[merged.length - 1]
-    if (prev && prev.color === seg.color) prev.text += seg.text
+    const prevIsEmoji = prev ? PICTO.test(prev.text) : false
+    if (prev && prev.color === seg.color && !isEmoji && !prevIsEmoji) prev.text += seg.text
     else merged.push({ ...seg })
   }
   // Replace ASCII spaces ADJACENT to color boundaries with non-breaking
@@ -923,6 +1046,10 @@ function planCawCard(opts: {
   backgroundColor: string
   /** Posted-at date. Rendered as "· Mon DD" suffix on the byline. */
   postedAt?: Date | null
+  /** Pre-bucketed display strings for the bottom stat row. Caller is
+   *  responsible for fmtCount-style bucketing — these strings land
+   *  on the card unchanged. */
+  stats?: { likes: string; recaws: string; replies: string; views: string }
 }): { tree: any; height: number } {
   // Pad tags + URLs with spaces BEFORE strip + wrap so the wrap sees
   // them as separate words and the tokenizer can color them inline.
@@ -932,6 +1059,14 @@ function planCawCard(opts: {
   const cleanDisplay = stripUnrenderable(opts.displayName || '')
   const cleanUsername = stripUnrenderable(opts.username || '')
   const cleanShownName = hasDisplayName && cleanDisplay ? cleanDisplay : ''
+
+  // Image-only post: no readable text, but we have an image. Switch
+  // to a stacked layout — header + byline at the top, then the image
+  // (full text-area width) below. Reads more like a photo card than
+  // a text card with a tiny corner thumbnail.
+  if (cleanText.length === 0 && opts.cornerImage && (!opts.poll || opts.poll.options.length === 0)) {
+    return planImageOnlyCard({ ...opts, cleanShownName, cleanUsername, stats: opts.stats })
+  }
   // "· Mon DD" suffix when we have a postedAt. Twitter-style — current
   // year is implicit, prior years not shown either since OG cards mostly
   // get shared close to the post date. Rendered separately from the
@@ -982,11 +1117,20 @@ function planCawCard(opts: {
     const narrowPx = W - CARD_STRIP_W - CARD_MARGIN - imgPx - CARD_NARROW_RIGHT_PAD - CARD_MARGIN
     return approxCharsPerPx(CARD_BODY_FS, Math.max(200, narrowPx))
   }
+  // Will the bottom stat row render? (any non-zero count.)
+  const hasStats = !!opts.stats && (
+    (opts.stats.likes && opts.stats.likes !== '0') ||
+    (opts.stats.recaws && opts.stats.recaws !== '0') ||
+    (opts.stats.replies && opts.stats.replies !== '0') ||
+    (opts.stats.views && opts.stats.views !== '0')
+  )
+  const STATS_ROW_H = 16 + 30  // marginTop + ~one line of 22px text + cushion
   const computeHeight = (narrowLines: number, wideLines: number) => {
     let h = CARD_MARGIN + CARD_HEADER_PX + CARD_BYLINE_PX
     if (narrowLines > 0) h += narrowLines * CARD_BODY_PX
     if (wideLines > 0)   h += wideLines * CARD_BODY_PX
     if (pollHeight > 0)  h += CARD_GAP_POLL + pollHeight
+    if (hasStats)        h += STATS_ROW_H
     h += CARD_MARGIN
     return h
   }
@@ -1157,21 +1301,53 @@ function planCawCard(opts: {
                           children: namePart,
                         },
                       },
+                      // Date suffix split into two pieces:
+                      //   • the · separator at the byline font size
+                      //     (visually consistent with surrounding chrome)
+                      //   • the date text itself smaller, softer color
+                      // Wrapped in a row so they sit on the same line.
                       dateText ? {
                         type: 'div',
                         props: {
                           style: {
                             display: 'flex',
-                            fontWeight: 400,
-                            color: '#9ca3af',
-                            whiteSpace: 'nowrap',
-                            // Deterministic gap from the bold name to
-                            // the date dot — larger than a rendered
-                            // space glyph so the · has breathing room
-                            // on the left side.
+                            flexDirection: 'row',
+                            alignItems: 'flex-end',
                             marginLeft: 10,
+                            whiteSpace: 'nowrap',
                           },
-                          children: dateText,
+                          children: [
+                            {
+                              type: 'div',
+                              props: {
+                                style: {
+                                  display: 'flex',
+                                  fontSize: CARD_BYLINE_FS,
+                                  fontWeight: 400,
+                                  color: '#9ca3af',
+                                  whiteSpace: 'nowrap',
+                                },
+                                children: '·',
+                              },
+                            },
+                            {
+                              type: 'div',
+                              props: {
+                                style: {
+                                  display: 'flex',
+                                  fontSize: Math.round(CARD_BYLINE_FS * 0.75),
+                                  fontWeight: 400,
+                                  color: '#9ca3af',
+                                  whiteSpace: 'nowrap',
+                                  marginLeft: 6,
+                                  paddingBottom: 2,
+                                },
+                                // Strip the prefix `· ` since we now
+                                // render the dot as its own segment.
+                                children: dateText.replace(/^[ ]?·\s*/, ''),
+                              },
+                            },
+                          ],
                         },
                       } : null,
                     ].filter(Boolean) as any,
@@ -1228,10 +1404,297 @@ function planCawCard(opts: {
                 // (≤ 2 lines) so a one-line caw + small poll doesn't
                 // look like a wall of bars.
                 pollOptions.length > 0 ? pollNode(pollOptions, totalVotes, contentLines.length > 0, contentLines.length) : null,
+                // Stat row at the very bottom — replies / recaws /
+                // likes / views. Hides any zero-count stat so a
+                // brand-new caw doesn't show "0 0 0 0".
+                opts.stats ? statsRow(opts.stats) : null,
               ].filter(Boolean) as any,
             },
           },
         ].filter(Boolean) as any,
+      },
+    },
+  }
+}
+
+// Bottom stat row. Compact, gray, near the body color so the eye
+// reads it as metadata rather than competing with the body copy.
+// Each stat is icon + count; counts come pre-bucketed (1.2K not 1247).
+// Stat-row icons. Match the FeedItem footer:
+//   • Reply  — heroicons HiOutlineChat
+//   • Recaw  — the project's recaw.svg (Layer_2 paths only)
+//   • Like   — heroicons HiOutlineHeart
+//   • View   — heroicons HiOutlineEye
+// Embedded as inline SVG strings so satori can render them via
+// <img src=data:image/svg+xml;...> at the exact pixel size of the
+// surrounding text. `currentColor` is replaced at build time with
+// the gray we use for the row.
+const STAT_ICON_COLOR = '#9ca3af'
+function svgDataUri(svg: string): string {
+  return `data:image/svg+xml;base64,${Buffer.from(svg, 'utf-8').toString('base64')}`
+}
+function statsRow(stats: { likes: string; recaws: string; replies: string; views: string }) {
+  // SVG sources — paths copied from heroicons outline (24x24) and the
+  // project's recaw.svg. Stroke uses the row's text color so they
+  // visually match the gray count number next to them.
+  const c = STAT_ICON_COLOR
+  const replyIcon = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="${c}" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M21 11.5a8.38 8.38 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.38 8.38 0 0 1-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.7-7.6 8.38 8.38 0 0 1 3.8-.9h.5a8.48 8.48 0 0 1 8 8v.5z"/></svg>`
+  const recawIcon = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="${c}" stroke-width="2" stroke-linecap="round" stroke-miterlimit="10"><path d="M1.2,9l3.2-3.1c0.1-0.1,0.2-0.1,0.3,0L7.8,9"/><path d="M4.6,5.9l0,10.5c0,0,0,3.4,3,3.4h5.8"/><path d="M22.5,16.6l-3.2,3.1c-0.1,0.1-0.2,0.1-0.3,0l-3.1-3.1"/><path d="M19.2,19.7l0-10.5c0,0,0-3.4-3-3.4h-5.8"/></svg>`
+  const likeIcon  = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="${c}" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 0 0 0-7.78z"/></svg>`
+  const viewIcon  = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="${c}" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>`
+
+  const items: Array<{ src: string; value: string }> = []
+  if (stats.replies && stats.replies !== '0') items.push({ src: svgDataUri(replyIcon), value: stats.replies })
+  if (stats.recaws  && stats.recaws  !== '0') items.push({ src: svgDataUri(recawIcon), value: stats.recaws })
+  if (stats.likes   && stats.likes   !== '0') items.push({ src: svgDataUri(likeIcon),  value: stats.likes })
+  if (stats.views   && stats.views   !== '0') items.push({ src: svgDataUri(viewIcon),  value: stats.views })
+  if (items.length === 0) return null
+
+  const ICON_PX = 22
+  return {
+    type: 'div',
+    props: {
+      style: {
+        display: 'flex',
+        flexDirection: 'row',
+        // marginTop: auto pushes the row to the bottom of the parent
+        // flex column. So on a short caw the space between the body
+        // text and the stat row grows; on a tall caw the row sits
+        // right under the content as before. Either way, the stats
+        // anchor to the visual bottom of the card.
+        marginTop: 'auto',
+        gap: 28,
+        fontSize: 22,
+        color: STAT_ICON_COLOR,
+        alignItems: 'center',
+      },
+      children: items.map((it, i) => ({
+        type: 'div',
+        key: `st${i}`,
+        props: {
+          style: { display: 'flex', flexDirection: 'row', alignItems: 'center', gap: 8 },
+          children: [
+            {
+              type: 'img',
+              props: {
+                src: it.src,
+                width: ICON_PX,
+                height: ICON_PX,
+                style: { display: 'flex' },
+              },
+            },
+            { type: 'div', props: { style: { display: 'flex' }, children: it.value } },
+          ],
+        },
+      })),
+    },
+  }
+}
+
+// Image-only layout: no body text, just the header / byline lines at
+// the top and a big square image below. Image takes the full text-
+// column width (everything between the strip+margin and the right
+// margin). Card height = chrome + image + margin. Reads as a photo
+// card rather than a tiny corner thumbnail with empty text space.
+function planImageOnlyCard(opts: {
+  cleanShownName: string
+  cleanUsername: string
+  cornerImage: string | null
+  backgroundColor: string
+  postedAt?: Date | null
+  stats?: { likes: string; recaws: string; replies: string; views: string }
+}): { tree: any; height: number } {
+  // Reuse the standard canvas width for consistency with text cards.
+  // The aspect-ratio cap below keeps the card from going taller than
+  // a 1.5:1 (W/H) ratio so OG previews don't letterbox awkwardly.
+  const cardW = W
+  const dateText = opts.postedAt
+    ? `${String.fromCharCode(0xa0)}· ${opts.postedAt.toLocaleString('en-US', { month: 'short', day: 'numeric' })}`
+    : ''
+  const fullName = opts.cleanShownName
+    ? `${opts.cleanShownName} (@${opts.cleanUsername}) on CAW`
+    : `@${opts.cleanUsername} on CAW`
+  const imageW = cardW - CARD_TEXT_X - CARD_MARGIN
+  // Card aspect must be >= 1.5 (W/H) so OG previews never letterbox
+  // weird on platforms that prefer landscape. Compute the maximum
+  // image height that keeps the WHOLE card at >= 1.5 aspect:
+  //   card_h = chrome + image_h + margin
+  //   card_w / card_h >= 1.5  →  image_h <= card_w/1.5 - chrome - margin
+  const chromePx = CARD_MARGIN + CARD_HEADER_PX + CARD_BYLINE_PX + 12
+  const maxImageH = Math.round(cardW / 1.5) - chromePx - CARD_MARGIN
+  const dims = opts.cornerImage ? dataUriDimensions(opts.cornerImage) : null
+  let imageH = Math.min(imageW, maxImageH)
+  if (dims && dims.w > 0 && dims.h > 0) {
+    const aspect = dims.h / dims.w  // < 1 for landscape, > 1 for portrait
+    const naturalH = Math.round(imageW * aspect)
+    imageH = Math.min(naturalH, maxImageH)
+  }
+  imageH = Math.max(imageH, 200)
+  // Trim 10% off the image height — image-only cards looked a touch
+  // tall for the share-card slot. Image gets cropped (objectFit:
+  // cover) so the photo's center stays in frame.
+  imageH = Math.round(imageH * 0.9)
+  const host = getHostname()
+  const headerText = host ? `CAW – ${host}` : 'CAW – Decentralized Network'
+  // Reserve room for the stat row at the bottom (only when any
+  // non-zero stat exists). Same constants as the text-card path.
+  const hasStats = !!opts.stats && (
+    (opts.stats.likes && opts.stats.likes !== '0') ||
+    (opts.stats.recaws && opts.stats.recaws !== '0') ||
+    (opts.stats.replies && opts.stats.replies !== '0') ||
+    (opts.stats.views && opts.stats.views !== '0')
+  )
+  const STATS_ROW_H = 16 + 30
+  const height = CARD_MARGIN + CARD_HEADER_PX + CARD_BYLINE_PX + 12 + imageH + (hasStats ? STATS_ROW_H : 0) + CARD_MARGIN
+
+  return {
+    height,
+    tree: {
+      type: 'div',
+      props: {
+        style: {
+          display: 'flex',
+          width: '100%',
+          height: '100%',
+          backgroundColor: opts.backgroundColor,
+          color: '#ffffff',
+          fontFamily: 'Inter',
+          position: 'relative',
+        },
+        children: [
+          // Yellow strip.
+          {
+            type: 'div',
+            props: {
+              style: {
+                display: 'flex',
+                position: 'absolute',
+                top: 0,
+                left: 0,
+                width: CARD_STRIP_W,
+                height,
+                backgroundColor: CAW_GOLD,
+              },
+            },
+          },
+          // Stacked text + image.
+          {
+            type: 'div',
+            props: {
+              style: {
+                display: 'flex',
+                flexDirection: 'column',
+                position: 'absolute',
+                top: CARD_MARGIN,
+                left: CARD_TEXT_X,
+                right: CARD_MARGIN,
+                bottom: CARD_MARGIN,
+              },
+              children: [
+                {
+                  type: 'div',
+                  props: {
+                    style: {
+                      fontSize: CARD_HEADER_FS,
+                      fontWeight: 700,
+                      color: CAW_GOLD,
+                      lineHeight: CARD_LINE_H,
+                    },
+                    children: headerText,
+                  },
+                },
+                {
+                  type: 'div',
+                  props: {
+                    style: {
+                      display: 'flex',
+                      flexDirection: 'row',
+                      fontSize: CARD_BYLINE_FS,
+                      lineHeight: CARD_LINE_H,
+                      whiteSpace: 'nowrap',
+                    },
+                    children: [
+                      {
+                        type: 'div',
+                        props: {
+                          style: { display: 'flex', fontWeight: 700, color: '#ffffff', whiteSpace: 'nowrap' },
+                          children: fullName,
+                        },
+                      },
+                      dateText ? {
+                        type: 'div',
+                        props: {
+                          style: {
+                            display: 'flex',
+                            flexDirection: 'row',
+                            alignItems: 'flex-end',
+                            marginLeft: 10,
+                            whiteSpace: 'nowrap',
+                          },
+                          children: [
+                            {
+                              type: 'div',
+                              props: {
+                                style: { display: 'flex', fontSize: CARD_BYLINE_FS, fontWeight: 400, color: '#9ca3af', whiteSpace: 'nowrap' },
+                                children: '·',
+                              },
+                            },
+                            {
+                              type: 'div',
+                              props: {
+                                style: {
+                                  display: 'flex',
+                                  fontSize: Math.round(CARD_BYLINE_FS * 0.75),
+                                  fontWeight: 400,
+                                  color: '#9ca3af',
+                                  whiteSpace: 'nowrap',
+                                  marginLeft: 6,
+                                  paddingBottom: 2,
+                                },
+                                children: dateText.replace(/^[ ]?·\s*/, ''),
+                              },
+                            },
+                          ],
+                        },
+                      } : null,
+                    ].filter(Boolean) as any,
+                  },
+                },
+                // Image — square, full text-column width, slight gap
+                // below the byline.
+                {
+                  type: 'div',
+                  props: {
+                    style: {
+                      display: 'flex',
+                      width: imageW,
+                      height: imageH,
+                      marginTop: 12,
+                      borderRadius: 12,
+                      overflow: 'hidden',
+                      backgroundColor: '#1a1a1a',
+                    },
+                    children: [
+                      {
+                        type: 'img',
+                        props: {
+                          src: opts.cornerImage,
+                          width: imageW,
+                          height: imageH,
+                          style: { objectFit: 'cover' },
+                        },
+                      },
+                    ],
+                  },
+                },
+                // Stat row anchored to the card bottom — same shape
+                // as the text-card path (marginTop: auto pushes it
+                // past any extra vertical space).
+                opts.stats ? statsRow(opts.stats) : null,
+              ].filter(Boolean) as any,
+            },
+          },
+        ],
       },
     },
   }
@@ -1497,9 +1960,66 @@ function defaultCardTree() {
 
 async function renderToPng(tree: any, height: number = H): Promise<Buffer> {
   const fonts = loadFonts()
-  const svg = await satori(tree as any, { width: W, height, fonts })
-  const png = new Resvg(svg, { fitTo: { mode: 'width', value: W } }).render().asPng()
+  const svg = await satori(tree as any, {
+    width: W,
+    height,
+    fonts,
+    // Satori asks us to resolve any character it can't render with
+    // the loaded fonts. For emoji it passes code='emoji' and the
+    // grapheme; we serve a Twemoji SVG (free, MIT, Twitter's color
+    // emoji set). The COLR/CPAL Noto Emoji we tried first isn't
+    // supported by satori — only solid-color or image-based glyphs.
+    loadAdditionalAsset: async (code: string, segment: string) => {
+      if (code === 'emoji') return await loadTwemojiSvg(segment)
+      return ''
+    },
+  } as any)
+  // Render at 2x source resolution. Satori produces an SVG at the
+  // logical card size (W × height); Resvg rasterizes at 2*W wide.
+  // Downstream platforms (Twitter, Telegram, etc.) display the
+  // image at smaller sizes anyway, so a 2x source survives a
+  // bilinear downscale much better than a 1x render that gets
+  // blown up by HiDPI displays. ~1ms cost per render, ~2-3x file
+  // size — both well within budget for OG cards.
+  const png = new Resvg(svg, { fitTo: { mode: 'width', value: W * 2 } }).render().asPng()
   return png
+}
+
+// Twemoji disk cache (one SVG per codepoint sequence). Twemoji files
+// live on jsdelivr at /gh/twitter/twemoji@latest/assets/svg/<codepoints>.svg
+// — codepoints are hyphen-joined hex, with fe0f variation selectors
+// stripped because Twemoji's filenames omit them.
+const TWEMOJI_CACHE = path.join(CACHE_DIR, 'twemoji')
+fs.mkdirSync(TWEMOJI_CACHE, { recursive: true })
+async function loadTwemojiSvg(emoji: string): Promise<string> {
+  const codepoints: string[] = []
+  for (const ch of emoji) {
+    const cp = ch.codePointAt(0)
+    if (cp === undefined) continue
+    if (cp === 0xfe0f) continue
+    codepoints.push(cp.toString(16))
+  }
+  if (codepoints.length === 0) return ''
+  const slug = codepoints.join('-')
+  const cacheFile = path.join(TWEMOJI_CACHE, `${slug}.svg`)
+  try {
+    if (fs.existsSync(cacheFile)) {
+      const buf = fs.readFileSync(cacheFile)
+      return `data:image/svg+xml;base64,${buf.toString('base64')}`
+    }
+    const url = `https://cdn.jsdelivr.net/gh/twitter/twemoji@latest/assets/svg/${slug}.svg`
+    const ctrl = new AbortController()
+    const t = setTimeout(() => ctrl.abort(), 4000)
+    const res = await fetch(url, { signal: ctrl.signal })
+    clearTimeout(t)
+    if (!res.ok) return ''
+    const buf = Buffer.from(await res.arrayBuffer())
+    if (buf.length === 0) return ''
+    fs.writeFileSync(cacheFile, buf)
+    return `data:image/svg+xml;base64,${buf.toString('base64')}`
+  } catch {
+    return ''
+  }
 }
 
 async function serveCachedOrRender(
@@ -1701,6 +2221,14 @@ router.get('/image/caw/:id', async (req, res) => {
       id: true, content: true, status: true, createdAt: true,
       hasImage: true, imageData: true,
       hasVideo: true, videoData: true,
+      // Live counters for the stat row at the bottom of the card.
+      // Bucketed via fmtCount before they hit the cache key so the
+      // PNG only re-renders when the displayed value changes (not
+      // every individual interaction).
+      likeCount: true,
+      recawCount: true,
+      commentCount: true,
+      viewCount: true,
       user: {
         select: {
           tokenId: true, username: true, displayName: true,
@@ -1716,14 +2244,61 @@ router.get('/image/caw/:id', async (req, res) => {
       },
     },
   })
-  // Only render cards for posts a stranger could see. PENDING/FAILED stays
-  // private (matches the GET /api/caws/:id visibility rule).
-  if (!caw || caw.status !== 'SUCCESS') return res.redirect(302, '/api/og/image/default')
+  // Render PENDING and SUCCESS — the post is publicly visible in
+  // both states (the FE shows pending posts in author feeds), so OG
+  // crawlers should see the same. FAILED / HIDDEN stay private.
+  if (!caw || (caw.status !== 'SUCCESS' && caw.status !== 'PENDING')) {
+    return res.redirect(302, '/api/og/image/default')
+  }
 
-  // v6 = CJK font support + image-only post layout. Old v5 PNGs
-  // cached the box-stripped (Latin-only) versions of CJK caws —
-  // bump the prefix so they get re-rendered with real glyphs.
-  const cacheKey = `caw-v6-${caw.id}`
+  // Poll vote counts: aggregate per option since Poll.options is just
+  // the labels and Poll.totalVotes is the running total. Done OUTSIDE
+  // serveCachedOrRender so we can bake the bucketed counts into the
+  // cache key — otherwise the cache would freeze the moment-of-first-
+  // render counts forever.
+  let pollData: { options: PollOption[]; totalVotes: number } | null = null
+  if (caw.poll && caw.poll.options.length > 0) {
+    const counts = await prisma.vote.groupBy({
+      by: ['optionIndex'],
+      where: { pollId: caw.poll.id, pending: false },
+      _count: { _all: true },
+    })
+    const countByIndex = new Map<number, number>()
+    for (const row of counts) countByIndex.set(row.optionIndex, row._count._all)
+    pollData = {
+      options: caw.poll.options.map((label, i) => ({
+        label,
+        votes: countByIndex.get(i) ?? 0,
+      })),
+      totalVotes: caw.poll.totalVotes,
+    }
+  }
+
+  // Bucket all live counters via fmtCount so the cache key only
+  // changes when the displayed value changes (999 → 1K, not every
+  // single new like). Card stats picked up from the bucket for the
+  // displayed strings too — see planCawCard's stats opt.
+  const stats = {
+    likes:    fmtCount(caw.likeCount),
+    recaws:   fmtCount(caw.recawCount),
+    replies:  fmtCount(caw.commentCount),
+    views:    fmtCount(caw.viewCount),
+  }
+  // Per-option vote percentages bucketed at 1% granularity for the
+  // cache hash — same level of detail the bars actually show.
+  const pollHash = pollData
+    ? pollData.options.map(o => Math.round((o.votes / Math.max(1, pollData!.totalVotes)) * 100)).join(',') + `|${fmtCount(pollData.totalVotes)}`
+    : ''
+  const liveHash = crypto.createHash('sha1')
+    .update([stats.likes, stats.recaws, stats.replies, stats.views, pollHash].join('|'))
+    .digest('hex').slice(0, 8)
+
+  // v9 = stat row + bucketed-hash cache busting. Old v8 PNGs are
+  // ignored. PENDING caws include status so a later SUCCESS/HIDDEN
+  // flip doesn't serve a stale render.
+  const cacheKey = caw.status === 'PENDING'
+    ? `caw-v10-${caw.id}-${liveHash}-pending`
+    : `caw-v10-${caw.id}-${liveHash}`
   return serveCachedOrRender(res, cacheKey, async () => {
     // Strip media URLs and poll markers out of the visible text — the
     // corner image and the rendered poll bars already represent them,
@@ -1754,36 +2329,27 @@ router.get('/image/caw/:id', async (req, res) => {
     }
     if (!cornerImage) cornerImage = await resolveAvatarDataUri(caw.user)
 
-    // Poll vote counts: aggregate per option since Poll.options is just
-    // the labels and Poll.totalVotes is the running total.
-    let pollData: { options: PollOption[]; totalVotes: number } | null = null
-    if (caw.poll && caw.poll.options.length > 0) {
-      const counts = await prisma.vote.groupBy({
-        by: ['optionIndex'],
-        where: { pollId: caw.poll.id, pending: false },
-        _count: { _all: true },
-      })
-      const countByIndex = new Map<number, number>()
-      for (const row of counts) countByIndex.set(row.optionIndex, row._count._all)
-      pollData = {
-        options: caw.poll.options.map((label, i) => ({
-          label,
-          votes: countByIndex.get(i) ?? 0,
-        })),
-        totalVotes: caw.poll.totalVotes,
-      }
-    }
-
-    const { tree, height } = planCawCard({
+    const planArgs = {
       displayName: caw.user.displayName || '',
       username: caw.user.username,
       text: visibleText,
-      cornerImage,
       poll: pollData,
       backgroundColor: cardBgFor(caw.id),
       postedAt: caw.createdAt,
-    })
-    return renderToPng(tree, height)
+      stats,
+    }
+    const { tree, height } = planCawCard({ ...planArgs, cornerImage })
+    try {
+      return await renderToPng(tree, height)
+    } catch (err: any) {
+      // Satori sometimes can't decode certain image formats (notably
+      // some webp variants) and throws inside its image preprocessor.
+      // Re-plan without the corner image rather than 500ing — the
+      // text portion of the card is the load-bearing part.
+      console.warn(`[og] satori render failed for caw ${caw.id} with corner image, retrying without:`, err?.message ?? err)
+      const fallback = planCawCard({ ...planArgs, cornerImage: null })
+      return await renderToPng(fallback.tree, fallback.height)
+    }
   })
 })
 
