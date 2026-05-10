@@ -1166,7 +1166,13 @@ const Staking = () => {
           </div>
         </div>
 
-        {/* Custom Tabs - Container Style */}
+        {/* Custom Tabs - Container Style.
+            min-w-0 + truncate are needed for languages whose labels
+            overflow the equal-width tabs (Spanish "Información" vs
+            English "Info"). Without min-w-0 the flex children refuse
+            to shrink below their content width and the icon spills
+            out of the rounded container. Slight text-size step down on
+            mobile keeps three tabs comfortable on a 320px viewport. */}
         <div className="mb-6">
           <div className={`relative p-1 rounded-xl transition-all duration-300 ${
             isDark ? 'bg-white/10' : 'bg-gray-200'
@@ -1174,38 +1180,38 @@ const Staking = () => {
             <div className="flex relative">
                                 <button
                     onClick={() => navigate('/staking')}
-                    className={`flex-1 py-2 px-2 sm:px-6 text-center font-medium text-lg transition-all duration-200 flex items-center justify-center space-x-2 relative z-10 cursor-pointer ${
+                    className={`flex-1 min-w-0 py-2 px-2 sm:px-6 text-center font-medium text-base sm:text-lg transition-all duration-200 flex items-center justify-center gap-1 sm:gap-2 relative z-10 cursor-pointer ${
                       activeTab === 'stake'
                         ? `${isDark ? 'bg-white text-black' : 'bg-black text-white'} rounded-lg`
                         : `${isDark ? 'text-gray-400 hover:text-white' : 'text-gray-600 hover:text-black'}`
                     }`}
                   >
-                    <HiOutlineTrendingUp className="w-5 h-5" />
-                    <span>{t('staking.tab.deposit')}</span>
+                    <HiOutlineTrendingUp className="w-5 h-5 shrink-0" />
+                    <span className="truncate">{t('staking.tab.deposit')}</span>
                   </button>
 
                   <button
                     onClick={() => navigate('/staking/unstake')}
-                    className={`flex-1 py-2 px-2 sm:px-6 text-center font-medium text-lg transition-all duration-200 flex items-center justify-center space-x-2 relative z-10 cursor-pointer ${
+                    className={`flex-1 min-w-0 py-2 px-2 sm:px-6 text-center font-medium text-base sm:text-lg transition-all duration-200 flex items-center justify-center gap-1 sm:gap-2 relative z-10 cursor-pointer ${
                       activeTab === 'unstake'
                         ? `${isDark ? 'bg-white text-black' : 'bg-black text-white'} rounded-lg`
                         : `${isDark ? 'text-gray-400 hover:text-white' : 'text-gray-600 hover:text-black'}`
                     }`}
                   >
-                    <HiOutlineTrendingDown className="w-5 h-5" />
-                    <span>{t('staking.tab.withdraw')}</span>
+                    <HiOutlineTrendingDown className="w-5 h-5 shrink-0" />
+                    <span className="truncate">{t('staking.tab.withdraw')}</span>
                   </button>
 
                   <button
                     onClick={() => navigate('/staking/info')}
-                    className={`flex-1 py-2 px-2 sm:px-6 text-center font-medium text-lg transition-all duration-200 flex items-center justify-center space-x-2 relative z-10 cursor-pointer ${
+                    className={`flex-1 min-w-0 py-2 px-2 sm:px-6 text-center font-medium text-base sm:text-lg transition-all duration-200 flex items-center justify-center gap-1 sm:gap-2 relative z-10 cursor-pointer ${
                       activeTab === 'info'
                         ? `${isDark ? 'bg-white text-black' : 'bg-black text-white'} rounded-lg`
                         : `${isDark ? 'text-gray-400 hover:text-white' : 'text-gray-600 hover:text-black'}`
                     }`}
                   >
-                    <HiOutlineInformationCircle className="w-5 h-5" />
-                    <span>{t('staking.tab.info')}</span>
+                    <HiOutlineInformationCircle className="w-5 h-5 shrink-0" />
+                    <span className="truncate">{t('staking.tab.info')}</span>
                   </button>
             </div>
           </div>
