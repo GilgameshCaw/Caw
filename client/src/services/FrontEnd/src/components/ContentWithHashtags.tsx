@@ -9,7 +9,7 @@ import { useTheme } from '~/hooks/useTheme'
 import { useT } from '~/i18n/I18nProvider'
 import { feedImageLargeUrl } from '~/utils/imageVariants'
 import { isCanonicalUploadUrl } from '~/utils/uploadUrl'
-import { TAG_CHAR_CLASS } from '~/../../../tools/hashtagRegex'
+import { TAG_CHAR_CLASS, HASHTAG_SIGIL_CLASS, MENTION_SIGIL_CLASS } from '~/../../../tools/hashtagRegex'
 
 // Caches. Keyed by `${host}|${code}` so cross-node short URLs with the
 // same code (e.g. coincidentally identical codes on two mirroring nodes)
@@ -224,16 +224,16 @@ const ContentWithHashtags: React.FC<Props> = ({ content, className = '', postId,
   const handleHashtagClick = (hashtag: string, event: React.MouseEvent) => {
     event.preventDefault()
     event.stopPropagation()
-    // Remove # or $ symbol if present and navigate
-    const cleanHashtag = hashtag.replace(/^[#$]/, '')
+    // Strip the leading sigil (ASCII # / $ OR fullwidth ＃ / ＄ from CJK keyboards).
+    const cleanHashtag = hashtag.replace(/^[#$＃＄]/, '')
     navigate(`/hashtags/${cleanHashtag}`)
   }
 
   const handleMentionClick = (mention: string, event: React.MouseEvent) => {
     event.preventDefault()
     event.stopPropagation()
-    // Remove @ symbol and navigate to user profile
-    const username = mention.replace(/^@/, '')
+    // Strip the leading sigil (ASCII @ OR fullwidth ＠ from CJK keyboards).
+    const username = mention.replace(/^[@＠]/, '')
     navigate(`/users/${username}`)
   }
 
@@ -280,7 +280,12 @@ const ContentWithHashtags: React.FC<Props> = ({ content, className = '', postId,
     //   provided the run contains at least one non-digit. So `#テスト`,
     //   `#你好`, `#résumé`, `#foo123` all match; `#5` and `$100` are plain text.
     // The lookahead `(?=...*[non-digit]...)` enforces the not-pure-digit rule.
-    const tagAlt = `[@#$](?=${TAG_CHAR_CLASS}*[\\p{L}\\p{M}_])${TAG_CHAR_CLASS}+`
+    // Sigil class merges hashtag/cashtag (#$＃＄) + mention (@＠) — historically
+    // they were kept separate but rendering treats them with the same matcher
+    // because the render-time differentiation happens in isFullMention vs
+    // isFullTag below.
+    const allSigils = `(?:${HASHTAG_SIGIL_CLASS}|${MENTION_SIGIL_CLASS})`
+    const tagAlt = `${allSigils}(?=${TAG_CHAR_CLASS}*[\\p{L}\\p{M}_])${TAG_CHAR_CLASS}+`
     // Plain URL alt — same shape as PostForm.tsx URL_REGEX. Keeps the
     // short-URL alt first so e.g. `https://caw.social/s/abc` is captured by
     // the short-URL branch, not the generic one.
@@ -293,7 +298,7 @@ const ContentWithHashtags: React.FC<Props> = ({ content, className = '', postId,
     // mention / URL — not just text that happens to start with `#`/`http`
     // (e.g. `#333 hi` or `https://x.com/foo bar`, which split() returns
     // intact as the head of the parts array if they don't fully match).
-    const isFullMention = new RegExp(`^@${TAG_CHAR_CLASS}+$`, 'u')
+    const isFullMention = new RegExp(`^${MENTION_SIGIL_CLASS}${TAG_CHAR_CLASS}+$`, 'u')
     const isFullTag = new RegExp(`^${tagAlt}$`, 'u')
     const isFullUrl = new RegExp(`^${urlAlt}$`, 'u')
 

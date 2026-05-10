@@ -12,11 +12,20 @@
 /** Char class for the body of a hashtag/cashtag/mention. */
 export const TAG_CHAR_CLASS = '[\\p{L}\\p{N}\\p{M}_]';
 
-/** Matches `#word` or `$word` runs. Use with `String#matchAll`. */
-export const HASHTAG_REGEX = new RegExp(`[#$](${TAG_CHAR_CLASS}+)`, 'gu');
+// Sigil character classes accept the ASCII forms (`#`, `$`, `@`) and their
+// fullwidth CJK counterparts (`＃` U+FF03, `＄` U+FF04, `＠` U+FF20). Japanese,
+// Chinese, and Korean keyboards default to fullwidth in many input modes;
+// without these, a Japanese user typing `＃ハッシュ` got plain text instead of a
+// hashtag. We normalize sigils to ASCII at extract time so storage and lookup
+// stay in one form.
+export const HASHTAG_SIGIL_CLASS = '[#$\\uFF03\\uFF04]';
+export const MENTION_SIGIL_CLASS = '[@\\uFF20]';
 
-/** Matches `@word` runs. */
-export const MENTION_REGEX = new RegExp(`@(${TAG_CHAR_CLASS}+)`, 'gu');
+/** Matches `#word` / `$word` runs (incl. fullwidth ＃ ＄). Use with `String#matchAll`. */
+export const HASHTAG_REGEX = new RegExp(`${HASHTAG_SIGIL_CLASS}(${TAG_CHAR_CLASS}+)`, 'gu');
+
+/** Matches `@word` runs (incl. fullwidth ＠). */
+export const MENTION_REGEX = new RegExp(`${MENTION_SIGIL_CLASS}(${TAG_CHAR_CLASS}+)`, 'gu');
 
 /**
  * True if `body` (the part after `#` / `$` / `@`) is a valid tag — i.e. it

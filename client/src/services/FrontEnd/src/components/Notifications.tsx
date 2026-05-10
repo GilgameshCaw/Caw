@@ -921,8 +921,17 @@ const Notifications: React.FC = () => {
             const divider = idx < notifications.length - 1
               ? (isDark ? 'border-b border-white/15' : 'border-b border-gray-200')
               : ''
+            // Subtle yellow tint on unread rows so new notifications stand
+            // out from already-seen ones at a glance (X-style; brand accent
+            // at low alpha so it sits behind the row content rather than
+            // shouting). Falls back to plain hover-only background once the
+            // row is marked read.
             const rowClass = `block px-4 py-4 transition cursor-pointer no-underline ${
-              isDark ? 'hover:bg-white/5' : 'hover:bg-gray-50'
+              !notification.isRead
+                ? isDark
+                  ? 'bg-yellow-500/10 hover:bg-yellow-500/15'
+                  : 'bg-yellow-500/10 hover:bg-yellow-500/15'
+                : isDark ? 'hover:bg-white/5' : 'hover:bg-gray-50'
             } ${divider}`
             const RowTag: any = href ? 'a' : 'div'
             const rowProps: any = href

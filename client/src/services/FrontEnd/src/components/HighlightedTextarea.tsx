@@ -1,6 +1,6 @@
 import React, { useRef, useEffect, useState } from 'react'
 import { useTheme } from '~/hooks/useTheme'
-import { TAG_CHAR_CLASS } from '~/../../../tools/hashtagRegex'
+import { TAG_CHAR_CLASS, HASHTAG_SIGIL_CLASS, MENTION_SIGIL_CLASS } from '~/../../../tools/hashtagRegex'
 
 interface HighlightedTextareaProps {
   value: string
@@ -63,6 +63,12 @@ const HighlightedTextarea: React.FC<HighlightedTextareaProps> = ({
     }
   }, [scrollTop])
 
+  // Mirrors the textarea's rendered height so the absolute-positioned
+  // highlight overlay can follow it on autoResize without relying on the
+  // parent's auto-height to catch up. Tracked in state so the inline style
+  // re-applies on every resize the same render the textarea grows.
+  const [overlayHeight, setOverlayHeight] = useState<number | null>(null)
+
   // Auto-grow to fit content (handles soft-wrapped long lines too).
   useEffect(() => {
     if (!autoResize) return
@@ -75,6 +81,11 @@ const HighlightedTextarea: React.FC<HighlightedTextareaProps> = ({
     el.style.height = '0px'
     const next = el.scrollHeight + 2 // tiny buffer to avoid 1px flicker
     el.style.height = `${next}px`
+    // Snap the highlight overlay to the same height. Without this, when the
+    // textarea grew the overlay sometimes lagged a frame and lines 1-2
+    // disappeared while line 3 was being typed (reported by Japanese users
+    // in the reply composer, where soft-wrap fires earlier with CJK chars).
+    setOverlayHeight(next)
   }, [autoResize, value, textareaRef, compact, lineHeight, fontSize])
 
   // Parse text and apply highlighting for @mentions, #hashtags, $cashtags, and URLs
@@ -85,8 +96,8 @@ const HighlightedTextarea: React.FC<HighlightedTextareaProps> = ({
     // contain at least one non-digit char; pure-numeric runs like `#5` or
     // `$100` stay plain text. Char class allows any Unicode letter/digit/mark
     // so e.g. `#テスト` and `#你好` highlight the same as `#foo`.
-    const tagAlt = `[#$](?=${TAG_CHAR_CLASS}*[\\p{L}\\p{M}_])${TAG_CHAR_CLASS}+`
-    const mentionAlt = `@${TAG_CHAR_CLASS}+`
+    const tagAlt = `${HASHTAG_SIGIL_CLASS}(?=${TAG_CHAR_CLASS}*[\\p{L}\\p{M}_])${TAG_CHAR_CLASS}+`
+    const mentionAlt = `${MENTION_SIGIL_CLASS}${TAG_CHAR_CLASS}+`
     const urlAlt = `https?:\\/\\/[^\\s<>"'{}|\\\\^\`\\[\\]]+[^\\s<>"'{}|\\\\^\`\\[\\].,!?;:)\\]]`
     const regex = new RegExp(`(${mentionAlt}|${tagAlt}|${urlAlt})`, 'gu')
     const parts = text.split(regex)
@@ -110,7 +121,7 @@ const HighlightedTextarea: React.FC<HighlightedTextareaProps> = ({
       {/* Highlight layer - renders behind textarea */}
       <div
         ref={highlightRef}
-        className={`absolute inset-0 pointer-events-none overflow-hidden whitespace-pre-wrap break-words ${textSizeClass} ${
+        className={`absolute left-0 right-0 top-0 pointer-events-none overflow-hidden whitespace-pre-wrap break-words ${textSizeClass} ${
           isDark ? 'text-white' : 'text-black'
         }`}
         style={{
@@ -118,6 +129,11 @@ const HighlightedTextarea: React.FC<HighlightedTextareaProps> = ({
           lineHeight,
           wordBreak: 'break-word',
           overflowWrap: 'break-word',
+          // Anchor the overlay to the textarea's exact rendered height
+          // when autoResize is on. inset-0 used to defer to the parent's
+          // height, which lagged a layout pass on Safari iOS — lines 1-2
+          // visually disappeared while line 3 was being typed.
+          ...(autoResize && overlayHeight != null ? { height: overlayHeight } : { bottom: 0 }),
         }}
         aria-hidden="true"
       >
