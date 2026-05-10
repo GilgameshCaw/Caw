@@ -419,28 +419,53 @@ async function runUnderLock<T>(tokenId: number, fn: () => Promise<T>): Promise<T
 }
 
 async function doAllocate(tokenId: number): Promise<number> {
-  // 1. Chain truth.
-  let chainNext = 0
-  try {
-    const result = await readContract(wagmiConfig, {
-      address: CAW_NAMES_L2_ADDRESS,
-      abi: cawProfileL2Abi,
-      functionName: 'getTokens',
-      args: [[tokenId]],
-      chainId: baseSepolia.id,
-    }) as any
-    const tok = result?.[0]
-    const raw = tok?.nextCawonce ?? tok?.[4]
-    chainNext = Number(BigInt(raw?.toString() ?? '0'))
-  } catch (err) {
-    console.warn(`[getNextCawonce] chain read failed for tokenId=${tokenId}:`, err)
+  // 1. Chain truth — retry a few times, the RPC throws "0x" /
+  // AbiDecodingZeroDataError when Infura rate-limits or the gateway
+  // hiccups. Without retries, a single transient failure made
+  // chainNext fall back to 0 silently and we'd post with cawonce 0
+  // (which collides with the very first post on this token).
+  let chainNext: number | null = null
+  let lastErr: unknown = null
+  const RETRY_DELAYS_MS = [0, 400, 1200, 3000, 6000]
+  for (let attempt = 0; attempt < RETRY_DELAYS_MS.length; attempt++) {
+    if (RETRY_DELAYS_MS[attempt] > 0) {
+      await new Promise(r => setTimeout(r, RETRY_DELAYS_MS[attempt]))
+    }
+    try {
+      const result = await readContract(wagmiConfig, {
+        address: CAW_NAMES_L2_ADDRESS,
+        abi: cawProfileL2Abi,
+        functionName: 'getTokens',
+        args: [[tokenId]],
+        chainId: baseSepolia.id,
+      }) as any
+      const tok = result?.[0]
+      const raw = tok?.nextCawonce ?? tok?.[4]
+      chainNext = Number(BigInt(raw?.toString() ?? '0'))
+      break
+    } catch (err) {
+      lastErr = err
+      if (attempt < RETRY_DELAYS_MS.length - 1) {
+        console.warn(`[getNextCawonce] chain read attempt ${attempt + 1} failed for tokenId=${tokenId}, retrying…`)
+      }
+    }
   }
 
   // 2. Local high-watermark (this tab + cross-tab via BC + localStorage).
   const localHigh = getLocalHigh(tokenId)
 
-  // 3. Pick the higher; bump and broadcast atomically (synchronous in JS).
-  const allocated = Math.max(chainNext, localHigh + 1)
+  // 3. If chain read failed AND we have no local watermark, refuse to
+  // pick a value. cawonce=0 collides with the first post on a token
+  // and a stale localHigh can collide with confirmed posts from other
+  // mirrors. Better to surface a real error than silently submit a
+  // duplicate that the validator rejects an hour later.
+  if (chainNext === null && localHigh < 0) {
+    console.error('[getNextCawonce] chain read failed and no local watermark — refusing to allocate', lastErr)
+    throw new Error('Could not reach the chain to assign a post number. Please try again in a moment.')
+  }
+
+  // 4. Pick the higher; bump and broadcast atomically (synchronous in JS).
+  const allocated = Math.max(chainNext ?? 0, localHigh + 1)
   bumpHigh(tokenId, allocated)
   return allocated
 }
