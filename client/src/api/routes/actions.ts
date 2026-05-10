@@ -1157,6 +1157,27 @@ router.post('/', async (req, res) => {
       }
     }
 
+    // Look up the optimistic Caw row's real DB id for CAW/RECAW so the FE
+    // can swap its `pending-<ts>` tempId for the real `/caws/<n>` URL the
+    // moment we respond, instead of waiting for the next feed refetch dedup
+    // to do the swap. Skipped for non-CAW actions (LIKE/FOLLOW/etc.) since
+    // they don't produce a Caw row.
+    let cawId: number | null = null
+    const isCawAction = data.actionType === 0 || data.actionType === 'caw' ||
+                        data.actionType === 3 || data.actionType === 'recaw'
+    if (isCawAction) {
+      try {
+        const row = await prisma.caw.findUnique({
+          where: { userId_cawonce: { userId: data.senderId, cawonce: data.cawonce } },
+          select: { id: true },
+        })
+        cawId = row?.id ?? null
+      } catch {
+        // Best-effort. The feed-refetch dedup path still resolves the id
+        // later if this lookup fails, so don't fail the request over it.
+      }
+    }
+
     mark('done')
     const total = Date.now() - reqStart
     if (total > 200) {
@@ -1166,6 +1187,7 @@ router.post('/', async (req, res) => {
     res.status(201).json({
       status: 'queued',
       txQueueId: txQueueEntry.id,
+      ...(cawId != null ? { cawId, cawonce: data.cawonce, senderId: data.senderId } : {}),
       ...(authResult ? { auth: authResult } : {})
     })
   } catch (err: any) {
@@ -1353,7 +1375,7 @@ router.post('/batch', async (req, res) => {
 
     // Verify every other signature matches the first signer
     // (and that action types are in the session scope if session-signed)
-    const results: Array<{ index: number; txQueueId?: number; status?: string; error?: string }> = []
+    const results: Array<{ index: number; txQueueId?: number; cawId?: number; cawonce?: number; senderId?: number; status?: string; error?: string }> = []
     const rowsToInsert: Array<{ senderId: number; cawonce: number; payload: any; signedTx: string; batchId: number | null }> = []
 
     for (let i = 0; i < actions.length; i++) {
@@ -1582,12 +1604,27 @@ router.post('/batch', async (req, res) => {
         throw err
       }
 
-      // Map created TxQueue IDs back to results
+      // Map created TxQueue IDs back to results, plus the optimistic
+      // Caw row's real DB id so the FE can replace its `pending-<ts>`
+      // tempId immediately (same reason as the single-action path
+      // above). cawByUserCawonce was populated when each Caw row was
+      // upserted inside the same transaction, so it's already available.
       let insertIdx = 0
       for (let i = 0; i < results.length; i++) {
         if (results[i].error) continue
         results[i].txQueueId = created[insertIdx].id
         results[i].status = 'queued'
+        const a = actions[i]
+        const isCawAction = a?.data?.actionType === 0 || a?.data?.actionType === 'caw' ||
+                            a?.data?.actionType === 3 || a?.data?.actionType === 'recaw'
+        if (isCawAction) {
+          const cawId = cawByUserCawonce.get(`${a.data.senderId}:${a.data.cawonce}`)
+          if (cawId) {
+            results[i].cawId = cawId
+            results[i].cawonce = a.data.cawonce
+            results[i].senderId = a.data.senderId
+          }
+        }
         insertIdx++
       }
     }

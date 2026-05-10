@@ -22,6 +22,7 @@ import { useQuickSignRenewStore } from '~/components/modals/QuickSignRenewModal'
 import { useClientAuthStore } from '~/store/clientAuthStore'
 import toast from 'react-hot-toast'
 import { usePendingSpendStore } from '~/store/pendingSpendStore'
+import { usePendingPostsStore } from '~/store/pendingPostsStore'
 import { useInstanceStore } from '~/store/instanceStore'
 import { API_HOST } from './client'
 
@@ -1121,6 +1122,19 @@ export function useSignAndSubmitAction() {
         }
       }
 
+      // Swap the pending post's tempId (`pending-<ts>-<rand>`) for the
+      // real DB id the server just returned. Without this, the URL bar
+      // and any share links show `/caws/pending-...` until Feed.tsx's
+      // dedup pass catches up on the next refetch — which can be tens
+      // of seconds. Server only returns cawId for CAW/RECAW actions.
+      if (response.cawId != null && response.cawonce != null && response.senderId != null) {
+        usePendingPostsStore.getState().updatePostId(
+          response.cawonce,
+          response.senderId,
+          String(response.cawId),
+        )
+      }
+
       // Record pending spend so subsequent actions see reduced effective stake.
       // Use the effective tip we actually signed with (respects per-session ceiling), not the
       // current market tip — otherwise the pending counter would mis-estimate.
@@ -1486,6 +1500,15 @@ export function useSignAndSubmitAction() {
         if (costWei > 0n) {
           usePendingSpendStore.getState().addPendingSpend(r.txQueueId, costWei)
         }
+      }
+      // Swap each pending post's tempId for its real DB id (same reason
+      // as the single-action path — beats waiting for Feed.tsx dedup).
+      if (r?.cawId != null && r?.cawonce != null && r?.senderId != null) {
+        usePendingPostsStore.getState().updatePostId(
+          r.cawonce,
+          r.senderId,
+          String(r.cawId),
+        )
       }
       onProgress?.({ signed: allParams.length, submitted: i + 1, total: allParams.length })
     }
