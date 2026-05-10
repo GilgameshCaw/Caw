@@ -2212,8 +2212,7 @@ const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess, placehol
                         className="hidden md:block fixed z-[100]"
                         style={{
                           left,
-                          top: rect.top - 8,
-                          transform: 'translateY(-100%)',
+                          top: rect.bottom + 8,
                           width: popoverW,
                         }}
                       >
@@ -2300,8 +2299,7 @@ const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess, placehol
                             }`}
                             style={{
                               left,
-                              top: rect.top - 8,
-                              transform: 'translateY(-100%)',
+                              top: rect.bottom + 8,
                               width: popoverW,
                             }}
                           >
