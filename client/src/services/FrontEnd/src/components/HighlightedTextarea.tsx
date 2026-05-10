@@ -42,8 +42,15 @@ const HighlightedTextarea: React.FC<HighlightedTextareaProps> = ({
   autoResize = false
 }) => {
   const { isDark } = useTheme()
-  const internalRef = useRef<HTMLTextAreaElement>(null)
-  const textareaRef = externalRef || internalRef
+  // Each instance keeps its OWN ref to its OWN textarea — required so
+  // autoResize finds the right element when the same external ref is
+  // shared across mobile + desktop instances of this component (the
+  // mounted-but-display:none one would steal the ref otherwise and
+  // scrollHeight would be 0). The external ref is forwarded via a
+  // callback ref attached to the textarea, so it points at whichever
+  // instance is visible (or the last-rendered one when both are
+  // mounted — caller decides which path is the active path).
+  const internalRef = useRef<HTMLTextAreaElement | null>(null)
   const highlightRef = useRef<HTMLDivElement>(null)
   const [scrollTop, setScrollTop] = useState(0)
 
@@ -72,8 +79,13 @@ const HighlightedTextarea: React.FC<HighlightedTextareaProps> = ({
   // Auto-grow to fit content (handles soft-wrapped long lines too).
   useEffect(() => {
     if (!autoResize) return
-    const el = (textareaRef as React.RefObject<HTMLTextAreaElement | null>)?.current
+    const el = internalRef.current
     if (!el) return
+    // scrollHeight is 0 on a display:none element, which would yield
+    // height: 2px and visibly squash the textarea. Skip resize when the
+    // element isn't laid out — the visible instance will recalc on its
+    // own when typing happens.
+    if (el.offsetParent === null) return
 
     // Use scrollHeight for BOTH empty and non-empty so the height is stable.
     // The placeholder is NOT inside the <textarea>, so we keep a hidden dot
@@ -86,7 +98,7 @@ const HighlightedTextarea: React.FC<HighlightedTextareaProps> = ({
     // disappeared while line 3 was being typed (reported by Japanese users
     // in the reply composer, where soft-wrap fires earlier with CJK chars).
     setOverlayHeight(next)
-  }, [autoResize, value, textareaRef, compact, lineHeight, fontSize])
+  }, [autoResize, value, compact, lineHeight, fontSize])
 
   // Parse text and apply highlighting for @mentions, #hashtags, $cashtags, and URLs
   const getHighlightedText = (text: string) => {
@@ -144,7 +156,24 @@ const HighlightedTextarea: React.FC<HighlightedTextareaProps> = ({
 
       {/* Actual textarea - transparent text, handles input */}
       <textarea
-        ref={textareaRef as React.RefObject<HTMLTextAreaElement>}
+        ref={(node) => {
+          internalRef.current = node
+          // External ref is shared across mobile + desktop instances of
+          // this component (PostForm passes the same useRef). Only the
+          // visible instance (offsetParent !== null) should claim the
+          // shared ref so focus / cursor / selection ops land on the
+          // textarea the user is actually looking at. RefObject.current
+          // is readonly in the type; the mutable assignment is fine at
+          // runtime — useRef returns a mutable object.
+          if (externalRef) {
+            const r = externalRef as { current: HTMLTextAreaElement | null }
+            if (node && node.offsetParent !== null) {
+              r.current = node
+            } else if (!node && r.current === internalRef.current) {
+              r.current = null
+            }
+          }
+        }}
         className={`w-full resize-none border-none outline-none bg-transparent ${textSizeClass} ${className}`}
         style={{
           boxShadow: 'none',
