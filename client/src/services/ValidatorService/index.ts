@@ -141,7 +141,15 @@ async function markTxQueueFailed(
 // declare it a real failure. The contract said the cawonce was used, but
 // our local Action table never caught up — at that point we have to
 // assume the indexer is broken or the action genuinely doesn't exist.
-const AWAITING_INDEXER_TIMEOUT_MS = 60_000
+// Extended from 60s to 10min on 2026-05-10 after a wave of false-failure
+// posts. Symptom: validator simulation said "Cawonce already used"
+// (cawonce IS used on chain), but our local Action table didn't have
+// the row yet because RawEventsGatherer was minutes behind the chain
+// head (Infura rate-limiting on L2 getLogs slowed indexing). With the
+// old 60s budget, the validator gave up and marked legitimate posts
+// failed. 10min covers the worst observed indexer lag while still
+// catching genuine collisions in a reasonable timeframe.
+const AWAITING_INDEXER_TIMEOUT_MS = 10 * 60_000
 
 /**
  * Resolve a "Cawonce already used" simulation rejection by checking our
