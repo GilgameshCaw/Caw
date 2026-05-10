@@ -2169,32 +2169,30 @@ const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess, placehol
                     onClick={() => setShowGifPicker(false)}
                   />
 
-                  {/* Mobile composeMode: bottom-anchored sheet so it sits
-                      directly above the keyboard / sticky toolbar instead
-                      of spilling below the viewport. Desktop: anchored
-                      popover whose RIGHT edge aligns with the GIF
-                      button's relative parent — left-anchored would
-                      overflow the form. */}
-                  {composeMode ? (
-                    <div className="fixed inset-x-3 bottom-3 z-50 max-w-[520px] mx-auto max-h-[70vh] overflow-y-auto">
-                      <GifPicker
-                        initialQuery={gifSearchQuery(text)}
-                        onSelect={handleGifSelected}
-                        onClose={() => setShowGifPicker(false)}
-                      />
-                    </div>
-                  ) : (
-                    <div
-                      className={`absolute z-50 right-0 ${replyTo ? 'bottom-full mb-2' : 'top-full mt-2'}`}
-                      style={{ width: 'min(520px, calc(100vw - 2rem))' }}
-                    >
-                      <GifPicker
-                        initialQuery={gifSearchQuery(text)}
-                        onSelect={handleGifSelected}
-                        onClose={() => setShowGifPicker(false)}
-                      />
-                    </div>
-                  )}
+                  {/* Mobile (<md): bottom-anchored sheet above keyboard.
+                      Desktop (≥md, including the home inline composer
+                      which also uses composeMode): anchored popover
+                      hanging off the GIF button's relative parent. The
+                      gating is by viewport, NOT composeMode — the home
+                      inline composer also passes composeMode but lives
+                      on a desktop page. */}
+                  <div className="md:hidden fixed inset-x-3 bottom-3 z-50 max-w-[520px] mx-auto max-h-[70vh] overflow-y-auto">
+                    <GifPicker
+                      initialQuery={gifSearchQuery(text)}
+                      onSelect={handleGifSelected}
+                      onClose={() => setShowGifPicker(false)}
+                    />
+                  </div>
+                  <div
+                    className={`hidden md:block absolute z-50 right-0 ${replyTo ? 'bottom-full mb-2' : 'top-full mt-2'}`}
+                    style={{ width: 'min(520px, calc(100vw - 2rem))' }}
+                  >
+                    <GifPicker
+                      initialQuery={gifSearchQuery(text)}
+                      onSelect={handleGifSelected}
+                      onClose={() => setShowGifPicker(false)}
+                    />
+                  </div>
                 </>
               )}
             </div>
@@ -2249,25 +2247,26 @@ const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess, placehol
                         ))}
                       </div>
                     )
-                    return composeMode ? (
-                      <div
-                        className={`fixed inset-x-3 bottom-3 z-50 max-w-[420px] mx-auto p-3 border rounded-xl shadow-2xl ${
-                          isDark ? 'border-white/10 bg-black' : 'border-gray-200 bg-white'
-                        }`}
-                      >
-                        {grid}
-                      </div>
-                    ) : (
-                      <div
-                        className={`absolute z-50 right-0 p-3 border rounded-xl shadow-2xl ${
-                          replyTo ? 'bottom-full mb-2' : 'top-full mt-2'
-                        } ${
-                          isDark ? 'border-white/10 bg-black' : 'border-gray-200 bg-white'
-                        }`}
-                        style={{ width: 'min(420px, calc(100vw - 2rem))' }}
-                      >
-                        {grid}
-                      </div>
+                    return (
+                      <>
+                        <div
+                          className={`md:hidden fixed inset-x-3 bottom-3 z-50 max-w-[420px] mx-auto p-3 border rounded-xl shadow-2xl ${
+                            isDark ? 'border-white/10 bg-black' : 'border-gray-200 bg-white'
+                          }`}
+                        >
+                          {grid}
+                        </div>
+                        <div
+                          className={`hidden md:block absolute z-50 right-0 p-3 border rounded-xl shadow-2xl ${
+                            replyTo ? 'bottom-full mb-2' : 'top-full mt-2'
+                          } ${
+                            isDark ? 'border-white/10 bg-black' : 'border-gray-200 bg-white'
+                          }`}
+                          style={{ width: 'min(420px, calc(100vw - 2rem))' }}
+                        >
+                          {grid}
+                        </div>
+                      </>
                     )
                   })()}
                 </>
