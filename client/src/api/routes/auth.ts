@@ -10,6 +10,7 @@ import { extractSession } from '../middleware/auth'
 // (NftTransferWatcher + RawEventsGatherer) populate rows asynchronously.
 // The frontend retries on 202 via apiFetch + retryOnIndexing.
 import dmService from '../../services/DmService'
+import { verifyDmIdentityProof } from '../dmSenderSig'
 
 const router = Router()
 
@@ -279,7 +280,6 @@ router.post('/verify-dm', async (req, res) => {
     // claim). Audit fix 2026-05-09 (Round 7 #1c).
     let validatedProof: string | null = null
     if (walletProof && typeof walletProof === 'string') {
-      const { verifyDmIdentityProof } = await import('../dmSenderSig')
       const ok = await verifyDmIdentityProof(tokenId, publicKey, recoveredAddress, walletProof)
       if (!ok) {
         res.status(400).json({ error: 'walletProof did not recover to walletAddress' })

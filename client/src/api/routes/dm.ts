@@ -13,6 +13,7 @@ import {
 import { recoverAddressFromCanonical } from '../../services/InstanceRegistryService/envelopeCrypto'
 import { getPeers } from '../../services/InstanceRegistryService'
 import { checkDmRate } from '../dmRateLimit'
+import { verifyDmIdentityProof, verifyDmSenderSig } from '../dmSenderSig'
 import crypto from 'crypto'
 
 const CLIENT_ID = (() => {
@@ -50,7 +51,6 @@ router.post('/identity',
       // the identity as unproven. Audit fix 2026-05-09 (Round 7 #1c).
       let validatedProof: string | null = null
       if (walletProof && typeof walletProof === 'string') {
-        const { verifyDmIdentityProof } = await import('../dmSenderSig')
         const ok = await verifyDmIdentityProof(Number(userId), publicKey, walletAddress, walletProof)
         if (!ok) {
           return res.status(400).json({ error: 'walletProof did not recover to walletAddress' })
@@ -166,7 +166,6 @@ router.post('/identity/relay', async (req: Request, res: Response) => {
     // to the lower-trust path. Audit fix 2026-05-09 (Round 7 #1c).
     let validatedProof: string | null = null
     if (walletProof && typeof walletProof === 'string') {
-      const { verifyDmIdentityProof } = await import('../dmSenderSig')
       const ok = await verifyDmIdentityProof(Number(userId), publicKey, walletAddress, walletProof)
       if (!ok) {
         return res.status(400).json({ error: 'walletProof did not recover to walletAddress' })
@@ -443,7 +442,6 @@ router.post('/messages',
           // tolerate the small ambiguity. The cost is one extra
           // recovery; safer than rejecting legitimate sigs over a
           // shape mismatch.
-          const { verifyDmSenderSig } = await import('../dmSenderSig')
           const tryGroup = verifyDmSenderSig(
             { encryptedPayload: ciphertextForSig, senderId: Number(senderId), recipientId: 0,
               conversationId, contentType: contentType || 'text', timestamp },

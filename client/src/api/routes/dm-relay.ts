@@ -26,6 +26,7 @@ import dmWebSocketService from '../../services/DmService/websocket'
 import { prisma } from '../../prismaClient'
 import { getPeers } from '../../services/InstanceRegistryService'
 import { recoverAddressFromCanonical } from '../../services/InstanceRegistryService/envelopeCrypto'
+import { verifyDmSenderSig } from '../dmSenderSig'
 
 const router = Router()
 
@@ -264,7 +265,6 @@ router.post('/', async (req, res) => {
         select: { publicKey: true },
       })
       if (senderIdentity?.publicKey) {
-        const { verifyDmSenderSig } = await import('../dmSenderSig')
         verifiedSender = verifyDmSenderSig(
           { encryptedPayload, senderId: Number(senderId), recipientId: Number(recipientId),
             conversationId, contentType, timestamp: Number(timestamp) },
