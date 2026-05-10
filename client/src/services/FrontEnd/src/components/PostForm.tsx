@@ -2169,11 +2169,14 @@ const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess, placehol
                     onClick={() => setShowGifPicker(false)}
                   />
 
-                  {/* On mobile composeMode: center as a fixed sheet so
-                      it never spills off the small viewport. On desktop:
-                      anchored popover next to the GIF button. */}
+                  {/* Mobile composeMode: bottom-anchored sheet so it sits
+                      directly above the keyboard / sticky toolbar instead
+                      of spilling below the viewport. Desktop: anchored
+                      popover whose RIGHT edge aligns with the GIF
+                      button's relative parent — left-anchored would
+                      overflow the form. */}
                   {composeMode ? (
-                    <div className="fixed inset-x-3 top-1/2 -translate-y-1/2 z-50 max-w-[520px] mx-auto">
+                    <div className="fixed inset-x-3 bottom-3 z-50 max-w-[520px] mx-auto max-h-[70vh] overflow-y-auto">
                       <GifPicker
                         initialQuery={gifSearchQuery(text)}
                         onSelect={handleGifSelected}
@@ -2182,11 +2185,8 @@ const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess, placehol
                     </div>
                   ) : (
                     <div
-                      className={`absolute z-50 left-1/2 ${replyTo ? 'bottom-full mb-2' : 'top-full mt-2'}`}
-                      style={{
-                        width: 'min(520px, calc(100vw - 2rem))',
-                        transform: 'translateX(calc(-50% + 170px))',
-                      }}
+                      className={`absolute z-50 right-0 ${replyTo ? 'bottom-full mb-2' : 'top-full mt-2'}`}
+                      style={{ width: 'min(520px, calc(100vw - 2rem))' }}
                     >
                       <GifPicker
                         initialQuery={gifSearchQuery(text)}
@@ -2251,7 +2251,7 @@ const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess, placehol
                     )
                     return composeMode ? (
                       <div
-                        className={`fixed inset-x-3 top-1/2 -translate-y-1/2 z-50 max-w-[420px] mx-auto p-3 border rounded-xl shadow-2xl ${
+                        className={`fixed inset-x-3 bottom-3 z-50 max-w-[420px] mx-auto p-3 border rounded-xl shadow-2xl ${
                           isDark ? 'border-white/10 bg-black' : 'border-gray-200 bg-white'
                         }`}
                       >
@@ -2259,12 +2259,12 @@ const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess, placehol
                       </div>
                     ) : (
                       <div
-                        className={`absolute z-50 left-1/2 p-3 border rounded-xl shadow-2xl ${
+                        className={`absolute z-50 right-0 p-3 border rounded-xl shadow-2xl ${
                           replyTo ? 'bottom-full mb-2' : 'top-full mt-2'
                         } ${
                           isDark ? 'border-white/10 bg-black' : 'border-gray-200 bg-white'
                         }`}
-                        style={{ width: 'min(420px, calc(100vw - 2rem))', transform: 'translateX(calc(-50% + 140px))' }}
+                        style={{ width: 'min(420px, calc(100vw - 2rem))' }}
                       >
                         {grid}
                       </div>
