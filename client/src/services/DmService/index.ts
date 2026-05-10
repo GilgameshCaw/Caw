@@ -5,11 +5,11 @@ export class DmService {
   /**
    * Register or update a user's DM public key
    */
-  async registerIdentity(userId: number, walletAddress: string, publicKey: string) {
+  async registerIdentity(userId: number, walletAddress: string, publicKey: string, walletProof?: string | null) {
     return prisma.dmIdentity.upsert({
       where: { userId },
-      create: { userId, walletAddress, publicKey },
-      update: { walletAddress, publicKey }
+      create: { userId, walletAddress, publicKey, walletProof: walletProof ?? null },
+      update: { walletAddress, publicKey, walletProof: walletProof ?? null }
     })
   }
 
@@ -365,6 +365,38 @@ export class DmService {
     const hasMore = participations.length > limit
     if (hasMore) participations.pop()
 
+    // Per-conversation unverified-unread count. Messages where
+    // verifiedSender is explicitly `false` (sig present but didn't
+    // recover to senderId's wallet) are counted SEPARATELY so the FE
+    // badge can exclude them — they're forgeries from a malicious
+    // relay node and shouldn't drive the user's "you have new messages"
+    // signal. Messages with verifiedSender = NULL (legacy + migration
+    // window, or no DmIdentity for the sender on this node) count as
+    // normal unread. Audit fix 2026-05-09 (Round 7 #1a).
+    const convIds = participations.map((p: any) => p.conversationId)
+    const unverifiedCounts: Map<string, number> = new Map()
+    if (convIds.length > 0) {
+      const rows = await prisma.message.groupBy({
+        by: ['conversationId'],
+        where: {
+          conversationId: { in: convIds },
+          verifiedSender: false,
+          shadowBlocked: false,
+          createdAt: {
+            // Anything since the user's lastReadAt for that conversation
+            // — but lastReadAt is per-participant, so we approximate by
+            // counting messages newer than `now - 30d`. The badge total
+            // is rounded; users still see exact counts in-thread.
+            gte: new Date(Date.now() - 30 * 24 * 60 * 60 * 1000),
+          },
+        },
+        _count: { id: true },
+      })
+      for (const r of rows) {
+        unverifiedCounts.set(r.conversationId, r._count.id)
+      }
+    }
+
     const conversations = participations.map((p: any) => {
       const last = p.conversation.messages[0] || null
       let shapedLast = last
@@ -373,10 +405,16 @@ export class DmService {
         const { recipientPayloads, ...rest } = last
         shapedLast = { ...rest, encryptedPayload: payload }
       }
+      const unverifiedUnreadCount = unverifiedCounts.get(p.conversationId) || 0
+      // The badge shows ONLY verified-or-unknown unread. unverifiedUnread
+      // surfaces in the conversation thread under a "X unverifiable
+      // messages" disclosure with explainer.
+      const verifiedUnread = Math.max(0, p.unreadCount - unverifiedUnreadCount)
       return {
         ...p.conversation,
         lastMessage: shapedLast,
-        unreadCount: p.unreadCount,
+        unreadCount: verifiedUnread,
+        unverifiedUnreadCount,
         myStatus: p.status,
         myRole: p.role,
       }

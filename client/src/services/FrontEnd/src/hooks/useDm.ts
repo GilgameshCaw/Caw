@@ -52,6 +52,15 @@ type UiConversation = {
   lastMessagePreview?: string // decrypted preview of last message
   lastMessageSenderId?: number
   unreadCount: number
+  /**
+   * Count of UNREAD messages where the inner sender sig was present but
+   * didn't recover to the wallet that owns DmIdentity for senderId —
+   * forgeries from a malicious relay node. Excluded from `unreadCount`
+   * (which drives the badge), surfaced under a "X unverifiable
+   * messages" disclosure inside the thread. Audit fix 2026-05-09
+   * (Round 7 #1a).
+   */
+  unverifiedUnreadCount?: number
   /** This user's participant.status — surfaces the "Accept" CTA in the
    *  conversation header for REQUEST conversations the recipient hasn't
    *  accepted yet. Pre-relay rows default to ACCEPTED (per the migration
@@ -314,6 +323,7 @@ export function useDmClient(tokenId?: number, username?: string) {
             lastMessagePreview,
             lastMessageSenderId,
             unreadCount: conv.unreadCount || 0,
+            unverifiedUnreadCount: conv.unverifiedUnreadCount || 0,
             myStatus: (conv.myStatus as UiConversationStatus) || 'ACCEPTED',
           }
         })
@@ -466,7 +476,7 @@ export function useDmClient(tokenId?: number, username?: string) {
         return sig
       }
 
-      const { privateKey, publicKeyHex, rawSignature, sigMessage } = await deriveKeyPair(
+      const { privateKey, publicKeyHex, rawSignature, sigMessage, walletProof } = await deriveKeyPair(
         signMessage, tokenId, username
       )
       privateKeyRef = privateKey
@@ -496,7 +506,8 @@ export function useDmClient(tokenId?: number, username?: string) {
               signature: rawSignature,
               message: sigMessage,
               userId: tokenId,
-              publicKey: publicKeyHex
+              publicKey: publicKeyHex,
+              walletProof,
             })
           })
         )

@@ -10,7 +10,7 @@ import Tooltip from '~/components/Tooltip'
 import ModalWrapper from '~/components/modals/ModalWrapper'
 import { apiFetch, API_HOST } from '~/api/client'
 import { getUserAvatar } from '~/utils/defaultAvatar'
-import Avatar from '~/components/Avatar'
+import { UserAvatar } from '~/components/Avatar'
 import {
   HiOutlineCog,
   HiOutlineMail,
@@ -132,6 +132,10 @@ const MessagesPage: React.FC = () => {
   const [filePreview, setFilePreview] = useState<{ file: File; previewUrl: string; isImage: boolean } | null>(null)
   const [chatSharedSecret, setChatSharedSecret] = useState<CryptoKey | null>(null)
   const [chatReady, setChatReady] = useState(false)
+  // Toggle for the "X unverifiable messages" disclosure inside a thread.
+  // Default: hidden. User can click "Show anyway" to expand. Audit fix
+  // 2026-05-09 (Round 7 #1a).
+  const [showUnverifiable, setShowUnverifiable] = useState(false)
   type ContextMenuState = {
     messageId: string
     x: number
@@ -1128,8 +1132,8 @@ const MessagesPage: React.FC = () => {
                   }}
                   className="w-8 h-8 rounded-full overflow-hidden flex-shrink-0 cursor-pointer"
                 >
-                  <Avatar
-                    src={getUserAvatar(otherParticipant.identity.user)}
+                  <UserAvatar
+                    user={otherParticipant.identity.user}
                     alt={otherParticipant.identity.user.username}
                     className="w-full h-full"
                     size="small"
@@ -1610,8 +1614,8 @@ const MessagesPage: React.FC = () => {
                               </div>
                             )
                           ) : otherUser?.identity.user ? (
-                            <Avatar
-                              src={getUserAvatar(otherUser.identity.user)}
+                            <UserAvatar
+                              user={otherUser.identity.user}
                               alt={otherUser.identity.user.username}
                               className="w-10 h-10 rounded-full"
                               size="small"
@@ -1788,9 +1792,63 @@ const MessagesPage: React.FC = () => {
                     )?.id
                   : null
 
+                // Split visible-by-default vs unverifiable. A message is
+                // unverifiable when verifiedSender === false (sig present
+                // but didn't recover to the wallet that owns DmIdentity
+                // for senderId — forged by a malicious relay node) or
+                // when decryption failed entirely (couldn't even parse
+                // the ciphertext under our shared key — could be key
+                // rotation, sender changed wallets, or forgery).
+                // Audit fix 2026-05-09 (Round 7 #1a).
+                const visibleMessages = showUnverifiable
+                  ? messages
+                  : messages.filter(m =>
+                      m.verifiedSender !== false &&
+                      (m.decryptOk !== false || m.contentType === 'deleted' || (m.contentType ?? '').startsWith('system:'))
+                    )
+                const hiddenCount = messages.length - visibleMessages.length
+
                 let lastDateLabel = ''
 
-                return messages.map((message, msgIdx) => {
+                const banner = hiddenCount > 0 ? (
+                  <div
+                    key="unverifiable-banner"
+                    className={`mx-auto my-3 max-w-md rounded-lg border px-3 py-2 text-xs ${
+                      isDark
+                        ? 'border-amber-700/40 bg-amber-900/10 text-amber-200/90'
+                        : 'border-amber-300 bg-amber-50 text-amber-800'
+                    }`}
+                  >
+                    <div className="flex items-start gap-2">
+                      <svg className="mt-0.5 h-4 w-4 flex-shrink-0" fill="currentColor" viewBox="0 0 20 20" aria-hidden="true">
+                        <path fillRule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-7-4a1 1 0 11-2 0 1 1 0 012 0zM9 9a1 1 0 000 2v3a1 1 0 001 1h1a1 1 0 100-2h-1V9a1 1 0 00-1 0z" clipRule="evenodd" />
+                      </svg>
+                      <div className="flex-1">
+                        <div className="font-medium">
+                          {hiddenCount} {hiddenCount === 1 ? 'message' : 'messages'} hidden from this conversation.
+                        </div>
+                        <div className="mt-1 leading-snug">
+                          Anyone can attempt to send you a message, but only messages signed by the
+                          claimed sender's wallet (or that decrypt cleanly under your shared key) are
+                          shown. The hidden ones are either forgeries from a malicious node, encrypted
+                          to a key you no longer hold, or sent before the sender registered their
+                          current wallet.
+                        </div>
+                        <button
+                          type="button"
+                          onClick={() => setShowUnverifiable(s => !s)}
+                          className={`mt-2 underline ${isDark ? 'text-amber-100 hover:text-amber-50' : 'text-amber-900 hover:text-amber-700'}`}
+                        >
+                          {showUnverifiable ? 'Hide unverified messages' : 'Show anyway'}
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                ) : null
+
+                return [
+                  banner,
+                  ...visibleMessages.map((message, msgIdx) => {
                   // Handle different content types
                   let messageContent = '';
                   let attachments: any[] = [];
@@ -2330,7 +2388,7 @@ const MessagesPage: React.FC = () => {
                       </div>
                     </div>
                   )
-                })
+                })]
               })()}
             </div>
 
@@ -2937,8 +2995,8 @@ const MessagesPage: React.FC = () => {
                               isDark ? 'text-white' : 'text-black'
                             }`}
                           >
-                            <Avatar
-                              src={getUserAvatar(user)}
+                            <UserAvatar
+                              user={user}
                               alt={user.username}
                               className="w-10 h-10 rounded-full"
                               size="small"
@@ -2980,8 +3038,8 @@ const MessagesPage: React.FC = () => {
                               isDark ? 'text-white' : 'text-black'
                             }`}
                           >
-                            <Avatar
-                              src={getUserAvatar(user)}
+                            <UserAvatar
+                              user={user}
                               alt={user.username}
                               className="w-10 h-10 rounded-full"
                               size="small"
@@ -3182,8 +3240,8 @@ const MessagesPage: React.FC = () => {
                 isDark ? 'bg-white/5' : 'bg-gray-50'
               }`}>
                 <div className="flex items-center gap-3">
-                  <Avatar
-                    src={getUserAvatar(dmPrivacyError.peer)}
+                  <UserAvatar
+                    user={dmPrivacyError.peer}
                     alt={dmPrivacyError.peer.username}
                     className="w-10 h-10 rounded-full"
                     size="small"

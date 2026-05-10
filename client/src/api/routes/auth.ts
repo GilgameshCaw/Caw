@@ -183,7 +183,7 @@ router.post('/verify', async (req, res) => {
  */
 router.post('/verify-dm', async (req, res) => {
   try {
-    const { signature, message: clientMessage, userId, publicKey } = req.body
+    const { signature, message: clientMessage, userId, publicKey, walletProof } = req.body
 
     if (!signature || !userId || !publicKey) {
       res.status(400).json({ error: 'signature, userId, and publicKey are required' })
@@ -273,8 +273,23 @@ router.post('/verify-dm', async (req, res) => {
     // guaranteed to exist — Tier 1's standalone existence check (kept
     // around the findOrCreateUser fallback) is now redundant and removed.
 
+    // Verify the optional wallet-signed proof of (userId, publicKey,
+    // walletAddress) — this proof is what cross-instance peers verify
+    // against the wallet (rather than trusting the source instance's
+    // claim). Audit fix 2026-05-09 (Round 7 #1c).
+    let validatedProof: string | null = null
+    if (walletProof && typeof walletProof === 'string') {
+      const { verifyDmIdentityProof } = await import('../dmSenderSig')
+      const ok = await verifyDmIdentityProof(tokenId, publicKey, recoveredAddress, walletProof)
+      if (!ok) {
+        res.status(400).json({ error: 'walletProof did not recover to walletAddress' })
+        return
+      }
+      validatedProof = walletProof
+    }
+
     // Register DM identity
-    await dmService.registerIdentity(tokenId, recoveredAddress, publicKey)
+    await dmService.registerIdentity(tokenId, recoveredAddress, publicKey, validatedProof)
 
     res.json({
       sessionToken,
