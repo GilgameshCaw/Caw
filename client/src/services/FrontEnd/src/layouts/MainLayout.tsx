@@ -373,11 +373,11 @@ const MainLayout = ({ children, hideSidebars: hideSidebarsProp }: MainLayoutProp
         <button
           onClick={() => openModal('post')}
           aria-label={t('main_layout.post_aria')}
-          className={`md:hidden fixed right-6 bottom-20 z-[60] w-14 h-14 rounded-full bg-yellow-500 hover:bg-yellow-400 active:bg-yellow-600 text-black flex items-center justify-center shadow-lg shadow-black/30 transition-all duration-200 cursor-pointer ${
+          className={`md:hidden fixed right-6 bottom-20 z-[60] w-12 h-12 rounded-full bg-yellow-500 hover:bg-yellow-400 active:bg-yellow-600 text-black flex items-center justify-center shadow-lg shadow-black/30 transition-all duration-200 cursor-pointer ${
             hasInlineDraft ? 'opacity-0 translate-y-24 pointer-events-none' : isScrolling ? 'opacity-30' : 'opacity-100'
           }`}
         >
-          <HiOutlinePencilAlt className="w-8 h-8" />
+          <HiOutlinePencilAlt className="w-7 h-7" />
         </button>
       )}
 
