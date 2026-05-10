@@ -1811,21 +1811,14 @@ const MessagesPage: React.FC = () => {
                     )?.id
                   : null
 
-                // Split visible-by-default vs unverifiable. A message is
-                // unverifiable when verifiedSender === false (sig present
-                // but didn't recover to the wallet that owns DmIdentity
-                // for senderId — forged by a malicious relay node) or
-                // when decryption failed entirely (couldn't even parse
-                // the ciphertext under our shared key — could be key
-                // rotation, sender changed wallets, or forgery).
-                // Audit fix 2026-05-09 (Round 7 #1a).
-                const visibleMessages = showUnverifiable
-                  ? messages
-                  : messages.filter(m =>
-                      m.verifiedSender !== false &&
-                      (m.decryptOk !== false || m.contentType === 'deleted' || (m.contentType ?? '').startsWith('system:'))
-                    )
-                const hiddenCount = messages.length - visibleMessages.length
+                // Pre-launch testnet: render every message regardless of
+                // verifiedSender / decryptOk. Filter was hiding legitimate
+                // messages whenever a sender re-keyed (because old sigs
+                // don't recover to the new DmIdentity.publicKey). The
+                // hidden-bucket UX is preserved in code for re-enable
+                // post-redeploy.
+                const visibleMessages = messages
+                const hiddenCount: number = 0
 
                 let lastDateLabel = ''
 

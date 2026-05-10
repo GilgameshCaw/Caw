@@ -476,7 +476,7 @@ export function useDmClient(tokenId?: number, username?: string) {
         return sig
       }
 
-      const { privateKey, publicKeyHex, rawSignature, sigMessage, walletProof } = await deriveKeyPair(
+      const { privateKey, publicKeyHex, rawSignature, sigMessage } = await deriveKeyPair(
         signMessage, tokenId, username
       )
       privateKeyRef = privateKey
@@ -507,7 +507,6 @@ export function useDmClient(tokenId?: number, username?: string) {
               message: sigMessage,
               userId: tokenId,
               publicKey: publicKeyHex,
-              walletProof,
             })
           })
         )

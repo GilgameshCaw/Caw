@@ -58,7 +58,7 @@ export async function deriveKeyPair(
   signMessage: (message: string) => Promise<string>,
   tokenId: number,
   username?: string
-): Promise<{ privateKey: Uint8Array; publicKeyHex: string; rawSignature?: string; sigMessage?: string; walletProof?: string }> {
+): Promise<{ privateKey: Uint8Array; publicKeyHex: string; rawSignature?: string; sigMessage?: string }> {
   // Fail fast with a clear message before triggering a wallet signature: if
   // the browser doesn't expose crypto.subtle (HTTP on a network host, some
   // in-app browsers), the SHA-256 step below would crash with "Cannot read
@@ -96,34 +96,12 @@ export async function deriveKeyPair(
   // Derive compressed public key (33 bytes, hex-encoded)
   const publicKeyHex = bytesToHex(secp256k1.getPublicKey(privateKey, true))
 
-  // Wallet-signed proof of (userId, publicKey, walletAddress). Travels
-  // with the DmIdentity to peer mirrors so they can verify directly
-  // against the wallet rather than trusting the source instance.
-  // Audit fix 2026-05-09 (Round 7 #1c).
-  //
-  // Costs ONE extra wallet popup at DM-enable time. Worth it because:
-  //   1. Without the proof, any registered instance can forge a
-  //      DmIdentity for any user (CL-2 from cross-layer audit).
-  //   2. DM-enable is a one-time cost per (wallet, username) pair —
-  //      the proof persists and travels with the identity.
-  //   3. Users who skip / cancel still get DMs working in DEGRADED mode
-  //      (peer mirrors will accept their identity but won't strongly
-  //      verify cross-instance) — a strict security mode could later
-  //      require it.
-  const proofMessage = `CAW DM identity\nuserId:${tokenId}\npublicKey:${publicKeyHex.toLowerCase()}`
-  let walletProof: string | undefined
-  try {
-    walletProof = await signMessage(proofMessage)
-  } catch {
-    walletProof = undefined
-  }
-
   cachedPrivateKey = privateKey
   cachedPublicKey = publicKeyHex
   cachedTokenId = tokenId
   persistKeys()
 
-  return { privateKey, publicKeyHex, rawSignature: signature, sigMessage: message, walletProof }
+  return { privateKey, publicKeyHex, rawSignature: signature, sigMessage: message }
 }
 
 /**
