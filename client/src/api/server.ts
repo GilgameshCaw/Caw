@@ -115,6 +115,79 @@ export function createApp() {
   })
   app.use(express.json({ limit: '50mb' })) // Increase limit for image uploads
 
+  // Security headers for every response (HTML + JSON + everything).
+  // CSP is the headline — it makes XSS exploitation much harder by
+  // restricting which scripts can run + where the page can connect to
+  // for exfiltration. With our localStorage-stored DM keys + session
+  // tokens, this is the strongest single defense-in-depth measure.
+  // Audit fix 2026-05-10 (Round 7 #3).
+  //
+  // The inline-script hash covers the theme-flash-prevention block in
+  // FrontEnd/index.html (computed via SHA-256 over the literal script
+  // content). If that script changes, regenerate the hash:
+  //   node -e "require('crypto').createHash('sha256').update(\$SCRIPT).digest('base64')"
+  // Builds bundle the same script into dist/index.html, so the same
+  // hash works whether we serve via Express prerender or nginx static.
+  //
+  // 'connect-src' is the most operator-specific knob: it must include
+  // every origin the FE talks to (api itself, peer instances, RPC
+  // endpoints, X OAuth, Filebase media proxy, etc.). The default
+  // values cover the test.caw.social setup; production deploys may
+  // need to widen via CSP_ADDITIONAL_CONNECT_SRC env (comma-separated).
+  const cspExtra = (process.env.CSP_ADDITIONAL_CONNECT_SRC || '').split(',').map(s => s.trim()).filter(Boolean)
+  const connectSrc = [
+    "'self'",
+    "https://*.caw.social",
+    "wss://*.caw.social",
+    "https://*.alchemyapi.io",
+    "https://*.infura.io",
+    "https://*.publicnode.com",
+    "https://api.x.com",
+    "https://*.filebase.io",
+    ...cspExtra,
+  ].join(' ')
+  const inlineScriptHash = "'sha256-xkVMad1A/6ozRonIOqWni0BBYrgJP5OHmcnrwTlUgGc='"
+  const csp = [
+    `default-src 'self'`,
+    `script-src 'self' 'wasm-unsafe-eval' ${inlineScriptHash}`,
+    // Tailwind v4 + emotion + react-router etc. produce inline styles
+    // at runtime; 'unsafe-inline' for styles is the standard SPA
+    // tradeoff. The XSS surface here is "attacker can change CSS"
+    // which is much narrower than full script execution.
+    `style-src 'self' 'unsafe-inline' https://fonts.googleapis.com`,
+    `font-src 'self' https://fonts.gstatic.com data:`,
+    // img-src wide because user-uploaded media legitimately comes
+    // from cross-mirror /uploads/ paths AND filebase. The actual
+    // shape-validation happens in EncryptedImage / ContentWithHashtags
+    // (Round 5 fix). This just says the BROWSER may load such URLs.
+    `img-src 'self' data: blob: https:`,
+    `media-src 'self' blob: https:`,
+    `connect-src ${connectSrc}`,
+    // OAuth popup for X verification opens a popup that posts back
+    // via localStorage events. No frame-src needed — the popup is
+    // top-level, not embedded.
+    `frame-src 'none'`,
+    `frame-ancestors 'none'`,
+    `base-uri 'self'`,
+    `form-action 'self'`,
+    `object-src 'none'`,
+  ].join('; ')
+
+  app.use((req, res, next) => {
+    // Don't apply security headers to /uploads — that path has its
+    // own stricter CSP (default-src 'none') already set by the static
+    // handler. Headers set here would compose oddly with that.
+    if (req.path.startsWith('/uploads/')) return next()
+    res.set('Content-Security-Policy', csp)
+    res.set('X-Content-Type-Options', 'nosniff')
+    res.set('Referrer-Policy', 'strict-origin-when-cross-origin')
+    res.set('Permissions-Policy', 'geolocation=(), microphone=(), camera=()')
+    // X-Frame-Options is the legacy companion to frame-ancestors.
+    // Some old browsers honor only this one.
+    res.set('X-Frame-Options', 'DENY')
+    next()
+  })
+
   // Serve static uploaded files with security headers
   app.use('/uploads', express.static(path.join(process.cwd(), 'public', 'uploads'), {
     setHeaders: (res) => {
