@@ -141,8 +141,8 @@ export const CawPage: React.FC = () => {
   const view = (searchParams.get('view') || '').toLowerCase()
   const wantsInteractions = view === 'interactions'
 
-  // Load likes list on-demand. Public endpoint — anyone viewing the
-  // interactions tab loads it. Author-only is a UI gate, not an API gate.
+  // Load likes list on-demand when the user opens the interactions tab.
+  // Public endpoint — interactions are visible to any authenticated viewer.
   useEffect(() => {
     if (!id) return
     if (!wantsInteractions) return
@@ -399,9 +399,7 @@ export const CawPage: React.FC = () => {
   }
   if (!caw) return errorView(t('caw_page.could_not_load_post'))
 
-  const viewerTokenId = activeTokenId ?? activeToken?.tokenId
-  const isOwnPost = viewerTokenId !== undefined && caw.user.tokenId === viewerTokenId
-  const canShowInteractions = isAuthenticated && isOwnPost
+  const canShowInteractions = isAuthenticated
   const showingInteractions = wantsInteractions && canShowInteractions
 
   const tabLabels: { key: 'likes' | 'comments' | 'reposts' | 'quotes' | 'tips'; label: string }[] = [
@@ -682,7 +680,7 @@ export const CawPage: React.FC = () => {
               </div>
             </div>
 
-            {/* Author-only interactions entrypoint (desktop only) */}
+            {/* Interactions entrypoint — visible to any authenticated viewer */}
             {canShowInteractions && (
               <div className="-mt-4 mb-6">
                 <div className="flex items-center justify-end">
