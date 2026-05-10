@@ -82,22 +82,22 @@ function injectMeta(html: string, meta: Meta): string {
   return out
 }
 
+// Title + description used to mirror what's already on the OG image
+// (handle, bio, post body, etc.), so on Twitter / Discord / iMessage the
+// preview rendered the same info twice — once as text below the card,
+// once burned into the image. Collapse all of them to a single brand
+// title + empty description so the image carries the per-page detail.
+const BRAND_TITLE = 'CAW — Decentralized & Censorship Resistant'
+
 async function profileMeta(username: string): Promise<Meta | null> {
   const user = await prisma.user.findUnique({
     where: { username: username.toLowerCase() },
-    select: {
-      username: true, displayName: true, bio: true,
-    },
+    select: { username: true },
   })
   if (!user) return null
-  const handle = `@${user.username}`
-  const title = user.displayName ? `${user.displayName} (${handle}) — CAW` : `${handle} — CAW`
-  const description = user.bio
-    ? truncate(user.bio, 200)
-    : `${handle} on CAW — Decentralized Social Clearing House`
   return {
-    title,
-    description,
+    title: BRAND_TITLE,
+    description: '',
     url: `${publicUrl()}/users/${user.username}`,
     image: `${publicUrl()}/api/og/image/profile/${user.username}`,
     ogType: 'website',
@@ -107,20 +107,9 @@ async function profileMeta(username: string): Promise<Meta | null> {
 async function hashtagMeta(tag: string): Promise<Meta | null> {
   const name = tag.toLowerCase().replace(/^#/, '')
   if (!name) return null
-  const hashtag = await prisma.hashtag.findUnique({
-    where: { name },
-    select: { name: true, usageCount: true },
-  })
-  // Even when the tag doesn't exist locally yet we still want a card —
-  // someone clicking a tag URL on Twitter and landing on an empty feed
-  // is fine; serving a generic card is worse than #tag itself.
-  const display = `#${hashtag?.name || name}`
-  const count = hashtag?.usageCount ?? 0
   return {
-    title: `${display} on CAW`,
-    description: count > 0
-      ? `${count.toLocaleString()} ${count === 1 ? 'caw' : 'caws'} tagged ${display}`
-      : `Posts tagged ${display} on CAW`,
+    title: BRAND_TITLE,
+    description: '',
     url: `${publicUrl()}/hashtags/${encodeURIComponent(name)}`,
     image: `${publicUrl()}/api/og/image/hashtag/${encodeURIComponent(name)}`,
     ogType: 'website',
@@ -132,17 +121,12 @@ async function cawMeta(idStr: string): Promise<Meta | null> {
   if (!Number.isFinite(id) || id <= 0) return null
   const caw = await prisma.caw.findUnique({
     where: { id },
-    select: {
-      id: true, content: true, status: true,
-      user: { select: { username: true, displayName: true } },
-    },
+    select: { id: true, status: true },
   })
   if (!caw || caw.status !== 'SUCCESS') return null
-  const handle = `@${caw.user.username}`
-  const author = caw.user.displayName ? `${caw.user.displayName} (${handle})` : handle
   return {
-    title: `${author} on CAW`,
-    description: truncate(caw.content || '', 200) || 'A post on CAW',
+    title: BRAND_TITLE,
+    description: '',
     url: `${publicUrl()}/caws/${caw.id}`,
     image: `${publicUrl()}/api/og/image/caw/${caw.id}`,
     ogType: 'article',
@@ -151,8 +135,8 @@ async function cawMeta(idStr: string): Promise<Meta | null> {
 
 function defaultMeta(reqPath: string): Meta {
   return {
-    title: 'CAW — Decentralized Social Clearing House',
-    description: 'Decentralized Social Clearing House',
+    title: BRAND_TITLE,
+    description: '',
     url: `${publicUrl()}${reqPath}`,
     image: `${publicUrl()}/api/og/image/default`,
     ogType: 'website',
