@@ -57,10 +57,10 @@ const LanguageSwitcher: React.FC<Props> = ({ className = '' }) => {
     }
   }
 
-  const buttonClass = `w-9 h-9 rounded-full flex items-center justify-center transition-colors cursor-pointer ${
+  const buttonClass = `w-9 h-9 rounded-full flex items-center justify-center transition-colors cursor-pointer border ${
     isDark
-      ? 'text-white/70 hover:text-white hover:bg-white/10'
-      : 'text-gray-700 hover:text-black hover:bg-black/5'
+      ? 'bg-white/10 text-white border-transparent hover:border-white/40'
+      : 'bg-black/5 text-black border-transparent hover:border-black/30'
   }`
   const panelClass = `absolute right-0 mt-1 w-56 rounded-xl border shadow-lg z-[60] overflow-hidden ${
     isDark ? 'bg-neutral-900 border-white/10' : 'bg-white border-gray-200'

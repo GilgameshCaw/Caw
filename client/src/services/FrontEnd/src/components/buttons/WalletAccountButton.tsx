@@ -31,12 +31,12 @@ const WalletAccountButton = () => {
             onClick={onClick}
             aria-label={label}
             title={label}
-            className={`w-9 h-9 rounded-full flex items-center justify-center transition-colors cursor-pointer ${
+            className={`w-9 h-9 rounded-full flex items-center justify-center transition-colors cursor-pointer border ${
               chain.unsupported
-                ? 'bg-red-500/15 text-red-400 hover:bg-red-500/25'
+                ? 'bg-red-500/15 text-red-400 border-transparent hover:border-red-400/60'
                 : isDark
-                  ? 'text-white/70 hover:text-white hover:bg-white/10'
-                  : 'text-gray-700 hover:text-black hover:bg-black/5'
+                  ? 'bg-white/10 text-white border-transparent hover:border-white/40'
+                  : 'bg-black/5 text-black border-transparent hover:border-black/30'
             }`}
           >
             <WalletIcon className="w-5 h-5" />
