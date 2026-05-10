@@ -1,4 +1,5 @@
 import React, { useState, useRef, useEffect, useLayoutEffect } from 'react'
+import { createPortal } from 'react-dom'
 import { Link } from 'react-router-dom'
 import { useSignAndSubmitAction, buildTypedData, TYPES, allocateCawonces } from '../api/actions'
 
@@ -413,6 +414,13 @@ const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess, placehol
   const textareaRef = useRef<HTMLTextAreaElement>(null)
   const submitBtnRef = useRef<HTMLButtonElement>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
+  // Anchor refs for the GIF / emoji popovers. We portal the popovers
+  // to document.body so they aren't clipped by overflow:hidden /
+  // overflow:auto ancestors (the home inline composer, ComposeModal,
+  // etc.), and use the button's bounding rect to position them just
+  // above the button.
+  const gifButtonRef = useRef<HTMLButtonElement>(null)
+  const emojiButtonRef = useRef<HTMLButtonElement>(null)
   const [selectedMedia, setSelectedMedia] = useState<any[]>([])
   const [isDragOverTextarea, setIsDragOverTextarea] = useState(false)
   const [showGifPicker, setShowGifPicker] = useState(false)
@@ -2137,6 +2145,7 @@ const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess, placehol
             {/* GIF */}
             <div className="relative">
               <button
+                ref={gifButtonRef}
                 type="button"
                 onClick={() => {
                   if (gifDisabled) return
@@ -2176,23 +2185,47 @@ const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess, placehol
                       gating is by viewport, NOT composeMode — the home
                       inline composer also passes composeMode but lives
                       on a desktop page. */}
-                  <div className="md:hidden fixed inset-x-3 bottom-3 z-50 max-w-[520px] mx-auto max-h-[70vh] overflow-y-auto">
+                  <div className="md:hidden fixed inset-x-3 bottom-3 z-[100] max-w-[520px] mx-auto max-h-[70vh] overflow-y-auto">
                     <GifPicker
                       initialQuery={gifSearchQuery(text)}
                       onSelect={handleGifSelected}
                       onClose={() => setShowGifPicker(false)}
                     />
                   </div>
-                  <div
-                    className={`hidden md:block absolute z-50 ${replyTo ? 'bottom-full mb-2' : 'top-full mt-2'}`}
-                    style={{ width: 'min(520px, calc(100vw - 2rem))' }}
-                  >
-                    <GifPicker
-                      initialQuery={gifSearchQuery(text)}
-                      onSelect={handleGifSelected}
-                      onClose={() => setShowGifPicker(false)}
-                    />
-                  </div>
+                  {/* Desktop: portaled to document.body to escape any
+                      overflow:hidden / overflow:auto ancestor (the
+                      home inline composer's fixed wrapper, the desktop
+                      ComposeModal's rounded-overflow-hidden box, etc).
+                      Position is computed from the button's bounding
+                      rect — opens upward so it doesn't get clipped by
+                      the form bottom. */}
+                  {(() => {
+                    const rect = gifButtonRef.current?.getBoundingClientRect()
+                    if (!rect) return null
+                    const popoverW = Math.min(520, window.innerWidth - 32)
+                    // Anchor popover left edge to button left edge, but
+                    // clamp inside the viewport with 16px margin on
+                    // either side.
+                    const left = Math.max(16, Math.min(rect.left, window.innerWidth - popoverW - 16))
+                    return createPortal(
+                      <div
+                        className="hidden md:block fixed z-[100]"
+                        style={{
+                          left,
+                          top: rect.top - 8,
+                          transform: 'translateY(-100%)',
+                          width: popoverW,
+                        }}
+                      >
+                        <GifPicker
+                          initialQuery={gifSearchQuery(text)}
+                          onSelect={handleGifSelected}
+                          onClose={() => setShowGifPicker(false)}
+                        />
+                      </div>,
+                      document.body,
+                    )
+                  })()}
                 </>
               )}
             </div>
@@ -2200,6 +2233,7 @@ const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess, placehol
             {/* Emoji Picker */}
             <div className="relative">
               <button
+                ref={emojiButtonRef}
                 type="button"
                 onClick={() => {
                   setShowEmojiPicker(!showEmojiPicker)
@@ -2247,25 +2281,34 @@ const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess, placehol
                         ))}
                       </div>
                     )
+                    const rect = emojiButtonRef.current?.getBoundingClientRect()
+                    const popoverW = Math.min(420, typeof window !== 'undefined' ? window.innerWidth - 32 : 420)
+                    const left = rect ? Math.max(16, Math.min(rect.left, window.innerWidth - popoverW - 16)) : 0
                     return (
                       <>
                         <div
-                          className={`md:hidden fixed inset-x-3 bottom-3 z-50 max-w-[420px] mx-auto p-3 border rounded-xl shadow-2xl ${
+                          className={`md:hidden fixed inset-x-3 bottom-3 z-[100] max-w-[420px] mx-auto p-3 border rounded-xl shadow-2xl ${
                             isDark ? 'border-white/10 bg-black' : 'border-gray-200 bg-white'
                           }`}
                         >
                           {grid}
                         </div>
-                        <div
-                          className={`hidden md:block absolute z-50 p-3 border rounded-xl shadow-2xl ${
-                            replyTo ? 'bottom-full mb-2' : 'top-full mt-2'
-                          } ${
-                            isDark ? 'border-white/10 bg-black' : 'border-gray-200 bg-white'
-                          }`}
-                          style={{ width: 'min(420px, calc(100vw - 2rem))' }}
-                        >
-                          {grid}
-                        </div>
+                        {rect && createPortal(
+                          <div
+                            className={`hidden md:block fixed z-[100] p-3 border rounded-xl shadow-2xl ${
+                              isDark ? 'border-white/10 bg-black' : 'border-gray-200 bg-white'
+                            }`}
+                            style={{
+                              left,
+                              top: rect.top - 8,
+                              transform: 'translateY(-100%)',
+                              width: popoverW,
+                            }}
+                          >
+                            {grid}
+                          </div>,
+                          document.body,
+                        )}
                       </>
                     )
                   })()}
