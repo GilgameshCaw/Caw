@@ -1560,7 +1560,7 @@ const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess, placehol
   return (
       <div className={`${replyTo ? 'p-2' : 'p-4'} transition-all duration-300 ${isDark ? 'bg-black' : 'bg-white'} ${
         hasInlineFeedDraft ? 'md:static md:p-4 md:pt-4 fixed left-0 right-0 bottom-0 top-16 z-[60] overflow-y-auto pt-14' : ''
-      }`}>
+      } ${composeMode ? 'flex-1 min-h-0 flex flex-col md:block md:min-h-0' : ''}`}>
       {hasInlineFeedDraft && (
         <button
           type="button"
@@ -1947,8 +1947,14 @@ const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess, placehol
         )}
       </div>
 
-      {/* Desktop Layout - Original */}
-      <div className={composeMode ? 'block' : 'hidden md:block'}>
+      {/* Desktop Layout - Original.
+          On mobile (composeMode), split into scrollable top + sticky
+          bottom so the toolbar / thread info / shorten-URLs toggle stay
+          glued to the keyboard edge while the textarea scrolls. On
+          desktop the whole block lays out naturally — md: prefixes
+          neutralize the mobile-only flex split. */}
+      <div className={`${composeMode ? 'flex flex-col flex-1 min-h-0 md:block' : 'hidden md:block'}`}>
+        <div className={`${composeMode ? 'flex-1 min-h-0 overflow-y-auto px-4 pt-2 pb-4 md:p-0 md:overflow-visible' : ''}`}>
         <div className="relative">
           <HighlightedTextarea
             value={text}
@@ -2092,13 +2098,20 @@ const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess, placehol
             )}
           </div>
         )}
+        </div>{/* end scrollable region (composeMode) */}
+
+        {/* Sticky footer on mobile composeMode: pinned to bottom while
+            the textarea above scrolls. Wraps the toolbar + thread info
+            + shorten-URLs toggle so the user can always reach Post and
+            see thread/URL controls without dismissing the keyboard. */}
+        <div className={composeMode ? `shrink-0 px-4 pt-2 pb-[max(env(safe-area-inset-bottom),0.5rem)] border-t md:p-0 md:border-0 md:pb-0 ${isDark ? 'bg-black border-white/10' : 'bg-white border-gray-200'}` : ''}>
 
         {/* Functionality Icons */}
         <div className={`flex items-center justify-between gap-2 ${replyTo ? 'mt-1.5' : 'mt-4'} ${
           hasInlineFeedDraft
             ? `fixed md:static bottom-0 left-0 right-0 z-[60] px-4 py-3 pb-[max(env(safe-area-inset-bottom),0.75rem)] border-t ${isDark ? 'bg-black border-white/10' : 'bg-white border-gray-200'}`
-            : composeMode && hasMedia
-              ? `sticky -bottom-px pt-3 pb-3 border-t ${isDark ? 'bg-black border-white/10' : 'bg-white border-gray-200'}`
+            : composeMode
+              ? ''
               : ''
         }`}>
           <div className={`flex items-center min-w-0 ${composeMode ? 'space-x-1' : 'space-x-3'}`}>
@@ -2156,20 +2169,32 @@ const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess, placehol
                     onClick={() => setShowGifPicker(false)}
                   />
 
-                  {/* Popover: in feed composer open downward; in reply composer open upward */}
-                  <div
-                    className={`absolute z-50 left-1/2 ${replyTo ? 'bottom-full mb-2' : 'top-full mt-2'}`}
-                    style={{
-                      width: 'min(520px, calc(100vw - 2rem))',
-                      transform: 'translateX(calc(-50% + 170px))',
-                    }}
-                  >
-                    <GifPicker
-                      initialQuery={gifSearchQuery(text)}
-                      onSelect={handleGifSelected}
-                      onClose={() => setShowGifPicker(false)}
-                    />
-                  </div>
+                  {/* On mobile composeMode: center as a fixed sheet so
+                      it never spills off the small viewport. On desktop:
+                      anchored popover next to the GIF button. */}
+                  {composeMode ? (
+                    <div className="fixed inset-x-3 top-1/2 -translate-y-1/2 z-50 max-w-[520px] mx-auto">
+                      <GifPicker
+                        initialQuery={gifSearchQuery(text)}
+                        onSelect={handleGifSelected}
+                        onClose={() => setShowGifPicker(false)}
+                      />
+                    </div>
+                  ) : (
+                    <div
+                      className={`absolute z-50 left-1/2 ${replyTo ? 'bottom-full mb-2' : 'top-full mt-2'}`}
+                      style={{
+                        width: 'min(520px, calc(100vw - 2rem))',
+                        transform: 'translateX(calc(-50% + 170px))',
+                      }}
+                    >
+                      <GifPicker
+                        initialQuery={gifSearchQuery(text)}
+                        onSelect={handleGifSelected}
+                        onClose={() => setShowGifPicker(false)}
+                      />
+                    </div>
+                  )}
                 </>
               )}
             </div>
@@ -2207,30 +2232,44 @@ const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess, placehol
                     onClick={() => setShowEmojiPicker(false)}
                   />
 
-                  {/* Popover: in feed composer open downward; in reply composer open upward */}
-                  <div
-                    className={`absolute z-50 left-1/2 p-3 border rounded-xl shadow-2xl ${
-                      replyTo ? 'bottom-full mb-2' : 'top-full mt-2'
-                    } ${
-                      isDark ? 'border-white/10 bg-black' : 'border-gray-200 bg-white'
-                    }`}
-                    style={{ width: 'min(420px, calc(100vw - 2rem))', transform: 'translateX(calc(-50% + 140px))' }}
-                  >
-                    <div className="grid grid-cols-8 gap-2 max-h-48 overflow-y-auto">
-                      {['😀', '😂', '🤣', '😊', '😍', '🤔', '😎', '🔥', '💯', '❤️', '👍', '👎', '👏', '🙏', '💪', '🚀'].map(emoji => (
-                        <button
-                          key={emoji}
-                          onClick={() => {
-                            setText(prev => prev + emoji)
-                            setShowEmojiPicker(false)
-                          }}
-                          className="p-2 text-2xl hover:bg-gray-200 dark:hover:bg-white/10 rounded transition-colors"
-                        >
-                          {emoji}
-                        </button>
-                      ))}
-                    </div>
-                  </div>
+                  {(() => {
+                    const grid = (
+                      <div className="grid grid-cols-8 gap-2 max-h-48 overflow-y-auto">
+                        {['😀', '😂', '🤣', '😊', '😍', '🤔', '😎', '🔥', '💯', '❤️', '👍', '👎', '👏', '🙏', '💪', '🚀'].map(emoji => (
+                          <button
+                            key={emoji}
+                            onClick={() => {
+                              setText(prev => prev + emoji)
+                              setShowEmojiPicker(false)
+                            }}
+                            className="p-2 text-2xl hover:bg-gray-200 dark:hover:bg-white/10 rounded transition-colors"
+                          >
+                            {emoji}
+                          </button>
+                        ))}
+                      </div>
+                    )
+                    return composeMode ? (
+                      <div
+                        className={`fixed inset-x-3 top-1/2 -translate-y-1/2 z-50 max-w-[420px] mx-auto p-3 border rounded-xl shadow-2xl ${
+                          isDark ? 'border-white/10 bg-black' : 'border-gray-200 bg-white'
+                        }`}
+                      >
+                        {grid}
+                      </div>
+                    ) : (
+                      <div
+                        className={`absolute z-50 left-1/2 p-3 border rounded-xl shadow-2xl ${
+                          replyTo ? 'bottom-full mb-2' : 'top-full mt-2'
+                        } ${
+                          isDark ? 'border-white/10 bg-black' : 'border-gray-200 bg-white'
+                        }`}
+                        style={{ width: 'min(420px, calc(100vw - 2rem))', transform: 'translateX(calc(-50% + 140px))' }}
+                      >
+                        {grid}
+                      </div>
+                    )
+                  })()}
                 </>
               )}
             </div>
@@ -2407,6 +2446,7 @@ const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess, placehol
             </Tooltip>
           </div>
         )}
+        </div>{/* end sticky footer (composeMode) */}
       </div>
 
       {/* Scheduled Post Success Modal */}
