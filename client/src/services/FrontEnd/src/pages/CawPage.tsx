@@ -434,7 +434,10 @@ export const CawPage: React.FC = () => {
   ]
 
   return (
-      <div className="max-w-2xl mx-auto px-6 py-4">
+      <div
+        className="max-w-2xl mx-auto px-6 py-4"
+        style={{ paddingBottom: 'calc(var(--bottom-nav-h, 0px) + 96px)' }}
+      >
         {/* Header with back button and title */}
         <div className="flex items-center space-x-4 mb-6 pb-4 border-b border-white/20">
           {showingInteractions ? (
