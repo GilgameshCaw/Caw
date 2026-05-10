@@ -5,7 +5,7 @@ import { useTheme } from '~/hooks/useTheme'
 import { FollowButton } from './FollowButton'
 import { UserAvatar } from '~/components/Avatar'
 import { useT } from '~/i18n/I18nProvider'
-import { useTokenDataStore } from '~/store/tokenDataStore'
+import { useAuthStore } from '~/store/authStore'
 
 export interface UserCardUser {
   tokenId: number
@@ -53,14 +53,12 @@ const UserCard: React.FC<UserCardProps> = ({
   const { isDark } = useTheme()
   const t = useT()
   // Suppress the Follow button when the card represents one of the
-  // viewer's own tokens — there's nothing useful to do, and the follow
-  // action would just bounce off the contract's self-action guard.
-  const isSelf = useTokenDataStore(s => {
-    for (const tokens of Object.values(s.tokensByAddress)) {
-      for (const t of tokens) if (t.tokenId === user.tokenId) return true
-    }
-    return false
-  })
+  // viewer's own currently-authorized tokens. Use authStore (the set
+  // of tokens this session is signed in for), NOT tokenDataStore —
+  // the latter persists tokens from old wallets we've connected to
+  // before, so a card for a stranger could falsely match an old
+  // tokenId we no longer control and lose its Follow button.
+  const isSelf = useAuthStore(s => s.authorizedTokenIds.includes(user.tokenId))
 
   const carouselStyle: React.CSSProperties = layout === 'carousel'
     ? {
@@ -109,7 +107,7 @@ const UserCard: React.FC<UserCardProps> = ({
           @{user.username}
         </p>
 
-        <div className={`flex justify-center gap-3 mt-2 text-xs ${
+        <div className={`flex justify-center gap-3 mt-2 text-xs whitespace-nowrap ${
           isDark ? 'text-white/40' : 'text-gray-400'
         }`}>
           <span>{t('user_card.followers_count', { count: user.followerCount, value: formatCount(user.followerCount) })}</span>
