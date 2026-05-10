@@ -734,11 +734,12 @@ export const CawPage: React.FC = () => {
                     <FeedItem item={quote} hideParentPreview={true} />
                   </div>
                 ))}
-                {pendingReplies.map((post) => (
-                  <div key={post.tempId} className="relative">
-                    <FeedItem item={post as CawItem} isReply={true} hideParentPreview={true} />
-                  </div>
-                ))}
+                {/* Replies are oldest-first (feedItems is sorted asc by
+                    timestamp), so pending replies render AFTER the
+                    confirmed list to match where they'll land once the
+                    chain catches up. Otherwise the user sees their fresh
+                    pending reply at the top, then it visibly jumps to
+                    the bottom on refresh. */}
                 {feedItems.map((entry) => {
                   return (
                     <div key={`reply-${entry.comm.id}`} className="relative">
@@ -757,6 +758,11 @@ export const CawPage: React.FC = () => {
                     </div>
                   )
                 })}
+                {pendingReplies.map((post) => (
+                  <div key={post.tempId} className="relative">
+                    <FeedItem item={post as CawItem} isReply={true} hideParentPreview={true} />
+                  </div>
+                ))}
                 {hasMoreComments && (
                   <button
                     onClick={loadMoreComments}
