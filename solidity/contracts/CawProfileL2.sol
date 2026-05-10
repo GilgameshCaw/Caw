@@ -22,7 +22,7 @@ contract CawProfileL2 is
   using OptionsBuilder for bytes;
 
   modifier onlyOnMainnet() {
-    require(bypassLZ && msg.sender == address(cawProfile), "only callable on the mainnet, from mainnet CawProfile");
+    require(bypassLZ && msg.sender == address(cawProfile), "only mainnet");
     _;
   }
 
@@ -66,10 +66,24 @@ contract CawProfileL2 is
     uint8   scopeBitmap;
     uint256 spendLimit;        // max total CAW (whole tokens) this session can spend
     uint64  perActionTipRate;  // implicit validator tip per session-signed action (whole CAW)
+    uint32  epoch;             // ownerSessionEpoch[owner] at registration time; mismatch invalidates
   }
 
   /// @notice ownerAddress => sessionKey => stored session data
   mapping(address => mapping(address => StoredSession)) public sessions;
+
+  /// @notice Per-tokenId L1-stamp of last applied ownership update. LZ messages
+  ///         carrying ownership writes include uint64 stamp set to L1 block
+  ///         number at flush time. L2 silently skips ownership writes whose
+  ///         stamp is strictly less than the stored value; funds-moving
+  ///         fields in the same message (deposits, mints, withdraws) ALWAYS
+  ///         apply regardless. CL-4 fix.
+  mapping(uint32 => uint64) public lastOwnerUpdateBlock;
+
+  /// @notice Per-owner session epoch. Bumped on every ownership-out transfer.
+  ///         Sessions stamp their epoch at registration; verification rejects
+  ///         sessions whose stamped epoch != current. CL-4 fix.
+  mapping(address => uint32) public ownerSessionEpoch;
 
   /// @notice Per-address nonce for session delegation signatures (prevents replay after revocation)
   mapping(address => uint256) public sessionNonce;
@@ -82,6 +96,16 @@ contract CawProfileL2 is
   ///         user's signed message could re-register a revoked session at
   ///         any time before the message's expiry. Audit fix 2026-05-08.
   mapping(bytes32 => bool) public consumedSessionMessage;
+
+  /// @notice Returns the StoredSession for (owner, sessionKey), zero-ed if the
+  ///         session's epoch != current ownerSessionEpoch[owner]. Lets callers
+  ///         (CawActions) skip a separate epoch check on the hot verify path.
+  function validSession(address owner, address sessionKey) external view returns (StoredSession memory s) {
+    s = sessions[owner][sessionKey];
+    if (s.epoch != ownerSessionEpoch[owner]) {
+      return StoredSession(0, 0, 0, 0, 0);
+    }
+  }
 
   bytes32 public immutable eip712DomainHash;
 
@@ -245,7 +269,7 @@ contract CawProfileL2 is
   /// @param amountToSpend Raw CAW amount (18 decimals) the spender pays
   /// @param amountToDistribute Raw CAW amount (18 decimals) distributed to all holders
   function spendAndDistribute(uint32 tokenId, uint256 amountToSpend, uint256 amountToDistribute) public {
-    require(address(cawActions) == _msgSender(), "caller is not the cawActions contract");
+    require(address(cawActions) == _msgSender(), "!ca");
     uint256 balance = cawBalanceOf(tokenId);
 
     require(balance >= amountToSpend, 'Insufficient CAW balance');
@@ -275,19 +299,19 @@ contract CawProfileL2 is
   /// @notice Mark a token as authenticated with a client and apply a batch of ownership updates.
   /// @dev Only callable from `_lzReceive` (the `fromLZ` flag is set there). The `updateOwners`
   ///      array carries pending L1→L2 ownership transfers piggybacked on this LZ message.
-  function authenticateAndUpdateOwners(uint32 cawClientId, uint32 tokenId, uint32[] calldata tokenIds, address[] calldata owners) public {
-    require(fromLZ, "authenticateAndUpdateOwners only callable internally");
+  function authenticateAndUpdateOwners(uint32 cawClientId, uint32 tokenId, uint32[] calldata tokenIds, address[] calldata owners, uint64[] calldata stamps) public {
+    require(fromLZ, "only LZ");
     authenticated[cawClientId][tokenId] = true;
-    updateOwners(tokenIds, owners);
+    updateOwners(tokenIds, owners, stamps);
   }
 
   /// @notice Credit a deposit, mark as authenticated, and apply pending ownership updates.
   /// @dev Only callable from `_lzReceive`. Triggered by L1 `deposit()` calls forwarded via LayerZero.
-  function depositAndUpdateOwners(uint32 cawClientId, uint32 tokenId, uint256 amount, uint32[] calldata tokenIds, address[] calldata owners) public {
-    require(fromLZ, "depositAndUpdateOwners only callable internally");
+  function depositAndUpdateOwners(uint32 cawClientId, uint32 tokenId, uint256 amount, uint32[] calldata tokenIds, address[] calldata owners, uint64[] calldata stamps) public {
+    require(fromLZ, "only LZ");
     totalCaw += amount;
     addToBalance(tokenId, amount);
-    authenticateAndUpdateOwners(cawClientId, tokenId, tokenIds, owners);
+    authenticateAndUpdateOwners(cawClientId, tokenId, tokenIds, owners, stamps);
   }
 
   /// @notice Add CAW (raw 18-decimal amount) to a token's balance.
@@ -299,7 +323,7 @@ contract CawProfileL2 is
       fromLZ ||
       address(cawActions) == _msgSender() ||
       (bypassLZ && _msgSender() == address(cawProfile)),
-      "caller is not cawActions or LZ"
+      "unauth"
     );
 
     setCawBalance(tokenId, cawBalanceOf(tokenId) + amount);
@@ -312,22 +336,21 @@ contract CawProfileL2 is
 
   /// @notice Apply a batch of ownership updates from L1 transfers.
   /// @dev Only callable from `_lzReceive`. Each entry overwrites `ownerOf[tokenId]` with the new owner.
-  function updateOwners(uint32[] calldata tokenIds, address[] calldata owners) public {
-    require(fromLZ, "updateOwners only callable internally");
+  function updateOwners(uint32[] calldata tokenIds, address[] calldata owners, uint64[] calldata stamps) public {
+    require(fromLZ, "only LZ");
     for (uint i = 0; i < tokenIds.length; i++)
-      _setOwnerOf(tokenIds[i], owners[i]);
+      _setOwnerOf(tokenIds[i], owners[i], stamps[i]);
   }
 
   /// @notice Mint a new token (mirror of an L1 mint) and apply pending ownership updates.
   /// @dev Only callable from `_lzReceive`. Sets username + owner atomically. Currently
   ///      unreachable because L1's mint() does not lzSend — kept wired so a future
   ///      "mint + authenticate (no deposit)" flow can be added without contract changes.
-  function mintAndUpdateOwners(uint32 tokenId, address owner, string memory username, uint32[] calldata tokenIds, address[] calldata owners) public {
-    require(fromLZ, "mintAndUpdateOwners only callable internally");
+  ///      The trailing entry of (tokenIds, owners, stamps) carries this token's owner.
+  function mintAndUpdateOwners(uint32 tokenId, address owner, string memory username, uint32[] calldata tokenIds, address[] calldata owners, uint64[] calldata stamps) public {
+    require(fromLZ, "only LZ");
     usernames[tokenId] = username;
-    ownerOf[tokenId] = owner;
-
-    updateOwners(tokenIds, owners);
+    updateOwners(tokenIds, owners, stamps);
   }
 
   /// @notice Mint a new token mirror, mark it authenticated with `cawClientId`, and
@@ -342,29 +365,30 @@ contract CawProfileL2 is
     address owner,
     string memory username,
     uint32[] calldata tokenIds,
-    address[] calldata owners
+    address[] calldata owners,
+    uint64[] calldata stamps
   ) public {
-    require(fromLZ, "mintAuthAndUpdateOwners only callable internally");
+    require(fromLZ, "only LZ");
     emit UsernameMinted(tokenId, owner);
     emit Authenticated(cawClientId, tokenId);
     usernames[tokenId] = username;
-    ownerOf[tokenId] = owner;
     authenticated[cawClientId][tokenId] = true;
 
-    updateOwners(tokenIds, owners);
+    // Trailing entry of (tokenIds, owners, stamps) is this token's owner; _setOwnerOf via updateOwners.
+    updateOwners(tokenIds, owners, stamps);
   }
 
   /// @notice Co-deployment (bypassLZ) variant: mint the L2 mirror AND auth in one call.
   /// @dev Only callable when `bypassLZ` is true and the caller is the L1 CawProfile contract.
   ///      Mirrors `mintAuthAndUpdateOwners` but without the LZ payload — pending owner
   ///      updates aren't relevant in bypassLZ mode (L1 transfers update L2 directly).
-  function mintAndAuth(uint32 tokenId, address owner, string memory username, uint32 cawClientId)
+  function mintAndAuth(uint32 tokenId, address owner, string memory username, uint32 cawClientId, uint64 stamp)
     external onlyOnMainnet
   {
     emit UsernameMinted(tokenId, owner);
     emit Authenticated(cawClientId, tokenId);
     usernames[tokenId] = username;
-    ownerOf[tokenId] = owner;
+    _setOwnerOf(tokenId, owner, stamp);
     authenticated[cawClientId][tokenId] = true;
   }
 
@@ -383,16 +407,21 @@ contract CawProfileL2 is
     uint256 spendLimit,
     uint64 perActionTipRate,
     uint32[] calldata tokenIds,
-    address[] calldata owners
+    address[] calldata owners,
+    uint64[] calldata stamps
   ) public {
-    require(fromLZ, "depositAndRegisterSessionAndUpdateOwners only callable internally");
-    require(sessionKey != address(0), "Zero session key");
-    require(expiry > block.timestamp, "Session already expired");
+    require(fromLZ, "only LZ");
+    require(sessionKey != address(0), "zero key");
+    require(expiry > block.timestamp, "expired");
 
     totalCaw += amount;
     addToBalance(tokenId, amount);
     authenticated[cawClientId][tokenId] = true;
     emit Authenticated(cawClientId, tokenId);
+
+    // Apply ownership updates BEFORE registering the session so the session
+    // gets stamped with the current ownerSessionEpoch (post-update).
+    updateOwners(tokenIds, owners, stamps);
 
     // Bump sessionNonce for cross-path coherence: any pending registerSession-by-sig
     // payload the user signed (and never submitted) is invalidated by this on-chain
@@ -400,10 +429,8 @@ contract CawProfileL2 is
     // anyone to register an additional, unintended session under the same owner.
     sessionNonce[owner]++;
     uint8 scopeBitmap = 0xBF; // all actions except WITHDRAW (bit 6) — non-delegatable
-    sessions[owner][sessionKey] = StoredSession(expiry, scopeBitmap, spendLimit, perActionTipRate);
+    sessions[owner][sessionKey] = StoredSession(expiry, scopeBitmap, spendLimit, perActionTipRate, ownerSessionEpoch[owner]);
     emit SessionCreated(owner, sessionKey, expiry, scopeBitmap, spendLimit, perActionTipRate);
-
-    updateOwners(tokenIds, owners);
   }
 
   /// @notice Bundled L2 receiver: mint mirror + mark authenticated + register a Quick Sign
@@ -418,25 +445,26 @@ contract CawProfileL2 is
     uint256 spendLimit,
     uint64 perActionTipRate,
     uint32[] calldata tokenIds,
-    address[] calldata owners
+    address[] calldata owners,
+    uint64[] calldata stamps
   ) public {
-    require(fromLZ, "mintAuthAndRegisterSessionAndUpdateOwners only callable internally");
-    require(sessionKey != address(0), "Zero session key");
-    require(expiry > block.timestamp, "Session already expired");
+    require(fromLZ, "only LZ");
+    require(sessionKey != address(0), "zero key");
+    require(expiry > block.timestamp, "expired");
 
     emit UsernameMinted(tokenId, owner);
     emit Authenticated(cawClientId, tokenId);
     usernames[tokenId] = username;
-    ownerOf[tokenId] = owner;
     authenticated[cawClientId][tokenId] = true;
+
+    // Apply ownership updates first (stamps trailing entry sets owner).
+    updateOwners(tokenIds, owners, stamps);
 
     // Same nonce-bump rationale as depositAndRegisterSessionAndUpdateOwners.
     sessionNonce[owner]++;
     uint8 scopeBitmap = 0xBF; // all actions except WITHDRAW (bit 6) — non-delegatable
-    sessions[owner][sessionKey] = StoredSession(expiry, scopeBitmap, spendLimit, perActionTipRate);
+    sessions[owner][sessionKey] = StoredSession(expiry, scopeBitmap, spendLimit, perActionTipRate, ownerSessionEpoch[owner]);
     emit SessionCreated(owner, sessionKey, expiry, scopeBitmap, spendLimit, perActionTipRate);
-
-    updateOwners(tokenIds, owners);
   }
 
   /// @notice Co-deployment (bypassLZ) helper for the bundled mint+quicksign flows. Registers a
@@ -446,12 +474,12 @@ contract CawProfileL2 is
   function registerSessionFromL1(address owner, address sessionKey, uint64 expiry, uint256 spendLimit, uint64 perActionTipRate)
     external onlyOnMainnet
   {
-    require(sessionKey != address(0), "Zero session key");
-    require(expiry > block.timestamp, "Session already expired");
+    require(sessionKey != address(0), "zero key");
+    require(expiry > block.timestamp, "expired");
     // Same nonce-bump rationale as depositAndRegisterSessionAndUpdateOwners.
     sessionNonce[owner]++;
     uint8 scopeBitmap = 0xBF; // all actions except WITHDRAW (bit 6) — non-delegatable
-    sessions[owner][sessionKey] = StoredSession(expiry, scopeBitmap, spendLimit, perActionTipRate);
+    sessions[owner][sessionKey] = StoredSession(expiry, scopeBitmap, spendLimit, perActionTipRate, ownerSessionEpoch[owner]);
     emit SessionCreated(owner, sessionKey, expiry, scopeBitmap, spendLimit, perActionTipRate);
   }
 
@@ -471,19 +499,28 @@ contract CawProfileL2 is
 
   /// @notice Mint a token (mirror of L1 mint) — co-deployment mode only.
   /// @dev Only callable when `bypassLZ` is true and the caller is the L1 CawProfile contract.
-  function mint(uint32 tokenId, address owner, string memory username) external onlyOnMainnet {
+  function mint(uint32 tokenId, address owner, string memory username, uint64 stamp) external onlyOnMainnet {
     emit UsernameMinted(tokenId, owner);
     usernames[tokenId] = username;
-    ownerOf[tokenId] = owner;
+    _setOwnerOf(tokenId, owner, stamp);
   }
 
   /// @notice Update a single token's owner — co-deployment mode only.
-  function setOwnerOf(uint32 tokenId, address newOwner) external onlyOnMainnet {
-    _setOwnerOf(tokenId, newOwner);
+  function setOwnerOf(uint32 tokenId, address newOwner, uint64 stamp) external onlyOnMainnet {
+    _setOwnerOf(tokenId, newOwner, stamp);
   }
 
-  /// @dev Internal: writes ownerOf and emits the OwnerSet event. Used by both `setOwnerOf` and `updateOwners`.
-  function _setOwnerOf(uint32 tokenId, address newOwner) internal {
+  /// @dev Internal: silent-skip if `stamp` is older than the last applied stamp
+  ///      for this token (CL-4 / out-of-order LZ delivery). On owner-change,
+  ///      bump `ownerSessionEpoch[oldOwner]` so any session keys registered
+  ///      while they held the token are invalidated.
+  function _setOwnerOf(uint32 tokenId, address newOwner, uint64 stamp) internal {
+    if (stamp < lastOwnerUpdateBlock[tokenId]) return; // stale; silent skip
+    lastOwnerUpdateBlock[tokenId] = stamp;
+    address prev = ownerOf[tokenId];
+    if (prev != newOwner && prev != address(0)) {
+      unchecked { ownerSessionEpoch[prev]++; }
+    }
     emit OwnerSet(tokenId, newOwner);
     ownerOf[tokenId] = newOwner;
   }
@@ -509,9 +546,9 @@ contract CawProfileL2 is
     uint256 nonce,
     uint8 v, bytes32 r, bytes32 s
   ) external {
-    require(sessionKey != address(0), "Zero session key");
-    require(expiry > block.timestamp, "Already expired");
-    require((scopeBitmap & 0x40) == 0, "Cannot delegate WITHDRAW");
+    require(sessionKey != address(0), "zero key");
+    require(expiry > block.timestamp, "expired");
+    require((scopeBitmap & 0x40) == 0, "no WITHDRAW");
 
     bytes32 structHash = keccak256(abi.encode(
       DELEGATION_TYPEHASH,
@@ -525,11 +562,11 @@ contract CawProfileL2 is
     bytes32 digest = keccak256(abi.encodePacked("\x19\x01", eip712DomainHash, structHash));
     address signer = ecrecover(digest, v, r, s);
 
-    require(signer != address(0), "Invalid signature");
+    require(signer != address(0), "badsig");
     require(nonce == sessionNonce[signer], "Invalid nonce");
 
     sessionNonce[signer]++;
-    sessions[signer][sessionKey] = StoredSession(expiry, scopeBitmap, spendLimit, perActionTipRate);
+    sessions[signer][sessionKey] = StoredSession(expiry, scopeBitmap, spendLimit, perActionTipRate, ownerSessionEpoch[signer]);
     emit SessionCreated(signer, sessionKey, expiry, scopeBitmap, spendLimit, perActionTipRate);
   }
 
@@ -559,25 +596,25 @@ contract CawProfileL2 is
       message
     ));
     address signer = ecrecover(digest, v, r, s);
-    require(signer != address(0), "Invalid signature");
+    require(signer != address(0), "badsig");
 
     // Replay protection: the personal-sign message format doesn't carry a
     // nonce, so a held signature could otherwise be re-submitted to undo a
     // revocation. Mark the digest consumed; reject duplicates. Audit fix
     // 2026-05-08.
-    require(!consumedSessionMessage[digest], "Message already consumed");
+    require(!consumedSessionMessage[digest], "replay");
     consumedSessionMessage[digest] = true;
 
     // Parse the message
     (uint256 spendLimit, uint64 perActionTipRate, uint64 expiry, address sessionKey) = _parseSessionMessage(message);
 
-    require(sessionKey != address(0), "Zero session key");
-    require(expiry > block.timestamp, "Already expired");
+    require(sessionKey != address(0), "zero key");
+    require(expiry > block.timestamp, "expired");
 
     sessionNonce[signer]++;
 
     uint8 scopeBitmap = 0xBF; // all actions except WITHDRAW (bit 6)
-    sessions[signer][sessionKey] = StoredSession(expiry, scopeBitmap, spendLimit, perActionTipRate);
+    sessions[signer][sessionKey] = StoredSession(expiry, scopeBitmap, spendLimit, perActionTipRate, ownerSessionEpoch[signer]);
     emit SessionCreated(signer, sessionKey, expiry, scopeBitmap, spendLimit, perActionTipRate);
   }
 
@@ -588,7 +625,7 @@ contract CawProfileL2 is
     internal pure returns (uint256 spendLimit, uint64 perActionTipRate, uint64 expiry, address sessionKey)
   {
     bytes[] memory lines = _splitLines(msg_);
-    require(lines.length == 13, "Expected 13 lines");
+    require(lines.length == 13, "badlines");
 
     // Line 0: "Enable Quick Sign"
     require(keccak256(lines[0]) == keccak256("Enable Quick Sign"), "Invalid header");
@@ -619,16 +656,16 @@ contract CawProfileL2 is
 
   /// @dev Parse a tip-rate line like "1000 CAW" or "0 CAW" → uint64 whole tokens.
   function _parseTipRateValue(bytes memory line) internal pure returns (uint64) {
-    require(line.length >= 5, "Invalid tip rate");
+    require(line.length >= 5, "badtip");
     uint256 number = 0;
     uint256 i = 0;
     while (i < line.length && line[i] >= 0x30 && line[i] <= 0x39) {
       number = number * 10 + (uint8(line[i]) - 0x30);
       i++;
     }
-    require(number <= type(uint64).max, "Tip rate overflows uint64");
+    require(number <= type(uint64).max, "tip ovf");
     // Allow 0 (opt-out) explicitly.
-    require(i < line.length && line[i] == 0x20, "Missing space after number");
+    require(i < line.length && line[i] == 0x20, "badnum");
     require(
       line.length - i - 1 == 3 &&
       line[i+1] == 'C' && line[i+2] == 'A' && line[i+3] == 'W',
@@ -665,14 +702,14 @@ contract CawProfileL2 is
 
   /// @dev Parse "5M CAW" → 5000000
   function _parseSpendLimitValue(bytes memory line) internal pure returns (uint256) {
-    require(line.length >= 5, "Invalid spend limit");
+    require(line.length >= 5, "badlim");
     uint256 number = 0;
     uint256 i = 0;
     while (i < line.length && line[i] >= 0x30 && line[i] <= 0x39) {
       number = number * 10 + (uint8(line[i]) - 0x30);
       i++;
     }
-    require(number > 0, "Zero spend limit");
+    require(number > 0, "zerolim");
     require(i < line.length, "Missing unit");
     if (line[i] == 'M') return number * 1_000_000;
     if (line[i] == 'K') return number * 1_000;
@@ -723,10 +760,10 @@ contract CawProfileL2 is
     // Month-aware day bound. 28-day Feb default; +1 for leap years.
     uint8[12] memory daysInMonth = [31,28,31,30,31,30,31,31,30,31,30,31];
     if (_isLeapYear(year)) daysInMonth[1] = 29;
-    require(day <= uint256(daysInMonth[month - 1]), "Invalid day for month");
+    require(day <= uint256(daysInMonth[month - 1]), "badday");
     // Sanity cap on year so the for-loop in _toUnixTimestamp can't be
     // weaponized into a 30M-gas DoS (~10K iterations max from 1970).
-    require(year <= 2200, "Year out of range");
+    require(year <= 2200, "yr hi");
 
     return uint64(_toUnixTimestamp(year, month, day, hour, minute, second));
   }
@@ -750,7 +787,7 @@ contract CawProfileL2 is
 
   /// @dev Convert date components to unix timestamp (UTC). Only valid for years >= 1970.
   function _toUnixTimestamp(uint256 year, uint256 month, uint256 day, uint256 hour, uint256 minute, uint256 second) internal pure returns (uint256) {
-    require(year >= 1970, "Year before epoch");
+    require(year >= 1970, "yr lo");
     uint256 timestamp = 0;
     // Years
     for (uint256 y = 1970; y < year; y++) {
@@ -774,7 +811,7 @@ contract CawProfileL2 is
   /// @dev Parse "0x742d...3e" → address
   function _parseAddressLine(bytes memory line) internal pure returns (address) {
     // "0x" + 40 hex chars = 42 bytes
-    require(line.length == 42, "Invalid address length");
+    require(line.length == 42, "badaddr");
     bytes memory hexStr = _slice(line, 2, 42);
     return address(uint160(_hexToUint(hexStr)));
   }
@@ -832,21 +869,21 @@ contract CawProfileL2 is
     uint256 spendLimit,
     uint64 perActionTipRate
   ) external {
-    require(msg.sender == address(cawActions), "Only CawActions");
+    require(msg.sender == address(cawActions), "!ca");
     require(owner != address(0), "Zero owner");
-    require(sessionKey != address(0), "Zero session key");
-    require(expiry > block.timestamp, "Already expired");
+    require(sessionKey != address(0), "zero key");
+    require(expiry > block.timestamp, "expired");
 
     sessionNonce[owner]++;
     uint8 scopeBitmap = 0xBF; // all actions except WITHDRAW (bit 6)
-    sessions[owner][sessionKey] = StoredSession(expiry, scopeBitmap, spendLimit, perActionTipRate);
+    sessions[owner][sessionKey] = StoredSession(expiry, scopeBitmap, spendLimit, perActionTipRate, ownerSessionEpoch[owner]);
     emit SessionCreated(owner, sessionKey, expiry, scopeBitmap, spendLimit, perActionTipRate);
   }
 
   /// @notice Revoke a session via an OTHER action (qx:) submitted by CawActions.
   /// @dev    Same auth gate + threat model as registerSessionFromActions.
   function revokeSessionFromActions(address owner, address sessionKey) external {
-    require(msg.sender == address(cawActions), "Only CawActions");
+    require(msg.sender == address(cawActions), "!ca");
     delete sessions[owner][sessionKey];
     emit SessionRevoked(owner, sessionKey);
   }
@@ -860,7 +897,7 @@ contract CawProfileL2 is
     uint8 v, bytes32 r, bytes32 s
   ) external {
     StoredSession memory session = sessions[owner][sessionKey];
-    require(session.expiry != 0, "Session not found");
+    require(session.expiry != 0, "no sess");
 
     // Verify the session key signed a revocation message that's BOUND to
     // the current session's expiry. Without binding, a previously-signed
@@ -881,7 +918,7 @@ contract CawProfileL2 is
       ))
     ));
     address signer = ecrecover(digest, v, r, s);
-    require(signer == sessionKey, "Invalid session key signature");
+    require(signer == sessionKey, "badsig");
 
     delete sessions[owner][sessionKey];
     emit SessionRevoked(owner, sessionKey);
@@ -911,7 +948,7 @@ contract CawProfileL2 is
     }
 
     // Ensure the selector corresponds to an expected function to prevent unauthorized actions
-    require(isAuthorizedFunction(decodedSelector), "Unauthorized function call");
+    require(isAuthorizedFunction(decodedSelector), "unauth fn");
 
     // Call the function using the selector and arguments.
     //
@@ -952,13 +989,13 @@ contract CawProfileL2 is
   ///      function from OApp, Ownable, or Context. Since the contract is immutable
   ///      post-deployment, no new selectors can ever be added to this list.
   function isAuthorizedFunction(bytes4 selector) private pure returns (bool) {
-    return selector == bytes4(keccak256("depositAndUpdateOwners(uint32,uint32,uint256,uint32[],address[])")) ||
-      selector == bytes4(keccak256("authenticateAndUpdateOwners(uint32,uint32,uint32[],address[])")) ||
-      selector == bytes4(keccak256("mintAndUpdateOwners(uint32,address,string,uint32[],address[])")) ||
-      selector == bytes4(keccak256("mintAuthAndUpdateOwners(uint32,uint32,address,string,uint32[],address[])")) ||
-      selector == bytes4(keccak256("depositAndRegisterSessionAndUpdateOwners(uint32,uint32,uint256,address,address,uint64,uint256,uint64,uint32[],address[])")) ||
-      selector == bytes4(keccak256("mintAuthAndRegisterSessionAndUpdateOwners(uint32,uint32,address,string,address,uint64,uint256,uint64,uint32[],address[])")) ||
-      selector == bytes4(keccak256("updateOwners(uint32[],address[])"));
+    return selector == bytes4(keccak256("depositAndUpdateOwners(uint32,uint32,uint256,uint32[],address[],uint64[])")) ||
+      selector == bytes4(keccak256("authenticateAndUpdateOwners(uint32,uint32,uint32[],address[],uint64[])")) ||
+      selector == bytes4(keccak256("mintAndUpdateOwners(uint32,address,string,uint32[],address[],uint64[])")) ||
+      selector == bytes4(keccak256("mintAuthAndUpdateOwners(uint32,uint32,address,string,uint32[],address[],uint64[])")) ||
+      selector == bytes4(keccak256("depositAndRegisterSessionAndUpdateOwners(uint32,uint32,uint256,address,address,uint64,uint256,uint64,uint32[],address[],uint64[])")) ||
+      selector == bytes4(keccak256("mintAuthAndRegisterSessionAndUpdateOwners(uint32,uint32,address,string,address,uint64,uint256,uint64,uint32[],address[],uint64[])")) ||
+      selector == bytes4(keccak256("updateOwners(uint32[],address[],uint64[])"));
   }
 
   /// @notice Subtract CAW from a token's balance (used during withdraw flows). CawActions only.
@@ -967,7 +1004,7 @@ contract CawProfileL2 is
   ///      `withdrawTokens` whole-token-input wrapper alongside, matching the
   ///      `addTokensToBalance` / `spendAndDistributeTokens` convention.
   function withdraw(uint32 tokenId, uint256 amount) public {
-    require(address(cawActions) == _msgSender(), "caller is not the cawActions contract");
+    require(address(cawActions) == _msgSender(), "!ca");
 
     uint256 balance = cawBalanceOf(tokenId);
     require(balance >= amount, 'Insufficient CAW balance');
@@ -1002,13 +1039,13 @@ contract CawProfileL2 is
   /// @param amounts Corresponding withdraw amounts (raw 18-decimal CAW)
   /// @param lzTokenAmount LayerZero ZRO token amount (0 to pay in native gas)
   function setWithdrawable(uint32[] memory tokenIds, uint256[] memory amounts, uint256 lzTokenAmount) external payable {
-    require(address(cawActions) == _msgSender(), "caller is not CawActions");
+    require(address(cawActions) == _msgSender(), "!ca");
     if (bypassLZ) {
       // bypassLZ mode does no LayerZero send, so any forwarded native fee
       // would be stuck in this contract permanently (there's no sweep path).
       // Reject explicitly so a misconfigured validator quote doesn't silently
       // brick funds. Audit fix 2026-05-08.
-      require(msg.value == 0, "bypassLZ takes no fee");
+      require(msg.value == 0, "no fee");
       cawProfile.setWithdrawable(tokenIds, amounts);
     } else {
       bytes memory payload = abi.encodeWithSelector(setWithdrawableSelector, tokenIds, amounts);

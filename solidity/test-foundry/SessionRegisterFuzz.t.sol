@@ -81,7 +81,7 @@ contract SessionRegisterFuzzTest is Test {
         bytes32 d = _digest(sessionKey, expiry, scope, spendLimit, tipRate, nonce);
         (uint8 v, bytes32 r, bytes32 s) = _sign(pk, d);
 
-        vm.expectRevert(bytes("Already expired"));
+        vm.expectRevert(bytes("expired"));
         profile.registerSession(sessionKey, expiry, scope, spendLimit, tipRate, nonce, v, r, s);
     }
 
@@ -146,7 +146,7 @@ contract SessionRegisterFuzzTest is Test {
             // If this somehow doesn't revert, assert at minimum that the
             // registration didn't land on `signer` (the original intended
             // owner). The sig-recovery would have produced some other addr.
-            (uint64 storedExpiry, , , ) = profile.sessions(signer, sessionKey);
+            (uint64 storedExpiry, , , , ) = profile.sessions(signer, sessionKey);
             assertEq(uint256(storedExpiry), 0, "tampered scope landed on signer");
         } catch {
             // Expected.
@@ -169,7 +169,7 @@ contract SessionRegisterFuzzTest is Test {
         bytes32 d = _digest(sessionKey, expiry, scope, 0, 0, nonce);
         (uint8 v, bytes32 r, bytes32 s) = _sign(pk, d);
 
-        vm.expectRevert(bytes("Cannot delegate WITHDRAW"));
+        vm.expectRevert(bytes("no WITHDRAW"));
         profile.registerSession(sessionKey, expiry, scope, 0, 0, nonce, v, r, s);
     }
 
@@ -187,7 +187,7 @@ contract SessionRegisterFuzzTest is Test {
         bytes32 d = _digest(address(0), expiry, scope, 0, 0, nonce);
         (uint8 v, bytes32 r, bytes32 s) = _sign(pk, d);
 
-        vm.expectRevert(bytes("Zero session key"));
+        vm.expectRevert(bytes("zero key"));
         profile.registerSession(address(0), expiry, scope, 0, 0, nonce, v, r, s);
     }
 }

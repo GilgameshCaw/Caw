@@ -444,14 +444,13 @@ contract CawActions is Ownable {
       // an authorized session key. Without an explicit expiry check here,
       // an expired or revoked session would still authorize actions in the
       // ZK path. (Audit finding 2026-05-08, Issue B.)
-      (uint64 expiry, uint8 scopeBitmap, uint256 spendLimit, uint64 perActionTipRate) =
-        cawProfile.sessions(owner, signer);
-      require(expiry > block.timestamp, "Session invalid");
+      CawProfileL2.StoredSession memory s = cawProfile.validSession(owner, signer);
+      require(s.expiry > block.timestamp, "Session invalid");
       ba.isSessionKey = true;
       ba.owner = owner;
-      ba.scopeBitmap = scopeBitmap;
-      ba.spendLimit = spendLimit;
-      ba.perActionTipRate = perActionTipRate;
+      ba.scopeBitmap = s.scopeBitmap;
+      ba.spendLimit = s.spendLimit;
+      ba.perActionTipRate = s.perActionTipRate;
     }
 
     // Apply each action with skip-don't-revert on cawonce conflicts.
@@ -619,7 +618,7 @@ contract CawActions is Ownable {
     ba.r = r;
     if (isSessionKey) {
       ba.owner = cawProfile.ownerOf(action.senderId);
-      (, ba.scopeBitmap, ba.spendLimit, ba.perActionTipRate) = cawProfile.sessions(ba.owner, ba.signer);
+      { CawProfileL2.StoredSession memory _s = cawProfile.validSession(ba.owner, ba.signer); ba.scopeBitmap = _s.scopeBitmap; ba.spendLimit = _s.spendLimit; ba.perActionTipRate = _s.perActionTipRate; }
     }
     c.implicitTipOwed += _applyAction(validatorId, action, ba, packedActions[actionStart:nextPos], c);
     c.actionsSeen += 1;
@@ -657,7 +656,7 @@ contract CawActions is Ownable {
     ba.r = r;
     if (ba.isSessionKey) {
       ba.owner = cawProfile.ownerOf(groupActions[0].senderId);
-      (, ba.scopeBitmap, ba.spendLimit, ba.perActionTipRate) = cawProfile.sessions(ba.owner, ba.signer);
+      { CawProfileL2.StoredSession memory _s = cawProfile.validSession(ba.owner, ba.signer); ba.scopeBitmap = _s.scopeBitmap; ba.spendLimit = _s.spendLimit; ba.perActionTipRate = _s.perActionTipRate; }
     }
 
     _applyBatch(validatorId, packedActions, groupActions, sliceStarts, sliceEnds, ba, c);
@@ -951,7 +950,7 @@ contract CawActions is Ownable {
       // parity even though a single-action group has nothing to amortize.
       if (ba.isSessionKey) {
         ba.owner = cawProfile.ownerOf(groupActions[0].senderId);
-        (, ba.scopeBitmap, ba.spendLimit, ba.perActionTipRate) = cawProfile.sessions(ba.owner, ba.signer);
+        { CawProfileL2.StoredSession memory _s = cawProfile.validSession(ba.owner, ba.signer); ba.scopeBitmap = _s.scopeBitmap; ba.spendLimit = _s.spendLimit; ba.perActionTipRate = _s.perActionTipRate; }
       }
     } else {
       // Batch — all senders must match, cawonces must be strictly contiguous
@@ -972,7 +971,7 @@ contract CawActions is Ownable {
       );
       if (ba.isSessionKey) {
         ba.owner = cawProfile.ownerOf(groupActions[0].senderId);
-        (, ba.scopeBitmap, ba.spendLimit, ba.perActionTipRate) = cawProfile.sessions(ba.owner, ba.signer);
+        { CawProfileL2.StoredSession memory _s = cawProfile.validSession(ba.owner, ba.signer); ba.scopeBitmap = _s.scopeBitmap; ba.spendLimit = _s.spendLimit; ba.perActionTipRate = _s.perActionTipRate; }
       }
     }
 
@@ -1027,7 +1026,7 @@ contract CawActions is Ownable {
     ba.r = r;
     if (isSessionKey) {
       ba.owner = cawProfile.ownerOf(action.senderId);
-      (, ba.scopeBitmap, ba.spendLimit, ba.perActionTipRate) = cawProfile.sessions(ba.owner, ba.signer);
+      { CawProfileL2.StoredSession memory _s = cawProfile.validSession(ba.owner, ba.signer); ba.scopeBitmap = _s.scopeBitmap; ba.spendLimit = _s.spendLimit; ba.perActionTipRate = _s.perActionTipRate; }
     }
     BatchCursor memory localCursor;
     localCursor.firstClientId = action.clientId;
@@ -1124,7 +1123,7 @@ contract CawActions is Ownable {
     if (ba.isSessionKey && actionCost > 0) {
       if (ba.owner == address(0)) {
         ba.owner = cawProfile.ownerOf(action.senderId);
-        (,, ba.spendLimit, ba.perActionTipRate) = cawProfile.sessions(ba.owner, ba.signer);
+        { CawProfileL2.StoredSession memory _s = cawProfile.validSession(ba.owner, ba.signer); ba.spendLimit = _s.spendLimit; ba.perActionTipRate = _s.perActionTipRate; }
       }
       if (ba.spendLimit > 0) {
         if (!ba.groupSpentLoaded) {
@@ -1313,9 +1312,9 @@ contract CawActions is Ownable {
     if (signer == owner && signer != address(0)) return (signer, false);
 
     if (signer != address(0)) {
-      (uint64 expiry, uint8 scopeBitmap,,) = cawProfile.sessions(owner, signer);
-      if (expiry > block.timestamp) {
-        require((scopeBitmap & (1 << uint8(data.actionType))) != 0, "Out of scope");
+      CawProfileL2.StoredSession memory sess = cawProfile.validSession(owner, signer);
+      if (sess.expiry > block.timestamp) {
+        require((sess.scopeBitmap & (1 << uint8(data.actionType))) != 0, "Out of scope");
         return (signer, true);
       }
       // Session record exists but is expired. Don't fall through to the
@@ -1324,7 +1323,7 @@ contract CawActions is Ownable {
       // 1271 fallback would silently elevate the expired session to full
       // owner authority. Explicit revert keeps the intent the user signed.
       // Audit fix 2026-05-08 (CawActions M-1).
-      if (expiry != 0) revert("Session expired");
+      if (sess.expiry != 0) revert("Session expired");
     }
 
     // Cold path: contract-owned profile, ERC-1271 fallback. The 1271 contract
@@ -1376,7 +1375,7 @@ contract CawActions is Ownable {
     if (signer == owner && signer != address(0)) return (signer, false);
 
     if (signer != address(0)) {
-      (uint64 expiry,,,) = cawProfile.sessions(owner, signer);
+      uint64 expiry = cawProfile.validSession(owner, signer).expiry;
       if (expiry > block.timestamp) return (signer, true);
       // See _verifySignatureMem for the rationale — don't let an expired
       // session fall through to ERC-1271, which would silently elevate it

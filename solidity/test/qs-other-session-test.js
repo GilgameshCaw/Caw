@@ -365,11 +365,11 @@ contract('CawActions — qs: / qx: OTHER session register/revoke', function (acc
   it('rejects direct calls to registerSessionFromActions / revokeSessionFromActions', async function () {
     await truffleAssert.reverts(
       setup.cawProfileL2.registerSessionFromActions(userA, sessionKeyEoa, futureExpiry, '1', 0),
-      "Only CawActions"
+      "!ca"
     );
     await truffleAssert.reverts(
       setup.cawProfileL2.revokeSessionFromActions(userA, sessionKeyEoa),
-      "Only CawActions"
+      "!ca"
     );
   });
 

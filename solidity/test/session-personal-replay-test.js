@@ -93,7 +93,7 @@ contract('CawProfileL2 — registerSessionPersonal replay protection', function 
       reason = (err.message || '').toLowerCase();
     }
     expect(reverted, 'replay should revert').to.equal(true);
-    expect(reason).to.include('message already consumed');
+    expect(reason).to.include('replay');
 
     // Confirm session stayed revoked.
     const stillRevoked = await cawProfileL2.sessions(owner, sessionKey);

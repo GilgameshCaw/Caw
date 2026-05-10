@@ -11,8 +11,8 @@ interface ICawProfileForQuoter {
   function authenticated(uint32 clientId, uint32 tokenId) external view returns (bool);
   function withdrawFeeLocked(uint32 clientId, uint32 tokenId) external view returns (bool);
   function lockedWithdrawFee(uint32 clientId, uint32 tokenId) external view returns (uint256);
-  function pendingTransferUpdates(uint32 lzDestId, address newOwner, uint32 tokenId) external view returns (uint32[] memory, address[] memory);
-  function pendingTransferUpdates(uint32 lzDestId) external view returns (uint32[] memory, address[] memory);
+  function pendingTransferUpdates(uint32 lzDestId, address newOwner, uint32 tokenId) external view returns (uint32[] memory, address[] memory, uint64[] memory);
+  function pendingTransferUpdates(uint32 lzDestId) external view returns (uint32[] memory, address[] memory, uint64[] memory);
   function peerWithMaxPendingTransfers() external view returns (uint32);
   function addToBalanceSelector() external view returns (bytes4);
   function mintSelector() external view returns (bytes4);
@@ -40,11 +40,11 @@ contract CawProfileQuoter {
   }
 
   function authenticateQuote(uint32 clientId, uint32 tokenId, uint32 lzDestId, bool payInLzToken) public view returns (MessagingFee memory quote) {
-    uint32[] memory tokenIds; address[] memory owners;
-    (tokenIds, owners) = cawProfile.pendingTransferUpdates(lzDestId, msg.sender, tokenId);
+    uint32[] memory tokenIds; address[] memory owners; uint64[] memory stamps;
+    (tokenIds, owners, stamps) = cawProfile.pendingTransferUpdates(lzDestId, msg.sender, tokenId);
 
     bytes memory payload = abi.encodeWithSelector(
-      cawProfile.authSelector(), clientId, tokenId, tokenIds, owners
+      cawProfile.authSelector(), clientId, tokenId, tokenIds, owners, stamps
     );
 
     quote = cawProfile.lzQuote(clientId, cawProfile.authSelector(), tokenIds.length, payload, lzDestId, payInLzToken);
@@ -53,11 +53,11 @@ contract CawProfileQuoter {
   }
 
   function depositQuote(uint32 clientId, uint32 tokenId, uint256 amount, uint32 lzDestId, bool payInLzToken) public view returns (MessagingFee memory quote) {
-    uint32[] memory tokenIds; address[] memory owners;
-    (tokenIds, owners) = cawProfile.pendingTransferUpdates(lzDestId, msg.sender, tokenId);
+    uint32[] memory tokenIds; address[] memory owners; uint64[] memory stamps;
+    (tokenIds, owners, stamps) = cawProfile.pendingTransferUpdates(lzDestId, msg.sender, tokenId);
 
     bytes memory payload = abi.encodeWithSelector(
-      cawProfile.addToBalanceSelector(), clientId, tokenId, amount, tokenIds, owners
+      cawProfile.addToBalanceSelector(), clientId, tokenId, amount, tokenIds, owners, stamps
     );
 
     quote = cawProfile.lzQuote(clientId, cawProfile.addToBalanceSelector(), tokenIds.length, payload, lzDestId, payInLzToken);
@@ -85,11 +85,11 @@ contract CawProfileQuoter {
     // (lzDestId == mainnetLzId) the L2 mirror is updated via a direct call.
     if (lzDestId == cawProfile.mainnetLzId()) return quote;
 
-    uint32[] memory tokenIds; address[] memory owners;
-    (tokenIds, owners) = cawProfile.pendingTransferUpdates(lzDestId, msg.sender, 0);
+    uint32[] memory tokenIds; address[] memory owners; uint64[] memory stamps;
+    (tokenIds, owners, stamps) = cawProfile.pendingTransferUpdates(lzDestId, msg.sender, 0);
 
     bytes memory payload = abi.encodeWithSelector(
-      cawProfile.addToBalanceSelector(), clientId, uint32(0), depositAmount, tokenIds, owners
+      cawProfile.addToBalanceSelector(), clientId, uint32(0), depositAmount, tokenIds, owners, stamps
     );
 
     MessagingFee memory lz = cawProfile.lzQuote(clientId, cawProfile.addToBalanceSelector(), tokenIds.length, payload, lzDestId, payInLzToken);
@@ -110,8 +110,8 @@ contract CawProfileQuoter {
     // path doesn't revert with NoPeer.)
     if (lzDestId == cawProfile.mainnetLzId()) return quote;
 
-    uint32[] memory tokenIds; address[] memory owners;
-    (tokenIds, owners) = cawProfile.pendingTransferUpdates(lzDestId, msg.sender, 0);
+    uint32[] memory tokenIds; address[] memory owners; uint64[] memory stamps;
+    (tokenIds, owners, stamps) = cawProfile.pendingTransferUpdates(lzDestId, msg.sender, 0);
 
     bytes memory payload = abi.encodeWithSelector(
       cawProfile.mintAuthSelector(),
@@ -120,7 +120,8 @@ contract CawProfileQuoter {
       msg.sender,
       "placeholdr",  // ~10-char placeholder username for sizing
       tokenIds,
-      owners
+      owners,
+      stamps
     );
 
     MessagingFee memory lz = cawProfile.lzQuote(clientId, cawProfile.mintAuthSelector(), tokenIds.length, payload, lzDestId, payInLzToken);
@@ -143,21 +144,21 @@ contract CawProfileQuoter {
 
     if (lzDestId == cawProfile.mainnetLzId()) return quote;
 
-    uint32[] memory tokenIds; address[] memory owners;
-    (tokenIds, owners) = cawProfile.pendingTransferUpdates(lzDestId, msg.sender, 0);
+    uint32[] memory tokenIds; address[] memory owners; uint64[] memory stamps;
+    (tokenIds, owners, stamps) = cawProfile.pendingTransferUpdates(lzDestId, msg.sender, 0);
 
     bytes4 selector;
     bytes memory payload;
     if (sessionKey == address(0)) {
       selector = cawProfile.addToBalanceSelector();
       payload = abi.encodeWithSelector(
-        selector, clientId, uint32(0), depositAmount, tokenIds, owners
+        selector, clientId, uint32(0), depositAmount, tokenIds, owners, stamps
       );
     } else {
       selector = cawProfile.depositRegisterSessionSelector();
       payload = abi.encodeWithSelector(
         selector, clientId, uint32(0), depositAmount, msg.sender,
-        sessionKey, uint64(0), uint256(0), uint64(0), tokenIds, owners
+        sessionKey, uint64(0), uint256(0), uint64(0), tokenIds, owners, stamps
       );
     }
 
@@ -179,21 +180,21 @@ contract CawProfileQuoter {
 
     if (lzDestId == cawProfile.mainnetLzId()) return quote;
 
-    uint32[] memory tokenIds; address[] memory owners;
-    (tokenIds, owners) = cawProfile.pendingTransferUpdates(lzDestId, msg.sender, 0);
+    uint32[] memory tokenIds; address[] memory owners; uint64[] memory stamps;
+    (tokenIds, owners, stamps) = cawProfile.pendingTransferUpdates(lzDestId, msg.sender, 0);
 
     bytes4 selector;
     bytes memory payload;
     if (sessionKey == address(0)) {
       selector = cawProfile.mintAuthSelector();
       payload = abi.encodeWithSelector(
-        selector, clientId, uint32(0), msg.sender, "placeholdr", tokenIds, owners
+        selector, clientId, uint32(0), msg.sender, "placeholdr", tokenIds, owners, stamps
       );
     } else {
       selector = cawProfile.mintAuthRegisterSessionSelector();
       payload = abi.encodeWithSelector(
         selector, clientId, uint32(0), msg.sender, "placeholdr",
-        sessionKey, uint64(0), uint256(0), uint64(0), tokenIds, owners
+        sessionKey, uint64(0), uint256(0), uint64(0), tokenIds, owners, stamps
       );
     }
 
@@ -227,12 +228,12 @@ contract CawProfileQuoter {
     if (lzDestId == cawProfile.mainnetLzId()) return quote;
 
     // Cross-chain (true L2 storage): include the LZ messaging cost.
-    uint32[] memory tokenIds; address[] memory owners;
-    (tokenIds, owners) = cawProfile.pendingTransferUpdates(lzDestId, msg.sender, tokenId);
+    uint32[] memory tokenIds; address[] memory owners; uint64[] memory stamps;
+    (tokenIds, owners, stamps) = cawProfile.pendingTransferUpdates(lzDestId, msg.sender, tokenId);
 
     // Use 0 as placeholder for `amount` — it doesn't affect LZ payload size.
     bytes memory payload = abi.encodeWithSelector(
-      cawProfile.addToBalanceSelector(), cawClientId, tokenId, uint256(0), tokenIds, owners
+      cawProfile.addToBalanceSelector(), cawClientId, tokenId, uint256(0), tokenIds, owners, stamps
     );
     MessagingFee memory lz = cawProfile.lzQuote(cawClientId, cawProfile.addToBalanceSelector(), tokenIds.length, payload, lzDestId, payInLzToken);
     quote.nativeFee += lz.nativeFee;
@@ -268,13 +269,13 @@ contract CawProfileQuoter {
   }
 
   function updateOwnerQuote(bool payInLzToken) public view returns (MessagingFee memory quote) {
-    uint32[] memory tokenIds; address[] memory owners;
+    uint32[] memory tokenIds; address[] memory owners; uint64[] memory stamps;
     uint32 lzDestId = cawProfile.peerWithMaxPendingTransfers();
-    (tokenIds, owners) = cawProfile.pendingTransferUpdates(lzDestId);
+    (tokenIds, owners, stamps) = cawProfile.pendingTransferUpdates(lzDestId);
 
     if (tokenIds.length == 0) return MessagingFee(0, 0);
     bytes memory payload = abi.encodeWithSelector(
-      cawProfile.updateOwnersSelector(), tokenIds, owners
+      cawProfile.updateOwnersSelector(), tokenIds, owners, stamps
     );
     // updateOwners isn't bound to a single clientId — use 0 (no override).
     return cawProfile.lzQuote(0, cawProfile.updateOwnersSelector(), tokenIds.length, payload, lzDestId, payInLzToken);
@@ -287,17 +288,17 @@ contract CawProfileQuoter {
    */
   function syncTransferQuote(uint32 tokenId, address newOwner, bool payInLzToken) public view returns (MessagingFee memory quote) {
     uint32 lzDestId = cawProfile.peerWithMaxPendingTransfers();
-    uint32[] memory tokenIds; address[] memory owners;
+    uint32[] memory tokenIds; address[] memory owners; uint64[] memory stamps;
 
     if (tokenId > 0 && newOwner != address(0)) {
-      (tokenIds, owners) = cawProfile.pendingTransferUpdates(lzDestId, newOwner, tokenId);
+      (tokenIds, owners, stamps) = cawProfile.pendingTransferUpdates(lzDestId, newOwner, tokenId);
     } else {
-      (tokenIds, owners) = cawProfile.pendingTransferUpdates(lzDestId);
+      (tokenIds, owners, stamps) = cawProfile.pendingTransferUpdates(lzDestId);
     }
 
     if (tokenIds.length == 0) return MessagingFee(0, 0);
     bytes memory payload = abi.encodeWithSelector(
-      cawProfile.updateOwnersSelector(), tokenIds, owners
+      cawProfile.updateOwnersSelector(), tokenIds, owners, stamps
     );
     // updateOwners isn't bound to a single clientId — use 0 (no override).
     return cawProfile.lzQuote(0, cawProfile.updateOwnersSelector(), tokenIds.length, payload, lzDestId, payInLzToken);

@@ -3015,7 +3015,7 @@ contract("CawProfileMinter - Bundled Quick Sign", function(accounts) {
         sessionKey, pastExpiry, web3.utils.toWei('1000', 'ether'), 0, // perActionTipRate
         { from: accounts[1], value: (BigInt(quote.nativeFee)).toString() }
       ),
-      "Session already expired"
+      "expired"
     );
 
     console.log("rejects expired expiry (bypassLZ mintAndAuth path)");
