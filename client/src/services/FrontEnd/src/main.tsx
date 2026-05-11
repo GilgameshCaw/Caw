@@ -20,7 +20,7 @@ import "@rainbow-me/rainbowkit/styles.css";
 import App from "./App.tsx";
 import Web3Provider from "./config/Web3Provider";
 import StateProvider from "./config/StateProvider.tsx";
-import { QueryClient } from '@tanstack/react-query'
+import { QueryClient, focusManager } from '@tanstack/react-query'
 
 // staleTime tuned for L2 chain reads + API responses. wagmi's
 // useReadContract uses this same client, so bumping staleTime cuts
@@ -43,6 +43,25 @@ const queryClient = new QueryClient({
     },
   },
 });
+
+// Hidden-tab gating. React Query's focusManager controls whether
+// refetchInterval-based queries (including wagmi block polling)
+// actually fire. By default it's tied to window focus + visibility;
+// we tighten it to "only fire when the tab is currently visible."
+// Without this, opening 20 CAW tabs ran 20 independent poll cycles
+// in parallel — each background tab still hit eth_blockNumber on
+// pollingInterval and ran any timer-based query refetch. With this,
+// only the foreground tab does work; backgrounded tabs go fully
+// idle until refocused, then immediately catch up.
+//
+// refetchOnWindowFocus stays false above so we DON'T fire stale
+// queries on every tab switch — only ones that have explicit
+// refetchInterval and have crossed it while hidden.
+if (typeof document !== 'undefined') {
+  const updateFocus = () => focusManager.setFocused(!document.hidden)
+  updateFocus()
+  document.addEventListener('visibilitychange', updateFocus)
+}
 
 // Diagnostic: count how often each query key fires. Enable from the
 // browser console with `localStorage.cawRpcDebug = '1'` then refresh.
