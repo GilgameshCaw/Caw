@@ -58,14 +58,20 @@ async function main() {
   console.log(`[seed-stake-ledger] clientId=${clientId} dryRun=${dryRun}`)
   console.log(`[seed-stake-ledger] reading L2 state from ${CAW_NAMES_L2_ADDRESS}, L1 nextId from ${CAW_NAMES_ADDRESS}...`)
 
-  const [multiplier, totalCaw, nextId] = await Promise.all([
+  // First read of multiplier/totalCaw is informational only — it's the
+  // chain state at scan-start. We re-read both immediately before the DB
+  // upsert below so the seeded value is as fresh as possible (rewardMultiplier
+  // ticks on every CawActions submission; with a long ownership scan, the
+  // value would drift mid-scan and verifyMultiplier would halt on first boot).
+  // Reported by Zin (2026-05-11) after hitting exactly this race.
+  const [multiplierAtStart, totalCawAtStart, nextId] = await Promise.all([
     l2.rewardMultiplier(),
     l2.totalCaw(),
     l1.nextId(),
   ])
   const maxId = Number(nextId) - 1
-  console.log(`  rewardMultiplier = ${multiplier}`)
-  console.log(`  totalCaw         = ${totalCaw}`)
+  console.log(`  rewardMultiplier (at scan start) = ${multiplierAtStart}`)
+  console.log(`  totalCaw         (at scan start) = ${totalCawAtStart}`)
   console.log(`  nextId           = ${nextId} (will read tokens 1..${maxId})`)
 
   if (maxId < 1) {
@@ -97,13 +103,30 @@ async function main() {
   }
   if (maxId >= 1) process.stdout.write('\n')
 
+  // Re-read multiplier + totalCaw RIGHT before the DB upsert. Tightens the
+  // race window between "what we seed" and "what chain reports on the next
+  // verifyMultiplier check after pm2 restart." There's still a tiny gap
+  // (this read → DB write → pm2 reload), but it's measured in seconds vs.
+  // the 60-90s ownership scan it would otherwise span.
+  const [multiplier, totalCaw] = await Promise.all([
+    l2.rewardMultiplier(),
+    l2.totalCaw(),
+  ])
+  if (multiplier !== multiplierAtStart) {
+    console.log(`  rewardMultiplier moved during scan: ${multiplierAtStart} → ${multiplier} (using fresh value)`)
+  }
+  if (totalCaw !== totalCawAtStart) {
+    console.log(`  totalCaw moved during scan: ${totalCawAtStart} → ${totalCaw} (using fresh value)`)
+  }
+
   const sumOwnership = [...ownership.values()].reduce((a, b) => a + b, 0n)
   console.log(`  sum(cawOwnership) = ${sumOwnership}`)
-  if (sumOwnership !== BigInt(totalCaw)) {
-    // Not fatal — sum can lag totalCaw by one block during reads, or
-    // contract may not enforce strict equality at all times. Log so the
-    // operator can decide whether to retry.
-    console.warn(`  ⚠  sum != totalCaw (delta ${BigInt(totalCaw) - sumOwnership}). Re-running with stable head usually closes this.`)
+  // Note: sumOwnership reflects ownerships read DURING the scan, while
+  // totalCaw is fresh as of after the scan — so a non-zero delta is
+  // expected on an active chain. We surface it for diagnostic value but
+  // don't treat any delta as an error.
+  if (sumOwnership !== totalCaw) {
+    console.log(`  (sum vs fresh totalCaw delta: ${totalCaw - sumOwnership} — expected on an active chain since reads aren't atomic)`)
   }
 
   if (dryRun) {
