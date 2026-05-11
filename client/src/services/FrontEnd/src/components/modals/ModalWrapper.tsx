@@ -148,7 +148,7 @@ const ModalWrapper: React.FC<ModalWrapperProps> = ({
     >
       <div
         ref={modalRef}
-        className={`w-full ${maxWidth} rounded-2xl transition-all duration-300 ${
+        className={`w-full ${maxWidth} max-h-[calc(100dvh-2rem)] overflow-y-auto rounded-2xl transition-all duration-300 ${
           isDark ? 'bg-black border border-yellow-500/30' : 'bg-white border border-gray-200'
         } ${className}`}
         onMouseDown={e => e.stopPropagation()}
