@@ -1,73 +1,31 @@
-import React, { useState } from 'react'
-import { useSignMessage, useAccount } from 'wagmi'
+import React from 'react'
 import ModalWrapper from './ModalWrapper'
 import { useEnsureWallet } from '~/hooks/useEnsureWallet'
+import { useVerifyWallet } from '~/hooks/useVerifyWallet'
 import { useTheme } from '~/hooks/useTheme'
 import { useT } from '~/i18n/I18nProvider'
 import { themeText, themeTextSecondary, themeSecondaryButton } from '~/utils/theme'
 import { useVerifyWalletStore } from '~/store/verifyWalletStore'
-import { useAuthStore } from '~/store/authStore'
-import { apiFetch, retryOnIndexing } from '~/api/client'
 
 const VerifyWalletModal: React.FC = () => {
   const { isDark } = useTheme()
   const t = useT()
   const { isOpen, onSuccess, close } = useVerifyWalletStore()
-  const { sessionToken, setSession, addAuthorization } = useAuthStore()
-  const { signMessageAsync } = useSignMessage()
-  const { isConnected } = useAccount()
   const ensureWallet = useEnsureWallet()
-  const [isVerifying, setIsVerifying] = useState(false)
-  const [error, setError] = useState<string | null>(null)
+  // Route through the shared useVerifyWallet hook (also used by
+  // useDm.ts's auth path). The hook builds the canonical 4-line
+  // domain-bound message (Host + ChainId, audit fix 2026-05-09 Round 7
+  // CRITICAL-2). Previously the modal hand-rolled a 2-line message and
+  // got "Invalid message format (missing fields)" 400s back from
+  // /api/auth/verify because the server enforces all four lines.
+  const { verify, isVerifying, error } = useVerifyWallet()
 
   const handleVerify = async () => {
     await ensureWallet(null, async () => {
-      setIsVerifying(true)
-      setError(null)
-
-      try {
-        const timestamp = Math.floor(Date.now() / 1000)
-        const message = `Verify wallet ownership for CAW\nTimestamp: ${timestamp}`
-
-        const signature = await signMessageAsync({ message })
-
-        // Tier 3 of the "RPC out of API request handlers" refactor:
-        // /api/auth/verify returns 202 when ownership isn't indexed yet
-        // (fresh transfer). retryOnIndexing backs off and retries.
-        const data = await retryOnIndexing(() =>
-          apiFetch<{
-            sessionToken: string
-            authorizedTokenIds: number[]
-            authorizedAddresses: string[]
-            expiresAt: number
-          }>('/api/auth/verify', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ message, signature }),
-          })
-        )
-
-        if (sessionToken && data.sessionToken === sessionToken) {
-          addAuthorization(data.authorizedTokenIds, data.authorizedAddresses)
-        } else {
-          setSession(
-            data.sessionToken,
-            data.authorizedTokenIds,
-            data.authorizedAddresses,
-            data.expiresAt
-          )
-        }
-
+      const ok = await verify()
+      if (ok) {
         close()
         onSuccess?.()
-      } catch (err: any) {
-        if (err?.name === 'UserRejectedRequestError' || err?.code === 4001) {
-          setError(t('verify_wallet.error.sig_rejected'))
-        } else {
-          setError(err.message || t('verify_wallet.error.failed'))
-        }
-      } finally {
-        setIsVerifying(false)
       }
     })
   }
