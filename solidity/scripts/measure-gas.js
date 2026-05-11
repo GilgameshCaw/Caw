@@ -160,16 +160,16 @@ async function main() {
   const cawProfileL2 = await deploy('CawProfileL2', [L1_EID, await l2Endpoint.getAddress()])
   console.log('CawProfileL2:  ', await cawProfileL2.getAddress())
 
-  // ----- Deploy L1 side (CawProfile needs a client manager + URI generator + CAW token) -----
+  // ----- Deploy L1 side (CawProfile needs a network manager + URI generator + CAW token) -----
   const caw = await deploy('MintableCaw')
   const uriGen = await deploy('CawProfileURI')
-  const clientMgr = await deploy('CawClientManager', [deployer])
+  const networkMgr = await deploy('CawNetworkManager', [deployer])
 
   const cawProfile = await deploy('CawProfile', [
     await caw.getAddress(),
     await uriGen.getAddress(),
     deployer,                    // buyAndBurn
-    await clientMgr.getAddress(),
+    await networkMgr.getAddress(),
     await l1Endpoint.getAddress(),
     L1_EID,
   ])
@@ -221,7 +221,7 @@ async function main() {
     ])
   }
 
-  // depositAndUpdateOwners(uint32 cawClientId, uint32 tokenId, uint256 amount, uint32[] tokenIds, address[] owners)
+  // depositAndUpdateOwners(uint32 cawNetworkId, uint32 tokenId, uint256 amount, uint32[] tokenIds, address[] owners)
   const buildDeposit = (n) => {
     const { tokenIds, owners } = makeOwners(n, 3000)
     return ethers.concat([
@@ -233,7 +233,7 @@ async function main() {
     ])
   }
 
-  // authenticateAndUpdateOwners(uint32 cawClientId, uint32 tokenId, uint32[] tokenIds, address[] owners)
+  // authenticateAndUpdateOwners(uint32 cawNetworkId, uint32 tokenId, uint32[] tokenIds, address[] owners)
   const buildAuth = (n) => {
     const { tokenIds, owners } = makeOwners(n, 4000)
     return ethers.concat([
@@ -245,7 +245,7 @@ async function main() {
     ])
   }
 
-  // setClientChains(uint32 clientId, uint32[] destEids)
+  // setClientChains(uint32 networkId, uint32[] destEids)
   const buildSetClientChains = (n) => {
     const destEids = Array.from({ length: n }, (_, i) => 10 + i) // matches pre-registered chains
     return ethers.concat([

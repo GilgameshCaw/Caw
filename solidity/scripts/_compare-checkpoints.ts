@@ -3,7 +3,7 @@ import { JsonRpcProvider, Contract, AbiCoder, Interface } from 'ethers'
 import { cawActionsAbi } from '../src/abi/generated'
 import { CAW_ACTIONS_ADDRESS, CAW_ACTIONS_REPLICATOR_L2_ADDRESS } from '../src/abi/addresses'
 
-const ACTION_TUPLE = 'tuple(uint8 actionType, uint32 senderId, uint32 receiverId, uint32 receiverCawonce, uint32 clientId, uint32 cawonce, uint32[] recipients, uint64[] amounts, bytes text)'
+const ACTION_TUPLE = 'tuple(uint8 actionType, uint32 senderId, uint32 receiverId, uint32 receiverCawonce, uint32 networkId, uint32 cawonce, uint32[] recipients, uint64[] amounts, bytes text)'
 
 async function main() {
   const p = new JsonRpcProvider(process.env.L2_RPC_URL)
@@ -23,11 +23,11 @@ async function main() {
     const multiData = decoded[1]
     for (let i = 0; i < multiData.actions.length; i++) {
       const a = multiData.actions[i]
-      if (Number(a.clientId) !== 1) continue
+      if (Number(a.networkId) !== 1) continue
       allActions.push(a)
     }
   }
-  console.log(`Total client-1 actions: ${allActions.length}\n`)
+  console.log(`Total network-1 actions: ${allActions.length}\n`)
 
   const coder = new AbiCoder()
   for (let cp = 1; cp <= 7; cp++) {

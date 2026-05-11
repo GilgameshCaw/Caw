@@ -77,7 +77,7 @@ fn pack_action_minimal(
     sender_id: u32,
     receiver_id: u32,
     receiver_cawonce: u32,
-    client_id: u32,
+    network_id: u32,
     cawonce: u32,
 ) -> Vec<u8> {
     let mut buf = Vec::with_capacity(25);
@@ -85,7 +85,7 @@ fn pack_action_minimal(
     buf.extend_from_slice(&sender_id.to_be_bytes());
     buf.extend_from_slice(&receiver_id.to_be_bytes());
     buf.extend_from_slice(&receiver_cawonce.to_be_bytes());
-    buf.extend_from_slice(&client_id.to_be_bytes());
+    buf.extend_from_slice(&network_id.to_be_bytes());
     buf.extend_from_slice(&cawonce.to_be_bytes());
     buf.push(0);
     buf.push(0);
@@ -119,7 +119,7 @@ fn main() {
         sender_id: 42,
         receiver_id: 0,
         receiver_cawonce: 0,
-        client_id: 1,
+        network_id: 1,
         cawonce: 7,
         recipients: vec![],
         amounts: vec![],

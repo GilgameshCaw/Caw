@@ -3,7 +3,7 @@
  *
  * Why this exists: replication's slashing path (`resolveChallenge` /
  * `slashIncoherentRoot` in CawActionsArchive.sol) compares an off-chain
- * computed checkpoint hash to the contract's `clientHashAtCheckpoint`. If
+ * computed checkpoint hash to the contract's `networkHashAtCheckpoint`. If
  * the validator unpacks the `sigs` blob from a `processActions` tx wrong,
  * the per-action `r` it folds into the hash chain diverges from the
  * on-chain `r`, the merkle root differs, and an honest peer slashes the
@@ -19,7 +19,7 @@
  *   1. Submits a processActions tx covering exactly CHECKPOINT_INTERVAL
  *      actions, with a mix of single-sig groups and a multi-action batch
  *      group, so both wire variants are exercised.
- *   2. Reads `clientHashAtCheckpoint(clientId, 1)` from the contract.
+ *   2. Reads `networkHashAtCheckpoint(networkId, 1)` from the contract.
  *   3. Re-derives the same hash off-chain by decoding the calldata,
  *      walking the sig blob via the inverse-of-pack format described
  *      above, and folding `h = keccak256(h, r[i], actionHash[i])` for
@@ -32,7 +32,7 @@
  */
 
 const MintableCaw = artifacts.require("MintableCaw");
-const CawClientManager = artifacts.require("CawClientManager");
+const CawNetworkManager = artifacts.require("CawNetworkManager");
 const CawProfile = artifacts.require("CawProfile");
 const CawProfileL2 = artifacts.require("CawProfileL2");
 const CawProfileMinter = artifacts.require("CawProfileMinter");
@@ -77,7 +77,7 @@ const dataTypes = {
     { name: 'senderId', type: 'uint32' },
     { name: 'receiverId', type: 'uint32' },
     { name: 'receiverCawonce', type: 'uint32' },
-    { name: 'clientId', type: 'uint32' },
+    { name: 'networkId', type: 'uint32' },
     { name: 'cawonce', type: 'uint32' },
     { name: 'recipients', type: 'uint32[]' },
     { name: 'amounts', type: 'uint64[]' },
@@ -108,7 +108,7 @@ function packActionForSlice(a) {
   buf.writeUInt32BE(Number(a.senderId), pos); pos += 4;
   buf.writeUInt32BE(Number(a.receiverId || 0), pos); pos += 4;
   buf.writeUInt32BE(Number(a.receiverCawonce || 0), pos); pos += 4;
-  buf.writeUInt32BE(Number(a.clientId), pos); pos += 4;
+  buf.writeUInt32BE(Number(a.networkId), pos); pos += 4;
   buf.writeUInt32BE(Number(a.cawonce), pos); pos += 4;
   buf.writeUInt8(recipients.length, pos); pos += 1;
   buf.writeUInt8(amounts.length, pos); pos += 1;
@@ -146,7 +146,7 @@ function packGroupedSigs(groups) {
 // each group's sig `groupSize` times. Mirrors unpackPerActionSigs in
 // client/src/utils/packActions.ts. If THIS function and that one drift,
 // the test still fails (the off-chain computed hash diverges from the
-// contract's clientHashAtCheckpoint), so this is the canonical reference.
+// contract's networkHashAtCheckpoint), so this is the canonical reference.
 function unpackPerActionSigs(sigsHex, expectedActionCount) {
   const sigs = Buffer.from(sigsHex.replace(/^0x/, ''), 'hex');
   if (sigs.length < 2) throw new Error('Sigs too short: missing numGroups header');
@@ -219,7 +219,7 @@ function signActionBatch(signer, actions, domain) {
 }
 
 // ============================================
-// Setup — minimal: two users, one validator, one client
+// Setup — minimal: two users, one validator, one network
 // ============================================
 async function fullSetup(accounts) {
   const l1Endpoint = await MockLayerZeroEndpoint.new(l1);
@@ -227,7 +227,7 @@ async function fullSetup(accounts) {
   const token = await MintableCaw.new();
   const mockRouter = await MockSwapRouter.new(token.address);
   const buyAndBurn = await CawBuyAndBurn.new(token.address, mockRouter.address);
-  const clientManager = await CawClientManager.new(buyAndBurn.address);
+  const networkManager = await CawNetworkManager.new(buyAndBurn.address);
   const CawProfileURI = artifacts.require("CawProfileURI");
   const CawFontDataA = artifacts.require("CawFontDataA");
   const CawFontDataB = artifacts.require("CawFontDataB");
@@ -238,14 +238,14 @@ async function fullSetup(accounts) {
   const cawProfileL2 = await CawProfileL2.new(l1, l2Endpoint.address);
   await l1Endpoint.setDestLzEndpoint(cawProfileL2.address, l2Endpoint.address);
 
-  const cawProfile = await CawProfile.new(token.address, uri.address, buyAndBurn.address, clientManager.address, l1Endpoint.address, l1);
+  const cawProfile = await CawProfile.new(token.address, uri.address, buyAndBurn.address, networkManager.address, l1Endpoint.address, l1);
   await buyAndBurn.setCawProfile(cawProfile.address);
   await cawProfileL2.setL1Peer(l1, cawProfile.address, false);
   await l2Endpoint.setDestLzEndpoint(cawProfile.address, l1Endpoint.address);
   await cawProfile.setL2Peer(l2, cawProfileL2.address);
 
-  await clientManager.createClient("Test Client", accounts[0], l2, 0, 0, 0, 0);
-  const clientId = 1;
+  await networkManager.createNetwork("Test Network", accounts[0], l2, 0, 0, 0, 0);
+  const networkId = 1;
 
   const minter = await CawProfileMinter.new(token.address, cawProfile.address, mockRouter.address);
   await cawProfile.setMinter(minter.address);
@@ -254,7 +254,7 @@ async function fullSetup(accounts) {
   const cawActions = await CawActions.new(cawProfileL2.address, "0x0000000000000000000000000000000000000000", "0x0000000000000000000000000000000000000000000000000000000000000000");
   await cawProfileL2.setCawActions(cawActions.address);
 
-  return { token, cawProfile, cawProfileL2, minter, quoter, cawActions, clientManager, clientId };
+  return { token, cawProfile, cawProfileL2, minter, quoter, cawActions, networkManager, networkId };
 }
 
 async function buyUsername(setup, user, name) {
@@ -262,8 +262,8 @@ async function buyUsername(setup, user, name) {
   await setup.token.mint(user, mintAmount);
   const cost = await setup.minter.costOfName(name);
   await setup.token.approve(setup.minter.address, cost.toString(), { from: user });
-  const quote = await setup.quoter.mintQuote(setup.clientId, false);
-  await setup.minter.mint(setup.clientId, name, quote.lzTokenFee, {
+  const quote = await setup.quoter.mintQuote(setup.networkId, false);
+  await setup.minter.mint(setup.networkId, name, quote.lzTokenFee, {
     from: user, value: quote.nativeFee.toString(),
   });
   const totalSupply = await setup.cawProfile.totalSupply();
@@ -274,8 +274,8 @@ async function depositAndAuth(setup, user, tokenId, amountWholeCaw) {
   const cawAmountWei = (BigInt(amountWholeCaw) * 10n ** 18n).toString();
   const balance = await setup.token.balanceOf(user);
   await setup.token.approve(setup.cawProfile.address, balance.toString(), { from: user });
-  const quote = await setup.quoter.depositQuote(setup.clientId, tokenId, cawAmountWei, l2, false);
-  await setup.cawProfile.deposit(setup.clientId, tokenId, cawAmountWei, l2, quote.lzTokenFee, {
+  const quote = await setup.quoter.depositQuote(setup.networkId, tokenId, cawAmountWei, l2, false);
+  await setup.cawProfile.deposit(setup.networkId, tokenId, cawAmountWei, l2, quote.lzTokenFee, {
     from: user, value: quote.nativeFee.toString(),
   });
 }
@@ -298,7 +298,7 @@ contract('Replication reconstruction — wire-format invariant', function (accou
     domain = await getDomain(setup.cawActions);
   });
 
-  it('reconstructs clientHashAtCheckpoint from grouped sigs (mixed single + batch)', async function () {
+  it('reconstructs networkHashAtCheckpoint from grouped sigs (mixed single + batch)', async function () {
     this.timeout(120000);
 
     // Build CHECKPOINT_INTERVAL (32) actions from userA so the very first
@@ -315,7 +315,7 @@ contract('Replication reconstruction — wire-format invariant', function (accou
         senderId: userATokenId,
         receiverId: 0,
         receiverCawonce: 0,
-        clientId: setup.clientId,
+        networkId: setup.networkId,
         cawonce: startCawonce + i,
         recipients: [],
         amounts: [0],
@@ -337,16 +337,16 @@ contract('Replication reconstruction — wire-format invariant', function (accou
 
     // Snapshot prevHash BEFORE submission so we can fold the chain off-chain
     // from the same starting point the contract will use.
-    const prevHashBefore = await setup.cawActions.clientCurrentHash(setup.clientId);
+    const prevHashBefore = await setup.cawActions.networkCurrentHash(setup.networkId);
 
     const tx = await setup.cawActions.processActions(
       validatorTokenId, packedHex, sigsHex, 0, 0
     );
     expect(tx.receipt.status).to.equal(true);
 
-    // The contract should have written to clientHashAtCheckpoint[clientId][1]
+    // The contract should have written to networkHashAtCheckpoint[networkId][1]
     // since CHECKPOINT_INTERVAL actions just landed.
-    const checkpointHashOnChain = await setup.cawActions.clientHashAtCheckpoint(setup.clientId, 1);
+    const checkpointHashOnChain = await setup.cawActions.networkHashAtCheckpoint(setup.networkId, 1);
     expect(checkpointHashOnChain).to.not.equal('0x' + '0'.repeat(64));
 
     // ---- Off-chain reconstruction ----
@@ -354,7 +354,7 @@ contract('Replication reconstruction — wire-format invariant', function (accou
     //    processActions tx. Pull packedActions + sigs.
     // 2. Walk the sig blob via unpackPerActionSigs.
     // 3. Fold h = keccak(h, r[i], actionHash[i]) for each action.
-    // 4. Compare to clientHashAtCheckpoint(clientId, 1).
+    // 4. Compare to networkHashAtCheckpoint(networkId, 1).
     const slices = actions.map(packActionForSlice);
     const perActionSigs = unpackPerActionSigs(sigsHex, actions.length);
     expect(perActionSigs.length).to.equal(CHECKPOINT_INTERVAL);
@@ -372,7 +372,7 @@ contract('Replication reconstruction — wire-format invariant', function (accou
     expect(h).to.equal(
       checkpointHashOnChain,
       'Off-chain reconstructed checkpoint hash diverged from on-chain ' +
-      'clientHashAtCheckpoint — wire format mismatch (would slash a real validator).'
+      'networkHashAtCheckpoint — wire format mismatch (would slash a real validator).'
     );
   });
 });

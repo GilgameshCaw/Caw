@@ -2,7 +2,7 @@ const MintableCaw = artifacts.require("MintableCaw");
 const CawProfileURI = artifacts.require("CawProfileURI");
 const CawFontDataA = artifacts.require("CawFontDataA");
 const CawFontDataB = artifacts.require("CawFontDataB");
-const CawClientManager = artifacts.require("CawClientManager");
+const CawNetworkManager = artifacts.require("CawNetworkManager");
 const CawProfile = artifacts.require("CawProfile");
 const CawProfileL2 = artifacts.require("CawProfileL2");
 const CawProfileMinter = artifacts.require("CawProfileMinter");
@@ -38,7 +38,7 @@ function packActionsForContract(signedActions) {
     buf.writeUInt32BE(Number(a.senderId), pos); pos += 4;
     buf.writeUInt32BE(Number(a.receiverId), pos); pos += 4;
     buf.writeUInt32BE(Number(a.receiverCawonce), pos); pos += 4;
-    buf.writeUInt32BE(Number(a.clientId), pos); pos += 4;
+    buf.writeUInt32BE(Number(a.networkId), pos); pos += 4;
     buf.writeUInt32BE(Number(a.cawonce), pos); pos += 4;
     // Recipients
     var recipients = a.recipients || [];
@@ -95,7 +95,7 @@ const gilg = "0xF71338f3eAa483aA66125598B09BA1988e694a95";
 
 const l2 = 8453;
 const l1 = 30101;
-var defaultClientId = 1;
+var defaultNetworkId = 1;
 var totalGas = 0n;
 var token;
 var minter;
@@ -108,7 +108,7 @@ var cawActions;
 var cawActionsMainnet;
 
 var uriGenerator;
-var clientManager;
+var networkManager;
 var quoter;
 
 const dataTypes = {
@@ -123,7 +123,7 @@ const dataTypes = {
     { name: 'senderId', type: 'uint32' },
     { name: 'receiverId', type: 'uint32' },
     { name: 'receiverCawonce', type: 'uint32' },
-    { name: 'clientId', type: 'uint32' },
+    { name: 'networkId', type: 'uint32' },
     { name: 'cawonce', type: 'uint32'},
     { name: 'recipients', type: 'uint32[]' },
     { name: 'amounts', type: 'uint64[]' },
@@ -209,7 +209,7 @@ function decodeActions(packedHex) {
     var senderId = buf.readUInt32BE(pos); pos += 4;
     var receiverId = buf.readUInt32BE(pos); pos += 4;
     var receiverCawonce = buf.readUInt32BE(pos); pos += 4;
-    var clientId = buf.readUInt32BE(pos); pos += 4;
+    var networkId = buf.readUInt32BE(pos); pos += 4;
     var cawonce = buf.readUInt32BE(pos); pos += 4;
     var rc = buf.readUInt8(pos); pos += 1;
     var ac = buf.readUInt8(pos); pos += 1;
@@ -219,7 +219,7 @@ function decodeActions(packedHex) {
     for (var j = 0; j < ac; j++) { amounts.push(buf.readBigUInt64BE(pos)); pos += 8; }
     var tl = buf.readUInt16BE(pos); pos += 2;
     var text = '0x' + buf.slice(pos, pos + tl).toString('hex'); pos += tl;
-    actions.push({ actionType, senderId, receiverId, receiverCawonce, clientId, cawonce, recipients, amounts, text });
+    actions.push({ actionType, senderId, receiverId, receiverCawonce, networkId, cawonce, recipients, amounts, text });
   }
   return actions;
 }
@@ -457,7 +457,7 @@ async function generateData(type, params = {}) {
       cawonce: cawonce,
       recipients: params.recipients || [],
       amounts: params.amounts || [],
-      clientId: params.clientId || defaultClientId,
+      networkId: params.networkId || defaultNetworkId,
     },
     domain: domain,
     types: {
@@ -486,8 +486,8 @@ async function verifyAndSplitSig(sig, user, data) {
   return { r, s, v };
 }
 
-async function deposit(user, tokenId, amount, layer, clientId) {
-  clientId ||= defaultClientId;
+async function deposit(user, tokenId, amount, layer, networkId) {
+  networkId ||= defaultNetworkId;
   layer ||= l2;
   console.log("DEPOSIT", tokenId, (BigInt(amount) * 10n**18n).toString());
 
@@ -498,10 +498,10 @@ async function deposit(user, tokenId, amount, layer, clientId) {
   });
 
   var cawAmount = (BigInt(amount) * 10n**18n).toString();
-  var quote = await quoter.depositQuote(clientId, tokenId, cawAmount, layer, false);
+  var quote = await quoter.depositQuote(networkId, tokenId, cawAmount, layer, false);
   console.log('deposit quote returned:', quote);
 
-  t = await cawProfiles.deposit(clientId, tokenId, cawAmount, layer, quote.lzTokenFee, {
+  t = await cawProfiles.deposit(networkId, tokenId, cawAmount, layer, quote.lzTokenFee, {
     nonce: await web3.eth.getTransactionCount(user),
     value: quote.nativeFee,
     from: user,
@@ -523,7 +523,7 @@ async function buyUsername(user, name) {
     from: user,
   });
 
-  var quote = await quoter.mintQuote(defaultClientId, false);
+  var quote = await quoter.mintQuote(defaultNetworkId, false);
   console.log('mint quote returned:', quote);
 
   var peer = await cawProfiles.peerWithMaxPendingTransfers();
@@ -532,14 +532,14 @@ async function buyUsername(user, name) {
   var updatesNeeded = await cawProfiles.updatesNeededForPeer(BigInt(peer));
   console.log('max pending peer', updatesNeeded);
 
-  // (removed dev-time getMintFeeAndAddress(0) probe — clientId=0 never exists,
-  // so the call always reverts with "Client does not exist" and surfaces as a
-  // misleading test failure. The defaultClientId fee is exercised inside
+  // (removed dev-time getMintFeeAndAddress(0) probe — networkId=0 never exists,
+  // so the call always reverts with "Network does not exist" and surfaces as a
+  // misleading test failure. The defaultNetworkId fee is exercised inside
   // mintQuote already.)
-  var fee = await clientManager.getMintFeeAndAddress(defaultClientId);
+  var fee = await networkManager.getMintFeeAndAddress(defaultNetworkId);
   console.log('FEE:', fee[0].toString(), fee[1].toString(), quote.nativeFee.toString());
 
-  t = await minter.mint(defaultClientId, name, quote.lzTokenFee, {
+  t = await minter.mint(defaultNetworkId, name, quote.lzTokenFee, {
     nonce: await web3.eth.getTransactionCount(user),
     value: (BigInt(quote.nativeFee)).toString(),
     from: user,
@@ -602,7 +602,7 @@ contract('CawProfiles', function(accounts, x) {
     var buyAndBurn = await CawBuyAndBurn.new(token.address, mockRouter.address);
     buyAndBurnAddress = buyAndBurn.address;
 
-    clientManager = clientManager || await CawClientManager.new(buyAndBurnAddress);
+    networkManager = networkManager || await CawNetworkManager.new(buyAndBurnAddress);
 
     uriGenerator = uriGenerator || await deployURI();
     console.log("URI Generator addr", uriGenerator.address);
@@ -610,13 +610,13 @@ contract('CawProfiles', function(accounts, x) {
     cawProfilesL2 = cawProfilesL2 || await CawProfileL2.new(l1, l2Endpoint.address);
     await l1Endpoint.setDestLzEndpoint(cawProfilesL2.address, l2Endpoint.address);
 
-    cawProfiles = cawProfiles || await CawProfile.new(token.address, uriGenerator.address, buyAndBurnAddress, clientManager.address, l1Endpoint.address, l1);
+    cawProfiles = cawProfiles || await CawProfile.new(token.address, uriGenerator.address, buyAndBurnAddress, networkManager.address, l1Endpoint.address, l1);
     await buyAndBurn.setCawProfile(cawProfiles.address);
     await cawProfilesL2.setL1Peer(l1, cawProfiles.address, false);
     await l2Endpoint.setDestLzEndpoint(cawProfiles.address, l1Endpoint.address);
     await cawProfiles.setL2Peer(l2, cawProfilesL2.address);
 
-    await clientManager.createClient("Test Client", gilg, l2, 1,1,1,1);
+    await networkManager.createNetwork("Test Network", gilg, l2, 1,1,1,1);
 
 
     cawProfilesL2Mainnet = cawProfilesL2Mainnet || await CawProfileL2.new(l1, l1Endpoint.address);
@@ -1036,8 +1036,8 @@ contract('CawProfiles', function(accounts, x) {
 
 
     var tokenBalanceWas = BigInt(await token.balanceOf(accounts[2]))
-    var quote = await quoter.withdrawQuote(defaultClientId, false);
-    await cawProfiles.withdraw(defaultClientId, 1, 0, {
+    var quote = await quoter.withdrawQuote(defaultNetworkId, false);
+    await cawProfiles.withdraw(defaultNetworkId, 1, 0, {
       value: quote?.nativeFee,
       from: accounts[2]
     });
@@ -1090,8 +1090,8 @@ contract('CawProfiles', function(accounts, x) {
     });
 
     var tokenBalanceWas3 = BigInt(await token.balanceOf(accounts[3]))
-    var quote = await quoter.withdrawQuote(defaultClientId, false);
-    await cawProfiles.withdraw(defaultClientId, 1, 0, {
+    var quote = await quoter.withdrawQuote(defaultNetworkId, false);
+    await cawProfiles.withdraw(defaultNetworkId, 1, 0, {
       value: quote?.nativeFee,
       from: accounts[3]
     });
@@ -1131,15 +1131,15 @@ contract('CawProfiles', function(accounts, x) {
 
 
 
-    await clientManager.createClient("Test Client", gilg, l2, 1,1,1,1);
+    await networkManager.createNetwork("Test Network", gilg, l2, 1,1,1,1);
 
 
 
     var unauthedCaw = {
       actionType: 'caw',
-      text: "Send Caw to a new client beofre authing",
+      text: "Send Caw to a new network beofre authing",
       sender: accounts[3],
-      clientId: 2,
+      networkId: 2,
       senderId: 1,
     };
     var result = await safeProcessActions([unauthedCaw], {
@@ -1172,13 +1172,13 @@ contract('CawProfiles', function(accounts, x) {
 
 
     // Another unauthed caw that becomes authed by depositing:
-    await clientManager.createClient("Test Client", gilg, l2, 1,1,1,1);
+    await networkManager.createNetwork("Test Network", gilg, l2, 1,1,1,1);
 
     var unauthedCaw = {
       actionType: 'caw',
-      text: "Send Caw to a new client before authing",
+      text: "Send Caw to a new network before authing",
       sender: accounts[3],
-      clientId: 3,
+      networkId: 3,
       senderId: 1,
     };
     var result = await safeProcessActions([unauthedCaw], {
@@ -1193,11 +1193,11 @@ contract('CawProfiles', function(accounts, x) {
         args.reason == 'User not authenticated';
     });
 
-    // depositing and specifying a new client ID is another way to authenticate with that client.
+    // depositing and specifying a new network ID is another way to authenticate with that network.
     await buyToken(accounts[3], 50);
     var balance = BigInt(await token.balanceOf(accounts[3]))
     console.log("will deposit", balance);;
-    tx = await deposit(accounts[3], unauthedCaw.senderId, (balance / 10n**18n), l2, unauthedCaw.clientId);
+    tx = await deposit(accounts[3], unauthedCaw.senderId, (balance / 10n**18n), l2, unauthedCaw.networkId);
     console.log("after deposit", BigInt(await cawProfilesL2.cawBalanceOf(unauthedCaw.senderId)));;
 
     // var quote = await cawProfiles.authenticateQuote(2, 1, l2, false);
@@ -1255,10 +1255,10 @@ contract('CawProfiles', function(accounts, x) {
 
     console.log("TOTAL GAS:", totalGas);
 
-    // Replication-destination management used to live on CawClientManager
+    // Replication-destination management used to live on CawNetworkManager
     // (addReplication / removeReplication / setReplicationEnabled). That
     // surface was removed: replication targets are now per-validator env
-    // config (REPLICATE_CLIENT_IDS), not chain state. Tests for the old
+    // config (REPLICATE_NETWORK_IDS), not chain state. Tests for the old
     // surface were deleted.
 
   });
@@ -1273,7 +1273,7 @@ contract("CawProfile - Transfer & Replication Gas", function(accounts) {
   var localMinter;
   var localCawProfiles;
   var localCawProfilesL2;
-  var localClientManager;
+  var localNetworkManager;
   var localQuoter;
   var localUriGenerator;
 
@@ -1287,14 +1287,14 @@ contract("CawProfile - Transfer & Replication Gas", function(accounts) {
     var mr = await MockSwapRouter.new(localToken.address);
     var bb = await CawBuyAndBurn.new(localToken.address, mr.address);
 
-    localClientManager = await CawClientManager.new(bb.address);
+    localNetworkManager = await CawNetworkManager.new(bb.address);
     localUriGenerator = await deployURI();
     localCawProfilesL2 = await CawProfileL2.new(l1, l2Endpoint.address);
     await l1Endpoint.setDestLzEndpoint(localCawProfilesL2.address, l2Endpoint.address);
 
     localCawProfiles = await CawProfile.new(
       localToken.address, localUriGenerator.address, bb.address,
-      localClientManager.address, l1Endpoint.address, l1
+      localNetworkManager.address, l1Endpoint.address, l1
     );
     await bb.setCawProfile(localCawProfiles.address);
 
@@ -1302,7 +1302,7 @@ contract("CawProfile - Transfer & Replication Gas", function(accounts) {
     await l2Endpoint.setDestLzEndpoint(localCawProfiles.address, l1Endpoint.address);
     await localCawProfiles.setL2Peer(l2, localCawProfilesL2.address);
 
-    await localClientManager.createClient("Local Test", accounts[0], l2, 1, 1, 1, 1);
+    await localNetworkManager.createNetwork("Local Test", accounts[0], l2, 1, 1, 1, 1);
 
     localMinter = await CawProfileMinter.new(localToken.address, localCawProfiles.address, mr.address);
     await localCawProfiles.setMinter(localMinter.address);
@@ -1474,7 +1474,7 @@ contract("CawProfile - Transfer & Replication Gas", function(accounts) {
 contract("CawProfileMinter - mintAndDeposit", function(accounts) {
   var l1Endpoint, l2Endpoint;
   var localToken, localMinter, localCawProfiles, localCawProfilesL2;
-  var localClientManager, localQuoter, localUriGenerator;
+  var localNetworkManager, localQuoter, localUriGenerator;
 
   before(async function() {
     this.timeout(120000);
@@ -1486,14 +1486,14 @@ contract("CawProfileMinter - mintAndDeposit", function(accounts) {
     var mr = await MockSwapRouter.new(localToken.address);
     var bb = await CawBuyAndBurn.new(localToken.address, mr.address);
 
-    localClientManager = await CawClientManager.new(bb.address);
+    localNetworkManager = await CawNetworkManager.new(bb.address);
     localUriGenerator = await deployURI();
     localCawProfilesL2 = await CawProfileL2.new(l1, l2Endpoint.address);
     await l1Endpoint.setDestLzEndpoint(localCawProfilesL2.address, l2Endpoint.address);
 
     localCawProfiles = await CawProfile.new(
       localToken.address, localUriGenerator.address, bb.address,
-      localClientManager.address, l1Endpoint.address, l1
+      localNetworkManager.address, l1Endpoint.address, l1
     );
     await bb.setCawProfile(localCawProfiles.address);
 
@@ -1501,8 +1501,8 @@ contract("CawProfileMinter - mintAndDeposit", function(accounts) {
     await l2Endpoint.setDestLzEndpoint(localCawProfiles.address, l1Endpoint.address);
     await localCawProfiles.setL2Peer(l2, localCawProfilesL2.address);
 
-    // Client with fees: mint=1, deposit=1, auth=1, withdraw=1
-    await localClientManager.createClient("Test Client", accounts[0], l2, 1, 1, 1, 1);
+    // Network with fees: mint=1, deposit=1, auth=1, withdraw=1
+    await localNetworkManager.createNetwork("Test Network", accounts[0], l2, 1, 1, 1, 1);
 
     localMinter = await CawProfileMinter.new(localToken.address, localCawProfiles.address, mr.address);
     await localCawProfiles.setMinter(localMinter.address);
@@ -1620,7 +1620,7 @@ contract("CawProfileMinter - mintAndDeposit", function(accounts) {
 
 
 contract("CawProfileMinter - mintAndAuth", function(accounts) {
-  // mintAndAuth = mint a Profile + auth with a client, NO deposit. Verifies:
+  // mintAndAuth = mint a Profile + auth with a network, NO deposit. Verifies:
   //   - L1 NFT minted, L1 authenticated flag set
   //   - L2 mirror has username, ownerOf, authenticated flag (via LZ message)
   //   - User cannot post until they later deposit (no balance)
@@ -1628,8 +1628,8 @@ contract("CawProfileMinter - mintAndAuth", function(accounts) {
   var l1Endpoint, l2Endpoint;
   var localToken, localMinter, localCawProfiles, localCawProfilesL2;
   var localCawProfilesL2Mainnet, localCawActions, localCawActionsMainnet;
-  var localClientManager, localQuoter, localUriGenerator;
-  var l2ClientId, l1ClientId;
+  var localNetworkManager, localQuoter, localUriGenerator;
+  var l2NetworkId, l1NetworkId;
 
   before(async function() {
     this.timeout(120000);
@@ -1641,7 +1641,7 @@ contract("CawProfileMinter - mintAndAuth", function(accounts) {
     var mr = await MockSwapRouter.new(localToken.address);
     var bb = await CawBuyAndBurn.new(localToken.address, mr.address);
 
-    localClientManager = await CawClientManager.new(bb.address);
+    localNetworkManager = await CawNetworkManager.new(bb.address);
     localUriGenerator = await deployURI();
 
     // Cross-chain L2 mirror (L2 storage)
@@ -1650,7 +1650,7 @@ contract("CawProfileMinter - mintAndAuth", function(accounts) {
 
     localCawProfiles = await CawProfile.new(
       localToken.address, localUriGenerator.address, bb.address,
-      localClientManager.address, l1Endpoint.address, l1
+      localNetworkManager.address, l1Endpoint.address, l1
     );
     await bb.setCawProfile(localCawProfiles.address);
 
@@ -1658,7 +1658,7 @@ contract("CawProfileMinter - mintAndAuth", function(accounts) {
     await l2Endpoint.setDestLzEndpoint(localCawProfiles.address, l1Endpoint.address);
     await localCawProfiles.setL2Peer(l2, localCawProfilesL2.address);
 
-    // Co-deployment L1 mirror (L1-storage clients use this — bypassLZ branch)
+    // Co-deployment L1 mirror (L1-storage networks use this — bypassLZ branch)
     localCawProfilesL2Mainnet = await CawProfileL2.new(l1, l1Endpoint.address);
     await localCawProfilesL2Mainnet.setL1Peer(l1, localCawProfiles.address, true);
     await localCawProfiles.setL2Peer(l1, localCawProfilesL2Mainnet.address);
@@ -1669,11 +1669,11 @@ contract("CawProfileMinter - mintAndAuth", function(accounts) {
     localCawActionsMainnet = await CawActions.new(localCawProfilesL2Mainnet.address, "0x0000000000000000000000000000000000000000", "0x0000000000000000000000000000000000000000000000000000000000000000");
     await localCawProfilesL2Mainnet.setCawActions(localCawActionsMainnet.address);
 
-    // Two clients: one L2-storage, one L1-storage (so we cover both branches)
-    await localClientManager.createClient("L2 Client", accounts[0], l2, 1, 1, 1, 1);
-    l2ClientId = 1;
-    await localClientManager.createClient("L1 Client", accounts[0], l1, 1, 1, 1, 1);
-    l1ClientId = 2;
+    // Two networks: one L2-storage, one L1-storage (so we cover both branches)
+    await localNetworkManager.createNetwork("L2 Network", accounts[0], l2, 1, 1, 1, 1);
+    l2NetworkId = 1;
+    await localNetworkManager.createNetwork("L1 Network", accounts[0], l1, 1, 1, 1, 1);
+    l1NetworkId = 2;
 
     localMinter = await CawProfileMinter.new(localToken.address, localCawProfiles.address, mr.address);
     await localCawProfiles.setMinter(localMinter.address);
@@ -1689,10 +1689,10 @@ contract("CawProfileMinter - mintAndAuth", function(accounts) {
   it("L2-storage: mints, auths on L1 + L2, no deposit, no balance", async function() {
     this.timeout(60000);
 
-    var quote = await localQuoter.mintAndAuthQuote(l2ClientId, l2, false);
+    var quote = await localQuoter.mintAndAuthQuote(l2NetworkId, l2, false);
     var balanceBefore = await localToken.balanceOf(accounts[1]);
 
-    await localMinter.mintAndAuth(l2ClientId, 'noauth', l2, 0, {
+    await localMinter.mintAndAuth(l2NetworkId, 'noauth', l2, 0, {
       from: accounts[1],
       value: (BigInt(quote.nativeFee)).toString(),
     });
@@ -1702,12 +1702,12 @@ contract("CawProfileMinter - mintAndAuth", function(accounts) {
     // L1 NFT exists
     expect(await localCawProfiles.ownerOf(tokenId)).to.equal(accounts[1]);
     expect(await localCawProfiles.usernames(tokenId - 1)).to.equal('noauth');
-    expect(await localCawProfiles.authenticated(l2ClientId, tokenId)).to.be.true;
+    expect(await localCawProfiles.authenticated(l2NetworkId, tokenId)).to.be.true;
 
     // L2 mirror brought in line via LZ
     expect(await localCawProfilesL2.usernames(tokenId)).to.equal('noauth');
     expect(await localCawProfilesL2.ownerOf(tokenId)).to.equal(accounts[1]);
-    expect(await localCawProfilesL2.authenticated(l2ClientId, tokenId)).to.be.true;
+    expect(await localCawProfilesL2.authenticated(l2NetworkId, tokenId)).to.be.true;
 
     // No CAW was deposited — totalCaw is unchanged
     expect(BigInt((await localCawProfiles.totalCaw()).toString())).to.equal(0n);
@@ -1724,9 +1724,9 @@ contract("CawProfileMinter - mintAndAuth", function(accounts) {
   it("L1-storage (bypassLZ): mints + auths on the co-deployed L2 mirror directly", async function() {
     this.timeout(60000);
 
-    var quote = await localQuoter.mintAndAuthQuote(l1ClientId, l1, false);
+    var quote = await localQuoter.mintAndAuthQuote(l1NetworkId, l1, false);
 
-    await localMinter.mintAndAuth(l1ClientId, 'bypassed', l1, 0, {
+    await localMinter.mintAndAuth(l1NetworkId, 'bypassed', l1, 0, {
       from: accounts[1],
       value: (BigInt(quote.nativeFee)).toString(),
     });
@@ -1735,12 +1735,12 @@ contract("CawProfileMinter - mintAndAuth", function(accounts) {
 
     // L1 NFT
     expect(await localCawProfiles.ownerOf(tokenId)).to.equal(accounts[1]);
-    expect(await localCawProfiles.authenticated(l1ClientId, tokenId)).to.be.true;
+    expect(await localCawProfiles.authenticated(l1NetworkId, tokenId)).to.be.true;
 
     // L2 mirror (the L1-co-deployed one) was updated via the direct call path
     expect(await localCawProfilesL2Mainnet.usernames(tokenId)).to.equal('bypassed');
     expect(await localCawProfilesL2Mainnet.ownerOf(tokenId)).to.equal(accounts[1]);
-    expect(await localCawProfilesL2Mainnet.authenticated(l1ClientId, tokenId)).to.be.true;
+    expect(await localCawProfilesL2Mainnet.authenticated(l1NetworkId, tokenId)).to.be.true;
 
     console.log("L1-storage (bypassLZ) mintAndAuth test passed");
   });
@@ -1748,9 +1748,9 @@ contract("CawProfileMinter - mintAndAuth", function(accounts) {
   it("rejects mintAndAuth with taken username", async function() {
     this.timeout(60000);
 
-    var quote = await localQuoter.mintAndAuthQuote(l2ClientId, l2, false);
+    var quote = await localQuoter.mintAndAuthQuote(l2NetworkId, l2, false);
     await expectRevert(
-      localMinter.mintAndAuth(l2ClientId, 'noauth', l2, 0, {
+      localMinter.mintAndAuth(l2NetworkId, 'noauth', l2, 0, {
         from: accounts[1],
         value: (BigInt(quote.nativeFee)).toString(),
       }),
@@ -1762,9 +1762,9 @@ contract("CawProfileMinter - mintAndAuth", function(accounts) {
     this.timeout(60000);
 
     // accounts[2] starts with no CAW
-    var quote = await localQuoter.mintAndAuthQuote(l2ClientId, l2, false);
+    var quote = await localQuoter.mintAndAuthQuote(l2NetworkId, l2, false);
     await expectRevert(
-      localMinter.mintAndAuth(l2ClientId, 'noburncaw', l2, 0, {
+      localMinter.mintAndAuth(l2NetworkId, 'noburncaw', l2, 0, {
         from: accounts[2],
         value: (BigInt(quote.nativeFee)).toString(),
       }),
@@ -1776,8 +1776,8 @@ contract("CawProfileMinter - mintAndAuth", function(accounts) {
     this.timeout(60000);
 
     // Mint+auth a fresh profile via L2-storage
-    var quote = await localQuoter.mintAndAuthQuote(l2ClientId, l2, false);
-    await localMinter.mintAndAuth(l2ClientId, 'depositlater', l2, 0, {
+    var quote = await localQuoter.mintAndAuthQuote(l2NetworkId, l2, false);
+    await localMinter.mintAndAuth(l2NetworkId, 'depositlater', l2, 0, {
       from: accounts[1],
       value: (BigInt(quote.nativeFee)).toString(),
     });
@@ -1789,8 +1789,8 @@ contract("CawProfileMinter - mintAndAuth", function(accounts) {
 
     // Deposit normally — uses the existing path, no new contract surface
     var depositAmount = web3.utils.toWei('100000', 'ether');
-    var depQuote = await localQuoter.depositQuote(l2ClientId, tokenId, depositAmount, l2, false);
-    await localCawProfiles.deposit(l2ClientId, tokenId, depositAmount, l2, 0, {
+    var depQuote = await localQuoter.depositQuote(l2NetworkId, tokenId, depositAmount, l2, false);
+    await localCawProfiles.deposit(l2NetworkId, tokenId, depositAmount, l2, 0, {
       from: accounts[1],
       value: (BigInt(depQuote.nativeFee)).toString(),
     });
@@ -1814,10 +1814,10 @@ contract("CawProfileMinter - mintAndAuth", function(accounts) {
     this.timeout(60000);
     var router = accounts[1], user = accounts[7];
 
-    var quote = await localQuoter.mintQuote(l2ClientId, false);
+    var quote = await localQuoter.mintQuote(l2NetworkId, false);
     var routerBalanceBefore = await localToken.balanceOf(router);
 
-    await localMinter.mintFor(l2ClientId, user, 'forplain', 0, {
+    await localMinter.mintFor(l2NetworkId, user, 'forplain', 0, {
       from: router,
       value: (BigInt(quote.nativeFee)).toString(),
     });
@@ -1838,19 +1838,19 @@ contract("CawProfileMinter - mintAndAuth", function(accounts) {
     this.timeout(60000);
     var router = accounts[1], user = accounts[8];
 
-    var quote = await localQuoter.mintAndAuthQuote(l2ClientId, l2, false);
+    var quote = await localQuoter.mintAndAuthQuote(l2NetworkId, l2, false);
 
-    await localMinter.mintAndAuthFor(l2ClientId, user, 'forauth', l2, 0, {
+    await localMinter.mintAndAuthFor(l2NetworkId, user, 'forauth', l2, 0, {
       from: router,
       value: (BigInt(quote.nativeFee)).toString(),
     });
     var tokenId = (await localCawProfiles.totalSupply()).toNumber();
 
     expect(await localCawProfiles.ownerOf(tokenId)).to.equal(user);
-    expect(await localCawProfiles.authenticated(l2ClientId, tokenId)).to.be.true;
+    expect(await localCawProfiles.authenticated(l2NetworkId, tokenId)).to.be.true;
     // L2 mirror reflects the recipient too
     expect(await localCawProfilesL2.ownerOf(tokenId)).to.equal(user);
-    expect(await localCawProfilesL2.authenticated(l2ClientId, tokenId)).to.be.true;
+    expect(await localCawProfilesL2.authenticated(l2NetworkId, tokenId)).to.be.true;
   });
 
   it("mintAndDepositFor: caller pays burn + deposit; recipient gets NFT and the credit", async function() {
@@ -1858,17 +1858,17 @@ contract("CawProfileMinter - mintAndAuth", function(accounts) {
     var router = accounts[1], user = accounts[9];
 
     var depositAmount = web3.utils.toWei('100000', 'ether');
-    var quote = await localQuoter.mintAndDepositQuote(l2ClientId, depositAmount, l2, false);
+    var quote = await localQuoter.mintAndDepositQuote(l2NetworkId, depositAmount, l2, false);
     var routerBalanceBefore = await localToken.balanceOf(router);
 
-    await localMinter.mintAndDepositFor(l2ClientId, user, 'fordep', depositAmount, l2, 0, {
+    await localMinter.mintAndDepositFor(l2NetworkId, user, 'fordep', depositAmount, l2, 0, {
       from: router,
       value: (BigInt(quote.nativeFee)).toString(),
     });
     var tokenId = (await localCawProfiles.totalSupply()).toNumber();
 
     expect(await localCawProfiles.ownerOf(tokenId)).to.equal(user);
-    expect(await localCawProfiles.authenticated(l2ClientId, tokenId)).to.be.true;
+    expect(await localCawProfiles.authenticated(l2NetworkId, tokenId)).to.be.true;
 
     // Deposit credit landed on the recipient's L2 cawBalance, not the router's
     var userBalance = await localCawProfilesL2.cawBalanceOf(tokenId);
@@ -1886,7 +1886,7 @@ contract("CawProfileMinter - mintAndAuth", function(accounts) {
 
 
 contract("CawProfile - depositFor", function(accounts) {
-  var localToken, localClientManager, localUriGenerator, localCawProfilesL2;
+  var localToken, localNetworkManager, localUriGenerator, localCawProfilesL2;
   var localCawProfiles, localMinter, localQuoter, localEndpointL1, localEndpointL2;
 
   before(async function() {
@@ -1899,20 +1899,20 @@ contract("CawProfile - depositFor", function(accounts) {
     var mr = await MockSwapRouter.new(localToken.address);
     var bb = await CawBuyAndBurn.new(localToken.address, mr.address);
 
-    localClientManager = await CawClientManager.new(bb.address);
+    localNetworkManager = await CawNetworkManager.new(bb.address);
     localUriGenerator = await deployURI();
 
     localCawProfilesL2 = await CawProfileL2.new(l1, localEndpointL2.address);
     await localEndpointL1.setDestLzEndpoint(localCawProfilesL2.address, localEndpointL2.address);
 
-    localCawProfiles = await CawProfile.new(localToken.address, localUriGenerator.address, bb.address, localClientManager.address, localEndpointL1.address, l1);
+    localCawProfiles = await CawProfile.new(localToken.address, localUriGenerator.address, bb.address, localNetworkManager.address, localEndpointL1.address, l1);
     await bb.setCawProfile(localCawProfiles.address);
     await localCawProfilesL2.setL1Peer(l1, localCawProfiles.address, false);
     await localEndpointL2.setDestLzEndpoint(localCawProfiles.address, localEndpointL1.address);
     await localCawProfiles.setL2Peer(l2, localCawProfilesL2.address);
 
-    // Client with fees: mint=1, deposit=1, auth=1, withdraw=1
-    await localClientManager.createClient("Test Client", accounts[0], l2, 1, 1, 1, 1);
+    // Network with fees: mint=1, deposit=1, auth=1, withdraw=1
+    await localNetworkManager.createNetwork("Test Network", accounts[0], l2, 1, 1, 1, 1);
 
     localMinter = await CawProfileMinter.new(localToken.address, localCawProfiles.address, mr.address);
     await localCawProfiles.setMinter(localMinter.address);
@@ -1972,26 +1972,26 @@ contract("CawProfile - depositFor", function(accounts) {
   it("should auto-authenticate when depositing via depositFor", async function() {
     this.timeout(60000);
 
-    // Create a second client
-    await localClientManager.createClient("Client 2", accounts[0], l2, 1, 1, 1, 1);
-    var clientId = 2;
+    // Create a second network
+    await localNetworkManager.createNetwork("Network 2", accounts[0], l2, 1, 1, 1, 1);
+    var networkId = 2;
 
     var tokenId = await localCawProfiles.nextId() - 1;
     var depositAmount = web3.utils.toWei('100', 'ether');
 
     await localToken.approve(localCawProfiles.address, depositAmount, { from: accounts[2] });
 
-    var isAuthedBefore = await localCawProfiles.authenticated(clientId, tokenId);
+    var isAuthedBefore = await localCawProfiles.authenticated(networkId, tokenId);
     expect(isAuthedBefore).to.be.false;
 
-    var quote = await localQuoter.depositQuote(clientId, tokenId, depositAmount, l2, false);
+    var quote = await localQuoter.depositQuote(networkId, tokenId, depositAmount, l2, false);
 
-    await localCawProfiles.depositFor(clientId, tokenId, depositAmount, l2, 0, {
+    await localCawProfiles.depositFor(networkId, tokenId, depositAmount, l2, 0, {
       from: accounts[2],
       value: (BigInt(quote.nativeFee)).toString(),
     });
 
-    var isAuthedAfter = await localCawProfiles.authenticated(clientId, tokenId);
+    var isAuthedAfter = await localCawProfiles.authenticated(networkId, tokenId);
     expect(isAuthedAfter).to.be.true;
 
     console.log("depositFor: auto-authentication works");
@@ -2078,14 +2078,14 @@ contract("CawProfile - depositFor", function(accounts) {
 
 
 contract("CawProfile - locked withdraw fee + fee withdrawal", function(accounts) {
-  var localToken, localClientManager, localUriGenerator, localCawProfilesL2;
+  var localToken, localNetworkManager, localUriGenerator, localCawProfilesL2;
   var localCawProfiles, localMinter, localQuoter, localEndpointL1, localEndpointL2;
   var feeRecipientMock;
   var FeeRecipientMock = artifacts.require("FeeRecipientMock");
 
-  // Test scenario: a single client charges a $3 withdraw fee at deposit time, then later
+  // Test scenario: a single network charges a $3 withdraw fee at deposit time, then later
   // raises the fee to $30. Existing depositors should still pay $3; new depositors pay $30.
-  // If the client lowers the fee to $1, existing depositors should automatically get the $1 rate.
+  // If the network lowers the fee to $1, existing depositors should automatically get the $1 rate.
 
   var INITIAL_WITHDRAW_FEE  = web3.utils.toWei('0.003', 'ether') // ~$3 at 1 ETH = $1000
   var RAISED_WITHDRAW_FEE   = web3.utils.toWei('0.030', 'ether') // ~$30
@@ -2104,13 +2104,13 @@ contract("CawProfile - locked withdraw fee + fee withdrawal", function(accounts)
     var localMockRouter = await MockSwapRouter.new(localToken.address);
     var localBuyAndBurn = await CawBuyAndBurn.new(localToken.address, localMockRouter.address);
 
-    localClientManager = await CawClientManager.new(localBuyAndBurn.address);
+    localNetworkManager = await CawNetworkManager.new(localBuyAndBurn.address);
     localUriGenerator = await deployURI();
 
     localCawProfilesL2 = await CawProfileL2.new(l1, localEndpointL2.address);
     await localEndpointL1.setDestLzEndpoint(localCawProfilesL2.address, localEndpointL2.address);
 
-    localCawProfiles = await CawProfile.new(localToken.address, localUriGenerator.address, localBuyAndBurn.address, localClientManager.address, localEndpointL1.address, l1);
+    localCawProfiles = await CawProfile.new(localToken.address, localUriGenerator.address, localBuyAndBurn.address, localNetworkManager.address, localEndpointL1.address, l1);
     await localBuyAndBurn.setCawProfile(localCawProfiles.address);
     await localCawProfilesL2.setL1Peer(l1, localCawProfiles.address, false);
     await localEndpointL2.setDestLzEndpoint(localCawProfiles.address, localEndpointL1.address);
@@ -2118,8 +2118,8 @@ contract("CawProfile - locked withdraw fee + fee withdrawal", function(accounts)
 
     feeRecipientMock = await FeeRecipientMock.new();
 
-    // Create client with the fee mock as feeAddress, so we can test contract recipients receiving fees
-    await localClientManager.createClient("LockedFeeClient", feeRecipientMock.address, l2, INITIAL_WITHDRAW_FEE, DEPOSIT_FEE, AUTH_FEE, MINT_FEE);
+    // Create network with the fee mock as feeAddress, so we can test contract recipients receiving fees
+    await localNetworkManager.createNetwork("LockedFeeClient", feeRecipientMock.address, l2, INITIAL_WITHDRAW_FEE, DEPOSIT_FEE, AUTH_FEE, MINT_FEE);
 
     localMinter = await CawProfileMinter.new(localToken.address, localCawProfiles.address, localMockRouter.address);
     await localCawProfiles.setMinter(localMinter.address);
@@ -2167,14 +2167,14 @@ contract("CawProfile - locked withdraw fee + fee withdrawal", function(accounts)
     console.log("locked-on-first-deposit: PASS");
   });
 
-  it("does not change the lock on subsequent deposits even after client raises fee", async function() {
+  it("does not change the lock on subsequent deposits even after network raises fee", async function() {
     this.timeout(60000);
 
     var tokenId = 1;
     var depositAmount = web3.utils.toWei('500', 'ether');
 
-    // Client raises the withdraw fee
-    await localClientManager.setFees(1, RAISED_WITHDRAW_FEE, DEPOSIT_FEE, AUTH_FEE, MINT_FEE);
+    // Network raises the withdraw fee
+    await localNetworkManager.setFees(1, RAISED_WITHDRAW_FEE, DEPOSIT_FEE, AUTH_FEE, MINT_FEE);
 
     // Existing depositor adds more — lock should NOT update
     var depositQuote = await localQuoter.depositQuote(1, tokenId, depositAmount, l2, false);
@@ -2221,11 +2221,11 @@ contract("CawProfile - locked withdraw fee + fee withdrawal", function(accounts)
     console.log("effectiveWithdrawFee-respects-lock: PASS");
   });
 
-  it("if client LOWERS fee, existing depositors automatically get the lower rate", async function() {
+  it("if network LOWERS fee, existing depositors automatically get the lower rate", async function() {
     this.timeout(60000);
 
     // Lower the fee below the locked-in rate
-    await localClientManager.setFees(1, LOWERED_WITHDRAW_FEE, DEPOSIT_FEE, AUTH_FEE, MINT_FEE);
+    await localNetworkManager.setFees(1, LOWERED_WITHDRAW_FEE, DEPOSIT_FEE, AUTH_FEE, MINT_FEE);
 
     // tokenId 1's lock is INITIAL ($3); current is now LOWERED ($1) — effective should be $1
     var effectiveFor1 = await localQuoter.effectiveWithdrawFee(1, 1);
@@ -2278,7 +2278,7 @@ contract("CawProfile - locked withdraw fee + fee withdrawal", function(accounts)
     this.timeout(60000);
 
     // Re-raise the fee to RAISED_WITHDRAW_FEE so we can verify the locked rate kicks in
-    await localClientManager.setFees(1, RAISED_WITHDRAW_FEE, DEPOSIT_FEE, AUTH_FEE, MINT_FEE);
+    await localNetworkManager.setFees(1, RAISED_WITHDRAW_FEE, DEPOSIT_FEE, AUTH_FEE, MINT_FEE);
 
     // We need a withdrawable balance on tokenId 1. The simplest path is to use the L2 withdraw
     // flow via cawActions, but that requires a full action processing setup. Instead, we just
@@ -2313,9 +2313,9 @@ contract("CawProfile - locked withdraw fee + fee withdrawal", function(accounts)
       cawProfilesL2 = localCawProfilesL2;
       quoter = localQuoter;
       token = localToken;
-      clientManager = localClientManager;
+      networkManager = localNetworkManager;
       minter = localMinter;
-      defaultClientId = 1;
+      defaultNetworkId = 1;
 
       // Deposit for tokenIds 1 and 2 so post-related actions can spend.
       var depositAmount = web3.utils.toWei('100000000', 'ether'); // 100M CAW
@@ -2431,7 +2431,7 @@ contract("CawProfile - locked withdraw fee + fee withdrawal", function(accounts)
 // Buy and Burn tests
 // ============================================
 contract("CawProfile - Buy and Burn", function(accounts) {
-  var localToken, localClientManager, localUriGenerator, localCawProfilesL2;
+  var localToken, localNetworkManager, localUriGenerator, localCawProfilesL2;
   var localCawProfiles, localMinter, localQuoter, localEndpointL1, localEndpointL2;
   var localBuyAndBurn, localMockRouter;
 
@@ -2451,7 +2451,7 @@ contract("CawProfile - Buy and Burn", function(accounts) {
     localMockRouter = await MockSwapRouter.new(localToken.address);
     localBuyAndBurn = await CawBuyAndBurn.new(localToken.address, localMockRouter.address);
 
-    localClientManager = await CawClientManager.new(localBuyAndBurn.address);
+    localNetworkManager = await CawNetworkManager.new(localBuyAndBurn.address);
     localUriGenerator = await deployURI();
 
     localCawProfilesL2 = await CawProfileL2.new(l1, localEndpointL2.address);
@@ -2459,15 +2459,15 @@ contract("CawProfile - Buy and Burn", function(accounts) {
 
     localCawProfiles = await CawProfile.new(
       localToken.address, localUriGenerator.address, localBuyAndBurn.address,
-      localClientManager.address, localEndpointL1.address, l1
+      localNetworkManager.address, localEndpointL1.address, l1
     );
     await localBuyAndBurn.setCawProfile(localCawProfiles.address);
     await localCawProfilesL2.setL1Peer(l1, localCawProfiles.address, false);
     await localEndpointL2.setDestLzEndpoint(localCawProfiles.address, localEndpointL1.address);
     await localCawProfiles.setL2Peer(l2, localCawProfilesL2.address);
 
-    // Client with meaningful fees — feeAddress = accounts[0]
-    await localClientManager.createClient("BuyBurn Client", accounts[0], l2, WITHDRAW_FEE, DEPOSIT_FEE, AUTH_FEE, MINT_FEE);
+    // Network with meaningful fees — feeAddress = accounts[0]
+    await localNetworkManager.createNetwork("BuyBurn Network", accounts[0], l2, WITHDRAW_FEE, DEPOSIT_FEE, AUTH_FEE, MINT_FEE);
 
     localMinter = await CawProfileMinter.new(localToken.address, localCawProfiles.address, localMockRouter.address);
     await localCawProfiles.setMinter(localMinter.address);
@@ -2480,30 +2480,30 @@ contract("CawProfile - Buy and Burn", function(accounts) {
     await localToken.approve(localCawProfiles.address, cawAmount.toString(), { from: accounts[1] });
   });
 
-  it("fees accrue to both client and buy-and-burn on mint", async function() {
+  it("fees accrue to both network and buy-and-burn on mint", async function() {
     this.timeout(60000);
 
     var mintQuote = await localQuoter.mintQuote(1, false);
     await localMinter.mint(1, 'burntest', 0, { from: accounts[1], value: BigInt(mintQuote.nativeFee).toString() });
 
-    var clientAccrued = BigInt(await localCawProfiles.accruedFees(accounts[0]));
+    var networkAccrued = BigInt(await localCawProfiles.accruedFees(accounts[0]));
     var protocolAccrued = BigInt(await localCawProfiles.accruedFees(localBuyAndBurn.address));
 
-    expect(clientAccrued.toString()).to.equal(MINT_FEE);
+    expect(networkAccrued.toString()).to.equal(MINT_FEE);
     expect(protocolAccrued.toString()).to.equal(MINT_FEE);
-    console.log("fees-accrue-on-mint: PASS (client:", clientAccrued.toString(), "protocol:", protocolAccrued.toString(), ")");
+    console.log("fees-accrue-on-mint: PASS (network:", networkAccrued.toString(), "protocol:", protocolAccrued.toString(), ")");
   });
 
-  it("withdrawFees() swaps ETH to CAW, sends half to client, burns half", async function() {
+  it("withdrawFees() swaps ETH to CAW, sends half to network, burns half", async function() {
     this.timeout(60000);
 
-    var clientAccrued = BigInt(await localCawProfiles.accruedFees(accounts[0]));
+    var networkAccrued = BigInt(await localCawProfiles.accruedFees(accounts[0]));
     var protocolAccrued = BigInt(await localCawProfiles.accruedFees(localBuyAndBurn.address));
-    var totalEth = clientAccrued + protocolAccrued;
+    var totalEth = networkAccrued + protocolAccrued;
     expect(totalEth > 0n).to.be.true;
 
     var deadBefore = BigInt(await localToken.balanceOf(DEAD));
-    var clientCawBefore = BigInt(await localToken.balanceOf(accounts[0]));
+    var networkCawBefore = BigInt(await localToken.balanceOf(accounts[0]));
 
     // Get expected output from mock router (1 ETH = 1M CAW)
     var expectedCaw = await localBuyAndBurn.getExpectedCawOut(totalEth.toString());
@@ -2512,22 +2512,22 @@ contract("CawProfile - Buy and Burn", function(accounts) {
     await localCawProfiles.withdrawFees(minCawOut.toString(), { from: accounts[0] });
 
     var deadAfter = BigInt(await localToken.balanceOf(DEAD));
-    var clientCawAfter = BigInt(await localToken.balanceOf(accounts[0]));
+    var networkCawAfter = BigInt(await localToken.balanceOf(accounts[0]));
     var cawBurned = deadAfter - deadBefore;
-    var cawToClient = clientCawAfter - clientCawBefore;
+    var cawToNetwork = networkCawAfter - networkCawBefore;
 
     expect(cawBurned > 0n).to.be.true;
-    expect(cawToClient > 0n).to.be.true;
+    expect(cawToNetwork > 0n).to.be.true;
     // Half goes to each (within rounding)
-    expect(cawBurned.toString()).to.equal(cawToClient.toString());
+    expect(cawBurned.toString()).to.equal(cawToNetwork.toString());
 
     // Accrued fees should be zero now
-    var clientAccruedAfter = BigInt(await localCawProfiles.accruedFees(accounts[0]));
+    var networkAccruedAfter = BigInt(await localCawProfiles.accruedFees(accounts[0]));
     var protocolAccruedAfter = BigInt(await localCawProfiles.accruedFees(localBuyAndBurn.address));
-    expect(clientAccruedAfter).to.equal(0n);
+    expect(networkAccruedAfter).to.equal(0n);
     expect(protocolAccruedAfter).to.equal(0n);
 
-    console.log("buy-and-burn: PASS (burned:", cawBurned.toString(), "to client:", cawToClient.toString(), ")");
+    console.log("buy-and-burn: PASS (burned:", cawBurned.toString(), ("to network:"), cawToNetwork.toString(), ")");
   });
 
   it("withdrawFees() reverts with no accrued fees", async function() {
@@ -2574,8 +2574,8 @@ contract("CawProfile - Buy and Burn", function(accounts) {
     var depositQuote = await localQuoter.depositQuote(1, 1, depositAmount.toString(), l2, false);
     await localCawProfiles.deposit(1, 1, depositAmount.toString(), l2, 0, { from: accounts[1], value: BigInt(depositQuote.nativeFee).toString() });
 
-    var clientAccrued = BigInt(await localCawProfiles.accruedFees(accounts[0]));
-    expect(clientAccrued > 0n).to.be.true;
+    var networkAccrued = BigInt(await localCawProfiles.accruedFees(accounts[0]));
+    expect(networkAccrued > 0n).to.be.true;
 
     // Set minCawOut absurdly high — should revert
     try {
@@ -2587,8 +2587,8 @@ contract("CawProfile - Buy and Burn", function(accounts) {
     }
 
     // Fees should still be accrued (not lost)
-    var clientAccruedAfter = BigInt(await localCawProfiles.accruedFees(accounts[0]));
-    expect(clientAccruedAfter.toString()).to.equal(clientAccrued.toString());
+    var networkAccruedAfter = BigInt(await localCawProfiles.accruedFees(accounts[0]));
+    expect(networkAccruedAfter.toString()).to.equal(networkAccrued.toString());
 
     console.log("high-min-caw-reverts-safely: PASS (fees preserved)");
   });
@@ -2607,15 +2607,15 @@ contract("CawProfile - Buy and Burn", function(accounts) {
 });
 
 
-contract("CawClientManager - lockdown + gas override", function(accounts) {
-  // Tests the per-client lockdown flags (lockClientFees / lockClientOwnership)
-  // and the per-client, per-selector gas-override ratchet introduced as the
+contract("CawNetworkManager - lockdown + gas override", function(accounts) {
+  // Tests the per-network lockdown flags (lockNetworkFees / lockNetworkOwnership)
+  // and the per-network, per-selector gas-override ratchet introduced as the
   // permanent escape hatch for cross-chain LZ gas miscalibrations. This
-  // surface is the only mutable path on the protocol after a client locks
+  // surface is the only mutable path on the protocol after a network locks
   // ownership + fees — by design, since the protocol has no admin.
 
-  var clientManager;
-  var clientId, otherClientId;
+  var networkManager;
+  var networkId, otherNetworkId;
   var owner = accounts[1];
   var attacker = accounts[2];
 
@@ -2623,115 +2623,115 @@ contract("CawClientManager - lockdown + gas override", function(accounts) {
     var token = await MintableCaw.new();
     var mr = await MockSwapRouter.new(token.address);
     var bb = await CawBuyAndBurn.new(token.address, mr.address);
-    clientManager = await CawClientManager.new(bb.address);
+    networkManager = await CawNetworkManager.new(bb.address);
 
-    await clientManager.createClient("Client A", owner, l2, 1, 1, 1, 1, { from: owner });
-    clientId = 1;
-    await clientManager.createClient("Client B", owner, l2, 1, 1, 1, 1, { from: owner });
-    otherClientId = 2;
+    await networkManager.createNetwork("Network A", owner, l2, 1, 1, 1, 1, { from: owner });
+    networkId = 1;
+    await networkManager.createNetwork("Network B", owner, l2, 1, 1, 1, 1, { from: owner });
+    otherNetworkId = 2;
   });
 
   // Sentinel selectors — real ones come from CawProfile but for unit-testing the
-  // CawClientManager surface we just need distinct bytes4 values.
+  // CawNetworkManager surface we just need distinct bytes4 values.
   var SEL_A = '0x11111111';
   var SEL_B = '0x22222222';
 
-  it("setGasOverride: only the client owner can set", async function() {
+  it("setGasOverride: only the network owner can set", async function() {
     await expectRevert(
-      clientManager.setGasOverride(clientId, SEL_A, 1000, { from: attacker }),
+      networkManager.setGasOverride(networkId, SEL_A, 1000, { from: attacker }),
       "Not the owner"
     );
-    await clientManager.setGasOverride(clientId, SEL_A, 1000, { from: owner });
-    var v = await clientManager.gasOverride(clientId, SEL_A);
+    await networkManager.setGasOverride(networkId, SEL_A, 1000, { from: owner });
+    var v = await networkManager.gasOverride(networkId, SEL_A);
     expect(v.toString()).to.equal('1000');
   });
 
   it("setGasOverride: ratchet — must strictly increase", async function() {
     await expectRevert(
-      clientManager.setGasOverride(clientId, SEL_A, 1000, { from: owner }),
+      networkManager.setGasOverride(networkId, SEL_A, 1000, { from: owner }),
       "Must increase"
     );
     await expectRevert(
-      clientManager.setGasOverride(clientId, SEL_A, 500, { from: owner }),
+      networkManager.setGasOverride(networkId, SEL_A, 500, { from: owner }),
       "Must increase"
     );
-    await clientManager.setGasOverride(clientId, SEL_A, 2000, { from: owner });
-    expect((await clientManager.gasOverride(clientId, SEL_A)).toString()).to.equal('2000');
+    await networkManager.setGasOverride(networkId, SEL_A, 2000, { from: owner });
+    expect((await networkManager.gasOverride(networkId, SEL_A)).toString()).to.equal('2000');
   });
 
   it("setGasOverride: hard cap at MAX_GAS_OVERRIDE", async function() {
-    var cap = await clientManager.MAX_GAS_OVERRIDE();
+    var cap = await networkManager.MAX_GAS_OVERRIDE();
     await expectRevert(
-      clientManager.setGasOverride(clientId, SEL_B, BigInt(cap.toString()) + 1n, { from: owner }),
+      networkManager.setGasOverride(networkId, SEL_B, BigInt(cap.toString()) + 1n, { from: owner }),
       "Above cap"
     );
     // At exactly the cap is fine
-    await clientManager.setGasOverride(clientId, SEL_B, cap.toString(), { from: owner });
-    expect((await clientManager.gasOverride(clientId, SEL_B)).toString()).to.equal(cap.toString());
+    await networkManager.setGasOverride(networkId, SEL_B, cap.toString(), { from: owner });
+    expect((await networkManager.gasOverride(networkId, SEL_B)).toString()).to.equal(cap.toString());
   });
 
-  it("setGasOverride: per-client isolation — client A's override doesn't bleed to B", async function() {
-    var aVal = await clientManager.gasOverride(clientId, SEL_A);
-    var bVal = await clientManager.gasOverride(otherClientId, SEL_A);
+  it("setGasOverride: per-network isolation — network A's override doesn't bleed to B", async function() {
+    var aVal = await networkManager.gasOverride(networkId, SEL_A);
+    var bVal = await networkManager.gasOverride(otherNetworkId, SEL_A);
     expect(aVal.toString()).to.equal('2000');
     expect(bVal.toString()).to.equal('0');
   });
 
-  it("lockClientFees: blocks fee setters but NOT setGasOverride or changeOwner", async function() {
+  it("lockNetworkFees: blocks fee setters but NOT setGasOverride or changeOwner", async function() {
     var freshOwner = accounts[3];
-    await clientManager.createClient("Lockable", freshOwner, l2, 1, 1, 1, 1, { from: freshOwner });
+    await networkManager.createNetwork("Lockable", freshOwner, l2, 1, 1, 1, 1, { from: freshOwner });
     var cid = 3;
 
-    await clientManager.setMintFee(cid, 99, { from: freshOwner });
+    await networkManager.setMintFee(cid, 99, { from: freshOwner });
 
-    await clientManager.lockClientFees(cid, { from: freshOwner });
-    expect(await clientManager.clientFeesLocked(cid)).to.be.true;
+    await networkManager.lockNetworkFees(cid, { from: freshOwner });
+    expect(await networkManager.networkFeesLocked(cid)).to.be.true;
 
-    await expectRevert(clientManager.setMintFee(cid, 100, { from: freshOwner }), "Fees locked");
-    await expectRevert(clientManager.setFees(cid, 1, 1, 1, 1, { from: freshOwner }), "Fees locked");
-    await expectRevert(clientManager.setFeeAddress(cid, accounts[5], { from: freshOwner }), "Fees locked");
+    await expectRevert(networkManager.setMintFee(cid, 100, { from: freshOwner }), "Fees locked");
+    await expectRevert(networkManager.setFees(cid, 1, 1, 1, 1, { from: freshOwner }), "Fees locked");
+    await expectRevert(networkManager.setFeeAddress(cid, accounts[5], { from: freshOwner }), "Fees locked");
 
     // setGasOverride still works — that's the whole point
-    await clientManager.setGasOverride(cid, SEL_A, 5000, { from: freshOwner });
-    expect((await clientManager.gasOverride(cid, SEL_A)).toString()).to.equal('5000');
+    await networkManager.setGasOverride(cid, SEL_A, 5000, { from: freshOwner });
+    expect((await networkManager.gasOverride(cid, SEL_A)).toString()).to.equal('5000');
 
     // changeOwner still works (ownership not locked)
-    await clientManager.changeOwner(cid, accounts[4], { from: freshOwner });
-    expect((await clientManager.getClientOwner(cid))).to.equal(accounts[4]);
+    await networkManager.changeOwner(cid, accounts[4], { from: freshOwner });
+    expect((await networkManager.getNetworkOwner(cid))).to.equal(accounts[4]);
   });
 
-  it("lockClientOwnership: blocks changeOwner but NOT setGasOverride or fee setters", async function() {
+  it("lockNetworkOwnership: blocks changeOwner but NOT setGasOverride or fee setters", async function() {
     var freshOwner = accounts[5];
-    await clientManager.createClient("OwnLockable", freshOwner, l2, 1, 1, 1, 1, { from: freshOwner });
+    await networkManager.createNetwork("OwnLockable", freshOwner, l2, 1, 1, 1, 1, { from: freshOwner });
     var cid = 4;
 
-    await clientManager.lockClientOwnership(cid, { from: freshOwner });
-    expect(await clientManager.clientOwnershipLocked(cid)).to.be.true;
+    await networkManager.lockNetworkOwnership(cid, { from: freshOwner });
+    expect(await networkManager.networkOwnershipLocked(cid)).to.be.true;
 
-    await expectRevert(clientManager.changeOwner(cid, accounts[6], { from: freshOwner }), "Ownership locked");
+    await expectRevert(networkManager.changeOwner(cid, accounts[6], { from: freshOwner }), "Ownership locked");
 
     // Fees still mutable
-    await clientManager.setMintFee(cid, 42, { from: freshOwner });
+    await networkManager.setMintFee(cid, 42, { from: freshOwner });
 
     // setGasOverride still works
-    await clientManager.setGasOverride(cid, SEL_A, 7777, { from: freshOwner });
-    expect((await clientManager.gasOverride(cid, SEL_A)).toString()).to.equal('7777');
+    await networkManager.setGasOverride(cid, SEL_A, 7777, { from: freshOwner });
+    expect((await networkManager.gasOverride(cid, SEL_A)).toString()).to.equal('7777');
   });
 
-  it("both locks together: client is fully renounce-equivalent except for gas override", async function() {
+  it("both locks together: network is fully renounce-equivalent except for gas override", async function() {
     var freshOwner = accounts[7];
-    await clientManager.createClient("FullLock", freshOwner, l2, 1, 1, 1, 1, { from: freshOwner });
+    await networkManager.createNetwork("FullLock", freshOwner, l2, 1, 1, 1, 1, { from: freshOwner });
     var cid = 5;
 
-    await clientManager.lockClientFees(cid, { from: freshOwner });
-    await clientManager.lockClientOwnership(cid, { from: freshOwner });
+    await networkManager.lockNetworkFees(cid, { from: freshOwner });
+    await networkManager.lockNetworkOwnership(cid, { from: freshOwner });
 
-    await expectRevert(clientManager.setMintFee(cid, 99, { from: freshOwner }), "Fees locked");
-    await expectRevert(clientManager.changeOwner(cid, accounts[8], { from: freshOwner }), "Ownership locked");
+    await expectRevert(networkManager.setMintFee(cid, 99, { from: freshOwner }), "Fees locked");
+    await expectRevert(networkManager.changeOwner(cid, accounts[8], { from: freshOwner }), "Ownership locked");
 
     // Only gas override still works
-    await clientManager.setGasOverride(cid, SEL_A, 1234, { from: freshOwner });
-    expect((await clientManager.gasOverride(cid, SEL_A)).toString()).to.equal('1234');
+    await networkManager.setGasOverride(cid, SEL_A, 1234, { from: freshOwner });
+    expect((await networkManager.gasOverride(cid, SEL_A)).toString()).to.equal('1234');
   });
 });
 
@@ -2754,8 +2754,8 @@ contract("CawProfileMinter - Bundled Quick Sign", function(accounts) {
   var l1Endpoint, l2Endpoint;
   var localToken, localMinter, localCawProfiles, localCawProfilesL2;
   var localCawProfilesL2Mainnet;
-  var localClientManager, localQuoter, localUriGenerator;
-  var l2ClientId, l1ClientId;
+  var localNetworkManager, localQuoter, localUriGenerator;
+  var l2NetworkId, l1NetworkId;
 
   before(async function() {
     this.timeout(120000);
@@ -2767,7 +2767,7 @@ contract("CawProfileMinter - Bundled Quick Sign", function(accounts) {
     var mr = await MockSwapRouter.new(localToken.address);
     var bb = await CawBuyAndBurn.new(localToken.address, mr.address);
 
-    localClientManager = await CawClientManager.new(bb.address);
+    localNetworkManager = await CawNetworkManager.new(bb.address);
     localUriGenerator = await deployURI();
 
     // L2-storage mirror (cross-chain)
@@ -2776,7 +2776,7 @@ contract("CawProfileMinter - Bundled Quick Sign", function(accounts) {
 
     localCawProfiles = await CawProfile.new(
       localToken.address, localUriGenerator.address, bb.address,
-      localClientManager.address, l1Endpoint.address, l1
+      localNetworkManager.address, l1Endpoint.address, l1
     );
     await bb.setCawProfile(localCawProfiles.address);
     await localCawProfilesL2.setL1Peer(l1, localCawProfiles.address, false);
@@ -2788,11 +2788,11 @@ contract("CawProfileMinter - Bundled Quick Sign", function(accounts) {
     await localCawProfilesL2Mainnet.setL1Peer(l1, localCawProfiles.address, true);
     await localCawProfiles.setL2Peer(l1, localCawProfilesL2Mainnet.address);
 
-    // Two clients to exercise both branches
-    await localClientManager.createClient("L2 Client", accounts[0], l2, 0, 0, 0, 0);
-    l2ClientId = 1;
-    await localClientManager.createClient("L1 Client", accounts[0], l1, 0, 0, 0, 0);
-    l1ClientId = 2;
+    // Two networks to exercise both branches
+    await localNetworkManager.createNetwork("L2 Network", accounts[0], l2, 0, 0, 0, 0);
+    l2NetworkId = 1;
+    await localNetworkManager.createNetwork("L1 Network", accounts[0], l1, 0, 0, 0, 0);
+    l1NetworkId = 2;
 
     localMinter = await CawProfileMinter.new(localToken.address, localCawProfiles.address, mr.address);
     await localCawProfiles.setMinter(localMinter.address);
@@ -2815,17 +2815,17 @@ contract("CawProfileMinter - Bundled Quick Sign", function(accounts) {
     var expiry = await futureExpiry(30 * 24 * 60 * 60); // 30d
 
     var depositAmount = web3.utils.toWei('100000', 'ether');
-    var quote = await localQuoter.mintAndDepositAndQuickSignQuote(l2ClientId, depositAmount, l2, false, sessionKey);
+    var quote = await localQuoter.mintAndDepositAndQuickSignQuote(l2NetworkId, depositAmount, l2, false, sessionKey);
 
     await localMinter.mintAndDepositAndQuickSign(
-      l2ClientId, 'qsdep1', depositAmount, l2, 0,
+      l2NetworkId, 'qsdep1', depositAmount, l2, 0,
       sessionKey, expiry, spendLimit, perActionTipRate,
       { from: owner, value: (BigInt(quote.nativeFee)).toString() }
     );
 
     var tokenId = (await localCawProfiles.totalSupply()).toNumber();
     expect(await localCawProfiles.ownerOf(tokenId)).to.equal(owner);
-    expect(await localCawProfiles.authenticated(l2ClientId, tokenId)).to.be.true;
+    expect(await localCawProfiles.authenticated(l2NetworkId, tokenId)).to.be.true;
 
     // L2 mirror: deposit credited
     var bal = await localCawProfilesL2.cawBalanceOf(tokenId);
@@ -2848,16 +2848,16 @@ contract("CawProfileMinter - Bundled Quick Sign", function(accounts) {
     // Locks in the addToBalance authorization fix (msg.sender == cawProfile in bypassLZ mode).
     var owner = accounts[1];
     var depositAmount = web3.utils.toWei('50000', 'ether');
-    var quote = await localQuoter.mintAndDepositQuote(l1ClientId, depositAmount, l1, false);
+    var quote = await localQuoter.mintAndDepositQuote(l1NetworkId, depositAmount, l1, false);
 
     await localMinter.mintAndDeposit(
-      l1ClientId, 'bypassdep1', depositAmount, l1, 0,
+      l1NetworkId, 'bypassdep1', depositAmount, l1, 0,
       { from: owner, value: (BigInt(quote.nativeFee)).toString() }
     );
 
     var tokenId = (await localCawProfiles.totalSupply()).toNumber();
     expect(await localCawProfiles.ownerOf(tokenId)).to.equal(owner);
-    expect(await localCawProfilesL2Mainnet.authenticated(l1ClientId, tokenId)).to.be.true;
+    expect(await localCawProfilesL2Mainnet.authenticated(l1NetworkId, tokenId)).to.be.true;
 
     var bal = await localCawProfilesL2Mainnet.cawBalanceOf(tokenId);
     expect(BigInt(bal.toString())).to.equal(BigInt(depositAmount));
@@ -2872,17 +2872,17 @@ contract("CawProfileMinter - Bundled Quick Sign", function(accounts) {
     var expiry = await futureExpiry(14 * 24 * 60 * 60);
 
     var depositAmount = web3.utils.toWei('75000', 'ether');
-    var quote = await localQuoter.mintAndDepositAndQuickSignQuote(l1ClientId, depositAmount, l1, false, sessionKey);
+    var quote = await localQuoter.mintAndDepositAndQuickSignQuote(l1NetworkId, depositAmount, l1, false, sessionKey);
 
     await localMinter.mintAndDepositAndQuickSign(
-      l1ClientId, 'bypassqs1', depositAmount, l1, 0,
+      l1NetworkId, 'bypassqs1', depositAmount, l1, 0,
       sessionKey, expiry, spendLimit, 0, // perActionTipRate
       { from: owner, value: (BigInt(quote.nativeFee)).toString() }
     );
 
     var tokenId = (await localCawProfiles.totalSupply()).toNumber();
     expect(await localCawProfiles.ownerOf(tokenId)).to.equal(owner);
-    expect(await localCawProfilesL2Mainnet.authenticated(l1ClientId, tokenId)).to.be.true;
+    expect(await localCawProfilesL2Mainnet.authenticated(l1NetworkId, tokenId)).to.be.true;
 
     var bal = await localCawProfilesL2Mainnet.cawBalanceOf(tokenId);
     expect(BigInt(bal.toString())).to.equal(BigInt(depositAmount));
@@ -2901,10 +2901,10 @@ contract("CawProfileMinter - Bundled Quick Sign", function(accounts) {
     var spendLimit = web3.utils.toWei('250000', 'ether');
     var expiry = await futureExpiry(7 * 24 * 60 * 60);
 
-    var quote = await localQuoter.mintAndAuthAndQuickSignQuote(l2ClientId, l2, false, sessionKey);
+    var quote = await localQuoter.mintAndAuthAndQuickSignQuote(l2NetworkId, l2, false, sessionKey);
 
     await localMinter.mintAndAuthAndQuickSign(
-      l2ClientId, 'qsauth1', l2, 0,
+      l2NetworkId, 'qsauth1', l2, 0,
       sessionKey, expiry, spendLimit, 0, // perActionTipRate
       { from: owner, value: (BigInt(quote.nativeFee)).toString() }
     );
@@ -2913,7 +2913,7 @@ contract("CawProfileMinter - Bundled Quick Sign", function(accounts) {
     expect(await localCawProfiles.ownerOf(tokenId)).to.equal(owner);
     expect(await localCawProfilesL2.usernames(tokenId)).to.equal('qsauth1');
     expect(await localCawProfilesL2.ownerOf(tokenId)).to.equal(owner);
-    expect(await localCawProfilesL2.authenticated(l2ClientId, tokenId)).to.be.true;
+    expect(await localCawProfilesL2.authenticated(l2NetworkId, tokenId)).to.be.true;
 
     var stored = await localCawProfilesL2.sessions(owner, sessionKey);
     expect(stored.expiry.toString()).to.equal(expiry.toString());
@@ -2931,17 +2931,17 @@ contract("CawProfileMinter - Bundled Quick Sign", function(accounts) {
     var spendLimit = web3.utils.toWei('100000', 'ether');
     var expiry = await futureExpiry(30 * 24 * 60 * 60);
 
-    var quote = await localQuoter.mintAndAuthAndQuickSignQuote(l1ClientId, l1, false, sessionKey);
+    var quote = await localQuoter.mintAndAuthAndQuickSignQuote(l1NetworkId, l1, false, sessionKey);
 
     await localMinter.mintAndAuthAndQuickSign(
-      l1ClientId, 'qsauth2', l1, 0,
+      l1NetworkId, 'qsauth2', l1, 0,
       sessionKey, expiry, spendLimit, 0, // perActionTipRate
       { from: owner, value: (BigInt(quote.nativeFee)).toString() }
     );
 
     var tokenId = (await localCawProfiles.totalSupply()).toNumber();
     expect(await localCawProfilesL2Mainnet.ownerOf(tokenId)).to.equal(owner);
-    expect(await localCawProfilesL2Mainnet.authenticated(l1ClientId, tokenId)).to.be.true;
+    expect(await localCawProfilesL2Mainnet.authenticated(l1NetworkId, tokenId)).to.be.true;
 
     var stored = await localCawProfilesL2Mainnet.sessions(owner, sessionKey);
     expect(stored.expiry.toString()).to.equal(expiry.toString());
@@ -2957,15 +2957,15 @@ contract("CawProfileMinter - Bundled Quick Sign", function(accounts) {
     // Sanity check: the original `mintAndDeposit` behavior (no session) is preserved.
     // This goes through the *For wrapper which passes "" for sessionExtra.
     var depositAmount = web3.utils.toWei('1000', 'ether');
-    var quote = await localQuoter.mintAndDepositQuote(l2ClientId, depositAmount, l2, false);
+    var quote = await localQuoter.mintAndDepositQuote(l2NetworkId, depositAmount, l2, false);
 
-    await localMinter.mintAndDeposit(l2ClientId, 'noqs1', depositAmount, l2, 0, {
+    await localMinter.mintAndDeposit(l2NetworkId, 'noqs1', depositAmount, l2, 0, {
       from: accounts[1],
       value: (BigInt(quote.nativeFee)).toString(),
     });
     var tokenId = (await localCawProfiles.totalSupply()).toNumber();
     expect(await localCawProfiles.ownerOf(tokenId)).to.equal(accounts[1]);
-    expect(await localCawProfiles.authenticated(l2ClientId, tokenId)).to.be.true;
+    expect(await localCawProfiles.authenticated(l2NetworkId, tokenId)).to.be.true;
     var bal = await localCawProfilesL2.cawBalanceOf(tokenId);
     expect(BigInt(bal.toString())).to.equal(BigInt(depositAmount));
 
@@ -2984,10 +2984,10 @@ contract("CawProfileMinter - Bundled Quick Sign", function(accounts) {
     var pastExpiry = await futureExpiry(-60); // already-expired
 
     var depositAmount = web3.utils.toWei('1000', 'ether');
-    var quote = await localQuoter.mintAndDepositAndQuickSignQuote(l2ClientId, depositAmount, l2, false, sessionKey);
+    var quote = await localQuoter.mintAndDepositAndQuickSignQuote(l2NetworkId, depositAmount, l2, false, sessionKey);
 
     await localMinter.mintAndDepositAndQuickSign(
-      l2ClientId, 'qsexp1', depositAmount, l2, 0,
+      l2NetworkId, 'qsexp1', depositAmount, l2, 0,
       sessionKey, pastExpiry, web3.utils.toWei('1000', 'ether'), 0, // perActionTipRate
       { from: owner, value: (BigInt(quote.nativeFee)).toString() }
     );
@@ -3007,11 +3007,11 @@ contract("CawProfileMinter - Bundled Quick Sign", function(accounts) {
     var sessionKey = accounts[2];
     var pastExpiry = await futureExpiry(-60);
 
-    var quote = await localQuoter.mintAndAuthAndQuickSignQuote(l1ClientId, l1, false, sessionKey);
+    var quote = await localQuoter.mintAndAuthAndQuickSignQuote(l1NetworkId, l1, false, sessionKey);
 
     await expectRevert(
       localMinter.mintAndAuthAndQuickSign(
-        l1ClientId, 'qsexp2', l1, 0,
+        l1NetworkId, 'qsexp2', l1, 0,
         sessionKey, pastExpiry, web3.utils.toWei('1000', 'ether'), 0, // perActionTipRate
         { from: accounts[1], value: (BigInt(quote.nativeFee)).toString() }
       ),
@@ -3026,11 +3026,11 @@ contract("CawProfileMinter - Bundled Quick Sign", function(accounts) {
 
     var farFutureExpiry = await futureExpiry(30 * 24 * 60 * 60);
     var depositAmount = web3.utils.toWei('1000', 'ether');
-    var quote = await localQuoter.mintAndDepositQuote(l2ClientId, depositAmount, l2, false);
+    var quote = await localQuoter.mintAndDepositQuote(l2NetworkId, depositAmount, l2, false);
 
     await expectRevert(
       localMinter.mintAndDepositAndQuickSign(
-        l2ClientId, 'qszero', depositAmount, l2, 0,
+        l2NetworkId, 'qszero', depositAmount, l2, 0,
         '0x0000000000000000000000000000000000000000',
         farFutureExpiry, web3.utils.toWei('1000', 'ether'), 0, // perActionTipRate
         { from: accounts[1], value: (BigInt(quote.nativeFee)).toString() }
@@ -3052,10 +3052,10 @@ contract("CawProfileMinter - Bundled Quick Sign", function(accounts) {
     var expiry = await futureExpiry(30 * 24 * 60 * 60);
 
     var depositAmount = web3.utils.toWei('100000', 'ether');
-    var quote = await localQuoter.mintAndDepositAndQuickSignQuote(l2ClientId, depositAmount, l2, false, sessionKey);
+    var quote = await localQuoter.mintAndDepositAndQuickSignQuote(l2NetworkId, depositAmount, l2, false, sessionKey);
 
     await localMinter.mintAndDepositAndQuickSign(
-      l2ClientId, 'qspost1', depositAmount, l2, 0,
+      l2NetworkId, 'qspost1', depositAmount, l2, 0,
       sessionKey, expiry, spendLimit, 0, // perActionTipRate
       { from: owner, value: (BigInt(quote.nativeFee)).toString() }
     );

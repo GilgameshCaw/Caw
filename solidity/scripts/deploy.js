@@ -2,6 +2,16 @@
 /**
  * Multi-Chain Deployment Script for CAW Protocol
  *
+ * !!! BRANCH GUARD !!!
+ * The contracts on master have been renamed (Client → Network) but the
+ * matching ABI regen + FE/backend rename live on `contract-support-v2`.
+ * Running this from master would write `CawNetworkManager` keys into
+ * client/src/abi/deployments.ts and break every consumer on master.
+ * Deploy must be run from `contract-support-v2` (or the eventual merge
+ * branch) where the FE/backend keys also expect the new names. The guard
+ * below enforces this — override with CAW_DEPLOY_FROM_MASTER=1 only if
+ * you know what you're doing.
+ *
  * This script replaces the old Truffle migrations (migrations/1_initial_migration.js).
  *
  * FEATURES:
@@ -38,9 +48,9 @@
  *                CawChallengeRelay_<storage>  ↔  CawActionsArchive_<archive>
  *
  * ARCHITECTURE:
- *   - Every L2 in `L2_CHAIN_KEYS` deploys the full set, so any client owner
- *     can pick any L2 as their storage chain (createClient(..., eid)) and
- *     any validator can replicate to any archive (REPLICATE_CLIENT_IDS env).
+ *   - Every L2 in `L2_CHAIN_KEYS` deploys the full set, so any network owner
+ *     can pick any L2 as their storage chain (createNetwork(..., eid)) and
+ *     any validator can replicate to any archive (REPLICATE_NETWORK_IDS env).
  *   - Adding a new L2 = append to `L2_CHAIN_KEYS` + add per-env CHAINS entries.
  *     CONTRACTS, LINKING_STEPS and the LZ DVN PATHWAYS regenerate automatically.
  *
@@ -102,21 +112,21 @@ const EXPECTED_DEPLOYER = '0xF71338f3eAa483aA66125598B09BA1988e694a95';
 
 // L2 chain *abstract* keys. Every L2 in this list runs the full per-chain set
 // (CawProfileL2, CawActions, CawActionsArchive, CawChallengeRelay) so any
-// client can pick any of them as its storage chain. Adding a new L2 = append
+// network can pick any of them as its storage chain. Adding a new L2 = append
 // to this list + add a per-env CHAINS entry below.
 //
 // L1 is INTENTIONALLY NOT IN THIS LIST. L1 still gets a co-deployed
 // CawProfileL2_L1 + CawActions_L1 (in `bypassLZ` mode — see Phase 2 below)
-// so that a client can pick L1 as their `storageChainEid` at createClient
+// so that a network can pick L1 as their `storageChainEid` at createNetwork
 // time and have actions land natively on mainnet. But L1 doesn't get a
 // CawActionsArchive or a CawChallengeRelay because:
 //   * Archiving L1 to a cheaper chain is pointless — L1 is the most
 //     permanent chain in the stack already.
 //   * Without an archive, there's no fraud-proof channel needed; readers
 //     verify L1 actions by reading the canonical chain directly.
-// Validators that opt to replicate an L1-storage client should set
-// SKIP_L1_REPLICATE_CLIENT_IDS=<id,id,...> in their .env so the
-// optimistic-replication loop short-circuits for that client (otherwise
+// Validators that opt to replicate an L1-storage network should set
+// SKIP_L1_REPLICATE_NETWORK_IDS=<id,id,...> in their .env so the
+// optimistic-replication loop short-circuits for that network (otherwise
 // it'd try to ship hashes from a chain with no relay and fail per cycle).
 const L2_CHAIN_KEYS = ['L2', 'L2b'];
 
@@ -278,7 +288,7 @@ const CONTRACTS = {
       state.addresses.MockSwapRouter,
     ],
   },
-  CawClientManager: {
+  CawNetworkManager: {
     chain: 'L1',
     phase: 2,
     dependencies: ['CawBuyAndBurn'],
@@ -292,13 +302,13 @@ const CONTRACTS = {
     // L2_CHAIN_KEYS so adding a new L2 doesn't require editing this list.
     dependencies: [
       ...L2_CHAIN_KEYS.map(L => `CawProfileL2_${L}`),
-      'CawProfileURI', 'CawClientManager', 'CawBuyAndBurn',
+      'CawProfileURI', 'CawNetworkManager', 'CawBuyAndBurn',
     ],
     constructorArgs: (state, chain) => [
       state.addresses.MintableCaw,
       state.addresses.CawProfileURI,
       state.addresses.CawBuyAndBurn,
-      state.addresses.CawClientManager,
+      state.addresses.CawNetworkManager,
       CHAINS[chain].lzEndpoint,
       CHAINS[chain].lzEid,
     ],
@@ -424,20 +434,20 @@ for (const L of L2_CHAIN_KEYS) {
 const LINKING_STEPS = [
   // Phase 2 linking (L1)
   {
-    name: 'Create first client on ClientManager',
+    name: 'Create first network on NetworkManager',
     chain: 'L1',
     phase: 2,
-    contract: 'CawClientManager',
-    method: 'createClient',
+    contract: 'CawNetworkManager',
+    method: 'createNetwork',
     // Fees: ~$3 each at ETH=$2000 → 0.0015 ETH = 1500000000000000 wei
     args: (state, chainConfig) => ['CAW Protocol', state.deployerAddress, CHAINS[chainConfig.env + 'L2'].lzEid, '1500000000000000', '1500000000000000', '1500000000000000', '1500000000000000'],
-    condition: (state) => state.addresses.CawClientManager,
+    condition: (state) => state.addresses.CawNetworkManager,
     skipIf: async (state, deployer) => {
-      return state.linking?.clientCreated === true;
+      return state.linking?.networkCreated === true;
     },
     onSuccess: (state) => {
       state.linking = state.linking || {};
-      state.linking.clientCreated = true;
+      state.linking.networkCreated = true;
     },
   },
   {
@@ -534,7 +544,7 @@ const LINKING_STEPS = [
   //            every other L2's CawActionsArchive (and vice versa).
 
   // Replication targets used to be on-chain (CCM.addReplication + LZ push to L2).
-  // That's gone — REPLICATE_CLIENT_IDS env on each validator is the source of truth.
+  // That's gone — REPLICATE_NETWORK_IDS env on each validator is the source of truth.
 
   // Phase 5: (was: marketplace payment-token whitelist via setAllowedPaymentToken)
   // The marketplace no longer has an admin. Allowed ERC20 payment tokens are
@@ -821,7 +831,7 @@ for (const L of L2_CHAIN_KEYS) {
 //
 // L1 contains everything L1-only (Profile, CCM, Minter, Marketplace, etc.)
 // PLUS the L1-side bypassLZ co-deployments (CawProfileL2_L1 → CawProfileL2,
-// CawActions_L1 → CawActions). That's why a client choosing L1 as their
+// CawActions_L1 → CawActions). That's why a network choosing L1 as their
 // storage chain still has CawActions to talk to.
 //
 // Each L2 in L2_CHAIN_KEYS contains the four per-chain roles. Empty strings
@@ -835,7 +845,7 @@ function buildDeploymentsBlock(env, addresses) {
     MintableCaw: addresses.MintableCaw,
     CawProfile: addresses.CawProfile,
     CawProfileL2: addresses.CawProfileL2_L1, // bypassLZ co-deployment on L1
-    CawClientManager: addresses.CawClientManager,
+    CawNetworkManager: addresses.CawNetworkManager,
     CawProfileMinter: addresses.CawProfileMinter,
     CawProfileQuoter: addresses.CawProfileQuoter,
     CawProfileMarketplace: addresses.CawProfileMarketplace,
@@ -1381,8 +1391,8 @@ class MultiChainDeployer {
       delete this.state.addresses[key];
       delete this.contracts[key];
     }
-    // Only clear clientCreated if CawClientManager itself is being redeployed
-    if (toRedeploy.has('CawClientManager')) {
+    // Only clear networkCreated if CawNetworkManager itself is being redeployed
+    if (toRedeploy.has('CawNetworkManager')) {
       this.state.linking = {};
     }
     this.saveState();
@@ -1451,7 +1461,7 @@ class MultiChainDeployer {
 }
 
 // ============================================
-// Local install: per-client addresses.ts writer
+// Local install: per-network addresses.ts writer
 // ============================================
 //
 // After a fresh deploy/redeploy the operator's addresses.ts still points at
@@ -1463,27 +1473,27 @@ class MultiChainDeployer {
 async function writeAddressesForLocalInstall(deployer) {
   const env = deployer.env;
   const envBlock = buildEnvBlock(env, deployer.state.addresses);
-  if (!envBlock || !envBlock.L1?.CawClientManager) {
-    console.warn('  Skipping addresses.ts (no CawClientManager in deploy state).');
+  if (!envBlock || !envBlock.L1?.CawNetworkManager) {
+    console.warn('  Skipping addresses.ts (no CawNetworkManager in deploy state).');
     return;
   }
 
-  // Resolve clientId=1's storage chain via on-chain CCM (canonical source).
-  // Local dev always uses clientId=1 — the single client created by the
+  // Resolve networkId=1's storage chain via on-chain CCM (canonical source).
+  // Local dev always uses networkId=1 — the single network created by the
   // post-deploy linking step.
-  const clientId = 1;
+  const networkId = 1;
   const l1ChainKey = deployer.getChainKey('L1');
   await deployer.initChain(l1ChainKey);
   const ccm = new ethers.Contract(
-    envBlock.L1.CawClientManager,
-    ['function getStorageChainEid(uint32 clientId) view returns (uint32)'],
+    envBlock.L1.CawNetworkManager,
+    ['function getStorageChainEid(uint32 networkId) view returns (uint32)'],
     deployer.wallets[l1ChainKey].provider,
   );
   let eid;
   try {
-    eid = Number(await ccm.getStorageChainEid(clientId));
+    eid = Number(await ccm.getStorageChainEid(networkId));
   } catch (e) {
-    console.warn(`  Couldn't read storageChainEid for client ${clientId}: ${e.message}`);
+    console.warn(`  Couldn't read storageChainEid for network : ${e.message}`);
     return;
   }
 
@@ -1493,11 +1503,11 @@ async function writeAddressesForLocalInstall(deployer) {
     if (CHAINS[env + L]?.lzEid === eid) { storageChainKey = L; break; }
   }
   if (!storageChainKey) {
-    // Could be L1 (clients can pick L1 as storage); resolve via CHAINS L1.
+    // Could be L1 (networks can pick L1 as storage); resolve via CHAINS L1.
     if (CHAINS[env + 'L1']?.lzEid === eid) storageChainKey = 'L1';
   }
   if (!storageChainKey) {
-    console.warn(`  Client ${clientId} reports storage eid ${eid}; no matching chain in CHAINS — skipping addresses.ts`);
+    console.warn(`  Network  reports storage eid ${eid}; no matching chain in CHAINS — skipping addresses.ts`);
     return;
   }
 
@@ -1509,11 +1519,11 @@ async function writeAddressesForLocalInstall(deployer) {
     CAW_NAME_QUOTER_ADDRESS: l1.CawProfileQuoter,
     CAW_NAMES_MINTER_ADDRESS: l1.CawProfileMinter,
     URI_GENERATOR_ADDRESS: l1.CawProfileURI,
-    CLIENT_MANAGER_ADDRESS: l1.CawClientManager,
+    NETWORK_MANAGER_ADDRESS: l1.CawNetworkManager,
     CAW_NAME_MARKETPLACE_ADDRESS: l1.CawProfileMarketplace,
     CAW_NAMES_L2_MAINNET_ADDRESS: l1.CawProfileL2,
     CAW_ACTIONS_MAINNET_ADDRESS: l1.CawActions,
-    // Per-client storage chain — for L1-storage clients these duplicate the
+    // Per-network storage chain — for L1-storage networks these duplicate the
     // L1 entries above, which is fine; the codebase reads singular constants.
     CAW_NAMES_L2_ADDRESS: storageChainKey === 'L1' ? l1.CawProfileL2 : l2.CawProfileL2,
     CAW_ACTIONS_ADDRESS: storageChainKey === 'L1' ? l1.CawActions : l2.CawActions,
@@ -1527,8 +1537,8 @@ async function writeAddressesForLocalInstall(deployer) {
   };
   const lines = [
     `// Generated by solidity/scripts/deploy.js after the deploy run.`,
-    `// Resolved for env=${env}, clientId=${clientId}, storage chain=${storageChainKey} (eid=${eid}).`,
-    `// To rebuild without redeploying: rerun the CLI install for this client.`,
+    `// Resolved for env=${env}, networkId=${networkId}, storage chain=${storageChainKey} (eid=${eid}).`,
+    `// To rebuild without redeploying: rerun the CLI install for this network.`,
     ``,
   ];
   for (const [k, v] of Object.entries(staticConsts)) {
@@ -1541,7 +1551,7 @@ async function writeAddressesForLocalInstall(deployer) {
   const out = lines.join('\n') + '\n';
   const outPath = path.join(__dirname, '../../client/src/abi/addresses.ts');
   fs.writeFileSync(outPath, out);
-  console.log(`Wrote ${outPath} (client ${clientId} → ${storageChainKey}, eid ${eid})`);
+  console.log(`Wrote ${outPath} (network ${networkId} → ${storageChainKey}, eid ${eid})`);
 }
 
 /**
@@ -1553,7 +1563,7 @@ function buildEnvBlock(env, addresses) {
   const block = { L1: {} };
   // L1 contracts (per the buildDeploymentsBlock layout)
   const l1Keys = [
-    'MintableCaw', 'CawProfile', 'CawProfileL2_L1', 'CawClientManager',
+    'MintableCaw', 'CawProfile', 'CawProfileL2_L1', 'CawNetworkManager',
     'CawProfileMinter', 'CawProfileQuoter', 'CawProfileMarketplace',
     'CawProfileURI', 'CawFontDataA', 'CawFontDataB', 'CawBuyAndBurn',
     'MockSwapRouter', 'CawActions_L1',
@@ -1582,6 +1592,25 @@ function buildEnvBlock(env, addresses) {
 // ============================================
 
 async function main() {
+  // Branch guard — see file header. The Client→Network rename split the
+  // contract surface from its FE/backend consumers; running this from
+  // master would emit deployments.ts keys the FE doesn't recognize.
+  if (!process.env.CAW_DEPLOY_FROM_MASTER) {
+    try {
+      const { execSync } = require('child_process');
+      const branch = execSync('git rev-parse --abbrev-ref HEAD', { encoding: 'utf8' }).trim();
+      if (branch === 'master' || branch === 'main') {
+        console.error('\n[deploy.js] Refusing to deploy from branch ' + branch + '.');
+        console.error('  The contract rename (Client → Network) is on master, but the');
+        console.error('  matching ABI + FE/backend rename lives on contract-support-v2.');
+        console.error('  Switch branches, or set CAW_DEPLOY_FROM_MASTER=1 to override.\n');
+        process.exit(1);
+      }
+    } catch (e) {
+      if (e.code !== 1) console.warn('[deploy.js] branch guard skipped: ' + e.message);
+    }
+  }
+
   const args = process.argv.slice(2);
 
   let env = 'testnet';
@@ -1632,10 +1661,10 @@ Deployment Phases:
   Phase 2: Deploy all L1 contracts and link them
   Phase 3: Deploy CawActions on L2 + L2b and link them to CawProfileL2
   Phase 4: Deploy CawActionsArchive on L2b and CawChallengeRelay on L2
-  Phase 5: LZ peering between archive and relay + register client replication targets
+  Phase 5: LZ peering between archive and relay + register network replication targets
 
 Architecture:
-  L1 (Sepolia): CawProfile, CawClientManager, CawProfileMinter, CawProfileQuoter
+  L1 (Sepolia): CawProfile, CawNetworkManager, CawProfileMinter, CawProfileQuoter
   L2 (Base Sepolia): CawProfileL2, CawActions, CawChallengeRelay
   L2b (Arbitrum Sepolia): CawProfileL2, CawActions, CawActionsArchive
 
@@ -1694,10 +1723,10 @@ After deployment, ABIs are automatically regenerated for the frontend.
   deployer.printState();
   console.log('\nDeployment complete!');
 
-  // Update client deployment manifest + regenerate ABIs
+  // Update network deployment manifest + regenerate ABIs
   if (!skipAbi) {
     // Rewrite the env block in client/src/abi/deployments.ts. The CLI then
-    // reads from there + the operator's clientId to write a per-install
+    // reads from there + the operator's networkId to write a per-install
     // addresses.ts. deploy.js never touches addresses.ts directly anymore.
     const deploymentsFile = path.join(__dirname, '../../client/src/abi/deployments.ts');
     try {
@@ -1737,7 +1766,7 @@ After deployment, ABIs are automatically regenerated for the frontend.
       }
     }
 
-    // Rewrite this install's per-client addresses.ts. The CLI's install step
+    // Rewrite this install's per-network addresses.ts. The CLI's install step
     // does the same thing for fresh operator installs; we run it inline here
     // so the local dev environment doesn't keep pointing at the OLD contract
     // addresses after a redeploy and silently process stale events.

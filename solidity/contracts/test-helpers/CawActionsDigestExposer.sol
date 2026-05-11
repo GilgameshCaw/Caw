@@ -19,7 +19,7 @@ contract CawActionsDigestExposer {
         uint32 senderId;
         uint32 receiverId;
         uint32 receiverCawonce;
-        uint32 clientId;
+        uint32 networkId;
         uint32 cawonce;
         uint32[] recipients;
         uint64[] amounts;
@@ -28,7 +28,7 @@ contract CawActionsDigestExposer {
 
     bytes32 public immutable eip712DomainHash;
     bytes32 public constant ACTIONDATA_TYPEHASH = keccak256(
-        "ActionData(uint8 actionType,uint32 senderId,uint32 receiverId,uint32 receiverCawonce,uint32 clientId,uint32 cawonce,uint32[] recipients,uint64[] amounts,bytes text)"
+        "ActionData(uint8 actionType,uint32 senderId,uint32 receiverId,uint32 receiverCawonce,uint32 networkId,uint32 cawonce,uint32[] recipients,uint64[] amounts,bytes text)"
     );
     bytes32 private constant EIP712_DOMAIN_TYPEHASH = keccak256(
         "EIP712Domain(string name,string version,uint256 chainId,address verifyingContract)"
@@ -59,7 +59,7 @@ contract CawActionsDigestExposer {
             data.senderId,
             data.receiverId,
             data.receiverCawonce,
-            data.clientId,
+            data.networkId,
             data.cawonce,
             recipHash,
             amtHash,

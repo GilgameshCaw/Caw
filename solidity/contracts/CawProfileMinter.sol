@@ -37,16 +37,16 @@ contract CawProfileMinter is Context {
   // and call `mintFor`/`mintAndAuthFor`/`mintAndDepositFor` on their behalf
   // (CAW for the burn + deposit comes from the router's balance).
 
-  function mint(uint32 clientId, string memory username, uint256 lzTokenAmount) public payable {
-    mintFor(clientId, msg.sender, username, lzTokenAmount);
+  function mint(uint32 networkId, string memory username, uint256 lzTokenAmount) public payable {
+    mintFor(networkId, msg.sender, username, lzTokenAmount);
   }
 
-  function mintAndAuth(uint32 clientId, string memory username, uint32 lzDestId, uint256 lzTokenAmount) public payable {
-    mintAndAuthFor(clientId, msg.sender, username, lzDestId, lzTokenAmount);
+  function mintAndAuth(uint32 networkId, string memory username, uint32 lzDestId, uint256 lzTokenAmount) public payable {
+    mintAndAuthFor(networkId, msg.sender, username, lzDestId, lzTokenAmount);
   }
 
-  function mintAndDeposit(uint32 clientId, string memory username, uint256 depositAmount, uint32 lzDestId, uint256 lzTokenAmount) public payable {
-    mintAndDepositFor(clientId, msg.sender, username, depositAmount, lzDestId, lzTokenAmount);
+  function mintAndDeposit(uint32 networkId, string memory username, uint256 depositAmount, uint32 lzDestId, uint256 lzTokenAmount) public payable {
+    mintAndDepositFor(networkId, msg.sender, username, depositAmount, lzDestId, lzTokenAmount);
   }
 
   /// @notice Bundled mint + deposit + auth + Quick Sign session — one tx, one wallet popup.
@@ -56,7 +56,7 @@ contract CawProfileMinter is Context {
   ///      we don't allow for bundled flows. WITHDRAW is permanently non-delegatable
   ///      (scopeBitmap hard-wired to 0xBF on L2).
   function mintAndDepositAndQuickSign(
-    uint32 clientId, string memory username, uint256 depositAmount, uint32 lzDestId, uint256 lzTokenAmount,
+    uint32 networkId, string memory username, uint256 depositAmount, uint32 lzDestId, uint256 lzTokenAmount,
     address sessionKey, uint64 expiry, uint256 spendLimit, uint64 perActionTipRate
   ) public payable {
     require(sessionKey != address(0), "Zero session key");
@@ -67,21 +67,21 @@ contract CawProfileMinter is Context {
     }
     bytes memory sessionExtra = abi.encode(sessionKey, expiry, spendLimit, perActionTipRate);
     CawProfile.mintAndDeposit{value: msg.value}(
-      clientId, msg.sender, username, newId, depositAmount, lzDestId, lzTokenAmount, sessionExtra
+      networkId, msg.sender, username, newId, depositAmount, lzDestId, lzTokenAmount, sessionExtra
     );
   }
 
   /// @notice Bundled mint + auth + Quick Sign session (no deposit). Self-mint only — see
   ///         the security note on `mintAndDepositAndQuickSign`.
   function mintAndAuthAndQuickSign(
-    uint32 clientId, string memory username, uint32 lzDestId, uint256 lzTokenAmount,
+    uint32 networkId, string memory username, uint32 lzDestId, uint256 lzTokenAmount,
     address sessionKey, uint64 expiry, uint256 spendLimit, uint64 perActionTipRate
   ) public payable {
     require(sessionKey != address(0), "Zero session key");
     uint32 newId = _burnAndAssignId(username, 0);
     bytes memory sessionExtra = abi.encode(sessionKey, expiry, spendLimit, perActionTipRate);
     CawProfile.mintAndAuth{value: msg.value}(
-      clientId, msg.sender, username, newId, lzDestId, lzTokenAmount, sessionExtra
+      networkId, msg.sender, username, newId, lzDestId, lzTokenAmount, sessionExtra
     );
   }
 
@@ -96,20 +96,20 @@ contract CawProfileMinter is Context {
   ///         `msg.sender`, but the Profile NFT (and ownership of any future deposit) goes
   ///         to `recipient`. Mirrors depositFor's pattern so external routers can offer
   ///         "pay in <other-currency>, get a CAW Profile" without holding the user's CAW.
-  function mintFor(uint32 clientId, address recipient, string memory username, uint256 lzTokenAmount) public payable {
+  function mintFor(uint32 networkId, address recipient, string memory username, uint256 lzTokenAmount) public payable {
     uint32 newId = _burnAndAssignId(username, 0);
-    CawProfile.mint{value: msg.value}(clientId, recipient, username, newId, lzTokenAmount);
+    CawProfile.mint{value: msg.value}(networkId, recipient, username, newId, lzTokenAmount);
   }
 
   /// @notice mintAndAuth on behalf of `recipient`. The burn cost is pulled from msg.sender.
-  function mintAndAuthFor(uint32 clientId, address recipient, string memory username, uint32 lzDestId, uint256 lzTokenAmount) public payable {
+  function mintAndAuthFor(uint32 networkId, address recipient, string memory username, uint32 lzDestId, uint256 lzTokenAmount) public payable {
     uint32 newId = _burnAndAssignId(username, 0);
-    CawProfile.mintAndAuth{value: msg.value}(clientId, recipient, username, newId, lzDestId, lzTokenAmount, "");
+    CawProfile.mintAndAuth{value: msg.value}(networkId, recipient, username, newId, lzDestId, lzTokenAmount, "");
   }
 
   /// @notice mintAndDeposit on behalf of `recipient`. burn + deposit CAW is pulled from
   ///         msg.sender; the NFT and the deposit credit go to `recipient`.
-  function mintAndDepositFor(uint32 clientId, address recipient, string memory username, uint256 depositAmount, uint32 lzDestId, uint256 lzTokenAmount) public payable {
+  function mintAndDepositFor(uint32 networkId, address recipient, string memory username, uint256 depositAmount, uint32 lzDestId, uint256 lzTokenAmount) public payable {
     uint32 newId = _burnAndAssignId(username, depositAmount);
     if (depositAmount > 0) {
       // Pull the deposit portion into this contract and approve CawProfile to pull it back —
@@ -118,7 +118,7 @@ contract CawProfileMinter is Context {
       CAW.transferFrom(_msgSender(), address(this), depositAmount);
       CAW.approve(address(CawProfile), depositAmount);
     }
-    CawProfile.mintAndDeposit{value: msg.value}(clientId, recipient, username, newId, depositAmount, lzDestId, lzTokenAmount, "");
+    CawProfile.mintAndDeposit{value: msg.value}(networkId, recipient, username, newId, depositAmount, lzDestId, lzTokenAmount, "");
   }
 
   /// @dev Shared prologue for every mint path: validate the username, take the burn cost
@@ -173,7 +173,7 @@ contract CawProfileMinter is Context {
   ///        Remainder (msg.value - swapEthAmount) is forwarded as LZ + storage fees.
   /// @param minCawOut Slippage floor enforced by the router.
   function depositZap(
-    uint32 cawClientId,
+    uint32 cawNetworkId,
     uint32 tokenId,
     uint256 swapEthAmount,
     uint256 minCawOut,
@@ -184,7 +184,7 @@ contract CawProfileMinter is Context {
     uint256 cawReceived = _swapEthForCaw(swapEthAmount, minCawOut);
     CAW.approve(address(CawProfile), cawReceived);
     CawProfile.depositFor{value: msg.value - swapEthAmount}(
-      cawClientId, tokenId, cawReceived, lzDestId, lzTokenAmount
+      cawNetworkId, tokenId, cawReceived, lzDestId, lzTokenAmount
     );
   }
 
@@ -192,7 +192,7 @@ contract CawProfileMinter is Context {
   ///         is checked BEFORE the swap so a frontrun-mint reverts without
   ///         spending any ETH on Uniswap.
   function mintAndDepositZap(
-    uint32 clientId,
+    uint32 networkId,
     string memory username,
     uint256 swapEthAmount,
     uint256 minCawOut,
@@ -215,7 +215,7 @@ contract CawProfileMinter is Context {
 
     CAW.approve(address(CawProfile), depositAmount);
     CawProfile.mintAndDeposit{value: msg.value - swapEthAmount}(
-      clientId, msg.sender, username, newId, depositAmount, lzDestId, lzTokenAmount, ""
+      networkId, msg.sender, username, newId, depositAmount, lzDestId, lzTokenAmount, ""
     );
   }
 
@@ -223,7 +223,7 @@ contract CawProfileMinter is Context {
   ///         Self-mint only — recipient is always msg.sender, matching the
   ///         security stance on `mintAndDepositAndQuickSign`.
   function mintAndDepositAndQuickSignZap(
-    uint32 clientId,
+    uint32 networkId,
     string memory username,
     uint256 swapEthAmount,
     uint256 minCawOut,
@@ -252,7 +252,7 @@ contract CawProfileMinter is Context {
     CAW.approve(address(CawProfile), depositAmount);
     bytes memory sessionExtra = abi.encode(sessionKey, expiry, spendLimit, perActionTipRate);
     CawProfile.mintAndDeposit{value: msg.value - swapEthAmount}(
-      clientId, msg.sender, username, newId, depositAmount, lzDestId, lzTokenAmount, sessionExtra
+      networkId, msg.sender, username, newId, depositAmount, lzDestId, lzTokenAmount, sessionExtra
     );
   }
 

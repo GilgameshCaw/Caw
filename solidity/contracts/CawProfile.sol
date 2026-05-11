@@ -16,7 +16,7 @@ import "./CawBuyAndBurn.sol";
 import "./OnlyOnce.sol";
 
 import { OApp, Origin, MessagingFee } from "@layerzerolabs/lz-evm-oapp-v2/contracts/oapp/OApp.sol";
-import { CawClientManager } from "./CawClientManager.sol";
+import { CawNetworkManager } from "./CawNetworkManager.sol";
 
 contract CawProfile is
   Context,
@@ -83,15 +83,15 @@ contract CawProfile is
   ///      need to read it directly; it calls lzQuote which calls gasLimitFor).
   mapping(bytes4 => uint128) internal gasBaseFor;
 
-  // Keeping track of clients to which the user has authenticated
+  // Keeping track of networks to which the user has authenticated
   mapping(uint32 => mapping(uint32 => bool)) public authenticated;
 
-  /// @notice Withdraw fee locked in at the moment a token first authenticates with a client.
-  /// @dev Once set, this fee floor is honored forever — clients cannot retroactively raise
+  /// @notice Withdraw fee locked in at the moment a token first authenticates with a network.
+  /// @dev Once set, this fee floor is honored forever — networks cannot retroactively raise
   ///      withdraw fees on existing depositors. On withdraw, the user pays min(locked, current),
-  ///      so they automatically benefit if the client lowers fees later. Indexed by (clientId, tokenId).
+  ///      so they automatically benefit if the network lowers fees later. Indexed by (networkId, tokenId).
   mapping(uint32 => mapping(uint32 => uint256)) public lockedWithdrawFee;
-  /// @notice True once a token has had its withdraw fee locked for a client. Used to distinguish
+  /// @notice True once a token has had its withdraw fee locked for a network. Used to distinguish
   ///         "locked at zero" from "never locked" (since 0 is a valid fee).
   mapping(uint32 => mapping(uint32 => bool)) public withdrawFeeLocked;
 
@@ -122,21 +122,21 @@ contract CawProfile is
   event MinterSet(address minter);
   event TransferPendingSync(uint32 indexed tokenId, address indexed from, address indexed to);
   event L2PeerSet(uint32 indexed eid, address indexed peer);
-  event Deposited(uint32 indexed cawClientId, uint32 indexed tokenId, uint256 amount, uint32 indexed lzDestId, address depositor);
+  event Deposited(uint32 indexed cawNetworkId, uint32 indexed tokenId, uint256 amount, uint32 indexed lzDestId, address depositor);
   // NOTE: no L1-side `Withdrawn` event. The CAW token's ERC20 Transfer
   // (cawProfile → recipient) inside `withdrawTo` is already observable
   // and uniquely identifies withdrawals — we can spend the contract-size
   // budget on more useful events. The L2 side has its own `Withdrawn`
   // for the totalCaw decrement, which has no equivalent observable.
 
-  CawClientManager public clientManager;
+  CawNetworkManager public networkManager;
   CawBuyAndBurn public buyAndBurn;
 
-  constructor(address _caw, address _gui, address _buyAndBurn, address _clientManager, address _endpoint, uint32 mainnetEid)
+  constructor(address _caw, address _gui, address _buyAndBurn, address _networkManager, address _endpoint, uint32 mainnetEid)
     ERC721("CAW NAME", "cawNAME")
     OApp(_endpoint, msg.sender)
   {
-    clientManager = CawClientManager(payable(_clientManager));
+    networkManager = CawNetworkManager(payable(_networkManager));
     uriGenerator = CawProfileURI(_gui);
     buyAndBurn = CawBuyAndBurn(payable(_buyAndBurn));
     CAW = IERC20(_caw);
@@ -216,18 +216,18 @@ contract CawProfile is
     return uriGenerator.generate(usernames[uint32(tokenId) - 1]);
   }
 
-  function mint(uint32 cawClientId, address owner, string memory username, uint32 newId, uint256 lzTokenAmount) public payable {
+  function mint(uint32 cawNetworkId, address owner, string memory username, uint32 newId, uint256 lzTokenAmount) public payable {
     require(minter == _msgSender(), "Not minter");
     usernames.push(username);
     _mint(owner, newId);
 
-    (uint256 fee, address feeAddress) = clientManager.getMintFeeAndAddress(cawClientId);
+    (uint256 fee, address feeAddress) = networkManager.getMintFeeAndAddress(cawNetworkId);
     uint256 lzEthAmount = msg.value - payFee(fee, feeAddress);
 
     _updateNewOwners(peerWithMaxPendingTransfers(), lzEthAmount, lzTokenAmount);
   }
 
-  /// @notice Mint a username and authenticate it with a client in one transaction,
+  /// @notice Mint a username and authenticate it with a network in one transaction,
   ///         WITHOUT depositing any CAW. The L2 mirror is brought in line via LZ
   ///         (or a direct call in co-deployment mode) so the token has its username,
   ///         owner, and auth flag on L2 from the start. Posts will revert until the
@@ -247,7 +247,7 @@ contract CawProfile is
   ///      0xBF (WITHDRAW permanently non-delegatable). `expiry > block.timestamp` is
   ///      enforced on the L2 side.
   function mintAndAuth(
-    uint32 cawClientId, address owner, string memory username, uint32 newId,
+    uint32 cawNetworkId, address owner, string memory username, uint32 newId,
     uint32 lzDestId, uint256 lzTokenAmount, bytes calldata sessionExtra
   ) public payable {
     require(minter == _msgSender(), "Not minter");
@@ -256,20 +256,20 @@ contract CawProfile is
 
     uint256 totalFeesPaid = 0;
     {
-      (uint256 mintFee, address mintFeeAddr) = clientManager.getMintFeeAndAddress(cawClientId);
+      (uint256 mintFee, address mintFeeAddr) = networkManager.getMintFeeAndAddress(cawNetworkId);
       totalFeesPaid += payFee(mintFee, mintFeeAddr);
 
-      (uint256 authFee, address authFeeAddr) = clientManager.getAuthFeeAndAddress(cawClientId);
+      (uint256 authFee, address authFeeAddr) = networkManager.getAuthFeeAndAddress(cawNetworkId);
       totalFeesPaid += payFee(authFee, authFeeAddr);
     }
 
-    authenticated[cawClientId][newId] = true;
-    _lockWithdrawFeeIfNeeded(cawClientId, newId);
+    authenticated[cawNetworkId][newId] = true;
+    _lockWithdrawFeeIfNeeded(cawNetworkId, newId);
     chosenChainIds[newId].add(uint256(lzDestId));
     uint256 lzEthAmount = msg.value - totalFeesPaid;
 
     if (lzDestId == mainnetLzId) {
-      cawProfileL2.mintAndAuth(newId, owner, username, cawClientId, uint64(block.number));
+      cawProfileL2.mintAndAuth(newId, owner, username, cawNetworkId, uint64(block.number));
       if (sessionExtra.length > 0) {
         (address sk, uint64 ex, uint256 sl, uint64 tr) = abi.decode(sessionExtra, (address, uint64, uint256, uint64));
         cawProfileL2.registerSessionFromL1(owner, sk, ex, sl, tr);
@@ -284,13 +284,13 @@ contract CawProfile is
       bytes memory payload;
       if (sessionExtra.length == 0) {
         sel = mintAuthSelector;
-        payload = abi.encodeWithSelector(sel, cawClientId, newId, owner, username, tokenIds, owners, stamps);
+        payload = abi.encodeWithSelector(sel, cawNetworkId, newId, owner, username, tokenIds, owners, stamps);
       } else {
         (address sk, uint64 ex, uint256 sl, uint64 tr) = abi.decode(sessionExtra, (address, uint64, uint256, uint64));
         sel = mintAuthRegisterSessionSelector;
-        payload = abi.encodeWithSelector(sel, cawClientId, newId, owner, username, sk, ex, sl, tr, tokenIds, owners, stamps);
+        payload = abi.encodeWithSelector(sel, cawNetworkId, newId, owner, username, sk, ex, sl, tr, tokenIds, owners, stamps);
       }
-      lzSend(cawClientId, lzDestId, sel, tokenIds.length, payload, lzEthAmount, lzTokenAmount);
+      lzSend(cawNetworkId, lzDestId, sel, tokenIds.length, payload, lzEthAmount, lzTokenAmount);
     }
   }
 
@@ -310,7 +310,7 @@ contract CawProfile is
   ///      0xBF (WITHDRAW permanently non-delegatable). `expiry > block.timestamp` is
   ///      enforced on the L2 side.
   function mintAndDeposit(
-    uint32 cawClientId, address owner, string memory username, uint32 newId,
+    uint32 cawNetworkId, address owner, string memory username, uint32 newId,
     uint256 depositAmount, uint32 lzDestId, uint256 lzTokenAmount, bytes calldata sessionExtra
   ) public payable {
     require(minter == _msgSender(), "Not minter");
@@ -323,22 +323,22 @@ contract CawProfile is
 
     uint256 totalFeesPaid = 0;
     {
-      (uint256 mintFee, address mintFeeAddr) = clientManager.getMintFeeAndAddress(cawClientId);
+      (uint256 mintFee, address mintFeeAddr) = networkManager.getMintFeeAndAddress(cawNetworkId);
       totalFeesPaid += payFee(mintFee, mintFeeAddr);
 
-      (uint256 depositFee, address depositFeeAddr) = clientManager.getDepositFeeAndAddress(cawClientId);
+      (uint256 depositFee, address depositFeeAddr) = networkManager.getDepositFeeAndAddress(cawNetworkId);
       totalFeesPaid += payFee(depositFee, depositFeeAddr);
 
-      (uint256 authFee, address authFeeAddr) = clientManager.getAuthFeeAndAddress(cawClientId);
+      (uint256 authFee, address authFeeAddr) = networkManager.getAuthFeeAndAddress(cawNetworkId);
       totalFeesPaid += payFee(authFee, authFeeAddr);
     }
 
-    authenticated[cawClientId][newId] = true;
-    _lockWithdrawFeeIfNeeded(cawClientId, newId);
+    authenticated[cawNetworkId][newId] = true;
+    _lockWithdrawFeeIfNeeded(cawNetworkId, newId);
     uint256 lzEthAmount = msg.value - totalFeesPaid;
 
     if (lzDestId == mainnetLzId) {
-      cawProfileL2.deposit(cawClientId, newId, depositAmount);
+      cawProfileL2.deposit(cawNetworkId, newId, depositAmount);
       if (sessionExtra.length > 0) {
         (address sk, uint64 ex, uint256 sl, uint64 tr) = abi.decode(sessionExtra, (address, uint64, uint256, uint64));
         cawProfileL2.registerSessionFromL1(owner, sk, ex, sl, tr);
@@ -353,20 +353,20 @@ contract CawProfile is
       bytes memory payload;
       if (sessionExtra.length == 0) {
         sel = addToBalanceSelector;
-        payload = abi.encodeWithSelector(sel, cawClientId, newId, depositAmount, tokenIds, owners, stamps);
+        payload = abi.encodeWithSelector(sel, cawNetworkId, newId, depositAmount, tokenIds, owners, stamps);
       } else {
         (address sk, uint64 ex, uint256 sl, uint64 tr) = abi.decode(sessionExtra, (address, uint64, uint256, uint64));
         sel = depositRegisterSessionSelector;
-        payload = abi.encodeWithSelector(sel, cawClientId, newId, depositAmount, owner, sk, ex, sl, tr, tokenIds, owners, stamps);
+        payload = abi.encodeWithSelector(sel, cawNetworkId, newId, depositAmount, owner, sk, ex, sl, tr, tokenIds, owners, stamps);
       }
-      lzSend(cawClientId, lzDestId, sel, tokenIds.length, payload, lzEthAmount, lzTokenAmount);
+      lzSend(cawNetworkId, lzDestId, sel, tokenIds.length, payload, lzEthAmount, lzTokenAmount);
     }
 
     // Emit Deposited so indexers can reconstruct totalCaw inflows symmetrically with
     // the standalone `depositFor` path. Without this, every onboarding deposit (every
     // wallet that mints + deposits in one tx) is invisible to the L1 watcher and the
     // activity ledger, causing totalCaw on chain to drift above sum-of-recorded-deposits.
-    emit Deposited(cawClientId, newId, depositAmount, lzDestId, _msgSender());
+    emit Deposited(cawNetworkId, newId, depositAmount, lzDestId, _msgSender());
   }
 
   /// @notice Accrued fees available for withdrawal (pull pattern to prevent DOS)
@@ -375,12 +375,12 @@ contract CawProfile is
   event FeesAccrued(address indexed recipient, uint256 amount);
   event FeesWithdrawn(address indexed recipient, uint256 amount);
 
-  /// @dev Lock the withdraw fee for a (client, token) pair the first time they authenticate.
+  /// @dev Lock the withdraw fee for a (network, token) pair the first time they authenticate.
   ///      Subsequent calls are no-ops, ensuring users always get their first-deposit terms or better.
-  function _lockWithdrawFeeIfNeeded(uint32 cawClientId, uint32 tokenId) internal {
-    if (!withdrawFeeLocked[cawClientId][tokenId]) {
-      lockedWithdrawFee[cawClientId][tokenId] = clientManager.getWithdrawFee(cawClientId);
-      withdrawFeeLocked[cawClientId][tokenId] = true;
+  function _lockWithdrawFeeIfNeeded(uint32 cawNetworkId, uint32 tokenId) internal {
+    if (!withdrawFeeLocked[cawNetworkId][tokenId]) {
+      lockedWithdrawFee[cawNetworkId][tokenId] = networkManager.getWithdrawFee(cawNetworkId);
+      withdrawFeeLocked[cawNetworkId][tokenId] = true;
     }
   }
 
@@ -405,34 +405,34 @@ contract CawProfile is
     require(ok, "Refund failed");
   }
 
-  /// @notice Withdraw accrued fees as CAW. Swaps the client's ETH fees + the matching protocol
-  ///         portion together into CAW via Uniswap. Client receives half the CAW, other half is burned.
+  /// @notice Withdraw accrued fees as CAW. Swaps the network's ETH fees + the matching protocol
+  ///         portion together into CAW via Uniswap. Network receives half the CAW, other half is burned.
   /// @param minCawOut Minimum total CAW the swap must produce (sandwich protection).
-  ///                  Client receives minCawOut/2, protocol burns minCawOut/2.
+  ///                  Network receives minCawOut/2, protocol burns minCawOut/2.
   ///                  Use buyAndBurn.getExpectedCawOut(totalETH) and apply slippage (e.g. 97%).
-  /// @dev By paying the client in CAW from the same swap, their incentives are perfectly aligned
-  ///      with the protocol: a bad minCawOut hurts the client's own payout equally. A client
+  /// @dev By paying the network in CAW from the same swap, their incentives are perfectly aligned
+  ///      with the protocol: a bad minCawOut hurts the network's own payout equally. A network
   ///      calling withdrawFees(0) would get sandwiched and lose their own fees — self-punishing.
   function withdrawFees(uint256 minCawOut) external {
     _withdrawFees(msg.sender, minCawOut);
   }
 
-  /// @notice Withdraw fees on behalf of a client. Callable by the client's owner.
-  ///         CAW is sent to the client's feeAddress (not the caller).
-  /// @param clientId The client whose fees to withdraw.
+  /// @notice Withdraw fees on behalf of a network. Callable by the network's owner.
+  ///         CAW is sent to the network's feeAddress (not the caller).
+  /// @param networkId The network whose fees to withdraw.
   /// @param minCawOut Minimum total CAW the swap must produce (sandwich protection).
-  function withdrawFeesFor(uint32 clientId, uint256 minCawOut) external {
-    require(clientManager.getClientOwner(clientId) == msg.sender, "Not client owner");
-    address feeAddress = clientManager.getClient(clientId).feeAddress;
+  function withdrawFeesFor(uint32 networkId, uint256 minCawOut) external {
+    require(networkManager.getNetworkOwner(networkId) == msg.sender, "Not network owner");
+    address feeAddress = networkManager.getNetwork(networkId).feeAddress;
     _withdrawFees(feeAddress, minCawOut);
   }
 
   function _withdrawFees(address feeAddress, uint256 minCawOut) internal {
-    uint256 clientAmount = accruedFees[feeAddress];
-    require(clientAmount > 0, "No fees");
+    uint256 networkAmount = accruedFees[feeAddress];
+    require(networkAmount > 0, "No fees");
 
     uint256 protocolPool = accruedFees[address(buyAndBurn)];
-    uint256 protocolAmount = clientAmount < protocolPool ? clientAmount : protocolPool;
+    uint256 protocolAmount = networkAmount < protocolPool ? networkAmount : protocolPool;
 
     // Zero balances before external calls (checks-effects-interactions)
     accruedFees[feeAddress] = 0;
@@ -440,7 +440,7 @@ contract CawProfile is
       accruedFees[address(buyAndBurn)] -= protocolAmount;
     }
 
-    uint256 totalEth = clientAmount + protocolAmount;
+    uint256 totalEth = networkAmount + protocolAmount;
     uint256 cawReceived = buyAndBurn.swapAndSplit{value: totalEth}(minCawOut, feeAddress);
 
     emit FeesWithdrawn(feeAddress, cawReceived);
@@ -471,13 +471,13 @@ contract CawProfile is
     return super.supportsInterface(interfaceId);
   }
 
-  function authenticate(uint32 cawClientId, uint32 tokenId, uint32 lzDestId, uint256 lzTokenAmount) external payable {
+  function authenticate(uint32 cawNetworkId, uint32 tokenId, uint32 lzDestId, uint256 lzTokenAmount) external payable {
     require(ownerOf(tokenId) == msg.sender, "Not owner");
 
-    (uint256 fee, address feeAddress) = clientManager.getAuthFeeAndAddress(cawClientId);
+    (uint256 fee, address feeAddress) = networkManager.getAuthFeeAndAddress(cawNetworkId);
     uint256 lzEthAmount = msg.value - payFee(fee, feeAddress);
-    authenticated[cawClientId][tokenId] = true;
-    _lockWithdrawFeeIfNeeded(cawClientId, tokenId);
+    authenticated[cawNetworkId][tokenId] = true;
+    _lockWithdrawFeeIfNeeded(cawNetworkId, tokenId);
 
     // Subscribe this token to lzDestId so future _afterTokenTransfer
     // pushes the new owner there. Without this, a token authenticated to
@@ -489,28 +489,28 @@ contract CawProfile is
     chosenChainIds[tokenId].add(uint256(lzDestId));
 
     if (lzDestId == mainnetLzId) {
-      cawProfileL2.auth(tokenId, cawClientId);
+      cawProfileL2.auth(tokenId, cawNetworkId);
       _refundUnusedLzEth(lzEthAmount);
     } else {
       uint32[] memory tokenIds;
       address[] memory owners;
       uint64[] memory stamps;
       (tokenIds, owners, stamps) = extractPendingTransferUpdates(lzDestId, msg.sender, tokenId);
-      bytes memory payload = abi.encodeWithSelector(authSelector, cawClientId, tokenId, tokenIds, owners, stamps);
-      lzSend(cawClientId, lzDestId, authSelector, tokenIds.length, payload, lzEthAmount, lzTokenAmount);
+      bytes memory payload = abi.encodeWithSelector(authSelector, cawNetworkId, tokenId, tokenIds, owners, stamps);
+      lzSend(cawNetworkId, lzDestId, authSelector, tokenIds.length, payload, lzEthAmount, lzTokenAmount);
     }
   }
 
   /// @notice Deposit CAW into a token on behalf of its owner. CAW is pulled from msg.sender
   ///         (not the token owner), so the caller must have approved this contract for CAW.
   ///         This allows router contracts to collect CAW from the user and deposit in one flow.
-  function depositFor(uint32 cawClientId, uint32 tokenId, uint256 amount, uint32 lzDestId, uint256 lzTokenAmount) public payable {
+  function depositFor(uint32 cawNetworkId, uint32 tokenId, uint256 amount, uint32 lzDestId, uint256 lzTokenAmount) public payable {
     address owner = ownerOf(tokenId);
 
     // depositFor is intentionally permissionless (routers pay-on-behalf-of),
     // but a zero-amount call lets a third party permanently mark a token
     // as subscribed to chains the owner never opted into, plus auth them
-    // to clients they didn't pick. Require a non-zero deposit so the caller
+    // to networks they didn't pick. Require a non-zero deposit so the caller
     // at least has economic skin in the game. Audit fix 2026-05-08 (M-2).
     require(amount > 0, "Zero deposit amount");
 
@@ -518,34 +518,34 @@ contract CawProfile is
     CAW.transferFrom(msg.sender, address(this), amount);
     totalCaw += amount;
 
-    (uint256 fee, address feeAddress) = clientManager.getDepositFeeAndAddress(cawClientId);
+    (uint256 fee, address feeAddress) = networkManager.getDepositFeeAndAddress(cawNetworkId);
 
-    if (!authenticated[cawClientId][tokenId]) {
-      fee += clientManager.getAuthFee(cawClientId);
-      authenticated[cawClientId][tokenId] = true;
-      _lockWithdrawFeeIfNeeded(cawClientId, tokenId);
+    if (!authenticated[cawNetworkId][tokenId]) {
+      fee += networkManager.getAuthFee(cawNetworkId);
+      authenticated[cawNetworkId][tokenId] = true;
+      _lockWithdrawFeeIfNeeded(cawNetworkId, tokenId);
     }
 
     uint256 lzEthAmount = msg.value - payFee(fee, feeAddress);
 
     if (lzDestId == mainnetLzId) {
-      cawProfileL2.deposit(cawClientId, tokenId, amount);
+      cawProfileL2.deposit(cawNetworkId, tokenId, amount);
       _refundUnusedLzEth(lzEthAmount);
     } else {
       uint32[] memory tokenIds;
       address[] memory owners;
       uint64[] memory stamps;
       (tokenIds, owners, stamps) = extractPendingTransferUpdates(lzDestId, owner, tokenId);
-      bytes memory payload = abi.encodeWithSelector(addToBalanceSelector, cawClientId, tokenId, amount, tokenIds, owners, stamps);
-      lzSend(cawClientId, lzDestId, addToBalanceSelector, tokenIds.length, payload, lzEthAmount, lzTokenAmount);
+      bytes memory payload = abi.encodeWithSelector(addToBalanceSelector, cawNetworkId, tokenId, amount, tokenIds, owners, stamps);
+      lzSend(cawNetworkId, lzDestId, addToBalanceSelector, tokenIds.length, payload, lzEthAmount, lzTokenAmount);
     }
 
-    emit Deposited(cawClientId, tokenId, amount, lzDestId, msg.sender);
+    emit Deposited(cawNetworkId, tokenId, amount, lzDestId, msg.sender);
   }
 
-  function deposit(uint32 cawClientId, uint32 tokenId, uint256 amount, uint32 lzDestId, uint256 lzTokenAmount) public payable {
+  function deposit(uint32 cawNetworkId, uint32 tokenId, uint256 amount, uint32 lzDestId, uint256 lzTokenAmount) public payable {
     require(ownerOf(tokenId) == msg.sender, "Not owner");
-    depositFor(cawClientId, tokenId, amount, lzDestId, lzTokenAmount);
+    depositFor(cawNetworkId, tokenId, amount, lzDestId, lzTokenAmount);
   }
 
   function peerWithMaxPendingTransfers() public view returns (uint32) {
@@ -572,12 +572,12 @@ contract CawProfile is
     return uint32(peer);
   }
 
-  function withdraw(uint32 cawClientId, uint32 tokenId, uint256 lzTokenAmount) public payable {
-    withdrawTo(cawClientId, tokenId, msg.sender, lzTokenAmount);
+  function withdraw(uint32 cawNetworkId, uint32 tokenId, uint256 lzTokenAmount) public payable {
+    withdrawTo(cawNetworkId, tokenId, msg.sender, lzTokenAmount);
   }
 
   /// @notice Withdraw CAW to any address. Only callable by the token owner.
-  function withdrawTo(uint32 cawClientId, uint32 tokenId, address recipient, uint256 lzTokenAmount) public payable {
+  function withdrawTo(uint32 cawNetworkId, uint32 tokenId, address recipient, uint256 lzTokenAmount) public payable {
     require(ownerOf(tokenId) == msg.sender, "Not owner");
     require(withdrawable[tokenId] > 0, "Nothing to withdraw");
     require(recipient != address(0), "Zero address");
@@ -586,10 +586,10 @@ contract CawProfile is
     totalCaw -= withdrawable[tokenId];
     withdrawable[tokenId] = 0;
 
-    (uint256 currentFee, address feeAddress) = clientManager.getWithdrawFeeAndAddress(cawClientId);
+    (uint256 currentFee, address feeAddress) = networkManager.getWithdrawFeeAndAddress(cawNetworkId);
     uint256 fee = currentFee;
-    if (withdrawFeeLocked[cawClientId][tokenId]) {
-      uint256 locked = lockedWithdrawFee[cawClientId][tokenId];
+    if (withdrawFeeLocked[cawNetworkId][tokenId]) {
+      uint256 locked = lockedWithdrawFee[cawNetworkId][tokenId];
       if (locked < fee) fee = locked;
     }
     uint256 lzEthAmount = msg.value - payFee(fee, feeAddress);
@@ -637,7 +637,7 @@ contract CawProfile is
   // REPLICATION CONFIG SYNC
   // ============================================
 
-  // Replication-chain sync to L2 has been removed. Per-validator REPLICATE_CLIENT_IDS
+  // Replication-chain sync to L2 has been removed. Per-validator REPLICATE_NETWORK_IDS
   // env config replaced the on-chain registry; no L1→L2 chain-list push is needed.
 
   /// @notice Credit per-token withdraw amounts. Only callable via LayerZero from L2 CawProfileL2.
@@ -652,7 +652,7 @@ contract CawProfile is
     // Two acceptable callers:
     //   1. The LZ delivery path (fromLZ flag set inside _lzReceive)
     //   2. The bypassLZ co-deployed L2 mirror calling directly. Without
-    //      this branch, withdrawals on L1-storage (bypassLZ) clients
+    //      this branch, withdrawals on L1-storage (bypassLZ) networks
     //      silently lose CAW: L2's setWithdrawable bypassLZ branch calls
     //      this function directly, but a fromLZ-only gate would always
     //      revert and the WITHDRAW action's L2 debit (which already
@@ -749,10 +749,10 @@ contract CawProfile is
   }
 
   /// @dev updateOwners messages sync the entire pending-transfer queue across all
-  ///      tokens regardless of which client they're authed to, so the gas budget
-  ///      reads `clientGasOverride[0][updateOwnersSelector]` — clientId=0 is
-  ///      reserved for protocol-wide overrides. CawClientManager.setGasOverride
-  ///      can't write clientId=0 (no owner), so this slot stays at 0 forever
+  ///      tokens regardless of which network they're authed to, so the gas budget
+  ///      reads `networkGasOverride[0][updateOwnersSelector]` — networkId=0 is
+  ///      reserved for protocol-wide overrides. CawNetworkManager.setGasOverride
+  ///      can't write networkId=0 (no owner), so this slot stays at 0 forever
   ///      unless a future amendment adds a controlled path. Acceptable: the
   ///      updateOwners handler is the lowest-risk one in the system.
   function _updateNewOwners(uint32 lzDestId, uint256 lzEthAmount, uint256 lzTokenAmount) internal {
@@ -835,14 +835,14 @@ contract CawProfile is
   }
 
   // Overriding this internal function because inherited LZ code requires msg.value == _nativeFee,
-  // which doesn't allow for clients to take native fees alongside LZ.
+  // which doesn't allow for networks to take native fees alongside LZ.
   function _payNative(uint256 _nativeFee) internal virtual override returns (uint256 nativeFee) {
     if (msg.value < _nativeFee) revert NotEnoughNative(msg.value);
     return _nativeFee;
   }
 
-  function lzSend(uint32 cawClientId, uint32 lzDestId, bytes4 selector, uint256 n, bytes memory payload, uint256 lzEthAmount, uint256 lzTokenAmount) internal {
-    bytes memory _options = OptionsBuilder.newOptions().addExecutorLzReceiveOption(gasLimitFor(cawClientId, selector, n), 0);
+  function lzSend(uint32 cawNetworkId, uint32 lzDestId, bytes4 selector, uint256 n, bytes memory payload, uint256 lzEthAmount, uint256 lzTokenAmount) internal {
+    bytes memory _options = OptionsBuilder.newOptions().addExecutorLzReceiveOption(gasLimitFor(cawNetworkId, selector, n), 0);
 
     // Refund excess LZ fee to tx.origin — the EOA that actually paid.
     // Using msg.sender would break when called through an intermediary contract
@@ -861,8 +861,8 @@ contract CawProfile is
   // Most quote functions moved to CawProfileQuoter contract to reduce contract size
   // lzQuote stays here since it needs access to inherited _quote from OApp
 
-  function lzQuote(uint32 cawClientId, bytes4 selector, uint256 n, bytes memory payload, uint32 lzDestId, bool _payInLzToken) public view returns (MessagingFee memory quote) {
-    bytes memory _options = OptionsBuilder.newOptions().addExecutorLzReceiveOption(gasLimitFor(cawClientId, selector, n), 0);
+  function lzQuote(uint32 cawNetworkId, bytes4 selector, uint256 n, bytes memory payload, uint32 lzDestId, bool _payInLzToken) public view returns (MessagingFee memory quote) {
+    bytes memory _options = OptionsBuilder.newOptions().addExecutorLzReceiveOption(gasLimitFor(cawNetworkId, selector, n), 0);
     return _quote(lzDestId, payload, _options, _payInLzToken);
   }
 
@@ -876,17 +876,17 @@ contract CawProfile is
   ///      their original measured baselines because they have not shown undersizing
   ///      in production.
   ///
-  ///      `clientGasOverride` from CawClientManager is added on top — see that contract
-  ///      for the per-client ratchet that lets a client owner bump this budget if some
+  ///      `networkGasOverride` from CawNetworkManager is added on top — see that contract
+  ///      for the per-network ratchet that lets a network owner bump this budget if some
   ///      future EVM/L2/LZ change ever undersizes a path. Cap'd at MAX_GAS_OVERRIDE so
-  ///      a compromised client owner can't grief their own users with arbitrary fees.
-  function gasLimitFor(uint32 cawClientId, bytes4 selector, uint256 n) public view returns (uint128) {
+  ///      a compromised network owner can't grief their own users with arbitrary fees.
+  function gasLimitFor(uint32 cawNetworkId, bytes4 selector, uint256 n) public view returns (uint128) {
     // Unset selectors return 0 here; the LZ send downstream will OOG meaningfully on the
     // L2 receive call (gas budget far below any handler's needs), so a bad selector still
     // reverts — just without an explicit require message in this hot path.
     // Per-token cost: 19k SSTORE (ownerOf, warm) + 22k (lastOwnerUpdateBlock cold)
     // + 22k (ownerSessionEpoch++ on prev-owner-out, cold). Plus arithmetic/loop overhead.
-    return gasBaseFor[selector] + uint128(40_000 * n) + clientManager.clientGasOverride(cawClientId, selector);
+    return gasBaseFor[selector] + uint128(40_000 * n) + networkManager.networkGasOverride(cawNetworkId, selector);
   }
 
   receive() external payable {}

@@ -5,11 +5,11 @@ import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import "./ISwapRouter.sol";
 
 /// @title CawBuyAndBurn
-/// @notice Swaps ETH for CAW, sends half to the client and burns the other half.
+/// @notice Swaps ETH for CAW, sends half to the network and burns the other half.
 ///         Called atomically by CawProfile.withdrawFees().
-/// @dev The client's fees and the protocol's matching portion are swapped together
-///      in a single Uniswap trade. Half the CAW goes to the client, half to 0xdead.
-///      Because the client receives CAW from the same swap, they are incentivized to
+/// @dev The network's fees and the protocol's matching portion are swapped together
+///      in a single Uniswap trade. Half the CAW goes to the network, half to 0xdead.
+///      Because the network receives CAW from the same swap, they are incentivized to
 ///      set a good minCawOut — a bad value hurts their own payout equally.
 contract CawBuyAndBurn {
 
@@ -22,7 +22,7 @@ contract CawBuyAndBurn {
 
   address public constant DEAD = 0x000000000000000000000000000000000000dEaD;
 
-  event BuyAndBurn(uint256 ethIn, uint256 cawBurned, uint256 cawToClient, address indexed client);
+  event BuyAndBurn(uint256 ethIn, uint256 cawBurned, uint256 cawToNetwork, address indexed network);
 
   constructor(address _caw, address _router) {
     CAW = IERC20(_caw);
@@ -38,12 +38,12 @@ contract CawBuyAndBurn {
     cawProfile = _cawProfile;
   }
 
-  /// @notice Swap all incoming ETH for CAW, send half to the client and burn half.
+  /// @notice Swap all incoming ETH for CAW, send half to the network and burn half.
   ///         Only callable by CawProfile during withdrawFees().
   /// @param minCawOut Minimum total CAW the swap must produce.
-  /// @param client Address to receive half the CAW.
-  /// @return clientShare The amount of CAW sent to the client.
-  function swapAndSplit(uint256 minCawOut, address client) external payable returns (uint256 clientShare) {
+  /// @param network Address to receive half the CAW.
+  /// @return networkShare The amount of CAW sent to the network.
+  function swapAndSplit(uint256 minCawOut, address network) external payable returns (uint256 networkShare) {
     require(msg.sender == cawProfile, "Only CawProfile");
     require(msg.value > 0, "No ETH");
 
@@ -60,14 +60,14 @@ contract CawBuyAndBurn {
     );
 
     uint256 totalCaw = amounts[amounts.length - 1];
-    clientShare = totalCaw / 2;
-    uint256 burnShare = totalCaw - clientShare;
+    networkShare = totalCaw / 2;
+    uint256 burnShare = totalCaw - networkShare;
 
-    // Send half to client, half to dead
-    CAW.transfer(client, clientShare);
+    // Send half to network, half to dead
+    CAW.transfer(network, networkShare);
     CAW.transfer(DEAD, burnShare);
 
-    emit BuyAndBurn(msg.value, burnShare, clientShare, client);
+    emit BuyAndBurn(msg.value, burnShare, networkShare, network);
   }
 
   /// @notice Preview how much CAW a given ETH amount would buy at current prices.

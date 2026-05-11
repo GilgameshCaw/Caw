@@ -14,7 +14,7 @@
  */
 
 const MintableCaw = artifacts.require("MintableCaw");
-const CawClientManager = artifacts.require("CawClientManager");
+const CawNetworkManager = artifacts.require("CawNetworkManager");
 const CawProfile = artifacts.require("CawProfile");
 const CawProfileL2 = artifacts.require("CawProfileL2");
 const CawProfileMinter = artifacts.require("CawProfileMinter");
@@ -66,7 +66,7 @@ const dataTypes = {
     { name: 'senderId', type: 'uint32' },
     { name: 'receiverId', type: 'uint32' },
     { name: 'receiverCawonce', type: 'uint32' },
-    { name: 'clientId', type: 'uint32' },
+    { name: 'networkId', type: 'uint32' },
     { name: 'cawonce', type: 'uint32' },
     { name: 'recipients', type: 'uint32[]' },
     { name: 'amounts', type: 'uint64[]' },
@@ -97,7 +97,7 @@ function packActionForSlice(a) {
   buf.writeUInt32BE(Number(a.senderId), pos); pos += 4;
   buf.writeUInt32BE(Number(a.receiverId || 0), pos); pos += 4;
   buf.writeUInt32BE(Number(a.receiverCawonce || 0), pos); pos += 4;
-  buf.writeUInt32BE(Number(a.clientId), pos); pos += 4;
+  buf.writeUInt32BE(Number(a.networkId), pos); pos += 4;
   buf.writeUInt32BE(Number(a.cawonce), pos); pos += 4;
   buf.writeUInt8(recipients.length, pos); pos += 1;
   buf.writeUInt8(amounts.length, pos); pos += 1;
@@ -196,8 +196,8 @@ async function buyUsername(user, name) {
   const cost = await setup.minter.costOfName(name);
   await setup.token.approve(setup.minter.address, cost.toString(), { from: user });
 
-  const quote = await setup.quoter.mintQuote(setup.clientId, false);
-  await setup.minter.mint(setup.clientId, name, quote.lzTokenFee, {
+  const quote = await setup.quoter.mintQuote(setup.networkId, false);
+  await setup.minter.mint(setup.networkId, name, quote.lzTokenFee, {
     from: user,
     value: quote.nativeFee.toString(),
   });
@@ -214,8 +214,8 @@ async function depositAndAuth(user, tokenId, amountWholeCaw) {
   const cawAmountWei = (BigInt(amountWholeCaw) * 10n ** 18n).toString();
   const balance = await setup.token.balanceOf(user);
   await setup.token.approve(setup.cawProfile.address, balance.toString(), { from: user });
-  const quote = await setup.quoter.depositQuote(setup.clientId, tokenId, cawAmountWei, l2, false);
-  await setup.cawProfile.deposit(setup.clientId, tokenId, cawAmountWei, l2, quote.lzTokenFee, {
+  const quote = await setup.quoter.depositQuote(setup.networkId, tokenId, cawAmountWei, l2, false);
+  await setup.cawProfile.deposit(setup.networkId, tokenId, cawAmountWei, l2, quote.lzTokenFee, {
     from: user,
     value: quote.nativeFee.toString(),
   });
@@ -253,7 +253,7 @@ async function fullSetup(accounts) {
   const token = await MintableCaw.new();
   const mockRouter = await MockSwapRouter.new(token.address);
   const buyAndBurn = await CawBuyAndBurn.new(token.address, mockRouter.address);
-  const clientManager = await CawClientManager.new(buyAndBurn.address);
+  const networkManager = await CawNetworkManager.new(buyAndBurn.address);
   // Use a minimal URI generator (skip fancy SVG to keep deploy fast)
   const CawProfileURI = artifacts.require("CawProfileURI");
   const CawFontDataA = artifacts.require("CawFontDataA");
@@ -265,16 +265,16 @@ async function fullSetup(accounts) {
   const cawProfileL2 = await CawProfileL2.new(l1, l2Endpoint.address);
   await l1Endpoint.setDestLzEndpoint(cawProfileL2.address, l2Endpoint.address);
 
-  const cawProfile = await CawProfile.new(token.address, uri.address, buyAndBurn.address, clientManager.address, l1Endpoint.address, l1);
+  const cawProfile = await CawProfile.new(token.address, uri.address, buyAndBurn.address, networkManager.address, l1Endpoint.address, l1);
   await buyAndBurn.setCawProfile(cawProfile.address);
   await cawProfileL2.setL1Peer(l1, cawProfile.address, false);
   await l2Endpoint.setDestLzEndpoint(cawProfile.address, l1Endpoint.address);
   await cawProfile.setL2Peer(l2, cawProfileL2.address);
 
-  // Create a client. createClient signature is (name, oversight, l2ChainId, mintFee, depositFee, authFee, withdrawFee).
+  // Create a network. createNetwork signature is (name, oversight, l2ChainId, mintFee, depositFee, authFee, withdrawFee).
   // Use 0 fees to keep tests focused on action processing, not fees.
-  await clientManager.createClient("Test Client", accounts[0], l2, 0, 0, 0, 0);
-  const clientId = 1;
+  await networkManager.createNetwork("Test Network", accounts[0], l2, 0, 0, 0, 0);
+  const networkId = 1;
 
   const minter = await CawProfileMinter.new(token.address, cawProfile.address, mockRouter.address);
   await cawProfile.setMinter(minter.address);
@@ -284,7 +284,7 @@ async function fullSetup(accounts) {
   const cawActions = await CawActions.new(cawProfileL2.address, "0x0000000000000000000000000000000000000000", "0x0000000000000000000000000000000000000000000000000000000000000000");
   await cawProfileL2.setCawActions(cawActions.address);
 
-  return { token, cawProfile, cawProfileL2, minter, quoter, cawActions, clientManager, clientId };
+  return { token, cawProfile, cawProfileL2, minter, quoter, cawActions, networkManager, networkId };
 }
 
 // ============================================
@@ -326,7 +326,7 @@ contract('CawActions — batched signatures', function (accounts) {
     const cawonce = Number(await setup.cawActions.nextCawonce(userATokenId));
     const action = {
       actionType: ACTION_TYPE.caw, senderId: userATokenId, receiverId: 0, receiverCawonce: 0,
-      clientId: setup.clientId, cawonce,
+      networkId: setup.networkId, cawonce,
       recipients: [], amounts: [0], text: '0x' + Buffer.from('hello').toString('hex'),
     };
     const { hex: packedHex } = packActions([action]);
@@ -347,7 +347,7 @@ contract('CawActions — batched signatures', function (accounts) {
     for (let i = 0; i < 5; i++) {
       actions.push({
         actionType: ACTION_TYPE.caw, senderId: userATokenId, receiverId: 0, receiverCawonce: 0,
-        clientId: setup.clientId, cawonce: startCawonce + i,
+        networkId: setup.networkId, cawonce: startCawonce + i,
         recipients: [], amounts: [0],
         text: '0x' + Buffer.from(`thread chunk ${i}`).toString('hex'),
       });
@@ -373,13 +373,13 @@ contract('CawActions — batched signatures', function (accounts) {
 
     const aBatch = [0, 1, 2].map(i => ({
       actionType: ACTION_TYPE.caw, senderId: userATokenId, receiverId: 0, receiverCawonce: 0,
-      clientId: setup.clientId, cawonce: aStart + i,
+      networkId: setup.networkId, cawonce: aStart + i,
       recipients: [], amounts: [0],
       text: '0x' + Buffer.from(`a${i}`).toString('hex'),
     }));
     const bSingle = {
       actionType: ACTION_TYPE.caw, senderId: userBTokenId, receiverId: 0, receiverCawonce: 0,
-      clientId: setup.clientId, cawonce: bStart,
+      networkId: setup.networkId, cawonce: bStart,
       recipients: [], amounts: [0],
       text: '0x' + Buffer.from('b0').toString('hex'),
     };
@@ -402,13 +402,13 @@ contract('CawActions — batched signatures', function (accounts) {
   // Hash chain advances correctly under batched flow
   // --------------------------------------------
   it('hash chain advances per-action even when sig is shared by a batch', async function () {
-    const beforeCount = Number(await setup.cawActions.clientActionCount(setup.clientId));
-    const beforeHash = await setup.cawActions.clientCurrentHash(setup.clientId);
+    const beforeCount = Number(await setup.cawActions.networkActionCount(setup.networkId));
+    const beforeHash = await setup.cawActions.networkCurrentHash(setup.networkId);
 
     const start = Number(await setup.cawActions.nextCawonce(userATokenId));
     const actions = [0, 1].map(i => ({
       actionType: ACTION_TYPE.caw, senderId: userATokenId, receiverId: 0, receiverCawonce: 0,
-      clientId: setup.clientId, cawonce: start + i,
+      networkId: setup.networkId, cawonce: start + i,
       recipients: [], amounts: [0],
       text: '0x' + Buffer.from(`hashchain${i}`).toString('hex'),
     }));
@@ -418,8 +418,8 @@ contract('CawActions — batched signatures', function (accounts) {
 
     await setup.cawActions.processActions(validatorTokenId, hex, sigsHex, 0, 0);
 
-    const afterCount = Number(await setup.cawActions.clientActionCount(setup.clientId));
-    const afterHash = await setup.cawActions.clientCurrentHash(setup.clientId);
+    const afterCount = Number(await setup.cawActions.networkActionCount(setup.networkId));
+    const afterHash = await setup.cawActions.networkCurrentHash(setup.networkId);
     expect(afterCount).to.equal(beforeCount + 2);
     expect(afterHash).to.not.equal(beforeHash);
   });
@@ -432,12 +432,12 @@ contract('CawActions — batched signatures', function (accounts) {
     const bStart = Number(await setup.cawActions.nextCawonce(userBTokenId));
     const a = {
       actionType: ACTION_TYPE.caw, senderId: userATokenId, receiverId: 0, receiverCawonce: 0,
-      clientId: setup.clientId, cawonce: aStart,
+      networkId: setup.networkId, cawonce: aStart,
       recipients: [], amounts: [0], text: '0x' + Buffer.from('a').toString('hex'),
     };
     const b = {
       actionType: ACTION_TYPE.caw, senderId: userBTokenId, receiverId: 0, receiverCawonce: 0,
-      clientId: setup.clientId, cawonce: bStart,
+      networkId: setup.networkId, cawonce: bStart,
       recipients: [], amounts: [0], text: '0x' + Buffer.from('b').toString('hex'),
     };
     const { hex } = packActions([a, b]);
@@ -463,12 +463,12 @@ contract('CawActions — batched signatures', function (accounts) {
     const actions = [
       {
         actionType: ACTION_TYPE.caw, senderId: userATokenId, receiverId: 0, receiverCawonce: 0,
-        clientId: setup.clientId, cawonce: start,
+        networkId: setup.networkId, cawonce: start,
         recipients: [], amounts: [0], text: '0x' + Buffer.from('first').toString('hex'),
       },
       {
         actionType: ACTION_TYPE.caw, senderId: userATokenId, receiverId: 0, receiverCawonce: 0,
-        clientId: setup.clientId, cawonce: start, // <-- same cawonce
+        networkId: setup.networkId, cawonce: start, // <-- same cawonce
         recipients: [], amounts: [0], text: '0x' + Buffer.from('dup').toString('hex'),
       },
     ];
@@ -498,12 +498,12 @@ contract('CawActions — batched signatures', function (accounts) {
     const actions = [
       {
         actionType: ACTION_TYPE.caw, senderId: userATokenId, receiverId: 0, receiverCawonce: 0,
-        clientId: setup.clientId, cawonce: start,
+        networkId: setup.networkId, cawonce: start,
         recipients: [], amounts: [0], text: '0x' + Buffer.from('a').toString('hex'),
       },
       {
         actionType: ACTION_TYPE.caw, senderId: userATokenId, receiverId: 0, receiverCawonce: 0,
-        clientId: setup.clientId, cawonce: start + 2, // <-- gap; should be start + 1
+        networkId: setup.networkId, cawonce: start + 2, // <-- gap; should be start + 1
         recipients: [], amounts: [0], text: '0x' + Buffer.from('b').toString('hex'),
       },
     ];
@@ -528,12 +528,12 @@ contract('CawActions — batched signatures', function (accounts) {
     const actions = [
       {
         actionType: ACTION_TYPE.caw, senderId: userATokenId, receiverId: 0, receiverCawonce: 0,
-        clientId: setup.clientId, cawonce: start,
+        networkId: setup.networkId, cawonce: start,
         recipients: [], amounts: [0], text: '0x' + Buffer.from('ok').toString('hex'),
       },
       {
         actionType: ACTION_TYPE.follow, senderId: userATokenId, receiverId: userATokenId, receiverCawonce: 0,
-        clientId: setup.clientId, cawonce: start + 1,
+        networkId: setup.networkId, cawonce: start + 1,
         recipients: [], amounts: [0], text: '0x',
       },
     ];
@@ -567,13 +567,13 @@ contract('CawActions — batched signatures', function (accounts) {
     const actions = [
       {
         actionType: ACTION_TYPE.like, senderId: userATokenId, receiverId: userBTokenId, receiverCawonce: 1,
-        clientId: setup.clientId, cawonce: start,
+        networkId: setup.networkId, cawonce: start,
         recipients: [], amounts: [0], text: '0x',
       },
       {
         // CAW is NOT in scope — should make the whole batch revert
         actionType: ACTION_TYPE.caw, senderId: userATokenId, receiverId: 0, receiverCawonce: 0,
-        clientId: setup.clientId, cawonce: start + 1,
+        networkId: setup.networkId, cawonce: start + 1,
         recipients: [], amounts: [0], text: '0x' + Buffer.from('out of scope').toString('hex'),
       },
     ];
@@ -611,7 +611,7 @@ contract('CawActions — batched signatures', function (accounts) {
     const start = Number(await setup.cawActions.nextCawonce(userATokenId));
     const actions = [0, 1, 2].map(i => ({
       actionType: ACTION_TYPE.caw, senderId: userATokenId, receiverId: 0, receiverCawonce: 0,
-      clientId: setup.clientId, cawonce: start + i,
+      networkId: setup.networkId, cawonce: start + i,
       recipients: [], amounts: [0],
       text: '0x' + Buffer.from(`exact${i}`).toString('hex'),
     }));
@@ -642,7 +642,7 @@ contract('CawActions — batched signatures', function (accounts) {
     const start = Number(await setup.cawActions.nextCawonce(userATokenId));
     const actions = [0, 1, 2].map(i => ({
       actionType: ACTION_TYPE.caw, senderId: userATokenId, receiverId: 0, receiverCawonce: 0,
-      clientId: setup.clientId, cawonce: start + i,
+      networkId: setup.networkId, cawonce: start + i,
       recipients: [], amounts: [0],
       text: '0x' + Buffer.from(`exceed${i}`).toString('hex'),
     }));
@@ -678,7 +678,7 @@ contract('CawActions — batched signatures', function (accounts) {
     const start = Number(await setup.cawActions.nextCawonce(userATokenId));
     const action = {
       actionType: ACTION_TYPE.caw, senderId: userATokenId, receiverId: 0, receiverCawonce: 0,
-      clientId: setup.clientId, cawonce: start,
+      networkId: setup.networkId, cawonce: start,
       recipients: [], amounts: [0],
       text: '0x' + Buffer.from('single-sig session').toString('hex'),
     };
@@ -694,7 +694,7 @@ contract('CawActions — batched signatures', function (accounts) {
     // observe the cumulative sessionSpent state from the first call).
     const action2 = {
       actionType: ACTION_TYPE.caw, senderId: userATokenId, receiverId: 0, receiverCawonce: 0,
-      clientId: setup.clientId, cawonce: start + 1,
+      networkId: setup.networkId, cawonce: start + 1,
       recipients: [], amounts: [0],
       text: '0x' + Buffer.from('over limit').toString('hex'),
     };
@@ -723,7 +723,7 @@ contract('CawActions — batched signatures', function (accounts) {
     const start = Number(await setup.cawActions.nextCawonce(userATokenId));
     const signedActions = [0, 1, 2].map(i => ({
       actionType: ACTION_TYPE.caw, senderId: userATokenId, receiverId: 0, receiverCawonce: 0,
-      clientId: setup.clientId, cawonce: start + i,
+      networkId: setup.networkId, cawonce: start + i,
       recipients: [], amounts: [0],
       text: '0x' + Buffer.from(`signed${i}`).toString('hex'),
     }));

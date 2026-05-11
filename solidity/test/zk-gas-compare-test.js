@@ -27,7 +27,7 @@
  * large regressions.
  */
 const MintableCaw = artifacts.require("MintableCaw");
-const CawClientManager = artifacts.require("CawClientManager");
+const CawNetworkManager = artifacts.require("CawNetworkManager");
 const CawProfile = artifacts.require("CawProfile");
 const CawProfileL2 = artifacts.require("CawProfileL2");
 const CawProfileMinter = artifacts.require("CawProfileMinter");
@@ -61,7 +61,7 @@ const dataTypes = {
   ActionData: [
     { name: 'actionType', type: 'uint8' }, { name: 'senderId', type: 'uint32' },
     { name: 'receiverId', type: 'uint32' }, { name: 'receiverCawonce', type: 'uint32' },
-    { name: 'clientId', type: 'uint32' }, { name: 'cawonce', type: 'uint32' },
+    { name: 'networkId', type: 'uint32' }, { name: 'cawonce', type: 'uint32' },
     { name: 'recipients', type: 'uint32[]' }, { name: 'amounts', type: 'uint64[]' },
     { name: 'text', type: 'bytes' },
   ],
@@ -79,7 +79,7 @@ function packActionForSlice(a) {
   buf.writeUInt32BE(Number(a.senderId), pos); pos += 4;
   buf.writeUInt32BE(Number(a.receiverId || 0), pos); pos += 4;
   buf.writeUInt32BE(Number(a.receiverCawonce || 0), pos); pos += 4;
-  buf.writeUInt32BE(Number(a.clientId), pos); pos += 4;
+  buf.writeUInt32BE(Number(a.networkId), pos); pos += 4;
   buf.writeUInt32BE(Number(a.cawonce), pos); pos += 4;
   buf.writeUInt8(recipients.length, pos); pos += 1;
   buf.writeUInt8(amounts.length, pos); pos += 1;
@@ -138,7 +138,7 @@ async function fullSetup(accounts) {
   const token = await MintableCaw.new();
   const mockRouter = await MockSwapRouter.new(token.address);
   const buyAndBurn = await CawBuyAndBurn.new(token.address, mockRouter.address);
-  const clientManager = await CawClientManager.new(buyAndBurn.address);
+  const networkManager = await CawNetworkManager.new(buyAndBurn.address);
   const CawProfileURI = artifacts.require("CawProfileURI");
   const CawFontDataA = artifacts.require("CawFontDataA");
   const CawFontDataB = artifacts.require("CawFontDataB");
@@ -149,14 +149,14 @@ async function fullSetup(accounts) {
   const cawProfileL2 = await CawProfileL2.new(l1, l2Endpoint.address);
   await l1Endpoint.setDestLzEndpoint(cawProfileL2.address, l2Endpoint.address);
 
-  const cawProfile = await CawProfile.new(token.address, uri.address, buyAndBurn.address, clientManager.address, l1Endpoint.address, l1);
+  const cawProfile = await CawProfile.new(token.address, uri.address, buyAndBurn.address, networkManager.address, l1Endpoint.address, l1);
   await buyAndBurn.setCawProfile(cawProfile.address);
   await cawProfileL2.setL1Peer(l1, cawProfile.address, false);
   await l2Endpoint.setDestLzEndpoint(cawProfile.address, l1Endpoint.address);
   await cawProfile.setL2Peer(l2, cawProfileL2.address);
 
-  await clientManager.createClient("Test Client", accounts[0], l2, 0, 0, 0, 0);
-  const clientId = 1;
+  await networkManager.createNetwork("Test Network", accounts[0], l2, 0, 0, 0, 0);
+  const networkId = 1;
   const minter = await CawProfileMinter.new(token.address, cawProfile.address, mockRouter.address);
   await cawProfile.setMinter(minter.address);
   const quoter = await CawProfileQuoter.new(cawProfile.address);
@@ -166,7 +166,7 @@ async function fullSetup(accounts) {
   const cawActions = await CawActions.new(cawProfileL2.address, mockVerifier.address, dummyVKey);
   await cawProfileL2.setCawActions(cawActions.address);
 
-  return { token, cawProfile, cawProfileL2, minter, quoter, cawActions, clientManager, clientId, mockVerifier };
+  return { token, cawProfile, cawProfileL2, minter, quoter, cawActions, networkManager, networkId, mockVerifier };
 }
 
 async function buyUsername(user, name) {
@@ -174,8 +174,8 @@ async function buyUsername(user, name) {
   await setup.token.mint(user, mintAmount);
   const cost = await setup.minter.costOfName(name);
   await setup.token.approve(setup.minter.address, cost.toString(), { from: user });
-  const quote = await setup.quoter.mintQuote(setup.clientId, false);
-  await setup.minter.mint(setup.clientId, name, quote.lzTokenFee, {
+  const quote = await setup.quoter.mintQuote(setup.networkId, false);
+  await setup.minter.mint(setup.networkId, name, quote.lzTokenFee, {
     from: user, value: quote.nativeFee.toString(),
   });
   return Number(await setup.cawProfile.totalSupply());
@@ -185,8 +185,8 @@ async function depositAndAuth(user, tokenId, amountWholeCaw) {
   const cawAmountWei = (BigInt(amountWholeCaw) * 10n ** 18n).toString();
   const balance = await setup.token.balanceOf(user);
   await setup.token.approve(setup.cawProfile.address, balance.toString(), { from: user });
-  const quote = await setup.quoter.depositQuote(setup.clientId, tokenId, cawAmountWei, l2, false);
-  await setup.cawProfile.deposit(setup.clientId, tokenId, cawAmountWei, l2, quote.lzTokenFee, {
+  const quote = await setup.quoter.depositQuote(setup.networkId, tokenId, cawAmountWei, l2, false);
+  await setup.cawProfile.deposit(setup.networkId, tokenId, cawAmountWei, l2, quote.lzTokenFee, {
     from: user, value: quote.nativeFee.toString(),
   });
 }
@@ -217,7 +217,7 @@ contract('CawActions — gas comparison: sig path vs zk path (mock verifier)', f
     let start = Number(await setup.cawActions.nextCawonce(userATokenId));
     const buildActions = () => Array.from({ length: n }, (_, i) => ({
       actionType: 0, senderId: userATokenId, receiverId: 0, receiverCawonce: 0,
-      clientId: setup.clientId, cawonce: start + i,
+      networkId: setup.networkId, cawonce: start + i,
       recipients: [], amounts: [0], text: '0x',
     }));
 

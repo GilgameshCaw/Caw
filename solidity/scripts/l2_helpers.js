@@ -10,7 +10,7 @@
 
   l2 = 40245;
   l1 = 40161;
-  defaultClientId = 1;
+  defaultNetworkId = 1;
 
 cawProfilesL2Address = '0x55C66CAbF9766AeFB3a770d9ea64E218dF195D9B';
 cawActionsAddress = "0xf3FF3891332be3Cb0A28B94218b416454133b26f";
@@ -46,7 +46,7 @@ const dataTypes = {
     { name: 'senderId', type: 'uint32' },
     { name: 'receiverId', type: 'uint32' },
     { name: 'receiverCawonce', type: 'uint32' },
-    { name: 'clientId', type: 'uint32' },
+    { name: 'networkId', type: 'uint32' },
     { name: 'cawonce', type: 'uint32'},
     { name: 'recipients', type: 'uint32[]' },
     { name: 'amounts', type: 'uint128[]' },
@@ -98,7 +98,7 @@ return data;
 			{ "internalType": "uint32", "name": "senderId", "type": "uint32" },
 			{ "internalType": "uint32", "name": "receiverId", "type": "uint32" },
 			{ "internalType": "uint32", "name": "receiverCawonce", "type": "uint32" },
-			{ "internalType": "uint32", "name": "clientId", "type": "uint32" },
+			{ "internalType": "uint32", "name": "networkId", "type": "uint32" },
 			{ "internalType": "uint32", "name": "cawonce", "type": "uint32" },
 			{ "internalType": "uint32[]", "name": "recipients", "type": "uint32[]" },
 			{ "internalType": "uint128[]", "name": "amounts", "type": "uint128[]" },
@@ -342,7 +342,7 @@ async function generateData(type, params = {}) {
       cawonce: cawonce,
       recipients: params.recipients || [],
       amounts: params.amounts || [],
-      clientId: params.clientId || defaultClientId,
+      networkId: params.networkId || defaultNetworkId,
     },
     domain: domain,
     types: {

@@ -42,7 +42,7 @@ contract CawProfileL2 is
   mapping(uint256 => address) public ownerOf;
   mapping(uint32 => string) public usernames;
 
-  // Keeping track of clients to which the user has authenticated
+  // Keeping track of networks to which the user has authenticated
   mapping(uint32 => mapping(uint32 => bool)) public authenticated;
 
   mapping(uint32 => uint256) public cawOwnership;
@@ -119,7 +119,7 @@ contract CawProfileL2 is
 
   event OwnerSet(uint32 tokenId, address newOwner);
   event UsernameMinted(uint32 tokenId, address owner);
-  event Authenticated(uint32 cawClientId, uint32 tokenId);
+  event Authenticated(uint32 cawNetworkId, uint32 tokenId);
   event CawActionsSet(address cawActions);
   event SessionCreated(address indexed owner, address indexed sessionKey, uint64 expiry, uint8 scopeBitmap, uint256 spendLimit, uint64 perActionTipRate);
   event SessionRevoked(address indexed owner, address indexed sessionKey);
@@ -296,28 +296,28 @@ contract CawProfileL2 is
     addToBalance(tokenId, amount * 10**18);
   }
 
-  /// @notice Mark a token as authenticated with a client and apply a batch of ownership updates.
+  /// @notice Mark a token as authenticated with a network and apply a batch of ownership updates.
   /// @dev Only callable from `_lzReceive` (the `fromLZ` flag is set there). The `updateOwners`
   ///      array carries pending L1→L2 ownership transfers piggybacked on this LZ message.
-  function authenticateAndUpdateOwners(uint32 cawClientId, uint32 tokenId, uint32[] calldata tokenIds, address[] calldata owners, uint64[] calldata stamps) public {
+  function authenticateAndUpdateOwners(uint32 cawNetworkId, uint32 tokenId, uint32[] calldata tokenIds, address[] calldata owners, uint64[] calldata stamps) public {
     require(fromLZ, "only LZ");
-    authenticated[cawClientId][tokenId] = true;
+    authenticated[cawNetworkId][tokenId] = true;
     updateOwners(tokenIds, owners, stamps);
   }
 
   /// @notice Credit a deposit, mark as authenticated, and apply pending ownership updates.
   /// @dev Only callable from `_lzReceive`. Triggered by L1 `deposit()` calls forwarded via LayerZero.
-  function depositAndUpdateOwners(uint32 cawClientId, uint32 tokenId, uint256 amount, uint32[] calldata tokenIds, address[] calldata owners, uint64[] calldata stamps) public {
+  function depositAndUpdateOwners(uint32 cawNetworkId, uint32 tokenId, uint256 amount, uint32[] calldata tokenIds, address[] calldata owners, uint64[] calldata stamps) public {
     require(fromLZ, "only LZ");
     totalCaw += amount;
     addToBalance(tokenId, amount);
-    authenticateAndUpdateOwners(cawClientId, tokenId, tokenIds, owners, stamps);
+    authenticateAndUpdateOwners(cawNetworkId, tokenId, tokenIds, owners, stamps);
   }
 
   /// @notice Add CAW (raw 18-decimal amount) to a token's balance.
   /// @dev Callable by `cawActions` directly, via LayerZero (`fromLZ` flag), OR by the L1
   ///      `cawProfile` contract in bypassLZ co-deployment mode (the same trust boundary
-  ///      `onlyOnMainnet` enforces — used by `deposit()` for L1-storage clients).
+  ///      `onlyOnMainnet` enforces — used by `deposit()` for L1-storage networks).
   function addToBalance(uint32 tokenId, uint256 amount) public {
     require(
       fromLZ ||
@@ -353,14 +353,14 @@ contract CawProfileL2 is
     updateOwners(tokenIds, owners, stamps);
   }
 
-  /// @notice Mint a new token mirror, mark it authenticated with `cawClientId`, and
+  /// @notice Mint a new token mirror, mark it authenticated with `cawNetworkId`, and
   ///         apply pending ownership updates — all in one LZ-delivered message.
   /// @dev Only callable from `_lzReceive`. Used by the L1 `mintAndAuth` flow: a user
   ///      pays mint+auth fees on L1, the L1 NFT is minted, and this function brings
   ///      the L2 mirror in line with no balance change. Posts will still revert
   ///      until the user does a separate `deposit()` to fund their cawBalance.
   function mintAuthAndUpdateOwners(
-    uint32 cawClientId,
+    uint32 cawNetworkId,
     uint32 tokenId,
     address owner,
     string memory username,
@@ -370,9 +370,9 @@ contract CawProfileL2 is
   ) public {
     require(fromLZ, "only LZ");
     emit UsernameMinted(tokenId, owner);
-    emit Authenticated(cawClientId, tokenId);
+    emit Authenticated(cawNetworkId, tokenId);
     usernames[tokenId] = username;
-    authenticated[cawClientId][tokenId] = true;
+    authenticated[cawNetworkId][tokenId] = true;
 
     // Trailing entry of (tokenIds, owners, stamps) is this token's owner; _setOwnerOf via updateOwners.
     updateOwners(tokenIds, owners, stamps);
@@ -382,14 +382,14 @@ contract CawProfileL2 is
   /// @dev Only callable when `bypassLZ` is true and the caller is the L1 CawProfile contract.
   ///      Mirrors `mintAuthAndUpdateOwners` but without the LZ payload — pending owner
   ///      updates aren't relevant in bypassLZ mode (L1 transfers update L2 directly).
-  function mintAndAuth(uint32 tokenId, address owner, string memory username, uint32 cawClientId, uint64 stamp)
+  function mintAndAuth(uint32 tokenId, address owner, string memory username, uint32 cawNetworkId, uint64 stamp)
     external onlyOnMainnet
   {
     emit UsernameMinted(tokenId, owner);
-    emit Authenticated(cawClientId, tokenId);
+    emit Authenticated(cawNetworkId, tokenId);
     usernames[tokenId] = username;
     _setOwnerOf(tokenId, owner, stamp);
-    authenticated[cawClientId][tokenId] = true;
+    authenticated[cawNetworkId][tokenId] = true;
   }
 
   /// @notice Bundled L2 receiver: deposit + mark authenticated + register a Quick Sign session.
@@ -398,7 +398,7 @@ contract CawProfileL2 is
   ///      accepted as a parameter. The L1 caller's trust boundary (only-minter on the L1
   ///      function) covers `owner`, so we don't need an EIP-712 signature on this side.
   function depositAndRegisterSessionAndUpdateOwners(
-    uint32 cawClientId,
+    uint32 cawNetworkId,
     uint32 tokenId,
     uint256 amount,
     address owner,
@@ -416,8 +416,8 @@ contract CawProfileL2 is
 
     totalCaw += amount;
     addToBalance(tokenId, amount);
-    authenticated[cawClientId][tokenId] = true;
-    emit Authenticated(cawClientId, tokenId);
+    authenticated[cawNetworkId][tokenId] = true;
+    emit Authenticated(cawNetworkId, tokenId);
 
     // Apply ownership updates BEFORE registering the session so the session
     // gets stamped with the current ownerSessionEpoch (post-update).
@@ -436,7 +436,7 @@ contract CawProfileL2 is
   /// @notice Bundled L2 receiver: mint mirror + mark authenticated + register a Quick Sign
   ///         session — no deposit. Only callable from `_lzReceive`.
   function mintAuthAndRegisterSessionAndUpdateOwners(
-    uint32 cawClientId,
+    uint32 cawNetworkId,
     uint32 tokenId,
     address owner,
     string memory username,
@@ -453,9 +453,9 @@ contract CawProfileL2 is
     require(expiry > block.timestamp, "expired");
 
     emit UsernameMinted(tokenId, owner);
-    emit Authenticated(cawClientId, tokenId);
+    emit Authenticated(cawNetworkId, tokenId);
     usernames[tokenId] = username;
-    authenticated[cawClientId][tokenId] = true;
+    authenticated[cawNetworkId][tokenId] = true;
 
     // Apply ownership updates first (stamps trailing entry sets owner).
     updateOwners(tokenIds, owners, stamps);
@@ -483,17 +483,17 @@ contract CawProfileL2 is
     emit SessionCreated(owner, sessionKey, expiry, scopeBitmap, spendLimit, perActionTipRate);
   }
 
-  /// @notice Mark a token as authenticated with a client. Only used in mainnet co-deployment mode.
-  function auth(uint32 cawClientId, uint32 tokenId) public onlyOnMainnet {
-    emit Authenticated(cawClientId, tokenId);
-    authenticated[cawClientId][tokenId] = true;
+  /// @notice Mark a token as authenticated with a network. Only used in mainnet co-deployment mode.
+  function auth(uint32 cawNetworkId, uint32 tokenId) public onlyOnMainnet {
+    emit Authenticated(cawNetworkId, tokenId);
+    authenticated[cawNetworkId][tokenId] = true;
   }
 
   /// @notice Credit a deposit from a co-deployed L1 contract (no LayerZero involved).
   /// @dev Only callable in mainnet co-deployment mode (`bypassLZ && msg.sender == cawProfile`).
-  function deposit(uint32 cawClientId, uint32 tokenId, uint256 amount) external onlyOnMainnet {
+  function deposit(uint32 cawNetworkId, uint32 tokenId, uint256 amount) external onlyOnMainnet {
     totalCaw += amount;
-    auth(cawClientId, tokenId);
+    auth(cawNetworkId, tokenId);
     addToBalance(tokenId, amount);
   }
 

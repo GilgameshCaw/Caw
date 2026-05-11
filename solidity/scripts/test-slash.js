@@ -24,25 +24,25 @@ const ARCHIVE_ABI = [
   'function stakes(address) view returns (uint256)',
   'function pendingCount(address) view returns (uint256)',
   'function deposit() payable',
-  'function submitReplication(uint32 clientId, uint256 startCheckpointId, uint256 endCheckpointId, bytes packedActions, bytes32[] r, bytes32 merkleRoot)',
+  'function submitReplication(uint32 networkId, uint256 startCheckpointId, uint256 endCheckpointId, bytes packedActions, bytes32[] r, bytes32 merkleRoot)',
   'function checkpointClaimed(uint32, uint256) view returns (uint256)',
   'function getSubmission(uint256) view returns (address, bytes32, uint32, uint256, uint256, uint256, uint8)',
   'function challengeDelivered(uint256, uint256) view returns (bool)',
   'function challengeHash(uint256, uint256) view returns (bytes32)',
   'function resolveChallenge(uint256 submissionId, uint256 checkpointId, bytes32 claimedHash, bytes32[] merkleProof)',
   'function nextSubmissionId() view returns (uint256)',
-  'event SubmissionCreated(uint256 indexed submissionId, address indexed submitter, uint32 indexed clientId, uint256 startCheckpointId, uint256 endCheckpointId, bytes32 merkleRoot, uint256 stakeAmount)',
+  'event SubmissionCreated(uint256 indexed submissionId, address indexed submitter, uint32 indexed networkId, uint256 startCheckpointId, uint256 endCheckpointId, bytes32 merkleRoot, uint256 stakeAmount)',
   'event ValidatorSlashed(address indexed validator, address indexed challenger, uint256 submissionId, uint256 checkpointId, uint256 reward)',
 ]
 
 const RELAY_ABI = [
-  'function relayChallenge(uint32 destEid, uint256 submissionId, uint32 clientId, uint256 checkpointId) payable',
-  'function quoteChallenge(uint32 destEid, uint256 submissionId, uint32 clientId, uint256 checkpointId, bool payInLzToken) view returns (tuple(uint256 nativeFee, uint256 lzTokenFee))',
+  'function relayChallenge(uint32 destEid, uint256 submissionId, uint32 networkId, uint256 checkpointId) payable',
+  'function quoteChallenge(uint32 destEid, uint256 submissionId, uint32 networkId, uint256 checkpointId, bool payInLzToken) view returns (tuple(uint256 nativeFee, uint256 lzTokenFee))',
 ]
 
 const CAW_ACTIONS_ABI = [
-  'function clientHashAtCheckpoint(uint32, uint256) view returns (bytes32)',
-  'function clientActionCount(uint32) view returns (uint256)',
+  'function networkHashAtCheckpoint(uint32, uint256) view returns (bytes32)',
+  'function networkActionCount(uint32) view returns (uint256)',
 ]
 
 // Merkle tree helper (must match OZ MerkleProof.verify)
@@ -88,9 +88,9 @@ async function main() {
   console.log('Wallet:', l2Wallet.address)
 
   // Step 0: Check what checkpoints exist
-  const actionCount = Number(await cawActions.clientActionCount(1))
+  const actionCount = Number(await cawActions.networkActionCount(1))
   const totalCheckpoints = Math.floor(actionCount / 32)
-  console.log(`Client 1: ${actionCount} actions, ${totalCheckpoints} checkpoints`)
+  console.log(`Network 1: ${actionCount} actions, ${totalCheckpoints} checkpoints`)
 
   // Find an unclaimed checkpoint
   let targetCp = 0
@@ -105,7 +105,7 @@ async function main() {
   }
 
   console.log(`\nTarget checkpoint: ${targetCp}`)
-  const correctHash = await cawActions.clientHashAtCheckpoint(1, targetCp)
+  const correctHash = await cawActions.networkHashAtCheckpoint(1, targetCp)
   console.log('Correct hash on L2:', correctHash)
 
   // Step 1: Ensure we have stake
@@ -128,7 +128,7 @@ async function main() {
     buf.writeUInt32BE(1, off + 1)  // senderId
     buf.writeUInt32BE(0, off + 5)  // receiverId
     buf.writeUInt32BE(0, off + 9)  // receiverCawonce
-    buf.writeUInt32BE(1, off + 13) // clientId
+    buf.writeUInt32BE(1, off + 13) // networkId
     buf.writeUInt32BE(i, off + 17) // cawonce (fake)
     buf.writeUInt8(0, off + 21)    // rc
     buf.writeUInt8(0, off + 22)    // ac

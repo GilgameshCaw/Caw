@@ -53,7 +53,7 @@ struct ActionFixture {
     sender_id: u32,
     receiver_id: u32,
     receiver_cawonce: u32,
-    client_id: u32,
+    network_id: u32,
     cawonce: u32,
     recipients: Vec<u32>,
     amounts: Vec<String>,    // uint64 as decimal string
@@ -140,7 +140,7 @@ fn main() {
         let sender_id = rng.next_u32();
         let receiver_id = rng.next_u32();
         let receiver_cawonce = rng.next_u32();
-        let client_id = rng.next_u32();
+        let network_id = rng.next_u32();
         let cawonce = rng.next_u32();
         let recipients: Vec<u32> = (0..rc).map(|_| rng.next_u32()).collect();
         let amounts_u64: Vec<u64> = (0..ac).map(|_| {
@@ -156,7 +156,7 @@ fn main() {
             sender_id,
             receiver_id,
             receiver_cawonce,
-            client_id,
+            network_id,
             cawonce,
             recipients: recipients.clone(),
             amounts: amounts_u64.clone(),
@@ -173,7 +173,7 @@ fn main() {
             sender_id,
             receiver_id,
             receiver_cawonce,
-            client_id,
+            network_id,
             cawonce,
             recipients,
             amounts,

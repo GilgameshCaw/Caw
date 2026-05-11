@@ -35,7 +35,7 @@
  */
 
 const MintableCaw = artifacts.require("MintableCaw");
-const CawClientManager = artifacts.require("CawClientManager");
+const CawNetworkManager = artifacts.require("CawNetworkManager");
 const CawProfile = artifacts.require("CawProfile");
 const CawProfileL2 = artifacts.require("CawProfileL2");
 const CawProfileMinter = artifacts.require("CawProfileMinter");
@@ -75,7 +75,7 @@ const dataTypes = {
     { name: 'senderId', type: 'uint32' },
     { name: 'receiverId', type: 'uint32' },
     { name: 'receiverCawonce', type: 'uint32' },
-    { name: 'clientId', type: 'uint32' },
+    { name: 'networkId', type: 'uint32' },
     { name: 'cawonce', type: 'uint32' },
     { name: 'recipients', type: 'uint32[]' },
     { name: 'amounts', type: 'uint64[]' },
@@ -106,7 +106,7 @@ function packActionForSlice(a) {
   buf.writeUInt32BE(Number(a.senderId), pos); pos += 4;
   buf.writeUInt32BE(Number(a.receiverId || 0), pos); pos += 4;
   buf.writeUInt32BE(Number(a.receiverCawonce || 0), pos); pos += 4;
-  buf.writeUInt32BE(Number(a.clientId), pos); pos += 4;
+  buf.writeUInt32BE(Number(a.networkId), pos); pos += 4;
   buf.writeUInt32BE(Number(a.cawonce), pos); pos += 4;
   buf.writeUInt8(recipients.length, pos); pos += 1;
   buf.writeUInt8(amounts.length, pos); pos += 1;
@@ -182,7 +182,7 @@ async function fullSetup(accounts) {
   const token = await MintableCaw.new();
   const mockRouter = await MockSwapRouter.new(token.address);
   const buyAndBurn = await CawBuyAndBurn.new(token.address, mockRouter.address);
-  const clientManager = await CawClientManager.new(buyAndBurn.address);
+  const networkManager = await CawNetworkManager.new(buyAndBurn.address);
   const CawProfileURI = artifacts.require("CawProfileURI");
   const CawFontDataA = artifacts.require("CawFontDataA");
   const CawFontDataB = artifacts.require("CawFontDataB");
@@ -193,14 +193,14 @@ async function fullSetup(accounts) {
   const cawProfileL2 = await CawProfileL2.new(l1, l2Endpoint.address);
   await l1Endpoint.setDestLzEndpoint(cawProfileL2.address, l2Endpoint.address);
 
-  const cawProfile = await CawProfile.new(token.address, uri.address, buyAndBurn.address, clientManager.address, l1Endpoint.address, l1);
+  const cawProfile = await CawProfile.new(token.address, uri.address, buyAndBurn.address, networkManager.address, l1Endpoint.address, l1);
   await buyAndBurn.setCawProfile(cawProfile.address);
   await cawProfileL2.setL1Peer(l1, cawProfile.address, false);
   await l2Endpoint.setDestLzEndpoint(cawProfile.address, l1Endpoint.address);
   await cawProfile.setL2Peer(l2, cawProfileL2.address);
 
-  await clientManager.createClient("Test Client", accounts[0], l2, 0, 0, 0, 0);
-  const clientId = 1;
+  await networkManager.createNetwork("Test Network", accounts[0], l2, 0, 0, 0, 0);
+  const networkId = 1;
   const minter = await CawProfileMinter.new(token.address, cawProfile.address, mockRouter.address);
   await cawProfile.setMinter(minter.address);
   const quoter = await CawProfileQuoter.new(cawProfile.address);
@@ -212,7 +212,7 @@ async function fullSetup(accounts) {
   const cawActions = await CawActions.new(cawProfileL2.address, mockVerifier.address, dummyVKey);
   await cawProfileL2.setCawActions(cawActions.address);
 
-  return { token, cawProfile, cawProfileL2, minter, quoter, cawActions, clientManager, clientId, mockVerifier };
+  return { token, cawProfile, cawProfileL2, minter, quoter, cawActions, networkManager, networkId, mockVerifier };
 }
 
 async function buyUsername(user, name) {
@@ -220,8 +220,8 @@ async function buyUsername(user, name) {
   await setup.token.mint(user, mintAmount);
   const cost = await setup.minter.costOfName(name);
   await setup.token.approve(setup.minter.address, cost.toString(), { from: user });
-  const quote = await setup.quoter.mintQuote(setup.clientId, false);
-  await setup.minter.mint(setup.clientId, name, quote.lzTokenFee, {
+  const quote = await setup.quoter.mintQuote(setup.networkId, false);
+  await setup.minter.mint(setup.networkId, name, quote.lzTokenFee, {
     from: user, value: quote.nativeFee.toString(),
   });
   return Number(await setup.cawProfile.totalSupply());
@@ -231,8 +231,8 @@ async function depositAndAuth(user, tokenId, amountWholeCaw) {
   const cawAmountWei = (BigInt(amountWholeCaw) * 10n ** 18n).toString();
   const balance = await setup.token.balanceOf(user);
   await setup.token.approve(setup.cawProfile.address, balance.toString(), { from: user });
-  const quote = await setup.quoter.depositQuote(setup.clientId, tokenId, cawAmountWei, l2, false);
-  await setup.cawProfile.deposit(setup.clientId, tokenId, cawAmountWei, l2, quote.lzTokenFee, {
+  const quote = await setup.quoter.depositQuote(setup.networkId, tokenId, cawAmountWei, l2, false);
+  await setup.cawProfile.deposit(setup.networkId, tokenId, cawAmountWei, l2, quote.lzTokenFee, {
     from: user, value: quote.nativeFee.toString(),
   });
 }
@@ -291,7 +291,7 @@ contract('CawActions — processActionsWithZkSigs', function (accounts) {
     const start = Number(await setup.cawActions.nextCawonce(userATokenId));
     const actions = [0, 1, 2].map(i => ({
       actionType: ACTION_TYPE.caw, senderId: userATokenId, receiverId: 0, receiverCawonce: 0,
-      clientId: setup.clientId, cawonce: start + i,
+      networkId: setup.networkId, cawonce: start + i,
       recipients: [], amounts: [0],   // owner-signed, explicit tip
       text: '0x' + Buffer.from(`zk${i}`).toString('hex'),
     }));
@@ -303,7 +303,7 @@ contract('CawActions — processActionsWithZkSigs', function (accounts) {
     const signersHex = packSigners([userA, userA, userA]);
     const dummyProof = "0x" + "ab".repeat(32);
 
-    const countBefore = Number(await setup.cawActions.clientActionCount(setup.clientId));
+    const countBefore = Number(await setup.cawActions.networkActionCount(setup.networkId));
 
     await setup.cawActions.processActionsWithZkSigs(
       validatorTokenId, hex, sigsHex, signersHex, dummyProof, 0, 0
@@ -312,7 +312,7 @@ contract('CawActions — processActionsWithZkSigs', function (accounts) {
     for (let i = 0; i < 3; i++) {
       expect(await setup.cawActions.isCawonceUsed(userATokenId, start + i)).to.equal(true);
     }
-    const countAfter = Number(await setup.cawActions.clientActionCount(setup.clientId));
+    const countAfter = Number(await setup.cawActions.networkActionCount(setup.networkId));
     expect(countAfter - countBefore).to.equal(3);
   });
 
@@ -324,7 +324,7 @@ contract('CawActions — processActionsWithZkSigs', function (accounts) {
     const start = Number(await setup.cawActions.nextCawonce(userATokenId));
     const action = {
       actionType: ACTION_TYPE.caw, senderId: userATokenId, receiverId: 0, receiverCawonce: 0,
-      clientId: setup.clientId, cawonce: start,
+      networkId: setup.networkId, cawonce: start,
       recipients: [], amounts: [0], text: '0x',
     };
     const { hex } = packActions([action]);
@@ -356,7 +356,7 @@ contract('CawActions — processActionsWithZkSigs', function (accounts) {
     const start = Number(await setup.cawActions.nextCawonce(userBTokenId));
     const actions = [0, 1].map(i => ({
       actionType: ACTION_TYPE.caw, senderId: userBTokenId, receiverId: 0, receiverCawonce: 0,
-      clientId: setup.clientId, cawonce: start + i,
+      networkId: setup.networkId, cawonce: start + i,
       recipients: [], amounts: [0], text: '0x',
     }));
     const { hex } = packActions(actions);
@@ -388,7 +388,7 @@ contract('CawActions — processActionsWithZkSigs', function (accounts) {
 
     const preAction = {
       actionType: ACTION_TYPE.caw, senderId: userBTokenId, receiverId: 0, receiverCawonce: 0,
-      clientId: setup.clientId, cawonce: skipMe,
+      networkId: setup.networkId, cawonce: skipMe,
       recipients: [], amounts: [0], text: '0x' + Buffer.from('pre').toString('hex'),
     };
     const { hex: preHex } = packActions([preAction]);
@@ -401,7 +401,7 @@ contract('CawActions — processActionsWithZkSigs', function (accounts) {
     // uses `skipMe` (already consumed → must skip), action 2 uses `start+2`.
     const actions = [start, skipMe, start + 2].map(c => ({
       actionType: ACTION_TYPE.caw, senderId: userBTokenId, receiverId: 0, receiverCawonce: 0,
-      clientId: setup.clientId, cawonce: c,
+      networkId: setup.networkId, cawonce: c,
       recipients: [], amounts: [0], text: '0x',
     }));
     const { hex } = packActions(actions);
@@ -410,13 +410,13 @@ contract('CawActions — processActionsWithZkSigs', function (accounts) {
     const signersHex = packSigners([userB, userB, userB]);
     const dummyProof = "0x" + "ee".repeat(32);
 
-    const countBefore = Number(await setup.cawActions.clientActionCount(setup.clientId));
+    const countBefore = Number(await setup.cawActions.networkActionCount(setup.networkId));
     const tx = await setup.cawActions.processActionsWithZkSigs(
       validatorTokenId, hex, sigsHex, signersHex, dummyProof, 0, 0
     );
 
     // Hash chain advanced by exactly 2 (the executed actions), not 3.
-    const countAfter = Number(await setup.cawActions.clientActionCount(setup.clientId));
+    const countAfter = Number(await setup.cawActions.networkActionCount(setup.networkId));
     expect(countAfter - countBefore).to.equal(2);
 
     // Cawonces 0 and 2 now used; skipMe was already used (still true).
@@ -443,7 +443,7 @@ contract('CawActions — processActionsWithZkSigs', function (accounts) {
     const start = Number(await setup.cawActions.nextCawonce(userATokenId));
     const actions = [0, 1].map(i => ({
       actionType: ACTION_TYPE.caw, senderId: userATokenId, receiverId: 0, receiverCawonce: 0,
-      clientId: setup.clientId, cawonce: start + i,
+      networkId: setup.networkId, cawonce: start + i,
       recipients: [], amounts: [0], text: '0x',
     }));
     const { hex } = packActions(actions);
@@ -484,7 +484,7 @@ contract('CawActions — processActionsWithZkSigs', function (accounts) {
 
     const action = {
       actionType: ACTION_TYPE.caw, senderId: 1, receiverId: 0, receiverCawonce: 0,
-      clientId: 1, cawonce: 0,
+      networkId: 1, cawonce: 0,
       recipients: [], amounts: [0], text: '0x',
     };
     const { hex } = packActions([action]);
@@ -517,7 +517,7 @@ contract('CawActions — processActionsWithZkSigs', function (accounts) {
   //
   // Bug fixed in this iteration: in the buggy version, B's tx would skip
   // the WITHDRAW (no second L2 debit) but `withdrawBitmap` had been set
-  // unconditionally during _trackClientAndWithdraw — so setWithdrawable
+  // unconditionally during _trackNetworkAndWithdraw — so setWithdrawable
   // would fire for the same amount AGAIN, double-crediting on L1.
   //
   // After fix: if a WITHDRAW is skipped, withdrawBitmap stays clear and
@@ -531,7 +531,7 @@ contract('CawActions — processActionsWithZkSigs', function (accounts) {
 
     const buildAction = (cawonce) => ({
       actionType: ACTION_TYPE.withdraw, senderId: userATokenId, receiverId: 0, receiverCawonce: 0,
-      clientId: setup.clientId, cawonce,
+      networkId: setup.networkId, cawonce,
       // Canonical WITHDRAW shape: recipients=[senderId] as a marker (the
       // first slot is unused, just there to make hasExplicitTip resolve
       // correctly per the H-2 fix). amounts=[X] is the withdraw target.
@@ -565,13 +565,13 @@ contract('CawActions — processActionsWithZkSigs', function (accounts) {
     //   - NO additional setWithdrawable / withdraw effect happens on chain
     const action0 = {
       actionType: ACTION_TYPE.caw, senderId: userATokenId, receiverId: 0, receiverCawonce: 0,
-      clientId: setup.clientId, cawonce: cawonceK + 1,
+      networkId: setup.networkId, cawonce: cawonceK + 1,
       recipients: [], amounts: [0], text: '0x',
     };
     const action1 = buildAction(cawonceK); // conflict
     const action2 = {
       actionType: ACTION_TYPE.caw, senderId: userATokenId, receiverId: 0, receiverCawonce: 0,
-      clientId: setup.clientId, cawonce: cawonceK + 2,
+      networkId: setup.networkId, cawonce: cawonceK + 2,
       recipients: [], amounts: [0], text: '0x',
     };
     const zkActions = [action0, action1, action2];
@@ -656,7 +656,7 @@ contract('CawActions — processActionsWithZkSigs', function (accounts) {
     const start = Number(await setup.cawActions.nextCawonce(userATokenId));
     const action = {
       actionType: ACTION_TYPE.like, senderId: userATokenId, receiverId: userBTokenId, receiverCawonce: 0,
-      clientId: setup.clientId, cawonce: start,
+      networkId: setup.networkId, cawonce: start,
       recipients: [], amounts: [], text: '0x',
     };
     const { hex } = packActions([action]);

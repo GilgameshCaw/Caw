@@ -37,7 +37,7 @@ contract CawActionsArchive is Ownable, ReentrancyGuard, OnlyOnce, OApp {
   struct Submission {
     address submitter;
     bytes32 merkleRoot;
-    uint32  clientId;
+    uint32  networkId;
     uint64  startCheckpointId;
     uint64  endCheckpointId;
     uint64  finalizedAt;
@@ -87,7 +87,7 @@ contract CawActionsArchive is Ownable, ReentrancyGuard, OnlyOnce, OApp {
   ///         off-chain readers keep working.
   mapping(uint256 => uint256) internal validatorSubmissionsIndexPlusOne;
 
-  /// @notice clientId => checkpointId => submissionId that covers it
+  /// @notice networkId => checkpointId => submissionId that covers it
   mapping(uint32 => mapping(uint256 => uint256)) public checkpointClaimed;
 
   /// @notice submissionId => checkpointId => correctHash from LZ
@@ -104,7 +104,7 @@ contract CawActionsArchive is Ownable, ReentrancyGuard, OnlyOnce, OApp {
   event SubmissionCreated(
     uint256 indexed submissionId,
     address indexed submitter,
-    uint32 indexed clientId,
+    uint32 indexed networkId,
     uint256 startCheckpointId,
     uint256 endCheckpointId,
     bytes32 merkleRoot
@@ -117,7 +117,7 @@ contract CawActionsArchive is Ownable, ReentrancyGuard, OnlyOnce, OApp {
   ///         `packedHash` / `rHash`. `entryHash` is small and stays inline.
   event ActionsArchived(
     uint256 indexed submissionId,
-    uint32 indexed clientId,
+    uint32 indexed networkId,
     uint16 actionCount,
     bytes32 packedHash,
     bytes32 rHash,
@@ -203,13 +203,13 @@ contract CawActionsArchive is Ownable, ReentrancyGuard, OnlyOnce, OApp {
   // ============================================
 
   /// @notice Submit checkpoint data for archival. Requires sufficient stake.
-  /// @param entryHash  The clientCurrentHash on the source L2 at
+  /// @param entryHash  The networkCurrentHash on the source L2 at
   ///                   checkpoint (startCheckpointId - 1). This is the
   ///                   value fed into the hash chain as the initial
   ///                   "prev" hash — committing it lets slashIncoherentRoot
   ///                   verify the full fold deterministically.
   function submitReplication(
-    uint32 clientId,
+    uint32 networkId,
     uint256 startCheckpointId,
     uint256 endCheckpointId,
     bytes calldata packedActions,
@@ -233,7 +233,7 @@ contract CawActionsArchive is Ownable, ReentrancyGuard, OnlyOnce, OApp {
 
     // Ensure no checkpoint in the range is already claimed
     for (uint256 cp = startCheckpointId; cp <= endCheckpointId; ) {
-      require(checkpointClaimed[clientId][cp] == 0, "Checkpoint already claimed");
+      require(checkpointClaimed[networkId][cp] == 0, "Checkpoint already claimed");
       unchecked { ++cp; }
     }
 
@@ -251,7 +251,7 @@ contract CawActionsArchive is Ownable, ReentrancyGuard, OnlyOnce, OApp {
     submissions[submissionId] = Submission({
       submitter: msg.sender,
       merkleRoot: merkleRoot,
-      clientId: clientId,
+      networkId: networkId,
       startCheckpointId: uint64(startCheckpointId),
       endCheckpointId: uint64(endCheckpointId),
       finalizedAt: uint64(block.timestamp + CHALLENGE_PERIOD),
@@ -260,7 +260,7 @@ contract CawActionsArchive is Ownable, ReentrancyGuard, OnlyOnce, OApp {
     });
 
     for (uint256 cp = startCheckpointId; cp <= endCheckpointId; ) {
-      checkpointClaimed[clientId][cp] = submissionId;
+      checkpointClaimed[networkId][cp] = submissionId;
       unchecked { ++cp; }
     }
 
@@ -269,15 +269,15 @@ contract CawActionsArchive is Ownable, ReentrancyGuard, OnlyOnce, OApp {
     // Record (length) — i.e. one past the index — so default 0 means "not in array".
     validatorSubmissionsIndexPlusOne[submissionId] = validatorSubmissions[msg.sender].length;
 
-    emit SubmissionCreated(submissionId, msg.sender, clientId, startCheckpointId, endCheckpointId, merkleRoot);
+    emit SubmissionCreated(submissionId, msg.sender, networkId, startCheckpointId, endCheckpointId, merkleRoot);
     // Emit a *commitment* to the submitter-supplied data. The full
     // packedActions and r[] live in this tx's calldata; off-chain
     // monitors fetch them via eth_getTransactionByHash and validate
     // against packedHash / rHash. entryHash stays inline so monitors
     // can compare it against the source L2's
-    // clientHashAtCheckpoint(clientId, startCheckpointId-1) without
+    // networkHashAtCheckpoint(networkId, startCheckpointId-1) without
     // any extra fetch.
-    emit ActionsArchived(submissionId, clientId, uint16(actionCount), packedHash, rHash, entryHash);
+    emit ActionsArchived(submissionId, networkId, uint16(actionCount), packedHash, rHash, entryHash);
   }
 
   // ============================================
@@ -335,7 +335,7 @@ contract CawActionsArchive is Ownable, ReentrancyGuard, OnlyOnce, OApp {
   ///   someone re-relays.
   ///
   ///   The recovery path is to call CawChallengeRelay.relayChallenge or
-  ///   .relayChallengeBatch again with the same (submissionId, clientId,
+  ///   .relayChallengeBatch again with the same (submissionId, networkId,
   ///   checkpointId(s)). The relay re-reads from CawActions checkpoint
   ///   storage (which is permanent) and emits a fresh LZ message — anyone
   ///   can call it, no operator privileges required. The archive's executor
@@ -391,16 +391,16 @@ contract CawActionsArchive is Ownable, ReentrancyGuard, OnlyOnce, OApp {
   function _processChallenge(bytes calldata payload) external {
     require(msg.sender == address(this), "only self");
 
-    // Payload is always the batch shape: (submissionId, clientId, cps[], hashes[]).
+    // Payload is always the batch shape: (submissionId, networkId, cps[], hashes[]).
     // Single-cp callers send arrays of length 1; the relay's two public
     // entrypoints (relayChallenge / relayChallengeBatch) produce identical
     // payloads, so there's one decode path here.
-    (uint256 submissionId, uint32 clientId, uint256[] memory cps, bytes32[] memory hashes) =
+    (uint256 submissionId, uint32 networkId, uint256[] memory cps, bytes32[] memory hashes) =
       abi.decode(payload, (uint256, uint32, uint256[], bytes32[]));
 
     Submission storage sub = submissions[submissionId];
     if (sub.status != Status.PENDING) return;
-    if (sub.clientId != clientId) return;
+    if (sub.networkId != networkId) return;
     if (cps.length != hashes.length) return;
 
     uint256 start = sub.startCheckpointId;
@@ -458,7 +458,7 @@ contract CawActionsArchive is Ownable, ReentrancyGuard, OnlyOnce, OApp {
         s.status = Status.SLASHED;
         // Release checkpoint claims
         for (uint256 cp = s.startCheckpointId; cp <= s.endCheckpointId; ) {
-          checkpointClaimed[s.clientId][cp] = 0;
+          checkpointClaimed[s.networkId][cp] = 0;
           unchecked { ++cp; }
         }
       }
@@ -561,7 +561,7 @@ contract CawActionsArchive is Ownable, ReentrancyGuard, OnlyOnce, OApp {
       if (s.status == Status.PENDING) {
         s.status = Status.SLASHED;
         for (uint256 cp = s.startCheckpointId; cp <= s.endCheckpointId; ) {
-          checkpointClaimed[s.clientId][cp] = 0;
+          checkpointClaimed[s.networkId][cp] = 0;
           unchecked { ++cp; }
         }
       }
@@ -647,21 +647,21 @@ contract CawActionsArchive is Ownable, ReentrancyGuard, OnlyOnce, OApp {
   // VIEW HELPERS
   // ============================================
 
-  function isRangeAvailable(uint32 clientId, uint256 start, uint256 end) external view returns (bool) {
+  function isRangeAvailable(uint32 networkId, uint256 start, uint256 end) external view returns (bool) {
     for (uint256 cp = start; cp <= end; ) {
-      if (checkpointClaimed[clientId][cp] != 0) return false;
+      if (checkpointClaimed[networkId][cp] != 0) return false;
       unchecked { ++cp; }
     }
     return true;
   }
 
   function getSubmission(uint256 submissionId) external view returns (
-    address submitter, bytes32 merkleRoot, uint32 clientId,
+    address submitter, bytes32 merkleRoot, uint32 networkId,
     uint256 startCheckpointId, uint256 endCheckpointId,
     uint256 finalizedAt, Status status
   ) {
     Submission storage sub = submissions[submissionId];
-    return (sub.submitter, sub.merkleRoot, sub.clientId,
+    return (sub.submitter, sub.merkleRoot, sub.networkId,
             sub.startCheckpointId, sub.endCheckpointId, sub.finalizedAt, sub.status);
   }
 

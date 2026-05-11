@@ -4,13 +4,13 @@ pragma solidity ^0.8.0;
 
 import "@layerzerolabs/oapp-evm/contracts/oapp/libs/OptionsBuilder.sol";
 import { MessagingFee } from "@layerzerolabs/lz-evm-oapp-v2/contracts/oapp/OApp.sol";
-import { CawClientManager } from "./CawClientManager.sol";
+import { CawNetworkManager } from "./CawNetworkManager.sol";
 
 interface ICawProfileForQuoter {
-  function clientManager() external view returns (CawClientManager);
-  function authenticated(uint32 clientId, uint32 tokenId) external view returns (bool);
-  function withdrawFeeLocked(uint32 clientId, uint32 tokenId) external view returns (bool);
-  function lockedWithdrawFee(uint32 clientId, uint32 tokenId) external view returns (uint256);
+  function networkManager() external view returns (CawNetworkManager);
+  function authenticated(uint32 networkId, uint32 tokenId) external view returns (bool);
+  function withdrawFeeLocked(uint32 networkId, uint32 tokenId) external view returns (bool);
+  function lockedWithdrawFee(uint32 networkId, uint32 tokenId) external view returns (uint256);
   function pendingTransferUpdates(uint32 lzDestId, address newOwner, uint32 tokenId) external view returns (uint32[] memory, address[] memory, uint64[] memory);
   function pendingTransferUpdates(uint32 lzDestId) external view returns (uint32[] memory, address[] memory, uint64[] memory);
   function peerWithMaxPendingTransfers() external view returns (uint32);
@@ -22,7 +22,7 @@ interface ICawProfileForQuoter {
   function mainnetLzId() external view returns (uint32);
   function updateOwnersSelector() external view returns (bytes4);
   function authSelector() external view returns (bytes4);
-  function lzQuote(uint32 cawClientId, bytes4 selector, uint256 n, bytes memory payload, uint32 lzDestId, bool _payInLzToken) external view returns (MessagingFee memory quote);
+  function lzQuote(uint32 cawNetworkId, bytes4 selector, uint256 n, bytes memory payload, uint32 lzDestId, bool _payInLzToken) external view returns (MessagingFee memory quote);
 }
 
 /**
@@ -39,49 +39,49 @@ contract CawProfileQuoter {
     cawProfile = ICawProfileForQuoter(_cawProfile);
   }
 
-  function authenticateQuote(uint32 clientId, uint32 tokenId, uint32 lzDestId, bool payInLzToken) public view returns (MessagingFee memory quote) {
+  function authenticateQuote(uint32 networkId, uint32 tokenId, uint32 lzDestId, bool payInLzToken) public view returns (MessagingFee memory quote) {
     uint32[] memory tokenIds; address[] memory owners; uint64[] memory stamps;
     (tokenIds, owners, stamps) = cawProfile.pendingTransferUpdates(lzDestId, msg.sender, tokenId);
 
     bytes memory payload = abi.encodeWithSelector(
-      cawProfile.authSelector(), clientId, tokenId, tokenIds, owners, stamps
+      cawProfile.authSelector(), networkId, tokenId, tokenIds, owners, stamps
     );
 
-    quote = cawProfile.lzQuote(clientId, cawProfile.authSelector(), tokenIds.length, payload, lzDestId, payInLzToken);
-    quote.nativeFee += cawProfile.clientManager().getAuthFee(clientId) * 2;
+    quote = cawProfile.lzQuote(networkId, cawProfile.authSelector(), tokenIds.length, payload, lzDestId, payInLzToken);
+    quote.nativeFee += cawProfile.networkManager().getAuthFee(networkId) * 2;
     return quote;
   }
 
-  function depositQuote(uint32 clientId, uint32 tokenId, uint256 amount, uint32 lzDestId, bool payInLzToken) public view returns (MessagingFee memory quote) {
+  function depositQuote(uint32 networkId, uint32 tokenId, uint256 amount, uint32 lzDestId, bool payInLzToken) public view returns (MessagingFee memory quote) {
     uint32[] memory tokenIds; address[] memory owners; uint64[] memory stamps;
     (tokenIds, owners, stamps) = cawProfile.pendingTransferUpdates(lzDestId, msg.sender, tokenId);
 
     bytes memory payload = abi.encodeWithSelector(
-      cawProfile.addToBalanceSelector(), clientId, tokenId, amount, tokenIds, owners, stamps
+      cawProfile.addToBalanceSelector(), networkId, tokenId, amount, tokenIds, owners, stamps
     );
 
-    quote = cawProfile.lzQuote(clientId, cawProfile.addToBalanceSelector(), tokenIds.length, payload, lzDestId, payInLzToken);
-    quote.nativeFee += cawProfile.clientManager().getDepositFee(clientId) * 2;
+    quote = cawProfile.lzQuote(networkId, cawProfile.addToBalanceSelector(), tokenIds.length, payload, lzDestId, payInLzToken);
+    quote.nativeFee += cawProfile.networkManager().getDepositFee(networkId) * 2;
 
-    if (!cawProfile.authenticated(clientId, tokenId))
-      quote.nativeFee += cawProfile.clientManager().getAuthFee(clientId) * 2;
+    if (!cawProfile.authenticated(networkId, tokenId))
+      quote.nativeFee += cawProfile.networkManager().getAuthFee(networkId) * 2;
 
     return quote;
   }
 
-  function mintQuote(uint32 clientId, bool payInLzToken) public view returns (MessagingFee memory quote) {
+  function mintQuote(uint32 networkId, bool payInLzToken) public view returns (MessagingFee memory quote) {
     quote = updateOwnerQuote(payInLzToken);
-    quote.nativeFee += cawProfile.clientManager().getMintFee(clientId) * 2;
+    quote.nativeFee += cawProfile.networkManager().getMintFee(networkId) * 2;
     return quote;
   }
 
-  function mintAndDepositQuote(uint32 clientId, uint256 depositAmount, uint32 lzDestId, bool payInLzToken) public view returns (MessagingFee memory quote) {
+  function mintAndDepositQuote(uint32 networkId, uint256 depositAmount, uint32 lzDestId, bool payInLzToken) public view returns (MessagingFee memory quote) {
     // Storage-fee leg: mint + deposit + auth (new user always needs auth).
-    quote.nativeFee = cawProfile.clientManager().getMintFee(clientId) * 2
-                    + cawProfile.clientManager().getDepositFee(clientId) * 2
-                    + cawProfile.clientManager().getAuthFee(clientId) * 2;
+    quote.nativeFee = cawProfile.networkManager().getMintFee(networkId) * 2
+                    + cawProfile.networkManager().getDepositFee(networkId) * 2
+                    + cawProfile.networkManager().getAuthFee(networkId) * 2;
 
-    // LZ leg: only needed for true L2-storage clients. In bypassLZ
+    // LZ leg: only needed for true L2-storage networks. In bypassLZ
     // (lzDestId == mainnetLzId) the L2 mirror is updated via a direct call.
     if (lzDestId == cawProfile.mainnetLzId()) return quote;
 
@@ -89,19 +89,19 @@ contract CawProfileQuoter {
     (tokenIds, owners, stamps) = cawProfile.pendingTransferUpdates(lzDestId, msg.sender, 0);
 
     bytes memory payload = abi.encodeWithSelector(
-      cawProfile.addToBalanceSelector(), clientId, uint32(0), depositAmount, tokenIds, owners, stamps
+      cawProfile.addToBalanceSelector(), networkId, uint32(0), depositAmount, tokenIds, owners, stamps
     );
 
-    MessagingFee memory lz = cawProfile.lzQuote(clientId, cawProfile.addToBalanceSelector(), tokenIds.length, payload, lzDestId, payInLzToken);
+    MessagingFee memory lz = cawProfile.lzQuote(networkId, cawProfile.addToBalanceSelector(), tokenIds.length, payload, lzDestId, payInLzToken);
     quote.nativeFee += lz.nativeFee;
     quote.lzTokenFee += lz.lzTokenFee;
     return quote;
   }
 
-  function mintAndAuthQuote(uint32 clientId, uint32 lzDestId, bool payInLzToken) public view returns (MessagingFee memory quote) {
+  function mintAndAuthQuote(uint32 networkId, uint32 lzDestId, bool payInLzToken) public view returns (MessagingFee memory quote) {
     // Storage-fee leg: mint + auth (the deposit fee is intentionally skipped).
-    quote.nativeFee = cawProfile.clientManager().getMintFee(clientId) * 2
-                    + cawProfile.clientManager().getAuthFee(clientId) * 2;
+    quote.nativeFee = cawProfile.networkManager().getMintFee(networkId) * 2
+                    + cawProfile.networkManager().getAuthFee(networkId) * 2;
 
     // LZ leg: only needed when the storage chain is a true L2 peer. In bypassLZ
     // (lzDestId == mainnetLzId) the L2 mirror is updated via a direct call, so
@@ -115,7 +115,7 @@ contract CawProfileQuoter {
 
     bytes memory payload = abi.encodeWithSelector(
       cawProfile.mintAuthSelector(),
-      clientId,
+      networkId,
       uint32(0),
       msg.sender,
       "placeholdr",  // ~10-char placeholder username for sizing
@@ -124,7 +124,7 @@ contract CawProfileQuoter {
       stamps
     );
 
-    MessagingFee memory lz = cawProfile.lzQuote(clientId, cawProfile.mintAuthSelector(), tokenIds.length, payload, lzDestId, payInLzToken);
+    MessagingFee memory lz = cawProfile.lzQuote(networkId, cawProfile.mintAuthSelector(), tokenIds.length, payload, lzDestId, payInLzToken);
     quote.nativeFee += lz.nativeFee;
     quote.lzTokenFee += lz.lzTokenFee;
     return quote;
@@ -134,13 +134,13 @@ contract CawProfileQuoter {
   /// @dev When `sessionKey == address(0)`, falls through to mintAndDepositQuote (no session leg).
   ///      When `lzDestId == mainnetLzId` (bypassLZ), there's no LZ fee — just storage fees.
   function mintAndDepositAndQuickSignQuote(
-    uint32 clientId, uint256 depositAmount, uint32 lzDestId, bool payInLzToken,
+    uint32 networkId, uint256 depositAmount, uint32 lzDestId, bool payInLzToken,
     address sessionKey
   ) public view returns (MessagingFee memory quote) {
     // Storage fees (mint + deposit + auth) — same as mintAndDepositQuote.
-    quote.nativeFee = cawProfile.clientManager().getMintFee(clientId) * 2
-                    + cawProfile.clientManager().getDepositFee(clientId) * 2
-                    + cawProfile.clientManager().getAuthFee(clientId) * 2;
+    quote.nativeFee = cawProfile.networkManager().getMintFee(networkId) * 2
+                    + cawProfile.networkManager().getDepositFee(networkId) * 2
+                    + cawProfile.networkManager().getAuthFee(networkId) * 2;
 
     if (lzDestId == cawProfile.mainnetLzId()) return quote;
 
@@ -152,17 +152,17 @@ contract CawProfileQuoter {
     if (sessionKey == address(0)) {
       selector = cawProfile.addToBalanceSelector();
       payload = abi.encodeWithSelector(
-        selector, clientId, uint32(0), depositAmount, tokenIds, owners, stamps
+        selector, networkId, uint32(0), depositAmount, tokenIds, owners, stamps
       );
     } else {
       selector = cawProfile.depositRegisterSessionSelector();
       payload = abi.encodeWithSelector(
-        selector, clientId, uint32(0), depositAmount, msg.sender,
+        selector, networkId, uint32(0), depositAmount, msg.sender,
         sessionKey, uint64(0), uint256(0), uint64(0), tokenIds, owners, stamps
       );
     }
 
-    MessagingFee memory lz = cawProfile.lzQuote(clientId, selector, tokenIds.length, payload, lzDestId, payInLzToken);
+    MessagingFee memory lz = cawProfile.lzQuote(networkId, selector, tokenIds.length, payload, lzDestId, payInLzToken);
     quote.nativeFee += lz.nativeFee;
     quote.lzTokenFee += lz.lzTokenFee;
     return quote;
@@ -172,11 +172,11 @@ contract CawProfileQuoter {
   /// @dev When `sessionKey == address(0)`, falls through to mintAndAuthQuote (no session leg).
   ///      When `lzDestId == mainnetLzId` (bypassLZ), there's no LZ fee — just storage fees.
   function mintAndAuthAndQuickSignQuote(
-    uint32 clientId, uint32 lzDestId, bool payInLzToken,
+    uint32 networkId, uint32 lzDestId, bool payInLzToken,
     address sessionKey
   ) public view returns (MessagingFee memory quote) {
-    quote.nativeFee = cawProfile.clientManager().getMintFee(clientId) * 2
-                    + cawProfile.clientManager().getAuthFee(clientId) * 2;
+    quote.nativeFee = cawProfile.networkManager().getMintFee(networkId) * 2
+                    + cawProfile.networkManager().getAuthFee(networkId) * 2;
 
     if (lzDestId == cawProfile.mainnetLzId()) return quote;
 
@@ -188,17 +188,17 @@ contract CawProfileQuoter {
     if (sessionKey == address(0)) {
       selector = cawProfile.mintAuthSelector();
       payload = abi.encodeWithSelector(
-        selector, clientId, uint32(0), msg.sender, "placeholdr", tokenIds, owners, stamps
+        selector, networkId, uint32(0), msg.sender, "placeholdr", tokenIds, owners, stamps
       );
     } else {
       selector = cawProfile.mintAuthRegisterSessionSelector();
       payload = abi.encodeWithSelector(
-        selector, clientId, uint32(0), msg.sender, "placeholdr",
+        selector, networkId, uint32(0), msg.sender, "placeholdr",
         sessionKey, uint64(0), uint256(0), uint64(0), tokenIds, owners, stamps
       );
     }
 
-    MessagingFee memory lz = cawProfile.lzQuote(clientId, selector, tokenIds.length, payload, lzDestId, payInLzToken);
+    MessagingFee memory lz = cawProfile.lzQuote(networkId, selector, tokenIds.length, payload, lzDestId, payInLzToken);
     quote.nativeFee += lz.nativeFee;
     quote.lzTokenFee += lz.lzTokenFee;
     return quote;
@@ -217,11 +217,11 @@ contract CawProfileQuoter {
   // deposit) is unknown until the tx settles; we use a placeholder value
   // for LZ payload sizing only.
 
-  function depositZapQuote(uint32 cawClientId, uint32 tokenId, uint32 lzDestId, bool payInLzToken) public view returns (MessagingFee memory quote) {
+  function depositZapQuote(uint32 cawNetworkId, uint32 tokenId, uint32 lzDestId, bool payInLzToken) public view returns (MessagingFee memory quote) {
     // Storage fees: deposit + auth (auth only if not yet authenticated).
-    quote.nativeFee = cawProfile.clientManager().getDepositFee(cawClientId) * 2;
-    if (!cawProfile.authenticated(cawClientId, tokenId))
-      quote.nativeFee += cawProfile.clientManager().getAuthFee(cawClientId) * 2;
+    quote.nativeFee = cawProfile.networkManager().getDepositFee(cawNetworkId) * 2;
+    if (!cawProfile.authenticated(cawNetworkId, tokenId))
+      quote.nativeFee += cawProfile.networkManager().getAuthFee(cawNetworkId) * 2;
 
     // bypassLZ: no LZ leg, just storage fees. Mirrors the mintAndDeposit
     // short-circuit added in 48e37cb.
@@ -233,36 +233,36 @@ contract CawProfileQuoter {
 
     // Use 0 as placeholder for `amount` — it doesn't affect LZ payload size.
     bytes memory payload = abi.encodeWithSelector(
-      cawProfile.addToBalanceSelector(), cawClientId, tokenId, uint256(0), tokenIds, owners, stamps
+      cawProfile.addToBalanceSelector(), cawNetworkId, tokenId, uint256(0), tokenIds, owners, stamps
     );
-    MessagingFee memory lz = cawProfile.lzQuote(cawClientId, cawProfile.addToBalanceSelector(), tokenIds.length, payload, lzDestId, payInLzToken);
+    MessagingFee memory lz = cawProfile.lzQuote(cawNetworkId, cawProfile.addToBalanceSelector(), tokenIds.length, payload, lzDestId, payInLzToken);
     quote.nativeFee += lz.nativeFee;
     quote.lzTokenFee += lz.lzTokenFee;
     return quote;
   }
 
-  function mintAndDepositZapQuote(uint32 clientId, uint32 lzDestId, bool payInLzToken) public view returns (MessagingFee memory quote) {
-    return mintAndDepositQuote(clientId, 0, lzDestId, payInLzToken);
+  function mintAndDepositZapQuote(uint32 networkId, uint32 lzDestId, bool payInLzToken) public view returns (MessagingFee memory quote) {
+    return mintAndDepositQuote(networkId, 0, lzDestId, payInLzToken);
   }
 
-  function mintAndDepositAndQuickSignZapQuote(uint32 clientId, address sessionKey, uint32 lzDestId, bool payInLzToken) public view returns (MessagingFee memory quote) {
-    return mintAndDepositAndQuickSignQuote(clientId, 0, lzDestId, payInLzToken, sessionKey);
+  function mintAndDepositAndQuickSignZapQuote(uint32 networkId, address sessionKey, uint32 lzDestId, bool payInLzToken) public view returns (MessagingFee memory quote) {
+    return mintAndDepositAndQuickSignQuote(networkId, 0, lzDestId, payInLzToken, sessionKey);
   }
 
-  function withdrawQuote(uint32 clientId, bool payInLzToken) public view returns (MessagingFee memory quote) {
+  function withdrawQuote(uint32 networkId, bool payInLzToken) public view returns (MessagingFee memory quote) {
     quote = updateOwnerQuote(payInLzToken);
-    quote.nativeFee += cawProfile.clientManager().getWithdrawFee(clientId) * 2;
+    quote.nativeFee += cawProfile.networkManager().getWithdrawFee(networkId) * 2;
     return quote;
   }
 
   /// @notice Returns the effective withdraw fee for a specific token, accounting for the locked-in
-  ///         rate if one exists. Use this for accurate quotes — `withdrawQuote(clientId)` returns
-  ///         the current client fee without considering the lock.
-  /// @return The lower of (current client fee, locked-in fee for this token), in wei
-  function effectiveWithdrawFee(uint32 clientId, uint32 tokenId) public view returns (uint256) {
-    uint256 current = cawProfile.clientManager().getWithdrawFee(clientId);
-    if (cawProfile.withdrawFeeLocked(clientId, tokenId)) {
-      uint256 locked = cawProfile.lockedWithdrawFee(clientId, tokenId);
+  ///         rate if one exists. Use this for accurate quotes — `withdrawQuote(networkId)` returns
+  ///         the current network fee without considering the lock.
+  /// @return The lower of (current network fee, locked-in fee for this token), in wei
+  function effectiveWithdrawFee(uint32 networkId, uint32 tokenId) public view returns (uint256) {
+    uint256 current = cawProfile.networkManager().getWithdrawFee(networkId);
+    if (cawProfile.withdrawFeeLocked(networkId, tokenId)) {
+      uint256 locked = cawProfile.lockedWithdrawFee(networkId, tokenId);
       if (locked < current) return locked;
     }
     return current;
@@ -277,7 +277,7 @@ contract CawProfileQuoter {
     bytes memory payload = abi.encodeWithSelector(
       cawProfile.updateOwnersSelector(), tokenIds, owners, stamps
     );
-    // updateOwners isn't bound to a single clientId — use 0 (no override).
+    // updateOwners isn't bound to a single networkId — use 0 (no override).
     return cawProfile.lzQuote(0, cawProfile.updateOwnersSelector(), tokenIds.length, payload, lzDestId, payInLzToken);
   }
 
@@ -300,7 +300,7 @@ contract CawProfileQuoter {
     bytes memory payload = abi.encodeWithSelector(
       cawProfile.updateOwnersSelector(), tokenIds, owners, stamps
     );
-    // updateOwners isn't bound to a single clientId — use 0 (no override).
+    // updateOwners isn't bound to a single networkId — use 0 (no override).
     return cawProfile.lzQuote(0, cawProfile.updateOwnersSelector(), tokenIds.length, payload, lzDestId, payInLzToken);
   }
 

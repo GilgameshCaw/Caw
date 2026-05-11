@@ -39,7 +39,7 @@ sol! {
 // ============================================================================
 
 pub const ACTIONDATA_TYPESTR: &[u8] =
-    b"ActionData(uint8 actionType,uint32 senderId,uint32 receiverId,uint32 receiverCawonce,uint32 clientId,uint32 cawonce,uint32[] recipients,uint64[] amounts,bytes text)";
+    b"ActionData(uint8 actionType,uint32 senderId,uint32 receiverId,uint32 receiverCawonce,uint32 networkId,uint32 cawonce,uint32[] recipients,uint64[] amounts,bytes text)";
 
 pub const ACTIONBATCH_TYPESTR: &[u8] =
     b"ActionBatch(uint32 senderId,uint32 firstCawonce,uint32 actionCount,bytes32 actionsHash)";
@@ -94,7 +94,7 @@ pub struct UnpackedAction<'a> {
     pub sender_id: u32,
     pub receiver_id: u32,
     pub receiver_cawonce: u32,
-    pub client_id: u32,
+    pub network_id: u32,
     pub cawonce: u32,
     pub recipients: Vec<u32>,
     pub amounts: Vec<u64>,
@@ -117,7 +117,7 @@ pub fn unpack_action(packed: &[u8], pos: usize) -> (UnpackedAction<'_>, usize) {
     let sender_id = u32::from_be_bytes(packed[pos + 1..pos + 5].try_into().unwrap());
     let receiver_id = u32::from_be_bytes(packed[pos + 5..pos + 9].try_into().unwrap());
     let receiver_cawonce = u32::from_be_bytes(packed[pos + 9..pos + 13].try_into().unwrap());
-    let client_id = u32::from_be_bytes(packed[pos + 13..pos + 17].try_into().unwrap());
+    let network_id = u32::from_be_bytes(packed[pos + 13..pos + 17].try_into().unwrap());
     let cawonce = u32::from_be_bytes(packed[pos + 17..pos + 21].try_into().unwrap());
     let rc = packed[pos + 21] as usize;
     let ac = packed[pos + 22] as usize;
@@ -142,7 +142,7 @@ pub fn unpack_action(packed: &[u8], pos: usize) -> (UnpackedAction<'_>, usize) {
             sender_id,
             receiver_id,
             receiver_cawonce,
-            client_id,
+            network_id,
             cawonce,
             recipients,
             amounts,
@@ -245,7 +245,7 @@ pub fn action_data_struct_hash<K: Keccak>(k: &K, action: &UnpackedAction<'_>) ->
     buf.extend_from_slice(&left_pad_32(&action.sender_id.to_be_bytes()));
     buf.extend_from_slice(&left_pad_32(&action.receiver_id.to_be_bytes()));
     buf.extend_from_slice(&left_pad_32(&action.receiver_cawonce.to_be_bytes()));
-    buf.extend_from_slice(&left_pad_32(&action.client_id.to_be_bytes()));
+    buf.extend_from_slice(&left_pad_32(&action.network_id.to_be_bytes()));
     buf.extend_from_slice(&left_pad_32(&action.cawonce.to_be_bytes()));
     buf.extend_from_slice(&recip_hash);
     buf.extend_from_slice(&amt_hash);

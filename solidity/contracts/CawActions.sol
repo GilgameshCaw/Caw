@@ -54,7 +54,7 @@ contract CawActions is Ownable {
     uint32 senderId;
     uint32 receiverId;
     uint32 receiverCawonce;
-    uint32 clientId;
+    uint32 networkId;
     uint32 cawonce;
     uint32[] recipients;
     uint64[] amounts;  // Whole CAW tokens (not wei) - multiplied by 10^18 on-chain
@@ -63,10 +63,10 @@ contract CawActions is Ownable {
 
   bytes32 public immutable eip712DomainHash;
 
-  // Checkpointing for verifiable migration to other chains (per-client)
-  mapping(uint32 => uint256) public clientActionCount;
-  mapping(uint32 => bytes32) public clientCurrentHash;
-  mapping(uint32 => mapping(uint256 => bytes32)) public clientHashAtCheckpoint;
+  // Checkpointing for verifiable migration to other chains (per-network)
+  mapping(uint32 => uint256) public networkActionCount;
+  mapping(uint32 => bytes32) public networkCurrentHash;
+  mapping(uint32 => mapping(uint256 => bytes32)) public networkHashAtCheckpoint;
 
   mapping(uint32 => mapping(uint256 => uint256)) public usedCawonce;
   mapping(uint32 => uint256) public currentCawonceMap;
@@ -78,10 +78,10 @@ contract CawActions is Ownable {
   ///         in the originating tx's calldata (the same bytes passed to
   ///         processActions / safeProcessActions); indexers fetch it via
   ///         eth_getTransactionByHash and validate against `batchHash`.
-  ///         `validatorId` is the submitting validator's profile id; `clientId`
-  ///         is the per-batch single-client id (all actions in a batch share it).
+  ///         `validatorId` is the submitting validator's profile id; `networkId`
+  ///         is the per-batch single-network id (all actions in a batch share it).
   event ActionsProcessed(
-    uint32 indexed clientId,
+    uint32 indexed networkId,
     uint32 indexed validatorId,
     uint16 actionCount,
     bytes32 batchHash
@@ -96,7 +96,7 @@ contract CawActions is Ownable {
     "EIP712Domain(string name,string version,uint256 chainId,address verifyingContract)"
   );
   bytes32 private constant ACTIONDATA_TYPEHASH = keccak256(
-    "ActionData(uint8 actionType,uint32 senderId,uint32 receiverId,uint32 receiverCawonce,uint32 clientId,uint32 cawonce,uint32[] recipients,uint64[] amounts,bytes text)"
+    "ActionData(uint8 actionType,uint32 senderId,uint32 receiverId,uint32 receiverCawonce,uint32 networkId,uint32 cawonce,uint32[] recipients,uint64[] amounts,bytes text)"
   );
   /// @dev Typed-data hash for batched-action signatures. One signature over a
   ///      group of actions, all sharing the same senderId. The hash chain on
@@ -106,7 +106,7 @@ contract CawActions is Ownable {
     "ActionBatch(uint32 senderId,uint32 firstCawonce,uint32 actionCount,bytes32 actionsHash)"
   );
 
-  /// @dev Checkpoint interval — a checkpoint is stored every N actions per client.
+  /// @dev Checkpoint interval — a checkpoint is stored every N actions per network.
   /// @dev 32 actions per checkpoint. Small checkpoints enable flexible multibatch
   ///      replication: the validator packs consecutive checkpoints into one LZ
   ///      message up to the ~60KB limit. Worst case (32 actions, 420B text,
@@ -149,7 +149,7 @@ contract CawActions is Ownable {
   ///         Indexers reconstructing the chain need this to know which
   ///         slice of the calldata to re-derive state from.
   event ActionsProcessedZk(
-    uint32 indexed clientId,
+    uint32 indexed networkId,
     uint32 indexed validatorId,
     uint16 actionCount,
     uint256 actionsExecutedBitmap,
@@ -176,7 +176,7 @@ contract CawActions is Ownable {
   //       [4]   uint32  senderId
   //       [4]   uint32  receiverId
   //       [4]   uint32  receiverCawonce
-  //       [4]   uint32  clientId
+  //       [4]   uint32  networkId
   //       [4]   uint32  cawonce
   //       [1]   uint8   recipientCount (N)
   //       [1]   uint8   amountCount (M) — as signed (0, N, or N+1)
@@ -233,12 +233,12 @@ contract CawActions is Ownable {
     require(c.pos == packedActions.length, "Trailing bytes");
 
     // Flush the in-memory hash chain back to storage — one SSTORE pair
-    // total instead of one per action. clientHashLoaded is the latch:
+    // total instead of one per action. networkHashLoaded is the latch:
     // false means no actions were applied (impossible past the actionCount
     // > 0 check above, but defensive against future refactors).
-    if (c.clientHashLoaded) {
-      clientCurrentHash[c.firstClientId] = c.clientHash;
-      clientActionCount[c.firstClientId] = c.clientActionCount;
+    if (c.networkHashLoaded) {
+      networkCurrentHash[c.firstNetworkId] = c.networkHash;
+      networkActionCount[c.firstNetworkId] = c.networkActionCount;
     }
 
     // Credit the validator with the sum of implicit per-action session tips
@@ -257,7 +257,7 @@ contract CawActions is Ownable {
     }
 
     emit ActionsProcessed(
-      c.firstClientId,
+      c.firstNetworkId,
       validatorId,
       uint16(actionCount),
       keccak256(packedActions)
@@ -365,9 +365,9 @@ contract CawActions is Ownable {
     // See processActions for the trailing-bytes rationale.
     require(c.pos == packedActions.length, "Trailing bytes");
 
-    if (c.clientHashLoaded) {
-      clientCurrentHash[c.firstClientId] = c.clientHash;
-      clientActionCount[c.firstClientId] = c.clientActionCount;
+    if (c.networkHashLoaded) {
+      networkCurrentHash[c.firstNetworkId] = c.networkHash;
+      networkActionCount[c.firstNetworkId] = c.networkActionCount;
     }
     if (c.implicitTipOwed > 0) {
       // See processActions for the validatorId rationale.
@@ -376,7 +376,7 @@ contract CawActions is Ownable {
     }
 
     emit ActionsProcessedZk(
-      c.firstClientId,
+      c.firstNetworkId,
       validatorId,
       uint16(actionCount),
       actionsExecutedBitmap,
@@ -470,7 +470,7 @@ contract CawActions is Ownable {
   ///      proof generation and submission, we DROP the slot entirely — no
   ///      `withdrawBitmap` bit set (so no L1 `setWithdrawable` for a WITHDRAW
   ///      that didn't debit on L2), no `implicitTipOwed` credit (validator
-  ///      gets nothing for skipped work), no `clientHash` extension (that
+  ///      gets nothing for skipped work), no `networkHash` extension (that
   ///      lives inside `_applyAction`). Only the cursor advances.
   function _zkApplyOne(
     uint32 validatorId,
@@ -483,13 +483,13 @@ contract CawActions is Ownable {
     (ActionData memory action, uint256 nextPos) = _unpackAction(packedActions, c.pos);
     c.pos = nextPos;
 
-    // Client-id invariant must hold across the whole batch even if some
-    // actions are skipped. firstClientId is set on the very first action
+    // Network-id invariant must hold across the whole batch even if some
+    // actions are skipped. firstNetworkId is set on the very first action
     // (index 0) and every subsequent action must match it.
     if (c.actionsSeen == 0) {
-      c.firstClientId = action.clientId;
+      c.firstNetworkId = action.networkId;
     } else {
-      require(action.clientId == c.firstClientId, "Mixed clients in batch");
+      require(action.networkId == c.firstNetworkId, "Mixed networks in batch");
     }
 
     // Race-loss check.
@@ -545,23 +545,23 @@ contract CawActions is Ownable {
   /// @dev Bookkeeping passed through the group-processing loop by reference.
   ///      Avoids returning a 6-tuple from internal helpers.
   ///
-  ///      `clientHash` / `clientActionCount` are the in-memory hash-chain
-  ///      accumulators. We load `clientCurrentHash[firstClientId]` and
-  ///      `clientActionCount[firstClientId]` lazily on the first action,
+  ///      `networkHash` / `networkActionCount` are the in-memory hash-chain
+  ///      accumulators. We load `networkCurrentHash[firstNetworkId]` and
+  ///      `networkActionCount[firstNetworkId]` lazily on the first action,
   ///      mutate them per action in memory, and write back once at the end
   ///      of the batch — replacing N SLOAD/SSTORE pairs with one of each.
-  ///      `clientHashLoaded` is the lazy-load latch.
+  ///      `networkHashLoaded` is the lazy-load latch.
   struct BatchCursor {
     uint256 pos;             // current offset into packedActions
     uint256 sigPos;          // current offset into sigs
     uint256 actionsSeen;     // total actions processed so far across all groups
-    uint32  firstClientId;   // set on first action; enforced equal across all
+    uint32  firstNetworkId;   // set on first action; enforced equal across all
     uint16  withdrawCount;
     uint256 withdrawBitmap;
     uint256 implicitTipOwed; // sum of session-key per-action tips, credited once at batch end
-    bytes32 clientHash;          // in-memory mirror of clientCurrentHash[firstClientId]
-    uint256 clientActionCount;   // in-memory mirror of clientActionCount[firstClientId]
-    bool    clientHashLoaded;    // false until first action loads from storage
+    bytes32 networkHash;          // in-memory mirror of networkCurrentHash[firstNetworkId]
+    uint256 networkActionCount;   // in-memory mirror of networkActionCount[firstNetworkId]
+    bool    networkHashLoaded;    // false until first action loads from storage
   }
 
   /// @dev Read a sig group header from `sigs` at `sigPos` and advance.
@@ -610,7 +610,7 @@ contract CawActions is Ownable {
     uint256 actionStart = c.pos;
     (ActionData memory action, uint256 nextPos) = _unpackAction(packedActions, c.pos);
     c.pos = nextPos;
-    _trackClientAndWithdraw(c, action, c.actionsSeen);
+    _trackNetworkAndWithdraw(c, action, c.actionsSeen);
     (address signer, bool isSessionKey) = _verifySignatureMem(v, r, s, action);
     BatchAuth memory ba;
     ba.signer = signer;
@@ -664,7 +664,7 @@ contract CawActions is Ownable {
   }
 
   /// @dev Walk `groupSize` actions starting at `c.pos`, unpacking each one,
-  ///      tracking client/withdraw bookkeeping, and asserting the batch
+  ///      tracking network/withdraw bookkeeping, and asserting the batch
   ///      invariants (same sender, contiguous cawonces). Splits the per-batch
   ///      preamble out of _processBatchSig to keep that function's stack
   ///      shallow enough for the via-IR optimizer.
@@ -682,7 +682,7 @@ contract CawActions is Ownable {
       (ActionData memory action, uint256 nextPos) = _unpackAction(packedActions, c.pos);
       c.pos = nextPos;
 
-      _trackClientAndWithdraw(c, action, c.actionsSeen + i);
+      _trackNetworkAndWithdraw(c, action, c.actionsSeen + i);
 
       // All actions in a batch must share the same senderId. Without this,
       // one user's batch sig could authorize another user's actions.
@@ -755,12 +755,12 @@ contract CawActions is Ownable {
     if (ba.groupSpentLoaded) sessionSpent[ba.owner][ba.signer] = ba.groupSpent;
   }
 
-  /// @dev Single-client invariant + withdraw bookkeeping per action.
-  function _trackClientAndWithdraw(BatchCursor memory c, ActionData memory action, uint256 actionIndex) internal pure {
+  /// @dev Single-network invariant + withdraw bookkeeping per action.
+  function _trackNetworkAndWithdraw(BatchCursor memory c, ActionData memory action, uint256 actionIndex) internal pure {
     if (actionIndex == 0) {
-      c.firstClientId = action.clientId;
+      c.firstNetworkId = action.networkId;
     } else {
-      require(action.clientId == c.firstClientId, "Mixed clients in batch");
+      require(action.networkId == c.firstNetworkId, "Mixed networks in batch");
     }
     if (action.actionType == ActionType.WITHDRAW) {
       c.withdrawBitmap |= (1 << actionIndex);
@@ -808,7 +808,7 @@ contract CawActions is Ownable {
     // ones. Indexers MUST cross-reference ActionRejected events to filter.
     if (successCount > 0) {
       emit ActionsProcessed(
-        sc.firstClientId,
+        sc.firstNetworkId,
         validatorId,
         uint16(actionCount),
         keccak256(packedActions)
@@ -837,7 +837,7 @@ contract CawActions is Ownable {
     uint256 successCount;
     uint16  withdrawCount;
     uint256 withdrawBitmap;
-    uint32  firstClientId;   // captured from the first action; used for the ActionsProcessed event
+    uint32  firstNetworkId;   // captured from the first action; used for the ActionsProcessed event
   }
 
   /// @dev Process one sig group in the safe path: try the whole group via
@@ -868,11 +868,11 @@ contract CawActions is Ownable {
       senderIds[i] = peek.senderId;
       cawonces[i] = peek.cawonce;
       isWithdraw[i] = peek.actionType == ActionType.WITHDRAW;
-      // Capture clientId once from the very first action of the very first group.
-      // Subsequent groups must match (enforced by _trackClientAndWithdraw inside
+      // Capture networkId once from the very first action of the very first group.
+      // Subsequent groups must match (enforced by _trackNetworkAndWithdraw inside
       // processGroupSingle's success path; safe-mode failures don't emit).
       if (sc.actionsSeen == 0 && i == 0) {
-        sc.firstClientId = peek.clientId;
+        sc.firstNetworkId = peek.networkId;
       }
       unchecked { ++i; }
     }
@@ -919,7 +919,7 @@ contract CawActions is Ownable {
     // groupBytes is just the actions slice for this group (no actionCount
     // header). We pass it verbatim to a re-entry of the group-processing
     // logic by reconstructing a tiny BatchCursor.
-    uint32 firstClientId = 0;
+    uint32 firstNetworkId = 0;
     uint256 pos = 0;
     bytes32[] memory perActionHashes = new bytes32[](groupSize);
     ActionData[] memory groupActions = new ActionData[](groupSize);
@@ -930,8 +930,8 @@ contract CawActions is Ownable {
       uint256 sliceStart = pos;
       (ActionData memory action, uint256 nextPos) = _unpackAction(groupBytes, pos);
       pos = nextPos;
-      if (i == 0) firstClientId = action.clientId;
-      else require(action.clientId == firstClientId, "Mixed clients in batch");
+      if (i == 0) firstNetworkId = action.networkId;
+      else require(action.networkId == firstNetworkId, "Mixed networks in batch");
       groupActions[i] = action;
       sliceStarts[i] = sliceStart;
       sliceEnds[i] = nextPos;
@@ -982,11 +982,11 @@ contract CawActions is Ownable {
     // can't amortize across groups (each group runs in its own external
     // call so reverts roll back independently).
     BatchCursor memory localCursor;
-    localCursor.firstClientId = firstClientId;
+    localCursor.firstNetworkId = firstNetworkId;
     _applyBatch(validatorId, groupBytes, groupActions, sliceStarts, sliceEnds, ba, localCursor);
-    if (localCursor.clientHashLoaded) {
-      clientCurrentHash[firstClientId] = localCursor.clientHash;
-      clientActionCount[firstClientId] = localCursor.clientActionCount;
+    if (localCursor.networkHashLoaded) {
+      networkCurrentHash[firstNetworkId] = localCursor.networkHash;
+      networkActionCount[firstNetworkId] = localCursor.networkActionCount;
     }
     if (localCursor.implicitTipOwed > 0) {
       // See processActions for the validatorId rationale.
@@ -1029,13 +1029,13 @@ contract CawActions is Ownable {
       { CawProfileL2.StoredSession memory _s = cawProfile.validSession(ba.owner, ba.signer); ba.scopeBitmap = _s.scopeBitmap; ba.spendLimit = _s.spendLimit; ba.perActionTipRate = _s.perActionTipRate; }
     }
     BatchCursor memory localCursor;
-    localCursor.firstClientId = action.clientId;
+    localCursor.firstNetworkId = action.networkId;
     uint256 owed = _applyAction(validatorId, action, ba, packedSlice, localCursor);
     // Single-action external entry: flush back immediately (no batch to
     // amortize across).
-    if (localCursor.clientHashLoaded) {
-      clientCurrentHash[action.clientId] = localCursor.clientHash;
-      clientActionCount[action.clientId] = localCursor.clientActionCount;
+    if (localCursor.networkHashLoaded) {
+      networkCurrentHash[action.networkId] = localCursor.networkHash;
+      networkActionCount[action.networkId] = localCursor.networkActionCount;
     }
     if (ba.groupSpentLoaded) sessionSpent[ba.owner][ba.signer] = ba.groupSpent;
     if (owed > 0) {
@@ -1062,7 +1062,7 @@ contract CawActions is Ownable {
     BatchCursor memory c
   ) internal returns (uint256 implicitTipOwed) {
     require(!isCawonceUsed(action.senderId, action.cawonce), "Cawonce already used");
-    require(cawProfile.authenticated(action.clientId, action.senderId), "User not authenticated");
+    require(cawProfile.authenticated(action.networkId, action.senderId), "User not authenticated");
     require(action.text.length <= 420, "Text exceeds 420 bytes");
 
     // Fixed protocol costs per action type (in whole CAW tokens)
@@ -1143,17 +1143,17 @@ contract CawActions is Ownable {
     // N). r is the recovering signature's r; actionHash is keccak of the
     // packed slice (no abi.encode overhead). The chain still extends with
     // a unique actionHash per action so links are non-degenerate.
-    if (!c.clientHashLoaded) {
-      c.clientHash = clientCurrentHash[c.firstClientId];
-      c.clientActionCount = clientActionCount[c.firstClientId];
-      c.clientHashLoaded = true;
+    if (!c.networkHashLoaded) {
+      c.networkHash = networkCurrentHash[c.firstNetworkId];
+      c.networkActionCount = networkActionCount[c.firstNetworkId];
+      c.networkHashLoaded = true;
     }
-    // c.clientHash = keccak256(c.clientHash || ba.r || keccak256(packedSlice))
+    // c.networkHash = keccak256(c.networkHash || ba.r || keccak256(packedSlice))
     // Assembly avoids the memory allocation Solidity would emit for
     // abi.encodePacked of three bytes32s; we just write the three slots
     // into scratch space (0x00..0x60) and hash. Memory-safe: scratch is
     // guaranteed-free for the duration of this hash.
-    bytes32 prevHash = c.clientHash;
+    bytes32 prevHash = c.networkHash;
     bytes32 sigR = ba.r;
     bytes32 newHash;
     assembly ("memory-safe") {
@@ -1172,15 +1172,15 @@ contract CawActions is Ownable {
       // restore the free-memory pointer (we used it as scratch but never advanced)
       mstore(0x40, m)
     }
-    c.clientHash = newHash;
-    unchecked { c.clientActionCount++; }
+    c.networkHash = newHash;
+    unchecked { c.networkActionCount++; }
 
     // Per-32-action checkpoint commitment must still hit storage — the
     // archive challenge protocol relies on indexed checkpoint hashes being
     // queryable at any time. The flush at batch end won't always cover
     // these because not every batch is a multiple of CHECKPOINT_INTERVAL.
-    if (c.clientActionCount % CHECKPOINT_INTERVAL == 0) {
-      clientHashAtCheckpoint[c.firstClientId][c.clientActionCount / CHECKPOINT_INTERVAL] = c.clientHash;
+    if (c.networkActionCount % CHECKPOINT_INTERVAL == 0) {
+      networkHashAtCheckpoint[c.firstNetworkId][c.networkActionCount / CHECKPOINT_INTERVAL] = c.networkHash;
     }
   }
 
@@ -1278,7 +1278,7 @@ contract CawActions is Ownable {
       mstore(add(buf, 0x40),   mload(add(data, 0x20)))   // senderId
       mstore(add(buf, 0x60),   mload(add(data, 0x40)))   // receiverId
       mstore(add(buf, 0x80),   mload(add(data, 0x60)))   // receiverCawonce
-      mstore(add(buf, 0xA0),   mload(add(data, 0x80)))   // clientId
+      mstore(add(buf, 0xA0),   mload(add(data, 0x80)))   // networkId
       mstore(add(buf, 0xC0),   mload(add(data, 0xA0)))   // cawonce
       mstore(add(buf, 0xE0),   recipHash)
       mstore(add(buf, 0x100),  amtHash)
@@ -1520,7 +1520,7 @@ contract CawActions is Ownable {
       mstore(add(action, 0x40), and(shr(184, w), 0xFFFFFFFF))
       // receiverCawonce: 4 bytes at bits [183..152]
       mstore(add(action, 0x60), and(shr(152, w), 0xFFFFFFFF))
-      // clientId: 4 bytes at bits [151..120]
+      // networkId: 4 bytes at bits [151..120]
       mstore(add(action, 0x80), and(shr(120, w), 0xFFFFFFFF))
       // cawonce: 4 bytes at bits [119..88]
       mstore(add(action, 0xA0), and(shr(88, w), 0xFFFFFFFF))

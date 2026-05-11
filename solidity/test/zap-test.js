@@ -10,7 +10,7 @@ const MintableCaw = artifacts.require("MintableCaw");
 const CawProfileURI = artifacts.require("CawProfileURI");
 const CawFontDataA = artifacts.require("CawFontDataA");
 const CawFontDataB = artifacts.require("CawFontDataB");
-const CawClientManager = artifacts.require("CawClientManager");
+const CawNetworkManager = artifacts.require("CawNetworkManager");
 const CawProfile = artifacts.require("CawProfile");
 const CawProfileL2 = artifacts.require("CawProfileL2");
 const CawProfileMinter = artifacts.require("CawProfileMinter");
@@ -42,10 +42,10 @@ function expectedCawOut(ethWei) {
 contract("CawProfileMinter — ZAP (pay-with-ETH) flows", function(accounts) {
   var l1Endpoint, l2Endpoint;
   var token, mockRouter, buyAndBurn;
-  var clientManager, uriGen;
+  var networkManager, uriGen;
   var cawProfile, cawProfileL2, cawProfileL2Mainnet;
   var minter, quoter;
-  var l2ClientId, l1ClientId;
+  var l2NetworkId, l1NetworkId;
 
   before(async function() {
     this.timeout(120000);
@@ -59,7 +59,7 @@ contract("CawProfileMinter — ZAP (pay-with-ETH) flows", function(accounts) {
     // mints fresh CAW on each swap, so no funding needed — but we mint a
     // sentinel amount on the router address anyway just to mirror reality.
     buyAndBurn = await CawBuyAndBurn.new(token.address, mockRouter.address);
-    clientManager = await CawClientManager.new(buyAndBurn.address);
+    networkManager = await CawNetworkManager.new(buyAndBurn.address);
     uriGen = await deployURI();
 
     // L2-storage mirror (cross-chain)
@@ -68,7 +68,7 @@ contract("CawProfileMinter — ZAP (pay-with-ETH) flows", function(accounts) {
 
     cawProfile = await CawProfile.new(
       token.address, uriGen.address, buyAndBurn.address,
-      clientManager.address, l1Endpoint.address, l1
+      networkManager.address, l1Endpoint.address, l1
     );
     await buyAndBurn.setCawProfile(cawProfile.address);
     await cawProfileL2.setL1Peer(l1, cawProfile.address, false);
@@ -80,11 +80,11 @@ contract("CawProfileMinter — ZAP (pay-with-ETH) flows", function(accounts) {
     await cawProfileL2Mainnet.setL1Peer(l1, cawProfile.address, true);
     await cawProfile.setL2Peer(l1, cawProfileL2Mainnet.address);
 
-    // Two clients to exercise both branches (zero fees to keep ETH math clean)
-    await clientManager.createClient("L2 Client", accounts[0], l2, 0, 0, 0, 0);
-    l2ClientId = 1;
-    await clientManager.createClient("L1 Client", accounts[0], l1, 0, 0, 0, 0);
-    l1ClientId = 2;
+    // Two networks to exercise both branches (zero fees to keep ETH math clean)
+    await networkManager.createNetwork("L2 Network", accounts[0], l2, 0, 0, 0, 0);
+    l2NetworkId = 1;
+    await networkManager.createNetwork("L1 Network", accounts[0], l1, 0, 0, 0, 0);
+    l1NetworkId = 2;
 
     minter = await CawProfileMinter.new(token.address, cawProfile.address, mockRouter.address);
     await cawProfile.setMinter(minter.address);
@@ -108,9 +108,9 @@ contract("CawProfileMinter — ZAP (pay-with-ETH) flows", function(accounts) {
       await token.approve(minter.address, mintAmount.toString(), { from: owner });
 
       var depositAmount = web3.utils.toWei('1000', 'ether');
-      var quote = await quoter.mintAndDepositQuote(l2ClientId, depositAmount, l2, false);
+      var quote = await quoter.mintAndDepositQuote(l2NetworkId, depositAmount, l2, false);
       await minter.mintAndDeposit(
-        l2ClientId, 'zapowner1', depositAmount, l2, 0,
+        l2NetworkId, 'zapowner1', depositAmount, l2, 0,
         { from: owner, value: BigInt(quote.nativeFee).toString() }
       );
       tokenId = (await cawProfile.totalSupply()).toNumber();
@@ -119,7 +119,7 @@ contract("CawProfileMinter — ZAP (pay-with-ETH) flows", function(accounts) {
     it("happy path (LZ): swap returns >= minCawOut, deposit credited", async function() {
       this.timeout(60000);
       var swapEth = web3.utils.toWei('0.05', 'ether');
-      var lzQuote = await quoter.depositZapQuote(l2ClientId, tokenId, l2, false);
+      var lzQuote = await quoter.depositZapQuote(l2NetworkId, tokenId, l2, false);
       var totalValue = BigInt(swapEth) + BigInt(lzQuote.nativeFee);
 
       var expectedCaw = expectedCawOut(swapEth);
@@ -128,7 +128,7 @@ contract("CawProfileMinter — ZAP (pay-with-ETH) flows", function(accounts) {
       var balBefore = BigInt((await cawProfileL2.cawBalanceOf(tokenId)).toString());
 
       await minter.depositZap(
-        l2ClientId, tokenId, swapEth, minCawOut.toString(), l2, 0,
+        l2NetworkId, tokenId, swapEth, minCawOut.toString(), l2, 0,
         { from: owner, value: totalValue.toString() }
       );
 
@@ -140,24 +140,24 @@ contract("CawProfileMinter — ZAP (pay-with-ETH) flows", function(accounts) {
 
     it("happy path (bypassLZ): credits L1-storage L2 mirror", async function() {
       this.timeout(60000);
-      // Mint an L1-storage token under l1ClientId for this account
+      // Mint an L1-storage token under l1NetworkId for this account
       var mintAmount = web3.utils.toWei('5000', 'ether');
-      var bypassQuote = await quoter.mintAndDepositQuote(l1ClientId, mintAmount, l1, false);
+      var bypassQuote = await quoter.mintAndDepositQuote(l1NetworkId, mintAmount, l1, false);
       await minter.mintAndDeposit(
-        l1ClientId, 'zapowner2', mintAmount, l1, 0,
+        l1NetworkId, 'zapowner2', mintAmount, l1, 0,
         { from: owner, value: BigInt(bypassQuote.nativeFee).toString() }
       );
       var bypassTokenId = (await cawProfile.totalSupply()).toNumber();
       var balBefore = BigInt((await cawProfileL2Mainnet.cawBalanceOf(bypassTokenId)).toString());
 
       var swapEth = web3.utils.toWei('0.02', 'ether');
-      var depositLzQuote = await quoter.depositZapQuote(l1ClientId, bypassTokenId, l1, false);
+      var depositLzQuote = await quoter.depositZapQuote(l1NetworkId, bypassTokenId, l1, false);
       var totalValue = BigInt(swapEth) + BigInt(depositLzQuote.nativeFee);
       var expectedCaw = expectedCawOut(swapEth);
       var minCawOut = expectedCaw * 97n / 100n;
 
       await minter.depositZap(
-        l1ClientId, bypassTokenId, swapEth, minCawOut.toString(), l1, 0,
+        l1NetworkId, bypassTokenId, swapEth, minCawOut.toString(), l1, 0,
         { from: owner, value: totalValue.toString() }
       );
 
@@ -168,7 +168,7 @@ contract("CawProfileMinter — ZAP (pay-with-ETH) flows", function(accounts) {
     it("reverts when swap output < minCawOut (slippage protection)", async function() {
       this.timeout(60000);
       var swapEth = web3.utils.toWei('0.01', 'ether');
-      var lzQuote = await quoter.depositZapQuote(l2ClientId, tokenId, l2, false);
+      var lzQuote = await quoter.depositZapQuote(l2NetworkId, tokenId, l2, false);
       var totalValue = BigInt(swapEth) + BigInt(lzQuote.nativeFee);
 
       var expectedCaw = expectedCawOut(swapEth);
@@ -177,7 +177,7 @@ contract("CawProfileMinter — ZAP (pay-with-ETH) flows", function(accounts) {
 
       try {
         await minter.depositZap(
-          l2ClientId, tokenId, swapEth, minCawOut.toString(), l2, 0,
+          l2NetworkId, tokenId, swapEth, minCawOut.toString(), l2, 0,
           { from: owner, value: totalValue.toString() }
         );
         assert.fail("Should have reverted on slippage");
@@ -194,7 +194,7 @@ contract("CawProfileMinter — ZAP (pay-with-ETH) flows", function(accounts) {
       // msg.value < swapEth → must revert
       try {
         await minter.depositZap(
-          l2ClientId, tokenId, swapEth.toString(), '0', l2, 0,
+          l2NetworkId, tokenId, swapEth.toString(), '0', l2, 0,
           { from: owner, value: (swapEth - 1n).toString() }
         );
         assert.fail("Should have reverted");
@@ -215,7 +215,7 @@ contract("CawProfileMinter — ZAP (pay-with-ETH) flows", function(accounts) {
       // With 0.5 ETH the user can't cover an 8-char burn (1M > 500K), so we
       // bump the swap to 1.5 ETH -> 1_500_000 CAW, leaving 500K to deposit.
       var swapEth = web3.utils.toWei('1.5', 'ether');
-      var lzQuote = await quoter.mintAndDepositZapQuote(l2ClientId, l2, false);
+      var lzQuote = await quoter.mintAndDepositZapQuote(l2NetworkId, l2, false);
       var totalValue = BigInt(swapEth) + BigInt(lzQuote.nativeFee);
 
       var username = 'zapnewone'; // 9 chars -> burn 1M CAW
@@ -229,7 +229,7 @@ contract("CawProfileMinter — ZAP (pay-with-ETH) flows", function(accounts) {
       var deadBefore = BigInt((await token.balanceOf('0xdEAD000000000000000042069420694206942069')).toString());
 
       await minter.mintAndDepositZap(
-        l2ClientId, username, swapEth, minCawOut.toString(), l2, 0,
+        l2NetworkId, username, swapEth, minCawOut.toString(), l2, 0,
         { from: owner, value: totalValue.toString() }
       );
 
@@ -249,7 +249,7 @@ contract("CawProfileMinter — ZAP (pay-with-ETH) flows", function(accounts) {
       this.timeout(60000);
       var owner = accounts[3];
       var swapEth = web3.utils.toWei('1.5', 'ether'); // 1.5M CAW
-      var lzQuote = await quoter.mintAndDepositZapQuote(l1ClientId, l1, false);
+      var lzQuote = await quoter.mintAndDepositZapQuote(l1NetworkId, l1, false);
       var totalValue = BigInt(swapEth) + BigInt(lzQuote.nativeFee);
 
       var username = 'zapnewtwo'; // 9 chars -> 1M CAW burn
@@ -259,7 +259,7 @@ contract("CawProfileMinter — ZAP (pay-with-ETH) flows", function(accounts) {
       var expectedDeposit = expectedCaw - burnCost;
 
       await minter.mintAndDepositZap(
-        l1ClientId, username, swapEth, minCawOut.toString(), l1, 0,
+        l1NetworkId, username, swapEth, minCawOut.toString(), l1, 0,
         { from: owner, value: totalValue.toString() }
       );
 
@@ -274,12 +274,12 @@ contract("CawProfileMinter — ZAP (pay-with-ETH) flows", function(accounts) {
       var owner = accounts[4];
       // Tiny swap: 0.0001 ETH -> 100 CAW; way below the 1M CAW burn for 8+ char.
       var swapEth = web3.utils.toWei('0.0001', 'ether');
-      var lzQuote = await quoter.mintAndDepositZapQuote(l2ClientId, l2, false);
+      var lzQuote = await quoter.mintAndDepositZapQuote(l2NetworkId, l2, false);
       var totalValue = BigInt(swapEth) + BigInt(lzQuote.nativeFee);
 
       try {
         await minter.mintAndDepositZap(
-          l2ClientId, 'zapcheapnow', swapEth, '0', l2, 0,
+          l2NetworkId, 'zapcheapnow', swapEth, '0', l2, 0,
           { from: owner, value: totalValue.toString() }
         );
         assert.fail("Should have reverted");
@@ -304,9 +304,9 @@ contract("CawProfileMinter — ZAP (pay-with-ETH) flows", function(accounts) {
       await token.mint(attacker, totalCaw.toString());
       await token.approve(minter.address, totalCaw.toString(), { from: attacker });
 
-      var quote = await quoter.mintAndDepositQuote(l2ClientId, depositAmt, l2, false);
+      var quote = await quoter.mintAndDepositQuote(l2NetworkId, depositAmt, l2, false);
       await minter.mintAndDeposit(
-        l2ClientId, 'frontrunzz', depositAmt, l2, 0,
+        l2NetworkId, 'frontrunzz', depositAmt, l2, 0,
         { from: attacker, value: BigInt(quote.nativeFee).toString() }
       );
 
@@ -314,12 +314,12 @@ contract("CawProfileMinter — ZAP (pay-with-ETH) flows", function(accounts) {
       // require() ordering in the contract enforces the username check
       // BEFORE _swapEthForCaw.
       var swapEth = web3.utils.toWei('1.5', 'ether');
-      var lzQuote = await quoter.mintAndDepositZapQuote(l2ClientId, l2, false);
+      var lzQuote = await quoter.mintAndDepositZapQuote(l2NetworkId, l2, false);
       var totalValue = BigInt(swapEth) + BigInt(lzQuote.nativeFee);
 
       try {
         await minter.mintAndDepositZap(
-          l2ClientId, 'frontrunzz', swapEth, '0', l2, 0,
+          l2NetworkId, 'frontrunzz', swapEth, '0', l2, 0,
           { from: victim, value: totalValue.toString() }
         );
         assert.fail("Should have reverted");
@@ -339,12 +339,12 @@ contract("CawProfileMinter — ZAP (pay-with-ETH) flows", function(accounts) {
       this.timeout(60000);
       var owner = accounts[7];
       var swapEth = web3.utils.toWei('0.5', 'ether');
-      var lzQuote = await quoter.mintAndDepositZapQuote(l2ClientId, l2, false);
+      var lzQuote = await quoter.mintAndDepositZapQuote(l2NetworkId, l2, false);
       var totalValue = BigInt(swapEth) + BigInt(lzQuote.nativeFee);
 
       try {
         await minter.mintAndDepositZap(
-          l2ClientId, 'BAD!', swapEth, '0', l2, 0,
+          l2NetworkId, 'BAD!', swapEth, '0', l2, 0,
           { from: owner, value: totalValue.toString() }
         );
         assert.fail("Should have reverted");
@@ -369,7 +369,7 @@ contract("CawProfileMinter — ZAP (pay-with-ETH) flows", function(accounts) {
       var expiry = await futureExpiry(30 * 24 * 60 * 60);
 
       var swapEth = web3.utils.toWei('1.5', 'ether');
-      var lzQuote = await quoter.mintAndDepositAndQuickSignZapQuote(l2ClientId, sessionKey, l2, false);
+      var lzQuote = await quoter.mintAndDepositAndQuickSignZapQuote(l2NetworkId, sessionKey, l2, false);
       var totalValue = BigInt(swapEth) + BigInt(lzQuote.nativeFee);
 
       var expectedCaw = expectedCawOut(swapEth);
@@ -378,7 +378,7 @@ contract("CawProfileMinter — ZAP (pay-with-ETH) flows", function(accounts) {
       var expectedDeposit = expectedCaw - burnCost;
 
       await minter.mintAndDepositAndQuickSignZap(
-        l2ClientId, 'zapqsname', swapEth, minCawOut.toString(),
+        l2NetworkId, 'zapqsname', swapEth, minCawOut.toString(),
         sessionKey, expiry, spendLimit, 0, // perActionTipRate
         l2, 0,
         { from: owner, value: totalValue.toString() }
@@ -404,7 +404,7 @@ contract("CawProfileMinter — ZAP (pay-with-ETH) flows", function(accounts) {
       var expiry = await futureExpiry(14 * 24 * 60 * 60);
 
       var swapEth = web3.utils.toWei('1.5', 'ether');
-      var lzQuote = await quoter.mintAndDepositAndQuickSignZapQuote(l1ClientId, sessionKey, l1, false);
+      var lzQuote = await quoter.mintAndDepositAndQuickSignZapQuote(l1NetworkId, sessionKey, l1, false);
       var totalValue = BigInt(swapEth) + BigInt(lzQuote.nativeFee);
 
       var expectedCaw = expectedCawOut(swapEth);
@@ -413,7 +413,7 @@ contract("CawProfileMinter — ZAP (pay-with-ETH) flows", function(accounts) {
       var expectedDeposit = expectedCaw - burnCost;
 
       await minter.mintAndDepositAndQuickSignZap(
-        l1ClientId, 'zapqstwoa', swapEth, minCawOut.toString(),
+        l1NetworkId, 'zapqstwoa', swapEth, minCawOut.toString(),
         sessionKey, expiry, spendLimit, 0, // perActionTipRate
         l1, 0,
         { from: owner, value: totalValue.toString() }
@@ -434,12 +434,12 @@ contract("CawProfileMinter — ZAP (pay-with-ETH) flows", function(accounts) {
       this.timeout(60000);
       var owner = accounts[2];
       var swapEth = web3.utils.toWei('0.5', 'ether');
-      var lzQuote = await quoter.mintAndDepositAndQuickSignZapQuote(l2ClientId, accounts[1], l2, false);
+      var lzQuote = await quoter.mintAndDepositAndQuickSignZapQuote(l2NetworkId, accounts[1], l2, false);
       var totalValue = BigInt(swapEth) + BigInt(lzQuote.nativeFee);
 
       try {
         await minter.mintAndDepositAndQuickSignZap(
-          l2ClientId, 'zapqs3', swapEth, '0',
+          l2NetworkId, 'zapqs3', swapEth, '0',
           '0x0000000000000000000000000000000000000000', 0, 0, 0, // perActionTipRate
           l2, 0,
           { from: owner, value: totalValue.toString() }

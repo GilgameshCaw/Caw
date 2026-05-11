@@ -1,7 +1,7 @@
 const CawProfile = artifacts.require("CawProfile");
 const CawProfileMinter = artifacts.require("CawProfileMinter");
 const CawProfileURI = artifacts.require("CawProfileURI");
-const CawClientManager = artifacts.require("CawClientManager");
+const CawNetworkManager = artifacts.require("CawNetworkManager");
 const CawProfileMarketplace = artifacts.require("CawProfileMarketplace");
 const MintableCaw = artifacts.require("MintableCaw");
 const MockLayerZeroEndpoint = artifacts.require("MockLayerZeroEndpoint");
@@ -18,7 +18,7 @@ contract("CawProfileMarketplace", (accounts) => {
   const bidder1 = accounts[3];
   const bidder2 = accounts[4];
 
-  let token, cawProfiles, minter, uriGenerator, clientManager, marketplace, lzEndpoint;
+  let token, cawProfiles, minter, uriGenerator, networkManager, marketplace, lzEndpoint;
   let tokenId1, tokenId2;
 
   // Deploy a simple ERC20 for testing ERC20 payment
@@ -32,13 +32,13 @@ contract("CawProfileMarketplace", (accounts) => {
     const fontA = await (artifacts.require("CawFontDataA")).new();
     const fontB = await (artifacts.require("CawFontDataB")).new();
     uriGenerator = await CawProfileURI.new(fontA.address, fontB.address);
-    clientManager = await CawClientManager.new(deployer);
+    networkManager = await CawNetworkManager.new(deployer);
 
     cawProfiles = await CawProfile.new(
       token.address,
       uriGenerator.address,
       deployer,
-      clientManager.address,
+      networkManager.address,
       lzEndpoint.address,
       l1Eid
     );
@@ -56,8 +56,8 @@ contract("CawProfileMarketplace", (accounts) => {
     const dummyL2Eid = 40245;
     await cawProfiles.setL2Peer(dummyL2Eid, accounts[9]); // dummy peer address
 
-    // Create a client (needed for minting)
-    await clientManager.createClient("Test Client", deployer, dummyL2Eid, 0, 0, 0, 0);
+    // Create a network (needed for minting)
+    await networkManager.createNetwork("Test Network", deployer, dummyL2Eid, 0, 0, 0, 0);
 
     // Use MintableCaw as payment token for ERC20 tests
     paymentToken = token;
@@ -76,7 +76,7 @@ contract("CawProfileMarketplace", (accounts) => {
     // Seller approves minter to burn CAW
     await token.approve(minter.address, mintAmount, { from: seller });
 
-    // Mint two CawProfile NFTs for seller (clientId=1, lzTokenAmount=0)
+    // Mint two CawProfile NFTs for seller (networkId=1, lzTokenAmount=0)
     tokenId1 = (await cawProfiles.nextId()).toNumber();
     await minter.mint(1, "alice", 0, { from: seller, value: web3.utils.toWei("0.01", "ether") });
 

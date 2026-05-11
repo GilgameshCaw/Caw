@@ -6,7 +6,7 @@
  *       once at batch end via a single addToBalance SSTORE. (CawActions.sol
  *       _applyAction + processActions implicitTipOwed accumulator.)
  *
- *   #2  clientCurrentHash / clientActionCount: lazy-loaded on first action,
+ *   #2  networkCurrentHash / networkActionCount: lazy-loaded on first action,
  *       mutated in memory across the batch, flushed once at the end.
  *       Per-32-action checkpoint commitments still hit storage immediately.
  *
@@ -21,7 +21,7 @@
  */
 
 const MintableCaw = artifacts.require("MintableCaw");
-const CawClientManager = artifacts.require("CawClientManager");
+const CawNetworkManager = artifacts.require("CawNetworkManager");
 const CawProfile = artifacts.require("CawProfile");
 const CawProfileL2 = artifacts.require("CawProfileL2");
 const CawProfileMinter = artifacts.require("CawProfileMinter");
@@ -69,7 +69,7 @@ const dataTypes = {
     { name: 'senderId', type: 'uint32' },
     { name: 'receiverId', type: 'uint32' },
     { name: 'receiverCawonce', type: 'uint32' },
-    { name: 'clientId', type: 'uint32' },
+    { name: 'networkId', type: 'uint32' },
     { name: 'cawonce', type: 'uint32' },
     { name: 'recipients', type: 'uint32[]' },
     { name: 'amounts', type: 'uint64[]' },
@@ -115,7 +115,7 @@ function packActionForSlice(a) {
   buf.writeUInt32BE(Number(a.senderId), pos); pos += 4;
   buf.writeUInt32BE(Number(a.receiverId || 0), pos); pos += 4;
   buf.writeUInt32BE(Number(a.receiverCawonce || 0), pos); pos += 4;
-  buf.writeUInt32BE(Number(a.clientId), pos); pos += 4;
+  buf.writeUInt32BE(Number(a.networkId), pos); pos += 4;
   buf.writeUInt32BE(Number(a.cawonce), pos); pos += 4;
   buf.writeUInt8(recipients.length, pos); pos += 1;
   buf.writeUInt8(amounts.length, pos); pos += 1;
@@ -190,7 +190,7 @@ function signActionData(signer, action, domain) {
   return splitSig(sig);
 }
 
-// Reconstruct clientCurrentHash from calldata exactly as CawActions does:
+// Reconstruct networkCurrentHash from calldata exactly as CawActions does:
 //   chain_n = keccak256(chain_{n-1} || r || keccak256(packed[n]))
 // where r is the recovering signature's r — for a batch sig, the same r is
 // reused for every action in the group.
@@ -218,7 +218,7 @@ async function fullSetup(accounts) {
   const token = await MintableCaw.new();
   const mockRouter = await MockSwapRouter.new(token.address);
   const buyAndBurn = await CawBuyAndBurn.new(token.address, mockRouter.address);
-  const clientManager = await CawClientManager.new(buyAndBurn.address);
+  const networkManager = await CawNetworkManager.new(buyAndBurn.address);
   const CawProfileURI = artifacts.require("CawProfileURI");
   const CawFontDataA = artifacts.require("CawFontDataA");
   const CawFontDataB = artifacts.require("CawFontDataB");
@@ -229,14 +229,14 @@ async function fullSetup(accounts) {
   const cawProfileL2 = await CawProfileL2.new(l1, l2Endpoint.address);
   await l1Endpoint.setDestLzEndpoint(cawProfileL2.address, l2Endpoint.address);
 
-  const cawProfile = await CawProfile.new(token.address, uri.address, buyAndBurn.address, clientManager.address, l1Endpoint.address, l1);
+  const cawProfile = await CawProfile.new(token.address, uri.address, buyAndBurn.address, networkManager.address, l1Endpoint.address, l1);
   await buyAndBurn.setCawProfile(cawProfile.address);
   await cawProfileL2.setL1Peer(l1, cawProfile.address, false);
   await l2Endpoint.setDestLzEndpoint(cawProfile.address, l1Endpoint.address);
   await cawProfile.setL2Peer(l2, cawProfileL2.address);
 
-  await clientManager.createClient("Test Client", accounts[0], l2, 0, 0, 0, 0);
-  const clientId = 1;
+  await networkManager.createNetwork("Test Network", accounts[0], l2, 0, 0, 0, 0);
+  const networkId = 1;
 
   const minter = await CawProfileMinter.new(token.address, cawProfile.address, mockRouter.address);
   await cawProfile.setMinter(minter.address);
@@ -245,7 +245,7 @@ async function fullSetup(accounts) {
   const cawActions = await CawActions.new(cawProfileL2.address, "0x0000000000000000000000000000000000000000", "0x0000000000000000000000000000000000000000000000000000000000000000");
   await cawProfileL2.setCawActions(cawActions.address);
 
-  return { token, cawProfile, cawProfileL2, minter, quoter, cawActions, clientManager, clientId };
+  return { token, cawProfile, cawProfileL2, minter, quoter, cawActions, networkManager, networkId };
 }
 
 async function buyUsername(user, name) {
@@ -253,8 +253,8 @@ async function buyUsername(user, name) {
   await setup.token.mint(user, mintAmount);
   const cost = await setup.minter.costOfName(name);
   await setup.token.approve(setup.minter.address, cost.toString(), { from: user });
-  const quote = await setup.quoter.mintQuote(setup.clientId, false);
-  await setup.minter.mint(setup.clientId, name, quote.lzTokenFee, {
+  const quote = await setup.quoter.mintQuote(setup.networkId, false);
+  await setup.minter.mint(setup.networkId, name, quote.lzTokenFee, {
     from: user, value: quote.nativeFee.toString(),
   });
   return Number(await setup.cawProfile.totalSupply());
@@ -264,8 +264,8 @@ async function depositAndAuth(user, tokenId, amountWholeCaw) {
   const cawAmountWei = (BigInt(amountWholeCaw) * 10n ** 18n).toString();
   const balance = await setup.token.balanceOf(user);
   await setup.token.approve(setup.cawProfile.address, balance.toString(), { from: user });
-  const quote = await setup.quoter.depositQuote(setup.clientId, tokenId, cawAmountWei, l2, false);
-  await setup.cawProfile.deposit(setup.clientId, tokenId, cawAmountWei, l2, quote.lzTokenFee, {
+  const quote = await setup.quoter.depositQuote(setup.networkId, tokenId, cawAmountWei, l2, false);
+  await setup.cawProfile.deposit(setup.networkId, tokenId, cawAmountWei, l2, quote.lzTokenFee, {
     from: user, value: quote.nativeFee.toString(),
   });
 }
@@ -372,7 +372,7 @@ contract('CawActions — session-tip + batched-accumulator integration', functio
     for (let i = 0; i < N; i++) {
       actions.push({
         actionType: ACTION_TYPE.caw, senderId: userATokenId, receiverId: 0, receiverCawonce: 0,
-        clientId: setup.clientId, cawonce: startCawonce + i,
+        networkId: setup.networkId, cawonce: startCawonce + i,
         recipients: [], amounts: [],   // <-- the optimization: NO tip slot
         text: '0x' + Buffer.from(`s1-${i}`).toString('hex'),
       });
@@ -405,7 +405,7 @@ contract('CawActions — session-tip + batched-accumulator integration', functio
     const cawonce = Number(await setup.cawActions.nextCawonce(userATokenId));
     const action = {
       actionType: ACTION_TYPE.caw, senderId: userATokenId, receiverId: 0, receiverCawonce: 0,
-      clientId: setup.clientId, cawonce,
+      networkId: setup.networkId, cawonce,
       recipients: [], amounts: [], text: '0x' + Buffer.from('zerotip').toString('hex'),
     };
     const { hex } = packActions([action]);
@@ -430,7 +430,7 @@ contract('CawActions — session-tip + batched-accumulator integration', functio
     const cawonce = Number(await setup.cawActions.nextCawonce(userBTokenId));
     const action = {
       actionType: ACTION_TYPE.caw, senderId: userBTokenId, receiverId: 0, receiverCawonce: 0,
-      clientId: setup.clientId, cawonce,
+      networkId: setup.networkId, cawonce,
       recipients: [], amounts: [tip],   // <-- legacy: tip in amounts[last]
       text: '0x' + Buffer.from('manual').toString('hex'),
     };
@@ -467,7 +467,7 @@ contract('CawActions — session-tip + batched-accumulator integration', functio
     for (let i = 0; i < N; i++) {
       actions.push({
         actionType: ACTION_TYPE.caw, senderId: userATokenId, receiverId: 0, receiverCawonce: 0,
-        clientId: setup.clientId, cawonce: startCawonce + i,
+        networkId: setup.networkId, cawonce: startCawonce + i,
         recipients: [], amounts: [], text: '0x' + Buffer.from(`spend-${i}`).toString('hex'),
       });
     }
@@ -483,11 +483,11 @@ contract('CawActions — session-tip + batched-accumulator integration', functio
   });
 
   // --------------------------------------------
-  // #2 — clientCurrentHash + clientActionCount must reflect ALL N actions
+  // #2 — networkCurrentHash + networkActionCount must reflect ALL N actions
   //      after a single processActions call (one flush at end), AND the
   //      hash chain reconstructs from calldata.
   // --------------------------------------------
-  it('#2: clientCurrentHash advances to the chain reconstructed from calldata, count grows by N', async function () {
+  it('#2: networkCurrentHash advances to the chain reconstructed from calldata, count grows by N', async function () {
     const sessionKey = web3.eth.accounts.create();
     const sessionKeyAddr = sessionKey.address;
     testKeys[sessionKeyAddr.toLowerCase()] = Buffer.from(sessionKey.privateKey.replace(/^0x/, ''), 'hex');
@@ -500,7 +500,7 @@ contract('CawActions — session-tip + batched-accumulator integration', functio
     for (let i = 0; i < N; i++) {
       actions.push({
         actionType: ACTION_TYPE.caw, senderId: userATokenId, receiverId: 0, receiverCawonce: 0,
-        clientId: setup.clientId, cawonce: startCawonce + i,
+        networkId: setup.networkId, cawonce: startCawonce + i,
         recipients: [], amounts: [], text: '0x' + Buffer.from(`h-${i}`).toString('hex'),
       });
     }
@@ -508,13 +508,13 @@ contract('CawActions — session-tip + batched-accumulator integration', functio
     const batchSig = signActionBatch(sessionKeyAddr, actions, domain);
     const sigsHex = packGroupedSigs([{ groupSize: N, ...batchSig }]);
 
-    const hashBefore = await setup.cawActions.clientCurrentHash(setup.clientId);
-    const countBefore = Number(await setup.cawActions.clientActionCount(setup.clientId));
+    const hashBefore = await setup.cawActions.networkCurrentHash(setup.networkId);
+    const countBefore = Number(await setup.cawActions.networkActionCount(setup.networkId));
 
     await setup.cawActions.processActions(validatorTokenId, hex, sigsHex, 0, 0);
 
-    const hashAfter = await setup.cawActions.clientCurrentHash(setup.clientId);
-    const countAfter = Number(await setup.cawActions.clientActionCount(setup.clientId));
+    const hashAfter = await setup.cawActions.networkCurrentHash(setup.networkId);
+    const countAfter = Number(await setup.cawActions.networkActionCount(setup.networkId));
 
     // Count incremented by exactly N — the in-memory accumulator flushed
     // once at the end carries the right total.
@@ -528,21 +528,21 @@ contract('CawActions — session-tip + batched-accumulator integration', functio
 
   // --------------------------------------------
   // #2 — Per-32-action checkpoint commitments STILL hit storage immediately
-  //      (the optimization defers per-action SLOAD/SSTORE on clientCurrentHash
+  //      (the optimization defers per-action SLOAD/SSTORE on networkCurrentHash
   //      but checkpoints must remain queryable mid-batch for the archive
   //      challenge protocol).
   // --------------------------------------------
-  it('#2: clientHashAtCheckpoint is written when actionCount crosses a CHECKPOINT_INTERVAL boundary', async function () {
+  it('#2: networkHashAtCheckpoint is written when actionCount crosses a CHECKPOINT_INTERVAL boundary', async function () {
     const sessionKey = web3.eth.accounts.create();
     const sessionKeyAddr = sessionKey.address;
     testKeys[sessionKeyAddr.toLowerCase()] = Buffer.from(sessionKey.privateKey.replace(/^0x/, ''), 'hex');
 
     await registerSessionFor(userB, sessionKeyAddr, 0xBF, 10_000_000, (await web3.eth.getBlock('latest')).timestamp + 3600, 10);
 
-    // We need clientActionCount to cross the next CHECKPOINT_INTERVAL boundary
+    // We need networkActionCount to cross the next CHECKPOINT_INTERVAL boundary
     // inside ONE processActions call. Send (interval - count_before mod interval)
     // actions to land exactly on the boundary.
-    const countBefore = Number(await setup.cawActions.clientActionCount(setup.clientId));
+    const countBefore = Number(await setup.cawActions.networkActionCount(setup.networkId));
     const N = CHECKPOINT_INTERVAL - (countBefore % CHECKPOINT_INTERVAL);
     if (N === 0) {
       // Already aligned — skip with a tiny no-op assertion.
@@ -555,7 +555,7 @@ contract('CawActions — session-tip + batched-accumulator integration', functio
     for (let i = 0; i < N; i++) {
       actions.push({
         actionType: ACTION_TYPE.caw, senderId: userBTokenId, receiverId: 0, receiverCawonce: 0,
-        clientId: setup.clientId, cawonce: startCawonce + i,
+        networkId: setup.networkId, cawonce: startCawonce + i,
         recipients: [], amounts: [], text: '0x' + Buffer.from(`cp-${i}`).toString('hex'),
       });
     }
@@ -565,16 +565,16 @@ contract('CawActions — session-tip + batched-accumulator integration', functio
 
     await setup.cawActions.processActions(validatorTokenId, hex, sigsHex, 0, 0);
 
-    const countAfter = Number(await setup.cawActions.clientActionCount(setup.clientId));
+    const countAfter = Number(await setup.cawActions.networkActionCount(setup.networkId));
     const checkpointIndex = countAfter / CHECKPOINT_INTERVAL;
     expect(countAfter % CHECKPOINT_INTERVAL).to.equal(0);
 
     // The checkpoint slot for the boundary we just crossed must equal
-    // current clientCurrentHash (since the last action in the batch IS the
+    // current networkCurrentHash (since the last action in the batch IS the
     // checkpoint-boundary action, the in-memory accumulator wrote the
-    // checkpoint AND the final flush writes the same value to clientCurrentHash).
-    const checkpointHash = await setup.cawActions.clientHashAtCheckpoint(setup.clientId, checkpointIndex);
-    const currentHash = await setup.cawActions.clientCurrentHash(setup.clientId);
+    // checkpoint AND the final flush writes the same value to networkCurrentHash).
+    const checkpointHash = await setup.cawActions.networkHashAtCheckpoint(setup.networkId, checkpointIndex);
+    const currentHash = await setup.cawActions.networkCurrentHash(setup.networkId);
     expect(checkpointHash).to.equal(currentHash);
     expect(checkpointHash).to.not.equal('0x0000000000000000000000000000000000000000000000000000000000000000');
   });
@@ -606,12 +606,12 @@ contract('CawActions — session-tip + batched-accumulator integration', functio
 
     const aActions = Array.from({ length: NA }, (_, i) => ({
       actionType: ACTION_TYPE.caw, senderId: userATokenId, receiverId: 0, receiverCawonce: 0,
-      clientId: setup.clientId, cawonce: aStart + i,
+      networkId: setup.networkId, cawonce: aStart + i,
       recipients: [], amounts: [], text: '0x' + Buffer.from(`A${i}`).toString('hex'),
     }));
     const bActions = Array.from({ length: NB }, (_, i) => ({
       actionType: ACTION_TYPE.caw, senderId: userBTokenId, receiverId: 0, receiverCawonce: 0,
-      clientId: setup.clientId, cawonce: bStart + i,
+      networkId: setup.networkId, cawonce: bStart + i,
       recipients: [], amounts: [], text: '0x' + Buffer.from(`B${i}`).toString('hex'),
     }));
 
@@ -637,7 +637,7 @@ contract('CawActions — session-tip + batched-accumulator integration', functio
   // --------------------------------------------
   // #1 + #2 — Submitting the same N actions one-batch-at-once vs N
   //           single-action batches must produce IDENTICAL final state on
-  //           clientCurrentHash, clientActionCount, sessionSpent, and
+  //           networkCurrentHash, networkActionCount, sessionSpent, and
   //           validator balance. The optimization is invariant-preserving.
   // --------------------------------------------
   it('one big batch vs N single batches: identical final state', async function () {
@@ -659,7 +659,7 @@ contract('CawActions — session-tip + batched-accumulator integration', functio
     const start1 = Number(await setup.cawActions.nextCawonce(userATokenId));
     const actions1 = Array.from({ length: N }, (_, i) => ({
       actionType: ACTION_TYPE.caw, senderId: userATokenId, receiverId: 0, receiverCawonce: 0,
-      clientId: setup.clientId, cawonce: start1 + i,
+      networkId: setup.networkId, cawonce: start1 + i,
       recipients: [], amounts: [], text: '0x' + Buffer.from(`P1-${i}`).toString('hex'),
     }));
     const { hex: hex1 } = packActions(actions1);
@@ -675,7 +675,7 @@ contract('CawActions — session-tip + batched-accumulator integration', functio
       const before2 = await snapshotValidator();
       const a = {
         actionType: ACTION_TYPE.caw, senderId: userATokenId, receiverId: 0, receiverCawonce: 0,
-        clientId: setup.clientId, cawonce: start2 + i,
+        networkId: setup.networkId, cawonce: start2 + i,
         recipients: [], amounts: [], text: '0x' + Buffer.from(`P2-${i}`).toString('hex'),
       };
       const { hex } = packActions([a]);
@@ -711,7 +711,7 @@ contract('CawActions — session-tip + batched-accumulator integration', functio
     const startCawonce = Number(await setup.cawActions.nextCawonce(userBTokenId));
     const actions = Array.from({ length: N }, (_, i) => ({
       actionType: ACTION_TYPE.caw, senderId: userBTokenId, receiverId: 0, receiverCawonce: 0,
-      clientId: setup.clientId, cawonce: startCawonce + i,
+      networkId: setup.networkId, cawonce: startCawonce + i,
       recipients: [], amounts: [], text: '0x' + Buffer.from(`L${i}`).toString('hex'),
     }));
     const { hex } = packActions(actions);

@@ -7,7 +7,7 @@ interface IMint {
   function nextId() external returns (uint32);
 
   function mint(
-    uint32 clientId,
+    uint32 networkId,
     address sender,
     string memory username,
     uint32 newId,
@@ -15,7 +15,7 @@ interface IMint {
   ) external payable;
 
   function mintAndDeposit(
-    uint32 clientId,
+    uint32 networkId,
     address sender,
     string memory username,
     uint32 newId,
@@ -26,7 +26,7 @@ interface IMint {
   ) external payable;
 
   function mintAndAuth(
-    uint32 clientId,
+    uint32 networkId,
     address sender,
     string memory username,
     uint32 newId,
@@ -36,7 +36,7 @@ interface IMint {
   ) external payable;
 
   function depositFor(
-    uint32 cawClientId,
+    uint32 cawNetworkId,
     uint32 tokenId,
     uint256 amount,
     uint32 lzDestId,

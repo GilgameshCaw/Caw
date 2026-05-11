@@ -7,7 +7,7 @@ import { OApp, Origin, MessagingFee } from "@layerzerolabs/lz-evm-oapp-v2/contra
 import "./OnlyOnce.sol";
 
 interface ICawActionsCheckpoints {
-  function clientHashAtCheckpoint(uint32 clientId, uint256 checkpointId) external view returns (bytes32);
+  function networkHashAtCheckpoint(uint32 networkId, uint256 checkpointId) external view returns (bytes32);
 }
 
 /**
@@ -32,7 +32,7 @@ contract CawChallengeRelay is OnlyOnce, OApp {
 
   event ChallengeRelayed(
     uint256 indexed submissionId,
-    uint32 indexed clientId,
+    uint32 indexed networkId,
     uint256 checkpointId,
     uint32 destEid,
     bytes32 correctHash
@@ -40,7 +40,7 @@ contract CawChallengeRelay is OnlyOnce, OApp {
 
   event ChallengeBatchRelayed(
     uint256 indexed submissionId,
-    uint32 indexed clientId,
+    uint32 indexed networkId,
     uint256[] checkpointIds,
     uint32 destEid
   );
@@ -74,12 +74,12 @@ contract CawChallengeRelay is OnlyOnce, OApp {
   ///         CawActions (this chain) and sent via LZ to the archive.
   /// @dev The batch form collapses what would otherwise be N transactions
   ///      into a single LZ message. Payload format is always the batch shape:
-  ///        abi.encode(submissionId, clientId, checkpointIds[], correctHashes[])
+  ///        abi.encode(submissionId, networkId, checkpointIds[], correctHashes[])
   ///      so the archive has exactly one decode path.
   function relayChallengeBatch(
     uint32 destEid,
     uint256 submissionId,
-    uint32 clientId,
+    uint32 networkId,
     uint256[] calldata checkpointIds
   ) external payable {
     uint256 n = checkpointIds.length;
@@ -87,28 +87,28 @@ contract CawChallengeRelay is OnlyOnce, OApp {
 
     bytes32[] memory correctHashes = new bytes32[](n);
     for (uint256 i = 0; i < n; i++) {
-      bytes32 h = cawActions.clientHashAtCheckpoint(clientId, checkpointIds[i]);
+      bytes32 h = cawActions.networkHashAtCheckpoint(networkId, checkpointIds[i]);
       require(h != bytes32(0), "Checkpoint does not exist");
       correctHashes[i] = h;
     }
 
-    bytes memory payload = abi.encode(submissionId, clientId, checkpointIds, correctHashes);
+    bytes memory payload = abi.encode(submissionId, networkId, checkpointIds, correctHashes);
     uint128 gasLimit = CHALLENGE_GAS_BASE + CHALLENGE_GAS_PER_CP * uint128(n);
     bytes memory options = OptionsBuilder.newOptions().addExecutorLzReceiveOption(gasLimit, 0);
 
     _lzSend(destEid, payload, options, MessagingFee(msg.value, 0), payable(msg.sender));
 
-    emit ChallengeBatchRelayed(submissionId, clientId, checkpointIds, destEid);
+    emit ChallengeBatchRelayed(submissionId, networkId, checkpointIds, destEid);
   }
 
   /// @notice Single-checkpoint convenience wrapper around relayChallengeBatch.
   function relayChallenge(
     uint32 destEid,
     uint256 submissionId,
-    uint32 clientId,
+    uint32 networkId,
     uint256 checkpointId
   ) external payable {
-    bytes32 correctHash = cawActions.clientHashAtCheckpoint(clientId, checkpointId);
+    bytes32 correctHash = cawActions.networkHashAtCheckpoint(networkId, checkpointId);
     require(correctHash != bytes32(0), "Checkpoint does not exist");
 
     uint256[] memory ids = new uint256[](1);
@@ -116,26 +116,26 @@ contract CawChallengeRelay is OnlyOnce, OApp {
     ids[0] = checkpointId;
     hashes[0] = correctHash;
 
-    bytes memory payload = abi.encode(submissionId, clientId, ids, hashes);
+    bytes memory payload = abi.encode(submissionId, networkId, ids, hashes);
     uint128 gasLimit = CHALLENGE_GAS_BASE + CHALLENGE_GAS_PER_CP;
     bytes memory options = OptionsBuilder.newOptions().addExecutorLzReceiveOption(gasLimit, 0);
 
     _lzSend(destEid, payload, options, MessagingFee(msg.value, 0), payable(msg.sender));
 
-    emit ChallengeRelayed(submissionId, clientId, checkpointId, destEid, correctHash);
+    emit ChallengeRelayed(submissionId, networkId, checkpointId, destEid, correctHash);
   }
 
   /// @notice Quote the LZ fee for a batch challenge relay.
   function quoteChallengeBatch(
     uint32 destEid,
     uint256 submissionId,
-    uint32 clientId,
+    uint32 networkId,
     uint256[] calldata checkpointIds,
     bool payInLzToken
   ) external view returns (MessagingFee memory) {
     uint256 n = checkpointIds.length;
     bytes32[] memory placeholder = new bytes32[](n);
-    bytes memory payload = abi.encode(submissionId, clientId, checkpointIds, placeholder);
+    bytes memory payload = abi.encode(submissionId, networkId, checkpointIds, placeholder);
     uint128 gasLimit = CHALLENGE_GAS_BASE + CHALLENGE_GAS_PER_CP * uint128(n);
     bytes memory options = OptionsBuilder.newOptions().addExecutorLzReceiveOption(gasLimit, 0);
     return _quote(destEid, payload, options, payInLzToken);
@@ -145,14 +145,14 @@ contract CawChallengeRelay is OnlyOnce, OApp {
   function quoteChallenge(
     uint32 destEid,
     uint256 submissionId,
-    uint32 clientId,
+    uint32 networkId,
     uint256 checkpointId,
     bool payInLzToken
   ) external view returns (MessagingFee memory) {
     uint256[] memory ids = new uint256[](1);
     bytes32[] memory placeholder = new bytes32[](1);
     ids[0] = checkpointId;
-    bytes memory payload = abi.encode(submissionId, clientId, ids, placeholder);
+    bytes memory payload = abi.encode(submissionId, networkId, ids, placeholder);
     uint128 gasLimit = CHALLENGE_GAS_BASE + CHALLENGE_GAS_PER_CP;
     bytes memory options = OptionsBuilder.newOptions().addExecutorLzReceiveOption(gasLimit, 0);
     return _quote(destEid, payload, options, payInLzToken);

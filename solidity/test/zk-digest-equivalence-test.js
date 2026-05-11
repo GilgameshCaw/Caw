@@ -102,7 +102,7 @@ contract('ZK digest equivalence — Rust circuit ↔ Solidity _computeStructHash
         senderId:        f.sender_id,
         receiverId:      f.receiver_id,
         receiverCawonce: f.receiver_cawonce,
-        clientId:        f.client_id,
+        networkId:        f.network_id,
         cawonce:         f.cawonce,
         recipients:      f.recipients,
         // truffle's web3 wants strings for uint64 to avoid JS-precision loss;
