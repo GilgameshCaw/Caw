@@ -190,10 +190,12 @@ const Marketplace: React.FC = () => {
             </TabButton>
           </div>
 
-          {activeTab === 'listings' && <ListingsTab />}
-          {activeTab === 'sales' && <SalesTab />}
-          {activeTab === 'mine' && <MyProfilesTab />}
-          {activeTab === 'offers' && <MyOffersTab />}
+          <div className="pb-[calc(var(--bottom-nav-h,0px)+16px)]">
+            {activeTab === 'listings' && <ListingsTab />}
+            {activeTab === 'sales' && <SalesTab />}
+            {activeTab === 'mine' && <MyProfilesTab />}
+            {activeTab === 'offers' && <MyOffersTab />}
+          </div>
         </div>
       </div>
   )
