@@ -30,11 +30,19 @@ export const usePendingSpendStore = create<PendingSpendState>((set, get) => ({
   pendingByTxQueue: {},
   pendingTimestamps: {},
 
-  addPendingSpend: (txQueueId, amount) => set(state => ({
-    pendingSpend: state.pendingSpend + amount,
-    pendingByTxQueue: { ...state.pendingByTxQueue, [txQueueId]: amount },
-    pendingTimestamps: { ...state.pendingTimestamps, [txQueueId]: Date.now() },
-  })),
+  addPendingSpend: (txQueueId, amount) => set(state => {
+    // Idempotent: if this txQueueId already has a pending spend, don't
+    // double-count. Server-side content-dedup can return an EXISTING
+    // txQueueId for an identical re-submit, and we'd otherwise stack the
+    // same spend onto pendingSpend twice — disabling further posts until
+    // the row confirms.
+    if (state.pendingByTxQueue[txQueueId]) return state
+    return {
+      pendingSpend: state.pendingSpend + amount,
+      pendingByTxQueue: { ...state.pendingByTxQueue, [txQueueId]: amount },
+      pendingTimestamps: { ...state.pendingTimestamps, [txQueueId]: Date.now() },
+    }
+  }),
 
   removePendingSpend: (txQueueId) => set(state => {
     const amount = state.pendingByTxQueue[txQueueId]

@@ -1,5 +1,6 @@
 import { Router } from 'express'
 import { ethers, JsonRpcProvider, WebSocketProvider, Contract } from 'ethers'
+import { createHash } from 'crypto'
 import { makeJsonRpcProvider, makeWebSocketProvider, getL2HttpRpcUrl } from '../../utils/rpcProvider'
 import SmlTxt from 'smltxt'
 import { prisma } from '../../prismaClient'
@@ -68,6 +69,25 @@ async function highestKnownCawonce(senderId: number): Promise<number | null> {
     select: { cawonce: true },
   })
   return row?.cawonce ?? null
+}
+
+// Stable content fingerprint for in-flight dedup. The user's signed
+// payload includes data.text (smltxt-compressed hex) and the action
+// shape — sha256 over the relevant fields collapses identical re-posts
+// to the same key regardless of cawonce. NOT used as a security
+// boundary; the signature on the TxQueue row is still the source of
+// truth for what the chain will accept.
+function contentFingerprint(data: any): string {
+  const fields = [
+    String(data?.actionType ?? ''),
+    String(data?.senderId ?? ''),
+    String(data?.receiverId ?? 0),
+    String(data?.receiverCawonce ?? 0),
+    typeof data?.text === 'string' ? data.text : '',
+    Array.isArray(data?.amounts) ? data.amounts.map(String).join(',') : '',
+    Array.isArray(data?.recipients) ? data.recipients.map(String).join(',') : '',
+  ].join('|')
+  return createHash('sha256').update(fields).digest('hex')
 }
 
 // Rate limiting for free actions (unlike, unfollow) to prevent validator griefing.
@@ -1113,6 +1133,55 @@ router.post('/', async (req, res) => {
         cawonce: data.cawonce,
         suggestedCawonce,
       })
+    }
+
+    // Recent-duplicate-content guard. Pattern observed 2026-05-11 on
+    // test.caw.social: when validator simulation rejects with "Session
+    // expired or not found" (or similar early-fail), the FE shows a
+    // failure and the user re-clicks Post. Each click signs a FRESH
+    // payload with a fresh cawonce, so the per-cawonce dedup above
+    // doesn't fire. Result: 4-6 identical Caw rows at consecutive
+    // cawonces. Found one user with 6 identical posts in a 3-minute
+    // window.
+    //
+    // Strategy: if we just saw this sender submit the same content
+    // (same actionType + recipients + text bytes) within the last
+    // 2 minutes AND the prior row is still in-flight OR very recently
+    // succeeded, return the existing row's id so the FE resumes
+    // tracking it instead of creating another duplicate.
+    //
+    // Bypassed when retriedTxQueueId is set — that's an explicit
+    // "retry this exact failed row" call and the caller knows what
+    // they're doing (the original row was already marked retried in
+    // the txn below).
+    if (parsedRetryId == null) {
+      const fp = contentFingerprint(data)
+      const recentSameContent = await prisma.txQueue.findFirst({
+        where: {
+          senderId: data.senderId,
+          // Match active rows of any age + recently-succeeded rows.
+          // The 2-min window mirrors a typical optimistic-UX horizon —
+          // long enough that a frustrated user's re-click is caught,
+          // short enough that legitimate "I want to post the same thing
+          // later" is not blocked.
+          OR: [
+            { status: { in: ['pending', 'processing', 'awaiting_indexer', 'waiting_for_deposit'] } },
+            { status: 'done', updatedAt: { gte: new Date(Date.now() - 2 * 60_000) } },
+          ],
+          createdAt: { gte: new Date(Date.now() - 5 * 60_000) },
+        },
+        orderBy: { id: 'desc' },
+        select: { id: true, status: true, cawonce: true, payload: true },
+      })
+      if (recentSameContent && contentFingerprint((recentSameContent.payload as any)?.data) === fp) {
+        console.log(`[Actions] Duplicate content guard: senderId=${data.senderId} cawonce=${data.cawonce} matches recent TxQueue ${recentSameContent.id} (status=${recentSameContent.status}, cawonce=${recentSameContent.cawonce}); returning existing row`)
+        return res.json({
+          txQueueId: recentSameContent.id,
+          status: recentSameContent.status,
+          deduped: true,
+          reason: 'identical content recently submitted by this sender',
+        })
+      }
     }
 
     try {
