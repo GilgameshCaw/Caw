@@ -722,7 +722,12 @@ function statTile(value: string, label: string) {
 // isn't a sliver; cap at CARD_MAX_H (the 1200×630 OG default) so a long
 // caw doesn't blow past the standard preview slot.
 const CARD_STRIP_W = Math.round(W * 0.015)      // 18 — left yellow strip
-const CARD_MARGIN  = Math.round(W * 0.015)      // 18 — outer margin (all sides)
+const CARD_MARGIN  = Math.round(W * 0.015)      // 18 — outer margin (left/right)
+// Top/bottom margin is wider than left/right so the text + stats stack
+// breathes against the card edges. Twitter's preview crops a few pixels
+// off each side; the extra vertical air keeps the chrome line / stats
+// row from kissing the crop boundary.
+const CARD_MARGIN_Y = CARD_MARGIN * 2            // 36 — outer margin (top/bottom)
 const CARD_IMG_SZ  = Math.round(W * 0.18)       // 216 — square image in top-right
 const CARD_NARROW_W = Math.round(W * 0.68)      // 816 — text column when image overlaps
 const CARD_TEXT_X   = CARD_STRIP_W + CARD_MARGIN
@@ -767,15 +772,18 @@ const POLL_FILL_WIN     = CAW_GOLD
 // satori never has to break a word mid-render.
 // Inter at body size — average glyph advance is closer to 0.55em for
 // ALL caps and 0.50em for lowercase. Body copy is mostly lowercase, so
-// 0.52 was the right average. BUT we used to overshoot by enough that
-// a "narrow"-budget line bled past 816px and into the corner image's
-// real estate. Bumping to 0.60 gives ~10% conservative slack — fewer
-// chars per line, but lines actually fit the column.
-const CHAR_W_RATIO = 0.60
+// 0.52 is the actual average glyph width for Inter at body size. We
+// used to overshoot enough that a "narrow"-budget line bled past the
+// column edge into the corner image, so this bumped to 0.60 (10%
+// slack). Now back to 0.55 — combined with the smaller right pad
+// below, lines fill the column without intruding into the image, and
+// fewer get punted to the wide section as a result.
+const CHAR_W_RATIO = 0.55
 // Hard pixel padding on the narrow column to leave a visible gap from
 // the right edge of the text to the left edge of the image. Without
-// this, even a perfectly-budgeted line touches the image.
-const CARD_NARROW_RIGHT_PAD = 32
+// this, even a perfectly-budgeted line touches the image. 12 is the
+// minimum that still reads as deliberate space rather than a bug.
+const CARD_NARROW_RIGHT_PAD = 12
 function approxCharsPerPx(fontSize: number, widthPx: number): number {
   return Math.floor(widthPx / (fontSize * CHAR_W_RATIO))
 }
@@ -1069,21 +1077,20 @@ function planCawCard(opts: {
   }
   // "· Mon DD" suffix when we have a postedAt. Twitter-style — current
   // year is implicit, prior years not shown either since OG cards mostly
-  // get shared close to the post date. Rendered separately from the
-  // bold name part so it can be non-bold (subtler look).
-  // Leading space is non-breaking — flex rows strip ASCII leading
-  // whitespace inside a child div, which was making "CAW" and "·" butt
-  // up against each other.
+  // get shared close to the post date. Rendered next to the domain on
+  // line 1 (chrome together) so a long display name on line 2 doesn't
+  // get truncated to make room for the date.
   const dateText = opts.postedAt
     ? `· ${opts.postedAt.toLocaleString('en-US', { month: 'short', day: 'numeric' })}`
     : ''
   // Name part stays bold. Truncated with `…` to fit the narrow column
-  // (minus the date) so a long display name never crosses into the
-  // top-right image and looks like it overflows the card.
+  // so a long display name never crosses into the top-right image and
+  // looks like it overflows the card. The date no longer lives on this
+  // line, so the full narrow width is available.
   const fullName = cleanShownName
     ? `${cleanShownName} (@${cleanUsername}) on CAW`
     : `@${cleanUsername} on CAW`
-  const bylineCharBudget = approxCharsPerPx(CARD_BYLINE_FS, CARD_NARROW_W) - dateText.length
+  const bylineCharBudget = approxCharsPerPx(CARD_BYLINE_FS, CARD_NARROW_W)
   const namePart = fullName.length > bylineCharBudget && bylineCharBudget > 4
     ? fullName.slice(0, bylineCharBudget - 1).trimEnd() + '…'
     : fullName
@@ -1126,12 +1133,12 @@ function planCawCard(opts: {
   )
   const STATS_ROW_H = 16 + 30  // marginTop + ~one line of 22px text + cushion
   const computeHeight = (narrowLines: number, wideLines: number) => {
-    let h = CARD_MARGIN + CARD_HEADER_PX + CARD_BYLINE_PX
+    let h = CARD_MARGIN_Y + CARD_HEADER_PX + CARD_BYLINE_PX
     if (narrowLines > 0) h += narrowLines * CARD_BODY_PX
     if (wideLines > 0)   h += wideLines * CARD_BODY_PX
     if (pollHeight > 0)  h += CARD_GAP_POLL + pollHeight
     if (hasStats)        h += STATS_ROW_H
-    h += CARD_MARGIN
+    h += CARD_MARGIN_Y
     return h
   }
   // Image grows with text height, but the layout is fixed at 3 narrow
@@ -1144,7 +1151,7 @@ function planCawCard(opts: {
   const IMG_MAX = Math.min(IMG_MAX_BY_LAYOUT, IMG_MAX_BY_WIDTH)
   const computeImgSize = (cardHeight: number) => {
     if (!opts.cornerImage) return 0
-    const fromHeight = cardHeight - 2 * CARD_MARGIN
+    const fromHeight = cardHeight - 2 * CARD_MARGIN_Y
     return Math.min(Math.max(CARD_IMG_SZ, fromHeight), IMG_MAX)
   }
 
@@ -1161,7 +1168,7 @@ function planCawCard(opts: {
   let narrowContent = contentLines.slice(0, NARROW_LINES)
   let wideContent = contentLines.slice(NARROW_LINES, totalContentLines)
   let textHeight = computeHeight(narrowContent.length, wideContent.length)
-  let imageSlotMinHeight = opts.cornerImage ? CARD_MARGIN + CARD_IMG_SZ + CARD_IMG_PAD : 0
+  let imageSlotMinHeight = opts.cornerImage ? CARD_MARGIN_Y + CARD_IMG_SZ + CARD_IMG_PAD : 0
   let height = Math.min(CARD_MAX_H, Math.max(textHeight, imageSlotMinHeight, CARD_MIN_H))
   let imgSize = computeImgSize(height)
 
@@ -1174,7 +1181,7 @@ function planCawCard(opts: {
     narrowContent = contentLines.slice(0, NARROW_LINES)
     wideContent = contentLines.slice(NARROW_LINES, totalContentLines)
     textHeight = computeHeight(narrowContent.length, wideContent.length)
-    imageSlotMinHeight = CARD_MARGIN + imgSize + CARD_IMG_PAD
+    imageSlotMinHeight = CARD_MARGIN_Y + imgSize + CARD_IMG_PAD
     height = Math.min(CARD_MAX_H, Math.max(textHeight, imageSlotMinHeight, CARD_MIN_H))
   }
   // Render-time narrow column width — the visible cap for header /
@@ -1218,7 +1225,7 @@ function planCawCard(opts: {
               style: {
                 display: 'flex',
                 position: 'absolute',
-                top: CARD_MARGIN,
+                top: CARD_MARGIN_Y,
                 right: CARD_MARGIN,
                 width: imgSize,
                 height: imgSize,
@@ -1247,31 +1254,89 @@ function planCawCard(opts: {
                 display: 'flex',
                 flexDirection: 'column',
                 position: 'absolute',
-                top: CARD_MARGIN,
+                top: CARD_MARGIN_Y,
                 left: CARD_TEXT_X,
                 right: CARD_MARGIN,
-                bottom: CARD_MARGIN,
+                bottom: CARD_MARGIN_Y,
               },
               children: [
-                // Line 1: protocol header (now uses host).
+                // Line 1: protocol header (host) + optional date suffix.
+                // Date lives here (chrome together) so the byline below
+                // gets the full narrow width for the author name.
                 {
                   type: 'div',
                   props: {
                     style: {
+                      display: 'flex',
+                      flexDirection: 'row',
+                      alignItems: 'baseline',
                       fontSize: CARD_HEADER_FS,
-                      fontWeight: 700,
-                      color: CAW_GOLD,
                       lineHeight: CARD_LINE_H,
                       maxWidth: narrowRenderW,
+                      whiteSpace: 'nowrap',
                     },
-                    children: headerText,
+                    children: [
+                      {
+                        type: 'div',
+                        props: {
+                          style: {
+                            display: 'flex',
+                            fontWeight: 700,
+                            color: CAW_GOLD,
+                            whiteSpace: 'nowrap',
+                          },
+                          children: headerText,
+                        },
+                      },
+                      dateText ? {
+                        type: 'div',
+                        props: {
+                          style: {
+                            display: 'flex',
+                            flexDirection: 'row',
+                            alignItems: 'baseline',
+                            marginLeft: 10,
+                            whiteSpace: 'nowrap',
+                          },
+                          children: [
+                            {
+                              type: 'div',
+                              props: {
+                                style: {
+                                  display: 'flex',
+                                  fontSize: CARD_HEADER_FS,
+                                  fontWeight: 400,
+                                  color: '#9ca3af',
+                                  whiteSpace: 'nowrap',
+                                },
+                                children: '·',
+                              },
+                            },
+                            {
+                              type: 'div',
+                              props: {
+                                style: {
+                                  display: 'flex',
+                                  fontSize: Math.round(CARD_HEADER_FS * 0.75),
+                                  fontWeight: 400,
+                                  color: '#9ca3af',
+                                  whiteSpace: 'nowrap',
+                                  marginLeft: 6,
+                                },
+                                // Strip the leading `· ` since we now
+                                // render the dot as its own segment.
+                                children: dateText.replace(/^[ ]?·\s*/, ''),
+                              },
+                            },
+                          ],
+                        },
+                      } : null,
+                    ].filter(Boolean) as any,
                   },
                 },
-                // Line 2: byline. Bold name + non-bold date in a flex
-                // row so the date reads as a softer suffix. Name part
-                // is pre-truncated to fit the narrow column (see
-                // namePart calc above) so the full row can never
-                // overlap the top-right image.
+                // Line 2: byline (author name only). The date used to
+                // live here too — it moved to line 1 so a long display
+                // name no longer competes with it for the narrow column.
                 {
                   type: 'div',
                   props: {
@@ -1301,56 +1366,8 @@ function planCawCard(opts: {
                           children: namePart,
                         },
                       },
-                      // Date suffix split into two pieces:
-                      //   • the · separator at the byline font size
-                      //     (visually consistent with surrounding chrome)
-                      //   • the date text itself smaller, softer color
-                      // Wrapped in a row so they sit on the same line.
-                      dateText ? {
-                        type: 'div',
-                        props: {
-                          style: {
-                            display: 'flex',
-                            flexDirection: 'row',
-                            alignItems: 'flex-end',
-                            marginLeft: 10,
-                            whiteSpace: 'nowrap',
-                          },
-                          children: [
-                            {
-                              type: 'div',
-                              props: {
-                                style: {
-                                  display: 'flex',
-                                  fontSize: CARD_BYLINE_FS,
-                                  fontWeight: 400,
-                                  color: '#9ca3af',
-                                  whiteSpace: 'nowrap',
-                                },
-                                children: '·',
-                              },
-                            },
-                            {
-                              type: 'div',
-                              props: {
-                                style: {
-                                  display: 'flex',
-                                  fontSize: Math.round(CARD_BYLINE_FS * 0.75),
-                                  fontWeight: 400,
-                                  color: '#9ca3af',
-                                  whiteSpace: 'nowrap',
-                                  marginLeft: 6,
-                                  paddingBottom: 2,
-                                },
-                                // Strip the prefix `· ` since we now
-                                // render the dot as its own segment.
-                                children: dateText.replace(/^[ ]?·\s*/, ''),
-                              },
-                            },
-                          ],
-                        },
-                      } : null,
-                    ].filter(Boolean) as any,
+                      // (Date suffix moved to line 1 next to the domain.)
+                    ],
                   },
                 },
                 // Narrow content (alongside image). Inline tokenization
@@ -1463,6 +1480,9 @@ function statsRow(stats: { likes: string; recaws: string; replies: string; views
         // right under the content as before. Either way, the stats
         // anchor to the visual bottom of the card.
         marginTop: 'auto',
+        // Right-align the stats so they sit under the corner image
+        // rather than competing with the body text on the left.
+        justifyContent: 'flex-end',
         gap: 28,
         fontSize: 22,
         color: STAT_ICON_COLOR,
@@ -1520,8 +1540,8 @@ function planImageOnlyCard(opts: {
   // image height that keeps the WHOLE card at >= 1.5 aspect:
   //   card_h = chrome + image_h + margin
   //   card_w / card_h >= 1.5  →  image_h <= card_w/1.5 - chrome - margin
-  const chromePx = CARD_MARGIN + CARD_HEADER_PX + CARD_BYLINE_PX + 12
-  const maxImageH = Math.round(cardW / 1.5) - chromePx - CARD_MARGIN
+  const chromePx = CARD_MARGIN_Y + CARD_HEADER_PX + CARD_BYLINE_PX + 12
+  const maxImageH = Math.round(cardW / 1.5) - chromePx - CARD_MARGIN_Y
   const dims = opts.cornerImage ? dataUriDimensions(opts.cornerImage) : null
   let imageH = Math.min(imageW, maxImageH)
   if (dims && dims.w > 0 && dims.h > 0) {
@@ -1545,7 +1565,7 @@ function planImageOnlyCard(opts: {
     (opts.stats.views && opts.stats.views !== '0')
   )
   const STATS_ROW_H = 16 + 30
-  const height = CARD_MARGIN + CARD_HEADER_PX + CARD_BYLINE_PX + 12 + imageH + (hasStats ? STATS_ROW_H : 0) + CARD_MARGIN
+  const height = CARD_MARGIN_Y + CARD_HEADER_PX + CARD_BYLINE_PX + 12 + imageH + (hasStats ? STATS_ROW_H : 0) + CARD_MARGIN_Y
 
   return {
     height,
@@ -1585,24 +1605,66 @@ function planImageOnlyCard(opts: {
                 display: 'flex',
                 flexDirection: 'column',
                 position: 'absolute',
-                top: CARD_MARGIN,
+                top: CARD_MARGIN_Y,
                 left: CARD_TEXT_X,
                 right: CARD_MARGIN,
-                bottom: CARD_MARGIN,
+                bottom: CARD_MARGIN_Y,
               },
               children: [
+                // Line 1: protocol header (host) + optional date suffix.
+                // Mirror text-card layout — date sits next to the domain.
                 {
                   type: 'div',
                   props: {
                     style: {
+                      display: 'flex',
+                      flexDirection: 'row',
+                      alignItems: 'baseline',
                       fontSize: CARD_HEADER_FS,
-                      fontWeight: 700,
-                      color: CAW_GOLD,
                       lineHeight: CARD_LINE_H,
+                      whiteSpace: 'nowrap',
                     },
-                    children: headerText,
+                    children: [
+                      {
+                        type: 'div',
+                        props: {
+                          style: { display: 'flex', fontWeight: 700, color: CAW_GOLD, whiteSpace: 'nowrap' },
+                          children: headerText,
+                        },
+                      },
+                      dateText ? {
+                        type: 'div',
+                        props: {
+                          style: { display: 'flex', flexDirection: 'row', alignItems: 'baseline', marginLeft: 10, whiteSpace: 'nowrap' },
+                          children: [
+                            {
+                              type: 'div',
+                              props: {
+                                style: { display: 'flex', fontSize: CARD_HEADER_FS, fontWeight: 400, color: '#9ca3af', whiteSpace: 'nowrap' },
+                                children: '·',
+                              },
+                            },
+                            {
+                              type: 'div',
+                              props: {
+                                style: {
+                                  display: 'flex',
+                                  fontSize: Math.round(CARD_HEADER_FS * 0.75),
+                                  fontWeight: 400,
+                                  color: '#9ca3af',
+                                  whiteSpace: 'nowrap',
+                                  marginLeft: 6,
+                                },
+                                children: dateText.replace(/^[ ]?·\s*/, ''),
+                              },
+                            },
+                          ],
+                        },
+                      } : null,
+                    ].filter(Boolean) as any,
                   },
                 },
+                // Line 2: byline (author name only).
                 {
                   type: 'div',
                   props: {
@@ -1621,43 +1683,7 @@ function planImageOnlyCard(opts: {
                           children: fullName,
                         },
                       },
-                      dateText ? {
-                        type: 'div',
-                        props: {
-                          style: {
-                            display: 'flex',
-                            flexDirection: 'row',
-                            alignItems: 'flex-end',
-                            marginLeft: 10,
-                            whiteSpace: 'nowrap',
-                          },
-                          children: [
-                            {
-                              type: 'div',
-                              props: {
-                                style: { display: 'flex', fontSize: CARD_BYLINE_FS, fontWeight: 400, color: '#9ca3af', whiteSpace: 'nowrap' },
-                                children: '·',
-                              },
-                            },
-                            {
-                              type: 'div',
-                              props: {
-                                style: {
-                                  display: 'flex',
-                                  fontSize: Math.round(CARD_BYLINE_FS * 0.75),
-                                  fontWeight: 400,
-                                  color: '#9ca3af',
-                                  whiteSpace: 'nowrap',
-                                  marginLeft: 6,
-                                  paddingBottom: 2,
-                                },
-                                children: dateText.replace(/^[ ]?·\s*/, ''),
-                              },
-                            },
-                          ],
-                        },
-                      } : null,
-                    ].filter(Boolean) as any,
+                    ],
                   },
                 },
                 // Image — square, full text-column width, slight gap
@@ -2293,12 +2319,13 @@ router.get('/image/caw/:id', async (req, res) => {
     .update([stats.likes, stats.recaws, stats.replies, stats.views, pollHash].join('|'))
     .digest('hex').slice(0, 8)
 
-  // v9 = stat row + bucketed-hash cache busting. Old v8 PNGs are
-  // ignored. PENDING caws include status so a later SUCCESS/HIDDEN
-  // flip doesn't serve a stale render.
+  // v11 = date moved to header line + right-aligned stats + doubled
+  // vertical margins + tighter narrow column → text-image gap.
+  // PENDING caws include status so a later SUCCESS/HIDDEN flip
+  // doesn't serve a stale render.
   const cacheKey = caw.status === 'PENDING'
-    ? `caw-v10-${caw.id}-${liveHash}-pending`
-    : `caw-v10-${caw.id}-${liveHash}`
+    ? `caw-v11-${caw.id}-${liveHash}-pending`
+    : `caw-v11-${caw.id}-${liveHash}`
   return serveCachedOrRender(res, cacheKey, async () => {
     // Strip media URLs and poll markers out of the visible text — the
     // corner image and the rendered poll bars already represent them,
