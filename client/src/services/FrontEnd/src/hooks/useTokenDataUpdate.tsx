@@ -1,6 +1,6 @@
 // client/src/services/FrontEnd/src/hooks/useTokenDataUpdate.tsx
 
-import { useEffect, useCallback } from "react"
+import { useEffect, useCallback, useMemo } from "react"
 import { useAccount, useReadContract } from "wagmi"
 import { Address } from "viem"
 import { baseSepolia, sepolia } from "wagmi/chains"
@@ -109,6 +109,20 @@ export default function useTokenDataUpdate() {
   }
 
 
+  // Memoize the token-id arrays so React Query's cache key stays
+  // stable across renders. Without this, every parent re-render
+  // produced a fresh array reference and wagmi treated it as a new
+  // query — refiring getTokens() against L2 even though the contents
+  // were identical to the previous call.
+  const viewedTokenIds = useMemo(
+    () => (rawTokens ?? []).map(t => Number(t.tokenId)),
+    [rawTokens],
+  )
+  const connectedTokenIds = useMemo(
+    () => (connectedTokens ?? []).map(t => Number(t.tokenId)),
+    [connectedTokens],
+  )
+
   const { data: l2TokenData, isLoading: balancesLoading, refetch: refetchL2 } = useReadContract({
     address: CAW_NAMES_L2_ADDRESS,
     chainId:      baseSepolia.id,
@@ -117,7 +131,7 @@ export default function useTokenDataUpdate() {
     query: {
       enabled: !!rawTokens && rawTokens.length > 0,
     },
-    args: [(rawTokens ?? []).map((token) => Number(token.tokenId))],
+    args: [viewedTokenIds],
   })
 
   // L2 data for connected address tokens
@@ -129,7 +143,7 @@ export default function useTokenDataUpdate() {
     query: {
       enabled: needsConnectedFetch && !!connectedTokens && connectedTokens.length > 0,
     },
-    args: [(connectedTokens ?? []).map((token) => Number(token.tokenId))],
+    args: [connectedTokenIds],
   })
 
 

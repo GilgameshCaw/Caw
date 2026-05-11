@@ -1,6 +1,5 @@
 import React, { useEffect, useMemo, useState } from 'react'
-import { useWriteContract, useWaitForTransactionReceipt, useChainId, useSwitchChain, useAccount } from 'wagmi'
-import { readContract } from '@wagmi/core'
+import { useWriteContract, useWaitForTransactionReceipt, useChainId, useSwitchChain, useAccount, useReadContract } from 'wagmi'
 import { useTheme } from '~/hooks/useTheme'
 import { useEnsureWallet } from '~/hooks/useEnsureWallet'
 import { themeTextSecondary, themeTextMuted, themeBorder } from '~/utils/theme'
@@ -11,7 +10,6 @@ import { apiFetch } from '~/api/client'
 import { CAW_NAME_MARKETPLACE_ADDRESS, CAW_NAME_QUOTER_ADDRESS } from '~/../../../abi/addresses'
 import { cawProfileMarketplaceAbi, cawProfileQuoterAbi } from '~/../../../abi/generated'
 import { chains } from '~/config/chains'
-import { wagmiConfig } from '~/config/Web3Provider'
 import ProfileCard from './ProfileCard'
 import LiveCountdown from './LiveCountdown'
 import ModalWrapper from '~/components/modals/ModalWrapper'
@@ -107,19 +105,23 @@ const ListingCard: React.FC<{ listing: MarketplaceListing; showCancel?: boolean 
   const isWinner = hasBids && address && listing.highestBidder?.toLowerCase() === address.toLowerCase()
   const canSettle = isAuctionEnded && isWinner && !isSettleSuccess
 
-  // Quote LZ fee for settle
+  // Quote LZ fee for settle. useReadContract (not imperative
+  // readContract) so the result lives in React Query's cache —
+  // multiple cards quoting the same (tokenId, highestBidder) pair
+  // share one eth_call, and re-renders don't refire the read.
+  const { data: settleQuoteData } = useReadContract({
+    address: CAW_NAME_QUOTER_ADDRESS,
+    abi: cawProfileQuoterAbi,
+    chainId: chains.l1.chainId,
+    functionName: 'syncTransferQuote',
+    args: [listing.tokenId, listing.highestBidder as `0x${string}`, false],
+    query: { enabled: !!(canSettle && listing.highestBidder) },
+  })
   useEffect(() => {
-    if (!canSettle || !listing.highestBidder) return
-    readContract(wagmiConfig, {
-      address: CAW_NAME_QUOTER_ADDRESS,
-      abi: cawProfileQuoterAbi,
-      functionName: 'syncTransferQuote',
-      args: [listing.tokenId, listing.highestBidder as `0x${string}`, false],
-      chainId: chains.l1.chainId,
-    }).then((quote: any) => {
-      setSettleLzFee((quote.nativeFee * 120n) / 100n)
-    }).catch(() => {})
-  }, [canSettle, listing.highestBidder])
+    if (!settleQuoteData) return
+    const quote = settleQuoteData as any
+    setSettleLzFee((BigInt(quote.nativeFee ?? 0) * 120n) / 100n)
+  }, [settleQuoteData])
 
   useEffect(() => {
     if (isSettleSuccess) triggerRefresh()

@@ -33,6 +33,11 @@ const InsufficientStakeModal: React.FC<InsufficientStakeModalProps> = ({
   // Sepolia in dev/testnet). Previously hard-coded to the mainnet CAW token
   // address, which returned 0 on testnet. Using the same per-env CAW_ADDRESS
   // + chainId pair that the Staking page uses.
+  // No refetchInterval — the user's wallet balance can't change while
+  // they sit on this modal (no on-chain action is happening from
+  // within it). Was firing balanceOf every 10s while the modal was
+  // open, ~6 redundant eth_calls per 60s of viewing. The default
+  // staleTime (5min) handles the open/close case fine.
   const { data: balanceData } = useReadContract({
     address: CAW_ADDRESS,
     abi: erc20Abi,
@@ -41,7 +46,6 @@ const InsufficientStakeModal: React.FC<InsufficientStakeModalProps> = ({
     args: address ? [address] : undefined,
     query: {
       enabled: isOpen && !!address,
-      refetchInterval: 10000,
     },
   })
 
