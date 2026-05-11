@@ -47,6 +47,38 @@ type Meta = {
    * variant (legacy /caws/:id, stale username, missing slug) so search
    * engines collapse all variants onto the canonical entry. */
   canonical?: string
+  /** Actual PNG dimensions for og:image:width / og:image:height. When
+   * unset (HEAD probe failed or timed out) we skip those meta tags
+   * entirely — they're optional per ogp.me and a wrong value is worse
+   * than no value (Facebook/Messenger validate strictly). */
+  imageWidth?: number
+  imageHeight?: number
+}
+
+// HEAD-probe the OG image route to learn the rendered PNG's actual
+// dimensions. The image route emits X-Image-Width / X-Image-Height
+// headers from the PNG's IHDR chunk. We use them to declare accurate
+// og:image:width / og:image:height — Facebook + Messenger validate
+// these strictly and will SUPPRESS the preview if they don't match.
+//
+// Timeout is tight (1500ms) because the SPA shell response can't wait
+// long: crawlers move on if the page takes too long to return HTML.
+// On miss/timeout we just omit the size tags — better to give scrapers
+// no hint than the wrong one.
+async function probeImageDims(url: string): Promise<{ w: number; h: number } | null> {
+  try {
+    const ctrl = new AbortController()
+    const t = setTimeout(() => ctrl.abort(), 1500)
+    const res = await fetch(url, { method: 'HEAD', signal: ctrl.signal })
+    clearTimeout(t)
+    if (!res.ok) return null
+    const w = Number(res.headers.get('x-image-width'))
+    const h = Number(res.headers.get('x-image-height'))
+    if (!Number.isFinite(w) || !Number.isFinite(h) || w <= 0 || h <= 0) return null
+    return { w, h }
+  } catch {
+    return null
+  }
 }
 
 function buildMetaTags(m: Meta): string {
@@ -56,7 +88,7 @@ function buildMetaTags(m: Meta): string {
   const i = escapeHtml(m.image)
   const c = escapeHtml(m.canonical || m.url)
   const ot = m.ogType || 'website'
-  return [
+  const tags = [
     `<title>${t}</title>`,
     `<meta name="description" content="${d}">`,
     // Canonical points to the one true URL for this content. For caws
@@ -68,14 +100,26 @@ function buildMetaTags(m: Meta): string {
     `<meta property="og:description" content="${d}">`,
     `<meta property="og:url" content="${c}">`,
     `<meta property="og:image" content="${i}">`,
-    `<meta property="og:image:width" content="1200">`,
-    `<meta property="og:image:height" content="630">`,
+  ]
+  // og:image:width / height are optional but high-signal for strict
+  // scrapers (Messenger). Emit only when we have real dims from the
+  // PNG; never lie — a mismatched value suppresses the preview.
+  if (m.imageWidth && m.imageHeight) {
+    tags.push(`<meta property="og:image:width" content="${m.imageWidth}">`)
+    tags.push(`<meta property="og:image:height" content="${m.imageHeight}">`)
+  }
+  tags.push(
+    // image:type and image:alt are also recommended by ogp.me. type
+    // tells scrapers what content-type to expect (skips a sniff).
+    `<meta property="og:image:type" content="image/png">`,
+    `<meta property="og:image:alt" content="${t}">`,
     `<meta property="og:site_name" content="CAW">`,
     `<meta name="twitter:card" content="summary_large_image">`,
     `<meta name="twitter:title" content="${t}">`,
     `<meta name="twitter:description" content="${d}">`,
     `<meta name="twitter:image" content="${i}">`,
-  ].join('\n    ')
+  )
+  return tags.join('\n    ')
 }
 
 function injectMeta(html: string, meta: Meta): string {
@@ -219,6 +263,16 @@ export async function spaPrerender(req: Request, res: Response): Promise<void> {
 
     // /address/:address and everything else falls back to the default card.
     if (!meta) meta = defaultMeta(reqPath)
+
+    // Probe the image's actual rendered dimensions so og:image:width /
+    // og:image:height match reality. Strict scrapers (Messenger) treat
+    // a wrong size as a reason to suppress the preview. Best-effort —
+    // a HEAD-probe miss just means we omit those two meta tags.
+    const dims = await probeImageDims(meta.image)
+    if (dims) {
+      meta.imageWidth = dims.w
+      meta.imageHeight = dims.h
+    }
 
     const html = injectMeta(readTemplate(), meta)
     res.set('Content-Type', 'text/html; charset=utf-8')

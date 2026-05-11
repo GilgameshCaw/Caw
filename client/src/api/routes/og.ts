@@ -2048,6 +2048,36 @@ async function loadTwemojiSvg(emoji: string): Promise<string> {
   }
 }
 
+// Read PNG width/height from the IHDR chunk. Per the PNG spec the file
+// starts with an 8-byte signature, then a 4-byte length, then "IHDR",
+// then width (uint32 BE) at byte 16 and height (uint32 BE) at byte 20.
+// Returns null on any failure — we don't want a header read to break
+// the render itself.
+function readPngDimensions(buf: Buffer): { w: number; h: number } | null {
+  if (buf.length < 24) return null
+  // Cheap sanity check on the signature so we don't misread non-PNG bytes.
+  if (buf[0] !== 0x89 || buf[1] !== 0x50 || buf[2] !== 0x4e || buf[3] !== 0x47) return null
+  try {
+    const w = buf.readUInt32BE(16)
+    const h = buf.readUInt32BE(20)
+    if (!Number.isFinite(w) || !Number.isFinite(h) || w <= 0 || h <= 0) return null
+    return { w, h }
+  } catch {
+    return null
+  }
+}
+
+// Set custom response headers carrying the real PNG dimensions. The SPA
+// prerender HEAD-probes these so meta tags can declare accurate
+// og:image:width / og:image:height, which Facebook/Messenger validate
+// strictly. CORS exposes them so cross-origin readers (other CAW mirrors
+// resolving a peer's card) can use them too.
+function setImageDimHeaders(res: any, w: number, h: number) {
+  res.set('X-Image-Width', String(w))
+  res.set('X-Image-Height', String(h))
+  res.set('Access-Control-Expose-Headers', 'X-Image-Width, X-Image-Height')
+}
+
 async function serveCachedOrRender(
   res: any,
   cacheKey: string,
@@ -2058,12 +2088,24 @@ async function serveCachedOrRender(
     if (fs.existsSync(file)) {
       res.set('Content-Type', 'image/png')
       res.set('Cache-Control', 'public, max-age=86400')
+      // Read just the 24-byte header so we can advertise real dims
+      // without slurping the whole PNG into memory.
+      try {
+        const fd = fs.openSync(file, 'r')
+        const head = Buffer.alloc(24)
+        fs.readSync(fd, head, 0, 24, 0)
+        fs.closeSync(fd)
+        const dim = readPngDimensions(head)
+        if (dim) setImageDimHeaders(res, dim.w, dim.h)
+      } catch { /* best-effort — don't fail the response over headers */ }
       return res.sendFile(file)
     }
     const png = await build()
     fs.writeFileSync(file, png)
     res.set('Content-Type', 'image/png')
     res.set('Cache-Control', 'public, max-age=86400')
+    const dim = readPngDimensions(png)
+    if (dim) setImageDimHeaders(res, dim.w, dim.h)
     return res.send(png)
   } catch (err) {
     console.error(`[og] render failed for ${cacheKey}:`, err)
