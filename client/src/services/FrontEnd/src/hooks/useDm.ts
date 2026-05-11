@@ -820,7 +820,9 @@ export function useDmMessages(
 
   // Load and decrypt messages
   useEffect(() => {
-    if (!conversationId || !tokenId || peerUserId === undefined) return
+    if (!conversationId || !tokenId) return
+    // peerUserId is meaningful for DMs only; for groups it's always undefined.
+    if (!groupContext?.isGroup && peerUserId === undefined) return
 
     let cancelled = false
 
