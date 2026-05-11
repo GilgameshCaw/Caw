@@ -2,6 +2,7 @@
 import React, { useState } from 'react'
 import { useLocation, useNavigate } from 'react-router-dom'
 import LinkPreview from './LinkPreview'
+import PostVideo from './PostVideo'
 import Tooltip from '~/components/Tooltip'
 import ImageLightbox from './ImageLightbox'
 import { useCachedFetch } from '~/hooks/useCachedFetch'
@@ -181,18 +182,8 @@ const ShortUrlVideo: React.FC<{
   if (!originalUrl || videoErrors.has(originalUrl)) return null
 
   return (
-    <div className="my-2 w-full max-w-full">
-      <video
-        src={originalUrl}
-        autoPlay
-        controls
-        className="w-full max-h-[32rem] min-w-[100px] rounded-lg"
-        loop
-        muted
-        onError={() => onError(originalUrl)}
-        onClick={(e) => e.stopPropagation()}
-        playsInline
-      />
+    <div className="my-2 w-full max-w-full rounded-lg overflow-hidden">
+      <PostVideo url={originalUrl} onError={() => onError(originalUrl)} />
     </div>
   )
 }

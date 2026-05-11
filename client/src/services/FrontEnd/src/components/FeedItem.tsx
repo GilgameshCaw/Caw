@@ -26,6 +26,7 @@ import {
   HiOutlineX,
   HiOutlineShieldCheck,
 } from 'react-icons/hi'
+import PostVideo from './PostVideo'
 import Recaw from '~/assets/images/recaw.svg?react';
 import UserHoverCard from './UserHoverCard';
 import Pencil from '~/assets/images/pencil.svg?react';
@@ -124,7 +125,8 @@ const ReplyShortUrlGifThumb: React.FC<{ code: string; originHost?: string; wrapp
   )
 }
 
-const FeedItem: React.FC<{ item: CawItem; isMainPost?: boolean; isReply?: boolean; hideParentPreview?: boolean; hideMedia?: boolean; contentClassName?: string; uiDensity?: 'normal' | 'compact'; onBookmarkUpdate?: (cawId: number, isBookmarked: boolean) => void; onLikeStateChange?: (cawId: string, likePending: boolean) => void; onRecawStateChange?: (cawId: string, recawPending: boolean) => void; onReplyStateChange?: (cawId: string, replyPending: boolean) => void; onTipStateChange?: (cawId: string, tipPending: boolean) => void; onPinUpdate?: (cawId: string, isPinned: boolean) => void }> = ({ item, isMainPost = false, isReply = false, hideParentPreview = false, hideMedia = false, contentClassName, uiDensity = 'normal', onBookmarkUpdate, onLikeStateChange, onRecawStateChange, onReplyStateChange, onTipStateChange, onPinUpdate }) => {
+
+const FeedItem: React.FC<{ item: CawItem; isMainPost?: boolean; isReply?: boolean; hideParentPreview?: boolean; hideMedia?: boolean; contentClassName?: string; uiDensity?: 'normal' | 'compact'; showReplyRail?: boolean; hideBottomBorder?: boolean; inThread?: boolean; onBookmarkUpdate?: (cawId: number, isBookmarked: boolean) => void; onLikeStateChange?: (cawId: string, likePending: boolean) => void; onRecawStateChange?: (cawId: string, recawPending: boolean) => void; onReplyStateChange?: (cawId: string, replyPending: boolean) => void; onTipStateChange?: (cawId: string, tipPending: boolean) => void; onPinUpdate?: (cawId: string, isPinned: boolean) => void }> = ({ item, isMainPost = false, isReply = false, hideParentPreview = false, hideMedia = false, contentClassName, uiDensity = 'normal', showReplyRail = true, hideBottomBorder = false, inThread = false, onBookmarkUpdate, onLikeStateChange, onRecawStateChange, onReplyStateChange, onTipStateChange, onPinUpdate }) => {
   // For plain recaws, pending states and counts should reflect the original post (parent),
   // not the recaw wrapper. useItem is set to item.parent for recaws further below, but
   // we need the right source for initial state here. Quotes act as their own posts.
@@ -1059,7 +1061,7 @@ const FeedItem: React.FC<{ item: CawItem; isMainPost?: boolean; isReply?: boolea
   return (
     <>
       <div onClick={handleCardClick} className="block" data-caw-id={item.id}>
-        <div className={`p-4 transition-all duration-300 feed-item-hover cursor-pointer border-b ${
+        <div className={`p-4 transition-all duration-300 feed-item-hover cursor-pointer ${hideBottomBorder ? 'feed-item-no-divider' : 'border-b'} ${
           isDark ? 'border-gray-800' : 'border-gray-200'
         } ${
           item.status === 'FAILED' ? 'opacity-60' : ''
@@ -1217,9 +1219,9 @@ const FeedItem: React.FC<{ item: CawItem; isMainPost?: boolean; isReply?: boolea
           )}
 
           {/* Content wrapper with left padding for replies - applies when isReply OR when it has a parent (reply in main feed), but NOT for recaws or quotes */}
-          <div className={`relative ${(isReply || (item.parent && !isRecaw && !isQuote)) ? 'pl-6' : ''}`}>
+          <div className={`relative ${(isReply || (item.parent && !isRecaw && !isQuote) || inThread) ? 'pl-6' : ''}`}>
             {/* Vertical line for replies */}
-            {(isReply || (item.parent && !isRecaw && !isQuote)) && (
+            {showReplyRail && (isReply || (item.parent && !isRecaw && !isQuote)) && (
               <div
                 className="absolute w-px bg-white/20"
                 style={{
@@ -1231,12 +1233,12 @@ const FeedItem: React.FC<{ item: CawItem; isMainPost?: boolean; isReply?: boolea
             )}
 
           {/* Post Header */}
-          <div className={`flex justify-between mb-3 ${isReply ? 'items-start' : 'items-center'}`}>
+          <div className={`flex justify-between mb-3 ${isReply ? 'items-start' : 'items-center'} ${inThread ? 'max-md:-ml-4 -ml-2' : ''}`}>
             <div className="flex items-center space-x-3">
               {/* Avatar */}
               <Link
                 to={`/users/${useItem.user.username}`}
-                className="w-10 h-10 rounded-full cursor-pointer overflow-hidden border border-gray-700"
+                className={`relative z-10 w-10 h-10 rounded-full cursor-pointer overflow-hidden border border-gray-700 ${inThread ? (isDark ? 'bg-black' : 'bg-white') : ''}`}
               >
                 <Avatar
                   src={getUserAvatar(useItem.user)}
@@ -1373,14 +1375,14 @@ const FeedItem: React.FC<{ item: CawItem; isMainPost?: boolean; isReply?: boolea
 
           {/* Post Content */}
           {isTranslating ? (
-            <div className={`mb-4 pl-2 md:pl-0 ${isDark ? 'text-gray-400' : 'text-gray-600'}`}>
+            <div className={`mb-4 ${inThread ? 'pl-10' : 'pl-2 md:pl-0'} ${isDark ? 'text-gray-400' : 'text-gray-600'}`}>
               <div className="flex items-center space-x-2">
                 <div className="w-4 h-4 border-2 border-gray-400 border-t-blue-500 rounded-full animate-spin"></div>
                 <span className="text-sm">{t('post.translating')}</span>
               </div>
             </div>
           ) : translatedText ? (
-            <div className="mb-4 pl-2 md:pl-0">
+            <div className={`mb-4 ${inThread ? "pl-10" : "pl-2 md:pl-0"}`}>
               <ContentWithHashtags
                 content={stripPollMarker(translatedText)}
                 postId={useItem.id}
@@ -1391,7 +1393,7 @@ const FeedItem: React.FC<{ item: CawItem; isMainPost?: boolean; isReply?: boolea
               />
             </div>
           ) : (
-            <div className="mb-4 pl-2 md:pl-0">
+            <div className={`mb-4 ${inThread ? "pl-10" : "pl-2 md:pl-0"}`}>
               <ContentWithHashtags
                 content={stripPollMarker(useItem.content)}
                 postId={useItem.id}
@@ -1407,14 +1409,14 @@ const FeedItem: React.FC<{ item: CawItem; isMainPost?: boolean; isReply?: boolea
               which only happens when a ::poll:...:: marker survived the
               indexer round-trip and got promoted into a Poll row. */}
           {useItem.poll && (
-            <div className="mb-4 pl-2 md:pl-0">
+            <div className={`mb-4 ${inThread ? "pl-10" : "pl-2 md:pl-0"}`}>
               <PollDisplay caw={useItem} />
             </div>
           )}
 
           {/* Video Display */}
           {!hideMedia && useItem.hasVideo && (
-            <div className="mb-4 pl-2 md:pl-0">
+            <div className={`mb-4 ${inThread ? "pl-10" : "pl-2 md:pl-0"}`}>
               {(() => {
                 // Check if videoData contains URLs
                 if (useItem.videoData) {
@@ -1423,31 +1425,8 @@ const FeedItem: React.FC<{ item: CawItem; isMainPost?: boolean; isReply?: boolea
                   return (
                     <div className="grid grid-cols-1 gap-2 w-full">
                       {videoUrls.map((url, index) => (
-                        <div key={index} className="relative rounded-lg overflow-hidden border border-gray-200 dark:border-gray-700 bg-black">
-                          {/* src on the element directly — NOT child <source> tags
-                              with hardcoded type="video/mp4" / "video/webm".
-                              Strict browsers (Safari) refuse to play when the
-                              declared MIME doesn't match what the server returns,
-                              and a single URL can't satisfy two declared types
-                              at once. The browser sniffs MIME from the response
-                              correctly when the type isn't asserted. */}
-                          <video
-                            src={url}
-                            autoPlay
-                            controls
-                            className="w-full h-auto max-h-[32rem]"
-                            loop
-                            muted
-                            playsInline
-                            preload="metadata"
-                            onClick={(e) => {
-                              e.stopPropagation()
-                            }}
-                            onError={(e) => {
-                              console.error('Failed to load video from URL:', url)
-                              e.currentTarget.style.display = 'none'
-                            }}
-                          />
+                        <div key={index} className="relative rounded-lg overflow-hidden">
+                          <PostVideo url={url} />
                         </div>
                       ))}
                     </div>
@@ -1460,7 +1439,7 @@ const FeedItem: React.FC<{ item: CawItem; isMainPost?: boolean; isReply?: boolea
 
           {/* Image Display */}
           {!hideMedia && useItem.hasImage && (
-            <div className="mb-4 pl-2 md:pl-0">
+            <div className={`mb-4 ${inThread ? "pl-10" : "pl-2 md:pl-0"}`}>
               {(() => {
                 // Check if imageData contains URLs or base64 data
                 if (useItem.imageData) {
@@ -1686,7 +1665,7 @@ const FeedItem: React.FC<{ item: CawItem; isMainPost?: boolean; isReply?: boolea
           })()}
 
           {/* Post Actions */}
-          <div className="flex items-center justify-between" onClick={(e) => e.stopPropagation()}>
+          <div className={`flex items-center justify-between ${inThread ? 'max-md:pl-4 pl-10' : ''}`} onClick={(e) => e.stopPropagation()}>
             <div className={`flex items-center ${uiDensity === 'compact' ? 'gap-4' : 'space-x-6'}`}>
               {/* Comments/Replies */}
               <Tooltip text={replyPending ? t('post.processing') : t('post.reply')} disabled={item.status === 'FAILED'}><button
@@ -2455,6 +2434,8 @@ export default React.memo(FeedItem, (prev, next) => {
     prev.item === next.item &&
     prev.isMainPost === next.isMainPost &&
     prev.isReply === next.isReply &&
-    prev.hideParentPreview === next.hideParentPreview
+    prev.hideParentPreview === next.hideParentPreview &&
+    prev.hideBottomBorder === next.hideBottomBorder &&
+    prev.inThread === next.inThread
   )
 })

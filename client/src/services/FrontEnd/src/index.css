@@ -150,6 +150,9 @@ html.theme-switching *::after {
   height: 1px;
   pointer-events: none;
 }
+.feed-item-hover.feed-item-no-divider::after {
+  display: none;
+}
 :root.dark .feed-item-hover::after {
   background: linear-gradient(to right,
     transparent 0%,
