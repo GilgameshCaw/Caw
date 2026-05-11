@@ -3,16 +3,23 @@ import { mainnet, sepolia, baseSepolia } from "wagmi/chains";
 import { getDefaultConfig, RainbowKitProvider, darkTheme } from "@rainbow-me/rainbowkit";
 import { QueryClientProvider, QueryClient } from "@tanstack/react-query";
 
-// RPC URLs — configurable via VITE_ env vars, falls back to free public endpoints.
-// Set VITE_L1_RPC_URL / VITE_L2_RPC_URL in the frontend .env to use the same
-// provider as the server (recommended). The optional _FRONTEND variants allow
-// a dedicated frontend RPC if needed (e.g. rate-limit separation).
+// RPC URLs — default to OUR backend RPC proxy at /api/rpc/{l1,l2}.
+// The proxy folds identical reads across all browsers into one
+// upstream Infura call, caches "latest"-block results for 3-5s, and
+// keeps the Infura key out of the bundle entirely. At 100 users open
+// at the same time, this is the difference between 100× upstream
+// fan-out and ~1× (plus cache misses on user-specific reads).
+//
+// Operators can override per-chain via VITE_L1_RPC_URL[_FRONTEND]
+// and VITE_L2_RPC_URL[_FRONTEND] — useful for tests where the proxy
+// is bypassed deliberately. The public-RPC fallback is a last
+// resort for static-hosted FE deployments that don't run a backend.
 const L1_RPC = import.meta.env.VITE_L1_RPC_URL_FRONTEND
   || import.meta.env.VITE_L1_RPC_URL
-  || "https://ethereum-sepolia-rpc.publicnode.com"
+  || (typeof window !== 'undefined' ? `${window.location.origin}/api/rpc/l1` : '/api/rpc/l1')
 const L2_RPC = import.meta.env.VITE_L2_RPC_URL_FRONTEND
   || import.meta.env.VITE_L2_RPC_URL
-  || "https://base-sepolia-rpc.publicnode.com"
+  || (typeof window !== 'undefined' ? `${window.location.origin}/api/rpc/l2` : '/api/rpc/l2')
 
 // Shared transport options for both chains.
 // - `batch.wait: 16ms` — coalesces any eth_call issued in the same render cycle

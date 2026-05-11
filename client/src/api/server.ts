@@ -42,6 +42,7 @@ import adminUsersRouter from './routes/admin-users'
 import adminValidatorRouter from './routes/admin-validator'
 import moderationRouter from './routes/moderation'
 import ogRouter from './routes/og'
+import rpcProxyRouter from './routes/rpc-proxy'
 import { spaPrerender } from './util/spaPrerender'
 import { cawPath, parseCawIdSlug } from './util/cawUrl'
 import { getSession } from './sessionStore'
@@ -367,6 +368,13 @@ export function createApp() {
   app.use('/api/admin/validator', adminValidatorRouter)
   app.use('/api/moderation', moderationRouter)
   app.use('/api/og', ogRouter)
+  // FE → backend → upstream RPC. Wagmi config in the FE points at
+  // /api/rpc/l1 and /api/rpc/l2; the proxy folds identical reads
+  // into one upstream request and caches "latest"-block results for
+  // a few seconds across all callers. Keeps the Infura key out of
+  // the FE bundle and gives us a single chokepoint for retries,
+  // failover, and rate limiting.
+  app.use('/api/rpc', rpcProxyRouter)
 
   app.get('/api/__sentry-test', (_req, _res) => {
     throw new Error('Sentry backend test error')
