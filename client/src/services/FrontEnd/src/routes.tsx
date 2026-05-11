@@ -122,6 +122,13 @@ export const layoutRoutes: RouteDef[] = [
   { path: "/users/:username", component: <Profile /> },
   { path: "/users/:username/activity", component: <CawActivity /> },
   { path: "/address/:address", component: <AddressTokens /> },
+  // Canonical caw URL — Twitter-style /<user>/caw/<id>-<slug>. The
+  // slug suffix is decorative; CawPage parses the leading numeric id
+  // and 301s to the canonical shape if the URL drifts (renamed user,
+  // stale slug, missing slug).
+  { path: "/users/:username/caw/:idSlug", component: <CawPage /> },
+  // Legacy share-link target. Same component; the canonical-redirect
+  // effect inside CawPage snaps the address bar once the caw loads.
   { path: "/caws/:id", component: <CawPage /> },
   { path: "/hashtags/:hashtag", component: <HashtagPage /> },
   { path: "/notifications", component: <AuthGate><NotificationsPage /></AuthGate> },

@@ -43,6 +43,7 @@ import adminValidatorRouter from './routes/admin-validator'
 import moderationRouter from './routes/moderation'
 import ogRouter from './routes/og'
 import { spaPrerender } from './util/spaPrerender'
+import { cawPath, parseCawIdSlug } from './util/cawUrl'
 import { getSession } from './sessionStore'
 import { prisma } from '../prismaClient'
 import { Sentry, sentryEnabled } from '../sentry'
@@ -369,6 +370,64 @@ export function createApp() {
 
   app.get('/api/__sentry-test', (_req, _res) => {
     throw new Error('Sentry backend test error')
+  })
+
+  // 301 canonical redirects for caw URLs, ahead of the SPA prerender.
+  // Three drift cases handled here:
+  //   1. Legacy /caws/:id            → /users/<owner>/caw/<id>-<slug>
+  //   2. Stale username on canonical → /users/<currentOwner>/caw/<id>-<slug>
+  //   3. Missing/stale slug          → /users/<owner>/caw/<id>-<currentSlug>
+  // Lookup is by numeric id only — slug is decorative. Only humans /
+  // crawlers hitting the FE catch-all see this; the /api/* routes above
+  // already short-circuited.
+  app.get(/^\/caws\/(\d+)\/?$/, async (req, res, next) => {
+    try {
+      const id = Number(req.params[0])
+      if (!Number.isFinite(id) || id <= 0) return next()
+      const caw = await prisma.caw.findUnique({
+        where: { id },
+        select: { id: true, content: true, user: { select: { username: true } } },
+      })
+      if (!caw?.user?.username) return next()
+      const target = cawPath({
+        id: caw.id,
+        username: caw.user.username,
+        content: caw.content,
+      })
+      const qs = req.url.includes('?') ? req.url.slice(req.url.indexOf('?')) : ''
+      res.redirect(301, `${target}${qs}`)
+    } catch {
+      next()
+    }
+  })
+  app.get(/^\/users\/([^/]+)\/caw\/([^/]+)\/?$/, async (req, res, next) => {
+    try {
+      const requestedUser = decodeURIComponent(req.params[0])
+      const idSlug = req.params[1]
+      const id = parseCawIdSlug(idSlug)
+      if (id == null) return next()
+      const caw = await prisma.caw.findUnique({
+        where: { id },
+        select: { id: true, content: true, user: { select: { username: true } } },
+      })
+      if (!caw?.user?.username) return next()
+      const target = cawPath({
+        id: caw.id,
+        username: caw.user.username,
+        content: caw.content,
+      })
+      // Already canonical — pass through to prerender.
+      if (target === req.path) return next()
+      const qs = req.url.includes('?') ? req.url.slice(req.url.indexOf('?')) : ''
+      // Wrong username, stale slug, or missing slug — 301 to canonical.
+      // Skip the redirect for crawler UAs that we want to serve the page
+      // to directly (they already follow 301s, but the extra hop costs
+      // crawl budget). Actually keep it: Googlebot handles 301 cleanly
+      // and indexes the destination. Same for Twitterbot.
+      res.redirect(301, `${target}${qs}`)
+    } catch {
+      next()
+    }
   })
 
   // SPA prerender for crawler User-Agents (Twitterbot, Slackbot, Discordbot,

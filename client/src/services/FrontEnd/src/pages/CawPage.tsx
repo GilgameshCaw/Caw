@@ -12,6 +12,7 @@ import { HiArrowLeft, HiChevronRight } from 'react-icons/hi'
 import SignInModal from '~/components/modals/SignInModal'
 import { usePendingPostsStore } from '~/store/pendingPostsStore'
 import { formatTimeAgo } from '~/utils/formatTimeAgo'
+import { cawUrl, parseCawIdSlug } from '~/utils/cawUrl'
 
 type IndicatorUser = {
   tokenId?: number
@@ -43,7 +44,14 @@ type LikeIndicator = {
 
 export const CawPage: React.FC = () => {
   const t = useT()
-  const { id } = useParams<{ id: string }>()
+  // Route can be either the legacy /caws/:id or the canonical
+  // /users/:username/caw/:idSlug. The numeric id is the only piece used
+  // for lookup; username + slug are decorative + canonical-redirected.
+  const params = useParams<{ id?: string; idSlug?: string; username?: string }>()
+  // Legacy /caws/:id passes raw id (can be `pending-...`). Canonical
+  // /users/:username/caw/:idSlug has only numeric ids — parseCawIdSlug
+  // strips the slug suffix.
+  const id = params.id ?? (params.idSlug ? String(parseCawIdSlug(params.idSlug) ?? '') : undefined)
   const [searchParams, setSearchParams] = useSearchParams()
   const navigate = useNavigate()
   const location = useLocation()
@@ -350,6 +358,20 @@ export const CawPage: React.FC = () => {
     if (String(realId) === id) return
     navigate(`/caws/${realId}`, { replace: true, state: { caw: matched } })
   }, [allPendingPosts, id, isTempIdRoute, navigate])
+
+  // Canonical-URL redirect. Once we have the caw, snap the address bar
+  // to /users/<username>/caw/<id>-<slug>. Covers legacy /caws/:id hits,
+  // stale usernames (token transfer), and stale slugs (post edit). Only
+  // runs when the target differs from the current path so it never loops.
+  useEffect(() => {
+    if (!caw) return
+    if (isTempIdRoute) return
+    const canonical = cawUrl(caw)
+    if (canonical === location.pathname) return
+    // Preserve the query string (e.g. ?reply=1, ?media=N) when redirecting.
+    const target = location.search ? `${canonical}${location.search}` : canonical
+    navigate(target, { replace: true, state: location.state })
+  }, [caw, isTempIdRoute, location.pathname, location.search, location.state, navigate])
 
   const errorView = (message: string) => (
       <div className="flex flex-col items-center justify-center py-16 px-6 text-center">

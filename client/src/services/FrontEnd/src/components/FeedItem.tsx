@@ -37,6 +37,7 @@ import { useViewerLanguage } from '~/hooks/useViewerLanguage'
 import { useMyRole } from '~/hooks/useMyRole'
 import { languageName } from '~/constants/languages'
 import { useT } from '~/i18n/I18nProvider'
+import { cawUrl } from '~/utils/cawUrl'
 import { useBlockedUsersStore } from '~/store/blockedUsersStore'
 import { ShareModal } from './ShareModal'
 import { useModalStore } from '~/store/modalStore'
@@ -173,8 +174,12 @@ const FeedItem: React.FC<{ item: CawItem; isMainPost?: boolean; isReply?: boolea
   const navigate = useNavigate()
   const location = useLocation()
 
-  const openPostMedia = (postId: string, mediaIndex: number) => {
-    navigate(`/caws/${postId}?media=${mediaIndex}&source=imageData`, {
+  const openPostMedia = (postOrId: CawItem | string, mediaIndex: number) => {
+    // Caller may pass either a full caw (preferred — gets canonical URL)
+    // or just a string id (back-compat for callsites that don't have the
+    // post in scope; the modal still resolves it from `:id`).
+    const path = typeof postOrId === 'string' ? `/caws/${postOrId}` : cawUrl(postOrId)
+    navigate(`${path}?media=${mediaIndex}&source=imageData`, {
       state: { backgroundLocation: location }
     })
   }
@@ -685,7 +690,7 @@ const FeedItem: React.FC<{ item: CawItem; isMainPost?: boolean; isReply?: boolea
     // Mobile UX stays modal for now. Same in-memory seed as
     // handleCardClick so the post renders without a full-page spinner.
     if (typeof window !== 'undefined' && window.matchMedia('(min-width: 768px)').matches) {
-      navigate(`/caws/${replyTarget.id}?reply=1`, { state: { caw: replyTarget } })
+      navigate(`${cawUrl(replyTarget)}?reply=1`, { state: { caw: replyTarget } })
       return
     }
 
@@ -1029,7 +1034,7 @@ const FeedItem: React.FC<{ item: CawItem; isMainPost?: boolean; isReply?: boolea
     if (item.status === 'FAILED') {
       return
     }
-    const url = `/caws/${useItem.id}`
+    const url = cawUrl(useItem)
     // Open in new tab if command+click (Mac) or ctrl+click (Windows/Linux)
     if (e.metaKey || e.ctrlKey) {
       window.open(url, '_blank')
@@ -1131,7 +1136,7 @@ const FeedItem: React.FC<{ item: CawItem; isMainPost?: boolean; isReply?: boolea
                 }
               }
               return (
-                <Link to={`/caws/${item.parent.id}`} state={{ caw: item.parent }} className={`block text-xs transition-all duration-300 mb-3 ${
+                <Link to={cawUrl(item.parent)} state={{ caw: item.parent }} className={`block text-xs transition-all duration-300 mb-3 ${
                   isDark ? 'text-gray-400' : 'text-gray-600'
                 }`}>
                   <span className="truncate md:truncate-none">{t('post.replying_to')} <span className="underline">@{item.parent.user.username}</span></span>
@@ -1479,7 +1484,7 @@ const FeedItem: React.FC<{ item: CawItem; isMainPost?: boolean; isReply?: boolea
                                   onClick={(e) => {
                                     e.preventDefault()
                                     e.stopPropagation()
-                                    openPostMedia(useItem.id, 0)
+                                    openPostMedia(useItem, 0)
                                   }}
                                   onError={(e) => {
                                     console.error('Failed to load image from URL:', url)
@@ -1511,7 +1516,7 @@ const FeedItem: React.FC<{ item: CawItem; isMainPost?: boolean; isReply?: boolea
                                     onClick={(e) => {
                                       e.preventDefault()
                                       e.stopPropagation()
-                                      openPostMedia(useItem.id, index)
+                                      openPostMedia(useItem, index)
                                     }}
                                     onError={(e) => {
                                       console.error('Failed to load image from URL:', url)
@@ -1545,7 +1550,7 @@ const FeedItem: React.FC<{ item: CawItem; isMainPost?: boolean; isReply?: boolea
                                   onClick={(e) => {
                                     e.preventDefault()
                                     e.stopPropagation()
-                                    openPostMedia(useItem.id, 0)
+                                    openPostMedia(useItem, 0)
                                   }}
                                   onError={(e) => {
                                     console.error('Failed to load on-chain image')
@@ -1580,7 +1585,7 @@ const FeedItem: React.FC<{ item: CawItem; isMainPost?: boolean; isReply?: boolea
                                     onClick={(e) => {
                                       e.preventDefault()
                                       e.stopPropagation()
-                                      openPostMedia(useItem.id, index)
+                                      openPostMedia(useItem, index)
                                     }}
                                     onError={(e) => {
                                       console.error('Failed to load on-chain image')
@@ -1609,7 +1614,7 @@ const FeedItem: React.FC<{ item: CawItem; isMainPost?: boolean; isReply?: boolea
                         onClick={(e) => {
                           e.preventDefault()
                           e.stopPropagation()
-                          openPostMedia(useItem.id, 0)
+                          openPostMedia(useItem, 0)
                         }}
                         onError={(e) => {
                           console.error('Failed to load image')
@@ -1630,7 +1635,7 @@ const FeedItem: React.FC<{ item: CawItem; isMainPost?: boolean; isReply?: boolea
             const Wrapper: any = isHidden ? 'div' : Link
             const wrapperProps: any = isHidden
               ? { onClick: (e: React.MouseEvent) => e.stopPropagation() }
-              : { to: `/caws/${item.parent.id}`, onClick: (e: React.MouseEvent) => e.stopPropagation() }
+              : { to: cawUrl(item.parent), onClick: (e: React.MouseEvent) => e.stopPropagation() }
             return (
               <Wrapper
                 {...wrapperProps}
@@ -2234,7 +2239,7 @@ const FeedItem: React.FC<{ item: CawItem; isMainPost?: boolean; isReply?: boolea
       <ShareModal
         isOpen={showShareModal}
         onClose={() => setShowShareModal(false)}
-        url={`/caws/${useItem.id}`}
+        url={cawUrl(useItem)}
         title={`${useItem.user?.displayName || '@' + useItem.user?.username}'s caw`}
         text={useItem.content}
       />

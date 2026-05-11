@@ -3,6 +3,7 @@ import path from 'path'
 import fs from 'fs'
 import { prisma } from '../../prismaClient'
 import { publicUrl } from './publicUrl'
+import { cawPath, parseCawIdSlug } from './cawUrl'
 
 // nginx routes only crawler User-Agents through to the API; this handler
 // reads the URL, fetches the per-route data, and returns the SPA's
@@ -41,6 +42,11 @@ type Meta = {
   url: string
   image: string
   ogType?: 'website' | 'article'
+  /** Canonical URL — used for <link rel="canonical">. Defaults to `url`
+   * when not set. Set explicitly when the requested URL is a non-canonical
+   * variant (legacy /caws/:id, stale username, missing slug) so search
+   * engines collapse all variants onto the canonical entry. */
+  canonical?: string
 }
 
 function buildMetaTags(m: Meta): string {
@@ -48,14 +54,19 @@ function buildMetaTags(m: Meta): string {
   const d = escapeHtml(m.description)
   const u = escapeHtml(m.url)
   const i = escapeHtml(m.image)
+  const c = escapeHtml(m.canonical || m.url)
   const ot = m.ogType || 'website'
   return [
     `<title>${t}</title>`,
     `<meta name="description" content="${d}">`,
+    // Canonical points to the one true URL for this content. For caws
+    // this collapses /caws/:id, stale usernames, and stale/missing slugs
+    // onto a single indexed URL.
+    `<link rel="canonical" href="${c}">`,
     `<meta property="og:type" content="${ot}">`,
     `<meta property="og:title" content="${t}">`,
     `<meta property="og:description" content="${d}">`,
-    `<meta property="og:url" content="${u}">`,
+    `<meta property="og:url" content="${c}">`,
     `<meta property="og:image" content="${i}">`,
     `<meta property="og:image:width" content="1200">`,
     `<meta property="og:image:height" content="630">`,
@@ -78,6 +89,7 @@ function injectMeta(html: string, meta: Meta): string {
   // og:* / twitter:* tags from a previous prerender pass would just stack;
   // we drop them too so re-rendering is idempotent.
   out = out.replace(/\s*<meta\s+(?:property|name)="(?:og:[^"]+|twitter:[^"]+)"[^>]*>/gi, '')
+  out = out.replace(/\s*<link\s+rel="canonical"[^>]*>/gi, '')
   out = out.replace(/<\/head>/i, `    ${buildMetaTags(meta)}\n  </head>`)
   return out
 }
@@ -116,12 +128,16 @@ async function hashtagMeta(tag: string): Promise<Meta | null> {
   }
 }
 
-async function cawMeta(idStr: string): Promise<Meta | null> {
-  const id = Number(idStr)
+async function cawMeta(id: number, requestedPath: string): Promise<Meta | null> {
   if (!Number.isFinite(id) || id <= 0) return null
   const caw = await prisma.caw.findUnique({
     where: { id },
-    select: { id: true, status: true },
+    select: {
+      id: true,
+      status: true,
+      content: true,
+      user: { select: { username: true } },
+    },
   })
   // PENDING is publicly visible (the FE shows pending posts in author
   // feeds and the share button surfaces them right after submit), so
@@ -131,10 +147,19 @@ async function cawMeta(idStr: string): Promise<Meta | null> {
   // until the indexer flipped them to SUCCESS minutes later.
   // FAILED / HIDDEN stay private (return null → default meta).
   if (!caw || (caw.status !== 'SUCCESS' && caw.status !== 'PENDING')) return null
+  const canonicalPath = cawPath({
+    id: caw.id,
+    username: caw.user?.username ?? null,
+    content: caw.content,
+  })
+  const canonical = `${publicUrl()}${canonicalPath}`
   return {
     title: BRAND_TITLE,
     description: '',
-    url: `${publicUrl()}/caws/${caw.id}`,
+    // og:url renders the canonical so social previews always link to the
+    // canonical form even when shared from a stale URL.
+    url: `${publicUrl()}${requestedPath}`,
+    canonical,
     image: `${publicUrl()}/api/og/image/caw/${caw.id}`,
     ogType: 'article',
   }
@@ -169,8 +194,22 @@ export async function spaPrerender(req: Request, res: Response): Promise<void> {
     if (m) meta = await profileMeta(decodeURIComponent(m[1]))
 
     if (!meta) {
+      // Canonical caw URL: /users/<username>/caw/<id>-<slug>. The slug
+      // suffix is decorative — the leading numeric id is what looks up
+      // the caw. canonical-redirect logic in the FE snaps stale URLs.
+      m = reqPath.match(/^\/users\/([^/]+)\/caw\/([^/]+)\/?$/)
+      if (m) {
+        const id = parseCawIdSlug(m[2])
+        if (id != null) meta = await cawMeta(id, reqPath)
+      }
+    }
+
+    if (!meta) {
+      // Legacy /caws/:id share-link target. Same content, different
+      // surface URL — meta.canonical points to the new shape so
+      // crawlers index only the canonical form.
       m = reqPath.match(/^\/caws\/(\d+)\/?$/)
-      if (m) meta = await cawMeta(m[1])
+      if (m) meta = await cawMeta(Number(m[1]), reqPath)
     }
 
     if (!meta) {

@@ -71,9 +71,12 @@ function AppRoutes() {
         ))}
       </Routes>
 
-      {/* Modal routes (rendered on top of backgroundLocation) */}
+      {/* Modal routes (rendered on top of backgroundLocation). Both URL
+          shapes mount the same media modal — the modal pulls the post
+          data via `id` from the route, slug suffix is ignored. */}
       {backgroundLocation && (
         <Routes>
+          <Route path="/users/:username/caw/:idSlug" element={<CawMediaModal />} />
           <Route path="/caws/:id" element={<CawMediaModal />} />
         </Routes>
       )}

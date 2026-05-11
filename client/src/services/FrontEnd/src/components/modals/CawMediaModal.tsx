@@ -10,6 +10,7 @@ import type { CawItem } from '~/types'
 import { useTheme } from '~/hooks/useTheme'
 import { useTokenDataStore, useActiveToken } from '~/store/tokenDataStore'
 import { usePendingPostsStore } from '~/store/pendingPostsStore'
+import { parseCawIdSlug } from '~/utils/cawUrl'
 
 type MediaItem =
   | { kind: 'url'; src: string }
@@ -29,7 +30,10 @@ const extractShortUrlHost = (shortUrlText: string): string | undefined => {
 const clamp = (n: number, min: number, max: number) => Math.max(min, Math.min(max, n))
 
 export default function CawMediaModal() {
-  const { id } = useParams<{ id: string }>()
+  // Mounted from either /caws/:id (legacy) or /users/:username/caw/:idSlug
+  // (canonical). Pull the numeric id from whichever shape is in the route.
+  const params = useParams<{ id?: string; idSlug?: string }>()
+  const id = params.id ?? (params.idSlug ? String(parseCawIdSlug(params.idSlug) ?? '') : undefined)
   const navigate = useNavigate()
   const location = useLocation()
   const { isDark } = useTheme()

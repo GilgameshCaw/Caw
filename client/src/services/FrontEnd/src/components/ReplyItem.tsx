@@ -20,6 +20,7 @@ import { useHasActiveSession } from '~/hooks/useHasActiveSession'
 import Tooltip from '~/components/Tooltip'
 
 import { formatTimeAgo } from '~/utils/formatTimeAgo'
+import { cawUrl } from '~/utils/cawUrl'
 
 const ReplyItem: React.FC<{ item: CawItem; onLikeStateChange?: (cawId: string, likePending: boolean) => void; onReplyStateChange?: (cawId: string, replyPending: boolean) => void }> = ({ item, onLikeStateChange, onReplyStateChange }) => {
   // Enable polling for pending items
@@ -158,7 +159,7 @@ const ReplyItem: React.FC<{ item: CawItem; onLikeStateChange?: (cawId: string, l
   }
 
   return (
-    <Link to={`/caws/${item.id}`} className="block">
+    <Link to={cawUrl(item)} className="block">
       <div className={`p-4 transition-all duration-300 hover:bg-gray-500/5 cursor-pointer ${
         (item.status === 'PENDING' || item.status === 'FAILED') ? 'opacity-60' : ''
       }`}>
