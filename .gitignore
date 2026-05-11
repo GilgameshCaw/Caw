@@ -102,3 +102,7 @@ solidity/test/zk-digest-fixtures.json
 # add a separate `.claude/settings.json` (no .local) explicitly.
 .claude/
 
+# Drafts of messages/posts written for the user to copy out (pbcopy).
+# Local-only scratch — not part of the codebase.
+/messages/
+
