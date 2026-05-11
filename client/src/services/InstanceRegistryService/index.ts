@@ -146,6 +146,14 @@ function applyToCache(
  * empty window after finding events, so a single full back-walk on
  * cold-start naturally limits to "the chunk containing the deploy."
  */
+// Highest block we've already scanned for instance-registry events.
+// Process-local cursor: on cold start we do a full backward scan to
+// find the contract's deploy block and all historical events; on
+// subsequent ticks we only scan `lastScanned + 1 → latest`. Prevents
+// the per-minute walk-back-from-head pattern that was generating
+// dozens of eth_getLogs per refresh even when nothing had changed.
+let lastScannedBlock = -1
+
 async function refreshPeers(
   provider: AbstractProvider,
   clientManagerAddress: string,
@@ -158,16 +166,56 @@ async function refreshPeers(
   const actSig = iface.getEvent('InstanceActivated')!.topicHash
   const clientIdTopic = '0x' + clientId.toString(16).padStart(64, '0')
 
-  // Filter on (sig, instanceId=ANY, clientId). InstanceRegistered indexes
-  // (instanceId, clientId, owner) so we can pin the second topic.
-  const regLogs = await scanLogsBackward(provider, clientManagerAddress, [regSig, null, clientIdTopic])
-  // InstanceUpdated / InstanceDeactivated / InstanceActivated aren't
-  // clientId-indexed (only instanceId is), so we pull all and filter
-  // client-side via the cache: if the instanceId isn't in our cache for
-  // this clientId, applyToCache ignores the event.
-  const updLogs = await scanLogsBackward(provider, clientManagerAddress, [updSig])
-  const deactLogs = await scanLogsBackward(provider, clientManagerAddress, [deactSig])
-  const actLogs = await scanLogsBackward(provider, clientManagerAddress, [actSig])
+  const latestBlock = await provider.getBlockNumber()
+  const isCold = lastScannedBlock < 0
+  // Use OR-of-topic-hashes to coalesce four event types into a single
+  // getLogs call per range. The contract emits all four from
+  // CLIENT_MANAGER_ADDRESS, so a single (address, topic[0] in {…})
+  // query returns everything we care about. Drops 4 RPC calls per
+  // refresh to 1 (plus chunked-walker chunks).
+  const allSigs = [regSig, updSig, deactSig, actSig]
+
+  let regLogs: any[] = []
+  let updLogs: any[] = []
+  let deactLogs: any[] = []
+  let actLogs: any[] = []
+
+  if (isCold) {
+    // Cold start: walk backward to find historical events. The walker
+    // bails as soon as it hits an empty window AFTER finding events,
+    // so on a freshly-deployed contract this stops within a few chunks.
+    const allLogs = await scanLogsBackward(provider, clientManagerAddress, [allSigs])
+    for (const log of allLogs) {
+      const t0 = (log.topics ?? [])[0]
+      if (t0 === regSig) {
+        // InstanceRegistered is the only one we filter by clientId.
+        const t2 = (log.topics ?? [])[2]
+        if (t2 === clientIdTopic) regLogs.push(log)
+      } else if (t0 === updSig)   updLogs.push(log)
+        else if (t0 === deactSig) deactLogs.push(log)
+        else if (t0 === actSig)   actLogs.push(log)
+    }
+  } else if (latestBlock > lastScannedBlock) {
+    // Warm path: only scan blocks since last refresh. Cheap: 60s of
+    // Sepolia is ~5 blocks, one getLogs call covers all four event
+    // types via the topic OR filter.
+    const incremental = await provider.getLogs({
+      address: clientManagerAddress,
+      topics: [allSigs],
+      fromBlock: lastScannedBlock + 1,
+      toBlock: latestBlock,
+    })
+    for (const log of incremental) {
+      const t0 = (log.topics ?? [])[0]
+      if (t0 === regSig) {
+        const t2 = (log.topics ?? [])[2]
+        if (t2 === clientIdTopic) regLogs.push(log)
+      } else if (t0 === updSig)   updLogs.push(log)
+        else if (t0 === deactSig) deactLogs.push(log)
+        else if (t0 === actSig)   actLogs.push(log)
+    }
+  }
+  lastScannedBlock = latestBlock
 
   const registered: any[] = []
   for (const log of regLogs) {
