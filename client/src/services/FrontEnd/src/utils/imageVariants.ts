@@ -1,16 +1,16 @@
 // Image variant URL derivation. Mirrors the server-side naming convention
-// from /api/upload/variant: `<id>.webp` → `<id>_<width>.webp`.
+// from /api/upload/variant, which preserves the base file's extension:
+// `<id>.jpg` → `<id>_<width>.jpg`, `<id>.webp` → `<id>_<width>.webp`.
 //
 // Why this is a pure string transform (no DB lookup): the variant naming
 // is deterministic, every renderer can resolve the URL synchronously, and
 // the <img onError> path naturally falls back to the original if the
 // variant doesn't exist (e.g. for images uploaded before the variant
-// system shipped, until the backfill runs).
+// system shipped).
 
 /** 96px square thumb variant of an avatar — used in feeds, comments,
- *  lists, profile chooser. Old uploads have a `_64.webp` instead; those
- *  will 404 here and the renderer falls back to the main URL via
- *  Avatar's onError path. */
+ *  lists, profile chooser. Pre-variant uploads (no thumb generated)
+ *  will 404 here and Avatar's onError falls back to the main URL. */
 export function avatarThumbUrl(url: string | null | undefined): string | undefined {
   if (!url) return undefined
   return appendWidthSuffix(url, 96)
@@ -35,11 +35,12 @@ function appendWidthSuffix(url: string, width: number): string {
   const dot = url.lastIndexOf('.')
   if (dot < 0) return url
   const stem = url.slice(0, dot)
+  const ext = url.slice(dot)
   // Already a variant? Don't double-suffix.
   if (/_\d+$/.test(stem)) return url
-  // Variants are ALWAYS .webp regardless of source extension —
-  // compressImage forces image/webp output, and the backfill script
-  // also writes _N.webp. Using the original extension here would 404
-  // for any source that wasn't already WebP (most JPGs/PNGs).
-  return `${stem}_${width}.webp`
+  // Preserve the base extension: the server-side variant route writes
+  // `${stem}_${width}${ext}` regardless of the thumb's actual mime, so
+  // `<id>.jpg` has its thumb at `<id>_96.jpg`, NOT `_96.webp`. Forcing
+  // .webp here 404s on every jpg/png/gif avatar.
+  return `${stem}_${width}${ext}`
 }
