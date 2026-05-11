@@ -532,6 +532,25 @@ const AccountSettings: React.FC = () => {
     }))
     .filter(g => g.tokens.length > 0)
 
+  const handleDisconnectWallet = async () => {
+    // Pure wallet disconnect: ask wagmi to drop every active connector
+    // and clear our auth session so cookies for this tokenId aren't
+    // left dangling against a now-detached wallet. Does NOT wipe
+    // localStorage / IndexedDB — that's "Clear All Data". Reload lets
+    // RainbowKit re-evaluate connector state on a clean boot.
+    try { useAuthStore.getState().clearSession() } catch { /* best-effort */ }
+    try {
+      const { disconnect, getConnections } = await import('@wagmi/core')
+      const { wagmiConfig } = await import('~/config/Web3Provider')
+      for (const connection of getConnections(wagmiConfig)) {
+        await disconnect(wagmiConfig, { connector: connection.connector })
+      }
+    } catch (e) {
+      console.warn('[DisconnectWallet] wagmi disconnect failed (continuing):', e)
+    }
+    window.location.reload()
+  }
+
   const handleLogoutCurrentAccount = () => {
     if (!activeTokenId) return
     // Clear DM keys for this account only
@@ -946,6 +965,33 @@ const AccountSettings: React.FC = () => {
           }`}>
             {t('account.section.browser_data')}
           </h2>
+
+          {/* Disconnect wallet — drops the wallet connection without
+              wiping local data. Useful when a user connected the wrong
+              wallet and just wants out without losing app state. */}
+          {isConnected && (
+            <button
+              onClick={handleDisconnectWallet}
+              className={`w-full flex items-center justify-between py-4 px-4 rounded-lg transition-colors cursor-pointer mb-3 ${
+                isDark ? 'bg-white/5 hover:bg-white/10' : 'bg-gray-50 hover:bg-gray-100'
+              }`}
+            >
+              <div className="text-left">
+                <h3 className={`font-medium ${isDark ? 'text-white' : 'text-gray-900'}`}>
+                  {t('account.disconnect_wallet.title')}
+                </h3>
+                <p className={`text-sm ${isDark ? 'text-white/50' : 'text-gray-500'}`}>
+                  {address
+                    ? t('account.disconnect_wallet.description_with_address', { address: `${address.slice(0, 6)}…${address.slice(-4)}` })
+                    : t('account.disconnect_wallet.description')}
+                </p>
+              </div>
+              <svg className={`w-5 h-5 ${isDark ? 'text-white/40' : 'text-gray-400'}`} fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13.828 10.172a4 4 0 00-5.656 0l-4 4a4 4 0 105.656 5.656l1.102-1.101m-.758-4.899a4 4 0 005.656 0l4-4a4 4 0 00-5.656-5.656l-1.1 1.1" />
+                <line x1="3" y1="3" x2="21" y2="21" strokeLinecap="round" strokeWidth={2} />
+              </svg>
+            </button>
+          )}
 
           {/* Log out current account */}
           {activeToken && (
