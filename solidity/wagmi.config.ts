@@ -12,7 +12,7 @@ export default defineConfig({
         "contracts/CawActions.sol/**",
         "contracts/CawActionsArchive.sol/**",
         "contracts/CawChallengeRelay.sol/**",
-        "contracts/CawClientManager.sol/**",
+        "contracts/CawNetworkManager.sol/**",
         "contracts/CawProfile.sol/**",
         "contracts/CawProfileL2.sol/**",
         "contracts/CawProfileMinter.sol/**",
