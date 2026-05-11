@@ -35,6 +35,69 @@ import {
 
 const router = Router()
 
+// Origin allowlist. Without this, any script anywhere on the
+// internet could POST /api/rpc/l2 and burn our paid Infura quota
+// — CORS only stops browsers from READING cross-origin responses;
+// it doesn't stop the server from processing the request itself.
+// We enforce server-side: require Origin or Referer to match one
+// of the configured origins, and reject anything else (including
+// requests with NO Origin header, which is the curl/script case).
+//
+// Sources:
+//   1. ALLOWED_ORIGINS env (comma-separated list, same as global CORS).
+//   2. PUBLIC_URL env (the operator's public hostname).
+// '*' in ALLOWED_ORIGINS is treated as wide-open (dev / on purpose).
+function parseAllowedOrigins(): { exact: Set<string>; wildcard: boolean } {
+  const exact = new Set<string>()
+  let wildcard = false
+  for (const raw of (process.env.ALLOWED_ORIGINS || '').split(',')) {
+    const o = raw.trim()
+    if (!o) continue
+    if (o === '*') { wildcard = true; continue }
+    exact.add(o.replace(/\/$/, ''))
+  }
+  const publicUrl = (process.env.PUBLIC_URL || '').trim().replace(/\/$/, '')
+  if (publicUrl) exact.add(publicUrl)
+  return { exact, wildcard }
+}
+const allowed = parseAllowedOrigins()
+if (process.env.NODE_ENV !== 'test') {
+  if (allowed.wildcard) {
+    console.warn('[rpc-proxy] ALLOWED_ORIGINS includes "*" — anyone can hit /api/rpc/*. OK for dev, NOT for prod.')
+  } else if (allowed.exact.size === 0) {
+    console.warn('[rpc-proxy] No ALLOWED_ORIGINS / PUBLIC_URL configured — /api/rpc/* will reject all requests. Set one to enable the proxy.')
+  } else {
+    console.log(`[rpc-proxy] Origin allowlist: ${Array.from(allowed.exact).join(', ')}`)
+  }
+}
+
+function originAllowed(req: Request): boolean {
+  if (allowed.wildcard) return true
+  // Prefer Origin (browser-set on fetch from a different page). Fall
+  // back to Referer (browser-set on most other requests). One must be
+  // present AND match — no header = block (script/curl with no spoof).
+  const origin = (req.headers.origin || '').replace(/\/$/, '')
+  if (origin && allowed.exact.has(origin)) return true
+  const referer = req.headers.referer || ''
+  if (referer) {
+    try {
+      const u = new URL(referer)
+      const refererOrigin = `${u.protocol}//${u.host}`
+      if (allowed.exact.has(refererOrigin)) return true
+    } catch { /* malformed referer */ }
+  }
+  return false
+}
+
+function originGate(req: Request, res: Response, next: () => void) {
+  if (originAllowed(req)) return next()
+  res.status(403).json({
+    jsonrpc: '2.0',
+    id: null,
+    error: { code: -32001, message: 'RPC proxy: origin not allowed' },
+  })
+}
+
 // Per-IP rate limit. Catches a single browser misbehaving without
 // affecting other users. Set generously: a normal user's tab fires
 // ~10 RPCs/min after our optimizations; a bot/buggy tab firing 100/sec
@@ -238,8 +301,8 @@ function makeHandler(chain: Chain) {
   }
 }
 
-router.post('/l1', proxyRateLimit, makeHandler('l1'))
-router.post('/l2', proxyRateLimit, makeHandler('l2'))
+router.post('/l1', originGate, proxyRateLimit, makeHandler('l1'))
+router.post('/l2', originGate, proxyRateLimit, makeHandler('l2'))
 
 // Light health probe — confirms the proxy is wired without exposing
 // upstream URLs.
