@@ -141,15 +141,57 @@ async function markTxQueueFailed(
 // declare it a real failure. The contract said the cawonce was used, but
 // our local Action table never caught up — at that point we have to
 // assume the indexer is broken or the action genuinely doesn't exist.
-// Extended from 60s to 10min on 2026-05-10 after a wave of false-failure
-// posts. Symptom: validator simulation said "Cawonce already used"
-// (cawonce IS used on chain), but our local Action table didn't have
-// the row yet because RawEventsGatherer was minutes behind the chain
-// head (Infura rate-limiting on L2 getLogs slowed indexing). With the
-// old 60s budget, the validator gave up and marked legitimate posts
-// failed. 10min covers the worst observed indexer lag while still
-// catching genuine collisions in a reasonable timeframe.
-const AWAITING_INDEXER_TIMEOUT_MS = 10 * 60_000
+//
+// History:
+//   - Originally 60s. Failed legit posts whenever the indexer was even
+//     mildly behind.
+//   - 2026-05-10: bumped to 10min after RPC rate-limiting on the L2
+//     endpoint slowed RawEventsGatherer + ActionProcessor enough that
+//     legit posts got marked failed.
+//   - 2026-05-11: discovered the 10min wall is still too aggressive
+//     during compound backend stalls (Prisma transaction starvation +
+//     ActionProcessor 15s tx timeout + L2 RPC throttling can push
+//     indexer lag past 10min). Floor stays at 10min; ceiling is now
+//     60min and the effective budget scales with measured indexer lag.
+//     See indexerAwareAwaitingTimeoutMs().
+const AWAITING_INDEXER_FLOOR_MS = 10 * 60_000
+const AWAITING_INDEXER_CEILING_MS = 60 * 60_000
+
+// Cached measure of how far behind chain-head the local Action table is.
+// Refreshed at the top of every poll cycle (cheap: a single max(createdAt)
+// query). Used to dynamically widen the awaiting_indexer budget when the
+// indexer is severely lagged, so a 30-min indexer stall doesn't produce a
+// wave of false-failure posts.
+let lastObservedIndexerLagMs = 0
+
+async function refreshIndexerLag(): Promise<void> {
+  try {
+    const row = await prisma.action.aggregate({ _max: { createdAt: true } })
+    if (row._max.createdAt) {
+      lastObservedIndexerLagMs = Math.max(0, Date.now() - row._max.createdAt.getTime())
+    }
+  } catch {
+    // Don't let a metrics query failure halt the loop — leave stale lag in place.
+  }
+}
+
+/**
+ * Effective awaiting_indexer budget for the current poll cycle.
+ *
+ * Returns max(FLOOR, observedLag * 3), capped at CEILING. The 3× multiplier
+ * gives the indexer enough time to catch up on its current backlog AND
+ * process whatever else lands in the meantime. If the indexer is current,
+ * we use FLOOR (10min) which is plenty for the typical race; if it's badly
+ * behind, the budget stretches up to 60min so legitimate posts don't get
+ * marked failed during a temporary stall.
+ */
+function indexerAwareAwaitingTimeoutMs(): number {
+  return Math.min(
+    AWAITING_INDEXER_CEILING_MS,
+    Math.max(AWAITING_INDEXER_FLOOR_MS, lastObservedIndexerLagMs * 3),
+  )
+}
+
 
 // Cache for cawActions.withdrawQuote() across the simulate → bisect →
 // recalculate flow within a single batch lifetime. Same (tokenIds,
@@ -235,9 +277,11 @@ async function resolveCawonceUsed(data: any, firstSeenAt?: Date): Promise<'done'
   }
   // No Action row yet. Either the indexer hasn't caught up, or the cawonce
   // really is a phantom (eg. used by a tx that failed receipt verification
-  // but still triggered the on-chain bitmap). Give the indexer a window;
-  // if we've been waiting past the timeout, treat it as a real failure.
-  if (firstSeenAt && Date.now() - firstSeenAt.getTime() > AWAITING_INDEXER_TIMEOUT_MS) {
+  // but still triggered the on-chain bitmap). Give the indexer a window
+  // sized to its current lag — short when caught up, long when stalled —
+  // and if we've been waiting past that budget, treat it as a real failure.
+  const budget = indexerAwareAwaitingTimeoutMs()
+  if (firstSeenAt && Date.now() - firstSeenAt.getTime() > budget) {
     return 'failed'
   }
   return 'awaiting_indexer'
@@ -1808,6 +1852,10 @@ console.log("succeededKeys", succeededKeys)
     /** natstat: core polling loop */
     async function pollLoop() {
       await refreshSettings(checkInterval)
+      // Cheap metric — one max(createdAt) query — so resolveCawonceUsed
+      // can size its budget to the indexer's actual lag rather than a
+      // static wall.
+      await refreshIndexerLag()
       // Track every row we mark 'processing' in this poll so the outer catch
       // can roll them back to 'pending' on failure. Without this, an RPC
       // hang anywhere downstream leaves rows stuck in 'processing' until the
