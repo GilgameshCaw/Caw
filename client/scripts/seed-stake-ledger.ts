@@ -108,9 +108,10 @@ async function main() {
   // verifyMultiplier check after pm2 restart." There's still a tiny gap
   // (this read → DB write → pm2 reload), but it's measured in seconds vs.
   // the 60-90s ownership scan it would otherwise span.
-  const [multiplier, totalCaw] = await Promise.all([
+  const [multiplier, totalCaw, headBlock] = await Promise.all([
     l2.rewardMultiplier(),
     l2.totalCaw(),
+    l2Provider.getBlockNumber(),
   ])
   if (multiplier !== multiplierAtStart) {
     console.log(`  rewardMultiplier moved during scan: ${multiplierAtStart} → ${multiplier} (using fresh value)`)
@@ -134,25 +135,28 @@ async function main() {
     return
   }
 
-  // StakeLedgerState upsert. lastBlock=0, lastLogIndex=-1 so the
-  // indexer's resume-cursor in recordAction() doesn't skip anything.
-  // The first observed ActionsProcessed event applies normally — the
-  // multiplier we just seeded is the chain's *current* value; the
-  // ledger's per-event check will pass.
+  // StakeLedgerState upsert. lastBlock = current chain head so the
+  // snapshotter resumes from HERE forward — events before this point are
+  // already incorporated in the seeded multiplier; replaying them would
+  // double-count communal inflation. (Fresh installs: same cursor still
+  // works, the indexer reads new events past the head as they arrive.)
   await prisma.stakeLedgerState.upsert({
     where: { clientId },
     create: {
       clientId,
       multiplier: String(multiplier),
       totalCaw: String(totalCaw),
-      lastBlock: 0n,
+      lastBlock: BigInt(headBlock),
       lastLogIndex: -1,
     },
     update: {
       multiplier: String(multiplier),
       totalCaw: String(totalCaw),
+      lastBlock: BigInt(headBlock),
+      lastLogIndex: -1,
     },
   })
+  console.log(`  lastBlock seeded to L2 head ${headBlock}`)
   console.log(`[seed-stake-ledger] StakeLedgerState upserted for clientId=${clientId}`)
 
   // CawOwnershipCurrent — wipe + repopulate. Wiping (not just upserting)
