@@ -53,6 +53,23 @@ function extractClientProvenance(req: any): { clientVersion: string | null; clie
   }
 }
 
+// Highest cawonce this mirror has ever seen for a sender, across every
+// status (including terminal — done/failed/retried). The 409 suggestion
+// must clear ALL known-used slots on this mirror: if a row is `done`
+// the chain bitmap is set, and the FE submitting the same cawonce again
+// hours later will fail validation anyway. Returning a per-status
+// "highest active" suggestion (the old shape) leaves terminal-status
+// collisions silent and produces the duplicate TxQueue rows observed
+// in production. Returns null when the sender has no rows.
+async function highestKnownCawonce(senderId: number): Promise<number | null> {
+  const row = await prisma.txQueue.findFirst({
+    where: { senderId, cawonce: { not: null } },
+    orderBy: { cawonce: 'desc' },
+    select: { cawonce: true },
+  })
+  return row?.cawonce ?? null
+}
+
 // Rate limiting for free actions (unlike, unfollow) to prevent validator griefing.
 // These actions cost 0 CAW so an attacker could spam them to waste validator gas.
 const FREE_ACTION_CODES = [2, 5] // unlike=2, unfollow=5
@@ -1072,6 +1089,32 @@ router.post('/', async (req, res) => {
       return res.json({ txQueueId: dup.id, status: dup.status })
     }
 
+    // Cawonce collision pre-check: the DB partial unique index only covers
+    // active statuses (pending/processing/awaiting_indexer/waiting_for_deposit).
+    // A row that has already transitioned to done/failed/retried — common
+    // when the user re-submits hours later from a different device after
+    // localStorage TTL expired — would slip past the index and produce a
+    // duplicate TxQueue row. Pre-check across ALL statuses and return 409
+    // so the FE's CawonceCollisionError handler bumps the local watermark
+    // and re-signs at a fresh slot. Diagnosed 2026-05-11 against a wave of
+    // duplicate TxQueue rows with {done, failed} status pairs hours apart.
+    const cawonceTaken = await prisma.txQueue.findFirst({
+      where: { senderId: data.senderId, cawonce: data.cawonce },
+      select: { id: true, status: true },
+    })
+    if (cawonceTaken) {
+      const highest = await highestKnownCawonce(data.senderId)
+      const suggestedCawonce = (highest ?? data.cawonce) + 1
+      console.log(`[Actions] Cawonce collision (pre-insert, existing row id=${cawonceTaken.id} status=${cawonceTaken.status}): senderId=${data.senderId} cawonce=${data.cawonce} — suggesting ${suggestedCawonce}`)
+      return res.status(409).json({
+        error: 'cawonce_collision',
+        message: 'Another action by this sender is already using this cawonce. Re-read chain and re-sign.',
+        senderId: data.senderId,
+        cawonce: data.cawonce,
+        suggestedCawonce,
+      })
+    }
+
     try {
       txQueueEntry = await prisma.$transaction(async (tx) => {
         if (parsedRetryId != null) {
@@ -1103,30 +1146,14 @@ router.post('/', async (req, res) => {
       if (err.retryConflict) {
         return res.status(409).json({ error: err.message })
       }
-      // P2002 = unique constraint violation. Our partial unique index on
-      // (senderId, cawonce) for active rows fires when two concurrent
-      // submissions try to claim the same cawonce slot — the chain race
-      // we expect occasionally with cross-tab / cross-server users. Tell
-      // the frontend to invalidate its local cawonce watermark, re-read
-      // chain, and re-sign. 409 is the right semantic; the body shape
-      // mirrors other typed-error responses.
+      // P2002 = unique constraint violation. The partial unique index on
+      // active (senderId, cawonce) fires when two near-simultaneous
+      // submissions race past the pre-check above. Returns the same 409
+      // shape as the pre-check path so the FE has one code path to handle.
       if (err?.code === 'P2002') {
-        // Tell the client what the highest active cawonce currently is for
-        // this sender so it can bump past it on retry. The chain.nextCawonce
-        // alone won't help — by definition, our TxQueue has rows for cawonces
-        // the chain hasn't yet processed. The client should use
-        // max(chain.nextCawonce, suggestedCawonce) on the next attempt.
-        const highest = await prisma.txQueue.findFirst({
-          where: {
-            senderId: data.senderId,
-            cawonce: { not: null },
-            status: { in: ['pending', 'processing', 'awaiting_indexer', 'waiting_for_deposit'] },
-          },
-          orderBy: { cawonce: 'desc' },
-          select: { cawonce: true },
-        })
-        const suggestedCawonce = (highest?.cawonce ?? data.cawonce) + 1
-        console.log(`[Actions] Cawonce collision: senderId=${data.senderId} cawonce=${data.cawonce} — suggesting ${suggestedCawonce}`)
+        const highest = await highestKnownCawonce(data.senderId)
+        const suggestedCawonce = (highest ?? data.cawonce) + 1
+        console.log(`[Actions] Cawonce collision (P2002 race): senderId=${data.senderId} cawonce=${data.cawonce} — suggesting ${suggestedCawonce}`)
         return res.status(409).json({
           error: 'cawonce_collision',
           message: 'Another action by this sender is already using this cawonce. Re-read chain and re-sign.',
@@ -1428,6 +1455,29 @@ router.post('/batch', async (req, res) => {
     // pendingDepositTxHash, and callers are already bounded by the 300-action
     // batch cap, 5MB payload cap, ownership check, and same-signer check.
 
+    // Cawonce collision pre-check across the entire batch. Same rationale as
+    // the single-action path (see highestKnownCawonce comment): the partial
+    // unique index ignores terminal statuses, so a re-submit hours later
+    // with the same cawonces slips through. One DB query covers every
+    // (senderId, cawonce) in this batch.
+    if (rowsToInsert.length > 0) {
+      const batchCawonces = rowsToInsert.map(r => r.cawonce)
+      const taken = await prisma.txQueue.findMany({
+        where: { senderId: firstSenderId, cawonce: { in: batchCawonces } },
+        select: { cawonce: true, status: true, id: true },
+      })
+      if (taken.length > 0) {
+        const highest = await highestKnownCawonce(firstSenderId)
+        const suggestedCawonce = (highest ?? Math.max(...batchCawonces)) + 1
+        console.log(`[Actions/batch] Cawonce collision (pre-insert, ${taken.length} taken): senderId=${firstSenderId} cawonces=${taken.map(t => `${t.cawonce}:${t.status}`).join(',')} — suggesting ${suggestedCawonce}`)
+        return res.status(409).json({
+          error: 'cawonce_collision',
+          message: 'One or more actions in this batch are already using their cawonce. Re-read chain and re-sign.',
+          suggestedCawonce,
+        })
+      }
+    }
+
     // Insert TxQueue rows + optimistic Caw/Reply records in a single transaction
     // so the frontend sees the thread in "pending" state immediately and the
     // ActionProcessor can resolve parent cawonces (post 2 → post 1) deterministically.
@@ -1572,29 +1622,12 @@ router.post('/batch', async (req, res) => {
         return txqRows
       })
       } catch (err: any) {
-        // P2002 = unique constraint violation on (senderId, cawonce)
-        // active partial index — one or more cawonces in this batch
-        // collide with another in-flight submission. Rejecting the whole
-        // batch is the correct (and simplest) call: thread cawonces are
-        // contiguous, so partial success would leave a sequence-gap that
-        // breaks reply-grouping anyway. The frontend re-reads chain,
-        // re-allocates the contiguous block, re-signs, and resubmits.
+        // P2002 = unique constraint violation. Race past the pre-check
+        // above; same 409 shape so the FE has one code path.
         if (err?.code === 'P2002') {
-          // Tell the client where to start its next batch: highest active
-          // cawonce + 1. Same reasoning as the single-action path —
-          // chain.nextCawonce alone is insufficient because the TxQueue
-          // has rows the chain hasn't seen yet.
-          const highest = await prisma.txQueue.findFirst({
-            where: {
-              senderId: firstSenderId,
-              cawonce: { not: null },
-              status: { in: ['pending', 'processing', 'awaiting_indexer', 'waiting_for_deposit'] },
-            },
-            orderBy: { cawonce: 'desc' },
-            select: { cawonce: true },
-          })
-          const suggestedCawonce = (highest?.cawonce ?? 0) + 1
-          console.log(`[Actions/batch] Cawonce collision — suggesting start cawonce=${suggestedCawonce}`)
+          const highest = await highestKnownCawonce(firstSenderId)
+          const suggestedCawonce = (highest ?? 0) + 1
+          console.log(`[Actions/batch] Cawonce collision (P2002 race) — suggesting start cawonce=${suggestedCawonce}`)
           return res.status(409).json({
             error: 'cawonce_collision',
             message: 'One or more actions in this batch are already using their cawonce. Re-read chain and re-sign.',
