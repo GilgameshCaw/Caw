@@ -115,6 +115,32 @@ The protocol's existing replay protection (`cawonce` per `senderId`) applies ide
 
 You may still want internal nonces if your authorization model uses Pattern C (delegated user sigs), since CAW only sees the contract as the actor.
 
+## Reacting to incoming actions: watchers, not callbacks
+
+A natural follow-up to "contracts can author actions" is "contracts can react to actions sent *to* them" — a DEX-via-tips, a function-call-via-text pattern, a prediction market that opens positions when users tip with a `::bet:option::` marker.
+
+**The protocol does not provide callbacks.** `processActions` doesn't call back into the receiving profile's owner — for good reason. Callbacks during action processing would (a) push unbounded gas costs onto whoever submits the tx, (b) introduce reentrancy across batched actions, and (c) couple the protocol to specific contract behaviors that should be the builder's call.
+
+Instead, **react off chain via a watcher that posts a separate fulfill tx.** Two paths exist, with very different trust models:
+
+### Trusted watcher (cheap, fine for most cases)
+
+A watcher process observes `ActionsProcessed` events, decodes the actions, and calls `contract.onIncomingAction(...)` with the relevant fields. The contract trusts the watcher. Liveness is the only thing at stake — if no watcher runs, nothing happens; funds aren't lost, just delayed.
+
+To make this more trustless without going full crypto:
+- **Permissionless relayer + bounty**: the contract pays a small fee in CAW to whoever lands the first fulfill. Self-incentivizing liveness, MEV-style.
+- **User-side fallback**: expose `claimMyAction(...)` so the user can self-submit if the watcher network is silent. Funds never get stuck.
+
+### Trustless watcher (the real thing)
+
+If your extension can't accept trust assumptions on liveness OR correctness — e.g. high-value DEX trades, prediction-market settlements — verify the action against the protocol's hash chain. `CawActions` maintains `networkHashAtCheckpoint[networkId][checkpointId]`, a rolling hash committed to every 32 actions. Anyone can prove a specific action was canonical by submitting the full 32-action checkpoint slice + the per-action `r` anchors, and asking the verifier to fold them. If they fold to the canonical hash, every action in that slice provably happened.
+
+See `solidity/contracts/examples/CawActionVerifier.sol` for the verifier (~60 lines, no state). `solidity/contracts/examples/CawTipResponder.sol` is a worked example that reacts to incoming `::echo:msg::` markers, and `solidity/test/action-verifier-test.js` is the full end-to-end proof.
+
+**Cost**: ~100k gas + 1.5-6 KB calldata per fulfill (the 32-action slice plus 32 r values). Trivial for DEX-sized trades; expensive for sub-cent tips. Pick the cheap model for cheap actions, the trustless one for high-stakes flows.
+
+**No protocol changes required.** The verifier reads `networkHashAtCheckpoint` directly. The hash chain is already the proof system; the verifier just makes it queryable.
+
 ## Building an extension contract — sketch
 
 A minimal prediction market contract owning a profile would look like:
