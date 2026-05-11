@@ -144,6 +144,48 @@ router.post('/variant', variantUpload.single('media'), requireAuth({ field: 'tok
   }
 })
 
+// Bug-report image uploads: auth-free path so users hitting an auth bug
+// (or anyone reporting before they've connected a wallet) can still
+// attach screenshots. The existing global rate-limit on /api/upload
+// (server.ts: 10/day unauthenticated, 30/15min authenticated) applies
+// to this route too because it's mounted under the same prefix.
+// Storage cap is the image-only tier; videos are rejected here on
+// purpose — a bug report doesn't need a 10MB clip.
+const bugReportUpload = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: IMAGE_MAX_BYTES, files: 4 },
+  fileFilter: (_req, file, cb) => {
+    const imageMimes = ['image/jpeg', 'image/png', 'image/gif', 'image/webp']
+    if (imageMimes.includes(file.mimetype)) cb(null, true)
+    else cb(new Error(`Invalid file format for bug report: ${file.mimetype}`))
+  },
+})
+
+router.post('/bug-report', bugReportUpload.array('media', 4), async (req: any, res: any) => {
+  try {
+    const files = (req.files as Express.Multer.File[]) || []
+    if (files.length === 0) return res.status(400).json({ error: 'No files uploaded' })
+
+    const oversized = files.find(f => f.size > IMAGE_MAX_BYTES)
+    if (oversized) {
+      return res.status(413).json({
+        error: `Image too large (${(oversized.size / 1024 / 1024).toFixed(1)}MB, max ${IMAGE_MAX_BYTES / 1024 / 1024}MB)`,
+      })
+    }
+
+    const storage = mediaStorage()
+    const urls = await Promise.all(files.map(async file => {
+      const filename = generateFilename(file.mimetype)
+      return storage.put('images', filename, file.buffer, file.mimetype)
+    }))
+
+    res.json({ success: true, urls, count: files.length })
+  } catch (error) {
+    console.error('Bug-report upload error:', error)
+    res.status(500).json({ success: false, error: error instanceof Error ? error.message : 'Failed to upload bug report image' })
+  }
+})
+
 const ENC_RATE_LIMIT_MAX = 50
 const ENC_RATE_LIMIT_BYTES = 100 * 1024 * 1024
 const ENC_RATE_LIMIT_WINDOW = 24 * 60 * 60 * 1000

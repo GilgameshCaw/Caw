@@ -259,7 +259,13 @@ export async function apiFetch<T = any>(
     let detail = ''
     try {
       body = await res.json()
-      detail = body?.error || body?.message || ''
+      // For 401s the server sends { error: 'AUTH_REQUIRED', message: 'Session token required' }
+      // — the `error` field is a machine-readable code, not user copy.
+      // Prefer the human `message` for the thrown text so banners and
+      // toasts don't surface a SHOUTY_CODE.
+      detail = res.status === 401
+        ? (body?.message || body?.error || '')
+        : (body?.error || body?.message || '')
     } catch {}
 
     // 410 Gone — currently emitted by /api/caws/:id when the caw was

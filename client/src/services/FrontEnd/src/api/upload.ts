@@ -74,14 +74,21 @@ export async function uploadMedia(
 
   const formData = new FormData()
   compressed.forEach(file => formData.append('media', file))
-  formData.append('tokenId', String(tokenId))
+
+  // Bug-report screenshots go to a dedicated auth-free endpoint so users
+  // who hit the bug (often an auth bug!) or who haven't connected a
+  // wallet yet can still attach an image. The main /api/upload route
+  // verifies tokenId ownership and would 401 anonymous callers.
+  const isBugReport = preset === 'report'
+  const endpoint = isBugReport ? '/api/upload/bug-report' : '/api/upload'
+  if (!isBugReport) formData.append('tokenId', String(tokenId))
 
   // Flip the progress indicator from "Compressing…" (or whatever the
   // previous stage was) to a generic upload state for the network leg.
   // PostForm reads this to keep the submit button honest while the
   // multipart body streams to the server.
   onProgress?.('Uploading…')
-  const res = await fetch('/api/upload', {
+  const res = await fetch(endpoint, {
     method: 'POST',
     headers: getAuthHeaders(),
     body: formData,
