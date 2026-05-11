@@ -82,7 +82,28 @@ const checkpointKey = (chainId: number, contract: string) =>
  * Burned tokens (ownerOf reverts) are caught by findOrCreateUser as
  * StaleTokenError; we log + skip them.
  */
+// Re-entrancy guard. A backfill can take tens of seconds on a large
+// gap (per-token ownerOf + usernameById RPC calls, throttled). If the
+// 1-hour timer ticks before the previous backfill finishes we used to
+// fire a second concurrent backfill — both would hit the same nextId()
+// + per-token reads, doubling the RPC cost for nothing. Skip when
+// already running.
+let backfillInProgress = false
+
 async function backfillMissingMints(contract: ethers.Contract): Promise<void> {
+  if (backfillInProgress) {
+    console.log('[NftTransferWatcher] backfill: skipped (previous run still in progress)')
+    return
+  }
+  backfillInProgress = true
+  try {
+    return await backfillMissingMintsInner(contract)
+  } finally {
+    backfillInProgress = false
+  }
+}
+
+async function backfillMissingMintsInner(contract: ethers.Contract): Promise<void> {
   let nextId: number
   try {
     nextId = Number(await contract.nextId())

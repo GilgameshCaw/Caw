@@ -151,6 +151,12 @@ async function markTxQueueFailed(
 // catching genuine collisions in a reasonable timeframe.
 const AWAITING_INDEXER_TIMEOUT_MS = 10 * 60_000
 
+// Cache for cawActions.withdrawQuote() across the simulate → bisect →
+// recalculate flow within a single batch lifetime. Same (tokenIds,
+// amounts) tuple = same quote. 60s TTL is more than enough for a batch
+// to land but short enough that LZ fee drift doesn't surprise us.
+const withdrawQuoteCache = new Map<string, { quote: { nativeFee: bigint; lzTokenFee: bigint }; cachedAt: number }>()
+
 /**
  * Resolve a "Cawonce already used" simulation rejection by checking our
  * local Action table.
@@ -970,6 +976,11 @@ export const validatorService: Service = {
             })
             withdrawQuote = await Promise.race([quotePromise, timeoutPromise]) as any
             console.log('[Validator] Withdraw quote:', withdrawQuote)
+            // Seed the cache so a downstream recalculateQuoteForActions
+            // for an identical-withdrawals sub-batch reuses the quote
+            // instead of issuing a second eth_call.
+            const cacheKey = tokenIds.map((t: any, i: number) => `${t}:${amounts[i].toString()}`).sort().join(',')
+            withdrawQuoteCache.set(cacheKey, { quote: withdrawQuote, cachedAt: Date.now() })
           } catch (err: any) {
             console.error("[Validator] Failed to get withdraw quote:", err.message || err)
           }
@@ -1688,7 +1699,14 @@ console.log("succeededKeys", succeededKeys)
 
     /**
      * Recalculate quote for a specific set of actions
-     * Used after filtering to succeeded actions to get accurate fees
+     * Used after filtering to succeeded actions to get accurate fees.
+     *
+     * Process-local cache keyed by (sorted tokenIds, sorted amounts) —
+     * when the bisect path produces a sub-batch whose withdrawal set is
+     * identical to the parent's (the common case: no failures in
+     * withdrawals), we reuse the parent's quote instead of issuing a
+     * second eth_call to withdrawQuote(). cache entries are short-lived
+     * (cleared every minute) to avoid stale fees if LZ pricing moves.
      */
     async function recalculateQuoteForActions(
       multiData: { actions: any[]; v: number[]; r: string[]; s: string[]; packedActions: string; packedSigs: string }
@@ -1699,10 +1717,17 @@ console.log("succeededKeys", succeededKeys)
       if (withdraws.length > 0) {
         const tokenIds = withdraws.map((action: any) => action.senderId)
         const amounts = withdraws.map((action: any) => BigInt(action.amounts[0]) * 10n**18n)
-        try {
-          withdrawQuote = await cawActions.withdrawQuote(tokenIds, amounts, false) as any
-        } catch (err) {
-          console.error("[Validator] Failed to get withdraw quote:", err)
+        const cacheKey = tokenIds.map((t: any, i: number) => `${t}:${amounts[i].toString()}`).sort().join(',')
+        const cached = withdrawQuoteCache.get(cacheKey)
+        if (cached && Date.now() - cached.cachedAt < 60_000) {
+          withdrawQuote = cached.quote
+        } else {
+          try {
+            withdrawQuote = await cawActions.withdrawQuote(tokenIds, amounts, false) as any
+            withdrawQuoteCache.set(cacheKey, { quote: withdrawQuote, cachedAt: Date.now() })
+          } catch (err) {
+            console.error("[Validator] Failed to get withdraw quote:", err)
+          }
         }
       }
 

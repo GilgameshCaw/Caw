@@ -136,6 +136,22 @@ export const depositWatcherService: Service = {
               console.log(`[DepositWatcher] Processing ${events.length} Deposited event(s) in blocks ${fromBlock}..${toBlock}`)
             }
 
+            // Dedupe block-timestamp lookups: multiple deposits in the
+            // same block previously fired separate provider.getBlock()
+            // calls. Now we fetch each unique block once and reuse.
+            const uniqueBlocks = Array.from(new Set(events.map(ev => ev.blockNumber)))
+            const blockTsByNumber = new Map<number, Date>()
+            await Promise.all(uniqueBlocks.map(async bn => {
+              try {
+                const block = await provider.getBlock(bn)
+                blockTsByNumber.set(bn, new Date(Number(block?.timestamp ?? 0) * 1000))
+              } catch {
+                // Provider hiccup → fall back to NOW; better an
+                // approximate timestamp than dropping the event.
+                blockTsByNumber.set(bn, new Date())
+              }
+            }))
+
             for (const ev of events) {
               const args = (ev as ethers.EventLog).args
               if (!args) continue
@@ -144,18 +160,7 @@ export const depositWatcherService: Service = {
               const txHash = ev.transactionHash
               const logIndex = (ev as any).index ?? (ev as any).logIndex ?? 0
               const blockNumber = BigInt(ev.blockNumber)
-
-              // Block timestamp — one extra RPC per event but events
-              // are rare and the timestamp drives chart accuracy.
-              let blockTimestamp: Date
-              try {
-                const block = await provider.getBlock(ev.blockNumber)
-                blockTimestamp = new Date(Number(block?.timestamp ?? 0) * 1000)
-              } catch {
-                // Provider hiccup? Fall back to NOW; better an
-                // approximate timestamp than dropping the event.
-                blockTimestamp = new Date()
-              }
+              const blockTimestamp = blockTsByNumber.get(ev.blockNumber) ?? new Date()
 
               try {
                 await prisma.$transaction(async (tx) => {
