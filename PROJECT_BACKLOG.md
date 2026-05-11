@@ -880,6 +880,8 @@ One-liner install: `curl -fsSL https://raw.githubusercontent.com/.../install.sh 
 
 - **Pre-auth Language Settings.** `/settings/language` is currently `AuthGate`-wrapped, so users without a profile can't change UI language. Combined with the new `<meta name="google" content="notranslate">` (which disables Chrome's page translator to fix a React-DOM corruption bug), this means a Japanese visitor on the captive splash sees English and has no way to switch. Move language preference into a localStorage-backed setting that's available pre-auth, then merge into the User row when they create a profile. The Captive footer / splash should also surface a tiny language picker (globe icon) so visitors discover it.
 
+- **Wallet-connector lazy loading.** `dist/assets/vendor-rainbowkit-*.js` is currently ~2.3MB (458KB gzipped) because `getDefaultConfig()` in `Web3Provider.tsx` bundles every wallet SDK on first load. Breakdown: `@walletconnect/*` is ~1.4MB, `@coinbase/wallet-sdk` ~250KB, RainbowKit core / wagmi / viem the rest. MetaMask + injected wallets don't need any of those SDKs — `window.ethereum` covers them. Rework `Web3Provider.tsx` to use `connectorsForWallets()` with **dynamic-imported wallet factories** so each heavy connector lands in its own chunk that only loads when the user actually picks that wallet. Expected impact: initial bundle drops to ~600KB; MetaMask users pay nothing extra; Coinbase / WalletConnect users get the SDK chunk on click. Risk: WalletConnect init order is fragile — needs real device testing across MetaMask (desktop), Coinbase Mobile, and at least one WalletConnect mobile wallet (Rainbow, Trust) before merging. Skipped 2026-05-11 because we don't have the device coverage to verify without breakage.
+
 
 
 
