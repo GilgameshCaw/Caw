@@ -44,6 +44,31 @@ const queryClient = new QueryClient({
   },
 });
 
+// Diagnostic: count how often each query key fires. Enable from the
+// browser console with `localStorage.cawRpcDebug = '1'` then refresh.
+// Inspect with `__cawRpcCounts` (object keyed by query hash → fire
+// count + last-fetched-at). Disable with `localStorage.removeItem`.
+// No-op unless explicitly enabled, so production traffic is unaffected.
+if (typeof window !== 'undefined' && localStorage.getItem('cawRpcDebug') === '1') {
+  const counts: Record<string, { count: number; lastAt: number; key: any }> = {}
+  ;(window as any).__cawRpcCounts = counts
+  queryClient.getQueryCache().subscribe(event => {
+    if (event.type !== 'updated') return
+    const action = (event.action as any)?.type
+    // 'fetch' fires when a query actually hits the network. (Cache
+    // hits don't trigger this — exactly what we want for RPC accounting.)
+    if (action !== 'fetch') return
+    const hash = event.query.queryHash
+    const existing = counts[hash]
+    counts[hash] = {
+      count: (existing?.count ?? 0) + 1,
+      lastAt: Date.now(),
+      key: event.query.queryKey,
+    }
+  })
+  console.log('[CAW RPC Debug] enabled — top callers visible at window.__cawRpcCounts')
+}
+
 createRoot(document.getElementById("root")!).render(
   <StrictMode>
     <Sentry.ErrorBoundary fallback={<p>Something went wrong. The error has been reported.</p>}>
