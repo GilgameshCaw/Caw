@@ -1,5 +1,7 @@
 import React, { createContext, useContext, useEffect, useState, useMemo } from 'react'
+import { useLocation } from 'react-router-dom'
 import { useViewerLanguage } from '~/hooks/useViewerLanguage'
+import { parseLocaleFromPath } from '~/utils/localePrefix'
 import { Catalog, EN_CATALOG, loadCatalog, translate, TVars } from './index'
 
 interface I18nContextValue {
@@ -27,24 +29,31 @@ const I18nContext = createContext<I18nContextValue>({
  */
 export const I18nProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const { preferredLanguage } = useViewerLanguage()
+  const location = useLocation()
+  // URL prefix wins over user preference: /es/users/maria forces Spanish
+  // UI even for an English-preference viewer. Falls back to user pref
+  // when bare. This is what makes shared deep-links land in the locale
+  // the URL claims, no matter who clicks them.
+  const urlLocale = parseLocaleFromPath(location.pathname).locale
+  const activeLocale = urlLocale || preferredLanguage
   const [catalog, setCatalog] = useState<Catalog>(EN_CATALOG)
   const [loadedLocale, setLoadedLocale] = useState<string>('en')
 
   useEffect(() => {
     // Don't refetch the EN catalog — it's bundled.
-    if (preferredLanguage === 'en') {
+    if (activeLocale === 'en') {
       setCatalog(EN_CATALOG)
       setLoadedLocale('en')
       return
     }
     let cancelled = false
-    loadCatalog(preferredLanguage).then(c => {
+    loadCatalog(activeLocale).then(c => {
       if (cancelled) return
       setCatalog(c)
-      setLoadedLocale(preferredLanguage)
+      setLoadedLocale(activeLocale)
     })
     return () => { cancelled = true }
-  }, [preferredLanguage])
+  }, [activeLocale])
 
   const value = useMemo<I18nContextValue>(() => ({
     locale: loadedLocale,

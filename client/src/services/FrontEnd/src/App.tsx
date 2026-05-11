@@ -1,5 +1,5 @@
 import { BrowserRouter, Outlet, Route, Routes, useLocation } from "react-router-dom";
-import { lazy, Suspense, useEffect } from 'react'
+import React, { lazy, Suspense, useEffect } from 'react'
 import { useCawonceSync } from '~/hooks/useCawonce'
 import { useSessionKeyWalletGuard } from '~/hooks/useSessionKey'
 import { useTxQueueMonitor } from '~/hooks/useTxQueueMonitor'
@@ -57,17 +57,30 @@ function AppRoutes() {
             between these, so Sidebar / ProfileChooser / Avatar don't
             remount and the avatar no longer flashes on every page change.
             Pages that need to suppress the chrome for a transient state
-            (e.g. /usernames/new mid-mint) flip useLayoutStore. */}
+            (e.g. /usernames/new mid-mint) flip useLayoutStore.
+
+            Each route is registered twice: bare (English, /home) and
+            locale-prefixed (e.g. /es/home). The locale segment is read
+            by I18nProvider via parseLocaleFromPath() — no route-side
+            code reads it. Routes themselves don't bind :locale: they
+            match by literal path and trust the i18n side to react. */}
         <Route element={<MainLayout><Outlet /></MainLayout>}>
           {layoutRoutes.map((route) => (
-            <Route key={route.path} path={route.path} element={route.component} />
+            <React.Fragment key={route.path}>
+              <Route path={route.path} element={route.component} />
+              <Route path={`/:locale${route.path}`} element={route.component} />
+            </React.Fragment>
           ))}
         </Route>
 
         {/* Bare routes: pre-auth captive splash, welcome, admin shells.
-            These render without MainLayout, same as pre-hoist. */}
+            These never had MainLayout pre-hoist. Same locale-prefix
+            duplication as layoutRoutes above. */}
         {bareRoutes.map((route) => (
-          <Route key={route.path} path={route.path} element={route.component} />
+          <React.Fragment key={route.path}>
+            <Route path={route.path} element={route.component} />
+            <Route path={`/:locale${route.path}`} element={route.component} />
+          </React.Fragment>
         ))}
       </Routes>
 
@@ -77,7 +90,9 @@ function AppRoutes() {
       {backgroundLocation && (
         <Routes>
           <Route path="/users/:username/caw/:idSlug" element={<CawMediaModal />} />
+          <Route path="/:locale/users/:username/caw/:idSlug" element={<CawMediaModal />} />
           <Route path="/caws/:id" element={<CawMediaModal />} />
+          <Route path="/:locale/caws/:id" element={<CawMediaModal />} />
         </Routes>
       )}
     </>
