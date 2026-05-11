@@ -39,6 +39,7 @@ import meRouter from './routes/me'
 import verifyRouter from './routes/verify'
 import adminDbRouter from './routes/admin-db'
 import adminUsersRouter from './routes/admin-users'
+import adminValidatorRouter from './routes/admin-validator'
 import moderationRouter from './routes/moderation'
 import ogRouter from './routes/og'
 import { spaPrerender } from './util/spaPrerender'
@@ -362,6 +363,7 @@ export function createApp() {
   app.use('/api/verify', verifyRouter)
   app.use('/api/admin/db', adminDbRouter)
   app.use('/api/admin/users', adminUsersRouter)
+  app.use('/api/admin/validator', adminValidatorRouter)
   app.use('/api/moderation', moderationRouter)
   app.use('/api/og', ogRouter)
 

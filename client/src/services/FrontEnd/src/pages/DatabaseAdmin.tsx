@@ -118,6 +118,11 @@ const DatabaseAdmin: React.FC = () => {
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
 
+  // "Execute batch now" state — admin force-kick of the validator's
+  // pending TxQueue. Result is shown next to the button for a few seconds.
+  const [executingBatch, setExecutingBatch] = useState(false)
+  const [batchResult, setBatchResult] = useState<string | null>(null)
+
   // Detail view
   const [detailRecord, setDetailRecord] = useState<any>(null)
   const [detailId, setDetailId] = useState<string | null>(searchParams.get('detail') || null)
@@ -330,6 +335,32 @@ const DatabaseAdmin: React.FC = () => {
       setSaveMsg(`Delete failed: ${err.message}`)
     }
   }
+
+  // Force the validator to drain its pending TxQueue on the next tick
+  // (which we also fire immediately) instead of waiting for batch
+  // accumulation. On api-only nodes the server reports triggered=false
+  // and we surface that so the operator knows the call hit the wrong
+  // node. Result clears itself after 6s.
+  const handleExecuteBatchNow = useCallback(async () => {
+    if (executingBatch) return
+    setExecutingBatch(true)
+    setBatchResult(null)
+    try {
+      const r = await apiFetch('/api/admin/validator/execute-batch-now', { method: 'POST' })
+      if (r.triggered) {
+        setBatchResult(`✓ Triggered (${r.pendingCount ?? '?'} pending)`)
+      } else {
+        setBatchResult(`No validator on this node: ${r.reason ?? 'unknown'}`)
+      }
+      // Refresh the table so the operator sees rows flipping out of pending.
+      fetchRecords()
+    } catch (err: any) {
+      setBatchResult(`Failed: ${err?.message || 'unknown error'}`)
+    } finally {
+      setExecutingBatch(false)
+      setTimeout(() => setBatchResult(null), 6000)
+    }
+  }, [executingBatch, fetchRecords])
 
   const handleSort = (field: string) => {
     if (sortField === field) {
@@ -557,6 +588,23 @@ const DatabaseAdmin: React.FC = () => {
             >
               Refresh
             </button>
+
+            {/* Execute batch now — push to the right end of the toolbar.
+                Forces the validator to process all pending TxQueue rows
+                immediately instead of waiting for batch accumulation. */}
+            <div className="ml-auto flex items-center gap-2">
+              {batchResult && (
+                <span className={`text-xs ${muted}`}>{batchResult}</span>
+              )}
+              <button
+                onClick={handleExecuteBatchNow}
+                disabled={executingBatch}
+                title="Tell the validator to process every pending TxQueue now, skipping batch wait"
+                className={`text-sm px-3 py-1 rounded-lg border ${card} ${text} ${hover} ${executingBatch ? 'opacity-50 cursor-wait' : ''}`}
+              >
+                {executingBatch ? 'Executing…' : 'Execute batch now'}
+              </button>
+            </div>
           </div>
 
           {error && <div className="text-red-400 text-sm mb-3">{error}</div>}

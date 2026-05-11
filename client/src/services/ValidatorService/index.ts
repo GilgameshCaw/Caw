@@ -157,6 +157,43 @@ const AWAITING_INDEXER_TIMEOUT_MS = 10 * 60_000
 // to land but short enough that LZ fee drift doesn't surprise us.
 const withdrawQuoteCache = new Map<string, { quote: { nativeFee: bigint; lzTokenFee: bigint }; cachedAt: number }>()
 
+// Module-level handle to the currently-running poll trigger. Set by
+// start() once the loop is scheduled, so external callers (admin
+// "Execute batch now" endpoint) can wake the loop without waiting for
+// the next setTimeout tick. Two parts:
+//   - `forceImmediatePoll` makes the next pollLoop tick bypass the
+//     batch-accumulation wait (process whatever is queued, even if
+//     it's a single non-priority action and maxWaitTime hasn't elapsed).
+//   - `wakePollLoop` invokes safePollLoop() right away. start() wires
+//     this to its local closure; before start() runs (or after stop()),
+//     the ref is null and the flag-only path is taken on the next
+//     scheduled tick.
+let forceImmediatePoll = false
+let wakePollLoop: (() => Promise<void>) | null = null
+
+/**
+ * Trigger an immediate validator poll, bypassing the batch wait. Used
+ * by the admin "Execute batch now" button to push all pending TxQueue
+ * rows through without waiting for maxWaitTime / checkInterval. Safe
+ * to call when the service isn't running — the force flag persists
+ * and is consumed on the next poll, but no immediate run is scheduled.
+ */
+export function triggerImmediateValidatorPoll(): { triggered: boolean; reason: string } {
+  if (!wakePollLoop) {
+    // No-op when the validator isn't running in this process (e.g.
+    // api-only node). Don't set the flag — there's no consumer, and
+    // it would persist as stale state.
+    return { triggered: false, reason: 'validator not running on this node' }
+  }
+  forceImmediatePoll = true
+  // Fire and forget — caller doesn't need to await the batch result.
+  // The poll mutex (isPolling) prevents this from racing an in-flight
+  // poll; if one's already running, the flag will be picked up on
+  // its next iteration.
+  wakePollLoop().catch(err => console.error('[Validator] triggered poll failed:', err))
+  return { triggered: true, reason: 'validator running — immediate poll dispatched' }
+}
+
 /**
  * Resolve a "Cawonce already used" simulation rejection by checking our
  * local Action table.
@@ -1791,10 +1828,16 @@ console.log("succeededKeys", succeededKeys)
           return action && isPriorityAction(action)
         })
 
+        // Admin-forced run: the "Execute batch now" admin button sets
+        // forceImmediatePoll so this tick bypasses the batch wait. Consume
+        // the flag exactly once so subsequent ticks resume normal gating.
+        const forced = forceImmediatePoll
+        if (forced) forceImmediatePoll = false
+
         // Batch accumulation: wait for more actions unless the oldest has been waiting too long
-        // OR a priority action is in the queue
+        // OR a priority action is in the queue OR an admin forced the run.
         const { minActionsPerBatch, maxWaitTime } = liveSettings
-        if (!hasPriority && entries.length < minActionsPerBatch) {
+        if (!hasPriority && !forced && entries.length < minActionsPerBatch) {
           const oldestAge = Date.now() - new Date(entries[0].createdAt).getTime()
           if (oldestAge < maxWaitTime) {
             console.log(`[Validator] Waiting for more actions: ${entries.length}/${minActionsPerBatch} (oldest: ${Math.round(oldestAge / 1000)}s / ${Math.round(maxWaitTime / 1000)}s max)`)
@@ -1803,7 +1846,9 @@ console.log("succeededKeys", succeededKeys)
           console.log(`[Validator] Max wait time reached (${Math.round(oldestAge / 1000)}s), submitting ${entries.length} action(s)`)
         }
 
-        if (hasPriority) {
+        if (forced) {
+          console.log(`[Validator] Admin-forced batch — skipping wait, processing ${entries.length} action(s)`)
+        } else if (hasPriority) {
           console.log(`[Validator] Priority action detected — skipping batch wait, processing immediately`)
         }
 
@@ -3953,6 +3998,9 @@ console.log("succeededKeys", succeededKeys)
         isPolling = false
       }
     }
+    // Expose to the module-level trigger so admin "Execute batch now"
+    // can wake this loop without waiting for the next setTimeout tick.
+    wakePollLoop = safePollLoop
 
     // Optimistic replication loop (stake-based, direct L2b)
     let isOptimisticReplicating = false
@@ -4039,6 +4087,7 @@ console.log("succeededKeys", succeededKeys)
         clearTimeout(timer)
         clearTimeout(optimisticReplicationTimer)
         clearTimeout(monitorTimer)
+        wakePollLoop = null
         // No need to remove handler since it's managed globally
         if (provider) {
           try {
