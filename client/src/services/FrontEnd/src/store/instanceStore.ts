@@ -37,6 +37,15 @@ interface InstanceState {
 // what's persisted, even on a brand-new session (instant first render).
 const FRESH_THRESHOLD_MS = 10 * 60 * 1000  // 10 minutes
 
+// Chain-fallback circuit breaker. Each chunked scan does ~15-30
+// eth_getLogs on L1; if the API tier is genuinely broken we'd otherwise
+// fire that on every fetchInstances tick forever. Suppress chain
+// fallback for an hour after a successful chain run — by then we've got
+// the data in localStorage anyway, and the next API attempt has had
+// time to recover.
+const CHAIN_FALLBACK_COOLDOWN_MS = 60 * 60 * 1000
+let lastChainAttemptAt = 0
+
 // localStorage tier: cached peer list survives across sessions. Key is
 // scoped by clientId so a multi-client browser doesn't blend lists.
 const LS_KEY = (clientId: number) => `caw:instances:${clientId}`
@@ -368,8 +377,17 @@ export const useInstanceStore = create<InstanceState>((set, get) => ({
     // Tier 2: /api/instances on any known node. Try the configured
     // primary first, then any peer apiUrls we already know about. Even
     // a single round-trip beats a chain scan.
+    //
+    // When VITE_API_HOST is empty (the default for self-hosted
+    // installs — operators don't have to configure it), the page is
+    // served from the same node that hosts /api/instances. Use the
+    // current origin as the primary so we still hit the API tier on
+    // cold-start. Without this fallback every fresh tab burned a
+    // chain scan (~15 eth_getLogs on L1) just to find the peer it
+    // was already loaded from.
+    const originHost = (API_HOST || (typeof window !== 'undefined' ? window.location.origin : '')) || null
     const knownHosts = (ls?.instances ?? state.instances).map(i => i.apiUrl).filter(Boolean)
-    const fromApi = await fetchFromAnyApi(API_HOST || null, knownHosts, clientId)
+    const fromApi = await fetchFromAnyApi(originHost, knownHosts, clientId)
     if (fromApi) {
       const filtered = filterUsableInstances(fromApi)
       set({
@@ -385,7 +403,19 @@ export const useInstanceStore = create<InstanceState>((set, get) => ({
 
     // Tier 3: chain scan via viem. Slow on cold start (chunked walk
     // back from head) but works without ANY working CAW node — the
-    // scenario for a static-hosted FE on a fresh browser.
+    // scenario for a static-hosted FE on a fresh browser. Gated by a
+    // 1h cooldown so an unreachable API tier doesn't fire chain scans
+    // on every tick: one successful chain run populates localStorage,
+    // then we coast on that until either the API recovers or the
+    // cooldown elapses.
+    if (Date.now() - lastChainAttemptAt < CHAIN_FALLBACK_COOLDOWN_MS) {
+      set({
+        isLoading: false,
+        error: 'API tier failed; chain fallback on cooldown. Using cached instances.',
+      })
+      return
+    }
+    lastChainAttemptAt = Date.now()
     const fromChain = await fetchFromChain(clientId)
     if (fromChain) {
       const filtered = filterUsableInstances(fromChain)
