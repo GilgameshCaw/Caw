@@ -2,9 +2,12 @@
 
 Welcome to the documentation for the CAW Protocol — a trustless and decentralized social clearing-house committed to making freedom of speech unstoppable.
 
+**👉 New here? Start with [Building on CAW](./FOR_DEVELOPERS.md)** — a builder-focused index organized by what you want to do (run a node, build a frontend, build a smart-contract extension).
+
 ## 📚 Core Documentation
 
 ### System Overview
+- **[Building on CAW](./FOR_DEVELOPERS.md)** - Developer landing page; what you can build and how
 - **[Architecture Overview](./ARCHITECTURE.md)** - Complete system architecture and design principles
 - **[Data Flow](./DATA_FLOW.md)** - How data moves through the system
 - **[Getting Started](./GETTING_STARTED.md)** - Quick start guide for developers
