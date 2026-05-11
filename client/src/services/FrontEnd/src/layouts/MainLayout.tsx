@@ -23,6 +23,9 @@ import { useAccount } from "wagmi";
 import WalletAccountButton from "~/components/buttons/WalletAccountButton";
 import cawLogo from '~/assets/images/caw-logo.png';
 import { themeLayoutShell } from '~/utils/theme'
+import Avatar from '~/components/Avatar';
+import { getUserAvatar } from '~/utils/defaultAvatar';
+import { useTokenDataStore } from '~/store/tokenDataStore';
 
 const BoidsBg = lazy(() => import('~/components/BoidsBg'))
 
@@ -45,6 +48,10 @@ const MainLayout = ({ children, hideSidebars: hideSidebarsProp }: MainLayoutProp
   const notifUnreadCount = useNotificationUnreadStore(s => s.unreadCount)
   const offersUnreadCount = useOffersUnreadStore(s => s.unreadCount)
   const hasInlineDraft = useComposeDraftStore(s => s.hasInlineDraft)
+  const avatarsByTokenId = useTokenDataStore(s => s.avatarsByTokenId)
+  const activeAvatarSrc = activeToken?.tokenId
+    ? (avatarsByTokenId[activeToken.tokenId] || getUserAvatar({ tokenId: activeToken.tokenId }))
+    : null
 
   // Bottom-nav transparency while scrolling: solid when idle, translucent
   // while the user actively scrolls so feed content can peek through.
@@ -322,13 +329,14 @@ const MainLayout = ({ children, hideSidebars: hideSidebarsProp }: MainLayoutProp
           }`}
         >
           {[
-            { to: '/home', icon: HiOutlineHome, match: '/home', badge: 0 },
-            { to: '/explore', icon: HiOutlineSearch, match: '/explore', badge: 0 },
-            { to: '/usernames', icon: HiOutlineColorSwatch, match: '/usernames', badge: offersUnreadCount },
-            { to: '/notifications', icon: HiOutlineBell, match: '/notifications', badge: notifUnreadCount },
-            { to: activeToken?.username ? `/users/${activeToken.username}` : '/welcome', icon: HiOutlineUser, match: activeToken?.username ? `/users/${activeToken.username}` : '/welcome', badge: 0 },
-          ].map(({ to, icon: Icon, match, badge }) => {
+            { to: '/home', icon: HiOutlineHome, match: '/home', badge: 0, isProfile: false },
+            { to: '/explore', icon: HiOutlineSearch, match: '/explore', badge: 0, isProfile: false },
+            { to: '/usernames', icon: HiOutlineColorSwatch, match: '/usernames', badge: offersUnreadCount, isProfile: false },
+            { to: '/notifications', icon: HiOutlineBell, match: '/notifications', badge: notifUnreadCount, isProfile: false },
+            { to: activeToken?.username ? `/users/${activeToken.username}` : '/welcome', icon: HiOutlineUser, match: activeToken?.username ? `/users/${activeToken.username}` : '/welcome', badge: 0, isProfile: true },
+          ].map(({ to, icon: Icon, match, badge, isProfile }) => {
             const active = location.pathname === match || location.pathname.startsWith(match + '/')
+            const showAvatar = isProfile && !!activeAvatarSrc
             return (
               <Link
                 key={to}
@@ -350,7 +358,15 @@ const MainLayout = ({ children, hideSidebars: hideSidebarsProp }: MainLayoutProp
                 }`}
               >
                 <span className="relative inline-flex">
-                  <Icon className="w-7 h-7" />
+                  {showAvatar ? (
+                    <span className={`w-7 h-7 rounded-full overflow-hidden block ${
+                      active ? (isDark ? 'ring-2 ring-yellow-500' : 'ring-2 ring-yellow-600') : ''
+                    }`}>
+                      <Avatar src={activeAvatarSrc!} size="small" className="w-full h-full object-cover" />
+                    </span>
+                  ) : (
+                    <Icon className="w-7 h-7" />
+                  )}
                   {badge > 0 && (
                     <span className={`absolute -top-1 -right-1 min-w-[18px] h-[18px] flex items-center justify-center text-[11px] font-bold rounded-full bg-yellow-500 text-black px-1 border-2 ${isDark ? 'border-black' : 'border-white'}`}>
                       {badge > 99 ? '99+' : badge}
