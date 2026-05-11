@@ -270,10 +270,19 @@ const liveSettings = {
   // per user, more efficient validator), and matches a pure-RPC reduction
   // (fewer fetchPendingQueue ticks per hour). Priority-tipped actions still
   // skip the wait, so latency-sensitive flows are unaffected.
-  checkInterval: 30_000,
+  // 60s default. The poll fetches pending TxQueue rows and runs an
+  // eth_call simulation against the contract; both cost RPC. Standard
+  // posts already show optimistically in the FE, so a slightly slower
+  // confirm is invisible. Priority-tipped actions bypass the wait via
+  // maxWaitTime, so latency-sensitive flows aren't affected.
+  checkInterval: 60_000,
   minActionsPerBatch: 1,
   maxWaitTime: 10_000,    // 10s default — users shouldn't wait long for standard-tip posts
-  replicationInterval: 60_000,
+  // 120s default. The optimistic-replication loop scans pending
+  // checkpoints + does several view calls per cycle; doubling the
+  // interval roughly halves the RPC cost and replication is purely
+  // background (no user-visible latency).
+  replicationInterval: 120_000,
   /** If true, this validator processes actions with a zero tip (public-goods mode).
    *  If false (default), zero-tip actions are rejected and must be processed by a validator
    *  that opts in. Allows users to set "No tip" in Quick Sign for free-but-slow processing. */
@@ -287,10 +296,10 @@ async function refreshSettings(configCheckInterval?: number) {
     const map = new Map(rows.map(r => [r.key, r.value]))
     if (map.has('validatorBaseTip'))    liveSettings.validatorBaseTip = BigInt(map.get('validatorBaseTip')!)
     if (map.has('priorityTip'))        liveSettings.priorityTip = BigInt(map.get('priorityTip')!) || DEFAULT_VALIDATOR_TIP * 3n
-    if (map.has('checkInterval'))       liveSettings.checkInterval = Number(map.get('checkInterval')!) || configCheckInterval || 30_000
+    if (map.has('checkInterval'))       liveSettings.checkInterval = Number(map.get('checkInterval')!) || configCheckInterval || 60_000
     if (map.has('minActionsPerBatch'))  liveSettings.minActionsPerBatch = Number(map.get('minActionsPerBatch')!) || 1
     if (map.has('maxWaitTime'))         liveSettings.maxWaitTime = Number(map.get('maxWaitTime')!) || 10_000
-    if (map.has('replicationInterval')) liveSettings.replicationInterval = Number(map.get('replicationInterval')!) || 60_000
+    if (map.has('replicationInterval')) liveSettings.replicationInterval = Number(map.get('replicationInterval')!) || 120_000
     if (map.has('acceptZeroTip'))       liveSettings.acceptZeroTip = map.get('acceptZeroTip') === 'true'
   } catch (e: any) {
     console.error('[Validator] Failed to refresh settings from DB:', e.message)
@@ -3564,6 +3573,21 @@ console.log("succeededKeys", succeededKeys)
         const hashCheckAbi = ['function clientHashAtCheckpoint(uint32,uint256) view returns (bytes32)']
         const actionsView = new Contract(CAW_ACTIONS_ADDRESS, hashCheckAbi, httpProvider)
 
+        // Persistent cache of submissions whose status is permanently
+        // resolved (slashed / finalized / invalidated). Each monitor
+        // cycle previously did a getSubmission view call for every
+        // submission in the 3-day window — ~50 view calls per cycle
+        // even when nothing had changed. Once a submission is
+        // status !== 0 it stays that way, so we skip the view call
+        // entirely on subsequent cycles.
+        const resolvedRow = await prisma.chainData.findUnique({
+          where: { key: 'validator_monitor_resolved' },
+        })
+        const resolvedSet = new Set<number>(
+          (resolvedRow?.value as { ids?: number[] })?.ids ?? [],
+        )
+        const newlyResolved: number[] = []
+
         for (const ev of events) {
           const args: any = ev.args
           if (!args) continue
@@ -3577,12 +3601,20 @@ console.log("succeededKeys", succeededKeys)
           // Skip our own submissions
           if (submitter.toLowerCase() === w.address.toLowerCase()) continue
 
+          // Skip submissions we already know are resolved (saves a
+          // getSubmission view call per cycle).
+          if (resolvedSet.has(submissionId)) continue
+
           // Check if still pending
           let merkleRoot: string
           try {
             const sub = await archive.getSubmission(submissionId)
             const status = Number(sub[6])
-            if (status !== 0) continue // Already finalized or slashed
+            if (status !== 0) {
+              // Cache this for future cycles.
+              newlyResolved.push(submissionId)
+              continue
+            }
             merkleRoot = sub[1] // bytes32 merkleRoot
           } catch { continue }
 
@@ -3843,6 +3875,19 @@ console.log("succeededKeys", succeededKeys)
           } catch (err: any) {
             console.warn(`[Monitor] Error verifying submission ${submissionId}: ${err?.shortMessage || err?.message}`)
           }
+        }
+
+        // Flush newly-resolved submission IDs to chainData so future
+        // cycles skip them. Bounded: only writes when we found new
+        // ones; the persisted set monotonically grows but each entry
+        // is just an int and submissions don't unresolve.
+        if (newlyResolved.length > 0) {
+          const merged = Array.from(new Set([...resolvedSet, ...newlyResolved])).sort((a, b) => a - b)
+          await prisma.chainData.upsert({
+            where: { key: 'validator_monitor_resolved' },
+            update: { value: { ids: merged } },
+            create: { key: 'validator_monitor_resolved', value: { ids: merged } },
+          })
         }
       } catch (err: any) {
         console.error(`[Monitor] Loop error: ${err?.shortMessage || err?.message}`)

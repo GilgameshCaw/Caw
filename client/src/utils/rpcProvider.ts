@@ -123,11 +123,9 @@ export function isRateLimitError(err: any): boolean {
 
 /**
  * Per-URL cache for eth_blockNumber. Every poller in the process calls
- * getBlockNumber() at the top of its tick — RawEventsGatherer (15s),
- * NftTransferWatcher (60s), MarketplaceIndexer (60s), ChainSync L2Events
- * (60s), Validator replication (60s) — all hitting the same RPC. With ~5
- * pollers and a tight throttle, that's still 4-5 redundant calls per
- * 2-second window, every window.
+ * getBlockNumber() at the top of its tick — RawEventsGatherer (30s),
+ * NftTransferWatcher (60s), MarketplaceIndexer (60s), Validator (60s
+ * poll + 120s replication + 10min monitor). All hitting the same RPC.
  *
  * This cache collapses identical eth_blockNumber requests into one round
  * trip when they fall within BLOCK_NUMBER_TTL_MS of each other. In-flight
@@ -135,11 +133,13 @@ export function isRateLimitError(err: any): boolean {
  * post-resolution caching handles the next-poller case. Keyed by URL so
  * L1 / L2 / mainnet / replication-chain stay separate.
  *
- * Block latency cost: TTL_MS at worst. At 2s with 12s blocks on Base /
- * Arbitrum and 12s on L1, the indexer is at most 2s "stale" — well under
- * one block. Imperceptible to users.
+ * Block latency cost: TTL_MS at worst. At 5s on chains with 12s blocks
+ * (Sepolia, Base, Arbitrum), the cache is at most ~half a block stale
+ * for the consumer that reuses it. Indexers process the block they see,
+ * so a half-block staleness just means the next tick picks up the
+ * skipped block — no events lost, just a slightly later confirmation.
  */
-const BLOCK_NUMBER_TTL_MS = 2000
+const BLOCK_NUMBER_TTL_MS = 5000
 type BlockNumberCacheEntry = { value: any; cachedAt: number; inFlight?: Promise<any> }
 const blockNumberCache = new Map<string, BlockNumberCacheEntry>()
 

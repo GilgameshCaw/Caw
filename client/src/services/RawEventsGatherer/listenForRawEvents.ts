@@ -381,12 +381,14 @@ export default async function listenForRawEvents(
   // Cap each poll's range so a service waking up far behind can't request
   // millions of logs in one call. Steady state stays well under this.
   const MAX_POLL_BLOCKS = 10_000
-  // 15s default — actions are already shown in the feed optimistically as
+  // 30s default — actions are already shown in the feed optimistically as
   // soon as the user signs (PostForm's optimistic insert path), so the
-  // indexer only sets the SUCCESS status flag a beat later. 15s × 720 polls
-  // ≠ huge UX hit but ≈ 3× fewer eth_getLogs calls than the old 5s default.
-  // RAW_EVENTS_POLL_MS env override stays for ops who need tighter timing.
-  const POLL_INTERVAL_MS = Number(process.env.RAW_EVENTS_POLL_MS) || 15000
+  // indexer only sets the SUCCESS status flag a beat later. Stretching
+  // from 15s → 30s halves eth_getLogs hits with imperceptible UX impact:
+  // the only visible difference is a confirmed badge appearing a few
+  // seconds later. Ops who need tighter timing override via
+  // RAW_EVENTS_POLL_MS.
+  const POLL_INTERVAL_MS = Number(process.env.RAW_EVENTS_POLL_MS) || 30000
 
   // setTimeout chain (NOT setInterval) so slow polls don't pile up. With
   // setInterval, a 20s-slow iteration during a rate-limit window would let
