@@ -127,9 +127,18 @@ const ProfileChooser: React.FC<{ compact?: boolean }> = ({ compact = false }) =>
   // on-chain stake has grown past that baseline by approximately the pending
   // amount. We use a 5% tolerance to absorb contract-side precision loss in
   // the L2 cawBalanceOf scaling math. When landed, flush the hint and badge.
-  // Share the by-token poll with other consumers via React Query — the
-  // 15s refetchInterval is coalesced across all callers using the same key.
-  const { data: byTokenData } = useUserByToken(activeToken?.tokenId, 15_000)
+  //
+  // Gate refetchInterval on having a live hint. Without a hint, there's no
+  // landed-deposit event to wait for — we just want fresh user data on
+  // navigation, which the default staleTime (5min) handles. The 15s poll
+  // used to fire constantly for every logged-in user, racking up ~4 API
+  // calls/min from ProfileChooser alone (always-mounted in MainLayout).
+  // Diagnostics showed this single query at 14 fires / 5 min vs. <2 for
+  // everything else.
+  const { data: byTokenData } = useUserByToken(
+    activeToken?.tokenId,
+    pendingDepositWei !== null ? 15_000 : undefined,
+  )
   useEffect(() => {
     if (!activeToken?.tokenId) return
     const data = byTokenData
