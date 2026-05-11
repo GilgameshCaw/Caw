@@ -22,8 +22,21 @@ const PRESETS = {
   avatar:       { maxSizeMB: 0.2,  maxWidthOrHeight: 300,  quality: 0.85 },
   /** Profile cover photo (display 570×180, 2× retina). */
   cover:        { maxSizeMB: 0.5,  maxWidthOrHeight: 1140, quality: 0.8 },
-  /** Inline feed image — what the post body shows. */
+  /** Inline feed image — what the post body shows. The render layer
+   *  picks between feedSmall/feedMedium/feed via <img srcset>, so this
+   *  is the upper bound for inline display (used by 1× desktop in a
+   *  full-width slot). */
   feed:         { maxSizeMB: 1,    maxWidthOrHeight: 1024, quality: 0.8 },
+  /** Inline feed image, mobile / multi-image-grid sizes. Slots range
+   *  from ~180px (mobile two-up) to ~245px (desktop two-up); 320 covers
+   *  2× retina on the mobile end. */
+  feedSmall:    { maxSizeMB: 0.15, maxWidthOrHeight: 320,  quality: 0.8 },
+  /** Inline feed image, desktop single-image / mobile single-image at
+   *  2× retina. ~600px CSS slot × 2× DPR ≈ 1200px source pixels, but
+   *  640 with quality 0.8 still looks sharp at that target — the
+   *  bandwidth saving (~50% vs the 1024 main) outweighs the half-step
+   *  upscale at the highest-density viewports. */
+  feedMedium:   { maxSizeMB: 0.4,  maxWidthOrHeight: 640,  quality: 0.8 },
   /** Lightbox/click-to-expand version of a feed image. */
   feedLarge:    { maxSizeMB: 2,    maxWidthOrHeight: 2048, quality: 0.8 },
   /** Bug-report screenshots, moderator evidence — small but readable. */

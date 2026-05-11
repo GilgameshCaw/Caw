@@ -7,7 +7,21 @@ import ImageLightbox from './ImageLightbox'
 import { useCachedFetch } from '~/hooks/useCachedFetch'
 import { useTheme } from '~/hooks/useTheme'
 import { useT } from '~/i18n/I18nProvider'
-import { feedImageLargeUrl } from '~/utils/imageVariants'
+import { feedImageLargeUrl, feedImageSrcset } from '~/utils/imageVariants'
+
+// Browser sizes hint for inline feed images. Feed container is max-w-2xl
+// (672px), inner width ~624px after padding, narrower below the sm
+// breakpoint (640px). Communicating this lets the browser pick the
+// smallest srcset candidate that satisfies the slot at its DPR.
+//
+//   single full-width image: clamps to 624px on desktop, 100vw on mobile
+//   two-up grid cell:        ~310px on desktop, ~50vw on mobile
+//
+// We slightly overstate the desktop ceiling (624 → 640) because the
+// browser rounds upward when picking; conservative sizes saves bytes
+// without ever underserving.
+const SIZES_SINGLE = '(min-width: 640px) 624px, 100vw'
+const SIZES_GRID_CELL = '(min-width: 640px) 312px, 50vw'
 import { isCanonicalUploadUrl } from '~/utils/uploadUrl'
 import { TAG_CHAR_CLASS, HASHTAG_SIGIL_CLASS, MENTION_SIGIL_CLASS } from '~/../../../tools/hashtagRegex'
 
@@ -54,9 +68,13 @@ const ShortUrlImage: React.FC<{
   imgClassName?: string
   /** Optional skeleton class override (defaults keep legacy layout). */
   skeletonClassName?: string
+  /** Browser sizes hint for srcset selection. Defaults to the
+   *  single-image layout. Pass SIZES_GRID_CELL when this image is
+   *  rendered inside the multi-image grid. */
+  sizes?: string
   /** When provided, click is forwarded instead of opening internal lightbox. */
   onImageClick?: (originalUrl: string, e: React.MouseEvent) => void
-}> = ({ code, originHost, onError, imageErrors, wrapperClassName, imgClassName, skeletonClassName, onImageClick }) => {
+}> = ({ code, originHost, onError, imageErrors, wrapperClassName, imgClassName, skeletonClassName, sizes, onImageClick }) => {
   const { url: originalUrl, loading } = useCachedFetch(
     cacheKey(originHost, code),
     shortUrlCache,
@@ -86,6 +104,8 @@ const ShortUrlImage: React.FC<{
       <div className={wrapper}>
         <img
           src={originalUrl}
+          srcSet={feedImageSrcset(originalUrl)}
+          sizes={sizes ?? SIZES_SINGLE}
           alt="Embedded content"
           className={imgClass}
           loading="lazy"
@@ -586,6 +606,8 @@ const ContentWithHashtags: React.FC<Props> = ({ content, className = '', postId,
               <div key={`img-${start}`} className="my-2 max-w-full">
                 <img
                   src={url}
+                  srcSet={feedImageSrcset(url)}
+                  sizes={SIZES_SINGLE}
                   alt="Embedded content"
                   className="max-w-full max-h-96 rounded-lg object-contain cursor-zoom-in"
                   loading="lazy"
@@ -627,11 +649,14 @@ const ContentWithHashtags: React.FC<Props> = ({ content, className = '', postId,
                       wrapperClassName="w-full h-full"
                       imgClassName="block w-full h-full object-cover"
                       skeletonClassName="w-full h-full bg-gray-200 dark:bg-gray-700 animate-pulse"
+                      sizes={SIZES_GRID_CELL}
                       onImageClick={postId ? () => openPostMedia(baseImageIndex + idx) : undefined}
                     />
                   ) : (
                     <img
                       src={im.data}
+                      srcSet={feedImageSrcset(im.data)}
+                      sizes={SIZES_GRID_CELL}
                       alt={`Embedded content ${idx + 1}`}
                       className="block w-full h-full object-cover cursor-zoom-in"
                       loading="lazy"

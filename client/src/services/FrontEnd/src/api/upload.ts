@@ -146,8 +146,17 @@ export async function uploadAvatar(file: File, tokenId: number): Promise<string>
 }
 
 /**
- * Upload a feed image with a 2048px lightbox variant alongside the 1024px
- * inline file. Same fall-back behavior as uploadAvatar.
+ * Upload a feed image with a full set of inline + lightbox variants:
+ *   - 1024 (main): hard upper bound for inline render at 1× desktop full-width.
+ *   - 320, 640: srcset candidates the browser picks between based on slot
+ *     size + DPR. Mobile two-up grids land on 320, single-image desktop on
+ *     640 — both ~5–10× smaller than the 1024 they replace at those slots.
+ *   - 2048: lightbox/click-to-expand only.
+ *
+ * Variants are uploaded sequentially so an early failure (auth, quota,
+ * network) doesn't pile follow-ups on top. Each variant is best-effort —
+ * a missing inline variant just means the renderer drops to the next-up
+ * size; a missing lightbox means click-to-expand serves the 1024 main.
  */
 export async function uploadFeedImage(file: File, tokenId: number): Promise<string> {
   const main = await compressImage(file, 'feed')
@@ -167,18 +176,24 @@ export async function uploadFeedImage(file: File, tokenId: number): Promise<stri
   const mainUrl: string = urls?.[0]
   if (!mainUrl) throw new Error('No URL returned')
 
-  try {
-    const large = await compressImage(file, 'feedLarge')
-    const baseFilename = mainUrl.split('/').pop()!
-    const tFd = new FormData()
-    tFd.append('media', large)
-    tFd.append('baseFilename', baseFilename)
-    tFd.append('width', '2048')
-    tFd.append('tokenId', String(tokenId))
-    await fetch('/api/upload/variant', { method: 'POST', headers: getAuthHeaders(), body: tFd })
-  } catch (err) {
-    console.warn('[uploadFeedImage] lightbox variant failed, will fall back to main:', err)
+  const baseFilename = mainUrl.split('/').pop()!
+  const uploadVariant = async (preset: CompressionPreset, width: number) => {
+    try {
+      const variant = await compressImage(file, preset)
+      const fd = new FormData()
+      fd.append('media', variant)
+      fd.append('baseFilename', baseFilename)
+      fd.append('width', String(width))
+      fd.append('tokenId', String(tokenId))
+      await fetch('/api/upload/variant', { method: 'POST', headers: getAuthHeaders(), body: fd })
+    } catch (err) {
+      console.warn(`[uploadFeedImage] ${preset} variant failed, will fall back at render time:`, err)
+    }
   }
+
+  await uploadVariant('feedSmall', 320)
+  await uploadVariant('feedMedium', 640)
+  await uploadVariant('feedLarge', 2048)
 
   return mainUrl
 }

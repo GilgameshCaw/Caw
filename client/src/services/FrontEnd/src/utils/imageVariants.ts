@@ -16,10 +16,46 @@ export function avatarThumbUrl(url: string | null | undefined): string | undefin
   return appendWidthSuffix(url, 96)
 }
 
+/** 320px inline variant of a feed image — multi-image grids, mobile.
+ *  Returns undefined for non-/uploads/images/ URLs (matching
+ *  feedImageLargeUrl's behavior). */
+export function feedImageSmallUrl(url: string | null | undefined): string | undefined {
+  if (!url) return undefined
+  return appendWidthSuffix(url, 320)
+}
+
+/** 640px inline variant of a feed image — single-image desktop / mobile
+ *  retina. Returns undefined for non-/uploads/images/ URLs. */
+export function feedImageMediumUrl(url: string | null | undefined): string | undefined {
+  if (!url) return undefined
+  return appendWidthSuffix(url, 640)
+}
+
 /** 2048px large variant of a feed image — used in lightbox / click-to-expand. */
 export function feedImageLargeUrl(url: string | null | undefined): string | undefined {
   if (!url) return undefined
   return appendWidthSuffix(url, 2048)
+}
+
+/** Build an <img srcset> string offering 320 / 640 / 1024 widths from a
+ *  feed image's main URL. Returns undefined if the URL isn't an
+ *  /uploads/images/ asset (external avatars, IPFS, data URIs — for
+ *  those just render the original src directly).
+ *
+ *  The browser uses srcset + sizes to pick the smallest variant that
+ *  satisfies the CSS slot at the device's DPR. Always include all three
+ *  candidates: the bandwidth saving from picking 320 over 1024 in a
+ *  mobile two-up grid (~10× smaller payload) dwarfs the cost of the
+ *  occasional missed-cache 640 on a single-image desktop view. */
+export function feedImageSrcset(url: string | null | undefined): string | undefined {
+  if (!url) return undefined
+  const small = feedImageSmallUrl(url)
+  const medium = feedImageMediumUrl(url)
+  // appendWidthSuffix returns the input unchanged for non-uploads URLs;
+  // detecting that here lets callers fall back to a plain <img src>
+  // instead of emitting a srcset that would 404 every candidate.
+  if (small === url || medium === url) return undefined
+  return `${small} 320w, ${medium} 640w, ${url} 1024w`
 }
 
 function appendWidthSuffix(url: string, width: number): string {
