@@ -6,6 +6,10 @@ import {
   HiOutlineX,
   HiOutlineExclamationCircle,
   HiOutlinePlay,
+  HiOutlinePause,
+  HiOutlineVolumeUp,
+  HiOutlineVolumeOff,
+  HiOutlineArrowsExpand,
 } from 'react-icons/hi'
 import { useTheme } from '~/hooks/useTheme'
 import { useT } from '~/i18n/I18nProvider'
@@ -38,6 +42,119 @@ interface MediaUploadProps {
 const SIZE_LIMITS = {
   IMAGE_MAX: 10 * 1024 * 1024, // 10MB for images
   VIDEO_MAX: 100 * 1024 * 1024, // 100MB for videos
+}
+
+/** Video preview with hover controls (play/pause, mute, fullscreen, progress bar) */
+const VideoPreview: React.FC<{ src: string; formatDuration: (s: number) => string; onAspectReady?: (ratio: number) => void }> = ({ src, formatDuration, onAspectReady }) => {
+  const videoRef = useRef<HTMLVideoElement>(null)
+  const [isPlaying, setIsPlaying] = useState(true)
+  const [currentTime, setCurrentTime] = useState(0)
+  const [duration, setDuration] = useState(0)
+  const [isMuted, setIsMuted] = useState(true)
+  const [showFullscreen, setShowFullscreen] = useState(false)
+
+  const togglePlay = (e: React.MouseEvent) => {
+    e.stopPropagation()
+    const v = videoRef.current
+    if (!v) return
+    if (v.paused) v.play(); else v.pause()
+  }
+
+  const toggleMute = (e: React.MouseEvent) => {
+    e.stopPropagation()
+    const v = videoRef.current
+    if (!v) return
+    v.muted = !v.muted
+    setIsMuted(v.muted)
+  }
+
+  const seek = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const v = videoRef.current
+    if (!v) return
+    v.currentTime = Number(e.target.value)
+  }
+
+  return (
+    <>
+      <div className="relative w-full group">
+        <video
+          ref={videoRef}
+          src={src}
+          autoPlay
+          muted
+          loop
+          playsInline
+          className="w-full h-auto md:max-h-[640px] object-contain cursor-pointer block"
+          onClick={togglePlay}
+          onPlay={() => setIsPlaying(true)}
+          onPause={() => setIsPlaying(false)}
+          onTimeUpdate={(e) => setCurrentTime(e.currentTarget.currentTime)}
+          onLoadedMetadata={(e) => {
+            const v = e.currentTarget
+            setDuration(v.duration)
+            if (onAspectReady && v.videoWidth && v.videoHeight) {
+              onAspectReady(v.videoWidth / v.videoHeight)
+            }
+          }}
+        />
+        <div
+          className="absolute bottom-0 left-0 right-0 px-2 py-1.5 bg-gradient-to-t from-black/80 to-transparent opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none"
+          onClick={(e) => e.stopPropagation()}
+        >
+          <div className="flex items-center gap-2 pointer-events-auto">
+            <button onClick={togglePlay} className="text-white hover:opacity-80 shrink-0 cursor-pointer" title={isPlaying ? 'Pause' : 'Play'}>
+              {isPlaying ? <HiOutlinePause className="w-8 h-8" /> : <HiOutlinePlay className="w-8 h-8" />}
+            </button>
+            <button onClick={toggleMute} className="text-white hover:opacity-80 shrink-0 cursor-pointer" title={isMuted ? 'Unmute' : 'Mute'}>
+              {isMuted ? <HiOutlineVolumeOff className="w-6 h-6" /> : <HiOutlineVolumeUp className="w-6 h-6" />}
+            </button>
+            <input
+              type="range"
+              min={0}
+              max={duration || 0}
+              value={currentTime}
+              step={0.01}
+              onChange={seek}
+              onClick={(e) => e.stopPropagation()}
+              className="flex-1 h-1 accent-yellow-500 cursor-pointer min-w-0"
+            />
+            <span className="text-[10px] text-white tabular-nums shrink-0">
+              {formatDuration(Math.floor(currentTime))} / {formatDuration(Math.floor(duration))}
+            </span>
+            <button
+              onClick={(e) => { e.stopPropagation(); setShowFullscreen(true) }}
+              className="text-white hover:opacity-80 shrink-0 cursor-pointer"
+              title="Fullscreen"
+            >
+              <HiOutlineArrowsExpand className="w-5 h-5" />
+            </button>
+          </div>
+        </div>
+      </div>
+      {showFullscreen && (
+        <div
+          className="fixed inset-0 z-[10000] bg-black/95 flex items-center justify-center p-4"
+          onClick={() => setShowFullscreen(false)}
+        >
+          <button
+            onClick={(e) => { e.stopPropagation(); setShowFullscreen(false) }}
+            className="absolute top-4 right-4 z-10 p-2 rounded-full bg-black/70 hover:bg-black/90 cursor-pointer"
+            title="Close"
+          >
+            <HiOutlineX className="w-6 h-6 text-white" />
+          </button>
+          <video
+            src={src}
+            controls
+            autoPlay
+            playsInline
+            className="max-w-full max-h-full"
+            onClick={(e) => e.stopPropagation()}
+          />
+        </div>
+      )}
+    </>
+  )
 }
 
 /** Single media cell with preview, remove button, and drag support */
@@ -74,7 +191,7 @@ const MediaCell: React.FC<{
           : isDark ? 'bg-gray-800' : 'bg-gray-50'
     } ${draggable ? 'cursor-grab active:cursor-grabbing' : ''} ${className}`}
   >
-    <div className="relative w-full h-full bg-black">
+    <div className={`relative w-full bg-black ${media.type === 'video' ? '' : 'h-full'}`}>
       {media.type === 'image' || media.type === 'gif' ? (
         <>
           <img
@@ -92,31 +209,21 @@ const MediaCell: React.FC<{
         </>
       ) : (
         <>
-          <video src={media.preview} className="w-full h-full object-contain" />
-          <div className="absolute inset-0 flex items-center justify-center">
-            <div className="bg-black/60 rounded-full p-2">
-              <HiOutlinePlay className="w-4 h-4 text-white" />
-            </div>
-          </div>
-          <span className={`absolute bottom-1 left-1 px-1 py-0.5 text-xs font-semibold rounded ${
+          <VideoPreview src={media.preview} formatDuration={formatDuration} />
+          <span className={`absolute top-1 left-1 px-1 py-0.5 text-xs font-semibold rounded pointer-events-none ${
             isDark ? 'bg-black/70 text-white' : 'bg-white/70 text-black'
           }`}>
             VIDEO
           </span>
-          {media.duration && (
-            <span className="absolute bottom-1 right-1 text-xs text-white bg-black/60 px-1 py-0.5 rounded">
-              {formatDuration(media.duration)}
-            </span>
-          )}
         </>
       )}
     </div>
     <button
       onClick={() => onRemove(index)}
-      className="absolute top-1 right-1 p-0.5 rounded-full bg-black/50 hover:bg-black/70 transition-colors"
+      className="absolute top-2 right-2 z-20 p-1.5 rounded-full bg-black/70 hover:bg-black/90 transition-colors cursor-pointer"
       title="Remove"
     >
-      <HiOutlineX className="h-3 w-3 text-white" />
+      <HiOutlineX className="h-5 w-5 text-white" />
     </button>
   </div>
 )
@@ -157,6 +264,10 @@ const MediaGrid: React.FC<{
   )
 
   if (count === 1) {
+    const isVideo = selectedMedia[0]?.type === 'video'
+    if (isVideo) {
+      return <div className="rounded-lg overflow-hidden bg-black md:max-h-[640px] flex items-center justify-center">{cell(0, 'w-full md:max-h-[640px]')}</div>
+    }
     return <div className="aspect-video rounded-lg overflow-hidden">{cell(0, 'w-full h-full')}</div>
   }
 
