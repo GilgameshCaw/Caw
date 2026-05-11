@@ -117,17 +117,36 @@ export const CawPage: React.FC = () => {
   const isQuoteItem = (c: CawItem) =>
     c.isQuote === true || (c.action === 'RECAW' && !!c.content && c.content !== '')
 
-  const feedItems = useMemo(() => {
-    return comments
+  const replyRows = useMemo(() => {
+    const replies = comments
       .filter(comm => {
         if (isQuoteItem(comm)) return false
         if (comm.status !== 'PENDING') return true
         const sig = `${comm.user.tokenId}:${comm.content?.trim()}`
         return !pendingReplies.some(p => `${p.user?.tokenId}:${p.content?.trim()}` === sig)
       })
-      .map(comm => ({ kind: 'reply' as const, timestamp: comm.timestamp, comm }))
       .sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime())
-  }, [comments, pendingReplies])
+
+    const rootId = String(caw?.id ?? id ?? '')
+    const replyIds = new Set(replies.map(reply => String(reply.id)))
+    const directReplies = replies.filter(reply => {
+      const parentId = String(reply.parent?.id ?? '')
+      return !parentId || parentId === rootId || !replyIds.has(parentId)
+    })
+    const usedIds = new Set<string>()
+
+    const rows = directReplies.map(reply => {
+      const children = replies.filter(candidate => String(candidate.parent?.id ?? '') === String(reply.id))
+      usedIds.add(String(reply.id))
+      children.forEach(child => usedIds.add(String(child.id)))
+      return { reply, children }
+    })
+
+    const leftovers = replies.filter(reply => !usedIds.has(String(reply.id)))
+    leftovers.forEach(reply => rows.push({ reply, children: [] }))
+
+    return rows
+  }, [comments, pendingReplies, caw?.id, id])
 
   // Quotes — kept in their original order from the API so they don't
   // shuffle under any of the merge logic above.
@@ -193,17 +212,24 @@ export const CawPage: React.FC = () => {
   useEffect(() => {
     if (searchParams.get('reply') !== '1') return
     if (!isAuthenticated) return
-    // Wait for PostForm to render.
-    requestAnimationFrame(() => {
+    // Re-align after media (images/videos) finishes loading and reflows the page.
+    const scrollToForm = (behavior: ScrollBehavior) => {
       const el = document.getElementById('caw-reply-form')
-      if (!el) return
-      el.scrollIntoView({ block: 'start', behavior: 'smooth' })
-      // Focus the first textarea inside the reply form.
-      setTimeout(() => {
-        const ta = el.querySelector('textarea') as HTMLTextAreaElement | null
-        ta?.focus()
-      }, 60)
+      if (!el) return false
+      el.scrollIntoView({ block: 'start', behavior })
+      return true
+    }
+    const timers: number[] = []
+    requestAnimationFrame(() => {
+      scrollToForm('auto')
+      const el = document.getElementById('caw-reply-form')
+      const ta = el?.querySelector('textarea') as HTMLTextAreaElement | null
+      timers.push(window.setTimeout(() => ta?.focus(), 60))
+      // Catch late layout shifts from images/videos loading.
+      timers.push(window.setTimeout(() => scrollToForm('smooth'), 350))
+      timers.push(window.setTimeout(() => scrollToForm('smooth'), 900))
     })
+    return () => { timers.forEach(clearTimeout) }
   }, [searchParams, isAuthenticated])
 
   // Function to refresh comments after posting a reply
@@ -457,7 +483,7 @@ export const CawPage: React.FC = () => {
 
   return (
       <div
-        className="max-w-2xl mx-auto px-6 py-4"
+        className="max-w-2xl mx-auto px-0 md:px-6 py-4"
         style={{ paddingBottom: 'calc(var(--bottom-nav-h, 0px) + 96px)' }}
       >
         {/* Header with back button and title */}
@@ -581,7 +607,7 @@ export const CawPage: React.FC = () => {
                           .sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime())
                           .map(c => (
                             <div key={`reply-tab-${c.id}`} className="relative">
-                              <FeedItem item={c} isReply={true} hideParentPreview={true} />
+                              <FeedItem item={c} isReply={true} hideParentPreview={true} showReplyRail={false} />
                             </div>
                           ))}
                       </div>
@@ -692,10 +718,17 @@ export const CawPage: React.FC = () => {
                   <span>Pending — waiting for on-chain confirmation</span>
                 </div>
               )}
-              <div className="relative z-10">
+              <div className="relative">
+                {((!!caw?.parent && (replyRows.length > 0 || pendingReplies.length > 0)) || (replyRows[0]?.children.length ?? 0) > 0) && (
+                  <div className={`pointer-events-none absolute left-[40px] md:left-[48px] top-9 bottom-[-72px] z-0 w-px ${isDark ? 'bg-white/20' : 'bg-gray-300'}`} />
+                )}
                 <FeedItem
                   item={caw}
                   isMainPost={true}
+                  showReplyRail={false}
+                  hideParentPreview={true}
+                  hideBottomBorder={(!!caw?.parent && (replyRows.length > 0 || pendingReplies.length > 0)) || (replyRows[0]?.children.length ?? 0) > 0}
+                  inThread={(!!caw?.parent && (replyRows.length > 0 || pendingReplies.length > 0)) || (replyRows[0]?.children.length ?? 0) > 0}
                   onReplyStateChange={(cawId, replyPending) => {
                     if (caw && caw.id === cawId) {
                       setCaw({ ...caw, replyPending })
@@ -726,19 +759,6 @@ export const CawPage: React.FC = () => {
               </div>
             )}
 
-            {/* Reply Form — only for authenticated users */}
-            {isAuthenticated && (
-              <div id="caw-reply-form" className="border-b border-white/20 mb-2">
-                <PostForm
-                  replyTo={caw}
-                  onSuccess={() => {
-                    setCaw(prev => prev ? { ...prev, replyPending: true } : prev)
-                    refreshComments()
-                  }}
-                />
-              </div>
-            )}
-
             {/* Comments Section */}
             {isAuthenticated ? (
               <div className="space-y-0 relative">
@@ -759,33 +779,91 @@ export const CawPage: React.FC = () => {
                     <FeedItem item={quote} hideParentPreview={true} />
                   </div>
                 ))}
-                {/* Replies are oldest-first (feedItems is sorted asc by
-                    timestamp), so pending replies render AFTER the
-                    confirmed list to match where they'll land once the
-                    chain catches up. Otherwise the user sees their fresh
-                    pending reply at the top, then it visibly jumps to
-                    the bottom on refresh. */}
-                {feedItems.map((entry) => {
-                  return (
-                    <div key={`reply-${entry.comm.id}`} className="relative">
-                      <FeedItem
-                        item={entry.comm}
-                        isReply={true}
-                        hideParentPreview={true}
-                        onLikeStateChange={(cawId, likePending) => {
-                          setComments(current =>
-                            current.map(item =>
-                              item.id === cawId ? { ...item, likePending } : item
+                {/* Replies render oldest-first; pending replies live at
+                    the bottom (see master fa73f585) to match where they
+                    land once the chain catches up. Thread mode (when this
+                    caw is itself a reply) draws connecting rails between
+                    rows. */}
+                {replyRows.map((row, rowIdx) => {
+                  const isFirstDirect = rowIdx === 0
+                  const isLastRow = rowIdx === replyRows.length - 1
+                  if (row.children.length === 0) {
+                    return (
+                      <div key={`reply-${row.reply.id}`} className="relative isolate">
+                        <FeedItem
+                          item={row.reply}
+                          isReply={true}
+                          hideParentPreview={true}
+                          showReplyRail={false}
+                          hideBottomBorder={!isLastRow}
+                          inThread={!!caw?.parent}
+                          onLikeStateChange={(cawId, likePending) => {
+                            setComments(current =>
+                              current.map(item =>
+                                item.id === cawId ? { ...item, likePending } : item
+                              )
                             )
-                          )
-                        }}
-                      />
+                          }}
+                        />
+                      </div>
+                    )
+                  }
+
+                  return (
+                    <div key={`thread-${row.reply.id}`} className="relative isolate">
+                      <div className="relative">
+                        {isFirstDirect && (
+                          <div className={`pointer-events-none absolute left-[40px] md:left-[48px] top-0 h-9 z-0 w-px ${isDark ? 'bg-white/20' : 'bg-gray-300'}`} />
+                        )}
+                        <div className={`pointer-events-none absolute left-[40px] md:left-[48px] top-9 bottom-0 z-0 w-px ${isDark ? 'bg-white/20' : 'bg-gray-300'}`} />
+                        <FeedItem
+                          item={row.reply}
+                          isReply={true}
+                          hideParentPreview={true}
+                          showReplyRail={false}
+                          hideBottomBorder={true}
+                          inThread={true}
+                          onLikeStateChange={(cawId, likePending) => {
+                            setComments(current =>
+                              current.map(item =>
+                                item.id === cawId ? { ...item, likePending } : item
+                              )
+                            )
+                          }}
+                        />
+                      </div>
+                      {row.children.map((child, childIndex) => {
+                        const isLastChild = childIndex === row.children.length - 1
+                        return (
+                          <div key={`reply-${child.id}`} className="relative isolate">
+                            <div className={`pointer-events-none absolute left-[40px] md:left-[48px] top-0 h-9 z-0 w-px ${isDark ? 'bg-white/20' : 'bg-gray-300'}`} />
+                            {!isLastChild && (
+                              <div className={`pointer-events-none absolute left-[40px] md:left-[48px] top-9 bottom-0 z-0 w-px ${isDark ? 'bg-white/20' : 'bg-gray-300'}`} />
+                            )}
+                            <FeedItem
+                              item={child}
+                              isReply={true}
+                              hideParentPreview={true}
+                              showReplyRail={false}
+                              hideBottomBorder={!isLastChild}
+                              inThread={true}
+                              onLikeStateChange={(cawId, likePending) => {
+                                setComments(current =>
+                                  current.map(item =>
+                                    item.id === cawId ? { ...item, likePending } : item
+                                  )
+                                )
+                              }}
+                            />
+                          </div>
+                        )
+                      })}
                     </div>
                   )
                 })}
                 {pendingReplies.map((post) => (
-                  <div key={post.tempId} className="relative">
-                    <FeedItem item={post as CawItem} isReply={true} hideParentPreview={true} />
+                  <div key={post.tempId} className="relative isolate">
+                    <FeedItem item={post as CawItem} isReply={true} hideParentPreview={true} showReplyRail={false} inThread={!!caw?.parent} />
                   </div>
                 ))}
                 {hasMoreComments && (
@@ -799,6 +877,23 @@ export const CawPage: React.FC = () => {
                     {loadingMore ? t('common.loading') : t('caw_page.load_more_replies')}
                   </button>
                 )}
+                <div id="caw-reply-form" className="border-t border-white/20 mt-2">
+                  <PostForm
+                    replyTo={caw}
+                    onSuccess={() => {
+                      setCaw(prev => prev ? { ...prev, replyPending: true } : prev)
+                      refreshComments().finally(() => {
+                        const scrollToForm = (behavior: ScrollBehavior) => {
+                          const el = document.getElementById('caw-reply-form')
+                          el?.scrollIntoView({ block: 'start', behavior })
+                        }
+                        requestAnimationFrame(() => scrollToForm('smooth'))
+                        setTimeout(() => scrollToForm('smooth'), 350)
+                        setTimeout(() => scrollToForm('smooth'), 900)
+                      })
+                    }}
+                  />
+                </div>
               </div>
             ) : (
               /* Gated replies — show count and sign-in prompt */
