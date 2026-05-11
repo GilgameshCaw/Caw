@@ -408,17 +408,23 @@ export async function recordAction(
     // the daily reconciler. Multiple touches for the same user in one
     // action collapse into one upsert per tokenId, taking the LAST
     // recorded ownership (which is the post-action contract state).
+    //
+    // Sequential, not Promise.all: each upsert needs its own connection
+    // from the Prisma pool. A single action can touch 3+ tokens (sender,
+    // receiver, validator, tip recipients) — fanning those out in
+    // parallel saturates the pool when multiple ActionProcessor handlers
+    // run concurrently, and the 15s tx timeout fires before any of them
+    // get their connection. Sequential keeps the per-tx connection
+    // footprint at 1 (held by the outer tx itself).
     const finalByToken = new Map<number, bigint>()
     for (const t of touches) finalByToken.set(t.tokenId, t.finalOwnership)
-    await Promise.all(
-      Array.from(finalByToken.entries()).map(([tokenId, ownership]) =>
-        tx.cawOwnershipCurrent.upsert({
-          where: { tokenId },
-          create: { tokenId, ownership: ownership.toString() },
-          update: { ownership: ownership.toString(), updatedAt: new Date() },
-        }),
-      ),
-    )
+    for (const [tokenId, ownership] of finalByToken) {
+      await tx.cawOwnershipCurrent.upsert({
+        where: { tokenId },
+        create: { tokenId, ownership: ownership.toString() },
+        update: { ownership: ownership.toString(), updatedAt: new Date() },
+      })
+    }
   }
 
   s.lastBlock = blockNumber

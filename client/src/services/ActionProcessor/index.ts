@@ -212,7 +212,7 @@ async function handleRawAction(raw: { id: number, chainId: number, blockNumber: 
     try {
       const result = await prisma.$transaction(async (tx) => {
         return await createOrFindAction(tx, rawId, chainId, rawAction)
-      }, { timeout: 15_000 })
+      }, { timeout: 30_000 })
       action = result.action
       shouldProcessDomain = result.shouldProcessDomain
     } catch (err: any) {
@@ -250,7 +250,7 @@ async function handleRawAction(raw: { id: number, chainId: number, blockNumber: 
       await prisma.$transaction(async (tx) => {
         const validAction = await ensureActionExists(tx, rawId, action)
         await processDomainEffects(tx, validAction, rawAction, resolved)
-      }, { timeout: 15_000 })
+      }, { timeout: 30_000 })
     } catch (err: any) {
       if (err instanceof CawNotFoundError) {
         // Like/reply/tip targets a caw we don't have indexed — most often
@@ -284,7 +284,7 @@ async function handleRawAction(raw: { id: number, chainId: number, blockNumber: 
           logIndex: raw.logIndex,
           actionIndex,
         })
-      }, { timeout: 15_000 })
+      }, { timeout: 30_000 })
     } catch (err: any) {
       console.error('[ActionProcessor] StakeLedger snapshot failed (domain rows committed):', err?.message ?? err)
     }
