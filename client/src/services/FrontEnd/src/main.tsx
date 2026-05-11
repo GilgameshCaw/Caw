@@ -63,6 +63,101 @@ if (typeof document !== 'undefined') {
   document.addEventListener('visibilitychange', updateFocus)
 }
 
+// Ctrl+W = delete word back, on any editable surface. The browser's
+// default Ctrl+W (close tab) is one of the most-hostile defaults for
+// people who came in expecting *nix readline behaviour. We intercept
+// it on inputs / textareas / contenteditable and route to a
+// word-back delete; if focus is anywhere else, we leave the
+// browser's tab-close behaviour alone.
+//
+// Boundary: whitespace, matching what Option+Backspace does on Mac
+// inputs (not punctuation-aware). If there's a selection, deletes
+// the selection (also matches Option+Backspace). preventDefault
+// always so the tab doesn't close out from under the user when they
+// hit the key in an editable field.
+if (typeof window !== 'undefined') {
+  const isEditableInput = (el: EventTarget | null): el is HTMLInputElement | HTMLTextAreaElement => {
+    if (!(el instanceof HTMLElement)) return false
+    if (el instanceof HTMLTextAreaElement) return !el.readOnly && !el.disabled
+    if (el instanceof HTMLInputElement) {
+      // selectionStart is null for input types that don't support
+      // text selection (checkbox, color, range, etc.). Skip those.
+      if (el.readOnly || el.disabled) return false
+      try { return el.selectionStart !== null } catch { return false }
+    }
+    return false
+  }
+  const isContentEditable = (el: EventTarget | null): el is HTMLElement => {
+    return el instanceof HTMLElement && el.isContentEditable
+  }
+  const deleteWordBackInInput = (el: HTMLInputElement | HTMLTextAreaElement) => {
+    const value = el.value
+    const start = el.selectionStart ?? 0
+    const end = el.selectionEnd ?? 0
+    let newStart = start
+    if (start !== end) {
+      // Selection present — just delete the selection.
+      newStart = Math.min(start, end)
+    } else if (start === 0) {
+      return // nothing to delete
+    } else {
+      // Walk back over trailing whitespace, then walk back over the
+      // word characters. Whitespace-only is the boundary.
+      let i = start
+      while (i > 0 && /\s/.test(value[i - 1])) i--
+      while (i > 0 && !/\s/.test(value[i - 1])) i--
+      newStart = i
+    }
+    const next = value.slice(0, newStart) + value.slice(Math.max(start, end))
+    // React-controlled inputs ignore direct .value writes; use the
+    // native setter then dispatch an 'input' event so React's
+    // synthetic onChange picks up the change.
+    const proto = el instanceof HTMLTextAreaElement
+      ? window.HTMLTextAreaElement.prototype
+      : window.HTMLInputElement.prototype
+    const setter = Object.getOwnPropertyDescriptor(proto, 'value')?.set
+    if (setter) {
+      setter.call(el, next)
+    } else {
+      el.value = next
+    }
+    el.setSelectionRange(newStart, newStart)
+    el.dispatchEvent(new Event('input', { bubbles: true }))
+  }
+  const deleteWordBackInContentEditable = () => {
+    const sel = window.getSelection()
+    if (!sel) return
+    // If there's a range collapsed at cursor, extend it backward
+    // by a word; if the range already has a selection, leave it
+    // and let execCommand('delete') remove that range.
+    if (sel.isCollapsed && typeof sel.modify === 'function') {
+      sel.modify('extend', 'backward', 'word')
+    }
+    // execCommand is deprecated but still works in every browser
+    // we ship to and is the only reliable way to perform an
+    // editor-aware delete inside a contenteditable that React might
+    // be controlling (lexical, slate, etc. listen for beforeinput).
+    document.execCommand('delete')
+  }
+  window.addEventListener('keydown', (e) => {
+    // Mac Cmd+W closes the tab and can't be preventDefault'd in
+    // any browser; we only handle ctrlKey here. Plain Ctrl+W
+    // works on all platforms including Mac.
+    if (e.key !== 'w' && e.key !== 'W') return
+    if (!e.ctrlKey || e.metaKey || e.altKey) return
+    const target = e.target
+    if (isEditableInput(target)) {
+      e.preventDefault()
+      deleteWordBackInInput(target)
+    } else if (isContentEditable(target)) {
+      e.preventDefault()
+      deleteWordBackInContentEditable()
+    }
+    // If focus isn't on an editable surface, fall through — the
+    // browser's tab-close default still applies (Chrome/FF).
+  }, { capture: true })
+}
+
 // Diagnostic: count how often each query key fires. Enable from the
 // browser console with `localStorage.cawRpcDebug = '1'` then refresh.
 // Inspect with `__cawRpcCounts` (object keyed by query hash → fire
