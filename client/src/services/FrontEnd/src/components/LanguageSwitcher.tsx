@@ -2,12 +2,14 @@ import React, { Fragment, useEffect, useState } from 'react'
 import { Listbox, Transition } from '@headlessui/react'
 import { useQueryClient } from '@tanstack/react-query'
 import { HiTranslate } from 'react-icons/hi'
+import { useLocation, useNavigate } from 'react-router-dom'
 import { LANGUAGES } from '~/constants/languages'
 import { apiFetch } from '~/api/client'
 import { useActiveToken } from '~/store/tokenDataStore'
 import { useAuthStore } from '~/store/authStore'
 import { useUserByToken } from '~/hooks/useUserData'
 import { useTheme } from '~/hooks/useTheme'
+import { stripLocalePrefix, withLocalePrefix } from '~/utils/localePrefix'
 
 export const VIEWER_LANG_STORAGE_KEY = 'caw:viewer-lang'
 
@@ -26,6 +28,10 @@ const LanguageSwitcher: React.FC<Props> = ({ className = '' }) => {
   const isTokenAuthorized = useAuthStore(s => s.isTokenAuthorized)
   const { data: user, refetch } = useUserByToken(tokenId)
   const queryClient = useQueryClient()
+  // Bypass the localizedRouter wrapper here — switching to a non-current
+  // locale is the one place we WANT to rewrite the prefix explicitly.
+  const navigate = useNavigate()
+  const location = useLocation()
 
   const [value, setValue] = useState<string>(() => getStoredViewerLanguage())
 
@@ -38,6 +44,19 @@ const LanguageSwitcher: React.FC<Props> = ({ className = '' }) => {
     setValue(code)
     try { localStorage.setItem(VIEWER_LANG_STORAGE_KEY, code) } catch { /* private mode, etc. */ }
     window.dispatchEvent(new Event('caw:viewer-lang-changed'))
+
+    // Rewrite the URL to reflect the new locale. Without this the URL
+    // would stay /es/users/maria after switching to French — and the
+    // I18nProvider (which reads URL first) would keep showing Spanish UI
+    // until the user navigated. Strip any existing locale prefix first,
+    // then add the new one (no-op for English; bare paths are canonical
+    // for English).
+    const bare = stripLocalePrefix(location.pathname)
+    const targetPath = withLocalePrefix(bare, code || null)
+    const target = `${targetPath}${location.search}${location.hash}`
+    if (target !== location.pathname + location.search + location.hash) {
+      navigate(target, { replace: true })
+    }
 
     // Only persist server-side when the viewer actually has a session for
     // this tokenId. Skipping the PATCH for a stale/unauthenticated token
