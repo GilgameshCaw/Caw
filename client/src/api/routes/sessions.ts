@@ -148,8 +148,13 @@ async function processSessionRequest(
 
     await setSessionRequest(requestId, { status: 'submitting' })
     console.log(`[Sessions] Using contract at: ${CAW_NAMES_L2_ADDRESS}`)
-    const sig = ethers.Signature.from(signature)
     const messageBytes = ethers.toUtf8Bytes(message)
+    // bytes-form registerSessionPersonal post-v1-passkey refactor: signature
+    // is passed as a raw bytes blob (r||s||v); the contract internally tries
+    // ecrecover for 65-byte sigs, falls back to ERC-1271 for smart-EOA owners.
+    // The signer (recoveredAddress) is now an explicit first arg so 1271
+    // validation has an address to check; for plain EOA flows it's the same
+    // address ecrecover would have produced.
 
     // Pass an explicit gasLimit HINT (not a cap) to estimateGas. Infura's Base
     // Sepolia endpoint rejects unbounded estimates with "intrinsic gas too high",
@@ -157,16 +162,15 @@ async function processSessionRequest(
     // that hides the real cause. A 2M hint comfortably covers the real cost
     // (~265k measured) while satisfying Infura's need for a bounded estimate.
     const estimated = await cawProfileL2.registerSessionPersonal.estimateGas(
-      messageBytes, sig.v, sig.r, sig.s,
+      recoveredAddress, messageBytes, signature,
       { gasLimit: 2_000_000 }
     )
     const gasLimit = (estimated * 120n) / 100n // +20% headroom
 
     const tx = await cawProfileL2.registerSessionPersonal(
+      recoveredAddress,
       messageBytes,
-      sig.v,
-      sig.r,
-      sig.s,
+      signature,
       { gasLimit }
     )
 
