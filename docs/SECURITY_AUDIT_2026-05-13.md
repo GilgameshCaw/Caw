@@ -42,6 +42,14 @@ Schema (prisma/schema.prisma):
 Contract:
 - `CawProfileL2.registerSession`, `registerSessionPersonal` — ERC-1271 fallback added; bytes-form signature parameter; 7 new tests; full self-audit in `native/docs/AUDIT_NOTES.md`.
 
+## ✅ Third-wave: contract invariant deep-dive — CLEAN
+
+A focused multi-step state-evolution audit on the smart contracts. Goal: find legitimate-but-combined sequences (transfer + revoke + re-register, deposit-during-transfer, challenge-while-finalizing, etc.) that leave the contracts in an inconsistent state.
+
+**Conclusion: no new critical invariants are broken.** All ten invariants checked — balance drift, session/ownership state coherence, L1/L2 sync, challenge-finalize race, stake accounting, cawonce monotonicity, spend-limit reset, ERC-1271 re-entrance, checkpoint boundaries, LZ out-of-order delivery — hold up against the audit. Existing mitigations (`ownerSessionEpoch` bump on transfer, `sessionNonce` increment per registration, LZ stamp ordering, gas-bounded staticcalls, etc.) form a coherent defense.
+
+One code-hygiene observation worth noting: `sessionSpent[owner][sessionKey]` is not zeroed on `revokeSession`. The dormant counter is *not* exploitable because `validSession` returns a zero struct (epoch mismatch / deleted record) once a session is revoked. Worth a one-line cleanup (`delete sessionSpent[msg.sender][sessionKey]` in `revokeSession`) for tidiness, not because of an exploit path.
+
 ## ✅ Second-wave audits and fixes
 
 After the first-wave fixes, three more audit passes ran:
