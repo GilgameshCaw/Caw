@@ -212,24 +212,17 @@ export const CawPage: React.FC = () => {
   useEffect(() => {
     if (searchParams.get('reply') !== '1') return
     if (!isAuthenticated) return
-    // Re-align after media (images/videos) finishes loading and reflows the page.
-    const scrollToForm = (behavior: ScrollBehavior) => {
-      const el = document.getElementById('caw-reply-form')
-      if (!el) return false
-      el.scrollIntoView({ block: 'start', behavior })
-      return true
-    }
-    const timers: number[] = []
+    // Wait for PostForm to render.
     requestAnimationFrame(() => {
-      scrollToForm('auto')
       const el = document.getElementById('caw-reply-form')
-      const ta = el?.querySelector('textarea') as HTMLTextAreaElement | null
-      timers.push(window.setTimeout(() => ta?.focus(), 60))
-      // Catch late layout shifts from images/videos loading.
-      timers.push(window.setTimeout(() => scrollToForm('smooth'), 350))
-      timers.push(window.setTimeout(() => scrollToForm('smooth'), 900))
+      if (!el) return
+      el.scrollIntoView({ block: 'start', behavior: 'smooth' })
+      // Focus the first textarea inside the reply form.
+      setTimeout(() => {
+        const ta = el.querySelector('textarea') as HTMLTextAreaElement | null
+        ta?.focus()
+      }, 60)
     })
-    return () => { timers.forEach(clearTimeout) }
   }, [searchParams, isAuthenticated])
 
   // Function to refresh comments after posting a reply
@@ -759,6 +752,19 @@ export const CawPage: React.FC = () => {
               </div>
             )}
 
+            {/* Reply Form — above replies (Twitter-style). */}
+            {isAuthenticated && (
+              <div id="caw-reply-form" className="border-b border-white/20 mb-2">
+                <PostForm
+                  replyTo={caw}
+                  onSuccess={() => {
+                    setCaw(prev => prev ? { ...prev, replyPending: true } : prev)
+                    refreshComments()
+                  }}
+                />
+              </div>
+            )}
+
             {/* Comments Section */}
             {isAuthenticated ? (
               <div className="space-y-0 relative">
@@ -877,23 +883,6 @@ export const CawPage: React.FC = () => {
                     {loadingMore ? t('common.loading') : t('caw_page.load_more_replies')}
                   </button>
                 )}
-                <div id="caw-reply-form" className="border-t border-white/20 mt-2">
-                  <PostForm
-                    replyTo={caw}
-                    onSuccess={() => {
-                      setCaw(prev => prev ? { ...prev, replyPending: true } : prev)
-                      refreshComments().finally(() => {
-                        const scrollToForm = (behavior: ScrollBehavior) => {
-                          const el = document.getElementById('caw-reply-form')
-                          el?.scrollIntoView({ block: 'start', behavior })
-                        }
-                        requestAnimationFrame(() => scrollToForm('smooth'))
-                        setTimeout(() => scrollToForm('smooth'), 350)
-                        setTimeout(() => scrollToForm('smooth'), 900)
-                      })
-                    }}
-                  />
-                </div>
               </div>
             ) : (
               /* Gated replies — show count and sign-in prompt */
