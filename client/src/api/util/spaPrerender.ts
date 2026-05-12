@@ -4,6 +4,7 @@ import fs from 'fs'
 import { prisma } from '../../prismaClient'
 import { publicUrl } from './publicUrl'
 import { cawPath, parseCawIdSlug } from './cawUrl'
+import { ALL_LOCALES, parseLocaleFromPath, withLocalePrefix } from './localePrefix'
 
 // nginx routes only crawler User-Agents through to the API; this handler
 // reads the URL, fetches the per-route data, and returns the SPA's
@@ -53,6 +54,12 @@ type Meta = {
    * than no value (Facebook/Messenger validate strictly). */
   imageWidth?: number
   imageHeight?: number
+  /** Bare path (no locale prefix) of the same content. When set, we
+   * emit one <link rel="alternate" hreflang="..."> per supported locale
+   * — tells Google "the same content lives at /es/... /fr/... etc.,
+   * route Spanish searchers to the /es/ variant." Omit for pages that
+   * don't have meaningful per-locale variants. */
+  altPath?: string
 }
 
 // HEAD-probe the OG image route to learn the rendered PNG's actual
@@ -93,7 +100,8 @@ function buildMetaTags(m: Meta): string {
     `<meta name="description" content="${d}">`,
     // Canonical points to the one true URL for this content. For caws
     // this collapses /caws/:id, stale usernames, and stale/missing slugs
-    // onto a single indexed URL.
+    // onto a single indexed URL. NOTE: each locale variant has its OWN
+    // canonical (the /es/... is canonical for the Spanish indexing).
     `<link rel="canonical" href="${c}">`,
     `<meta property="og:type" content="${ot}">`,
     `<meta property="og:title" content="${t}">`,
@@ -101,6 +109,22 @@ function buildMetaTags(m: Meta): string {
     `<meta property="og:url" content="${c}">`,
     `<meta property="og:image" content="${i}">`,
   ]
+  // hreflang alternates: one <link rel="alternate"> per supported
+  // locale, plus x-default. Tells Google to route Spanish searchers to
+  // /es/..., Japanese searchers to /ja/..., etc. Without these, Google
+  // either misses the locale variants or treats them as duplicates and
+  // splits ranking.
+  if (m.altPath) {
+    const base = publicUrl()
+    for (const loc of ALL_LOCALES) {
+      const href = `${base}${withLocalePrefix(m.altPath, loc === 'en' ? null : loc)}`
+      const hreflang = loc === 'en' ? 'en' : loc
+      tags.push(`<link rel="alternate" hreflang="${hreflang}" href="${escapeHtml(href)}">`)
+    }
+    // x-default = the fallback shown when no other hreflang matches.
+    // Bare English path.
+    tags.push(`<link rel="alternate" hreflang="x-default" href="${escapeHtml(`${base}${m.altPath}`)}">`)
+  }
   // og:image:width / height are optional but high-signal for strict
   // scrapers (Messenger). Emit only when we have real dims from the
   // PNG; never lie — a mismatched value suppresses the preview.
@@ -134,6 +158,7 @@ function injectMeta(html: string, meta: Meta): string {
   // we drop them too so re-rendering is idempotent.
   out = out.replace(/\s*<meta\s+(?:property|name)="(?:og:[^"]+|twitter:[^"]+)"[^>]*>/gi, '')
   out = out.replace(/\s*<link\s+rel="canonical"[^>]*>/gi, '')
+  out = out.replace(/\s*<link\s+rel="alternate"[^>]*hreflang="[^"]+"[^>]*>/gi, '')
   out = out.replace(/<\/head>/i, `    ${buildMetaTags(meta)}\n  </head>`)
   return out
 }
@@ -145,34 +170,42 @@ function injectMeta(html: string, meta: Meta): string {
 // title + empty description so the image carries the per-page detail.
 const BRAND_TITLE = 'CAW — Decentralized & Censorship Resistant'
 
-async function profileMeta(username: string): Promise<Meta | null> {
+async function profileMeta(username: string, locale: string | null): Promise<Meta | null> {
   const user = await prisma.user.findUnique({
     where: { username: username.toLowerCase() },
     select: { username: true },
   })
   if (!user) return null
+  const altPath = `/users/${user.username}`
+  const canonicalPath = withLocalePrefix(altPath, locale)
   return {
     title: BRAND_TITLE,
     description: '',
-    url: `${publicUrl()}/users/${user.username}`,
+    url: `${publicUrl()}${canonicalPath}`,
+    canonical: `${publicUrl()}${canonicalPath}`,
     image: `${publicUrl()}/api/og/image/profile/${user.username}`,
     ogType: 'website',
+    altPath,
   }
 }
 
-async function hashtagMeta(tag: string): Promise<Meta | null> {
+async function hashtagMeta(tag: string, locale: string | null): Promise<Meta | null> {
   const name = tag.toLowerCase().replace(/^#/, '')
   if (!name) return null
+  const altPath = `/hashtags/${encodeURIComponent(name)}`
+  const canonicalPath = withLocalePrefix(altPath, locale)
   return {
     title: BRAND_TITLE,
     description: '',
-    url: `${publicUrl()}/hashtags/${encodeURIComponent(name)}`,
+    url: `${publicUrl()}${canonicalPath}`,
+    canonical: `${publicUrl()}${canonicalPath}`,
     image: `${publicUrl()}/api/og/image/hashtag/${encodeURIComponent(name)}`,
     ogType: 'website',
+    altPath,
   }
 }
 
-async function cawMeta(id: number, requestedPath: string): Promise<Meta | null> {
+async function cawMeta(id: number, requestedPath: string, locale: string | null): Promise<Meta | null> {
   if (!Number.isFinite(id) || id <= 0) return null
   const caw = await prisma.caw.findUnique({
     where: { id },
@@ -185,27 +218,27 @@ async function cawMeta(id: number, requestedPath: string): Promise<Meta | null> 
   })
   // PENDING is publicly visible (the FE shows pending posts in author
   // feeds and the share button surfaces them right after submit), so
-  // OG crawlers must see them too. The /api/og/image/caw/:id route
-  // already renders PENDING — this gate was the missing piece, which
-  // caused fresh caws to fall through to the default share image
-  // until the indexer flipped them to SUCCESS minutes later.
-  // FAILED / HIDDEN stay private (return null → default meta).
+  // OG crawlers must see them too. FAILED / HIDDEN stay private.
   if (!caw || (caw.status !== 'SUCCESS' && caw.status !== 'PENDING')) return null
-  const canonicalPath = cawPath({
+  const bareCanonical = cawPath({
     id: caw.id,
     username: caw.user?.username ?? null,
     content: caw.content,
   })
-  const canonical = `${publicUrl()}${canonicalPath}`
+  // Each locale has its own canonical entry. Spanish-locale URL canonicals
+  // to itself (so /es/users/maria/caw/123-slug is the canonical for the
+  // Spanish index), and the alternates list all locale siblings.
+  const canonicalPath = withLocalePrefix(bareCanonical, locale)
   return {
     title: BRAND_TITLE,
     description: '',
     // og:url renders the canonical so social previews always link to the
     // canonical form even when shared from a stale URL.
     url: `${publicUrl()}${requestedPath}`,
-    canonical,
+    canonical: `${publicUrl()}${canonicalPath}`,
     image: `${publicUrl()}/api/og/image/caw/${caw.id}`,
     ogType: 'article',
+    altPath: bareCanonical,
   }
 }
 
@@ -232,19 +265,22 @@ export async function spaPrerender(req: Request, res: Response): Promise<void> {
       res.status(404).end()
       return
     }
+    // Parse the optional locale prefix once. Routes match on the bare
+    // path; canonical and og:url get the locale prefix re-applied.
+    const { locale, restPath } = parseLocaleFromPath(reqPath)
     let meta: Meta | null = null
 
-    let m = reqPath.match(/^\/users\/([^/]+)\/?$/)
-    if (m) meta = await profileMeta(decodeURIComponent(m[1]))
+    let m = restPath.match(/^\/users\/([^/]+)\/?$/)
+    if (m) meta = await profileMeta(decodeURIComponent(m[1]), locale)
 
     if (!meta) {
       // Canonical caw URL: /users/<username>/caw/<id>-<slug>. The slug
       // suffix is decorative — the leading numeric id is what looks up
       // the caw. canonical-redirect logic in the FE snaps stale URLs.
-      m = reqPath.match(/^\/users\/([^/]+)\/caw\/([^/]+)\/?$/)
+      m = restPath.match(/^\/users\/([^/]+)\/caw\/([^/]+)\/?$/)
       if (m) {
         const id = parseCawIdSlug(m[2])
-        if (id != null) meta = await cawMeta(id, reqPath)
+        if (id != null) meta = await cawMeta(id, reqPath, locale)
       }
     }
 
@@ -252,13 +288,13 @@ export async function spaPrerender(req: Request, res: Response): Promise<void> {
       // Legacy /caws/:id share-link target. Same content, different
       // surface URL — meta.canonical points to the new shape so
       // crawlers index only the canonical form.
-      m = reqPath.match(/^\/caws\/(\d+)\/?$/)
-      if (m) meta = await cawMeta(Number(m[1]), reqPath)
+      m = restPath.match(/^\/caws\/(\d+)\/?$/)
+      if (m) meta = await cawMeta(Number(m[1]), reqPath, locale)
     }
 
     if (!meta) {
-      m = reqPath.match(/^\/hashtags\/([^/]+)\/?$/)
-      if (m) meta = await hashtagMeta(decodeURIComponent(m[1]))
+      m = restPath.match(/^\/hashtags\/([^/]+)\/?$/)
+      if (m) meta = await hashtagMeta(decodeURIComponent(m[1]), locale)
     }
 
     // /address/:address and everything else falls back to the default card.
