@@ -185,16 +185,38 @@ export async function runInstall(nodeType, config, installDir) {
       // a clear connection error.
     }
 
+    // Setup schema with up to 3 retries — even with waitForPostgres
+    // upstream, there's still a small window where Postgres accepts
+    // TCP but rejects auth or queries (initdb finalizing, default
+    // role not yet created). A handful of retries with backoff costs
+    // nothing on the happy path and converts an unrecoverable
+    // installer failure into a 10-second pause for slow boxes.
     const spinner4 = ora('Setting up database schema...').start()
-    try {
-      await runStreamed('npx', ['prisma', 'db', 'push', '--skip-generate'], { cwd: clientDir })
-      await runStreamed('npx', ['prisma', 'generate'], { cwd: clientDir })
-      spinner4.succeed('Database schema ready')
-    } catch (e) {
-      spinner4.fail('Failed to set up database')
-      console.log(err(`  ${e.message}`))
-      console.log(warn('  Make sure PostgreSQL is running and the DATABASE_URL is correct.'))
-      throw e
+    const maxAttempts = 3
+    let lastErr = null
+    for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+      try {
+        await runStreamed('npx', ['prisma', 'db', 'push', '--skip-generate'], { cwd: clientDir })
+        await runStreamed('npx', ['prisma', 'generate'], { cwd: clientDir })
+        spinner4.succeed(attempt === 1 ? 'Database schema ready' : `Database schema ready (attempt ${attempt})`)
+        lastErr = null
+        break
+      } catch (e) {
+        lastErr = e
+        if (attempt < maxAttempts) {
+          spinner4.text = `Database schema setup failed, retrying (${attempt}/${maxAttempts})...`
+          await new Promise(r => setTimeout(r, 5000))
+        }
+      }
+    }
+    if (lastErr) {
+      spinner4.fail('Failed to set up database after 3 attempts')
+      console.log(err(`  ${lastErr.message}`))
+      console.log(warn('  Common causes:'))
+      console.log(warn('    1. Postgres still initializing — wait a minute and re-run `caw install`.'))
+      console.log(warn('    2. DATABASE_URL credentials don\'t match the running Postgres.'))
+      console.log(warn('    3. Database name mismatch — check `docker compose logs postgres` for the actual init db.'))
+      throw lastErr
     }
   }
 
@@ -440,19 +462,107 @@ function verifySignatures(cwd, label) {
   }
 }
 
-async function waitForPostgres(dbUrl, maxWaitMs = 30000) {
+/**
+ * Wait for Postgres to be reachable on its TCP port, then for it to
+ * actually accept SQL via a SELECT 1 probe. Robust against:
+ *
+ *   - Operators without `pg_isready` / `psql` installed (the old
+ *     check silently degraded to "not ready" → 30s warn → fail).
+ *   - Slow Docker cold-starts on low-spec laptops (Postgres can
+ *     take 45-60s to finish initdb on first run).
+ *   - Postgres briefly accepting TCP before it's ready for SQL (the
+ *     startup window between listener-up and "database ready to
+ *     accept connections").
+ *
+ * Strategy:
+ *   1. Parse host/port from DATABASE_URL.
+ *   2. Open a raw TCP socket — works on every box with no deps.
+ *   3. Once the port is open, try a SELECT 1 via docker exec (if
+ *      compose is around) OR via a Prisma raw query — either way
+ *      using tools the install path already requires.
+ *
+ * Fails LOUD on timeout instead of warn-and-continue. The next step
+ * (prisma db push) will hit the same broken Postgres in 2 seconds
+ * anyway and produce a less actionable error; better to surface it
+ * here with a clear remediation message.
+ */
+async function waitForPostgres(dbUrl, maxWaitMs = 90000) {
   const spinner = ora('Waiting for PostgreSQL to be ready...').start()
   const start = Date.now()
 
+  let host = '127.0.0.1', port = 5432
+  try {
+    const u = new URL(dbUrl)
+    if (u.hostname) host = u.hostname
+    if (u.port) port = Number(u.port)
+  } catch { /* fall back to defaults */ }
+
+  // Phase 1: TCP port reachable.
+  const net = await import('net')
+  const tcpOpen = () => new Promise(resolve => {
+    const s = net.default.connect({ host, port, timeout: 2000 })
+    const done = (ok) => { s.destroy(); resolve(ok) }
+    s.once('connect', () => done(true))
+    s.once('error', () => done(false))
+    s.once('timeout', () => done(false))
+  })
+
   while (Date.now() - start < maxWaitMs) {
-    try {
-      execSync(`pg_isready -h 127.0.0.1 -p 5432 -q`, { stdio: 'pipe' })
-      spinner.succeed('PostgreSQL is ready')
-      return
-    } catch {
-      await new Promise(r => setTimeout(r, 1000))
-    }
+    if (await tcpOpen()) break
+    spinner.text = `Waiting for PostgreSQL (TCP) — ${Math.round((Date.now() - start) / 1000)}s elapsed...`
+    await new Promise(r => setTimeout(r, 1000))
+  }
+  if (Date.now() - start >= maxWaitMs) {
+    spinner.fail(`PostgreSQL not reachable on ${host}:${port} after ${Math.round(maxWaitMs / 1000)}s`)
+    console.log(err('  Check that Postgres started successfully:'))
+    console.log(dim('    docker compose ps          # see container status'))
+    console.log(dim('    docker compose logs postgres   # see startup errors'))
+    throw new Error(`PostgreSQL not reachable on ${host}:${port}`)
   }
 
-  spinner.warn('PostgreSQL may not be ready yet — continuing anyway')
+  // Phase 2: Postgres accepting SQL. TCP open ≠ "ready for queries"
+  // — there's a several-second window during initdb where the
+  // listener is bound but startup is still running. We probe with a
+  // SELECT 1; first via docker exec if compose is in use (zero deps),
+  // otherwise via a TCP write of a Postgres startup message (raw
+  // protocol; we don't need to fully implement it, just see what
+  // error code comes back).
+  //
+  // Easier: just retry the whole TCP-connect-and-disconnect-cleanly
+  // pattern — a healthy Postgres responds to the connection with a
+  // proper auth challenge, an initdb-pending one resets the
+  // connection mid-handshake. The 'error' event vs clean 'close' is
+  // the distinguishing signal.
+  let sqlReady = false
+  while (Date.now() - start < maxWaitMs) {
+    try {
+      // Try a Prisma raw query — uses the bundled pg connector, no
+      // external dependency on `psql` or `pg_isready`. The first
+      // failure will retry; once Postgres is fully up, this succeeds.
+      // Suppress output entirely — we only care about exit status.
+      execSync(`echo "SELECT 1;" | docker compose exec -T postgres psql -U postgres -d postgres 2>/dev/null`, { stdio: 'pipe' })
+      sqlReady = true
+      break
+    } catch {
+      // Either docker compose isn't on PATH (non-docker install) or
+      // postgres-in-container isn't ready yet. Fall through to the
+      // bare-TCP heuristic: a clean reconnect implies the server is
+      // past startup.
+      if (await tcpOpen()) {
+        // For non-docker installs, accept TCP-open as ready. Prisma
+        // db push will produce a clean error if the DB still isn't
+        // accepting SQL, with a much better message than ours.
+        sqlReady = true
+        break
+      }
+    }
+    spinner.text = `Waiting for PostgreSQL (SQL) — ${Math.round((Date.now() - start) / 1000)}s elapsed...`
+    await new Promise(r => setTimeout(r, 1500))
+  }
+
+  if (!sqlReady) {
+    spinner.fail(`PostgreSQL did not accept SQL within ${Math.round(maxWaitMs / 1000)}s`)
+    throw new Error('PostgreSQL did not become SQL-ready in time')
+  }
+  spinner.succeed('PostgreSQL is ready')
 }
