@@ -260,7 +260,7 @@ const DatabaseAdmin: React.FC = () => {
     if (model) params.set('model', model)
     if (detail) params.set('detail', detail)
     const qs = params.toString()
-    return qs ? `/admin/db?${qs}` : '/admin/db'
+    return qs ? `/admin/database?${qs}` : '/admin/database'
   }, [])
 
   // Cmd/Ctrl/middle-click → new tab; plain click → in-page handler.
