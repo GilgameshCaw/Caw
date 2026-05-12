@@ -143,7 +143,7 @@ const GifPicker: React.FC<GifPickerProps> = ({ initialQuery = '', onSelect, onCl
       </div>
 
       {/* GIF grid */}
-      <div className="p-2 max-h-80 overflow-y-auto">
+      <div className="p-2 max-h-80 overflow-y-auto overscroll-contain">
         {loading ? (
           <div className="grid grid-cols-3 gap-2">
             {[...Array(9)].map((_, i) => (

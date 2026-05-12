@@ -4,6 +4,7 @@ import { useTheme } from '~/hooks/useTheme'
 import { ShareModal } from '~/components/ShareModal'
 import { HiShare } from 'react-icons/hi'
 import { useLayoutStore } from '~/store/layoutStore'
+import { acquireScrollLock, releaseScrollLock } from '~/utils/scrollLock'
 
 type ShareProfileCardModalProps = {
   isOpen: boolean
@@ -42,11 +43,10 @@ export const ShareProfileCardModal: React.FC<ShareProfileCardModalProps> = ({
 
     const onKeyDown = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose() }
     window.addEventListener('keydown', onKeyDown)
-    const prevOverflow = document.body.style.overflow
-    document.body.style.overflow = 'hidden'
+    acquireScrollLock()
     return () => {
       window.removeEventListener('keydown', onKeyDown)
-      document.body.style.overflow = prevOverflow
+      releaseScrollLock()
       if (isMobile) setHideMobileNavOverride(false)
     }
   }, [isOpen, onClose, setHideMobileNavOverride])

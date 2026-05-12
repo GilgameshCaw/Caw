@@ -5,6 +5,7 @@ import { useTheme } from '~/hooks/useTheme'
 import { useActiveToken } from '~/store/tokenDataStore'
 import { UserAvatar } from './Avatar'
 import { FollowButton } from './FollowButton'
+import XBadge from '~/components/XBadge'
 
 const SHOW_DELAY = 300
 const HIDE_DELAY = 150
@@ -69,8 +70,16 @@ const UserHoverCard: React.FC<Props> = ({ username, children }) => {
                 )}
               </div>
               <Link to={`/users/${user.username}`} className="block">
-                <div className={`font-semibold truncate ${isDark ? 'text-white' : 'text-black'}`}>
-                  {user.displayName || user.username}
+                <div className="flex items-center gap-1 min-w-0">
+                  <div className={`font-semibold truncate ${isDark ? 'text-white' : 'text-black'}`}>
+                    {user.displayName || user.username}
+                  </div>
+                  <XBadge
+                    xHandle={user.xHandle}
+                    xFollowerBucket={user.xFollowerBucket}
+                    size="md"
+                    className="shrink-0"
+                  />
                 </div>
                 <div className={`text-sm truncate ${isDark ? 'text-white/50' : 'text-gray-500'}`}>@{user.username}</div>
               </Link>

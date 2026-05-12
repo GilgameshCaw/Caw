@@ -1855,6 +1855,19 @@ const MessagesPage: React.FC = () => {
                     && new Date(nextMsg.createdAt).toDateString() === msgDate.toDateString()
                     && (new Date(nextMsg.createdAt).getTime() - msgDate.getTime()) <= 5 * 60 * 1000
                   const blockSpacing = compactWithNext && message.isFromCurrentUser ? 'mb-2' : 'mb-4'
+                  // Detect image/video-only attachments so we can drop the
+                  // bubble background — the media looks cleaner sitting on the
+                  // chat surface directly instead of inside a colored box.
+                  let isMediaOnlyBubble = false
+                  try {
+                    const parsed = JSON.parse(messageContent)
+                    if (parsed?.msgType === 'encrypted-attachment' && parsed?.url) {
+                      const mt = String(parsed.mimeType || '')
+                      isMediaOnlyBubble = mt.startsWith('image/') || mt.startsWith('video/') || parsed.type === 'image'
+                    }
+                  } catch {
+                    // Plain text message — keep the standard bubble.
+                  }
 
                   return (
                     <div
@@ -1952,12 +1965,16 @@ const MessagesPage: React.FC = () => {
                               fight the reaction strip's hover area. */}
                           <div
                             data-dm-bubble
-                            className={`max-w-[85%] md:max-w-md lg:max-w-xl px-5 py-3.5 rounded-2xl relative ${
-                              message.isFromCurrentUser
-                                ? 'bg-gray-600 text-white'
-                                : isDark
-                                ? 'bg-gray-700 text-white'
-                                : 'bg-gray-200 text-black'
+                            className={`max-w-[85%] md:max-w-md lg:max-w-xl rounded-2xl relative ${
+                              isMediaOnlyBubble
+                                ? 'bg-transparent p-0 text-inherit'
+                                : `px-5 py-3.5 ${
+                                    message.isFromCurrentUser
+                                      ? 'bg-gray-600 text-white'
+                                      : isDark
+                                      ? 'bg-gray-700 text-white'
+                                      : 'bg-gray-200 text-black'
+                                  }`
                             }`}
                             onPointerDown={(e) => {
                               // Mobile UX: reactions open on long-press, not on random taps.
@@ -2536,7 +2553,7 @@ const MessagesPage: React.FC = () => {
                 <div className="border-t border-white/10 p-3">
                   <div className="relative inline-block">
                     {filePreview.isImage ? (
-                      <img src={filePreview.previewUrl} alt="File preview" className="max-h-48 rounded-lg border border-white/10" />
+                      <img src={filePreview.previewUrl} alt="File preview" className="h-20 w-28 rounded-lg border border-white/10 object-cover" />
                     ) : (
                       <div className="flex items-center gap-2 p-3 rounded-lg bg-white/5">
                         <HiOutlinePaperClip className="w-5 h-5 text-white/50" />
@@ -2553,12 +2570,6 @@ const MessagesPage: React.FC = () => {
                       <HiOutlineX className="w-4 h-4" />
                     </button>
                   </div>
-                  <button
-                    onClick={handleSendFile}
-                    className="mt-2 px-4 py-1.5 rounded-full text-sm font-semibold bg-yellow-500 hover:bg-yellow-600 text-black cursor-pointer"
-                  >
-                    {filePreview.isImage ? 'Send Image' : 'Send File'}
-                  </button>
                 </div>
               )}
 
@@ -2734,7 +2745,11 @@ const MessagesPage: React.FC = () => {
                   onKeyDown={(e) => {
                     if (e.key === 'Enter' && !e.shiftKey) {
                       e.preventDefault()
-                      handleSendMessage()
+                      if (filePreview) {
+                        void handleSendFile()
+                      } else {
+                        handleSendMessage()
+                      }
                     }
                     // Escape clears the reply chip — same UX as Slack /
                     // iMessage. We only intercept when there's an active
@@ -2746,7 +2761,7 @@ const MessagesPage: React.FC = () => {
                     }
                   }}
                   rows={1}
-                  className={`flex-1 min-w-0 px-3 bg-transparent border-none outline-none resize-none text-left text-base md:text-[15px] overflow-y-auto ${
+                  className={`flex-1 min-w-0 px-3 bg-transparent border-none outline-none resize-none text-left text-[16px] md:text-[15px] overflow-y-auto ${
                     isDark
                       ? 'text-white placeholder-gray-500'
                       : 'text-black placeholder-gray-500'
@@ -2754,10 +2769,12 @@ const MessagesPage: React.FC = () => {
                   style={{ maxHeight: '96px' }}
                 />
 
-                {/* Send button */}
+                {/* Send button — also dispatches file send when a preview
+                    is staged, since the dedicated "Send Image" button was
+                    removed in favor of this single send affordance. */}
                 <button
-                  onClick={handleSendMessage}
-                  disabled={isSending || !newMessageContent.trim()}
+                  onClick={() => { if (filePreview) { void handleSendFile() } else { handleSendMessage() } }}
+                  disabled={isSending || (!newMessageContent.trim() && !filePreview)}
                   className={`p-2 rounded-full transition-all duration-200 cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed ${
                     isDark
                       ? 'text-yellow-400/70 hover:text-yellow-400 hover:bg-yellow-400/10'

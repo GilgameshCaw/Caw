@@ -926,11 +926,18 @@ const Notifications: React.FC = () => {
             // at low alpha so it sits behind the row content rather than
             // shouting). Falls back to plain hover-only background once the
             // row is marked read.
+            // Age-graded tint for unread rows: brand accent fades as the
+            // notification gets older, so the freshest items stand out
+            // most (X-style). Read rows drop the tint entirely.
+            const ageHours = (Date.now() - new Date(notification.createdAt).getTime()) / 3600000
+            const unreadTint = ageHours < 24
+              ? 'bg-yellow-500/10 hover:bg-yellow-500/15'
+              : ageHours < 72
+                ? 'bg-yellow-500/5 hover:bg-yellow-500/10'
+                : (isDark ? 'hover:bg-white/5' : 'hover:bg-gray-50')
             const rowClass = `block px-4 py-4 transition cursor-pointer no-underline ${
               !notification.isRead
-                ? isDark
-                  ? 'bg-yellow-500/10 hover:bg-yellow-500/15'
-                  : 'bg-yellow-500/10 hover:bg-yellow-500/15'
+                ? unreadTint
                 : isDark ? 'hover:bg-white/5' : 'hover:bg-gray-50'
             } ${divider}`
             const RowTag: any = href ? 'a' : 'div'
@@ -1006,6 +1013,7 @@ const Notifications: React.FC = () => {
                 })()}
                 <button
                   onClick={(e) => {
+                    e.preventDefault()
                     e.stopPropagation()
                     hideNotification(notification.id)
                   }}

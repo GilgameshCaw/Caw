@@ -52,7 +52,13 @@ const Tooltip: React.FC<TooltipProps> = ({
 
     let autoHideTimer: ReturnType<typeof setTimeout> | null = null
 
+    // Touch devices fire mouseenter on tap, leaving the tooltip stuck
+    // visually over surrounding UI (e.g. hashtag tooltips landing on
+    // the action row of the post below). Gate show behind a real-hover
+    // capability check so only mouse/trackpad devices trigger it.
+    const canHover = typeof window !== 'undefined' && window.matchMedia('(hover: hover)').matches
     const show = () => {
+      if (!canHover) return
       setVisible(true)
       if (autoHideTimer) clearTimeout(autoHideTimer)
       // Auto-dismiss safety net for touch devices where the synthesized

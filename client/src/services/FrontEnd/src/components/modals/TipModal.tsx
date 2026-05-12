@@ -216,6 +216,27 @@ const TipModal: React.FC<TipModalProps> = ({
                     }`}
                   />
                 </div>
+                {/* Balance line — derived from the staked amount we already
+                    check against on submit. Turns red when the input pushes
+                    total cost past available balance, so the user sees the
+                    constraint before clicking Tip. */}
+                {(() => {
+                  const stakedAmount = activeToken?.stakedAmount ?? 0n
+                  const balanceCaw = Number(stakedAmount / 10n**18n)
+                  const insufficient = isValid && stakedAmount < totalCost
+                  return (
+                    <div className={`mt-1.5 text-xs flex justify-between ${insufficient ? 'text-red-500' : themeTextMuted(isDark)}`}>
+                      <span>{t('tip.balance', { defaultValue: 'Balance' })}: {balanceCaw.toLocaleString()} CAW</span>
+                      {isValid && (
+                        <span>
+                          {insufficient
+                            ? t('tip.insufficient', { defaultValue: 'Insufficient' })
+                            : `${(balanceCaw - tipAmount - Number(validatorTip)).toLocaleString()} CAW left`}
+                        </span>
+                      )}
+                    </div>
+                  )
+                })()}
               </div>
 
               {/* Cost summary */}

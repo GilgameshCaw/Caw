@@ -4,6 +4,7 @@ import PostForm from '~/components/PostForm'
 import ModalWrapper from './ModalWrapper'
 import { useTheme } from '~/hooks/useTheme'
 import { useT } from '~/i18n/I18nProvider'
+import { acquireScrollLock, releaseScrollLock } from '~/utils/scrollLock'
 
 interface ComposePostModalProps {
   isOpen: boolean
@@ -27,31 +28,11 @@ const ComposePostModal: React.FC<ComposePostModalProps> = ({ isOpen, onClose }) 
   }, [])
 
   // Lock body scroll while the mobile fullscreen sheet is open.
-  // iOS Safari ignores body { overflow: hidden } — only position:fixed
-  // + a negative top reliably stops the page scrolling under the sheet.
-  // Mirrors the ModalWrapper scroll-lock pattern so behavior is
-  // consistent across modals + this in-tree sheet.
+  // Lock scroll while the compose sheet is open (iOS-aware via shared util).
   useEffect(() => {
     if (!isOpen) return
-    const scrollY = window.scrollY
-    const body = document.body
-    const original = {
-      overflow: body.style.overflow,
-      position: body.style.position,
-      top: body.style.top,
-      width: body.style.width,
-    }
-    body.style.overflow = 'hidden'
-    body.style.position = 'fixed'
-    body.style.top = `-${scrollY}px`
-    body.style.width = '100%'
-    return () => {
-      body.style.overflow = original.overflow
-      body.style.position = original.position
-      body.style.top = original.top
-      body.style.width = original.width
-      window.scrollTo(0, scrollY)
-    }
+    acquireScrollLock()
+    return () => { releaseScrollLock() }
   }, [isOpen])
 
   if (!isOpen) return null

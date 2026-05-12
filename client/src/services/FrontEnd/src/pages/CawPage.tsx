@@ -366,6 +366,12 @@ export const CawPage: React.FC = () => {
   useEffect(() => {
     if (!caw) return
     if (isTempIdRoute) return
+    // CRITICAL: this component stays mounted across /users/:username/caw/:idSlug navigations.
+    // During the transition, `caw` can briefly refer to the *previous* route's post while
+    // `location.pathname` already reflects the new one. If we canonical-redirect in that
+    // window, we can create an infinite ping-pong between two caws.
+    if (!id) return
+    if (String(caw.id) !== String(id)) return
     const canonical = cawUrl(caw)
     if (canonical === location.pathname) return
     // Preserve the query string (e.g. ?reply=1, ?media=N) when redirecting.
