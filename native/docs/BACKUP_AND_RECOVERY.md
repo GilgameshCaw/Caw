@@ -159,14 +159,17 @@ Like social recovery, the on-chain version requires a smart account. The off-cha
 
 ### ERC-4337 + passkey-signed smart accounts
 
-The "wallet that doesn't need a seed phrase at all" path. Considered and deferred at the top of the plan: per-user smart account deploy on L1 is too expensive, EntryPoint UserOp overhead taxes every action, and EIP-7212 (the P-256 precompile that would make passkey verification cheap on-chain) isn't deployed to L1 mainnet yet.
+The "wallet that doesn't need a seed phrase at all" path. Considered and deferred at the top of the plan: per-user smart account deploy on L1 is meaningfully expensive, and EntryPoint UserOp overhead taxes every action.
+
+**Status update (post-Fusaka, Dec 2025):** EIP-7951 — the secp256r1 precompile that makes passkey signature verification cheap on L1 — is now live on mainnet. This drops on-chain P-256 verification from ~330K gas to ~3.5K gas, removing the single biggest specific objection in earlier analysis. The remaining costs (smart-account deploy per user, EntryPoint overhead per action) are still real, but the gap to "viable on L1" is much narrower than when this plan was first written. See [`docs/ERC4337_REASSESSMENT.md`](ERC4337_REASSESSMENT.md) for a fresh cost analysis.
 
 Worth revisiting if any of these change:
-- CawProfile ever moves to / is mirrored on an L2 with EIP-7212.
+- The re-analysis concludes the L1 economics now pencil out for our user mix.
+- CawProfile ever moves to / is mirrored on an L2 (where 4337 has always been cheaper).
 - A meaningful fraction of users specifically request a no-seed-no-backup-blob option and the cost is justifiable.
-- Account-abstraction tooling matures to the point where the per-user smart account is invisible in UX (some L2s are already close).
+- Account-abstraction tooling matures further (some L2s already render the smart account invisible in UX).
 
-For now: noted, not built.
+For now: noted, not built — pending the re-analysis.
 
 ## Sanity checks during development
 

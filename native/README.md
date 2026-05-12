@@ -43,9 +43,9 @@ A thin native shell around the existing `client/src/services/FrontEnd` web app, 
 
 The web app talks to the native wallet through an EIP-1193-shaped bridge, so existing wagmi connectors work unchanged.
 
-## Why not ERC-4337 + passkeys
+## Why not ERC-4337 + passkeys (revisit pending)
 
-Considered and rejected for now: the per-user smart-account deploy + UserOp overhead on L1 (where `CawProfile` lives) is too expensive given the volume we want. Revisit if usernames ever move to L2.
+Initially rejected for L1 cost reasons (smart-account deploy per user, UserOp overhead, and at the time no cheap on-chain P-256 verification). The Fusaka upgrade (Dec 2025) shipped EIP-7951, which collapsed on-chain passkey verification from ~330K gas to ~3.5K gas — removing the biggest specific objection. The remaining costs are real but narrower than before. A fresh cost analysis lives in [`docs/ERC4337_REASSESSMENT.md`](docs/ERC4337_REASSESSMENT.md); the plan in this directory still reflects the EOA-wallet path until that re-analysis lands a different conclusion.
 
 ## Documentation
 
