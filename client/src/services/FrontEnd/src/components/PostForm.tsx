@@ -57,6 +57,7 @@ function gifSearchQuery(text: string): string {
 }
 import HighlightedTextarea from './HighlightedTextarea'
 import { useT } from '~/i18n/I18nProvider'
+import { acquireScrollLock, releaseScrollLock } from '~/utils/scrollLock'
 
 const POST_CHAR_LIMIT = 420 // bytes — matches the on-chain check `bytes(text).length <= 420`
 
@@ -1558,6 +1559,19 @@ const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess, placehol
   // attached the big empty textarea looks ridiculous.
   const hasMedia = selectedMedia.length > 0
   const hasInlineFeedDraft = trackDraft && (text.trim().length > 0 || hasMedia)
+
+  // Lock background scroll while the inline draft is expanded fullscreen
+  // on mobile. Desktop renders the form inline (`md:static` in the
+  // wrapper className), so the lock is gated to viewports below the md
+  // breakpoint to avoid freezing the page during normal desktop typing.
+  useEffect(() => {
+    if (!hasInlineFeedDraft) return
+    if (typeof window === 'undefined') return
+    const mq = window.matchMedia('(max-width: 767px)')
+    if (!mq.matches) return
+    acquireScrollLock()
+    return () => { releaseScrollLock() }
+  }, [hasInlineFeedDraft])
   const desktopRows = replyTo
     ? Math.max(2, Math.min(lineCount, 10))
     : hasMedia
@@ -1934,7 +1948,7 @@ const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess, placehol
             {/* Floating panel — opens near the emoji button in mobile feed */}
             <div
               ref={emojiPopoverRef}
-              className={`fixed z-50 rounded-xl shadow-2xl max-h-[40vh] overflow-auto ${isDark ? 'border border-white/10 bg-black' : 'border border-gray-200 bg-white'}`}
+              className={`fixed z-50 rounded-xl shadow-2xl max-h-[40vh] overflow-auto overscroll-contain ${isDark ? 'border border-white/10 bg-black' : 'border border-gray-200 bg-white'}`}
               style={emojiPopover
                 ? {
                     left: emojiPopover.x,

@@ -253,6 +253,7 @@ const FeedItem: React.FC<{ item: CawItem; isMainPost?: boolean; isReply?: boolea
   const menuRef = useRef<HTMLDivElement>(null)
   const optionsMenuRef = useRef<HTMLDivElement>(null)
   const isSubmittingLikeRef = useRef(false) // Prevent duplicate like submissions
+  const pinInFlightRef = useRef(false) // Prevent rapid-fire pin/unpin submissions that inflate count
   // Guards the auto-translate effect — without it, every render that
   // produces a fresh runTranslation closure (or refetch that bumps
   // useItem) would queue another translate call. We only want one
@@ -736,42 +737,52 @@ const FeedItem: React.FC<{ item: CawItem; isMainPost?: boolean; isReply?: boolea
   //   onChain=true  → OTHER action text "pi:{cawId}" / "xpi:{cawId}".
   //   onChain=false → POST/DELETE /api/pins/:cawId, no chain involvement.
   const submitPinAction = async (target: 'pin' | 'unpin', onChain: boolean) => {
+    // Reentrancy guard: rapid-fire clicks (especially while an on-chain
+    // submit is awaiting the wallet) were producing duplicate server-side
+    // pin rows, inflating the user's pinnedCawCount past the cap (e.g.
+    // 4/3). One in-flight pin/unpin at a time.
+    if (pinInFlightRef.current) return
     const effectiveTokenId = activeTokenId || activeToken?.tokenId
     if (!effectiveTokenId) return
     const cawId = parseInt(useItem.id)
     const willBePinned = target === 'pin'
 
+    pinInFlightRef.current = true
     // Snappy in-memory reorder. The server-side optimistic write makes
     // the result survive a refresh; this is purely the visual feedback
     // before any round-trip completes.
     onPinUpdate?.(useItem.id, willBePinned)
 
-    if (onChain) {
-      try {
-        await signAndSubmit({
-          actionType: 'other',
-          senderId: effectiveTokenId,
-          receiverId: 0,
-          receiverCawonce: 0,
-          text: willBePinned ? `pi:${cawId}` : `xpi:${cawId}`,
-        })
-      } catch (err) {
-        console.error('[Pin] on-chain submit failed:', err)
-        // Roll back the in-memory reorder. The server-side optimistic
-        // row was never written (signAndSubmit failed before /api/actions
-        // returned), so there's nothing to clean up server-side.
-        onPinUpdate?.(useItem.id, !willBePinned)
+    try {
+      if (onChain) {
+        try {
+          await signAndSubmit({
+            actionType: 'other',
+            senderId: effectiveTokenId,
+            receiverId: 0,
+            receiverCawonce: 0,
+            text: willBePinned ? `pi:${cawId}` : `xpi:${cawId}`,
+          })
+        } catch (err) {
+          console.error('[Pin] on-chain submit failed:', err)
+          // Roll back the in-memory reorder. The server-side optimistic
+          // row was never written (signAndSubmit failed before /api/actions
+          // returned), so there's nothing to clean up server-side.
+          onPinUpdate?.(useItem.id, !willBePinned)
+        }
+      } else {
+        try {
+          await apiFetch(`/api/pins/${cawId}`, {
+            method: willBePinned ? 'POST' : 'DELETE',
+            headers: { 'x-user-id': String(effectiveTokenId) },
+          })
+        } catch (err) {
+          console.error('[Pin] off-chain submit failed:', err)
+          onPinUpdate?.(useItem.id, !willBePinned)
+        }
       }
-    } else {
-      try {
-        await apiFetch(`/api/pins/${cawId}`, {
-          method: willBePinned ? 'POST' : 'DELETE',
-          headers: { 'x-user-id': String(effectiveTokenId) },
-        })
-      } catch (err) {
-        console.error('[Pin] off-chain submit failed:', err)
-        onPinUpdate?.(useItem.id, !willBePinned)
-      }
+    } finally {
+      pinInFlightRef.current = false
     }
   }
 
@@ -1883,7 +1894,9 @@ const FeedItem: React.FC<{ item: CawItem; isMainPost?: boolean; isReply?: boolea
                 )}
               </button></Tooltip>
 
-              {/* Tip */}
+              {/* Tip — hidden when the post author is the signed-in user,
+                  since tipping yourself is a no-op. */}
+              {useItem.user.tokenId !== (activeTokenId || activeToken?.tokenId) && (
               <Tooltip text={tipPending ? t('post.processing') : useItem.totalTipAmount ? t('post.tipped', { amount: (useItem.totalTipAmount).toLocaleString() }) : t('post.tip')} disabled={item.status === 'FAILED'}><button
                 onClick={(e) => {
                   e.preventDefault()
@@ -1906,6 +1919,7 @@ const FeedItem: React.FC<{ item: CawItem; isMainPost?: boolean; isReply?: boolea
                   <span className={`${uiDensity === 'compact' ? 'text-[11px] -translate-y-[2px]' : 'text-xs -translate-y-[3px]'}`}>{useItem.tipCount}</span>
                 )}
               </button></Tooltip>
+              )}
 
               {/* Share */}
               <Tooltip text={t('post.share')} disabled={item.status === 'FAILED'}><button

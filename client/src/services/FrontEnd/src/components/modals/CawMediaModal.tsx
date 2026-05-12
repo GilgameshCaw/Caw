@@ -12,6 +12,7 @@ import { useTheme } from '~/hooks/useTheme'
 import { useTokenDataStore, useActiveToken } from '~/store/tokenDataStore'
 import { usePendingPostsStore } from '~/store/pendingPostsStore'
 import { parseCawIdSlug } from '~/utils/cawUrl'
+import { acquireScrollLock, releaseScrollLock } from '~/utils/scrollLock'
 
 type MediaItem =
   | { kind: 'url'; src: string }
@@ -54,13 +55,10 @@ export default function CawMediaModal() {
   const [mobileSheetOpen, setMobileSheetOpen] = useState(false)
   const allPendingPosts = usePendingPostsStore(s => s.pendingPosts)
 
-  // Lock scroll while modal is open.
+  // Lock scroll while modal is open (iOS-aware via shared util).
   useEffect(() => {
-    const prev = document.body.style.overflow
-    document.body.style.overflow = 'hidden'
-    return () => {
-      document.body.style.overflow = prev
-    }
+    acquireScrollLock()
+    return () => { releaseScrollLock() }
   }, [])
 
   // ESC closes modal (standard lightbox behavior).

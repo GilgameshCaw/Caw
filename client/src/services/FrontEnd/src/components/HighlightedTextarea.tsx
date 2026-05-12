@@ -77,6 +77,12 @@ const HighlightedTextarea: React.FC<HighlightedTextareaProps> = ({
   const [overlayHeight, setOverlayHeight] = useState<number | null>(null)
 
   // Auto-grow to fit content (handles soft-wrapped long lines too).
+  // Deferred to rAF so the browser finishes any pending reflow (e.g.
+  // flex parent re-layout on a keystroke) before we read scrollHeight.
+  // A same-frame measure-and-set was reportedly causing the mobile reply
+  // textarea to shrink after ~2 lines (#221) because the height='0px'
+  // collapse + scrollHeight read happened before the flex row had
+  // re-measured, yielding a stale (smaller) scrollHeight.
   useEffect(() => {
     if (!autoResize) return
     const el = internalRef.current
@@ -87,17 +93,23 @@ const HighlightedTextarea: React.FC<HighlightedTextareaProps> = ({
     // own when typing happens.
     if (el.offsetParent === null) return
 
-    // Use scrollHeight for BOTH empty and non-empty so the height is stable.
-    // The placeholder is NOT inside the <textarea>, so we keep a hidden dot
-    // in the mirror layer; here we just want consistent sizing.
-    el.style.height = '0px'
-    const next = el.scrollHeight + 2 // tiny buffer to avoid 1px flicker
-    el.style.height = `${next}px`
-    // Snap the highlight overlay to the same height. Without this, when the
-    // textarea grew the overlay sometimes lagged a frame and lines 1-2
-    // disappeared while line 3 was being typed (reported by Japanese users
-    // in the reply composer, where soft-wrap fires earlier with CJK chars).
-    setOverlayHeight(next)
+    const rafId = requestAnimationFrame(() => {
+      // Re-check inside rAF: the element may have unmounted or gone
+      // offscreen between the effect run and the next frame.
+      if (!el.isConnected || el.offsetParent === null) return
+      // Use scrollHeight for BOTH empty and non-empty so the height is stable.
+      // The placeholder is NOT inside the <textarea>, so we keep a hidden dot
+      // in the mirror layer; here we just want consistent sizing.
+      el.style.height = '0px'
+      const next = el.scrollHeight + 2 // tiny buffer to avoid 1px flicker
+      el.style.height = `${next}px`
+      // Snap the highlight overlay to the same height. Without this, when the
+      // textarea grew the overlay sometimes lagged a frame and lines 1-2
+      // disappeared while line 3 was being typed (reported by Japanese users
+      // in the reply composer, where soft-wrap fires earlier with CJK chars).
+      setOverlayHeight(next)
+    })
+    return () => cancelAnimationFrame(rafId)
   }, [autoResize, value, compact, lineHeight, fontSize])
 
   // Parse text and apply highlighting for @mentions, #hashtags, $cashtags, and URLs

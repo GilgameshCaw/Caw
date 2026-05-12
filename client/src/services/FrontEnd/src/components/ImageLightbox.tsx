@@ -1,6 +1,7 @@
 import React, { useEffect, useState, useRef } from 'react'
 import { createPortal } from 'react-dom'
 import { HiOutlineX } from 'react-icons/hi'
+import { acquireScrollLock, releaseScrollLock } from '~/utils/scrollLock'
 
 interface ImageLightboxProps {
   /** Currently-rendered (small / inline) image URL. Used as the immediate
@@ -57,11 +58,10 @@ const ImageLightbox: React.FC<ImageLightboxProps> = ({ src, largeSrc, alt = '', 
       }
     }
     document.addEventListener('keydown', handler)
-    const prevOverflow = document.body.style.overflow
-    document.body.style.overflow = 'hidden'
+    acquireScrollLock()
     return () => {
       document.removeEventListener('keydown', handler)
-      document.body.style.overflow = prevOverflow
+      releaseScrollLock()
     }
   }, [isOpen, onClose])
 

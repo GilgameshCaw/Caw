@@ -32,7 +32,8 @@ const ListingFilters: React.FC = () => {
   const { isDark } = useTheme()
   const { filters, setFilter } = useMarketplaceStore()
 
-  const selectClass = `px-3 py-2 rounded-lg text-sm border outline-none transition cursor-pointer ${themeInput(isDark)} ${themeBorder(isDark)}`
+  // Use fixed height to avoid 1-2px drift between input vs listbox across browsers.
+  const selectClass = `h-[52px] px-3 rounded-lg text-sm border outline-none transition cursor-pointer ${themeInput(isDark)} ${themeBorder(isDark)}`
 
   return (
     <div className={`grid grid-cols-1 sm:grid-cols-2 gap-3 p-4 rounded-xl ${themeBgSubtle(isDark)} ${themeBorder(isDark)} border`}>

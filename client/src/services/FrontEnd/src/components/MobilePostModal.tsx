@@ -1,5 +1,6 @@
-import React, { useState } from 'react'
+import React, { useEffect, useState } from 'react'
 import { useSignAndSubmitAction } from '~/api/actions'
+import { acquireScrollLock, releaseScrollLock } from '~/utils/scrollLock'
 import { useTokenDataStore } from "~/store/tokenDataStore";
 import { useAccount } from "wagmi";
 import { useConnectModal } from "@rainbow-me/rainbowkit";
@@ -48,6 +49,14 @@ const MobilePostModal: React.FC<MobilePostModalProps> = ({ isOpen, onClose, onSu
       handlePost()
     }
   }
+
+  // Lock background scroll while the fullscreen sheet is open
+  // (iOS-aware via shared util).
+  useEffect(() => {
+    if (!isOpen) return
+    acquireScrollLock()
+    return () => { releaseScrollLock() }
+  }, [isOpen])
 
   if (!isOpen) return null
 
