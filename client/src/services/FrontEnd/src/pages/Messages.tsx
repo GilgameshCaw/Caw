@@ -2149,7 +2149,17 @@ const MessagesPage: React.FC = () => {
                                   const mySlot = parsed.sealedKeys?.[currentUser?.id ?? -1]
                                   const senderParticipant = selectedConversation?.participants.find(p => p.userId === message.senderId)
                                   const senderPub = senderParticipant?.publicKey || null
-                                  if (!mySlot || !senderPub) {
+                                  // Legacy DM attachments uploaded before the sealed-key
+                                  // rollout (2026-05-12) don't carry sealedKeys. We fall
+                                  // back to the conversation's shared secret if we have
+                                  // one — works for 1:1 legacy attachments. Group legacy
+                                  // attachments can't be decrypted regardless (each member
+                                  // saw a different shared secret), so we still bail in
+                                  // that case. Remove this fallback at the v2 contract
+                                  // redeploy — see docs/V2_CLEANUP.md.
+                                  const hasNewKey = !!(mySlot && senderPub)
+                                  const hasLegacyKey = !!chatSharedSecret
+                                  if (!hasNewKey && !hasLegacyKey) {
                                     return (
                                       <div className="text-xs text-red-400 p-2 rounded bg-red-900/20">
                                         Attachment unavailable (no sealed key for this recipient)
@@ -2163,7 +2173,8 @@ const MessagesPage: React.FC = () => {
                                           url={parsed.url}
                                           sealedKey={mySlot}
                                           senderTokenId={message.senderId}
-                                          senderPublicKey={senderPub}
+                                          senderPublicKey={senderPub || undefined}
+                                          legacySharedSecret={chatSharedSecret}
                                           mimeType={parsed.mimeType}
                                           alt={parsed.name}
                                         />
@@ -2183,7 +2194,8 @@ const MessagesPage: React.FC = () => {
                                         url={parsed.url}
                                         sealedKey={mySlot}
                                         senderTokenId={message.senderId}
-                                        senderPublicKey={senderPub}
+                                        senderPublicKey={senderPub || undefined}
+                                        legacySharedSecret={chatSharedSecret}
                                         mimeType={parsed.mimeType}
                                         alt={parsed.name}
                                         className={mt.startsWith('video/')
