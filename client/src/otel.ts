@@ -44,6 +44,15 @@ if (endpoint) {
         '@opentelemetry/instrumentation-fs': { enabled: false },
         // dns auto-instrumentation is similar — high-cardinality, low-signal.
         '@opentelemetry/instrumentation-dns': { enabled: false },
+        // undici auto-instrumentation collides with http auto-instrumentation
+        // on the @elastic/elasticsearch client: both inject a `traceparent`
+        // header on the same outbound request, ES then rejects with
+        // "multiple values for single-valued header [traceparent]" and the
+        // search/index call fails. http coverage is sufficient — disable
+        // undici. Caveat: if any code path uses undici directly (not via the
+        // ES client), those requests will no longer carry trace context.
+        // Re-enable selectively if that becomes a real need.
+        '@opentelemetry/instrumentation-undici': { enabled: false },
       }),
     ],
   })
