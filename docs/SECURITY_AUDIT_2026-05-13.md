@@ -42,6 +42,26 @@ Schema (prisma/schema.prisma):
 Contract:
 - `CawProfileL2.registerSession`, `registerSessionPersonal` — ERC-1271 fallback added; bytes-form signature parameter; 7 new tests; full self-audit in `native/docs/AUDIT_NOTES.md`.
 
+## ✅ Second-wave audits and fixes
+
+After the first-wave fixes, three more audit passes ran:
+
+**LayerZero / cross-chain audit** — **CLEAN**. All findings from the 2026-05-08 pass remain mitigated (peer locks, stamp ordering, fee refund paths, withdraw-scope hardening). No new findings. Documented in the chat history; no separate report needed.
+
+**Auth system deep-dive** — surfaced two CRITICAL findings:
+1. **Auth signature replay within 5-minute window** — FIXED. New `consumeAuthSignatureOnce` in `sessionStore.ts`; both `/api/auth/verify` and `/api/auth/enable-dms` now atomic-SET-NX the sig digest in Redis with a 5-minute TTL.
+2. **"Session fixation via attacker-controlled session IDs"** — VERIFIED FALSE ALARM on re-read. `createSession` generates the token server-side via `randomBytes(32)`; the only way an attacker-supplied `x-session-token` is honored is if it already exists in Redis (i.e., the attacker first authenticated and is now trying to attach a victim to their own session). That's CSRF-territory, not a session-store bug. Real but lower-priority and out of scope for this pass.
+
+Plus medium findings: session TTL is 1 year (no idle timeout), DM-auth signature has no timestamp binding (also fixed via consumed-sig nonce, but the broader timestamp-binding issue remains), logout doesn't require auth (low-risk).
+
+**Logs / observability audit** — applied 5 fixes:
+- `ValidatorService:1098,1237,2834` — wrap `l2RpcUrl` in `redactRpcUrl()` before logging. RPC URLs can contain embedded basic-auth secrets (`https://:SECRET@host/`); previously logged plaintext.
+- `actions.ts:402,1271,1781` — three full-error-object logs replaced with `message + code` only. Stack traces leak file paths and internal context without aiding triage.
+
+**Dependency CVE audit** — 28 client vulns / 81 solidity vulns enumerated in `docs/DEPENDENCY_AUDIT_2026-05-13.md`. `npm audit fix` recommended; not applied in this pass (risk of breakage without focused testing).
+
+**Migration safety audit** — `docs/MIGRATION_AUDIT_2026-05-13.md`. Two would-break-prod patterns documented in already-applied migrations; forward-looking checklist for future migrations.
+
 ## ⏳ Still open (deliberate or design-needed)
 
 - **F1** (CRIT) — JWT/Bearer token in `localStorage`. Needs migration to HttpOnly cookie. Design-needed, not a one-line fix.
