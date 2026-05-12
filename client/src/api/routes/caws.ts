@@ -530,14 +530,20 @@ router.get('/:id/likes', async (req, res) => {
   const currentUserId = userIdHeader ? Number(userIdHeader) : undefined
   const blockedIds = currentUserId ? await getBlockedUserIds(currentUserId) : []
 
+  // Cursor pagination. Previous hard cap of 500 made it impossible to
+  // page through likes on a viral post. Audit fix 2026-05-13.
+  const limit = Math.min(parseInt(req.query.limit as string) || 100, 500)
+  const cursor = req.query.cursor ? parseInt(req.query.cursor as string) : undefined
+
   const rawLikes = await prisma.like.findMany({
     where: {
       cawId,
       pending: false,
       ...(blockedIds.length > 0 ? { userId: { notIn: blockedIds } } : {}),
     },
-    take: 500,
-    orderBy: { createdAt: 'asc' },
+    take: limit + 1, // +1 to detect whether there's another page
+    ...(cursor ? { cursor: { id: cursor }, skip: 1 } : {}),
+    orderBy: { id: 'asc' },
     select: {
       id: true,
       createdAt: true,
@@ -545,13 +551,17 @@ router.get('/:id/likes', async (req, res) => {
     },
   })
 
-  const likes = rawLikes.map(l => ({
+  const hasMore = rawLikes.length > limit
+  const sliced = hasMore ? rawLikes.slice(0, limit) : rawLikes
+  const nextCursor = hasMore ? sliced[sliced.length - 1].id : undefined
+
+  const likes = sliced.map(l => ({
     id: l.id.toString(),
     timestamp: l.createdAt.toISOString(),
     user: l.user,
   }))
 
-  res.json({ likes })
+  res.json({ likes, nextCursor, hasMore })
 })
 
 

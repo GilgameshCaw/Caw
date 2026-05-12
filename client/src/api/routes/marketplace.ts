@@ -672,60 +672,89 @@ router.post('/offers/notify', requireAuth({ field: 'senderTokenId', verifyOwners
       return res.status(403).json({ error: 'Session wallet does not match sender' })
     }
 
-    // Look up the offer by txHash — may need to wait for indexer
+    // Look up the offer by txHash. The indexer may not have processed
+    // this tx yet, so the offer might not exist for a few seconds.
+    //
+    // Previously this endpoint blocked the request for up to 15 seconds
+    // (5×3s retries) waiting for the indexer. Under load that starved
+    // the request pool. Now: return 202 if the offer isn't visible yet
+    // and kick off a background retry; the client is already prepared
+    // for the notification to arrive asynchronously (the underlying
+    // tx + indexer pipeline is async by nature). Audit fix 2026-05-13.
     let offer = await prisma.marketplaceOffer.findFirst({ where: { txHash } })
 
     if (!offer) {
-      // Retry a few times with short delays for indexer lag
-      for (let i = 0; i < 5; i++) {
-        await new Promise(r => setTimeout(r, 3000))
-        offer = await prisma.marketplaceOffer.findFirst({ where: { txHash } })
-        if (offer) break
-      }
+      // Fire-and-forget background retry. We respond 202 immediately
+      // so the client doesn't hold a socket open.
+      void backgroundNotifyOnIndex(senderTid, sender.address.toLowerCase(), txHash)
+      return res.status(202).json({ ok: true, deferred: true })
     }
-
-    if (!offer) return res.status(404).json({ error: 'Offer not found (indexer may not have processed it yet)' })
 
     // Verify sender's address matches the offerer on the offer
     if (sender.address.toLowerCase() !== offer.offerer.toLowerCase()) {
       return res.status(403).json({ error: 'Sender address does not match offer offerer' })
     }
 
-    // Find the username owner to notify
-    const owner = await prisma.user.findUnique({ where: { tokenId: offer.tokenId } })
-    if (!owner) return res.json({ ok: true }) // No owner to notify
-
-    // Don't notify yourself
-    if (owner.tokenId === senderTid) return res.json({ ok: true })
-
-    // Check for duplicate notification
-    const existing = await prisma.notification.findFirst({
-      where: {
-        userId: owner.tokenId,
-        actorId: senderTid,
-        type: 'OFFER',
-        offerId: offer.id,
-      },
-    })
-
-    if (!existing) {
-      await prisma.notification.create({
-        data: {
-          userId: owner.tokenId,
-          actorId: senderTid,
-          type: 'OFFER',
-          offerId: offer.id,
-        },
-      })
-    }
-
-    console.log(`[marketplace] Offer notification sent: actor=${senderTid} -> owner=${owner.tokenId} (tx: ${txHash})`)
+    await finalizeOfferNotification(offer, senderTid)
     res.json({ ok: true })
   } catch (err: any) {
     console.error('[marketplace] offer notify error:', err)
     res.status(500).json({ error: 'Internal server error' })
   }
 })
+
+/**
+ * Common notification-emission tail: find the username owner, dedupe,
+ * write the Notification row.
+ */
+async function finalizeOfferNotification(
+  offer: { id: number; tokenId: number },
+  senderTid: number,
+): Promise<void> {
+  const owner = await prisma.user.findUnique({ where: { tokenId: offer.tokenId } })
+  if (!owner) return
+  if (owner.tokenId === senderTid) return
+  const existing = await prisma.notification.findFirst({
+    where: { userId: owner.tokenId, actorId: senderTid, type: 'OFFER', offerId: offer.id },
+  })
+  if (!existing) {
+    await prisma.notification.create({
+      data: { userId: owner.tokenId, actorId: senderTid, type: 'OFFER', offerId: offer.id },
+    })
+  }
+  console.log(`[marketplace] Offer notification sent: actor=${senderTid} -> owner=${owner.tokenId}`)
+}
+
+/**
+ * Background retry: poll for the indexed offer for up to ~30s, then
+ * emit the notification. Caller has already verified the sender and
+ * the txHash format; if the offer never appears, this just gives up.
+ */
+async function backgroundNotifyOnIndex(
+  senderTid: number,
+  senderAddress: string,
+  txHash: string,
+): Promise<void> {
+  try {
+    const maxAttempts = 10
+    const delayMs = 3000
+    for (let i = 0; i < maxAttempts; i++) {
+      await new Promise(r => setTimeout(r, delayMs))
+      const offer = await prisma.marketplaceOffer.findFirst({ where: { txHash } })
+      if (!offer) continue
+      if (offer.offerer.toLowerCase() !== senderAddress) {
+        // Indexer found a different offerer than the sender; refuse to
+        // notify on someone else's behalf even in the background.
+        return
+      }
+      await finalizeOfferNotification(offer, senderTid)
+      return
+    }
+    console.warn(`[marketplace] background notify: offer for ${txHash} never appeared after ${maxAttempts} retries`)
+  } catch (err: any) {
+    console.error('[marketplace] background notify error:', err)
+  }
+}
 
 /**
  * POST /api/marketplace/offers/report-failure
