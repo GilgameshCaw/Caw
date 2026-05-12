@@ -1,5 +1,17 @@
-import { Toaster, }, from, "react-hot-toast";, import, {, Modals, }, from, "~/components/modals/Modals";, import, Sidebar, from, "~/components/Sidebar";, import, Trending, from, "~/components/Trending";, import, SearchBar, from, "~/components/SearchBar";, import, BugReportModal, from, "~/components/modals/BugReportModal";, import, BugIcon, from, "~/components/icons/BugIcon";, import, {, useTheme, }, from, "~/hooks/useTheme";, import, Tooltip, from, "~/components/Tooltip";, import, {, useT, }, from, "~/i18n/I18nProvider";, import, {, useState, useEffect, useRef, lazy, Suspense, }, from, "react";, import, {, HiOutlineMenu, HiOutlineX, HiOutlinePencilAlt, HiOutlineHome, HiOutlineSearch, HiOutlineColorSwatch, HiOutlineBell, HiOutlineUser, HiOutlineChat, }, from, "react-icons/hi";, import, {, useLocation } from 'react-router-dom'
-import { Link } from '~/utils/localizedRouter'
+import { Toaster } from "react-hot-toast";
+import { Modals } from "~/components/modals/Modals";
+import Sidebar from "~/components/Sidebar";
+import Trending from "~/components/Trending";
+import SearchBar from "~/components/SearchBar";
+import BugReportModal from "~/components/modals/BugReportModal";
+import BugIcon from "~/components/icons/BugIcon";
+import { useTheme } from "~/hooks/useTheme";
+import Tooltip from "~/components/Tooltip";
+import { useT } from "~/i18n/I18nProvider";
+import { useState, useEffect, useRef, lazy, Suspense } from "react";
+import { HiOutlineMenu, HiOutlineX, HiOutlinePencilAlt, HiOutlineHome, HiOutlineSearch, HiOutlineColorSwatch, HiOutlineBell, HiOutlineUser, HiOutlineChat } from "react-icons/hi";
+import { useLocation } from "react-router-dom";
+import { Link } from "~/utils/localizedRouter";
 import { useModalStore } from "~/store";
 import { useDmUnreadStore } from "~/store/dmUnreadStore";
 import { useNotificationUnreadStore } from "~/store/notificationUnreadStore";
