@@ -36,7 +36,15 @@
       name="description"
       content=""
     />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <!--
+      viewport-fit=cover makes env(safe-area-inset-*) emit real values on
+      iOS Safari + PWA mode (apple-mobile-web-app-status-bar-style is
+      black-translucent below, which extends the viewport behind the
+      status bar — without viewport-fit=cover the inset variables stay
+      at 0 and the mobile header renders with the page background
+      showing through the status-bar strip above it).
+    -->
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
     <title>CAW — Decentralized &amp; Censorship Resistant</title>
 
     <!--

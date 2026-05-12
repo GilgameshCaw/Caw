@@ -133,14 +133,19 @@ const MainLayout = ({ children, hideSidebars: hideSidebarsProp }: MainLayoutProp
         <div className={`w-full max-w-[1050px] ${themeLayoutShell(isDark)}`} />
       </div>
     )}
-    <div className={`min-h-screen w-full flex [--app-mobile-header-h:4rem] transition-colors duration-300 relative z-[1] ${
+    <div className={`min-h-screen w-full flex [--app-mobile-header-h:calc(4rem+env(safe-area-inset-top))] transition-colors duration-300 relative z-[1] ${
       hideSidebars
         ? (isDark ? 'bg-black' : 'bg-gray-100')
         : `max-w-[1050px] m-auto ${themeLayoutShell(isDark)}`
     }`}>
-      {/* Mobile Header */}
+      {/* Mobile Header. pt extends the header BG up under the iOS status
+          bar (apple-mobile-web-app-status-bar-style is black-translucent,
+          so the viewport bleeds into that strip); the icon row stays
+          below the inset by virtue of being inside the padded box. On
+          devices/browsers where the inset is 0 the value collapses and
+          the header sits flush at top-0 — same as before. */}
       {!hideSidebars && (
-        <div className={`md:hidden fixed top-0 left-0 right-0 z-[9999] flex items-center justify-center p-4 border-b w-screen overflow-hidden transition-all duration-300 ${
+        <div className={`md:hidden fixed top-0 left-0 right-0 z-[9999] flex items-center justify-center px-4 pb-4 pt-[calc(env(safe-area-inset-top)+1rem)] border-b w-screen overflow-hidden transition-all duration-300 ${
           isDark ? 'bg-black border-white/10' : 'bg-white border-gray-200'
         }`}>
           <button
@@ -229,7 +234,7 @@ const MainLayout = ({ children, hideSidebars: hideSidebarsProp }: MainLayoutProp
       <main className={`flex-1 min-w-0 transition-colors duration-300 flex flex-col ${
         hideSidebars
           ? `pt-0 relative overflow-hidden ${isDark ? 'text-white' : 'text-black'}`
-          : `${isDark ? 'bg-black text-white' : 'bg-white text-black'} ${isMobileMenuOpen ? 'md:pt-0 pt-16' : 'pt-16 md:pt-0'}`
+          : `${isDark ? 'bg-black text-white' : 'bg-white text-black'} ${isMobileMenuOpen ? 'md:pt-0 pt-[var(--app-mobile-header-h)]' : 'pt-[var(--app-mobile-header-h)] md:pt-0'}`
       }`}>
         {hideSidebars && (
           <Suspense fallback={null}>
