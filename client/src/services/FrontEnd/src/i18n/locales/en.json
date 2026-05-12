@@ -1257,5 +1257,14 @@
   "new_profile.need_more_caw": "Need more CAW? Click here.",
   "new_profile.claim_mcaw": "Claim more mCAW",
   "new_profile.marketplace_link": "Username Marketplace →",
-  "new_profile.choose_username_heading": "Choose Your Username"
+  "new_profile.choose_username_heading": "Choose Your Username",
+
+  "og.profile.stat.follower_one": "Follower",
+  "og.profile.stat.follower_other": "Followers",
+  "og.profile.stat.following": "Following",
+  "og.profile.stat.post_one": "Post",
+  "og.profile.stat.post_other": "Posts",
+  "og.profile.stat.likes": "Likes",
+  "og.hashtag.caws_on_caw_one": "{{display}} caw on CAW",
+  "og.hashtag.caws_on_caw_other": "{{display}} caws on CAW"
 }

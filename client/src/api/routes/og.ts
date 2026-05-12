@@ -8,6 +8,8 @@ import { prisma } from '../../prismaClient'
 import { publicUrl } from '../util/publicUrl'
 import { isSafePublicUrl } from '../util/ssrfGuard'
 import { stripPollMarker } from '../../tools/pollMarker'
+import { t as i18nT } from '../util/i18n'
+import { hasLocale } from '../util/localePrefix'
 
 const router = Router()
 
@@ -578,7 +580,12 @@ function profileCardTree(opts: {
   followingCount: number
   cawCount: number
   likesReceivedCount: number
+  /** Locale for the card chrome labels. null = English (default). */
+  locale?: string | null
 }) {
+  // Local t() that captures the locale once so the call sites read clean.
+  const tt = (key: string, vars?: { count?: number }) =>
+    i18nT(opts.locale ?? null, key, vars)
   const hasDisplayName = !!opts.displayName && opts.displayName.trim() !== ''
   return {
     type: 'div',
@@ -664,10 +671,10 @@ function profileCardTree(opts: {
               paddingTop: 24,
             },
             children: [
-              statTile(fmtCount(opts.followerCount), opts.followerCount === 1 ? 'Follower' : 'Followers'),
-              statTile(fmtCount(opts.followingCount), 'Following'),
-              statTile(fmtCount(opts.cawCount), opts.cawCount === 1 ? 'Post' : 'Posts'),
-              statTile(fmtCount(opts.likesReceivedCount), 'Likes'),
+              statTile(fmtCount(opts.followerCount), tt('og.profile.stat.follower', { count: opts.followerCount })),
+              statTile(fmtCount(opts.followingCount), tt('og.profile.stat.following')),
+              statTile(fmtCount(opts.cawCount), tt('og.profile.stat.post', { count: opts.cawCount })),
+              statTile(fmtCount(opts.likesReceivedCount), tt('og.profile.stat.likes')),
             ],
           },
         },
@@ -1852,7 +1859,9 @@ function pollNode(options: PollOption[], totalVotes: number, hasContentAbove: bo
 
 // Hashtag card — big #tag (white), usage count below, brand lockup at
 // the bottom. Lockup uses the same logo + gold wordmark as the page.
-function hashtagCardTree(opts: { tag: string; usageCount: number }) {
+function hashtagCardTree(opts: { tag: string; usageCount: number; locale?: string | null }) {
+  const tt = (key: string, vars?: { count?: number }) =>
+    i18nT(opts.locale ?? null, key, vars)
   return {
     type: 'div',
     props: {
@@ -1890,7 +1899,10 @@ function hashtagCardTree(opts: { tag: string; usageCount: number }) {
                 props: {
                   style: { fontSize: 40, color: '#9ca3af', marginTop: 24 },
                   children: opts.usageCount > 0
-                    ? `${opts.usageCount.toLocaleString()} ${opts.usageCount === 1 ? 'caw' : 'caws'} on CAW`
+                    ? i18nT(opts.locale ?? null, 'og.hashtag.caws_on_caw', {
+                        count: opts.usageCount,
+                        display: opts.usageCount.toLocaleString(),
+                      })
                     : 'on CAW',
                 },
               },
@@ -2115,6 +2127,11 @@ async function serveCachedOrRender(
 
 router.get('/image/profile/:username', async (req, res) => {
   const username = String(req.params.username).toLowerCase()
+  // ?locale=<code> selects the chrome language; validated against the
+  // catalog list so an unknown / malicious code falls back to English
+  // rather than rendering with the key string as the label.
+  const rawLocale = typeof req.query.locale === 'string' ? req.query.locale : ''
+  const locale: string | null = rawLocale && hasLocale(rawLocale) && rawLocale !== 'en' ? rawLocale : null
   const user = await prisma.user.findUnique({
     where: { username },
     select: {
@@ -2129,7 +2146,8 @@ router.get('/image/profile/:username', async (req, res) => {
   // Cache key includes a hash of the inputs so name/bio/avatar/count edits
   // invalidate. Counts are bucketed by the formatted display value so we
   // don't blow the cache on every new follower — the card only changes
-  // when the displayed number changes (e.g. 999 → 1K).
+  // when the displayed number changes (e.g. 999 → 1K). Locale is part of
+  // the key — each language gets its own cached PNG.
   const followersDisp = fmtCount(user.followerCount)
   const followingDisp = fmtCount(user.followingCount)
   const cawsDisp = fmtCount(user.cawCount)
@@ -2140,7 +2158,7 @@ router.get('/image/profile/:username', async (req, res) => {
       followersDisp, followingDisp, cawsDisp, likesDisp,
     ].join('|'))
     .digest('hex').slice(0, 8)
-  const cacheKey = `profile-${user.tokenId}-${inputHash}`
+  const cacheKey = `profile-${user.tokenId}-${locale || 'en'}-${inputHash}`
 
   return serveCachedOrRender(res, cacheKey, async () => {
     const avatar = await resolveAvatarDataUri(user)
@@ -2153,6 +2171,7 @@ router.get('/image/profile/:username', async (req, res) => {
       followingCount: user.followingCount,
       cawCount: user.cawCount,
       likesReceivedCount: user.likesReceivedCount,
+      locale,
     }))
   })
 })
@@ -2425,20 +2444,23 @@ router.get('/image/caw/:id', async (req, res) => {
 router.get('/image/hashtag/:tag', async (req, res) => {
   const tag = String(req.params.tag).toLowerCase().replace(/^#/, '')
   if (!tag || !/^[\w-]+$/.test(tag)) return res.redirect(302, '/api/og/image/default')
+  const rawLocale = typeof req.query.locale === 'string' ? req.query.locale : ''
+  const locale: string | null = rawLocale && hasLocale(rawLocale) && rawLocale !== 'en' ? rawLocale : null
   const hashtag = await prisma.hashtag.findUnique({
     where: { name: tag },
     select: { name: true, displayName: true, usageCount: true },
   })
   // Cache key includes count so the card updates as the tag grows. Bucketed
   // so we don't blow the cache every single new caw — bumps every order of
-  // magnitude (1 → 10 → 100 → 1000 → ...).
+  // magnitude (1 → 10 → 100 → 1000 → ...). Locale included so each
+  // language's chrome is cached separately.
   const count = hashtag?.usageCount ?? 0
   const bucket = count === 0 ? 0 : Math.floor(Math.log10(count))
-  const cacheKey = `hashtag-${tag}-${bucket}`
+  const cacheKey = `hashtag-${tag}-${locale || 'en'}-${bucket}`
   // Render with original casing when we have it; URL still uses lowercase.
   const displayTag = hashtag?.displayName || hashtag?.name || tag
   return serveCachedOrRender(res, cacheKey, () => renderToPng(hashtagCardTree({
-    tag: displayTag, usageCount: count,
+    tag: displayTag, usageCount: count, locale,
   })))
 })
 

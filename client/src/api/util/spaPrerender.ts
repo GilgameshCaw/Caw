@@ -170,6 +170,18 @@ function injectMeta(html: string, meta: Meta): string {
 // title + empty description so the image carries the per-page detail.
 const BRAND_TITLE = 'CAW — Decentralized & Censorship Resistant'
 
+// OG image URL with optional ?locale=<code> so the rendered card chrome
+// (Followers / Following / Posts / Likes labels, hashtag "N caws on
+// CAW" line) matches the locale variant the social share lands in.
+// Card body / username / post text stays in source language; only the
+// chrome translates.
+function localizedOgImage(path: string, locale: string | null): string {
+  const base = `${publicUrl()}${path}`
+  if (!locale) return base
+  const sep = base.includes('?') ? '&' : '?'
+  return `${base}${sep}locale=${encodeURIComponent(locale)}`
+}
+
 async function profileMeta(username: string, locale: string | null): Promise<Meta | null> {
   const user = await prisma.user.findUnique({
     where: { username: username.toLowerCase() },
@@ -183,7 +195,7 @@ async function profileMeta(username: string, locale: string | null): Promise<Met
     description: '',
     url: `${publicUrl()}${canonicalPath}`,
     canonical: `${publicUrl()}${canonicalPath}`,
-    image: `${publicUrl()}/api/og/image/profile/${user.username}`,
+    image: localizedOgImage(`/api/og/image/profile/${user.username}`, locale),
     ogType: 'website',
     altPath,
   }
@@ -199,7 +211,7 @@ async function hashtagMeta(tag: string, locale: string | null): Promise<Meta | n
     description: '',
     url: `${publicUrl()}${canonicalPath}`,
     canonical: `${publicUrl()}${canonicalPath}`,
-    image: `${publicUrl()}/api/og/image/hashtag/${encodeURIComponent(name)}`,
+    image: localizedOgImage(`/api/og/image/hashtag/${encodeURIComponent(name)}`, locale),
     ogType: 'website',
     altPath,
   }
