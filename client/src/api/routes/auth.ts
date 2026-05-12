@@ -1,7 +1,7 @@
 import { Router } from 'express'
 import { ethers } from 'ethers'
 import { prisma } from '../../prismaClient'
-import { createSession, getSession, addAuthorization, deleteSession } from '../sessionStore'
+import { createSession, getSession, addAuthorization, deleteSession, consumeAuthSignatureOnce } from '../sessionStore'
 import { extractSession } from '../middleware/auth'
 // Tier 1 + Tier 3 of the "RPC out of API request handlers" refactor
 // (PROJECT_BACKLOG.md): findOrCreateUser, verifyOwnershipOnChain, and
@@ -117,6 +117,18 @@ router.post('/verify', async (req, res) => {
       return
     }
 
+    // One-time-use guard against replay within the 5-minute freshness
+    // window. Without this, an attacker who captures the signed message
+    // (XSS, browser extension, leaked log, etc.) can replay it to attach
+    // the victim's wallet to an attacker-controlled session. The atomic
+    // SET NX in Redis means even parallel verify calls with the same
+    // signature can't both succeed. Audit fix 2026-05-13.
+    const fresh = await consumeAuthSignatureOnce(message, signature)
+    if (!fresh) {
+      res.status(400).json({ error: 'Signature already used. Please sign again.' })
+      return
+    }
+
     // Look up all tokenIds owned by this address (case-insensitive —
     // DB may store checksummed addresses while recovery returns lowercase).
     //
@@ -209,6 +221,19 @@ router.post('/verify-dm', async (req, res) => {
       recoveredAddress = ethers.verifyMessage(message, signature).toLowerCase()
     } catch {
       res.status(400).json({ error: 'Invalid signature' })
+      return
+    }
+
+    // Replay-guard the DM-auth signature the same way we guard the main
+    // wallet-verify signature: one-time use via Redis SET NX. Without this,
+    // a captured signature is reusable. Note: the DM-auth message currently
+    // has no timestamp binding (fixed format `@username`), which is a
+    // separate longer-lived replay risk worth fixing — but burning the
+    // exact sig once at least closes the easy automation path. Audit fix
+    // 2026-05-13.
+    const fresh = await consumeAuthSignatureOnce(message, signature)
+    if (!fresh) {
+      res.status(400).json({ error: 'Signature already used. Please sign again.' })
       return
     }
 

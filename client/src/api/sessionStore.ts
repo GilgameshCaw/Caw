@@ -1,5 +1,5 @@
 import Redis from 'ioredis'
-import { randomBytes } from 'crypto'
+import { randomBytes, createHash } from 'crypto'
 
 // Honor REDIS_URL when set so multi-install setups can isolate Redis
 // state into different logical databases (redis://host:port/N). Falls
@@ -17,11 +17,40 @@ const KEY_PREFIX = 'caw:session:'
 const TOKEN_AUTH_PREFIX = 'caw:tokenAuth:'
 const SESSION_TTL = 365 * 24 * 60 * 60 // 1 year in seconds
 
+// One-time-use dedup for auth signatures. The signed auth message has a
+// 5-minute freshness window — without consumption, an attacker who captures
+// the signed message can replay it repeatedly within that window to attach
+// the victim's wallet to attacker-controlled sessions. The consumed flag
+// is keyed by the SHA-256 of the (message, signature) pair so malleated
+// signatures over the same message still collapse to the same flag.
+//
+// TTL = MAX_MESSAGE_AGE_MS (5 minutes). After that the message's own
+// timestamp-freshness check rejects it regardless. Audit fix 2026-05-13.
+const AUTH_SIG_PREFIX = 'caw:authSig:'
+const AUTH_SIG_TTL_SECONDS = 5 * 60
+
 export interface SessionData {
   authorizedTokenIds: number[]
   authorizedAddresses: string[] // lowercase
   createdAt: number
   expiresAt: number
+}
+
+/**
+ * Atomically mark an auth signature as consumed. Returns true if the
+ * signature was fresh (caller may proceed), false if it had already been
+ * used. Uses Redis SET ... NX EX for atomicity — no race between two
+ * parallel verify calls with the same (message, signature).
+ *
+ * Caller passes the canonical SHA-256 of `message || signature`; we
+ * compute it here so the routes don't need to know the key format.
+ */
+export async function consumeAuthSignatureOnce(message: string, signature: string): Promise<boolean> {
+  const digest = createHash('sha256').update(message).update(signature).digest('hex')
+  const key = AUTH_SIG_PREFIX + digest
+  // SET NX = only set if not exists; EX = with TTL.
+  const result = await redis.set(key, '1', 'EX', AUTH_SIG_TTL_SECONDS, 'NX')
+  return result === 'OK'
 }
 
 export async function createSession(): Promise<{ token: string; session: SessionData }> {

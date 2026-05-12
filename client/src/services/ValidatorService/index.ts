@@ -1095,7 +1095,7 @@ export const validatorService: Service = {
       const maxRetries = 3;
 
       try {
-        console.log(`[Attempt ${retryCount + 1}/${maxRetries}] Simulating actions with RPC: ${l2RpcUrl}`);
+        console.log(`[Attempt ${retryCount + 1}/${maxRetries}] Simulating actions with RPC: ${redactRpcUrl(l2RpcUrl)}`);
         console.log("Actions to simulate:", multiData.actions.map(a => ({
           type: getActionType(a.actionType).toString(),
           sender: a.senderId,
@@ -1235,9 +1235,9 @@ export const validatorService: Service = {
       } catch (err: any) {
         // Log full error details
         console.error(`[Attempt ${retryCount + 1}] Simulation failed:`, {
-          error: err.message || err,
-          stack: err.stack,
-          rpcUrl: l2RpcUrl,
+          error: err.message || String(err),
+          code: err.code,
+          rpcUrl: redactRpcUrl(l2RpcUrl),
           actions: multiData.actions.map(a => ({
             type: getActionType(a.actionType).toString(),
             sender: a.senderId,
@@ -2833,8 +2833,8 @@ console.log("succeededKeys", succeededKeys)
       } catch (err: any) {
         console.error("[Validator] Poll loop error:", {
           message: err.message,
-          stack: err.stack,
-          rpcUrl: l2RpcUrl
+          code: err.code,
+          rpcUrl: redactRpcUrl(l2RpcUrl)
         })
         // Roll back any rows we marked 'processing' that the loop didn't get
         // a chance to move to a terminal state. The WHERE-clause filter on

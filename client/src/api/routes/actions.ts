@@ -399,8 +399,11 @@ router.post('/', async (req, res) => {
         }
       }
     } catch (err: any) {
-      console.error('[Actions] ❌ PASSIVE AUTH FAILED:', err?.message || err)
-      console.error('[Actions] Stack:', err?.stack)
+      // Don't dump the full stack — it's a passive-auth attempt that often
+      // fails for benign reasons (no x-session-token, signature timeout
+      // races, etc.). Message + code is enough to triage. Audit fix
+      // 2026-05-13.
+      console.error('[Actions] ❌ PASSIVE AUTH FAILED:', err?.message || String(err), err?.code)
     }
     mark('passiveAuth')
 
@@ -1268,7 +1271,10 @@ router.post('/', async (req, res) => {
       ...(authResult ? { auth: authResult } : {})
     })
   } catch (err: any) {
-    console.error('POST /api/actions error', err)
+    // Log message + code only — full error objects can include request
+    // context or internal state that doesn't belong in logs. Audit fix
+    // 2026-05-13.
+    console.error('POST /api/actions error:', err?.message || String(err), err?.code)
     res.status(500).json({ error: 'Internal error' })
   }
 })
@@ -1778,7 +1784,7 @@ router.post('/batch', async (req, res) => {
 
     res.status(201).json({ results })
   } catch (err: any) {
-    console.error('POST /api/actions/batch error', err)
+    console.error('POST /api/actions/batch error:', err?.message || String(err), err?.code)
     res.status(500).json({ error: err.message || 'Internal error' })
   }
 })
