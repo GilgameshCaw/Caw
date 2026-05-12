@@ -244,6 +244,24 @@ const ConnectedAccountsSection: React.FC<{ isDark: boolean; tokenId: number }> =
       }),
     })
       .then((res) => {
+        // Defense-in-depth: the backend returns an x.com / twitter.com OAuth
+        // URL. Validate the origin before redirecting, so a backend bug /
+        // compromise can't turn this endpoint into an open-redirect vector.
+        // Audit fix 2026-05-13.
+        const X_OAUTH_ORIGINS = new Set(['https://x.com', 'https://twitter.com', 'https://api.x.com', 'https://api.twitter.com'])
+        let target: URL
+        try {
+          target = new URL(res.url)
+        } catch {
+          setBusy(false)
+          setError('Invalid X OAuth response. Please try again.')
+          return
+        }
+        if (!X_OAUTH_ORIGINS.has(target.origin)) {
+          setBusy(false)
+          setError(`X OAuth URL has unexpected origin: ${target.origin}`)
+          return
+        }
         if (isMobile) {
           // Top-level redirect — the user leaves this tab entirely. The
           // callback page will redirect back to returnTo when done.

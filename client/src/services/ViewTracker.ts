@@ -85,14 +85,23 @@ export async function trackBulkViews(cawIds: number[], userId?: number, ipHash?:
 }
 
 /**
- * Get trending caws by view count
+ * Get trending caws by view count.
+ *
+ * Filters to caws with a minimum view threshold so the planner can use a
+ * partial index scan rather than reading every row from the last 7 days
+ * just to sort them. The threshold is intentionally cheap-to-reach (5
+ * views) — at scale this is the difference between scanning the entire
+ * 7-day window and scanning a small "interesting" subset. Most caws
+ * never accrue 5 views and don't belong in "trending" output anyway.
+ * Audit fix 2026-05-13.
  */
 export async function getTrendingByViews(limit: number = 10): Promise<number[]> {
   const trending = await prisma.caw.findMany({
     where: {
       createdAt: {
         gte: new Date(Date.now() - 7 * 24 * 60 * 60 * 1000) // Last 7 days
-      }
+      },
+      viewCount: { gte: 5 }
     },
     orderBy: { viewCount: 'desc' },
     take: limit,
