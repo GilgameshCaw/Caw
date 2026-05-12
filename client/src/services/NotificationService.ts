@@ -4,27 +4,35 @@ import { elasticsearchService } from './ElasticsearchService'
 
 export class NotificationService {
   /**
-   * Get the root thread ID for a caw (follows parent chain to find root)
+   * Get the root thread ID for a caw (follows parent chain to find root).
+   *
+   * Previously this walked the parent chain one prisma.findUnique call at
+   * a time, with a 100-depth fuse. For a deep thread that's 100 sequential
+   * DB round-trips. Now: a single recursive CTE that resolves the root in
+   * one query. The 100-depth fuse becomes a SQL LIMIT on the CTE so we
+   * still terminate on accidental cycles. Audit fix 2026-05-13.
+   *
+   * If the CTE finds nothing (the cawId doesn't exist) we return the
+   * original id — preserves the old behaviour where a missing caw was
+   * treated as "this IS the root."
    */
   static async getThreadRootId(cawId: number): Promise<number> {
-    let currentId = cawId
-    let maxDepth = 100 // Prevent infinite loops
-
-    while (maxDepth > 0) {
-      const caw = await prisma.caw.findUnique({
-        where: { id: currentId },
-        select: { id: true, originalCawId: true }
-      })
-
-      if (!caw || !caw.originalCawId) {
-        return currentId // This is the root
-      }
-
-      currentId = caw.originalCawId
-      maxDepth--
-    }
-
-    return currentId
+    const rows = await prisma.$queryRaw<Array<{ id: number }>>`
+      WITH RECURSIVE chain (id, "originalCawId", depth) AS (
+        SELECT id, "originalCawId", 0
+        FROM "Caw"
+        WHERE id = ${cawId}
+        UNION ALL
+        SELECT c.id, c."originalCawId", chain.depth + 1
+        FROM "Caw" c
+        INNER JOIN chain ON c.id = chain."originalCawId"
+        WHERE chain.depth < 100
+      )
+      SELECT id FROM chain WHERE "originalCawId" IS NULL OR depth = 100
+      ORDER BY depth DESC
+      LIMIT 1
+    `
+    return rows[0]?.id ?? cawId
   }
 
   // Note: Muting accounts/threads is handled client-side (localStorage) for privacy reasons.
