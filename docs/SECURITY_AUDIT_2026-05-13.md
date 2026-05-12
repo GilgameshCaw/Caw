@@ -7,6 +7,55 @@ Three-pronged audit pass:
 
 Findings spot-checked against the actual code; agent claims confirmed where called out as CRITICAL/HIGH.
 
+## ✅ Fixes applied in this pass
+
+API security:
+- `withdrawals.ts:104` — added `requireAuth({ verifyOwnership })` to `/:userId/pending` (was unauthenticated).
+- `tips.ts:53,90` — added `requireAuth` to `/sent` and `/received` (were unauthenticated).
+- `reports.ts:61` — removed misleading `: 0` fallback (was dead code, kept it tight).
+- `admin-db.ts` PATCH — explicit per-model writableFields allowlist; req.body fields outside the allowlist are dropped.
+- `admin-db.ts` DELETE — required `reason` field; ModeratorAction audit row written.
+
+Crypto / randomness:
+- `shorturl.ts:54` — `generateShortCode` switched from `Math.random()` to `crypto.randomBytes` with modulo-bias rejection sampling.
+- `scheduled.ts:88` — threadId random suffix switched to `randomBytes(6).toString('hex')`.
+
+Frontend:
+- `AccountSettings.tsx` X-verify flow — origin allowlist on `res.url` before redirect (defense-in-depth open-redirect mitigation).
+- `FeedItem.tsx` — 7 unguarded `JSON.parse(localStorage.getItem(...))` calls routed through new `utils/safeStorage` helper.
+
+Smoothness / perf:
+- Free-action rate limiter moved from in-memory Map to Redis (`freeActionRateLimit.ts`); previous limiter was per-worker, bypassable.
+- `marketplace.ts /sales/stats` — push SUM aggregation to Postgres via raw query (previous version full-scanned the table).
+- `marketplace.ts /refunds/:address` — added pagination matching `/bids/:address`.
+- `marketplace.ts /offers/notify` — 15s blocking retry loop converted to 202 + background poll.
+- `caws.ts /:id/likes` — replaced 500-row hard cap with cursor pagination.
+- `users.ts /followers + /following` — N+1 batched into a single `findMany` for the "is this author in my follows" check.
+- `ViewTracker` — bulk update loop replaced with `updateMany` (20 round-trips → 1); trending query gated by `viewCount >= 5` threshold to enable partial index scan.
+- `ValidatorService.submitProcessActions` — nonce fetch + send now serialized via a promise chain so parallel sub-batch submissions don't collide on nonce.
+
+Schema (prisma/schema.prisma):
+- Added: `Caw(userId, status, createdAt)`, `Follow(followerId, action, status)`, `Tip(recipientId, pending, createdAt)`, `ConversationParticipant(userId, leftAt, status)`.
+- Dropped: standalone `Notification(createdAt)` and `Conversation(lastMessageAt)`.
+- Schema-only; needs `npx prisma migrate dev --create-only --name add_feed_indexes` then review the SQL before applying.
+
+Contract:
+- `CawProfileL2.registerSession`, `registerSessionPersonal` — ERC-1271 fallback added; bytes-form signature parameter; 7 new tests; full self-audit in `native/docs/AUDIT_NOTES.md`.
+
+## ⏳ Still open (deliberate or design-needed)
+
+- **F1** (CRIT) — JWT/Bearer token in `localStorage`. Needs migration to HttpOnly cookie. Design-needed, not a one-line fix.
+- **F3** (HIGH) — DM private keys stored as plaintext hex in `localStorage`. Needs wrapping under the session-encryption layer; affects DM bootstrap UX (unlock-on-cold-start). Defer to a focused DM-security pass.
+- **F6** (MED) — Decrypted DM keys in-memory Map across tabs without zeroing on logout. Lower-impact follow-up.
+- **V1** (CRIT-adjacent) — ZK proof cache key not bound to submission context. Needs careful thought to avoid breaking the ZK happy path.
+- **V3** (HIGH, slashing) — Archive chain not verified before `submitReplication`. Needs a deployment-config hash to compare against.
+- **V4** (HIGH, slashing) — LayerZero fee buffer 120% → 150%+. Trivial to apply but worth measuring against actual fee variance first.
+- **V5/V6** (HIGH, uptime) — Cawonce dedup indexer-lag-dependent + mixed-batch re-simulation. Touches the hot submission path; needs careful handling.
+- **C3** (MED) — AES-GCM without AAD on DM/session encryption. Defense-in-depth; add when next touching that code.
+- **API #6** (MED) — `dm-groups.ts:117` actor pattern — verified clean on re-read.
+
+Remaining contract change carryover: none. The single mandatory pre-deploy change for v1 (ERC-1271 in `registerSession`) is applied.
+
 ## API security
 
 ### CRITICAL
