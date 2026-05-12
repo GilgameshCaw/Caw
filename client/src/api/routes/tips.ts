@@ -1,5 +1,6 @@
 import { Router } from 'express'
 import { prisma } from '../../prismaClient'
+import { requireAuth } from '../middleware/auth'
 
 const router = Router()
 
@@ -48,9 +49,12 @@ router.get('/post/:cawId', async (req, res) => {
 
 /**
  * GET /api/tips/sent
- * Get tips sent by current user
+ * Get tips sent by the authenticated user. The userId is read from the
+ * authenticated session, not from a header — the previous version trusted
+ * `x-user-id` from the client and would happily return any user's sent-tip
+ * history. Audit fix 2026-05-13.
  */
-router.get('/sent', async (req, res) => {
+router.get('/sent', requireAuth({ lookup: async (req) => Number(req.header('x-user-id')), verifyOwnership: true }), async (req, res) => {
   try {
     const userId = Number(req.header('x-user-id'))
     if (!userId) {
@@ -85,9 +89,12 @@ router.get('/sent', async (req, res) => {
 
 /**
  * GET /api/tips/received
- * Get tips received by a user
+ * Get tips received by the authenticated user. The userId param is verified
+ * against the authenticated session via requireAuth's verifyOwnership flag —
+ * the previous version was unauthenticated and would return any user's
+ * received-tip history given a userId query param. Audit fix 2026-05-13.
  */
-router.get('/received', async (req, res) => {
+router.get('/received', requireAuth({ lookup: async (req) => Number(req.query.userId), verifyOwnership: true }), async (req, res) => {
   try {
     const { userId, limit = 50, offset = 0 } = req.query
     if (!userId) {

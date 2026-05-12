@@ -55,10 +55,14 @@ router.post('/', requireAuth({ field: 'reporterId', verifyOwnership: true }), as
       }
     }
 
-    // Create the report
+    // Create the report. reporterId is guaranteed non-falsy by requireAuth
+    // above — it validates req.body.reporterId against the authenticated
+    // session and returns 400 / 401 / 403 if it's missing or doesn't match.
+    // The previous `: 0` fallback was dead code that, if reached, would have
+    // de-anonymized... or rather, falsely anonymized... the report.
     const report = await prisma.report.create({
       data: {
-        reporterId: reporterId ? parseInt(reporterId) : 0, // 0 for anonymous reports
+        reporterId: parseInt(reporterId),
         postId: parseInt(postId),
         postAuthorId: parseInt(postAuthorId),
         reason: reason as ReportReason,

@@ -101,7 +101,7 @@ router.get('/:userId', requireAuth({ lookup: async (req) => Number(req.params.us
  * GET /api/withdrawals/:userId/pending
  * Fetch only pending withdrawal requests for a specific user
  */
-router.get('/:userId/pending', async (req, res) => {
+router.get('/:userId/pending', requireAuth({ lookup: async (req) => Number(req.params.userId), verifyOwnership: true }), async (req, res) => {
   try {
     const userId = parseInt(req.params.userId)
 

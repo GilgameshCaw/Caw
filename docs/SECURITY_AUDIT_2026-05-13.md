@@ -44,20 +44,13 @@ Same shape: read any user's received tips. Information disclosure of payment pat
 
 **Fix:** either gate behind auth + ownership check, or make this admin-only / public-profile-only depending on intent. If the data is meant to be public on profile pages, that's fine, but it should be a deliberate choice (and the response shape should exclude sender details to reduce DM-graph fingerprinting).
 
-**6. `reports.ts:61` — reporter id read from `req.body` and defaults to 0 on miss**
-```
-reporterId: parseInt(reporterId || '0')
-```
-If `req.body.reporterId` is missing or zero, the row gets `reporterId: 0`, breaking the link back to the authenticated reporter. An attacker could strip `reporterId` to detach a report from their identity even while still being authenticated.
-
-**Fix:** read reporterId from `req.sessionData` (the verified session), not from the request body. Pattern is already correct in `bugReports.ts:92-97`.
+**6. `reports.ts:61` — reporter id read from `req.body` and defaults to 0 on miss** — **PARTIALLY APPLIED**
+The `: 0` fallback was dead code (`requireAuth` returns 400 before the handler if reporterId is missing). Removed the misleading fallback. The body-field pattern itself is safe because `requireAuth({ field: 'reporterId', verifyOwnership: true })` validates the body-supplied reporterId against the authenticated session's tokenIds — see verified-clean note on (7).
 
 ### MEDIUM
 
-**7. `dm-groups.ts:117` — DELETE member uses `actorUserId` from req.body**
-The body-supplied `actorUserId` is passed to `requireAuth({ field: 'actorUserId', verifyOwnership: true })`. If the verifyOwnership middleware checks that the authenticated user owns the body-supplied id (rather than verifying the action is being performed *by* the authenticated user), an attacker could pass their own tokenId as actorUserId, satisfy ownership, and remove someone else from a group they're not in. Worth code-reading the verifyOwnership middleware to confirm semantics.
-
-**Fix:** read actorUserId from the verified session rather than req.body.
+**7. `dm-groups.ts:117` — DELETE member uses `actorUserId` from req.body** — **VERIFIED CLEAN**
+After reading `requireAuth` in `middleware/auth.ts:39-58`, the `field: 'actorUserId'` setting reads the body value, then checks it against `req.sessionData.authorizedTokenIds`. So the body-supplied actorUserId MUST be one the caller has a session for. The pattern is fine. False alarm in the agent's first pass.
 
 **8. `upload.ts:42` — file upload validates MIME type via header, not magic bytes**
 The MIME_TO_EXT allowlist is good defense in depth, but Content-Type is client-supplied. A client could upload a file with executable contents and a spoofed `image/png` header.
