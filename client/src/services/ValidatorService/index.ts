@@ -2236,16 +2236,54 @@ console.log("succeededKeys", succeededKeys)
           console.log("========== [Validator] PERMANENT FAILURE DETECTED ==========")
           console.log("  Marking transactions as FAILED")
           console.log("  Affected TxQueue IDs:", validatedEntries.map(e => e.id).join(', '))
-          // Mark ALL entries as failed with their specific rejection messages
+          // Per-entry routing.
+          //
+          // We arrived here because the "all rejections are cawonce-used"
+          // guard at line 2172 didn't fire — but that guard uses .every(),
+          // so a SINGLE non-cawonce-used rejection (including an empty /
+          // undefined entry in rejectionMessages, which can happen when
+          // simulation returns fewer messages than entries) flips the
+          // whole batch into permanent-failure mode. That used to mass-
+          // mark legitimate cawonce-used rows as failed without ever
+          // consulting the Action table.
+          //
+          // Route each entry individually: cawonce-used rejections still
+          // go through resolveCawonceUsed (so legit ones land as done /
+          // awaiting_indexer); other rejections get the original
+          // permanent-failure treatment.
           await Promise.all(validatedEntries.map(async (entry, index) => {
             const data = (entry.payload as any).data
+            const rejection = rejectionMessages[index] || ''
+            const isCawonceUsed = rejection.includes('Cawonce already used')
+
+            if (isCawonceUsed) {
+              const resolution = await resolveCawonceUsed(data, entry.updatedAt)
+              if (resolution === 'done') {
+                console.log(`[Validator] TxQueue ${entry.id}: Same action exists for senderId=${data.senderId} cawonce=${data.cawonce} — marking done`)
+                await prisma.txQueue.update({ where: { id: entry.id }, data: { status: 'done' } })
+                return
+              }
+              if (resolution === 'awaiting_indexer') {
+                console.log(`[Validator] TxQueue ${entry.id}: Cawonce ${data.cawonce} reported used but Action row not yet indexed — deferring`)
+                await prisma.txQueue.update({
+                  where: { id: entry.id },
+                  data: { status: 'awaiting_indexer', reason: 'awaiting Action indexer' },
+                })
+                return
+              }
+              // resolution === 'failed' — different action at this cawonce
+              // or the indexer-aware budget elapsed. Fall through to
+              // markTxQueueFailed with the canonical reason.
+              await markTxQueueFailed(entry.id, 'Cawonce already used', data.senderId, data)
+              return
+            }
 
             // Mark Caw as FAILED if this is a caw or recaw action
             // Caw / Follow / Like / Tip row cleanup is now handled inside
             // markTxQueueFailed -> cleanupOptimisticRows. No per-site cleanup
             // needed here.
 
-            const reason = rejectionMessages[index] || 'Simulation rejected - unknown reason'
+            const reason = rejection || 'Simulation rejected - unknown reason'
             await markTxQueueFailed(entry.id, reason, data.senderId, data)
           }))
         }
