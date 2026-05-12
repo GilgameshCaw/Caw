@@ -1353,6 +1353,15 @@ export const validatorService: Service = {
     }
 
 
+    // Serializes the nonce-fetch-and-send section of submitProcessActions
+    // so two parallel sub-batch submissions don't both read the same `pending`
+    // nonce and submit colliding txs. The contract's onchain logic and the
+    // retry path at line ~1503 already recover from a nonce collision, but
+    // serializing here saves the wasted gas + delay of REPLACEMENT_UNDERPRICED
+    // retries when many clients are processing in parallel. Audit fix
+    // 2026-05-13.
+    let _submitChain: Promise<unknown> = Promise.resolve()
+
     async function submitProcessActions(
       validatorId: number,
       multiData: { actions: any[]; v: number[]; r: string[]; s: string[]; packedActions: string; packedSigs: string },
@@ -1362,6 +1371,17 @@ export const validatorService: Service = {
     ) {
       const maxRetries = 3
       const gasBumpPercent = 15 // Increase gas by 15% on each retry
+
+      // Wait until any prior submission has at least read its nonce and
+      // submitted. We don't wait for the receipt — that would unnecessarily
+      // serialize all on-chain confirmation latency. Just the "fetch nonce
+      // → sendTransaction" race is what we're fixing.
+      const prev = _submitChain
+      let releaseSlot: () => void = () => {}
+      _submitChain = new Promise<void>(resolve => { releaseSlot = resolve })
+      try {
+        await prev
+      } catch { /* prior failed — fine, continue */ }
 
       const feeData = await httpProvider.getFeeData();
 
@@ -1417,6 +1437,11 @@ export const validatorService: Service = {
           chainId: 84532,
           type: 2,
         })
+        // Submission is in the mempool — release the nonce-serialization
+        // slot so the next caller can fetch its own nonce. We don't wait
+        // for tx confirmation here, which would needlessly block parallel
+        // submissions on chain latency.
+        releaseSlot()
         console.log(`[submitProcessActions] Sent ${multiData.actions.length} action(s), tx=${tx.hash}`)
 
         const receipt = await tx.wait()
@@ -1523,6 +1548,11 @@ export const validatorService: Service = {
         }
 
         throw err
+      } finally {
+        // Always release the nonce-serialization slot, even if sendTransaction
+        // threw before we reached the success-path release above. Idempotent —
+        // resolving an already-resolved promise is a no-op.
+        releaseSlot()
       }
     }
 
