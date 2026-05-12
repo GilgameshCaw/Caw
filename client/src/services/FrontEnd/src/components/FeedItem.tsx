@@ -1,6 +1,7 @@
 import { getUserAvatar, getDefaultAvatarForUser } from "~/utils/defaultAvatar"
 import Avatar from "~/components/Avatar"
 import { ThumbtackIcon } from "~/components/icons/ThumbtackIcon"
+import { getJSON, setJSON } from "~/utils/safeStorage"
 // src/components/FeedItem.tsx - UPDATED FOR CONSISTENCY
 import React, { useState, useRef, useEffect } from 'react'
 import { useQueryClient } from '@tanstack/react-query'
@@ -974,9 +975,9 @@ const FeedItem: React.FC<{ item: CawItem; isMainPost?: boolean; isReply?: boolea
           // Don't save yet - will save when modal closes
         } else {
           // No modal needed, save immediately
-          const hiddenPosts = JSON.parse(localStorage.getItem('hiddenPosts') || '[]')
+          const hiddenPosts = getJSON<string[]>('hiddenPosts', [])
           hiddenPosts.push(useItem.id)
-          localStorage.setItem('hiddenPosts', JSON.stringify([...new Set(hiddenPosts)]))
+          setJSON('hiddenPosts', [...new Set(hiddenPosts)])
           window.dispatchEvent(new CustomEvent('mutePreferencesChanged'))
         }
         break
@@ -986,9 +987,9 @@ const FeedItem: React.FC<{ item: CawItem; isMainPost?: boolean; isReply?: boolea
           setMuteConfirmAction('mute-account')
           setShowMuteConfirmModal(true)
         } else {
-          const mutedAccounts = JSON.parse(localStorage.getItem('mutedAccounts') || '[]')
+          const mutedAccounts = getJSON<number[]>('mutedAccounts', [])
           mutedAccounts.push(useItem.user.tokenId)
-          localStorage.setItem('mutedAccounts', JSON.stringify([...new Set(mutedAccounts)]))
+          setJSON('mutedAccounts', [...new Set(mutedAccounts)])
           window.dispatchEvent(new CustomEvent('mutePreferencesChanged'))
           // Sync to server for notification filtering
           if (effectiveTokenId) {
@@ -2243,11 +2244,11 @@ const FeedItem: React.FC<{ item: CawItem; isMainPost?: boolean; isReply?: boolea
         isOpen={showMuteWordsModal}
         onClose={() => setShowMuteWordsModal(false)}
         postContent={useItem.content}
-        existingMutedWords={JSON.parse(localStorage.getItem('mutedWords') || '[]')}
+        existingMutedWords={getJSON<string[]>('mutedWords', [])}
         onMute={(words) => {
-          const mutedWords = JSON.parse(localStorage.getItem('mutedWords') || '[]')
+          const mutedWords = getJSON<string[]>('mutedWords', [])
           mutedWords.push(...words)
-          localStorage.setItem('mutedWords', JSON.stringify([...new Set(mutedWords)]))
+          setJSON('mutedWords', [...new Set(mutedWords)])
           window.dispatchEvent(new CustomEvent('mutePreferencesChanged'))
           if (shouldShowMuteConfirmModal()) {
             setMuteConfirmAction('mute-words')
@@ -2267,9 +2268,9 @@ const FeedItem: React.FC<{ item: CawItem; isMainPost?: boolean; isReply?: boolea
           switch (muteConfirmAction) {
             case 'hide-post': {
               // Use useItem.id (the original post) - for recaws this hides the original, which also hides all recaws
-              const hiddenPosts = JSON.parse(localStorage.getItem('hiddenPosts') || '[]')
+              const hiddenPosts = getJSON<string[]>('hiddenPosts', [])
               hiddenPosts.push(useItem.id)
-              localStorage.setItem('hiddenPosts', JSON.stringify([...new Set(hiddenPosts)]))
+              setJSON('hiddenPosts', [...new Set(hiddenPosts)])
               window.dispatchEvent(new CustomEvent('mutePreferencesChanged'))
               break
             }
@@ -2285,9 +2286,9 @@ const FeedItem: React.FC<{ item: CawItem; isMainPost?: boolean; isReply?: boolea
               break
             }
             case 'mute-account': {
-              const mutedAccounts = JSON.parse(localStorage.getItem('mutedAccounts') || '[]')
+              const mutedAccounts = getJSON<number[]>('mutedAccounts', [])
               mutedAccounts.push(useItem.user.tokenId)
-              localStorage.setItem('mutedAccounts', JSON.stringify([...new Set(mutedAccounts)]))
+              setJSON('mutedAccounts', [...new Set(mutedAccounts)])
               window.dispatchEvent(new CustomEvent('mutePreferencesChanged'))
               // Sync to server for notification filtering
               const muteTokenId = activeTokenId || activeToken?.tokenId
@@ -2331,14 +2332,14 @@ const FeedItem: React.FC<{ item: CawItem; isMainPost?: boolean; isReply?: boolea
           })
 
           // Also store locally so we can hide it from the user's feed
-          const reportedPosts = JSON.parse(localStorage.getItem('reportedPosts') || '[]')
+          const reportedPosts = getJSON<Array<{postId: string; userId: number; reason: string; timestamp: string}>>('reportedPosts', [])
           reportedPosts.push({
             postId: useItem.id,
             userId: useItem.user.tokenId,
             reason,
             timestamp: new Date().toISOString()
           })
-          localStorage.setItem('reportedPosts', JSON.stringify(reportedPosts))
+          setJSON('reportedPosts', reportedPosts)
           window.dispatchEvent(new CustomEvent('mutePreferencesChanged'))
         }}
       />
