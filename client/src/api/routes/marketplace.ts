@@ -146,19 +146,33 @@ router.get('/sales', async (req, res) => {
 /**
  * GET /api/marketplace/sales/stats
  * Aggregate volume and count.
+ *
+ * Pushes aggregation to Postgres via SUM with a NUMERIC cast — the price
+ * column is stored as a string (BigInt-shaped), so Prisma's _sum aggregate
+ * can't be used directly. Previous implementation loaded every sale row
+ * into application memory and summed in JS, which was a full-table scan
+ * + large response shape at scale (OOM-adjacent). Audit fix 2026-05-13.
+ *
+ * NUMERIC handles arbitrary-precision integers natively in Postgres; we
+ * cast back to text for the response so the BigInt math survives the
+ * JSON serialization.
  */
 router.get('/sales/stats', async (req, res) => {
   try {
-    const totalSales = await prisma.marketplaceSale.count()
-    const sales = await prisma.marketplaceSale.findMany({
-      select: { price: true, paymentToken: true },
-    })
+    const rows = await prisma.$queryRaw<Array<{ paymentToken: string; count: bigint; volume: string }>>`
+      SELECT
+        "paymentToken",
+        COUNT(*)::bigint AS count,
+        SUM("price"::numeric)::text AS volume
+      FROM "MarketplaceSale"
+      GROUP BY "paymentToken"
+    `
 
-    // Group volume by payment token
     const volumeByToken: Record<string, string> = {}
-    for (const s of sales) {
-      const current = BigInt(volumeByToken[s.paymentToken] || '0')
-      volumeByToken[s.paymentToken] = (current + BigInt(s.price)).toString()
+    let totalSales = 0
+    for (const r of rows) {
+      totalSales += Number(r.count)
+      volumeByToken[r.paymentToken] = r.volume ?? '0'
     }
 
     res.json({ totalSales, volumeByToken })
@@ -208,12 +222,22 @@ router.get('/bids/:address', async (req, res) => {
 router.get('/refunds/:address', async (req, res) => {
   try {
     const address = req.params.address.toLowerCase()
-    const bids = await prisma.marketplaceBid.findMany({
-      where: { bidder: address, status: 'OUTBID' },
-      orderBy: { createdAt: 'desc' },
-      include: { listing: true },
-    })
-    res.json({ bids })
+    // Paginated: matches the pattern in /bids/:address below. A heavy bidder
+    // with thousands of OUTBID rows was previously loading them all in one
+    // shot. Audit fix 2026-05-13.
+    const limit = Math.min(parseInt(req.query.limit as string) || 50, 200)
+    const offset = parseInt(req.query.offset as string) || 0
+    const [bids, total] = await Promise.all([
+      prisma.marketplaceBid.findMany({
+        where: { bidder: address, status: 'OUTBID' },
+        orderBy: { createdAt: 'desc' },
+        include: { listing: true },
+        take: limit,
+        skip: offset,
+      }),
+      prisma.marketplaceBid.count({ where: { bidder: address, status: 'OUTBID' } }),
+    ])
+    res.json({ bids, total, hasMore: offset + bids.length < total })
   } catch (err: any) {
     console.error('[marketplace] refunds error:', err)
     res.status(500).json({ error: 'Internal server error' })

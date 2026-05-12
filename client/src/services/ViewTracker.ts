@@ -73,15 +73,13 @@ export async function trackBulkViews(cawIds: number[], userId?: number, ipHash?:
   const results = await Promise.all(promises)
   const cawsToUpdate = results.filter(id => id !== null) as number[]
 
-  // Bulk update view counts in database
+  // Bulk update view counts in database. Single `updateMany` instead of N
+  // serial round-trips inside a transaction — at 20 caws on a feed page
+  // this drops 20 DB round-trips to 1. Audit fix 2026-05-13.
   if (cawsToUpdate.length > 0) {
-    await prisma.$transaction(async (tx) => {
-      for (const cawId of cawsToUpdate) {
-        await tx.caw.update({
-          where: { id: cawId },
-          data: { viewCount: { increment: 1 } }
-        })
-      }
+    await prisma.caw.updateMany({
+      where: { id: { in: cawsToUpdate } },
+      data: { viewCount: { increment: 1 } }
     })
   }
 }
