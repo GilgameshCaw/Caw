@@ -169,3 +169,60 @@ No findings worth escalating from this self-audit. Recommend external review foc
 - The `recoverOrValidate` dual-packing fallback (rsv then vrs). Did anyone do that before? Worth a sanity check on whether accepting both packings could ever be a footgun in some user-flow.
 - The gas-stipend on the 1271 staticcall (50,000). Same as CawActions; verify it's enough for plausible smart-EOA implementations (Safe's isValidSignature seems to consume ~7-15k in practice).
 - The personal-sign digest construction. Already audited at 2026-05-08, unchanged here, but worth confirming the move from a per-overload digest helper to an inlined one didn't subtly alter the hash.
+
+## Second-pass adversarial review (2026-05-13, after main self-audit)
+
+Re-read with explicit adversarial framing. Findings:
+
+### 1. Personal-sign digest grief (LOW)
+
+**Description.** The personal-sign path verifies the signature against `signer`, then marks `consumedSessionMessage[digest] = true`. A user signs a message with intent to register against their own address. An attacker can submit the same signed message with a *different* `signer` — specifically, a malicious 1271 contract they deployed that returns the magic value for any signature. The contract verifies (1271 says yes), marks the digest consumed, and registers a session against the malicious contract. The original user's later submission with their actual address now reverts as `Replayed()`.
+
+**Outcome.** The user has not been compromised. Their funds are safe; their account is untouched. They just need to sign a fresh message (different expiry → different digest). The attacker burned gas to grief one specific signed message.
+
+**Severity.** LOW. Pure griefing. No fund risk. No persistent denial — user can re-sign.
+
+**Mitigation considered but not applied.** Adding a `signer` field to the personal-sign message body and parsing+validating it would close this. But the parser is already at the edge of what's reasonable for a contract function, and the attack is unattractive economically. Document and accept.
+
+### 2. Cross-replay between personal-sign and EIP-712 (CLEAN)
+
+Both digest constructions start with `0x19`, but the second byte differs: `0x45` ("E" in "Ethereum Signed Message:") for personal-sign vs `0x01` for EIP-712. The bytes are pre-image-separated, so a digest collision between the two paths requires a keccak256 collision. Not exploitable.
+
+### 3. Signature malleability impact (CLEAN)
+
+ECDSA accepts two valid `(r, s)` pairs per signature. Both recover to the same address. Both produce different *signature bytes* but identical *digests*:
+
+- EIP-712 path: gated by `nonce == sessionNonce[signer]`. Only one of the malleated sigs increments first; the other reverts BadNonce.
+- Personal-sign path: gated by `consumedSessionMessage[digest]`. The digest is over the message, not the sig, so both forms map to the same digest entry. Only one succeeds.
+
+No security impact either way.
+
+### 4. Dual-packing ecrecover (CLEAN)
+
+`recoverOrValidate` tries `r||s||v` and `v||r||s`. For a random 65-byte string interpreted as either packing, the resulting `(r, s, v)` tuples differ, and ecrecover produces different addresses. The chance that both packings recover to the same `claimedSigner` is negligible. Worst case: an attacker who has both forms of a sig from the owner can submit either — the contract accepts either, but both recover to the same address with the same nonce, so only one can succeed.
+
+### 5. Interactions with privileged session-write paths (CLEAN)
+
+`registerSessionFromActions` (msg.sender == CawActions) and `registerSessionFromL1` (LZ-bridged) both `sessionNonce[owner]++` after writing. This correctly invalidates any user's pre-signed registerSession payload with the now-stale nonce. The qs-other-session-test already covers this.
+
+Cross-typehash replay (`SessionDelegation` sig used as `RevokeSession` sig, or vice versa): different `TYPEHASH` constants embedded in the struct hash, so digests are not portable across functions. ✓
+
+### 6. signer == address(this) (CLEAN)
+
+A submitter could pass `signer = cawProfileL2.address`. The contract calls `staticcall` to itself looking for `isValidSignature`. CawProfileL2 doesn't implement that selector and has no fallback. The staticcall reverts, `_checkERC1271` returns false, registration reverts BadSig. ✓
+
+### 7. 7702-delegated EOA re-entrance into CawProfileL2 (CLEAN)
+
+A malicious 1271 implementation could attempt to call back into `registerSession` or any other state-modifying function during its `isValidSignature` call. The outer call is a `staticcall`, which propagates: any state-modifying call from within the staticcall context reverts. No re-entrance possible. ✓
+
+### 8. Junk return data from 1271 (CLEAN)
+
+`_checkERC1271` requires `ret.length >= 32` AND `abi.decode(ret, (bytes4)) == MAGIC_VALUE`. Short or non-magic returns fail closed. ✓
+
+### 9. Gas-griefing from a malicious 1271 (BOUNDED)
+
+50,000-gas stipend on the staticcall. Out-of-gas inside the staticcall surfaces as `ok=false`, registration reverts cleanly. Caller pays the stipend + tx setup, no more. Mirrors the existing CawActions pattern (also 50k). ✓
+
+### Summary
+
+One LOW griefing item (personal-sign digest grief, accepted as not worth the parser-complexity cost to fix). Everything else holds up. The contract change is ship-ready.
