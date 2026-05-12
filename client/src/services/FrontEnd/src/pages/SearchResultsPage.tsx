@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useMemo } from 'react'
-import { useSearchParams, useNavigate, useLocation } from 'react-router-dom'
+import { useSearchParams, useLocation } from 'react-router-dom'
+import { useNavigate } from '~/utils/localizedRouter'
 import { apiFetch } from '~/api/client'
 import Feed from '~/components/Feed'
 import { useTheme } from '~/hooks/useTheme'

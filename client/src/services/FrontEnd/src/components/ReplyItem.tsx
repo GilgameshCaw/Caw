@@ -11,7 +11,7 @@ import Avatar from '~/components/Avatar';
 import { getUserAvatar, getDefaultAvatarForUser } from '~/utils/defaultAvatar';
 import { useTokenDataStore } from '~/store/tokenDataStore'
 import { useModalStore } from '~/store/modalStore'
-import { Link } from 'react-router-dom'
+import { Link } from '~/utils/localizedRouter'
 import { User, CawItem } from '~/types'
 import { useTheme } from '~/hooks/useTheme'
 import { usePendingCawPolling, usePendingLikePolling, usePendingReplyPolling } from '~/hooks/usePendingPolling'

@@ -1,6 +1,7 @@
 // src/services/FrontEnd/src/components/Sidebar.tsx
 import React, { useEffect, useState } from 'react'
-import { NavLink, useNavigate, useLocation } from 'react-router-dom'
+import { useLocation } from 'react-router-dom'
+import { NavLink, useNavigate } from '~/utils/localizedRouter'
 import ProfileChooser           from '~/components/ProfileChooser'
 import { fetchTxPage }          from '../api/txs'
 import { useTokenDataStore, useActiveToken, usePriceStore } from "~/store/tokenDataStore";

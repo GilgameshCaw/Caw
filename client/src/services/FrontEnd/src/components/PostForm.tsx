@@ -1,6 +1,6 @@
 import React, { useState, useRef, useEffect, useLayoutEffect } from 'react'
 import { createPortal } from 'react-dom'
-import { Link } from 'react-router-dom'
+import { Link } from '~/utils/localizedRouter'
 import { useSignAndSubmitAction, buildTypedData, TYPES, allocateCawonces } from '../api/actions'
 
 /** Hard cap on thread length. Must match the API cap in

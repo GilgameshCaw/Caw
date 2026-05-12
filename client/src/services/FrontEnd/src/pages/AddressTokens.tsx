@@ -1,5 +1,6 @@
 import React, { useMemo } from 'react'
-import { Link, useParams } from 'react-router-dom'
+import { useParams } from 'react-router-dom'
+import { Link } from '~/utils/localizedRouter'
 import { useReadContract, useReadContracts } from 'wagmi'
 import { useQuery, useQueries } from '@tanstack/react-query'
 import { erc20Abi, formatEther, formatUnits } from 'viem'

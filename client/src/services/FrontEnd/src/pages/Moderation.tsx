@@ -1,5 +1,5 @@
 import React, { useEffect } from 'react'
-import { Link, useNavigate } from 'react-router-dom'
+import { Link, useNavigate } from '~/utils/localizedRouter'
 import { useTheme } from '~/hooks/useTheme'
 import { useMyRole } from '~/hooks/useMyRole'
 

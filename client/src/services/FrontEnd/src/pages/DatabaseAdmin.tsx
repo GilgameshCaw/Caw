@@ -1,7 +1,8 @@
 import React, { useState, useEffect, useCallback } from 'react'
 import { useTheme } from '~/hooks/useTheme'
 import { apiFetch } from '~/api/client'
-import { useSearchParams, Link } from 'react-router-dom'
+import { useSearchParams } from 'react-router-dom'
+import { Link } from '~/utils/localizedRouter'
 import { decompressSignedText } from '~/api/actions'
 
 const PAGE_SIZE = 50

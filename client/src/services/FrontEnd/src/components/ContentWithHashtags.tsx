@@ -1,6 +1,7 @@
 // src/components/ContentWithHashtags.tsx
 import React, { useState } from 'react'
-import { useLocation, useNavigate } from 'react-router-dom'
+import { useLocation } from 'react-router-dom'
+import { useNavigate } from '~/utils/localizedRouter'
 import LinkPreview from './LinkPreview'
 import PostVideo from './PostVideo'
 import Tooltip from '~/components/Tooltip'

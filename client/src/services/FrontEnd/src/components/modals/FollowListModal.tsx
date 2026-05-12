@@ -1,7 +1,7 @@
 import { UserAvatar } from "~/components/Avatar"
 // src/components/modals/FollowListModal.tsx
 import React, { useState, useEffect } from 'react'
-import { useNavigate } from 'react-router-dom'
+import { useNavigate } from '~/utils/localizedRouter'
 import { useModalStore } from '~/store/modalStore'
 import { useTheme } from '~/hooks/useTheme'
 import { apiFetch } from '~/api/client'

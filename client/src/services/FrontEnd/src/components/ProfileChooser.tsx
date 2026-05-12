@@ -3,7 +3,7 @@ import React, { useState, useEffect, useRef } from "react";
 import { useTokenDataStore, useActiveToken } from "~/store/tokenDataStore";
 import { formatAddress, formatUnitsCompact, convertToText } from "~/utils";
 import UsernameSvg from "./UsernameSvg";
-import { Link } from 'react-router-dom'
+import { Link } from '~/utils/localizedRouter'
 import { TokenData } from "~/types";
 import { useAccount } from "wagmi";
 import { useConnectModal } from '@rainbow-me/rainbowkit';

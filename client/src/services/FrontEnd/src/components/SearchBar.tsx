@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react'
-import { useNavigate } from 'react-router-dom'
+import { useNavigate } from '~/utils/localizedRouter'
 import { HiSearch, HiX } from 'react-icons/hi'
 import { HiTrendingUp, HiHashtag, HiUser } from 'react-icons/hi'
 import { apiFetch } from '~/api/client'

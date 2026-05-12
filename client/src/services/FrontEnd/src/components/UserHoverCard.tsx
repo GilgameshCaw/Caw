@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useState } from 'react'
-import { Link } from 'react-router-dom'
+import { Link } from '~/utils/localizedRouter'
 import { useUserByUsername } from '~/hooks/useUserData'
 import { useTheme } from '~/hooks/useTheme'
 import { useActiveToken } from '~/store/tokenDataStore'

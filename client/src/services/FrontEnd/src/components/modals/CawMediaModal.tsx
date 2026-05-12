@@ -1,5 +1,6 @@
 import React, { useEffect, useMemo, useState } from 'react'
-import { useLocation, useNavigate, useParams, useSearchParams } from 'react-router-dom'
+import { useLocation, useParams, useSearchParams } from 'react-router-dom'
+import { useNavigate } from '~/utils/localizedRouter'
 import { HiArrowLeft, HiArrowRight, HiOutlineX } from 'react-icons/hi'
 
 import FeedItem from '~/components/FeedItem'

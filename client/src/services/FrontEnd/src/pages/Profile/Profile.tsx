@@ -2,7 +2,8 @@ import { getUserAvatar, getDefaultAvatarForUser } from "~/utils/defaultAvatar"
 import Avatar from "~/components/Avatar"
 // src/pages/ProfilePage.tsx
 import React, { useState, useEffect, useRef } from 'react'
-import { Link, useParams, useSearchParams }    from 'react-router-dom'
+import { useParams, useSearchParams } from 'react-router-dom'
+import { Link } from '~/utils/localizedRouter'
 import { Tabs, TabItem } from '~/components/Tabs'
 import Feed             from '~/components/Feed'
 import { useTheme } from '~/hooks/useTheme'
@@ -22,7 +23,7 @@ import { CAW_NAMES_MINTER_ADDRESS } from '~/../../../abi/addresses'
 import { cawProfileMinterAbi } from '~/../../../abi/generated'
 import { useSignAndSubmitAction } from '~/api/actions'
 import { useConnectModal } from '@rainbow-me/rainbowkit'
-import { useNavigate } from 'react-router-dom'
+import { useNavigate } from '~/utils/localizedRouter'
 import { useTokenDataStore } from '~/store/tokenDataStore'
 import InsufficientStakeModal from '~/components/modals/InsufficientStakeModal'
 import AvatarCropperModal from '~/components/modals/AvatarCropperModal'

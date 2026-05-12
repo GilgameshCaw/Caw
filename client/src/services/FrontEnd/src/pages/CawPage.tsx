@@ -1,5 +1,6 @@
 import React, { useEffect, useMemo, useState } from 'react'
-import { useParams, Link, useSearchParams, useNavigate, useLocation } from 'react-router-dom'
+import { useParams, useSearchParams, useLocation } from 'react-router-dom'
+import { Link, useNavigate } from '~/utils/localizedRouter'
 import { useT } from '~/i18n/I18nProvider'
 import PostForm from "~/components/PostForm";
 import FeedItem from '~/components/FeedItem'

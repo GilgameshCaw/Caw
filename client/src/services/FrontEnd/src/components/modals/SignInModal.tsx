@@ -1,4 +1,4 @@
-import { Link } from 'react-router-dom'
+import { Link } from '~/utils/localizedRouter'
 import { useAccount } from 'wagmi'
 import { useActiveToken } from '~/store/tokenDataStore'
 import { useSignInModalStore } from '~/store/signInModalStore'

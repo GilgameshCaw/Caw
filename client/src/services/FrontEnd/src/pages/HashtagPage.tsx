@@ -1,6 +1,7 @@
 // src/pages/HashtagPage.tsx
 import React from 'react'
-import { useParams, useNavigate } from 'react-router-dom'
+import { useParams } from 'react-router-dom'
+import { useNavigate } from '~/utils/localizedRouter'
 import Feed from '~/components/Feed'
 import { useTheme } from '~/hooks/useTheme'
 import { useQuery } from '@tanstack/react-query'

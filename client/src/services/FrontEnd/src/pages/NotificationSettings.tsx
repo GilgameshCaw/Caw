@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react'
-import { Link } from 'react-router-dom'
+import { Link } from '~/utils/localizedRouter'
 import { useTheme } from '~/hooks/useTheme'
 import { HiArrowLeft, HiBell, HiHeart, HiChat, HiUserAdd, HiAtSymbol, HiVolumeOff } from 'react-icons/hi'
 import { useT } from '~/i18n/I18nProvider'

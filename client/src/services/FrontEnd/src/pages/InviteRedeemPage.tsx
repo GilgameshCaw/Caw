@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
-import { useNavigate, useParams } from 'react-router-dom'
+import { useParams } from 'react-router-dom'
+import { useNavigate } from '~/utils/localizedRouter'
 import { useTheme } from '~/hooks/useTheme'
 import { useDmClient } from '~/hooks/useDm'
 import { useActiveToken } from '~/store/tokenDataStore'

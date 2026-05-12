@@ -1,5 +1,5 @@
 import React from 'react'
-import { useNavigate } from 'react-router-dom'
+import { useNavigate } from '~/utils/localizedRouter'
 import { useReadContract, useAccount } from 'wagmi'
 import { erc20Abi } from 'viem'
 import { CAW_ADDRESS } from '~/../../../abi/addresses'

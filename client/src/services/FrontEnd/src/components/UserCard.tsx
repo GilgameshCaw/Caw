@@ -1,5 +1,5 @@
 import React from 'react'
-import { Link } from 'react-router-dom'
+import { Link } from '~/utils/localizedRouter'
 import { HiOutlineX } from 'react-icons/hi'
 import { useTheme } from '~/hooks/useTheme'
 import { FollowButton } from './FollowButton'

@@ -1,5 +1,6 @@
 import React, { useEffect, useMemo, useState } from 'react'
-import { useParams, useNavigate, useLocation } from 'react-router-dom'
+import { useParams, useLocation } from 'react-router-dom'
+import { useNavigate } from '~/utils/localizedRouter'
 import { useTokenDataStore } from '~/store/tokenDataStore'
 import { apiFetch, retryOnIndexing } from '~/api/client'
 import PostMintOnboarding from '~/components/PostMintOnboarding'
