@@ -1,4 +1,5 @@
 import { Router } from 'express'
+import { randomBytes } from 'crypto'
 import { prisma } from '../../prismaClient'
 import { publicUrl } from '../util/publicUrl'
 import { isSafePublicUrl } from '../util/ssrfGuard'
@@ -47,11 +48,27 @@ async function findExistingShortUrlByCode(url: string): Promise<{ code: string; 
   return prisma.shortUrl.findUnique({ where: { code } })
 }
 
-// Generate a random short code
+// Generate a random short code.
+//
+// Uses crypto.randomBytes (not Math.random) so the codes are not
+// enumerable by an attacker who can guess the timing or PRNG state.
+// We sample one byte per position and reject any value >= floor(256 /
+// 62) * 62 to keep the distribution uniform — naive `byte % 62` is
+// biased toward the low end of the alphabet. Audit fix 2026-05-13.
 function generateShortCode(length: number = 6): string {
+  const alphabetLen = BASE62_CHARS.length
+  // Largest multiple of alphabetLen that fits in a uint8. Values >=
+  // this bound are rejected to avoid modulo bias.
+  const acceptUpTo = Math.floor(256 / alphabetLen) * alphabetLen
   let code = ''
-  for (let i = 0; i < length; i++) {
-    code += BASE62_CHARS[Math.floor(Math.random() * BASE62_CHARS.length)]
+  while (code.length < length) {
+    // Sample twice the bytes we need so we rarely have to loop again.
+    const buf = randomBytes(length * 2)
+    for (let i = 0; i < buf.length && code.length < length; i++) {
+      if (buf[i] < acceptUpTo) {
+        code += BASE62_CHARS[buf[i] % alphabetLen]
+      }
+    }
   }
   return code
 }

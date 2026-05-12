@@ -90,31 +90,12 @@ function contentFingerprint(data: any): string {
   return createHash('sha256').update(fields).digest('hex')
 }
 
-// Rate limiting for free actions (unlike, unfollow) to prevent validator griefing.
-// These actions cost 0 CAW so an attacker could spam them to waste validator gas.
-const FREE_ACTION_CODES = [2, 5] // unlike=2, unfollow=5
-const FREE_ACTION_LIMIT = 30 // max per minute per sender
-const freeActionCounts = new Map<number, { count: number; resetAt: number }>()
-
-function checkFreeActionRate(senderId: number, actionType: number): boolean {
-  if (!FREE_ACTION_CODES.includes(actionType)) return true
-  const now = Date.now()
-  const entry = freeActionCounts.get(senderId)
-  if (!entry || now > entry.resetAt) {
-    freeActionCounts.set(senderId, { count: 1, resetAt: now + 60_000 })
-    return true
-  }
-  entry.count++
-  return entry.count <= FREE_ACTION_LIMIT
-}
-
-// Clean up stale entries every 5 minutes
-setInterval(() => {
-  const now = Date.now()
-  for (const [key, entry] of freeActionCounts) {
-    if (now > entry.resetAt) freeActionCounts.delete(key)
-  }
-}, 5 * 60_000)
+// Rate limiting for free actions (unlike, unfollow) to prevent validator
+// griefing. These actions cost 0 CAW so an attacker could spam them to
+// waste validator gas. Implementation lives in freeActionRateLimit.ts and
+// is Redis-backed — the previous in-memory version was bypassable by
+// spreading requests across worker processes.
+import { checkFreeActionRate } from '../freeActionRateLimit'
 
 // Lazy-initialized read-only provider for on-chain session key verification
 let _readProvider: JsonRpcProvider | WebSocketProvider | null = null
@@ -263,7 +244,7 @@ router.post('/', async (req, res) => {
     }
 
     // Rate limit free actions (unlike/unfollow) to prevent validator gas griefing
-    if (!checkFreeActionRate(data.senderId, data.actionType)) {
+    if (!(await checkFreeActionRate(data.senderId, data.actionType))) {
       return res.status(429).json({ error: 'Too many free actions. Please slow down.' })
     }
 

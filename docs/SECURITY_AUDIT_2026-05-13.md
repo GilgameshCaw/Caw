@@ -184,10 +184,128 @@ If mute logic ever becomes server-side, this becomes a real N+1.
 | Smoothness — soon | 7 |
 | Smoothness — eventually | 5 |
 
+## Frontend (React + Vite)
+
+### CRITICAL
+
+**F1. JWT/Bearer token in plain `localStorage`** — `MessageSearch.tsx:46`
+`localStorage.getItem('token')` used as Authorization header without any wrapper encryption. XSS = full account takeover.
+**Fix:** move auth to HttpOnly cookie. If localStorage is unavoidable, encrypt at rest under a session-derived key.
+
+**F2. Open redirect via OAuth `returnTo`** — `AccountSettings.tsx:243, 250`
+`window.location.href = res.url` after a backend hop that takes a `returnTo` query param. Unvalidated.
+**Fix:** allowlist the redirect URL (same-origin only, or a small allowlist of trusted external destinations).
+
+### HIGH
+
+**F3. Unencrypted DM private keys in `localStorage`** — `DmCryptoService.ts:27, 34-35`
+Comment says encrypted; actual storage shape is `{[tokenId]: {privateKey: "..."}}` in plaintext hex.
+**Fix:** wrap keys under the QuickSign session-encryption layer before persistence, or move to IndexedDB with the same encryption.
+
+**F4. Unguarded `JSON.parse(localStorage.getItem(...))` in 6+ places** — `FeedItem.tsx:977, 989, 2246, 2248, 2270, 2290, 2334`, plus `ProfileChooser.tsx`, `PostMintOnboarding.tsx`, `PostForm.tsx`
+A malformed localStorage entry (corruption, another tab, dev tooling) crashes the parsing path.
+**Fix:** wrap each parse in try/catch with a safe default.
+
+### MEDIUM
+
+**F5. `credentials: 'include'` cross-origin assumption** — `client.ts:198` and admin paths
+Pattern relies on server-side CORS being strict. Verify server doesn't allow `*` with credentials.
+
+**F6. Decrypted DM keys live in an in-memory Map** — `sessionKeyEncryption.ts:79-159`
+No memory zeroing on logout/tab close. BroadcastChannel sync between tabs sends plaintext (same-origin, but visible to all tabs).
+**Fix:** clear the Map on logout; consider memory-only for keys above a security threshold.
+
+## Validator service
+
+### CRITICAL (slashing-adjacent)
+
+**V1. ZK proof cache key isn't bound to submission context** — `ValidatorService/index.ts:57`
+Cache key = `keccak256(packedActions || packedSigs)`. Proof is consumed only on submission success; failed-then-retry paths can pair a cached proof with an unrelated batch under specific timing.
+**Fix:** include validatorId + quote hash in the cache key, or move to TTL-based eviction with no in-flight consumption.
+
+### HIGH (slashing-adjacent)
+
+**V2. Withdraw quote cache reuses stale quotes** — `index.ts:1126-1127`
+Cache key based on sorted tokenIds/amounts; doesn't capture timestamp. LayerZero fees shift rapidly during congestion; a stale-but-cache-key-matching quote underestimates gas and the submission reverts.
+**Fix:** TTL of 5-10s on the cache plus a hash of the LZ-fee read.
+
+**V3. Archive chain isn't verified before `submitReplication`** — `index.ts:3566-3572`
+If DNS/RPC routing is hijacked, the validator could stake on a rogue archive that drains them.
+**Fix:** verify `chainId` and a hash of the archive's deployment config before each submission.
+
+**V4. LayerZero fee buffer is 120%** — `index.ts:3996`
+Under congestion the actual cost can exceed the buffer, the challenge relay fails, and the fraudulent submission finalizes unchallenged.
+**Fix:** raise to 150%+ or implement a retry that tops up the fee.
+
+### HIGH (uptime, not slashing)
+
+**V5. Cawonce dedup relies on indexer lag budget** — `index.ts:283`
+Long indexer outage = legit retries get marked failed even though they landed on-chain.
+**Fix:** direct on-chain check (`checkpointClaimed`) as primary, indexer as fast path.
+
+**V6. Mixed batch failures don't re-simulate non-cawonce errors** — `index.ts:2236`
+Audit fix `ef08a8b` only handles "Cawonce already used"; mixed batches with other errors still mass-fail.
+**Fix:** for any permanent-failure path, re-simulate individual entries to distinguish transient (awaiting_indexer) from real failures.
+
+### MED
+
+**V7. Nonce desync risk in parallel multi-client submissions** — `index.ts:1369`
+`getTransactionCount('pending')` is read per sub-batch; if sub-batches submit in parallel, they all get the same nonce.
+**Fix:** local nonce counter, or serialize submissions across clients.
+
+**V8. Withdrawal validation is contract-only** — `index.ts:1107`
+Defense-in-depth: validator could pre-check `senderId == ownerOf(tokenId)` before including a WITHDRAW in a batch.
+
+**V9. Gas estimation ignores calldata size** — `index.ts:1350-1352`
+Large `text` fields can blow up calldata costs; static `base + perAction*count` formula underestimates.
+**Fix:** add `16 * calldataLength` to the formula.
+
+### LOW
+
+**V10. `console.error(submitErr)` logs full error objects** — `index.ts:2525, 4145`
+Stack traces, transient state, RPC URLs. Operational-security smell; not a key-leak.
+
+**V11. `triggerImmediateValidatorPoll` has no caller-auth check** — `index.ts:223`
+Any module that imports it can wake the poller. Probably fine in practice (admin route gates it) but worth confirming.
+
+## Crypto primitives
+
+### CRITICAL (FIXED in this pass)
+
+**C1. `shorturl.ts:54` — `generateShortCode` uses `Math.random()`** — **FIXED 2026-05-13**.
+Replaced with `randomBytes` and modulo-bias rejection sampling. 6 base62 chars → 35.7 bits if uniform; old `Math.random()` was likely worse due to PRNG state recovery, and the public `GET /api/shorturl/:code` endpoint is enumerable.
+
+### HIGH (FIXED in this pass)
+
+**C2. `scheduled.ts:88` — threadId uses `Math.random()` suffix** — **FIXED 2026-05-13**.
+Replaced with `randomBytes(6).toString('hex')`. Attacker knowing `userId` and approximate `Date.now()` could no longer enumerate. ThreadIds are used for batch operations like "cancel all chunks of a thread."
+
+### MED
+
+**C3. AES-GCM without AAD in DM and session-key encryption** — `DmCryptoService.ts:291-295`, `sessionKeyEncryption.ts:47-50`
+Per-peer key separation mitigates ciphertext-shuffling; add `additionalData: conversationId` for defense-in-depth.
+
+### Clean
+
+Session/admin tokens use `randomBytes(32)`. JWT verification rejects `alg:none`. Signature verification uses `ethers.verifyMessage` / `verifyTypedData`. DM IVs use `crypto.getRandomValues(12)`. PBKDF2 uses 100,000 iterations. Admin password comparison uses `timingSafeEqual` on SHA-256 digests. No hardcoded secrets in source.
+
+## Smoothness fix applied in this pass
+
+**S6 (fixed).** Free-action rate limiter moved from in-memory Map to Redis (`client/src/api/freeActionRateLimit.ts`). The previous in-memory version had effective limit = `N × 30/min` for `N` worker processes — bypassable by spreading requests. Redis-backed `INCR + EXPIRE` is atomic and shared across workers.
+
 ## Recommended next steps
 
-1. Fix the three CRITICAL findings before next release: withdrawals auth, admin-db field allowlist, admin DELETE audit log.
-2. Fix the three HIGH findings in the same cycle: tips routes auth, reports.reporterId source.
-3. Schedule the index migration after the next deploy.
-4. Confirm the verifyOwnership middleware semantics against `dm-groups.ts` actorUserId pattern.
-5. Add file-magic-byte validation to `upload.ts`.
+1. **CRITICAL / HIGH that need code changes:**
+   - withdrawals.ts auth (CRIT)
+   - admin-db field allowlist + DELETE audit (CRIT × 2)
+   - tips routes auth + reports.reporterId fix (HIGH × 3)
+   - Frontend JWT cookie migration (CRIT)
+   - DM-key encryption at rest (HIGH)
+   - OAuth returnTo allowlist (CRIT)
+   - ZK proof cache key tightening (CRIT)
+   - Archive chain verification before replication submit (HIGH)
+2. **Index migration:** the 4 new + 2 dropped composites land in one Prisma migration.
+3. **Operational:** LayerZero fee buffer → 150%, nonce serialization in validator, indexer-aware cawonce dedup.
+4. **Defense-in-depth:** AAD on DM/session AES-GCM; file-magic-byte validation in upload; in-memory key zeroing on logout.
+
+Two fixes applied in-place this pass: shorturl PRNG, scheduled.ts threadId PRNG, free-action rate limiter to Redis.

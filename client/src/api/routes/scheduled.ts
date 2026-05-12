@@ -1,4 +1,5 @@
 import { Router } from 'express'
+import { randomBytes } from 'crypto'
 import { prisma } from '../../prismaClient'
 import { requireAuth } from '../middleware/auth'
 
@@ -84,8 +85,11 @@ router.post('/', requireAuth({ lookup: (req) => Promise.resolve(Number(req.heade
           return res.status(400).json({ error: `Chunk ${i} missing cawonce` })
         }
       }
-      // Generate a thread id once; reuse for every chunk so the processor and UI can group them
-      const threadId = `t_${userId}_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`
+      // Generate a thread id once; reuse for every chunk so the processor and UI can group them.
+      // Use crypto.randomBytes for the random suffix so threadIds aren't enumerable from
+      // userId + timestamp (which an attacker could guess for a target's recent posts).
+      // Audit fix 2026-05-13.
+      const threadId = `t_${userId}_${Date.now()}_${randomBytes(6).toString('hex')}`
       const total = chunks.length
       // Interactive form so all chunks share one transaction. The array form
       // of $transaction was rejecting our mapped promises with "All elements
