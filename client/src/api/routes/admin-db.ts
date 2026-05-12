@@ -23,7 +23,17 @@ interface ModelMeta {
   writable: boolean
   /** Human-friendly label */
   label: string
+  /** Per-model allowlist of fields that admin PATCH can write. If omitted,
+   *  defaults to `listFields`. Always-blocked: id, createdAt, updatedAt,
+   *  any field beginning with `_`. Audit fix 2026-05-13. */
+  writableFields?: string[]
 }
+
+/** Fields the admin PATCH path will never write, regardless of MODEL_META.
+ *  These are either ORM-managed (id, updatedAt) or audit-sensitive in a way
+ *  that should require a deliberate, explicit code change rather than a
+ *  generic admin-DB edit. */
+const ADMIN_WRITE_BLOCKLIST = new Set(['id', 'createdAt', 'updatedAt'])
 
 const MODEL_META: Record<string, ModelMeta> = {
   txQueue: {
@@ -451,11 +461,26 @@ router.patch('/:model/:id', async (req, res) => {
   }
 
   const delegate = getDelegate(model)
-  const data = req.body
 
-  // Sanitize: remove fields that shouldn't be directly updated
-  delete data.id
-  delete data.createdAt
+  // Filter req.body against an explicit field allowlist. Previously this
+  // spread the full req.body into delegate.update, which let admins (or
+  // anyone with admin auth tokens) silently update fields outside the
+  // intended write set — including role-promotion fields if the schema
+  // ever evolved to include them. Audit fix 2026-05-13.
+  //
+  // Allowlist source order:
+  //   1. meta.writableFields (explicit per-model list)
+  //   2. fallback to meta.listFields minus the global blocklist
+  // Either way, fields in ADMIN_WRITE_BLOCKLIST are always stripped, and
+  // unknown fields are dropped rather than rejected (so admin-tool UI
+  // pre-populating extra fields stays forgiving).
+  const allowed = new Set(
+    (meta.writableFields ?? meta.listFields).filter(f => !ADMIN_WRITE_BLOCKLIST.has(f))
+  )
+  const data: Record<string, unknown> = {}
+  for (const k of Object.keys(req.body ?? {})) {
+    if (allowed.has(k) && !ADMIN_WRITE_BLOCKLIST.has(k)) data[k] = req.body[k]
+  }
 
   try {
     const { idField, idValue } = resolveIdForLookup(model, id)
@@ -477,7 +502,9 @@ router.patch('/:model/:id', async (req, res) => {
 
 /**
  * DELETE /api/admin/db/:model/:id
- * Delete a record. Only allowed for writable models.
+ * Delete a record. Only allowed for writable models. Requires a `reason`
+ * field in the request body and writes a ModeratorAction audit row so
+ * deletes via the admin DB tool leave a trail. Audit fix 2026-05-13.
  */
 router.delete('/:model/:id', async (req, res) => {
   const { model, id } = req.params
@@ -490,6 +517,16 @@ router.delete('/:model/:id', async (req, res) => {
     return res.status(403).json({ error: `Model ${model} is read-only` })
   }
 
+  const reason = typeof req.body?.reason === 'string' ? req.body.reason.trim() : ''
+  if (!reason) {
+    return res.status(400).json({ error: 'reason field is required for admin DB delete' })
+  }
+  // Best-effort attribution: the admin auth path may or may not have a
+  // wallet identity attached (password-cookie admin has none, wallet-auth
+  // admin has authorizedTokenIds[0]).
+  const actorTokenId =
+    (req as any).sessionData?.authorizedTokenIds?.[0] ?? null
+
   const delegate = getDelegate(model)
 
   try {
@@ -497,6 +534,20 @@ router.delete('/:model/:id', async (req, res) => {
     await delegate.delete({
       where: { [idField]: idValue },
     })
+
+    // Audit row. Best-effort — if the audit write fails we still report
+    // success to the admin, since the delete itself landed.
+    try {
+      await prisma.moderatorAction.create({
+        data: {
+          actorTokenId,
+          type: `admin_db_delete:${model}`,
+          reason: `Deleted ${model}/${idValue}: ${reason}`.slice(0, 1000),
+        },
+      })
+    } catch (auditErr: any) {
+      console.error('[AdminDB] Failed to write audit row:', auditErr.message)
+    }
 
     res.json({ success: true })
   } catch (err: any) {
