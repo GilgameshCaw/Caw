@@ -88,11 +88,36 @@ async function main() {
 
     const ex = existingAction.data as any
     const dataTextPlain = decompressActionText(data.text)
+
+    // STRICT match: every field the user signed must match what's on
+    // chain. resolveCawonceUsed in the validator does the lighter
+    // 4-field check (type + receiver + text), but for an irreversible
+    // failed→done flip we want to be paranoid — checking amounts and
+    // recipients catches the case where someone re-signed the same
+    // cawonce slot with a different tip / withdrawal amount.
+    //
+    // The contract bitmap is per-cawonce: at most ONE action ever
+    // lands at (senderId, cawonce). If the on-chain action's fields
+    // ALL match the submitted payload, the TxQueue's signed action
+    // IS the on-chain action — safe to flip done. If anything diverges
+    // (even amounts), the TxQueue carries a different signed payload
+    // and was legitimately rejected by the chain because someone else
+    // (different device, different tip) won the slot.
+    const arraysEqual = (a: any, b: any): boolean => {
+      const aa = Array.isArray(a) ? a.map(String) : []
+      const bb = Array.isArray(b) ? b.map(String) : []
+      if (aa.length !== bb.length) return false
+      return aa.every((v, i) => v === bb[i])
+    }
+    const sameClient = Number(ex?.clientId ?? -1) === Number(data.clientId ?? -1)
     const sameAction =
+      sameClient &&
       Number(ex?.actionType ?? -1) === Number(data.actionType) &&
       Number(ex?.receiverId ?? -1) === Number(data.receiverId ?? 0) &&
       Number(ex?.receiverCawonce ?? -1) === Number(data.receiverCawonce ?? 0) &&
-      (ex?.text ?? '') === dataTextPlain
+      (ex?.text ?? '') === dataTextPlain &&
+      arraysEqual(ex?.amounts, data?.amounts) &&
+      arraysEqual(ex?.recipients, data?.recipients)
 
     if (!sameAction) {
       contentMismatch++
