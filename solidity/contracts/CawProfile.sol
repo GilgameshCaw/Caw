@@ -25,6 +25,22 @@ contract CawProfile is
   OnlyOnce,
   OApp
 {
+  // Custom errors — bytecode-cheaper than `require(cond, "msg")` because the
+  // selector is 4 bytes vs the variable-length string. Needed on 0.8.30 where
+  // codegen grew the deployed bytecode close enough to the EIP-170 24,576-byte
+  // cap that the string form pushed CawProfile over.
+  error ZeroAddr();
+  error NotMinter();
+  error NotOwner();
+  error RefundFailed();
+  error NotNetOwner();
+  error NoFees();
+  error ZeroDeposit();
+  error NothingToWithdraw();
+  error NoPending();
+  error Unauthorized();
+  error DelegateFailed();
+
   using OptionsBuilder for bytes;
   using EnumerableSet for EnumerableSet.UintSet;
 
@@ -164,7 +180,7 @@ contract CawProfile is
     onlyOwner
     onlyOnce(keccak256(abi.encode("setL2Peer", _eid)))
   {
-    require(_peer != address(0), "Zero address");
+    if (_peer == address(0)) revert ZeroAddr();
     if (_eid != mainnetLzId) {
       peerIds.add(uint256(_eid));
       setPeer(_eid, bytes32(uint256(uint160(_peer))));
@@ -198,7 +214,7 @@ contract CawProfile is
     onlyOwner
     onlyOnce(keccak256("setMinter"))
   {
-    require(_minter != address(0), "Zero address");
+    if (_minter == address(0)) revert ZeroAddr();
     minter = _minter;
     emit MinterSet(_minter);
   }
@@ -208,7 +224,7 @@ contract CawProfile is
     onlyOwner
     onlyOnce(keccak256("setUriGenerator"))
   {
-    require(_gui != address(0), "Zero address");
+    if (_gui == address(0)) revert ZeroAddr();
     uriGenerator = CawProfileURI(_gui);
   }
 
@@ -217,7 +233,7 @@ contract CawProfile is
   }
 
   function mint(uint32 cawNetworkId, address owner, string memory username, uint32 newId, uint256 lzTokenAmount) public payable {
-    require(minter == _msgSender(), "Not minter");
+    if (minter != _msgSender()) revert NotMinter();
     usernames.push(username);
     _mint(owner, newId);
 
@@ -250,7 +266,7 @@ contract CawProfile is
     uint32 cawNetworkId, address owner, string memory username, uint32 newId,
     uint32 lzDestId, uint256 lzTokenAmount, bytes calldata sessionExtra
   ) public payable {
-    require(minter == _msgSender(), "Not minter");
+    if (minter != _msgSender()) revert NotMinter();
     usernames.push(username);
     _mint(owner, newId);
 
@@ -313,7 +329,7 @@ contract CawProfile is
     uint32 cawNetworkId, address owner, string memory username, uint32 newId,
     uint256 depositAmount, uint32 lzDestId, uint256 lzTokenAmount, bytes calldata sessionExtra
   ) public payable {
-    require(minter == _msgSender(), "Not minter");
+    if (minter != _msgSender()) revert NotMinter();
     usernames.push(username);
     _mint(owner, newId);
 
@@ -402,7 +418,7 @@ contract CawProfile is
   function _refundUnusedLzEth(uint256 amount) internal {
     if (amount == 0) return;
     (bool ok, ) = msg.sender.call{value: amount}("");
-    require(ok, "Refund failed");
+    if (!(ok)) revert RefundFailed();
   }
 
   /// @notice Withdraw accrued fees as CAW. Swaps the network's ETH fees + the matching protocol
@@ -422,14 +438,14 @@ contract CawProfile is
   /// @param networkId The network whose fees to withdraw.
   /// @param minCawOut Minimum total CAW the swap must produce (sandwich protection).
   function withdrawFeesFor(uint32 networkId, uint256 minCawOut) external {
-    require(networkManager.getNetworkOwner(networkId) == msg.sender, "Not network owner");
+    if (networkManager.getNetworkOwner(networkId) != msg.sender) revert NotNetOwner();
     address feeAddress = networkManager.getNetwork(networkId).feeAddress;
     _withdrawFees(feeAddress, minCawOut);
   }
 
   function _withdrawFees(address feeAddress, uint256 minCawOut) internal {
     uint256 networkAmount = accruedFees[feeAddress];
-    require(networkAmount > 0, "No fees");
+    if (networkAmount == 0) revert NoFees();
 
     uint256 protocolPool = accruedFees[address(buyAndBurn)];
     uint256 protocolAmount = networkAmount < protocolPool ? networkAmount : protocolPool;
@@ -472,7 +488,7 @@ contract CawProfile is
   }
 
   function authenticate(uint32 cawNetworkId, uint32 tokenId, uint32 lzDestId, uint256 lzTokenAmount) external payable {
-    require(ownerOf(tokenId) == msg.sender, "Not owner");
+    if (ownerOf(tokenId) != msg.sender) revert NotOwner();
 
     (uint256 fee, address feeAddress) = networkManager.getAuthFeeAndAddress(cawNetworkId);
     uint256 lzEthAmount = msg.value - payFee(fee, feeAddress);
@@ -512,7 +528,7 @@ contract CawProfile is
     // as subscribed to chains the owner never opted into, plus auth them
     // to networks they didn't pick. Require a non-zero deposit so the caller
     // at least has economic skin in the game. Audit fix 2026-05-08 (M-2).
-    require(amount > 0, "Zero deposit amount");
+    if (amount == 0) revert ZeroDeposit();
 
     chosenChainIds[tokenId].add(uint256(lzDestId));
     CAW.transferFrom(msg.sender, address(this), amount);
@@ -544,7 +560,7 @@ contract CawProfile is
   }
 
   function deposit(uint32 cawNetworkId, uint32 tokenId, uint256 amount, uint32 lzDestId, uint256 lzTokenAmount) public payable {
-    require(ownerOf(tokenId) == msg.sender, "Not owner");
+    if (ownerOf(tokenId) != msg.sender) revert NotOwner();
     depositFor(cawNetworkId, tokenId, amount, lzDestId, lzTokenAmount);
   }
 
@@ -578,9 +594,9 @@ contract CawProfile is
 
   /// @notice Withdraw CAW to any address. Only callable by the token owner.
   function withdrawTo(uint32 cawNetworkId, uint32 tokenId, address recipient, uint256 lzTokenAmount) public payable {
-    require(ownerOf(tokenId) == msg.sender, "Not owner");
-    require(withdrawable[tokenId] > 0, "Nothing to withdraw");
-    require(recipient != address(0), "Zero address");
+    if (ownerOf(tokenId) != msg.sender) revert NotOwner();
+    if (withdrawable[tokenId] == 0) revert NothingToWithdraw();
+    if (recipient == address(0)) revert ZeroAddr();
 
     uint256 amount = withdrawable[tokenId];
     totalCaw -= withdrawable[tokenId];
@@ -629,7 +645,7 @@ contract CawProfile is
    * @param lzTokenAmount LZ token amount for fees (usually 0)
    */
   function syncTransfer(uint32 lzDestId, uint256 lzTokenAmount) external payable {
-    require(updatesNeededForPeer(lzDestId) > 0, "No pending");
+    if (updatesNeededForPeer(lzDestId) == 0) revert NoPending();
     _updateNewOwners(lzDestId, msg.value, lzTokenAmount);
   }
 
@@ -795,7 +811,7 @@ contract CawProfile is
     }
 
     // Ensure the selector corresponds to an expected function to prevent unauthorized actions
-    require(isAuthorizedFunction(decodedSelector), "Unauthorized");
+    if (!(isAuthorizedFunction(decodedSelector))) revert Unauthorized();
 
     // Call the function using the selector and arguments.
     //
@@ -816,7 +832,7 @@ contract CawProfile is
     if (!success) {
       // If the returndata is empty, use a generic error message
       if (returnData.length == 0) {
-        revert("Delegatecall failed");
+        revert DelegateFailed();
       } else {
         // Bubble up the revert reason
         assembly {

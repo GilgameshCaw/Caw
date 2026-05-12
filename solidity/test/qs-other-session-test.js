@@ -24,6 +24,21 @@ const MockLayerZeroEndpoint = artifacts.require("MockLayerZeroEndpoint");
 const truffleAssert = require('truffle-assertions');
 const { signTypedData, SignTypedDataVersion } = require('@metamask/eth-sig-util');
 
+// Custom-error revert helper — see multi-layer-test.js for full explanation.
+// 0.8.30 contracts use `revert E()` instead of `require(cond, "msg")`; the
+// 4-byte selector surfaces in err.message and we assert on it exactly.
+function _errorSelector(sig) { return web3.utils.keccak256(sig).slice(0, 10); }
+async function expectRevertWithCustomError(promise, errorSig) {
+  const sel = _errorSelector(errorSig);
+  let didRevert = false;
+  let actualMsg = '';
+  try { await promise; } catch (e) { didRevert = true; actualMsg = e.message || String(e); }
+  if (!didRevert) throw new Error(`Expected revert with ${errorSig} (${sel}), but call succeeded`);
+  if (!actualMsg.toLowerCase().includes(sel.toLowerCase())) {
+    throw new Error(`Expected revert with ${errorSig} (${sel}), got: ${actualMsg}`);
+  }
+}
+
 const l1 = 30101;
 const l2 = 8453;
 
@@ -363,13 +378,14 @@ contract('CawActions — qs: / qx: OTHER session register/revoke', function (acc
   // Direct call to registerSessionFromActions from non-CawActions reverts
   // --------------------------------------------
   it('rejects direct calls to registerSessionFromActions / revokeSessionFromActions', async function () {
-    await truffleAssert.reverts(
+    // Both should revert with NotCa() since msg.sender isn't CawActions.
+    await expectRevertWithCustomError(
       setup.cawProfileL2.registerSessionFromActions(userA, sessionKeyEoa, futureExpiry, '1', 0),
-      "!ca"
+      'NotCa()'
     );
-    await truffleAssert.reverts(
+    await expectRevertWithCustomError(
       setup.cawProfileL2.revokeSessionFromActions(userA, sessionKeyEoa),
-      "!ca"
+      'NotCa()'
     );
   });
 

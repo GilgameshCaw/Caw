@@ -16,6 +16,36 @@ const MockLayerZeroEndpoint = artifacts.require("MockLayerZeroEndpoint");
 const truffleAssert = require('truffle-assertions');
 
 // ============================================
+// Custom-error revert assertion helpers
+// ============================================
+// 0.8.30 contracts use `revert CustomError()` instead of `require(cond, "msg")`.
+// Hardhat/Truffle surface the unknown 4-byte selector in err.message as:
+//   "reverted with an unrecognized custom error (return data: 0x<selector>...)"
+// These helpers compute the expected selector and assert it appears verbatim
+// in the message — so a test that expected "Not owner" now asserts the exact
+// `NotOwner()` selector, not just "some revert".
+function errorSelector(sig) {
+  return web3.utils.keccak256(sig).slice(0, 10); // 0x + 4 bytes
+}
+async function expectRevertWithCustomError(promise, errorSig) {
+  const sel = errorSelector(errorSig);
+  let didRevert = false;
+  let actualMsg = '';
+  try {
+    await promise;
+  } catch (e) {
+    didRevert = true;
+    actualMsg = e.message || String(e);
+  }
+  if (!didRevert) {
+    throw new Error(`Expected revert with ${errorSig} (${sel}), but call succeeded`);
+  }
+  if (!actualMsg.toLowerCase().includes(sel.toLowerCase())) {
+    throw new Error(`Expected revert with ${errorSig} (${sel}), got: ${actualMsg}`);
+  }
+}
+
+// ============================================
 // Packed action format helpers
 // ============================================
 function packActionsForContract(signedActions) {
@@ -1412,18 +1442,13 @@ contract("CawProfile - Transfer & Replication Gas", function(accounts) {
     this.timeout(60000);
 
     // Use a peer eid that has no pending transfers
-    var shouldFail = false;
-    try {
-      await localCawProfiles.syncTransfer(99999, 0, {
+    await expectRevertWithCustomError(
+      localCawProfiles.syncTransfer(99999, 0, {
         from: accounts[0],
         value: web3.utils.toWei('0.001', 'ether'),
-      });
-    } catch (e) {
-      shouldFail = true;
-      var errorMsg = e.reason || e.message || '';
-      expect(errorMsg).to.include('No pending');
-    }
-    expect(shouldFail).to.equal(true, "syncTransfer should fail with no pending transfers");
+      }),
+      'NoPending()'
+    );
 
     console.log("syncTransfer no pending test passed");
   });
@@ -2064,12 +2089,12 @@ contract("CawProfile - depositFor", function(accounts) {
 
     await localToken.approve(localCawProfiles.address, depositAmount, { from: accounts[2] });
 
-    await expectRevert(
+    await expectRevertWithCustomError(
       localCawProfiles.deposit(1, tokenId, depositAmount, l2, 0, {
         from: accounts[2],
         value: web3.utils.toWei('1', 'ether'),
       }),
-      "Not owner"
+      'NotOwner()'
     );
 
     console.log("deposit() still rejects non-owner");
@@ -2533,12 +2558,10 @@ contract("CawProfile - Buy and Burn", function(accounts) {
   it("withdrawFees() reverts with no accrued fees", async function() {
     this.timeout(60000);
 
-    try {
-      await localCawProfiles.withdrawFees(0, { from: accounts[2] });
-      assert.fail("Should have reverted");
-    } catch (err) {
-      assert(err.message.includes("No fees"), "Expected revert but got: " + err.message);
-    }
+    await expectRevertWithCustomError(
+      localCawProfiles.withdrawFees(0, { from: accounts[2] }),
+      'NoFees()'
+    );
     console.log("no-fees-reverts: PASS");
   });
 
@@ -3009,13 +3032,13 @@ contract("CawProfileMinter - Bundled Quick Sign", function(accounts) {
 
     var quote = await localQuoter.mintAndAuthAndQuickSignQuote(l1NetworkId, l1, false, sessionKey);
 
-    await expectRevert(
+    await expectRevertWithCustomError(
       localMinter.mintAndAuthAndQuickSign(
         l1NetworkId, 'qsexp2', l1, 0,
         sessionKey, pastExpiry, web3.utils.toWei('1000', 'ether'), 0, // perActionTipRate
         { from: accounts[1], value: (BigInt(quote.nativeFee)).toString() }
       ),
-      "expired"
+      'Expired()'
     );
 
     console.log("rejects expired expiry (bypassLZ mintAndAuth path)");
