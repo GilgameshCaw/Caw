@@ -133,19 +133,19 @@ const MainLayout = ({ children, hideSidebars: hideSidebarsProp }: MainLayoutProp
         <div className={`w-full max-w-[1050px] ${themeLayoutShell(isDark)}`} />
       </div>
     )}
-    <div className={`min-h-screen w-full flex [--app-mobile-header-h:calc(4rem+env(safe-area-inset-top))] transition-colors duration-300 relative z-[1] ${
+    <div className={`min-h-screen w-full flex [--app-mobile-header-h:calc(3rem+max(env(safe-area-inset-top),1rem))] transition-colors duration-300 relative z-[1] ${
       hideSidebars
         ? (isDark ? 'bg-black' : 'bg-gray-100')
         : `max-w-[1050px] m-auto ${themeLayoutShell(isDark)}`
     }`}>
-      {/* Mobile Header. pt extends the header BG up under the iOS status
-          bar (apple-mobile-web-app-status-bar-style is black-translucent,
-          so the viewport bleeds into that strip); the icon row stays
-          below the inset by virtue of being inside the padded box. On
-          devices/browsers where the inset is 0 the value collapses and
-          the header sits flush at top-0 — same as before. */}
+      {/* Mobile Header. pt-top uses max(inset, 1rem) — NOT inset+1rem —
+          so on iOS the icon row pads exactly to the safe-area edge (just
+          below the translucent URL chrome), while on Android/desktop the
+          inset is 0 and the original 1rem padding takes over. Adding
+          padding ON TOP of the inset produces a visible black strip
+          between the URL bar and the icons. */}
       {!hideSidebars && (
-        <div className={`md:hidden fixed top-0 left-0 right-0 z-[9999] flex items-center justify-center px-4 pb-4 pt-[calc(env(safe-area-inset-top)+1rem)] border-b w-screen overflow-hidden transition-all duration-300 ${
+        <div className={`md:hidden fixed top-0 left-0 right-0 z-[9999] flex items-center justify-center px-4 pb-4 pt-[max(env(safe-area-inset-top),1rem)] border-b w-screen overflow-hidden transition-all duration-300 ${
           isDark ? 'bg-black border-white/10' : 'bg-white border-gray-200'
         }`}>
           <button
