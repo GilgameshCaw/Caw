@@ -159,17 +159,18 @@ Like social recovery, the on-chain version requires a smart account. The off-cha
 
 ### ERC-4337 + passkey-signed smart accounts
 
-The "wallet that doesn't need a seed phrase at all" path. Considered and deferred at the top of the plan: per-user smart account deploy on L1 is meaningfully expensive, and EntryPoint UserOp overhead taxes every action.
+**Update: this is now the v1 plan, not a future option.** See [`ERC4337_REASSESSMENT.md`](ERC4337_REASSESSMENT.md).
 
-**Status update (post-Fusaka, Dec 2025):** EIP-7951 — the secp256r1 precompile that makes passkey signature verification cheap on L1 — is now live on mainnet. This drops on-chain P-256 verification from ~330K gas to ~3.5K gas, removing the single biggest specific objection in earlier analysis. The remaining costs (smart-account deploy per user, EntryPoint overhead per action) are still real, but the gap to "viable on L1" is much narrower than when this plan was first written. See [`docs/ERC4337_REASSESSMENT.md`](ERC4337_REASSESSMENT.md) for a fresh cost analysis.
+Originally deferred for L1 cost reasons (per-user smart account deploy, UserOp overhead, expensive on-chain P-256 verification). The picture changed:
 
-Worth revisiting if any of these change:
-- The re-analysis concludes the L1 economics now pencil out for our user mix.
-- CawProfile ever moves to / is mirrored on an L2 (where 4337 has always been cheaper).
-- A meaningful fraction of users specifically request a no-seed-no-backup-blob option and the cost is justifiable.
-- Account-abstraction tooling matures further (some L2s already render the smart account invisible in UX).
+- **EIP-7702** (Pectra, May 2025) replaces "deploy a smart account per user" with a one-time ~12.5K gas authorization that delegates an EOA's code. No per-user deploy, no factory, no address migration.
+- **EIP-7951** (Fusaka, Dec 2025) shipped the secp256r1 precompile on L1. On-chain passkey verification dropped from ~330K gas to ~3.5K gas.
+- **ERC-1271 fallback is already in `CawActions`** (audited 2026-05). Smart-EOA-signed actions work in the existing contracts.
+- **The validator service is already close to a bundler**, so we don't have to build one from scratch.
 
-For now: noted, not built — pending the re-analysis.
+In this design the passkey *is* the wallet. The original ECDSA key still exists as a sealed-emergency backup (encrypted + cloud-mirrored, password-gated) for the "lost iCloud entirely" failure case. But the day-to-day signing path is Face ID → passkey → on-chain verification via EIP-7951 precompile. No password to remember in normal use.
+
+This document still describes the **password + encrypted blob** path because it remains the fallback for browsers/devices without passkey-prf support, and because the underlying primitives (Argon2id, AES-GCM, hardware-backed key wrapping) are reused as the storage layer for the sealed-emergency ECDSA backup key in the passkey-primary design.
 
 ## Sanity checks during development
 

@@ -43,9 +43,18 @@ A thin native shell around the existing `client/src/services/FrontEnd` web app, 
 
 The web app talks to the native wallet through an EIP-1193-shaped bridge, so existing wagmi connectors work unchanged.
 
-## Why not ERC-4337 + passkeys (revisit pending)
+## The path: 7702 + passkey-signer
 
-Initially rejected for L1 cost reasons (smart-account deploy per user, UserOp overhead, and at the time no cheap on-chain P-256 verification). The Fusaka upgrade (Dec 2025) shipped EIP-7951, which collapsed on-chain passkey verification from ~330K gas to ~3.5K gas — removing the biggest specific objection. The remaining costs are real but narrower than before. A fresh cost analysis lives in [`docs/ERC4337_REASSESSMENT.md`](docs/ERC4337_REASSESSMENT.md); the plan in this directory still reflects the EOA-wallet path until that re-analysis lands a different conclusion.
+Original analysis rejected ERC-4337 for L1 cost reasons (deploy-per-user, UserOp overhead, no cheap P-256 verification). That analysis was anchored on a pre-Pectra mental model. Updated picture, post-Pectra (May 2025) and post-Fusaka (Dec 2025):
+
+- **EIP-7702** replaces "deploy a smart account per user" with "delegate an EOA's code via a ~12.5K gas authorization." Same address, same key, gains programmable signing.
+- **EIP-7951** is live on L1 mainnet — on-chain passkey verification dropped from ~330K gas to ~3.5K gas.
+- **ERC-1271 fallback is already in `CawActions`** (audited 2026-05). Smart-EOA-signed actions work today.
+- **Per-tokenId session scoping** is the one mandatory contract change before deploy — see [`docs/CONTRACT_CHANGES_V1.md`](docs/CONTRACT_CHANGES_V1.md).
+
+v1 ships 7702 + passkey-signer as the primary flow. Encrypted-blob + password stays as a fallback for browsers without passkey-prf. Validators absorb bundler + paymaster duties (they already do 80% of that job). Full re-analysis in [`docs/ERC4337_REASSESSMENT.md`](docs/ERC4337_REASSESSMENT.md).
+
+The encrypted-blob-only plan is preserved in the other docs in this directory as the *fallback* design and as the reference for how key custody works in environments without passkey support.
 
 ## Documentation
 

@@ -91,44 +91,60 @@ The existing `native/` plan is built around an EOA wallet with passkey-prf wrapp
 - The **session key system** — gets *better*. Today, registering a session key requires an L1 EIP-712 signature from the EOA (one biometric prompt). With 7702 + passkey signers, session-key registration is itself a passkey signature, verifiable on-chain via the precompile. The CawProfile contract may need a small update to accept this (recognize that valid signatures from a delegated smart EOA come from the passkey, not the EOA's original ECDSA key — depends on whether the existing `ecrecover` path is sufficient or whether we need ERC-1271 fallback verification).
 - The **multi-frontend `sign.caw.social` pattern** — also unchanged. The popup-broker just signs UserOps instead of raw EIP-712 payloads.
 
-## Open questions before committing
+## What's already in the contracts (verified 2026-05)
 
-These are real and need answers before we redo the plan:
+After actually reading the code, several "open questions" I'd flagged are already answered:
 
-1. **Does `CawActions._verifySignatureMem` work with 7702-delegated accounts?** The existing code does `ecrecover` and compares to `ownerOf(senderId)`. If the owner is a 7702-delegated EOA, the EOA's address is unchanged, so `ecrecover` against an ECDSA-signed action still works. But a *passkey-signed* action wouldn't be ecrecoverable to that address — we'd need ERC-1271 `isValidSignature` fallback, which means a contract change. **This is the load-bearing question; everything else is downstream.**
+1. **ERC-1271 fallback in CawActions: already implemented and audited.** `CawActions._verifySignatureMem` (lines 1320-1357) and `_verifyBatchSignature` (lines 1375+) have a cold-path ERC-1271 fallback at line 1349. If `ownerOf(senderId)` is a contract (or 7702-delegated EOA, which has `code.length > 0`), the action verification calls `isValidSignature` on the owner with the full EIP-712 digest. This was an audit fix dated 2026-05-08. **7702 + passkey-signer accounts can already sign CAW actions today, as long as the smart EOA implements `isValidSignature` correctly.** No contract change needed for this.
 
-2. **Which 7702 delegate implementation do we use?** Audit posture, signer flexibility, session-key support, recovery hooks — all vary. Worth a focused 1-week evaluation.
+2. **Expired-session-fallthrough is closed.** A real subtle attack: if a profile is contract-owned (Safe, 7702 smart EOA) and the contract's `isValidSignature` would also approve a session key whose on-chain record is expired, the 1271 fallback would silently elevate the expired session to full owner authority. The audit fix at line 1343 explicitly reverts on `expiry != 0` before reaching the 1271 path. This invariant must be preserved by any new code.
 
-3. **What's the bundler / paymaster operational story?** Self-host vs. rent. Either is fine; this is a cost-vs-control call.
+3. **Session-on-transfer is solved via epoch bump.** `ownerSessionEpoch[owner]` increments on every outbound ownership transfer; `validSession()` zeroes out stale-epoch records. So wallet-scoped sessions don't "leak" to a new owner. The CL-4 audit fix from a prior pass.
 
-4. **How does cross-chain (L2 action processing, archive chains) interact with 7702?** EIP-7702 authorizations are per-chain. The user's L1 EOA being a smart EOA doesn't automatically make their L2 address one. For action processing this is probably fine (actions are EIP-712 signed off-chain and submitted by validators; the user's signature is what's checked, not the on-chain account type). But worth verifying explicitly.
+What is **not** in yet:
 
-5. **What about non-modern browsers / older devices?** Passkey + prf support is good on modern stacks but not universal. The fallback story (password + secp256k1) needs to remain as a parallel path for users who can't use passkeys.
+- **Per-tokenId session scoping.** Sessions are still wallet-scoped only — one session key registered for a wallet has authority over every profile that wallet currently owns. The epoch bump means future profiles acquired *after* registration don't inherit the session, but profiles owned *at registration time* all do. For the multi-profile / multi-frontend / external-app-delegation use cases the manifesto describes, this is too coarse. **This is the one contract change that's load-bearing to make before deploy.** Spec at [`CONTRACT_CHANGES_V1.md`](CONTRACT_CHANGES_V1.md).
 
-## Recommendation
+## Open operational questions (not contract-blocking)
 
-**Don't redo the v1 plan around this.** Reasons:
+These don't need pre-deploy answers but should be decided before v1 ships:
 
-- The EOA-only plan answers question #1 (no contract changes needed) by construction. We can ship it without touching `CawActions` or `CawProfile`.
-- 7702 + passkey-signer is genuinely better but adds dependencies (bundler, paymaster, delegate contract audit, possible CawActions update). Each is tractable; the bundle of them is a real project.
-- Most of the v1 plan is reusable verbatim. We're not throwing anything away by shipping it.
+1. **Which 7702 delegate implementation do we use?** Audit posture, signer flexibility, session-key support. Candidates: OpenZeppelin reference impl, Daimo's passkey-first account, Biconomy Nexus, Safe's 7702 module. Daimo is probably the closest match for "passkey is the primary signer."
 
-**Do plan for v2 around this.** Reasons:
+2. **Bundler / paymaster operational story.** Per the validator-service review: today's ValidatorService is 80% of a bundler-paymaster already. It holds a hot ETH wallet, takes off-chain signed actions, batches them, submits them on-chain. Extending it to accept UserOps for the L1 7702 upgrade + session registration is a real but bounded extension (probably 1-2 weeks). Beats running a third-party bundler.
 
-- The recovery story is meaningfully better. No password-can-be-forgotten failure mode for users who stay on Apple/Google ecosystems.
-- The signing UX is meaningfully better. Passkey-as-signer means no "unlock vault" step at all on cold start — Face ID directly produces an on-chain-verifiable signature.
-- The on-ramp narrative is meaningfully cleaner. "Tap Apple Pay, then Face ID to enable posting" can become "tap Apple Pay" — the same Face ID that authorized the purchase also authorized the smart-EOA upgrade and session-key registration as part of the bundled UserOps.
+3. **Cross-chain interaction with 7702.** EIP-7702 authorizations are per-chain. The user's L1 EOA being smart doesn't make their L2 address smart. For action processing this is fine (actions are EIP-712-signed off-chain and validated via ERC-1271 on the action-processing L2, which already works). The user *could* also delegate their L2 address, but it's not required — and probably shouldn't be, since L2 actions don't benefit much from passkey signing once session keys are doing the day-to-day signing anyway.
 
-**Sequence:**
-1. **v1**: ship the existing EOA + passkey-prf wrapping plan. Native + browser. No contract changes.
-2. **v1.5 (during v1 hardening)**: answer the open questions above. Specifically, audit `CawActions._verifySignatureMem` against 7702-delegated owners and decide if a contract change is needed.
-3. **v2**: ship the 7702 + passkey-signer upgrade as an opt-in for existing users and the default for new users. Existing users keep their address; their EOA gains passkey signing in place. This is *the* selling point of 7702 — no migration, just an upgrade tx.
+4. **Fallback for non-modern browsers / older devices.** Passkey + prf isn't universal. We keep the password-encrypted blob path as a parallel option for users who can't use passkeys. It's no longer the headline flow.
 
-## What I got wrong before
+## Recommendation: go straight to 7702 + passkey-signer for v1
 
-The original plan said "ERC-4337 is too expensive on L1, defer to L2." That was correct as of when it was written but it was already partially obsolete:
+Earlier I recommended shipping the encrypted-blob path first and treating 7702 as v2. Updated view: **the contracts are in better shape than I realized (ERC-1271 already in), and the validator service is closer to a bundler than I realized, so the gap between the two paths is much smaller than my original analysis suggested.**
 
-- Pectra (May 2025, ~12 months before this analysis) had already made 7702 available. I didn't surface it because the original analysis framed everything around "smart account deploy per user," which is the pre-7702 model. 7702 reframes 4337 from "deploy a contract per user" to "upgrade an EOA in place," which has fundamentally different economics.
-- Fusaka (Dec 2025) then resolved the P-256 verification cost. I caught this one but should have caught the 7702 part earlier — it predated the original plan, not the other way around.
+Specifically:
+- The "load-bearing contract question" (does ERC-1271 work?) was already answered before this conversation started.
+- The "load-bearing infra question" (do we need to build a bundler?) is answered "no, extend the validator service."
+- The "load-bearing audit question" (write a smart-EOA contract?) is answered "no, pick an existing audited one."
 
-The decision to ship the EOA-only path first is still defensible — it's simpler, ships faster, requires no contract changes — but it should be framed as "v1 is the conservative path, v2 unlocks substantially better UX" rather than "smart accounts are too expensive." The cost framing was true; it's no longer the load-bearing reason.
+What's left is real but bounded:
+- Per-tokenId session contract changes (pre-deploy, mandatory regardless of v1/v2 choice — see next doc).
+- Audit/integrate a chosen 7702 delegate.
+- Extend ValidatorService for UserOp submission + paymaster accounting.
+- Wallet code: passkey-as-signer flow.
+- Keep encrypted-blob + password as fallback path for browsers without passkey-prf.
+
+This is roughly 4-6 weeks more than the encrypted-blob-only v1, but saves a v2 migration entirely and gives non-crypto users the genuinely better UX from day one.
+
+**Plan:**
+1. **Pre-deploy contract work** (mandatory regardless of v1 plan): per-tokenId session scoping. See [`CONTRACT_CHANGES_V1.md`](CONTRACT_CHANGES_V1.md).
+2. **v1 (the new v1)**: ship 7702 + passkey-signer as the primary path, encrypted-blob + password as the fallback for users without passkey-prf support.
+3. **v2**: polish, optimize, multi-app delegation flows, hardware-wallet support for high-value users.
+
+## What I got wrong, twice
+
+For the record so this doesn't keep happening:
+
+- The original plan said "ERC-4337 is too expensive on L1, defer to L2." That was correct for the **pre-7702 model** but EIP-7702 had already been live for ~12 months when I wrote it. I didn't surface it because I was anchored on "smart account deploy per user," which is the wrong frame post-Pectra.
+- The first revision of this doc said "we need to verify if `CawActions._verifySignatureMem` supports 7702 — this is the load-bearing question." Wrong again — ERC-1271 was already in the contract, with a recent audit comment I could have seen on a careful read. The lesson: when a question is contract-shaped, **read the contract** before declaring it open.
+
+Net: the recommendation tightens from "ship the conservative path first" to "ship the right path, the contracts are ready, the validator service is closer than I thought." The cost ratio changed because the unknowns turned out to mostly be already-knowns.
