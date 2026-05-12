@@ -40,6 +40,7 @@ router.get('/status', requireAuth({ anySession: true }), async (req, res) => {
         reason: true,
         senderId: true,
         payload: true,
+        batchId: true,
       }
     })
 
@@ -50,12 +51,70 @@ router.get('/status', requireAuth({ anySession: true }), async (req, res) => {
           id: entry.id,
           status: entry.status,
           reason: entry.reason,
+          // batchId travels on every row so the FE retry path can find
+          // sibling thread members on a single TxQueue failure (the user
+          // doesn't have to retry each post in the thread separately).
+          batchId: entry.batchId,
           // Include senderId and payload for failed entries so the client can auto-retry
           ...(entry.status === 'failed' ? { senderId: entry.senderId, payload: entry.payload } : {}),
         }))
     })
   } catch (err: any) {
     console.error('GET /api/txqueue/status error', err)
+    res.status(500).json({ error: 'Internal error' })
+  }
+})
+
+/**
+ * Return every TxQueue row that shares a batchId, regardless of status.
+ * The FE uses this when a batched action (thread post) fails so it can
+ * retry the WHOLE thread atomically — not just the failed-and-clicked
+ * row. Without this, the user would have to manually re-trigger each
+ * thread member individually, and historically the sibling members
+ * would silently stay dead in the queue.
+ *
+ * Caller must own the senderId (anySession auth + payload owner check).
+ * Bounded at the natural batch cap (256 actions per batch on the
+ * /api/actions/batch endpoint).
+ */
+router.get('/batch/:batchId',
+  requireAuth({ anySession: true }),
+  async (req, res) => {
+  try {
+    const batchId = parseInt(req.params.batchId, 10)
+    if (isNaN(batchId)) {
+      return res.status(400).json({ error: 'Invalid batchId' })
+    }
+
+    const entries = await prisma.txQueue.findMany({
+      where: { batchId },
+      select: {
+        id: true,
+        senderId: true,
+        cawonce: true,
+        status: true,
+        reason: true,
+        payload: true,
+        createdAt: true,
+      },
+      orderBy: { cawonce: 'asc' },
+    })
+
+    if (entries.length === 0) {
+      return res.json({ entries: [] })
+    }
+
+    // Authorization: every row in a batch shares the same senderId
+    // (enforced at /api/actions/batch creation time), so check the
+    // first row's owner against the caller's authorized tokens.
+    const authorized = new Set((req.sessionData?.authorizedTokenIds || []) as number[])
+    if (!authorized.has(entries[0].senderId)) {
+      return res.status(403).json({ error: 'Not authorized for this batch' })
+    }
+
+    res.json({ entries })
+  } catch (err: any) {
+    console.error('GET /api/txqueue/batch error', err)
     res.status(500).json({ error: 'Internal error' })
   }
 })

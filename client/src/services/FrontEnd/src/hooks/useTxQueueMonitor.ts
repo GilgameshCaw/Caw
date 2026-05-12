@@ -8,7 +8,7 @@ import { useQuickSignRenewStore } from '~/components/modals/QuickSignRenewModal'
 import { useSessionKeyStore } from '~/store/sessionKeyStore'
 import { privateKeyToAccount } from 'viem/accounts'
 import { useAutoRetryStore } from '~/store/autoRetryStore'
-import { TYPES, DOMAIN, allocateCawonces } from '~/api/actions'
+import { TYPES, DOMAIN, allocateCawonces, retryBatchByBatchId } from '~/api/actions'
 
 // Track retry counts per TxQueue ID to prevent infinite loops.
 // Persisted to sessionStorage so retries don't reset on page refresh.
@@ -98,14 +98,46 @@ export function useTxQueueMonitor() {
             usePendingSpendStore.getState().removePendingSpend(status.id)
             processedIds.current.add(status.id)
 
-            // Show session renewal modal for session-related failures
-            if (reason.includes('session expired') || (reason.includes('session') && reason.includes('not found'))) {
+            // Show session renewal modal for session-related failures.
+            // When the failed row is part of a batched thread (status.batchId
+            // is set), wire an onRetry that resubmits the WHOLE batch via
+            // retryBatchByBatchId — otherwise the user has to manually
+            // re-trigger each thread member individually and siblings
+            // historically stayed dead in the queue (incident 2026-05-12:
+            // TxQueue 64476 retried, sibling 64477 abandoned). Single-row
+            // failures get the original no-retry behaviour.
+            //
+            // "Session expired or not found" classification has a known
+            // false-positive variant (per memory feedback_session_check_decode_failure) —
+            // most of the time the user's session IS valid, the retry
+            // just needs a fresh cawonce and the actions land cleanly.
+            const isSessionFailure = reason.includes('session expired') ||
+              (reason.includes('session') && reason.includes('not found'))
+            const isSpendLimitFailure = reason.includes('spend limit')
+            if (isSessionFailure || isSpendLimitFailure) {
               const sessionStore = useSessionKeyStore.getState()
               if (sessionStore.enabled) {
-                useQuickSignRenewStore.getState().show('expired')
+                const failedBatchId = status.batchId ?? null
+                const failedRowId = status.id
+                const onRetry = failedBatchId
+                  ? async () => {
+                      try {
+                        const result = await retryBatchByBatchId(failedBatchId, failedRowId)
+                        if (result.resubmitted > 0) {
+                          console.log(`[TxQueueMonitor] Batch retry recovered ${result.resubmitted} row(s) for batch ${failedBatchId}`)
+                        } else {
+                          console.log(`[TxQueueMonitor] Batch retry no-op (${result.reason ?? 'unknown'}) for batch ${failedBatchId}`)
+                        }
+                      } catch (err) {
+                        console.warn(`[TxQueueMonitor] Batch retry threw for batch ${failedBatchId}:`, err)
+                      }
+                    }
+                  : undefined
+                useQuickSignRenewStore.getState().show(
+                  isSpendLimitFailure ? 'spend_limit' : 'expired',
+                  onRetry,
+                )
               }
-            } else if (reason.includes('spend limit')) {
-              useQuickSignRenewStore.getState().show('spend_limit')
             } else if (reason.includes('cawonce already used')) {
               // Cawonce collision — auto-retry with a fresh cawonce using Quick Sign.
               // Each txqueue ID gets exactly one retry attempt.

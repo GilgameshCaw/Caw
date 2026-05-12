@@ -1308,7 +1308,21 @@ router.post('/', async (req, res) => {
  */
 router.post('/batch', async (req, res) => {
   try {
-    const { actions, pendingDepositTxHash, batchSig, domain: batchDomain, types: batchTypes } = req.body
+    const { actions, pendingDepositTxHash, batchSig, domain: batchDomain, types: batchTypes, retriedTxQueueIds } = req.body
+
+    // Validate retriedTxQueueIds shape if provided. Optional — only present
+    // when this batch is a retry of a previously-failed batch (the FE's
+    // retryBatchByBatchId path). When set, every id listed will be flipped
+    // to status='retried' inside the transaction below, AND each one's
+    // ACTION_FAILED notification will be hidden so the user doesn't see a
+    // stale "your post failed" entry alongside the new in-flight posts.
+    let parsedRetryIds: number[] | null = null
+    if (retriedTxQueueIds != null) {
+      if (!Array.isArray(retriedTxQueueIds) || !retriedTxQueueIds.every((v: any) => Number.isInteger(v) && v > 0)) {
+        return res.status(400).json({ error: 'Invalid retriedTxQueueIds: expected array of positive integers' })
+      }
+      parsedRetryIds = retriedTxQueueIds.map((v: any) => Number(v))
+    }
 
     if (!Array.isArray(actions) || actions.length === 0) {
       return res.status(400).json({ error: 'Expected non-empty actions array' })
@@ -1562,6 +1576,32 @@ router.post('/batch', async (req, res) => {
       let created: any
       try {
         created = await prisma.$transaction(async (tx) => {
+        // Step 0: if this batch is a retry, atomically mark every
+        // original failed row as 'retried' BEFORE inserting the new
+        // batch. Same pattern as the single-action retriedTxQueueId
+        // path, just over a list. Scoped by senderId so a hostile
+        // caller can't flip rows that belong to a different user.
+        if (parsedRetryIds && parsedRetryIds.length > 0) {
+          const updated = await tx.txQueue.updateMany({
+            where: {
+              id: { in: parsedRetryIds },
+              senderId: firstSenderId,
+              status: 'failed',
+            },
+            data: { status: 'retried' },
+          })
+          if (updated.count !== parsedRetryIds.length) {
+            // Not fatal — the batch still goes through. Some originals
+            // may have already transitioned (e.g. recovered to done by
+            // the validator's pre-sim peer-mirror check, or marked
+            // retried by a parallel retry path). Log so we notice
+            // pattern drift; the FE still gets a clean submission.
+            console.warn(`[Actions/batch] retriedTxQueueIds: requested ${parsedRetryIds.length}, marked ${updated.count}; some originals likely already in a non-failed state.`)
+          } else {
+            console.log(`[Actions/batch] Marked ${updated.count} TxQueue rows as retried (batch retry)`)
+          }
+        }
+
         // Step 1: insert all TxQueue rows. Forward pendingDepositTxHash so
         // the validator parks them as waiting_for_deposit until LZ lands
         // client authentication on L2.
@@ -1728,6 +1768,28 @@ router.post('/batch', async (req, res) => {
           }
         }
         insertIdx++
+      }
+
+      // Hide ACTION_FAILED notifications for every retried original.
+      // The FE retryBatchByBatchId also hides the one it actually clicked,
+      // but siblings would otherwise leave stale "failed" entries in the
+      // user's notification feed. Best-effort: a failure here is non-fatal.
+      if (parsedRetryIds && parsedRetryIds.length > 0) {
+        try {
+          await prisma.notification.updateMany({
+            where: {
+              type: 'ACTION_FAILED',
+              userId: firstSenderId,
+              actionPayload: {
+                path: ['originalTxQueueId'],
+                in: parsedRetryIds,
+              },
+            },
+            data: { hidden: true },
+          })
+        } catch (hideErr: any) {
+          console.warn(`[Actions/batch] Could not hide ACTION_FAILED notifications for retried batch:`, hideErr?.message)
+        }
       }
     }
 

@@ -610,8 +610,11 @@ const DatabaseAdmin: React.FC = () => {
 
           {error && <div className="text-red-400 text-sm mb-3">{error}</div>}
 
-          {/* Table */}
-          <div className={`rounded-xl border overflow-hidden ${card}`}>
+          {/* Table — horizontal scroll for wide column sets (TxQueue, Action,
+              etc. have ~10 columns and easily exceed viewport width on
+              laptops). overflow-x:auto keeps the border-rounding visible
+              while letting the row contents scroll independently. */}
+          <div className={`rounded-xl border overflow-x-auto ${card}`}>
             <table className="w-full text-sm">
               <thead>
                 <tr className={isDark ? 'bg-white/5' : 'bg-gray-50'}>
