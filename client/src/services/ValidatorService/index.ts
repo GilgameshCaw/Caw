@@ -862,6 +862,69 @@ export const validatorService: Service = {
         take: 256,
       })
 
+      // Cross-mirror redundancy pre-check. The FE fans out every signed
+      // action to peer mirrors; both mirrors race to submit the same
+      // action, the chain picks one. The loser used to simulate the
+      // action, get "Cawonce already used" back, and recover via
+      // resolveCawonceUsed. That works but costs an eth_call per row
+      // every poll until either the indexer catches up or the budget
+      // expires — significant waste during a multi-user storm.
+      //
+      // Shortcut: if our local Action table already has a row for
+      // (senderId, cawonce) AND its content matches our payload, this
+      // action was already processed by some validator. Mark this row
+      // done immediately and skip simulation entirely. resolveCawonceUsed
+      // would have reached the same verdict; this just gets there
+      // without burning the RPC call.
+      const dedupedCandidates: typeof candidates = []
+      for (const candidate of candidates) {
+        const data = (candidate.payload as any)?.data
+        if (!data || candidate.cawonce == null) {
+          dedupedCandidates.push(candidate)
+          continue
+        }
+        const existingAction = await prisma.action.findFirst({
+          where: { senderId: candidate.senderId, cawonce: candidate.cawonce },
+        })
+        if (!existingAction) {
+          dedupedCandidates.push(candidate)
+          continue
+        }
+        const ex = existingAction.data as any
+        const dataTextPlain = decompressActionText(data.text)
+        const sameAction =
+          Number(ex?.actionType ?? -1) === Number(data.actionType) &&
+          Number(ex?.receiverId ?? -1) === Number(data.receiverId ?? 0) &&
+          Number(ex?.receiverCawonce ?? -1) === Number(data.receiverCawonce ?? 0) &&
+          (ex?.text ?? '') === dataTextPlain
+        if (sameAction) {
+          console.log(`[Validator] TxQueue ${candidate.id}: action already on chain (peer mirror submitted) — marking done without simulation`)
+          await prisma.txQueue.update({
+            where: { id: candidate.id },
+            data: { status: 'done', reason: null },
+          })
+          // Mirror the SUCCESS state to optimistic Caw rows so the FE
+          // stops showing pending.
+          if (data.actionType === 0 || data.actionType === 'caw' || data.actionType === 3 || data.actionType === 'recaw') {
+            await prisma.caw.update({
+              where: { userId_cawonce: { userId: data.senderId, cawonce: data.cawonce } },
+              data: { status: 'SUCCESS' },
+            }).catch(() => {})
+          }
+          continue
+        }
+        // Action row exists but for a different action — let the
+        // normal flow handle it (will hit "Cawonce already used"
+        // during sim, then mark failed via resolveCawonceUsed →
+        // 'failed' for a genuine different-action collision).
+        dedupedCandidates.push(candidate)
+      }
+      // Shadow `candidates` with the filtered list so the rest of
+      // this function (bounded-batch builder + downstream sim) sees
+      // only entries that still need work. `candidates` was declared
+      // const above; rebind via a fresh let in this scope.
+      const remainingCandidates = dedupedCandidates
+
       // Bound the batch by estimated calldata size. With packed format, each
       // action is ~25 bytes fixed + 65 bytes sig = 90 bytes + text + arrays.
       // Cap at 120KB to leave margin below the 128KB protocol tx size limit.
@@ -895,8 +958,8 @@ export const validatorService: Service = {
         return PER_ACTION_OVERHEAD + textLen + recipientsLen + amountsLen
       }
 
-      for (let i = 0; i < candidates.length; i++) {
-        const entry = candidates[i]
+      for (let i = 0; i < remainingCandidates.length; i++) {
+        const entry = remainingCandidates[i]
         const sz = entrySize(entry)
 
         if (bounded.length > 0 && runningSize + sz > MAX_BATCH_CALLDATA_BYTES) {
@@ -908,9 +971,9 @@ export const validatorService: Service = {
             // Drop the partial group from `bounded`.
             bounded.length = currentGroup.startIdx
             runningSize -= currentGroup.bytes
-            console.log(`[Validator] Rolling back partial batch group ${currentGroup.batchId} (${candidates.length - currentGroup.startIdx} rows) to next poll — calldata would overflow`)
+            console.log(`[Validator] Rolling back partial batch group ${currentGroup.batchId} (${remainingCandidates.length - currentGroup.startIdx} rows) to next poll — calldata would overflow`)
           } else {
-            console.log(`[Validator] Batch size limit reached at ${bounded.length} entries (~${runningSize} bytes). Deferring ${candidates.length - bounded.length} entries to next poll.`)
+            console.log(`[Validator] Batch size limit reached at ${bounded.length} entries (~${runningSize} bytes). Deferring ${remainingCandidates.length - bounded.length} entries to next poll.`)
           }
           break
         }
