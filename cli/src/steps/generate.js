@@ -363,7 +363,16 @@ function buildEnvVars(nodeType, config) {
   const env = {}
   const net = NETWORKS[config.network || 'testnet']
 
-  env.DATABASE_URL = config.dbUrl || 'postgresql://postgres:postgres@127.0.0.1:5432/caw'
+  // Append Prisma pool params if the operator-supplied URL doesn't already
+  // carry them. Default connection_limit (num_physical_cpus * 2 + 1, usually
+  // 9 on a 4-core box) is too low for this app — one process runs the API,
+  // validator, indexer, watchers, and the action processor concurrently, so
+  // 20 connections is the right floor. pool_timeout=20 (default 10) gives
+  // transactions room to breathe before throwing P2024 during bursts.
+  const baseDbUrl = config.dbUrl || 'postgresql://postgres:postgres@127.0.0.1:5432/caw'
+  env.DATABASE_URL = baseDbUrl.includes('connection_limit=') || baseDbUrl.includes('pool_timeout=')
+    ? baseDbUrl
+    : `${baseDbUrl}${baseDbUrl.includes('?') ? '&' : '?'}connection_limit=20&pool_timeout=20`
   env.REDIS_URL = config.redisUrl || 'redis://127.0.0.1:6379'
   env.ELASTICSEARCH_NODE = config.elasticsearchNode || 'http://127.0.0.1:9200'
 
@@ -635,7 +644,14 @@ function buildPm2Config(nodeType, config, installDir) {
       // source of truth for which port this install's API listens on.
       // config.json's Api.port should match (we set both from config.apiPort).
       env: { NODE_ENV: 'production', PORT: String(apiPort) },
-      max_memory_restart: '1G',
+      // 2G headroom: the single-process app runs the API + validator +
+      // indexer + watchers in one Node, and the StakeLedger / Action /
+      // CountManager in-memory caches legitimately sit around 1.2-1.5GB
+      // on a populated testnet. 1G was too tight — observed a 333-restart
+      // PM2 loop on test.caw.social 2026-05-12 when steady-state crossed
+      // 1G and PM2 SIGINT'd the process every ~2 min, causing cascading
+      // Prisma pool-exhaustion 500s from the constant cold-restarts.
+      max_memory_restart: '2G',
       error_file: path.join(installDir, 'logs/caw-server-error.log'),
       out_file: path.join(installDir, 'logs/caw-server-out.log'),
       merge_logs: true,
