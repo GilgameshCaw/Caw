@@ -157,6 +157,13 @@ model Caw {
   @@index([originalCawId])
   @@index([originalCawId, action])
   @@index([status, userId])
+  // Covers the dominant profile-feed + main-feed query shape:
+  // `where: { userId, status: 'SUCCESS' } orderBy: { createdAt: desc }`.
+  // The existing `(userId, action, createdAt)` and `(status, userId)`
+  // composites each handle two of the three predicates; this one closes
+  // the index gap so Postgres can serve the query without a sort step.
+  // Audit 2026-05-13.
+  @@index([userId, status, createdAt])
 }
 
 // Poll attached to a Caw. Created in the same transaction as the Caw row by
@@ -271,6 +278,11 @@ model Follow {
   @@unique([followerId, followingId])
   @@index([followerId, status])
   @@index([followingId, status])
+  // Covers the home-feed "is this author in my follows?" check: the feed
+  // join filters by `followerId == me, action='FOLLOW', status='SUCCESS'`,
+  // which the existing `(followerId, status)` indexes only partially.
+  // Audit 2026-05-13.
+  @@index([followerId, action, status])
 }
 
 model Block {
@@ -429,13 +441,16 @@ model Notification {
   caw           Caw?              @relation(fields: [cawId], references: [id], onDelete: Cascade)
   offer         MarketplaceOffer? @relation(fields: [offerId], references: [id], onDelete: Cascade)
   user          User              @relation("NotificationRecipient", fields: [userId], references: [tokenId], onDelete: Cascade)
+  // Note: the previous standalone @@index([createdAt]) was dropped — every
+  // real query path filters by userId first, and the userId-prefixed
+  // composites above already handle every observed read. The lone-column
+  // index just cost write overhead on this append-heavy table. Audit 2026-05-13.
 
   @@index([userId, isRead, createdAt])
   @@index([userId, hidden, createdAt])
   @@index([userId, type])
   @@index([userId, actorId, type])
   @@index([groupKey])
-  @@index([createdAt])
 }
 
 model DmIdentity {
@@ -487,7 +502,9 @@ model Conversation {
   messages      Message[]
   invites       GroupInvite[]
 
-  @@index([lastMessageAt])
+  // Conversations are almost always reached via ConversationParticipant
+  // (userId filter), not by a global lastMessageAt sort, so the
+  // standalone @@index([lastMessageAt]) was dropped. Audit 2026-05-13.
   @@index([creatorId])
 }
 
@@ -520,6 +537,11 @@ model ConversationParticipant {
   @@index([conversationId])
   @@index([userId, status])
   @@index([conversationId, leftAt])
+  // DM inbox queries filter by all three: userId + leftAt IS NULL +
+  // optional status='REQUEST' for the Requests tab. None of the existing
+  // composites cover the multi-filter. Runs on every DM inbox load.
+  // Audit 2026-05-13.
+  @@index([userId, leftAt, status])
 }
 
 enum ConversationParticipantStatus {
@@ -713,6 +735,10 @@ model Tip {
   @@index([recipientId])
   @@index([cawId])
   @@index([pending])
+  // Covers the "tips received on profile" view: filter by recipientId +
+  // pending=false, sort by createdAt desc. Existing indexes only handle
+  // pieces of this. Audit 2026-05-13.
+  @@index([recipientId, pending, createdAt])
 }
 
 enum ActionType {

@@ -1177,37 +1177,42 @@ router.get('/:username/followers', async (req, res) => {
     const followersList = followers.slice(0, limit)
     const nextCursor = hasMore ? followers[limit - 1].id : undefined
 
-    // For each follower, check if current user is following them
-    const items = await Promise.all(followersList.map(async (f) => {
+    // Batch-load the current user's follow relationships in one query
+    // instead of issuing N findUnique calls (one per follower). At a
+    // typical page size of 50 followers this drops 50 DB round-trips
+    // to 1. Audit fix 2026-05-13.
+    const followingMap = new Map<number, { action: string; status: string }>()
+    if (currentUserId) {
+      const targetIds = followersList
+        .map(f => f.follower.tokenId)
+        .filter(id => id !== currentUserId)
+      if (targetIds.length > 0) {
+        const follows = await prisma.follow.findMany({
+          where: { followerId: currentUserId, followingId: { in: targetIds } },
+          select: { followingId: true, action: true, status: true },
+        })
+        for (const f of follows) {
+          followingMap.set(f.followingId, { action: f.action, status: f.status })
+        }
+      }
+    }
+
+    const items = followersList.map((f) => {
       let isFollowing = false
       let followPending = false
-
       if (currentUserId && currentUserId !== f.follower.tokenId) {
-        const follow = await prisma.follow.findUnique({
-          where: {
-            followerId_followingId: {
-              followerId: currentUserId,
-              followingId: f.follower.tokenId
-            }
-          },
-          select: {
-            action: true,
-            status: true
-          }
-        })
-
+        const follow = followingMap.get(f.follower.tokenId)
         if (follow) {
           isFollowing = follow.action === 'FOLLOW' && follow.status === 'SUCCESS'
           followPending = follow.status === 'PENDING'
         }
       }
-
       return {
         ...f.follower,
         isFollowing,
         followPending
       }
-    }))
+    })
 
     // Filter out blocked users
     let filtered = items
@@ -1275,37 +1280,40 @@ router.get('/:username/following', async (req, res) => {
     const followingList = following.slice(0, limit)
     const nextCursor = hasMore ? following[limit - 1].id : undefined
 
-    // For each following user, check if current user is following them
-    const items = await Promise.all(followingList.map(async (f) => {
+    // Same batch-load pattern as the /followers endpoint above —
+    // one findMany instead of N findUnique. Audit fix 2026-05-13.
+    const followingMap = new Map<number, { action: string; status: string }>()
+    if (currentUserId) {
+      const targetIds = followingList
+        .map(f => f.following.tokenId)
+        .filter(id => id !== currentUserId)
+      if (targetIds.length > 0) {
+        const follows = await prisma.follow.findMany({
+          where: { followerId: currentUserId, followingId: { in: targetIds } },
+          select: { followingId: true, action: true, status: true },
+        })
+        for (const f of follows) {
+          followingMap.set(f.followingId, { action: f.action, status: f.status })
+        }
+      }
+    }
+
+    const items = followingList.map((f) => {
       let isFollowing = false
       let followPending = false
-
       if (currentUserId && currentUserId !== f.following.tokenId) {
-        const follow = await prisma.follow.findUnique({
-          where: {
-            followerId_followingId: {
-              followerId: currentUserId,
-              followingId: f.following.tokenId
-            }
-          },
-          select: {
-            action: true,
-            status: true
-          }
-        })
-
+        const follow = followingMap.get(f.following.tokenId)
         if (follow) {
           isFollowing = follow.action === 'FOLLOW' && follow.status === 'SUCCESS'
           followPending = follow.status === 'PENDING'
         }
       }
-
       return {
         ...f.following,
         isFollowing,
         followPending
       }
-    }))
+    })
 
     // Filter out blocked users
     let filtered = items
