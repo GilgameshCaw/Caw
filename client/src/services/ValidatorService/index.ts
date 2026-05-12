@@ -4021,9 +4021,15 @@ console.log("succeededKeys", succeededKeys)
               // source chain (endpoint + payload encoding). 200k + 60k/cp
               // with a buffer.
               const gasLimit = 200_000n + 60_000n * BigInt(notYetDelivered.length)
+              // LZ fee buffer: 150%, not 120%. Slashing-adjacent path — if
+              // the relay tx fails due to a fee underpayment, the challenge
+              // doesn't deliver and a fraudulent submission can finalize
+              // unchallenged. 50% over the quoted fee covers LZ-fee spikes
+              // during destination-chain congestion. Audit fix 2026-05-13
+              // (validator V4).
               const relayTx = await relayContract.relayChallengeBatch(
                 L2B_EID, submissionId, clientId, notYetDelivered,
-                { value: quote.nativeFee * 120n / 100n, gasLimit },
+                { value: quote.nativeFee * 150n / 100n, gasLimit },
               )
               const relayReceipt = await relayTx.wait()
               console.log(`[Monitor] Challenge batch relayed (${reason}) for submission ${submissionId} cps=[${notYetDelivered.join(',')}]. tx: ${relayReceipt?.hash}`)
