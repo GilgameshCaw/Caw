@@ -15,13 +15,16 @@ const FORK_BLOCK = process.env.FORK_BASE_SEPOLIA_BLOCK ? Number(process.env.FORK
 /** @type import('hardhat/config').HardhatUserConfig */
 module.exports = {
   solidity: {
-    version: "0.8.22",
+    version: "0.8.30",
     settings: {
       viaIR: true,
       optimizer: {
         enabled: true,
         runs: 1,
       },
+      // Pin to Cancun — see truffle-config.js for rationale; must match
+      // exactly so Truffle and Hardhat produce identical bytecode.
+      evmVersion: "cancun",
     },
   },
   networks: {
