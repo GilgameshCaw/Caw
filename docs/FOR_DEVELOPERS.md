@@ -6,11 +6,12 @@ This page is a builder's index. It's organized by *what you want to do*, not by 
 
 ## What's possible
 
-Three orthogonal axes that can be mixed freely:
+Four orthogonal axes that can be mixed freely:
 
 1. **Run infrastructure.** Validator nodes (submit user actions on chain, earn tips), front-end servers (serve a UI rooted in the protocol), indexers (consume the event stream for your own purposes). The protocol is permissionless — anyone can run any of these.
-2. **Build a frontend.** A CAW frontend reads from a node's indexed DB and writes by signing actions. It can be a Twitter-like reader, a niche feed for one community, a wallet UI for an existing app, or anything else that wants on-chain social presence.
-3. **Build smart-contract extensions.** Contracts can own profile NFTs, author actions, hold balances, accept tips, and act on incoming actions trustlessly. This is how prediction markets, GameFi, launchpads, multisig accounts, and DEX-via-tips get built **without changing the core protocol**.
+2. **Run your own network.** A "network" is a top-level on-chain namespace: its own fees, its own action-processing L2, its own validator/instance registry, its own social graph. You register one by calling `createNetwork` on `CawNetworkManager`. Networks coexist on the same protocol — users can post to any network, and validators can serve any network they choose to relay for.
+3. **Build a frontend.** A CAW frontend reads from a node's indexed DB and writes by signing actions. It can be a Twitter-like reader, a niche feed for one community, a wallet UI for an existing app, or anything else that wants on-chain social presence.
+4. **Build smart-contract extensions.** Contracts can own profile NFTs, author actions, hold balances, accept tips, and act on incoming actions trustlessly. This is how prediction markets, GameFi, launchpads, multisig accounts, and DEX-via-tips get built **without changing the core protocol**.
 
 CAW handles the data and identity layer. Funds movement through tips is a core primitive. **Conditional payouts** (escrow, oracle resolution, randomness) and **complex on-chain logic** live in extension contracts — buildable on top, never in the core.
 
@@ -33,8 +34,8 @@ Validators batch and submit user-signed actions to the action-processing L2. The
 You don't have to be a validator to run a node — you can run just the indexer + API + frontend if you only want to serve content. Same setup process; just don't fund the validator wallet.
 
 - **Setup**: [`client/README.md`](../client/README.md).
-- **What a "network" is**: each frontend operator registers a `network` in the on-chain `CawNetworkManager`. The network picks its own action-processing L2 and archive chain at runtime — the protocol doesn't pin you to one. Multiple networks coexist; users can post to any of them.
 - **Reading the event stream**: [`docs/DATA_FLOW.md`](./DATA_FLOW.md) shows the action → DB pipeline.
+- **Which network to serve**: see the next section.
 
 ### Run a search / analytics indexer
 
@@ -46,7 +47,70 @@ The protocol emits `ActionsProcessed(bytes packedActions)` per submission. The b
 
 ---
 
-## 2. Build a frontend
+## 2. Run your own network
+
+A **network** is a top-level on-chain namespace registered in `CawNetworkManager`. Each network has its own social graph (profiles, actions, tips), its own fee schedule, its own action-processing L2, and its own validator/instance registry. Running a network is how you start a *new* CAW deployment with its own identity, branding, and economics — distinct from existing networks but still using the same protocol contracts and the same CAW token.
+
+You'd run your own network if you want:
+- A branded social space for a specific community, project, or product.
+- Different fee economics (lower mint fees, higher tip splits, etc.) than the default network.
+- Control over which action-processing L2 your users post on (latency, cost, sovereignty).
+- A clean indexable slice of the protocol for analytics or downstream services.
+
+### Creating a network
+
+Call `CawNetworkManager.createNetwork(name, feeAddress, storageChainEid, withdrawFee, depositFee, authFee, mintFee)` on L1. Anyone can call it. The caller becomes the `ownerAddress` and the network is assigned the next `nextNetworkId`. Fees can be updated later (until the owner calls `lockFees`), and ownership can be transferred or renounced.
+
+```solidity
+// Example — register a new network using Base Sepolia as the action chain
+CawNetworkManager(networkManagerAddr).createNetwork(
+  "My Network Name",
+  myFeeReceiver,
+  baseSepoliaEid,
+  withdrawFeeInCaw,
+  depositFeeInCaw,
+  authFeeInCaw,
+  mintFeeInCaw
+);
+```
+
+### Running the infrastructure for it
+
+Once your network exists on chain, point your validator + frontend + indexer at it:
+- **Validator service**: set `CLIENT_ID` (legacy env var name; it's the network id) to your new network's id. Validators submit actions tagged with your network's id to the `storageChainEid` you chose.
+- **Frontend**: configure the UI to read from your indexer and write actions with your `networkId` baked into the EIP-712 payload.
+- **Instance registry**: optionally call `registerInstance(networkId, apiUrl, validatorAddress)` so users running other frontends can discover your API endpoint on chain. This is what makes the network self-describing — a fresh client install can boot with just an L1 RPC and find everything it needs.
+
+### Lockdown options (trust-minimized networks)
+
+Network owners can independently freeze fees and ownership:
+- `lockNetworkFees(networkId)` — fees become immutable forever. No one can change them, including the owner.
+- `lockNetworkOwnership(networkId)` — ownership becomes immutable. Equivalent to renounce.
+
+Locking both is how a network signals "this is genuinely trust-minimized" to its users. The one thing that stays mutable is the per-selector cross-chain gas override (`MAX_GAS_OVERRIDE`, hard-capped at 100,000 gas), needed because the protocol has no global admin to fix future LZ gas miscalibrations. Grief surface is bounded to a single network's users and is scoped in dollar terms to fractions of a cent at typical L2 gas prices.
+
+### Replication and archive
+
+Replication targets are **per-validator configuration**, not on-chain state. A validator chooses which networks to replicate via the `REPLICATE_CLIENT_IDS` env var (legacy naming — these are network ids). As a network owner you don't pick "which validators replicate me" — you make it economically attractive (via your fee schedule and tip volume) for validators to choose to relay your network. See [`docs/REPLICATION_AND_SLASHING.md`](./REPLICATION_AND_SLASHING.md).
+
+### What's shared vs. per-network
+
+| Thing | Shared (protocol) | Per-network |
+|---|---|---|
+| CAW token, profile NFTs | ✅ | |
+| Action contracts (`CawActions`) | ✅ (one per L2) | |
+| EIP-712 verification, hash chain | ✅ | |
+| Profile namespace | ✅ (a username is unique across the protocol) | |
+| Action-processing L2 | | ✅ |
+| Fee schedule + fee receiver | | ✅ |
+| Owner, lockdown flags, gas overrides | | ✅ |
+| Validator + frontend choice | | ✅ |
+
+The shared layer is what makes interop possible — a profile on Network A is the same NFT as a profile on Network B, and CAW deposited on one network is the same CAW. The per-network layer is what gives operators meaningful sovereignty.
+
+---
+
+## 3. Build a frontend
 
 The reference React frontend lives at `client/src/services/FrontEnd/`. Build on top of it, or write your own — anything that can sign EIP-712 messages can post to CAW.
 
@@ -76,7 +140,7 @@ For non-crypto-native users: fiat on-ramp + biometric-encrypted wallet keys mean
 
 ---
 
-## 3. Build smart-contract extensions
+## 4. Build smart-contract extensions
 
 Smart contracts can fully participate in CAW: own profile NFTs, author actions, hold balances, accept tips, and react to incoming actions trustlessly. This is how prediction markets, GameFi, launchpads, and other on-chain extensions get built on top of CAW without changes to the core protocol.
 
