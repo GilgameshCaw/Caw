@@ -351,6 +351,65 @@ export async function decryptBinary(encrypted: Uint8Array, sharedSecret: CryptoK
   return new Uint8Array(decrypted)
 }
 
+/**
+ * Generate a fresh AES-256 key for one-shot use (e.g. encrypting a single
+ * attachment binary). Returns both the raw 32-byte material and the
+ * imported CryptoKey. The raw bytes get sealed per recipient via
+ * `sealKeyForRecipients`; the CryptoKey is what `encryptBinary` consumes.
+ *
+ * extractable=true on the imported key so the raw form survives a round-
+ * trip through web crypto if a caller ever needs to re-derive — but the
+ * usual flow keeps the original `raw` and discards the CryptoKey after
+ * the binary is encrypted.
+ */
+export async function generateRandomAesKey(): Promise<{ raw: Uint8Array; key: CryptoKey }> {
+  const raw = crypto.getRandomValues(new Uint8Array(32))
+  const key = await crypto.subtle.importKey('raw', raw, { name: 'AES-GCM' }, false, ['encrypt', 'decrypt'])
+  return { raw, key }
+}
+
+/**
+ * Seal a raw AES key once per recipient using per-pair ECDH. Output shape
+ * matches `encryptForRecipients` (Record<userId, base64Ciphertext>) but
+ * the plaintext is 32 random bytes instead of message text. The receiver
+ * unseals with their own pair key, then uses the recovered raw key to
+ * decrypt the (single, shared) attachment ciphertext.
+ *
+ * Why per-recipient: same reasoning as text. The image binary is
+ * encrypted ONCE with a random key, then the *key* is sealed N times.
+ * This is cheap (32 bytes × N) and keeps the storage shape symmetric
+ * with text — every recipient extracts their own slot.
+ */
+export async function sealKeyForRecipients(
+  rawKey: Uint8Array,
+  myPrivateKey: Uint8Array,
+  members: { userId: number; publicKey: string }[],
+): Promise<Record<number, string>> {
+  // Reuse `encrypt` (which takes a string plaintext) by base64-encoding
+  // the raw bytes — keeps the wire format identical to text payloads.
+  const rawB64 = uint8ArrayToBase64(rawKey)
+  const out: Record<number, string> = {}
+  for (const m of members) {
+    const pairKey = await computeSharedSecretForPeer(myPrivateKey, m.userId, m.publicKey)
+    out[m.userId] = await encrypt(rawB64, pairKey)
+  }
+  return out
+}
+
+/**
+ * Reverse of `sealKeyForRecipients`: unseal the recipient's slot with
+ * their pair key, then re-import the raw bytes as an AES-GCM CryptoKey
+ * ready for `decryptBinary`.
+ */
+export async function unsealAttachmentKey(
+  sealedBase64: string,
+  pairKey: CryptoKey,
+): Promise<CryptoKey> {
+  const rawB64 = await decrypt(sealedBase64, pairKey)
+  const raw = base64ToUint8Array(rawB64)
+  return crypto.subtle.importKey('raw', raw, { name: 'AES-GCM' }, false, ['encrypt', 'decrypt'])
+}
+
 // --- Utility functions ---
 
 function hexToBytes(hex: string): Uint8Array {

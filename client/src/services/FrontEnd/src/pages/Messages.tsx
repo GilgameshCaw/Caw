@@ -44,6 +44,8 @@ import MessageSearch from '~/components/MessageSearch'
 import GifPicker from '~/components/GifPicker'
 import EncryptedImage from '~/components/EncryptedImage'
 import { useDmFileUpload } from '~/hooks/useDmFileUpload'
+import { getCachedPrivateKey } from '~/services/DmCryptoService'
+import MentionAutocomplete from '~/components/MentionAutocomplete'
 import { useBlockedUsersStore } from '~/store/blockedUsersStore'
 import { useDmMuteStore } from '~/store/dmMuteStore'
 import MuteConfirmModal from '~/components/modals/MuteConfirmModal'
@@ -121,6 +123,11 @@ const MessagesPage: React.FC = () => {
   const [currentView, setCurrentView] = useState<'inbox' | 'chat' | 'setup' | 'signin'>('inbox')
   const [selectedConversationId, setSelectedConversationId] = useState<string | null>(null)
   const [newMessageContent, setNewMessageContent] = useState('')
+  // Tracks the composer's caret index so MentionAutocomplete can detect
+  // an in-progress @mention. Kept in sync on every keyboard / input
+  // event below; reset to end-of-string after sends so the next message
+  // starts clean.
+  const [composerCursor, setComposerCursor] = useState(0)
   const pendingMessageRef = useRef<string | null>(null)
   const [showChatOptionsMenu, setShowChatOptionsMenu] = useState(false)
   const [showSearchModal, setShowSearchModal] = useState(false)
@@ -468,6 +475,24 @@ const MessagesPage: React.FC = () => {
     return selectedConversation.participants.find(p => p.userId !== currentUser?.id)
   }, [selectedConversation, currentUser])
 
+  // Surface conversation participants first in the mention picker — the
+  // people most likely being addressed inside a chat. Excludes self (you
+  // can't @ yourself in a DM you're already part of). Shape matches the
+  // remote /api/users/search response so the autocomplete merges them
+  // without branching.
+  const mentionPriorityUsers = useMemo(() => {
+    if (!selectedConversation) return []
+    return selectedConversation.participants
+      .filter(p => p.userId !== currentUser?.id)
+      .map(p => ({
+        tokenId: p.userId,
+        username: p.identity.user.username,
+        displayName: p.identity.user.displayName,
+        avatarUrl: p.identity.user.avatarUrl || undefined,
+        image: p.identity.user.image,
+      }))
+  }, [selectedConversation, currentUser])
+
   // Function to handle conversation selection
   const handleConversationSelect = (conversationId: string) => {
     // Leave previous conversation room
@@ -616,17 +641,33 @@ const MessagesPage: React.FC = () => {
 
   // Actually encrypt and send the staged file
   const handleSendFile = async () => {
-    if (!filePreview || !selectedConversationId || !currentUser?.id) return
+    if (!filePreview || !selectedConversationId || !currentUser?.id || !selectedConversation) return
     setUploadError(null)
 
     try {
-      const secret = await getSharedSecret()
-      if (!secret) {
-        setUploadError('Cannot encrypt: encryption key not available')
+      const myPrivateKey = getCachedPrivateKey()
+      if (!myPrivateKey) {
+        setUploadError('Cannot encrypt: DM identity key not available')
         return
       }
 
-      const attachment = await uploadEncryptedFile(filePreview.file, secret, currentUser.id)
+      // Build the recipients list. For groups: every active member with
+      // a publicKey (incl. self for reload self-decrypt). For DMs: peer
+      // + self. Shape is uniform so the receiver doesn't branch.
+      const recipients = selectedConversation.participants
+        .filter(p => !!p.publicKey)
+        .map(p => ({ userId: p.userId, publicKey: p.publicKey as string }))
+      if (recipients.length === 0) {
+        setUploadError('No recipient identities available — they may not have DMs enabled yet.')
+        return
+      }
+
+      const attachment = await uploadEncryptedFile(
+        filePreview.file,
+        myPrivateKey,
+        recipients,
+        currentUser.id,
+      )
       if (!attachment) return
 
       const msg = JSON.stringify({ msgType: 'encrypted-attachment', ...attachment })
@@ -662,9 +703,32 @@ const MessagesPage: React.FC = () => {
     }
   }
 
+  // Replace the current @query with the picked username and re-position
+  // the caret just past the inserted mention.
+  const handleMentionSelect = (username: string, startPos: number, endPos: number) => {
+    const before = newMessageContent.slice(0, startPos)
+    const after = newMessageContent.slice(endPos)
+    const insert = `@${username} `
+    const next = before + insert + after
+    setNewMessageContent(next)
+    const nextCaret = startPos + insert.length
+    setComposerCursor(nextCaret)
+    // Restore the cursor in the textarea on the next tick (state update
+    // is batched; the DOM value hasn't reflected `next` yet).
+    requestAnimationFrame(() => {
+      const ta = composerTextareaRef.current
+      if (!ta) return
+      ta.focus()
+      ta.setSelectionRange(nextCaret, nextCaret)
+    })
+  }
+
   // Handle typing indicator
   const handleInputChange = (value: string) => {
     setNewMessageContent(value)
+    // Keep caret in sync; onChange fires before onSelect on some browsers.
+    const ta = composerTextareaRef.current
+    if (ta) setComposerCursor(ta.selectionStart ?? value.length)
 
     if (!selectedConversationId) return
 
@@ -2075,12 +2139,31 @@ const MessagesPage: React.FC = () => {
                                   // with the same inline-floated time
                                   // pattern that text messages use.
                                   const decryptFailed = encryptedAttachmentFailures.has(message.id)
+                                  // Look up this recipient's sealed-key slot
+                                  // and the sender's publicKey. Sender is
+                                  // always a participant of this conversation;
+                                  // for self-sent attachments the sender's
+                                  // own pubkey is on `currentUser` (we still
+                                  // unseal via ECDH(myPriv, myPub) which yields
+                                  // a deterministic valid AES key).
+                                  const mySlot = parsed.sealedKeys?.[currentUser?.id ?? -1]
+                                  const senderParticipant = selectedConversation?.participants.find(p => p.userId === message.senderId)
+                                  const senderPub = senderParticipant?.publicKey || null
+                                  if (!mySlot || !senderPub) {
+                                    return (
+                                      <div className="text-xs text-red-400 p-2 rounded bg-red-900/20">
+                                        Attachment unavailable (no sealed key for this recipient)
+                                      </div>
+                                    )
+                                  }
                                   if (decryptFailed) {
                                     return (
                                       <div className={`whitespace-pre-wrap break-words min-w-0`}>
                                         <EncryptedImage
                                           url={parsed.url}
-                                          sharedSecret={chatSharedSecret}
+                                          sealedKey={mySlot}
+                                          senderTokenId={message.senderId}
+                                          senderPublicKey={senderPub}
                                           mimeType={parsed.mimeType}
                                           alt={parsed.name}
                                         />
@@ -2098,7 +2181,9 @@ const MessagesPage: React.FC = () => {
                                     <div className="relative">
                                       <EncryptedImage
                                         url={parsed.url}
-                                        sharedSecret={chatSharedSecret}
+                                        sealedKey={mySlot}
+                                        senderTokenId={message.senderId}
+                                        senderPublicKey={senderPub}
                                         mimeType={parsed.mimeType}
                                         alt={parsed.name}
                                         className={mt.startsWith('video/')
@@ -2747,12 +2832,28 @@ const MessagesPage: React.FC = () => {
                     }
                   }}
                   rows={1}
+                  onClick={(e) => setComposerCursor(e.currentTarget.selectionStart ?? 0)}
+                  onKeyUp={(e) => setComposerCursor(e.currentTarget.selectionStart ?? 0)}
+                  onSelect={(e) => setComposerCursor((e.target as HTMLTextAreaElement).selectionStart ?? 0)}
                   className={`flex-1 min-w-0 px-3 bg-transparent border-none outline-none resize-none text-left text-base md:text-[15px] overflow-y-auto ${
                     isDark
                       ? 'text-white placeholder-gray-500'
                       : 'text-black placeholder-gray-500'
                   }`}
                   style={{ maxHeight: '96px' }}
+                />
+
+                {/* @mention autocomplete for the DM composer. Surfaces
+                    conversation participants first (priorityUsers) so a
+                    bare "@" inside a DM/group opens a picker of the
+                    other people in the chat; partial queries also hit
+                    the global /api/users/search and dedupe. */}
+                <MentionAutocomplete
+                  text={newMessageContent}
+                  cursorPosition={composerCursor}
+                  onSelect={handleMentionSelect}
+                  textareaRef={composerTextareaRef}
+                  priorityUsers={mentionPriorityUsers}
                 />
 
                 {/* Send button */}

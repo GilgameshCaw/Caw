@@ -1,11 +1,30 @@
 import React, { useEffect, useState } from 'react'
-import { decryptBinary } from '~/services/DmCryptoService'
+import {
+  decryptBinary,
+  unsealAttachmentKey,
+  computeSharedSecretForPeer,
+  getCachedPrivateKey,
+} from '~/services/DmCryptoService'
 import { isCanonicalEncryptedUploadUrl } from '~/utils/uploadUrl'
 import ImageLightbox from './ImageLightbox'
 
 interface EncryptedImageProps {
   url: string
-  sharedSecret: CryptoKey | null
+  /**
+   * The recipient's sealed copy of the per-attachment AES key (base64).
+   * The attachment binary was encrypted ONCE with a random AES key; that
+   * key was then sealed N times — one per recipient. The receiver picks
+   * their slot before passing it here.
+   */
+  sealedKey: string
+  /**
+   * The MESSAGE SENDER's tokenId + publicKey. Used to derive the ECDH
+   * pair key that unseals `sealedKey`. Same pair-key shape that text
+   * messages decrypt with — every recipient unseals their own slot
+   * against the sender, NOT against some single conversation key.
+   */
+  senderTokenId: number
+  senderPublicKey: string
   mimeType?: string
   alt?: string
   className?: string
@@ -17,9 +36,10 @@ interface EncryptedImageProps {
 }
 
 /**
- * Fetches an encrypted blob, decrypts it client-side, and renders as an image.
+ * Fetches an encrypted blob, unseals the per-recipient AES key, decrypts
+ * the blob, and renders as image / GIF / video.
  */
-const EncryptedImage: React.FC<EncryptedImageProps> = ({ url, sharedSecret, mimeType = 'image/webp', alt = 'Encrypted image', className, onError }) => {
+const EncryptedImage: React.FC<EncryptedImageProps> = ({ url, sealedKey, senderTokenId, senderPublicKey, mimeType = 'image/webp', alt = 'Encrypted image', className, onError }) => {
   const [objectUrl, setObjectUrl] = useState<string | null>(null)
   const [error, setError] = useState(false)
   const [loading, setLoading] = useState(true)
@@ -32,7 +52,7 @@ const EncryptedImage: React.FC<EncryptedImageProps> = ({ url, sharedSecret, mime
   const [videoReady, setVideoReady] = useState(false)
 
   useEffect(() => {
-    if (!sharedSecret) return
+    if (!sealedKey || !senderPublicKey) return
 
     let cancelled = false
     let blobUrl: string | null = null
@@ -46,18 +66,25 @@ const EncryptedImage: React.FC<EncryptedImageProps> = ({ url, sharedSecret, mime
         // (https://attacker.tld/track, http://192.168.1.1/admin, etc.)
         // and the receiver's browser would emit a GET that leaks IP/UA
         // or probes their LAN. Mirrors the project-wide URL sanitizer
-        // convention (validate by path shape, not host equality). Audit
-        // fix 2026-05-09 (Round 5 FE/DM CRITICAL-3; Round 6 corrects
-        // the filename width which was incorrectly `{8}` and rejected
-        // every legitimate encrypted attachment).
+        // convention (validate by path shape, not host equality).
         if (!isCanonicalEncryptedUploadUrl(url)) {
           throw new Error('URL does not match the canonical encrypted-upload shape')
         }
 
+        // Derive the ECDH pair key with the sender (cached internally by
+        // sharedSecretByPeer keyed on senderTokenId), then unseal our
+        // per-attachment AES key with it. The binary is encrypted once
+        // and shared by every recipient; only the sealed-key slot is
+        // per-recipient.
+        const myPrivateKey = getCachedPrivateKey()
+        if (!myPrivateKey) throw new Error('DM identity key not available')
+        const pairKey = await computeSharedSecretForPeer(myPrivateKey, senderTokenId, senderPublicKey)
+        const attachmentKey = await unsealAttachmentKey(sealedKey, pairKey)
+
         const response = await fetch(url)
         if (!response.ok) throw new Error('Fetch failed')
         const encrypted = new Uint8Array(await response.arrayBuffer())
-        const decrypted = await decryptBinary(encrypted, sharedSecret)
+        const decrypted = await decryptBinary(encrypted, attachmentKey)
         if (cancelled) return
         const blob = new Blob([decrypted], { type: mimeType })
         blobUrl = URL.createObjectURL(blob)
@@ -79,7 +106,7 @@ const EncryptedImage: React.FC<EncryptedImageProps> = ({ url, sharedSecret, mime
       cancelled = true
       if (blobUrl) URL.revokeObjectURL(blobUrl)
     }
-  }, [url, sharedSecret, mimeType])
+  }, [url, sealedKey, senderTokenId, senderPublicKey, mimeType])
 
   if (loading) {
     return (
