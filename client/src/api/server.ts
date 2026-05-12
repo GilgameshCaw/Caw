@@ -42,9 +42,11 @@ import adminUsersRouter from './routes/admin-users'
 import adminValidatorRouter from './routes/admin-validator'
 import moderationRouter from './routes/moderation'
 import ogRouter from './routes/og'
+import sitemapRouter from './routes/sitemap'
 import rpcProxyRouter from './routes/rpc-proxy'
 import { spaPrerender } from './util/spaPrerender'
 import { cawPath, parseCawIdSlug } from './util/cawUrl'
+import { parseLocaleFromPath, withLocalePrefix } from './util/localePrefix'
 import { getSession } from './sessionStore'
 import { prisma } from '../prismaClient'
 import { Sentry, sentryEnabled } from '../sentry'
@@ -368,6 +370,10 @@ export function createApp() {
   app.use('/api/admin/validator', adminValidatorRouter)
   app.use('/api/moderation', moderationRouter)
   app.use('/api/og', ogRouter)
+  // /sitemap.xml + /robots.txt mounted at root, ahead of the SPA prerender
+  // catch-all. Crawler-only surfaces but routed through Express for both
+  // crawler and user requests since nginx doesn't gate /sitemap.xml.
+  app.use('/', sitemapRouter)
   // FE → backend → upstream RPC. Wagmi config in the FE points at
   // /api/rpc/l1 and /api/rpc/l2; the proxy folds identical reads
   // into one upstream request and caches "latest"-block results for
@@ -381,57 +387,78 @@ export function createApp() {
   })
 
   // 301 canonical redirects for caw URLs, ahead of the SPA prerender.
-  // Three drift cases handled here:
-  //   1. Legacy /caws/:id            → /users/<owner>/caw/<id>-<slug>
-  //   2. Stale username on canonical → /users/<currentOwner>/caw/<id>-<slug>
-  //   3. Missing/stale slug          → /users/<owner>/caw/<id>-<currentSlug>
-  // Lookup is by numeric id only — slug is decorative. Only humans /
-  // crawlers hitting the FE catch-all see this; the /api/* routes above
-  // already short-circuited.
-  app.get(/^\/caws\/(\d+)\/?$/, async (req, res, next) => {
+  // Drift cases handled:
+  //   1. Legacy /caws/:id              → /users/<owner>/caw/<id>-<slug>
+  //   2. Stale username on canonical   → /users/<currentOwner>/caw/<id>-<slug>
+  //   3. Missing/stale slug            → /users/<owner>/caw/<id>-<currentSlug>
+  //   4. /en/... locale prefix         → bare (English is bare-canonical)
+  //   5. /<locale>/caws/:id (legacy under locale prefix) → /<locale>/users/...
+  //   6. /<locale>/users/.../caw/<id-staleslug> → same with current slug
+  // Lookup is by numeric id only — slug is decorative.
+
+  // /en/... explicitly canonicalizes back to bare. English is the bare-URL
+  // locale and we don't want both /en/foo and /foo indexed as separate
+  // pages. ANY path under /en/ qualifies, not just caws.
+  app.get(/^\/en(\/.*)?$/, (req, res, next) => {
+    const rest = req.params[0] || '/'
+    const qs = req.url.includes('?') ? req.url.slice(req.url.indexOf('?')) : ''
+    if (rest === req.path) return next()
+    res.redirect(301, `${rest}${qs}`)
+  })
+
+  // Caw URL redirects — match both bare and locale-prefixed shapes.
+  // (?:\/[a-z]{2,3})? is an optional 2-3 char locale segment; we
+  // validate it via parseLocaleFromPath rather than matching against
+  // the full locale list here.
+  app.get(/^((?:\/[a-z]{2,3})?)\/caws\/(\d+)\/?$/, async (req, res, next) => {
     try {
-      const id = Number(req.params[0])
+      const localeSegment = req.params[0] || ''
+      const id = Number(req.params[1])
       if (!Number.isFinite(id) || id <= 0) return next()
+      const locale = localeSegment ? parseLocaleFromPath(localeSegment + '/x').locale : null
+      // If the prefix looked like a locale but isn't a real one, fall
+      // through — we don't want to invent a redirect for /xx/caws/123.
+      if (localeSegment && !locale) return next()
       const caw = await prisma.caw.findUnique({
         where: { id },
         select: { id: true, content: true, user: { select: { username: true } } },
       })
       if (!caw?.user?.username) return next()
-      const target = cawPath({
+      const bare = cawPath({
         id: caw.id,
         username: caw.user.username,
         content: caw.content,
       })
+      const target = withLocalePrefix(bare, locale)
       const qs = req.url.includes('?') ? req.url.slice(req.url.indexOf('?')) : ''
       res.redirect(301, `${target}${qs}`)
     } catch {
       next()
     }
   })
-  app.get(/^\/users\/([^/]+)\/caw\/([^/]+)\/?$/, async (req, res, next) => {
+
+  app.get(/^((?:\/[a-z]{2,3})?)\/users\/([^/]+)\/caw\/([^/]+)\/?$/, async (req, res, next) => {
     try {
-      const requestedUser = decodeURIComponent(req.params[0])
-      const idSlug = req.params[1]
+      const localeSegment = req.params[0] || ''
+      const idSlug = req.params[2]
       const id = parseCawIdSlug(idSlug)
       if (id == null) return next()
+      const locale = localeSegment ? parseLocaleFromPath(localeSegment + '/x').locale : null
+      if (localeSegment && !locale) return next()
       const caw = await prisma.caw.findUnique({
         where: { id },
         select: { id: true, content: true, user: { select: { username: true } } },
       })
       if (!caw?.user?.username) return next()
-      const target = cawPath({
+      const bare = cawPath({
         id: caw.id,
         username: caw.user.username,
         content: caw.content,
       })
+      const target = withLocalePrefix(bare, locale)
       // Already canonical — pass through to prerender.
       if (target === req.path) return next()
       const qs = req.url.includes('?') ? req.url.slice(req.url.indexOf('?')) : ''
-      // Wrong username, stale slug, or missing slug — 301 to canonical.
-      // Skip the redirect for crawler UAs that we want to serve the page
-      // to directly (they already follow 301s, but the extra hop costs
-      // crawl budget). Actually keep it: Googlebot handles 301 cleanly
-      // and indexes the destination. Same for Twitterbot.
       res.redirect(301, `${target}${qs}`)
     } catch {
       next()

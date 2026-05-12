@@ -1,6 +1,6 @@
 import React, { useState, useRef, useEffect, useLayoutEffect } from 'react'
 import { createPortal } from 'react-dom'
-import { Link } from 'react-router-dom'
+import { Link } from '~/utils/localizedRouter'
 import { useSignAndSubmitAction, buildTypedData, TYPES, allocateCawonces } from '../api/actions'
 
 /** Hard cap on thread length. Must match the API cap in
@@ -1581,7 +1581,7 @@ const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess, placehol
 
   return (
       <div className={`${replyTo ? 'p-2' : 'p-4'} transition-all duration-300 ${isDark ? 'bg-black' : 'bg-white'} ${
-        hasInlineFeedDraft ? 'md:static md:p-4 md:pt-4 fixed left-0 right-0 bottom-0 top-16 z-[60] overflow-y-auto pt-14' : ''
+        hasInlineFeedDraft ? 'md:static md:p-4 md:pt-4 md:pb-4 fixed left-0 right-0 bottom-0 top-16 z-[60] overflow-y-auto pt-14 pb-[calc(env(safe-area-inset-bottom)+90px)]' : ''
       } ${composeMode ? 'flex-1 min-h-0 flex flex-col md:block md:min-h-0' : ''}`}>
       {hasInlineFeedDraft && (
         <button

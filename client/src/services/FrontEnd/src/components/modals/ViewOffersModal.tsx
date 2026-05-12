@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react'
-import { Link } from 'react-router-dom'
+import { Link } from '~/utils/localizedRouter'
 import { useAccount, useChainId, useSwitchChain, useWriteContract, useWaitForTransactionReceipt, useReadContract } from 'wagmi'
 import { readContract } from '@wagmi/core'
 import { useConnectModal } from '@rainbow-me/rainbowkit'

@@ -66,7 +66,24 @@ const QuickSignRenewModal: React.FC = () => {
     try {
       setEnabled(true)
       await createSession((s) => setStatus(s), spendLimit, duration, walletProtect, tipCeiling)
+      // Fire the retry callback BEFORE closing so the caller can stitch
+      // the new session into a queued action. Previously this path
+      // closed the modal without ever invoking onRetry — meaning a
+      // session-expired post-failure surfaced the modal, the user
+      // renewed, the modal closed, and the failed action sat there
+      // forever waiting for the user to manually re-post. The retry
+      // is best-effort: a thrown error doesn't roll back the renewal
+      // (the session IS valid now), just leaves the user with a stale
+      // failed-notification they can click manually.
+      const retry = onRetry
       close()
+      if (retry) {
+        setTimeout(async () => {
+          try { await retry() } catch (err) {
+            console.warn('[QuickSign] onRetry after renew failed:', err)
+          }
+        }, 100)
+      }
     } catch (err: any) {
       console.error('[QuickSign] Renewal failed:', err)
       const msg = err?.message || ''

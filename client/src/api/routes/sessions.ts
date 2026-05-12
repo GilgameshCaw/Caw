@@ -39,7 +39,12 @@ const inFlight = new Set<string>()
 // Max expiry: 1 year
 const MAX_EXPIRY_SECONDS = 365 * 24 * 60 * 60
 
-// Track pending requests for polling
+// Track pending requests for polling. Redis-backed so a server restart
+// mid-request doesn't break the FE's 4-minute poll loop (the FE would
+// otherwise see 404 forever and surface a generic "something went wrong"
+// even though the on-chain tx may have landed in another process or
+// be observable elsewhere). The in-memory Map stays as a write-through
+// cache so same-process polls don't hit Redis on every read.
 type SessionRequest = {
   status: 'waiting_for_sync' | 'submitting' | 'pending' | 'confirmed' | 'failed'
   txHash?: string
@@ -47,6 +52,34 @@ type SessionRequest = {
   error?: string
 }
 const requests = new Map<string, SessionRequest>()
+
+const SESSION_REQUEST_TTL = 10 * 60 // seconds — matches the in-memory cleanup below
+function sessionRequestKey(requestId: string): string {
+  return `session_request:${requestId}`
+}
+async function setSessionRequest(requestId: string, value: SessionRequest): Promise<void> {
+  requests.set(requestId, value)
+  try {
+    await redis.set(sessionRequestKey(requestId), JSON.stringify(value), 'EX', SESSION_REQUEST_TTL)
+  } catch (e) {
+    // Best-effort: a Redis blip shouldn't break the in-process happy path.
+    // The Map write above still gives every poll from THIS process the
+    // current value; only cross-process / cross-restart polls degrade.
+    console.warn('[Sessions] Failed to persist request state to Redis (non-fatal):', e)
+  }
+}
+async function getSessionRequest(requestId: string): Promise<SessionRequest | null> {
+  const cached = requests.get(requestId)
+  if (cached) return cached
+  try {
+    const raw = await redis.get(sessionRequestKey(requestId))
+    if (!raw) return null
+    return JSON.parse(raw) as SessionRequest
+  } catch (e) {
+    console.warn('[Sessions] Failed to read request state from Redis:', e)
+    return null
+  }
+}
 
 // Lazy-initialized provider/wallet
 let _provider: JsonRpcProvider | WebSocketProvider | null = null
@@ -106,7 +139,7 @@ async function processSessionRequest(
   try {
     const cawProfileL2 = getContract()
 
-    requests.set(requestId, { status: 'submitting' })
+    await setSessionRequest(requestId, { status: 'submitting' })
     console.log(`[Sessions] Using contract at: ${CAW_NAMES_L2_ADDRESS}`)
     const sig = ethers.Signature.from(signature)
     const messageBytes = ethers.toUtf8Bytes(message)
@@ -138,11 +171,11 @@ async function processSessionRequest(
     const spendLimit = parseSpendLimitFromMessage(lines[3] || '')
 
     console.log(`[Sessions] Submitted tx: ${tx.hash}`)
-    requests.set(requestId, { status: 'pending', txHash: tx.hash })
+    await setSessionRequest(requestId, { status: 'pending', txHash: tx.hash })
 
     const receipt = await tx.wait()
     console.log(`[Sessions] Confirmed tx ${tx.hash} in block ${receipt.blockNumber}`)
-    requests.set(requestId, { status: 'confirmed', txHash: tx.hash, blockNumber: receipt.blockNumber })
+    await setSessionRequest(requestId, { status: 'confirmed', txHash: tx.hash, blockNumber: receipt.blockNumber })
 
     // Pre-populate the SessionKey table so the user's next action hits the
     // DB fast path instead of falling back to a live RPC call. The L2Events
@@ -219,7 +252,7 @@ async function processSessionRequest(
     } else if (rawLower.includes('nonce') && rawLower.includes('too low')) {
       userError = 'Transaction conflict. Please try again.'
     }
-    requests.set(requestId, { status: 'failed', error: userError })
+    await setSessionRequest(requestId, { status: 'failed', error: userError })
   } finally {
     inFlight.delete(recoveredAddress)
   }
@@ -298,7 +331,7 @@ router.post('/', async (req: any, res: any) => {
 
     // Create request and process in background
     const requestId = randomUUID()
-    requests.set(requestId, { status: 'submitting' })
+    await setSessionRequest(requestId, { status: 'submitting' })
     inFlight.add(recoveredAddress)
 
     processSessionRequest(requestId, recoveredAddress, message, signature)
@@ -316,7 +349,10 @@ router.post('/', async (req: any, res: any) => {
  */
 router.get('/status/:requestId', async (req: any, res: any) => {
   const { requestId } = req.params
-  const tracked = requests.get(requestId)
+  // Falls back to Redis if the in-memory cache is cold (e.g. this process
+  // just restarted while the FE was mid-poll). Returns 404 only when the
+  // request is genuinely unknown to BOTH stores.
+  const tracked = await getSessionRequest(requestId)
   if (!tracked) {
     return res.status(404).json({ error: 'Request not found' })
   }

@@ -613,6 +613,183 @@ export function buildTypedData(params: ActionParams, tipOverride?: bigint) {
 }
 
 /**
+ * Retry every TxQueue row in a batchId group as a single new batch.
+ *
+ * Why this exists: when a thread is submitted via /api/actions/batch
+ * and the validator rejects with a recoverable error (e.g. transient
+ * "Session expired or not found" — see project memories on the
+ * false-positive variants of that classification), every row in the
+ * group ends up status=failed. Retrying via the single-action path
+ * would either (a) leave siblings dead in the queue, or (b) re-sign
+ * each independently — losing the single-batch-sig efficiency the
+ * thread originally had, and risking inconsistent cawonce ordering.
+ *
+ * This re-signs all failed-or-stuck siblings with fresh, contiguous
+ * cawonces under ONE new ActionBatch signature, sends them through
+ * /api/actions/batch, and marks each original as retried. The new
+ * batch is atomic from the validator's perspective.
+ *
+ * Requires an active Quick Sign session for the sender's owner —
+ * the modal-renew flow upstream is expected to have run first.
+ * Skips rows already in done/retried state. Returns the number of
+ * rows that got resubmitted (0 = nothing to do).
+ */
+export async function retryBatchByBatchId(
+  batchId: number,
+  originalTxQueueId: number,
+): Promise<{ resubmitted: number; reason?: string }> {
+  // Fetch every sibling in the batch from the server (we need their
+  // original payloads to re-sign).
+  let entries: Array<{
+    id: number
+    senderId: number
+    cawonce: number
+    status: string
+    payload: any
+  }>
+  try {
+    const res = await apiFetch(`/api/txqueue/batch/${batchId}`)
+    entries = res?.entries ?? []
+  } catch (err: any) {
+    console.warn('[retryBatch] Failed to fetch batch siblings:', err?.message)
+    return { resubmitted: 0, reason: 'fetch-failed' }
+  }
+  if (entries.length === 0) return { resubmitted: 0, reason: 'empty-batch' }
+
+  // Skip rows already terminally resolved by some other path —
+  // only retry pending/failed siblings. If the originally-clicked
+  // row is already done, exit silently (something else recovered).
+  const retryable = entries.filter(e => e.status === 'failed' || e.status === 'pending' || e.status === 'awaiting_indexer')
+  if (retryable.length === 0) return { resubmitted: 0, reason: 'nothing-retryable' }
+
+  const senderId = retryable[0].senderId
+
+  // Look up the session key for the sender's owner. The renew modal
+  // upstream should have re-established this if the failure was a
+  // session-expiry one.
+  const userRes = await apiFetch(`/api/users/by-token/${senderId}`)
+  const ownerAddress = userRes?.address?.toLowerCase()
+  if (!ownerAddress) return { resubmitted: 0, reason: 'no-owner' }
+  const sessionStore = useSessionKeyStore.getState()
+  const session = sessionStore.getSessionForAddress(ownerAddress)
+  if (!session || !sessionStore.enabled || session.expiry < Date.now() / 1000) {
+    return { resubmitted: 0, reason: 'no-active-session' }
+  }
+
+  // Allocate a contiguous block of fresh cawonces for the whole batch.
+  // Using one allocator call here matches what signAndSubmitMany does
+  // on the original submission — the resulting cawonces are sequential
+  // and won't collide with anything else this tab signs.
+  const fresh = await allocateCawonces(senderId, retryable.length)
+  if (fresh.length !== retryable.length) {
+    return { resubmitted: 0, reason: 'cawonce-alloc-short' }
+  }
+
+  // Build typed messages with the fresh cawonces, then ONE ActionBatch
+  // signature covering all of them. Mirrors signAndSubmitMany — kept
+  // duplicated rather than refactored because the retry context (no
+  // tip ceiling lookup, no client-auth precheck, no progress callback,
+  // no per-action pending-spend accounting) is different enough that
+  // sharing the loop body would tangle both paths.
+  const tipCeiling = session.tipCeiling !== undefined
+    ? BigInt(session.tipCeiling || '0')
+    : undefined
+  const effectiveTip = getValidatorTip(tipCeiling)
+
+  const typedItems = retryable.map((row, i) => {
+    const originalData = row.payload?.data
+    if (!originalData) throw new Error(`Missing payload data on row ${row.id}`)
+    const message = { ...originalData, cawonce: fresh[i] }
+    // buildTypedData expects ActionParams; row payloads are already in
+    // the same shape minus the param-level conveniences. Skip
+    // buildTypedData here and reuse the existing data — we ONLY need
+    // to bump cawonce. Amounts already include the validator tip.
+    void effectiveTip
+    return {
+      domain: DOMAIN,
+      types: TYPES,
+      message,
+      params: originalData,
+    }
+  })
+
+  // Pack + hash for ActionBatch.actionsHash. Same logic
+  // signAndSubmitMany uses on the original send.
+  const sanitizedForPack = typedItems.map(item => ({
+    actionType: Number(item.message.actionType),
+    senderId: Number(item.message.senderId),
+    receiverId: Number(item.message.receiverId || 0),
+    receiverCawonce: Number(item.message.receiverCawonce || 0),
+    clientId: Number(item.message.clientId),
+    cawonce: Number(item.message.cawonce),
+    recipients: (item.message.recipients || []).map(Number),
+    amounts: (item.message.amounts || []).map((x: any) => BigInt(x)),
+    text: item.message.text || '0x',
+  }))
+  const packedBytes = packActions(sanitizedForPack)
+  const slices = getPackedActionSlices(packedBytes)
+  const perActionHashes = slices.map((s: Uint8Array) => keccak256(s))
+  const actionsHash = keccak256(concat(perActionHashes))
+
+  const batchDomain = typedItems[0].domain
+  const batchTypeDef = {
+    ActionBatch: [
+      { name: 'senderId', type: 'uint32' },
+      { name: 'firstCawonce', type: 'uint32' },
+      { name: 'actionCount', type: 'uint32' },
+      { name: 'actionsHash', type: 'bytes32' },
+    ],
+  }
+  const batchMessage = {
+    senderId: Number(typedItems[0].message.senderId),
+    firstCawonce: Number(typedItems[0].message.cawonce),
+    actionCount: typedItems.length,
+    actionsHash,
+  }
+  const sessionAccount = privateKeyToAccount(session.privateKey)
+  const batchSig = await sessionAccount.signTypedData({
+    domain: batchDomain as any,
+    types: batchTypeDef,
+    primaryType: 'ActionBatch',
+    message: batchMessage,
+  })
+
+  // Submit the new batch. retriedTxQueueIds carries every original row
+  // id so the server can mark them all retried atomically (analogous to
+  // the single-action path's retriedTxQueueId, just plural).
+  const batchPayload = typedItems.map(item => ({ data: item.message }))
+  try {
+    await retryOnIndexing(() => apiFetch('/api/actions/batch', {
+      method: 'POST',
+      body: JSON.stringify({
+        actions: batchPayload,
+        batchSig,
+        domain: batchDomain,
+        types: batchTypeDef,
+        retriedTxQueueIds: retryable.map(r => r.id),
+      }),
+    }))
+  } catch (err: any) {
+    console.warn('[retryBatch] Batch resubmit failed:', err?.message)
+    return { resubmitted: 0, reason: err?.message || 'submit-failed' }
+  }
+
+  // Best-effort: hide the ACTION_FAILED notification(s) for the
+  // originally-clicked row. The server's batch handler will hide the
+  // others via retriedTxQueueIds → server-side per-row notification
+  // cleanup; this just covers the user-clicked case immediately.
+  try {
+    await apiFetch('/api/notifications/hide-by-original-tx', {
+      method: 'POST',
+      body: JSON.stringify({ userId: senderId, txQueueId: originalTxQueueId }),
+    })
+  } catch { /* non-fatal */ }
+
+  console.log(`[retryBatch] Resubmitted ${retryable.length} row(s) of batch ${batchId} (originally clicked ${originalTxQueueId})`)
+  return { resubmitted: retryable.length }
+}
+
+/**
  * natstat: sign with EIP-712 v4 and enqueue to our API
  */
 export function useSignAndSubmitAction() {

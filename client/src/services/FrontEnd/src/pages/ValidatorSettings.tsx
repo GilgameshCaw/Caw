@@ -1,8 +1,7 @@
 import React, { useState, useEffect, useCallback } from 'react'
 import { useTheme } from '~/hooks/useTheme'
 import { apiFetch } from '~/api/client'
-import { Link } from 'react-router-dom'
-
+import { Link } from '~/utils/localizedRouter'
 interface SettingField {
   key: string
   label: string

@@ -1,4 +1,4 @@
-import { Link } from 'react-router-dom'
+import { Link } from '~/utils/localizedRouter'
 import { useConnectModal } from '@rainbow-me/rainbowkit'
 import { useAccount } from 'wagmi'
 import { useActiveToken } from '~/store/tokenDataStore'

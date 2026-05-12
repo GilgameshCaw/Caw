@@ -1,7 +1,8 @@
 import React, { useState, useEffect, useCallback } from 'react'
 import { useTheme } from '~/hooks/useTheme'
 import { apiFetch } from '~/api/client'
-import { useSearchParams, Link } from 'react-router-dom'
+import { useSearchParams } from 'react-router-dom'
+import { Link } from '~/utils/localizedRouter'
 import { decompressSignedText } from '~/api/actions'
 
 const PAGE_SIZE = 50
@@ -259,7 +260,7 @@ const DatabaseAdmin: React.FC = () => {
     if (model) params.set('model', model)
     if (detail) params.set('detail', detail)
     const qs = params.toString()
-    return qs ? `/admin/db?${qs}` : '/admin/db'
+    return qs ? `/admin/database?${qs}` : '/admin/database'
   }, [])
 
   // Cmd/Ctrl/middle-click → new tab; plain click → in-page handler.
@@ -609,8 +610,11 @@ const DatabaseAdmin: React.FC = () => {
 
           {error && <div className="text-red-400 text-sm mb-3">{error}</div>}
 
-          {/* Table */}
-          <div className={`rounded-xl border overflow-hidden ${card}`}>
+          {/* Table — horizontal scroll for wide column sets (TxQueue, Action,
+              etc. have ~10 columns and easily exceed viewport width on
+              laptops). overflow-x:auto keeps the border-rounding visible
+              while letting the row contents scroll independently. */}
+          <div className={`rounded-xl border overflow-x-auto ${card}`}>
             <table className="w-full text-sm">
               <thead>
                 <tr className={isDark ? 'bg-white/5' : 'bg-gray-50'}>

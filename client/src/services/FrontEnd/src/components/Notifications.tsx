@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback } from 'react'
-import { useNavigate, Link } from 'react-router-dom'
+import { useNavigate, Link } from '~/utils/localizedRouter'
 import { apiFetch } from '~/api/client'
 import { useVerifyWalletStore } from '~/store/verifyWalletStore'
 import { useTheme } from '~/hooks/useTheme'

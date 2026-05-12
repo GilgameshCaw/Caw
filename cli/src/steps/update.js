@@ -335,7 +335,42 @@ function readDatabaseUrl(installDir) {
   if (!fs.existsSync(envPath)) return null
   const txt = fs.readFileSync(envPath, 'utf8')
   const m = /^DATABASE_URL=(.+)$/m.exec(txt)
-  return m ? m[1].replace(/^["']|["']$/g, '') : null
+  if (!m) return null
+  // Strip wrapping quotes (operators sometimes quote the value because
+  // the URL contains `&`, which would otherwise be treated as a shell
+  // operator if .env is sourced via `set -a; source .env`).
+  let url = m[1].replace(/^["']|["']$/g, '')
+  // Strip Prisma-only query params before handing to psql. Prisma
+  // understands connection_limit / pool_timeout / schema etc, but
+  // psql rejects them with "invalid URI query parameter". We use psql
+  // for migration-status reads (the JS layer never touches these
+  // params), so it's safe to drop them.
+  //
+  // Preserve params libpq DOES understand: sslmode, sslcert, sslkey,
+  // sslrootcert, sslcompression, application_name, fallback_application_name,
+  // keepalives, keepalives_idle, keepalives_interval, keepalives_count,
+  // connect_timeout, tcp_user_timeout, target_session_attrs, gssencmode,
+  // krbsrvname, service, options, replication, client_encoding, hostaddr,
+  // requirepeer, channel_binding.
+  // See https://www.postgresql.org/docs/current/libpq-connect.html#LIBPQ-PARAMKEYWORDS
+  const LIBPQ_KEYS = new Set([
+    'sslmode', 'sslcert', 'sslkey', 'sslrootcert', 'sslcompression',
+    'application_name', 'fallback_application_name',
+    'keepalives', 'keepalives_idle', 'keepalives_interval', 'keepalives_count',
+    'connect_timeout', 'tcp_user_timeout', 'target_session_attrs',
+    'gssencmode', 'krbsrvname', 'service', 'options', 'replication',
+    'client_encoding', 'hostaddr', 'requirepeer', 'channel_binding',
+  ])
+  const qIdx = url.indexOf('?')
+  if (qIdx !== -1) {
+    const base = url.slice(0, qIdx)
+    const params = url.slice(qIdx + 1)
+      .split('&')
+      .map(p => p.trim())
+      .filter(p => p && LIBPQ_KEYS.has(p.split('=')[0]))
+    url = params.length > 0 ? `${base}?${params.join('&')}` : base
+  }
+  return url
 }
 
 /**

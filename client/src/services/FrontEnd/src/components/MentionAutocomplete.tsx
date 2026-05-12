@@ -15,13 +15,22 @@ interface MentionAutocompleteProps {
   cursorPosition: number
   onSelect: (username: string, startPos: number, endPos: number) => void
   textareaRef: React.RefObject<HTMLTextAreaElement | null>
+  /**
+   * Optional list of users to surface first (e.g. participants of the
+   * current DM / group chat). Matched locally against `username` and
+   * `displayName` so the people most likely being addressed pop up
+   * instantly without a server roundtrip. Remote /api/users/search
+   * results are appended below, deduped against this list.
+   */
+  priorityUsers?: User[]
 }
 
 const MentionAutocomplete: React.FC<MentionAutocompleteProps> = ({
   text,
   cursorPosition,
   onSelect,
-  textareaRef
+  textareaRef,
+  priorityUsers,
 }) => {
   const { isDark } = useTheme()
   const [users, setUsers] = useState<User[]>([])
@@ -70,26 +79,48 @@ const MentionAutocomplete: React.FC<MentionAutocompleteProps> = ({
     setSearchQuery(query)
     setMentionStart(lastAtIndex)
 
-    // Search for users if query has at least 1 character
+    // Filter the priority list (e.g. DM/group participants) locally so
+    // the people most likely being addressed surface instantly. Empty
+    // query → show full priority list so "@" alone in a DM opens a
+    // picker of the chat's members.
+    const q = query.toLowerCase()
+    const priorityMatches = (priorityUsers || []).filter(u => {
+      if (!q) return true
+      return (
+        u.username.toLowerCase().includes(q) ||
+        (u.displayName || '').toLowerCase().includes(q)
+      )
+    })
+
     if (query.length >= 1) {
       fetch(`/api/users/search/${encodeURIComponent(query)}`)
         .then(res => res.json())
         .then(data => {
-          const foundUsers = data.users || []
-          setUsers(foundUsers)
+          const remote: User[] = data.users || []
+          // Dedupe: priority entries win over remote ones (same tokenId).
+          const seen = new Set(priorityMatches.map(u => u.tokenId))
+          const merged = [...priorityMatches, ...remote.filter(u => !seen.has(u.tokenId))]
+          setUsers(merged)
           setSelectedIndex(0)
-          setIsVisible(foundUsers.length > 0)
+          setIsVisible(merged.length > 0)
         })
         .catch(err => {
           console.error('Failed to search users:', err)
-          setUsers([])
-          setIsVisible(false)
+          // Even if the remote search fails, show the priority matches.
+          setUsers(priorityMatches)
+          setSelectedIndex(0)
+          setIsVisible(priorityMatches.length > 0)
         })
+    } else if (priorityMatches.length > 0) {
+      // Bare "@" with a populated priority list — show participants.
+      setUsers(priorityMatches)
+      setSelectedIndex(0)
+      setIsVisible(true)
     } else {
       setUsers([])
       setIsVisible(false)
     }
-  }, [text, cursorPosition])
+  }, [text, cursorPosition, priorityUsers])
 
   // Calculate dropdown position based on cursor position in textarea
   useEffect(() => {

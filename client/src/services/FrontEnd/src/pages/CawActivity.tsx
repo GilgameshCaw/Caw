@@ -1,5 +1,6 @@
 import React, { useEffect, useMemo, useState } from 'react'
-import { Link, useParams, useSearchParams } from 'react-router-dom'
+import { useParams, useSearchParams } from 'react-router-dom'
+import { Link } from '~/utils/localizedRouter'
 import { apiFetch } from '~/api/client'
 import { useTheme } from '~/hooks/useTheme'
 import { Tabs, TabItem } from '~/components/Tabs'

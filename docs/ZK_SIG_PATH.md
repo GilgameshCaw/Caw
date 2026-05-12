@@ -132,14 +132,28 @@ gas for an empty receipt. With ZK, the batch keeps running and the
 `actionsExecutedBitmap` field of the `ActionsProcessedZk` event tells the
 indexer which slots actually ran:
 
-```
-event ActionsProcessedZk(bytes packedActions, uint256 actionsExecutedBitmap);
+```solidity
+event ActionsProcessedZk(
+  uint32 indexed networkId,
+  uint32 indexed validatorId,
+  uint16 actionCount,
+  uint256 actionsExecutedBitmap,
+  bytes32 batchHash
+);
 ```
 
 Bit `i` set = action `i` executed. Bit `i` clear = action `i` was skipped
 (its cawonce was already consumed by another tx). The validator service
 filters these out of its downstream pipeline so the unexecuted actions get
 retried via the normal sig-path lifecycle.
+
+The event is a *calldata commitment*, mirroring the sig path's
+`ActionsProcessed`: `batchHash = keccak256(packedActions)` is the hash of
+the bytes that were submitted, but the bytes themselves live in the
+originating tx's calldata. Indexers fetch them via
+`eth_getTransactionByHash` and validate against `batchHash`. Indexed
+`networkId` and `validatorId` make per-network / per-validator log
+filtering cheap.
 
 This matters because the validator submits proofs that take 10s+ to generate;
 during that window, another sig-path tx may consume the same cawonce. We'd

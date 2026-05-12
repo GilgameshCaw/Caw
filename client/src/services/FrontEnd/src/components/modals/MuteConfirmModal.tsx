@@ -1,6 +1,6 @@
 import React, { useState } from 'react'
 import { HiEyeOff, HiVolumeOff, HiUserRemove } from 'react-icons/hi'
-import { Link } from 'react-router-dom'
+import { Link } from '~/utils/localizedRouter'
 import ModalWrapper from './ModalWrapper'
 import ModalHeader from './ModalHeader'
 import { useT } from '~/i18n/I18nProvider'

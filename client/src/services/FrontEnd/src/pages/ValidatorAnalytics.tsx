@@ -1,8 +1,8 @@
 import React, { useState, useEffect, useCallback } from 'react'
 import { useTheme } from '~/hooks/useTheme'
 import { apiFetch } from '~/api/client'
-import { Link, useSearchParams } from 'react-router-dom'
-
+import { useSearchParams } from 'react-router-dom'
+import { Link } from '~/utils/localizedRouter'
 const BASESCAN = 'https://sepolia.basescan.org'
 const ARBISCAN = 'https://sepolia.arbiscan.io'
 

@@ -1,5 +1,5 @@
 import React, { useEffect, useState, useMemo } from 'react'
-import { Link } from 'react-router-dom'
+import { Link } from '~/utils/localizedRouter'
 import { useTheme } from '~/hooks/useTheme'
 import { themeTextMuted, themeBorder } from '~/utils/theme'
 import { convertToNumber, formatNumberCompact } from '~/utils'

@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
-import { useNavigate } from 'react-router-dom'
+import { useNavigate } from '~/utils/localizedRouter'
 import { HiOutlineTranslate } from 'react-icons/hi'
 import { useTheme } from '~/hooks/useTheme'
 import { formatLargeNumber } from '~/utils/numberFormat'

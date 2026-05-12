@@ -2,7 +2,8 @@
 import React, { useEffect, useState, useCallback, useMemo } from "react"
 import { useSignAndSubmitAction, getValidatorTip } from '~/api/actions'
 import { apiFetch } from '~/api/client'
-import { useSearchParams, useNavigate, useLocation } from "react-router-dom"
+import { useSearchParams, useLocation } from 'react-router-dom'
+import { useNavigate } from '~/utils/localizedRouter'
 import { CgExternal } from "react-icons/cg"
 import { FormHeader } from "~/components/forms/FormHeader"
 import { SubmitButton } from "~/components/buttons/SubmitButton"
@@ -1079,12 +1080,23 @@ const Staking = () => {
         </div>
 
         {/* Portfolio Overview */}
-        <div className="mb-8">
-          <h3 className={`text-lg font-semibold mb-4 transition-colors duration-300 ${
-            isDark ? 'text-white' : 'text-black'
-          }`}>
-            Portfolio Overview
-          </h3>
+        <div className="mb-8 md:mb-12">
+          <div className="mb-4 flex items-center justify-between">
+            <h3 className={`text-lg font-semibold transition-colors duration-300 ${
+              isDark ? 'text-white' : 'text-black'
+            }`}>
+              Portfolio Overview
+            </h3>
+
+            {/* Desktop-only Activity link — aligns with section title */}
+            <button
+              type="button"
+              onClick={() => navigate('/staking/activity')}
+              className="hidden md:inline-flex items-center px-3 py-1.5 bg-yellow-500 text-black font-semibold text-xs rounded-full hover:bg-yellow-400 transition-colors cursor-pointer"
+            >
+              View activity →
+            </button>
+          </div>
           <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
             <div className={`px-1 pb-1 rounded-lg border transition-all duration-300 flex flex-col items-center justify-between ${isDark ? 'bg-black' : 'bg-white'} ${
               isDark ? 'border-white/20' : 'border-gray-300'
@@ -1153,7 +1165,7 @@ const Staking = () => {
             </div>
           </div>
           {/* Activity link — opens day-by-day flow page. */}
-          <div className="mt-3 flex justify-end">
+          <div className="mt-3 flex justify-end md:hidden">
             <button
               type="button"
               onClick={() => navigate('/staking/activity')}
@@ -1218,7 +1230,7 @@ const Staking = () => {
         </div>
 
         {/* Tab Content */}
-        <div className="mt-6">
+        <div className="mt-6 pb-[calc(var(--bottom-nav-h,0px)+16px)]">
           {activeTab === 'stake' && renderStakePanel()}
           {activeTab === 'unstake' && renderUnstakePanel()}
           {activeTab === 'info' && renderInfoPanel()}

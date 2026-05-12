@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback } from 'react'
-import { Link } from 'react-router-dom'
+import { Link } from '~/utils/localizedRouter'
 import { useTheme } from '~/hooks/useTheme'
 import { useTokenDataStore, useActiveToken } from '~/store/tokenDataStore'
 import { useAuthStore } from '~/store/authStore'

@@ -703,6 +703,36 @@ contract CawActions is Ownable {
     }
   }
 
+  /// @dev Walk `groupSize` actions from the start of `groupBytes` (a slice
+  ///      with no batch header), unpacking each one and asserting that all
+  ///      actions share the same networkId. Parallel to `_unpackBatchGroup`
+  ///      but used by `processGroupSingle` — split out to keep that
+  ///      function's stack shallow enough for the via-IR optimizer on
+  ///      newer Solidity (the inline version blows the stack on 0.8.30
+  ///      with eight memory pointers + counters + the firstNetworkId local).
+  function _unpackProcessGroup(
+    bytes calldata groupBytes,
+    uint256 groupSize,
+    bytes32[] memory perActionHashes,
+    ActionData[] memory groupActions,
+    uint256[] memory sliceStarts,
+    uint256[] memory sliceEnds
+  ) internal pure returns (uint32 firstNetworkId) {
+    uint256 pos = 0;
+    for (uint256 i = 0; i < groupSize; ) {
+      uint256 sliceStart = pos;
+      (ActionData memory action, uint256 nextPos) = _unpackAction(groupBytes, pos);
+      pos = nextPos;
+      if (i == 0) firstNetworkId = action.networkId;
+      else require(action.networkId == firstNetworkId, "Mixed networks in batch");
+      groupActions[i] = action;
+      sliceStarts[i] = sliceStart;
+      sliceEnds[i] = nextPos;
+      perActionHashes[i] = keccak256(groupBytes[sliceStart:nextPos]);
+      unchecked { ++i; }
+    }
+  }
+
   /// @dev Bundle of fields produced by batch-sig recovery, threaded into
   ///      _applyBatch as one struct to keep the inner loop's stack shallow.
   ///      `owner` and `spendLimit` are populated once at sig recovery (when
@@ -919,25 +949,12 @@ contract CawActions is Ownable {
     // groupBytes is just the actions slice for this group (no actionCount
     // header). We pass it verbatim to a re-entry of the group-processing
     // logic by reconstructing a tiny BatchCursor.
-    uint32 firstNetworkId = 0;
-    uint256 pos = 0;
     bytes32[] memory perActionHashes = new bytes32[](groupSize);
     ActionData[] memory groupActions = new ActionData[](groupSize);
     uint256[] memory sliceStarts = new uint256[](groupSize);
     uint256[] memory sliceEnds = new uint256[](groupSize);
 
-    for (uint256 i = 0; i < groupSize; ) {
-      uint256 sliceStart = pos;
-      (ActionData memory action, uint256 nextPos) = _unpackAction(groupBytes, pos);
-      pos = nextPos;
-      if (i == 0) firstNetworkId = action.networkId;
-      else require(action.networkId == firstNetworkId, "Mixed networks in batch");
-      groupActions[i] = action;
-      sliceStarts[i] = sliceStart;
-      sliceEnds[i] = nextPos;
-      perActionHashes[i] = keccak256(groupBytes[sliceStart:nextPos]);
-      unchecked { ++i; }
-    }
+    uint32 firstNetworkId = _unpackProcessGroup(groupBytes, groupSize, perActionHashes, groupActions, sliceStarts, sliceEnds);
 
     BatchAuth memory ba;
     ba.r = r;

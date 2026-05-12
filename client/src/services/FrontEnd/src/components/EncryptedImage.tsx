@@ -1,11 +1,45 @@
 import React, { useEffect, useState } from 'react'
-import { decryptBinary } from '~/services/DmCryptoService'
+import {
+  decryptBinary,
+  unsealAttachmentKey,
+  computeSharedSecretForPeer,
+  getCachedPrivateKey,
+} from '~/services/DmCryptoService'
 import { isCanonicalEncryptedUploadUrl } from '~/utils/uploadUrl'
 import ImageLightbox from './ImageLightbox'
 
 interface EncryptedImageProps {
   url: string
-  sharedSecret: CryptoKey | null
+  /**
+   * NEW PATH (every upload after 2026-05-12): the recipient's sealed copy
+   * of the per-attachment AES key (base64). The attachment binary was
+   * encrypted ONCE with a random AES key; that key was then sealed N
+   * times — one per recipient. The receiver picks their slot before
+   * passing it here.
+   *
+   * Optional only because messages sent BEFORE the sealed-key rollout
+   * don't carry a sealedKeys map — those flow through `legacySharedSecret`
+   * below. Every new send populates this and `legacySharedSecret` is
+   * ignored.
+   */
+  sealedKey?: string
+  /**
+   * NEW PATH companion: the MESSAGE SENDER's tokenId + publicKey, used to
+   * derive the ECDH pair key that unseals `sealedKey`. Same pair-key
+   * shape that text messages decrypt with.
+   */
+  senderTokenId?: number
+  senderPublicKey?: string
+  /**
+   * LEGACY PATH (DM attachments uploaded before the sealed-key rollout
+   * on 2026-05-12): a single ECDH pair-key shared between the sender
+   * and the viewing recipient. The binary was encrypted directly with
+   * this key — no per-recipient sealed wrapper.
+   *
+   * Only consulted when `sealedKey` is empty. To be removed at the v2
+   * contract redeploy (see docs/V2_CLEANUP.md).
+   */
+  legacySharedSecret?: CryptoKey | null
   mimeType?: string
   alt?: string
   className?: string
@@ -17,9 +51,12 @@ interface EncryptedImageProps {
 }
 
 /**
- * Fetches an encrypted blob, decrypts it client-side, and renders as an image.
+ * Fetches an encrypted blob, decrypts it (via the sealed-key envelope
+ * path or the legacy shared-secret path), and renders as image / GIF /
+ * video. The two paths are interchangeable on the wire — only the
+ * decrypt step differs.
  */
-const EncryptedImage: React.FC<EncryptedImageProps> = ({ url, sharedSecret, mimeType = 'image/webp', alt = 'Encrypted image', className, onError }) => {
+const EncryptedImage: React.FC<EncryptedImageProps> = ({ url, sealedKey, senderTokenId, senderPublicKey, legacySharedSecret, mimeType = 'image/webp', alt = 'Encrypted image', className, onError }) => {
   const [objectUrl, setObjectUrl] = useState<string | null>(null)
   const [error, setError] = useState(false)
   const [loading, setLoading] = useState(true)
@@ -32,7 +69,13 @@ const EncryptedImage: React.FC<EncryptedImageProps> = ({ url, sharedSecret, mime
   const [videoReady, setVideoReady] = useState(false)
 
   useEffect(() => {
-    if (!sharedSecret) return
+    // Need EITHER the new sealed-key path (sealedKey + senderPublicKey)
+    // OR the legacy shared-secret path. If neither is supplied the
+    // effect can't proceed — bail without setting loading=false so the
+    // parent shows the spinner until proper props arrive.
+    const hasNewPath = !!(sealedKey && senderPublicKey && senderTokenId)
+    const hasLegacyPath = !!legacySharedSecret
+    if (!hasNewPath && !hasLegacyPath) return
 
     let cancelled = false
     let blobUrl: string | null = null
@@ -46,18 +89,32 @@ const EncryptedImage: React.FC<EncryptedImageProps> = ({ url, sharedSecret, mime
         // (https://attacker.tld/track, http://192.168.1.1/admin, etc.)
         // and the receiver's browser would emit a GET that leaks IP/UA
         // or probes their LAN. Mirrors the project-wide URL sanitizer
-        // convention (validate by path shape, not host equality). Audit
-        // fix 2026-05-09 (Round 5 FE/DM CRITICAL-3; Round 6 corrects
-        // the filename width which was incorrectly `{8}` and rejected
-        // every legitimate encrypted attachment).
+        // convention (validate by path shape, not host equality).
         if (!isCanonicalEncryptedUploadUrl(url)) {
           throw new Error('URL does not match the canonical encrypted-upload shape')
+        }
+
+        // Pick the decrypt key.
+        //   - New path: derive the ECDH pair key with the sender, then
+        //     unseal our per-attachment AES key with it.
+        //   - Legacy path: the caller already has the conversation's
+        //     pair key (1:1 only — group legacy attachments can't be
+        //     decrypted because each recipient saw a different shared
+        //     secret).
+        let attachmentKey: CryptoKey
+        if (hasNewPath) {
+          const myPrivateKey = getCachedPrivateKey()
+          if (!myPrivateKey) throw new Error('DM identity key not available')
+          const pairKey = await computeSharedSecretForPeer(myPrivateKey, senderTokenId!, senderPublicKey!)
+          attachmentKey = await unsealAttachmentKey(sealedKey!, pairKey)
+        } else {
+          attachmentKey = legacySharedSecret!
         }
 
         const response = await fetch(url)
         if (!response.ok) throw new Error('Fetch failed')
         const encrypted = new Uint8Array(await response.arrayBuffer())
-        const decrypted = await decryptBinary(encrypted, sharedSecret)
+        const decrypted = await decryptBinary(encrypted, attachmentKey)
         if (cancelled) return
         const blob = new Blob([decrypted], { type: mimeType })
         blobUrl = URL.createObjectURL(blob)
@@ -79,7 +136,7 @@ const EncryptedImage: React.FC<EncryptedImageProps> = ({ url, sharedSecret, mime
       cancelled = true
       if (blobUrl) URL.revokeObjectURL(blobUrl)
     }
-  }, [url, sharedSecret, mimeType])
+  }, [url, sealedKey, senderTokenId, senderPublicKey, legacySharedSecret, mimeType])
 
   if (loading) {
     return (

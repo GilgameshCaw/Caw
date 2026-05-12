@@ -1,5 +1,5 @@
 import React, { useEffect, useState, useCallback } from 'react'
-import { Link } from 'react-router-dom'
+import { Link } from '~/utils/localizedRouter'
 import { apiFetch } from '~/api/client'
 import { useTheme } from '~/hooks/useTheme'
 

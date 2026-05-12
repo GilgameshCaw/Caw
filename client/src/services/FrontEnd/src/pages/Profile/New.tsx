@@ -14,7 +14,8 @@ import UsernameSvg from '~/components/UsernameSvg'
 import { formatNumber, formatNumberCompact, convertToNumber } from "~/utils";
 import { formatUnits } from "viem";
 import BadgedIcon from '~/assets/images/badged.svg'
-import { useNavigate, Link, useSearchParams } from 'react-router-dom'
+import { useSearchParams } from 'react-router-dom'
+import { useNavigate, Link } from '~/utils/localizedRouter'
 import StakingRewardsInfo from '~/components/StakingRewardsInfo'
 import { HiInformationCircle } from 'react-icons/hi'
 import { useTheme } from '~/hooks/useTheme'

@@ -1,8 +1,7 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react'
 import { useTheme } from '~/hooks/useTheme'
 import { apiFetch } from '~/api/client'
-import { Link } from 'react-router-dom'
-
+import { Link } from '~/utils/localizedRouter'
 const PAGE_SIZE = 50
 
 interface Report {

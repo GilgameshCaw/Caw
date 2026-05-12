@@ -238,7 +238,7 @@ module.exports = {
   // Configure your compilers
   compilers: {
     solc: {
-      version: "0.8.22",    // Fetch exact version from solc-bin (default: truffle's version)
+      version: "0.8.30",    // Fetch exact version from solc-bin (default: truffle's version)
       // docker: true,        // Use "0.5.1" you've installed locally with docker (default: false)
       settings: {          // See the solidity docs for advice about optimization and evmVersion
        optimizer: {
@@ -249,7 +249,9 @@ module.exports = {
          runs: 1
        },
        viaIR: true,
-       // evmVersion: "byzantium"
+       // Pin to Cancun: known-good opcode set across every L2 we deploy to,
+       // avoids the newer Prague/Osaka defaults that some chains lag on.
+       evmVersion: "cancun"
       }
     }
   },

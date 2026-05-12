@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react'
 import { useTheme } from '~/hooks/useTheme'
-import { Link, useNavigate } from 'react-router-dom'
+import { Link, useNavigate } from '~/utils/localizedRouter'
 import { apiFetch } from '~/api/client'
 
 interface Stats {

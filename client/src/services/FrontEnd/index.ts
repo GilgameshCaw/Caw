@@ -66,7 +66,30 @@ export const frontEndService: Service = {
     sweepPort(port)
 
     const started = (async () => {
-      proc = spawn(cmd, args, { cwd, stdio: 'inherit', shell: true })
+      // Scrub inherited USER / LOGNAME so yarn's findRc doesn't try to
+      // open /root/.config/yarn (EACCES) when pm2 launched this process
+      // with HOME=/home/caw but USER=root / LOGNAME=root left over from
+      // pm2's own startup env. Yarn (1.x) resolves rc paths via the
+      // username, not HOME, so a mismatched LOGNAME silently routes
+      // file reads at the wrong user's home. Setting them explicitly
+      // here is independent of how pm2 was started.
+      const homeDir = process.env.HOME || '/tmp'
+      const userName = homeDir.split('/').filter(Boolean).pop() || 'caw'
+      proc = spawn(cmd, args, {
+        cwd,
+        stdio: 'inherit',
+        shell: true,
+        env: {
+          ...process.env,
+          HOME: homeDir,
+          USER: userName,
+          LOGNAME: userName,
+          // Drop XDG_RUNTIME_DIR=/run/user/0 (root's runtime dir) that
+          // pm2 inherits from its launcher; downstream tools that
+          // honor XDG_RUNTIME_DIR otherwise probe a root-only path.
+          XDG_RUNTIME_DIR: '',
+        },
+      })
       proc.on('exit', (code, sig) => {
         console.warn(`FrontEnd exited with ${sig ?? code}`)
       })

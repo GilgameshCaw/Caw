@@ -1,5 +1,5 @@
 import { useState, useCallback } from 'react'
-import { encryptBinary } from '~/services/DmCryptoService'
+import { encryptBinary, generateRandomAesKey, sealKeyForRecipients } from '~/services/DmCryptoService'
 import { getAuthHeaders } from '~/api/client'
 import { compressImage } from '~/utils/compressImage'
 import { compressVideo } from '~/utils/compressVideo'
@@ -41,6 +41,23 @@ export interface DmAttachment {
   mimeType: string
   width?: number
   height?: number
+  /**
+   * Per-recipient sealed AES key. The attachment binary is encrypted
+   * once with a random AES key; that random key is then sealed N times
+   * (one entry per group member, including the sender for self-decrypt
+   * on reload). Receiver looks up `sealedKeys[myTokenId]`, unseals it
+   * with their own ECDH pair key against the sender, and uses the
+   * recovered key to decrypt the binary.
+   *
+   * For DMs (1:1), `sealedKeys` has exactly two entries (peer + self);
+   * the shape is identical to groups, so the renderer doesn't branch.
+   */
+  sealedKeys: Record<number, string>
+}
+
+export interface DmRecipient {
+  userId: number
+  publicKey: string
 }
 
 /**
@@ -50,10 +67,22 @@ export function useDmFileUpload() {
   const [isUploading, setIsUploading] = useState(false)
   const [uploadProgress, setUploadProgress] = useState('')
 
+  /**
+   * Encrypt the file with a fresh random AES key, upload the encrypted
+   * binary, then seal the random key per recipient. Recipients include
+   * the sender so they can re-decrypt their own messages on reload.
+   *
+   * For DMs (1:1) pass `recipients = [peer, self]`.
+   * For groups pass every active member (incl. self).
+   *
+   * Caller must hold their own DM identity privateKey — used to compute
+   * the ECDH pair key for sealing each recipient slot.
+   */
   const uploadEncryptedFile = useCallback(async (
     file: File,
-    sharedSecret: CryptoKey,
-    tokenId: number
+    myPrivateKey: Uint8Array,
+    recipients: DmRecipient[],
+    tokenId: number,
   ): Promise<DmAttachment | null> => {
     setIsUploading(true)
     setUploadProgress('Preparing...')
@@ -97,9 +126,13 @@ export function useDmFileUpload() {
       const data = new Uint8Array(await toUpload.arrayBuffer())
       const mimeType = toUpload.type || file.type
 
-      // Encrypt
+      // Encrypt with a fresh random AES key. The key itself gets sealed
+      // per recipient below; the binary on disk is a single ciphertext
+      // every recipient shares.
       setUploadProgress('Encrypting...')
-      const encrypted = await encryptBinary(data, sharedSecret)
+      const { raw: rawAesKey, key: attachmentKey } = await generateRandomAesKey()
+      const encrypted = await encryptBinary(data, attachmentKey)
+      const sealedKeys = await sealKeyForRecipients(rawAesKey, myPrivateKey, recipients)
 
       // Size check is on the ENCRYPTED blob — that's what hits the server cap.
       if (encrypted.byteLength > MAX_ENCRYPTED_SIZE) {
@@ -136,6 +169,7 @@ export function useDmFileUpload() {
         mimeType,
         width,
         height,
+        sealedKeys,
       }
     } catch (err: any) {
       console.error('[DM Upload] Error:', err)

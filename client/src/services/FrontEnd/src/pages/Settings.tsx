@@ -1,6 +1,6 @@
 import { useTheme } from '~/hooks/useTheme'
 import { useState } from 'react'
-import { useNavigate } from 'react-router-dom'
+import { useNavigate } from '~/utils/localizedRouter'
 import { HiUser, HiBell, HiVolumeOff, HiLightningBolt, HiTranslate, HiOutlineShieldCheck } from 'react-icons/hi'
 import { useT } from '~/i18n/I18nProvider'
 import { useMyRole } from '~/hooks/useMyRole'
