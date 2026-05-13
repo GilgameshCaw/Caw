@@ -499,7 +499,7 @@ export const CawPage: React.FC = () => {
                   setSearchParams(next, { replace: true })
                 }
               }}
-              className={`p-2 rounded-full transition-all duration-200 cursor-pointer hover:bg-white/10 ${
+              className={`relative z-[80] p-2 rounded-full transition-all duration-200 cursor-pointer hover:bg-white/10 ${
                 isDark ? 'text-white' : 'text-black'
               }`}
               aria-label={t('caw_page.back')}
@@ -515,7 +515,7 @@ export const CawPage: React.FC = () => {
                   navigate('/home')
                 }
               }}
-              className={`p-2 rounded-full transition-all duration-200 cursor-pointer hover:bg-white/10 ${
+              className={`relative z-[80] p-2 rounded-full transition-all duration-200 cursor-pointer hover:bg-white/10 ${
                 isDark ? 'text-white' : 'text-black'
               }`}
               aria-label={t('caw_page.back')}
