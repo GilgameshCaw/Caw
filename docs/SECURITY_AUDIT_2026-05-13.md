@@ -72,7 +72,7 @@ Plus medium findings: session TTL is 1 year (no idle timeout), DM-auth signature
 
 ## ⏳ Still open (deliberate or design-needed)
 
-- **F1** (CRIT) — JWT/Bearer token in `localStorage`. Needs migration to HttpOnly cookie. Design-needed, not a one-line fix.
+- **F1** (CRIT) — **FIXED on 2026-05-14 (on `contract-support-v2` branch).** Wallet session token now also rides on an HttpOnly + Secure + SameSite=Lax cookie. Server accepts either cookie or `x-session-token` header during the migration window. Frontend Zustand store no longer persists `sessionToken` (only derived UI hint state). Token still appears in `/verify` response body so the WebSocket auth handshake works during migration; switching WS to cookie-based `withCredentials` is a separate focused change.
 - **F3** (HIGH) — DM private keys stored as plaintext hex in `localStorage`. Needs wrapping under the session-encryption layer; affects DM bootstrap UX (unlock-on-cold-start). Defer to a focused DM-security pass.
 - **F6** (MED) — Decrypted DM keys in-memory Map across tabs without zeroing on logout. Lower-impact follow-up.
 - **V1** (CRIT-adjacent) — ZK proof cache key not bound to submission context. Needs careful thought to avoid breaking the ZK happy path.
