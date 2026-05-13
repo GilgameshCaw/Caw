@@ -264,6 +264,80 @@ function defaultMeta(reqPath: string): Meta {
   }
 }
 
+// Path → static-card slug. Keep in sync with STATIC_PAGE_TITLES in
+// client/src/api/routes/og.ts. Each entry matches an exact bare path
+// (the locale prefix has already been stripped by parseLocaleFromPath
+// before we look up here). Paths with sub-routes that should share one
+// card (e.g. /staking, /staking/activity, /staking/unstake) live in the
+// STATIC_PAGE_PREFIXES table below.
+const STATIC_PAGE_PATHS: Record<string, string> = {
+  '/help': 'help',
+  '/help/faq': 'help-faq',
+  '/help/history': 'help-history',
+  '/help/manifesto': 'help-manifesto',
+  '/help/gettingstarted': 'help-gettingstarted',
+  '/help/howto': 'help-gettingstarted',
+  '/help/developers': 'help-developers',
+  '/help/resources': 'help-resources',
+  '/usernames': 'usernames',
+  '/explore': 'explore',
+  '/settings': 'settings',
+  '/settings/account': 'settings-account',
+  '/settings/notifications': 'settings-notifications',
+  '/settings/language': 'settings-language',
+  '/settings/muted': 'settings-muted',
+  '/settings/session-keys': 'settings-session-keys',
+  '/notifications': 'notifications',
+  '/bookmarks': 'bookmarks',
+  '/scheduled': 'scheduled',
+  '/faucet': 'faucet',
+  '/welcome': 'welcome',
+}
+
+// Path prefix → static-card slug. Used when a whole sub-tree should
+// resolve to the same card (e.g. /staking/* → "CAW Staking",
+// /messages/* → "Messages"). Longest prefix wins on overlap; ordering
+// here is insertion order, and Object.entries preserves it, so list the
+// more specific prefixes first if you ever add overlapping entries.
+const STATIC_PAGE_PREFIXES: Array<[string, string]> = [
+  ['/staking/', 'staking'],
+  ['/messages/', 'messages'],
+  ['/search/', 'search'],
+]
+
+function staticPageMeta(restPath: string, reqPath: string, locale: string | null): Meta | null {
+  // Strip a single trailing slash so "/help" and "/help/" both match. We
+  // don't normalize multi-slash because the matched URL is what we want
+  // canonical'd to itself for now.
+  const trimmed = restPath.length > 1 && restPath.endsWith('/')
+    ? restPath.slice(0, -1)
+    : restPath
+  let slug = STATIC_PAGE_PATHS[trimmed]
+  if (!slug) {
+    // Also match the literal path of a prefix base (e.g. "/staking"
+    // itself maps to the staking card, not just "/staking/activity").
+    for (const [prefix, s] of STATIC_PAGE_PREFIXES) {
+      const base = prefix.slice(0, -1) // "/staking/" → "/staking"
+      if (trimmed === base || trimmed.startsWith(prefix)) {
+        slug = s
+        break
+      }
+    }
+  }
+  if (!slug) return null
+  const altPath = trimmed
+  const canonicalPath = withLocalePrefix(altPath, locale)
+  return {
+    title: BRAND_TITLE,
+    description: '',
+    url: `${publicUrl()}${reqPath}`,
+    canonical: `${publicUrl()}${canonicalPath}`,
+    image: `${publicUrl()}/api/og/image/static/${slug}`,
+    ogType: 'website',
+    altPath,
+  }
+}
+
 // Paths the catch-all should NOT swallow even though they aren't /api/*.
 // /uploads/* is a static handler that calls next() on misses; we don't want
 // to serve an HTML SPA shell for a missing image. /s/* is the short-URL
@@ -308,6 +382,11 @@ export async function spaPrerender(req: Request, res: Response): Promise<void> {
       m = restPath.match(/^\/hashtags\/([^/]+)\/?$/)
       if (m) meta = await hashtagMeta(decodeURIComponent(m[1]), locale)
     }
+
+    // Static-page cards (help/staking/settings/etc.). Cheap synchronous
+    // table lookup — no DB hit. Runs after the entity matchers so a real
+    // /users/<staking-username-collision> would never get clobbered.
+    if (!meta) meta = staticPageMeta(restPath, reqPath, locale)
 
     // /address/:address and everything else falls back to the default card.
     if (!meta) meta = defaultMeta(reqPath)
