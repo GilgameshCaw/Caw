@@ -946,7 +946,7 @@ export const Profile: React.FC = () => {
                 navigate('/home')
               }
             }}
-            className="absolute top-3 left-3 z-10 w-9 h-9 rounded-full flex items-center justify-center bg-black/40 hover:bg-black/60 text-white backdrop-blur-sm transition-colors cursor-pointer"
+            className="absolute top-3 left-3 z-[80] w-9 h-9 rounded-full flex items-center justify-center bg-black/40 hover:bg-black/60 text-white backdrop-blur-sm transition-colors cursor-pointer"
           >
             <HiArrowLeft className="w-5 h-5" />
           </button>

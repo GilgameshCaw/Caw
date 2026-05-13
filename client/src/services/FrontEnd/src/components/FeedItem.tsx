@@ -1609,12 +1609,12 @@ const FeedItem: React.FC<{ item: CawItem; isMainPost?: boolean; isReply?: boolea
                 {showRecawMenu && (
                   <div
                     ref={menuRef}
-                    className={`absolute z-10 text-bold rounded-xl p-3 space-y-1 whitespace-nowrap transition-all duration-300 ${
+                    className={`absolute z-30 text-bold rounded-xl p-3 space-y-1 whitespace-nowrap ${
                       isDark
-                        ? 'text-white bg-black/90 backdrop-blur-sm shadow-[0_4px_24px_rgba(255,255,255,0.12)]'
-                        : 'text-black bg-white border border-gray-200 shadow-lg'
+                        ? 'text-white border border-white/10 shadow-[0_4px_24px_rgba(255,255,255,0.12)]'
+                        : 'text-black border border-gray-200 shadow-lg'
                     }`}
-                    style={{ left: '-3px', top: '0' }}
+                    style={{ left: '-3px', bottom: 'calc(100% + 4px)', backgroundColor: isDark ? '#000' : '#fff', opacity: 1 }}
                   >
                     {(useItem.hasRecawed || isRecawByCurrentUser || recawPending) ? (
                       <button

@@ -527,19 +527,15 @@ const MessagesPage: React.FC = () => {
     }
   }, [selectedConversationId, messages.length])
 
-  // Function to go back to inbox
+  // Function to go back to inbox. Only navigates — the URL-change
+  // useEffect (no urlUsername + currentView === 'chat') handles
+  // leaving the conversation room and resetting state. Doing both
+  // here AND in the effect caused a double state update → visible
+  // rebound flicker on mobile.
   const goBackToInbox = () => {
-    // Leave conversation room
-    if (selectedConversationId) {
-      leaveConversation(selectedConversationId)
-    }
-
-    setCurrentView('inbox')
-    setSelectedConversationId(null)
-    setShowChatOptionsMenu(false)
     navigate('/messages', { replace: true })
-
-    // Refresh conversations to show latest messages
+    // Refresh conversations to show latest messages after the URL effect
+    // has cleared the chat view.
     refreshConversations()
   }
 
@@ -1198,7 +1194,7 @@ const MessagesPage: React.FC = () => {
               {currentView === 'chat' && (
                 <button
                   onClick={goBackToInbox}
-                  className={`p-2 rounded-full transition-all duration-300 hover:bg-gray-500/20 ${
+                  className={`relative z-[80] p-2 rounded-full transition-all duration-300 hover:bg-gray-500/20 ${
                     isDark ? 'text-white' : 'text-black'
                   }`}
                 >

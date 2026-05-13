@@ -330,7 +330,7 @@ const MainLayout = ({ children, hideSidebars: hideSidebarsProp }: MainLayoutProp
               click is unaffected. */}
           {!isMobileMenuOpen && (
             <div
-              className="md:hidden fixed top-0 left-0 bottom-[calc(var(--bottom-nav-h,0px)+50px)] w-[25vw] z-[65]"
+              className="md:hidden fixed top-0 left-0 bottom-[calc(var(--bottom-nav-h,0px)+50px)] w-5 z-[65]"
               style={{ touchAction: 'pan-y' }}
               onTouchStart={(e) => onDrawerTouchStart(e, false)}
               onTouchMove={onDrawerTouchMove}

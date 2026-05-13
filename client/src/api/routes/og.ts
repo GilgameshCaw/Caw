@@ -79,12 +79,12 @@ function getLogoDataUri(): string {
   return logoDataUri
 }
 
-// Card canvas. Width was 1200 (the OG-spec default) but at that size
-// the card felt sparse — half the platforms (Telegram, iMessage,
-// Discord) crop or letterbox to a more square aspect anyway. 860 is
-// denser, reads as one block, and still hits the OG-image minimum
-// dimensions every platform respects.
-const W = 860
+// Card canvas. 1200×630 is the OG-spec default and the only aspect
+// Twitter's `summary_large_image` renders without cropping — at the
+// previous 860×630 (1.37:1), X cropped centrally to 2:1, cutting off
+// the top/bottom of the layout. Other platforms (Facebook, LinkedIn,
+// Telegram) also expect ~1.9:1, so this matches everyone.
+const W = 1200
 const H = 630
 const CAW_GOLD = '#ebc046'
 
@@ -750,19 +750,23 @@ function statTile(value: string, label: string) {
 // isn't a sliver; cap at CARD_MAX_H (the 1200×630 OG default) so a long
 // caw doesn't blow past the standard preview slot.
 const CARD_STRIP_W = Math.round(W * 0.015)      // 18 — left yellow strip
-const CARD_MARGIN  = Math.round(W * 0.015)      // 18 — outer margin (left/right)
-// Top/bottom margin is wider than left/right so the text + stats stack
-// breathes against the card edges. Twitter's preview crops a few pixels
-// off each side; the extra vertical air keeps the chrome line / stats
-// row from kissing the crop boundary.
-const CARD_MARGIN_Y = CARD_MARGIN * 2            // 36 — outer margin (top/bottom)
+const CARD_MARGIN  = Math.round(W * 0.03)       // 36 — outer margin (left/right)
+// X/Twitter previews often feel visually tighter than a raw browser-opened
+// 1200×630 card. Keep the *important* content inside a more conservative
+// horizontal safe area so text / stats / image don't read as clipped.
+const CARD_SAFE_X  = Math.round(W * 0.10)       // 120 — conservative content safe area for X/Twitter crops
+// Vertical margin kept modest so the image (top-right) and the stats
+// row (bottom) don't squeeze the middle content. Twitter's ~15px
+// top/bottom crop on summary_large_image still falls inside this
+// margin, so the chrome line / stats row stay clear of the boundary.
+const CARD_MARGIN_Y = Math.round(H * 0.06)       // 38 — outer margin (top/bottom)
 const CARD_IMG_SZ  = Math.round(W * 0.18)       // 216 — square image in top-right
 const CARD_NARROW_W = Math.round(W * 0.68)      // 816 — text column when image overlaps
-const CARD_TEXT_X   = CARD_STRIP_W + CARD_MARGIN
+const CARD_TEXT_X   = CARD_STRIP_W + CARD_SAFE_X
 // Wide content lines render below the corner image, so they get the
 // full available width — everything between the text column's left
 // edge and the right outer margin. No image-overlap concern.
-const CARD_WIDE_W   = W - CARD_TEXT_X - CARD_MARGIN
+const CARD_WIDE_W   = W - CARD_TEXT_X - CARD_SAFE_X
 const CARD_MIN_H    = 280
 const CARD_MAX_H    = H
 
@@ -1149,7 +1153,7 @@ function planCawCard(opts: {
   // column is squeezed and we re-wrap. Cards where the image stays at
   // CARD_IMG_SZ skip the second pass.
   const computeNarrowChars = (imgPx: number) => {
-    const narrowPx = W - CARD_STRIP_W - CARD_MARGIN - imgPx - CARD_NARROW_RIGHT_PAD - CARD_MARGIN
+    const narrowPx = W - CARD_STRIP_W - CARD_SAFE_X - imgPx - CARD_NARROW_RIGHT_PAD - CARD_SAFE_X
     return approxCharsPerPx(CARD_BODY_FS, Math.max(200, narrowPx))
   }
   // Will the bottom stat row render? (any non-zero count.)
@@ -1196,7 +1200,9 @@ function planCawCard(opts: {
   let narrowContent = contentLines.slice(0, NARROW_LINES)
   let wideContent = contentLines.slice(NARROW_LINES, totalContentLines)
   let textHeight = computeHeight(narrowContent.length, wideContent.length)
-  let imageSlotMinHeight = opts.cornerImage ? CARD_MARGIN_Y + CARD_IMG_SZ + CARD_IMG_PAD : 0
+  let imageSlotMinHeight = opts.cornerImage
+    ? CARD_MARGIN_Y + CARD_IMG_SZ + CARD_IMG_PAD + (hasStats ? STATS_ROW_H : 0) + CARD_MARGIN_Y
+    : 0
   let height = Math.min(CARD_MAX_H, Math.max(textHeight, imageSlotMinHeight, CARD_MIN_H))
   let imgSize = computeImgSize(height)
 
@@ -1209,12 +1215,12 @@ function planCawCard(opts: {
     narrowContent = contentLines.slice(0, NARROW_LINES)
     wideContent = contentLines.slice(NARROW_LINES, totalContentLines)
     textHeight = computeHeight(narrowContent.length, wideContent.length)
-    imageSlotMinHeight = CARD_MARGIN_Y + imgSize + CARD_IMG_PAD
+    imageSlotMinHeight = CARD_MARGIN_Y + imgSize + CARD_IMG_PAD + (hasStats ? STATS_ROW_H : 0) + CARD_MARGIN_Y
     height = Math.min(CARD_MAX_H, Math.max(textHeight, imageSlotMinHeight, CARD_MIN_H))
   }
   // Render-time narrow column width — the visible cap for header /
   // byline / narrow content lines.
-  const narrowRenderW = W - CARD_STRIP_W - CARD_MARGIN - imgSize - CARD_NARROW_RIGHT_PAD - CARD_MARGIN
+  const narrowRenderW = W - CARD_STRIP_W - CARD_SAFE_X - imgSize - CARD_NARROW_RIGHT_PAD - CARD_SAFE_X
 
   return {
     height,
@@ -1254,7 +1260,7 @@ function planCawCard(opts: {
                 display: 'flex',
                 position: 'absolute',
                 top: CARD_MARGIN_Y,
-                right: CARD_MARGIN,
+                right: CARD_SAFE_X,
                 width: imgSize,
                 height: imgSize,
                 borderRadius: 12,
@@ -1284,7 +1290,7 @@ function planCawCard(opts: {
                 position: 'absolute',
                 top: CARD_MARGIN_Y,
                 left: CARD_TEXT_X,
-                right: CARD_MARGIN,
+                right: CARD_SAFE_X,
                 bottom: CARD_MARGIN_Y,
               },
               children: [
@@ -2169,6 +2175,46 @@ async function renderToPng(tree: any, height: number = H): Promise<Buffer> {
   return png
 }
 
+// Twitter/X `summary_large_image` behaves best when the delivered image is a
+// stable 1200×630. Our caw cards are laid out at dynamic heights (short posts
+// can be much shorter), which makes X crop them unpredictably. Wrap the
+// variable-height card inside a fixed OG canvas instead of changing the card
+// layout logic itself.
+function wrapTreeInOgCanvas(tree: any, innerHeight: number, backgroundColor: string) {
+  const clampedInnerHeight = Math.min(H, Math.max(0, innerHeight))
+  const topOffset = Math.max(0, Math.floor((H - clampedInnerHeight) / 2))
+  return {
+    type: 'div',
+    props: {
+      style: {
+        display: 'flex',
+        width: '100%',
+        height: '100%',
+        position: 'relative',
+        backgroundColor,
+        overflow: 'hidden',
+      },
+      children: [
+        {
+          type: 'div',
+          props: {
+            style: {
+              display: 'flex',
+              position: 'absolute',
+              top: topOffset,
+              left: 0,
+              width: W,
+              height: clampedInnerHeight,
+              overflow: 'hidden',
+            },
+            children: [tree],
+          },
+        },
+      ],
+    },
+  }
+}
+
 // Twemoji disk cache (one SVG per codepoint sequence). Twemoji files
 // live on jsdelivr at /gh/twitter/twemoji@latest/assets/svg/<codepoints>.svg
 // — codepoints are hyphen-joined hex, with fe0f variation selectors
@@ -2526,13 +2572,13 @@ router.get('/image/caw/:id', async (req, res) => {
     .update([stats.likes, stats.recaws, stats.replies, stats.views, pollHash].join('|'))
     .digest('hex').slice(0, 8)
 
-  // v11 = date moved to header line + right-aligned stats + doubled
-  // vertical margins + tighter narrow column → text-image gap.
+  // v13 = reserve stat-row space under the corner image on short cards so
+  // the right-aligned icons never overlap the media block.
   // PENDING caws include status so a later SUCCESS/HIDDEN flip
   // doesn't serve a stale render.
   const cacheKey = caw.status === 'PENDING'
-    ? `caw-v11-${caw.id}-${liveHash}-pending`
-    : `caw-v11-${caw.id}-${liveHash}`
+    ? `caw-v13-${caw.id}-${liveHash}-pending`
+    : `caw-v13-${caw.id}-${liveHash}`
   return serveCachedOrRender(res, cacheKey, async () => {
     // Strip media URLs and poll markers out of the visible text — the
     // corner image and the rendered poll bars already represent them,
@@ -2573,8 +2619,9 @@ router.get('/image/caw/:id', async (req, res) => {
       stats,
     }
     const { tree, height } = planCawCard({ ...planArgs, cornerImage })
+    const wrappedTree = wrapTreeInOgCanvas(tree, height, planArgs.backgroundColor)
     try {
-      return await renderToPng(tree, height)
+      return await renderToPng(wrappedTree, H)
     } catch (err: any) {
       // Satori sometimes can't decode certain image formats (notably
       // some webp variants) and throws inside its image preprocessor.
@@ -2582,7 +2629,10 @@ router.get('/image/caw/:id', async (req, res) => {
       // text portion of the card is the load-bearing part.
       console.warn(`[og] satori render failed for caw ${caw.id} with corner image, retrying without:`, err?.message ?? err)
       const fallback = planCawCard({ ...planArgs, cornerImage: null })
-      return await renderToPng(fallback.tree, fallback.height)
+      return await renderToPng(
+        wrapTreeInOgCanvas(fallback.tree, fallback.height, planArgs.backgroundColor),
+        H,
+      )
     }
   })
 })
