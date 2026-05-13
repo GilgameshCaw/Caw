@@ -3485,7 +3485,7 @@ console.log("succeededKeys", succeededKeys)
     }
     const REPLICATOR_PRIVATE_KEY = process.env.REPLICATOR_PRIVATE_KEY
 
-    function getL2bContracts() {
+    async function getL2bContracts() {
       if (l2bProvider && l2bSubmitter && l2bMonitor && archiveRead && archiveWrite) {
         return { l2bProvider, l2bSubmitter, l2bMonitor, archiveRead, archiveWrite }
       }
@@ -3501,9 +3501,34 @@ console.log("succeededKeys", succeededKeys)
       const replicationChain = process.env.REPLICATION_CHAIN || 'arbitrum-sepolia'
       const resolved = resolveReplicationArchive(replicationChain)
       OPTIMISTIC_ARCHIVE_ADDRESS = resolved.address
-      const chainId = resolved.chainId
+      const expectedChainId = resolved.chainId
 
-      l2bProvider = makeJsonRpcProvider(l2bRpcUrl, chainId)
+      const provider = makeJsonRpcProvider(l2bRpcUrl, expectedChainId)
+
+      // SLASHING-ADJACENT VERIFICATION: confirm the RPC actually serves the
+      // chain we think it does. ethers' staticNetwork option pins the chainId
+      // for signing purposes but does NOT verify it against the RPC's
+      // eth_chainId. Without this check, a hijacked DNS / BGP path could
+      // route the validator to a rogue archive on a different chain where
+      // our stake gets drained. Fail loud here rather than discover the
+      // mismatch via a slashed submission. Audit fix 2026-05-13 (V3).
+      let actualChainId: bigint
+      try {
+        const net = await provider.getNetwork()
+        actualChainId = net.chainId
+      } catch (e: any) {
+        throw new Error(`[OptimisticReplication] could not read chainId from REPLICATION_RPC: ${e?.message || e}`)
+      }
+      if (Number(actualChainId) !== expectedChainId) {
+        throw new Error(
+          `[OptimisticReplication] CHAIN MISMATCH: REPLICATION_CHAIN=${replicationChain} ` +
+          `expects chainId ${expectedChainId}, but the RPC reports ${actualChainId}. ` +
+          `Refusing to submit — this is a slashing risk. Check REPLICATION_RPC ` +
+          `points at the right chain.`
+        )
+      }
+
+      l2bProvider = provider
 
       // Submitter uses REPLICATOR_PRIVATE_KEY if present (test mode), else main validator.
       // Both go through the signer abstraction so they can be swapped to a
@@ -3517,7 +3542,7 @@ console.log("succeededKeys", succeededKeys)
       archiveRead = new Contract(OPTIMISTIC_ARCHIVE_ADDRESS, archiveAbi, l2bProvider)
       archiveWrite = new Contract(OPTIMISTIC_ARCHIVE_ADDRESS, archiveAbi, l2bSubmitter.asEthersSigner())
 
-      console.log(`[OptimisticReplication] L2b RPC: ${redactRpcUrl(l2bRpcUrl)}`)
+      console.log(`[OptimisticReplication] L2b RPC: ${redactRpcUrl(l2bRpcUrl)} (chainId ${expectedChainId} verified)`)
       console.log(`[OptimisticReplication] Archive: ${OPTIMISTIC_ARCHIVE_ADDRESS}`)
       console.log(`[OptimisticReplication] Submitter: ${l2bSubmitter.getAddress()}${REPLICATOR_PRIVATE_KEY ? ' (REPLICATOR test key)' : ''}`)
       console.log(`[OptimisticReplication] Monitor:   ${l2bMonitor.getAddress()}`)
@@ -3737,7 +3762,7 @@ console.log("succeededKeys", succeededKeys)
             `Unset both env vars and restart to disable.`
           )
         }
-        const { archiveRead: archive, archiveWrite: archiveW, l2bSubmitter: w } = getL2bContracts()
+        const { archiveRead: archive, archiveWrite: archiveW, l2bSubmitter: w } = await getL2bContracts()
 
         // 1. Find clients needing replication FIRST — if none, nothing to do
         //    and we shouldn't prod the operator about stake either.
@@ -4113,7 +4138,7 @@ console.log("succeededKeys", succeededKeys)
      */
     async function autoFinalizeSubmissions() {
       try {
-        const { archiveRead: archive, archiveWrite: archiveW, l2bProvider: provider, l2bSubmitter: w } = getL2bContracts()
+        const { archiveRead: archive, archiveWrite: archiveW, l2bProvider: provider, l2bSubmitter: w } = await getL2bContracts()
 
         const latestBlock = await provider!.getBlockNumber()
         const checkpointKey = `optimistic-finalize:${w.getAddress().toLowerCase()}:last-block`
@@ -4181,7 +4206,7 @@ console.log("succeededKeys", succeededKeys)
      */
     async function autoWithdrawExcessStake() {
       try {
-        const { archiveRead: archive, archiveWrite: archiveW, l2bSubmitter: w } = getL2bContracts()
+        const { archiveRead: archive, archiveWrite: archiveW, l2bSubmitter: w } = await getL2bContracts()
 
         const pending = Number(await archive.pendingCount(w.getAddress()))
         if (pending > 0) return // Can't withdraw with pending submissions
@@ -4213,7 +4238,7 @@ console.log("succeededKeys", succeededKeys)
         // Use the MONITOR wallet here so that a separate REPLICATOR_PRIVATE_KEY
         // submitter's submissions are not skipped as "our own" — the monitor
         // wants to challenge them during the slash test.
-        const { archiveRead: archive, l2bProvider: provider, l2bMonitor: w } = getL2bContracts()
+        const { archiveRead: archive, l2bProvider: provider, l2bMonitor: w } = await getL2bContracts()
 
         const latestBlock = await provider!.getBlockNumber()
         // Look back ~3 days of blocks
@@ -4285,7 +4310,7 @@ console.log("succeededKeys", succeededKeys)
             'function slashIncoherentRoot(uint256 submissionId, bytes packedActions, bytes32[] r, bytes32 entryHash)',
           ]
           // Reuse the L2b monitor signer — same key, same provider as a fresh Wallet.
-          const { l2bMonitor: resolveSigner } = getL2bContracts()
+          const { l2bMonitor: resolveSigner } = await getL2bContracts()
           const archiveW = new Contract(OPTIMISTIC_ARCHIVE_ADDRESS, resolveAbi, resolveSigner.asEthersSigner())
           const archiveResolveRead = new Contract(OPTIMISTIC_ARCHIVE_ADDRESS, resolveAbi, l2bProvider)
 
