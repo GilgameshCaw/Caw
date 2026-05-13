@@ -2172,8 +2172,16 @@ const MessagesPage: React.FC = () => {
                                   // unseal via ECDH(myPriv, myPub) which yields
                                   // a deterministic valid AES key).
                                   const mySlot = parsed.sealedKeys?.[currentUser?.id ?? -1]
+                                  // Sender's pubkey for ECDH unseal. For peer-sent messages it's
+                                  // on the conversation participant; for self-sent messages it's
+                                  // NOT in `participants` (useDm strips self from DM participants)
+                                  // so we fall back to our own cached pubkey. Without this, every
+                                  // image the current user sends shows "Failed to decrypt" on
+                                  // their own client even though peers can read it fine.
                                   const senderParticipant = selectedConversation?.participants.find(p => p.userId === message.senderId)
-                                  const senderPub = senderParticipant?.publicKey || null
+                                  const senderPub = senderParticipant?.publicKey
+                                    || (message.senderId === currentUser?.id ? getCachedPublicKeyHex() : null)
+                                    || null
                                   // Legacy DM attachments uploaded before the sealed-key
                                   // rollout (2026-05-12) don't carry sealedKeys. We fall
                                   // back to the conversation's shared secret if we have
