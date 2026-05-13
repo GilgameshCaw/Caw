@@ -2,6 +2,7 @@ import React, { useState, useCallback, useMemo } from 'react'
 import { HiOutlineSearch, HiOutlineInformationCircle } from 'react-icons/hi'
 import { useTheme } from '~/hooks/useTheme'
 import { format } from 'date-fns'
+import { apiFetch } from '~/api/client'
 
 interface Message {
   id: string
@@ -37,20 +38,16 @@ const MessageSearch: React.FC<MessageSearchProps> = ({ userId, onSearchComplete 
     setIsSearching(true)
 
     try {
-      // Fetch messages within date range from server
-      const response = await fetch(
+      // Fetch messages within date range from server. Use apiFetch so the
+      // session-token header is attached automatically — the previous
+      // `Authorization: Bearer ${localStorage.getItem('token')}` line was
+      // reading a key that nothing ever sets, so the call was unauthenticated.
+      // apiFetch returns the parsed JSON body directly, not a Response —
+      // it throws on non-2xx so the catch below handles failures.
+      const data = await apiFetch<{ messages?: Message[] }>(
         `/api/dm/conversations?userId=${userId}`,
-        {
-          headers: {
-            'Content-Type': 'application/json',
-            'Authorization': `Bearer ${localStorage.getItem('token') || ''}`
-          }
-        }
+        { method: 'GET' }
       )
-
-      if (!response.ok) throw new Error('Search failed')
-
-      const data = await response.json()
       const messages: Message[] = data.messages || []
 
       // Client-side search through decrypted messages
