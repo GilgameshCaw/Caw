@@ -24,21 +24,39 @@ interface HiddenCawEntry {
   hiddenAt: number
 }
 
+// Recaw-undo is sender-scoped: a viewer can unrecaw the same original from a
+// different active token without the first viewer's undo leaking. Keyed by
+// `${recawerTokenId}:${originalTokenId}:${originalCawonce}` to match the
+// on-chain `hide:recaw:<originalTokenId>:<originalCawonce>` semantics
+// (handleHideAction: deleteMany where userId=sender, originalCaw matches).
+interface HiddenRecawEntry {
+  recawerTokenId: number
+  originalTokenId: number
+  originalCawonce: number
+  hiddenAt: number
+}
+
 interface HiddenCawsStore {
   hiddenCawonces: Record<string, HiddenCawEntry>
+  hiddenRecaws: Record<string, HiddenRecawEntry>
   hideCaw: (tokenId: number, cawonce: number) => void
+  hideRecaw: (recawerTokenId: number, originalTokenId: number, originalCawonce: number) => void
   isHidden: (tokenId: number | undefined | null, cawonce: number | undefined | null) => boolean
+  isRecawHidden: (recawerTokenId: number | undefined | null, originalTokenId: number | undefined | null, originalCawonce: number | undefined | null) => boolean
   clear: () => void
 }
 
 const TTL_MS = 30 * 24 * 60 * 60 * 1000
 
 const entryKey = (tokenId: number, cawonce: number) => `${tokenId}:${cawonce}`
+const recawKey = (recawerTokenId: number, originalTokenId: number, originalCawonce: number) =>
+  `${recawerTokenId}:${originalTokenId}:${originalCawonce}`
 
 export const useHiddenCawsStore = create<HiddenCawsStore>()(
   persist(
     (set, get) => ({
       hiddenCawonces: {},
+      hiddenRecaws: {},
 
       hideCaw: (tokenId, cawonce) => {
         if (!tokenId || !cawonce) return
@@ -46,6 +64,21 @@ export const useHiddenCawsStore = create<HiddenCawsStore>()(
           hiddenCawonces: {
             ...state.hiddenCawonces,
             [entryKey(tokenId, cawonce)]: { tokenId, cawonce, hiddenAt: Date.now() },
+          },
+        }))
+      },
+
+      hideRecaw: (recawerTokenId, originalTokenId, originalCawonce) => {
+        if (!recawerTokenId || !originalTokenId || !originalCawonce) return
+        set((state) => ({
+          hiddenRecaws: {
+            ...state.hiddenRecaws,
+            [recawKey(recawerTokenId, originalTokenId, originalCawonce)]: {
+              recawerTokenId,
+              originalTokenId,
+              originalCawonce,
+              hiddenAt: Date.now(),
+            },
           },
         }))
       },
@@ -58,7 +91,15 @@ export const useHiddenCawsStore = create<HiddenCawsStore>()(
         return true
       },
 
-      clear: () => set({ hiddenCawonces: {} }),
+      isRecawHidden: (recawerTokenId, originalTokenId, originalCawonce) => {
+        if (recawerTokenId == null || originalTokenId == null || originalCawonce == null) return false
+        const entry = get().hiddenRecaws[recawKey(Number(recawerTokenId), Number(originalTokenId), Number(originalCawonce))]
+        if (!entry) return false
+        if (Date.now() - entry.hiddenAt > TTL_MS) return false
+        return true
+      },
+
+      clear: () => set({ hiddenCawonces: {}, hiddenRecaws: {} }),
     }),
     {
       name: 'caw:hidden-caws',
@@ -67,8 +108,13 @@ export const useHiddenCawsStore = create<HiddenCawsStore>()(
       // re-keyed (the deleter's tokenId wasn't recorded), so we drop
       // them — the indexer-side hide is the source of truth and will
       // catch up on the next refetch.
-      version: 1,
-      migrate: () => ({ hiddenCawonces: {} }),
+      // v2 adds hiddenRecaws; nothing to migrate, just preserve hiddenCawonces.
+      version: 2,
+      migrate: (persisted: unknown, fromVersion: number) => {
+        if (fromVersion < 1) return { hiddenCawonces: {}, hiddenRecaws: {} }
+        const prior = (persisted as { hiddenCawonces?: Record<string, HiddenCawEntry> }) || {}
+        return { hiddenCawonces: prior.hiddenCawonces || {}, hiddenRecaws: {} }
+      },
     },
   ),
 )

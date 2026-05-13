@@ -1935,6 +1935,131 @@ function hashtagCardTree(opts: { tag: string; usageCount: number; locale?: strin
   }
 }
 
+// Shared brand subhead — appears under the CAW wordmark on the default
+// card AND every static-page card. Kept in sync with BRAND_TITLE in
+// spaPrerender.ts (which is the og:title text social platforms render
+// alongside the image). Change them together.
+const BRAND_SUBHEAD = 'Decentralized & Censorship Resistant'
+
+// Slug → English page title shown as the H2 on the static-page share card.
+// Slugs map 1:1 to URL paths in spaPrerender.ts. Keep this list and the
+// spaPrerender path table in lockstep.
+//
+// Future: thread these through the i18n catalog so /es/help/manifesto
+// renders the Spanish heading. Untranslated for v1 because the tab labels
+// themselves aren't in the en.json under a clean key per tab — adding
+// them is a separate change.
+const STATIC_PAGE_TITLES: Record<string, string> = {
+  'help': 'Help & Resources',
+  'help-faq': 'FAQ',
+  'help-history': 'History',
+  'help-manifesto': 'Manifesto',
+  'help-gettingstarted': 'Getting Started',
+  'help-developers': 'Developers',
+  'help-resources': 'Resources',
+  'staking': 'CAW Staking',
+  'usernames': 'Profile Marketplace',
+  'explore': 'Explore',
+  'settings': 'Settings',
+  'settings-account': 'Account',
+  'settings-notifications': 'Notifications',
+  'settings-language': 'Language',
+  'settings-muted': 'Muted Content',
+  'settings-session-keys': 'Quick Sign',
+  'notifications': 'Notifications',
+  'bookmarks': 'Bookmarks',
+  'scheduled': 'Scheduled Posts',
+  'messages': 'Messages',
+  'search': 'Search Results',
+  'faucet': 'Testnet Faucet',
+  'welcome': 'Welcome to CAW',
+}
+
+// Static-page card — same chrome as the default card (CAW logo + wordmark
+// + brand subhead) with one extra line: the page title. Used for routes
+// where there's no dynamic per-entity data (help/staking/settings/etc.).
+function staticCardTree(opts: { title: string }) {
+  return {
+    type: 'div',
+    props: {
+      style: {
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'center',
+        width: '100%',
+        height: '100%',
+        backgroundColor: '#0A0A0A',
+        color: '#ffffff',
+        fontFamily: 'Inter',
+      },
+      children: [
+        {
+          type: 'div',
+          props: {
+            style: { display: 'flex', flexDirection: 'column', alignItems: 'center' },
+            children: [
+              {
+                type: 'div',
+                props: {
+                  style: { display: 'flex', flexDirection: 'row', alignItems: 'center', gap: 32 },
+                  children: [
+                    {
+                      type: 'img',
+                      props: {
+                        src: getLogoDataUri(),
+                        width: 160,
+                        height: 160,
+                        style: { objectFit: 'contain' },
+                      },
+                    },
+                    {
+                      type: 'div',
+                      props: {
+                        style: {
+                          fontSize: 180,
+                          fontWeight: 700,
+                          color: CAW_GOLD,
+                          letterSpacing: '-0.02em',
+                          lineHeight: 1,
+                        },
+                        children: 'CAW',
+                      },
+                    },
+                  ],
+                },
+              },
+              {
+                type: 'div',
+                props: {
+                  style: { fontSize: 32, color: '#9ca3af', marginTop: 24 },
+                  children: BRAND_SUBHEAD,
+                },
+              },
+              // Per-page H2 — the whole reason this card exists. Sized large
+              // enough to read in a Twitter card but small enough that the
+              // brand chrome still anchors the visual.
+              {
+                type: 'div',
+                props: {
+                  style: {
+                    fontSize: 72,
+                    fontWeight: 700,
+                    color: '#ffffff',
+                    marginTop: 40,
+                    letterSpacing: '-0.01em',
+                    textAlign: 'center',
+                  },
+                  children: opts.title,
+                },
+              },
+            ],
+          },
+        },
+      ],
+    },
+  }
+}
+
 // Default card — big logo + CAW wordmark in brand color, tagline below.
 // Used for the homepage and any route not handled above.
 function defaultCardTree() {
@@ -1991,7 +2116,7 @@ function defaultCardTree() {
                 type: 'div',
                 props: {
                   style: { fontSize: 36, color: '#9ca3af', marginTop: 32 },
-                  children: 'Decentralized Social Clearing House',
+                  children: BRAND_SUBHEAD,
                 },
               },
             ],
@@ -2516,6 +2641,17 @@ router.get('/image/hashtag/:tag', async (req, res) => {
 
 router.get('/image/default', async (_req, res) => {
   return serveCachedOrRender(res, 'default', () => renderToPng(defaultCardTree()))
+})
+
+router.get('/image/static/:slug', async (req, res) => {
+  const slug = String(req.params.slug).toLowerCase()
+  const title = STATIC_PAGE_TITLES[slug]
+  // Unknown slug → fall through to the default card. Avoids rendering
+  // an empty-H2 card if a stale link points at a removed page.
+  if (!title) return res.redirect(302, '/api/og/image/default')
+  return serveCachedOrRender(res, `static-${slug}`, () =>
+    renderToPng(staticCardTree({ title })),
+  )
 })
 
 export default router

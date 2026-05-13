@@ -464,8 +464,47 @@ async function doAllocate(tokenId: number): Promise<number> {
     throw new Error('Could not reach the chain to assign a post number. Please try again in a moment.')
   }
 
-  // 4. Pick the higher; bump and broadcast atomically (synchronous in JS).
-  const allocated = Math.max(chainNext ?? 0, localHigh + 1)
+  // 4. Pick the higher, then verify the slot is actually free on chain.
+  //
+  // chain.nextCawonce returns the first unset bit in the current word
+  // (CawActions.nextCawonce: scans usedCawonce[currentMap] for a gap).
+  // It's normally correct, but a stale RPC node — or any path that's
+  // updated localHigh past a slot whose bitmap state we can't trust
+  // (closed-tab signs, cross-mirror leakage) — can hand back a cawonce
+  // that's already used. Without this pre-check, the wallet popup goes
+  // up, the user signs, the server accepts, and only the validator's
+  // simulate eventually rejects with "Cawonce already used" — usually
+  // recovered transparently by useTxQueueMonitor, but it's visible to
+  // the user as a flash and burns a sig.
+  //
+  // We try a small number of slots forward; each isCawonceUsed costs one
+  // eth_call. Two tries covers the common case (stale chain.nextCawonce
+  // missed exactly one used slot). Past that we trust the bitmap-driven
+  // chain.nextCawonce + 409 retry to converge.
+  const MAX_PROBE = 4
+  let allocated = Math.max(chainNext ?? 0, localHigh + 1)
+  for (let probe = 0; probe < MAX_PROBE; probe++) {
+    let used: boolean
+    try {
+      used = await readContract(wagmiConfig, {
+        address: CAW_ACTIONS_ADDRESS,
+        abi: cawActionsAbi,
+        functionName: 'isCawonceUsed',
+        args: [tokenId, BigInt(allocated)],
+        chainId: baseSepolia.id,
+      }) as boolean
+    } catch (err) {
+      // Probe RPC failed — don't block the allocation. The 409 retry
+      // path still catches collisions; this pre-check is best-effort.
+      console.warn(`[doAllocate] isCawonceUsed probe failed for cawonce=${allocated}, skipping pre-check`, err)
+      break
+    }
+    if (!used) break
+    console.warn(`[doAllocate] cawonce=${allocated} already used on chain — bumping past it`)
+    bumpHigh(tokenId, allocated)
+    allocated += 1
+  }
+
   bumpHigh(tokenId, allocated)
   return allocated
 }
