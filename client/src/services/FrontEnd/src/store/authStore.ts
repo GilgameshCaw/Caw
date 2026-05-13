@@ -58,6 +58,16 @@ export const useAuthStore = create<AuthSessionState>()(
     }),
     {
       name: 'caw-auth-session',
+      // `sessionToken` is no longer persisted — the HttpOnly cookie carries
+      // the real auth, and an XSS payload should NOT be able to read it from
+      // localStorage. The derived state (authorizedTokenIds, addresses,
+      // expiresAt) is non-secret UI hint state — fine to persist for instant
+      // badge rendering on cold start. Audit fix 2026-05-14 (F1).
+      partialize: (state) => ({
+        authorizedTokenIds: state.authorizedTokenIds,
+        authorizedAddresses: state.authorizedAddresses,
+        expiresAt: state.expiresAt,
+      }) as AuthSessionState,
     }
   )
 )

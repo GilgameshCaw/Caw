@@ -42,6 +42,20 @@ const adminTokens = new Map<string, number>() // token -> expiry timestamp
 const ADMIN_TOKEN_TTL = 24 * 60 * 60 * 1000 // 24 hours
 export const ADMIN_COOKIE_NAME = 'caw_admin'
 
+// --- Wallet session cookie ---
+// The wallet session token (from sessionStore.ts, created in /api/auth/verify)
+// can now also ride on an HttpOnly cookie. JS can't read it, so an XSS payload
+// in our frontend can't exfiltrate the token for replay; it can only make
+// authenticated requests while the page is open (which it could do regardless).
+//
+// We keep the x-session-token header path during a migration window so
+// existing browser sessions don't all get kicked out. Once the cookie path is
+// in production for a while, the header path can be removed.
+export const SESSION_COOKIE_NAME = 'caw_session'
+// 1 year — matches SESSION_TTL in sessionStore.ts so cookie and Redis entry
+// expire together.
+const SESSION_COOKIE_MAX_AGE = 365 * 24 * 60 * 60 * 1000
+
 export function generateAdminToken(): string {
   return randomBytes(32).toString('hex')
 }
@@ -83,6 +97,30 @@ export function adminCookieOptions() {
     secure: isProd,
     path: '/',
     maxAge: ADMIN_TOKEN_TTL,
+  }
+}
+
+/**
+ * Cookie options for the wallet session.
+ *
+ * SameSite=Lax (not Strict like admin): the wallet session needs to survive
+ * top-level navigations back from external redirects (X OAuth, on-ramp
+ * checkout, payment-provider returns). Strict would drop the cookie on those
+ * cross-site navigations and force a re-auth on every return-from-X flow.
+ * Lax still defeats the typical CSRF vector — requests initiated by another
+ * site's JS don't carry the cookie; only top-level GETs do, and our session-
+ * required endpoints are POST/PATCH/DELETE.
+ *
+ * HttpOnly so JS can't read or exfiltrate it on XSS. Secure in production.
+ */
+export function sessionCookieOptions() {
+  const isProd = process.env.NODE_ENV === 'production'
+  return {
+    httpOnly: true,
+    sameSite: 'lax' as const,
+    secure: isProd,
+    path: '/',
+    maxAge: SESSION_COOKIE_MAX_AGE,
   }
 }
 
@@ -270,7 +308,14 @@ export async function requireWalletAdmin(req: Request, res: Response, next: Next
 // --- Session-based wallet auth ---
 
 export async function extractSession(req: Request): Promise<void> {
-  const token = req.headers['x-session-token'] as string | undefined
+  // Prefer the HttpOnly cookie (added 2026-05-14); fall back to the legacy
+  // x-session-token header for the migration window. Once the cookie has
+  // been in production long enough that all live FE sessions are using it,
+  // the header fallback can be removed.
+  const token =
+    readCookie(req, SESSION_COOKIE_NAME) ||
+    (req.headers['x-session-token'] as string | undefined)
+
   if (!token) {
     req.sessionData = null
     req.sessionToken = null

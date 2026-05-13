@@ -2,7 +2,7 @@ import { Router } from 'express'
 import { ethers } from 'ethers'
 import { prisma } from '../../prismaClient'
 import { createSession, getSession, addAuthorization, deleteSession, consumeAuthSignatureOnce } from '../sessionStore'
-import { extractSession } from '../middleware/auth'
+import { extractSession, SESSION_COOKIE_NAME, sessionCookieOptions } from '../middleware/auth'
 // Tier 1 + Tier 3 of the "RPC out of API request handlers" refactor
 // (PROJECT_BACKLOG.md): findOrCreateUser, verifyOwnershipOnChain, and
 // syncTokensOwnedByWallet are intentionally NOT imported. API endpoints
@@ -161,8 +161,12 @@ router.post('/verify', async (req, res) => {
       return
     }
 
-    // Get or create session
-    let sessionToken = req.headers['x-session-token'] as string | undefined
+    // Get or create session. Cookie (HttpOnly) is the new canonical source;
+    // x-session-token header is the legacy path kept for the migration
+    // window so live FE sessions don't all get kicked out.
+    let sessionToken =
+      (req.headers.cookie?.match(/(?:^|;\s*)caw_session=([^;]+)/)?.[1]) ||
+      (req.headers['x-session-token'] as string | undefined)
     let session = sessionToken ? await getSession(sessionToken) : null
 
     if (!session) {
@@ -173,6 +177,11 @@ router.post('/verify', async (req, res) => {
 
     // Add authorization
     const updated = await addAuthorization(sessionToken!, recoveredAddress, tokenIds)
+
+    // Set HttpOnly cookie. Returned-in-body sessionToken kept for the
+    // migration window so existing FE clients that still read it from
+    // the response don't break; will go away once cookie use is universal.
+    res.cookie(SESSION_COOKIE_NAME, sessionToken!, sessionCookieOptions())
 
     res.json({
       sessionToken,
@@ -281,8 +290,10 @@ router.post('/verify-dm', async (req, res) => {
     })
     const tokenIds = users.map(u => u.tokenId)
 
-    // Create or extend auth session
-    let sessionToken = req.headers['x-session-token'] as string | undefined
+    // Create or extend auth session. Cookie first, header fallback.
+    let sessionToken =
+      (req.headers.cookie?.match(/(?:^|;\s*)caw_session=([^;]+)/)?.[1]) ||
+      (req.headers['x-session-token'] as string | undefined)
     let session = sessionToken ? await getSession(sessionToken) : null
 
     if (!session) {
@@ -292,6 +303,9 @@ router.post('/verify-dm', async (req, res) => {
     }
 
     const updated = await addAuthorization(sessionToken!, recoveredAddress, tokenIds)
+
+    // Set HttpOnly cookie (migration window: also returned in body, see /verify).
+    res.cookie(SESSION_COOKIE_NAME, sessionToken!, sessionCookieOptions())
 
     // DmIdentity has a FK on User.tokenId. The earlier ownership check
     // already 202'd if the User row was missing, so by here it's
@@ -351,7 +365,8 @@ router.post('/refresh', async (req, res) => {
       return
     }
 
-    const sessionToken = req.headers['x-session-token'] as string
+    // extractSession populates req.sessionToken from cookie-or-header.
+    const sessionToken = req.sessionToken as string
 
     // For each authorized address, look up all tokenIds (case-insensitive)
     for (const addr of req.sessionData.authorizedAddresses) {
@@ -365,6 +380,9 @@ router.post('/refresh', async (req, res) => {
 
     // Re-read updated session
     const updated = await getSession(sessionToken)
+
+    // Refresh cookie expiry (sliding window).
+    res.cookie(SESSION_COOKIE_NAME, sessionToken, sessionCookieOptions())
 
     res.json({
       sessionToken,
@@ -384,10 +402,16 @@ router.post('/refresh', async (req, res) => {
  */
 router.post('/logout', async (req, res) => {
   try {
-    const token = req.headers['x-session-token'] as string | undefined
+    // Cookie first (new path), header fallback (legacy clients).
+    const token =
+      (req.headers.cookie?.match(/(?:^|;\s*)caw_session=([^;]+)/)?.[1]) ||
+      (req.headers['x-session-token'] as string | undefined)
     if (token) {
       await deleteSession(token)
     }
+    // Clear the cookie regardless — defensive against the case where Redis
+    // already lost the session but the browser still carries the cookie.
+    res.clearCookie(SESSION_COOKIE_NAME, { path: '/' })
     res.json({ success: true })
   } catch (error) {
     console.error('POST /api/auth/logout error:', error)
