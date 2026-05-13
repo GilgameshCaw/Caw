@@ -568,6 +568,20 @@ function avatarNode(opts: {
 //   • Avatar (left), name + @handle + bio (right)
 //   • Stats row at the bottom: followers · following · caws
 //   • CAW logo+wordmark in the top-right corner
+// Pick a heading font size that won't overflow the profile card's text
+// column. Used for both displayName and @username headings — the long-
+// handle case (no displayName, 15+ char username) was clipping past the
+// brand lockup. Step function instead of true measurement because satori
+// has no glyph-metrics API; numbers tuned visually against Inter Bold.
+function headingFontSize(s: string): number {
+  const len = (s || '').length
+  if (len <= 10) return 64
+  if (len <= 13) return 56
+  if (len <= 16) return 48
+  if (len <= 20) return 40
+  return 36
+}
+
 function profileCardTree(opts: {
   displayName: string
   username: string
@@ -629,7 +643,14 @@ function profileCardTree(opts: {
                     {
                       type: 'div',
                       props: {
-                        style: { fontSize: 64, fontWeight: 700, lineHeight: 1.1 },
+                        // Dynamic font size: long handles/names overflow the
+                        // text column AND collide with the top-right brand
+                        // lockup. Step the size down based on char count so
+                        // a 15-char username fits without truncation.
+                        // Available text-column width (after avatar + brand
+                        // lockup carve-out) is ~210px on the top row; Inter
+                        // Bold averages ~0.55em per char.
+                        style: { fontSize: headingFontSize(hasDisplayName ? opts.displayName : `@${opts.username}`), fontWeight: 700, lineHeight: 1.1 },
                         children: hasDisplayName ? opts.displayName : `@${opts.username}`,
                       },
                     },
@@ -1945,11 +1966,11 @@ const BRAND_SUBHEAD = 'Decentralized & Censorship Resistant'
 // them is a separate change.
 const STATIC_PAGE_TITLES: Record<string, string> = {
   'help': 'Help & Resources',
-  'help-faq': 'FAQ',
+  'help-faq': 'Frequently Asked Questions',
   'help-history': 'History',
   'help-manifesto': 'Manifesto',
   'help-gettingstarted': 'Getting Started',
-  'help-developers': 'Developers',
+  'help-developers': 'For Developers',
   'help-resources': 'Resources',
   'staking': 'CAW Staking',
   'usernames': 'Profile Marketplace',
