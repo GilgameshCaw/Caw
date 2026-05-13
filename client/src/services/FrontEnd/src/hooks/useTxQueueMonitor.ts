@@ -165,6 +165,62 @@ export function useTxQueueMonitor() {
                     const originalData = status.payload?.data
                     if (!senderId || !originalData) return
 
+                    // Pre-flight: did the action ACTUALLY land already?
+                    // The validator's "Cawonce already used" rejection just
+                    // means the chain bitmap was set — but if a peer mirror
+                    // (or an earlier same-content submission from another
+                    // tab) already landed OUR exact payload, retrying would
+                    // create a duplicate post at a fresh cawonce. The
+                    // server-side check looks at the local Action table for
+                    // a content match.
+                    //
+                    // Three verdicts:
+                    //   'ours'      → action already on chain, mark this
+                    //                 row done client-side and skip retry.
+                    //   'collision' → slot used by different content; real
+                    //                 retry needed.
+                    //   'unknown'   → indexer hasn't caught up; proceed with
+                    //                 retry (same behaviour as today —
+                    //                 worst case stays no worse than the
+                    //                 status quo).
+                    try {
+                      const landedRes = await apiFetch<{ landed: 'ours' | 'collision' | 'unknown' }>(
+                        `/api/txqueue/check-landed/${status.id}`,
+                      )
+                      if (landedRes?.landed === 'ours') {
+                        console.log(`[TxQueueMonitor] TxQueue ${status.id} action already landed on chain — skipping retry to avoid duplicate`)
+                        // Clean up the failed-state UI for this row. The
+                        // server keeps TxQueue.status='failed' (the row
+                        // never made it through the validator's success
+                        // path) but the user-visible truth is "this
+                        // succeeded" — hide the failure notification and
+                        // drop the pending post tracking so the indexed
+                        // Caw row (which already has status=SUCCESS) is
+                        // the only copy the feed dedup sees.
+                        try {
+                          await apiFetch('/api/notifications/hide-by-original-tx', {
+                            method: 'POST',
+                            body: JSON.stringify({ userId: senderId, txQueueId: status.id }),
+                          })
+                        } catch { /* non-fatal */ }
+                        // The pending post was kept earlier under the
+                        // assumption a retry would hook into it. Since we
+                        // ARE NOT retrying, drop it now — the chain Caw
+                        // row is the canonical post.
+                        removePendingPostByTxQueueId(status.id)
+                        retrySucceeded = true // for the cleanup flag below
+                        return
+                      }
+                      // 'collision' or 'unknown' → fall through to the
+                      // existing retry flow below.
+                    } catch (err) {
+                      // check-landed failure is non-fatal — fall through to
+                      // the original retry path. The dedup safety here is
+                      // strictly additive; if the check errors we're no
+                      // worse off than before this commit.
+                      console.warn(`[TxQueueMonitor] check-landed failed for ${status.id}, proceeding with retry:`, err)
+                    }
+
                     // Allocate a fresh cawonce via the same allocator
                     // the original-submission path uses. /api/users/
                     // min-cawonce only sees pending/processing/scheduled

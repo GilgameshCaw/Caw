@@ -2,6 +2,7 @@ import { Router } from 'express'
 import { prisma } from '../../prismaClient'
 import { requireAuth } from '../middleware/auth'
 import { countManager } from '../../services/CountManager'
+import { decompressActionText } from '../../utils/decompressActionText'
 
 const router = Router()
 
@@ -115,6 +116,92 @@ router.get('/batch/:batchId',
     res.json({ entries })
   } catch (err: any) {
     console.error('GET /api/txqueue/batch error', err)
+    res.status(500).json({ error: 'Internal error' })
+  }
+})
+
+/**
+ * Resolve whether a failed TxQueue row's action actually landed on chain
+ * (i.e. our signed payload is already represented by an indexed Action row
+ * with matching content). Used by the FE BEFORE it auto-retries a
+ * "Cawonce already used" failure — if the action already succeeded via a
+ * peer mirror or a same-content earlier submission, retrying would create
+ * a duplicate post at a fresh cawonce.
+ *
+ * Mirrors the validator's resolveCawonceUsed comparison field-by-field
+ * (actionType, receiverId, receiverCawonce, decompressed text). DB-only;
+ * per project_no_rpc_in_request_handlers.md API request handlers don't
+ * call chain RPC. If the Action row isn't indexed yet, returns
+ * `{ landed: 'unknown', reason: 'no-action-row' }` and the FE should
+ * apply its own delay heuristic before retrying.
+ *
+ * Auth: caller must own the row's senderId (anySession + per-row check).
+ *
+ * Response shape:
+ *   { landed: 'ours' }     — exact same action is on chain; safe to mark done
+ *   { landed: 'collision' } — slot used by a DIFFERENT action; retry needed
+ *   { landed: 'unknown', reason: '...' } — can't tell yet (indexer lag, etc.)
+ */
+router.get('/check-landed/:id',
+  requireAuth({ anySession: true }),
+  async (req, res) => {
+  try {
+    const id = parseInt(req.params.id, 10)
+    if (isNaN(id)) {
+      return res.status(400).json({ error: 'Invalid id' })
+    }
+
+    const row = await prisma.txQueue.findUnique({
+      where: { id },
+      select: { senderId: true, cawonce: true, payload: true },
+    })
+    if (!row) {
+      return res.status(404).json({ error: 'Not found' })
+    }
+
+    const authorized = new Set((req.sessionData?.authorizedTokenIds || []) as number[])
+    if (!authorized.has(row.senderId)) {
+      return res.status(403).json({ error: 'Not authorized for this row' })
+    }
+
+    if (row.cawonce == null) {
+      return res.json({ landed: 'unknown', reason: 'no-cawonce-on-row' })
+    }
+
+    const data = (row.payload as any)?.data
+    if (!data) {
+      return res.json({ landed: 'unknown', reason: 'no-payload-data' })
+    }
+
+    const existingAction = await prisma.action.findFirst({
+      where: { senderId: row.senderId, cawonce: row.cawonce },
+    })
+    if (!existingAction) {
+      // Action row not yet indexed locally. Could mean:
+      //   (a) the slot really hasn't been used (the validator's
+      //       "Cawonce already used" rejection might be from a peer
+      //       mirror that landed an action we haven't indexed yet).
+      //   (b) the slot wasn't used at all and the validator's
+      //       rejection was wrong (rare — chain bitmap doesn't lie).
+      // Either way the FE shouldn't assume safe-to-retry yet. The
+      // 'unknown' verdict lets the FE choose: wait a few seconds and
+      // re-check, OR fall back to a chain bitmap probe via wagmi/viem
+      // (which goes through /api/rpc/* so we still benefit from the
+      // proxy cache).
+      return res.json({ landed: 'unknown', reason: 'no-action-row' })
+    }
+
+    const ex = existingAction.data as any
+    const dataTextPlain = decompressActionText(data.text)
+    const sameAction =
+      Number(ex?.actionType ?? -1) === Number(data.actionType) &&
+      Number(ex?.receiverId ?? -1) === Number(data.receiverId ?? 0) &&
+      Number(ex?.receiverCawonce ?? -1) === Number(data.receiverCawonce ?? 0) &&
+      (ex?.text ?? '') === dataTextPlain
+
+    return res.json({ landed: sameAction ? 'ours' : 'collision' })
+  } catch (err: any) {
+    console.error('GET /api/txqueue/check-landed error', err)
     res.status(500).json({ error: 'Internal error' })
   }
 })
