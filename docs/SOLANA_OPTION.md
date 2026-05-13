@@ -107,6 +107,5 @@ For completeness so we don't re-derive these:
 ## References
 
 - `docs/MULTI_CHAIN_STORAGE.md` — where Solana would plug in as an archive-chain option
-- `docs/CHAIN_CHOICE_DECISION.md` — the L1-anchored / per-validator-L2 framing this builds on
 - `docs/REPLICATION_AND_SLASHING.md` — what the archive contract actually does
 - `PROJECT_BACKLOG.md` — backlog placeholder
