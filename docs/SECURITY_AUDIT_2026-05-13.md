@@ -78,7 +78,7 @@ Plus medium findings: session TTL is 1 year (no idle timeout), DM-auth signature
 - **V1** (CRIT-adjacent) — ZK proof cache key not bound to submission context. Needs careful thought to avoid breaking the ZK happy path.
 - **V3** (HIGH, slashing) — Archive chain not verified before `submitReplication`. Needs a deployment-config hash to compare against.
 - **V4** (HIGH, slashing) — LayerZero fee buffer 120% → 150%+. Trivial to apply but worth measuring against actual fee variance first.
-- **V5/V6** (HIGH, uptime) — Cawonce dedup indexer-lag-dependent + mixed-batch re-simulation. Touches the hot submission path; needs careful handling.
+- **V5/V6** (HIGH, uptime) — **VERIFIED CLEAN on 2026-05-14 re-read.** V5: `resolveCawonceUsed` is solving "is the on-chain action OURS?", not "is cawonce used?" The chain can answer the latter but not the former (no calldata stored on-chain), so the indexer-lag-aware timeout is the right design. V6: `recoverBatchFailure` already does per-entry re-simulation + bisection on permanent failures — the original-revert path was correctly delegating to it. Both agent findings traced the first-pass code without following the recovery branch.
 - **C3** (MED) — AES-GCM without AAD on DM/session encryption. Defense-in-depth; add when next touching that code.
 - **API #6** (MED) — `dm-groups.ts:117` actor pattern — verified clean on re-read.
 
@@ -309,13 +309,11 @@ Under congestion the actual cost can exceed the buffer, the challenge relay fail
 
 ### HIGH (uptime, not slashing)
 
-**V5. Cawonce dedup relies on indexer lag budget** — `index.ts:283`
-Long indexer outage = legit retries get marked failed even though they landed on-chain.
-**Fix:** direct on-chain check (`checkpointClaimed`) as primary, indexer as fast path.
+**V5. Cawonce dedup relies on indexer lag budget** — `index.ts:283` — **VERIFIED CLEAN on 2026-05-14.**
+On re-read: the function is solving "is the existing on-chain action OURS or a collision with a different action at the same cawonce?", not "is cawonce used?" The chain doesn't store action content — only the bitmap — so it can't distinguish self-match from collision. The local `Action` row (reconstructed by the indexer from `ActionsProcessed` calldata) is the only authoritative source for that comparison. The lag-aware `indexerAwareAwaitingTimeoutMs()` budget caps the wait so genuine phantom-bitmap cases (cawonce consumed without a matching event) still resolve as `failed` after a reasonable window. Intentional design, not a finding.
 
-**V6. Mixed batch failures don't re-simulate non-cawonce errors** — `index.ts:2236`
-Audit fix `ef08a8b` only handles "Cawonce already used"; mixed batches with other errors still mass-fail.
-**Fix:** for any permanent-failure path, re-simulate individual entries to distinguish transient (awaiting_indexer) from real failures.
+**V6. Mixed batch failures don't re-simulate non-cawonce errors** — `index.ts:2236` — **VERIFIED CLEAN on 2026-05-14.**
+On re-read: `recoverBatchFailure` (line 1624) is invoked on every permanent batch-submission failure (called from line 2668). It runs in two stages — (1) re-simulate the whole batch and mark individual rejected entries failed while resetting the rest to pending (handles the mirror-race / cawonce-already-used case per entry), (2) bisect when sim-passes-but-tx-reverts (handles the underestimated-LZ-fee class). Mixed-failure batches do NOT mass-fail; the per-entry verdicts from `recoverBatchFailure` populate `verdictByEntryId` and reconciliation honors them. The agent's "still mass-fails" claim traced only the first-pass `every()` short-circuit at line 2236 without following the recovery path.
 
 ### MED
 
