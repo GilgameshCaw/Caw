@@ -243,8 +243,7 @@ async function registerSessionFor(owner, sessionKey, scopeBitmap, spendLimit, ex
     message: { sessionKey, expiry, scopeBitmap, spendLimit, perActionTipRate, nonce },
   };
   const sigHex = signTypedData({ data, privateKey: privFor(owner), version: SignTypedDataVersion.V4 });
-  const { v, r, s } = splitSig(sigHex);
-  await setup.cawProfileL2.registerSession(sessionKey, expiry, scopeBitmap, spendLimit, perActionTipRate, nonce, v, r, s);
+  await setup.cawProfileL2.registerSession(owner, sessionKey, expiry, scopeBitmap, spendLimit, perActionTipRate, nonce, sigHex);
 }
 
 async function fullSetup(accounts) {

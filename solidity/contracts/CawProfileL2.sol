@@ -10,6 +10,7 @@ import "./interfaces/ICawActions.sol";
 import "./CawProfileURI.sol";
 import "./CawProfile.sol";
 import "./OnlyOnce.sol";
+import "./SigVerification.sol";
 
 import { OApp, Origin, MessagingFee } from "@layerzerolabs/lz-evm-oapp-v2/contracts/oapp/OApp.sol";
 
@@ -30,6 +31,12 @@ contract CawProfileL2 is
   error Expired();
   error NotCa();
   error BadSig();
+  error NoWithdraw();    // attempted to delegate WITHDRAW scope (bit 6)
+  error BadNonce();      // session-registration nonce didn't match sessionNonce[signer]
+  error Replayed();      // personal-sign digest already consumed
+  error BadParse();      // any malformed input in the personal-sign message parser
+
+  using SigVerification for address;
 
   modifier onlyOnMainnet() {
     require(bypassLZ && msg.sender == address(cawProfile), "only mainnet");
@@ -125,6 +132,10 @@ contract CawProfileL2 is
 
   bytes32 private constant DELEGATION_TYPEHASH = keccak256(
     "SessionDelegation(address sessionKey,uint64 expiry,uint8 scopeBitmap,uint256 spendLimit,uint64 perActionTipRate,uint256 nonce)"
+  );
+
+  bytes32 private constant REVOKE_SESSION_TYPEHASH = keccak256(
+    "RevokeSession(address owner,address sessionKey,uint64 expiry)"
   );
 
   event OwnerSet(uint32 tokenId, address newOwner);
@@ -539,41 +550,47 @@ contract CawProfileL2 is
   // SESSION KEY REGISTRATION & REVOCATION
   // ============================================
 
-  /// @notice Register a session key. The wallet owner signs an EIP-712 delegation,
-  ///         then anyone (e.g. the validator) can submit it on-chain.
-  ///         Address-based: covers all tokens owned by the signer's wallet.
-  /// @param sessionKey The ephemeral address that will sign actions
-  /// @param expiry Unix timestamp after which the session is invalid
-  /// @param scopeBitmap Bitfield of allowed ActionTypes (bits 0-7; only WITHDRAW bit 6 is forbidden)
-  /// @param spendLimit Max whole CAW tokens this session key can spend (0 = unlimited)
-  /// @param nonce Must match the signer's current sessionNonce (prevents replay after revocation)
+  /// @notice Register a session key. The wallet owner signs an EIP-712
+  ///         delegation, then anyone (e.g. the validator) can submit it
+  ///         on-chain. Address-based: covers all tokens owned by `signer`.
+  /// @dev    Signature handling routes through `SigVerification.recoverOrValidate`:
+  ///           - 65-byte sig + EOA `signer`: ECDSA fast path via ecrecover
+  ///             (both `r||s||v` and `v||r||s` packings supported).
+  ///           - any-length sig + contract `signer` (Safe, 7702-delegated, etc.):
+  ///             ERC-1271 `isValidSignature` fallback with a 50k-gas budget.
+  ///         Callers that previously passed `(v, r, s)` should now pass
+  ///         `abi.encodePacked(r, s, v)` as the signature.
+  /// @param signer The address whose authorization is being claimed.
+  /// @param sessionKey The ephemeral address that will sign actions.
+  /// @param expiry Unix timestamp after which the session is invalid.
+  /// @param scopeBitmap Bitfield of allowed ActionTypes (bits 0-7; only WITHDRAW bit 6 is forbidden).
+  /// @param spendLimit Max whole CAW tokens this session key can spend (0 = unlimited).
+  /// @param nonce Must match the signer's current sessionNonce (prevents replay after revocation).
   function registerSession(
+    address signer,
     address sessionKey,
     uint64 expiry,
     uint8 scopeBitmap,
     uint256 spendLimit,
     uint64 perActionTipRate,
     uint256 nonce,
-    uint8 v, bytes32 r, bytes32 s
+    bytes calldata signature
   ) external {
+    if (signer == address(0)) revert BadSig();
     if (sessionKey == address(0)) revert ZeroKey();
     if (expiry <= block.timestamp) revert Expired();
-    require((scopeBitmap & 0x40) == 0, "no WITHDRAW");
+    if ((scopeBitmap & 0x40) != 0) revert NoWithdraw();
 
-    bytes32 structHash = keccak256(abi.encode(
-      DELEGATION_TYPEHASH,
-      sessionKey,
-      expiry,
-      scopeBitmap,
-      spendLimit,
-      perActionTipRate,
-      nonce
+    bytes32 digest = keccak256(abi.encodePacked(
+      "\x19\x01",
+      eip712DomainHash,
+      keccak256(abi.encode(
+        DELEGATION_TYPEHASH,
+        sessionKey, expiry, scopeBitmap, spendLimit, perActionTipRate, nonce
+      ))
     ));
-    bytes32 digest = keccak256(abi.encodePacked("\x19\x01", eip712DomainHash, structHash));
-    address signer = ecrecover(digest, v, r, s);
-
-    if (signer == address(0)) revert BadSig();
-    require(nonce == sessionNonce[signer], "Invalid nonce");
+    if (!signer.recoverOrValidate(digest, signature)) revert BadSig();
+    if (nonce != sessionNonce[signer]) revert BadNonce();
 
     sessionNonce[signer]++;
     sessions[signer][sessionKey] = StoredSession(expiry, scopeBitmap, spendLimit, perActionTipRate, ownerSessionEpoch[signer]);
@@ -595,27 +612,30 @@ contract CawProfileL2 is
   ///           (blank)
   ///           CAW Key:
   ///           0x742d...3e
+  /// @dev    Signature handling mirrors `registerSession`: 65-byte sigs route
+  ///         through ecrecover (both `r||s||v` and `v||r||s` packings); longer
+  ///         sigs hit the ERC-1271 fallback if `signer` has code. ECDSA
+  ///         callers pack as `abi.encodePacked(r, s, v)`.
   function registerSessionPersonal(
+    address signer,
     bytes memory message,
-    uint8 v, bytes32 r, bytes32 s
+    bytes calldata signature
   ) external {
-    // Recover signer from personal_sign prefix
+    if (signer == address(0)) revert BadSig();
     bytes32 digest = keccak256(abi.encodePacked(
       "\x19Ethereum Signed Message:\n",
       _uint2str(message.length),
       message
     ));
-    address signer = ecrecover(digest, v, r, s);
-    if (signer == address(0)) revert BadSig();
+    if (!signer.recoverOrValidate(digest, signature)) revert BadSig();
 
     // Replay protection: the personal-sign message format doesn't carry a
     // nonce, so a held signature could otherwise be re-submitted to undo a
     // revocation. Mark the digest consumed; reject duplicates. Audit fix
     // 2026-05-08.
-    require(!consumedSessionMessage[digest], "replay");
+    if (consumedSessionMessage[digest]) revert Replayed();
     consumedSessionMessage[digest] = true;
 
-    // Parse the message
     (uint256 spendLimit, uint64 perActionTipRate, uint64 expiry, address sessionKey) = _parseSessionMessage(message);
 
     if (sessionKey == address(0)) revert ZeroKey();
@@ -635,10 +655,10 @@ contract CawProfileL2 is
     internal pure returns (uint256 spendLimit, uint64 perActionTipRate, uint64 expiry, address sessionKey)
   {
     bytes[] memory lines = _splitLines(msg_);
-    require(lines.length == 13, "badlines");
+    if (lines.length != 13) revert BadParse();
 
     // Line 0: "Enable Quick Sign"
-    require(keccak256(lines[0]) == keccak256("Enable Quick Sign"), "Invalid header");
+    if (keccak256(lines[0]) != keccak256("Enable Quick Sign")) revert BadParse();
     // Line 1: "------------------" (decorative, skip)
     // Line 2: "Spend limit:" (label, skip)
 
@@ -666,21 +686,20 @@ contract CawProfileL2 is
 
   /// @dev Parse a tip-rate line like "1000 CAW" or "0 CAW" → uint64 whole tokens.
   function _parseTipRateValue(bytes memory line) internal pure returns (uint64) {
-    require(line.length >= 5, "badtip");
+    if (line.length < 5) revert BadParse();
     uint256 number = 0;
     uint256 i = 0;
     while (i < line.length && line[i] >= 0x30 && line[i] <= 0x39) {
       number = number * 10 + (uint8(line[i]) - 0x30);
       i++;
     }
-    require(number <= type(uint64).max, "tip ovf");
+    if (number > type(uint64).max) revert BadParse();
     // Allow 0 (opt-out) explicitly.
-    require(i < line.length && line[i] == 0x20, "badnum");
-    require(
+    if (!(i < line.length && line[i] == 0x20)) revert BadParse();
+    if (!(
       line.length - i - 1 == 3 &&
-      line[i+1] == 'C' && line[i+2] == 'A' && line[i+3] == 'W',
-      "Expected ' CAW' suffix"
-    );
+      line[i+1] == 'C' && line[i+2] == 'A' && line[i+3] == 'W'
+    )) revert BadParse();
     return uint64(number);
   }
 
@@ -712,19 +731,19 @@ contract CawProfileL2 is
 
   /// @dev Parse "5M CAW" → 5000000
   function _parseSpendLimitValue(bytes memory line) internal pure returns (uint256) {
-    require(line.length >= 5, "badlim");
+    if (line.length < 5) revert BadParse();
     uint256 number = 0;
     uint256 i = 0;
     while (i < line.length && line[i] >= 0x30 && line[i] <= 0x39) {
       number = number * 10 + (uint8(line[i]) - 0x30);
       i++;
     }
-    require(number > 0, "zerolim");
-    require(i < line.length, "Missing unit");
+    if (number == 0) revert BadParse();
+    if (i >= line.length) revert BadParse();
     if (line[i] == 'M') return number * 1_000_000;
     if (line[i] == 'K') return number * 1_000;
     if (line[i] == 'B') return number * 1_000_000_000;
-    revert("Invalid unit (expected K, M, or B)");
+    revert BadParse();
   }
 
   /// @dev Parse "25 April 2026 00:00:00 UTC" → unix timestamp
@@ -909,23 +928,17 @@ contract CawProfileL2 is
     StoredSession memory session = sessions[owner][sessionKey];
     require(session.expiry != 0, "no sess");
 
-    // Verify the session key signed a revocation message that's BOUND to
-    // the current session's expiry. Without binding, a previously-signed
-    // revocation could be replayed if the user later re-registers the
-    // same sessionKey under the same owner — letting an attacker who held
-    // the old signature revoke the freshly-registered session at any
-    // time. Each register fixes a unique expiry, so a fresh expiry
-    // invalidates old revocation sigs. Audit fix 2026-05-08
-    // (cross-contract MED-5).
+    // EIP-712 digest for the RevokeSession message. Bound to the CURRENT
+    // session's expiry — without binding, a previously-signed revocation could
+    // be replayed if the user later re-registers the same sessionKey under the
+    // same owner, letting an attacker who held the old signature revoke the
+    // freshly-registered session. Each register fixes a unique expiry, so a
+    // fresh expiry invalidates old revocation sigs. Audit fix 2026-05-08
+    // cross-contract MED-5.
     bytes32 digest = keccak256(abi.encodePacked(
       "\x19\x01",
       eip712DomainHash,
-      keccak256(abi.encode(
-        keccak256("RevokeSession(address owner,address sessionKey,uint64 expiry)"),
-        owner,
-        sessionKey,
-        session.expiry
-      ))
+      keccak256(abi.encode(REVOKE_SESSION_TYPEHASH, owner, sessionKey, session.expiry))
     ));
     address signer = ecrecover(digest, v, r, s);
     if (!(signer == sessionKey)) revert BadSig();
@@ -933,6 +946,14 @@ contract CawProfileL2 is
     delete sessions[owner][sessionKey];
     emit SessionRevoked(owner, sessionKey);
   }
+
+  // Note: no ERC-1271 overload for revokeSessionBySig in v1. Session keys in
+  // the magic-wallet design are always ephemeral ECDSA keys (generated locally
+  // by the app/browser), so the ecrecover path is sufficient. A contract-style
+  // session key (e.g., a smart-EOA delegated to a passkey, self-revoking) is
+  // an interesting future case but doesn't exist today. Adding the overload
+  // pushes CawProfileL2 over the EIP-170 deployed-bytecode limit; revisit when
+  // there's a real consumer.
 
   /// @notice OApp callback for receiving cross-chain messages from L1.
   /// @dev See SECURITY NOTE inside. The OApp base verifies sender is the endpoint and the configured
@@ -1104,6 +1125,10 @@ contract CawProfileL2 is
     if (selector == setWithdrawableSelector) return uint128(22_000 + 19_000 * n);  // measured: 15.5k + 14.4k*n
     revert('unexpected selector');
   }
+
+  // Signature verification (ERC-1271 fallback included) lives in
+  // SigVerification.sol — extracted as a library to keep CawProfileL2's
+  // deployed bytecode under the EIP-170 24,576-byte cap.
 
 }
 

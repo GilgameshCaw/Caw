@@ -349,8 +349,7 @@ contract('CawActions — qs: / qx: OTHER session register/revoke', function (acc
       message: { sessionKey, expiry: futureExpiry, scopeBitmap: 0xBF, spendLimit: '5000000', perActionTipRate: 0, nonce },
     };
     const sigHex = signTypedData({ data, privateKey: privFor(userA), version: SignTypedDataVersion.V4 });
-    const { v, r, s } = splitSig(sigHex);
-    await setup.cawProfileL2.registerSession(sessionKey, futureExpiry, 0xBF, '5000000', 0, nonce, v, r, s);
+    await setup.cawProfileL2.registerSession(userA, sessionKey, futureExpiry, 0xBF, '5000000', 0, nonce, sigHex);
 
     // Now try to use that session key to sign a qs: that registers a NEW session.
     const evilSessionKey = accounts[6];
@@ -505,7 +504,6 @@ contract('CawActions — qs: / qx: OTHER session register/revoke', function (acc
       message: { sessionKey: stalePayloadKey, expiry, scopeBitmap: 0xBF, spendLimit, perActionTipRate: 0, nonce: staleNonce },
     };
     const sigHex = signTypedData({ data: sigData, privateKey: privFor(newOwner), version: SignTypedDataVersion.V4 });
-    const { v, r, s } = splitSig(sigHex);
 
     // (2) Run the L1-bundled mintAndDepositAndQuickSign for a DIFFERENT
     //     session key (delivered via LZ to depositAndRegisterSessionAndUpdateOwners).
@@ -522,12 +520,16 @@ contract('CawActions — qs: / qx: OTHER session register/revoke', function (acc
     expect(Number(await setup.cawProfileL2.sessionNonce(newOwner))).to.equal(staleNonce + 1);
 
     // (3) The pre-signed payload now reverts when anyone tries to submit it.
+    //     The nonce mismatch triggers the BadNonce() custom error (was the
+    //     "Invalid nonce" require-string before the v1-passkey refactor).
     let threw = false;
     try {
-      await setup.cawProfileL2.registerSession(stalePayloadKey, expiry, 0xBF, spendLimit, 0, staleNonce, v, r, s);
+      await setup.cawProfileL2.registerSession(newOwner, stalePayloadKey, expiry, 0xBF, spendLimit, 0, staleNonce, sigHex);
     } catch (err) {
       threw = true;
-      expect(err.message).to.match(/Invalid nonce/);
+      // 0x4bd574ec = bytes4(keccak256("BadNonce()")) — match either the
+      // decoded error name or the raw selector hex.
+      expect(err.message).to.match(/BadNonce|Invalid nonce|0x4bd574ec/);
     }
     expect(threw).to.equal(true);
 

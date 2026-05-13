@@ -64,17 +64,19 @@ contract('CawProfileL2 — registerSessionPersonal replay protection', function 
   function signPersonal(message, privKey) {
     const digest = hashPersonalMessage(toBuffer('0x' + Buffer.from(message, 'utf8').toString('hex')));
     const sig = ecsign(digest, privKey);
-    return { v: sig.v, r: '0x' + sig.r.toString('hex'), s: '0x' + sig.s.toString('hex') };
+    // Pack as r||s||v for the bytes-form registerSessionPersonal overload.
+    const v = sig.v.toString(16).padStart(2, '0');
+    return '0x' + sig.r.toString('hex') + sig.s.toString('hex') + v;
   }
 
   it('first submission registers the session, second reverts as already-consumed', async function () {
     const message = buildPersonalMessage();
     const messageHex = '0x' + Buffer.from(message, 'utf8').toString('hex');
     const privKey = testKeys[owner.toLowerCase()];
-    const { v, r, s } = signPersonal(message, privKey);
+    const sigHex = signPersonal(message, privKey);
 
     // First submission — session registered.
-    await cawProfileL2.registerSessionPersonal(messageHex, v, r, s);
+    await cawProfileL2.registerSessionPersonal(owner, messageHex, sigHex);
     const session = await cawProfileL2.sessions(owner, sessionKey);
     expect(Number(session.expiry), 'session is registered after first call').to.be.greaterThan(0);
 
@@ -83,17 +85,21 @@ contract('CawProfileL2 — registerSessionPersonal replay protection', function 
     const revoked = await cawProfileL2.sessions(owner, sessionKey);
     expect(Number(revoked.expiry), 'session zeroed after revoke').to.equal(0);
 
-    // Replay the SAME signed message — must revert.
+    // Replay the SAME signed message — must revert. The custom error is
+    // `Replayed()` (was the "replay" require-string before the v1-passkey
+    // refactor). Older clients still surface the selector hex in the message.
     let reverted = false;
     let reason = '';
     try {
-      await cawProfileL2.registerSessionPersonal(messageHex, v, r, s);
+      await cawProfileL2.registerSessionPersonal(owner, messageHex, sigHex);
     } catch (err) {
       reverted = true;
       reason = (err.message || '').toLowerCase();
     }
     expect(reverted, 'replay should revert').to.equal(true);
-    expect(reason).to.include('replay');
+    // Match either the custom error name (when truffle/ganache decodes it) or
+    // the raw selector 0xf6c62c02 = bytes4(keccak256("Replayed()")).
+    expect(reason).to.match(/replay|replayed|0xf6c62c02/);
 
     // Confirm session stayed revoked.
     const stillRevoked = await cawProfileL2.sessions(owner, sessionKey);
