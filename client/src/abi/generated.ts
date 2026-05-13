@@ -1990,6 +1990,7 @@ export const cawProfileAbi = [
     ],
     stateMutability: 'nonpayable',
   },
+  { type: 'error', inputs: [], name: 'DelegateFailed' },
   { type: 'error', inputs: [], name: 'InvalidDelegate' },
   { type: 'error', inputs: [], name: 'InvalidEndpointCall' },
   {
@@ -1998,16 +1999,22 @@ export const cawProfileAbi = [
     name: 'InvalidOptionType',
   },
   { type: 'error', inputs: [], name: 'LzTokenUnavailable' },
+  { type: 'error', inputs: [], name: 'NoFees' },
   {
     type: 'error',
     inputs: [{ name: 'eid', internalType: 'uint32', type: 'uint32' }],
     name: 'NoPeer',
   },
+  { type: 'error', inputs: [], name: 'NoPending' },
   {
     type: 'error',
     inputs: [{ name: 'msgValue', internalType: 'uint256', type: 'uint256' }],
     name: 'NotEnoughNative',
   },
+  { type: 'error', inputs: [], name: 'NotMinter' },
+  { type: 'error', inputs: [], name: 'NotNetOwner' },
+  { type: 'error', inputs: [], name: 'NotOwner' },
+  { type: 'error', inputs: [], name: 'NothingToWithdraw' },
   {
     type: 'error',
     inputs: [{ name: 'addr', internalType: 'address', type: 'address' }],
@@ -2021,6 +2028,10 @@ export const cawProfileAbi = [
     ],
     name: 'OnlyPeer',
   },
+  { type: 'error', inputs: [], name: 'RefundFailed' },
+  { type: 'error', inputs: [], name: 'Unauthorized' },
+  { type: 'error', inputs: [], name: 'ZeroAddr' },
+  { type: 'error', inputs: [], name: 'ZeroDeposit' },
   {
     type: 'event',
     anonymous: false,
@@ -2975,6 +2986,10 @@ export const cawProfileL2Abi = [
     ],
     stateMutability: 'nonpayable',
   },
+  { type: 'error', inputs: [], name: 'BadNonce' },
+  { type: 'error', inputs: [], name: 'BadParse' },
+  { type: 'error', inputs: [], name: 'BadSig' },
+  { type: 'error', inputs: [], name: 'Expired' },
   { type: 'error', inputs: [], name: 'InvalidDelegate' },
   { type: 'error', inputs: [], name: 'InvalidEndpointCall' },
   {
@@ -2988,6 +3003,8 @@ export const cawProfileL2Abi = [
     inputs: [{ name: 'eid', internalType: 'uint32', type: 'uint32' }],
     name: 'NoPeer',
   },
+  { type: 'error', inputs: [], name: 'NoWithdraw' },
+  { type: 'error', inputs: [], name: 'NotCa' },
   {
     type: 'error',
     inputs: [{ name: 'msgValue', internalType: 'uint256', type: 'uint256' }],
@@ -2998,6 +3015,7 @@ export const cawProfileL2Abi = [
     inputs: [{ name: 'addr', internalType: 'address', type: 'address' }],
     name: 'OnlyEndpoint',
   },
+  { type: 'error', inputs: [], name: 'OnlyLZ' },
   {
     type: 'error',
     inputs: [
@@ -3006,6 +3024,8 @@ export const cawProfileL2Abi = [
     ],
     name: 'OnlyPeer',
   },
+  { type: 'error', inputs: [], name: 'Replayed' },
+  { type: 'error', inputs: [], name: 'ZeroKey' },
   {
     type: 'event',
     anonymous: false,
@@ -3624,15 +3644,14 @@ export const cawProfileL2Abi = [
   {
     type: 'function',
     inputs: [
+      { name: 'signer', internalType: 'address', type: 'address' },
       { name: 'sessionKey', internalType: 'address', type: 'address' },
       { name: 'expiry', internalType: 'uint64', type: 'uint64' },
       { name: 'scopeBitmap', internalType: 'uint8', type: 'uint8' },
       { name: 'spendLimit', internalType: 'uint256', type: 'uint256' },
       { name: 'perActionTipRate', internalType: 'uint64', type: 'uint64' },
       { name: 'nonce', internalType: 'uint256', type: 'uint256' },
-      { name: 'v', internalType: 'uint8', type: 'uint8' },
-      { name: 'r', internalType: 'bytes32', type: 'bytes32' },
-      { name: 's', internalType: 'bytes32', type: 'bytes32' },
+      { name: 'signature', internalType: 'bytes', type: 'bytes' },
     ],
     name: 'registerSession',
     outputs: [],
@@ -3667,10 +3686,9 @@ export const cawProfileL2Abi = [
   {
     type: 'function',
     inputs: [
+      { name: 'signer', internalType: 'address', type: 'address' },
       { name: 'message', internalType: 'bytes', type: 'bytes' },
-      { name: 'v', internalType: 'uint8', type: 'uint8' },
-      { name: 'r', internalType: 'bytes32', type: 'bytes32' },
-      { name: 's', internalType: 'bytes32', type: 'bytes32' },
+      { name: 'signature', internalType: 'bytes', type: 'bytes' },
     ],
     name: 'registerSessionPersonal',
     outputs: [],
