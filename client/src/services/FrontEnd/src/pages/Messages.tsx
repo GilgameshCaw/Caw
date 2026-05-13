@@ -44,7 +44,7 @@ import MessageSearch from '~/components/MessageSearch'
 import GifPicker from '~/components/GifPicker'
 import EncryptedImage from '~/components/EncryptedImage'
 import { useDmFileUpload } from '~/hooks/useDmFileUpload'
-import { getCachedPrivateKey } from '~/services/DmCryptoService'
+import { getCachedPrivateKey, getCachedPublicKeyHex } from '~/services/DmCryptoService'
 import MentionAutocomplete from '~/components/MentionAutocomplete'
 import { useBlockedUsersStore } from '~/store/blockedUsersStore'
 import { useDmMuteStore } from '~/store/dmMuteStore'
@@ -652,11 +652,19 @@ const MessagesPage: React.FC = () => {
       }
 
       // Build the recipients list. For groups: every active member with
-      // a publicKey (incl. self for reload self-decrypt). For DMs: peer
-      // + self. Shape is uniform so the receiver doesn't branch.
-      const recipients = selectedConversation.participants
+      // a publicKey (incl. self — group conv.participants includes self).
+      // For DMs: `selectedConversation.participants` is the "others only"
+      // shape (useDm strips self), so we have to add the sender's own
+      // slot ourselves — otherwise we can't re-decrypt our own sent
+      // image on reload (no key sealed for us). Same uniform shape on
+      // the receive side regardless of conversation type.
+      const baseRecipients = selectedConversation.participants
         .filter(p => !!p.publicKey)
         .map(p => ({ userId: p.userId, publicKey: p.publicKey as string }))
+      const myPub = getCachedPublicKeyHex()
+      const recipients = (myPub && !baseRecipients.some(r => r.userId === currentUser.id))
+        ? [...baseRecipients, { userId: currentUser.id, publicKey: myPub }]
+        : baseRecipients
       if (recipients.length === 0) {
         setUploadError('No recipient identities available — they may not have DMs enabled yet.')
         return
