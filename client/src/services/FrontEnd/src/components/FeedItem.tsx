@@ -1759,6 +1759,18 @@ const FeedItem: React.FC<{ item: CawItem; isMainPost?: boolean; isReply?: boolea
                           e.preventDefault(); e.stopPropagation(); setShowRecawMenu(false)
                           const effectiveTokenId = activeTokenId || activeToken?.tokenId
                           if (!effectiveTokenId) return
+                          // Optimistically hide the viewer's own recaw row in any
+                          // feed they're currently looking at (their profile is
+                          // the obvious one). Indexer deletes the recaw row in
+                          // 5–60s; without this it lingers on the profile until
+                          // refresh. Mirrors the delete-post optimistic hide.
+                          if (useItem.user?.tokenId != null && useItem.cawonce != null) {
+                            useHiddenCawsStore.getState().hideRecaw(
+                              Number(effectiveTokenId),
+                              Number(useItem.user.tokenId),
+                              Number(useItem.cawonce),
+                            )
+                          }
                           try {
                             setBusyRecaw(true)
                             await signAndSubmit({

@@ -78,6 +78,7 @@ const Feed = forwardRef<FeedRef, Props>(({ filter, username, apiEndpoint, title 
   const { preferences } = useMutePreferences()
   const blockedUsers = useBlockedUsersStore(s => s.blockedUsers)
   const hiddenCawonces = useHiddenCawsStore(s => s.hiddenCawonces)
+  const hiddenRecaws = useHiddenCawsStore(s => s.hiddenRecaws)
   const cacheKey = feedCacheKey(filter, activeTokenId, apiEndpoint, username)
   const cached = feedCache.get(cacheKey)
   const [items,      setItems]      = useState<CawItem[]>(cached?.items ?? [])
@@ -242,6 +243,11 @@ const Feed = forwardRef<FeedRef, Props>(({ filter, username, apiEndpoint, title 
       // takes 5–60s to land, this keeps them gone immediately.
       if (item.cawonce != null && item.user?.tokenId != null &&
           hiddenCawonces[`${item.user.tokenId}:${Number(item.cawonce)}`]) return false
+      // Filter out plain recaws the current user just undid. Quotes are
+      // standalone posts and aren't deleted by `hide:recaw:*` — skip them.
+      if (item.action === 'RECAW' && !item.isQuote && item.parent &&
+          item.user?.tokenId != null && item.parent.user?.tokenId != null && item.parent.cawonce != null &&
+          hiddenRecaws[`${item.user.tokenId}:${item.parent.user.tokenId}:${Number(item.parent.cawonce)}`]) return false
       // Filter out DB PENDING posts that match local pending posts (same user + content + parent)
       if (item.status === 'PENDING') {
         if (pendingPostSignatures.has(pendingSig(item))) return false
@@ -314,7 +320,7 @@ const Feed = forwardRef<FeedRef, Props>(({ filter, username, apiEndpoint, title 
       result.push(...queued)
     }
     return result
-  }, [items, preferences, blockedUsers, pendingPosts, hiddenCawonces])
+  }, [items, preferences, blockedUsers, pendingPosts, hiddenCawonces, hiddenRecaws])
 
   // Expose refresh method via ref
   useImperativeHandle(ref, () => ({
