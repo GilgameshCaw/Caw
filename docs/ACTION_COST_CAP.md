@@ -50,21 +50,25 @@ Properties:
 
 ### Proposed cap values (immutable constants)
 
-Target $0.01 per like at ETH = $5,000:
+Anchor LIKE = $0.01 at ETH = $5,000 (i.e. 2e11 wei). All other caps
+derived by preserving today's baseline CAW ratios from
+`CawActions.sol:1085-1126`:
 
-| Action  | `max_eth_per_action` (wei) | Notional at ETH=$5k |
-| ------- | -------------------------- | ------------------- |
-| LIKE    | 200,000,000,000 (2e11)     | $0.01               |
-| RECAW   | 400,000,000,000 (4e11)     | $0.02               |
-| FOLLOW  | 1,000,000,000,000 (1e12)   | $0.05               |
-| CAW     | 1,000,000,000,000 (1e12)   | $0.05               |
-| UNLIKE/UNFOLLOW | 100,000,000,000 (1e11) | $0.005          |
+| Action          | Baseline CAW | Ratio vs LIKE | `max_eth_per_action` (wei) | Notional at ETH=$5k |
+| --------------- | ------------ | ------------- | -------------------------- | ------------------- |
+| UNLIKE/UNFOLLOW | 1,000        | 0.5×          | 100,000,000,000 (1e11)     | $0.005              |
+| LIKE            | 2,000        | 1×            | 200,000,000,000 (2e11)     | $0.01               |
+| RECAW           | 4,000        | 2×            | 400,000,000,000 (4e11)     | $0.02               |
+| CAW             | 5,000        | 2.5×          | 500,000,000,000 (5e11)     | $0.025              |
+| FOLLOW          | 30,000       | 15×           | 3,000,000,000,000 (3e12)   | $0.15               |
 
 These are notional ceilings — at today's CAW price the baseline is far
-below the cap so it doesn't bind. Values picked so likes/recaws stay
-psychologically free, posts/follows are still cheap, and the ratios
-match today's relative weights (LIKE:CAW = 2:5 baseline → 1:5 capped,
-intentional — at scale, posting should cost more relative to liking).
+below the cap so it doesn't bind. By construction, when the cap *does*
+bind, the relative cost of each action matches the relative cost today
+(post is 2.5× a like; follow is 15× a like). FOLLOW at $0.15 reflects
+that follows are a higher-value commitment than likes in the existing
+economic design; if that ratio should change at scale, that's a
+protocol-level conversation, not a cap-tuning one.
 
 ### Oracle
 
@@ -149,10 +153,67 @@ itself). Pros: payload format for existing messages doesn't change.
 Cons: 4 lines added to `isAuthorizedFunction`, new handler function on
 L2, both contracts grow — and they're already at the cap.
 
-**Recommendation: Strategy A.** Pre-launch we can change wire formats
+**Decision: Strategy A.** Pre-launch we can change wire formats
 freely, and the existing messages are already changing as the protocol
 evolves. Adding 32 bytes to each payload is far cheaper than adding a
 handler function and risking a tip over the 24,576 cap.
+
+#### Selectors that gain the price-sample piggyback
+
+Every L1→L2 message currently ends in
+`(uint32[] tokenIds, address[] owners, uint64[] stamps)` — that's the
+`updateOwners` payload tacked on for ownership-sync. The piggyback
+extends each of these *seven* selectors to also carry
+`(uint128 priceCumulativeLast, uint32 sampleTimestamp)`:
+
+| Selector const | Defined at | New signature |
+| -------------- | ---------- | ------------- |
+| `mintSelector` | `CawProfile.sol:76` | `mintAndUpdateOwners(uint32,address,string,uint32[],address[],uint64[],uint128,uint32)` |
+| `addToBalanceSelector` | `CawProfile.sol:78` | `depositAndUpdateOwners(uint32,uint32,uint256,uint32[],address[],uint64[],uint128,uint32)` |
+| `authSelector` | `CawProfile.sol:79` | `authenticateAndUpdateOwners(uint32,uint32,uint32[],address[],uint64[],uint128,uint32)` |
+| `updateOwnersSelector` | `CawProfile.sol:80` | `updateOwners(uint32[],address[],uint64[],uint128,uint32)` |
+| `mintAuthSelector` | `CawProfile.sol:83` | `mintAuthAndUpdateOwners(uint32,uint32,address,string,uint32[],address[],uint64[],uint128,uint32)` |
+| `depositRegisterSessionSelector` | `CawProfile.sol:89` | `depositAndRegisterSessionAndUpdateOwners(uint32,uint32,uint256,address,address,uint64,uint256,uint64,uint32[],address[],uint64[],uint128,uint32)` |
+| `mintAuthRegisterSessionSelector` | `CawProfile.sol:93` | `mintAuthAndRegisterSessionAndUpdateOwners(uint32,uint32,address,string,address,uint64,uint256,uint64,uint32[],address[],uint64[],uint128,uint32)` |
+
+Each L2-side handler in `CawProfileL2` gets the two trailing params and
+calls `oracle.recordSample(priceCumulativeLast, sampleTimestamp)`
+before dispatching to its existing logic.
+
+#### L1 price reading: separate contract
+
+`CawProfile` is at the EIP-170 cap
+(`project_eip170_24576_cap.md`), so the price-read logic doesn't go
+inline. A new immutable contract:
+
+```solidity
+contract CawL1PriceReader {
+  IUniswapV2Pair public immutable pair;
+  bool public immutable cawIsToken0;
+
+  constructor(IUniswapV2Pair _pair, address cawToken) {
+    pair = _pair;
+    cawIsToken0 = (_pair.token0() == cawToken);
+  }
+
+  function readSample() external view returns (uint128 cumulative, uint32 timestamp) {
+    // Read price0/price1CumulativeLast + reserves, advance the cumulative
+    // by the unaccrued portion since last _update() if needed. Standard
+    // UniV2 oracle trick — see Compound's UniswapAnchoredView or
+    // OpenZeppelin's UniswapV2OracleLibrary.
+  }
+}
+```
+
+`CawProfile` holds an `immutable CawL1PriceReader priceReader` and
+calls `priceReader.readSample()` once per L1→L2 send, splicing the
+result into the outgoing payload. One external call (~2.5K gas worst
+case), reader is independently testable, reader's pool address is the
+single source of truth.
+
+If the reader contract ever needs to be replaced (it won't — it's
+immutable and read-only), the answer is: it can't. The pool address is
+the lockdown point, exactly as designed.
 
 #### Sample format
 
