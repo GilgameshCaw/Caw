@@ -32,21 +32,58 @@ For each action type with a configured cap:
 
 ```
 cost_in_CAW = min(
-  baseline_caw_per_action,           // current fixed cost
+  baseline_caw_per_action,           // manifesto fixed cost
   max_eth_per_action / twap_eth_per_caw
 )
+scale_num = cost_in_CAW
+scale_den = baseline_caw_per_action
 ```
+
+Every internal distribution amount for that action is then scaled by
+`scale_num / scale_den`. **The split percentages don't change** — only
+the total notional. So a LIKE that today is `2000 = 1600 (receiver) +
+400 (depositors)` becomes, when the cap binds at e.g. 500:
+
+```
+total      = 500
+receiver   = 1600 * 500 / 2000 = 400  (still 80%)
+depositors = 400 * 500 / 2000  = 100  (still 20%)
+```
+
+This is critical: scaling only the total without scaling the splits
+would silently change who-gets-what. The manifesto's distribution model
+is preserved at every price point.
 
 Properties:
 
 - **Self-deactivating.** While CAW is cheap (`max_eth / twap_eth_per_caw`
-  > baseline), the baseline binds. Cap is a no-op until needed.
+  > baseline), `scale_num == scale_den` and the baseline applies
+  byte-for-byte. Cap is a no-op until needed.
+- **Splits invariant.** Receiver share, depositor share, validator-tip
+  share all remain at today's percentages, scaled proportionally with
+  the total.
 - **No floor.** When CAW falls, baseline applies unchanged. Cap-only,
   asymmetric. Avoids the "subsidy-during-volatility" attack surface a
   symmetric rule would introduce.
 - **Per-action-type caps.** Different `max_eth_per_action` per type.
-  Likes/recaws/follows cheap; posts higher; tips/withdraw uncapped
+  Likes/recaws cheap; CAW/follow higher; tips/withdraw uncapped
   (amounts are user-chosen, not protocol-priced).
+
+### Distribution splits (preserved at every price point)
+
+From `CawActions.sol:1085-1126`:
+
+| Action | Total | Receiver | Depositors | Notes |
+| ------ | ----- | -------- | ---------- | ----- |
+| CAW    | 5,000 | — | 5,000 (100%) | `spendAndDistributeTokens(senderId, 5000, 5000)` — no receiver, fully funds depositor pool |
+| LIKE   | 2,000 | 1,600 (80%) | 400 (20%) | |
+| RECAW  | 4,000 | 2,000 (50%) | 2,000 (50%) | |
+| FOLLOW | 30,000 | 24,000 (80%) | 6,000 (20%) | receiver = followee |
+| UNLIKE | 1,000 | 1,000 to validator (100%) | 0 | griefing floor |
+| UNFOLLOW | 1,000 | 1,000 to validator (100%) | 0 | griefing floor |
+
+When the cap binds, each of these breakdowns is scaled by
+`scale_num/scale_den` and the percentages preserved.
 
 ### Proposed cap values (immutable constants)
 
