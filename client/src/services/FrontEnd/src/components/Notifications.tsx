@@ -28,6 +28,7 @@ import { getUserAvatar } from '~/utils/defaultAvatar'
 import Avatar from '~/components/Avatar'
 import { LoadingSpinner } from '~/components/Skeleton'
 import UserHoverCard from '~/components/UserHoverCard'
+import { CawThumbnail, pickCawThumbnail } from '~/utils/cawThumbnail'
 
 interface Actor {
   tokenId: number
@@ -46,6 +47,12 @@ interface Notification {
     id: number
     content: string
     createdAt: string
+    // Media bits used to render a thumbnail and scrub the lifted GIF
+    // URL out of the content snippet.
+    hasImage?: boolean
+    hasVideo?: boolean
+    imageData?: string | null
+    videoData?: string | null
   }
   offer?: {
     id: number
@@ -979,14 +986,36 @@ const Notifications: React.FC = () => {
                       </span>
                     </Tooltip>
                   </div>
-                  {notification.caw && (
-                    <p className={`text-sm mt-1 truncate ${
-                      isDark ? 'text-white/60' : 'text-gray-600'
-                    }`}>
-                      {notification.caw.content}
-                    </p>
-                  )}
+                  {notification.caw && (() => {
+                    // Pick a thumbnail (if any) AND scrub any lifted GIF
+                    // URL out of the snippet so we don't render the URL
+                    // text twice when the same media is shown as the
+                    // thumb on the right.
+                    const picked = pickCawThumbnail(notification.caw, notification.caw.content)
+                    return picked.body ? (
+                      <p className={`text-sm mt-1 truncate ${
+                        isDark ? 'text-white/60' : 'text-gray-600'
+                      }`}>
+                        {picked.body}
+                      </p>
+                    ) : null
+                  })()}
                 </div>
+                {notification.caw && (() => {
+                  // Same picker call as above for the thumb itself — cheap
+                  // enough to run twice (regex match + a couple of string
+                  // splits, no fetch) that the alternative of hoisting it
+                  // up isn't worth restructuring the JSX flow for.
+                  const { thumb } = pickCawThumbnail(notification.caw, notification.caw.content)
+                  if (!thumb) return null
+                  return (
+                    <CawThumbnail
+                      thumb={thumb}
+                      wrapperClass="relative flex-shrink-0 self-start mt-1 w-12 h-12 rounded overflow-hidden"
+                      showPlayOverlay={thumb.kind !== 'image'}
+                    />
+                  )
+                })()}
                 {notification.type === 'ACTION_FAILED' && notification.actionPayload && (() => {
                   // Manual retry in progress (user tapped the button on this
                   // notification) OR auto-retry in progress (useTxQueueMonitor

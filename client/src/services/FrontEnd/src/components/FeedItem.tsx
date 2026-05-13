@@ -72,60 +72,7 @@ import { HiOutlineCurrencyDollar } from 'react-icons/hi'
 import { chains } from '~/config/chains'
 
 import { formatTimeAgo } from '~/utils/formatTimeAgo'
-import { useCachedFetch } from '~/hooks/useCachedFetch'
-// Shared with ContentWithHashtags so a successful resolve from the
-// inline post-content renderer is reusable in the "Replying to"
-// thumbnail (and vice versa) — same `${host}|${code}` key shape.
-import { shortUrlCache as replyThumbCache } from './ContentWithHashtags'
-
-// Map a Giphy GIF URL to its still-frame variant. Giphy's CDN serves
-// `/giphy_s.gif` alongside `/giphy.gif`, so we just rewrite that path
-// segment — query strings (e.g. `?cid=...&rid=giphy.gif`) can also
-// contain ".gif", which is why we replace the path token specifically.
-const giphyStillUrl = (url: string): string =>
-  /\/giphy\.gif(?:\?|$)/i.test(url) ? url.replace('/giphy.gif', '/giphy_s.gif') : url
-
-const isGiphyUrl = (url: string): boolean =>
-  /https?:\/\/(?:media\d?\.giphy\.com|i\.giphy\.com)\/media\//i.test(url)
-
-// Renders the resolved still-frame for a `/s/<code>.gif` short URL in
-// the "Replying to" preview. Resolves the short URL via the same
-// `/api/shorturl/:code` endpoint ContentWithHashtags uses, then maps a
-// Giphy original to its `_s.gif` still — non-Giphy short URLs render
-// as-is (which is fine; first paint shows the GIF's first frame).
-const ReplyShortUrlGifThumb: React.FC<{ code: string; originHost?: string; wrapperClass: string }> = ({ code, originHost, wrapperClass }) => {
-  const key = originHost ? `${originHost}|${code}` : code
-  const endpoint = originHost ? `${originHost}/api/shorturl/${code}` : `/api/shorturl/${code}`
-  const { url: originalUrl, loading } = useCachedFetch(
-    key,
-    replyThumbCache,
-    endpoint,
-    (data: { originalUrl: string }) => data.originalUrl,
-  )
-  const [errored, setErrored] = useState(false)
-  if (loading) return <span className={`${wrapperClass} animate-pulse bg-white/10`} />
-  // Resolver returned null (404, cross-mirror) or the image errored — render
-  // nothing rather than an empty black wrapper.
-  if (!originalUrl || errored) return null
-  const src = isGiphyUrl(originalUrl) ? giphyStillUrl(originalUrl) : originalUrl
-  return (
-    <span className={`${wrapperClass} bg-black`}>
-      <img
-        src={src}
-        alt=""
-        className="w-full h-full object-cover"
-        onError={() => setErrored(true)}
-      />
-      <span className="absolute inset-0 flex items-center justify-center pointer-events-none">
-        <span className="w-6 h-6 rounded-full bg-black/60 flex items-center justify-center">
-          <svg width="10" height="10" viewBox="0 0 10 10" fill="white">
-            <polygon points="2,1 9,5 2,9" />
-          </svg>
-        </span>
-      </span>
-    </span>
-  )
-}
+import { CawThumbnail, pickCawThumbnail, type CawThumbnailSource } from '~/utils/cawThumbnail'
 
 
 const FeedItem: React.FC<{ item: CawItem; isMainPost?: boolean; isReply?: boolean; hideParentPreview?: boolean; hideMedia?: boolean; contentClassName?: string; uiDensity?: 'normal' | 'compact'; showReplyRail?: boolean; hideBottomBorder?: boolean; inThread?: boolean; onBookmarkUpdate?: (cawId: number, isBookmarked: boolean) => void; onLikeStateChange?: (cawId: string, likePending: boolean) => void; onRecawStateChange?: (cawId: string, recawPending: boolean) => void; onReplyStateChange?: (cawId: string, replyPending: boolean) => void; onTipStateChange?: (cawId: string, tipPending: boolean) => void; onPinUpdate?: (cawId: string, isPinned: boolean) => void }> = ({ item, isMainPost = false, isReply = false, hideParentPreview = false, hideMedia = false, contentClassName, uiDensity = 'normal', showReplyRail = true, hideBottomBorder = false, inThread = false, onBookmarkUpdate, onLikeStateChange, onRecawStateChange, onReplyStateChange, onTipStateChange, onPinUpdate }) => {
@@ -1102,54 +1049,12 @@ const FeedItem: React.FC<{ item: CawItem; isMainPost?: boolean; isReply?: boolea
               let parentBody = stripPollMarker(item.parent.content || '')
               // Pick the parent's first piece of media for a thumbnail
               // preview, in priority: image → video poster → Giphy still
-              // (resolved via short URL when needed). 'shortGif' is a
-              // separate kind because rendering goes through a hook-using
-              // component; 'gif' covers raw Giphy URLs (legacy/unshortened).
-              const parentAny = item.parent as any
-              let parentThumb:
-                | { kind: 'image' | 'video' | 'gif'; src: string }
-                | { kind: 'shortGif'; code: string; originHost?: string }
-                | null = null
-              if (item.parent.hasImage && item.parent.imageData) {
-                const data = item.parent.imageData
-                if (data.startsWith('urls:')) {
-                  const first = data.replace('urls:', '').split('|||')[0]
-                  if (first) parentThumb = { kind: 'image', src: first }
-                } else {
-                  const first = data.split('|||')[0]
-                  if (first) parentThumb = { kind: 'image', src: `data:image/jpeg;base64,${first}` }
-                }
-              }
-              if (!parentThumb && parentAny.hasVideo && parentAny.videoData) {
-                const first = String(parentAny.videoData).split('|||')[0]
-                if (first) parentThumb = { kind: 'video', src: first }
-              }
-              if (!parentThumb && parentBody) {
-                // Giphy GIFs in posts are stored as our /s/<code>.gif
-                // short URLs (sometimes absolute, e.g. https://node/s/X.gif).
-                // Catch those first; fall back to a raw Giphy URL for
-                // legacy posts that pre-date the shortener. When we lift
-                // the URL into a thumbnail, scrub it from the snippet so
-                // the user doesn't see the raw URL twice.
-                const shortGifRegex = /(https?:\/\/[^\s\/]+)?\/s\/([a-zA-Z0-9]+\.gif)\b/i
-                const shortGifMatch = parentBody.match(shortGifRegex)
-                if (shortGifMatch) {
-                  // Code includes the extension — the resolver row was
-                  // created with `code: <base>.gif` so we MUST query that
-                  // exact form. Stripping `.gif` 404s.
-                  const code = shortGifMatch[2]
-                  const originHost = shortGifMatch[1] || undefined
-                  parentThumb = { kind: 'shortGif', code, originHost }
-                  parentBody = parentBody.replace(shortGifRegex, '').replace(/\s{2,}/g, ' ').trim()
-                } else {
-                  const giphyRegex = /https?:\/\/(?:media\d?\.giphy\.com|i\.giphy\.com)\/media\/\S*?\/giphy\.gif(?:\?\S*)?/i
-                  const giphyMatch = parentBody.match(giphyRegex)
-                  if (giphyMatch) {
-                    parentThumb = { kind: 'gif', src: giphyStillUrl(giphyMatch[0]) }
-                    parentBody = parentBody.replace(giphyRegex, '').replace(/\s{2,}/g, ' ').trim()
-                  }
-                }
-              }
+              // (resolved via short URL when needed). The picker also
+              // scrubs the lifted GIF URL out of parentBody so the snippet
+              // doesn't render the raw URL alongside the thumbnail.
+              const picked = pickCawThumbnail(item.parent as CawThumbnailSource, parentBody)
+              const parentThumb = picked.thumb
+              parentBody = picked.body
               return (
                 <Link to={cawUrl(item.parent)} state={{ caw: item.parent }} className={`block text-xs transition-all duration-300 mb-3 ${
                   isDark ? 'text-gray-400' : 'text-gray-600'
@@ -1157,51 +1062,12 @@ const FeedItem: React.FC<{ item: CawItem; isMainPost?: boolean; isReply?: boolea
                   <span className="truncate md:truncate-none">{t('post.replying_to')} <span className="underline">@{item.parent.user.username}</span></span>
                   {(parentBody || parentThumb || item.parent.poll) && (
                     <span className="flex items-start gap-2 mt-1">
-                      {parentThumb && (() => {
-                        const wrapperClass = `relative flex-shrink-0 mt-1 rounded overflow-hidden ${item.parent!.poll ? 'w-20 h-20' : 'w-16 h-16'}`
-                        const playOverlay = (
-                          <span className="absolute inset-0 flex items-center justify-center pointer-events-none">
-                            <span className="w-6 h-6 rounded-full bg-black/60 flex items-center justify-center">
-                              <svg width="10" height="10" viewBox="0 0 10 10" fill="white">
-                                <polygon points="2,1 9,5 2,9" />
-                              </svg>
-                            </span>
-                          </span>
-                        )
-                        if (parentThumb.kind === 'shortGif') {
-                          // Component owns its wrapper so it can render
-                          // nothing when the short URL 404s on this mirror.
-                          return (
-                            <ReplyShortUrlGifThumb code={parentThumb.code} originHost={parentThumb.originHost} wrapperClass={wrapperClass} />
-                          )
-                        }
-                        if (parentThumb.kind === 'video') {
-                          return (
-                            <span className={`${wrapperClass} bg-black`}>
-                              <video
-                                src={parentThumb.src}
-                                muted
-                                playsInline
-                                preload="metadata"
-                                className="w-full h-full object-cover pointer-events-none"
-                              />
-                              {playOverlay}
-                            </span>
-                          )
-                        }
-                        // image or gif (raw)
-                        return (
-                          <span className={`${wrapperClass} bg-black`}>
-                            <img
-                              src={parentThumb.src}
-                              alt=""
-                              className="w-full h-full object-cover"
-                              onError={(e) => { (e.currentTarget.parentElement as HTMLElement | null)?.style.setProperty('display', 'none') }}
-                            />
-                            {parentThumb.kind === 'gif' && playOverlay}
-                          </span>
-                        )
-                      })()}
+                      {parentThumb && (
+                        <CawThumbnail
+                          thumb={parentThumb}
+                          wrapperClass={`relative flex-shrink-0 mt-1 rounded overflow-hidden ${item.parent!.poll ? 'w-20 h-20' : 'w-16 h-16'}`}
+                        />
+                      )}
                       <span className="flex-1 min-w-0 flex flex-col gap-1.5">
                         {parentBody && (
                           <span className={`text-[11px] leading-snug line-clamp-2 ${

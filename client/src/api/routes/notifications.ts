@@ -64,7 +64,14 @@ router.get('/', requireAuth({ lookup: async (req) => Number(req.query.userId) ||
           select: {
             id: true,
             content: true,
-            createdAt: true
+            createdAt: true,
+            // Media bits so the notification row can render a thumbnail
+            // and the renderer can scrub the embedded GIF URL out of the
+            // content snippet. Same shape FeedItem uses.
+            hasImage: true,
+            hasVideo: true,
+            imageData: true,
+            videoData: true,
           }
         },
         offer: {
