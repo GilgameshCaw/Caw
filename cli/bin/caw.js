@@ -149,19 +149,48 @@ const EXPECTED_DROPS = new Set([
 // Returns { loaded, unrecognized } so the caller can warn about keys we
 // won't preserve — anything in the operator's .env that the wizard doesn't
 // know about would be silently dropped on rewrite.
+// uint32 on chain — anything outside this range is bogus. Catches the
+// case where an operator pasted a wallet address into CLIENT_ID by mistake:
+// Number('0x...') resolves to ~1.2e+48, which passes Number.isInteger but
+// poisons every downstream lookup. Mirror of validateClientId in
+// cli/src/steps/generate.js (kept in sync by hand; both files run early
+// enough that pulling one in from the other adds startup latency for no win).
+function isValidClientId(raw) {
+  if (raw === undefined || raw === '') return false
+  const n = Number(raw)
+  return Number.isFinite(n) && Number.isInteger(n) && n > 0 && n <= 0xffffffff
+}
+
 function preloadFromEnv(envFilePath, frontendEnvFilePath) {
   const backend = loadEnvFile(envFilePath)
   const frontend = frontendEnvFilePath ? loadEnvFile(frontendEnvFilePath) : {}
   let loaded = 0
   const unrecognized = []
+  const rejected = []
   for (const [k, v] of Object.entries(backend)) {
     const target = ENV_TO_CAW[k]
     if (target && !process.env[target] && v) {
+      // Per-key sanity filter for keys with known-bad failure modes. Bad
+      // values get dropped on the floor with a warning — the wizard then
+      // re-prompts normally for that field, instead of silently writing
+      // garbage through to the new .env.
+      if (k === 'CLIENT_ID' && !isValidClientId(v)) {
+        rejected.push({ key: k, value: v, reason: 'must be a positive integer ≤ 4294967295 (looks like an address?)' })
+        continue
+      }
       process.env[target] = v
       loaded++
     } else if (!target && !EXPECTED_DROPS.has(k)) {
       unrecognized.push(k)
     }
+  }
+  if (rejected.length > 0) {
+    console.log()
+    console.log(brand('  ⚠ Values in your .env that look invalid — the wizard will re-prompt:'))
+    for (const r of rejected) {
+      console.log(dim(`     ${r.key} = ${JSON.stringify(r.value)}   (${r.reason})`))
+    }
+    console.log()
   }
   // Backend domain isn't written to .env directly, but install.sh already
   // forwards CAW_DOMAIN. If the operator wants to reuse, they should keep
@@ -473,6 +502,13 @@ program
       const { generateConfig: _generateConfig, writeAddressesForClient } = await import('../src/steps/generate.js')
       void _generateConfig
       const env = loadEnvFile(envPath)
+      if (env.CLIENT_ID && !isValidClientId(env.CLIENT_ID)) {
+        console.error(
+          `CLIENT_ID in ${envPath} is invalid: ${JSON.stringify(env.CLIENT_ID)} ` +
+          `(must be a positive integer ≤ 4294967295). Fix it and re-run.`
+        )
+        process.exit(1)
+      }
       const config = {
         network: env.NETWORK || 'testnet',
         clientId: Number(env.CLIENT_ID || 1),

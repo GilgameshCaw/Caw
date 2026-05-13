@@ -50,6 +50,14 @@ export async function generateConfig(nodeType, config, installDir) {
   fs.chmodSync(envPath, 0o600)
   console.log(success(`  Created ${dim(envPath)} (mode 600)`))
 
+  // Same NaN/address-as-number trap as VITE_CLIENT_ID, but for the backend.
+  // CLIENT_ID is read by InstanceRegistryService, DmRelayService, DataCleaner,
+  // etc. If it got set to a wallet address by mistake, /api/instances returns
+  // a clientId of ~1.2e+48 and the peer cache is empty — the failure mode
+  // Nyaro hit. Catch it here so the operator gets a clear error at install
+  // time instead of debugging it post-deploy.
+  verifyBackendEnv(envPath)
+
   // Build .env for frontend (Vite). Less sensitive than the backend .env
   // (only VITE_* values, which all end up in the public JS bundle anyway),
   // but no reason to leak. 0640 — owner write, owner+group read.
@@ -563,25 +571,94 @@ function buildFrontendEnv(nodeType, config) {
  * `RangeError: NaN can't be converted to BigInt`. Catch it here so the
  * operator gets a clear error at install time.
  */
-function verifyFrontendEnv(frontendEnvPath) {
-  const text = fs.readFileSync(frontendEnvPath, 'utf8')
+/**
+ * Validate a clientId env value. CawClientManager stores clientId as a
+ * uint32 on chain, so anything outside [1, 0xffffffff] is wrong. Catches:
+ *   - empty / missing
+ *   - non-numeric strings (NaN)
+ *   - zero / negative
+ *   - quoted Ethereum address (Number('0xabc...') yields ~1.2e+48, which
+ *     passes Number.isInteger but exceeds uint32)
+ * Returns { ok: true, value } | { ok: false, reason }.
+ */
+function validateClientId(raw) {
+  if (raw === undefined || raw === '') {
+    return { ok: false, reason: 'missing or empty' }
+  }
+  const n = Number(raw)
+  if (!Number.isFinite(n) || !Number.isInteger(n)) {
+    return { ok: false, reason: `not an integer (got ${JSON.stringify(raw)})` }
+  }
+  if (n <= 0) {
+    return { ok: false, reason: `must be > 0 (got ${n})` }
+  }
+  if (n > 0xffffffff) {
+    return {
+      ok: false,
+      reason: `exceeds uint32 max — looks like a wallet address was pasted in by mistake (got ${JSON.stringify(raw)})`,
+    }
+  }
+  return { ok: true, value: n }
+}
+
+function parseDotenv(text) {
   const parsed = {}
   for (const line of text.split('\n')) {
     const m = line.match(/^([A-Z0-9_]+)=(.*)$/)
     if (m) parsed[m[1]] = m[2]
   }
+  return parsed
+}
 
-  const raw = parsed.VITE_CLIENT_ID
-  const n = Number(raw)
-  if (raw === undefined || raw === '' || !Number.isFinite(n) || n <= 0 || !Number.isInteger(n)) {
+/**
+ * Read the .env files we just wrote back from disk and re-validate the
+ * critical clientId values, since a bogus write leaves operators chasing
+ * symptoms ("NaN can't be converted to BigInt" / empty peer registry /
+ * 'Sigs length mismatch' on chain) instead of fixing the root cause.
+ *
+ * Disk is the source of truth here — we deliberately don't trust the
+ * in-memory object, because the failure mode this guard exists to catch
+ * is "the file on disk doesn't match what we think we wrote" (filesystem
+ * error, permissions, an earlier-aborted run leaving a stale file, etc.).
+ *
+ * VITE_CLIENT_ID is the killer: when missing, the FE bundle initializes
+ * `CLIENT_ID = NaN`, which silently propagates into every wagmi
+ * `args: [CLIENT_ID, ...]` call and surfaces as the cryptic runtime
+ * `RangeError: NaN can't be converted to BigInt`. Catch it here so the
+ * operator gets a clear error at install time.
+ */
+function verifyFrontendEnv(frontendEnvPath) {
+  const parsed = parseDotenv(fs.readFileSync(frontendEnvPath, 'utf8'))
+  const check = validateClientId(parsed.VITE_CLIENT_ID)
+  if (!check.ok) {
     throw new Error(
-      `VITE_CLIENT_ID is missing or invalid in ${frontendEnvPath} (got ${JSON.stringify(raw)}).\n` +
-      `  This will cause the frontend to throw "NaN can't be converted to BigInt" on every contract call.\n` +
+      `VITE_CLIENT_ID is invalid in ${frontendEnvPath}: ${check.reason}.\n` +
+      `  This will cause the frontend to throw "NaN can't be converted to BigInt" on every contract call,\n` +
+      `  or to query the wrong client's data on chain.\n` +
       `  Re-run the install (node cli/bin/caw.js install --dir <install-dir>) and pick a client at the prompt,\n` +
-      `  or set VITE_CLIENT_ID=<positive integer> in that .env by hand and restart vite.`
+      `  or set VITE_CLIENT_ID=<positive integer ≤ 4294967295> in that .env by hand and restart vite.`
     )
   }
-  console.log(success(`  Verified ${dim('VITE_CLIENT_ID=' + n)}`))
+  console.log(success(`  Verified ${dim('VITE_CLIENT_ID=' + check.value)}`))
+}
+
+/**
+ * Parallel guard for the backend .env. CLIENT_ID is read at runtime by
+ * InstanceRegistryService, DmRelayService, DataCleaner, etc. A wallet
+ * address sneaking in here causes /api/instances to return clientId of
+ * ~1.2e+48 and an empty peer cache, with no other obvious symptom.
+ */
+function verifyBackendEnv(envPath) {
+  const parsed = parseDotenv(fs.readFileSync(envPath, 'utf8'))
+  const check = validateClientId(parsed.CLIENT_ID)
+  if (!check.ok) {
+    throw new Error(
+      `CLIENT_ID is invalid in ${envPath}: ${check.reason}.\n` +
+      `  The backend uses this to scope peer discovery, replication, and DM relay.\n` +
+      `  Re-run the install and pick a client at the prompt, or set CLIENT_ID=<positive integer ≤ 4294967295> by hand.`
+    )
+  }
+  console.log(success(`  Verified ${dim('CLIENT_ID=' + check.value)}`))
 }
 
 function buildDockerCompose(config) {
