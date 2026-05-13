@@ -21,6 +21,7 @@ export type CawThumb =
   | { kind: 'video'; src: string }
   | { kind: 'gif'; src: string }
   | { kind: 'shortGif'; code: string; originHost?: string }
+  | { kind: 'shortVideo'; code: string; originHost?: string }
 
 export interface CawThumbnailSource {
   hasImage?: boolean
@@ -54,13 +55,17 @@ export function pickCawThumbnail(
     if (first) thumb = { kind: 'video', src: first }
   }
   if (!thumb && body) {
-    // Giphy GIFs in posts are stored as our /s/<code>.gif short URLs
-    // (sometimes absolute, e.g. https://node/s/X.gif). Catch those
-    // first; fall back to a raw Giphy URL for legacy posts that
-    // pre-date the shortener. When we lift the URL into a thumbnail,
-    // scrub it from the body so the user doesn't see the raw URL twice.
+    // Media embedded in body text:
+    //   /s/<code>.gif → short-URL'd GIF (resolver renders the still)
+    //   /s/<code>.<vid> → short-URL'd VIDEO (mp4/webm/mov/m4v) — render
+    //                     as a <video> directly from the resolved URL
+    //   raw giphy URL  → legacy pre-shortener path
+    // When we lift the URL into a thumbnail we scrub it from the body
+    // so the user doesn't see the raw URL twice.
     const shortGifRegex = /(https?:\/\/[^\s\/]+)?\/s\/([a-zA-Z0-9]+\.gif)\b/i
+    const shortVideoRegex = /(https?:\/\/[^\s\/]+)?\/s\/([a-zA-Z0-9]+\.(?:mp4|webm|mov|m4v))\b/i
     const shortGifMatch = body.match(shortGifRegex)
+    const shortVideoMatch = body.match(shortVideoRegex)
     if (shortGifMatch) {
       // Code includes the extension — the resolver row was created
       // with `code: <base>.gif` so we MUST query that exact form.
@@ -69,6 +74,13 @@ export function pickCawThumbnail(
       const originHost = shortGifMatch[1] || undefined
       thumb = { kind: 'shortGif', code, originHost }
       body = body.replace(shortGifRegex, '').replace(/\s{2,}/g, ' ').trim()
+    } else if (shortVideoMatch) {
+      // Same short-URL resolver, different kind so the renderer plays
+      // a <video> instead of an <img>.
+      const code = shortVideoMatch[2]
+      const originHost = shortVideoMatch[1] || undefined
+      thumb = { kind: 'shortVideo', code, originHost }
+      body = body.replace(shortVideoRegex, '').replace(/\s{2,}/g, ' ').trim()
     } else {
       const giphyRegex = /https?:\/\/(?:media\d?\.giphy\.com|i\.giphy\.com)\/media\/\S*?\/giphy\.gif(?:\?\S*)?/i
       const giphyMatch = body.match(giphyRegex)
@@ -82,18 +94,21 @@ export function pickCawThumbnail(
   return { thumb, body }
 }
 
-// Resolves the still-frame for a `/s/<code>.gif` short URL via the
-// same `/api/shorturl/:code` endpoint ContentWithHashtags uses, then
-// maps a Giphy original to its `_s.gif` still. Non-Giphy short URLs
-// render as-is (first paint shows the GIF's first frame). Renders
-// nothing when the resolver 404s or the image errors — own wrapper
-// shape so the surrounding layout can size it.
-export const ShortUrlGifThumb: React.FC<{
+// Resolves a `/s/<code>.<ext>` short URL via the same `/api/shorturl/:code`
+// endpoint ContentWithHashtags uses. For GIFs we map a Giphy original
+// to its `_s.gif` still (non-Giphy short GIFs render as-is — first
+// paint shows the GIF's first frame). For videos we render a <video>
+// element from the resolved URL with `preload=metadata` so the
+// browser shows the first frame without auto-playing.
+// Renders nothing when the resolver 404s or the media errors — own
+// wrapper shape so the surrounding layout can size it.
+export const ShortUrlMediaThumb: React.FC<{
+  kind: 'gif' | 'video'
   code: string
   originHost?: string
   wrapperClass: string
   showPlayOverlay?: boolean
-}> = ({ code, originHost, wrapperClass, showPlayOverlay = true }) => {
+}> = ({ kind, code, originHost, wrapperClass, showPlayOverlay = true }) => {
   const key = originHost ? `${originHost}|${code}` : code
   const endpoint = originHost ? `${originHost}/api/shorturl/${code}` : `/api/shorturl/${code}`
   const { url: originalUrl, loading } = useCachedFetch(
@@ -105,6 +120,30 @@ export const ShortUrlGifThumb: React.FC<{
   const [errored, setErrored] = useState(false)
   if (loading) return <span className={`${wrapperClass} animate-pulse bg-white/10`} />
   if (!originalUrl || errored) return null
+  const playOverlay = showPlayOverlay && (
+    <span className="absolute inset-0 flex items-center justify-center pointer-events-none">
+      <span className="w-6 h-6 rounded-full bg-black/60 flex items-center justify-center">
+        <svg width="10" height="10" viewBox="0 0 10 10" fill="white">
+          <polygon points="2,1 9,5 2,9" />
+        </svg>
+      </span>
+    </span>
+  )
+  if (kind === 'video') {
+    return (
+      <span className={`${wrapperClass} bg-black`}>
+        <video
+          src={originalUrl}
+          muted
+          playsInline
+          preload="metadata"
+          className="w-full h-full object-cover pointer-events-none"
+          onError={() => setErrored(true)}
+        />
+        {playOverlay}
+      </span>
+    )
+  }
   const src = isGiphyUrl(originalUrl) ? giphyStillUrl(originalUrl) : originalUrl
   return (
     <span className={`${wrapperClass} bg-black`}>
@@ -114,15 +153,7 @@ export const ShortUrlGifThumb: React.FC<{
         className="w-full h-full object-cover"
         onError={() => setErrored(true)}
       />
-      {showPlayOverlay && (
-        <span className="absolute inset-0 flex items-center justify-center pointer-events-none">
-          <span className="w-6 h-6 rounded-full bg-black/60 flex items-center justify-center">
-            <svg width="10" height="10" viewBox="0 0 10 10" fill="white">
-              <polygon points="2,1 9,5 2,9" />
-            </svg>
-          </span>
-        </span>
-      )}
+      {playOverlay}
     </span>
   )
 }
@@ -144,9 +175,10 @@ export const CawThumbnail: React.FC<{
       </span>
     </span>
   )
-  if (thumb.kind === 'shortGif') {
+  if (thumb.kind === 'shortGif' || thumb.kind === 'shortVideo') {
     return (
-      <ShortUrlGifThumb
+      <ShortUrlMediaThumb
+        kind={thumb.kind === 'shortGif' ? 'gif' : 'video'}
         code={thumb.code}
         originHost={thumb.originHost}
         wrapperClass={wrapperClass}
