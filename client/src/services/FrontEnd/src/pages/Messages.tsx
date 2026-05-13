@@ -2182,6 +2182,25 @@ const MessagesPage: React.FC = () => {
                                   const senderPub = senderParticipant?.publicKey
                                     || (message.senderId === currentUser?.id ? getCachedPublicKeyHex() : null)
                                     || null
+                                  // One-time diagnostic for the test.caw.social "failed to
+                                  // decrypt own image" report. Logs the shape of the lookup —
+                                  // tells us whether sealedKeys lacks our slot, whether the
+                                  // sender's pubkey is missing, or whether neither problem
+                                  // exists and the failure is downstream (key/binary mismatch).
+                                  // Remove once the report is confirmed resolved.
+                                  if (parsed.url && (!mySlot || !senderPub)) {
+                                    console.warn('[DM][diag] image envelope missing prereqs', {
+                                      messageId: message.id,
+                                      senderId: message.senderId,
+                                      selfId: currentUser?.id,
+                                      hasMySlot: !!mySlot,
+                                      hasSenderPub: !!senderPub,
+                                      sealedKeyIds: parsed.sealedKeys ? Object.keys(parsed.sealedKeys) : null,
+                                      participantIds: selectedConversation?.participants.map(p => p.userId) ?? null,
+                                      cachedPubFallbackUsed: !senderParticipant?.publicKey && message.senderId === currentUser?.id,
+                                      cachedPubAvailable: !!getCachedPublicKeyHex(),
+                                    })
+                                  }
                                   // Legacy DM attachments uploaded before the sealed-key
                                   // rollout (2026-05-12) don't carry sealedKeys. We fall
                                   // back to the conversation's shared secret if we have
