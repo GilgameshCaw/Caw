@@ -75,6 +75,128 @@ const MainLayout = ({ children, hideSidebars: hideSidebarsProp }: MainLayoutProp
   // lives further down (after hideSidebars/isCaptive are computed).
   const bottomNavRef = useRef<HTMLElement | null>(null)
 
+  // Swipe-to-open/close for the mobile drawer. Open zone is the left 25%
+  // of the viewport; close zone is anywhere on the drawer itself. While
+  // dragging we set an inline transform on the panel and an opacity on the
+  // backdrop so the gesture tracks the finger; on release we snap based on
+  // distance + velocity. The CSS class-driven transition is disabled
+  // during drag (transition-none) and re-enabled on release.
+  const drawerPanelRef = useRef<HTMLDivElement | null>(null)
+  const drawerBackdropRef = useRef<HTMLDivElement | null>(null)
+  const dragState = useRef<{
+    startX: number
+    startY: number
+    lastX: number
+    lastT: number
+    velocity: number
+    width: number
+    dragging: boolean
+    fromOpen: boolean
+  } | null>(null)
+  const [isDragging, setIsDragging] = useState(false)
+
+  const applyDrawerTransform = (translateXPx: number, width: number) => {
+    const panel = drawerPanelRef.current
+    const backdrop = drawerBackdropRef.current
+    if (panel) panel.style.transform = `translateX(${translateXPx}px)`
+    if (backdrop) {
+      // Backdrop opacity goes from 0 (fully closed: translateX = -width)
+      // to 1 (fully open: translateX = 0).
+      const progress = 1 + translateXPx / width // -width -> 0, 0 -> 1
+      backdrop.style.opacity = String(Math.max(0, Math.min(1, progress)))
+    }
+  }
+
+  const clearInlineDrawerStyles = () => {
+    const panel = drawerPanelRef.current
+    const backdrop = drawerBackdropRef.current
+    if (panel) panel.style.transform = ''
+    if (backdrop) backdrop.style.opacity = ''
+  }
+
+  const onDrawerTouchStart = (e: React.TouchEvent, fromOpen: boolean) => {
+    if (e.touches.length !== 1) return
+    const t = e.touches[0]
+    // When closed, only react if the touch starts in the left 25% of the viewport.
+    if (!fromOpen) {
+      if (t.clientX > window.innerWidth * 0.25) return
+    }
+    const panel = drawerPanelRef.current
+    const width = panel?.offsetWidth || Math.min(320, window.innerWidth * 0.9)
+    dragState.current = {
+      startX: t.clientX,
+      startY: t.clientY,
+      lastX: t.clientX,
+      lastT: performance.now(),
+      velocity: 0,
+      width,
+      dragging: false,
+      fromOpen,
+    }
+  }
+
+  const onDrawerTouchMove = (e: React.TouchEvent) => {
+    const s = dragState.current
+    if (!s) return
+    const t = e.touches[0]
+    const dx = t.clientX - s.startX
+    const dy = t.clientY - s.startY
+
+    if (!s.dragging) {
+      // Only commit to a horizontal drag once it clearly beats the vertical
+      // motion — otherwise feed-scroll touches starting in the left band
+      // would steal Y-scroll. 10px threshold matches typical native drawers.
+      if (Math.abs(dx) < 10 || Math.abs(dx) < Math.abs(dy)) return
+      // Direction must match: opening = swipe right, closing = swipe left.
+      if (!s.fromOpen && dx <= 0) {
+        dragState.current = null
+        return
+      }
+      if (s.fromOpen && dx >= 0) {
+        // Swiping right while open: no-op (don't over-translate past 0).
+        return
+      }
+      s.dragging = true
+      setIsDragging(true)
+      // Make sure the overlay is hit-testable while we drag open.
+      if (!s.fromOpen && !isMobileMenuOpen) setIsMobileMenuOpen(true)
+    }
+
+    const now = performance.now()
+    const dt = now - s.lastT
+    if (dt > 0) s.velocity = (t.clientX - s.lastX) / dt // px/ms
+    s.lastX = t.clientX
+    s.lastT = now
+
+    // translateX range: -width (closed) → 0 (open).
+    const base = s.fromOpen ? 0 : -s.width
+    const next = Math.max(-s.width, Math.min(0, base + dx))
+    applyDrawerTransform(next, s.width)
+  }
+
+  const onDrawerTouchEnd = () => {
+    const s = dragState.current
+    if (!s) return
+    dragState.current = null
+    if (!s.dragging) {
+      setIsDragging(false)
+      return
+    }
+    // Decide snap: position past midpoint OR sufficient velocity (px/ms).
+    const panel = drawerPanelRef.current
+    const transform = panel?.style.transform || ''
+    const match = transform.match(/translateX\((-?\d+(?:\.\d+)?)px\)/)
+    const currentX = match ? parseFloat(match[1]) : (s.fromOpen ? 0 : -s.width)
+    const passedMidpoint = currentX > -s.width / 2
+    const fastOpen = s.velocity > 0.5
+    const fastClose = s.velocity < -0.5
+    const shouldOpen = fastOpen || (!fastClose && passedMidpoint)
+    setIsMobileMenuOpen(shouldOpen)
+    // Clear inline styles so the class-driven transition takes over.
+    clearInlineDrawerStyles()
+    setIsDragging(false)
+  }
+
   // Captive mode: no username and on a public page like /help/*
   const isCaptive = !activeToken?.username
   // hideSidebars resolution order (any one truthy wins):
@@ -200,23 +322,47 @@ const MainLayout = ({ children, hideSidebars: hideSidebarsProp }: MainLayoutProp
 
       {/* Mobile Sidebar Overlay */}
       {!hideSidebars && (
-        <div
-          className={`md:hidden fixed inset-0 z-[70] transition-all duration-300 ${
-            isMobileMenuOpen ? 'bg-black/50 opacity-100' : 'bg-black/0 opacity-0 pointer-events-none'
-          }`}
-          onClick={() => setIsMobileMenuOpen(false)}
-        >
+        <>
+          {/* Edge-swipe catcher: when the drawer is closed, this invisible
+              strip listens for touchstarts in the left 25% of the screen and
+              starts the open-drag. It sits below the bottom nav so taps on
+              nav buttons aren't intercepted. pointer-events on touch only —
+              click is unaffected. */}
+          {!isMobileMenuOpen && (
+            <div
+              className="md:hidden fixed top-0 left-0 bottom-[calc(var(--bottom-nav-h,0px)+50px)] w-[25vw] z-[65]"
+              style={{ touchAction: 'pan-y' }}
+              onTouchStart={(e) => onDrawerTouchStart(e, false)}
+              onTouchMove={onDrawerTouchMove}
+              onTouchEnd={onDrawerTouchEnd}
+              onTouchCancel={onDrawerTouchEnd}
+            />
+          )}
           <div
-            className={`fixed left-0 top-0 h-full w-80 max-w-[90vw] transform transition-transform duration-300 ease-in-out ${
-              isMobileMenuOpen ? 'translate-x-0' : '-translate-x-full'
-            } ${
-              isDark ? 'bg-black border-r border-white/20' : 'bg-white border-r border-gray-300'
+            ref={drawerBackdropRef}
+            className={`md:hidden fixed inset-0 z-[70] ${isDragging ? '' : 'transition-all duration-300'} ${
+              isMobileMenuOpen ? 'bg-black/50 opacity-100' : 'bg-black/0 opacity-0 pointer-events-none'
             }`}
-            onClick={(e) => e.stopPropagation()}
+            onClick={() => setIsMobileMenuOpen(false)}
           >
-            <Sidebar onNavigate={() => setIsMobileMenuOpen(false)} />
+            <div
+              ref={drawerPanelRef}
+              className={`fixed left-0 top-0 h-full w-80 max-w-[90vw] transform ${isDragging ? '' : 'transition-transform duration-300 ease-in-out'} ${
+                isMobileMenuOpen ? 'translate-x-0' : '-translate-x-full'
+              } ${
+                isDark ? 'bg-black border-r border-white/20' : 'bg-white border-r border-gray-300'
+              }`}
+              style={{ touchAction: 'pan-y' }}
+              onClick={(e) => e.stopPropagation()}
+              onTouchStart={(e) => onDrawerTouchStart(e, true)}
+              onTouchMove={onDrawerTouchMove}
+              onTouchEnd={onDrawerTouchEnd}
+              onTouchCancel={onDrawerTouchEnd}
+            >
+              <Sidebar onNavigate={() => setIsMobileMenuOpen(false)} />
+            </div>
           </div>
-        </div>
+        </>
       )}
 
       {/* Desktop Sidebar */}
