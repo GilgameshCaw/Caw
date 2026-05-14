@@ -412,9 +412,13 @@ The replication path was rewritten as the optimistic archive + trustless `CawCha
 
 ## Frontend
 
-### Re-enable tsc in the production build
+### Re-enable tsc in the production build — SHIPPED (`c518891a`, 2026-05)
 
-**Status:** Disabled 2026-04-27 to unblock testnet launch. The build script
+**Status:** Re-enabled in `c518891a` — `tsc -b && vite build` is back in the
+production build script, and the 23 latent type errors were fixed in the same
+commit. Section retained below for historical context.
+
+**Status (historical):** Disabled 2026-04-27 to unblock testnet launch. The build script
 went from `tsc -b && vite build` → `vite build`; type errors no longer fail
 the build. A `yarn typecheck` script still exists for CI / dev use.
 
@@ -447,7 +451,12 @@ half-applied fix.
 
 ---
 
-### Spurious "access other apps and services" prompt during DM enable
+### Spurious "access other apps and services" prompt during DM enable — SHIPPED (`67361dae`, 2026-05)
+
+**Status:** Fixed in `67361dae` — hardware-wallet connectors (Ledger, Trezor)
+moved into a secondary "More wallets" group in `Web3Provider.tsx` so they're
+not registered on boot. WebUSB prompt no longer fires unless the user
+explicitly picks a hardware wallet. Section retained for historical context.
 
 **Reported:** 2026-04-28. Operator hit Chrome's *"test.caw.social wants to:
 Access other apps and services on this device"* permission dialog while
@@ -578,13 +587,9 @@ right scope before we ship.
   - **Fix**: track which events in the batch succeeded; if any failed, don't advance `lastBlock` past the failed one. Re-poll from there next pass. Or: maintain a per-token "stuck" set and have a slow background sweeper retry them.
   - The bug existed before the refactor but the new architecture makes it user-visible because the API no longer compensates with its own RPC fallback. Higher priority than it would have been a week ago.
 
-- [ ] **"Switch wallet" button in ProfileChooser**
-  - Operators with multiple wallet extensions installed (Rabby + MetaMask + Coinbase, etc) hit a confusing dead-end: once wagmi has connected to one, there's no obvious in-app path to switch to another. Today's escape hatch is editing localStorage by hand or disconnecting from the wallet's own UI. Both are bad UX and easy to misdiagnose as "Wrong Address" bug reports.
-  - **Where**: ProfileChooser dropdown — add a "Switch wallet" item that calls wagmi's `disconnect()` and then `openConnectModal()` from RainbowKit. One click, picker appears, operator picks the wallet they actually meant.
-  - **Watch out for**: clearing the right state. wagmi's `disconnect()` should handle the recentConnectorId, but a belt-and-suspenders `localStorage.removeItem('wagmi.recentConnectorId')` before calling `openConnectModal` is cheap insurance.
-  - Tiny — ~15 lines.
+- [x] ~~**"Switch wallet" button in ProfileChooser**~~ — SHIPPED (`8ba60aed`, 2026-05). ProfileChooser dropdown now has a Switch wallet item that disconnects and reopens the RainbowKit connect modal.
 
-- [ ] **Rainbow Wallet connect failure**
+- [ ] **Rainbow Wallet connect failure** — diagnostics in place (`2254ae01`, 2026-05): projectId + origin now logged on Web3Provider mount, and `RAINBOW_WALLET_REPRO.md` captures the repro steps. Root cause still open — waiting on next reproduction with the new logs.
   - Reported on test.caw.social (HTTPS production install): Rainbow Wallet failed to connect via the RainbowKit connect modal. Other wallets work; this one specifically fails.
   - **Likely culprits to investigate first**:
     - WalletConnect / Reown project ID — Rainbow uses WC under the hood. If `VITE_PROJECT_ID` is missing or its origin allowlist on the WC dashboard doesn't include `https://test.caw.social`, Rainbow's WC handshake fails (other wallets that use injected providers — MetaMask, Coinbase desktop — would still work, masking the WC misconfig).
@@ -593,19 +598,9 @@ right scope before we ship.
   - **What to capture next session**: exact failure mode (modal didn't open / opened but errored / scanned QR but never connected / etc.) and the browser console output during the attempt.
   - Reproduce on `test.caw.social` with Rainbow mobile + desktop QR flow to narrow it down.
 
-- [ ] **Canonical URLs (SEO + dedup across instances)**
-  - The same post / user / hashtag is reachable from every client domain (test.caw.social, caw.social, third-party clients) — search engines see N copies and split ranking, social embeds attribute to whichever URL was first scraped, and the protocol's "any client can render any content" property turns into an SEO liability.
-  - Add `<link rel="canonical" href="...">` to every shareable page so all clients point at one canonical origin.
-  - **Open question**: what *is* the canonical origin? Two reasonable answers:
-    1. **Author's home client** — `cawProfile.tokenURI` already encodes the user's instance. Resolves to "the URL the author would link." Downside: requires an on-chain read at render time, and a transferred profile changes the canonical mid-flight.
-    2. **A protocol-level canonical** (e.g. `caw.social`) — operationally simple, every page points to caw.social, but means caw.social earns all the search equity and other clients are second-class.
-  - **Implementation sketch**: SSR `<link rel="canonical">` in the prerender path (`spaPrerender.ts`) using whichever rule we settle on. Mirror in OG tags (`og:url`) so social embeds also point canonical. The SPA shell can render a placeholder canonical that the prerender catch-all overwrites for crawlers.
-  - **Where**: `/users/:username`, `/caws/:id`, `/hashtags/:tag`, profile pages, the home feed (canonical = root of canonical origin).
-  - Decide before we have meaningful crawl traffic — once Google indexes the wrong URLs, undoing it is slow.
+- [x] ~~**Canonical URLs (SEO + dedup across instances)**~~ — SHIPPED (`bee1cf47`, 2026-05). Prerender path now emits protocol-level canonical URLs plus `hreflang` alternates on shareable routes (`/users/:username`, `/caws/:id`, `/hashtags/:tag`).
 
-- [ ] **Real gas price** (`client/src/services/FrontEnd/src/components/GasPriceLine.tsx:12-15`)
-  - Currently hardcoded `const ethPrice = 1`.
-  - ETH price IS already tracked by `ChainSyncService` (`usdPerEth` cached, `chainData` updated every 5 min). Frontend just needs to consume it via the `chainData` API.
+- [x] ~~**Real gas price** (`client/src/services/FrontEnd/src/components/GasPriceLine.tsx:12-15`)~~ — already shipped (`db84bf7`, 2026-04-25). `GasPriceLine.tsx` reads `usePriceStore(s => s.priceMap['ethereum'])`; `ChainSyncService` publishes live `usdPerEth` from Uniswap V2. The "currently hardcoded" claim above was stale. See the entry under Resolved.
 
 - [ ] **Reported content moderation (EXPLICIT / REMOVED)** — IN PROGRESS
   - **Done**: report modal sub-options (Explicit vs Illegal/Harmful), reason filtering on admin dashboard, success confirmation screen, duplicate reports update instead of 409.
@@ -868,6 +863,19 @@ One-liner install: `curl -fsSL https://raw.githubusercontent.com/.../install.sh 
 - [x] **`caw update --rebuild` flag + dual yarn-lockfile detection** (2026-04, `01bd28d`)
 - [x] **Image modal / lightbox** (2026-04, `3648f57`) — was `// TODO: Open image in modal` at three callsites in `FeedItem.tsx`
 - [x] **DM emoji button** (2026-04, `5851a3a`) — smiley-trigger reactions + bigger picker
+- [x] **Canonical URLs + hreflang in prerender** (2026-05, `bee1cf47`) — protocol-level canonical URLs on `/users`, `/caws`, `/hashtags`; dedups SEO across instances
+- [x] **tsc re-enabled in production build + 23 latent type errors fixed** (2026-05, `c518891a`) — build script back to `tsc -b && vite build`; type errors now fail the build again
+- [x] **Hardware wallets moved to secondary group** (2026-05, `67361dae`) — Ledger/Trezor out of the default RainbowKit registration, suppressing the spurious WebUSB / "access other apps and services" prompt
+- [x] **Switch wallet in ProfileChooser** (2026-05, `8ba60aed`) — dropdown item disconnects current wallet and reopens the RainbowKit picker
+- [x] **Optimistic unlike + unfollow with rollback** (2026-05, `63181c2d`, `17713ffa`, `e3b62425`, `26a6b3bc`, `5207b059`, `3f8e98e8`, `50ad2f26`) — heart/follow state flips immediately; cancel handler restores server-side optimistic writes and reverses the like/follow direction
+- [x] **balance-toast floating CAW change indicator** (2026-05, `cdb835c4`) — pending-window store + toast surfacing CAW deltas
+- [x] **DM image compression bump** (2026-05, `0558674a`) — sharper click-to-expand
+- [x] **LZ-as-transport contract comment clarifications** (2026-05, `a0374187`) — challenge-relay path docs in-contract
+- [x] **`text-error-dim` theme token + bright-red error sweep** (2026-05, `95108e55`) — consistent muted-red across error text
+- [x] **tip-modal wrong-wallet button styling** (2026-05, `54e4d80f`) — matches post-form, readable during "signing" state (`57baa931`)
+- [x] **quick-sign badge + session lookup keyed by owner** (2026-05, `10d15a91`) — not by connected wallet
+- [x] **Rainbow Wallet diagnostics + repro doc** (2026-05, `2254ae01`) — projectId + origin logged on Web3Provider mount; root-cause investigation still open above
+- [x] **`check-username` + `list-instances` debug scripts** (2026-05, `d9845923`) — `client/scripts/`; `latest.timestamp` gitignored
 
 
 
