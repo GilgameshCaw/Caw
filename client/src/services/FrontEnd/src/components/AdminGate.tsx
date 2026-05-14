@@ -71,7 +71,7 @@ export default function AdminGate({ children }: { children: React.ReactNode }) {
             className={`w-full px-3 py-2 rounded-lg border text-sm mb-3 focus:outline-none focus:ring-2 focus:ring-blue-500/50 ${input}`}
             autoFocus
           />
-          {authError && <p className="text-red-500 text-xs mb-2">{authError}</p>}
+          {authError && <p className="text-error-dim text-xs mb-2">{authError}</p>}
           <button
             onClick={login}
             disabled={authLoading}

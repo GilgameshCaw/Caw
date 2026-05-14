@@ -137,7 +137,7 @@ const FollowListModal: React.FC<Props> = ({ type }) => {
             <div className="animate-spin text-2xl">⌛</div>
           </div>
         ) : error ? (
-          <div className="p-8 text-center text-red-500">
+          <div className="p-8 text-center text-error-dim">
             {error}
           </div>
         ) : users.length === 0 ? (

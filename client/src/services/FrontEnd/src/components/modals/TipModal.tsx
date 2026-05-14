@@ -225,7 +225,7 @@ const TipModal: React.FC<TipModalProps> = ({
                   const balanceCaw = Number(stakedAmount / 10n**18n)
                   const insufficient = isValid && stakedAmount < totalCost
                   return (
-                    <div className={`mt-1.5 text-xs flex justify-between ${insufficient ? 'text-red-500' : themeTextMuted(isDark)}`}>
+                    <div className={`mt-1.5 text-xs flex justify-between ${insufficient ? 'text-error-dim' : themeTextMuted(isDark)}`}>
                       <span>{t('tip.balance', { defaultValue: 'Balance' })}: {balanceCaw.toLocaleString()} CAW</span>
                       {isValid && (
                         <span>
@@ -257,7 +257,7 @@ const TipModal: React.FC<TipModalProps> = ({
 
               {/* Error */}
               {error && (
-                <p className="text-sm text-red-500 text-center">{error}</p>
+                <p className="text-sm text-error-dim text-center">{error}</p>
               )}
 
               {/* Submit */}

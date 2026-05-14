@@ -46,6 +46,7 @@ html.theme-switching *::after {
   --color-accent-100: #6dd4fd;
   --color-warning: #f7e545;
   --color-error: #de71a4;
+  --color-error-dim: rgb(176, 79, 86);
   --color-base-100: #222222;
   --color-base-200: #171717;
   --color-base-300: #000000;

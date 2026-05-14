@@ -41,7 +41,7 @@ const VerifyWalletModal: React.FC = () => {
         </p>
 
         {error && (
-          <div className="mb-4 p-3 rounded-lg bg-red-500/10 text-red-500 text-sm">
+          <div className="mb-4 p-3 rounded-lg bg-red-500/10 text-error-dim text-sm">
             {error}
           </div>
         )}

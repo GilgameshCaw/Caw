@@ -200,7 +200,7 @@ const ReportUserModal: React.FC<ReportUserModalProps> = ({ isOpen, onClose, user
 
           {error && (
             <div className="mb-4 p-3 rounded-lg bg-red-500/20 border border-red-500">
-              <p className="text-red-500 text-sm">{error}</p>
+              <p className="text-error-dim text-sm">{error}</p>
             </div>
           )}
 

@@ -239,7 +239,7 @@ const BugReportModal: React.FC<BugReportModalProps> = ({ isOpen, onClose }) => {
             </div>
 
             {error && (
-              <p className="text-red-500 text-xs mt-2">{error}</p>
+              <p className="text-error-dim text-xs mt-2">{error}</p>
             )}
           </>
         )}

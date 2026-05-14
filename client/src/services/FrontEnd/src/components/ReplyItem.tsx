@@ -338,10 +338,10 @@ const ReplyItem: React.FC<{ item: CawItem; onLikeStateChange?: (cawId: string, l
         {/* Wrong wallet error message */}
         {wrongWalletError && (
           <div className="mt-2 rounded-md overflow-hidden bg-black">
-            <div className={`px-4 py-2 text-sm rounded-md transition-all duration-300 ${
+            <div className={`px-4 py-2 text-sm rounded-md transition-all duration-300 text-error-dim ${
               isDark
-                ? 'bg-red-900/20 text-red-400 border border-red-800'
-                : 'bg-red-50 text-red-600 border border-red-200'
+                ? 'bg-red-900/20 border border-red-800'
+                : 'bg-red-50 border border-red-200'
             }`}>
               Please switch to the correct wallet
             </div>

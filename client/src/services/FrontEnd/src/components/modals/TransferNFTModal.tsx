@@ -156,7 +156,7 @@ const TransferNFTModal: React.FC = () => {
               } ${inputError ? (isDark ? 'border-red-500/50' : 'border-red-400') : ''} outline-none`}
             />
             {inputError && (
-              <p className="mt-1 text-xs text-red-500">{inputError}</p>
+              <p className="mt-1 text-xs text-error-dim">{inputError}</p>
             )}
           </div>
         )}
@@ -172,7 +172,7 @@ const TransferNFTModal: React.FC = () => {
         )}
 
         {writeError && (
-          <div className="mb-4 p-3 rounded-lg bg-red-500/10 text-red-500 text-sm">
+          <div className="mb-4 p-3 rounded-lg bg-red-500/10 text-error-dim text-sm">
             {writeError.message?.includes('User rejected')
               ? t('transfer_nft.error.tx_rejected')
               : writeError.message?.includes('caller is not the token owner')

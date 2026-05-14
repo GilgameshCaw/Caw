@@ -1970,7 +1970,7 @@ const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess, placehol
           </div>
 
         {isThreadMode && chunkCount > MAX_THREAD_LENGTH && (
-          <p className="text-xs text-red-500 mt-1 text-right">Thread exceeds {MAX_THREAD_LENGTH} post limit. Shorten your text to continue.</p>
+          <p className="text-xs text-error-dim mt-1 text-right">Thread exceeds {MAX_THREAD_LENGTH} post limit. Shorten your text to continue.</p>
         )}
 
         {/* Mobile Thread Info */}
@@ -2598,7 +2598,7 @@ const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess, placehol
         </div>
 
         {isThreadMode && chunkCount > MAX_THREAD_LENGTH && (
-          <p className="text-xs text-red-500 mt-1 text-right">Thread exceeds {MAX_THREAD_LENGTH} post limit. Shorten your text to continue.</p>
+          <p className="text-xs text-error-dim mt-1 text-right">Thread exceeds {MAX_THREAD_LENGTH} post limit. Shorten your text to continue.</p>
         )}
 
         {/* Desktop Thread Info */}

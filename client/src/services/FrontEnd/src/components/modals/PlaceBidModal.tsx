@@ -385,13 +385,13 @@ const PlaceBidModal: React.FC = () => {
                     {usdDisplay ? `${usdDisplay} USD` : '\u00A0'}
                   </span>
                   {isConnected && (
-                    <span className={`text-xs ${insufficientBalance ? (isDark ? 'text-red-400' : 'text-red-500') : themeTextMuted(isDark)}`}>
+                    <span className={`text-xs ${insufficientBalance ? 'text-error-dim' : themeTextMuted(isDark)}`}>
                       {t('bid_modal.balance_label')}: {fmtPrice(userBalance.toString(), listing.paymentToken)} {listing.paymentToken}
                     </span>
                   )}
                 </div>
                 {insufficientBalance && (
-                  <p className={`text-xs mt-1 ${isDark ? 'text-red-400' : 'text-red-500'}`}>
+                  <p className="text-xs mt-1 text-error-dim">
                     {t('bid_modal.insufficient_balance')}
                   </p>
                 )}
@@ -415,14 +415,14 @@ const PlaceBidModal: React.FC = () => {
             )}
 
             {isEnded && (
-              <div className={`text-center mb-4 p-3 rounded-lg ${isDark ? 'bg-red-500/10 text-red-400' : 'bg-red-50 text-red-600'}`}>
+              <div className={`text-center mb-4 p-3 rounded-lg text-error-dim ${isDark ? 'bg-red-500/10' : 'bg-red-50'}`}>
                 {t('bid_modal.auction_ended')}
               </div>
             )}
 
             {/* Errors */}
             {(approveError || writeError) && (
-              <div className="mb-4 p-3 rounded-lg bg-red-500/10 text-red-500 text-sm text-center">
+              <div className="mb-4 p-3 rounded-lg bg-red-500/10 text-error-dim text-sm text-center">
                 {(approveError || writeError)?.message?.includes('User rejected')
                   ? t('bid_modal.tx_rejected')
                   : (approveError || writeError)?.message?.includes('Bid too low')
