@@ -2508,8 +2508,17 @@ const MessagesPage: React.FC = () => {
                   className="fixed z-50 bg-gray-800 border border-white/20 rounded-lg shadow-xl py-1 min-w-[180px] max-w-[calc(100vw-1rem)]"
                   style={{ top: contextMenu.y, left: contextMenu.x }}
                 >
-                  {/* Edit — only own messages within 15 min */}
-                  {contextMenu.isOwn && (Date.now() - new Date(contextMenu.createdAt).getTime() < 15 * 60 * 1000) && (
+                  {/* Edit — only own TEXT messages within 15 min. Attachments
+                      (image/video/file) have nothing meaningful to edit since
+                      the bubble content is binary, so the affordance is hidden. */}
+                  {contextMenu.isOwn && (Date.now() - new Date(contextMenu.createdAt).getTime() < 15 * 60 * 1000) && (() => {
+                    const msg = messages.find(m => m.id === contextMenu.messageId)
+                    try {
+                      const parsed = JSON.parse(msg?.content || '')
+                      if (parsed?.msgType === 'encrypted-attachment') return false
+                    } catch {}
+                    return true
+                  })() && (
                     <button
                       onClick={() => {
                         const msg = messages.find(m => m.id === contextMenu.messageId)
