@@ -267,11 +267,15 @@ const TipModal: React.FC<TipModalProps> = ({
                   <button
                     onClick={handleSubmit}
                     disabled={isDisabled}
-                    className={`w-full py-2.5 rounded-lg text-sm font-semibold transition-all duration-200 cursor-pointer ${
-                      isDisabled
-                        ? `bg-yellow-500/30 cursor-not-allowed ${wrongWallet ? 'text-black/50' : 'text-yellow-500/50'}`
-                        : 'bg-yellow-500 text-black hover:bg-yellow-400'
-                    }`}
+                    className={
+                      wrongWallet
+                        ? 'w-full px-3 py-1.5 bg-yellow-500 text-black font-semibold text-sm rounded-full hover:bg-yellow-400 disabled:opacity-50 disabled:cursor-not-allowed transition-all duration-200 shadow-lg hover:shadow-xl cursor-pointer'
+                        : `w-full py-2.5 rounded-lg text-sm font-semibold transition-all duration-200 cursor-pointer ${
+                            isDisabled
+                              ? 'bg-yellow-500/30 cursor-not-allowed text-yellow-500/50'
+                              : 'bg-yellow-500 text-black hover:bg-yellow-400'
+                          }`
+                    }
                   >
                     {wrongWallet ? t('post_form.button.wrong_wallet') : !priceReady ? t('tip.button.loading_price') : tipState === 'signing' ? (
                       <div className="flex items-center justify-center space-x-2">
