@@ -529,6 +529,7 @@
   "profile_chooser.create_profile": "Create a profile",
   "profile_chooser.create_new": "Create New",
   "profile_chooser.manage_profiles": "Manage Profiles",
+  "profile_chooser.switch_wallet": "Switch wallet",
   "signin_modal.title": "Sign in to continue",
   "signin_modal.default_message": "Connect your wallet and create a username to get started.",
   "signin_modal.create_profile": "Create Your Profile",
