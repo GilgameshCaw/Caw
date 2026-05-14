@@ -751,10 +751,6 @@ function statTile(value: string, label: string) {
 // caw doesn't blow past the standard preview slot.
 const CARD_STRIP_W = Math.round(W * 0.015)      // 18 — left yellow strip
 const CARD_MARGIN  = Math.round(W * 0.03)       // 36 — outer margin (left/right)
-// X/Twitter previews often feel visually tighter than a raw browser-opened
-// 1200×630 card. Keep the *important* content inside a more conservative
-// horizontal safe area so text / stats / image don't read as clipped.
-const CARD_SAFE_X  = Math.round(W * 0.10)       // 120 — conservative content safe area for X/Twitter crops
 // Vertical margin kept tight so content fills the card. Twitter's
 // ~15px top/bottom crop on summary_large_image still falls inside this
 // margin, and the stats row gets its own paddingTop below for a small
@@ -762,11 +758,11 @@ const CARD_SAFE_X  = Math.round(W * 0.10)       // 120 — conservative content 
 const CARD_MARGIN_Y = Math.round(H * 0.028)      // 18 — outer margin (top/bottom)
 const CARD_IMG_SZ  = Math.round(W * 0.18)       // 216 — square image in top-right
 const CARD_NARROW_W = Math.round(W * 0.68)      // 816 — text column when image overlaps
-const CARD_TEXT_X   = CARD_STRIP_W + CARD_SAFE_X
+const CARD_TEXT_X   = CARD_STRIP_W + CARD_MARGIN
 // Wide content lines render below the corner image, so they get the
 // full available width — everything between the text column's left
 // edge and the right outer margin. No image-overlap concern.
-const CARD_WIDE_W   = W - CARD_TEXT_X - CARD_SAFE_X
+const CARD_WIDE_W   = W - CARD_TEXT_X - CARD_MARGIN
 const CARD_MIN_H    = 280
 const CARD_MAX_H    = H
 
@@ -1153,7 +1149,7 @@ function planCawCard(opts: {
   // column is squeezed and we re-wrap. Cards where the image stays at
   // CARD_IMG_SZ skip the second pass.
   const computeNarrowChars = (imgPx: number) => {
-    const narrowPx = W - CARD_STRIP_W - CARD_SAFE_X - imgPx - CARD_NARROW_RIGHT_PAD - CARD_SAFE_X
+    const narrowPx = W - CARD_STRIP_W - CARD_MARGIN - imgPx - CARD_NARROW_RIGHT_PAD - CARD_MARGIN
     return approxCharsPerPx(CARD_BODY_FS, Math.max(200, narrowPx))
   }
   // Will the bottom stat row render? (any non-zero count.)
@@ -1220,7 +1216,7 @@ function planCawCard(opts: {
   }
   // Render-time narrow column width — the visible cap for header /
   // byline / narrow content lines.
-  const narrowRenderW = W - CARD_STRIP_W - CARD_SAFE_X - imgSize - CARD_NARROW_RIGHT_PAD - CARD_SAFE_X
+  const narrowRenderW = W - CARD_STRIP_W - CARD_MARGIN - imgSize - CARD_NARROW_RIGHT_PAD - CARD_MARGIN
 
   return {
     height,
@@ -1260,7 +1256,7 @@ function planCawCard(opts: {
                 display: 'flex',
                 position: 'absolute',
                 top: CARD_MARGIN_Y,
-                right: CARD_SAFE_X,
+                right: CARD_MARGIN,
                 width: imgSize,
                 height: imgSize,
                 borderRadius: 12,
@@ -1290,7 +1286,7 @@ function planCawCard(opts: {
                 position: 'absolute',
                 top: CARD_MARGIN_Y,
                 left: CARD_TEXT_X,
-                right: CARD_SAFE_X,
+                right: CARD_MARGIN,
                 bottom: CARD_MARGIN_Y,
               },
               children: [
@@ -2183,9 +2179,16 @@ async function renderToPng(tree: any, height: number = H): Promise<Buffer> {
 // can be much shorter), which makes X crop them unpredictably. Wrap the
 // variable-height card inside a fixed OG canvas instead of changing the card
 // layout logic itself.
-function wrapTreeInOgCanvas(tree: any, innerHeight: number, backgroundColor: string) {
+function wrapTreeInOgCanvas(tree: any, innerHeight: number, _backgroundColor: string) {
   const clampedInnerHeight = Math.min(H, Math.max(0, innerHeight))
   const topOffset = Math.max(0, Math.floor((H - clampedInnerHeight) / 2))
+  // The outer canvas (visible only to Twitter, whose summary_large_image
+  // central-crops anything not in 1200×630 aspect) sits on a neutral
+  // off-black so the inner card reads as a floating element rather than
+  // an awkward letterboxed crop. The inner card stays full 1200px wide;
+  // the visible band is just the top/bottom strips above/below the
+  // shorter content height. Pronounced top+bottom shadow lifts the card
+  // off the band.
   return {
     type: 'div',
     props: {
@@ -2194,7 +2197,7 @@ function wrapTreeInOgCanvas(tree: any, innerHeight: number, backgroundColor: str
         width: '100%',
         height: '100%',
         position: 'relative',
-        backgroundColor,
+        backgroundColor: '#0E0E0E',
         overflow: 'hidden',
       },
       children: [
@@ -2209,6 +2212,12 @@ function wrapTreeInOgCanvas(tree: any, innerHeight: number, backgroundColor: str
               width: W,
               height: clampedInnerHeight,
               overflow: 'hidden',
+              // Pronounced top + bottom shadow only — full-width inner
+              // card has no left/right band for a side shadow to land
+              // on. Two stacked shadows (one pointing up, one down)
+              // because satori's boxShadow doesn't render a top shadow
+              // from a single negative-Y offset reliably.
+              boxShadow: '0 16px 48px rgba(0,0,0,0.7), 0 -16px 48px rgba(0,0,0,0.7)',
             },
             children: [tree],
           },
@@ -2592,8 +2601,8 @@ router.get('/image/caw/:id', async (req, res) => {
   // renders don't collide in cache.
   const variant = isTwitterUA ? 'tw' : 'std'
   const cacheKey = caw.status === 'PENDING'
-    ? `caw-v14-${variant}-${caw.id}-${liveHash}-pending`
-    : `caw-v14-${variant}-${caw.id}-${liveHash}`
+    ? `caw-v15-${variant}-${caw.id}-${liveHash}-pending`
+    : `caw-v15-${variant}-${caw.id}-${liveHash}`
   return serveCachedOrRender(res, cacheKey, async () => {
     // Strip media URLs and poll markers out of the visible text — the
     // corner image and the rendered poll bars already represent them,
