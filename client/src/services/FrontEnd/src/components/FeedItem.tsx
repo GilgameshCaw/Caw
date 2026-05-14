@@ -431,6 +431,15 @@ const FeedItem: React.FC<{ item: CawItem; isMainPost?: boolean; isReply?: boolea
     const addOptimisticLike = useOptimisticLikesStore.getState().addOptimisticLike
     const updateLikeWithTxQueueId = useOptimisticLikesStore.getState().updateLikeWithTxQueueId
 
+    const isLiking = !useItem.hasLiked
+    setLikeCountAdj(isLiking ? 1 : -1)
+    setLikeCountBase(useItem.likeCount)
+    setLikePending(true)
+    if (isLiking) {
+      tempLikeId = addOptimisticLike({ userId: effectiveTokenId, cawId: useItem.id })
+    }
+    if (onLikeStateChange) onLikeStateChange(useItem.id, true)
+
     try {
       const response = await signAndSubmit({
         actionType:      useItem.hasLiked ? 'unlike' : 'like',
@@ -439,22 +448,17 @@ const FeedItem: React.FC<{ item: CawItem; isMainPost?: boolean; isReply?: boolea
         receiverCawonce: useItem.cawonce ?? 0,
       })
 
-      // null = insufficient stake (no retry) — just clear busy
-      if (!response) return
-
-      // Action submitted — switch to pending state and increment count optimistically
-      const isLiking = !useItem.hasLiked
-      if (isLiking) {
-        tempLikeId = addOptimisticLike({ userId: effectiveTokenId, cawId: useItem.id })
-        if (response?.txQueueId) updateLikeWithTxQueueId(tempLikeId, response.txQueueId)
-        setLikeCountAdj(1)
-      } else {
-        setLikeCountAdj(-1)
+      if (!response) {
+        setLikePending(false)
+        setLikeCountAdj(0)
+        setLikeCountBase(null)
+        if (tempLikeId) useOptimisticLikesStore.getState().removeOptimisticLike(tempLikeId)
+        if (onLikeStateChange) onLikeStateChange(useItem.id, false)
+        return
       }
-      setLikeCountBase(useItem.likeCount)
-      setLikePending(true)
+
+      if (tempLikeId && response?.txQueueId) updateLikeWithTxQueueId(tempLikeId, response.txQueueId)
       if (response?.txQueueId) setPendingLikeTxQueueId(response.txQueueId)
-      if (onLikeStateChange) onLikeStateChange(useItem.id, true)
     } catch (err) {
       console.error('Like failed', err)
       setLikePending(false)
