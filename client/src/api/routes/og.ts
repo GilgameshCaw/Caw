@@ -1381,7 +1381,7 @@ function planCawCard(opts: {
                                   // up with the larger header baseline
                                   // — satori's baseline alignment leaves
                                   // the smaller glyph hanging low.
-                                  marginTop: -7,
+                                  marginTop: -12,
                                 },
                                 // Strip the leading `· ` since we now
                                 // render the dot as its own segment.
@@ -1727,7 +1727,7 @@ function planImageOnlyCard(opts: {
                                   marginLeft: 6,
                                   // Mirror the text-card variant — pull
                                   // date up to align baseline with header.
-                                  marginTop: -7,
+                                  marginTop: -12,
                                 },
                                 children: dateText.replace(/^[ ]?·\s*/, ''),
                               },
@@ -2648,8 +2648,8 @@ router.get('/image/caw/:id', async (req, res) => {
   // renders don't collide in cache.
   const variant = isTwitterUA ? 'tw' : 'std'
   const cacheKey = caw.status === 'PENDING'
-    ? `caw-v25-${variant}-${caw.id}-${liveHash}-pending`
-    : `caw-v25-${variant}-${caw.id}-${liveHash}`
+    ? `caw-v26-${variant}-${caw.id}-${liveHash}-pending`
+    : `caw-v26-${variant}-${caw.id}-${liveHash}`
   return serveCachedOrRender(res, cacheKey, async () => {
     // Strip media URLs and poll markers out of the visible text — the
     // corner image and the rendered poll bars already represent them,
