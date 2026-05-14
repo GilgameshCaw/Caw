@@ -1,6 +1,14 @@
 import { WagmiProvider, http } from "wagmi";
 import { mainnet, sepolia, baseSepolia } from "wagmi/chains";
 import { getDefaultConfig, RainbowKitProvider, darkTheme } from "@rainbow-me/rainbowkit";
+import {
+  safeWallet,
+  rainbowWallet,
+  coinbaseWallet,
+  metaMaskWallet,
+  walletConnectWallet,
+  ledgerWallet,
+} from "@rainbow-me/rainbowkit/wallets";
 import { QueryClientProvider, QueryClient } from "@tanstack/react-query";
 
 // RPC URLs — default to OUR backend RPC proxy at /api/rpc/{l1,l2}.
@@ -62,12 +70,40 @@ const APP_URL = (typeof window !== 'undefined' && window.location?.origin)
 // tolerate a 30s lag. Cuts blockNumber polling by ~7×.
 const BLOCK_POLLING_INTERVAL_MS = 30_000
 
+// Explicit wallet list. We pin this rather than relying on the implicit
+// `getDefaultWallets()` so a future RainbowKit version bump can't silently
+// re-introduce hardware-wallet connectors into the "Popular" group.
+//
+// Hardware-wallet connectors (Ledger, etc.) probe WebUSB / WebHID during
+// connector init, which triggers a browser-level permission prompt the
+// first time the user opens any wallet flow — even users who don't own a
+// hardware wallet see it. We push Ledger into a separate "Hardware" group
+// behind the "More" expansion in the RainbowKit modal so it only loads
+// when a user actively reaches for it.
+const walletList = [
+  {
+    groupName: "Popular",
+    wallets: [
+      safeWallet,
+      rainbowWallet,
+      coinbaseWallet,
+      metaMaskWallet,
+      walletConnectWallet,
+    ],
+  },
+  {
+    groupName: "Hardware",
+    wallets: [ledgerWallet],
+  },
+];
+
 export const wagmiConfig = getDefaultConfig({
   appName: "CAW",
   appDescription: "A trustless and decentralized social clearing-house committed to making freedom of speech unstoppable.",
   appUrl: APP_URL,
   appIcon: `${APP_URL}/logo.jpeg`,
   projectId: import.meta.env.VITE_PROJECT_ID || "your_project_id_here",
+  wallets: walletList,
   chains: [sepolia, baseSepolia, mainnet],
   pollingInterval: BLOCK_POLLING_INTERVAL_MS,
   transports: {
