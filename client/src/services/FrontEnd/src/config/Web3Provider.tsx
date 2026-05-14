@@ -1,3 +1,4 @@
+import { useEffect } from "react";
 import { WagmiProvider, http } from "wagmi";
 import { mainnet, sepolia, baseSepolia } from "wagmi/chains";
 import { getDefaultConfig, RainbowKitProvider, darkTheme } from "@rainbow-me/rainbowkit";
@@ -121,6 +122,19 @@ interface Web3ProviderProps {
 }
 
 export default function Web3Provider({ children, queryClient }: Web3ProviderProps) {
+  // Diagnostic: surface WalletConnect projectId + origin so Rainbow Wallet
+  // connection failures on test.caw.social can be triaged from console alone.
+  // The placeholder-id check catches missing VITE_PROJECT_ID (the most common
+  // cause of "QR scans but never opens the dApp" symptoms).
+  useEffect(() => {
+    const projectId = import.meta.env.VITE_PROJECT_ID || "your_project_id_here";
+    const origin = typeof window !== 'undefined' ? window.location.origin : '(no window)';
+    console.log(`[Web3Provider] projectId=${projectId} origin=${origin}`);
+    if (projectId === "your_project_id_here") {
+      console.warn('[Web3Provider] WARNING: VITE_PROJECT_ID is unset; WalletConnect will not work');
+    }
+  }, []);
+
   return (
     <WagmiProvider config={wagmiConfig}>
       <QueryClientProvider client={queryClient}>
