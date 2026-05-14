@@ -755,11 +755,11 @@ const CARD_MARGIN  = Math.round(W * 0.03)       // 36 — outer margin (left/rig
 // 1200×630 card. Keep the *important* content inside a more conservative
 // horizontal safe area so text / stats / image don't read as clipped.
 const CARD_SAFE_X  = Math.round(W * 0.10)       // 120 — conservative content safe area for X/Twitter crops
-// Vertical margin kept modest so the image (top-right) and the stats
-// row (bottom) don't squeeze the middle content. Twitter's ~15px
-// top/bottom crop on summary_large_image still falls inside this
-// margin, so the chrome line / stats row stay clear of the boundary.
-const CARD_MARGIN_Y = Math.round(H * 0.06)       // 38 — outer margin (top/bottom)
+// Vertical margin kept tight so content fills the card. Twitter's
+// ~15px top/bottom crop on summary_large_image still falls inside this
+// margin, and the stats row gets its own paddingTop below for a small
+// cushion above the icons.
+const CARD_MARGIN_Y = Math.round(H * 0.028)      // 18 — outer margin (top/bottom)
 const CARD_IMG_SZ  = Math.round(W * 0.18)       // 216 — square image in top-right
 const CARD_NARROW_W = Math.round(W * 0.68)      // 816 — text column when image overlaps
 const CARD_TEXT_X   = CARD_STRIP_W + CARD_SAFE_X
@@ -1163,7 +1163,7 @@ function planCawCard(opts: {
     (opts.stats.replies && opts.stats.replies !== '0') ||
     (opts.stats.views && opts.stats.views !== '0')
   )
-  const STATS_ROW_H = 16 + 30  // marginTop + ~one line of 22px text + cushion
+  const STATS_ROW_H = 6 + 30   // paddingTop + ~one line of 22px text + cushion
   const computeHeight = (narrowLines: number, wideLines: number) => {
     let h = CARD_MARGIN_Y + CARD_HEADER_PX + CARD_BYLINE_PX
     if (narrowLines > 0) h += narrowLines * CARD_BODY_PX
@@ -1512,8 +1512,11 @@ function statsRow(stats: { likes: string; recaws: string; replies: string; views
         // flex column. So on a short caw the space between the body
         // text and the stat row grows; on a tall caw the row sits
         // right under the content as before. Either way, the stats
-        // anchor to the visual bottom of the card.
+        // anchor to the visual bottom of the card. paddingTop guarantees
+        // a tiny visible cushion above the icons even when content fills
+        // the card and the auto-margin collapses to zero.
         marginTop: 'auto',
+        paddingTop: 6,
         // Right-align the stats so they sit under the corner image
         // rather than competing with the body text on the left.
         justifyContent: 'flex-end',
@@ -1598,7 +1601,7 @@ function planImageOnlyCard(opts: {
     (opts.stats.replies && opts.stats.replies !== '0') ||
     (opts.stats.views && opts.stats.views !== '0')
   )
-  const STATS_ROW_H = 16 + 30
+  const STATS_ROW_H = 6 + 30
   const height = CARD_MARGIN_Y + CARD_HEADER_PX + CARD_BYLINE_PX + 12 + imageH + (hasStats ? STATS_ROW_H : 0) + CARD_MARGIN_Y
 
   return {
@@ -2589,8 +2592,8 @@ router.get('/image/caw/:id', async (req, res) => {
   // renders don't collide in cache.
   const variant = isTwitterUA ? 'tw' : 'std'
   const cacheKey = caw.status === 'PENDING'
-    ? `caw-v13-${variant}-${caw.id}-${liveHash}-pending`
-    : `caw-v13-${variant}-${caw.id}-${liveHash}`
+    ? `caw-v14-${variant}-${caw.id}-${liveHash}-pending`
+    : `caw-v14-${variant}-${caw.id}-${liveHash}`
   return serveCachedOrRender(res, cacheKey, async () => {
     // Strip media URLs and poll markers out of the visible text — the
     // corner image and the rendered poll bars already represent them,
