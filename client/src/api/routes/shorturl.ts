@@ -117,8 +117,11 @@ function decodeHtmlEntities(s: string | undefined): string | undefined {
     .replace(/&amp;/g, '&') // last — otherwise &amp;lt; double-decodes
 }
 
-// Extract Open Graph metadata from a URL
-async function extractMetadata(url: string): Promise<{
+// Extract Open Graph metadata from a URL. Exported so the one-off
+// refetch-shorturl-metadata.ts script can re-run it for rows that
+// captured bad values (e.g. unsubstituted __CAW_PUBLIC_URL__ placeholder
+// from pre-cawbot-UA nginx routing). Pure function — no router state.
+export async function extractMetadata(url: string): Promise<{
   title?: string
   description?: string
   imageUrl?: string
