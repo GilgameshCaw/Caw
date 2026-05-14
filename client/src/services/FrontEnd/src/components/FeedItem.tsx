@@ -250,10 +250,19 @@ const FeedItem: React.FC<{ item: CawItem; isMainPost?: boolean; isReply?: boolea
 
   // Compute effective count adjustments: if the server count has moved past
   // the base snapshot (taken when the optimistic adj was applied), the server
-  // has caught up and we should stop adding the adjustment to avoid double-counting.
-  const effectiveReplyAdj = (replyCountAdj !== 0 && replyCountBase !== null && useItem.commentCount > replyCountBase) ? 0 : replyCountAdj
-  const effectiveRecawAdj = (recawCountAdj !== 0 && recawCountBase !== null && useItem.recawCount > recawCountBase) ? 0 : recawCountAdj
-  const effectiveLikeAdj = (likeCountAdj !== 0 && likeCountBase !== null && useItem.likeCount > likeCountBase) ? 0 : likeCountAdj
+  // has caught up and we should stop adding the adjustment to avoid double-
+  // counting. Direction-aware: a positive adj resolves when the server
+  // counter has climbed at or past base+adj; a negative adj resolves when
+  // the server counter has fallen at or past base+adj. Unlike now writes
+  // a server-side decrement immediately (matching the local -1), so we
+  // need symmetry — the previous `> base` check only caught upward catch-up.
+  const settled = (adj: number, server: number, base: number | null): boolean => {
+    if (adj === 0 || base === null) return false
+    return adj > 0 ? server >= base + adj : server <= base + adj
+  }
+  const effectiveReplyAdj = settled(replyCountAdj, useItem.commentCount, replyCountBase) ? 0 : replyCountAdj
+  const effectiveRecawAdj = settled(recawCountAdj, useItem.recawCount, recawCountBase) ? 0 : recawCountAdj
+  const effectiveLikeAdj  = settled(likeCountAdj,  useItem.likeCount,    likeCountBase)  ? 0 : likeCountAdj
 
   // Auto-trigger like after wallet connection
   useEffect(() => {
