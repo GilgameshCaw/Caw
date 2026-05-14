@@ -13,12 +13,17 @@
 
 ## Client (production runtime) — actionable findings
 
-### CRITICAL
+### CRITICAL — FIXED on 2026-05-14 (on `contract-support-v2`)
 
-**protobufjs — Arbitrary code execution**
-- Advisory: GHSA-xq3m-2v4x-88gg
-- Reachable through: transitive (likely opentelemetry stack)
-- Action: `npm audit fix` should bump it via the parent. Verify after fix that nothing in our prod code-path imports protobufjs directly with untrusted input.
+**protobufjs — Arbitrary code execution** — **FIXED**
+- Advisory: GHSA-xq3m-2v4x-88gg (RCE via crafted JSON descriptors with malicious schema metadata)
+- Reached us at version 7.5.4, transitively through `@opentelemetry/otlp-transformer` → `exporter-trace-otlp-http` and through `@grpc/proto-loader` → `sdk-node`.
+- Fix: added `"resolutions": { "protobufjs": "^7.5.5" }` to `client/package.json`; yarn install resolved to 7.5.8 (patch-level inside the 7.x line, no semver-major surface change).
+- Also re-expressed the legacy `jws` pin as a yarn resolution — it was previously a dead npm-style `overrides` block that yarn ignored, so the install was running jws 3.2.2 despite the package.json claiming 3.2.3.
+- Smoke-tested: OTel SDK init (`sdk-node`, `auto-instrumentations-node`, `exporter-trace-otlp-http`, `exporter-trace-otlp-grpc`) all load cleanly post-bump. `yarn install --frozen-lockfile` passes — deploy path unaffected.
+- Lives on `contract-support-v2` commit `28109ba9`.
+
+**Zero critical vulnerabilities remain.** 64 high, 45 moderate, 3 low still present — all transitive, mostly in the same OTel/serialize-javascript/mocha clusters discussed below. Resolving them requires either targeted yarn upgrades with test oversight or accepting them as build-/dev-only.
 
 ### HIGH — actionable
 
