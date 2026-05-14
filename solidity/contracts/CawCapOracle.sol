@@ -34,6 +34,14 @@ contract CawCapOracle {
   ///         under-charge relative to the cap.
   uint256 public constant STALE_THRESHOLD = 24 hours;
 
+  /// @notice Minimum span between the oldest and latest samples before TWAP is
+  ///         considered "fresh." Stops the cap from binding based on a
+  ///         too-short window (e.g. a burst of samples within an hour).
+  ///         Together with the per-window dilution of any single manipulated
+  ///         sample, this ensures the TWAP reflects an actual price-discovery
+  ///         period before kicking in.
+  uint256 public constant MIN_WINDOW = 1 days;
+
   /// @notice Ring buffer size. Power of 2 for cheap modular indexing.
   ///         Sized for ~700 samples in a 7-day window (≈100 L1→L2 msgs/day);
   ///         oversized 1024 gives headroom without paying for empty slots.
@@ -150,17 +158,25 @@ contract CawCapOracle {
     (uint256 twap, bool fresh) = twapEthPerCaw();
     if (!fresh || twap == 0) return baseline; // dormant fallback
 
-    // ethCap is in wei; twap is UQ112.112 of WETH-per-CAW.
-    //   wei_per_caw = twap / 2^112 (gives WETH-per-CAW as a regular ratio)
-    //   caw_per_action_at_cap = ethCap / wei_per_caw
-    //                         = ethCap * 2^112 / twap
+    // Units walk-through.
+    //   twap   : UQ112.112 of (WETH-raw / CAW-raw), where both reserves are
+    //            raw-token units (i.e. 18-decimal wei). So twap × 2^-112 is
+    //            "wei per raw-CAW-unit (1e-18 CAW)".
+    //   ethCap : wei (atto-ETH).
     //
-    // Result is whole CAW (the unit `baseline` and `actionCost` use in
-    // CawActions). Multiplication by 2^112 first ensures no precision loss
-    // for sub-1 CAW results; ethCap is ≤ ~3e12, twap is ≤ 2^224, so
-    // ethCap << 112 fits in uint256 with headroom.
-    uint256 ethCapShifted = ethCap << 112;
-    uint256 cappedCaw = ethCapShifted / twap;
+    // What we want:
+    //   capped_whole_caw = ethCap_wei / wei_per_whole_caw
+    //   wei_per_whole_caw = wei_per_raw_caw × 1e18 = (twap × 2^-112) × 1e18
+    //   → capped_whole_caw = ethCap × 2^112 / (twap × 1e18)
+    //
+    // Order of ops: shift first (no precision loss; shift fits since
+    // ethCap ≤ ~3e12, ethCap << 112 ≤ ~1.5e46 << 2^256), then divide.
+    uint256 cappedCaw = (ethCap << 112) / twap / 1e18;
+
+    // Floor at 1 whole CAW. If twap is so high that capped_whole_caw rounds
+    // to 0, the user would otherwise pay nothing — violates "actions always
+    // cost something" and short-circuits the depositor distribution.
+    if (cappedCaw == 0) cappedCaw = 1;
 
     return cappedCaw < baseline ? cappedCaw : baseline;
   }
@@ -224,11 +240,33 @@ contract CawCapOracle {
 
     if (oldest.timestamp >= latest.timestamp) return (0, false);
 
+    // M-1: enforce a minimum spread between oldest and latest. Stops the cap
+    // from binding off a too-short window (e.g. only a few hours of history
+    // available right after deploy, or after a long quiet period the buffer
+    // happens to be densely-packed near `latest`). Combined with the natural
+    // per-sample dilution of any single manipulated sample, this is what
+    // makes the manipulate-one-sample attack uneconomic — the TWAP averages
+    // across ≥1 day of price action regardless.
+    uint256 timeDelta = uint256(latest.timestamp - oldest.timestamp);
+    if (timeDelta < MIN_WINDOW) return (0, false);
+
     unchecked {
-      // V2 cumulatives can wrap (uint256); subtraction in unchecked block
-      // gives the right window delta either way.
-      uint256 cumDelta = uint256(latest.cumulative) - uint256(oldest.cumulative);
-      uint256 timeDelta = uint256(latest.timestamp - oldest.timestamp);
+      // C-2 fix: V2 `priceCumulativeLast` is uint256 and wraps mod 2^256;
+      // consumers recover the delta by unchecked subtraction. We store the
+      // low 224 bits of the cumulative in `Sample.cumulative`, so a wrap
+      // through the 2^224 boundary mid-window would surface here as
+      // `latest.cumulative < oldest.cumulative` in 224-bit space, and an
+      // unchecked uint256 subtract would produce 2^256 − 2^224 + (true delta).
+      // Mask to 224 bits to recover the true delta in our truncated space.
+      //
+      // Per-window bound: at any plausible WETH-per-CAW price the cumulative
+      // growth over 7 days is < 2^140 (UQ112.112 of a sub-1e18 fraction times
+      // 604800 seconds), so the true delta fits comfortably in 224 bits and
+      // masking is lossless. If the pair somehow produces a per-window delta
+      // ≥ 2^224, the mask would silently truncate, but reaching that requires
+      // sustained reserves so extreme they imply pool death — in which case
+      // the staleness path catches it within a day anyway.
+      uint256 cumDelta = (uint256(latest.cumulative) - uint256(oldest.cumulative)) & ((uint256(1) << 224) - 1);
       twap = cumDelta / timeDelta;
     }
     fresh = true;

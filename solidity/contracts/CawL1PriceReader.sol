@@ -37,6 +37,15 @@ contract CawL1PriceReader {
     address t0 = _pair.token0();
     address t1 = _pair.token1();
     require(t0 == _cawToken || t1 == _cawToken, "CAW not in pair");
+
+    // L-2: probe the other functions we depend on, fail loudly here rather
+    // than producing garbage at the first readSample() after deploy. `_pair`
+    // is immutable, so a fat-finger here is permanent — this is the only
+    // line of defense.
+    _pair.getReserves();
+    _pair.price0CumulativeLast();
+    _pair.price1CumulativeLast();
+
     pair = _pair;
     cawIsToken0 = (t0 == _cawToken);
   }

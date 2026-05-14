@@ -78,79 +78,138 @@ contract("CawCapOracle", (accounts) => {
     });
   });
 
-  describe("cap binds with fresh oracle", () => {
-    it("does not cap below baseline when CAW is cheap", async () => {
-      // CAW is "cheap" if 1 CAW < $0.01 / 2000 = $5e-6, i.e. <1e-9 ETH ≈ 1e9 wei per CAW.
-      // Pick 1e8 wei per CAW (CAW worth $5e-7 → like would be ~$0.00025 at baseline)
-      const cheapPriceUQ = uqPriceFromWeiPerCaw(new BN("100000000"));
-      const now = Math.floor(Date.now() / 1000);
-      const t0 = now - 60;
-      const t1 = now;
+  // Helper: record a TWAP-defining pair of samples MIN_WINDOW + 1 second apart,
+  // so twapEthPerCaw returns fresh and matches the supplied weiPerWholeCaw price.
+  async function seedConstantPrice(weiPerWholeCaw) {
+    const priceUQ = uqPriceFromWeiPerCaw(weiPerWholeCaw);
+    const minWindowSecs = 86400; // MIN_WINDOW
+    const now = Math.floor(Date.now() / 1000);
+    const t0 = now - (minWindowSecs + 60);
+    const t1 = now;
+    const elapsed = t1 - t0;
 
-      await oracle.recordSample(0, t0, { from: writer });
-      await oracle.recordSample(cheapPriceUQ.mul(new BN(60)), t1, { from: writer });
+    await oracle.recordSample(0, t0, { from: writer });
+    await oracle.recordSample(priceUQ.mul(new BN(elapsed)), t1, { from: writer });
+  }
+
+  describe("cap binds with fresh oracle", () => {
+    it("does not cap below baseline when CAW is cheap (today)", async () => {
+      // Today's CAW is ~$1e-9 each, so wei-per-whole-CAW at ETH=$5k is
+      // about 1e-9 / 5e3 × 1e18 = 200 wei. At that price, the CAP_LIKE
+      // (2e11 wei = $0.01) buys 1e9 CAW — way above baseline 2000.
+      await seedConstantPrice(new BN("200"));
 
       const cap = await oracle.capLike();
       const baseline = await oracle.BASELINE_LIKE();
       assert.equal(
         cap.toString(),
         baseline.toString(),
-        "cheap CAW → baseline binds, cap is dormant in the sense of not below baseline"
+        "cheap CAW → baseline binds, cap dormant"
       );
     });
 
-    it("caps below baseline when CAW is expensive", async () => {
-      // Cap math: cappedCaw = ethCap_wei * 1e18 / weiPerCaw  (see capForAction).
-      // Break-even for LIKE (baseline 2000): weiPerCaw = 2e11 * 1e18 / 2000 = 1e26.
-      // To clamp visibly below baseline, push price 10× higher.
-      const expensiveWeiPerCaw = new BN("1000000000000000000000000000"); // 1e27
-      const priceUQ = uqPriceFromWeiPerCaw(expensiveWeiPerCaw);
-      const now = Math.floor(Date.now() / 1000);
-
-      await oracle.recordSample(0, now - 60, { from: writer });
-      await oracle.recordSample(priceUQ.mul(new BN(60)), now, { from: writer });
+    it("caps below baseline at a realistic $3B mcap scenario", async () => {
+      // CAW mcap $3.3B at 666B supply → $5e-6 / CAW → 1e9 wei / whole CAW.
+      // Expected: cappedCaw = 2e11 / 1e9 = 200 whole CAW (vs baseline 2000).
+      await seedConstantPrice(new BN("1000000000")); // 1e9
 
       const cap = await oracle.capLike();
       const baseline = await oracle.BASELINE_LIKE();
 
       assert(
         cap.lt(baseline),
-        `expected cap (${cap.toString()}) < baseline (${baseline.toString()}) when CAW is expensive`
+        `expected cap (${cap.toString()}) < baseline (${baseline.toString()})`
       );
-      // Expected: 2e11 * 1e18 / 1e27 = 200 (whole CAW)
-      assert.equal(cap.toString(), "200", "cap math: 2e11 wei * 1e18 / 1e27 wei-per-CAW = 200 CAW");
+      assert.equal(cap.toString(), "200", "cap should clamp LIKE to 200 whole CAW at $3B mcap");
     });
 
-    it("preserves ratios across action types", async () => {
-      // At a high price where all caps bind, relative cap values should match
-      // the baseline ratios (since each cap_i is ethCap_i / price, and the
-      // ethCap_i values are constructed as ratios off baseline).
-      const expensiveWeiPerCaw = new BN("1000000000000000000000000000"); // 1e27
-      const priceUQ = uqPriceFromWeiPerCaw(expensiveWeiPerCaw);
-      const now = Math.floor(Date.now() / 1000);
+    it("at X-scale mcap ($44B), cap floors at 1 whole CAW", async () => {
+      // X/Twitter-scale: CAW mcap $44B / 666B = $0.066 / CAW → ~1.32e13 wei / CAW @ ETH=$5k.
+      // 2e11 / 1.32e13 ≈ 0.015 whole CAW → floors to 1.
+      await seedConstantPrice(new BN("13200000000000")); // 1.32e13
 
-      await oracle.recordSample(0, now - 60, { from: writer });
-      await oracle.recordSample(priceUQ.mul(new BN(60)), now, { from: writer });
+      const cap = await oracle.capLike();
+      assert.equal(cap.toString(), "1", "floor at 1 whole CAW at X-scale mcap");
+    });
 
-      const cLike = await oracle.capLike();
-      const cRecaw = await oracle.capRecaw();
-      const cCaw = await oracle.capCaw();
-      const cFollow = await oracle.capFollow();
+    it("preserves ratios across action types at realistic mcap", async () => {
+      // $3.3B mcap → 1e9 wei / whole CAW.
+      //   LIKE:    2e11 / 1e9 =  200 (vs baseline 2000)   → cap binds
+      //   RECAW:   4e11 / 1e9 =  400 (vs baseline 4000)   → cap binds
+      //   CAW:     5e11 / 1e9 =  500 (vs baseline 5000)   → cap binds
+      //   FOLLOW: 30e11 / 1e9 = 3000 (vs baseline 30000)  → cap binds
+      await seedConstantPrice(new BN("1000000000")); // 1e9
 
-      // Expected, by ethCap_wei * 1e18 / weiPerCaw with weiPerCaw=1e27:
-      //   LIKE:    2e11 * 1e18 / 1e27 =   200
-      //   RECAW:   4e11 * 1e18 / 1e27 =   400
-      //   CAW:     5e11 * 1e18 / 1e27 =   500
-      //   FOLLOW: 30e11 * 1e18 / 1e27 =  3000
-      assert.equal(cLike.toString(), "200");
-      assert.equal(cRecaw.toString(), "400");
-      assert.equal(cCaw.toString(), "500");
-      assert.equal(cFollow.toString(), "3000");
+      assert.equal((await oracle.capLike()).toString(), "200");
+      assert.equal((await oracle.capRecaw()).toString(), "400");
+      assert.equal((await oracle.capCaw()).toString(), "500");
+      assert.equal((await oracle.capFollow()).toString(), "3000");
 
       // Ratios match today's baselines (1 : 2 : 2.5 : 15).
       // LIKE : RECAW = 200:400 = 1:2     ✓
       // LIKE : CAW   = 200:500 = 2:5     ✓
       // LIKE : FOLLOW = 200:3000 = 1:15  ✓
+    });
+
+    it("splits-preserved sanity: capped LIKE total scales 80/20 evenly", async () => {
+      // This test asserts the property CawActions._applyAction needs to enforce:
+      // when total scales from baseline 2000 → cap 200 (×0.1), receiver share
+      // (1600 → 160) and depositor share (400 → 40) must both scale by ×0.1.
+      // The oracle itself doesn't compute these — but the test documents the
+      // invariant so the integration code has a fixed target.
+      await seedConstantPrice(new BN("1000000000"));
+      const cap = await oracle.capLike();
+      const baseline = await oracle.BASELINE_LIKE();
+
+      // Both numerator/denominator known integer → no floor() surprises here.
+      const cappedReceiver = new BN(1600).mul(cap).div(baseline);
+      const cappedDepositors = new BN(400).mul(cap).div(baseline);
+
+      assert.equal(cappedReceiver.toString(), "160", "receiver scales proportionally");
+      assert.equal(cappedDepositors.toString(), "40", "depositors scale proportionally");
+      assert.equal(
+        cappedReceiver.add(cappedDepositors).toString(),
+        cap.toString(),
+        "scaled parts sum to capped total"
+      );
+    });
+  });
+
+  describe("MIN_WINDOW guard", () => {
+    it("returns baseline when samples span less than MIN_WINDOW", async () => {
+      // Two samples 60 seconds apart — well under 1 day. Should fall back to baseline.
+      const priceUQ = uqPriceFromWeiPerCaw(new BN("1000000000")); // would-cap price
+      const now = Math.floor(Date.now() / 1000);
+      const t0 = now - 60;
+
+      await oracle.recordSample(0, t0, { from: writer });
+      await oracle.recordSample(priceUQ.mul(new BN(60)), now, { from: writer });
+
+      const cap = await oracle.capLike();
+      const baseline = await oracle.BASELINE_LIKE();
+      assert.equal(
+        cap.toString(),
+        baseline.toString(),
+        "<1 day of samples → cap dormant regardless of would-cap price"
+      );
+
+      // Direct probe of twapEthPerCaw to confirm fresh=false reason
+      const result = await oracle.twapEthPerCaw();
+      assert.equal(result.fresh, false, "twap should report not-fresh");
+    });
+
+    it("transitions to fresh once samples span MIN_WINDOW", async () => {
+      // Sample 1 day + 1 second apart → just over MIN_WINDOW → fresh.
+      const priceUQ = uqPriceFromWeiPerCaw(new BN("1000000000"));
+      const now = Math.floor(Date.now() / 1000);
+      const minWindowSecs = 86400;
+      const t0 = now - (minWindowSecs + 1);
+
+      await oracle.recordSample(0, t0, { from: writer });
+      await oracle.recordSample(priceUQ.mul(new BN(minWindowSecs + 1)), now, { from: writer });
+
+      const result = await oracle.twapEthPerCaw();
+      assert.equal(result.fresh, true, "≥ MIN_WINDOW → fresh");
     });
   });
 });
