@@ -24,10 +24,20 @@ export class DmWebSocketService {
       path: '/dm-ws/'
     })
 
-    // Authentication middleware — uses the same session token system as the REST API
+    // Authentication middleware — uses the same session token system as the REST API.
+    // Token source order: HttpOnly cookie (preferred, set by /api/auth/verify) →
+    // handshake.auth.sessionToken (legacy in-band path for clients that still
+    // hold the token in JS). Once all clients are using cookie auth, the
+    // handshake.auth path can be removed and /api/auth/verify can stop
+    // returning sessionToken in its JSON body. Audit fix 2026-05-14 (F1
+    // follow-up).
     this.io.use(async (socket: AuthenticatedSocket, next) => {
       try {
-        const sessionToken = socket.handshake.auth.sessionToken
+        const cookieHeader = socket.handshake.headers.cookie || ''
+        const cookieToken = cookieHeader.match(/(?:^|;\s*)caw_session=([^;]+)/)?.[1]
+        const sessionToken = cookieToken
+          ? decodeURIComponent(cookieToken)
+          : (socket.handshake.auth.sessionToken as string | undefined)
         const userId = Number(socket.handshake.auth.userId)
         const username = socket.handshake.auth.username
 

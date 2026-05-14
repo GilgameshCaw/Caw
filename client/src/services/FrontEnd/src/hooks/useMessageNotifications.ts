@@ -109,13 +109,17 @@ export function useMessageNotifications({
 
     console.log('[MessageNotifications] Connecting WebSocket for user:', username, userId)
 
+    // Auth via cookie + legacy in-band token; see useDmWebSocket for the
+    // full migration note. The HttpOnly caw_session cookie is the canonical
+    // path; the sessionToken in the auth payload is only present on
+    // browsers that still have a fresh in-memory copy from /verify.
     const sessionToken = useAuthStore.getState().sessionToken
-    if (!sessionToken) return
 
     // Connect to WebSocket for real-time notifications
     socketRef.current = io(resolveSocketUrl(), {
       path: '/dm-ws/',
-      auth: { sessionToken, userId, username },
+      auth: { ...(sessionToken ? { sessionToken } : {}), userId, username },
+      withCredentials: true,
       transports: ['websocket', 'polling'],
       reconnection: true,
       reconnectionAttempts: 5,

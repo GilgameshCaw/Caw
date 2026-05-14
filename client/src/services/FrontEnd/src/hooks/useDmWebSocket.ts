@@ -49,12 +49,18 @@ export function useDmWebSocket({ userId, username, enabled = true, onNewMessage,
   const connect = useCallback(() => {
     if (!userId || !username || !enabled) return
 
+    // Auth: the HttpOnly caw_session cookie carries the session token on
+    // every same-origin connection (withCredentials: true tells Socket.IO
+    // to include cookies on cross-origin handshakes too). The handshake.auth
+    // payload still carries the in-memory token if any so existing browsers
+    // mid-migration can still authenticate; the server accepts either path.
+    // Audit fix 2026-05-14 (F1 follow-up).
     const sessionToken = useAuthStore.getState().sessionToken
-    if (!sessionToken) return
 
     socketRef.current = io(resolveSocketUrl(), {
       path: '/dm-ws/',
-      auth: { sessionToken, userId, username },
+      auth: { ...(sessionToken ? { sessionToken } : {}), userId, username },
+      withCredentials: true,
       transports: ['websocket', 'polling'],
       reconnection: true,
       reconnectionAttempts: 5,
