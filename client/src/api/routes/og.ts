@@ -1974,7 +1974,7 @@ const STATIC_PAGE_TITLES: Record<string, string> = {
   'help': 'Help & Resources',
   'help-faq': 'Frequently Asked Questions',
   'help-history': 'History',
-  'help-manifesto': 'Manifesto',
+  'help-manifesto': 'The CAW Manifesto',
   'help-gettingstarted': 'Getting Started',
   'help-developers': 'For Developers',
   'help-resources': 'Resources',
@@ -2063,7 +2063,7 @@ function staticCardTree(opts: { title: string }) {
                 type: 'div',
                 props: {
                   style: {
-                    fontSize: 72,
+                    fontSize: 83,
                     fontWeight: 700,
                     color: '#ffffff',
                     marginTop: 40,
