@@ -10,6 +10,7 @@ import inquirer from 'inquirer'
 import ora from 'ora'
 import { section, success, dim, brand, warn, err } from '../utils/ui.js'
 import { configureMediaNginx } from './mediaNginx.js'
+import { patchMainNginxConfig } from './nginx.js'
 
 // Subset of SQL keywords that indicate a destructive migration. We refuse
 // to auto-apply migrations whose .sql contains any of these without an
@@ -1069,6 +1070,27 @@ export async function runUpdate(installDir, opts = {}) {
     await configureMediaNginx(installDir)
   } catch (e) {
     console.log(warn(`  Media nginx setup failed: ${e.message}`))
+    console.log(warn('  Continuing with the rest of the update — fix and re-run later.'))
+  }
+
+  // Apply idempotent patches to the main-app nginx config so template
+  // changes (e.g. new entries in the crawler UA matcher) reach already-
+  // installed boxes without a full re-install. Silent no-op when nothing
+  // needs patching. See patchMainNginxConfig in steps/nginx.js for the
+  // patch list + how to add a new one.
+  try {
+    const r = patchMainNginxConfig(installDir)
+    if (r.status === 'no-config') {
+      console.log(dim(`  Nginx patch: ${r.reason} — skipping.`))
+    } else if (r.status === 'not-managed') {
+      console.log(warn(`  Nginx patch: ${r.reason}. If you want caw to manage this file, re-run 'caw install'.`))
+    } else if (r.status === 'nginx-test-failed') {
+      console.log(warn(`  Nginx patch reverted — config test failed. Fix ${r.sitesAvailable} by hand or re-run.`))
+    }
+    // 'unchanged' / 'patched' / 'skipped' need no extra noise — the
+    // function already logged via spinners when it did real work.
+  } catch (e) {
+    console.log(warn(`  Nginx patch failed: ${e.message}`))
     console.log(warn('  Continuing with the rest of the update — fix and re-run later.'))
   }
 
