@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useRef, useState } from 'react'
+import React, { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { useTheme } from '~/hooks/useTheme'
 import { themeTextSecondary, themeTextMuted, themeBorder } from '~/utils/theme'
@@ -111,9 +111,10 @@ const TipAttachmentControl: React.FC<Props> = ({
     const firstMention = mentionUsernames[0]
     if (!firstMention) return
     let cancelled = false
-    apiFetch<RecipientUser[]>(`/api/users/search/${encodeURIComponent(firstMention)}`)
-      .then(users => {
+    apiFetch<{ users: RecipientUser[] }>(`/api/users/search/${encodeURIComponent(firstMention)}`)
+      .then(data => {
         if (cancelled) return
+        const users = data?.users ?? []
         const exact = users.find(u => u.username.toLowerCase() === firstMention.toLowerCase())
         if (exact && !ownTokenIds.includes(exact.tokenId)) setRecipient(exact)
       })
@@ -134,8 +135,8 @@ const TipAttachmentControl: React.FC<Props> = ({
       let cancelled = false
       Promise.all(
         mentionUsernames.slice(0, 5).map(u =>
-          apiFetch<RecipientUser[]>(`/api/users/search/${encodeURIComponent(u)}`)
-            .then(arr => arr.find(x => x.username.toLowerCase() === u.toLowerCase()) || null)
+          apiFetch<{ users: RecipientUser[] }>(`/api/users/search/${encodeURIComponent(u)}`)
+            .then(data => (data?.users ?? []).find(x => x.username.toLowerCase() === u.toLowerCase()) || null)
             .catch(() => null)
         )
       ).then(results => {
@@ -155,9 +156,10 @@ const TipAttachmentControl: React.FC<Props> = ({
     }
     let cancelled = false
     const timer = setTimeout(() => {
-      apiFetch<RecipientUser[]>(`/api/users/search/${encodeURIComponent(q)}`)
-        .then(users => {
+      apiFetch<{ users: RecipientUser[] }>(`/api/users/search/${encodeURIComponent(q)}`)
+        .then(data => {
           if (cancelled) return
+          const users = data?.users ?? []
           setRecipientSuggestions(users.filter(u => !ownTokenIds.includes(u.tokenId)).slice(0, 8))
         })
         .catch(() => { if (!cancelled) setRecipientSuggestions([]) })
@@ -165,16 +167,45 @@ const TipAttachmentControl: React.FC<Props> = ({
     return () => { cancelled = true; clearTimeout(timer) }
   }, [recipientQuery, mentionUsernames, ownTokenIds])
 
-  // Position the popover relative to the icon button, portalled to body so
-  // overflow:hidden ancestors (compose modal, etc.) don't clip it. Same
-  // pattern the GIF / emoji pickers use here.
-  useEffect(() => {
-    if (!open) return
+  // Position the popover relative to the button. The render gate below is
+  // `open && popPos`, so popPos MUST be set synchronously when open flips
+  // true or the popover never mounts. Use useLayoutEffect (pre-paint) with
+  // an estimated panel size on the first pass.
+  useLayoutEffect(() => {
+    if (!open) {
+      setPopPos(null)
+      return
+    }
+    const btn = btnRef.current
+    if (!btn) return
+    const r = btn.getBoundingClientRect()
+    const pad = 8
+    // popRef.current is null on the very first run (popover not in DOM yet
+    // because popPos is still null). Estimate ~320×360 from the design;
+    // the refinement effect below re-measures once the popover has mounted.
     const el = popRef.current
-    if (!el || !btnRef.current) return
-    const r = btnRef.current.getBoundingClientRect()
-    const panelW = el.offsetWidth || 320
-    const panelH = el.offsetHeight || 360
+    const panelW = el?.offsetWidth || 320
+    const panelH = el?.offsetHeight || 360
+    const xRaw = r.left + r.width / 2 - panelW / 2
+    const yBelow = r.bottom + 8
+    const yAbove = r.top - panelH - 8
+    const fitsBelow = yBelow + panelH <= window.innerHeight - pad
+    const x = Math.min(Math.max(pad, xRaw), window.innerWidth - panelW - pad)
+    const y = fitsBelow ? yBelow : Math.max(pad, yAbove)
+    setPopPos(prev => prev && Math.abs(prev.x - x) < 0.5 && Math.abs(prev.y - y) < 0.5 ? prev : { x, y })
+  }, [open])
+
+  // Refinement pass: once the popover is in the DOM and popPos has a value,
+  // measure it for real and nudge the position if the estimate was off.
+  useLayoutEffect(() => {
+    if (!open || !popPos) return
+    const btn = btnRef.current
+    const el = popRef.current
+    if (!btn || !el) return
+    const r = btn.getBoundingClientRect()
+    const panelW = el.offsetWidth
+    const panelH = el.offsetHeight
+    if (panelW === 0 || panelH === 0) return
     const pad = 8
     const xRaw = r.left + r.width / 2 - panelW / 2
     const yBelow = r.bottom + 8
@@ -182,8 +213,10 @@ const TipAttachmentControl: React.FC<Props> = ({
     const fitsBelow = yBelow + panelH <= window.innerHeight - pad
     const x = Math.min(Math.max(pad, xRaw), window.innerWidth - panelW - pad)
     const y = fitsBelow ? yBelow : Math.max(pad, yAbove)
-    setPopPos({ x, y })
-  }, [open])
+    if (Math.abs(popPos.x - x) > 0.5 || Math.abs(popPos.y - y) > 0.5) {
+      setPopPos({ x, y })
+    }
+  }, [open, popPos])
 
   // Close on click-outside.
   useEffect(() => {
