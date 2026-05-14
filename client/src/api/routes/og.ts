@@ -2494,6 +2494,15 @@ router.get('/image/caw/:id', async (req, res) => {
   const id = Number(req.params.id)
   if (!Number.isFinite(id) || id <= 0) return res.redirect(302, '/api/og/image/default')
 
+  // Twitter/X is the only platform that benefits from the fixed
+  // 1200×630 outer canvas — its `summary_large_image` central crop
+  // mangles variable-height cards. Every other platform (Facebook,
+  // Telegram, Discord, iMessage, browsers viewing the raw URL) reads
+  // the PNG's natural dimensions, so we serve them the tighter
+  // variable-height card directly.
+  const ua = String(req.header('user-agent') || '')
+  const isTwitterUA = /Twitterbot|twitter\.com/i.test(ua)
+
   const caw = await prisma.caw.findUnique({
     where: { id },
     select: {
@@ -2575,10 +2584,13 @@ router.get('/image/caw/:id', async (req, res) => {
   // v13 = reserve stat-row space under the corner image on short cards so
   // the right-aligned icons never overlap the media block.
   // PENDING caws include status so a later SUCCESS/HIDDEN flip
-  // doesn't serve a stale render.
+  // doesn't serve a stale render. UA variant is part of the key so
+  // Twitter (fixed 1200×630 canvas) and non-Twitter (variable height)
+  // renders don't collide in cache.
+  const variant = isTwitterUA ? 'tw' : 'std'
   const cacheKey = caw.status === 'PENDING'
-    ? `caw-v13-${caw.id}-${liveHash}-pending`
-    : `caw-v13-${caw.id}-${liveHash}`
+    ? `caw-v13-${variant}-${caw.id}-${liveHash}-pending`
+    : `caw-v13-${variant}-${caw.id}-${liveHash}`
   return serveCachedOrRender(res, cacheKey, async () => {
     // Strip media URLs and poll markers out of the visible text — the
     // corner image and the rendered poll bars already represent them,
@@ -2619,9 +2631,15 @@ router.get('/image/caw/:id', async (req, res) => {
       stats,
     }
     const { tree, height } = planCawCard({ ...planArgs, cornerImage })
-    const wrappedTree = wrapTreeInOgCanvas(tree, height, planArgs.backgroundColor)
+    // Twitter only: wrap in the fixed 1200×630 outer canvas to defeat
+    // the summary_large_image central crop. Other platforms (and direct
+    // browser views) get the natural variable-height card.
+    const renderTree = isTwitterUA
+      ? wrapTreeInOgCanvas(tree, height, planArgs.backgroundColor)
+      : tree
+    const renderHeight = isTwitterUA ? H : height
     try {
-      return await renderToPng(wrappedTree, H)
+      return await renderToPng(renderTree, renderHeight)
     } catch (err: any) {
       // Satori sometimes can't decode certain image formats (notably
       // some webp variants) and throws inside its image preprocessor.
@@ -2629,10 +2647,11 @@ router.get('/image/caw/:id', async (req, res) => {
       // text portion of the card is the load-bearing part.
       console.warn(`[og] satori render failed for caw ${caw.id} with corner image, retrying without:`, err?.message ?? err)
       const fallback = planCawCard({ ...planArgs, cornerImage: null })
-      return await renderToPng(
-        wrapTreeInOgCanvas(fallback.tree, fallback.height, planArgs.backgroundColor),
-        H,
-      )
+      const fallbackTree = isTwitterUA
+        ? wrapTreeInOgCanvas(fallback.tree, fallback.height, planArgs.backgroundColor)
+        : fallback.tree
+      const fallbackHeight = isTwitterUA ? H : fallback.height
+      return await renderToPng(fallbackTree, fallbackHeight)
     }
   })
 })
