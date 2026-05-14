@@ -162,9 +162,15 @@ export class NotificationService {
   }
 
   /**
-   * Create notification for a follow action
+   * Create notification for a follow action.
+   *
+   * Pass the tx `client` when called from inside an interactive transaction.
+   * Skipping this leaks a second pool connection (this method's queries
+   * acquire their own connection from the global pool while the caller's
+   * tx still holds the first), so concurrent ingest hits P2024 at half
+   * the apparent pool size.
    */
-  static async createFollowNotification(followedId: number, followerId: number) {
+  static async createFollowNotification(followedId: number, followerId: number, client: Pick<typeof prisma, 'notification'> = prisma) {
     // Don't notify if user follows themselves
     if (followedId === followerId) return
 
@@ -174,7 +180,7 @@ export class NotificationService {
     }
 
     // Check if notification already exists to avoid duplicates
-    const existing = await prisma.notification.findFirst({
+    const existing = await client.notification.findFirst({
       where: {
         userId: followedId,
         actorId: followerId,
@@ -183,7 +189,7 @@ export class NotificationService {
     })
 
     if (!existing) {
-      await prisma.notification.create({
+      await client.notification.create({
         data: {
           userId: followedId,
           actorId: followerId,
@@ -194,43 +200,29 @@ export class NotificationService {
   }
 
   /**
-   * Create notification for a like action
+   * Create notification for a like action.
+   *
+   * Pass the tx `client` when called from inside an interactive transaction.
+   * Same pool-leak rationale as createFollowNotification.
    */
-  static async createLikeNotification(cawId: number, likerId: number) {
-    console.log(`[createLikeNotification] Starting: cawId=${cawId}, likerId=${likerId}`)
-
+  static async createLikeNotification(cawId: number, likerId: number, client: Pick<typeof prisma, 'caw' | 'notification'> = prisma) {
     // Get the caw to find its owner
-    const caw = await prisma.caw.findUnique({
+    const caw = await client.caw.findUnique({
       where: { id: cawId },
       select: { userId: true }
     })
 
-    console.log(`[createLikeNotification] Found caw:`, caw)
-
-    if (!caw) {
-      console.log(`[createLikeNotification] Caw not found, skipping`)
-      return
-    }
-
-    if (caw.userId === likerId) {
-      console.log(`[createLikeNotification] Self-like detected (caw.userId=${caw.userId} === likerId=${likerId}), skipping`)
-      return
-    }
+    if (!caw) return
+    if (caw.userId === likerId) return // self-like
 
     // Check if the recipient has muted or blocked the actor
-    if (await this.isUserMutedOrBlocked(caw.userId, likerId)) {
-      console.log(`[createLikeNotification] User ${likerId} is muted/blocked by ${caw.userId}, skipping`)
-      return
-    }
+    if (await this.isUserMutedOrBlocked(caw.userId, likerId)) return
 
     // Check if the recipient has muted this thread
-    if (await this.isThreadMutedForUser(caw.userId, cawId)) {
-      console.log(`[createLikeNotification] Thread ${cawId} is muted by user ${caw.userId}, skipping`)
-      return
-    }
+    if (await this.isThreadMutedForUser(caw.userId, cawId)) return
 
     // Check if notification already exists to avoid duplicates
-    const existing = await prisma.notification.findFirst({
+    const existing = await client.notification.findFirst({
       where: {
         userId: caw.userId,
         actorId: likerId,
@@ -239,11 +231,8 @@ export class NotificationService {
       }
     })
 
-    console.log(`[createLikeNotification] Existing notification:`, existing)
-
     if (!existing) {
-      console.log(`[createLikeNotification] Creating new notification for userId=${caw.userId}`)
-      const notification = await prisma.notification.create({
+      await client.notification.create({
         data: {
           userId: caw.userId,
           actorId: likerId,
@@ -252,9 +241,6 @@ export class NotificationService {
           groupKey: `like_caw_${cawId}`
         }
       })
-      console.log(`[createLikeNotification] Created notification:`, notification)
-    } else {
-      console.log(`[createLikeNotification] Notification already exists, skipping`)
     }
   }
 
@@ -309,11 +295,14 @@ export class NotificationService {
   }
 
   /**
-   * Create notification for a repost
+   * Create notification for a repost.
+   *
+   * Pass the tx `client` when called from inside an interactive transaction.
+   * Same pool-leak rationale as createFollowNotification.
    */
-  static async createRepostNotification(originalCawId: number, reposterId: number) {
+  static async createRepostNotification(originalCawId: number, reposterId: number, client: Pick<typeof prisma, 'caw' | 'notification'> = prisma) {
     // Get the original caw to find its owner
-    const originalCaw = await prisma.caw.findUnique({
+    const originalCaw = await client.caw.findUnique({
       where: { id: originalCawId },
       select: { userId: true }
     })
@@ -331,7 +320,7 @@ export class NotificationService {
     }
 
     // Check if notification already exists to avoid duplicates
-    const existing = await prisma.notification.findFirst({
+    const existing = await client.notification.findFirst({
       where: {
         userId: originalCaw.userId,
         actorId: reposterId,
@@ -341,7 +330,7 @@ export class NotificationService {
     })
 
     if (!existing) {
-      await prisma.notification.create({
+      await client.notification.create({
         data: {
           userId: originalCaw.userId,
           actorId: reposterId,
@@ -402,9 +391,12 @@ export class NotificationService {
   }
 
   /**
-   * Create notification for a tip
+   * Create notification for a tip.
+   *
+   * Pass the tx `client` when called from inside an interactive transaction.
+   * Same pool-leak rationale as createFollowNotification.
    */
-  static async createTipNotification(recipientId: number, tipperId: number, cawId?: number, amount?: number) {
+  static async createTipNotification(recipientId: number, tipperId: number, cawId?: number, amount?: number, client: Pick<typeof prisma, 'notification'> = prisma) {
     // Don't notify for self-tips
     if (recipientId === tipperId) return
 
@@ -414,7 +406,7 @@ export class NotificationService {
     }
 
     // Check if notification already exists to avoid duplicates
-    const existing = await prisma.notification.findFirst({
+    const existing = await client.notification.findFirst({
       where: {
         userId: recipientId,
         actorId: tipperId,
@@ -424,7 +416,7 @@ export class NotificationService {
     })
 
     if (!existing) {
-      await prisma.notification.create({
+      await client.notification.create({
         data: {
           userId: recipientId,
           actorId: tipperId,

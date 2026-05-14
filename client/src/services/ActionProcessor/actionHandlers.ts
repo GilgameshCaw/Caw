@@ -384,7 +384,7 @@ export async function handleRecawAction(
         const newCaw = await tx.caw.findUnique({ where: { userId_cawonce: { userId, cawonce: action.cawonce } } })
         if (newCaw) await NotificationService.createQuoteNotification(originalCawId, newCaw.id, userId, tx)
       } else {
-        await NotificationService.createRepostNotification(originalCawId, userId)
+        await NotificationService.createRepostNotification(originalCawId, userId, tx)
       }
     } catch (err) {
       console.error(`Failed to create repost/quote notification:`, err)
@@ -440,7 +440,7 @@ export async function handleLikeAction(
 
       // Create like notification for pending->confirmed transition
       try {
-        await NotificationService.createLikeNotification(parentCawId, userId)
+        await NotificationService.createLikeNotification(parentCawId, userId, tx)
       } catch (err) {
         console.error(`Failed to create like notification for confirmed pending like:`, err)
       }
@@ -464,7 +464,7 @@ export async function handleLikeAction(
 
     // Create like notification
     try {
-      await NotificationService.createLikeNotification(parentCawId, userId)
+      await NotificationService.createLikeNotification(parentCawId, userId, tx)
     } catch (err) {
       console.error(`Failed to create like notification:`, err)
     }
@@ -552,7 +552,7 @@ export async function handleFollowAction(
 
     // Create follow notification
     try {
-      await NotificationService.createFollowNotification(followingId, followerId)
+      await NotificationService.createFollowNotification(followingId, followerId, tx)
     } catch (err) {
       console.error(`Failed to create follow notification:`, err)
     }
@@ -589,7 +589,7 @@ export async function handleFollowAction(
     // Create follow notification if this was a pending follow being confirmed
     if (wasPending) {
       try {
-        await NotificationService.createFollowNotification(followingId, followerId)
+        await NotificationService.createFollowNotification(followingId, followerId, tx)
       } catch (err) {
         console.error(`Failed to create follow notification:`, err)
       }
@@ -981,7 +981,7 @@ async function handleTipAction(
 
   // Create notification
   try {
-    await NotificationService.createTipNotification(recipientId, senderId, cawId || undefined, Number(tipAmount))
+    await NotificationService.createTipNotification(recipientId, senderId, cawId || undefined, Number(tipAmount), tx)
   } catch (err) {
     console.error('[handleTipAction] Failed to create tip notification:', err)
   }
