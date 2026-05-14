@@ -374,13 +374,17 @@ function buildEnvVars(nodeType, config) {
   // Append Prisma pool params if the operator-supplied URL doesn't already
   // carry them. Default connection_limit (num_physical_cpus * 2 + 1, usually
   // 9 on a 4-core box) is too low for this app — one process runs the API,
-  // validator, indexer, watchers, and the action processor concurrently, so
-  // 20 connections is the right floor. pool_timeout=20 (default 10) gives
-  // transactions room to breathe before throwing P2024 during bursts.
+  // validator, indexer, watchers, and the action processor concurrently.
+  // 20 was the original floor and proved insufficient on test.caw.social
+  // (P2024 cascades during bursts when an action handler's parent tx +
+  // a notification call held two slots each). Bumped to 40 with a 30s
+  // pool_timeout to give transactions room to breathe under load. Postgres
+  // default max_connections=100, so this leaves headroom for psql /
+  // backups / a second app on the same DB.
   const baseDbUrl = config.dbUrl || 'postgresql://postgres:postgres@127.0.0.1:5432/caw'
   env.DATABASE_URL = baseDbUrl.includes('connection_limit=') || baseDbUrl.includes('pool_timeout=')
     ? baseDbUrl
-    : `${baseDbUrl}${baseDbUrl.includes('?') ? '&' : '?'}connection_limit=20&pool_timeout=20`
+    : `${baseDbUrl}${baseDbUrl.includes('?') ? '&' : '?'}connection_limit=40&pool_timeout=30`
   env.REDIS_URL = config.redisUrl || 'redis://127.0.0.1:6379'
   env.ELASTICSEARCH_NODE = config.elasticsearchNode || 'http://127.0.0.1:9200'
 
