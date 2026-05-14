@@ -1384,7 +1384,7 @@ function planCawCard(opts: {
                                   // position:relative + top is the way
                                   // to actually move it.
                                   position: 'relative',
-                                  top: -5,
+                                  top: -3,
                                 },
                                 // Strip the leading `· ` since we now
                                 // render the dot as its own segment.
@@ -1731,7 +1731,7 @@ function planImageOnlyCard(opts: {
                                   // Mirror the text-card variant — pull
                                   // date up to align baseline with header.
                                   position: 'relative',
-                                  top: -5,
+                                  top: -3,
                                 },
                                 children: dateText.replace(/^[ ]?·\s*/, ''),
                               },
@@ -2652,8 +2652,8 @@ router.get('/image/caw/:id', async (req, res) => {
   // renders don't collide in cache.
   const variant = isTwitterUA ? 'tw' : 'std'
   const cacheKey = caw.status === 'PENDING'
-    ? `caw-v28-${variant}-${caw.id}-${liveHash}-pending`
-    : `caw-v28-${variant}-${caw.id}-${liveHash}`
+    ? `caw-v29-${variant}-${caw.id}-${liveHash}-pending`
+    : `caw-v29-${variant}-${caw.id}-${liveHash}`
   return serveCachedOrRender(res, cacheKey, async () => {
     // Strip media URLs and poll markers out of the visible text — the
     // corner image and the rendered poll bars already represent them,
