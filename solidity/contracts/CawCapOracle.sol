@@ -185,21 +185,24 @@ contract CawCapOracle {
     uint64 cursor = nextIdx - 1;
     uint64 maxScan = nextIdx > BUFFER_SIZE ? uint64(BUFFER_SIZE) : nextIdx;
 
-    uint32 windowStart;
-    unchecked {
-      // Underflow is fine — the comparison below treats it as "everything is
-      // within window", which is correct for early protocol life.
-      windowStart = latest.timestamp - uint32(TWAP_WINDOW);
-    }
+    // Early protocol life: if latest.timestamp < TWAP_WINDOW, no sample can
+    // possibly be old enough to anchor the window. Skip the search and fall
+    // through to "use the oldest we have." (We can't compute
+    // `latest.timestamp - TWAP_WINDOW` directly without underflow — and the
+    // unchecked wrap would silently false-positive in the comparison below,
+    // anchoring on a too-recent sample.)
+    if (uint256(latest.timestamp) >= TWAP_WINDOW) {
+      uint32 windowStart = latest.timestamp - uint32(TWAP_WINDOW);
 
-    for (uint64 i = 1; i < maxScan; i++) {
-      uint64 probe = cursor - i;
-      Sample memory s = buf[probe & BUFFER_MASK];
-      if (s.timestamp == 0) break; // unwritten slot (early life)
-      if (s.timestamp <= windowStart) {
-        oldestIdx = probe;
-        foundWindowAnchor = true;
-        break;
+      for (uint64 i = 1; i < maxScan; i++) {
+        uint64 probe = cursor - i;
+        Sample memory s = buf[probe & BUFFER_MASK];
+        if (s.timestamp == 0) break; // unwritten slot (early life)
+        if (s.timestamp <= windowStart) {
+          oldestIdx = probe;
+          foundWindowAnchor = true;
+          break;
+        }
       }
     }
 

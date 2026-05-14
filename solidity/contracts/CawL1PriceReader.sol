@@ -76,8 +76,22 @@ contract CawL1PriceReader {
         uint256 price = cawIsToken0
           ? (uint256(reserve1) << 112) / reserve0
           : (uint256(reserve0) << 112) / reserve1;
+
+        // `price * elapsed` is CHECKED. Bounds: price ≤ 2^224 (UQ112.112,
+        // since both reserves are uint112), elapsed ≤ 2^32, product ≤ 2^256
+        // worst case. For any plausible reserve/time combination the
+        // product is comfortably ≤ 2^200, but if a pathological pair or
+        // time-warp pushes it to overflow we want a loud revert, not a
+        // silent wrap. (The wrap that V2 *intends* is on the cumulative
+        // accumulator below, not on the per-block increment.)
+        uint256 increment = price * elapsed;
         unchecked {
-          cumulative += price * elapsed;
+          // `cumulative +=` is UNCHECKED. V2's pair `_update()` itself
+          // wraps the cumulative — that's part of the design. A TWAP
+          // consumer that subtracts unchecked recovers the true delta
+          // because `(a + N) - a == N (mod 2^256)`. Our oracle's
+          // `twapEthPerCaw()` subtracts unchecked for exactly this reason.
+          cumulative += increment;
         }
       }
     }
