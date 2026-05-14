@@ -758,7 +758,12 @@ const CARD_MARGIN  = Math.round(W * 0.03)       // 36 — outer margin (left/rig
 const CARD_MARGIN_Y = Math.round(H * 0.028)      // 18 — outer margin (top/bottom)
 const CARD_IMG_SZ  = Math.round(W * 0.18)       // 216 — square image in top-right
 const CARD_NARROW_W = Math.round(W * 0.68)      // 816 — text column when image overlaps
-const CARD_TEXT_X   = CARD_STRIP_W + CARD_MARGIN
+// Gap between the yellow strip's right edge and the text's left edge.
+// Less than CARD_MARGIN (the right-edge gutter) because the strip is
+// already a visible left anchor — needs less breathing room than the
+// open right edge.
+const CARD_TEXT_LEFT_PAD = 18
+const CARD_TEXT_X   = CARD_STRIP_W + CARD_TEXT_LEFT_PAD
 // Wide content lines render below the corner image, so they get the
 // full available width — everything between the text column's left
 // edge and the right outer margin. No image-overlap concern.
@@ -1149,7 +1154,7 @@ function planCawCard(opts: {
   // column is squeezed and we re-wrap. Cards where the image stays at
   // CARD_IMG_SZ skip the second pass.
   const computeNarrowChars = (imgPx: number) => {
-    const narrowPx = W - CARD_STRIP_W - CARD_MARGIN - imgPx - CARD_NARROW_RIGHT_PAD - CARD_MARGIN
+    const narrowPx = W - CARD_TEXT_X - imgPx - CARD_NARROW_RIGHT_PAD - CARD_MARGIN
     return approxCharsPerPx(CARD_BODY_FS, Math.max(200, narrowPx))
   }
   // Will the bottom stat row render? (any non-zero count.)
@@ -1216,7 +1221,7 @@ function planCawCard(opts: {
   }
   // Render-time narrow column width — the visible cap for header /
   // byline / narrow content lines.
-  const narrowRenderW = W - CARD_STRIP_W - CARD_MARGIN - imgSize - CARD_NARROW_RIGHT_PAD - CARD_MARGIN
+  const narrowRenderW = W - CARD_TEXT_X - imgSize - CARD_NARROW_RIGHT_PAD - CARD_MARGIN
 
   return {
     height,
@@ -1233,7 +1238,9 @@ function planCawCard(opts: {
           position: 'relative',
         },
         children: [
-          // Left yellow strip — full height of THIS card.
+          // Left yellow strip — full height of THIS card. Subtle
+          // shadow cast to the right so the strip reads as a slightly
+          // raised element against the card body.
           {
             type: 'div',
             props: {
@@ -1245,10 +1252,13 @@ function planCawCard(opts: {
                 width: CARD_STRIP_W,
                 height,
                 backgroundColor: CAW_GOLD,
+                boxShadow: '4px 0 12px rgba(0,0,0,0.45)',
               },
             },
           },
-          // Top-right corner image (square, center-cropped).
+          // Top-right corner image (square, center-cropped). Subtle
+          // drop shadow under it so it reads as a stuck-on photo on
+          // the card surface.
           opts.cornerImage ? {
             type: 'div',
             props: {
@@ -1262,6 +1272,7 @@ function planCawCard(opts: {
                 borderRadius: 12,
                 overflow: 'hidden',
                 backgroundColor: '#1a1a1a',
+                boxShadow: '0 6px 14px rgba(0,0,0,0.45)',
               },
               children: [
                 {
@@ -1615,7 +1626,7 @@ function planImageOnlyCard(opts: {
           position: 'relative',
         },
         children: [
-          // Yellow strip.
+          // Yellow strip with a subtle shadow to its right.
           {
             type: 'div',
             props: {
@@ -1627,6 +1638,7 @@ function planImageOnlyCard(opts: {
                 width: CARD_STRIP_W,
                 height,
                 backgroundColor: CAW_GOLD,
+                boxShadow: '4px 0 12px rgba(0,0,0,0.45)',
               },
             },
           },
@@ -1720,7 +1732,8 @@ function planImageOnlyCard(opts: {
                   },
                 },
                 // Image — square, full text-column width, slight gap
-                // below the byline.
+                // below the byline. Subtle drop shadow so it reads as
+                // a stuck-on photo, matching the corner-image variant.
                 {
                   type: 'div',
                   props: {
@@ -1732,6 +1745,7 @@ function planImageOnlyCard(opts: {
                       borderRadius: 12,
                       overflow: 'hidden',
                       backgroundColor: '#1a1a1a',
+                      boxShadow: '0 6px 14px rgba(0,0,0,0.45)',
                     },
                     children: [
                       {
@@ -2601,8 +2615,8 @@ router.get('/image/caw/:id', async (req, res) => {
   // renders don't collide in cache.
   const variant = isTwitterUA ? 'tw' : 'std'
   const cacheKey = caw.status === 'PENDING'
-    ? `caw-v16-${variant}-${caw.id}-${liveHash}-pending`
-    : `caw-v16-${variant}-${caw.id}-${liveHash}`
+    ? `caw-v17-${variant}-${caw.id}-${liveHash}-pending`
+    : `caw-v17-${variant}-${caw.id}-${liveHash}`
   return serveCachedOrRender(res, cacheKey, async () => {
     // Strip media URLs and poll markers out of the visible text — the
     // corner image and the rendered poll bars already represent them,
