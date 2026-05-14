@@ -798,15 +798,15 @@ const POLL_FILL_WIN     = CAW_GOLD
 // estimate wrap points without dragging in a real font-shaping lib.
 // Slightly under-shoots so the wrapped lines have a hair of slack and
 // satori never has to break a word mid-render.
-// Inter at body size — average glyph advance is closer to 0.55em for
-// ALL caps and 0.50em for lowercase. Body copy is mostly lowercase, so
-// 0.52 is the actual average glyph width for Inter at body size. We
-// used to overshoot enough that a "narrow"-budget line bled past the
-// column edge into the corner image, so this bumped to 0.60 (10%
-// slack). Now back to 0.55 — combined with the smaller right pad
-// below, lines fill the column without intruding into the image, and
-// fewer get punted to the wide section as a result.
-const CHAR_W_RATIO = 0.55
+// Inter at body size — average glyph advance is ~0.58em for ALL CAPS
+// (caps glyphs are wider) and ~0.50em for lowercase. We have to budget
+// for the WORST case, not the average, because an all-caps post would
+// systematically overflow into the corner image when the ratio was
+// tuned for mixed-case content. A caps-heavy 52-char line ("HAPPY
+// FRIDAY. THE ECOSYSTEM KEEPS IMPROVING. STAYING") was clipping mid-
+// word at 0.55. 0.58 keeps lowercase a touch under-filled (acceptable)
+// while preventing caps overflow.
+const CHAR_W_RATIO = 0.58
 // Hard pixel padding on the narrow column to leave a visible gap from
 // the right edge of the text to the left edge of the image. Without
 // this, even a perfectly-budgeted line touches the image. 12 is the
@@ -2601,8 +2601,8 @@ router.get('/image/caw/:id', async (req, res) => {
   // renders don't collide in cache.
   const variant = isTwitterUA ? 'tw' : 'std'
   const cacheKey = caw.status === 'PENDING'
-    ? `caw-v15-${variant}-${caw.id}-${liveHash}-pending`
-    : `caw-v15-${variant}-${caw.id}-${liveHash}`
+    ? `caw-v16-${variant}-${caw.id}-${liveHash}-pending`
+    : `caw-v16-${variant}-${caw.id}-${liveHash}`
   return serveCachedOrRender(res, cacheKey, async () => {
     // Strip media URLs and poll markers out of the visible text — the
     // corner image and the rendered poll bars already represent them,
