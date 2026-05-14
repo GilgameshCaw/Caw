@@ -1349,6 +1349,11 @@ function planCawCard(opts: {
                                   fontWeight: 400,
                                   color: '#9ca3af',
                                   whiteSpace: 'nowrap',
+                                  // The middot glyph floats high in
+                                  // its em-square; baseline-aligned
+                                  // against a smaller date label, it
+                                  // looks ~5px too high. Nudge down.
+                                  marginTop: 5,
                                 },
                                 children: '·',
                               },
@@ -1685,7 +1690,9 @@ function planImageOnlyCard(opts: {
                             {
                               type: 'div',
                               props: {
-                                style: { display: 'flex', fontSize: CARD_HEADER_FS, fontWeight: 400, color: '#9ca3af', whiteSpace: 'nowrap' },
+                                // marginTop nudges the middot down ~5px
+                                // — see the text-card variant for why.
+                                style: { display: 'flex', fontSize: CARD_HEADER_FS, fontWeight: 400, color: '#9ca3af', whiteSpace: 'nowrap', marginTop: 5 },
                                 children: '·',
                               },
                             },
@@ -2615,8 +2622,8 @@ router.get('/image/caw/:id', async (req, res) => {
   // renders don't collide in cache.
   const variant = isTwitterUA ? 'tw' : 'std'
   const cacheKey = caw.status === 'PENDING'
-    ? `caw-v18-${variant}-${caw.id}-${liveHash}-pending`
-    : `caw-v18-${variant}-${caw.id}-${liveHash}`
+    ? `caw-v19-${variant}-${caw.id}-${liveHash}-pending`
+    : `caw-v19-${variant}-${caw.id}-${liveHash}`
   return serveCachedOrRender(res, cacheKey, async () => {
     // Strip media URLs and poll markers out of the visible text — the
     // corner image and the rendered poll bars already represent them,
