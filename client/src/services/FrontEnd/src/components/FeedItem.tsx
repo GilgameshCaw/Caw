@@ -1783,7 +1783,9 @@ const FeedItem: React.FC<{ item: CawItem; isMainPost?: boolean; isReply?: boolea
               <Tooltip
                 text={
                   (likePending || stateSource.likePending)
-                    ? (pendingLikeTxQueueId ? t('post.cancel_like') : t('post.processing'))
+                    ? (pendingLikeTxQueueId
+                        ? (useItem.hasLiked ? t('post.cancel_unlike') : t('post.cancel_like'))
+                        : t('post.processing'))
                     : t('post.like')
                 }
                 disabled={item.status === 'FAILED'}

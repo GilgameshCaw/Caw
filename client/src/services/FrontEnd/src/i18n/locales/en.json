@@ -133,6 +133,7 @@
   "post.recaw": "ReCaw",
   "post.like": "Like",
   "post.cancel_like": "Cancel like",
+  "post.cancel_unlike": "Cancel unlike",
   "post.views": "Views",
   "post.remove_bookmark": "Remove bookmark",
   "post.save": "Save",
