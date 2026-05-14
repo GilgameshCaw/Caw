@@ -1378,10 +1378,13 @@ function planCawCard(opts: {
                                   whiteSpace: 'nowrap',
                                   marginLeft: 6,
                                   // Pull date up so its baseline lines
-                                  // up with the larger header baseline
-                                  // — satori's baseline alignment leaves
-                                  // the smaller glyph hanging low.
-                                  marginTop: -27,
+                                  // up with the larger header baseline.
+                                  // satori clamps negative marginTop on
+                                  // baseline-aligned flex children, so
+                                  // position:relative + top is the way
+                                  // to actually move it.
+                                  position: 'relative',
+                                  top: -5,
                                 },
                                 // Strip the leading `· ` since we now
                                 // render the dot as its own segment.
@@ -1727,7 +1730,8 @@ function planImageOnlyCard(opts: {
                                   marginLeft: 6,
                                   // Mirror the text-card variant — pull
                                   // date up to align baseline with header.
-                                  marginTop: -27,
+                                  position: 'relative',
+                                  top: -5,
                                 },
                                 children: dateText.replace(/^[ ]?·\s*/, ''),
                               },
@@ -2648,8 +2652,8 @@ router.get('/image/caw/:id', async (req, res) => {
   // renders don't collide in cache.
   const variant = isTwitterUA ? 'tw' : 'std'
   const cacheKey = caw.status === 'PENDING'
-    ? `caw-v27-${variant}-${caw.id}-${liveHash}-pending`
-    : `caw-v27-${variant}-${caw.id}-${liveHash}`
+    ? `caw-v28-${variant}-${caw.id}-${liveHash}-pending`
+    : `caw-v28-${variant}-${caw.id}-${liveHash}`
   return serveCachedOrRender(res, cacheKey, async () => {
     // Strip media URLs and poll markers out of the visible text — the
     // corner image and the rendered poll bars already represent them,
