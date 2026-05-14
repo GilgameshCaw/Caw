@@ -41,8 +41,10 @@ const PRESETS = {
   feedLarge:    { maxSizeMB: 2,    maxWidthOrHeight: 2048, quality: 0.8 },
   /** Bug-report screenshots, moderator evidence — small but readable. */
   report:       { maxSizeMB: 0.5,  maxWidthOrHeight: 1280, quality: 0.75 },
-  /** DM attachments — encrypted, so we can't recompress server-side. */
-  dm:           { maxSizeMB: 0.75, maxWidthOrHeight: 1024, quality: 0.8 },
+  /** DM attachments — encrypted, so we can't recompress server-side.
+   *  Sized for click-to-expand: 2048 max edge matches feedLarge so the
+   *  fullscreen viewer on a high-DPR phone gets a 1:1 pixel mapping. */
+  dm:           { maxSizeMB: 1.5,  maxWidthOrHeight: 2048, quality: 0.85 },
   /** Poll option image — display ~64px square (2× retina). Tighter byte
    *  cap than `thumb` because polls can have up to 6 of these per post,
    *  and we want the total payload for one poll's images to stay under
