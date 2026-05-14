@@ -85,7 +85,7 @@ const MutedContentPage: React.FC = () => {
             [threadId]: {
               id: threadId,
               content: response.caw.content || '',
-              createdAt: response.caw.createdAt,
+              createdAt: response.caw.timestamp,
               user: {
                 tokenId: response.caw.user?.tokenId || 0,
                 username: response.caw.user?.username || 'Unknown',

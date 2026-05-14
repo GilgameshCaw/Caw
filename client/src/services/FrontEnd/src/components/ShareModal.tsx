@@ -131,7 +131,7 @@ export const ShareModal: React.FC<ShareModalProps> = ({
           {/* Content */}
           <div className="p-4">
             {/* Native share button (if supported) */}
-            {navigator.share && (
+            {typeof navigator.share === 'function' && (
               <button
                 onClick={handleNativeShare}
                 className={`w-full mb-4 px-4 py-3 rounded-full flex items-center justify-center space-x-2 transition ${
@@ -192,7 +192,7 @@ export const ShareModal: React.FC<ShareModalProps> = ({
         </div>
       </div>
 
-      <style jsx>{`
+      <style>{`
         @keyframes slide-up {
           from {
             transform: translateY(100%);

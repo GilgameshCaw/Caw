@@ -344,7 +344,9 @@ const Feed = forwardRef<FeedRef, Props>(({ filter, username, apiEndpoint, title 
   useHostVerification(verificationItems)
 
   // Track views for visible caws (memoize to avoid re-triggering on every render)
-  const visibleCawIds = useMemo(() => filteredItems.map(item => item.id).filter(id => id != null), [filteredItems])
+  const visibleCawIds = useMemo(() => filteredItems
+    .map(item => Number(item.id))
+    .filter(id => Number.isFinite(id)), [filteredItems])
   useViewTracking(visibleCawIds)
 
   // Refs for loadPage to always read current props (avoids stale closures)

@@ -42,9 +42,8 @@ export function useCawonceSync() {
   useEffect(() => {
     console.log("DATA (cawocne) returned ----", data, activeTokenId)
     if (data != null) {
-      // data is a BigInt or BigNumber depending on your client config
-      const raw = typeof data === 'bigint' ? data : data.toBigInt?.() ?? BigInt(data)
-      setCawonce(activeTokenId!, Number(raw))
+      // queryFn always returns bigint (see normalization above).
+      setCawonce(activeTokenId!, Number(data))
     }
   }, [data, activeTokenId, setCawonce])
 }

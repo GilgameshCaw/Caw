@@ -316,6 +316,10 @@ const ProfileChooser: React.FC<{ compact?: boolean }> = ({ compact = false }) =>
     );
   }
 
+  // Pre-hydration: render nothing rather than crashing on an undefined active
+  // token. Hydration kicks in within the first frame.
+  if (!selectedToken) return null
+
   // --- handlers ---
   const toggleDropdown = () => {
     const willOpen = !isDropdownOpen

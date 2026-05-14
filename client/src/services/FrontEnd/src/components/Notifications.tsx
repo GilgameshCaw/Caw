@@ -504,7 +504,7 @@ const Notifications: React.FC = () => {
         const payload = notification.actionPayload
         if (!payload) return 'An action failed. Please try again.'
         const { title, snippet, snippetLabel } = describeFailedAction(payload)
-        const reason = describeFailedReason(payload.reason)
+        const reason = describeFailedReason(payload.reason ?? '')
         return (
           <>
             <span>{title}</span>
@@ -649,6 +649,10 @@ const Notifications: React.FC = () => {
       5: 'unfollow',
       6: 'withdraw',
       7: 'other',
+    }
+    if (payload.actionType == null) {
+      console.warn('[Notifications] Cannot retry — missing action type')
+      return
     }
     const actionTypeKey = codeToKey[payload.actionType]
     if (!actionTypeKey) {

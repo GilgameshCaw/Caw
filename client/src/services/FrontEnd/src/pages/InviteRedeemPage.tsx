@@ -10,7 +10,7 @@ export default function InviteRedeemPage() {
   const navigate = useNavigate()
   const { isDark } = useTheme()
   const activeToken = useActiveToken()
-  const tokenId = activeToken?.id
+  const tokenId = activeToken?.tokenId
 
   const dm = useDmClient(tokenId, activeToken?.username)
   const { previewInvite, redeemInvite } = dm

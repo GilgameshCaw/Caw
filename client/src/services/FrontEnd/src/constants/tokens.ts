@@ -9,12 +9,14 @@ const TOKENS: Record<string, Token> = {
     address: WETH_ADDRESS,
     coingeckoId: "ethereum",
     decimals: 18,
+    price: 0n,
   },
   CAW: {
     symbol: "CAW",
     address: CAW_ADDRESS,
     coingeckoId: "a-hunters-dream",
     decimals: 18,
+    price: 0n,
   },
 };
 

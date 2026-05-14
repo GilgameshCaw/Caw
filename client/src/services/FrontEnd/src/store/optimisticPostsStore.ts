@@ -1,7 +1,7 @@
 import { create } from 'zustand'
-import { FeedItem } from '~/types'
+import { CawItem } from '~/types'
 
-interface OptimisticPost extends Omit<FeedItem, 'id' | 'createdAt'> {
+interface OptimisticPost extends Omit<CawItem, 'id' | 'createdAt' | 'status'> {
   tempId: string
   createdAt: string
   status: 'pending' | 'confirmed' | 'failed'
@@ -41,7 +41,7 @@ export const useOptimisticPostsStore = create<OptimisticPostsStore>((set) => ({
     set((state) => ({
       optimisticPosts: state.optimisticPosts.map(post =>
         post.tempId === tempId
-          ? { ...post, status, ...(realId ? { id: realId } : {}) }
+          ? { ...post, status, ...(realId ? { id: String(realId) } : {}) }
           : post
       )
     }))
