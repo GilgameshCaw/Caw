@@ -29,6 +29,7 @@ import { HiCalendar, HiClock, HiX } from 'react-icons/hi'
 import MentionAutocomplete from './MentionAutocomplete'
 import GifPicker from './GifPicker'
 import PollComposer from './PollComposer'
+import TipAttachmentControl, { type TipAttachment } from './TipAttachmentControl'
 import { HiOutlineChartBar } from 'react-icons/hi'
 import { buildPollMarker, imageUrlToPollHash, imageUrlToMeta } from '~/../../../tools/pollMarker'
 
@@ -457,6 +458,14 @@ const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess, placehol
   const [pollOptionImages, setPollOptionImages] = useState<string[]>([])
   const [pollEnabled, setPollEnabled] = useState(false)
   const [pollPosition, setPollPosition] = useState<'start' | 'end'>('end')
+  // Tip-along-post: when set, an OTHER (tip) action is bundled into the same
+  // batch as the CAW action(s). Cleared on submit-success / reset.
+  const [tipAttachment, setTipAttachment] = useState<TipAttachment | null>(null)
+  // Reset the tip whenever we swap to a different reply target — the picker's
+  // default recipient (parent author) only makes sense for the active context.
+  useEffect(() => {
+    setTipAttachment(null)
+  }, [replyTo?.id, quote?.id])
   const [isSubmitting, setIsSubmitting] = useState(false)
   const [signingProgress, setSigningProgress] = useState<{ current: number; total: number } | null>(null)
   const signingTotal = signingProgress?.total ?? 0
@@ -1263,6 +1272,62 @@ const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess, placehol
       void _ignored
     }
 
+    // Pre-check for the attached tip (separate from the chunk-only gate above,
+    // since a single-chunk caw with a tip still needs verification). The tip is
+    // an OTHER action and bundles with the CAW via the same batch sig — which
+    // requires Quick Sign. If the user attached a tip but has no QS session,
+    // surface the QS-enable prompt instead of silently dropping the tip.
+    if (tipAttachment) {
+      const { getValidatorTip } = await import('~/api/actions')
+      const { useSessionKeyStore } = await import('~/store/sessionKeyStore')
+      const { useQuickSignPromptStore } = await import('~/components/modals/QuickSignModal')
+      const { useQuickSignRenewStore } = await import('~/components/modals/QuickSignRenewModal')
+      const { useInsufficientStakeStore } = await import('~/store/insufficientStakeStore')
+      const { usePendingSpendStore } = await import('~/store/pendingSpendStore')
+
+      const sessionStore = useSessionKeyStore.getState()
+      const sess = activeToken?.owner
+        ? sessionStore.getActiveSessionForAddress(activeToken.owner)
+        : sessionStore.getActiveSession()
+      const OTHER_BIT = 7
+      const sessionCoversTip = !!sess && (sess.scopeBitmap & (1 << OTHER_BIT)) !== 0
+      if (!sessionCoversTip) {
+        // Match the Quick Sign prompt pattern used elsewhere — open the
+        // enable modal and re-enter handleSubmit when the user confirms.
+        useQuickSignPromptStore.getState().show(async () => { await handleSubmit() })
+        return
+      }
+
+      // Add the tip's CAW cost (tip + validator fee) to the staked-budget
+      // gate so we don't pass the post check and then strand the tip.
+      const validatorTipWhole = getValidatorTip()
+      const tipCostWhole = BigInt(tipAttachment.tipAmountCaw) + validatorTipWhole
+      // The CAW chunks' per-post cost is already counted into pendingSpend by
+      // the API once those rows are queued; here we additively check the tip
+      // fits on top of the chunks the user is about to submit.
+      const CAW_COST_PER_POST_WHOLE = 5000n
+      const chunksCostWhole = (CAW_COST_PER_POST_WHOLE + validatorTipWhole) * BigInt(chunks.length)
+      const grandTotalWei = (chunksCostWhole + tipCostWhole) * 10n ** 18n
+      const onChainStake = activeToken?.stakedAmount ?? 0n
+      const pendingSpend = usePendingSpendStore.getState().pendingSpend
+      const totalBudgetSigned = onChainStake - pendingSpend
+      const effectiveBudgetWei = totalBudgetSigned > 0n ? totalBudgetSigned : 0n
+      if (effectiveBudgetWei < grandTotalWei) {
+        useInsufficientStakeStore.getState().show(effectiveBudgetWei, grandTotalWei, 'post')
+        return
+      }
+
+      // Quick Sign spend-limit gate, including the tip.
+      if (sessionStore.enabled) {
+        const remaining = sessionStore.getRemainingLimit()
+        const totalCostWhole = chunksCostWhole + tipCostWhole
+        if (remaining !== null && totalCostWhole > remaining) {
+          useQuickSignRenewStore.getState().show('spend_limit', () => handleSubmit())
+          return
+        }
+      }
+    }
+
     // Allocate the whole thread atomically through the chain-based
     // allocator. allocateCawonces holds a per-tokenId Web Lock for the
     // full batch, so any concurrent vote/like/tip in this tab or another
@@ -1270,12 +1335,19 @@ const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess, placehol
     // cawonce in the middle of our range. Cross-server races (other
     // mirror submitting concurrently) still possible but caught by the
     // 409 retry path on submit.
-    const threadCawonces = await allocateCawonces(effectiveTokenId, chunks.length)
+    //
+    // When a tip is attached, allocate one extra cawonce — it sits at the
+    // end of the contiguous range so the batch sig's firstCawonce stays
+    // pointed at the first CAW chunk.
+    const tipCawonceCount = tipAttachment ? 1 : 0
+    const allocatedCawonces = await allocateCawonces(effectiveTokenId, chunks.length + tipCawonceCount)
+    const threadCawonces = allocatedCawonces.slice(0, chunks.length)
+    const tipCawonce = tipAttachment ? allocatedCawonces[chunks.length] : undefined
     const startCawonce = threadCawonces[0]
     // Refresh the UI hint store so any "next post #N" indicator stays
     // roughly accurate without waiting for the next poll cycle.
     const setCawonce = useTokenDataStore.getState().setCawonce
-    setCawonce(effectiveTokenId, startCawonce + chunks.length)
+    setCawonce(effectiveTokenId, startCawonce + chunks.length + tipCawonceCount)
 
     // Post first chunk (with media, parent info, etc.)
     // Quotes use actionType 'recaw' (with text) so the original author receives funds.
@@ -1303,9 +1375,38 @@ const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess, placehol
 
     const firstPostCawonce = threadCawonces[0]
 
-    // Check if we can batch via Quick Sign session
+    // Tip-along-post: build the OTHER (tip) action that will ride along in
+    // the same batch sig as the CAW(s). Following TipModal's convention:
+    // - For replies/quotes, target the parent caw: text = "tip:<userId>:<cawonce>"
+    //   where the user+cawonce refer to the caw being tipped (here, the
+    //   parent we're replying to or quoting).
+    // - For top-level caws, it's a profile-level tip: text = "tip:"
+    // amounts[] is [tipAmount, validatorTip]. recipients[] carries the recipient.
+    let tipParams: ActionParams | null = null
+    if (tipAttachment && tipCawonce != null) {
+      const { getValidatorTip } = await import('~/api/actions')
+      const validatorTipWhole = getValidatorTip()
+      const tipText = parentCaw
+        ? `tip:${parentCaw.user.tokenId}:${parentCaw.cawonce}`
+        : 'tip:'
+      tipParams = {
+        actionType: 'other',
+        senderId: effectiveTokenId,
+        receiverId: tipAttachment.recipientTokenId,
+        receiverCawonce: parentCaw?.cawonce ?? 0,
+        cawonce: tipCawonce,
+        recipients: [tipAttachment.recipientTokenId],
+        amounts: [BigInt(tipAttachment.tipAmountCaw), validatorTipWhole],
+        text: tipText,
+      }
+    }
+
+    // Check if we can batch via Quick Sign session. When a tip is attached,
+    // we MUST batch (one sig covers CAW + tip), so override the single-chunk
+    // bailout — the tip pre-check already verified the session covers OTHER.
     const checkCanBatch = async () => {
-      if (chunks.length <= 1 || typeof (signAndSubmit as any).many !== 'function') return false
+      if (typeof (signAndSubmit as any).many !== 'function') return false
+      if (chunks.length <= 1 && !tipParams) return false
       try {
         const { useSessionKeyStore: sks } = await import('~/store/sessionKeyStore')
         const store = sks.getState()
@@ -1319,7 +1420,10 @@ const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess, placehol
     let firstPendingId: string | undefined
     let firstPendingPost: CawItem | undefined
 
-    // Batch-submit a set of chunk params via .many(), adding pending posts for each
+    // Batch-submit a set of chunk params via .many(), adding pending posts for each.
+    // When the params array includes the trailing tipParams (actionType 'other'),
+    // it's the last element and doesn't get a pending post — the tip table is
+    // populated by the indexer when the on-chain action lands.
     const batchSubmitChunks = async (params: ActionParams[], chunkOffset: number) => {
       const responses = await (signAndSubmit as any).many(params, (p: any) => {
         setSigningProgress({ current: chunkOffset + p.signed, total: chunks.length })
@@ -1328,6 +1432,8 @@ const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess, placehol
         for (let i = 0; i < params.length; i++) {
           const r = responses[i]
           if (!r || r.error) continue
+          // Skip the tip param — it produces no pending feed row.
+          if (params[i].actionType === 'other') continue
           const chunkAbsIdx = chunkOffset + i
           const isFirstChunk = chunkAbsIdx === 0
           const isLastChunk = chunkAbsIdx === chunks.length - 1
@@ -1386,8 +1492,12 @@ const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess, placehol
       })
 
     if (await checkCanBatch()) {
-      // Fast path: batch all chunks (including first) through .many()
-      await batchSubmitChunks([firstParams, ...buildReplyParams(1)], 0)
+      // Fast path: batch all chunks (including first) through .many(). When a
+      // tip is attached, append it at the end of the params array so the same
+      // batch sig covers the CAW(s) + the tip.
+      const allParams: ActionParams[] = [firstParams, ...buildReplyParams(1)]
+      if (tipParams) allParams.push(tipParams)
+      await batchSubmitChunks(allParams, 0)
     } else {
       // Sign+submit the first chunk (may trigger Quick Sign enable prompt)
       const response = await signAndSubmit(firstParams)
@@ -1454,6 +1564,7 @@ const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess, placehol
     setPollEnabled(false)
     setPollOptions([])
     setPollOptionImages([])
+    setTipAttachment(null)
     onSuccess?.()
     } catch (error: any) {
       // Ignore errors (user may have rejected signature)
@@ -1814,6 +1925,16 @@ const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess, placehol
               >
                 <HiOutlineChartBar className="w-5 h-5" />
               </button>
+
+              {/* Tip attachment */}
+              <TipAttachmentControl
+                text={text}
+                replyTo={replyTo}
+                ownTokenIds={activeToken?.tokenId ? [activeToken.tokenId] : []}
+                value={tipAttachment}
+                onChange={setTipAttachment}
+                iconSizeClass="w-5 h-5"
+              />
             </div>
 
             {/* Right side - Action buttons (Post/etc.) */}
@@ -2416,6 +2537,17 @@ const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess, placehol
             >
               <HiOutlineChartBar className="w-6 h-6" />
             </button>
+
+            {/* Tip attachment — bundles an OTHER (tip) action into the same
+                batch as the CAW so they confirm together. */}
+            <TipAttachmentControl
+              text={text}
+              replyTo={replyTo}
+              ownTokenIds={activeToken?.tokenId ? [activeToken.tokenId] : []}
+              value={tipAttachment}
+              onChange={setTipAttachment}
+              iconSizeClass="w-6 h-6"
+            />
 
           </div>
 
