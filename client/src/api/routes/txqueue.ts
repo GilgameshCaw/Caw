@@ -301,13 +301,14 @@ router.post(
         return res.status(409).json({ error: 'too_late', message: 'Action already picked up by validator' })
       }
 
-      // Roll back the optimistic Like row /api/actions wrote when this
-      // was a 'like' action. Other action types either don't have an
-      // optimistic API-side row or have their own teardown elsewhere
-      // (caw rows live in pending/failed status that the indexer
-      // reconciles; pin rows are handled by the Pin lifecycle).
+      // Roll back the optimistic row(s) /api/actions wrote, mirroring the
+      // failure path in cleanupOptimisticRows but deleting instead of
+      // marking FAILED — the user explicitly took back the action, so
+      // there should be no audit trail of it. Each branch is a no-op
+      // if the indexer already raced ahead (status no longer PENDING).
       const data = (entry.payload as any)?.data || {}
       const actionType = Number(data.actionType)
+
       if (actionType === 1 /* LIKE */) {
         const targetCaw = await prisma.caw.findFirst({
           where: { userId: data.receiverId, cawonce: data.receiverCawonce },
@@ -328,6 +329,55 @@ router.post(
             }
           })
         }
+      } else if (actionType === 4 /* FOLLOW */ && data.receiverId != null) {
+        // Pending Follow row was written with status=PENDING by /api/actions
+        // but /api/actions does NOT bump followerCount/followingCount on the
+        // optimistic write — those happen at confirmation time in the
+        // indexer. So cancel just deletes the row; no count decrement needed.
+        // Matches the failure-path behavior in cleanupOptimisticRows
+        // (which also doesn't call CountManager for follow).
+        await prisma.follow.deleteMany({
+          where: {
+            followerId: entry.senderId,
+            followingId: Number(data.receiverId),
+            action: 'FOLLOW',
+            status: 'PENDING',
+          },
+        })
+      } else if (actionType === 5 /* UNFOLLOW */ && data.receiverId != null) {
+        // The unfollow optimistic write only flips an existing Follow row
+        // back to PENDING — it doesn't change counts. Cancelling unfollow
+        // means restoring the row to its previous active state. Without
+        // a stored previous state we can only return it to SUCCESS, which
+        // matches what the indexer would do if the unfollow had never run.
+        await prisma.follow.updateMany({
+          where: {
+            followerId: entry.senderId,
+            followingId: Number(data.receiverId),
+            action: 'FOLLOW',
+            status: 'PENDING',
+          },
+          data: { status: 'SUCCESS' },
+        })
+      } else if (actionType === 3 /* RECAW */ && typeof data.cawonce === 'number') {
+        // Recaw wrote a Caw row with action=RECAW, status=PENDING.
+        // Cancelling deletes the row and rolls back the user.recawCount
+        // bump + the parent caw's recawCount bump. Indexer raced ahead =
+        // status no longer PENDING; skip.
+        await prisma.$transaction(async (tx: any) => {
+          const pendingRecaw = await tx.caw.findFirst({
+            where: { userId: entry.senderId, cawonce: data.cawonce, status: 'PENDING', action: 'RECAW' },
+            select: { id: true, userId: true, action: true, originalCawId: true },
+          })
+          if (pendingRecaw) {
+            await tx.caw.delete({ where: { id: pendingRecaw.id } })
+            await countManager.onStatusChanged(tx, 'caw', pendingRecaw.id, 'PENDING', 'FAILED', {
+              userId: pendingRecaw.userId,
+              action: pendingRecaw.action,
+              originalCawId: pendingRecaw.originalCawId,
+            })
+          }
+        })
       }
 
       return res.json({ ok: true })

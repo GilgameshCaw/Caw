@@ -342,6 +342,14 @@ export function useTxQueueMonitor() {
             if (!wasPendingPost && feedRefreshVisibleCallback) {
               feedRefreshVisibleCallback()
             }
+          } else if (status.status === 'cancelled') {
+            // Defense in depth. Cancel callsites already remove their
+            // optimistic state synchronously; this catches any path that
+            // forgets to, so the ProfileChooser budget can't stay stuck.
+            removePendingPostByTxQueueId(status.id)
+            removeOptimisticLikeByTxQueueId(status.id)
+            usePendingSpendStore.getState().removePendingSpend(status.id)
+            processedIds.current.add(status.id)
           }
         })
 

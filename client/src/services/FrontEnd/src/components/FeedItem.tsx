@@ -44,6 +44,7 @@ import { useBlockedUsersStore } from '~/store/blockedUsersStore'
 import { ShareModal } from './ShareModal'
 import { useModalStore } from '~/store/modalStore'
 import { useOptimisticLikesStore } from '~/store/optimisticLikesStore'
+import { usePendingSpendStore } from '~/store/pendingSpendStore'
 import { useHiddenCawsStore } from '~/store/hiddenCawsStore'
 import { useBookmarksStore } from '~/store/bookmarksStore'
 import { useLocation } from 'react-router-dom'
@@ -141,6 +142,10 @@ const FeedItem: React.FC<{ item: CawItem; isMainPost?: boolean; isReply?: boolea
   // tap calls /api/txqueue/:id/cancel instead of being inert.
   const [pendingLikeTxQueueId, setPendingLikeTxQueueId] = useState<number | null>(null)
   const [pendingLikeAction, setPendingLikeAction] = useState<{ receiverId: number, receiverCawonce: number, actionType: 'like' | 'unlike' } | null>(null) // Track pending like data
+  // Recaw counterpart. Lets the "Undo repost" menu cancel a still-pending
+  // recaw via /api/txqueue/:id/cancel instead of firing a second on-chain
+  // hide:recaw action that would double-spend.
+  const [pendingRecawTxQueueId, setPendingRecawTxQueueId] = useState<number | null>(null)
   const [wrongWalletError, setWrongWalletError] = useState(false) // Track if wrong wallet is connected
   const signAndSubmit     = useSignAndSubmitAction()
   const [showRecawMenu, setShowRecawMenu]   = useState(false)
@@ -324,7 +329,11 @@ const FeedItem: React.FC<{ item: CawItem; isMainPost?: boolean; isReply?: boolea
 
   useEffect(() => {
     setRecawPending(stateSource.recawPending || false)
-    if (!stateSource.recawPending) { setRecawCountAdj(0); setRecawCountBase(null) }
+    if (!stateSource.recawPending) {
+      setRecawCountAdj(0)
+      setRecawCountBase(null)
+      setPendingRecawTxQueueId(null)
+    }
   }, [stateSource.recawPending])
 
   useEffect(() => {
@@ -462,6 +471,10 @@ const FeedItem: React.FC<{ item: CawItem; isMainPost?: boolean; isReply?: boolea
       setLikeCountAdj(0)
       setLikeCountBase(null)
       useOptimisticLikesStore.getState().removeOptimisticLikeByTxQueueId(pendingLikeTxQueueId)
+      // Roll back the optimistic spend so the ProfileChooser budget snaps
+      // back. useTxQueueMonitor only cleans pendingSpend on 'failed'/'done';
+      // a 'cancelled' row would otherwise leave the spend stuck until reload.
+      usePendingSpendStore.getState().removePendingSpend(pendingLikeTxQueueId)
       setPendingLikeTxQueueId(null)
       if (onLikeStateChange) onLikeStateChange(useItem.id, false)
     } catch (err: any) {
@@ -594,6 +607,7 @@ const FeedItem: React.FC<{ item: CawItem; isMainPost?: boolean; isReply?: boolea
       setRecawPending(true)
       setRecawCountAdj(1)
       setRecawCountBase(useItem.recawCount)
+      if (result.txQueueId) setPendingRecawTxQueueId(result.txQueueId)
 
       if (onRecawStateChange) {
         onRecawStateChange(useItem.id, true)
@@ -1625,6 +1639,38 @@ const FeedItem: React.FC<{ item: CawItem; isMainPost?: boolean; isReply?: boolea
                           e.preventDefault(); e.stopPropagation(); setShowRecawMenu(false)
                           const effectiveTokenId = activeTokenId || activeToken?.tokenId
                           if (!effectiveTokenId) return
+
+                          // Fast-path: the recaw is still pending (validator
+                          // hasn't picked it up). Cancel the original tx queue
+                          // entry instead of firing a second on-chain hide:recaw
+                          // that would double-spend. On 409 (lost the race) we
+                          // fall through to the hide-action path below.
+                          if (pendingRecawTxQueueId) {
+                            setBusyRecaw(true)
+                            try {
+                              await apiFetch(`/api/txqueue/${pendingRecawTxQueueId}/cancel`, { method: 'POST' })
+                              setRecawPending(false)
+                              setRecawCountAdj(0)
+                              setRecawCountBase(null)
+                              usePendingSpendStore.getState().removePendingSpend(pendingRecawTxQueueId)
+                              setPendingRecawTxQueueId(null)
+                              if (onRecawStateChange) onRecawStateChange(useItem.id, false)
+                              setBusyRecaw(false)
+                              return
+                            } catch (err: any) {
+                              if (!String(err?.message || '').includes('409')) {
+                                console.error('Cancel recaw failed', err)
+                                setBusyRecaw(false)
+                                return
+                              }
+                              // 409: validator already picked it up. Clear the
+                              // local txQueueId tracker and continue into the
+                              // hide-action branch below — the recaw will land
+                              // and we need to undo it on-chain.
+                              setPendingRecawTxQueueId(null)
+                            }
+                          }
+
                           // Optimistically hide the viewer's own recaw row in any
                           // feed they're currently looking at (their profile is
                           // the obvious one). Indexer deletes the recaw row in

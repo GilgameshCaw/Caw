@@ -498,6 +498,7 @@
   "follow.following": "Following",
   "follow.unfollow": "Unfollow",
   "follow.processing": "Processing...",
+  "follow.cancel_tooltip": "Tap to cancel",
 
   "profile_edit.save": "Save Changes",
   "profile_edit.saving": "Saving...",

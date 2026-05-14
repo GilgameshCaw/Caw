@@ -90,15 +90,19 @@ export const FollowButton: React.FC<FollowButtonProps> = ({
     }
   }
 
+  // Stay clickable while pending so a second click can cancel the in-flight
+  // follow/unfollow (matches Like's cancel-the-in-flight UX). The hook
+  // gates the actual cancel on having a known txQueueId; clicks during the
+  // wallet-sign window are no-ops there.
   const button = (
     <button
       onClick={handleFollowClick}
-      disabled={isPending || wrongWallet || disabled}
+      disabled={wrongWallet || disabled}
       onMouseEnter={() => setIsHovered(true)}
       onMouseLeave={() => setIsHovered(false)}
       className={`rounded-full font-medium transition-all duration-200 ${
         wrongWallet || disabled ? 'opacity-50 cursor-not-allowed' :
-        isPending ? 'opacity-90 cursor-not-allowed' :
+        isPending ? 'opacity-90 cursor-pointer' :
         'cursor-pointer'
       } ${getButtonStyles()} ${sizeClasses[size]} ${className}`}
     >
@@ -108,7 +112,7 @@ export const FollowButton: React.FC<FollowButtonProps> = ({
 
   if (isPending && !isSigning) {
     return (
-      <Tooltip text={t('post.processing')} className="inline-block">
+      <Tooltip text={t('follow.cancel_tooltip')} className="inline-block">
         {button}
       </Tooltip>
     )

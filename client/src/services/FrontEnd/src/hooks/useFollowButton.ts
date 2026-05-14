@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef } from 'react'
 import { useSignAndSubmitAction } from '~/api/actions'
 import { useActiveToken, useTokenDataStore } from '~/store/tokenDataStore'
+import { usePendingSpendStore } from '~/store/pendingSpendStore'
 import { useAccount } from 'wagmi'
 import { apiFetch } from '~/api/client'
 import { useHasActiveSession } from '~/hooks/useHasActiveSession'
@@ -52,6 +53,10 @@ export function useFollowButton({
   const [isPending, setPending] = useState(initialIsPending)
   const [isSigning, setIsSigning] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  // TxQueue id of the in-flight follow/unfollow, set right after
+  // signAndSubmit resolves. Lets a follow-up click cancel the action
+  // before the validator picks it up — same pattern as Like.
+  const [pendingTxQueueId, setPendingTxQueueId] = useState<number | null>(null)
   const [isPolling, setIsPolling] = useState(initialIsPending) // Start polling immediately if mounting in pending state
   const [hasUserAction, setHasUserAction] = useState(false) // Track if user has taken action
   const [awaitingConnection, setAwaitingConnection] = useState(false) // Track if waiting for wallet connection
@@ -129,9 +134,10 @@ export function useFollowButton({
       actionType,
       senderId: effectiveTokenId,
       receiverId: targetUserId
-    }).then(() => {
+    }).then((result: any) => {
       isSubmittingRef.current = false
       setIsSigning(false)
+      if (result?.txQueueId) setPendingTxQueueId(result.txQueueId)
       // Start polling for status updates
       setIsPolling(true)
     }).catch((error: any) => {
@@ -193,6 +199,7 @@ export function useFollowButton({
         // Check if we've been polling for too long
         if (pollStartTimeRef.current && Date.now() - pollStartTimeRef.current > POLL_TIMEOUT) {
           setPending(false)
+          setPendingTxQueueId(null)
           setHasUserAction(false) // Allow prop sync again
           pendingActionRef.current = null
           // Revert to original state
@@ -223,6 +230,7 @@ export function useFollowButton({
         // matches our anticipation as success.
         if (status.isFollowing === isFollowing) {
           setPending(false)
+          setPendingTxQueueId(null)
           // setIsFollowing call left in for callback symmetry — value already matches.
           setIsFollowing(status.isFollowing)
           pendingActionRef.current = null
@@ -236,6 +244,7 @@ export function useFollowButton({
           // Enough time has passed — accept the server state, even if it
           // contradicts what we anticipated (e.g. tx reverted).
           setPending(false)
+          setPendingTxQueueId(null)
           setIsFollowing(status.isFollowing)
           pendingActionRef.current = null
           onFollowStateChangeRef.current?.(status.isFollowing)
@@ -272,11 +281,51 @@ export function useFollowButton({
 
   const handleFollowClick = async () => {
     console.log('[FollowButton] handleFollowClick', { wrongWallet, isPending, isSigning, targetUserId, activeTokenId, activeTokenOwner: activeToken?.owner, connectedAddress: address, hasActiveSession })
-    // Don't do anything if wrong wallet or pending
-    if (wrongWallet || isPending) {
-      console.log('[FollowButton] Early return — wrongWallet:', wrongWallet, 'isPending:', isPending)
+    // Don't do anything if wrong wallet
+    if (wrongWallet) {
+      console.log('[FollowButton] Early return — wrongWallet')
       return
     }
+
+    // Cancel path: if a follow/unfollow is in flight and we have its txQueueId,
+    // a second click cancels it (and rolls back the ProfileChooser budget)
+    // instead of being inert. Mirrors Like's handleCancelLike. We only attempt
+    // a cancel while the row is still cancellable — once isSigning is over and
+    // we have the id, the validator hasn't grabbed it yet.
+    if (isPending && pendingTxQueueId) {
+      try {
+        await apiFetch(`/api/txqueue/${pendingTxQueueId}/cancel`, { method: 'POST' })
+        usePendingSpendStore.getState().removePendingSpend(pendingTxQueueId)
+        // Revert local UI: go back to whatever the server last confirmed.
+        setIsFollowing(initialIsFollowing)
+        setPending(false)
+        setIsSigning(false)
+        setPendingTxQueueId(null)
+        setHasUserAction(false)
+        pendingActionRef.current = null
+        // Stop polling — there's nothing to wait for anymore.
+        if (pollIntervalRef.current) {
+          clearInterval(pollIntervalRef.current)
+          pollIntervalRef.current = null
+        }
+        pollStartTimeRef.current = null
+        setIsPolling(false)
+        onFollowStateChange?.(initialIsFollowing)
+        return
+      } catch (err: any) {
+        // 409 = validator already picked it up. Leave the optimistic state
+        // alone — the polling loop will reconcile to the server result.
+        if (!String(err?.message || '').includes('409')) {
+          console.error('Cancel follow failed', err)
+        }
+        return
+      }
+    }
+
+    // No cancel handle yet (still signing, or the cancel just got cleared).
+    // Treat as a no-op — a click during the wallet-sign window shouldn't
+    // double-submit.
+    if (isPending) return
 
     // Clear any previous error
     setError(null)
@@ -335,6 +384,7 @@ export function useFollowButton({
       }
 
       // Server has the action — stop signing state, start polling
+      if (result?.txQueueId) setPendingTxQueueId(result.txQueueId)
       setIsSigning(false)
       setIsPolling(true)
 
