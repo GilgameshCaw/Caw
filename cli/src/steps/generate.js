@@ -262,7 +262,7 @@ function parseLzEids(txt) {
   return result
 }
 
-function buildServiceList(nodeType, config) {
+export function buildServiceList(nodeType, config) {
   const services = []
   const net = NETWORKS[config.network || 'testnet']
   // Node groupings — keep these in one place so future tweaks don't need

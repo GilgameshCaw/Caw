@@ -527,6 +527,72 @@ program
   })
 
 program
+  .command('regen-config')
+  .description('Add any newly-canonical services to client/config.json that aren\'t already there — preserves operator-customized entries')
+  .option('--dir <path>', 'Installation directory', ROOT_DIR)
+  .option('--env <path>', 'Path to existing .env (default: <dir>/client/.env)')
+  .option('--node-type <type>', 'Node type: full | frontend-api | api-only | validator | frontend-only', 'full')
+  .option('--dry-run', 'Show what would be added without writing the file')
+  .action(async (opts) => {
+    try {
+      const installDir = resolveInstallDir(opts, ROOT_DIR)
+      const envPath = opts.env
+        ? (path.isAbsolute(opts.env) ? opts.env : path.resolve(installDir, opts.env))
+        : path.join(installDir, 'client', '.env')
+      const configPath = path.join(installDir, 'client', 'config.json')
+      if (!fs.existsSync(envPath)) {
+        console.error(`No .env at ${envPath}. Specify with --env or run 'caw install' first.`)
+        process.exit(1)
+      }
+      if (!fs.existsSync(configPath)) {
+        console.error(`No config.json at ${configPath}. Run 'caw install' first to create one.`)
+        process.exit(1)
+      }
+      const env = loadEnvFile(envPath)
+      if (env.CLIENT_ID && !isValidClientId(env.CLIENT_ID)) {
+        console.error(
+          `CLIENT_ID in ${envPath} is invalid: ${JSON.stringify(env.CLIENT_ID)} ` +
+          `(must be a positive integer ≤ 4294967295). Fix it and re-run.`
+        )
+        process.exit(1)
+      }
+      const { buildServiceList } = await import('../src/steps/generate.js')
+      const config = {
+        network: env.NETWORK || 'testnet',
+        clientId: Number(env.CLIENT_ID || 1),
+        domain: env.SHORTURL_DOMAIN?.replace(/^https?:\/\//, ''),
+        apiPort: Number(env.PORT) || 4000,
+        redisUrl: env.REDIS_URL,
+        validatorId: Number(env.VALIDATOR_ID) || 1,
+        checkInterval: Number(env.VALIDATOR_CHECK_INTERVAL) || 30000,
+      }
+      const canonical = buildServiceList(opts.nodeType, config)
+      const existing = JSON.parse(fs.readFileSync(configPath, 'utf8'))
+      const existingNames = new Set(existing.map(e => e.service))
+      const toAdd = canonical.filter(c => !existingNames.has(c.service))
+      if (toAdd.length === 0) {
+        console.log(success(`  config.json already has every canonical service for nodeType=${opts.nodeType}.`))
+        return
+      }
+      console.log(brand(`  Adding ${toAdd.length} service(s) to config.json:`))
+      for (const s of toAdd) console.log(dim(`    • ${s.service}`))
+      if (opts.dryRun) {
+        console.log(dim('  (dry-run — not writing)'))
+        return
+      }
+      const merged = [...existing, ...toAdd]
+      const backupPath = `${configPath}.bak.${Date.now()}`
+      fs.copyFileSync(configPath, backupPath)
+      console.log(dim(`  Backed up old config to ${backupPath}`))
+      fs.writeFileSync(configPath, JSON.stringify(merged, null, 2) + '\n')
+      console.log(success(`  Wrote ${configPath}. Restart services to pick up the new entries (pm2 restart all).`))
+    } catch (e) {
+      console.error('regen-config failed:', e.message)
+      process.exit(1)
+    }
+  })
+
+program
   .command('status')
   .description('Show status of CAW services')
   .action(() => {
