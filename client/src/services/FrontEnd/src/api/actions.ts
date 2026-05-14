@@ -1410,14 +1410,44 @@ export function useSignAndSubmitAction() {
         }
       }
 
-      // Broadcast to other instances as redundancy (fire-and-forget after 2s delay)
-      // Other instances will either accept it or reject as duplicate — both are fine.
-      // Filtered through useHostVerificationStore so a peer that's repeatedly
-      // failing or has been blacklisted gets skipped — keeps a misbehaving
-      // node from absorbing every browser's broadcast traffic.
+      // Broadcast to other instances as redundancy (fire-and-forget after 20s delay).
+      // The 20s window is the user's grace period to hit cancel on like /
+      // recaw / follow / unfollow before the signed payload leaks to peers.
+      // Without it, even a successful local cancel still results in peer
+      // mirrors picking up the action — their validators eventually try to
+      // submit it, the on-chain action lands, and the user-visible "cancel"
+      // didn't actually cancel anything (incident 2026-05-14, cancel UX).
+      //
+      // Right before broadcasting we re-check the local row's status; if it
+      // was cancelled (or otherwise no longer pending), we skip the broadcast
+      // entirely so peers don't create orphan pending rows for a dead action.
+      // Other instances will either accept it or reject as duplicate — both
+      // are fine. Filtered through useHostVerificationStore so a peer that's
+      // repeatedly failing or has been blacklisted gets skipped — keeps a
+      // misbehaving node from absorbing every browser's broadcast traffic.
       const actionPayload = JSON.stringify({ data: message, domain, types, signature })
+      const broadcastTxQueueId = response.txQueueId
       setTimeout(async () => {
         try {
+          // Cancel-aware: skip the broadcast if the local row was cancelled
+          // (or finished, failed, picked up by validator, etc.) in the 20s
+          // window. Status === 'pending' is the only case where redundant
+          // peer submission is still useful.
+          if (broadcastTxQueueId) {
+            try {
+              const statusRes = await apiFetch<{ statuses: Array<{ id: number; status: string }> }>(
+                `/api/txqueue/status?ids=${broadcastTxQueueId}`,
+              )
+              const entry = statusRes?.statuses?.find(s => s.id === broadcastTxQueueId)
+              if (entry && entry.status !== 'pending') {
+                console.log(`[Actions] Skipping broadcast for TxQueue ${broadcastTxQueueId} — status=${entry.status}`)
+                return
+              }
+            } catch {
+              // Status check failed — proceed with the broadcast. Better to
+              // double-fan-out than to silently drop a legitimate action.
+            }
+          }
           const { useHostVerificationStore } = await import('~/hooks/useHostVerification')
           const verify = useHostVerificationStore.getState()
           const allHosts = useInstanceStore.getState().getApiHosts()
@@ -1447,7 +1477,7 @@ export function useSignAndSubmitAction() {
             console.log(`[Actions] Broadcast to ${otherHosts.length} redundant instance(s)`)
           }
         } catch {}
-      }, 2000)
+      }, 20000)
 
       return { ...response, cawonce: useCawonce } // Include cawonce for pending post tracking
     } catch (error: any) {
