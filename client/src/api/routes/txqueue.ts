@@ -329,35 +329,78 @@ router.post(
             }
           })
         }
+      } else if (actionType === 2 /* UNLIKE */) {
+        // Undo the optimistic unlike: /api/actions flipped the existing Like
+        // row to action='UNLIKE', pending=true and decremented likeCount.
+        // Cancelling restores LIKE/SUCCESS + bumps the count back.
+        const targetCaw = await prisma.caw.findFirst({
+          where: { userId: data.receiverId, cawonce: data.receiverCawonce },
+          select: { id: true },
+        })
+        if (targetCaw) {
+          await prisma.$transaction(async (tx: any) => {
+            const existing = await tx.like.findUnique({
+              where: { userId_cawId: { userId: entry.senderId, cawId: targetCaw.id } },
+              select: { id: true, pending: true, action: true },
+            })
+            if (existing && existing.pending && existing.action === 'UNLIKE') {
+              await tx.like.update({
+                where: { id: existing.id },
+                data: { pending: false, action: 'LIKE' },
+              })
+              await countManager.onStatusChanged(tx, 'like', existing.id, 'PENDING', 'SUCCESS-undo', {
+                cawId: targetCaw.id,
+                userId: entry.senderId,
+              })
+            }
+          })
+        }
       } else if (actionType === 4 /* FOLLOW */ && data.receiverId != null) {
-        // Pending Follow row was written with status=PENDING by /api/actions
-        // but /api/actions does NOT bump followerCount/followingCount on the
-        // optimistic write — those happen at confirmation time in the
-        // indexer. So cancel just deletes the row; no count decrement needed.
-        // Matches the failure-path behavior in cleanupOptimisticRows
-        // (which also doesn't call CountManager for follow).
-        await prisma.follow.deleteMany({
-          where: {
-            followerId: entry.senderId,
-            followingId: Number(data.receiverId),
-            action: 'FOLLOW',
-            status: 'PENDING',
-          },
+        // Optimistic FOLLOW writes a Follow row with status=PENDING + bumps
+        // followerCount / followingCount. Cancel deletes the row and rolls
+        // back the counts.
+        await prisma.$transaction(async (tx: any) => {
+          const existing = await tx.follow.findFirst({
+            where: {
+              followerId: entry.senderId,
+              followingId: Number(data.receiverId),
+              action: 'FOLLOW',
+              status: 'PENDING',
+            },
+            select: { id: true },
+          })
+          if (existing) {
+            await tx.follow.delete({ where: { id: existing.id } })
+            await countManager.onStatusChanged(tx, 'follow', existing.id, 'PENDING', 'FAILED', {
+              followerId: entry.senderId,
+              followingId: Number(data.receiverId),
+            })
+          }
         })
       } else if (actionType === 5 /* UNFOLLOW */ && data.receiverId != null) {
-        // The unfollow optimistic write only flips an existing Follow row
-        // back to PENDING — it doesn't change counts. Cancelling unfollow
-        // means restoring the row to its previous active state. Without
-        // a stored previous state we can only return it to SUCCESS, which
-        // matches what the indexer would do if the unfollow had never run.
-        await prisma.follow.updateMany({
-          where: {
-            followerId: entry.senderId,
-            followingId: Number(data.receiverId),
-            action: 'FOLLOW',
-            status: 'PENDING',
-          },
-          data: { status: 'SUCCESS' },
+        // Optimistic UNFOLLOW flips action='UNFOLLOW', status='PENDING' on the
+        // existing Follow row and decrements counts. Cancel restores
+        // FOLLOW/SUCCESS and increments counts back.
+        await prisma.$transaction(async (tx: any) => {
+          const existing = await tx.follow.findFirst({
+            where: {
+              followerId: entry.senderId,
+              followingId: Number(data.receiverId),
+              action: 'UNFOLLOW',
+              status: 'PENDING',
+            },
+            select: { id: true },
+          })
+          if (existing) {
+            await tx.follow.update({
+              where: { id: existing.id },
+              data: { status: 'SUCCESS', action: 'FOLLOW' },
+            })
+            await countManager.onStatusChanged(tx, 'follow', existing.id, 'PENDING', 'SUCCESS-undo', {
+              followerId: entry.senderId,
+              followingId: Number(data.receiverId),
+            })
+          }
         })
       } else if (actionType === 3 /* RECAW */ && typeof data.cawonce === 'number') {
         // Recaw wrote a Caw row with action=RECAW, status=PENDING.
