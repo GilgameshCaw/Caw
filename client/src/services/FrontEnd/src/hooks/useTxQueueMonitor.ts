@@ -3,6 +3,7 @@ import { usePendingPostsStore } from '~/store/pendingPostsStore'
 import { useOptimisticLikesStore } from '~/store/optimisticLikesStore'
 import { useTokenDataStore } from '~/store/tokenDataStore'
 import { usePendingSpendStore } from '~/store/pendingSpendStore'
+import { useBalanceChangeStore } from '~/store/balanceChangeStore'
 import { apiFetch } from '~/api/client'
 import { useQuickSignRenewStore } from '~/components/modals/QuickSignRenewModal'
 import { useSessionKeyStore } from '~/store/sessionKeyStore'
@@ -331,6 +332,19 @@ export function useTxQueueMonitor() {
               usePendingPostsStore.getState().markPostAsConfirmed(status.id)
             }
             removeOptimisticLikeByTxQueueId(status.id)
+            // Fire a balance-change toast for the outgoing spend BEFORE
+            // removing it from pendingSpendStore — once removed the amount
+            // is gone. Duration matches the spec (10s desktop, 5s mobile).
+            const spendAmount = usePendingSpendStore.getState().pendingByTxQueue[status.id]
+            if (spendAmount && spendAmount > 0n) {
+              const isMobile = typeof window !== 'undefined'
+                && window.matchMedia('(max-width: 767px)').matches
+              useBalanceChangeStore.getState().addWindow(
+                -spendAmount, // outgoing → negative
+                isMobile ? 5_000 : 10_000,
+                `txq:${status.id}`,
+              )
+            }
             usePendingSpendStore.getState().removePendingSpend(status.id)
             processedIds.current.add(status.id)
             anyCompleted = true

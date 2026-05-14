@@ -12,6 +12,7 @@ import { useTheme } from "~/hooks/useTheme";
 import { apiFetch } from "~/api/client";
 import { useHasActiveSession } from '~/hooks/useHasActiveSession';
 import { usePendingSpendStore } from '~/store/pendingSpendStore';
+import { useBalanceChangeStore } from '~/store/balanceChangeStore';
 import { useUserByUsername, useUserByToken } from '~/hooks/useUserData';
 import { getUserAvatar, getDefaultAvatarForUser } from '~/utils/defaultAvatar';
 import Avatar from '~/components/Avatar';
@@ -29,6 +30,19 @@ const ProfileChooser: React.FC<{ compact?: boolean }> = ({ compact = false }) =>
   const hasActiveSession = useHasActiveSession();
   const activeToken = useActiveToken()
   const pendingSpend = usePendingSpendStore(s => s.pendingSpend)
+  // Live in-flight balance change windows — drives the per-event line
+  // below the existing pending-deposit/spend line. Same store the
+  // BalanceChangeToast reads from.
+  const balanceWindows = useBalanceChangeStore(s => s.windows)
+  const sweepBalance = useBalanceChangeStore(s => s.sweep)
+  useEffect(() => {
+    // Periodically drop expired windows so the displayed net rolls down.
+    // The toast component does its own sweep, but ProfileChooser is
+    // visible without it (sidebar always-on), so it needs its own tick.
+    const id = setInterval(() => { sweepBalance() }, 500)
+    return () => clearInterval(id)
+  }, [sweepBalance])
+  const balanceNet = balanceWindows.reduce((acc, w) => acc + w.delta, 0n)
   const lastAddress = useTokenDataStore(state => state.lastAddress);
   const activeTokenId = useTokenDataStore(state => state.activeTokenId);
   const tokensByAddress = useTokenDataStore(s => s.tokensByAddress);
@@ -178,6 +192,18 @@ const ProfileChooser: React.FC<{ compact?: boolean }> = ({ compact = false }) =>
             clearPendingHint(activeToken.tokenId)
             setPendingDepositWei(null)
             try { useTokenDataStore.getState().refetchTokenData?.() } catch {}
+            // Fire a +N CAW balance-change toast for the landed deposit.
+            // Source key is the hint's stored timestamp so the same hint
+            // can't double-fire across remounts.
+            try {
+              const isMobile = typeof window !== 'undefined'
+                && window.matchMedia('(max-width: 767px)').matches
+              useBalanceChangeStore.getState().addWindow(
+                hintWei,
+                isMobile ? 5_000 : 10_000,
+                `deposit:${activeToken.tokenId}:${hintWei.toString()}`,
+              )
+            } catch { /* non-critical */ }
             return
           }
         }
@@ -477,6 +503,21 @@ const ProfileChooser: React.FC<{ compact?: boolean }> = ({ compact = false }) =>
             return (
               <div className={`text-2xs ${isPositive ? 'text-yellow-500' : 'text-gray-400'}`}>
                 {isPositive ? '+' : '-'}{formatUnitsCompact(absValue, 18)} CAW pending
+              </div>
+            )
+          })()}
+          {(() => {
+            // Live "recent activity" net — sum of currently-live balance-change
+            // windows (incoming notifications + outgoing spend confirmations +
+            // landed deposits). Distinct from the "pending" line above which
+            // tracks unconfirmed flow. This line surfaces the just-happened
+            // events and fades as their windows expire (5s mobile / 10s desktop).
+            if (balanceNet === 0n) return null
+            const isPos = balanceNet > 0n
+            const abs = isPos ? balanceNet : -balanceNet
+            return (
+              <div className={`text-2xs ${isPos ? 'text-green-400' : 'text-red-400'}`}>
+                {isPos ? '+' : '−'}{formatUnitsCompact(abs, 18)} CAW
               </div>
             )
           })()}

@@ -8,6 +8,8 @@ import MainLayout from '~/layouts/MainLayout'
 import { useInsufficientStakeStore } from '~/store/insufficientStakeStore'
 import { useSessionSpendSync } from '~/hooks/useSessionSpendSync'
 import { useBadgeSync } from '~/hooks/useBadgeSync'
+import { useIncomingBalanceWatcher } from '~/hooks/useIncomingBalanceWatcher'
+import BalanceChangeToast from '~/components/BalanceChangeToast'
 import { useBlockedUsersStore } from '~/store/blockedUsersStore'
 import { useTokenDataStore } from '~/store/tokenDataStore'
 import { useActionErrorStore } from '~/store/actionErrorStore'
@@ -105,6 +107,7 @@ function App() {
   useSessionKeyWalletGuard();
   useSessionSpendSync(); // Sync on-chain session spending on load
   useBadgeSync(); // Combined poll for sidebar badge counts (DMs, notifications, offers)
+  useIncomingBalanceWatcher(); // Fires balance-change toast windows when likes/recaws/follows/tips land
 
   // Discover peer instances on boot + every 5 min. Without this call,
   // useInstanceStore stays empty and getApiHosts() returns just the
@@ -176,6 +179,7 @@ function App() {
       <QuickSignModal />
       <QuickSignUnlock />
       <ClientAuthModal />
+      <BalanceChangeToast />
       {/* Lazy modals: each renders to null until its zustand isOpen flips,
           so the chunk fetch doesn't fire on first paint. Suspense fallback
           is null because the modal itself was hidden a moment ago anyway —
