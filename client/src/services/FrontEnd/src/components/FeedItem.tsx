@@ -86,6 +86,7 @@ const FeedItem: React.FC<{ item: CawItem; isMainPost?: boolean; isReply?: boolea
 
   // Local pending states (declared early so polling can use them)
   const [likePending, setLikePending] = useState(stateSource.likePending || false)
+  const [likeOverride, setLikeOverride] = useState<boolean | null>(null)
   const [recawPending, setRecawPending] = useState(stateSource.recawPending || false)
   const [replyPending, setReplyPending] = useState(stateSource.replyPending || false)
   const [tipPending, setTipPending] = useState(stateSource.tipPending || false)
@@ -436,6 +437,7 @@ const FeedItem: React.FC<{ item: CawItem; isMainPost?: boolean; isReply?: boolea
     setLikeCountAdj(isLiking ? 1 : -1)
     setLikeCountBase(useItem.likeCount)
     setLikePending(true)
+    setLikeOverride(isLiking)
     if (isLiking) {
       tempLikeId = addOptimisticLike({ userId: effectiveTokenId, cawId: useItem.id })
     }
@@ -453,6 +455,7 @@ const FeedItem: React.FC<{ item: CawItem; isMainPost?: boolean; isReply?: boolea
         setLikePending(false)
         setLikeCountAdj(0)
         setLikeCountBase(null)
+        setLikeOverride(null)
         if (tempLikeId) useOptimisticLikesStore.getState().removeOptimisticLike(tempLikeId)
         if (onLikeStateChange) onLikeStateChange(useItem.id, false)
         return
@@ -465,6 +468,7 @@ const FeedItem: React.FC<{ item: CawItem; isMainPost?: boolean; isReply?: boolea
       setLikePending(false)
       setLikeCountAdj(0)
       setLikeCountBase(null)
+      setLikeOverride(null)
       if (tempLikeId) useOptimisticLikesStore.getState().removeOptimisticLike(tempLikeId)
       if (onLikeStateChange) onLikeStateChange(useItem.id, false)
     } finally {
@@ -488,6 +492,7 @@ const FeedItem: React.FC<{ item: CawItem; isMainPost?: boolean; isReply?: boolea
     setLikePending(false)
     setLikeCountAdj(0)
     setLikeCountBase(null)
+    setLikeOverride(null)
     useOptimisticLikesStore.getState().removeOptimisticLikeByTxQueueId(cancelledTxQueueId)
     usePendingSpendStore.getState().removePendingSpend(cancelledTxQueueId)
     useBalanceChangeStore.getState().dropPendingWindow(`txq:${cancelledTxQueueId}`)
@@ -1770,6 +1775,11 @@ const FeedItem: React.FC<{ item: CawItem; isMainPost?: boolean; isReply?: boolea
               </div>
 
               {/* Likes */}
+              {(() => {
+                const effectiveHasLiked = (likeOverride !== null && likeOverride !== useItem.hasLiked)
+                  ? likeOverride
+                  : useItem.hasLiked
+                return (
               <Tooltip
                 text={
                   (likePending || stateSource.likePending)
@@ -1783,7 +1793,7 @@ const FeedItem: React.FC<{ item: CawItem; isMainPost?: boolean; isReply?: boolea
                     ? 'cursor-not-allowed opacity-50'
                     : 'hover:text-red-500 cursor-pointer'
                 } ${
-                  (useItem.hasLiked || likePending || stateSource.likePending)
+                  effectiveHasLiked
                     ? `text-red-500 ${(likePending || stateSource.likePending) ? 'opacity-90' : ''}`
                     : isDark ? 'text-gray-400' : 'text-gray-600'
                 }`}
@@ -1809,10 +1819,12 @@ const FeedItem: React.FC<{ item: CawItem; isMainPost?: boolean; isReply?: boolea
                     <HiOutlineCheck className="absolute inset-0 w-3 h-3 m-auto text-red-500" />
                   </div>
                 ) : (
-                  <HiOutlineHeart className={`${uiDensity === 'compact' ? 'w-4 h-4' : 'w-5 h-5'} ${(useItem.hasLiked || likePending || stateSource.likePending) ? 'fill-current' : ''}`} />
+                  <HiOutlineHeart className={`${uiDensity === 'compact' ? 'w-4 h-4' : 'w-5 h-5'} ${effectiveHasLiked ? 'fill-current' : ''}`} />
                 )}
                 <span className={uiDensity === 'compact' ? 'text-xs' : 'text-sm'}>{formatEngagementCount(useItem.likeCount + effectiveLikeAdj)}</span>
               </button></Tooltip>
+                )
+              })()}
 
               {/* Views */}
               <Tooltip text={t('post.views')}><button
