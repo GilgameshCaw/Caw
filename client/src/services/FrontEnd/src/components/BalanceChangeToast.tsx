@@ -56,51 +56,38 @@ const BalanceChangeToast: React.FC = () => {
   const isPositive = net > 0n
   const abs = isPositive ? net : -net
   const sign = isPositive ? '+' : '−'
-  const colorClass = isPositive ? 'text-green-400' : 'text-red-400'
+  // Colours exactly mirror the ProfileChooser "pending" line:
+  //   positive → yellow-500
+  //   negative → gray-400
+  // No opacity dimming for the pending state — the trailing " pending"
+  // text in the body already signals the unconfirmed state, and the
+  // dimmed variant didn't match the ProfileChooser line.
+  const anyPending = windows.some(w => w.pending)
+  const colorClass = isPositive ? 'text-yellow-500' : 'text-gray-400'
 
-  // Mobile + desktop share the same pill. Position diverges:
-  //   - desktop (md+): fixed top-right, slide-from-right
-  //   - mobile: fixed bottom, slide-from-below-nav
+  // Mobile-only — desktop has the always-visible ProfileChooser "pending"
+  // line which serves the same purpose. Showing a floating toast there
+  // would just be redundant chrome.
   const mobileTransform = exiting
     ? 'translateY(calc(100% + var(--bottom-nav-h, 0px) + 12px))'
     : 'translateY(0)'
-  const desktopTransform = exiting ? 'translateX(120%)' : 'translateX(0)'
 
   return createPortal(
-    <>
-      {/* Mobile pill */}
+    <div
+      className="md:hidden fixed left-1/2 z-[95] pointer-events-none"
+      style={{
+        bottom: `calc(var(--bottom-nav-h, 0px) + 6px)`,
+        transform: `translateX(-50%) ${mobileTransform}`,
+        transition: 'transform 350ms cubic-bezier(0.2, 0.8, 0.2, 1)',
+      }}
+    >
       <div
-        className="md:hidden fixed left-1/2 -translate-x-1/2 z-[95] pointer-events-none"
-        style={{
-          bottom: `calc(var(--bottom-nav-h, 0px) + 6px)`,
-          transform: `translateX(-50%) ${mobileTransform}`,
-          transition: 'transform 350ms cubic-bezier(0.2, 0.8, 0.2, 1)',
-        }}
+        className={`bg-black rounded-full shadow-[0_4px_16px_rgba(0,0,0,0.5)] px-3 py-1 text-xs font-medium whitespace-nowrap ${colorClass}`}
+        style={{ minWidth: 60, height: 25, lineHeight: '17px', textAlign: 'center' }}
       >
-        <div
-          className={`bg-black rounded-full shadow-[0_4px_16px_rgba(0,0,0,0.5)] px-3 py-1 text-xs font-medium whitespace-nowrap ${colorClass}`}
-          style={{ minWidth: 60, height: 25, lineHeight: '17px', textAlign: 'center' }}
-        >
-          {sign}{formatUnitsCompact(abs, 18)} CAW
-        </div>
+        {sign}{formatUnitsCompact(abs, 18)} CAW{anyPending ? ' pending' : ''}
       </div>
-
-      {/* Desktop pill */}
-      <div
-        className="hidden md:block fixed top-4 right-4 z-[95] pointer-events-none"
-        style={{
-          transform: desktopTransform,
-          transition: 'transform 350ms cubic-bezier(0.2, 0.8, 0.2, 1)',
-        }}
-      >
-        <div
-          className={`bg-black rounded-full shadow-[0_4px_16px_rgba(0,0,0,0.5)] px-3 py-1 text-xs font-medium whitespace-nowrap ${colorClass}`}
-          style={{ minWidth: 60, height: 25, lineHeight: '17px', textAlign: 'center' }}
-        >
-          {sign}{formatUnitsCompact(abs, 18)} CAW
-        </div>
-      </div>
-    </>,
+    </div>,
     document.body
   )
 }

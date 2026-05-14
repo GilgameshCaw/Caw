@@ -30,9 +30,10 @@ const ProfileChooser: React.FC<{ compact?: boolean }> = ({ compact = false }) =>
   const hasActiveSession = useHasActiveSession();
   const activeToken = useActiveToken()
   const pendingSpend = usePendingSpendStore(s => s.pendingSpend)
-  // Live in-flight balance change windows — drives the per-event line
-  // below the existing pending-deposit/spend line. Same store the
-  // BalanceChangeToast reads from.
+  // Live in-flight balance change windows — incoming-only deltas roll
+  // into the existing "pending" line below so a like / recaw / follow
+  // landing on the user's content nudges the +X CAW pending counter.
+  // Same store the BalanceChangeToast reads from.
   const balanceWindows = useBalanceChangeStore(s => s.windows)
   const sweepBalance = useBalanceChangeStore(s => s.sweep)
   useEffect(() => {
@@ -42,7 +43,6 @@ const ProfileChooser: React.FC<{ compact?: boolean }> = ({ compact = false }) =>
     const id = setInterval(() => { sweepBalance() }, 500)
     return () => clearInterval(id)
   }, [sweepBalance])
-  const balanceNet = balanceWindows.reduce((acc, w) => acc + w.delta, 0n)
   const lastAddress = useTokenDataStore(state => state.lastAddress);
   const activeTokenId = useTokenDataStore(state => state.activeTokenId);
   const tokensByAddress = useTokenDataStore(s => s.tokensByAddress);
@@ -488,15 +488,25 @@ const ProfileChooser: React.FC<{ compact?: boolean }> = ({ compact = false }) =>
             // Live in-flight CAW meter. Shows the net delta between funds the
             // user expects to land soon and funds they've committed to actions
             // that haven't confirmed yet:
-            //   delta = pendingDepositWei - pendingSpend
+            //   delta = pendingDepositWei + recentIncoming - pendingSpend
+            //
+            // recentIncoming pulls only the positive (incoming) windows from
+            // balanceChangeStore — likes / recaws / follows / tips landing on
+            // the user's content. Outgoing spend is already captured by
+            // pendingSpend; including negative windows here would double-count.
+            //
             // Examples:
             //   deposited 38k, no actions → "+38k pending"
             //   deposited 38k, followed once (31k) → "+7k pending"
             //   no pending deposit, liked 3 posts (9k) → "-9k pending"
-            //   deposited 38k, followed twice (62k, over budget) → "-24k pending"
+            //   no pending, someone liked your caw (+1600) → "+1k6 pending"
             // Hidden only when the delta is exactly zero.
             const pendingDep = pendingDepositWei ?? 0n
-            const delta = pendingDep - pendingSpend
+            const recentIncoming = balanceWindows.reduce(
+              (acc, w) => w.delta > 0n ? acc + w.delta : acc,
+              0n,
+            )
+            const delta = pendingDep + recentIncoming - pendingSpend
             if (delta === 0n) return null
             const isPositive = delta > 0n
             const absValue = isPositive ? delta : -delta
@@ -506,23 +516,8 @@ const ProfileChooser: React.FC<{ compact?: boolean }> = ({ compact = false }) =>
               </div>
             )
           })()}
-          {(() => {
-            // Live "recent activity" net — sum of currently-live balance-change
-            // windows (incoming notifications + outgoing spend confirmations +
-            // landed deposits). Distinct from the "pending" line above which
-            // tracks unconfirmed flow. This line surfaces the just-happened
-            // events and fades as their windows expire (5s mobile / 10s desktop).
-            if (balanceNet === 0n) return null
-            const isPos = balanceNet > 0n
-            const abs = isPos ? balanceNet : -balanceNet
-            return (
-              <div className={`text-2xs ${isPos ? 'text-green-400' : 'text-red-400'}`}>
-                {isPos ? '+' : '−'}{formatUnitsCompact(abs, 18)} CAW
-              </div>
-            )
-          })()}
           {notCurrentAddress && (
-            <div className="text-2xs text-red-500">
+            <div className="text-2xs text-error-dim">
               <span
                 role="button"
                 tabIndex={0}
@@ -537,7 +532,7 @@ const ProfileChooser: React.FC<{ compact?: boolean }> = ({ compact = false }) =>
                     useQuickSignPromptStore.getState().show()
                   }
                 }}
-                className="underline hover:text-red-400 cursor-pointer"
+                className="underline hover:opacity-80 cursor-pointer"
               >
                 {isConnected ? "(Wrong Address)" : "not connected"}
               </span>

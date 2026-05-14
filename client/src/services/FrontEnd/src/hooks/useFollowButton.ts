@@ -2,6 +2,7 @@ import { useState, useEffect, useRef } from 'react'
 import { useSignAndSubmitAction } from '~/api/actions'
 import { useActiveToken, useTokenDataStore } from '~/store/tokenDataStore'
 import { usePendingSpendStore } from '~/store/pendingSpendStore'
+import { useBalanceChangeStore } from '~/store/balanceChangeStore'
 import { useAccount } from 'wagmi'
 import { apiFetch } from '~/api/client'
 import { useHasActiveSession } from '~/hooks/useHasActiveSession'
@@ -292,34 +293,44 @@ export function useFollowButton({
     // instead of being inert. Mirrors Like's handleCancelLike. We only attempt
     // a cancel while the row is still cancellable — once isSigning is over and
     // we have the id, the validator hasn't grabbed it yet.
+    //
+    // Optimistic teardown: drop the pending spend + UI synchronously at
+    // click time so the "−X CAW pending" line snaps back without waiting
+    // for the cancel POST roundtrip. On a 409 we restore.
     if (isPending && pendingTxQueueId) {
+      const cancelledTxQueueId = pendingTxQueueId
+      const snapshotSpend = usePendingSpendStore.getState().pendingByTxQueue[cancelledTxQueueId]
+      usePendingSpendStore.getState().removePendingSpend(cancelledTxQueueId)
+      useBalanceChangeStore.getState().dropPendingWindow(`txq:${cancelledTxQueueId}`)
+      setIsFollowing(initialIsFollowing)
+      setPending(false)
+      setIsSigning(false)
+      setPendingTxQueueId(null)
+      setHasUserAction(false)
+      pendingActionRef.current = null
+      if (pollIntervalRef.current) {
+        clearInterval(pollIntervalRef.current)
+        pollIntervalRef.current = null
+      }
+      pollStartTimeRef.current = null
+      setIsPolling(false)
+      onFollowStateChange?.(initialIsFollowing)
       try {
-        await apiFetch(`/api/txqueue/${pendingTxQueueId}/cancel`, { method: 'POST' })
-        usePendingSpendStore.getState().removePendingSpend(pendingTxQueueId)
-        // Revert local UI: go back to whatever the server last confirmed.
-        setIsFollowing(initialIsFollowing)
-        setPending(false)
-        setIsSigning(false)
-        setPendingTxQueueId(null)
-        setHasUserAction(false)
-        pendingActionRef.current = null
-        // Stop polling — there's nothing to wait for anymore.
-        if (pollIntervalRef.current) {
-          clearInterval(pollIntervalRef.current)
-          pollIntervalRef.current = null
-        }
-        pollStartTimeRef.current = null
-        setIsPolling(false)
-        onFollowStateChange?.(initialIsFollowing)
-        return
+        await apiFetch(`/api/txqueue/${cancelledTxQueueId}/cancel`, { method: 'POST' })
       } catch (err: any) {
-        // 409 = validator already picked it up. Leave the optimistic state
-        // alone — the polling loop will reconcile to the server result.
-        if (!String(err?.message || '').includes('409')) {
+        // 409 = validator already picked it up. Restore the pending spend
+        // so the user's "−X CAW pending" reflects reality. The polling loop
+        // (which we just stopped) won't restart — that's fine, the action
+        // will confirm via TxQueueMonitor and clear normally.
+        if (String(err?.message || '').includes('409')) {
+          if (snapshotSpend && snapshotSpend > 0n) {
+            usePendingSpendStore.getState().addPendingSpend(cancelledTxQueueId, snapshotSpend)
+          }
+        } else {
           console.error('Cancel follow failed', err)
         }
-        return
       }
+      return
     }
 
     // No cancel handle yet (still signing, or the cancel just got cleared).

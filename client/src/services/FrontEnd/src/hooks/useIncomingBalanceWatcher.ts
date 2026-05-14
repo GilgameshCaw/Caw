@@ -82,9 +82,7 @@ export function useIncomingBalanceWatcher() {
         // Notifications come back desc by createdAt — walk them, fire on
         // any with id > cursor, then advance cursor to the max id seen.
         let newMax = cursor
-        const isMobile = typeof window !== 'undefined'
-          && window.matchMedia('(max-width: 767px)').matches
-        const durationMs = isMobile ? 5_000 : 10_000
+        const durationMs = 5_000
 
         for (const n of notifications) {
           if (n.id <= cursor) continue

@@ -45,6 +45,7 @@ import { ShareModal } from './ShareModal'
 import { useModalStore } from '~/store/modalStore'
 import { useOptimisticLikesStore } from '~/store/optimisticLikesStore'
 import { usePendingSpendStore } from '~/store/pendingSpendStore'
+import { useBalanceChangeStore } from '~/store/balanceChangeStore'
 import { useHiddenCawsStore } from '~/store/hiddenCawsStore'
 import { useBookmarksStore } from '~/store/bookmarksStore'
 import { useLocation } from 'react-router-dom'
@@ -478,23 +479,31 @@ const FeedItem: React.FC<{ item: CawItem; isMainPost?: boolean; isReply?: boolea
   const handleCancelLike = async () => {
     if (!pendingLikeTxQueueId) return
     setBusyLike(true)
+    // Snapshot the spend amount before we drop it so we can restore on a
+    // 409 (validator already picked it up). Optimistically tear down the
+    // pending UI right now — the ProfileChooser "−X CAW pending" line
+    // updates instantly instead of after the cancel POST roundtrip.
+    const cancelledTxQueueId = pendingLikeTxQueueId
+    const snapshotSpend = usePendingSpendStore.getState().pendingByTxQueue[cancelledTxQueueId]
+    setLikePending(false)
+    setLikeCountAdj(0)
+    setLikeCountBase(null)
+    useOptimisticLikesStore.getState().removeOptimisticLikeByTxQueueId(cancelledTxQueueId)
+    usePendingSpendStore.getState().removePendingSpend(cancelledTxQueueId)
+    useBalanceChangeStore.getState().dropPendingWindow(`txq:${cancelledTxQueueId}`)
+    setPendingLikeTxQueueId(null)
+    if (onLikeStateChange) onLikeStateChange(useItem.id, false)
     try {
-      await apiFetch(`/api/txqueue/${pendingLikeTxQueueId}/cancel`, { method: 'POST' })
-      setLikePending(false)
-      setLikeCountAdj(0)
-      setLikeCountBase(null)
-      useOptimisticLikesStore.getState().removeOptimisticLikeByTxQueueId(pendingLikeTxQueueId)
-      // Roll back the optimistic spend so the ProfileChooser budget snaps
-      // back. useTxQueueMonitor only cleans pendingSpend on 'failed'/'done';
-      // a 'cancelled' row would otherwise leave the spend stuck until reload.
-      usePendingSpendStore.getState().removePendingSpend(pendingLikeTxQueueId)
-      setPendingLikeTxQueueId(null)
-      if (onLikeStateChange) onLikeStateChange(useItem.id, false)
+      await apiFetch(`/api/txqueue/${cancelledTxQueueId}/cancel`, { method: 'POST' })
     } catch (err: any) {
-      // 409 = too late, validator already picked it up. Leave the
-      // optimistic state intact — the action will confirm and the
-      // pending flag clears via the polling effect.
-      if (!String(err?.message || '').includes('409')) {
+      // 409 = too late, validator already picked it up. Restore the
+      // pending spend so the user's "−X CAW pending" reflects reality.
+      // The action will confirm via the polling effect and clear normally.
+      if (String(err?.message || '').includes('409')) {
+        if (snapshotSpend && snapshotSpend > 0n) {
+          usePendingSpendStore.getState().addPendingSpend(cancelledTxQueueId, snapshotSpend)
+        }
+      } else {
         console.error('Cancel like failed', err)
       }
     } finally {
@@ -1658,16 +1667,23 @@ const FeedItem: React.FC<{ item: CawItem; isMainPost?: boolean; isReply?: boolea
                           // entry instead of firing a second on-chain hide:recaw
                           // that would double-spend. On 409 (lost the race) we
                           // fall through to the hide-action path below.
+                          //
+                          // Tear down the pending UI synchronously so the
+                          // "−X CAW pending" line snaps back at click time;
+                          // restore it on a 409.
                           if (pendingRecawTxQueueId) {
                             setBusyRecaw(true)
+                            const cancelledTxQueueId = pendingRecawTxQueueId
+                            const snapshotSpend = usePendingSpendStore.getState().pendingByTxQueue[cancelledTxQueueId]
+                            setRecawPending(false)
+                            setRecawCountAdj(0)
+                            setRecawCountBase(null)
+                            usePendingSpendStore.getState().removePendingSpend(cancelledTxQueueId)
+                            useBalanceChangeStore.getState().dropPendingWindow(`txq:${cancelledTxQueueId}`)
+                            setPendingRecawTxQueueId(null)
+                            if (onRecawStateChange) onRecawStateChange(useItem.id, false)
                             try {
-                              await apiFetch(`/api/txqueue/${pendingRecawTxQueueId}/cancel`, { method: 'POST' })
-                              setRecawPending(false)
-                              setRecawCountAdj(0)
-                              setRecawCountBase(null)
-                              usePendingSpendStore.getState().removePendingSpend(pendingRecawTxQueueId)
-                              setPendingRecawTxQueueId(null)
-                              if (onRecawStateChange) onRecawStateChange(useItem.id, false)
+                              await apiFetch(`/api/txqueue/${cancelledTxQueueId}/cancel`, { method: 'POST' })
                               setBusyRecaw(false)
                               return
                             } catch (err: any) {
@@ -1676,11 +1692,14 @@ const FeedItem: React.FC<{ item: CawItem; isMainPost?: boolean; isReply?: boolea
                                 setBusyRecaw(false)
                                 return
                               }
-                              // 409: validator already picked it up. Clear the
-                              // local txQueueId tracker and continue into the
-                              // hide-action branch below — the recaw will land
-                              // and we need to undo it on-chain.
-                              setPendingRecawTxQueueId(null)
+                              // 409: validator already picked it up. Restore
+                              // the pending spend (the action will confirm),
+                              // and continue into the hide-action branch
+                              // below — the recaw will land and we need to
+                              // undo it on-chain.
+                              if (snapshotSpend && snapshotSpend > 0n) {
+                                usePendingSpendStore.getState().addPendingSpend(cancelledTxQueueId, snapshotSpend)
+                              }
                             }
                           }
 

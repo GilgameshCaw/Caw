@@ -22,8 +22,15 @@ interface BalanceWindow {
   expiresAt: number
   /** Stable key from the source (notification id, txQueueId, deposit hash)
    *  — used to dedupe re-renders / re-polls so the same event doesn't
-   *  fire two windows. */
+   *  fire two windows. Also the join key used by confirmWindow to upgrade
+   *  a pending window to confirmed in place. */
   source: string
+  /** Pending = action signed and queued client-side but the validator
+   *  hasn't confirmed yet. Toast renders these dim/grey so the user gets
+   *  immediate visual feedback at click time. Flipped to false (and
+   *  delta possibly updated) by confirmWindow when the txqueue 'done'
+   *  branch fires. */
+  pending: boolean
 }
 
 interface BalanceChangeState {
@@ -35,7 +42,16 @@ interface BalanceChangeState {
   /** Monotonic id generator. */
   _nextId: number
 
-  addWindow: (delta: bigint, durationMs: number, source: string) => void
+  addWindow: (delta: bigint, durationMs: number, source: string, opts?: { pending?: boolean }) => void
+  /** Upgrade a pending window (matched by source) to confirmed. Updates
+   *  delta + extends expiry. If no matching pending window exists (it
+   *  already expired, or the action skipped the pending step) this falls
+   *  through to addWindow so the confirmed amount still surfaces. */
+  confirmWindow: (delta: bigint, durationMs: number, source: string) => void
+  /** Drop any live pending window for this source. Called when an action
+   *  fails or is cancelled — the user's spend didn't happen, so the
+   *  grey pending pill shouldn't linger for its full 20s duration. */
+  dropPendingWindow: (source: string) => void
   /** Drop expired windows. Called on a tick from a hook. Returns true if
    *  any windows were dropped (so callers can re-render). */
   sweep: () => boolean
@@ -51,7 +67,7 @@ export const useBalanceChangeStore = create<BalanceChangeState>((set, get) => ({
   seenSources: new Set(),
   _nextId: 1,
 
-  addWindow: (delta, durationMs, source) => {
+  addWindow: (delta, durationMs, source, opts) => {
     const state = get()
     if (state.seenSources.has(source)) return
     // Bounded set — drop oldest half when too large. Keeps long sessions
@@ -63,11 +79,58 @@ export const useBalanceChangeStore = create<BalanceChangeState>((set, get) => ({
     set({
       windows: [
         ...state.windows,
-        { id: state._nextId, delta, expiresAt: Date.now() + durationMs, source },
+        { id: state._nextId, delta, expiresAt: Date.now() + durationMs, source, pending: !!opts?.pending },
       ],
       seenSources: newSeen,
       _nextId: state._nextId + 1,
     })
+  },
+
+  confirmWindow: (delta, durationMs, source) => {
+    const state = get()
+    // Match by source — pending window already created at click time.
+    const existing = state.windows.find(w => w.source === source && w.pending)
+    if (existing) {
+      // Upgrade in place: flip pending→false, replace delta (validator's
+      // settled cost may differ from the optimistic estimate). Keep the
+      // ORIGINAL expiry — the pill shouldn't linger longer just because
+      // the confirm arrived; the 5s budget is from click time, not from
+      // confirm time.
+      set({
+        windows: state.windows.map(w =>
+          w.id === existing.id
+            ? { ...w, pending: false, delta }
+            : w
+        ),
+      })
+      return
+    }
+    // No pending window matched — either the user clicked just before the
+    // pending window expired, or some path skipped addWindow at click
+    // time. Fall through to a fresh confirmed window so the amount still
+    // surfaces. We add it directly (not via addWindow) because seenSources
+    // already holds this source key from the pending step, which would
+    // otherwise dedup the confirm into a no-op.
+    if (state.seenSources.has(source)) {
+      // Already-seen but no live pending window — append a fresh confirmed
+      // entry directly, bypassing the dedup gate.
+      set({
+        windows: [
+          ...state.windows,
+          { id: state._nextId, delta, expiresAt: Date.now() + durationMs, source, pending: false },
+        ],
+        _nextId: state._nextId + 1,
+      })
+    } else {
+      get().addWindow(delta, durationMs, source)
+    }
+  },
+
+  dropPendingWindow: (source) => {
+    const state = get()
+    const hasLivePending = state.windows.some(w => w.source === source && w.pending)
+    if (!hasLivePending) return
+    set({ windows: state.windows.filter(w => !(w.source === source && w.pending)) })
   },
 
   sweep: () => {

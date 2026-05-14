@@ -97,6 +97,8 @@ export function useTxQueueMonitor() {
             }
             removeOptimisticLikeByTxQueueId(status.id)
             usePendingSpendStore.getState().removePendingSpend(status.id)
+            // Drop the grey pending pill — the spend didn't happen.
+            useBalanceChangeStore.getState().dropPendingWindow(`txq:${status.id}`)
             processedIds.current.add(status.id)
 
             // Show session renewal modal for session-related failures.
@@ -339,7 +341,10 @@ export function useTxQueueMonitor() {
             if (spendAmount && spendAmount > 0n) {
               const isMobile = typeof window !== 'undefined'
                 && window.matchMedia('(max-width: 767px)').matches
-              useBalanceChangeStore.getState().addWindow(
+              // Upgrade the pending window (created at click time in
+              // actions.ts) to confirmed — same source key, so it stays
+              // as a single pill rather than producing a duplicate.
+              useBalanceChangeStore.getState().confirmWindow(
                 -spendAmount, // outgoing → negative
                 isMobile ? 5_000 : 10_000,
                 `txq:${status.id}`,
@@ -363,6 +368,7 @@ export function useTxQueueMonitor() {
             removePendingPostByTxQueueId(status.id)
             removeOptimisticLikeByTxQueueId(status.id)
             usePendingSpendStore.getState().removePendingSpend(status.id)
+            useBalanceChangeStore.getState().dropPendingWindow(`txq:${status.id}`)
             processedIds.current.add(status.id)
           }
         })

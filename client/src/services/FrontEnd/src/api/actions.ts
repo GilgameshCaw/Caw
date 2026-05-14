@@ -1407,6 +1407,26 @@ export function useSignAndSubmitAction() {
         const costWei = costWholeTokens * 10n**18n
         if (costWei > 0n) {
           usePendingSpendStore.getState().addPendingSpend(response.txQueueId, costWei)
+          // Surface the outgoing spend in the BalanceChange pill immediately
+          // — pending=true so the toast renders it in dim/grey. The
+          // useTxQueueMonitor 'done' branch later calls confirmWindow with
+          // the same source key, which upgrades this window to confirmed
+          // (red) without producing a duplicate. If the action fails /
+          // cancels, the pending window just expires at the same duration.
+          {
+            // 5s total visible window — same as the confirmed branch — so
+            // the pill doesn't linger. If the validator takes longer than
+            // 5s to confirm, the user just sees the dim pending pill the
+            // whole time and it fades; the confirm is silent (no second
+            // pop). Matches the spec: "go away after 5 seconds".
+            const { useBalanceChangeStore } = await import('~/store/balanceChangeStore')
+            useBalanceChangeStore.getState().addWindow(
+              -costWei,
+              5_000,
+              `txq:${response.txQueueId}`,
+              { pending: true },
+            )
+          }
         }
       }
 
