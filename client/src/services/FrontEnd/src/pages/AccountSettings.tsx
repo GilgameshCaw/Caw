@@ -5,7 +5,8 @@ import { useTokenDataStore, useActiveToken } from '~/store/tokenDataStore'
 import { useAuthStore } from '~/store/authStore'
 import { useSessionKeyStore } from '~/store/sessionKeyStore'
 import { clearKeyCache } from '~/services/DmCryptoService'
-import { useAccount } from 'wagmi'
+import { useAccount, useDisconnect } from 'wagmi'
+import { useConnectModal } from '@rainbow-me/rainbowkit'
 import { HiArrowLeft, HiClipboard, HiCheck, HiExternalLink, HiCurrencyDollar, HiUser, HiIdentification, HiKey, HiExclamation } from 'react-icons/hi'
 import { formatCAWAmount } from '~/utils/numberFormat'
 import ModalWrapper from '~/components/modals/ModalWrapper'
@@ -493,6 +494,8 @@ const AccountSettings: React.FC = () => {
   const t = useT()
   const { isDark } = useTheme()
   const { address, isConnected } = useAccount()
+  const { disconnect } = useDisconnect()
+  const { openConnectModal } = useConnectModal()
   const [copiedField, setCopiedField] = useState<string | null>(null)
   const [showClearDataModal, setShowClearDataModal] = useState(false)
   const [showLogoutModal, setShowLogoutModal] = useState(false)
@@ -549,6 +552,19 @@ const AccountSettings: React.FC = () => {
         }),
     }))
     .filter(g => g.tokens.length > 0)
+
+  // Disconnect the current wallet and immediately surface RainbowKit's
+  // connect modal so the user can pick a different one. Mirrors the
+  // ProfileChooser implementation: clear wagmi's `recentConnectorId`
+  // from localStorage so hydration doesn't auto-reconnect to the
+  // just-disconnected wallet on the next page load.
+  const handleSwitchWallet = () => {
+    try { localStorage.removeItem('wagmi.recentConnectorId') } catch { /* ignore */ }
+    try { disconnect() } catch { /* ignore */ }
+    // Defer so wagmi has a tick to flush its disconnect state before
+    // RainbowKit decides which connectors to render.
+    setTimeout(() => { openConnectModal?.() }, 0)
+  }
 
   const handleDisconnectWallet = async () => {
     // Pure wallet disconnect: ask wagmi to drop every active connector
@@ -984,30 +1000,33 @@ const AccountSettings: React.FC = () => {
             {t('account.section.browser_data')}
           </h2>
 
-          {/* Disconnect wallet — drops the wallet connection without
-              wiping local data. Useful when a user connected the wrong
-              wallet and just wants out without losing app state. */}
-          {isConnected && (
+          {/* Wallet controls. Connected: side-by-side Switch (primary) +
+              Disconnect (secondary). Not connected: single Connect button
+              (previously this whole area was hidden, which left users
+              with no in-page entry point to a wallet — that was the bug). */}
+          {isConnected ? (
+            <div className="flex gap-3 mb-3">
+              <button
+                onClick={handleSwitchWallet}
+                className="flex-1 py-3 px-4 rounded-lg text-sm font-medium bg-yellow-500 text-black hover:bg-yellow-400 transition-colors cursor-pointer"
+              >
+                {t('account.switch_wallet')}
+              </button>
+              <button
+                onClick={handleDisconnectWallet}
+                className={`flex-1 py-3 px-4 rounded-lg text-sm font-medium transition-colors cursor-pointer ${
+                  isDark ? 'bg-white/5 hover:bg-white/10 text-white' : 'bg-gray-50 hover:bg-gray-100 text-gray-900'
+                }`}
+              >
+                {t('account.disconnect')}
+              </button>
+            </div>
+          ) : (
             <button
-              onClick={handleDisconnectWallet}
-              className={`w-full flex items-center justify-between py-4 px-4 rounded-lg transition-colors cursor-pointer mb-3 ${
-                isDark ? 'bg-white/5 hover:bg-white/10' : 'bg-gray-50 hover:bg-gray-100'
-              }`}
+              onClick={() => openConnectModal?.()}
+              className="w-full py-3 px-4 rounded-lg text-sm font-medium bg-yellow-500 text-black hover:bg-yellow-400 transition-colors cursor-pointer mb-3"
             >
-              <div className="text-left">
-                <h3 className={`font-medium ${isDark ? 'text-white' : 'text-gray-900'}`}>
-                  {t('account.disconnect_wallet.title')}
-                </h3>
-                <p className={`text-sm ${isDark ? 'text-white/50' : 'text-gray-500'}`}>
-                  {address
-                    ? t('account.disconnect_wallet.description_with_address', { address: `${address.slice(0, 6)}…${address.slice(-4)}` })
-                    : t('account.disconnect_wallet.description')}
-                </p>
-              </div>
-              <svg className={`w-5 h-5 ${isDark ? 'text-white/40' : 'text-gray-400'}`} fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13.828 10.172a4 4 0 00-5.656 0l-4 4a4 4 0 105.656 5.656l1.102-1.101m-.758-4.899a4 4 0 005.656 0l4-4a4 4 0 00-5.656-5.656l-1.1 1.1" />
-                <line x1="3" y1="3" x2="21" y2="21" strokeLinecap="round" strokeWidth={2} />
-              </svg>
+              {t('account.connect_wallet')}
             </button>
           )}
 

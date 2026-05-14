@@ -5,9 +5,8 @@ import { formatAddress, formatUnitsCompact, convertToText } from "~/utils";
 import UsernameSvg from "./UsernameSvg";
 import { Link } from '~/utils/localizedRouter'
 import { TokenData } from "~/types";
-import { useAccount, useDisconnect } from "wagmi";
+import { useAccount } from "wagmi";
 import { useConnectModal } from '@rainbow-me/rainbowkit';
-import { HiOutlineSwitchHorizontal } from 'react-icons/hi';
 import { Address } from "viem";
 import { useTheme } from "~/hooks/useTheme";
 import { apiFetch } from "~/api/client";
@@ -27,22 +26,7 @@ import { useT } from '~/i18n/I18nProvider';
 const ProfileChooser: React.FC<{ compact?: boolean }> = ({ compact = false }) => {
   const t = useT()
   const { isConnected, address } = useAccount();
-  const { disconnect } = useDisconnect();
   const { openConnectModal } = useConnectModal();
-
-  // Disconnect the current wallet and immediately surface RainbowKit's
-  // connect modal so the user can pick a different one. We also wipe
-  // wagmi's `recentConnectorId` from localStorage as belt-and-suspenders
-  // against auto-reconnect to the just-disconnected wallet on the next
-  // page load (wagmi reads this key during hydration).
-  const handleSwitchWallet = () => {
-    try { localStorage.removeItem('wagmi.recentConnectorId') } catch { /* ignore */ }
-    try { disconnect() } catch { /* ignore */ }
-    setDropdownOpen(false)
-    // Defer so wagmi has a tick to flush its disconnect state before
-    // RainbowKit decides which connectors to render.
-    setTimeout(() => { openConnectModal?.() }, 0)
-  }
   const hasActiveSession = useHasActiveSession();
   const activeToken = useActiveToken()
   const pendingSpend = usePendingSpendStore(s => s.pendingSpend)
@@ -734,27 +718,6 @@ const ProfileChooser: React.FC<{ compact?: boolean }> = ({ compact = false }) =>
               </ul>
             </li>
           ))}
-
-          {/* Switch wallet: disconnects the current wallet and opens
-              RainbowKit's connect modal so the user can pick another. */}
-          <li
-            className={`border-t ${
-              isDark ? 'bg-black border-white/20' : 'bg-white border-gray-200'
-            }`}
-          >
-            <button
-              type="button"
-              onClick={handleSwitchWallet}
-              className={`cursor-pointer flex items-center justify-center gap-2 w-full px-4 py-2 text-sm font-medium transition-all duration-200 ${
-                isDark
-                  ? 'hover:bg-gray-800 text-white'
-                  : 'hover:bg-gray-100 text-black'
-              }`}
-            >
-              <HiOutlineSwitchHorizontal className={`w-4 h-4 flex-shrink-0 ${isDark ? 'text-white/70' : 'text-black/60'}`} />
-              <span>{t('profile_chooser.switch_wallet')}</span>
-            </button>
-          </li>
 
           {/* Sticky footer: Create New (left) + Manage Profiles (right),
               equal-width 2-column grid. Both always visible. */}
