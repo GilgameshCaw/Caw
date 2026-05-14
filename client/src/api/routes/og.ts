@@ -763,6 +763,10 @@ const CARD_NARROW_W = Math.round(W * 0.68)      // 816 — text column when imag
 // already a visible left anchor — needs less breathing room than the
 // open right edge.
 const CARD_TEXT_LEFT_PAD = 21
+// Right-edge gap for the corner image. Tighter than CARD_MARGIN (the
+// text column's right-edge gutter) so the image sits closer to the
+// card edge — visually balances the strip-anchored left side.
+const CARD_IMAGE_RIGHT_PAD = 23
 const CARD_TEXT_X   = CARD_STRIP_W + CARD_TEXT_LEFT_PAD
 // Wide content lines render below the corner image, so they get the
 // full available width — everything between the text column's left
@@ -1252,7 +1256,13 @@ function planCawCard(opts: {
                 width: CARD_STRIP_W,
                 height,
                 backgroundColor: CAW_GOLD,
-                boxShadow: '10px 0 22px rgba(0,0,0,0.75)',
+                // Subtle drop shadow cast to the right. Spread param
+                // (the 4th value) is what makes the shadow actually
+                // visible in satori for absolute-positioned elements;
+                // pure offset+blur was being culled.
+                boxShadow: '5px 0 10px 2px rgba(0,0,0,0.85)',
+                borderTopLeftRadius: 7,
+                borderBottomLeftRadius: 7,
               },
             },
           },
@@ -1266,7 +1276,7 @@ function planCawCard(opts: {
                 display: 'flex',
                 position: 'absolute',
                 top: CARD_MARGIN_Y,
-                right: CARD_MARGIN,
+                right: CARD_IMAGE_RIGHT_PAD,
                 width: imgSize,
                 height: imgSize,
                 borderRadius: 12,
@@ -1643,7 +1653,13 @@ function planImageOnlyCard(opts: {
                 width: CARD_STRIP_W,
                 height,
                 backgroundColor: CAW_GOLD,
-                boxShadow: '10px 0 22px rgba(0,0,0,0.75)',
+                // Subtle drop shadow cast to the right. Spread param
+                // (the 4th value) is what makes the shadow actually
+                // visible in satori for absolute-positioned elements;
+                // pure offset+blur was being culled.
+                boxShadow: '5px 0 10px 2px rgba(0,0,0,0.85)',
+                borderTopLeftRadius: 7,
+                borderBottomLeftRadius: 7,
               },
             },
           },
@@ -2233,6 +2249,10 @@ function wrapTreeInOgCanvas(tree: any, innerHeight: number, _backgroundColor: st
               width: W,
               height: clampedInnerHeight,
               overflow: 'hidden',
+              // Soft rounded corners on all four corners. ~18px (~3%
+              // of 630 short edge) reads as a subtle card-edge curve
+              // rather than a chunky pill.
+              borderRadius: 18,
               // Pronounced top + bottom shadow only — full-width inner
               // card has no left/right band for a side shadow to land
               // on. Two stacked shadows (one pointing up, one down)
@@ -2622,8 +2642,8 @@ router.get('/image/caw/:id', async (req, res) => {
   // renders don't collide in cache.
   const variant = isTwitterUA ? 'tw' : 'std'
   const cacheKey = caw.status === 'PENDING'
-    ? `caw-v19-${variant}-${caw.id}-${liveHash}-pending`
-    : `caw-v19-${variant}-${caw.id}-${liveHash}`
+    ? `caw-v23-${variant}-${caw.id}-${liveHash}-pending`
+    : `caw-v23-${variant}-${caw.id}-${liveHash}`
   return serveCachedOrRender(res, cacheKey, async () => {
     // Strip media URLs and poll markers out of the visible text — the
     // corner image and the rendered poll bars already represent them,
