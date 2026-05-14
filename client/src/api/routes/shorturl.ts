@@ -97,6 +97,26 @@ function isPrivateUrl(url: string): boolean {
   }
 }
 
+// HTML entity decoder. The og:title / og:description regexes below capture
+// content from inside HTML attributes, where values are entity-encoded
+// (`&amp;` for `&`, `&#39;` for `'`, etc.). Storing the encoded form caused
+// shared links to display "CAW — Decentralized &amp; Censorship Resistant"
+// in our own LinkPreview because React renders strings verbatim and never
+// decodes. Cover the named entities upstream commonly emits + numeric
+// (`&#39;` / `&#x27;`) forms.
+function decodeHtmlEntities(s: string | undefined): string | undefined {
+  if (!s) return s
+  return s
+    .replace(/&#x([0-9a-fA-F]+);/g, (_, h) => String.fromCodePoint(parseInt(h, 16)))
+    .replace(/&#(\d+);/g, (_, d) => String.fromCodePoint(parseInt(d, 10)))
+    .replace(/&quot;/g, '"')
+    .replace(/&apos;/g, "'")
+    .replace(/&lt;/g, '<')
+    .replace(/&gt;/g, '>')
+    .replace(/&nbsp;/g, ' ')
+    .replace(/&amp;/g, '&') // last — otherwise &amp;lt; double-decodes
+}
+
 // Extract Open Graph metadata from a URL
 async function extractMetadata(url: string): Promise<{
   title?: string
@@ -149,10 +169,10 @@ async function extractMetadata(url: string): Promise<{
     const siteName = ogSiteName || new URL(url).hostname.replace(/^www\./, '')
 
     return {
-      title: title?.trim().substring(0, 255),
-      description: description?.trim(),
-      imageUrl: ogImage?.trim(),
-      siteName: siteName?.trim().substring(0, 100)
+      title: decodeHtmlEntities(title?.trim().substring(0, 255)),
+      description: decodeHtmlEntities(description?.trim()),
+      imageUrl: decodeHtmlEntities(ogImage?.trim()),
+      siteName: decodeHtmlEntities(siteName?.trim().substring(0, 100))
     }
   } catch (error) {
     console.error('Error extracting metadata from', url, error)

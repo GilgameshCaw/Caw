@@ -32,6 +32,26 @@ const metadataCache = new Map<string, ShortUrlMetadata | null>()
 const cacheKey = (host: string | undefined, code: string) =>
   host ? `${host}|${code}` : code
 
+// Defensive entity decode. The shorturl extractor stores raw og:title /
+// og:description from upstream HTML attributes, which means values can
+// arrive entity-encoded (`&amp;`, `&#39;`, etc.). The server-side fix
+// decodes at write time going forward, but existing rows already contain
+// encoded strings. Decoding at read keeps them readable without a DB
+// migration. Identical helper to the one in api/routes/shorturl.ts —
+// kept inline because it's 8 lines and only used here.
+function decodeEntities(s: string | undefined): string {
+  if (!s) return ''
+  return s
+    .replace(/&#x([0-9a-fA-F]+);/g, (_, h) => String.fromCodePoint(parseInt(h, 16)))
+    .replace(/&#(\d+);/g, (_, d) => String.fromCodePoint(parseInt(d, 10)))
+    .replace(/&quot;/g, '"')
+    .replace(/&apos;/g, "'")
+    .replace(/&lt;/g, '<')
+    .replace(/&gt;/g, '>')
+    .replace(/&nbsp;/g, ' ')
+    .replace(/&amp;/g, '&')
+}
+
 const LinkPreview: React.FC<LinkPreviewProps> = ({ code, originHost, className = '' }) => {
   const { isDark } = useTheme()
   const ck = cacheKey(originHost, code)
@@ -132,7 +152,7 @@ const LinkPreview: React.FC<LinkPreviewProps> = ({ code, originHost, className =
           <h4 className={`font-medium line-clamp-2 ${
             isDark ? 'text-white' : 'text-gray-900'
           }`}>
-            {metadata.title}
+            {decodeEntities(metadata.title)}
           </h4>
         )}
 
@@ -141,7 +161,7 @@ const LinkPreview: React.FC<LinkPreviewProps> = ({ code, originHost, className =
           <p className={`text-sm line-clamp-2 mt-1 ${
             isDark ? 'text-gray-400' : 'text-gray-600'
           }`}>
-            {metadata.description}
+            {decodeEntities(metadata.description)}
           </p>
         )}
       </div>

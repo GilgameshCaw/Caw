@@ -341,7 +341,7 @@ function renderNginxConf({ domain, apiPort, frontendDist, uploadsDir, tls, nginx
     # HTML shell with og:* / twitter:* meta tags injected. Real users
     # never touch the API for the HTML shell — zero perf cost.
     location / {
-        if (\$http_user_agent ~* "(twitterbot|facebookexternalhit|slackbot|discordbot|telegrambot|whatsapp|linkedinbot|skypeuripreview|googlebot|bingbot|applebot|redditbot|preview|embedly|nuzzel|pinterest|rogerbot|showyoubot|outbrain|w3c_validator)") {
+        if (\$http_user_agent ~* "(twitterbot|facebookexternalhit|slackbot|discordbot|telegrambot|whatsapp|linkedinbot|skypeuripreview|googlebot|bingbot|applebot|redditbot|preview|embedly|nuzzel|pinterest|rogerbot|showyoubot|outbrain|w3c_validator|cawbot)") {
             rewrite ^ /__prerender\$request_uri last;
         }
         try_files \$uri \$uri/ /index.html;
