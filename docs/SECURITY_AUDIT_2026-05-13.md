@@ -37,7 +37,7 @@ Smoothness / perf:
 Schema (prisma/schema.prisma):
 - Added: `Caw(userId, status, createdAt)`, `Follow(followerId, action, status)`, `Tip(recipientId, pending, createdAt)`, `ConversationParticipant(userId, leftAt, status)`.
 - Dropped: standalone `Notification(createdAt)` and `Conversation(lastMessageAt)`.
-- Schema-only; needs `npx prisma migrate dev --create-only --name add_feed_indexes` then review the SQL before applying.
+- Migration SQL written to `client/prisma/migrations/20260514020000_add_feed_indexes/migration.sql` on `contract-support-v2` (CONCURRENTLY + IF NOT EXISTS). Apply via `prisma db execute` per `project_prisma_migrations` — not yet applied to any database.
 
 Contract:
 - `CawProfileL2.registerSession`, `registerSessionPersonal` — ERC-1271 fallback added; bytes-form signature parameter; 7 new tests; full self-audit in `native/docs/AUDIT_NOTES.md`.
