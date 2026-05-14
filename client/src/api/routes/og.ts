@@ -1256,6 +1256,10 @@ function planCawCard(opts: {
                 width: CARD_STRIP_W,
                 height,
                 backgroundColor: CAW_GOLD,
+                // Spread param (4th value) is what makes satori
+                // actually paint the shadow on absolute-positioned
+                // children — pure offset+blur was being culled.
+                boxShadow: '5px 0 10px 2px rgba(0,0,0,0.85)',
                 borderTopLeftRadius: 10,
                 borderBottomLeftRadius: 10,
               },
@@ -1653,6 +1657,10 @@ function planImageOnlyCard(opts: {
                 width: CARD_STRIP_W,
                 height,
                 backgroundColor: CAW_GOLD,
+                // Spread param (4th value) is what makes satori
+                // actually paint the shadow on absolute-positioned
+                // children — pure offset+blur was being culled.
+                boxShadow: '5px 0 10px 2px rgba(0,0,0,0.85)',
                 borderTopLeftRadius: 10,
                 borderBottomLeftRadius: 10,
               },
@@ -2640,8 +2648,8 @@ router.get('/image/caw/:id', async (req, res) => {
   // renders don't collide in cache.
   const variant = isTwitterUA ? 'tw' : 'std'
   const cacheKey = caw.status === 'PENDING'
-    ? `caw-v24-${variant}-${caw.id}-${liveHash}-pending`
-    : `caw-v24-${variant}-${caw.id}-${liveHash}`
+    ? `caw-v25-${variant}-${caw.id}-${liveHash}-pending`
+    : `caw-v25-${variant}-${caw.id}-${liveHash}`
   return serveCachedOrRender(res, cacheKey, async () => {
     // Strip media URLs and poll markers out of the visible text — the
     // corner image and the rendered poll bars already represent them,
