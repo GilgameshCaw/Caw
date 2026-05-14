@@ -762,7 +762,7 @@ const CARD_NARROW_W = Math.round(W * 0.68)      // 816 — text column when imag
 // Less than CARD_MARGIN (the right-edge gutter) because the strip is
 // already a visible left anchor — needs less breathing room than the
 // open right edge.
-const CARD_TEXT_LEFT_PAD = 18
+const CARD_TEXT_LEFT_PAD = 21
 const CARD_TEXT_X   = CARD_STRIP_W + CARD_TEXT_LEFT_PAD
 // Wide content lines render below the corner image, so they get the
 // full available width — everything between the text column's left
@@ -1252,7 +1252,7 @@ function planCawCard(opts: {
                 width: CARD_STRIP_W,
                 height,
                 backgroundColor: CAW_GOLD,
-                boxShadow: '4px 0 12px rgba(0,0,0,0.45)',
+                boxShadow: '10px 0 22px rgba(0,0,0,0.75)',
               },
             },
           },
@@ -1272,7 +1272,7 @@ function planCawCard(opts: {
                 borderRadius: 12,
                 overflow: 'hidden',
                 backgroundColor: '#1a1a1a',
-                boxShadow: '0 6px 14px rgba(0,0,0,0.45)',
+                boxShadow: '0 8px 18px rgba(0,0,0,0.6)',
               },
               children: [
                 {
@@ -1638,7 +1638,7 @@ function planImageOnlyCard(opts: {
                 width: CARD_STRIP_W,
                 height,
                 backgroundColor: CAW_GOLD,
-                boxShadow: '4px 0 12px rgba(0,0,0,0.45)',
+                boxShadow: '10px 0 22px rgba(0,0,0,0.75)',
               },
             },
           },
@@ -1745,7 +1745,7 @@ function planImageOnlyCard(opts: {
                       borderRadius: 12,
                       overflow: 'hidden',
                       backgroundColor: '#1a1a1a',
-                      boxShadow: '0 6px 14px rgba(0,0,0,0.45)',
+                      boxShadow: '0 8px 18px rgba(0,0,0,0.6)',
                     },
                     children: [
                       {
@@ -2615,8 +2615,8 @@ router.get('/image/caw/:id', async (req, res) => {
   // renders don't collide in cache.
   const variant = isTwitterUA ? 'tw' : 'std'
   const cacheKey = caw.status === 'PENDING'
-    ? `caw-v17-${variant}-${caw.id}-${liveHash}-pending`
-    : `caw-v17-${variant}-${caw.id}-${liveHash}`
+    ? `caw-v18-${variant}-${caw.id}-${liveHash}-pending`
+    : `caw-v18-${variant}-${caw.id}-${liveHash}`
   return serveCachedOrRender(res, cacheKey, async () => {
     // Strip media URLs and poll markers out of the visible text — the
     // corner image and the rendered poll bars already represent them,
