@@ -6,6 +6,17 @@ import { publicUrl } from './publicUrl'
 import { cawPath, parseCawIdSlug } from './cawUrl'
 import { ALL_LOCALES, parseLocaleFromPath, withLocalePrefix } from './localePrefix'
 
+// Protocol-level canonical origin. Every CAW mirror prerenders the same
+// public content (caws, profiles, hashtags) and they're all reachable on
+// their own host. Without a stable cross-mirror canonical, search engines
+// see each mirror as a separate duplicate copy and split ranking signal.
+// Pinning canonical + hreflang alternates to a single origin collapses
+// all mirrors onto one indexed entry. og:url / og:image still point at
+// the serving mirror so social previews reflect where the link came from.
+function canonicalOrigin(): string {
+  return 'https://caw.social'
+}
+
 // nginx routes only crawler User-Agents through to the API; this handler
 // reads the URL, fetches the per-route data, and returns the SPA's
 // index.html with og:* / twitter:* meta tags swapped in for the static
@@ -115,7 +126,10 @@ function buildMetaTags(m: Meta): string {
   // either misses the locale variants or treats them as duplicates and
   // splits ranking.
   if (m.altPath) {
-    const base = publicUrl()
+    // hreflang alternates must share an origin with the canonical link or
+    // Google flags the page in Search Console as having inconsistent
+    // signals. Pin them to canonicalOrigin() to match the canonical above.
+    const base = canonicalOrigin()
     for (const loc of ALL_LOCALES) {
       const href = `${base}${withLocalePrefix(m.altPath, loc === 'en' ? null : loc)}`
       const hreflang = loc === 'en' ? 'en' : loc
@@ -194,7 +208,7 @@ async function profileMeta(username: string, locale: string | null): Promise<Met
     title: BRAND_TITLE,
     description: '',
     url: `${publicUrl()}${canonicalPath}`,
-    canonical: `${publicUrl()}${canonicalPath}`,
+    canonical: `${canonicalOrigin()}${canonicalPath}`,
     image: localizedOgImage(`/api/og/image/profile/${user.username}`, locale),
     ogType: 'website',
     altPath,
@@ -210,7 +224,7 @@ async function hashtagMeta(tag: string, locale: string | null): Promise<Meta | n
     title: BRAND_TITLE,
     description: '',
     url: `${publicUrl()}${canonicalPath}`,
-    canonical: `${publicUrl()}${canonicalPath}`,
+    canonical: `${canonicalOrigin()}${canonicalPath}`,
     image: localizedOgImage(`/api/og/image/hashtag/${encodeURIComponent(name)}`, locale),
     ogType: 'website',
     altPath,
@@ -247,21 +261,31 @@ async function cawMeta(id: number, requestedPath: string, locale: string | null)
     // og:url renders the canonical so social previews always link to the
     // canonical form even when shared from a stale URL.
     url: `${publicUrl()}${requestedPath}`,
-    canonical: `${publicUrl()}${canonicalPath}`,
+    canonical: `${canonicalOrigin()}${canonicalPath}`,
     image: `${publicUrl()}/api/og/image/caw/${caw.id}`,
     ogType: 'article',
     altPath: bareCanonical,
   }
 }
 
-function defaultMeta(reqPath: string): Meta {
-  return {
+function defaultMeta(reqPath: string, restPath: string, locale: string | null): Meta {
+  const meta: Meta = {
     title: BRAND_TITLE,
     description: '',
     url: `${publicUrl()}${reqPath}`,
     image: `${publicUrl()}/api/og/image/default`,
     ogType: 'website',
   }
+  // Home feed is the only unmatched route we cross-mirror canonicalize.
+  // /address/<addr> and other catch-alls intentionally fall through with
+  // no canonical (they're per-mirror or unindexable). restPath strips
+  // the locale prefix, so "/", "/es", "/ja/" all collapse to "/" here.
+  if (restPath === '/' || restPath === '') {
+    const canonicalPath = withLocalePrefix('/', locale)
+    meta.canonical = `${canonicalOrigin()}${canonicalPath}`
+    meta.altPath = '/'
+  }
+  return meta
 }
 
 // Path → static-card slug. Keep in sync with STATIC_PAGE_TITLES in
@@ -331,7 +355,7 @@ function staticPageMeta(restPath: string, reqPath: string, locale: string | null
     title: BRAND_TITLE,
     description: '',
     url: `${publicUrl()}${reqPath}`,
-    canonical: `${publicUrl()}${canonicalPath}`,
+    canonical: `${canonicalOrigin()}${canonicalPath}`,
     image: `${publicUrl()}/api/og/image/static/${slug}`,
     ogType: 'website',
     altPath,
@@ -389,7 +413,7 @@ export async function spaPrerender(req: Request, res: Response): Promise<void> {
     if (!meta) meta = staticPageMeta(restPath, reqPath, locale)
 
     // /address/:address and everything else falls back to the default card.
-    if (!meta) meta = defaultMeta(reqPath)
+    if (!meta) meta = defaultMeta(reqPath, restPath, locale)
 
     // Probe the image's actual rendered dimensions so og:image:width /
     // og:image:height match reality. Strict scrapers (Messenger) treat
