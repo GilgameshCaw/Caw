@@ -75,6 +75,7 @@ type ProfileData = {
   mediaCount: number
   isFollowing?: boolean
   followPending?: boolean
+  followPendingAction?: 'FOLLOW' | 'UNFOLLOW' | null
   hasTipped?: boolean
   tipPending?: boolean
   xHandle?: string | null
@@ -193,6 +194,7 @@ export const Profile: React.FC = () => {
     targetUserId: profileData?.tokenId || 0,
     initialIsFollowing: profileData?.isFollowing || false,
     initialIsPending: profileData?.followPending || false,
+    initialPendingAction: profileData?.followPendingAction ?? null,
     onFollowStateChange: (newState) => {
       setProfileData(prev => prev ? { ...prev, isFollowing: newState } : null)
     }

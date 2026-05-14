@@ -8,6 +8,8 @@ interface FollowButtonProps {
   targetUserId: number
   initialIsFollowing: boolean
   initialIsPending?: boolean
+  /** Direction of the pending row; pass through from the server's `followPendingAction` */
+  initialPendingAction?: 'FOLLOW' | 'UNFOLLOW' | null
   onFollowStateChange?: (isFollowing: boolean) => void
   /** Fires when a follow action is fully confirmed (pending → confirmed following) */
   onFollowConfirmed?: () => void
@@ -20,6 +22,7 @@ export const FollowButton: React.FC<FollowButtonProps> = ({
   targetUserId,
   initialIsFollowing,
   initialIsPending = false,
+  initialPendingAction = null,
   onFollowStateChange,
   onFollowConfirmed,
   className = '',
@@ -43,6 +46,7 @@ export const FollowButton: React.FC<FollowButtonProps> = ({
     targetUserId,
     initialIsFollowing,
     initialIsPending,
+    initialPendingAction,
     onFollowStateChange
   })
 

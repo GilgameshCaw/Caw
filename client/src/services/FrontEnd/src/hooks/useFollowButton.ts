@@ -12,6 +12,15 @@ export interface UseFollowButtonParams {
   targetUserId: number
   initialIsFollowing: boolean
   initialIsPending?: boolean
+  /**
+   * Direction of the pending row when initialIsPending=true. Without it the
+   * hook can't distinguish "pending FOLLOW (anticipating true)" from
+   * "pending UNFOLLOW (anticipating false)" — both arrive from the server
+   * with isFollowing:false, isPending:true, since isFollowing only flips
+   * to true on SUCCESS. Optional so existing callers keep their (slightly
+   * wrong for unfollow) behavior until they pass this through.
+   */
+  initialPendingAction?: 'FOLLOW' | 'UNFOLLOW' | null
   onFollowStateChange?: (isFollowing: boolean) => void
 }
 
@@ -35,6 +44,7 @@ export function useFollowButton({
   targetUserId,
   initialIsFollowing,
   initialIsPending = false,
+  initialPendingAction = null,
   onFollowStateChange
 }: UseFollowButtonParams): UseFollowButtonReturn {
   const t = useT()
@@ -43,13 +53,24 @@ export function useFollowButton({
   const activeTokenId = useTokenDataStore(s => s.activeTokenId)
   const { address, isConnected } = useAccount()
   const hasActiveSession = useHasActiveSession()
-  // When mounting into a pending server-state, `initialIsFollowing` reflects
-  // the *previous* (last server-confirmed) state — the user is mid-transition
-  // to its opposite. Display `isFollowing` as the anticipated end state from
-  // the start so it agrees with the click path (which also flips this flag
-  // optimistically before the on-chain confirmation lands).
+  // When mounting into a pending server-state, `initialIsFollowing` from the
+  // server reflects only successful FOLLOW rows. A pending UNFOLLOW reports
+  // `isFollowing:false` even though the on-chain truth is still "following".
+  // If we know the pending direction, use it directly as the anticipated end
+  // state. Without that hint, fall back to the legacy "flip on pending" rule
+  // (correct for pending FOLLOW, wrong for pending UNFOLLOW).
+  const anticipated = (
+    pending: boolean,
+    confirmed: boolean,
+    pendingAction: 'FOLLOW' | 'UNFOLLOW' | null
+  ) => {
+    if (!pending) return confirmed
+    if (pendingAction === 'FOLLOW') return true
+    if (pendingAction === 'UNFOLLOW') return false
+    return !confirmed
+  }
   const [isFollowing, setIsFollowing] = useState(
-    initialIsPending ? !initialIsFollowing : initialIsFollowing
+    anticipated(initialIsPending, initialIsFollowing, initialPendingAction)
   )
   const [isPending, setPending] = useState(initialIsPending)
   const [isSigning, setIsSigning] = useState(false)
@@ -84,10 +105,10 @@ export function useFollowButton({
   // anticipated state, not the previous server-confirmed state.
   useEffect(() => {
     if (!hasUserAction) {
-      setIsFollowing(initialIsPending ? !initialIsFollowing : initialIsFollowing)
+      setIsFollowing(anticipated(initialIsPending, initialIsFollowing, initialPendingAction))
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [initialIsFollowing, initialIsPending])
+  }, [initialIsFollowing, initialIsPending, initialPendingAction])
 
   useEffect(() => {
     if (!hasUserAction) {

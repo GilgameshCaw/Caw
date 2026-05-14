@@ -247,6 +247,7 @@ router.get('/top-followed', async (req, res) => {
       const f = followByTarget.get(u.tokenId)
       const isFollowing = !!(f && f.action === 'FOLLOW' && f.status === 'SUCCESS')
       const followPending = !!(f && f.status === 'PENDING')
+      const followPendingAction = followPending ? (f!.action as 'FOLLOW' | 'UNFOLLOW') : null
       return {
         tokenId: u.tokenId,
         username: u.username,
@@ -258,6 +259,7 @@ router.get('/top-followed', async (req, res) => {
         likeCount: u.likesReceivedCount, // API field name = likes received (popularity)
         isFollowing,
         followPending,
+        followPendingAction,
       }
     })
 
@@ -308,13 +310,15 @@ router.get('/follow-status', async (req, res) => {
     if (!follow) {
       return res.json({
         isFollowing: false,
-        isPending: false
+        isPending: false,
+        pendingAction: null
       })
     }
 
     return res.json({
       isFollowing: follow.action === 'FOLLOW' && follow.status === 'SUCCESS',
-      isPending: follow.status === 'PENDING'
+      isPending: follow.status === 'PENDING',
+      pendingAction: follow.status === 'PENDING' ? follow.action : null
     })
   } catch (err: any) {
     console.error('GET /api/users/follow-status error', err)
@@ -977,6 +981,7 @@ router.get('/:username', async (req, res) => {
     // Check if current user is following this user
     let isFollowing = false
     let followPending = false
+    let followPendingAction: 'FOLLOW' | 'UNFOLLOW' | null = null
     if (currentUserId && currentUserId !== user.tokenId) {
       const follow = await prisma.follow.findUnique({
         where: {
@@ -996,6 +1001,7 @@ router.get('/:username', async (req, res) => {
         isFollowing = follow.action === 'FOLLOW' && follow.status === 'SUCCESS'
         // Set pending if status is PENDING
         followPending = follow.status === 'PENDING'
+        if (followPending) followPendingAction = follow.action as 'FOLLOW' | 'UNFOLLOW'
       }
     }
 
@@ -1113,6 +1119,7 @@ router.get('/:username', async (req, res) => {
       mediaCount,
       isFollowing,
       followPending,
+      followPendingAction,
       hasTipped,
       tipPending,
       isBlocked,
@@ -1200,17 +1207,20 @@ router.get('/:username/followers', async (req, res) => {
     const items = followersList.map((f) => {
       let isFollowing = false
       let followPending = false
+      let followPendingAction: 'FOLLOW' | 'UNFOLLOW' | null = null
       if (currentUserId && currentUserId !== f.follower.tokenId) {
         const follow = followingMap.get(f.follower.tokenId)
         if (follow) {
           isFollowing = follow.action === 'FOLLOW' && follow.status === 'SUCCESS'
           followPending = follow.status === 'PENDING'
+          if (followPending) followPendingAction = follow.action as 'FOLLOW' | 'UNFOLLOW'
         }
       }
       return {
         ...f.follower,
         isFollowing,
-        followPending
+        followPending,
+        followPendingAction
       }
     })
 
@@ -1301,17 +1311,20 @@ router.get('/:username/following', async (req, res) => {
     const items = followingList.map((f) => {
       let isFollowing = false
       let followPending = false
+      let followPendingAction: 'FOLLOW' | 'UNFOLLOW' | null = null
       if (currentUserId && currentUserId !== f.following.tokenId) {
         const follow = followingMap.get(f.following.tokenId)
         if (follow) {
           isFollowing = follow.action === 'FOLLOW' && follow.status === 'SUCCESS'
           followPending = follow.status === 'PENDING'
+          if (followPending) followPendingAction = follow.action as 'FOLLOW' | 'UNFOLLOW'
         }
       }
       return {
         ...f.following,
         isFollowing,
-        followPending
+        followPending,
+        followPendingAction
       }
     })
 
