@@ -54,7 +54,10 @@ const HighlightedTextarea: React.FC<HighlightedTextareaProps> = ({
   const highlightRef = useRef<HTMLDivElement>(null)
   const [scrollTop, setScrollTop] = useState(0)
 
-  const textSizeClass = fontSize === 'xl' ? 'text-xl' : 'text-base'
+  // Mobile uses an explicit 16px to avoid iOS Safari's focus-zoom on
+  // inputs below 16px. Root font-size is 15px (index.css), so plain
+  // `text-base` resolves to 15px and trips the zoom. Desktop keeps 15px.
+  const textSizeClass = fontSize === 'xl' ? 'text-xl' : 'text-[16px] md:text-base'
   const lineHeight = fontSize === 'xl' ? '1.75rem' : '1.5rem'
   const paddingBottom = compact ? '10px' : '26px'
   const padding = `2px 8px ${paddingBottom} 8px`
