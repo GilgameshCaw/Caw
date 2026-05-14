@@ -25,8 +25,7 @@ const SessionKeySettings: React.FC = () => {
   const setEnabled = useSessionKeyStore(s => s.setEnabled)
   const sessions = useSessionKeyStore(s => s.sessions)
   const ownerAddr = activeToken?.owner?.toLowerCase()
-  const activeWallet = useSessionKeyStore(s => s.activeWallet)
-  const session = (ownerAddr && sessions[ownerAddr]) || (activeWallet && sessions[activeWallet]) || null
+  const session = (ownerAddr && sessions[ownerAddr]) || null
   const createSession = useCreateSession()
   // Keep a ref to the latest createSession so the action passed into
   // ensureWallet (which runs asynchronously after connect/chain-switch) always

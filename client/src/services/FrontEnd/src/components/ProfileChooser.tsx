@@ -345,7 +345,7 @@ const ProfileChooser: React.FC<{ compact?: boolean }> = ({ compact = false }) =>
     // useEffect will fetch avatar when activeToken.tokenId changes
   };
 
-  const walletMismatch = address?.toLowerCase() != activeToken?.address?.toLowerCase();
+  const walletMismatch = address?.toLowerCase() != activeToken?.owner?.toLowerCase();
   const notCurrentAddress = !hasActiveSession && walletMismatch;
   const quickSignWithWrongWallet = hasActiveSession && walletMismatch && isConnected;
 

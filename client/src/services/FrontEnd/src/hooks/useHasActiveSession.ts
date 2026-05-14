@@ -3,21 +3,20 @@ import { useActiveToken } from '~/store/tokenDataStore'
 
 /**
  * Returns true if Quick Sign is enabled and there's a valid (non-expired) session key
- * for the active token's owner. This allows Quick Sign to work even when the connected
- * wallet differs from the token owner — the session key was delegated by the owner.
+ * for the active token's owner. The session key was delegated by the owner, so the
+ * lookup is owner-keyed — independent of whichever wallet is currently connected.
  */
 export function useHasActiveSession(): boolean {
   const enabled = useSessionKeyStore(s => s.enabled)
   const sessions = useSessionKeyStore(s => s.sessions)
-  const activeWallet = useSessionKeyStore(s => s.activeWallet)
   const activeToken = useActiveToken()
 
   if (!enabled) return false
 
-  // Check token owner's session first, then fall back to connected wallet's session
   const ownerAddress = activeToken?.owner?.toLowerCase()
-  const session = (ownerAddress && sessions[ownerAddress]) || (activeWallet && sessions[activeWallet]) || null
+  if (!ownerAddress) return false
 
+  const session = sessions[ownerAddress]
   if (!session) return false
 
   return session.expiry > Date.now() / 1000
