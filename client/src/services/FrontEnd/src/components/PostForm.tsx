@@ -1422,9 +1422,6 @@ const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess, placehol
       // Gate: sum of all recipient tip amounts (session's implicit validator fee
       // via perActionTipRate is already included in chunksCostWhole from the
       // batch-cost gate above, so we don't add it again here).
-      // TODO: verify that costPerChunkWhole above already accounts for the session
-      // perActionTipRate when a session is active. If not, the budget here may be
-      // slightly under-counted by perActionTipRate × chunks.length.
       const recipientTipSum = tipAttachments.reduce((s, tip) => s + BigInt(tip.tipAmountCaw), 0n)
       const CAW_COST_PER_POST_WHOLE = 5000n
       const { getValidatorTip } = await import('~/api/actions')
@@ -1477,6 +1474,7 @@ const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess, placehol
     // nothing.
     const pollLandsInFirstChunk = !!submitPollMarker && (!isThreadMode || pollPosition === 'start')
     const pollLandsInLastChunk = !!submitPollMarker && isThreadMode && pollPosition === 'end'
+
     const firstParams: ActionParams = {
       actionType: quote ? 'recaw' : 'caw',
       senderId: effectiveTokenId,
@@ -1485,9 +1483,6 @@ const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess, placehol
       ...(parentCaw && {
         receiverId: parentCaw.user.tokenId,
         receiverCawonce: parentCaw.cawonce,
-      }),
-      ...(totalCawCost > 0 && {
-        amounts: [totalCawCost]
       }),
       // Embed tip recipients/amounts on the first CAW chunk only.
       // Contract shape: recipients[i] receives amounts[i] (recipient-only).
@@ -1520,9 +1515,6 @@ const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess, placehol
     let firstPendingPost: CawItem | undefined
 
     // Batch-submit a set of chunk params via .many(), adding pending posts for each.
-    // When the params array includes the trailing tipParams (actionType 'other'),
-    // it's the last element and doesn't get a pending post — the tip table is
-    // populated by the indexer when the on-chain action lands.
     const batchSubmitChunks = async (params: ActionParams[], chunkOffset: number) => {
       const responses = await (signAndSubmit as any).many(params, (p: any) => {
         setSigningProgress({ current: chunkOffset + p.signed, total: chunks.length })
@@ -1531,8 +1523,6 @@ const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess, placehol
         for (let i = 0; i < params.length; i++) {
           const r = responses[i]
           if (!r || r.error) continue
-          // Skip the tip param — it produces no pending feed row.
-          if (params[i].actionType === 'other') continue
           const chunkAbsIdx = chunkOffset + i
           const isFirstChunk = chunkAbsIdx === 0
           const isLastChunk = chunkAbsIdx === chunks.length - 1
