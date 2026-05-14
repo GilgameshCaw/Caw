@@ -64,17 +64,23 @@
 
 ## Recommended action
 
+**`npm audit fix` does not apply cleanly to this codebase** — the project uses yarn as the canonical package manager, and running `npm audit fix` touches `package-lock.json` while leaving `yarn.lock` out of sync (or, with both updated, the dep trees disagree). Tried on 2026-05-14; reverted because the lockfile divergence wasn't worth the marginal vulns it resolved.
+
+The right approach for this project:
+
 ```bash
 cd client
-npm audit fix     # apply non-breaking fixes
-npm audit         # re-check
-npm audit fix --force   # only if first pass leaves criticals + you've vetted breaking changes
+yarn audit            # report only (yarn audit doesn't have an auto-fix)
+yarn upgrade <pkg>    # targeted bumps for specific deps you've vetted
+yarn install          # resync
 ```
 
-After the non-force fix:
-1. Run the full backend test suite (Mocha) to confirm no behavior regressions.
-2. Spot-check the WebSocket relay (`DmService`) since socket.io-parser is in the bump list.
-3. Spot-check the OpenTelemetry boot (`instrument.ts`) — a major bump could change the SDK init shape.
+Plus the safe non-force fixes from `npm audit fix --package-lock-only` would update package-lock.json alone, but yarn ignores it — so it's a no-op for the actual install.
+
+For the criticals (protobufjs, currently transitive through @opentelemetry):
+1. Run `yarn why protobufjs` to confirm the chain.
+2. Targeted upgrade of the parent (likely opentelemetry) which carries a semver-major bump.
+3. Test the OpenTelemetry init path (`instrument.ts`) — its SDK API changes across majors.
 
 For the `--force` pass: probably worth deferring to a focused upgrade sprint rather than a quick fix. Several of the listed packages (effect, opentelemetry stack) have semver-major changes pending.
 
