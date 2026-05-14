@@ -101,6 +101,10 @@ ecosystem.config.js
 # Redis append-only-file persistence (recreated on each redis-server start)
 *.aof
 
+# Build/deploy timestamp marker, touched at repo root by the CLI / deploy
+# scripts to record when the last update ran. Empty file, machine-local.
+latest.timestamp
+
 # Per-install addresses.ts. Written by the CLI install step (resolves the
 # operator's chosen client to the right per-chain addresses from
 # client/src/abi/deployments.ts). The committed addresses.ts.example is the
