@@ -8,7 +8,7 @@ import { UserAvatar } from '~/components/Avatar'
 import { apiFetch, RemovedCawError } from '~/api/client'
 import type { CawItem } from '~/types'
 import { useTheme } from '~/hooks/useTheme'
-import { useTokenDataStore, useActiveToken } from '~/store/tokenDataStore'
+import { useTokenDataStore, useActiveToken, usePriceStore } from '~/store/tokenDataStore'
 import { HiArrowLeft, HiChevronRight } from 'react-icons/hi'
 import SignInModal from '~/components/modals/SignInModal'
 import { usePendingPostsStore } from '~/store/pendingPostsStore'
@@ -80,7 +80,7 @@ export const CawPage: React.FC = () => {
   const [likesLoading, setLikesLoading] = useState(false)
   const [likesError, setLikesError] = useState<string | null>(null)
   const [likesAttempted, setLikesAttempted] = useState(false)
-  const [activeInteractionsTab, setActiveInteractionsTab] = useState<'likes' | 'comments' | 'reposts' | 'quotes' | 'tips'>('likes')
+  const [activeInteractionsTab, setActiveInteractionsTab] = useState<'likes' | 'comments' | 'reposts' | 'tips'>('likes')
   // `loading` covers the post itself; `commentsLoading` covers replies/
   // recaws/tips. When we have a seed, we skip the post-loading state but
   // still show a small loader below the post for the comments fetch.
@@ -98,6 +98,10 @@ export const CawPage: React.FC = () => {
   const activeTokenId = useTokenDataStore(s => s.activeTokenId)
   const activeToken = useActiveToken()
   const isAuthenticated = !!activeToken?.username
+  // CAW→USD price for the interactions earnings header. Same key as
+  // CawActivity (~/store/tokenDataStore.usePriceStore). Cards fall back
+  // to CAW-only display when the price isn't loaded yet.
+  const cawUsdPrice = usePriceStore(s => s.priceMap['a-hunters-dream'] ?? 0)
   const allPendingPosts = usePendingPostsStore(s => s.pendingPosts)
   // Pending posts targeted at this caw, excluding quotes — quotes are
   // standalone posts, not replies, so they don't belong in the reply
@@ -450,7 +454,12 @@ export const CawPage: React.FC = () => {
   const canShowInteractions = isAuthenticated
   const showingInteractions = wantsInteractions && canShowInteractions
 
-  const tabLabels: { key: 'likes' | 'comments' | 'reposts' | 'quotes' | 'tips'; label: string }[] = [
+  // Reposts tab covers bare recaws + quotes — same on-chain action,
+  // same author credit; the only difference is whether the quoter added
+  // text. Surfacing them as one list keeps the tab strip shorter and
+  // matches how the count cards group them.
+  const repostsTotal = recaws.length + quoteIndicators.length
+  const tabLabels: { key: 'likes' | 'comments' | 'reposts' | 'tips'; label: string }[] = [
     {
       key: 'likes',
       label: t('caw_page.tab.likes_count', { count: likesLoaded ? likes.length : (caw.likeCount ?? 0) }),
@@ -463,15 +472,9 @@ export const CawPage: React.FC = () => {
     },
     {
       key: 'reposts',
-      label: recaws.length
-        ? t('caw_page.tab.recaws_count', { count: recaws.length })
+      label: repostsTotal
+        ? t('caw_page.tab.recaws_count', { count: repostsTotal })
         : t('caw_page.tab.recaws'),
-    },
-    {
-      key: 'quotes',
-      label: quoteIndicators.length
-        ? t('caw_page.tab.quotes_count', { count: quoteIndicators.length })
-        : t('caw_page.tab.quotes'),
     },
     {
       key: 'tips',
@@ -533,9 +536,107 @@ export const CawPage: React.FC = () => {
         {/* Main content area: Post view OR Interactions view */}
         {showingInteractions ? (
           <div>
+            {/* Earnings header. Per-action receive credits from
+                solidity/contracts/CawActions._applyAction (mirrored in
+                client/src/utils/cawActionCosts.ts): LIKE→1600,
+                RECAW→2000 (covers bare recaws and quotes — both pay the
+                same to the author). Tips are summed by the API
+                (caws.ts → tipAgg). Total is the author's gross direct
+                credit from this caw's social interactions; staking
+                rewards aren't attributable to a single post and live on
+                /staking/activity. */}
+            {(() => {
+              const likeCount = caw.likeCount ?? 0
+              const recawCount = caw.recawCount ?? 0
+              const tipsCaw = caw.totalTipAmount ?? 0
+              const likesCaw = likeCount * 1600
+              const recawsCaw = recawCount * 2000
+              const totalCaw = likesCaw + recawsCaw + tipsCaw
+              if (totalCaw === 0) return null
+
+              const fmtCawNum = (n: number) => {
+                const abs = Math.abs(n)
+                if (abs === 0) return '0'
+                if (abs < 1) return n.toFixed(2)
+                if (abs < 1_000) return n.toFixed(0)
+                if (abs < 1_000_000) return `${(n / 1_000).toFixed(1)}K`
+                if (abs < 1_000_000_000) return `${(n / 1_000_000).toFixed(2)}M`
+                return `${(n / 1_000_000_000).toFixed(2)}B`
+              }
+              const fmtUsd = (cawAmount: number): string | null => {
+                if (!cawUsdPrice || cawUsdPrice <= 0) return null
+                const usd = cawAmount * cawUsdPrice
+                const abs = Math.abs(usd)
+                if (abs === 0) return '$0.00'
+                if (abs < 0.01) return `$${usd.toFixed(4)}`
+                if (abs < 1_000) return `$${usd.toFixed(2)}`
+                if (abs < 1_000_000) return `$${(usd / 1_000).toFixed(1)}K`
+                if (abs < 1_000_000_000) return `$${(usd / 1_000_000).toFixed(2)}M`
+                return `$${(usd / 1_000_000_000).toFixed(2)}B`
+              }
+
+              const cardClass = `rounded-2xl p-4 text-center ${isDark ? 'bg-white/5 border border-white/10' : 'bg-white border border-gray-200'}`
+              const labelClass = `text-[10px] uppercase tracking-wide font-semibold ${isDark ? 'text-white/50' : 'text-gray-500'}`
+              const subClass = `text-[10px] mt-0.5 tabular-nums ${isDark ? 'text-white/40' : 'text-gray-400'}`
+
+              const tipCount = caw.tipCount ?? 0
+              const cards: { label: string; caw: number; color: string }[] = [
+                { label: `${likeCount} ${t('caw_page.stats.likes')}`,   caw: likesCaw,  color: '#d96d72' },
+                { label: `${recawCount} ${t('caw_page.stats.recaws')}`, caw: recawsCaw, color: '#a373c8' },
+                { label: `${tipCount} ${t('caw_page.stats.tips')}`,     caw: tipsCaw,   color: '#7cb958' },
+              ]
+              return (
+                <>
+                  <div className={cardClass + ' mb-3'}>
+                    <div className={labelClass} title={t('caw_page.stats.approx_tooltip')}>
+                      {t('caw_page.stats.total_earned')}{' '}
+                      <span className={isDark ? 'text-white/30' : 'text-gray-400'}>
+                        {t('caw_page.stats.approx_suffix')}
+                      </span>
+                    </div>
+                    {(() => {
+                      const usd = fmtUsd(totalCaw)
+                      return usd ? (
+                        <>
+                          <div className="text-2xl font-bold mt-1" style={{ color: '#ebc046' }}>{usd}</div>
+                          <div className={subClass}>{fmtCawNum(totalCaw)} CAW</div>
+                        </>
+                      ) : (
+                        <>
+                          <div className="text-2xl font-bold mt-1" style={{ color: '#ebc046' }}>{fmtCawNum(totalCaw)}</div>
+                          <div className={subClass}>CAW</div>
+                        </>
+                      )
+                    })()}
+                  </div>
+                  <div className="grid grid-cols-3 gap-3 mb-4">
+                    {cards.map(c => {
+                      const usd = fmtUsd(c.caw)
+                      return (
+                        <div key={c.label} className={cardClass}>
+                          <div className={labelClass}>{c.label}</div>
+                          {usd ? (
+                            <>
+                              <div className="text-lg font-bold mt-1" style={{ color: c.color }}>{usd}</div>
+                              <div className={subClass}>{fmtCawNum(c.caw)} CAW</div>
+                            </>
+                          ) : (
+                            <>
+                              <div className="text-lg font-bold mt-1" style={{ color: c.color }}>{fmtCawNum(c.caw)}</div>
+                              <div className={subClass}>CAW</div>
+                            </>
+                          )}
+                        </div>
+                      )
+                    })}
+                  </div>
+                </>
+              )
+            })()}
+
             <div className={`rounded-2xl border overflow-hidden ${isDark ? 'border-white/10 bg-black' : 'border-gray-200 bg-white'}`}>
               {/* Tabs */}
-              <div className={`grid grid-cols-5 border-b ${isDark ? 'border-white/10' : 'border-gray-200'}`}>
+              <div className={`grid grid-cols-4 border-b ${isDark ? 'border-white/10' : 'border-gray-200'}`}>
                 {tabLabels.map(tab => (
                   <button
                     key={tab.key}
@@ -615,58 +716,58 @@ export const CawPage: React.FC = () => {
                   </div>
                 )}
 
-                {activeInteractionsTab === 'reposts' && (
-                  <div>
-                    {recaws.length === 0 ? (
+                {activeInteractionsTab === 'reposts' && (() => {
+                  // Merge bare recaws (no content) with quotes (recaw + text).
+                  // Both are RECAW actions and credit the author identically;
+                  // the difference is purely whether the quoter added text.
+                  // Newest first to match the other tabs' ordering.
+                  type RepostRow =
+                    | { kind: 'recaw'; id: string; timestamp: string; user: IndicatorUser }
+                    | { kind: 'quote'; id: string; timestamp: string; user: CawItem['user']; content: string; quote: CawItem }
+                  const rows: RepostRow[] = [
+                    ...recaws.map<RepostRow>(r => ({ kind: 'recaw', id: r.id, timestamp: r.timestamp, user: r.user })),
+                    ...quotes.map<RepostRow>(q => ({ kind: 'quote', id: q.id, timestamp: q.timestamp, user: q.user, content: q.content, quote: q })),
+                  ].sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime())
+
+                  if (rows.length === 0) {
+                    return (
                       <div className={`text-sm ${isDark ? 'text-gray-400' : 'text-gray-600'}`}>{t('caw_page.empty.reposts')}</div>
-                    ) : (
-                      <div className="space-y-3">
-                        {[...recaws].reverse().map(r => (
+                    )
+                  }
+                  return (
+                    <div className="space-y-3">
+                      {rows.map(row => {
+                        const linkTo = row.kind === 'quote'
+                          ? cawUrl(row.quote)
+                          : `/users/${row.user.username}`
+                        return (
                           <Link
-                            key={`repost-${r.id}`}
-                            to={`/users/${r.user.username}`}
-                            className="flex items-center gap-3 hover:underline"
+                            key={`${row.kind}-${row.id}`}
+                            to={linkTo}
+                            className="flex items-start gap-3 hover:underline"
                           >
-                            <div className="w-9 h-9 rounded-full overflow-hidden flex-shrink-0 border border-gray-700">
-                              <UserAvatar user={r.user} alt={t('caw_page.user_avatar_alt', { username: r.user.username })} className="w-full h-full rounded-full" size="small" />
+                            <div className="w-9 h-9 rounded-full overflow-hidden flex-shrink-0 border border-gray-700 mt-0.5">
+                              <UserAvatar user={row.user} alt={t('caw_page.user_avatar_alt', { username: row.user.username })} className="w-full h-full rounded-full" size="small" />
                             </div>
-                            <div className="min-w-0">
+                            <div className="min-w-0 flex-1">
                               <div className={`text-sm font-semibold truncate ${isDark ? 'text-white' : 'text-black'}`}>
-                                {r.user.displayName || r.user.username}
+                                {row.user.displayName || row.user.username}
                               </div>
                               <div className="text-xs truncate text-gray-500">
-                                @{r.user.username} · {formatTimeAgo(r.timestamp)}
+                                @{row.user.username} · {formatTimeAgo(row.timestamp)}
                               </div>
+                              {row.kind === 'quote' && row.content && (
+                                <div className={`text-sm mt-1 line-clamp-2 whitespace-pre-wrap break-words ${isDark ? 'text-white/80' : 'text-gray-800'}`}>
+                                  {row.content}
+                                </div>
+                              )}
                             </div>
                           </Link>
-                        ))}
-                      </div>
-                    )}
-                  </div>
-                )}
-
-                {activeInteractionsTab === 'quotes' && (
-                  <div>
-                    {/* Quotes as FeedItems — they ARE standalone posts, so
-                        rendering them in their full form is the natural read.
-                        hideParentPreview for the same reason as replies: the
-                        parent is this page. */}
-                    {quotes.length === 0 ? (
-                      <div className={`text-sm ${isDark ? 'text-gray-400' : 'text-gray-600'}`}>{t('caw_page.empty.quotes')}</div>
-                    ) : (
-                      <div className="space-y-0">
-                        {quotes
-                          .slice()
-                          .sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime())
-                          .map(q => (
-                            <div key={`quote-tab-${q.id}`} className="relative">
-                              <FeedItem item={q} hideParentPreview={true} />
-                            </div>
-                          ))}
-                      </div>
-                    )}
-                  </div>
-                )}
+                        )
+                      })}
+                    </div>
+                  )
+                })()}
 
                 {activeInteractionsTab === 'tips' && (
                   <div>

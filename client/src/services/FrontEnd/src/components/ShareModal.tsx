@@ -90,20 +90,22 @@ export const ShareModal: React.FC<ShareModalProps> = ({
     }
   ]
 
+  const handleBackdropMouseDown = (e: React.MouseEvent) => {
+    if (e.target === e.currentTarget) onClose()
+  }
+
   return (
     <>
-      {/* Backdrop */}
+      {/* Backdrop + modal share a container so clicks on empty area close */}
       <div
-        className="fixed inset-0 bg-black/50 z-[80] transition-opacity"
-        onMouseDown={onClose}
-      />
-
-      {/* Modal */}
-      <div className="fixed inset-x-0 bottom-0 md:inset-0 md:flex md:items-center md:justify-center z-[90] px-4 md:px-0">
+        className="fixed inset-0 bg-black/50 z-[80] flex items-end justify-center md:items-center px-4 md:px-0"
+        onMouseDown={handleBackdropMouseDown}
+      >
         <div
           className={`w-full md:w-96 rounded-t-2xl md:rounded-2xl ${
             isDark ? 'bg-black border-yellow-500/30' : 'bg-white border-gray-200'
           } border overflow-hidden animate-slide-up md:animate-fade-in`}
+          onMouseDown={e => e.stopPropagation()}
         >
           {/* Header */}
           <div className={`flex items-center justify-between px-4 py-3 border-b ${
