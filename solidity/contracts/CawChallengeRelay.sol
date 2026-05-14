@@ -16,8 +16,11 @@ interface ICawActionsCheckpoints {
  *         them via LayerZero to archive chains as fraud proofs.
  * @dev Only used during challenges — sits idle during normal operation. Anyone can
  *      call relayChallenge() to dispute a submission on any archive chain. The
- *      archive trusts the hash because it arrives from a registered LZ peer that
- *      reads directly from CawActions' immutable checkpoint storage.
+ *      hash is canonical because the relay reads it directly from CawActions'
+ *      immutable checkpoint storage on this chain; LayerZero is the transport
+ *      that delivers that bytes32 to the archive, and the archive's peer lock
+ *      authenticates that the message originated from this relay (not that
+ *      LayerZero attests to the value).
  */
 contract CawChallengeRelay is OnlyOnce, OApp {
   using OptionsBuilder for bytes;

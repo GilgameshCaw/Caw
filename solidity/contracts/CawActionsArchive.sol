@@ -21,9 +21,13 @@ import "./OnlyOnce.sol";
  *
  * Trust model:
  *   - merkleRoot commits to checkpoint hashes; checkpoint hashes commit to actions.
- *   - Fraud proofs arrive via LZ from a canonical CawChallengeRelay on each
- *     source chain. The archive owner pairs one peer per source EID via
- *     setPeer, then ownership is renounced — zero admin post-setup.
+ *   - Fraud proofs are canonicalized by the source L2: CawChallengeRelay reads
+ *     `clientHashAtCheckpoint` directly from CawActions storage on the source
+ *     chain. LayerZero is the transport that delivers that bytes32 here; the
+ *     peer lock authenticates origin (the relay), not the value (which is
+ *     canonical by virtue of where it was read from). The archive owner pairs
+ *     one peer per source EID via setPeer, then ownership is renounced — zero
+ *     admin post-setup.
  *   - At least one honest validator must monitor within CHALLENGE_PERIOD.
  */
 contract CawActionsArchive is Ownable, ReentrancyGuard, OnlyOnce, OApp {
@@ -148,9 +152,12 @@ contract CawActionsArchive is Ownable, ReentrancyGuard, OnlyOnce, OApp {
 
   /// @notice Lock the inherited OApp `setPeer` once per eid. Once a peer is set
   /// in deploy, it can NEVER be changed — even by the owner. Critical here because
-  /// the canonical CawChallengeRelay on each source chain is what we trust to deliver
-  /// fraud proofs; a swapped peer could send forged "everything is fine" / "this is
-  /// fraud" messages. New eids stay openable so future chains can be added.
+  /// the canonical CawChallengeRelay on each source chain is the only contract
+  /// authorized to deliver fraud-proof messages over this LZ channel; the bytes32
+  /// it carries is canonical because the relay reads it from CawActions storage,
+  /// but a swapped peer could pass off arbitrary bytes as if they came from that
+  /// canonical read, forging "fraud" or "no-fraud" verdicts. New eids stay
+  /// openable so future chains can be added.
   function setPeer(uint32 _eid, bytes32 _peer)
     public
     override
