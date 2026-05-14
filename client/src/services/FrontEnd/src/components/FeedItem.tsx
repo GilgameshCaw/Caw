@@ -489,10 +489,21 @@ const FeedItem: React.FC<{ item: CawItem; isMainPost?: boolean; isReply?: boolea
     // updates instantly instead of after the cancel POST roundtrip.
     const cancelledTxQueueId = pendingLikeTxQueueId
     const snapshotSpend = usePendingSpendStore.getState().pendingByTxQueue[cancelledTxQueueId]
+    // If we're cancelling an UNLIKE (server already decremented likeCount and
+    // shows hasLiked=false), the cancel will eventually restore the row to
+    // LIKE/SUCCESS. Hold an optimistic +1 / liked override until the refetch
+    // catches up so the UI doesn't briefly show the unliked state.
+    const cancellingUnlike = !useItem.hasLiked && likeOverride === false
     setLikePending(false)
-    setLikeCountAdj(0)
-    setLikeCountBase(null)
-    setLikeOverride(null)
+    if (cancellingUnlike) {
+      setLikeCountAdj(1)
+      setLikeCountBase(useItem.likeCount)
+      setLikeOverride(true)
+    } else {
+      setLikeCountAdj(0)
+      setLikeCountBase(null)
+      setLikeOverride(null)
+    }
     useOptimisticLikesStore.getState().removeOptimisticLikeByTxQueueId(cancelledTxQueueId)
     usePendingSpendStore.getState().removePendingSpend(cancelledTxQueueId)
     useBalanceChangeStore.getState().dropPendingWindow(`txq:${cancelledTxQueueId}`)
@@ -507,6 +518,13 @@ const FeedItem: React.FC<{ item: CawItem; isMainPost?: boolean; isReply?: boolea
       if (String(err?.message || '').includes('409')) {
         if (snapshotSpend && snapshotSpend > 0n) {
           usePendingSpendStore.getState().addPendingSpend(cancelledTxQueueId, snapshotSpend)
+        }
+        // The action landed on chain — our optimistic restore was wrong.
+        // Snap back to the pre-cancel pending state so the UI matches.
+        if (cancellingUnlike) {
+          setLikeCountAdj(-1)
+          setLikeCountBase(useItem.likeCount)
+          setLikeOverride(false)
         }
       } else {
         console.error('Cancel like failed', err)
