@@ -769,6 +769,53 @@ router.post('/', async (req, res) => {
       text: plaintext.substring(0, 50) // First 50 chars for debugging
     })
 
+    // Optimistic-undo for UNLIKE: flip the user's existing Like row to
+    // pending=true, action='UNLIKE' and decrement counts now. On indexer
+    // confirm we delete the row (no-op count); on tx fail we flip back to
+    // action='LIKE', pending=false and restore the counts.
+    if (data.actionType === 2) {  // 2 is the enum value for 'unlike'
+      console.log('Processing UNLIKE action - flipping like row to pending unlike')
+
+      try {
+        const targetCaw = await prisma.caw.findFirst({
+          where: {
+            userId: data.receiverId,
+            cawonce: data.receiverCawonce
+          }
+        })
+
+        if (targetCaw) {
+          const existingLike = await prisma.like.findUnique({
+            where: { userId_cawId: { userId: data.senderId, cawId: targetCaw.id } }
+          })
+
+          if (existingLike) {
+            // Only apply optimistic-undo when the row is currently a
+            // confirmed LIKE — skipping pending rows avoids double
+            // decrements if the user double-taps mid-flight.
+            const wasConfirmedLike = !existingLike.pending && existingLike.action === 'LIKE'
+            await prisma.like.update({
+              where: { userId_cawId: { userId: data.senderId, cawId: targetCaw.id } },
+              data: { pending: true, action: 'UNLIKE' }
+            })
+            if (wasConfirmedLike) {
+              await countManager.onStatusChanged(prisma, 'like', existingLike.id, 'SUCCESS', 'PENDING', {
+                cawId: targetCaw.id,
+                userId: data.senderId,
+              })
+            }
+            console.log('Flipped like to pending unlike:', existingLike.id)
+          } else {
+            console.log('No existing like row to flip for user:', data.senderId, 'caw:', targetCaw.id)
+          }
+        } else {
+          console.log('Target caw not found for UNLIKE receiverId:', data.receiverId, 'cawonce:', data.receiverCawonce)
+        }
+      } catch (unlikeErr) {
+        console.error('Failed to flip like to pending unlike:', unlikeErr)
+      }
+    }
+
     // Create optimistic pending like if this is a like action
     if (data.actionType === 1) {  // 1 is the enum value for 'like'
       console.log('Processing LIKE action - creating pending like record')
@@ -887,7 +934,23 @@ router.post('/', async (req, res) => {
       console.log('Unfollower:', data.senderId, 'Unfollowing:', data.receiverId)
 
       try {
-        // Mark existing follow as PENDING (will be deleted when processed)
+        // Look up the existing confirmed FOLLOW row so we can decide whether
+        // to apply the optimistic-undo decrement. Only the SUCCESS→PENDING
+        // transition decrements; if the row is already pending or absent
+        // (e.g. fresh unfollow from a mirror, or double-tap) we skip the
+        // count side effect.
+        const existingFollow = await prisma.follow.findUnique({
+          where: {
+            followerId_followingId: {
+              followerId: data.senderId,
+              followingId: data.receiverId,
+            }
+          }
+        })
+
+        // Mark existing follow as PENDING with action='UNFOLLOW' so the
+        // indexer (and txQueueFailure rollback) can recognize the pending-
+        // undo distinctly from a pending follow.
         const updatedFollow = await prisma.follow.updateMany({
           where: {
             followerId: data.senderId,
@@ -895,10 +958,18 @@ router.post('/', async (req, res) => {
             action: 'FOLLOW'
           },
           data: {
-            status: 'PENDING'
+            status: 'PENDING',
+            action: 'UNFOLLOW'
           }
         })
         console.log('Marked follow as pending for removal:', updatedFollow.count, 'records')
+
+        if (existingFollow && existingFollow.action === 'FOLLOW' && existingFollow.status === 'SUCCESS') {
+          await countManager.onStatusChanged(prisma, 'follow', existingFollow.id, 'SUCCESS', 'PENDING', {
+            followerId: data.senderId,
+            followingId: data.receiverId,
+          })
+        }
       } catch (unfollowErr) {
         console.error('Failed to mark follow as pending removal:', unfollowErr)
         // Continue even if marking fails

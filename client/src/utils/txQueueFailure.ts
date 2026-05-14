@@ -105,23 +105,60 @@ async function cleanupOptimisticRows(
       })
     }
 
-    // FOLLOW (4) / UNFOLLOW (5): mark the pending Follow row as FAILED so
-    // the UI reverts the optimistic follow-button state. Use updateMany in
-    // case the record doesn't exist (paranoia — this never throws).
-    if ((actionType === 4 || actionType === 5) && actionData?.receiverId != null) {
+    // FOLLOW (4) failed: mark the pending Follow row as FAILED so the UI
+    // reverts the optimistic follow-button state, and decrement the
+    // optimistic followingCount/followerCount we bumped at submit time.
+    if (actionType === 4 && actionData?.receiverId != null) {
+      const pending = await prisma.follow.findUnique({
+        where: {
+          followerId_followingId: {
+            followerId: senderId,
+            followingId: actionData.receiverId,
+          }
+        }
+      })
       await prisma.follow.updateMany({
         where: {
           followerId: senderId,
           followingId: actionData.receiverId,
-          status: 'PENDING'
+          status: 'PENDING',
+          action: 'FOLLOW',
         },
         data: { status: 'FAILED' }
       })
+      if (pending && pending.status === 'PENDING' && pending.action === 'FOLLOW') {
+        await countManager.onStatusChanged(prisma, 'follow', pending.id, 'PENDING', 'FAILED', {
+          followerId: senderId,
+          followingId: actionData.receiverId,
+        })
+      }
     }
 
-    // LIKE (1): delete the pending like so the heart count reverts. We
-    // delete rather than mark FAILED because Like doesn't have a status
-    // field we'd want to show — users expect the heart to unfill on failure.
+    // UNFOLLOW (5) failed: flip the pending-undo Follow row back to a
+    // confirmed FOLLOW and restore the optimistic count decrements.
+    if (actionType === 5 && actionData?.receiverId != null) {
+      const pending = await prisma.follow.findUnique({
+        where: {
+          followerId_followingId: {
+            followerId: senderId,
+            followingId: actionData.receiverId,
+          }
+        }
+      })
+      if (pending && pending.status === 'PENDING' && pending.action === 'UNFOLLOW') {
+        await prisma.follow.update({
+          where: { id: pending.id },
+          data: { status: 'SUCCESS', action: 'FOLLOW' }
+        })
+        await countManager.onStatusChanged(prisma, 'follow', pending.id, 'PENDING', 'SUCCESS-undo', {
+          followerId: senderId,
+          followingId: actionData.receiverId,
+        })
+      }
+    }
+
+    // LIKE (1) failed: delete the pending Like row and decrement the
+    // optimistic likeCount we bumped at submit time.
     if (actionType === 1 && actionData?.receiverId != null && actionData?.receiverCawonce != null) {
       const targetCaw = await prisma.caw.findFirst({
         where: { userId: actionData.receiverId, cawonce: actionData.receiverCawonce },
@@ -129,7 +166,7 @@ async function cleanupOptimisticRows(
       })
       if (targetCaw) {
         const deleted = await prisma.like.deleteMany({
-          where: { userId: senderId, cawId: targetCaw.id, pending: true }
+          where: { userId: senderId, cawId: targetCaw.id, pending: true, action: 'LIKE' }
         })
         if (deleted.count > 0) {
           // Decrement the likeCount we optimistically incremented on submit
@@ -139,6 +176,29 @@ async function cleanupOptimisticRows(
               cawId: targetCaw.id, userId: senderId,
             })
           }
+        }
+      }
+    }
+
+    // UNLIKE (2) failed: flip the pending-undo Like row back to a confirmed
+    // LIKE and restore the optimistic count decrements.
+    if (actionType === 2 && actionData?.receiverId != null && actionData?.receiverCawonce != null) {
+      const targetCaw = await prisma.caw.findFirst({
+        where: { userId: actionData.receiverId, cawonce: actionData.receiverCawonce },
+        select: { id: true }
+      })
+      if (targetCaw) {
+        const pending = await prisma.like.findUnique({
+          where: { userId_cawId: { userId: senderId, cawId: targetCaw.id } }
+        })
+        if (pending && pending.pending && pending.action === 'UNLIKE') {
+          await prisma.like.update({
+            where: { userId_cawId: { userId: senderId, cawId: targetCaw.id } },
+            data: { pending: false, action: 'LIKE' }
+          })
+          await countManager.onStatusChanged(prisma, 'like', pending.id, 'PENDING', 'SUCCESS-undo', {
+            cawId: targetCaw.id, userId: senderId,
+          })
         }
       }
     }

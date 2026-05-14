@@ -51,7 +51,7 @@ router.get('/:tag/caws', async (req, res) => {
           include: {
             user: { select: { tokenId: true, username: true, displayName: true, image: true, avatarUrl: true, defaultAvatarId: true } },
             likes: currentUserId
-              ? { where: { userId: currentUserId }, select: { userId: true, pending: true } }
+              ? { where: { userId: currentUserId }, select: { userId: true, pending: true, action: true } }
               : false,
             recaws: currentUserId
               ? { where: { userId: currentUserId, action: 'RECAW' }, select: { id: true } }

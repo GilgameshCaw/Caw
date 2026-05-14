@@ -220,6 +220,10 @@ const countManager = {
   // Rules:
   //   PENDING -> SUCCESS : NO-OP (counts were already set optimistically)
   //   PENDING -> FAILED  : DECREMENT (undo the optimistic increment)
+  //   SUCCESS -> PENDING : DECREMENT (optimistic-undo, e.g. unlike/unfollow
+  //                                   in flight — counts come off now, will
+  //                                   come back via PENDING -> SUCCESS-undo
+  //                                   if the tx fails)
   //   All other transitions: log a warning
   //
   // The `meta` parameter carries entity-specific context needed to know
@@ -240,6 +244,94 @@ const countManager = {
     // PENDING -> SUCCESS: no count change needed
     if (oldStatus === 'PENDING' && newStatus === 'SUCCESS') {
       log(`${entity} ${id}: PENDING -> SUCCESS (no-op, counts already set)`)
+      return
+    }
+
+    // SUCCESS -> PENDING: optimistic undo (used for in-flight unlike /
+    // unfollow). The user previously had a confirmed Like/Follow row; we
+    // flip it to pending-undo and decrement the cached counters now so the
+    // UI reflects the undo immediately. If the tx fails, the matching
+    // PENDING -> SUCCESS-undo restore path will increment them back.
+    if (oldStatus === 'SUCCESS' && newStatus === 'PENDING') {
+      log(`${entity} ${id}: SUCCESS -> PENDING — applying optimistic-undo decrement`)
+
+      switch (entity) {
+        case 'like': {
+          if (!meta) { warn(`onStatusChanged like ${id}: missing meta for optimistic-undo`); return }
+          const { cawId: likeCawId, userId: likeUserId } = meta
+
+          await safeDecrement(tx, 'Caw', 'likeCount', 'id', likeCawId)
+          log(`likeCount -1 on caw ${likeCawId} (pending unlike ${id})`)
+
+          await safeDecrement(tx, 'User', 'likedCount', 'tokenId', likeUserId)
+          log(`likedCount -1 on user ${likeUserId} (pending unlike ${id})`)
+
+          const undoCaw = await (tx as any).caw.findUnique({ where: { id: likeCawId }, select: { userId: true } })
+          if (undoCaw) {
+            await safeDecrement(tx, 'User', 'likesReceivedCount', 'tokenId', undoCaw.userId)
+            log(`likesReceivedCount -1 on user ${undoCaw.userId} (pending unlike on caw ${likeCawId})`)
+          }
+          break
+        }
+
+        case 'follow': {
+          if (!meta) { warn(`onStatusChanged follow ${id}: missing meta for optimistic-undo`); return }
+          const { followerId, followingId } = meta
+
+          await safeDecrement(tx, 'User', 'followingCount', 'tokenId', followerId)
+          log(`followingCount -1 on user ${followerId} (pending unfollow ${id})`)
+
+          await safeDecrement(tx, 'User', 'followerCount', 'tokenId', followingId)
+          log(`followerCount -1 on user ${followingId} (pending unfollow ${id})`)
+          break
+        }
+
+        default:
+          warn(`onStatusChanged: SUCCESS->PENDING not supported for entity "${entity}" id ${id}`)
+      }
+      return
+    }
+
+    // PENDING -> SUCCESS-undo (restore): "undo the undo" when an in-flight
+    // unlike / unfollow tx fails. The original SUCCESS -> PENDING decremented
+    // optimistically; this restores +1 on each touched counter.
+    if (oldStatus === 'PENDING' && newStatus === 'SUCCESS-undo') {
+      log(`${entity} ${id}: PENDING -> SUCCESS-undo — restoring counts after failed undo`)
+
+      switch (entity) {
+        case 'like': {
+          if (!meta) { warn(`onStatusChanged like ${id}: missing meta for restore`); return }
+          const { cawId: likeCawId, userId: likeUserId } = meta
+
+          await safeIncrement(tx, 'Caw', 'id', likeCawId, 'likeCount')
+          log(`likeCount +1 on caw ${likeCawId} (unlike ${id} failed)`)
+
+          await safeIncrement(tx, 'User', 'tokenId', likeUserId, 'likedCount')
+          log(`likedCount +1 on user ${likeUserId} (unlike ${id} failed)`)
+
+          const restoredCaw = await (tx as any).caw.findUnique({ where: { id: likeCawId }, select: { userId: true } })
+          if (restoredCaw) {
+            await safeIncrement(tx, 'User', 'tokenId', restoredCaw.userId, 'likesReceivedCount')
+            log(`likesReceivedCount +1 on user ${restoredCaw.userId} (unlike ${id} on caw ${likeCawId} failed)`)
+          }
+          break
+        }
+
+        case 'follow': {
+          if (!meta) { warn(`onStatusChanged follow ${id}: missing meta for restore`); return }
+          const { followerId, followingId } = meta
+
+          await safeIncrement(tx, 'User', 'tokenId', followerId, 'followingCount')
+          log(`followingCount +1 on user ${followerId} (unfollow ${id} failed)`)
+
+          await safeIncrement(tx, 'User', 'tokenId', followingId, 'followerCount')
+          log(`followerCount +1 on user ${followingId} (unfollow ${id} failed)`)
+          break
+        }
+
+        default:
+          warn(`onStatusChanged: PENDING->SUCCESS-undo not supported for entity "${entity}" id ${id}`)
+      }
       return
     }
 

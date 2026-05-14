@@ -428,7 +428,7 @@ export async function handleLikeAction(
   })
 
   if (existing) {
-    if (existing.pending) {
+    if (existing.pending && existing.action === 'LIKE') {
       await tx.like.update({
         where: { userId_cawId: { userId, cawId: parentCawId } },
         data: { action: 'LIKE', pending: false }
@@ -443,6 +443,26 @@ export async function handleLikeAction(
         await NotificationService.createLikeNotification(parentCawId, userId, tx)
       } catch (err) {
         console.error(`Failed to create like notification for confirmed pending like:`, err)
+      }
+    } else if (existing.pending && existing.action === 'UNLIKE') {
+      // Edge case: a fresh LIKE landed while a pending UNLIKE was still
+      // in flight. Counts were decremented for the pending unlike — flip
+      // the row back to a confirmed LIKE and restore the counts. The
+      // user's net effect is "still liked".
+      await tx.like.update({
+        where: { userId_cawId: { userId, cawId: parentCawId } },
+        data: { action: 'LIKE', pending: false }
+      })
+      await countManager.onLikeCreated(tx, {
+        cawId: parentCawId,
+        userId,
+        pending: false,
+      })
+
+      try {
+        await NotificationService.createLikeNotification(parentCawId, userId, tx)
+      } catch (err) {
+        console.error(`Failed to create like notification for re-liked unlike:`, err)
       }
     } else {
       // Already processed, just ensure it's marked as LIKE
@@ -472,7 +492,15 @@ export async function handleLikeAction(
 }
 
 /**
- * Handle UNLIKE action - remove like and update counts
+ * Handle UNLIKE action - remove like and update counts.
+ *
+ * Two paths converge here:
+ *   (a) Optimistic-undo path: /api/actions already flipped the Like row to
+ *       pending=true, action='UNLIKE' AND decremented counts. Delete the row
+ *       and log the PENDING→SUCCESS no-op (counts stay where they are).
+ *   (b) Legacy / cross-mirror path: no optimistic flip happened locally
+ *       (mirror node, missing row, or pre-flip code). Delete the row and
+ *       decrement counts via onLikeRemoved.
  */
 export async function handleUnlikeAction(
   tx: PrismaTransactionClient,
@@ -482,19 +510,30 @@ export async function handleUnlikeAction(
   const userId = await findOrCreateUser(action.senderId)
   const cawId = await findCawId(rawAction.receiverCawonce, rawAction.receiverId)
 
-  // Check if the like exists and isn't pending before deleting
   const existing = await tx.like.findUnique({
     where: { userId_cawId: { userId, cawId } }
   })
 
   if (existing) {
-    // Delete the like
     await tx.like.delete({
       where: { userId_cawId: { userId, cawId } }
     })
 
-    // If it wasn't pending, decrement the count via CountManager
-    if (!existing.pending) {
+    if (existing.pending && existing.action === 'UNLIKE') {
+      // Optimistic-undo path: counts were already decremented at submit
+      // time. Just log the no-op so the audit trail is complete.
+      await countManager.onStatusChanged(tx, 'like', existing.id, 'PENDING', 'SUCCESS', {
+        cawId, userId,
+      })
+    } else if (!existing.pending) {
+      // Legacy / cross-mirror path: row was a confirmed LIKE we still need
+      // to decrement on removal.
+      await countManager.onLikeRemoved(tx, { cawId, userId })
+    }
+    // Other case (pending=true, action='LIKE'): a pending-like collided
+    // with an inbound unlike — counts were already incremented for the
+    // pending like, so decrement on removal to balance.
+    if (existing.pending && existing.action === 'LIKE') {
       await countManager.onLikeRemoved(tx, { cawId, userId })
     }
   }
@@ -598,7 +637,15 @@ export async function handleFollowAction(
 }
 
 /**
- * Handle UNFOLLOW action - remove follow relationship
+ * Handle UNFOLLOW action - remove follow relationship.
+ *
+ * Two paths converge here:
+ *   (a) Optimistic-undo path: /api/actions already flipped the Follow row to
+ *       status=PENDING, action='UNFOLLOW' AND decremented counts. Delete the
+ *       row and log the PENDING→SUCCESS no-op.
+ *   (b) Legacy / cross-mirror path: no optimistic flip happened locally
+ *       (mirror node, missing row, or pre-flip code). Delete a confirmed
+ *       FOLLOW row and decrement counts via onFollowRemoved.
  */
 export async function handleUnfollowAction(
   tx: PrismaTransactionClient,
@@ -608,23 +655,37 @@ export async function handleUnfollowAction(
   const followerId = await findOrCreateUser(action.senderId)
   const followingId = await findOrCreateUser(rawAction.receiverId)
 
-  // Delete the follow relationship
-  const deleted = await tx.follow.deleteMany({
-    where: {
-      followerId,
-      followingId,
-      action: 'FOLLOW' // Only delete if it's a FOLLOW relationship
-    }
+  const existing = await tx.follow.findUnique({
+    where: { followerId_followingId: { followerId, followingId } }
   })
 
-  if (deleted.count > 0) {
-    // Update counts via CountManager (uses safe decrement, never goes negative)
-    await countManager.onFollowRemoved(tx, { followerId, followingId })
-
-    console.log(`User ${followerId} unfollowed user ${followingId}`)
-  } else {
+  if (!existing) {
     console.log(`User ${followerId} was not following user ${followingId}`)
+    return
   }
+
+  await tx.follow.delete({
+    where: { followerId_followingId: { followerId, followingId } }
+  })
+
+  if (existing.status === 'PENDING' && existing.action === 'UNFOLLOW') {
+    // Optimistic-undo path: counts already decremented at submit time.
+    await countManager.onStatusChanged(tx, 'follow', existing.id, 'PENDING', 'SUCCESS', {
+      followerId, followingId,
+    })
+  } else if (existing.action === 'FOLLOW' && existing.status === 'SUCCESS') {
+    // Legacy / cross-mirror path: confirmed FOLLOW that we still need to
+    // decrement on removal.
+    await countManager.onFollowRemoved(tx, { followerId, followingId })
+  } else if (existing.status === 'PENDING' && existing.action === 'FOLLOW') {
+    // Edge case: a pending FOLLOW from the same user got swept by an
+    // inbound UNFOLLOW (e.g. follow then immediate unfollow before the
+    // first confirmed). Counts were already incremented for the pending
+    // follow, so decrement on removal to balance.
+    await countManager.onFollowRemoved(tx, { followerId, followingId })
+  }
+
+  console.log(`User ${followerId} unfollowed user ${followingId} (was action=${existing.action}, status=${existing.status})`)
 }
 
 /**

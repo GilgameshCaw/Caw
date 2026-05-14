@@ -8,7 +8,7 @@ export interface CawRaw {
   createdAt: Date
   user: { id: number; tokenId: number; username: string; displayName?: string; image?: string; avatarUrl?: string; address?: string | null; xBadgeVisible?: boolean; xHandle?: string | null; xFollowerBucket?: number | null; preferredLanguage?: string | null }
   _count?: { likes: number; recaws: number }
-  likes?: Array<{ userId: number; pending?: boolean }>
+  likes?: Array<{ userId: number; pending?: boolean; action?: string }>
   recaws?: Array<{ id: number; status?: 'SUCCESS' | 'PENDING' | 'FAILED'; action?: string; content?: string }>
   repliesOnThis?: Array<{ userId: number; pending?: boolean; replyCawId?: number }>
   tips?: Array<{ senderId: number; pending?: boolean; amount?: number }>
@@ -163,7 +163,12 @@ export function shapeCaw(raw: CawRaw | any): ShapedCaw {
     user: raw.user,
     likeCount: raw.likeCount,
     viewCount: raw.viewCount || 0,
-    hasLiked: Boolean(userLike && !userLike.pending), // Only true if liked AND not pending
+    // hasLiked is the FINAL answer for the heart-fill state, action-aware:
+    //   row absent                           → false
+    //   confirmed LIKE   (pending=false)     → true
+    //   pending LIKE     (in-flight new)     → false (pending fill drives UI)
+    //   pending UNLIKE   (in-flight undo)    → false (already undone)
+    hasLiked: Boolean(userLike && !userLike.pending && (userLike.action ?? 'LIKE') === 'LIKE'),
     likePending: userLike?.pending,
     hasRecawed, // Only true if recawed AND confirmed
     recawPending,
@@ -230,7 +235,7 @@ export function getCawIncludeConfig(options: CawQueryOptions = {}) {
   return {
     user: { select: cawUserSelect },
     likes: currentUserId
-      ? { where: { userId: currentUserId }, select: { userId: true, pending: true } }
+      ? { where: { userId: currentUserId }, select: { userId: true, pending: true, action: true } }
       : false,
     recaws: currentUserId
       ? { where: { userId: currentUserId }, select: { id: true, status: true, action: true, content: true } }
@@ -264,7 +269,7 @@ export function getCawIncludeConfig(options: CawQueryOptions = {}) {
       include: {
         user: { select: cawUserSelect },
         likes: currentUserId
-          ? { where: { userId: currentUserId }, select: { userId: true, pending: true } }
+          ? { where: { userId: currentUserId }, select: { userId: true, pending: true, action: true } }
           : false,
         recaws: currentUserId
           ? { where: { userId: currentUserId }, select: { id: true, status: true, action: true, content: true } }
