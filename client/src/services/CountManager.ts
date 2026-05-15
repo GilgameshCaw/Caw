@@ -180,17 +180,25 @@ const countManager = {
     await safeIncrement(tx, 'Caw', 'id', like.cawId, 'likeCount')
     log(`likeCount +1 on caw ${like.cawId} (like by user ${like.userId}, pending=${like.pending})`)
 
-    await safeIncrement(tx, 'User', 'tokenId', like.userId, 'likedCount')
-    log(`likedCount +1 on user ${like.userId} (liked caw ${like.cawId})`)
-
-    // Bump the caw owner's likesReceivedCount. Look up the owner inside the tx
-    // so the read sees any pending writes from this transaction.
+    // The two User-row increments (liker.likedCount + recipient.likesReceivedCount)
+    // touch different rows but the same table — concurrent likes between two users
+    // can deadlock if A→B is acquired in (liker, recipient) order while B→A is
+    // acquired in the opposite order. Sort by tokenId so every worker takes the
+    // same lock order regardless of which side they're processing.
     const caw = await (tx as any).caw.findUnique({ where: { id: like.cawId }, select: { userId: true } })
-    if (caw) {
-      await safeIncrement(tx, 'User', 'tokenId', caw.userId, 'likesReceivedCount')
-      log(`likesReceivedCount +1 on user ${caw.userId} (caw ${like.cawId} liked by user ${like.userId})`)
+    const recipientId: number | null = caw?.userId ?? null
+    const userBumps: Array<{ id: number; column: 'likedCount' | 'likesReceivedCount'; reason: string }> = [
+      { id: like.userId, column: 'likedCount', reason: `liked caw ${like.cawId}` },
+    ]
+    if (recipientId !== null) {
+      userBumps.push({ id: recipientId, column: 'likesReceivedCount', reason: `caw ${like.cawId} liked by user ${like.userId}` })
     } else {
       warn(`onLikeCreated: caw ${like.cawId} not found, skipping likesReceivedCount`)
+    }
+    userBumps.sort((a, b) => a.id - b.id)
+    for (const b of userBumps) {
+      await safeIncrement(tx, 'User', 'tokenId', b.id, b.column)
+      log(`${b.column} +1 on user ${b.id} (${b.reason})`)
     }
   },
 
@@ -206,11 +214,18 @@ const countManager = {
       followingId: number
     }
   ): Promise<void> {
-    await safeIncrement(tx, 'User', 'tokenId', follow.followerId, 'followingCount')
-    log(`followingCount +1 on user ${follow.followerId} (now follows user ${follow.followingId})`)
-
-    await safeIncrement(tx, 'User', 'tokenId', follow.followingId, 'followerCount')
-    log(`followerCount +1 on user ${follow.followingId} (new follower: user ${follow.followerId})`)
+    // Sort the two row-lock targets by tokenId so concurrent follows in the
+    // opposite direction (A→B and B→A) don't deadlock. Both transactions
+    // will acquire the smaller-id row first, then the larger-id row.
+    const ops: Array<{ id: number; column: 'followingCount' | 'followerCount'; reason: string }> = [
+      { id: follow.followerId, column: 'followingCount', reason: `now follows user ${follow.followingId}` },
+      { id: follow.followingId, column: 'followerCount', reason: `new follower: user ${follow.followerId}` },
+    ]
+    ops.sort((a, b) => a.id - b.id)
+    for (const op of ops) {
+      await safeIncrement(tx, 'User', 'tokenId', op.id, op.column)
+      log(`${op.column} +1 on user ${op.id} (${op.reason})`)
+    }
   },
 
   // =========================================================================
@@ -263,13 +278,19 @@ const countManager = {
           await safeDecrement(tx, 'Caw', 'likeCount', 'id', likeCawId)
           log(`likeCount -1 on caw ${likeCawId} (pending unlike ${id})`)
 
-          await safeDecrement(tx, 'User', 'likedCount', 'tokenId', likeUserId)
-          log(`likedCount -1 on user ${likeUserId} (pending unlike ${id})`)
-
+          // Sort the two User-row lock targets so concurrent unlikes between
+          // two users acquire the smaller-id row first (deadlock avoidance).
           const undoCaw = await (tx as any).caw.findUnique({ where: { id: likeCawId }, select: { userId: true } })
+          const userDecs: Array<{ id: number; column: 'likedCount' | 'likesReceivedCount'; reason: string }> = [
+            { id: likeUserId, column: 'likedCount', reason: `pending unlike ${id}` },
+          ]
           if (undoCaw) {
-            await safeDecrement(tx, 'User', 'likesReceivedCount', 'tokenId', undoCaw.userId)
-            log(`likesReceivedCount -1 on user ${undoCaw.userId} (pending unlike on caw ${likeCawId})`)
+            userDecs.push({ id: undoCaw.userId, column: 'likesReceivedCount', reason: `pending unlike on caw ${likeCawId}` })
+          }
+          userDecs.sort((a, b) => a.id - b.id)
+          for (const d of userDecs) {
+            await safeDecrement(tx, 'User', d.column, 'tokenId', d.id)
+            log(`${d.column} -1 on user ${d.id} (${d.reason})`)
           }
           break
         }
@@ -278,11 +299,16 @@ const countManager = {
           if (!meta) { warn(`onStatusChanged follow ${id}: missing meta for optimistic-undo`); return }
           const { followerId, followingId } = meta
 
-          await safeDecrement(tx, 'User', 'followingCount', 'tokenId', followerId)
-          log(`followingCount -1 on user ${followerId} (pending unfollow ${id})`)
-
-          await safeDecrement(tx, 'User', 'followerCount', 'tokenId', followingId)
-          log(`followerCount -1 on user ${followingId} (pending unfollow ${id})`)
+          // Sort by id so A→B unfollow and B→A unfollow can't deadlock.
+          const decs: Array<{ id: number; column: 'followingCount' | 'followerCount'; reason: string }> = [
+            { id: followerId, column: 'followingCount', reason: `pending unfollow ${id}` },
+            { id: followingId, column: 'followerCount', reason: `pending unfollow ${id}` },
+          ]
+          decs.sort((a, b) => a.id - b.id)
+          for (const d of decs) {
+            await safeDecrement(tx, 'User', d.column, 'tokenId', d.id)
+            log(`${d.column} -1 on user ${d.id} (${d.reason})`)
+          }
           break
         }
 
@@ -306,13 +332,18 @@ const countManager = {
           await safeIncrement(tx, 'Caw', 'id', likeCawId, 'likeCount')
           log(`likeCount +1 on caw ${likeCawId} (unlike ${id} failed)`)
 
-          await safeIncrement(tx, 'User', 'tokenId', likeUserId, 'likedCount')
-          log(`likedCount +1 on user ${likeUserId} (unlike ${id} failed)`)
-
+          // Sort by id (deadlock avoidance — see SUCCESS→PENDING branch above).
           const restoredCaw = await (tx as any).caw.findUnique({ where: { id: likeCawId }, select: { userId: true } })
+          const userIncs: Array<{ id: number; column: 'likedCount' | 'likesReceivedCount'; reason: string }> = [
+            { id: likeUserId, column: 'likedCount', reason: `unlike ${id} failed` },
+          ]
           if (restoredCaw) {
-            await safeIncrement(tx, 'User', 'tokenId', restoredCaw.userId, 'likesReceivedCount')
-            log(`likesReceivedCount +1 on user ${restoredCaw.userId} (unlike ${id} on caw ${likeCawId} failed)`)
+            userIncs.push({ id: restoredCaw.userId, column: 'likesReceivedCount', reason: `unlike ${id} on caw ${likeCawId} failed` })
+          }
+          userIncs.sort((a, b) => a.id - b.id)
+          for (const u of userIncs) {
+            await safeIncrement(tx, 'User', 'tokenId', u.id, u.column)
+            log(`${u.column} +1 on user ${u.id} (${u.reason})`)
           }
           break
         }
@@ -321,11 +352,16 @@ const countManager = {
           if (!meta) { warn(`onStatusChanged follow ${id}: missing meta for restore`); return }
           const { followerId, followingId } = meta
 
-          await safeIncrement(tx, 'User', 'tokenId', followerId, 'followingCount')
-          log(`followingCount +1 on user ${followerId} (unfollow ${id} failed)`)
-
-          await safeIncrement(tx, 'User', 'tokenId', followingId, 'followerCount')
-          log(`followerCount +1 on user ${followingId} (unfollow ${id} failed)`)
+          // Sort by id so concurrent failed-undo restores can't deadlock.
+          const incs: Array<{ id: number; column: 'followingCount' | 'followerCount'; reason: string }> = [
+            { id: followerId, column: 'followingCount', reason: `unfollow ${id} failed` },
+            { id: followingId, column: 'followerCount', reason: `unfollow ${id} failed` },
+          ]
+          incs.sort((a, b) => a.id - b.id)
+          for (const i of incs) {
+            await safeIncrement(tx, 'User', 'tokenId', i.id, i.column)
+            log(`${i.column} +1 on user ${i.id} (${i.reason})`)
+          }
           break
         }
 

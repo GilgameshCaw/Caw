@@ -250,11 +250,43 @@ async function handleRawAction(raw: { id: number, chainId: number, blockNumber: 
     // re-feeds this rawId) will re-enter via createOrFindAction's
     // existing-action path and call processDomainEffects again because
     // checkDomainObjectExists will return false.
+    //
+    // Deadlock retry: concurrent indexer workers updating shared count
+    // columns (User followingCount/followerCount, Caw likeCount, etc.) can
+    // deadlock when two transactions acquire row locks in opposite orders.
+    // Postgres surfaces this as SQLSTATE 40P01 → Prisma error code P2034.
+    // We retry the whole Tx2 a small number of times with jittered backoff
+    // so a transient deadlock victim still lands its domain rows instead of
+    // leaving an Action row without its Like/Follow/etc.
     try {
-      await prisma.$transaction(async (tx) => {
-        const validAction = await ensureActionExists(tx, rawId, action)
-        await processDomainEffects(tx, validAction, rawAction, resolved)
-      }, { timeout: 30_000 })
+      let lastErr: any = null
+      const MAX_TX2_RETRIES = 3
+      for (let attempt = 0; attempt <= MAX_TX2_RETRIES; attempt++) {
+        try {
+          await prisma.$transaction(async (tx) => {
+            const validAction = await ensureActionExists(tx, rawId, action)
+            await processDomainEffects(tx, validAction, rawAction, resolved)
+          }, { timeout: 30_000 })
+          lastErr = null
+          break
+        } catch (err: any) {
+          // P2034 is Prisma's wrapper for postgres 40P01 (deadlock_detected).
+          // The error message also contains "deadlock detected" on raw paths,
+          // so match either to be safe.
+          const isDeadlock = err?.code === 'P2034'
+            || /deadlock detected/i.test(err?.message || '')
+          if (isDeadlock && attempt < MAX_TX2_RETRIES) {
+            const backoffMs = 20 + Math.floor(Math.random() * 80) * (attempt + 1)
+            console.warn(`[ActionProcessor] Tx2 deadlock (attempt ${attempt + 1}/${MAX_TX2_RETRIES + 1}), retrying in ${backoffMs}ms`)
+            await new Promise(r => setTimeout(r, backoffMs))
+            lastErr = err
+            continue
+          }
+          lastErr = err
+          throw err
+        }
+      }
+      if (lastErr) throw lastErr
     } catch (err: any) {
       if (err instanceof CawNotFoundError) {
         // Like/reply/tip targets a caw we don't have indexed — most often
