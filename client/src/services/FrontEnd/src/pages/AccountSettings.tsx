@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react'
+import React, { useState, useEffect, useCallback, useRef } from 'react'
 import { Link } from '~/utils/localizedRouter'
 import { useTheme } from '~/hooks/useTheme'
 import { useTokenDataStore, useActiveToken } from '~/store/tokenDataStore'
@@ -499,6 +499,10 @@ const AccountSettings: React.FC = () => {
   const [copiedField, setCopiedField] = useState<string | null>(null)
   const [showClearDataModal, setShowClearDataModal] = useState(false)
   const [showLogoutModal, setShowLogoutModal] = useState(false)
+  // Marker so the effect below knows to surface the connect modal once
+  // wagmi has flushed the disconnect. A plain setTimeout closure captures
+  // a stale openConnectModal that no-ops post-render.
+  const pendingSwitchRef = useRef(false)
 
   // The store has both a (deprecated) global activeTokenId and a
   // per-address activeTokenIdByAddress; useActiveToken() walks the
@@ -553,18 +557,22 @@ const AccountSettings: React.FC = () => {
     }))
     .filter(g => g.tokens.length > 0)
 
-  // Disconnect the current wallet and immediately surface RainbowKit's
-  // connect modal so the user can pick a different one. Mirrors the
-  // ProfileChooser implementation: clear wagmi's `recentConnectorId`
-  // from localStorage so hydration doesn't auto-reconnect to the
-  // just-disconnected wallet on the next page load.
+  // Disconnect the current wallet, then let the effect below pop the
+  // connect modal once `isConnected` flips to false. A plain setTimeout
+  // captures the stale (still-connected) openConnectModal reference and
+  // RainbowKit no-ops it.
   const handleSwitchWallet = () => {
     try { localStorage.removeItem('wagmi.recentConnectorId') } catch { /* ignore */ }
+    pendingSwitchRef.current = true
     try { disconnect() } catch { /* ignore */ }
-    // Defer so wagmi has a tick to flush its disconnect state before
-    // RainbowKit decides which connectors to render.
-    setTimeout(() => { openConnectModal?.() }, 0)
   }
+
+  useEffect(() => {
+    if (!pendingSwitchRef.current) return
+    if (isConnected) return
+    pendingSwitchRef.current = false
+    openConnectModal?.()
+  }, [isConnected, openConnectModal])
 
   const handleDisconnectWallet = async () => {
     // Pure wallet disconnect: ask wagmi to drop every active connector
@@ -1008,7 +1016,9 @@ const AccountSettings: React.FC = () => {
             <div className="flex gap-3 mb-3">
               <button
                 onClick={handleSwitchWallet}
-                className="flex-1 py-3 px-4 rounded-lg text-sm font-medium bg-yellow-500 text-black hover:bg-yellow-400 transition-colors cursor-pointer"
+                className={`flex-1 py-3 px-4 rounded-lg text-sm font-medium transition-colors cursor-pointer ${
+                  isDark ? 'bg-white/5 hover:bg-white/10 text-white' : 'bg-gray-50 hover:bg-gray-100 text-gray-900'
+                }`}
               >
                 {t('account.switch_wallet')}
               </button>
@@ -1024,7 +1034,9 @@ const AccountSettings: React.FC = () => {
           ) : (
             <button
               onClick={() => openConnectModal?.()}
-              className="w-full py-3 px-4 rounded-lg text-sm font-medium bg-yellow-500 text-black hover:bg-yellow-400 transition-colors cursor-pointer mb-3"
+              className={`w-full py-3 px-4 rounded-lg text-sm font-medium transition-colors cursor-pointer mb-3 ${
+                isDark ? 'bg-white/5 hover:bg-white/10 text-white' : 'bg-gray-50 hover:bg-gray-100 text-gray-900'
+              }`}
             >
               {t('account.connect_wallet')}
             </button>
