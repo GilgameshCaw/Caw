@@ -82,15 +82,27 @@ type Meta = {
 // og:image:width / og:image:height — Facebook + Messenger validate
 // these strictly and will SUPPRESS the preview if they don't match.
 //
+// The image route's response shape depends on the requesting UA:
+// Twitter / FB / Messenger get the fixed 1200×630 canvas wrap, everyone
+// else gets the variable-height natural card. So we MUST forward the
+// incoming crawler's UA on the probe — otherwise we'd declare e.g.
+// 2400×608 (the bare-`node`-UA shape) while the actual fetch by FB
+// gets 2400×1260 (the canvas shape), and FB reports "Inferred
+// Property" because the meta dims don't match the fetched image.
+//
 // Timeout is tight (1500ms) because the SPA shell response can't wait
 // long: crawlers move on if the page takes too long to return HTML.
 // On miss/timeout we just omit the size tags — better to give scrapers
 // no hint than the wrong one.
-async function probeImageDims(url: string): Promise<{ w: number; h: number } | null> {
+async function probeImageDims(url: string, ua?: string): Promise<{ w: number; h: number } | null> {
   try {
     const ctrl = new AbortController()
     const t = setTimeout(() => ctrl.abort(), 1500)
-    const res = await fetch(url, { method: 'HEAD', signal: ctrl.signal })
+    const res = await fetch(url, {
+      method: 'HEAD',
+      signal: ctrl.signal,
+      headers: ua ? { 'user-agent': ua } : undefined,
+    })
     clearTimeout(t)
     if (!res.ok) return null
     const w = Number(res.headers.get('x-image-width'))
@@ -435,9 +447,16 @@ export async function spaPrerender(req: Request, res: Response): Promise<void> {
 
     // Probe the image's actual rendered dimensions so og:image:width /
     // og:image:height match reality. Strict scrapers (Messenger) treat
-    // a wrong size as a reason to suppress the preview. Best-effort —
-    // a HEAD-probe miss just means we omit those two meta tags.
-    const dims = await probeImageDims(meta.image)
+    // a wrong size as a reason to suppress the preview. Forward the
+    // incoming crawler's UA so the probe sees the SAME variant the
+    // crawler will subsequently fetch — without this, the probe ran as
+    // bare `node` and declared the natural-height card's dims (e.g.
+    // 2400×608) while FB's actual fetch landed on the canvas-wrap
+    // variant (2400×1260), triggering FB's "Inferred Property" warning
+    // and an empty preview. Best-effort — a HEAD-probe miss just means
+    // we omit those two meta tags.
+    const probeUa = String(req.headers['user-agent'] || '')
+    const dims = await probeImageDims(meta.image, probeUa)
     if (dims) {
       meta.imageWidth = dims.w
       meta.imageHeight = dims.h
