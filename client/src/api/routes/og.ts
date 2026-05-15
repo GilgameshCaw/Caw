@@ -84,8 +84,19 @@ function getLogoDataUri(): string {
 // previous 860×630 (1.37:1), X cropped centrally to 2:1, cutting off
 // the top/bottom of the layout. Other platforms (Facebook, LinkedIn,
 // Telegram) also expect ~1.9:1, so this matches everyone.
+// Outer canvas size — the dimensions Twitter / FB / Messenger expect
+// (1200×630 = 1.91:1). Used for the wrapTreeInOgCanvas outer band.
 const W = 1200
 const H = 630
+
+// Inner card width. Tighter than W so the corner image and stat row
+// sit closer to the wrapped text instead of hanging off in a sea of
+// empty right margin. The outer canvas wrap (Twitter / FB) still
+// renders at W=1200 with neutral bands either side; non-canvas
+// platforms (TG, Discord, browsers) render at exactly CARD_W and
+// fill the PNG edge-to-edge.
+const CARD_W = 970
+
 const CAW_GOLD = '#ebc046'
 
 // Subtle background variants — caw_id mod 4 picks one. Differences are
@@ -749,15 +760,15 @@ function statTile(value: string, label: string) {
 // to render to that exact height. Floor at CARD_MIN_H so a one-word caw
 // isn't a sliver; cap at CARD_MAX_H (the 1200×630 OG default) so a long
 // caw doesn't blow past the standard preview slot.
-const CARD_STRIP_W = Math.round(W * 0.015)      // 18 — left yellow strip
-const CARD_MARGIN  = Math.round(W * 0.03)       // 36 — outer margin (left/right)
+const CARD_STRIP_W = Math.round(CARD_W * 0.015)  // ~15 — left yellow strip
+const CARD_MARGIN  = Math.round(CARD_W * 0.03)   // ~29 — outer margin (left/right)
 // Vertical margin kept tight so content fills the card. Twitter's
 // ~15px top/bottom crop on summary_large_image still falls inside this
 // margin, and the stats row gets its own paddingTop below for a small
 // cushion above the icons.
 const CARD_MARGIN_Y = Math.round(H * 0.028)      // 18 — outer margin (top/bottom)
-const CARD_IMG_SZ  = Math.round(W * 0.18)       // 216 — square image in top-right
-const CARD_NARROW_W = Math.round(W * 0.68)      // 816 — text column when image overlaps
+const CARD_IMG_SZ  = Math.round(CARD_W * 0.18)   // ~175 — square image in top-right
+const CARD_NARROW_W = Math.round(CARD_W * 0.68)  // ~660 — text column when image overlaps
 // Gap between the yellow strip's right edge and the text's left edge.
 // Less than CARD_MARGIN (the right-edge gutter) because the strip is
 // already a visible left anchor — needs less breathing room than the
@@ -771,7 +782,7 @@ const CARD_TEXT_X   = CARD_STRIP_W + CARD_TEXT_LEFT_PAD
 // Wide content lines render below the corner image, so they get the
 // full available width — everything between the text column's left
 // edge and the right outer margin. No image-overlap concern.
-const CARD_WIDE_W   = W - CARD_TEXT_X - CARD_MARGIN
+const CARD_WIDE_W   = CARD_W - CARD_TEXT_X - CARD_MARGIN
 const CARD_MIN_H    = 280
 const CARD_MAX_H    = H
 
@@ -1270,7 +1281,7 @@ function planCawCard(opts: {
   // column is squeezed and we re-wrap. Cards where the image stays at
   // CARD_IMG_SZ skip the second pass.
   const computeNarrowChars = (imgPx: number) => {
-    const narrowPx = W - CARD_TEXT_X - imgPx - CARD_NARROW_RIGHT_PAD - CARD_MARGIN
+    const narrowPx = CARD_W - CARD_TEXT_X - imgPx - CARD_NARROW_RIGHT_PAD - CARD_MARGIN
     return approxCharsPerPx(CARD_BODY_FS, Math.max(200, narrowPx))
   }
   // Will the bottom stat row render? (any non-zero count.)
@@ -1296,7 +1307,7 @@ function planCawCard(opts: {
   // overlaps the image. Cap at: chrome (header + byline) + 3 body
   // lines, minus the top margin (image starts at top margin).
   const IMG_MAX_BY_LAYOUT = CARD_HEADER_PX + CARD_BYLINE_PX + 3 * CARD_BODY_PX - CARD_IMG_PAD
-  const IMG_MAX_BY_WIDTH = Math.round(W * 0.24)
+  const IMG_MAX_BY_WIDTH = Math.round(CARD_W * 0.24)
   const IMG_MAX = Math.min(IMG_MAX_BY_LAYOUT, IMG_MAX_BY_WIDTH)
   const computeImgSize = (cardHeight: number) => {
     if (!opts.cornerImage) return 0
@@ -1337,7 +1348,7 @@ function planCawCard(opts: {
   }
   // Render-time narrow column width — the visible cap for header /
   // byline / narrow content lines.
-  const narrowRenderW = W - CARD_TEXT_X - imgSize - CARD_NARROW_RIGHT_PAD - CARD_MARGIN
+  const narrowRenderW = CARD_W - CARD_TEXT_X - imgSize - CARD_NARROW_RIGHT_PAD - CARD_MARGIN
 
   return {
     height,
@@ -1705,7 +1716,7 @@ function planImageOnlyCard(opts: {
   // Reuse the standard canvas width for consistency with text cards.
   // The aspect-ratio cap below keeps the card from going taller than
   // a 1.5:1 (W/H) ratio so OG previews don't letterbox awkwardly.
-  const cardW = W
+  const cardW = CARD_W
   const dateText = opts.postedAt
     ? `${String.fromCharCode(0xa0)}· ${opts.postedAt.toLocaleString('en-US', { month: 'short', day: 'numeric' })}`
     : ''
@@ -2306,10 +2317,10 @@ function defaultCardTree() {
   }
 }
 
-async function renderToPng(tree: any, height: number = H): Promise<Buffer> {
+async function renderToPng(tree: any, height: number = H, width: number = CARD_W): Promise<Buffer> {
   const fonts = loadFonts()
   const svg = await satori(tree as any, {
-    width: W,
+    width,
     height,
     fonts,
     // Satori asks us to resolve any character it can't render with
@@ -2323,13 +2334,13 @@ async function renderToPng(tree: any, height: number = H): Promise<Buffer> {
     },
   } as any)
   // Render at 2x source resolution. Satori produces an SVG at the
-  // logical card size (W × height); Resvg rasterizes at 2*W wide.
+  // logical size (width × height); Resvg rasterizes at 2*width wide.
   // Downstream platforms (Twitter, Telegram, etc.) display the
   // image at smaller sizes anyway, so a 2x source survives a
   // bilinear downscale much better than a 1x render that gets
   // blown up by HiDPI displays. ~1ms cost per render, ~2-3x file
   // size — both well within budget for OG cards.
-  const png = new Resvg(svg, { fitTo: { mode: 'width', value: W * 2 } }).render().asPng()
+  const png = new Resvg(svg, { fitTo: { mode: 'width', value: width * 2 } }).render().asPng()
   return png
 }
 
@@ -2367,20 +2378,24 @@ function wrapTreeInOgCanvas(tree: any, innerHeight: number, _backgroundColor: st
               display: 'flex',
               position: 'absolute',
               top: topOffset,
-              left: 0,
-              width: W,
+              // Center the (now-CARD_W-wide) card inside the W-wide outer
+              // canvas. The previous full-width `width: W` worked when
+              // the inner card was also W; now that the card is CARD_W
+              // (970), centering puts equal neutral bands on either side
+              // of the visible card — same letterboxing pattern as the
+              // top/bottom for short cards, just on the sides.
+              left: Math.floor((W - CARD_W) / 2),
+              width: CARD_W,
               height: clampedInnerHeight,
               overflow: 'hidden',
               // Soft rounded corners on all four corners. Matches the
               // 10px radius on the inline corner image so the card and
               // its photo speak the same curve language.
               borderRadius: 10,
-              // Pronounced top + bottom shadow only — full-width inner
-              // card has no left/right band for a side shadow to land
-              // on. Two stacked shadows (one pointing up, one down)
-              // because satori's boxShadow doesn't render a top shadow
-              // from a single negative-Y offset reliably.
-              boxShadow: '0 16px 48px rgba(0,0,0,0.7), 0 -16px 48px rgba(0,0,0,0.7)',
+              // Shadow on all four sides now that the card is centered
+              // with neutral bands on every edge — gives it a properly
+              // "floating" feel inside the canvas.
+              boxShadow: '0 16px 48px rgba(0,0,0,0.7), 0 -16px 48px rgba(0,0,0,0.7), 16px 0 48px rgba(0,0,0,0.7), -16px 0 48px rgba(0,0,0,0.7)',
             },
             children: [tree],
           },
@@ -2776,8 +2791,8 @@ router.get('/image/caw/:id', async (req, res) => {
   // doesn't serve a stale render.
   const variant = isCanvasUA ? 'canvas' : 'std'
   const cacheKey = caw.status === 'PENDING'
-    ? `caw-v33-${variant}-${caw.id}-${liveHash}-pending`
-    : `caw-v33-${variant}-${caw.id}-${liveHash}`
+    ? `caw-v34-${variant}-${caw.id}-${liveHash}-pending`
+    : `caw-v34-${variant}-${caw.id}-${liveHash}`
   return serveCachedOrRender(res, cacheKey, async () => {
     // Strip media URLs and poll markers out of the visible text — the
     // corner image and the rendered poll bars already represent them,
@@ -2820,15 +2835,18 @@ router.get('/image/caw/:id', async (req, res) => {
     const { tree, height } = planCawCard({ ...planArgs, cornerImage })
     // Twitter + FB/Messenger: wrap in the fixed 1200×630 outer canvas
     // to satisfy their 1.91:1 expectations (Twitter central-crops,
-    // Messenger letterboxes/rejects). TG / Discord / iMessage /
-    // browsers respect the PNG's natural dimensions, so they get the
-    // tight content-only card with no top/bottom padding band.
+    // Messenger letterboxes/rejects). The canvas-wrap renders at W=1200
+    // with the smaller CARD_W card centered inside; the extra width is
+    // neutral side bands. TG / Discord / iMessage / browsers respect
+    // the PNG's natural dimensions, so they get a CARD_W-wide PNG with
+    // image + stats hugging the right edge — no empty whitespace strip.
     const renderTree = isCanvasUA
       ? wrapTreeInOgCanvas(tree, height, planArgs.backgroundColor)
       : tree
     const renderHeight = isCanvasUA ? H : height
+    const renderWidth = isCanvasUA ? W : CARD_W
     try {
-      return await renderToPng(renderTree, renderHeight)
+      return await renderToPng(renderTree, renderHeight, renderWidth)
     } catch (err: any) {
       // Satori sometimes can't decode certain image formats (notably
       // some webp variants) and throws inside its image preprocessor.
@@ -2840,7 +2858,8 @@ router.get('/image/caw/:id', async (req, res) => {
         ? wrapTreeInOgCanvas(fallback.tree, fallback.height, planArgs.backgroundColor)
         : fallback.tree
       const fallbackHeight = isCanvasUA ? H : fallback.height
-      return await renderToPng(fallbackTree, fallbackHeight)
+      const fallbackWidth = isCanvasUA ? W : CARD_W
+      return await renderToPng(fallbackTree, fallbackHeight, fallbackWidth)
     }
   })
 })
