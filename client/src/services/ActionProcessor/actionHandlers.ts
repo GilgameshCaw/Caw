@@ -89,24 +89,24 @@ export async function handleCawAction(
     textContent = textContent.replace(/\n{3,}/g, '\n\n').trim()
   }
 
-  // Check if a pending caw already exists (optimistic counts were already incremented)
-  const existingPendingCaw = await tx.caw.findUnique({
+  // Read the existing row's status so we can decide whether to flip it
+  // to SUCCESS on this on-chain confirmation. Chain wins over PENDING
+  // (optimistic FE row) and over FAILED (DataCleaner-swept dead row from
+  // a peer's earlier failed submission that nevertheless landed on chain
+  // via a different mirror). HIDDEN is moderation state and stays sticky.
+  const existingCaw = await tx.caw.findUnique({
     where: { userId_cawonce: { userId: authorId, cawonce: action.cawonce } },
     select: { status: true }
   })
-  const wasPendingCaw = existingPendingCaw?.status === 'PENDING'
+  const chainOverridesStatus =
+    existingCaw?.status === 'PENDING' || existingCaw?.status === 'FAILED'
 
   // Use upsert to prevent duplicate CAWs.
   //
-  // The update branch ONLY runs when the existing row is PENDING (the
-  // optimistic FE-side row waiting for chain confirmation) — if we
-  // reach this code with an existing row at all, checkCawExists in
-  // domainObjectChecks.ts already returned false, which only happens
-  // for PENDING. But before tightening that check, this update branch
-  // could fire on a SUCCESS-or-HIDDEN caw and clobber its status. The
-  // double-write defense here is intentional belt-and-braces: if a
-  // future code path manages to re-enter handleCawAction for a non-
-  // PENDING row, we won't undo a hide.
+  // The update branch flips status to SUCCESS only when the existing row
+  // is in a chain-overridable state (PENDING or FAILED). HIDDEN rows
+  // stay hidden (moderation > chain). The conditional avoids re-asserting
+  // SUCCESS on an already-SUCCESS row, which would be a no-op anyway.
   const newCaw = await tx.caw.upsert({
     where: {
       userId_cawonce: {
@@ -115,11 +115,8 @@ export async function handleCawAction(
       }
     },
     update: {
-      // Only write the on-chain-confirmed fields and ONLY flip status
-      // SUCCESS when the row was PENDING. The conditional set is via
-      // a Prisma raw expression — Prisma's typed update doesn't have
-      // a "set this to X if current is Y" primitive, so we read the
-      // existing status earlier (wasPendingCaw) and gate this write.
+      // Only write the on-chain-confirmed fields and gate the status flip
+      // on the chainOverridesStatus check computed above.
       content: textContent,
       action: action.actionType,
       originalCawId: parentCawId,
@@ -127,7 +124,7 @@ export async function handleCawAction(
       hasImage: imageUrls.length > 0,
       videoData: videoUrls.length > 0 ? videoUrls.join('|||') : null,
       hasVideo: videoUrls.length > 0,
-      ...(wasPendingCaw ? { status: 'SUCCESS' as const } : {}),
+      ...(chainOverridesStatus ? { status: 'SUCCESS' as const } : {}),
       updatedAt: new Date()
     },
     create: {
@@ -276,11 +273,20 @@ export async function handleCawAction(
     }
   }
 
-  // Increment user's caw count + parent recawCount for quotes (skip if confirming a pending caw).
-  // For replies, do NOT pass originalCawId — onCawCreated would bump recawCount on the parent,
-  // but replies only affect commentCount (handled separately below).
+  // Increment user's caw count + parent recawCount for quotes. Skip if
+  // the existing row was PENDING or FAILED: in both cases the FE-side
+  // optimistic `onCawCreated` already incremented the user's cawCount
+  // (and DataCleaner doesn't roll back caw counts on PENDING→FAILED — see
+  // txQueueFailure.ts and DataCleaner/index.ts), so this branch would
+  // double-count.
+  //
+  // For replies, do NOT pass originalCawId — onCawCreated would bump
+  // recawCount on the parent, but replies only affect commentCount
+  // (handled separately below).
   const quoteOriginalCawId = (parentCawId && !isReplyNotQuote) ? parentCawId : null
-  if (!wasPendingCaw) {
+  const hadOptimisticCounts =
+    existingCaw?.status === 'PENDING' || existingCaw?.status === 'FAILED'
+  if (!hadOptimisticCounts) {
     await countManager.onCawCreated(tx, {
       id: newCaw.id,
       userId: authorId,
@@ -289,8 +295,9 @@ export async function handleCawAction(
       status: 'SUCCESS',
     })
   } else {
-    // Was pending — counts already set optimistically, just log the no-op
-    await countManager.onStatusChanged(tx, 'caw', newCaw.id, 'PENDING', 'SUCCESS', {
+    // Optimistic counts already applied (PENDING) or were never rolled
+    // back on the sweep (FAILED) — just log the status transition.
+    await countManager.onStatusChanged(tx, 'caw', newCaw.id, existingCaw!.status, 'SUCCESS', {
       userId: authorId, action: 'CAW', originalCawId: quoteOriginalCawId,
     })
   }
@@ -343,6 +350,12 @@ export async function handleRecawAction(
     }
   })
 
+  // Chain confirmation should win over PENDING (optimistic) and FAILED
+  // (DataCleaner-swept pending row that nevertheless landed via another
+  // mirror). HIDDEN is moderation state and stays sticky.
+  const recawChainOverrides =
+    existingRecaw?.status === 'PENDING' || existingRecaw?.status === 'FAILED'
+
   // Use upsert to prevent duplicate RECAWs
   await tx.caw.upsert({
     where: {
@@ -352,8 +365,7 @@ export async function handleRecawAction(
       }
     },
     update: {
-      // If RECAW already exists, update status to SUCCESS
-      status: 'SUCCESS',
+      ...(recawChainOverrides ? { status: 'SUCCESS' as const } : {}),
       updatedAt: new Date()
     },
     create: {
@@ -366,8 +378,9 @@ export async function handleRecawAction(
   })
 
   // Increment counts only if this is truly new (no existing record).
-  // If it was pending, counts were already optimistically incremented by the API.
-  const wasPendingRecaw = existingRecaw?.status === 'PENDING'
+  // If it was pending OR failed, counts were already optimistically
+  // incremented at submit time and never rolled back by the sweep —
+  // see recawChainOverrides branch below.
   if (!existingRecaw) {
     // onCawCreated handles user.cawCount/recawCount and parent recawCount
     const isQuoteRecaw = rawAction.text && rawAction.text.trim().length > 0
@@ -389,12 +402,13 @@ export async function handleRecawAction(
     } catch (err) {
       console.error(`Failed to create repost/quote notification:`, err)
     }
-  } else if (wasPendingRecaw) {
-    // Was pending — counts already set optimistically, log the no-op
+  } else if (recawChainOverrides) {
+    // Was PENDING or FAILED — counts already set optimistically and never
+    // rolled back, so just log the transition.
     const recawCaw = await tx.caw.findUnique({ where: { userId_cawonce: { userId, cawonce: action.cawonce } } })
     if (recawCaw) {
       const isQuoteRecaw = rawAction.text && rawAction.text.trim().length > 0
-      await countManager.onStatusChanged(tx, 'caw', recawCaw.id, 'PENDING', 'SUCCESS', {
+      await countManager.onStatusChanged(tx, 'caw', recawCaw.id, existingRecaw!.status, 'SUCCESS', {
         userId, action: isQuoteRecaw ? 'CAW' : 'RECAW', originalCawId,
       })
     }
