@@ -1,0 +1,18 @@
+# Echidna config for CAW fuzz tests.
+#
+# Initial pass — keep counts modest enough that a single run finishes in
+# minutes on a dev Mac. Scale up via CLI flags or by editing this file.
+testMode: property
+testLimit: 50000
+seqLen: 50
+coverage: true
+format: text
+shrinkLimit: 5000
+# Crytic options: tell solc where to find the contracts + use the same solc
+# version + via_ir + optimizer-runs settings the rest of the build uses
+# (foundry.toml / truffle-config.js). Echidna picks solc via solc-select if
+# unspecified; pinning here keeps the fuzz reproducible.
+cryticArgs:
+  - "--solc-remaps=@openzeppelin/contracts/=node_modules/@openzeppelin/contracts/ @openzeppelin/contracts-upgradeable/=node_modules/@openzeppelin/contracts-upgradeable/"
+  - "--solc-args=--via-ir --optimize --optimize-runs 1 --evm-version cancun"
+solcArgs: "--via-ir --optimize --optimize-runs 1 --evm-version cancun"
