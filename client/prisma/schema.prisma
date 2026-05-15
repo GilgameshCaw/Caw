@@ -348,16 +348,19 @@ model TxQueue {
 }
 
 model Action {
-  id         Int        @id @default(autoincrement())
-  rawEventId Int
-  chainId    Int
-  senderId   Int
-  cawonce    Int
-  actionType ActionType
-  data       Json
-  createdAt  DateTime   @default(now())
-  updatedAt  DateTime   @updatedAt
-  rawEvent   RawEvent   @relation(fields: [rawEventId], references: [id])
+  id               Int        @id @default(autoincrement())
+  rawEventId       Int
+  chainId          Int
+  senderId         Int
+  cawonce          Int
+  actionType       ActionType
+  data             Json
+  txHash           String?
+  blockNumber      Int?
+  submitterAddress String?
+  createdAt        DateTime   @default(now())
+  updatedAt        DateTime   @updatedAt
+  rawEvent         RawEvent   @relation(fields: [rawEventId], references: [id])
 
   @@unique([chainId, senderId, cawonce])
   @@index([senderId])

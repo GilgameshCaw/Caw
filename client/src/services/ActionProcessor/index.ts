@@ -211,7 +211,10 @@ async function handleRawAction(raw: { id: number, chainId: number, blockNumber: 
     let shouldProcessDomain
     try {
       const result = await prisma.$transaction(async (tx) => {
-        return await createOrFindAction(tx, rawId, chainId, rawAction)
+        return await createOrFindAction(tx, rawId, chainId, rawAction, {
+          txHash: raw.transactionHash,
+          blockNumber: Number(raw.blockNumber),
+        })
       }, { timeout: 30_000 })
       action = result.action
       shouldProcessDomain = result.shouldProcessDomain

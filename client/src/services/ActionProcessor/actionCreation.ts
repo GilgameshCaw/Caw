@@ -15,7 +15,8 @@ export async function createOrFindAction(
   tx: PrismaTransactionClient,
   rawId: number,
   chainId: number,
-  rawAction: RawAction
+  rawAction: RawAction,
+  attribution?: { txHash?: string; blockNumber?: number; submitterAddress?: string }
 ): Promise<CreateActionResult> {
   // First, try to find existing action (match by chainId + senderId + cawonce,
   // which is the unique constraint on the Action table)
@@ -53,7 +54,10 @@ export async function createOrFindAction(
         senderId: rawAction.senderId,
         cawonce: rawAction.cawonce,
         actionType: getActionType(Number(rawAction.actionType)),
-        data: rawAction as any
+        data: rawAction as any,
+        txHash: attribution?.txHash ?? null,
+        blockNumber: attribution?.blockNumber ?? null,
+        submitterAddress: attribution?.submitterAddress ?? null,
       }
     })
 
