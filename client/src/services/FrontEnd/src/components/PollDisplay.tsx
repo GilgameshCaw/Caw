@@ -9,6 +9,7 @@ import { useT } from '~/i18n/I18nProvider'
 
 interface Props {
   caw: CawItem
+  optionLabelsOverride?: string[] | null
 }
 
 /**
@@ -115,7 +116,7 @@ interface LocalVote {
  * Unvote (text "vote:") works the same way in reverse — local state
  * resets to the no-vote view immediately.
  */
-const PollDisplay: React.FC<Props> = ({ caw }) => {
+const PollDisplay: React.FC<Props> = ({ caw, optionLabelsOverride }) => {
   const { isDark } = useTheme()
   const t = useT()
   const activeToken = useActiveToken()
@@ -248,6 +249,8 @@ const PollDisplay: React.FC<Props> = ({ caw }) => {
   return (
     <div className="mt-3 mb-1 space-y-1.5">
       {poll.options.map((opt, i) => {
+        const useOverride = optionLabelsOverride && optionLabelsOverride.length === poll.options.length
+        const displayOpt = useOverride ? optionLabelsOverride![i] : opt
         const count = totals.counts[i] || 0
         const rawPct = totals.sum > 0 ? (count / totals.sum) * 100 : 0
         const pct = Math.round(rawPct)
@@ -295,12 +298,12 @@ const PollDisplay: React.FC<Props> = ({ caw }) => {
               }`} />
               <div className="relative flex items-center gap-3">
                 <PollOptionThumb imageUrl={imgUrl} number={i + 1} isDark={isDark} />
-                <span className={`flex-1 truncate text-base transition-colors ${
+                <span className={`flex-1 break-words text-base transition-colors ${
                   isUserPick
                     ? (isDark ? 'text-white font-medium' : 'text-gray-900 font-medium')
                     : (isDark ? 'text-white/80' : 'text-gray-800')
                 }`}>
-                  {opt}
+                  {displayOpt}
                   {isUserPick && local.pending && (
                     <span className={`ml-2 text-[10px] uppercase tracking-wide ${
                       isDark ? 'text-yellow-400/70' : 'text-yellow-600/80'
@@ -338,7 +341,7 @@ const PollDisplay: React.FC<Props> = ({ caw }) => {
             }`}
           >
             <PollOptionThumb imageUrl={imgUrl} number={i + 1} isDark={isDark} />
-            <span className="flex-1 truncate">{opt}</span>
+            <span className="flex-1 break-words">{displayOpt}</span>
           </button>
         )
       })}

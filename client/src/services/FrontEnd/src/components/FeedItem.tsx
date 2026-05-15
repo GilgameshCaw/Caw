@@ -188,6 +188,7 @@ const FeedItem: React.FC<{ item: CawItem; isMainPost?: boolean; isReply?: boolea
     wasPinnedRef.current = !!item.isPinned
   }, [item.isPinned])
   const [translatedText, setTranslatedText] = useState<string | null>(null)
+  const [translatedPollOptions, setTranslatedPollOptions] = useState<string[] | null>(null)
   const [isTranslating, setIsTranslating] = useState(false)
   // Tracks the source language we've discovered for this caw — either
   // from item.sourceLanguage on first render, or from a successful
@@ -900,9 +901,35 @@ const FeedItem: React.FC<{ item: CawItem; isMainPost?: boolean; isReply?: boolea
     if (!useItem.content) return
     setIsTranslating(true)
     try {
-      const result = await translateTextDetailed(useItem.content, viewerLang.preferredLanguage)
+      const pollOpts = useItem.poll?.options
+      const hasPoll = Array.isArray(pollOpts) && pollOpts.length > 0
+      const sourceText = hasPoll
+        ? `${useItem.content}\n\n${pollOpts!.join('\n')}`
+        : useItem.content
+      const result = await translateTextDetailed(sourceText, viewerLang.preferredLanguage)
       if (!result) return
-      setTranslatedText(result.text)
+      if (hasPoll) {
+        const lines = result.text.replace(/\s+$/, '').split('\n')
+        const nonEmptyTrailing: string[] = []
+        let i = lines.length - 1
+        while (i >= 0 && nonEmptyTrailing.length < pollOpts!.length) {
+          if (lines[i].trim().length > 0) nonEmptyTrailing.unshift(lines[i])
+          i--
+        }
+        if (nonEmptyTrailing.length === pollOpts!.length) {
+          const bodyLines = lines.slice(0, i + 1)
+          while (bodyLines.length > 0 && bodyLines[bodyLines.length - 1].trim() === '') bodyLines.pop()
+          setTranslatedText(bodyLines.join('\n'))
+          setTranslatedPollOptions(nonEmptyTrailing)
+        } else {
+          console.warn('[FeedItem] poll translation line-count mismatch; showing originals')
+          setTranslatedText(result.text)
+          setTranslatedPollOptions(null)
+        }
+      } else {
+        setTranslatedText(result.text)
+        setTranslatedPollOptions(null)
+      }
       const detected = result.sourceLanguage
       // gtx returns "auto" when it couldn't decide — only persist real
       // codes, and only the first time we discover one for this caw.
@@ -920,7 +947,7 @@ const FeedItem: React.FC<{ item: CawItem; isMainPost?: boolean; isReply?: boolea
     } finally {
       setIsTranslating(false)
     }
-  }, [useItem.id, useItem.content, useItem.sourceLanguage, viewerLang.preferredLanguage, knownSourceLanguage])
+  }, [useItem.id, useItem.content, useItem.sourceLanguage, useItem.poll?.options, viewerLang.preferredLanguage, knownSourceLanguage])
 
   // Auto-translate when the viewer enabled it AND we know the post's
   // source differs from the viewer's language. We require knownSourceLanguage
@@ -956,6 +983,7 @@ const FeedItem: React.FC<{ item: CawItem; isMainPost?: boolean; isReply?: boolea
         if (isTranslating || translatedText) {
           // Toggle off — second click on Translate clears the translation.
           setTranslatedText(null)
+          setTranslatedPollOptions(null)
           return
         }
         await runTranslation()
@@ -1349,7 +1377,7 @@ const FeedItem: React.FC<{ item: CawItem; isMainPost?: boolean; isReply?: boolea
               indexer round-trip and got promoted into a Poll row. */}
           {useItem.poll && (
             <div className={`mb-4 ${inThread ? "pl-10" : "pl-2 md:pl-0"}`}>
-              <PollDisplay caw={useItem} />
+              <PollDisplay caw={useItem} optionLabelsOverride={translatedText ? translatedPollOptions : null} />
             </div>
           )}
 
