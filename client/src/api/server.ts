@@ -437,7 +437,19 @@ export function createApp() {
     }
   })
 
-  app.get(/^((?:\/[a-z]{2,3})?)\/users\/([^/]+)\/caw\/([^/]+)\/?$/, async (req, res, next) => {
+  // `[^/?]+` (not `[^/]+`) on the slug capture: Express 5 matches route
+  // regexes against the full request URL including the query string, so
+  // `[^/]+` greedily eats `?a=b` into `req.params[2]`. The regex still
+  // matches the right path, but the contaminated capture made the
+  // canonical compare downstream fail (`target` was clean, `req.path`
+  // was clean, but `req.params[2]` carried the query) — actually the
+  // bug was even worse: `req.path` itself ended up including the query
+  // in this match, so `target === req.path` returned false on
+  // already-canonical URLs whenever a query was present, producing an
+  // infinite redirect to the same URL (TG / FB / browsers loop forever).
+  // Excluding `?` from the slug capture makes Express stop the match
+  // BEFORE the query, so all downstream comparisons see clean paths.
+  app.get(/^((?:\/[a-z]{2,3})?)\/users\/([^/?]+)\/caw\/([^/?]+)\/?$/, async (req, res, next) => {
     try {
       const localeSegment = req.params[0] || ''
       const idSlug = req.params[2]
