@@ -117,7 +117,17 @@ function buildMetaTags(m: Meta): string {
     `<meta property="og:type" content="${ot}">`,
     `<meta property="og:title" content="${t}">`,
     `<meta property="og:description" content="${d}">`,
-    `<meta property="og:url" content="${c}">`,
+    // og:url MUST point at the serving mirror (m.url), NOT the canonical
+    // origin. They look interchangeable but Telegram and other preview
+    // fetchers actually follow og:url to (re-)fetch metadata; if that
+    // points at https://caw.social/... and caw.social isn't yet serving
+    // content (or doesn't have this caw, or is down), TG's preview hangs
+    // on infinite-loading despite the serving mirror returning a perfectly
+    // valid prerendered page. rel=canonical above is for search-indexing
+    // mirror-collapse and is correctly pinned to the canonical origin —
+    // search engines treat the two URLs as the same page; preview
+    // fetchers don't.
+    `<meta property="og:url" content="${u}">`,
     `<meta property="og:image" content="${i}">`,
   ]
   // hreflang alternates: one <link rel="alternate"> per supported
