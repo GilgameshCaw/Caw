@@ -142,3 +142,103 @@ A few things that aren't quite captured above and would refine the choice:
 4. Do we want the signer to be portable across operators (i.e., other people running CAW nodes) — and if so, can we expect them all to set up cloud KMS, or do we need a "works without a cloud account" path?
 
 Question #4 is the strongest argument for keeping option B in the back pocket: operators who run CAW nodes themselves probably can't or won't set up KMS, and a "drop-in signer service" might be what *they* use even if we (the reference operator) use C.
+
+---
+
+## Addendum: pluggable signer abstraction (per-operator choice)
+
+Picking *one* option network-wide is the wrong frame. Different operators have different threat models and operational appetites:
+
+| Operator type | What they want | What they'd actually run |
+|---|---|---|
+| Reference operator (us) | Best security available | Cloud KMS |
+| Serious independent operator | Decent security, no cloud lock-in | Local signer service (option B) or local HSM |
+| Hobbyist on a $5 VPS | "Just works" out of the box | Plaintext `.env` (today) |
+| Air-gapped paranoid operator | Key never online | Manual co-signing (probably impractical at submission cadence) |
+
+A one-size answer loses several of those groups. The right move is to introduce a small abstraction inside the codebase so the operator picks their backend at install time.
+
+### The interface
+
+```ts
+// client/src/lib/signer/types.ts (proposed)
+export interface ValidatorSigner {
+  /** Synchronous address read — used for nonce fetch, identity, ownership checks. */
+  getAddress(): string;
+
+  /** Sign a fully-populated transaction request; return raw signed tx for broadcast.
+   *  Caller pre-fills nonce, chainId, gas fields — the signer only signs. */
+  signTransaction(tx: TransactionRequest): Promise<string>;
+
+  /** Sign an arbitrary 32-byte digest with secp256k1 (no EIP-191 prefix).
+   *  Used by DmRelayService for canonical envelope signing. KMS / HSM backends
+   *  implement this via their respective Sign-digest APIs. */
+  signDigest(digest: Uint8Array): Promise<{ r: string; s: string; v: number }>;
+
+  /** Optional: free any resources (close socket, drop KMS client). */
+  dispose?(): Promise<void>;
+}
+```
+
+Three methods, that's it. `signMessage` and `signTypedData` are deliberately absent — they aren't used in the validator codebase today, and adding them invites callers to start signing things outside the existing patterns. If a future feature legitimately needs them, we add them then.
+
+### Backends
+
+```ts
+// client/src/lib/signer/index.ts (proposed)
+export function getValidatorSigner(provider: Provider): ValidatorSigner {
+  switch (process.env.VALIDATOR_SIGNER_TYPE || 'env') {
+    case 'env':    return new EnvKeySigner(provider);     // today's behavior
+    case 'socket': return new SocketSigner(provider);     // option B (deferred)
+    case 'kms':    return new KmsSigner(provider);        // option C (ship next)
+    case 'hsm':    return new HsmSigner(provider);        // option D (deferred)
+    default: throw new Error(`Unknown VALIDATOR_SIGNER_TYPE`);
+  }
+}
+```
+
+Each backend is a separate file. Implementations:
+
+- **`EnvKeySigner`** — wraps `new ethers.Wallet(process.env.VALIDATOR_PRIVATE_KEY, provider)`. ~30 lines. Default. Drop-in for current behavior.
+- **`KmsSigner`** — wraps an AWS KMS / GCP KMS client. ~150 lines (mostly DER-encoded signature decoding and recovery-id calculation). Ships for the reference operator.
+- **`SocketSigner`** — talks to the option B signer process over a Unix socket. Built only if/when an independent operator needs it.
+- **`HsmSigner`** — talks to a YubiHSM or AWS CloudHSM. Built on demand.
+
+### Per-callsite migration
+
+The inventory found 10 files reading `VALIDATOR_PRIVATE_KEY` directly. The migration is mechanical:
+
+- `new Wallet(VALIDATOR_PRIVATE_KEY, provider)` → `getValidatorSigner(provider)` (used as a `Signer`-like object passed into `new Contract(addr, abi, signer)`).
+- `wallet.address` reads → `signer.getAddress()`.
+- The DmRelayService `signCanonical(canonical, privateKey)` call needs reshaping: instead of passing the raw key, hash to a digest first and call `signer.signDigest(digest)`. The signature shape (`r`, `s`, `v`) stays identical.
+- Scripts that only need `.address` (the inspect script) can still keep doing `new ethers.Wallet(pk).address` — they're operator-local tools, not security-critical paths.
+
+### Per-operator config
+
+Set in install env:
+
+```bash
+# Default: backwards compatible, no change
+VALIDATOR_SIGNER_TYPE=env
+VALIDATOR_PRIVATE_KEY=0xabc...
+
+# Cloud KMS (reference operator)
+VALIDATOR_SIGNER_TYPE=kms
+KMS_KEY_ID=arn:aws:kms:us-east-1:...
+AWS_REGION=us-east-1
+# AWS credentials via the standard chain (env, instance role, ~/.aws/credentials)
+
+# Local signer process (independent operators)
+VALIDATOR_SIGNER_TYPE=socket
+SIGNER_SOCKET_PATH=/var/run/caw-signer/signer.sock
+```
+
+### Tradeoffs the abstraction surfaces
+
+- **DM relay needs `signDigest`** with raw secp256k1 semantics. AWS KMS supports `ECDSA_SHA_256` and returns a DER signature — we have to decode it and compute the recovery id ourselves. ~30 lines of well-known code; not novel.
+- **`signMessage` / `signTypedData` are off the menu**. If a future feature wants them, the abstraction can grow. Better to keep the interface minimal than pre-add unused methods.
+- **Single key for everything**: validator txs, sessions-api tx, instance registry tx, DM relay envelope signing all use the same signer. A compromise affects all of them. Worth revisiting if DM relay becomes a separate concern, but for now the operator-choice axis is more valuable than splitting.
+
+### What this changes in the recommendation
+
+The earlier rec (A → C → E) stays. The abstraction is what *enables* that path without forcing every operator onto our choice. Pre-mainnet, the reference operator runs `kms`; hobbyists keep running `env`; security-conscious independents can build `socket` for themselves. Nobody is forced to pick.

@@ -14,6 +14,7 @@
 
 import { secp256k1 } from '@noble/curves/secp256k1'
 import { sha256 } from '@noble/hashes/sha256'
+import type { ValidatorSigner } from '../../utils/signer/types'
 
 export function hexToBytes(hex: string): Uint8Array {
   const clean = hex.startsWith('0x') ? hex.slice(2) : hex
@@ -43,6 +44,27 @@ export function signCanonical(canonical: string, privateKey: Uint8Array): string
   out.set(compact, 0)
   out[64] = v
   return '0x' + bytesToHex(out)
+}
+
+/**
+ * Same as signCanonical but routes through a ValidatorSigner so the key
+ * material can live in a KMS/HSM/socket-process instead of being passed
+ * around as bytes. Produces an identical wire format.
+ */
+export async function signCanonicalWithSigner(
+  canonical: string,
+  signer: ValidatorSigner,
+): Promise<string> {
+  const hash = sha256(new TextEncoder().encode(canonical))
+  const { r, s, v } = await signer.signDigest(hash)
+  // r, s are 0x-prefixed; strip and concat with v as a single byte.
+  const rHex = r.startsWith('0x') ? r.slice(2) : r
+  const sHex = s.startsWith('0x') ? s.slice(2) : s
+  if (rHex.length !== 64 || sHex.length !== 64) {
+    throw new Error(`signCanonicalWithSigner: invalid r/s length (r=${rHex.length}, s=${sHex.length})`)
+  }
+  const vHex = (v & 1).toString(16).padStart(2, '0')
+  return '0x' + rHex + sHex + vHex
 }
 
 /**

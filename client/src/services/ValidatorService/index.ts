@@ -22,6 +22,7 @@ import { cawToEthCached, isPriceFresh } from '../ChainSyncService'
 import { markTxQueueFailed as sharedMarkTxQueueFailed } from '../../utils/txQueueFailure'
 import { incrementSessionSpent } from '../../utils/sessionSpendTracker'
 import { span } from '../../utils/trace'
+import { requireValidatorSigner, type ValidatorSigner } from '../../utils/signer'
 
 // ABI for the new packed-calldata CawActions functions
 const PACKED_ABI = [
@@ -752,11 +753,11 @@ export const validatorService: Service = {
       throw new Error('Missing L2_RPC_URL in environment variables')
     }
 
-    const privateKey = process.env.VALIDATOR_PRIVATE_KEY
-    if (!privateKey) throw new Error('Missing VALIDATOR_PRIVATE_KEY in env')
-
     let provider: WebSocketProvider
-    let wallet: Wallet
+    // `signer` replaces the former `wallet: Wallet`. The underlying ethers.Signer
+    // is reached via signer.asEthersSigner() where Contract instantiation needs
+    // it. Provider gets bound during initializeConnection() / rebuildHttpProvider().
+    const signer: ValidatorSigner = requireValidatorSigner({})
     let cawActions: Contract
     let iface: any
 
@@ -803,8 +804,8 @@ export const validatorService: Service = {
       httpProvider = makeFallbackJsonRpcProvider(l2HttpRpcUrls, 84532)
       if (!USE_WS) {
         provider = httpProvider as unknown as WebSocketProvider
-        wallet = new Wallet(privateKey!, httpProvider)
-        cawActions = new Contract(CAW_ACTIONS_ADDRESS, cawActionsAbi, wallet)
+        signer.reconnect(httpProvider)
+        cawActions = new Contract(CAW_ACTIONS_ADDRESS, cawActionsAbi, signer.asEthersSigner())
         iface = cawActions.interface
       }
     }
@@ -823,10 +824,10 @@ export const validatorService: Service = {
     // Function to initialize/reinitialize the WebSocket connection
     async function initializeConnection() {
       if (!USE_WS) {
-        // No-WS path: bind wallet/contract to the HTTP provider instead.
+        // No-WS path: bind signer/contract to the HTTP provider instead.
         provider = httpProvider as unknown as WebSocketProvider
-        wallet = new Wallet(privateKey!, httpProvider)
-        cawActions = new Contract(CAW_ACTIONS_ADDRESS, cawActionsAbi, wallet)
+        signer.reconnect(httpProvider)
+        cawActions = new Contract(CAW_ACTIONS_ADDRESS, cawActionsAbi, signer.asEthersSigner())
         iface = cawActions.interface
         console.log('[Validator] WebSocket disabled — using HTTP provider (set ENABLE_VALIDATOR_WS=1 to re-enable)')
         return
@@ -898,8 +899,8 @@ export const validatorService: Service = {
           })
         }
 
-        wallet = new Wallet(privateKey!, provider)
-        cawActions = new Contract(CAW_ACTIONS_ADDRESS, cawActionsAbi, wallet)
+        signer.reconnect(provider)
+        cawActions = new Contract(CAW_ACTIONS_ADDRESS, cawActionsAbi, signer.asEthersSigner())
         iface = cawActions.interface
 
         // Wait for the provider to be ready
@@ -1573,7 +1574,7 @@ export const validatorService: Service = {
       const feeData = await httpProvider.getFeeData();
 
       // Pre-fetch nonce so sendTransaction doesn't need to (throttle handles spacing)
-      const nonce = await httpProvider.getTransactionCount(wallet.address, 'pending')
+      const nonce = await httpProvider.getTransactionCount(signer.getAddress(), 'pending')
 
       // Bump gas fees on retry to handle REPLACEMENT_UNDERPRICED errors
       let maxFeePerGas = feeData.maxFeePerGas ?? BigInt(0)
@@ -1613,7 +1614,7 @@ export const validatorService: Service = {
         }
 
         // All params pre-populated so ethers makes exactly 1 RPC call (eth_sendRawTransaction)
-        const tx = await wallet.sendTransaction({
+        const tx = await signer.asEthersSigner().sendTransaction({
           to:    CAW_ACTIONS_ADDRESS,
           data:  txData,
           value: quote.nativeFee,
@@ -3230,10 +3231,10 @@ console.log("succeededKeys", succeededKeys)
 
     // Lazily initialized L2b provider + contracts (only when optimistic mode is enabled)
     let l2bProvider: JsonRpcProvider | null = null
-    let l2bWallet: Wallet | null = null          // SUBMITTER — may be REPLICATOR_PRIVATE_KEY in test mode
-    let l2bMonitorWallet: Wallet | null = null   // MONITOR/challenger — always the main validator key
+    let l2bSubmitter: ValidatorSigner | null = null   // SUBMITTER — may be REPLICATOR_PRIVATE_KEY in test mode
+    let l2bMonitor: ValidatorSigner | null = null     // MONITOR/challenger — always the main validator key
     let archiveRead: Contract | null = null
-    let archiveWrite: Contract | null = null     // bound to l2bWallet (submitter)
+    let archiveWrite: Contract | null = null          // bound to l2bSubmitter
 
     // Slash-test knobs. When both are set, submissions fire from a separate
     // wallet (so slashed ETH visibly moves to the main validator who challenges)
@@ -3263,8 +3264,8 @@ console.log("succeededKeys", succeededKeys)
     const REPLICATOR_PRIVATE_KEY = process.env.REPLICATOR_PRIVATE_KEY
 
     function getL2bContracts() {
-      if (l2bProvider && l2bWallet && l2bMonitorWallet && archiveRead && archiveWrite) {
-        return { l2bProvider, l2bWallet, l2bMonitorWallet, archiveRead, archiveWrite }
+      if (l2bProvider && l2bSubmitter && l2bMonitor && archiveRead && archiveWrite) {
+        return { l2bProvider, l2bSubmitter, l2bMonitor, archiveRead, archiveWrite }
       }
       // REPLICATION_RPC + REPLICATION_CHAIN are the canonical names; falls
       // back to L2B_RPC_URL when an operator hasn't set the dedicated
@@ -3283,22 +3284,26 @@ console.log("succeededKeys", succeededKeys)
       l2bProvider = makeJsonRpcProvider(l2bRpcUrl, chainId)
 
       // Submitter uses REPLICATOR_PRIVATE_KEY if present (test mode), else main validator.
-      const submitterKey = REPLICATOR_PRIVATE_KEY || privateKey!
-      l2bWallet = new Wallet(submitterKey, l2bProvider)
-      l2bMonitorWallet = new Wallet(privateKey!, l2bProvider)
+      // Both go through the signer abstraction so they can be swapped to a
+      // KMS/HSM/socket backend later without touching the submission code.
+      l2bSubmitter = requireValidatorSigner({
+        provider: l2bProvider,
+        privateKeyEnv: REPLICATOR_PRIVATE_KEY ? 'REPLICATOR_PRIVATE_KEY' : 'VALIDATOR_PRIVATE_KEY',
+      })
+      l2bMonitor = requireValidatorSigner({ provider: l2bProvider })
 
       archiveRead = new Contract(OPTIMISTIC_ARCHIVE_ADDRESS, archiveAbi, l2bProvider)
-      archiveWrite = new Contract(OPTIMISTIC_ARCHIVE_ADDRESS, archiveAbi, l2bWallet)
+      archiveWrite = new Contract(OPTIMISTIC_ARCHIVE_ADDRESS, archiveAbi, l2bSubmitter.asEthersSigner())
 
       console.log(`[OptimisticReplication] L2b RPC: ${redactRpcUrl(l2bRpcUrl)}`)
       console.log(`[OptimisticReplication] Archive: ${OPTIMISTIC_ARCHIVE_ADDRESS}`)
-      console.log(`[OptimisticReplication] Submitter: ${l2bWallet.address}${REPLICATOR_PRIVATE_KEY ? ' (REPLICATOR test key)' : ''}`)
-      console.log(`[OptimisticReplication] Monitor:   ${l2bMonitorWallet.address}`)
+      console.log(`[OptimisticReplication] Submitter: ${l2bSubmitter.getAddress()}${REPLICATOR_PRIVATE_KEY ? ' (REPLICATOR test key)' : ''}`)
+      console.log(`[OptimisticReplication] Monitor:   ${l2bMonitor.getAddress()}`)
       if (CORRUPT_REPLICATION) {
         console.warn(`[OptimisticReplication] ⚠️  CORRUPT_REPLICATION=true CORRUPT_MODE=${CORRUPT_MODE} — next submission will be fraudulent`)
       }
 
-      return { l2bProvider, l2bWallet, l2bMonitorWallet, archiveRead, archiveWrite }
+      return { l2bProvider, l2bSubmitter, l2bMonitor, archiveRead, archiveWrite }
     }
 
     /**
@@ -3514,7 +3519,7 @@ console.log("succeededKeys", succeededKeys)
             `Unset both env vars and restart to disable.`
           )
         }
-        const { archiveRead: archive, archiveWrite: archiveW, l2bWallet: w } = getL2bContracts()
+        const { archiveRead: archive, archiveWrite: archiveW, l2bSubmitter: w } = getL2bContracts()
 
         // 1. Find clients needing replication FIRST — if none, nothing to do
         //    and we shouldn't prod the operator about stake either.
@@ -3570,7 +3575,7 @@ console.log("succeededKeys", succeededKeys)
         //    Under-staked + opt-out: print a clear CLI setup instruction
         //    ONCE per process lifetime, then skip quietly on subsequent
         //    cycles so we don't flood logs every 30s.
-        const currentStake = BigInt(await archive.stakes(w.address))
+        const currentStake = BigInt(await archive.stakes(w.getAddress()))
         if (currentStake < OPTIMISTIC_MIN_STAKE) {
           if (process.env.AUTO_RESTAKE !== 'true') {
             if (!underStakedWarned) {
@@ -3580,7 +3585,7 @@ console.log("succeededKeys", succeededKeys)
               console.warn(
                 `\n` +
                 `┌─ Replication paused: under-staked ─────────────────────┐\n` +
-                `│ Your ${role} wallet (${w.address.slice(0,10)}…) has ${ethers_formatStake(currentStake)} ETH\n` +
+                `│ Your ${role} wallet (${w.getAddress().slice(0,10)}…) has ${ethers_formatStake(currentStake)} ETH\n` +
                 `│ staked on archive ${archiveAddr.slice(0,10)}…, but the\n` +
                 `│ minimum is ${ethers_formatStake(OPTIMISTIC_MIN_STAKE)} ETH.\n` +
                 `│\n` +
@@ -3611,7 +3616,7 @@ console.log("succeededKeys", succeededKeys)
         // during LZ/monitor latency windows; for fraud-testing it prevents
         // the runaway "pre-slash spam" we kept observing.
         const maxPending = Number(process.env.MAX_PENDING_SUBMISSIONS || '1')
-        const pending = Number(await archive.pendingCount(w.address))
+        const pending = Number(await archive.pendingCount(w.getAddress()))
         if (pending >= maxPending) {
           console.log(`[OptimisticReplication] pendingCount=${pending} >= MAX_PENDING_SUBMISSIONS=${maxPending} — waiting for existing submission(s) to finalize or slash before queueing more`)
           return
@@ -3802,7 +3807,7 @@ console.log("succeededKeys", succeededKeys)
                   gasPrice: receipt.fee ? (receipt.fee / receipt.gasUsed).toString() : '0',
                   ethCost: receipt.fee?.toString() || '0',
                   totalCost: receipt.fee?.toString() || '0',
-                  submitter: w.address.toLowerCase(),
+                  submitter: w.getAddress().toLowerCase(),
                 }})
               } catch (e: any) { console.error('[Analytics] Failed to record optimistic replication:', e.message) }
             }
@@ -3890,10 +3895,10 @@ console.log("succeededKeys", succeededKeys)
      */
     async function autoFinalizeSubmissions() {
       try {
-        const { archiveRead: archive, archiveWrite: archiveW, l2bProvider: provider, l2bWallet: w } = getL2bContracts()
+        const { archiveRead: archive, archiveWrite: archiveW, l2bProvider: provider, l2bSubmitter: w } = getL2bContracts()
 
         const latestBlock = await provider!.getBlockNumber()
-        const checkpointKey = `optimistic-finalize:${w.address.toLowerCase()}:last-block`
+        const checkpointKey = `optimistic-finalize:${w.getAddress().toLowerCase()}:last-block`
         const cp = await prisma.chainData.findUnique({ where: { key: checkpointKey } })
         // ~12s/block on Arbitrum = ~28800 blocks/day. 4-day cold-start lookback.
         const cold = !cp
@@ -3910,7 +3915,7 @@ console.log("succeededKeys", succeededKeys)
         const events = await scanArchiveEvents(
           archive,
           provider,
-          archive.filters.SubmissionCreated(null, w.address),
+          archive.filters.SubmissionCreated(null, w.getAddress()),
           fromBlock,
           latestBlock,
         )
@@ -3958,12 +3963,12 @@ console.log("succeededKeys", succeededKeys)
      */
     async function autoWithdrawExcessStake() {
       try {
-        const { archiveRead: archive, archiveWrite: archiveW, l2bWallet: w } = getL2bContracts()
+        const { archiveRead: archive, archiveWrite: archiveW, l2bSubmitter: w } = getL2bContracts()
 
-        const pending = Number(await archive.pendingCount(w.address))
+        const pending = Number(await archive.pendingCount(w.getAddress()))
         if (pending > 0) return // Can't withdraw with pending submissions
 
-        const currentStake = BigInt(await archive.stakes(w.address))
+        const currentStake = BigInt(await archive.stakes(w.getAddress()))
         const threshold = OPTIMISTIC_MIN_STAKE * 3n
 
         if (currentStake <= threshold) return
@@ -3990,7 +3995,7 @@ console.log("succeededKeys", succeededKeys)
         // Use the MONITOR wallet here so that a separate REPLICATOR_PRIVATE_KEY
         // submitter's submissions are not skipped as "our own" — the monitor
         // wants to challenge them during the slash test.
-        const { archiveRead: archive, l2bProvider: provider, l2bMonitorWallet: w } = getL2bContracts()
+        const { archiveRead: archive, l2bProvider: provider, l2bMonitor: w } = getL2bContracts()
 
         const latestBlock = await provider!.getBlockNumber()
         // Look back ~3 days of blocks
@@ -4035,7 +4040,7 @@ console.log("succeededKeys", succeededKeys)
           const endCp = Number(args[4] || args.endCheckpointId)
 
           // Skip our own submissions
-          if (submitter.toLowerCase() === w.address.toLowerCase()) continue
+          if (submitter.toLowerCase() === w.getAddress().toLowerCase()) continue
 
           // Skip submissions we already know are resolved (saves a
           // getSubmission view call per cycle).
@@ -4061,7 +4066,9 @@ console.log("succeededKeys", succeededKeys)
             'function resolveChallenge(uint256 submissionId, uint256 checkpointId, bytes32 claimedHash, bytes32[] merkleProof)',
             'function slashIncoherentRoot(uint256 submissionId, bytes packedActions, bytes32[] r, bytes32 entryHash)',
           ]
-          const archiveW = new Contract(OPTIMISTIC_ARCHIVE_ADDRESS, resolveAbi, new Wallet(privateKey!, l2bProvider))
+          // Reuse the L2b monitor signer — same key, same provider as a fresh Wallet.
+          const { l2bMonitor: resolveSigner } = getL2bContracts()
+          const archiveW = new Contract(OPTIMISTIC_ARCHIVE_ADDRESS, resolveAbi, resolveSigner.asEthersSigner())
           const archiveResolveRead = new Contract(OPTIMISTIC_ARCHIVE_ADDRESS, resolveAbi, l2bProvider)
 
           // --- Build the SUBMITTER'S OWN claimed view of this range ------
@@ -4139,7 +4146,7 @@ console.log("succeededKeys", succeededKeys)
                 return
               }
 
-              const claimedLock = await tryClaimChallengeLock('resolve', submissionId, cpId, w.address.toLowerCase(), 10 * 60 * 1000)
+              const claimedLock = await tryClaimChallengeLock('resolve', submissionId, cpId, w.getAddress().toLowerCase(), 10 * 60 * 1000)
               if (!claimedLock) return
 
               console.log(`[Monitor] Resolving challenge for submission ${submissionId} checkpoint ${cpId}...`)
@@ -4191,7 +4198,7 @@ console.log("succeededKeys", succeededKeys)
             }
             if (notYetDelivered.length === 0) return
 
-            const holder = w.address.toLowerCase()
+            const holder = w.getAddress().toLowerCase()
             const lockClaimed = await tryClaimChallengeLock('relayBatch', submissionId, 0, holder, 10 * 60 * 1000)
             if (!lockClaimed) return
 
@@ -4200,7 +4207,8 @@ console.log("succeededKeys", succeededKeys)
               'function relayChallengeBatch(uint32 destEid, uint256 submissionId, uint32 clientId, uint256[] checkpointIds) payable',
               'function quoteChallengeBatch(uint32 destEid, uint256 submissionId, uint32 clientId, uint256[] checkpointIds, bool payInLzToken) view returns (tuple(uint256 nativeFee, uint256 lzTokenFee))',
             ]
-            const relayContract = new Contract(CHALLENGE_RELAY_ADDRESS, relayAbi, new Wallet(privateKey!, replicationHttpProvider))
+            const relaySigner = requireValidatorSigner({ provider: replicationHttpProvider })
+            const relayContract = new Contract(CHALLENGE_RELAY_ADDRESS, relayAbi, relaySigner.asEthersSigner())
 
             try {
               const quote = await relayContract.quoteChallengeBatch(L2B_EID, submissionId, clientId, notYetDelivered, false)
@@ -4237,7 +4245,7 @@ console.log("succeededKeys", succeededKeys)
                 `committedRoot=${merkleRoot} does not match root built from submitter's own packedActions.`
               )
 
-              const lockHolder = w.address.toLowerCase()
+              const lockHolder = w.getAddress().toLowerCase()
               const claimed = await tryClaimChallengeLock('slashIncoherent', submissionId, 0, lockHolder, 10 * 60 * 1000)
               if (!claimed) continue
 
@@ -4420,7 +4428,7 @@ console.log("succeededKeys", succeededKeys)
       console.log(`  - Check Interval: ${liveSettings.checkInterval}ms`);
       console.log(`  - Base Tip: ${liveSettings.validatorBaseTip} CAW`);
       console.log(`  - Replication Interval: ${liveSettings.replicationInterval}ms`);
-      console.log(`  - Wallet Address: ${wallet.address}`);
+      console.log(`  - Wallet Address: ${signer.getAddress()}`);
 
       // Use setTimeout chains instead of setInterval so updated settings take effect immediately
       function schedulePoll() {

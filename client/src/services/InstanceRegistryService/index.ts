@@ -20,8 +20,9 @@
 import { z } from 'zod'
 import 'dotenv/config'
 import { Service } from '../../Service'
-import { Contract, Wallet, AbstractProvider, Interface } from 'ethers'
+import { Contract, AbstractProvider, Interface } from 'ethers'
 import { makeJsonRpcProvider, getL1HttpRpcUrl } from '../../utils/rpcProvider'
+import { getValidatorSigner, type ValidatorSigner } from '../../utils/signer'
 import { scanLogsBackward } from '../../utils/chunkedLogs'
 import { cawClientManagerAbi } from '../../abi/generated'
 import { CLIENT_MANAGER_ADDRESS } from '../../abi/addresses'
@@ -310,14 +311,15 @@ export const instanceRegistryService: Service = {
     const apiUrl = process.env.INSTANCE_API_URL || cfg.apiUrl
     const pollIntervalMs = cfg.pollIntervalMs ?? 60_000
 
-    const privateKey = process.env.VALIDATOR_PRIVATE_KEY
+    const provider = makeJsonRpcProvider(l1RpcUrl, 11155111)
+    const signer: ValidatorSigner | null = getValidatorSigner({ provider })
 
-    // Even without a private key we still want peer discovery — a
+    // Even without a signer we still want peer discovery — a
     // frontend-api node has no validator wallet but still benefits from
     // knowing about peers so its FE bundle can fall back to them.
-    const canRegister = !!(privateKey && apiUrl)
-    if (!privateKey) {
-      console.log('[InstanceRegistry] No VALIDATOR_PRIVATE_KEY — peer discovery only (no self-registration)')
+    const canRegister = !!(signer && apiUrl)
+    if (!signer) {
+      console.log('[InstanceRegistry] No validator key configured — peer discovery only (no self-registration)')
     } else if (!apiUrl) {
       console.log('[InstanceRegistry] No INSTANCE_API_URL — peer discovery only (no self-registration)')
     }
@@ -326,10 +328,8 @@ export const instanceRegistryService: Service = {
     let pollTimer: NodeJS.Timeout | null = null
     let stopped = false
 
-    const provider = makeJsonRpcProvider(l1RpcUrl, 11155111)
-    const wallet = canRegister ? new Wallet(privateKey!, provider) : null
-    const clientManager = wallet
-      ? new Contract(CLIENT_MANAGER_ADDRESS, cawClientManagerAbi, wallet)
+    const clientManager = signer
+      ? new Contract(CLIENT_MANAGER_ADDRESS, cawClientManagerAbi, signer.asEthersSigner())
       : new Contract(CLIENT_MANAGER_ADDRESS, cawClientManagerAbi, provider)
 
     /** First refresh: populates the cache. Subsequent refreshes log diffs. */
@@ -355,8 +355,8 @@ export const instanceRegistryService: Service = {
 
     /** Self-registration. Reads the cache populated by refreshAndLog. */
     async function selfRegister() {
-      if (!canRegister || !wallet) return
-      const validatorAddress = wallet.address
+      if (!canRegister || !signer) return
+      const validatorAddress = signer.getAddress()
       console.log(`[InstanceRegistry] Checking registration for client ${clientId}, validator ${validatorAddress}, url ${apiUrl}`)
 
       // Find an existing instance owned by us pointing at our apiUrl.
@@ -365,7 +365,7 @@ export const instanceRegistryService: Service = {
       let existingPeer: PeerInstance | null = null
       if (peers) {
         for (const p of peers.values()) {
-          if (p.apiUrl === apiUrl && p.owner.toLowerCase() === wallet.address.toLowerCase()) {
+          if (p.apiUrl === apiUrl && p.owner.toLowerCase() === validatorAddress.toLowerCase()) {
             existingInstanceId = p.instanceId
             existingPeer = p
             break

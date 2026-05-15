@@ -1,7 +1,8 @@
 import { Router } from 'express'
 import { randomUUID } from 'crypto'
-import { ethers, Contract, Wallet, JsonRpcProvider, WebSocketProvider } from 'ethers'
+import { ethers, Contract, JsonRpcProvider, WebSocketProvider } from 'ethers'
 import { makeJsonRpcProvider, makeWebSocketProvider, getL2HttpRpcUrl } from '../../utils/rpcProvider'
+import { getValidatorSigner, type ValidatorSigner } from '../../utils/signer'
 import { cawProfileL2Abi } from '../../abi/generated'
 import { CAW_NAMES_L2_ADDRESS } from '../../abi/addresses'
 import { prisma } from '../../prismaClient'
@@ -81,22 +82,21 @@ async function getSessionRequest(requestId: string): Promise<SessionRequest | nu
   }
 }
 
-// Lazy-initialized provider/wallet
+// Lazy-initialized provider/signer
 let _provider: JsonRpcProvider | WebSocketProvider | null = null
-let _wallet: Wallet | null = null
+let _signer: ValidatorSigner | null = null
 let _contract: Contract | null = null
 
 function getContract() {
   if (_contract) return _contract
   const rpcUrl = getL2HttpRpcUrl()
   if (!rpcUrl) throw new Error('L2 RPC not configured')
-  const validatorKey = process.env.VALIDATOR_PRIVATE_KEY
-  if (!validatorKey) throw new Error('Validator not configured')
   _provider = rpcUrl.startsWith('wss://') || rpcUrl.startsWith('ws://')
     ? makeWebSocketProvider(rpcUrl, 84532)
     : makeJsonRpcProvider(rpcUrl, 84532)
-  _wallet = new Wallet(validatorKey, _provider)
-  _contract = new Contract(CAW_NAMES_L2_ADDRESS, cawProfileL2Abi as any, _wallet)
+  _signer = getValidatorSigner({ provider: _provider })
+  if (!_signer) throw new Error('Validator not configured')
+  _contract = new Contract(CAW_NAMES_L2_ADDRESS, cawProfileL2Abi as any, _signer.asEthersSigner())
   return _contract
 }
 

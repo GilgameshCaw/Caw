@@ -21,7 +21,8 @@
 
 import 'dotenv/config'
 import { getPeers, getOwnInstanceId } from '../InstanceRegistryService'
-import { signCanonical, hexToBytes } from '../InstanceRegistryService/envelopeCrypto'
+import { signCanonicalWithSigner } from '../InstanceRegistryService/envelopeCrypto'
+import { getValidatorSigner, type ValidatorSigner } from '../../utils/signer'
 import type { RelayEnvelope } from '../../api/routes/dm-relay'
 import { canonicalizeEnvelope } from '../../api/routes/dm-relay'
 import crypto from 'crypto'
@@ -64,16 +65,18 @@ interface RelayParams {
   timestamp?: number
 }
 
-let cachedPrivateKey: Uint8Array | null = null
-function getPrivateKey(): Uint8Array | null {
-  if (cachedPrivateKey) return cachedPrivateKey
-  const raw = process.env.VALIDATOR_PRIVATE_KEY
-  if (!raw) return null
+let cachedSigner: ValidatorSigner | null = null
+let signerInitTried = false
+function getSigner(): ValidatorSigner | null {
+  if (cachedSigner) return cachedSigner
+  if (signerInitTried) return null
+  signerInitTried = true
   try {
-    cachedPrivateKey = hexToBytes(raw)
-    return cachedPrivateKey
-  } catch {
-    console.error('[DmRelay] VALIDATOR_PRIVATE_KEY is not a valid hex string')
+    // No provider needed — relay only calls signDigest, never sends txs.
+    cachedSigner = getValidatorSigner({})
+    return cachedSigner
+  } catch (err: any) {
+    console.error('[DmRelay] Signer init failed:', err.message)
     return null
   }
 }
@@ -88,8 +91,8 @@ function getPrivateKey(): Uint8Array | null {
  * message will pick it up.
  */
 export async function relayDmToPeers(params: RelayParams): Promise<{ attempted: number }> {
-  const privateKey = getPrivateKey()
-  if (!privateKey) {
+  const signer = getSigner()
+  if (!signer) {
     // No validator key — can't sign envelopes. Silent skip; this
     // matches frontend-only / api-only-without-validator nodes that
     // simply don't relay.
@@ -122,7 +125,7 @@ export async function relayDmToPeers(params: RelayParams): Promise<{ attempted: 
 
   let signature: string
   try {
-    signature = signCanonical(canonicalizeEnvelope(envelope), privateKey)
+    signature = await signCanonicalWithSigner(canonicalizeEnvelope(envelope), signer)
   } catch (err: any) {
     console.error('[DmRelay] Signing failed (continuing without relay):', err.message)
     return { attempted: 0 }
@@ -198,8 +201,8 @@ export async function relayDmIdentityToPeers(params: {
   walletAddress: string
   publicKey: string
 }): Promise<{ attempted: number }> {
-  const privateKey = getPrivateKey()
-  if (!privateKey) return { attempted: 0 }
+  const signer = getSigner()
+  if (!signer) return { attempted: 0 }
 
   const sourceInstanceId = getOwnInstanceId()
   if (sourceInstanceId == null) {
@@ -221,7 +224,7 @@ export async function relayDmIdentityToPeers(params: {
 
   let signature: string
   try {
-    signature = signCanonical(canonicalizeIdentityEnvelope(envelope), privateKey)
+    signature = await signCanonicalWithSigner(canonicalizeIdentityEnvelope(envelope), signer)
   } catch (err: any) {
     console.error('[DmRelay] Identity signing failed (continuing without relay):', err.message)
     return { attempted: 0 }
