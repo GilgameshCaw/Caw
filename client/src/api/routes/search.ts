@@ -160,7 +160,8 @@ async function searchUsersWithES(query: string, limit: number, offset: number) {
       displayName: true,
       avatarUrl: true, defaultAvatarId: true,
       image: true,
-      address: true
+      address: true,
+      followerCount: true
     }
   })
 
@@ -263,7 +264,8 @@ router.get('/', async (req, res) => {
             displayName: true,
             avatarUrl: true, defaultAvatarId: true,
             image: true,
-            address: true
+            address: true,
+            followerCount: true
           }
         })
       }

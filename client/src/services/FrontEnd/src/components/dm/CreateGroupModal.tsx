@@ -3,6 +3,7 @@ import ModalWrapper from '~/components/modals/ModalWrapper'
 import { apiFetch } from '~/api/client'
 import { useTheme } from '~/hooks/useTheme'
 import { UserAvatar } from '~/components/Avatar'
+import { useT } from '~/i18n/I18nProvider'
 
 type SearchUser = {
   tokenId: number
@@ -25,6 +26,7 @@ const MAX_OTHERS = 9  // 10 cap
 
 export default function CreateGroupModal({ isOpen, onClose, currentUserId, onCreate }: Props) {
   const { isDark } = useTheme()
+  const t = useT()
   const [name, setName] = useState('')
   const [query, setQuery] = useState('')
   const [results, setResults] = useState<SearchUser[]>([])
@@ -47,7 +49,7 @@ export default function CreateGroupModal({ isOpen, onClose, currentUserId, onCre
   useEffect(() => {
     if (!isOpen) return
     if (!query.trim()) { setResults([]); return }
-    const t = setTimeout(async () => {
+    const to = setTimeout(async () => {
       try {
         const r = await apiFetch<{ users: SearchUser[] }>(`/api/search?type=users&q=${encodeURIComponent(query)}&limit=20`)
         const filtered = (r.users || []).filter((u: SearchUser) => u.tokenId !== currentUserId && !picked.some(p => p.tokenId === u.tokenId))
@@ -59,7 +61,7 @@ export default function CreateGroupModal({ isOpen, onClose, currentUserId, onCre
         setResults([])
       }
     }, 250)
-    return () => clearTimeout(t)
+    return () => clearTimeout(to)
   }, [query, isOpen, currentUserId, picked])
 
   const togglePicked = (u: SearchUser) => {
@@ -83,7 +85,7 @@ export default function CreateGroupModal({ isOpen, onClose, currentUserId, onCre
       })
       onClose()
     } catch (e: any) {
-      setError(e?.message || 'Failed to create group')
+      setError(e?.message || t('group_modal.error.create'))
     } finally {
       setSubmitting(false)
     }
@@ -96,20 +98,20 @@ export default function CreateGroupModal({ isOpen, onClose, currentUserId, onCre
   return (
     <ModalWrapper isOpen={isOpen} onClose={onClose} maxWidth="max-w-lg" usePortal>
       <div className="p-5 space-y-4">
-        <h2 className="text-lg font-semibold">New group chat</h2>
+        <h2 className="text-lg font-semibold">{t('group_modal.title')}</h2>
 
         <div>
-          <label className={`block text-sm mb-1 ${muted}`}>Group name (optional)</label>
+          <label className={`block text-sm mb-1 ${muted}`}>{t('group_modal.name_label')}</label>
           <input
             value={name}
             onChange={e => setName(e.target.value.slice(0, 50))}
-            placeholder="Squad chat"
+            placeholder={t('group_modal.name_placeholder')}
             className={`w-full rounded-md border px-3 py-2 text-sm ${inputBase}`}
           />
         </div>
 
         <div>
-          <label className={`block text-sm mb-1 ${muted}`}>Members ({picked.length}/{MAX_OTHERS})</label>
+          <label className={`block text-sm mb-1 ${muted}`}>{t('group_modal.members_label', { picked: picked.length, max: MAX_OTHERS })}</label>
           {picked.length > 0 && (
             <div className="flex flex-wrap gap-1 mb-2">
               {picked.map(p => (
@@ -127,7 +129,7 @@ export default function CreateGroupModal({ isOpen, onClose, currentUserId, onCre
           <input
             value={query}
             onChange={e => setQuery(e.target.value)}
-            placeholder="Search users to add"
+            placeholder={t('group_modal.search_placeholder')}
             className={`w-full rounded-md border px-3 py-2 text-sm ${inputBase}`}
           />
           {results.length > 0 && (
@@ -143,7 +145,7 @@ export default function CreateGroupModal({ isOpen, onClose, currentUserId, onCre
                   <UserAvatar user={u} className="w-7 h-7 rounded-full" size="small" />
                   <div className="flex-1">
                     <div>{u.displayName || u.username}</div>
-                    <div className={`text-xs ${muted}`}>@{u.username}{!u.hasDmIdentity ? ' — DMs not enabled' : ''}</div>
+                    <div className={`text-xs ${muted}`}>@{u.username}{!u.hasDmIdentity ? ` — ${t('messages.modal.dms_not_enabled')}` : ''}</div>
                   </div>
                 </button>
               ))}
@@ -158,13 +160,13 @@ export default function CreateGroupModal({ isOpen, onClose, currentUserId, onCre
             type="button"
             onClick={onClose}
             className={`px-3 py-1.5 rounded-md text-sm ${isDark ? 'hover:bg-zinc-800' : 'hover:bg-zinc-100'}`}
-          >Cancel</button>
+          >{t('common.cancel')}</button>
           <button
             type="button"
             onClick={submit}
             disabled={!canSubmit}
             className={`px-3 py-1.5 rounded-md text-sm font-medium ${canSubmit ? 'bg-emerald-600 hover:bg-emerald-500 text-white' : 'bg-zinc-500 text-white opacity-50 cursor-not-allowed'}`}
-          >{submitting ? 'Creating…' : 'Create group'}</button>
+          >{submitting ? t('group_modal.creating') : t('group_modal.create')}</button>
         </div>
       </div>
     </ModalWrapper>

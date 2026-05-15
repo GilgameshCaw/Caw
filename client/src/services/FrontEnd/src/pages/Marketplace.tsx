@@ -728,7 +728,7 @@ const MyOffersTab: React.FC = () => {
       {!loading && (
         <div className="mb-8">
           <h3 className={`text-sm font-medium mb-3 ${themeTextMuted(isDark)}`}>
-            Offers Sent ({sentOffers.length})
+            {t('marketplace.offers.sent.title', { n: sentOffers.length })}
           </h3>
           {sentOffers.length > 0 ? (
             <div className="grid grid-cols-1 min-[520px]:grid-cols-2 gap-4">
@@ -776,7 +776,7 @@ const MyOffersTab: React.FC = () => {
                     >
                       {isThisOffer && isCancelPending ? t('marketplace.button.confirm_in_wallet')
                         : isThisOffer && isCancelConfirming ? t('staking.button.withdrawing')
-                        : 'Cancel & Withdraw'}
+                        : t('marketplace.button.cancel_withdraw')}
                     </button>
                   </div>
                 )
@@ -790,12 +790,12 @@ const MyOffersTab: React.FC = () => {
               <h3 className={`text-lg font-semibold mb-2 transition-colors duration-300 ${
                 isDark ? 'text-white' : 'text-black'
               }`}>
-                No offers sent
+                {t('marketplace.offers.sent.empty.title')}
               </h3>
               <p className={`transition-colors duration-300 ${
                 isDark ? 'text-gray-400' : 'text-gray-600'
               }`}>
-                Make an offer on any profile to buy it
+                {t('marketplace.offers.sent.empty.body')}
               </p>
             </div>
           )}
@@ -813,7 +813,7 @@ const MyOffersTab: React.FC = () => {
       {!loading && (
         <div className="mb-8">
           <h3 className={`text-sm font-medium mb-3 ${themeTextMuted(isDark)}`}>
-            Offers Received ({receivedOffers.length})
+            {t('marketplace.offers.received.title', { n: receivedOffers.length })}
           </h3>
           {receivedOffers.length > 0 ? (
             <div className="grid grid-cols-1 min-[520px]:grid-cols-2 gap-4">
@@ -844,7 +844,7 @@ const MyOffersTab: React.FC = () => {
                         {fmtPrice(offer.amount, offer.paymentToken)} {offer.paymentToken}
                       </div>
                       <div className={`text-xs mt-1 ${themeTextMuted(isDark)}`}>
-                        from{' '}
+                        {t('marketplace.offers.from')}{' '}
                         <Link
                           to={`/address/${offer.offerer.toLowerCase()}`}
                           onClick={e => e.stopPropagation()}
@@ -879,7 +879,7 @@ const MyOffersTab: React.FC = () => {
                                 : 'bg-gray-100 text-gray-900 hover:bg-gray-200'
                             }`}
                           >
-                            Deny
+                            {t('marketplace.button.deny')}
                           </button>
                         </div>
                       )
@@ -896,12 +896,12 @@ const MyOffersTab: React.FC = () => {
               <h3 className={`text-lg font-semibold mb-2 transition-colors duration-300 ${
                 isDark ? 'text-white' : 'text-black'
               }`}>
-                No offers received
+                {t('marketplace.offers.received.empty.title')}
               </h3>
               <p className={`transition-colors duration-300 ${
                 isDark ? 'text-gray-400' : 'text-gray-600'
               }`}>
-                Offers from other users will appear here.
+                {t('marketplace.offers.received.empty.body')}
               </p>
             </div>
           )}

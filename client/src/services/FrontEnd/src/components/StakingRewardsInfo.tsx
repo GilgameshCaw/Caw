@@ -1,5 +1,6 @@
 import React, { useState } from 'react'
 import { HiChevronDown } from 'react-icons/hi'
+import { useT } from '~/i18n/I18nProvider'
 
 interface StakingRewardsInfoProps {
   /** Always use dark styling (e.g. onboarding). Default false = theme-aware. */
@@ -9,20 +10,21 @@ interface StakingRewardsInfoProps {
   defaultCollapsed?: boolean
 }
 
-const REWARDS = [
-  { action: 'Post', cost: '5,000 CAW', parts: ['100% to depositors'] },
-  { action: 'Like', cost: '2,000 CAW', parts: ['80% to poster', '20% to depositors'] },
-  { action: 'ReCAW', cost: '4,000 CAW', parts: ['50% to poster', '50% to depositors'] },
-  { action: 'Follow', cost: '30,000 CAW', parts: ['80% to followed', '20% to depositors'] },
-]
-
 const StakingRewardsInfo: React.FC<StakingRewardsInfoProps> = ({
   alwaysDark = false,
   isDark = true,
   defaultCollapsed = false,
 }) => {
+  const t = useT()
   const dark = alwaysDark || isDark
   const [expanded, setExpanded] = useState(!defaultCollapsed)
+
+  const REWARDS = [
+    { action: t('staking.rewards.action.post'), cost: '5,000 CAW', parts: [t('staking.rewards.split.100_depositors')] },
+    { action: t('staking.rewards.action.like'), cost: '2,000 CAW', parts: [t('staking.rewards.split.80_poster'), t('staking.rewards.split.20_depositors')] },
+    { action: 'ReCAW', cost: '4,000 CAW', parts: [t('staking.rewards.split.50_poster'), t('staking.rewards.split.50_depositors')] },
+    { action: t('staking.rewards.action.follow'), cost: '30,000 CAW', parts: [t('staking.rewards.split.80_followed'), t('staking.rewards.split.20_depositors')] },
+  ]
 
   return (
     <div className={`py-4 px-[10px] rounded-lg border transition-all duration-300 ${
@@ -38,7 +40,7 @@ const StakingRewardsInfo: React.FC<StakingRewardsInfoProps> = ({
         <h3 className={`text-base font-semibold transition-colors duration-300 ${
           dark ? 'text-white' : 'text-gray-900'
         }`}>
-          Earn from every action on the protocol:
+          {t('staking.rewards.heading')}
         </h3>
         <HiChevronDown
           className={`w-5 h-5 flex-shrink-0 transition-transform duration-300 ${
@@ -73,7 +75,7 @@ const StakingRewardsInfo: React.FC<StakingRewardsInfoProps> = ({
             ))}
           </ul>
           <p className={`text-xs mt-3 ${dark ? 'text-gray-500' : 'text-gray-400'}`}>
-            Rewards accrue in real time with no lock-up periods.
+            {t('staking.rewards.footer')}
           </p>
         </div>
       </div>

@@ -390,8 +390,8 @@ const ProfileEditForm: React.FC<ProfileEditFormProps> = ({
       {/* Images Section */}
       <div className="space-y-0.5">
         <div className="flex items-center justify-between">
-          <label className={`text-sm font-medium ${isDark ? 'text-gray-300' : 'text-gray-700'}`}>Profile Picture</label>
-          <label className={`text-sm font-medium ${isDark ? 'text-gray-300' : 'text-gray-700'}`}>Cover Photo</label>
+          <label className={`text-sm font-medium ${isDark ? 'text-gray-300' : 'text-gray-700'}`}>{t('profile_edit.field.profile_picture')}</label>
+          <label className={`text-sm font-medium ${isDark ? 'text-gray-300' : 'text-gray-700'}`}>{t('profile_edit.field.cover_photo')}</label>
         </div>
 
         <div className="flex items-center space-x-6" style={{ whiteSpace: 'break-spaces' }}>
@@ -557,7 +557,7 @@ const ProfileEditForm: React.FC<ProfileEditFormProps> = ({
 
       {/* Display Name */}
       <div className="space-y-2">
-        <label className={`text-sm font-medium ${isDark ? 'text-gray-300' : 'text-gray-700'}`}>Display Name</label>
+        <label className={`text-sm font-medium ${isDark ? 'text-gray-300' : 'text-gray-700'}`}>{t('profile_edit.field.display_name')}</label>
         <input
           type="text"
           value={formData.displayName}
@@ -573,7 +573,7 @@ const ProfileEditForm: React.FC<ProfileEditFormProps> = ({
       {/* Description */}
       <div>
         <div className="flex justify-between items-center">
-          <label className={`text-sm font-medium ${isDark ? 'text-gray-300' : 'text-gray-700'}`}>Description</label>
+          <label className={`text-sm font-medium ${isDark ? 'text-gray-300' : 'text-gray-700'}`}>{t('profile_edit.field.description')}</label>
           {saveOnChain && (
             <span className={`text-xs ${
               formData.description.length > bioCharsRemaining
@@ -582,7 +582,7 @@ const ProfileEditForm: React.FC<ProfileEditFormProps> = ({
                   ? 'text-yellow-500'
                   : isDark ? 'text-gray-500' : 'text-gray-400'
             }`}>
-              {bioCharsRemaining - formData.description.length} chars remaining
+              {t('profile_edit.field.chars_remaining', { count: bioCharsRemaining - formData.description.length })}
             </span>
           )}
         </div>
@@ -599,7 +599,7 @@ const ProfileEditForm: React.FC<ProfileEditFormProps> = ({
 
       {/* Website */}
       <div className="space-y-2">
-        <label className={`text-sm font-medium ${isDark ? 'text-gray-300' : 'text-gray-700'}`}>Website</label>
+        <label className={`text-sm font-medium ${isDark ? 'text-gray-300' : 'text-gray-700'}`}>{t('profile_edit.field.website')}</label>
         <div className="relative">
           <HiLink className={`absolute left-3 top-1/2 -translate-y-1/2 w-5 h-5 ${isDark ? 'text-gray-400' : 'text-gray-500'}`} />
           <input
@@ -616,7 +616,7 @@ const ProfileEditForm: React.FC<ProfileEditFormProps> = ({
 
       {/* Location */}
       <div className="space-y-2 mb-2">
-        <label className={`text-sm font-medium ${isDark ? 'text-gray-300' : 'text-gray-700'}`}>Location</label>
+        <label className={`text-sm font-medium ${isDark ? 'text-gray-300' : 'text-gray-700'}`}>{t('profile_edit.field.location')}</label>
         <div className="relative">
           <HiLocationMarker className={`absolute left-3 top-1/2 -translate-y-1/2 w-5 h-5 ${isDark ? 'text-gray-400' : 'text-gray-500'}`} />
           <input

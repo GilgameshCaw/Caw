@@ -271,7 +271,14 @@ const MainLayout = ({ children, hideSidebars: hideSidebarsProp }: MainLayoutProp
           isDark ? 'bg-black border-white/10' : 'bg-white border-gray-200'
         }`}>
           <button
-            onClick={() => setIsMobileMenuOpen(!isMobileMenuOpen)}
+            onClick={() => {
+              // Belt-and-suspenders: a half-finished swipe-drag can leave an
+              // inline `style.transform` on the panel that overrides the
+              // class-based `translate-x-0/-translate-x-full` toggle. Clearing
+              // here guarantees the class transition takes over on every tap.
+              clearInlineDrawerStyles()
+              setIsMobileMenuOpen(prev => !prev)
+            }}
             className={`absolute left-4 p-2 rounded-lg transition-colors duration-200 ${
               isDark ? 'text-white hover:bg-white/10' : 'text-black hover:bg-gray-100'
             }`}
@@ -330,7 +337,7 @@ const MainLayout = ({ children, hideSidebars: hideSidebarsProp }: MainLayoutProp
               click is unaffected. */}
           {!isMobileMenuOpen && (
             <div
-              className="md:hidden fixed top-0 left-0 bottom-[calc(var(--bottom-nav-h,0px)+50px)] w-5 z-[65]"
+              className="md:hidden fixed top-0 left-0 bottom-[calc(var(--bottom-nav-h,0px)+50px)] w-2 z-[65]"
               style={{ touchAction: 'pan-y' }}
               onTouchStart={(e) => onDrawerTouchStart(e, false)}
               onTouchMove={onDrawerTouchMove}

@@ -12,6 +12,7 @@ import { formatCAWAmount } from '~/utils/numberFormat'
 import ModalWrapper from '~/components/modals/ModalWrapper'
 import Tooltip from '~/components/Tooltip'
 import { UserAvatar } from '~/components/Avatar'
+import { getUserAvatar } from '~/utils/defaultAvatar'
 import XLogo from '~/components/icons/x-logo.svg?react'
 import { apiFetch, API_HOST, AuthError } from '~/api/client'
 import { useFollowerCounts } from '~/hooks/useFollowerCounts'
@@ -513,6 +514,8 @@ const AccountSettings: React.FC = () => {
   const tokensByAddress = useTokenDataStore(s => s.tokensByAddress)
   const setActiveTokenId = useTokenDataStore(s => s.setActiveTokenId)
   const setLastAddress   = useTokenDataStore(s => s.setLastAddress)
+  const avatars = useTokenDataStore(s => s.avatarsByTokenId)
+  const setAvatar = useTokenDataStore(s => s.setAvatar)
 
   // Mirror ProfileChooser.handleSelectProfile so the All Usernames rows
   // act as a profile-switcher. setLastAddress drives useTokenDataUpdate
@@ -529,6 +532,20 @@ const AccountSettings: React.FC = () => {
   // current context, then sees other wallets below.
   const allTokens = Object.values(tokensByAddress).flat()
   const followerCounts = useFollowerCounts(allTokens.map(t => t.tokenId))
+
+  // Hydrate real avatars per tokenId. TokenData itself has no avatar
+  // fields, so without this fetch the rows fall back to the deterministic
+  // default avatar. Same pattern ProfileChooser uses on dropdown open.
+  const tokenIdsKey = allTokens.map(t => t.tokenId).sort((a, b) => a - b).join(',')
+  useEffect(() => {
+    for (const token of allTokens) {
+      if (avatars[token.tokenId] != null) continue
+      apiFetch(`/api/users/${token.username}`)
+        .then(data => setAvatar(token.tokenId, getUserAvatar(data) || null))
+        .catch(() => {})
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tokenIdsKey])
   const pinnedAt = usePinnedProfilesStore(s => s.pinnedAt)
   const togglePin = usePinnedProfilesStore(s => s.togglePin)
 
@@ -838,7 +855,7 @@ const AccountSettings: React.FC = () => {
                           className={`flex items-center gap-3 flex-1 text-left ${isActive ? 'cursor-default' : 'cursor-pointer'}`}
                         >
                           <UserAvatar
-                            user={token}
+                            user={{ ...token, avatarUrl: avatars[token.tokenId] }}
                             alt={token.username}
                             className="w-10 h-10 rounded-full"
                             size="small"

@@ -19,7 +19,7 @@ const Trending: React.FC = () => {
           title={
             <h2 className={`text-xl font-bold transition-all duration-300 ${
               isDark ? 'text-white' : 'text-black'
-            }`}>Trending</h2>
+            }`}>{t('trending.title')}</h2>
           }
         />
       </div>
