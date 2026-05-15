@@ -82,7 +82,7 @@ User Action → PENDING → Validator Processing → On-chain Submission → SUC
 │                    Smart Contracts                               │
 │  • CawActions.sol - Core action processing                       │
 │  • CawProfile.sol - Name service (L1/L2)                           │
-│  • CawClientManager.sol - Client management                      │
+│  • CawNetworkManager.sol - Network registry                      │
 │  • LayerZero integration for cross-chain                        │
 └────────────────────────┬────────────────────────────────────────┘
                          │
@@ -185,15 +185,16 @@ User Action → PENDING → Validator Processing → On-chain Submission → SUC
 - Separate contracts for L1 and L2
 - Manages name registration and transfers
 
-#### CawClientManager.sol
-- Manages registered clients/validators
-- Tracks client permissions and capabilities
+#### CawNetworkManager.sol
+- Registry of all Networks (the operator-tier entity — a hosted CAW deployment with its own L2, fees, and validator set)
+- Permissionless Network registration via `createNetwork()`
+- Tracks Network fee gates, lockdown flags, and capabilities
 
 #### CawActionsReplicator.sol
 - Cross-chain archiving via LayerZero
 - Sends action data to archive chains for censorship resistance
-- Supports protocol-level archive (always on) and client-specific archives
-- Client owners can configure additional archive chains for their users
+- Supports protocol-level archive (always on) and Network-specific archives
+- Network owners can configure additional archive chains for their users
 
 #### CawActionsArchive.sol
 - Deployed on archive chains (e.g., Arbitrum)
@@ -203,33 +204,33 @@ User Action → PENDING → Validator Processing → On-chain Submission → SUC
 
 ### Fee Structure
 
-CawProfile charges ETH fees on four operations: **mint**, **deposit**, **authenticate**, and **withdraw**. Each fee is set independently per client by the client owner via `CawClientManager`.
+CawProfile charges ETH fees on four operations: **mint**, **deposit**, **authenticate**, and **withdraw**. Each fee is set independently per Network by the Network owner via `CawNetworkManager`.
 
 #### 50/50 Split
 Every fee is split equally between two recipients:
-1. **Client** — receives their share as CAW tokens (converted via Uniswap at withdrawal time)
+1. **Network** — receives their share as CAW tokens (converted via Uniswap at withdrawal time)
 2. **Burn** — the matching share of CAW is sent to `0xdead` (permanently burned)
 
-The fee amount set by the client (e.g. `mintFee = 0.001 ETH`) is the **per-recipient** amount. The user pays **double** that (0.002 ETH total) at the time of the transaction. When the client later withdraws fees, all accumulated ETH is swapped to CAW in a single trade, with half going to the client and half burned. UIs must show the total cost, not the per-recipient fee.
+The fee amount set by the Network (e.g. `mintFee = 0.001 ETH`) is the **per-recipient** amount. The user pays **double** that (0.002 ETH total) at the time of the transaction. When the Network later withdraws fees, all accumulated ETH is swapped to CAW in a single trade, with half going to the Network and half burned. UIs must show the total cost, not the per-recipient fee.
 
 #### Withdraw Fee Locking
-When a user first authenticates or deposits with a client, the current withdraw fee is locked for that (client, token) pair. On withdrawal, the user pays `min(locked, current)` — they automatically benefit if the client lowers fees, but are protected from retroactive increases.
+When a user first authenticates or deposits with a Network, the current withdraw fee is locked for that (Network, token) pair. On withdrawal, the user pays `min(locked, current)` — they automatically benefit if the Network lowers fees, but are protected from retroactive increases.
 
 #### Buy-and-Burn (`CawBuyAndBurn.sol`)
 - Protocol fees accumulate in CawProfile's `accruedFees` mapping under the buy-and-burn contract's address
-- When a client calls `withdrawFees(minCawOut)`, CawProfile combines the client's fees + the protocol's matching portion and sends them to `CawBuyAndBurn.swapAndSplit()` in a single Uniswap swap
-- Half the resulting CAW goes to the client, half to `0xdead` (burned)
-- Clients receive CAW instead of ETH — this aligns incentives: a bad `minCawOut` hurts the client's own payout equally, making sandwich griefing self-punishing
+- When a Network calls `withdrawFees(minCawOut)`, CawProfile combines the Network's fees + the protocol's matching portion and sends them to `CawBuyAndBurn.swapAndSplit()` in a single Uniswap swap
+- Half the resulting CAW goes to the Network, half to `0xdead` (burned)
+- Networks receive CAW instead of ETH — this aligns incentives: a bad `minCawOut` hurts the Network's own payout equally, making sandwich griefing self-punishing
 - Only CawProfile can call `swapAndSplit()` — no public access, no external MEV griefing
 - The CAW/ETH Uniswap V2 pool has 99.99% of LP tokens burned, ensuring permanent liquidity
 
-#### Fee Configuration (for client operators)
-Client owners set fees via `CawClientManager`:
-- `setMintFee(clientId, fee)` — charged when a user creates a username through this client
-- `setAuthFee(clientId, fee)` — charged on first authentication with this client
-- `setDepositFee(clientId, fee)` — charged on each CAW deposit
-- `setWithdrawFee(clientId, fee)` — charged on withdrawal (subject to locking, see above)
-- `setFees(clientId, ...)` — atomic batch update of all four fees
+#### Fee Configuration (for Network operators)
+Network owners set fees via `CawNetworkManager`:
+- `setMintFee(networkId, fee)` — charged when a user creates a username through this Network
+- `setAuthFee(networkId, fee)` — charged on first authentication with this Network
+- `setDepositFee(networkId, fee)` — charged on each CAW deposit
+- `setWithdrawFee(networkId, fee)` — charged on withdrawal (subject to locking, see above)
+- `setFees(networkId, ...)` — atomic batch update of all four fees
 - All fees are in wei (ETH). Remember: users pay 2× the set amount due to the 50/50 split.
 
 ### Backend Services (TypeScript/Node.js)
@@ -450,8 +451,8 @@ CAW Protocol implements cross-chain archiving to ensure censorship resistance. A
 │                    L2 (Base) - Primary Chain                     │
 │  ┌─────────────────┐     ┌─────────────────────────────────┐    │
 │  │   CawActions    │────▶│    CawActionsReplicator         │    │
-│  │ (processes all  │     │  • Reads client's replication   │    │
-│  │  social actions)│     │    config from CawClientManager │    │
+│  │ (processes all  │     │  • Reads Network's replication  │    │
+│  │  social actions)│     │    config from CawNetworkManager│    │
 │  └─────────────────┘     └──────────────┬──────────────────┘    │
 └─────────────────────────────────────────┼───────────────────────┘
                                           │ LayerZero
@@ -459,7 +460,7 @@ CAW Protocol implements cross-chain archiving to ensure censorship resistance. A
                     │                     │                     │
                     ▼                     ▼                     ▼
         ┌───────────────────┐  ┌───────────────────┐  ┌───────────────────┐
-        │  Client 1 Archive │  │  Client 2 Archive │  │  Client 3 Archive │
+        │ Network 1 Archive │  │ Network 2 Archive │  │ Network 3 Archive │
         │   (Arbitrum)      │  │   (Optimism)      │  │   (Polygon)       │
         │                   │  │                   │  │                   │
         │ CawActionsArchive │  │ CawActionsArchive │  │ CawActionsArchive │
@@ -467,14 +468,14 @@ CAW Protocol implements cross-chain archiving to ensure censorship resistance. A
         └───────────────────┘  └───────────────────┘  └───────────────────┘
 ```
 
-### Client Replication
+### Network Replication
 
-Each action belongs to a client. When an action is processed, it is replicated to that client's configured archive destinations:
+Each action belongs to a Network. When an action is processed, it is replicated to that Network's configured archive destinations:
 
-- Clients can deploy their own `CawActionsArchive` contracts to any chain
-- Client owners register their archive addresses in `CawClientManager`
+- Networks can deploy their own `CawActionsArchive` contracts to any chain
+- Network owners register their archive addresses in `CawNetworkManager`
 - Allows communities to choose trusted archive destinations and maintain control
-- Up to 4 replication destinations per client
+- Up to 4 replication destinations per Network
 - Archive costs are factored into the action's CAW payment
 
 ### Data Preservation
@@ -507,34 +508,34 @@ For a typical post:
 - Archive cost: ~750 CAW per chain
 - Total: ~3,150 CAW for L2 + 1 archive chain
 
-### Client Replication Management
+### Network Replication Management
 
-Clients can deploy their own `CawActionsArchive` contracts to any chain and register them with their client configuration. This allows communities to:
+Networks can deploy their own `CawActionsArchive` contracts to any chain and register them with their Network configuration. This allows communities to:
 - Choose their own trusted archive chains
 - Deploy archives to chains with favorable storage costs
 - Maintain full control over their archiving infrastructure
 
-Client owners manage replication destinations via `CawClientManager`:
+Network owners manage replication destinations via `CawNetworkManager`:
 
 ```solidity
 // Deploy your own CawActionsArchive on a target chain, then register it:
-clientManager.addReplication(clientId, eid, archiveContractAddress);
+networkManager.addReplication(networkId, eid, archiveContractAddress);
 
 // Remove a replication destination
-clientManager.removeReplication(clientId, eid);
+networkManager.removeReplication(networkId, eid);
 
-// Enable/disable replication for your client
-clientManager.setReplicationEnabled(clientId, true);
+// Enable/disable replication for your Network
+networkManager.setReplicationEnabled(networkId, true);
 
 // Query current replication destinations
-ReplicationDestination[] memory replications = clientManager.getReplications(clientId);
+ReplicationDestination[] memory replications = networkManager.getReplications(networkId);
 ```
 
 The `ReplicationDestination` struct contains:
 - `eid`: LayerZero endpoint ID of the chain
 - `target`: Address of the deployed contract (e.g., `CawActionsArchive`)
 
-Each client can have up to 4 replication destinations.
+Each Network can have up to 4 replication destinations.
 
 ## Future Enhancements
 

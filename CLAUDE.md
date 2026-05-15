@@ -41,9 +41,9 @@ Uses Truffle for deployment and testing. Networks configured include:
 ## Architecture
 
 ### Smart Contracts
-- **CawActions.sol** - Core contract for CAW social actions (post, like, follow, etc.). Maintains a per-client hash-chain checkpoint (`clientHashAtCheckpoint`) that the optimistic-archive flow commits to.
+- **CawActions.sol** - Core contract for CAW social actions (post, like, follow, etc.). Maintains a per-Network hash-chain checkpoint (`clientHashAtCheckpoint` — legacy storage name, not yet renamed in code) that the optimistic-archive flow commits to.
 - **CawProfile.sol** / **CawProfileL2.sol** - Name-service / profile-balance contracts for L1/L2. CAW tokens are locked on L1 and bookkept per-tokenId on L2; withdrawals route back to L1 via LayerZero.
-- **CawClientManager.sol** - Client management system. Each client picks its own L2 venue and archive chain at runtime.
+- **CawNetworkManager.sol** - Network registry. Each Network picks its own L2 venue and archive chain at registration. ("Network" = the operator-tier entity that owns a hosted CAW deployment; distinct from "client" in any other sense.)
 - **CawActionsArchive.sol** - Archive contract deployed on archive chains. Validators stake ETH once and submit *optimistic* checkpoint replications (merkle root + packed actions). After a 2-day challenge window, submissions finalize. If a challenger proves fraud, the validator's entire stake is slashed and all their pending submissions are invalidated.
 - **CawChallengeRelay.sol** - Deployed on each source L2. Reads canonical checkpoint hashes from `CawActions` and relays them via LayerZero to the archive as fraud proofs. Permissionless; anyone can challenge.
 - Uses LayerZero for cross-chain functionality (L1↔L2 deposits/withdrawals, L2→archive challenge messages).
@@ -54,7 +54,7 @@ Uses Truffle for deployment and testing. Networks configured include:
 The archive chain is **not** a pass-through replica of every action. The flow is:
 1. Validators run a service that watches `ActionsProcessed` on the source L2, accumulates packed actions per checkpoint (`CHECKPOINT_INTERVAL = 32` actions), and groups checkpoints into submissions (≤ 256 per submission).
 2. Validator calls `submitReplication()` on `CawActionsArchive` with the merkle root of checkpoint hashes plus the underlying packed actions and `r` anchors. ETH stake (`MIN_STAKE = 0.01 ether`) is required.
-3. Anyone monitoring can dispute a submission via `CawChallengeRelay.relayChallenge()` on the source L2, which sends the canonical `clientHashAtCheckpoint` to the archive over LayerZero.
+3. Anyone monitoring can dispute a submission via `CawChallengeRelay.relayChallenge()` on the source L2, which sends the canonical per-Network checkpoint hash (`clientHashAtCheckpoint` storage slot) to the archive over LayerZero.
 4. If the relayed hash differs from the submitter's claimed leaf, `resolveChallenge()` slashes the entire stake and invalidates all the submitter's pending submissions. `slashIncoherentRoot()` catches a separate fraud class where the merkleRoot can't even be derived from the published data.
 5. After `CHALLENGE_PERIOD = 2 days` with no successful challenge, `finalizeSubmission()` makes the archive entry canonical.
 
@@ -114,7 +114,7 @@ Follow the container standard defined in `UI_CONSISTENCY_STANDARD.md`:
 ## Key Development Notes
 
 - The project uses a monorepo structure with separate package.json files for different components
-- Smart contracts support multi-L2 deployment; clients pick their own action-processing L2 and archive chain at runtime, not at protocol level
+- Smart contracts support multi-L2 deployment; Networks pick their own action-processing L2 and archive chain at registration, not at protocol level
 - Action data (post text, signatures) is the source of truth in tx **calldata** on the action-processing L2; events are commitments to the calldata, not copies of it (see `ActionsProcessed` and `ActionsArchived` event signatures)
 - Frontend uses path aliases configured in `vite.config.ts` (~ prefix)
 - TypeScript strict mode enabled across all components

@@ -322,7 +322,7 @@ is wrong.
 - **Single canonical relay per source chain.** The archive's `peers`
   mapping is 1:1 (eid → relay address). Adding a new source chain
   requires the archive owner to call `setPeer` once. After that, anyone
-  can use that relay; no per-client config needed.
+  can use that relay; no per-Network config needed.
 - **Submission size.** `relayChallengeBatch` payload caps out around
   ~30KB packedActions for the resolveChallenge / slashIncoherentRoot
   path to stay within RPC providers' tx-size limits. The submitter's
