@@ -358,6 +358,7 @@ model Action {
   txHash           String?
   blockNumber      Int?
   submitterAddress String?
+  validatorId      Int?
   createdAt        DateTime   @default(now())
   updatedAt        DateTime   @updatedAt
   rawEvent         RawEvent   @relation(fields: [rawEventId], references: [id])

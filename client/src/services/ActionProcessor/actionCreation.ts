@@ -16,7 +16,7 @@ export async function createOrFindAction(
   rawId: number,
   chainId: number,
   rawAction: RawAction,
-  attribution?: { txHash?: string; blockNumber?: number; submitterAddress?: string }
+  attribution?: { txHash?: string; blockNumber?: number; submitterAddress?: string; validatorId?: number }
 ): Promise<CreateActionResult> {
   // First, try to find existing action (match by chainId + senderId + cawonce,
   // which is the unique constraint on the Action table)
@@ -58,6 +58,7 @@ export async function createOrFindAction(
         txHash: attribution?.txHash ?? null,
         blockNumber: attribution?.blockNumber ?? null,
         submitterAddress: attribution?.submitterAddress ?? null,
+        validatorId: attribution?.validatorId ?? null,
       }
     })
 

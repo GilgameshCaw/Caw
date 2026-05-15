@@ -214,6 +214,7 @@ async function handleRawAction(raw: { id: number, chainId: number, blockNumber: 
         return await createOrFindAction(tx, rawId, chainId, rawAction, {
           txHash: raw.transactionHash,
           blockNumber: Number(raw.blockNumber),
+          validatorId,
         })
       }, { timeout: 30_000 })
       action = result.action

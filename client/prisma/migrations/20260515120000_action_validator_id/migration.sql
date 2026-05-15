@@ -1,0 +1,1 @@
+ALTER TABLE "Action" ADD COLUMN IF NOT EXISTS "validatorId" INTEGER;
