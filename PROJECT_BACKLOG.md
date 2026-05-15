@@ -32,43 +32,6 @@ Reference conversation with LZ team (Dane, 2026-04-29): confirmed 0 required + l
 
 ## Smart Contracts
 
-### Remove `clientReplications` / `clientReplicationEnabled` from CawClientManager
-
-The `clientReplications[]` mapping, `clientReplicationEnabled` mapping, `addReplication` / `removeReplication` setters, `getClientChainEids`, `setClientReplicationEnabled`, and the L1→L2 sync logic that pushes them via `setClientChains` are all dead code from the old LZ-batch replication path.
-
-**Why nothing depends on this on-chain:**
-- `CawActionsArchive.submitReplication` (line 178) only checks `stakes[msg.sender] >= MIN_STAKE`. It does NOT consult `clientReplications[clientId]`.
-- The slashing path (`resolveChallenge`, `slashIncoherentRoot`) also doesn't consult it.
-- `CawProfileL2.setClientChains` is comment-flagged "this function only emits an event so indexers can observe config changes" — purely advisory.
-
-**With optimistic-archive, replication is per-operator and permissionless.** Anyone with stake on any peered archive chain can replicate any client's batches. The `clientReplications` mapping doesn't gate, doesn't constrain, doesn't earn.
-
-**Cleanup checklist** (do at next CawClientManager redeploy — it's an immutable contract, so this only happens when something else forces a redeploy anyway):
-
-Contracts:
-- [ ] Delete `ReplicationDestination` struct from `CawClientManager.sol`
-- [ ] Delete `clientReplications`, `clientReplicationEnabled` mappings
-- [ ] Delete `addReplication`, `removeReplication`, `setClientReplicationEnabled` functions
-- [ ] Delete `getClientChainEids`, `getClientReplicationCount`, `getClientReplications` view helpers
-- [ ] Delete `ClientReplicationAdded`, `ClientReplicationRemoved`, `ClientReplicationEnabledChanged` events
-- [ ] Drop the LZ-fee plumbing in `CawClientManager`'s `addReplication` / `removeReplication` (the `cawProfile.syncReplicationInternal{value: msg.value}` calls)
-- [ ] Drop the `receive() external payable` on `CawClientManager` (only existed for those LZ refunds)
-- [ ] In `CawProfile.sol`: delete `syncReplication`, `_syncClientChains`, `setClientChainsSelector`. The `setClientChainsSelector` is in the L2 selector whitelist too — remove it from `isAuthorizedFunction` on `CawProfileL2`.
-- [ ] In `CawProfileL2.sol`: delete `setClientChains` (the public function called via `_lzReceive`) and the `ClientChainsSet` event.
-
-Deployment:
-- [ ] `solidity/scripts/deploy.js` references — check whether the deploy still wires up the LZ peers / fees for replication-related routes. The challenge-relay path stays; only the `setClientChains` path goes away.
-
-Off-chain (touch lightly — these are read paths):
-- [ ] `MarketplaceIndexerService` / `ChainSyncService` / `InstanceRegistryService` — search for `getClientChainEids`, `clientReplications`, `ClientChainsSet`. Probably nothing reads these today, but verify.
-- [ ] Any frontend code displaying "this client replicates to chain X" (probably none — search for `getClientChainEids` or the event).
-- [ ] `client/src/abi/generated.ts` — regenerate from the new contracts.
-
-Test:
-- [ ] `solidity/test/multi-layer-test.js` and any client-creation tests that pass replication chain args — update signatures.
-
-This work is a clean half-day. Rationale for deferring until the next contract change: deploying contracts purely to remove dead code costs LZ peer-config gas and risks address churn for off-chain configs. Bundle it with whatever other contract change goes out next (e.g. multi-storage-chain support — see `docs/MULTI_CHAIN_STORAGE.md`).
-
 ### Mint flow — three modes (frontend work)
 
 The `mintSelector` / `mintAndUpdateOwners` plumbing is intentionally kept as latent capacity (see comments in `CawProfile.sol:44-50` and `CawProfileL2.sol:280-289`). Once mainnet contracts ship they're immutable, so removing the wiring would lock us out of a flow we might want.
@@ -333,7 +296,7 @@ matches every other principle-of-least-privilege production setup.
 - `CawProfileL2.setL1Peer`, `setCawActions`, raw `setPeer` (per-eid)
 - `CawActionsArchive.setPeer` (per-eid) — newly added
 - `CawChallengeRelay.setPeer` (per-eid) — newly added
-- `CawClientManager.setCawProfile`
+- `CawNetworkManager.setCawProfile`
 
 Strictly stronger than `renounceOwnership()` because it's per-setter and doesn't need a separate "remember to renounce" step.
 
@@ -341,7 +304,7 @@ The inherited `OAppCore.setPeer(uint32, bytes32)` was the dangerous one — `pub
 
 Intentionally unlocked (operational, not protocol-critical):
 
-- `CawClientManager` per-client fee setters — controlled by each client's owner, not the protocol owner. By design.
+- `CawNetworkManager` per-network fee setters — controlled by each network's owner, not the protocol owner. By design.
 - `OAppCore.setDelegate` — not virtual (can't override). Handled by the multisig/renounce step in the deploy checklist instead.
 
 Removed entirely:
@@ -656,7 +619,7 @@ right scope before we ship.
 
 **Already in place:**
 
-- **On-chain instance registry**: `CawClientManager` emits `InstanceRegistered` / `InstanceUpdated` events carrying each instance's `apiUrl` and `validatorAddress`. `InstanceRegistryService` auto-registers the local instance on startup, so any node coming online broadcasts itself.
+- **On-chain instance registry**: `CawNetworkManager` emits `InstanceRegistered` / `InstanceUpdated` events carrying each instance's `apiUrl` and `validatorAddress`. `InstanceRegistryService` auto-registers the local instance on startup, so any node coming online broadcasts itself.
 - **Frontend host failover with reputation**: `useInstanceStore` reads the registry and exposes `getApiHosts()`; `apiFetch` walks that list in response-time-priority order; `useHostVerification` records failures and blacklists hosts that serve unverified posts. 5xx errors trigger automatic failover; 4xx don't (correct semantics).
 - **DM relay across instances**: `DmRelayService` reads the same registry, fans out incoming DMs to peer instances via `POST /api/dm/relay` (fire-and-forget), so a conversation can happen across domains regardless of which instance each side connects to.
 
@@ -724,8 +687,8 @@ right scope before we ship.
   - Update after each deployment so client config and indexers stay in sync.
 
 - [ ] **Multi-chain storage support** — see `docs/MULTI_CHAIN_STORAGE.md` for the full plan.
-  - Contracts already accept any `storageChainEid` per client (`CawClientManager.createClient`); the off-chain runtime hardcodes Base.
-  - Work splits into: deploy `CawActions` + `CawProfileL2` to a new chain, restructure `addresses.ts` as `addresses.<chain>.<symbol>`, parameterize chain-specific addresses in service configs, have the CLI read `storageChainEid` from `CawClientManager.getClient(clientId)` at install time and configure RPC + addresses per-client.
+  - Contracts already accept any `storageChainEid` per network (`CawNetworkManager.createNetwork`); the off-chain runtime hardcodes Base.
+  - Work splits into: deploy `CawActions` + `CawProfileL2` to a new chain, restructure `addresses.ts` as `addresses.<chain>.<symbol>`, parameterize chain-specific addresses in service configs, have the CLI read `storageChainEid` from `CawNetworkManager.getNetwork(networkId)` at install time and configure RPC + addresses per-network.
   - Don't touch this until there's a real driver (a client wanting to deploy to a non-Base storage chain). Indirection costs zero today; the abstraction is purely future-tense.
   - Same restructure unblocks the parallel "replication chain → archive contract address" map in `ValidatorService` (today there's one hardcoded `CAW_ACTIONS_ARCHIVE_ADDRESS`).
 

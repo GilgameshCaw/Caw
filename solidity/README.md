@@ -8,20 +8,18 @@ Solidity smart contracts for the CAW decentralized social network as described i
 - **CawActions.sol** - Processes social actions (post, like, follow, tip, etc.) with EIP-712 signature verification
 - **CawProfile.sol** - ERC-721 username NFTs on L1 (Ethereum)
 - **CawProfileL2.sol** - Username state mirror on L2 (Base)
-- **CawClientManager.sol** - Client/app registration, fee management, and replication configuration
+- **CawNetworkManager.sol** - Network registry, fee management, per-instance API endpoint registry
 - **CawProfileMinter.sol** - Username minting with CAW token burning
 - **CawProfileMarketplace.sol** - On-chain profile trading
 - **CawProfileQuoter.sol** - Minting price quotes
 - **CawProfileURI.sol** - On-chain SVG renderer for profile NFTs (with CawFontDataA/B)
 - **CawBuyAndBurn.sol** - Token economics: buy and burn mechanism
 
-### Cross-Chain Replication
-- **CawActionsReplicator.sol** - Replicates action data to other chains via LayerZero
-- **CawActionsArchive.sol** - Receives and stores action data on archive chains (deploy to your archive chain)
+### Optimistic Archive + Challenge
+- **CawActionsArchive.sol** - Deployed on archive chains. Validators stake ETH (`MIN_STAKE = 0.01 ether`) and submit checkpoint replications optimistically (merkle root + packed actions). After a 2-day challenge window, submissions finalize. Successful fraud proof slashes the entire stake.
+- **CawChallengeRelay.sol** - Deployed on each source L2. Reads canonical checkpoint hashes from `CawActions` and relays them to the archive over LayerZero so anyone can challenge a fraudulent submission.
 
-Clients can deploy their own replication contracts to any chain and register them in `CawClientManager` using `addReplication(clientId, eid, targetAddress)`. It is recommended that the data replicated to at least one `CawActionsArchive` contract on another chain to ensure permanence.
-
-See the **[Client Replication Guide](./docs/CLIENT_REPLICATION_GUIDE.md)** for full setup instructions, cost estimation, historical migration, and troubleshooting.
+Replication is **per-operator** and **permissionless** — any validator with stake on a peered archive chain can replicate any network's batches. There is no on-chain config for "which chains a network replicates to"; that is a per-validator runtime choice (`REPLICATE_NETWORK_IDS` env on the validator).
 
 ### ZK Sig-Only Path (optional)
 
@@ -58,7 +56,7 @@ npx truffle deploy --network devL1
 # Deploy CawNamesL2 on L2
 npx truffle deploy --network devL2
 
-# Deploy L1 contracts (CawName, CawClientManager, etc.)
+# Deploy L1 contracts (CawName, CawNetworkManager, etc.)
 npx truffle deploy --network devL1
 
 # Deploy archive contract on archive chain

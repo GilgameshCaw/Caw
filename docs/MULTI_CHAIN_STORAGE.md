@@ -1,6 +1,6 @@
 # Multi-chain storage plan
 
-> Terminology: a **Network** is the operator-tier entity in CAW — a hosted deployment with its own L2 venue, fee gates, and validator set. Registered via `CawNetworkManager.createNetwork()`. "Network" here is distinct from the unrelated uses of "client" (HTTP client, frontend app, library instances). Some on-chain storage names still use the legacy `client*` prefix (e.g. `clientHashAtCheckpoint`, `clientReplications`); these are code-level and will be renamed separately.
+> Terminology: a **Network** is the operator-tier entity in CAW — a hosted deployment with its own L2 venue, fee gates, and validator set. Registered via `CawNetworkManager.createNetwork()`. "Network" here is distinct from the unrelated uses of "client" (HTTP client, frontend app, library instances). One legacy on-chain name remains — `CawActions.clientHashAtCheckpoint` — used by the archive challenge path; it stays as-is to avoid storage-slot churn on an immutable contract.
 
 ## Two separate concepts, often confused
 
@@ -39,7 +39,7 @@ The replication path is **already permissionless**:
 
 This means the CLI's replication question is a per-operator economic choice ("which chain do you have ETH on?"), not a per-Network constraint. Today the CLI lists the one deployed archive chain (Arbitrum Sepolia / Arbitrum One); the structure scales to N.
 
-The legacy `clientReplications` mapping in `CawNetworkManager` exists from the old LZ-batch replication path and is no longer load-bearing — see `BACKLOG: contracts cleanup` below.
+The old `clientReplications` mapping and L1→L2 sync that used to live on `CawNetworkManager` is gone (removed in the Client → Network rename). Replication is wholly off-chain config now.
 
 ## What needs to change to add Arbitrum (or any chain) as a *storage* chain
 
@@ -115,6 +115,6 @@ Total: ~one full day of focused work.
 3. **CLI reorder is cheap** — move network-ID earlier, derive labels. Doable in a couple of commits.
 4. The replication-chain side of this is already "done" — it's per-operator and the CLI structure for picking a chain already exists. New chain = one entry in the replication-chain table.
 
-## Related: BACKLOG: contracts cleanup
+## Note: legacy replication plumbing already removed
 
-The `clientReplications` / `clientReplicationEnabled` plumbing in `CawNetworkManager` is dead code from the old LZ-batch replication path. With optimistic-archive, replication is per-operator and permissionless — nothing on-chain needs to know which chains a Network "expects". See `PROJECT_BACKLOG.md` → "Remove `clientReplications` from CawNetworkManager" for the cleanup list. Worth doing at the next contract redeploy cycle.
+The `clientReplications` / `clientReplicationEnabled` mappings, `addReplication` / `removeReplication` setters, and L1→L2 sync logic for replication targets have all been removed from `CawNetworkManager` and `CawProfile` / `CawProfileL2`. With optimistic-archive, replication is per-operator and permissionless — nothing on-chain needs to know which chains a Network "expects". The previous backlog item tracking this cleanup is closed.

@@ -276,18 +276,22 @@ Users -> Frontend -> API -> Database <- Validator -> Blockchain (L2)
                               |                         |
                        ActionProcessor <- RawEventsGatherer
                                                         |
-                                              CawActionsReplicator
+                                              Validator (optimistic replication)
                                                         |
-                                                  Archive Chain
+                                              CawActionsArchive (Archive Chain)
+                                                        ▲
+                                                        │ LayerZero (challenges)
+                                                        │
+                                              CawChallengeRelay
 ```
 
 **Key Components:**
 - **Frontend** - React 18 + Vite + TailwindCSS + Wagmi/RainbowKit
 - **API** - Express server receiving EIP-712 signed actions
-- **Validator** - Batches and submits pending actions on-chain
+- **Validator** - Batches and submits pending actions on-chain; optionally stakes ETH on `CawActionsArchive` and submits checkpoint replications optimistically
 - **Blockchain** - Immutable source of truth (Base L2)
 - **Event Processors** - Index blockchain events into PostgreSQL
-- **Replicator** - Cross-chain archiving via LayerZero
+- **Archive + Challenge Relay** - Optimistic archive with 2-day fraud-proof window; challenge-relay ships canonical checkpoint hashes from the source L2 to the archive over LayerZero
 
 [Learn more about the architecture ->](./docs/ARCHITECTURE.md)
 
@@ -322,9 +326,9 @@ The endpoint is the standard [OTLP/HTTP](https://opentelemetry.io/docs/specs/ote
 | **CawProfileMinter** | Minting with CAW token burn mechanism |
 | **CawProfileMarketplace** | On-chain profile trading |
 | **CawProfileURI** | On-chain SVG renderer for profile NFTs |
-| **CawClientManager** | Client authentication and archive chain config |
-| **CawActionsReplicator** | Cross-chain archiving via LayerZero |
-| **CawActionsArchive** | Archive contract on Arbitrum |
+| **CawNetworkManager** | Network registry, per-network fees, instance registry |
+| **CawActionsArchive** | Optimistic archive on archive chains (validators stake ETH + submit checkpoint replications, 2-day challenge window) |
+| **CawChallengeRelay** | Per-L2 relay that ships canonical checkpoint hashes to the archive over LayerZero for fraud resolution |
 | **CawBuyAndBurn** | Token economics: buy and burn mechanism |
 
 ## ✨ Features

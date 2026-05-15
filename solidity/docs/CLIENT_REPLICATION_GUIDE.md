@@ -1,5 +1,11 @@
 # Client Replication Guide
 
+> **OBSOLETE — kept for historical reference only.**
+>
+> This guide describes the original LayerZero-batch replication path: per-network on-chain configuration of replication destinations, with `CawClientManager.addReplication()` pushing config to L2 via LayerZero. **That path no longer exists.** Replication is now optimistic, per-operator, and permissionless — validators stake ETH on `CawActionsArchive` and submit checkpoint replications without any on-chain "expected replication chains" config.
+>
+> Current replication architecture: see the top-level [README](../README.md) plus the optimistic-archive section in [CLAUDE.md](../../CLAUDE.md). Validator-side config is the `REPLICATE_NETWORK_IDS` env, not a contract.
+
 This guide explains how CAW Protocol clients can set up cross-chain replication to archive their users' actions on additional blockchains.
 
 ## What is Replication?

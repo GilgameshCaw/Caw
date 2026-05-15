@@ -37,9 +37,9 @@ Welcome to the documentation for the CAW Protocol — a trustless and decentrali
 - **CawProfileMinter.sol** - Minting with CAW token burn
 - **CawProfileMarketplace.sol** - On-chain profile trading
 - **CawProfileURI.sol** - On-chain SVG renderer
-- **CawClientManager.sol** - Client management and replication config
-- **CawActionsReplicator.sol** - Cross-chain archiving via LayerZero
-- **CawActionsArchive.sol** - Archive contract on Arbitrum
+- **CawNetworkManager.sol** - Network registry, per-network fees, instance registry
+- **CawActionsArchive.sol** - Optimistic archive on archive chains; validators stake ETH and submit checkpoint replications, challengeable for 2 days
+- **CawChallengeRelay.sol** - Per-L2 relay that ships canonical checkpoint hashes to the archive over LayerZero for fraud resolution
 - **CawBuyAndBurn.sol** - Token economics
 
 ### Backend Services

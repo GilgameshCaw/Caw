@@ -190,17 +190,18 @@ User Action → PENDING → Validator Processing → On-chain Submission → SUC
 - Permissionless Network registration via `createNetwork()`
 - Tracks Network fee gates, lockdown flags, and capabilities
 
-#### CawActionsReplicator.sol
-- Cross-chain archiving via LayerZero
-- Sends action data to archive chains for censorship resistance
-- Supports protocol-level archive (always on) and Network-specific archives
-- Network owners can configure additional archive chains for their users
-
 #### CawActionsArchive.sol
 - Deployed on archive chains (e.g., Arbitrum)
-- Receives action data via LayerZero
-- Emits `ActionsArchived` events for permanent storage
-- Minimal gas cost - just event emission for data preservation
+- Validators stake ETH (`MIN_STAKE = 0.01 ether`) and call `submitReplication()` with a merkle root of checkpoint hashes plus the underlying packed actions
+- Submissions finalize after a 2-day challenge window
+- Successful fraud proof slashes the validator's entire stake and invalidates all their pending submissions
+- Replication is permissionless: any staked validator can replicate any Network's batches
+
+#### CawChallengeRelay.sol
+- Deployed on each source L2 alongside `CawActions`
+- Reads canonical `clientHashAtCheckpoint` from `CawActions` storage and relays it to the archive over LayerZero
+- Anyone can call `relayChallenge()` against a fraudulent submission
+- Slashing is automatic if the relayed hash differs from the submitter's claimed checkpoint leaf
 
 ### Fee Structure
 
@@ -440,102 +441,60 @@ Validators can run independently:
 - CDN for media content
 - WebSocket connection pooling
 
-## Cross-Chain Archiving
+## Optimistic Archive + Challenge
 
-CAW Protocol implements cross-chain archiving to ensure censorship resistance. Actions are replicated to archive chains where they are permanently stored as blockchain events.
+CAW Protocol uses an optimistic archive with a fraud-proof window for censorship-resistant action storage. Validators stake ETH and submit checkpoint replications to archive chains; anyone can challenge a fraudulent submission, and a successful challenge slashes the validator's entire stake.
 
 ### Architecture
 
 ```
-┌─────────────────────────────────────────────────────────────────┐
-│                    L2 (Base) - Primary Chain                     │
-│  ┌─────────────────┐     ┌─────────────────────────────────┐    │
-│  │   CawActions    │────▶│    CawActionsReplicator         │    │
-│  │ (processes all  │     │  • Reads Network's replication  │    │
-│  │  social actions)│     │    config from CawNetworkManager│    │
-│  └─────────────────┘     └──────────────┬──────────────────┘    │
+┌────────────────────────────────────────────────────────────────┐
+│                    Source L2 (e.g. Base)                        │
+│  ┌─────────────────┐    ┌─────────────────────────────────┐    │
+│  │   CawActions    │    │      CawChallengeRelay          │    │
+│  │ (stores         │───▶│  reads clientHashAtCheckpoint   │    │
+│  │ clientHashAt-   │    │  and relays it via LayerZero    │    │
+│  │ Checkpoint)     │    │  on challenge                   │    │
+│  └─────────────────┘    └──────────────┬──────────────────┘    │
 └─────────────────────────────────────────┼───────────────────────┘
-                                          │ LayerZero
-                    ┌─────────────────────┼─────────────────────┐
-                    │                     │                     │
-                    ▼                     ▼                     ▼
-        ┌───────────────────┐  ┌───────────────────┐  ┌───────────────────┐
-        │ Network 1 Archive │  │ Network 2 Archive │  │ Network 3 Archive │
-        │   (Arbitrum)      │  │   (Optimism)      │  │   (Polygon)       │
-        │                   │  │                   │  │                   │
-        │ CawActionsArchive │  │ CawActionsArchive │  │ CawActionsArchive │
-        │   └─ Events       │  │   └─ Events       │  │   └─ Events       │
-        └───────────────────┘  └───────────────────┘  └───────────────────┘
+                          (validator                │
+                           submits via              │
+                           plain calldata)          │ LayerZero
+                                ▼                   ▼
+                  ┌──────────────────────────────────────┐
+                  │       Archive Chain                  │
+                  │   ┌──────────────────────────────┐   │
+                  │   │     CawActionsArchive        │   │
+                  │   │  • stakes[validator] >= MIN  │   │
+                  │   │  • submitReplication(root,   │   │
+                  │   │       packedActions, ...)    │   │
+                  │   │  • 2-day challenge window    │   │
+                  │   │  • resolveChallenge slashes  │   │
+                  │   └──────────────────────────────┘   │
+                  └──────────────────────────────────────┘
 ```
 
-### Network Replication
+### Lifecycle
 
-Each action belongs to a Network. When an action is processed, it is replicated to that Network's configured archive destinations:
+1. **Submit (optimistic)** — a validator with stake calls `submitReplication()` on `CawActionsArchive` with the merkle root of checkpoint hashes plus the underlying packed actions and `r` anchors. Action *bytes* live in calldata, committed to via `dataCommitment` on the submission record — they are not stored long-term in contract storage.
 
-- Networks can deploy their own `CawActionsArchive` contracts to any chain
-- Network owners register their archive addresses in `CawNetworkManager`
-- Allows communities to choose trusted archive destinations and maintain control
-- Up to 4 replication destinations per Network
-- Archive costs are factored into the action's CAW payment
+2. **Challenge (permissionless)** — anyone monitoring the source L2 can call `CawChallengeRelay.relayChallenge()` with the suspect checkpoint. The relay reads the canonical `clientHashAtCheckpoint` from `CawActions` storage and ships it over LayerZero to the archive.
 
-### Data Preservation
+3. **Resolve** — if the relayed hash differs from the submitter's claimed leaf, `resolveChallenge()` slashes the entire stake and invalidates all the submitter's pending submissions. `slashIncoherentRoot()` catches a separate fraud class where the merkle root can't even be derived from the published data.
 
-Actions are stored as events on archive chains:
-```solidity
-event ActionsArchived(
-    uint32 indexed sourceChainId,
-    bytes32 indexed guid,
-    bytes data  // Full action payload including signatures
-);
-```
+4. **Finalize** — after `CHALLENGE_PERIOD = 2 days` with no successful challenge, `finalizeSubmission()` makes the archive entry canonical.
 
-This ensures:
-- **Permanent storage**: Events are immutable blockchain history
-- **Verifiable**: Original signatures preserved for authenticity
-- **Recoverable**: Full history can be reconstructed from events
-- **Cost-effective**: Event emission is minimal gas cost
+### Permissionless and Per-Operator
 
-### Archive Cost Calculation
+Replication is not configured per-Network on-chain. Any validator with stake on a peered archive chain can replicate any Network's batches. Each operator chooses which Networks to replicate (`REPLICATE_NETWORK_IDS` env on the validator) and which archive chain to stake on. Multiple validators replicate the same batches in parallel; the optimistic model accepts the first finalized submission per checkpoint.
 
-Archive costs are factored into action pricing:
-- LayerZero base fee (~0.0005 ETH per chain)
-- Destination chain gas (~50k gas for event emission)
-- Multiplied by number of archive chains
-- 50% buffer for fee volatility
+### Data Availability
 
-For a typical post:
-- L2 storage cost: ~2,400 CAW (10KB)
-- Archive cost: ~750 CAW per chain
-- Total: ~3,150 CAW for L2 + 1 archive chain
+The action bytes never live in archive contract storage. They live in the submitter-supplied calldata, committed to via `dataCommitment`. Indexers reconstruct full action data from the calldata logs of `submitReplication` calls.
 
-### Network Replication Management
+### Cost Model
 
-Networks can deploy their own `CawActionsArchive` contracts to any chain and register them with their Network configuration. This allows communities to:
-- Choose their own trusted archive chains
-- Deploy archives to chains with favorable storage costs
-- Maintain full control over their archiving infrastructure
-
-Network owners manage replication destinations via `CawNetworkManager`:
-
-```solidity
-// Deploy your own CawActionsArchive on a target chain, then register it:
-networkManager.addReplication(networkId, eid, archiveContractAddress);
-
-// Remove a replication destination
-networkManager.removeReplication(networkId, eid);
-
-// Enable/disable replication for your Network
-networkManager.setReplicationEnabled(networkId, true);
-
-// Query current replication destinations
-ReplicationDestination[] memory replications = networkManager.getReplications(networkId);
-```
-
-The `ReplicationDestination` struct contains:
-- `eid`: LayerZero endpoint ID of the chain
-- `target`: Address of the deployed contract (e.g., `CawActionsArchive`)
-
-Each Network can have up to 4 replication destinations.
+Per-action cost on the archive is dominated by calldata, not storage — typical submission packs many actions per call. Validators pay this gas; they're compensated by the fees baked into actions on the source L2.
 
 ## Future Enhancements
 
