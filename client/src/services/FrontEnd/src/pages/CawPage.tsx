@@ -180,6 +180,9 @@ export const CawPage: React.FC = () => {
     if (!wantsInteractions) return
     if (likesAttempted || likesLoaded || likesLoading) return
     if (!caw) return
+    // No DB row for tempId routes — skip the fetch entirely. The redirect
+    // effect below moves us to the real id once the action confirms.
+    if (isTempIdRoute) return
 
     setLikesAttempted(true)
     setLikesLoading(true)
@@ -232,6 +235,10 @@ export const CawPage: React.FC = () => {
 
   // Function to refresh comments after posting a reply
   const refreshComments = async () => {
+    // No DB row for tempId routes — caller's reply was on an optimistic
+    // post that hasn't confirmed yet; the redirect effect will refresh
+    // us onto the real id once the chain catches up.
+    if (isTempIdRoute) return
     try {
       const { caw: fetched, comments: fetchedComments, recaws: fetchedRecaws, tips: fetchedTips } =
         await apiFetch<{ caw: CawItem; comments: CawItem[]; recaws?: RecawIndicator[]; tips?: TipIndicator[] }>(`/api/caws/${id}`)

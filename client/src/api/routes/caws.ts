@@ -349,7 +349,15 @@ router.post('/by-ids', async (req, res) => {
 
 // GET /api/caws/:id
 router.get('/:id', async (req, res) => {
+  // Reject anything that isn't a positive integer. The FE sometimes
+  // routes via a `pending-<ms>-<rand>` tempId (optimistic post before
+  // the server assigned a real id), and external shares of that URL
+  // would land here with garbage. Number(<garbage>) is NaN; Prisma
+  // throws on findUnique({ where: { id: NaN } }) and we'd return 500.
+  // 404 matches the no-such-caw semantic and lets the FE render a
+  // clean "not found" / "loading" state.
   const cawId = Number(req.params.id)
+  if (!Number.isInteger(cawId) || cawId <= 0) return res.status(404).end()
   // 1) fetch the caw itself
   const userIdHeader = req.header('x-user-id')
   const currentUserId = userIdHeader ? Number(userIdHeader) : undefined
