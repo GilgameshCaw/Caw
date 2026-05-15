@@ -95,12 +95,7 @@ const H = 630
 // renders at W=1200 with neutral bands either side; non-canvas
 // platforms (TG, Discord, browsers) render at exactly CARD_W and
 // fill the PNG edge-to-edge.
-//
-// Width tuned empirically: CHAR_W_RATIO=0.58 is conservative for the
-// caps-worst-case so lowercase text wraps a fair bit shorter than the
-// narrow budget declares. CARD_W is sized so the gap between actual
-// rendered text and the image right-anchor is comfortable, not vast.
-const CARD_W = 870
+const CARD_W = 970
 
 const CAW_GOLD = '#ebc046'
 
@@ -831,7 +826,17 @@ const POLL_FILL_WIN     = CAW_GOLD
 // FRIDAY. THE ECOSYSTEM KEEPS IMPROVING. STAYING") was clipping mid-
 // word at 0.55. 0.58 keeps lowercase a touch under-filled (acceptable)
 // while preventing caps overflow.
-const CHAR_W_RATIO = 0.58
+// Average glyph width as a fraction of the font's em-size. Inter at
+// CARD_BODY_FS=30 measures ~14px per char for mixed-case prose (so
+// ratio 0.47). 0.58 was set defensively in 5af6e1b9 for an all-caps
+// post that overflowed the narrow column — but all-caps is rare, and
+// 0.58 made every normal post wrap ~15-20% short of its budget,
+// leaving visible empty space between the line ends and the corner
+// image. 0.50 is the compromise: mixed-case lines reach close to the
+// budget, all-caps lines run ~6% past it (one to two glyphs of
+// overflow, much less than the "STAYIN[G eaten by image]" symptom
+// 5af6e1b9 was fixing).
+const CHAR_W_RATIO = 0.50
 // Hard pixel padding on the narrow column to leave a visible gap from
 // the right edge of the text to the left edge of the image. Without
 // this, even a perfectly-budgeted line touches the image. 12 is the
@@ -1271,7 +1276,20 @@ function planCawCard(opts: {
   // toward this cap, so a caw with multiple paragraph breaks naturally
   // gets less rendered prose.
   const totalContentLines = opts.poll && opts.poll.options.length > 0 ? 5 : 8
-  const wideChars = approxCharsPerPx(CARD_BODY_FS, CARD_WIDE_W)
+
+  // Latin-only posts can use a slightly more aggressive char budget
+  // (Inter's actual mean glyph width is ~0.47em for mixed-case prose,
+  // but we pad to 0.50 to handle the caps-worst-case); for the common
+  // lowercase content, +5% over the conservative budget is still well
+  // within the column. CJK posts stay at the base budget — CJK glyphs
+  // really do consume 2 weighted units, and over-budgeting here would
+  // bring back the under-image overflow we just fixed.
+  const hasCjk = (() => {
+    for (const ch of cleanText) if (glyphWeight(ch) === 2) return true
+    return false
+  })()
+  const charBudgetMul = hasCjk ? 1.00 : 1.05
+  const wideChars = Math.floor(approxCharsPerPx(CARD_BODY_FS, CARD_WIDE_W) * charBudgetMul)
 
   // Up to 4 poll options, ordered by votes desc — needed for height calc.
   const pollOptions = (opts.poll?.options ?? []).slice().sort((a, b) => b.votes - a.votes).slice(0, 4)
@@ -1287,7 +1305,7 @@ function planCawCard(opts: {
   // CARD_IMG_SZ skip the second pass.
   const computeNarrowChars = (imgPx: number) => {
     const narrowPx = CARD_W - CARD_TEXT_X - imgPx - CARD_NARROW_RIGHT_PAD - CARD_MARGIN
-    return approxCharsPerPx(CARD_BODY_FS, Math.max(200, narrowPx))
+    return Math.floor(approxCharsPerPx(CARD_BODY_FS, Math.max(200, narrowPx)) * charBudgetMul)
   }
   // Will the bottom stat row render? (any non-zero count.)
   const hasStats = !!opts.stats && (
@@ -2796,8 +2814,8 @@ router.get('/image/caw/:id', async (req, res) => {
   // doesn't serve a stale render.
   const variant = isCanvasUA ? 'canvas' : 'std'
   const cacheKey = caw.status === 'PENDING'
-    ? `caw-v35-${variant}-${caw.id}-${liveHash}-pending`
-    : `caw-v35-${variant}-${caw.id}-${liveHash}`
+    ? `caw-v37-${variant}-${caw.id}-${liveHash}-pending`
+    : `caw-v37-${variant}-${caw.id}-${liveHash}`
   return serveCachedOrRender(res, cacheKey, async () => {
     // Strip media URLs and poll markers out of the visible text — the
     // corner image and the rendered poll bars already represent them,
