@@ -223,7 +223,7 @@ async function cleanupPendingTips() {
           const completedTx = await prisma.txQueue.findFirst({
             where: {
               senderId: pendingTip.senderId,
-              status: 'done',
+              status: { in: ['done', 'validated_by_peer'] },
               payload: { path: ['data', 'cawonce'], equals: pendingTip.cawonce }
             }
           })
@@ -407,7 +407,7 @@ async function cleanupPendingCaws() {
           const completedTx = await prisma.txQueue.findFirst({
             where: {
               senderId: pendingCaw.userId,
-              status: 'done',
+              status: { in: ['done', 'validated_by_peer'] },
               payload: { path: ['data', 'cawonce'], equals: pendingCaw.cawonce }
             }
           })
@@ -754,7 +754,7 @@ async function cleanupPendingFollows() {
         const completedTx = await prisma.txQueue.findFirst({
           where: {
             senderId: fId,
-            status: 'done',
+            status: { in: ['done', 'validated_by_peer'] },
             payload: { path: ['data', 'receiverId'], equals: tId }
           },
           orderBy: { createdAt: 'desc' }

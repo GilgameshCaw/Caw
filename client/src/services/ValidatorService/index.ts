@@ -1023,7 +1023,7 @@ export const validatorService: Service = {
             console.log(`[Validator] TxQueue ${row.id}: Action row now indexed and matches — marking done`)
             await prisma.txQueue.update({
               where: { id: row.id },
-              data: { status: 'done', reason: null },
+              data: { status: 'validated_by_peer', reason: null },
             })
             // Also mark the optimistic Caw row SUCCESS for caw/recaw actions, mirroring updateQueueStatuses.
             if (data.actionType === 0 || data.actionType === 'caw' || data.actionType === 3 || data.actionType === 'recaw') {
@@ -1089,7 +1089,7 @@ export const validatorService: Service = {
           console.log(`[Validator] TxQueue ${candidate.id}: action already on chain (peer mirror submitted) — marking done without simulation`)
           await prisma.txQueue.update({
             where: { id: candidate.id },
-            data: { status: 'done', reason: null },
+            data: { status: 'validated_by_peer', reason: null },
           })
           // Mirror the SUCCESS state to optimistic Caw rows so the FE
           // stops showing pending.
@@ -2308,7 +2308,7 @@ console.log("succeededKeys", succeededKeys)
                   if (processedByOther) {
                     await prisma.txQueue.update({
                       where: { id: entry.id },
-                      data: { status: 'done', reason: null }
+                      data: { status: 'validated_by_peer', reason: null }
                     })
                   } else if (failStatus === 'failed' && failReason) {
                     await markTxQueueFailed(entry.id, failReason, data.senderId, data)
@@ -2457,7 +2457,7 @@ console.log("succeededKeys", succeededKeys)
             const resolution = await resolveCawonceUsed(data, entry.updatedAt, httpProvider, 84532)
             if (resolution === 'done') {
               console.log(`[Validator] TxQueue ${entry.id}: Same action exists for senderId=${data.senderId} cawonce=${data.cawonce} — marking done`)
-              await prisma.txQueue.update({ where: { id: entry.id }, data: { status: 'done' } })
+              await prisma.txQueue.update({ where: { id: entry.id }, data: { status: 'validated_by_peer' } })
             } else if (resolution === 'failed') {
               console.log(`[Validator] TxQueue ${entry.id}: Cawonce ${data.cawonce} used by DIFFERENT action (or indexer timeout) — marking failed`)
               await markTxQueueFailed(entry.id, 'Cawonce already used', data.senderId, data)
@@ -2541,7 +2541,7 @@ console.log("succeededKeys", succeededKeys)
               const resolution = await resolveCawonceUsed(data, entry.updatedAt, httpProvider, 84532)
               if (resolution === 'done') {
                 console.log(`[Validator] TxQueue ${entry.id}: Same action exists for senderId=${data.senderId} cawonce=${data.cawonce} — marking done`)
-                await prisma.txQueue.update({ where: { id: entry.id }, data: { status: 'done' } })
+                await prisma.txQueue.update({ where: { id: entry.id }, data: { status: 'validated_by_peer' } })
                 return
               }
               if (resolution === 'awaiting_indexer') {
@@ -2874,7 +2874,7 @@ console.log("succeededKeys", succeededKeys)
             where: { id: entry.id },
             select: { status: true }
           })
-          if (currentEntry?.status === 'done') {
+          if (currentEntry?.status === 'done' || currentEntry?.status === 'validated_by_peer') {
             // Another path already marked this done — nothing to do, quiet skip.
             return
           }

@@ -1221,7 +1221,7 @@ router.post('/', async (req, res) => {
           // later" is not blocked.
           OR: [
             { status: { in: ['pending', 'processing', 'awaiting_indexer', 'waiting_for_deposit'] } },
-            { status: 'done', updatedAt: { gte: new Date(Date.now() - 2 * 60_000) } },
+            { status: { in: ['done', 'validated_by_peer'] }, updatedAt: { gte: new Date(Date.now() - 2 * 60_000) } },
           ],
           createdAt: { gte: new Date(Date.now() - 5 * 60_000) },
         },

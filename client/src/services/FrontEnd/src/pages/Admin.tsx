@@ -11,6 +11,7 @@ interface Stats {
   activeUsersThisWeek: number
   pendingTx: number
   failedTx: number
+  validatedByPeerTx: number
   pendingReports: number
   pendingBugs: number
 }
@@ -123,10 +124,11 @@ const Admin: React.FC = () => {
   useEffect(() => {
     const fetchStats = async () => {
       try {
-        const [publicStats, txPending, txFailed, reports, bugs] = await Promise.all([
+        const [publicStats, txPending, txFailed, txValidatedByPeer, reports, bugs] = await Promise.all([
           apiFetch('/api/stats'),
           apiFetch('/api/admin/db/txQueue?limit=1&filter=' + encodeURIComponent(JSON.stringify({ status: 'pending' }))),
           apiFetch('/api/admin/db/txQueue?limit=1&filter=' + encodeURIComponent(JSON.stringify({ status: 'failed' }))),
+          apiFetch('/api/admin/db/txQueue?limit=1&filter=' + encodeURIComponent(JSON.stringify({ status: 'validated_by_peer' }))),
           apiFetch('/api/admin/db/report?limit=1&filter=' + encodeURIComponent(JSON.stringify({ status: 'PENDING' }))),
           apiFetch('/api/admin/db/bugReport?limit=1&filter=' + encodeURIComponent(JSON.stringify({ status: 'PENDING' }))),
         ])
@@ -134,6 +136,7 @@ const Admin: React.FC = () => {
           ...publicStats,
           pendingTx: txPending.total || 0,
           failedTx: txFailed.total || 0,
+          validatedByPeerTx: txValidatedByPeer.total || 0,
           pendingReports: reports.total || 0,
           pendingBugs: bugs.total || 0,
         })
@@ -144,7 +147,7 @@ const Admin: React.FC = () => {
     fetchStats()
   }, [])
 
-  const statCards = stats ? [
+  const statCards: Array<{ label: string; value: string; alert?: boolean; positive?: boolean }> | null = stats ? [
     { label: 'Users', value: stats.totalUsers.toLocaleString() },
     { label: 'Posts', value: stats.totalPosts.toLocaleString() },
     { label: 'Posts Today', value: stats.postsToday.toLocaleString() },
@@ -152,6 +155,7 @@ const Admin: React.FC = () => {
     { label: 'New This Week', value: stats.newMembersThisWeek.toLocaleString() },
     { label: 'Pending Tx', value: stats.pendingTx.toLocaleString(), alert: stats.pendingTx > 10 },
     { label: 'Failed Tx', value: stats.failedTx.toLocaleString(), alert: stats.failedTx > 0 },
+    { label: 'Validated by peer', value: stats.validatedByPeerTx.toLocaleString(), positive: stats.validatedByPeerTx > 0 },
     { label: 'Pending Reports', value: stats.pendingReports.toLocaleString(), alert: stats.pendingReports > 0 },
     { label: 'Pending Bugs', value: stats.pendingBugs.toLocaleString(), alert: stats.pendingBugs > 0 },
   ] : null
@@ -170,9 +174,9 @@ const Admin: React.FC = () => {
             {statCards.map(s => (
               <div
                 key={s.label}
-                className={`px-3 py-2.5 rounded-xl border ${card} ${s.alert ? 'border-red-500/40' : ''}`}
+                className={`px-3 py-2.5 rounded-xl border ${card} ${s.alert ? 'border-red-500/40' : s.positive ? 'border-green-500/40' : ''}`}
               >
-                <div className={`text-lg font-bold ${s.alert ? 'text-red-400' : text}`}>
+                <div className={`text-lg font-bold ${s.alert ? 'text-red-400' : s.positive ? 'text-green-400' : text}`}>
                   {s.value}
                 </div>
                 <div className={`text-xs ${muted}`}>{s.label}</div>

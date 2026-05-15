@@ -324,7 +324,7 @@ export function useTxQueueMonitor() {
             // removed; falling through to this point means the failure is
             // already recorded as a notification that the user will see
             // the next time they open the notifications panel.
-          } else if (status.status === 'done') {
+          } else if (status.status === 'done' || status.status === 'validated_by_peer') {
             console.log(`[TxQueueMonitor] TxQueue ID ${status.id} succeeded`)
             const wasPendingPost = usePendingPostsStore.getState().pendingPosts.some(p => p.txQueueId === status.id)
             if (wasPendingPost) {
