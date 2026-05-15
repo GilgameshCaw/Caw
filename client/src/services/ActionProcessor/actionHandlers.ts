@@ -403,14 +403,40 @@ export async function handleRecawAction(
       console.error(`Failed to create repost/quote notification:`, err)
     }
   } else if (recawChainOverrides) {
-    // Was PENDING or FAILED — counts already set optimistically and never
-    // rolled back, so just log the transition.
+    // PENDING → SUCCESS: counts were already set optimistically by the
+    // API submit path and never rolled back; this is a true no-op.
+    //
+    // FAILED → SUCCESS: chain confirmed an action that DataCleaner had
+    // previously swept to FAILED (>30 min pending without indexer
+    // confirmation). DataCleaner.checkForFailedActions decrements the
+    // parent's recawCount on the sweep — see DataCleaner/index.ts:431
+    // and :537 — so we owe the parent its +1 back now. Recompute from
+    // the live SUCCESS-row count (just-flipped row included) to match
+    // exactly what DataCleaner does in reverse; no risk of drift if
+    // multiple recaws ping-pong PENDING→FAILED→SUCCESS in a window.
+    // Quotes don't bump parent.recawCount, so they skip the recompute.
+    //
+    // user.recawCount is left alone in both directions — DataCleaner
+    // doesn't touch it on sweep, so no restore is required here.
     const recawCaw = await tx.caw.findUnique({ where: { userId_cawonce: { userId, cawonce: action.cawonce } } })
     if (recawCaw) {
       const isQuoteRecaw = rawAction.text && rawAction.text.trim().length > 0
       await countManager.onStatusChanged(tx, 'caw', recawCaw.id, existingRecaw!.status, 'SUCCESS', {
         userId, action: isQuoteRecaw ? 'CAW' : 'RECAW', originalCawId,
       })
+      if (existingRecaw!.status === 'FAILED' && !isQuoteRecaw && originalCawId) {
+        try {
+          const actualRecawCount = await tx.caw.count({
+            where: { originalCawId, action: 'RECAW', status: 'SUCCESS' },
+          })
+          await tx.caw.update({
+            where: { id: originalCawId },
+            data: { recawCount: actualRecawCount },
+          })
+        } catch (err) {
+          console.error(`[handleRecawAction] Failed to restore parent ${originalCawId} recawCount after FAILED→SUCCESS:`, err)
+        }
+      }
     }
   }
 }

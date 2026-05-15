@@ -239,6 +239,16 @@ const countManager = {
   //                                   in flight — counts come off now, will
   //                                   come back via PENDING -> SUCCESS-undo
   //                                   if the tx fails)
+  //   FAILED  -> SUCCESS : NO-OP here. Chain confirmed a caw that
+  //                        DataCleaner had previously swept to FAILED.
+  //                        Restoring counts that DataCleaner rolled back
+  //                        (parent.recawCount for RECAW) is done at the
+  //                        handler callsite — see handleRecawAction's
+  //                        FAILED→SUCCESS branch — because it requires a
+  //                        live COUNT(*) recompute that mirrors what
+  //                        DataCleaner does in reverse, and is action-
+  //                        type-specific in a way the generic transition
+  //                        rule can't express.
   //   All other transitions: log a warning
   //
   // The `meta` parameter carries entity-specific context needed to know
@@ -259,6 +269,18 @@ const countManager = {
     // PENDING -> SUCCESS: no count change needed
     if (oldStatus === 'PENDING' && newStatus === 'SUCCESS') {
       log(`${entity} ${id}: PENDING -> SUCCESS (no-op, counts already set)`)
+      return
+    }
+
+    // FAILED -> SUCCESS: chain confirmed an entity that DataCleaner had
+    // previously swept to FAILED. Restoration of any rolled-back counts
+    // (specifically parent.recawCount for plain RECAW; userCawCount is
+    // not touched by DataCleaner) is done at the handler callsite via a
+    // direct COUNT(*) recompute. From CountManager's perspective this
+    // is a logged no-op — keeping the call here means every status
+    // transition flows through one place for log consistency.
+    if (oldStatus === 'FAILED' && newStatus === 'SUCCESS') {
+      log(`${entity} ${id}: FAILED -> SUCCESS (chain confirmation; count restoration handled at callsite)`)
       return
     }
 
