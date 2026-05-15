@@ -8,6 +8,7 @@ import delay from '../../tools/delay'
 import SmlTxt from 'smltxt'
 import { unpackActions } from '../../utils/packActions'
 import { span } from '../../utils/trace'
+import { recordIndexerProgress } from '../../utils/indexerHealth'
 
 // smltxt singleton — events arrive with `bytes text` (compressed) but the
 // rest of the pipeline (ActionProcessor, hashtag/mention indexing, Caw.content
@@ -377,6 +378,9 @@ export default async function listenForRawEvents(
 
   // Track last synced block for polling - start from the latest processed event
   let lastSyncedBlock = past.length > 0 ? past[past.length - 1].blockNumber : startBlock
+  // Seed indexer-health snapshot with the post-historical-sync watermark so
+  // the validator's lag check sees a real value on cold start, not 0.
+  recordIndexerProgress(config.chainId, lastSyncedBlock)
 
   // Cap each poll's range so a service waking up far behind can't request
   // millions of logs in one call. Steady state stays well under this.
@@ -429,6 +433,10 @@ export default async function listenForRawEvents(
         }
         lastSyncedBlock = toBlock
       }
+      // Always publish the current high-water mark — even on a quiet poll
+      // (no new events, toBlock equals currentBlock), the indexer is up
+      // to that block and that's the freshness signal the validator needs.
+      recordIndexerProgress(config.chainId, lastSyncedBlock)
       config.onTick?.()
     } catch (err) {
       console.error('[RawEventsGatherer] Polling error:', err)

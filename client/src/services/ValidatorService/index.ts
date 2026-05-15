@@ -13,9 +13,11 @@ import { packActions, packSignatures, packGroupedSignatures, bytesToHex, getPack
 import { buildCheckpointMerkleTree } from '../../utils/checkpointMerkle'
 import { tryClaimChallengeLock, releaseChallengeLock } from '../../utils/challengeLock'
 import { foldCheckpointHashes } from '../../utils/foldCheckpointHashes'
-import { scanLogsForward } from '../../utils/chunkedLogs'
+import { scanLogsForward, scanLogsBackward } from '../../utils/chunkedLogs'
 import { decompressActionText } from '../../utils/decompressActionText'
 import { makeJsonRpcProvider, makeFallbackJsonRpcProvider, makeWebSocketProvider, getL2HttpRpcUrl, getL2HttpRpcUrls, getL2WsRpcUrl, getL2WsSecret, getEthMainnetHttpRpcUrl, getReplicationHttpRpcUrl, redactRpcUrl } from '../../utils/rpcProvider'
+import { getIndexerStats } from '../../utils/indexerHealth'
+import type { AbstractProvider } from 'ethers'
 import { cawToEthCached, isPriceFresh } from '../ChainSyncService'
 import { markTxQueueFailed as sharedMarkTxQueueFailed } from '../../utils/txQueueFailure'
 import { incrementSessionSpent } from '../../utils/sessionSpendTracker'
@@ -237,6 +239,136 @@ export function triggerImmediateValidatorPoll(): { triggered: boolean; reason: s
 }
 
 /**
+ * Compare a TxQueue payload against a candidate already-landed action.
+ * Both shapes have actionType / receiverId / receiverCawonce / text. The
+ * candidate's text is plaintext (whether sourced from an Action row that
+ * RawEventsGatherer already decompressed, or freshly decompressed off-chain
+ * by the backstop); the payload's text is the smltxt-compressed hex that
+ * was signed for on-chain submission. Decompress the payload side for
+ * comparison — never re-compress or pad the candidate, per the
+ * "validator must not mutate signed bytes" rule.
+ */
+function sameActionAsPayload(payload: any, candidate: { actionType: any, receiverId: any, receiverCawonce: any, text?: string }): boolean {
+  const dataTextPlain = decompressActionText(payload.text)
+  return (
+    Number(candidate.actionType ?? -1) === Number(payload.actionType) &&
+    Number(candidate.receiverId ?? -1) === Number(payload.receiverId ?? 0) &&
+    Number(candidate.receiverCawonce ?? -1) === Number(payload.receiverCawonce ?? 0) &&
+    (candidate.text ?? '') === dataTextPlain
+  )
+}
+
+/**
+ * Layer-2 calldata backstop. When indexer-lag is acceptable but no local
+ * Action row exists for a "Cawonce already used" rejection, scan recent
+ * ActionsProcessed logs on-chain, decode their tx calldata, and search
+ * for a packed action carrying our (senderId, cawonce). If found, run
+ * the same payload-match used against the local row.
+ *
+ * Returns:
+ *   'done'   — the slot was filled by a peer mirror with matching content.
+ *   'failed' — slot filled with a DIFFERENT action (true collision) or
+ *              not found in the scan window (truly lost or scan came back
+ *              empty, both treated as failed — caller can retry the
+ *              user's action with a fresh cawonce).
+ */
+async function backstopCawonceFromCalldata(
+  provider: AbstractProvider,
+  chainId: number,
+  payload: any,
+  windowMs: number,
+): Promise<'done' | 'failed'> {
+  const eventSig = packedIface.getEvent('ActionsProcessed')!.topicHash
+  // Estimate the block range to scan. The window is set by the indexer-
+  // aware budget; convert ms→blocks at the chain's nominal block time
+  // (Base Sepolia: 2s). Add a generous safety multiplier so a slow block
+  // doesn't make us miss the tx; capped at chunkedLogs' single-request
+  // ceiling so we never blow past the free-RPC 50K-block limit.
+  const NOMINAL_BLOCK_MS = 2000
+  const head = await provider.getBlockNumber()
+  const targetSpan = Math.max(50, Math.ceil((windowMs / NOMINAL_BLOCK_MS) * 4))
+  const fromBlock = Math.max(0, head - targetSpan)
+
+  let logs
+  try {
+    logs = await scanLogsBackward(provider, CAW_ACTIONS_ADDRESS, [eventSig], {
+      fromBlock,
+      toBlock: head,
+      chunkBlocks: 10_000,
+      maxWindows: 8,
+    })
+  } catch (err) {
+    console.warn(`[Validator] backstop: scanLogsBackward failed — ${err instanceof Error ? err.message : String(err)}`)
+    return 'failed'
+  }
+  if (logs.length === 0) return 'failed'
+
+  // De-dupe by tx hash; each tx can carry many actions but the calldata
+  // is the same regardless of how many ActionsProcessed events it emits.
+  const txHashes = Array.from(new Set(logs.map(l => l.transactionHash)))
+  for (const txHash of txHashes) {
+    let tx
+    try {
+      tx = await provider.getTransaction(txHash)
+    } catch (err) {
+      console.warn(`[Validator] backstop: getTransaction ${txHash} failed — ${err instanceof Error ? err.message : String(err)}`)
+      continue
+    }
+    if (!tx?.data || tx.data === '0x') continue
+
+    // Decode packedActions from the tx calldata. CawActions has three
+    // entry points that carry packed actions; selectors differ but the
+    // first dynamic-bytes arg is packedActions in all of them. Try the
+    // canonical one first, fall through on selector mismatch.
+    let packedHex: string | undefined
+    try {
+      const parsed = packedIface.parseTransaction({ data: tx.data, value: tx.value })
+      if (parsed && (parsed.name === 'processActions' || parsed.name === 'safeProcessActions' || parsed.name === 'processActionsWithZkSigs')) {
+        packedHex = parsed.args.packedActions as string
+      }
+    } catch {
+      // Not one of our function selectors — skip.
+      continue
+    }
+    if (!packedHex) continue
+
+    let unpacked
+    try {
+      const packedBuf = new Uint8Array(
+        (packedHex.startsWith('0x') ? packedHex.slice(2) : packedHex)
+          .match(/.{2}/g)!.map(b => parseInt(b, 16)),
+      )
+      unpacked = unpackActions(packedBuf)
+    } catch (err) {
+      console.warn(`[Validator] backstop: unpackActions failed for tx ${txHash} — ${err instanceof Error ? err.message : String(err)}`)
+      continue
+    }
+
+    for (const a of unpacked) {
+      if (Number(a.senderId) !== Number(payload.senderId)) continue
+      if (Number(a.cawonce) !== Number(payload.cawonce)) continue
+      // Hit. Decompress the on-chain text and run the same match used
+      // against local Action rows.
+      const landedText = decompressActionText(a.text)
+      const matches = sameActionAsPayload(payload, {
+        actionType: a.actionType,
+        receiverId: a.receiverId,
+        receiverCawonce: a.receiverCawonce,
+        text: landedText,
+      })
+      console.log(`[Validator] backstop: found (sender=${payload.senderId}, cawonce=${payload.cawonce}) in tx ${txHash} — ${matches ? 'matches payload (done)' : 'different action (failed)'}`)
+      return matches ? 'done' : 'failed'
+    }
+  }
+  // Walked every recent batch; the slot wasn't filled by any action with
+  // our (senderId, cawonce). The bitmap-said-used implies some path set
+  // it, but no packed-action evidence within the indexer-lag-aware
+  // window means we can't validate it as ours — mark failed.
+  console.log(`[Validator] backstop: (sender=${payload.senderId}, cawonce=${payload.cawonce}) not found in last ${txHashes.length} batch tx(es) — marking failed`)
+  return 'failed'
+}
+
+/**
  * Resolve a "Cawonce already used" simulation rejection by checking our
  * local Action table.
  *
@@ -249,12 +381,29 @@ export function triggerImmediateValidatorPoll(): { triggered: boolean; reason: s
  * seconds, especially during retry storms — so when the row isn't there
  * yet, we defer instead of immediately failing.
  *
+ * When the indexer-lag-aware budget elapses without a local row, two
+ * extra layers gate the "failed" verdict:
+ *   1. Indexer-lag gate. If chainHead - lastScannedBlock exceeds what
+ *      the indexer could realistically have processed in the budget,
+ *      return 'awaiting_indexer' — the silence is the indexer being
+ *      stalled, not the action genuinely missing. The TxQueue stays
+ *      in its current state for the next pass to recheck.
+ *   2. Calldata backstop. With indexer fresh enough, scan recent
+ *      ActionsProcessed events and their underlying tx calldata for
+ *      a packed action carrying our (senderId, cawonce). Match or
+ *      mismatch are both terminal verdicts; not-found is failed.
+ *
  * Returns:
- *   'done'              — Action row exists and matches our payload; it's our action.
- *   'failed'            — Action row exists but is a different action at this cawonce.
- *   'awaiting_indexer'  — Action row not yet present; recheck on next tick.
+ *   'done'              — Action exists (locally or on-chain) and matches our payload.
+ *   'failed'            — Different action at this cawonce, or scan window came back empty.
+ *   'awaiting_indexer'  — Action row not present and either budget hasn't elapsed or indexer is stalled.
  */
-async function resolveCawonceUsed(data: any, firstSeenAt?: Date): Promise<'done' | 'failed' | 'awaiting_indexer'> {
+async function resolveCawonceUsed(
+  data: any,
+  firstSeenAt: Date | undefined,
+  provider: AbstractProvider,
+  chainId: number,
+): Promise<'done' | 'failed' | 'awaiting_indexer'> {
   const existingAction = await prisma.action.findFirst({
     where: { senderId: data.senderId, cawonce: data.cawonce }
   })
@@ -267,12 +416,12 @@ async function resolveCawonceUsed(data: any, firstSeenAt?: Date): Promise<'done'
     // 'failed' for the legitimate same-cawonce-already-landed case.
     // Decompress data.text for the comparison. Audit fix 2026-05-09
     // (Round 6 cross-layer agent CL-1 bonus).
-    const dataTextPlain = decompressActionText(data.text)
-    const sameAction =
-      Number(ex?.actionType ?? -1) === Number(data.actionType) &&
-      Number(ex?.receiverId ?? -1) === Number(data.receiverId ?? 0) &&
-      Number(ex?.receiverCawonce ?? -1) === Number(data.receiverCawonce ?? 0) &&
-      (ex?.text ?? '') === dataTextPlain
+    const sameAction = sameActionAsPayload(data, {
+      actionType: ex?.actionType,
+      receiverId: ex?.receiverId,
+      receiverCawonce: ex?.receiverCawonce,
+      text: ex?.text ?? '',
+    })
     return sameAction ? 'done' : 'failed'
   }
   // No Action row yet. Either the indexer hasn't caught up, or the cawonce
@@ -281,10 +430,48 @@ async function resolveCawonceUsed(data: any, firstSeenAt?: Date): Promise<'done'
   // sized to its current lag — short when caught up, long when stalled —
   // and if we've been waiting past that budget, treat it as a real failure.
   const budget = indexerAwareAwaitingTimeoutMs()
-  if (firstSeenAt && Date.now() - firstSeenAt.getTime() > budget) {
-    return 'failed'
+  if (!firstSeenAt || Date.now() - firstSeenAt.getTime() <= budget) {
+    return 'awaiting_indexer'
   }
-  return 'awaiting_indexer'
+
+  // Budget elapsed. Before declaring failed, gate on indexer freshness.
+  // If chainHead - lastScannedBlock is larger than what the indexer
+  // could plausibly cover in `budget`, the silence is indexer lag —
+  // don't burn the row yet.
+  let chainHead: number
+  try {
+    chainHead = await provider.getBlockNumber()
+  } catch (err) {
+    // If we can't even read the head, we have no basis to declare
+    // failure. Defer.
+    console.warn(`[Validator] resolveCawonceUsed: getBlockNumber failed, deferring — ${err instanceof Error ? err.message : String(err)}`)
+    return 'awaiting_indexer'
+  }
+
+  const stats = getIndexerStats(chainId)
+  // Fallback throughput when the indexer hasn't produced enough samples
+  // yet (cold start, or process just restarted). Conservative — on Base
+  // Sepolia a healthy indexer processes ~tens of blocks/sec, but here
+  // we'd rather defer one extra tick than burn a legit action.
+  const FALLBACK_BLOCKS_PER_SEC = 1
+  const throughput = stats.hasSamples && stats.throughputBlocksPerSec > 0
+    ? stats.throughputBlocksPerSec
+    : FALLBACK_BLOCKS_PER_SEC
+  const SAFETY_MULTIPLIER = 1.5
+  const tolerableLag = (budget / 1000) * throughput * SAFETY_MULTIPLIER
+  const lag = stats.lastScannedBlock > 0
+    ? Math.max(0, chainHead - stats.lastScannedBlock)
+    : 0
+
+  if (stats.lastScannedBlock > 0 && lag > tolerableLag) {
+    console.log(`[Validator] resolveCawonceUsed: indexer lag=${lag} blocks > tolerable=${Math.round(tolerableLag)} (throughput=${throughput.toFixed(2)} blk/s, budget=${Math.round(budget/1000)}s) — deferring`)
+    return 'awaiting_indexer'
+  }
+
+  // Indexer is caught up enough that any peer-landed action would have
+  // been picked up by now. The local-row miss is either a real silent
+  // loss or a phantom. Calldata backstop is the tiebreaker.
+  return backstopCawonceFromCalldata(provider, chainId, data, budget)
 }
 
 /** Build { CAW: 3, LIKE: 2, ... } breakdown from submitted actions (which have actionType) */
@@ -830,7 +1017,7 @@ export const validatorService: Service = {
         await Promise.all(awaitingRows.map(async (row) => {
           const data = (row.payload as any)?.data
           if (!data) return
-          const resolution = await resolveCawonceUsed(data, row.updatedAt)
+          const resolution = await resolveCawonceUsed(data, row.updatedAt, httpProvider, 84532)
           if (resolution === 'done') {
             console.log(`[Validator] TxQueue ${row.id}: Action row now indexed and matches — marking done`)
             await prisma.txQueue.update({
@@ -1784,7 +1971,7 @@ console.log("succeededKeys", succeededKeys)
         const cawonceUsed = rejection.includes('Cawonce already used')
         let cawonceResolution: 'done' | 'failed' | 'awaiting_indexer' | null = null
         if (cawonceUsed) {
-          cawonceResolution = await resolveCawonceUsed(data, entry.updatedAt)
+          cawonceResolution = await resolveCawonceUsed(data, entry.updatedAt, httpProvider, 84532)
           if (cawonceResolution === 'failed') {
             console.log(`[Validator] TxQueue ${entry.id}: Cawonce ${data.cawonce} used by DIFFERENT action — marking failed`)
           } else if (cawonceResolution === 'awaiting_indexer') {
@@ -2098,7 +2285,7 @@ console.log("succeededKeys", succeededKeys)
                   const cawonceUsed = rejection.includes('Cawonce already used')
                   let cawonceResolution: 'done' | 'failed' | 'awaiting_indexer' | null = null
                   if (cawonceUsed) {
-                    cawonceResolution = await resolveCawonceUsed(data, entry.updatedAt)
+                    cawonceResolution = await resolveCawonceUsed(data, entry.updatedAt, httpProvider, 84532)
                   }
                   const processedByOther = cawonceResolution === 'done'
 
@@ -2266,7 +2453,7 @@ console.log("succeededKeys", succeededKeys)
           console.log("[Validator] All actions rejected with 'Cawonce already used' — checking Action table...")
           await Promise.all(validatedEntries.map(async (entry: any) => {
             const data = (entry.payload as any).data
-            const resolution = await resolveCawonceUsed(data, entry.updatedAt)
+            const resolution = await resolveCawonceUsed(data, entry.updatedAt, httpProvider, 84532)
             if (resolution === 'done') {
               console.log(`[Validator] TxQueue ${entry.id}: Same action exists for senderId=${data.senderId} cawonce=${data.cawonce} — marking done`)
               await prisma.txQueue.update({ where: { id: entry.id }, data: { status: 'done' } })
@@ -2350,7 +2537,7 @@ console.log("succeededKeys", succeededKeys)
             const isCawonceUsed = rejection.includes('Cawonce already used')
 
             if (isCawonceUsed) {
-              const resolution = await resolveCawonceUsed(data, entry.updatedAt)
+              const resolution = await resolveCawonceUsed(data, entry.updatedAt, httpProvider, 84532)
               if (resolution === 'done') {
                 console.log(`[Validator] TxQueue ${entry.id}: Same action exists for senderId=${data.senderId} cawonce=${data.cawonce} — marking done`)
                 await prisma.txQueue.update({ where: { id: entry.id }, data: { status: 'done' } })
