@@ -698,11 +698,15 @@ router.get('/verify/:userId/:cawonce', async (req, res) => {
       return res.status(400).json({ error: 'Invalid userId or cawonce' })
     }
 
-    // Find the TxQueue entry which has the signature
+    // Find the TxQueue entry which has the signature. Accept both
+    // 'done' (our validator confirmed) and 'validated_by_peer' (a peer
+    // mirror submitted the action, our local row still holds the
+    // user-signed payload) so verification works regardless of which
+    // mirror ended up on chain.
     const txEntry = await prisma.txQueue.findFirst({
       where: {
         senderId: userId,
-        status: 'done',
+        status: { in: ['done', 'validated_by_peer'] },
         payload: {
           path: ['data', 'cawonce'],
           equals: cawonce,
