@@ -152,13 +152,18 @@ function buildMetaTags(m: Meta): string {
     // Bare English path.
     tags.push(`<link rel="alternate" hreflang="x-default" href="${escapeHtml(`${base}${m.altPath}`)}">`)
   }
-  // og:image:width / height are optional but high-signal for strict
-  // scrapers (Messenger). Emit only when we have real dims from the
-  // PNG; never lie — a mismatched value suppresses the preview.
-  if (m.imageWidth && m.imageHeight) {
-    tags.push(`<meta property="og:image:width" content="${m.imageWidth}">`)
-    tags.push(`<meta property="og:image:height" content="${m.imageHeight}">`)
-  }
+  // og:image:width / height. Always emit something — FB Messenger
+  // surfaces an "Inferred Property" warning otherwise ("specify the
+  // dimensions so we can accept the image asynchronously") and the
+  // first-share-of-a-URL preview ends up empty because the scraper
+  // didn't wait for the satori render to complete. Use the real
+  // probed dims when available, fall back to the OG-spec default
+  // (1200×630) when the probe missed — FB only needs plausible dims
+  // to accept the preview; the actual fetch supplies the real size.
+  const imgW = m.imageWidth || 1200
+  const imgH = m.imageHeight || 630
+  tags.push(`<meta property="og:image:width" content="${imgW}">`)
+  tags.push(`<meta property="og:image:height" content="${imgH}">`)
   tags.push(
     // image:type and image:alt are also recommended by ogp.me. type
     // tells scrapers what content-type to expect (skips a sniff).
