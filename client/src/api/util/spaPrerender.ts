@@ -144,12 +144,33 @@ function buildMetaTags(m: Meta): string {
     // fetchers don't.
     `<meta property="og:url" content="${u}">`,
     `<meta property="og:image" content="${i}">`,
+    // og:image* group MUST be contiguous — no other tags between
+    // og:image and its width/height/type/alt siblings. FB's OG parser
+    // treats a non-og:image tag (e.g. a <link rel="alternate"> from the
+    // hreflang block) as the end of the og:image group; the later
+    // og:image:width / og:image:height get reassigned to whatever the
+    // parser's "current" property is, surfacing as bizarre
+    // `og:temporal:twitter:image` entries and an Inferred-Property
+    // warning ("og:image properties are not yet available"). The
+    // hreflang block is emitted AFTER the og:image* group below.
+    //
+    // og:image:width / og:image:height: always emit something. Use the
+    // real probed dims when available (probeImageDims forwards the
+    // crawler's UA so the dims match the variant they'll actually
+    // fetch), fall back to OG-spec default (1200×630) on probe miss.
+    `<meta property="og:image:width" content="${m.imageWidth || 1200}">`,
+    `<meta property="og:image:height" content="${m.imageHeight || 630}">`,
+    // image:type and image:alt are also recommended by ogp.me. type
+    // tells scrapers what content-type to expect (skips a sniff).
+    `<meta property="og:image:type" content="image/png">`,
+    `<meta property="og:image:alt" content="${t}">`,
   ]
   // hreflang alternates: one <link rel="alternate"> per supported
   // locale, plus x-default. Tells Google to route Spanish searchers to
   // /es/..., Japanese searchers to /ja/..., etc. Without these, Google
   // either misses the locale variants or treats them as duplicates and
-  // splits ranking.
+  // splits ranking. Emitted AFTER the og:image* group above so the FB
+  // OG parser doesn't see them as interrupting the og:image group.
   if (m.altPath) {
     // hreflang alternates must share an origin with the canonical link or
     // Google flags the page in Search Console as having inconsistent
@@ -164,23 +185,7 @@ function buildMetaTags(m: Meta): string {
     // Bare English path.
     tags.push(`<link rel="alternate" hreflang="x-default" href="${escapeHtml(`${base}${m.altPath}`)}">`)
   }
-  // og:image:width / height. Always emit something — FB Messenger
-  // surfaces an "Inferred Property" warning otherwise ("specify the
-  // dimensions so we can accept the image asynchronously") and the
-  // first-share-of-a-URL preview ends up empty because the scraper
-  // didn't wait for the satori render to complete. Use the real
-  // probed dims when available, fall back to the OG-spec default
-  // (1200×630) when the probe missed — FB only needs plausible dims
-  // to accept the preview; the actual fetch supplies the real size.
-  const imgW = m.imageWidth || 1200
-  const imgH = m.imageHeight || 630
-  tags.push(`<meta property="og:image:width" content="${imgW}">`)
-  tags.push(`<meta property="og:image:height" content="${imgH}">`)
   tags.push(
-    // image:type and image:alt are also recommended by ogp.me. type
-    // tells scrapers what content-type to expect (skips a sniff).
-    `<meta property="og:image:type" content="image/png">`,
-    `<meta property="og:image:alt" content="${t}">`,
     `<meta property="og:site_name" content="CAW">`,
     `<meta name="twitter:card" content="summary_large_image">`,
     `<meta name="twitter:title" content="${t}">`,
