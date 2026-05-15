@@ -4,7 +4,14 @@ import { baseSepolia }           from 'wagmi/chains'
 import { useConnectModal } from '@rainbow-me/rainbowkit'
 import { useSignTypedData, useAccount, useSwitchChain, useChainId } from 'wagmi'
 import { readContract } from '@wagmi/core'
-import type { TypedDataField } from '@ethersproject/abstract-signer'
+// EIP-712 typed-data field shape. Locally declared instead of imported
+// from `@ethersproject/abstract-signer` so this module doesn't depend
+// on a package that isn't a direct FE dep. The previous import resolved
+// locally via hoisting from `solidity/node_modules/` but failed on
+// per-workspace VPS installs where no such fallback exists, breaking
+// the prod build under `tsc -b`. Shape matches ethers' TypedDataField
+// 1:1 ({ name, type }) so the consumer types are unchanged.
+type TypedDataField = { name: string; type: string }
 import { useActiveToken, useTokenDataStore } from "~/store/tokenDataStore";
 import { CAW_ACTIONS_ADDRESS, CAW_NAMES_L2_ADDRESS } from '~/../../../abi/addresses'
 import { cawActionsAbi, cawProfileL2Abi } from '~/../../../abi/generated'
