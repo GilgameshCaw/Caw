@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react'
+import { createPortal } from 'react-dom'
 import { HiX, HiLink, HiMail, HiShare, HiCheck } from 'react-icons/hi'
 import { FaXTwitter, FaFacebook, FaWhatsapp, FaTelegram } from 'react-icons/fa6'
 import { useTheme } from '~/hooks/useTheme'
@@ -94,7 +95,12 @@ export const ShareModal: React.FC<ShareModalProps> = ({
     if (e.target === e.currentTarget) onClose()
   }
 
-  return (
+  // Portal to document.body so we escape any stacking context the
+  // mounting parent (FeedItem, ShareProfileCardModal, etc.) creates.
+  // Without this the fixed-position modal gets trapped behind sibling
+  // FeedItems lower in the DOM because they're rendered after the
+  // modal's parent and share the same z-stack.
+  return createPortal(
     <>
       {/* Backdrop + modal share a container so clicks on empty area close */}
       <div
@@ -221,6 +227,7 @@ export const ShareModal: React.FC<ShareModalProps> = ({
           animation: fade-in 0.2s ease-out;
         }
       `}</style>
-    </>
+    </>,
+    document.body,
   )
 }
