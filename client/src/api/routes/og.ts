@@ -825,6 +825,45 @@ function approxCharsPerPx(fontSize: number, widthPx: number): number {
   return Math.floor(widthPx / (fontSize * CHAR_W_RATIO))
 }
 
+// Visual width of a character in CHAR_W_RATIO-em units. ASCII / Latin
+// glyphs are 1; CJK / fullwidth glyphs are ~2× a Latin glyph in Inter +
+// Noto JP, so we count them as 2. Without this, the wrap budget — which
+// is pure character count — under-estimates how much horizontal space a
+// Japanese line will consume, and the rendered line overflows the
+// narrow column and flows past the corner image.
+function glyphWeight(ch: string): number {
+  const code = ch.codePointAt(0) || 0
+  // Common CJK + Japanese / Korean blocks. Not exhaustive (there are
+  // some niche fullwidth blocks we don't enumerate), but covers
+  // hiragana, katakana, han, hangul, fullwidth ASCII, and the most
+  // common CJK punctuation.
+  //   3000-303F : CJK symbols/punctuation
+  //   3040-309F : hiragana
+  //   30A0-30FF : katakana
+  //   3400-4DBF : CJK extension A
+  //   4E00-9FFF : CJK unified ideographs
+  //   AC00-D7AF : hangul syllables
+  //   F900-FAFF : CJK compatibility ideographs
+  //   FF00-FF60 : fullwidth ASCII
+  //   FF61-FFEF : halfwidth katakana (count as 1 — narrow glyph)
+  //   20000-2FFFF : CJK extensions B-F (supplementary plane)
+  if (code >= 0xff61 && code <= 0xffef) return 1
+  if ((code >= 0x3000 && code <= 0x9fff) ||
+      (code >= 0xac00 && code <= 0xd7af) ||
+      (code >= 0xf900 && code <= 0xfaff) ||
+      (code >= 0xff00 && code <= 0xff60) ||
+      (code >= 0x20000 && code <= 0x2ffff)) {
+    return 2
+  }
+  return 1
+}
+
+function weightedLength(s: string): number {
+  let n = 0
+  for (const ch of s) n += glyphWeight(ch)
+  return n
+}
+
 // Strip characters Inter can't render — emoji, exotic unicode, control
 // chars. Without this, satori draws "NO GLYPH" rectangles for every
 // missing codepoint. Cheap allowlist: ASCII printable + Latin-1
@@ -1016,53 +1055,126 @@ function wrapCawContent(
   // Normalize whitespace; preserve explicit newlines as line breaks.
   const paragraphs = text.replace(/\r\n/g, '\n').split('\n')
 
-  const breakWord = (word: string, max: number): string[] => {
+  // Hard-break a token that's wider than `max` units (after weighting).
+  // Walks codepoints, accumulates weighted width, and cuts when the next
+  // glyph would push past the budget. Used for both run-on Latin
+  // (e.g. long URL slugs) and CJK strings (which have no spaces to
+  // break at — we treat every CJK glyph as its own breakable token).
+  const breakBudget = (token: string, max: number): string[] => {
     const out: string[] = []
-    let i = 0
-    while (i < word.length) { out.push(word.slice(i, i + max)); i += max }
+    let buf = ''
+    let bufW = 0
+    for (const ch of token) {
+      const w = glyphWeight(ch)
+      if (bufW + w > max && buf) {
+        out.push(buf)
+        buf = ch
+        bufW = w
+      } else {
+        buf += ch
+        bufW += w
+      }
+    }
+    if (buf) out.push(buf)
     return out
+  }
+
+  // Split a paragraph into wrap-tokens. For Latin text we split on
+  // whitespace; for CJK we treat each glyph as its own token so the
+  // wrapper can break between any two CJK characters (matching CSS
+  // line-break: anywhere behavior for those scripts). We detect mixed
+  // content by walking and emitting tokens at any Latin↔CJK boundary.
+  const tokenize = (para: string): string[] => {
+    const toks: string[] = []
+    // Each "run" alternates between whitespace-delimited Latin runs
+    // and pure-CJK runs. Latin runs are kept as words (existing
+    // behavior). CJK runs are split per-glyph so each glyph becomes
+    // its own wrap token.
+    let buf = ''
+    let bufIsCjk = false
+    const flushBuf = () => {
+      if (!buf) return
+      if (bufIsCjk) {
+        // Each CJK glyph is its own token.
+        for (const ch of buf) toks.push(ch)
+      } else {
+        // Latin run: split on whitespace.
+        for (const w of buf.split(/\s+/)) if (w) toks.push(w)
+      }
+      buf = ''
+    }
+    for (const ch of para) {
+      const isCjk = glyphWeight(ch) === 2
+      if (isCjk !== bufIsCjk && buf) {
+        flushBuf()
+        bufIsCjk = isCjk
+      } else if (!buf) {
+        bufIsCjk = isCjk
+      }
+      buf += ch
+    }
+    flushBuf()
+    return toks
   }
 
   for (const para of paragraphs) {
     if (lines.length >= totalLines) break
-    const words = para.split(/\s+/).filter(Boolean)
-    if (words.length === 0) { lines.push(''); continue }
+    const tokens = tokenize(para)
+    if (tokens.length === 0) { lines.push(''); continue }
     let current = ''
-    for (const rawWord of words) {
+    let currentW = 0
+    for (const rawToken of tokens) {
       if (lines.length >= totalLines) break
       const max = lines.length < narrowLines ? narrowChars : wideChars
-      // Hard-break any single word that's longer than a full line.
-      const pieces = rawWord.length > max ? breakWord(rawWord, max) : [rawWord]
+      // Hard-break any single token wider than a full line. For Latin
+      // this is a long URL; for CJK it's never (single glyphs ≤ 2).
+      const tokenW = weightedLength(rawToken)
+      const pieces = tokenW > max ? breakBudget(rawToken, max) : [rawToken]
       for (const piece of pieces) {
         if (lines.length >= totalLines) break
-        const candidate = current ? `${current} ${piece}` : piece
-        if (candidate.length <= max) {
-          current = candidate
+        const pieceW = weightedLength(piece)
+        // Latin tokens are space-joined; CJK glyph-tokens butt against
+        // each other with no separator. glyphWeight(piece[0]) === 2
+        // → CJK piece → don't insert a space.
+        const isCjkPiece = pieceW > 0 && glyphWeight(piece[0]) === 2
+        const sep = current && !isCjkPiece ? ' ' : ''
+        const sepW = sep ? 1 : 0
+        const wWithSep = currentW + sepW + pieceW
+        if (wWithSep <= max) {
+          current = current + sep + piece
+          currentW = wWithSep
         } else {
           lines.push(current)
           current = piece
+          currentW = pieceW
         }
       }
     }
     if (current && lines.length < totalLines) {
       lines.push(current)
       current = ''
+      currentW = 0
     }
   }
 
   // Ellipsis overflow: if we ran out of room mid-text, trim the last
-  // visible line and stick a … on it.
-  // Detection: if the original text contained more chars than what we
-  // rendered (sum of line lengths + spaces between them), there's
-  // truncation to mark.
-  const renderedChars = lines.reduce((n, l) => n + l.length, 0) + Math.max(0, lines.length - 1)
+  // visible line and stick a … on it. Comparison is weighted-length so
+  // a Japanese line that filled the budget doesn't get spurious
+  // ellipsis appended when it actually fit.
+  const renderedW = lines.reduce((n, l) => n + weightedLength(l), 0) + Math.max(0, lines.length - 1)
   const stripped = text.replace(/\s+/g, ' ').trim()
-  if (renderedChars < stripped.length && lines.length > 0) {
+  const strippedW = weightedLength(stripped)
+  if (renderedW < strippedW && lines.length > 0) {
     const last = lines[lines.length - 1]
     const max = lines.length <= narrowLines ? narrowChars : wideChars
-    // Trim to fit "…" within the same char budget.
-    if (last.length >= max) {
-      lines[lines.length - 1] = last.slice(0, max - 1).trimEnd() + '…'
+    // Trim to fit "…" within the budget. We trim by walking codepoints
+    // and shrinking while weighted width > max - 1.
+    if (weightedLength(last) >= max) {
+      let trimmed = last
+      while (weightedLength(trimmed) > max - 1 && trimmed.length > 0) {
+        trimmed = trimmed.slice(0, -1)
+      }
+      lines[lines.length - 1] = trimmed.trimEnd() + '…'
     } else {
       lines[lines.length - 1] = last.trimEnd() + '…'
     }
@@ -2653,15 +2765,19 @@ router.get('/image/caw/:id', async (req, res) => {
     .update([stats.likes, stats.recaws, stats.replies, stats.views, pollHash].join('|'))
     .digest('hex').slice(0, 8)
 
-  // v32 = extend Twitter's fixed-canvas wrap to Facebook / Messenger
-  // (both enforce ≈1.91:1; off-aspect images get letterboxed or
-  // rejected by Messenger). Cache split renamed 'tw' → 'canvas' to
-  // reflect the wider scope. PENDING caws include status so a later
-  // SUCCESS/HIDDEN flip doesn't serve a stale render.
+  // v33 = CJK-aware wrap budget. Japanese / Chinese / Korean glyphs
+  // are ~2× wider than Latin in Inter + Noto JP; the pre-v33 wrap was
+  // pure character count and produced CJK lines that overflowed the
+  // narrow column under the corner image. Each glyph now contributes
+  // weighted units (1 for Latin / halfwidth, 2 for fullwidth CJK) and
+  // CJK runs are tokenized per-glyph so the wrapper can break between
+  // any two characters (no whitespace to anchor on).
+  // PENDING caws include status so a later SUCCESS/HIDDEN flip
+  // doesn't serve a stale render.
   const variant = isCanvasUA ? 'canvas' : 'std'
   const cacheKey = caw.status === 'PENDING'
-    ? `caw-v32-${variant}-${caw.id}-${liveHash}-pending`
-    : `caw-v32-${variant}-${caw.id}-${liveHash}`
+    ? `caw-v33-${variant}-${caw.id}-${liveHash}-pending`
+    : `caw-v33-${variant}-${caw.id}-${liveHash}`
   return serveCachedOrRender(res, cacheKey, async () => {
     // Strip media URLs and poll markers out of the visible text — the
     // corner image and the rendered poll bars already represent them,
