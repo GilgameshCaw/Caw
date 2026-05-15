@@ -259,22 +259,47 @@ function makeCrawlerPatch(bot) {
 const NGINX_PATCHES = [
   // Order is preserved so the resulting config lists bots in a predictable
   // sequence; functionally the alternation is order-agnostic.
-  'cawbot',
-  'meta-externalagent',
-  'slack-imgproxy',
-  'mastodon',
-  'bluesky',
-  'cardyb',
-  'discoursebot',
-  'yandexbot',
-  'tumblr',
-  'wechat',
-  'line',
-  'twitchbot',
-  'vkshare',
-  'notion',
-  'pocket',
-].map(makeCrawlerPatch)
+  ...[
+    'cawbot',
+    'meta-externalagent',
+    'slack-imgproxy',
+    'mastodon',
+    'bluesky',
+    'cardyb',
+    'discoursebot',
+    'yandexbot',
+    'tumblr',
+    'wechat',
+    'line',
+    'twitchbot',
+    'vkshare',
+    'notion',
+    'pocket',
+  ].map(makeCrawlerPatch),
+  // Fix the prerender rewrite: `$request_uri` embeds the original query
+  // string into the rewrite target, which nginx then percent-encodes
+  // the embedded `?` into the path segment — Express then sees
+  // req.path / req.params[*] contaminated with `%3Fa=d` and the
+  // canonical-redirect short-circuit fails, producing a 301-to-self
+  // infinite loop for any crawler URL that carries a query string.
+  // The naive `$uri$is_args$args` rewrite is no better (nginx STILL
+  // percent-encodes the `?` from $is_args into the path). The right
+  // idiom is `$uri` alone — original args carry through implicitly.
+  {
+    name: 'fix prerender rewrite query-string encoding',
+    // Match both the original `$request_uri` form AND the in-between
+    // `$uri$is_args$args` form (which we briefly tried) so a re-run
+    // of the patcher converges to the correct rewrite either way.
+    pattern: /rewrite \^ \/__prerender\$(?:request_uri|uri\$is_args\$args) last;/,
+    apply: (s) => s.replace(
+      /rewrite \^ \/__prerender\$(?:request_uri|uri\$is_args\$args) last;/,
+      'rewrite ^ /__prerender$uri last;',
+    ),
+    // Word boundary on `$uri` — careful not to false-positive on
+    // `$uri$is_args$args` which contains `$uri` as a prefix.
+    isApplied: (s) => /rewrite \^ \/__prerender\$uri last;/.test(s),
+  },
+]
 
 export function patchMainNginxConfig(installDir) {
   if (process.env.NODE_ENV === 'development') {
@@ -494,7 +519,22 @@ function renderNginxConf({ domain, apiPort, frontendDist, uploadsDir, tls, nginx
     # never touch the API for the HTML shell — zero perf cost.
     location / {
         if (\$http_user_agent ~* "(twitterbot|facebookexternalhit|meta-externalagent|slackbot|slack-imgproxy|discordbot|telegrambot|whatsapp|linkedinbot|skypeuripreview|googlebot|bingbot|applebot|redditbot|mastodon|bluesky|cardyb|discoursebot|yandexbot|tumblr|wechat|line|twitchbot|vkshare|notion|pocket|preview|embedly|nuzzel|pinterest|rogerbot|showyoubot|outbrain|w3c_validator|cawbot)") {
-            rewrite ^ /__prerender\$request_uri last;
+            # Prefix the path with /__prerender and let nginx carry the
+            # original query string through implicitly. The naive
+            # \$request_uri form embeds the query inside the rewrite
+            # target — nginx then percent-encodes the literal `?` from
+            # \$request_uri into the path (e.g.
+            # /__prerender/users/foo%3Fa=d?a=d), which survives all the
+            # way to Express where req.path / req.params end up with
+            # `%3F...` glued onto the slug, defeating the canonical-
+            # redirect short-circuit and producing an infinite
+            # 301-to-self on any crawler URL with a query string (TG
+            # share previews were the symptom).
+            #
+            # \$uri alone is the right idiom: it's the decoded path with
+            # no query, and `rewrite ... last;` without an explicit `?`
+            # in the target preserves the original args automatically.
+            rewrite ^ /__prerender\$uri last;
         }
         try_files \$uri \$uri/ /index.html;
     }
