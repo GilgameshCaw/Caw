@@ -589,12 +589,12 @@ const Staking = () => {
         <h2 className={`text-xl font-bold mb-2 transition-colors duration-300 ${
           isDark ? 'text-white' : 'text-black'
         }`}>
-          Deposit CAW
+          {t('staking.deposit.title')}
         </h2>
         <p className={`text-sm transition-colors duration-300 ${
           isDark ? 'text-gray-400' : 'text-gray-600'
         }`}>
-          The more CAW you deposit, the more you will earn from the protocol's activity
+          {t('staking.deposit.subtitle')}
         </p>
       </div>
 
@@ -614,7 +614,7 @@ const Staking = () => {
         <label className={`text-sm font-medium transition-colors duration-300 ${
           isDark ? 'text-gray-300' : 'text-gray-700'
         }`}>
-          Amount to Deposit
+          {t('staking.amount.deposit')}
         </label>
         {getPresetAmounts(mockData.availableBalance).length > 0 && (
           <div className="flex flex-wrap gap-2 my-3">
@@ -651,7 +651,7 @@ const Staking = () => {
               className={`px-3 py-1 text-xs font-semibold rounded-full transition-all duration-300 cursor-pointer ${
               isDark ? 'bg-yellow-500/20 text-yellow-500 hover:bg-yellow-500/30' : 'bg-yellow-500/20 text-yellow-600 hover:bg-yellow-500/30'
             }`}>
-              MAX
+              {t('staking.max')}
             </button>
           </div>
         </div>
@@ -662,7 +662,7 @@ const Staking = () => {
               isDark ? 'text-gray-400 hover:text-white' : 'text-gray-600 hover:text-black'
             }`}
           >
-            Available: {mockData.availableBalance.toLocaleString('en-US', { maximumFractionDigits: 2 })} CAW
+            {t('staking.available', { amount: mockData.availableBalance.toLocaleString('en-US', { maximumFractionDigits: 2 }) })}
           </button>
         </div>
       </div>
@@ -700,7 +700,7 @@ const Staking = () => {
           <div className="text-sm text-gray-500 text-center mt-2">
             est. gas+fees: {totalEth.toFixed(4)} ETH{ethPrice > 0 && ` (~$${(totalEth * ethPrice).toFixed(2)})`}
             <span className="block text-xs mt-0.5 opacity-60">
-              Half of all fees are used to buy and burn CAW
+              {t('staking.fees.half')}
             </span>
           </div>
         )
@@ -713,7 +713,7 @@ const Staking = () => {
           rel="noopener noreferrer"
           className="text-sm text-yellow-500/70 hover:text-yellow-500 transition-colors cursor-pointer"
         >
-          Need more CAW? Click here.
+          {t('staking.need_more')}
         </a>
       </div>
     </div>
@@ -725,12 +725,12 @@ const Staking = () => {
         <h2 className={`text-xl font-bold mb-2 transition-colors duration-300 ${
           isDark ? 'text-white' : 'text-black'
         }`}>
-          Withdraw CAW
+          {t('staking.withdraw.title')}
         </h2>
         <p className={`text-sm transition-colors duration-300 ${
           isDark ? 'text-gray-400' : 'text-gray-600'
         }`}>
-          Withdraw your deposited tokens
+          {t('staking.withdraw.subtitle')}
         </p>
       </div>
 
@@ -745,7 +745,7 @@ const Staking = () => {
               <div className={`text-sm font-semibold transition-colors duration-300 ${
                 isDark ? 'text-green-200' : 'text-green-800'
               }`}>
-                Ready for Withdrawal
+                {t('staking.ready_withdrawal')}
               </div>
               <div className={`text-2xl font-bold transition-colors duration-300 mt-1 ${
                 isDark ? 'text-green-200' : 'text-green-800'
@@ -782,7 +782,7 @@ const Staking = () => {
                 <div className="text-sm text-gray-500 text-center mt-2">
                   est. gas+fees: {totalEth.toFixed(4)} ETH{ethPrice > 0 && ` (~$${(totalEth * ethPrice).toFixed(2)})`}
                   <span className="block text-xs mt-0.5 opacity-60">
-                    Half of all fees are used to buy and burn CAW
+                    {t('staking.fees.half')}
                   </span>
                 </div>
               )
@@ -801,7 +801,7 @@ const Staking = () => {
           new Date(w.updatedAt).getTime() > oneHourAgo
         )
         return hasRecentCompletedWithdrawals && address && (
-          <LayerZeroStatus address={address} message="Waiting for your unstaked CAW?" isDark={isDark} />
+          <LayerZeroStatus address={address} message={t('staking.waiting_unstake')} isDark={isDark} />
         )
       })()}
 
@@ -834,7 +834,7 @@ const Staking = () => {
                       ? isDark ? 'bg-green-500/20 text-green-200' : 'bg-green-200 text-green-800'
                       : isDark ? 'bg-yellow-500/20 text-yellow-200' : 'bg-yellow-200 text-yellow-800'
                   }`}>
-                    {isCompleted ? 'Completed' : 'Pending'}
+                    {isCompleted ? t('staking.status.completed') : t('staking.status.pending')}
                   </span>
                 </div>
               </div>
@@ -848,7 +848,7 @@ const Staking = () => {
         <label className={`text-sm font-medium transition-colors duration-300 ${
           isDark ? 'text-gray-300' : 'text-gray-700'
         }`}>
-          Amount to Unstake
+          {t('staking.amount.unstake')}
         </label>
         {getPresetAmounts(mockData.stakedAmount).length > 0 && (
           <div className="flex flex-wrap gap-2 my-3">
@@ -885,7 +885,7 @@ const Staking = () => {
               className={`px-3 py-1 text-xs font-semibold rounded-full transition-all duration-300 cursor-pointer ${
               isDark ? 'bg-yellow-500/20 text-yellow-500 hover:bg-yellow-500/30' : 'bg-yellow-500/20 text-yellow-600 hover:bg-yellow-500/30'
             }`}>
-              MAX
+              {t('staking.max')}
             </button>
           </div>
         </div>
@@ -896,7 +896,7 @@ const Staking = () => {
               isDark ? 'text-gray-400 hover:text-white' : 'text-gray-600 hover:text-black'
             }`}
           >
-            Staked: {mockData.stakedAmount.toLocaleString('en-US', { maximumFractionDigits: 2 })} CAW
+            {t('staking.staked', { amount: mockData.stakedAmount.toLocaleString('en-US', { maximumFractionDigits: 2 }) })}
           </button>
         </div>
       </div>
@@ -932,12 +932,12 @@ const Staking = () => {
         <h2 className={`text-xl font-bold mb-2 transition-colors duration-300 ${
           isDark ? 'text-white' : 'text-black'
         }`}>
-          How Staking Works
+          {t('staking.info.title')}
         </h2>
         <p className={`text-sm transition-colors duration-300 ${
           isDark ? 'text-gray-400' : 'text-gray-600'
         }`}>
-          Learn about CAW Protocol deposit mechanics
+          {t('staking.info.subtitle')}
         </p>
       </div>
 
@@ -957,12 +957,12 @@ const Staking = () => {
             <h3 className={`font-semibold mb-2 transition-colors duration-300 ${
               isDark ? 'text-white' : 'text-black'
             }`}>
-              Requirements
+              {t('staking.info.requirements.title')}
             </h3>
             <p className={`text-sm transition-colors duration-300 ${
               isDark ? 'text-gray-400' : 'text-gray-600'
             }`}>
-              Depositing CAW requires a username NFT, which will retain the deposited amount and accrue rewards over time.
+              {t('staking.info.requirements.body')}
             </p>
           </div>
         </div>
@@ -984,12 +984,12 @@ const Staking = () => {
             <h3 className={`font-semibold mb-2 transition-colors duration-300 ${
               isDark ? 'text-white' : 'text-black'
             }`}>
-              Reward Distribution
+              {t('staking.info.distribution.title')}
             </h3>
             <p className={`text-sm transition-colors duration-300 ${
               isDark ? 'text-gray-400' : 'text-gray-600'
             }`}>
-              With every action (CAW, RECAW, LIKE, FOLLOW, etc...) on the CAW Protocol, a small CAW fee is collected and automatically distributed to all CAW depositors in proportion to their deposits.
+              {t('staking.info.distribution.body')}
             </p>
           </div>
         </div>
@@ -1011,12 +1011,12 @@ const Staking = () => {
             <h3 className={`font-semibold mb-2 transition-colors duration-300 ${
               isDark ? 'text-white' : 'text-black'
             }`}>
-              Real-time Rewards
+              {t('staking.info.realtime.title')}
             </h3>
             <p className={`text-sm transition-colors duration-300 ${
               isDark ? 'text-gray-400' : 'text-gray-600'
             }`}>
-              Rewards accrue in real time and can be withdrawn at any moment. No lock-up periods or waiting times.
+              {t('staking.info.realtime.body')}
             </p>
           </div>
         </div>
@@ -1063,7 +1063,7 @@ const Staking = () => {
               <span className={`text-sm font-medium transition-colors duration-300 ${
                 isDark ? 'text-white' : 'text-black'
               }`}>
-                Active Account: @{mockData.username}
+                {t('staking.active_account', { username: mockData.username })}
               </span>
             </button>
           ) : (
@@ -1073,7 +1073,7 @@ const Staking = () => {
               <span className={`text-sm font-medium transition-colors duration-300 ${
                 isDark ? 'text-white' : 'text-black'
               }`}>
-                No Active Account
+                {t('staking.no_active_account')}
               </span>
             </div>
           )}
@@ -1085,7 +1085,7 @@ const Staking = () => {
             <h3 className={`text-lg font-semibold transition-colors duration-300 ${
               isDark ? 'text-white' : 'text-black'
             }`}>
-              Portfolio Overview
+              {t('staking.portfolio.title')}
             </h3>
 
             {/* Desktop-only Activity link — aligns with section title */}
@@ -1094,7 +1094,7 @@ const Staking = () => {
               onClick={() => navigate('/staking/activity')}
               className="hidden md:inline-flex items-center px-3 py-1.5 bg-yellow-500 text-black font-semibold text-xs rounded-full hover:bg-yellow-400 transition-colors cursor-pointer"
             >
-              View activity →
+              {t('staking.view_activity')}
             </button>
           </div>
           <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
@@ -1109,7 +1109,7 @@ const Staking = () => {
               <div className={`text-sm transition-colors duration-300 text-center ${
                 isDark ? 'text-gray-400' : 'text-gray-600'
               }`}>
-                Staked CAW
+                {t('staking.portfolio.staked')}
               </div>
             </div>
 
@@ -1118,7 +1118,7 @@ const Staking = () => {
             }`} style={{ paddingTop: '10px' }}>
               {/* Question mark icon in top right */}
               <div className="absolute top-1.5 right-1.5">
-                <Tooltip text="You must unstake your CAW to withdraw it" position="top">
+                <Tooltip text={t('staking.withdrawable_tooltip')} position="top">
                   <HiQuestionMarkCircle className={`w-4 h-4 cursor-help ${isDark ? 'text-gray-400' : 'text-gray-500'}`} />
                 </Tooltip>
               </div>
@@ -1130,7 +1130,7 @@ const Staking = () => {
               <div className={`text-sm transition-colors duration-300 text-center ${
                 isDark ? 'text-gray-400' : 'text-gray-600'
               }`}>
-                Withdrawable
+                {t('staking.portfolio.withdrawable')}
               </div>
             </div>
 
@@ -1145,7 +1145,7 @@ const Staking = () => {
               <div className={`text-sm transition-colors duration-300 text-center ${
                 isDark ? 'text-gray-400' : 'text-gray-600'
               }`}>
-                Wallet Balance
+                {t('staking.portfolio.wallet')}
               </div>
             </div>
 
@@ -1160,7 +1160,7 @@ const Staking = () => {
               <div className={`text-sm transition-colors duration-300 text-center ${
                 isDark ? 'text-gray-400' : 'text-gray-600'
               }`}>
-                Actions
+                {t('staking.portfolio.actions')}
               </div>
             </div>
           </div>
@@ -1173,7 +1173,7 @@ const Staking = () => {
                 isDark ? 'text-yellow-500/80 hover:text-yellow-400' : 'text-yellow-700 hover:text-yellow-800'
               }`}
             >
-              View activity →
+              {t('staking.view_activity')}
             </button>
           </div>
         </div>

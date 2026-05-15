@@ -111,7 +111,7 @@ const ExplorePage: React.FC = () => {
                     <h2 className={`text-lg font-semibold transition-colors duration-300 ${
                       isDark ? 'text-white' : 'text-black'
                     }`}>
-                      What's trending
+                      {t('explore.whats_trending')}
                     </h2>
                   }
                 />

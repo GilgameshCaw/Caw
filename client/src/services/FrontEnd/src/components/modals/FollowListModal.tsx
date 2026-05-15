@@ -152,7 +152,7 @@ const FollowListModal: React.FC<Props> = ({ type }) => {
                   className="flex items-center space-x-3 cursor-pointer flex-1"
                   onClick={() => handleUserClick(user.username)}
                 >
-                  <div className={`w-10 h-10 rounded-full overflow-hidden ${isDark ? 'bg-gray-700' : 'bg-gray-200'}`}>
+                  <div className={`w-10 h-10 flex-shrink-0 rounded-full overflow-hidden ${isDark ? 'bg-gray-700' : 'bg-gray-200'}`}>
                     <UserAvatar
                       user={user}
                       alt={user.username}

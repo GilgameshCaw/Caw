@@ -1288,7 +1288,7 @@ const MessagesPage: React.FC = () => {
                     isDark ? 'text-gray-400' : 'text-gray-500'
                   }`}>
                     <HiOutlineLockClosed className="w-4 h-4 flex-shrink-0" />
-                    <span>End-to-end encrypted · AES-256-GCM</span>
+                    <span>{t('messages.encryption_label')}</span>
                   </div>
                 )}
                 {currentView === 'inbox' && (
@@ -1301,7 +1301,7 @@ const MessagesPage: React.FC = () => {
                           : (isDark ? 'text-gray-400 hover:bg-white/10' : 'text-gray-500 hover:bg-black/5')
                       }`}
                     >
-                      Inbox
+                      {t('messages.tab.inbox')}
                     </button>
                     <button
                       onClick={() => setInbox('requests')}
@@ -1311,7 +1311,7 @@ const MessagesPage: React.FC = () => {
                           : (isDark ? 'text-gray-400 hover:bg-white/10' : 'text-gray-500 hover:bg-black/5')
                       }`}
                     >
-                      Requests
+                      {t('messages.tab.requests')}
                       {requestCount > 0 && (
                         <span className={`text-xs px-1.5 py-0.5 rounded-full ${
                           inbox === 'requests'
@@ -1451,7 +1451,7 @@ const MessagesPage: React.FC = () => {
                           }`}
                         >
                           <HiOutlineMail className="w-5 h-5 mr-3" />
-                          <span className="text-sm font-medium">New direct message</span>
+                          <span className="text-sm font-medium">{t('messages.new_menu.direct')}</span>
                         </button>
                         <button
                           onClick={() => { setIsNewMenuOpen(false); setIsCreateGroupModalOpen(true) }}
@@ -1460,7 +1460,7 @@ const MessagesPage: React.FC = () => {
                           }`}
                         >
                           <HiOutlineUserGroup className="w-5 h-5 mr-3" />
-                          <span className="text-sm font-medium">New group chat</span>
+                          <span className="text-sm font-medium">{t('messages.new_menu.group')}</span>
                         </button>
                       </div>
                     </div>
@@ -1485,7 +1485,7 @@ const MessagesPage: React.FC = () => {
               >
                 <span className="flex items-center">
                   <HiOutlineSearch className="w-5 h-5 mr-2" />
-                  Search messages
+                  {t('messages.search.placeholder')}
                 </span>
               </button>
             </div>
@@ -2674,15 +2674,6 @@ const MessagesPage: React.FC = () => {
                       <HiOutlineX className="w-4 h-4" />
                     </button>
                   </div>
-                  <button
-                    onClick={() => {
-                      dmSendMessage(gifPreview.url)
-                      setGifPreview(null)
-                    }}
-                    className="mt-2 px-4 py-1.5 rounded-full text-sm font-semibold bg-yellow-500 hover:bg-yellow-600 text-black cursor-pointer"
-                  >
-                    Send GIF
-                  </button>
                 </div>
               )}
 
@@ -2883,7 +2874,10 @@ const MessagesPage: React.FC = () => {
                   onKeyDown={(e) => {
                     if (e.key === 'Enter' && !e.shiftKey) {
                       e.preventDefault()
-                      if (filePreview) {
+                      if (gifPreview) {
+                        dmSendMessage(gifPreview.url)
+                        setGifPreview(null)
+                      } else if (filePreview) {
                         void handleSendFile()
                       } else {
                         handleSendMessage()
@@ -2927,8 +2921,17 @@ const MessagesPage: React.FC = () => {
                     is staged, since the dedicated "Send Image" button was
                     removed in favor of this single send affordance. */}
                 <button
-                  onClick={() => { if (filePreview) { void handleSendFile() } else { handleSendMessage() } }}
-                  disabled={isSending || (!newMessageContent.trim() && !filePreview)}
+                  onClick={() => {
+                    if (gifPreview) {
+                      dmSendMessage(gifPreview.url)
+                      setGifPreview(null)
+                    } else if (filePreview) {
+                      void handleSendFile()
+                    } else {
+                      handleSendMessage()
+                    }
+                  }}
+                  disabled={isSending || (!newMessageContent.trim() && !filePreview && !gifPreview)}
                   className={`p-2 rounded-full transition-all duration-200 cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed ${
                     isDark
                       ? 'text-yellow-400/70 hover:text-yellow-400 hover:bg-yellow-400/10'
@@ -3138,7 +3141,7 @@ const MessagesPage: React.FC = () => {
                               <div className={`text-sm ${isDark ? 'text-gray-400' : 'text-gray-600'}`}>
                                 @{user.username}
                                 {user.hasDmIdentity === false && (
-                                  <span className="ml-2 text-xs text-yellow-500">DMs not enabled</span>
+                                  <span className="ml-2 text-xs text-yellow-500">{t('messages.modal.dms_not_enabled')}</span>
                                 )}
                               </div>
                             </div>
@@ -3147,7 +3150,7 @@ const MessagesPage: React.FC = () => {
                       </div>
                     ) : (
                       <div className={`text-center py-8 ${isDark ? 'text-gray-400' : 'text-gray-600'}`}>
-                        No users found
+                        {t('messages.modal.no_users_found')}
                       </div>
                     )
                   ) : (
@@ -3155,7 +3158,7 @@ const MessagesPage: React.FC = () => {
                     recentFollows.length > 0 ? (
                       <div>
                         <div className={`px-4 py-2 text-sm font-semibold ${isDark ? 'text-gray-400' : 'text-gray-600'}`}>
-                          Recent follows
+                          {t('messages.modal.recent_follows')}
                         </div>
                         {recentFollows.map(user => (
                           <button
@@ -3181,7 +3184,7 @@ const MessagesPage: React.FC = () => {
                               <div className={`text-sm ${isDark ? 'text-gray-400' : 'text-gray-600'}`}>
                                 @{user.username}
                                 {user.hasDmIdentity === false && (
-                                  <span className="ml-2 text-xs text-yellow-500">DMs not enabled</span>
+                                  <span className="ml-2 text-xs text-yellow-500">{t('messages.modal.dms_not_enabled')}</span>
                                 )}
                               </div>
                             </div>
@@ -3190,7 +3193,7 @@ const MessagesPage: React.FC = () => {
                       </div>
                     ) : (
                       <div className={`text-center py-8 ${isDark ? 'text-gray-400' : 'text-gray-600'}`}>
-                        Start typing to search for people
+                        {t('messages.modal.search_hint')}
                       </div>
                     )
                   )}
@@ -3239,7 +3242,7 @@ const MessagesPage: React.FC = () => {
                     disabled={!messageText.trim()}
                     className="w-full py-2 px-6 rounded-full font-semibold bg-yellow-500 hover:bg-yellow-600 text-black transition-all duration-200 disabled:opacity-50 disabled:cursor-not-allowed"
                   >
-                    Send Message
+                    {t('messages.modal.send_button')}
                   </button>
                 </div>
               </>
@@ -3250,17 +3253,17 @@ const MessagesPage: React.FC = () => {
       <ModalWrapper isOpen={isSettingsModalOpen} onClose={() => setIsSettingsModalOpen(false)} maxWidth="max-w-sm">
         <div className="p-5 space-y-4">
           <h3 className={`text-lg font-semibold ${isDark ? 'text-white' : 'text-gray-900'}`}>
-            Message Settings
+            {t('messages.settings.title')}
           </h3>
           <div>
             <p className={`text-sm mb-3 ${isDark ? 'text-white/60' : 'text-gray-500'}`}>
-              Receive messages from:
+              {t('messages.settings.receive_from')}
             </p>
             <div className="space-y-2">
               {([
-                { value: 'EVERYONE' as const, label: 'Everyone', desc: 'Anyone with DMs enabled can message you' },
-                { value: 'FOLLOWERS' as const, label: 'Users who follow me', desc: 'Your followers and people you follow' },
-                { value: 'FOLLOWING' as const, label: 'Users I follow', desc: 'Only people you follow' },
+                { value: 'EVERYONE' as const, label: t('messages.settings.privacy.everyone.label'), desc: t('messages.settings.privacy.everyone.desc') },
+                { value: 'FOLLOWERS' as const, label: t('messages.settings.privacy.followers.label'), desc: t('messages.settings.privacy.followers.desc') },
+                { value: 'FOLLOWING' as const, label: t('messages.settings.privacy.following.label'), desc: t('messages.settings.privacy.following.desc') },
               ]).map(option => (
                 <label
                   key={option.value}
@@ -3317,9 +3320,9 @@ const MessagesPage: React.FC = () => {
               className="mt-1 accent-yellow-500"
             />
             <div>
-              <p className={`text-sm font-medium ${isDark ? 'text-white' : 'text-gray-900'}`}>Allow direct group adds</p>
+              <p className={`text-sm font-medium ${isDark ? 'text-white' : 'text-gray-900'}`}>{t('messages.settings.group_invites.label')}</p>
               <p className={`text-xs ${isDark ? 'text-white/40' : 'text-gray-400'}`}>
-                When off, others can't drop you into a group without an invite link.
+                {t('messages.settings.group_invites.desc')}
               </p>
             </div>
           </label>
@@ -3331,7 +3334,7 @@ const MessagesPage: React.FC = () => {
                 : 'bg-gray-100 text-gray-900 hover:bg-gray-200'
             }`}
           >
-            Done
+            {t('messages.settings.done')}
           </button>
         </div>
       </ModalWrapper>
@@ -3345,7 +3348,7 @@ const MessagesPage: React.FC = () => {
                 <HiOutlineMail className="w-5 h-5 text-yellow-500" />
               </div>
               <h3 className={`text-lg font-semibold ${isDark ? 'text-white' : 'text-gray-900'}`}>
-                Can't Send Message
+                {t('messages.privacy_error.title')}
               </h3>
             </div>
 
@@ -3360,8 +3363,8 @@ const MessagesPage: React.FC = () => {
                     @{dmPrivacyError.peer.username}
                   </a>
                   {dmPrivacyError.reason === 'following'
-                    ? ' only accepts messages from users they follow.'
-                    : ' only accepts messages from their followers.'}
+                    ? ` ${t('messages.privacy_error.only_following')}`
+                    : ` ${t('messages.privacy_error.only_followers')}`}
                 </>
               ) : dmPrivacyError.message}
             </p>
@@ -3397,7 +3400,7 @@ const MessagesPage: React.FC = () => {
 
             {dmPrivacyError.reason === 'following' && (
               <p className={`text-xs ${isDark ? 'text-white/40' : 'text-gray-400'}`}>
-                This user needs to follow you before you can message them.
+                {t('messages.privacy_error.needs_follow')}
               </p>
             )}
 
@@ -3409,7 +3412,7 @@ const MessagesPage: React.FC = () => {
                   : 'bg-gray-100 text-gray-900 hover:bg-gray-200'
               }`}
             >
-              Got it
+              {t('messages.privacy_error.got_it')}
             </button>
           </div>
         )}

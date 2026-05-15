@@ -60,6 +60,34 @@ export const Main: React.FC = () => {
   const { isDark } = useTheme()
   const feedRef = useRef<FeedRef>(null)
 
+  // Horizontal swipe on the feed body toggles between Following / For You,
+  // matching X's mobile gesture. Vertical scroll wins on commit (lock axis
+  // after the first 10px of movement) so reading isn't hijacked.
+  const swipeRef = useRef<{ x: number; y: number; locked: 'h' | 'v' | null } | null>(null)
+  const onFeedTouchStart = (e: React.TouchEvent) => {
+    if (e.touches.length !== 1) return
+    swipeRef.current = { x: e.touches[0].clientX, y: e.touches[0].clientY, locked: null }
+  }
+  const onFeedTouchMove = (e: React.TouchEvent) => {
+    const s = swipeRef.current
+    if (!s || s.locked === 'v') return
+    const dx = e.touches[0].clientX - s.x
+    const dy = e.touches[0].clientY - s.y
+    if (s.locked === null) {
+      if (Math.abs(dx) < 10 && Math.abs(dy) < 10) return
+      s.locked = Math.abs(dx) > Math.abs(dy) ? 'h' : 'v'
+    }
+  }
+  const onFeedTouchEnd = (e: React.TouchEvent) => {
+    const s = swipeRef.current
+    swipeRef.current = null
+    if (!s || s.locked !== 'h') return
+    const dx = e.changedTouches[0].clientX - s.x
+    if (Math.abs(dx) < 60) return
+    if (dx < 0 && activeTab === 'following') setActiveTab('foryou')
+    else if (dx > 0 && activeTab === 'foryou') setActiveTab('following')
+  }
+
   const mainTabs: TabItem<MainTab>[] = [
     { id: 'following', label: t('feed.tab.following') },
     { id: 'foryou', label: t('feed.tab.for_you') },
@@ -76,7 +104,13 @@ export const Main: React.FC = () => {
       <div className={`border-b ${isDark ? 'border-white/10' : 'border-gray-200'}`}>
         <PostForm onSuccess={() => feedRef.current?.refresh()} composeMode trackDraft/>
       </div>
-      <div className="w-full">
+      <div
+        className="w-full"
+        onTouchStart={onFeedTouchStart}
+        onTouchMove={onFeedTouchMove}
+        onTouchEnd={onFeedTouchEnd}
+        onTouchCancel={() => { swipeRef.current = null }}
+      >
         <Feed
           ref={feedRef}
           filter={TAB_TO_FILTER[activeTab]}

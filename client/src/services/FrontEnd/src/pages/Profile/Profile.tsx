@@ -1259,7 +1259,7 @@ export const Profile: React.FC = () => {
                                 isDark ? 'hover:bg-white/10 text-white' : 'hover:bg-gray-100 text-gray-900'
                               }`}
                             >
-                              Share profile
+                              {t('profile.menu.share')}
                             </button>
                             <button
                               onClick={() => {
@@ -1272,7 +1272,7 @@ export const Profile: React.FC = () => {
                                 isDark ? 'hover:bg-white/10 text-yellow-500' : 'hover:bg-gray-100 text-yellow-600'
                               }`}
                             >
-                              List for Sale
+                              {t('profile.menu.list_for_sale')}
                             </button>
                             <button
                               onClick={() => {
@@ -1285,7 +1285,7 @@ export const Profile: React.FC = () => {
                                 isDark ? 'hover:bg-white/10 text-yellow-500' : 'hover:bg-gray-100 text-yellow-600'
                               }`}
                             >
-                              View Offers
+                              {t('profile.menu.view_offers')}
                             </button>
                             <button
                               onClick={() => {
@@ -1298,7 +1298,7 @@ export const Profile: React.FC = () => {
                                 isDark ? 'hover:bg-red-500/20 text-red-400' : 'hover:bg-red-50 text-red-500'
                               }`}
                             >
-                              Transfer Profile
+                              {t('profile.menu.transfer')}
                             </button>
                           </div>
                         </>
