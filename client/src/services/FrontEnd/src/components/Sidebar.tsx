@@ -177,6 +177,7 @@ const Sidebar: React.FC<SidebarProps> = ({ onNavigate }) => {
         <div className="hidden sm:block p-4">
           <NavLink
             to="/home"
+            onClick={guardClick}
             className="caw-logo-lockup flex items-center pl-3 cursor-pointer hover:opacity-80 transition-opacity duration-200"
           >
               <img

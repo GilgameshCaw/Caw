@@ -107,6 +107,11 @@ const Feed = forwardRef<FeedRef, Props>(({ filter, username, apiEndpoint, title 
       setItems([])
       setNextCursor(undefined)
       setHasMore(true)
+      // setLoading(true) here too — same reasoning as the cache-miss
+      // branch in the other effect below. Without it, switching to a
+      // tab with an empty cache flashes "No posts yet." while the
+      // fetch is in flight.
+      setLoading(true)
       setTimeout(() => loadPageRef.current?.(true), 0)
     }
   }, [cacheKey])
@@ -551,12 +556,18 @@ const Feed = forwardRef<FeedRef, Props>(({ filter, username, apiEndpoint, title 
         setTimeout(() => loadPageRef.current?.(true), 0)
       }
     } else {
-      // User changed or no cache — clear and refetch
+      // User changed or no cache — clear and refetch. setLoading(true)
+      // here, not false: we're about to fetch, and the empty render
+      // window between this effect and loadPage's own setLoading(true)
+      // was flashing "No posts yet." for first-time visitors to /home
+      // (e.g. landed on a caw page via shared link, then clicked the
+      // logo). Setting loading first means the empty branch hits the
+      // spinner check at line ~703 instead of the empty-state text.
       if (userChanged) feedCache.delete(key)
       setItems([])
       setNextCursor(undefined)
       setHasMore(true)
-      setLoading(false)
+      setLoading(true)
       setTimeout(() => loadPageRef.current?.(true), 0)
     }
   }, [filter, activeTokenId, apiEndpoint, username])
