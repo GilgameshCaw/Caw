@@ -2557,11 +2557,16 @@ router.get('/image/caw/:id', async (req, res) => {
   const id = Number(req.params.id)
   if (!Number.isFinite(id) || id <= 0) return res.redirect(302, '/api/og/image/default')
 
-  // Every preview fetcher (TG, FB, X, Discord, LinkedIn, iMessage)
-  // expects ~1200×630 OG images. We used to split UAs and serve a
-  // variable-height card to non-Twitter — turned out TG bails on the
-  // preview entirely when the image is far off the 1.91:1 sweet
-  // spot, so unify on the fixed canvas wrap regardless of UA.
+  // Twitter/X is the only platform that needs the fixed 1200×630 outer
+  // canvas — its `summary_large_image` central crop mangles
+  // variable-height cards. Every other platform (Telegram, Facebook,
+  // Discord, iMessage, browsers viewing the raw URL) reads the PNG's
+  // natural dimensions, so they get the tighter content-only card with
+  // no padding band. The mid-week "canvas for everyone" gate was an
+  // over-fix for a TG loading-forever symptom whose actual cause was
+  // canonical→404 (fixed in 78bceb38), not aspect ratio.
+  const ua = String(req.header('user-agent') || '')
+  const isTwitterUA = /Twitterbot|twitter\.com/i.test(ua)
 
   const caw = await prisma.caw.findUnique({
     where: { id },
@@ -2641,14 +2646,14 @@ router.get('/image/caw/:id', async (req, res) => {
     .update([stats.likes, stats.recaws, stats.replies, stats.views, pollHash].join('|'))
     .digest('hex').slice(0, 8)
 
-  // v30 = single fixed 1200×630 canvas for all UAs (TG was bailing on
-  // off-aspect-ratio renders); the UA-variant cache split from v29 is
-  // gone since both shapes are identical now.
-  // PENDING caws include status so a later SUCCESS/HIDDEN flip
-  // doesn't serve a stale render.
+  // v31 = restore Twitter-only canvas wrap (reverts v30's "canvas for
+  // all"); non-Twitter UAs now serve the tight variable-height card
+  // again, so the cache split returns. PENDING caws include status so a
+  // later SUCCESS/HIDDEN flip doesn't serve a stale render.
+  const variant = isTwitterUA ? 'tw' : 'std'
   const cacheKey = caw.status === 'PENDING'
-    ? `caw-v30-${caw.id}-${liveHash}-pending`
-    : `caw-v30-${caw.id}-${liveHash}`
+    ? `caw-v31-${variant}-${caw.id}-${liveHash}-pending`
+    : `caw-v31-${variant}-${caw.id}-${liveHash}`
   return serveCachedOrRender(res, cacheKey, async () => {
     // Strip media URLs and poll markers out of the visible text — the
     // corner image and the rendered poll bars already represent them,
@@ -2689,18 +2694,17 @@ router.get('/image/caw/:id', async (req, res) => {
       stats,
     }
     const { tree, height } = planCawCard({ ...planArgs, cornerImage })
-    // Always wrap in the fixed 1200×630 outer canvas. The previous
-    // "Twitter UAs only" gate (4a355ada) assumed other platforms would
-    // happily render variable-height cards from their natural dimensions
-    // — turns out Telegram in particular bails on the preview when the
-    // image is meaningfully off-aspect from ~1.91:1 (a 2400×984 / 2.44:1
-    // render produced infinite-loading previews in TG). Every major
-    // preview fetcher (FB, TG, Discord, LinkedIn, X) targets ≈1200×630,
-    // so giving everyone the same fixed canvas matches expectations
-    // across the board. Direct-browser viewers get a slightly more
-    // padded card than before, which is fine.
+    // Twitter only: wrap in the fixed 1200×630 outer canvas to defeat
+    // its summary_large_image central crop. Everyone else gets the
+    // tight content-only card with no top/bottom padding band — looks
+    // significantly better in TG / FB / Discord previews where the
+    // platform respects the PNG's natural dimensions.
+    const renderTree = isTwitterUA
+      ? wrapTreeInOgCanvas(tree, height, planArgs.backgroundColor)
+      : tree
+    const renderHeight = isTwitterUA ? H : height
     try {
-      return await renderToPng(wrapTreeInOgCanvas(tree, height, planArgs.backgroundColor), H)
+      return await renderToPng(renderTree, renderHeight)
     } catch (err: any) {
       // Satori sometimes can't decode certain image formats (notably
       // some webp variants) and throws inside its image preprocessor.
@@ -2708,10 +2712,11 @@ router.get('/image/caw/:id', async (req, res) => {
       // text portion of the card is the load-bearing part.
       console.warn(`[og] satori render failed for caw ${caw.id} with corner image, retrying without:`, err?.message ?? err)
       const fallback = planCawCard({ ...planArgs, cornerImage: null })
-      return await renderToPng(
-        wrapTreeInOgCanvas(fallback.tree, fallback.height, planArgs.backgroundColor),
-        H,
-      )
+      const fallbackTree = isTwitterUA
+        ? wrapTreeInOgCanvas(fallback.tree, fallback.height, planArgs.backgroundColor)
+        : fallback.tree
+      const fallbackHeight = isTwitterUA ? H : fallback.height
+      return await renderToPng(fallbackTree, fallbackHeight)
     }
   })
 })
