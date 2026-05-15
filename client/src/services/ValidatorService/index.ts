@@ -140,6 +140,44 @@ async function markTxQueueFailed(
   return sharedMarkTxQueueFailed(prisma as any, txQueueId, reason, senderId, actionData)
 }
 
+// Mark a TxQueue row 'validated_by_peer' and bump the session-key spent
+// counter exactly once. Five validator-loop branches converge on this
+// terminal state (awaiting_indexer recheck, pre-sim peer-mirror dedup,
+// sub-batch processedByOther, allCawonceUsed batch, per-entry routing),
+// so a naive `update` would risk double-incrementing the spend counter
+// when two branches race on the same row.
+//
+// Idempotency strategy: atomic `updateMany` with a status guard on the
+// non-terminal states. Only the branch whose updateMany returns count=1
+// fires incrementSessionSpent; concurrent branches see count=0 and
+// no-op. This ties the spend bump to the same write that flips status,
+// so the two facts can't drift.
+//
+// Mirrors the increment behavior of the 'done' write path at L2891 —
+// see project_session_spend_drift_on_peer_validated.md for the drift bug
+// this closes. Action types that count toward spend are determined by
+// incrementSessionSpent itself (early-returns at totalSpent === 0n for
+// like/follow/recaw/etc.), matching the pre-sign gate's
+// 'other' + 'withdraw' amounts[] sum (see project_quick_sign_spend_limit_units.md).
+async function markTxQueueValidatedByPeer(
+  txQueueId: number,
+  payload: any,
+  signedTx: string | null | undefined,
+): Promise<boolean> {
+  const result = await prisma.txQueue.updateMany({
+    where: {
+      id: txQueueId,
+      status: { in: ['pending', 'processing', 'awaiting_indexer'] },
+    },
+    data: { status: 'validated_by_peer', reason: null },
+  })
+  if (result.count !== 1) return false
+  if (signedTx && payload) {
+    await incrementSessionSpent(prisma as any, payload as any, signedTx)
+  }
+  return true
+}
+
 // How long a txqueue can sit in 'awaiting_indexer' before we give up and
 // declare it a real failure. The contract said the cawonce was used, but
 // our local Action table never caught up — at that point we have to
@@ -275,19 +313,26 @@ function sameActionAsPayload(payload: any, candidate: { actionType: any, receive
  */
 async function backstopCawonceFromCalldata(
   provider: AbstractProvider,
-  chainId: number,
   payload: any,
-  windowMs: number,
+  rowAgeMs: number,
 ): Promise<'done' | 'failed'> {
   const eventSig = packedIface.getEvent('ActionsProcessed')!.topicHash
-  // Estimate the block range to scan. The window is set by the indexer-
-  // aware budget; convert ms→blocks at the chain's nominal block time
-  // (Base Sepolia: 2s). Add a generous safety multiplier so a slow block
-  // doesn't make us miss the tx; capped at chunkedLogs' single-request
-  // ceiling so we never blow past the free-RPC 50K-block limit.
+  // Scan back only as far as the failing TxQueue row is old. Any action
+  // landing this user's (senderId, cawonce) before that row was created
+  // can't be the one we're chasing — it's either an older confirmed
+  // action that's already in our local Action table (so resolveCawonceUsed
+  // wouldn't have reached the backstop), or a stale-cawonce-allocator
+  // collision we DON'T want to claim as ours. A pad multiplier covers
+  // clock skew + slow blocks; capped by maxWindows below.
+  //
+  // Base Sepolia: 2s nominal block time. Pad ×3 for safety.
   const NOMINAL_BLOCK_MS = 2000
+  const PAD = 3
   const head = await provider.getBlockNumber()
-  const targetSpan = Math.max(50, Math.ceil((windowMs / NOMINAL_BLOCK_MS) * 4))
+  // Floor at 50 blocks so a row created seconds before the resolve still
+  // gets a usable window — block timestamps and DB clocks aren't perfectly
+  // synced and rowAgeMs near zero would otherwise produce a 0-block scan.
+  const targetSpan = Math.max(50, Math.ceil((rowAgeMs / NOMINAL_BLOCK_MS) * PAD))
   const fromBlock = Math.max(0, head - targetSpan)
 
   let logs
@@ -321,6 +366,13 @@ async function backstopCawonceFromCalldata(
     // entry points that carry packed actions; selectors differ but the
     // first dynamic-bytes arg is packedActions in all of them. Try the
     // canonical one first, fall through on selector mismatch.
+    //
+    // IMPORTANT: this allowlist must be kept in sync with CawActions'
+    // action-submission entry points. If you add a new selector to
+    // CawActions (or rename one), add it here too — otherwise the
+    // backstop silently misses any "Cawonce already used" wave whose
+    // landed action went through the new entry point, and those rows
+    // get marked failed by mistake.
     let packedHex: string | undefined
     try {
       const parsed = packedIface.parseTransaction({ data: tx.data, value: tx.value })
@@ -399,11 +451,33 @@ async function backstopCawonceFromCalldata(
  *   'failed'            — Different action at this cawonce, or scan window came back empty.
  *   'awaiting_indexer'  — Action row not present and either budget hasn't elapsed or indexer is stalled.
  */
+// Resolve and cache the chainId from a provider once per process. Calling
+// `provider.getNetwork()` per resolveCawonceUsed invocation would add an
+// RPC roundtrip to a path that already has tight latency targets, but the
+// active L2 doesn't change at runtime — the validator is bound to a single
+// provider for its lifetime. This is the seam V2's "network" model will
+// hook into; today it just reads the live provider rather than the
+// hardcoded 84532 constant the rest of this file uses.
+let _cachedChainId: number | null = null
+async function resolveChainIdFromProvider(provider: AbstractProvider): Promise<number> {
+  if (_cachedChainId !== null) return _cachedChainId
+  try {
+    const net = await provider.getNetwork()
+    _cachedChainId = Number(net.chainId)
+  } catch (err) {
+    // Fall back to the Base Sepolia constant. Matches what every other
+    // RPC site in this file does today; not a regression. Logged so the
+    // operator can spot RPC issues in the noise.
+    console.warn(`[Validator] resolveChainIdFromProvider: getNetwork failed, falling back to 84532 — ${err instanceof Error ? err.message : String(err)}`)
+    _cachedChainId = 84532
+  }
+  return _cachedChainId
+}
+
 async function resolveCawonceUsed(
   data: any,
   firstSeenAt: Date | undefined,
   provider: AbstractProvider,
-  chainId: number,
 ): Promise<'done' | 'failed' | 'awaiting_indexer'> {
   const existingAction = await prisma.action.findFirst({
     where: { senderId: data.senderId, cawonce: data.cawonce }
@@ -449,6 +523,7 @@ async function resolveCawonceUsed(
     return 'awaiting_indexer'
   }
 
+  const chainId = await resolveChainIdFromProvider(provider)
   const stats = getIndexerStats(chainId)
   // Fallback throughput when the indexer hasn't produced enough samples
   // yet (cold start, or process just restarted). Conservative — on Base
@@ -472,7 +547,19 @@ async function resolveCawonceUsed(
   // Indexer is caught up enough that any peer-landed action would have
   // been picked up by now. The local-row miss is either a real silent
   // loss or a phantom. Calldata backstop is the tiebreaker.
-  return backstopCawonceFromCalldata(provider, chainId, data, budget)
+  //
+  // Scan-window sizing: we want to look back only as far as the failing
+  // TxQueue row's age — searching older history risks claiming an
+  // unrelated old (senderId, cawonce) match as ours (would happen only
+  // if the cawonce allocator misfired and re-used a long-confirmed slot;
+  // we should mark that failed, not done). rowAgeMs is undefined when
+  // firstSeenAt is missing — fall back to a sensible default that's
+  // larger than typical validator latency but small enough to keep the
+  // scan cheap.
+  const rowAgeMs = firstSeenAt
+    ? Math.max(0, Date.now() - firstSeenAt.getTime())
+    : 60_000
+  return backstopCawonceFromCalldata(provider, data, rowAgeMs)
 }
 
 /** Build { CAW: 3, LIKE: 2, ... } breakdown from submitted actions (which have actionType) */
@@ -1011,20 +1098,19 @@ export const validatorService: Service = {
       // action contents has.
       const awaitingRows = await prisma.txQueue.findMany({
         where: { status: 'awaiting_indexer' },
-        select: { id: true, payload: true, senderId: true, updatedAt: true },
+        // signedTx is needed for markTxQueueValidatedByPeer → incrementSessionSpent
+        // (recovers signer to identify the session key to charge).
+        select: { id: true, payload: true, senderId: true, updatedAt: true, signedTx: true },
       })
       if (awaitingRows.length > 0) {
         console.log(`[Validator] Rechecking ${awaitingRows.length} awaiting_indexer row(s)`)
         await Promise.all(awaitingRows.map(async (row) => {
           const data = (row.payload as any)?.data
           if (!data) return
-          const resolution = await resolveCawonceUsed(data, row.updatedAt, httpProvider, 84532)
+          const resolution = await resolveCawonceUsed(data, row.updatedAt, httpProvider)
           if (resolution === 'done') {
             console.log(`[Validator] TxQueue ${row.id}: Action row now indexed and matches — marking done`)
-            await prisma.txQueue.update({
-              where: { id: row.id },
-              data: { status: 'validated_by_peer', reason: null },
-            })
+            await markTxQueueValidatedByPeer(row.id, row.payload, row.signedTx)
             // Also mark the optimistic Caw row SUCCESS for caw/recaw actions, mirroring updateQueueStatuses.
             if (data.actionType === 0 || data.actionType === 'caw' || data.actionType === 3 || data.actionType === 'recaw') {
               await prisma.caw.update({
@@ -1087,10 +1173,7 @@ export const validatorService: Service = {
           (ex?.text ?? '') === dataTextPlain
         if (sameAction) {
           console.log(`[Validator] TxQueue ${candidate.id}: action already on chain (peer mirror submitted) — marking done without simulation`)
-          await prisma.txQueue.update({
-            where: { id: candidate.id },
-            data: { status: 'validated_by_peer', reason: null },
-          })
+          await markTxQueueValidatedByPeer(candidate.id, (candidate as any).payload, (candidate as any).signedTx)
           // Mirror the SUCCESS state to optimistic Caw rows so the FE
           // stops showing pending.
           if (data.actionType === 0 || data.actionType === 'caw' || data.actionType === 3 || data.actionType === 'recaw') {
@@ -1972,7 +2055,7 @@ console.log("succeededKeys", succeededKeys)
         const cawonceUsed = rejection.includes('Cawonce already used')
         let cawonceResolution: 'done' | 'failed' | 'awaiting_indexer' | null = null
         if (cawonceUsed) {
-          cawonceResolution = await resolveCawonceUsed(data, entry.updatedAt, httpProvider, 84532)
+          cawonceResolution = await resolveCawonceUsed(data, entry.updatedAt, httpProvider)
           if (cawonceResolution === 'failed') {
             console.log(`[Validator] TxQueue ${entry.id}: Cawonce ${data.cawonce} used by DIFFERENT action — marking failed`)
           } else if (cawonceResolution === 'awaiting_indexer') {
@@ -2286,7 +2369,7 @@ console.log("succeededKeys", succeededKeys)
                   const cawonceUsed = rejection.includes('Cawonce already used')
                   let cawonceResolution: 'done' | 'failed' | 'awaiting_indexer' | null = null
                   if (cawonceUsed) {
-                    cawonceResolution = await resolveCawonceUsed(data, entry.updatedAt, httpProvider, 84532)
+                    cawonceResolution = await resolveCawonceUsed(data, entry.updatedAt, httpProvider)
                   }
                   const processedByOther = cawonceResolution === 'done'
 
@@ -2306,10 +2389,7 @@ console.log("succeededKeys", succeededKeys)
                     failReason = depositCheck.reason
                   }
                   if (processedByOther) {
-                    await prisma.txQueue.update({
-                      where: { id: entry.id },
-                      data: { status: 'validated_by_peer', reason: null }
-                    })
+                    await markTxQueueValidatedByPeer(entry.id, (entry as any).payload, (entry as any).signedTx)
                   } else if (failStatus === 'failed' && failReason) {
                     await markTxQueueFailed(entry.id, failReason, data.senderId, data)
                   } else {
@@ -2454,10 +2534,10 @@ console.log("succeededKeys", succeededKeys)
           console.log("[Validator] All actions rejected with 'Cawonce already used' — checking Action table...")
           await Promise.all(validatedEntries.map(async (entry: any) => {
             const data = (entry.payload as any).data
-            const resolution = await resolveCawonceUsed(data, entry.updatedAt, httpProvider, 84532)
+            const resolution = await resolveCawonceUsed(data, entry.updatedAt, httpProvider)
             if (resolution === 'done') {
               console.log(`[Validator] TxQueue ${entry.id}: Same action exists for senderId=${data.senderId} cawonce=${data.cawonce} — marking done`)
-              await prisma.txQueue.update({ where: { id: entry.id }, data: { status: 'validated_by_peer' } })
+              await markTxQueueValidatedByPeer(entry.id, entry.payload, entry.signedTx)
             } else if (resolution === 'failed') {
               console.log(`[Validator] TxQueue ${entry.id}: Cawonce ${data.cawonce} used by DIFFERENT action (or indexer timeout) — marking failed`)
               await markTxQueueFailed(entry.id, 'Cawonce already used', data.senderId, data)
@@ -2538,10 +2618,10 @@ console.log("succeededKeys", succeededKeys)
             const isCawonceUsed = rejection.includes('Cawonce already used')
 
             if (isCawonceUsed) {
-              const resolution = await resolveCawonceUsed(data, entry.updatedAt, httpProvider, 84532)
+              const resolution = await resolveCawonceUsed(data, entry.updatedAt, httpProvider)
               if (resolution === 'done') {
                 console.log(`[Validator] TxQueue ${entry.id}: Same action exists for senderId=${data.senderId} cawonce=${data.cawonce} — marking done`)
-                await prisma.txQueue.update({ where: { id: entry.id }, data: { status: 'validated_by_peer' } })
+                await markTxQueueValidatedByPeer(entry.id, entry.payload, (entry as any).signedTx)
                 return
               }
               if (resolution === 'awaiting_indexer') {
