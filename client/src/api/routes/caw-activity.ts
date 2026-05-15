@@ -134,10 +134,18 @@ router.get('/:tokenId/caw-activity', limiter, async (req, res): Promise<void> =>
     })
     responseCache.set(cacheKey, { expiresAt: 0, body: null, inFlight })
 
-    const bucketExpr = (col: string) =>
-      interval === '6hour'
-        ? `date_trunc('day', ${col} AT TIME ZONE '${tzLiteral}') + (FLOOR(EXTRACT(HOUR FROM ${col} AT TIME ZONE '${tzLiteral}') / 6) * INTERVAL '6 hours')`
-        : `date_trunc('${interval}', ${col} AT TIME ZONE '${tzLiteral}')`
+    // blockTimestamp is stored as `timestamp without time zone` (Prisma's
+    // default mapping) with UTC wall-clock values. A bare `AT TIME ZONE tz`
+    // would invert the conversion (Postgres treats the naked timestamp AS
+    // being in tz, then converts to UTC). Chain `AT TIME ZONE 'UTC' AT
+    // TIME ZONE tz` to first attach UTC, then convert to local tz for
+    // bucketing.
+    const bucketExpr = (col: string) => {
+      const local = `(${col} AT TIME ZONE 'UTC' AT TIME ZONE '${tzLiteral}')`
+      return interval === '6hour'
+        ? `date_trunc('day', ${local}) + (FLOOR(EXTRACT(HOUR FROM ${local}) / 6) * INTERVAL '6 hours')`
+        : `date_trunc('${interval}', ${local})`
+    }
 
     // ---------------------------------------------------------------
     // Direct activity. Aggregates wei deltas per (bucket, reason,
@@ -563,10 +571,14 @@ router.get('/caw-activity-all', allStatsLimiter, async (req, res): Promise<void>
     })
     systemResponseCache.set(cacheKey, { expiresAt: 0, body: null, inFlight })
 
-    const bucketExpr = (col: string) =>
-      interval === '6hour'
-        ? `date_trunc('day', ${col} AT TIME ZONE '${tzLiteral}') + (FLOOR(EXTRACT(HOUR FROM ${col} AT TIME ZONE '${tzLiteral}') / 6) * INTERVAL '6 hours')`
-        : `date_trunc('${interval}', ${col} AT TIME ZONE '${tzLiteral}')`
+    // See bucketExpr comment in the per-user handler above — same
+    // naked-timestamp / UTC-then-local conversion applies.
+    const bucketExpr = (col: string) => {
+      const local = `(${col} AT TIME ZONE 'UTC' AT TIME ZONE '${tzLiteral}')`
+      return interval === '6hour'
+        ? `date_trunc('day', ${local}) + (FLOOR(EXTRACT(HOUR FROM ${local}) / 6) * INTERVAL '6 hours')`
+        : `date_trunc('${interval}', ${local})`
+    }
 
     // ---------------------------------------------------------------
     // System-wide rows from CawOwnershipSnapshot. No tokenId filter.

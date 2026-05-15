@@ -185,10 +185,18 @@ router.get('/chart', async (req, res) => {
     // appears multiple times (bucket + TO_CHAR + GROUP BY), so we interpolate directly.
     const tzLiteral = tz.replace(/'/g, "''") // escape single quotes for SQL safety
 
+    // ValidatorTx.createdAt is `timestamp without time zone` (Prisma's
+    // default mapping for DateTime). The naked column stores UTC wall-clock,
+    // so a bare `AT TIME ZONE '${tz}'` would invert the conversion (Postgres
+    // would read the timestamp AS being in tz, then convert to UTC — the
+    // opposite of what we want). Chain `AT TIME ZONE 'UTC' AT TIME ZONE tz`
+    // to first attach UTC, then convert into the local tz for bucketing.
+    const localCreatedAt = `("createdAt" AT TIME ZONE 'UTC' AT TIME ZONE '${tzLiteral}')`
+
     // For 6hour, floor the hour to the nearest 6-hour block (0, 6, 12, 18)
     const bucketExpr = interval === '6hour'
-      ? `date_trunc('day', "createdAt" AT TIME ZONE '${tzLiteral}') + (FLOOR(EXTRACT(HOUR FROM "createdAt" AT TIME ZONE '${tzLiteral}') / 6) * INTERVAL '6 hours')`
-      : `date_trunc('${interval}', "createdAt" AT TIME ZONE '${tzLiteral}')`
+      ? `date_trunc('day', ${localCreatedAt}) + (FLOOR(EXTRACT(HOUR FROM ${localCreatedAt}) / 6) * INTERVAL '6 hours')`
+      : `date_trunc('${interval}', ${localCreatedAt})`
 
     // Inline ISO timestamps into the SQL — Prisma 6.18's $queryRawUnsafe
     // serializer rejects both Date objects and (oddly) string-encoded dates
@@ -221,7 +229,7 @@ router.get('/chart', async (req, res) => {
           AVG("avgWaitMs")::int as avg_wait_ms,
           jsonb_agg("actionBreakdown") FILTER (WHERE "actionBreakdown" IS NOT NULL) as breakdowns
         FROM "ValidatorTx"
-        WHERE "createdAt" >= '${fromIso}'::timestamptz AND "createdAt" <= '${toIso}'::timestamptz AND "status" = 'confirmed'
+        WHERE "createdAt" AT TIME ZONE 'UTC' >= '${fromIso}'::timestamptz AND "createdAt" AT TIME ZONE 'UTC' <= '${toIso}'::timestamptz AND "status" = 'confirmed'
         GROUP BY bucket
       ) sub
       ORDER BY bucket ASC
