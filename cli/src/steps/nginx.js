@@ -229,20 +229,52 @@ export async function configureNginx(config, installDir) {
  *   status='skipped'     — non-root or non-production
  *   status='nginx-test-failed' — wrote but nginx -t rejected; reverted
  */
-const NGINX_PATCHES = [
-  {
-    name: 'add cawbot to crawler UA matcher',
-    // Match the alternation INSIDE the existing if-statement so we don't
-    // touch anything else. Conservative: only edits the line that already
-    // lists the other crawlers.
+// Each patch is keyed by the bot name and uses the same `w3c_validator`
+// splice anchor — every patch inserts its bot right after w3c_validator,
+// which keeps the anchor stable across patches (a prior patch's insertion
+// goes after the anchor, so the anchor itself isn't shifted). Each patch
+// runs only if its bot isn't already present in the alternation, so the
+// patcher is fully idempotent.
+//
+// To add a new bot to the list later: append a new entry below with the
+// bot's UA token. The next `caw update` on an already-installed box picks
+// it up; fresh installs get the full list from renderNginxConf above.
+function makeCrawlerPatch(bot) {
+  return {
+    name: `add ${bot} to crawler UA matcher`,
     pattern: /(http_user_agent\s+~\*\s+"\([^)]*twitterbot[^)]*)(w3c_validator)([^)]*\)")/i,
     apply: (s) => s.replace(
       /(http_user_agent\s+~\*\s+"\([^)]*twitterbot[^)]*)(w3c_validator)([^)]*\)")/i,
-      (_, before, end, after) => before + end + '|cawbot' + after,
+      (_, before, end, after) => before + end + '|' + bot + after,
     ),
-    isApplied: (s) => /\(\s*[^)]*\bcawbot\b[^)]*\)/i.test(s),
-  },
-]
+    // Bot already present anywhere in the alternation? Skip. Anchored by
+    // the alternation delimiters `(` or `|` on the left and `|` or `)` on
+    // the right — `\b` alone is wrong for tokens containing hyphens (e.g.
+    // `meta-externalagent` would false-positive on bare `meta`). Regex
+    // metachars in bot names are escaped via the standard $&-callback dance.
+    isApplied: (s) => new RegExp(`[(|]${bot.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}[|)]`, 'i').test(s),
+  }
+}
+
+const NGINX_PATCHES = [
+  // Order is preserved so the resulting config lists bots in a predictable
+  // sequence; functionally the alternation is order-agnostic.
+  'cawbot',
+  'meta-externalagent',
+  'slack-imgproxy',
+  'mastodon',
+  'bluesky',
+  'cardyb',
+  'discoursebot',
+  'yandexbot',
+  'tumblr',
+  'wechat',
+  'line',
+  'twitchbot',
+  'vkshare',
+  'notion',
+  'pocket',
+].map(makeCrawlerPatch)
 
 export function patchMainNginxConfig(installDir) {
   if (process.env.NODE_ENV === 'development') {
@@ -461,7 +493,7 @@ function renderNginxConf({ domain, apiPort, frontendDist, uploadsDir, tls, nginx
     # HTML shell with og:* / twitter:* meta tags injected. Real users
     # never touch the API for the HTML shell — zero perf cost.
     location / {
-        if (\$http_user_agent ~* "(twitterbot|facebookexternalhit|slackbot|discordbot|telegrambot|whatsapp|linkedinbot|skypeuripreview|googlebot|bingbot|applebot|redditbot|preview|embedly|nuzzel|pinterest|rogerbot|showyoubot|outbrain|w3c_validator|cawbot)") {
+        if (\$http_user_agent ~* "(twitterbot|facebookexternalhit|meta-externalagent|slackbot|slack-imgproxy|discordbot|telegrambot|whatsapp|linkedinbot|skypeuripreview|googlebot|bingbot|applebot|redditbot|mastodon|bluesky|cardyb|discoursebot|yandexbot|tumblr|wechat|line|twitchbot|vkshare|notion|pocket|preview|embedly|nuzzel|pinterest|rogerbot|showyoubot|outbrain|w3c_validator|cawbot)") {
             rewrite ^ /__prerender\$request_uri last;
         }
         try_files \$uri \$uri/ /index.html;
