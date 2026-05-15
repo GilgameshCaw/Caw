@@ -14,7 +14,7 @@ import { scanLogsBackward } from '../src/utils/chunkedLogs'
 const CLIENT_MANAGER = '0xA5C515D35C291110090b6edc4278acdEf1424C7a' // testnet L1
 
 const ABI = [
-  'event InstanceRegistered(uint32 indexed instanceId, uint32 indexed clientId, address indexed owner, string apiUrl, address validatorAddress)',
+  'event InstanceRegistered(uint32 indexed instanceId, uint32 indexed networkId, address indexed owner, string apiUrl, address validatorAddress)',
   'event InstanceUpdated(uint32 indexed instanceId, string apiUrl, address validatorAddress)',
   'event InstanceDeactivated(uint32 indexed instanceId)',
 ]

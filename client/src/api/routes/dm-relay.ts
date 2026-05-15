@@ -8,7 +8,7 @@
 // source instance's home node signs the relay envelope with its
 // VALIDATOR_PRIVATE_KEY (same key it uses for on-chain submissions);
 // receivers verify against the source's registered validatorAddress
-// from CawClientManager via instanceRegistryService.getPeers(). This
+// from CawNetworkManager via instanceRegistryService.getPeers(). This
 // authenticates which node operator emitted a relay — DM body
 // confidentiality is independent of the relay layer (AES-GCM
 // auth-tag rejection means a malicious relayer can never put words
@@ -27,14 +27,15 @@ import { prisma } from '../../prismaClient'
 import { getPeers } from '../../services/InstanceRegistryService'
 import { recoverAddressFromCanonical } from '../../services/InstanceRegistryService/envelopeCrypto'
 import { verifyDmSenderSig } from '../dmSenderSig'
+import { getNetworkId } from '../../utils/networkId'
 
 const router = Router()
 
 const CLIENT_ID = (() => {
-  const raw = process.env.CLIENT_ID
+  const raw = getNetworkId()
   const n = raw ? Number(raw) : NaN
   if (!Number.isFinite(n) || n <= 0) {
-    throw new Error('dm-relay: CLIENT_ID is required (set it in client/.env)')
+    throw new Error('dm-relay: NETWORK_ID is required (set it in client/.env)')
   }
   return n
 })()

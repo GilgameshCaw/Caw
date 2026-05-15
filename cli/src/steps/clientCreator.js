@@ -2,14 +2,14 @@ import inquirer from 'inquirer'
 import { section, dim, tipBlock, brand, success, warn, err } from '../utils/ui.js'
 import { addr } from '../addresses.js'
 
-// Just the bits of CawClientManager we use here.
-const CLIENT_MANAGER_ABI = [
-  'function createClient(string name, address feeAddress, uint32 storageChainEid, uint256 withdrawFee, uint256 depositFee, uint256 authFee, uint256 mintFee) public',
-  'function getClient(uint32 clientId) view returns (tuple(uint32 id, uint32 storageChainEid, string name, address feeAddress, address ownerAddress, uint256 withdrawFee, uint256 depositFee, uint256 authFee, uint256 mintFee, uint256 creationBlock))',
-  'event ClientCreated(uint32 indexed clientId, tuple(uint32 id, uint32 storageChainEid, string name, address feeAddress, address ownerAddress, uint256 withdrawFee, uint256 depositFee, uint256 authFee, uint256 mintFee, uint256 creationBlock) client)',
+// Just the bits of CawNetworkManager we use here.
+const NETWORK_MANAGER_ABI = [
+  'function createNetwork(string name, address feeAddress, uint32 storageChainEid, uint256 withdrawFee, uint256 depositFee, uint256 authFee, uint256 mintFee) public',
+  'function getNetwork(uint32 networkId) view returns (tuple(uint32 id, uint32 storageChainEid, string name, address feeAddress, address ownerAddress, uint256 withdrawFee, uint256 depositFee, uint256 authFee, uint256 mintFee, uint256 creationBlock))',
+  'event NetworkCreated(uint32 indexed networkId, tuple(uint32 id, uint32 storageChainEid, string name, address feeAddress, address ownerAddress, uint256 withdrawFee, uint256 depositFee, uint256 authFee, uint256 mintFee, uint256 creationBlock) network)',
 ]
 
-// Storage-chain options the CLI surfaces during createClient. Each entry
+// Storage-chain options the CLI surfaces during createNetwork. Each entry
 // must have CawProfileL2 + CawActions deployed (or planned). The actual
 // contract addresses live in client/src/abi/deployments.ts (written by the
 // deploy script); we only need labels + LZ EIDs here for the CLI to wire
@@ -43,25 +43,25 @@ const STORAGE_CHAINS = {
 }
 
 /**
- * Walk the operator through creating a new client on-chain. Signs the tx
- * with the validator key (passed in via ctx) and returns the new clientId.
+ * Walk the operator through creating a new Network on-chain. Signs the tx
+ * with the validator key (passed in via ctx) and returns the new networkId.
  *
  * Returns null if the user backs out at any prompt.
  */
-export async function createClientFlow(ctx) {
+export async function createNetworkFlow(ctx) {
   const { l1RpcUrl, validatorPrivateKey, network = 'testnet' } = ctx
   if (!l1RpcUrl || !validatorPrivateKey) {
-    console.log(warn('  Missing L1 RPC or validator key — cannot create a client from the CLI.'))
+    console.log(warn('  Missing L1 RPC or validator key — cannot create a Network from the CLI.'))
     return null
   }
 
-  section('Create a new client')
+  section('Create a new Network')
 
   const { ethers } = await import('ethers')
   const provider = new ethers.JsonRpcProvider(l1RpcUrl)
   const wallet = new ethers.Wallet(validatorPrivateKey, provider)
 
-  // Show the operator who's about to spend gas + own the new client.
+  // Show the operator who's about to spend gas + own the new Network.
   const balance = await provider.getBalance(wallet.address).catch(() => 0n)
   const balanceEth = ethers.formatEther(balance)
   console.log(brand(`  Tx will be sent from: ${wallet.address}`))
@@ -71,12 +71,12 @@ export async function createClientFlow(ctx) {
   }
   console.log()
 
-  // ---- Client metadata ----
+  // ---- Network metadata ----
   const { name } = await inquirer.prompt([
     {
       type: 'input',
       name: 'name',
-      message: 'Client name (shown on-chain, ~30 chars max):',
+      message: 'Network name (shown on-chain, ~30 chars max):',
       validate: (input) => {
         const v = input.trim()
         if (!v) return 'Required'
@@ -94,13 +94,13 @@ export async function createClientFlow(ctx) {
     console.log(dim(`  Storage chain: ${chains[0].label} (only option on ${network})`))
   } else {
     tipBlock([
-      'Storage chain = where your client\'s actions are processed and where',
+      'Storage chain = where your Network\'s actions are processed and where',
       'validators submit batches. The choice affects gas costs for every',
-      'single user action your client serves.',
+      'single user action your Network serves.',
       '',
       `${brand('L2s (Base, Arbitrum)')} are cheap (cents per action) and the typical choice.`,
       `${brand('L1 (Ethereum)')} is supported but ${dim('extremely expensive')} — only pick it if`,
-      'you have a specific reason (max decentralization for a specialized client).',
+      'you have a specific reason (max decentralization for a specialized Network).',
     ])
     while (true) {
       const answer = await inquirer.prompt([
@@ -120,7 +120,7 @@ export async function createClientFlow(ctx) {
       if (picked?.costNote) {
         console.log()
         console.log(warn(`  Heads up: ${picked.label} is ${picked.costNote}.`))
-        console.log(dim('  Every user action your client serves pays a tx on this chain.'))
+        console.log(dim('  Every user action your Network serves pays a tx on this chain.'))
         console.log(dim('  At typical gas prices that\'s orders of magnitude more than an L2.'))
         console.log()
         const { confirmed } = await inquirer.prompt([
@@ -146,20 +146,20 @@ export async function createClientFlow(ctx) {
 
   // ---- Fees ----
   tipBlock([
-    'Set the on-chain fees your client charges. Fees are in ETH (wei).',
+    'Set the on-chain fees your Network charges. Fees are in ETH (wei).',
     `${brand('Each fee is matched 1:1 by the protocol burn pool')}, so a 0.001 ETH`,
     'mintFee actually costs the user 0.002 ETH (half goes to your fee address',
     'as CAW after withdrawal; half is burned).',
     '',
     `Defaults below are reasonable testnet values — you can change them later`,
-    'with CawClientManager.setFees(). All can be 0 if you want a free client.',
+    'with CawNetworkManager.setFees(). All can be 0 if you want a free Network.',
   ])
 
   const { mintFeeEth, depositFeeEth, withdrawFeeEth, authFeeEth } = await inquirer.prompt([
     { type: 'input', name: 'mintFeeEth',     message: 'Mint fee (ETH, charged when minting a username):',           default: '0.001' },
     { type: 'input', name: 'depositFeeEth',  message: 'Deposit fee (ETH, charged when depositing CAW to L2):',      default: '0' },
     { type: 'input', name: 'withdrawFeeEth', message: 'Withdraw fee (ETH, charged when withdrawing CAW back to L1):', default: '0' },
-    { type: 'input', name: 'authFeeEth',     message: 'Auth fee (ETH, charged when authenticating to a new client):', default: '0' },
+    { type: 'input', name: 'authFeeEth',     message: 'Auth fee (ETH, charged when authenticating to a new Network):', default: '0' },
   ])
   const toWei = (eth) => ethers.parseEther(String(eth || '0').trim())
   const mintFee = toWei(mintFeeEth)
@@ -169,7 +169,7 @@ export async function createClientFlow(ctx) {
 
   // ---- Confirm ----
   console.log()
-  console.log(brand('  About to create a client with:'))
+  console.log(brand('  About to create a Network with:'))
   console.log(`    name:        ${name}`)
   console.log(`    storage:     EID ${storageChainEid}`)
   console.log(`    feeAddress:  ${feeAddress}`)
@@ -181,22 +181,22 @@ export async function createClientFlow(ctx) {
   console.log()
 
   const { confirm } = await inquirer.prompt([
-    { type: 'confirm', name: 'confirm', message: 'Send the createClient transaction?', default: true },
+    { type: 'confirm', name: 'confirm', message: 'Send the createNetwork transaction?', default: true },
   ])
   if (!confirm) {
-    console.log(dim('  Cancelled. Picking an existing client ID instead.'))
+    console.log(dim('  Cancelled. Picking an existing Network ID instead.'))
     return null
   }
 
   // ---- Send tx ----
-  const clientManagerAddress = addr('CLIENT_MANAGER_ADDRESS')
-  const cm = new ethers.Contract(clientManagerAddress, CLIENT_MANAGER_ABI, wallet)
+  const networkManagerAddress = addr('NETWORK_MANAGER_ADDRESS')
+  const cm = new ethers.Contract(networkManagerAddress, NETWORK_MANAGER_ABI, wallet)
 
   console.log()
   console.log(dim('  Sending transaction...'))
   let tx, receipt
   try {
-    tx = await cm.createClient(name.trim(), feeAddress.trim(), storageChainEid, withdrawFee, depositFee, authFee, mintFee)
+    tx = await cm.createNetwork(name.trim(), feeAddress.trim(), storageChainEid, withdrawFee, depositFee, authFee, mintFee)
     console.log(dim(`  tx hash: ${tx.hash}`))
     console.log(dim('  Waiting for confirmation...'))
     receipt = await tx.wait()
@@ -205,29 +205,29 @@ export async function createClientFlow(ctx) {
     return null
   }
 
-  // ---- Find the new clientId from the ClientCreated event ----
-  let newClientId
+  // ---- Find the new networkId from the NetworkCreated event ----
+  let newNetworkId
   for (const log of receipt.logs || []) {
     try {
       const parsed = cm.interface.parseLog(log)
-      if (parsed?.name === 'ClientCreated') {
-        newClientId = Number(parsed.args.clientId)
+      if (parsed?.name === 'NetworkCreated') {
+        newNetworkId = Number(parsed.args.networkId)
         break
       }
     } catch { /* not our event */ }
   }
-  if (!newClientId) {
-    console.log(warn('  Tx succeeded but no ClientCreated event found — check the receipt manually.'))
+  if (!newNetworkId) {
+    console.log(warn('  Tx succeeded but no NetworkCreated event found — check the receipt manually.'))
     return null
   }
 
   console.log()
-  console.log(success(`  Client #${newClientId} created.`))
+  console.log(success(`  Network #${newNetworkId} created.`))
   console.log(dim(`  Owner: ${wallet.address}`))
   console.log(dim(`  Block: ${receipt.blockNumber}`))
   const chainEntry = chains.find(c => c.eid === storageChainEid)
   return {
-    clientId: newClientId,
+    networkId: newNetworkId,
     storageChainEid,
     storageChainKey: chainEntry?.key,
     storageChainLabel: chainEntry?.label,
@@ -235,24 +235,24 @@ export async function createClientFlow(ctx) {
 }
 
 /**
- * Look up an existing client's storage chain on L1. Used to label the L2
+ * Look up an existing Network's storage chain on L1. Used to label the L2
  * RPC prompt by the chain's actual name once the operator has picked an
- * existing clientId.
+ * existing networkId.
  *
  * Returns the matched STORAGE_CHAINS entry ({ key, label, eid, ... }) or
- * null if the client doesn't exist or the chain isn't in our table.
+ * null if the Network doesn't exist or the chain isn't in our table.
  */
-export async function lookupClientStorageChain(clientId, l1RpcUrl, network = 'testnet') {
-  if (!l1RpcUrl || !clientId) return null
+export async function lookupNetworkStorageChain(networkId, l1RpcUrl, network = 'testnet') {
+  if (!l1RpcUrl || !networkId) return null
   let cmAddress
-  try { cmAddress = addr('CLIENT_MANAGER_ADDRESS') } catch { return null }
+  try { cmAddress = addr('NETWORK_MANAGER_ADDRESS') } catch { return null }
   if (!cmAddress) return null
   try {
     const { ethers } = await import('ethers')
     const provider = new ethers.JsonRpcProvider(l1RpcUrl)
-    const cm = new ethers.Contract(cmAddress, CLIENT_MANAGER_ABI, provider)
-    const client = await cm.getClient(clientId)
-    const eid = Number(client.storageChainEid)
+    const cm = new ethers.Contract(cmAddress, NETWORK_MANAGER_ABI, provider)
+    const cawNetwork = await cm.getNetwork(networkId)
+    const eid = Number(cawNetwork.storageChainEid)
     const chains = STORAGE_CHAINS[network] || []
     return chains.find(c => c.eid === eid) || null
   } catch {

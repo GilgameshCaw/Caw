@@ -94,20 +94,20 @@ const ENV_TO_CAW = {
   // answer is locked in by everything downstream).
   NETWORK: 'CAW_NETWORK',
   // Replication — collectReplicationConfig skips the entire participate +
-  // chain + RPC + client-IDs prompt sequence when these are preloaded.
+  // chain + RPC + Network-IDs prompt sequence when these are preloaded.
   // The replicator key still re-prompts (sensitive, same as validator key).
   REPLICATION_RPC: 'CAW_REPLICATION_RPC',
   REPLICATION_CHAIN: 'CAW_REPLICATION_CHAIN',
-  REPLICATE_CLIENT_IDS: 'CAW_REPLICATE_CLIENT_IDS',
+  REPLICATE_NETWORK_IDS: 'CAW_REPLICATE_NETWORK_IDS',
   REPLICATOR_PRIVATE_KEY: 'CAW_REPLICATOR_PRIVATE_KEY',
   // Identity — preloading these skips the whole validator + admin pw +
-  // clientId prompt sequence. The values are already on disk in the
+  // networkId prompt sequence. The values are already on disk in the
   // previous .env; re-asking just re-types the same answers.
   VALIDATOR_PRIVATE_KEY: 'CAW_VALIDATOR_PRIVATE_KEY',
   VALIDATOR_ID: 'CAW_VALIDATOR_ID',
   VALIDATOR_USERNAME: 'CAW_VALIDATOR_USERNAME',
   ADMIN_PASSWORD: 'CAW_ADMIN_PASSWORD',
-  CLIENT_ID: 'CAW_CLIENT_ID',
+  NETWORK_ID: 'CAW_NETWORK_ID',
   // VITE_PROJECT_ID lives in the FRONTEND .env, handled separately.
 }
 
@@ -133,7 +133,7 @@ function loadEnvFile(envPath) {
 // drops" suppresses the unrecognized-key warning below — they'd otherwise
 // appear scary every re-run even though we deliberately re-derive them.
 const EXPECTED_DROPS = new Set([
-  // Re-derived from network/chain/clientId on every run; safe to drop.
+  // Re-derived from network/chain/networkId on every run; safe to drop.
   'L1_CHAIN_ID', 'L2_CHAIN_ID', 'NETWORK',
   // Re-derived from CAW_DOMAIN (shell env, not .env) on every run.
   'SHORTURL_DOMAIN',
@@ -150,12 +150,12 @@ const EXPECTED_DROPS = new Set([
 // won't preserve — anything in the operator's .env that the wizard doesn't
 // know about would be silently dropped on rewrite.
 // uint32 on chain — anything outside this range is bogus. Catches the
-// case where an operator pasted a wallet address into CLIENT_ID by mistake:
+// case where an operator pasted a wallet address into NETWORK_ID by mistake:
 // Number('0x...') resolves to ~1.2e+48, which passes Number.isInteger but
-// poisons every downstream lookup. Mirror of validateClientId in
+// poisons every downstream lookup. Mirror of validateNetworkId in
 // cli/src/steps/generate.js (kept in sync by hand; both files run early
 // enough that pulling one in from the other adds startup latency for no win).
-function isValidClientId(raw) {
+function isValidNetworkId(raw) {
   if (raw === undefined || raw === '') return false
   const n = Number(raw)
   return Number.isFinite(n) && Number.isInteger(n) && n > 0 && n <= 0xffffffff
@@ -174,7 +174,7 @@ function preloadFromEnv(envFilePath, frontendEnvFilePath) {
       // values get dropped on the floor with a warning — the wizard then
       // re-prompts normally for that field, instead of silently writing
       // garbage through to the new .env.
-      if (k === 'CLIENT_ID' && !isValidClientId(v)) {
+      if (k === 'NETWORK_ID' && !isValidNetworkId(v)) {
         rejected.push({ key: k, value: v, reason: 'must be a positive integer ≤ 4294967295 (looks like an address?)' })
         continue
       }
@@ -497,29 +497,29 @@ program
         console.error(`No .env at ${envPath}. Specify with --env or run 'caw install' first.`)
         process.exit(1)
       }
-      // Pull just the values writeAddressesForClient needs out of the
+      // Pull just the values writeAddressesForNetwork needs out of the
       // existing .env. No prompts, no preload trickery.
-      const { generateConfig: _generateConfig, writeAddressesForClient } = await import('../src/steps/generate.js')
+      const { generateConfig: _generateConfig, writeAddressesForNetwork } = await import('../src/steps/generate.js')
       void _generateConfig
       const env = loadEnvFile(envPath)
-      if (env.CLIENT_ID && !isValidClientId(env.CLIENT_ID)) {
+      if (env.NETWORK_ID && !isValidNetworkId(env.NETWORK_ID)) {
         console.error(
-          `CLIENT_ID in ${envPath} is invalid: ${JSON.stringify(env.CLIENT_ID)} ` +
+          `NETWORK_ID in ${envPath} is invalid: ${JSON.stringify(env.NETWORK_ID)} ` +
           `(must be a positive integer ≤ 4294967295). Fix it and re-run.`
         )
         process.exit(1)
       }
       const config = {
         network: env.NETWORK || 'testnet',
-        clientId: Number(env.CLIENT_ID || 1),
+        networkId: Number(env.NETWORK_ID || 1),
         l1RpcUrl: env.L1_RPC_URL,
         l1RpcUrlHttp: env.L1_RPC_URL_HTTP,
       }
       const clientDir = path.join(installDir, 'client')
       setAddressesNetwork(config.network)
-      console.log(brand(`Regenerating addresses.ts (network=${config.network}, clientId=${config.clientId})...`))
-      await writeAddressesForClient(config, clientDir)
-      console.log(success(`Done. addresses.ts now reflects deployments.ts for ${config.network}/client ${config.clientId}.`))
+      console.log(brand(`Regenerating addresses.ts (network=${config.network}, networkId=${config.networkId})...`))
+      await writeAddressesForNetwork(config, clientDir)
+      console.log(success(`Done. addresses.ts now reflects deployments.ts for ${config.network}/Network ${config.networkId}.`))
     } catch (e) {
       console.error('regen-addresses failed:', e.message)
       process.exit(1)
@@ -549,9 +549,9 @@ program
         process.exit(1)
       }
       const env = loadEnvFile(envPath)
-      if (env.CLIENT_ID && !isValidClientId(env.CLIENT_ID)) {
+      if (env.NETWORK_ID && !isValidNetworkId(env.NETWORK_ID)) {
         console.error(
-          `CLIENT_ID in ${envPath} is invalid: ${JSON.stringify(env.CLIENT_ID)} ` +
+          `NETWORK_ID in ${envPath} is invalid: ${JSON.stringify(env.NETWORK_ID)} ` +
           `(must be a positive integer ≤ 4294967295). Fix it and re-run.`
         )
         process.exit(1)
@@ -559,7 +559,7 @@ program
       const { buildServiceList } = await import('../src/steps/generate.js')
       const config = {
         network: env.NETWORK || 'testnet',
-        clientId: Number(env.CLIENT_ID || 1),
+        networkId: Number(env.NETWORK_ID || 1),
         domain: env.SHORTURL_DOMAIN?.replace(/^https?:\/\//, ''),
         apiPort: Number(env.PORT) || 4000,
         redisUrl: env.REDIS_URL,

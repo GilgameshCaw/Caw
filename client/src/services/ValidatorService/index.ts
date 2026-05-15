@@ -35,8 +35,8 @@ const PACKED_ABI = [
   // ActionsProcessed is a *commitment* to the calldata (packedActions lives
   // in the originating tx's input). Consumers who need the bytes call
   // decodePackedActionsFromTx() to fetch and decode them from tx.data.
-  'event ActionsProcessed(uint32 indexed clientId, uint32 indexed validatorId, uint16 actionCount, bytes32 batchHash)',
-  'event ActionsProcessedZk(uint32 indexed clientId, uint32 indexed validatorId, uint16 actionCount, uint256 actionsExecutedBitmap, bytes32 batchHash)',
+  'event ActionsProcessed(uint32 indexed networkId, uint32 indexed validatorId, uint16 actionCount, bytes32 batchHash)',
+  'event ActionsProcessedZk(uint32 indexed networkId, uint32 indexed validatorId, uint16 actionCount, uint256 actionsExecutedBitmap, bytes32 batchHash)',
   'event ActionRejected(uint32 senderId, uint32 cawonce, string reason)',
 ]
 const packedIface = new Interface(PACKED_ABI)
@@ -809,7 +809,7 @@ async function validateActionTip(
 function getUniqueClientIds(actions: any[]): number[] {
   const clientIds = new Set<number>()
   for (const action of actions) {
-    clientIds.add(action.clientId ?? 1)
+    clientIds.add(action.networkId ?? 1)
   }
   return Array.from(clientIds)
 }
@@ -821,7 +821,7 @@ function getUniqueClientIds(actions: any[]): number[] {
 function groupActionsByClient(actions: any[]): Map<number, number[]> {
   const groups = new Map<number, number[]>()
   for (let i = 0; i < actions.length; i++) {
-    const clientId = actions[i].clientId ?? 1
+    const clientId = actions[i].networkId ?? 1
     if (!groups.has(clientId)) {
       groups.set(clientId, [])
     }
@@ -1433,7 +1433,7 @@ export const validatorService: Service = {
         senderId: Number(a.senderId),
         receiverId: Number(a.receiverId || 0),
         receiverCawonce: Number(a.receiverCawonce || 0),
-        clientId: Number(a.clientId),
+        networkId: Number(a.networkId),
         cawonce: Number(a.cawonce),
         recipients: (a.recipients || []).map(Number),
         amounts: a.amounts.map((x: any) => BigInt(x)),
@@ -3411,17 +3411,17 @@ console.log("succeededKeys", succeededKeys)
       'function pendingCount(address) view returns (uint256)',
       'function deposit() payable',
       'function withdraw(uint256)',
-      'function submitReplication(uint32 clientId, uint256 startCheckpointId, uint256 endCheckpointId, bytes packedActions, bytes32[] r, bytes32 merkleRoot, bytes32 entryHash)',
+      'function submitReplication(uint32 networkId, uint256 startCheckpointId, uint256 endCheckpointId, bytes packedActions, bytes32[] r, bytes32 merkleRoot, bytes32 entryHash)',
       'function finalizeSubmission(uint256 submissionId)',
       'function checkpointClaimed(uint32, uint256) view returns (uint256)',
-      'function isRangeAvailable(uint32 clientId, uint256 start, uint256 end) view returns (bool)',
-      'function getSubmission(uint256) view returns (address submitter, bytes32 merkleRoot, uint32 clientId, uint256 startCheckpointId, uint256 endCheckpointId, uint256 finalizedAt, uint8 status)',
+      'function isRangeAvailable(uint32 networkId, uint256 start, uint256 end) view returns (bool)',
+      'function getSubmission(uint256) view returns (address submitter, bytes32 merkleRoot, uint32 networkId, uint256 startCheckpointId, uint256 endCheckpointId, uint256 finalizedAt, uint8 status)',
       'function nextSubmissionId() view returns (uint256)',
-      'event SubmissionCreated(uint256 indexed submissionId, address indexed submitter, uint32 indexed clientId, uint256 startCheckpointId, uint256 endCheckpointId, bytes32 merkleRoot)',
+      'event SubmissionCreated(uint256 indexed submissionId, address indexed submitter, uint32 indexed networkId, uint256 startCheckpointId, uint256 endCheckpointId, bytes32 merkleRoot)',
       // ActionsArchived now carries hashes only; the underlying packedActions
       // and r[] live in the originating tx's calldata. Consumers fetch them
       // via decodeArchiveSubmissionFromTx() below.
-      'event ActionsArchived(uint256 indexed submissionId, uint32 indexed clientId, uint16 actionCount, bytes32 packedHash, bytes32 rHash, bytes32 entryHash)',
+      'event ActionsArchived(uint256 indexed submissionId, uint32 indexed networkId, uint16 actionCount, bytes32 packedHash, bytes32 rHash, bytes32 entryHash)',
     ]
 
     /**
@@ -3430,7 +3430,7 @@ console.log("succeededKeys", succeededKeys)
      * event" path now that the event only carries commitments.
      */
     const archiveSubmitIface = new Interface([
-      'function submitReplication(uint32 clientId, uint256 startCheckpointId, uint256 endCheckpointId, bytes packedActions, bytes32[] r, bytes32 merkleRoot, bytes32 entryHash)',
+      'function submitReplication(uint32 networkId, uint256 startCheckpointId, uint256 endCheckpointId, bytes packedActions, bytes32[] r, bytes32 merkleRoot, bytes32 entryHash)',
     ])
     async function decodeArchiveSubmissionFromTx(
       provider: { getTransaction: (h: string) => Promise<{ data?: string } | null> },
@@ -3575,10 +3575,10 @@ console.log("succeededKeys", succeededKeys)
       const numCheckpoints = endCheckpointId - startCheckpointId + 1
       const totalActionsNeeded = numCheckpoints * OPTIMISTIC_CHECKPOINT_INTERVAL
 
-      // Read clientActionCount from CawActions to know total actions
-      const cawActionsViewAbi = ['function clientActionCount(uint32) view returns (uint256)']
+      // Read networkActionCount from CawActions to know total actions
+      const cawActionsViewAbi = ['function networkActionCount(uint32) view returns (uint256)']
       const cawActionsView = new Contract(CAW_ACTIONS_ADDRESS, cawActionsViewAbi, httpProvider)
-      const actionCount = Number(await cawActionsView.clientActionCount(clientId))
+      const actionCount = Number(await cawActionsView.networkActionCount(clientId))
 
       const rangeStartPos = (startCheckpointId - 1) * OPTIMISTIC_CHECKPOINT_INTERVAL
       const actionsNeededFromEnd = actionCount - rangeStartPos
@@ -3592,7 +3592,7 @@ console.log("succeededKeys", succeededKeys)
 
       while (scannedActions < actionsNeededFromEnd) {
         const fromBlock = Math.max(0, toBlock - CHUNK + 1)
-        // Filter on the indexed clientId topic so we only get this client's
+        // Filter on the indexed networkId topic so we only get this client's
         // batches back — much cheaper than the old "decode every event's
         // bytes to count" approach.
         const batch = await eventsContract.queryFilter(
@@ -3646,7 +3646,7 @@ console.log("succeededKeys", succeededKeys)
 
         for (let i = 0; i < unpackedActions.length; i++) {
           const a = unpackedActions[i]
-          if (a.clientId !== clientId) continue
+          if (a.networkId !== clientId) continue
           const sig = perActionSigs[i]
           orderedEntries.push({
             blockNumber: tx.blockNumber!,
@@ -3657,7 +3657,7 @@ console.log("succeededKeys", succeededKeys)
               senderId: a.senderId,
               receiverId: a.receiverId,
               receiverCawonce: a.receiverCawonce,
-              clientId: a.clientId,
+              networkId: a.networkId,
               cawonce: a.cawonce,
               recipients: a.recipients,
               amounts: a.amounts.map((x: any) => BigInt(x)),
@@ -3691,7 +3691,7 @@ console.log("succeededKeys", succeededKeys)
         senderId: Number(e.action.senderId),
         receiverId: Number(e.action.receiverId),
         receiverCawonce: Number(e.action.receiverCawonce),
-        clientId: Number(e.action.clientId),
+        networkId: Number(e.action.networkId),
         cawonce: Number(e.action.cawonce),
         recipients: Array.from(e.action.recipients).map(Number),
         amounts: Array.from(e.action.amounts).map((a: any) => BigInt(a)),
@@ -3705,7 +3705,7 @@ console.log("succeededKeys", succeededKeys)
         senderId: a.senderId,
         receiverId: a.receiverId,
         receiverCawonce: a.receiverCawonce,
-        clientId: a.clientId,
+        networkId: a.networkId,
         cawonce: a.cawonce,
         recipients: a.recipients,
         amounts: a.amounts.map((x: any) => BigInt(x)),
@@ -3713,12 +3713,12 @@ console.log("succeededKeys", succeededKeys)
       })))
 
       // Verify and compute hash chain per checkpoint
-      const hashCheckAbi = ['function clientHashAtCheckpoint(uint32,uint256) view returns (bytes32)']
+      const hashCheckAbi = ['function networkHashAtCheckpoint(uint32,uint256) view returns (bytes32)']
       const actionsView = new Contract(CAW_ACTIONS_ADDRESS, hashCheckAbi, httpProvider)
       const prevHash = startCheckpointId === 1
         ? '0x' + '00'.repeat(32)
-        : await actionsView.clientHashAtCheckpoint(clientId, startCheckpointId - 1)
-      const expectedFinalHash = await actionsView.clientHashAtCheckpoint(clientId, endCheckpointId)
+        : await actionsView.networkHashAtCheckpoint(clientId, startCheckpointId - 1)
+      const expectedFinalHash = await actionsView.networkHashAtCheckpoint(clientId, endCheckpointId)
 
       const actionSlices = getPackedActionSlices(packed)
       const checkpointHashes: string[] = []
@@ -3784,7 +3784,7 @@ console.log("succeededKeys", succeededKeys)
         //    Why: archiving L1 actions to another chain is pointless — L1 is
         //    already the most permanent chain in the stack. The deploy script
         //    intentionally does NOT include L1 in L2_CHAIN_KEYS, so there's no
-        //    CawChallengeRelay_L1 to read CawActions_L1.clientHashAtCheckpoint
+        //    CawChallengeRelay_L1 to read CawActions_L1.networkHashAtCheckpoint
         //    and ship a fraud proof. Anyone wanting to verify L1 actions reads
         //    the canonical chain directly.
         //
@@ -4254,7 +4254,7 @@ console.log("succeededKeys", succeededKeys)
         )
 
         const httpProvider = replicationHttpProvider
-        const hashCheckAbi = ['function clientHashAtCheckpoint(uint32,uint256) view returns (bytes32)']
+        const hashCheckAbi = ['function networkHashAtCheckpoint(uint32,uint256) view returns (bytes32)']
         const actionsView = new Contract(CAW_ACTIONS_ADDRESS, hashCheckAbi, httpProvider)
 
         // Persistent cache of submissions whose status is permanently
@@ -4278,7 +4278,7 @@ console.log("succeededKeys", succeededKeys)
 
           const submissionId = Number(args[0] || args.submissionId)
           const submitter = args[1] || args.submitter
-          const clientId = Number(args[2] || args.clientId)
+          const clientId = Number(args[2] || args.networkId)
           const startCp = Number(args[3] || args.startCheckpointId)
           const endCp = Number(args[4] || args.endCheckpointId)
 
@@ -4318,7 +4318,7 @@ console.log("succeededKeys", succeededKeys)
           //
           // For Mode B detection: an honest-looking submission's packedActions
           // hash up to its committed merkle root. If those hashes don't match
-          // L2's canonical clientHashAtCheckpoint, the submitter committed to
+          // L2's canonical networkHashAtCheckpoint, the submitter committed to
           // invented actions — which we can prove by supplying their own
           // claimedHash + a valid proof in their own tree.
           //
@@ -4348,7 +4348,7 @@ console.log("succeededKeys", succeededKeys)
 
             const entryHash = startCp === 1
               ? '0x' + '00'.repeat(32)
-              : await actionsView.clientHashAtCheckpoint(clientId, startCp - 1)
+              : await actionsView.networkHashAtCheckpoint(clientId, startCp - 1)
 
             const packedBytes = Buffer.from(submitterPackedHex.slice(2), 'hex')
             submitterHashes = foldCheckpointHashes(
@@ -4451,8 +4451,8 @@ console.log("succeededKeys", succeededKeys)
 
             const L2B_EID = 40231
             const relayAbi = [
-              'function relayChallengeBatch(uint32 destEid, uint256 submissionId, uint32 clientId, uint256[] checkpointIds) payable',
-              'function quoteChallengeBatch(uint32 destEid, uint256 submissionId, uint32 clientId, uint256[] checkpointIds, bool payInLzToken) view returns (tuple(uint256 nativeFee, uint256 lzTokenFee))',
+              'function relayChallengeBatch(uint32 destEid, uint256 submissionId, uint32 networkId, uint256[] checkpointIds) payable',
+              'function quoteChallengeBatch(uint32 destEid, uint256 submissionId, uint32 networkId, uint256[] checkpointIds, bool payInLzToken) view returns (tuple(uint256 nativeFee, uint256 lzTokenFee))',
             ]
             const relaySigner = requireValidatorSigner({ provider: replicationHttpProvider })
             const relayContract = new Contract(CHALLENGE_RELAY_ADDRESS, relayAbi, relaySigner.asEthersSigner())
@@ -4514,13 +4514,13 @@ console.log("succeededKeys", succeededKeys)
                 const submitterPackedHex = submitted.packedActions
                 const submitterR = submitted.r.map(x => String(x))
 
-                // entryHash: honest L2's clientHashAtCheckpoint at startCp-1.
+                // entryHash: honest L2's networkHashAtCheckpoint at startCp-1.
                 // If submitter lied about entryHash, the contract's
                 // dataCommitment check will fail — but that's Mode B which
                 // was caught above, so reaching here means entryHash matched.
                 const entryHash = startCp === 1
                   ? '0x' + '00'.repeat(32)
-                  : await actionsView.clientHashAtCheckpoint(clientId, startCp - 1)
+                  : await actionsView.networkHashAtCheckpoint(clientId, startCp - 1)
 
                 console.log(`[Monitor] Calling slashIncoherentRoot(${submissionId})...`)
                 // slashIncoherentRoot does: keccak check, full hash-chain
@@ -4554,7 +4554,7 @@ console.log("succeededKeys", succeededKeys)
               const claimedHash = submitterHashes[i]
               let l2Hash: string
               try {
-                l2Hash = await actionsView.clientHashAtCheckpoint(clientId, cpId)
+                l2Hash = await actionsView.networkHashAtCheckpoint(clientId, cpId)
               } catch {
                 console.warn(`[Monitor] Could not read L2 hash for checkpoint ${cpId}, skipping`)
                 continue

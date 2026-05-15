@@ -15,12 +15,13 @@ import { getPeers } from '../../services/InstanceRegistryService'
 import { checkDmRate } from '../dmRateLimit'
 import { verifyDmSenderSig } from '../dmSenderSig'
 import crypto from 'crypto'
+import { getNetworkId } from '../../utils/networkId'
 
 const CLIENT_ID = (() => {
-  const raw = process.env.CLIENT_ID
+  const raw = getNetworkId()
   const n = raw ? Number(raw) : NaN
   if (!Number.isFinite(n) || n <= 0) {
-    throw new Error('dm route: CLIENT_ID is required (set it in client/.env)')
+    throw new Error('dm route: NETWORK_ID is required (set it in client/.env)')
   }
   return n
 })()
@@ -71,7 +72,7 @@ router.post('/identity',
 // POST /api/dm/identity/relay — peer-to-peer sync of DmIdentity rows.
 // Mirrors the dm-relay.ts pattern: source instance signs the envelope
 // with its validator key, receiver verifies against the registered
-// validatorAddress in CawClientManager. The relayed publicKey is then
+// validatorAddress in CawNetworkManager. The relayed publicKey is then
 // upserted locally so this node's lookup endpoints see the same data
 // every other peer sees.
 //

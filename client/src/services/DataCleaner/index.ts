@@ -11,6 +11,7 @@ import { processDomainEffects, resolveActionUsers } from '../ActionProcessor/dom
 import { CawNotFoundError } from '../ActionProcessor/actionHandlers'
 import type { RawAction } from '../ActionProcessor/types'
 import { refreshUserFromChain, StaleTokenError } from '../UserService'
+import { getNetworkId } from '../../utils/networkId'
 
 // Lazy-initialized L2 read provider for the pending-mint-deposit watcher.
 // Reused across ticks so we don't churn sockets.
@@ -32,10 +33,10 @@ function getCawProfileL2(): Contract {
 // authentication-status checks to the wrong client, silently dropping
 // real users from cleanup decisions.
 const CAW_CLIENT_ID = (() => {
-  const raw = process.env.CLIENT_ID
+  const raw = getNetworkId()
   const n = raw ? Number(raw) : NaN
   if (!Number.isFinite(n) || n <= 0) {
-    throw new Error('DataCleaner: CLIENT_ID is required (set it in client/.env)')
+    throw new Error('DataCleaner: NETWORK_ID is required (set it in client/.env)')
   }
   return n
 })()

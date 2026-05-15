@@ -6,23 +6,23 @@ import { section, dim, tipBlock, brand, success, warn, err } from '../utils/ui.j
 // CawActionsArchive has been deployed to. We pick by network so operators
 // see only the chains that exist for their chosen environment.
 //
-// Canonical pairing: a client whose storage is Base typically replicates
+// Canonical pairing: a Network whose storage is Base typically replicates
 // to Arbitrum (and vice-versa) — pick the L2 where you already have an ETH
 // balance. The CLI surfaces this as a "(recommended for X storage)" hint
-// when the operator has told us which storage chain their target client
+// when the operator has told us which storage chain their target Network
 // uses.
 const REPLICATION_CHAINS = {
   testnet: [
     {
       key: 'arbitrum-sepolia',
       label: 'Arbitrum Sepolia',
-      hint: 'cheap L2 — recommended if your client stores on Base Sepolia',
+      hint: 'cheap L2 — recommended if your Network stores on Base Sepolia',
       pairsWith: ['base-sepolia', 'sepolia'],
     },
     {
       key: 'base-sepolia',
       label: 'Base Sepolia',
-      hint: 'cheap L2 — recommended if your client stores on Arbitrum Sepolia',
+      hint: 'cheap L2 — recommended if your Network stores on Arbitrum Sepolia',
       pairsWith: ['arbitrum-sepolia', 'sepolia'],
     },
     // Future: optimism-sepolia, polygon-amoy, etc. Add as deployments land.
@@ -31,13 +31,13 @@ const REPLICATION_CHAINS = {
     {
       key: 'arbitrum',
       label: 'Arbitrum One',
-      hint: 'cheap L2 — recommended if your client stores on Base',
+      hint: 'cheap L2 — recommended if your Network stores on Base',
       pairsWith: ['base', 'ethereum'],
     },
     {
       key: 'base',
       label: 'Base',
-      hint: 'cheap L2 — recommended if your client stores on Arbitrum',
+      hint: 'cheap L2 — recommended if your Network stores on Arbitrum',
       pairsWith: ['arbitrum', 'ethereum'],
     },
     // Future entries gated on actually-deployed contracts. Don't list a chain
@@ -51,8 +51,8 @@ const REPLICATION_CHAINS = {
  * to an archive chain and watch for incorrect submissions from peers,
  * winning slashing rewards if they catch fraud.
  *
- * Each client picks its own replication destinations on-chain (via
- * CawClientManager.addReplication). The validator just needs (a) an RPC for
+ * Each Network picks its own replication destinations on-chain (via
+ * CawNetworkManager.addReplication). The validator just needs (a) an RPC for
  * one of those chains and (b) a key with ETH on that chain to submit batch
  * hashes and challenges.
  *
@@ -65,7 +65,7 @@ const REPLICATION_CHAINS = {
  *                            unset, ValidatorService falls back to the main
  *                            validator key. We recommend separate keys so a
  *                            compromise of one is contained.
- *   REPLICATE_CLIENT_IDS   — comma-separated list of client IDs this validator
+ *   REPLICATE_NETWORK_IDS  — comma-separated list of Network IDs this validator
  *                            replicates (e.g. "1" or "1,3"). Per-validator
  *                            config; the chain has no on-chain replication
  *                            registry anymore.
@@ -101,8 +101,8 @@ export async function collectReplicationConfig(nodeType, ctx = {}) {
   // replicator key) still re-prompt — same pattern as the validator key.
   const preloadRpc = process.env.CAW_REPLICATION_RPC || ''
   const preloadChain = process.env.CAW_REPLICATION_CHAIN || ''
-  const preloadClientIds = process.env.CAW_REPLICATE_CLIENT_IDS || ''
-  const preloaded = preloadRpc || preloadChain || preloadClientIds
+  const preloadNetworkIds = process.env.CAW_REPLICATE_NETWORK_IDS || ''
+  const preloaded = preloadRpc || preloadChain || preloadNetworkIds
 
   let participate
   if (preloaded) {
@@ -122,7 +122,7 @@ export async function collectReplicationConfig(nodeType, ctx = {}) {
 
   if (!participate) {
     console.log(dim('  Skipping replication setup — you can enable it later by setting'))
-    console.log(dim('  REPLICATION_RPC, REPLICATION_CHAIN, REPLICATE_CLIENT_IDS, and'))
+    console.log(dim('  REPLICATION_RPC, REPLICATION_CHAIN, REPLICATE_NETWORK_IDS, and'))
     console.log(dim('  (optionally) REPLICATOR_PRIVATE_KEY in client/.env.'))
     return {}
   }
@@ -266,36 +266,36 @@ export async function collectReplicationConfig(nodeType, ctx = {}) {
     if (!reenter) break
   }
 
-  // ---- Which clients to replicate ----
-  let replicateClientIds
-  if (preloadClientIds) {
-    replicateClientIds = preloadClientIds
-    console.log(dim(`  Using replicate client IDs from --env preload: ${preloadClientIds}`))
+  // ---- Which Networks to replicate ----
+  let replicateNetworkIds
+  if (preloadNetworkIds) {
+    replicateNetworkIds = preloadNetworkIds
+    console.log(dim(`  Using replicate Network IDs from --env preload: ${preloadNetworkIds}`))
   } else {
     console.log()
     tipBlock([
-      `${brand('Which clients do you replicate?')}`,
-      'Replication is per-validator: you decide which clients\' actions you',
-      'archive. Most operators replicate the client they run a node for.',
+      `${brand('Which Networks do you replicate?')}`,
+      'Replication is per-validator: you decide which Networks\' actions you',
+      'archive. Most operators replicate the Network they run a node for.',
       'Multiple comma-separated IDs are fine if you replicate for several.',
     ])
     const ans = await inquirer.prompt([
       {
         type: 'input',
-        name: 'replicateClientIds',
-        message: 'Client IDs to replicate (comma-separated):',
-        default: ctx.clientId ? String(ctx.clientId) : '1',
+        name: 'replicateNetworkIds',
+        message: 'Network IDs to replicate (comma-separated):',
+        default: ctx.networkId ? String(ctx.networkId) : '1',
         validate: (input) => {
           const ids = input.split(',').map(s => s.trim()).filter(Boolean)
-          if (ids.length === 0) return 'At least one client ID required'
+          if (ids.length === 0) return 'At least one Network ID required'
           for (const id of ids) {
-            if (!/^\d+$/.test(id) || Number(id) <= 0) return `Invalid client ID: ${id}`
+            if (!/^\d+$/.test(id) || Number(id) <= 0) return `Invalid Network ID: ${id}`
           }
           return true
         },
       },
     ])
-    replicateClientIds = ans.replicateClientIds
+    replicateNetworkIds = ans.replicateNetworkIds
   }
 
   // ---- Replicator key ----
@@ -319,7 +319,7 @@ export async function collectReplicationConfig(nodeType, ctx = {}) {
     return {
       replicationRpcUrl,
       replicationChain,
-      replicateClientIds,
+      replicateNetworkIds,
       replicatorPrivateKey,
       replicationEnabled: true,
     }
@@ -410,7 +410,7 @@ export async function collectReplicationConfig(nodeType, ctx = {}) {
   return {
     replicationRpcUrl,
     replicationChain,
-    replicateClientIds,
+    replicateNetworkIds,
     replicatorPrivateKey,
     replicationEnabled: true,
   }

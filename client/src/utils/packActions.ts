@@ -8,7 +8,7 @@
  *     [4]   senderId
  *     [4]   receiverId
  *     [4]   receiverCawonce
- *     [4]   clientId
+ *     [4]   networkId
  *     [4]   cawonce
  *     [1]   recipientCount (N)
  *     [1]   amountCount (M) — as signed (0, N, or N+1)
@@ -25,7 +25,7 @@ interface ActionForPacking {
   senderId: number
   receiverId: number
   receiverCawonce: number
-  clientId: number
+  networkId: number
   cawonce: number
   recipients: number[]
   amounts: (bigint | string | number)[]
@@ -57,7 +57,7 @@ export function packActions(actions: ActionForPacking[]): Uint8Array {
     writeU32(buf, pos, a.senderId); pos += 4
     writeU32(buf, pos, a.receiverId || 0); pos += 4
     writeU32(buf, pos, a.receiverCawonce || 0); pos += 4
-    writeU32(buf, pos, a.clientId); pos += 4
+    writeU32(buf, pos, a.networkId); pos += 4
     writeU32(buf, pos, a.cawonce); pos += 4
 
     // Recipients + amounts counts
@@ -213,7 +213,7 @@ export function unpackActions(packed: Uint8Array): ActionForPacking[] {
     const senderId = readU32BE(packed, pos); pos += 4
     const receiverId = readU32BE(packed, pos); pos += 4
     const receiverCawonce = readU32BE(packed, pos); pos += 4
-    const clientId = readU32BE(packed, pos); pos += 4
+    const networkId = readU32BE(packed, pos); pos += 4
     const cawonce = readU32BE(packed, pos); pos += 4
     const rc = packed[pos++]
     const ac = packed[pos++]
@@ -223,7 +223,7 @@ export function unpackActions(packed: Uint8Array): ActionForPacking[] {
     for (let j = 0; j < ac; j++) { amounts.push(readU64BE(packed, pos)); pos += 8 }
     const tl = (packed[pos] << 8) | packed[pos + 1]; pos += 2
     const text = bytesToHex(packed.slice(pos, pos + tl)); pos += tl
-    actions.push({ actionType, senderId, receiverId, receiverCawonce, clientId, cawonce, recipients, amounts, text })
+    actions.push({ actionType, senderId, receiverId, receiverCawonce, networkId, cawonce, recipients, amounts, text })
   }
   return actions
 }

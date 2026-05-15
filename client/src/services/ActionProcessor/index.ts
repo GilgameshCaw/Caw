@@ -142,10 +142,10 @@ export const actionProcessorService: Service = {
  */
 async function handleRawEvent(raw: { id: number, chainId: number, data: any, blockNumber: bigint, logIndex: number, transactionHash: string, topics: any, createdAt: Date }) {
   const list = Array.isArray(raw.data) ? raw.data : [raw.data];
-  // ActionsProcessed event signature: (uint32 indexed clientId, uint32
+  // ActionsProcessed event signature: (uint32 indexed networkId, uint32
   // indexed validatorId, uint16 actionCount, bytes32 batchHash). We only
   // need validatorId for ledger attribution (validator tip recipient).
-  // topics[0] = sig hash, topics[1] = clientId, topics[2] = validatorId.
+  // topics[0] = sig hash, topics[1] = networkId, topics[2] = validatorId.
   const topics = Array.isArray(raw.topics) ? raw.topics : []
   let validatorId = 0
   if (topics[2]) {

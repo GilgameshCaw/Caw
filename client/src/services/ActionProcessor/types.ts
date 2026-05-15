@@ -8,9 +8,9 @@ export interface RawAction {
   senderId: number
   receiverId?: number
   receiverCawonce?: number
-  // Submitting client. Used by domainProcessor to gate new-content rows
+  // Submitting Network. Used by domainProcessor to gate new-content rows
   // (CAW/RECAW) to OUR_CLIENT_ID; everything else processes regardless.
-  clientId?: number
+  networkId?: number
   cawonce: number
   text: string
   recipients?: number[]

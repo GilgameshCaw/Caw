@@ -7,6 +7,7 @@ import { convertBigIntsToStrings } from "./utils";
 import { CAW_ACTIONS_ADDRESS } from '../../abi/addresses'
 import { prisma } from '../../prismaClient'
 import { getL2WsRpcUrl } from '../../utils/rpcProvider'
+import { getNetworkId } from '../../utils/networkId'
 
 const Config = z.object({
   chainId:         z.number().int().positive(),
@@ -45,7 +46,7 @@ export const rawEventsGathererService: Service = {
     //
     // Note: Number(undefined) is NaN, and NaN ?? x does NOT fall through
     // because NaN isn't nullish. Coerce with explicit env.CLIENT_ID check.
-    const envClientIdRaw = process.env.CLIENT_ID
+    const envClientIdRaw = getNetworkId()
     const envClientId = envClientIdRaw ? Number(envClientIdRaw) : undefined
     const clientId = cfg.clientId ?? (envClientId && Number.isFinite(envClientId) ? envClientId : undefined)
     if (clientId === undefined || !Number.isFinite(clientId) || clientId <= 0) {
@@ -164,9 +165,9 @@ export const rawEventsGathererService: Service = {
       //      backfill/repair or short-circuiting history.
       //   2. Client.creationBlock in DB — canonical "this client was created
       //      at block N" for the client we're indexing. Populated from
-      //      the CawClientManager's on-chain CawClient struct once the
+      //      the CawNetworkManager's on-chain CawNetwork struct once the
       //      struct carries that field (pending a redeploy). For now
-      //      seeded manually via `npx tsx scripts/set-client-creation-block.ts`.
+      //      seeded manually via `npx tsx scripts/seed-network-creation-block.ts`.
       //   3. undefined — listenForRawEvents falls back to "current head",
       //      which is the today-behavior for an unknown client.
       //

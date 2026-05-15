@@ -2,7 +2,7 @@
  * Deployment manifest for CAW Protocol contracts.
  *
  * MANAGED BY: solidity/scripts/deploy.js (after every successful deploy run).
- * READ BY: cli/src/steps/* (resolves the operator's chosen client to the
+ * READ BY: cli/src/steps/* (resolves the operator's chosen network to the
  *          right per-chain addresses, then writes addresses.ts).
  *
  * STRUCTURE:
@@ -11,9 +11,9 @@
  *   * env       — 'testnet' | 'mainnet' | 'dev'
  *   * chainKey  — 'L1' | 'L2' | 'L2b' | future 'L2c'...
  *
- * One client = one storage chain. The CLI looks up the operator's clientId
- * on the L1 CawClientManager (getStorageChainEid), maps the eid back to a
- * chainKey, and pulls THIS client's CawActions / CawProfileL2 / etc. from
+ * One Network = one storage chain. The CLI looks up the operator's networkId
+ * on the L1 CawNetworkManager (getStorageChainEid), maps the eid back to a
+ * chainKey, and pulls THIS Network's CawActions / CawProfileL2 / etc. from
  * the matching block. addresses.ts ends up with singular constants — the
  * call-sites in the rest of the codebase don't have to be multi-chain aware.
  *
@@ -24,11 +24,11 @@
  *   - CawChallengeRelay (storage chain's relay for fraud proofs)
  *
  * L1-only contracts:
- *   - CawProfile, CawClientManager, CawProfileMinter, CawProfileQuoter,
+ *   - CawProfile, CawNetworkManager, CawProfileMinter, CawProfileQuoter,
  *     CawProfileMarketplace, CawProfileURI, MintableCaw, CawProfileL2_L1,
  *     CawActions_L1
  *     (L1 hosts a co-deployed CawProfileL2 + CawActions in bypassLZ mode so
- *     a client can pick L1 as their storage chain. L1 doesn't get its own
+ *     a Network can pick L1 as their storage chain. L1 doesn't get its own
  *     archive/relay — see L2_CHAIN_KEYS comment in deploy.js.)
  *
  * After deploy: deploy.js rewrites just the env block it ran against.
@@ -43,7 +43,7 @@ export interface ChainContracts {
   MintableCaw?: `0x${string}`
   CawProfile?: `0x${string}`
   CawProfileL2?: `0x${string}`     // On L1 this is the bypassLZ co-deployed mirror
-  CawClientManager?: `0x${string}`
+  CawNetworkManager?: `0x${string}`
   CawProfileMinter?: `0x${string}`
   CawProfileQuoter?: `0x${string}`
   CawProfileMarketplace?: `0x${string}`
@@ -67,7 +67,7 @@ export const deployments: Deployments = {
       MintableCaw: '0x56817dc696448135203C0556f702c6a953260411',
       CawProfile: '0x9fcbb3d6880cD3293F1a731Fe6c958a6621a74bF',
       CawProfileL2: '0xa99936edD087cE11824232ebD83B036C90163688',
-      CawClientManager: '0xA5C515D35C291110090b6edc4278acdEf1424C7a',
+      CawNetworkManager: '0xA5C515D35C291110090b6edc4278acdEf1424C7a',
       CawProfileMinter: '0x8D65D141a60b1E1136Be62604783AADe8E7290D9',
       CawProfileQuoter: '0x3100B1e890B7a4F3dA0B6Be0388A9b2aFF9c8e79',
       CawProfileMarketplace: '0x6404d1D3D878407a0977d99C832453f235DA67C3',
@@ -115,7 +115,7 @@ export function getChainContracts(env: Env, chainKey: ChainKey): ChainContracts 
 
 /**
  * LZ endpoint IDs for each (env, chainKey) pair. Same source-of-truth shape
- * as the addresses above so the CLI can map a client's storageChainEid back
+ * as the addresses above so the CLI can map a Network's storageChainEid back
  * to the right chainKey without duplicating the table elsewhere.
  *
  * Kept in sync by hand with solidity/scripts/deploy.js CHAINS map. If you
@@ -142,7 +142,7 @@ export const lzEids: Record<Env, Partial<Record<ChainKey, number>>> = {
 
 /**
  * Reverse lookup: storageChainEid → chainKey for a given env. Used by the
- * CLI to translate a client's on-chain storageChainEid into the abstract
+ * CLI to translate a Network's on-chain storageChainEid into the abstract
  * chainKey it needs to read deployments[env][chainKey] from.
  */
 export function chainKeyForEid(env: Env, eid: number): ChainKey | null {

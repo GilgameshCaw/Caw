@@ -5,19 +5,19 @@ import net from 'net'
 import os from 'os'
 import path from 'path'
 import { section, dim, tipBlock, brand, success, warn } from '../utils/ui.js'
-import { createClientFlow, lookupClientStorageChain } from './clientCreator.js'
-import { pickClientAndApi } from './clientAndApiPicker.js'
+import { createNetworkFlow, lookupNetworkStorageChain } from './clientCreator.js'
+import { pickNetworkAndApi } from './clientAndApiPicker.js'
 
 /**
- * Phase 1 of infra collection: domain + admin password + client selection
+ * Phase 1 of infra collection: domain + admin password + Network selection
  * + WalletConnect ID. These run BEFORE the L2 RPC step so the L2 prompt
  * can name the actual storage chain (Base Sepolia / Arbitrum Sepolia / …)
- * once we know which client the operator picked.
+ * once we know which Network the operator picked.
  *
  * Returns:
  *   • domain, adminPassword          — for nodes that serve HTTP
- *   • clientId, storageChain         — { key, label, eid } or null when
- *                                       lookup fails / public client
+ *   • networkId, storageChain        — { key, label, eid } or null when
+ *                                       lookup fails / public Network
  *   • walletConnectProjectId
  *
  * The remaining infra config (DB / Redis / ES / docker mode / API port)
@@ -91,78 +91,78 @@ export async function collectInfraEarly(nodeType, ctx = {}) {
     }
   }
 
-  // Client ID. Each clientId on-chain scopes a separate sub-network: only
-  // posts attributed to that client are visible to its users, and the client
+  // Network ID. Each networkId on-chain scopes a separate sub-network: only
+  // posts attributed to that Network are visible to its users, and the Network
   // owner controls the fees (mint, auth, deposit, withdraw) charged on-chain.
-  // Most operators want to join the public network (clientId 1). Anyone with
-  // ETH on L1 can create a new client via CawClientManager.createClient —
-  // we offer that as a sub-flow when the validator key has the funds.
-  let clientId = 1
+  // Most operators want to join the public CAW Network (networkId 1). Anyone
+  // with ETH on L1 can create a new Network via CawNetworkManager.createNetwork
+  // — we offer that as a sub-flow when the validator key has the funds.
+  let networkId = 1
   let storageChain = null // { key, label, eid } once known
 
   if (['full', 'frontend-api'].includes(nodeType)) {
-    section('Client ID')
+    section('Network ID')
     // --env preload: skip the entire public/existing/create picker when we
-    // have a clientId already. Operators almost never want to switch the
-    // node's clientId mid-install — that's a fresh-install operation.
-    if (process.env.CAW_CLIENT_ID && Number(process.env.CAW_CLIENT_ID) > 0) {
-      clientId = Number(process.env.CAW_CLIENT_ID)
-      console.log(dim(`  Using clientId ${clientId} from --env preload.`))
+    // have a networkId already. Operators almost never want to switch the
+    // node's networkId mid-install — that's a fresh-install operation.
+    if (process.env.CAW_NETWORK_ID && Number(process.env.CAW_NETWORK_ID) > 0) {
+      networkId = Number(process.env.CAW_NETWORK_ID)
+      console.log(dim(`  Using networkId ${networkId} from --env preload.`))
       // Look up the storage chain on-chain so the next step (L2 RPC)
       // can name it. Same lookup the regular path does later.
       if (ctx.l1RpcUrl) {
-        storageChain = await lookupClientStorageChain(clientId, ctx.l1RpcUrl, ctx.network)
+        storageChain = await lookupNetworkStorageChain(networkId, ctx.l1RpcUrl, ctx.network)
         if (storageChain) {
-          console.log(dim(`  Client #${clientId} stores on ${storageChain.label}.`))
+          console.log(dim(`  Network #${networkId} stores on ${storageChain.label}.`))
         }
       }
     } else {
     tipBlock([
-      'Each CAW frontend is registered on-chain under a clientId.',
+      'Each CAW frontend is registered on-chain under a networkId.',
       '',
       `${brand('What does it do?')}`,
       '  • Scopes a sub-network: users on your frontend see posts attributed',
-      '    to your clientId. Different clientIds form independent networks.',
-      '  • The client owner sets the fees (mint / auth / deposit / withdraw)',
-      '    charged on-chain for actions submitted under that client.',
+      '    to your networkId. Different networkIds form independent sub-networks.',
+      '  • The Network owner sets the fees (mint / auth / deposit / withdraw)',
+      '    charged on-chain for actions submitted under that Network.',
       '  • The owner picks the storage chain and replication chains.',
     ])
 
     const choices = [
-      { value: 'public', name: `${brand('Use clientId 1')} ${dim('(public CAW network — recommended)')}` },
-      { value: 'existing', name: 'I already have a clientId' },
+      { value: 'public', name: `${brand('Use networkId 1')} ${dim('(public CAW Network — recommended)')}` },
+      { value: 'existing', name: 'I already have a networkId' },
     ]
     if (ctx.l1RpcUrl && ctx.validatorPrivateKey) {
       choices.push({
         value: 'create',
-        name: `${brand('Create a new client with my validator address')} ${dim('(needs ETH on L1)')}`,
+        name: `${brand('Create a new Network with my validator address')} ${dim('(needs ETH on L1)')}`,
       })
     }
 
-    const { clientChoice } = await inquirer.prompt([
-      { type: 'list', name: 'clientChoice', message: 'Client setup:', choices, default: 'public' },
+    const { networkChoice } = await inquirer.prompt([
+      { type: 'list', name: 'networkChoice', message: 'Network setup:', choices, default: 'public' },
     ])
 
-    if (clientChoice === 'public') {
-      clientId = 1
-    } else if (clientChoice === 'existing') {
-      const { clientIdInput } = await inquirer.prompt([
+    if (networkChoice === 'public') {
+      networkId = 1
+    } else if (networkChoice === 'existing') {
+      const { networkIdInput } = await inquirer.prompt([
         {
           type: 'number',
-          name: 'clientIdInput',
-          message: 'Client ID:',
+          name: 'networkIdInput',
+          message: 'Network ID:',
           validate: (input) => input > 0 ? true : 'Must be a positive number',
         },
       ])
-      clientId = clientIdInput
+      networkId = networkIdInput
     } else {
-      const created = await createClientFlow({
+      const created = await createNetworkFlow({
         l1RpcUrl: ctx.l1RpcUrl,
         validatorPrivateKey: ctx.validatorPrivateKey,
         network: ctx.network,
       })
       if (created && typeof created === 'object') {
-        clientId = created.clientId
+        networkId = created.networkId
         storageChain = {
           key: created.storageChainKey,
           label: created.storageChainLabel,
@@ -171,30 +171,30 @@ export async function collectInfraEarly(nodeType, ctx = {}) {
       } else {
         // Operator backed out or tx failed — fall back to existing-id prompt
         // rather than crashing the whole install.
-        console.log(dim('  Falling back to existing-clientId prompt.'))
-        const { clientIdInput } = await inquirer.prompt([
+        console.log(dim('  Falling back to existing-networkId prompt.'))
+        const { networkIdInput } = await inquirer.prompt([
           {
             type: 'number',
-            name: 'clientIdInput',
-            message: 'Client ID:',
+            name: 'networkIdInput',
+            message: 'Network ID:',
             default: 1,
             validate: (input) => input > 0 ? true : 'Must be a positive number',
           },
         ])
-        clientId = clientIdInput
+        networkId = networkIdInput
       }
     }
 
-    // For the public + existing-clientId branches we don't yet know the
+    // For the public + existing-networkId branches we don't yet know the
     // storage chain. Look it up on-chain so the next step (L2 RPC prompt)
     // can name the actual chain. Lookup is best-effort — if it fails we'll
     // fall back to a generic L2 label.
     if (!storageChain && ctx.l1RpcUrl) {
-      storageChain = await lookupClientStorageChain(clientId, ctx.l1RpcUrl, ctx.network)
+      storageChain = await lookupNetworkStorageChain(networkId, ctx.l1RpcUrl, ctx.network)
       if (storageChain) {
-        console.log(dim(`  Client #${clientId} stores on ${storageChain.label}.`))
+        console.log(dim(`  Network #${networkId} stores on ${storageChain.label}.`))
       } else {
-        console.log(dim(`  Couldn't read client #${clientId}'s storage chain on-chain — L2 prompt will use a generic label.`))
+        console.log(dim(`  Couldn't read Network #${networkId}'s storage chain on-chain — L2 prompt will use a generic label.`))
       }
     }
     } // close --env preload else
@@ -233,11 +233,11 @@ export async function collectInfraEarly(nodeType, ctx = {}) {
   // is a no-op at runtime. Auto-installs SigNoz on this box if the
   // operator picks that option; otherwise asks for an existing URL.
   const { endpoint: signozEndpoint, serviceName: otelServiceName } =
-    await collectSignozEndpoint(nodeType, { domain, clientId })
+    await collectSignozEndpoint(nodeType, { domain, networkId })
 
   result.domain = domain
   result.adminPassword = adminPassword
-  result.clientId = clientId
+  result.networkId = networkId
   result.storageChain = storageChain
   result.walletConnectProjectId = walletConnectProjectId
   result.giphyApiKey = giphyApiKey
@@ -369,14 +369,14 @@ async function collectFrontendOnlyConfig(ctx = {}) {
 
   tipBlock([
     'A frontend-only node serves the React app as a static site.',
-    'All data comes from an external API hosted by another client.',
+    'All data comes from an external API hosted by another Network.',
   ])
 
-  // Try to pull the client + instance list from the on-chain registry
+  // Try to pull the Network + instance list from the on-chain registry
   // first. Falls through to the free-text prompt below if the picker
-  // returns null (RPC unreachable, no clients yet, no instances for the
-  // chosen client, or operator picks "Other").
-  let apiUrl = await pickClientAndApi({ network: ctx.network })
+  // returns null (RPC unreachable, no Networks yet, no instances for the
+  // chosen Network, or operator picks "Other").
+  let apiUrl = await pickNetworkAndApi({ network: ctx.network })
 
   if (!apiUrl) {
     const answer = await inquirer.prompt([
@@ -688,9 +688,9 @@ async function collectInstanceRegistration(nodeType, domain) {
   tipBlock([
     `${brand('What is this?')}`,
     'Each CAW instance can register its API URL on-chain via',
-    `${brand('CawClientManager.registerInstance')}. Other instances read the registry`,
+    `${brand('CawNetworkManager.registerInstance')}. Other instances read the registry`,
     'to route DMs and mentions to your users when they see activity from',
-    'someone authenticated against your client.',
+    'someone authenticated against your Network.',
     '',
     `${brand('What does it cost?')}`,
     '  • One L1 tx (one-time, only if you change your URL or validator).',
@@ -917,7 +917,7 @@ function deriveServiceName(config) {
   const fromEnv = process.env.CAW_OTEL_SERVICE_NAME
   if (fromEnv) return fromEnv
   if (config.domain) return `caw-${String(config.domain).replace(/[^a-zA-Z0-9-]/g, '-')}`
-  if (config.clientId) return `caw-client-${config.clientId}`
+  if (config.networkId) return `caw-network-${config.networkId}`
   return 'caw-backend'
 }
 
@@ -1024,7 +1024,7 @@ async function collectSignozEndpoint(nodeType, config) {
     '',
     'One SigNoz collector can serve many CAW nodes — multiple instances on one',
     'box should share a single install. They show up as separate services in',
-    'the UI via OTEL_SERVICE_NAME (auto-derived from your domain / clientId).',
+    'the UI via OTEL_SERVICE_NAME (auto-derived from your domain / networkId).',
   ])
 
   let docker = detectDocker()

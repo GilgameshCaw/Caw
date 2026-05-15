@@ -14,7 +14,7 @@ export async function collectNetworkAndMode(nodeType) {
   section('Network')
   // --env preload: skip the prompt entirely when CAW_NETWORK is set. The
   // network is locked in by every downstream answer (RPC URLs, contract
-  // addresses, validator's clientId), so re-asking on a re-run is just
+  // addresses, validator's networkId), so re-asking on a re-run is just
   // friction.
   if (process.env.CAW_NETWORK === 'testnet' || process.env.CAW_NETWORK === 'mainnet') {
     const network = process.env.CAW_NETWORK
@@ -94,13 +94,13 @@ export async function collectNetworkAndMode(nodeType) {
 
 /**
  * Human-readable chain labels for prompts. The L1 is fixed (Ethereum) but
- * the L2 is whichever chain the operator's target client stores on (Base,
+ * the L2 is whichever chain the operator's target Network stores on (Base,
  * Arbitrum, …) — we don't know which until later, so the L2 label stays
  * generic. Keep in lockstep with NETWORKS in generate.js.
  */
 export function chainLabels(network) {
   if (network === 'mainnet') {
-    return { l1: 'L1 (Ethereum Mainnet)', l2: 'L2 (your client\'s storage chain)' }
+    return { l1: 'L1 (Ethereum Mainnet)', l2: 'L2 (your Network\'s storage chain)' }
   }
-  return { l1: 'L1 (Ethereum Sepolia)', l2: 'L2 Sepolia (your client\'s storage chain)' }
+  return { l1: 'L1 (Ethereum Sepolia)', l2: 'L2 Sepolia (your Network\'s storage chain)' }
 }

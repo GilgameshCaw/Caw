@@ -34,6 +34,7 @@ import {
   addToBalance,
 } from './contractMath'
 import { getCawProfileL2 as _getCawProfileL2Real } from './cawProfileL2'
+import { getNetworkId } from '../../utils/networkId'
 
 // Tests can override this to avoid real RPC calls.
 // eslint-disable-next-line prefer-const
@@ -46,10 +47,10 @@ function getCawProfileL2(): { rewardMultiplier: (...args: any[]) => Promise<any>
 // One client per process — the snapshotter reads CLIENT_ID from env at
 // boot and persists state under that key.
 const CAW_CLIENT_ID = (() => {
-  const raw = process.env.CLIENT_ID
+  const raw = getNetworkId()
   const n = raw ? Number(raw) : NaN
   if (!Number.isFinite(n) || n <= 0) {
-    throw new Error('StakeLedger: CLIENT_ID is required (set it in client/.env)')
+    throw new Error('StakeLedger: NETWORK_ID is required (set it in client/.env)')
   }
   return n
 })()

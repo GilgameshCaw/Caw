@@ -8,7 +8,7 @@
 //   npx tsx scripts/deactivate-instance.ts <instanceId> [<instanceId> ...]
 //
 // Reads RPC + owner key from .env (VALIDATOR_PRIVATE_KEY, L1_RPC_URL_HTTP
-// or L1_RPC_URL — CawClientManager lives on L1). Owner check is enforced
+// or L1_RPC_URL — CawNetworkManager lives on L1). Owner check is enforced
 // on chain; the script will fail loudly if the validator key isn't the
 // instance owner.
 //
@@ -16,8 +16,8 @@
 // fetch — InstanceRegistryService rebuilds its cache from the chain.
 import 'dotenv/config'
 import { ethers } from 'ethers'
-import { CLIENT_MANAGER_ADDRESS } from '../src/abi/addresses'
-import { cawClientManagerAbi } from '../src/abi/generated'
+import { NETWORK_MANAGER_ADDRESS } from '../src/abi/addresses'
+import { cawNetworkManagerAbi } from '../src/abi/generated'
 import { makeJsonRpcProvider, getL1HttpRpcUrl } from '../src/utils/rpcProvider'
 
 async function main() {
@@ -42,9 +42,9 @@ async function main() {
 
   const provider = makeJsonRpcProvider(rpc)
   const wallet = new ethers.Wallet(pk, provider)
-  const ccm = new ethers.Contract(CLIENT_MANAGER_ADDRESS, cawClientManagerAbi as any, wallet)
+  const ccm = new ethers.Contract(NETWORK_MANAGER_ADDRESS, cawNetworkManagerAbi as any, wallet)
 
-  console.log(`CawClientManager: ${CLIENT_MANAGER_ADDRESS}`)
+  console.log(`CawNetworkManager: ${NETWORK_MANAGER_ADDRESS}`)
   console.log(`Caller:           ${wallet.address}`)
   console.log()
 

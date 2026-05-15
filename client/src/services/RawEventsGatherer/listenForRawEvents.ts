@@ -77,7 +77,7 @@ export type RawEventInput = {
 const CONTRACT_ABI = [
   // ActionsProcessed is now a calldata commitment. The packedActions payload
   // lives in the originating tx; fetchPackedActionsFromTx() pulls it.
-  'event ActionsProcessed(uint32 indexed clientId, uint32 indexed validatorId, uint16 actionCount, bytes32 batchHash)'
+  'event ActionsProcessed(uint32 indexed networkId, uint32 indexed validatorId, uint16 actionCount, bytes32 batchHash)'
 ]
 
 
@@ -204,7 +204,7 @@ export default async function listenForRawEvents(
           senderId:        a.senderId,
           receiverId:      a.receiverId,
           receiverCawonce: a.receiverCawonce,
-          clientId:        a.clientId,
+          networkId:       a.networkId,
           cawonce:         a.cawonce,
           recipients:      a.recipients,
           amounts:         a.amounts,
@@ -300,10 +300,10 @@ export default async function listenForRawEvents(
       wsProvider = makeWebSocketProvider(config.rpcUrl, config.chainId, getL2WsSecret())
       wsContract = new Contract(CAW_ACTIONS_ADDRESS, CONTRACT_ABI, wsProvider)
 
-      // Signature: ActionsProcessed(uint32 indexed clientId, uint32 indexed validatorId, uint16 actionCount, bytes32 batchHash)
+      // Signature: ActionsProcessed(uint32 indexed networkId, uint32 indexed validatorId, uint16 actionCount, bytes32 batchHash)
       // We don't need the topic args here — we always go to tx calldata for the bytes.
       wsContract.on('ActionsProcessed', async (
-        _clientId: number, _validatorId: number, _actionCount: number, _batchHash: string,
+        _networkId: number, _validatorId: number, _actionCount: number, _batchHash: string,
         ev: ContractEventPayload,
       ) => {
         console.log("[RawEventsGatherer] Raw event received via WebSocket", ev)
@@ -327,7 +327,7 @@ export default async function listenForRawEvents(
               senderId:        a.senderId,
               receiverId:      a.receiverId,
               receiverCawonce: a.receiverCawonce,
-              clientId:        a.clientId,
+              networkId:       a.networkId,
               cawonce:         a.cawonce,
               recipients:      a.recipients,
               amounts:         a.amounts,

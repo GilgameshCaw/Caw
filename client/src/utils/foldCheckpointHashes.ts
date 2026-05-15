@@ -3,7 +3,7 @@ import { bytesToHex, getPackedActionSlices } from './packActions'
 
 /**
  * Given a submitter's packedActions + r[] and the on-chain entry hash (the
- * clientCurrentHash at checkpoint start-1), roll through the same hash-chain
+ * networkCurrentHash at checkpoint start-1), roll through the same hash-chain
  * the L2 contract computes:
  *
  *   actionHash       = keccak256(packedActionSlice)
@@ -12,7 +12,7 @@ import { bytesToHex, getPackedActionSlices } from './packActions'
  *
  * This lets an off-chain monitor reconstruct what the submitter's *claimed*
  * checkpoint hashes must be, independent of what the honest L2 actions
- * would produce. Comparing those to L2's clientHashAtCheckpoint is how
+ * would produce. Comparing those to L2's networkHashAtCheckpoint is how
  * Mode B fraud (submitter invented actions and signed them into their own
  * consistent root) is detected.
  *

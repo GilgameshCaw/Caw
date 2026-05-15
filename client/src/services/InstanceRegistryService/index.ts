@@ -12,7 +12,7 @@
 //      from the cache instead of re-scanning chain on every request.
 //
 // The on-chain registry stores apiUrl + validatorAddress in event args
-// only (CawClientManager.sol comment line 42: "Details live in events to
+// only (CawNetworkManager.sol comment line 42: "Details live in events to
 // minimize L1 gas costs"). So peer discovery means scanning logs, which
 // on free RPCs is bounded to ~50K blocks per request — chunked via
 // utils/chunkedLogs.
@@ -24,9 +24,10 @@ import { Contract, AbstractProvider, Interface } from 'ethers'
 import { makeJsonRpcProvider, getL1HttpRpcUrl } from '../../utils/rpcProvider'
 import { getValidatorSigner, type ValidatorSigner } from '../../utils/signer'
 import { scanLogsBackward } from '../../utils/chunkedLogs'
-import { cawClientManagerAbi } from '../../abi/generated'
-import { CLIENT_MANAGER_ADDRESS } from '../../abi/addresses'
+import { cawNetworkManagerAbi } from '../../abi/generated'
+import { NETWORK_MANAGER_ADDRESS } from '../../abi/addresses'
 import { isSafePublicUrl } from '../../api/util/ssrfGuard'
+import { getNetworkId } from '../../utils/networkId'
 
 async function isAcceptablePeerApiUrl(rawUrl: string): Promise<boolean> {
   if (typeof rawUrl !== 'string' || rawUrl.length === 0) return false
@@ -177,7 +178,7 @@ async function refreshPeers(
   clientManagerAddress: string,
   clientId: number,
 ): Promise<{ added: PeerInstance[]; changed: PeerInstance[] }> {
-  const iface = new Interface(cawClientManagerAbi)
+  const iface = new Interface(cawNetworkManagerAbi)
   const regSig = iface.getEvent('InstanceRegistered')!.topicHash
   const updSig = iface.getEvent('InstanceUpdated')!.topicHash
   const deactSig = iface.getEvent('InstanceDeactivated')!.topicHash
@@ -188,7 +189,7 @@ async function refreshPeers(
   const isCold = lastScannedBlock < 0
   // Use OR-of-topic-hashes to coalesce four event types into a single
   // getLogs call per range. The contract emits all four from
-  // CLIENT_MANAGER_ADDRESS, so a single (address, topic[0] in {…})
+  // NETWORK_MANAGER_ADDRESS, so a single (address, topic[0] in {…})
   // query returns everything we care about. Drops 4 RPC calls per
   // refresh to 1 (plus chunked-walker chunks).
   const allSigs = [regSig, updSig, deactSig, actSig]
@@ -307,7 +308,7 @@ export const instanceRegistryService: Service = {
   start(rawCfg, _ctx) {
     const cfg = InstanceRegistryConfig.parse(rawCfg)
     const l1RpcUrl = getL1HttpRpcUrl() || cfg.l1RpcUrl
-    const clientId = Number(process.env.CLIENT_ID || cfg.clientId)
+    const clientId = Number(getNetworkId() || cfg.clientId)
     const apiUrl = process.env.INSTANCE_API_URL || cfg.apiUrl
     const pollIntervalMs = cfg.pollIntervalMs ?? 60_000
 
@@ -329,13 +330,13 @@ export const instanceRegistryService: Service = {
     let stopped = false
 
     const clientManager = signer
-      ? new Contract(CLIENT_MANAGER_ADDRESS, cawClientManagerAbi, signer.asEthersSigner())
-      : new Contract(CLIENT_MANAGER_ADDRESS, cawClientManagerAbi, provider)
+      ? new Contract(NETWORK_MANAGER_ADDRESS, cawNetworkManagerAbi, signer.asEthersSigner())
+      : new Contract(NETWORK_MANAGER_ADDRESS, cawNetworkManagerAbi, provider)
 
     /** First refresh: populates the cache. Subsequent refreshes log diffs. */
     async function refreshAndLog() {
       try {
-        const { added, changed } = await refreshPeers(provider, CLIENT_MANAGER_ADDRESS, clientId)
+        const { added, changed } = await refreshPeers(provider, NETWORK_MANAGER_ADDRESS, clientId)
         for (const p of added) {
           console.log(
             `[InstanceRegistry] Peer discovered — instance #${p.instanceId} ` +

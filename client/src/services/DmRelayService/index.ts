@@ -11,7 +11,7 @@
 //     ethers eth-personal-sign prefix — avoids the "this looks like a
 //     wallet message to a user" surface).
 //   - Receiver verifies against this node's registered validatorAddress
-//     in CawClientManager, looked up via the sourceInstanceId field
+//     in CawNetworkManager, looked up via the sourceInstanceId field
 //     and the receiver's instanceRegistryService.getPeers cache.
 //
 // Peers come from instanceRegistryService.getPeers — same cache the
@@ -26,12 +26,13 @@ import { getValidatorSigner, type ValidatorSigner } from '../../utils/signer'
 import type { RelayEnvelope } from '../../api/routes/dm-relay'
 import { canonicalizeEnvelope } from '../../api/routes/dm-relay'
 import crypto from 'crypto'
+import { getNetworkId } from '../../utils/networkId'
 
 function requireClientId(): number {
-  const raw = process.env.CLIENT_ID
+  const raw = getNetworkId()
   const n = raw ? Number(raw) : NaN
   if (!Number.isFinite(n) || n <= 0) {
-    throw new Error('DmRelayService: CLIENT_ID is required (set it in client/.env)')
+    throw new Error('DmRelayService: NETWORK_ID is required (set it in client/.env)')
   }
   return n
 }

@@ -1,10 +1,10 @@
 // Frontend-only "External API URL" picker that pulls live state from the
-// L1 CawClientManager contract:
+// L1 CawNetworkManager contract:
 //
-//   1. Read every Client (id, name) directly via getClient(id) for
-//      id in [1..nextClientId-1] — no event scan needed.
-//   2. For the chosen clientId, scan InstanceRegistered + InstanceUpdated
-//      events filtered to that client. apiUrl lives in events (the
+//   1. Read every Network (id, name) directly via getNetwork(id) for
+//      id in [1..nextNetworkId-1] — no event scan needed.
+//   2. For the chosen networkId, scan InstanceRegistered + InstanceUpdated
+//      events filtered to that Network. apiUrl lives in events (the
 //      contract intentionally doesn't store strings on-chain to save gas),
 //      so an event scan is the only path here.
 //   3. Present each registered apiUrl as a list choice + an "Other (type
@@ -12,7 +12,7 @@
 //      that hasn't broadcast yet, etc).
 //
 // Read-only — no validator key needed, no fees paid. Falls back gracefully
-// to a free-text prompt if the L1 RPC is unreachable, the client list is
+// to a free-text prompt if the L1 RPC is unreachable, the Network list is
 // empty, or anything else goes sideways. The fallback is what we did
 // before this step existed, so the worst case is "the new step adds zero
 // friction."
@@ -25,12 +25,12 @@ import { addr } from '../addresses.js'
 // Minimal ABI — just what we need. Saves importing the full generated.ts
 // (the CLI doesn't currently import any client-side ABIs and starting
 // would add a real coupling).
-const CLIENT_MANAGER_ABI = [
-  'function nextClientId() view returns (uint32)',
+const NETWORK_MANAGER_ABI = [
+  'function nextNetworkId() view returns (uint32)',
   'function nextInstanceId() view returns (uint32)',
-  'function getClient(uint32 clientId) view returns (tuple(uint32 id, uint32 storageChainEid, string name, address ownerAddress, address feeAddress, uint256 mintFee, uint256 authFee, uint256 depositFee, uint256 withdrawFee))',
+  'function getNetwork(uint32 networkId) view returns (tuple(uint32 id, uint32 storageChainEid, string name, address ownerAddress, address feeAddress, uint256 mintFee, uint256 authFee, uint256 depositFee, uint256 withdrawFee))',
   'function instanceActive(uint32) view returns (bool)',
-  'event InstanceRegistered(uint32 indexed instanceId, uint32 indexed clientId, address indexed owner, string apiUrl, address validatorAddress)',
+  'event InstanceRegistered(uint32 indexed instanceId, uint32 indexed networkId, address indexed owner, string apiUrl, address validatorAddress)',
   'event InstanceUpdated(uint32 indexed instanceId, string apiUrl, address validatorAddress)',
 ]
 
@@ -68,28 +68,28 @@ async function pickWorkingRpc(urls, perAttemptTimeoutMs = 4000) {
 }
 
 /**
- * Pull the client roster directly from on-chain state.
+ * Pull the Network roster directly from on-chain state.
  * Returns [{ id, name, ownerAddress }, …] sorted by id.
  */
-async function loadClients(provider, clientManagerAddress) {
-  const cm = new Contract(clientManagerAddress, CLIENT_MANAGER_ABI, provider)
-  const nextId = Number(await cm.nextClientId())
-  if (nextId <= 1) return [] // no clients exist
+async function loadNetworks(provider, networkManagerAddress) {
+  const cm = new Contract(networkManagerAddress, NETWORK_MANAGER_ABI, provider)
+  const nextId = Number(await cm.nextNetworkId())
+  if (nextId <= 1) return [] // no Networks exist
 
-  const clients = []
+  const networks = []
   // Sequential reads so we don't blow up a public RPC's per-IP rate limit.
-  // nextClientId is realistically <50 today; this is fine.
+  // nextNetworkId is realistically <50 today; this is fine.
   for (let id = 1; id < nextId; id++) {
     try {
-      const c = await cm.getClient(id)
-      // Client structs with ownerAddress=0x0 are deleted/never-existed
+      const c = await cm.getNetwork(id)
+      // Network structs with ownerAddress=0x0 are deleted/never-existed
       // (defensive — current contract doesn't actually delete them).
       if (c.ownerAddress && c.ownerAddress !== '0x0000000000000000000000000000000000000000') {
-        clients.push({ id, name: c.name, ownerAddress: c.ownerAddress })
+        networks.push({ id, name: c.name, ownerAddress: c.ownerAddress })
       }
     } catch { /* skip individual failures, keep going */ }
   }
-  return clients
+  return networks
 }
 
 /**
@@ -137,22 +137,22 @@ async function chunkedQueryLogs(provider, addr, topics, opts = {}) {
 }
 
 /**
- * Pull all registered instances for a given clientId by scanning events
+ * Pull all registered instances for a given networkId by scanning events
  * (apiUrl isn't in contract storage). Applies InstanceUpdated overrides
  * so each instanceId maps to its CURRENT apiUrl, then filters out
  * deactivated instances via the on-chain instanceActive() flag.
  */
-async function loadInstances(provider, clientManagerAddress, clientId) {
-  const cm = new Contract(clientManagerAddress, CLIENT_MANAGER_ABI, provider)
+async function loadInstances(provider, networkManagerAddress, networkId) {
+  const cm = new Contract(networkManagerAddress, NETWORK_MANAGER_ABI, provider)
   const iface = cm.interface
 
-  // Topic-filter on (sig, indexed instanceId=ANY, indexed clientId).
-  // ethers' filters.InstanceRegistered(null, clientId) builds the right
+  // Topic-filter on (sig, indexed instanceId=ANY, indexed networkId).
+  // ethers' filters.InstanceRegistered(null, networkId) builds the right
   // shape, but we need the topics directly for getLogs.
   const regSigTopic = iface.getEvent('InstanceRegistered').topicHash
-  const clientIdTopic = '0x' + clientId.toString(16).padStart(64, '0')
-  const regLogs = await chunkedQueryLogs(provider, clientManagerAddress, [
-    regSigTopic, null, clientIdTopic,
+  const networkIdTopic = '0x' + networkId.toString(16).padStart(64, '0')
+  const regLogs = await chunkedQueryLogs(provider, networkManagerAddress, [
+    regSigTopic, null, networkIdTopic,
   ])
 
   const byInstanceId = new Map()
@@ -169,11 +169,11 @@ async function loadInstances(provider, clientManagerAddress, clientId) {
   }
 
   // Apply InstanceUpdated to refresh apiUrl / validatorAddress. The
-  // updated event is NOT clientId-indexed — pull all and filter by
+  // updated event is NOT networkId-indexed — pull all and filter by
   // instanceId membership.
   if (byInstanceId.size > 0) {
     const updSigTopic = iface.getEvent('InstanceUpdated').topicHash
-    const updLogs = await chunkedQueryLogs(provider, clientManagerAddress, [updSigTopic])
+    const updLogs = await chunkedQueryLogs(provider, networkManagerAddress, [updSigTopic])
     for (const log of updLogs) {
       const parsed = iface.parseLog(log)
       if (!parsed) continue
@@ -208,8 +208,8 @@ async function loadInstances(provider, clientManagerAddress, clientId) {
  * and they declined to type one. Caller is expected to fall back to
  * its own free-text prompt on null.
  */
-export async function pickClientAndApi({ network }) {
-  // Mainnet has its own ClientManager address but we haven't shipped
+export async function pickNetworkAndApi({ network }) {
+  // Mainnet has its own NetworkManager address but we haven't shipped
   // mainnet yet. The addresses.js loader will return whatever is in
   // deployments.ts for the chosen network.
   if (network && network !== 'testnet') {
@@ -219,12 +219,12 @@ export async function pickClientAndApi({ network }) {
     return null
   }
 
-  let clientManagerAddress
-  try { clientManagerAddress = addr('CLIENT_MANAGER_ADDRESS') } catch { return null }
-  if (!clientManagerAddress) return null
+  let networkManagerAddress
+  try { networkManagerAddress = addr('NETWORK_MANAGER_ADDRESS') } catch { return null }
+  if (!networkManagerAddress) return null
 
-  section('Looking up registered clients on-chain')
-  console.log(dim(`  Reading ${brand('CawClientManager')} at ${clientManagerAddress}...`))
+  section('Looking up registered Networks on-chain')
+  console.log(dim(`  Reading ${brand('CawNetworkManager')} at ${networkManagerAddress}...`))
 
   const provider = await pickWorkingRpc(PUBLIC_SEPOLIA_RPCS)
   if (!provider) {
@@ -232,26 +232,26 @@ export async function pickClientAndApi({ network }) {
     return null
   }
 
-  let clients
+  let networks
   try {
-    clients = await loadClients(provider, clientManagerAddress)
+    networks = await loadNetworks(provider, networkManagerAddress)
   } catch (err) {
-    console.log(warn(`  Failed to load client list: ${err.message} — skipping.`))
+    console.log(warn(`  Failed to load Network list: ${err.message} — skipping.`))
     return null
   }
 
-  if (clients.length === 0) {
-    console.log(warn('  No clients registered yet — falling back to manual entry.'))
+  if (networks.length === 0) {
+    console.log(warn('  No Networks registered yet — falling back to manual entry.'))
     return null
   }
 
-  // Pick a client.
-  const { clientId } = await inquirer.prompt([{
+  // Pick a Network.
+  const { networkId } = await inquirer.prompt([{
     type: 'list',
-    name: 'clientId',
-    message: 'Which client will this frontend serve?',
+    name: 'networkId',
+    message: 'Which Network will this frontend serve?',
     choices: [
-      ...clients.map(c => ({
+      ...networks.map(c => ({
         value: c.id,
         name: `${brand('#' + c.id)}  ${c.name || dim('(unnamed)')}  ${dim('owner: ' + c.ownerAddress.slice(0, 10) + '…')}`,
       })),
@@ -261,12 +261,12 @@ export async function pickClientAndApi({ network }) {
     pageSize: 12,
   }])
 
-  if (clientId === '__custom__') return null
+  if (networkId === '__custom__') return null
 
   // Pick an instance (or back out to manual).
   let instances
   try {
-    instances = await loadInstances(provider, clientManagerAddress, clientId)
+    instances = await loadInstances(provider, networkManagerAddress, networkId)
   } catch (err) {
     console.log(warn(`  Failed to load instance list: ${err.message}`))
     return null
@@ -274,8 +274,8 @@ export async function pickClientAndApi({ network }) {
 
   if (instances.length === 0) {
     tipBlock([
-      `Client ${brand('#' + clientId)} has no broadcast nodes yet.`,
-      'You can still serve this client by pointing at a private API URL.',
+      `Network ${brand('#' + networkId)} has no broadcast nodes yet.`,
+      'You can still serve this Network by pointing at a private API URL.',
     ])
     return null
   }

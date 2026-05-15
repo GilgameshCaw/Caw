@@ -21,7 +21,7 @@ const NETWORKS = {
 
 /**
  * Generate config.json and .env from collected answers, plus resolve the
- * client's storage chain on L1 and write a per-install addresses.ts.
+ * Network's storage chain on L1 and write a per-install addresses.ts.
  */
 export async function generateConfig(nodeType, config, installDir) {
   section('Generating Configuration')
@@ -50,10 +50,10 @@ export async function generateConfig(nodeType, config, installDir) {
   fs.chmodSync(envPath, 0o600)
   console.log(success(`  Created ${dim(envPath)} (mode 600)`))
 
-  // Same NaN/address-as-number trap as VITE_CLIENT_ID, but for the backend.
-  // CLIENT_ID is read by InstanceRegistryService, DmRelayService, DataCleaner,
+  // Same NaN/address-as-number trap as VITE_NETWORK_ID, but for the backend.
+  // NETWORK_ID is read by InstanceRegistryService, DmRelayService, DataCleaner,
   // etc. If it got set to a wallet address by mistake, /api/instances returns
-  // a clientId of ~1.2e+48 and the peer cache is empty — the failure mode
+  // a networkId of ~1.2e+48 and the peer cache is empty — the failure mode
   // Nyaro hit. Catch it here so the operator gets a clear error at install
   // time instead of debugging it post-deploy.
   verifyBackendEnv(envPath)
@@ -71,7 +71,7 @@ export async function generateConfig(nodeType, config, installDir) {
     fs.chmodSync(frontendEnvPath, 0o640)
     console.log(success(`  Created ${dim(frontendEnvPath)} (mode 640)`))
 
-    // Read the file back and confirm VITE_CLIENT_ID landed as a positive
+    // Read the file back and confirm VITE_NETWORK_ID landed as a positive
     // integer. If it didn't, every contract-call hook in the FE will throw
     // `NaN can't be converted to BigInt` at runtime — a confusing failure
     // mode that pulls operators (and their AIs) into hours of debugging the
@@ -92,26 +92,26 @@ export async function generateConfig(nodeType, config, installDir) {
   fs.writeFileSync(pm2Path, `module.exports = ${JSON.stringify(pm2Config, null, 2)}\n`)
   console.log(success(`  Created ${dim(pm2Path)}`))
 
-  // Resolve the client's storage chain on L1 + write addresses.ts. Skipped
+  // Resolve the Network's storage chain on L1 + write addresses.ts. Skipped
   // for frontend-only installs — they get their addresses from a sibling
   // API node (the static repo file works for those, since they don't run
   // the validator/indexer that need per-chain addresses to be exact).
   if (['full', 'frontend-api', 'api-only', 'validator'].includes(nodeType)) {
-    await writeAddressesForClient(config, clientDir)
+    await writeAddressesForNetwork(config, clientDir)
   }
 
   return { configJsonPath, envPath }
 }
 
 /**
- * Resolve the operator's chosen client to a storage chain on L1, pull the
+ * Resolve the operator's chosen Network to a storage chain on L1, pull the
  * matching contract addresses out of deployments.ts, and write a per-install
  * addresses.ts. The rest of the codebase imports singular constants from
  * addresses.ts and stays multi-chain-unaware.
  */
-export async function writeAddressesForClient(config, clientDir) {
+export async function writeAddressesForNetwork(config, clientDir) {
   const env = config.network || 'testnet'
-  const clientId = Number(config.clientId || 1)
+  const networkId = Number(config.networkId || 1)
   const l1RpcUrl = config.l1RpcUrlHttp || config.l1RpcUrl
   if (!l1RpcUrl) {
     console.log(dim('  Skipping addresses.ts (no L1 RPC) — fill in client/src/abi/addresses.ts manually.'))
@@ -139,30 +139,30 @@ export async function writeAddressesForClient(config, clientDir) {
     }
   })
 
-  // Read CCM.getStorageChainEid(clientId) on L1.
+  // Read CNM.getStorageChainEid(networkId) on L1.
   const envBlock = deployments[env] || {}
-  const ccmAddr = envBlock.L1?.CawClientManager
-  if (!ccmAddr) {
-    console.log(dim(`  Skipping addresses.ts (no CawClientManager in deployments[${env}].L1).`))
+  const cnmAddr = envBlock.L1?.CawNetworkManager
+  if (!cnmAddr) {
+    console.log(dim(`  Skipping addresses.ts (no CawNetworkManager in deployments[${env}].L1).`))
     return
   }
   const provider = new ethers.JsonRpcProvider(l1RpcUrl)
-  const ccm = new ethers.Contract(
-    ccmAddr,
-    ['function getStorageChainEid(uint32 clientId) view returns (uint32)'],
+  const cnm = new ethers.Contract(
+    cnmAddr,
+    ['function getStorageChainEid(uint32 networkId) view returns (uint32)'],
     provider,
   )
   let eid
   try {
-    eid = Number(await ccm.getStorageChainEid(clientId))
+    eid = Number(await cnm.getStorageChainEid(networkId))
   } catch (e) {
-    console.log(dim(`  Couldn't read storageChainEid for client ${clientId} from L1: ${e.message?.slice(0, 80)}`))
-    console.log(dim('  Skipping addresses.ts — verify the client exists on-chain and rerun.'))
+    console.log(dim(`  Couldn't read storageChainEid for Network ${networkId} from L1: ${e.message?.slice(0, 80)}`))
+    console.log(dim('  Skipping addresses.ts — verify the Network exists on-chain and rerun.'))
     return
   }
   const chainKey = chainKeyForEid(env, eid)
   if (!chainKey) {
-    console.log(dim(`  Client ${clientId} reports storage eid ${eid}, no matching chain in deployments[${env}].`))
+    console.log(dim(`  Network ${networkId} reports storage eid ${eid}, no matching chain in deployments[${env}].`))
     return
   }
 
@@ -176,11 +176,11 @@ export async function writeAddressesForClient(config, clientDir) {
     CAW_NAME_QUOTER_ADDRESS: l1.CawProfileQuoter,
     CAW_NAMES_MINTER_ADDRESS: l1.CawProfileMinter,
     URI_GENERATOR_ADDRESS: l1.CawProfileURI,
-    CLIENT_MANAGER_ADDRESS: l1.CawClientManager,
+    NETWORK_MANAGER_ADDRESS: l1.CawNetworkManager,
     CAW_NAME_MARKETPLACE_ADDRESS: l1.CawProfileMarketplace,
     CAW_NAMES_L2_MAINNET_ADDRESS: l1.CawProfileL2,
     CAW_ACTIONS_MAINNET_ADDRESS: l1.CawActions,
-    // Per-client-storage-chain — resolved here, not multi-chain in the codebase.
+    // Per-Network-storage-chain — resolved here, not multi-chain in the codebase.
     CAW_NAMES_L2_ADDRESS: l2.CawProfileL2,
     CAW_ACTIONS_ADDRESS: l2.CawActions,
     CAW_ACTIONS_ARCHIVE_ADDRESS: l2.CawActionsArchive,
@@ -197,7 +197,7 @@ export async function writeAddressesForClient(config, clientDir) {
 
   const lines = [
     `// Generated by the CLI install step (cli/src/steps/generate.js).`,
-    `// Resolved for env=${env}, clientId=${clientId}, storage chain=${chainKey} (eid=${eid}).`,
+    `// Resolved for env=${env}, networkId=${networkId}, storage chain=${chainKey} (eid=${eid}).`,
     `// To rebuild: rerun the CLI \`install\`, or pull addresses out of`,
     `// client/src/abi/deployments.ts with chainKeyForEid().`,
     ``,
@@ -212,7 +212,7 @@ export async function writeAddressesForClient(config, clientDir) {
   const out = lines.join('\n') + '\n'
   const outPath = path.join(clientDir, 'src/abi/addresses.ts')
   fs.writeFileSync(outPath, out)
-  console.log(success(`  Wrote ${dim(outPath)} (client ${clientId} → ${chainKey})`))
+  console.log(success(`  Wrote ${dim(outPath)} (Network ${networkId} → ${chainKey})`))
 }
 
 /**
@@ -302,7 +302,7 @@ export function buildServiceList(nodeType, config) {
       service: 'InstanceRegistry',
       config: {
         l1RpcUrl: '${L1_RPC_URL}',
-        clientId: config.clientId,
+        networkId: config.networkId,
       },
     })
   }
@@ -326,7 +326,7 @@ export function buildServiceList(nodeType, config) {
     // Read l2DeployBlock from solidity/.deploy-state.json so RawEventsGatherer
     // backfills from the right L2 block on a fresh DB. Without this, the
     // gatherer falls back to "current head" and silently misses every
-    // historical event for this client.
+    // historical event for this Network.
     //
     // Failure modes are non-fatal: a missing / malformed deploy-state file
     // just means we don't write startBlock and the gatherer stays at
@@ -452,19 +452,19 @@ function buildEnvVars(nodeType, config) {
 
   // OpenTelemetry / SigNoz — backend-only. The standard OTLP env var name
   // gets the OTel SDK initialized in src/otel.ts; unset = no-op. Service
-  // name is auto-derived from domain/clientId in collectSignozEndpoint so
+  // name is auto-derived from domain/networkId in collectSignozEndpoint so
   // multiple CAW instances sharing one collector don't collide as one
   // merged "caw-backend" entry in the SigNoz UI.
   if (config.signozEndpoint) env.OTEL_EXPORTER_OTLP_ENDPOINT = config.signozEndpoint
   if (config.otelServiceName) env.OTEL_SERVICE_NAME = config.otelServiceName
 
-  // CLIENT_ID is the same value the frontend reads as VITE_CLIENT_ID — the
+  // NETWORK_ID is the same value the frontend reads as VITE_NETWORK_ID — the
   // duplication exists only because Vite requires the VITE_ prefix to expose
   // a var to the browser bundle. Backend services (RawEventsGatherer,
-  // DmRelayService, DataCleaner, InstanceRegistryService) read CLIENT_ID
-  // directly. Without it, they silently fall back to clientId=1, which is
-  // wrong for any install serving a different client.
-  if (config.clientId) env.CLIENT_ID = String(config.clientId)
+  // DmRelayService, DataCleaner, InstanceRegistryService) read NETWORK_ID
+  // directly. Without it, they silently fall back to networkId=1, which is
+  // wrong for any install serving a different Network.
+  if (config.networkId) env.NETWORK_ID = String(config.networkId)
 
   // Replication is optional. REPLICATION_RPC + REPLICATION_CHAIN enable the
   // optimistic-archive loop in ValidatorService; REPLICATOR_PRIVATE_KEY is
@@ -474,13 +474,13 @@ function buildEnvVars(nodeType, config) {
   if (config.replicationChain) env.REPLICATION_CHAIN = config.replicationChain
   if (config.replicatorPrivateKey) env.REPLICATOR_PRIVATE_KEY = config.replicatorPrivateKey
 
-  // REPLICATE_CLIENT_IDS defaults to this install's own clientId — the common
-  // case is "I run a node for client N, so I replicate N." When replication
+  // REPLICATE_NETWORK_IDS defaults to this install's own networkId — the common
+  // case is "I run a node for Network N, so I replicate N." When replication
   // is enabled, prefer the operator's explicit answer (which may list
-  // multiple); otherwise mirror CLIENT_ID so the var isn't missing. Skip
+  // multiple); otherwise mirror NETWORK_ID so the var isn't missing. Skip
   // entirely when replication is off — writing it would be misleading.
   if (config.replicationRpcUrl) {
-    env.REPLICATE_CLIENT_IDS = config.replicateClientIds || String(config.clientId || 1)
+    env.REPLICATE_NETWORK_IDS = config.replicateNetworkIds || String(config.networkId || 1)
   }
 
   // JWT signs API session tokens. Precedence:
@@ -530,7 +530,7 @@ function buildFrontendEnv(nodeType, config) {
     env.VITE_API_HOST = ''
   }
 
-  env.VITE_CLIENT_ID = String(config.clientId || 1)
+  env.VITE_NETWORK_ID = String(config.networkId || 1)
 
   // Frontend RPC URLs. When the operator opted into a separate frontend
   // key during the RPC step, use that — this is the two-key flow:
@@ -572,14 +572,14 @@ function buildFrontendEnv(nodeType, config) {
  * doesn't match what we think we wrote" (filesystem error, permissions,
  * an earlier-aborted run leaving a stale file, etc.).
  *
- * VITE_CLIENT_ID is the killer: when missing, the FE bundle initializes
- * `CLIENT_ID = NaN`, which silently propagates into every wagmi
- * `args: [CLIENT_ID, ...]` call and surfaces as the cryptic runtime
+ * VITE_NETWORK_ID is the killer: when missing, the FE bundle initializes
+ * `NETWORK_ID = NaN`, which silently propagates into every wagmi
+ * `args: [NETWORK_ID, ...]` call and surfaces as the cryptic runtime
  * `RangeError: NaN can't be converted to BigInt`. Catch it here so the
  * operator gets a clear error at install time.
  */
 /**
- * Validate a clientId env value. CawClientManager stores clientId as a
+ * Validate a networkId env value. CawNetworkManager stores networkId as a
  * uint32 on chain, so anything outside [1, 0xffffffff] is wrong. Catches:
  *   - empty / missing
  *   - non-numeric strings (NaN)
@@ -588,7 +588,7 @@ function buildFrontendEnv(nodeType, config) {
  *     passes Number.isInteger but exceeds uint32)
  * Returns { ok: true, value } | { ok: false, reason }.
  */
-function validateClientId(raw) {
+function validateNetworkId(raw) {
   if (raw === undefined || raw === '') {
     return { ok: false, reason: 'missing or empty' }
   }
@@ -619,7 +619,7 @@ function parseDotenv(text) {
 
 /**
  * Read the .env files we just wrote back from disk and re-validate the
- * critical clientId values, since a bogus write leaves operators chasing
+ * critical networkId values, since a bogus write leaves operators chasing
  * symptoms ("NaN can't be converted to BigInt" / empty peer registry /
  * 'Sigs length mismatch' on chain) instead of fixing the root cause.
  *
@@ -628,44 +628,44 @@ function parseDotenv(text) {
  * is "the file on disk doesn't match what we think we wrote" (filesystem
  * error, permissions, an earlier-aborted run leaving a stale file, etc.).
  *
- * VITE_CLIENT_ID is the killer: when missing, the FE bundle initializes
- * `CLIENT_ID = NaN`, which silently propagates into every wagmi
- * `args: [CLIENT_ID, ...]` call and surfaces as the cryptic runtime
+ * VITE_NETWORK_ID is the killer: when missing, the FE bundle initializes
+ * `NETWORK_ID = NaN`, which silently propagates into every wagmi
+ * `args: [NETWORK_ID, ...]` call and surfaces as the cryptic runtime
  * `RangeError: NaN can't be converted to BigInt`. Catch it here so the
  * operator gets a clear error at install time.
  */
 function verifyFrontendEnv(frontendEnvPath) {
   const parsed = parseDotenv(fs.readFileSync(frontendEnvPath, 'utf8'))
-  const check = validateClientId(parsed.VITE_CLIENT_ID)
+  const check = validateNetworkId(parsed.VITE_NETWORK_ID)
   if (!check.ok) {
     throw new Error(
-      `VITE_CLIENT_ID is invalid in ${frontendEnvPath}: ${check.reason}.\n` +
+      `VITE_NETWORK_ID is invalid in ${frontendEnvPath}: ${check.reason}.\n` +
       `  This will cause the frontend to throw "NaN can't be converted to BigInt" on every contract call,\n` +
-      `  or to query the wrong client's data on chain.\n` +
-      `  Re-run the install (node cli/bin/caw.js install --dir <install-dir>) and pick a client at the prompt,\n` +
-      `  or set VITE_CLIENT_ID=<positive integer ≤ 4294967295> in that .env by hand and restart vite.`
+      `  or to query the wrong Network's data on chain.\n` +
+      `  Re-run the install (node cli/bin/caw.js install --dir <install-dir>) and pick a Network at the prompt,\n` +
+      `  or set VITE_NETWORK_ID=<positive integer ≤ 4294967295> in that .env by hand and restart vite.`
     )
   }
-  console.log(success(`  Verified ${dim('VITE_CLIENT_ID=' + check.value)}`))
+  console.log(success(`  Verified ${dim('VITE_NETWORK_ID=' + check.value)}`))
 }
 
 /**
- * Parallel guard for the backend .env. CLIENT_ID is read at runtime by
+ * Parallel guard for the backend .env. NETWORK_ID is read at runtime by
  * InstanceRegistryService, DmRelayService, DataCleaner, etc. A wallet
- * address sneaking in here causes /api/instances to return clientId of
+ * address sneaking in here causes /api/instances to return networkId of
  * ~1.2e+48 and an empty peer cache, with no other obvious symptom.
  */
 function verifyBackendEnv(envPath) {
   const parsed = parseDotenv(fs.readFileSync(envPath, 'utf8'))
-  const check = validateClientId(parsed.CLIENT_ID)
+  const check = validateNetworkId(parsed.NETWORK_ID)
   if (!check.ok) {
     throw new Error(
-      `CLIENT_ID is invalid in ${envPath}: ${check.reason}.\n` +
+      `NETWORK_ID is invalid in ${envPath}: ${check.reason}.\n` +
       `  The backend uses this to scope peer discovery, replication, and DM relay.\n` +
-      `  Re-run the install and pick a client at the prompt, or set CLIENT_ID=<positive integer ≤ 4294967295> by hand.`
+      `  Re-run the install and pick a Network at the prompt, or set NETWORK_ID=<positive integer ≤ 4294967295> by hand.`
     )
   }
-  console.log(success(`  Verified ${dim('CLIENT_ID=' + check.value)}`))
+  console.log(success(`  Verified ${dim('NETWORK_ID=' + check.value)}`))
 }
 
 function buildDockerCompose(config) {

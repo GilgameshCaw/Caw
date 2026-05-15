@@ -28,6 +28,7 @@ import { Service } from '../../Service'
 import { prisma } from '../../prismaClient'
 import { CAW_NAMES_ADDRESS } from '../../abi/addresses'
 import { recordDeposit } from '../StakeLedger'
+import { getNetworkId } from '../../utils/networkId'
 
 const Config = z.object({
   l1RpcUrl:          z.string().optional(),
@@ -47,10 +48,10 @@ const Config = z.object({
 type Config = z.infer<typeof Config>
 
 const CAW_CLIENT_ID = (() => {
-  const raw = process.env.CLIENT_ID
+  const raw = getNetworkId()
   const n = raw ? Number(raw) : NaN
   if (!Number.isFinite(n) || n <= 0) {
-    throw new Error('DepositWatcher: CLIENT_ID is required (set it in client/.env)')
+    throw new Error('DepositWatcher: NETWORK_ID is required (set it in client/.env)')
   }
   return n
 })()

@@ -1593,7 +1593,7 @@ router.post('/batch', async (req, res) => {
           senderId: Number(a.data.senderId),
           receiverId: Number(a.data.receiverId || 0),
           receiverCawonce: Number(a.data.receiverCawonce || 0),
-          clientId: Number(a.data.clientId),
+          networkId: Number(a.data.networkId),
           cawonce: Number(a.data.cawonce),
           recipients: (a.data.recipients || []).map(Number),
           amounts: amounts.map((x: any) => BigInt(x)),

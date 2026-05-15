@@ -5,7 +5,7 @@
 // (/api/dm/identity/relay). Both flows use the same trust model —
 // validator-key signs SHA-256(canonical envelope), receiver recovers
 // the address and matches it against the source instance's registered
-// validatorAddress in CawClientManager.
+// validatorAddress in CawNetworkManager.
 //
 // Envelope canonicalization is INTENTIONALLY per-flow (kept inline
 // in each route/service). The primitives below operate on the bytes

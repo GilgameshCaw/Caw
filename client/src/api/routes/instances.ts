@@ -17,6 +17,7 @@
 
 import { Router } from 'express'
 import { getPeers } from '../../services/InstanceRegistryService'
+import { getNetworkId } from '../../utils/networkId'
 
 const router = Router()
 
@@ -32,7 +33,7 @@ router.get('/', (req, res) => {
   const clientIdParam = req.query.clientId
   const clientId = clientIdParam
     ? Number(clientIdParam)
-    : Number(process.env.CLIENT_ID || 1)
+    : Number(getNetworkId() || 1)
 
   if (!Number.isFinite(clientId) || clientId <= 0) {
     return res.status(400).json({ error: 'Invalid clientId' })

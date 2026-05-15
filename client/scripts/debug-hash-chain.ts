@@ -1,6 +1,6 @@
 // Debug the hash chain for a specific checkpoint.
-// Fetches clientCurrentHash progressively + compares each step of our local
-// recomputation against what's actually stored on-chain for clients that
+// Fetches networkCurrentHash progressively + compares each step of our local
+// recomputation against what's actually stored on-chain for Networks that
 // have indexed but not processed the chain (if available).
 
 import 'dotenv/config'
@@ -11,14 +11,14 @@ import {
 import { cawActionsAbi } from '../src/abi/generated'
 
 const HASH_ABI = [
-  'function clientCurrentHash(uint32) view returns (bytes32)',
-  'function clientActionCount(uint32) view returns (uint256)',
-  'function clientHashAtCheckpoint(uint32, uint256) view returns (bytes32)',
+  'function networkCurrentHash(uint32) view returns (bytes32)',
+  'function networkActionCount(uint32) view returns (uint256)',
+  'function networkHashAtCheckpoint(uint32, uint256) view returns (bytes32)',
 ]
 
 const CLIENT_ID = 1
 const CHECKPOINT = 3
-const ACTION_TUPLE = 'tuple(uint8 actionType, uint32 senderId, uint32 receiverId, uint32 receiverCawonce, uint32 clientId, uint32 cawonce, uint32[] recipients, uint64[] amounts, bytes text)'
+const ACTION_TUPLE = 'tuple(uint8 actionType, uint32 senderId, uint32 receiverId, uint32 receiverCawonce, uint32 networkId, uint32 cawonce, uint32[] recipients, uint64[] amounts, bytes text)'
 
 async function main() {
   const rpc = process.env.L2_RPC_URL_HTTP || process.env.L2_RPC_URL || 'https://sepolia.base.org'
@@ -26,12 +26,12 @@ async function main() {
   const view = new Contract(CAW_ACTIONS_ADDRESS, HASH_ABI, provider)
 
   console.log(`\n== On-chain state ==`)
-  const currentCount = await view.clientActionCount(CLIENT_ID)
-  const currentHash = await view.clientCurrentHash(CLIENT_ID)
-  console.log(`   clientActionCount(${CLIENT_ID}):     ${currentCount}`)
-  console.log(`   clientCurrentHash(${CLIENT_ID}):     ${currentHash}`)
-  console.log(`   checkpoint ${CHECKPOINT - 1} hash:          ${await view.clientHashAtCheckpoint(CLIENT_ID, CHECKPOINT - 1)}`)
-  const cpHash = await view.clientHashAtCheckpoint(CLIENT_ID, CHECKPOINT)
+  const currentCount = await view.networkActionCount(CLIENT_ID)
+  const currentHash = await view.networkCurrentHash(CLIENT_ID)
+  console.log(`   networkActionCount(${CLIENT_ID}):     ${currentCount}`)
+  console.log(`   networkCurrentHash(${CLIENT_ID}):     ${currentHash}`)
+  console.log(`   checkpoint ${CHECKPOINT - 1} hash:          ${await view.networkHashAtCheckpoint(CLIENT_ID, CHECKPOINT - 1)}`)
+  const cpHash = await view.networkHashAtCheckpoint(CLIENT_ID, CHECKPOINT)
   console.log(`   checkpoint ${CHECKPOINT} hash:              ${cpHash}`)
   if (cpHash === '0x' + '00'.repeat(32)) {
     console.log(`   (checkpoint ${CHECKPOINT} not yet reached)`)
@@ -68,7 +68,7 @@ async function main() {
     const multiData = decoded[1]
     for (let i = 0; i < multiData.actions.length; i++) {
       const a = multiData.actions[i]
-      if (Number(a.clientId) !== CLIENT_ID) continue
+      if (Number(a.networkId) !== CLIENT_ID) continue
       entries.push({
         blockNumber: tx.blockNumber!,
         txIndex: tx.index!,
@@ -94,7 +94,7 @@ async function main() {
   const coder = new AbiCoder()
   let hash: string = CHECKPOINT === 1
     ? '0x' + '00'.repeat(32)
-    : await view.clientHashAtCheckpoint(CLIENT_ID, CHECKPOINT - 1)
+    : await view.networkHashAtCheckpoint(CLIENT_ID, CHECKPOINT - 1)
 
   console.log(`\n   seed hash: ${hash}`)
   for (let i = 0; i < 128; i++) {
@@ -104,7 +104,7 @@ async function main() {
       senderId: Number(e.action.senderId),
       receiverId: Number(e.action.receiverId),
       receiverCawonce: Number(e.action.receiverCawonce),
-      clientId: Number(e.action.clientId),
+      networkId: Number(e.action.networkId),
       cawonce: Number(e.action.cawonce),
       recipients: Array.from(e.action.recipients).map(Number),
       amounts: Array.from(e.action.amounts).map((x: any) => BigInt(x)),
@@ -122,7 +122,7 @@ async function main() {
   console.log(`   match: ${hash === cpHash ? '✓' : '✗'}`)
 
   if (hash !== cpHash) {
-    // Walk the chain once more but this time compare each step to clientCurrentHash
+    // Walk the chain once more but this time compare each step to networkCurrentHash
     // at the time that action was processed. We need to find the block where
     // cumulative action count reached N for each step.
     console.log(`\n   Looking for the first divergent step by comparing against clientCurrentHash at historical blocks…`)

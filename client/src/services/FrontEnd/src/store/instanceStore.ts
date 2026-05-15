@@ -2,8 +2,8 @@ import { create } from 'zustand'
 import { getPublicClient } from '@wagmi/core'
 import { sepolia } from 'wagmi/chains'
 import { wagmiConfig } from '~/config/Web3Provider'
-import { cawClientManagerAbi } from '~/../../../abi/generated'
-import { CLIENT_MANAGER_ADDRESS } from '~/../../../abi/addresses'
+import { cawNetworkManagerAbi } from '~/../../../abi/generated'
+import { NETWORK_MANAGER_ADDRESS } from '~/../../../abi/addresses'
 import { API_HOST } from '~/api/client'
 
 export interface Instance {
@@ -261,19 +261,19 @@ async function fetchFromChain(clientId: number): Promise<Instance[] | null> {
 
   try {
     const registeredLogs = await chunkedGetLogs(publicClient, {
-      address: CLIENT_MANAGER_ADDRESS,
+      address: NETWORK_MANAGER_ADDRESS,
       event: {
         type: 'event',
         name: 'InstanceRegistered',
         inputs: [
           { name: 'instanceId', type: 'uint32', indexed: true },
-          { name: 'clientId', type: 'uint32', indexed: true },
+          { name: 'networkId', type: 'uint32', indexed: true },
           { name: 'owner', type: 'address', indexed: true },
           { name: 'apiUrl', type: 'string', indexed: false },
           { name: 'validatorAddress', type: 'address', indexed: false },
         ],
       },
-      eventArgs: { clientId },
+      eventArgs: { networkId: clientId },
     })
 
     const instanceMap = new Map<number, Instance>()
@@ -281,7 +281,7 @@ async function fetchFromChain(clientId: number): Promise<Instance[] | null> {
       const a = (log as any).args
       instanceMap.set(Number(a.instanceId), {
         instanceId: Number(a.instanceId),
-        clientId: Number(a.clientId),
+        clientId: Number(a.networkId),
         owner: a.owner,
         apiUrl: a.apiUrl,
         validatorAddress: a.validatorAddress,
@@ -291,10 +291,10 @@ async function fetchFromChain(clientId: number): Promise<Instance[] | null> {
 
     if (instanceMap.size === 0) return []
 
-    // Apply InstanceUpdated overrides — not clientId-indexed so we pull
+    // Apply InstanceUpdated overrides — not networkId-indexed so we pull
     // all and filter by instanceId membership.
     const updatedLogs = await chunkedGetLogs(publicClient, {
-      address: CLIENT_MANAGER_ADDRESS,
+      address: NETWORK_MANAGER_ADDRESS,
       event: {
         type: 'event',
         name: 'InstanceUpdated',
@@ -320,8 +320,8 @@ async function fetchFromChain(clientId: number): Promise<Instance[] | null> {
     for (const [id, instance] of instanceMap) {
       try {
         const isActive = await publicClient.readContract({
-          address: CLIENT_MANAGER_ADDRESS,
-          abi: cawClientManagerAbi,
+          address: NETWORK_MANAGER_ADDRESS,
+          abi: cawNetworkManagerAbi,
           functionName: 'instanceActive',
           args: [id],
         })

@@ -64,17 +64,17 @@ async function main() {
   const wallet = new ethers.Wallet(pk, arb)
 
   const archiveAbi = [
-    'function submissions(uint256) view returns (address submitter, bytes32 merkleRoot, uint32 clientId, uint64 startCheckpointId, uint64 endCheckpointId, uint64 finalizedAt, uint8 status, bytes32 dataCommitment)',
+    'function submissions(uint256) view returns (address submitter, bytes32 merkleRoot, uint32 networkId, uint64 startCheckpointId, uint64 endCheckpointId, uint64 finalizedAt, uint8 status, bytes32 dataCommitment)',
     'function stakes(address) view returns (uint256)',
     'function slashIncoherentRoot(uint256,bytes,bytes32[],bytes32)',
     // ActionsArchived now carries hash commitments only; the bytes live in
     // the originating submitReplication tx's calldata. We fetch them below.
-    'event ActionsArchived(uint256 indexed submissionId, uint32 indexed clientId, uint16 actionCount, bytes32 packedHash, bytes32 rHash, bytes32 entryHash)',
+    'event ActionsArchived(uint256 indexed submissionId, uint32 indexed networkId, uint16 actionCount, bytes32 packedHash, bytes32 rHash, bytes32 entryHash)',
   ]
   const submitReplicationIface = new ethers.Interface([
-    'function submitReplication(uint32 clientId, uint256 startCheckpointId, uint256 endCheckpointId, bytes packedActions, bytes32[] r, bytes32 merkleRoot, bytes32 entryHash)',
+    'function submitReplication(uint32 networkId, uint256 startCheckpointId, uint256 endCheckpointId, bytes packedActions, bytes32[] r, bytes32 merkleRoot, bytes32 entryHash)',
   ])
-  const cawActionsAbi = ['function clientHashAtCheckpoint(uint32,uint256) view returns (bytes32)']
+  const cawActionsAbi = ['function networkHashAtCheckpoint(uint32,uint256) view returns (bytes32)']
 
   const archive = new ethers.Contract(archiveAddress, archiveAbi, arb)
   const archiveW = new ethers.Contract(archiveAddress, archiveAbi, wallet)
@@ -111,7 +111,7 @@ async function main() {
   const startCp = Number(sub.startCheckpointId)
   const entryHash = startCp === 1
     ? '0x' + '00'.repeat(32)
-    : await cawActions.clientHashAtCheckpoint(sub.clientId, BigInt(startCp) - 1n)
+    : await cawActions.networkHashAtCheckpoint(sub.networkId, BigInt(startCp) - 1n)
   console.log('  entryHash:     ', entryHash)
 
   // Sanity: check the dataCommitment matches what the contract stored.

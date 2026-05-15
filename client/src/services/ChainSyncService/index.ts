@@ -4,8 +4,8 @@
 import { prisma } from '../../prismaClient'
 import { JsonRpcProvider, Contract } from 'ethers'
 import { makeJsonRpcProvider, getL1HttpRpcUrl, getL2HttpRpcUrl, getEthMainnetHttpRpcUrl, redactRpcUrl } from '../../utils/rpcProvider'
-import { cawClientManagerAbi } from '../../abi/generated'
-import { CLIENT_MANAGER_ADDRESS, CAW_NAMES_L2_ADDRESS } from '../../abi/addresses'
+import { cawNetworkManagerAbi } from '../../abi/generated'
+import { NETWORK_MANAGER_ADDRESS, CAW_NAMES_L2_ADDRESS } from '../../abi/addresses'
 
 // Mainnet token addresses for price fetching (distinct from testnet contract addresses)
 const MAINNET_CAW_ADDRESS = '0xf3b9569F82B18aEf890De263B84189bd33EBe452'
@@ -89,7 +89,7 @@ function initializeProviders(config: ChainSyncConfig) {
     const l1Url = getL1HttpRpcUrl(config.l1RpcUrl)
     console.log('[ChainSync] L1 provider URL:', l1Url.slice(0, 40) + '...')
     l1Provider = makeJsonRpcProvider(l1Url, 11155111)
-    clientManager = new Contract(CLIENT_MANAGER_ADDRESS, cawClientManagerAbi, l1Provider)
+    clientManager = new Contract(NETWORK_MANAGER_ADDRESS, cawNetworkManagerAbi, l1Provider)
   }
 
   if (!l2Provider && config.l2RpcUrl) {
@@ -175,9 +175,9 @@ async function syncAllClients(): Promise<void> {
 
   // Quick check: verify the contract exists at this address on the connected chain
   try {
-    const code = await l1Provider.getCode(CLIENT_MANAGER_ADDRESS)
+    const code = await l1Provider.getCode(NETWORK_MANAGER_ADDRESS)
     if (!code || code === '0x') {
-      console.log('[ChainSync:Clients] Skipping — CawClientManager not deployed on this chain')
+      console.log('[ChainSync:Clients] Skipping — CawNetworkManager not deployed on this chain')
       return
     }
   } catch {
@@ -776,7 +776,7 @@ export const chainSyncService = {
     // <RPC>_SECRET is set, so backend traffic can bypass an Infura origin
     // allowlist that's locked down for the frontend bundle's safety.
     const resolvedCfg: ChainSyncConfig = {
-      // L1 RPC is Sepolia (where CawClientManager lives) — NOT mainnet
+      // L1 RPC is Sepolia (where CawNetworkManager lives) — NOT mainnet
       l1RpcUrl: getL1HttpRpcUrl() || cfg.l1RpcUrl,
       l2RpcUrl: getL2HttpRpcUrl() || cfg.l2RpcUrl,
       ethMainnetRpcUrl: getEthMainnetHttpRpcUrl(cfg.ethMainnetRpcUrl) || '',

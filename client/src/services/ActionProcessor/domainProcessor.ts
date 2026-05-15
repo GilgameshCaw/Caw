@@ -13,6 +13,7 @@ import {
   handleWithdrawAction
 } from './actionHandlers'
 import type { PrismaTransactionClient, RawAction } from './types'
+import { getNetworkId } from '../../utils/networkId'
 
 export interface ResolvedUsers {
   authorId: number
@@ -25,7 +26,7 @@ export interface ResolvedUsers {
 // to land too), but new content (CAW + RECAW = new Caw rows) is gated to
 // our client so the local feed stays scoped.
 const OUR_CLIENT_ID = (() => {
-  const raw = process.env.CLIENT_ID
+  const raw = getNetworkId()
   const n = raw === undefined || raw === null ? NaN : Number(raw)
   return Number.isFinite(n) && n > 0 ? n : null
 })()
@@ -109,7 +110,7 @@ export async function processDomainEffects(
   // a like from a user authed to both clients should bump our like-count
   // either way; if the target isn't ours, the natural CawNotFoundError
   // path skips quietly.
-  const isOurClient = OUR_CLIENT_ID === null || Number(rawAction.clientId) === OUR_CLIENT_ID
+  const isOurClient = OUR_CLIENT_ID === null || Number(rawAction.networkId) === OUR_CLIENT_ID
 
   // Delegate to specific handlers based on action type
   switch (action.actionType) {
