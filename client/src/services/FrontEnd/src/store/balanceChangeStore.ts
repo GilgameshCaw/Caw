@@ -31,6 +31,12 @@ interface BalanceWindow {
    *  delta possibly updated) by confirmWindow when the txqueue 'done'
    *  branch fires. */
   pending: boolean
+  /** Owning token id, when known. Lets ProfileChooser show *its* token's
+   *  pending counter without bleeding spends/credits across profiles
+   *  belonging to the same wallet. Optional — windows without it stay
+   *  visible to wallet-wide consumers (the BalanceChangeToast) but are
+   *  invisible to per-token getters. */
+  tokenId?: number
 }
 
 interface BalanceChangeState {
@@ -42,7 +48,7 @@ interface BalanceChangeState {
   /** Monotonic id generator. */
   _nextId: number
 
-  addWindow: (delta: bigint, durationMs: number, source: string, opts?: { pending?: boolean }) => void
+  addWindow: (delta: bigint, durationMs: number, source: string, opts?: { pending?: boolean; tokenId?: number }) => void
   /** Upgrade a pending window (matched by source) to confirmed. Updates
    *  delta + extends expiry. If no matching pending window exists (it
    *  already expired, or the action skipped the pending step) this falls
@@ -58,6 +64,10 @@ interface BalanceChangeState {
   /** Sum of currently-live window deltas. Computed lazily — call sweep()
    *  first if you need stale entries excluded. */
   getNet: () => bigint
+  /** Sum of currently-live window deltas for a single token. Windows
+   *  without a tokenId are EXCLUDED. Used by ProfileChooser; the global
+   *  getNet/windows arrays remain wallet-wide for other consumers. */
+  getNetForToken: (tokenId: number | undefined) => bigint
 }
 
 const MAX_SEEN = 5_000
@@ -79,7 +89,7 @@ export const useBalanceChangeStore = create<BalanceChangeState>((set, get) => ({
     set({
       windows: [
         ...state.windows,
-        { id: state._nextId, delta, expiresAt: Date.now() + durationMs, source, pending: !!opts?.pending },
+        { id: state._nextId, delta, expiresAt: Date.now() + durationMs, source, pending: !!opts?.pending, tokenId: opts?.tokenId },
       ],
       seenSources: newSeen,
       _nextId: state._nextId + 1,
@@ -144,5 +154,13 @@ export const useBalanceChangeStore = create<BalanceChangeState>((set, get) => ({
 
   getNet: () => {
     return get().windows.reduce((acc, w) => acc + w.delta, 0n)
+  },
+
+  getNetForToken: (tokenId) => {
+    if (tokenId == null) return 0n
+    return get().windows.reduce(
+      (acc, w) => (w.tokenId === tokenId ? acc + w.delta : acc),
+      0n,
+    )
   },
 }))

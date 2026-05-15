@@ -303,6 +303,7 @@ export function useFollowButton({
 
   const handleFollowClick = async () => {
     console.log('[FollowButton] handleFollowClick', { wrongWallet, isPending, isSigning, targetUserId, activeTokenId, activeTokenOwner: activeToken?.owner, connectedAddress: address, hasActiveSession })
+    const effectiveTokenId = activeTokenId || activeToken?.tokenId
     // Don't do anything if wrong wallet
     if (wrongWallet) {
       console.log('[FollowButton] Early return — wrongWallet')
@@ -345,7 +346,7 @@ export function useFollowButton({
         // will confirm via TxQueueMonitor and clear normally.
         if (String(err?.message || '').includes('409')) {
           if (snapshotSpend && snapshotSpend > 0n) {
-            usePendingSpendStore.getState().addPendingSpend(cancelledTxQueueId, snapshotSpend)
+            usePendingSpendStore.getState().addPendingSpend(cancelledTxQueueId, snapshotSpend, effectiveTokenId)
           }
         } else {
           console.error('Cancel follow failed', err)
@@ -361,8 +362,6 @@ export function useFollowButton({
 
     // Clear any previous error
     setError(null)
-
-    const effectiveTokenId = activeTokenId || activeToken?.tokenId
 
     // If no token OR wallet not connected (and no session key), trigger wallet connection
     if (!effectiveTokenId || !activeToken || (!isConnected && !hasActiveSession)) {

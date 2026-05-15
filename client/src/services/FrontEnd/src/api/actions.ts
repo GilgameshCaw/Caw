@@ -1413,7 +1413,7 @@ export function useSignAndSubmitAction() {
         const costWholeTokens = (actionCostWei[params.actionType] || 0n) + extraAmountsWhole + tipForCalc
         const costWei = costWholeTokens * 10n**18n
         if (costWei > 0n) {
-          usePendingSpendStore.getState().addPendingSpend(response.txQueueId, costWei)
+          usePendingSpendStore.getState().addPendingSpend(response.txQueueId, costWei, params.senderId)
           // Surface the outgoing spend in the BalanceChange pill immediately
           // — pending=true so the toast renders it in dim/grey. The
           // useTxQueueMonitor 'done' branch later calls confirmWindow with
@@ -1431,7 +1431,7 @@ export function useSignAndSubmitAction() {
               -costWei,
               5_000,
               `txq:${response.txQueueId}`,
-              { pending: true },
+              { pending: true, tokenId: params.senderId },
             )
           }
         }
@@ -1796,7 +1796,7 @@ export function useSignAndSubmitAction() {
         const costWholeTokens = (actionCostWei[typedItems[i].params.actionType] || 0n) + effectiveTip
         const costWei = costWholeTokens * 10n**18n
         if (costWei > 0n) {
-          usePendingSpendStore.getState().addPendingSpend(r.txQueueId, costWei)
+          usePendingSpendStore.getState().addPendingSpend(r.txQueueId, costWei, typedItems[i].params.senderId)
         }
       }
       // Swap each pending post's tempId for its real DB id (same reason

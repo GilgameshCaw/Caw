@@ -29,7 +29,13 @@ const ProfileChooser: React.FC<{ compact?: boolean }> = ({ compact = false }) =>
   const { openConnectModal } = useConnectModal();
   const hasActiveSession = useHasActiveSession();
   const activeToken = useActiveToken()
-  const pendingSpend = usePendingSpendStore(s => s.pendingSpend)
+  // Subscribe to the per-txQueue maps so we re-render on adds/removes;
+  // the actual per-token sum is computed below with activeToken.tokenId.
+  // We can't read `pendingSpend` directly here — that's the wallet-wide
+  // sum (used by the mobile counter) and would bleed across profiles
+  // owned by the same wallet.
+  const pendingByTxQueue = usePendingSpendStore(s => s.pendingByTxQueue)
+  const tokenIdByTxQueue = usePendingSpendStore(s => s.tokenIdByTxQueue)
   // Live in-flight balance change windows — incoming-only deltas roll
   // into the existing "pending" line below so a like / recaw / follow
   // landing on the user's content nudges the +X CAW pending counter.
@@ -506,10 +512,24 @@ const ProfileChooser: React.FC<{ compact?: boolean }> = ({ compact = false }) =>
             //   no pending, someone liked your caw (+1600) → "+1k6 pending"
             // Hidden only when the delta is exactly zero.
             const pendingDep = pendingDepositWei ?? 0n
-            const recentIncoming = balanceWindows.reduce(
-              (acc, w) => w.delta > 0n ? acc + w.delta : acc,
+            // Per-token isolation: only count incoming windows tagged with
+            // the active token id. Untagged windows (older callers) are
+            // ignored here on purpose — better to under-count than to
+            // bleed credits across sibling profiles on the same wallet.
+            const activeTid = activeToken?.tokenId
+            const recentIncoming = activeTid == null ? 0n : balanceWindows.reduce(
+              (acc, w) => (w.delta > 0n && w.tokenId === activeTid) ? acc + w.delta : acc,
               0n,
             )
+            // Per-token spend: sum only entries whose tokenId matches the
+            // active profile. The wallet-wide `pendingSpend` total stays
+            // available for the mobile counter that needs it.
+            let pendingSpend = 0n
+            if (activeTid != null) {
+              for (const [idStr, amount] of Object.entries(pendingByTxQueue)) {
+                if (tokenIdByTxQueue[Number(idStr)] === activeTid) pendingSpend += amount
+              }
+            }
             const delta = pendingDep + recentIncoming - pendingSpend
             if (delta === 0n) return null
             const isPositive = delta > 0n

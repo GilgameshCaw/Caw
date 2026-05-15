@@ -482,6 +482,7 @@ const FeedItem: React.FC<{ item: CawItem; isMainPost?: boolean; isReply?: boolea
   // action will go through and surface as a confirmed like shortly.
   const handleCancelLike = async () => {
     if (!pendingLikeTxQueueId) return
+    const effectiveTokenId = activeTokenId || activeToken?.tokenId
     setBusyLike(true)
     // Snapshot the spend amount before we drop it so we can restore on a
     // 409 (validator already picked it up). Optimistically tear down the
@@ -517,7 +518,7 @@ const FeedItem: React.FC<{ item: CawItem; isMainPost?: boolean; isReply?: boolea
       // The action will confirm via the polling effect and clear normally.
       if (String(err?.message || '').includes('409')) {
         if (snapshotSpend && snapshotSpend > 0n) {
-          usePendingSpendStore.getState().addPendingSpend(cancelledTxQueueId, snapshotSpend)
+          usePendingSpendStore.getState().addPendingSpend(cancelledTxQueueId, snapshotSpend, effectiveTokenId)
         }
         // The action landed on chain — our optimistic restore was wrong.
         // Snap back to the pre-cancel pending state so the UI matches.
@@ -1721,7 +1722,7 @@ const FeedItem: React.FC<{ item: CawItem; isMainPost?: boolean; isReply?: boolea
                               // below — the recaw will land and we need to
                               // undo it on-chain.
                               if (snapshotSpend && snapshotSpend > 0n) {
-                                usePendingSpendStore.getState().addPendingSpend(cancelledTxQueueId, snapshotSpend)
+                                usePendingSpendStore.getState().addPendingSpend(cancelledTxQueueId, snapshotSpend, effectiveTokenId)
                               }
                             }
                           }
