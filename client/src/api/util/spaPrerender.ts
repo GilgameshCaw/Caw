@@ -6,15 +6,18 @@ import { publicUrl } from './publicUrl'
 import { cawPath, parseCawIdSlug } from './cawUrl'
 import { ALL_LOCALES, parseLocaleFromPath, withLocalePrefix } from './localePrefix'
 
-// Protocol-level canonical origin. Every CAW mirror prerenders the same
-// public content (caws, profiles, hashtags) and they're all reachable on
-// their own host. Without a stable cross-mirror canonical, search engines
-// see each mirror as a separate duplicate copy and split ranking signal.
-// Pinning canonical + hreflang alternates to a single origin collapses
-// all mirrors onto one indexed entry. og:url / og:image still point at
-// the serving mirror so social previews reflect where the link came from.
+// Protocol-level canonical origin. The intent (bee1cf47) was to collapse
+// every CAW mirror onto a single search-indexed entry by pinning canonical
+// + hreflang at https://caw.social. Reverted to the serving mirror's own
+// publicUrl() until caw.social itself serves the same content — pointing
+// canonical at an origin that 404s the path actively breaks preview
+// fetchers like Telegram, which follow rel=canonical and bail when the
+// follow-up fetch fails. Restoring the cross-mirror-collapse needs
+// caw.social to be a real serving host (or a redirector to the active
+// mirror), not just a DNS name pointing at the same nginx with no
+// matching server block.
 function canonicalOrigin(): string {
-  return 'https://caw.social'
+  return publicUrl()
 }
 
 // nginx routes only crawler User-Agents through to the API; this handler
