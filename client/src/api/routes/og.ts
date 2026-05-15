@@ -95,7 +95,12 @@ const H = 630
 // renders at W=1200 with neutral bands either side; non-canvas
 // platforms (TG, Discord, browsers) render at exactly CARD_W and
 // fill the PNG edge-to-edge.
-const CARD_W = 970
+//
+// Width tuned empirically: CHAR_W_RATIO=0.58 is conservative for the
+// caps-worst-case so lowercase text wraps a fair bit shorter than the
+// narrow budget declares. CARD_W is sized so the gap between actual
+// rendered text and the image right-anchor is comfortable, not vast.
+const CARD_W = 870
 
 const CAW_GOLD = '#ebc046'
 
@@ -2791,8 +2796,8 @@ router.get('/image/caw/:id', async (req, res) => {
   // doesn't serve a stale render.
   const variant = isCanvasUA ? 'canvas' : 'std'
   const cacheKey = caw.status === 'PENDING'
-    ? `caw-v34-${variant}-${caw.id}-${liveHash}-pending`
-    : `caw-v34-${variant}-${caw.id}-${liveHash}`
+    ? `caw-v35-${variant}-${caw.id}-${liveHash}-pending`
+    : `caw-v35-${variant}-${caw.id}-${liveHash}`
   return serveCachedOrRender(res, cacheKey, async () => {
     // Strip media URLs and poll markers out of the visible text — the
     // corner image and the rendered poll bars already represent them,
