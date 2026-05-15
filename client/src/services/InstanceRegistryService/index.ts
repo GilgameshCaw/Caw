@@ -25,6 +25,15 @@ import { makeJsonRpcProvider, getL1HttpRpcUrl } from '../../utils/rpcProvider'
 import { scanLogsBackward } from '../../utils/chunkedLogs'
 import { cawClientManagerAbi } from '../../abi/generated'
 import { CLIENT_MANAGER_ADDRESS } from '../../abi/addresses'
+import { isSafePublicUrl } from '../../api/util/ssrfGuard'
+
+async function isAcceptablePeerApiUrl(rawUrl: string): Promise<boolean> {
+  if (typeof rawUrl !== 'string' || rawUrl.length === 0) return false
+  let parsed: URL
+  try { parsed = new URL(rawUrl) } catch { return false }
+  if (parsed.protocol !== 'https:') return false
+  return await isSafePublicUrl(rawUrl)
+}
 
 const InstanceRegistryConfig = z.object({
   l1RpcUrl: z.string(),
@@ -79,12 +88,12 @@ export function getOwnInstanceId(): number | null {
 // Apply event scan results into the cache, returning the diff so the
 // caller can log "new peer joined" / "peer URL changed" without keeping
 // before-state on hand.
-function applyToCache(
+async function applyToCache(
   clientId: number,
   registered: { instanceId: number; clientId: number; owner: string; apiUrl: string; validatorAddress: string }[],
   updates:    { instanceId: number; apiUrl: string; validatorAddress: string }[],
   activations: { instanceId: number; active: boolean }[],
-): { added: PeerInstance[]; changed: PeerInstance[] } {
+): Promise<{ added: PeerInstance[]; changed: PeerInstance[] }> {
   const cur = peerCache.get(clientId) ?? new Map<number, PeerInstance>()
   const added: PeerInstance[] = []
   const changed: PeerInstance[] = []
@@ -93,6 +102,10 @@ function applyToCache(
   for (const r of registered) {
     const existing = cur.get(r.instanceId)
     if (!existing) {
+      if (!(await isAcceptablePeerApiUrl(r.apiUrl))) {
+        console.warn(`[InstanceRegistry] Rejecting registration for instance #${r.instanceId}: unsafe apiUrl ${r.apiUrl}`)
+        continue
+      }
       const fresh: PeerInstance = { ...r, active: true }
       cur.set(r.instanceId, fresh)
       added.push(fresh)
@@ -106,6 +119,10 @@ function applyToCache(
     const existing = cur.get(u.instanceId)
     if (!existing) continue
     if (existing.apiUrl !== u.apiUrl || existing.validatorAddress.toLowerCase() !== u.validatorAddress.toLowerCase()) {
+      if (existing.apiUrl !== u.apiUrl && !(await isAcceptablePeerApiUrl(u.apiUrl))) {
+        console.warn(`[InstanceRegistry] Rejecting update for instance #${u.instanceId}: unsafe apiUrl ${u.apiUrl}`)
+        continue
+      }
       existing.apiUrl = u.apiUrl
       existing.validatorAddress = u.validatorAddress
       changed.push(existing)
@@ -271,7 +288,7 @@ async function refreshPeers(
   )
   const activations = ordered.map(o => ({ instanceId: o.instanceId, active: o.active }))
 
-  return applyToCache(clientId, registered, updates, activations)
+  return await applyToCache(clientId, registered, updates, activations)
 }
 
 // =====================================================================
