@@ -419,11 +419,26 @@ const CONTRACTS = {
     chain: 'L1',
     phase: 2,
     dependencies: ['CawProfileL2_L1'],
+    // predictedSiblingKey: before this contract is deployed the engine reads the
+    // deployer's current nonce, computes getContractAddress(deployer, nonce+1), and
+    // stashes it in state.predictedAddresses['CawActionsERC1271_L1']. That value is
+    // then passed as the immutable _erc1271Sibling arg. CawActionsERC1271_L1 is
+    // deployed immediately after (phase 2, dep on CawActions_L1) so it lands at
+    // exactly that nonce.
+    predictedSiblingKey: 'CawActionsERC1271_L1',
     constructorArgs: (state, chainKey) => [
       state.addresses.CawProfileL2_L1,
       state.addresses.MockSP1Verifier_L1 || requireSp1Verifier(chainKey),
       ZK_PROGRAM_VKEY,
+      state.predictedAddresses?.CawActionsERC1271_L1 || ethers.ZeroAddress,
     ],
+  },
+  CawActionsERC1271_L1: {
+    artifact: 'CawActionsERC1271',
+    chain: 'L1',
+    phase: 2,
+    dependencies: ['CawActions_L1'],
+    constructorArgs: (state) => [state.addresses.CawActions_L1],
   },
   MockSP1Verifier_L1: {
     artifact: 'MockSP1Verifier',
@@ -480,11 +495,20 @@ for (const L of L2_CHAIN_KEYS) {
     chain: L,
     phase: 3,
     dependencies: [`CawProfileL2_${L}`],
+    predictedSiblingKey: `CawActionsERC1271_${L}`,
     constructorArgs: (state, chainKey) => [
       state.addresses[`CawProfileL2_${L}`],
       state.addresses[`MockSP1Verifier_${L}`] || requireSp1Verifier(chainKey),
       ZK_PROGRAM_VKEY,
+      state.predictedAddresses?.[`CawActionsERC1271_${L}`] || ethers.ZeroAddress,
     ],
+  };
+  CONTRACTS[`CawActionsERC1271_${L}`] = {
+    artifact: 'CawActionsERC1271',
+    chain: L,
+    phase: 3,
+    dependencies: [`CawActions_${L}`],
+    constructorArgs: (state) => [state.addresses[`CawActions_${L}`]],
   };
   CONTRACTS[`CawActionsArchive_${L}`] = {
     artifact: 'CawActionsArchive',
@@ -609,6 +633,24 @@ const LINKING_STEPS = [
     getter: 'cawActions',
     args: (state) => [state.addresses.CawActions_L1],
     condition: (state) => state.addresses.CawProfileL2_L1 && state.addresses.CawActions_L1,
+  },
+  {
+    // One-shot setter — reverts if already set (SiblingSet). skipIf guards idempotency.
+    name: 'Set ERC-1271 sibling on CawProfileL2_L1',
+    chain: 'L1',
+    phase: 2,
+    contract: 'CawProfileL2_L1',
+    method: 'setERC1271Sibling',
+    args: (state) => [state.addresses.CawActionsERC1271_L1],
+    condition: (state) => state.addresses.CawProfileL2_L1 && state.addresses.CawActionsERC1271_L1,
+    skipIf: async (state, deployer) => {
+      const contract = deployer.getContract('CawProfileL2_L1');
+      if (!contract) return false;
+      try {
+        const current = await contract.erc1271Sibling();
+        return current !== '0x0000000000000000000000000000000000000000';
+      } catch { return false; }
+    },
   },
   {
     name: 'Set CawProfile on BuyAndBurn',
@@ -802,6 +844,27 @@ for (const L of L2_CHAIN_KEYS) {
     condition: (state) => state.addresses[`CawProfileL2_${L}`] && state.addresses[`CawActions_${L}`],
   });
 
+  // Phase 3: set CawActionsERC1271 as the ERC-1271 sibling on CawProfileL2.
+  // One-shot: reverts on second call (SiblingSet error). skipIf guards idempotency.
+  LINKING_STEPS.push({
+    name: `Set ERC-1271 sibling on CawProfileL2_${L}`,
+    chain: L,
+    phase: 3,
+    contract: `CawProfileL2_${L}`,
+    method: 'setERC1271Sibling',
+    args: (state) => [state.addresses[`CawActionsERC1271_${L}`]],
+    condition: (state) =>
+      state.addresses[`CawProfileL2_${L}`] && state.addresses[`CawActionsERC1271_${L}`],
+    skipIf: async (state, deployer) => {
+      const contract = deployer.getContract(`CawProfileL2_${L}`);
+      if (!contract) return false;
+      try {
+        const current = await contract.erc1271Sibling();
+        return current !== '0x0000000000000000000000000000000000000000';
+      } catch { return false; }
+    },
+  });
+
   // Phase 5: full-mesh archive ↔ relay wiring. For every other L2 L':
   //   - On L (storage), CawChallengeRelay_L peers L'.lzEid → CawActionsArchive_L'.
   //   - On L' (archive), CawActionsArchive_L' peers L.lzEid → CawChallengeRelay_L.
@@ -941,6 +1004,7 @@ function buildDeploymentsBlock(env, addresses) {
     CawBuyAndBurn: addresses.CawBuyAndBurn,
     MockSwapRouter: addresses.MockSwapRouter,
     CawActions: addresses.CawActions_L1,
+    CawActionsERC1271: addresses.CawActionsERC1271_L1,
   };
   lines.push('    L1: {');
   for (const [name, addr] of Object.entries(l1)) {
@@ -953,6 +1017,7 @@ function buildDeploymentsBlock(env, addresses) {
     const block = {
       CawProfileL2: addresses[`CawProfileL2_${L}`],
       CawActions: addresses[`CawActions_${L}`],
+      CawActionsERC1271: addresses[`CawActionsERC1271_${L}`],
       CawActionsArchive: addresses[`CawActionsArchive_${L}`],
       CawChallengeRelay: addresses[`CawChallengeRelay_${L}`],
     };
@@ -1141,6 +1206,20 @@ class MultiChainDeployer {
       return null;
     }
     const wallet = this.wallets[chainKey];
+
+    // Nonce-prediction for contracts that carry an immutable sibling address.
+    // When a CONTRACTS entry has `predictedSiblingKey`, the sibling is deployed
+    // immediately after this contract (same chain, nonce+1). We compute the
+    // sibling's future address BEFORE evaluating constructorArgs so the sibling
+    // address can be wired in as an immutable constructor arg.
+    if (config.predictedSiblingKey && !this.state.addresses[config.predictedSiblingKey]) {
+      const nonce = await wallet.getNonce();
+      // This contract lands at nonce; sibling lands at nonce+1.
+      const siblingAddr = ethers.getContractAddress({ from: wallet.address, nonce: nonce + 1 });
+      this.state.predictedAddresses = this.state.predictedAddresses || {};
+      this.state.predictedAddresses[config.predictedSiblingKey] = siblingAddr;
+      console.log(`   Predicted ${config.predictedSiblingKey} address (nonce ${nonce + 1}): ${siblingAddr}`);
+    }
 
     const args = config.constructorArgs(this.state, chainKey, this.env);
     console.log(`\nDeploying ${contractKey} to ${chainKey}...`);
