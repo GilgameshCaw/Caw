@@ -189,7 +189,13 @@ const HighlightedTextarea: React.FC<HighlightedTextareaProps> = ({
             }
           }
         }}
-        className={`w-full resize-none border-none outline-none bg-transparent ${textSizeClass} ${className}`}
+        // placeholder-transparent suppresses the native ::placeholder
+        // text — the overlay div below renders our own placeholder.
+        // Without this, browsers paint a default-styled placeholder on
+        // top of the overlay so the two strings overlap (especially
+        // visible with an image attached + empty text, when the form
+        // doesn't auto-expand to hide the overlap).
+        className={`w-full resize-none border-none outline-none bg-transparent placeholder-transparent ${textSizeClass} ${className}`}
         style={{
           boxShadow: 'none',
           padding,

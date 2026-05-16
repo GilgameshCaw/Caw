@@ -43,8 +43,14 @@
       status bar — without viewport-fit=cover the inset variables stay
       at 0 and the mobile header renders with the page background
       showing through the status-bar strip above it).
+
+      interactive-widget=resizes-content tells iOS 16.4+/Chrome 108+ to
+      shrink the layout viewport when the keyboard opens, so a
+      position: fixed; bottom: 0 element (e.g. the inline-compose Post
+      toolbar) sits above the keyboard instead of being covered by it.
+      Older browsers ignore the unknown token.
     -->
-    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover, interactive-widget=resizes-content" />
     <title>CAW — Decentralized &amp; Censorship Resistant</title>
 
     <!--
