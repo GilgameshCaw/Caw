@@ -48,6 +48,17 @@ const SuggestedUsers: React.FC<SuggestedUsersProps> = ({ onFollowChange }) => {
   const t = useT()
   const { isDark } = useTheme()
   const activeTokenId = useTokenDataStore(s => s.activeTokenId)
+  // Owned-token set: covers every profile the connected wallet(s) hold,
+  // not just the currently-active one. A user with multiple profiles
+  // shouldn't see ANY of their own profiles in the suggestion list —
+  // filtering by activeTokenId alone leaks sibling profiles in.
+  const ownedTokenIds = useTokenDataStore(s => {
+    const out = new Set<number>()
+    for (const tokens of Object.values(s.tokensByAddress)) {
+      for (const t of tokens) out.add(t.tokenId)
+    }
+    return out
+  })
   const hasCachedData = cachedUsers !== null && cacheTokenId === activeTokenId
   const [users, setUsers] = useState<SuggestedUser[]>(hasCachedData ? cachedUsers! : [])
   const [loading, setLoading] = useState(!hasCachedData)
@@ -65,7 +76,7 @@ const SuggestedUsers: React.FC<SuggestedUsersProps> = ({ onFollowChange }) => {
     const fetchUsers = async () => {
       try {
         const response = await apiFetch<{ users: SuggestedUser[] }>('/api/users/top-followed?limit=10')
-        const filtered = response.users.filter(u => u.tokenId !== activeTokenId)
+        const filtered = response.users.filter(u => !ownedTokenIds.has(u.tokenId))
         setUsers(filtered)
         cachedUsers = filtered
         cacheTokenId = activeTokenId
@@ -115,7 +126,7 @@ const SuggestedUsers: React.FC<SuggestedUsersProps> = ({ onFollowChange }) => {
   }
 
   const visibleUsers = users.filter(u =>
-    u.tokenId !== activeTokenId && !removedIds.has(u.tokenId) && !dismissedIds.has(u.tokenId) && !u.isFollowing && !u.followPending
+    !ownedTokenIds.has(u.tokenId) && !removedIds.has(u.tokenId) && !dismissedIds.has(u.tokenId) && !u.isFollowing && !u.followPending
   )
 
   if (visibleUsers.length <= 1) {
