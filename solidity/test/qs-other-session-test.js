@@ -225,7 +225,7 @@ async function fullSetup(accounts) {
   await cawProfile.setMinter(minter.address);
   const quoter = await CawProfileQuoter.new(cawProfile.address);
 
-  const cawActions = await CawActions.new(cawProfileL2.address, "0x0000000000000000000000000000000000000000", "0x0000000000000000000000000000000000000000000000000000000000000000");
+  const cawActions = await CawActions.new(cawProfileL2.address, "0x0000000000000000000000000000000000000000", "0x0000000000000000000000000000000000000000000000000000000000000000", "0x0000000000000000000000000000000000000000");
   await cawProfileL2.setCawActions(cawActions.address);
 
   return { token, cawProfile, cawProfileL2, minter, quoter, cawActions, networkManager, networkId };

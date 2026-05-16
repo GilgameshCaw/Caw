@@ -249,7 +249,7 @@ async function fullSetup(accounts) {
   const minter = await CawProfileMinter.new(token.address, cawProfile.address, mockRouter.address);
   await cawProfile.setMinter(minter.address);
   const quoter = await CawProfileQuoter.new(cawProfile.address);
-  const cawActions = await CawActions.new(cawProfileL2.address, "0x0000000000000000000000000000000000000000", "0x0000000000000000000000000000000000000000000000000000000000000000");
+  const cawActions = await CawActions.new(cawProfileL2.address, "0x0000000000000000000000000000000000000000", "0x0000000000000000000000000000000000000000000000000000000000000000", "0x0000000000000000000000000000000000000000");
   await cawProfileL2.setCawActions(cawActions.address);
 
   return { token, cawProfile, cawProfileL2, minter, quoter, cawActions, networkManager, networkId };
@@ -410,6 +410,45 @@ contract('CawActions — ERC-1271 contract-owner signatures', function (accounts
     if (!revertReason) throw new Error('Expected a revert but the call succeeded');
     expect(revertReason).to.include('Invalid signature');
     expect(await setup.cawActions.isCawonceUsed(contractOwnedTokenId, cawonce)).to.equal(false);
+  });
+
+  // --------------------------------------------
+  // setERC1271Sibling one-shot guard
+  // --------------------------------------------
+  it('setERC1271Sibling reverts with ZeroSibling when called with address(0)', async function () {
+    let didRevert = false;
+    try {
+      await setup.cawProfileL2.setERC1271Sibling('0x0000000000000000000000000000000000000000', { from: accounts[0] });
+    } catch (e) {
+      didRevert = true;
+      // Custom error — message contains the selector or the error name.
+      expect(e.message.toLowerCase()).to.satisfy(
+        m => m.includes('zerosibling') || m.includes('revert') || m.includes('0x'),
+        `Unexpected error message: ${e.message}`
+      );
+    }
+    if (!didRevert) throw new Error('Expected a revert but the call succeeded');
+  });
+
+  it('setERC1271Sibling reverts with SiblingSet on second call', async function () {
+    // Use a fresh CawProfileL2 for isolation — the main setup instance has no sibling set yet.
+    const l2Endpoint2 = await MockLayerZeroEndpoint.new(l2);
+    const freshL2 = await CawProfileL2.new(l1, l2Endpoint2.address);
+    const someAddr = accounts[5];
+    // First call should succeed.
+    await freshL2.setERC1271Sibling(someAddr, { from: accounts[0] });
+    // Second call should revert with SiblingSet.
+    let didRevert = false;
+    try {
+      await freshL2.setERC1271Sibling(accounts[6], { from: accounts[0] });
+    } catch (e) {
+      didRevert = true;
+      expect(e.message.toLowerCase()).to.satisfy(
+        m => m.includes('siblingset') || m.includes('revert') || m.includes('0x'),
+        `Unexpected error message: ${e.message}`
+      );
+    }
+    if (!didRevert) throw new Error('Expected a revert but the call succeeded');
   });
 
   // --------------------------------------------

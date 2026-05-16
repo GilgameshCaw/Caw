@@ -47,6 +47,9 @@ import { ISP1Verifier } from "./IZKActionsVerifier.sol";
 import { MessagingFee } from "@layerzerolabs/lz-evm-oapp-v2/contracts/oapp/OApp.sol";
 
 contract CawActions is Ownable {
+  error NotSibling();
+  error OnlySelf();
+
   enum ActionType { CAW, LIKE, UNLIKE, RECAW, FOLLOW, UNFOLLOW, WITHDRAW, OTHER }
 
   struct ActionData {
@@ -90,6 +93,12 @@ contract CawActions is Ownable {
 
   CawProfileL2 public immutable cawProfile;
   CawActions public immutable externalSelf;
+
+  /// @notice Sibling contract that handles variable-length ERC-1271 signatures
+  ///         (passkey / smart-EOA owners). Set at construction via CREATE2
+  ///         pre-image; immutable thereafter. Only this address may call
+  ///         `executeVerifiedGroup`. Zero = ERC-1271 sibling path disabled.
+  address public immutable erc1271Sibling;
 
   // Precomputed type hashes for EIP712
   bytes32 private constant EIP712_DOMAIN_TYPEHASH = keccak256(
@@ -156,12 +165,13 @@ contract CawActions is Ownable {
     bytes32 batchHash
   );
 
-  constructor(address _cawProfiles, address _zkVerifier, bytes32 _zkProgramVKey) {
+  constructor(address _cawProfiles, address _zkVerifier, bytes32 _zkProgramVKey, address _erc1271Sibling) {
     eip712DomainHash = generateDomainHash();
     externalSelf = CawActions(this);
     cawProfile = CawProfileL2(_cawProfiles);
     zkVerifier = ISP1Verifier(_zkVerifier);
     zkProgramVKey = _zkProgramVKey;
+    erc1271Sibling = _erc1271Sibling;
   }
 
   // ============================================
@@ -908,7 +918,7 @@ contract CawActions is Ownable {
     }
 
     try CawActions(this).processGroupSingle(
-      validatorId, packedActions[groupStartPos:sc.pos], v, r, s, uint16(groupSize)
+      validatorId, packedActions[groupStartPos:sc.pos], v, r, s, uint16(groupSize), address(0)
     ) {
       sc.successCount += groupSize;
       for (uint256 i = 0; i < groupSize; ) {
@@ -935,20 +945,31 @@ contract CawActions is Ownable {
     sc.actionsSeen += groupSize;
   }
 
-  /// @notice External entry for safeProcessActions try/catch. Only callable by self.
-  ///         Processes one signature group atomically; reverts roll back the
-  ///         whole group's state changes (all-or-nothing within a batch).
+  /// @notice External entry for safeProcessActions try/catch, and (with a
+  ///         pre-verified signer) for the ERC-1271 sibling path.
+  ///
+  ///         Normal mode (preVerifiedSigner == address(0)):
+  ///           Callable only by `address(this)` (self-call from safeProcessActions).
+  ///           Performs full ECDSA / ERC-1271 sig verification.
+  ///
+  ///         Sibling mode (preVerifiedSigner != address(0)):
+  ///           Callable only by `erc1271Sibling`. Skips sig verification —
+  ///           the sibling has already called `isValidSignature` on the owner.
+  ///           `v`, `s` are ignored; `r` is the hash-chain anchor
+  ///           (= keccak256(sigBlob), spec-locked per project_replication_wire_format).
   function processGroupSingle(
     uint32 validatorId,
     bytes calldata groupBytes,
     uint8 v, bytes32 r, bytes32 s,
-    uint16 groupSize
+    uint16 groupSize,
+    address preVerifiedSigner
   ) external {
-    require(msg.sender == address(this), "Only self");
+    if (preVerifiedSigner != address(0)) {
+      if (msg.sender != erc1271Sibling) revert NotSibling();
+    } else {
+      if (msg.sender != address(this)) revert OnlySelf();
+    }
 
-    // groupBytes is just the actions slice for this group (no actionCount
-    // header). We pass it verbatim to a re-entry of the group-processing
-    // logic by reconstructing a tiny BatchCursor.
     bytes32[] memory perActionHashes = new bytes32[](groupSize);
     ActionData[] memory groupActions = new ActionData[](groupSize);
     uint256[] memory sliceStarts = new uint256[](groupSize);
@@ -958,22 +979,17 @@ contract CawActions is Ownable {
 
     BatchAuth memory ba;
     ba.r = r;
-    if (groupSize == 1) {
+
+    if (preVerifiedSigner != address(0)) {
+      ba.signer = preVerifiedSigner;
+      ba.isSessionKey = false;
+    } else if (groupSize == 1) {
       (ba.signer, ba.isSessionKey) = _verifySignatureMem(v, r, s, groupActions[0]);
-      // _applyBatch's per-action scope check below is redundant for the
-      // single-sig path (already enforced inside _verifySignatureMem), but
-      // populating the bitmap here keeps the unified loop correct rather
-      // than special-casing groupSize==1. owner/spendLimit are cached for
-      // parity even though a single-action group has nothing to amortize.
       if (ba.isSessionKey) {
         ba.owner = cawProfile.ownerOf(groupActions[0].senderId);
         { CawProfileL2.StoredSession memory _s = cawProfile.validSession(ba.owner, ba.signer); ba.scopeBitmap = _s.scopeBitmap; ba.spendLimit = _s.spendLimit; ba.perActionTipRate = _s.perActionTipRate; }
       }
     } else {
-      // Batch — all senders must match, cawonces must be strictly contiguous
-      // and ascending starting from groupActions[0].cawonce, then verify the
-      // ActionBatch sig. Contiguity must match the processActions enforcement
-      // exactly so safeProcessActions's pre-flight catches the same bad batches.
       for (uint256 i = 1; i < groupSize; ) {
         require(groupActions[i].senderId == groupActions[0].senderId, "Mixed senders in batch");
         require(groupActions[i].cawonce == groupActions[0].cawonce + i, "Non-contiguous cawonces");
@@ -992,12 +1008,6 @@ contract CawActions is Ownable {
       }
     }
 
-    // Reuse _applyBatch's loop so processActions and safeProcessActions share
-    // a single per-action application path (and one stack frame depth, which
-    // matters for the via-IR optimizer's reach). In safe mode the cursor
-    // lives in a local frame and is flushed once at group end — safe mode
-    // can't amortize across groups (each group runs in its own external
-    // call so reverts roll back independently).
     BatchCursor memory localCursor;
     localCursor.firstNetworkId = firstNetworkId;
     _applyBatch(validatorId, groupBytes, groupActions, sliceStarts, sliceEnds, ba, localCursor);
@@ -1006,7 +1016,6 @@ contract CawActions is Ownable {
       networkActionCount[firstNetworkId] = localCursor.networkActionCount;
     }
     if (localCursor.implicitTipOwed > 0) {
-      // See processActions for the validatorId rationale.
       _requireValidatorExists(validatorId);
       cawProfile.addTokensToBalance(validatorId, localCursor.implicitTipOwed);
     }
@@ -1019,7 +1028,7 @@ contract CawActions is Ownable {
     uint8 v, bytes32 r, bytes32 s,
     bytes calldata packedSlice
   ) external {
-    require(msg.sender == address(this), "Only self");
+    if (msg.sender != address(this)) revert OnlySelf();
     _processActionPacked(validatorId, action, v, r, s, packedSlice);
   }
 

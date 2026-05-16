@@ -35,6 +35,8 @@ contract CawProfileL2 is
   error BadNonce();      // session-registration nonce didn't match sessionNonce[signer]
   error Replayed();      // personal-sign digest already consumed
   error BadParse();      // any malformed input in the personal-sign message parser
+  error SiblingSet();    // setERC1271Sibling already called
+  error ZeroSibling();   // setERC1271Sibling called with address(0)
 
   using SigVerification for address;
 
@@ -46,6 +48,8 @@ contract CawProfileL2 is
   uint256 public totalCaw;
 
   ICawActions public cawActions;
+  /// @notice ERC-1271 sibling contract. Also authorized to call setWithdrawable.
+  address public erc1271Sibling;
 
   // SECURITY NOTE (audited 2026-04-06): Unlike standard ERC721, this ownerOf intentionally returns
   // address(0) for non-existent tokens instead of reverting. This is by design — CawProfileL2 is a
@@ -247,6 +251,16 @@ contract CawProfileL2 is
     require(_cawActions != address(0), "Zero address");
     cawActions = ICawActions(_cawActions);
     emit CawActionsSet(_cawActions);
+  }
+
+  event ERC1271SiblingSet(address sibling);
+
+  /// @notice Set the ERC-1271 sibling contract. Owner-only; can only be called once.
+  function setERC1271Sibling(address _sibling) external onlyOwner {
+    if (erc1271Sibling != address(0)) revert SiblingSet();
+    if (_sibling == address(0)) revert ZeroSibling();
+    erc1271Sibling = _sibling;
+    emit ERC1271SiblingSet(_sibling);
   }
 
   /// @notice Get the CAW balance for a token, scaled by the global reward multiplier.
@@ -1070,7 +1084,8 @@ contract CawProfileL2 is
   /// @param amounts Corresponding withdraw amounts (raw 18-decimal CAW)
   /// @param lzTokenAmount LayerZero ZRO token amount (0 to pay in native gas)
   function setWithdrawable(uint32[] memory tokenIds, uint256[] memory amounts, uint256 lzTokenAmount) external payable {
-    if (!(address(cawActions) == _msgSender())) revert NotCa();
+    address _s = _msgSender();
+    if (_s != address(cawActions) && _s != erc1271Sibling) revert NotCa();
     if (bypassLZ) {
       // bypassLZ mode does no LayerZero send, so any forwarded native fee
       // would be stuck in this contract permanently (there's no sweep path).

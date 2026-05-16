@@ -163,7 +163,7 @@ async function fullSetup(accounts) {
 
   const mockVerifier = await MockSP1Verifier.new();
   const dummyVKey = "0x" + "11".repeat(32);
-  const cawActions = await CawActions.new(cawProfileL2.address, mockVerifier.address, dummyVKey);
+  const cawActions = await CawActions.new(cawProfileL2.address, mockVerifier.address, dummyVKey, "0x0000000000000000000000000000000000000000");
   await cawProfileL2.setCawActions(cawActions.address);
 
   return { token, cawProfile, cawProfileL2, minter, quoter, cawActions, networkManager, networkId, mockVerifier };
