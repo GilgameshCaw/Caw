@@ -485,8 +485,14 @@ const MainLayout = ({ children, hideSidebars: hideSidebarsProp }: MainLayoutProp
       {!hideSidebars && !isCaptive && !hideMobileNavOverride && (
         <nav
           ref={bottomNavRef}
+          // While the user is scrolling we drop opacity AND pointer-events.
+          // Without `pointer-events-none`, the semi-transparent nav still
+          // catches taps over the post action row behind it — visible icons
+          // suggest the row is interactive but the click lands on the nav
+          // (bug #215). The nav reclaims pointer events as soon as scroll
+          // settles, so its own buttons remain usable.
           className={`md:hidden fixed bottom-0 left-0 right-0 z-[55] flex items-center justify-around h-14 pb-[env(safe-area-inset-bottom)] [height:calc(theme(height.14)+env(safe-area-inset-bottom))] border-t transition-all duration-200 ${
-            hasInlineDraft ? 'opacity-0 translate-y-full pointer-events-none' : isScrolling ? 'opacity-30' : 'opacity-100'
+            hasInlineDraft ? 'opacity-0 translate-y-full pointer-events-none' : isScrolling ? 'opacity-30 pointer-events-none' : 'opacity-100'
           } ${
             isDark ? 'bg-black border-white/10' : 'bg-white border-gray-200'
           }`}
@@ -552,8 +558,11 @@ const MainLayout = ({ children, hideSidebars: hideSidebarsProp }: MainLayoutProp
         <button
           onClick={() => openModal('post')}
           aria-label={t('main_layout.post_aria')}
+          // Mirrors the bottom-nav rule: pointer-events-none while
+          // scrolling so the semi-transparent FAB doesn't intercept
+          // taps meant for the post action row sitting behind it.
           className={`md:hidden fixed right-6 bottom-20 z-[60] w-12 h-12 rounded-full bg-yellow-500 hover:bg-yellow-400 active:bg-yellow-600 text-black flex items-center justify-center shadow-lg shadow-black/30 transition-all duration-200 cursor-pointer ${
-            hasInlineDraft ? 'opacity-0 translate-y-24 pointer-events-none' : isScrolling ? 'opacity-30' : 'opacity-100'
+            hasInlineDraft ? 'opacity-0 translate-y-24 pointer-events-none' : isScrolling ? 'opacity-30 pointer-events-none' : 'opacity-100'
           }`}
         >
           <HiOutlinePencilAlt className="w-7 h-7" />
