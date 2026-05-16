@@ -89,6 +89,8 @@ contract CawActionsERC1271 {
       unchecked { ++g; }
     }
 
+    require(ctx.pos == packedActions.length, "Trailing bytes");
+
     if (ctx.withdrawCount > 0) {
       _executeWithdrawals(ctx, withdrawFee, withdrawLzTokenAmount);
     }
@@ -204,9 +206,7 @@ contract CawActionsERC1271 {
         uint256 firstAmt = _readFirstAmountAt(packed, sliceStart + 23 + rc_i * 4);
         uint32 sid_i;
         assembly { sid_i := and(shr(216, calldataload(add(packed.offset, sliceStart))), 0xFFFFFFFF) }
-        ctx.withdrawIds[ctx.withdrawCount]     = sid_i;
-        ctx.withdrawAmounts[ctx.withdrawCount] = firstAmt * 10**18;
-        unchecked { ++ctx.withdrawCount; }
+        _recordWithdraw(ctx, sid_i, firstAmt * 10**18);
       }
 
       unchecked { ++i; }
@@ -334,10 +334,16 @@ contract CawActionsERC1271 {
     if (uint8(w >> 248) == ACTION_WITHDRAW) {
       uint256 rc = (w >> 80) & 0xFF;
       uint256 firstAmt = _readFirstAmountAt(packed, pos + 23 + rc * 4);
-      ctx.withdrawIds[ctx.withdrawCount]     = uint32((w >> 216) & 0xFFFFFFFF);
-      ctx.withdrawAmounts[ctx.withdrawCount] = firstAmt * 10**18;
-      unchecked { ++ctx.withdrawCount; }
+      _recordWithdraw(ctx, uint32((w >> 216) & 0xFFFFFFFF), firstAmt * 10**18);
     }
+  }
+
+  /// @dev Append one WITHDRAW entry to ctx, enforcing the 256-slot cap.
+  function _recordWithdraw(BatchCtx memory ctx, uint32 id, uint256 amount) internal pure {
+    require(ctx.withdrawCount < 256, "Too many withdraws");
+    ctx.withdrawIds[ctx.withdrawCount]     = id;
+    ctx.withdrawAmounts[ctx.withdrawCount] = amount;
+    unchecked { ++ctx.withdrawCount; }
   }
 
   function _skipAction(bytes calldata packed, uint256 pos) internal pure returns (uint256) {

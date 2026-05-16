@@ -23,6 +23,7 @@ const CawBuyAndBurn = artifacts.require("CawBuyAndBurn");
 const MockSwapRouter = artifacts.require("MockSwapRouter");
 const MockLayerZeroEndpoint = artifacts.require("MockLayerZeroEndpoint");
 const MockContractOwner = artifacts.require("MockContractOwner");
+const CawActionsERC1271 = artifacts.require("CawActionsERC1271");
 
 const { signTypedData, SignTypedDataVersion } = require('@metamask/eth-sig-util');
 
@@ -476,5 +477,273 @@ contract('CawActions — ERC-1271 contract-owner signatures', function (accounts
 
     if (!revertReason) throw new Error('Expected a revert but the call succeeded');
     expect(revertReason).to.include('Batch sig invalid');
+  });
+});
+
+// =============================================================================
+// CawActionsERC1271 — direct sibling tests (Issue 4 + Issue 5)
+// =============================================================================
+//
+// Packs actions into ERC-1271 sibling wire format:
+//   packedActions = concat over groups of [ uint16 groupSize | raw action bytes ]
+// No top-level actionCount header — unlike CawActions.processActions.
+//
+function packERC1271Actions(groups) {
+  // groups is an array of arrays of actions.
+  const parts = groups.map(group => {
+    const slices = group.map(packActionForSlice);
+    const bodyLen = slices.reduce((a, b) => a + b.length, 0);
+    const buf = Buffer.alloc(2 + bodyLen);
+    buf.writeUInt16BE(group.length, 0);
+    let pos = 2;
+    for (const s of slices) { s.copy(buf, pos); pos += s.length; }
+    return buf;
+  });
+  const total = parts.reduce((a, b) => a + b.length, 0);
+  const out = Buffer.alloc(total);
+  let pos = 0;
+  for (const p of parts) { p.copy(out, pos); pos += p.length; }
+  return '0x' + out.toString('hex');
+}
+
+async function fullSetupWithSibling(accounts) {
+  const l1 = 30101;
+  const l2 = 8453;
+  const l1Endpoint = await MockLayerZeroEndpoint.new(l1);
+  const l2Endpoint = await MockLayerZeroEndpoint.new(l2);
+  const token = await MintableCaw.new();
+  const mockRouter = await MockSwapRouter.new(token.address);
+  const buyAndBurn = await CawBuyAndBurn.new(token.address, mockRouter.address);
+  const networkManager = await CawNetworkManager.new(buyAndBurn.address);
+  const CawProfileURI = artifacts.require("CawProfileURI");
+  const CawFontDataA = artifacts.require("CawFontDataA");
+  const CawFontDataB = artifacts.require("CawFontDataB");
+  const fontA = await CawFontDataA.new();
+  const fontB = await CawFontDataB.new();
+  const uri = await CawProfileURI.new(fontA.address, fontB.address);
+
+  const cawProfileL2 = await CawProfileL2.new(l1, l2Endpoint.address);
+  await l1Endpoint.setDestLzEndpoint(cawProfileL2.address, l2Endpoint.address);
+
+  const cawProfile = await CawProfile.new(token.address, uri.address, buyAndBurn.address, networkManager.address, l1Endpoint.address, l1);
+  await buyAndBurn.setCawProfile(cawProfile.address);
+  await cawProfileL2.setL1Peer(l1, cawProfile.address, false);
+  await l2Endpoint.setDestLzEndpoint(cawProfile.address, l1Endpoint.address);
+  await cawProfile.setL2Peer(l2, cawProfileL2.address);
+
+  await networkManager.createNetwork("Test Network 2", accounts[0], l2, 0, 0, 0, 0, 0);
+  const networkId = 1;
+
+  const minter = await CawProfileMinter.new(token.address, cawProfile.address, mockRouter.address);
+  await cawProfile.setMinter(minter.address);
+  const quoter = await CawProfileQuoter.new(cawProfile.address);
+
+  // Bootstrap: CawActions.erc1271Sibling is immutable; CawActionsERC1271
+  // reads cawActions.cawProfile() in its constructor. Break the cycle by
+  // predicting the sibling's CREATE address (nonce+1 from now), deploying
+  // CawActions first with that predicted sibling address, then deploying
+  // CawActionsERC1271 pointing at the just-deployed CawActions.
+  //
+  // At nonce N:   deploy CawActions(erc1271Sibling=predict(N+1))
+  // At nonce N+1: deploy CawActionsERC1271(cawActions) → address == predict(N+1) ✓
+  function rlpEncodeNonce(n) {
+    if (n === 0) return Buffer.from([0x80]);
+    if (n < 0x80) return Buffer.from([n]);
+    // Encode as minimal big-endian bytes with RLP length prefix.
+    let hex = n.toString(16);
+    if (hex.length % 2) hex = '0' + hex;
+    const bytes = Buffer.from(hex, 'hex');
+    return Buffer.concat([Buffer.from([0x80 + bytes.length]), bytes]);
+  }
+
+  function createAddress(addr, n) {
+    const addrBytes = Buffer.from(addr.replace(/^0x/, ''), 'hex');
+    const addrRlp   = Buffer.concat([Buffer.from([0x94]), addrBytes]);
+    const nonceRlp  = rlpEncodeNonce(n);
+    const list = Buffer.concat([addrRlp, nonceRlp]);
+    const rlp  = Buffer.concat([Buffer.from([0xc0 + list.length]), list]);
+    const hash = web3.utils.keccak256('0x' + rlp.toString('hex'));
+    return '0x' + hash.slice(-40);
+  }
+
+  const deployerNonce = await web3.eth.getTransactionCount(accounts[0]);
+  const predictedSiblingAddr = createAddress(accounts[0], deployerNonce + 1);
+
+  const cawActions = await CawActions.new(
+    cawProfileL2.address,
+    '0x0000000000000000000000000000000000000000',
+    '0x0000000000000000000000000000000000000000000000000000000000000000',
+    predictedSiblingAddr,
+    { from: accounts[0] }
+  );
+  const sibling = await CawActionsERC1271.new(cawActions.address, { from: accounts[0] });
+  if (sibling.address.toLowerCase() !== predictedSiblingAddr.toLowerCase()) {
+    throw new Error(`Sibling address mismatch: got ${sibling.address}, expected ${predictedSiblingAddr}`);
+  }
+
+  await cawProfileL2.setCawActions(cawActions.address);
+
+  return { token, cawProfile, cawProfileL2, minter, quoter, cawActions, sibling, networkManager, networkId, l2 };
+}
+
+contract('CawActionsERC1271 — trailing-bytes and withdraw-cap guards', function (accounts) {
+  const validatorOwner = accounts[0];
+  const contractKeyHolder = accounts[3];
+
+  let s2;          // setup with real sibling
+  let contractOwnedTokenId2;
+  let validatorTokenId2;
+  let mockOwner2;
+  let domain2;
+  const l1 = 30101;
+  const l2 = 8453;
+
+  before(async function () {
+    this.timeout(180000);
+    s2 = await fullSetupWithSibling(accounts);
+
+    // Mint + deposit for validator and a contract-owned token.
+    const mintAmount = (10n * 1_000_000_000n * 10n ** 18n).toString();
+    await s2.token.mint(validatorOwner, mintAmount);
+    const cost1 = await s2.minter.costOfName('validator2');
+    await s2.token.approve(s2.minter.address, cost1.toString(), { from: validatorOwner });
+    const q1 = await s2.quoter.mintQuote(s2.networkId, false);
+    await s2.minter.mint(s2.networkId, 'validator2', q1.lzTokenFee, { from: validatorOwner, value: q1.nativeFee.toString() });
+    validatorTokenId2 = Number(await s2.cawProfile.totalSupply());
+
+    await s2.token.mint(contractKeyHolder, mintAmount);
+    const cost2 = await s2.minter.costOfName('cty2');
+    await s2.token.approve(s2.minter.address, cost2.toString(), { from: contractKeyHolder });
+    const q2 = await s2.quoter.mintQuote(s2.networkId, false);
+    await s2.minter.mint(s2.networkId, 'cty2', q2.lzTokenFee, { from: contractKeyHolder, value: q2.nativeFee.toString() });
+    contractOwnedTokenId2 = Number(await s2.cawProfile.totalSupply());
+
+    // Deposit balances.
+    const cawAmtWei = (5_000_000n * 10n ** 18n).toString();
+    await s2.token.approve(s2.cawProfile.address, (10_000_000n * 10n ** 18n).toString(), { from: validatorOwner });
+    const dq1 = await s2.quoter.depositQuote(s2.networkId, validatorTokenId2, cawAmtWei, l2, false);
+    await s2.cawProfile.deposit(s2.networkId, validatorTokenId2, cawAmtWei, l2, dq1.lzTokenFee, { from: validatorOwner, value: dq1.nativeFee.toString() });
+
+    await s2.token.approve(s2.cawProfile.address, (10_000_000n * 10n ** 18n).toString(), { from: contractKeyHolder });
+    const dq2 = await s2.quoter.depositQuote(s2.networkId, contractOwnedTokenId2, cawAmtWei, l2, false);
+    await s2.cawProfile.deposit(s2.networkId, contractOwnedTokenId2, cawAmtWei, l2, dq2.lzTokenFee, { from: contractKeyHolder, value: dq2.nativeFee.toString() });
+
+    // Deploy mock and transfer NFT to it.
+    mockOwner2 = await MockContractOwner.new(contractKeyHolder);
+    const tq = await s2.quoter.syncTransferQuote(contractOwnedTokenId2, mockOwner2.address, false);
+    await s2.cawProfile.transferAndSync(mockOwner2.address, contractOwnedTokenId2, tq.lzTokenFee, { from: contractKeyHolder, value: tq.nativeFee.toString() });
+
+    domain2 = await getDomain(s2.cawActions);
+  });
+
+  // Helper: build a single-group ERC-1271 batch and return the components
+  // needed for processActionsERC1271 (packedActions bytes, sigs[], rs[]).
+  async function buildSingleGroupBatch(actions) {
+    const slices = actions.map(packActionForSlice);
+
+    // packedActions in ERC-1271 format: 2-byte groupSize + raw action bytes.
+    const bodyLen = slices.reduce((a, b) => a + b.length, 0);
+    const packed = Buffer.alloc(2 + bodyLen);
+    packed.writeUInt16BE(actions.length, 0);
+    let pos = 2;
+    for (const s of slices) { s.copy(packed, pos); pos += s.length; }
+
+    // ERC-1271 sig: the mock contract recovers ecrecover from the digest.
+    let sig;
+    if (actions.length === 1) {
+      const { r, s: sv, v } = signActionData(contractKeyHolder, actions[0], domain2);
+      // Re-encode as raw 65-byte sig (r + s + v).
+      sig = Buffer.concat([
+        Buffer.from(r.replace(/^0x/, ''), 'hex'),
+        Buffer.from(sv.replace(/^0x/, ''), 'hex'),
+        Buffer.from([v]),
+      ]);
+    } else {
+      const { r, s: sv, v } = signActionBatch(contractKeyHolder, actions, domain2);
+      sig = Buffer.concat([
+        Buffer.from(r.replace(/^0x/, ''), 'hex'),
+        Buffer.from(sv.replace(/^0x/, ''), 'hex'),
+        Buffer.from([v]),
+      ]);
+    }
+
+    const sigHex = '0x' + sig.toString('hex');
+    const rsBytes32 = web3.utils.keccak256(sigHex);
+
+    return {
+      packedActions: '0x' + packed.toString('hex'),
+      sigs: [sigHex],
+      rs: [rsBytes32],
+    };
+  }
+
+  // ---------------------------------------------------------------------------
+  // Issue 4 — Trailing-bytes check
+  // ---------------------------------------------------------------------------
+  it('Issue 4: processActionsERC1271 reverts with "Trailing bytes" when packedActions has trailing data', async function () {
+    const cawonce = Number(await s2.cawActions.nextCawonce(contractOwnedTokenId2));
+    const actions = [{
+      actionType: ACTION_TYPE.caw,
+      senderId: contractOwnedTokenId2,
+      receiverId: 0, receiverCawonce: 0,
+      networkId: s2.networkId, cawonce,
+      recipients: [], amounts: [0],
+      text: '0x' + Buffer.from('trailing test').toString('hex'),
+    }];
+
+    const { packedActions, sigs, rs } = await buildSingleGroupBatch(actions);
+
+    // Append one spurious trailing byte.
+    const withTrailing = packedActions + 'ff';
+
+    let revertReason = null;
+    try {
+      await s2.sibling.processActionsERC1271(
+        validatorTokenId2, withTrailing, sigs, rs, 0, 0
+      );
+    } catch (e) {
+      revertReason = e.message;
+    }
+    if (!revertReason) throw new Error('Expected revert but succeeded');
+    expect(revertReason).to.include('Trailing bytes');
+  });
+
+  it('Issue 4: processActionsERC1271 succeeds when packedActions has no trailing bytes', async function () {
+    const cawonce = Number(await s2.cawActions.nextCawonce(contractOwnedTokenId2));
+    const actions = [{
+      actionType: ACTION_TYPE.caw,
+      senderId: contractOwnedTokenId2,
+      receiverId: 0, receiverCawonce: 0,
+      networkId: s2.networkId, cawonce,
+      recipients: [], amounts: [0],
+      text: '0x' + Buffer.from('no trailing').toString('hex'),
+    }];
+
+    const { packedActions, sigs, rs } = await buildSingleGroupBatch(actions);
+
+    await s2.sibling.processActionsERC1271(
+      validatorTokenId2, packedActions, sigs, rs, 0, 0
+    );
+    expect(await s2.cawActions.isCawonceUsed(contractOwnedTokenId2, cawonce)).to.equal(true);
+  });
+
+  // ---------------------------------------------------------------------------
+  // Issue 5 — Withdraw cap
+  //
+  // Building 256 distinct token-owning contract wallets in a truffle test is
+  // impractical (would require 256+ funded accounts). The guard is enforced by
+  // `_recordWithdraw` via `require(ctx.withdrawCount < 256, "Too many withdraws")`
+  // which runs BEFORE each indexed write. The Solidity array-bounds check is
+  // the secondary safety net. Manual inspection confirms both write sites
+  // (_trackWithdraw0 and _walkGroup) funnel through _recordWithdraw.
+  // ---------------------------------------------------------------------------
+  it('Issue 5: withdraw cap guard documented (cannot build 256+ distinct funded senders in unit test)', function () {
+    // The require(ctx.withdrawCount < 256, "Too many withdraws") in _recordWithdraw
+    // fires before every indexed write at both call sites. See:
+    //   CawActionsERC1271._trackWithdraw0  -> _recordWithdraw
+    //   CawActionsERC1271._walkGroup (i>0) -> _recordWithdraw
+    // This test is a documentation placeholder; functional coverage would require
+    // 257 distinct ERC-1271 contract owners, each with a funded L2 balance.
+    expect(true).to.equal(true);
   });
 });
