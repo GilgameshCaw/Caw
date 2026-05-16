@@ -29,6 +29,7 @@ import Avatar from '~/components/Avatar'
 import { LoadingSpinner } from '~/components/Skeleton'
 import UserHoverCard from '~/components/UserHoverCard'
 import { CawThumbnail, pickCawThumbnail } from '~/utils/cawThumbnail'
+import { useModalStore } from '~/store/modalStore'
 
 interface Actor {
   tokenId: number
@@ -100,6 +101,7 @@ interface Notification {
   isRead: boolean
   createdAt: string
   count?: number
+  groupKey?: string
   notificationIds: number[]
 }
 
@@ -184,6 +186,7 @@ const Notifications: React.FC = () => {
   // normally short-lived — the notification disappears from the list.
   const autoRetryingTxIds = useAutoRetryStore(s => s.retryingTxIds)
   const setGlobalUnreadCount = useNotificationUnreadStore(s => s.setUnreadCount)
+  const openModal = useModalStore(s => s.openModal)
   const [hasMore, setHasMore] = useState(false)
   const [offset, setOffset] = useState(0)
 
@@ -459,7 +462,7 @@ const Notifications: React.FC = () => {
   }
 
   const getNotificationText = (notification: Notification): React.ReactNode => {
-    const { type, actor, additionalActors, count = 1 } = notification
+    const { type, actor, additionalActors, count = 1, groupKey } = notification
 
     // Style: actor is the visual anchor; action should be readable (less gray).
     const actionClass = isDark ? 'text-white/85 font-normal' : 'text-gray-800 font-normal'
@@ -489,13 +492,39 @@ const Notifications: React.FC = () => {
       : actorSpan
     const grouped = count > 1 && additionalActors && additionalActors.length > 0
     const othersCount = grouped ? count - 1 : 0
-    // Use a sentinel marker so we can splice the React <Link> back in after
-    // running the translation through t() — t() only handles strings.
-    const NAME_TOKEN = ' NAME '
+    // For grouped notifications the "X others" portion becomes a clickable
+    // button that opens the full actor list modal. We use the plural i18n
+    // keys and reconstruct the label around actorLink + a <button>.
     const actorNode: React.ReactNode = grouped
       ? (() => {
-          const parts = t('notifications.actor_grouped', { count: othersCount, name: NAME_TOKEN }).split(NAME_TOKEN)
-          return <>{parts[0]}{actorLink}{parts[1] ?? ''}</>
+          const othersLabel = othersCount === 1
+            ? t('notifications.actor_grouped_one', { count: othersCount })
+            : t('notifications.actor_grouped_other', { count: othersCount })
+          // The translated string is e.g. "{{name}} and 3 others".
+          // We strip the name placeholder portion and extract the suffix
+          // ("3 others") so we can render it as a <button>.
+          const andSep = ' and '
+          const andIdx = othersLabel.lastIndexOf(andSep)
+          const suffix = andIdx >= 0 ? othersLabel.slice(andIdx + andSep.length) : othersLabel
+          const notificationType = type as 'FOLLOW' | 'LIKE' | 'REPOST' | 'TIP'
+          const othersButton = (
+            <button
+              type="button"
+              onClick={e => {
+                e.preventDefault()
+                e.stopPropagation()
+                openModal('notificationActors', {
+                  groupKey: groupKey ?? `${type}:${actor.tokenId}`,
+                  userId: activeToken?.tokenId ?? 0,
+                  notificationType,
+                })
+              }}
+              className={`underline cursor-pointer font-bold ${isDark ? 'text-white/85' : 'text-gray-800'} hover:opacity-70`}
+            >
+              {suffix}
+            </button>
+          )
+          return <>{actorLink}{andSep}{othersButton}</>
         })()
       : actorLink
 

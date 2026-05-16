@@ -7,7 +7,7 @@ import FollowListModal from '~/components/modals/FollowListModal'
 import ComposePostModal from '~/components/modals/ComposePostModal'
 
 
-const KEEP_MODALS: Modal[] = ["network", "comment", "quote", "message", "post", "followingList", "followersList"];
+const KEEP_MODALS: Modal[] = ["network", "comment", "quote", "message", "post", "followingList", "followersList", "notificationActors"];
 
 export const Modals: React.FC = () => {
   const { modal, modalData, closeModal, onSuccess } = useModalStore();
@@ -53,6 +53,7 @@ export const Modals: React.FC = () => {
       )}
       <FollowListModal type="following" />
       <FollowListModal type="followers" />
+      <FollowListModal type="notificationActors" />
     </>
   );
 };

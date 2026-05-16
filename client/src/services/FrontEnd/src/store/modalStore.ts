@@ -1,6 +1,6 @@
 import { create } from "zustand";
 
-export type Modal = "network" | 'comment' | 'quote' | 'message' | 'post' | 'followingList' | 'followersList';
+export type Modal = "network" | 'comment' | 'quote' | 'message' | 'post' | 'followingList' | 'followersList' | 'notificationActors';
 
 interface ModalStore {
   modal?: Modal;

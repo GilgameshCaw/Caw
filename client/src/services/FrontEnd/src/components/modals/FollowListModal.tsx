@@ -25,8 +25,10 @@ type UserItem = {
 }
 
 type Props = {
-  type: 'following' | 'followers'
+  type: 'following' | 'followers' | 'notificationActors'
 }
+
+type NotificationActorType = 'FOLLOW' | 'LIKE' | 'REPOST' | 'TIP'
 
 const FollowListModal: React.FC<Props> = ({ type }) => {
   const t = useT()
@@ -37,38 +39,81 @@ const FollowListModal: React.FC<Props> = ({ type }) => {
   const [users, setUsers] = useState<UserItem[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
-  const [nextCursor, setNextCursor] = useState<number | undefined>(undefined)
+  const [nextCursor, setNextCursor] = useState<string | number | undefined>(undefined)
   const [hasMore, setHasMore] = useState(true)
   const [followingStates, setFollowingStates] = useState<Record<number, boolean>>({})
 
-  const isOpen = modal === (type === 'following' ? 'followingList' : 'followersList')
+  const isOpen = type === 'notificationActors'
+    ? modal === 'notificationActors'
+    : modal === (type === 'following' ? 'followingList' : 'followersList')
+
+  // Data for notificationActors mode
+  const groupKey: string | undefined = modalData?.groupKey
+  const notificationUserId: number | undefined = modalData?.userId
+  const notificationType: NotificationActorType | undefined = modalData?.notificationType
+  // Data for following/followers mode
   const username = modalData?.username
+
+  // Build the API endpoint for the initial fetch
+  const buildEndpoint = (cursor?: string | number) => {
+    if (type === 'notificationActors') {
+      const params = new URLSearchParams()
+      if (notificationUserId != null) params.set('userId', String(notificationUserId))
+      if (groupKey) params.set('groupKey', groupKey)
+      if (notificationType) params.set('type', notificationType)
+      params.set('limit', '50')
+      if (cursor != null) params.set('cursor', String(cursor))
+      return `/api/notifications/group-actors?${params.toString()}`
+    }
+    const base = type === 'following'
+      ? `/api/users/${username}/following`
+      : `/api/users/${username}/followers`
+    return cursor != null ? `${base}?cursor=${cursor}` : base
+  }
+
+  // Resolve the modal title
+  const modalTitle = () => {
+    if (type === 'notificationActors') {
+      switch (notificationType) {
+        case 'FOLLOW': return t('notifications.actors_modal.followed_you')
+        case 'LIKE': return t('notifications.actors_modal.liked_your_caw')
+        case 'REPOST': return t('notifications.actors_modal.recawed_your_caw')
+        case 'TIP': return t('notifications.actors_modal.tipped_you')
+        default: return t('notifications.actors_modal.default')
+      }
+    }
+    return type === 'following' ? t('profile.stats.following') : t('profile.stats.followers')
+  }
 
   // Fetch users
   useEffect(() => {
-    if (!isOpen || !username) return
+    if (!isOpen) return
+    if (type === 'notificationActors' && !groupKey) return
+    if (type !== 'notificationActors' && !username) return
 
     const fetchUsers = async () => {
       setLoading(true)
       setError(null)
+      setUsers([])
+      setNextCursor(undefined)
+      setHasMore(false)
 
       try {
-        const endpoint = type === 'following'
-          ? `/api/users/${username}/following`
-          : `/api/users/${username}/followers`
-
+        const endpoint = buildEndpoint()
         const response = await apiFetch<{
-          items: UserItem[]
-          nextCursor?: number
+          items?: UserItem[]
+          actors?: UserItem[]
+          nextCursor?: string | number
         }>(endpoint)
 
-        setUsers(response.items)
+        const items = response.items ?? response.actors ?? []
+        setUsers(items)
         setNextCursor(response.nextCursor)
-        setHasMore(!!response.nextCursor)
+        setHasMore(response.nextCursor != null)
 
         // Initialize following states from API data
         const states: Record<number, boolean> = {}
-        for (const user of response.items) {
+        for (const user of items) {
           states[user.tokenId] = user.isFollowing || false
         }
         setFollowingStates(states)
@@ -81,29 +126,29 @@ const FollowListModal: React.FC<Props> = ({ type }) => {
     }
 
     fetchUsers()
-  }, [isOpen, username, type, activeToken?.tokenId])
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isOpen, username, groupKey, notificationType, type, activeToken?.tokenId])
 
   // Load more users
   const loadMore = async () => {
-    if (!hasMore || !nextCursor) return
+    if (!hasMore || nextCursor == null) return
 
     try {
-      const endpoint = type === 'following'
-        ? `/api/users/${username}/following?cursor=${nextCursor}`
-        : `/api/users/${username}/followers?cursor=${nextCursor}`
-
+      const endpoint = buildEndpoint(nextCursor)
       const response = await apiFetch<{
-        items: UserItem[]
-        nextCursor?: number
+        items?: UserItem[]
+        actors?: UserItem[]
+        nextCursor?: string | number
       }>(endpoint)
 
-      setUsers(prev => [...prev, ...response.items])
+      const items = response.items ?? response.actors ?? []
+      setUsers(prev => [...prev, ...items])
       setNextCursor(response.nextCursor)
-      setHasMore(!!response.nextCursor)
+      setHasMore(response.nextCursor != null)
 
       // Update following states for new users from API data
       const states = { ...followingStates }
-      for (const user of response.items) {
+      for (const user of items) {
         states[user.tokenId] = user.isFollowing || false
       }
       setFollowingStates(states)
@@ -126,7 +171,7 @@ const FollowListModal: React.FC<Props> = ({ type }) => {
       className="max-h-[80vh] max-h-[80dvh] overflow-hidden"
     >
       <ModalHeader
-        title={type === 'following' ? t('profile.stats.following') : t('profile.stats.followers')}
+        title={modalTitle()}
         onClose={closeModal}
       />
 
@@ -142,7 +187,11 @@ const FollowListModal: React.FC<Props> = ({ type }) => {
           </div>
         ) : users.length === 0 ? (
           <div className="p-8 text-center text-gray-500">
-            {type === 'following' ? t('follow_list.empty.following') : t('follow_list.empty.followers')}
+            {type === 'notificationActors'
+              ? t('follow_list.empty.notification_actors')
+              : type === 'following'
+                ? t('follow_list.empty.following')
+                : t('follow_list.empty.followers')}
           </div>
         ) : (
           <div className={`divide-y ${themeDivide(isDark)}`}>
