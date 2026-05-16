@@ -188,16 +188,25 @@ export async function handleCawAction(
           ? resolvePollImageUrl(parsedPoll.imageHost, h, 'webp', parsedPoll.imagePort, parsedPoll.imageScheme)
           : ''
       )
+      // Compute endsAt from the caw's on-chain creation time + the
+      // marker's duration. Same input on every mirror → same endsAt →
+      // late votes are rejected identically everywhere. Polls without
+      // a ::pd: sidecar leave endsAt null (legacy, never expires).
+      const endsAt = parsedPoll.durationSeconds != null
+        ? new Date(newCaw.createdAt.getTime() + parsedPoll.durationSeconds * 1000)
+        : null
       await tx.poll.upsert({
         where: { cawId: newCaw.id },
         update: {
           options: parsedPoll.options,
           optionImages: reconstructedImages,
+          endsAt,
         },
         create: {
           cawId: newCaw.id,
           options: parsedPoll.options,
           optionImages: reconstructedImages,
+          endsAt,
         },
       })
     }
@@ -1145,7 +1154,7 @@ async function handleVoteAction(
   // chain order so this race is rare but possible across mirror nodes.
   const targetCaw = await tx.caw.findUnique({
     where: { userId_cawonce: { userId: ownerUserId, cawonce: targetCawonce } },
-    select: { id: true, poll: { select: { id: true, totalVotes: true } } },
+    select: { id: true, poll: { select: { id: true, totalVotes: true, endsAt: true } } },
   })
   if (!targetCaw) {
     console.warn(`[handleVoteAction] Target caw not found yet (owner=${ownerUserId} cawonce=${targetCawonce}) — skipping`)
@@ -1153,6 +1162,19 @@ async function handleVoteAction(
   }
   if (!targetCaw.poll) {
     console.warn(`[handleVoteAction] Target caw ${targetCaw.id} has no poll — vote ignored`)
+    return
+  }
+
+  // Reject votes after the poll's endsAt. The duration was committed
+  // to the on-chain ::pd:<dur>:: sidecar at post time, so endsAt is
+  // mirror-consistent (computed from the caw's createdAt + duration).
+  // Legacy polls with endsAt=null have no expiry and always accept
+  // votes — preserves behavior for polls posted before the duration
+  // sidecar existed.
+  if (targetCaw.poll.endsAt && Date.now() > targetCaw.poll.endsAt.getTime()) {
+    console.warn(
+      `[handleVoteAction] Vote rejected: poll ${targetCaw.poll.id} ended at ${targetCaw.poll.endsAt.toISOString()} — voter=${voterId}`,
+    )
     return
   }
 

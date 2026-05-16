@@ -459,6 +459,11 @@ const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess, placehol
   const [pollOptionImages, setPollOptionImages] = useState<string[]>([])
   const [pollEnabled, setPollEnabled] = useState(false)
   const [pollPosition, setPollPosition] = useState<'start' | 'end'>('end')
+  // Voting window for the poll, encoded on-chain via the ::pd:<dur>::
+  // marker sidecar. Validator + indexer reject vote actions whose
+  // server-now is past (caw.createdAt + duration). Default 1d
+  // matches the picker default in pollMarker.ts.
+  const [pollDuration, setPollDuration] = useState<string>('1d')
   // Tip-along-post: when set, an OTHER (tip) action is bundled into the same
   // batch as the CAW action(s). Cleared on submit-success / reset.
   const [tipAttachment, setTipAttachment] = useState<TipAttachment | null>(null)
@@ -1128,9 +1133,9 @@ const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess, placehol
     const submitPollHashes = pollOptionImages.map(u => imageUrlToPollHash(u || ''))
     const submitPollMeta = imageUrlToMeta(pollOptionImages.find(u => u) || '')
     const submitPollMarker = pollEnabled && submitPollMeta
-      ? buildPollMarker(pollOptions, submitPollHashes, submitPollMeta)
+      ? buildPollMarker(pollOptions, submitPollHashes, submitPollMeta, pollDuration)
       : pollEnabled
-        ? buildPollMarker(pollOptions) // text-only poll
+        ? buildPollMarker(pollOptions, undefined, undefined, pollDuration) // text-only poll
         : null
     if (submitPollMarker && !isThreadMode) {
       finalText = (finalText ? finalText + '\n' : '') + submitPollMarker
@@ -1623,9 +1628,9 @@ const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess, placehol
   const counterPollHashes = pollOptionImages.map(u => imageUrlToPollHash(u || ''))
   const counterPollMeta = imageUrlToMeta(pollOptionImages.find(u => u) || '')
   const pollMarker = pollEnabled && counterPollMeta
-    ? buildPollMarker(pollOptions, counterPollHashes, counterPollMeta)
+    ? buildPollMarker(pollOptions, counterPollHashes, counterPollMeta, pollDuration)
     : pollEnabled
-      ? buildPollMarker(pollOptions)
+      ? buildPollMarker(pollOptions, undefined, undefined, pollDuration)
       : null
   // Poll is "active but not yet valid" when the user has opened the composer
   // but hasn't filled in at least 2 valid options. Submit gets blocked but
@@ -1830,6 +1835,8 @@ const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess, placehol
               position={pollPosition}
               onChangePosition={setPollPosition}
               showPositionPicker={isThreadMode}
+              duration={pollDuration}
+              onChangeDuration={setPollDuration}
             />
           )}
 
@@ -2216,6 +2223,8 @@ const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess, placehol
             position={pollPosition}
             onChangePosition={setPollPosition}
             showPositionPicker={isThreadMode}
+            duration={pollDuration}
+            onChangeDuration={setPollDuration}
           />
         )}
 

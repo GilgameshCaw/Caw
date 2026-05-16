@@ -180,6 +180,11 @@ model Caw {
 model Poll {
   id           Int      @id @default(autoincrement())
   cawId        Int      @unique
+  /// When voting closes. Computed at indexer-write time from the caw's
+  /// block timestamp plus the duration in the ::pd:<dur>:: marker
+  /// sidecar. NULL means the poll has no expiry (legacy polls created
+  /// before the duration sidecar was added).
+  endsAt       DateTime?
   options      String[] // PG text[]; positional. ≤ 6 entries enforced at write time.
   // Optional per-option image URLs. Positional, parallel to `options` —
   // empty string in slot i means "no image for option i". Default to an

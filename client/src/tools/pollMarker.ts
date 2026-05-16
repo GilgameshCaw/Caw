@@ -49,6 +49,59 @@ export const POLL_IMAGE_HASH_LEN = 8
 // that slot). Mirror nodes that see an unknown hash render text-only.
 const POLL_IMAGE_HASH_REGEX = /^[a-f0-9]{8}$/
 
+// Optional duration sidecar, e.g. "::pd:7d::". Encodes how long the
+// poll accepts votes after the caw's block timestamp. Validator and
+// indexer reject vote actions whose block timestamp is past
+// (cawCreated + duration). Format is digits + a single unit char
+// from POLL_DURATION_UNITS. Compact (2-3 bytes vs 10 for unix epoch)
+// and mirror-consistent because every node derives endsAt from the
+// same on-chain timestamps. Omitted entirely on polls that should
+// never expire (pre-launch backstop — we can decide to require a
+// duration later without a marker shape change).
+//
+// Wire shape:
+//   ::poll:opt1:opt2:opt3::pd:7d::
+//   ::poll:opt1:opt2::pi:host:hash:hash::pd:1h::
+// Order: ::pi:::: comes before ::pd:::: when both are present, so the
+// parser walks sidecars in known order. Old mirrors that don't know
+// about ::pd: just ignore the trailing bytes (the main poll/image
+// shape stays intact).
+const POLL_DURATION_REGEX = /^::pd:(\d{1,3}[hdw])::/
+// Mapping from unit suffix to seconds. Kept narrow (h/d/w) so the
+// validator's allow-list is trivial — minutes feel too short for a
+// social poll, months are unbounded enough we'd rather force a fresh
+// post.
+export const POLL_DURATION_UNITS: Record<string, number> = {
+  h: 3600,
+  d: 86400,
+  w: 604800,
+}
+// Composer-facing duration choices. Validator accepts any well-formed
+// `\d+[hdw]` value within (POLL_MIN_DURATION_SEC, POLL_MAX_DURATION_SEC]
+// — these constants are what we surface in the picker UI but are not
+// the only legal values on-chain.
+export const POLL_DURATION_CHOICES: { label: string; value: string; seconds: number }[] = [
+  { label: '1 hour', value: '1h', seconds: 3600 },
+  { label: '6 hours', value: '6h', seconds: 21600 },
+  { label: '1 day', value: '1d', seconds: 86400 },
+  { label: '7 days', value: '7d', seconds: 604800 },
+  { label: '30 days', value: '30d', seconds: 2592000 },
+]
+export const POLL_DURATION_DEFAULT = '1d'
+export const POLL_MIN_DURATION_SEC = 3600        // 1 hour
+export const POLL_MAX_DURATION_SEC = 30 * 86400  // 30 days
+// Parse the bare duration value (e.g. "7d") into seconds. Returns
+// undefined for malformed input or values outside the allowed range.
+export function parsePollDuration(s: string): number | undefined {
+  const m = /^(\d{1,3})([hdw])$/.exec(s)
+  if (!m) return undefined
+  const n = parseInt(m[1], 10)
+  const unit = m[2] as keyof typeof POLL_DURATION_UNITS
+  const seconds = n * POLL_DURATION_UNITS[unit]
+  if (seconds < POLL_MIN_DURATION_SEC || seconds > POLL_MAX_DURATION_SEC) return undefined
+  return seconds
+}
+
 // Regex matches "::poll:" up to the next "::". The body in between is the
 // colon-separated option list. Greedy on inner content but bounded by the
 // closing "::". Anchored anywhere in the string (g flag for matchAll).
@@ -90,11 +143,11 @@ const POLL_PORT_REGEX = /^p([1-9][0-9]{0,4})$/
 const POLL_SCHEME_FLAG = 's'
 
 export interface ParsedPoll {
-  /** Substring of the input matched by the marker, including outer "::poll:" / "::" AND any trailing ::pi:...:: sidecar. */
+  /** Substring of the input matched by the marker, including outer "::poll:" / "::" AND any trailing ::pi:...:: + ::pd:...:: sidecars. */
   marker: string
   /** Position in the input where the marker starts (UTF-16 char index) */
   start: number
-  /** Position one past the end of the marker (including image sidecar if present) */
+  /** Position one past the end of the marker (including any sidecars) */
   end: number
   /** The decoded options, in order. Empty/whitespace-only entries dropped. */
   options: string[]
@@ -112,6 +165,14 @@ export interface ParsedPoll {
   /** Scheme to use when reconstructing URLs: 'https' (default) or 'http'
    *  when the `:s:` flag is present. */
   imageScheme: 'http' | 'https'
+  /** Voting window in seconds, from the ::pd:<dur>:: sidecar. Undefined
+   *  when the sidecar is absent (poll never expires by marker) or
+   *  malformed. Validator + indexer enforce: reject votes whose block
+   *  timestamp is past (cawCreatedAt + durationSeconds). */
+  durationSeconds?: number
+  /** Raw duration value from the marker (e.g. "7d"). Preserved so
+   *  re-renderers can emit the same wire form when reconstructing. */
+  durationValue?: string
 }
 
 /**
@@ -137,21 +198,21 @@ export function parsePoll(text: string): ParsedPoll | null {
     return null
   }
 
-  // Try to consume a "::pi:host:hash:hash::" sidecar immediately after the
-  // main marker. Same-line only; anything else (whitespace, a newline)
-  // ends the poll block.
-  //
-  // Sidecar shape: first segment is the host, remaining segments are
-  // positional image hashes. The host appears once and amortizes across
-  // every image — saves a lot of bytes vs repeating the URL prefix.
+  // Try to consume sidecars immediately after the main marker. Same-
+  // line only; anything else (whitespace, a newline) ends the poll
+  // block. Sidecars appear in fixed order: image first, then duration.
+  // Each is independently optional.
   const tailStart = match.index + match[0].length
-  const tail = text.slice(tailStart)
+  let cursor = tailStart
   let imageHashes: string[] = options.map(() => '')
   let imageHost = ''
   let imagePort: number | undefined
   let imageScheme: 'http' | 'https' = 'https'
-  let endPos = tailStart
-  const imgMatch = POLL_IMAGES_REGEX.exec(tail)
+  let durationSeconds: number | undefined
+  let durationValue: string | undefined
+
+  // ::pi:host[:p<N>][:s]:hash:hash:: — image sidecar.
+  const imgMatch = POLL_IMAGES_REGEX.exec(text.slice(cursor))
   if (imgMatch) {
     const segments = imgMatch[1].split(':')
     const host = (segments[0] || '').trim().toLowerCase()
@@ -185,7 +246,7 @@ export function parsePoll(text: string): ParsedPoll | null {
         const h = (rawHashes[idx] || '').trim()
         return POLL_IMAGE_HASH_REGEX.test(h) ? h : ''
       })
-      endPos = tailStart + imgMatch[0].length
+      cursor += imgMatch[0].length
     }
     // Malformed host → consume no sidecar bytes; treat as text-only.
     // The ::pi:...:: substring still appears in `text` and would render
@@ -193,15 +254,30 @@ export function parsePoll(text: string): ParsedPoll | null {
     // it. Acceptable: invalid sidecars are user/forgery error and rare.
   }
 
+  // ::pd:<duration>:: — vote-window sidecar. Mirror nodes that don't
+  // know about ::pd:: just leave it in the body text — same fallback
+  // as a malformed ::pi: above.
+  const durMatch = POLL_DURATION_REGEX.exec(text.slice(cursor))
+  if (durMatch) {
+    const parsed = parsePollDuration(durMatch[1])
+    if (parsed != null) {
+      durationSeconds = parsed
+      durationValue = durMatch[1]
+      cursor += durMatch[0].length
+    }
+  }
+
   return {
-    marker: text.slice(match.index, endPos),
+    marker: text.slice(match.index, cursor),
     start: match.index,
-    end: endPos,
+    end: cursor,
     options,
     imageHashes,
     imageHost,
     imagePort,
     imageScheme,
+    durationSeconds,
+    durationValue,
   }
 }
 
@@ -230,6 +306,7 @@ export function buildPollMarker(
   options: string[],
   imageHashes?: string[],
   meta?: { host: string; port?: number; scheme?: 'http' | 'https' },
+  duration?: string,
 ): string | null {
   const trimmed = options.map(o => o.trim()).filter(o => o.length > 0)
   if (trimmed.length < POLL_MIN_OPTIONS || trimmed.length > POLL_MAX_OPTIONS) {
@@ -238,7 +315,7 @@ export function buildPollMarker(
   for (const o of trimmed) {
     if (o.includes(':') || o.includes('\n')) return null
   }
-  const base = `::poll:${trimmed.join(':')}::`
+  let out = `::poll:${trimmed.join(':')}::`
 
   // Image sidecar — only emit when at least one slot is populated AND we
   // have a valid host. Without a host the hashes can't be resolved on a
@@ -260,10 +337,22 @@ export function buildPollMarker(
     if (port && port !== defaultPort) metaSegments.push(`p${port}`)
     if (scheme === 'http') metaSegments.push(POLL_SCHEME_FLAG)
     const metaPrefix = metaSegments.length > 0 ? `:${metaSegments.join(':')}` : ''
-    return `${base}::pi:${cleanHost}${metaPrefix}:${padded.join(':')}::`
+    out += `::pi:${cleanHost}${metaPrefix}:${padded.join(':')}::`
   }
 
-  return base
+  // Duration sidecar — only emit when duration is a well-formed value
+  // within the allowed range. Malformed input is silently dropped (poll
+  // becomes never-expires) rather than failing the whole build; the
+  // composer should validate before getting here, but a graceful
+  // degrade is safer than a hard reject.
+  if (duration) {
+    const seconds = parsePollDuration(duration)
+    if (seconds != null) {
+      out += `::pd:${duration}::`
+    }
+  }
+
+  return out
 }
 
 /**

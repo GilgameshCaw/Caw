@@ -8,6 +8,7 @@ import {
   POLL_MAX_OPTIONS,
   POLL_MAX_OPTION_BYTES,
   POLL_MAX_OPTION_BYTES_WITH_IMAGES,
+  POLL_DURATION_CHOICES,
 } from '~/../../../tools/pollMarker'
 import { useT } from '~/i18n/I18nProvider'
 
@@ -30,6 +31,9 @@ interface Props {
   onChangePosition: (p: 'start' | 'end') => void
   /** Show the start/end picker (only relevant when the post will thread). */
   showPositionPicker: boolean
+  /** Voting window. One of POLL_DURATION_CHOICES.value. */
+  duration: string
+  onChangeDuration: (d: string) => void
 }
 
 /**
@@ -58,6 +62,8 @@ const PollComposer: React.FC<Props> = ({
   position,
   onChangePosition,
   showPositionPicker,
+  duration,
+  onChangeDuration,
 }) => {
   const { isDark } = useTheme()
   const t = useT()
@@ -337,6 +343,28 @@ const PollComposer: React.FC<Props> = ({
           </label>
         </div>
       )}
+
+      {/* Voting window picker. Drives the on-chain ::pd:<dur>:: marker
+          sidecar so validator + indexer enforce a consistent cut-off
+          across mirrors. */}
+      <div className={`mt-3 pt-3 border-t flex items-center gap-2 text-xs ${
+        isDark ? 'border-white/10 text-white/60' : 'border-gray-200 text-gray-600'
+      }`}>
+        <span>{t('poll.duration')}</span>
+        <select
+          value={duration}
+          onChange={e => onChangeDuration(e.target.value)}
+          className={`px-2 py-1 rounded border text-xs cursor-pointer ${
+            isDark
+              ? 'bg-white/5 border-white/10 text-white'
+              : 'bg-gray-50 border-gray-200 text-gray-900'
+          }`}
+        >
+          {POLL_DURATION_CHOICES.map(c => (
+            <option key={c.value} value={c.value}>{c.label}</option>
+          ))}
+        </select>
+      </div>
     </div>
   )
 }

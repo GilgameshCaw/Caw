@@ -58,6 +58,13 @@ export interface ShapedPoll {
    * confirms. Null when no currentUserId in the request.
    */
   userVote: { optionIndex: number; pending: boolean } | null
+  /**
+   * ISO timestamp when voting closes (Poll.endsAt). Computed by the
+   * indexer from the caw's createdAt + the ::pd:<dur>:: marker
+   * duration. Null for legacy polls posted before the duration
+   * sidecar existed — those never expire.
+   */
+  endsAt: string | null
 }
 
 export interface ShapedCaw {
@@ -148,6 +155,7 @@ export function shapeCaw(raw: CawRaw | any): ShapedCaw {
       totalVotes: raw.poll.totalVotes ?? 0,
       optionVoteCounts: [],   // filled by enrichWithPollVotes
       userVote: null,         // filled by enrichWithPollVotes
+      endsAt: raw.poll.endsAt ? raw.poll.endsAt.toISOString() : null,
     }
     ;(poll as any)._pollId = raw.poll.id
   }

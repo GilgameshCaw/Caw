@@ -1059,8 +1059,24 @@ router.post('/', async (req, res) => {
           // are present.
           const targetCaw = await prisma.caw.findUnique({
             where: { userId_cawonce: { userId: pollOwnerTokenId, cawonce: targetCawonce } },
-            select: { id: true, poll: { select: { id: true } } },
+            select: { id: true, poll: { select: { id: true, endsAt: true } } },
           })
+          // Refuse to write an optimistic vote (or unvote) after the
+          // poll's endsAt. Mirrors the indexer's enforcement so the
+          // FE doesn't see a fake "your vote landed" state for a
+          // vote that will be rejected on-chain. Legacy polls with
+          // endsAt=null have no expiry — vote freely.
+          if (
+            targetCaw?.poll?.endsAt &&
+            Date.now() > targetCaw.poll.endsAt.getTime()
+          ) {
+            res.status(409).json({
+              error: 'POLL_ENDED',
+              message: 'This poll has ended; votes are no longer accepted.',
+              endsAt: targetCaw.poll.endsAt.toISOString(),
+            })
+            return
+          }
           if (targetCaw?.poll) {
             // Ensure the voter user exists (mirror the tip path's upsert).
             await prisma.user.upsert({

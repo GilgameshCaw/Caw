@@ -81,5 +81,9 @@ export type CawItem = {
     totalVotes: number
     optionVoteCounts: number[]
     userVote: { optionIndex: number; pending: boolean } | null
+    /** ISO timestamp when voting closes. Computed by the indexer from the
+     * caw's createdAt + the ::pd:<dur>:: marker duration. Null when the
+     * poll has no expiry (legacy polls created before the duration sidecar). */
+    endsAt?: string | null
   }
 }

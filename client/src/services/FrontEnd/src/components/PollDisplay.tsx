@@ -7,6 +7,27 @@ import { buildVoteText } from '~/../../../tools/pollMarker'
 import type { CawItem } from '~/types'
 import { useT } from '~/i18n/I18nProvider'
 
+/**
+ * Format a positive millisecond duration as a short countdown string —
+ * "3d 4h", "5h", "23m", "<1m". Picks the two largest non-zero units so
+ * a poll closing in 25 hours reads "1d 1h" instead of "25h". Used by
+ * the inline poll widget's "Ends in <X>" footer.
+ *
+ * Negative input falls through to "<1m" — caller should swap to the
+ * "Poll ended" copy before reaching here.
+ */
+function formatRemaining(ms: number): string {
+  if (ms <= 0) return '<1m'
+  const totalMin = Math.floor(ms / 60_000)
+  if (totalMin < 1) return '<1m'
+  const d = Math.floor(totalMin / 1440)
+  const h = Math.floor((totalMin % 1440) / 60)
+  const m = totalMin % 60
+  if (d > 0) return h > 0 ? `${d}d ${h}h` : `${d}d`
+  if (h > 0) return m > 0 ? `${h}h ${m}m` : `${h}h`
+  return `${m}m`
+}
+
 interface Props {
   caw: CawItem
   optionLabelsOverride?: string[] | null
@@ -182,12 +203,26 @@ const PollDisplay: React.FC<Props> = ({ caw, optionLabelsOverride }) => {
     return { counts: local.counts, sum }
   }, [poll, local])
 
+  // Re-render every 30s so the "Ends in Xh" countdown stays fresh
+  // without polling the server. Cheap; only kicks for polls with an
+  // endsAt set.
+  const [, forceTick] = useState(0)
+  useEffect(() => {
+    if (!poll?.endsAt) return
+    const id = setInterval(() => forceTick(t => t + 1), 30_000)
+    return () => clearInterval(id)
+  }, [poll?.endsAt])
+
   if (!poll || !totals) return null
 
-  const showResults = local.optionIndex !== null  // viewer has voted (or just voted)
+  const endsAtMs = poll.endsAt ? new Date(poll.endsAt).getTime() : null
+  const hasEnded = endsAtMs != null && Date.now() > endsAtMs
+
+  const showResults = local.optionIndex !== null || hasEnded  // viewer voted, or poll closed
 
   const submitVote = async (optionIndex: number | null) => {
     if (submitting) return
+    if (hasEnded) return  // Poll closed — UI disables the buttons too.
     if (!activeToken?.tokenId) {
       openConnectModal?.()
       return
@@ -269,14 +304,16 @@ const PollDisplay: React.FC<Props> = ({ caw, optionLabelsOverride }) => {
             <button
               key={i}
               onClick={() => submitVote(i)}
-              disabled={submitting || isUserPick}
+              disabled={submitting || isUserPick || hasEnded}
               onMouseEnter={() => setHovered(i)}
               onMouseLeave={() => setHovered(null)}
               style={{ background: 'transparent', minHeight: 50 }}
               className={`relative w-full text-left px-3 py-2 rounded-lg overflow-hidden ${
-                isUserPick
+                hasEnded
                   ? 'cursor-default'
-                  : (submitting ? 'cursor-wait opacity-60' : 'cursor-pointer hover:opacity-95')
+                  : isUserPick
+                    ? 'cursor-default'
+                    : (submitting ? 'cursor-wait opacity-60' : 'cursor-pointer hover:opacity-95')
               }`}
             >
               {/* Filled bar — width transitions to its target percentage.
@@ -349,8 +386,17 @@ const PollDisplay: React.FC<Props> = ({ caw, optionLabelsOverride }) => {
       <div className={`flex items-center justify-between text-xs mt-2 ${
         isDark ? 'text-white/40' : 'text-gray-500'
       }`}>
-        <span>{t('poll.vote_count', { count: local.total })}</span>
-        {showResults && !local.pending && (
+        <span className="flex items-center gap-2">
+          <span>{t('poll.vote_count', { count: local.total })}</span>
+          {endsAtMs != null && (
+            <span className={hasEnded ? 'text-red-400' : ''}>
+              · {hasEnded
+                  ? t('poll.ended')
+                  : t('poll.ends_in', { remaining: formatRemaining(endsAtMs - Date.now()) })}
+            </span>
+          )}
+        </span>
+        {showResults && !hasEnded && !local.pending && local.optionIndex !== null && (
           <button
             onClick={() => submitVote(null)}
             disabled={submitting}
