@@ -6,7 +6,7 @@ import { Service } from '../../Service'
 import { prisma }  from '../../prismaClient'
 import getActionType from '../../abi/getActionType'
 import { cawActionsAbi } from '../../abi/generated'
-import { CAW_ACTIONS_ADDRESS, CAW_ADDRESS, WETH_ADDRESS, CAW_ACTIONS_ARCHIVE_ADDRESS, CAW_CHALLENGE_RELAY_ADDRESS } from '../../abi/addresses'
+import { CAW_ACTIONS_ADDRESS, CAW_ACTIONS_ERC1271_ADDRESS, CAW_ADDRESS, WETH_ADDRESS, CAW_ACTIONS_ARCHIVE_ADDRESS, CAW_CHALLENGE_RELAY_ADDRESS } from '../../abi/addresses'
 import { deployments, type Env, type ChainKey } from '../../abi/deployments'
 import { WebSocketProvider, JsonRpcProvider, Contract, Interface, keccak256, solidityPacked, AbiCoder } from 'ethers'
 import { packActions, packSignatures, packGroupedSignatures, bytesToHex, getPackedActionSlices, unpackActions, unpackPerActionSigs } from '../../utils/packActions'
@@ -32,6 +32,11 @@ const PACKED_ABI = [
   // (packedActions, packedSigs) tuple has been pre-staged in zkProofCache.
   // Falls back to processActions transparently if no proof is ready.
   'function processActionsWithZkSigs(uint32 validatorId, bytes packedActions, bytes packedSigs, bytes signers, bytes proof, uint256 withdrawFee, uint256 withdrawLzTokenAmount) payable',
+  // ERC-1271 path: called on CawActionsERC1271 (sibling contract). Carries
+  // per-group sigs (bytes[]) and rs (bytes32[]) instead of a single packed
+  // bytes sigs. For each group g, rs[g] == keccak256(sigs[g]) is enforced
+  // on-chain and is the value folded into the hash chain as ba.r.
+  'function processActionsERC1271(uint32 validatorId, bytes packedActions, bytes[] sigs, bytes32[] rs, uint256 withdrawFee, uint256 withdrawLzTokenAmount) payable',
   // ActionsProcessed is a *commitment* to the calldata (packedActions lives
   // in the originating tx's input). Consumers who need the bytes call
   // decodePackedActionsFromTx() to fetch and decode them from tx.data.
@@ -3584,8 +3589,17 @@ console.log("succeededKeys", succeededKeys)
       const actionsNeededFromEnd = actionCount - rangeStartPos
       const latestL2 = await httpProvider.getBlockNumber()
       const eventsContract = new Contract(CAW_ACTIONS_ADDRESS, cawActionsAbi as any, httpProvider)
+      // Bind a second contract to the ERC-1271 sibling if deployed. The sibling
+      // emits ActionsProcessed from its own address for every ERC-1271 batch, and
+      // those events must be merged into the reconstruction stream so checkpoints
+      // that span both ECDSA and ERC-1271 batches produce the correct hash chain.
+      const eventsContractERC1271 = CAW_ACTIONS_ERC1271_ADDRESS
+        ? new Contract(CAW_ACTIONS_ERC1271_ADDRESS, cawActionsAbi as any, httpProvider)
+        : null
 
       const CHUNK = 50_000
+      // processedEvents items carry .address so the decode dispatch can branch on
+      // which contract emitted the event (ECDSA vs ERC-1271 calldata shape).
       let processedEvents: any[] = []
       let scannedActions = 0
       let toBlock = latestL2
@@ -3600,19 +3614,42 @@ console.log("succeededKeys", succeededKeys)
           fromBlock,
           toBlock,
         )
-        for (const ev of batch) {
+        let batchERC1271: any[] = []
+        if (eventsContractERC1271) {
+          batchERC1271 = await eventsContractERC1271.queryFilter(
+            eventsContractERC1271.filters.ActionsProcessed(clientId),
+            fromBlock,
+            toBlock,
+          )
+        }
+        // Merge the two event streams for counting. The address field on each
+        // event record identifies which contract emitted it.
+        const combined = [...batch, ...batchERC1271]
+        for (const ev of combined) {
           const args: any = (ev as any).args
           if (!args) continue
           // The new event carries actionCount directly; no payload decode needed.
           const cnt = Number(args.actionCount ?? args[2] ?? 0)
           scannedActions += cnt
         }
-        processedEvents = [...batch, ...processedEvents]
+        processedEvents = [...combined, ...processedEvents]
         if (fromBlock === 0) break
         toBlock = fromBlock - 1
       }
 
-      const txHashes = Array.from(new Set(processedEvents.map(e => e.transactionHash)))
+      if (processedEvents.length === 0) return null
+
+      // Build a map from txHash → emitting contract address. A single tx calls
+      // exactly one entry point (processActions OR processActionsERC1271), so the
+      // mapping is 1:1. This is used below to select the correct calldata decoder.
+      const txEmitter = new Map<string, string>()
+      for (const ev of processedEvents) {
+        const txHash: string = ev.transactionHash
+        // ev.address is the contract that emitted the event (lowercased by ethers).
+        if (!txEmitter.has(txHash)) txEmitter.set(txHash, (ev.address as string).toLowerCase())
+      }
+
+      const txHashes = Array.from(txEmitter.keys())
       if (txHashes.length === 0) return null
 
       type OrderedEntry = {
@@ -3628,45 +3665,137 @@ console.log("succeededKeys", succeededKeys)
           return null
         }
 
-        const decoded = packedIface.decodeFunctionData('processActions', tx.data)
-        const packedHex: string = decoded[1]
-        const sigsHex: string = decoded[2]
+        const emitter = txEmitter.get(txHash)!
+        // Cast to string (not the "" literal) so TS doesn't narrow to never
+        // when CAW_ACTIONS_ERC1271_ADDRESS is typed as "" as const.
+        const erc1271Addr: string = CAW_ACTIONS_ERC1271_ADDRESS
+        const isERC1271 = erc1271Addr !== '' && emitter === erc1271Addr.toLowerCase()
 
-        const packedBuf = new Uint8Array((packedHex.startsWith('0x') ? packedHex.slice(2) : packedHex).match(/.{2}/g)!.map(b => parseInt(b, 16)))
-        const unpackedActions = unpackActions(packedBuf)
+        if (isERC1271) {
+          // ---- ERC-1271 path ----
+          // Calldata shape: processActionsERC1271(validatorId, packedActions, bytes[] sigs, bytes32[] rs, ...)
+          // For each group g, rs[g] == keccak256(sigs[g]) is enforced on-chain.
+          // In _updateHashChain, ba.r = rs[g] is folded once per action in the group
+          // (CawActions.sol:981,1183 — same group-r-reuse pattern as ECDSA).
+          // So for each action i in group g, allR[i] = rs[g].
+          let decodedERC1271: any
+          try {
+            decodedERC1271 = packedIface.decodeFunctionData('processActionsERC1271', tx.data)
+          } catch (err) {
+            console.error(`[Reconstruct] ERC-1271 calldata decode failed for tx ${txHash}: ${err instanceof Error ? err.message : String(err)}`)
+            return null
+          }
+          const packedHexERC1271: string = decodedERC1271[1]
+          const sigsArr: string[] = Array.from(decodedERC1271[2] as string[])
+          const rsArr: string[] = Array.from(decodedERC1271[3] as string[])
 
-        const sigBytes = new Uint8Array((sigsHex.startsWith('0x') ? sigsHex.slice(2) : sigsHex).match(/.{2}/g)!.map(b => parseInt(b, 16)))
+          // Sanity-check: rs[g] must equal keccak256(sigs[g]). The on-chain
+          // contract already enforces this, but verifying client-side catches
+          // local calldata corruption before it propagates to archive submission.
+          for (let g = 0; g < sigsArr.length; g++) {
+            const expected = keccak256(sigsArr[g])
+            if (expected !== rsArr[g]) {
+              console.error(`[Reconstruct] ERC-1271 rs[${g}] mismatch in tx ${txHash}: got ${rsArr[g]}, want ${expected}`)
+              return null
+            }
+          }
 
-        // Wire format is grouped: [uint16 numGroups][per group: 2-byte size +
-        // 65-byte sig], with batch groups sharing one (v,r,s) across multiple
-        // actions. Expand to one entry per action so each action gets the r
-        // value the on-chain hash chain folded in (see CawActions.sol's
-        // _advanceHashChain — batch groups reuse the group's r per action).
-        const perActionSigs = unpackPerActionSigs(sigBytes, unpackedActions.length)
+          const packedBufERC1271 = new Uint8Array(
+            (packedHexERC1271.startsWith('0x') ? packedHexERC1271.slice(2) : packedHexERC1271)
+              .match(/.{2}/g)!.map(b => parseInt(b, 16))
+          )
+          const unpackedERC1271 = unpackActions(packedBufERC1271)
 
-        for (let i = 0; i < unpackedActions.length; i++) {
-          const a = unpackedActions[i]
-          if (a.networkId !== clientId) continue
-          const sig = perActionSigs[i]
-          orderedEntries.push({
-            blockNumber: tx.blockNumber!,
-            txIndex: tx.index!,
-            calldataPos: i,
-            action: {
-              actionType: a.actionType,
-              senderId: a.senderId,
-              receiverId: a.receiverId,
-              receiverCawonce: a.receiverCawonce,
-              networkId: a.networkId,
-              cawonce: a.cawonce,
-              recipients: a.recipients,
-              amounts: a.amounts.map((x: any) => BigInt(x)),
-              text: a.text,
-            },
-            v: sig.v,
-            r: sig.r,
-            s: sig.s,
-          })
+          // Assign rs[g] to each action in group g. The packed-actions wire format
+          // groups actions identically to the sig groups in sigsArr/rsArr: group g
+          // is a contiguous run of actions sharing the same sender. We walk the
+          // actions tracking group boundaries by senderId transitions (each group
+          // has a unique sender per CawActionsERC1271's _processGroup invariant).
+          // Group size can be 1 or more; we track by sender change to align.
+          let gIdx = 0
+          let prevSender = unpackedERC1271.length > 0 ? unpackedERC1271[0].senderId : -1
+          for (let i = 0; i < unpackedERC1271.length; i++) {
+            const a = unpackedERC1271[i]
+            // Advance group index when sender changes (each group = one sender).
+            if (i > 0 && a.senderId !== prevSender) {
+              gIdx++
+              prevSender = a.senderId
+            }
+            if (a.networkId !== clientId) continue
+            const groupR: string = rsArr[gIdx]
+            orderedEntries.push({
+              blockNumber: tx.blockNumber!,
+              txIndex: tx.index!,
+              calldataPos: i,
+              action: {
+                actionType: a.actionType,
+                senderId: a.senderId,
+                receiverId: a.receiverId,
+                receiverCawonce: a.receiverCawonce,
+                networkId: a.networkId,
+                cawonce: a.cawonce,
+                recipients: a.recipients,
+                amounts: a.amounts.map((x: any) => BigInt(x)),
+                text: a.text,
+              },
+              v: 0,
+              r: groupR,
+              s: '0x' + '00'.repeat(32),
+            })
+          }
+        } else {
+          // ---- ECDSA path (processActions / safeProcessActions) ----
+          let decoded: any
+          try {
+            decoded = packedIface.decodeFunctionData('processActions', tx.data)
+          } catch {
+            // May be safeProcessActions — same arg shape, different selector.
+            try {
+              decoded = packedIface.decodeFunctionData('safeProcessActions', tx.data)
+            } catch (err) {
+              console.error(`[Reconstruct] ECDSA calldata decode failed for tx ${txHash}: ${err instanceof Error ? err.message : String(err)}`)
+              return null
+            }
+          }
+          const packedHex: string = decoded[1]
+          const sigsHex: string = decoded[2]
+
+          const packedBuf = new Uint8Array((packedHex.startsWith('0x') ? packedHex.slice(2) : packedHex).match(/.{2}/g)!.map(b => parseInt(b, 16)))
+          const unpackedActions = unpackActions(packedBuf)
+
+          const sigBytes = new Uint8Array((sigsHex.startsWith('0x') ? sigsHex.slice(2) : sigsHex).match(/.{2}/g)!.map(b => parseInt(b, 16)))
+
+          // Wire format is grouped: [uint16 numGroups][per group: 2-byte size +
+          // 65-byte sig], with batch groups sharing one (v,r,s) across multiple
+          // actions. Expand to one entry per action so each action gets the r
+          // value the on-chain hash chain folded in (see CawActions.sol's
+          // _updateHashChain — batch groups reuse the group's r per action).
+          const perActionSigs = unpackPerActionSigs(sigBytes, unpackedActions.length)
+
+          for (let i = 0; i < unpackedActions.length; i++) {
+            const a = unpackedActions[i]
+            if (a.networkId !== clientId) continue
+            const sig = perActionSigs[i]
+            orderedEntries.push({
+              blockNumber: tx.blockNumber!,
+              txIndex: tx.index!,
+              calldataPos: i,
+              action: {
+                actionType: a.actionType,
+                senderId: a.senderId,
+                receiverId: a.receiverId,
+                receiverCawonce: a.receiverCawonce,
+                networkId: a.networkId,
+                cawonce: a.cawonce,
+                recipients: a.recipients,
+                amounts: a.amounts.map((x: any) => BigInt(x)),
+                text: a.text,
+              },
+              v: sig.v,
+              r: sig.r,
+              s: sig.s,
+            })
+          }
         }
       }
 
