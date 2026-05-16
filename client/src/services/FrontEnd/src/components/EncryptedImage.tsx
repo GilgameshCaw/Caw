@@ -48,6 +48,13 @@ interface EncryptedImageProps {
    * absolute-positioned timestamp; the failure path is text-shaped and
    * needs the timestamp inline so it doesn't overlap the error label). */
   onError?: () => void
+  /** Original pixel dimensions of the attachment (captured at upload via
+   * readImageDimensions). When present, the loading placeholder mirrors
+   * the image's aspect ratio inside the max-240×240 box so the bubble
+   * doesn't jump when the decrypted bitmap mounts. Pre-rollout messages
+   * lack these — falls back to the old fixed 200×150 skeleton. */
+  width?: number
+  height?: number
 }
 
 /**
@@ -56,7 +63,7 @@ interface EncryptedImageProps {
  * video. The two paths are interchangeable on the wire — only the
  * decrypt step differs.
  */
-const EncryptedImage: React.FC<EncryptedImageProps> = ({ url, sealedKey, senderTokenId, senderPublicKey, legacySharedSecret, mimeType = 'image/webp', alt = 'Encrypted image', className, onError }) => {
+const EncryptedImage: React.FC<EncryptedImageProps> = ({ url, sealedKey, senderTokenId, senderPublicKey, legacySharedSecret, mimeType = 'image/webp', alt = 'Encrypted image', className, onError, width, height }) => {
   const [objectUrl, setObjectUrl] = useState<string | null>(null)
   const [error, setError] = useState(false)
   const [loading, setLoading] = useState(true)
@@ -139,8 +146,27 @@ const EncryptedImage: React.FC<EncryptedImageProps> = ({ url, sealedKey, senderT
   }, [url, sealedKey, senderTokenId, senderPublicKey, legacySharedSecret, mimeType])
 
   if (loading) {
+    // Size the placeholder to mirror the eventual image's aspect ratio
+    // so the bubble (and the messages below it) don't jump when the
+    // decrypted bitmap mounts. Cap at 240px each side to match the
+    // rendered <img>'s max-w/max-h-[240px]. Fall back to the old
+    // 200×150 box when dimensions weren't recorded at upload time.
+    let placeholderStyle: React.CSSProperties | undefined
+    let placeholderSize = 'w-[200px] h-[150px]'
+    if (width && height && width > 0 && height > 0) {
+      const MAX = 240
+      const scale = Math.min(MAX / width, MAX / height, 1)
+      placeholderStyle = {
+        width: Math.round(width * scale),
+        height: Math.round(height * scale),
+      }
+      placeholderSize = ''
+    }
     return (
-      <div className={`animate-pulse bg-white/10 rounded-lg ${className || 'w-[200px] h-[150px]'}`} />
+      <div
+        className={`animate-pulse bg-white/10 rounded-lg ${placeholderSize}`}
+        style={placeholderStyle}
+      />
     )
   }
 
@@ -185,6 +211,11 @@ const EncryptedImage: React.FC<EncryptedImageProps> = ({ url, sealedKey, senderT
       <img
         src={objectUrl}
         alt={alt}
+        // Setting width/height as attributes (not just CSS) lets the
+        // browser reserve the right aspect-ratio before paint — the CSS
+        // max-w/max-h still scales it down to the bubble cap.
+        width={width || undefined}
+        height={height || undefined}
         className={`${className || 'max-w-[240px] max-h-[240px] rounded-lg object-contain'} cursor-zoom-in`}
         loading="lazy"
         onClick={(e) => {

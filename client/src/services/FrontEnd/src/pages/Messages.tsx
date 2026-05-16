@@ -2244,6 +2244,8 @@ const MessagesPage: React.FC = () => {
                                           legacySharedSecret={chatSharedSecret}
                                           mimeType={parsed.mimeType}
                                           alt={parsed.name}
+                                          width={parsed.width}
+                                          height={parsed.height}
                                         />
                                         {bubbleTime && (
                                           <span className={`float-right ml-2 mt-1 text-[11px] font-medium whitespace-nowrap inline-flex items-center gap-1 ${bubbleTimeTextClass}`}>
@@ -2265,6 +2267,8 @@ const MessagesPage: React.FC = () => {
                                         legacySharedSecret={chatSharedSecret}
                                         mimeType={parsed.mimeType}
                                         alt={parsed.name}
+                                        width={parsed.width}
+                                        height={parsed.height}
                                         className={mt.startsWith('video/')
                                           ? 'max-w-[320px] max-h-[320px] rounded-lg'
                                           : 'max-w-[240px] max-h-[240px] rounded-lg object-contain'}
@@ -2311,12 +2315,23 @@ const MessagesPage: React.FC = () => {
                             const trimmed = messageContent.trim()
                             if (imageUrlPattern.test(trimmed) || giphyPattern.test(trimmed)) {
                               return (
-                                <div className="relative">
+                                <div className="relative inline-block">
+                                  {/* Reserve a 4:3 area at the bubble's max
+                                      width so the message list doesn't jump
+                                      when the GIF/external image loads.
+                                      onLoad clears the hint so the image's
+                                      natural aspect takes over. */}
                                   <img
                                     src={trimmed}
                                     alt="Shared image"
-                                    className="max-w-[240px] max-h-[240px] rounded-lg object-contain"
+                                    className="max-w-[240px] max-h-[240px] rounded-lg object-contain block"
+                                    style={{ width: 240, aspectRatio: '4 / 3' }}
                                     loading="lazy"
+                                    onLoad={(e) => {
+                                      const el = e.currentTarget
+                                      el.style.width = ''
+                                      el.style.aspectRatio = ''
+                                    }}
                                   />
                                   {bubbleTime && (
                                     <span className={`absolute bottom-1 right-1 px-1.5 py-0.5 rounded text-[11px] font-medium whitespace-nowrap ${bubbleTimePillClass}`}>
