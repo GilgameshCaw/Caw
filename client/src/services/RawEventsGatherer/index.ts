@@ -4,7 +4,7 @@ import Redis from 'ioredis'
 import { Service } from '../../Service'
 import listenForRawEvents, { RawEventInput } from './listenForRawEvents'
 import { convertBigIntsToStrings } from "./utils";
-import { CAW_ACTIONS_ADDRESS } from '../../abi/addresses'
+import { CAW_ACTIONS_ADDRESS, CAW_ACTIONS_ERC1271_ADDRESS } from '../../abi/addresses'
 import { prisma } from '../../prismaClient'
 import { getL2WsRpcUrl } from '../../utils/rpcProvider'
 import { getNetworkId } from '../../utils/networkId'
@@ -63,9 +63,15 @@ export const rawEventsGathererService: Service = {
     const started = (async () => {
       await prisma.$connect()
 
+      // Build the set of known contract addresses for this chain so the high-water
+      // mark query covers both CawActions and CawActionsERC1271 rows. Using the
+      // max across both avoids re-scanning already-processed blocks on restart.
+      const knownContractAddresses = [CAW_ACTIONS_ADDRESS as string]
+      if (CAW_ACTIONS_ERC1271_ADDRESS) knownContractAddresses.push(CAW_ACTIONS_ERC1271_ADDRESS)
+
       const getLast = async () => {
         const last = await prisma.rawEvent.findFirst({
-          where: { chainId, contractAddress: CAW_ACTIONS_ADDRESS },
+          where: { chainId, contractAddress: { in: knownContractAddresses } },
           orderBy: [
             { blockNumber: 'desc' },
             { logIndex:    'desc' }
@@ -98,7 +104,7 @@ export const rawEventsGathererService: Service = {
             parentHash:      e.parentHash,
             data:            convertBigIntsToStrings(e.data),
             topics:          e.topics,
-            contractAddress: CAW_ACTIONS_ADDRESS
+            contractAddress: e.contractAddress
           }
         })
       }
@@ -142,7 +148,7 @@ export const rawEventsGathererService: Service = {
             parentHash:      e.parentHash,
             data:            convertBigIntsToStrings(e.data),
             topics:          e.topics,
-            contractAddress: CAW_ACTIONS_ADDRESS,
+            contractAddress: e.contractAddress,
           })),
           skipDuplicates: true,
         })
@@ -150,7 +156,7 @@ export const rawEventsGathererService: Service = {
         // Fetch new rows in id order so downstream ActionProcessor sees them
         // in the same sequence we computed the parentHash chain in.
         const created = await prisma.rawEvent.findMany({
-          where: { id: { gt: maxBefore }, chainId, contractAddress: CAW_ACTIONS_ADDRESS },
+          where: { id: { gt: maxBefore }, chainId, contractAddress: { in: knownContractAddresses } },
           orderBy: { id: 'asc' },
           select: { id: true },
         })

@@ -55,6 +55,7 @@ export interface ChainContracts {
 
   // Per-chain contracts (present on every L2; CawActions also on L1):
   CawActions?: `0x${string}`
+  CawActionsERC1271?: `0x${string}`
   CawActionsArchive?: `0x${string}`
   CawChallengeRelay?: `0x${string}`
 }

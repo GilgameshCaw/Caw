@@ -1,7 +1,7 @@
 // src/services/RawEventsGatherer/listenForRawEvents.ts
 import { ContractEventPayload, WebSocketProvider, Contract, Interface, keccak256, toUtf8Bytes, getBytes, concat } from 'ethers'
 import type { Log } from '@ethersproject/abstract-provider'
-import { CAW_ACTIONS_ADDRESS } from '../../abi/addresses'
+import { CAW_ACTIONS_ADDRESS, CAW_ACTIONS_ERC1271_ADDRESS } from '../../abi/addresses'
 import { makeFallbackJsonRpcProvider, makeWebSocketProvider, getL2HttpRpcUrls, getL2WsSecret, waitForRateLimit, redactRpcUrl } from '../../utils/rpcProvider'
 import { scanLogsForward } from '../../utils/chunkedLogs'
 import delay from '../../tools/delay'
@@ -14,10 +14,17 @@ import { recordIndexerProgress } from '../../utils/indexerHealth'
 // (clientId, validatorId, actionCount, batchHash) — the actual packedActions
 // bytes live in the originating tx's calldata. We fetch tx.input via
 // eth_getTransactionByHash and decode the function args.
+//
+// Both CawActions (sig path) and CawActionsERC1271 (ERC-1271 path) share the
+// same packedActions wire format inside, so we parse both here. The outer
+// wrapper differs: the ERC-1271 variant carries bytes[] sigs + bytes32[] rs
+// instead of a single packed bytes sigs.
 const PROCESS_ACTIONS_IFACE = new Interface([
   'function processActions(uint32 validatorId, bytes packedActions, bytes sigs, uint256 withdrawFee, uint256 withdrawLzTokenAmount) payable',
   'function safeProcessActions(uint32 validatorId, bytes packedActions, bytes sigs, uint256 withdrawFee, uint256 withdrawLzTokenAmount) payable returns (uint256 successCount, string[] rejections)',
+  'function processActionsERC1271(uint32 validatorId, bytes packedActions, bytes[] sigs, bytes32[] rs, uint256 withdrawFee, uint256 withdrawLzTokenAmount) payable',
 ])
+
 
 // Cache packedActions per txHash so multiple events from the same tx don't
 // re-fetch (rare with the new event since one tx → one event, but cheap to
@@ -36,7 +43,11 @@ async function fetchPackedActionsFromTx(
   try {
     const parsed = PROCESS_ACTIONS_IFACE.parseTransaction({ data: tx.data })
     if (!parsed) return null
-    if (parsed.name !== 'processActions' && parsed.name !== 'safeProcessActions') return null
+    if (
+      parsed.name !== 'processActions' &&
+      parsed.name !== 'safeProcessActions' &&
+      parsed.name !== 'processActionsERC1271'
+    ) return null
     const packed = parsed.args.packedActions as string
     if (txDataCache.size >= TX_CACHE_MAX) {
       const firstKey = txDataCache.keys().next().value as string | undefined
@@ -133,6 +144,10 @@ export default async function listenForRawEvents(
     console.log(`[RawEventsGatherer] HTTP RPC (with ${l2HttpRpcUrls.length - 1} fallback(s)): ${redactRpcUrl(l2HttpRpcUrls[0])}`)
   }
   const httpContract = new Contract(CAW_ACTIONS_ADDRESS, CONTRACT_ABI, httpProvider)
+  // ERC-1271 sibling contract — only instantiated when an address is configured.
+  const httpContractERC1271 = CAW_ACTIONS_ERC1271_ADDRESS
+    ? new Contract(CAW_ACTIONS_ERC1271_ADDRESS, CONTRACT_ABI, httpProvider)
+    : null
 
   const last = await config.rawEventsProvider.getLastProcessedEvent()
   // On fresh DB: use configured startBlock, or current block (never scan from 0)
@@ -261,6 +276,8 @@ export default async function listenForRawEvents(
         break
       }
       console.log(`[RawEventsGatherer] Historical sync: blocks ${startBlock} → ${latest} (${latest - startBlock} blocks)`)
+
+      // Scan CawActions logs (sig path).
       const rawLogs = await scanLogsForward(
         httpProvider,
         CAW_ACTIONS_ADDRESS,
@@ -278,7 +295,33 @@ export default async function listenForRawEvents(
           },
         },
       )
-      past = rawLogs as unknown as Log[]
+
+      // Scan CawActionsERC1271 logs (ERC-1271 path) if the sibling is deployed.
+      let erc1271Logs: typeof rawLogs = []
+      if (CAW_ACTIONS_ERC1271_ADDRESS) {
+        erc1271Logs = await scanLogsForward(
+          httpProvider,
+          CAW_ACTIONS_ERC1271_ADDRESS,
+          [eventSig],
+          startBlock,
+          latest,
+          {
+            chunkBlocks: 10_000,
+            maxWindows: 100_000,
+            onProgress: (from, to, n) => {
+              if (n > 0) console.log(`[RawEventsGatherer] Historical ERC-1271 chunk ${from}..${to}: ${n} events`)
+            },
+          },
+        )
+      }
+
+      // Merge and sort by (blockNumber, logIndex) so parentHash chains correctly.
+      const allLogs = [...rawLogs, ...erc1271Logs].sort((a, b) =>
+        a.blockNumber !== b.blockNumber
+          ? a.blockNumber - b.blockNumber
+          : a.index - b.index
+      )
+      past = allLogs as unknown as Log[]
       break
     } catch (err) {
       console.error('[RawEventsGatherer] Error fetching past events, retrying in 5s', err)
@@ -299,6 +342,10 @@ export default async function listenForRawEvents(
       // gets URL-embedded — see extractEmbeddedAuth() comment for why.
       wsProvider = makeWebSocketProvider(config.rpcUrl, config.chainId, getL2WsSecret())
       wsContract = new Contract(CAW_ACTIONS_ADDRESS, CONTRACT_ABI, wsProvider)
+      // ERC-1271 sibling WS contract, if deployed on this chain.
+      let wsContractERC1271: Contract | null = CAW_ACTIONS_ERC1271_ADDRESS
+        ? new Contract(CAW_ACTIONS_ERC1271_ADDRESS, CONTRACT_ABI, wsProvider)
+        : null
 
       // Signature: ActionsProcessed(uint32 indexed networkId, uint32 indexed validatorId, uint16 actionCount, bytes32 batchHash)
       // We don't need the topic args here — we always go to tx calldata for the bytes.
@@ -358,6 +405,66 @@ export default async function listenForRawEvents(
           console.error("[RawEventsGatherer] FAILED to process raw event from WebSocket", err)
         }
       })
+
+      // Subscribe the ERC-1271 sibling to the same handler when deployed.
+      // The handler is identical — fetchPackedActionsFromTx dispatches on
+      // the parsed function name, so the correct outer decoder runs regardless
+      // of which contract emitted the event.
+      if (wsContractERC1271) {
+        wsContractERC1271.on('ActionsProcessed', async (
+          _networkId: number, _validatorId: number, _actionCount: number, _batchHash: string,
+          ev: ContractEventPayload,
+        ) => {
+          console.log("[RawEventsGatherer] ERC-1271 raw event received via WebSocket", ev)
+          try {
+            const packedHex = await fetchPackedActionsFromTx(httpProvider, ev.log.transactionHash)
+            if (!packedHex) {
+              console.warn(`[RawEventsGatherer] WS ERC-1271: could not fetch packedActions calldata for tx ${ev.log.transactionHash} — skipping`)
+              return
+            }
+            const packedBuf = new Uint8Array((packedHex.startsWith('0x') ? packedHex.slice(2) : packedHex).match(/.{2}/g)!.map(b => parseInt(b, 16)))
+            const wsActions = unpackActions(packedBuf)
+
+            const batch: RawEventInput[] = []
+            for (let i = 0; i < wsActions.length; i++) {
+              const a = wsActions[i]
+              const action = {
+                actionType:      a.actionType,
+                senderId:        a.senderId,
+                receiverId:      a.receiverId,
+                receiverCawonce: a.receiverCawonce,
+                networkId:       a.networkId,
+                cawonce:         a.cawonce,
+                recipients:      a.recipients,
+                amounts:         a.amounts,
+                text:            decompressEventText(a.text)
+              }
+              const logIndex = (ev.log.index ?? 0) + i
+              lastHash = hashNext(lastHash, action)
+              batch.push({
+                chainId:         config.chainId,
+                blockNumber:     ev.log.blockNumber,
+                logIndex,
+                transactionHash: ev.log.transactionHash,
+                parentHash:      lastHash,
+                data:            action,
+                topics:          [ ...ev.log.topics ],
+                contractAddress: ev.log.address
+              })
+            }
+
+            if (config.rawEventsProvider.storeBatch) {
+              await config.rawEventsProvider.storeBatch(batch)
+            } else {
+              for (const entry of batch) {
+                await config.rawEventsProvider.storeEvent(entry)
+              }
+            }
+          } catch (err) {
+            console.error("[RawEventsGatherer] FAILED to process ERC-1271 raw event from WebSocket", err)
+          }
+        })
+      }
 
       // Monitor WebSocket connection health.
       // Leading semicolons guard against ASI — without them the parser reads
@@ -487,11 +594,27 @@ export default async function listenForRawEvents(
         } else {
           console.log(`[RawEventsGatherer] Polling for events ${lastSyncedBlock + 1}..${toBlock}`)
         }
-        const events = await httpContract.queryFilter(
+        const sigEvents = await httpContract.queryFilter(
           httpContract.filters.ActionsProcessed(config.clientId),
           lastSyncedBlock + 1,
           toBlock
         ) as unknown as Log[]
+
+        // Also poll the ERC-1271 sibling when deployed.
+        const erc1271Events: Log[] = httpContractERC1271
+          ? (await httpContractERC1271.queryFilter(
+              httpContractERC1271.filters.ActionsProcessed(config.clientId),
+              lastSyncedBlock + 1,
+              toBlock
+            ) as unknown as Log[])
+          : []
+
+        // Merge and sort by (blockNumber, logIndex) to preserve canonical order.
+        const events: Log[] = [...sigEvents, ...erc1271Events].sort((a, b) =>
+          (a as any).blockNumber !== (b as any).blockNumber
+            ? (a as any).blockNumber - (b as any).blockNumber
+            : (a as any).logIndex - (b as any).logIndex
+        )
 
         if (events.length > 0) {
           // Span scope is "actually processing fetched events" — the
