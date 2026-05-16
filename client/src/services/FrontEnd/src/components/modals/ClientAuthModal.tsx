@@ -11,6 +11,7 @@ import { CAW_NAMES_ADDRESS, CAW_NAME_QUOTER_ADDRESS } from '~/../../../abi/addre
 import { chains } from '~/config/chains'
 import { formatEther } from 'viem'
 import { usePriceStore } from '~/store/tokenDataStore'
+import NetworkFeesPanel from '~/components/NetworkFeesPanel'
 
 const ClientAuthModal: React.FC = () => {
   const { isOpen, tokenId, close } = useClientAuthStore()
@@ -126,6 +127,13 @@ const ClientAuthModal: React.FC = () => {
             </span>
           </div>
         )}
+
+        <NetworkFeesPanel
+          networkId={CLIENT_ID}
+          show={['auth']}
+          omitZeroRows
+          className="mb-4"
+        />
 
         {error && (
           <div className="mb-4 p-3 rounded-lg bg-red-900/20 border border-red-700/50 text-sm text-red-400 text-center">

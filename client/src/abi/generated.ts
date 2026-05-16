@@ -1694,6 +1694,13 @@ export const cawNetworkManagerAbi = [
   {
     type: 'function',
     inputs: [{ name: 'networkId', internalType: 'uint32', type: 'uint32' }],
+    name: 'getFeeCeiling',
+    outputs: [{ name: '', internalType: 'uint256', type: 'uint256' }],
+    stateMutability: 'view',
+  },
+  {
+    type: 'function',
+    inputs: [{ name: 'networkId', internalType: 'uint32', type: 'uint32' }],
     name: 'getAuthFeeAndAddress',
     outputs: [
       { name: '', internalType: 'uint256', type: 'uint256' },

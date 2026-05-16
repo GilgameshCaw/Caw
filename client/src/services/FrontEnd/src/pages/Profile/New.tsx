@@ -23,6 +23,7 @@ import { useT } from '~/i18n/I18nProvider'
 import { getDefaultSpendLimit, DEFAULT_SESSION_DURATION } from '~/hooks/useSessionKey'
 import { useSessionKeyStore } from '~/store/sessionKeyStore'
 import { usePoolReserves, useMinCawOut, suggestedSlippageBps } from '~/hooks/useZapQuote'
+import NetworkFeesPanel from '~/components/NetworkFeesPanel'
 
 // Quick Sign default scope: all actions except WITHDRAW (bit 6) — matches the
 // 0xBF hard-wired on L2 in the bundled session register flow.
@@ -1395,6 +1396,13 @@ console.log("BALANCE:", balance)
               )}
             </div>
             )}
+
+            <NetworkFeesPanel
+              networkId={CLIENT_ID}
+              show={['mint']}
+              omitZeroRows
+              className="mb-2"
+            />
 
             <SubmitButton
                 onClick={handleSubmit}

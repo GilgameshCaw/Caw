@@ -32,6 +32,7 @@ import { useSessionKeyStore } from '~/store/sessionKeyStore'
 import { useEnsureWallet } from '~/hooks/useEnsureWallet'
 import { CLIENT_ID } from '~/api/actions'
 import { useT } from '~/i18n/I18nProvider'
+import NetworkFeesPanel from '~/components/NetworkFeesPanel'
 
 type StakingTab = 'stake' | 'unstake' | 'info'
 
@@ -832,6 +833,13 @@ const Staking = () => {
       </div>
       )}
 
+      <NetworkFeesPanel
+        networkId={CLIENT_ID}
+        show={['deposit']}
+        showCacheExplainer
+        omitZeroRows
+      />
+
       {/* Stake Button */}
       <button
         onClick={handleStake}
@@ -1073,6 +1081,12 @@ const Staking = () => {
           </button>
         </div>
       </div>
+
+      <NetworkFeesPanel
+        networkId={CLIENT_ID}
+        show={['withdraw']}
+        omitZeroRows
+      />
 
       {/* Unstake Button */}
       <button

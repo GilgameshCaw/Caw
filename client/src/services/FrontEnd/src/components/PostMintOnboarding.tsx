@@ -24,6 +24,8 @@ import { chains } from '~/config/chains'
 import { handleError } from '~/utils'
 import { apiFetch, retryOnIndexing } from '~/api/client'
 
+import NetworkFeesPanel from '~/components/NetworkFeesPanel'
+
 const persistOnboardingStep = (username: string, step: number) => {
   apiFetch(`/api/users/onboarding/${username}`, {
     method: 'PATCH',
@@ -995,6 +997,13 @@ const PostMintOnboarding: React.FC<PostMintOnboardingProps> = ({ username, token
                       <a href="https://app.uniswap.org/#/swap?inputCurrency=ETH&outputCurrency=0xf3b9569F82B18aEf890De263B84189bd33EBe452" target="_blank" rel="noopener noreferrer" className="underline hover:text-red-300">Buy more on Uniswap</a>
                     </p>
                   )}
+
+                  <NetworkFeesPanel
+                    networkId={CLIENT_ID}
+                    show={['deposit']}
+                    showCacheExplainer
+                    omitZeroRows
+                  />
 
                   <button
                     onClick={handleStake}
