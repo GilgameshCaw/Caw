@@ -344,8 +344,12 @@ const MediaUpload: React.FC<MediaUploadProps> = ({
   const handleDragOver = useCallback((e: React.DragEvent) => {
     e.preventDefault()
     e.stopPropagation()
+    // Don't paint the wrapper-level "drop new files here" highlight
+    // when the drag is an internal reorder — the cell-level visual
+    // already covers that case.
+    if (draggedIndex !== null) return
     setIsDragOver(true)
-  }, [])
+  }, [draggedIndex])
 
   const handleDragLeave = useCallback((e: React.DragEvent) => {
     e.preventDefault()
@@ -358,9 +362,21 @@ const MediaUpload: React.FC<MediaUploadProps> = ({
     e.stopPropagation()
     setIsDragOver(false)
 
+    // Bug #127: dropping an internal reorder onto the wrapper-level
+    // drop zone (or onto another cell that bubbles up) would re-enter
+    // processFiles with the dragged image's auto-synthesized file
+    // payload — Chrome populates dataTransfer.files when an inline
+    // <img> is the drag source. Ignore drops that originated from a
+    // reorder so the same image doesn't get added a second time.
+    if (draggedIndex !== null) {
+      setDraggedIndex(null)
+      setDragOverIndex(null)
+      return
+    }
+
     const files = Array.from(e.dataTransfer.files)
     await processFiles(files)
-  }, [selectedMedia])
+  }, [selectedMedia, draggedIndex])
 
   const handleFileSelect = useCallback(async (e: React.ChangeEvent<HTMLInputElement>) => {
     const files = e.target.files
@@ -505,6 +521,11 @@ const MediaUpload: React.FC<MediaUploadProps> = ({
 
   const handleReorderDrop = (e: React.DragEvent, dropIndex: number) => {
     e.preventDefault()
+    // Stop bubbling so the wrapper-level handleDrop (which accepts OS
+    // file drops) doesn't also process this event. Belt-and-suspenders
+    // with the draggedIndex guard in handleDrop — together they close
+    // the duplicate-add path from bug #127.
+    e.stopPropagation()
     if (draggedIndex === null || draggedIndex === dropIndex) {
       setDraggedIndex(null)
       setDragOverIndex(null)
