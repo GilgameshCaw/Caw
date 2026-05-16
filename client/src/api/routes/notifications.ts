@@ -26,30 +26,92 @@ router.get('/', requireAuth({ lookup: async (req) => Number(req.query.userId) ||
     // Filter out notifications from blocked users
     const blockedIds = await getBlockedUserIds(userTokenId)
 
-    // Build where clause
-    const where: any = { userId: userTokenId, hidden: false }
-
-    if (blockedIds.length > 0) {
-      where.actorId = { notIn: blockedIds }
-    }
-
+    // Resolve the type filter once — Prisma where AND raw SQL WHERE both
+    // need it.
+    let typeFilter: NotificationType | null = null
     if (type && type !== 'all') {
-      if (type === 'mentions') {
-        where.type = NotificationType.MENTION
-      } else if (Object.values(NotificationType).includes(type as NotificationType)) {
-        where.type = type as NotificationType
+      if (type === 'mentions') typeFilter = NotificationType.MENTION
+      else if (Object.values(NotificationType).includes(type as NotificationType)) {
+        typeFilter = type as NotificationType
       }
     }
 
+    // Group-aware pagination.
+    //
+    // The previous version used offset-based pagination of RAW rows then
+    // grouped each page in memory. That broke for any group that spanned
+    // a page boundary: the SAME FOLLOW rollup showed up on every Load
+    // More with a different lead-name, because each page sliced a
+    // different subset of the same 'follow' bucket (bug reported with
+    // 99 unread + 3 visible groups repeating forever).
+    //
+    // Fix: paginate by GROUP, not by row. Each group is identified by
+    // `groupKey` (rows without one get a per-row synthetic key
+    // `single:<id>`). The aggregation picks each group's most-recent
+    // notification id as the representative; downstream code fetches
+    // that row plus the additional-actor metadata.
+    type GroupRow = {
+      group_key: string
+      latest_id: number
+      latest_created_at: Date
+      total_count: bigint
+      any_unread: boolean
+    }
+    // Build the SQL + params dynamically so optional filters (blocked
+    // actors, type, unread-only) only add WHERE clauses when active.
+    // Param order: userTokenId, then optional typeFilter, then limit
+    // + offset, then optional blocked ids tail.
+    const params: any[] = [userTokenId]
+    const whereParts: string[] = [`"userId" = $1`, `hidden = false`]
+    if (typeFilter) {
+      params.push(typeFilter)
+      whereParts.push(`type::text = $${params.length}`)
+    }
     if (unreadOnly === 'true') {
-      where.isRead = false
+      whereParts.push(`"isRead" = false`)
+    }
+    if (blockedIds.length > 0) {
+      const startIdx = params.length + 1
+      const placeholders = blockedIds.map((_, i) => `$${startIdx + i}`).join(',')
+      whereParts.push(`"actorId" NOT IN (${placeholders})`)
+      params.push(...blockedIds)
+    }
+    // LIMIT + OFFSET go last so we can append them after the variable
+    // WHERE tail without re-numbering.
+    params.push(notificationLimit, notificationOffset)
+    const limitIdx = params.length - 1
+    const offsetIdx = params.length
+
+    const groupsRaw = await prisma.$queryRawUnsafe<GroupRow[]>(`
+      SELECT
+        COALESCE("groupKey", 'single:' || id::text) AS group_key,
+        MAX(id) AS latest_id,
+        MAX("createdAt") AS latest_created_at,
+        COUNT(*) AS total_count,
+        bool_or(NOT "isRead") AS any_unread
+      FROM "Notification"
+      WHERE ${whereParts.join(' AND ')}
+      GROUP BY group_key
+      ORDER BY latest_created_at DESC
+      LIMIT $${limitIdx} OFFSET $${offsetIdx}
+    `, ...params)
+
+    // No groups → nothing to render. Short-circuit out without the
+    // downstream relation fetches.
+    if (groupsRaw.length === 0) {
+      const unreadWhereEmpty: any = { userId: userTokenId, isRead: false, hidden: false }
+      if (blockedIds.length > 0) unreadWhereEmpty.actorId = { notIn: blockedIds }
+      const emptyCount = await prisma.notification.count({ where: unreadWhereEmpty })
+      return res.json({ notifications: [], unreadCount: emptyCount, hasMore: false })
     }
 
-    // Get notifications with grouping for likes and reposts
+    // Fetch the representative row (the latest one in each group) for
+    // rendering. This gives us the actor/caw/offer relations for the
+    // group's lead notification — the one whose name appears first in
+    // "Liam and 4 others liked your caw".
+    const latestIds = groupsRaw.map(g => g.latest_id)
     const notifications = await prisma.notification.findMany({
-      where,
-      take: notificationLimit,
-      skip: notificationOffset,
+      where: { id: { in: latestIds } },
       orderBy: { createdAt: 'desc' },
       include: {
         actor: {
@@ -89,6 +151,53 @@ router.get('/', requireAuth({ lookup: async (req) => Number(req.query.userId) ||
         }
       }
     })
+
+    // Pull the next ~10 distinct actors per group for the rollup
+    // additionalActors array. The modal that opens on click loads the
+    // full list separately via /api/notifications/group-actors; here we
+    // just want enough to drive count > 1 and the avatar stack.
+    const groupKeysForActors = groupsRaw
+      .filter(g => g.total_count > 1n && !g.group_key.startsWith('single:'))
+      .map(g => g.group_key)
+    type ExtraActorRow = {
+      groupKey: string
+      actorId: number
+      username: string
+      displayName: string | null
+      avatarUrl: string | null
+      defaultAvatarId: number | null
+    }
+    const extraActorsByGroup = new Map<string, ExtraActorRow[]>()
+    if (groupKeysForActors.length > 0) {
+      const extras = await prisma.$queryRawUnsafe<ExtraActorRow[]>(`
+        SELECT DISTINCT ON (n."groupKey", u."tokenId")
+          n."groupKey" AS "groupKey",
+          u."tokenId" AS "actorId",
+          u.username,
+          u."displayName",
+          u."avatarUrl",
+          u."defaultAvatarId"
+        FROM "Notification" n
+        JOIN "User" u ON u."tokenId" = n."actorId"
+        WHERE n."userId" = $1
+          AND n.hidden = false
+          AND n."groupKey" = ANY($2::text[])
+          AND n.id <> ALL($3::int[])
+        ORDER BY n."groupKey", u."tokenId", n."createdAt" DESC
+      `, userTokenId, groupKeysForActors, latestIds)
+      for (const e of extras) {
+        const arr = extraActorsByGroup.get(e.groupKey) ?? []
+        if (arr.length < 50) arr.push(e)
+        extraActorsByGroup.set(e.groupKey, arr)
+      }
+    }
+
+    // Build a quick lookup for group metadata by groupKey so the merge
+    // loop below can stamp count + any_unread on each notification.
+    const groupMetaByKey = new Map<string, GroupRow>()
+    for (const g of groupsRaw) groupMetaByKey.set(g.group_key, g)
+    const groupKeyForNotif = (n: { id: number; groupKey: string | null }) =>
+      n.groupKey ?? `single:${n.id}`
 
     // For ACTION_FAILED notifications, batch-fetch context the client needs
     // to render a human-readable description:
@@ -134,92 +243,67 @@ router.get('/', requireAuth({ lookup: async (req) => Number(req.query.userId) ||
       }
     }
 
-    // Group similar notifications (likes and reposts on same caw)
+    // Merge SQL group metadata into each notification row. Each
+    // notification represents ONE group (its latest member); the
+    // group-level count + actor list come from the aggregation
+    // queries above. ACTION_FAILED rows still get their payload
+    // enriched the same way as before.
     const groupedNotifications: any[] = []
-    const groupMap = new Map<string, any>()
 
     for (const notification of notifications) {
-      // Group LIKE, REPOST, TIP, and FOLLOW notifications
-      if ((notification.type === 'LIKE' || notification.type === 'REPOST' || notification.type === 'TIP' || notification.type === 'FOLLOW') && notification.groupKey) {
-        const existing = groupMap.get(notification.groupKey)
-        if (existing) {
-          // Add to existing group (cap additionalActors at 50; count is always exact)
-          if (existing.additionalActors.length < 50) {
-            existing.additionalActors.push({
-              tokenId: notification.actor.tokenId,
-              username: notification.actor.username,
-              displayName: notification.actor.displayName,
-              avatarUrl: notification.actor.avatarUrl
-            })
-          }
-          existing.count++
-          // Update read status - group is unread if any notification is unread
-          if (!notification.isRead) {
-            existing.isRead = false
-          }
-          // Keep track of all notification IDs in this group
-          existing.notificationIds.push(notification.id)
-        } else {
-          // Create new group
-          groupMap.set(notification.groupKey, {
-            id: notification.id,
-            type: notification.type,
-            actor: notification.actor,
-            additionalActors: [],
-            caw: notification.caw,
-            actionPayload: (notification as any).actionPayload ?? null,
-            isRead: notification.isRead,
-            createdAt: notification.createdAt,
-            count: 1,
-            notificationIds: [notification.id],
-            groupKey: notification.groupKey
-          })
+      const gk = groupKeyForNotif(notification)
+      const meta = groupMetaByKey.get(gk)
+      const totalCount = meta ? Number(meta.total_count) : 1
+      const anyUnread = meta ? meta.any_unread : !notification.isRead
+
+      let actionPayload: any = (notification as any).actionPayload ?? null
+      if ((notification as any).type === 'ACTION_FAILED' && actionPayload) {
+        const enriched = { ...actionPayload }
+        if (actionPayload.receiverId != null) {
+          const uname = receiverUsernames.get(actionPayload.receiverId)
+          if (uname) enriched.receiverUsername = uname
         }
-      } else {
-        // Don't group - add as individual notification.
-        // For ACTION_FAILED notifications, enrich the payload with the target
-        // user's username and (for like / recaw / quote / reply) the target
-        // caw's content + author. Lets the frontend render "Following @alice
-        // failed" or "Like on @bob's caw 'text...' failed" without a lookup.
-        let actionPayload: any = (notification as any).actionPayload ?? null
-        if ((notification as any).type === 'ACTION_FAILED' && actionPayload) {
-          const enriched = { ...actionPayload }
-          if (actionPayload.receiverId != null) {
-            const uname = receiverUsernames.get(actionPayload.receiverId)
-            if (uname) enriched.receiverUsername = uname
-          }
-          if (actionPayload.receiverId != null && actionPayload.receiverCawonce != null) {
-            const target = targetCaws.get(`${actionPayload.receiverId}:${actionPayload.receiverCawonce}`)
-            if (target) {
-              enriched.targetCaw = {
-                content: target.content.slice(0, 140),
-                authorUsername: target.username,
-              }
+        if (actionPayload.receiverId != null && actionPayload.receiverCawonce != null) {
+          const target = targetCaws.get(`${actionPayload.receiverId}:${actionPayload.receiverCawonce}`)
+          if (target) {
+            enriched.targetCaw = {
+              content: target.content.slice(0, 140),
+              authorUsername: target.username,
             }
           }
-          actionPayload = enriched
         }
-        groupedNotifications.push({
-          id: notification.id,
-          type: notification.type,
-          actor: notification.actor,
-          caw: notification.caw,
-          offer: (notification as any).offer || null,
-          actionPayload,
-          isRead: notification.isRead,
-          createdAt: notification.createdAt,
-          notificationIds: [notification.id]
-        })
+        actionPayload = enriched
       }
+
+      const additionalActors = totalCount > 1
+        ? (extraActorsByGroup.get(gk) || []).map(a => ({
+            tokenId: a.actorId,
+            username: a.username,
+            displayName: a.displayName ?? undefined,
+            avatarUrl: a.avatarUrl ?? undefined,
+            defaultAvatarId: a.defaultAvatarId ?? undefined,
+          }))
+        : []
+
+      groupedNotifications.push({
+        id: notification.id,
+        type: notification.type,
+        actor: notification.actor,
+        additionalActors,
+        caw: notification.caw,
+        offer: (notification as any).offer || null,
+        actionPayload,
+        isRead: !anyUnread,
+        createdAt: notification.createdAt,
+        count: totalCount,
+        groupKey: notification.groupKey ?? null,
+        notificationIds: [notification.id],
+      })
     }
 
-    // Add grouped notifications to result
-    groupedNotifications.push(...Array.from(groupMap.values()))
-
-    // Sort by createdAt
-    groupedNotifications.sort((a, b) =>
-      new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
-    )
+    // groupedNotifications is already in descending createdAt order
+    // because the SQL aggregation sorted by latest_created_at DESC and
+    // we fetched notifications in that order.
 
     // Get unread count (also filtered by blocked users)
     const unreadWhere: any = { userId: userTokenId, isRead: false, hidden: false }
@@ -231,7 +315,10 @@ router.get('/', requireAuth({ lookup: async (req) => Number(req.query.userId) ||
     return res.json({
       notifications: groupedNotifications,
       unreadCount,
-      hasMore: notifications.length === notificationLimit
+      // hasMore is based on GROUPS now, not raw rows. If the SQL group
+      // query returned exactly notificationLimit groups, there may be
+      // more groups behind the cursor.
+      hasMore: groupsRaw.length === notificationLimit
     })
 
   } catch (error) {

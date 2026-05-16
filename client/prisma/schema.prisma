@@ -460,6 +460,13 @@ model Notification {
   @@index([userId, type])
   @@index([userId, actorId, type])
   @@index([groupKey])
+  /// Lets the notifications-list GROUP BY query in
+  /// api/routes/notifications.ts use an index-only scan to bucket a
+  /// user's notifications by groupKey. Without this, fetching the
+  /// notifications page for users with thousands of rows did a full
+  /// scan + HashAggregate (~hundreds of ms for the 4K-row heavy users
+  /// on test.caw.social).
+  @@index([userId, groupKey, createdAt])
 }
 
 model DmIdentity {
