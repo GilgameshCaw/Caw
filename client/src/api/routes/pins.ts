@@ -74,7 +74,7 @@ router.post('/:cawId', async (req, res) => {
     // existing row was pending and we're flipping it to confirmed).
     const existing = await prisma.pinnedCaw.findUnique({
       where: { userId_cawId: { userId, cawId } },
-      select: { id: true, pending: true },
+      select: { id: true, pending: true, pendingUnpin: true },
     })
 
     if (!existing) {
@@ -88,18 +88,28 @@ router.post('/:cawId', async (req, res) => {
         }),
       ])
     } else if (existing.pending) {
+      // Pending pin getting confirmed off-chain. Clear pendingUnpin too
+      // in case a stale unpin flag survived a re-pin cycle.
       await prisma.$transaction([
         prisma.pinnedCaw.update({
           where: { id: existing.id },
-          data: { pending: false },
+          data: { pending: false, pendingUnpin: false },
         }),
         prisma.user.update({
           where: { tokenId: userId },
           data: { pinnedCawCount: { increment: 1 } },
         }),
       ])
+    } else if (existing.pendingUnpin) {
+      // Already-confirmed pin with an on-chain unpin in flight. The new
+      // pin supersedes it; clear the flag without re-incrementing count
+      // (the original confirmed pin was already counted).
+      await prisma.pinnedCaw.update({
+        where: { id: existing.id },
+        data: { pendingUnpin: false },
+      })
     }
-    // else: already confirmed — idempotent no-op.
+    // else: already confirmed and not unpin-pending — idempotent no-op.
 
     res.json({ success: true, cawId })
   } catch (err) {

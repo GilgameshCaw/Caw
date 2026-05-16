@@ -1171,7 +1171,15 @@ model PinnedCaw {
   id        Int      @id @default(autoincrement())
   userId    Int
   cawId     Int
+  // True when an optimistic pin write has landed but the on-chain
+  // action hasn't confirmed yet. Indexer flips to false on confirm.
   pending   Boolean  @default(false)
+  // True when the user has submitted an unpin but the on-chain action
+  // hasn't confirmed yet. The row still exists (so the indexer can
+  // delete it on confirm), but read paths must suppress it. Set by
+  // /api/actions on xpi:; cleared either by the indexer deleting the
+  // row, or by a re-pin (pi:) on the same cawId.
+  pendingUnpin Boolean @default(false)
   createdAt DateTime @default(now())
   user      User     @relation(fields: [userId], references: [tokenId], onDelete: Cascade)
   caw       Caw      @relation(fields: [cawId], references: [id], onDelete: Cascade)

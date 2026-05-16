@@ -244,7 +244,10 @@ router.get('/', async (req, res) => {
     let pinnedCaws: any[] = []
     if (isProfileFeed && !cursor) {
       const pins = await prisma.pinnedCaw.findMany({
-        where: { userId: targetUserId },
+        // Suppress rows with a pending xpi: in flight so the optimistic
+        // unpin is reflected on refresh, not just on the FE in-memory
+        // state. The indexer deletes the row on confirm.
+        where: { userId: targetUserId, pendingUnpin: false },
         orderBy: { createdAt: 'desc' },
         take: 3,
         include: {

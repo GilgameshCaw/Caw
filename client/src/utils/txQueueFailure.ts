@@ -234,9 +234,9 @@ async function cleanupOptimisticRows(
 
       // PIN / UNPIN (pi: / xpi: prefix). Symmetric rollback:
       //   pi:  optimistic insert wrote a pending row → delete it.
-      //   xpi: optimistic write only flipped pending=true on an EXISTING
-      //        confirmed row → flip it back to pending=false. The original
-      //        pin survives the failed unpin attempt.
+      //   xpi: optimistic write only set pendingUnpin=true on an EXISTING
+      //        confirmed row → flip it back to false. The original pin
+      //        survives the failed unpin attempt.
       if (text.startsWith('pi:')) {
         const cawId = parseInt(text.replace('pi:', '').trim())
         if (!isNaN(cawId) && cawId > 0) {
@@ -248,8 +248,8 @@ async function cleanupOptimisticRows(
         const cawId = parseInt(text.replace('xpi:', '').trim())
         if (!isNaN(cawId) && cawId > 0) {
           await prisma.pinnedCaw.updateMany({
-            where: { userId: senderId, cawId, pending: true },
-            data: { pending: false }
+            where: { userId: senderId, cawId, pendingUnpin: true },
+            data: { pendingUnpin: false }
           })
         }
       }

@@ -503,20 +503,23 @@ router.post('/', async (req, res) => {
           })
           if (target && target.userId === data.senderId) {
             if (isUnpin) {
-              // Flag the existing row pending; the indexer deletes on confirm.
+              // Mark the existing row pendingUnpin so the read path
+              // suppresses it; indexer deletes on confirm.
               const updated = await prisma.pinnedCaw.updateMany({
                 where: { userId: data.senderId, cawId },
-                data: { pending: true },
+                data: { pendingUnpin: true },
               })
               console.log(`[Actions] Optimistic unpin: user=${data.senderId} caw=${cawId} matched=${updated.count}`)
             } else {
               // Pin: insert pending row (or no-op if one already exists).
               // Don't increment pinnedCawCount yet — only confirmed pins
               // count. The indexer flips pending→false and bumps the
-              // counter at that point.
+              // counter at that point. If the row was previously flagged
+              // pendingUnpin (rapid unpin→repin while indexer is behind),
+              // clear that flag — the re-pin supersedes the unpin intent.
               await prisma.pinnedCaw.upsert({
                 where: { userId_cawId: { userId: data.senderId, cawId } },
-                update: { pending: true },
+                update: { pending: true, pendingUnpin: false },
                 create: { userId: data.senderId, cawId, pending: true },
               })
               console.log(`[Actions] Optimistic pin: user=${data.senderId} caw=${cawId}`)
