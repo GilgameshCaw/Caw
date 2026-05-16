@@ -169,6 +169,8 @@
   "post_form.placeholder_quote": "Add a comment",
   "post_form.bytes_remaining": "Bytes remaining",
   "post_form.attach_media_to": "Attach media to:",
+  "post_form.media.dropped_images": "Skipped {{count}} extra image(s) — max 4 per post.",
+  "post_form.media.dropped_videos": "Skipped {{count}} extra video(s) — max 1 per post.",
   "post_form.button.post": "Post",
   "post_form.button.reply": "Reply",
   "post_form.button.signing": "Signing...",

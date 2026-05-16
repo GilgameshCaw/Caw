@@ -168,6 +168,8 @@
   "post_form.placeholder_quote": "Añadir un comentario",
   "post_form.bytes_remaining": "Bytes restantes",
   "post_form.attach_media_to": "Adjuntar medios a:",
+  "post_form.media.dropped_images": "Se omitieron {{count}} imagen(es) extra — máximo 4 por publicación.",
+  "post_form.media.dropped_videos": "Se omitieron {{count}} video(s) extra — máximo 1 por publicación.",
   "post_form.button.post": "Publicar",
   "post_form.button.reply": "Responder",
   "post_form.button.signing": "Firmando...",

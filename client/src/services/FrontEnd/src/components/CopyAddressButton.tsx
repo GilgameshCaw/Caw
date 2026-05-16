@@ -33,8 +33,13 @@ const CopyAddressButton: React.FC<CopyAddressButtonProps> = ({
     setTimeout(() => setCopied(false), 2000)
   }
 
-  const baseClasses = `flex items-center gap-1 text-xs font-mono cursor-pointer transition-all duration-200 ${
-    isDark ? 'text-gray-500 hover:text-gray-300' : 'text-gray-400 hover:text-gray-600'
+  // p-1.5 + larger icons give roughly a 32px square on the icon-only
+  // variant — well above the 24px tap-target floor and matched to other
+  // small inline action buttons on the address page. The visual icon
+  // stays w-3.5 (14px) so dense pages don't feel cluttered, but the
+  // padding expands the hit area for touch.
+  const baseClasses = `flex items-center gap-1 text-xs font-mono cursor-pointer transition-all duration-200 p-1.5 -m-1.5 rounded ${
+    isDark ? 'text-gray-500 hover:text-gray-300 hover:bg-white/5' : 'text-gray-400 hover:text-gray-600 hover:bg-black/5'
   }`
 
   return (
@@ -42,8 +47,8 @@ const CopyAddressButton: React.FC<CopyAddressButtonProps> = ({
       <button onClick={handleClick} className={`${baseClasses} ${className}`}>
         {!iconOnly && formatAddress(address, shortFirst, shortLast)}
         {copied
-          ? <HiCheck className="w-3 h-3 text-green-500" />
-          : <HiClipboardCopy className="w-3 h-3" />
+          ? <HiCheck className="w-3.5 h-3.5 text-green-500" />
+          : <HiClipboardCopy className="w-3.5 h-3.5" />
         }
       </button>
     </Tooltip>

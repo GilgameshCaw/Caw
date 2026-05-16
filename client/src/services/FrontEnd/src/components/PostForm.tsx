@@ -1,5 +1,6 @@
 import React, { useState, useRef, useEffect, useLayoutEffect } from 'react'
 import { createPortal } from 'react-dom'
+import toast from 'react-hot-toast'
 import { Link } from '~/utils/localizedRouter'
 import { useSignAndSubmitAction, buildTypedData, TYPES, allocateCawonces } from '../api/actions'
 
@@ -613,6 +614,8 @@ const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess, placehol
     if (!files || files.length === 0) return
 
     const newMedia: any[] = []
+    let droppedImages = 0
+    let droppedVideos = 0
 
     for (const file of Array.from(files)) {
       const isImage = file.type.startsWith('image/')
@@ -624,8 +627,14 @@ const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess, placehol
       const currentImages = selectedMedia.filter(m => m.type === 'image').length
       const currentVideos = selectedMedia.filter(m => m.type === 'video').length
 
-      if (isImage && currentImages + newMedia.filter(m => m.type === 'image').length >= 4) continue
-      if (isVideo && currentVideos + newMedia.filter(m => m.type === 'video').length >= 1) continue
+      if (isImage && currentImages + newMedia.filter(m => m.type === 'image').length >= 4) {
+        droppedImages++
+        continue
+      }
+      if (isVideo && currentVideos + newMedia.filter(m => m.type === 'video').length >= 1) {
+        droppedVideos++
+        continue
+      }
 
       const mediaFile = {
         file,
@@ -640,6 +649,16 @@ const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess, placehol
 
     if (newMedia.length > 0) {
       setSelectedMedia(prev => [...prev, ...newMedia])
+    }
+
+    // Surface a toast if any selections were silently dropped. iOS in
+    // particular lets the native picker pick N regardless of our cap;
+    // without this users wonder why only the first 4 images appeared.
+    if (droppedImages > 0 || droppedVideos > 0) {
+      const parts: string[] = []
+      if (droppedImages > 0) parts.push(t('post_form.media.dropped_images', { count: droppedImages }))
+      if (droppedVideos > 0) parts.push(t('post_form.media.dropped_videos', { count: droppedVideos }))
+      toast(parts.join(' '))
     }
 
     // Reset input so same file can be selected again

@@ -407,7 +407,11 @@ const MainLayout = ({ children, hideSidebars: hideSidebarsProp }: MainLayoutProp
       {!hideSidebars && (
         <div className="hidden lg:block w-[280px]">
           <div className={`fixed border-l h-full w-[280px] z-30 transition-colors duration-300 ${
-            isDark ? 'border-white/20' : 'border-gray-300'
+            // bg pin is intentional in dark mode: without it the right
+            // panel inherits the page's black background and reads as
+            // floating text, not a panel. Light mode already reads as
+            // a separate column via the gray border + page bg contrast.
+            isDark ? 'bg-black border-white/20' : 'bg-white border-gray-300'
           }`}>
             <div className="p-2">
               <SearchBar />
