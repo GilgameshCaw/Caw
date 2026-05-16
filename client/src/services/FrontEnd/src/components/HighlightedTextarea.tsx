@@ -52,6 +52,11 @@ const HighlightedTextarea: React.FC<HighlightedTextareaProps> = ({
   // mounted — caller decides which path is the active path).
   const internalRef = useRef<HTMLTextAreaElement | null>(null)
   const highlightRef = useRef<HTMLDivElement>(null)
+  // Hidden measurement mirror — same width/font/padding/wrap as the
+  // textarea but with NO explicit height. Reading its offsetHeight
+  // gives us the textarea's natural content height without the
+  // height='0px' collapse trick. See the autoResize effect below.
+  const mirrorRef = useRef<HTMLDivElement>(null)
   const [scrollTop, setScrollTop] = useState(0)
 
   // Mobile uses an explicit 16px to avoid iOS Safari's focus-zoom on
@@ -100,11 +105,21 @@ const HighlightedTextarea: React.FC<HighlightedTextareaProps> = ({
       // Re-check inside rAF: the element may have unmounted or gone
       // offscreen between the effect run and the next frame.
       if (!el.isConnected || el.offsetParent === null) return
-      // Use scrollHeight for BOTH empty and non-empty so the height is stable.
-      // The placeholder is NOT inside the <textarea>, so we keep a hidden dot
-      // in the mirror layer; here we just want consistent sizing.
-      el.style.height = '0px'
-      const next = el.scrollHeight + 2 // tiny buffer to avoid 1px flicker
+      // Read the natural content height from the hidden measurement
+      // mirror (mirrorRef below). The mirror has no explicit height
+      // and the same font/padding/width/word-wrap as the textarea,
+      // so its offsetHeight is the textarea's natural unconstrained
+      // height. Using this instead of the previous "height='0px' →
+      // re-read scrollHeight" trick avoids the per-keystroke
+      // document scroll that bug #211 surfaced: collapsing the
+      // textarea to 0px briefly, even for one paint frame, caused
+      // iOS Safari (and to a lesser degree Chrome) to scroll the
+      // document by ~15px each keystroke as the browser re-anchored
+      // the caret against a momentarily-empty layout.
+      const mirror = mirrorRef.current
+      if (!mirror) return
+      const next = mirror.offsetHeight + 2 // tiny buffer to avoid 1px flicker
+      // Apply the new height directly with no transient collapse.
       el.style.height = `${next}px`
       // Snap the highlight overlay to the same height. Without this, when the
       // textarea grew the overlay sometimes lagged a frame and lines 1-2
@@ -240,6 +255,33 @@ const HighlightedTextarea: React.FC<HighlightedTextareaProps> = ({
           }}
         >
           {placeholder}
+        </div>
+      )}
+
+      {/* Hidden measurement mirror — autoResize only. Same width and
+          inline-styling as the textarea so its layout-driven height
+          mirrors the textarea's natural unconstrained height. Anchored
+          absolutely (so it doesn't push other content) and visually
+          hidden via visibility:hidden (still laid out — `display:none`
+          would zero its offsetHeight). aria-hidden + pointer-events-none
+          keep it out of every interaction path. */}
+      {autoResize && (
+        <div
+          ref={mirrorRef}
+          aria-hidden="true"
+          className={`absolute left-0 right-0 top-0 pointer-events-none whitespace-pre-wrap break-words ${textSizeClass}`}
+          style={{
+            visibility: 'hidden',
+            padding,
+            lineHeight,
+            wordBreak: 'break-word',
+            overflowWrap: 'break-word',
+          }}
+        >
+          {/* Trailing space + zero-width joiner so a value ending in
+              \n still counts the trailing empty line in offsetHeight. */}
+          {value || '.'}
+          {value.endsWith('\n') ? '​' : ''}
         </div>
       )}
     </div>
