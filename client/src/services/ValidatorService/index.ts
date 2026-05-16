@@ -379,23 +379,41 @@ async function backstopCawonceFromCalldata(
   const targetSpan = Math.max(50, Math.ceil((rowAgeMs / NOMINAL_BLOCK_MS) * PAD))
   const fromBlock = Math.max(0, head - targetSpan)
 
+  const scanOpts = { fromBlock, toBlock: head, chunkBlocks: 10_000, maxWindows: 8 }
   let logs
   try {
-    logs = await scanLogsBackward(provider, CAW_ACTIONS_ADDRESS, [eventSig], {
-      fromBlock,
-      toBlock: head,
-      chunkBlocks: 10_000,
-      maxWindows: 8,
-    })
+    logs = await scanLogsBackward(provider, CAW_ACTIONS_ADDRESS, [eventSig], scanOpts)
   } catch (err) {
-    console.warn(`[Validator] backstop: scanLogsBackward failed — ${err instanceof Error ? err.message : String(err)}`)
+    console.warn(`[Validator] backstop: scanLogsBackward (ECDSA) failed — ${err instanceof Error ? err.message : String(err)}`)
     return 'failed'
+  }
+  // Also scan the ERC-1271 sibling contract when deployed. A peer mirror may
+  // have landed the user's action via processActionsERC1271 on that contract,
+  // which emits the same ActionsProcessed event but from a different address.
+  if (CAW_ACTIONS_ERC1271_ADDRESS) {
+    let logsERC1271: typeof logs
+    try {
+      logsERC1271 = await scanLogsBackward(provider, CAW_ACTIONS_ERC1271_ADDRESS, [eventSig], scanOpts)
+    } catch (err) {
+      console.warn(`[Validator] backstop: scanLogsBackward (ERC-1271) failed — ${err instanceof Error ? err.message : String(err)}`)
+      // Non-fatal: still return whatever the ECDSA scan found.
+      logsERC1271 = []
+    }
+    logs = [...logs, ...logsERC1271]
   }
   if (logs.length === 0) return 'failed'
 
   // De-dupe by tx hash; each tx can carry many actions but the calldata
   // is the same regardless of how many ActionsProcessed events it emits.
-  const txHashes = Array.from(new Set(logs.map(l => l.transactionHash)))
+  // Build a txHash → emitting contract address map so the decode dispatch
+  // below can branch on which contract (ECDSA vs ERC-1271) produced each tx.
+  const txEmitter = new Map<string, string>()
+  for (const l of logs) {
+    if (!txEmitter.has(l.transactionHash)) {
+      txEmitter.set(l.transactionHash, (l.address as string).toLowerCase())
+    }
+  }
+  const txHashes = Array.from(txEmitter.keys())
   for (const txHash of txHashes) {
     let tx
     try {
@@ -406,26 +424,48 @@ async function backstopCawonceFromCalldata(
     }
     if (!tx?.data || tx.data === '0x') continue
 
-    // Decode packedActions from the tx calldata. CawActions has three
-    // entry points that carry packed actions; selectors differ but the
-    // first dynamic-bytes arg is packedActions in all of them. Try the
-    // canonical one first, fall through on selector mismatch.
+    // Decode packedActions from the tx calldata. The two action-processing
+    // contracts use different selectors; dispatch is keyed on the emitting
+    // contract address recorded in txEmitter.
     //
-    // IMPORTANT: this allowlist must be kept in sync with CawActions'
-    // action-submission entry points. If you add a new selector to
-    // CawActions (or rename one), add it here too — otherwise the
-    // backstop silently misses any "Cawonce already used" wave whose
-    // landed action went through the new entry point, and those rows
-    // get marked failed by mistake.
+    // IMPORTANT: this allowlist must be kept in sync with ALL action-submission
+    // entry points across both contracts. When adding a new entry point, you
+    // must update ALL FOUR of these sites:
+    //   (a) PACKED_ABI constant (near top of this file)
+    //   (b) this decode dispatch in backstopCawonceFromCalldata
+    //   (c) reconstructCheckpointData (calldata decode section, ~L3628)
+    //   (d) RawEventsGatherer's PROCESS_ACTIONS_IFACE in listenForRawEvents.ts
+    //
+    // Current allowlist:
+    //   CAW_ACTIONS_ADDRESS        → processActions | safeProcessActions | processActionsWithZkSigs
+    //   CAW_ACTIONS_ERC1271_ADDRESS → processActionsERC1271
+    const emitter = txEmitter.get(txHash)!
+    const erc1271Addr: string = CAW_ACTIONS_ERC1271_ADDRESS
+    const isERC1271Tx = erc1271Addr !== '' && emitter === erc1271Addr.toLowerCase()
+
     let packedHex: string | undefined
-    try {
-      const parsed = packedIface.parseTransaction({ data: tx.data, value: tx.value })
-      if (parsed && (parsed.name === 'processActions' || parsed.name === 'safeProcessActions' || parsed.name === 'processActionsWithZkSigs')) {
-        packedHex = parsed.args.packedActions as string
+    if (isERC1271Tx) {
+      // ERC-1271 path: processActionsERC1271(uint32, bytes, bytes[], bytes32[], uint256, uint256)
+      // packedActions is arg index 1.
+      try {
+        const decoded = packedIface.decodeFunctionData('processActionsERC1271', tx.data)
+        packedHex = decoded[1] as string
+      } catch {
+        // Unexpected selector on the ERC-1271 contract — skip.
+        continue
       }
-    } catch {
-      // Not one of our function selectors — skip.
-      continue
+    } else {
+      // ECDSA path: processActions | safeProcessActions | processActionsWithZkSigs
+      // packedActions is a named arg in all three.
+      try {
+        const parsed = packedIface.parseTransaction({ data: tx.data, value: tx.value })
+        if (parsed && (parsed.name === 'processActions' || parsed.name === 'safeProcessActions' || parsed.name === 'processActionsWithZkSigs')) {
+          packedHex = parsed.args.packedActions as string
+        }
+      } catch {
+        // Not one of our function selectors — skip.
+        continue
+      }
     }
     if (!packedHex) continue
 
