@@ -71,6 +71,24 @@ const { execSync } = require('child_process');
 const { configureLzDvns } = require('./lz-dvn-config');
 require('dotenv').config();
 
+// Program vkey for the SP1 sig-recovery circuit. Regenerated whenever the
+// Rust program at solidity/zk/sig-recovery/ changes. To regenerate:
+//   cd solidity/zk/sig-recovery && cargo run --release --bin vkey
+// Then update this constant and the fixture file in lockstep.
+const ZK_PROGRAM_VKEY = '0x00197b568ede30c47de32e462b8f4b99897351568da36e5aad94cfbf6da94770';
+
+// Lockstep guard: the constant above must match the groth16 fixture.
+// If you regenerate the SP1 circuit, update BOTH this constant AND the fixture.
+{
+  const fixture = require('../test/zk-fixtures/groth16-fixture.json');
+  if (fixture.vkey.toLowerCase() !== ZK_PROGRAM_VKEY.toLowerCase()) {
+    throw new Error(
+      `vkey mismatch: deploy.js says ${ZK_PROGRAM_VKEY} but fixture says ${fixture.vkey}. ` +
+      `If the circuit was regenerated, update both in lockstep.`
+    );
+  }
+}
+
 // ============================================
 // CONFIGURATION
 // ============================================
@@ -140,6 +158,10 @@ const CHAINS = {
     lzEndpoint: '0x6EDCE65403992e310A62460808c4b910D972f10f',
     lzEid: 40161,
     dvn: '0x8eebf8b423b73bfca51a1db4b7354aa0bfca9193',
+    // CawActions on L1 is the bypassLZ storage chain path — ZK path supported
+    // but L1 is not the primary action chain. Look up canonical address at:
+    // https://docs.succinct.xyz/onchain-verification
+    sp1Verifier: '<TBD before testnetL1 deploy: look up canonical Succinct SP1Verifier on Sepolia>',
   },
   testnetL2: {
     name: 'Base Sepolia',
@@ -148,6 +170,9 @@ const CHAINS = {
     lzEndpoint: '0x6EDCE65403992e310A62460808c4b910D972f10f',
     lzEid: 40245,
     dvn: '0xe1a12515f9ab2764b887bf60b923ca494ebbb2d6',
+    // Canonical Succinct SP1VerifierGateway on Base Sepolia. Confirmed working
+    // on a fork (see docs/ZK_SIG_PATH.md). Verified 2026-05-16.
+    sp1Verifier: '0x397A5f7f3dBd538f23DE225B51f532c34448dA9B',
   },
   testnetL2b: {
     name: 'Arbitrum Sepolia',
@@ -156,6 +181,8 @@ const CHAINS = {
     lzEndpoint: '0x6EDCE65403992e310A62460808c4b910D972f10f',
     lzEid: 40231,
     dvn: '0x8eebf8b423b73bfca51a1db4b7354aa0bfca9193',
+    // Look up canonical address at https://docs.succinct.xyz/onchain-verification
+    sp1Verifier: '<TBD before testnetL2b deploy: look up canonical Succinct SP1Verifier on Arbitrum Sepolia>',
   },
   devL1: {
     name: 'Local L1',
@@ -164,6 +191,7 @@ const CHAINS = {
     lzEndpoint: '0x1a44076050125825900e736c501f859c50fe728c',
     lzEid: 30101,
     dvn: '0x0000000000000000000000000000000000000000',
+    sp1Verifier: null, // dev: MockSP1Verifier deployed at phase 1 (see CONTRACTS below)
   },
   devL2: {
     name: 'Local L2',
@@ -172,6 +200,7 @@ const CHAINS = {
     lzEndpoint: '0x1a44076050125825900e736c501f859c50fe728c',
     lzEid: 40161,
     dvn: '0x0000000000000000000000000000000000000000',
+    sp1Verifier: null, // dev: MockSP1Verifier deployed at phase 1 (see CONTRACTS below)
   },
   devL2b: {
     name: 'Local L2b',
@@ -180,6 +209,7 @@ const CHAINS = {
     lzEndpoint: '0x1a44076050125825900e736c501f859c50fe728c',
     lzEid: 40231,
     dvn: '0x0000000000000000000000000000000000000000',
+    sp1Verifier: null, // dev: MockSP1Verifier deployed at phase 1 (see CONTRACTS below)
   },
   // Mainnet configurations
   mainnetL1: {
@@ -189,6 +219,8 @@ const CHAINS = {
     lzEndpoint: '0x1a44076050125825900e736c501f859c50fe728c',
     lzEid: 30101,
     dvn: '0x589dedbd617e0cbcb916a9223f4d1300c294236b',
+    // Look up canonical address at https://docs.succinct.xyz/onchain-verification
+    sp1Verifier: '<TBD before mainnetL1 deploy: look up canonical Succinct SP1Verifier on Ethereum mainnet>',
   },
   mainnetL2: {
     name: 'Base Mainnet',
@@ -197,6 +229,8 @@ const CHAINS = {
     lzEndpoint: '0x1a44076050125825900e736c501f859c50fe728c',
     lzEid: 30184,
     dvn: '0x9e059a54699a285714207b43b055483e78faac25',
+    // Look up canonical address at https://docs.succinct.xyz/onchain-verification
+    sp1Verifier: '<TBD before mainnetL2 deploy: look up canonical Succinct SP1Verifier on Base mainnet>',
   },
   mainnetL2b: {
     name: 'Arbitrum Mainnet',
@@ -205,8 +239,36 @@ const CHAINS = {
     lzEndpoint: '0x1a44076050125825900e736c501f859c50fe728c',
     lzEid: 30110,
     dvn: '0x2f55c492897526677c5b68fb199ea31e2c126416',
+    // Look up canonical address at https://docs.succinct.xyz/onchain-verification
+    sp1Verifier: '<TBD before mainnetL2b deploy: look up canonical Succinct SP1Verifier on Arbitrum mainnet>',
   },
 };
+
+// Returns true when a CHAINS key refers to a local dev chain. Dev chains
+// use MockSP1Verifier instead of a canonical Succinct SP1VerifierGateway.
+// The key is the full CHAINS key (e.g. 'devL2'), NOT the abstract logical chain
+// key (e.g. 'L2') — do not call this with abstract keys.
+function isDevChain(chainKey) {
+  return chainKey.startsWith('dev');
+}
+
+// Returns the canonical sp1Verifier address for a chain, or throws if it has
+// not been set (placeholder strings starting with '<' are rejected). Returns
+// null for dev chains (MockSP1Verifier will be deployed instead).
+//
+// Called from constructorArgs callbacks where chainKey is the full CHAINS key.
+function requireSp1Verifier(chainKey) {
+  const v = CHAINS[chainKey]?.sp1Verifier;
+  if (v === null) return null; // dev chain — MockSP1Verifier will be deployed
+  if (!v || typeof v !== 'string' || v.startsWith('<')) {
+    throw new Error(
+      `CHAINS[${chainKey}].sp1Verifier is not set. ` +
+      `Look up the canonical Succinct SP1Verifier address for this chain at ` +
+      `https://docs.succinct.xyz/onchain-verification and update CHAINS in deploy.js.`
+    );
+  }
+  return v;
+}
 
 // Pre-existing contracts (don't redeploy these)
 const EXISTING_CONTRACTS = {
@@ -357,7 +419,19 @@ const CONTRACTS = {
     chain: 'L1',
     phase: 2,
     dependencies: ['CawProfileL2_L1'],
-    constructorArgs: (state) => [state.addresses.CawProfileL2_L1],
+    constructorArgs: (state, chainKey) => [
+      state.addresses.CawProfileL2_L1,
+      state.addresses.MockSP1Verifier_L1 || requireSp1Verifier(chainKey),
+      ZK_PROGRAM_VKEY,
+    ],
+  },
+  MockSP1Verifier_L1: {
+    artifact: 'MockSP1Verifier',
+    chain: 'L1',
+    phase: 1, // before CawActions_L1 in phase 2
+    dependencies: [],
+    constructorArgs: () => [],
+    condition: (_state, _deployer, env) => env === 'dev',
   },
   // Phase 7: PathwayExpander on L1. Becomes the owner of CawProfile +
   // CawProfileL2_L1 in the linking step that follows. Owner of the
@@ -393,12 +467,24 @@ for (const L of L2_CHAIN_KEYS) {
       CHAINS[chain].lzEndpoint,
     ],
   };
+  CONTRACTS[`MockSP1Verifier_${L}`] = {
+    artifact: 'MockSP1Verifier',
+    chain: L,
+    phase: 1, // before CawActions_${L} in phase 3
+    dependencies: [],
+    constructorArgs: () => [],
+    condition: (_state, _deployer, env) => env === 'dev',
+  };
   CONTRACTS[`CawActions_${L}`] = {
     artifact: 'CawActions',
     chain: L,
     phase: 3,
     dependencies: [`CawProfileL2_${L}`],
-    constructorArgs: (state) => [state.addresses[`CawProfileL2_${L}`]],
+    constructorArgs: (state, chainKey) => [
+      state.addresses[`CawProfileL2_${L}`],
+      state.addresses[`MockSP1Verifier_${L}`] || requireSp1Verifier(chainKey),
+      ZK_PROGRAM_VKEY,
+    ],
   };
   CONTRACTS[`CawActionsArchive_${L}`] = {
     artifact: 'CawActionsArchive',
@@ -993,6 +1079,15 @@ class MultiChainDeployer {
       artifactPath = path.join(
         __dirname,
         '../artifacts/contracts/mocks',
+        `${contractName}.sol`,
+        `${contractName}.json`
+      );
+    }
+
+    if (!fs.existsSync(artifactPath)) {
+      artifactPath = path.join(
+        __dirname,
+        '../artifacts/contracts/test-helpers',
         `${contractName}.sol`,
         `${contractName}.json`
       );
