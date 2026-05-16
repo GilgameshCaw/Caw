@@ -57,7 +57,7 @@ contract("CawProfileMarketplace", (accounts) => {
     await cawProfiles.setL2Peer(dummyL2Eid, accounts[9]); // dummy peer address
 
     // Create a network (needed for minting)
-    await networkManager.createNetwork("Test Network", deployer, dummyL2Eid, 0, 0, 0, 0);
+    await networkManager.createNetwork("Test Network", deployer, dummyL2Eid, 0, 0, 0, 0, 0);
 
     // Use MintableCaw as payment token for ERC20 tests
     paymentToken = token;
