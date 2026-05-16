@@ -497,15 +497,44 @@ const Notifications: React.FC = () => {
     // keys and reconstruct the label around actorLink + a <button>.
     const actorNode: React.ReactNode = grouped
       ? (() => {
-          const othersLabel = othersCount === 1
+          // Pass `count` but intentionally NOT `name` so the `{{name}}`
+          // placeholder stays literal in the returned string. We then
+          // split on the placeholder position to extract:
+          //   - `connector`: whitespace/punctuation between the name
+          //                   and the count phrase ("y", "and", "und",
+          //                   "et", etc. plus surrounding spaces)
+          //   - `suffix`:    the count phrase itself ("3 más", "and
+          //                   3 others", "外 3名")
+          // This is locale-agnostic — every translation in every locale
+          // file follows the `{{name}} <connector> <count phrase>`
+          // shape, so the {{name}} marker is the only stable anchor.
+          // The previous lastIndexOf(' and ') only worked in English.
+          const rawTemplate = othersCount === 1
             ? t('notifications.actor_grouped_one', { count: othersCount })
             : t('notifications.actor_grouped_other', { count: othersCount })
-          // The translated string is e.g. "{{name}} and 3 others".
-          // We strip the name placeholder portion and extract the suffix
-          // ("3 others") so we can render it as a <button>.
-          const andSep = ' and '
-          const andIdx = othersLabel.lastIndexOf(andSep)
-          const suffix = andIdx >= 0 ? othersLabel.slice(andIdx + andSep.length) : othersLabel
+          const NAME_TOKEN = '{{name}}'
+          const tokenIdx = rawTemplate.indexOf(NAME_TOKEN)
+          let connector = ' '
+          let suffix = rawTemplate
+          if (tokenIdx >= 0) {
+            const afterName = rawTemplate.slice(tokenIdx + NAME_TOKEN.length)
+            // Split on the FIRST run of non-whitespace text after the
+            // name marker — that's the count phrase. Whitespace +
+            // connector word(s) before it become `connector`. e.g.
+            //   " y 3 más"      → connector=" y ",   suffix="3 más"
+            //   " and 3 others" → connector=" and ", suffix="3 others"
+            //   " 外 3名"        → connector=" 外 ",   suffix="3名"
+            const m = afterName.match(/^(\s*\S+\s*)(.*)$/)
+            if (m && m[2]) {
+              connector = m[1]
+              suffix = m[2]
+            } else {
+              // Single-word remainder — no clear split. Render as-is
+              // (the whole remainder becomes the button text and the
+              // connector falls back to a single space).
+              suffix = afterName.trimStart()
+            }
+          }
           const notificationType = type as 'FOLLOW' | 'LIKE' | 'REPOST' | 'TIP'
           const othersButton = (
             <button
@@ -524,7 +553,7 @@ const Notifications: React.FC = () => {
               {suffix}
             </button>
           )
-          return <>{actorLink}{andSep}{othersButton}</>
+          return <>{actorLink}{connector}{othersButton}</>
         })()
       : actorLink
 
@@ -831,21 +860,29 @@ const Notifications: React.FC = () => {
       style={{ paddingBottom: 'calc(1rem + var(--bottom-nav-h, 0px))' }}
     >
       {/* Header */}
-      <div className="flex items-center justify-between mb-6">
-        <h1 className={`text-2xl font-bold ${isDark ? 'text-white' : 'text-gray-900'}`}>
+      <div className="flex items-center justify-between gap-3 mb-6">
+        {/* min-w-0 + truncate so the title doesn't push the
+            mark-all-read button off-screen in long-label locales
+            (e.g. ja: "通知" is short but ru/de/pl run long). */}
+        <h1 className={`text-2xl font-bold min-w-0 truncate ${isDark ? 'text-white' : 'text-gray-900'}`}>
           {t('notifications.title')}
         </h1>
         {unreadCount > 0 && (
           <button
             onClick={markAllAsRead}
-            className={`flex items-center space-x-2 px-3 py-1.5 rounded-lg transition ${
+            className={`flex items-center space-x-2 px-3 py-1.5 rounded-lg transition flex-shrink-0 ${
               isDark
                 ? 'bg-white/10 hover:bg-white/20 text-white'
                 : 'bg-gray-100 hover:bg-gray-200 text-gray-900'
             }`}
           >
-            <HiCheck className="w-4 h-4" />
-            <span className="text-sm">{t('notifications.mark_all_read')}</span>
+            <HiCheck className="w-4 h-4 flex-shrink-0" />
+            {/* whitespace-nowrap keeps the label on one line in locales
+                where it would otherwise wrap (Spanish/Polish/Russian
+                run noticeably longer than English). The flex-shrink-0
+                above prevents the button itself from squeezing into
+                the title column on narrow viewports. */}
+            <span className="text-sm whitespace-nowrap">{t('notifications.mark_all_read')}</span>
           </button>
         )}
       </div>

@@ -184,7 +184,7 @@
   "post_form.error.schedule_failed": "Algo salió mal al programar esta publicación.",
   "post_form.error.wrong_wallet_tooltip": "Por favor cambia a la wallet correcta",
   "notifications.title": "Notificaciones",
-  "notifications.mark_all_read": "Marcar todas como leídas",
+  "notifications.mark_all_read": "Marcar todas",
   "notifications.tab.all": "Todas",
   "notifications.tab.mentions": "Menciones",
   "notifications.signin_prompt": "Inicia sesión para ver tus notificaciones",
