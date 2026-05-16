@@ -1732,8 +1732,10 @@ const MessagesPage: React.FC = () => {
 
                         <div className="flex-1 min-w-0">
                           <div className="flex items-center space-x-2 mb-1">
-                            <h3 className={`font-semibold text-base transition-colors duration-300 truncate ${
-                              isDark ? 'text-white' : 'text-black'
+                            <h3 className={`text-base transition-colors duration-300 truncate ${
+                              conversation.unreadCount > 0
+                                ? `font-bold ${isDark ? 'text-yellow-400' : 'text-yellow-600'}`
+                                : `font-semibold ${isDark ? 'text-white' : 'text-black'}`
                             }`}>
                               {groupTitle}
                             </h3>
@@ -1744,7 +1746,9 @@ const MessagesPage: React.FC = () => {
                             )}
                           </div>
                           <p className={`text-sm transition-colors duration-300 line-clamp-1 ${
-                            isDark ? 'text-gray-300' : 'text-gray-700'
+                            conversation.unreadCount > 0
+                              ? `font-semibold ${isDark ? 'text-white' : 'text-black'}`
+                              : (isDark ? 'text-gray-300' : 'text-gray-700')
                           }`}>
                             {conversation.lastMessagePreview
                               ? (
@@ -1764,7 +1768,9 @@ const MessagesPage: React.FC = () => {
 
                       <div className="flex-shrink-0 ml-4">
                         <span className={`text-sm transition-colors duration-300 ${
-                          isDark ? 'text-gray-500' : 'text-gray-500'
+                          conversation.unreadCount > 0
+                            ? (isDark ? 'text-yellow-400 font-medium' : 'text-yellow-600 font-medium')
+                            : 'text-gray-500'
                         }`}>
                           {conversation.lastMessageAt ? formatMessageTime(conversation.lastMessageAt) : ''}
                         </span>
