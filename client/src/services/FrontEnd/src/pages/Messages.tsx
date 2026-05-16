@@ -707,6 +707,25 @@ const MessagesPage: React.FC = () => {
     }
   }
 
+  // Splice `text` into the composer at the current cursor, replacing any
+  // selection. Mirrors the @mention path so emoji insertion lands at the
+  // caret rather than always appending at the end.
+  const insertAtComposerCursor = (text: string) => {
+    const ta = composerTextareaRef.current
+    const startPos = ta?.selectionStart ?? composerCursor ?? newMessageContent.length
+    const endPos = ta?.selectionEnd ?? startPos
+    const next = newMessageContent.slice(0, startPos) + text + newMessageContent.slice(endPos)
+    setNewMessageContent(next)
+    const nextCaret = startPos + text.length
+    setComposerCursor(nextCaret)
+    requestAnimationFrame(() => {
+      const el = composerTextareaRef.current
+      if (!el) return
+      el.focus()
+      el.setSelectionRange(nextCaret, nextCaret)
+    })
+  }
+
   // Replace the current @query with the picked username and re-position
   // the caret just past the inserted mention.
   const handleMentionSelect = (username: string, startPos: number, endPos: number) => {
@@ -2720,7 +2739,7 @@ const MessagesPage: React.FC = () => {
                         <button
                           key={emoji}
                           onClick={() => {
-                            setNewMessageContent((prev) => prev + emoji)
+                            insertAtComposerCursor(emoji)
                             setShowEmojiPicker(false)
                           }}
                           className={`p-1 text-xl rounded transition-colors ${isDark ? 'hover:bg-white/10' : 'hover:bg-gray-200'}`}
@@ -2968,7 +2987,7 @@ const MessagesPage: React.FC = () => {
         open={composerEmojiPickerOpen}
         onClose={() => setComposerEmojiPickerOpen(false)}
         onPick={(emoji) => {
-          setNewMessageContent(prev => prev + emoji)
+          insertAtComposerCursor(emoji)
           setComposerEmojiPickerOpen(false)
         }}
       />
