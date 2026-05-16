@@ -193,7 +193,8 @@ export class NotificationService {
         data: {
           userId: followedId,
           actorId: followerId,
-          type: NotificationType.FOLLOW
+          type: NotificationType.FOLLOW,
+          groupKey: 'follow'
         }
       })
     }

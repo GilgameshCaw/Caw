@@ -139,17 +139,19 @@ router.get('/', requireAuth({ lookup: async (req) => Number(req.query.userId) ||
     const groupMap = new Map<string, any>()
 
     for (const notification of notifications) {
-      // Group LIKE, REPOST, and TIP notifications
-      if ((notification.type === 'LIKE' || notification.type === 'REPOST' || notification.type === 'TIP') && notification.groupKey) {
+      // Group LIKE, REPOST, TIP, and FOLLOW notifications
+      if ((notification.type === 'LIKE' || notification.type === 'REPOST' || notification.type === 'TIP' || notification.type === 'FOLLOW') && notification.groupKey) {
         const existing = groupMap.get(notification.groupKey)
         if (existing) {
-          // Add to existing group
-          existing.additionalActors.push({
-            tokenId: notification.actor.tokenId,
-            username: notification.actor.username,
-            displayName: notification.actor.displayName,
-            avatarUrl: notification.actor.avatarUrl
-          })
+          // Add to existing group (cap additionalActors at 50; count is always exact)
+          if (existing.additionalActors.length < 50) {
+            existing.additionalActors.push({
+              tokenId: notification.actor.tokenId,
+              username: notification.actor.username,
+              displayName: notification.actor.displayName,
+              avatarUrl: notification.actor.avatarUrl
+            })
+          }
           existing.count++
           // Update read status - group is unread if any notification is unread
           if (!notification.isRead) {
@@ -265,6 +267,109 @@ router.get('/unread-count', requireAuth({ lookup: async (req) => Number(req.quer
   } catch (error) {
     console.error('GET /api/notifications/unread-count error:', error)
     return res.status(500).json({ error: 'Failed to get unread count' })
+  }
+})
+
+/**
+ * GET /api/notifications/group-actors
+ * Paginate the full actor list for a notification group beyond the 50 inlined
+ * in the main notifications response.
+ *
+ * Query params:
+ *   userId    – REQUIRED. Must match the authenticated session's tokenId.
+ *   groupKey  – REQUIRED. Literal grouping key, e.g. 'follow' or 'like_caw_42'.
+ *   type      – REQUIRED. NotificationType string, e.g. 'FOLLOW' or 'LIKE'.
+ *   cursor    – optional. Opaque: "<createdAt ISO>_<notificationId>" of the last
+ *               returned row. Omit for the first page.
+ *   limit     – optional. Default 50, max 100.
+ */
+router.get('/group-actors', requireAuth({ lookup: async (req) => Number(req.query.userId) || undefined, verifyOwnership: true }), async (req, res) => {
+  try {
+    const { userId, groupKey, type, cursor, limit: limitParam } = req.query
+
+    if (!userId) {
+      return res.status(400).json({ error: 'userId is required' })
+    }
+    if (!groupKey) {
+      return res.status(400).json({ error: 'groupKey is required' })
+    }
+    if (!type) {
+      return res.status(400).json({ error: 'type is required' })
+    }
+
+    const userTokenId = Number(userId)
+    if (!Number.isFinite(userTokenId) || userTokenId === 0) {
+      return res.status(400).json({ error: 'Invalid userId' })
+    }
+
+    // Validate type is a known NotificationType
+    if (!Object.values(NotificationType).includes(type as NotificationType)) {
+      return res.status(400).json({ error: 'Invalid notification type' })
+    }
+
+    const limit = Math.min(Number(limitParam) || 50, 100)
+
+    // Parse cursor: "<createdAt ISO>_<notificationId>"
+    let cursorWhere: any = undefined
+    if (cursor && typeof cursor === 'string') {
+      const parts = cursor.split('_')
+      const cursorId = Number(parts[parts.length - 1])
+      const cursorDate = new Date(parts.slice(0, -1).join('_'))
+      if (Number.isFinite(cursorId) && !isNaN(cursorDate.getTime())) {
+        cursorWhere = {
+          OR: [
+            { createdAt: { lt: cursorDate } },
+            { createdAt: cursorDate, id: { lt: cursorId } }
+          ]
+        }
+      }
+    }
+
+    const notifications = await prisma.notification.findMany({
+      where: {
+        userId: userTokenId,
+        type: type as NotificationType,
+        groupKey: groupKey as string,
+        hidden: false,
+        ...(cursorWhere ?? {})
+      },
+      take: limit + 1,
+      orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
+      include: {
+        actor: {
+          select: {
+            tokenId: true,
+            username: true,
+            displayName: true,
+            avatarUrl: true,
+            defaultAvatarId: true
+          }
+        }
+      }
+    })
+
+    const hasMore = notifications.length > limit
+    const page = notifications.slice(0, limit)
+
+    let nextCursor: string | undefined
+    if (hasMore && page.length > 0) {
+      const last = page[page.length - 1]
+      nextCursor = `${last.createdAt.toISOString()}_${last.id}`
+    }
+
+    const actors = page.map(n => ({
+      tokenId: n.actor.tokenId,
+      username: n.actor.username,
+      displayName: n.actor.displayName,
+      avatarUrl: n.actor.avatarUrl,
+      defaultAvatarId: (n.actor as any).defaultAvatarId ?? 0
+    }))
+
+    return res.json({ actors, nextCursor })
+
+  } catch (error) {
+    console.error('GET /api/notifications/group-actors error:', error)
+    return res.status(500).json({ error: 'Failed to get group actors' })
   }
 })
 
