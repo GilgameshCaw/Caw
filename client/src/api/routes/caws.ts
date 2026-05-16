@@ -464,8 +464,10 @@ router.get('/:id', async (req, res) => {
   const nextCommentCursor = hasMoreComments ? rawComments[rawComments.length - 1]?.id : undefined
 
   // Plain recaws (RECAW with no text) — rendered as inline 1-liners on the
-  // post page, interleaved with replies by timestamp. Capped to keep the
-  // payload small for popular posts.
+  // post page, interleaved with replies by timestamp. Hard cap (no
+  // pagination) because the UI interleaves these into the timeline; a
+  // proper paginated /recaws endpoint is the right longer-term move
+  // when posts routinely exceed this.
   const rawRecaws = await prisma.caw.findMany({
     where: {
       originalCawId: cawId,
@@ -474,7 +476,7 @@ router.get('/:id', async (req, res) => {
       status: 'SUCCESS',
       ...(commentBlockedIds.length > 0 ? { userId: { notIn: commentBlockedIds } } : {}),
     },
-    take: 100,
+    take: 500,
     orderBy: { createdAt: 'asc' },
     select: {
       id: true,
@@ -496,7 +498,7 @@ router.get('/:id', async (req, res) => {
       pending: false,
       ...(commentBlockedIds.length > 0 ? { senderId: { notIn: commentBlockedIds } } : {}),
     },
-    take: 100,
+    take: 500,
     orderBy: { createdAt: 'asc' },
     select: {
       id: true,

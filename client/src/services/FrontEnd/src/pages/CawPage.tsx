@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from 'react'
+import React, { useCallback, useEffect, useMemo, useState } from 'react'
 import { useParams, useSearchParams, useLocation } from 'react-router-dom'
 import { Link, useNavigate } from '~/utils/localizedRouter'
 import { useT } from '~/i18n/I18nProvider'
@@ -80,6 +80,10 @@ export const CawPage: React.FC = () => {
   const [likesLoading, setLikesLoading] = useState(false)
   const [likesError, setLikesError] = useState<string | null>(null)
   const [likesAttempted, setLikesAttempted] = useState(false)
+  // Cursor pagination for likes: server caps each page at 500. Without
+  // this, viral posts only ever showed the first 500 likers.
+  const [likesNextCursor, setLikesNextCursor] = useState<number | null>(null)
+  const [likesLoadingMore, setLikesLoadingMore] = useState(false)
   const [activeInteractionsTab, setActiveInteractionsTab] = useState<'likes' | 'comments' | 'reposts' | 'tips'>('likes')
   // `loading` covers the post itself; `commentsLoading` covers replies/
   // recaws/tips. When we have a seed, we skip the post-loading state but
@@ -187,9 +191,10 @@ export const CawPage: React.FC = () => {
     setLikesAttempted(true)
     setLikesLoading(true)
     setLikesError(null)
-    apiFetch<{ likes: LikeIndicator[] }>(`/api/caws/${id}/likes`)
+    apiFetch<{ likes: LikeIndicator[]; nextCursor?: number; hasMore?: boolean }>(`/api/caws/${id}/likes?limit=500`)
       .then(data => {
         setLikes(data.likes || [])
+        setLikesNextCursor(data.hasMore && data.nextCursor != null ? data.nextCursor : null)
         setLikesLoaded(true)
       })
       .catch(err => {
@@ -214,7 +219,26 @@ export const CawPage: React.FC = () => {
     setLikesLoading(false)
     setLikesError(null)
     setLikes([])
+    setLikesNextCursor(null)
+    setLikesLoadingMore(false)
   }, [wantsInteractions, id])
+
+  // Load the next page of likes when the user clicks Load More.
+  const loadMoreLikes = useCallback(() => {
+    if (!id || likesNextCursor == null || likesLoadingMore) return
+    setLikesLoadingMore(true)
+    apiFetch<{ likes: LikeIndicator[]; nextCursor?: number; hasMore?: boolean }>(
+      `/api/caws/${id}/likes?limit=500&cursor=${likesNextCursor}`
+    )
+      .then(data => {
+        setLikes(prev => [...prev, ...(data.likes || [])])
+        setLikesNextCursor(data.hasMore && data.nextCursor != null ? data.nextCursor : null)
+      })
+      .catch(err => {
+        console.error('Error loading more likes:', err)
+      })
+      .finally(() => setLikesLoadingMore(false))
+  }, [id, likesNextCursor, likesLoadingMore])
 
   // If we arrived from a desktop Reply click, scroll/focus the reply form.
   useEffect(() => {
@@ -693,6 +717,17 @@ export const CawPage: React.FC = () => {
                             </div>
                           </Link>
                         ))}
+                        {likesNextCursor != null && (
+                          <button
+                            onClick={loadMoreLikes}
+                            disabled={likesLoadingMore}
+                            className={`w-full py-2 text-sm rounded-md ${
+                              isDark ? 'text-gray-300 hover:bg-white/5' : 'text-gray-700 hover:bg-black/5'
+                            } disabled:opacity-50`}
+                          >
+                            {likesLoadingMore ? t('common.loading') : t('caw_page.load_more_likes')}
+                          </button>
+                        )}
                       </div>
                     )}
                   </div>
