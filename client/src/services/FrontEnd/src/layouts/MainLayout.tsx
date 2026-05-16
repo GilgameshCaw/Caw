@@ -347,7 +347,12 @@ const MainLayout = ({ children, hideSidebars: hideSidebarsProp }: MainLayoutProp
           )}
           <div
             ref={drawerBackdropRef}
-            className={`md:hidden fixed inset-0 z-[70] ${isDragging ? '' : 'transition-all duration-300'} ${
+            // z-[90] sits above page-level floating elements like the
+            // Profile back button (z-[80]) so they don't bleed through
+            // on top of the drawer menu items. Stays below the mobile
+            // header (z-[9999]) so the hamburger / close toggle in the
+            // header remains tappable to dismiss the drawer.
+            className={`md:hidden fixed inset-0 z-[90] ${isDragging ? '' : 'transition-all duration-300'} ${
               isMobileMenuOpen ? 'bg-black/50 opacity-100' : 'bg-black/0 opacity-0 pointer-events-none'
             }`}
             onClick={() => setIsMobileMenuOpen(false)}
