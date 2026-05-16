@@ -167,9 +167,17 @@ function handleAuthError(_res: Response, errorData: any): never {
  * Supports multi-instance failover: tries each known API host in order.
  * Falls back to VITE_API_HOST if no instances are discovered.
  */
+// Tracks whether the current apiFetch call has already attempted a
+// session-refresh retry for a 403 TOKEN_OWNER_CHANGED response. Used
+// only inside one call's local scope (passed via the `_retried` flag
+// below); the WeakMap shape lets the recursion guard survive across
+// the inner refetch call without leaking state between unrelated
+// requests.
+const RETRY_FLAG = Symbol('apiFetchRetried')
+
 export async function apiFetch<T = any>(
   path: string,
-  init?: RequestInit
+  init?: RequestInit & { [RETRY_FLAG]?: boolean }
 ): Promise<T> {
   const headers = buildHeaders(init)
 
@@ -230,6 +238,38 @@ export async function apiFetch<T = any>(
     }
     // Other 409s are different conflict shapes (e.g. retry-already-submitted);
     // fall through to the generic !res.ok handler below.
+  }
+
+  // 403 TOKEN_OWNER_CHANGED — token was transferred to/from a wallet
+  // since this session was issued. Common case: user just bought an
+  // NFT in the marketplace and the indexer has now updated
+  // User.address, but the session's authorizedTokenIds doesn't yet
+  // include the new tokenId. /api/auth/refresh re-reads the DB and
+  // adds the new tokenId without requiring a fresh signature. Retry
+  // the original call exactly once after refresh succeeds.
+  //
+  // Bug #135: without this auto-refresh, the user has to manually
+  // re-sign in after every NFT purchase before they can post / like /
+  // recaw with the newly-owned profile.
+  if (res.status === 403 && !init?.[RETRY_FLAG]) {
+    let errorData: any = {}
+    try { errorData = await res.clone().json() } catch {}
+    if (errorData?.error === 'TOKEN_OWNER_CHANGED') {
+      try {
+        const refreshRes = await fetch(`${host}/api/auth/refresh`, {
+          method: 'POST',
+          credentials: 'include',
+          headers: buildHeaders({ method: 'POST' }),
+        })
+        if (refreshRes.ok) {
+          return apiFetch<T>(path, { ...init, [RETRY_FLAG]: true })
+        }
+      } catch (err) {
+        console.warn('[apiFetch] auth refresh during TOKEN_OWNER_CHANGED retry failed:', err)
+      }
+      // Refresh didn't help — fall through to the standard error path
+      // so the caller still sees the 403.
+    }
   }
 
   if (res.status === 401) {

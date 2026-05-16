@@ -117,7 +117,18 @@ const BuyModal: React.FC = () => {
     // MarketplaceIndexerService on the next L2 poll. A one-shot refetch
     // would lose that race; this keeps trying until the chooser sees
     // the new ownership (or budget runs out).
-    refetchTokenDataUntilChanged()
+    //
+    // Once the token-data change lands, also refresh the wallet
+    // session so requireAuth({ verifyOwnership }) accepts the
+    // newly-owned tokenId. Without this, posting/liking/recawing as
+    // the new owner gets 403 TOKEN_OWNER_CHANGED until the user
+    // signs back in (bug #135). /api/auth/refresh re-reads the DB's
+    // address→tokenId mapping and adds the new tokenId to the
+    // session's authorizedTokenIds without requiring a fresh sig.
+    refetchTokenDataUntilChanged().then(() => {
+      apiFetch('/api/auth/refresh', { method: 'POST' })
+        .catch(err => console.warn('[BuyModal] auth refresh failed:', err))
+    })
   }, [isSuccess])
 
   // Quote LZ fee for L2 sync (pass tokenId + buyer to simulate the pending transfer)
