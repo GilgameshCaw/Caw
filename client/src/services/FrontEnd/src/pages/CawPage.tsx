@@ -43,6 +43,23 @@ type LikeIndicator = {
   user: IndicatorUser
 }
 
+// Response shape for GET /api/caws/:id. The initial page of recaws and
+// tips ships with the post so the page can paint without a second
+// round-trip; subsequent pages come from the dedicated /recaws and
+// /tips endpoints via the cursor fields below.
+type CawDetailResponse = {
+  caw: CawItem
+  comments: CawItem[]
+  recaws?: RecawIndicator[]
+  tips?: TipIndicator[]
+  hasMoreComments?: boolean
+  nextCommentCursor?: number
+  hasMoreRecaws?: boolean
+  recawsNextCursor?: number
+  hasMoreTips?: boolean
+  tipsNextCursor?: number
+}
+
 export const CawPage: React.FC = () => {
   const t = useT()
   // Route can be either the legacy /caws/:id or the canonical
@@ -80,10 +97,16 @@ export const CawPage: React.FC = () => {
   const [likesLoading, setLikesLoading] = useState(false)
   const [likesError, setLikesError] = useState<string | null>(null)
   const [likesAttempted, setLikesAttempted] = useState(false)
-  // Cursor pagination for likes: server caps each page at 500. Without
-  // this, viral posts only ever showed the first 500 likers.
+  // Cursor pagination for likes / recaws / tips. The initial pages are
+  // seeded from the /api/caws/:id response (recaws/tips embedded for a
+  // fast first paint); subsequent pages come from the dedicated
+  // /api/caws/:id/{likes,recaws,tips} endpoints.
   const [likesNextCursor, setLikesNextCursor] = useState<number | null>(null)
   const [likesLoadingMore, setLikesLoadingMore] = useState(false)
+  const [recawsNextCursor, setRecawsNextCursor] = useState<number | null>(null)
+  const [recawsLoadingMore, setRecawsLoadingMore] = useState(false)
+  const [tipsNextCursor, setTipsNextCursor] = useState<number | null>(null)
+  const [tipsLoadingMore, setTipsLoadingMore] = useState(false)
   const [activeInteractionsTab, setActiveInteractionsTab] = useState<'likes' | 'comments' | 'reposts' | 'tips'>('likes')
   // `loading` covers the post itself; `commentsLoading` covers replies/
   // recaws/tips. When we have a seed, we skip the post-loading state but
@@ -161,16 +184,6 @@ export const CawPage: React.FC = () => {
   // shuffle under any of the merge logic above.
   const quotes = useMemo(() => comments.filter(isQuoteItem), [comments])
 
-  const commentIndicators = useMemo(() => {
-    return comments
-      .filter(c => !isQuoteItem(c))
-      .map(c => ({ id: c.id, timestamp: c.timestamp, user: c.user }))
-  }, [comments])
-
-  const quoteIndicators = useMemo(() => {
-    return quotes.map(q => ({ id: q.id, timestamp: q.timestamp, user: q.user }))
-  }, [quotes])
-
   const [showSignInModal, setShowSignInModal] = useState(false)
   const [pollingReplies, setPollingReplies] = useState(false)
 
@@ -240,6 +253,38 @@ export const CawPage: React.FC = () => {
       .finally(() => setLikesLoadingMore(false))
   }, [id, likesNextCursor, likesLoadingMore])
 
+  const loadMoreRecaws = useCallback(() => {
+    if (!id || recawsNextCursor == null || recawsLoadingMore) return
+    setRecawsLoadingMore(true)
+    apiFetch<{ recaws: RecawIndicator[]; nextCursor?: number; hasMore?: boolean }>(
+      `/api/caws/${id}/recaws?limit=500&cursor=${recawsNextCursor}`
+    )
+      .then(data => {
+        setRecaws(prev => [...prev, ...(data.recaws || [])])
+        setRecawsNextCursor(data.hasMore && data.nextCursor != null ? data.nextCursor : null)
+      })
+      .catch(err => {
+        console.error('Error loading more recaws:', err)
+      })
+      .finally(() => setRecawsLoadingMore(false))
+  }, [id, recawsNextCursor, recawsLoadingMore])
+
+  const loadMoreTips = useCallback(() => {
+    if (!id || tipsNextCursor == null || tipsLoadingMore) return
+    setTipsLoadingMore(true)
+    apiFetch<{ tips: TipIndicator[]; nextCursor?: number; hasMore?: boolean }>(
+      `/api/caws/${id}/tips?limit=500&cursor=${tipsNextCursor}`
+    )
+      .then(data => {
+        setTips(prev => [...prev, ...(data.tips || [])])
+        setTipsNextCursor(data.hasMore && data.nextCursor != null ? data.nextCursor : null)
+      })
+      .catch(err => {
+        console.error('Error loading more tips:', err)
+      })
+      .finally(() => setTipsLoadingMore(false))
+  }, [id, tipsNextCursor, tipsLoadingMore])
+
   // If we arrived from a desktop Reply click, scroll/focus the reply form.
   useEffect(() => {
     if (searchParams.get('reply') !== '1') return
@@ -264,12 +309,14 @@ export const CawPage: React.FC = () => {
     // us onto the real id once the chain catches up.
     if (isTempIdRoute) return
     try {
-      const { caw: fetched, comments: fetchedComments, recaws: fetchedRecaws, tips: fetchedTips } =
-        await apiFetch<{ caw: CawItem; comments: CawItem[]; recaws?: RecawIndicator[]; tips?: TipIndicator[] }>(`/api/caws/${id}`)
-      setCaw(fetched)
-      setComments(fetchedComments)
-      setRecaws(fetchedRecaws || [])
-      setTips(fetchedTips || [])
+      const data =
+        await apiFetch<CawDetailResponse>(`/api/caws/${id}`)
+      setCaw(data.caw)
+      setComments(data.comments)
+      setRecaws(data.recaws || [])
+      setTips(data.tips || [])
+      setRecawsNextCursor(data.hasMoreRecaws && data.recawsNextCursor != null ? data.recawsNextCursor : null)
+      setTipsNextCursor(data.hasMoreTips && data.tipsNextCursor != null ? data.tipsNextCursor : null)
     } catch (error) {
       console.error('Error refreshing comments:', error)
     }
@@ -311,15 +358,16 @@ export const CawPage: React.FC = () => {
 
     const interval = setInterval(async () => {
       try {
-        const { caw: fetched, comments: fetchedComments, recaws: fetchedRecaws, tips: fetchedTips } =
-          await apiFetch<{ caw: CawItem; comments: CawItem[]; recaws?: RecawIndicator[]; tips?: TipIndicator[] }>(`/api/caws/${id}`)
+        const data = await apiFetch<CawDetailResponse>(`/api/caws/${id}`)
 
-        setCaw(fetched)
-        setComments(fetchedComments)
-        setRecaws(fetchedRecaws || [])
-        setTips(fetchedTips || [])
-        const hasPendingComments = fetchedComments.some(c => c.status === 'PENDING')
-        if (!fetched.replyPending && !hasPendingComments) {
+        setCaw(data.caw)
+        setComments(data.comments)
+        setRecaws(data.recaws || [])
+        setTips(data.tips || [])
+        setRecawsNextCursor(data.hasMoreRecaws && data.recawsNextCursor != null ? data.recawsNextCursor : null)
+        setTipsNextCursor(data.hasMoreTips && data.tipsNextCursor != null ? data.tipsNextCursor : null)
+        const hasPendingComments = data.comments.some(c => c.status === 'PENDING')
+        if (!data.caw.replyPending && !hasPendingComments) {
           setPollingReplies(false)
         }
       } catch (error) {
@@ -357,6 +405,13 @@ export const CawPage: React.FC = () => {
                     String((location.state as { caw?: CawItem }).caw!.id) === id
     if (!hasSeed) setLoading(true)
     setCommentsLoading(true)
+    // Stale cursors from the previous caw would let a Load More click
+    // page through a different post's recaws/tips. Reset until the
+    // fresh response lands.
+    setRecawsNextCursor(null)
+    setRecawsLoadingMore(false)
+    setTipsNextCursor(null)
+    setTipsLoadingMore(false)
   }, [id])
 
   // Load caw and comments - refetch when id or activeTokenId changes
@@ -365,13 +420,15 @@ export const CawPage: React.FC = () => {
       setError(null)
       setRemovedBy(null)
 
-      const data = await apiFetch<{ caw: CawItem; comments: CawItem[]; recaws?: RecawIndicator[]; tips?: TipIndicator[]; hasMoreComments?: boolean; nextCommentCursor?: number }>(`/api/caws/${id}`)
+      const data = await apiFetch<CawDetailResponse>(`/api/caws/${id}`)
       setCaw(data.caw)
       setComments(data.comments)
       setRecaws(data.recaws || [])
       setTips(data.tips || [])
       setHasMoreComments(!!data.hasMoreComments)
       setCommentCursor(data.nextCommentCursor)
+      setRecawsNextCursor(data.hasMoreRecaws && data.recawsNextCursor != null ? data.recawsNextCursor : null)
+      setTipsNextCursor(data.hasMoreTips && data.tipsNextCursor != null ? data.tipsNextCursor : null)
     } catch (err) {
       // 410 → caw was hidden by its author. Render a tombstone instead
       // of the generic "could not load" path so deep-links from old
@@ -485,32 +542,36 @@ export const CawPage: React.FC = () => {
   const canShowInteractions = isAuthenticated
   const showingInteractions = wantsInteractions && canShowInteractions
 
-  // Reposts tab covers bare recaws + quotes — same on-chain action,
-  // same author credit; the only difference is whether the quoter added
-  // text. Surfacing them as one list keeps the tab strip shorter and
-  // matches how the count cards group them.
-  const repostsTotal = recaws.length + quoteIndicators.length
+  // Tab labels always read the authoritative counts off the Caw row
+  // (Caw.likeCount/recawCount/commentCount + the tipCount aggregate
+  // emitted by /api/caws/:id). Using the loaded slice length instead
+  // would under-count any post with more interactions than fit in a
+  // single page.
+  const likesTabCount = caw.likeCount ?? 0
+  const commentsTabCount = caw.commentCount ?? 0
+  const repostsTabCount = caw.recawCount ?? 0
+  const tipsTabCount = caw.tipCount ?? 0
   const tabLabels: { key: 'likes' | 'comments' | 'reposts' | 'tips'; label: string }[] = [
     {
       key: 'likes',
-      label: t('caw_page.tab.likes_count', { count: likesLoaded ? likes.length : (caw.likeCount ?? 0) }),
+      label: t('caw_page.tab.likes_count', { count: likesTabCount }),
     },
     {
       key: 'comments',
-      label: commentIndicators.length
-        ? t('caw_page.tab.comments_count', { count: commentIndicators.length })
+      label: commentsTabCount
+        ? t('caw_page.tab.comments_count', { count: commentsTabCount })
         : t('caw_page.tab.comments'),
     },
     {
       key: 'reposts',
-      label: repostsTotal
-        ? t('caw_page.tab.recaws_count', { count: repostsTotal })
+      label: repostsTabCount
+        ? t('caw_page.tab.recaws_count', { count: repostsTabCount })
         : t('caw_page.tab.recaws'),
     },
     {
       key: 'tips',
-      label: tips.length
-        ? t('caw_page.tab.tips_count', { count: tips.length })
+      label: tipsTabCount
+        ? t('caw_page.tab.tips_count', { count: tipsTabCount })
         : t('caw_page.tab.tips'),
     },
   ]
@@ -807,6 +868,17 @@ export const CawPage: React.FC = () => {
                           </Link>
                         )
                       })}
+                      {recawsNextCursor != null && (
+                        <button
+                          onClick={loadMoreRecaws}
+                          disabled={recawsLoadingMore}
+                          className={`w-full py-2 text-sm rounded-md ${
+                            isDark ? 'text-gray-300 hover:bg-white/5' : 'text-gray-700 hover:bg-black/5'
+                          } disabled:opacity-50`}
+                        >
+                          {recawsLoadingMore ? t('common.loading') : t('caw_page.load_more_recaws')}
+                        </button>
+                      )}
                     </div>
                   )
                 })()}
@@ -836,6 +908,17 @@ export const CawPage: React.FC = () => {
                             </div>
                           </Link>
                         ))}
+                        {tipsNextCursor != null && (
+                          <button
+                            onClick={loadMoreTips}
+                            disabled={tipsLoadingMore}
+                            className={`w-full py-2 text-sm rounded-md ${
+                              isDark ? 'text-gray-300 hover:bg-white/5' : 'text-gray-700 hover:bg-black/5'
+                            } disabled:opacity-50`}
+                          >
+                            {tipsLoadingMore ? t('common.loading') : t('caw_page.load_more_tips')}
+                          </button>
+                        )}
                       </div>
                     )}
                   </div>

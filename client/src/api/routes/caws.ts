@@ -463,11 +463,11 @@ router.get('/:id', async (req, res) => {
   if (hasMoreComments) rawComments.pop()
   const nextCommentCursor = hasMoreComments ? rawComments[rawComments.length - 1]?.id : undefined
 
-  // Plain recaws (RECAW with no text) — rendered as inline 1-liners on the
-  // post page, interleaved with replies by timestamp. Hard cap (no
-  // pagination) because the UI interleaves these into the timeline; a
-  // proper paginated /recaws endpoint is the right longer-term move
-  // when posts routinely exceed this.
+  // First page of plain recaws (RECAW with no text). Subsequent pages
+  // come from GET /api/caws/:id/recaws which uses the same cursor shape
+  // as /likes. Authoritative count for badges/tabs lives on
+  // Caw.recawCount — never use the page slice length for that.
+  const RECAWS_PAGE = 100
   const rawRecaws = await prisma.caw.findMany({
     where: {
       originalCawId: cawId,
@@ -476,30 +476,35 @@ router.get('/:id', async (req, res) => {
       status: 'SUCCESS',
       ...(commentBlockedIds.length > 0 ? { userId: { notIn: commentBlockedIds } } : {}),
     },
-    take: 500,
-    orderBy: { createdAt: 'asc' },
+    take: RECAWS_PAGE + 1, // +1 to detect hasMore
+    orderBy: { id: 'asc' },
     select: {
       id: true,
       createdAt: true,
       user: { select: { tokenId: true, username: true, displayName: true, avatarUrl: true, image: true, defaultAvatarId: true } },
     },
   })
-  const recaws = rawRecaws.map(r => ({
+  const hasMoreRecaws = rawRecaws.length > RECAWS_PAGE
+  const slicedRecaws = hasMoreRecaws ? rawRecaws.slice(0, RECAWS_PAGE) : rawRecaws
+  const recawsNextCursor = hasMoreRecaws ? slicedRecaws[slicedRecaws.length - 1].id : undefined
+  const recaws = slicedRecaws.map(r => ({
     id: r.id.toString(),
     timestamp: r.createdAt.toISOString(),
     user: r.user,
   }))
 
-  // Tips on this caw — rendered inline like recaws. Same blocked-user filter
-  // and cap. Pending tips are excluded so we don't show un-confirmed tips.
+  // First page of tips. Subsequent pages come from GET /api/caws/:id/tips.
+  // Authoritative count is the aggregate above (tipCount on the shaped
+  // caw); never use array length.
+  const TIPS_PAGE = 100
   const rawTips = await prisma.tip.findMany({
     where: {
       cawId,
       pending: false,
       ...(commentBlockedIds.length > 0 ? { senderId: { notIn: commentBlockedIds } } : {}),
     },
-    take: 500,
-    orderBy: { createdAt: 'asc' },
+    take: TIPS_PAGE + 1,
+    orderBy: { id: 'asc' },
     select: {
       id: true,
       amount: true,
@@ -507,7 +512,10 @@ router.get('/:id', async (req, res) => {
       sender: { select: { tokenId: true, username: true, displayName: true, avatarUrl: true, image: true, defaultAvatarId: true } },
     },
   })
-  const tips = rawTips.map(t => ({
+  const hasMoreTips = rawTips.length > TIPS_PAGE
+  const slicedTips = hasMoreTips ? rawTips.slice(0, TIPS_PAGE) : rawTips
+  const tipsNextCursor = hasMoreTips ? slicedTips[slicedTips.length - 1].id : undefined
+  const tips = slicedTips.map(t => ({
     id: t.id.toString(),
     timestamp: t.createdAt.toISOString(),
     amount: t.amount,
@@ -528,7 +536,101 @@ router.get('/:id', async (req, res) => {
     tips,
     hasMoreComments,
     nextCommentCursor,
+    hasMoreRecaws,
+    recawsNextCursor,
+    hasMoreTips,
+    tipsNextCursor,
   })
+})
+
+// GET /api/caws/:id/recaws — paginated list of plain recaws (RECAW with
+// empty content). Same cursor shape as /likes. Used by the post page's
+// Reposts tab when there are more than the first page returned by the
+// main /api/caws/:id endpoint.
+router.get('/:id/recaws', async (req, res) => {
+  const cawId = Number(req.params.id)
+  if (!Number.isFinite(cawId)) return res.status(400).json({ error: 'Invalid caw ID' })
+
+  const userIdHeader = req.header('x-user-id')
+  const currentUserId = userIdHeader ? Number(userIdHeader) : undefined
+  const blockedIds = currentUserId ? await getBlockedUserIds(currentUserId) : []
+
+  const limit = Math.min(parseInt(req.query.limit as string) || 100, 500)
+  const cursor = req.query.cursor ? parseInt(req.query.cursor as string) : undefined
+
+  const raw = await prisma.caw.findMany({
+    where: {
+      originalCawId: cawId,
+      action: 'RECAW',
+      content: '',
+      status: 'SUCCESS',
+      ...(blockedIds.length > 0 ? { userId: { notIn: blockedIds } } : {}),
+    },
+    take: limit + 1,
+    ...(cursor ? { cursor: { id: cursor }, skip: 1 } : {}),
+    orderBy: { id: 'asc' },
+    select: {
+      id: true,
+      createdAt: true,
+      user: { select: { tokenId: true, username: true, displayName: true, avatarUrl: true, image: true, defaultAvatarId: true } },
+    },
+  })
+
+  const hasMore = raw.length > limit
+  const sliced = hasMore ? raw.slice(0, limit) : raw
+  const nextCursor = hasMore ? sliced[sliced.length - 1].id : undefined
+
+  const recaws = sliced.map(r => ({
+    id: r.id.toString(),
+    timestamp: r.createdAt.toISOString(),
+    user: r.user,
+  }))
+
+  res.json({ recaws, nextCursor, hasMore })
+})
+
+// GET /api/caws/:id/tips — paginated list of tip senders + amounts.
+// Pending tips excluded; mirrors /likes pagination shape.
+router.get('/:id/tips', async (req, res) => {
+  const cawId = Number(req.params.id)
+  if (!Number.isFinite(cawId)) return res.status(400).json({ error: 'Invalid caw ID' })
+
+  const userIdHeader = req.header('x-user-id')
+  const currentUserId = userIdHeader ? Number(userIdHeader) : undefined
+  const blockedIds = currentUserId ? await getBlockedUserIds(currentUserId) : []
+
+  const limit = Math.min(parseInt(req.query.limit as string) || 100, 500)
+  const cursor = req.query.cursor ? parseInt(req.query.cursor as string) : undefined
+
+  const raw = await prisma.tip.findMany({
+    where: {
+      cawId,
+      pending: false,
+      ...(blockedIds.length > 0 ? { senderId: { notIn: blockedIds } } : {}),
+    },
+    take: limit + 1,
+    ...(cursor ? { cursor: { id: cursor }, skip: 1 } : {}),
+    orderBy: { id: 'asc' },
+    select: {
+      id: true,
+      amount: true,
+      createdAt: true,
+      sender: { select: { tokenId: true, username: true, displayName: true, avatarUrl: true, image: true, defaultAvatarId: true } },
+    },
+  })
+
+  const hasMore = raw.length > limit
+  const sliced = hasMore ? raw.slice(0, limit) : raw
+  const nextCursor = hasMore ? sliced[sliced.length - 1].id : undefined
+
+  const tips = sliced.map(t => ({
+    id: t.id.toString(),
+    timestamp: t.createdAt.toISOString(),
+    amount: t.amount,
+    user: t.sender,
+  }))
+
+  res.json({ tips, nextCursor, hasMore })
 })
 
 // GET /api/caws/:id/likes — public list of users who liked this caw.

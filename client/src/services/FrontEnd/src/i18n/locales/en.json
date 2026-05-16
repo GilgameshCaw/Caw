@@ -85,6 +85,8 @@
   "caw_page.view_interactions": "View interactions",
   "caw_page.load_more_replies": "Load more replies",
   "caw_page.load_more_likes": "Load more likes",
+  "caw_page.load_more_recaws": "Load more reposts",
+  "caw_page.load_more_tips": "Load more tips",
   "caw_page.sign_in_to_view_and_reply": "Sign in to view and reply",
   "caw_page.sign_in_to_be_first": "Sign in to be the first to reply",
   "caw_page.sign_in_modal_message": "Connect your wallet and create a username to view replies and join the conversation.",

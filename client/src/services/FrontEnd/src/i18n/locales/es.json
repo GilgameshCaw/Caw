@@ -86,6 +86,8 @@
   "caw_page.view_interactions": "Ver interacciones",
   "caw_page.load_more_replies": "Cargar más respuestas",
   "caw_page.load_more_likes": "Cargar más Me gusta",
+  "caw_page.load_more_recaws": "Cargar más reposts",
+  "caw_page.load_more_tips": "Cargar más propinas",
   "caw_page.sign_in_to_view_and_reply": "Inicia sesión para ver y responder",
   "caw_page.sign_in_to_be_first": "Inicia sesión para ser el primero en responder",
   "caw_page.sign_in_modal_message": "Conecta tu billetera y crea un nombre de usuario para ver las respuestas y unirte a la conversación.",
