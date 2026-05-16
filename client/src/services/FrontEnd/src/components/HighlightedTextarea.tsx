@@ -123,24 +123,34 @@ const HighlightedTextarea: React.FC<HighlightedTextareaProps> = ({
     // contain at least one non-digit char; pure-numeric runs like `#5` or
     // `$100` stay plain text. Char class allows any Unicode letter/digit/mark
     // so e.g. `#テスト` and `#你好` highlight the same as `#foo`.
-    const tagAlt = `${HASHTAG_SIGIL_CLASS}(?=${TAG_CHAR_CLASS}*[\\p{L}\\p{M}_])${TAG_CHAR_CLASS}+`
-    const mentionAlt = `${MENTION_SIGIL_CLASS}${TAG_CHAR_CLASS}+`
-    const urlAlt = `https?:\\/\\/[^\\s<>"'{}|\\\\^\`\\[\\]]+[^\\s<>"'{}|\\\\^\`\\[\\].,!?;:)\\]]`
-    const regex = new RegExp(`(${mentionAlt}|${tagAlt}|${urlAlt})`, 'gu')
-    const parts = text.split(regex)
-    const isMentionOrTag = new RegExp(`^(${mentionAlt}|${tagAlt})$`, 'u')
-    const isUrl = /^https?:\/\//
+    try {
+      const tagAlt = `${HASHTAG_SIGIL_CLASS}(?=${TAG_CHAR_CLASS}*[\\p{L}\\p{M}_])${TAG_CHAR_CLASS}+`
+      const mentionAlt = `${MENTION_SIGIL_CLASS}${TAG_CHAR_CLASS}+`
+      const urlAlt = `https?:\\/\\/[^\\s<>"'{}|\\\\^\`\\[\\]]+[^\\s<>"'{}|\\\\^\`\\[\\].,!?;:)\\]]`
+      const regex = new RegExp(`(${mentionAlt}|${tagAlt}|${urlAlt})`, 'gu')
+      const parts = text.split(regex)
+      const isMentionOrTag = new RegExp(`^(${mentionAlt}|${tagAlt})$`, 'u')
+      const isUrl = /^https?:\/\//
 
-    return parts.map((part, index) => {
-      if (isMentionOrTag.test(part) || isUrl.test(part)) {
-        return (
-          <span key={index} className={isDark ? 'text-yellow-400' : 'text-amber-800'}>
-            {part}
-          </span>
-        )
-      }
-      return part
-    })
+      return parts.map((part, index) => {
+        if (isMentionOrTag.test(part) || isUrl.test(part)) {
+          return (
+            <span key={index} className={isDark ? 'text-yellow-400' : 'text-amber-800'}>
+              {part}
+            </span>
+          )
+        }
+        return part
+      })
+    } catch (err) {
+      // Defensive: a malformed regex run shouldn't take down the
+      // post form. Bug #82 reported a "screen goes black + error
+      // occurred" symptom — most likely an unrelated cause, but
+      // falling back to plain text here means the highlighter can
+      // never be the trigger for an unrecoverable React crash.
+      console.warn('[HighlightedTextarea] highlight parse failed, falling back to plain text:', err)
+      return text
+    }
   }
 
   return (
