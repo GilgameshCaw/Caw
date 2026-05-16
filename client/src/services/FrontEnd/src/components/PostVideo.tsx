@@ -9,6 +9,22 @@ import {
   HiOutlineArrowsExpand,
 } from 'react-icons/hi'
 
+// Module-scoped singleton tracking the one <video> currently playing
+// with sound. When a second video unmutes, the previously-tracked one
+// gets re-muted so the user never hears two posts at once (bug
+// reports #99, #173). Plain ref, no React state — coordinator must
+// work across sibling instances and a re-render would defeat that.
+const audioCoordinator: { current: HTMLVideoElement | null } = { current: null }
+function claimAudio(el: HTMLVideoElement) {
+  if (audioCoordinator.current && audioCoordinator.current !== el) {
+    audioCoordinator.current.muted = true
+  }
+  audioCoordinator.current = el
+}
+function releaseAudio(el: HTMLVideoElement) {
+  if (audioCoordinator.current === el) audioCoordinator.current = null
+}
+
 /** Video player for posts. Mobile = native browser controls (familiar UX,
  * accessibility, buffering indicator). Desktop = custom hover overlay
  * (no browser chrome, cleaner look, fullscreen modal). */
@@ -36,6 +52,75 @@ const PostVideo: React.FC<{ url: string; onError?: () => void }> = ({ url, onErr
     return () => window.removeEventListener('keydown', onKey)
   }, [showFullscreen])
 
+  // Track explicit user-initiated pauses so the IntersectionObserver
+  // below doesn't auto-resume a video the user deliberately stopped.
+  // Declared before any effect that reads it (the closures don't fire
+  // until after mount, but keeping the source order tidy avoids TDZ
+  // surprises if the file is ever restructured).
+  const videoUserPausedRef = useRef(false)
+
+  // Pause when the video scrolls off-screen, resume when it scrolls
+  // back in. Fixes bug #177 (videos kept playing after swipe-past).
+  // Uses 0.25 as the threshold so a partial sliver visible at the
+  // edge of the viewport doesn't keep playback running.
+  useEffect(() => {
+    const el = videoRef.current
+    if (!el) return
+    const io = new IntersectionObserver(
+      ([entry]) => {
+        if (entry.isIntersecting) {
+          // Only auto-resume videos the user hasn't explicitly paused.
+          // We can't fully tell intent vs scroll-pause, but
+          // `videoUserPausedRef` is flipped in togglePlay below to
+          // record explicit pauses.
+          if (!videoUserPausedRef.current && el.paused) {
+            void el.play().catch(() => { /* autoplay blocked: ignore */ })
+          }
+        } else {
+          if (!el.paused) el.pause()
+          // Reset audio state when leaving the viewport. Without this,
+          // scrolling past a video the user unmuted and then scrolling
+          // back later would auto-resume it with sound — and if
+          // another video also got unmuted in the meantime, both
+          // would play audio at once. Force-muting on exit gives a
+          // clean slate; the user can re-unmute if they want sound.
+          el.muted = true
+          releaseAudio(el)
+        }
+      },
+      { threshold: 0.25 },
+    )
+    io.observe(el)
+    return () => io.disconnect()
+  }, [])
+
+  // Cleanup audio-coordinator slot on unmount.
+  useEffect(() => {
+    return () => {
+      const el = videoRef.current
+      if (el) releaseAudio(el)
+    }
+  }, [])
+
+  // Sync the audio coordinator with native-control-driven mute changes.
+  // The mobile path uses the browser's built-in <video controls>, so a
+  // user unmute via the native UI never hits our toggleMute handler.
+  // Listening for `volumechange` here catches both desktop and mobile
+  // paths uniformly and fixes the sibling case where two posts on
+  // screen could be unmuted at once via the native bar (bug #173,
+  // #99).
+  useEffect(() => {
+    const el = videoRef.current
+    if (!el) return
+    const onVolumeChange = () => {
+      setIsMuted(el.muted)
+      if (!el.muted) claimAudio(el)
+      else releaseAudio(el)
+    }
+    el.addEventListener('volumechange', onVolumeChange)
+    return () => { el.removeEventListener('volumechange', onVolumeChange) }
+  }, [])
+
   const fmt = (s: number) => {
     if (!isFinite(s)) return '0:00'
     const m = Math.floor(s / 60)
@@ -45,12 +130,26 @@ const PostVideo: React.FC<{ url: string; onError?: () => void }> = ({ url, onErr
   const togglePlay = (e: React.MouseEvent) => {
     e.stopPropagation()
     const v = videoRef.current; if (!v) return
-    if (v.paused) v.play(); else v.pause()
+    if (v.paused) {
+      videoUserPausedRef.current = false
+      void v.play().catch(() => { /* ignore */ })
+    } else {
+      videoUserPausedRef.current = true
+      v.pause()
+    }
   }
   const toggleMute = (e: React.MouseEvent) => {
     e.stopPropagation()
     const v = videoRef.current; if (!v) return
-    v.muted = !v.muted; setIsMuted(v.muted)
+    v.muted = !v.muted
+    setIsMuted(v.muted)
+    if (!v.muted) {
+      // Claim the global audio slot so any other unmuted PostVideo
+      // gets re-muted before this one starts producing sound.
+      claimAudio(v)
+    } else {
+      releaseAudio(v)
+    }
   }
   const seek = (e: React.ChangeEvent<HTMLInputElement>) => {
     const v = videoRef.current; if (!v) return
@@ -60,6 +159,13 @@ const PostVideo: React.FC<{ url: string; onError?: () => void }> = ({ url, onErr
   if (!isDesktop) {
     return (
       <video
+        // Same ref the desktop path uses — wires up the
+        // IntersectionObserver (auto-pause on scroll-off) and
+        // volumechange listener (audio coordinator) for mobile too.
+        // Without this the mobile native-controls path skipped both,
+        // so videos kept playing after swipe-down and two videos
+        // could be audible at once.
+        ref={videoRef}
         src={url}
         autoPlay
         controls
@@ -69,6 +175,21 @@ const PostVideo: React.FC<{ url: string; onError?: () => void }> = ({ url, onErr
         playsInline
         preload="metadata"
         onClick={(e) => e.stopPropagation()}
+        // Track user-initiated pauses via the native controls so the
+        // IntersectionObserver doesn't force-resume on the next
+        // scroll back into view.
+        onPause={(e) => {
+          // We only flag user pauses, not auto-pauses. Distinguish by
+          // checking whether the pause came from a fully-visible
+          // state — if the element is on-screen, the only thing that
+          // could have paused it is the user tapping the native
+          // pause button.
+          const v = e.currentTarget
+          const rect = v.getBoundingClientRect()
+          const onScreen = rect.bottom > 0 && rect.top < window.innerHeight
+          if (onScreen) videoUserPausedRef.current = true
+        }}
+        onPlay={() => { videoUserPausedRef.current = false }}
         onError={onError}
       />
     )
@@ -87,8 +208,17 @@ const PostVideo: React.FC<{ url: string; onError?: () => void }> = ({ url, onErr
           preload="metadata"
           className="w-full h-auto max-h-[32rem] block outline-none cursor-pointer"
           onClick={togglePlay}
-          onPlay={() => setIsPlaying(true)}
-          onPause={() => setIsPlaying(false)}
+          onPlay={() => { setIsPlaying(true); videoUserPausedRef.current = false }}
+          onPause={(e) => {
+            setIsPlaying(false)
+            // Mark explicit pauses (anything that happens while the
+            // element is on-screen) so the IntersectionObserver
+            // resume doesn't fight a deliberate user pause.
+            const v = e.currentTarget
+            const rect = v.getBoundingClientRect()
+            const onScreen = rect.bottom > 0 && rect.top < window.innerHeight
+            if (onScreen) videoUserPausedRef.current = true
+          }}
           onTimeUpdate={(e) => setCurrentTime(e.currentTarget.currentTime)}
           onLoadedMetadata={(e) => setDuration(e.currentTarget.duration)}
           onError={onError}
