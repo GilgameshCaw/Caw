@@ -522,17 +522,17 @@ function renderNginxConf({ domain, apiPort, frontendDist, uploadsDir, tls, nginx
             # Prefix the path with /__prerender and let nginx carry the
             # original query string through implicitly. The naive
             # \$request_uri form embeds the query inside the rewrite
-            # target — nginx then percent-encodes the literal `?` from
+            # target — nginx then percent-encodes the literal \`?\` from
             # \$request_uri into the path (e.g.
             # /__prerender/users/foo%3Fa=d?a=d), which survives all the
             # way to Express where req.path / req.params end up with
-            # `%3F...` glued onto the slug, defeating the canonical-
+            # \`%3F...\` glued onto the slug, defeating the canonical-
             # redirect short-circuit and producing an infinite
             # 301-to-self on any crawler URL with a query string (TG
             # share previews were the symptom).
             #
             # \$uri alone is the right idiom: it's the decoded path with
-            # no query, and `rewrite ... last;` without an explicit `?`
+            # no query, and \`rewrite ... last;\` without an explicit \`?\`
             # in the target preserves the original args automatically.
             rewrite ^ /__prerender\$uri last;
         }
