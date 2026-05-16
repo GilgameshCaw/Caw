@@ -1,6 +1,6 @@
 import { Router } from 'express'
 import { prisma } from '../../prismaClient'
-import { NotificationService } from '../../services/NotificationService'
+import { NotificationService, createNotificationWithGroup } from '../../services/NotificationService'
 import { NotificationType } from '@prisma/client'
 import { requireAuth } from '../middleware/auth'
 import { getBlockedUserIds } from '../shared/blockUtils'
@@ -36,83 +36,61 @@ router.get('/', requireAuth({ lookup: async (req) => Number(req.query.userId) ||
       }
     }
 
-    // Group-aware pagination.
+    // Read path: NotificationGroup is the authoritative feed.
     //
-    // The previous version used offset-based pagination of RAW rows then
-    // grouped each page in memory. That broke for any group that spanned
-    // a page boundary: the SAME FOLLOW rollup showed up on every Load
-    // More with a different lead-name, because each page sliced a
-    // different subset of the same 'follow' bucket (bug reported with
-    // 99 unread + 3 visible groups repeating forever).
+    // Per group:
+    //   - one row in NotificationGroup with count, lastEventAt,
+    //     isRead, latestNotificationId
+    //   - many rows in Notification linked via groupId, each with its
+    //     own actor (the people who liked / followed / etc.)
     //
-    // Fix: paginate by GROUP, not by row. Each group is identified by
-    // `groupKey` (rows without one get a per-row synthetic key
-    // `single:<id>`). The aggregation picks each group's most-recent
-    // notification id as the representative; downstream code fetches
-    // that row plus the additional-actor metadata.
-    type GroupRow = {
-      group_key: string
-      latest_id: number
-      latest_created_at: Date
-      total_count: bigint
-      any_unread: boolean
-    }
-    // Build the SQL + params dynamically so optional filters (blocked
-    // actors, type, unread-only) only add WHERE clauses when active.
-    // Param order: userTokenId, then optional typeFilter, then limit
-    // + offset, then optional blocked ids tail.
-    const params: any[] = [userTokenId]
-    const whereParts: string[] = [`"userId" = $1`, `hidden = false`]
-    if (typeFilter) {
-      params.push(typeFilter)
-      whereParts.push(`type::text = $${params.length}`)
-    }
-    if (unreadOnly === 'true') {
-      whereParts.push(`"isRead" = false`)
-    }
-    if (blockedIds.length > 0) {
-      const startIdx = params.length + 1
-      const placeholders = blockedIds.map((_, i) => `$${startIdx + i}`).join(',')
-      whereParts.push(`"actorId" NOT IN (${placeholders})`)
-      params.push(...blockedIds)
-    }
-    // LIMIT + OFFSET go last so we can append them after the variable
-    // WHERE tail without re-numbering.
-    params.push(notificationLimit, notificationOffset)
-    const limitIdx = params.length - 1
-    const offsetIdx = params.length
+    // We paginate over groups (LIMIT/OFFSET on the indexed lastEventAt
+    // DESC scan), then fetch each group's latest notification + a few
+    // additional actors for the rollup stack. Read is O(group page
+    // size) — no aggregation per request.
 
-    const groupsRaw = await prisma.$queryRawUnsafe<GroupRow[]>(`
-      SELECT
-        COALESCE("groupKey", 'single:' || id::text) AS group_key,
-        MAX(id) AS latest_id,
-        MAX("createdAt") AS latest_created_at,
-        COUNT(*) AS total_count,
-        bool_or(NOT "isRead") AS any_unread
-      FROM "Notification"
-      WHERE ${whereParts.join(' AND ')}
-      GROUP BY group_key
-      ORDER BY latest_created_at DESC
-      LIMIT $${limitIdx} OFFSET $${offsetIdx}
-    `, ...params)
+    const groupWhere: any = { userId: userTokenId }
+    if (typeFilter) groupWhere.type = typeFilter
+    if (unreadOnly === 'true') groupWhere.isRead = false
 
-    // No groups → nothing to render. Short-circuit out without the
-    // downstream relation fetches.
-    if (groupsRaw.length === 0) {
-      const unreadWhereEmpty: any = { userId: userTokenId, isRead: false, hidden: false }
-      if (blockedIds.length > 0) unreadWhereEmpty.actorId = { notIn: blockedIds }
-      const emptyCount = await prisma.notification.count({ where: unreadWhereEmpty })
+    const groups = await prisma.notificationGroup.findMany({
+      where: groupWhere,
+      orderBy: { lastEventAt: 'desc' },
+      take: notificationLimit,
+      skip: notificationOffset,
+      select: {
+        id: true,
+        type: true,
+        targetKey: true,
+        count: true,
+        isRead: true,
+        lastEventAt: true,
+        openedAt: true,
+        latestNotificationId: true,
+      },
+    })
+
+    if (groups.length === 0) {
+      // Count of unread GROUPS (not raw rows) — matches what the bell
+      // badge should display now that the feed is group-paginated.
+      const unreadWhereEmpty: any = { userId: userTokenId, isRead: false }
+      const emptyCount = await prisma.notificationGroup.count({ where: unreadWhereEmpty })
       return res.json({ notifications: [], unreadCount: emptyCount, hasMore: false })
     }
 
-    // Fetch the representative row (the latest one in each group) for
-    // rendering. This gives us the actor/caw/offer relations for the
-    // group's lead notification — the one whose name appears first in
-    // "Liam and 4 others liked your caw".
-    const latestIds = groupsRaw.map(g => g.latest_id)
+    // Fetch the representative notification (the group's latest member)
+    // for each group, with the actor / caw / offer relations needed to
+    // render the row. blockedIds is applied here as a post-filter rather
+    // than baked into the group query — a blocked actor's most recent
+    // event might still be the group's latest; if the entire group is
+    // from blocked actors we'll just render an empty actor below and
+    // the UI will skip it.
+    const latestIds = groups.map(g => g.latestNotificationId)
     const notifications = await prisma.notification.findMany({
-      where: { id: { in: latestIds } },
-      orderBy: { createdAt: 'desc' },
+      where: {
+        id: { in: latestIds },
+        ...(blockedIds.length > 0 ? { actorId: { notIn: blockedIds } } : {}),
+      },
       include: {
         actor: {
           select: {
@@ -152,26 +130,22 @@ router.get('/', requireAuth({ lookup: async (req) => Number(req.query.userId) ||
       }
     })
 
-    // Pull the next ~10 distinct actors per group for the rollup
-    // additionalActors array. The modal that opens on click loads the
-    // full list separately via /api/notifications/group-actors; here we
-    // just want enough to drive count > 1 and the avatar stack.
-    const groupKeysForActors = groupsRaw
-      .filter(g => g.total_count > 1n && !g.group_key.startsWith('single:'))
-      .map(g => g.group_key)
+    // Pull a few distinct extra actors per multi-member group for the
+    // rollup avatar stack. Single-row groups skip this entirely.
+    const multiGroupIds = groups.filter(g => g.count > 1).map(g => g.id)
     type ExtraActorRow = {
-      groupKey: string
+      groupId: number
       actorId: number
       username: string
       displayName: string | null
       avatarUrl: string | null
       defaultAvatarId: number | null
     }
-    const extraActorsByGroup = new Map<string, ExtraActorRow[]>()
-    if (groupKeysForActors.length > 0) {
+    const extraActorsByGroup = new Map<number, ExtraActorRow[]>()
+    if (multiGroupIds.length > 0) {
       const extras = await prisma.$queryRawUnsafe<ExtraActorRow[]>(`
-        SELECT DISTINCT ON (n."groupKey", u."tokenId")
-          n."groupKey" AS "groupKey",
+        SELECT DISTINCT ON (n."groupId", u."tokenId")
+          n."groupId" AS "groupId",
           u."tokenId" AS "actorId",
           u.username,
           u."displayName",
@@ -179,25 +153,22 @@ router.get('/', requireAuth({ lookup: async (req) => Number(req.query.userId) ||
           u."defaultAvatarId"
         FROM "Notification" n
         JOIN "User" u ON u."tokenId" = n."actorId"
-        WHERE n."userId" = $1
-          AND n.hidden = false
-          AND n."groupKey" = ANY($2::text[])
-          AND n.id <> ALL($3::int[])
-        ORDER BY n."groupKey", u."tokenId", n."createdAt" DESC
-      `, userTokenId, groupKeysForActors, latestIds)
+        WHERE n."groupId" = ANY($1::int[])
+          AND n.id <> ALL($2::int[])
+          ${blockedIds.length > 0 ? `AND n."actorId" NOT IN (${blockedIds.map((_, i) => `$${i + 3}`).join(',')})` : ''}
+        ORDER BY n."groupId", u."tokenId", n."createdAt" DESC
+      `, multiGroupIds, latestIds, ...blockedIds)
       for (const e of extras) {
-        const arr = extraActorsByGroup.get(e.groupKey) ?? []
+        const arr = extraActorsByGroup.get(e.groupId) ?? []
         if (arr.length < 50) arr.push(e)
-        extraActorsByGroup.set(e.groupKey, arr)
+        extraActorsByGroup.set(e.groupId, arr)
       }
     }
 
-    // Build a quick lookup for group metadata by groupKey so the merge
-    // loop below can stamp count + any_unread on each notification.
-    const groupMetaByKey = new Map<string, GroupRow>()
-    for (const g of groupsRaw) groupMetaByKey.set(g.group_key, g)
-    const groupKeyForNotif = (n: { id: number; groupKey: string | null }) =>
-      n.groupKey ?? `single:${n.id}`
+    // Pair each notification with its group metadata for the merge
+    // loop below.
+    const groupByLatestId = new Map<number, typeof groups[number]>()
+    for (const g of groups) groupByLatestId.set(g.latestNotificationId, g)
 
     // For ACTION_FAILED notifications, batch-fetch context the client needs
     // to render a human-readable description:
@@ -251,10 +222,9 @@ router.get('/', requireAuth({ lookup: async (req) => Number(req.query.userId) ||
     const groupedNotifications: any[] = []
 
     for (const notification of notifications) {
-      const gk = groupKeyForNotif(notification)
-      const meta = groupMetaByKey.get(gk)
-      const totalCount = meta ? Number(meta.total_count) : 1
-      const anyUnread = meta ? meta.any_unread : !notification.isRead
+      const group = groupByLatestId.get(notification.id)
+      const totalCount = group ? group.count : 1
+      const groupIsRead = group ? group.isRead : notification.isRead
 
       let actionPayload: any = (notification as any).actionPayload ?? null
       if ((notification as any).type === 'ACTION_FAILED' && actionPayload) {
@@ -275,8 +245,8 @@ router.get('/', requireAuth({ lookup: async (req) => Number(req.query.userId) ||
         actionPayload = enriched
       }
 
-      const additionalActors = totalCount > 1
-        ? (extraActorsByGroup.get(gk) || []).map(a => ({
+      const additionalActors = group && totalCount > 1
+        ? (extraActorsByGroup.get(group.id) || []).map(a => ({
             tokenId: a.actorId,
             username: a.username,
             displayName: a.displayName ?? undefined,
@@ -293,7 +263,7 @@ router.get('/', requireAuth({ lookup: async (req) => Number(req.query.userId) ||
         caw: notification.caw,
         offer: (notification as any).offer || null,
         actionPayload,
-        isRead: !anyUnread,
+        isRead: groupIsRead,
         createdAt: notification.createdAt,
         count: totalCount,
         groupKey: notification.groupKey ?? null,
@@ -301,24 +271,26 @@ router.get('/', requireAuth({ lookup: async (req) => Number(req.query.userId) ||
       })
     }
 
-    // groupedNotifications is already in descending createdAt order
-    // because the SQL aggregation sorted by latest_created_at DESC and
-    // we fetched notifications in that order.
+    // groupedNotifications inherits the lastEventAt DESC order from the
+    // NotificationGroup query above. Sort again here as a safety net in
+    // case the blocked-actor filter rearranged anything.
+    groupedNotifications.sort((a, b) =>
+      new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
+    )
 
-    // Get unread count (also filtered by blocked users)
-    const unreadWhere: any = { userId: userTokenId, isRead: false, hidden: false }
-    if (blockedIds.length > 0) {
-      unreadWhere.actorId = { notIn: blockedIds }
-    }
-    const unreadCount = await prisma.notification.count({ where: unreadWhere })
+    // Bell-badge count = unread GROUPS (the bell shows "you have N
+    // unread rollups", not "N raw notifications"). The /unread-count
+    // route below shares this definition.
+    const unreadGroupCount = await prisma.notificationGroup.count({
+      where: { userId: userTokenId, isRead: false },
+    })
 
     return res.json({
       notifications: groupedNotifications,
-      unreadCount,
-      // hasMore is based on GROUPS now, not raw rows. If the SQL group
-      // query returned exactly notificationLimit groups, there may be
-      // more groups behind the cursor.
-      hasMore: groupsRaw.length === notificationLimit
+      unreadCount: unreadGroupCount,
+      // hasMore is based on GROUPS. If the page returned exactly
+      // notificationLimit groups, there may be more behind the cursor.
+      hasMore: groups.length === notificationLimit,
     })
 
   } catch (error) {
@@ -341,13 +313,12 @@ router.get('/unread-count', requireAuth({ lookup: async (req) => Number(req.quer
 
     const userTokenId = parseInt(userId as string)
 
-    // Filter out notifications from blocked users
-    const blockedIds = await getBlockedUserIds(userTokenId)
-    const unreadWhere: any = { userId: userTokenId, isRead: false, hidden: false }
-    if (blockedIds.length > 0) {
-      unreadWhere.actorId = { notIn: blockedIds }
-    }
-    const unreadCount = await prisma.notification.count({ where: unreadWhere })
+    // Count unread GROUPS (matches the bell-badge semantic in the
+    // notifications list). Single indexed lookup on
+    // NotificationGroup(userId, isRead, lastEventAt).
+    const unreadCount = await prisma.notificationGroup.count({
+      where: { userId: userTokenId, isRead: false },
+    })
 
     return res.json({ unreadCount })
 
@@ -605,16 +576,14 @@ router.post('/test', async (req, res) => {
       return res.status(400).json({ error: 'userId, actorId, and type are required' })
     }
 
-    const notification = await prisma.notification.create({
-      data: {
-        userId: parseInt(userId),
-        actorId: parseInt(actorId),
-        type: type as NotificationType,
-        cawId: cawId ? parseInt(cawId) : undefined
-      }
+    const notificationId = await createNotificationWithGroup(prisma, {
+      userId: parseInt(userId),
+      actorId: parseInt(actorId),
+      type: type as NotificationType,
+      cawId: cawId ? parseInt(cawId) : undefined,
     })
 
-    return res.json({ notification })
+    return res.json({ notificationId })
 
   } catch (error) {
     console.error('POST /api/notifications/test error:', error)

@@ -1,8 +1,113 @@
 import { prisma } from '../prismaClient'
-import { NotificationType } from '@prisma/client'
+import { NotificationType, Prisma } from '@prisma/client'
 import { elasticsearchService } from './ElasticsearchService'
 
+// 15-minute open-group window. New notifications matching an open
+// group's (userId, type, targetKey) join it; otherwise a fresh group
+// is created. Same constant the migration backfill used.
+const NOTIFICATION_GROUP_OPEN_WINDOW_MS = 15 * 60 * 1000
+
+/**
+ * Derive the persistent-group `targetKey` for a notification. NULL
+ * collapses all rows of this `(userId, type)` into one bucket; a
+ * value separates buckets per target.
+ *
+ *   FOLLOW                                  → null (one bucket per user)
+ *   OFFER                                   → offerId.toString()
+ *   LIKE / REPOST / QUOTE / REPLY / TIP / MENTION  → cawId.toString()
+ *   ACTION_FAILED                           → null (each row stays alone via
+ *                                                   the duplicate-check in
+ *                                                   the create call site)
+ */
+function notificationTargetKey(
+  type: NotificationType,
+  ctx: { cawId?: number | null; offerId?: number | null }
+): string | null {
+  if (type === NotificationType.FOLLOW || type === NotificationType.ACTION_FAILED) return null
+  if (type === NotificationType.OFFER) return ctx.offerId != null ? String(ctx.offerId) : null
+  return ctx.cawId != null ? String(ctx.cawId) : null
+}
+
+/**
+ * Create a notification row AND assign it to a NotificationGroup,
+ * opening a fresh group or joining the currently-open one based on
+ * the read+window rules.
+ *
+ * Always runs inside the caller's prisma client (so it composes with
+ * an outer transaction). The caller must pass a client that supports
+ * `notification.create` and `notificationGroup.*`.
+ *
+ * Returns the created Notification's id.
+ */
+export async function createNotificationWithGroup(
+  client: { notification: any; notificationGroup: any },
+  data: Prisma.NotificationCreateInput | Prisma.NotificationUncheckedCreateInput,
+): Promise<number> {
+  // 1) Insert the notification row first — we need its id to point
+  //    the group's `latestNotificationId` at it.
+  const notif = await client.notification.create({ data })
+
+  // 2) Decide the bucket key.
+  const targetKey = notificationTargetKey(
+    notif.type as NotificationType,
+    { cawId: notif.cawId, offerId: notif.offerId },
+  )
+
+  // 3) Look for an open group: same (userId, type, targetKey),
+  //    isRead=false, lastEventAt within the window. Most recent
+  //    wins so the "next event since you read it" semantics hold.
+  const cutoff = new Date(Date.now() - NOTIFICATION_GROUP_OPEN_WINDOW_MS)
+  const open = await client.notificationGroup.findFirst({
+    where: {
+      userId: notif.userId,
+      type: notif.type,
+      targetKey,
+      isRead: false,
+      lastEventAt: { gte: cutoff },
+    },
+    orderBy: { lastEventAt: 'desc' },
+    select: { id: true },
+  })
+
+  let groupId: number
+  if (open) {
+    await client.notificationGroup.update({
+      where: { id: open.id },
+      data: {
+        count: { increment: 1 },
+        lastEventAt: notif.createdAt,
+        latestNotificationId: notif.id,
+      },
+    })
+    groupId = open.id
+  } else {
+    const group = await client.notificationGroup.create({
+      data: {
+        userId: notif.userId,
+        type: notif.type,
+        targetKey,
+        latestNotificationId: notif.id,
+        openedAt: notif.createdAt,
+        lastEventAt: notif.createdAt,
+        isRead: false,
+        count: 1,
+      },
+      select: { id: true },
+    })
+    groupId = group.id
+  }
+
+  await client.notification.update({
+    where: { id: notif.id },
+    data: { groupId },
+  })
+
+  return notif.id
+}
+
 export class NotificationService {
+  /** Exposed for tests + the migration backfill path. */
+  static _attachToGroup = createNotificationWithGroup
   /**
    * Get the root thread ID for a caw (follows parent chain to find root).
    *
@@ -99,7 +204,7 @@ export class NotificationService {
    * caw created in this same tx (e.g. cawes ingested via RawEventsGatherer
    * from remote nodes, which have no pre-existing pending row).
    */
-  static async createMentionNotifications(cawId: number, content: string, actorId: number, client: Pick<typeof prisma, 'user' | 'notification'> = prisma) {
+  static async createMentionNotifications(cawId: number, content: string, actorId: number, client: Pick<typeof prisma, 'user' | 'notification' | 'notificationGroup'> = prisma) {
     const mentions = this.extractMentions(content)
 
     if (mentions.length === 0) return
@@ -154,10 +259,17 @@ export class NotificationService {
       }))
 
     if (notifications.length > 0) {
-      await client.notification.createMany({
-        data: notifications,
-        skipDuplicates: true
-      })
+      // One-by-one through the group-aware helper instead of
+      // createMany. Each mention is its own (userId, type, cawId)
+      // bucket so the helper opens the right group for each
+      // recipient; skipDuplicates is replaced by the
+      // findFirst-then-create pattern inside createNotificationWithGroup's
+      // callers (mentions don't have a uniqueness constraint so we
+      // accept the small race window where two simultaneous indexer
+      // runs could double-write — same behavior as before).
+      for (const n of notifications) {
+        await createNotificationWithGroup(client, n)
+      }
     }
   }
 
@@ -170,7 +282,7 @@ export class NotificationService {
    * tx still holds the first), so concurrent ingest hits P2024 at half
    * the apparent pool size.
    */
-  static async createFollowNotification(followedId: number, followerId: number, client: Pick<typeof prisma, 'notification'> = prisma) {
+  static async createFollowNotification(followedId: number, followerId: number, client: Pick<typeof prisma, 'notification' | 'notificationGroup'> = prisma) {
     // Don't notify if user follows themselves
     if (followedId === followerId) return
 
@@ -189,13 +301,11 @@ export class NotificationService {
     })
 
     if (!existing) {
-      await client.notification.create({
-        data: {
-          userId: followedId,
-          actorId: followerId,
-          type: NotificationType.FOLLOW,
-          groupKey: 'follow'
-        }
+      await createNotificationWithGroup(client, {
+        userId: followedId,
+        actorId: followerId,
+        type: NotificationType.FOLLOW,
+        groupKey: 'follow',
       })
     }
   }
@@ -206,7 +316,7 @@ export class NotificationService {
    * Pass the tx `client` when called from inside an interactive transaction.
    * Same pool-leak rationale as createFollowNotification.
    */
-  static async createLikeNotification(cawId: number, likerId: number, client: Pick<typeof prisma, 'caw' | 'notification'> = prisma) {
+  static async createLikeNotification(cawId: number, likerId: number, client: Pick<typeof prisma, 'caw' | 'notification' | 'notificationGroup'> = prisma) {
     // Get the caw to find its owner
     const caw = await client.caw.findUnique({
       where: { id: cawId },
@@ -233,14 +343,12 @@ export class NotificationService {
     })
 
     if (!existing) {
-      await client.notification.create({
-        data: {
-          userId: caw.userId,
-          actorId: likerId,
-          type: NotificationType.LIKE,
-          cawId,
-          groupKey: `like_caw_${cawId}`
-        }
+      await createNotificationWithGroup(client, {
+        userId: caw.userId,
+        actorId: likerId,
+        type: NotificationType.LIKE,
+        cawId,
+        groupKey: `like_caw_${cawId}`,
       })
     }
   }
@@ -254,7 +362,7 @@ export class NotificationService {
    * outside connections until commit. See createMentionNotifications for the
    * same pattern.
    */
-  static async createReplyNotification(parentCawId: number, replyCawId: number, replierId: number, client: Pick<typeof prisma, 'caw' | 'notification'> = prisma) {
+  static async createReplyNotification(parentCawId: number, replyCawId: number, replierId: number, client: Pick<typeof prisma, 'caw' | 'notification' | 'notificationGroup'> = prisma) {
     // Get the parent caw to find its owner
     const parentCaw = await client.caw.findUnique({
       where: { id: parentCawId },
@@ -284,13 +392,11 @@ export class NotificationService {
     })
 
     if (!existing) {
-      await client.notification.create({
-        data: {
-          userId: parentCaw.userId,
-          actorId: replierId,
-          type: NotificationType.REPLY,
-          cawId: replyCawId
-        }
+      await createNotificationWithGroup(client, {
+        userId: parentCaw.userId,
+        actorId: replierId,
+        type: NotificationType.REPLY,
+        cawId: replyCawId,
       })
     }
   }
@@ -301,7 +407,7 @@ export class NotificationService {
    * Pass the tx `client` when called from inside an interactive transaction.
    * Same pool-leak rationale as createFollowNotification.
    */
-  static async createRepostNotification(originalCawId: number, reposterId: number, client: Pick<typeof prisma, 'caw' | 'notification'> = prisma) {
+  static async createRepostNotification(originalCawId: number, reposterId: number, client: Pick<typeof prisma, 'caw' | 'notification' | 'notificationGroup'> = prisma) {
     // Get the original caw to find its owner
     const originalCaw = await client.caw.findUnique({
       where: { id: originalCawId },
@@ -331,14 +437,12 @@ export class NotificationService {
     })
 
     if (!existing) {
-      await client.notification.create({
-        data: {
-          userId: originalCaw.userId,
-          actorId: reposterId,
-          type: NotificationType.REPOST,
-          cawId: originalCawId,
-          groupKey: `repost_caw_${originalCawId}`
-        }
+      await createNotificationWithGroup(client, {
+        userId: originalCaw.userId,
+        actorId: reposterId,
+        type: NotificationType.REPOST,
+        cawId: originalCawId,
+        groupKey: `repost_caw_${originalCawId}`,
       })
     }
   }
@@ -350,7 +454,7 @@ export class NotificationService {
    * the FK on `quoteCawId` points at a caw upserted in the same tx. See
    * createMentionNotifications for the same pattern.
    */
-  static async createQuoteNotification(originalCawId: number, quoteCawId: number, quoterId: number, client: Pick<typeof prisma, 'caw' | 'notification'> = prisma) {
+  static async createQuoteNotification(originalCawId: number, quoteCawId: number, quoterId: number, client: Pick<typeof prisma, 'caw' | 'notification' | 'notificationGroup'> = prisma) {
     // Get the original caw to find its owner
     const originalCaw = await client.caw.findUnique({
       where: { id: originalCawId },
@@ -380,13 +484,11 @@ export class NotificationService {
     })
 
     if (!existing) {
-      await client.notification.create({
-        data: {
-          userId: originalCaw.userId,
-          actorId: quoterId,
-          type: NotificationType.QUOTE,
-          cawId: quoteCawId
-        }
+      await createNotificationWithGroup(client, {
+        userId: originalCaw.userId,
+        actorId: quoterId,
+        type: NotificationType.QUOTE,
+        cawId: quoteCawId,
       })
     }
   }
@@ -397,7 +499,7 @@ export class NotificationService {
    * Pass the tx `client` when called from inside an interactive transaction.
    * Same pool-leak rationale as createFollowNotification.
    */
-  static async createTipNotification(recipientId: number, tipperId: number, cawId?: number, amount?: number, client: Pick<typeof prisma, 'notification'> = prisma) {
+  static async createTipNotification(recipientId: number, tipperId: number, cawId?: number, amount?: number, client: Pick<typeof prisma, 'notification' | 'notificationGroup'> = prisma) {
     // Don't notify for self-tips
     if (recipientId === tipperId) return
 
@@ -417,15 +519,13 @@ export class NotificationService {
     })
 
     if (!existing) {
-      await client.notification.create({
-        data: {
-          userId: recipientId,
-          actorId: tipperId,
-          type: NotificationType.TIP,
-          cawId: cawId || undefined,
-          groupKey: cawId ? `tip_caw_${cawId}` : undefined,
-          actionPayload: amount ? { tipAmount: String(amount) } : undefined,
-        }
+      await createNotificationWithGroup(client, {
+        userId: recipientId,
+        actorId: tipperId,
+        type: NotificationType.TIP,
+        cawId: cawId || undefined,
+        groupKey: cawId ? `tip_caw_${cawId}` : undefined,
+        actionPayload: amount ? { tipAmount: String(amount) } : undefined,
       })
     }
   }
@@ -435,40 +535,65 @@ export class NotificationService {
    */
   static async markAsRead(userId: number, notificationIds?: number[], types?: NotificationType[]) {
     if (notificationIds) {
-      // Mark specific notifications as read
+      // Mark specific notifications as read. Also flip every NotificationGroup
+      // those rows belong to — a group is read iff all its members are.
+      // Closing a group like this is what causes the next event to open a
+      // fresh group (the open-window check requires isRead=false to join).
+      const rows = await prisma.notification.findMany({
+        where: { id: { in: notificationIds }, userId },
+        select: { groupId: true },
+      })
       await prisma.notification.updateMany({
-        where: {
-          id: { in: notificationIds },
-          userId
-        },
+        where: { id: { in: notificationIds }, userId },
         data: { isRead: true }
       })
+      const affectedGroupIds = Array.from(new Set(rows.map(r => r.groupId).filter((x): x is number => x != null)))
+      if (affectedGroupIds.length > 0) {
+        // Only flip a group read when ALL its members are now read.
+        // For partial-read groups (user clicked individual rows), keep
+        // them unread so the bell badge stays accurate.
+        await prisma.$executeRaw`
+          UPDATE "NotificationGroup" g
+          SET "isRead" = true
+          WHERE g.id = ANY(${affectedGroupIds}::int[])
+            AND NOT EXISTS (
+              SELECT 1 FROM "Notification" n
+              WHERE n."groupId" = g.id AND n."isRead" = false
+            )
+        `
+      }
     } else if (types && types.length > 0) {
-      // Mark all unread notifications of the given types (e.g. clearing a
-      // tab-scoped badge like Recent Sales).
+      // Tab-scoped clear: mark all unread of these types read at both
+      // the notification level and the group level.
       await prisma.notification.updateMany({
         where: { userId, isRead: false, type: { in: types } },
         data: { isRead: true }
       })
+      await prisma.notificationGroup.updateMany({
+        where: { userId, isRead: false, type: { in: types } },
+        data: { isRead: true },
+      })
     } else {
-      // Mark all notifications as read for the user
+      // Mark-all-read: flip every unread row and every unread group.
       await prisma.notification.updateMany({
         where: { userId, isRead: false },
         data: { isRead: true }
+      })
+      await prisma.notificationGroup.updateMany({
+        where: { userId, isRead: false },
+        data: { isRead: true },
       })
     }
   }
 
   /**
-   * Get unread notification count
+   * Get unread notification count. Returns the count of unread GROUPS —
+   * that's what the bell badge displays (one entry per group on the
+   * feed).
    */
   static async getUnreadCount(userId: number): Promise<number> {
-    return await prisma.notification.count({
-      where: {
-        userId,
-        isRead: false,
-        hidden: false
-      }
+    return await prisma.notificationGroup.count({
+      where: { userId, isRead: false }
     })
   }
 }

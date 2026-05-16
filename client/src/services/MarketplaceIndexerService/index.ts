@@ -6,6 +6,7 @@ import { makeJsonRpcProvider, getL1HttpRpcUrl } from '../../utils/rpcProvider'
 import { Service } from '../../Service'
 import { prisma } from '../../prismaClient'
 import { CAW_NAME_MARKETPLACE_ADDRESS, CAW_NAMES_ADDRESS } from '../../abi/addresses'
+import { createNotificationWithGroup } from '../NotificationService'
 
 const Config = z.object({
   l1RpcUrl:            z.string().optional(),
@@ -296,14 +297,12 @@ export const marketplaceIndexerService: Service = {
                     select: { id: true },
                   })
                   if (!existing) {
-                    await prisma.notification.create({
-                      data: {
-                        userId: sellerUser.tokenId,
-                        actorId: buyerUser?.tokenId ?? sellerUser.tokenId,
-                        type: 'SALE_SOLD',
-                        groupKey: sellerGroupKey,
-                        actionPayload: payload,
-                      },
+                    await createNotificationWithGroup(prisma, {
+                      userId: sellerUser.tokenId,
+                      actorId: buyerUser?.tokenId ?? sellerUser.tokenId,
+                      type: 'SALE_SOLD',
+                      groupKey: sellerGroupKey,
+                      actionPayload: payload,
                     })
                   }
                 }
@@ -313,14 +312,12 @@ export const marketplaceIndexerService: Service = {
                     select: { id: true },
                   })
                   if (!existing) {
-                    await prisma.notification.create({
-                      data: {
-                        userId: buyerUser.tokenId,
-                        actorId: sellerUser?.tokenId ?? buyerUser.tokenId,
-                        type: 'SALE_BOUGHT',
-                        groupKey: buyerGroupKey,
-                        actionPayload: payload,
-                      },
+                    await createNotificationWithGroup(prisma, {
+                      userId: buyerUser.tokenId,
+                      actorId: sellerUser?.tokenId ?? buyerUser.tokenId,
+                      type: 'SALE_BOUGHT',
+                      groupKey: buyerGroupKey,
+                      actionPayload: payload,
                     })
                   }
                 }
@@ -380,18 +377,16 @@ export const marketplaceIndexerService: Service = {
                     select: { tokenId: true },
                   })
                   if (outbidUser) {
-                    await prisma.notification.create({
-                      data: {
-                        userId: outbidUser.tokenId,
-                        actorId: newBidderUser?.tokenId ?? outbidUser.tokenId,
-                        type: 'OUTBID',
-                        actionPayload: {
-                          listingId: listing.listingId,
-                          username: listing.username,
-                          tokenId: listing.tokenId,
-                          newBidAmount: amount,
-                          previousBidAmount: listing.highestBid,
-                        },
+                    await createNotificationWithGroup(prisma, {
+                      userId: outbidUser.tokenId,
+                      actorId: newBidderUser?.tokenId ?? outbidUser.tokenId,
+                      type: 'OUTBID',
+                      actionPayload: {
+                        listingId: listing.listingId,
+                        username: listing.username,
+                        tokenId: listing.tokenId,
+                        newBidAmount: amount,
+                        previousBidAmount: listing.highestBid,
                       },
                     })
                     console.log(`[Marketplace] Sent OUTBID notification to tokenId=${outbidUser.tokenId} for listing ${listing.listingId}`)
@@ -499,18 +494,16 @@ export const marketplaceIndexerService: Service = {
                   select: { tokenId: true },
                 })
                 if (winnerUser) {
-                  await prisma.notification.create({
-                    data: {
-                      userId: winnerUser.tokenId,
-                      actorId: sellerUser?.tokenId ?? winnerUser.tokenId,
-                      type: 'AUCTION_WON',
-                      actionPayload: {
-                        listingId: listing.listingId,
-                        username: listing.username,
-                        tokenId: listing.tokenId,
-                        winningBid: price,
-                        paymentToken: listing.paymentToken,
-                      },
+                  await createNotificationWithGroup(prisma, {
+                    userId: winnerUser.tokenId,
+                    actorId: sellerUser?.tokenId ?? winnerUser.tokenId,
+                    type: 'AUCTION_WON',
+                    actionPayload: {
+                      listingId: listing.listingId,
+                      username: listing.username,
+                      tokenId: listing.tokenId,
+                      winningBid: price,
+                      paymentToken: listing.paymentToken,
                     },
                   })
                   console.log(`[Marketplace] Sent AUCTION_WON notification to tokenId=${winnerUser.tokenId} for listing ${listing.listingId}`)

@@ -1,6 +1,7 @@
 import { Router } from 'express'
 import { prisma } from '../../prismaClient'
 import { requireAuth } from '../middleware/auth'
+import { createNotificationWithGroup } from '../../services/NotificationService'
 
 const router = Router()
 
@@ -718,8 +719,8 @@ async function finalizeOfferNotification(
     where: { userId: owner.tokenId, actorId: senderTid, type: 'OFFER', offerId: offer.id },
   })
   if (!existing) {
-    await prisma.notification.create({
-      data: { userId: owner.tokenId, actorId: senderTid, type: 'OFFER', offerId: offer.id },
+    await createNotificationWithGroup(prisma, {
+      userId: owner.tokenId, actorId: senderTid, type: 'OFFER', offerId: offer.id,
     })
   }
   console.log(`[marketplace] Offer notification sent: actor=${senderTid} -> owner=${owner.tokenId}`)

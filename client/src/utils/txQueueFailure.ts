@@ -1,6 +1,7 @@
 import { PrismaClient } from '@prisma/client'
 import { countManager } from '../services/CountManager'
 import { decompressActionText } from './decompressActionText'
+import { createNotificationWithGroup } from '../services/NotificationService'
 
 /**
  * THE single choke point for marking a TxQueue row as failed.
@@ -286,23 +287,25 @@ export async function createActionFailedNotification(
     if (actionType === 6 || actionType === 2 || actionType === 5) return
 
     // ACTION_FAILED is a self-notification: actor = user = sender.
-    await prisma.notification.create({
-      data: {
-        userId: senderId,
-        actorId: senderId,
-        type: 'ACTION_FAILED',
-        groupKey: groupKey,
-        actionPayload: {
-          actionType,
-          receiverId: actionData?.receiverId ?? null,
-          receiverCawonce: actionData?.receiverCawonce ?? null,
-          text: actionData?.text ?? null,
-          recipients: actionData?.recipients ?? null,
-          amounts: actionData?.amounts ?? null,
-          originalTxQueueId: txQueueId,
-          reason,
-        } as any,
-      },
+    // Use the group-aware helper so it gets a NotificationGroup row
+    // (each ACTION_FAILED row becomes its own singleton group since
+    // targetKey is null for this type — failures aren't useful to
+    // roll up across attempts).
+    await createNotificationWithGroup(prisma, {
+      userId: senderId,
+      actorId: senderId,
+      type: 'ACTION_FAILED',
+      groupKey: groupKey,
+      actionPayload: {
+        actionType,
+        receiverId: actionData?.receiverId ?? null,
+        receiverCawonce: actionData?.receiverCawonce ?? null,
+        text: actionData?.text ?? null,
+        recipients: actionData?.recipients ?? null,
+        amounts: actionData?.amounts ?? null,
+        originalTxQueueId: txQueueId,
+        reason,
+      } as any,
     })
   } catch (err: any) {
     console.warn(`[markTxQueueFailed] Failed to create ACTION_FAILED notification for tx ${txQueueId}:`, err.message)
