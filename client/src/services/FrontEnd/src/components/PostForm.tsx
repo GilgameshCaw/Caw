@@ -1497,7 +1497,19 @@ const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess, placehol
       }
     }
 
-    // Build reply params for chunks after the first
+    // Build reply params for chunks after the first.
+    //
+    // When the thread is a reply to someone else's caw (parentCaw set), every
+    // chunk targets the SAME parentCaw — not a chain pointing back at chunk 0.
+    // Otherwise threads to @alice would only credit her with one reply even
+    // though the user wrote N posts directly under her. The visual thread
+    // order is preserved by cawonce sequencing.
+    //
+    // When there's no parentCaw (top-level self-thread), chunks 1..N still
+    // chain to chunk 0 — there's no other receiver to point at, and the
+    // chain links the thread together server-side.
+    const replyTargetId = parentCaw ? parentCaw.user.tokenId : effectiveTokenId
+    const replyTargetCawonce = parentCaw ? parentCaw.cawonce : firstPostCawonce
     const buildReplyParams = (startIdx: number): ActionParams[] =>
       chunks.slice(startIdx).map((text, i) => {
         const chunkIdx = startIdx + i
@@ -1507,8 +1519,8 @@ const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess, placehol
           senderId: effectiveTokenId,
           text,
           cawonce: threadCawonces[chunkIdx],
-          receiverId: effectiveTokenId,
-          receiverCawonce: firstPostCawonce,
+          receiverId: replyTargetId,
+          receiverCawonce: replyTargetCawonce,
           // Attach poll images to whichever reply chunk carries the marker.
           // Single-chunk threads don't reach this builder; for multi-chunk
           // threads with poll-position=end, the marker lives in chunks[last].
@@ -1781,6 +1793,7 @@ const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess, placehol
                  fontSize="base"
                  compact={!!replyTo || hasMedia}
                  autoResize
+                 chunkBoundaries={isThreadMode ? chunkBoundaries : undefined}
                />
               <MentionAutocomplete
                 text={text}
@@ -2166,6 +2179,7 @@ const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess, placehol
             fontSize={replyTo ? 'base' : 'xl'}
             compact={!!replyTo || hasMedia}
             autoResize
+            chunkBoundaries={isThreadMode ? chunkBoundaries : undefined}
           />
           <MentionAutocomplete
             text={text}
