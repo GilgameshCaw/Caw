@@ -1460,11 +1460,8 @@ async function handleHideAction(
     })
 
     if (deleted.count > 0) {
-      // Decrement the parent's recawCount
-      await tx.caw.update({
-        where: { id: originalCaw.id },
-        data: { recawCount: { decrement: deleted.count } }
-      })
+      // Decrement the parent's recawCount via CountManager (floors at zero + audit log)
+      await countManager.onRecawRemoved(tx, { originalCawId: originalCaw.id, senderId, amount: deleted.count })
       console.log(`[handleHideAction] Deleted recaw: user=${senderId} of caw=${originalCaw.id}`)
     } else {
       console.warn(`[handleHideAction] No recaw found to delete: user=${senderId} originalCaw=${originalCaw.id}`)

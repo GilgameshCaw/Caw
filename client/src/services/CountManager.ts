@@ -526,6 +526,29 @@ const countManager = {
   },
 
   // =========================================================================
+  // onRecawRemoved
+  // Called when a recaw is deleted (hide:recaw: action). Decrements:
+  //   - Caw.recawCount on the original caw (by amount — deleteMany may
+  //     remove more than one row in degenerate cases)
+  //   - User.recawCount on the sender (recaws they have posted)
+  // =========================================================================
+  async onRecawRemoved(
+    tx: TxClient,
+    params: {
+      originalCawId: number
+      senderId: number
+      amount?: number
+    }
+  ): Promise<void> {
+    const amount = params.amount ?? 1
+    await safeDecrement(tx, 'Caw', 'recawCount', 'id', params.originalCawId, amount)
+    log(`recawCount -${amount} on caw ${params.originalCawId} (recaw removed by user ${params.senderId})`)
+
+    await safeDecrement(tx, 'User', 'recawCount', 'tokenId', params.senderId, amount)
+    log(`recawCount -${amount} on user ${params.senderId} (removed recaw of caw ${params.originalCawId})`)
+  },
+
+  // =========================================================================
   // onFollowRemoved
   // Called when a follow is deleted (unfollow action). Decrements
   // followingCount on the follower and followerCount on the target.

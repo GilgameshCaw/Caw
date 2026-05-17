@@ -464,16 +464,15 @@ router.post('/', async (req, res) => {
               select: { id: true }
             })
             if (originalCaw) {
-              const deleted = await prisma.caw.deleteMany({
-                where: { userId: data.senderId, originalCawId: originalCaw.id, action: 'RECAW' }
-              })
-              if (deleted.count > 0) {
-                await prisma.caw.update({
-                  where: { id: originalCaw.id },
-                  data: { recawCount: { decrement: deleted.count } }
+              await prisma.$transaction(async (tx) => {
+                const deleted = await tx.caw.deleteMany({
+                  where: { userId: data.senderId, originalCawId: originalCaw.id, action: 'RECAW' }
                 })
-                console.log(`[Actions] Optimistic undo recaw: user=${data.senderId} of caw=${originalCaw.id}`)
-              }
+                if (deleted.count > 0) {
+                  await countManager.onRecawRemoved(tx, { originalCawId: originalCaw.id, senderId: data.senderId, amount: deleted.count })
+                  console.log(`[Actions] Optimistic undo recaw: user=${data.senderId} of caw=${originalCaw.id}`)
+                }
+              })
             }
           }
         }
