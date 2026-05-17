@@ -118,15 +118,8 @@ async function cleanupPendingLikes() {
             }
           })
 
-          // Increment like count only if the action is LIKE (not UNLIKE) AND the like was pending
-          // This prevents double-incrementing if ActionProcessor already processed it
-          if (action.actionType === 'LIKE' && pendingLike.pending) {
-            await prisma.caw.update({
-              where: { id: pendingLike.cawId },
-              data: { likeCount: { increment: 1 } }
-            })
-            logger.log(` Incremented like count for caw ${pendingLike.cawId}`)
-          }
+          // Note: count was incremented at /api/actions optimistic write time;
+          // PENDING→SUCCESS is a no-op so we only flip pending here.
         } else if (pendingLike.createdAt < thirtyMinutesAgo) {
           // No action found after 30 minutes, delete the optimistic like
           logger.log(` Removing failed like for user ${pendingLike.userId} on caw ${pendingLike.cawId}`)

@@ -944,8 +944,10 @@ export async function handleOtherAction(
     status: 'SUCCESS',
   })
 
-  // If this was a comment/reply, bump the parent's comment count (once)
-  if (parentCawId) {
+  // Quotes (RECAW with text) bump recawCount via onCawCreated; they must NOT
+  // also bump commentCount — that's reserved for true CAW replies.
+  const isReplyNotQuote = effectiveActionType !== 'RECAW'
+  if (parentCawId && isReplyNotQuote) {
     await countManager.onReplyCreated(tx, {
       cawId: parentCawId,
       replyCawId: newCaw.id,
