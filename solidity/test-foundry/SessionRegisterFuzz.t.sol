@@ -34,7 +34,7 @@ contract SessionRegisterFuzzTest is Test {
     function setUp() public {
         // EIDs are arbitrary; we don't actually send LZ messages.
         lzEndpoint = new MockLayerZeroEndpoint(40245);
-        profile = new CawProfileL2(30101, address(lzEndpoint));
+        profile = new CawProfileL2(30101, address(lzEndpoint), address(0));
         DOMAIN = profile.eip712DomainHash();
     }
 
@@ -81,8 +81,8 @@ contract SessionRegisterFuzzTest is Test {
         bytes32 d = _digest(sessionKey, expiry, scope, spendLimit, tipRate, nonce);
         (uint8 v, bytes32 r, bytes32 s) = _sign(pk, d);
 
-        vm.expectRevert(bytes("expired"));
-        profile.registerSession(sessionKey, expiry, scope, spendLimit, tipRate, nonce, v, r, s);
+        vm.expectRevert(abi.encodeWithSelector(CawProfileL2.Expired.selector));
+        profile.registerSession(vm.addr(pk), sessionKey, expiry, scope, spendLimit, tipRate, nonce, abi.encodePacked(r, s, v));
     }
 
     // ------------------------------------------------------------------
@@ -103,13 +103,13 @@ contract SessionRegisterFuzzTest is Test {
         (uint8 v, bytes32 r, bytes32 s) = _sign(pk, d);
 
         // First register succeeds.
-        profile.registerSession(sessionKey, expiry, scope, 0, 0, nonce, v, r, s);
+        profile.registerSession(signer, sessionKey, expiry, scope, 0, 0, nonce, abi.encodePacked(r, s, v));
         assertEq(profile.sessionNonce(signer), nonce + 1, "nonce did not bump by 1");
 
         // Replaying the EXACT same signature must revert with "Invalid nonce"
         // because sessionNonce[signer] is now nonce + 1.
-        vm.expectRevert(bytes("Invalid nonce"));
-        profile.registerSession(sessionKey, expiry, scope, 0, 0, nonce, v, r, s);
+        vm.expectRevert(abi.encodeWithSelector(CawProfileL2.BadNonce.selector));
+        profile.registerSession(signer, sessionKey, expiry, scope, 0, 0, nonce, abi.encodePacked(r, s, v));
     }
 
     // ------------------------------------------------------------------
@@ -142,7 +142,7 @@ contract SessionRegisterFuzzTest is Test {
         // We don't pin the revert string — different tampering paths surface
         // different ones (Invalid signature / Invalid nonce). The point is
         // the session is NOT created for `signer`.
-        try profile.registerSession(sessionKey, expiry, scopeTamper, 0, 0, nonce, v, r, s) {
+        try profile.registerSession(signer, sessionKey, expiry, scopeTamper, 0, 0, nonce, abi.encodePacked(r, s, v)) {
             // If this somehow doesn't revert, assert at minimum that the
             // registration didn't land on `signer` (the original intended
             // owner). The sig-recovery would have produced some other addr.
@@ -169,8 +169,8 @@ contract SessionRegisterFuzzTest is Test {
         bytes32 d = _digest(sessionKey, expiry, scope, 0, 0, nonce);
         (uint8 v, bytes32 r, bytes32 s) = _sign(pk, d);
 
-        vm.expectRevert(bytes("no WITHDRAW"));
-        profile.registerSession(sessionKey, expiry, scope, 0, 0, nonce, v, r, s);
+        vm.expectRevert(abi.encodeWithSelector(CawProfileL2.NoWithdraw.selector));
+        profile.registerSession(vm.addr(pk), sessionKey, expiry, scope, 0, 0, nonce, abi.encodePacked(r, s, v));
     }
 
     // ------------------------------------------------------------------
@@ -187,7 +187,7 @@ contract SessionRegisterFuzzTest is Test {
         bytes32 d = _digest(address(0), expiry, scope, 0, 0, nonce);
         (uint8 v, bytes32 r, bytes32 s) = _sign(pk, d);
 
-        vm.expectRevert(bytes("zero key"));
-        profile.registerSession(address(0), expiry, scope, 0, 0, nonce, v, r, s);
+        vm.expectRevert(abi.encodeWithSelector(CawProfileL2.ZeroKey.selector));
+        profile.registerSession(vm.addr(pk), address(0), expiry, scope, 0, 0, nonce, abi.encodePacked(r, s, v));
     }
 }

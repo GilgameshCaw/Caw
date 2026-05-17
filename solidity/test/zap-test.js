@@ -63,12 +63,13 @@ contract("CawProfileMinter — ZAP (pay-with-ETH) flows", function(accounts) {
     uriGen = await deployURI();
 
     // L2-storage mirror (cross-chain)
-    cawProfileL2 = await CawProfileL2.new(l1, l2Endpoint.address);
+    cawProfileL2 = await CawProfileL2.new(l1, l2Endpoint.address, "0x0000000000000000000000000000000000000000");
     await l1Endpoint.setDestLzEndpoint(cawProfileL2.address, l2Endpoint.address);
 
     cawProfile = await CawProfile.new(
       token.address, uriGen.address, buyAndBurn.address,
-      networkManager.address, l1Endpoint.address, l1
+      networkManager.address, l1Endpoint.address, l1,
+      "0x0000000000000000000000000000000000000000"
     );
     await buyAndBurn.setCawProfile(cawProfile.address);
     await cawProfileL2.setL1Peer(l1, cawProfile.address, false);
@@ -76,7 +77,7 @@ contract("CawProfileMinter — ZAP (pay-with-ETH) flows", function(accounts) {
     await cawProfile.setL2Peer(l2, cawProfileL2.address);
 
     // L1-co-deployed mirror (bypassLZ)
-    cawProfileL2Mainnet = await CawProfileL2.new(l1, l1Endpoint.address);
+    cawProfileL2Mainnet = await CawProfileL2.new(l1, l1Endpoint.address, "0x0000000000000000000000000000000000000000");
     await cawProfileL2Mainnet.setL1Peer(l1, cawProfile.address, true);
     await cawProfile.setL2Peer(l1, cawProfileL2Mainnet.address);
 

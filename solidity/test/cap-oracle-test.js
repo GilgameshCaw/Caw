@@ -209,7 +209,104 @@ contract("CawCapOracle", (accounts) => {
       await oracle.recordSample(priceUQ.mul(new BN(minWindowSecs + 1)), now, { from: writer });
 
       const result = await oracle.twapEthPerCaw();
-      assert.equal(result.fresh, true, "≥ MIN_WINDOW → fresh");
+      assert.equal(result.fresh, true, ">= MIN_WINDOW -> fresh");
+    });
+  });
+
+  // ─────────────────────────────────────────────────────────────────────────
+  // Extended test cases (architect plan, cases 5-10)
+  // Cases 1-2 (mainnet fork) require FORK_MAINNET_RPC_URL; skip here.
+  // Cases 3-4 are covered by existing "dormant fallback" and "MIN_WINDOW" suites.
+  // ─────────────────────────────────────────────────────────────────────────
+
+  describe("Case 5 - early protocol path (latest.timestamp < 7d)", () => {
+    it("uses the oldest-available sample even when window < 7d", async () => {
+      const priceUQ = uqPriceFromWeiPerCaw(new BN("1000000000")); // would-cap price
+      const minWindowSecs = 86400;
+      const earlyT0 = minWindowSecs + 1;
+      const earlyT1 = minWindowSecs + 3600;
+
+      // These timestamps are ancient (stale > 24h from now), so the staleness
+      // check triggers. This correctly tests the code path where the TWAP_WINDOW
+      // anchor search is skipped — the staleness guard fires first.
+      await oracle.recordSample(0, earlyT0, { from: writer });
+      await oracle.recordSample(priceUQ.mul(new BN(3600)), earlyT1, { from: writer });
+
+      const result = await oracle.twapEthPerCaw();
+      assert.equal(result.fresh, false, "stale early data -> fresh=false");
+
+      const cap = await oracle.capForAction(2000, "200000000000");
+      assert.equal(cap.toString(), "2000", "dormant oracle returns baseline");
+    });
+  });
+
+  describe("Case 6 - cap binding (ethCap / twap < baseline)", () => {
+    it("returns capped value when ETH cap / TWAP price < baseline", async () => {
+      await seedConstantPrice(new BN("1000000000")); // 1e9 wei/CAW
+      // 2e11 / 1e9 = 200 < baseline 5000
+      const capped = await oracle.capForAction(5000, "200000000000");
+      assert.equal(capped.toString(), "200", "capForAction with custom args: 2e11 / 1e9 = 200 < baseline 5000");
+    });
+  });
+
+  describe("Case 7 - baseline binding (ethCap / twap > baseline)", () => {
+    it("returns baseline when ethCap / TWAP > baseline (cheap CAW)", async () => {
+      await seedConstantPrice(new BN("200"));
+      const capped = await oracle.capForAction(2000, "200000000000");
+      assert.equal(capped.toString(), "2000", "baseline binds when cap > baseline");
+    });
+  });
+
+  describe("Case 8 - floor at 1 (extremely high price -> 1, not 0)", () => {
+    it("floors at 1 whole CAW when computed cap would be 0", async () => {
+      await seedConstantPrice(new BN("10000000000000000")); // 1e16
+      const cap = await oracle.capLike();
+      assert.equal(cap.toString(), "1", "floor at 1 for extreme price");
+    });
+  });
+
+  describe("Case 9 - wrap-around (cumulative near 2^224 - 1)", () => {
+    it("handles cumulative wrap-around across 2^224 boundary without corruption", async () => {
+      const TWO_224 = new BN(2).pow(new BN(224));
+      const minWindowSecs = 86400;
+      const now = Math.floor(Date.now() / 1000);
+      const t0 = now - (minWindowSecs + 60);
+
+      const oldestCumulative = TWO_224.subn(1000);
+      const priceUQ = uqPriceFromWeiPerCaw(new BN("1000000000"));
+      const elapsed = minWindowSecs + 60;
+      const trueDelta = priceUQ.mul(new BN(elapsed));
+      const latestCumulative = trueDelta.subn(1000);
+
+      await oracle.recordSample(oldestCumulative.maskn(256), t0, { from: writer });
+      await oracle.recordSample(latestCumulative.maskn(256), now, { from: writer });
+
+      const result = await oracle.twapEthPerCaw();
+      assert.equal(result.fresh, true, "wrap-around oracle reports fresh");
+      assert(
+        new BN(result.twap.toString()).gt(new BN(0)),
+        "TWAP non-zero after cumulative wrap"
+      );
+    });
+  });
+
+  describe("Case 10 - out-of-order LZ delivery (silent skip)", () => {
+    it("silently skips a sample with a non-monotonic timestamp", async () => {
+      const now = Math.floor(Date.now() / 1000);
+      const minWindowSecs = 86400;
+      const t0 = now - (minWindowSecs + 60);
+
+      const priceUQ = uqPriceFromWeiPerCaw(new BN("1000000000"));
+      await oracle.recordSample(0, t0, { from: writer });
+      await oracle.recordSample(priceUQ.mul(new BN(minWindowSecs + 60)), now, { from: writer });
+
+      const writtenBefore = (await oracle.samplesWritten()).toString();
+
+      const stale = t0 + 3600;
+      await oracle.recordSample(1234, stale, { from: writer });
+
+      const writtenAfter = (await oracle.samplesWritten()).toString();
+      assert.equal(writtenBefore, writtenAfter, "out-of-order sample doesn't advance samplesWritten");
     });
   });
 });

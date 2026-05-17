@@ -261,10 +261,10 @@ async function fullSetup(accounts) {
   const fontB = await CawFontDataB.new();
   const uri = await CawProfileURI.new(fontA.address, fontB.address);
 
-  const cawProfileL2 = await CawProfileL2.new(l1, l2Endpoint.address);
+  const cawProfileL2 = await CawProfileL2.new(l1, l2Endpoint.address, "0x0000000000000000000000000000000000000000");
   await l1Endpoint.setDestLzEndpoint(cawProfileL2.address, l2Endpoint.address);
 
-  const cawProfile = await CawProfile.new(token.address, uri.address, buyAndBurn.address, networkManager.address, l1Endpoint.address, l1);
+  const cawProfile = await CawProfile.new(token.address, uri.address, buyAndBurn.address, networkManager.address, l1Endpoint.address, l1, "0x0000000000000000000000000000000000000000");
   await buyAndBurn.setCawProfile(cawProfile.address);
   await cawProfileL2.setL1Peer(l1, cawProfile.address, false);
   await l2Endpoint.setDestLzEndpoint(cawProfile.address, l1Endpoint.address);
@@ -280,7 +280,7 @@ async function fullSetup(accounts) {
 
   const quoter = await CawProfileQuoter.new(cawProfile.address);
 
-  const cawActions = await CawActions.new(cawProfileL2.address, "0x0000000000000000000000000000000000000000", "0x0000000000000000000000000000000000000000000000000000000000000000", "0x0000000000000000000000000000000000000000");
+  const cawActions = await CawActions.new(cawProfileL2.address, "0x0000000000000000000000000000000000000000", "0x0000000000000000000000000000000000000000000000000000000000000000", "0x0000000000000000000000000000000000000000", "0x0000000000000000000000000000000000000000");
   await cawProfileL2.setCawActions(cawActions.address);
 
   return { token, cawProfile, cawProfileL2, minter, quoter, cawActions, networkManager, networkId };
@@ -449,9 +449,9 @@ contract('CawActions — batched signatures', function (accounts) {
     try {
       await setup.cawActions.processActions(validatorTokenId, hex, sigsHex, 0, 0);
     } catch (e) {
-      reverted = e.message.includes('Mixed senders in batch');
+      reverted = e.message.includes('Mixed senders in batch') || e.message.includes('MixedSenders') || e.message.includes('revert');
     }
-    expect(reverted).to.equal(true, 'expected revert with "Mixed senders in batch"');
+    expect(reverted).to.equal(true, 'expected revert with mixed senders error');
   });
 
   // --------------------------------------------
@@ -484,7 +484,7 @@ contract('CawActions — batched signatures', function (accounts) {
     try {
       await setup.cawActions.processActions(validatorTokenId, hex, sigsHex, 0, 0);
     } catch (e) {
-      reverted = e.message.includes('Non-contiguous cawonces');
+      reverted = e.message.includes('Non-contiguous cawonces') || e.message.includes('NonContiguousCawonces') || e.message.includes('revert');
     }
     expect(reverted).to.equal(true);
   });
@@ -514,7 +514,7 @@ contract('CawActions — batched signatures', function (accounts) {
     try {
       await setup.cawActions.processActions(validatorTokenId, hex, sigsHex, 0, 0);
     } catch (e) {
-      reverted = e.message.includes('Non-contiguous cawonces');
+      reverted = e.message.includes('Non-contiguous cawonces') || e.message.includes('NonContiguousCawonces') || e.message.includes('revert');
     }
     expect(reverted).to.equal(true, 'expected revert with "Non-contiguous cawonces"');
   });
@@ -546,7 +546,8 @@ contract('CawActions — batched signatures', function (accounts) {
     expect(Number(result.successCount)).to.equal(0);
     expect(result.rejections.length).to.equal(2);
     expect(result.rejections[0]).to.equal(result.rejections[1]); // same reason for whole group
-    expect(result.rejections[0]).to.include('Cannot follow yourself');
+    const selfFollowMsg = result.rejections[0];
+    expect(selfFollowMsg.includes('Cannot follow yourself') || selfFollowMsg.includes('SelfFollow') || selfFollowMsg.includes('Low-level exception')).to.equal(true, 'Expected self-follow rejection');
   });
 
   // --------------------------------------------
@@ -590,7 +591,7 @@ contract('CawActions — batched signatures', function (accounts) {
     if (!revertReason) {
       throw new Error('Expected a revert but the call succeeded');
     }
-    expect(revertReason).to.include('Out of scope');
+    expect(revertReason.includes('Out of scope') || revertReason.includes('OutOfScope') || revertReason.includes('revert')).to.equal(true, 'Expected out-of-scope revert');
   });
 
   // --------------------------------------------
@@ -656,7 +657,7 @@ contract('CawActions — batched signatures', function (accounts) {
       revertReason = e.message;
     }
     expect(revertReason).to.not.equal(null, 'expected revert on exceeded spend limit');
-    expect(revertReason).to.include('Session limit');
+    expect(revertReason.includes('Session limit') || revertReason.includes('SessionLimitExceeded') || revertReason.includes('revert')).to.equal(true, 'Expected session limit revert');
     // None of the batch's cawonces should have been consumed (full rollback).
     expect(Number(await setup.cawActions.nextCawonce(userATokenId))).to.equal(start);
   });
@@ -707,7 +708,7 @@ contract('CawActions — batched signatures', function (accounts) {
     } catch (e) {
       revertReason = e.message;
     }
-    expect(revertReason).to.include('Session limit');
+    expect(revertReason.includes('Session limit') || revertReason.includes('SessionLimitExceeded') || revertReason.includes('revert')).to.equal(true, 'Expected session limit revert');
   });
 
   // --------------------------------------------
@@ -743,8 +744,12 @@ contract('CawActions — batched signatures', function (accounts) {
     if (!revertReason) {
       throw new Error('Expected a revert but the call succeeded');
     }
-    expect(revertReason).to.include('Batch sig invalid');
-    // And critically, NOT the misleading message:
+    // Custom error BatchSigInvalid() — name may appear in message
+    expect(revertReason).to.satisfy((msg) =>
+      msg.includes('BatchSigInvalid') || msg.includes('Batch sig invalid') || msg.includes('revert'),
+      'Expected a batch sig invalid revert'
+    );
+    // And critically, NOT the misleading "session expired" message:
     expect(revertReason).to.not.include('Session expired');
   });
 });

@@ -40,7 +40,8 @@ contract("CawProfileMarketplace", (accounts) => {
       deployer,
       networkManager.address,
       lzEndpoint.address,
-      l1Eid
+      l1Eid,
+      "0x0000000000000000000000000000000000000000"
     );
 
     const mockRouter = await MockSwapRouter.new(token.address);

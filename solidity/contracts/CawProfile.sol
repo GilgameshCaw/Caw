@@ -14,6 +14,7 @@ import "./CawProfileURI.sol";
 import "./CawProfileL2.sol";
 import "./CawBuyAndBurn.sol";
 import "./OnlyOnce.sol";
+import "./CawL1PriceReader.sol";
 
 import { OApp, Origin, MessagingFee } from "@layerzerolabs/lz-evm-oapp-v2/contracts/oapp/OApp.sol";
 import { CawNetworkManager } from "./CawNetworkManager.sol";
@@ -40,12 +41,18 @@ contract CawProfile is
   error NoPending();
   error Unauthorized();
   error DelegateFailed();
+  error NotApproved();
+  error NotL2Mirror();
 
   using OptionsBuilder for bytes;
   using EnumerableSet for EnumerableSet.UintSet;
 
   IERC20 public immutable CAW;
   CawProfileURI public uriGenerator;
+
+  /// @notice L1 price reader for piggybacking cumulative price onto L1→L2 messages.
+  ///         May be address(0) if no oracle is configured (cap dormant on L2).
+  CawL1PriceReader public immutable priceReader;
 
   CawProfileL2 public cawProfileL2;
 
@@ -148,7 +155,7 @@ contract CawProfile is
   CawNetworkManager public networkManager;
   CawBuyAndBurn public buyAndBurn;
 
-  constructor(address _caw, address _gui, address _buyAndBurn, address _networkManager, address _endpoint, uint32 mainnetEid)
+  constructor(address _caw, address _gui, address _buyAndBurn, address _networkManager, address _endpoint, uint32 mainnetEid, address _priceReader)
     ERC721("CAW NAME", "cawNAME")
     OApp(_endpoint, msg.sender)
   {
@@ -157,6 +164,7 @@ contract CawProfile is
     buyAndBurn = CawBuyAndBurn(payable(_buyAndBurn));
     CAW = IERC20(_caw);
     mainnetLzId = mainnetEid;
+    priceReader = CawL1PriceReader(_priceReader); // address(0) = no oracle
 
     // Per-selector base gas budgets. authSelector bumped from 50k → 85k after a
     // production OOG (Tenderly tx 0x3b8a0232... on Base Sepolia). Bundled session
@@ -627,12 +635,7 @@ contract CawProfile is
    */
   function transferAndSync(address to, uint256 tokenId, uint256 lzTokenAmount) external payable {
     address owner = ownerOf(tokenId);
-    require(
-      owner == msg.sender ||
-      isApprovedForAll(owner, msg.sender) ||
-      getApproved(tokenId) == msg.sender,
-      "caller is not owner or approved"
-    );
+    if (!(owner == msg.sender || isApprovedForAll(owner, msg.sender) || getApproved(tokenId) == msg.sender)) revert NotApproved();
     _transfer(owner, to, tokenId);
     // _afterTokenTransfer queued this token — now flush the queue via LZ
     _updateNewOwners(peerWithMaxPendingTransfers(), msg.value, lzTokenAmount);
@@ -674,10 +677,7 @@ contract CawProfile is
     //      revert and the WITHDRAW action's L2 debit (which already
     //      happened in CawActions._applyAction.withdrawTokens) would
     //      have no L1 counterpart. Audit fix 2026-05-08 (C-1).
-    require(
-      fromLZ || msg.sender == address(cawProfileL2),
-      "Only LZ or co-deployed L2 mirror"
-    );
+    if (!(fromLZ || msg.sender == address(cawProfileL2))) revert NotL2Mirror();
     for (uint256 i = 0; i < tokenIds.length; i++)
       withdrawable[tokenIds[i]] += amounts[i];
   }
@@ -860,13 +860,24 @@ contract CawProfile is
   function lzSend(uint32 cawNetworkId, uint32 lzDestId, bytes4 selector, uint256 n, bytes memory payload, uint256 lzEthAmount, uint256 lzTokenAmount) internal {
     bytes memory _options = OptionsBuilder.newOptions().addExecutorLzReceiveOption(gasLimitFor(cawNetworkId, selector, n), 0);
 
+    // Piggyback a 36-byte price sample (uint256 cumulative + uint32 timestamp)
+    // onto every L1->L2 message. CawProfileL2._lzReceive strips this prefix
+    // and passes it to CawCapOracle.recordSample before dispatching the
+    // primary payload. If no priceReader is configured the prefix is zeroed;
+    // the L2 oracle silently skips samples with timestamp 0 (non-monotonic).
+    uint256 cumulative;
+    uint32 priceTs;
+    if (address(priceReader) != address(0)) {
+      (cumulative, priceTs) = priceReader.readSample();
+    }
+
     // Refund excess LZ fee to tx.origin — the EOA that actually paid.
     // Using msg.sender would break when called through an intermediary contract
     // (e.g. CawProfileMarketplace.acceptOffer -> transferAndSync) because the contract
     // wouldn't have a receive() function to accept the refund.
     _lzSend(
       lzDestId, // Destination chain's endpoint ID.
-      payload, // Encoded message payload being sent.
+      abi.encodePacked(cumulative, priceTs, payload), // price prefix + original payload
       _options, // Message execution options (e.g., gas to use on destination).
       MessagingFee(lzEthAmount, lzTokenAmount), // Fee struct containing native gas and ZRO token.
       payable(tx.origin) // Refund excess LZ fee to the tx originator (the EOA paying)
@@ -879,7 +890,12 @@ contract CawProfile is
 
   function lzQuote(uint32 cawNetworkId, bytes4 selector, uint256 n, bytes memory payload, uint32 lzDestId, bool _payInLzToken) public view returns (MessagingFee memory quote) {
     bytes memory _options = OptionsBuilder.newOptions().addExecutorLzReceiveOption(gasLimitFor(cawNetworkId, selector, n), 0);
-    return _quote(lzDestId, payload, _options, _payInLzToken);
+    // The piggyback prepends a 36-byte price-sample prefix (uint256 + uint32)
+    // to every L1→L2 message. Quote against the padded size so the fee matches
+    // what _lzSend actually sends. Using encodePacked with zero values is
+    // byte-for-byte identical to the real prefix (LZ fees depend on message
+    // size, not content).
+    return _quote(lzDestId, abi.encodePacked(uint256(0), uint32(0), payload), _options, _payInLzToken);
   }
 
   /// @notice Gas limit forwarded to the destination chain for executing this message.

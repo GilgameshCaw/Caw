@@ -356,6 +356,22 @@ const CONTRACTS = {
     dependencies: ['CawBuyAndBurn'],
     constructorArgs: (state) => [state.addresses.CawBuyAndBurn],
   },
+  CawL1PriceReader: {
+    chain: 'L1',
+    phase: 2,
+    dependencies: [],
+    // _pair: Uniswap V2 CAW/WETH pair; _cawToken: CAW token address.
+    // address(0) for both disables the oracle on L2 (cap stays dormant).
+    constructorArgs: (state, _chain, env) => {
+      const cawToken = state.addresses.MintableCaw;
+      const pairAddr = process.env.CAW_WETH_PAIR || ethers.ZeroAddress;
+      // If pair or caw is not configured, deploy with address(0) to disable.
+      // CawProfile accepts address(0) for priceReader = no oracle.
+      if (!cawToken || pairAddr === ethers.ZeroAddress) return [ethers.ZeroAddress, ethers.ZeroAddress];
+      return [pairAddr, cawToken];
+    },
+    condition: () => true, // always deploy; cap stays dormant if no pair configured
+  },
   CawProfile: {
     chain: 'L1',
     phase: 2,
@@ -364,7 +380,7 @@ const CONTRACTS = {
     // L2_CHAIN_KEYS so adding a new L2 doesn't require editing this list.
     dependencies: [
       ...L2_CHAIN_KEYS.map(L => `CawProfileL2_${L}`),
-      'CawProfileURI', 'CawNetworkManager', 'CawBuyAndBurn',
+      'CawProfileURI', 'CawNetworkManager', 'CawBuyAndBurn', 'CawL1PriceReader',
     ],
     constructorArgs: (state, chain) => [
       state.addresses.MintableCaw,
@@ -373,6 +389,18 @@ const CONTRACTS = {
       state.addresses.CawNetworkManager,
       CHAINS[chain].lzEndpoint,
       CHAINS[chain].lzEid,
+      state.addresses.CawL1PriceReader || ethers.ZeroAddress,
+    ],
+  },
+  CawCapOracle_L1: {
+    artifact: 'CawCapOracle',
+    chain: 'L1',
+    phase: 2,
+    dependencies: [],
+    // l2Writer will be the CawProfileL2_L1 deployed immediately after (nonce+1).
+    predictedSiblingKey: 'CawProfileL2_L1',
+    constructorArgs: (state) => [
+      state.predictedAddresses?.CawProfileL2_L1 || ethers.ZeroAddress,
     ],
   },
   CawProfileL2_L1: {
@@ -380,10 +408,11 @@ const CONTRACTS = {
     artifact: 'CawProfileL2',
     chain: 'L1',
     phase: 2,
-    dependencies: [],
+    dependencies: ['CawCapOracle_L1'],
     constructorArgs: (state, chain) => [
       CHAINS[chain.replace('L1', 'L2')].lzEid, // peer network eid (L2)
       CHAINS[chain].lzEndpoint,
+      state.addresses.CawCapOracle_L1 || ethers.ZeroAddress,
     ],
   },
   CawProfileMinter: {
@@ -431,6 +460,7 @@ const CONTRACTS = {
       state.addresses.MockSP1Verifier_L1 || requireSp1Verifier(chainKey),
       ZK_PROGRAM_VKEY,
       state.predictedAddresses?.CawActionsERC1271_L1 || ethers.ZeroAddress,
+      state.addresses.CawCapOracle_L1 || ethers.ZeroAddress,
     ],
   },
   CawActionsERC1271_L1: {
@@ -472,14 +502,29 @@ const CONTRACTS = {
 // Adding a new L2 = append to L2_CHAIN_KEYS + a CHAINS entry per env. The
 // peer wiring in LINKING_STEPS regenerates from this list too.
 for (const L of L2_CHAIN_KEYS) {
+  // CawCapOracle_<L> must deploy BEFORE CawProfileL2_<L> because the oracle's
+  // constructor takes l2Writer = CawProfileL2 address (predicted via nonce+1).
+  // CawProfileL2_<L> in turn takes capOracle = the actual deployed oracle address.
+  // This is the same sibling-prediction pattern used by CawActions ↔ CawActionsERC1271.
+  CONTRACTS[`CawCapOracle_${L}`] = {
+    artifact: 'CawCapOracle',
+    chain: L,
+    phase: 1,
+    dependencies: [],
+    predictedSiblingKey: `CawProfileL2_${L}`,
+    constructorArgs: (state) => [
+      state.predictedAddresses?.[`CawProfileL2_${L}`] || ethers.ZeroAddress,
+    ],
+  };
   CONTRACTS[`CawProfileL2_${L}`] = {
     artifact: 'CawProfileL2',
     chain: L,
     phase: 1,
-    dependencies: [],
+    dependencies: [`CawCapOracle_${L}`],
     constructorArgs: (state, chain) => [
       CHAINS[chain.replace(/L2.*$/, 'L1')].lzEid, // peer eid (L1)
       CHAINS[chain].lzEndpoint,
+      state.addresses[`CawCapOracle_${L}`] || ethers.ZeroAddress,
     ],
   };
   CONTRACTS[`MockSP1Verifier_${L}`] = {
@@ -501,6 +546,7 @@ for (const L of L2_CHAIN_KEYS) {
       state.addresses[`MockSP1Verifier_${L}`] || requireSp1Verifier(chainKey),
       ZK_PROGRAM_VKEY,
       state.predictedAddresses?.[`CawActionsERC1271_${L}`] || ethers.ZeroAddress,
+      state.addresses[`CawCapOracle_${L}`] || ethers.ZeroAddress,
     ],
   };
   CONTRACTS[`CawActionsERC1271_${L}`] = {
