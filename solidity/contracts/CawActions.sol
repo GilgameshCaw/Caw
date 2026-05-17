@@ -444,7 +444,8 @@ contract CawActions is Ownable {
     BatchAuth memory ba;
     ba.signer = signer;
     ba.r = r;
-    address owner = cawProfile.ownerOf(_peekSenderId(packedActions, c.pos));
+    uint32 senderId0 = _peekSenderId(packedActions, c.pos);
+    address owner = cawProfile.ownerOf(senderId0);
     if (signer == owner) {
       ba.isSessionKey = false;
     } else {
@@ -465,7 +466,7 @@ contract CawActions is Ownable {
 
     // Apply each action with skip-don't-revert on cawonce conflicts.
     for (uint256 i = 0; i < groupSize; ) {
-      executedBitmap = _zkApplyOne(validatorId, packedActions, c, ba, executedBitmap);
+      executedBitmap = _zkApplyOne(validatorId, packedActions, c, ba, senderId0, executedBitmap);
       unchecked { ++i; }
     }
 
@@ -487,6 +488,7 @@ contract CawActions is Ownable {
     bytes calldata packedActions,
     BatchCursor memory c,
     BatchAuth memory ba,
+    uint32 senderId0,
     uint256 executedBitmap
   ) internal returns (uint256) {
     uint256 actionStart = c.pos;
@@ -501,6 +503,14 @@ contract CawActions is Ownable {
     } else {
       require(action.networkId == c.firstNetworkId, "Mixed networks in batch");
     }
+
+    // Mixed-sender guard: defense-in-depth against a broken/malicious ZK
+    // circuit attesting a single signer for actions on different senderIds.
+    // The sig path enforces this via `Mixed senders in batch` in _unpackBatchGroup;
+    // the ZK path must mirror it. Without this, a faulty proof could authorize
+    // actions on any senderId by smuggling them into a group keyed to a different
+    // owner. (Audit 2026-05-17, H-2.)
+    require(action.senderId == senderId0, "Mixed senders in ZK group");
 
     // Race-loss check.
     if (isCawonceUsed(action.senderId, action.cawonce)) {
@@ -1676,6 +1686,24 @@ contract CawActions is Ownable {
   uint32[] private _pendingWithdrawIds;
   uint256[] private _pendingWithdrawAmounts;
 
+  /// @dev NOTE TO FUTURE AUDITORS: the storage-scratch pattern here
+  ///      (_pendingWithdrawIds / _pendingWithdrawAmounts written by
+  ///      _handleWithdrawals, consumed + deleted by _executeWithdrawals,
+  ///      with no nonReentrant guard on the entry points) was re-examined
+  ///      2026-05-17 and intentionally left as-is. Reentrancy chain
+  ///      considered: _executeWithdrawals → cawProfile.setWithdrawable →
+  ///      lzSend → endpoint callback → re-entry into processActions.
+  ///      Not reachable, because (1) the bypassLZ branch of
+  ///      CawProfileL2.setWithdrawable calls CawProfile.setWithdrawable
+  ///      on L1 which performs no external calls (see CawProfile.sol:820
+  ///      audit note), and (2) the LZ branch hands the native fee to the
+  ///      canonical OApp endpoint, which emits an event and does not
+  ///      execute source-chain code in the same call stack — destination
+  ///      _lzReceive is a separate tx on the destination chain. The OApp
+  ///      endpoint is the protocol's immutable trust root; if a future
+  ///      hostile endpoint is ever wired in, nonReentrant does not save
+  ///      us anyway. Pattern violates checks-effects-interactions
+  ///      cosmetically but the reachable attack surface is empty.
   function _executeWithdrawals(uint256 withdrawFee, uint256 lzTokenAmount) internal {
     if (_pendingWithdrawIds.length > 0) {
       cawProfile.setWithdrawable{ value: withdrawFee }(
