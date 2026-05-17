@@ -154,10 +154,22 @@ contract CawCapOracle {
 
     emit SampleRecorded(nextIdx, cumulative, timestamp);
 
-    // Push ratio to CawActions if the cap state has changed. Isolated so that
-    // a reverting push (should never happen, but defensive) doesn't block
-    // sample ingestion — the STALE_THRESHOLD backstop in CawActions catches
-    // accumulated push failures within 24 h.
+    // Push ratio to CawActions if the cap state has changed. A revert inside
+    // _maybePushRatio (e.g. CawActions OOG or unexpected revert) is caught
+    // here so sample ingestion always succeeds — the outer try/catch in
+    // CawProfileL2._lzReceive preserves L2 delivery and the STALE_THRESHOLD
+    // backstop in CawActions makes the cap dormant within 24 h, bounding
+    // exposure to a single missed push cycle.
+    // solhint-disable-next-line no-empty-blocks
+    (bool ok,) = address(this).call(abi.encodeWithSelector(this._maybePushRatioExternal.selector));
+    // Ignore ok — a failed push is intentionally swallowed; see comment above.
+    ok; // silence unused-variable warning
+  }
+
+  /// @dev External trampoline so the call above can catch reverts. Only
+  ///      callable from this contract itself; any other caller is rejected.
+  function _maybePushRatioExternal() external {
+    require(msg.sender == address(this), "self-only");
     _maybePushRatio();
   }
 

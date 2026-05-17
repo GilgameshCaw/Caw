@@ -425,7 +425,14 @@ const CONTRACTS = {
   CawProfileMinter: {
     chain: 'L1',
     phase: 2,
-    dependencies: ['CawProfile', 'MockSwapRouter'],
+    // CawActionsERC1271_L1 is the terminal link in the nonce-prediction chain:
+    //   CawProfileL2_L1 → CawCapOracle_L1 → CawActions_L1 → CawActionsERC1271_L1
+    // These three contracts don't use CawActions/CawCapOracle at all, but they
+    // share the L1 chain. Adding CawActionsERC1271_L1 to deps guarantees the
+    // entire nonce chain completes before any of these deploy — preventing a
+    // round-robin scheduler from interleaving a Minter/Quoter/Marketplace deploy
+    // between CawCapOracle and CawActions and corrupting the nonce prediction.
+    dependencies: ['CawProfile', 'MockSwapRouter', 'CawActionsERC1271_L1'],
     constructorArgs: (state) => [
       state.addresses.MintableCaw,
       state.addresses.CawProfile,
@@ -435,13 +442,15 @@ const CONTRACTS = {
   CawProfileQuoter: {
     chain: 'L1',
     phase: 2,
-    dependencies: ['CawProfile'],
+    // See CawProfileMinter comment above — same ordering constraint applies.
+    dependencies: ['CawProfile', 'CawActionsERC1271_L1'],
     constructorArgs: (state) => [state.addresses.CawProfile],
   },
   CawProfileMarketplace: {
     chain: 'L1',
     phase: 2,
-    dependencies: ['CawProfile'],
+    // See CawProfileMinter comment above — same ordering constraint applies.
+    dependencies: ['CawProfile', 'CawActionsERC1271_L1'],
     constructorArgs: (state, _chainKey, env) => {
       const erc20Tokens = (MARKETPLACE_PAYMENT_TOKENS[env] || []).slice();
       // CAW (per env) — added on top of the static list. Skip if not deployed.
@@ -700,6 +709,37 @@ const LINKING_STEPS = [
     getter: 'cawActions',
     args: (state) => [state.addresses.CawActions_L1],
     condition: (state) => state.addresses.CawProfileL2_L1 && state.addresses.CawActions_L1,
+  },
+  {
+    // Nonce-prediction correctness assertion. CawCapOracle_L1 bakes CawActions_L1
+    // as an immutable. If the deploy scheduler ever interleaves another L1 contract
+    // between CawCapOracle_L1 and CawActions_L1 the oracle's push target would be
+    // wrong and the cap mechanism would be silently dead. Fail fast here so a
+    // broken deploy is caught before it reaches the finalization phase.
+    name: 'Assert CawCapOracle_L1.cawActions == CawActions_L1 (nonce-prediction check)',
+    chain: 'L1',
+    phase: 2,
+    custom: async (state, deployer) => {
+      const oracleAddr = state.addresses.CawCapOracle_L1;
+      const actionsAddr = state.addresses.CawActions_L1;
+      if (!oracleAddr || !actionsAddr) {
+        throw new Error('CawCapOracle_L1 or CawActions_L1 not deployed — cannot assert nonce-prediction correctness');
+      }
+      const oracle = deployer.getContract('CawCapOracle_L1');
+      if (!oracle) {
+        throw new Error('CawCapOracle_L1 contract handle missing');
+      }
+      const storedCawActions = await oracle.cawActions();
+      if (storedCawActions.toLowerCase() !== actionsAddr.toLowerCase()) {
+        throw new Error(
+          `NONCE PREDICTION MISMATCH: CawCapOracle_L1.cawActions=${storedCawActions} ` +
+          `but CawActions_L1 deployed at ${actionsAddr}. ` +
+          `The cap-push mechanism is broken — abort and redeploy from scratch.`
+        );
+      }
+      console.log(`   Assertion passed: oracle.cawActions() == CawActions_L1 (${actionsAddr})`);
+    },
+    condition: (state) => state.addresses.CawCapOracle_L1 && state.addresses.CawActions_L1,
   },
   {
     // One-shot setter — reverts if already set (SiblingSet). skipIf guards idempotency.

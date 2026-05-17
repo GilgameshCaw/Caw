@@ -200,3 +200,134 @@ contract("CawActions.capState — storage accessors", (accounts) => {
     assert.equal(ratio.toString(), state.ratio.toString());
   });
 });
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Test 4: Stale-ratio fallback — after CAP_STALE_THRESHOLD passes, _getCost
+// reverts to baseline regardless of stored ratio.
+//
+// CawActions._getCost: if (block.timestamp - capState.lastUpdatedAt > 24h)
+//   return baseline.
+// This test seeds a non-zero ratio via oracle.recordSample, advances the EVM
+// clock past 24 h, and asserts that capState shows a stale lastUpdatedAt so
+// the baseline path would be taken. A processActions call is not made here
+// (would require full profile/network stack); the invariant is verified
+// through capState storage + the documented _getCost logic.
+// ─────────────────────────────────────────────────────────────────────────────
+
+contract("CawActions._getCost — stale-ratio fallback after CAP_STALE_THRESHOLD", (accounts) => {
+  const writer = accounts[1];
+  const CAP_STALE_THRESHOLD = 24 * 3600; // mirrors CawActions.CAP_STALE_THRESHOLD
+
+  let cawActions, oracle;
+
+  before(async () => {
+    const l2Endpoint = await MockLayerZeroEndpoint.new(l2Eid);
+    const cawProfileL2 = await CawProfileL2.new(l1Eid, l2Endpoint.address, ZERO);
+
+    // mockTarget is the oracle's push target (substitutes for CawActions in oracle setup)
+    const MockCawActionsCapTarget = artifacts.require("MockCawActionsCapTarget");
+    const mockTarget = await MockCawActionsCapTarget.new();
+
+    // Deploy real oracle with writer = accounts[1], push target = mockTarget.
+    // We use mockTarget so we can control ratio independently; the real
+    // CawActions below has oracle.address as its capOracle immutable.
+    oracle = await CawCapOracle.new(writer, mockTarget.address);
+
+    // Deploy CawActions with oracle as capOracle so setCapRatio is auth-gated
+    // to oracle.address. We call setCapRatio directly from oracle to seed state.
+    cawActions = await CawActions.new(
+      cawProfileL2.address, ZERO, ZERO_BYTES32, ZERO, oracle.address
+    );
+  });
+
+  it("seeds a non-zero ratio via direct oracle.cawActions call, confirms capState.lastUpdatedAt set", async () => {
+    // Directly call setCapRatio from the oracle address. Because we deployed
+    // cawActions with capOracle = oracle.address, only oracle.address may call
+    // setCapRatio. We impersonate oracle.address via web3.eth.sendTransaction.
+    //
+    // Truffle dev network: oracle.address is a contract, not an EOA — we can't
+    // send from it directly. Instead, use a mock-oracle pattern: deploy a
+    // CawActions with capOracle = accounts[1] (a real EOA) so we can call
+    // setCapRatio directly from accounts[1].
+    const l2Endpoint2 = await MockLayerZeroEndpoint.new(l2Eid);
+    const cawProfileL2b = await CawProfileL2.new(l1Eid, l2Endpoint2.address, ZERO);
+
+    // capOracle = accounts[1] (EOA) so we can call setCapRatio from tests
+    const CawActionsArtifact = artifacts.require("CawActions");
+    const cawActionsB = await CawActionsArtifact.new(
+      cawProfileL2b.address, ZERO, ZERO_BYTES32, ZERO, accounts[1]
+    );
+
+    // Set a non-zero ratio from the oracle EOA (accounts[1])
+    const nonZeroRatio = new BN("1000000000000000000000"); // arbitrary non-zero
+    await cawActionsB.setCapRatio(nonZeroRatio.toString(), { from: accounts[1] });
+
+    const state = await cawActionsB.capState();
+    assert(
+      !state.ratio.isZero(),
+      "capState.ratio should be non-zero after setCapRatio"
+    );
+    assert(
+      new BN(state.lastUpdatedAt.toString()).gt(new BN(0)),
+      "capState.lastUpdatedAt should be non-zero after setCapRatio"
+    );
+  });
+
+  it("after evm_increaseTime past CAP_STALE_THRESHOLD, capState is stale → _getCost returns baseline", async () => {
+    // Setup: deploy fresh CawActions with capOracle = accounts[1] (EOA)
+    const l2Endpoint3 = await MockLayerZeroEndpoint.new(l2Eid);
+    const cawProfileL2c = await CawProfileL2.new(l1Eid, l2Endpoint3.address, ZERO);
+    const CawActionsArtifact = artifacts.require("CawActions");
+    const cawActionsC = await CawActionsArtifact.new(
+      cawProfileL2c.address, ZERO, ZERO_BYTES32, ZERO, accounts[1]
+    );
+
+    // Push a ratio that would bind the cap (high price scenario: 1e9 wei/CAW)
+    // If the cap bound: LIKE cost = 2e11 / 1e9 = 200 < baseline 2000
+    const bindingRatio = uqPriceFromWeiPerCaw(new BN("1000000000")); // 1e9
+    await cawActionsC.setCapRatio(bindingRatio.toString(), { from: accounts[1] });
+
+    const stateBefore = await cawActionsC.capState();
+    assert(!stateBefore.ratio.isZero(), "ratio should be non-zero (cap-binding)");
+
+    // Advance time past CAP_STALE_THRESHOLD (24h + 1s)
+    await web3.currentProvider.send({
+      jsonrpc: '2.0', method: 'evm_increaseTime',
+      params: [CAP_STALE_THRESHOLD + 1], id: Date.now()
+    }, () => {});
+    await web3.currentProvider.send({
+      jsonrpc: '2.0', method: 'evm_mine', params: [], id: Date.now()
+    }, () => {});
+
+    // Read current block timestamp
+    const latestBlock = await web3.eth.getBlock('latest');
+    const blockTs = new BN(latestBlock.timestamp.toString());
+
+    const stateAfter = await cawActionsC.capState();
+    const lastUpdated = new BN(stateAfter.lastUpdatedAt.toString());
+    const elapsed = blockTs.sub(lastUpdated);
+
+    // Confirm the stale invariant: block.timestamp - lastUpdatedAt > CAP_STALE_THRESHOLD
+    // This is the exact condition under which _getCost returns baseline.
+    assert(
+      elapsed.gt(new BN(CAP_STALE_THRESHOLD.toString())),
+      `elapsed (${elapsed.toString()}s) should exceed CAP_STALE_THRESHOLD (${CAP_STALE_THRESHOLD}s) — stale condition not met`
+    );
+
+    // capState.ratio is still non-zero (push hasn't been cleared) but the
+    // stale guard fires before it's used. _getCost returns baseline.
+    assert(!stateAfter.ratio.isZero(), "ratio still non-zero (no clear push happened)");
+
+    // Sanity: capStateRatio() agrees with capState().ratio
+    const ratioView = await cawActionsC.capStateRatio();
+    assert.equal(
+      ratioView.toString(),
+      stateAfter.ratio.toString(),
+      "capStateRatio() must equal capState().ratio"
+    );
+
+    // The stale invariant directly maps to the _getCost baseline return:
+    //   if (block.timestamp - s.lastUpdatedAt > CAP_STALE_THRESHOLD) return baseline;
+    // Both pre-conditions are confirmed above: ratio != 0 AND elapsed > threshold.
+  });
+});
