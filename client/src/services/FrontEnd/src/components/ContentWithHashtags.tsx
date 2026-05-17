@@ -56,6 +56,30 @@ const MediaSkeleton = () => (
   <div className="my-2 max-w-full h-48 bg-gray-200 dark:bg-gray-700 rounded-lg animate-pulse" />
 )
 
+// Visible fallback when an image fails both the srcset retry and the
+// plain-src retry. Keeps the grid cell occupied so the layout doesn't
+// collapse into a misleading empty slot.
+const BrokenImagePlaceholder: React.FC<{ className?: string }> = ({ className }) => (
+  <div
+    className={className ?? 'my-2 max-w-full h-48 rounded-lg bg-gray-200 dark:bg-gray-700 flex items-center justify-center'}
+    aria-label="Image failed to load"
+  >
+    <svg
+      xmlns="http://www.w3.org/2000/svg"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.5"
+      className="w-8 h-8 text-gray-400 dark:text-gray-500"
+    >
+      <rect x="3" y="3" width="18" height="18" rx="2" />
+      <circle cx="8.5" cy="8.5" r="1.5" />
+      <path d="M21 15l-5-5L5 21" />
+      <line x1="3" y1="3" x2="21" y2="21" />
+    </svg>
+  </div>
+)
+
 // Component to render short URL images. `originHost` lets us resolve a
 // short URL against a different node when the post was created on a
 // mirror — see resolverEndpoint() comment.
@@ -85,13 +109,25 @@ const ShortUrlImage: React.FC<{
   )
 
   const [lightboxOpen, setLightboxOpen] = useState(false)
+  // Two-stage retry: first failure clears srcSet (the chosen variant
+  // 404'd — old uploads predate the variant generator), second failure
+  // gives up and surfaces a placeholder. Prevents the grid-cell-blank
+  // failure mode where errorred images left a dead slot.
+  const [srcsetFailed, setSrcsetFailed] = useState(false)
 
   if (loading) {
     return skeletonClassName
       ? <div className={skeletonClassName} />
       : <MediaSkeleton />
   }
-  if (!originalUrl || imageErrors.has(originalUrl)) return null
+  if (!originalUrl) return null
+  if (imageErrors.has(originalUrl)) {
+    return (
+      <BrokenImagePlaceholder
+        className={skeletonClassName ?? wrapperClassName ?? 'my-2 max-w-full h-48 rounded-lg bg-gray-200 dark:bg-gray-700 flex items-center justify-center'}
+      />
+    )
+  }
 
   // feedImageLargeUrl returns undefined for URLs outside /uploads/images/,
   // and the lightbox falls back to `src` if the variant 404s — so it's
@@ -106,12 +142,15 @@ const ShortUrlImage: React.FC<{
       <div className={wrapper}>
         <img
           src={originalUrl}
-          srcSet={feedImageSrcset(originalUrl)}
-          sizes={sizes ?? SIZES_SINGLE}
+          srcSet={srcsetFailed ? undefined : feedImageSrcset(originalUrl)}
+          sizes={srcsetFailed ? undefined : (sizes ?? SIZES_SINGLE)}
           alt="Embedded content"
           className={imgClass}
           loading="lazy"
-          onError={() => onError(originalUrl)}
+          onError={() => {
+            if (!srcsetFailed) setSrcsetFailed(true)
+            else onError(originalUrl)
+          }}
           onClick={(e) => {
             e.stopPropagation()
             if (onImageClick) {
@@ -132,6 +171,61 @@ const ShortUrlImage: React.FC<{
       )}
     </>
   )
+}
+
+// Direct-URL image renderer with the same two-stage retry / placeholder
+// fallback as ShortUrlImage. Used for images embedded as raw http(s)
+// URLs (canonical /uploads/images/ paths, validated by
+// isCanonicalUploadUrl upstream). Kept as a separate component so each
+// instance owns its own srcsetFailed state — can't useState inside a
+// JSX render loop.
+const DirectImage: React.FC<{
+  url: string
+  imgClass: string
+  wrapperClass?: string
+  sizes: string
+  alt: string
+  imageErrors: Set<string>
+  onError: (url: string) => void
+  onClick: (e: React.MouseEvent) => void
+  /** When non-empty (count > 4 grid), overlay rendered by caller. */
+  overlay?: React.ReactNode
+}> = ({ url, imgClass, wrapperClass, sizes, alt, imageErrors, onError, onClick, overlay }) => {
+  const [srcsetFailed, setSrcsetFailed] = useState(false)
+
+  if (imageErrors.has(url)) {
+    return (
+      <BrokenImagePlaceholder
+        className={wrapperClass ?? 'my-2 max-w-full h-48 rounded-lg bg-gray-200 dark:bg-gray-700 flex items-center justify-center'}
+      />
+    )
+  }
+
+  const img = (
+    <img
+      src={url}
+      srcSet={srcsetFailed ? undefined : feedImageSrcset(url)}
+      sizes={srcsetFailed ? undefined : sizes}
+      alt={alt}
+      className={imgClass}
+      loading="lazy"
+      onError={() => {
+        if (!srcsetFailed) setSrcsetFailed(true)
+        else onError(url)
+      }}
+      onClick={onClick}
+    />
+  )
+
+  if (wrapperClass) {
+    return (
+      <>
+        {img}
+        {overlay}
+      </>
+    )
+  }
+  return <div className="my-2 max-w-full">{img}{overlay}</div>
 }
 
 // Component to render an inline short URL link — shows the original URL
@@ -595,22 +689,20 @@ const ContentWithHashtags: React.FC<Props> = ({ content, className = '', postId,
           } else if (only.type === 'image') {
             const url = only.data
             result.push(
-              <div key={`img-${start}`} className="my-2 max-w-full">
-                <img
-                  src={url}
-                  srcSet={feedImageSrcset(url)}
-                  sizes={SIZES_SINGLE}
-                  alt="Embedded content"
-                  className="max-w-full max-h-96 rounded-lg object-contain cursor-zoom-in"
-                  loading="lazy"
-                  onError={() => handleImageError(url)}
-                  onClick={(e) => {
-                    e.stopPropagation()
-                    if (postId) openPostMedia(imageIdx)
-                    else setLightbox({ src: url, largeSrc: feedImageLargeUrl(url) })
-                  }}
-                />
-              </div>
+              <DirectImage
+                key={`img-${start}`}
+                url={url}
+                imgClass="max-w-full max-h-96 rounded-lg object-contain cursor-zoom-in"
+                sizes={SIZES_SINGLE}
+                alt="Embedded content"
+                imageErrors={imageErrors}
+                onError={handleImageError}
+                onClick={(e) => {
+                  e.stopPropagation()
+                  if (postId) openPostMedia(imageIdx)
+                  else setLightbox({ src: url, largeSrc: feedImageLargeUrl(url) })
+                }}
+              />
             )
           }
           continue
@@ -645,14 +737,14 @@ const ContentWithHashtags: React.FC<Props> = ({ content, className = '', postId,
                       onImageClick={postId ? () => openPostMedia(baseImageIndex + idx) : undefined}
                     />
                   ) : (
-                    <img
-                      src={im.data}
-                      srcSet={feedImageSrcset(im.data)}
+                    <DirectImage
+                      url={im.data}
+                      imgClass="block w-full h-full object-cover cursor-zoom-in"
+                      wrapperClass="w-full h-full"
                       sizes={SIZES_GRID_CELL}
                       alt={`Embedded content ${idx + 1}`}
-                      className="block w-full h-full object-cover cursor-zoom-in"
-                      loading="lazy"
-                      onError={() => handleImageError(im.data)}
+                      imageErrors={imageErrors}
+                      onError={handleImageError}
                       onClick={(e) => {
                         e.stopPropagation()
                         if (postId) openPostMedia(baseImageIndex + idx)
