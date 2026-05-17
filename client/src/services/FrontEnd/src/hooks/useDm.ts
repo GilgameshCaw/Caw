@@ -990,7 +990,7 @@ export function useDmMessages(
       // recipient), so the sig binds (senderId, conversationId,
       // contentType, encryptedPayload, timestamp). Audit fix
       // 2026-05-09 (Round 7 #1b).
-      const timestamp = Math.floor(Date.now() / 1000)
+      const timestamp = Date.now()
       const contentType = 'text'
 
       let body: Record<string, any>
