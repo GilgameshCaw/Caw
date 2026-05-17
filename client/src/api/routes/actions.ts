@@ -1918,14 +1918,20 @@ router.post('/batch', async (req, res) => {
       // user's notification feed. Best-effort: a failure here is non-fatal.
       if (parsedRetryIds && parsedRetryIds.length > 0) {
         try {
+          // Prisma's JsonNullableFilter doesn't accept `in:` inside a `path:`
+          // query — only `equals`, `string_contains`, etc. OR a list of per-ID
+          // equals filters; the retry-set is small (sibling rows in one batch),
+          // so the OR length is bounded by batch size.
           await prisma.notification.updateMany({
             where: {
               type: 'ACTION_FAILED',
               userId: firstSenderId,
-              actionPayload: {
-                path: ['originalTxQueueId'],
-                in: parsedRetryIds,
-              },
+              OR: parsedRetryIds.map(id => ({
+                actionPayload: {
+                  path: ['originalTxQueueId'],
+                  equals: id,
+                },
+              })),
             },
             data: { hidden: true },
           })
