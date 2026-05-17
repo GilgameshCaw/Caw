@@ -93,7 +93,7 @@ contract('CawProfileL2 — ERC-1271 register-session', function (accounts) {
   before(async function () {
     this.timeout(60000);
     const l2Endpoint = await MockLayerZeroEndpoint.new(l2);
-    cawProfileL2 = await CawProfileL2.new(l1, l2Endpoint.address);
+    cawProfileL2 = await CawProfileL2.new(l1, l2Endpoint.address, "0x0000000000000000000000000000000000000000");
     chainId = await web3.eth.getChainId();
     domain = { name: 'CawProfileL2', version: '1', chainId, verifyingContract: cawProfileL2.address };
   });

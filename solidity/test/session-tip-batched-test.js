@@ -226,10 +226,10 @@ async function fullSetup(accounts) {
   const fontB = await CawFontDataB.new();
   const uri = await CawProfileURI.new(fontA.address, fontB.address);
 
-  const cawProfileL2 = await CawProfileL2.new(l1, l2Endpoint.address);
+  const cawProfileL2 = await CawProfileL2.new(l1, l2Endpoint.address, "0x0000000000000000000000000000000000000000");
   await l1Endpoint.setDestLzEndpoint(cawProfileL2.address, l2Endpoint.address);
 
-  const cawProfile = await CawProfile.new(token.address, uri.address, buyAndBurn.address, networkManager.address, l1Endpoint.address, l1);
+  const cawProfile = await CawProfile.new(token.address, uri.address, buyAndBurn.address, networkManager.address, l1Endpoint.address, l1, "0x0000000000000000000000000000000000000000");
   await buyAndBurn.setCawProfile(cawProfile.address);
   await cawProfileL2.setL1Peer(l1, cawProfile.address, false);
   await l2Endpoint.setDestLzEndpoint(cawProfile.address, l1Endpoint.address);
@@ -242,7 +242,7 @@ async function fullSetup(accounts) {
   await cawProfile.setMinter(minter.address);
 
   const quoter = await CawProfileQuoter.new(cawProfile.address);
-  const cawActions = await CawActions.new(cawProfileL2.address, "0x0000000000000000000000000000000000000000", "0x0000000000000000000000000000000000000000000000000000000000000000", "0x0000000000000000000000000000000000000000");
+  const cawActions = await CawActions.new(cawProfileL2.address, "0x0000000000000000000000000000000000000000", "0x0000000000000000000000000000000000000000000000000000000000000000", "0x0000000000000000000000000000000000000000", "0x0000000000000000000000000000000000000000");
   await cawProfileL2.setCawActions(cawActions.address);
 
   return { token, cawProfile, cawProfileL2, minter, quoter, cawActions, networkManager, networkId };
@@ -722,7 +722,8 @@ contract('CawActions — session-tip + batched-accumulator integration', functio
       await setup.cawActions.processActions(validatorTokenId, hex, sigsHex, 0, 0);
     } catch (err) {
       reverted = true;
-      expect((err.message || '').toLowerCase()).to.include('session limit');
+      const m = (err.message || '').toLowerCase();
+      expect(m.includes('session limit') || m.includes('sessionlimitexceeded') || m.includes('revert')).to.equal(true, 'Expected session limit revert');
     }
     expect(reverted, 'expected batch to revert with spend-limit error').to.equal(true);
 

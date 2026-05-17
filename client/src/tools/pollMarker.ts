@@ -62,11 +62,17 @@ const POLL_IMAGE_HASH_REGEX = /^[a-f0-9]{8}$/
 // Wire shape:
 //   ::poll:opt1:opt2:opt3::pd:7d::
 //   ::poll:opt1:opt2::pi:host:hash:hash::pd:1h::
-// Order: ::pi:::: comes before ::pd:::: when both are present, so the
-// parser walks sidecars in known order. Old mirrors that don't know
-// about ::pd: just ignore the trailing bytes (the main poll/image
-// shape stays intact).
+//   ::poll:opt1:opt2:opt3::pm::                       (multi-select)
+//   ::poll:opt1:opt2::pi:host:hash:hash::pd:1h::pm::  (everything)
+// Order: ::pi: → ::pd: → ::pm: when present. Parser walks sidecars
+// in this order; missing ones are tolerated. Old mirrors that don't
+// know about a sidecar just ignore the trailing bytes (the main
+// poll/image shape stays intact).
 const POLL_DURATION_REGEX = /^::pd:(\d{1,3}[hdw])::/
+// Multi-select flag sidecar — bare `::pm::` (4 bytes). Presence
+// indicates the poll accepts multiple option picks per voter. Absent =
+// single-select, the historical default.
+const POLL_MULTISELECT_REGEX = /^::pm::/
 // Mapping from unit suffix to seconds. Kept narrow (h/d/w) so the
 // validator's allow-list is trivial — minutes feel too short for a
 // social poll, months are unbounded enough we'd rather force a fresh
@@ -173,6 +179,10 @@ export interface ParsedPoll {
   /** Raw duration value from the marker (e.g. "7d"). Preserved so
    *  re-renderers can emit the same wire form when reconstructing. */
   durationValue?: string
+  /** True when the ::pm:: sidecar is present. Multi-select polls let
+   *  the voter pick multiple options; each vote action toggles a
+   *  specific option in or out (instead of replacing the prior pick). */
+  multiSelect: boolean
 }
 
 /**
@@ -267,6 +277,16 @@ export function parsePoll(text: string): ParsedPoll | null {
     }
   }
 
+  // ::pm:: — multi-select flag. Same lenient-tail policy: a malformed
+  // run leaves the literal bytes in the body for older renderers to
+  // ignore.
+  let multiSelect = false
+  const msMatch = POLL_MULTISELECT_REGEX.exec(text.slice(cursor))
+  if (msMatch) {
+    multiSelect = true
+    cursor += msMatch[0].length
+  }
+
   return {
     marker: text.slice(match.index, cursor),
     start: match.index,
@@ -278,6 +298,7 @@ export function parsePoll(text: string): ParsedPoll | null {
     imageScheme,
     durationSeconds,
     durationValue,
+    multiSelect,
   }
 }
 
@@ -307,6 +328,7 @@ export function buildPollMarker(
   imageHashes?: string[],
   meta?: { host: string; port?: number; scheme?: 'http' | 'https' },
   duration?: string,
+  multiSelect?: boolean,
 ): string | null {
   const trimmed = options.map(o => o.trim()).filter(o => o.length > 0)
   if (trimmed.length < POLL_MIN_OPTIONS || trimmed.length > POLL_MAX_OPTIONS) {
@@ -351,6 +373,11 @@ export function buildPollMarker(
       out += `::pd:${duration}::`
     }
   }
+
+  // Multi-select flag sidecar — bare presence indicates the poll
+  // accepts multiple picks per voter. Omitted on single-select (the
+  // default, common path).
+  if (multiSelect) out += `::pm::`
 
   return out
 }

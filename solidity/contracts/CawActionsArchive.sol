@@ -295,7 +295,11 @@ contract CawActionsArchive is Ownable, ReentrancyGuard, OnlyOnce, OApp {
   function finalizeSubmission(uint256 submissionId) external {
     Submission storage sub = submissions[submissionId];
     require(sub.status == Status.PENDING, "Not pending");
-    require(block.timestamp >= sub.finalizedAt, "Challenge period active");
+    // Strict `>` reserves the boundary timestamp for challengers. With `>=`,
+    // a fraudulent submitter colluding with a block builder could front-run
+    // an honest resolveChallenge in the same block at exactly finalizedAt,
+    // permanently escaping slash. (Audit 2026-05-17, M-1.)
+    require(block.timestamp > sub.finalizedAt, "Challenge period active");
 
     sub.status = Status.FINALIZED;
     pendingCount[sub.submitter]--;

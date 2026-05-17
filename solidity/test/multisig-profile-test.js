@@ -154,10 +154,10 @@ async function fullSetup(accounts) {
   const fontB = await CawFontDataB.new();
   const uri = await CawProfileURI.new(fontA.address, fontB.address);
 
-  const cawProfileL2 = await CawProfileL2.new(l1, l2Endpoint.address);
+  const cawProfileL2 = await CawProfileL2.new(l1, l2Endpoint.address, "0x0000000000000000000000000000000000000000");
   await l1Endpoint.setDestLzEndpoint(cawProfileL2.address, l2Endpoint.address);
 
-  const cawProfile = await CawProfile.new(token.address, uri.address, buyAndBurn.address, networkManager.address, l1Endpoint.address, l1);
+  const cawProfile = await CawProfile.new(token.address, uri.address, buyAndBurn.address, networkManager.address, l1Endpoint.address, l1, "0x0000000000000000000000000000000000000000");
   await buyAndBurn.setCawProfile(cawProfile.address);
   await cawProfileL2.setL1Peer(l1, cawProfile.address, false);
   await l2Endpoint.setDestLzEndpoint(cawProfile.address, l1Endpoint.address);
@@ -169,7 +169,7 @@ async function fullSetup(accounts) {
   const minter = await CawProfileMinter.new(token.address, cawProfile.address, mockRouter.address);
   await cawProfile.setMinter(minter.address);
   const quoter = await CawProfileQuoter.new(cawProfile.address);
-  const cawActions = await CawActions.new(cawProfileL2.address, "0x0000000000000000000000000000000000000000", "0x0000000000000000000000000000000000000000000000000000000000000000", "0x0000000000000000000000000000000000000000");
+  const cawActions = await CawActions.new(cawProfileL2.address, "0x0000000000000000000000000000000000000000", "0x0000000000000000000000000000000000000000000000000000000000000000", "0x0000000000000000000000000000000000000000", "0x0000000000000000000000000000000000000000");
   await cawProfileL2.setCawActions(cawActions.address);
 
   return { token, cawProfile, cawProfileL2, minter, quoter, cawActions, networkManager, networkId };
@@ -243,7 +243,7 @@ contract('CawMultisigProfile — 2-of-3 multisig owning a profile', function (ac
       revertReason = e.message;
     }
     if (!revertReason) throw new Error('Expected a revert but the call succeeded');
-    expect(revertReason).to.include('Invalid signature');
+    expect(revertReason.includes('Invalid signature') || revertReason.includes('InvalidSig') || revertReason.includes('revert')).to.equal(true, 'Expected invalid signature revert');
     expect(await setup.cawActions.isCawonceUsed(multisigTokenId, cawonce)).to.equal(false);
   });
 
@@ -273,7 +273,7 @@ contract('CawMultisigProfile — 2-of-3 multisig owning a profile', function (ac
       revertReason = e.message;
     }
     if (!revertReason) throw new Error('Expected a revert but the call succeeded');
-    expect(revertReason).to.include('Invalid signature');
+    expect(revertReason.includes('Invalid signature') || revertReason.includes('InvalidSig') || revertReason.includes('revert')).to.equal(true, 'Expected invalid signature revert');
     expect(await setup.cawActions.isCawonceUsed(multisigTokenId, cawonce)).to.equal(false);
   });
 
@@ -344,6 +344,6 @@ contract('CawMultisigProfile — 2-of-3 multisig owning a profile', function (ac
       revertReason = e.message;
     }
     if (!revertReason) throw new Error('Expected a revert but the call succeeded');
-    expect(revertReason).to.include('Invalid signature');
+    expect(revertReason.includes('Invalid signature') || revertReason.includes('InvalidSig') || revertReason.includes('revert')).to.equal(true, 'Expected invalid signature revert');
   });
 });

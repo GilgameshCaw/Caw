@@ -16,6 +16,7 @@ import {
   HiCheck,
   HiCurrencyDollar,
   HiTag,
+  HiChartBar,
   HiOutlineBell,
   HiOutlineAtSymbol
 } from 'react-icons/hi'
@@ -29,6 +30,8 @@ import Avatar from '~/components/Avatar'
 import { LoadingSpinner } from '~/components/Skeleton'
 import UserHoverCard from '~/components/UserHoverCard'
 import { CawThumbnail, pickCawThumbnail } from '~/utils/cawThumbnail'
+import { stripPollMarker } from '~/../../../tools/pollMarker'
+import PollMiniResults from '~/components/PollMiniResults'
 import { useModalStore } from '~/store/modalStore'
 
 interface Actor {
@@ -41,7 +44,7 @@ interface Actor {
 
 interface Notification {
   id: number
-  type: 'FOLLOW' | 'LIKE' | 'REPLY' | 'REPOST' | 'QUOTE' | 'MENTION' | 'TIP' | 'OFFER' | 'OUTBID' | 'AUCTION_WON' | 'SALE_SOLD' | 'SALE_BOUGHT' | 'ACTION_FAILED'
+  type: 'FOLLOW' | 'LIKE' | 'REPLY' | 'REPOST' | 'QUOTE' | 'MENTION' | 'TIP' | 'OFFER' | 'OUTBID' | 'AUCTION_WON' | 'SALE_SOLD' | 'SALE_BOUGHT' | 'ACTION_FAILED' | 'VOTE'
   actor: Actor
   additionalActors?: Actor[]
   caw?: {
@@ -54,6 +57,16 @@ interface Notification {
     hasVideo?: boolean
     imageData?: string | null
     videoData?: string | null
+    // Poll data when the caw has an attached poll. Shaped by the API to
+    // match the PollMiniResults Props interface. userVote is always null
+    // here (recipient is the poll author, not a voter).
+    poll?: {
+      options: string[]
+      totalVotes: number
+      optionVoteCounts: number[]
+      userVote: { optionIndex: number; pending: boolean } | null
+      endsAt?: string | null
+    }
   }
   offer?: {
     id: number
@@ -101,7 +114,11 @@ interface Notification {
   isRead: boolean
   createdAt: string
   count?: number
-  groupKey?: string
+  groupKey?: string | null
+  // Per-NotificationGroup identity. Use this to scope the "X others" modal
+  // to just the actors of THIS rollup; querying by groupKey alone is wrong
+  // for FOLLOW (every follow notification has groupKey='follow').
+  groupId?: number | null
   notificationIds: number[]
 }
 
@@ -324,6 +341,8 @@ const Notifications: React.FC = () => {
         return <HiTag className="w-6 h-6 text-blue-500" />
       case 'ACTION_FAILED':
         return <HiBell className="w-6 h-6 text-red-400" />
+      case 'VOTE':
+        return <HiChartBar className="w-6 h-6 text-yellow-500" />
       default:
         return <HiBell className="w-6 h-6 text-gray-500" />
     }
@@ -543,6 +562,10 @@ const Notifications: React.FC = () => {
                 e.preventDefault()
                 e.stopPropagation()
                 openModal('notificationActors', {
+                  // Prefer groupId (per-NotificationGroup, precise). Always
+                  // include groupKey too as a legacy fallback for stale
+                  // server bundles that don't yet honor groupId.
+                  groupId: notification.groupId ?? undefined,
                   groupKey: groupKey ?? `${type}:${actor.tokenId}`,
                   userId: activeToken?.tokenId ?? 0,
                   notificationType,
@@ -592,6 +615,8 @@ const Notifications: React.FC = () => {
         return <>{Actor(actorNode)} {Action(t('notifications.message.quoted', { count }))}</>
       case 'MENTION':
         return <>{Actor(actorNode)} {Action(t('notifications.message.mentioned', { count }))}</>
+      case 'VOTE':
+        return <>{Actor(actorNode)} {Action(t('notifications.message.voted', { count }))}</>
       case 'TIP': {
         const tipAmt = notification.actionPayload?.tipAmount
         let tipLabel = ''
@@ -1041,11 +1066,25 @@ const Notifications: React.FC = () => {
                 <div className="flex-1 min-w-0">
                   <div className={`min-w-0 text-sm md:text-base leading-snug ${isDark ? 'text-white' : 'text-gray-900'}`}>
                     {notification.actor && notification.type !== 'ACTION_FAILED' && (
-                      <Avatar
-                        src={getUserAvatar(notification.actor)}
-                        className="w-7 h-7 rounded-full flex-shrink-0 inline-block align-middle mr-1.5"
-                        size="small"
-                      />
+                      notification.actor.username ? (
+                        <Link
+                          to={`/users/${notification.actor.username}`}
+                          onClick={e => e.stopPropagation()}
+                          className="inline-block align-middle mr-1.5"
+                        >
+                          <Avatar
+                            src={getUserAvatar(notification.actor)}
+                            className="w-7 h-7 rounded-full flex-shrink-0"
+                            size="small"
+                          />
+                        </Link>
+                      ) : (
+                        <Avatar
+                          src={getUserAvatar(notification.actor)}
+                          className="w-7 h-7 rounded-full flex-shrink-0 inline-block align-middle mr-1.5"
+                          size="small"
+                        />
+                      )
                     )}
                     {getNotificationText(notification)}
                     <Tooltip text={formatFullDateTime(notification.createdAt)} className="inline-block">
@@ -1060,15 +1099,29 @@ const Notifications: React.FC = () => {
                     // Pick a thumbnail (if any) AND scrub any lifted GIF
                     // URL out of the snippet so we don't render the URL
                     // text twice when the same media is shown as the
-                    // thumb on the right.
-                    const picked = pickCawThumbnail(notification.caw, notification.caw.content)
-                    return picked.body ? (
-                      <p className={`text-sm mt-1 truncate ${
-                        isDark ? 'text-white/60' : 'text-gray-600'
-                      }`}>
-                        {picked.body}
-                      </p>
-                    ) : null
+                    // thumb on the right. stripPollMarker hides the raw
+                    // ::poll:opt1:opt2:: sidecar so it doesn't leak into
+                    // the notification body. When the caw has a poll
+                    // attached, render PollMiniResults bars below the
+                    // text snippet so the recipient can see live results
+                    // inline.
+                    const picked = pickCawThumbnail(notification.caw, stripPollMarker(notification.caw.content || ''))
+                    return (
+                      <>
+                        {picked.body && (
+                          <p className={`text-sm mt-1 truncate ${
+                            isDark ? 'text-white/60' : 'text-gray-600'
+                          }`}>
+                            {picked.body}
+                          </p>
+                        )}
+                        {notification.caw.poll && (
+                          <div className="mt-1.5">
+                            <PollMiniResults poll={notification.caw.poll as any} width={220} rowHeight={18} />
+                          </div>
+                        )}
+                      </>
+                    )
                   })()}
                 </div>
                 {notification.caw && (() => {
@@ -1076,7 +1129,7 @@ const Notifications: React.FC = () => {
                   // enough to run twice (regex match + a couple of string
                   // splits, no fetch) that the alternative of hoisting it
                   // up isn't worth restructuring the JSX flow for.
-                  const { thumb } = pickCawThumbnail(notification.caw, notification.caw.content)
+                  const { thumb } = pickCawThumbnail(notification.caw, stripPollMarker(notification.caw.content || ''))
                   if (!thumb) return null
                   return (
                     <CawThumbnail

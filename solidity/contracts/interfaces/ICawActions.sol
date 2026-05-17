@@ -4,6 +4,18 @@ pragma solidity ^0.8.0;
 interface ICawActions {
   function nextCawonce(uint32 senderId) external view returns (uint256);
 
+  // ── Cap oracle push interface ─────────────────────────────────────────────
+  // Called by CawCapOracle to push the current TWAP ratio into storage so
+  // CawActions can read it per-batch (zero external calls per action).
+
+  /// @notice Returns the currently stored cap ratio (UQ112.112 WETH-per-CAW).
+  ///         Zero means the cap is dormant and baseline action costs apply.
+  function capStateRatio() external view returns (uint192);
+
+  /// @notice Called by CawCapOracle to push a new TWAP ratio.
+  ///         Caller must be the immutable capOracle address or the call reverts.
+  function setCapRatio(uint192 newRatio) external;
+
   // ── ERC-1271 sibling callbacks ────────────────────────────────────────────
   // Called by CawActionsERC1271 only.
 

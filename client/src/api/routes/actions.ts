@@ -464,16 +464,15 @@ router.post('/', async (req, res) => {
               select: { id: true }
             })
             if (originalCaw) {
-              const deleted = await prisma.caw.deleteMany({
-                where: { userId: data.senderId, originalCawId: originalCaw.id, action: 'RECAW' }
-              })
-              if (deleted.count > 0) {
-                await prisma.caw.update({
-                  where: { id: originalCaw.id },
-                  data: { recawCount: { decrement: deleted.count } }
+              await prisma.$transaction(async (tx) => {
+                const deleted = await tx.caw.deleteMany({
+                  where: { userId: data.senderId, originalCawId: originalCaw.id, action: 'RECAW' }
                 })
-                console.log(`[Actions] Optimistic undo recaw: user=${data.senderId} of caw=${originalCaw.id}`)
-              }
+                if (deleted.count > 0) {
+                  await countManager.onRecawRemoved(tx, { originalCawId: originalCaw.id, senderId: data.senderId, amount: deleted.count })
+                  console.log(`[Actions] Optimistic undo recaw: user=${data.senderId} of caw=${originalCaw.id}`)
+                }
+              })
             }
           }
         }
@@ -754,6 +753,45 @@ router.post('/', async (req, res) => {
           } catch (replyErr) {
             console.error('Failed to create pending Reply record:', replyErr)
             // Continue even if Reply record creation fails
+          }
+        }
+
+        // Create pending Tip rows for CAW-embedded tips (recipients[] / amounts[]
+        // on the CAW action itself, not a separate OTHER action). The cawId is the
+        // just-created caw row — the tip attaches to the post the user is sending.
+        if (data.recipients && data.recipients.length > 0 && data.amounts && data.amounts.length > 0) {
+          try {
+            // Ensure sender exists
+            await prisma.user.upsert({
+              where: { tokenId: data.senderId },
+              update: {},
+              create: { id: data.senderId, tokenId: data.senderId, username: `user_${data.senderId}` },
+            })
+            for (let ri = 0; ri < data.recipients.length; ri++) {
+              const recipientTokenId = Number(data.recipients[ri])
+              const tipAmount = Number(data.amounts[ri])
+              if (!recipientTokenId || !tipAmount) continue
+              await prisma.user.upsert({
+                where: { tokenId: recipientTokenId },
+                update: {},
+                create: { id: recipientTokenId, tokenId: recipientTokenId, username: `user_${recipientTokenId}` },
+              })
+              await prisma.tip.create({
+                data: {
+                  senderId: data.senderId,
+                  recipientId: recipientTokenId,
+                  amount: tipAmount,
+                  // cawId is the caw being created (the tip is on the sender's own new post).
+                  cawId: caw.id,
+                  cawonce: data.cawonce,
+                  pending: true,
+                },
+              })
+              console.log(`Created pending embedded tip: sender=${data.senderId} recipient=${recipientTokenId} amount=${tipAmount} cawId=${caw.id}`)
+            }
+          } catch (embeddedTipErr) {
+            console.error('Failed to create pending embedded tip rows:', embeddedTipErr)
+            // Non-fatal — indexer will create confirmed rows on chain land.
           }
         }
       } catch (cawErr) {
@@ -1059,7 +1097,7 @@ router.post('/', async (req, res) => {
           // are present.
           const targetCaw = await prisma.caw.findUnique({
             where: { userId_cawonce: { userId: pollOwnerTokenId, cawonce: targetCawonce } },
-            select: { id: true, poll: { select: { id: true, endsAt: true } } },
+            select: { id: true, poll: { select: { id: true, endsAt: true, multiSelect: true } } },
           })
           // Refuse to write an optimistic vote (or unvote) after the
           // poll's endsAt. Mirrors the indexer's enforcement so the
@@ -1085,28 +1123,53 @@ router.post('/', async (req, res) => {
               create: { id: data.senderId, tokenId: data.senderId, username: `user_${data.senderId}` },
             })
 
+            const pollId = targetCaw.poll.id
+            const voterId = data.senderId
+
             if (parsed.optionIndex === null) {
-              // Optimistic unvote: drop the existing row immediately so the UI
-              // reflects "removed" on refresh. If the action fails, the user
-              // gets an ACTION_FAILED notification and can retry; the row
-              // stays gone in the meantime, which matches what they wanted.
+              // Optimistic unvote: drop ALL rows for this voter on this
+              // poll (covers both single-select and multi-select).
               await prisma.vote.deleteMany({
-                where: { pollId: targetCaw.poll.id, voterId: data.senderId },
+                where: { pollId, voterId },
               })
+            } else if (targetCaw.poll.multiSelect) {
+              // Multi-select toggle. Find the existing row for this
+              // specific (pollId, voterId, optionIndex) — if present,
+              // drop it (toggle OFF); if absent, write a pending row
+              // (toggle ON, indexer confirms).
+              const existing = await prisma.vote.findUnique({
+                where: { pollId_voterId_optionIndex: { pollId, voterId, optionIndex: parsed.optionIndex } },
+              })
+              if (existing) {
+                await prisma.vote.delete({ where: { id: existing.id } })
+              } else {
+                await prisma.vote.create({
+                  data: {
+                    pollId,
+                    voterId,
+                    optionIndex: parsed.optionIndex,
+                    cawonce: data.cawonce,
+                    pending: true,
+                  },
+                })
+              }
             } else {
-              // Optimistic vote / change-vote. Upsert with pending=true so
-              // the indexer can flip it to false later. If the user already
-              // had a confirmed vote and is changing, we set pending=true
-              // again — failure cleanup will then revert to the prior state
-              // when the indexer never confirms. Acceptable: a stuck pending
-              // change reverts to "no vote shown" rather than the prior
-              // option, which is the safer side of the tradeoff.
+              // Single-select optimistic vote / change-vote. Drop any
+              // prior rows on a DIFFERENT optionIndex first (the new
+              // pick replaces the old), then upsert the row on the new
+              // option as pending. If the user already had this exact
+              // option marked, the upsert just re-stamps pending=true
+              // (a no-op for the UI but resets the failure-cleanup
+              // window — accept it).
+              await prisma.vote.deleteMany({
+                where: { pollId, voterId, NOT: { optionIndex: parsed.optionIndex } },
+              })
               await prisma.vote.upsert({
-                where: { pollId_voterId: { pollId: targetCaw.poll.id, voterId: data.senderId } },
-                update: { optionIndex: parsed.optionIndex, cawonce: data.cawonce, pending: true },
+                where: { pollId_voterId_optionIndex: { pollId, voterId, optionIndex: parsed.optionIndex } },
+                update: { cawonce: data.cawonce, pending: true },
                 create: {
-                  pollId: targetCaw.poll.id,
-                  voterId: data.senderId,
+                  pollId,
+                  voterId,
                   optionIndex: parsed.optionIndex,
                   cawonce: data.cawonce,
                   pending: true,
@@ -1651,8 +1714,9 @@ router.post('/batch', async (req, res) => {
       }
 
       let created: any
+      let cawByUserCawonce: Map<string, number>
       try {
-        created = await prisma.$transaction(async (tx) => {
+        ;({ txqRows: created, cawByUserCawonce } = await prisma.$transaction(async (tx) => {
         // Step 0: if this batch is a retry, atomically mark every
         // original failed row as 'retried' BEFORE inserting the new
         // batch. Same pattern as the single-action retriedTxQueueId
@@ -1805,8 +1869,8 @@ router.post('/batch', async (req, res) => {
           }
         }
 
-        return txqRows
-      })
+        return { txqRows, cawByUserCawonce }
+      }))
       } catch (err: any) {
         // P2002 = unique constraint violation. Race past the pre-check
         // above; same 409 shape so the FE has one code path.
@@ -1853,14 +1917,20 @@ router.post('/batch', async (req, res) => {
       // user's notification feed. Best-effort: a failure here is non-fatal.
       if (parsedRetryIds && parsedRetryIds.length > 0) {
         try {
+          // Prisma's JsonNullableFilter doesn't accept `in:` inside a `path:`
+          // query — only `equals`, `string_contains`, etc. OR a list of per-ID
+          // equals filters; the retry-set is small (sibling rows in one batch),
+          // so the OR length is bounded by batch size.
           await prisma.notification.updateMany({
             where: {
               type: 'ACTION_FAILED',
               userId: firstSenderId,
-              actionPayload: {
-                path: ['originalTxQueueId'],
-                in: parsedRetryIds,
-              },
+              OR: parsedRetryIds.map(id => ({
+                actionPayload: {
+                  path: ['originalTxQueueId'],
+                  equals: id,
+                },
+              })),
             },
             data: { hidden: true },
           })

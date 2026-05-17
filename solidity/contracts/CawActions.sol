@@ -43,12 +43,42 @@ import "@openzeppelin/contracts/utils/Strings.sol";
 import "@openzeppelin/contracts/interfaces/IERC1271.sol";
 
 import "./CawProfileL2.sol";
+import "./interfaces/ICawCapOracle.sol";
 import { ISP1Verifier } from "./IZKActionsVerifier.sol";
 import { MessagingFee } from "@layerzerolabs/lz-evm-oapp-v2/contracts/oapp/OApp.sol";
 
 contract CawActions is Ownable {
   error NotSibling();
   error OnlySelf();
+  error NotCapOracle();
+  error NoActions();
+  error TooManyActions();
+  error BadSigGroupCount();
+  error SigsIncomplete();
+  error TrailingBytes();
+  error EmptyGroup();
+  error GroupOverflows();
+  error MixedNetworks();
+  error ZkNotConfigured();
+  error ZkSignersMismatch();
+  error CawonceUsed();
+  error UserNotAuth();
+  error TextTooLong();
+  error NoWithdrawFee();
+  error SignerMismatch();
+  error SessionExpired();
+  error MixedSenders();
+  error NonContiguousCawonces();
+  error OutOfScope();
+  error SelfFollow();
+  error SessionLimitExceeded();
+  error UnknownOwner();
+  error InvalidActionType();
+  error BatchSigInvalid();
+  error InvalidSig();
+  error TooManyRecipients();
+  error WithdrawZeroAmount();
+  error InvalidValidator();
 
   enum ActionType { CAW, LIKE, UNLIKE, RECAW, FOLLOW, UNFOLLOW, WITHDRAW, OTHER }
 
@@ -77,6 +107,15 @@ contract CawActions is Ownable {
   /// @notice Tracks cumulative spending (whole CAW tokens) per session key (by owner address)
   mapping(address => mapping(address => uint256)) public sessionSpent;
 
+  /// @notice Pushed-ratio cap state. Packed into one 256-bit slot.
+  ///         The oracle writes this via setCapRatio(); _getCost reads it with
+  ///         a single SLOAD — zero external calls per action.
+  struct CapState {
+    uint64  lastUpdatedAt; // block.timestamp of last setCapRatio call
+    uint192 ratio;         // 0 = cap dormant, baseline applies; else UQ112.112 ethPerCaw TWAP
+  }
+  CapState public capState;
+
   /// @notice Commitment to a processed batch. The full `packedActions` payload lives
   ///         in the originating tx's calldata (the same bytes passed to
   ///         processActions / safeProcessActions); indexers fetch it via
@@ -91,6 +130,10 @@ contract CawActions is Ownable {
   );
   event ActionRejected(uint32 senderId, uint32 cawonce, string reason);
 
+  /// @notice Emitted whenever the cap oracle pushes a new ratio.
+  ///         ratio == 0 means the cap is now dormant (baseline applies).
+  event CapRatioUpdated(uint192 ratio, uint64 timestamp);
+
   CawProfileL2 public immutable cawProfile;
   CawActions public immutable externalSelf;
 
@@ -99,6 +142,11 @@ contract CawActions is Ownable {
   ///         pre-image; immutable thereafter. Only this address may call
   ///         `executeVerifiedGroup`. Zero = ERC-1271 sibling path disabled.
   address public immutable erc1271Sibling;
+
+  /// @notice Cap oracle for ETH-denominated per-action cost ceilings.
+  ///         If address(0), all actions are charged the manifesto baseline
+  ///         (backward-compatible null-oracle fallback, parallel to zkVerifier).
+  ICawCapOracle public immutable capOracle;
 
   // Precomputed type hashes for EIP712
   bytes32 private constant EIP712_DOMAIN_TYPEHASH = keccak256(
@@ -134,6 +182,11 @@ contract CawActions is Ownable {
   uint256 private constant ERC1271_GAS_LIMIT = 50_000;
   bytes4  private constant ERC1271_MAGIC_VALUE = 0x1626ba7e;
 
+  /// @dev If the cap oracle hasn't pushed a fresh ratio within this window,
+  ///      treat the stored ratio as stale and fall back to baseline.
+  ///      Mirrors CawCapOracle.STALE_THRESHOLD — both must stay in sync.
+  uint64 private constant CAP_STALE_THRESHOLD = 24 hours;
+
   // ============================================
   // ZK SIG-RECOVERY PATH (immutable hooks)
   // ============================================
@@ -165,13 +218,14 @@ contract CawActions is Ownable {
     bytes32 batchHash
   );
 
-  constructor(address _cawProfiles, address _zkVerifier, bytes32 _zkProgramVKey, address _erc1271Sibling) {
+  constructor(address _cawProfiles, address _zkVerifier, bytes32 _zkProgramVKey, address _erc1271Sibling, address _capOracle) {
     eip712DomainHash = generateDomainHash();
     externalSelf = CawActions(this);
     cawProfile = CawProfileL2(_cawProfiles);
     zkVerifier = ISP1Verifier(_zkVerifier);
     zkProgramVKey = _zkProgramVKey;
     erc1271Sibling = _erc1271Sibling;
+    capOracle = ICawCapOracle(_capOracle); // address(0) = cap dormant (backward-compatible)
   }
 
   // ============================================
@@ -219,12 +273,12 @@ contract CawActions is Ownable {
   ) external payable {
     uint256 actionCount;
     assembly { actionCount := shr(240, calldataload(packedActions.offset)) }
-    require(actionCount > 0, "No actions");
-    require(actionCount <= 256, "Too many actions");
+    if (actionCount == 0) revert NoActions();
+    if (actionCount > 256) revert TooManyActions();
 
     uint256 numGroups;
     assembly { numGroups := shr(240, calldataload(sigs.offset)) }
-    require(numGroups > 0 && numGroups <= actionCount, "Bad sig group count");
+    if (numGroups == 0 || numGroups > actionCount) revert BadSigGroupCount();
 
     BatchCursor memory c;
     c.pos = 2;     // skip actionCount header
@@ -235,12 +289,12 @@ contract CawActions is Ownable {
       unchecked { ++g; }
     }
 
-    require(c.actionsSeen == actionCount, "Sigs incomplete");
+    if (c.actionsSeen != actionCount) revert SigsIncomplete();
     // Reject trailing bytes after the consumed actions. Without this, two
     // semantically-identical batches with different trailing-byte content
     // emit different `batchHash` fields, confusing indexers that dedupe by
     // batchHash. Audit fix 2026-05-08 (Round 3 CawActions adversarial agent).
-    require(c.pos == packedActions.length, "Trailing bytes");
+    if (c.pos != packedActions.length) revert TrailingBytes();
 
     // Flush the in-memory hash chain back to storage — one SSTORE pair
     // total instead of one per action. networkHashLoaded is the latch:
@@ -281,8 +335,7 @@ contract CawActions is Ownable {
       // _executeWithdrawals after the L2 debit already ran — silent fund
       // loss. Revert instead so a misconfigured validator surfaces. Audit
       // fix 2026-05-08 (C-1; tightened in Round 3).
-      require(withdrawFee > 0 || cawProfile.bypassLZ(),
-              "withdrawFee required");
+      if (withdrawFee == 0 && !cawProfile.bypassLZ()) revert NoWithdrawFee();
       _executeWithdrawals(withdrawFee, withdrawLzTokenAmount);
     }
   }
@@ -326,13 +379,13 @@ contract CawActions is Ownable {
     uint256 withdrawFee,
     uint256 withdrawLzTokenAmount
   ) external payable {
-    require(address(zkVerifier) != address(0), "ZK path not configured");
+    if (address(zkVerifier) == address(0)) revert ZkNotConfigured();
 
     uint256 actionCount;
     assembly { actionCount := shr(240, calldataload(packedActions.offset)) }
-    require(actionCount > 0, "No actions");
-    require(actionCount <= 256, "Too many actions");
-    require(signers.length == actionCount * 20, "signers length mismatch");
+    if (actionCount == 0) revert NoActions();
+    if (actionCount > 256) revert TooManyActions();
+    if (signers.length != actionCount * 20) revert ZkSignersMismatch();
 
     // Verify the proof. The verifier reverts on failure; on success the
     // proof has attested:
@@ -360,7 +413,7 @@ contract CawActions is Ownable {
 
     uint256 numGroups;
     assembly { numGroups := shr(240, calldataload(packedSigs.offset)) }
-    require(numGroups > 0 && numGroups <= actionCount, "Bad sig group count");
+    if (numGroups == 0 || numGroups > actionCount) revert BadSigGroupCount();
 
     uint256 actionsExecutedBitmap;
 
@@ -371,9 +424,9 @@ contract CawActions is Ownable {
       unchecked { ++g; }
     }
 
-    require(c.actionsSeen == actionCount, "Sigs incomplete");
+    if (c.actionsSeen != actionCount) revert SigsIncomplete();
     // See processActions for the trailing-bytes rationale.
-    require(c.pos == packedActions.length, "Trailing bytes");
+    if (c.pos != packedActions.length) revert TrailingBytes();
 
     if (c.networkHashLoaded) {
       networkCurrentHash[c.firstNetworkId] = c.networkHash;
@@ -396,8 +449,7 @@ contract CawActions is Ownable {
     if (c.withdrawCount > 0) {
       _handleWithdrawals(c.withdrawBitmap, c.withdrawCount, actionCount, packedActions);
       // See processActions for the bypassLZ rationale.
-      require(withdrawFee > 0 || cawProfile.bypassLZ(),
-              "withdrawFee required");
+      if (withdrawFee == 0 && !cawProfile.bypassLZ()) revert NoWithdrawFee();
       _executeWithdrawals(withdrawFee, withdrawLzTokenAmount);
     }
   }
@@ -416,8 +468,8 @@ contract CawActions is Ownable {
     uint256 executedBitmap
   ) internal returns (uint256) {
     (uint256 groupSize, , bytes32 r, ) = _readSigGroup(packedSigs, c.sigPos);
-    require(groupSize > 0, "Empty group");
-    require(c.actionsSeen + groupSize <= actionCount, "Group overflows actions");
+    if (groupSize == 0) revert EmptyGroup();
+    if (c.actionsSeen + groupSize > actionCount) revert GroupOverflows();
     c.sigPos += 67;
 
     // Read the verified signer for the FIRST action in this group. Within
@@ -429,7 +481,7 @@ contract CawActions is Ownable {
     // can't slip a different signer onto a batched action).
     address signer = _readSigner(signers, c.actionsSeen);
     for (uint256 i = 1; i < groupSize; ) {
-      require(_readSigner(signers, c.actionsSeen + i) == signer, "Signer mismatch");
+      if (_readSigner(signers, c.actionsSeen + i) != signer) revert SignerMismatch();
       unchecked { ++i; }
     }
 
@@ -444,7 +496,8 @@ contract CawActions is Ownable {
     BatchAuth memory ba;
     ba.signer = signer;
     ba.r = r;
-    address owner = cawProfile.ownerOf(_peekSenderId(packedActions, c.pos));
+    uint32 senderId0 = _peekSenderId(packedActions, c.pos);
+    address owner = cawProfile.ownerOf(senderId0);
     if (signer == owner) {
       ba.isSessionKey = false;
     } else {
@@ -455,7 +508,7 @@ contract CawActions is Ownable {
       // an expired or revoked session would still authorize actions in the
       // ZK path. (Audit finding 2026-05-08, Issue B.)
       CawProfileL2.StoredSession memory s = cawProfile.validSession(owner, signer);
-      require(s.expiry > block.timestamp, "Session invalid");
+      if (s.expiry <= block.timestamp) revert SessionExpired();
       ba.isSessionKey = true;
       ba.owner = owner;
       ba.scopeBitmap = s.scopeBitmap;
@@ -465,7 +518,7 @@ contract CawActions is Ownable {
 
     // Apply each action with skip-don't-revert on cawonce conflicts.
     for (uint256 i = 0; i < groupSize; ) {
-      executedBitmap = _zkApplyOne(validatorId, packedActions, c, ba, executedBitmap);
+      executedBitmap = _zkApplyOne(validatorId, packedActions, c, ba, senderId0, executedBitmap);
       unchecked { ++i; }
     }
 
@@ -487,6 +540,7 @@ contract CawActions is Ownable {
     bytes calldata packedActions,
     BatchCursor memory c,
     BatchAuth memory ba,
+    uint32 senderId0,
     uint256 executedBitmap
   ) internal returns (uint256) {
     uint256 actionStart = c.pos;
@@ -499,8 +553,16 @@ contract CawActions is Ownable {
     if (c.actionsSeen == 0) {
       c.firstNetworkId = action.networkId;
     } else {
-      require(action.networkId == c.firstNetworkId, "Mixed networks in batch");
+      if (action.networkId != c.firstNetworkId) revert MixedNetworks();
     }
+
+    // Mixed-sender guard: defense-in-depth against a broken/malicious ZK
+    // circuit attesting a single signer for actions on different senderIds.
+    // The sig path enforces this via `Mixed senders in batch` in _unpackBatchGroup;
+    // the ZK path must mirror it. Without this, a faulty proof could authorize
+    // actions on any senderId by smuggling them into a group keyed to a different
+    // owner. (Audit 2026-05-17, H-2.)
+    if (action.senderId != senderId0) revert MixedSenders();
 
     // Race-loss check.
     if (isCawonceUsed(action.senderId, action.cawonce)) {
@@ -518,10 +580,7 @@ contract CawActions is Ownable {
 
     // Session scope check (session-key signers only).
     if (ba.isSessionKey) {
-      require(
-        (ba.scopeBitmap & (1 << uint8(action.actionType))) != 0,
-        "Out of scope"
-      );
+      if ((ba.scopeBitmap & (1 << uint8(action.actionType))) == 0) revert OutOfScope();
     }
 
     // Capture implicitTipOwed exactly like the sig path does in
@@ -588,6 +647,14 @@ contract CawActions is Ownable {
     }
   }
 
+  /// @dev Validate group size: non-zero and doesn't overflow the batch. Pure
+  ///      helper extracted to keep _processOneGroup's Yul stack within the
+  ///      via-IR scheduler's 16-slot limit (the inline guards push it 1 over).
+  function _checkGroupBounds(uint256 groupSize, uint256 actionsSeen, uint256 actionCount) private pure {
+    if (groupSize == 0) revert EmptyGroup();
+    if (actionsSeen + groupSize > actionCount) revert GroupOverflows();
+  }
+
   /// @dev Process one signature group: recover the signer once, apply each
   ///      action in the group with the same r anchor in the hash chain.
   function _processOneGroup(
@@ -598,8 +665,7 @@ contract CawActions is Ownable {
     uint256 actionCount
   ) internal {
     (uint256 groupSize, uint8 v, bytes32 r, bytes32 s) = _readSigGroup(sigs, c.sigPos);
-    require(groupSize > 0, "Empty group");
-    require(c.actionsSeen + groupSize <= actionCount, "Group overflows actions");
+    _checkGroupBounds(groupSize, c.actionsSeen, actionCount);
     c.sigPos += 67;
 
     if (groupSize == 1) {
@@ -701,8 +767,8 @@ contract CawActions is Ownable {
       // with `actionsHash` and a future tightening could silently change
       // the signed semantics.
       if (i > 0) {
-        require(action.senderId == groupActions[0].senderId, "Mixed senders in batch");
-        require(action.cawonce == groupActions[0].cawonce + i, "Non-contiguous cawonces");
+        if (action.senderId != groupActions[0].senderId) revert MixedSenders();
+        if (action.cawonce != groupActions[0].cawonce + i) revert NonContiguousCawonces();
       }
 
       groupActions[i] = action;
@@ -734,7 +800,7 @@ contract CawActions is Ownable {
       (ActionData memory action, uint256 nextPos) = _unpackAction(groupBytes, pos);
       pos = nextPos;
       if (i == 0) firstNetworkId = action.networkId;
-      else require(action.networkId == firstNetworkId, "Mixed networks in batch");
+      else if (action.networkId != firstNetworkId) revert MixedNetworks();
       groupActions[i] = action;
       sliceStarts[i] = sliceStart;
       sliceEnds[i] = nextPos;
@@ -782,7 +848,7 @@ contract CawActions is Ownable {
     for (uint256 i = 0; i < n; ) {
       ActionData memory action = groupActions[i];
       if (ba.isSessionKey) {
-        require((ba.scopeBitmap & (1 << uint8(action.actionType))) != 0, "Out of scope");
+        if ((ba.scopeBitmap & (1 << uint8(action.actionType))) == 0) revert OutOfScope();
       }
       owed += _applyAction(validatorId, action, ba, packedActions[sliceStarts[i]:sliceEnds[i]], c);
       unchecked { ++i; }
@@ -800,7 +866,7 @@ contract CawActions is Ownable {
     if (actionIndex == 0) {
       c.firstNetworkId = action.networkId;
     } else {
-      require(action.networkId == c.firstNetworkId, "Mixed networks in batch");
+      if (action.networkId != c.firstNetworkId) revert MixedNetworks();
     }
     if (action.actionType == ActionType.WITHDRAW) {
       c.withdrawBitmap |= (1 << actionIndex);
@@ -821,12 +887,12 @@ contract CawActions is Ownable {
   ) external payable returns (uint256 successCount, string[] memory rejections) {
     uint256 actionCount;
     assembly { actionCount := shr(240, calldataload(packedActions.offset)) }
-    require(actionCount > 0, "No actions");
-    require(actionCount <= 256, "Too many actions");
+    if (actionCount == 0) revert NoActions();
+    if (actionCount > 256) revert TooManyActions();
 
     uint256 numGroups;
     assembly { numGroups := shr(240, calldataload(sigs.offset)) }
-    require(numGroups > 0 && numGroups <= actionCount, "Bad sig group count");
+    if (numGroups == 0 || numGroups > actionCount) revert BadSigGroupCount();
 
     rejections = new string[](actionCount);
     SafeCursor memory sc;
@@ -838,9 +904,9 @@ contract CawActions is Ownable {
       unchecked { ++g; }
     }
 
-    require(sc.actionsSeen == actionCount, "Sigs incomplete");
+    if (sc.actionsSeen != actionCount) revert SigsIncomplete();
     // See processActions for the trailing-bytes rationale.
-    require(sc.pos == packedActions.length, "Trailing bytes");
+    if (sc.pos != packedActions.length) revert TrailingBytes();
     successCount = sc.successCount;
 
     // NOTE (audited 2026-04-20): the calldata referenced by `batchHash` is the
@@ -862,8 +928,7 @@ contract CawActions is Ownable {
     if (sc.withdrawCount > 0) {
       _handleWithdrawals(sc.withdrawBitmap, sc.withdrawCount, actionCount, packedActions);
       // See processActions for the bypassLZ rationale.
-      require(withdrawFee > 0 || cawProfile.bypassLZ(),
-              "withdrawFee required");
+      if (withdrawFee == 0 && !cawProfile.bypassLZ()) revert NoWithdrawFee();
       _executeWithdrawals(withdrawFee, withdrawLzTokenAmount);
     }
   }
@@ -891,8 +956,7 @@ contract CawActions is Ownable {
     uint256 actionCount
   ) internal {
     (uint256 groupSize, uint8 v, bytes32 r, bytes32 s) = _readSigGroup(sigs, sc.sigPos);
-    require(groupSize > 0, "Empty group");
-    require(sc.actionsSeen + groupSize <= actionCount, "Group overflows actions");
+    _checkGroupBounds(groupSize, sc.actionsSeen, actionCount);
     sc.sigPos += 67;
 
     uint256 groupStartPos = sc.pos;
@@ -991,8 +1055,8 @@ contract CawActions is Ownable {
       }
     } else {
       for (uint256 i = 1; i < groupSize; ) {
-        require(groupActions[i].senderId == groupActions[0].senderId, "Mixed senders in batch");
-        require(groupActions[i].cawonce == groupActions[0].cawonce + i, "Non-contiguous cawonces");
+        if (groupActions[i].senderId != groupActions[0].senderId) revert MixedSenders();
+        if (groupActions[i].cawonce != groupActions[0].cawonce + i) revert NonContiguousCawonces();
         unchecked { ++i; }
       }
       (ba.signer, ba.isSessionKey) = _verifyBatchSignature(
@@ -1071,6 +1135,40 @@ contract CawActions is Ownable {
     }
   }
 
+  // ============================================
+  // CAP ORACLE — PUSH RATIO INTERFACE
+  // ============================================
+
+  /// @notice Called by CawCapOracle to update the stored cap ratio.
+  ///         ratio == 0 clears the cap (baseline applies). Otherwise it is a
+  ///         UQ112.112 TWAP of WETH-per-CAW from the oracle.
+  ///         The `capOracle` immutable is re-used for the access check — a
+  ///         zero capOracle means this function is permanently unreachable.
+  function setCapRatio(uint192 newRatio) external {
+    if (msg.sender != address(capOracle)) revert NotCapOracle();
+    capState = CapState(uint64(block.timestamp), newRatio);
+    emit CapRatioUpdated(newRatio, uint64(block.timestamp));
+  }
+
+  /// @notice Read-only accessor for the oracle to probe the currently stored
+  ///         ratio without a state-changing call.
+  function capStateRatio() external view returns (uint192) {
+    return capState.ratio;
+  }
+
+  /// @dev Helper: return pushed-ratio-capped cost, or baseline when cap is dormant.
+  ///      Single SLOAD reads both fields of CapState (one 256-bit slot).
+  ///      Zero capOracle (null-oracle deploy) also returns baseline — the capState
+  ///      slot is always zero in that case (setCapRatio is permanently unreachable).
+  function _getCost(uint256 baseline, uint256 ethCap) private view returns (uint256) {
+    CapState memory s = capState; // single SLOAD
+    if (s.ratio == 0) return baseline;
+    if (block.timestamp - s.lastUpdatedAt > CAP_STALE_THRESHOLD) return baseline;
+    uint256 capped = (ethCap << 112) / uint256(s.ratio) / 1e18;
+    if (capped == 0) capped = 1;
+    return capped < baseline ? capped : baseline;
+  }
+
   /// @dev Apply a single already-authenticated action: protocol costs,
   ///      amount distribution, session spend, cawonce burn, hash-chain link.
   ///      Caller is responsible for verifying the signature (single or batch)
@@ -1087,15 +1185,21 @@ contract CawActions is Ownable {
     bytes calldata packedSlice,
     BatchCursor memory c
   ) internal returns (uint256 implicitTipOwed) {
-    require(!isCawonceUsed(action.senderId, action.cawonce), "Cawonce already used");
-    require(cawProfile.authenticated(action.networkId, action.senderId), "User not authenticated");
-    require(action.text.length <= 420, "Text exceeds 420 bytes");
+    if (isCawonceUsed(action.senderId, action.cawonce)) revert CawonceUsed();
+    if (!cawProfile.authenticated(action.networkId, action.senderId)) revert UserNotAuth();
+    if (action.text.length > 420) revert TextTooLong();
 
-    // Fixed protocol costs per action type (in whole CAW tokens)
+    // Fixed protocol costs per action type (in whole CAW tokens).
+    // When the cap oracle is configured and populated, each baseline is
+    // capped at `capOracle.capForAction(baseline, ethCap)`. The result is
+    // scaled proportionally across the sub-components (distribute / recipient)
+    // so economic ratios are preserved under the cap.
+    // Oracle == address(0): cap dormant, baselines apply unchanged.
     uint256 actionCost;
     if (action.actionType == ActionType.CAW) {
-      cawProfile.spendAndDistributeTokens(action.senderId, 5000, 5000);
-      actionCost = 5000;
+      uint256 cost = _getCost(5000, 5e11);
+      cawProfile.spendAndDistributeTokens(action.senderId, cost, cost);
+      actionCost = cost;
     } else if (action.actionType == ActionType.LIKE) {
       // NOTE: self-LIKE (senderId == receiverId) is permitted on-chain.
       // Adding a `revert` would let one bad action tank the whole batch
@@ -1104,16 +1208,22 @@ contract CawActions is Ownable {
       // counters; the on-chain economic discount (~75% of fee returns to
       // self) is small enough not to be worth either trade. See Round 3
       // audit findings (CawActions adversarial agent, MED).
-      cawProfile.spendDistributeAndAddTokensToBalance(action.senderId, 2000, 400, action.receiverId, 1600);
-      actionCost = 2000;
+      uint256 cost = _getCost(2000, 2e11);
+      // LIKE split: 20% distribute, 80% to receiver (ratios preserved under cap).
+      cawProfile.spendDistributeAndAddTokensToBalance(action.senderId, cost, cost / 5, action.receiverId, cost - cost / 5);
+      actionCost = cost;
     } else if (action.actionType == ActionType.RECAW) {
       // Self-RECAW permitted on-chain — same rationale as self-LIKE above.
-      cawProfile.spendDistributeAndAddTokensToBalance(action.senderId, 4000, 2000, action.receiverId, 2000);
-      actionCost = 4000;
+      uint256 cost = _getCost(4000, 4e11);
+      // RECAW split: 50% distribute, 50% to receiver.
+      cawProfile.spendDistributeAndAddTokensToBalance(action.senderId, cost, cost / 2, action.receiverId, cost - cost / 2);
+      actionCost = cost;
     } else if (action.actionType == ActionType.FOLLOW) {
-      require(action.senderId != action.receiverId, "Cannot follow yourself");
-      cawProfile.spendDistributeAndAddTokensToBalance(action.senderId, 30000, 6000, action.receiverId, 24000);
-      actionCost = 30000;
+      if (action.senderId == action.receiverId) revert SelfFollow();
+      uint256 cost = _getCost(30000, 30e11);
+      // FOLLOW split: 20% distribute, 80% to receiver.
+      cawProfile.spendDistributeAndAddTokensToBalance(action.senderId, cost, cost / 5, action.receiverId, cost - cost / 5);
+      actionCost = cost;
     } else if (action.actionType == ActionType.WITHDRAW) {
       cawProfile.withdrawTokens(action.senderId, uint256(action.amounts[0]));
     } else if (action.actionType == ActionType.OTHER) {
@@ -1131,10 +1241,11 @@ contract CawActions is Ownable {
       // Floor charge: 1000 CAW from sender to validator. Without this,
       // UNLIKE/UNFOLLOW are pure validator-gas griefing. Audit fix
       // 2026-05-09 (Round 7 econ HIGH-1).
-      cawProfile.spendDistributeAndAddTokensToBalance(action.senderId, 1000, 0, validatorId, 1000);
-      actionCost = 1000;
+      uint256 cost = _getCost(1000, 1e11);
+      cawProfile.spendDistributeAndAddTokensToBalance(action.senderId, cost, 0, validatorId, cost);
+      actionCost = cost;
     } else {
-      revert("Invalid action type");
+      revert InvalidActionType();
     }
 
     // Distribute amounts (recipient transfers + tip handling)
@@ -1157,7 +1268,7 @@ contract CawActions is Ownable {
           ba.groupSpentLoaded = true;
         }
         ba.groupSpent += actionCost;
-        require(ba.groupSpent <= ba.spendLimit, "Session limit");
+        if (ba.groupSpent > ba.spendLimit) revert SessionLimitExceeded();
       }
     }
 
@@ -1245,7 +1356,7 @@ contract CawActions is Ownable {
     if (ba.owner == address(0)) {
       ba.owner = cawProfile.ownerOf(action.senderId);
     }
-    require(ba.owner != address(0), "Unknown owner");
+    if (ba.owner == address(0)) revert UnknownOwner();
 
     // Malformed payloads silently no-op instead of reverting. Reverting
     // here would let one malicious user tank the whole batch (sig path
@@ -1340,7 +1451,7 @@ contract CawActions is Ownable {
     if (signer != address(0)) {
       CawProfileL2.StoredSession memory sess = cawProfile.validSession(owner, signer);
       if (sess.expiry > block.timestamp) {
-        require((sess.scopeBitmap & (1 << uint8(data.actionType))) != 0, "Out of scope");
+        if ((sess.scopeBitmap & (1 << uint8(data.actionType))) == 0) revert OutOfScope();
         return (signer, true);
       }
       // Session record exists but is expired. Don't fall through to the
@@ -1349,7 +1460,7 @@ contract CawActions is Ownable {
       // 1271 fallback would silently elevate the expired session to full
       // owner authority. Explicit revert keeps the intent the user signed.
       // Audit fix 2026-05-08 (CawActions M-1).
-      if (sess.expiry != 0) revert("Session expired");
+      if (sess.expiry != 0) revert SessionExpired();
     }
 
     // Cold path: contract-owned profile, ERC-1271 fallback. The 1271 contract
@@ -1357,12 +1468,12 @@ contract CawActions is Ownable {
     // have signed), not the bare structHash. Gas-bounded — see _checkERC1271.
     if (owner.code.length > 0) {
       bytes32 digest = keccak256(abi.encodePacked("\x19\x01", eip712DomainHash, structHash));
-      require(_checkERC1271(owner, digest, v, r, s), "Invalid signature");
+      if (!_checkERC1271(owner, digest, v, r, s)) revert InvalidSig();
       return (owner, false);
     }
 
-    require(signer != address(0), "Invalid signature");
-    revert("Session invalid");
+    if (signer == address(0)) revert InvalidSig();
+    revert SessionExpired();
   }
 
   /// @dev Recover the signer of an ActionBatch signature. Performs the same
@@ -1413,14 +1524,11 @@ contract CawActions is Ownable {
     // EOA would have signed for an ActionBatch. Gas-bounded — see _checkERC1271.
     if (owner.code.length > 0) {
       bytes32 digest = keccak256(abi.encodePacked("\x19\x01", eip712DomainHash, structHash));
-      require(
-        _checkERC1271(owner, digest, v, r, s),
-        "Batch sig invalid"
-      );
+      if (!_checkERC1271(owner, digest, v, r, s)) revert BatchSigInvalid();
       return (owner, false);
     }
 
-    revert("Batch sig invalid");
+    revert BatchSigInvalid();
   }
 
   // ============================================
@@ -1450,11 +1558,11 @@ contract CawActions is Ownable {
     uint256 numRecipients = action.recipients.length;
     uint256 numAmounts = action.amounts.length;
 
-    require(numRecipients <= 10, "Too many recipients");
+    if (numRecipients > 10) revert TooManyRecipients();
 
     bool hasExplicitTip = numAmounts == numRecipients + 1;
     if (numAmounts != numRecipients && !hasExplicitTip)
-      revert("Amounts and recipients mismatch");
+      revert InvalidActionType();
 
     // For WITHDRAW with `recipients=[]` and `amounts=[X]`, the shape would
     // be misread as hasExplicitTip (numAmounts == 0+1), which would BOTH
@@ -1465,10 +1573,7 @@ contract CawActions is Ownable {
     // requiring at least one recipient when amounts has length 1 for a
     // WITHDRAW. Audit fix 2026-05-08 (H-2, CawActions agent finding).
     bool isWithdrawal = action.actionType == ActionType.WITHDRAW;
-    require(
-      !(isWithdrawal && numRecipients == 0 && hasExplicitTip),
-      "WITHDRAW shape ambiguous"
-    );
+    if (isWithdrawal && numRecipients == 0 && hasExplicitTip) revert InvalidActionType();
 
     // Fast path: no recipients, no explicit tip. Session-key actions
     // owe the implicit tip; OTHER actions with no tip mechanism firing
@@ -1484,8 +1589,9 @@ contract CawActions is Ownable {
         totalWholeTokens = implicitTipOwed;
       } else if (action.actionType == ActionType.OTHER) {
         _requireValidatorExists(validatorId);
-        cawProfile.spendDistributeAndAddTokensToBalance(action.senderId, 1000, 0, validatorId, 1000);
-        totalWholeTokens = 1000;
+        uint256 otherCost = _getCost(1000, 1e11);
+        cawProfile.spendDistributeAndAddTokensToBalance(action.senderId, otherCost, 0, validatorId, otherCost);
+        totalWholeTokens = otherCost;
       }
       return (totalWholeTokens, implicitTipOwed);
     }
@@ -1659,7 +1765,7 @@ contract CawActions is Ownable {
         // invariant local. If _distributeAmountsMem's upstream enforcement
         // ever changes, this catches the mismatch instead of crediting a
         // withdrawal amount derived from the textLength field.
-        require(acOut > 0, "WITHDRAW must have amount");
+        if (acOut == 0) revert WithdrawZeroAmount();
         withdrawIds[wIdx] = senderId;
         withdrawAmounts[wIdx] = uint256(firstAmount) * 10**18;
         unchecked { ++wIdx; }
@@ -1676,6 +1782,24 @@ contract CawActions is Ownable {
   uint32[] private _pendingWithdrawIds;
   uint256[] private _pendingWithdrawAmounts;
 
+  /// @dev NOTE TO FUTURE AUDITORS: the storage-scratch pattern here
+  ///      (_pendingWithdrawIds / _pendingWithdrawAmounts written by
+  ///      _handleWithdrawals, consumed + deleted by _executeWithdrawals,
+  ///      with no nonReentrant guard on the entry points) was re-examined
+  ///      2026-05-17 and intentionally left as-is. Reentrancy chain
+  ///      considered: _executeWithdrawals → cawProfile.setWithdrawable →
+  ///      lzSend → endpoint callback → re-entry into processActions.
+  ///      Not reachable, because (1) the bypassLZ branch of
+  ///      CawProfileL2.setWithdrawable calls CawProfile.setWithdrawable
+  ///      on L1 which performs no external calls (see CawProfile.sol:820
+  ///      audit note), and (2) the LZ branch hands the native fee to the
+  ///      canonical OApp endpoint, which emits an event and does not
+  ///      execute source-chain code in the same call stack — destination
+  ///      _lzReceive is a separate tx on the destination chain. The OApp
+  ///      endpoint is the protocol's immutable trust root; if a future
+  ///      hostile endpoint is ever wired in, nonReentrant does not save
+  ///      us anyway. Pattern violates checks-effects-interactions
+  ///      cosmetically but the reachable attack surface is empty.
   function _executeWithdrawals(uint256 withdrawFee, uint256 lzTokenAmount) internal {
     if (_pendingWithdrawIds.length > 0) {
       cawProfile.setWithdrawable{ value: withdrawFee }(
@@ -1694,7 +1818,7 @@ contract CawActions is Ownable {
   ///      Hoisted from inline call sites so the require body bytecode is
   ///      shared. Audit fix 2026-05-08 (Round 4 CawActions LOW-1).
   function _requireValidatorExists(uint32 validatorId) internal view {
-    require(cawProfile.ownerOf(validatorId) != address(0), "Invalid validatorId");
+    if (cawProfile.ownerOf(validatorId) == address(0)) revert InvalidValidator();
   }
 
   function useCawonce(uint32 senderId, uint256 cawonce) internal {

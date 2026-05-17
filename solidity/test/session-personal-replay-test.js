@@ -38,7 +38,7 @@ contract('CawProfileL2 — registerSessionPersonal replay protection', function 
 
   before(async function () {
     const l2Endpoint = await MockLayerZeroEndpoint.new(l2);
-    cawProfileL2 = await CawProfileL2.new(l1, l2Endpoint.address);
+    cawProfileL2 = await CawProfileL2.new(l1, l2Endpoint.address, "0x0000000000000000000000000000000000000000");
   });
 
   function buildPersonalMessage() {

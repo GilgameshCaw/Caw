@@ -49,6 +49,7 @@ const FollowListModal: React.FC<Props> = ({ type }) => {
 
   // Data for notificationActors mode
   const groupKey: string | undefined = modalData?.groupKey
+  const groupId: number | undefined = modalData?.groupId
   const notificationUserId: number | undefined = modalData?.userId
   const notificationType: NotificationActorType | undefined = modalData?.notificationType
   // Data for following/followers mode
@@ -59,6 +60,10 @@ const FollowListModal: React.FC<Props> = ({ type }) => {
     if (type === 'notificationActors') {
       const params = new URLSearchParams()
       if (notificationUserId != null) params.set('userId', String(notificationUserId))
+      // Prefer groupId (precise — scoped to one NotificationGroup row).
+      // Always include groupKey too as a legacy fallback for servers that
+      // haven't deployed the groupId path yet.
+      if (groupId != null) params.set('groupId', String(groupId))
       if (groupKey) params.set('groupKey', groupKey)
       if (notificationType) params.set('type', notificationType)
       params.set('limit', '50')
@@ -88,7 +93,7 @@ const FollowListModal: React.FC<Props> = ({ type }) => {
   // Fetch users
   useEffect(() => {
     if (!isOpen) return
-    if (type === 'notificationActors' && !groupKey) return
+    if (type === 'notificationActors' && !groupKey && !groupId) return
     if (type !== 'notificationActors' && !username) return
 
     const fetchUsers = async () => {
@@ -127,7 +132,7 @@ const FollowListModal: React.FC<Props> = ({ type }) => {
 
     fetchUsers()
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [isOpen, username, groupKey, notificationType, type, activeToken?.tokenId])
+  }, [isOpen, username, groupKey, groupId, notificationType, type, activeToken?.tokenId])
 
   // Load more users
   const loadMore = async () => {

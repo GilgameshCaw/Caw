@@ -112,6 +112,18 @@ router.get('/', requireAuth({ lookup: async (req) => Number(req.query.userId) ||
             hasVideo: true,
             imageData: true,
             videoData: true,
+            // Poll core — options + totalVotes for PollMiniResults.
+            // Per-option vote counts are filled in below via a grouped
+            // Vote query. userVote is omitted: the notification recipient
+            // is the poll author, not a voter.
+            poll: {
+              select: {
+                id: true,
+                options: true,
+                totalVotes: true,
+                endsAt: true,
+              }
+            }
           }
         },
         offer: {
@@ -214,6 +226,30 @@ router.get('/', requireAuth({ lookup: async (req) => Number(req.query.userId) ||
       }
     }
 
+    // Enrich poll vote counts for any notification whose caw has a poll.
+    // We collect all poll IDs across the page, do a single grouped Vote
+    // query, then attach optionVoteCounts to each caw.poll. userVote is
+    // not surfaced here — the recipient is the poll author, not a voter.
+    const pollIdsByCawId = new Map<number, number>()
+    for (const n of notifications) {
+      const caw = (n as any).caw
+      if (caw?.poll?.id) pollIdsByCawId.set(caw.id, caw.poll.id)
+    }
+    const pollVoteCountsByPollId = new Map<number, number[]>()
+    if (pollIdsByCawId.size > 0) {
+      const pollIds = Array.from(new Set(pollIdsByCawId.values()))
+      const voteCounts = await prisma.vote.groupBy({
+        by: ['pollId', 'optionIndex'],
+        where: { pollId: { in: pollIds }, pending: false },
+        _count: { id: true },
+      })
+      for (const row of voteCounts) {
+        const arr = pollVoteCountsByPollId.get(row.pollId) ?? []
+        arr[row.optionIndex] = row._count.id
+        pollVoteCountsByPollId.set(row.pollId, arr)
+      }
+    }
+
     // Merge SQL group metadata into each notification row. Each
     // notification represents ONE group (its latest member); the
     // group-level count + actor list come from the aggregation
@@ -255,18 +291,43 @@ router.get('/', requireAuth({ lookup: async (req) => Number(req.query.userId) ||
           }))
         : []
 
+      // Attach per-option vote counts to caw.poll when present.
+      let cawOut: any = notification.caw
+      if (cawOut?.poll) {
+        const pollId = cawOut.poll.id
+        const rawCounts = pollVoteCountsByPollId.get(pollId) ?? []
+        const optionsLen: number = cawOut.poll.options?.length ?? 0
+        const optionVoteCounts: number[] = []
+        for (let i = 0; i < optionsLen; i++) optionVoteCounts.push(rawCounts[i] ?? 0)
+        cawOut = {
+          ...cawOut,
+          poll: {
+            options: cawOut.poll.options,
+            totalVotes: cawOut.poll.totalVotes ?? 0,
+            optionVoteCounts,
+            endsAt: cawOut.poll.endsAt ? cawOut.poll.endsAt.toISOString() : null,
+            userVote: null,
+            userVotes: [],
+          }
+        }
+      }
+
       groupedNotifications.push({
         id: notification.id,
         type: notification.type,
         actor: notification.actor,
         additionalActors,
-        caw: notification.caw,
+        caw: cawOut,
         offer: (notification as any).offer || null,
         actionPayload,
         isRead: groupIsRead,
         createdAt: notification.createdAt,
         count: totalCount,
         groupKey: notification.groupKey ?? null,
+        // Per-NotificationGroup identity. Scopes the "X others" modal
+        // to actors of THIS rollup. groupKey alone is wrong for FOLLOW
+        // (every follow notification has groupKey='follow').
+        groupId: group ? group.id : null,
         notificationIds: [notification.id],
       })
     }
@@ -343,16 +404,10 @@ router.get('/unread-count', requireAuth({ lookup: async (req) => Number(req.quer
  */
 router.get('/group-actors', requireAuth({ lookup: async (req) => Number(req.query.userId) || undefined, verifyOwnership: true }), async (req, res) => {
   try {
-    const { userId, groupKey, type, cursor, limit: limitParam } = req.query
+    const { userId, groupKey, type, cursor, limit: limitParam, groupId: groupIdParam } = req.query
 
     if (!userId) {
       return res.status(400).json({ error: 'userId is required' })
-    }
-    if (!groupKey) {
-      return res.status(400).json({ error: 'groupKey is required' })
-    }
-    if (!type) {
-      return res.status(400).json({ error: 'type is required' })
     }
 
     const userTokenId = Number(userId)
@@ -360,9 +415,25 @@ router.get('/group-actors', requireAuth({ lookup: async (req) => Number(req.quer
       return res.status(400).json({ error: 'Invalid userId' })
     }
 
-    // Validate type is a known NotificationType
-    if (!Object.values(NotificationType).includes(type as NotificationType)) {
-      return res.status(400).json({ error: 'Invalid notification type' })
+    // Prefer groupId (precise — per-NotificationGroup). Falls back to the
+    // legacy groupKey+type filter for stale FE bundles. For FOLLOW the
+    // legacy fallback returns EVERY follow notification ever (all share
+    // groupKey='follow') — see project_notification_groups for why.
+    const groupId = groupIdParam != null ? Number(groupIdParam) : null
+    const usingGroupId = Number.isFinite(groupId) && groupId !== 0
+
+    if (!usingGroupId) {
+      if (!groupKey) {
+        return res.status(400).json({ error: 'groupKey is required' })
+      }
+      if (!type) {
+        return res.status(400).json({ error: 'type is required' })
+      }
+      // Validate type is a known NotificationType
+      if (!Object.values(NotificationType).includes(type as NotificationType)) {
+        return res.status(400).json({ error: 'Invalid notification type' })
+      }
+      console.warn(`[group-actors] Legacy groupKey-only query from user ${userTokenId}; FE bundle may be stale.`)
     }
 
     const limit = Math.min(Number(limitParam) || 50, 100)
@@ -383,12 +454,17 @@ router.get('/group-actors', requireAuth({ lookup: async (req) => Number(req.quer
       }
     }
 
+    const baseWhere: any = { userId: userTokenId, hidden: false }
+    if (usingGroupId) {
+      baseWhere.groupId = groupId
+    } else {
+      baseWhere.type = type as NotificationType
+      baseWhere.groupKey = groupKey as string
+    }
+
     const notifications = await prisma.notification.findMany({
       where: {
-        userId: userTokenId,
-        type: type as NotificationType,
-        groupKey: groupKey as string,
-        hidden: false,
+        ...baseWhere,
         ...(cursorWhere ?? {})
       },
       take: limit + 1,

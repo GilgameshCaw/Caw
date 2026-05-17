@@ -33,7 +33,15 @@ import {
   spendAndDistribute,
   addToBalance,
 } from './contractMath'
-import { getCawProfileL2 } from './cawProfileL2'
+import { getCawProfileL2 as _getCawProfileL2Real } from './cawProfileL2'
+
+// Tests can override this to avoid real RPC calls.
+// eslint-disable-next-line prefer-const
+let _cawProfileL2Override: { rewardMultiplier: (...args: any[]) => Promise<any> } | null = null
+
+function getCawProfileL2(): { rewardMultiplier: (...args: any[]) => Promise<any> } {
+  return (_cawProfileL2Override ?? _getCawProfileL2Real()) as any
+}
 
 // One client per process — the snapshotter reads CLIENT_ID from env at
 // boot and persists state under that key.
@@ -46,7 +54,7 @@ const CAW_CLIENT_ID = (() => {
   return n
 })()
 
-interface RuntimeState {
+export interface RuntimeState {
   multiplier: bigint
   totalCaw: bigint
   // Cached cawOwnership[tokenId]. Loaded lazily — on first touch we read
@@ -524,27 +532,88 @@ export async function recordDeposit(
   })
 }
 
+// Error message substrings that indicate the RPC endpoint does not retain
+// historical state (non-archive node).  When we catch one of these we fall
+// back to a HEAD read rather than halting the ledger.
+const NON_ARCHIVE_PATTERNS = [
+  'missing trie node',
+  'header not found',
+  'state not available',
+  'block not found',
+  'missing required field',
+  'unknown block',
+]
+
+function isNonArchiveError(msg: string): boolean {
+  const lower = msg.toLowerCase()
+  return NON_ARCHIVE_PATTERNS.some(p => lower.includes(p))
+}
+
+// Emit the non-archive warning at most once per process lifetime so it
+// doesn't spam logs on every ActionsProcessed event.
+let _nonArchiveWarnEmitted = false
+
 /**
- * Per-event integrity check: read rewardMultiplier() from chain and
- * assert equality with our running value. Costs one RPC read per
- * ActionsProcessed event regardless of how many actions it carries.
+ * Per-event integrity check: read rewardMultiplier() from chain AT the block
+ * we have fully consumed through (s.lastBlock) and assert equality with our
+ * running value. Reading at a specific historical block is deterministic —
+ * chain advancement between event processing and this call can no longer
+ * produce spurious DIVERGENCE.
  *
- * Called from outside any DB transaction — RPC reads must not extend
- * a Prisma tx timeout.
+ * Edge cases:
+ *  - lastBlock=0n  → skip (ledger not yet consumed any actions; both sides
+ *    are PRECISION by definition).
+ *  - Non-archive RPC → blockTag read fails with a "missing trie node" /
+ *    "state not available" family of errors; we fall back to HEAD and emit a
+ *    one-time process-level warning. The ledger is NOT halted on this path.
+ *  - Other RPC errors → warn + skip (existing behaviour).
+ *
+ * Called from outside any DB transaction — RPC reads must not extend a Prisma
+ * tx timeout.
  */
 export async function verifyMultiplier(): Promise<void> {
   const s = await ensureBooted()
   if (s.halted) return
+
+  // Nothing processed yet — both sides boot to PRECISION; nothing to verify.
+  if (s.lastBlock === 0n) return
+
+  const lastBlock = Number(s.lastBlock)
   let onChain: bigint
+
+  // Attempt a historical read at the block we've consumed through.
   try {
-    onChain = BigInt(await getCawProfileL2().rewardMultiplier())
-  } catch (err: any) {
-    console.warn('[StakeLedger] verifyMultiplier RPC read failed; skipping check:', err?.message ?? err)
-    return
+    onChain = BigInt(await getCawProfileL2().rewardMultiplier({ blockTag: lastBlock }))
+  } catch (histErr: any) {
+    const msg: string = histErr?.message ?? String(histErr)
+
+    if (isNonArchiveError(msg)) {
+      // Non-archive RPC — fall back to HEAD but don't halt.
+      if (!_nonArchiveWarnEmitted) {
+        console.warn(
+          '[StakeLedger] historical state read failed; falling back to HEAD comparison ' +
+            '(may produce spurious DIVERGENCE under high load — configure an archive RPC to eliminate). ' +
+            `Error: ${msg}`,
+        )
+        _nonArchiveWarnEmitted = true
+      }
+      try {
+        onChain = BigInt(await getCawProfileL2().rewardMultiplier())
+      } catch (headErr: any) {
+        console.warn('[StakeLedger] verifyMultiplier HEAD fallback also failed; skipping check:', headErr?.message ?? headErr)
+        return
+      }
+    } else {
+      // Transient network / timeout error — skip, don't halt.
+      console.warn('[StakeLedger] verifyMultiplier RPC read failed; skipping check:', msg)
+      return
+    }
   }
+
   if (onChain !== s.multiplier) {
     console.error(
-      `[StakeLedger] DIVERGENCE: chain rewardMultiplier=${onChain}, ledger=${s.multiplier}. ` +
+      `[StakeLedger] DIVERGENCE: chain rewardMultiplier=${onChain}, ledger=${s.multiplier} ` +
+        `(checked at block ${lastBlock}). ` +
         `Halting writes — operator must reseed (read CawProfileL2 state and overwrite StakeLedgerState + CawOwnershipCurrent).`,
     )
     s.halted = true
@@ -560,4 +629,22 @@ export function _peekState(): RuntimeState | null {
 export function _resetForTests(): void {
   state = null
   bootPromise = null
+  _nonArchiveWarnEmitted = false
+  _cawProfileL2Override = null
+}
+
+/** For tests: inject a mock contract so verifyMultiplier never hits a real RPC. */
+export function _setContractForTests(mock: { rewardMultiplier: (...args: any[]) => Promise<any> } | null): void {
+  _cawProfileL2Override = mock
+}
+
+/** For tests: directly inject RuntimeState, bypassing Prisma boot. */
+export function _injectStateForTests(s: RuntimeState): void {
+  state = s
+  bootPromise = null
+}
+
+/** For tests: check whether the non-archive warn has been emitted this session. */
+export function _nonArchiveWarnWasEmitted(): boolean {
+  return _nonArchiveWarnEmitted
 }

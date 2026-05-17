@@ -4,6 +4,7 @@ import { prisma } from '../../prismaClient'
 import { shapeCaw, getCawIncludeConfig, handlePagination, enrichWithPollVotes, enrichWithXBadges } from '../shared/cawUtils'
 import { requireAuth } from '../middleware/auth'
 import { getBlockedUserIds } from '../shared/blockUtils'
+import { safeDecrement } from '../../services/CountManager'
 
 const router = Router()
 
@@ -755,39 +756,68 @@ router.delete('/:originalCawId/recaw', requireAuth({
 
     if (recaw) {
       // Delete the recaw, its txqueue entry, its action record,
-      // and decrement the parent's recawCount.
-      await prisma.$transaction([
-        prisma.txQueue.deleteMany({
+      // and decrement the parent's recawCount (floored at zero via safeDecrement).
+      // Also drop the REPOST notification — otherwise a redo-after-undo
+      // would silently dedup against the stale row at
+      // NotificationService.createRepostNotification's findFirst gate.
+      await prisma.$transaction(async (tx) => {
+        await tx.txQueue.deleteMany({
           where: { senderId: userId, payload: { path: ['data', 'cawonce'], equals: recaw.cawonce } }
-        }),
-        prisma.action.deleteMany({
-          where: { senderId: userId, cawonce: recaw.cawonce }
-        }),
-        prisma.caw.delete({ where: { id: recaw.id } }),
-        prisma.caw.update({
-          where: { id: originalCawId },
-          data: { recawCount: { decrement: 1 } }
         })
-      ])
+        await tx.action.deleteMany({
+          where: { senderId: userId, cawonce: recaw.cawonce }
+        })
+        await tx.caw.delete({ where: { id: recaw.id } })
+        await safeDecrement(tx, 'Caw', 'recawCount', 'id', originalCawId)
+        await tx.notification.deleteMany({
+          where: {
+            actorId: userId,
+            userId: originalCaw.userId,
+            type: 'REPOST',
+            cawId: originalCawId,
+          },
+        })
+      })
     } else {
-      // No recaw row yet — might be a pending txqueue that hasn't been processed.
+      // No confirmed recaw row yet — might be a pending txqueue that hasn't been processed.
       // Match by actionType=3 (RECAW) + receiverId + receiverCawonce.
-      const deleted = await prisma.txQueue.deleteMany({
-        where: {
-          senderId: userId,
-          status: { in: ['pending', 'failed'] },
-          AND: [
-            { payload: { path: ['data', 'actionType'], equals: 3 } },
-            { payload: { path: ['data', 'receiverId'], equals: originalCaw.userId } },
-            { payload: { path: ['data', 'receiverCawonce'], equals: originalCaw.cawonce } },
-          ]
+      let pendingCawDeleted = 0
+      const deleted = await prisma.$transaction(async (tx) => {
+        const txQueueResult = await tx.txQueue.deleteMany({
+          where: {
+            senderId: userId,
+            status: { in: ['pending', 'failed'] },
+            AND: [
+              { payload: { path: ['data', 'actionType'], equals: 3 } },
+              { payload: { path: ['data', 'receiverId'], equals: originalCaw.userId } },
+              { payload: { path: ['data', 'receiverCawonce'], equals: originalCaw.cawonce } },
+            ]
+          }
+        })
+        // Also delete the pending Caw row if one was created optimistically.
+        // onCawCreated fires at submit time for RECAW, so if we delete this row
+        // we must undo the optimistic recawCount increment on the parent.
+        const cawResult = await tx.caw.deleteMany({
+          where: { originalCawId, userId, action: 'RECAW', status: 'PENDING' }
+        })
+        pendingCawDeleted = cawResult.count
+        if (cawResult.count > 0) {
+          // Undo the optimistic recawCount increment that onCawCreated applied.
+          await safeDecrement(tx, 'Caw', 'recawCount', 'id', originalCawId)
         }
+        // Drop any REPOST notification too — same dedup-resistance reason
+        // as the confirmed branch above.
+        await tx.notification.deleteMany({
+          where: {
+            actorId: userId,
+            userId: originalCaw.userId,
+            type: 'REPOST',
+            cawId: originalCawId,
+          },
+        })
+        return txQueueResult
       })
-      // Also delete the pending Caw row if one was created optimistically
-      await prisma.caw.deleteMany({
-        where: { originalCawId, userId, action: 'RECAW', status: 'PENDING' }
-      })
-      if (deleted.count === 0) {
+      if (deleted.count === 0 && pendingCawDeleted === 0) {
         return res.status(404).json({ error: 'Recaw not found' })
       }
     }

@@ -11,6 +11,23 @@ import "./ISwapRouter.sol";
 ///      in a single Uniswap trade. Half the CAW goes to the network, half to 0xdead.
 ///      Because the network receives CAW from the same swap, they are incentivized to
 ///      set a good minCawOut — a bad value hurts their own payout equally.
+///
+///      NOTE TO FUTURE AUDITORS — two findings re-examined 2026-05-17 and
+///      intentionally left as-is:
+///
+///      1) `deadline: block.timestamp` on swapExactETHForTokens. Technically
+///         loose (the tx never expires from the router's perspective), but the
+///         MEV-sandwich vector requires a slack minCawOut. The only caller is
+///         CawProfile.withdrawFees, and the network operator who triggers it
+///         receives half the swap output — so they have a direct,
+///         equal-magnitude incentive to set minCawOut tight. CawProfile is
+///         immutable, so "future upgrade passes minCawOut=0" is not a real
+///         scenario. The minCawOut incentive IS the safety mechanism.
+///
+///      2) Unchecked `CAW.transfer` return values. The real CAW ERC-20 is
+///         OpenZeppelin-derived and reverts on failure, so the missing return
+///         check is a no-op. SafeERC20 would be defensive style only — not
+///         a security gap on the deployed token.
 contract CawBuyAndBurn {
 
   IERC20 public immutable CAW;

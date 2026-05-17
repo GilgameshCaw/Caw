@@ -3,6 +3,7 @@ import { useTheme } from '~/hooks/useTheme'
 import { useActiveToken } from '~/store/tokenDataStore'
 import { useConnectModal } from '@rainbow-me/rainbowkit'
 import { useSignAndSubmitAction } from '~/api/actions'
+import { apiFetch } from '~/api/client'
 import { buildVoteText } from '~/../../../tools/pollMarker'
 import type { CawItem } from '~/types'
 import { useT } from '~/i18n/I18nProvider'
@@ -109,14 +110,27 @@ function PollOptionThumb({
 }
 
 interface LocalVote {
-  optionIndex: number | null  // null = unvoted (after a confirmed vote was removed)
-  pending: boolean
+  /**
+   * The set of options the viewer has voted for. Single-select polls
+   * keep this at size 0 or 1; multi-select polls can carry any subset
+   * of option indices. Empty Set = no vote (whether the user never
+   * voted OR explicitly cleared their vote).
+   */
+  picks: Set<number>
+  /**
+   * Per-option pending flag. `pending.get(i) === true` means the
+   * viewer's vote on option i is optimistic — local state shows it
+   * but the indexer hasn't confirmed yet. Single-select polls usually
+   * only have one entry; multi-select polls can have several.
+   */
+  pending: Map<number, boolean>
   // The vote count we're displaying for each option, kept in sync with the
   // server's snapshot but allowed to bump optimistically on click. Indexed
   // positionally; same length as poll.options.
   counts: number[]
   total: number
 }
+
 
 /**
  * Renders a poll inline inside a FeedItem.
@@ -146,6 +160,14 @@ const PollDisplay: React.FC<Props> = ({ caw, optionLabelsOverride }) => {
 
   const [submitting, setSubmitting] = useState(false)
   const [hovered, setHovered] = useState<number | null>(null)
+  // Track the TxQueue id of the most recent in-flight vote, per option.
+  // When the user changes / unsets their pick while one is still
+  // pending we can POST /api/txqueue/:id/cancel and submit a fresh
+  // action — same pattern Like/Recaw/Follow use for cancel-on-second-
+  // click. Single-select polls only have one entry at a time;
+  // multi-select polls keep one entry per toggled-on option until
+  // the indexer confirms.
+  const pendingTxIdsRef = useRef<Map<number, number>>(new Map())
 
   const poll = caw.poll
 
@@ -155,12 +177,24 @@ const PollDisplay: React.FC<Props> = ({ caw, optionLabelsOverride }) => {
   // distinct from the server-side absence of a vote: when the user just
   // clicked "Remove vote" we want to show the no-vote rows even though the
   // server still has a row until the action confirms.
-  const buildInitialLocal = (): LocalVote => ({
-    optionIndex: poll?.userVote?.optionIndex ?? null,
-    pending: poll?.userVote?.pending ?? false,
-    counts: poll?.optionVoteCounts ? poll.optionVoteCounts.slice() : (poll?.options || []).map(() => 0),
-    total: poll?.totalVotes || 0,
-  })
+  const buildInitialLocal = (): LocalVote => {
+    // Prefer `userVotes` (full multi-select set) when present; fall
+    // back to `userVote` for older API responses that only carried
+    // the single-select shape.
+    const rows = poll?.userVotes ?? (poll?.userVote ? [poll.userVote] : [])
+    const picks = new Set<number>()
+    const pending = new Map<number, boolean>()
+    for (const r of rows) {
+      picks.add(r.optionIndex)
+      pending.set(r.optionIndex, r.pending)
+    }
+    return {
+      picks,
+      pending,
+      counts: poll?.optionVoteCounts ? poll.optionVoteCounts.slice() : (poll?.options || []).map(() => 0),
+      total: poll?.totalVotes || 0,
+    }
+  }
   const [local, setLocal] = useState<LocalVote>(buildInitialLocal)
 
   // Track whether the user has interacted locally this session — once they
@@ -176,9 +210,13 @@ const PollDisplay: React.FC<Props> = ({ caw, optionLabelsOverride }) => {
   // pending state matches.
   useEffect(() => {
     if (!poll) return
-    const serverConfirmedOurVote = poll.userVote && !poll.userVote.pending
-    const ourLocalIsPending = local.pending
-    if (!userTouchedRef.current || (serverConfirmedOurVote && ourLocalIsPending)) {
+    // "Server confirmed at least one of our votes": any row that
+    // came back with pending=false. If the user has a still-pending
+    // optimistic pick we keep that until the indexer round-trips.
+    const serverConfirmed = (poll.userVotes ?? (poll.userVote ? [poll.userVote] : []))
+      .some(r => !r.pending)
+    const ourLocalHasPending = Array.from(local.pending.values()).some(v => v)
+    if (!userTouchedRef.current || (serverConfirmed && ourLocalHasPending)) {
       setLocal(buildInitialLocal())
     } else if ((poll.totalVotes ?? 0) > local.total) {
       // Other voters joined — refresh the counts but keep our optimistic pick.
@@ -188,8 +226,15 @@ const PollDisplay: React.FC<Props> = ({ caw, optionLabelsOverride }) => {
         total: poll.totalVotes ?? prev.total,
       }))
     }
+    // Drop the txQueueId map entry for any option whose server-side
+    // row is now confirmed (pending=false). After confirm we can't
+    // cancel it anyway, and a stale entry would make a future "cancel
+    // before resubmit" try to cancel an already-finalized action.
+    for (const r of poll.userVotes ?? (poll.userVote ? [poll.userVote] : [])) {
+      if (!r.pending) pendingTxIdsRef.current.delete(r.optionIndex)
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [poll?.userVote?.optionIndex, poll?.userVote?.pending, poll?.totalVotes, JSON.stringify(poll?.optionVoteCounts)])
+  }, [JSON.stringify(poll?.userVotes ?? poll?.userVote), poll?.totalVotes, JSON.stringify(poll?.optionVoteCounts)])
 
   // Mount-once flag so bars get a "fill from 0" entry animation the first
   // time results render. Without this the bars would snap to width on
@@ -218,7 +263,13 @@ const PollDisplay: React.FC<Props> = ({ caw, optionLabelsOverride }) => {
   const endsAtMs = poll.endsAt ? new Date(poll.endsAt).getTime() : null
   const hasEnded = endsAtMs != null && Date.now() > endsAtMs
 
-  const showResults = local.optionIndex !== null || hasEnded  // viewer voted, or poll closed
+  const isMulti = !!poll.multiSelect
+  // For single-select polls the existing "user voted → show results"
+  // semantic is right. For multi-select we keep showing the option
+  // rows as checkboxes regardless of whether they've voted, but flip
+  // to results-style fill bars when the poll has ended (or when the
+  // user wants to see results — out of scope for v1).
+  const showResults = (!isMulti && local.picks.size > 0) || hasEnded
 
   const submitVote = async (optionIndex: number | null) => {
     if (submitting) return
@@ -235,24 +286,111 @@ const PollDisplay: React.FC<Props> = ({ caw, optionLabelsOverride }) => {
     setLocal(curr => {
       const counts = curr.counts.slice()
       let total = curr.total
-      // Decrement previous pick (only if it was confirmed locally — a
-      // pending pick wasn't reflected in `total` to begin with).
-      if (curr.optionIndex !== null && !curr.pending) {
-        counts[curr.optionIndex] = Math.max(0, counts[curr.optionIndex] - 1)
-        total = Math.max(0, total - 1)
-      }
+      const picks = new Set(curr.picks)
+      const pending = new Map(curr.pending)
+
       if (optionIndex === null) {
-        // Unvote: just leave the decrement in place.
-        return { optionIndex: null, pending: true, counts, total }
+        // Unvote: drop every pick this user had. Decrement counts for
+        // confirmed picks only (pending picks weren't reflected in
+        // total to begin with).
+        for (const i of picks) {
+          if (!pending.get(i)) {
+            counts[i] = Math.max(0, counts[i] - 1)
+            total = Math.max(0, total - 1)
+          }
+        }
+        picks.clear()
+        pending.clear()
+        return { picks, pending, counts, total }
       }
+
+      if (isMulti) {
+        // Multi-select toggle. If the user already had this option
+        // picked, drop it; otherwise add it. Counts adjust based on
+        // whether the removed pick was confirmed.
+        if (picks.has(optionIndex)) {
+          if (!pending.get(optionIndex)) {
+            counts[optionIndex] = Math.max(0, counts[optionIndex] - 1)
+            total = Math.max(0, total - 1)
+          }
+          picks.delete(optionIndex)
+          pending.delete(optionIndex)
+        } else {
+          counts[optionIndex] = (counts[optionIndex] || 0) + 1
+          total = total + 1
+          picks.add(optionIndex)
+          pending.set(optionIndex, true)
+        }
+        return { picks, pending, counts, total }
+      }
+
+      // Single-select: drop the previous pick (if any) and add the new one.
+      for (const i of picks) {
+        if (!pending.get(i)) {
+          counts[i] = Math.max(0, counts[i] - 1)
+          total = Math.max(0, total - 1)
+        }
+      }
+      picks.clear()
+      pending.clear()
       counts[optionIndex] = (counts[optionIndex] || 0) + 1
       total = total + 1
-      return { optionIndex, pending: true, counts, total }
+      picks.add(optionIndex)
+      pending.set(optionIndex, true)
+      return { picks, pending, counts, total }
     })
 
     setSubmitting(true)
+    // Snapshot the txQueueIds we need to cancel before submitting the
+    // new vote: anything that's about to be replaced by this action.
+    //   - unvote (optionIndex===null): cancel every pending tx the
+    //     user has on this poll
+    //   - multi toggle-off: cancel the pending tx for that specific
+    //     option (we set pending to false on it above, but the
+    //     queued TxQueue still exists until cancelled)
+    //   - multi toggle-on: nothing to cancel on this option (no prior
+    //     tx); other options' pending votes stay independent
+    //   - single replace: cancel the pending tx on the prior option
+    //     (if any) — the new vote will supersede it
+    const txIdsToCancel: number[] = []
+    if (optionIndex === null) {
+      for (const id of pendingTxIdsRef.current.values()) txIdsToCancel.push(id)
+      pendingTxIdsRef.current.clear()
+    } else if (isMulti) {
+      // Was this a toggle-off? local already mutated; check prev.
+      if (prev.picks.has(optionIndex)) {
+        const id = pendingTxIdsRef.current.get(optionIndex)
+        if (id != null) { txIdsToCancel.push(id); pendingTxIdsRef.current.delete(optionIndex) }
+      }
+    } else {
+      // Single-select: cancel any tx for a different option (replace).
+      for (const [opt, id] of pendingTxIdsRef.current.entries()) {
+        if (opt !== optionIndex) {
+          txIdsToCancel.push(id)
+          pendingTxIdsRef.current.delete(opt)
+        }
+      }
+    }
+
+    // Fire cancels in parallel. 409 = validator already picked it up;
+    // we accept that case (the indexer's confirm-then-replace path
+    // means the prior vote will be replaced on the next handleVote
+    // run anyway).
+    if (txIdsToCancel.length > 0) {
+      await Promise.allSettled(
+        txIdsToCancel.map(id =>
+          apiFetch(`/api/txqueue/${id}/cancel`, { method: 'POST' })
+            .catch((err: any) => {
+              if (!String(err?.message || '').includes('409')) {
+                console.warn(`[PollDisplay] cancel txQueueId=${id} failed:`, err)
+              }
+            })
+        )
+      )
+    }
+
     try {
-      await signAndSubmit({
+      const response: any = await signAndSubmit({
         actionType: 'other',
         senderId: activeToken.tokenId,
         // The poll's caw is identified by (receiverId, receiverCawonce) —
@@ -270,6 +408,17 @@ const PollDisplay: React.FC<Props> = ({ caw, optionLabelsOverride }) => {
         amounts: [],
         text: buildVoteText(optionIndex),
       })
+      // Stash the txQueueId so a future change can cancel us. Only
+      // tracked for actions that ARE optimistic-on (i.e. we just
+      // added this option to picks). Unvote and toggle-off don't
+      // need tracking because there's nothing further to cancel.
+      const txQueueId = response?.txQueueId
+      if (txQueueId != null && optionIndex !== null) {
+        const isAdd = isMulti
+          ? !prev.picks.has(optionIndex)  // toggle-on
+          : true                           // single-select always adds
+        if (isAdd) pendingTxIdsRef.current.set(optionIndex, txQueueId)
+      }
     } catch (err) {
       // Roll back the optimistic bump. ACTION_FAILED notification covers
       // the user-facing retry path elsewhere.
@@ -289,7 +438,8 @@ const PollDisplay: React.FC<Props> = ({ caw, optionLabelsOverride }) => {
         const count = totals.counts[i] || 0
         const rawPct = totals.sum > 0 ? (count / totals.sum) * 100 : 0
         const pct = Math.round(rawPct)
-        const isUserPick = local.optionIndex === i
+        const isUserPick = local.picks.has(i)
+        const isThisPending = !!local.pending.get(i)
         const isHover = hovered === i
         // Optional per-option thumbnail. The image lives off-chain so polls
         // mirrored from another node arrive without one — render text-only
@@ -300,20 +450,22 @@ const PollDisplay: React.FC<Props> = ({ caw, optionLabelsOverride }) => {
           // Width animates from 0 on the very first render with results
           // visible. After that, transitions handle subsequent changes.
           const targetWidth = mounted ? `${rawPct}%` : '0%'
+          // In single-select results view, clicking your own pick is a
+          // no-op (it would just re-submit the same vote). Multi-
+          // select would toggle off so we keep it interactive.
+          const lockedToPick = !isMulti && isUserPick
           return (
             <button
               key={i}
               onClick={() => submitVote(i)}
-              disabled={submitting || isUserPick || hasEnded}
+              disabled={submitting || lockedToPick || hasEnded}
               onMouseEnter={() => setHovered(i)}
               onMouseLeave={() => setHovered(null)}
               style={{ background: 'transparent', minHeight: 50 }}
               className={`relative w-full text-left px-3 py-2 rounded-lg overflow-hidden ${
-                hasEnded
+                hasEnded || lockedToPick
                   ? 'cursor-default'
-                  : isUserPick
-                    ? 'cursor-default'
-                    : (submitting ? 'cursor-wait opacity-60' : 'cursor-pointer hover:opacity-95')
+                  : (submitting ? 'cursor-wait opacity-60' : 'cursor-pointer hover:opacity-95')
               }`}
             >
               {/* Filled bar — width transitions to its target percentage.
@@ -341,7 +493,7 @@ const PollDisplay: React.FC<Props> = ({ caw, optionLabelsOverride }) => {
                     : (isDark ? 'text-white/80' : 'text-gray-800')
                 }`}>
                   {displayOpt}
-                  {isUserPick && local.pending && (
+                  {isUserPick && isThisPending && (
                     <span className={`ml-2 text-[10px] uppercase tracking-wide ${
                       isDark ? 'text-yellow-400/70' : 'text-yellow-600/80'
                     }`}>
@@ -360,7 +512,9 @@ const PollDisplay: React.FC<Props> = ({ caw, optionLabelsOverride }) => {
           )
         }
 
-        // Pre-vote state. Each option is a fresh button.
+        // Pre-vote state. Each option is a fresh button. Multi-select
+        // adds a checkbox indicator on the right; ticked when the user
+        // has the option picked (whether confirmed or pending).
         return (
           <button
             key={i}
@@ -372,13 +526,39 @@ const PollDisplay: React.FC<Props> = ({ caw, optionLabelsOverride }) => {
             className={`w-full text-left px-3 py-2 rounded-lg border text-base transition-colors flex items-center gap-3 ${
               submitting
                 ? 'cursor-wait opacity-60'
-                : (isHover
+                : isUserPick
                   ? (isDark ? 'border-yellow-500 bg-yellow-500/10 text-white' : 'border-yellow-500 bg-yellow-50 text-gray-900')
-                  : (isDark ? 'border-white/10 hover:border-yellow-500/50 text-white/80' : 'border-gray-200 hover:border-yellow-500/50 text-gray-800'))
+                  : (isHover
+                    ? (isDark ? 'border-yellow-500 bg-yellow-500/10 text-white' : 'border-yellow-500 bg-yellow-50 text-gray-900')
+                    : (isDark ? 'border-white/10 hover:border-yellow-500/50 text-white/80' : 'border-gray-200 hover:border-yellow-500/50 text-gray-800'))
             }`}
           >
             <PollOptionThumb imageUrl={imgUrl} number={i + 1} isDark={isDark} />
-            <span className="flex-1 break-words">{displayOpt}</span>
+            <span className="flex-1 break-words">
+              {displayOpt}
+              {isUserPick && isThisPending && (
+                <span className={`ml-2 text-[10px] uppercase tracking-wide ${
+                  isDark ? 'text-yellow-400/70' : 'text-yellow-600/80'
+                }`}>
+                  {t('poll.pending')}
+                </span>
+              )}
+            </span>
+            {isMulti && (
+              <span
+                className={`flex-shrink-0 w-5 h-5 rounded border-2 flex items-center justify-center transition-colors ${
+                  isUserPick
+                    ? 'bg-yellow-500 border-yellow-500'
+                    : (isDark ? 'border-white/30' : 'border-gray-400')
+                }`}
+              >
+                {isUserPick && (
+                  <svg viewBox="0 0 16 16" className="w-3.5 h-3.5 text-black" fill="none">
+                    <path d="M3 8.5l3 3 7-7" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" />
+                  </svg>
+                )}
+              </span>
+            )}
           </button>
         )
       })}
@@ -396,7 +576,10 @@ const PollDisplay: React.FC<Props> = ({ caw, optionLabelsOverride }) => {
             </span>
           )}
         </span>
-        {showResults && !hasEnded && !local.pending && local.optionIndex !== null && (
+        {/* Remove-vote control appears whenever the user has at least
+            one confirmed pick AND the poll is still open. For multi-
+            select polls this clears every pick at once. */}
+        {!hasEnded && local.picks.size > 0 && Array.from(local.pending.values()).every(v => !v) && (
           <button
             onClick={() => submitVote(null)}
             disabled={submitting}

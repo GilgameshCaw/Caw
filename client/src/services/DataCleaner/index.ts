@@ -118,15 +118,8 @@ async function cleanupPendingLikes() {
             }
           })
 
-          // Increment like count only if the action is LIKE (not UNLIKE) AND the like was pending
-          // This prevents double-incrementing if ActionProcessor already processed it
-          if (action.actionType === 'LIKE' && pendingLike.pending) {
-            await prisma.caw.update({
-              where: { id: pendingLike.cawId },
-              data: { likeCount: { increment: 1 } }
-            })
-            logger.log(` Incremented like count for caw ${pendingLike.cawId}`)
-          }
+          // Note: count was incremented at /api/actions optimistic write time;
+          // PENDING→SUCCESS is a no-op so we only flip pending here.
         } else if (pendingLike.createdAt < thirtyMinutesAgo) {
           // No action found after 30 minutes, delete the optimistic like
           logger.log(` Removing failed like for user ${pendingLike.userId} on caw ${pendingLike.cawId}`)
@@ -549,44 +542,9 @@ async function cleanupFailedTxQueue() {
             }
           }
         } else if (data.actionType === 1 || data.actionType === 'like') {
-          // Remove the pending like if it exists
-          logger.log(` Removing failed pending like for user ${data.senderId}`)
-
-          // First find the target caw
-          const targetCaw = await prisma.caw.findFirst({
-            where: {
-              userId: data.receiverId,
-              cawonce: data.receiverCawonce
-            }
-          })
-
-          if (targetCaw) {
-            await prisma.like.deleteMany({
-              where: {
-                userId: data.senderId,
-                cawId: targetCaw.id,
-                pending: true
-              }
-            })
-
-            // Recalculate the correct like count
-            const actualLikeCount = await prisma.like.count({
-              where: {
-                cawId: targetCaw.id,
-                action: 'LIKE',
-                pending: false
-              }
-            })
-
-            await prisma.caw.update({
-              where: { id: targetCaw.id },
-              data: {
-                likeCount: actualLikeCount
-              }
-            })
-
-            logger.log(` Updated caw ${targetCaw.id} like count to ${actualLikeCount}`)
-          }
+          // Note: like rollback is owned by markTxQueueFailed → cleanupOptimisticRows.
+          // A second pass here used to race with confirmed-between-sweeps Likes
+          // and skew likeCount (RC-2).
         } else if (data.actionType === 4 || data.actionType === 'follow') {
           // Delete the pending follow record (only if still pending — a prior successful tx may have confirmed it)
           logger.log(` Removing failed pending follow for user ${data.senderId} -> ${data.receiverId}`)

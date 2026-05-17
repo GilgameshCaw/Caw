@@ -66,6 +66,12 @@ async function safeDecrement(
 
 /**
  * Atomically increment a column using Prisma's built-in atomic operation.
+ *
+ * P2025 (record not found) is swallowed on the Caw branch: a child row
+ * (reply/recaw/quote) can arrive via peer-mirror indexing before the parent
+ * Caw row exists locally. Aborting the whole transaction would silently drop
+ * the child row, which is the more important artifact. Count drift is accepted
+ * as transient and reconciled by the periodic sweep.
  */
 async function safeIncrement(
   tx: TxClient,
@@ -76,15 +82,37 @@ async function safeIncrement(
   amount: number = 1
 ): Promise<void> {
   if (table === 'Caw') {
-    await (tx as any).caw.update({
-      where: { id: idValue },
-      data: { [column]: { increment: amount } }
-    })
+    try {
+      await (tx as any).caw.update({
+        where: { id: idValue },
+        data: { [column]: { increment: amount } }
+      })
+    } catch (e: any) {
+      // P2025 = parent Caw row missing (typically peer-mirror lag where a child
+      // row arrived before its parent was indexed locally). Don't abort the outer
+      // transaction — the child is the more important artifact. Count drifts
+      // +${amount}; expect reconcile sweep to correct it.
+      if (e?.code === 'P2025') {
+        log(`safeIncrement: Caw.id=${idValue} missing — count ${column} drifts +${amount} (child preserved; expect reconcile sweep)`)
+        return
+      }
+      throw e
+    }
   } else {
-    await (tx as any).user.update({
-      where: { [idColumn]: idValue },
-      data: { [column]: { increment: amount } }
-    })
+    try {
+      await (tx as any).user.update({
+        where: { [idColumn]: idValue },
+        data: { [column]: { increment: amount } }
+      })
+    } catch (e: any) {
+      // P2025 on a User row is also treated as a transient peer-mirror lag:
+      // swallow, log, and let the child row commit. Count drift reconciled by sweep.
+      if (e?.code === 'P2025') {
+        log(`safeIncrement: User.${idColumn}=${idValue} missing — count ${column} drifts +${amount} (child preserved; expect reconcile sweep)`)
+        return
+      }
+      throw e
+    }
   }
 }
 
@@ -498,6 +526,29 @@ const countManager = {
   },
 
   // =========================================================================
+  // onRecawRemoved
+  // Called when a recaw is deleted (hide:recaw: action). Decrements:
+  //   - Caw.recawCount on the original caw (by amount — deleteMany may
+  //     remove more than one row in degenerate cases)
+  //   - User.recawCount on the sender (recaws they have posted)
+  // =========================================================================
+  async onRecawRemoved(
+    tx: TxClient,
+    params: {
+      originalCawId: number
+      senderId: number
+      amount?: number
+    }
+  ): Promise<void> {
+    const amount = params.amount ?? 1
+    await safeDecrement(tx, 'Caw', 'recawCount', 'id', params.originalCawId, amount)
+    log(`recawCount -${amount} on caw ${params.originalCawId} (recaw removed by user ${params.senderId})`)
+
+    await safeDecrement(tx, 'User', 'recawCount', 'tokenId', params.senderId, amount)
+    log(`recawCount -${amount} on user ${params.senderId} (removed recaw of caw ${params.originalCawId})`)
+  },
+
+  // =========================================================================
   // onFollowRemoved
   // Called when a follow is deleted (unfollow action). Decrements
   // followingCount on the follower and followerCount on the target.
@@ -517,5 +568,5 @@ const countManager = {
   },
 }
 
-export { countManager }
+export { countManager, safeDecrement }
 export default countManager

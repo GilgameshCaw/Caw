@@ -196,6 +196,12 @@ model Poll {
   // stays text-only, so mirror nodes see the poll but not the images
   // unless they fetch from the original instance.
   optionImages String[] @default([])
+  /// When true, voters can pick any subset of options (checkbox UI;
+  /// each vote action toggles one option). Encoded on-chain via the
+  /// `::pm::` marker sidecar. Default false = single-select (radio UI;
+  /// each vote replaces the prior choice). Legacy polls created
+  /// before the sidecar always parse as single-select.
+  multiSelect  Boolean  @default(false)
   totalVotes   Int      @default(0)
   createdAt    DateTime @default(now())
   updatedAt    DateTime @updatedAt
@@ -230,7 +236,15 @@ model Vote {
   poll        Poll     @relation(fields: [pollId], references: [id], onDelete: Cascade)
   voter       User     @relation(fields: [voterId], references: [tokenId])
 
-  @@unique([pollId, voterId])
+  /// Uniqueness on (pollId, voterId, optionIndex) so multi-select polls
+  /// can have multiple Vote rows per voter — one per picked option.
+  /// Single-select polls still get one row per voter in practice
+  /// because the FE only emits one vote action per voter (replaces on
+  /// change); the broader uniqueness key just stops being the
+  /// constraint enforced. Existing rows satisfy the new constraint
+  /// because (pollId, voterId) was already unique and adding
+  /// optionIndex preserves that.
+  @@unique([pollId, voterId, optionIndex])
   @@index([pollId, optionIndex])
   @@index([voterId])
 }
@@ -447,8 +461,8 @@ model ScheduledCaw {
 ///
 /// Marking a group read closes it: the next event on the same target
 /// starts a fresh group so users can see "5 new likes since last
-/// time" instead of one ever-growing rollup. Same close behavior
-/// after 15 minutes of inactivity even if still unread.
+/// time" instead of one ever-growing rollup. A group stays open
+/// indefinitely while unread — no time-based closure.
 model NotificationGroup {
   id                   Int      @id @default(autoincrement())
   userId               Int
@@ -459,8 +473,7 @@ model NotificationGroup {
   targetKey            String?
   openedAt             DateTime @default(now())
   /// Updated whenever a notification is added to this group. Drives
-  /// both the order on the feed (DESC) and the 15-minute open-window
-  /// check on the write path.
+  /// the order on the feed (DESC).
   lastEventAt          DateTime @default(now())
   isRead               Boolean  @default(false)
   /// Quick pointer to the most-recent member for renderer lead
@@ -474,8 +487,9 @@ model NotificationGroup {
 
   /// Two read indexes:
   ///   - feed read: ORDER BY lastEventAt DESC over (userId)
-  ///   - open-group lookup on write: (userId, type, targetKey) with
-  ///     isRead=false + lastEventAt cutoff filter
+  ///   - open-group lookup / atomic upsert: partial unique index on
+  ///     (userId, type, COALESCE(targetKey,'')) WHERE isRead=false
+  ///     (hand-rolled in migration; Prisma can't express partial uniques)
   @@index([userId, lastEventAt])
   @@index([userId, type, targetKey, isRead, lastEventAt])
 }
@@ -844,6 +858,10 @@ enum NotificationType {
   SALE_SOLD
   SALE_BOUGHT
   ACTION_FAILED
+  /// Sent to the poll author when someone votes on their poll. groupKey
+  /// = "vote_caw_<cawId>" so all votes on the same poll roll up into
+  /// one notification row in the recipient's feed.
+  VOTE
 }
 
 enum MessageStatus {

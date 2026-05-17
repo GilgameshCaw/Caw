@@ -2,11 +2,6 @@ import { prisma } from '../prismaClient'
 import { NotificationType, Prisma } from '@prisma/client'
 import { elasticsearchService } from './ElasticsearchService'
 
-// 15-minute open-group window. New notifications matching an open
-// group's (userId, type, targetKey) join it; otherwise a fresh group
-// is created. Same constant the migration backfill used.
-const NOTIFICATION_GROUP_OPEN_WINDOW_MS = 15 * 60 * 1000
-
 /**
  * Derive the persistent-group `targetKey` for a notification. NULL
  * collapses all rows of this `(userId, type)` into one bucket; a
@@ -29,18 +24,30 @@ function notificationTargetKey(
 }
 
 /**
- * Create a notification row AND assign it to a NotificationGroup,
- * opening a fresh group or joining the currently-open one based on
- * the read+window rules.
+ * Create a notification row AND assign it to a NotificationGroup.
+ *
+ * A group stays open as long as `isRead = false`. Any notification
+ * arriving on the same `(userId, type, targetKey)` bucket joins the
+ * open group regardless of age. When a user reads the group it closes;
+ * the next event on that bucket opens a fresh group.
+ *
+ * The group upsert is atomic: a single INSERT … ON CONFLICT DO UPDATE
+ * prevents the race where two concurrent inserts both see "no open
+ * group" and each create their own duplicate.
+ *
+ * The partial unique index on `(userId, type, COALESCE(targetKey, ''))
+ * WHERE isRead = false` enforces at most one open group per bucket.
+ * The COALESCE handles the NULL targetKey case (FOLLOW, ACTION_FAILED)
+ * since Postgres treats NULLs as distinct in regular unique indexes.
  *
  * Always runs inside the caller's prisma client (so it composes with
  * an outer transaction). The caller must pass a client that supports
- * `notification.create` and `notificationGroup.*`.
+ * `notification.create` and `$executeRaw` / `$queryRaw`.
  *
  * Returns the created Notification's id.
  */
 export async function createNotificationWithGroup(
-  client: { notification: any; notificationGroup: any },
+  client: { notification: any; notificationGroup: any; $queryRawUnsafe?: any; $queryRaw?: any },
   data: Prisma.NotificationCreateInput | Prisma.NotificationUncheckedCreateInput,
 ): Promise<number> {
   // 1) Insert the notification row first — we need its id to point
@@ -53,50 +60,49 @@ export async function createNotificationWithGroup(
     { cawId: notif.cawId, offerId: notif.offerId },
   )
 
-  // 3) Look for an open group: same (userId, type, targetKey),
-  //    isRead=false, lastEventAt within the window. Most recent
-  //    wins so the "next event since you read it" semantics hold.
-  const cutoff = new Date(Date.now() - NOTIFICATION_GROUP_OPEN_WINDOW_MS)
-  const open = await client.notificationGroup.findFirst({
-    where: {
-      userId: notif.userId,
-      type: notif.type,
-      targetKey,
-      isRead: false,
-      lastEventAt: { gte: cutoff },
-    },
-    orderBy: { lastEventAt: 'desc' },
-    select: { id: true },
-  })
+  // 3) Atomic upsert: if an open group already exists for this
+  //    (userId, type, targetKey) bucket, increment its count and
+  //    update the latest pointer. Otherwise create a fresh group.
+  //
+  //    The conflict target matches the partial unique index:
+  //      (userId, type, COALESCE(targetKey, '')) WHERE isRead = false
+  //
+  //    We use $queryRawUnsafe on the tx client (or fall back to the
+  //    global prisma) because Prisma has no first-class support for
+  //    partial-index ON CONFLICT targets.
+  const now = notif.createdAt as Date
 
-  let groupId: number
-  if (open) {
-    await client.notificationGroup.update({
-      where: { id: open.id },
-      data: {
-        count: { increment: 1 },
-        lastEventAt: notif.createdAt,
-        latestNotificationId: notif.id,
-      },
-    })
-    groupId = open.id
-  } else {
-    const group = await client.notificationGroup.create({
-      data: {
-        userId: notif.userId,
-        type: notif.type,
-        targetKey,
-        latestNotificationId: notif.id,
-        openedAt: notif.createdAt,
-        lastEventAt: notif.createdAt,
-        isRead: false,
-        count: 1,
-      },
-      select: { id: true },
-    })
-    groupId = group.id
-  }
+  // Resolve to a raw-query-capable client. Interactive-transaction
+  // clients expose $executeRaw / $queryRaw but not $queryRawUnsafe;
+  // the global prisma exposes all three. We need the RETURNING id so
+  // we prefer $queryRawUnsafe when available, otherwise $queryRaw
+  // with a tagged-template literal.
+  const rawClient = (client as any).$queryRawUnsafe
+    ? (client as any)
+    : prisma
 
+  const rows: Array<{ id: number }> = await rawClient.$queryRawUnsafe(
+    `INSERT INTO "NotificationGroup" (
+       "userId", "type", "targetKey", "openedAt", "lastEventAt",
+       "isRead", "latestNotificationId", "count"
+     ) VALUES ($1, $2::\"NotificationType\", $3, $4, $4, false, $5, 1)
+     ON CONFLICT ("userId", "type", COALESCE("targetKey", ''))
+       WHERE "isRead" = false
+     DO UPDATE SET
+       "count"                = "NotificationGroup"."count" + 1,
+       "lastEventAt"          = EXCLUDED."lastEventAt",
+       "latestNotificationId" = EXCLUDED."latestNotificationId"
+     RETURNING id`,
+    notif.userId,
+    notif.type,
+    targetKey,
+    now,
+    notif.id,
+  )
+
+  const groupId = rows[0].id
+
+  // 4) Back-reference the new notification to its group.
   await client.notification.update({
     where: { id: notif.id },
     data: { groupId },
@@ -528,6 +534,51 @@ export class NotificationService {
         actionPayload: amount ? { tipAmount: String(amount) } : undefined,
       })
     }
+  }
+
+  /**
+   * Create notification for a vote on the recipient's poll.
+   *
+   * The poll's owner is the recipient. groupKey is keyed by the
+   * caw the poll lives on, so multiple voters on the same poll
+   * collapse to one notification row at read time. Idempotent vote
+   * changes (single-select user changing their pick) hit the
+   * findFirst dedupe and skip a duplicate notification — they only
+   * cost one notification per (poll, voter) pair.
+   *
+   * Pass the tx `client` when called from inside an interactive
+   * transaction. Same pool-leak rationale as createFollowNotification.
+   */
+  static async createVoteNotification(
+    cawId: number,
+    pollOwnerId: number,
+    voterId: number,
+    client: Pick<typeof prisma, 'notification' | 'notificationGroup'> = prisma,
+  ) {
+    if (pollOwnerId === voterId) return  // self-vote, no notification
+    if (await this.isUserMutedOrBlocked(pollOwnerId, voterId)) return
+
+    // Dedupe: one VOTE notification per (poll-author, voter, poll).
+    // Single-select polls with vote-changing only emit one row total;
+    // multi-select polls likewise — additional toggles by the same
+    // voter on the same poll don't spam a fresh notification.
+    const existing = await client.notification.findFirst({
+      where: {
+        userId: pollOwnerId,
+        actorId: voterId,
+        type: NotificationType.VOTE,
+        cawId,
+      },
+    })
+    if (existing) return
+
+    await createNotificationWithGroup(client, {
+      userId: pollOwnerId,
+      actorId: voterId,
+      type: NotificationType.VOTE,
+      cawId,
+      groupKey: `vote_caw_${cawId}`,
+    })
   }
 
   /**

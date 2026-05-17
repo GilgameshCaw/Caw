@@ -44,7 +44,14 @@ import MessageSearch from '~/components/MessageSearch'
 import GifPicker from '~/components/GifPicker'
 import EncryptedImage from '~/components/EncryptedImage'
 import { useDmFileUpload } from '~/hooks/useDmFileUpload'
-import { getCachedPrivateKey, getCachedPublicKeyHex } from '~/services/DmCryptoService'
+import {
+  getCachedPrivateKey,
+  getCachedPublicKeyHex,
+  computeSharedSecretForPeer,
+  unsealAttachmentKey,
+  decryptBinary,
+} from '~/services/DmCryptoService'
+import { isCanonicalEncryptedUploadUrl } from '~/utils/uploadUrl'
 import MentionAutocomplete from '~/components/MentionAutocomplete'
 import { useBlockedUsersStore } from '~/store/blockedUsersStore'
 import { useDmMuteStore } from '~/store/dmMuteStore'
@@ -434,6 +441,7 @@ const MessagesPage: React.FC = () => {
 
     // Check if conversation already exists
     const existingConv = conversations.find(c =>
+      c.type === 'DM' &&
       c.participants.some(p => p.identity.user.tokenId === targetUser.tokenId)
     )
 
@@ -1152,6 +1160,194 @@ const MessagesPage: React.FC = () => {
     }
   }, [translations, runTranslate])
 
+  // Inspect a message's raw content and return two facts needed by the
+  // context menu: whether there is any visible text to translate, and the
+  // list of downloadable media items (url + derived filename).
+  //
+  // Three content shapes exist in the wild:
+  //   1. Encrypted attachment JSON  — { msgType: 'encrypted-attachment', url, mimeType, name, … }
+  //      No user-visible text; url is the download target.
+  //   2. Structured text+attachments — { text, attachments: [...] }
+  //      Text may or may not be empty; each attachment may carry a url.
+  //   3. Plain URL (legacy GIF / image paste) — a bare https string matching
+  //      the image-URL pattern.  No text to translate; url is the download target.
+  //   4. Plain text — everything else.
+  const parseMessageMediaInfo = useCallback((rawContent: string | undefined | null): {
+    hasText: boolean
+    mediaItems: { url: string; filename: string }[]
+  } => {
+    if (!rawContent) return { hasText: false, mediaItems: [] }
+
+    // Helper: derive a filename from a URL, falling back to a generated name.
+    const filenameFromUrl = (url: string, index: number, mimeType?: string): string => {
+      try {
+        const pathname = new URL(url).pathname
+        const base = pathname.split('/').pop()
+        if (base && base.includes('.')) return base
+      } catch {}
+      // Derive extension from mimeType if available.
+      const extMap: Record<string, string> = {
+        'image/jpeg': 'jpg', 'image/png': 'png', 'image/gif': 'gif',
+        'image/webp': 'webp', 'video/mp4': 'mp4', 'video/webm': 'webm',
+        'video/quicktime': 'mov',
+      }
+      const ext = mimeType ? (extMap[mimeType] ?? mimeType.split('/')[1] ?? 'bin') : 'bin'
+      return `caw-dm-${index}.${ext}`
+    }
+
+    // Shape 1 / Shape 2: try JSON parse.
+    try {
+      const parsed = JSON.parse(rawContent)
+
+      // Encrypted attachment (shape 1).
+      if (parsed?.msgType === 'encrypted-attachment' && parsed?.url) {
+        const mt = String(parsed.mimeType || '')
+        const isMedia = mt.startsWith('image/') || mt.startsWith('video/') || parsed.type === 'image'
+        return {
+          hasText: false,
+          mediaItems: isMedia
+            ? [{ url: parsed.url as string, filename: (parsed.name as string | undefined) || filenameFromUrl(parsed.url, 0, mt || undefined) }]
+            : [],
+        }
+      }
+
+      // Structured message (shape 2): { text, attachments }
+      if (parsed?.text !== undefined || Array.isArray(parsed?.attachments)) {
+        const text = String(parsed.text || '').trim()
+        const attachments: { url: string; filename: string }[] = []
+        if (Array.isArray(parsed.attachments)) {
+          ;(parsed.attachments as Array<{ url?: string; mimeType?: string; name?: string }>)
+            .forEach((att, idx) => {
+              if (att?.url) {
+                attachments.push({
+                  url: att.url,
+                  filename: att.name || filenameFromUrl(att.url, idx, att.mimeType),
+                })
+              }
+            })
+        }
+        return { hasText: !!text, mediaItems: attachments }
+      }
+    } catch {}
+
+    // Shape 3: bare image / GIF URL.
+    const imageUrlPattern = /^https?:\/\/\S+\.(gif|jpg|jpeg|png|webp)(\?\S*)?$/i
+    const giphyPattern = /^https?:\/\/(media\d?\.giphy\.com|i\.giphy\.com)\//i
+    const trimmed = rawContent.trim()
+    if (imageUrlPattern.test(trimmed) || giphyPattern.test(trimmed)) {
+      return {
+        hasText: false,
+        mediaItems: [{ url: trimmed, filename: filenameFromUrl(trimmed, 0, undefined) }],
+      }
+    }
+
+    // Shape 4: plain text.
+    return { hasText: !!rawContent.trim(), mediaItems: [] }
+  }, [])
+
+  // Metadata needed to decrypt an encrypted-attachment before saving it.
+  // When supplied, downloadMediaUrl fetches + decrypts the ciphertext and
+  // saves the cleartext blob. When absent, the legacy plain-fetch path runs.
+  type EncryptedDownloadMeta = {
+    // New sealed-key path (post-2026-05-12 uploads).
+    sealedKey?: string
+    senderTokenId?: number
+    senderPublicKey?: string
+    // Legacy path: conversation's ECDH shared secret (1:1 only).
+    legacySharedSecret?: CryptoKey | null
+    // MIME type of the cleartext — comes from the envelope, NOT the ciphertext
+    // response headers (those just say application/octet-stream).
+    mimeType: string
+  }
+
+  // Programmatically download one media file. We attempt a fetch→blob path
+  // first so the browser `download` attribute is honoured cross-origin
+  // (servers commonly send Content-Disposition: inline which prevents the
+  // `download` attribute from working directly on cross-origin links).
+  //
+  // For encrypted DM attachments, pass `encryptedMeta` so the ciphertext is
+  // decrypted before saving — otherwise the user receives useless opaque bytes.
+  const downloadMediaUrl = useCallback(async (
+    url: string,
+    filename: string,
+    encryptedMeta?: EncryptedDownloadMeta,
+  ) => {
+    try {
+      if (encryptedMeta) {
+        // --- Encrypted-attachment path ---
+        // Mirror the exact same two-path logic that EncryptedImage uses.
+        if (!isCanonicalEncryptedUploadUrl(url)) {
+          throw new Error('Encrypted attachment URL has unexpected shape')
+        }
+
+        const { sealedKey, senderTokenId, senderPublicKey, legacySharedSecret, mimeType } = encryptedMeta
+        const hasNewPath = !!(sealedKey && senderPublicKey && senderTokenId)
+        const hasLegacyPath = !!legacySharedSecret
+
+        if (!hasNewPath && !hasLegacyPath) {
+          // No key available — DM identity key cleared (wagmi disconnect?) or
+          // message predates key rollout without a stored shared secret.
+          // Save the ciphertext with an ".encrypted" suffix so the user at
+          // least has the raw file; a toast would be out of scope here.
+          const res = await fetch(url, { credentials: 'omit' })
+          if (!res.ok) throw new Error('fetch failed')
+          const blob = await res.blob()
+          const objectUrl = URL.createObjectURL(blob)
+          const a = document.createElement('a')
+          a.href = objectUrl
+          a.download = filename + '.encrypted'
+          document.body.appendChild(a)
+          a.click()
+          document.body.removeChild(a)
+          setTimeout(() => URL.revokeObjectURL(objectUrl), 10_000)
+          return
+        }
+
+        let attachmentKey: CryptoKey
+        if (hasNewPath) {
+          const myPrivateKey = getCachedPrivateKey()
+          if (!myPrivateKey) throw new Error('DM identity key not in cache')
+          const pairKey = await computeSharedSecretForPeer(myPrivateKey, senderTokenId!, senderPublicKey!)
+          attachmentKey = await unsealAttachmentKey(sealedKey!, pairKey)
+        } else {
+          attachmentKey = legacySharedSecret!
+        }
+
+        const res = await fetch(url, { credentials: 'omit' })
+        if (!res.ok) throw new Error('fetch failed')
+        const encrypted = new Uint8Array(await res.arrayBuffer())
+        const decrypted = await decryptBinary(encrypted, attachmentKey)
+        const blob = new Blob([decrypted], { type: mimeType })
+        const objectUrl = URL.createObjectURL(blob)
+        const a = document.createElement('a')
+        a.href = objectUrl
+        a.download = filename
+        document.body.appendChild(a)
+        a.click()
+        document.body.removeChild(a)
+        setTimeout(() => URL.revokeObjectURL(objectUrl), 10_000)
+        return
+      }
+
+      // --- Plain (non-encrypted) download path ---
+      const res = await fetch(url, { credentials: 'omit' })
+      if (!res.ok) throw new Error('fetch failed')
+      const blob = await res.blob()
+      const objectUrl = URL.createObjectURL(blob)
+      const a = document.createElement('a')
+      a.href = objectUrl
+      a.download = filename
+      document.body.appendChild(a)
+      a.click()
+      document.body.removeChild(a)
+      // Revoke after a short delay so the download can start.
+      setTimeout(() => URL.revokeObjectURL(objectUrl), 10_000)
+    } catch {
+      // Fallback: open in new tab — at least the user can long-press / save.
+      window.open(url, '_blank', 'noopener,noreferrer')
+    }
+  }, [])
+
   // After the context menu mounts, measure its real size and re-clamp.
   // LayoutEffect => no visible "jump" (the glitch you saw on desktop).
   // UX RULE: menu must be on the SAME ROW as the bubble, right next to it.
@@ -1734,7 +1930,7 @@ const MessagesPage: React.FC = () => {
                           <div className="flex items-center space-x-2 mb-1">
                             <h3 className={`text-base transition-colors duration-300 truncate ${
                               conversation.unreadCount > 0
-                                ? `font-bold ${isDark ? 'text-yellow-400' : 'text-yellow-600'}`
+                                ? `font-bold underline ${isDark ? 'text-white' : 'text-black'}`
                                 : `font-semibold ${isDark ? 'text-white' : 'text-black'}`
                             }`}>
                               {groupTitle}
@@ -2593,12 +2789,15 @@ const MessagesPage: React.FC = () => {
                     </button>
                   )}
 
-                  {/* Translate — available on any text-bearing message.
+                  {/* Translate — only on messages with actual text content.
+                      Hidden for media-only messages (encrypted attachments,
+                      bare image/GIF URLs) — there is nothing to translate.
                       Toggles off if already translated. The privacy modal
                       gates the first run per browser (see startTranslate). */}
                   {(() => {
                     const msg = messages.find(m => m.id === contextMenu.messageId)
-                    const hasText = !!msg?.content && msg.contentType !== 'deleted'
+                    if (!msg?.content || msg.contentType === 'deleted') return null
+                    const { hasText } = parseMessageMediaInfo(msg.content)
                     if (!hasText) return null
                     const isTranslated = !!translations[contextMenu.messageId]
                     const isInFlight = translatingIds.has(contextMenu.messageId)
@@ -2612,6 +2811,58 @@ const MessagesPage: React.FC = () => {
                         className="w-full px-4 py-2 text-left text-sm text-white hover:bg-white/10 cursor-pointer disabled:opacity-50 disabled:cursor-wait"
                       >
                         {isInFlight ? 'Translating…' : isTranslated ? 'Hide translation' : 'Translate'}
+                      </button>
+                    )
+                  })()}
+
+                  {/* Download media — visible only when the message has
+                      one or more media attachments. Each item triggers a
+                      separate download so the user gets individual files.
+                      For encrypted DM attachments the ciphertext is decrypted
+                      client-side before saving (same logic as EncryptedImage). */}
+                  {(() => {
+                    const msg = messages.find(m => m.id === contextMenu.messageId)
+                    if (!msg?.content || msg.contentType === 'deleted') return null
+                    const { mediaItems } = parseMessageMediaInfo(msg.content)
+                    if (mediaItems.length === 0) return null
+                    return (
+                      <button
+                        onClick={() => {
+                          mediaItems.forEach(item => {
+                            // Resolve decryption context for encrypted-attachment
+                            // messages. The conversation's sealed-key envelope and
+                            // the sender's public key mirror exactly what EncryptedImage
+                            // receives at render time — we just resolve them here at
+                            // click time instead.
+                            let encryptedMeta: Parameters<typeof downloadMediaUrl>[2]
+                            try {
+                              const parsed = JSON.parse(msg.content)
+                              if (parsed?.msgType === 'encrypted-attachment' && parsed?.url === item.url) {
+                                const sealedKey: string | undefined = parsed.sealedKeys?.[currentUser?.id ?? -1]
+                                const senderParticipant = selectedConversation?.participants.find(
+                                  p => p.userId === msg.senderId,
+                                )
+                                const senderPublicKey: string | null | undefined =
+                                  senderParticipant?.publicKey
+                                  || (msg.senderId === currentUser?.id ? getCachedPublicKeyHex() : null)
+                                encryptedMeta = {
+                                  sealedKey,
+                                  senderTokenId: msg.senderId,
+                                  senderPublicKey: senderPublicKey || undefined,
+                                  legacySharedSecret: chatSharedSecret,
+                                  mimeType: String(parsed.mimeType || 'application/octet-stream'),
+                                }
+                              }
+                            } catch {
+                              // Not JSON / not an encrypted attachment — plain download.
+                            }
+                            downloadMediaUrl(item.url, item.filename, encryptedMeta)
+                          })
+                          setContextMenu(null)
+                        }}
+                        className="w-full px-4 py-2 text-left text-sm text-white hover:bg-white/10 cursor-pointer"
+                      >
+                        {t('messages.context_menu.download_media')}
                       </button>
                     )
                   })()}

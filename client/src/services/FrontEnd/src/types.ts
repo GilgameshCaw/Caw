@@ -80,10 +80,20 @@ export type CawItem = {
     optionImages: string[]
     totalVotes: number
     optionVoteCounts: number[]
+    /** Single-select compat: the user's first (or only) vote row. Multi-
+     * select renderers should prefer `userVotes` below for the full set. */
     userVote: { optionIndex: number; pending: boolean } | null
+    /** Full set of viewer's votes on this poll. Always an array (possibly
+     * empty). Single-select polls have 0 or 1 entries; multi-select polls
+     * can have any subset. */
+    userVotes?: { optionIndex: number; pending: boolean }[]
     /** ISO timestamp when voting closes. Computed by the indexer from the
      * caw's createdAt + the ::pd:<dur>:: marker duration. Null when the
      * poll has no expiry (legacy polls created before the duration sidecar). */
     endsAt?: string | null
+    /** True when the poll's ::pm:: sidecar was present at post time. The
+     * renderer uses this to switch between radio (single-select) and
+     * checkbox (multi-select) controls. */
+    multiSelect?: boolean
   }
 }

@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState, useCallback } from 'react'
+import React, { useEffect, useMemo, useRef, useState, useCallback } from 'react'
 import { useTheme } from '~/hooks/useTheme'
 import { apiFetch } from '~/api/client'
 import { useTokenDataStore } from '~/store/tokenDataStore'
@@ -48,6 +48,25 @@ const SuggestedUsers: React.FC<SuggestedUsersProps> = ({ onFollowChange }) => {
   const t = useT()
   const { isDark } = useTheme()
   const activeTokenId = useTokenDataStore(s => s.activeTokenId)
+  // Owned-token set: covers every profile the connected wallet(s) hold,
+  // not just the currently-active one. A user with multiple profiles
+  // shouldn't see ANY of their own profiles in the suggestion list —
+  // filtering by activeTokenId alone leaks sibling profiles in.
+  //
+  // Select the raw map and derive the Set via useMemo. Selecting `s => new
+  // Set(...)` directly returns a fresh Set every store-tick — zustand's
+  // default reference-equality check then sees a "change" and re-renders,
+  // which re-runs the selector, which returns another fresh Set: classic
+  // infinite render loop (React error #185 on home feed). useMemo keyed
+  // on the raw object reference is stable across unrelated store changes.
+  const tokensByAddress = useTokenDataStore(s => s.tokensByAddress)
+  const ownedTokenIds = useMemo(() => {
+    const out = new Set<number>()
+    for (const tokens of Object.values(tokensByAddress)) {
+      for (const t of tokens) out.add(t.tokenId)
+    }
+    return out
+  }, [tokensByAddress])
   const hasCachedData = cachedUsers !== null && cacheTokenId === activeTokenId
   const [users, setUsers] = useState<SuggestedUser[]>(hasCachedData ? cachedUsers! : [])
   const [loading, setLoading] = useState(!hasCachedData)
@@ -65,7 +84,7 @@ const SuggestedUsers: React.FC<SuggestedUsersProps> = ({ onFollowChange }) => {
     const fetchUsers = async () => {
       try {
         const response = await apiFetch<{ users: SuggestedUser[] }>('/api/users/top-followed?limit=10')
-        const filtered = response.users.filter(u => u.tokenId !== activeTokenId)
+        const filtered = response.users.filter(u => !ownedTokenIds.has(u.tokenId))
         setUsers(filtered)
         cachedUsers = filtered
         cacheTokenId = activeTokenId
@@ -115,7 +134,7 @@ const SuggestedUsers: React.FC<SuggestedUsersProps> = ({ onFollowChange }) => {
   }
 
   const visibleUsers = users.filter(u =>
-    u.tokenId !== activeTokenId && !removedIds.has(u.tokenId) && !dismissedIds.has(u.tokenId) && !u.isFollowing && !u.followPending
+    !ownedTokenIds.has(u.tokenId) && !removedIds.has(u.tokenId) && !dismissedIds.has(u.tokenId) && !u.isFollowing && !u.followPending
   )
 
   if (visibleUsers.length <= 1) {

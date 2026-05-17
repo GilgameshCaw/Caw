@@ -7,6 +7,7 @@ import "@openzeppelin/contracts/utils/cryptography/draft-EIP712.sol";
 import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import "@openzeppelin/contracts/access/Ownable.sol";
 import "./interfaces/ICawActions.sol";
+import "./interfaces/ICawCapOracle.sol";
 import "./CawProfileURI.sol";
 import "./CawProfile.sol";
 import "./OnlyOnce.sol";
@@ -40,8 +41,18 @@ contract CawProfileL2 is
 
   using SigVerification for address;
 
+  error NotMainnet();
+  error ZeroAddress();
+  error UnauthorizedSelector();
+  error NoSession();
+  error NoFee();
+  error Unauth();
+  error ZeroOwner();
+  error InsufficientBalance();
+  error BadDate();
+
   modifier onlyOnMainnet() {
-    require(bypassLZ && msg.sender == address(cawProfile), "only mainnet");
+    if (!(bypassLZ && msg.sender == address(cawProfile))) revert NotMainnet();
     _;
   }
 
@@ -72,6 +83,10 @@ contract CawProfileL2 is
   uint256 public precision = 10**18;
 
   uint32 public immutable layer1EndpointId;
+
+  /// @notice Cap oracle. Receives piggybacked price samples from every L1->L2
+  ///         message. May be address(0) if no oracle is configured (cap dormant).
+  ICawCapOracle public immutable capOracle;
 
   bool private fromLZ;
 
@@ -169,11 +184,13 @@ contract CawProfileL2 is
 
   /// @param _endpointId LayerZero EID of the L1 chain (the source of truth for ownership)
   /// @param _endpoint Address of the LayerZero V2 EndpointV2 contract on this chain
-  constructor(uint32 _endpointId, address _endpoint)
+  /// @param _capOracle CawCapOracle address (address(0) = cap dormant, backward-compatible)
+  constructor(uint32 _endpointId, address _endpoint, address _capOracle)
     OApp(_endpoint, msg.sender)
   {
     layer1EndpointId = _endpointId;
     eip712DomainHash = generateDomainHash();
+    capOracle = ICawCapOracle(_capOracle); // address(0) permitted — cap stays dormant
   }
 
   /// @notice Compute the EIP-712 domain separator hash. Cached in `eip712DomainHash` at construction.
@@ -218,7 +235,7 @@ contract CawProfileL2 is
     onlyOwner
     onlyOnce(keccak256("setL1Peer"))
   {
-    require(peer != address(0), "Zero address");
+    if (peer == address(0)) revert ZeroAddress();
     if (_bypassLZ) {
       bypassLZ = true;
       cawProfile = CawProfile(peer);
@@ -248,7 +265,7 @@ contract CawProfileL2 is
     onlyOwner
     onlyOnce(keccak256("setCawActions"))
   {
-    require(_cawActions != address(0), "Zero address");
+    if (_cawActions == address(0)) revert ZeroAddress();
     cawActions = ICawActions(_cawActions);
     emit CawActionsSet(_cawActions);
   }
@@ -307,7 +324,7 @@ contract CawProfileL2 is
     if (!(address(cawActions) == _msgSender())) revert NotCa();
     uint256 balance = cawBalanceOf(tokenId);
 
-    require(balance >= amountToSpend, 'Insufficient CAW balance');
+    if (balance < amountToSpend) revert InsufficientBalance();
     uint256 newCawBalance = balance - amountToSpend;
 
     // SECURITY (audited 2026-04-07): if "everyone else" holds less than the distribute amount,
@@ -354,12 +371,7 @@ contract CawProfileL2 is
   ///      `cawProfile` contract in bypassLZ co-deployment mode (the same trust boundary
   ///      `onlyOnMainnet` enforces — used by `deposit()` for L1-storage networks).
   function addToBalance(uint32 tokenId, uint256 amount) public {
-    require(
-      fromLZ ||
-      address(cawActions) == _msgSender() ||
-      (bypassLZ && _msgSender() == address(cawProfile)),
-      "unauth"
-    );
+    if (!(fromLZ || address(cawActions) == _msgSender() || (bypassLZ && _msgSender() == address(cawProfile)))) revert Unauth();
 
     setCawBalance(tokenId, cawBalanceOf(tokenId) + amount);
   }
@@ -762,7 +774,7 @@ contract CawProfileL2 is
 
   /// @dev Parse "25 April 2026 00:00:00 UTC" → unix timestamp
   function _parseExpiryValue(bytes memory line) internal pure returns (uint64) {
-    require(line.length > 20, "Invalid expiry");
+    if (line.length <= 20) revert BadDate();
     uint256 i = 0;
 
     // Day (1-2 digits)
@@ -771,7 +783,7 @@ contract CawProfileL2 is
       day = day * 10 + (uint8(line[i]) - 0x30);
       i++;
     }
-    require(day >= 1 && day <= 31, "Invalid day");
+    if (day < 1 || day > 31) revert BadDate();
     i++; // skip space
 
     // Month name
@@ -797,16 +809,16 @@ contract CawProfileL2 is
     // expiry. Without these: "Feb 31" parses fine and rolls into March, or
     // "30:99:99" parses and rolls into the next day + extra hours/minutes.
     // Audit fix 2026-05-08 (L2 M-4).
-    require(hour < 24, "Invalid hour");
-    require(minute < 60, "Invalid minute");
-    require(second < 60, "Invalid second");
+    if (hour >= 24) revert BadDate();
+    if (minute >= 60) revert BadDate();
+    if (second >= 60) revert BadDate();
     // Month-aware day bound. 28-day Feb default; +1 for leap years.
     uint8[12] memory daysInMonth = [31,28,31,30,31,30,31,31,30,31,30,31];
     if (_isLeapYear(year)) daysInMonth[1] = 29;
-    require(day <= uint256(daysInMonth[month - 1]), "badday");
+    if (day > uint256(daysInMonth[month - 1])) revert BadDate();
     // Sanity cap on year so the for-loop in _toUnixTimestamp can't be
     // weaponized into a 30M-gas DoS (~10K iterations max from 1970).
-    require(year <= 2200, "yr hi");
+    if (year > 2200) revert BadDate();
 
     return uint64(_toUnixTimestamp(year, month, day, hour, minute, second));
   }
@@ -830,7 +842,7 @@ contract CawProfileL2 is
 
   /// @dev Convert date components to unix timestamp (UTC). Only valid for years >= 1970.
   function _toUnixTimestamp(uint256 year, uint256 month, uint256 day, uint256 hour, uint256 minute, uint256 second) internal pure returns (uint256) {
-    require(year >= 1970, "yr lo");
+    if (year < 1970) revert BadDate();
     uint256 timestamp = 0;
     // Years
     for (uint256 y = 1970; y < year; y++) {
@@ -854,7 +866,7 @@ contract CawProfileL2 is
   /// @dev Parse "0x742d...3e" → address
   function _parseAddressLine(bytes memory line) internal pure returns (address) {
     // "0x" + 40 hex chars = 42 bytes
-    require(line.length == 42, "badaddr");
+    if (line.length != 42) revert BadDate();
     bytes memory hexStr = _slice(line, 2, 42);
     return address(uint160(_hexToUint(hexStr)));
   }
@@ -913,7 +925,7 @@ contract CawProfileL2 is
     uint64 perActionTipRate
   ) external {
     if (!(msg.sender == address(cawActions))) revert NotCa();
-    require(owner != address(0), "Zero owner");
+    if (owner == address(0)) revert ZeroOwner();
     if (sessionKey == address(0)) revert ZeroKey();
     if (expiry <= block.timestamp) revert Expired();
 
@@ -940,7 +952,7 @@ contract CawProfileL2 is
     uint8 v, bytes32 r, bytes32 s
   ) external {
     StoredSession memory session = sessions[owner][sessionKey];
-    require(session.expiry != 0, "no sess");
+    if (session.expiry == 0) revert NoSession();
 
     // EIP-712 digest for the RevokeSession message. Bound to the CURRENT
     // session's expiry — without binding, a previously-signed revocation could
@@ -971,8 +983,13 @@ contract CawProfileL2 is
 
   /// @notice OApp callback for receiving cross-chain messages from L1.
   /// @dev See SECURITY NOTE inside. The OApp base verifies sender is the endpoint and the configured
-  ///      peer before this runs. The payload's first 4 bytes are a function selector (whitelisted via
-  ///      `isAuthorizedFunction`), and the rest are ABI-encoded args dispatched via delegatecall to self.
+  ///      peer before this runs. The payload layout (piggyback format):
+  ///        [0..31]  uint256 cumulative  — UQ112.112 price cumulative from CawL1PriceReader
+  ///        [32..35] uint32  priceTs     — block.timestamp at L1 read time
+  ///        [36..39] bytes4  selector    — function selector (whitelisted via isAuthorizedFunction)
+  ///        [40..]   bytes   args        — ABI-encoded arguments for the delegatecall
+  ///      The 36-byte price prefix is stripped, fed to capOracle.recordSample, and the
+  ///      rest dispatched via delegatecall exactly as before.
   function _lzReceive(
     Origin calldata _origin, // struct containing info about the message sender
     bytes32 _guid, // global packet identifier
@@ -980,20 +997,40 @@ contract CawProfileL2 is
     address _executor, // the Executor address.
     bytes calldata // arbitrary data appended by the Executor
   ) internal override {
-    // Declare selector and arguments as memory variables
+    // ── Price sample piggyback ────────────────────────────────────────────
+    // Strip the 36-byte price prefix and pass it to the cap oracle.
+    // If the oracle is not configured the sample is discarded (no-op).
+    // Out-of-order LZ delivery is safe: recordSample silently skips
+    // non-monotonic timestamps (see CawCapOracle.recordSample).
+    if (address(capOracle) != address(0)) {
+      uint256 cumulative;
+      uint32 priceTs;
+      assembly {
+        cumulative := calldataload(payload.offset)
+        priceTs    := shr(224, calldataload(add(payload.offset, 32)))
+      }
+      try capOracle.recordSample(cumulative, priceTs) {} catch {
+        // Oracle reverts (OOG, invariant break, etc.) must NOT block L1->L2 delivery.
+        // A missed sample only makes the TWAP slightly less dense — safe; cap goes
+        // dormant under STALE_THRESHOLD if too many samples are dropped.
+      }
+    }
+
+    // ── Primary payload dispatch ──────────────────────────────────────────
+    // Selector at byte 36; args start at byte 40.
     bytes4 decodedSelector;
-    bytes memory args = new bytes(payload.length - 4); // Arguments excluding the first 4 bytes
+    bytes memory args = new bytes(payload.length - 40); // args = payload minus 36-byte prefix minus 4-byte selector
 
     assembly {
-      // Copy the selector (first 4 bytes) from calldata
-      decodedSelector := calldataload(payload.offset)
+      // Copy the selector (bytes 36..39) from calldata
+      decodedSelector := calldataload(add(payload.offset, 36))
 
-      // Copy the arguments from calldata to memory
-      calldatacopy(add(args, 32), add(payload.offset, 4), sub(payload.length, 4))
+      // Copy the arguments (bytes 40..) from calldata to memory
+      calldatacopy(add(args, 32), add(payload.offset, 40), sub(payload.length, 40))
     }
 
     // Ensure the selector corresponds to an expected function to prevent unauthorized actions
-    require(isAuthorizedFunction(decodedSelector), "unauth fn");
+    if (!isAuthorizedFunction(decodedSelector)) revert UnauthorizedSelector();
 
     // Call the function using the selector and arguments.
     //
@@ -1052,7 +1089,7 @@ contract CawProfileL2 is
     if (!(address(cawActions) == _msgSender())) revert NotCa();
 
     uint256 balance = cawBalanceOf(tokenId);
-    require(balance >= amount, 'Insufficient CAW balance');
+    if (balance < amount) revert InsufficientBalance();
 
     totalCaw -= amount;
     setCawBalance(tokenId, balance - amount);
@@ -1091,7 +1128,7 @@ contract CawProfileL2 is
       // would be stuck in this contract permanently (there's no sweep path).
       // Reject explicitly so a misconfigured validator quote doesn't silently
       // brick funds. Audit fix 2026-05-08.
-      require(msg.value == 0, "no fee");
+      if (msg.value != 0) revert NoFee();
       cawProfile.setWithdrawable(tokenIds, amounts);
     } else {
       bytes memory payload = abi.encodeWithSelector(setWithdrawableSelector, tokenIds, amounts);

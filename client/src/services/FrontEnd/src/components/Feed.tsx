@@ -232,9 +232,12 @@ const Feed = forwardRef<FeedRef, Props>(({ filter, username, apiEndpoint, title 
 
     const isReply = (it: CawItem) => it.parent?.id && !it.isQuote && it.action !== 'RECAW'
     const isHomeFeed = filter === 'For you' || filter === 'Following'
-    // On the home feeds, collapse multiple recaws of the same post (and the
-    // original beneath them) down to a single visible row. Quotes carry
-    // their own content, so they stay as standalone items.
+    // On the home feeds, dedupe by "underlying caw" so the same post never
+    // appears twice no matter how it surfaces — bare recaw + original + a
+    // quote of it all collapse to the FIRST occurrence in desc order. The
+    // quote/recaw wrapper IS the surface kept on screen when it's first,
+    // so the user still sees who quoted; subsequent occurrences (whether
+    // another recaw, another quote, or the original itself) drop out.
     const seenUnderlying = new Set<string>()
 
     const filtered = items.filter(item => {
@@ -257,7 +260,12 @@ const Feed = forwardRef<FeedRef, Props>(({ filter, username, apiEndpoint, title 
       if (item.status === 'PENDING') {
         if (pendingPostSignatures.has(pendingSig(item))) return false
       }
-      if (isHomeFeed && !item.isQuote) {
+      if (isHomeFeed) {
+        // Quotes ARE RECAW rows with content; bare recaws are RECAW
+        // rows with empty content. Both reference an underlying
+        // (parent) caw — collapse against it. Regular caws collapse
+        // against their own id. First occurrence wins, all later
+        // occurrences (recaw, quote, or the original) are dropped.
         const underlyingId = item.action === 'RECAW' ? (item.parent?.id ?? item.id) : item.id
         if (seenUnderlying.has(underlyingId)) return false
         seenUnderlying.add(underlyingId)
@@ -348,9 +356,18 @@ const Feed = forwardRef<FeedRef, Props>(({ filter, username, apiEndpoint, title 
   })), [filteredItems])
   useHostVerification(verificationItems)
 
-  // Track views for visible caws (memoize to avoid re-triggering on every render)
+  // Track views for visible caws (memoize to avoid re-triggering on every render).
+  // Bare recaws (RECAW action with empty content) are wrappers — the impression
+  // belongs to the underlying original, not the recaw row, otherwise a popular
+  // post that gets surfaced via 100+ recaws ends up with views split across
+  // every wrapper while its own viewCount stays near zero. Quote-recaws (RECAW
+  // with content) are standalone posts with their own engagement, so they
+  // keep their own id.
   const visibleCawIds = useMemo(() => filteredItems
-    .map(item => Number(item.id))
+    .map(item => {
+      const isBareRecaw = item.action === 'RECAW' && !item.isQuote && item.parent?.id
+      return Number(isBareRecaw ? item.parent.id : item.id)
+    })
     .filter(id => Number.isFinite(id)), [filteredItems])
   useViewTracking(visibleCawIds)
 

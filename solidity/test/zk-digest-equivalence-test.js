@@ -54,7 +54,7 @@ contract('ZK digest equivalence — Rust circuit ↔ Solidity _computeStructHash
     // 0x0 from for non-existent token IDs (which is what we want for digest-
     // only tests; signature verification isn't exercised here).
     const l2Endpoint = await MockLayerZeroEndpoint.new(l2);
-    const cawProfileL2 = await CawProfileL2.new(l1, l2Endpoint.address);
+    const cawProfileL2 = await CawProfileL2.new(l1, l2Endpoint.address, "0x0000000000000000000000000000000000000000");
     exposer = await CawActionsDigestExposer.new(cawProfileL2.address);
 
     // The helper's domain hash is keyed to its address + chainId, so it
