@@ -1676,8 +1676,9 @@ router.post('/batch', async (req, res) => {
       }
 
       let created: any
+      let cawByUserCawonce: Map<string, number>
       try {
-        created = await prisma.$transaction(async (tx) => {
+        ;({ txqRows: created, cawByUserCawonce } = await prisma.$transaction(async (tx) => {
         // Step 0: if this batch is a retry, atomically mark every
         // original failed row as 'retried' BEFORE inserting the new
         // batch. Same pattern as the single-action retriedTxQueueId
@@ -1830,8 +1831,8 @@ router.post('/batch', async (req, res) => {
           }
         }
 
-        return txqRows
-      })
+        return { txqRows, cawByUserCawonce }
+      }))
       } catch (err: any) {
         // P2002 = unique constraint violation. Race past the pre-check
         // above; same 409 shape so the FE has one code path.

@@ -1518,13 +1518,17 @@ export function useSignAndSubmitAction() {
       // getNextCawonce call returns suggestedCawonce, not the stale
       // chain.nextCawonce.
       if (error?.name === 'CawonceCollisionError') {
-        if (params.cawonce == null && activeTokenId) {
+        // Always bump the local watermark from the server's hint, regardless
+        // of whether the caller pre-allocated the cawonce. The watermark is
+        // process-wide; skipping it for pre-allocated cawonces was the bug
+        // that caused three retries to all collide on the same dead slot.
+        if (activeTokenId) {
           if (typeof error.suggestedCawonce === 'number') {
             console.log(`[signAndSubmit] Server suggests next cawonce=${error.suggestedCawonce} — bumping local watermark`)
             setLocalCawonceFloor(activeTokenId, error.suggestedCawonce)
-          } else {
-            // Older server without suggestedCawonce in the payload — fall
-            // back to invalidating the watermark (the previous behavior).
+          } else if (params.cawonce == null) {
+            // Older server without suggestedCawonce in the payload, and no
+            // pre-allocated cawonce — fall back to invalidating the watermark.
             invalidateLocalCawonce(activeTokenId)
           }
         }
@@ -1532,7 +1536,19 @@ export function useSignAndSubmitAction() {
         const MAX_CAWONCE_RETRIES = 3
         if (attempt <= MAX_CAWONCE_RETRIES) {
           console.log(`[signAndSubmit] Cawonce collision (attempt ${attempt}/${MAX_CAWONCE_RETRIES}) — re-reading chain and re-signing`)
-          return await requestAndSubmit({ ...params, _cawonceRetryCount: attempt } as ActionParams)
+          // CRITICAL: strip the pre-allocated cawonce on retry so the next
+          // call re-allocates from the bumped watermark. Without this,
+          // pre-allocated cawonces (thread submissions, FeedItem optimistic
+          // ops) are passed unchanged and collide again on every retry.
+          // NOTE: signAndSubmit.many (batch path) also receives pre-allocated
+          // cawonces but its batch-sig commits to firstCawonce+actionCount —
+          // re-signing the full batch on collision is a non-trivial change.
+          // MILESTONE: signAndSubmit.many batch-collision retry left as follow-up
+          const { cawonce: _staleCawonce, ...paramsWithoutCawonce } = params
+          return await requestAndSubmit({
+            ...paramsWithoutCawonce,
+            _cawonceRetryCount: attempt,
+          } as ActionParams)
         }
         console.warn('[signAndSubmit] Cawonce collision persisted past max retries — surfacing')
       }
