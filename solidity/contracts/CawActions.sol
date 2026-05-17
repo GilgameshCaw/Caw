@@ -50,6 +50,7 @@ import { MessagingFee } from "@layerzerolabs/lz-evm-oapp-v2/contracts/oapp/OApp.
 contract CawActions is Ownable {
   error NotSibling();
   error OnlySelf();
+  error NotCapOracle();
   error NoActions();
   error TooManyActions();
   error BadSigGroupCount();
@@ -106,6 +107,15 @@ contract CawActions is Ownable {
   /// @notice Tracks cumulative spending (whole CAW tokens) per session key (by owner address)
   mapping(address => mapping(address => uint256)) public sessionSpent;
 
+  /// @notice Pushed-ratio cap state. Packed into one 256-bit slot.
+  ///         The oracle writes this via setCapRatio(); _getCost reads it with
+  ///         a single SLOAD — zero external calls per action.
+  struct CapState {
+    uint64  lastUpdatedAt; // block.timestamp of last setCapRatio call
+    uint192 ratio;         // 0 = cap dormant, baseline applies; else UQ112.112 ethPerCaw TWAP
+  }
+  CapState public capState;
+
   /// @notice Commitment to a processed batch. The full `packedActions` payload lives
   ///         in the originating tx's calldata (the same bytes passed to
   ///         processActions / safeProcessActions); indexers fetch it via
@@ -119,6 +129,10 @@ contract CawActions is Ownable {
     bytes32 batchHash
   );
   event ActionRejected(uint32 senderId, uint32 cawonce, string reason);
+
+  /// @notice Emitted whenever the cap oracle pushes a new ratio.
+  ///         ratio == 0 means the cap is now dormant (baseline applies).
+  event CapRatioUpdated(uint192 ratio, uint64 timestamp);
 
   CawProfileL2 public immutable cawProfile;
   CawActions public immutable externalSelf;
@@ -167,6 +181,11 @@ contract CawActions is Ownable {
   ///      isValidSignature well under this budget.
   uint256 private constant ERC1271_GAS_LIMIT = 50_000;
   bytes4  private constant ERC1271_MAGIC_VALUE = 0x1626ba7e;
+
+  /// @dev If the cap oracle hasn't pushed a fresh ratio within this window,
+  ///      treat the stored ratio as stale and fall back to baseline.
+  ///      Mirrors CawCapOracle.STALE_THRESHOLD — both must stay in sync.
+  uint64 private constant CAP_STALE_THRESHOLD = 24 hours;
 
   // ============================================
   // ZK SIG-RECOVERY PATH (immutable hooks)
@@ -1116,9 +1135,38 @@ contract CawActions is Ownable {
     }
   }
 
-  /// @dev Helper: return oracle-capped cost, or baseline when oracle is dormant.
+  // ============================================
+  // CAP ORACLE — PUSH RATIO INTERFACE
+  // ============================================
+
+  /// @notice Called by CawCapOracle to update the stored cap ratio.
+  ///         ratio == 0 clears the cap (baseline applies). Otherwise it is a
+  ///         UQ112.112 TWAP of WETH-per-CAW from the oracle.
+  ///         The `capOracle` immutable is re-used for the access check — a
+  ///         zero capOracle means this function is permanently unreachable.
+  function setCapRatio(uint192 newRatio) external {
+    if (msg.sender != address(capOracle)) revert NotCapOracle();
+    capState = CapState(uint64(block.timestamp), newRatio);
+    emit CapRatioUpdated(newRatio, uint64(block.timestamp));
+  }
+
+  /// @notice Read-only accessor for the oracle to probe the currently stored
+  ///         ratio without a state-changing call.
+  function capStateRatio() external view returns (uint192) {
+    return capState.ratio;
+  }
+
+  /// @dev Helper: return pushed-ratio-capped cost, or baseline when cap is dormant.
+  ///      Single SLOAD reads both fields of CapState (one 256-bit slot).
+  ///      Zero capOracle (null-oracle deploy) also returns baseline — the capState
+  ///      slot is always zero in that case (setCapRatio is permanently unreachable).
   function _getCost(uint256 baseline, uint256 ethCap) private view returns (uint256) {
-    return address(capOracle) != address(0) ? capOracle.capForAction(baseline, ethCap) : baseline;
+    CapState memory s = capState; // single SLOAD
+    if (s.ratio == 0) return baseline;
+    if (block.timestamp - s.lastUpdatedAt > CAP_STALE_THRESHOLD) return baseline;
+    uint256 capped = (ethCap << 112) / uint256(s.ratio) / 1e18;
+    if (capped == 0) capped = 1;
+    return capped < baseline ? capped : baseline;
   }
 
   /// @dev Apply a single already-authenticated action: protocol costs,

@@ -392,27 +392,34 @@ const CONTRACTS = {
       state.addresses.CawL1PriceReader || ethers.ZeroAddress,
     ],
   },
+  CawProfileL2_L1: {
+    // CawProfileL2 deployed on L1 (for local actions without cross-chain).
+    // Predicts CawCapOracle_L1 (deployed immediately after, nonce+1) so it can
+    // pass the oracle address as an immutable constructor arg.
+    artifact: 'CawProfileL2',
+    chain: 'L1',
+    phase: 2,
+    dependencies: [],
+    predictedSiblingKey: 'CawCapOracle_L1',
+    constructorArgs: (state, chain) => [
+      CHAINS[chain.replace('L1', 'L2')].lzEid, // peer network eid (L2)
+      CHAINS[chain].lzEndpoint,
+      state.predictedAddresses?.CawCapOracle_L1 || ethers.ZeroAddress,
+    ],
+  },
   CawCapOracle_L1: {
     artifact: 'CawCapOracle',
     chain: 'L1',
     phase: 2,
-    dependencies: [],
-    // l2Writer will be the CawProfileL2_L1 deployed immediately after (nonce+1).
-    predictedSiblingKey: 'CawProfileL2_L1',
+    // Deploy order: CawProfileL2_L1 (nonce N) → CawCapOracle_L1 (nonce N+1) →
+    // CawActions_L1 (nonce N+2) → CawActionsERC1271_L1 (nonce N+3).
+    // CawCapOracle_L1 takes the real l2Writer (CawProfileL2_L1) and predicts
+    // CawActions_L1 (nonce+1) as its cawActions push target.
+    dependencies: ['CawProfileL2_L1'],
+    predictedSiblingKey: 'CawActions_L1',
     constructorArgs: (state) => [
-      state.predictedAddresses?.CawProfileL2_L1 || ethers.ZeroAddress,
-    ],
-  },
-  CawProfileL2_L1: {
-    // CawProfileL2 deployed on L1 (for local actions without cross-chain)
-    artifact: 'CawProfileL2',
-    chain: 'L1',
-    phase: 2,
-    dependencies: ['CawCapOracle_L1'],
-    constructorArgs: (state, chain) => [
-      CHAINS[chain.replace('L1', 'L2')].lzEid, // peer network eid (L2)
-      CHAINS[chain].lzEndpoint,
-      state.addresses.CawCapOracle_L1 || ethers.ZeroAddress,
+      state.addresses.CawProfileL2_L1,
+      state.predictedAddresses?.CawActions_L1 || ethers.ZeroAddress,
     ],
   },
   CawProfileMinter: {
@@ -447,13 +454,11 @@ const CONTRACTS = {
     artifact: 'CawActions',
     chain: 'L1',
     phase: 2,
-    dependencies: ['CawProfileL2_L1'],
-    // predictedSiblingKey: before this contract is deployed the engine reads the
-    // deployer's current nonce, computes getContractAddress(deployer, nonce+1), and
-    // stashes it in state.predictedAddresses['CawActionsERC1271_L1']. That value is
-    // then passed as the immutable _erc1271Sibling arg. CawActionsERC1271_L1 is
-    // deployed immediately after (phase 2, dep on CawActions_L1) so it lands at
-    // exactly that nonce.
+    // Deploy order: CawProfileL2_L1 (N) → CawCapOracle_L1 (N+1) →
+    // CawActions_L1 (N+2) → CawActionsERC1271_L1 (N+3).
+    // CawCapOracle_L1 predicted CawActions_L1 at N+2; CawActions_L1
+    // now predicts CawActionsERC1271_L1 at N+3.
+    dependencies: ['CawCapOracle_L1'],
     predictedSiblingKey: 'CawActionsERC1271_L1',
     constructorArgs: (state, chainKey) => [
       state.addresses.CawProfileL2_L1,
@@ -493,53 +498,68 @@ const CONTRACTS = {
   },
 };
 
-// Per-L2 contracts: for each L2 in L2_CHAIN_KEYS, expand to four entries:
-//   CawProfileL2_<L>     (phase 1, peered with L1)
-//   CawActions_<L>       (phase 3, depends on CawProfileL2_<L>)
-//   CawActionsArchive_<L>(phase 4, archive role on this chain)
-//   CawChallengeRelay_<L>(phase 4, depends on CawActions_<L>)
+// Per-L2 contracts: for each L2 in L2_CHAIN_KEYS, expand to entries:
+//   CawProfileL2_<L>      (phase 1, predicts CawCapOracle at nonce+1)
+//   CawCapOracle_<L>      (phase 1, dep CawProfileL2, predicts CawActions at nonce+1)
+//   CawActions_<L>        (phase 1, dep CawCapOracle, predicts CawActionsERC1271 at nonce+1)
+//   CawActionsERC1271_<L> (phase 1, dep CawActions)
+//   CawActionsArchive_<L> (phase 4, archive role on this chain)
+//   CawChallengeRelay_<L> (phase 4, depends on CawActions_<L>)
 //
 // Adding a new L2 = append to L2_CHAIN_KEYS + a CHAINS entry per env. The
 // peer wiring in LINKING_STEPS regenerates from this list too.
 for (const L of L2_CHAIN_KEYS) {
-  // CawCapOracle_<L> must deploy BEFORE CawProfileL2_<L> because the oracle's
-  // constructor takes l2Writer = CawProfileL2 address (predicted via nonce+1).
-  // CawProfileL2_<L> in turn takes capOracle = the actual deployed oracle address.
-  // This is the same sibling-prediction pattern used by CawActions ↔ CawActionsERC1271.
-  CONTRACTS[`CawCapOracle_${L}`] = {
-    artifact: 'CawCapOracle',
+  // Deploy order for each L2 (single chain, all phase 1 to guarantee consecutive nonces):
+  //   MockSP1Verifier_<L>  (nonce 0 in phase, dev-only, no deps — deploys before chain)
+  //   CawProfileL2_<L>     (nonce N,   predicts CawCapOracle at N+1)
+  //   CawCapOracle_<L>     (nonce N+1, dep CawProfileL2, predicts CawActions at N+2)
+  //   CawActions_<L>       (nonce N+2, dep CawCapOracle, predicts CawActionsERC1271 at N+3)
+  //   CawActionsERC1271_<L>(nonce N+3, dep CawActions)
+  //
+  // All four in phase 1 so no other per-L2 contracts can interrupt the nonce chain.
+  // MockSP1Verifier deploys before the chain because it has no deps (ready first).
+  CONTRACTS[`MockSP1Verifier_${L}`] = {
+    artifact: 'MockSP1Verifier',
     chain: L,
     phase: 1,
     dependencies: [],
-    predictedSiblingKey: `CawProfileL2_${L}`,
-    constructorArgs: (state) => [
-      state.predictedAddresses?.[`CawProfileL2_${L}`] || ethers.ZeroAddress,
-    ],
+    constructorArgs: () => [],
+    condition: (_state, _deployer, env) => env === 'dev',
   };
   CONTRACTS[`CawProfileL2_${L}`] = {
     artifact: 'CawProfileL2',
     chain: L,
     phase: 1,
-    dependencies: [`CawCapOracle_${L}`],
+    // No deps — deploys first (after MockSP1Verifier if dev).
+    // Predicts CawCapOracle_<L> at nonce+1 and passes it as the capOracle arg.
+    dependencies: [],
+    predictedSiblingKey: `CawCapOracle_${L}`,
     constructorArgs: (state, chain) => [
       CHAINS[chain.replace(/L2.*$/, 'L1')].lzEid, // peer eid (L1)
       CHAINS[chain].lzEndpoint,
-      state.addresses[`CawCapOracle_${L}`] || ethers.ZeroAddress,
+      state.predictedAddresses?.[`CawCapOracle_${L}`] || ethers.ZeroAddress,
     ],
   };
-  CONTRACTS[`MockSP1Verifier_${L}`] = {
-    artifact: 'MockSP1Verifier',
+  CONTRACTS[`CawCapOracle_${L}`] = {
+    artifact: 'CawCapOracle',
     chain: L,
-    phase: 1, // before CawActions_${L} in phase 3
-    dependencies: [],
-    constructorArgs: () => [],
-    condition: (_state, _deployer, env) => env === 'dev',
+    phase: 1,
+    // dep on CawProfileL2_<L> so it deploys right after (nonce N+1).
+    // Takes the real l2Writer and predicts CawActions_<L> at nonce+1 (N+2).
+    dependencies: [`CawProfileL2_${L}`],
+    predictedSiblingKey: `CawActions_${L}`,
+    constructorArgs: (state) => [
+      state.addresses[`CawProfileL2_${L}`],
+      state.predictedAddresses?.[`CawActions_${L}`] || ethers.ZeroAddress,
+    ],
   };
   CONTRACTS[`CawActions_${L}`] = {
     artifact: 'CawActions',
     chain: L,
-    phase: 3,
-    dependencies: [`CawProfileL2_${L}`],
+    phase: 1,
+    // dep on CawCapOracle_<L> so it deploys right after (nonce N+2).
+    // Predicts CawActionsERC1271_<L> at nonce+1 (N+3).
+    dependencies: [`CawCapOracle_${L}`],
     predictedSiblingKey: `CawActionsERC1271_${L}`,
     constructorArgs: (state, chainKey) => [
       state.addresses[`CawProfileL2_${L}`],
@@ -552,7 +572,8 @@ for (const L of L2_CHAIN_KEYS) {
   CONTRACTS[`CawActionsERC1271_${L}`] = {
     artifact: 'CawActionsERC1271',
     chain: L,
-    phase: 3,
+    phase: 1,
+    // dep on CawActions_<L> (nonce N+3).
     dependencies: [`CawActions_${L}`],
     constructorArgs: (state) => [state.addresses[`CawActions_${L}`]],
   };

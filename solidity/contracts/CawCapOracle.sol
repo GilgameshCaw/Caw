@@ -1,10 +1,14 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.20;
 
+import "./interfaces/ICawActions.sol";
+
 /// @title CawCapOracle
 /// @notice L2-side oracle that maintains a ring buffer of price samples
 ///         piggybacked on L1→L2 messages, computes a 7-day TWAP, and
-///         returns the per-action CAW cap when the cap binds.
+///         **pushes** the resulting ratio to CawActions whenever the cap
+///         state changes. CawActions then reads it from storage — zero
+///         external calls per action (vs one STATICCALL per action before).
 ///
 ///         The oracle is **immutable and admin-less**. Pool address lives in
 ///         CawL1PriceReader on L1; the L2 side just consumes samples and does
@@ -99,16 +103,25 @@ contract CawCapOracle {
   ///         immutable thereafter.
   address public immutable l2Writer;
 
+  /// @notice CawActions contract to which this oracle pushes ratio updates.
+  ///         Required (non-zero). The oracle actively calls setCapRatio on
+  ///         every sample that produces a cap-state change.
+  ICawActions public immutable cawActions;
+
   error UnauthorizedWriter();
   error TimestampNotMonotonic();
 
   // ─── Constructor ──────────────────────────────────────────────────────────
 
-  /// @param _l2Writer Address of CawProfileL2 (the only contract permitted
-  ///                  to call `recordSample`).
-  constructor(address _l2Writer) {
+  /// @param _l2Writer   Address of CawProfileL2 (the only contract permitted
+  ///                    to call `recordSample`).
+  /// @param _cawActions Address of CawActions (required; receives setCapRatio
+  ///                    calls when the cap state changes).
+  constructor(address _l2Writer, address _cawActions) {
     require(_l2Writer != address(0), "writer zero");
+    require(_cawActions != address(0), "cawActions zero");
     l2Writer = _l2Writer;
+    cawActions = ICawActions(_cawActions);
   }
 
   // ─── Sample ingestion ─────────────────────────────────────────────────────
@@ -140,6 +153,62 @@ contract CawCapOracle {
     samplesWritten = nextIdx + 1;
 
     emit SampleRecorded(nextIdx, cumulative, timestamp);
+
+    // Push ratio to CawActions if the cap state has changed. Isolated so that
+    // a reverting push (should never happen, but defensive) doesn't block
+    // sample ingestion — the STALE_THRESHOLD backstop in CawActions catches
+    // accumulated push failures within 24 h.
+    _maybePushRatio();
+  }
+
+  // ─── Push-ratio logic ────────────────────────────────────────────────────────
+
+  /// @dev Evaluate whether the cap state has changed enough to warrant a push.
+  ///      Called after every successful sample write. Reads the current stored
+  ///      ratio from CawActions (one external view call) to decide:
+  ///       - oracle stale / under-populated → push 0 if currently non-zero
+  ///       - cap doesn't bind              → push 0 if currently non-zero
+  ///       - cap binds + moved > 100 bps   → push new ratio
+  ///       - cap binds + within 100 bps    → no-op (hysteresis)
+  function _maybePushRatio() internal {
+    (uint256 newRatio, bool fresh) = twapEthPerCaw();
+
+    uint192 currentRatio = cawActions.capStateRatio();
+
+    if (!fresh) {
+      // Oracle stale or under-populated. If CawActions has a live ratio,
+      // clear it so the cap goes dormant. Otherwise no-op.
+      if (currentRatio != 0) {
+        cawActions.setCapRatio(0);
+      }
+      return;
+    }
+
+    // Use LIKE as the binding probe. If LIKE doesn't bind, no action type binds
+    // (it has the tightest ETH ceiling per-CAW). CAP_LIKE = 2e11 wei.
+    uint256 likeCap = (CAP_LIKE << 112) / newRatio / 1e18;
+    bool bindsNow = likeCap < BASELINE_LIKE;
+
+    if (!bindsNow) {
+      // Cap currently not binding. Clear stored ratio if non-zero.
+      if (currentRatio != 0) {
+        cawActions.setCapRatio(0);
+      }
+      return;
+    }
+
+    // Cap binds. Hysteresis: only push if ratio moved > 100 bps from stored,
+    // or if transitioning from dormant (currentRatio == 0) to active.
+    if (currentRatio == 0 || _movedMoreThanBps(uint256(currentRatio), newRatio, 100)) {
+      cawActions.setCapRatio(uint192(newRatio));
+    }
+  }
+
+  /// @dev Returns true if the ratio moved by more than `bps` basis points.
+  function _movedMoreThanBps(uint256 oldR, uint256 newR, uint256 bps) internal pure returns (bool) {
+    if (oldR == 0) return true;
+    uint256 diff = newR > oldR ? newR - oldR : oldR - newR;
+    return diff * 10000 > oldR * bps;
   }
 
   // ─── TWAP + cap ───────────────────────────────────────────────────────────
