@@ -1153,6 +1153,115 @@ const MessagesPage: React.FC = () => {
     }
   }, [translations, runTranslate])
 
+  // Inspect a message's raw content and return two facts needed by the
+  // context menu: whether there is any visible text to translate, and the
+  // list of downloadable media items (url + derived filename).
+  //
+  // Three content shapes exist in the wild:
+  //   1. Encrypted attachment JSON  — { msgType: 'encrypted-attachment', url, mimeType, name, … }
+  //      No user-visible text; url is the download target.
+  //   2. Structured text+attachments — { text, attachments: [...] }
+  //      Text may or may not be empty; each attachment may carry a url.
+  //   3. Plain URL (legacy GIF / image paste) — a bare https string matching
+  //      the image-URL pattern.  No text to translate; url is the download target.
+  //   4. Plain text — everything else.
+  const parseMessageMediaInfo = useCallback((rawContent: string | undefined | null): {
+    hasText: boolean
+    mediaItems: { url: string; filename: string }[]
+  } => {
+    if (!rawContent) return { hasText: false, mediaItems: [] }
+
+    // Helper: derive a filename from a URL, falling back to a generated name.
+    const filenameFromUrl = (url: string, index: number, mimeType?: string): string => {
+      try {
+        const pathname = new URL(url).pathname
+        const base = pathname.split('/').pop()
+        if (base && base.includes('.')) return base
+      } catch {}
+      // Derive extension from mimeType if available.
+      const extMap: Record<string, string> = {
+        'image/jpeg': 'jpg', 'image/png': 'png', 'image/gif': 'gif',
+        'image/webp': 'webp', 'video/mp4': 'mp4', 'video/webm': 'webm',
+        'video/quicktime': 'mov',
+      }
+      const ext = mimeType ? (extMap[mimeType] ?? mimeType.split('/')[1] ?? 'bin') : 'bin'
+      return `caw-dm-${index}.${ext}`
+    }
+
+    // Shape 1 / Shape 2: try JSON parse.
+    try {
+      const parsed = JSON.parse(rawContent)
+
+      // Encrypted attachment (shape 1).
+      if (parsed?.msgType === 'encrypted-attachment' && parsed?.url) {
+        const mt = String(parsed.mimeType || '')
+        const isMedia = mt.startsWith('image/') || mt.startsWith('video/') || parsed.type === 'image'
+        return {
+          hasText: false,
+          mediaItems: isMedia
+            ? [{ url: parsed.url as string, filename: (parsed.name as string | undefined) || filenameFromUrl(parsed.url, 0, mt || undefined) }]
+            : [],
+        }
+      }
+
+      // Structured message (shape 2): { text, attachments }
+      if (parsed?.text !== undefined || Array.isArray(parsed?.attachments)) {
+        const text = String(parsed.text || '').trim()
+        const attachments: { url: string; filename: string }[] = []
+        if (Array.isArray(parsed.attachments)) {
+          ;(parsed.attachments as Array<{ url?: string; mimeType?: string; name?: string }>)
+            .forEach((att, idx) => {
+              if (att?.url) {
+                attachments.push({
+                  url: att.url,
+                  filename: att.name || filenameFromUrl(att.url, idx, att.mimeType),
+                })
+              }
+            })
+        }
+        return { hasText: !!text, mediaItems: attachments }
+      }
+    } catch {}
+
+    // Shape 3: bare image / GIF URL.
+    const imageUrlPattern = /^https?:\/\/\S+\.(gif|jpg|jpeg|png|webp)(\?\S*)?$/i
+    const giphyPattern = /^https?:\/\/(media\d?\.giphy\.com|i\.giphy\.com)\//i
+    const trimmed = rawContent.trim()
+    if (imageUrlPattern.test(trimmed) || giphyPattern.test(trimmed)) {
+      return {
+        hasText: false,
+        mediaItems: [{ url: trimmed, filename: filenameFromUrl(trimmed, 0, undefined) }],
+      }
+    }
+
+    // Shape 4: plain text.
+    return { hasText: !!rawContent.trim(), mediaItems: [] }
+  }, [])
+
+  // Programmatically download one media file. We attempt a fetch→blob path
+  // first so the browser `download` attribute is honoured cross-origin
+  // (servers commonly send Content-Disposition: inline which prevents the
+  // `download` attribute from working directly on cross-origin links).
+  const downloadMediaUrl = useCallback(async (url: string, filename: string) => {
+    try {
+      const res = await fetch(url, { credentials: 'omit' })
+      if (!res.ok) throw new Error('fetch failed')
+      const blob = await res.blob()
+      const objectUrl = URL.createObjectURL(blob)
+      const a = document.createElement('a')
+      a.href = objectUrl
+      a.download = filename
+      document.body.appendChild(a)
+      a.click()
+      document.body.removeChild(a)
+      // Revoke after a short delay so the download can start.
+      setTimeout(() => URL.revokeObjectURL(objectUrl), 10_000)
+    } catch {
+      // Fallback: open in new tab — at least the user can long-press / save.
+      window.open(url, '_blank', 'noopener,noreferrer')
+    }
+  }, [])
+
   // After the context menu mounts, measure its real size and re-clamp.
   // LayoutEffect => no visible "jump" (the glitch you saw on desktop).
   // UX RULE: menu must be on the SAME ROW as the bubble, right next to it.
@@ -2594,12 +2703,15 @@ const MessagesPage: React.FC = () => {
                     </button>
                   )}
 
-                  {/* Translate — available on any text-bearing message.
+                  {/* Translate — only on messages with actual text content.
+                      Hidden for media-only messages (encrypted attachments,
+                      bare image/GIF URLs) — there is nothing to translate.
                       Toggles off if already translated. The privacy modal
                       gates the first run per browser (see startTranslate). */}
                   {(() => {
                     const msg = messages.find(m => m.id === contextMenu.messageId)
-                    const hasText = !!msg?.content && msg.contentType !== 'deleted'
+                    if (!msg?.content || msg.contentType === 'deleted') return null
+                    const { hasText } = parseMessageMediaInfo(msg.content)
                     if (!hasText) return null
                     const isTranslated = !!translations[contextMenu.messageId]
                     const isInFlight = translatingIds.has(contextMenu.messageId)
@@ -2613,6 +2725,27 @@ const MessagesPage: React.FC = () => {
                         className="w-full px-4 py-2 text-left text-sm text-white hover:bg-white/10 cursor-pointer disabled:opacity-50 disabled:cursor-wait"
                       >
                         {isInFlight ? 'Translating…' : isTranslated ? 'Hide translation' : 'Translate'}
+                      </button>
+                    )
+                  })()}
+
+                  {/* Download media — visible only when the message has
+                      one or more media attachments. Each item triggers a
+                      separate download so the user gets individual files. */}
+                  {(() => {
+                    const msg = messages.find(m => m.id === contextMenu.messageId)
+                    if (!msg?.content || msg.contentType === 'deleted') return null
+                    const { mediaItems } = parseMessageMediaInfo(msg.content)
+                    if (mediaItems.length === 0) return null
+                    return (
+                      <button
+                        onClick={() => {
+                          mediaItems.forEach(item => downloadMediaUrl(item.url, item.filename))
+                          setContextMenu(null)
+                        }}
+                        className="w-full px-4 py-2 text-left text-sm text-white hover:bg-white/10 cursor-pointer"
+                      >
+                        {t('messages.context_menu.download_media')}
                       </button>
                     )
                   })()}

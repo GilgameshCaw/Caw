@@ -1324,6 +1324,7 @@
   "messages.tab.inbox": "Inbox",
   "messages.tab.requests": "Requests",
   "messages.search.placeholder": "Search messages",
+  "messages.context_menu.download_media": "Download media",
   "marketplace.filter.label.type": "Type",
   "marketplace.filter.label.payment": "Payment",
   "marketplace.filter.label.length": "Length",
