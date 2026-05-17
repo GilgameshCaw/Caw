@@ -1046,11 +1046,25 @@ const Notifications: React.FC = () => {
                 <div className="flex-1 min-w-0">
                   <div className={`min-w-0 text-sm md:text-base leading-snug ${isDark ? 'text-white' : 'text-gray-900'}`}>
                     {notification.actor && notification.type !== 'ACTION_FAILED' && (
-                      <Avatar
-                        src={getUserAvatar(notification.actor)}
-                        className="w-7 h-7 rounded-full flex-shrink-0 inline-block align-middle mr-1.5"
-                        size="small"
-                      />
+                      notification.actor.username ? (
+                        <Link
+                          to={`/users/${notification.actor.username}`}
+                          onClick={e => e.stopPropagation()}
+                          className="inline-block align-middle mr-1.5"
+                        >
+                          <Avatar
+                            src={getUserAvatar(notification.actor)}
+                            className="w-7 h-7 rounded-full flex-shrink-0"
+                            size="small"
+                          />
+                        </Link>
+                      ) : (
+                        <Avatar
+                          src={getUserAvatar(notification.actor)}
+                          className="w-7 h-7 rounded-full flex-shrink-0 inline-block align-middle mr-1.5"
+                          size="small"
+                        />
+                      )
                     )}
                     {getNotificationText(notification)}
                     <Tooltip text={formatFullDateTime(notification.createdAt)} className="inline-block">
