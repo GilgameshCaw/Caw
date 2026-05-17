@@ -434,6 +434,7 @@ const MessagesPage: React.FC = () => {
 
     // Check if conversation already exists
     const existingConv = conversations.find(c =>
+      c.type === 'DM' &&
       c.participants.some(p => p.identity.user.tokenId === targetUser.tokenId)
     )
 
