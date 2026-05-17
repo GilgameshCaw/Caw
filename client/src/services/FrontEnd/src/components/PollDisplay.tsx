@@ -3,6 +3,7 @@ import { useTheme } from '~/hooks/useTheme'
 import { useActiveToken } from '~/store/tokenDataStore'
 import { useConnectModal } from '@rainbow-me/rainbowkit'
 import { useSignAndSubmitAction } from '~/api/actions'
+import { apiFetch } from '~/api/client'
 import { buildVoteText } from '~/../../../tools/pollMarker'
 import type { CawItem } from '~/types'
 import { useT } from '~/i18n/I18nProvider'
@@ -159,6 +160,14 @@ const PollDisplay: React.FC<Props> = ({ caw, optionLabelsOverride }) => {
 
   const [submitting, setSubmitting] = useState(false)
   const [hovered, setHovered] = useState<number | null>(null)
+  // Track the TxQueue id of the most recent in-flight vote, per option.
+  // When the user changes / unsets their pick while one is still
+  // pending we can POST /api/txqueue/:id/cancel and submit a fresh
+  // action — same pattern Like/Recaw/Follow use for cancel-on-second-
+  // click. Single-select polls only have one entry at a time;
+  // multi-select polls keep one entry per toggled-on option until
+  // the indexer confirms.
+  const pendingTxIdsRef = useRef<Map<number, number>>(new Map())
 
   const poll = caw.poll
 
@@ -216,6 +225,13 @@ const PollDisplay: React.FC<Props> = ({ caw, optionLabelsOverride }) => {
         counts: poll.optionVoteCounts ? poll.optionVoteCounts.slice() : prev.counts,
         total: poll.totalVotes ?? prev.total,
       }))
+    }
+    // Drop the txQueueId map entry for any option whose server-side
+    // row is now confirmed (pending=false). After confirm we can't
+    // cancel it anyway, and a stale entry would make a future "cancel
+    // before resubmit" try to cancel an already-finalized action.
+    for (const r of poll.userVotes ?? (poll.userVote ? [poll.userVote] : [])) {
+      if (!r.pending) pendingTxIdsRef.current.delete(r.optionIndex)
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [JSON.stringify(poll?.userVotes ?? poll?.userVote), poll?.totalVotes, JSON.stringify(poll?.optionVoteCounts)])
@@ -325,8 +341,56 @@ const PollDisplay: React.FC<Props> = ({ caw, optionLabelsOverride }) => {
     })
 
     setSubmitting(true)
+    // Snapshot the txQueueIds we need to cancel before submitting the
+    // new vote: anything that's about to be replaced by this action.
+    //   - unvote (optionIndex===null): cancel every pending tx the
+    //     user has on this poll
+    //   - multi toggle-off: cancel the pending tx for that specific
+    //     option (we set pending to false on it above, but the
+    //     queued TxQueue still exists until cancelled)
+    //   - multi toggle-on: nothing to cancel on this option (no prior
+    //     tx); other options' pending votes stay independent
+    //   - single replace: cancel the pending tx on the prior option
+    //     (if any) — the new vote will supersede it
+    const txIdsToCancel: number[] = []
+    if (optionIndex === null) {
+      for (const id of pendingTxIdsRef.current.values()) txIdsToCancel.push(id)
+      pendingTxIdsRef.current.clear()
+    } else if (isMulti) {
+      // Was this a toggle-off? local already mutated; check prev.
+      if (prev.picks.has(optionIndex)) {
+        const id = pendingTxIdsRef.current.get(optionIndex)
+        if (id != null) { txIdsToCancel.push(id); pendingTxIdsRef.current.delete(optionIndex) }
+      }
+    } else {
+      // Single-select: cancel any tx for a different option (replace).
+      for (const [opt, id] of pendingTxIdsRef.current.entries()) {
+        if (opt !== optionIndex) {
+          txIdsToCancel.push(id)
+          pendingTxIdsRef.current.delete(opt)
+        }
+      }
+    }
+
+    // Fire cancels in parallel. 409 = validator already picked it up;
+    // we accept that case (the indexer's confirm-then-replace path
+    // means the prior vote will be replaced on the next handleVote
+    // run anyway).
+    if (txIdsToCancel.length > 0) {
+      await Promise.allSettled(
+        txIdsToCancel.map(id =>
+          apiFetch(`/api/txqueue/${id}/cancel`, { method: 'POST' })
+            .catch((err: any) => {
+              if (!String(err?.message || '').includes('409')) {
+                console.warn(`[PollDisplay] cancel txQueueId=${id} failed:`, err)
+              }
+            })
+        )
+      )
+    }
+
     try {
-      await signAndSubmit({
+      const response: any = await signAndSubmit({
         actionType: 'other',
         senderId: activeToken.tokenId,
         // The poll's caw is identified by (receiverId, receiverCawonce) —
@@ -344,6 +408,17 @@ const PollDisplay: React.FC<Props> = ({ caw, optionLabelsOverride }) => {
         amounts: [],
         text: buildVoteText(optionIndex),
       })
+      // Stash the txQueueId so a future change can cancel us. Only
+      // tracked for actions that ARE optimistic-on (i.e. we just
+      // added this option to picks). Unvote and toggle-off don't
+      // need tracking because there's nothing further to cancel.
+      const txQueueId = response?.txQueueId
+      if (txQueueId != null && optionIndex !== null) {
+        const isAdd = isMulti
+          ? !prev.picks.has(optionIndex)  // toggle-on
+          : true                           // single-select always adds
+        if (isAdd) pendingTxIdsRef.current.set(optionIndex, txQueueId)
+      }
     } catch (err) {
       // Roll back the optimistic bump. ACTION_FAILED notification covers
       // the user-facing retry path elsewhere.
