@@ -31,6 +31,7 @@ import { LoadingSpinner } from '~/components/Skeleton'
 import UserHoverCard from '~/components/UserHoverCard'
 import { CawThumbnail, pickCawThumbnail } from '~/utils/cawThumbnail'
 import { stripPollMarker } from '~/../../../tools/pollMarker'
+import PollMiniResults from '~/components/PollMiniResults'
 import { useModalStore } from '~/store/modalStore'
 
 interface Actor {
@@ -56,6 +57,16 @@ interface Notification {
     hasVideo?: boolean
     imageData?: string | null
     videoData?: string | null
+    // Poll data when the caw has an attached poll. Shaped by the API to
+    // match the PollMiniResults Props interface. userVote is always null
+    // here (recipient is the poll author, not a voter).
+    poll?: {
+      options: string[]
+      totalVotes: number
+      optionVoteCounts: number[]
+      userVote: { optionIndex: number; pending: boolean } | null
+      endsAt?: string | null
+    }
   }
   offer?: {
     id: number
@@ -1082,15 +1093,27 @@ const Notifications: React.FC = () => {
                     // text twice when the same media is shown as the
                     // thumb on the right. stripPollMarker hides the raw
                     // ::poll:opt1:opt2:: sidecar so it doesn't leak into
-                    // the notification body.
+                    // the notification body. When the caw has a poll
+                    // attached, render PollMiniResults bars below the
+                    // text snippet so the recipient can see live results
+                    // inline.
                     const picked = pickCawThumbnail(notification.caw, stripPollMarker(notification.caw.content || ''))
-                    return picked.body ? (
-                      <p className={`text-sm mt-1 truncate ${
-                        isDark ? 'text-white/60' : 'text-gray-600'
-                      }`}>
-                        {picked.body}
-                      </p>
-                    ) : null
+                    return (
+                      <>
+                        {picked.body && (
+                          <p className={`text-sm mt-1 truncate ${
+                            isDark ? 'text-white/60' : 'text-gray-600'
+                          }`}>
+                            {picked.body}
+                          </p>
+                        )}
+                        {notification.caw.poll && (
+                          <div className="mt-1.5">
+                            <PollMiniResults poll={notification.caw.poll as any} width={220} rowHeight={18} />
+                          </div>
+                        )}
+                      </>
+                    )
                   })()}
                 </div>
                 {notification.caw && (() => {

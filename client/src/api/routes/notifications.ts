@@ -112,6 +112,18 @@ router.get('/', requireAuth({ lookup: async (req) => Number(req.query.userId) ||
             hasVideo: true,
             imageData: true,
             videoData: true,
+            // Poll core — options + totalVotes for PollMiniResults.
+            // Per-option vote counts are filled in below via a grouped
+            // Vote query. userVote is omitted: the notification recipient
+            // is the poll author, not a voter.
+            poll: {
+              select: {
+                id: true,
+                options: true,
+                totalVotes: true,
+                endsAt: true,
+              }
+            }
           }
         },
         offer: {
@@ -214,6 +226,30 @@ router.get('/', requireAuth({ lookup: async (req) => Number(req.query.userId) ||
       }
     }
 
+    // Enrich poll vote counts for any notification whose caw has a poll.
+    // We collect all poll IDs across the page, do a single grouped Vote
+    // query, then attach optionVoteCounts to each caw.poll. userVote is
+    // not surfaced here — the recipient is the poll author, not a voter.
+    const pollIdsByCawId = new Map<number, number>()
+    for (const n of notifications) {
+      const caw = (n as any).caw
+      if (caw?.poll?.id) pollIdsByCawId.set(caw.id, caw.poll.id)
+    }
+    const pollVoteCountsByPollId = new Map<number, number[]>()
+    if (pollIdsByCawId.size > 0) {
+      const pollIds = Array.from(new Set(pollIdsByCawId.values()))
+      const voteCounts = await prisma.vote.groupBy({
+        by: ['pollId', 'optionIndex'],
+        where: { pollId: { in: pollIds }, pending: false },
+        _count: { id: true },
+      })
+      for (const row of voteCounts) {
+        const arr = pollVoteCountsByPollId.get(row.pollId) ?? []
+        arr[row.optionIndex] = row._count.id
+        pollVoteCountsByPollId.set(row.pollId, arr)
+      }
+    }
+
     // Merge SQL group metadata into each notification row. Each
     // notification represents ONE group (its latest member); the
     // group-level count + actor list come from the aggregation
@@ -255,12 +291,33 @@ router.get('/', requireAuth({ lookup: async (req) => Number(req.query.userId) ||
           }))
         : []
 
+      // Attach per-option vote counts to caw.poll when present.
+      let cawOut: any = notification.caw
+      if (cawOut?.poll) {
+        const pollId = cawOut.poll.id
+        const rawCounts = pollVoteCountsByPollId.get(pollId) ?? []
+        const optionsLen: number = cawOut.poll.options?.length ?? 0
+        const optionVoteCounts: number[] = []
+        for (let i = 0; i < optionsLen; i++) optionVoteCounts.push(rawCounts[i] ?? 0)
+        cawOut = {
+          ...cawOut,
+          poll: {
+            options: cawOut.poll.options,
+            totalVotes: cawOut.poll.totalVotes ?? 0,
+            optionVoteCounts,
+            endsAt: cawOut.poll.endsAt ? cawOut.poll.endsAt.toISOString() : null,
+            userVote: null,
+            userVotes: [],
+          }
+        }
+      }
+
       groupedNotifications.push({
         id: notification.id,
         type: notification.type,
         actor: notification.actor,
         additionalActors,
-        caw: notification.caw,
+        caw: cawOut,
         offer: (notification as any).offer || null,
         actionPayload,
         isRead: groupIsRead,
