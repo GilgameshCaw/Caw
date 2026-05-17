@@ -1734,7 +1734,7 @@ const MessagesPage: React.FC = () => {
                           <div className="flex items-center space-x-2 mb-1">
                             <h3 className={`text-base transition-colors duration-300 truncate ${
                               conversation.unreadCount > 0
-                                ? `font-bold ${isDark ? 'text-yellow-400' : 'text-yellow-600'}`
+                                ? `font-bold underline ${isDark ? 'text-white' : 'text-black'}`
                                 : `font-semibold ${isDark ? 'text-white' : 'text-black'}`
                             }`}>
                               {groupTitle}
