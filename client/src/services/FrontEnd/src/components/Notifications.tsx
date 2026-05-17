@@ -30,6 +30,7 @@ import Avatar from '~/components/Avatar'
 import { LoadingSpinner } from '~/components/Skeleton'
 import UserHoverCard from '~/components/UserHoverCard'
 import { CawThumbnail, pickCawThumbnail } from '~/utils/cawThumbnail'
+import { stripPollMarker } from '~/../../../tools/pollMarker'
 import { useModalStore } from '~/store/modalStore'
 
 interface Actor {
@@ -1079,8 +1080,10 @@ const Notifications: React.FC = () => {
                     // Pick a thumbnail (if any) AND scrub any lifted GIF
                     // URL out of the snippet so we don't render the URL
                     // text twice when the same media is shown as the
-                    // thumb on the right.
-                    const picked = pickCawThumbnail(notification.caw, notification.caw.content)
+                    // thumb on the right. stripPollMarker hides the raw
+                    // ::poll:opt1:opt2:: sidecar so it doesn't leak into
+                    // the notification body.
+                    const picked = pickCawThumbnail(notification.caw, stripPollMarker(notification.caw.content || ''))
                     return picked.body ? (
                       <p className={`text-sm mt-1 truncate ${
                         isDark ? 'text-white/60' : 'text-gray-600'
@@ -1095,7 +1098,7 @@ const Notifications: React.FC = () => {
                   // enough to run twice (regex match + a couple of string
                   // splits, no fetch) that the alternative of hoisting it
                   // up isn't worth restructuring the JSX flow for.
-                  const { thumb } = pickCawThumbnail(notification.caw, notification.caw.content)
+                  const { thumb } = pickCawThumbnail(notification.caw, stripPollMarker(notification.caw.content || ''))
                   if (!thumb) return null
                   return (
                     <CawThumbnail
