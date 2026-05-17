@@ -44,7 +44,14 @@ import MessageSearch from '~/components/MessageSearch'
 import GifPicker from '~/components/GifPicker'
 import EncryptedImage from '~/components/EncryptedImage'
 import { useDmFileUpload } from '~/hooks/useDmFileUpload'
-import { getCachedPrivateKey, getCachedPublicKeyHex } from '~/services/DmCryptoService'
+import {
+  getCachedPrivateKey,
+  getCachedPublicKeyHex,
+  computeSharedSecretForPeer,
+  unsealAttachmentKey,
+  decryptBinary,
+} from '~/services/DmCryptoService'
+import { isCanonicalEncryptedUploadUrl } from '~/utils/uploadUrl'
 import MentionAutocomplete from '~/components/MentionAutocomplete'
 import { useBlockedUsersStore } from '~/store/blockedUsersStore'
 import { useDmMuteStore } from '~/store/dmMuteStore'
@@ -1238,12 +1245,91 @@ const MessagesPage: React.FC = () => {
     return { hasText: !!rawContent.trim(), mediaItems: [] }
   }, [])
 
+  // Metadata needed to decrypt an encrypted-attachment before saving it.
+  // When supplied, downloadMediaUrl fetches + decrypts the ciphertext and
+  // saves the cleartext blob. When absent, the legacy plain-fetch path runs.
+  type EncryptedDownloadMeta = {
+    // New sealed-key path (post-2026-05-12 uploads).
+    sealedKey?: string
+    senderTokenId?: number
+    senderPublicKey?: string
+    // Legacy path: conversation's ECDH shared secret (1:1 only).
+    legacySharedSecret?: CryptoKey | null
+    // MIME type of the cleartext — comes from the envelope, NOT the ciphertext
+    // response headers (those just say application/octet-stream).
+    mimeType: string
+  }
+
   // Programmatically download one media file. We attempt a fetch→blob path
   // first so the browser `download` attribute is honoured cross-origin
   // (servers commonly send Content-Disposition: inline which prevents the
   // `download` attribute from working directly on cross-origin links).
-  const downloadMediaUrl = useCallback(async (url: string, filename: string) => {
+  //
+  // For encrypted DM attachments, pass `encryptedMeta` so the ciphertext is
+  // decrypted before saving — otherwise the user receives useless opaque bytes.
+  const downloadMediaUrl = useCallback(async (
+    url: string,
+    filename: string,
+    encryptedMeta?: EncryptedDownloadMeta,
+  ) => {
     try {
+      if (encryptedMeta) {
+        // --- Encrypted-attachment path ---
+        // Mirror the exact same two-path logic that EncryptedImage uses.
+        if (!isCanonicalEncryptedUploadUrl(url)) {
+          throw new Error('Encrypted attachment URL has unexpected shape')
+        }
+
+        const { sealedKey, senderTokenId, senderPublicKey, legacySharedSecret, mimeType } = encryptedMeta
+        const hasNewPath = !!(sealedKey && senderPublicKey && senderTokenId)
+        const hasLegacyPath = !!legacySharedSecret
+
+        if (!hasNewPath && !hasLegacyPath) {
+          // No key available — DM identity key cleared (wagmi disconnect?) or
+          // message predates key rollout without a stored shared secret.
+          // Save the ciphertext with an ".encrypted" suffix so the user at
+          // least has the raw file; a toast would be out of scope here.
+          const res = await fetch(url, { credentials: 'omit' })
+          if (!res.ok) throw new Error('fetch failed')
+          const blob = await res.blob()
+          const objectUrl = URL.createObjectURL(blob)
+          const a = document.createElement('a')
+          a.href = objectUrl
+          a.download = filename + '.encrypted'
+          document.body.appendChild(a)
+          a.click()
+          document.body.removeChild(a)
+          setTimeout(() => URL.revokeObjectURL(objectUrl), 10_000)
+          return
+        }
+
+        let attachmentKey: CryptoKey
+        if (hasNewPath) {
+          const myPrivateKey = getCachedPrivateKey()
+          if (!myPrivateKey) throw new Error('DM identity key not in cache')
+          const pairKey = await computeSharedSecretForPeer(myPrivateKey, senderTokenId!, senderPublicKey!)
+          attachmentKey = await unsealAttachmentKey(sealedKey!, pairKey)
+        } else {
+          attachmentKey = legacySharedSecret!
+        }
+
+        const res = await fetch(url, { credentials: 'omit' })
+        if (!res.ok) throw new Error('fetch failed')
+        const encrypted = new Uint8Array(await res.arrayBuffer())
+        const decrypted = await decryptBinary(encrypted, attachmentKey)
+        const blob = new Blob([decrypted], { type: mimeType })
+        const objectUrl = URL.createObjectURL(blob)
+        const a = document.createElement('a')
+        a.href = objectUrl
+        a.download = filename
+        document.body.appendChild(a)
+        a.click()
+        document.body.removeChild(a)
+        setTimeout(() => URL.revokeObjectURL(objectUrl), 10_000)
+        return
+      }
+
+      // --- Plain (non-encrypted) download path ---
       const res = await fetch(url, { credentials: 'omit' })
       if (!res.ok) throw new Error('fetch failed')
       const blob = await res.blob()
@@ -2731,7 +2817,9 @@ const MessagesPage: React.FC = () => {
 
                   {/* Download media — visible only when the message has
                       one or more media attachments. Each item triggers a
-                      separate download so the user gets individual files. */}
+                      separate download so the user gets individual files.
+                      For encrypted DM attachments the ciphertext is decrypted
+                      client-side before saving (same logic as EncryptedImage). */}
                   {(() => {
                     const msg = messages.find(m => m.id === contextMenu.messageId)
                     if (!msg?.content || msg.contentType === 'deleted') return null
@@ -2740,7 +2828,36 @@ const MessagesPage: React.FC = () => {
                     return (
                       <button
                         onClick={() => {
-                          mediaItems.forEach(item => downloadMediaUrl(item.url, item.filename))
+                          mediaItems.forEach(item => {
+                            // Resolve decryption context for encrypted-attachment
+                            // messages. The conversation's sealed-key envelope and
+                            // the sender's public key mirror exactly what EncryptedImage
+                            // receives at render time — we just resolve them here at
+                            // click time instead.
+                            let encryptedMeta: Parameters<typeof downloadMediaUrl>[2]
+                            try {
+                              const parsed = JSON.parse(msg.content)
+                              if (parsed?.msgType === 'encrypted-attachment' && parsed?.url === item.url) {
+                                const sealedKey: string | undefined = parsed.sealedKeys?.[currentUser?.id ?? -1]
+                                const senderParticipant = selectedConversation?.participants.find(
+                                  p => p.userId === msg.senderId,
+                                )
+                                const senderPublicKey: string | null | undefined =
+                                  senderParticipant?.publicKey
+                                  || (msg.senderId === currentUser?.id ? getCachedPublicKeyHex() : null)
+                                encryptedMeta = {
+                                  sealedKey,
+                                  senderTokenId: msg.senderId,
+                                  senderPublicKey: senderPublicKey || undefined,
+                                  legacySharedSecret: chatSharedSecret,
+                                  mimeType: String(parsed.mimeType || 'application/octet-stream'),
+                                }
+                              }
+                            } catch {
+                              // Not JSON / not an encrypted attachment — plain download.
+                            }
+                            downloadMediaUrl(item.url, item.filename, encryptedMeta)
+                          })
                           setContextMenu(null)
                         }}
                         className="w-full px-4 py-2 text-left text-sm text-white hover:bg-white/10 cursor-pointer"
