@@ -7,16 +7,27 @@ interface HighlightedTextareaProps {
   onChange: (e: React.ChangeEvent<HTMLTextAreaElement>) => void
   onClick?: (e: React.MouseEvent<HTMLTextAreaElement>) => void
   onKeyUp?: (e: React.KeyboardEvent<HTMLTextAreaElement>) => void
+  onKeyDown?: (e: React.KeyboardEvent<HTMLTextAreaElement>) => void
+  onBeforeInput?: (e: React.FormEvent<HTMLTextAreaElement>) => void
   onDragOver?: (e: React.DragEvent) => void
   onDragLeave?: (e: React.DragEvent) => void
   onDrop?: (e: React.DragEvent) => void
   placeholder?: string
   rows?: number
   className?: string
-  textareaRef?: React.RefObject<HTMLTextAreaElement | null>
+  // Accepts either a RefObject (useRef) or a callback ref (e.g. the
+  // chunkRefs.current[i] = el pattern used by the threaded composer).
+  textareaRef?: React.Ref<HTMLTextAreaElement>
   fontSize?: 'base' | 'xl'
   /** Tighter vertical padding for compact composers (e.g. replies). */
   compact?: boolean
+  /**
+   * Even tighter top + bottom padding — used by per-chunk textareas in the
+   * threaded composer where adjacent textareas are separated by a divider
+   * line and the default 10px bottom padding would stack into ~20px of
+   * white space around the divider.
+   */
+  denser?: boolean
   /** When true, grows textarea height to fit content (no internal scroll). */
   autoResize?: boolean
 }
@@ -30,6 +41,8 @@ const HighlightedTextarea: React.FC<HighlightedTextareaProps> = ({
   onChange,
   onClick,
   onKeyUp,
+  onKeyDown,
+  onBeforeInput,
   onDragOver,
   onDragLeave,
   onDrop,
@@ -39,6 +52,7 @@ const HighlightedTextarea: React.FC<HighlightedTextareaProps> = ({
   textareaRef: externalRef,
   fontSize = 'xl',
   compact = false,
+  denser = false,
   autoResize = false
 }) => {
   const { isDark } = useTheme()
@@ -58,14 +72,37 @@ const HighlightedTextarea: React.FC<HighlightedTextareaProps> = ({
   // height='0px' collapse trick. See the autoResize effect below.
   const mirrorRef = useRef<HTMLDivElement>(null)
   const [scrollTop, setScrollTop] = useState(0)
+  // Bumped on window resize so the autoResize effect re-runs and remeasures
+  // the mirror against the new viewport width. Without this, soft-wrap
+  // changes on viewport-rotate / browser-resize / virtual-keyboard-show
+  // leave the textarea at its old height.
+  const [resizeTick, setResizeTick] = useState(0)
+  useEffect(() => {
+    if (!autoResize) return
+    const onResize = () => setResizeTick(t => t + 1)
+    window.addEventListener('resize', onResize)
+    // visualViewport fires on iOS keyboard show/hide and orientation change
+    // when `resize` doesn't (Safari's quirk).
+    const vv = (window as unknown as { visualViewport?: VisualViewport }).visualViewport
+    vv?.addEventListener('resize', onResize)
+    return () => {
+      window.removeEventListener('resize', onResize)
+      vv?.removeEventListener('resize', onResize)
+    }
+  }, [autoResize])
 
   // Mobile uses an explicit 16px to avoid iOS Safari's focus-zoom on
   // inputs below 16px. Root font-size is 15px (index.css), so plain
   // `text-base` resolves to 15px and trips the zoom. Desktop keeps 15px.
   const textSizeClass = fontSize === 'xl' ? 'text-xl' : 'text-[16px] md:text-base'
   const lineHeight = fontSize === 'xl' ? '1.75rem' : '1.5rem'
-  const paddingBottom = compact ? '10px' : '26px'
-  const padding = `2px 8px ${paddingBottom} 8px`
+  // denser (per-chunk in thread mode): no vertical padding at all — adjacent
+  // chunks sit right against the divider line, no stacked whitespace.
+  // compact (replies, media-attached): 10px bottom.
+  // default: 26px bottom for the give-it-room single-post layout.
+  const paddingTop = denser ? '0px' : '2px'
+  const paddingBottom = denser ? '0px' : compact ? '10px' : '26px'
+  const padding = `${paddingTop} 8px ${paddingBottom} 8px`
 
   // Sync scroll between textarea and highlight div
   const handleScroll = (e: React.UIEvent<HTMLTextAreaElement>) => {
@@ -128,7 +165,7 @@ const HighlightedTextarea: React.FC<HighlightedTextareaProps> = ({
       setOverlayHeight(next)
     })
     return () => cancelAnimationFrame(rafId)
-  }, [autoResize, value, compact, lineHeight, fontSize])
+  }, [autoResize, value, compact, lineHeight, fontSize, resizeTick])
 
   // Parse text and apply highlighting for @mentions, #hashtags, $cashtags, and URLs
   const getHighlightedText = (text: string) => {
@@ -206,11 +243,26 @@ const HighlightedTextarea: React.FC<HighlightedTextareaProps> = ({
           // is readonly in the type; the mutable assignment is fine at
           // runtime — useRef returns a mutable object.
           if (externalRef) {
-            const r = externalRef as { current: HTMLTextAreaElement | null }
-            if (node && node.offsetParent !== null) {
-              r.current = node
-            } else if (!node && r.current === internalRef.current) {
-              r.current = null
+            if (typeof externalRef === 'function') {
+              // Callback ref: pass node directly. Mount fires with the node,
+              // unmount with null. No visible-instance gating — the threaded
+              // composer expects every chunk's ref to fire so the array stays
+              // dense.
+              externalRef(node)
+            } else {
+              // RefObject case (useRef): the same external ref may be shared
+              // across mobile + desktop instances of this component, so only
+              // the visible instance (offsetParent !== null) should claim the
+              // shared ref so focus / cursor / selection ops land on the
+              // textarea the user is actually looking at. RefObject.current
+              // is readonly in the type; the mutable assignment is fine at
+              // runtime — useRef returns a mutable object.
+              const r = externalRef as { current: HTMLTextAreaElement | null }
+              if (node && node.offsetParent !== null) {
+                r.current = node
+              } else if (!node && r.current === internalRef.current) {
+                r.current = null
+              }
             }
           }
         }}
@@ -236,6 +288,8 @@ const HighlightedTextarea: React.FC<HighlightedTextareaProps> = ({
         onChange={onChange}
         onClick={onClick}
         onKeyUp={onKeyUp}
+        onKeyDown={onKeyDown}
+        onBeforeInput={onBeforeInput}
         onScroll={handleScroll}
         onDragOver={onDragOver}
         onDragLeave={onDragLeave}

@@ -1,4 +1,4 @@
-import React, { useState, useRef, useEffect, useLayoutEffect } from 'react'
+import React, { useState, useRef, useEffect, useLayoutEffect, useMemo } from 'react'
 import { createPortal } from 'react-dom'
 import toast from 'react-hot-toast'
 import { Link } from '~/utils/localizedRouter'
@@ -417,6 +417,20 @@ const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess, placehol
   const textareaRef = useRef<HTMLTextAreaElement>(null)
   const submitBtnRef = useRef<HTMLButtonElement>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
+  // Per-chunk textarea refs for thread mode (N separate textareas).
+  const chunkRefs = useRef<Array<HTMLTextAreaElement | null>>([])
+  // Which chunk last had focus, and the cursor position within that chunk's local text.
+  const [activeChunkIndex, setActiveChunkIndex] = useState(0)
+  const [activeChunkCursor, setActiveChunkCursor] = useState(0)
+  // Cross-chunk "select all" state. Native browsers can't select across
+  // separate <textarea> elements, so Cmd/Ctrl-A within any chunk only
+  // highlights that one chunk. We emulate select-all-across-thread:
+  //   - Cmd/Ctrl-A in any chunk → set allChunksSelected = true, tint every chunk
+  //   - Then Copy / Cut → clipboard gets the master text; Cut also clears
+  //   - Then Backspace / Delete → clear master text
+  //   - Then a printable key (or onBeforeInput) → replace master with typed char
+  //   - Any click / arrow / focus change → clear the all-selected state
+  const [allChunksSelected, setAllChunksSelected] = useState(false)
   // Anchor refs for the GIF / emoji popovers. We portal the popovers
   // to document.body so they aren't clipped by overflow:hidden /
   // overflow:auto ancestors (the home inline composer, ComposeModal,
@@ -677,8 +691,17 @@ const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess, placehol
 
   // Handle text change and cursor position for mention autocomplete
   const handleTextChange = (e: React.ChangeEvent<HTMLTextAreaElement>) => {
+    const cursor = e.target.selectionStart
+    // Single-mode → thread-mode transition: when this keystroke pushes the
+    // text past POST_CHAR_LIMIT, the single textarea will unmount and the
+    // chunk-mode textareas mount on the next render. The chunk-grew
+    // layoutEffect won't have a preInputStateRef snapshot (we never set
+    // one in single-mode) and the cursor-restore effect needs a master
+    // cursor offset to know where to land focus. Single-mode master ==
+    // local since there's only one chunk, so cursor IS the master offset.
+    pendingMasterCursorRef.current = cursor
     setText(e.target.value)
-    setCursorPosition(e.target.selectionStart)
+    setCursorPosition(cursor)
   }
 
   const handleTextClick = (e: React.MouseEvent<HTMLTextAreaElement>) => {
@@ -689,24 +712,42 @@ const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess, placehol
     setCursorPosition((e.target as HTMLTextAreaElement).selectionEnd ?? (e.target as HTMLTextAreaElement).selectionStart)
   }
 
-  // Handle mention selection from autocomplete
+  // Handle mention selection from autocomplete.
+  // In thread mode the positions are relative to the active chunk's local text;
+  // we patch only that chunk's slice and rebuild master text via replaceChunk.
   const handleMentionSelect = (username: string, startPos: number, endPos: number) => {
-    const beforeMention = text.substring(0, startPos)
-    const afterMention = text.substring(endPos)
-    const newText = `${beforeMention}@${username} ${afterMention}`
-
-    setText(newText)
-
-    // Set cursor position after the inserted mention
-    setTimeout(() => {
-      if (textareaRef.current) {
-        const newCursorPos = startPos + username.length + 2 // +2 for @ and space
-        textareaRef.current.selectionStart = newCursorPos
-        textareaRef.current.selectionEnd = newCursorPos
-        setCursorPosition(newCursorPos)
-        textareaRef.current.focus()
-      }
-    }, 0)
+    if (isThreadMode && chunkSlices.length > 0) {
+      const chunkText = chunkSlices[activeChunkIndex] ?? ''
+      const before = chunkText.substring(0, startPos)
+      const after = chunkText.substring(endPos)
+      const newChunkText = `${before}@${username} ${after}`
+      replaceChunk(activeChunkIndex, newChunkText)
+      setTimeout(() => {
+        const ta = chunkRefs.current[activeChunkIndex]
+        if (ta) {
+          const newCursorPos = startPos + username.length + 2
+          ta.selectionStart = newCursorPos
+          ta.selectionEnd = newCursorPos
+          setActiveChunkCursor(newCursorPos)
+          ta.focus({ preventScroll: true })
+        }
+      }, 0)
+    } else {
+      const beforeMention = text.substring(0, startPos)
+      const afterMention = text.substring(endPos)
+      const newText = `${beforeMention}@${username} ${afterMention}`
+      setText(newText)
+      // Set cursor position after the inserted mention
+      setTimeout(() => {
+        if (textareaRef.current) {
+          const newCursorPos = startPos + username.length + 2 // +2 for @ and space
+          textareaRef.current.selectionStart = newCursorPos
+          textareaRef.current.selectionEnd = newCursorPos
+          setCursorPosition(newCursorPos)
+          textareaRef.current.focus()
+        }
+      }, 0)
+    }
   }
 
   // Thin wrapper preserving the local { success, urls } shape. Images
@@ -1630,6 +1671,8 @@ const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess, placehol
   const lastChunkPollCost = (pollMarker && pollPosition === 'end') ? pollBytes : 0
 
   const effectiveTextLength = textBytes + mediaCost + pollBytes
+  // Thread mode is active when text overflows one post OR the user typed a
+  // manual `---` break marker (which forces a split regardless of length).
   const isThreadMode = effectiveTextLength > POST_CHAR_LIMIT
   const firstChunkMediaCost = (!isThreadMode || mediaPosition === 'start') ? mediaCost : 0
   const lastChunkMediaCost = (isThreadMode && mediaPosition === 'end') ? mediaCost : 0
@@ -1640,6 +1683,579 @@ const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess, placehol
     lastChunkMediaCost + lastChunkPollCost,
   )
 
+  // ---------------------------------------------------------------------------
+  // Per-chunk slices (marker-stripped) for the N-textarea thread UI.
+  // In manual-break mode the boundaries point PAST each `---\n` marker, so
+  // slicing [boundaries[i]..boundaries[i+1]] already contains no marker — the
+  // only thing to strip is a trailing newline that preceded the next marker.
+  // In auto-split mode boundaries point to post-trimStart offsets so the raw
+  // slice is also clean.
+  // ---------------------------------------------------------------------------
+  const chunkSlices = useMemo((): string[] => {
+    if (!isThreadMode) return [text]
+    return chunkBoundaries.map((start, i) => {
+      const end = chunkBoundaries[i + 1] ?? text.length
+      return text.slice(start, end)
+    })
+  }, [text, chunkBoundaries, isThreadMode])
+
+  /** Replace chunk `i`'s content with `newValue` and patch the master `text`. */
+  const replaceChunk = (i: number, newValue: string) => {
+    if (!isThreadMode) {
+      setText(newValue)
+      return
+    }
+    // Auto-split mode: patch raw string at the known boundary offsets.
+    const start = chunkBoundaries[i]
+    const end = chunkBoundaries[i + 1] ?? text.length
+    setText(text.slice(0, start) + newValue + text.slice(end))
+  }
+
+  // Number of non-empty chunks — used for button labels.
+  const submittableChunkCount = chunkSlices.filter(s => s.trim().length > 0).length
+
+  // ---------------------------------------------------------------------------
+  // Focus auto-jump on chunk-count change. Three cases:
+  //
+  //   GREW + active chunk OVERFLOWED (the spillover case — single keystroke
+  //     typed past the cap, OR multi-char paste that crossed the boundary):
+  //     Jump to the end of the LAST new chunk that holds the spillover.
+  //     For typing one char past the cap this is position 1 of the new
+  //     chunk (≈ start); for a paste that lands a 300-char block this is
+  //     position 300, which is what the user expects (cursor follows the
+  //     pasted text).
+  //
+  //   GREW for other reasons (programmatic insertion, marker injection by
+  //     a future feature): jump to start of the chunk after the active one.
+  //
+  //   SHRANK (e.g. user deleted all content in chunk i and the boundary
+  //     above merged with the next one):
+  //     Move focus to the END of the chunk that absorbed the deletion
+  //     (typically chunk i-1, or chunk 0 if everything collapsed).
+  //
+  //   STABLE:
+  //     No-op. Active chunk's own onChange already kept the cursor live.
+  // ---------------------------------------------------------------------------
+  const prevBoundariesRef = useRef(chunkBoundaries)
+  // Stable per-index callback refs. Inline `(el) => { ... }` would recreate
+  // a new function identity on every render; React's diff would then call
+  // the old ref with `null` and the new ref with the node — the brief null
+  // window steals focus out of the textarea on every keystroke (only
+  // observable when a NEW chunk mounts, because that triggers a full
+  // re-render). useRef-cached makers preserve identity.
+  const chunkRefSettersRef = useRef<Map<number, (el: HTMLTextAreaElement | null) => void>>(new Map())
+  const getChunkRefSetter = (i: number) => {
+    let fn = chunkRefSettersRef.current.get(i)
+    if (!fn) {
+      fn = (el: HTMLTextAreaElement | null) => {
+        if (el && el.offsetParent !== null) {
+          chunkRefs.current[i] = el
+          if (i === 0) {
+            (textareaRef as React.MutableRefObject<HTMLTextAreaElement | null>).current = el
+          }
+        } else if (!el && chunkRefs.current[i]) {
+          // Unmount: clear ONLY if we currently hold this node.
+          chunkRefs.current[i] = null
+        }
+      }
+      chunkRefSettersRef.current.set(i, fn)
+    }
+    return fn
+  }
+  // Pre-input snapshot captured by onBeforeInput on each chunk textarea.
+  // The onChange handler fires AFTER the keystroke has already been
+  // applied, so e.target.selectionStart reflects the POST-keystroke
+  // cursor, which is always >= the previous slice length when typing at
+  // OR before the end. To distinguish "at end" (jump) from "in middle"
+  // (stay), we need the cursor + slice length AS THEY WERE before the
+  // keystroke fired. onBeforeInput runs synchronously immediately before
+  // the value mutates, with the cursor still at its pre-input position.
+  const preInputStateRef = useRef<{ chunkIdx: number, preCursorPos: number, preSliceLen: number } | null>(null)
+  // After a chunk's onChange, this holds the cursor's MASTER-text offset
+  // (chunkBoundary[i] + e.target.selectionStart). The cursor-restore
+  // layoutEffect uses it to compute which new chunk the cursor lives in
+  // post-resplit and the local offset within it — so adding a space mid-
+  // chunk lands the cursor right after the typed space, even if the
+  // splitter shifts the chunk boundaries earlier (word-boundary effect).
+  const pendingMasterCursorRef = useRef<number | null>(null)
+  // Use layoutEffect so the focus + cursor jump runs BEFORE the browser
+  // paints the new layout. Otherwise on a fast keystroke that spills into
+  // a new chunk, the user sees the cursor flash in the old chunk for one
+  // frame before it jumps. Layout effect fires synchronously after DOM
+  // mutation, which is when the new textarea's ref callback has already
+  // fired and chunkRefs.current[targetIdx] is populated.
+  useLayoutEffect(() => {
+    const prev = prevBoundariesRef.current
+    const prevCount = prev.length
+    const nextCount = chunkBoundaries.length
+
+    if (nextCount > prevCount) {
+      // GREW. New chunk(s) appeared. Two reasons this can happen:
+      //
+      //   (A) User typed/pasted AT THE END of the active chunk and the
+      //       content spilled forward → cursor follows into the new chunk.
+      //       Detected via: pre-keystroke cursor was at the end of the
+      //       pre-keystroke slice (snapshot captured in onBeforeInput).
+      //
+      //   (B) User typed/pasted in the MIDDLE of the active chunk, pushing
+      //       trailing content forward → cursor STAYS where the user was
+      //       typing (don't yank focus away).
+      //       Detected via: pre-keystroke cursor was strictly before the
+      //       end of the pre-keystroke slice.
+      //
+      //   Fallback (no preInputState — e.g. programmatic setText):
+      //   Default to NOT jumping. The caller can manually focus a chunk
+      //   if they want a specific cursor placement.
+      const snap = preInputStateRef.current
+      const cursorWasAtEnd = snap != null && snap.preCursorPos >= snap.preSliceLen
+      // Consume the snapshot so a later render (not driven by an input
+      // event) doesn't reuse it.
+      preInputStateRef.current = null
+
+      if (cursorWasAtEnd) {
+        const targetIdx = nextCount - 1
+        const ta = chunkRefs.current[targetIdx]
+        const sliceLen = chunkSlices[targetIdx]?.length ?? 0
+        if (ta) {
+          cursorRestoreSkipRef.current = true
+          // setActiveChunkIndex / setActiveChunkCursor will trigger a second
+          // render; do these BEFORE the DOM focus call so the React-tracked
+          // active chunk matches the DOM-focused chunk immediately.
+          setActiveChunkIndex(targetIdx)
+          setActiveChunkCursor(sliceLen)
+          // Focus + cursor write directly — no rAF defer. The new textarea
+          // is already in the DOM (layoutEffect runs after commit) and its
+          // .value has been applied by React's reconciliation pass. Setting
+          // selectionRange on it lands cleanly.
+          ta.focus({ preventScroll: true })
+          ta.setSelectionRange(sliceLen, sliceLen)
+        }
+      }
+      // Mid-chunk overflow (case B): no-op. The user's textarea still has
+      // focus and the browser-maintained selection is correct for where
+      // they were typing.
+    } else if (nextCount < prevCount) {
+      // SHRANK. Active chunk merged backward. Cursor at END of the
+      // absorbing chunk so the user can keep typing where they left off.
+      // Two sub-cases:
+      //   - Still in thread mode (chunk count went 3→2 etc.): focus the
+      //     surviving chunk's textarea via chunkRefs.
+      //   - Dropped out of thread mode (count 2→1 = back to single textarea):
+      //     chunkRefs no longer apply — the single-mode textarea is the one
+      //     attached to the outer `textareaRef`. requestAnimationFrame lets
+      //     React swap the DOM (chunk-mode <Frag> → single <HighlightedTextarea>)
+      //     and the new ref to populate before we focus.
+      const targetIdx = Math.max(0, Math.min(activeChunkIndex, nextCount - 1))
+      const sliceLen = chunkSlices[targetIdx]?.length ?? 0
+      setActiveChunkIndex(targetIdx)
+      setActiveChunkCursor(sliceLen)
+      cursorRestoreSkipRef.current = true
+      if (nextCount > 1) {
+        // Still in thread mode.
+        const ta = chunkRefs.current[targetIdx]
+        if (ta) {
+          ta.focus({ preventScroll: true })
+          ta.setSelectionRange(sliceLen, sliceLen)
+        }
+      } else {
+        // Collapsed back to single-textarea mode. The chunk-mode textareas
+        // are about to unmount; wait one frame for the single-mode one to
+        // mount and claim the outer textareaRef, then focus it at END.
+        requestAnimationFrame(() => {
+          const ta = textareaRef.current
+          if (ta) {
+            const fullLen = ta.value.length
+            ta.focus({ preventScroll: true })
+            ta.setSelectionRange(fullLen, fullLen)
+          }
+        })
+      }
+    }
+    prevBoundariesRef.current = chunkBoundaries
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [chunkBoundaries.join(',')])
+
+  // Cursor-restore effect: after a setText-driven re-render the splitter
+  // can shift chunk boundaries (e.g. typing a space mid-chunk introduces
+  // a new word boundary, so chunk 0 shrinks and the rest spills forward).
+  // React clamps the textarea's DOM selection to the new (shorter) value's
+  // end — the user perceives this as "cursor jumped to end."
+  //
+  // To preserve the user's intended position, onChange records the cursor's
+  // MASTER-text offset in pendingMasterCursorRef. After the re-render we
+  // translate that master offset back to (newChunk, newLocalOffset) using
+  // the freshly-computed chunkBoundaries, then focus + place cursor there.
+  //
+  // Skipped when the chunk-count layoutEffect already placed the cursor
+  // (its own jump logic is authoritative for those cases).
+  const cursorRestoreSkipRef = useRef(false)
+  useLayoutEffect(() => {
+    // Always consume the skip flag at the top, even when we return early
+    // for non-thread mode. Otherwise a SHRANK→1 transition (which sets
+    // skip while isThreadMode is already false) leaves the flag set, and
+    // the NEXT single→thread transition gets silently suppressed —
+    // observed as "second time entering thread mode, focus is lost."
+    const skipThisRender = cursorRestoreSkipRef.current
+    cursorRestoreSkipRef.current = false
+    if (!isThreadMode) {
+      // Also drop any pending master cursor on the way out — it was set
+      // for a chunk layout that no longer exists.
+      pendingMasterCursorRef.current = null
+      return
+    }
+    if (skipThisRender) {
+      pendingMasterCursorRef.current = null
+      return
+    }
+    const masterCursor = pendingMasterCursorRef.current
+    pendingMasterCursorRef.current = null
+    if (masterCursor == null) return
+    // Walk forward to find the chunk that contains masterCursor. The
+    // RIGHTMOST chunk whose start is <= masterCursor wins (i.e. the cursor
+    // lives at the very start of a chunk rather than at the end of the
+    // prior one when sitting on a boundary).
+    let targetIdx = 0
+    for (let k = 0; k < chunkBoundaries.length; k++) {
+      if (chunkBoundaries[k] <= masterCursor) targetIdx = k
+      else break
+    }
+    const localOffset = Math.max(0, masterCursor - chunkBoundaries[targetIdx])
+    const ta = chunkRefs.current[targetIdx]
+    if (!ta) return
+    const sliceLen = chunkSlices[targetIdx]?.length ?? 0
+    const desired = Math.min(localOffset, sliceLen)
+    // Update React-tracked active chunk if it shifted.
+    if (targetIdx !== activeChunkIndex) {
+      setActiveChunkIndex(targetIdx)
+    }
+    setActiveChunkCursor(desired)
+    ta.focus({ preventScroll: true })
+    ta.setSelectionRange(desired, desired)
+  })
+
+  // Measure the (x, y) pixel position of a caret offset within a textarea,
+  // relative to the textarea's own padding box. Uses a hidden mirror div
+  // styled to match the textarea's wrap/font/padding so a marker span at
+  // the same character offset lands at the same visual position. Returns
+  // null if the mirror can't be built (e.g. textarea isn't laid out).
+  const measureCaretXY = (ta: HTMLTextAreaElement, offset: number): { x: number, y: number } | null => {
+    const style = window.getComputedStyle(ta)
+    const mirror = document.createElement('div')
+    // Copy every property that affects line-wrap and glyph positioning.
+    const props: (keyof CSSStyleDeclaration)[] = [
+      'boxSizing', 'width', 'height',
+      'paddingTop', 'paddingRight', 'paddingBottom', 'paddingLeft',
+      'borderTopWidth', 'borderRightWidth', 'borderBottomWidth', 'borderLeftWidth',
+      'fontFamily', 'fontSize', 'fontWeight', 'fontStyle', 'fontVariant',
+      'lineHeight', 'letterSpacing', 'wordSpacing', 'textTransform', 'textIndent',
+      'whiteSpace', 'wordBreak', 'overflowWrap', 'tabSize',
+    ]
+    for (const p of props) {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      ;(mirror.style as any)[p] = (style as any)[p]
+    }
+    mirror.style.position = 'absolute'
+    mirror.style.visibility = 'hidden'
+    mirror.style.top = '0'
+    mirror.style.left = '0'
+    mirror.style.whiteSpace = 'pre-wrap'
+    mirror.style.wordWrap = 'break-word'
+    mirror.style.overflow = 'hidden'
+
+    const value = ta.value
+    const before = document.createTextNode(value.slice(0, offset))
+    const marker = document.createElement('span')
+    marker.textContent = '​' // zero-width space — gets a layout box
+    const after = document.createTextNode(value.slice(offset) || '​')
+    mirror.appendChild(before)
+    mirror.appendChild(marker)
+    mirror.appendChild(after)
+    document.body.appendChild(mirror)
+    const rect = marker.getBoundingClientRect()
+    const mirrorRect = mirror.getBoundingClientRect()
+    document.body.removeChild(mirror)
+    if (!rect.width && !rect.height) return null
+    return {
+      x: rect.left - mirrorRect.left,
+      y: rect.top - mirrorRect.top,
+    }
+  }
+
+  // Given a textarea and a target pixel-x, find the character offset on
+  // the FIRST visual row (when seekFirstRow=true) or LAST visual row
+  // (when seekFirstRow=false) whose caret x is closest to targetX.
+  // Returns 0 / value.length as fallbacks if the textarea is empty.
+  const findOffsetByX = (ta: HTMLTextAreaElement, targetX: number, seekFirstRow: boolean): number => {
+    const value = ta.value
+    if (!value) return 0
+    const len = value.length
+    // Build mirror once; we'll move the marker through every offset.
+    const style = window.getComputedStyle(ta)
+    const mirror = document.createElement('div')
+    const props: (keyof CSSStyleDeclaration)[] = [
+      'boxSizing', 'width', 'height',
+      'paddingTop', 'paddingRight', 'paddingBottom', 'paddingLeft',
+      'borderTopWidth', 'borderRightWidth', 'borderBottomWidth', 'borderLeftWidth',
+      'fontFamily', 'fontSize', 'fontWeight', 'fontStyle', 'fontVariant',
+      'lineHeight', 'letterSpacing', 'wordSpacing', 'textTransform', 'textIndent',
+      'whiteSpace', 'wordBreak', 'overflowWrap', 'tabSize',
+    ]
+    for (const p of props) {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      ;(mirror.style as any)[p] = (style as any)[p]
+    }
+    mirror.style.position = 'absolute'
+    mirror.style.visibility = 'hidden'
+    mirror.style.top = '0'
+    mirror.style.left = '0'
+    mirror.style.whiteSpace = 'pre-wrap'
+    mirror.style.wordWrap = 'break-word'
+    mirror.style.overflow = 'hidden'
+
+    // Render the whole value + a single trailing marker we move via DOM ops.
+    const span = document.createElement('span')
+    span.textContent = value
+    const marker = document.createElement('span')
+    marker.textContent = '​'
+    mirror.appendChild(span)
+    mirror.appendChild(marker)
+    document.body.appendChild(mirror)
+
+    // Walk every character offset, measure its y; pick offsets on the
+    // target row, then choose the one closest to targetX.
+    // O(n) on chunk length — chunks are bounded by POST_CHAR_LIMIT bytes
+    // so a few hundred chars at most.
+    const range = document.createRange()
+    const textNode = span.firstChild as Text
+    const mirrorTop = mirror.getBoundingClientRect().top
+    const mirrorLeft = mirror.getBoundingClientRect().left
+
+    let firstRowY = Infinity
+    let lastRowY = -Infinity
+    const points: { offset: number, x: number, y: number }[] = []
+    for (let off = 0; off <= len; off++) {
+      try {
+        range.setStart(textNode, Math.min(off, textNode.length))
+        range.setEnd(textNode, Math.min(off, textNode.length))
+        const r = range.getBoundingClientRect()
+        const x = r.left - mirrorLeft
+        const y = r.top - mirrorTop
+        if (y < firstRowY) firstRowY = y
+        if (y > lastRowY) lastRowY = y
+        points.push({ offset: off, x, y })
+      } catch { /* ignore */ }
+    }
+    document.body.removeChild(mirror)
+    const targetY = seekFirstRow ? firstRowY : lastRowY
+    // Tolerance for "same row" — half the row height.
+    const rowHeight = lastRowY - firstRowY > 0
+      ? (lastRowY - firstRowY) / Math.max(1, Math.round((lastRowY - firstRowY) / (parseFloat(style.lineHeight) || 20)))
+      : (parseFloat(style.lineHeight) || 20)
+    const tol = Math.max(2, rowHeight / 2)
+    const onRow = points.filter(p => Math.abs(p.y - targetY) < tol)
+    if (onRow.length === 0) return seekFirstRow ? 0 : len
+    let best = onRow[0]
+    let bestDist = Math.abs(best.x - targetX)
+    for (const p of onRow) {
+      const d = Math.abs(p.x - targetX)
+      if (d < bestDist) { best = p; bestDist = d }
+    }
+    return best.offset
+  }
+
+  // Arrow-key navigation BETWEEN chunks. In thread mode, the user expects
+  // arrow keys to cross chunk boundaries the same way they cross newlines
+  // in a single textarea:
+  //
+  //   - Left  at column 0       → end of previous chunk
+  //   - Right at end-of-content → start of next chunk
+  //   - Up    on the first line → end of previous chunk
+  //   - Down  on the last line  → start of next chunk
+  //
+  // "First/last line" is detected via cursor position vs newline markers:
+  //   - first line  = no `\n` in value[0..selectionStart]
+  //   - last line   = no `\n` in value[selectionStart..]
+  // Soft-wrapped lines without an explicit `\n` count as a single line for
+  // this check, which is fine: arrow-key navigation across a soft-wrap
+  // still works inside the current textarea via the browser's native
+  // handling; we only intercept when the user is at a HARD boundary.
+  const handleChunkArrow = (e: React.KeyboardEvent<HTMLTextAreaElement>, i: number) => {
+    if (!isThreadMode) return
+    const ta = e.currentTarget
+    const pos = ta.selectionStart ?? 0
+    const end = ta.selectionEnd ?? pos
+
+    // ---- Cross-chunk SELECT-ALL / COPY / CUT / DELETE handling ----
+    // Browsers can't select across separate <textarea>s, so Cmd/Ctrl-A
+    // within any chunk only highlights that one. We intercept the chord,
+    // mark allChunksSelected=true (visual tint on every chunk via class),
+    // then catch the FOLLOW-UP keystroke (copy/cut/delete/print char) to
+    // act on the master text.
+    const modKey = e.metaKey || e.ctrlKey
+    if (modKey && e.key === 'a' && !e.shiftKey && !e.altKey) {
+      e.preventDefault()
+      // Select within this chunk so the textarea's own selection mirrors
+      // the visual "all selected" state — needed so Cmd-C in chunk N
+      // produces a non-empty clipboard write via the native copy event
+      // path (we still preventDefault on copy and write master text, but
+      // having a native selection prevents the OS from doing nothing on
+      // older browsers).
+      ta.setSelectionRange(0, ta.value.length)
+      setAllChunksSelected(true)
+      return
+    }
+    if (allChunksSelected) {
+      // Copy/Cut → write master text to clipboard; cut also clears.
+      if (modKey && (e.key === 'c' || e.key === 'x') && !e.shiftKey && !e.altKey) {
+        e.preventDefault()
+        // Best-effort: use the Clipboard API; fall back to execCommand if
+        // unavailable (e.g. non-secure context). Errors silently no-op —
+        // not worth a user-facing toast for a clipboard hiccup.
+        try { void navigator.clipboard.writeText(text) }
+        catch { try { document.execCommand('copy') } catch { /* no-op */ } }
+        if (e.key === 'x') {
+          setText('')
+          pendingMasterCursorRef.current = 0
+        }
+        setAllChunksSelected(false)
+        return
+      }
+      // Backspace / Delete → clear master text.
+      if (e.key === 'Backspace' || e.key === 'Delete') {
+        e.preventDefault()
+        setText('')
+        pendingMasterCursorRef.current = 0
+        setAllChunksSelected(false)
+        return
+      }
+      // Arrow keys / Home / End / Escape → just clear the highlight
+      // (native deselect behavior) and let the textarea handle the key.
+      if (e.key === 'ArrowLeft' || e.key === 'ArrowRight'
+          || e.key === 'ArrowUp' || e.key === 'ArrowDown'
+          || e.key === 'Home' || e.key === 'End' || e.key === 'Escape') {
+        setAllChunksSelected(false)
+        // Don't return — let the rest of the arrow-handler run too.
+      }
+      // Printable single-char keys (and Enter / Tab) replace master text
+      // with that char. onBeforeInput on the chunk textarea catches the
+      // typed input path too, but doing it here covers Enter (which
+      // doesn't go through onBeforeInput as a textInputType).
+      else if (e.key.length === 1 || e.key === 'Enter') {
+        e.preventDefault()
+        const replacement = e.key === 'Enter' ? '\n' : e.key
+        setText(replacement)
+        pendingMasterCursorRef.current = replacement.length
+        setAllChunksSelected(false)
+        return
+      }
+    }
+
+    // Only intercept when there's no selection — otherwise arrow keys are
+    // editing the selection range and the user means in-textarea behavior.
+    if (pos !== end) return
+    // Don't fight modifier-key combos (Shift+Arrow for selection extension,
+    // Cmd/Ctrl+Arrow for word/line jumps).
+    if (e.shiftKey || e.metaKey || e.ctrlKey || e.altKey) return
+
+    const value = ta.value
+    const isAtLogicalStart = pos === 0
+    const isAtLogicalEnd = pos === value.length
+    const isOnFirstLine = value.lastIndexOf('\n', pos - 1) === -1
+    const isOnLastLine = value.indexOf('\n', pos) === -1
+
+    // For Up/Down crosses we want to preserve the cursor's pixel-x in the
+    // target textarea — same convention as moving up/down within a single
+    // textarea. carryX = the x-coord of the cursor right now; null means
+    // "Left/Right cross, no x-preservation".
+    const goPrev = (carryX: number | null) => {
+      if (i === 0) return
+      const targetIdx = i - 1
+      const targetTa = chunkRefs.current[targetIdx]
+      if (!targetTa) return
+      e.preventDefault()
+      let targetOffset: number
+      if (carryX != null) {
+        // Land on the LAST row of the previous chunk, x closest to carryX.
+        targetOffset = findOffsetByX(targetTa, carryX, false)
+      } else {
+        targetOffset = chunkSlices[targetIdx]?.length ?? 0
+      }
+      setActiveChunkIndex(targetIdx)
+      setActiveChunkCursor(targetOffset)
+      targetTa.focus({ preventScroll: true })
+      targetTa.setSelectionRange(targetOffset, targetOffset)
+    }
+    const goNext = (carryX: number | null) => {
+      if (i >= chunkSlices.length - 1) return
+      const targetIdx = i + 1
+      const targetTa = chunkRefs.current[targetIdx]
+      if (!targetTa) return
+      e.preventDefault()
+      let targetOffset: number
+      if (carryX != null) {
+        // Land on the FIRST row of the next chunk, x closest to carryX.
+        targetOffset = findOffsetByX(targetTa, carryX, true)
+      } else {
+        targetOffset = 0
+      }
+      setActiveChunkIndex(targetIdx)
+      setActiveChunkCursor(targetOffset)
+      targetTa.focus({ preventScroll: true })
+      targetTa.setSelectionRange(targetOffset, targetOffset)
+    }
+
+    if (e.key === 'ArrowLeft' && isAtLogicalStart) {
+      goPrev(null)
+    } else if (e.key === 'ArrowRight' && isAtLogicalEnd) {
+      goNext(null)
+    } else if (e.key === 'ArrowUp' && isOnFirstLine) {
+      const xy = measureCaretXY(ta, pos)
+      goPrev(xy ? xy.x : null)
+    } else if (e.key === 'ArrowDown' && isOnLastLine) {
+      const xy = measureCaretXY(ta, pos)
+      goNext(xy ? xy.x : null)
+    } else if (e.key === 'Backspace' && isAtLogicalStart && i > 0) {
+      // Backspace at position 0 of a non-first chunk. Always preventDefault
+      // and hop focus to end of the previous chunk — same intuition as
+      // backspace-at-start in a single textarea (deletes the preceding
+      // newline-equivalent boundary). Two sub-cases:
+      //
+      //   a) Current chunk has content (value.length > 0):
+      //      Merge it backward into the previous chunk via setText. The
+      //      layoutEffect's SHRANK branch then handles focus + cursor.
+      //
+      //   b) Current chunk is empty:
+      //      No merge needed. Just move focus + cursor to end of the
+      //      previous chunk. The empty chunk stays rendered (the splitter
+      //      keeps it as long as the previous chunk is at the cap), but
+      //      the user can keep typing/deleting in the previous chunk.
+      //      When they delete enough from prev chunk to fall under the
+      //      cap, the splitter collapses both chunks and the layoutEffect
+      //      SHRANK branch handles the final cursor.
+      const prevSlice = chunkSlices[i - 1] ?? ''
+      const cursorLand = prevSlice.length
+      const prevTa = chunkRefs.current[i - 1]
+      e.preventDefault()
+      if (value.length > 0) {
+        // Merge sub-case: rebuild master text with this chunk concatenated
+        // onto the previous one.
+        const mergedPrev = prevSlice + value
+        const prevStart = chunkBoundaries[i - 1]
+        const thisEnd = chunkBoundaries[i + 1] ?? text.length
+        const nextText = text.slice(0, prevStart) + mergedPrev + text.slice(thisEnd)
+        setActiveChunkIndex(i - 1)
+        setActiveChunkCursor(cursorLand)
+        setText(nextText)
+      } else if (prevTa) {
+        // Hop sub-case: empty chunk, just move focus.
+        setActiveChunkIndex(i - 1)
+        setActiveChunkCursor(cursorLand)
+        prevTa.focus({ preventScroll: true })
+        prevTa.setSelectionRange(cursorLand, cursorLand)
+      }
+    }
+  }
+
   // Figure out which chunk the cursor is in
   // When media gets its own dedicated last chunk, the cursor should never land there —
   // cap to the last text chunk so the counter shows remaining bytes for actual text.
@@ -1647,10 +2263,8 @@ const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess, placehol
   const maxCursorChunk = hasMediaOnlyChunk ? chunkCount - 2 : chunkCount - 1
   const currentChunkIndex = (() => {
     if (!isThreadMode) return 0
-    for (let i = chunkBoundaries.length - 1; i >= 0; i--) {
-      if (cursorPosition >= chunkBoundaries[i]) return Math.min(i, maxCursorChunk)
-    }
-    return 0
+    // In thread mode with separate textareas, use the actively focused chunk.
+    return Math.min(activeChunkIndex, maxCursorChunk)
   })()
 
   // Calculate bytes remaining for the current chunk (uses on-chain byte lengths
@@ -1659,12 +2273,9 @@ const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess, placehol
     if (!isThreadMode) {
       return POST_CHAR_LIMIT - effectiveTextLength
     }
-    // In thread mode, show remaining bytes for the current chunk
-    const chunkStart = chunkBoundaries[currentChunkIndex]
-    const chunkEnd = currentChunkIndex < chunkBoundaries.length - 1
-      ? chunkBoundaries[currentChunkIndex + 1]
-      : text.length
-    const chunkLen = onChainByteLen(text.slice(chunkStart, chunkEnd))
+    // In thread mode, show remaining bytes for the focused chunk's stripped slice.
+    const chunkText = chunkSlices[currentChunkIndex] ?? ''
+    const chunkLen = onChainByteLen(chunkText)
     // Add media cost to the chunk that will contain the media
     const isFirstChunk = currentChunkIndex === 0
     const isLastChunk = currentChunkIndex === chunkCount - 1
@@ -1744,36 +2355,120 @@ const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess, placehol
               the input collapses to its smallest visible size and
               everything else takes the rest of the row. */}
           <div className="flex items-center space-x-3 w-full">
-            {/* Input */}
+            {/* Input — single textarea (single-post) or N textareas (thread mode) */}
             <div className="flex-1 min-w-0 relative">
-              <HighlightedTextarea
-                 value={text}
-                 onChange={handleTextChange}
-                 onClick={handleTextClick}
-                 onKeyUp={handleTextKeyUp}
-                onDragOver={handleTextareaDragOver}
-                onDragLeave={handleTextareaDragLeave}
-                onDrop={handleTextareaDrop}
-                rows={1}
-                placeholder={
-                  replyTo
-                    ? `Reply to @${replyTo.user.username}`
-                    : (
-                      placeholder ?? (quote ? t('post_form.placeholder_quote') : t('post_form.placeholder'))
-                    )
-                }
-                 textareaRef={textareaRef}
-                 fontSize="base"
-                 compact={!!replyTo || hasMedia}
-                 autoResize
-                 chunkBoundaries={isThreadMode ? chunkBoundaries : undefined}
-               />
-              <MentionAutocomplete
-                text={text}
-                cursorPosition={cursorPosition}
-                onSelect={handleMentionSelect}
-                textareaRef={textareaRef}
-              />
+              {isThreadMode ? (
+                <div>
+                  {chunkSlices.map((slice, i) => (
+                    <React.Fragment key={i}>
+                      {i > 0 && (
+                        <div
+                          style={{
+                            borderTop: '1px dashed #f0b1005e',
+                            marginLeft: '20px',
+                            marginRight: '20px',
+                            marginTop: '10px',
+                            marginBottom: '10px',
+                          }}
+                        />
+                      )}
+                      <div
+                        // When Cmd/Ctrl-A is active across the thread, tint
+                        // every chunk so the user can see the "all selected"
+                        // state. Native textarea selection only highlights
+                        // the focused chunk; this wrapper bg fills the gap.
+                        // Yellow at low opacity matches the divider line.
+                        className={allChunksSelected ? 'bg-yellow-500/20 rounded' : ''}
+                      >
+                      <HighlightedTextarea
+                        value={slice}
+                        onChange={(e) => {
+                          const localCursor = e.target.selectionStart ?? 0
+                          // Stash the cursor's master-text offset so the
+                          // cursor-restore layoutEffect can translate it
+                          // to (newChunk, newLocalOffset) after re-split.
+                          pendingMasterCursorRef.current = chunkBoundaries[i] + localCursor
+                          replaceChunk(i, e.target.value)
+                          setActiveChunkIndex(i)
+                          setActiveChunkCursor(localCursor)
+                        }}
+                        onClick={(e) => {
+                          setActiveChunkIndex(i)
+                          setActiveChunkCursor((e.target as HTMLTextAreaElement).selectionStart ?? 0)
+                          setAllChunksSelected(false)
+                        }}
+                        onKeyUp={(e) => {
+                          setActiveChunkIndex(i)
+                          setActiveChunkCursor((e.target as HTMLTextAreaElement).selectionStart ?? 0)
+                        }}
+                        onKeyDown={(e) => handleChunkArrow(e, i)}
+                        onBeforeInput={(e) => {
+                          // Capture pre-input cursor + slice length so the
+                          // chunk-grew layoutEffect can tell end-of-chunk
+                          // spillover (cursor follows forward) from mid-chunk
+                          // overflow (cursor stays where the user was typing).
+                          const ta = e.currentTarget as HTMLTextAreaElement
+                          preInputStateRef.current = {
+                            chunkIdx: i,
+                            preCursorPos: ta.selectionStart ?? 0,
+                            preSliceLen: ta.value.length,
+                          }
+                        }}
+                        onDragOver={handleTextareaDragOver}
+                        onDragLeave={handleTextareaDragLeave}
+                        onDrop={handleTextareaDrop}
+                        rows={1}
+                        placeholder={i === 0
+                          ? (replyTo
+                              ? `Reply to @${replyTo.user.username}`
+                              : (placeholder ?? (quote ? t('post_form.placeholder_quote') : t('post_form.placeholder'))))
+                          : ''}
+                        textareaRef={getChunkRefSetter(i)}
+                        fontSize="base"
+                        denser
+                        autoResize
+                      />
+                      </div>
+                    </React.Fragment>
+                  ))}
+                  <MentionAutocomplete
+                    text={chunkSlices[activeChunkIndex] ?? ''}
+                    cursorPosition={activeChunkCursor}
+                    onSelect={handleMentionSelect}
+                    textareaRef={{ current: chunkRefs.current[activeChunkIndex] ?? null }}
+                  />
+                </div>
+              ) : (
+                <>
+                  <HighlightedTextarea
+                    value={text}
+                    onChange={handleTextChange}
+                    onClick={handleTextClick}
+                    onKeyUp={handleTextKeyUp}
+                    onDragOver={handleTextareaDragOver}
+                    onDragLeave={handleTextareaDragLeave}
+                    onDrop={handleTextareaDrop}
+                    rows={1}
+                    placeholder={
+                      replyTo
+                        ? `Reply to @${replyTo.user.username}`
+                        : (
+                          placeholder ?? (quote ? t('post_form.placeholder_quote') : t('post_form.placeholder'))
+                        )
+                    }
+                    textareaRef={textareaRef}
+                    fontSize="base"
+                    compact={!!replyTo || hasMedia}
+                    autoResize
+                  />
+                  <MentionAutocomplete
+                    text={text}
+                    cursorPosition={cursorPosition}
+                    onSelect={handleMentionSelect}
+                    textareaRef={textareaRef}
+                  />
+                </>
+              )}
               {/* Drag overlay */}
               {isDragOverTextarea && (
                 <div className="absolute inset-0 flex items-center justify-center bg-yellow-500/10 border-2 border-dashed border-yellow-500 rounded-lg pointer-events-none">
@@ -1786,16 +2481,16 @@ const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess, placehol
                 </div>
               )}
             </div>
-            
+
             {/* Character counter and thread indicator */}
             <div className="flex items-center space-x-2">
               {isThreadMode && (
                 <span className={`text-xs font-medium px-1.5 py-0.5 rounded ${
-                  chunkCount > 300
+                  submittableChunkCount > 300
                     ? (isDark ? 'bg-red-500/20 text-red-400' : 'bg-red-100 text-red-700')
                     : (isDark ? 'bg-yellow-500/20 text-yellow-400' : 'bg-yellow-100 text-yellow-700')
                 }`}>
-                  {currentChunkIndex + 1}/{chunkCount}
+                  {currentChunkIndex + 1}/{submittableChunkCount}
                 </span>
               )}
               {(text.length > 0 || selectedMedia.length > 0) && (
@@ -1970,7 +2665,7 @@ const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess, placehol
                 // triggers the connect flow and should say "Post".
                 const wrongWallet = isConnected && !isTokenOwner && !hasActiveSession && activeToken?.tokenId
                 const tooltipText = wrongWallet ? t('post_form.error.wrong_wallet_tooltip') : ''
-                const threadTooLong = isThreadMode && chunkCount > MAX_THREAD_LENGTH
+                const threadTooLong = isThreadMode && submittableChunkCount > MAX_THREAD_LENGTH
                 const isDisabled = (!text && selectedMedia.length === 0 && !pollMarker) || isOverLimit || !canPost || isSubmitting || isScheduling || threadTooLong || pollInvalid
                 const btn = (
                   <button
@@ -1979,7 +2674,7 @@ const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess, placehol
                     disabled={isDisabled}
                     onClick={handleSubmit}
                   >
-                    {wrongWallet ? t('post_form.button.wrong_wallet') : uploadProgress ? uploadProgress : signingProgress ? <>{t('post_form.button.signing_progress')} <span ref={signingCountRef1}>1</span>/{signingProgress.total}...</> : isSubmitting ? t('post_form.button.signing') : isThreadMode ? t('post_form.button.thread', { count: chunkCount }) : replyTo ? t('post_form.button.reply') : t('post_form.button.post')}
+                    {wrongWallet ? t('post_form.button.wrong_wallet') : uploadProgress ? uploadProgress : signingProgress ? <>{t('post_form.button.signing_progress')} <span ref={signingCountRef1}>1</span>/{signingProgress.total}...</> : isSubmitting ? t('post_form.button.signing') : isThreadMode ? t('post_form.button.thread', { count: submittableChunkCount }) : replyTo ? t('post_form.button.reply') : t('post_form.button.post')}
                   </button>
                 )
                 return tooltipText ? <Tooltip text={tooltipText}>{btn}</Tooltip> : btn
@@ -1987,7 +2682,7 @@ const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess, placehol
             }
           </div>
 
-        {isThreadMode && chunkCount > MAX_THREAD_LENGTH && (
+        {isThreadMode && submittableChunkCount > MAX_THREAD_LENGTH && (
           <p className="text-xs text-error-dim mt-1 text-right">Thread exceeds {MAX_THREAD_LENGTH} post limit. Shorten your text to continue.</p>
         )}
 
@@ -2001,7 +2696,7 @@ const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess, placehol
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M7 8h10M7 12h4m1 8l-4-4H5a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v8a2 2 0 01-2 2h-3l-4 4z" />
               </svg>
               <span className={`text-xs font-medium ${isDark ? 'text-yellow-200' : 'text-yellow-800'}`}>
-                This will be posted as a thread of {chunkCount} posts
+                This will be posted as a thread of {submittableChunkCount} posts
               </span>
             </div>
             {selectedMedia.length > 0 && (
@@ -2024,7 +2719,7 @@ const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess, placehol
                 onChange={(e) => setIncludePageIndicators(e.target.checked)}
                 className="w-3.5 h-3.5 rounded accent-yellow-500"
               />
-              Include (1/{chunkCount}) indicators
+              Include (1/{submittableChunkCount}) indicators
             </label>
           </div>
         )}
@@ -2132,34 +2827,116 @@ const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess, placehol
       <div className={`${composeMode ? 'flex flex-col flex-1 min-h-0 md:block' : 'hidden md:block'}`}>
         <div className={`${composeMode ? 'flex-1 min-h-0 overflow-y-auto px-4 pt-2 pb-4 md:p-0 md:overflow-visible' : ''}`}>
         <div className="relative">
-          <HighlightedTextarea
-            value={text}
-            onChange={handleTextChange}
-            onClick={handleTextClick}
-            onKeyUp={handleTextKeyUp}
-            onDragOver={handleTextareaDragOver}
-            onDragLeave={handleTextareaDragLeave}
-            onDrop={handleTextareaDrop}
-            rows={desktopRows}
-            placeholder={
-              replyTo
-                ? `Reply to @${replyTo.user.username}`
-                : (
-                  placeholder ?? (quote ? t('post_form.placeholder_quote') : t('post_form.placeholder'))
-                )
-            }
-            textareaRef={textareaRef}
-            fontSize={replyTo ? 'base' : 'xl'}
-            compact={!!replyTo || hasMedia}
-            autoResize
-            chunkBoundaries={isThreadMode ? chunkBoundaries : undefined}
-          />
-          <MentionAutocomplete
-            text={text}
-            cursorPosition={cursorPosition}
-            onSelect={handleMentionSelect}
-            textareaRef={textareaRef}
-          />
+          {isThreadMode ? (
+            <>
+              {chunkSlices.map((slice, i) => (
+                <React.Fragment key={i}>
+                  {i > 0 && (
+                    <div
+                      style={{
+                        borderTop: '1px dashed #f0b1005e',
+                        marginLeft: '20px',
+                        marginRight: '20px',
+                        marginTop: '10px',
+                        marginBottom: '10px',
+                      }}
+                    />
+                  )}
+                  <div className={allChunksSelected ? 'bg-yellow-500/20 rounded' : ''}>
+                  <HighlightedTextarea
+                    value={slice}
+                    onChange={(e) => {
+                      const localCursor = e.target.selectionStart ?? 0
+                      pendingMasterCursorRef.current = chunkBoundaries[i] + localCursor
+                      replaceChunk(i, e.target.value)
+                      setActiveChunkIndex(i)
+                      setActiveChunkCursor(localCursor)
+                    }}
+                    onClick={(e) => {
+                      setActiveChunkIndex(i)
+                      setActiveChunkCursor((e.target as HTMLTextAreaElement).selectionStart ?? 0)
+                      setAllChunksSelected(false)
+                    }}
+                    onKeyUp={(e) => {
+                      setActiveChunkIndex(i)
+                      setActiveChunkCursor((e.target as HTMLTextAreaElement).selectionStart ?? 0)
+                    }}
+                    onKeyDown={(e) => handleChunkArrow(e, i)}
+                    onBeforeInput={(e) => {
+                      const ta = e.currentTarget as HTMLTextAreaElement
+                      preInputStateRef.current = {
+                        chunkIdx: i,
+                        preCursorPos: ta.selectionStart ?? 0,
+                        preSliceLen: ta.value.length,
+                      }
+                    }}
+                    onDragOver={handleTextareaDragOver}
+                    onDragLeave={handleTextareaDragLeave}
+                    onDrop={handleTextareaDrop}
+                    rows={desktopRows}
+                    placeholder={i === 0
+                      ? (replyTo
+                          ? `Reply to @${replyTo.user.username}`
+                          : (placeholder ?? (quote ? t('post_form.placeholder_quote') : t('post_form.placeholder'))))
+                      : ''}
+                    textareaRef={(el) => {
+                          // Mobile + desktop PostForm instances both mount this loop.
+                          // Only the visible instance (offsetParent !== null) should
+                          // claim chunkRefs[i] — otherwise focus/setSelectionRange
+                          // lands on a display:none textarea and silently no-ops.
+                          if (el && el.offsetParent !== null) {
+                            chunkRefs.current[i] = el
+                            if (i === 0) (textareaRef as React.MutableRefObject<HTMLTextAreaElement | null>).current = el
+                          } else if (!el && chunkRefs.current[i]) {
+                            // Unmount: clear ONLY if we currently hold this node.
+                            chunkRefs.current[i] = null
+                          }
+                        }}
+                    fontSize={replyTo ? 'base' : 'xl'}
+                    denser
+                    autoResize
+                  />
+                  </div>
+                </React.Fragment>
+              ))}
+              <MentionAutocomplete
+                text={chunkSlices[activeChunkIndex] ?? ''}
+                cursorPosition={activeChunkCursor}
+                onSelect={handleMentionSelect}
+                textareaRef={{ current: chunkRefs.current[activeChunkIndex] ?? null }}
+              />
+            </>
+          ) : (
+            <>
+              <HighlightedTextarea
+                value={text}
+                onChange={handleTextChange}
+                onClick={handleTextClick}
+                onKeyUp={handleTextKeyUp}
+                onDragOver={handleTextareaDragOver}
+                onDragLeave={handleTextareaDragLeave}
+                onDrop={handleTextareaDrop}
+                rows={desktopRows}
+                placeholder={
+                  replyTo
+                    ? `Reply to @${replyTo.user.username}`
+                    : (
+                      placeholder ?? (quote ? t('post_form.placeholder_quote') : t('post_form.placeholder'))
+                    )
+                }
+                textareaRef={textareaRef}
+                fontSize={replyTo ? 'base' : 'xl'}
+                compact={!!replyTo || hasMedia}
+                autoResize
+              />
+              <MentionAutocomplete
+                text={text}
+                cursorPosition={cursorPosition}
+                onSelect={handleMentionSelect}
+                textareaRef={textareaRef}
+              />
+            </>
+          )}
           {/* Drag overlay */}
           {isDragOverTextarea && (
             <div className="top-[-3px] absolute inset-0 flex items-center justify-center bg-yellow-500/10 border-2 border-dashed border-yellow-500 rounded-lg pointer-events-none">
@@ -2581,7 +3358,7 @@ const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess, placehol
                 <span className={`text-sm font-medium px-2 py-0.5 rounded ${
                   isDark ? 'bg-yellow-500/20 text-yellow-400' : 'bg-yellow-100 text-yellow-700'
                 }`}>
-                  {currentChunkIndex + 1}/{chunkCount}
+                  {currentChunkIndex + 1}/{submittableChunkCount}
                 </span>
               )}
               {(text.length > 0 || selectedMedia.length > 0) && (
@@ -2601,7 +3378,7 @@ const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess, placehol
             {(() => {
                 const wrongWallet2 = isConnected && !isTokenOwner && !hasActiveSession && activeToken?.tokenId
                 const tooltipText2 = wrongWallet2 ? t('post_form.error.wrong_wallet_tooltip') : ''
-                const threadTooLong2 = isThreadMode && chunkCount > MAX_THREAD_LENGTH
+                const threadTooLong2 = isThreadMode && submittableChunkCount > MAX_THREAD_LENGTH
                 const isDisabled2 = (!text && selectedMedia.length === 0 && !pollMarker) || isOverLimit || !canPost || isSubmitting || isScheduling || threadTooLong2 || pollInvalid
                 const btn2 = (
                   <button
@@ -2610,7 +3387,7 @@ const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess, placehol
                     disabled={isDisabled2}
                     onClick={handleSubmit}
                   >
-                    {wrongWallet2 ? t('post_form.button.wrong_wallet') : hasNoToken ? t('post_form.button.create_account') : uploadProgress ? uploadProgress : signingProgress ? <>{t('post_form.button.signing_progress')} <span ref={signingCountRef2}>1</span>/{signingProgress.total}...</> : isSubmitting ? t('post_form.button.signing') : isThreadMode ? t('post_form.button.thread', { count: chunkCount }) : replyTo ? t('post_form.button.reply') : t('post_form.button.post')}
+                    {wrongWallet2 ? t('post_form.button.wrong_wallet') : hasNoToken ? t('post_form.button.create_account') : uploadProgress ? uploadProgress : signingProgress ? <>{t('post_form.button.signing_progress')} <span ref={signingCountRef2}>1</span>/{signingProgress.total}...</> : isSubmitting ? t('post_form.button.signing') : isThreadMode ? t('post_form.button.thread', { count: submittableChunkCount }) : replyTo ? t('post_form.button.reply') : t('post_form.button.post')}
                   </button>
                 )
                 return tooltipText2 ? <Tooltip text={tooltipText2}>{btn2}</Tooltip> : btn2
@@ -2619,7 +3396,7 @@ const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess, placehol
           </div>
         </div>
 
-        {isThreadMode && chunkCount > MAX_THREAD_LENGTH && (
+        {isThreadMode && submittableChunkCount > MAX_THREAD_LENGTH && (
           <p className="text-xs text-error-dim mt-1 text-right">Thread exceeds {MAX_THREAD_LENGTH} post limit. Shorten your text to continue.</p>
         )}
 
@@ -2633,7 +3410,7 @@ const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess, placehol
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M7 8h10M7 12h4m1 8l-4-4H5a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v8a2 2 0 01-2 2h-3l-4 4z" />
               </svg>
               <span className={`text-sm ${isDark ? 'text-yellow-200' : 'text-yellow-800'}`}>
-                This will be posted as a thread of {chunkCount} posts
+                This will be posted as a thread of {submittableChunkCount} posts
               </span>
             </div>
             {selectedMedia.length > 0 && (
@@ -2656,7 +3433,7 @@ const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess, placehol
                 onChange={(e) => setIncludePageIndicators(e.target.checked)}
                 className="w-4 h-4 rounded accent-yellow-500"
               />
-              Include (1/{chunkCount}) indicators
+              Include (1/{submittableChunkCount}) indicators
             </label>
           </div>
         )}
