@@ -756,6 +756,45 @@ router.post('/', async (req, res) => {
             // Continue even if Reply record creation fails
           }
         }
+
+        // Create pending Tip rows for CAW-embedded tips (recipients[] / amounts[]
+        // on the CAW action itself, not a separate OTHER action). The cawId is the
+        // just-created caw row — the tip attaches to the post the user is sending.
+        if (data.recipients && data.recipients.length > 0 && data.amounts && data.amounts.length > 0) {
+          try {
+            // Ensure sender exists
+            await prisma.user.upsert({
+              where: { tokenId: data.senderId },
+              update: {},
+              create: { id: data.senderId, tokenId: data.senderId, username: `user_${data.senderId}` },
+            })
+            for (let ri = 0; ri < data.recipients.length; ri++) {
+              const recipientTokenId = Number(data.recipients[ri])
+              const tipAmount = Number(data.amounts[ri])
+              if (!recipientTokenId || !tipAmount) continue
+              await prisma.user.upsert({
+                where: { tokenId: recipientTokenId },
+                update: {},
+                create: { id: recipientTokenId, tokenId: recipientTokenId, username: `user_${recipientTokenId}` },
+              })
+              await prisma.tip.create({
+                data: {
+                  senderId: data.senderId,
+                  recipientId: recipientTokenId,
+                  amount: tipAmount,
+                  // cawId is the caw being created (the tip is on the sender's own new post).
+                  cawId: caw.id,
+                  cawonce: data.cawonce,
+                  pending: true,
+                },
+              })
+              console.log(`Created pending embedded tip: sender=${data.senderId} recipient=${recipientTokenId} amount=${tipAmount} cawId=${caw.id}`)
+            }
+          } catch (embeddedTipErr) {
+            console.error('Failed to create pending embedded tip rows:', embeddedTipErr)
+            // Non-fatal — indexer will create confirmed rows on chain land.
+          }
+        }
       } catch (cawErr) {
         console.error('Failed to create optimistic pending caw:', cawErr)
         // Continue even if optimistic caw creation fails

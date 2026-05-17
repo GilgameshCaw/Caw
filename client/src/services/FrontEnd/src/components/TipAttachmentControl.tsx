@@ -10,9 +10,11 @@ import type { CawItem } from '~/types'
 
 const PRESET_USD_AMOUNTS = [1, 5, 10, 20]
 const MIN_TIP_USD = 1
+/** Contract hard-cap: require(numRecipients <= 10). */
+const MAX_TIPS = 10
 
 export interface TipAttachment {
-  /** Tip amount in whole CAW tokens (no validator fee included — caller adds that). */
+  /** Tip amount in whole CAW tokens. */
   tipAmountCaw: number
   /** USD amount entered by the user (display only). */
   tipUsd: number
@@ -32,13 +34,13 @@ interface RecipientUser {
 interface Props {
   /** Live post text — used to detect @mentions and prefill the recipient picker. */
   text: string
-  /** When replying, the parent caw is the default recipient. */
+  /** When replying, the parent caw is the default recipient for the first tip. */
   replyTo?: CawItem
   /** Tokens the user owns — we never tip ourselves, so we hide these from the picker. */
   ownTokenIds: number[]
-  /** Current attached tip — null when no tip is attached. */
-  value: TipAttachment | null
-  onChange: (next: TipAttachment | null) => void
+  /** Current attached tips — empty array when no tips are attached. */
+  values: TipAttachment[]
+  onChange: (next: TipAttachment[]) => void
   /** Match parent toolbar sizing — w-5 on mobile bar, w-6 on desktop bar. */
   iconSizeClass?: string
   /** Disable the control (e.g. no token, not connected). */
@@ -73,38 +75,44 @@ function extractMentionUsernames(text: string): string[] {
   return out
 }
 
-const TipAttachmentControl: React.FC<Props> = ({
-  text, replyTo, ownTokenIds, value, onChange,
-  iconSizeClass = 'w-5 h-5', disabled = false, title,
+// Single-tip picker sub-component — shared between the "add first" and
+// "add another" flows. Calls onAttach(tip) when the user confirms.
+interface PickerProps {
+  text: string
+  replyTo?: CawItem
+  ownTokenIds: number[]
+  /** tokenIds already tipped — excluded from the picker to prevent dupes. */
+  excludeTokenIds: number[]
+  /** Pre-fill a recipient (e.g. for editing). */
+  prefillRecipient?: RecipientUser
+  prefillUsd?: number
+  isDark: boolean
+  onAttach: (tip: TipAttachment) => void
+  onCancel: () => void
+  attachLabel: string
+}
+
+const SingleTipPicker: React.FC<PickerProps> = ({
+  text, replyTo, ownTokenIds, excludeTokenIds, prefillRecipient, prefillUsd,
+  isDark, onAttach, onCancel, attachLabel,
 }) => {
-  const { isDark } = useTheme()
   const t = useT()
   const cawPrice = usePriceStore(s => s.priceMap['a-hunters-dream'] ?? 0)
   const priceReady = cawPrice > 0
 
-  const [open, setOpen] = useState(false)
-  const [popPos, setPopPos] = useState<{ x: number; y: number } | null>(null)
-  const btnRef = useRef<HTMLButtonElement>(null)
-  const popRef = useRef<HTMLDivElement>(null)
-
-  const [usdInput, setUsdInput] = useState<string>(String(value?.tipUsd ?? PRESET_USD_AMOUNTS[0]))
-  const [recipient, setRecipient] = useState<RecipientUser | null>(
-    value
-      ? { tokenId: value.recipientTokenId, username: value.recipientUsername }
-      : replyTo
-        ? { tokenId: replyTo.user.tokenId, username: replyTo.user.username, displayName: replyTo.user.displayName }
-        : null
-  )
+  const [usdInput, setUsdInput] = useState<string>(String(prefillUsd ?? PRESET_USD_AMOUNTS[0]))
+  const [recipient, setRecipient] = useState<RecipientUser | null>(prefillRecipient ?? null)
   const [recipientQuery, setRecipientQuery] = useState('')
   const [recipientSuggestions, setRecipientSuggestions] = useState<RecipientUser[]>([])
   const [showSuggestions, setShowSuggestions] = useState(false)
 
-  // Default recipient resolves from replyTo > first @mention > nothing.
-  // Re-runs only while no recipient is set so manual choices stick.
   const mentionUsernames = useMemo(() => extractMentionUsernames(text), [text])
+  const allExcluded = useMemo(() => [...ownTokenIds, ...excludeTokenIds], [ownTokenIds, excludeTokenIds])
+
+  // Default recipient: replyTo > first @mention > nothing (only when no prefill).
   useEffect(() => {
-    if (recipient) return
-    if (replyTo) {
+    if (prefillRecipient || recipient) return
+    if (replyTo && !allExcluded.includes(replyTo.user.tokenId)) {
       setRecipient({ tokenId: replyTo.user.tokenId, username: replyTo.user.username, displayName: replyTo.user.displayName })
       return
     }
@@ -116,22 +124,17 @@ const TipAttachmentControl: React.FC<Props> = ({
         if (cancelled) return
         const users = data?.users ?? []
         const exact = users.find(u => u.username.toLowerCase() === firstMention.toLowerCase())
-        if (exact && !ownTokenIds.includes(exact.tokenId)) setRecipient(exact)
+        if (exact && !allExcluded.includes(exact.tokenId)) setRecipient(exact)
       })
-      .catch(() => { /* silent — picker still lets them search */ })
+      .catch(() => {})
     return () => { cancelled = true }
-  }, [recipient, replyTo, mentionUsernames, ownTokenIds])
+  }, []) // intentionally run once on mount
 
-  // Debounced user search for the picker input. Mention-prefill candidates
-  // float to the top so the user sees the people they're addressing first.
+  // Debounced search
   useEffect(() => {
     const q = recipientQuery.trim()
     if (!q) {
-      // When no query: surface @mention-prefilled candidates from the caw text.
-      if (mentionUsernames.length === 0) {
-        setRecipientSuggestions([])
-        return
-      }
+      if (mentionUsernames.length === 0) { setRecipientSuggestions([]); return }
       let cancelled = false
       Promise.all(
         mentionUsernames.slice(0, 5).map(u =>
@@ -145,7 +148,7 @@ const TipAttachmentControl: React.FC<Props> = ({
         const out: RecipientUser[] = []
         for (const r of results) {
           if (!r) continue
-          if (ownTokenIds.includes(r.tokenId)) continue
+          if (allExcluded.includes(r.tokenId)) continue
           if (seen.has(r.tokenId)) continue
           seen.add(r.tokenId)
           out.push(r)
@@ -159,33 +162,163 @@ const TipAttachmentControl: React.FC<Props> = ({
       apiFetch<{ users: RecipientUser[] }>(`/api/users/search/${encodeURIComponent(q)}`)
         .then(data => {
           if (cancelled) return
-          const users = data?.users ?? []
-          setRecipientSuggestions(users.filter(u => !ownTokenIds.includes(u.tokenId)).slice(0, 8))
+          setRecipientSuggestions((data?.users ?? []).filter(u => !allExcluded.includes(u.tokenId)).slice(0, 8))
         })
         .catch(() => { if (!cancelled) setRecipientSuggestions([]) })
     }, 180)
     return () => { cancelled = true; clearTimeout(timer) }
-  }, [recipientQuery, mentionUsernames, ownTokenIds])
+  }, [recipientQuery, mentionUsernames, allExcluded])
 
-  // Position the popover relative to the button. The render gate below is
-  // `open && popPos`, so popPos MUST be set synchronously when open flips
-  // true or the popover never mounts. Use useLayoutEffect (pre-paint) with
-  // an estimated panel size on the first pass.
+  const usdAmount = parseFloat(usdInput) || 0
+  const tipAmountCaw = usdToCaw(usdAmount, cawPrice)
+  const canAttach = priceReady && usdAmount >= MIN_TIP_USD && tipAmountCaw > 0 && !!recipient
+
+  const handleAttach = () => {
+    if (!canAttach || !recipient) return
+    onAttach({ tipAmountCaw, tipUsd: usdAmount, recipientTokenId: recipient.tokenId, recipientUsername: recipient.username })
+  }
+
+  return (
+    <div className="space-y-3">
+      {/* Recipient picker */}
+      <div className="space-y-1">
+        <label className={`text-xs font-medium ${themeTextSecondary(isDark)}`}>
+          {t('post_form.tip.recipient', { defaultValue: 'Recipient' })}
+        </label>
+        {recipient ? (
+          <div className={`flex items-center justify-between rounded-lg px-2 py-1.5 ${isDark ? 'bg-white/10' : 'bg-gray-100'}`}>
+            <div className="flex items-center gap-2 min-w-0">
+              <img src={getUserAvatar({ tokenId: recipient.tokenId, avatarUrl: recipient.avatarUrl })} alt={recipient.username} className="w-6 h-6 rounded-full" />
+              <span className="text-sm truncate">
+                {recipient.displayName ? (
+                  <><span className="font-medium">{recipient.displayName}</span>{' '}<span className={themeTextMuted(isDark)}>@{recipient.username}</span></>
+                ) : <>@{recipient.username}</>}
+              </span>
+            </div>
+            <button type="button" onClick={() => { setRecipient(null); setShowSuggestions(true) }}
+              className={`text-xs ${themeTextMuted(isDark)} hover:underline cursor-pointer flex-shrink-0 ml-2`}>
+              {t('post_form.tip.change', { defaultValue: 'Change' })}
+            </button>
+          </div>
+        ) : (
+          <div className="relative">
+            <input type="text" value={recipientQuery}
+              onChange={e => { setRecipientQuery(e.target.value); setShowSuggestions(true) }}
+              onFocus={() => setShowSuggestions(true)}
+              placeholder={t('post_form.tip.recipient_placeholder', { defaultValue: 'Search by username…' })}
+              className={`w-full px-3 py-1.5 rounded-lg text-sm outline-none transition-colors ${
+                isDark
+                  ? 'bg-white/10 text-white border border-white/20 focus:border-yellow-500/50 placeholder-gray-500'
+                  : 'bg-gray-100 text-gray-900 border border-gray-200 focus:border-yellow-500 placeholder-gray-400'
+              }`}
+            />
+            {showSuggestions && recipientSuggestions.length > 0 && (
+              <ul className={`absolute left-0 right-0 mt-1 max-h-48 overflow-auto rounded-lg shadow-lg border z-10 ${isDark ? 'bg-zinc-900 border-white/10' : 'bg-white border-gray-200'}`}>
+                {recipientSuggestions.map(u => (
+                  <li key={u.tokenId}>
+                    <button type="button"
+                      onClick={() => { setRecipient(u); setShowSuggestions(false); setRecipientQuery('') }}
+                      className={`w-full flex items-center gap-2 px-2 py-1.5 text-left cursor-pointer ${isDark ? 'hover:bg-white/10' : 'hover:bg-gray-100'}`}>
+                      <img src={getUserAvatar({ tokenId: u.tokenId, avatarUrl: u.avatarUrl })} alt={u.username} className="w-6 h-6 rounded-full" />
+                      <span className="text-sm truncate">
+                        {u.displayName ? (
+                          <><span className="font-medium">{u.displayName}</span>{' '}<span className={themeTextMuted(isDark)}>@{u.username}</span></>
+                        ) : <>@{u.username}</>}
+                      </span>
+                    </button>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </div>
+        )}
+      </div>
+
+      {/* Preset amounts */}
+      <div className="grid grid-cols-4 gap-1.5">
+        {PRESET_USD_AMOUNTS.map(preset => (
+          <button key={preset} type="button" onClick={() => setUsdInput(preset.toString())}
+            className={`px-2 py-1.5 rounded-lg text-sm font-medium cursor-pointer transition-colors ${
+              usdAmount === preset
+                ? 'bg-yellow-500 text-black'
+                : isDark ? 'bg-white/10 text-white hover:bg-white/20' : 'bg-gray-100 text-gray-900 hover:bg-gray-200'
+            }`}>
+            {formatUsd(preset)}
+          </button>
+        ))}
+      </div>
+
+      {/* Custom amount */}
+      <div className="relative">
+        <span className={`absolute left-3 top-1/2 -translate-y-1/2 text-sm ${themeTextMuted(isDark)}`}>$</span>
+        <input type="number" min={MIN_TIP_USD} step="1" value={usdInput} onChange={e => setUsdInput(e.target.value)} placeholder="0"
+          className={`w-full pl-7 pr-3 py-1.5 rounded-lg text-sm outline-none transition-colors ${
+            isDark
+              ? 'bg-white/10 text-white border border-white/20 focus:border-yellow-500/50 placeholder-gray-500'
+              : 'bg-gray-100 text-gray-900 border border-gray-200 focus:border-yellow-500 placeholder-gray-400'
+          }`}
+        />
+      </div>
+
+      {/* Cost preview */}
+      <div className={`text-xs flex justify-between ${themeTextMuted(isDark)}`}>
+        <span>{t('post_form.tip.preview_label', { defaultValue: 'Approx.' })}</span>
+        <span>{priceReady ? `${tipAmountCaw.toLocaleString()} CAW` : '—'}</span>
+      </div>
+
+      {!priceReady && <p className="text-xs text-yellow-500">{t('post_form.tip.loading_price', { defaultValue: 'Loading CAW price…' })}</p>}
+      {priceReady && usdAmount > 0 && usdAmount < MIN_TIP_USD && (
+        <p className={`text-xs ${themeTextMuted(isDark)}`}>{t('post_form.tip.min', { defaultValue: `Minimum $${MIN_TIP_USD}.` })}</p>
+      )}
+      {!recipient && (
+        <p className={`text-xs ${themeTextMuted(isDark)}`}>{t('post_form.tip.need_recipient', { defaultValue: 'Pick a recipient — start with @username to find someone.' })}</p>
+      )}
+
+      <div className="flex gap-2 pt-1">
+        <button type="button" onClick={onCancel}
+          className={`flex-1 py-1.5 rounded-lg text-sm font-medium border cursor-pointer ${themeBorder(isDark)} ${isDark ? 'text-white hover:bg-white/5' : 'text-gray-900 hover:bg-gray-50'}`}>
+          {t('post_form.tip.cancel', { defaultValue: 'Cancel' })}
+        </button>
+        <button type="button" onClick={handleAttach} disabled={!canAttach}
+          className={`flex-1 py-1.5 rounded-lg text-sm font-semibold cursor-pointer ${canAttach ? 'bg-yellow-500 text-black hover:bg-yellow-400' : 'bg-yellow-500/30 text-yellow-500/60 cursor-not-allowed'}`}>
+          {attachLabel}
+        </button>
+      </div>
+    </div>
+  )
+}
+
+const TipAttachmentControl: React.FC<Props> = ({
+  text, replyTo, ownTokenIds, values, onChange,
+  iconSizeClass = 'w-5 h-5', disabled = false, title,
+}) => {
+  const { isDark } = useTheme()
+  const t = useT()
+
+  const [open, setOpen] = useState(false)
+  const [popPos, setPopPos] = useState<{ x: number; y: number } | null>(null)
+  const btnRef = useRef<HTMLButtonElement>(null)
+  const popRef = useRef<HTMLDivElement>(null)
+
+  // 'list' = showing the attached-tips list (with "add another")
+  // 'picker' = showing the single-tip picker (new entry or editing index editingIdx)
+  type PanelView = 'list' | 'picker'
+  const [view, setView] = useState<PanelView>('list')
+  const [editingIdx, setEditingIdx] = useState<number | null>(null)
+
+  const hasTips = values.length > 0
+  const totalUsd = values.reduce((s, t) => s + t.tipUsd, 0)
+
+  // Position the popover relative to the button.
   useLayoutEffect(() => {
-    if (!open) {
-      setPopPos(null)
-      return
-    }
+    if (!open) { setPopPos(null); return }
     const btn = btnRef.current
     if (!btn) return
     const r = btn.getBoundingClientRect()
     const pad = 8
-    // popRef.current is null on the very first run (popover not in DOM yet
-    // because popPos is still null). Estimate ~320×360 from the design;
-    // the refinement effect below re-measures once the popover has mounted.
     const el = popRef.current
     const panelW = el?.offsetWidth || 320
-    const panelH = el?.offsetHeight || 360
+    const panelH = el?.offsetHeight || 380
     const xRaw = r.left + r.width / 2 - panelW / 2
     const yBelow = r.bottom + 8
     const yAbove = r.top - panelH - 8
@@ -195,8 +328,7 @@ const TipAttachmentControl: React.FC<Props> = ({
     setPopPos(prev => prev && Math.abs(prev.x - x) < 0.5 && Math.abs(prev.y - y) < 0.5 ? prev : { x, y })
   }, [open])
 
-  // Refinement pass: once the popover is in the DOM and popPos has a value,
-  // measure it for real and nudge the position if the estimate was off.
+  // Refinement pass once the popover is in the DOM.
   useLayoutEffect(() => {
     if (!open || !popPos) return
     const btn = btnRef.current
@@ -213,9 +345,7 @@ const TipAttachmentControl: React.FC<Props> = ({
     const fitsBelow = yBelow + panelH <= window.innerHeight - pad
     const x = Math.min(Math.max(pad, xRaw), window.innerWidth - panelW - pad)
     const y = fitsBelow ? yBelow : Math.max(pad, yAbove)
-    if (Math.abs(popPos.x - x) > 0.5 || Math.abs(popPos.y - y) > 0.5) {
-      setPopPos({ x, y })
-    }
+    if (Math.abs(popPos.x - x) > 0.5 || Math.abs(popPos.y - y) > 0.5) setPopPos({ x, y })
   }, [open, popPos])
 
   // Close on click-outside.
@@ -231,30 +361,52 @@ const TipAttachmentControl: React.FC<Props> = ({
     return () => document.removeEventListener('mousedown', onDoc)
   }, [open])
 
-  const usdAmount = parseFloat(usdInput) || 0
-  const tipAmountCaw = usdToCaw(usdAmount, cawPrice)
-  const canAttach = priceReady && usdAmount >= MIN_TIP_USD && tipAmountCaw > 0 && !!recipient
+  const handleOpenToggle = () => {
+    if (disabled) return
+    if (!open) {
+      // If no tips yet, go straight to picker; otherwise show the list.
+      setView(hasTips ? 'list' : 'picker')
+      setEditingIdx(null)
+      setOpen(true)
+    } else {
+      setOpen(false)
+    }
+  }
 
-  const handleAttach = () => {
-    if (!canAttach || !recipient) return
-    onChange({
-      tipAmountCaw,
-      tipUsd: usdAmount,
-      recipientTokenId: recipient.tokenId,
-      recipientUsername: recipient.username,
-    })
+  const handlePickerAttach = (tip: TipAttachment) => {
+    if (editingIdx !== null) {
+      // Replace an existing entry (duplicate-recipient dedupe: handled naturally
+      // since we edit by index, not search).
+      const next = [...values]
+      next[editingIdx] = tip
+      onChange(next)
+    } else {
+      // New entry. Dedupe by recipient: replace if already tipped that person.
+      const existing = values.findIndex(v => v.recipientTokenId === tip.recipientTokenId)
+      if (existing !== -1) {
+        const next = [...values]
+        next[existing] = tip
+        onChange(next)
+      } else {
+        onChange([...values, tip])
+      }
+    }
+    // After attaching, return to list view so the user sees the full list.
+    setView('list')
+    setEditingIdx(null)
+  }
+
+  const handleRemove = (idx: number) => {
+    onChange(values.filter((_, i) => i !== idx))
+  }
+
+  const handleClearAll = () => {
+    onChange([])
     setOpen(false)
   }
 
-  const handleClear = () => {
-    onChange(null)
-    setRecipientQuery('')
-  }
-
-  // Active state styling mirrors the poll button — yellow fill when attached,
-  // dimmed yellow when empty.
-  const hasTip = !!value
-  const activeClasses = hasTip
+  // Tip-button active-state styling — mirrors the poll button pattern.
+  const activeClasses = hasTips
     ? 'text-yellow-500 bg-yellow-400/10'
     : text.trim()
       ? (isDark
@@ -264,24 +416,34 @@ const TipAttachmentControl: React.FC<Props> = ({
           ? 'text-yellow-400/70 hover:text-yellow-400 hover:bg-yellow-400/10'
           : 'text-yellow-600/70 hover:text-yellow-600 hover:bg-yellow-200/50')
 
+  // The tooltip on the trigger summarises the attached total.
+  const triggerAriaLabel = hasTips
+    ? t('post_form.tip.aria_attached_multi', {
+        defaultValue: `${values.length} tip${values.length > 1 ? 's' : ''} attached — total $${totalUsd}`,
+      })
+    : t('post_form.tip.aria', { defaultValue: 'Attach a tip' })
+
+  // Already-tipped tokenIds (excluding the one being edited).
+  const excludeForPicker = values
+    .filter((_, i) => i !== editingIdx)
+    .map(v => v.recipientTokenId)
+
   return (
     <>
       <button
         ref={btnRef}
         type="button"
-        onClick={() => { if (!disabled) setOpen(o => !o) }}
+        onClick={handleOpenToggle}
         disabled={disabled}
-        title={title || t('post_form.tip.tooltip', { defaultValue: 'Attach a tip to your post' })}
-        aria-label={hasTip
-          ? t('post_form.tip.aria_attached', { defaultValue: `Tip attached: $${value!.tipUsd} to @${value!.recipientUsername}` })
-          : t('post_form.tip.aria', { defaultValue: 'Attach a tip' })}
+        title={title || t('post_form.tip.tooltip', { defaultValue: 'Attach tips to your post' })}
+        aria-label={triggerAriaLabel}
         className={`relative p-1 rounded-full transition-all duration-200 ${
           disabled ? 'opacity-30 cursor-not-allowed' : 'cursor-pointer'
         } ${activeClasses}`}
       >
-        {/* Dollar-sign coin icon. Filled when a tip is attached, outline when not. */}
-        <svg className={iconSizeClass} fill={hasTip ? 'currentColor' : 'none'} stroke="currentColor" viewBox="0 0 24 24">
-          {hasTip ? (
+        {/* Dollar-sign coin icon. Filled when tips are attached, outline when not. */}
+        <svg className={iconSizeClass} fill={hasTips ? 'currentColor' : 'none'} stroke="currentColor" viewBox="0 0 24 24">
+          {hasTips ? (
             <path fillRule="evenodd" clipRule="evenodd" d="M12 2a10 10 0 100 20 10 10 0 000-20zm.75 5a.75.75 0 00-1.5 0v.5h-.5a2.25 2.25 0 000 4.5h2a.75.75 0 010 1.5h-3a.75.75 0 000 1.5h1.5v.5a.75.75 0 001.5 0V15h.5a2.25 2.25 0 000-4.5h-2a.75.75 0 010-1.5h3a.75.75 0 000-1.5h-1.5V7z" />
           ) : (
             <>
@@ -290,9 +452,11 @@ const TipAttachmentControl: React.FC<Props> = ({
             </>
           )}
         </svg>
-        {hasTip && (
+        {hasTips && (
           <span className="absolute -top-1 -right-1 bg-yellow-500 text-black text-[10px] font-bold rounded-full px-1 min-w-4 h-4 flex items-center justify-center shadow">
-            ${value!.tipUsd >= 100 ? Math.round(value!.tipUsd) : value!.tipUsd}
+            {values.length > 1
+              ? `$${totalUsd >= 100 ? Math.round(totalUsd) : totalUsd} ×${values.length}`
+              : `$${values[0].tipUsd >= 100 ? Math.round(values[0].tipUsd) : values[0].tipUsd}`}
           </span>
         )}
       </button>
@@ -306,193 +470,104 @@ const TipAttachmentControl: React.FC<Props> = ({
             isDark ? 'bg-zinc-900 border-white/10 text-white' : 'bg-white border-gray-200 text-gray-900'
           } p-4 space-y-3`}
         >
+          {/* Panel header */}
           <div className="flex items-center justify-between">
             <span className="text-sm font-semibold">
-              {t('post_form.tip.title', { defaultValue: 'Tip alongside your post' })}
+              {view === 'picker' && editingIdx === null && hasTips
+                ? t('post_form.tip.add_another_title', { defaultValue: 'Add another tip' })
+                : view === 'picker' && editingIdx !== null
+                  ? t('post_form.tip.edit_tip_title', { defaultValue: 'Edit tip' })
+                  : t('post_form.tip.title', { defaultValue: 'Tip alongside your post' })}
             </span>
-            {hasTip && (
-              <button
-                type="button"
-                onClick={handleClear}
-                className={`text-xs ${themeTextMuted(isDark)} hover:underline cursor-pointer`}
-              >
-                {t('post_form.tip.remove', { defaultValue: 'Remove' })}
+            {view === 'list' && hasTips && (
+              <button type="button" onClick={handleClearAll}
+                className={`text-xs ${themeTextMuted(isDark)} hover:underline cursor-pointer`}>
+                {t('post_form.tip.remove_all', { defaultValue: 'Remove all' })}
+              </button>
+            )}
+            {view === 'picker' && hasTips && (
+              <button type="button" onClick={() => { setView('list'); setEditingIdx(null) }}
+                className={`text-xs ${themeTextMuted(isDark)} hover:underline cursor-pointer`}>
+                {t('post_form.tip.back', { defaultValue: '← Back' })}
               </button>
             )}
           </div>
 
-          {/* Recipient picker */}
-          <div className="space-y-1">
-            <label className={`text-xs font-medium ${themeTextSecondary(isDark)}`}>
-              {t('post_form.tip.recipient', { defaultValue: 'Recipient' })}
-            </label>
-            {recipient ? (
-              <div className={`flex items-center justify-between rounded-lg px-2 py-1.5 ${
-                isDark ? 'bg-white/10' : 'bg-gray-100'
-              }`}>
-                <div className="flex items-center gap-2 min-w-0">
-                  <img
-                    src={getUserAvatar({ tokenId: recipient.tokenId, avatarUrl: recipient.avatarUrl })}
-                    alt={recipient.username}
-                    className="w-6 h-6 rounded-full"
-                  />
-                  <span className="text-sm truncate">
-                    {recipient.displayName ? (
-                      <>
-                        <span className="font-medium">{recipient.displayName}</span>{' '}
-                        <span className={themeTextMuted(isDark)}>@{recipient.username}</span>
-                      </>
-                    ) : (
-                      <>@{recipient.username}</>
-                    )}
-                  </span>
-                </div>
-                <button
-                  type="button"
-                  onClick={() => { setRecipient(null); setShowSuggestions(true) }}
-                  className={`text-xs ${themeTextMuted(isDark)} hover:underline cursor-pointer flex-shrink-0 ml-2`}
-                >
-                  {t('post_form.tip.change', { defaultValue: 'Change' })}
-                </button>
+          {view === 'list' && (
+            <>
+              {/* Attached tips list */}
+              <div className="space-y-2">
+                {values.map((tip, idx) => (
+                  <div key={tip.recipientTokenId}
+                    className={`flex items-center justify-between rounded-lg px-2 py-1.5 ${isDark ? 'bg-white/10' : 'bg-gray-100'}`}>
+                    <span className="text-sm truncate">
+                      <span className={themeTextMuted(isDark)}>@{tip.recipientUsername}</span>
+                      {' '}
+                      <span className="font-medium text-yellow-500">${tip.tipUsd >= 100 ? Math.round(tip.tipUsd) : tip.tipUsd}</span>
+                    </span>
+                    <div className="flex items-center gap-2 flex-shrink-0 ml-2">
+                      <button type="button"
+                        onClick={() => { setEditingIdx(idx); setView('picker') }}
+                        className={`text-xs ${themeTextMuted(isDark)} hover:underline cursor-pointer`}>
+                        {t('post_form.tip.edit', { defaultValue: 'Edit' })}
+                      </button>
+                      <button type="button" onClick={() => handleRemove(idx)}
+                        aria-label={`Remove tip to @${tip.recipientUsername}`}
+                        className={`text-xs ${themeTextMuted(isDark)} hover:text-red-500 cursor-pointer leading-none`}>
+                        ×
+                      </button>
+                    </div>
+                  </div>
+                ))}
               </div>
-            ) : (
-              <div className="relative">
-                <input
-                  type="text"
-                  value={recipientQuery}
-                  onChange={e => { setRecipientQuery(e.target.value); setShowSuggestions(true) }}
-                  onFocus={() => setShowSuggestions(true)}
-                  placeholder={t('post_form.tip.recipient_placeholder', { defaultValue: 'Search by username…' })}
-                  className={`w-full px-3 py-1.5 rounded-lg text-sm outline-none transition-colors ${
-                    isDark
-                      ? 'bg-white/10 text-white border border-white/20 focus:border-yellow-500/50 placeholder-gray-500'
-                      : 'bg-gray-100 text-gray-900 border border-gray-200 focus:border-yellow-500 placeholder-gray-400'
-                  }`}
-                />
-                {showSuggestions && recipientSuggestions.length > 0 && (
-                  <ul className={`absolute left-0 right-0 mt-1 max-h-48 overflow-auto rounded-lg shadow-lg border z-10 ${
-                    isDark ? 'bg-zinc-900 border-white/10' : 'bg-white border-gray-200'
+
+              {/* Add another tip affordance (hidden at cap) */}
+              {values.length < MAX_TIPS && (
+                <button type="button"
+                  onClick={() => { setEditingIdx(null); setView('picker') }}
+                  className={`w-full py-1.5 rounded-lg text-sm font-medium border cursor-pointer ${themeBorder(isDark)} ${
+                    isDark ? 'text-yellow-400 hover:bg-white/5' : 'text-yellow-600 hover:bg-gray-50'
                   }`}>
-                    {recipientSuggestions.map(u => (
-                      <li key={u.tokenId}>
-                        <button
-                          type="button"
-                          onClick={() => { setRecipient(u); setShowSuggestions(false); setRecipientQuery('') }}
-                          className={`w-full flex items-center gap-2 px-2 py-1.5 text-left cursor-pointer ${
-                            isDark ? 'hover:bg-white/10' : 'hover:bg-gray-100'
-                          }`}
-                        >
-                          <img
-                            src={getUserAvatar({ tokenId: u.tokenId, avatarUrl: u.avatarUrl })}
-                            alt={u.username}
-                            className="w-6 h-6 rounded-full"
-                          />
-                          <span className="text-sm truncate">
-                            {u.displayName ? (
-                              <>
-                                <span className="font-medium">{u.displayName}</span>{' '}
-                                <span className={themeTextMuted(isDark)}>@{u.username}</span>
-                              </>
-                            ) : (
-                              <>@{u.username}</>
-                            )}
-                          </span>
-                        </button>
-                      </li>
-                    ))}
-                  </ul>
-                )}
-              </div>
-            )}
-          </div>
+                  {t('post_form.tip.add_another', { defaultValue: '+ Add another tip' })}
+                </button>
+              )}
 
-          {/* Preset amounts */}
-          <div className="grid grid-cols-4 gap-1.5">
-            {PRESET_USD_AMOUNTS.map(preset => (
-              <button
-                key={preset}
-                type="button"
-                onClick={() => setUsdInput(preset.toString())}
-                className={`px-2 py-1.5 rounded-lg text-sm font-medium cursor-pointer transition-colors ${
-                  usdAmount === preset
-                    ? 'bg-yellow-500 text-black'
-                    : isDark
-                      ? 'bg-white/10 text-white hover:bg-white/20'
-                      : 'bg-gray-100 text-gray-900 hover:bg-gray-200'
-                }`}
-              >
-                {formatUsd(preset)}
+              {values.length >= MAX_TIPS && (
+                <p className={`text-xs ${themeTextMuted(isDark)}`}>
+                  {t('post_form.tip.cap_reached', { defaultValue: `Maximum ${MAX_TIPS} tips per post.` })}
+                </p>
+              )}
+
+              <button type="button" onClick={() => setOpen(false)}
+                className={`w-full py-1.5 rounded-lg text-sm font-medium border cursor-pointer ${themeBorder(isDark)} ${
+                  isDark ? 'text-white hover:bg-white/5' : 'text-gray-900 hover:bg-gray-50'
+                }`}>
+                {t('post_form.tip.done', { defaultValue: 'Done' })}
               </button>
-            ))}
-          </div>
-
-          {/* Custom amount */}
-          <div className="relative">
-            <span className={`absolute left-3 top-1/2 -translate-y-1/2 text-sm ${themeTextMuted(isDark)}`}>$</span>
-            <input
-              type="number"
-              min={MIN_TIP_USD}
-              step="1"
-              value={usdInput}
-              onChange={e => setUsdInput(e.target.value)}
-              placeholder="0"
-              className={`w-full pl-7 pr-3 py-1.5 rounded-lg text-sm outline-none transition-colors ${
-                isDark
-                  ? 'bg-white/10 text-white border border-white/20 focus:border-yellow-500/50 placeholder-gray-500'
-                  : 'bg-gray-100 text-gray-900 border border-gray-200 focus:border-yellow-500 placeholder-gray-400'
-              }`}
-            />
-          </div>
-
-          {/* Cost preview */}
-          <div className={`text-xs flex justify-between ${themeTextMuted(isDark)}`}>
-            <span>{t('post_form.tip.preview_label', { defaultValue: 'Approx.' })}</span>
-            <span>{priceReady ? `${tipAmountCaw.toLocaleString()} CAW` : '—'}</span>
-          </div>
-
-          {/* Hints */}
-          {!priceReady && (
-            <p className="text-xs text-yellow-500">
-              {t('post_form.tip.loading_price', { defaultValue: 'Loading CAW price…' })}
-            </p>
-          )}
-          {priceReady && usdAmount > 0 && usdAmount < MIN_TIP_USD && (
-            <p className={`text-xs ${themeTextMuted(isDark)}`}>
-              {t('post_form.tip.min', { defaultValue: `Minimum $${MIN_TIP_USD}.` })}
-            </p>
-          )}
-          {!recipient && (
-            <p className={`text-xs ${themeTextMuted(isDark)}`}>
-              {t('post_form.tip.need_recipient', { defaultValue: 'Pick a recipient — start with @username to find someone.' })}
-            </p>
+            </>
           )}
 
-          {/* Actions */}
-          <div className="flex gap-2 pt-1">
-            <button
-              type="button"
-              onClick={() => setOpen(false)}
-              className={`flex-1 py-1.5 rounded-lg text-sm font-medium border cursor-pointer ${themeBorder(isDark)} ${
-                isDark ? 'text-white hover:bg-white/5' : 'text-gray-900 hover:bg-gray-50'
-              }`}
-            >
-              {t('post_form.tip.cancel', { defaultValue: 'Cancel' })}
-            </button>
-            <button
-              type="button"
-              onClick={handleAttach}
-              disabled={!canAttach}
-              className={`flex-1 py-1.5 rounded-lg text-sm font-semibold cursor-pointer ${
-                canAttach
-                  ? 'bg-yellow-500 text-black hover:bg-yellow-400'
-                  : 'bg-yellow-500/30 text-yellow-500/60 cursor-not-allowed'
-              }`}
-            >
-              {hasTip
+          {view === 'picker' && (
+            <SingleTipPicker
+              text={text}
+              replyTo={replyTo}
+              ownTokenIds={ownTokenIds}
+              excludeTokenIds={excludeForPicker}
+              prefillRecipient={editingIdx !== null
+                ? { tokenId: values[editingIdx].recipientTokenId, username: values[editingIdx].recipientUsername }
+                : undefined}
+              prefillUsd={editingIdx !== null ? values[editingIdx].tipUsd : undefined}
+              isDark={isDark}
+              onAttach={handlePickerAttach}
+              onCancel={() => {
+                if (hasTips) { setView('list'); setEditingIdx(null) }
+                else setOpen(false)
+              }}
+              attachLabel={editingIdx !== null
                 ? t('post_form.tip.update', { defaultValue: 'Update' })
                 : t('post_form.tip.attach', { defaultValue: 'Attach' })}
-            </button>
-          </div>
+            />
+          )}
         </div>,
         document.body
       )}

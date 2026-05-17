@@ -160,6 +160,56 @@ export async function handleCawAction(
     // Don't fail the entire transaction if hashtag processing fails
   }
 
+  // Confirm (or create) pending Tip rows for CAW-embedded tips.
+  //
+  // Unlike the OTHER-action tip path (handleTipAction), embedded tips have no
+  // text marker — they are purely structural: the signed CAW action itself
+  // names recipients[i]/amounts[i]. Security is intrinsic: the sender signed
+  // the distribution. We don't cross-validate text here.
+  //
+  // For each (recipient, amount) pair in rawAction:
+  //   1. Find the pending Tip row written by the API route on submit.
+  //   2. If found, confirm it (pending→false) and anchor to newCaw.id.
+  //   3. If not found (peer-validated path — another mirror submitted), create
+  //      a fresh confirmed row.
+  if (rawAction.recipients && rawAction.recipients.length > 0) {
+    for (let ri = 0; ri < rawAction.recipients.length; ri++) {
+      const recipientTokenId = Number(rawAction.recipients[ri])
+      const tipAmount = Number(rawAction.amounts?.[ri] ?? 0)
+      if (!recipientTokenId || !tipAmount) continue
+      try {
+        const recipientId = await findOrCreateUser(recipientTokenId)
+        const existingTip = await tx.tip.findFirst({
+          where: { senderId: authorId, recipientId, cawonce: action.cawonce, pending: true },
+        })
+        if (existingTip) {
+          await tx.tip.update({
+            where: { id: existingTip.id },
+            data: { pending: false, cawId: newCaw.id },
+          })
+        } else {
+          await tx.tip.create({
+            data: {
+              senderId: authorId,
+              recipientId,
+              amount: tipAmount,
+              cawId: newCaw.id,
+              cawonce: action.cawonce,
+              pending: false,
+            },
+          })
+        }
+        try {
+          await NotificationService.createTipNotification(recipientId, authorId, newCaw.id, tipAmount, tx)
+        } catch (notifErr) {
+          console.error(`[handleCawAction] Failed to create embedded tip notification for recipient ${recipientId}:`, notifErr)
+        }
+      } catch (tipErr) {
+        console.error(`[handleCawAction] Failed to process embedded tip for recipient ${recipientTokenId}:`, tipErr)
+      }
+    }
+  }
+
   // Create notifications for @mentions — pass tx so the FK to newCaw resolves
   // (newCaw is only visible inside this transaction until commit)
   try {
