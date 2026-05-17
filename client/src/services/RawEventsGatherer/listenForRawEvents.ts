@@ -2,7 +2,7 @@
 import { ContractEventPayload, WebSocketProvider, Contract, keccak256, toUtf8Bytes, getBytes, concat } from 'ethers'
 import type { Log } from '@ethersproject/abstract-provider'
 import { CAW_ACTIONS_ADDRESS } from '../../abi/addresses'
-import { makeJsonRpcProvider, makeWebSocketProvider, getL2HttpRpcUrl, getL2WsSecret, waitForRateLimit } from '../../utils/rpcProvider'
+import { makeFallbackJsonRpcProvider, makeWebSocketProvider, getL2HttpRpcUrls, getL2WsSecret, waitForRateLimit, redactRpcUrl } from '../../utils/rpcProvider'
 import { scanLogsForward } from '../../utils/chunkedLogs'
 import delay from '../../tools/delay'
 import SmlTxt from 'smltxt'
@@ -75,9 +75,22 @@ export default async function listenForRawEvents(
   let isReconnecting = false
   let isStopped = false
 
-  // HTTP provider for reliable polling (WebSocket can die silently)
-  const httpRpcUrl = getL2HttpRpcUrl(config.rpcUrl)
-  const httpProvider = makeJsonRpcProvider(httpRpcUrl, config.chainId)
+  // HTTP provider for reliable polling (WebSocket can die silently).
+  // Uses makeFallbackJsonRpcProvider so L2_RPC_URL_HTTP_FALLBACK is honoured:
+  // when the primary endpoint throttles or goes down, ethers rotates to the
+  // next URL in the list without interrupting the poll loop. config.rpcUrl
+  // is the bare wss:// URL from the caller; getL2HttpRpcUrls converts it to
+  // an HTTP URL and appends any operator-configured fallback URLs.
+  //
+  // Note: fallback URLs may have different log-pruning windows (e.g. publicnode
+  // Base Sepolia silently prunes historical logs; for backfills Coinbase's
+  // sepolia.base.org is more reliable). Operators should keep that in mind
+  // when choosing fallback URLs — pruning produces empty results, not errors.
+  const l2HttpRpcUrls = getL2HttpRpcUrls(config.rpcUrl)
+  const httpProvider = makeFallbackJsonRpcProvider(l2HttpRpcUrls, config.chainId)
+  if (l2HttpRpcUrls.length > 1) {
+    console.log(`[RawEventsGatherer] HTTP RPC (with ${l2HttpRpcUrls.length - 1} fallback(s)): ${redactRpcUrl(l2HttpRpcUrls[0])}`)
+  }
   const httpContract = new Contract(CAW_ACTIONS_ADDRESS, CONTRACT_ABI, httpProvider)
 
   const last = await config.rawEventsProvider.getLastProcessedEvent()
