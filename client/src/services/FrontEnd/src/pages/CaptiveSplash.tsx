@@ -10,6 +10,8 @@ import LanguageSwitcher from '~/components/LanguageSwitcher'
 import WalletAccountButton from '~/components/buttons/WalletAccountButton'
 
 const Caw3D = lazy(() => import('~/components/Caw3D'))
+const Features = lazy(() => import('~/components/landing/Features'))
+const Community = lazy(() => import('~/components/landing/Community'))
 
 const KEYWORD_KEYS = [
   'captive_splash.kw.permissionless',
@@ -45,7 +47,7 @@ export default function CaptiveSplash() {
   }, [])
 
   return (
-    <div className={`min-h-screen flex flex-col relative overflow-hidden ${isDark ? 'bg-black text-white' : 'bg-white text-black'}`}>
+    <div className={`h-[100svh] overflow-y-auto overflow-x-hidden snap-y snap-mandatory relative ${isDark ? 'bg-black text-white' : 'bg-white text-black'}`}>
       <BoidsBg isDark={isDark} />
       {/* Language picker — top-right so a non-English visitor can pick
           their language before reading anything else. Persisted in
@@ -60,8 +62,8 @@ export default function CaptiveSplash() {
       <div className="absolute top-3 left-3 z-20">
         <WalletAccountButton />
       </div>
-      {/* Main content - centered */}
-      <div className="flex-1 flex flex-col items-center justify-center px-6 pb-6 relative z-10">
+      {/* Hero — one full viewport, snaps so only the hero shows at top */}
+      <div className="min-h-[100svh] snap-start flex flex-col items-center justify-center px-6 py-6 relative z-10">
         {/* 3D Crow shape — lazy loaded */}
         <Suspense fallback={
           <div className="my-1 w-64 h-64 md:w-80 md:h-72" />
@@ -129,56 +131,26 @@ export default function CaptiveSplash() {
           </Link>
         </div>
 
-        {/* Feature highlights */}
-        <div className="grid grid-cols-1 sm:grid-cols-3 gap-6 max-w-2xl w-full mb-12">
-          <div className="text-center">
-            <div className={`w-12 h-12 mx-auto mb-3 rounded-full flex items-center justify-center ${
-              isDark ? 'bg-yellow-500/20' : 'bg-yellow-100'
-            }`}>
-              <svg className="w-6 h-6 text-yellow-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z" />
-              </svg>
-            </div>
-            <h3 className="font-semibold mb-1">{t('captive_splash.feature1.title')}</h3>
-            <p className={`text-sm ${isDark ? 'text-white/50' : 'text-gray-500'}`}>
-              {t('captive_splash.feature1.body')}
-            </p>
-          </div>
-
-          <div className="text-center">
-            <div className={`w-12 h-12 mx-auto mb-3 rounded-full flex items-center justify-center ${
-              isDark ? 'bg-yellow-500/20' : 'bg-yellow-100'
-            }`}>
-              <svg className="w-6 h-6 text-yellow-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 6H5a2 2 0 00-2 2v9a2 2 0 002 2h14a2 2 0 002-2V8a2 2 0 00-2-2h-5m-4 0V5a2 2 0 114 0v1m-4 0a2 2 0 104 0m-5 8a2 2 0 100-4 2 2 0 000 4zm0 0c1.306 0 2.417.835 2.83 2M9 14a3.001 3.001 0 00-2.83 2M15 11h3m-3 4h2" />
-              </svg>
-            </div>
-            <h3 className="font-semibold mb-1">{t('captive_splash.feature2.title')}</h3>
-            <p className={`text-sm ${isDark ? 'text-white/50' : 'text-gray-500'}`}>
-              {t('captive_splash.feature2.body')}
-            </p>
-          </div>
-
-          <div className="text-center">
-            <div className={`w-12 h-12 mx-auto mb-3 rounded-full flex items-center justify-center ${
-              isDark ? 'bg-yellow-500/20' : 'bg-yellow-100'
-            }`}>
-              <svg className="w-6 h-6 text-yellow-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z" />
-              </svg>
-            </div>
-            <h3 className="font-semibold mb-1">{t('captive_splash.feature3.title')}</h3>
-            <p className={`text-sm ${isDark ? 'text-white/50' : 'text-gray-500'}`}>
-              {t('captive_splash.feature3.body')}
-            </p>
-          </div>
-        </div>
-
 
       </div>
 
+      {/* Landing sections ported from caw-landing (below the hero/CTA).
+          Each section is one full viewport + snap-start so scrolling
+          settles on exactly one module at a time. */}
+      <div className="min-h-[100svh] snap-start flex flex-col justify-center relative z-10">
+        <Suspense fallback={<div className="py-20" />}>
+          <Features />
+        </Suspense>
+      </div>
+
+      <div className="min-h-[100svh] snap-start flex flex-col justify-center relative z-10">
+        <Suspense fallback={<div className="py-20" />}>
+          <Community />
+        </Suspense>
+      </div>
+
       {/* Footer - resource links */}
-      <footer className={`border-t py-8 px-6 relative z-10 backdrop-blur-[2px] ${isDark ? 'border-white/10 bg-black/10' : 'border-gray-200 bg-white/10'}`}>
+      <footer className={`snap-start border-t py-8 px-6 relative z-10 backdrop-blur-[2px] ${isDark ? 'border-white/10 bg-black/10' : 'border-gray-200 bg-white/10'}`}>
         <div className="max-w-2xl mx-auto">
           <div className="flex flex-wrap justify-center gap-x-6 gap-y-3 text-sm">
             <Link to="/help/faq" className={`transition-colors ${isDark ? 'text-white/50 hover:text-white' : 'text-gray-500 hover:text-gray-800'}`}>{t('captive_splash.footer.faq')}</Link>

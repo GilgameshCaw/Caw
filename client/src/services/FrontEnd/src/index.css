@@ -599,3 +599,11 @@ input[type="number"] {
 .feed-pin-flash {
   animation: feed-pin-flash 0.7s ease-out;
 }
+
+/* Ported from caw-landing: radial mask that feathers the Features
+   artwork edges to transparent so the PNG's black backdrop blends
+   into the dark welcome page instead of showing a hard square. */
+.hero-vignette {
+  -webkit-mask-image: radial-gradient(ellipse 90% 90% at center, black 20%, transparent 85%);
+  mask-image: radial-gradient(ellipse 90% 90% at center, black 20%, transparent 85%);
+}
