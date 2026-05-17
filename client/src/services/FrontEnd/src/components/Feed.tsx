@@ -356,9 +356,18 @@ const Feed = forwardRef<FeedRef, Props>(({ filter, username, apiEndpoint, title 
   })), [filteredItems])
   useHostVerification(verificationItems)
 
-  // Track views for visible caws (memoize to avoid re-triggering on every render)
+  // Track views for visible caws (memoize to avoid re-triggering on every render).
+  // Bare recaws (RECAW action with empty content) are wrappers — the impression
+  // belongs to the underlying original, not the recaw row, otherwise a popular
+  // post that gets surfaced via 100+ recaws ends up with views split across
+  // every wrapper while its own viewCount stays near zero. Quote-recaws (RECAW
+  // with content) are standalone posts with their own engagement, so they
+  // keep their own id.
   const visibleCawIds = useMemo(() => filteredItems
-    .map(item => Number(item.id))
+    .map(item => {
+      const isBareRecaw = item.action === 'RECAW' && !item.isQuote && item.parent?.id
+      return Number(isBareRecaw ? item.parent.id : item.id)
+    })
     .filter(id => Number.isFinite(id)), [filteredItems])
   useViewTracking(visibleCawIds)
 

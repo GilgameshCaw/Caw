@@ -14,6 +14,7 @@ import SignInModal from '~/components/modals/SignInModal'
 import { usePendingPostsStore } from '~/store/pendingPostsStore'
 import { formatTimeAgo } from '~/utils/formatTimeAgo'
 import { cawUrl, parseCawIdSlug } from '~/utils/cawUrl'
+import { useViewTrackingSingle } from '~/hooks/useViewTracking'
 
 type IndicatorUser = {
   tokenId?: number
@@ -139,6 +140,20 @@ export const CawPage: React.FC = () => {
     ),
     [allPendingPosts, id]
   )
+
+  // Track a view for this post once it's loaded. If the route landed on a
+  // bare-recaw row (action=RECAW with empty content), attribute the view
+  // to the underlying original — same convention as Feed.tsx, so a popular
+  // post's viewCount reflects all the places it surfaced from. Quote-recaws
+  // are standalone posts and keep their own id.
+  const trackedCawId = useMemo(() => {
+    if (!caw) return undefined
+    const isBareRecaw = caw.action === 'RECAW' && !caw.isQuote && caw.parent?.id
+    const target = isBareRecaw ? caw.parent.id : caw.id
+    const n = Number(target)
+    return Number.isFinite(n) ? n : undefined
+  }, [caw])
+  useViewTrackingSingle(trackedCawId)
 
   // Quotes (RECAW with non-empty content) are standalone posts that just
   // happen to reference this one. They don't belong in the chronological
