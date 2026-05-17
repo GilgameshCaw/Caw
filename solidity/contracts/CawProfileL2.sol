@@ -1009,7 +1009,11 @@ contract CawProfileL2 is
         cumulative := calldataload(payload.offset)
         priceTs    := shr(224, calldataload(add(payload.offset, 32)))
       }
-      capOracle.recordSample(cumulative, priceTs);
+      try capOracle.recordSample(cumulative, priceTs) {} catch {
+        // Oracle reverts (OOG, invariant break, etc.) must NOT block L1->L2 delivery.
+        // A missed sample only makes the TWAP slightly less dense — safe; cap goes
+        // dormant under STALE_THRESHOLD if too many samples are dropped.
+      }
     }
 
     // ── Primary payload dispatch ──────────────────────────────────────────

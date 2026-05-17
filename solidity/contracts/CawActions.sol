@@ -1541,8 +1541,9 @@ contract CawActions is Ownable {
         totalWholeTokens = implicitTipOwed;
       } else if (action.actionType == ActionType.OTHER) {
         _requireValidatorExists(validatorId);
-        cawProfile.spendDistributeAndAddTokensToBalance(action.senderId, 1000, 0, validatorId, 1000);
-        totalWholeTokens = 1000;
+        uint256 otherCost = _getCost(1000, 1e11);
+        cawProfile.spendDistributeAndAddTokensToBalance(action.senderId, otherCost, 0, validatorId, otherCost);
+        totalWholeTokens = otherCost;
       }
       return (totalWholeTokens, implicitTipOwed);
     }
