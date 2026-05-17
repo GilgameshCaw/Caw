@@ -2111,7 +2111,10 @@ const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess, placehol
       }
     }
     if (allChunksSelected) {
-      // Copy/Cut → write master text to clipboard; cut also clears.
+      // Copy/Cut → write master text to clipboard.
+      // Copy is non-destructive; KEEP the all-selected highlight so the
+      // user can hit Copy again or extend the action (Cut, Delete, etc.).
+      // Cut clears the master text AND deselects.
       if (modKey && (e.key === 'c' || e.key === 'x') && !e.shiftKey && !e.altKey) {
         e.preventDefault()
         // Best-effort: use the Clipboard API; fall back to execCommand if
@@ -2122,8 +2125,8 @@ const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess, placehol
         if (e.key === 'x') {
           setText('')
           pendingMasterCursorRef.current = 0
+          setAllChunksSelected(false)
         }
-        setAllChunksSelected(false)
         return
       }
       // Backspace / Delete → clear master text.
