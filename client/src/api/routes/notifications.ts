@@ -324,6 +324,10 @@ router.get('/', requireAuth({ lookup: async (req) => Number(req.query.userId) ||
         createdAt: notification.createdAt,
         count: totalCount,
         groupKey: notification.groupKey ?? null,
+        // Per-NotificationGroup identity. Scopes the "X others" modal
+        // to actors of THIS rollup. groupKey alone is wrong for FOLLOW
+        // (every follow notification has groupKey='follow').
+        groupId: group ? group.id : null,
         notificationIds: [notification.id],
       })
     }
@@ -400,16 +404,10 @@ router.get('/unread-count', requireAuth({ lookup: async (req) => Number(req.quer
  */
 router.get('/group-actors', requireAuth({ lookup: async (req) => Number(req.query.userId) || undefined, verifyOwnership: true }), async (req, res) => {
   try {
-    const { userId, groupKey, type, cursor, limit: limitParam } = req.query
+    const { userId, groupKey, type, cursor, limit: limitParam, groupId: groupIdParam } = req.query
 
     if (!userId) {
       return res.status(400).json({ error: 'userId is required' })
-    }
-    if (!groupKey) {
-      return res.status(400).json({ error: 'groupKey is required' })
-    }
-    if (!type) {
-      return res.status(400).json({ error: 'type is required' })
     }
 
     const userTokenId = Number(userId)
@@ -417,9 +415,25 @@ router.get('/group-actors', requireAuth({ lookup: async (req) => Number(req.quer
       return res.status(400).json({ error: 'Invalid userId' })
     }
 
-    // Validate type is a known NotificationType
-    if (!Object.values(NotificationType).includes(type as NotificationType)) {
-      return res.status(400).json({ error: 'Invalid notification type' })
+    // Prefer groupId (precise — per-NotificationGroup). Falls back to the
+    // legacy groupKey+type filter for stale FE bundles. For FOLLOW the
+    // legacy fallback returns EVERY follow notification ever (all share
+    // groupKey='follow') — see project_notification_groups for why.
+    const groupId = groupIdParam != null ? Number(groupIdParam) : null
+    const usingGroupId = Number.isFinite(groupId) && groupId !== 0
+
+    if (!usingGroupId) {
+      if (!groupKey) {
+        return res.status(400).json({ error: 'groupKey is required' })
+      }
+      if (!type) {
+        return res.status(400).json({ error: 'type is required' })
+      }
+      // Validate type is a known NotificationType
+      if (!Object.values(NotificationType).includes(type as NotificationType)) {
+        return res.status(400).json({ error: 'Invalid notification type' })
+      }
+      console.warn(`[group-actors] Legacy groupKey-only query from user ${userTokenId}; FE bundle may be stale.`)
     }
 
     const limit = Math.min(Number(limitParam) || 50, 100)
@@ -440,12 +454,17 @@ router.get('/group-actors', requireAuth({ lookup: async (req) => Number(req.quer
       }
     }
 
+    const baseWhere: any = { userId: userTokenId, hidden: false }
+    if (usingGroupId) {
+      baseWhere.groupId = groupId
+    } else {
+      baseWhere.type = type as NotificationType
+      baseWhere.groupKey = groupKey as string
+    }
+
     const notifications = await prisma.notification.findMany({
       where: {
-        userId: userTokenId,
-        type: type as NotificationType,
-        groupKey: groupKey as string,
-        hidden: false,
+        ...baseWhere,
         ...(cursorWhere ?? {})
       },
       take: limit + 1,

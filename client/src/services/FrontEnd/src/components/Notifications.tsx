@@ -114,7 +114,11 @@ interface Notification {
   isRead: boolean
   createdAt: string
   count?: number
-  groupKey?: string
+  groupKey?: string | null
+  // Per-NotificationGroup identity. Use this to scope the "X others" modal
+  // to just the actors of THIS rollup; querying by groupKey alone is wrong
+  // for FOLLOW (every follow notification has groupKey='follow').
+  groupId?: number | null
   notificationIds: number[]
 }
 
@@ -558,6 +562,10 @@ const Notifications: React.FC = () => {
                 e.preventDefault()
                 e.stopPropagation()
                 openModal('notificationActors', {
+                  // Prefer groupId (per-NotificationGroup, precise). Always
+                  // include groupKey too as a legacy fallback for stale
+                  // server bundles that don't yet honor groupId.
+                  groupId: notification.groupId ?? undefined,
                   groupKey: groupKey ?? `${type}:${actor.tokenId}`,
                   userId: activeToken?.tokenId ?? 0,
                   notificationType,
