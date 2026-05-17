@@ -288,7 +288,7 @@ All three paths produce identical on-chain state under a single `ActionsProcesse
 
 1. Verifies the signature (ecrecover for the sig path; pre-verified by Groth16 for the ZK path; pre-verified by `CawActionsERC1271` for the ERC-1271 path).
 2. Enforces cawonce uniqueness — revert on conflict in the sig and ERC-1271 paths; skip on conflict in the ZK path.
-3. Applies the action cost, clamped by `CawCapOracle.maxCostInCaw(actionType)` (see §7).
+3. Applies the action cost, clamped against the per-action ETH ceiling using the pushed cap ratio (see §7) — a single SLOAD, no external call per action.
 4. Distributes the cost across receiver, depositor pool, validator, and burn according to the split rules.
 5. Advances the per-Network hash chain. Every 32 actions, a checkpoint is recorded.
 6. Emits `ActionsProcessed(batchHash, networkId, validatorId, ...)`, committing to the calldata.
@@ -485,22 +485,32 @@ The cap is **self-deactivating**. While CAW is cheap (`max_eth / TWAP > baseline
    oracle transaction. Opportunistic.
         │
         ▼
-   L2: CawCapOracle ring buffer (1024 slots, power-of-2)
+   L2: CawCapOracle ring buffer
         │
         │ • computes 7-day TWAP
-        │ • if newest sample > 24h stale → cap dormant
-        │   (baseline cost applies)
+        │ • if newest sample > 24h stale → push ratio = 0
+        │   (cap dormant; baseline cost applies)
+        │ • 100-bps hysteresis: only push when ratio
+        │   actually moved meaningfully
         │
+        │  setCapRatio(ratio) — single tx, pushed to CawActions
         ▼
-   CawActions._applyAction()
+   CawActions.capState (one packed slot: ratio + timestamp)
+        │
+        │  single SLOAD per action
+        ▼
+   CawActions._getCost(baseline, ethCap)
         finalCost = min( baseline_in_CAW ,
-                         ETH_cap / TWAP_price )
+                         ethCap / ratio )
         ★ splits scale proportionally when the cap binds
+        ★ zero external calls — pure local read
 ```
+
+The design is a **push model**: the oracle writes its current TWAP ratio into a single packed slot on `CawActions` after each new sample, with a 100-basis-point hysteresis so spammy small movements don't cost gas. Action processing reads that slot via one SLOAD — no per-action `STATICCALL` to the oracle. A 32-action batch goes from "32 external calls" under a pull model to zero. The user-facing property is unchanged ("baseline when cap dormant, clamped when active, splits preserved at every price point"); the architecture is simply cheaper.
 
 The oracle's integrity follows from two structural facts. First, the pool's LP tokens are burned, so liquidity cannot be removed and the pool depth is fixed forever. Second, V2 cumulatives are unbounded; unlike V3's `observe()` ring buffer, an old V2 cumulative does not expire. The seven-day window over a fixed-depth pool makes TWAP manipulation prohibitively expensive (rough order: at 12-second blocks for 7 days, an attacker needs 50,400 blocks of continuous defense against arbitrageurs while still spending real CAW to act on the artificially low cap).
 
-If no L1 → L2 message arrives for over 24 hours (unlikely under normal traffic, but possible during quiet periods), the cap goes dormant and baseline applies. The conservative default avoids over-charging on stale price.
+If no L1 → L2 message arrives for over 24 hours (unlikely under normal traffic, but possible during quiet periods), the oracle pushes a zero ratio and the cap goes dormant — baseline applies. The conservative default avoids over-charging on stale price.
 
 For full math and design rationale, see `docs/ACTION_COST_CAP.md`.
 
@@ -1149,9 +1159,12 @@ For per-contract function inventory and natspec, see `solidity/contracts/` direc
 | `CHALLENGE_GAS_PER_CP`            | 55,000               | `CawChallengeRelay.sol`                               |
 | `ERC1271_GAS_LIMIT`               | 50,000               | `CawActions.sol`, `CawActionsERC1271.sol`, `SigVerification.sol` |
 | EIP-170 contract size cap         | 24,576 bytes         | Ethereum protocol                                     |
-| Action cap window (TWAP)          | 7 days               | `CawCapOracle.sol`                                    |
-| Stale-sample threshold            | 24 hours             | `CawCapOracle.sol`                                    |
-| TWAP ring buffer size             | 1024                 | `CawCapOracle.sol`                                    |
+| Action cap window (TWAP)          | 7 days               | `CawCapOracle.sol` (TWAP_WINDOW)                      |
+| Stale-sample threshold (oracle)   | 24 hours             | `CawCapOracle.sol` (STALE_THRESHOLD)                  |
+| Stale-pushed-ratio threshold      | 24 hours             | `CawActions.sol` (CAP_STALE_THRESHOLD)                |
+| TWAP minimum window               | 1 day                | `CawCapOracle.sol` (MIN_WINDOW)                       |
+| TWAP ring buffer size             | 1024                 | `CawCapOracle.sol` (BUFFER_SIZE)                      |
+| Cap-push hysteresis               | 100 bps              | `CawCapOracle.sol` (`_movedMoreThanBps`)              |
 | Action cap, LIKE                  | 2 × 10¹¹ wei         | `CawActions.sol` (CAP_LIKE)                           |
 | Action cap, UNLIKE/UNFOLLOW       | 1 × 10¹¹ wei         | `CawActions.sol` (CAP_UNLIKE/CAP_UNFOLLOW)            |
 | Action cap, RECAW                 | 4 × 10¹¹ wei         | `CawActions.sol` (CAP_RECAW)                          |
