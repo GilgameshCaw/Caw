@@ -496,6 +496,20 @@ export async function handleRecawAction(
           console.error(`[handleRecawAction] Failed to restore parent ${originalCawId} recawCount after FAILED→SUCCESS:`, err)
         }
       }
+      // Mirror what the LIKE handler does on its PENDING→SUCCESS path:
+      // fire the REPOST notification here too. The !existingRecaw branch
+      // above (line 458) only handles indexer-first recaws (~0% of real
+      // traffic); FE-originated recaws go through this branch via the
+      // optimistic API submit creating a PENDING row first. Without this
+      // call, bare recaws never notified the original poster.
+      // Quotes notify via createQuoteNotification on their own path.
+      try {
+        if (!isQuoteRecaw && originalCawId) {
+          await NotificationService.createRepostNotification(originalCawId, userId, tx)
+        }
+      } catch (err) {
+        console.error(`[handleRecawAction] Failed to create repost notification (PENDING→SUCCESS path):`, err)
+      }
     }
   }
 }

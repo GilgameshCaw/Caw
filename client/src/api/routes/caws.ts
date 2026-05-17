@@ -757,6 +757,9 @@ router.delete('/:originalCawId/recaw', requireAuth({
     if (recaw) {
       // Delete the recaw, its txqueue entry, its action record,
       // and decrement the parent's recawCount (floored at zero via safeDecrement).
+      // Also drop the REPOST notification — otherwise a redo-after-undo
+      // would silently dedup against the stale row at
+      // NotificationService.createRepostNotification's findFirst gate.
       await prisma.$transaction(async (tx) => {
         await tx.txQueue.deleteMany({
           where: { senderId: userId, payload: { path: ['data', 'cawonce'], equals: recaw.cawonce } }
@@ -766,6 +769,14 @@ router.delete('/:originalCawId/recaw', requireAuth({
         })
         await tx.caw.delete({ where: { id: recaw.id } })
         await safeDecrement(tx, 'Caw', 'recawCount', 'id', originalCawId)
+        await tx.notification.deleteMany({
+          where: {
+            actorId: userId,
+            userId: originalCaw.userId,
+            type: 'REPOST',
+            cawId: originalCawId,
+          },
+        })
       })
     } else {
       // No confirmed recaw row yet — might be a pending txqueue that hasn't been processed.
@@ -794,6 +805,16 @@ router.delete('/:originalCawId/recaw', requireAuth({
           // Undo the optimistic recawCount increment that onCawCreated applied.
           await safeDecrement(tx, 'Caw', 'recawCount', 'id', originalCawId)
         }
+        // Drop any REPOST notification too — same dedup-resistance reason
+        // as the confirmed branch above.
+        await tx.notification.deleteMany({
+          where: {
+            actorId: userId,
+            userId: originalCaw.userId,
+            type: 'REPOST',
+            cawId: originalCawId,
+          },
+        })
         return txQueueResult
       })
       if (deleted.count === 0 && pendingCawDeleted === 0) {
