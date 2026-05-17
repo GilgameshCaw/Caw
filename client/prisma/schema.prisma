@@ -858,6 +858,10 @@ enum NotificationType {
   SALE_SOLD
   SALE_BOUGHT
   ACTION_FAILED
+  /// Sent to the poll author when someone votes on their poll. groupKey
+  /// = "vote_caw_<cawId>" so all votes on the same poll roll up into
+  /// one notification row in the recipient's feed.
+  VOTE
 }
 
 enum MessageStatus {

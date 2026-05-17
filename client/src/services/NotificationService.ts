@@ -531,6 +531,51 @@ export class NotificationService {
   }
 
   /**
+   * Create notification for a vote on the recipient's poll.
+   *
+   * The poll's owner is the recipient. groupKey is keyed by the
+   * caw the poll lives on, so multiple voters on the same poll
+   * collapse to one notification row at read time. Idempotent vote
+   * changes (single-select user changing their pick) hit the
+   * findFirst dedupe and skip a duplicate notification — they only
+   * cost one notification per (poll, voter) pair.
+   *
+   * Pass the tx `client` when called from inside an interactive
+   * transaction. Same pool-leak rationale as createFollowNotification.
+   */
+  static async createVoteNotification(
+    cawId: number,
+    pollOwnerId: number,
+    voterId: number,
+    client: Pick<typeof prisma, 'notification' | 'notificationGroup'> = prisma,
+  ) {
+    if (pollOwnerId === voterId) return  // self-vote, no notification
+    if (await this.isUserMutedOrBlocked(pollOwnerId, voterId)) return
+
+    // Dedupe: one VOTE notification per (poll-author, voter, poll).
+    // Single-select polls with vote-changing only emit one row total;
+    // multi-select polls likewise — additional toggles by the same
+    // voter on the same poll don't spam a fresh notification.
+    const existing = await client.notification.findFirst({
+      where: {
+        userId: pollOwnerId,
+        actorId: voterId,
+        type: NotificationType.VOTE,
+        cawId,
+      },
+    })
+    if (existing) return
+
+    await createNotificationWithGroup(client, {
+      userId: pollOwnerId,
+      actorId: voterId,
+      type: NotificationType.VOTE,
+      cawId,
+      groupKey: `vote_caw_${cawId}`,
+    })
+  }
+
+  /**
    * Mark notifications as read
    */
   static async markAsRead(userId: number, notificationIds?: number[], types?: NotificationType[]) {

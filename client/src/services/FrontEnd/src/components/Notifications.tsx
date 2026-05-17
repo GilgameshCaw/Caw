@@ -16,6 +16,7 @@ import {
   HiCheck,
   HiCurrencyDollar,
   HiTag,
+  HiChartBar,
   HiOutlineBell,
   HiOutlineAtSymbol
 } from 'react-icons/hi'
@@ -41,7 +42,7 @@ interface Actor {
 
 interface Notification {
   id: number
-  type: 'FOLLOW' | 'LIKE' | 'REPLY' | 'REPOST' | 'QUOTE' | 'MENTION' | 'TIP' | 'OFFER' | 'OUTBID' | 'AUCTION_WON' | 'SALE_SOLD' | 'SALE_BOUGHT' | 'ACTION_FAILED'
+  type: 'FOLLOW' | 'LIKE' | 'REPLY' | 'REPOST' | 'QUOTE' | 'MENTION' | 'TIP' | 'OFFER' | 'OUTBID' | 'AUCTION_WON' | 'SALE_SOLD' | 'SALE_BOUGHT' | 'ACTION_FAILED' | 'VOTE'
   actor: Actor
   additionalActors?: Actor[]
   caw?: {
@@ -324,6 +325,8 @@ const Notifications: React.FC = () => {
         return <HiTag className="w-6 h-6 text-blue-500" />
       case 'ACTION_FAILED':
         return <HiBell className="w-6 h-6 text-red-400" />
+      case 'VOTE':
+        return <HiChartBar className="w-6 h-6 text-yellow-500" />
       default:
         return <HiBell className="w-6 h-6 text-gray-500" />
     }
@@ -592,6 +595,8 @@ const Notifications: React.FC = () => {
         return <>{Actor(actorNode)} {Action(t('notifications.message.quoted', { count }))}</>
       case 'MENTION':
         return <>{Actor(actorNode)} {Action(t('notifications.message.mentioned', { count }))}</>
+      case 'VOTE':
+        return <>{Actor(actorNode)} {Action(t('notifications.message.voted', { count }))}</>
       case 'TIP': {
         const tipAmt = notification.actionPayload?.tipAmount
         let tipLabel = ''

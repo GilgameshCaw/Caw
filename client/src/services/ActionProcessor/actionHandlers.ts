@@ -1241,6 +1241,13 @@ async function handleVoteAction(
         where: { id: poll.id },
         data: { totalVotes: { increment: 1 } },
       })
+      // Notify the poll author (idempotent per (poll, voter) so
+      // toggling extra options doesn't spam the author).
+      try {
+        await NotificationService.createVoteNotification(targetCaw.id, ownerUserId, voterId, tx)
+      } catch (err) {
+        console.error(`[handleVoteAction] Failed to create VOTE notification:`, err)
+      }
       console.log(`[handleVoteAction] Toggled ON (poll=${poll.id} voter=${voterId} option=${parsed.optionIndex})`)
     }
     return
@@ -1289,6 +1296,17 @@ async function handleVoteAction(
         where: { id: poll.id },
         data: { totalVotes: { increment: 1 } },
       })
+      // Pending → confirmed: this is the first time the vote is
+      // canonical, so notify the author. Re-confirms (already-
+      // confirmed → re-confirmed) skip — the author was already
+      // notified on the first confirm. createVoteNotification's
+      // findFirst dedupe is a second line of defense for any
+      // edge case where wasPending is true but we already sent.
+      try {
+        await NotificationService.createVoteNotification(targetCaw.id, ownerUserId, voterId, tx)
+      } catch (err) {
+        console.error(`[handleVoteAction] Failed to create VOTE notification:`, err)
+      }
     }
     console.log(`[handleVoteAction] ${wasPending ? 'Confirmed' : 'Re-confirmed'} vote (poll=${poll.id} voter=${voterId} option=${parsed.optionIndex})`)
   } else {
@@ -1305,6 +1323,15 @@ async function handleVoteAction(
       where: { id: poll.id },
       data: { totalVotes: { increment: 1 } },
     })
+    // Fresh confirmed vote (no prior pending row from the API path —
+    // this is a vote from a remote node or a cold-start indexer).
+    // createVoteNotification dedupes per (poll, voter) so changing
+    // the pick later won't re-notify.
+    try {
+      await NotificationService.createVoteNotification(targetCaw.id, ownerUserId, voterId, tx)
+    } catch (err) {
+      console.error(`[handleVoteAction] Failed to create VOTE notification:`, err)
+    }
     console.log(`[handleVoteAction] Created vote (poll=${poll.id} voter=${voterId} option=${parsed.optionIndex})`)
   }
 }
