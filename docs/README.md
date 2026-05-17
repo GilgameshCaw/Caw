@@ -4,9 +4,12 @@ Welcome to the documentation for the CAW Protocol — a trustless and decentrali
 
 **👉 New here? Start with [Building on CAW](./FOR_DEVELOPERS.md)** — a builder-focused index organized by what you want to do (run a node, build a frontend, build a smart-contract extension).
 
+**For a single-document overview of the protocol**, see **[White Paper](./WHITEPAPER.md)** — philosophy, architecture, economics, security, comparison to alternatives, and roadmap in ~30 pages.
+
 ## 📚 Core Documentation
 
 ### System Overview
+- **[White Paper](./WHITEPAPER.md)** - The canonical document. Philosophy, architecture, economics, threat model, roadmap.
 - **[Building on CAW](./FOR_DEVELOPERS.md)** - Developer landing page; what you can build and how
 - **[Architecture Overview](./ARCHITECTURE.md)** - Complete system architecture and design principles
 - **[Data Flow](./DATA_FLOW.md)** - How data moves through the system
