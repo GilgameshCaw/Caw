@@ -66,6 +66,12 @@ async function safeDecrement(
 
 /**
  * Atomically increment a column using Prisma's built-in atomic operation.
+ *
+ * P2025 (record not found) is swallowed on the Caw branch: a child row
+ * (reply/recaw/quote) can arrive via peer-mirror indexing before the parent
+ * Caw row exists locally. Aborting the whole transaction would silently drop
+ * the child row, which is the more important artifact. Count drift is accepted
+ * as transient and reconciled by the periodic sweep.
  */
 async function safeIncrement(
   tx: TxClient,
@@ -76,15 +82,37 @@ async function safeIncrement(
   amount: number = 1
 ): Promise<void> {
   if (table === 'Caw') {
-    await (tx as any).caw.update({
-      where: { id: idValue },
-      data: { [column]: { increment: amount } }
-    })
+    try {
+      await (tx as any).caw.update({
+        where: { id: idValue },
+        data: { [column]: { increment: amount } }
+      })
+    } catch (e: any) {
+      // P2025 = parent Caw row missing (typically peer-mirror lag where a child
+      // row arrived before its parent was indexed locally). Don't abort the outer
+      // transaction — the child is the more important artifact. Count drifts
+      // +${amount}; expect reconcile sweep to correct it.
+      if (e?.code === 'P2025') {
+        log(`safeIncrement: Caw.id=${idValue} missing — count ${column} drifts +${amount} (child preserved; expect reconcile sweep)`)
+        return
+      }
+      throw e
+    }
   } else {
-    await (tx as any).user.update({
-      where: { [idColumn]: idValue },
-      data: { [column]: { increment: amount } }
-    })
+    try {
+      await (tx as any).user.update({
+        where: { [idColumn]: idValue },
+        data: { [column]: { increment: amount } }
+      })
+    } catch (e: any) {
+      // P2025 on a User row is also treated as a transient peer-mirror lag:
+      // swallow, log, and let the child row commit. Count drift reconciled by sweep.
+      if (e?.code === 'P2025') {
+        log(`safeIncrement: User.${idColumn}=${idValue} missing — count ${column} drifts +${amount} (child preserved; expect reconcile sweep)`)
+        return
+      }
+      throw e
+    }
   }
 }
 
