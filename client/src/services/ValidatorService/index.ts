@@ -178,6 +178,42 @@ async function markTxQueueValidatedByPeer(
   return true
 }
 
+// Mark a TxQueue row 'done' and bump the session-key spent counter exactly
+// once. The sub-batch finalize path (multi-client split, ~L2454) converges
+// here; it previously wrote status='done' via a plain prisma.txQueue.update
+// which silently skipped incrementSessionSpent, letting users over-spend
+// their session limits (project_session_spend_drift_sub_batch_finalize.md).
+//
+// Idempotency strategy: same atomic updateMany + status-guard pattern as
+// markTxQueueValidatedByPeer. Only the winner (count=1) fires the spend
+// bump; concurrent paths (e.g. the main batch loop, a recheck) that race on
+// the same row see count=0 and no-op. Ties the spend bump to the status
+// flip so the two facts can't drift apart.
+//
+// The main batch finalize path (L2964+) writes 'done' + calls
+// incrementSessionSpent inline; that path has no concurrency risk because it
+// loops sequentially inside a single await Promise.all slice. The sub-batch
+// path is similar but it is cleanest to funnel through this helper so the
+// idempotency guarantee is explicit.
+async function markTxQueueDone(
+  txQueueId: number,
+  payload: any,
+  signedTx: string | null | undefined,
+): Promise<boolean> {
+  const result = await prisma.txQueue.updateMany({
+    where: {
+      id: txQueueId,
+      status: { in: ['pending', 'processing', 'awaiting_indexer'] },
+    },
+    data: { status: 'done', reason: null },
+  })
+  if (result.count !== 1) return false
+  if (signedTx && payload) {
+    await incrementSessionSpent(prisma as any, payload as any, signedTx)
+  }
+  return true
+}
+
 // How long a txqueue can sit in 'awaiting_indexer' before we give up and
 // declare it a real failure. The contract said the cawonce was used, but
 // our local Action table never caught up — at that point we have to
@@ -2456,10 +2492,11 @@ console.log("succeededKeys", succeededKeys)
                 const key = `${data.senderId}-${data.cawonce}`
                 const succeeded = finalizedKeys.has(key)
                 if (succeeded) {
-                  await prisma.txQueue.update({
-                    where: { id: entry.id },
-                    data: { status: 'done', reason: null }
-                  })
+                  // Use markTxQueueDone (not a plain update) so that
+                  // incrementSessionSpent fires atomically with the status
+                  // flip. A plain update here was the sub-batch session-spend
+                  // drift bug (project_session_spend_drift_sub_batch_finalize.md).
+                  await markTxQueueDone(entry.id, entry.payload, (entry as any).signedTx)
                 } else {
                   const failReason = simResult.rejectionMessages?.[idx] || 'Transaction failed'
                   await markTxQueueFailed(entry.id, failReason, data.senderId, data)
