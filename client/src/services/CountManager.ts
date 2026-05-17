@@ -545,5 +545,5 @@ const countManager = {
   },
 }
 
-export { countManager }
+export { countManager, safeDecrement }
 export default countManager
