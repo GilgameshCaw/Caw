@@ -542,44 +542,9 @@ async function cleanupFailedTxQueue() {
             }
           }
         } else if (data.actionType === 1 || data.actionType === 'like') {
-          // Remove the pending like if it exists
-          logger.log(` Removing failed pending like for user ${data.senderId}`)
-
-          // First find the target caw
-          const targetCaw = await prisma.caw.findFirst({
-            where: {
-              userId: data.receiverId,
-              cawonce: data.receiverCawonce
-            }
-          })
-
-          if (targetCaw) {
-            await prisma.like.deleteMany({
-              where: {
-                userId: data.senderId,
-                cawId: targetCaw.id,
-                pending: true
-              }
-            })
-
-            // Recalculate the correct like count
-            const actualLikeCount = await prisma.like.count({
-              where: {
-                cawId: targetCaw.id,
-                action: 'LIKE',
-                pending: false
-              }
-            })
-
-            await prisma.caw.update({
-              where: { id: targetCaw.id },
-              data: {
-                likeCount: actualLikeCount
-              }
-            })
-
-            logger.log(` Updated caw ${targetCaw.id} like count to ${actualLikeCount}`)
-          }
+          // Note: like rollback is owned by markTxQueueFailed → cleanupOptimisticRows.
+          // A second pass here used to race with confirmed-between-sweeps Likes
+          // and skew likeCount (RC-2).
         } else if (data.actionType === 4 || data.actionType === 'follow') {
           // Delete the pending follow record (only if still pending — a prior successful tx may have confirmed it)
           logger.log(` Removing failed pending follow for user ${data.senderId} -> ${data.receiverId}`)
