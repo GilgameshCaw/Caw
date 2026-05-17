@@ -5,33 +5,15 @@
 
 ALTER TABLE "Poll" ADD COLUMN IF NOT EXISTS "multiSelect" BOOLEAN NOT NULL DEFAULT false;
 
--- Drop the old (pollId, voterId) unique constraint and replace with
--- (pollId, voterId, optionIndex). Existing rows are safe: the old
--- constraint guaranteed one row per (pollId, voterId), so the new
--- triple is automatically unique. Wrap in DO block to tolerate the
--- constraint name being different across environments.
-DO $$
-DECLARE
-  con_name TEXT;
-BEGIN
-  -- Find the existing UNIQUE constraint on (pollId, voterId).
-  SELECT conname INTO con_name
-  FROM pg_constraint c
-  JOIN pg_class t ON t.oid = c.conrelid
-  WHERE t.relname = 'Vote' AND c.contype = 'u' AND con_name IS NULL
-    AND (
-      SELECT array_agg(attname ORDER BY a.attnum)
-      FROM pg_attribute a
-      WHERE a.attrelid = t.oid AND a.attnum = ANY(c.conkey)
-    ) = ARRAY['pollId', 'voterId'];
+-- Swap the Vote uniqueness key from (pollId, voterId) to
+-- (pollId, voterId, optionIndex). The original was a Prisma-generated
+-- UNIQUE INDEX named Vote_pollId_voterId_key (NOT a UNIQUE CONSTRAINT
+-- — Prisma's @@unique compiles to bare unique indexes). DROP INDEX
+-- by name; IF EXISTS handles fresh DBs that never had the old index.
+-- Existing rows are safe under the new triple: the old index already
+-- guaranteed one row per (pollId, voterId), so adding optionIndex
+-- preserves uniqueness on every existing row.
+DROP INDEX IF EXISTS "Vote_pollId_voterId_key";
 
-  IF con_name IS NOT NULL THEN
-    EXECUTE format('ALTER TABLE "Vote" DROP CONSTRAINT %I', con_name);
-  END IF;
-END $$;
-
--- Create the new uniqueness constraint via a unique index — Prisma's
--- @@unique([pollId, voterId, optionIndex]) generates an index named
--- Vote_pollId_voterId_optionIndex_key on prisma migrate deploy.
 CREATE UNIQUE INDEX IF NOT EXISTS "Vote_pollId_voterId_optionIndex_key"
   ON "Vote" ("pollId", "voterId", "optionIndex");
