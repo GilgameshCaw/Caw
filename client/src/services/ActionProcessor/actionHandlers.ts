@@ -1154,7 +1154,7 @@ async function handleVoteAction(
   // chain order so this race is rare but possible across mirror nodes.
   const targetCaw = await tx.caw.findUnique({
     where: { userId_cawonce: { userId: ownerUserId, cawonce: targetCawonce } },
-    select: { id: true, poll: { select: { id: true, totalVotes: true, endsAt: true } } },
+    select: { id: true, poll: { select: { id: true, totalVotes: true, endsAt: true, multiSelect: true, options: true } } },
   })
   if (!targetCaw) {
     console.warn(`[handleVoteAction] Target caw not found yet (owner=${ownerUserId} cawonce=${targetCawonce}) — skipping`)
@@ -1164,6 +1164,7 @@ async function handleVoteAction(
     console.warn(`[handleVoteAction] Target caw ${targetCaw.id} has no poll — vote ignored`)
     return
   }
+  const poll = targetCaw.poll
 
   // Reject votes after the poll's endsAt. The duration was committed
   // to the on-chain ::pd:<dur>:: sidecar at post time, so endsAt is
@@ -1171,80 +1172,129 @@ async function handleVoteAction(
   // Legacy polls with endsAt=null have no expiry and always accept
   // votes — preserves behavior for polls posted before the duration
   // sidecar existed.
-  if (targetCaw.poll.endsAt && Date.now() > targetCaw.poll.endsAt.getTime()) {
+  if (poll.endsAt && Date.now() > poll.endsAt.getTime()) {
     console.warn(
-      `[handleVoteAction] Vote rejected: poll ${targetCaw.poll.id} ended at ${targetCaw.poll.endsAt.toISOString()} — voter=${voterId}`,
+      `[handleVoteAction] Vote rejected: poll ${poll.id} ended at ${poll.endsAt.toISOString()} — voter=${voterId}`,
     )
     return
   }
 
-  // Unvote path
+  // Unvote path: `vote:` with no option index. Drops ALL of this
+  // voter's rows on this poll (covers single-select where there's at
+  // most one, and multi-select where there could be several).
   if (parsed.optionIndex === null) {
-    const existing = await tx.vote.findUnique({
-      where: { pollId_voterId: { pollId: targetCaw.poll.id, voterId } },
+    const existing = await tx.vote.findMany({
+      where: { pollId: poll.id, voterId },
+      select: { id: true, pending: true },
     })
-    if (!existing) {
-      console.log(`[handleVoteAction] Unvote with no existing vote (poll=${targetCaw.poll.id} voter=${voterId}) — no-op`)
+    if (existing.length === 0) {
+      console.log(`[handleVoteAction] Unvote with no existing vote (poll=${poll.id} voter=${voterId}) — no-op`)
       return
     }
-    await tx.vote.delete({ where: { id: existing.id } })
-    if (!existing.pending) {
-      // Only decrement when we're removing a confirmed vote — pending votes
-      // never bumped totalVotes (the count is for confirmed only).
+    await tx.vote.deleteMany({ where: { pollId: poll.id, voterId } })
+    const confirmedCount = existing.filter(v => !v.pending).length
+    if (confirmedCount > 0) {
       await tx.poll.update({
-        where: { id: targetCaw.poll.id },
-        data: { totalVotes: { decrement: 1 } },
+        where: { id: poll.id },
+        data: { totalVotes: { decrement: confirmedCount } },
       })
     }
-    console.log(`[handleVoteAction] Removed vote (poll=${targetCaw.poll.id} voter=${voterId})`)
+    console.log(`[handleVoteAction] Removed ${existing.length} vote(s) (poll=${poll.id} voter=${voterId})`)
     return
   }
 
-  // Vote / change-vote path. Bounds check against the actual options
-  // count, not POLL_MAX_OPTIONS — a poll might have only 3 options and a
-  // stale frontend that submitted optionIndex=4 should be rejected.
-  const optionsCount = await tx.poll.findUnique({
-    where: { id: targetCaw.poll.id },
-    select: { options: true },
-  })
-  if (!optionsCount || parsed.optionIndex >= optionsCount.options.length) {
-    console.warn(`[handleVoteAction] optionIndex ${parsed.optionIndex} out of range for poll ${targetCaw.poll.id}`)
+  // Bounds check against the poll's actual options count.
+  if (parsed.optionIndex >= poll.options.length) {
+    console.warn(`[handleVoteAction] optionIndex ${parsed.optionIndex} out of range for poll ${poll.id}`)
     return
   }
 
-  // Upsert the vote row. There's an existing pending row when the API
-  // submitted optimistically — flip pending → false and update the index.
-  // If no existing row, this is a vote from a remote node and we create
-  // it confirmed in one shot.
-  const existing = await tx.vote.findUnique({
-    where: { pollId_voterId: { pollId: targetCaw.poll.id, voterId } },
-  })
+  if (poll.multiSelect) {
+    // Multi-select: each vote:N action toggles option N for the voter.
+    // If they have a row on this (pollId, voterId, optionIndex) it
+    // gets dropped; otherwise a fresh confirmed row gets added.
+    const existing = await tx.vote.findUnique({
+      where: { pollId_voterId_optionIndex: {
+        pollId: poll.id, voterId, optionIndex: parsed.optionIndex,
+      } },
+    })
+    if (existing) {
+      await tx.vote.delete({ where: { id: existing.id } })
+      if (!existing.pending) {
+        await tx.poll.update({
+          where: { id: poll.id },
+          data: { totalVotes: { decrement: 1 } },
+        })
+      }
+      console.log(`[handleVoteAction] Toggled OFF (poll=${poll.id} voter=${voterId} option=${parsed.optionIndex})`)
+    } else {
+      await tx.vote.create({
+        data: {
+          pollId: poll.id,
+          voterId,
+          optionIndex: parsed.optionIndex,
+          cawonce: action.cawonce,
+          pending: false,
+        },
+      })
+      await tx.poll.update({
+        where: { id: poll.id },
+        data: { totalVotes: { increment: 1 } },
+      })
+      console.log(`[handleVoteAction] Toggled ON (poll=${poll.id} voter=${voterId} option=${parsed.optionIndex})`)
+    }
+    return
+  }
 
-  if (existing) {
-    const wasPending = existing.pending
-    const indexChanged = existing.optionIndex !== parsed.optionIndex
+  // Single-select path: a fresh vote replaces any prior pick by this
+  // voter. The API path's optimistic write set pending=true on one
+  // row keyed by (pollId, voterId, optionIndex); if the voter is
+  // CHANGING their pick, the new optionIndex differs from the old
+  // row's, so we need to drop the prior row(s) and write the new one.
+  const prior = await tx.vote.findMany({
+    where: { pollId: poll.id, voterId },
+    select: { id: true, optionIndex: true, pending: true },
+  })
+  // Find an existing row that matches the new pick (covers the
+  // re-confirm + same-index change cases).
+  const sameIndex = prior.find(v => v.optionIndex === parsed.optionIndex)
+  const otherIndexConfirmed = prior.filter(v => v.optionIndex !== parsed.optionIndex && !v.pending).length
+
+  // Drop any prior rows on different optionIndices — single-select
+  // promises one effective vote per voter at confirm time. Pending
+  // rows on other indices were never counted, so removing them is a
+  // no-op against totalVotes; confirmed rows on other indices need to
+  // decrement.
+  await tx.vote.deleteMany({
+    where: { pollId: poll.id, voterId, NOT: { optionIndex: parsed.optionIndex } },
+  })
+  if (otherIndexConfirmed > 0) {
+    await tx.poll.update({
+      where: { id: poll.id },
+      data: { totalVotes: { decrement: otherIndexConfirmed } },
+    })
+  }
+
+  if (sameIndex) {
+    const wasPending = sameIndex.pending
     await tx.vote.update({
-      where: { id: existing.id },
+      where: { id: sameIndex.id },
       data: {
-        optionIndex: parsed.optionIndex,
         cawonce: action.cawonce,
         pending: false,
       },
     })
-    // Only bump totalVotes when a pending row gets CONFIRMED (it wasn't
-    // counted before). Changing the option on an already-confirmed vote
-    // is a no-op for totalVotes.
     if (wasPending) {
       await tx.poll.update({
-        where: { id: targetCaw.poll.id },
+        where: { id: poll.id },
         data: { totalVotes: { increment: 1 } },
       })
     }
-    console.log(`[handleVoteAction] ${wasPending ? 'Confirmed' : indexChanged ? 'Updated' : 'Re-confirmed'} vote (poll=${targetCaw.poll.id} voter=${voterId} option=${parsed.optionIndex})`)
+    console.log(`[handleVoteAction] ${wasPending ? 'Confirmed' : 'Re-confirmed'} vote (poll=${poll.id} voter=${voterId} option=${parsed.optionIndex})`)
   } else {
     await tx.vote.create({
       data: {
-        pollId: targetCaw.poll.id,
+        pollId: poll.id,
         voterId,
         optionIndex: parsed.optionIndex,
         cawonce: action.cawonce,
@@ -1252,10 +1302,10 @@ async function handleVoteAction(
       },
     })
     await tx.poll.update({
-      where: { id: targetCaw.poll.id },
+      where: { id: poll.id },
       data: { totalVotes: { increment: 1 } },
     })
-    console.log(`[handleVoteAction] Created vote (poll=${targetCaw.poll.id} voter=${voterId} option=${parsed.optionIndex})`)
+    console.log(`[handleVoteAction] Created vote (poll=${poll.id} voter=${voterId} option=${parsed.optionIndex})`)
   }
 }
 

@@ -311,6 +311,7 @@
   "poll.duration": "Voting closes after:",
   "poll.ends_in": "Ends in {{remaining}}",
   "poll.ended": "Poll ended",
+  "poll.multi_select": "Allow multiple choices",
   "poll.pending": "pending",
   "poll.remove_vote": "Remove vote",
   "poll.vote_count_one": "{{count}} vote",

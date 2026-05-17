@@ -1059,7 +1059,7 @@ router.post('/', async (req, res) => {
           // are present.
           const targetCaw = await prisma.caw.findUnique({
             where: { userId_cawonce: { userId: pollOwnerTokenId, cawonce: targetCawonce } },
-            select: { id: true, poll: { select: { id: true, endsAt: true } } },
+            select: { id: true, poll: { select: { id: true, endsAt: true, multiSelect: true } } },
           })
           // Refuse to write an optimistic vote (or unvote) after the
           // poll's endsAt. Mirrors the indexer's enforcement so the
@@ -1085,28 +1085,53 @@ router.post('/', async (req, res) => {
               create: { id: data.senderId, tokenId: data.senderId, username: `user_${data.senderId}` },
             })
 
+            const pollId = targetCaw.poll.id
+            const voterId = data.senderId
+
             if (parsed.optionIndex === null) {
-              // Optimistic unvote: drop the existing row immediately so the UI
-              // reflects "removed" on refresh. If the action fails, the user
-              // gets an ACTION_FAILED notification and can retry; the row
-              // stays gone in the meantime, which matches what they wanted.
+              // Optimistic unvote: drop ALL rows for this voter on this
+              // poll (covers both single-select and multi-select).
               await prisma.vote.deleteMany({
-                where: { pollId: targetCaw.poll.id, voterId: data.senderId },
+                where: { pollId, voterId },
               })
+            } else if (targetCaw.poll.multiSelect) {
+              // Multi-select toggle. Find the existing row for this
+              // specific (pollId, voterId, optionIndex) — if present,
+              // drop it (toggle OFF); if absent, write a pending row
+              // (toggle ON, indexer confirms).
+              const existing = await prisma.vote.findUnique({
+                where: { pollId_voterId_optionIndex: { pollId, voterId, optionIndex: parsed.optionIndex } },
+              })
+              if (existing) {
+                await prisma.vote.delete({ where: { id: existing.id } })
+              } else {
+                await prisma.vote.create({
+                  data: {
+                    pollId,
+                    voterId,
+                    optionIndex: parsed.optionIndex,
+                    cawonce: data.cawonce,
+                    pending: true,
+                  },
+                })
+              }
             } else {
-              // Optimistic vote / change-vote. Upsert with pending=true so
-              // the indexer can flip it to false later. If the user already
-              // had a confirmed vote and is changing, we set pending=true
-              // again — failure cleanup will then revert to the prior state
-              // when the indexer never confirms. Acceptable: a stuck pending
-              // change reverts to "no vote shown" rather than the prior
-              // option, which is the safer side of the tradeoff.
+              // Single-select optimistic vote / change-vote. Drop any
+              // prior rows on a DIFFERENT optionIndex first (the new
+              // pick replaces the old), then upsert the row on the new
+              // option as pending. If the user already had this exact
+              // option marked, the upsert just re-stamps pending=true
+              // (a no-op for the UI but resets the failure-cleanup
+              // window — accept it).
+              await prisma.vote.deleteMany({
+                where: { pollId, voterId, NOT: { optionIndex: parsed.optionIndex } },
+              })
               await prisma.vote.upsert({
-                where: { pollId_voterId: { pollId: targetCaw.poll.id, voterId: data.senderId } },
-                update: { optionIndex: parsed.optionIndex, cawonce: data.cawonce, pending: true },
+                where: { pollId_voterId_optionIndex: { pollId, voterId, optionIndex: parsed.optionIndex } },
+                update: { cawonce: data.cawonce, pending: true },
                 create: {
-                  pollId: targetCaw.poll.id,
-                  voterId: data.senderId,
+                  pollId,
+                  voterId,
                   optionIndex: parsed.optionIndex,
                   cawonce: data.cawonce,
                   pending: true,

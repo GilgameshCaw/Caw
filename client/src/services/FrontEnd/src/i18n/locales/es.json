@@ -290,6 +290,7 @@
   "poll.duration": "Las votaciones cierran en:",
   "poll.ends_in": "Termina en {{remaining}}",
   "poll.ended": "Encuesta cerrada",
+  "poll.multi_select": "Permitir varias opciones",
   "poll.pending": "pendiente",
   "poll.remove_vote": "Quitar voto",
   "poll.vote_count_one": "{{count}} voto",

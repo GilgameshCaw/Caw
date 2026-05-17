@@ -56,8 +56,27 @@ export interface ShapedPoll {
    * deletes the row entirely. `pending` mirrors the same semantics as
    * Like / Tip: optimistic local writes flag pending until the indexer
    * confirms. Null when no currentUserId in the request.
+   *
+   * Single-select polls: at most one entry (the user's pick).
+   * Multi-select polls: zero, one, or many entries (one per picked
+   * option). Whichever mode, the renderer treats each entry the same
+   * — single-select just happens to never have more than one.
    */
   userVote: { optionIndex: number; pending: boolean } | null
+  /**
+   * Full set of viewer's votes on this poll. Populated only when the
+   * request has a currentUserId. Always an array (possibly empty).
+   * Used by multi-select polls — the FE checks `userVotes` for the
+   * checkbox set; `userVote` above is preserved for back-compat with
+   * single-select renderers that haven't been updated.
+   */
+  userVotes: { optionIndex: number; pending: boolean }[]
+  /**
+   * Surfaced from Poll.multiSelect so the FE can render the right
+   * vote control (radio vs checkbox) without re-parsing the caw text
+   * marker. False for legacy polls.
+   */
+  multiSelect: boolean
   /**
    * ISO timestamp when voting closes (Poll.endsAt). Computed by the
    * indexer from the caw's createdAt + the ::pd:<dur>:: marker
@@ -154,8 +173,10 @@ export function shapeCaw(raw: CawRaw | any): ShapedCaw {
       optionImages,
       totalVotes: raw.poll.totalVotes ?? 0,
       optionVoteCounts: [],   // filled by enrichWithPollVotes
-      userVote: null,         // filled by enrichWithPollVotes
+      userVote: null,         // filled by enrichWithPollVotes (single-select / first)
+      userVotes: [],          // filled by enrichWithPollVotes
       endsAt: raw.poll.endsAt ? raw.poll.endsAt.toISOString() : null,
+      multiSelect: !!raw.poll.multiSelect,
     }
     ;(poll as any)._pollId = raw.poll.id
   }
@@ -346,16 +367,20 @@ export async function enrichWithPollVotes(
     inner.set(row.optionIndex, row._count._all)
   }
 
-  // Viewer's votes — one row per poll at most (unique constraint).
-  const userVotes = currentUserId
+  // Viewer's votes — multi-select polls can have several rows per poll
+  // (one per picked option); single-select polls have at most one. The
+  // groupedByPoll map handles both shapes uniformly.
+  const userVoteRows = currentUserId
     ? await prisma.vote.findMany({
         where: { pollId: { in: ids }, voterId: currentUserId },
         select: { pollId: true, optionIndex: true, pending: true },
       })
     : []
-  const myVoteByPoll = new Map<number, { optionIndex: number; pending: boolean }>()
-  for (const v of userVotes) {
-    myVoteByPoll.set(v.pollId, { optionIndex: v.optionIndex, pending: v.pending })
+  const myVotesByPoll = new Map<number, { optionIndex: number; pending: boolean }[]>()
+  for (const v of userVoteRows) {
+    const arr = myVotesByPoll.get(v.pollId) ?? []
+    arr.push({ optionIndex: v.optionIndex, pending: v.pending })
+    myVotesByPoll.set(v.pollId, arr)
   }
 
   const decorate = (caw: ShapedCaw | null | undefined) => {
@@ -367,7 +392,11 @@ export async function enrichWithPollVotes(
     const optionVoteCounts: number[] = []
     for (let i = 0; i < optionsLen; i++) optionVoteCounts.push(inner.get(i) || 0)
     caw.poll.optionVoteCounts = optionVoteCounts
-    caw.poll.userVote = myVoteByPoll.get(pid) || null
+    const myVotes = myVotesByPoll.get(pid) ?? []
+    caw.poll.userVotes = myVotes
+    // Back-compat: keep userVote populated with the first row so the
+    // single-select renderer path still works without changes.
+    caw.poll.userVote = myVotes[0] ?? null
     // Strip the internal id so it doesn't leak into responses.
     delete (caw.poll as any)._pollId
   }

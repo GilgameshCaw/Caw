@@ -464,6 +464,9 @@ const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess, placehol
   // server-now is past (caw.createdAt + duration). Default 1d
   // matches the picker default in pollMarker.ts.
   const [pollDuration, setPollDuration] = useState<string>('1d')
+  // Multi-select flag (::pm:: marker sidecar). When set, voters can
+  // toggle any subset of options instead of picking exactly one.
+  const [pollMultiSelect, setPollMultiSelect] = useState(false)
   // Tip-along-post: when set, an OTHER (tip) action is bundled into the same
   // batch as the CAW action(s). Cleared on submit-success / reset.
   const [tipAttachment, setTipAttachment] = useState<TipAttachment | null>(null)
@@ -1133,9 +1136,9 @@ const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess, placehol
     const submitPollHashes = pollOptionImages.map(u => imageUrlToPollHash(u || ''))
     const submitPollMeta = imageUrlToMeta(pollOptionImages.find(u => u) || '')
     const submitPollMarker = pollEnabled && submitPollMeta
-      ? buildPollMarker(pollOptions, submitPollHashes, submitPollMeta, pollDuration)
+      ? buildPollMarker(pollOptions, submitPollHashes, submitPollMeta, pollDuration, pollMultiSelect)
       : pollEnabled
-        ? buildPollMarker(pollOptions, undefined, undefined, pollDuration) // text-only poll
+        ? buildPollMarker(pollOptions, undefined, undefined, pollDuration, pollMultiSelect) // text-only poll
         : null
     if (submitPollMarker && !isThreadMode) {
       finalText = (finalText ? finalText + '\n' : '') + submitPollMarker
@@ -1588,6 +1591,7 @@ const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess, placehol
     setPollEnabled(false)
     setPollOptions([])
     setPollOptionImages([])
+    setPollMultiSelect(false)
     setTipAttachment(null)
     onSuccess?.()
     } catch (error: any) {
@@ -1628,9 +1632,9 @@ const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess, placehol
   const counterPollHashes = pollOptionImages.map(u => imageUrlToPollHash(u || ''))
   const counterPollMeta = imageUrlToMeta(pollOptionImages.find(u => u) || '')
   const pollMarker = pollEnabled && counterPollMeta
-    ? buildPollMarker(pollOptions, counterPollHashes, counterPollMeta, pollDuration)
+    ? buildPollMarker(pollOptions, counterPollHashes, counterPollMeta, pollDuration, pollMultiSelect)
     : pollEnabled
-      ? buildPollMarker(pollOptions, undefined, undefined, pollDuration)
+      ? buildPollMarker(pollOptions, undefined, undefined, pollDuration, pollMultiSelect)
       : null
   // Poll is "active but not yet valid" when the user has opened the composer
   // but hasn't filled in at least 2 valid options. Submit gets blocked but
@@ -1831,12 +1835,14 @@ const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess, placehol
               onChange={setPollOptions}
               optionImages={pollOptionImages}
               onChangeImages={setPollOptionImages}
-              onClose={() => { setPollEnabled(false); setPollOptions([]); setPollOptionImages([]) }}
+              onClose={() => { setPollEnabled(false); setPollOptions([]); setPollOptionImages([]); setPollMultiSelect(false) }}
               position={pollPosition}
               onChangePosition={setPollPosition}
               showPositionPicker={isThreadMode}
               duration={pollDuration}
               onChangeDuration={setPollDuration}
+              multiSelect={pollMultiSelect}
+              onChangeMultiSelect={setPollMultiSelect}
             />
           )}
 
@@ -2219,12 +2225,14 @@ const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess, placehol
             onChange={setPollOptions}
             optionImages={pollOptionImages}
             onChangeImages={setPollOptionImages}
-            onClose={() => { setPollEnabled(false); setPollOptions([]); setPollOptionImages([]) }}
+            onClose={() => { setPollEnabled(false); setPollOptions([]); setPollOptionImages([]); setPollMultiSelect(false) }}
             position={pollPosition}
             onChangePosition={setPollPosition}
             showPositionPicker={isThreadMode}
             duration={pollDuration}
             onChangeDuration={setPollDuration}
+            multiSelect={pollMultiSelect}
+            onChangeMultiSelect={setPollMultiSelect}
           />
         )}
 

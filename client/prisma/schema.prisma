@@ -196,6 +196,12 @@ model Poll {
   // stays text-only, so mirror nodes see the poll but not the images
   // unless they fetch from the original instance.
   optionImages String[] @default([])
+  /// When true, voters can pick any subset of options (checkbox UI;
+  /// each vote action toggles one option). Encoded on-chain via the
+  /// `::pm::` marker sidecar. Default false = single-select (radio UI;
+  /// each vote replaces the prior choice). Legacy polls created
+  /// before the sidecar always parse as single-select.
+  multiSelect  Boolean  @default(false)
   totalVotes   Int      @default(0)
   createdAt    DateTime @default(now())
   updatedAt    DateTime @updatedAt
@@ -230,7 +236,15 @@ model Vote {
   poll        Poll     @relation(fields: [pollId], references: [id], onDelete: Cascade)
   voter       User     @relation(fields: [voterId], references: [tokenId])
 
-  @@unique([pollId, voterId])
+  /// Uniqueness on (pollId, voterId, optionIndex) so multi-select polls
+  /// can have multiple Vote rows per voter — one per picked option.
+  /// Single-select polls still get one row per voter in practice
+  /// because the FE only emits one vote action per voter (replaces on
+  /// change); the broader uniqueness key just stops being the
+  /// constraint enforced. Existing rows satisfy the new constraint
+  /// because (pollId, voterId) was already unique and adding
+  /// optionIndex preserves that.
+  @@unique([pollId, voterId, optionIndex])
   @@index([pollId, optionIndex])
   @@index([voterId])
 }
