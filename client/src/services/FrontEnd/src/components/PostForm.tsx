@@ -2093,16 +2093,22 @@ const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess, placehol
     // act on the master text.
     const modKey = e.metaKey || e.ctrlKey
     if (modKey && e.key === 'a' && !e.shiftKey && !e.altKey) {
-      e.preventDefault()
-      // Select within this chunk so the textarea's own selection mirrors
-      // the visual "all selected" state — needed so Cmd-C in chunk N
-      // produces a non-empty clipboard write via the native copy event
-      // path (we still preventDefault on copy and write master text, but
-      // having a native selection prevents the OS from doing nothing on
-      // older browsers).
-      ta.setSelectionRange(0, ta.value.length)
-      setAllChunksSelected(true)
-      return
+      // Multi-chunk thread mode: suppress the native textarea selection
+      // entirely so the only visible "selection" is our yellow tint across
+      // every chunk. Without this, the focused chunk also shows the
+      // browser's native highlight (blue/system color) on top of our
+      // yellow wrapper, which reads as two competing selection states.
+      // Single-chunk thread mode (rare: media-only chunk-pinned case) —
+      // let the native select-all run as usual since there's nothing to
+      // tint across.
+      if (chunkSlices.length > 1) {
+        e.preventDefault()
+        // Collapse selection so neither a highlight nor a blinking caret
+        // is visible — only the yellow wrapper tint remains.
+        ta.setSelectionRange(ta.value.length, ta.value.length)
+        setAllChunksSelected(true)
+        return
+      }
     }
     if (allChunksSelected) {
       // Copy/Cut → write master text to clipboard; cut also clears.
