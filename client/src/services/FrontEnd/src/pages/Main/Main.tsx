@@ -102,7 +102,7 @@ export const Main: React.FC = () => {
       />
       {/* PostForm - Always visible */}
       <div className={`border-b ${isDark ? 'border-white/10' : 'border-gray-200'}`}>
-        <PostForm onSuccess={() => feedRef.current?.refresh()} composeMode trackDraft/>
+        <PostForm onSuccess={() => feedRef.current?.refresh()} composeMode trackDraft autoFocus={false}/>
       </div>
       <div
         className="w-full"

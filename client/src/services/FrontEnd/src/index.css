@@ -8,6 +8,14 @@ body {
   overflow-x: hidden;
 }
 
+/* #210: <html> is the real scroll container (the overflow-x above makes its
+   overflow-y compute to auto). scrollLock toggles its overflow to freeze the
+   page behind modals; reserve the scrollbar gutter permanently so that
+   freeze/unfreeze doesn't shift content ~15px sideways. */
+html {
+  scrollbar-gutter: stable;
+}
+
 @font-face {
   font-family: 'Fraunces';
   src: url('/fonts/Fraunces.ttf') format('truetype');

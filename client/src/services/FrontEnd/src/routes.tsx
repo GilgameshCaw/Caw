@@ -66,6 +66,7 @@ const NotificationSettings = lazyWithReload(() => import("./pages/NotificationSe
 const LanguageSettings = lazyWithReload(() => import("./pages/LanguageSettings"));
 const AccountSettings = lazyWithReload(() => import("./pages/AccountSettings"));
 const SessionKeySettings = lazyWithReload(() => import("./pages/SessionKeySettings"));
+const AIProviderSettings = lazyWithReload(() => import("./pages/AIProviderSettings"));
 const HelpPage = lazyWithReload(() => import("./pages/HelpPage"));
 const MessagesPage = lazyWithReload(() => import("./pages/Messages"));
 const InviteRedeemPage = lazyWithReload(() => import("./pages/InviteRedeemPage"));
@@ -141,6 +142,7 @@ export const layoutRoutes: RouteDef[] = [
   { path: "/settings/language", component: <AuthGate><LanguageSettings /></AuthGate> },
   { path: "/settings/account", component: <AuthGate><AccountSettings /></AuthGate> },
   { path: "/settings/session-keys", component: <AuthGate><SessionKeySettings /></AuthGate> },
+  { path: "/settings/ai-provider", component: <AuthGate><AIProviderSettings /></AuthGate> },
   { path: "/help", component: <HelpPage /> },
   { path: "/help/faq", component: <HelpPage defaultTab="faq" /> },
   { path: "/help/history", component: <HelpPage defaultTab="history" /> },
