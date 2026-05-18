@@ -616,46 +616,12 @@ async function cleanupFailedTxQueue() {
   }
 }
 
-/**
- * Escalate "Cawonce already used" failures older than 24 hours to
- * ACTION_FAILED notifications. The frontend auto-retries these within the
- * first 24h; if that hasn't worked, the user needs a manual retry path.
- */
-async function escalateStaleCawonceFailures() {
-  try {
-    const cutoff = new Date(Date.now() - 24 * 60 * 60 * 1000)
-
-    const staleEntries = await prisma.txQueue.findMany({
-      where: {
-        status: 'failed',
-        reason: 'Cawonce already used',
-        updatedAt: { lt: cutoff },
-      },
-      take: 50,
-    })
-
-    if (staleEntries.length === 0) return
-
-    logger.log(`Escalating ${staleEntries.length} stale cawonce failures to notifications`)
-
-    for (const entry of staleEntries) {
-      try {
-        const actionData = (entry.payload as any)?.data
-        if (actionData) {
-          await createActionFailedNotification(prisma, entry.senderId, entry.id, actionData, 'Cawonce already used')
-        }
-        await prisma.txQueue.update({
-          where: { id: entry.id },
-          data: { reason: 'Cawonce already used (notified)' },
-        })
-      } catch (err) {
-        logger.error(` Error escalating cawonce failure ${entry.id}:`, err)
-      }
-    }
-  } catch (err) {
-    logger.error('Fatal error during cawonce failure escalation:', err)
-  }
-}
+// (Removed) escalateStaleCawonceFailures — used to create ACTION_FAILED
+// notifications for 'Cawonce already used' failures after 24h. Per
+// txQueueFailure.ts:50-53 (and observed data: 99% of "escalated"
+// failures came from users whose actual post succeeded), this reason
+// means "the action already landed under a sibling row" — NEVER a
+// user-visible failure. Removed 2026-05-18 (bug #246).
 
 /**
  * Clean up stale pending follows
@@ -1075,9 +1041,6 @@ async function runDataCleanup() {
 
   // Clean up failed txqueue records and update associated caws
   await cleanupFailedTxQueue()
-
-  // Escalate stale "Cawonce already used" failures (>24h) to notifications
-  await escalateStaleCawonceFailures()
 
   // Promote waiting_for_deposit rows once their L1 deposit has landed on L2
   await cleanupPendingMintDeposits()
