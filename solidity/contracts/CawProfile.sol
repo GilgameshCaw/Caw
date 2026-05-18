@@ -917,8 +917,9 @@ contract CawProfile is
     // L2 receive call (gas budget far below any handler's needs), so a bad selector still
     // reverts — just without an explicit require message in this hot path.
     // Per-token cost: 19k SSTORE (ownerOf, warm) + 22k (lastOwnerUpdateBlock cold)
-    // + 22k (ownerSessionEpoch++ on prev-owner-out, cold). Plus arithmetic/loop overhead.
-    return gasBaseFor[selector] + uint128(40_000 * n) + networkManager.networkGasOverride(cawNetworkId, selector);
+    // + 22k (ownerSessionEpoch++ on prev-owner-out, cold)
+    // + 22k (tokenSessionEpoch[tokenId]++ cold, token-scoped-session invalidation). Plus arithmetic/loop overhead.
+    return gasBaseFor[selector] + uint128(65_000 * n) + networkManager.networkGasOverride(cawNetworkId, selector);
   }
 
   receive() external payable {}

@@ -146,7 +146,7 @@ contract SessionRegisterFuzzTest is Test {
             // If this somehow doesn't revert, assert at minimum that the
             // registration didn't land on `signer` (the original intended
             // owner). The sig-recovery would have produced some other addr.
-            (uint64 storedExpiry, , , , ) = profile.sessions(signer, sessionKey);
+            (uint64 storedExpiry, , , , , ) = profile.sessions(signer, sessionKey);
             assertEq(uint256(storedExpiry), 0, "tampered scope landed on signer");
         } catch {
             // Expected.

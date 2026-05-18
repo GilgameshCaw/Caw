@@ -97,12 +97,18 @@ contract CawProfileL2 is
   // SESSION KEY DELEGATION (address-based)
   // ============================================
 
+  /// @notice Packed session record. Slot layout (two storage slots):
+  ///   Slot 0 (200 bits used): expiry(64) | scopeBitmap(8) | epoch(32) | perActionTipRate(64) | profileId(32)
+  ///   Slot 1 (256 bits):       spendLimit(256)
+  /// profileId == 0 → wallet-scoped (all tokens owned by `owner`).
+  /// profileId != 0 → token-scoped (actions only valid for that specific tokenId).
   struct StoredSession {
     uint64  expiry;
     uint8   scopeBitmap;
-    uint256 spendLimit;        // max total CAW (whole tokens) this session can spend
+    uint32  epoch;             // ownerSessionEpoch[owner] or tokenSessionEpoch[profileId] at registration; mismatch invalidates
     uint64  perActionTipRate;  // implicit validator tip per session-signed action (whole CAW)
-    uint32  epoch;             // ownerSessionEpoch[owner] at registration time; mismatch invalidates
+    uint32  profileId;         // 0 = wallet-scoped; non-zero = token-scoped (only valid for that tokenId)
+    uint256 spendLimit;        // max total CAW (whole tokens) this session can spend
   }
 
   /// @notice ownerAddress => sessionKey => stored session data
@@ -121,8 +127,16 @@ contract CawProfileL2 is
   ///         sessions whose stamped epoch != current. CL-4 fix.
   mapping(address => uint32) public ownerSessionEpoch;
 
+  /// @dev Per-tokenId session epoch. Bumped on every transfer of that token (in _setOwnerOf).
+  ///      Token-scoped sessions stamp this at registration; mismatch after transfer invalidates them.
+  ///      Internal: callers verify indirectly via validSession().
+  mapping(uint32 => uint32) internal tokenSessionEpoch;
+
   /// @notice Per-address nonce for session delegation signatures (prevents replay after revocation)
   mapping(address => uint256) public sessionNonce;
+
+  /// @notice Per-tokenId nonce for token-scoped session delegation signatures.
+  mapping(uint32 => uint256) public tokenSessionNonce;
 
   /// @notice Set of session-delegation message digests that have already been
   ///         consumed by `registerSessionPersonal`. The personal-sign message
@@ -134,12 +148,16 @@ contract CawProfileL2 is
   mapping(bytes32 => bool) public consumedSessionMessage;
 
   /// @notice Returns the StoredSession for (owner, sessionKey), zero-ed if the
-  ///         session's epoch != current ownerSessionEpoch[owner]. Lets callers
-  ///         (CawActions) skip a separate epoch check on the hot verify path.
+  ///         session's epoch != current epoch or the session is expired.
+  ///         For wallet-scoped sessions (profileId == 0) uses ownerSessionEpoch[owner];
+  ///         for token-scoped sessions (profileId != 0) uses tokenSessionEpoch[profileId].
   function validSession(address owner, address sessionKey) external view returns (StoredSession memory s) {
     s = sessions[owner][sessionKey];
-    if (s.epoch != ownerSessionEpoch[owner]) {
-      return StoredSession(0, 0, 0, 0, 0);
+    uint32 expectedEpoch = s.profileId == 0
+      ? ownerSessionEpoch[owner]
+      : tokenSessionEpoch[s.profileId];
+    if (s.epoch != expectedEpoch) {
+      return StoredSession(0, 0, 0, 0, 0, 0);
     }
   }
 
@@ -155,6 +173,10 @@ contract CawProfileL2 is
 
   bytes32 private constant REVOKE_SESSION_TYPEHASH = keccak256(
     "RevokeSession(address owner,address sessionKey,uint64 expiry)"
+  );
+
+  bytes32 private constant TOKEN_DELEGATION_TYPEHASH = keccak256(
+    "TokenSessionDelegation(uint32 profileId,address sessionKey,uint64 expiry,uint8 scopeBitmap,uint256 spendLimit,uint64 perActionTipRate,uint256 nonce)"
   );
 
   event OwnerSet(uint32 tokenId, address newOwner);
@@ -475,9 +497,7 @@ contract CawProfileL2 is
     // session write. Without this, an old by-sig payload could be submitted later by
     // anyone to register an additional, unintended session under the same owner.
     sessionNonce[owner]++;
-    uint8 scopeBitmap = 0xBF; // all actions except WITHDRAW (bit 6) — non-delegatable
-    sessions[owner][sessionKey] = StoredSession(expiry, scopeBitmap, spendLimit, perActionTipRate, ownerSessionEpoch[owner]);
-    emit SessionCreated(owner, sessionKey, expiry, scopeBitmap, spendLimit, perActionTipRate);
+    _writeWalletSession(owner, sessionKey, expiry, 0xBF, perActionTipRate, spendLimit);
   }
 
   /// @notice Bundled L2 receiver: mint mirror + mark authenticated + register a Quick Sign
@@ -509,9 +529,7 @@ contract CawProfileL2 is
 
     // Same nonce-bump rationale as depositAndRegisterSessionAndUpdateOwners.
     sessionNonce[owner]++;
-    uint8 scopeBitmap = 0xBF; // all actions except WITHDRAW (bit 6) — non-delegatable
-    sessions[owner][sessionKey] = StoredSession(expiry, scopeBitmap, spendLimit, perActionTipRate, ownerSessionEpoch[owner]);
-    emit SessionCreated(owner, sessionKey, expiry, scopeBitmap, spendLimit, perActionTipRate);
+    _writeWalletSession(owner, sessionKey, expiry, 0xBF, perActionTipRate, spendLimit);
   }
 
   /// @notice Co-deployment (bypassLZ) helper for the bundled mint+quicksign flows. Registers a
@@ -525,9 +543,7 @@ contract CawProfileL2 is
     if (expiry <= block.timestamp) revert Expired();
     // Same nonce-bump rationale as depositAndRegisterSessionAndUpdateOwners.
     sessionNonce[owner]++;
-    uint8 scopeBitmap = 0xBF; // all actions except WITHDRAW (bit 6) — non-delegatable
-    sessions[owner][sessionKey] = StoredSession(expiry, scopeBitmap, spendLimit, perActionTipRate, ownerSessionEpoch[owner]);
-    emit SessionCreated(owner, sessionKey, expiry, scopeBitmap, spendLimit, perActionTipRate);
+    _writeWalletSession(owner, sessionKey, expiry, 0xBF, perActionTipRate, spendLimit);
   }
 
   /// @notice Mark a token as authenticated with a network. Only used in mainnet co-deployment mode.
@@ -559,14 +575,29 @@ contract CawProfileL2 is
 
   /// @dev Internal: silent-skip if `stamp` is older than the last applied stamp
   ///      for this token (CL-4 / out-of-order LZ delivery). On owner-change,
-  ///      bump `ownerSessionEpoch[oldOwner]` so any session keys registered
-  ///      while they held the token are invalidated.
+  ///      bump `tokenSessionEpoch[tokenId]` so any token-scoped session keys
+  ///      registered for this token are invalidated. Wallet-scoped sessions
+  ///      do not need an epoch bump here: after transfer, `ownerOf[tokenId]`
+  ///      is updated to the new owner, so CawActions.validSession() lookups
+  ///      use the NEW owner's session table — the old owner's wallet-scoped
+  ///      sessions are unreachable for that token regardless of epoch.
   function _setOwnerOf(uint32 tokenId, address newOwner, uint64 stamp) internal {
     if (stamp < lastOwnerUpdateBlock[tokenId]) return; // stale; silent skip
     lastOwnerUpdateBlock[tokenId] = stamp;
     address prev = ownerOf[tokenId];
     if (prev != newOwner && prev != address(0)) {
+      // CL-4 invariant: bump BOTH epochs on owner change.
+      //   - ownerSessionEpoch[prev]: invalidates EVERY wallet-scoped session
+      //     for the prev wallet. Required because an LZ unordered redelivery
+      //     could later re-stamp ownerOf back to prev, reanimating sessions
+      //     prev registered during their brief ownership. Without this, the
+      //     intermediate-holder drain attack from project_l1l2_ownership_desync
+      //     re-opens.
+      //   - tokenSessionEpoch[tokenId]: invalidates token-scoped sessions
+      //     bound to this profileId. Required for the same reason on the
+      //     token-scoped path.
       unchecked { ownerSessionEpoch[prev]++; }
+      unchecked { tokenSessionEpoch[tokenId]++; }
     }
     emit OwnerSet(tokenId, newOwner);
     ownerOf[tokenId] = newOwner;
@@ -575,6 +606,15 @@ contract CawProfileL2 is
   // ============================================
   // SESSION KEY REGISTRATION & REVOCATION
   // ============================================
+
+  /// @dev Write a wallet-scoped session record and emit SessionCreated.
+  ///      Caller responsible for all pre-checks (expiry, nonce, sig).
+  function _writeWalletSession(
+    address owner, address sessionKey, uint64 expiry, uint8 scopeBitmap, uint64 perActionTipRate, uint256 spendLimit
+  ) internal {
+    sessions[owner][sessionKey] = StoredSession(expiry, scopeBitmap, ownerSessionEpoch[owner], perActionTipRate, 0, spendLimit);
+    emit SessionCreated(owner, sessionKey, expiry, scopeBitmap, spendLimit, perActionTipRate);
+  }
 
   /// @notice Register a session key. The wallet owner signs an EIP-712
   ///         delegation, then anyone (e.g. the validator) can submit it
@@ -619,8 +659,7 @@ contract CawProfileL2 is
     if (nonce != sessionNonce[signer]) revert BadNonce();
 
     sessionNonce[signer]++;
-    sessions[signer][sessionKey] = StoredSession(expiry, scopeBitmap, spendLimit, perActionTipRate, ownerSessionEpoch[signer]);
-    emit SessionCreated(signer, sessionKey, expiry, scopeBitmap, spendLimit, perActionTipRate);
+    _writeWalletSession(signer, sessionKey, expiry, scopeBitmap, perActionTipRate, spendLimit);
   }
 
   /// @notice Register a session key using a human-readable personal_sign message.
@@ -668,10 +707,43 @@ contract CawProfileL2 is
     if (expiry <= block.timestamp) revert Expired();
 
     sessionNonce[signer]++;
+    _writeWalletSession(signer, sessionKey, expiry, 0xBF, perActionTipRate, spendLimit);
+  }
 
-    uint8 scopeBitmap = 0xBF; // all actions except WITHDRAW (bit 6)
-    sessions[signer][sessionKey] = StoredSession(expiry, scopeBitmap, spendLimit, perActionTipRate, ownerSessionEpoch[signer]);
-    emit SessionCreated(signer, sessionKey, expiry, scopeBitmap, spendLimit, perActionTipRate);
+  /// @notice Register a token-scoped session key. Bound to a specific profileId;
+  ///         only valid for actions from that profile. WITHDRAW (bit 6) force-cleared.
+  ///         Invalidated on transfer via tokenSessionEpoch bump.
+  ///         v/r/s: ECDSA sig from the current token owner over the typed-data digest.
+  function registerTokenScopedSession(
+    uint32 profileId,
+    address sessionKey,
+    uint64 expiry,
+    uint8 scopeBitmap,
+    uint256 spendLimit,
+    uint64 perActionTipRate,
+    uint256 nonce,
+    uint8 v, bytes32 r, bytes32 s
+  ) external {
+    if (sessionKey == address(0)) revert ZeroKey();
+    if (expiry <= block.timestamp) revert Expired();
+    if (nonce != tokenSessionNonce[profileId]) revert BadNonce();
+    uint8 bm = scopeBitmap & 0xBF;
+    bytes32 digest = keccak256(abi.encodePacked(
+      "\x19\x01",
+      eip712DomainHash,
+      keccak256(abi.encode(
+        TOKEN_DELEGATION_TYPEHASH,
+        profileId, sessionKey, expiry, bm, spendLimit, perActionTipRate, nonce
+      ))
+    ));
+    address recovered = ecrecover(digest, v, r, s);
+    // Use L2's local ownerOf mirror (kept in sync via LZ updateOwners + _setOwnerOf).
+    // cawProfile.ownerOf() would only work in bypassLZ co-deployment mode; on a
+    // real cross-chain deployment cawProfile is on L1 and the call reverts.
+    if (recovered == address(0) || recovered != ownerOf[profileId]) revert BadSig();
+    tokenSessionNonce[profileId]++;
+    sessions[recovered][sessionKey] = StoredSession(expiry, bm, tokenSessionEpoch[profileId], perActionTipRate, profileId, spendLimit);
+    emit SessionCreated(recovered, sessionKey, expiry, bm, spendLimit, perActionTipRate);
   }
 
   /// @dev Parse the multi-line session message. Format:
@@ -837,7 +909,7 @@ contract CawProfileL2 is
     if (h == keccak256("October"))   return 10;
     if (h == keccak256("November"))  return 11;
     if (h == keccak256("December"))  return 12;
-    revert("Invalid month");
+    revert BadParse();
   }
 
   /// @dev Convert date components to unix timestamp (UTC). Only valid for years >= 1970.
@@ -878,7 +950,7 @@ contract CawProfileL2 is
       if (c >= 0x30 && c <= 0x39) val = c - 0x30;
       else if (c >= 0x61 && c <= 0x66) val = c - 0x61 + 10;
       else if (c >= 0x41 && c <= 0x46) val = c - 0x41 + 10;
-      else revert("Invalid hex char");
+      else revert BadParse();
       result = result * 16 + val;
     }
   }
@@ -930,9 +1002,7 @@ contract CawProfileL2 is
     if (expiry <= block.timestamp) revert Expired();
 
     sessionNonce[owner]++;
-    uint8 scopeBitmap = 0xBF; // all actions except WITHDRAW (bit 6)
-    sessions[owner][sessionKey] = StoredSession(expiry, scopeBitmap, spendLimit, perActionTipRate, ownerSessionEpoch[owner]);
-    emit SessionCreated(owner, sessionKey, expiry, scopeBitmap, spendLimit, perActionTipRate);
+    _writeWalletSession(owner, sessionKey, expiry, 0xBF, perActionTipRate, spendLimit);
   }
 
   /// @notice Revoke a session via an OTHER action (qx:) submitted by CawActions.
@@ -1051,20 +1121,13 @@ contract CawProfileL2 is
 
     // Handle failure and revert with the error message
     if (!success) {
-      // If the returndata is empty, use a generic error message
-      if (returnData.length == 0) {
-        revert("Delegatecall failed with no revert reason");
-      } else {
-        // Bubble up the revert reason
-        assembly {
-          let returndata_size := mload(returnData)
-          revert(add(32, returnData), returndata_size)
-        }
+      if (returnData.length == 0) revert UnauthorizedSelector();
+      assembly {
+        let returndata_size := mload(returnData)
+        revert(add(32, returnData), returndata_size)
       }
     }
   }
-
-  mapping(bytes4 => string) public functionSigs;
 
   /// @notice Whitelist of selectors allowed via delegatecall from LayerZero messages.
   /// @dev Security: verified that no authorized selector collides with any inherited
@@ -1144,8 +1207,8 @@ contract CawProfileL2 is
     ); return lzQuote(setWithdrawableSelector, tokenIds.length, payload, payInLzToken);
   }
 
-  /// @notice Quote a generic LayerZero message to L1, given a selector, batch size, and payload.
-  function lzQuote(bytes4 selector, uint256 n, bytes memory payload, bool _payInLzToken) public view returns (MessagingFee memory quote) {
+  /// @dev Quote a generic LayerZero message to L1, given a selector, batch size, and payload.
+  function lzQuote(bytes4 selector, uint256 n, bytes memory payload, bool _payInLzToken) internal view returns (MessagingFee memory quote) {
     bytes memory _options = OptionsBuilder.newOptions().addExecutorLzReceiveOption(gasLimitFor(selector, n), 0);
     return _quote(layer1EndpointId, payload, _options, _payInLzToken);
   }
@@ -1173,9 +1236,9 @@ contract CawProfileL2 is
   ///      the validator pays L1 gas prices for every wasted unit. Constants come from real
   ///      measurements (scripts/measure-gas.js): measured ≈ 15.5k + 14.4k*n, with base and
   ///      slope each scaled up ~1.3× for safety margin covering cold-slot warmup variance.
-  function gasLimitFor(bytes4 selector, uint256 n) public view returns (uint128) {
+  function gasLimitFor(bytes4 selector, uint256 n) internal view returns (uint128) {
     if (selector == setWithdrawableSelector) return uint128(22_000 + 19_000 * n);  // measured: 15.5k + 14.4k*n
-    revert('unexpected selector');
+    revert UnauthorizedSelector();
   }
 
   // Signature verification (ERC-1271 fallback included) lives in
