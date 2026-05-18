@@ -30,6 +30,14 @@ interface HighlightedTextareaProps {
   denser?: boolean
   /** When true, grows textarea height to fit content (no internal scroll). */
   autoResize?: boolean
+  /**
+   * Character offsets in `value` where the post will be split into chunks
+   * for a thread. Each non-zero entry renders as a 1px horizontal hairline
+   * in the highlight overlay so the user can see where the on-chain post
+   * boundary lands while typing. Boundaries[0] is conventionally 0 and is
+   * ignored (no break before the first chunk). Empty / undefined = no breaks.
+   */
+  chunkBoundaries?: number[]
 }
 
 /**
@@ -53,7 +61,8 @@ const HighlightedTextarea: React.FC<HighlightedTextareaProps> = ({
   fontSize = 'xl',
   compact = false,
   denser = false,
-  autoResize = false
+  autoResize = false,
+  chunkBoundaries
 }) => {
   const { isDark } = useTheme()
   // Each instance keeps its OWN ref to its OWN textarea — required so
@@ -167,8 +176,10 @@ const HighlightedTextarea: React.FC<HighlightedTextareaProps> = ({
     return () => cancelAnimationFrame(rafId)
   }, [autoResize, value, compact, lineHeight, fontSize, resizeTick])
 
-  // Parse text and apply highlighting for @mentions, #hashtags, $cashtags, and URLs
-  const getHighlightedText = (text: string) => {
+  // Apply mention/hashtag/URL highlighting to a single text slice. Used both
+  // for the whole `value` (no chunk boundaries) and for each between-boundary
+  // segment when threading is active.
+  const highlightSlice = (text: string, keyPrefix: string): React.ReactNode => {
     if (!text) return null
 
     // Match @mentions, #hashtags, $cashtags, and URLs. Hashtags/cashtags must
@@ -187,12 +198,12 @@ const HighlightedTextarea: React.FC<HighlightedTextareaProps> = ({
       return parts.map((part, index) => {
         if (isMentionOrTag.test(part) || isUrl.test(part)) {
           return (
-            <span key={index} className={isDark ? 'text-yellow-400' : 'text-amber-800'}>
+            <span key={`${keyPrefix}-${index}`} className={isDark ? 'text-yellow-400' : 'text-amber-800'}>
               {part}
             </span>
           )
         }
-        return part
+        return <React.Fragment key={`${keyPrefix}-${index}`}>{part}</React.Fragment>
       })
     } catch (err) {
       // Defensive: a malformed regex run shouldn't take down the
@@ -204,6 +215,71 @@ const HighlightedTextarea: React.FC<HighlightedTextareaProps> = ({
       return text
     }
   }
+
+  // Render the highlighted text with optional zero-height marker spans at
+  // each chunk boundary. The markers don't disturb the text flow (so the
+  // highlight overlay stays pixel-aligned with the transparent textarea
+  // underneath); we read their offsetTop in an effect below and render
+  // absolute-positioned hairlines on top. Boundaries are character offsets
+  // into `value`; the leading 0 (if present) is ignored — we only mark
+  // breaks BETWEEN chunks, not before the first one.
+  const getHighlightedText = (text: string): React.ReactNode => {
+    if (!text) return null
+
+    const breaks = (chunkBoundaries ?? [])
+      .filter(b => b > 0 && b < text.length)
+      .sort((a, b) => a - b)
+      .filter((b, i, arr) => i === 0 || b !== arr[i - 1])
+
+    if (breaks.length === 0) return highlightSlice(text, 'h')
+
+    const segments: React.ReactNode[] = []
+    let prev = 0
+    for (let i = 0; i < breaks.length; i++) {
+      const at = breaks[i]
+      segments.push(
+        <React.Fragment key={`seg-${i}`}>{highlightSlice(text.slice(prev, at), `s${i}`)}</React.Fragment>
+      )
+      // Zero-width inline marker. We use `inline` (not block) so the
+      // line flow is unaffected; the line itself is drawn by an absolute
+      // overlay positioned from this span's offsetTop.
+      segments.push(
+        <span
+          key={`brk-${i}`}
+          data-chunk-break={i}
+          aria-hidden="true"
+          style={{ display: 'inline-block', width: 0, height: 0 }}
+        />
+      )
+      prev = at
+    }
+    segments.push(
+      <React.Fragment key={`seg-${breaks.length}`}>{highlightSlice(text.slice(prev), `s${breaks.length}`)}</React.Fragment>
+    )
+    return segments
+  }
+
+  // Position the hairlines by measuring the marker spans' offsetTop. Runs
+  // after every render that changes value or boundaries, plus on resize.
+  const [breakTops, setBreakTops] = useState<number[]>([])
+  useEffect(() => {
+    const el = highlightRef.current
+    if (!el) { setBreakTops([]); return }
+    const breaks = (chunkBoundaries ?? []).filter(b => b > 0 && b < value.length)
+    if (breaks.length === 0) { setBreakTops([]); return }
+    // Measure on the next animation frame so layout has settled.
+    let rafId = requestAnimationFrame(() => {
+      const markers = el.querySelectorAll<HTMLElement>('[data-chunk-break]')
+      const tops: number[] = []
+      markers.forEach(m => {
+        // offsetTop is relative to the nearest positioned ancestor — the
+        // highlight layer itself, which matches what we need.
+        tops.push(m.offsetTop)
+      })
+      setBreakTops(tops)
+    })
+    return () => cancelAnimationFrame(rafId)
+  }, [value, chunkBoundaries, overlayHeight, fontSize, compact])
 
   return (
     <div className="relative w-full">
@@ -227,6 +303,24 @@ const HighlightedTextarea: React.FC<HighlightedTextareaProps> = ({
         aria-hidden="true"
       >
         {getHighlightedText(value)}
+        {/* Chunk-boundary hairlines. Absolutely positioned within the
+            highlight layer so they don't push any text and the overlay
+            stays pixel-aligned with the transparent textarea below.
+            offsetTop is measured from each marker span above; we shift
+            up by a hair so the line lands on the line's baseline gap
+            instead of slicing through ascenders. */}
+        {breakTops.map((top, i) => (
+          <span
+            key={`brkline-${i}`}
+            aria-hidden="true"
+            className={`absolute left-2 right-2 ${isDark ? 'border-gray-600' : 'border-gray-300'}`}
+            style={{
+              top: `${top - 1}px`,
+              borderTopWidth: 1,
+              height: 0,
+            }}
+          />
+        ))}
         {/* Add invisible character to maintain height when empty */}
         {!value && <span className="invisible">.</span>}
       </div>
