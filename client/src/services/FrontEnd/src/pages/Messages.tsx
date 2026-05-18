@@ -2248,7 +2248,7 @@ const MessagesPage: React.FC = () => {
                           </button>
                         )}
 
-                        <div className={`flex items-start gap-1 group ${message.isFromCurrentUser ? 'flex-row-reverse' : 'flex-row'}`}>
+                        <div className={`flex w-full items-start gap-1 group ${message.isFromCurrentUser ? 'flex-row-reverse' : 'flex-row'}`}>
                           {/* Message bubble — full timestamp lives on the
                               "X minutes ago" line below now, so the bubble
                               itself isn't a tooltip trigger and doesn't

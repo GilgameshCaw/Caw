@@ -1,7 +1,7 @@
 import { useTheme } from '~/hooks/useTheme'
 import { useState } from 'react'
 import { useNavigate } from '~/utils/localizedRouter'
-import { HiUser, HiBell, HiVolumeOff, HiLightningBolt, HiTranslate, HiOutlineShieldCheck } from 'react-icons/hi'
+import { HiUser, HiBell, HiVolumeOff, HiLightningBolt, HiTranslate, HiOutlineShieldCheck, HiSparkles } from 'react-icons/hi'
 import { useT } from '~/i18n/I18nProvider'
 import { useMyRole } from '~/hooks/useMyRole'
 
@@ -46,6 +46,14 @@ export const SettingsPage: React.FC = () => {
       icon: <HiLightningBolt className="w-5 h-5" />,
       hasArrow: true,
       onClick: () => navigate('/settings/session-keys')
+    },
+    {
+      id: 'ai-provider',
+      title: t('settings.ai_provider.title'),
+      description: t('settings.ai_provider.menu_description'),
+      icon: <HiSparkles className="w-5 h-5" />,
+      hasArrow: true,
+      onClick: () => navigate('/settings/ai-provider')
     },
     {
       id: 'muted-content',

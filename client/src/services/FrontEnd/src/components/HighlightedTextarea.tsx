@@ -104,6 +104,15 @@ const HighlightedTextarea: React.FC<HighlightedTextareaProps> = ({
   const paddingBottom = denser ? '0px' : compact ? '10px' : '26px'
   const padding = `${paddingTop} 8px ${paddingBottom} 8px`
 
+  // Floor for autoResize: `rows` full text lines + vertical padding. The
+  // grow effect can silently bail (offsetParent === null while the composer
+  // is behind a position:fixed/transform ancestor — the mobile reply case,
+  // #221), leaving the box stuck at its 1-row natural height with
+  // overflow:hidden clipping the text. This CSS min-height holds even when
+  // the JS never runs, so the box is always at least `rows` lines readable.
+  // box-border (no border here) → padding is included in the height.
+  const minBoxHeight = `calc(${lineHeight} * ${rows} + ${paddingTop} + ${paddingBottom})`
+
   // Sync scroll between textarea and highlight div
   const handleScroll = (e: React.UIEvent<HTMLTextAreaElement>) => {
     setScrollTop(e.currentTarget.scrollTop)
@@ -278,6 +287,7 @@ const HighlightedTextarea: React.FC<HighlightedTextareaProps> = ({
           padding,
           lineHeight,
           overflow: autoResize ? 'hidden' : undefined,
+          minHeight: autoResize ? minBoxHeight : undefined,
           color: 'transparent',
           caretColor: isDark ? 'white' : 'black',
           WebkitTextFillColor: 'transparent',
@@ -328,6 +338,9 @@ const HighlightedTextarea: React.FC<HighlightedTextareaProps> = ({
             visibility: 'hidden',
             padding,
             lineHeight,
+            // Same floor as the textarea so the measured height (and the
+            // overlay snapped to it) never reports below the visible box.
+            minHeight: minBoxHeight,
             wordBreak: 'break-word',
             overflowWrap: 'break-word',
           }}

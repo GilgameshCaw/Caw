@@ -31,8 +31,35 @@ import MentionAutocomplete from './MentionAutocomplete'
 import GifPicker from './GifPicker'
 import PollComposer from './PollComposer'
 import TipAttachmentControl, { type TipAttachment } from './TipAttachmentControl'
+import AiProviderConnectModal from './modals/AiProviderConnectModal'
+import AiImageGenerateModal from './modals/AiImageGenerateModal'
+import { useAIProviderStore } from '~/store/aiProviderStore'
+import { useNavigate } from '~/utils/localizedRouter'
 import { HiOutlineChartBar } from 'react-icons/hi'
 import { buildPollMarker, imageUrlToPollHash, imageUrlToMeta } from '~/../../../tools/pollMarker'
+
+// AI (outline) + glitter (outline) in one icon, so proportions match toolbar.
+// Rendered as a single SVG to avoid badges/stickers.
+const AiGlitterIcon: React.FC<{ sizeClass: string }> = ({ sizeClass }) => (
+  <svg className={sizeClass} viewBox="0 0 24 24" fill="none" stroke="currentColor" aria-hidden="true">
+    {/* AI block (outline) — bigger, like other icons */}
+    <rect x="1.5" y="5" width="14" height="14" rx="2.5" strokeWidth={2} />
+    {/* A */}
+    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4.9 17l2.7-10 2.7 10" />
+    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 13.3h3.2" />
+    {/* I (add top/bottom bars so it reads as I) */}
+    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11.2 8.4h2.2" />
+    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12.3 8.4v8.2" />
+    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11.2 16.6h2.2" />
+
+    {/* Glitter as a small accent on the right */}
+    {/* Move glitter further right without clipping: scale down + translate */}
+    <g transform="translate(6 0) scale(0.82)">
+      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 10.5l.55 1.9a2.7 2.7 0 001.85 1.85L23.3 15l-1.9.55a2.7 2.7 0 00-1.85 1.85L19 19.3l-.55-1.9a2.7 2.7 0 00-1.85-1.85L14.7 15l1.9-.55a2.7 2.7 0 001.85-1.85L19 10.5z" />
+      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 6l.18.6a1.7 1.7 0 001.15 1.15l.6.18-.6.18A1.7 1.7 0 0021.18 9.3L21 9.9l-.18-.6a1.7 1.7 0 00-1.15-1.15l-.6-.18.6-.18A1.7 1.7 0 0020.82 6.6L21 6z" />
+    </g>
+  </svg>
+)
 
 /** Extract a short, meaningful search query from post text for GIF search.
  *  Drops articles/prepositions/conjunctions, URLs, and @mentions,
@@ -314,9 +341,16 @@ interface PostFormProps {
   composeMode?: boolean;
   /** when true, publish draft state to the compose store so the mobile bottom nav can hide while typing */
   trackDraft?: boolean;
+  /**
+   * Focus the textarea on mount. Default true (modals/reply boxes the user
+   * opened intentionally want the caret ready). The inline home-feed
+   * composer passes false: tapping the bottom-nav home icon mounts it and
+   * an unconditional focus pops the iOS keyboard with no input intent (#202).
+   */
+  autoFocus?: boolean;
 }
 
-const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess, placeholder, composeMode = false, trackDraft = false }) => {
+const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess, placeholder, composeMode = false, trackDraft = false, autoFocus = true }) => {
   const { isConnected } = useAccount();
   const { openConnectModal } = useConnectModal();
   const hasActiveSession = useHasActiveSession();
@@ -324,12 +358,28 @@ const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess, placehol
   const { isDark } = useTheme()
   const t = useT()
 
-  // Auto-focus the textarea when component mounts (e.g., when modal opens)
+  const [aiModalOpen, setAiModalOpen] = useState(false)
+  const [aiGenOpen, setAiGenOpen] = useState(false)
+  const aiNavigate = useNavigate()
+  const aiConnected = useAIProviderStore((s) => !!s.apiKey && !!s.provider)
+  // AI-images entry point: generate when a provider is connected, otherwise
+  // prompt to connect one (modal -> /settings/ai-provider).
+  const openAiImages = () => (aiConnected ? setAiGenOpen(true) : setAiModalOpen(true))
+  const handleAiImage = (file: File) => {
+    if (selectedMedia.filter((m: any) => m.type === 'image' || m.type === 'gif').length >= 4) return
+    setSelectedMedia((prev: any[]) => [...prev, {
+      file, type: 'image', preview: URL.createObjectURL(file), size: file.size, storageType: 'off-chain',
+    }])
+  }
+
+  // Auto-focus the textarea when component mounts (e.g., when modal opens).
+  // Skipped for the inline home-feed composer (autoFocus=false) so landing
+  // on /home via the bottom-nav home icon doesn't pop the iOS keyboard (#202).
   useEffect(() => {
-    if (textareaRef.current) {
+    if (autoFocus && textareaRef.current) {
       textareaRef.current.focus()
     }
-  }, [])
+  }, [autoFocus])
 
   // Tab key in textarea moves focus to the submit button
   useEffect(() => {
@@ -442,6 +492,8 @@ const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess, placehol
   const [isDragOverTextarea, setIsDragOverTextarea] = useState(false)
   const [showGifPicker, setShowGifPicker] = useState(false)
   const [showEmojiPicker, setShowEmojiPicker] = useState(false)
+  // #207: true while the picker is fading out before unmount (close-on-scroll).
+  const [emojiClosing, setEmojiClosing] = useState(false)
   type AnchorRect = { left: number; right: number; top: number; bottom: number }
   const [emojiPopover, setEmojiPopover] = useState<null | {
     x: number
@@ -2313,6 +2365,30 @@ const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess, placehol
     acquireScrollLock()
     return () => { releaseScrollLock() }
   }, [hasInlineFeedDraft])
+
+  // #207: the emoji picker is a transient fixed/portaled popover whose grid
+  // is too short to scroll, so wheel/touch over it falls through and the page
+  // scrolls behind it. Rather than fighting the scroll container (the real
+  // vertical scroller is <html>, not body — see scrollLock notes), close the
+  // picker on the first scroll with a short fade-out. This is the common
+  // popover pattern (X, GitHub) and is robust regardless of which element
+  // owns the scroll. emojiClosing drives the opacity transition; the picker
+  // unmounts ~160ms later so the fade is visible.
+  useEffect(() => {
+    if (!showEmojiPicker) return
+    setEmojiClosing(false) // fresh open is fully opaque
+    const onScroll = () => {
+      setEmojiClosing(true)
+      window.setTimeout(() => {
+        setShowEmojiPicker(false)
+        setEmojiClosing(false)
+      }, 160)
+    }
+    window.addEventListener('scroll', onScroll, { passive: true, capture: true })
+    return () => window.removeEventListener('scroll', onScroll, { capture: true } as EventListenerOptions)
+  }, [showEmojiPicker])
+  // Reusable fade class for the picker containers (close-on-scroll, #207).
+  const emojiFadeClass = `transition-opacity duration-150 ${emojiClosing ? 'opacity-0' : 'opacity-100'}`
   const desktopRows = replyTo
     ? Math.max(2, Math.min(lineCount, 10))
     : hasMedia
@@ -2454,7 +2530,7 @@ const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess, placehol
                     onDragOver={handleTextareaDragOver}
                     onDragLeave={handleTextareaDragLeave}
                     onDrop={handleTextareaDrop}
-                    rows={1}
+                    rows={replyTo ? 3 : 1}
                     placeholder={
                       replyTo
                         ? `Reply to @${replyTo.user.username}`
@@ -2654,6 +2730,27 @@ const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess, placehol
                 onChange={setTipAttachments}
                 iconSizeClass="w-5 h-5"
               />
+
+              {/* AI image generation — plain post composers only (not replies/quotes) */}
+              {!replyTo && !quote && (
+                <button
+                  type="button"
+                  onClick={openAiImages}
+                  title={t('post_form.ai.tooltip')}
+                  aria-label={t('post_form.ai.aria')}
+                  className={`relative p-1 rounded-full transition-all duration-200 cursor-pointer ${
+                    text.trim()
+                      ? (isDark
+                          ? 'text-yellow-400 hover:text-yellow-300 hover:bg-yellow-400/10'
+                          : 'text-yellow-600 hover:text-yellow-500 hover:bg-yellow-200/50')
+                      : (isDark
+                          ? 'text-yellow-400/70 hover:text-yellow-400 hover:bg-yellow-400/10'
+                          : 'text-yellow-600/70 hover:text-yellow-600 hover:bg-yellow-200/50')
+                  }`}
+                >
+                  <AiGlitterIcon sizeClass="w-5 h-5" />
+                </button>
+              )}
             </div>
 
             {/* Right side - Action buttons (Post/etc.) */}
@@ -2788,7 +2885,7 @@ const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess, placehol
             {/* Floating panel — opens near the emoji button in mobile feed */}
             <div
               ref={emojiPopoverRef}
-              className={`fixed z-50 rounded-xl shadow-2xl max-h-[40vh] overflow-auto overscroll-contain ${isDark ? 'border border-white/10 bg-black' : 'border border-gray-200 bg-white'}`}
+              className={`fixed z-50 rounded-xl shadow-2xl max-h-[40vh] overflow-auto overscroll-contain ${emojiFadeClass} ${isDark ? 'border border-white/10 bg-black' : 'border border-gray-200 bg-white'}`}
               style={emojiPopover
                 ? {
                     left: emojiPopover.x,
@@ -3078,7 +3175,7 @@ const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess, placehol
               ? ''
               : ''
         }`}>
-          <div className={`flex items-center min-w-0 ${composeMode ? 'space-x-1' : 'space-x-3'}`}>
+          <div className={`flex items-center min-w-0 ${composeMode ? 'space-x-1' : 'space-x-1 sm:space-x-3'}`}>
             {/* Media Upload */}
             <button
               onClick={() => fileInputRef.current?.click()}
@@ -3269,7 +3366,7 @@ const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess, placehol
                     return (
                       <>
                         <div
-                          className={`md:hidden fixed inset-x-3 bottom-3 z-[100] max-w-[420px] mx-auto p-3 border rounded-xl shadow-2xl ${
+                          className={`md:hidden fixed inset-x-3 bottom-3 z-[100] max-w-[420px] mx-auto p-3 border rounded-xl shadow-2xl ${emojiFadeClass} ${
                             isDark ? 'border-white/10 bg-black' : 'border-gray-200 bg-white'
                           }`}
                         >
@@ -3277,7 +3374,7 @@ const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess, placehol
                         </div>
                         {rect && createPortal(
                           <div
-                            className={`hidden md:block fixed z-[100] p-3 border rounded-xl shadow-2xl ${
+                            className={`hidden md:block fixed z-[100] p-3 border rounded-xl shadow-2xl ${emojiFadeClass} ${
                               isDark ? 'border-white/10 bg-black' : 'border-gray-200 bg-white'
                             }`}
                             style={desktopStyle}
@@ -3354,6 +3451,27 @@ const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess, placehol
               iconSizeClass="w-6 h-6"
             />
 
+            {/* AI (home composer only for now) */}
+            {!replyTo && !quote && (
+              <button
+                type="button"
+                onClick={openAiImages}
+                title={t('post_form.ai.tooltip')}
+                aria-label={t('post_form.ai.aria')}
+              className={`relative p-2 rounded-full transition-all duration-200 cursor-pointer ${
+                  text.trim()
+                    ? (isDark
+                        ? 'text-yellow-400 hover:text-yellow-300 hover:bg-yellow-400/10'
+                        : 'text-yellow-600 hover:text-yellow-500 hover:bg-yellow-200/50')
+                    : (isDark
+                        ? 'text-yellow-400/70 hover:text-yellow-400 hover:bg-yellow-400/10'
+                        : 'text-yellow-600/70 hover:text-yellow-600 hover:bg-yellow-200/50')
+                }`}
+              >
+                <AiGlitterIcon sizeClass="w-6 h-6" />
+              </button>
+            )}
+
           </div>
 
           {/* Character counter, token status and Post Button */}
@@ -3389,7 +3507,7 @@ const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess, placehol
                 const btn2 = (
                   <button
                     ref={submitBtnRef}
-                    className="px-5 py-2 bg-yellow-500 text-black font-semibold text-base rounded-full hover:bg-yellow-400 disabled:opacity-50 disabled:cursor-not-allowed transition-all duration-200 shadow-lg hover:shadow-xl cursor-pointer flex-shrink-0 whitespace-nowrap"
+                    className="px-3 sm:px-5 py-2 bg-yellow-500 text-black font-semibold text-sm sm:text-base rounded-full hover:bg-yellow-400 disabled:opacity-50 disabled:cursor-not-allowed transition-all duration-200 shadow-lg hover:shadow-xl cursor-pointer min-w-0 truncate"
                     disabled={isDisabled2}
                     onClick={handleSubmit}
                   >
@@ -3518,6 +3636,25 @@ const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess, placehol
           </div>
         </div>
       )}
+
+      <AiProviderConnectModal
+        isOpen={aiModalOpen}
+        onClose={() => setAiModalOpen(false)}
+        onConnect={() => {
+          setAiModalOpen(false)
+          // Close the host composer modal (ComposePostModal passes its
+          // onClose as onSuccess) so we don't navigate to settings with the
+          // post modal still floating on top. No-op for the inline feed
+          // composer (it just refreshes; it unmounts on navigation anyway).
+          onSuccess?.()
+          aiNavigate('/settings/ai-provider')
+        }}
+      />
+      <AiImageGenerateModal
+        isOpen={aiGenOpen}
+        onClose={() => setAiGenOpen(false)}
+        onImage={handleAiImage}
+      />
     </div>
   )
 }

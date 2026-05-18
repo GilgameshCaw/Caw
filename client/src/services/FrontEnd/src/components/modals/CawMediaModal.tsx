@@ -11,8 +11,8 @@ import type { CawItem } from '~/types'
 import { useTheme } from '~/hooks/useTheme'
 import { useTokenDataStore, useActiveToken } from '~/store/tokenDataStore'
 import { usePendingPostsStore } from '~/store/pendingPostsStore'
-import { parseCawIdSlug } from '~/utils/cawUrl'
 import { acquireScrollLock, releaseScrollLock } from '~/utils/scrollLock'
+import { parseCawIdSlug } from '~/utils/cawUrl'
 
 type MediaItem =
   | { kind: 'url'; src: string }
@@ -55,7 +55,9 @@ export default function CawMediaModal() {
   const [mobileSheetOpen, setMobileSheetOpen] = useState(false)
   const allPendingPosts = usePendingPostsStore(s => s.pendingPosts)
 
-  // Lock scroll while modal is open (iOS-aware via shared util).
+  // #210: lock the page behind this overlay (no feed bleed-through). The
+  // post + reply thread scrolls inside the left panel's own overflow-y-auto
+  // container, not the page — so the html lock doesn't clamp the content.
   useEffect(() => {
     acquireScrollLock()
     return () => { releaseScrollLock() }
