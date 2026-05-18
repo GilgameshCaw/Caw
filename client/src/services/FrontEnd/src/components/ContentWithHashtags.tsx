@@ -141,6 +141,17 @@ const ShortUrlImage: React.FC<{
     <>
       <div className={wrapper}>
         <img
+          // Force a remount when the srcset retry fires. Just dropping
+          // srcSet={undefined} on the existing element doesn't reliably
+          // re-run the browser's resource selection — once an <img>'s
+          // chosen srcset candidate has 404'd, some browsers leave it
+          // in the broken state even after the srcset attribute is
+          // cleared. Remounting gets a fresh element that picks `src`
+          // (which always exists) cleanly. The grid-cell-blank failure
+          // mode for posts whose 320/640 variants didn't upload was
+          // *supposed* to be fixed by the srcset retry in 70426a6a, but
+          // without the remount the retry was a no-op in practice.
+          key={srcsetFailed ? 'retry' : 'initial'}
           src={originalUrl}
           srcSet={srcsetFailed ? undefined : feedImageSrcset(originalUrl)}
           sizes={srcsetFailed ? undefined : (sizes ?? SIZES_SINGLE)}
@@ -203,6 +214,9 @@ const DirectImage: React.FC<{
 
   const img = (
     <img
+      // See ShortUrlImage above for why the retry needs a remount, not
+      // just a srcset clear.
+      key={srcsetFailed ? 'retry' : 'initial'}
       src={url}
       srcSet={srcsetFailed ? undefined : feedImageSrcset(url)}
       sizes={srcsetFailed ? undefined : sizes}
