@@ -8,6 +8,7 @@ import { countManager } from '../CountManager'
 import { parsePoll, parseVoteText, resolvePollImageUrl } from '../../tools/pollMarker'
 import { markOrphansInImageData } from '../../api/util/orphanedMedia'
 import type { PrismaTransactionClient } from './types'
+import { recomputePinnedCount } from '../../utils/pinnedCount'
 
 /** Sentinel thrown by findCawId so callers (and the top-level
  *  handleRawAction error handler) can distinguish "indexer doesn't have
@@ -1538,14 +1539,15 @@ async function handlePinAction(
     select: { id: true, pending: true },
   })
 
+  // #222: count is derived from the deduped rows (recompute), not delta-
+  // mutated, so racing off-chain/on-chain confirms and duplicate event
+  // replays converge instead of drifting. Recompute even on the "already
+  // confirmed" path so a previously-drifted counter self-heals here.
   if (!existing) {
     await tx.pinnedCaw.create({
       data: { userId: senderId, cawId, pending: false },
     })
-    await tx.user.update({
-      where: { tokenId: senderId },
-      data: { pinnedCawCount: { increment: 1 } },
-    })
+    await recomputePinnedCount(tx, senderId)
     console.log(`[handlePinAction] Created+confirmed pin caw=${cawId} for user=${senderId}`)
     return
   }
@@ -1555,15 +1557,14 @@ async function handlePinAction(
       where: { id: existing.id },
       data: { pending: false },
     })
-    await tx.user.update({
-      where: { tokenId: senderId },
-      data: { pinnedCawCount: { increment: 1 } },
-    })
+    await recomputePinnedCount(tx, senderId)
     console.log(`[handlePinAction] Confirmed pin caw=${cawId} for user=${senderId}`)
     return
   }
 
-  // Already confirmed — idempotent no-op (e.g. duplicate event replay).
+  // Already confirmed — idempotent no-op for the row; still recompute so
+  // any prior counter drift for this user heals on replay.
+  await recomputePinnedCount(tx, senderId)
   console.log(`[handlePinAction] Pin caw=${cawId} for user=${senderId} already confirmed; skipping`)
 }
 
@@ -1603,13 +1604,9 @@ async function handleUnpinAction(
   }
 
   await tx.pinnedCaw.delete({ where: { id: existing.id } })
-  // Only decrement if the row was confirmed: pending rows weren't
-  // counted (count tracks confirmed pins).
-  if (!existing.pending) {
-    await tx.user.update({
-      where: { tokenId: senderId },
-      data: { pinnedCawCount: { decrement: 1 } },
-    })
-  }
+  // #222: derive the count from the remaining rows — uniform across
+  // confirmed vs pending (pending wasn't counted, so its removal is a
+  // recompute no-op) and self-heals prior drift.
+  await recomputePinnedCount(tx, senderId)
   console.log(`[handleUnpinAction] Unpinned caw=${cawId} for user=${senderId} (was pending=${existing.pending})`)
 }
