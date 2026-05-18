@@ -31,10 +31,17 @@ CREATE INDEX IF NOT EXISTS "NotificationGroup_userId_type_targetKey_isRead_lastE
 ALTER TABLE "Notification"
   ADD COLUMN IF NOT EXISTS "groupId" INTEGER;
 
-ALTER TABLE "Notification"
-  ADD CONSTRAINT "Notification_groupId_fkey"
-  FOREIGN KEY ("groupId") REFERENCES "NotificationGroup"("id")
-  ON DELETE SET NULL;
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint WHERE conname = 'Notification_groupId_fkey'
+  ) THEN
+    ALTER TABLE "Notification"
+      ADD CONSTRAINT "Notification_groupId_fkey"
+      FOREIGN KEY ("groupId") REFERENCES "NotificationGroup"("id")
+      ON DELETE SET NULL;
+  END IF;
+END $$;
 
 -- Backfill: collapse existing notifications into groups using the same
 -- semantics the runtime would use — (userId, type, targetKey) buckets
