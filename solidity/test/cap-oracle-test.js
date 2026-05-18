@@ -27,6 +27,16 @@ contract("CawCapOracle", (accounts) => {
     oracle = await CawCapOracle.new(writer, mockActions.address);
   });
 
+  // EVM time, NOT wall-clock. Ganache instances drift relative to the host
+  // clock; on a long-running dev session we've seen +5 days. Any timestamp
+  // anchored on Date.now() can land in the past or future from the EVM's
+  // perspective, breaking the oracle's staleness/freshness logic in
+  // surprising ways. Always use this helper instead of Date.now()/1000.
+  async function evmNow() {
+    const block = await web3.eth.getBlock("latest");
+    return Number(block.timestamp);
+  }
+
   describe("ingestion", () => {
     it("rejects writes from non-writer", async () => {
       let threw = false;
@@ -70,7 +80,7 @@ contract("CawCapOracle", (accounts) => {
 
     it("returns baseline when latest sample is older than STALE_THRESHOLD", async () => {
       // Sample timestamps far in the past relative to chain time → stale.
-      const now = Math.floor(Date.now() / 1000);
+      const now = await evmNow();
       const ancient = now - 7 * 86400; // 7 days ago
       await oracle.recordSample(0, ancient, { from: writer });
       await oracle.recordSample(uqPriceFromWeiPerCaw("1000000").mul(new BN(60)), ancient + 60, { from: writer });
@@ -189,7 +199,7 @@ contract("CawCapOracle", (accounts) => {
     it("returns baseline when samples span less than MIN_WINDOW", async () => {
       // Two samples 60 seconds apart — well under 1 day. Should fall back to baseline.
       const priceUQ = uqPriceFromWeiPerCaw(new BN("1000000000")); // would-cap price
-      const now = Math.floor(Date.now() / 1000);
+      const now = await evmNow();
       const t0 = now - 60;
 
       await oracle.recordSample(0, t0, { from: writer });
@@ -210,13 +220,16 @@ contract("CawCapOracle", (accounts) => {
 
     it("transitions to fresh once samples span MIN_WINDOW", async () => {
       // Sample 1 day + 1 second apart → just over MIN_WINDOW → fresh.
+      // Anchor on EVM block.timestamp (not Date.now()) for the same reason
+      // seedConstantPrice does — see the helper's comment.
       const priceUQ = uqPriceFromWeiPerCaw(new BN("1000000000"));
-      const now = Math.floor(Date.now() / 1000);
       const minWindowSecs = 86400;
-      const t0 = now - (minWindowSecs + 1);
+      const block = await web3.eth.getBlock("latest");
+      const t1 = Number(block.timestamp);
+      const t0 = t1 - (minWindowSecs + 1);
 
       await oracle.recordSample(0, t0, { from: writer });
-      await oracle.recordSample(priceUQ.mul(new BN(minWindowSecs + 1)), now, { from: writer });
+      await oracle.recordSample(priceUQ.mul(new BN(minWindowSecs + 1)), t1, { from: writer });
 
       const result = await oracle.twapEthPerCaw();
       assert.equal(result.fresh, true, ">= MIN_WINDOW -> fresh");
@@ -279,7 +292,7 @@ contract("CawCapOracle", (accounts) => {
     it("handles cumulative wrap-around across 2^224 boundary without corruption", async () => {
       const TWO_224 = new BN(2).pow(new BN(224));
       const minWindowSecs = 86400;
-      const now = Math.floor(Date.now() / 1000);
+      const now = await evmNow();
       const t0 = now - (minWindowSecs + 60);
 
       const oldestCumulative = TWO_224.subn(1000);
@@ -302,7 +315,7 @@ contract("CawCapOracle", (accounts) => {
 
   describe("Case 10 - out-of-order LZ delivery (silent skip)", () => {
     it("silently skips a sample with a non-monotonic timestamp", async () => {
-      const now = Math.floor(Date.now() / 1000);
+      const now = await evmNow();
       const minWindowSecs = 86400;
       const t0 = now - (minWindowSecs + 60);
 
@@ -343,27 +356,34 @@ contract("CawCapOracle", (accounts) => {
 
   describe("push-ratio: active within 100 bps — no push", () => {
     it("does not push when ratio moves less than 100 bps", async () => {
-      // First seed to activate the cap
-      await seedConstantPrice(new BN("1000000000")); // 1e9
+      // Seed oracle to fresh+binding state. This fires the initial push.
+      await seedConstantPrice(new BN("1000000000")); // 1e9 wei/CAW
       const firstCallCount = (await mockActions.setRatioCallCount()).toNumber();
       assert(firstCallCount >= 1, "initial push expected");
-
       const firstRatio = await mockActions.lastSetRatio();
 
-      // New oracle and same mock to simulate a tiny price move (< 100 bps = 1%)
-      // A 50 bps move: 1e9 → 1.005e9 = 1005000000
-      // Deploy a fresh oracle sharing the same mock (already has firstRatio set)
-      const oracle2 = await CawCapOracle.new(writer, mockActions.address);
-      const priceUQ2 = uqPriceFromWeiPerCaw(new BN("1005000000")); // 0.5% move up
+      // Add a THIRD sample to the SAME oracle at a 50-bps-moved price.
+      // Using the same oracle preserves the existing 2-sample window so
+      // freshness stays true at the third sample; the test previously used
+      // a fresh oracle2 which started under-populated, fired a clear-to-0
+      // push from the dormant path, then a re-push when the second sample
+      // brought the window back to fresh — both spurious for this test.
+      //
+      // seedConstantPrice wrote cumulative = priceUQ_old * elapsed at t1.
+      // For the third sample at t1+1, the cumulative needs to advance by
+      // priceUQ_new (1 second × the new instantaneous price). Compute it
+      // directly from the constants:
       const minWindowSecs = 86400;
-      const now = Math.floor(Date.now() / 1000);
-      const t0 = now - (minWindowSecs + 60);
-      await oracle2.recordSample(0, t0, { from: writer });
-      await oracle2.recordSample(priceUQ2.mul(new BN(minWindowSecs + 60)), now, { from: writer });
+      const elapsed = minWindowSecs + 60;
+      const priceUQ_old = uqPriceFromWeiPerCaw(new BN("1000000000"));
+      const priceUQ_new = uqPriceFromWeiPerCaw(new BN("1005000000")); // 0.5% up
+      const cumulativeT1 = priceUQ_old.mul(new BN(elapsed)); // what seedConstantPrice wrote
+      const newCumulative = cumulativeT1.add(priceUQ_new); // +1 second at new price
+      const now = await evmNow();
+      await oracle.recordSample(newCumulative, now + 1, { from: writer });
 
-      // The ratio in mockActions is still firstRatio from oracle1.
-      // Oracle2 computes a ratio ~0.5% different — within 100 bps hysteresis.
-      // It should NOT push again.
+      // After the 0.5% move, the oracle's _maybePushRatio computes a new
+      // TWAP within 100 bps of firstRatio. Hysteresis must suppress the push.
       const afterCallCount = (await mockActions.setRatioCallCount()).toNumber();
       assert.equal(
         afterCallCount,
@@ -388,7 +408,7 @@ contract("CawCapOracle", (accounts) => {
       const oracle3 = await CawCapOracle.new(writer, mockActions.address);
       const priceUQ3 = uqPriceFromWeiPerCaw(new BN("1020000000")); // 2% move
       const minWindowSecs = 86400;
-      const now = Math.floor(Date.now() / 1000);
+      const now = await evmNow();
       const t0 = now - (minWindowSecs + 60);
       await oracle3.recordSample(0, t0, { from: writer });
       await oracle3.recordSample(priceUQ3.mul(new BN(minWindowSecs + 60)), now, { from: writer });
@@ -415,7 +435,7 @@ contract("CawCapOracle", (accounts) => {
       // 200 wei/CAW: likeCap = 2e11 / 200 = 1e9 >> BASELINE_LIKE=2000 → doesn't bind
       const priceUQ4 = uqPriceFromWeiPerCaw(new BN("200"));
       const minWindowSecs = 86400;
-      const now = Math.floor(Date.now() / 1000);
+      const now = await evmNow();
       const t0 = now - (minWindowSecs + 60);
       await oracle4.recordSample(0, t0, { from: writer });
       await oracle4.recordSample(priceUQ4.mul(new BN(minWindowSecs + 60)), now, { from: writer });
