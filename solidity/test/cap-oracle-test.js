@@ -83,12 +83,19 @@ contract("CawCapOracle", (accounts) => {
 
   // Helper: record a TWAP-defining pair of samples MIN_WINDOW + 1 second apart,
   // so twapEthPerCaw returns fresh and matches the supplied weiPerWholeCaw price.
+  //
+  // CRITICAL: anchor on EVM block.timestamp, NOT Date.now(). Ganache instances
+  // that have been running a while accumulate drift between wall-clock and EVM
+  // time (we've seen +5 days on the test environment). Using Date.now() puts
+  // `latest.timestamp` in the past from the EVM's POV, the STALE_THRESHOLD
+  // check fires (latest > now - 24h fails), and twap returns fresh=false →
+  // capForAction returns baseline → tests asserting `cap < baseline` fail.
   async function seedConstantPrice(weiPerWholeCaw) {
     const priceUQ = uqPriceFromWeiPerCaw(weiPerWholeCaw);
     const minWindowSecs = 86400; // MIN_WINDOW
-    const now = Math.floor(Date.now() / 1000);
-    const t0 = now - (minWindowSecs + 60);
-    const t1 = now;
+    const block = await web3.eth.getBlock("latest");
+    const t1 = Number(block.timestamp);
+    const t0 = t1 - (minWindowSecs + 60);
     const elapsed = t1 - t0;
 
     await oracle.recordSample(0, t0, { from: writer });
