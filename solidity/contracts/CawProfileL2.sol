@@ -193,12 +193,6 @@ contract CawProfileL2 is
   ///      the L2 decrement is invisible and `cawProfileL2.totalCaw()` drifts below
   ///      sum-of-deposits-minus-recorded-withdrawals.
   event Withdrawn(uint32 indexed tokenId, uint256 amount);
-  /// @notice Emitted when an LZ message from L1 could not be processed, keeping the channel alive.
-  /// @dev The only sender is the locked-immutable L1 peer, so any failure indicates a CawProfile bug,
-  ///      not adversarial input. srcEid + sender + errCode identify the failure mode; the payload
-  ///      is recoverable from LZ delivery logs.
-  ///      errCode: 1 = payload < 40 bytes; 2 = unauthorized selector; 3 = delegatecall reverted.
-  event LZDeliveryFailed(uint32 srcEid, bytes32 sender, uint8 errCode);
 
   bytes4 public setWithdrawableSelector = bytes4(keccak256("setWithdrawable(uint32[],uint256[])"));
 
@@ -588,7 +582,7 @@ contract CawProfileL2 is
   ///      use the NEW owner's session table — the old owner's wallet-scoped
   ///      sessions are unreachable for that token regardless of epoch.
   function _setOwnerOf(uint32 tokenId, address newOwner, uint64 stamp) internal {
-    if (stamp < lastOwnerUpdateBlock[tokenId]) return; // stale; silent skip
+    if (stamp <= lastOwnerUpdateBlock[tokenId]) return; // stale or same-stamp; silent skip
     lastOwnerUpdateBlock[tokenId] = stamp;
     address prev = ownerOf[tokenId];
     if (prev != newOwner && prev != address(0)) {
@@ -1067,15 +1061,19 @@ contract CawProfileL2 is
   ///      The 36-byte price prefix is stripped, fed to capOracle.recordSample, and the
   ///      rest dispatched via delegatecall exactly as before.
   ///
-  ///      SAFETY: all error paths return without reverting, so the LZ channel nonce is never
-  ///      stalled. A reverting _lzReceive in LZ V2 blocks every subsequent message from L1
-  ///      until someone manually retries the stuck nonce. The delegatecall-failure path emits
-  ///      LZDeliveryFailed for observability; the other two failure paths (short payload, bad
-  ///      selector) are unreachable from any correct CawProfile deploy and just return silently.
-  ///
-  ///      The only sender is the locked-immutable L1 peer, so any failure here indicates a bug
-  ///      in CawProfile, not adversarial input. The short-payload case (payload.length < 40) is
-  ///      unreachable under normal CawProfile.sol operation.
+  ///      Error-path behaviour (intentionally asymmetric):
+  ///        payload.length < 40  — silent return; the LZ channel is preserved. This path is
+  ///                               unreachable from any correct CawProfile.sol deployment; it
+  ///                               exists only to avoid a permanent channel stall if somehow
+  ///                               a truncated message were delivered at the LZ layer.
+  ///        bad selector         — reverts UnauthorizedSelector(); channel halts for operator
+  ///                               attention. Recovery via endpoint.skipInboundNonce(). This
+  ///                               path indicates a real bug in CawProfile (wrong selector
+  ///                               construction) and should NOT be silently discarded.
+  ///        delegatecall failure — reverts with the inner error; same rationale as above.
+  ///                               A failing authorized function (e.g. InsufficientBalance)
+  ///                               must halt the channel — silently dropping would permanently
+  ///                               lose a deposit or ownership update.
   function _lzReceive(
     Origin calldata _origin, // struct containing info about the message sender
     bytes32 _guid, // global packet identifier
@@ -1105,8 +1103,9 @@ contract CawProfileL2 is
     // ── Primary payload dispatch ──────────────────────────────────────────
     // Guard: payload must be at least 40 bytes (36-byte prefix + 4-byte selector).
     // Only the locked-immutable L1 peer can send here, so a short payload indicates
-    // a CawProfile bug. Return without reverting to keep the LZ channel alive.
-    // (No event: this path is unreachable from any correct CawProfile deploy.)
+    // a CawProfile bug. Return without reverting to keep the LZ channel alive —
+    // this is the one path where silent-drop is preferable to a permanent stall,
+    // because there is no meaningful state to preserve or operator action to take.
     if (payload.length < 40) return;
 
     // Selector at byte 36; args start at byte 40.
@@ -1121,10 +1120,8 @@ contract CawProfileL2 is
       calldatacopy(add(args, 32), add(payload.offset, 40), sub(payload.length, 40))
     }
 
-    // Ensure the selector corresponds to an expected function to prevent unauthorized actions.
-    // Return without reverting to keep the LZ channel alive.
-    // (No event: unreachable from any correct CawProfile deploy.)
-    if (!isAuthorizedFunction(decodedSelector)) return;
+    // Ensure the selector corresponds to an expected function to prevent unauthorized actions
+    if (!isAuthorizedFunction(decodedSelector)) revert UnauthorizedSelector();
 
     // Call the function using the selector and arguments.
     //
@@ -1133,23 +1130,23 @@ contract CawProfileL2 is
     // - All authorized functions (depositAndUpdateOwners, authenticateAndUpdateOwners,
     //   mintAndUpdateOwners, mintAuthAndUpdateOwners, depositAndRegisterSessionAndUpdateOwners,
     //   mintAuthAndRegisterSessionAndUpdateOwners, updateOwners) perform only storage writes.
-    // - fromLZ cannot get stuck: delegatecall returns (success or not) rather than reverting the
-    //   outer frame, so fromLZ = false always executes. On delegatecall revert, the inner storage
-    //   changes are rolled back but fromLZ = true (set before the call) remains — it is then reset
-    //   by the fromLZ = false line below. The outer frame emits LZDeliveryFailed and returns.
+    // - fromLZ cannot get stuck: on success it resets below; on revert the entire tx rolls back.
     // - The endpoint is immutable (set once in constructor, can never change).
     // - These contracts are immutable post-deployment, so no new authorized functions can be added.
     // - An alternative like msg.sender == endpoint would not work here because the authorized functions
     //   are public (required for delegatecall dispatch), and fromLZ is needed to distinguish the
     //   _lzReceive call path from direct external calls.
     fromLZ = true;
-    (bool success,) = address(this).delegatecall(bytes.concat(decodedSelector, args));
+    (bool success, bytes memory returnData) = address(this).delegatecall(bytes.concat(decodedSelector, args));
     fromLZ = false;
 
-    // On delegatecall failure: emit and return to keep the LZ channel alive.
-    // The delegatecall's storage changes were rolled back; fromLZ is already false above.
+    // Handle failure and revert with the error message
     if (!success) {
-      emit LZDeliveryFailed(_origin.srcEid, _origin.sender, 3);
+      if (returnData.length == 0) revert UnauthorizedSelector();
+      assembly {
+        let returndata_size := mload(returnData)
+        revert(add(32, returnData), returndata_size)
+      }
     }
   }
 
