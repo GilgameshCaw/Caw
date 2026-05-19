@@ -1,9 +1,12 @@
 // Client-side AI image generation (BYOK). Calls the provider directly from
 // the browser with the user's own key — same rationale as utils/translate.ts
-// (no backend, no key custody). Gemini's Generative Language API allows the
-// API key as a query param and serves permissive CORS, so this works without
-// a proxy. OpenAI does NOT (CORS-hostile + secret-key-in-browser is bad
-// practice) and would need a backend proxy — intentionally not added here.
+// (no backend, no key custody). Gemini's Generative Language API accepts the
+// key as an x-goog-api-key request header (not ?key= query param). We use the
+// header form deliberately: Sentry's default fetch instrumentation captures
+// URLs in breadcrumbs/Replay but does NOT capture request headers, so the
+// header form prevents the key from appearing in Sentry payloads.
+// OpenAI does NOT support permissive CORS and would need a backend proxy —
+// intentionally not added here.
 
 export type AIProvider = 'gemini'
 
@@ -33,12 +36,15 @@ function base64ToBlob(b64: string, mimeType: string): Blob {
 }
 
 async function generateGemini(prompt: string, apiKey: string): Promise<AIImageResult> {
-  const url = `${GEMINI_BASE}/${GEMINI_IMAGE_MODEL}:predict?key=${encodeURIComponent(apiKey)}`
+  const url = `${GEMINI_BASE}/${GEMINI_IMAGE_MODEL}:predict`
   let res: Response
   try {
     res = await fetch(url, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: {
+        'Content-Type': 'application/json',
+        'x-goog-api-key': apiKey,
+      },
       body: JSON.stringify({
         instances: [{ prompt }],
         parameters: { sampleCount: 1, aspectRatio: '1:1' },

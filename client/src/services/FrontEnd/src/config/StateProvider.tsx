@@ -1,5 +1,6 @@
 import useTokenDataUpdate from "~/hooks/useTokenDataUpdate";
 import { useTokenDataStore } from "~/store/tokenDataStore"
+import { useAIProviderStore } from "~/store/aiProviderStore"
 import { useFetchPrices } from "~/hooks/useFetchPrices";
 import { useEffect, useRef } from 'react';
 import { useAccount } from "wagmi";
@@ -17,8 +18,10 @@ export default function StateProvider({ children }: StateProviderProps) {
   useTokenDataUpdate();
 
   useEffect(() => {
-    if (address && prevAddress.current && prevAddress.current !== address)
+    if (address && prevAddress.current && prevAddress.current !== address) {
       useTokenDataStore.getState().removeActiveToken()
+      useAIProviderStore.getState().disconnect()
+    }
     prevAddress.current = address
   }, [address])
 
