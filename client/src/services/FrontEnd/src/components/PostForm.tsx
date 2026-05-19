@@ -3409,10 +3409,10 @@ const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess, placehol
             </div>
             </div>
             {/* Group 2 — post attributes (4 icons). flex-1 lets it fill
-                the row width on wrap so the centered icons read as a
-                deliberate second row, not orphaned at the left edge.
-                justify-center centers the 4 icons within the wrapped row. */}
-            <div className={`flex flex-1 items-center justify-center ${
+                the row width on wrap; justify-start hugs them to the left
+                edge of that filled width (matches the alignment of group
+                1 above, which also pins left). */}
+            <div className={`flex flex-1 items-center justify-start ${
               composeMode || replyTo ? 'gap-x-1' : 'gap-x-1 sm:gap-x-3'
             }`}>
 
