@@ -43,6 +43,7 @@ contract CawProfile is
   error DelegateFailed();
   error NotApproved();
   error NotL2Mirror();
+  error TooManyChains();
 
   using OptionsBuilder for bytes;
   using EnumerableSet for EnumerableSet.UintSet;
@@ -129,6 +130,7 @@ contract CawProfile is
   // lzDestId => index => tokenId
   mapping(uint32 => mapping(uint256 => uint32)) public pendingTransfers;
   uint256 public transferUpdateLimit = 50;
+  uint256 public constant MAX_CHOSEN_CHAINS = 128;
 
   // lzDestId => value
   mapping(uint32 => uint256) internal pendingTransferStart;
@@ -289,7 +291,7 @@ contract CawProfile is
 
     authenticated[cawNetworkId][newId] = true;
     _lockWithdrawFeeIfNeeded(cawNetworkId, newId);
-    chosenChainIds[newId].add(uint256(lzDestId));
+    _addChosenChain(newId, lzDestId);
     uint256 lzEthAmount = msg.value - totalFeesPaid;
 
     if (lzDestId == mainnetLzId) {
@@ -343,7 +345,7 @@ contract CawProfile is
 
     CAW.transferFrom(_msgSender(), address(this), depositAmount);
     totalCaw += depositAmount;
-    chosenChainIds[newId].add(uint256(lzDestId));
+    _addChosenChain(newId, lzDestId);
 
     uint256 totalFeesPaid = 0;
     {
@@ -510,7 +512,7 @@ contract CawProfile is
     // chain X after a future transfer — the previous owner could keep
     // posting as the username on chain X indefinitely. Audit fix
     // 2026-05-08 (H-1, CawProfile-agent finding).
-    chosenChainIds[tokenId].add(uint256(lzDestId));
+    _addChosenChain(tokenId, lzDestId);
 
     if (lzDestId == mainnetLzId) {
       cawProfileL2.auth(tokenId, cawNetworkId);
@@ -538,7 +540,7 @@ contract CawProfile is
     // at least has economic skin in the game. Audit fix 2026-05-08 (M-2).
     if (amount == 0) revert ZeroDeposit();
 
-    chosenChainIds[tokenId].add(uint256(lzDestId));
+    _addChosenChain(tokenId, lzDestId);
     CAW.transferFrom(msg.sender, address(this), amount);
     totalCaw += amount;
 
@@ -680,6 +682,14 @@ contract CawProfile is
     if (!(fromLZ || msg.sender == address(cawProfileL2))) revert NotL2Mirror();
     for (uint256 i = 0; i < tokenIds.length; i++)
       withdrawable[tokenIds[i]] += amounts[i];
+  }
+
+  /// @dev Add lzDestId to the token's chosen-chain set. Reverts if the set would exceed
+  ///      MAX_CHOSEN_CHAINS; the cap prevents an attacker from growing the set until
+  ///      _afterTokenTransfer iterates enough entries to exceed block gas (H-3 fix).
+  function _addChosenChain(uint32 tokenId, uint32 lzDestId) internal {
+    if (chosenChainIds[tokenId].length() >= MAX_CHOSEN_CHAINS) revert TooManyChains();
+    chosenChainIds[tokenId].add(uint256(lzDestId));
   }
 
   function getChosenChainIdAtIndex(uint32 token, uint256 index) public view returns (uint256) {
