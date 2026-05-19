@@ -172,7 +172,7 @@ const MessageSearch: React.FC<MessageSearchProps> = ({ userId, onSearchComplete 
           value={searchQuery}
           onChange={(e) => setSearchQuery(e.target.value)}
           onKeyPress={handleKeyPress}
-          className={`w-full pl-10 pr-12 py-3 rounded-full border transition-all duration-300 focus:outline-none focus:ring-2 focus:ring-gray-500/30 ${
+          className={`w-full pl-10 pr-12 py-3 rounded-full border text-[16px] sm:text-[15px] transition-all duration-300 focus:outline-none focus:ring-2 focus:ring-gray-500/30 ${
             isDark
               ? 'bg-black border-gray-600 text-white placeholder-gray-400'
               : 'bg-white border-gray-300 text-black placeholder-gray-500'

@@ -3388,7 +3388,7 @@ const MessagesPage: React.FC = () => {
                       placeholder={t('messages.search.people')}
                       value={newMessageSearch}
                       onChange={(e) => setNewMessageSearch(e.target.value)}
-                      className={`w-full pl-10 pr-4 py-2 rounded-full border transition-all duration-300 focus:outline-none focus:ring-2 focus:ring-yellow-500/30 ${
+                      className={`w-full pl-10 pr-4 py-2 rounded-full border text-[16px] sm:text-[15px] transition-all duration-300 focus:outline-none focus:ring-2 focus:ring-yellow-500/30 ${
                         isDark
                           ? 'bg-black border-gray-600 text-white placeholder-gray-500'
                           : 'bg-white border-gray-300 text-black placeholder-gray-400'

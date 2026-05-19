@@ -38,28 +38,30 @@ import { useNavigate } from '~/utils/localizedRouter'
 import { HiOutlineChartBar } from 'react-icons/hi'
 import { buildPollMarker, imageUrlToPollHash, imageUrlToMeta } from '~/../../../tools/pollMarker'
 
-// AI (outline) + glitter (outline) in one icon, so proportions match toolbar.
-// Rendered as a single SVG to avoid badges/stickers.
-// Simple AI badge: rounded square outline with "AI" lettering inside.
-// Uses currentColor for both stroke (the square) and fill (the text), so
-// the icon picks up the toolbar's active-state colour the same way every
-// other PostForm toolbar icon does.
+// AI button icon: just sparkles.
+// Rationale: letters/frames read like a sticker and look off next to toolbar icons.
+// IMPORTANT: keep strokeWeight consistent with the rest of the toolbar (2).
 const AiGlitterIcon: React.FC<{ sizeClass: string }> = ({ sizeClass }) => (
   <svg className={sizeClass} viewBox="0 0 24 24" fill="none" stroke="currentColor" aria-hidden="true">
-    <rect x="3" y="3" width="18" height="18" rx="4" strokeWidth={2} />
-    <text
-      x="12"
-      y="16.5"
-      textAnchor="middle"
-      fontSize="10"
-      fontWeight="700"
-      fontFamily="ui-sans-serif, system-ui, -apple-system, sans-serif"
-      letterSpacing="0.5"
-      fill="currentColor"
-      stroke="none"
-    >
-      AI
-    </text>
+    {/* Sparkles — outline, centered */}
+    {/* Slightly larger and nudged down to visually center inside circular button */}
+    {/* NOTE: sparkles read visually heavier than other outline icons; use slightly thinner stroke */}
+    <g transform="translate(12 12) scale(1.12) translate(-12 -12) translate(-1.6 2.6)">
+      <path
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        strokeWidth={1.8}
+        vectorEffect="non-scaling-stroke"
+        d="M12 3.5l.8 2.7a3.6 3.6 0 002.5 2.5l2.7.8-2.7.8a3.6 3.6 0 00-2.5 2.5l-.8 2.7-.8-2.7a3.6 3.6 0 00-2.5-2.5l-2.7-.8 2.7-.8a3.6 3.6 0 002.5-2.5L12 3.5z"
+      />
+      <path
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        strokeWidth={1.8}
+        vectorEffect="non-scaling-stroke"
+        d="M18 6.2l.3 1a2.1 2.1 0 001.4 1.4l1 .3-1 .3a2.1 2.1 0 00-1.4 1.4l-.3 1-.3-1a2.1 2.1 0 00-1.4-1.4l-1-.3 1-.3a2.1 2.1 0 001.4-1.4l.3-1z"
+      />
+    </g>
   </svg>
 )
 
@@ -2738,13 +2740,14 @@ const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess, placehol
 
               {/* AI image generation — available in every composer (incl.
                   replies + quotes). The narrow-context overflow is handled
-                  by the outer flex-wrap on the toolbar row. */}
+                  by the outer flex-wrap on the toolbar row. -ml-0.5 nudges
+                  it back inside the toolbar's hitbox rhythm. */}
               <button
                 type="button"
                 onClick={openAiImages}
                 title={t('post_form.ai.tooltip')}
                 aria-label={t('post_form.ai.aria')}
-                className={`relative p-1 rounded-full transition-all duration-200 cursor-pointer ${
+                className={`relative p-1 -ml-0.5 rounded-full transition-all duration-200 cursor-pointer ${
                   text.trim()
                     ? (isDark
                         ? 'text-yellow-400 hover:text-yellow-300 hover:bg-yellow-400/10'
@@ -3188,8 +3191,9 @@ const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess, placehol
               at a time. The first group (content embedding — Media / GIF /
               Emoji) sits inline with the Post button on the top row; the
               second group (post attributes — Schedule / Poll / Tip / AI)
-              wraps to a second row when there isn't enough width. */}
-          {/* Outer gap-x mirrors the inner groups' gap-x so the inter-group
+              wraps to a second row when there isn't enough width.
+
+              Outer gap-x mirrors the inner groups' gap-x so the inter-group
               spacing (Emoji ↔ Schedule) matches the intra-group spacing.
               Without this the parent kept gap-x-3 in compose/reply mode
               while the groups dropped to gap-x-1 → 8px asymmetric hole. */}
@@ -3485,13 +3489,14 @@ const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess, placehol
 
             {/* AI image generation — available in every composer (incl.
                 replies + quotes). Narrow-context overflow is handled by
-                the outer flex-wrap on the toolbar row. */}
+                the outer flex-wrap on the toolbar row. -ml-1 nudges the
+                hitbox to line up with the rest of the toolbar. */}
             <button
               type="button"
               onClick={openAiImages}
               title={t('post_form.ai.tooltip')}
               aria-label={t('post_form.ai.aria')}
-              className={`relative p-2 rounded-full transition-all duration-200 cursor-pointer ${
+              className={`relative p-2 -ml-1 rounded-full transition-all duration-200 cursor-pointer ${
                 text.trim()
                   ? (isDark
                       ? 'text-yellow-400 hover:text-yellow-300 hover:bg-yellow-400/10'
