@@ -406,6 +406,10 @@ const TipAttachmentControl: React.FC<Props> = ({
   }
 
   // Tip-button active-state styling — mirrors the poll button pattern.
+  // Note: the inactive states use opacity-70 on the icon itself (handled
+  // below) instead of putting alpha on text-yellow-*/70, so the SVG's
+  // overlapping outline + "$" strokes don't compound their alpha at the
+  // intersection points. Put alpha on the group, not on per-path stroke.
   const activeClasses = hasTips
     ? 'text-yellow-500 bg-yellow-400/10'
     : text.trim()
@@ -413,8 +417,12 @@ const TipAttachmentControl: React.FC<Props> = ({
           ? 'text-yellow-400 hover:text-yellow-300 hover:bg-yellow-400/10'
           : 'text-yellow-600 hover:text-yellow-500 hover:bg-yellow-200/50')
       : (isDark
-          ? 'text-yellow-400/70 hover:text-yellow-400 hover:bg-yellow-400/10'
-          : 'text-yellow-600/70 hover:text-yellow-600 hover:bg-yellow-200/50')
+          ? 'text-yellow-400 hover:text-yellow-400 hover:bg-yellow-400/10'
+          : 'text-yellow-600 hover:text-yellow-600 hover:bg-yellow-200/50')
+
+  // True only for the dim "inactive with no draft" state. Drives the SVG
+  // opacity-70 below so the overlap-hot-spot from per-stroke alpha is gone.
+  const dimIcon = !hasTips && !text.trim()
 
   // The tooltip on the trigger summarises the attached total.
   const triggerAriaLabel = hasTips
@@ -447,7 +455,7 @@ const TipAttachmentControl: React.FC<Props> = ({
             stroke-based when inactive). Both states use currentColor so
             the active/inactive colour swap is handled by activeClasses. */}
         <svg
-          className={iconSizeClass}
+          className={`${iconSizeClass} ${dimIcon ? 'opacity-70' : ''}`}
           fill={hasTips ? 'currentColor' : 'none'}
           stroke="currentColor"
           viewBox="0 0 24 24"
@@ -464,24 +472,22 @@ const TipAttachmentControl: React.FC<Props> = ({
               />
             </g>
           ) : (
-            // Outline coin + stroked "$" — same visual weight as the other
-            // toolbar icons (poll bar, image, etc.) when inactive.
-            <>
-              <circle cx="12" cy="12" r="9" strokeWidth={2} />
-              {/* $ S-curve: top hook + middle bar + bottom hook */}
-              <path
-                strokeLinecap="round"
-                strokeLinejoin="round"
-                strokeWidth={2}
-                d="M14.5 9a3 3 0 00-2.5-1.3h-.8a2 2 0 100 4h1.6a2 2 0 010 4h-1a3 3 0 01-2.8-1.5"
-              />
-              {/* $ vertical stem (extends slightly past hooks like real $) */}
-              <path
-                strokeLinecap="round"
-                strokeWidth={2}
-                d="M12 6v1.7M12 16.3V18"
-              />
-            </>
+            // Outline coin + stroked "$" collapsed into a SINGLE path. Two
+            // overlapping painted elements would compound their alpha at
+            // intersection points when currentColor carries opacity (e.g.
+            // text-white/70 on the toolbar) — multi-path overlaps become
+            // visible hot-spots. One path = one fill of the stroke geometry
+            // = no compounding at the points where the $ touches the ring.
+            // Same visual weight as the other outline-only toolbar icons.
+            <path
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              strokeWidth={2}
+              d="M21 12a9 9 0 11-18 0 9 9 0 0118 0z
+                 M14.5 9a3 3 0 00-2.5-1.3h-.8a2 2 0 100 4h1.6a2 2 0 010 4h-1a3 3 0 01-2.8-1.5
+                 M12 6v1.7
+                 M12 16.3V18"
+            />
           )}
         </svg>
         {hasTips && (
