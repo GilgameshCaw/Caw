@@ -2736,26 +2736,26 @@ const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess, placehol
                 iconSizeClass="w-5 h-5"
               />
 
-              {/* AI image generation — plain post composers only (not replies/quotes) */}
-              {!replyTo && !quote && (
-                <button
-                  type="button"
-                  onClick={openAiImages}
-                  title={t('post_form.ai.tooltip')}
-                  aria-label={t('post_form.ai.aria')}
-                  className={`relative p-1 rounded-full transition-all duration-200 cursor-pointer ${
-                    text.trim()
-                      ? (isDark
-                          ? 'text-yellow-400 hover:text-yellow-300 hover:bg-yellow-400/10'
-                          : 'text-yellow-600 hover:text-yellow-500 hover:bg-yellow-200/50')
-                      : (isDark
-                          ? 'text-yellow-400/70 hover:text-yellow-400 hover:bg-yellow-400/10'
-                          : 'text-yellow-600/70 hover:text-yellow-600 hover:bg-yellow-200/50')
-                  }`}
-                >
-                  <AiGlitterIcon sizeClass="w-5 h-5" />
-                </button>
-              )}
+              {/* AI image generation — available in every composer (incl.
+                  replies + quotes). The narrow-context overflow is handled
+                  by the outer flex-wrap on the toolbar row. */}
+              <button
+                type="button"
+                onClick={openAiImages}
+                title={t('post_form.ai.tooltip')}
+                aria-label={t('post_form.ai.aria')}
+                className={`relative p-1 rounded-full transition-all duration-200 cursor-pointer ${
+                  text.trim()
+                    ? (isDark
+                        ? 'text-yellow-400 hover:text-yellow-300 hover:bg-yellow-400/10'
+                        : 'text-yellow-600 hover:text-yellow-500 hover:bg-yellow-200/50')
+                    : (isDark
+                        ? 'text-yellow-400/70 hover:text-yellow-400 hover:bg-yellow-400/10'
+                        : 'text-yellow-600/70 hover:text-yellow-600 hover:bg-yellow-200/50')
+                }`}
+              >
+                <AiGlitterIcon sizeClass="w-5 h-5" />
+              </button>
             </div>
 
             {/* Right side - Action buttons (Post/etc.) */}
@@ -3173,7 +3173,13 @@ const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess, placehol
         <div className={composeMode ? `shrink-0 px-2 pt-2 pb-[max(env(safe-area-inset-bottom),0.5rem)] border-t md:p-0 md:border-0 md:pb-0 ${isDark ? 'bg-black border-white/10' : 'bg-white border-gray-200'}` : ''}>
 
         {/* Functionality Icons */}
-        <div className={`flex items-center justify-between gap-2 ${replyTo ? 'mt-1.5' : 'mt-4'} ${
+        {/* flex-wrap on the outer row: on wide-enough contexts everything
+            stays inline; on narrow ones (image-modal sidebar 300px, sub-377
+            phones) the icons row keeps its place and the Post button wraps
+            to its own row, taking the full width via the `ml-auto` +
+            `flex-grow` combo below. No explicit breakpoints — flex figures
+            it out from intrinsic widths. */}
+        <div className={`flex flex-wrap items-center justify-between gap-x-2 gap-y-2 ${replyTo ? 'mt-1.5' : 'mt-4'} ${
           hasInlineFeedDraft
             ? `fixed md:static bottom-0 left-0 right-0 z-[60] px-4 py-3 pb-[max(env(safe-area-inset-bottom),0.75rem)] border-t ${isDark ? 'bg-black border-white/10' : 'bg-white border-gray-200'}`
             : composeMode
@@ -3463,31 +3469,34 @@ const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess, placehol
               iconSizeClass="w-6 h-6"
             />
 
-            {/* AI (home composer only for now) */}
-            {!replyTo && !quote && (
-              <button
-                type="button"
-                onClick={openAiImages}
-                title={t('post_form.ai.tooltip')}
-                aria-label={t('post_form.ai.aria')}
+            {/* AI image generation — available in every composer (incl.
+                replies + quotes). Narrow-context overflow is handled by
+                the outer flex-wrap on the toolbar row. */}
+            <button
+              type="button"
+              onClick={openAiImages}
+              title={t('post_form.ai.tooltip')}
+              aria-label={t('post_form.ai.aria')}
               className={`relative p-2 rounded-full transition-all duration-200 cursor-pointer ${
-                  text.trim()
-                    ? (isDark
-                        ? 'text-yellow-400 hover:text-yellow-300 hover:bg-yellow-400/10'
-                        : 'text-yellow-600 hover:text-yellow-500 hover:bg-yellow-200/50')
-                    : (isDark
-                        ? 'text-yellow-400/70 hover:text-yellow-400 hover:bg-yellow-400/10'
-                        : 'text-yellow-600/70 hover:text-yellow-600 hover:bg-yellow-200/50')
-                }`}
-              >
-                <AiGlitterIcon sizeClass="w-6 h-6" />
-              </button>
-            )}
+                text.trim()
+                  ? (isDark
+                      ? 'text-yellow-400 hover:text-yellow-300 hover:bg-yellow-400/10'
+                      : 'text-yellow-600 hover:text-yellow-500 hover:bg-yellow-200/50')
+                  : (isDark
+                      ? 'text-yellow-400/70 hover:text-yellow-400 hover:bg-yellow-400/10'
+                      : 'text-yellow-600/70 hover:text-yellow-600 hover:bg-yellow-200/50')
+              }`}
+            >
+              <AiGlitterIcon sizeClass="w-6 h-6" />
+            </button>
 
           </div>
 
-          {/* Character counter, token status and Post Button */}
-          <div className="flex items-center space-x-3">
+          {/* Character counter, token status and Post Button.
+              ml-auto pins this block to the right edge whether it stays
+              on the icons row (wide contexts) or wraps to its own row
+              (narrow contexts — image-modal sidebar, <377px phones). */}
+          <div className="flex items-center space-x-3 ml-auto">
             {/* Token ownership and character counter */}
             <div className="flex items-center space-x-3">
               {isThreadMode && !composeMode && (
