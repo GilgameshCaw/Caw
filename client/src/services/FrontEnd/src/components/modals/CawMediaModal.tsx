@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from 'react'
+import React, { useEffect, useMemo, useRef, useState } from 'react'
 import { useLocation, useParams, useSearchParams } from 'react-router-dom'
 import { useNavigate } from '~/utils/localizedRouter'
 import { HiArrowLeft, HiArrowRight, HiOutlineX } from 'react-icons/hi'
@@ -63,13 +63,40 @@ export default function CawMediaModal() {
     return () => { releaseScrollLock() }
   }, [])
 
-  // ESC closes modal (standard lightbox behavior).
+  // Keyboard shortcuts: ESC closes, ←/→ navigate between images.
+  // Arrow handling reads activeIndex/mediaItems via refs so the listener
+  // doesn't have to re-subscribe on every index change.
+  const navStateRef = useRef<{ activeIndex: number; count: number; setIndex: (i: number) => void }>({
+    activeIndex: 0,
+    count: 0,
+    setIndex: () => {},
+  })
   useEffect(() => {
     const onKeyDown = (e: KeyboardEvent) => {
       if (e.key === 'Escape') {
         e.preventDefault()
         e.stopPropagation()
         navigate(-1)
+        return
+      }
+      // Skip arrow handling while the user is typing in the reply box,
+      // the search field, or any other input — left/right arrows must
+      // still move the caret inside text inputs.
+      const target = e.target as HTMLElement | null
+      if (target) {
+        const tag = target.tagName
+        if (tag === 'INPUT' || tag === 'TEXTAREA' || target.isContentEditable) return
+      }
+      const { activeIndex, count, setIndex } = navStateRef.current
+      if (count <= 1) return
+      if (e.key === 'ArrowLeft' && activeIndex > 0) {
+        e.preventDefault()
+        e.stopPropagation()
+        setIndex(activeIndex - 1)
+      } else if (e.key === 'ArrowRight' && activeIndex < count - 1) {
+        e.preventDefault()
+        e.stopPropagation()
+        setIndex(activeIndex + 1)
       }
     }
     document.addEventListener('keydown', onKeyDown)
@@ -258,6 +285,9 @@ export default function CawMediaModal() {
   const close = () => {
     navigate(-1)
   }
+
+  // Keep the keyboard handler's ref in sync without re-subscribing.
+  navStateRef.current = { activeIndex, count: mediaItems.length, setIndex }
 
   const current = mediaItems[activeIndex]
 
