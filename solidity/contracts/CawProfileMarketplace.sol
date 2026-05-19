@@ -58,6 +58,8 @@ contract CawProfileMarketplace is ReentrancyGuard {
     mapping(address => bool) public allowedPaymentTokens;
     // bidder => listingId => amount (pull-pattern refunds for English auctions)
     mapping(address => mapping(uint256 => uint256)) public pendingReturns;
+    // seller => amount owed (pull-pattern payouts — H-15)
+    mapping(address => uint256) public pendingPayouts;
 
     mapping(uint256 => Offer) public offers;
     uint256 public nextOfferId = 1;
@@ -66,6 +68,7 @@ contract CawProfileMarketplace is ReentrancyGuard {
 
     uint64 public constant ANTI_SNIPE_DURATION = 10 minutes;
     uint256 public constant MIN_BID_INCREMENT_BPS = 500; // 5%
+    uint256 public constant AUCTION_DEFAULT_GRACE = 7 days;
 
     // Events
     event Listed(uint256 indexed listingId, uint32 indexed tokenId, address seller, ListingType listingType, address paymentToken, uint256 startPrice);
@@ -78,6 +81,11 @@ contract CawProfileMarketplace is ReentrancyGuard {
     event OfferCreated(uint256 indexed offerId, uint32 indexed tokenId, address offerer, address paymentToken, uint256 amount, uint64 expiry);
     event OfferAccepted(uint256 indexed offerId, uint32 indexed tokenId, address seller, address buyer, uint256 price, address paymentToken);
     event OfferCancelled(uint256 indexed offerId);
+    // H-15: pull-pattern seller payouts
+    event PayoutQueued(address indexed seller, uint256 amount);
+    event PayoutWithdrawn(address indexed seller, address indexed recipient, uint256 amount);
+    // H-17: defaulted auction escape hatch
+    event AuctionDefaulted(uint256 indexed listingId, address indexed bidder, uint256 amount);
 
     /// @param _cawProfile The CawProfile (NFT) address.
     /// @param _paymentTokens ERC20 tokens that should be allowed as payment, in
@@ -209,9 +217,10 @@ contract CawProfileMarketplace is ReentrancyGuard {
         listing.active = false;
         listingByTokenId[listing.tokenId] = 0;
 
-        // Transfer payment to seller
-        (bool sent,) = listing.seller.call{value: price}("");
-        require(sent, "ETH transfer failed");
+        // Queue payment to seller (pull pattern — H-15: prevents seller smart
+        // wallet reverts from bricking settlement)
+        pendingPayouts[listing.seller] += price;
+        emit PayoutQueued(listing.seller, price);
 
         // Transfer NFT to buyer and sync L2 ownership (excess ETH covers LZ fee)
         uint256 lzFee = msg.value - price;
@@ -339,10 +348,10 @@ contract CawProfileMarketplace is ReentrancyGuard {
         listing.active = false;
         listingByTokenId[listing.tokenId] = 0;
 
-        // Transfer payment to seller
+        // Queue or transfer payment to seller (ETH uses pull pattern — H-15)
         if (listing.paymentToken == address(0)) {
-            (bool sent,) = listing.seller.call{value: listing.highestBid}("");
-            require(sent, "ETH transfer failed");
+            pendingPayouts[listing.seller] += listing.highestBid;
+            emit PayoutQueued(listing.seller, listing.highestBid);
         } else {
             IERC20(listing.paymentToken).safeTransfer(listing.seller, listing.highestBid);
         }
@@ -439,6 +448,37 @@ contract CawProfileMarketplace is ReentrancyGuard {
         }
 
         emit BidWithdrawn(listingId, msg.sender, amount);
+    }
+
+    // ============================================
+    // SELLER PAYOUT WITHDRAWAL (H-15)
+    // ============================================
+
+    /**
+     * @notice Withdraw pending ETH sale proceeds for the caller.
+     */
+    function withdrawPayouts() external nonReentrant {
+        _withdrawPayoutsTo(msg.sender);
+    }
+
+    /**
+     * @notice Withdraw pending ETH sale proceeds to a recipient of the
+     *         seller's choosing. Mirrors withdrawBidTo / cancelOfferTo:
+     *         if the seller's address becomes unable to receive ETH, they
+     *         can redirect proceeds to another address they control.
+     */
+    function withdrawPayoutsTo(address recipient) external nonReentrant {
+        require(recipient != address(0), "Zero address");
+        _withdrawPayoutsTo(recipient);
+    }
+
+    function _withdrawPayoutsTo(address recipient) internal {
+        uint256 amount = pendingPayouts[msg.sender];
+        require(amount > 0, "Nothing to withdraw");
+        pendingPayouts[msg.sender] = 0;
+        (bool sent,) = recipient.call{value: amount}("");
+        require(sent, "ETH transfer failed");
+        emit PayoutWithdrawn(msg.sender, recipient, amount);
     }
 
     // ============================================
@@ -541,10 +581,10 @@ contract CawProfileMarketplace is ReentrancyGuard {
             }
         }
 
-        // Transfer payment to seller
+        // Queue or transfer payment to seller (ETH uses pull pattern — H-15)
         if (offer.paymentToken == address(0)) {
-            (bool sent,) = msg.sender.call{value: offer.amount}("");
-            require(sent, "ETH transfer failed");
+            pendingPayouts[msg.sender] += offer.amount;
+            emit PayoutQueued(msg.sender, offer.amount);
         } else {
             IERC20(offer.paymentToken).safeTransfer(msg.sender, offer.amount);
         }
@@ -596,6 +636,44 @@ contract CawProfileMarketplace is ReentrancyGuard {
         } else {
             IERC20(offer.paymentToken).safeTransfer(recipient, offer.amount);
         }
+    }
+
+    // ============================================
+    // DEFAULTED AUCTION ESCAPE HATCH (H-17)
+    // ============================================
+
+    /**
+     * @notice Refund the highest bidder if the seller never calls settleAuction
+     *         within AUCTION_DEFAULT_GRACE (7 days) after auction end.
+     *         This prevents a griefing scenario where a seller lets an English
+     *         auction expire without settling, trapping the winning bidder's
+     *         funds indefinitely.
+     *         Only the highest bidder may call this function.
+     */
+    function refundDefaultedAuction(uint256 listingId) external nonReentrant {
+        Listing storage listing = listings[listingId];
+        require(listing.active, "Listing not active");
+        require(listing.listingType == ListingType.ENGLISH_AUCTION, "Not an English auction");
+        require(listing.highestBidder != address(0), "No bids");
+        require(block.timestamp > listing.endTime + AUCTION_DEFAULT_GRACE, "Grace period not elapsed");
+        require(msg.sender == listing.highestBidder, "Only highest bidder");
+
+        uint256 amount = listing.highestBid;
+        address bidder = listing.highestBidder;
+
+        listing.active = false;
+        listingByTokenId[listing.tokenId] = 0;
+
+        if (listing.paymentToken == address(0)) {
+            // ETH: credit via pendingPayouts so the bidder can withdraw to any
+            // address (handles blocklist tokens / receiving-contract edge cases)
+            pendingPayouts[bidder] += amount;
+            emit PayoutQueued(bidder, amount);
+        } else {
+            IERC20(listing.paymentToken).safeTransfer(bidder, amount);
+        }
+
+        emit AuctionDefaulted(listingId, bidder, amount);
     }
 
     // ============================================
