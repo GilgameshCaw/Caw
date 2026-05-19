@@ -3183,16 +3183,17 @@ const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess, placehol
               ? ''
               : ''
         }`}>
-          {/* Icons wrap to a second row when they can't fit (image-modal
-              sidebar at 300px, sub-377 phones, etc.). gap-y-1 spaces the
-              two icon rows without leaving a big gap. */}
-          <div className={`flex flex-wrap items-center min-w-0 gap-y-1 ${
-            composeMode || replyTo
-              // Compose mode + any reply context — narrow column squeezes
-              // the icons against the Post button if we use the wider gap.
-              ? 'gap-x-1'
-              : 'gap-x-1 sm:gap-x-3'
-          }`}>
+          {/* Icons split into two groups so the toolbar collapses into a
+              clean 3 + 4 split when wrapped instead of breaking one icon
+              at a time. The first group (content embedding — Media / GIF /
+              Emoji) sits inline with the Post button on the top row; the
+              second group (post attributes — Schedule / Poll / Tip / AI)
+              wraps to a second row when there isn't enough width. */}
+          <div className="flex flex-wrap items-center min-w-0 gap-x-3 gap-y-1 flex-1">
+            {/* Group 1 — content embedding (3 icons) */}
+            <div className={`flex items-center ${
+              composeMode || replyTo ? 'gap-x-1' : 'gap-x-1 sm:gap-x-3'
+            }`}>
             {/* Media Upload */}
             <button
               onClick={() => fileInputRef.current?.click()}
@@ -3406,6 +3407,14 @@ const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess, placehol
                 </>
               )}
             </div>
+            </div>
+            {/* Group 2 — post attributes (4 icons). flex-1 lets it fill
+                the row width on wrap so the centered icons read as a
+                deliberate second row, not orphaned at the left edge.
+                justify-center centers the 4 icons within the wrapped row. */}
+            <div className={`flex flex-1 items-center justify-center ${
+              composeMode || replyTo ? 'gap-x-1' : 'gap-x-1 sm:gap-x-3'
+            }`}>
 
             {/* Schedule Post (not for replies/quotes) */}
             {!replyTo && !quote && (
@@ -3488,6 +3497,7 @@ const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess, placehol
             >
               <AiGlitterIcon sizeClass="w-6 h-6" />
             </button>
+            </div>
 
           </div>
 
