@@ -40,24 +40,26 @@ import { buildPollMarker, imageUrlToPollHash, imageUrlToMeta } from '~/../../../
 
 // AI (outline) + glitter (outline) in one icon, so proportions match toolbar.
 // Rendered as a single SVG to avoid badges/stickers.
+// Simple AI badge: rounded square outline with "AI" lettering inside.
+// Uses currentColor for both stroke (the square) and fill (the text), so
+// the icon picks up the toolbar's active-state colour the same way every
+// other PostForm toolbar icon does.
 const AiGlitterIcon: React.FC<{ sizeClass: string }> = ({ sizeClass }) => (
   <svg className={sizeClass} viewBox="0 0 24 24" fill="none" stroke="currentColor" aria-hidden="true">
-    {/* AI block (outline) — bigger, like other icons */}
-    <rect x="1.5" y="5" width="14" height="14" rx="2.5" strokeWidth={2} />
-    {/* A */}
-    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4.9 17l2.7-10 2.7 10" />
-    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 13.3h3.2" />
-    {/* I (add top/bottom bars so it reads as I) */}
-    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11.2 8.4h2.2" />
-    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12.3 8.4v8.2" />
-    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11.2 16.6h2.2" />
-
-    {/* Glitter as a small accent on the right */}
-    {/* Move glitter further right without clipping: scale down + translate */}
-    <g transform="translate(6 0) scale(0.82)">
-      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 10.5l.55 1.9a2.7 2.7 0 001.85 1.85L23.3 15l-1.9.55a2.7 2.7 0 00-1.85 1.85L19 19.3l-.55-1.9a2.7 2.7 0 00-1.85-1.85L14.7 15l1.9-.55a2.7 2.7 0 001.85-1.85L19 10.5z" />
-      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 6l.18.6a1.7 1.7 0 001.15 1.15l.6.18-.6.18A1.7 1.7 0 0021.18 9.3L21 9.9l-.18-.6a1.7 1.7 0 00-1.15-1.15l-.6-.18.6-.18A1.7 1.7 0 0020.82 6.6L21 6z" />
-    </g>
+    <rect x="3" y="3" width="18" height="18" rx="4" strokeWidth={2} />
+    <text
+      x="12"
+      y="16.5"
+      textAnchor="middle"
+      fontSize="10"
+      fontWeight="700"
+      fontFamily="ui-sans-serif, system-ui, -apple-system, sans-serif"
+      letterSpacing="0.5"
+      fill="currentColor"
+      stroke="none"
+    >
+      AI
+    </text>
   </svg>
 )
 
