@@ -471,6 +471,8 @@ async function cleanupPendingCaws() {
   }
 }
 
+const FAILED_TXQUEUE_MAX_PER_TICK = 500
+
 /**
  * Clean up failed txqueue records and update associated caws
  * - Find txqueue records that have been failed for 5+ minutes
@@ -490,10 +492,12 @@ async function cleanupFailedTxQueue() {
         updatedAt: {
           lt: fiveMinutesAgo
         }
-      }
+      },
+      orderBy: { updatedAt: 'asc' },
+      take: FAILED_TXQUEUE_MAX_PER_TICK,
     })
 
-    logger.log(` Found ${failedTxQueueRecords.length} failed txqueue records`)
+    logger.log(` Found ${failedTxQueueRecords.length} failed txqueue records${failedTxQueueRecords.length === FAILED_TXQUEUE_MAX_PER_TICK ? ' (capped — more records pending next tick)' : ''}`)
 
     for (const txRecord of failedTxQueueRecords) {
       try {
