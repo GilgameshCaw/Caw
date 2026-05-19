@@ -9,17 +9,27 @@ import { elasticsearchService } from './ElasticsearchService'
  *
  *   FOLLOW                                  → null (one bucket per user)
  *   OFFER                                   → offerId.toString()
- *   LIKE / REPOST / QUOTE / REPLY / TIP / MENTION  → cawId.toString()
+ *   LIKE / REPOST / QUOTE / TIP / MENTION   → cawId.toString()
+ *   REPLY                                   → parentCawId.toString()
+ *                                              (NOT the reply's own cawId — that
+ *                                              would put every chunk of a multi-
+ *                                              part thread reply in its own group;
+ *                                              keying by the caw being replied to
+ *                                              folds all chunks into one rollup)
  *   ACTION_FAILED                           → null (each row stays alone via
  *                                                   the duplicate-check in
  *                                                   the create call site)
  */
 function notificationTargetKey(
   type: NotificationType,
-  ctx: { cawId?: number | null; offerId?: number | null }
+  ctx: { cawId?: number | null; offerId?: number | null; parentCawId?: number | null }
 ): string | null {
   if (type === NotificationType.FOLLOW || type === NotificationType.ACTION_FAILED) return null
   if (type === NotificationType.OFFER) return ctx.offerId != null ? String(ctx.offerId) : null
+  if (type === NotificationType.REPLY) {
+    return ctx.parentCawId != null ? String(ctx.parentCawId)
+      : (ctx.cawId != null ? String(ctx.cawId) : null)
+  }
   return ctx.cawId != null ? String(ctx.cawId) : null
 }
 
@@ -49,6 +59,10 @@ function notificationTargetKey(
 export async function createNotificationWithGroup(
   client: { notification: any; notificationGroup: any; $queryRawUnsafe?: any; $queryRaw?: any },
   data: Prisma.NotificationCreateInput | Prisma.NotificationUncheckedCreateInput,
+  // Optional grouping context. Currently only REPLY uses parentCawId to
+  // bucket by the caw being replied to (instead of by the reply chunk's
+  // own id) so multi-part thread replies fold into a single rollup.
+  groupCtx?: { parentCawId?: number | null },
 ): Promise<number> {
   // 1) Insert the notification row first — we need its id to point
   //    the group's `latestNotificationId` at it.
@@ -57,7 +71,7 @@ export async function createNotificationWithGroup(
   // 2) Decide the bucket key.
   const targetKey = notificationTargetKey(
     notif.type as NotificationType,
-    { cawId: notif.cawId, offerId: notif.offerId },
+    { cawId: notif.cawId, offerId: notif.offerId, parentCawId: groupCtx?.parentCawId },
   )
 
   // 3) Atomic upsert: if an open group already exists for this
@@ -398,12 +412,19 @@ export class NotificationService {
     })
 
     if (!existing) {
-      await createNotificationWithGroup(client, {
-        userId: parentCaw.userId,
-        actorId: replierId,
-        type: NotificationType.REPLY,
-        cawId: replyCawId,
-      })
+      await createNotificationWithGroup(
+        client,
+        {
+          userId: parentCaw.userId,
+          actorId: replierId,
+          type: NotificationType.REPLY,
+          cawId: replyCawId,
+        },
+        // Bucket REPLY notifications by the parent caw, so all chunks of
+        // a multi-part thread reply fold into one rollup row instead of
+        // filling the bell with "(1/6) replied", "(2/6) replied", etc.
+        { parentCawId },
+      )
     }
   }
 
