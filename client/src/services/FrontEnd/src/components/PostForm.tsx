@@ -3180,7 +3180,14 @@ const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess, placehol
               ? ''
               : ''
         }`}>
-          <div className={`flex items-center min-w-0 ${composeMode ? 'space-x-1' : 'space-x-1 sm:space-x-3'}`}>
+          <div className={`flex items-center min-w-0 ${
+            composeMode || replyTo
+              // Compose mode + any reply context (incl. the image-modal
+              // sidebar at md:w-[300px]) — the narrow column squeezes the
+              // icons against the Reply button if we use the wider gap.
+              ? 'space-x-1'
+              : 'space-x-1 sm:space-x-3'
+          }`}>
             {/* Media Upload */}
             <button
               onClick={() => fileInputRef.current?.click()}
