@@ -3173,26 +3173,25 @@ const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess, placehol
         <div className={composeMode ? `shrink-0 px-2 pt-2 pb-[max(env(safe-area-inset-bottom),0.5rem)] border-t md:p-0 md:border-0 md:pb-0 ${isDark ? 'bg-black border-white/10' : 'bg-white border-gray-200'}` : ''}>
 
         {/* Functionality Icons */}
-        {/* flex-wrap on the outer row: on wide-enough contexts everything
-            stays inline; on narrow ones (image-modal sidebar 300px, sub-377
-            phones) the icons row keeps its place and the Post button wraps
-            to its own row, taking the full width via the `ml-auto` +
-            `flex-grow` combo below. No explicit breakpoints — flex figures
-            it out from intrinsic widths. */}
-        <div className={`flex flex-wrap items-center justify-between gap-x-2 gap-y-2 ${replyTo ? 'mt-1.5' : 'mt-4'} ${
+        {/* Outer row: Post button stays pinned right (items-start so on the
+            two-row icons case the Post button doesn't jump to mid-height).
+            The icons block on the left is the only thing that wraps. */}
+        <div className={`flex items-start justify-between gap-2 ${replyTo ? 'mt-1.5' : 'mt-4'} ${
           hasInlineFeedDraft
             ? `fixed md:static bottom-0 left-0 right-0 z-[60] px-4 py-3 pb-[max(env(safe-area-inset-bottom),0.75rem)] border-t ${isDark ? 'bg-black border-white/10' : 'bg-white border-gray-200'}`
             : composeMode
               ? ''
               : ''
         }`}>
-          <div className={`flex items-center min-w-0 ${
+          {/* Icons wrap to a second row when they can't fit (image-modal
+              sidebar at 300px, sub-377 phones, etc.). gap-y-1 spaces the
+              two icon rows without leaving a big gap. */}
+          <div className={`flex flex-wrap items-center min-w-0 gap-y-1 ${
             composeMode || replyTo
-              // Compose mode + any reply context (incl. the image-modal
-              // sidebar at md:w-[300px]) — the narrow column squeezes the
-              // icons against the Reply button if we use the wider gap.
-              ? 'space-x-1'
-              : 'space-x-1 sm:space-x-3'
+              // Compose mode + any reply context — narrow column squeezes
+              // the icons against the Post button if we use the wider gap.
+              ? 'gap-x-1'
+              : 'gap-x-1 sm:gap-x-3'
           }`}>
             {/* Media Upload */}
             <button
@@ -3492,11 +3491,11 @@ const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess, placehol
 
           </div>
 
-          {/* Character counter, token status and Post Button.
-              ml-auto pins this block to the right edge whether it stays
-              on the icons row (wide contexts) or wraps to its own row
-              (narrow contexts — image-modal sidebar, <377px phones). */}
-          <div className="flex items-center space-x-3 ml-auto">
+          {/* Character counter, token status and Post Button. The outer
+              justify-between pins this right; items-start on the outer
+              row keeps it top-aligned when the icons block wraps to two
+              rows so the Post button stays where the eye expects it. */}
+          <div className="flex items-center space-x-3 flex-shrink-0">
             {/* Token ownership and character counter */}
             <div className="flex items-center space-x-3">
               {isThreadMode && !composeMode && (
