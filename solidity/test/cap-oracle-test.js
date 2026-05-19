@@ -485,4 +485,140 @@ contract("CawCapOracle", (accounts) => {
       );
     });
   });
+
+  // ─────────────────────────────────────────────────────────────────────────
+  // H-9/H-10: pushRatioIfStale — permissionless freshness recovery
+  // ─────────────────────────────────────────────────────────────────────────
+
+  describe("pushRatioIfStale — rate-limit guard", () => {
+    it("reverts with TooSoon when called twice within 5 minutes", async () => {
+      // First call from a fresh oracle (lastPushAttemptAt=0). EVM timestamp
+      // is always > 0 + 5 min so the first call passes.
+      await oracle.pushRatioIfStale({ from: stranger });
+
+      // Immediate second call must revert.
+      let threw = false;
+      try {
+        await oracle.pushRatioIfStale({ from: stranger });
+      } catch (e) {
+        threw = true;
+        assert.match(e.message, /TooSoon|revert/i, "expected TooSoon revert");
+      }
+      assert(threw, "second pushRatioIfStale within 5 min should revert");
+    });
+
+    it("updates lastPushAttemptAt on successful call", async () => {
+      const before = await oracle.lastPushAttemptAt();
+      await oracle.pushRatioIfStale({ from: stranger });
+      const after = await oracle.lastPushAttemptAt();
+      assert(
+        new BN(after.toString()).gt(new BN(before.toString())),
+        "lastPushAttemptAt must increase after pushRatioIfStale"
+      );
+    });
+
+    it("pushes ratio when oracle is fresh+binding and 5 minutes have passed", async () => {
+      // Seed a fresh binding price via recordSample. The trampoline path sets
+      // lastPushAttemptAt; advance EVM time by 5 min + 1 s so pushRatioIfStale
+      // is no longer rate-limited.
+      await seedConstantPrice(new BN("1000000000")); // 1e9 → binds
+
+      const callCountAfterSeed = (await mockActions.setRatioCallCount()).toNumber();
+      assert(callCountAfterSeed >= 1, "seed should have triggered an initial push");
+
+      // Advance EVM clock past rate-limit window.
+      await web3.currentProvider.send({
+        jsonrpc: '2.0', method: 'evm_increaseTime',
+        params: [5 * 60 + 1], id: Date.now()
+      }, () => {});
+      await web3.currentProvider.send({
+        jsonrpc: '2.0', method: 'evm_mine', params: [], id: Date.now()
+      }, () => {});
+
+      // pushRatioIfStale should now pass the rate-limit and re-evaluate.
+      // The TWAP is within 100 bps of the already-stored ratio (same samples),
+      // so hysteresis suppresses a new setCapRatio call — but the function
+      // itself must NOT revert.
+      let threw = false;
+      try {
+        await oracle.pushRatioIfStale({ from: stranger });
+      } catch (e) {
+        threw = true;
+      }
+      assert(!threw, "pushRatioIfStale should not revert after 5 min");
+    });
+  });
+
+  // ─────────────────────────────────────────────────────────────────────────
+  // H-8: uint192 overflow check in _maybePushRatio
+  // ─────────────────────────────────────────────────────────────────────────
+
+  describe("H-8 — RatioOverflow revert on uint192 cast", () => {
+    it("_maybePushRatioExternal: reverts with RatioOverflow when TWAP > uint192.max", async () => {
+      // To trigger the overflow path we need: fresh=true AND binds AND newRatio > uint192.max.
+      //
+      // newRatio = cumDelta / timeDelta, so to make it huge we need a massive
+      // cumulative delta over a MIN_WINDOW-sized window.
+      //
+      // uint192.max ≈ 6.28e57. We need cumDelta/timeDelta > 6.28e57.
+      // Choose timeDelta = MIN_WINDOW + 1 = 86401 s.
+      // cumDelta must exceed 86401 × 6.28e57 ≈ 5.43e62.
+      // But Sample.cumulative is uint224 (max ≈ 2.69e67), so this is feasible.
+      //
+      // We also need the cap to "bind" — the bindsNow check:
+      //   likeCap = (CAP_LIKE << 112) / newRatio / 1e18 < BASELINE_LIKE
+      // A giant newRatio makes likeCap tiny (→ 0), so bindsNow=true.
+      //
+      // Craft a cumulative delta = (type(uint192).max + 1) * (MIN_WINDOW + 1)
+      // to guarantee the TWAP is exactly uint192.max + 1 after division.
+      const BN_192_MAX = new BN(2).pow(new BN(192)).subn(1);
+      const timeDelta = new BN(86401); // MIN_WINDOW + 1
+      const bigCumDelta = BN_192_MAX.addn(1).mul(timeDelta);
+
+      // bigCumDelta might exceed uint224.max if 192_MAX * 86401 > 224_max.
+      // uint224.max ≈ 2.695e67; BN_192_MAX * 86401 ≈ 5.43e62 << 2.695e67. Safe.
+      const now = await evmNow();
+      const t0 = now - timeDelta.toNumber();
+
+      await oracle.recordSample(0, t0, { from: writer });
+      // latest cumulative = 0 + bigCumDelta (oldest is 0).
+      // We need the raw cumulative value, but it may exceed uint224 in theory.
+      // Check it fits.
+      const TWO_224 = new BN(2).pow(new BN(224));
+      assert(bigCumDelta.lt(TWO_224), "bigCumDelta must fit in uint224 for this test");
+
+      // Record the second sample. This triggers recordSample → _maybePushRatioExternal
+      // → _maybePushRatio → require(newRatio <= uint192.max) → revert.
+      // But the revert is caught by the try/catch in recordSample itself
+      // (the call is: address(this).call(abi.encodeWithSelector(_maybePushRatioExternal))
+      // and the result is ignored). So recordSample itself should NOT revert.
+      await oracle.recordSample(bigCumDelta, now, { from: writer });
+      const written = (await oracle.samplesWritten()).toString();
+      assert.equal(written, "2", "recordSample should succeed even when _maybePushRatio overflows");
+
+      // The overflow catch swallows the RatioOverflow inside recordSample.
+      // Verify it via pushRatioIfStale (rate-limited after the trampoline ran).
+      // Advance clock 5 min + 1 s.
+      await web3.currentProvider.send({
+        jsonrpc: '2.0', method: 'evm_increaseTime',
+        params: [5 * 60 + 1], id: Date.now()
+      }, () => {});
+      await web3.currentProvider.send({
+        jsonrpc: '2.0', method: 'evm_mine', params: [], id: Date.now()
+      }, () => {});
+
+      // pushRatioIfStale calls _maybePushRatio directly (not via the swallowing
+      // try/catch), so it should revert with RatioOverflow.
+      let threw = false;
+      let errMsg = "";
+      try {
+        await oracle.pushRatioIfStale({ from: stranger });
+      } catch (e) {
+        threw = true;
+        errMsg = e.message;
+      }
+      assert(threw, "pushRatioIfStale should revert with RatioOverflow when TWAP > uint192.max");
+      assert.match(errMsg, /RatioOverflow|revert/i, "expected RatioOverflow");
+    });
+  });
 });
