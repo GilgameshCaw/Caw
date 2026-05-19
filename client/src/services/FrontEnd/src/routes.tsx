@@ -67,6 +67,7 @@ const LanguageSettings = lazyWithReload(() => import("./pages/LanguageSettings")
 const AccountSettings = lazyWithReload(() => import("./pages/AccountSettings"));
 const SessionKeySettings = lazyWithReload(() => import("./pages/SessionKeySettings"));
 const HelpPage = lazyWithReload(() => import("./pages/HelpPage"));
+const WhitepaperPage = lazyWithReload(() => import("./pages/WhitepaperPage"));
 const MessagesPage = lazyWithReload(() => import("./pages/Messages"));
 const InviteRedeemPage = lazyWithReload(() => import("./pages/InviteRedeemPage"));
 const BookmarksPage = lazyWithReload(() => import("./pages/Bookmarks"));
@@ -164,6 +165,9 @@ export const layoutRoutes: RouteDef[] = [
 export const bareRoutes: RouteDef[] = [
   { path: "/welcome", component: <CaptiveSplash /> },
   { path: "/welcome/:username", component: <WelcomePage /> },
+  // Whitepaper is intentionally a bare route so it doesn't mount MainLayout
+  // (the social app chrome / network-specific flows).
+  { path: "/help/whitepaper", component: <WhitepaperPage /> },
   { path: "/admin", component: <AdminGate><Admin /></AdminGate> },
   { path: "/admin/bugs", component: <AdminGate><BugReportsAdmin /></AdminGate> },
   { path: "/admin/reports", component: <AdminGate><ReportsAdmin /></AdminGate> },

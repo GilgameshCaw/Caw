@@ -73,7 +73,7 @@ export const Community = () => {
         <div className={`text-center mb-6 md:hidden transition-all duration-500 delay-200 ${
           showContent ? 'opacity-100 translate-y-0' : 'opacity-0 translate-y-4'
         }`}>
-          <h3 className="text-2xl font-semibold leading-tight">
+          <h3 className="text-3xl font-semibold leading-tight">
             <span className="block">Built by</span>
             <RotatingWordCommunity />
           </h3>
@@ -81,7 +81,7 @@ export const Community = () => {
 
         {/* Mobile: Image below title */}
         <div className="flex justify-start md:hidden mb-6 ml-8">
-          <div className="max-w-[280px] w-full relative z-0">
+          <div className="max-w-[340px] w-full relative z-0">
             <div className="relative w-full overflow-hidden rounded-lg hero-vignette">
               <img
                 src={ethereumImg}
@@ -125,7 +125,7 @@ export const Community = () => {
         </div>
 
         {/* Desktop: icon with side text boxes + connector lines */}
-        <div className="relative flex items-center justify-center mb-12">
+        <div className="relative flex items-center justify-center mb-12 md:-translate-x-8 lg:-translate-x-12">
           <div className={`absolute left-0 sm:left-4 md:left-12 lg:left-24 top-[35%] -translate-y-1/2 bg-black z-10 transition-all duration-500 delay-300 hidden sm:block ${
             showContent ? 'opacity-100 translate-y-0' : 'opacity-0 translate-y-4'
           }`}>
@@ -179,9 +179,9 @@ export const Community = () => {
           </div>
 
           {/* Title at right of icon — desktop only */}
-          <div className={`absolute -right-12 sm:-right-20 md:-right-32 lg:-right-48 top-[40%] -translate-y-1/2 text-center z-10 scale-75 sm:scale-90 origin-right w-max transition-all duration-500 delay-200 hidden md:block ${
-            showContent ? 'opacity-100 translate-y-0' : 'opacity-0 translate-y-4'
-          }`}>
+          <div className={`absolute -right-4 sm:-right-8 md:-right-16 lg:-right-24 top-[40%] -translate-y-1/2 text-center z-10 scale-75 sm:scale-90 origin-right w-max transition-all duration-500 delay-200 hidden md:block ${
+              showContent ? 'opacity-100 translate-y-0' : 'opacity-0 translate-y-4'
+            }`}>
             <h3 className="text-2xl sm:text-4xl md:text-5xl lg:text-6xl font-semibold leading-tight">
               <span className="block">Built by</span>
               <RotatingWordCommunity />

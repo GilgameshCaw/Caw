@@ -8,10 +8,13 @@ import { useState, useEffect, useRef, lazy, Suspense } from 'react'
 import BoidsBg from '~/components/BoidsBg'
 import LanguageSwitcher from '~/components/LanguageSwitcher'
 import WalletAccountButton from '~/components/buttons/WalletAccountButton'
+import { HiDocumentText } from 'react-icons/hi'
 
 const Caw3D = lazy(() => import('~/components/Caw3D'))
 const Features = lazy(() => import('~/components/landing/Features'))
 const Community = lazy(() => import('~/components/landing/Community'))
+const FreeSpeech = lazy(() => import('~/components/landing/FreeSpeech'))
+const Cawmmunity = lazy(() => import('~/components/landing/Cawmmunity'))
 
 const KEYWORD_KEYS = [
   'captive_splash.kw.permissionless',
@@ -52,7 +55,23 @@ export default function CaptiveSplash() {
       {/* Language picker — top-right so a non-English visitor can pick
           their language before reading anything else. Persisted in
           localStorage; promoted to User.preferredLanguage post-mint. */}
-      <div className="absolute top-3 right-3 z-20">
+      <div className="absolute top-3 right-3 z-20 flex items-center gap-2">
+        {/* Whitepaper CTA: icon on mobile, text button on md+. */}
+        <Link
+          to="/help/whitepaper"
+          className="inline-flex md:hidden items-center justify-center w-9 h-9 rounded-md border border-white/20 bg-black/40 text-white transition-colors hover:bg-white hover:text-black hover:border-white"
+          aria-label="Open whitepaper"
+          title="Whitepaper"
+        >
+          <HiDocumentText className="w-5 h-5" />
+        </Link>
+        <Link
+          to="/help/whitepaper"
+          className="hidden md:inline-flex items-center justify-center gap-2 px-3 py-2 rounded-md border border-white/20 bg-black/40 text-white text-sm font-semibold transition-colors hover:bg-white hover:text-black hover:border-white"
+        >
+          <HiDocumentText className="w-4 h-4" />
+          Whitepaper
+        </Link>
         <LanguageSwitcher />
       </div>
       {/* Wallet pill — top-left. Lets a connected user reach the account
@@ -94,26 +113,26 @@ export default function CaptiveSplash() {
           {t('captive_splash.subtitle')}
         </p>
 
-        {/* CTA buttons */}
-        <div className="flex flex-col sm:flex-row items-center gap-4 mb-12">
+        {/* CTA buttons (mobile: side-by-side) */}
+        <div className="flex flex-row items-center justify-center gap-3 sm:gap-4 mb-12">
           {!isConnected ? (
             <button
               onClick={openConnectModal}
-              className="px-8 py-3 bg-yellow-500 text-black font-bold text-lg rounded-full hover:bg-yellow-400 transition-all shadow-lg hover:shadow-xl cursor-pointer"
+              className="px-5 sm:px-8 py-3 bg-yellow-500 text-black font-bold text-base sm:text-lg rounded-full hover:bg-yellow-400 transition-all shadow-lg hover:shadow-xl cursor-pointer whitespace-nowrap"
             >
               {t('common.sign_in')}
             </button>
           ) : !activeToken?.username ? (
             <Link
               to="/usernames/new"
-              className="px-8 py-3 bg-yellow-500 text-black font-bold text-lg rounded-full hover:bg-yellow-400 transition-all shadow-lg hover:shadow-xl"
+              className="px-5 sm:px-8 py-3 bg-yellow-500 text-black font-bold text-base sm:text-lg rounded-full hover:bg-yellow-400 transition-all shadow-lg hover:shadow-xl whitespace-nowrap"
             >
               {t('main_layout.create_profile')}
             </Link>
           ) : (
             <Link
               to="/home"
-              className="px-8 py-3 bg-yellow-500 text-black font-bold text-lg rounded-full hover:bg-yellow-400 transition-all shadow-lg hover:shadow-xl"
+              className="px-5 sm:px-8 py-3 bg-yellow-500 text-black font-bold text-base sm:text-lg rounded-full hover:bg-yellow-400 transition-all shadow-lg hover:shadow-xl whitespace-nowrap"
             >
               {t('captive_splash.go_to_feed')}
             </Link>
@@ -121,7 +140,7 @@ export default function CaptiveSplash() {
 
           <Link
             to="/help/faq"
-            className={`px-8 py-3 font-semibold text-lg rounded-full border transition-all ${
+            className={`px-5 sm:px-8 py-3 font-semibold text-base sm:text-lg rounded-full border transition-all whitespace-nowrap ${
               isDark
                 ? 'border-white/20 text-white/80 hover:bg-white/10'
                 : 'border-gray-300 text-gray-700 hover:bg-gray-100'
@@ -146,6 +165,18 @@ export default function CaptiveSplash() {
       <div className="min-h-[100svh] snap-start flex flex-col justify-center relative z-10">
         <Suspense fallback={<div className="py-20" />}>
           <Community />
+        </Suspense>
+      </div>
+
+      <div className="min-h-[100svh] snap-start flex flex-col justify-center relative z-10">
+        <Suspense fallback={<div className="py-20" />}>
+          <FreeSpeech />
+        </Suspense>
+      </div>
+
+      <div className="min-h-[100svh] snap-start flex flex-col justify-center relative z-10">
+        <Suspense fallback={<div className="py-20" />}>
+          <Cawmmunity />
         </Suspense>
       </div>
 

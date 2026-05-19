@@ -103,7 +103,7 @@ export const Features = () => {
             Your words, your wallet, your identity — all on-chain.
           </p>
         </div>
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-6 sm:gap-8 -mt-6 sm:-mt-8">
+        <div className="grid grid-cols-2 md:grid-cols-2 gap-5 sm:gap-8 -mt-6 sm:-mt-8">
           {features.map((feature, index) => (
             <div
               key={index}
@@ -121,18 +121,18 @@ export const Features = () => {
                   is driven by the fixed image HEIGHT below, not width. */}
               <div className={`mx-auto relative hero-vignette ${
                 index === 1
-                  ? 'max-w-[140px] sm:max-w-[235px]'
+                  ? 'max-w-[130px] sm:max-w-[235px]'
                   : index === 0
-                  ? 'max-w-[160px] sm:max-w-[270px]'
-                  : 'max-w-[140px] sm:max-w-[224px]'
+                  ? 'max-w-[145px] sm:max-w-[270px]'
+                  : 'max-w-[130px] sm:max-w-[224px]'
               }`}>
                 <img
                   src={feature.image}
                   alt={feature.title}
                   className={`w-full object-contain relative z-0 transition-opacity duration-300 ${
                     index === 0 || index === 1
-                      ? 'h-[160px] sm:h-[270px]'
-                      : 'h-[140px] sm:h-[224px]'
+                      ? 'h-[120px] sm:h-[270px]'
+                      : 'h-[110px] sm:h-[224px]'
                   } ${
                     imageStates[index]?.showBoth ? 'opacity-100' : 'opacity-0'
                   }`}
@@ -177,13 +177,13 @@ export const Features = () => {
               {/* Text content - tucked up under the artwork. Image height
                   is fixed per row (above), so the negative margin lands
                   every title in the row at the exact same Y. */}
-              <div className={`relative z-30 ${index === 0 || index === 1 ? '-mt-8 sm:-mt-14' : '-mt-3 sm:-mt-6'} space-y-1.5 sm:space-y-2 text-center transition-all duration-500 delay-300 ${
+              <div className={`relative z-30 ${index === 0 || index === 1 ? '-mt-4 sm:-mt-14' : '-mt-2 sm:-mt-6'} space-y-1.5 sm:space-y-2 text-center transition-all duration-500 delay-300 ${
                 showContent
                   ? 'opacity-100 translate-y-0'
                   : 'opacity-0 translate-y-4'
               }`}>
-                <h4 className="text-sm sm:text-lg font-semibold">{feature.title}</h4>
-                <p className="text-gray-400 text-[10px] sm:text-sm leading-tight sm:leading-normal max-w-[140px] sm:max-w-none mx-auto break-words sm:break-normal">{feature.description}</p>
+                <h4 className="text-[14px] sm:text-lg font-semibold">{feature.title}</h4>
+                <p className="text-gray-400 text-[12px] sm:text-sm leading-snug sm:leading-normal max-w-[170px] sm:max-w-none mx-auto break-words sm:break-normal">{feature.description}</p>
               </div>
             </div>
           ))}
