@@ -8,6 +8,7 @@ import BugIcon from "~/components/icons/BugIcon";
 import { useTheme } from "~/hooks/useTheme";
 import Tooltip from "~/components/Tooltip";
 import { useT } from "~/i18n/I18nProvider";
+import { acquireScrollLock, releaseScrollLock } from "~/utils/scrollLock";
 import { useState, useEffect, useRef, lazy, Suspense } from "react";
 import { HiOutlineMenu, HiOutlineX, HiOutlinePencilAlt, HiOutlineHome, HiOutlineSearch, HiOutlineColorSwatch, HiOutlineBell, HiOutlineUser, HiOutlineChat } from "react-icons/hi";
 import { useLocation } from "react-router-dom";
@@ -247,6 +248,16 @@ const MainLayout = ({ children, hideSidebars: hideSidebarsProp }: MainLayoutProp
     }
   }, [showBottomNav, hasInlineDraft])
 
+  // Lock background scroll while the mobile drawer is open so the feed
+  // behind the backdrop doesn't scroll under the finger. Reuses the same
+  // refcounted lock as modals — handles iOS Safari (which ignores
+  // overflow:hidden) via position:fixed and restores scrollY on close.
+  useEffect(() => {
+    if (!isMobileMenuOpen) return
+    acquireScrollLock()
+    return () => releaseScrollLock()
+  }, [isMobileMenuOpen])
+
   return (
     <>
     {/* Fixed backdrop so scrolling doesn't reveal the root gradient */}
@@ -289,6 +300,7 @@ const MainLayout = ({ children, hideSidebars: hideSidebarsProp }: MainLayoutProp
           <Link
             to="/messages"
             aria-label="Messages"
+            onClick={() => { clearInlineDrawerStyles(); setIsMobileMenuOpen(false) }}
             className={`absolute right-4 translate-y-[2px] p-2 rounded-lg transition-colors duration-200 ${
               isDark ? 'text-white hover:bg-white/10' : 'text-black hover:bg-gray-100'
             }`}

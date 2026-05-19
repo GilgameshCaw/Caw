@@ -38,25 +38,29 @@ import { useNavigate } from '~/utils/localizedRouter'
 import { HiOutlineChartBar } from 'react-icons/hi'
 import { buildPollMarker, imageUrlToPollHash, imageUrlToMeta } from '~/../../../tools/pollMarker'
 
-// AI (outline) + glitter (outline) in one icon, so proportions match toolbar.
-// Rendered as a single SVG to avoid badges/stickers.
+// AI button icon: just sparkles.
+// Rationale: letters/frames read like a sticker and look off next to toolbar icons.
+// IMPORTANT: keep strokeWeight consistent with the rest of the toolbar (2).
 const AiGlitterIcon: React.FC<{ sizeClass: string }> = ({ sizeClass }) => (
   <svg className={sizeClass} viewBox="0 0 24 24" fill="none" stroke="currentColor" aria-hidden="true">
-    {/* AI block (outline) — bigger, like other icons */}
-    <rect x="1.5" y="5" width="14" height="14" rx="2.5" strokeWidth={2} />
-    {/* A */}
-    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4.9 17l2.7-10 2.7 10" />
-    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 13.3h3.2" />
-    {/* I (add top/bottom bars so it reads as I) */}
-    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11.2 8.4h2.2" />
-    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12.3 8.4v8.2" />
-    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11.2 16.6h2.2" />
-
-    {/* Glitter as a small accent on the right */}
-    {/* Move glitter further right without clipping: scale down + translate */}
-    <g transform="translate(6 0) scale(0.82)">
-      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 10.5l.55 1.9a2.7 2.7 0 001.85 1.85L23.3 15l-1.9.55a2.7 2.7 0 00-1.85 1.85L19 19.3l-.55-1.9a2.7 2.7 0 00-1.85-1.85L14.7 15l1.9-.55a2.7 2.7 0 001.85-1.85L19 10.5z" />
-      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 6l.18.6a1.7 1.7 0 001.15 1.15l.6.18-.6.18A1.7 1.7 0 0021.18 9.3L21 9.9l-.18-.6a1.7 1.7 0 00-1.15-1.15l-.6-.18.6-.18A1.7 1.7 0 0020.82 6.6L21 6z" />
+    {/* Sparkles — outline, centered */}
+    {/* Slightly larger and nudged down to visually center inside circular button */}
+    {/* NOTE: sparkles read visually heavier than other outline icons; use slightly thinner stroke */}
+    <g transform="translate(12 12) scale(1.12) translate(-12 -12) translate(-1.6 2.6)">
+      <path
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        strokeWidth={1.8}
+        vectorEffect="non-scaling-stroke"
+        d="M12 3.5l.8 2.7a3.6 3.6 0 002.5 2.5l2.7.8-2.7.8a3.6 3.6 0 00-2.5 2.5l-.8 2.7-.8-2.7a3.6 3.6 0 00-2.5-2.5l-2.7-.8 2.7-.8a3.6 3.6 0 002.5-2.5L12 3.5z"
+      />
+      <path
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        strokeWidth={1.8}
+        vectorEffect="non-scaling-stroke"
+        d="M18 6.2l.3 1a2.1 2.1 0 001.4 1.4l1 .3-1 .3a2.1 2.1 0 00-1.4 1.4l-.3 1-.3-1a2.1 2.1 0 00-1.4-1.4l-1-.3 1-.3a2.1 2.1 0 001.4-1.4l.3-1z"
+      />
     </g>
   </svg>
 )
@@ -2741,7 +2745,7 @@ const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess, placehol
                   onClick={openAiImages}
                   title={t('post_form.ai.tooltip')}
                   aria-label={t('post_form.ai.aria')}
-                  className={`relative p-1 rounded-full transition-all duration-200 cursor-pointer ${
+                  className={`relative p-1 -ml-0.5 rounded-full transition-all duration-200 cursor-pointer ${
                     text.trim()
                       ? (isDark
                           ? 'text-yellow-400 hover:text-yellow-300 hover:bg-yellow-400/10'
@@ -2751,6 +2755,7 @@ const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess, placehol
                           : 'text-yellow-600/70 hover:text-yellow-600 hover:bg-yellow-200/50')
                   }`}
                 >
+                  {/* Match hover hitbox with the rest of the toolbar */}
                   <AiGlitterIcon sizeClass="w-5 h-5" />
                 </button>
               )}
@@ -3178,7 +3183,7 @@ const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess, placehol
               ? ''
               : ''
         }`}>
-          <div className={`flex items-center min-w-0 ${composeMode ? 'space-x-1' : 'space-x-1 sm:space-x-3'}`}>
+          <div className={`flex items-center min-w-0 ${composeMode ? 'space-x-1' : 'space-x-1 sm:space-x-2'}`}>
             {/* Media Upload */}
             <button
               onClick={() => fileInputRef.current?.click()}
@@ -3461,7 +3466,7 @@ const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess, placehol
                 onClick={openAiImages}
                 title={t('post_form.ai.tooltip')}
                 aria-label={t('post_form.ai.aria')}
-              className={`relative p-2 rounded-full transition-all duration-200 cursor-pointer ${
+                className={`relative p-2 -ml-1 rounded-full transition-all duration-200 cursor-pointer ${
                   text.trim()
                     ? (isDark
                         ? 'text-yellow-400 hover:text-yellow-300 hover:bg-yellow-400/10'
@@ -3471,6 +3476,7 @@ const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess, placehol
                         : 'text-yellow-600/70 hover:text-yellow-600 hover:bg-yellow-200/50')
                 }`}
               >
+                {/* Match hover hitbox with the rest of the toolbar */}
                 <AiGlitterIcon sizeClass="w-6 h-6" />
               </button>
             )}

@@ -444,11 +444,17 @@ const TipAttachmentControl: React.FC<Props> = ({
         {/* Dollar-sign coin icon. Filled when tips are attached, outline when not. */}
         <svg className={iconSizeClass} fill={hasTips ? 'currentColor' : 'none'} stroke="currentColor" viewBox="0 0 24 24">
           {hasTips ? (
-            <path fillRule="evenodd" clipRule="evenodd" d="M12 2a10 10 0 100 20 10 10 0 000-20zm.75 5a.75.75 0 00-1.5 0v.5h-.5a2.25 2.25 0 000 4.5h2a.75.75 0 010 1.5h-3a.75.75 0 000 1.5h1.5v.5a.75.75 0 001.5 0V15h.5a2.25 2.25 0 000-4.5h-2a.75.75 0 010-1.5h3a.75.75 0 000-1.5h-1.5V7z" />
+            // Nudge the "$" a hair RIGHT to read centered inside the coin.
+            <g transform="translate(0.75 0)">
+              <path fillRule="evenodd" clipRule="evenodd" d="M12 2a10 10 0 100 20 10 10 0 000-20zm.75 5a.75.75 0 00-1.5 0v.5h-.5a2.25 2.25 0 000 4.5h2a.75.75 0 010 1.5h-3a.75.75 0 000 1.5h1.5v.5a.75.75 0 001.5 0V15h.5a2.25 2.25 0 000-4.5h-2a.75.75 0 010-1.5h3a.75.75 0 000-1.5h-1.5V7z" />
+            </g>
           ) : (
             <>
               <circle cx="12" cy="12" r="9" strokeWidth={2} />
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M14.5 9.5a3 3 0 00-3-1.5h-1a2 2 0 000 4h2a2 2 0 010 4h-1.5a3 3 0 01-3-1.5M12 7v1.5m0 7V17" />
+              {/* Nudge the "$" a hair RIGHT to read centered inside the coin. */}
+              <g transform="translate(0.75 0)">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M14.5 9.5a3 3 0 00-3-1.5h-1a2 2 0 000 4h2a2 2 0 010 4h-1.5a3 3 0 01-3-1.5M12 7v1.5m0 7V17" />
+              </g>
             </>
           )}
         </svg>
