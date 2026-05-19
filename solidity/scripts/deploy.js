@@ -162,6 +162,10 @@ const CHAINS = {
     // but L1 is not the primary action chain. Look up canonical address at:
     // https://docs.succinct.xyz/onchain-verification
     sp1Verifier: '<TBD before testnetL1 deploy: look up canonical Succinct SP1Verifier on Sepolia>',
+    // Canonical Uniswap V2 Router 02 on Sepolia. Listed on the official
+    // deployments page (developers.uniswap.org/contracts/v2/reference/
+    // smart-contracts/v2-deployments) and verified on sepolia.etherscan.io.
+    uniswapV2Router: '0xeE567Fe1712Faf6149d80dA1E6934E354124CfE3',
   },
   testnetL2: {
     name: 'Base Sepolia',
@@ -192,6 +196,7 @@ const CHAINS = {
     lzEid: 30101,
     dvn: '0x0000000000000000000000000000000000000000',
     sp1Verifier: null, // dev: MockSP1Verifier deployed at phase 1 (see CONTRACTS below)
+    uniswapV2Router: null, // dev: MockSwapRouter deployed at phase 2 (see CONTRACTS below)
   },
   devL2: {
     name: 'Local L2',
@@ -221,6 +226,9 @@ const CHAINS = {
     dvn: '0x589dedbd617e0cbcb916a9223f4d1300c294236b',
     // Look up canonical address at https://docs.succinct.xyz/onchain-verification
     sp1Verifier: '<TBD before mainnetL1 deploy: look up canonical Succinct SP1Verifier on Ethereum mainnet>',
+    // Canonical Uniswap V2 Router 02 on Ethereum mainnet. Verified at
+    // https://docs.uniswap.org/contracts/v2/reference/smart-contracts/router-02
+    uniswapV2Router: '0x7a250d5630B4cF539739dF2C5dAcb4c659F2488D',
   },
   mainnetL2: {
     name: 'Base Mainnet',
@@ -265,6 +273,23 @@ function requireSp1Verifier(chainKey) {
       `CHAINS[${chainKey}].sp1Verifier is not set. ` +
       `Look up the canonical Succinct SP1Verifier address for this chain at ` +
       `https://docs.succinct.xyz/onchain-verification and update CHAINS in deploy.js.`
+    );
+  }
+  return v;
+}
+
+// Returns the canonical Uniswap V2 router address for a chain, or throws if it
+// has not been set (placeholder strings starting with '<' are rejected). Returns
+// null for dev chains (MockSwapRouter will be deployed instead).
+//
+// Called from constructorArgs callbacks where chainKey is the full CHAINS key.
+function requireUniswapRouter(chainKey) {
+  const v = CHAINS[chainKey]?.uniswapV2Router;
+  if (v === null) return null; // dev chain — MockSwapRouter will be deployed
+  if (!v || typeof v !== 'string' || v.startsWith('<')) {
+    throw new Error(
+      `CHAINS[${chainKey}].uniswapV2Router is not set. ` +
+      `Look up the Uniswap V2 Router 02 address for this chain and update CHAINS in deploy.js.`
     );
   }
   return v;
@@ -340,14 +365,17 @@ const CONTRACTS = {
     phase: 2,
     dependencies: [],
     constructorArgs: (state) => [state.addresses.MintableCaw],
+    condition: (_state, _deployer, env) => env === 'dev',
   },
   CawBuyAndBurn: {
     chain: 'L1',
     phase: 2,
-    dependencies: ['MockSwapRouter'],
-    constructorArgs: (state) => [
+    // MockSwapRouter is only a dependency on dev; on testnet/mainnet the Uniswap
+    // V2 router is an existing contract — no deploy needed before this.
+    dependencies: [],
+    constructorArgs: (state, chainKey) => [
       state.addresses.MintableCaw,
-      state.addresses.MockSwapRouter,
+      state.addresses.MockSwapRouter || requireUniswapRouter(chainKey),
     ],
   },
   CawNetworkManager: {
@@ -432,11 +460,13 @@ const CONTRACTS = {
     // entire nonce chain completes before any of these deploy — preventing a
     // round-robin scheduler from interleaving a Minter/Quoter/Marketplace deploy
     // between CawCapOracle and CawActions and corrupting the nonce prediction.
-    dependencies: ['CawProfile', 'MockSwapRouter', 'CawActionsERC1271_L1'],
-    constructorArgs: (state) => [
+    // MockSwapRouter is only a dependency on dev; on testnet/mainnet the Uniswap
+    // V2 router is an existing contract — no deploy needed before this.
+    dependencies: ['CawProfile', 'CawActionsERC1271_L1'],
+    constructorArgs: (state, chainKey) => [
       state.addresses.MintableCaw,
       state.addresses.CawProfile,
-      state.addresses.MockSwapRouter,
+      state.addresses.MockSwapRouter || requireUniswapRouter(chainKey),
     ],
   },
   CawProfileQuoter: {
