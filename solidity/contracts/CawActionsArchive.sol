@@ -61,6 +61,10 @@ contract CawActionsArchive is Ownable, ReentrancyGuard, OnlyOnce, OApp {
   uint256 public constant MIN_STAKE = 0.01 ether;
   uint256 public constant CHECKPOINT_INTERVAL = 32;
   uint256 public constant MAX_CHECKPOINTS_PER_SUBMISSION = 256;
+  /// @notice H-6 fix: cap pending submissions per validator so the slash loop
+  ///         (which iterates validatorSubmissions[]) can never exceed L2 block
+  ///         gas. 16 pending × 256 checkpoints each = 4096 SSTORE worst case.
+  uint256 public constant MAX_PENDING_PER_VALIDATOR = 16;
 
   // ============================================
   // STATE
@@ -225,6 +229,8 @@ contract CawActionsArchive is Ownable, ReentrancyGuard, OnlyOnce, OApp {
     bytes32 entryHash
   ) external {
     require(stakes[msg.sender] >= MIN_STAKE, "Insufficient stake");
+    // H-6: cap pending submissions so slash-loop work stays within L2 block gas.
+    require(pendingCount[msg.sender] < MAX_PENDING_PER_VALIDATOR, "TooManyPending");
     require(startCheckpointId > 0, "Invalid start");
     require(endCheckpointId >= startCheckpointId, "Invalid range");
 
@@ -237,6 +243,18 @@ contract CawActionsArchive is Ownable, ReentrancyGuard, OnlyOnce, OApp {
     require(actionCount == expectedActions, "Action count mismatch");
     require(r.length == expectedActions, "r length mismatch");
     require(merkleRoot != bytes32(0), "Empty merkle root");
+
+    // H-5: walk the packedActions byte layout to verify it contains exactly
+    // `actionCount` well-formed actions with no trailing garbage. Without this,
+    // a malformed blob can be submitted and then cause slashIncoherentRoot to
+    // revert on _actionSliceEnd — making that fraud class permanently unslashable.
+    {
+      uint256 pos = 2; // skip the 2-byte actionCount header
+      for (uint256 i = 0; i < actionCount; i++) {
+        pos = _actionSliceEnd(packedActions, pos);
+      }
+      require(pos == packedActions.length, "Malformed packedActions");
+    }
 
     // Ensure no checkpoint in the range is already claimed
     for (uint256 cp = startCheckpointId; cp <= endCheckpointId; ) {
