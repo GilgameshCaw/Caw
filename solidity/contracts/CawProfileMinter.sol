@@ -271,6 +271,12 @@ contract CawProfileMinter is Context {
     return amounts[amounts.length - 1];
   }
 
+  /// @notice Accept ETH refunds from CawProfile._refundUnusedLzEth. Without
+  ///         this, the low-level call{value: amount}("") in _refundUnusedLzEth
+  ///         reverts when the Minter is msg.sender, causing all bypassLZ mint
+  ///         paths to fail. (H-1)
+  receive() external payable {}
+
   function costOfName(string memory username) public pure returns (uint256) {
     uint8 usernameLength = uint8(bytes(username).length);
     uint256 amount;
