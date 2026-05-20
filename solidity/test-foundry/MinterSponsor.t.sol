@@ -77,8 +77,15 @@ contract MockProfile {
     // Minter address enforced by authenticateForMinter
     address public minter;
 
-    constructor(address _minter) {
+    // CAW reference — used by depositFor to actually exercise the
+    // CAW.transferFrom path (catches the class of bug found in integration
+    // audit 2026-05-21 HIGH-1 where depositForSponsored on the live Minter
+    // would revert because no pull-and-approve happened).
+    MockERC20 public caw;
+
+    constructor(address _minter, address _caw) {
         minter = _minter;
+        caw = MockERC20(_caw);
     }
 
     function nextId() external returns (uint32) {
@@ -133,7 +140,8 @@ contract MockProfile {
         _nextId = newId + 1;
     }
 
-    // permissionless deposit — records call
+    // permissionless deposit — pulls CAW like the real contract does, so the
+    // sponsor entry point's pull-and-approve prologue is genuinely exercised.
     function depositFor(
         uint32 /*cawNetworkId*/,
         uint32 tokenId,
@@ -142,6 +150,10 @@ contract MockProfile {
         uint256 /*lzTokenAmount*/
     ) external payable {
         require(_owner[tokenId] != address(0), "MockProfile: nonexistent");
+        // Mirror real CawProfile.depositFor: pull amount CAW from msg.sender
+        // (which is the Minter contract in the sponsor flow). If the Minter
+        // hasn't pulled+approved CAW before delegating here, this reverts.
+        caw.transferFrom(msg.sender, address(this), amount);
         depositForCalled = true;
         lastDepositAmount = amount;
     }
@@ -292,7 +304,7 @@ contract MinterSponsorTest is Test {
         // to point at Minter's address.  BUT MockProfile.minter is set at construction.
         // Use vm.computeCreateAddress to predict the minter address:
         address predictedMinter = vm.computeCreateAddress(address(this), vm.getNonce(address(this)) + 1);
-        profile  = new MockProfile(predictedMinter);
+        profile  = new MockProfile(predictedMinter, address(caw));
         minter   = new CawProfileMinter(address(caw), address(profile), address(router));
         require(address(minter) == predictedMinter, "address prediction mismatch");
 

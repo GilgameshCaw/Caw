@@ -397,6 +397,16 @@ contract CawProfileMinter is Context {
     ));
     bytes32 digest = keccak256(abi.encodePacked("\x19\x01", DOMAIN_SEPARATOR, structHash));
     _checkPermit(owner, ACTION_DEPOSIT_FOR, permitNonce, digest, sig);
+
+    // Pull CAW from the sponsor (msg.sender) into the Minter, then approve
+    // CawProfile to pull it back. Required because CawProfile.depositFor does
+    // CAW.transferFrom(msg.sender, ...) where msg.sender is THIS contract — we
+    // must have the balance + allowance before delegating. Matches the pattern
+    // used by mintAndDepositFor at line ~159. The sponsor server must hold the
+    // user's CAW and have pre-approved the Minter for at least `amount`.
+    // Integration audit 2026-05-21 HIGH-1.
+    CAW.transferFrom(_msgSender(), address(this), amount);
+    CAW.approve(address(CawProfile), amount);
     CawProfile.depositFor{value: msg.value}(networkId, tokenId, amount, lzDestId, lzTokenAmount);
   }
 
