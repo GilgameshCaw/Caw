@@ -445,7 +445,7 @@ const TipAttachmentControl: React.FC<Props> = ({
         disabled={disabled}
         title={title || t('post_form.tip.tooltip', { defaultValue: 'Attach tips to your post' })}
         aria-label={triggerAriaLabel}
-        className={`relative p-1 rounded-full transition-all duration-200 ${
+        className={`relative p-2 rounded-full transition-all duration-200 ${
           disabled ? 'opacity-30 cursor-not-allowed' : 'cursor-pointer'
         } ${activeClasses}`}
       >
