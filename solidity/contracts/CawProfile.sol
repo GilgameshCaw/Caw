@@ -65,12 +65,8 @@ contract CawProfile is
   string[] public usernames;
   bool private fromLZ;
 
-  /// @notice Selector for L2's mint mirror. Currently unused — mint() does not lzSend.
-  /// @dev Reserved for a future "mint + authenticate (no deposit)" flow that pushes
-  ///      username + owner to L2 at mint time so the token can receive internal CAW
-  ///      transfers from other tokens before its own first deposit. Keeping the selector,
-  ///      gasLimitFor branch, and L2 receiver wired now means we don't need to redeploy
-  ///      to enable that flow later — these contracts are immutable post-deployment.
+  // Precomputed L2 handler selectors. Stored as internal state (no public getter
+  // bytecode overhead); explicit view wrappers below satisfy CawProfileQuoter.
   // ALL selectors that carry an ownership-update tail include a uint64[]
   // stamps parameter as the final array. L1 stamps each (tokenId, owner)
   // entry with block.number at flush time. L2 honors the highest stamp
@@ -81,24 +77,13 @@ contract CawProfile is
   // session keys that wallet had registered before the bump (closes
   // the Bob-briefly-held-token attack from CL-4). Audit fix 2026-05-11
   // (Round 7 CL-4).
-  bytes4 public mintSelector = bytes4(keccak256("mintAndUpdateOwners(uint32,address,string,uint32[],address[],uint64[])"));
-
-  bytes4 public addToBalanceSelector = bytes4(keccak256("depositAndUpdateOwners(uint32,uint32,uint256,uint32[],address[],uint64[])"));
-  bytes4 public authSelector = bytes4(keccak256("authenticateAndUpdateOwners(uint32,uint32,uint32[],address[],uint64[])"));
-  bytes4 public updateOwnersSelector = bytes4(keccak256("updateOwners(uint32[],address[],uint64[])"));
-  /// @notice Selector for the mint+auth (no deposit) flow. Brings the L2 mirror in line
-  ///         with the L1 NFT in one LZ message: sets username, owner, and the auth flag.
-  bytes4 public mintAuthSelector = bytes4(keccak256("mintAuthAndUpdateOwners(uint32,uint32,address,string,uint32[],address[],uint64[])"));
-
-  /// @notice Selector for the bundled deposit + register-session L2 handler. Used by the
-  ///         mintAndDepositAndQuickSign flow so a fresh user mints+deposits+auths+quicksigns
-  ///         in a single L1 transaction. The L2 receiver hard-wires scopeBitmap = 0xBF —
-  ///         WITHDRAW is permanently non-delegatable.
-  bytes4 public depositRegisterSessionSelector = bytes4(keccak256("depositAndRegisterSessionAndUpdateOwners(uint32,uint32,uint256,address,address,uint64,uint256,uint64,uint32[],address[],uint64[])"));
-
-  /// @notice Selector for the bundled mint+auth + register-session L2 handler. Used by the
-  ///         mintAndAuthAndQuickSign flow (no deposit). Same 0xBF scope hard-wire on L2.
-  bytes4 public mintAuthRegisterSessionSelector = bytes4(keccak256("mintAuthAndRegisterSessionAndUpdateOwners(uint32,uint32,address,string,address,uint64,uint256,uint64,uint32[],address[],uint64[])"));
+  bytes4 internal constant _mintSelector                    = bytes4(keccak256("mintAndUpdateOwners(uint32,address,string,uint32[],address[],uint64[])"));
+  bytes4 internal constant _addToBalanceSelector            = bytes4(keccak256("depositAndUpdateOwners(uint32,uint32,uint256,uint32[],address[],uint64[])"));
+  bytes4 internal constant _authSelector                    = bytes4(keccak256("authenticateAndUpdateOwners(uint32,uint32,uint32[],address[],uint64[])"));
+  bytes4 internal constant _updateOwnersSelector            = bytes4(keccak256("updateOwners(uint32[],address[],uint64[])"));
+  bytes4 internal constant _mintAuthSelector                = bytes4(keccak256("mintAuthAndUpdateOwners(uint32,uint32,address,string,uint32[],address[],uint64[])"));
+  bytes4 internal constant _depositRegisterSessionSelector  = bytes4(keccak256("depositAndRegisterSessionAndUpdateOwners(uint32,uint32,uint256,address,address,uint64,uint256,uint64,uint32[],address[],uint64[])"));
+  bytes4 internal constant _mintAuthRegisterSessionSelector = bytes4(keccak256("mintAuthAndRegisterSessionAndUpdateOwners(uint32,uint32,address,string,address,uint64,uint256,uint64,uint32[],address[],uint64[])"));
 
   /// @dev Per-selector base gas limit (the constant component; per-update overhead is added
   ///      separately in `gasLimitFor`). Initialized in the constructor. An unset selector
@@ -121,7 +106,7 @@ contract CawProfile is
 
   mapping(uint32 => uint256) public withdrawable;
 
-  uint256 public rewardMultiplier = 10**18;
+  uint256 public constant rewardMultiplier = 10**18;
 
   // tokenId => [lzDestId, lzDestId2, ...]
   mapping(uint32 => EnumerableSet.UintSet) private chosenChainIds;
@@ -129,20 +114,12 @@ contract CawProfile is
 
   // lzDestId => index => tokenId
   mapping(uint32 => mapping(uint256 => uint32)) public pendingTransfers;
-  uint256 public transferUpdateLimit = 50;
+  uint256 public constant transferUpdateLimit = 50;
   uint256 public constant MAX_CHOSEN_CHAINS = 128;
 
   // lzDestId => value
   mapping(uint32 => uint256) internal pendingTransferStart;
   mapping(uint32 => uint256) internal pendingTransferEnd;
-
-  struct Token {
-    uint256 withdrawable;
-    uint256 ownerBalance;
-    uint256 tokenId;
-    string username;
-    address owner;
-  }
 
   event MinterSet(address minter);
   event TransferPendingSync(uint32 indexed tokenId, address indexed from, address indexed to);
@@ -176,13 +153,13 @@ contract CawProfile is
     // SSTORE + epoch SLOAD + StoredSession.epoch SSTORE on session-bundling
     // selectors. Per-token cost in `gasLimitFor` separately covers the new
     // stamp slot per ownership update.
-    gasBaseFor[addToBalanceSelector]            = 150_000;
-    gasBaseFor[mintSelector]                    = 100_000;
-    gasBaseFor[updateOwnersSelector]            =  40_000;
-    gasBaseFor[authSelector]                    = 110_000;
-    gasBaseFor[mintAuthSelector]                = 155_000;
-    gasBaseFor[depositRegisterSessionSelector]  = 225_000;
-    gasBaseFor[mintAuthRegisterSessionSelector] = 240_000;
+    gasBaseFor[_addToBalanceSelector]            = 150_000;
+    gasBaseFor[_mintSelector]                    = 100_000;
+    gasBaseFor[_updateOwnersSelector]            =  40_000;
+    gasBaseFor[_authSelector]                    = 110_000;
+    gasBaseFor[_mintAuthSelector]                = 155_000;
+    gasBaseFor[_depositRegisterSessionSelector]  = 225_000;
+    gasBaseFor[_mintAuthRegisterSessionSelector] = 240_000;
   }
 
   function setL2Peer(uint32 _eid, address _peer)
@@ -309,11 +286,11 @@ contract CawProfile is
       bytes4 sel;
       bytes memory payload;
       if (sessionExtra.length == 0) {
-        sel = mintAuthSelector;
+        sel = _mintAuthSelector;
         payload = abi.encodeWithSelector(sel, cawNetworkId, newId, owner, username, tokenIds, owners, stamps);
       } else {
         (address sk, uint64 ex, uint256 sl, uint64 tr) = abi.decode(sessionExtra, (address, uint64, uint256, uint64));
-        sel = mintAuthRegisterSessionSelector;
+        sel = _mintAuthRegisterSessionSelector;
         payload = abi.encodeWithSelector(sel, cawNetworkId, newId, owner, username, sk, ex, sl, tr, tokenIds, owners, stamps);
       }
       lzSend(cawNetworkId, lzDestId, sel, tokenIds.length, payload, lzEthAmount, lzTokenAmount);
@@ -378,11 +355,11 @@ contract CawProfile is
       bytes4 sel;
       bytes memory payload;
       if (sessionExtra.length == 0) {
-        sel = addToBalanceSelector;
+        sel = _addToBalanceSelector;
         payload = abi.encodeWithSelector(sel, cawNetworkId, newId, depositAmount, tokenIds, owners, stamps);
       } else {
         (address sk, uint64 ex, uint256 sl, uint64 tr) = abi.decode(sessionExtra, (address, uint64, uint256, uint64));
-        sel = depositRegisterSessionSelector;
+        sel = _depositRegisterSessionSelector;
         payload = abi.encodeWithSelector(sel, cawNetworkId, newId, depositAmount, owner, sk, ex, sl, tr, tokenIds, owners, stamps);
       }
       lzSend(cawNetworkId, lzDestId, sel, tokenIds.length, payload, lzEthAmount, lzTokenAmount);
@@ -522,8 +499,8 @@ contract CawProfile is
       address[] memory owners;
       uint64[] memory stamps;
       (tokenIds, owners, stamps) = extractPendingTransferUpdates(lzDestId, msg.sender, tokenId);
-      bytes memory payload = abi.encodeWithSelector(authSelector, cawNetworkId, tokenId, tokenIds, owners, stamps);
-      lzSend(cawNetworkId, lzDestId, authSelector, tokenIds.length, payload, lzEthAmount, lzTokenAmount);
+      bytes memory payload = abi.encodeWithSelector(_authSelector, cawNetworkId, tokenId, tokenIds, owners, stamps);
+      lzSend(cawNetworkId, lzDestId, _authSelector, tokenIds.length, payload, lzEthAmount, lzTokenAmount);
     }
   }
 
@@ -562,8 +539,8 @@ contract CawProfile is
       address[] memory owners;
       uint64[] memory stamps;
       (tokenIds, owners, stamps) = extractPendingTransferUpdates(lzDestId, owner, tokenId);
-      bytes memory payload = abi.encodeWithSelector(addToBalanceSelector, cawNetworkId, tokenId, amount, tokenIds, owners, stamps);
-      lzSend(cawNetworkId, lzDestId, addToBalanceSelector, tokenIds.length, payload, lzEthAmount, lzTokenAmount);
+      bytes memory payload = abi.encodeWithSelector(_addToBalanceSelector, cawNetworkId, tokenId, amount, tokenIds, owners, stamps);
+      lzSend(cawNetworkId, lzDestId, _addToBalanceSelector, tokenIds.length, payload, lzEthAmount, lzTokenAmount);
     }
 
     emit Deposited(cawNetworkId, tokenId, amount, lzDestId, msg.sender);
@@ -795,8 +772,8 @@ contract CawProfile is
       if (lzDestId == mainnetLzId)
         cawProfileL2.updateOwners(tokenIds, owners, stamps);
       else {
-        bytes memory payload = abi.encodeWithSelector(updateOwnersSelector, tokenIds, owners, stamps);
-        lzSend(0, lzDestId, updateOwnersSelector, tokenIds.length, payload, lzEthAmount, lzTokenAmount);
+        bytes memory payload = abi.encodeWithSelector(_updateOwnersSelector, tokenIds, owners, stamps);
+        lzSend(0, lzDestId, _updateOwnersSelector, tokenIds.length, payload, lzEthAmount, lzTokenAmount);
       }
     }
   }
@@ -808,22 +785,12 @@ contract CawProfile is
     address _executor, // the Executor address.
     bytes calldata // arbitrary data appended by the Executor
   ) internal override {
-    // Declare selector and arguments as memory variables
-    bytes4 decodedSelector;
-    bytes memory args = new bytes(payload.length - 4); // Arguments excluding the first 4 bytes
-
-    assembly {
-      // Copy the selector (first 4 bytes) from calldata
-      decodedSelector := calldataload(payload.offset)
-
-      // Copy the arguments from calldata to memory
-      calldatacopy(add(args, 32), add(payload.offset, 4), sub(payload.length, 4))
-    }
+    bytes4 decodedSelector = bytes4(payload);
 
     // Ensure the selector corresponds to an expected function to prevent unauthorized actions
     if (!(isAuthorizedFunction(decodedSelector))) revert Unauthorized();
 
-    // Call the function using the selector and arguments.
+    // Copy payload to memory for delegatecall (payload IS selector++args).
     //
     // SECURITY NOTE (audited 2026-04-06): The fromLZ + delegatecall pattern is intentional and safe.
     // - The OApp base class already verifies msg.sender == endpoint and the peer before _lzReceive runs.
@@ -835,7 +802,7 @@ contract CawProfile is
     //   are public (required for delegatecall dispatch), and fromLZ is needed to distinguish the
     //   _lzReceive call path from direct external calls.
     fromLZ = true;
-    (bool success, bytes memory returnData) = address(this).delegatecall(bytes.concat(decodedSelector, args));
+    (bool success, bytes memory returnData) = address(this).delegatecall(payload);
     fromLZ = false;
 
     // Handle failure and revert with the error message
@@ -931,6 +898,16 @@ contract CawProfile is
     // + 22k (tokenSessionEpoch[tokenId]++ cold, token-scoped-session invalidation). Plus arithmetic/loop overhead.
     return gasBaseFor[selector] + uint128(65_000 * n) + networkManager.networkGasOverride(cawNetworkId, selector);
   }
+
+  // Public getters for the L2 handler selectors, preserving the CawProfileQuoter
+  // interface without storing them in contract storage (7 fewer SLOADs per call).
+  function mintSelector()                    public pure returns (bytes4) { return _mintSelector; }
+  function addToBalanceSelector()            public pure returns (bytes4) { return _addToBalanceSelector; }
+  function authSelector()                    public pure returns (bytes4) { return _authSelector; }
+  function updateOwnersSelector()            public pure returns (bytes4) { return _updateOwnersSelector; }
+  function mintAuthSelector()                public pure returns (bytes4) { return _mintAuthSelector; }
+  function depositRegisterSessionSelector()  public pure returns (bytes4) { return _depositRegisterSessionSelector; }
+  function mintAuthRegisterSessionSelector() public pure returns (bytes4) { return _mintAuthRegisterSessionSelector; }
 
   receive() external payable {}
   fallback() external payable {}
