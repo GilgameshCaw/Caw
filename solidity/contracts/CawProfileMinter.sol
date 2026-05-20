@@ -351,10 +351,19 @@ contract CawProfileMinter is Context {
   ///         allowance); the NFT and deposit balance go to `recipient`.
   ///         `recipient` must be a contract (7702-delegated EOA or smart wallet).
   ///
+  ///         NOTE: `depositAmount = 0` is INTENTIONALLY permitted (matches the
+  ///         non-sponsored `mintAndDepositFor` semantics — a user may want to
+  ///         register a username with no initial CAW balance). Audit #8 INFO-2
+  ///         flagged this as inconsistent with `depositForSponsored`'s zero-amount
+  ///         guard, but the operations have different semantics: depositForSponsored
+  ///         at amount=0 is a no-op (nonce burn with no side effect), while
+  ///         mintAndDepositSponsored at depositAmount=0 still mints the NFT + name.
+  ///         Sponsors should validate amounts off-chain before submitting.
+  ///
   /// @param networkId       CAW network to register on.
   /// @param recipient       Smart-contract wallet that will own the new profile.
   /// @param username        Desired username (must pass isValidUsername).
-  /// @param depositAmount   CAW to lock as balance (pulled from msg.sender).
+  /// @param depositAmount   CAW to lock as balance (pulled from msg.sender). Zero is allowed.
   /// @param lzDestId        LayerZero destination chain ID (0 = mainnet bypass).
   /// @param lzTokenAmount   Optional LZ ZRO payment (pass 0 for ETH-only fee).
   /// @param permitNonce     Must match recipient.nonceOf(address(this), ACTION_MINT_DEPOSIT).
