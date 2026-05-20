@@ -141,9 +141,18 @@ contract("CawProfileMarketplace", (accounts) => {
       const listing = await marketplace.listings(1);
       assert.equal(listing.active, false);
 
-      // Verify seller received payment
+      // H-15: seller payment is queued in pendingPayouts (pull pattern), not pushed.
+      // Balance unchanged until seller calls withdrawPayouts().
       const sellerBalAfter = BigInt(await web3.eth.getBalance(seller));
-      assert(sellerBalAfter > sellerBalBefore, "Seller should have received ETH");
+      assert.equal(sellerBalAfter.toString(), sellerBalBefore.toString(),
+        "H-15: seller balance must not change on buy (payment queued in pendingPayouts)");
+      const queued = BigInt((await marketplace.pendingPayouts(seller)).toString());
+      assert(queued >= BigInt(price), "H-15: price must be in pendingPayouts");
+
+      // Seller withdraws; verify payment lands.
+      await marketplace.withdrawPayouts({ from: seller });
+      const sellerBalFinal = BigInt(await web3.eth.getBalance(seller));
+      assert(sellerBalFinal > sellerBalBefore, "H-15: seller should receive ETH after withdrawPayouts");
     });
 
     it("should forward excess ETH as LZ fee for L2 sync", async () => {
@@ -369,9 +378,17 @@ contract("CawProfileMarketplace", (accounts) => {
       // NFT goes to highest bidder (bidder1 with 0.3 ETH)
       assert.equal(await cawProfiles.ownerOf(tokenId1), bidder1);
 
-      // Seller gets the payment
+      // H-15: seller payment is queued in pendingPayouts (pull pattern).
       const sellerBalAfter = BigInt(await web3.eth.getBalance(seller));
-      assert(sellerBalAfter > sellerBalBefore, "Seller should receive ETH");
+      assert.equal(sellerBalAfter.toString(), sellerBalBefore.toString(),
+        "H-15: seller balance must not change on settleAuction (payment queued in pendingPayouts)");
+      const queued = BigInt((await marketplace.pendingPayouts(seller)).toString());
+      assert(queued > 0n, "H-15: winning bid must be in pendingPayouts");
+
+      // Seller withdraws.
+      await marketplace.withdrawPayouts({ from: seller });
+      const sellerBalFinal = BigInt(await web3.eth.getBalance(seller));
+      assert(sellerBalFinal > sellerBalBefore, "H-15: seller should receive ETH after withdrawPayouts");
     });
   });
 
@@ -812,9 +829,17 @@ contract("CawProfileMarketplace", (accounts) => {
       // NFT transferred to buyer
       assert.equal(await cawProfiles.ownerOf(tokenId2), buyer);
 
-      // Seller received ETH
+      // H-15: seller payment is queued in pendingPayouts (pull pattern).
       const sellerBalAfter = BigInt(await web3.eth.getBalance(seller));
-      assert(sellerBalAfter > sellerBalBefore, "Seller should receive ETH");
+      assert.equal(sellerBalAfter.toString(), sellerBalBefore.toString(),
+        "H-15: seller balance must not change on acceptOffer (payment queued in pendingPayouts)");
+      const queued = BigInt((await marketplace.pendingPayouts(seller)).toString());
+      assert(queued > 0n, "H-15: offer amount must be in pendingPayouts");
+
+      // Seller withdraws.
+      await marketplace.withdrawPayouts({ from: seller });
+      const sellerBalFinal = BigInt(await web3.eth.getBalance(seller));
+      assert(sellerBalFinal > sellerBalBefore, "H-15: seller should receive ETH after withdrawPayouts");
 
       // Offer is no longer active
       const offer = await marketplace.offers(offerId);
