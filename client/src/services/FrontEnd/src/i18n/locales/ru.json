@@ -1354,7 +1354,7 @@
   "settings.ai_provider.description": "Подключите свой собственный ключ поставщика искусственного интеллекта, чтобы генерировать изображения из подсказки. Ключ используется непосредственно из вашего браузера и никогда не отправляется на наши серверы.",
   "settings.ai_provider.provider_label": "Поставщик",
   "settings.ai_provider.key_label": "API-ключ",
-  "settings.ai_provider.get_key": "Получить ключ Gemini API →",
+  "settings.ai_provider.get_key": "Получить ключ {{provider}} API →",
   "settings.ai_provider.remember": "Помните, на этом устройстве",
   "settings.ai_provider.remember_warning": "Хранится в незашифрованном виде в этом браузере. Включайте только на том устройстве, которому вы доверяете.",
   "settings.ai_provider.save": "Сохранять",

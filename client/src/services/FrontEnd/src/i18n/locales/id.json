@@ -1354,7 +1354,7 @@
   "settings.ai_provider.description": "Hubungkan kunci penyedia AI Anda sendiri untuk menghasilkan gambar dari perintah. Kuncinya digunakan langsung dari browser Anda dan tidak pernah dikirim ke server kami.",
   "settings.ai_provider.provider_label": "Penyedia",
   "settings.ai_provider.key_label": "Kunci API",
-  "settings.ai_provider.get_key": "Dapatkan kunci API Gemini →",
+  "settings.ai_provider.get_key": "Dapatkan kunci API {{provider}} →",
   "settings.ai_provider.remember": "Ingat di perangkat ini",
   "settings.ai_provider.remember_warning": "Disimpan tidak terenkripsi di browser ini. Hanya aktifkan di perangkat yang Anda percayai.",
   "settings.ai_provider.save": "Menyimpan",

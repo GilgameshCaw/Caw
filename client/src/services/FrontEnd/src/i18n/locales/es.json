@@ -1332,7 +1332,7 @@
   "settings.ai_provider.description": "Conecte su propia clave de proveedor de IA para generar imágenes a partir de un mensaje. La clave se utiliza directamente desde su navegador y nunca se envía a nuestros servidores.",
   "settings.ai_provider.provider_label": "Proveedor",
   "settings.ai_provider.key_label": "clave API",
-  "settings.ai_provider.get_key": "Obtenga una clave API de Gemini →",
+  "settings.ai_provider.get_key": "Obtenga una clave API de {{provider}} →",
   "settings.ai_provider.remember": "Recuerda en este dispositivo",
   "settings.ai_provider.remember_warning": "Almacenado sin cifrar en este navegador. Habilítelo solo en un dispositivo en el que confíe.",
   "settings.ai_provider.save": "Ahorrar",

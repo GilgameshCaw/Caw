@@ -1354,7 +1354,7 @@
   "settings.ai_provider.description": "Kết nối khóa nhà cung cấp AI của riêng bạn để tạo hình ảnh từ lời nhắc. Khóa được sử dụng trực tiếp từ trình duyệt của bạn và không bao giờ được gửi đến máy chủ của chúng tôi.",
   "settings.ai_provider.provider_label": "nhà cung cấp",
   "settings.ai_provider.key_label": "Khóa API",
-  "settings.ai_provider.get_key": "Nhận khóa API Gemini →",
+  "settings.ai_provider.get_key": "Nhận khóa API {{provider}} →",
   "settings.ai_provider.remember": "Ghi nhớ trên thiết bị này",
   "settings.ai_provider.remember_warning": "Được lưu trữ không được mã hóa trong trình duyệt này. Chỉ kích hoạt trên thiết bị mà bạn tin tưởng.",
   "settings.ai_provider.save": "Cứu",

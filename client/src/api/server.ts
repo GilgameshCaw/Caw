@@ -44,6 +44,7 @@ import moderationRouter from './routes/moderation'
 import ogRouter from './routes/og'
 import sitemapRouter from './routes/sitemap'
 import rpcProxyRouter from './routes/rpc-proxy'
+import aiProxyRouter from './routes/ai-proxy'
 import { spaPrerender } from './util/spaPrerender'
 import { cawPath, parseCawIdSlug } from './util/cawUrl'
 import { parseLocaleFromPath, withLocalePrefix } from './util/localePrefix'
@@ -381,6 +382,12 @@ export function createApp() {
   // the FE bundle and gives us a single chokepoint for retries,
   // failover, and rate limiting.
   app.use('/api/rpc', rpcProxyRouter)
+
+  // BYOK AI image gen proxy for providers that don't allow browser-direct
+  // calls (OpenAI, xAI). Gemini stays browser-direct in utils/aiImage.ts
+  // because Google serves permissive CORS — see ai-proxy.ts header for
+  // the full rationale.
+  app.use('/api/ai-proxy', aiProxyRouter)
 
   app.get('/api/__sentry-test', (_req, _res) => {
     throw new Error('Sentry backend test error')

@@ -1354,7 +1354,7 @@
   "settings.ai_provider.description": "Connectez votre propre clé de fournisseur d'IA pour générer des images à partir d'une invite. La clé est utilisée directement depuis votre navigateur et n'est jamais envoyée à nos serveurs.",
   "settings.ai_provider.provider_label": "Fournisseur",
   "settings.ai_provider.key_label": "Clé API",
-  "settings.ai_provider.get_key": "Obtenir une clé API Gemini →",
+  "settings.ai_provider.get_key": "Obtenir une clé API {{provider}} →",
   "settings.ai_provider.remember": "N'oubliez pas sur cet appareil",
   "settings.ai_provider.remember_warning": "Stocké en clair dans ce navigateur. Activez uniquement sur un appareil en qui vous avez confiance.",
   "settings.ai_provider.save": "Sauvegarder",

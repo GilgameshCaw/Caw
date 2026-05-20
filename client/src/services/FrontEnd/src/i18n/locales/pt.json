@@ -1354,7 +1354,7 @@
   "settings.ai_provider.description": "Conecte sua própria chave de provedor de IA para gerar imagens a partir de um prompt. A chave é usada diretamente do seu navegador e nunca é enviada aos nossos servidores.",
   "settings.ai_provider.provider_label": "Provedor",
   "settings.ai_provider.key_label": "Chave de API",
-  "settings.ai_provider.get_key": "Obtenha uma chave de API Gemini →",
+  "settings.ai_provider.get_key": "Obtenha uma chave de API {{provider}} →",
   "settings.ai_provider.remember": "Lembre-se neste dispositivo",
   "settings.ai_provider.remember_warning": "Armazenado sem criptografia neste navegador. Ative apenas em um dispositivo em que você confia.",
   "settings.ai_provider.save": "Salvar",

@@ -1,14 +1,23 @@
-// Client-side AI image generation (BYOK). Calls the provider directly from
-// the browser with the user's own key — same rationale as utils/translate.ts
-// (no backend, no key custody). Gemini's Generative Language API accepts the
-// key as an x-goog-api-key request header (not ?key= query param). We use the
-// header form deliberately: Sentry's default fetch instrumentation captures
-// URLs in breadcrumbs/Replay but does NOT capture request headers, so the
-// header form prevents the key from appearing in Sentry payloads.
-// OpenAI does NOT support permissive CORS and would need a backend proxy —
-// intentionally not added here.
+// Client-side AI image generation (BYOK). Two transport modes depending on
+// the provider's CORS posture:
+//
+//   - Gemini: browser → Google directly. Google's Generative Language API
+//     serves permissive CORS and accepts the key in an `x-goog-api-key`
+//     header. We use the header form deliberately: Sentry's default fetch
+//     instrumentation captures URLs in breadcrumbs/Replay but does NOT
+//     capture request headers, so the key never lands in Sentry payloads.
+//
+//   - OpenAI / Grok: browser → our backend → upstream. These providers
+//     do NOT serve permissive CORS, so direct browser fetches are blocked
+//     before the response reaches user code. We forward through
+//     /api/ai-proxy/{provider}/image with the user's key in the JSON body;
+//     the backend uses it for the upstream call and discards it (no
+//     persistence, no logging). See api/routes/ai-proxy.ts for the
+//     server-side contract.
+//
+// Either way the key stays the user's (BYOK) — we never custody it.
 
-export type AIProvider = 'gemini'
+export type AIProvider = 'gemini' | 'openai' | 'grok'
 
 export interface AIImageResult {
   blob: Blob
@@ -77,6 +86,46 @@ async function generateGemini(prompt: string, apiKey: string): Promise<AIImageRe
   return { blob: base64ToBlob(pred.bytesBase64Encoded, mimeType), mimeType }
 }
 
+// OpenAI and Grok go through our backend proxy (see header). Both share
+// the same proxy response shape — { b64Json, mimeType } on success, or
+// { error: { kind, message } } with a non-2xx status. We re-map the kind
+// straight into AIImageError so the modal's existing catch path works
+// uniformly across providers.
+type ProxyErrorKind = AIImageError['kind']
+
+async function generateViaProxy(
+  proxyPath: '/api/ai-proxy/openai/image' | '/api/ai-proxy/grok/image',
+  prompt: string,
+  apiKey: string,
+): Promise<AIImageResult> {
+  let res: Response
+  try {
+    res = await fetch(proxyPath, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      // Body-only auth: the key never appears in URL/query (Sentry safe)
+      // and is consumed once by the backend, never persisted there.
+      body: JSON.stringify({ apiKey, prompt }),
+    })
+  } catch {
+    throw new AIImageError('Network error reaching the AI proxy.', 'network')
+  }
+
+  if (!res.ok) {
+    const data = await res.json().catch(() => null) as { error?: { kind?: ProxyErrorKind; message?: string } } | null
+    const kind = data?.error?.kind || 'network'
+    const message = data?.error?.message || `AI proxy error (${res.status}).`
+    throw new AIImageError(message, kind)
+  }
+
+  const data = await res.json().catch(() => null) as { b64Json?: string; mimeType?: string } | null
+  if (!data?.b64Json) {
+    throw new AIImageError('No image returned by AI proxy.', 'empty')
+  }
+  const mimeType = data.mimeType || 'image/png'
+  return { blob: base64ToBlob(data.b64Json, mimeType), mimeType }
+}
+
 /**
  * Generate one image from a prompt using the connected provider. Throws
  * AIImageError with a typed `kind` so the modal can show an actionable message.
@@ -89,7 +138,16 @@ export async function generateAIImage(
   switch (provider) {
     case 'gemini':
       return generateGemini(prompt, apiKey)
-    default:
+    case 'openai':
+      return generateViaProxy('/api/ai-proxy/openai/image', prompt, apiKey)
+    case 'grok':
+      return generateViaProxy('/api/ai-proxy/grok/image', prompt, apiKey)
+    default: {
+      // Exhaustiveness check: if AIProvider grows and we forget to handle
+      // it here, tsc flags this assignment.
+      const _exhaustive: never = provider
+      void _exhaustive
       throw new AIImageError('Unsupported provider.', 'network')
+    }
   }
 }

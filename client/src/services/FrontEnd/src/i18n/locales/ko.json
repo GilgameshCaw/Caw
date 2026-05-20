@@ -1354,7 +1354,7 @@
   "settings.ai_provider.description": "프롬프트에서 이미지를 생성하려면 자체 AI 공급자 키를 연결하세요. 키는 브라우저에서 직접 사용되며 당사 서버로 전송되지 않습니다.",
   "settings.ai_provider.provider_label": "공급자",
   "settings.ai_provider.key_label": "API 키",
-  "settings.ai_provider.get_key": "Gemini API 키 받기 →",
+  "settings.ai_provider.get_key": "{{provider}} API 키 받기 →",
   "settings.ai_provider.remember": "이 기기에 기억하세요",
   "settings.ai_provider.remember_warning": "이 브라우저에 암호화되지 않은 상태로 저장됩니다. 신뢰할 수 있는 장치에서만 활성화하세요.",
   "settings.ai_provider.save": "구하다",

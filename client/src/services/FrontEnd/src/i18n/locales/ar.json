@@ -1354,7 +1354,7 @@
   "settings.ai_provider.description": "قم بتوصيل مفتاح موفر الذكاء الاصطناعي الخاص بك لإنشاء صور من المطالبة. يتم استخدام المفتاح مباشرة من متصفحك ولا يتم إرساله مطلقًا إلى خوادمنا.",
   "settings.ai_provider.provider_label": "مزود",
   "settings.ai_provider.key_label": "مفتاح واجهة برمجة التطبيقات",
-  "settings.ai_provider.get_key": "احصل على مفتاح Gemini API →",
+  "settings.ai_provider.get_key": "احصل على مفتاح {{provider}} API →",
   "settings.ai_provider.remember": "تذكر على هذا الجهاز",
   "settings.ai_provider.remember_warning": "مخزنة غير مشفرة في هذا المتصفح. قم بالتمكين فقط على الجهاز الذي تثق به.",
   "settings.ai_provider.save": "يحفظ",

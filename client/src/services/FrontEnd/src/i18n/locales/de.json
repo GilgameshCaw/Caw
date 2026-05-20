@@ -1354,7 +1354,7 @@
   "settings.ai_provider.description": "Verbinden Sie Ihren eigenen KI-Anbieterschlüssel, um Bilder aus einer Eingabeaufforderung zu generieren. Der Schlüssel wird direkt von Ihrem Browser verwendet und niemals an unsere Server gesendet.",
   "settings.ai_provider.provider_label": "Anbieter",
   "settings.ai_provider.key_label": "API-Schlüssel",
-  "settings.ai_provider.get_key": "Holen Sie sich einen Gemini-API-Schlüssel →",
+  "settings.ai_provider.get_key": "Holen Sie sich einen {{provider}}-API-Schlüssel →",
   "settings.ai_provider.remember": "Denken Sie an dieses Gerät",
   "settings.ai_provider.remember_warning": "Wird unverschlüsselt in diesem Browser gespeichert. Aktivieren Sie die Funktion nur auf einem Gerät, dem Sie vertrauen.",
   "settings.ai_provider.save": "Speichern",

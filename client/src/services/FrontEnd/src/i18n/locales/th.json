@@ -1354,7 +1354,7 @@
   "settings.ai_provider.description": "เชื่อมต่อคีย์ผู้ให้บริการ AI ของคุณเองเพื่อสร้างภาพจากข้อความแจ้ง รหัสนี้ถูกใช้โดยตรงจากเบราว์เซอร์ของคุณ และไม่เคยส่งไปยังเซิร์ฟเวอร์ของเรา",
   "settings.ai_provider.provider_label": "ผู้ให้บริการ",
   "settings.ai_provider.key_label": "คีย์เอพีไอ",
-  "settings.ai_provider.get_key": "รับคีย์ Gemini API →",
+  "settings.ai_provider.get_key": "รับคีย์ {{provider}} API →",
   "settings.ai_provider.remember": "จำไว้ในอุปกรณ์นี้",
   "settings.ai_provider.remember_warning": "จัดเก็บแบบไม่เข้ารหัสในเบราว์เซอร์นี้ เปิดใช้งานบนอุปกรณ์ที่คุณเชื่อถือเท่านั้น",
   "settings.ai_provider.save": "บันทึก",

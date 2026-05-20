@@ -1354,7 +1354,7 @@
   "settings.ai_provider.description": "प्रॉम्प्ट से छवियाँ उत्पन्न करने के लिए अपनी स्वयं की AI प्रदाता कुंजी कनेक्ट करें। कुंजी का उपयोग सीधे आपके ब्राउज़र से किया जाता है और कभी भी हमारे सर्वर पर नहीं भेजा जाता है।",
   "settings.ai_provider.provider_label": "प्रदाता",
   "settings.ai_provider.key_label": "एपीआई कुंजी",
-  "settings.ai_provider.get_key": "जेमिनी एपीआई कुंजी प्राप्त करें →",
+  "settings.ai_provider.get_key": "{{provider}} एपीआई कुंजी प्राप्त करें →",
   "settings.ai_provider.remember": "इस डिवाइस पर याद रखें",
   "settings.ai_provider.remember_warning": "इस ब्राउज़र में अनएन्क्रिप्टेड संग्रहीत। केवल उसी डिवाइस पर सक्षम करें जिस पर आपको भरोसा है।",
   "settings.ai_provider.save": "बचाना",

@@ -1354,7 +1354,7 @@
   "settings.ai_provider.description": "Bir istemden görüntüler oluşturmak için kendi AI sağlayıcı anahtarınızı bağlayın. Anahtar doğrudan tarayıcınızdan kullanılır ve hiçbir zaman sunucularımıza gönderilmez.",
   "settings.ai_provider.provider_label": "sağlayıcı",
   "settings.ai_provider.key_label": "API anahtarı",
-  "settings.ai_provider.get_key": "Gemini API anahtarı edinin →",
+  "settings.ai_provider.get_key": "{{provider}} API anahtarı edinin →",
   "settings.ai_provider.remember": "Bu cihazda hatırla",
   "settings.ai_provider.remember_warning": "Bu tarayıcıda şifrelenmemiş olarak saklanıyor. Yalnızca güvendiğiniz bir cihazda etkinleştirin.",
   "settings.ai_provider.save": "Kaydetmek",

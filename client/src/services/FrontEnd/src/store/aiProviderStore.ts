@@ -9,7 +9,12 @@ import { create } from 'zustand'
 // the user explicitly opts into "remember on this device", and even then just
 // their own provider key at their own risk (clear security note in the UI).
 
-export type AIProvider = 'gemini'
+export type AIProvider = 'gemini' | 'openai' | 'grok'
+
+// Keep this in sync with the AIProvider union — used to validate the
+// persisted blob so a stale localStorage entry from a previous provider
+// list can't crash the rehydrate path.
+const VALID_PROVIDERS: ReadonlyArray<AIProvider> = ['gemini', 'openai', 'grok']
 
 const LS_KEY = 'caw.ai.connection'
 
@@ -23,7 +28,7 @@ function loadPersisted(): Persisted | null {
     const raw = localStorage.getItem(LS_KEY)
     if (!raw) return null
     const p = JSON.parse(raw)
-    if (p && typeof p.apiKey === 'string' && p.provider === 'gemini') return p
+    if (p && typeof p.apiKey === 'string' && VALID_PROVIDERS.includes(p.provider)) return p
   } catch {
     /* corrupt / unavailable storage — treat as not connected */
   }

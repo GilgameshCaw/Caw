@@ -1353,7 +1353,7 @@
   "settings.ai_provider.description": "کلید ارائه دهنده هوش مصنوعی خود را برای تولید تصاویر از یک درخواست وصل کنید. کلید مستقیماً از مرورگر شما استفاده می شود و هرگز به سرورهای ما ارسال نمی شود.",
   "settings.ai_provider.provider_label": "ارائه دهنده",
   "settings.ai_provider.key_label": "کلید API",
-  "settings.ai_provider.get_key": "یک کلید API Gemini دریافت کنید →",
+  "settings.ai_provider.get_key": "یک کلید API {{provider}} دریافت کنید →",
   "settings.ai_provider.remember": "در این دستگاه به خاطر بسپارید",
   "settings.ai_provider.remember_warning": "به صورت رمزگذاری نشده در این مرورگر ذخیره می شود. فقط در دستگاهی که به آن اعتماد دارید فعال کنید.",
   "settings.ai_provider.save": "ذخیره کنید",

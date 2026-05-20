@@ -1354,7 +1354,7 @@
   "settings.ai_provider.description": "Sluit uw eigen AI-providersleutel aan om afbeeldingen te genereren op basis van een prompt. De sleutel wordt rechtstreeks vanuit uw browser gebruikt en nooit naar onze servers verzonden.",
   "settings.ai_provider.provider_label": "Aanbieder",
   "settings.ai_provider.key_label": "API-sleutel",
-  "settings.ai_provider.get_key": "Verkrijg een Gemini API-sleutel →",
+  "settings.ai_provider.get_key": "Verkrijg een {{provider}} API-sleutel →",
   "settings.ai_provider.remember": "Onthoud op dit apparaat",
   "settings.ai_provider.remember_warning": "Onversleuteld opgeslagen in deze browser. Schakel dit alleen in op een apparaat dat u vertrouwt.",
   "settings.ai_provider.save": "Redden",
