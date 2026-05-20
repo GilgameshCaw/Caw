@@ -3189,7 +3189,13 @@ const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess, placehol
               Emoji) sits inline with the Post button on the top row; the
               second group (post attributes — Schedule / Poll / Tip / AI)
               wraps to a second row when there isn't enough width. */}
-          <div className="flex flex-wrap items-center min-w-0 gap-x-3 gap-y-1 flex-1">
+          {/* Outer gap-x mirrors the inner groups' gap-x so the inter-group
+              spacing (Emoji ↔ Schedule) matches the intra-group spacing.
+              Without this the parent kept gap-x-3 in compose/reply mode
+              while the groups dropped to gap-x-1 → 8px asymmetric hole. */}
+          <div className={`flex flex-wrap items-center min-w-0 gap-y-1 flex-1 ${
+            composeMode || replyTo ? 'gap-x-1' : 'gap-x-1 sm:gap-x-3'
+          }`}>
             {/* Group 1 — content embedding (3 icons) */}
             <div className={`flex items-center ${
               composeMode || replyTo ? 'gap-x-1' : 'gap-x-1 sm:gap-x-3'

@@ -496,7 +496,14 @@ const MainLayout = ({ children, hideSidebars: hideSidebarsProp }: MainLayoutProp
           // suggest the row is interactive but the click lands on the nav
           // (bug #215). The nav reclaims pointer events as soon as scroll
           // settles, so its own buttons remain usable.
-          className={`md:hidden fixed bottom-0 left-0 right-0 z-[55] flex items-center justify-around h-14 pb-[env(safe-area-inset-bottom)] [height:calc(theme(height.14)+env(safe-area-inset-bottom))] border-t transition-all duration-200 ${
+          // Padding-top proportional to the bottom safe-area inset. Only
+          // takes effect on hardware with a home-bar (iPhone X+ adds
+          // ~34px → pt ≈ 17px → icon shifts ~9px down, well clear of
+          // the FAB tap zone above). On Android / emulators without a
+          // safe-area the value is 0 and the layout matches the pre-fix
+          // behaviour exactly. Fixes #287 without over-correcting on
+          // safe-area-less environments.
+          className={`md:hidden fixed bottom-0 left-0 right-0 z-[55] flex items-center justify-around h-14 pt-[calc(env(safe-area-inset-bottom)/2)] pb-[env(safe-area-inset-bottom)] [height:calc(theme(height.14)+env(safe-area-inset-bottom))] border-t transition-all duration-200 ${
             hasInlineDraft ? 'opacity-0 translate-y-full pointer-events-none' : isScrolling ? 'opacity-30 pointer-events-none' : 'opacity-100'
           } ${
             isDark ? 'bg-black border-white/10' : 'bg-white border-gray-200'
