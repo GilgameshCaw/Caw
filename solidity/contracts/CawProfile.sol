@@ -521,15 +521,23 @@ contract CawProfile is
     CAW.transferFrom(msg.sender, address(this), amount);
     totalCaw += amount;
 
-    (uint256 fee, address feeAddress) = networkManager.getDepositFeeAndAddress(cawNetworkId);
+    // Pay deposit + auth fees through their respective getters so the
+    // accounting routes to the right addresses. NetworkManager today
+    // returns the same feeAddress for every fee type (single per-Network
+    // recipient), so the user-visible behavior is unchanged — but if a
+    // future NetworkManager upgrade splits them per fee, this path
+    // already routes correctly. Audit fix 2026-05-17 H-1.
+    (uint256 depositFee, address depositFeeAddr) = networkManager.getDepositFeeAndAddress(cawNetworkId);
+    uint256 totalFeesPaid = payFee(depositFee, depositFeeAddr);
 
     if (!authenticated[cawNetworkId][tokenId]) {
-      fee += networkManager.getAuthFee(cawNetworkId);
+      (uint256 authFee, address authFeeAddr) = networkManager.getAuthFeeAndAddress(cawNetworkId);
+      totalFeesPaid += payFee(authFee, authFeeAddr);
       authenticated[cawNetworkId][tokenId] = true;
       _lockWithdrawFeeIfNeeded(cawNetworkId, tokenId);
     }
 
-    uint256 lzEthAmount = msg.value - payFee(fee, feeAddress);
+    uint256 lzEthAmount = msg.value - totalFeesPaid;
 
     if (lzDestId == mainnetLzId) {
       cawProfileL2.deposit(cawNetworkId, tokenId, amount);
