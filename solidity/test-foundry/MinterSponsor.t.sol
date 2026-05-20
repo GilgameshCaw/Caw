@@ -225,7 +225,9 @@ contract MockP256Precompile2 {
 ///        Used for passkey-sig tests (14, 15, 16, 17, 18, 20, 20a, 20b) to exercise
 ///        the real nonceOf / consumeNonce / isValidSignature paths.
 ///      - SmartContractWalletMock: Population C wallet (test 13).  Returns magic for
-///        any non-empty sig; proves the contract layer is wallet-agnostic.
+///        any non-empty sig; proves the contract layer is mock-permissive on the
+///        ERC-1271 surface (but NOT generally wallet-agnostic — see CawProfileMinter
+///        sponsor-section comments for the ISmartEOA + ERC-1271 dual requirement).
 ///
 /// @dev P-256 mock: same vm.etch strategy as SmartEOA.t.sol.  The EIP-7951 precompile
 ///      is not live in foundry's default EVM; we install a registry-backed mock at 0x0100.
@@ -482,13 +484,16 @@ contract MinterSponsorTest is Test {
     }
 
     // =========================================================================
-    // Test 13 — SmartContractWalletMock (Population C, wallet-agnostic)
-    // §7 item 13 — wallet-agnostic sponsor path
+    // Test 13 — SmartContractWalletMock (Population C ISmartEOA-shim wallet)
+    // §7 item 13 — wallet-permissiveness at the ERC-1271 layer
     // =========================================================================
 
-    /// @notice Deploy SmartContractWalletMock as recipient; verify the Minter's
-    ///         contract layer is wallet-agnostic: code.length > 0 passes, any
-    ///         non-empty ERC-1271 sig is accepted, NFT minted to mock address.
+    /// @notice Deploy SmartContractWalletMock as recipient; verify the Minter
+    ///         accepts ANY non-empty ERC-1271 sig from a wallet that also
+    ///         implements the CAW-specific ISmartEOA nonce surface. The mock
+    ///         is permissive on isValidSignature (returns magic for any
+    ///         non-empty sig) to prove the contract layer doesn't introspect
+    ///         the sig content beyond the ERC-1271 + nonce checks.
     function test_13_walletAgnostic_scwMock_success() public {
         // setUp has minted sufficient CAW and approved the minter already.
         // Use zero deposit so only the burn amount (for "alice13333" 8+ chars → 10^6*10^18) is needed.
