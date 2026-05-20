@@ -952,9 +952,9 @@ contract SmartEOA {
     //     = 65 bytes.  secp256k1 path fires.  Gas limit: 50,000.
     //   - CawActionsERC1271._verifyERC1271 (line 309-315): passes sig verbatim
     //     from caller.  May be 65-byte or WebAuthn.  Gas limit: 50,000 (ERC1271_GAS_LIMIT).
-    //   - CawProfileMinter.mintAndDepositSponsored (planned): passes WebAuthn or
-    //     65-byte sig assembled by sponsor server.  Gas limit: ≥30,000 (MockMinter
-    //     uses 30,000; real Minter should use ≥50,000 to cover P-256 path at ~8,000).
+    //   - CawProfileMinter sponsor entry points (mintAndDepositSponsored,
+    //     depositForSponsored, authenticateSponsored): staticcall via _checkPermit.
+    //     Gas limit uncapped; SmartEOA P-256 verify uses ~8,000 gas.
     //   - Any future ERC-1271 consumer: same isValidSignature(bytes32,bytes) ABI.
     //
     // initialize(bytes32, bytes32, address, address payable, bytes):
@@ -966,11 +966,12 @@ contract SmartEOA {
     //   - Each requires a valid sig from an enrolled active key or ecdsaFallback.
     //
     // consumeNonce(address, uint8):
-    //   - Called by CawProfileMinter (planned) after verifying ERC-1271.
+    //   - Called by CawProfileMinter._checkPermit after verifying ERC-1271.
     //   - Gated: msg.sender must equal the verifyingContract param.
     //
     // nonceOf(address, uint8):
-    //   - Read-only.  Called by FE / sponsor server when assembling permits.
+    //   - Read-only.  Called by CawProfileMinter._checkPermit and by the FE / sponsor server
+    //     when assembling permits.
     //
     // managementNonceOf():
     //   - Read-only.  Called by FE / sponsor server when assembling management-op sigs.

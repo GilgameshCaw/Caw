@@ -485,7 +485,7 @@ contract CawProfileMinter is Context {
   ///          Passing address(this) means the Minter's own nonce sequence is read —
   ///          the gate in SmartEOA ensures only the Minter can advance that sequence.
   ///       2. Require caller-supplied permitNonce matches (prevents stale permit use).
-  ///       3. Staticcall signer.isValidSignature(digest, sig) — wallet-agnostic.
+  ///       3. Staticcall signer.isValidSignature(digest, sig).
   ///          We do NOT cap gas here; SmartEOA P-256 verify uses ~8k, which is well
   ///          within the 50k CawActions uses. Any wallet that reverts here is rejected.
   ///       4. Consume the nonce via signer.consumeNonce(address(this), actionType).
