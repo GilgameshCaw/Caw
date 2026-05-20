@@ -1354,7 +1354,7 @@
   "settings.ai_provider.description": "连接您自己的 AI 提供商密钥以根据提示生成图像。密钥直接从您的浏览器使用，不会发送到我们的服务器。",
   "settings.ai_provider.provider_label": "提供商",
   "settings.ai_provider.key_label": "API密钥",
-  "settings.ai_provider.get_key": "获取 Gemini API 密钥 →",
+  "settings.ai_provider.get_key": "获取 {{provider}} API 密钥 →",
   "settings.ai_provider.remember": "在此设备上记住",
   "settings.ai_provider.remember_warning": "未加密地存储在此浏览器中。仅在您信任的设备上启用。",
   "settings.ai_provider.save": "节省",

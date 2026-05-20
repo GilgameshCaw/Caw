@@ -162,6 +162,11 @@ const MediaCell: React.FC<{
   media: any
   index: number
   className?: string
+  /** How the image fills its cell. 'cover' (default) crops to fill — used
+   *  by the 2/3/4-image grid tiles. 'contain' preserves the source aspect
+   *  ratio — used by the single-image preview so square AI outputs don't
+   *  get cropped before they hit the feed. */
+  imageFit?: 'cover' | 'contain'
   isDark: boolean
   draggable: boolean
   draggedIndex: number | null
@@ -173,7 +178,7 @@ const MediaCell: React.FC<{
   onReorderDrop: (e: React.DragEvent, i: number) => void
   onRemove: (i: number) => void
   formatDuration: (s: number) => string
-}> = ({ media, index, className = '', isDark, draggable, draggedIndex, dragOverIndex,
+}> = ({ media, index, className = '', imageFit = 'cover', isDark, draggable, draggedIndex, dragOverIndex,
         onReorderDragStart, onReorderDragEnd, onReorderDragOver, onReorderDragLeave,
         onReorderDrop, onRemove, formatDuration }) => (
   <div
@@ -197,7 +202,7 @@ const MediaCell: React.FC<{
           <img
             src={media.preview || media.originalUrl || media.url}
             alt={`Selected ${index + 1}`}
-            className="w-full h-full object-cover"
+            className={`w-full h-full ${imageFit === 'contain' ? 'object-contain' : 'object-cover'}`}
           />
           {media.type === 'gif' && (
             <span className={`absolute bottom-1 left-1 px-1 py-0.5 text-xs font-semibold rounded ${
@@ -252,12 +257,16 @@ const MediaGrid: React.FC<{
   const count = selectedMedia.length
   const draggable = count > 1
 
-  const cell = (index: number, className?: string) => (
+  // imageFit defaults to 'cover' — preserves the grid-tile look for 2/3/4
+  // image layouts. Single-image passes 'contain' so square sources render
+  // at their natural aspect ratio without being cropped to 16:9.
+  const cell = (index: number, className?: string, imageFit: 'cover' | 'contain' = 'cover') => (
     <MediaCell
       key={index}
       media={selectedMedia[index]}
       index={index}
       className={className}
+      imageFit={imageFit}
       draggable={draggable}
       {...cellProps}
     />
@@ -268,7 +277,12 @@ const MediaGrid: React.FC<{
     if (isVideo) {
       return <div className="rounded-lg overflow-hidden bg-black md:max-h-[640px] flex items-center justify-center">{cell(0, 'w-full md:max-h-[640px]')}</div>
     }
-    return <div className="aspect-video rounded-lg overflow-hidden">{cell(0, 'w-full h-full')}</div>
+    // Single image: preserve the source aspect ratio in the preview so
+    // square outputs (AI providers default to 1:1 — Imagen, gpt-image-1,
+    // grok-2-image) don't get visually cropped to 16:9 only to render
+    // un-cropped in the feed afterwards. Match the video container's
+    // bg/centering so the bounding box still feels uniform.
+    return <div className="rounded-lg overflow-hidden bg-black md:max-h-[640px] flex items-center justify-center">{cell(0, 'w-full md:max-h-[640px]', 'contain')}</div>
   }
 
   if (count === 2) {

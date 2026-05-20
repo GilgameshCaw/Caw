@@ -198,7 +198,6 @@
   "post_form.tip.preview_label": "Approx.",
   "post_form.tip.loading_price": "Loading CAW price…",
   "post_form.tip.need_recipient": "Pick a recipient — start with @username to find someone.",
-
   "post_form.ai.tooltip": "Create AI images",
   "post_form.ai.aria": "Create AI images",
   "post_form.ai.modal.title": "Connect your AI provider",
@@ -220,7 +219,7 @@
   "settings.ai_provider.menu_description": "Connect your own AI provider key to generate images",
   "settings.ai_provider.provider_label": "Provider",
   "settings.ai_provider.key_label": "API key",
-  "settings.ai_provider.get_key": "Get a Gemini API key →",
+  "settings.ai_provider.get_key": "Get a {{provider}} API key →",
   "settings.ai_provider.remember": "Remember on this device",
   "settings.ai_provider.remember_warning": "Stored unencrypted in this browser. Only enable on a device you trust.",
   "settings.ai_provider.save": "Save",

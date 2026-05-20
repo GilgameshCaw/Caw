@@ -3,8 +3,21 @@ import ModalWrapper from './ModalWrapper'
 import { useTheme } from '~/hooks/useTheme'
 import { useT } from '~/i18n/I18nProvider'
 import { themeText, themeTextSecondary, themeSecondaryButton } from '~/utils/theme'
-import { useAIProviderStore } from '~/store/aiProviderStore'
+import { useAIProviderStore, type AIProvider } from '~/store/aiProviderStore'
 import { generateAIImage, AIImageError } from '~/utils/aiImage'
+import { SiOpenai, SiGooglegemini, SiX } from 'react-icons/si'
+import type { IconType } from 'react-icons'
+
+// Provider tag metadata shown in the modal header. Brand marks come
+// from react-icons/si (Simple Icons) — already a dep, zero new bundle
+// cost. xAI doesn't have a dedicated mark in the set; we reuse SiX
+// because xAI uses the same X letterform visually as their parent
+// brand. Names aren't translated (brand names never are).
+const PROVIDER_TAG: Record<AIProvider, { label: string; Icon: IconType }> = {
+  gemini: { label: 'Gemini', Icon: SiGooglegemini },
+  openai: { label: 'OpenAI', Icon: SiOpenai },
+  grok:   { label: 'Grok',   Icon: SiX },
+}
 
 interface Props {
   isOpen: boolean
@@ -59,7 +72,25 @@ const AiImageGenerateModal: React.FC<Props> = ({ isOpen, onClose, onImage }) => 
   return (
     <ModalWrapper isOpen={isOpen} onClose={onClose} maxWidth="max-w-md" zIndex={90} usePortal backdropClass="bg-black/60">
       <div className="p-6">
-        <h2 className={`text-lg font-bold mb-4 ${themeText(isDark)}`}>{t('post_form.ai.gen.title')}</h2>
+        <div className="flex items-center gap-2 mb-4">
+          <h2 className={`text-lg font-bold ${themeText(isDark)}`}>{t('post_form.ai.gen.title')}</h2>
+          {provider && (() => {
+            const { label, Icon } = PROVIDER_TAG[provider]
+            return (
+              <span
+                className={`inline-flex items-center gap-1.5 text-[11px] font-semibold uppercase tracking-wide px-2 py-0.5 rounded-full border ${
+                  isDark
+                    ? 'border-yellow-500/30 bg-yellow-500/10 text-yellow-400'
+                    : 'border-yellow-500/40 bg-yellow-500/10 text-yellow-700'
+                }`}
+                title={t('settings.ai_provider.title')}
+              >
+                <Icon className="w-3 h-3" aria-hidden />
+                {label}
+              </span>
+            )
+          })()}
+        </div>
 
         <textarea
           value={prompt}
@@ -91,7 +122,15 @@ const AiImageGenerateModal: React.FC<Props> = ({ isOpen, onClose, onImage }) => 
             disabled={loading || !prompt.trim()}
             className={`px-4 py-2 rounded-lg text-sm font-medium transition cursor-pointer ${themeSecondaryButton(isDark)} disabled:opacity-50`}
           >
-            {loading ? t('post_form.ai.gen.generating') : result ? t('post_form.ai.gen.regenerate') : t('post_form.ai.gen.generate')}
+            {loading ? (
+              <span className="inline-flex items-center gap-2">
+                {/* Inline spinner — same border-spin pattern used across
+                    the app (TrendingHashtags, ReplyItem). Sized small to
+                    sit next to the label without changing button height. */}
+                <span className="w-3.5 h-3.5 border-2 border-gray-400 border-t-yellow-500 rounded-full animate-spin" />
+                {t('post_form.ai.gen.generating')}
+              </span>
+            ) : result ? t('post_form.ai.gen.regenerate') : t('post_form.ai.gen.generate')}
           </button>
           {result && (
             <button

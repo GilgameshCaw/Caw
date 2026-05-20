@@ -1354,7 +1354,7 @@
   "settings.ai_provider.description": "Підключіть власний ключ постачальника штучного інтелекту, щоб генерувати зображення з підказки. Ключ використовується безпосередньо з вашого браузера і ніколи не надсилається на наші сервери.",
   "settings.ai_provider.provider_label": "Провайдер",
   "settings.ai_provider.key_label": "Ключ API",
-  "settings.ai_provider.get_key": "Отримайте ключ Gemini API →",
+  "settings.ai_provider.get_key": "Отримайте ключ {{provider}} API →",
   "settings.ai_provider.remember": "Запам'ятати на цьому пристрої",
   "settings.ai_provider.remember_warning": "Зберігається в незашифрованому вигляді в цьому браузері. Увімкніть лише на пристрої, якому ви довіряєте.",
   "settings.ai_provider.save": "зберегти",

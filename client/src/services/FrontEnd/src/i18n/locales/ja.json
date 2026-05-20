@@ -1354,7 +1354,7 @@
   "settings.ai_provider.description": "独自の AI プロバイダー キーを接続して、プロンプトから画像を生成します。キーはブラウザから直接使用され、当社のサーバーに送信されることはありません。",
   "settings.ai_provider.provider_label": "プロバイダー",
   "settings.ai_provider.key_label": "APIキー",
-  "settings.ai_provider.get_key": "Gemini API キーを取得 →",
+  "settings.ai_provider.get_key": "{{provider}} API キーを取得 →",
   "settings.ai_provider.remember": "このデバイスで記憶する",
   "settings.ai_provider.remember_warning": "このブラウザでは暗号化されずに保存されます。信頼できるデバイスでのみ有効にしてください。",
   "settings.ai_provider.save": "保存",

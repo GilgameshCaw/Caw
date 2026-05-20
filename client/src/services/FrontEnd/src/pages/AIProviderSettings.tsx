@@ -3,8 +3,32 @@ import { useNavigate } from '~/utils/localizedRouter'
 import { useTheme } from '~/hooks/useTheme'
 import { useT } from '~/i18n/I18nProvider'
 import { themeText, themeTextSecondary, themeSecondaryButton } from '~/utils/theme'
-import { useAIProviderStore } from '~/store/aiProviderStore'
+import { useAIProviderStore, type AIProvider } from '~/store/aiProviderStore'
 import { HiArrowLeft } from 'react-icons/hi'
+import ThemedListbox from '~/components/forms/ThemedListbox'
+
+// Single source of truth for the per-provider UI metadata (label shown in
+// the selector, where to grab a key, placeholder hint). Adding a fourth
+// provider = one entry here + matching backend route + AIProvider union.
+// Per-provider UI metadata. None of these are translated — all are
+// brand-name/format-hint strings that read the same in every locale.
+//   - `label`     : verbose name shown in the dropdown.
+//   - `shortName` : short form interpolated into the translated
+//                   "Get a {{provider}} API key →" link below the input.
+//   - `placeholder`: API-key prefix hint inside the input.
+//   - `keyHelpUrl`: where the user can fetch a key.
+interface ProviderMeta {
+  id: AIProvider
+  label: string
+  shortName: string
+  keyHelpUrl: string
+  placeholder: string
+}
+const PROVIDER_META: ProviderMeta[] = [
+  { id: 'gemini', label: 'Google Gemini', shortName: 'Gemini', keyHelpUrl: 'https://aistudio.google.com/apikey',    placeholder: 'AI...'  },
+  { id: 'openai', label: 'OpenAI (GPT)',  shortName: 'OpenAI', keyHelpUrl: 'https://platform.openai.com/api-keys', placeholder: 'sk-...' },
+  { id: 'grok',   label: 'xAI (Grok)',    shortName: 'Grok',   keyHelpUrl: 'https://console.x.ai',                 placeholder: 'xai-...' },
+]
 
 const AIProviderSettings: React.FC = () => {
   const { isDark } = useTheme()
@@ -12,16 +36,20 @@ const AIProviderSettings: React.FC = () => {
   const navigate = useNavigate()
   const { provider, apiKey, remembered, connect, disconnect } = useAIProviderStore()
 
+  // Initialize from the persisted connection if any; otherwise default to
+  // the first provider in the list so the input/help link have a target.
+  const [selected, setSelected] = useState<AIProvider>(provider ?? 'gemini')
   const [key, setKey] = useState(apiKey ?? '')
   const [remember, setRemember] = useState(remembered)
   const [saved, setSaved] = useState(false)
 
   const connected = !!apiKey && !!provider
+  const selectedMeta = PROVIDER_META.find(p => p.id === selected) ?? PROVIDER_META[0]
 
   const onSave = () => {
     const trimmed = key.trim()
     if (!trimmed) return
-    connect('gemini', trimmed, remember)
+    connect(selected, trimmed, remember)
     setSaved(true)
     setTimeout(() => setSaved(false), 2000)
   }
@@ -48,10 +76,13 @@ const AIProviderSettings: React.FC = () => {
       <label className={`block text-sm font-medium mb-1 ${themeText(isDark)}`}>
         {t('settings.ai_provider.provider_label')}
       </label>
-      <div className={`mb-4 px-3 py-2 rounded-lg border text-sm ${
-        isDark ? 'border-white/15 bg-white/5 text-white' : 'border-gray-300 bg-gray-50 text-black'
-      }`}>
-        Google Gemini
+      <div className="mb-4">
+        <ThemedListbox<AIProvider>
+          isDark={isDark}
+          value={selected}
+          onChange={setSelected}
+          options={PROVIDER_META.map(p => ({ value: p.id, label: p.label }))}
+        />
       </div>
 
       <label className={`block text-sm font-medium mb-1 ${themeText(isDark)}`}>
@@ -61,19 +92,19 @@ const AIProviderSettings: React.FC = () => {
         type="password"
         value={key}
         onChange={(e) => setKey(e.target.value)}
-        placeholder="AI..."
+        placeholder={selectedMeta.placeholder}
         autoComplete="off"
         className={`w-full mb-2 px-3 py-2 rounded-lg border text-sm focus:outline-none focus:ring-2 focus:ring-yellow-500/40 ${
           isDark ? 'border-white/15 bg-black text-white' : 'border-gray-300 bg-white text-black'
         }`}
       />
       <a
-        href="https://aistudio.google.com/apikey"
+        href={selectedMeta.keyHelpUrl}
         target="_blank"
         rel="noopener noreferrer"
         className="text-xs text-yellow-500 hover:underline"
       >
-        {t('settings.ai_provider.get_key')}
+        {t('settings.ai_provider.get_key', { provider: selectedMeta.shortName })}
       </a>
 
       <label className={`flex items-start gap-2 mt-5 mb-1 cursor-pointer ${themeText(isDark)}`}>

@@ -1354,7 +1354,7 @@
   "settings.ai_provider.description": "Podłącz własny klucz dostawcy AI, aby generować obrazy z podpowiedzi. Klucz jest używany bezpośrednio z Twojej przeglądarki i nigdy nie jest wysyłany na nasze serwery.",
   "settings.ai_provider.provider_label": "Dostawca",
   "settings.ai_provider.key_label": "Klucz API",
-  "settings.ai_provider.get_key": "Zdobądź klucz API Gemini →",
+  "settings.ai_provider.get_key": "Zdobądź klucz API {{provider}} →",
   "settings.ai_provider.remember": "Remember on this device",
   "settings.ai_provider.remember_warning": "Przechowywane w formie niezaszyfrowanej w tej przeglądarce. Włącz tylko na zaufanym urządzeniu.",
   "settings.ai_provider.save": "Ratować",

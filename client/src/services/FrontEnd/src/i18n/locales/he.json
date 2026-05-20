@@ -1354,7 +1354,7 @@
   "settings.ai_provider.description": "חבר מפתח ספק AI משלך כדי ליצור תמונות מהנחיה. המפתח משמש ישירות מהדפדפן שלך ולעולם לא נשלח לשרתים שלנו.",
   "settings.ai_provider.provider_label": "ספק",
   "settings.ai_provider.key_label": "מפתח API",
-  "settings.ai_provider.get_key": "קבל מפתח API של Gemini →",
+  "settings.ai_provider.get_key": "קבל מפתח API של {{provider}} →",
   "settings.ai_provider.remember": "זכור במכשיר הזה",
   "settings.ai_provider.remember_warning": "מאוחסן לא מוצפן בדפדפן זה. הפעל רק במכשיר שאתה סומך עליו.",
   "settings.ai_provider.save": "לְהַצִיל",

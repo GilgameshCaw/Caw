@@ -1353,7 +1353,7 @@
   "settings.ai_provider.description": "Ikonekta ang iyong sariling AI provider key para makabuo ng mga larawan mula sa isang prompt. Ang susi ay direktang ginagamit mula sa iyong browser at hindi kailanman ipinadala sa aming mga server.",
   "settings.ai_provider.provider_label": "Provider",
   "settings.ai_provider.key_label": "API key",
-  "settings.ai_provider.get_key": "Kumuha ng Gemini API key →",
+  "settings.ai_provider.get_key": "Kumuha ng {{provider}} API key →",
   "settings.ai_provider.remember": "Tandaan sa device na ito",
   "settings.ai_provider.remember_warning": "Naka-imbak nang hindi naka-encrypt sa browser na ito. Paganahin lang sa isang device na pinagkakatiwalaan mo.",
   "settings.ai_provider.save": "I-save",
