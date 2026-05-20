@@ -368,9 +368,16 @@ contract CawProfileMinter is Context {
   ///         `depositFor` is permissionless on CawProfile, but this entry point adds
   ///         sig-gating so the sponsor is sure the owner authorised the deposit.
   ///
+  ///         FUNDING MODEL: the sponsor (msg.sender — typically a sponsor server) holds the
+  ///         user's CAW balance and has pre-approved this Minter for at least `amount`.
+  ///         The Minter pulls `amount` from the sponsor, approves CawProfile to pull it
+  ///         back, then delegates to CawProfile.depositFor. The deposit credit goes to
+  ///         the token's current owner (not to msg.sender). Integration audit 2026-05-21
+  ///         HIGH-1: this pull-and-approve was missing in the initial Step 3b implementation.
+  ///
   /// @param networkId       CAW network.
   /// @param tokenId         Token whose balance to top up.
-  /// @param amount          CAW amount to deposit (pulled from msg.sender).
+  /// @param amount          CAW amount to deposit (pulled from the sponsor msg.sender).
   /// @param lzDestId        LayerZero destination chain ID.
   /// @param lzTokenAmount   Optional LZ ZRO payment.
   /// @param permitNonce     Must match owner.nonceOf(address(this), ACTION_DEPOSIT_FOR).
@@ -384,6 +391,11 @@ contract CawProfileMinter is Context {
     uint256 permitNonce,
     bytes calldata sig
   ) external payable {
+    // Reject zero-amount calls BEFORE _checkPermit consumes the user's nonce.
+    // CawProfile.depositFor has its own ZeroDeposit guard but it fires after the
+    // nonce was already consumed by _checkPermit, wasting the owner's permit slot.
+    // Re-audit 2026-05-21 LOW.
+    require(amount > 0, "Zero deposit");
     address owner = CawProfile.ownerOf(tokenId);
     require(owner.code.length > 0, "Direct submit required");
     bytes32 structHash = keccak256(abi.encode(

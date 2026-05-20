@@ -792,6 +792,32 @@ contract MinterSponsorTest is Test {
     }
 
     // =========================================================================
+    // Additional: zero-amount depositForSponsored reverts before consuming the
+    // owner's permit nonce.  Re-audit 2026-05-21 LOW: an attacker with a valid
+    // sig for amount=0 could otherwise burn through the owner's nonce slots.
+    // =========================================================================
+
+    function test_depositForSponsored_zeroAmount_reverts_beforeNonceConsume() public {
+        address eoa = _deployDelegatedEOA(USER_EOA_PK);
+        profile.seedToken(50, eoa);
+
+        // Read nonce BEFORE the call.
+        uint256 nonceBefore = ISmartEOA(eoa).nonceOf(address(minter), 2 /* ACTION_DEPOSIT_FOR */);
+
+        // Even with a valid-shaped sig, amount=0 must revert at the top.
+        bytes32 digest = _depositForDigest(1, 50, 0, 0, 0, nonceBefore);
+        _registerP256(digest, SIG_R_A, SIG_S_A, PK1_X, PK1_Y);
+        bytes memory sig = abi.encode(AUTH_DATA, _makeCdj(digest), SIG_R_A, SIG_S_A);
+
+        vm.expectRevert("Zero deposit");
+        minter.depositForSponsored(1, 50, 0, 0, 0, nonceBefore, sig);
+
+        // Nonce must NOT have been consumed.
+        uint256 nonceAfter = ISmartEOA(eoa).nonceOf(address(minter), 2);
+        assertEq(nonceAfter, nonceBefore, "nonce must not advance on zero-amount revert");
+    }
+
+    // =========================================================================
     // Additional: DOMAIN_SEPARATOR cross-chain isolation
     // Integration audit 2026-05-21 LOW-1: prove that two Minters deployed on
     // different chainids have different DOMAIN_SEPARATORs, so a permit signed
