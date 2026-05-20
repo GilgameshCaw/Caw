@@ -607,3 +607,18 @@ input[type="number"] {
 .feed-pin-flash {
   animation: feed-pin-flash 0.7s ease-out;
 }
+
+/* Feed tab slide-in (Following ↔ For You). The new tab's content
+   slides in from the side the user swiped from. Direction is set by
+   the inline --caw-tab-slide-from CSS var so the same animation
+   handles both directions without two keyframe blocks. */
+@keyframes caw-tab-slide-in {
+  from {
+    opacity: 0;
+    transform: translateX(var(--caw-tab-slide-from, 0px));
+  }
+  to {
+    opacity: 1;
+    transform: translateX(0);
+  }
+}
