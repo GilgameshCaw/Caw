@@ -4,7 +4,9 @@ pragma solidity ^0.8.0;
 
 import "@openzeppelin/contracts/utils/Context.sol";
 import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
+import "@openzeppelin/contracts/interfaces/IERC1271.sol";
 import "./interfaces/IMint.sol";
+import "./interfaces/ISmartEOA.sol";
 import "./ISwapRouter.sol";
 
 contract CawProfileMinter is Context {
@@ -20,11 +22,50 @@ contract CawProfileMinter is Context {
   ISwapRouter public immutable swapRouter;
   address public immutable WETH;
 
+  // ============================================
+  // SPONSOR ENTRY POINTS — EIP-712 domain + nonce constants
+  // ============================================
+  // Three action types for per-(contract,actionType) nonce namespacing.
+  // Values must remain stable — changing them invalidates all outstanding permits.
+  uint8 internal constant ACTION_MINT_DEPOSIT = 1;
+  uint8 internal constant ACTION_DEPOSIT_FOR  = 2;
+  uint8 internal constant ACTION_AUTHENTICATE = 3;
+
+  // ERC-1271 magic value from the standard.
+  bytes4 internal constant ERC1271_MAGIC = 0x1626ba7e;
+
+  // EIP-712 domain separator — bakes chainId + address(this) at deploy time
+  // so permits signed for one chain/deployment cannot be replayed on another.
+  bytes32 public immutable DOMAIN_SEPARATOR;
+
+  // EIP-712 struct type hashes — keccak256 is evaluated at compile time as a
+  // constant expression.
+  bytes32 internal constant MINT_DEPOSIT_TYPEHASH = keccak256(
+    "MintAndDeposit(uint32 networkId,address recipient,string username,uint256 depositAmount,uint32 lzDestId,uint256 lzTokenAmount,uint256 nonce)"
+  );
+
+  bytes32 internal constant DEPOSIT_FOR_TYPEHASH = keccak256(
+    "DepositFor(uint32 networkId,uint32 tokenId,uint256 amount,uint32 lzDestId,uint256 lzTokenAmount,uint256 nonce)"
+  );
+
+  bytes32 internal constant AUTHENTICATE_TYPEHASH = keccak256(
+    "Authenticate(uint32 networkId,uint32 tokenId,uint32 lzDestId,uint256 lzTokenAmount,uint256 nonce)"
+  );
+
   constructor(address _caw, address _cawProfiles, address _router) {
     CAW = IERC20(_caw);
     CawProfile = IMint(_cawProfiles);
     swapRouter = ISwapRouter(_router);
     WETH = swapRouter.WETH();
+
+    // Compute EIP-712 domain separator once at deploy time.
+    DOMAIN_SEPARATOR = keccak256(abi.encode(
+      keccak256("EIP712Domain(string name,string version,uint256 chainId,address verifyingContract)"),
+      keccak256(bytes("CawProfileMinter")),
+      keccak256(bytes("1")),
+      block.chainid,
+      address(this)
+    ));
   }
 
   // ============================================
@@ -269,6 +310,168 @@ contract CawProfileMinter is Context {
       minCawOut, path, address(this), block.timestamp + 600
     );
     return amounts[amounts.length - 1];
+  }
+
+  // ============================================
+  // SPONSOR ENTRY POINTS — for Population B (7702 SmartEOA) and C (ERC-1271 wallets)
+  // ============================================
+  // All three functions follow the same pattern:
+  //   1. Confirm the owner/recipient is a smart contract (code.length > 0).
+  //      Plain EOAs (code.length == 0) must submit directly — no sponsor needed.
+  //   2. Build the EIP-712 struct hash + final digest for this specific operation.
+  //   3. Delegate to _checkPermit: verify nonce, verify ERC-1271 sig, consume nonce.
+  //   4. Forward to the existing CawProfile entry point.
+  // The Minter is wallet-agnostic: it does not care whether the contract at the
+  // owner address is a SmartEOA, a Safe, or a Coinbase Smart Wallet — it only
+  // requires that isValidSignature returns 0x1626ba7e for the EIP-712 digest.
+
+  /// @notice Mint a profile and deposit CAW on behalf of a smart-contract wallet.
+  ///         The CAW burn + deposit is pulled from msg.sender (the sponsor server's
+  ///         allowance); the NFT and deposit balance go to `recipient`.
+  ///         `recipient` must be a contract (7702-delegated EOA or smart wallet).
+  ///
+  /// @param networkId       CAW network to register on.
+  /// @param recipient       Smart-contract wallet that will own the new profile.
+  /// @param username        Desired username (must pass isValidUsername).
+  /// @param depositAmount   CAW to lock as balance (pulled from msg.sender).
+  /// @param lzDestId        LayerZero destination chain ID (0 = mainnet bypass).
+  /// @param lzTokenAmount   Optional LZ ZRO payment (pass 0 for ETH-only fee).
+  /// @param permitNonce     Must match recipient.nonceOf(address(this), ACTION_MINT_DEPOSIT).
+  /// @param sig             ERC-1271 sig from recipient over the EIP-712 digest.
+  function mintAndDepositSponsored(
+    uint32 networkId,
+    address recipient,
+    string memory username,
+    uint256 depositAmount,
+    uint32 lzDestId,
+    uint256 lzTokenAmount,
+    uint256 permitNonce,
+    bytes calldata sig
+  ) external payable {
+    require(recipient.code.length > 0, "Direct submit required");
+    bytes32 structHash = keccak256(abi.encode(
+      MINT_DEPOSIT_TYPEHASH,
+      networkId,
+      recipient,
+      keccak256(bytes(username)),
+      depositAmount,
+      lzDestId,
+      lzTokenAmount,
+      permitNonce
+    ));
+    bytes32 digest = keccak256(abi.encodePacked("\x19\x01", DOMAIN_SEPARATOR, structHash));
+    _checkPermit(recipient, ACTION_MINT_DEPOSIT, permitNonce, digest, sig);
+    mintAndDepositFor(networkId, recipient, username, depositAmount, lzDestId, lzTokenAmount);
+  }
+
+  /// @notice Deposit additional CAW into an existing token owned by a smart-contract wallet.
+  ///         `depositFor` is permissionless on CawProfile, but this entry point adds
+  ///         sig-gating so the sponsor is sure the owner authorised the deposit.
+  ///
+  /// @param networkId       CAW network.
+  /// @param tokenId         Token whose balance to top up.
+  /// @param amount          CAW amount to deposit (pulled from msg.sender).
+  /// @param lzDestId        LayerZero destination chain ID.
+  /// @param lzTokenAmount   Optional LZ ZRO payment.
+  /// @param permitNonce     Must match owner.nonceOf(address(this), ACTION_DEPOSIT_FOR).
+  /// @param sig             ERC-1271 sig from the token owner over the EIP-712 digest.
+  function depositForSponsored(
+    uint32 networkId,
+    uint32 tokenId,
+    uint256 amount,
+    uint32 lzDestId,
+    uint256 lzTokenAmount,
+    uint256 permitNonce,
+    bytes calldata sig
+  ) external payable {
+    address owner = CawProfile.ownerOf(tokenId);
+    require(owner.code.length > 0, "Direct submit required");
+    bytes32 structHash = keccak256(abi.encode(
+      DEPOSIT_FOR_TYPEHASH,
+      networkId,
+      tokenId,
+      amount,
+      lzDestId,
+      lzTokenAmount,
+      permitNonce
+    ));
+    bytes32 digest = keccak256(abi.encodePacked("\x19\x01", DOMAIN_SEPARATOR, structHash));
+    _checkPermit(owner, ACTION_DEPOSIT_FOR, permitNonce, digest, sig);
+    CawProfile.depositFor{value: msg.value}(networkId, tokenId, amount, lzDestId, lzTokenAmount);
+  }
+
+  /// @notice Authenticate an existing profile to a second CAW network via the Minter.
+  ///         Trust chain: owner's ERC-1271 sig verified here → Minter calls
+  ///         CawProfile.authenticateForMinter (which trusts msg.sender == minter).
+  ///         Useful for Population B users who already have a deposited profile and
+  ///         want to join a second Network with sponsored gas.
+  ///
+  /// @param networkId       CAW network to authenticate to.
+  /// @param tokenId         Token to authenticate.
+  /// @param lzDestId        LayerZero destination chain ID.
+  /// @param lzTokenAmount   Optional LZ ZRO payment.
+  /// @param permitNonce     Must match owner.nonceOf(address(this), ACTION_AUTHENTICATE).
+  /// @param sig             ERC-1271 sig from the token owner over the EIP-712 digest.
+  function authenticateSponsored(
+    uint32 networkId,
+    uint32 tokenId,
+    uint32 lzDestId,
+    uint256 lzTokenAmount,
+    uint256 permitNonce,
+    bytes calldata sig
+  ) external payable {
+    address owner = CawProfile.ownerOf(tokenId);
+    require(owner.code.length > 0, "Direct submit required");
+    bytes32 structHash = keccak256(abi.encode(
+      AUTHENTICATE_TYPEHASH,
+      networkId,
+      tokenId,
+      lzDestId,
+      lzTokenAmount,
+      permitNonce
+    ));
+    bytes32 digest = keccak256(abi.encodePacked("\x19\x01", DOMAIN_SEPARATOR, structHash));
+    _checkPermit(owner, ACTION_AUTHENTICATE, permitNonce, digest, sig);
+    CawProfile.authenticateForMinter{value: msg.value}(networkId, tokenId, lzDestId, owner, lzTokenAmount);
+  }
+
+  /// @dev Shared permit-verification logic for all three sponsor entry points.
+  ///
+  ///      Steps:
+  ///       1. Read current nonce from signer.nonceOf(address(this), actionType).
+  ///          Passing address(this) means the Minter's own nonce sequence is read —
+  ///          the gate in SmartEOA ensures only the Minter can advance that sequence.
+  ///       2. Require caller-supplied permitNonce matches (prevents stale permit use).
+  ///       3. Staticcall signer.isValidSignature(digest, sig) — wallet-agnostic.
+  ///          We do NOT cap gas here; SmartEOA P-256 verify uses ~8k, which is well
+  ///          within the 50k CawActions uses. Any wallet that reverts here is rejected.
+  ///       4. Consume the nonce via signer.consumeNonce(address(this), actionType).
+  ///          Because consumeNonce is gated to msg.sender == verifyingContract and
+  ///          msg.sender here is address(this) (the Minter), the call will succeed
+  ///          for the Minter's nonce sequence only.
+  ///
+  /// @param signer      Contract whose ERC-1271 / nonce we verify.
+  /// @param actionType  One of ACTION_MINT_DEPOSIT / ACTION_DEPOSIT_FOR / ACTION_AUTHENTICATE.
+  /// @param permitNonce Caller-supplied nonce — must equal signer.nonceOf(this, actionType).
+  /// @param digest      EIP-712 final digest (keccak256("\x19\x01" || domainSep || structHash)).
+  /// @param sig         Raw sig bytes forwarded verbatim to isValidSignature.
+  function _checkPermit(
+    address signer,
+    uint8 actionType,
+    uint256 permitNonce,
+    bytes32 digest,
+    bytes calldata sig
+  ) internal {
+    uint256 currentNonce = ISmartEOA(signer).nonceOf(address(this), actionType);
+    require(permitNonce == currentNonce, "Nonce mismatch");
+    (bool ok, bytes memory ret) = signer.staticcall(
+      abi.encodeWithSelector(IERC1271.isValidSignature.selector, digest, sig)
+    );
+    require(
+      ok && ret.length >= 32 && abi.decode(ret, (bytes4)) == ERC1271_MAGIC,
+      "Bad sig"
+    );
+    ISmartEOA(signer).consumeNonce(address(this), actionType);
   }
 
   /// @notice Accept ETH refunds from CawProfile._refundUnusedLzEth. Without

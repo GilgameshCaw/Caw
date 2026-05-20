@@ -43,4 +43,20 @@ interface IMint {
     uint256 lzTokenAmount
   ) external payable;
 
+  /// @notice Returns the current owner of a profile token.
+  ///         Mirrors ERC-721 ownerOf — used by sponsor entry points to look up
+  ///         which address must supply the ERC-1271 permit sig.
+  function ownerOf(uint256 tokenId) external view returns (address);
+
+  /// @notice Authenticate a token to a network via the registered minter.
+  ///         msg.sender must be the minter; trust chain: owner sig verified at
+  ///         Minter → Minter trusted by CawProfile.
+  function authenticateForMinter(
+    uint32 cawNetworkId,
+    uint32 tokenId,
+    uint32 lzDestId,
+    address owner,
+    uint256 lzTokenAmount
+  ) external payable;
+
 }
