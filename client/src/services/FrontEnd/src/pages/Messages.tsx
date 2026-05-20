@@ -3192,7 +3192,7 @@ const MessagesPage: React.FC = () => {
                       ? 'text-white placeholder-gray-500'
                       : 'text-black placeholder-gray-500'
                   }`}
-                  style={{ maxHeight: '96px' }}
+                  style={{ maxHeight: '240px' }}
                 />
 
                 {/* @mention autocomplete for the DM composer. Surfaces
