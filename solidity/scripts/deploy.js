@@ -489,6 +489,16 @@ const CONTRACTS = {
       return [state.addresses.CawProfile, erc20Tokens];
     },
   },
+  SmartEOA: {
+    chain: 'L1',
+    phase: 2,
+    // No dependencies — SmartEOA is a standalone immutable contract that
+    // serves as the EIP-7702 delegate implementation for CAW user EOAs.
+    // No constructor args; user-specific state lives in each delegated EOA's
+    // storage slots, not in the implementation contract.
+    dependencies: [],
+    constructorArgs: () => [],
+  },
   CawActions_L1: {
     artifact: 'CawActions',
     chain: 'L1',
@@ -1135,6 +1145,7 @@ function buildDeploymentsBlock(env, addresses) {
     CawProfileMinter: addresses.CawProfileMinter,
     CawProfileQuoter: addresses.CawProfileQuoter,
     CawProfileMarketplace: addresses.CawProfileMarketplace,
+    SmartEOA: addresses.SmartEOA,
     CawProfileURI: addresses.CawProfileURI,
     CawFontDataA: addresses.CawFontDataA,
     CawFontDataB: addresses.CawFontDataB,
