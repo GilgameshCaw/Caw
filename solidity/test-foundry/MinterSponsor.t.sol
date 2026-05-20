@@ -791,5 +791,31 @@ contract MinterSponsorTest is Test {
         minter.authenticateSponsored(1, 21, 0, 0, 0, bytes(""));
     }
 
+    // =========================================================================
+    // Additional: DOMAIN_SEPARATOR cross-chain isolation
+    // Integration audit 2026-05-21 LOW-1: prove that two Minters deployed on
+    // different chainids have different DOMAIN_SEPARATORs, so a permit signed
+    // against chain A cannot replay against a Minter on chain B.
+    // =========================================================================
+
+    function test_domain_separator_is_chainid_specific() public {
+        uint256 originalChainId = block.chainid;
+        bytes32 dsOnCurrent = minter.DOMAIN_SEPARATOR();
+
+        // Deploy a fresh Minter on a different chainid and capture its DS.
+        vm.chainId(8453);  // Base mainnet
+        CawProfileMinter minterOnBase = new CawProfileMinter(
+            address(caw),
+            address(profile),  // re-uses the same profile mock; just for DS
+            address(router)
+        );
+        bytes32 dsOnBase = minterOnBase.DOMAIN_SEPARATOR();
+        vm.chainId(originalChainId);
+
+        assertTrue(dsOnCurrent != dsOnBase, "DS must differ across chainIds");
+        assertTrue(dsOnCurrent != bytes32(0), "DS must be non-zero");
+        assertTrue(dsOnBase != bytes32(0), "DS must be non-zero");
+    }
+
     receive() external payable {}
 }
