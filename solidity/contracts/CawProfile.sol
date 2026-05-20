@@ -476,7 +476,23 @@ contract CawProfile is
 
   function authenticate(uint32 cawNetworkId, uint32 tokenId, uint32 lzDestId, uint256 lzTokenAmount) external payable {
     if (ownerOf(tokenId) != msg.sender) revert NotOwner();
+    _authenticateBody(cawNetworkId, tokenId, lzDestId, msg.sender, lzTokenAmount);
+  }
 
+  /// @notice Authenticate a token to a network on behalf of its owner.
+  ///         Callable only by the minter contract. Used by the sponsored auth
+  ///         path (CawProfileMinter.authenticateSponsored) so a relayer can pay
+  ///         the LZ fee without the token owner needing ETH.
+  /// @param owner The current token owner — used as the new-owner hint in the
+  ///              pending-transfer update bundle sent to the destination chain.
+  function authenticateForMinter(uint32 cawNetworkId, uint32 tokenId, uint32 lzDestId, address owner, uint256 lzTokenAmount) external payable {
+    if (msg.sender != minter) revert NotMinter();
+    _authenticateBody(cawNetworkId, tokenId, lzDestId, owner, lzTokenAmount);
+  }
+
+  /// @dev Shared body for authenticate and authenticateForMinter. Caller
+  ///      must validate access before delegating here.
+  function _authenticateBody(uint32 cawNetworkId, uint32 tokenId, uint32 lzDestId, address owner, uint256 lzTokenAmount) private {
     (uint256 fee, address feeAddress) = networkManager.getAuthFeeAndAddress(cawNetworkId);
     uint256 lzEthAmount = msg.value - payFee(fee, feeAddress);
     authenticated[cawNetworkId][tokenId] = true;
@@ -498,7 +514,7 @@ contract CawProfile is
       uint32[] memory tokenIds;
       address[] memory owners;
       uint64[] memory stamps;
-      (tokenIds, owners, stamps) = extractPendingTransferUpdates(lzDestId, msg.sender, tokenId);
+      (tokenIds, owners, stamps) = extractPendingTransferUpdates(lzDestId, owner, tokenId);
       bytes memory payload = abi.encodeWithSelector(_authSelector, cawNetworkId, tokenId, tokenIds, owners, stamps);
       lzSend(cawNetworkId, lzDestId, _authSelector, tokenIds.length, payload, lzEthAmount, lzTokenAmount);
     }
@@ -703,10 +719,6 @@ contract CawProfile is
     return Math.min(transferUpdateLimit, pendingTransferEnd[lzDestId] - pendingTransferStart[lzDestId]);
   }
 
-  function pendingTransferUpdates(uint32 lzDestId) public view returns (uint32[] memory, address[] memory, uint64[] memory) {
-    return pendingTransferUpdates(lzDestId, address(0), 0);
-  }
-
   function pendingTransferUpdates(uint32 lzDestId, address newOwner, uint32 tokenId) public view returns (uint32[] memory, address[] memory, uint64[] memory) {
     uint256 updateCount = updatesNeededForPeer(lzDestId);
     uint256 includeOwner = newOwner == address(0) && tokenId == 0 ? 0 : 1;
@@ -897,7 +909,7 @@ contract CawProfile is
   ///      for the per-network ratchet that lets a network owner bump this budget if some
   ///      future EVM/L2/LZ change ever undersizes a path. Cap'd at MAX_GAS_OVERRIDE so
   ///      a compromised network owner can't grief their own users with arbitrary fees.
-  function gasLimitFor(uint32 cawNetworkId, bytes4 selector, uint256 n) public view returns (uint128) {
+  function gasLimitFor(uint32 cawNetworkId, bytes4 selector, uint256 n) internal view returns (uint128) {
     // Unset selectors return 0 here; the LZ send downstream will OOG meaningfully on the
     // L2 receive call (gas budget far below any handler's needs), so a bad selector still
     // reverts — just without an explicit require message in this hot path.
@@ -907,15 +919,28 @@ contract CawProfile is
     return gasBaseFor[selector] + uint128(65_000 * n) + networkManager.networkGasOverride(cawNetworkId, selector);
   }
 
-  // Public getters for the L2 handler selectors, preserving the CawProfileQuoter
-  // interface without storing them in contract storage (7 fewer SLOADs per call).
-  function mintSelector()                    public pure returns (bytes4) { return _mintSelector; }
-  function addToBalanceSelector()            public pure returns (bytes4) { return _addToBalanceSelector; }
-  function authSelector()                    public pure returns (bytes4) { return _authSelector; }
-  function updateOwnersSelector()            public pure returns (bytes4) { return _updateOwnersSelector; }
-  function mintAuthSelector()                public pure returns (bytes4) { return _mintAuthSelector; }
-  function depositRegisterSessionSelector()  public pure returns (bytes4) { return _depositRegisterSessionSelector; }
-  function mintAuthRegisterSessionSelector() public pure returns (bytes4) { return _mintAuthRegisterSessionSelector; }
+  /// @notice Returns all 7 L2 handler selectors in a single call.
+  /// @dev Single dispatcher entry instead of 7 — reduces bytecode. Callers
+  ///      (CawProfileQuoter) call this once and cache the results locally.
+  function selectors() external pure returns (
+    bytes4 mint,
+    bytes4 addToBalance,
+    bytes4 auth,
+    bytes4 updateOwners,
+    bytes4 mintAuth,
+    bytes4 depositRegisterSession,
+    bytes4 mintAuthRegisterSession
+  ) {
+    return (
+      _mintSelector,
+      _addToBalanceSelector,
+      _authSelector,
+      _updateOwnersSelector,
+      _mintAuthSelector,
+      _depositRegisterSessionSelector,
+      _mintAuthRegisterSessionSelector
+    );
+  }
 
   receive() external payable {}
   fallback() external payable {}
