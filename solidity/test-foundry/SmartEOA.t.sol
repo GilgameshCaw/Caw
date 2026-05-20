@@ -710,10 +710,26 @@ contract SmartEOATest is Test {
         (uint8 vc, bytes32 rc, bytes32 sc) = vm.sign(ECDSA_PK, cancelDigest);
         bytes memory cancelSig = abi.encodePacked(rc, sc, vc);
 
-        // Expect PasskeyCancelled and NO PasskeyRemoved.
-        vm.expectEmit(true, false, false, false);
-        emit SmartEOA.PasskeyCancelled(pk2Hash);
+        // vm.recordLogs captures ALL events; we assert PasskeyCancelled is emitted
+        // EXACTLY ONCE and PasskeyRemoved is NOT emitted. This is stronger than
+        // vm.expectEmit which only checks the next matching event and doesn't
+        // prove absence of other events.
+        vm.recordLogs();
         account.cancelPendingPasskey(pk2Hash, cancelSig);
+        Vm.Log[] memory logs = vm.getRecordedLogs();
+
+        bytes32 cancelledSig = keccak256("PasskeyCancelled(bytes32)");
+        bytes32 removedSig = keccak256("PasskeyRemoved(bytes32)");
+        uint256 cancelledCount;
+        uint256 removedCount;
+        for (uint256 i = 0; i < logs.length; i++) {
+            if (logs[i].topics.length > 0) {
+                if (logs[i].topics[0] == cancelledSig) cancelledCount++;
+                if (logs[i].topics[0] == removedSig) removedCount++;
+            }
+        }
+        assertEq(cancelledCount, 1, "expected exactly one PasskeyCancelled");
+        assertEq(removedCount, 0, "expected no PasskeyRemoved");
     }
 
     function test_L3_remove_emits_removed_not_cancelled() public {
@@ -723,9 +739,22 @@ contract SmartEOATest is Test {
         (uint8 vr, bytes32 rr, bytes32 sr) = vm.sign(ECDSA_PK, removeDigest);
         bytes memory removeSig = abi.encodePacked(rr, sr, vr);
 
-        vm.expectEmit(true, false, false, false);
-        emit SmartEOA.PasskeyRemoved(pk1Hash);
+        vm.recordLogs();
         account.removePasskey(pk1Hash, removeSig);
+        Vm.Log[] memory logs = vm.getRecordedLogs();
+
+        bytes32 cancelledSig = keccak256("PasskeyCancelled(bytes32)");
+        bytes32 removedSig = keccak256("PasskeyRemoved(bytes32)");
+        uint256 cancelledCount;
+        uint256 removedCount;
+        for (uint256 i = 0; i < logs.length; i++) {
+            if (logs[i].topics.length > 0) {
+                if (logs[i].topics[0] == cancelledSig) cancelledCount++;
+                if (logs[i].topics[0] == removedSig) removedCount++;
+            }
+        }
+        assertEq(removedCount, 1, "expected exactly one PasskeyRemoved");
+        assertEq(cancelledCount, 0, "expected no PasskeyCancelled");
     }
 
     // =========================================================================
