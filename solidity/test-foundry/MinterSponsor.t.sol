@@ -163,10 +163,15 @@ contract MockProfile {
         uint32 cawNetworkId,
         uint32 tokenId,
         uint32 /*lzDestId*/,
-        address /*owner*/,
+        address owner,
         uint256 /*lzTokenAmount*/
     ) external payable {
         require(msg.sender == minter, "NotMinter");
+        // Defense-in-depth — mirror the real CawProfile L-1 check added in
+        // final audit 2026-05-21: the supplied owner MUST match the on-chain
+        // owner for this token. This catches any future Minter-side bug that
+        // passes a caller-supplied or stale owner address.
+        require(_owner[tokenId] == owner, "NotOwner");
         authenticated[cawNetworkId][tokenId] = true;
         authenticateForMinterCalled = true;
         lastAuthNetworkId = cawNetworkId;
@@ -705,6 +710,23 @@ contract MinterSponsorTest is Test {
         vm.prank(randomCaller);
         vm.expectRevert("NotMinter");
         profile.authenticateForMinter(1, 9, 0, address(scwMock), 0);
+    }
+
+    // =========================================================================
+    // Defense-in-depth: authenticateForMinter rejects mismatched owner
+    // Final audit 2026-05-21 L-1: even when called by the registered minter,
+    // a caller-supplied `owner` that does NOT match ownerOf(tokenId) must revert.
+    // Catches future Minter-side bugs that might pass a stale or fake owner.
+    // =========================================================================
+
+    function test_authenticateForMinter_mismatched_owner_reverts() public {
+        profile.seedToken(99, address(scwMock));
+        address fakeOwner = vm.addr(0xdeadbeef);
+
+        // Call from the registered minter (vm.prank as the minter address)
+        vm.prank(address(minter));
+        vm.expectRevert("NotOwner");
+        profile.authenticateForMinter(1, 99, 0, fakeOwner, 0);
     }
 
     // =========================================================================

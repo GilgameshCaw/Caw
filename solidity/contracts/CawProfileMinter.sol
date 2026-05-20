@@ -313,17 +313,38 @@ contract CawProfileMinter is Context {
   }
 
   // ============================================
-  // SPONSOR ENTRY POINTS — for Population B (7702 SmartEOA) and C (ERC-1271 wallets)
+  // SPONSOR ENTRY POINTS — for ISmartEOA-compatible wallets
   // ============================================
   // All three functions follow the same pattern:
   //   1. Confirm the owner/recipient is a smart contract (code.length > 0).
   //      Plain EOAs (code.length == 0) must submit directly — no sponsor needed.
   //   2. Build the EIP-712 struct hash + final digest for this specific operation.
-  //   3. Delegate to _checkPermit: verify nonce, verify ERC-1271 sig, consume nonce.
+  //   3. Delegate to _checkPermit: read nonce, verify ERC-1271 sig, consume nonce.
   //   4. Forward to the existing CawProfile entry point.
-  // The Minter is wallet-agnostic: it does not care whether the contract at the
-  // owner address is a SmartEOA, a Safe, or a Coinbase Smart Wallet — it only
-  // requires that isValidSignature returns 0x1626ba7e for the EIP-712 digest.
+  //
+  // WALLET COMPATIBILITY (clarified after integration audit #52 M-1):
+  //   The Minter staticcalls TWO interfaces on the owner/recipient: standard
+  //   ERC-1271 isValidSignature(digest, sig) AND CAW-specific
+  //   ISmartEOA.{nonceOf, consumeNonce} for replay protection. To use these
+  //   sponsor entry points, the wallet contract MUST implement BOTH:
+  //     - ERC-1271 isValidSignature returning 0x1626ba7e for the Minter's digest
+  //     - ISmartEOA.nonceOf(verifyingContract, actionType) returning a uint256
+  //     - ISmartEOA.consumeNonce(verifyingContract, actionType) gated to
+  //       msg.sender == verifyingContract
+  //
+  //   SUPPORTED:
+  //     * Population B: SmartEOA (the 7702 delegate) — implements both
+  //     * Population C wallets that wrap their ERC-1271 surface with a CAW-
+  //       compatible nonce shim (TBD per-wallet, v2 scope)
+  //
+  //   NOT SUPPORTED via sponsor path:
+  //     * Vanilla Safe, Argent, or generic Coinbase Smart Wallet that do not
+  //       expose nonceOf/consumeNonce. These wallets can still interact with
+  //       CawProfile via the direct (non-sponsored) entry points.
+  //
+  //   The `recipient.code.length > 0` gate filters out Population A direct EOAs.
+  //   The ISmartEOA nonce calls will revert cleanly for incompatible wallets —
+  //   no funds are at risk, just a failed tx.
 
   /// @notice Mint a profile and deposit CAW on behalf of a smart-contract wallet.
   ///         The CAW burn + deposit is pulled from msg.sender (the sponsor server's

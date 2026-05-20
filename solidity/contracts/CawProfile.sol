@@ -487,6 +487,13 @@ contract CawProfile is
   ///              pending-transfer update bundle sent to the destination chain.
   function authenticateForMinter(uint32 cawNetworkId, uint32 tokenId, uint32 lzDestId, address owner, uint256 lzTokenAmount) external payable {
     if (msg.sender != minter) revert NotMinter();
+    // Defense-in-depth: the Minter is the only caller (gated above) and the
+    // current Minter design resolves `owner` via `ownerOf(tokenId)` immediately
+    // before this call — so the supplied `owner` should always match the chain
+    // state. Re-check here so a future Minter-side bug (or v2 Minter that
+    // accepts caller-supplied owner) can't silently inject a fake new-owner
+    // hint into the LZ payload. Final audit 2026-05-21 L-1.
+    if (ownerOf(tokenId) != owner) revert NotOwner();
     _authenticateBody(cawNetworkId, tokenId, lzDestId, owner, lzTokenAmount);
   }
 
