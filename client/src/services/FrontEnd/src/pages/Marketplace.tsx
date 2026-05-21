@@ -14,6 +14,7 @@ import { Link, useNavigate } from '~/utils/localizedRouter'
 import { formatAddress } from '~/utils'
 import ProfileCard from '~/components/marketplace/ProfileCard'
 import RefundsBanner from '~/components/marketplace/RefundsBanner'
+import SalesProceedsBanner from '~/components/marketplace/SalesProceedsBanner'
 import { useAccount, useChainId, useSwitchChain, useWriteContract, useWaitForTransactionReceipt, useReadContract } from 'wagmi'
 import { readContract } from '@wagmi/core'
 import { wagmiConfig } from '~/config/Web3Provider'
@@ -161,6 +162,9 @@ const Marketplace: React.FC = () => {
         {/* Marketplace section */}
         <div className={`border-t pt-6 ${themeBorder(isDark)}`}>
           <h2 className={`text-3xl font-bold mb-4 ${themeText(isDark)}`}>{t('marketplace.title')}</h2>
+
+          {/* Unclaimed sale proceeds — V2 pull-payout model (H-15) */}
+          <SalesProceedsBanner />
 
           {/* Claimable refunds (outbid bids + cancelled/reclaimed auctions) */}
           <RefundsBanner />

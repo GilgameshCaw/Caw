@@ -135,9 +135,13 @@ const NetworkFeesPanel: React.FC<NetworkFeesPanelProps> = ({
   const loadingLabel = t('network.loading')
   const ceilingNote = t('network.fee_ceiling_note')
 
-  // Permanently-free network: ceiling is 0 and all current fees are also 0.
+  // Permanently-free network: all four ceilings are 0 (locked at zero forever)
+  // and all current fees are also 0.
   const permanentlyFree =
-    fees.feeCeiling === 0n &&
+    fees.withdrawFeeCeiling === 0n &&
+    fees.depositFeeCeiling === 0n &&
+    fees.authFeeCeiling === 0n &&
+    fees.mintFeeCeiling === 0n &&
     fees.depositFee === 0n &&
     fees.authFee === 0n &&
     fees.withdrawFee === 0n &&
@@ -167,7 +171,7 @@ const NetworkFeesPanel: React.FC<NetworkFeesPanelProps> = ({
             <FeeLineWithCeiling
               label={t('network.deposit_fee')}
               fee={fees.depositFee}
-              ceiling={fees.feeCeiling}
+              ceiling={fees.depositFeeCeiling}
               isDark={isDark}
               freeLabel={freeLabel}
               loadingLabel={loadingLabel}
@@ -179,7 +183,7 @@ const NetworkFeesPanel: React.FC<NetworkFeesPanelProps> = ({
             <FeeLineWithCeiling
               label={t('network.auth_fee')}
               fee={fees.authFee}
-              ceiling={fees.feeCeiling}
+              ceiling={fees.authFeeCeiling}
               isDark={isDark}
               freeLabel={freeLabel}
               loadingLabel={loadingLabel}
@@ -191,7 +195,7 @@ const NetworkFeesPanel: React.FC<NetworkFeesPanelProps> = ({
             <FeeLineWithCeiling
               label={t('network.mint_fee')}
               fee={fees.mintFee}
-              ceiling={fees.feeCeiling}
+              ceiling={fees.mintFeeCeiling}
               isDark={isDark}
               freeLabel={freeLabel}
               loadingLabel={loadingLabel}
@@ -206,7 +210,7 @@ const NetworkFeesPanel: React.FC<NetworkFeesPanelProps> = ({
                   <FeeLineWithCeiling
                     label={t('network.withdraw_fee_cached')}
                     fee={cachedWithdrawFee}
-                    ceiling={fees.feeCeiling}
+                    ceiling={fees.withdrawFeeCeiling}
                     isDark={isDark}
                     freeLabel={freeLabel}
                     loadingLabel={loadingLabel}
@@ -218,7 +222,7 @@ const NetworkFeesPanel: React.FC<NetworkFeesPanelProps> = ({
                     <FeeLineWithCeiling
                       label={t('network.withdraw_fee_current')}
                       fee={fees.withdrawFee}
-                      ceiling={fees.feeCeiling}
+                      ceiling={fees.withdrawFeeCeiling}
                       isDark={isDark}
                       freeLabel={freeLabel}
                       loadingLabel={loadingLabel}
@@ -231,7 +235,7 @@ const NetworkFeesPanel: React.FC<NetworkFeesPanelProps> = ({
                 <FeeLineWithCeiling
                   label={t('network.withdraw_fee')}
                   fee={fees.withdrawFee}
-                  ceiling={fees.feeCeiling}
+                  ceiling={fees.withdrawFeeCeiling}
                   isDark={isDark}
                   freeLabel={freeLabel}
                   loadingLabel={loadingLabel}
