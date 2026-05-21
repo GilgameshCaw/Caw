@@ -272,7 +272,7 @@ export function ReDownloadBackupDialog({
               <StrengthMeter password={newPassword} />
               {isTooShort && (
                 <p className={`text-xs ${isDark ? 'text-red-400' : 'text-red-600'}`}>
-                  Minimum {MIN_VAULT_PASSWORD_LENGTH} characters required.
+                  {t('identity.redownload.min_length', { n: MIN_VAULT_PASSWORD_LENGTH })}
                 </p>
               )}
             </div>
