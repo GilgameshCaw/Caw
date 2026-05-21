@@ -58,7 +58,11 @@ contract CawActionsArchive is Ownable, ReentrancyGuard, OnlyOnce, OApp {
   // ============================================
 
   uint256 public constant CHALLENGE_PERIOD = 2 days;
-  uint256 public constant MIN_STAKE = 0.01 ether;
+  // Round-2 censorship drill: at 0.01 ETH per grief cycle a $50K attacker could sustain
+  // ~2,000 slash-grief cycles. 0.05 ETH (5x) makes selective-censorship costly enough
+  // given the existing off-chain fraud monitors; full fund-loss exposure stays zero so
+  // we don't need a defender-prohibitive deposit.
+  uint256 public constant MIN_STAKE = 0.05 ether;
   uint256 public constant CHECKPOINT_INTERVAL = 32;
   uint256 public constant MAX_CHECKPOINTS_PER_SUBMISSION = 256;
   /// @notice H-6 fix: cap pending submissions per validator so the slash loop
