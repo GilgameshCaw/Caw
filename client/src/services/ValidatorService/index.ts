@@ -849,28 +849,28 @@ async function validateActionTip(
 }
 
 /**
- * Get unique client IDs from a batch of actions
+ * Get unique network IDs from a batch of actions
  */
 function getUniqueClientIds(actions: any[]): number[] {
-  const clientIds = new Set<number>()
+  const networkIds = new Set<number>()
   for (const action of actions) {
-    clientIds.add(action.networkId ?? 1)
+    networkIds.add(action.networkId ?? 1)
   }
-  return Array.from(clientIds)
+  return Array.from(networkIds)
 }
 
 /**
- * Split actions by client ID for batching
- * Returns map of clientId -> indices of actions for that client
+ * Split actions by network ID for batching
+ * Returns map of networkId -> indices of actions for that network
  */
 function groupActionsByClient(actions: any[]): Map<number, number[]> {
   const groups = new Map<number, number[]>()
   for (let i = 0; i < actions.length; i++) {
-    const clientId = actions[i].networkId ?? 1
-    if (!groups.has(clientId)) {
-      groups.set(clientId, [])
+    const networkId = actions[i].networkId ?? 1
+    if (!groups.has(networkId)) {
+      groups.set(networkId, [])
     }
-    groups.get(clientId)!.push(i)
+    groups.get(networkId)!.push(i)
   }
   return groups
 }
@@ -1154,7 +1154,7 @@ export const validatorService: Service = {
       //   - Rows carry pendingDepositTxHash as proof the client expects an L1 deposit
       //     to land on L2 shortly. They are NOT re-simulated by the validator — that
       //     would cycle them right back to failed. Instead, the DataCleaner watcher
-      //     reads L2 on-chain state (authenticated[clientId][tokenId] and
+      //     reads L2 on-chain state (authenticated[networkId][tokenId] and
       //     cawBalanceOf(tokenId)) and promotes them back to 'pending' only when the
       //     deposit has actually landed. The watcher also handles the 20-min timeout
       //     and failure path. The validator's only job here is to hard-fail any
@@ -2490,17 +2490,17 @@ console.log("succeededKeys", succeededKeys)
         }
 
         // All actions in a batch must belong to the same client (enforced by CawActions.sol).
-        // If we have multiple clients, split into per-client batches and process each separately.
+        // If we have multiple networks, split into per-network batches and process each separately.
         const allActions = validatedEntries.map(e => (e.payload as any).data)
         const uniqueClientIds = getUniqueClientIds(allActions)
         if (uniqueClientIds.length > 1) {
-          console.log(`[Validator] Batch has ${uniqueClientIds.length} unique clients, splitting into per-client batches`)
+          console.log(`[Validator] Batch has ${uniqueClientIds.length} unique networks, splitting into per-network batches`)
 
           const clientGroups = groupActionsByClient(allActions)
 
           for (const [clientId, indices] of clientGroups.entries()) {
             const subBatchEntries = indices.map(idx => validatedEntries[idx])
-            console.log(`[Validator] Processing client ${clientId}: ${subBatchEntries.length} entries`)
+            console.log(`[Validator] Processing network ${clientId}: ${subBatchEntries.length} entries`)
 
             const subBatch = buildMultiActionData(subBatchEntries)
 
@@ -2511,7 +2511,7 @@ console.log("succeededKeys", succeededKeys)
                 'client.id': clientId,
               }, () => simulateActions(validatorId, subBatch))
               if (!simResult || !simResult.successfulActions?.length) {
-                console.log(`[Validator] Client ${clientId} simulation failed or no successful actions`)
+                console.log(`[Validator] Network ${clientId} simulation failed or no successful actions`)
                 await Promise.all(subBatchEntries.map(async (entry: any, idx) => {
                   const data = (entry.payload as any).data
                   const rejection = simResult?.rejectionMessages?.[idx] || ''
@@ -2575,7 +2575,7 @@ console.log("succeededKeys", succeededKeys)
                 'batch.kind': 'sub',
                 'client.id': clientId,
               }, () => submitProcessActions(validatorId, succeededData, subQuote, gasLimit))
-              console.log(`[Validator] Client ${clientId}: ${finalized.length} actions finalized`)
+              console.log(`[Validator] Network ${clientId}: ${finalized.length} actions finalized`)
 
               // Record analytics
               if (subReceipt) {
@@ -2616,7 +2616,7 @@ console.log("succeededKeys", succeededKeys)
                 }
               }))
             } catch (err: any) {
-              console.error(`[Validator] Client ${clientId} batch failed:`, err.message)
+              console.error(`[Validator] Network ${clientId} batch failed:`, err.message)
               await Promise.all(subBatchEntries.map(async (entry) => {
                 const data = (entry.payload as any).data
                 await markTxQueueFailed(entry.id, err.message, data.senderId, data)
@@ -3600,7 +3600,7 @@ console.log("succeededKeys", succeededKeys)
 
     /**
      * Shared helper: reconstruct ordered actions + r values from L2 events
-     * for a given client and checkpoint range. Reuses the exact same logic as
+     * for a given network and checkpoint range. Reuses the exact same logic as
      * the existing replicationLoop.
      *
      * Returns null if reconstruction fails (caller should skip/retry).
@@ -3933,22 +3933,25 @@ console.log("succeededKeys", succeededKeys)
         }
         const { archiveRead: archive, archiveWrite: archiveW, l2bSubmitter: w } = await getL2bContracts()
 
-        // 1. Find clients needing replication FIRST — if none, nothing to do
+        // 1. Find networks needing replication FIRST — if none, nothing to do
         //    and we shouldn't prod the operator about stake either.
         //
-        //    Per-validator config via REPLICATE_CLIENT_IDS env (comma-separated
-        //    list of client IDs this validator replicates). Replaces the old
+        //    Per-validator config via REPLICATE_NETWORK_IDS env (comma-separated
+        //    list of network IDs this validator replicates). Replaces the old
         //    on-chain CCM replication registry — operators decide independently
-        //    which clients they archive, and the chain doesn't need to know.
-        const replicateClientIds = (process.env.REPLICATE_CLIENT_IDS || '')
+        //    which networks they archive, and the chain doesn't need to know.
+        const replicateNetworkIds = (process.env.REPLICATE_NETWORK_IDS ?? process.env.REPLICATE_CLIENT_IDS ?? '')
           .split(',')
           .map(s => s.trim())
           .filter(Boolean)
           .map(s => Number(s))
           .filter(n => Number.isFinite(n) && n > 0)
-        if (replicateClientIds.length === 0) return
+        if (process.env.REPLICATE_CLIENT_IDS && !process.env.REPLICATE_NETWORK_IDS) {
+          console.warn('[validator] REPLICATE_CLIENT_IDS is deprecated; rename to REPLICATE_NETWORK_IDS')
+        }
+        if (replicateNetworkIds.length === 0) return
 
-        // 1a. Filter out clients whose storage chain is L1 (mainnet/Sepolia).
+        // 1a. Filter out networks whose storage chain is L1 (mainnet/Sepolia).
         //
         //    Why: archiving L1 actions to another chain is pointless — L1 is
         //    already the most permanent chain in the stack. The deploy script
@@ -3957,27 +3960,30 @@ console.log("succeededKeys", succeededKeys)
         //    and ship a fraud proof. Anyone wanting to verify L1 actions reads
         //    the canonical chain directly.
         //
-        //    The validator can't see Client.storageChainEid in the DB (not
+        //    The validator can't see Network.storageChainEid in the DB (not
         //    cached today), and we don't want to add a per-cycle CCM RPC just
-        //    for this guard. Operators with L1-storage clients should set
-        //    SKIP_L1_REPLICATE_CLIENT_IDS=N,M to silence the loop for those
+        //    for this guard. Operators with L1-storage networks should set
+        //    SKIP_L1_REPLICATE_NETWORK_IDS=N,M to silence the loop for those
         //    ids — without it, the loop tries to ship hashes from the wrong
         //    chain and the archive submission fails per cycle.
         const skipL1Ids = new Set(
-          (process.env.SKIP_L1_REPLICATE_CLIENT_IDS || '')
+          (process.env.SKIP_L1_REPLICATE_NETWORK_IDS ?? process.env.SKIP_L1_REPLICATE_CLIENT_IDS ?? '')
             .split(',').map(s => s.trim()).filter(Boolean)
             .map(s => Number(s)).filter(n => Number.isFinite(n) && n > 0)
         )
-        const eligibleClientIds = replicateClientIds.filter(id => !skipL1Ids.has(id))
+        if (process.env.SKIP_L1_REPLICATE_CLIENT_IDS && !process.env.SKIP_L1_REPLICATE_NETWORK_IDS) {
+          console.warn('[validator] SKIP_L1_REPLICATE_CLIENT_IDS is deprecated; rename to SKIP_L1_REPLICATE_NETWORK_IDS')
+        }
+        const eligibleNetworkIds = replicateNetworkIds.filter(id => !skipL1Ids.has(id))
         if (skipL1Ids.size > 0 && !skippedL1ClientsWarned) {
           console.log(
-            `[OptimisticReplication] Skipping L1-storage client(s) ${[...skipL1Ids].join(', ')} ` +
+            `[OptimisticReplication] Skipping L1-storage network(s) ${[...skipL1Ids].join(', ')} ` +
             `— L1-stored actions don't need archiving (L1 is already canonical).`
           )
           skippedL1ClientsWarned = true
         }
-        if (eligibleClientIds.length === 0) return
-        const clients = eligibleClientIds.map(id => ({ id }))
+        if (eligibleNetworkIds.length === 0) return
+        const clients = eligibleNetworkIds.map(id => ({ id }))
 
         // 2. Check stake. Auto-restake is OFF BY DEFAULT: a stake drop during
         //    live operation almost always means a slash — silently topping
@@ -4069,7 +4075,7 @@ console.log("succeededKeys", succeededKeys)
             // Verify range is still available (atomic check)
             const rangeAvailable = await archive.isRangeAvailable(client.id, startCheckpointId, endCheckpointId)
             if (!rangeAvailable) {
-              console.log(`[OptimisticReplication] Client ${client.id}: range ${startCheckpointId}..${endCheckpointId} no longer available, skipping`)
+              console.log(`[OptimisticReplication] Network ${client.id}: range ${startCheckpointId}..${endCheckpointId} no longer available, skipping`)
               continue
             }
 
@@ -4086,12 +4092,12 @@ console.log("succeededKeys", succeededKeys)
             //   packed(30KB) * 1.5 ≈ 45KB tx → fits
             const L2B_CALLDATA_LIMIT = 30_000
 
-            console.log(`[OptimisticReplication] Client ${client.id}: attempting checkpoints ${startCheckpointId}..${endCheckpointId} (${numCheckpoints})`)
+            console.log(`[OptimisticReplication] Network ${client.id}: attempting checkpoints ${startCheckpointId}..${endCheckpointId} (${numCheckpoints})`)
 
             // 4. Reconstruct data from L2 events — try the full range first
             let data = await reconstructCheckpointData(client.id, startCheckpointId, endCheckpointId)
             if (!data) {
-              console.error(`[OptimisticReplication] Failed to reconstruct data for client ${client.id} checkpoints ${startCheckpointId}..${endCheckpointId}`)
+              console.error(`[OptimisticReplication] Failed to reconstruct data for network ${client.id} checkpoints ${startCheckpointId}..${endCheckpointId}`)
               continue
             }
 
@@ -4105,14 +4111,14 @@ console.log("succeededKeys", succeededKeys)
             }
 
             if (!data) {
-              console.error(`[OptimisticReplication] Failed to reconstruct data after trimming for client ${client.id}`)
+              console.error(`[OptimisticReplication] Failed to reconstruct data after trimming for network ${client.id}`)
               continue
             }
 
             const totalActions = numCheckpoints * OPTIMISTIC_CHECKPOINT_INTERVAL
-            console.log(`[OptimisticReplication] Client ${client.id}: submitting checkpoints ${startCheckpointId}..${endCheckpointId} (${numCheckpoints} checkpoints, ${totalActions} actions, ${data.packedBytes.length} bytes)`)
+            console.log(`[OptimisticReplication] Network ${client.id}: submitting checkpoints ${startCheckpointId}..${endCheckpointId} (${numCheckpoints} checkpoints, ${totalActions} actions, ${data.packedBytes.length} bytes)`)
 
-            console.log(`[OptimisticReplication] Hash chain verified for client ${client.id} checkpoints ${startCheckpointId}..${endCheckpointId}`)
+            console.log(`[OptimisticReplication] Hash chain verified for network ${client.id} checkpoints ${startCheckpointId}..${endCheckpointId}`)
 
             // 5. Build merkle tree over checkpoint hashes
             const checkpointIds = Array.from(
@@ -4179,7 +4185,7 @@ console.log("succeededKeys", succeededKeys)
               )
             } catch (simErr: any) {
               const reason = simErr?.revert?.args?.[0] || simErr?.reason || simErr?.shortMessage || simErr?.message || 'unknown'
-              console.error(`[OptimisticReplication] Pre-flight failed for client ${client.id}: ${reason}`)
+              console.error(`[OptimisticReplication] Pre-flight failed for network ${client.id}: ${reason}`)
               continue
             }
 
@@ -4224,7 +4230,7 @@ console.log("succeededKeys", succeededKeys)
               } catch (e: any) { console.error('[Analytics] Failed to record optimistic replication:', e.message) }
             }
           } catch (err: any) {
-            console.error(`[OptimisticReplication] Failed for client ${client.id}: ${formatRpcError(err)}`)
+            console.error(`[OptimisticReplication] Failed for network ${client.id}: ${formatRpcError(err)}`)
           }
         }
 
@@ -4741,7 +4747,7 @@ console.log("succeededKeys", succeededKeys)
               try { await relayBatch(fraudulentCps, 'mode B') }
               catch (e: any) { console.error(`[Monitor] Failed to relay batch for submission ${submissionId}: ${e?.shortMessage || e?.message}`) }
             } else {
-              console.log(`[Monitor] Submission ${submissionId} verified OK (client ${clientId}, ${startCp}..${endCp}, submitter ${submitter.slice(0, 10)}...)`)
+              console.log(`[Monitor] Submission ${submissionId} verified OK (network ${clientId}, ${startCp}..${endCp}, submitter ${submitter.slice(0, 10)}...)`)
             }
           } catch (err: any) {
             console.warn(`[Monitor] Error verifying submission ${submissionId}: ${err?.shortMessage || err?.message}`)

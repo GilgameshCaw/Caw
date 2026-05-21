@@ -39,9 +39,9 @@ export const rawEventsGathererService: Service = {
     const rpcUrl = getL2WsRpcUrl() || cfg.rpcUrl
     const { chainId, redisUrl } = cfg
 
-    // Resolve clientId — this instance scopes to one client. Falls through
+    // Resolve networkId — this instance scopes to one network. Falls through
     // config.json → CLIENT_ID env var. No legacy fallback to 1: a missing
-    // value is a real bug (silently watching the wrong client's events
+    // value is a real bug (silently watching the wrong network's events
     // cross-contaminates the indexer's database) and should fail loud.
     //
     // Note: Number(undefined) is NaN, and NaN ?? x does NOT fall through
@@ -189,10 +189,10 @@ export const rawEventsGathererService: Service = {
           })
           if (client?.creationBlock != null) {
             resolvedStartBlock = Number(client.creationBlock)
-            console.log(`[RawEventsGatherer] Using Client.creationBlock=${resolvedStartBlock} for clientId=${clientId}`)
+            console.log(`[RawEventsGatherer] Using Network.creationBlock=${resolvedStartBlock} for networkId=${clientId}`)
           }
         } catch (err: any) {
-          console.warn(`[RawEventsGatherer] Failed to read Client.creationBlock: ${err?.message}`)
+          console.warn(`[RawEventsGatherer] Failed to read Network.creationBlock: ${err?.message}`)
         }
       }
 

@@ -113,7 +113,7 @@ function initializeProviders(config: ChainSyncConfig) {
 }
 
 // ============================================================================
-// Client Sync
+// Network Sync
 // ============================================================================
 
 async function syncClient(clientId: number): Promise<boolean> {
@@ -156,13 +156,13 @@ async function syncClient(clientId: number): Promise<boolean> {
       }
     })
 
-    console.log(`[ChainSync:Clients] Synced client ${clientId}: owner=${client.ownerAddress}`)
+    console.log(`[ChainSync:Clients] Synced network ${clientId}: owner=${client.ownerAddress}`)
     return true
   } catch (err: any) {
     if (err.message?.includes('revert') || err.message?.includes('call revert')) {
       return false
     }
-    console.error(`[ChainSync:Clients] Error syncing client ${clientId}:`, err.message)
+    console.error(`[ChainSync:Clients] Error syncing network ${clientId}:`, err.message)
     return false
   }
 }
@@ -207,7 +207,7 @@ async function syncAllClients(): Promise<void> {
     clientId++
   }
 
-  console.log(`[ChainSync:Clients] Sync complete: ${synced} clients`)
+  console.log(`[ChainSync:Clients] Sync complete: ${synced} networks`)
 }
 
 // ============================================================================
@@ -498,7 +498,7 @@ async function loadPricesFromDb(): Promise<void> {
 // ============================================================================
 
 /**
- * Force sync a specific client
+ * Force sync a specific network
  */
 export async function forceSyncClient(clientId: number, l1RpcUrl: string): Promise<boolean> {
   initializeProviders({ l1RpcUrl })
@@ -506,7 +506,7 @@ export async function forceSyncClient(clientId: number, l1RpcUrl: string): Promi
 }
 
 /**
- * Get client from database
+ * Get network from database
  */
 export async function getClient(clientId: number) {
   return prisma.client.findUnique({
@@ -515,7 +515,7 @@ export async function getClient(clientId: number) {
 }
 
 // ============================================================================
-// L2 Event Indexing (SessionKey + ClientAuth)
+// L2 Event Indexing (SessionKey + NetworkAuth)
 // ============================================================================
 
 // CawProfileL2 ABI fragments for event indexing

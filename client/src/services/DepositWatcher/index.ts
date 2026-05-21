@@ -1,6 +1,6 @@
 // src/services/DepositWatcher/index.ts
 //
-// Watches CawProfile.Deposited(uint32 indexed cawClientId, uint32
+// Watches CawProfile.Deposited(uint32 indexed cawNetworkId, uint32
 // indexed tokenId, uint256 amount, uint32 indexed lzDestId, address
 // depositor) events on L1 and writes a CawOwnershipSnapshot row per
 // deposit (reason='DEPOSIT'). Closes the gap that the daily
@@ -10,8 +10,8 @@
 // the corresponding L2 update, which is fine: the chart only cares
 // about WHEN the user committed CAW from L1).
 //
-// Filtered to the configured cawClientId so we don't index deposits
-// from other CAW client deployments sharing the same L1 contract.
+// Filtered to the configured cawNetworkId so we don't index deposits
+// from other CAW network deployments sharing the same L1 contract.
 //
 // Operator-tuned for free-tier RPCs (50K-block-per-getLogs cap):
 // per-poll cap, halve-and-retry on chunk failures via the shared

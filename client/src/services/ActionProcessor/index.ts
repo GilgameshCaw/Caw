@@ -291,7 +291,7 @@ async function handleRawAction(raw: { id: number, chainId: number, blockNumber: 
       if (err instanceof CawNotFoundError) {
         // Like/reply/tip targets a caw we don't have indexed — most often
         // because the local node started after the original caw, was
-        // running a different clientId at the time, or the target caw
+        // running a different networkId at the time, or the target caw
         // hasn't been processed yet (its own RawEvent is later in the
         // backlog or also failed domain processing on a prior pass).
         // Action row is recorded; the side-effect didn't land. Quiet warn.

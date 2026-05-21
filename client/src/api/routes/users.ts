@@ -455,11 +455,11 @@ router.get('/by-token/:tokenId', async (req, res) => {
 /**
  * GET /api/users/client-auth/:tokenId?clientId=1
  *
- * Returns whether the given tokenId is authenticated with the given clientId,
+ * Returns whether the given tokenId is authenticated with the given networkId,
  * based on the indexed ClientAuth table (populated by ChainSyncService's
  * L2Events indexer). Lets the frontend skip a live readContract call.
  *
- * Auth is a one-way flag: once true, always true for that (clientId, tokenId)
+ * Auth is a one-way flag: once true, always true for that (networkId, tokenId)
  * pair. So `authenticated: false` here doesn't mean "never will be" — it
  * means "we haven't seen the Authenticated event yet". The frontend may
  * still want to fall back to a live RPC in that case, or rely on the
@@ -471,7 +471,7 @@ router.get('/client-auth/:tokenId', async (req, res) => {
   try {
     const tokenId = Number(req.params.tokenId)
     const clientId = Number(req.query.clientId) || 1
-    // Bound the inputs — tokenIds and clientIds are uint32 on-chain, so they're
+    // Bound the inputs — tokenIds and networkIds are uint32 on-chain, so they're
     // positive and fit in a Postgres Int4. Reject anything that wouldn't map.
     if (!Number.isInteger(tokenId) || tokenId <= 0 || tokenId > 2_147_483_647) {
       return res.status(400).json({ error: 'Invalid tokenId' })

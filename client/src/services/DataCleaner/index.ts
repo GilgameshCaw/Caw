@@ -778,7 +778,7 @@ async function cleanupOrphanActions() {
       } catch (err: any) {
         if (err instanceof CawNotFoundError) {
           // Same quiet skip the live path uses — target caw isn't
-          // indexed locally (different mirror, different clientId, etc).
+          // indexed locally (different mirror, different networkId, etc).
           continue
         }
         logger.error(` Orphan reconciliation failed for action id=${action.id}:`, err)

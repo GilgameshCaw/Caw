@@ -49,8 +49,8 @@ type InstanceRegistryConfig = z.infer<typeof InstanceRegistryConfig>
 
 // =====================================================================
 // Module-scoped peer cache. Shared across the process — `/api/instances`
-// reads it, redundant-broadcast helpers read it, etc. Keyed by clientId
-// because a process is always scoped to one client today, but we keep
+// reads it, redundant-broadcast helpers read it, etc. Keyed by networkId
+// because a process is always scoped to one network today, but we keep
 // the structure cleanly separable in case that changes.
 // =====================================================================
 
@@ -63,9 +63,9 @@ export interface PeerInstance {
   active: boolean
 }
 
-const peerCache = new Map<number /* clientId */, Map<number /* instanceId */, PeerInstance>>()
+const peerCache = new Map<number /* networkId */, Map<number /* instanceId */, PeerInstance>>()
 
-/** Public read of the cached peer list for a given client. */
+/** Public read of the cached peer list for a given network. */
 export function getPeers(clientId: number): PeerInstance[] {
   const m = peerCache.get(clientId)
   if (!m) return []
@@ -154,7 +154,7 @@ async function applyToCache(
 }
 
 /**
- * Pull every InstanceRegistered + InstanceUpdated event for `clientId`
+ * Pull every InstanceRegistered + InstanceUpdated event for `networkId`
  * via the chunked log walker and apply them to the peer cache. Returns
  * the diff (added / changed) so callers can log new peers as they appear.
  *
@@ -207,7 +207,7 @@ async function refreshPeers(
     for (const log of allLogs) {
       const t0 = (log.topics ?? [])[0]
       if (t0 === regSig) {
-        // InstanceRegistered is the only one we filter by clientId.
+        // InstanceRegistered is the only one we filter by networkId.
         const t2 = (log.topics ?? [])[2]
         if (t2 === clientIdTopic) regLogs.push(log)
       } else if (t0 === updSig)   updLogs.push(log)
@@ -340,7 +340,7 @@ export const instanceRegistryService: Service = {
         for (const p of added) {
           console.log(
             `[InstanceRegistry] Peer discovered — instance #${p.instanceId} ` +
-            `client=${p.clientId} url=${p.apiUrl} validator=${p.validatorAddress}`,
+            `network=${p.clientId} url=${p.apiUrl} validator=${p.validatorAddress}`,
           )
         }
         for (const p of changed) {
@@ -358,7 +358,7 @@ export const instanceRegistryService: Service = {
     async function selfRegister() {
       if (!canRegister || !signer) return
       const validatorAddress = signer.getAddress()
-      console.log(`[InstanceRegistry] Checking registration for client ${clientId}, validator ${validatorAddress}, url ${apiUrl}`)
+      console.log(`[InstanceRegistry] Checking registration for network ${clientId}, validator ${validatorAddress}, url ${apiUrl}`)
 
       // Find an existing instance owned by us pointing at our apiUrl.
       const peers = peerCache.get(clientId)
@@ -386,7 +386,7 @@ export const instanceRegistryService: Service = {
             console.log(`[InstanceRegistry] Instance #${instanceId} updated`)
           }
         } else {
-          console.log(`[InstanceRegistry] Registering new instance for client ${clientId}, url ${apiUrl}...`)
+          console.log(`[InstanceRegistry] Registering new instance for network ${clientId}, url ${apiUrl}...`)
           const tx = await clientManager.registerInstance(clientId, apiUrl, validatorAddress)
           const receipt = await tx.wait()
           const iface = clientManager.interface

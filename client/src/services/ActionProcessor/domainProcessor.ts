@@ -20,11 +20,11 @@ export interface ResolvedUsers {
   receiverId?: number
 }
 
-// Our scoped clientId. Resolved once at module load — config never changes
-// at runtime. RawEvent ingest persists every client's actions (multiplier
-// is global, cross-client likes/follows/tips on caws we already have need
+// Our scoped networkId. Resolved once at module load — config never changes
+// at runtime. RawEvent ingest persists every network's actions (multiplier
+// is global, cross-network likes/follows/tips on caws we already have need
 // to land too), but new content (CAW + RECAW = new Caw rows) is gated to
-// our client so the local feed stays scoped.
+// our network so the local feed stays scoped.
 const OUR_CLIENT_ID = (() => {
   const raw = getNetworkId()
   const n = raw === undefined || raw === null ? NaN : Number(raw)

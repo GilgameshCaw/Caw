@@ -28,7 +28,7 @@ router.get('/', (req, res) => {
   res.setHeader('Vary', 'Origin')
 
   // Default to the configured CLIENT_ID; allow ?clientId=N override so
-  // a frontend serving multiple clients (rare today but supported by
+  // a frontend serving multiple networks (rare today but supported by
   // the protocol) can ask for any peer set.
   const clientIdParam = req.query.clientId
   const clientId = clientIdParam

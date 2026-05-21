@@ -16,7 +16,7 @@ import { recomputePinnedCount } from '../../utils/pinnedCount'
  *  target was created against a different node's database — i.e. fresh
  *  local node looking at chain history that includes likes/replies/tips
  *  for caws that were authored on production, or events from another
- *  clientId that we filter out. We don't want this to spew red errors
+ *  networkId that we filter out. We don't want this to spew red errors
  *  in those cases. */
 export class CawNotFoundError extends Error {
   constructor(public userId: number, public cawonce: number) {

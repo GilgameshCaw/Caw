@@ -25,8 +25,8 @@ const Config = z.object({
   // a marketplace sale every few minutes in the busy case, hours otherwise).
   // Shorter intervals just burn eth_getLogs credits to find empty windows.
   pollIntervalMs:      z.number().int().positive().default(60_000),
-  // First-run start block. Once we land #4 (per-client checkpointing) this
-  // becomes redundant — discovered from the ClientCreated event. For now it's
+  // First-run start block. Once we land #4 (per-network checkpointing) this
+  // becomes redundant — discovered from the NetworkCreated event. For now it's
   // a config knob.
   startBlock:          z.number().int().optional(),
   // Max blocks per poll — guards against millions-of-logs requests if the
