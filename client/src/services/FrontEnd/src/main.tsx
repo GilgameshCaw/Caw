@@ -21,6 +21,7 @@ import "@rainbow-me/rainbowkit/styles.css";
 import App from "./App.tsx";
 import Web3Provider from "./config/Web3Provider";
 import StateProvider from "./config/StateProvider.tsx";
+import { IdentitySigningProvider } from "./components/identity/IdentitySigningProvider.tsx";
 import { QueryClient, focusManager } from '@tanstack/react-query'
 
 // staleTime tuned for L2 chain reads + API responses. wagmi's
@@ -194,7 +195,9 @@ createRoot(document.getElementById("root")!).render(
     <Sentry.ErrorBoundary fallback={<p>Something went wrong. The error has been reported.</p>}>
       <Web3Provider queryClient={queryClient}>
         <StateProvider>
-          <App />
+          <IdentitySigningProvider>
+            <App />
+          </IdentitySigningProvider>
         </StateProvider>
       </Web3Provider>
     </Sentry.ErrorBoundary>

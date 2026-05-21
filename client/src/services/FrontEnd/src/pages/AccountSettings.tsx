@@ -20,6 +20,7 @@ import { usePinnedProfilesStore } from '~/store/pinnedProfilesStore'
 import { formatAddress } from '~/utils'
 import { ThumbtackIcon } from '~/components/icons/ThumbtackIcon'
 import { useT } from '~/i18n/I18nProvider'
+import { IdentitySection } from '~/components/identity/IdentitySection'
 
 // 401s on the X verification flow are expected when the user's session
 // has expired or never authenticated for the active token — apiFetch's
@@ -958,6 +959,9 @@ const AccountSettings: React.FC = () => {
         {activeTokenId && (
           <ConnectedAccountsSection isDark={isDark} tokenId={activeTokenId} />
         )}
+
+        {/* Identity (Population B only — hidden for A and C) */}
+        <IdentitySection username={activeToken?.username} />
 
         {/* Contract Info */}
         <section className="mb-8">
