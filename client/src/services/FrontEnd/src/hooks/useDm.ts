@@ -322,16 +322,12 @@ export function useDmClient(tokenId?: number, username?: string) {
       if (loadMore) {
         setConversations(prev => {
           const merged = [...prev, ...uiConversations]
-          useDmUnreadStore.getState().setTotalUnread(
-            merged.reduce((sum, c) => sum + c.unreadCount, 0)
-          )
+          useDmUnreadStore.getState().setUnreadFromConversations(merged)
           return merged
         })
       } else {
         setConversations(uiConversations)
-        useDmUnreadStore.getState().setTotalUnread(
-          uiConversations.reduce((sum, c) => sum + c.unreadCount, 0)
-        )
+        useDmUnreadStore.getState().setUnreadFromConversations(uiConversations)
       }
       setHasMoreConversations(!!data.hasMore)
       setConversationsLoaded(true)
@@ -628,9 +624,7 @@ export function useDmClient(tokenId?: number, username?: string) {
       const updated = prev.map(c =>
         c.id === conversationId ? { ...c, unreadCount: 0 } : c
       )
-      useDmUnreadStore.getState().setTotalUnread(
-        updated.reduce((sum, c) => sum + c.unreadCount, 0)
-      )
+      useDmUnreadStore.getState().setUnreadFromConversations(updated)
       return updated
     })
   }, [])

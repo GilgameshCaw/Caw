@@ -114,7 +114,9 @@ const Sidebar: React.FC<SidebarProps> = ({ onNavigate }) => {
   const activeToken = useActiveToken()
   const { isDark, toggle } = useTheme()
   const { hasIdentity: dmEnabled } = useDmIdentity(activeToken?.tokenId)
-  const dmUnreadCount = useDmUnreadStore(s => s.totalUnread)
+  // Sidebar badge mirrors the drawer: count of CONVERSATIONS with unread
+  // messages, not total unread messages. See dmUnreadStore for rationale.
+  const dmUnreadCount = useDmUnreadStore(s => s.unreadConversations)
   const notifUnreadCount = useNotificationUnreadStore(s => s.unreadCount)
   const offersUnreadCount = useOffersUnreadStore(s => s.unreadCount)
   const navigate = useNavigate()

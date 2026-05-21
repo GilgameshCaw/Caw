@@ -46,7 +46,11 @@ const MainLayout = ({ children, hideSidebars: hideSidebarsProp }: MainLayoutProp
   const { isConnected } = useAccount()
   const { openConnectModal } = useConnectModal()
   const openModal = useModalStore(s => s.openModal)
-  const dmUnreadCount = useDmUnreadStore(s => s.totalUnread)
+  // Drawer badge shows COUNT OF CONVERSATIONS with unread messages, not
+  // total unread messages. "5 friends are waiting on me" reads better
+  // than "23 unread messages" — the per-conversation counters in the
+  // Messages list still show the message count per thread.
+  const dmUnreadCount = useDmUnreadStore(s => s.unreadConversations)
   const notifUnreadCount = useNotificationUnreadStore(s => s.unreadCount)
   const offersUnreadCount = useOffersUnreadStore(s => s.unreadCount)
   const hasInlineDraft = useComposeDraftStore(s => s.hasInlineDraft)

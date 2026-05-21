@@ -40,11 +40,15 @@ export function useBadgeSync() {
         useNotificationUnreadStore.getState().setUnreadCount(data.notifications)
         useOffersUnreadStore.getState().setUnreadCount(data.offers)
         useSalesUnreadStore.getState().setUnreadCount(data.sales ?? 0)
+        // Compute both totalUnread (sum of messages) AND
+        // unreadConversations (count of conversations with ≥1 unread) in
+        // one pass — the drawer badge renders the latter; the former is
+        // kept for any volume-aware surface.
         const mutedIds = useDmMuteStore.getState().mutedConversations
-        const dmTotal = (data.dmConversations || [])
-          .filter(c => !mutedIds.includes(c.id))
-          .reduce((sum, c) => sum + (c.unreadCount || 0), 0)
-        useDmUnreadStore.getState().setTotalUnread(dmTotal)
+        useDmUnreadStore.getState().setUnreadFromConversations(
+          data.dmConversations || [],
+          mutedIds,
+        )
       } catch {
         // Silently fail — badges are non-critical
       }
