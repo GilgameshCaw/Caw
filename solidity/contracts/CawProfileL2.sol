@@ -1263,10 +1263,11 @@ contract CawProfileL2 is
   /// @notice Gas limit forwarded to the destination chain for executing this message.
   /// @dev L2→L1 destination is Ethereum mainnet — gas overprovisioning is expensive because
   ///      the validator pays L1 gas prices for every wasted unit. Constants come from real
-  ///      measurements (scripts/measure-gas.js): measured ≈ 15.5k + 14.4k*n, with base and
-  ///      slope each scaled up ~1.3× for safety margin covering cold-slot warmup variance.
+  ///      measurements (test-foundry/SetWithdrawableGas.t.sol, mainnet fork, cold storage slots):
+  ///      measured base 35k + 24k*n; prior formula 22k + 19k*n underbudgeted every n.
   function gasLimitFor(bytes4 selector, uint256 n) internal view returns (uint128) {
-    if (selector == setWithdrawableSelector) return uint128(22_000 + 19_000 * n);  // measured: 15.5k + 14.4k*n
+    // Measured 2026-05-21 on mainnet fork with cold storage slots: see solidity/test-foundry/SetWithdrawableGas.t.sol
+    if (selector == setWithdrawableSelector) return uint128(35_000 + 24_000 * n);
     revert UnauthorizedSelector();
   }
 
