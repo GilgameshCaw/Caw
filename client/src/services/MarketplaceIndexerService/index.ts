@@ -29,6 +29,9 @@ const MARKETPLACE_ABI = [
   'event OfferCreated(uint256 indexed offerId, uint32 indexed tokenId, address offerer, address paymentToken, uint256 amount, uint64 expiry)',
   'event OfferAccepted(uint256 indexed offerId, uint32 indexed tokenId, address seller, address buyer, uint256 price, address paymentToken)',
   'event OfferCancelled(uint256 indexed offerId)',
+  // V2 (H-15): Pull-pattern payout events
+  'event PayoutQueued(address indexed seller, uint256 amount)',
+  'event PayoutWithdrawn(address indexed seller, address indexed recipient, uint256 amount)',
   // Read functions
   'function listings(uint256) view returns (uint32 tokenId, address seller, address paymentToken, uint8 listingType, uint256 startPrice, uint256 endPrice, uint64 startTime, uint64 endTime, uint256 highestBid, address highestBidder, bool active)',
 ]
@@ -122,6 +125,8 @@ export const marketplaceIndexerService: Service = {
         'Listed', 'Sale', 'BidPlaced', 'BidWithdrawn', 'BidReclaimed',
         'ListingCancelled', 'AuctionSettled',
         'OfferCreated', 'OfferAccepted', 'OfferCancelled',
+        // V2 payout events
+        'PayoutQueued', 'PayoutWithdrawn',
       ] as const
       const eventTopics: Record<string, string> = {}
       const topicToName: Record<string, string> = {}
@@ -177,9 +182,11 @@ export const marketplaceIndexerService: Service = {
           const offersCreated = byName.OfferCreated
           const offersAccepted = byName.OfferAccepted
           const offersCancelled = byName.OfferCancelled
+          const payoutsQueued = byName.PayoutQueued
+          const payoutsWithdrawn = byName.PayoutWithdrawn
 
-          if (listed.length || sales.length || bids.length || bidWithdrawals.length || bidReclaimed.length || cancelled.length || settled.length || offersCreated.length || offersAccepted.length || offersCancelled.length) {
-            console.log(`[MarketplaceIndexer] Found events: ${listed.length} listed, ${sales.length} sales, ${bids.length} bids, ${bidWithdrawals.length} bid-withdrawn, ${bidReclaimed.length} bid-reclaimed, ${cancelled.length} cancelled, ${settled.length} settled, ${offersCreated.length} offers created, ${offersAccepted.length} offers accepted, ${offersCancelled.length} offers cancelled`)
+          if (listed.length || sales.length || bids.length || bidWithdrawals.length || bidReclaimed.length || cancelled.length || settled.length || offersCreated.length || offersAccepted.length || offersCancelled.length || payoutsQueued.length || payoutsWithdrawn.length) {
+            console.log(`[MarketplaceIndexer] Found events: ${listed.length} listed, ${sales.length} sales, ${bids.length} bids, ${bidWithdrawals.length} bid-withdrawn, ${bidReclaimed.length} bid-reclaimed, ${cancelled.length} cancelled, ${settled.length} settled, ${offersCreated.length} offers created, ${offersAccepted.length} offers accepted, ${offersCancelled.length} offers cancelled, ${payoutsQueued.length} payouts-queued, ${payoutsWithdrawn.length} payouts-withdrawn`)
           }
 
           // Process Listed events
@@ -612,6 +619,76 @@ export const marketplaceIndexerService: Service = {
             },
             data: { status: 'EXPIRED' },
           })
+
+          // Process PayoutQueued events (V2 H-15 pull-pattern)
+          // Each event inserts a new pending MarketplacePayout row. The seller
+          // calls withdrawPayouts() separately; we only write the fact here.
+          for (const event of payoutsQueued) {
+            const ev = event as ethers.EventLog
+            const seller = String(ev.args[0]).toLowerCase()
+            const amount = BigInt(ev.args[1].toString())
+            try {
+              await prisma.marketplacePayout.create({
+                data: {
+                  seller,
+                  amount,
+                  status: 'pending',
+                  queuedTxHash: ev.transactionHash,
+                },
+              })
+              console.log(`[MarketplaceIndexer] PayoutQueued: seller=${seller.slice(0, 10)}... amount=${amount.toString()} tx=${ev.transactionHash.slice(0, 10)}...`)
+            } catch (err: any) {
+              // Idempotency: duplicate tx on re-index will hit unique-ish constraint.
+              // We don't have a unique constraint on queuedTxHash alone (one tx can
+              // queue multiple sellers), so log and continue rather than throw.
+              console.warn(`[MarketplaceIndexer] PayoutQueued insert error (may be re-index):`, err.message?.slice(0, 100))
+            }
+          }
+
+          // Process PayoutWithdrawn events (V2 H-15 pull-pattern)
+          // Mark all pending rows for this seller as withdrawn. If the event
+          // amount doesn't match the sum of pending rows, log a discrepancy.
+          for (const event of payoutsWithdrawn) {
+            const ev = event as ethers.EventLog
+            const seller    = String(ev.args[0]).toLowerCase()
+            const recipient = String(ev.args[1]).toLowerCase()
+            const amount    = BigInt(ev.args[2].toString())
+
+            try {
+              const pendingRows = await prisma.marketplacePayout.findMany({
+                where: { seller, status: 'pending' },
+              })
+
+              const pendingSum = pendingRows.reduce((acc, r) => acc + r.amount, 0n)
+              if (pendingSum !== amount) {
+                console.warn(
+                  `[MarketplaceIndexer] PayoutWithdrawn amount mismatch for seller=${seller.slice(0, 10)}...: ` +
+                  `event=${amount.toString()} vs pending-sum=${pendingSum.toString()}. ` +
+                  `Marking all ${pendingRows.length} pending rows withdrawn anyway.`
+                )
+              }
+
+              if (pendingRows.length > 0) {
+                await prisma.marketplacePayout.updateMany({
+                  where: { seller, status: 'pending' },
+                  data: {
+                    status: 'withdrawn',
+                    withdrawnAt: new Date(),
+                    withdrawnTxHash: ev.transactionHash,
+                    // recipient is null when seller withdraws to self (same address)
+                    recipient: recipient === seller ? null : recipient,
+                  },
+                })
+                console.log(`[MarketplaceIndexer] PayoutWithdrawn: seller=${seller.slice(0, 10)}... ${pendingRows.length} rows marked withdrawn tx=${ev.transactionHash.slice(0, 10)}...`)
+              } else {
+                // Can happen if the indexer missed the PayoutQueued event (e.g. first
+                // run against an existing chain). Log only — not an error state.
+                console.warn(`[MarketplaceIndexer] PayoutWithdrawn: no pending rows found for seller=${seller.slice(0, 10)}... (bootstrapped past PayoutQueued?) tx=${ev.transactionHash.slice(0, 10)}...`)
+              }
+            } catch (err: any) {
+              console.error(`[MarketplaceIndexer] PayoutWithdrawn processing error for seller=${seller}:`, err.message?.slice(0, 200))
+            }
+          }
 
           lastBlock = toBlock
           await saveLastProcessedBlock(toBlock)

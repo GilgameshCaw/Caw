@@ -183,7 +183,7 @@ export const rawEventsGathererService: Service = {
       let resolvedStartBlock: number | undefined = cfg.startBlock
       if (resolvedStartBlock === undefined) {
         try {
-          const client = await prisma.client.findUnique({
+          const client = await prisma.network.findUnique({
             where: { id: clientId },
             select: { creationBlock: true },
           })

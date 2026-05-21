@@ -165,7 +165,7 @@ const MODEL_META: Record<string, ModelMeta> = {
   replicationTx: {
     defaultSort: 'createdAt',
     searchFields: ['txHash', 'status'],
-    listFields: ['id', 'txHash', 'clientId', 'actionCount', 'status', 'createdAt'],
+    listFields: ['id', 'txHash', 'networkId', 'actionCount', 'status', 'createdAt'],
     writable: false,
     label: 'Replication Txs',
   },
@@ -176,12 +176,12 @@ const MODEL_META: Record<string, ModelMeta> = {
     writable: true,
     label: 'Validator Settings',
   },
-  client: {
+  network: {
     defaultSort: 'createdAt',
     searchFields: ['ownerAddress'],
     listFields: ['id', 'ownerAddress', 'feeAddress', 'createdAt'],
     writable: false,
-    label: 'Clients',
+    label: 'Networks',
   },
   chainData: {
     defaultSort: 'updatedAt',

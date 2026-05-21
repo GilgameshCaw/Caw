@@ -85,7 +85,7 @@ export async function ensureBooted(): Promise<RuntimeState> {
   if (state) return state
   if (bootPromise) return bootPromise
   bootPromise = (async () => {
-    const persisted = await prisma.stakeLedgerState.findUnique({ where: { clientId: CAW_CLIENT_ID } })
+    const persisted = await prisma.stakeLedgerState.findUnique({ where: { networkId: CAW_CLIENT_ID } })
     const ownership = new Map<number, bigint>()
     const currentRows = await prisma.cawOwnershipCurrent.findMany()
     for (const row of currentRows) ownership.set(row.tokenId, BigInt(row.ownership))
@@ -439,9 +439,9 @@ export async function recordAction(
   s.lastBlock = blockNumber
   s.lastLogIndex = logIndex
   await tx.stakeLedgerState.upsert({
-    where: { clientId: CAW_CLIENT_ID },
+    where: { networkId: CAW_CLIENT_ID },
     create: {
-      clientId: CAW_CLIENT_ID,
+      networkId: CAW_CLIENT_ID,
       totalCaw: s.totalCaw.toString(),
       multiplier: s.multiplier.toString(),
       lastBlock: blockNumber,
@@ -515,9 +515,9 @@ export async function recordDeposit(
     update: { ownership: after.ownership.toString(), updatedAt: new Date() },
   })
   await tx.stakeLedgerState.upsert({
-    where: { clientId: CAW_CLIENT_ID },
+    where: { networkId: CAW_CLIENT_ID },
     create: {
-      clientId: CAW_CLIENT_ID,
+      networkId: CAW_CLIENT_ID,
       totalCaw: s.totalCaw.toString(),
       multiplier: s.multiplier.toString(),
       lastBlock: blockNumber,

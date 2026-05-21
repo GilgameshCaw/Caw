@@ -116,58 +116,68 @@ function initializeProviders(config: ChainSyncConfig) {
 // Network Sync
 // ============================================================================
 
-async function syncClient(clientId: number): Promise<boolean> {
+async function syncNetwork(networkId: number): Promise<boolean> {
   if (!clientManager || !l1Provider) {
     console.error('[ChainSync:Clients] Contract not initialized')
     return false
   }
 
   try {
-    const client = await clientManager.getClient(clientId)
+    // V2: CawNetworkManager exposes getNetwork(); the struct includes 4 ceiling fields.
+    const network = await clientManager.getNetwork(networkId)
 
-    if (client.ownerAddress === '0x0000000000000000000000000000000000000000') {
+    if (network.ownerAddress === '0x0000000000000000000000000000000000000000') {
       return false
     }
 
     const currentBlock = await l1Provider.getBlockNumber()
 
-    await prisma.client.upsert({
-      where: { id: clientId },
+    await prisma.network.upsert({
+      where: { id: networkId },
       update: {
-        ownerAddress: client.ownerAddress,
-        feeAddress: client.feeAddress,
-        mintFee: client.mintFee.toString(),
-        depositFee: client.depositFee.toString(),
-        withdrawFee: client.withdrawFee.toString(),
-        authFee: client.authFee.toString(),
+        ownerAddress: network.ownerAddress,
+        feeAddress: network.feeAddress,
+        mintFee: network.mintFee.toString(),
+        depositFee: network.depositFee.toString(),
+        withdrawFee: network.withdrawFee.toString(),
+        authFee: network.authFee.toString(),
+        withdrawFeeCeiling: BigInt(network.withdrawFeeCeiling?.toString() || '0'),
+        depositFeeCeiling:  BigInt(network.depositFeeCeiling?.toString()  || '0'),
+        authFeeCeiling:     BigInt(network.authFeeCeiling?.toString()     || '0'),
+        mintFeeCeiling:     BigInt(network.mintFeeCeiling?.toString()     || '0'),
         lastSyncedAt: new Date(),
-        lastSyncedBlock: BigInt(currentBlock)
+        lastSyncedBlock: BigInt(currentBlock),
       },
       create: {
-        id: clientId,
-        ownerAddress: client.ownerAddress,
-        feeAddress: client.feeAddress,
-        mintFee: client.mintFee.toString(),
-        depositFee: client.depositFee.toString(),
-        withdrawFee: client.withdrawFee.toString(),
-        authFee: client.authFee.toString(),
+        id: networkId,
+        ownerAddress: network.ownerAddress,
+        feeAddress: network.feeAddress,
+        mintFee: network.mintFee.toString(),
+        depositFee: network.depositFee.toString(),
+        withdrawFee: network.withdrawFee.toString(),
+        authFee: network.authFee.toString(),
+        withdrawFeeCeiling: BigInt(network.withdrawFeeCeiling?.toString() || '0'),
+        depositFeeCeiling:  BigInt(network.depositFeeCeiling?.toString()  || '0'),
+        authFeeCeiling:     BigInt(network.authFeeCeiling?.toString()     || '0'),
+        mintFeeCeiling:     BigInt(network.mintFeeCeiling?.toString()     || '0'),
+        creationBlock:      network.creationBlock ? BigInt(network.creationBlock.toString()) : null,
         lastSyncedAt: new Date(),
-        lastSyncedBlock: BigInt(currentBlock)
-      }
+        lastSyncedBlock: BigInt(currentBlock),
+      },
     })
 
-    console.log(`[ChainSync:Clients] Synced network ${clientId}: owner=${client.ownerAddress}`)
+    console.log(`[ChainSync:Clients] Synced network ${networkId}: owner=${network.ownerAddress}`)
     return true
   } catch (err: any) {
     if (err.message?.includes('revert') || err.message?.includes('call revert')) {
       return false
     }
-    console.error(`[ChainSync:Clients] Error syncing network ${clientId}:`, err.message)
+    console.error(`[ChainSync:Clients] Error syncing network ${networkId}:`, err.message)
     return false
   }
 }
 
-async function syncAllClients(): Promise<void> {
+async function syncAllNetworks(): Promise<void> {
   if (!clientManager || !l1Provider) {
     console.log('[ChainSync:Clients] Skipping — L1 provider not available')
     return
@@ -189,12 +199,12 @@ async function syncAllClients(): Promise<void> {
 
   let synced = 0
   let consecutiveNotFound = 0
-  let clientId = 1
+  let networkId = 1
   const MAX_CONSECUTIVE_NOT_FOUND = 10
 
   while (consecutiveNotFound < MAX_CONSECUTIVE_NOT_FOUND) {
     try {
-      const exists = await syncClient(clientId)
+      const exists = await syncNetwork(networkId)
       if (exists) {
         synced++
         consecutiveNotFound = 0
@@ -204,7 +214,7 @@ async function syncAllClients(): Promise<void> {
     } catch (err) {
       consecutiveNotFound++
     }
-    clientId++
+    networkId++
   }
 
   console.log(`[ChainSync:Clients] Sync complete: ${synced} networks`)
@@ -498,20 +508,30 @@ async function loadPricesFromDb(): Promise<void> {
 // ============================================================================
 
 /**
- * Force sync a specific network
+ * Force sync a specific network (V2: reads CawNetworkManager.getNetwork)
  */
-export async function forceSyncClient(clientId: number, l1RpcUrl: string): Promise<boolean> {
+export async function forceSyncNetwork(networkId: number, l1RpcUrl: string): Promise<boolean> {
   initializeProviders({ l1RpcUrl })
-  return syncClient(clientId)
+  return syncNetwork(networkId)
+}
+
+/** @deprecated Use forceSyncNetwork */
+export async function forceSyncClient(clientId: number, l1RpcUrl: string): Promise<boolean> {
+  return forceSyncNetwork(clientId, l1RpcUrl)
 }
 
 /**
  * Get network from database
  */
-export async function getClient(clientId: number) {
-  return prisma.client.findUnique({
-    where: { id: clientId }
+export async function getNetwork(networkId: number) {
+  return prisma.network.findUnique({
+    where: { id: networkId }
   })
+}
+
+/** @deprecated Use getNetwork */
+export async function getClient(networkId: number) {
+  return getNetwork(networkId)
 }
 
 // ============================================================================
@@ -645,16 +665,17 @@ async function handleSessionRevoked(args: any) {
 }
 
 async function handleAuthenticated(args: any) {
-  const clientId = Number(args.cawClientId)
+  // V2: event field is cawClientId (kept for compatibility); maps to networkId
+  const networkId = Number(args.cawClientId ?? args.networkId)
   const tokenId = Number(args.tokenId)
   try {
-    await prisma.clientAuth.upsert({
-      where: { clientId_tokenId: { clientId, tokenId } },
+    await prisma.networkAuth.upsert({
+      where: { networkId_tokenId: { networkId, tokenId } },
       update: { authenticated: true, lastSyncedAt: new Date() },
-      create: { clientId, tokenId, authenticated: true, lastSyncedAt: new Date() },
+      create: { networkId, tokenId, authenticated: true, lastSyncedAt: new Date() },
     })
   } catch (err: any) {
-    console.error(`[ChainSync:L2Events] Failed to upsert ClientAuth for ${clientId}/${tokenId}:`, err.message)
+    console.error(`[ChainSync:L2Events] Failed to upsert NetworkAuth for ${networkId}/${tokenId}:`, err.message)
   }
 }
 
@@ -729,11 +750,15 @@ async function syncL2Events(): Promise<void> {
 // L1 NetworkManager Fee Event Indexing (V2: NetworkFeeUpdated + ceiling events)
 // ============================================================================
 
-// Minimal ABI fragments for the five V2 fee events on CawNetworkManager.
+// Minimal ABI fragments for the V2 events on CawNetworkManager.
 // The full generated ABI is already bound to `clientManager`; we keep a
 // separate minimal ABI here so the Contract instance can be created without
 // importing the entire generated artifact again.
 const NETWORK_FEE_EVENT_ABI = [
+  // NetworkCreated carries the full CawNetwork struct (id, storageChainEid, name,
+  // feeAddress, ownerAddress, withdrawFee, depositFee, mintFee, authFee,
+  // creationBlock, withdrawFeeCeiling, depositFeeCeiling, authFeeCeiling, mintFeeCeiling)
+  'event NetworkCreated(uint32 indexed networkId, tuple(uint32 id, uint32 storageChainEid, string name, address feeAddress, address ownerAddress, uint256 withdrawFee, uint256 depositFee, uint256 mintFee, uint256 authFee, uint256 creationBlock, uint256 withdrawFeeCeiling, uint256 depositFeeCeiling, uint256 authFeeCeiling, uint256 mintFeeCeiling) network)',
   'event NetworkFeeUpdated(uint32 indexed networkId, string feeType, uint256 newFee)',
   'event WithdrawFeeCeilingLowered(uint32 indexed networkId, uint256 oldCeiling, uint256 newCeiling)',
   'event DepositFeeCeilingLowered(uint32 indexed networkId, uint256 oldCeiling, uint256 newCeiling)',
@@ -763,6 +788,115 @@ async function setLastSyncedL1FeeBlock(block: number): Promise<void> {
   })
 }
 
+// ── Fee-field mapping ─────────────────────────────────────────────────────────
+// CawNetworkManager.NetworkFeeUpdated emits feeType as a plain string.
+// Map it to the Prisma Network column name.
+const FEE_TYPE_TO_COLUMN: Record<string, 'withdrawFee' | 'depositFee' | 'authFee' | 'mintFee'> = {
+  withdraw: 'withdrawFee',
+  deposit:  'depositFee',
+  auth:     'authFee',
+  mint:     'mintFee',
+}
+
+// ── Event handlers ────────────────────────────────────────────────────────────
+
+async function handleNetworkCreated(args: any, txHash: string): Promise<void> {
+  const networkId = Number(args.networkId)
+  const n = args.network
+  if (!n) {
+    console.warn(`[ChainSync:L1FeeEvents] NetworkCreated: missing network struct for id=${networkId}`)
+    return
+  }
+  try {
+    await prisma.network.upsert({
+      where: { id: networkId },
+      update: {
+        ownerAddress:      String(n.ownerAddress).toLowerCase(),
+        feeAddress:        String(n.feeAddress).toLowerCase(),
+        mintFee:           BigInt(n.mintFee?.toString()    || '0').toString(),
+        depositFee:        BigInt(n.depositFee?.toString() || '0').toString(),
+        withdrawFee:       BigInt(n.withdrawFee?.toString()|| '0').toString(),
+        authFee:           BigInt(n.authFee?.toString()    || '0').toString(),
+        withdrawFeeCeiling: BigInt(n.withdrawFeeCeiling?.toString() || '0'),
+        depositFeeCeiling:  BigInt(n.depositFeeCeiling?.toString()  || '0'),
+        authFeeCeiling:     BigInt(n.authFeeCeiling?.toString()     || '0'),
+        mintFeeCeiling:     BigInt(n.mintFeeCeiling?.toString()     || '0'),
+        creationBlock:      n.creationBlock ? BigInt(n.creationBlock.toString()) : undefined,
+        lastSyncedAt: new Date(),
+      },
+      create: {
+        id:                networkId,
+        ownerAddress:      String(n.ownerAddress).toLowerCase(),
+        feeAddress:        String(n.feeAddress).toLowerCase(),
+        mintFee:           BigInt(n.mintFee?.toString()    || '0').toString(),
+        depositFee:        BigInt(n.depositFee?.toString() || '0').toString(),
+        withdrawFee:       BigInt(n.withdrawFee?.toString()|| '0').toString(),
+        authFee:           BigInt(n.authFee?.toString()    || '0').toString(),
+        withdrawFeeCeiling: BigInt(n.withdrawFeeCeiling?.toString() || '0'),
+        depositFeeCeiling:  BigInt(n.depositFeeCeiling?.toString()  || '0'),
+        authFeeCeiling:     BigInt(n.authFeeCeiling?.toString()     || '0'),
+        mintFeeCeiling:     BigInt(n.mintFeeCeiling?.toString()     || '0'),
+        creationBlock:      n.creationBlock ? BigInt(n.creationBlock.toString()) : null,
+        lastSyncedAt: new Date(),
+      },
+    })
+    console.log(`[ChainSync:L1FeeEvents] NetworkCreated: upserted networkId=${networkId} tx=${txHash.slice(0, 10)}...`)
+  } catch (err: any) {
+    console.error(`[ChainSync:L1FeeEvents] Failed to upsert NetworkCreated for ${networkId}:`, err.message)
+  }
+}
+
+async function handleNetworkFeeUpdated(args: any): Promise<void> {
+  const networkId = Number(args.networkId)
+  const feeType   = String(args.feeType).toLowerCase()
+  const newFee    = BigInt(args.newFee?.toString() || '0')
+  const column    = FEE_TYPE_TO_COLUMN[feeType]
+
+  if (!column) {
+    console.warn(`[ChainSync:L1FeeEvents] NetworkFeeUpdated: unknown feeType="${feeType}" for networkId=${networkId}`)
+    return
+  }
+
+  try {
+    await prisma.network.update({
+      where: { id: networkId },
+      data:  { [column]: newFee.toString(), lastSyncedAt: new Date() },
+    })
+    console.log(`[ChainSync:L1FeeEvents] NetworkFeeUpdated: networkId=${networkId} ${column}=${newFee.toString()}`)
+  } catch (err: any) {
+    if (err.code === 'P2025') {
+      // Network row doesn't exist yet — the NetworkCreated event was missed or
+      // is in the same chunk after this one. syncAllNetworks() will fill it in.
+      console.warn(`[ChainSync:L1FeeEvents] NetworkFeeUpdated: networkId=${networkId} not in DB yet; fee update will be applied on next full sync`)
+    } else {
+      console.error(`[ChainSync:L1FeeEvents] Failed to update ${column} for networkId=${networkId}:`, err.message)
+    }
+  }
+}
+
+async function handleFeeCeilingLowered(
+  args: any,
+  ceilingColumn: 'withdrawFeeCeiling' | 'depositFeeCeiling' | 'authFeeCeiling' | 'mintFeeCeiling',
+): Promise<void> {
+  const networkId  = Number(args.networkId)
+  const newCeiling = BigInt(args.newCeiling?.toString() || '0')
+  const oldCeiling = BigInt(args.oldCeiling?.toString() || '0')
+
+  try {
+    await prisma.network.update({
+      where: { id: networkId },
+      data:  { [ceilingColumn]: newCeiling, lastSyncedAt: new Date() },
+    })
+    console.log(`[ChainSync:L1FeeEvents] ${ceilingColumn}: networkId=${networkId}, ${oldCeiling} → ${newCeiling}`)
+  } catch (err: any) {
+    if (err.code === 'P2025') {
+      console.warn(`[ChainSync:L1FeeEvents] ${ceilingColumn}: networkId=${networkId} not in DB yet; ceiling update will be applied on next full sync`)
+    } else {
+      console.error(`[ChainSync:L1FeeEvents] Failed to update ${ceilingColumn} for networkId=${networkId}:`, err.message)
+    }
+  }
+}
+
 async function syncL1FeeEvents(): Promise<void> {
   if (!l1Provider || !NETWORK_MANAGER_ADDRESS) {
     console.log('[ChainSync:L1FeeEvents] Skipping — L1 provider not available')
@@ -788,6 +922,7 @@ async function syncL1FeeEvents(): Promise<void> {
     const toBlock = Math.min(cursor + L1_FEE_EVENT_CHUNK_SIZE - 1, latestBlock)
 
     try {
+      const networkCreated  = await contract.queryFilter(contract.filters.NetworkCreated(), cursor, toBlock)
       const feeUpdated      = await contract.queryFilter(contract.filters.NetworkFeeUpdated(), cursor, toBlock)
       const withdrawCeiling = await contract.queryFilter(contract.filters.WithdrawFeeCeilingLowered(), cursor, toBlock)
       const depositCeiling  = await contract.queryFilter(contract.filters.DepositFeeCeilingLowered(), cursor, toBlock)
@@ -795,7 +930,8 @@ async function syncL1FeeEvents(): Promise<void> {
       const mintCeiling     = await contract.queryFilter(contract.filters.MintFeeCeilingLowered(), cursor, toBlock)
 
       const combined = [
-        ...feeUpdated.map(e      => ({ ev: e, kind: 'NetworkFeeUpdated'      as const })),
+        ...networkCreated.map(e  => ({ ev: e, kind: 'NetworkCreated'           as const })),
+        ...feeUpdated.map(e      => ({ ev: e, kind: 'NetworkFeeUpdated'         as const })),
         ...withdrawCeiling.map(e => ({ ev: e, kind: 'WithdrawFeeCeilingLowered' as const })),
         ...depositCeiling.map(e  => ({ ev: e, kind: 'DepositFeeCeilingLowered'  as const })),
         ...authCeiling.map(e     => ({ ev: e, kind: 'AuthFeeCeilingLowered'     as const })),
@@ -809,36 +945,18 @@ async function syncL1FeeEvents(): Promise<void> {
         const args = (ev as any).args
         if (!args) continue
 
-        if (kind === 'NetworkFeeUpdated') {
-          const networkId = Number(args.networkId)
-          const feeType   = String(args.feeType)
-          const newFee    = BigInt(args.newFee?.toString() || '0')
-          console.log(`[ChainSync:L1FeeEvents] NetworkFeeUpdated: networkId=${networkId}, type=${feeType}, newFee=${newFee.toString()}`)
-          // TODO: invalidate any cached fee state for this networkId
+        if (kind === 'NetworkCreated') {
+          await handleNetworkCreated(args, (ev as any).transactionHash || '')
+        } else if (kind === 'NetworkFeeUpdated') {
+          await handleNetworkFeeUpdated(args)
         } else if (kind === 'WithdrawFeeCeilingLowered') {
-          const networkId  = Number(args.networkId)
-          const oldCeiling = BigInt(args.oldCeiling?.toString() || '0')
-          const newCeiling = BigInt(args.newCeiling?.toString() || '0')
-          console.log(`[ChainSync:L1FeeEvents] WithdrawFeeCeilingLowered: networkId=${networkId}, ${oldCeiling} → ${newCeiling}`)
-          // TODO: invalidate any cached fee state for this networkId
+          await handleFeeCeilingLowered(args, 'withdrawFeeCeiling')
         } else if (kind === 'DepositFeeCeilingLowered') {
-          const networkId  = Number(args.networkId)
-          const oldCeiling = BigInt(args.oldCeiling?.toString() || '0')
-          const newCeiling = BigInt(args.newCeiling?.toString() || '0')
-          console.log(`[ChainSync:L1FeeEvents] DepositFeeCeilingLowered: networkId=${networkId}, ${oldCeiling} → ${newCeiling}`)
-          // TODO: invalidate any cached fee state for this networkId
+          await handleFeeCeilingLowered(args, 'depositFeeCeiling')
         } else if (kind === 'AuthFeeCeilingLowered') {
-          const networkId  = Number(args.networkId)
-          const oldCeiling = BigInt(args.oldCeiling?.toString() || '0')
-          const newCeiling = BigInt(args.newCeiling?.toString() || '0')
-          console.log(`[ChainSync:L1FeeEvents] AuthFeeCeilingLowered: networkId=${networkId}, ${oldCeiling} → ${newCeiling}`)
-          // TODO: invalidate any cached fee state for this networkId
+          await handleFeeCeilingLowered(args, 'authFeeCeiling')
         } else if (kind === 'MintFeeCeilingLowered') {
-          const networkId  = Number(args.networkId)
-          const oldCeiling = BigInt(args.oldCeiling?.toString() || '0')
-          const newCeiling = BigInt(args.newCeiling?.toString() || '0')
-          console.log(`[ChainSync:L1FeeEvents] MintFeeCeilingLowered: networkId=${networkId}, ${oldCeiling} → ${newCeiling}`)
-          // TODO: invalidate any cached fee state for this networkId
+          await handleFeeCeilingLowered(args, 'mintFeeCeiling')
         }
       }
 
@@ -936,7 +1054,7 @@ export const chainSyncService = {
     registerTask({
       name: 'Clients',
       interval: 30 * 60 * 1000, // 30 minutes
-      sync: syncAllClients
+      sync: syncAllNetworks,
     })
     ctx.declareLoop('ChainSync:Clients', 90 * 60_000) // 3× interval
 
@@ -990,11 +1108,11 @@ export const chainSyncService = {
       },
 
       stats: async () => {
-        const clientCount = await prisma.client.count()
+        const networkCount = await prisma.network.count()
         const cawPriceAge = cawPriceCache ? Math.floor((Date.now() - cawPriceCache.updatedAt) / 1000) : 'N/A'
         const ethPriceAge = ethPriceCache ? Math.floor((Date.now() - ethPriceCache.updatedAt) / 1000) : 'N/A'
         const ethPrice = ethPriceCache ? `$${(Number(ethPriceCache.usdPerEth) / 1e6).toFixed(2)}` : 'N/A'
-        return `Clients: ${clientCount}, ETH: ${ethPrice}, Price ages: CAW ${cawPriceAge}s, ETH ${ethPriceAge}s`
+        return `Networks: ${networkCount}, ETH: ${ethPrice}, Price ages: CAW ${cawPriceAge}s, ETH ${ethPriceAge}s`
       }
     }
   }

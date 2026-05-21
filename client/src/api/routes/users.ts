@@ -480,8 +480,8 @@ router.get('/client-auth/:tokenId', async (req, res) => {
       return res.status(400).json({ error: 'Invalid clientId' })
     }
 
-    const row = await prisma.clientAuth.findUnique({
-      where: { clientId_tokenId: { clientId, tokenId } },
+    const row = await prisma.networkAuth.findUnique({
+      where: { networkId_tokenId: { networkId: clientId, tokenId } },
       select: { authenticated: true, lastSyncedAt: true },
     })
 

@@ -4227,7 +4227,7 @@ console.log("succeededKeys", succeededKeys)
                 await prisma.replicationTx.create({ data: {
                   txHash: receipt.hash,
                   blockNumber: BigInt(receipt.blockNumber),
-                  clientId: client.id,
+                  networkId: client.id,
                   checkpointId: startCheckpointId,
                   endCheckpointId,
                   actionCount: numCheckpoints * OPTIMISTIC_CHECKPOINT_INTERVAL,
