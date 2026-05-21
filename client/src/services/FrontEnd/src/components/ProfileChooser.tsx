@@ -1,6 +1,6 @@
 // src/components/ProfileChooser.tsx
 import React, { useState, useEffect, useRef } from "react";
-import { useTokenDataStore, useActiveToken } from "~/store/tokenDataStore";
+import { useTokenDataStore, useActiveToken, usePriceStore } from "~/store/tokenDataStore";
 import { formatAddress, formatUnitsCompact, convertToText } from "~/utils";
 import UsernameSvg from "./UsernameSvg";
 import { Link } from '~/utils/localizedRouter'
@@ -36,6 +36,10 @@ const ProfileChooser: React.FC<{ compact?: boolean }> = ({ compact = false }) =>
   // owned by the same wallet.
   const pendingByTxQueue = usePendingSpendStore(s => s.pendingByTxQueue)
   const tokenIdByTxQueue = usePendingSpendStore(s => s.tokenIdByTxQueue)
+  // CAW → USD for the pending-spend chip below. Without USD context,
+  // a "-26k CAW" string looks scary even though it's ≈ $0.001. Pulled
+  // from the existing usePriceStore (server-fed via /api/prices).
+  const cawPriceUsd = usePriceStore(s => s.priceMap['a-hunters-dream']) as number | undefined
   // Live in-flight balance change windows — incoming-only deltas roll
   // into the existing "pending" line below so a like / recaw / follow
   // landing on the user's content nudges the +X CAW pending counter.
@@ -534,9 +538,22 @@ const ProfileChooser: React.FC<{ compact?: boolean }> = ({ compact = false }) =>
             if (delta === 0n) return null
             const isPositive = delta > 0n
             const absValue = isPositive ? delta : -delta
+            // CAW is denominated tiny in USD (≈ $3.8e-8 / CAW), so action
+            // costs like 26k CAW look huge. Showing the USD equivalent
+            // alongside prevents sticker-shock — 26k CAW reads as "~$0.001".
+            // Falls back to CAW-only if the price feed hasn't loaded yet.
+            let usdLabel = ''
+            if (cawPriceUsd !== undefined && cawPriceUsd > 0) {
+              const cawWhole = Number(absValue / 10n**18n) + Number(absValue % 10n**18n) / 1e18
+              const usd = cawWhole * cawPriceUsd
+              // Format: <$0.01 → "<$0.01"; <$1 → "$0.XX"; ≥$1 → "$X.XX"
+              if (usd < 0.01) usdLabel = ' (<$0.01)'
+              else if (usd < 1) usdLabel = ` (~$${usd.toFixed(2)})`
+              else usdLabel = ` (~$${usd.toFixed(2)})`
+            }
             return (
               <div className={`text-2xs ${isPositive ? 'text-yellow-500' : 'text-gray-400'}`}>
-                {isPositive ? '+' : '-'}{formatUnitsCompact(absValue, 18)} CAW pending
+                {isPositive ? '+' : '-'}{formatUnitsCompact(absValue, 18)} CAW{usdLabel} pending
               </div>
             )
           })()}
