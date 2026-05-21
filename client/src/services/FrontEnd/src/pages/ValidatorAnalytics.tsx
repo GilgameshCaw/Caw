@@ -234,7 +234,7 @@ const ValidatorAnalytics: React.FC = () => {
         id: t.id,
         time: t.createdAt,
         txHash: t.txHash,
-        client: String(t.clientId),
+        client: String(t.networkId),
         checkpoint: t.endCheckpointId && t.endCheckpointId !== t.checkpointId
           ? `${t.checkpointId}-${t.endCheckpointId}`
           : String(t.checkpointId),

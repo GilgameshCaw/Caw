@@ -22,7 +22,7 @@ const ACTION_TYPE_LABELS: Record<number, string> = {
 function flattenTxQueueRecord(record: any): any {
   const payload = record.payload
   const data = payload?.data
-  if (!data) return { ...record, actionType: '-', receiverId: '-', receiverCawonce: '-', cawonce: '-', clientId: '-', recipients: '-', amounts: '-', text: '-' }
+  if (!data) return { ...record, actionType: '-', receiverId: '-', receiverCawonce: '-', cawonce: '-', networkId: '-', recipients: '-', amounts: '-', text: '-' }
   const actionCode = typeof data.actionType === 'number' ? data.actionType : parseInt(data.actionType)
   const actionLabel = ACTION_TYPE_LABELS[actionCode] ?? String(data.actionType)
   let text = '-'
@@ -41,7 +41,7 @@ function flattenTxQueueRecord(record: any): any {
     receiverId: data.receiverId ?? '-',
     receiverCawonce: data.receiverCawonce ?? '-',
     cawonce: data.cawonce ?? '-',
-    clientId: data.clientId ?? '-',
+    networkId: data.networkId ?? '-',
     recipients,
     amounts,
     text: text.length > 80 ? text.slice(0, 80) + '...' : text,
