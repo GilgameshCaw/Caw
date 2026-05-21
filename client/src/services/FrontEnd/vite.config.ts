@@ -64,11 +64,19 @@ export default defineConfig({
     global: 'globalThis',
     __CLIENT_VERSION__: JSON.stringify(CLIENT_VERSION),
   },
+  // argon2-browser bundles a .wasm file via require() inside its lib/argon2.js.
+  // Vite/Rollup tries to interpret that as an ESM-Wasm module and fails because
+  // the "ESM integration proposal for Wasm" is not yet supported in Rollup.
+  // We exclude it from optimizeDeps so Vite doesn't pre-bundle it, and treat
+  // the .wasm as a static asset (URL) at build time. argon2-browser loads the
+  // WASM at runtime via fetch() so it resolves correctly.
   optimizeDeps: {
     esbuildOptions: {
       target: 'esnext'
-    }
+    },
+    exclude: ['argon2-browser']
   },
+  assetsInclude: ['**/*.wasm'],
   build: {
     target: 'esnext',
     commonjsOptions: {
