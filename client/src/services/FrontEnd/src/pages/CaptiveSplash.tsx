@@ -1,4 +1,4 @@
-import { Link } from '~/utils/localizedRouter'
+import { Link, useNavigate } from '~/utils/localizedRouter'
 import { useConnectModal } from '@rainbow-me/rainbowkit'
 import { useAccount } from 'wagmi'
 import { useActiveToken } from '~/store/tokenDataStore'
@@ -8,6 +8,8 @@ import { useState, useEffect, useRef, lazy, Suspense } from 'react'
 import BoidsBg from '~/components/BoidsBg'
 import LanguageSwitcher from '~/components/LanguageSwitcher'
 import WalletAccountButton from '~/components/buttons/WalletAccountButton'
+import { SignInChoiceModal } from '~/components/identity/SignInChoiceModal'
+import { useRecoveryContext } from '~/components/identity/RecoveryProvider'
 
 const Caw3D = lazy(() => import('~/components/Caw3D'))
 
@@ -28,9 +30,12 @@ export default function CaptiveSplash() {
   const { isConnected } = useAccount()
   const { openConnectModal } = useConnectModal()
   const activeToken = useActiveToken()
+  const { isInRecoveryMode } = useRecoveryContext()
+  const navigate = useNavigate()
 
   const [keywordIndex, setKeywordIndex] = useState(0)
   const [isAnimating, setIsAnimating] = useState(false)
+  const [showSignInChoice, setShowSignInChoice] = useState(false)
   const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null)
 
   useEffect(() => {
@@ -95,9 +100,9 @@ export default function CaptiveSplash() {
         {/* CTA buttons */}
         <div className="flex flex-col items-center gap-4 mb-12">
           <div className="flex flex-col sm:flex-row items-center gap-4">
-          {!isConnected ? (
+          {!isConnected && !isInRecoveryMode ? (
             <button
-              onClick={openConnectModal}
+              onClick={() => setShowSignInChoice(true)}
               className="px-8 py-3 bg-yellow-500 text-black font-bold text-lg rounded-full hover:bg-yellow-400 transition-all shadow-lg hover:shadow-xl cursor-pointer"
             >
               {t('common.sign_in')}
@@ -129,30 +134,15 @@ export default function CaptiveSplash() {
             {t('main_layout.learn_more')}
           </Link>
           </div>
-
-          {/* Discovery link for users who don't have a crypto wallet yet */}
-          {!isConnected && (
-            <Link
-              to="/onboarding"
-              className={`text-sm transition-colors ${
-                isDark ? 'text-white/40 hover:text-white/70' : 'text-gray-400 hover:text-gray-600'
-              }`}
-            >
-              {t('captive_splash.no_wallet')}
-            </Link>
-          )}
-          {/* Recovery entry point for users who have lost their device */}
-          {!isConnected && (
-            <Link
-              to="/recovery"
-              className={`text-sm transition-colors ${
-                isDark ? 'text-white/40 hover:text-white/70' : 'text-gray-400 hover:text-gray-600'
-              }`}
-            >
-              {t('captive_splash.have_backup_file')}
-            </Link>
-          )}
         </div>
+
+        {/* Sign-in chooser modal */}
+        <SignInChoiceModal
+          open={showSignInChoice}
+          onClose={() => setShowSignInChoice(false)}
+          onWalletPath={() => openConnectModal?.()}
+          onPasskeyPath={() => navigate('/onboarding')}
+        />
 
         {/* Feature highlights */}
         <div className="grid grid-cols-1 sm:grid-cols-3 gap-6 max-w-2xl w-full mb-12">
