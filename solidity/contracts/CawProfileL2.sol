@@ -38,6 +38,7 @@ contract CawProfileL2 is
   error BadParse();      // any malformed input in the personal-sign message parser
   error SiblingSet();    // setERC1271Sibling already called
   error ZeroSibling();   // setERC1271Sibling called with address(0)
+  error SpendLimitTooHigh(); // parsed or supplied spendLimit exceeds MAX_SESSION_SPEND
 
   using SigVerification for address;
 
@@ -178,6 +179,11 @@ contract CawProfileL2 is
   bytes32 private constant TOKEN_DELEGATION_TYPEHASH = keccak256(
     "TokenSessionDelegation(uint32 profileId,address sessionKey,uint64 expiry,uint8 scopeBitmap,uint256 spendLimit,uint64 perActionTipRate,uint256 nonce)"
   );
+
+  /// @notice Absolute upper bound on any session spend limit. Prevents phishing
+  ///         pages from submitting an inflated value (e.g. "999B CAW") after
+  ///         showing the user a lower figure. Finding NEW-4, audit 2026-05-19.
+  uint256 public constant MAX_SESSION_SPEND = 1_000_000_000 ether; // 1B CAW
 
   event OwnerSet(uint32 tokenId, address newOwner);
   event UsernameMinted(uint32 tokenId, address owner);
@@ -612,6 +618,7 @@ contract CawProfileL2 is
   function _writeWalletSession(
     address owner, address sessionKey, uint64 expiry, uint8 scopeBitmap, uint64 perActionTipRate, uint256 spendLimit
   ) internal {
+    if (spendLimit > MAX_SESSION_SPEND) revert SpendLimitTooHigh();
     sessions[owner][sessionKey] = StoredSession(expiry, scopeBitmap, ownerSessionEpoch[owner], perActionTipRate, 0, spendLimit);
     emit SessionCreated(owner, sessionKey, expiry, scopeBitmap, spendLimit, perActionTipRate);
   }
@@ -727,6 +734,7 @@ contract CawProfileL2 is
     if (sessionKey == address(0)) revert ZeroKey();
     if (expiry <= block.timestamp) revert Expired();
     if (nonce != tokenSessionNonce[profileId]) revert BadNonce();
+    if (spendLimit > MAX_SESSION_SPEND) revert SpendLimitTooHigh();
     uint8 bm = scopeBitmap & 0xBF;
     bytes32 digest = keccak256(abi.encodePacked(
       "\x19\x01",
