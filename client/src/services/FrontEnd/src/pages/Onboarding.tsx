@@ -14,7 +14,7 @@
  *  6. confirm        — success + txHash + navigate to feed
  */
 
-import { useState, useCallback } from 'react'
+import React, { useState, useCallback } from 'react'
 import { useTheme } from '~/hooks/useTheme'
 import { useT } from '~/i18n/I18nProvider'
 import UsernameStep from './onboarding/UsernameStep'
@@ -23,6 +23,16 @@ import VaultPasswordStep from './onboarding/VaultPasswordStep'
 import PasskeyStep from './onboarding/PasskeyStep'
 import BackupStep from './onboarding/BackupStep'
 import ConfirmStep from './onboarding/ConfirmStep'
+import BoidsBg from '~/components/BoidsBg'
+import LanguageSwitcher from '~/components/LanguageSwitcher'
+import {
+  HiAtSymbol,
+  HiCurrencyDollar,
+  HiLockClosed,
+  HiFingerPrint,
+  HiCloudDownload,
+  HiCheck,
+} from 'react-icons/hi'
 import type { PasskeyPubkey } from '~/services/identity/passkey'
 import type { BootstrapResult } from '~/services/identity/bootstrap'
 
@@ -58,7 +68,7 @@ const INITIAL_STATE: OnboardingState = {
   bootstrapResult: null,
 }
 
-// Steps that show in the progress indicator (exclude the confirm step).
+// Steps that show in the segmented stepper (exclude the confirm step).
 const PROGRESS_STEPS: OnboardingStep[] = [
   'username',
   'deposit',
@@ -74,6 +84,21 @@ const ALL_STEPS: OnboardingStep[] = [
   'passkey',
   'backup',
   'confirm',
+]
+
+interface StepMeta {
+  id: OnboardingStep
+  icon: React.ReactNode
+  shortLabel: string
+}
+
+// Icon size matches PostMintOnboarding (w-4 h-4 inside the label row)
+const STEP_META: StepMeta[] = [
+  { id: 'username',       icon: <HiAtSymbol className="w-4 h-4" />,      shortLabel: '@' },
+  { id: 'deposit',        icon: <HiCurrencyDollar className="w-4 h-4" />, shortLabel: 'CAW' },
+  { id: 'vault-password', icon: <HiLockClosed className="w-4 h-4" />,     shortLabel: 'Vault' },
+  { id: 'passkey',        icon: <HiFingerPrint className="w-4 h-4" />,    shortLabel: 'Key' },
+  { id: 'backup',         icon: <HiCloudDownload className="w-4 h-4" />,  shortLabel: 'Save' },
 ]
 
 function stepIndex(step: OnboardingStep): number {
@@ -97,12 +122,14 @@ export default function Onboarding() {
   const [state, setState] = useState<OnboardingState>(INITIAL_STATE)
 
   const currentIndex = stepIndex(state.step)
-  const totalSteps = PROGRESS_STEPS.length
   const showProgress = PROGRESS_STEPS.includes(state.step as typeof PROGRESS_STEPS[number])
   const progressIndex = PROGRESS_STEPS.indexOf(state.step as typeof PROGRESS_STEPS[number])
 
-  const mutedClass = isDark ? 'text-white/50' : 'text-gray-500'
-  const strongClass = isDark ? 'text-white' : 'text-gray-900'
+  // Theme helpers — mirrors PostMintOnboarding tc object pattern
+  const outerBg = isDark ? 'bg-black' : 'bg-white'
+  const textPrimary = isDark ? 'text-white' : 'text-gray-900'
+  const textFaint = isDark ? 'text-white/40' : 'text-gray-500'
+  const stepperInactive = isDark ? 'bg-[#1A1A1A]/85' : 'bg-black/10'
 
   // ── Navigation ────────────────────────────────────────────────────────────
 
@@ -169,60 +196,84 @@ export default function Onboarding() {
   }, [t])
 
   return (
-    <div className={`min-h-screen flex flex-col ${isDark ? 'bg-black' : 'bg-white'}`}>
-      {/* Header bar */}
-      <div className={`sticky top-0 z-10 border-b px-6 py-4 ${isDark ? 'bg-black/90 border-white/10' : 'bg-white/90 border-gray-200'} backdrop-blur-sm`}>
-        <div className="max-w-lg mx-auto flex items-center justify-between">
-          <div className="flex items-center gap-3">
-            {/* Back arrow — hidden on first step and confirm */}
-            {currentIndex > 0 && state.step !== 'confirm' && (
-              <button
-                onClick={goBack}
-                className={`p-1 rounded-lg transition-colors cursor-pointer ${isDark ? 'hover:bg-white/10 text-white/70' : 'hover:bg-gray-100 text-gray-600'}`}
-                aria-label={t('common.back')}
-              >
-                <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
-                </svg>
-              </button>
-            )}
-            <div>
-              <h1 className={`text-base font-semibold ${strongClass}`}>
-                {t('onboarding.title')}
-              </h1>
-              {showProgress && (
-                <p className={`text-xs ${mutedClass}`}>
-                  {t('onboarding.step_of', {
-                    current: String(progressIndex + 1),
-                    total: String(totalSteps),
-                  })}
-                </p>
-              )}
-            </div>
-          </div>
+    <div className={`fixed inset-0 z-[100] overflow-y-auto overflow-x-hidden ${outerBg}`}>
+      <BoidsBg isDark={isDark} />
 
-          {/* Step label */}
-          {showProgress && (
-            <span className={`text-xs font-medium ${mutedClass}`}>
-              {stepLabel(state.step, t)}
-            </span>
-          )}
-        </div>
+      {/* Language picker — top-right, matches PostMintOnboarding */}
+      <div className="absolute top-3 right-3 z-[110]">
+        <LanguageSwitcher />
       </div>
 
-      {/* Progress bar */}
-      {showProgress && (
-        <div className={`h-0.5 ${isDark ? 'bg-white/10' : 'bg-gray-100'}`}>
-          <div
-            className="h-full bg-yellow-500 transition-all duration-500"
-            style={{ width: `${((progressIndex + 1) / totalSteps) * 100}%` }}
-          />
-        </div>
-      )}
-
-      {/* Step content */}
-      <div className="flex-1 flex items-start justify-center px-6 py-8">
+      <div className="relative z-10 px-4 py-8 min-h-screen flex items-start justify-center">
         <div className="w-full max-w-lg">
+
+          {/* Slim segmented stepper — hidden on the confirm success screen */}
+          {showProgress && (
+            <>
+              {/* Back chevron inline above the stepper — hidden on first step */}
+              {currentIndex > 0 && (
+                <button
+                  onClick={goBack}
+                  className={`mb-3 flex items-center gap-1 text-sm transition-colors cursor-pointer ${textFaint} hover:${textPrimary}`}
+                  aria-label={t('common.back')}
+                >
+                  <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
+                  </svg>
+                  <span>{t('common.back')}</span>
+                </button>
+              )}
+
+              {/* Segmented stepper bar */}
+              <div className="flex items-center justify-center gap-2 mb-6">
+                {STEP_META.map((meta, i) => {
+                  const done = i < progressIndex
+                  const active = i === progressIndex
+                  const label = stepLabel(meta.id, t)
+                  return (
+                    <button
+                      key={meta.id}
+                      onClick={() => {
+                        if (i < progressIndex) {
+                          // Only allow navigating back to completed steps
+                          const targetStep = ALL_STEPS[i]
+                          setState(s => ({ ...s, step: targetStep }))
+                        }
+                      }}
+                      className={`flex-1 min-w-[56px] flex flex-col items-center gap-2 transition-opacity duration-300 ${
+                        done && !active ? 'opacity-70 cursor-pointer hover:opacity-100' : active ? 'opacity-100 cursor-default' : 'opacity-50 cursor-default'
+                      }`}
+                    >
+                      <div className={`w-full h-2 rounded-full transition-all duration-300 ${
+                        done ? 'bg-green-500'
+                        : active ? 'bg-yellow-500'
+                        : stepperInactive
+                      }`} />
+                      <div className="flex items-center gap-1 whitespace-nowrap">
+                        <span className={`transition-colors duration-300 ${
+                          done ? 'text-green-400'
+                          : active ? 'text-yellow-500'
+                          : textFaint
+                        }`}>
+                          {done ? <HiCheck className="w-4 h-4" /> : meta.icon}
+                        </span>
+                        <span className={`text-sm font-medium transition-colors duration-300 ${
+                          done ? 'text-green-400'
+                          : active ? textPrimary
+                          : textFaint
+                        }`}>
+                          <span className="min-[480px]:hidden">{meta.shortLabel}</span>
+                          <span className="hidden min-[480px]:inline">{label}</span>
+                        </span>
+                      </div>
+                    </button>
+                  )
+                })}
+              </div>
+            </>
+          )}
+
+          {/* Step content */}
           {state.step === 'username' && (
             <UsernameStep
               username={state.username}
@@ -279,6 +330,7 @@ export default function Onboarding() {
               txHash={state.bootstrapResult.txHash}
             />
           )}
+
         </div>
       </div>
     </div>

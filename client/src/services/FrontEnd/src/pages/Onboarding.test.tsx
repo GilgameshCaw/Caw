@@ -62,6 +62,14 @@ vi.mock('~/utils/localizedRouter', () => ({
   Link: ({ children }: { children: React.ReactNode }) => React.createElement('a', null, children),
 }))
 
+vi.mock('~/components/BoidsBg', () => ({
+  default: () => null,
+}))
+
+vi.mock('~/components/LanguageSwitcher', () => ({
+  default: () => null,
+}))
+
 // ─── Identity service mocks ────────────────────────────────────────────────────
 
 const mockEnrollPasskey = vi.fn()
@@ -300,7 +308,8 @@ describe('Onboarding state machine', () => {
     render(React.createElement(Onboarding), { wrapper: makeWrapper() })
     await navigateToDeposit()
     await act(async () => {
-      fireEvent.click(screen.getByText('common.back'))
+      // Multiple back buttons exist (stepper chevron + step's own back btn); click the first
+      fireEvent.click(screen.getAllByText('common.back')[0])
     })
     expect(screen.getByText('onboarding.username.title')).toBeInTheDocument()
   })

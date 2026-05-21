@@ -13,6 +13,7 @@ import { useActiveToken, useTokenDataStore, usePriceStore } from "~/store/tokenD
 import { chains, isTestnet } from '~/config/chains'
 import UsernameSvg from '~/components/UsernameSvg'
 import { formatNumber, formatNumberCompact, convertToNumber } from "~/utils";
+import { formatUsd } from '~/utils/numberFormat'
 import { useSearchParams } from 'react-router-dom'
 import { useNavigate, Link } from '~/utils/localizedRouter'
 import StakingRewardsInfo from '~/components/StakingRewardsInfo'
@@ -23,7 +24,8 @@ import { useT } from '~/i18n/I18nProvider'
 import { getDefaultSpendLimit, getDefaultTipCeiling, DEFAULT_SESSION_DURATION } from '~/hooks/useSessionKey'
 import { useSessionKeyStore } from '~/store/sessionKeyStore'
 import { usePoolReserves, useMinCawOut, suggestedSlippageBps } from '~/hooks/useZapQuote'
-import NetworkFeesPanel from '~/components/NetworkFeesPanel'
+import { useNetworkFees } from '~/hooks/useNetworkFees'
+import NetworkFeeModal from '~/components/NetworkFeeModal'
 
 // Quick Sign default scope: all actions except WITHDRAW (bit 6) — matches the
 // 0xBF hard-wired on L2 in the bundled session register flow.
@@ -180,6 +182,8 @@ export const NewProfile: React.FC = () => {
   const setActiveTokenId = useTokenDataStore(state => state.setActiveTokenId);
   const cawPrice = usePriceStore(s => s.priceMap['a-hunters-dream'] ?? 0)
   const ethPrice = usePriceStore(s => s.priceMap['ethereum'] ?? 0)
+  const [showFeeModal, setShowFeeModal] = useState(false)
+  const networkFees = useNetworkFees(CLIENT_ID)
 
   // Dollar presets for staking — converted to CAW amounts
   const DOLLAR_PRESETS = [10, 25, 50, 100]
@@ -1161,20 +1165,8 @@ console.log("BALANCE:", balance)
                 Pay with ETH
               </button>
             </div>
-            {paymentMode === 'eth' && (
-              <div className="text-right -mt-1">
-                <a
-                  href="https://app.uniswap.org/#/swap?inputCurrency=ETH&outputCurrency=0xf3b9569F82B18aEf890De263B84189bd33EBe452"
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="text-xs text-yellow-500/70 hover:text-yellow-500 transition-colors"
-                >
-                  Or use Uniswap directly &rarr;
-                </a>
-              </div>
-            )}
 
-            {/* ETH-mode input + slippage slider */}
+            {/* ETH-mode input */}
             {paymentMode === 'eth' && (
               <div className={`border rounded-xl p-4 space-y-3 mt-3 ${
                 isDark ? 'border-white/10 bg-[#0D0D0D]/85' : 'border-gray-200 bg-gray-50'
@@ -1200,41 +1192,36 @@ console.log("BALANCE:", balance)
                   />
                   <span className="absolute right-4 top-1/2 -translate-y-1/2 text-gray-500 text-sm">ETH</span>
                 </div>
+                {ethAmountWei > 0n && ethPrice > 0 && (
+                  <div className={`text-xs ${isDark ? 'text-gray-400' : 'text-gray-600'}`}>
+                    ~${formatUsd(Number(ethAmount) * ethPrice)}
+                  </div>
+                )}
                 {ethAmountWei > 0n && reserves.loaded && (
                   <div className={`text-xs space-y-1 ${isDark ? 'text-gray-400' : 'text-gray-600'}`}>
-                    <div>
-                      Expected: <span className={`font-mono ${isDark ? 'text-white' : 'text-gray-900'}`}>
-                        {formatNumberCompact(convertToNumber(zapQuote.expectedCawOut, 18))} CAW
-                      </span>
-                    </div>
-                    <div>
-                      Minimum (after {(slippageBps / 100).toFixed(2)}% slippage):&nbsp;
-                      <span className={`font-mono ${isDark ? 'text-white' : 'text-gray-900'}`}>
-                        {formatNumberCompact(convertToNumber(zapQuote.minCawOut, 18))} CAW
-                      </span>
-                    </div>
+                    {(() => {
+                      const depositCaw = zapQuote.expectedCawOut > cost ? zapQuote.expectedCawOut - cost : 0n
+                      const depositWhole = convertToNumber(depositCaw, 18)
+                      const depositUsd = cawPrice > 0 ? depositWhole * cawPrice : null
+                      return (
+                        <div>
+                          You&apos;ll deposit &asymp;&nbsp;
+                          <span className={`font-mono ${isDark ? 'text-white' : 'text-gray-900'}`}>
+                            {formatNumberCompact(depositWhole)} CAW
+                          </span>
+                          {depositUsd != null && (
+                            <span className="ml-1">(~${formatUsd(depositUsd)})</span>
+                          )}
+                        </div>
+                      )
+                    })()}
                     {zapQuote.minCawOut < cost && (
                       <div className="text-red-400">
-                        Below the {formatNumberCompact(convertToNumber(cost, 18))} CAW burn cost — increase ETH or reduce slippage.
+                        Below the {formatNumberCompact(convertToNumber(cost, 18))} CAW burn cost — increase ETH.
                       </div>
                     )}
                   </div>
                 )}
-                <div className="space-y-1">
-                  <div className="flex justify-between items-center text-xs">
-                    <span className={isDark ? 'text-gray-400' : 'text-gray-600'}>Slippage tolerance</span>
-                    <span className={`font-mono ${isDark ? 'text-white' : 'text-gray-900'}`}>{(slippageBps / 100).toFixed(2)}%</span>
-                  </div>
-                  <input
-                    type="range"
-                    min={50}
-                    max={1000}
-                    step={50}
-                    value={slippageBps}
-                    onChange={e => { setSlippageBps(parseInt(e.target.value, 10)); setSlippageAutoSet(true) }}
-                    className="w-full"
-                  />
-                </div>
               </div>
             )}
 
@@ -1404,13 +1391,6 @@ console.log("BALANCE:", balance)
             </div>
             )}
 
-            <NetworkFeesPanel
-              networkId={CLIENT_ID}
-              show={['mint']}
-              omitZeroRows
-              className="mb-2"
-            />
-
             <SubmitButton
                 onClick={handleSubmit}
                 disabled={!!insufficientBalance || (wrongChain ? false : (
@@ -1444,17 +1424,47 @@ console.log("BALANCE:", balance)
               </div>
             )}
 
-            {gasCostEth != null && (() => {
-                const totalEth = gasCostEth + Number(formatEther(quote?.nativeFee ?? 0n))
-                return (
-                    <div className="text-sm text-gray-500 text-center">
-                        est. gas+fees: {totalEth.toFixed(4)} ETH{ethPrice > 0 && ` (~$${(totalEth * ethPrice).toFixed(2)})`}
-                        <span className={`block text-xs mt-0.5 font-medium ${isDark ? 'text-yellow-600' : 'text-amber-700'}`}>
-                            Half of all fees are used to buy and burn CAW
-                        </span>
-                    </div>
-                )
+            {/* Rolled-up network fee row */}
+            {(() => {
+              // Sum all protocol fees that apply to the current flow
+              let protocolFeesWei = networkFees.mintFee ?? 0n
+              if (depositEnabled || paymentMode === 'eth') {
+                protocolFeesWei += networkFees.depositFee ?? 0n
+              }
+              if (quickSignEnabled && (depositEnabled || paymentMode === 'eth')) {
+                protocolFeesWei += networkFees.authFee ?? 0n
+              }
+              const lzFeeWei = quote?.nativeFee ?? 0n
+              const gasWei = gasCostEth != null ? BigInt(Math.round(gasCostEth * 1e18)) : 0n
+              const totalWei = protocolFeesWei + lzFeeWei + gasWei
+              const totalEth = Number(formatEther(totalWei))
+              const totalUsd = ethPrice > 0 ? totalEth * ethPrice : null
+              return (
+                <div className="flex items-center justify-center gap-1 text-sm text-gray-500">
+                  <span>Network fee:</span>
+                  <span className={isDark ? 'text-white' : 'text-gray-900'}>
+                    {totalUsd != null ? `~$${formatUsd(totalUsd)}` : '—'}
+                  </span>
+                  <button
+                    type="button"
+                    aria-label="Network fee details"
+                    onClick={() => setShowFeeModal(true)}
+                    className="flex items-center cursor-pointer text-gray-400 hover:text-yellow-500 transition-colors"
+                  >
+                    <HiInformationCircle className="w-4 h-4" />
+                  </button>
+                </div>
+              )
             })()}
+
+            <NetworkFeeModal
+              isOpen={showFeeModal}
+              onClose={() => setShowFeeModal(false)}
+              networkId={CLIENT_ID}
+              networkName={typeof window !== 'undefined' ? window.location.hostname : 'CAW'}
+              ethPrice={ethPrice}
+              lzFeeWei={quote?.nativeFee ?? 0n}
+            />
         </div>
             </div>
           </div>

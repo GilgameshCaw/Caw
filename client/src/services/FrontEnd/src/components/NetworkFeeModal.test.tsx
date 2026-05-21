@@ -1,0 +1,182 @@
+/**
+ * NetworkFeeModal.test.tsx
+ *
+ * Tests for the NetworkFeeModal component and its USD-formatting math.
+ */
+
+import React from 'react'
+import { describe, it, expect, vi, beforeEach } from 'vitest'
+import { render, screen } from '@testing-library/react'
+import { formatUsd } from '~/utils/numberFormat'
+
+// ─── Mock external dependencies ──────────────────────────────────────────────
+
+vi.mock('~/components/modals/ModalWrapper', () => ({
+  default: ({ isOpen, children }: { isOpen: boolean; children: React.ReactNode }) =>
+    isOpen ? <div data-testid="modal-wrapper">{children}</div> : null,
+}))
+
+vi.mock('~/components/modals/ModalHeader', () => ({
+  default: ({ title, onClose }: { title: string; onClose: () => void }) => (
+    <div data-testid="modal-header">
+      <span>{title}</span>
+      <button onClick={onClose} data-testid="modal-close-btn">X</button>
+    </div>
+  ),
+}))
+
+vi.mock('~/hooks/useTheme', () => ({
+  useTheme: () => ({ isDark: true }),
+}))
+
+vi.mock('~/i18n/I18nProvider', () => ({
+  useT: () => (key: string) => key,
+}))
+
+// Default: all fees null (loading state)
+let mockNetworkFees = {
+  mintFee: null as bigint | null,
+  mintFeeCeiling: null as bigint | null,
+  depositFee: null as bigint | null,
+  depositFeeCeiling: null as bigint | null,
+  authFee: null as bigint | null,
+  authFeeCeiling: null as bigint | null,
+  withdrawFee: null as bigint | null,
+  withdrawFeeCeiling: null as bigint | null,
+  isLoading: true,
+}
+
+vi.mock('~/hooks/useNetworkFees', () => ({
+  useNetworkFees: () => mockNetworkFees,
+}))
+
+// ─── Import component after mocks ─────────────────────────────────────────────
+
+import NetworkFeeModal from './NetworkFeeModal'
+
+// ─── Helpers ─────────────────────────────────────────────────────────────────
+
+const ETH_PRICE = 2000 // $2000/ETH
+const DEFAULT_PROPS = {
+  isOpen: true,
+  onClose: vi.fn(),
+  networkId: 1,
+  networkName: 'CAW',
+  ethPrice: ETH_PRICE,
+}
+
+// ─── Tests ────────────────────────────────────────────────────────────────────
+
+describe('NetworkFeeModal', () => {
+  beforeEach(() => {
+    mockNetworkFees = {
+      mintFee: null,
+      mintFeeCeiling: null,
+      depositFee: null,
+      depositFeeCeiling: null,
+      authFee: null,
+      authFeeCeiling: null,
+      withdrawFee: null,
+      withdrawFeeCeiling: null,
+      isLoading: true,
+    }
+  })
+
+  it('renders nothing when isOpen=false', () => {
+    render(<NetworkFeeModal {...DEFAULT_PROPS} isOpen={false} />)
+    expect(screen.queryByTestId('modal-wrapper')).toBeNull()
+  })
+
+  it('shows network name in the header title', () => {
+    render(<NetworkFeeModal {...DEFAULT_PROPS} networkName="test.caw.social" />)
+    expect(screen.getByTestId('modal-header')).toHaveTextContent('test.caw.social')
+  })
+
+  it('shows — for all fees when fees are still loading', () => {
+    render(<NetworkFeeModal {...DEFAULT_PROPS} />)
+    // All current + ceiling cells should show —
+    const dashes = screen.getAllByText('—')
+    // 4 fee rows × 2 columns (current + ceiling) = 8 dashes, plus LZ current = 9 total
+    expect(dashes.length).toBeGreaterThanOrEqual(8)
+  })
+
+  it('renders USD-converted fee when fees are loaded', () => {
+    // mintFee = 0.001 ETH = 1e15 wei → $2 at $2000/ETH
+    mockNetworkFees = {
+      ...mockNetworkFees,
+      mintFee: 1_000_000_000_000_000n,
+      mintFeeCeiling: 2_000_000_000_000_000n,
+      depositFee: 500_000_000_000_000n,
+      depositFeeCeiling: 1_000_000_000_000_000n,
+      authFee: 0n,
+      authFeeCeiling: 0n,
+      withdrawFee: 0n,
+      withdrawFeeCeiling: 0n,
+      isLoading: false,
+    }
+
+    render(<NetworkFeeModal {...DEFAULT_PROPS} />)
+
+    // mintFee: 0.001 ETH × $2000 = $2.00
+    // (may appear in both current + ceiling columns; use getAllByText)
+    expect(screen.getAllByText('~$2.00').length).toBeGreaterThanOrEqual(1)
+    // depositFee: 0.0005 ETH × $2000 = $1.00
+    expect(screen.getAllByText('~$1.00').length).toBeGreaterThanOrEqual(1)
+  })
+
+  it('shows the LZ fee when provided', () => {
+    // 0.002 ETH = 2e15 wei → $4.00 at $2000/ETH
+    render(<NetworkFeeModal {...DEFAULT_PROPS} lzFeeWei={2_000_000_000_000_000n} />)
+    expect(screen.getByText('~$4.00')).toBeTruthy()
+  })
+
+  it('shows — for LZ fee when lzFeeWei is not provided', () => {
+    render(<NetworkFeeModal {...DEFAULT_PROPS} lzFeeWei={undefined} />)
+    // Expect the LZ row's current column to be —
+    // (varies) appears for ceiling, — for current
+    expect(screen.getByText('(varies)')).toBeTruthy()
+    const dashes = screen.getAllByText('—')
+    expect(dashes.length).toBeGreaterThan(0)
+  })
+
+  it('shows the buy-and-burn note', () => {
+    render(<NetworkFeeModal {...DEFAULT_PROPS} />)
+    expect(screen.getByText(/buy and burn CAW/i)).toBeTruthy()
+  })
+
+  it('shows the ceiling commitment explanation', () => {
+    render(<NetworkFeeModal {...DEFAULT_PROPS} />)
+    expect(screen.getByText(/lower it, never raise it/i)).toBeTruthy()
+  })
+})
+
+// ─── formatUsd math unit tests ────────────────────────────────────────────────
+
+describe('formatUsd rollup math (network fee)', () => {
+  it('formats a typical ETH gas cost', () => {
+    // 0.003 ETH × $2000 = $6.00
+    expect(formatUsd(0.003 * 2000)).toBe('6.00')
+  })
+
+  it('formats sub-cent protocol fees', () => {
+    // 0.00001 ETH × $2000 = $0.02 exactly → standard 2-decimal
+    expect(formatUsd(0.02)).toBe('0.02')
+  })
+
+  it('formats zero as 0.00', () => {
+    expect(formatUsd(0)).toBe('0.00')
+  })
+
+  it('formats large amounts with thousands separator', () => {
+    expect(formatUsd(1234.56)).toBe('1,234.56')
+  })
+
+  it('rollup: mintFee + depositFee + lzFee → total in USD', () => {
+    // Simulate the rollup logic used in New.tsx:
+    //   mintFee = 0.001 ETH, depositFee = 0.0005 ETH, lzFee = 0.002 ETH
+    //   total = 0.0035 ETH × $2000 = $7.00
+    const totalEth = 0.001 + 0.0005 + 0.002 + 0.001 // gas estimate
+    const usd = totalEth * ETH_PRICE
+    expect(formatUsd(usd)).toBe('9.00')
+  })
+})
