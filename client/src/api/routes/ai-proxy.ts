@@ -1,6 +1,15 @@
-import { Router, Request, Response } from 'express'
+import { Router, Request, Response, json as expressJson } from 'express'
 import { rateLimit } from 'express-rate-limit'
 import { originGate } from '../middleware/originGate'
+
+// Per-route body parser: tight 8 KB cap. The global express.json limit
+// is 50 MB to accommodate image uploads elsewhere — that's gratuitous
+// here. The legitimate ai-proxy body is { apiKey: ~51 chars, prompt:
+// up to a few hundred chars } — 8 KB is roomy. Without this, a malicious
+// caller could amplify ~50 MB of body parsing per request (gated by the
+// 30/min rate limit, but still a memory + bandwidth multiplier worth
+// closing). Security audit finding pre-merge.
+const tightBody = expressJson({ limit: '8kb' })
 
 /**
  * BYOK (bring-your-own-key) AI image generation proxy.
@@ -222,8 +231,13 @@ async function forwardToProvider(spec: ProviderSpec, apiKey: string, prompt: str
   // Fetch the bytes server-side and convert to b64 so the FE keeps a
   // single rendering path regardless of provider.
   if (first.url) {
+    // 20s timeout on the CDN-fetch fallback so a stalled upstream CDN
+    // can't hold a worker thread open indefinitely (security audit
+    // finding — secondary fetch had no abort/timeout).
+    const cdnController = new AbortController()
+    const cdnTimer = setTimeout(() => cdnController.abort(), 20_000)
     try {
-      const imgRes = await fetch(first.url)
+      const imgRes = await fetch(first.url, { signal: cdnController.signal })
       if (!imgRes.ok) {
         return { ok: false, status: 502, kind: 'network', message: `Failed to fetch generated image (${imgRes.status}).` }
       }
@@ -232,6 +246,8 @@ async function forwardToProvider(spec: ProviderSpec, apiKey: string, prompt: str
       return { ok: true, b64Json: buf.toString('base64'), mimeType }
     } catch {
       return { ok: false, status: 502, kind: 'network', message: 'Failed to download generated image.' }
+    } finally {
+      clearTimeout(cdnTimer)
     }
   }
 
@@ -271,8 +287,8 @@ function makeImageHandler(providerKey: string) {
   }
 }
 
-router.post('/openai/image', gate, aiProxyRateLimit, makeImageHandler('openai'))
-router.post('/grok/image',   gate, aiProxyRateLimit, makeImageHandler('grok'))
+router.post('/openai/image', tightBody, gate, aiProxyRateLimit, makeImageHandler('openai'))
+router.post('/grok/image',   tightBody, gate, aiProxyRateLimit, makeImageHandler('grok'))
 
 router.get('/health', (_req, res) => {
   res.json({ providers: Object.keys(PROVIDERS) })
