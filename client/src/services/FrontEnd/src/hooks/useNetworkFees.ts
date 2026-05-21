@@ -4,6 +4,8 @@ import { NETWORK_MANAGER_ADDRESS } from '~/../../../abi/addresses'
 import { chains } from '~/config/chains'
 
 export interface NetworkFees {
+  /** Network name from CawNetwork.name (e.g., "Uruk (testnet)"). */
+  name: string | null
   depositFee: bigint | null
   authFee: bigint | null
   withdrawFee: bigint | null
@@ -89,11 +91,23 @@ export function useNetworkFees(networkId: number | undefined, enabled = true): N
         functionName: 'getMintFeeCeiling',
         args: [networkId ?? 0],
       },
+      // [8] network metadata (struct read — extract .name)
+      {
+        address: NETWORK_MANAGER_ADDRESS,
+        abi: cawNetworkManagerAbi,
+        chainId: chains.l1.chainId,
+        functionName: 'getNetwork',
+        args: [networkId ?? 0],
+      },
     ],
     query: { enabled: ready },
   })
 
+  // getNetwork returns the full CawNetwork struct. Extract `name`.
+  const networkStruct = data?.[8]?.result as { name?: string } | undefined
+
   return {
+    name: networkStruct?.name ?? null,
     depositFee:  (data?.[0]?.result as bigint | undefined) ?? null,
     authFee:     (data?.[1]?.result as bigint | undefined) ?? null,
     withdrawFee: (data?.[2]?.result as bigint | undefined) ?? null,

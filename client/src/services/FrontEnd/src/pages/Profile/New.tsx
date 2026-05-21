@@ -1461,7 +1461,6 @@ console.log("BALANCE:", balance)
               isOpen={showFeeModal}
               onClose={() => setShowFeeModal(false)}
               networkId={CLIENT_ID}
-              networkName={typeof window !== 'undefined' ? window.location.hostname : 'CAW'}
               ethPrice={ethPrice}
               lzFeeWei={quote?.nativeFee ?? 0n}
             />

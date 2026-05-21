@@ -28,8 +28,13 @@ interface NetworkFeeModalProps {
   isOpen: boolean
   onClose: () => void
   networkId: number | undefined
-  /** Human-readable network name, e.g. "CAW" or "test.caw.social" */
-  networkName: string
+  /**
+   * Optional override. If omitted, the modal reads the on-chain Network
+   * name via useNetworkFees(networkId).name. This is the right behavior in
+   * 99% of cases — pass an override only if you want to display the mirror
+   * hostname or a custom label instead of the actual Network name.
+   */
+  networkName?: string
   /** ETH/USD price in dollars (from usePriceStore) */
   ethPrice: number
   /** Current LZ native fee in wei (from quote?.nativeFee) */
@@ -80,6 +85,10 @@ const NetworkFeeModal: React.FC<NetworkFeeModalProps> = ({
   const { isDark } = useTheme()
   const fees = useNetworkFees(networkId, isOpen)
 
+  // Prefer the actual on-chain Network name over any caller override.
+  // Falls back to override → "this Network" when both are missing.
+  const displayName = fees.name ?? networkName ?? 'this Network'
+
   const mutedClass = isDark ? 'text-white/60' : 'text-gray-500'
   const headerClass = isDark ? 'text-white/40' : 'text-gray-400'
   const borderClass = isDark ? 'border-white/10' : 'border-gray-200'
@@ -95,7 +104,7 @@ const NetworkFeeModal: React.FC<NetworkFeeModalProps> = ({
       usePortal
     >
       <ModalHeader
-        title={`Network fees on ${networkName}`}
+        title={`Network fees on ${displayName}`}
         onClose={onClose}
         icon={<HiInformationCircle className="w-5 h-5 text-yellow-500" />}
         iconBg="bg-yellow-500/20"
@@ -105,7 +114,7 @@ const NetworkFeeModal: React.FC<NetworkFeeModalProps> = ({
         {/* Intro */}
         <p className={`text-sm leading-relaxed ${mutedClass}`}>
           These are the fees you pay when you mint, deposit, authenticate, or
-          withdraw on <span className={isDark ? 'text-white' : 'text-gray-900'}>{networkName}</span>.
+          withdraw on <span className={isDark ? 'text-white' : 'text-gray-900'}>{displayName}</span>.
           The ceiling is a permanent upper bound the Network operator committed to —
           they can lower it, never raise it.
         </p>
