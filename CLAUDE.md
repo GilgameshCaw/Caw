@@ -102,6 +102,20 @@ Detailed write-up: `docs/ZK_SIG_PATH.md`. Crate: `solidity/zk/sig-recovery/READM
 - **React Query** for server state
 - **Framer Motion** for animations
 
+### Population routing (FE)
+
+The FE classifies every connected wallet into one of four populations via `useWalletPopulation()` (reads wagmi `useAccount()` + viem `getCode`):
+- **A** — plain EOA (empty code). Uses wagmi `writeContract` directly to the V2 contracts.
+- **B** — EIP-7702-delegated EOA (`code` starts with `0xef0100`, 23 bytes total). Routes through the sponsor server's three entry points (`mintAndDepositSponsored`, `depositForSponsored`, `authenticateSponsored`) signed by a WebAuthn passkey (default) or the secp256k1 ecdsaFallback key (recovery mode). `withdrawTo` is always direct, never sponsored.
+- **C** — other contract account (Safe / Argent / CSW). Not yet supported via sponsor path — needs an ISmartEOA shim (v2 scope).
+- **none** — no wallet connected. Recovery mode upgrades this to **B** when `RecoveryProvider.isInRecoveryMode === true`.
+
+New routes:
+- `/onboarding` — Population B signup (passkey enroll + secp256k1 keygen + Argon2id-encrypted backup blob + sponsor `bootstrap`).
+- `/recovery` — sign in with backup file + vault password. The recovered secp256k1 key lives ONLY in `RecoveryProvider` React state; never persisted to localStorage / sessionStorage / IndexedDB.
+
+Identity management lives under the existing AccountSettings page (Population B users only): enrolled passkeys list, add-passkey (24h timelock), rotate ecdsaFallback, re-download backup file. The `IdentitySigningProvider` shows a global biometric-prompt overlay during `navigator.credentials.get()` ceremonies.
+
 ### Database & Infrastructure
 - **PostgreSQL** with Prisma ORM
 - **Redis** for caching
