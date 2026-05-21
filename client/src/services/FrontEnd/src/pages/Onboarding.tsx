@@ -149,7 +149,13 @@ export default function Onboarding() {
 
   // BackupStep → advances to 'confirm' after successful bootstrap
   const handleBootstrapDone = useCallback((result: BootstrapResult) => {
-    setState(s => ({ ...s, bootstrapResult: result, step: 'confirm' }))
+    setState(s => ({
+      ...s,
+      bootstrapResult: result,
+      step: 'confirm',
+      vaultPassword: '',
+      vaultPasswordConfirm: '',
+    }))
   }, [])
 
   // BackupStep → USERNAME_TAKEN: return to username step with error hint

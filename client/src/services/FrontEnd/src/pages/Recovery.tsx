@@ -217,7 +217,7 @@ export default function Recovery() {
               {isDecrypting ? t('recovery.password.decrypting') : t('recovery.password.decrypt_cta')}
             </button>
             <button
-              onClick={() => { setStep('file-select'); setPassword(''); setError(null) }}
+              onClick={() => { setBlob(null); setPassword(''); setError(null); setStep('file-select') }}
               className={`w-full py-2.5 text-sm rounded-xl transition-colors cursor-pointer ${
                 isDark ? 'text-white/50 hover:text-white/80' : 'text-gray-400 hover:text-gray-700'
               }`}

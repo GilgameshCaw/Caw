@@ -50,7 +50,7 @@ const FAKE_PUBKEY_ID = '0xdeadbeef0000000000000000000000000000000000000000000000
 
 function buildPendingRow(proposedAt: number): PendingPasskeyRow {
   return {
-    pubkeyId: FAKE_PUBKEY_ID,
+    pubkeyHash: FAKE_PUBKEY_ID,
     pubkeyX: '0xaaaa000000000000000000000000000000000000000000000000000000000000' as `0x${string}`,
     pubkeyY: '0xbbbb000000000000000000000000000000000000000000000000000000000000' as `0x${string}`,
     proposedAt,

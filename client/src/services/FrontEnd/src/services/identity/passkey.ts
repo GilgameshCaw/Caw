@@ -276,19 +276,25 @@ function normalizeSignatureComponent(raw: Uint8Array): Uint8Array {
 // ---------------------------------------------------------------------------
 // SPKI public key extraction
 // ---------------------------------------------------------------------------
-// SubjectPublicKeyInfo DER for P-256 ends with 65 uncompressed-point bytes:
-//   0x04 || X (32 bytes) || Y (32 bytes)
-// We find the 0x04 marker and read the subsequent 64 bytes.
+// P-256 SubjectPublicKeyInfo for an uncompressed point is exactly 91 bytes:
+//   Bytes 0–25:  DER prefix (SEQUENCE { SEQUENCE { OID ecPublicKey, OID prime256v1 }, BIT STRING })
+//   Byte  26:    0x00 (BIT STRING unused-bits count)
+//   Byte  27:    0x04 (uncompressed point marker)
+//   Bytes 28–59: X (32 bytes)
+//   Bytes 60–91: Y (32 bytes)
 
 function extractP256XYFromSpki(spki: Uint8Array): { x: Uint8Array; y: Uint8Array } {
-  // P-256 uncompressed point prefix
-  const markerIdx = spki.lastIndexOf(0x04)
-  if (markerIdx === -1 || spki.length < markerIdx + 65) {
-    throw new Error('extractP256XYFromSpki: could not find uncompressed point in SPKI')
+  // P-256 SPKI for an uncompressed point is exactly 91 bytes.
+  // The DER prefix is fixed; byte 27 is the 0x04 uncompressed marker; the
+  // next 64 bytes are X || Y. Reject any other shape — lastIndexOf-style
+  // scanning can be fooled by a 0x04 byte appearing inside the OID prefix.
+  if (spki.length !== 91) {
+    throw new Error(`extractP256XYFromSpki: P-256 SPKI must be 91 bytes, got ${spki.length}`)
   }
-  const x = spki.slice(markerIdx + 1, markerIdx + 33)
-  const y = spki.slice(markerIdx + 33, markerIdx + 65)
-  return { x, y }
+  if (spki[26] !== 0x00 || spki[27] !== 0x04) {
+    throw new Error('extractP256XYFromSpki: P-256 SPKI uncompressed point marker not at byte 27')
+  }
+  return { x: spki.slice(28, 60), y: spki.slice(60, 92) }
 }
 
 // ---------------------------------------------------------------------------

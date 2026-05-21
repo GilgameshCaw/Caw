@@ -9,7 +9,7 @@
  *
  * Phase B — Finalize: shown separately in IdentitySection as a banner
  *   on any pending row whose proposedAt + 24h has elapsed.
- *   Calling SmartEOA.finalizeAddPasskey(pubkeyId) promotes it to enrolled.
+ *   Calling SmartEOA.finalizeAddPasskey(pubkeyHash) promotes it to enrolled.
  *
  * For Wave 3, the actual on-chain write for propose and finalize is
  * stubbed behind the `onPropose` / `onFinalize` callbacks — the parent
@@ -17,7 +17,7 @@
  * decoupled from the ABI and contract address details.
  *
  * A "Cancel pending passkey" button removes a pending row by calling
- * SmartEOA.cancelPendingPasskey(pubkeyId) via the `onCancel` callback.
+ * SmartEOA.cancelPendingPasskey(pubkeyHash) via the `onCancel` callback.
  */
 
 import React, { useState, useCallback, useEffect } from 'react'
@@ -31,8 +31,8 @@ import { enrollPasskey, type PasskeyPubkey } from '~/services/identity/passkey'
 // ─── Types ────────────────────────────────────────────────────────────────────
 
 export interface PendingPasskeyRow {
-  /** keccak256(abi.encode(X, Y)) as 0x-hex */
-  pubkeyId: `0x${string}`
+  /** keccak256(abi.encode(X, Y)) as 0x-hex; matches event's pubkeyHash */
+  pubkeyHash: `0x${string}`
   pubkeyX: `0x${string}`
   pubkeyY: `0x${string}`
   /** Unix timestamp (seconds) when the passkey was proposed on-chain. */
@@ -224,13 +224,13 @@ export function AddPasskeyDialog({
             {pendingPasskeys.map(row => {
               const remainSeconds = secondsUntilFinalizable(row.proposedAt)
               const canFinalize = remainSeconds === 0
-              const isFinalizing = finalizingId === row.pubkeyId
-              const isCancelling = cancellingId === row.pubkeyId
-              const shortId = row.pubkeyId.slice(2, 10)
+              const isFinalizing = finalizingId === row.pubkeyHash
+              const isCancelling = cancellingId === row.pubkeyHash
+              const shortId = row.pubkeyHash.slice(2, 10)
 
               return (
                 <div
-                  key={row.pubkeyId}
+                  key={row.pubkeyHash}
                   className={`rounded-lg p-3 ${subtleBg}`}
                   data-testid={`pending-passkey-${shortId}`}
                 >
@@ -263,7 +263,7 @@ export function AddPasskeyDialog({
                         <button
                           type="button"
                           data-testid={`finalize-btn-${shortId}`}
-                          onClick={() => handleFinalize(row.pubkeyId)}
+                          onClick={() => handleFinalize(row.pubkeyHash)}
                           disabled={isFinalizing}
                           className="text-xs px-2 py-1 rounded bg-yellow-500 text-black font-medium hover:bg-yellow-400 transition-colors cursor-pointer disabled:opacity-50"
                         >
@@ -273,7 +273,7 @@ export function AddPasskeyDialog({
                       <button
                         type="button"
                         data-testid={`cancel-btn-${shortId}`}
-                        onClick={() => handleCancel(row.pubkeyId)}
+                        onClick={() => handleCancel(row.pubkeyHash)}
                         disabled={isCancelling}
                         className={`text-xs px-2 py-1 rounded transition-colors cursor-pointer disabled:opacity-50 ${
                           isDark
