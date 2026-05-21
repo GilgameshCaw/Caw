@@ -541,9 +541,14 @@ const MessagesPage: React.FC = () => {
   // here AND in the effect caused a double state update → visible
   // rebound flicker on mobile.
   const goBackToInbox = () => {
+    if (selectedConversationId) {
+      leaveConversation(selectedConversationId)
+    }
+    setCurrentView('inbox')
+    setSelectedConversationId(null)
+    setShowChatOptionsMenu(false)
     navigate('/messages', { replace: true })
-    // Refresh conversations to show latest messages after the URL effect
-    // has cleared the chat view.
+    // Refresh conversations to show latest messages.
     refreshConversations()
   }
 
