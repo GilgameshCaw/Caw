@@ -535,11 +535,12 @@ const MessagesPage: React.FC = () => {
     }
   }, [selectedConversationId, messages.length])
 
-  // Function to go back to inbox. Only navigates — the URL-change
-  // useEffect (no urlUsername + currentView === 'chat') handles
-  // leaving the conversation room and resetting state. Doing both
-  // here AND in the effect caused a double state update → visible
-  // rebound flicker on mobile.
+  // Function to go back to inbox. Resets state directly because group
+  // chats stay at /messages (no urlUsername transition fires the
+  // URL-watching effect at line ~872). The effect remains as a safety
+  // net for direct URL navigation; it self-skips when currentView is
+  // already 'inbox', so the synchronous setCurrentView('inbox') here
+  // pre-empts the second update without a visible flicker.
   const goBackToInbox = () => {
     if (selectedConversationId) {
       leaveConversation(selectedConversationId)
