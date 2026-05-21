@@ -66,7 +66,6 @@ async function checkSponsorRateLimit(ip: string, op: 'bootstrap' | 'deposit' | '
 
 const hex32Schema = z.string().regex(/^0x[0-9a-fA-F]{64}$/, 'must be 0x-prefixed 32-byte hex')
 const addressSchema = z.string().regex(/^0x[0-9a-fA-F]{40}$/, 'must be 0x-prefixed 20-byte address')
-const hexBytesSchema = z.string().regex(/^0x([0-9a-fA-F]{2})*$/, 'must be 0x-prefixed even-length hex')
 // Signature-specific schema (L-2): 65-byte ECDSA = 132 chars. WebAuthn blobs are
 // larger (encodes authenticatorData + clientDataJSON + r + s as bytes, bytes,
 // bytes32, bytes32) — typically <1500 bytes. Cap at ~8 KB with margin for any
