@@ -52,6 +52,7 @@ export interface ChainContracts {
   CawFontDataB?: `0x${string}`
   CawBuyAndBurn?: `0x${string}`
   MockSwapRouter?: `0x${string}`
+  SmartEOA?: `0x${string}`
 
   // Per-chain contracts (present on every L2; CawActions also on L1):
   CawActions?: `0x${string}`
@@ -77,6 +78,7 @@ export const deployments: Deployments = {
       CawFontDataB: '0x1D084Cb5F219627285a83A8ce6F70d4EBa98fBf3',
       CawBuyAndBurn: '0x5860d1E0b1bcE200B273f41716f5dB200FC7f486',
       MockSwapRouter: '0x1b5ee1C13c7D4135Ee4173Ca4D0dF2B847E84199',
+      SmartEOA: '0x0000000000000000000000000000000000000000',
       CawActions: '0xD20bE35D2365C0f7DaF563A47b29eB5a165C2007',
     },
     L2: {
