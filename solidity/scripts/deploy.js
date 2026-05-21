@@ -1970,6 +1970,9 @@ async function writeAddressesForLocalInstall(deployer) {
     CAW_ACTIONS_ADDRESS: storageChainKey === 'L1' ? l1.CawActions : l2.CawActions,
     CAW_ACTIONS_ARCHIVE_ADDRESS: l2.CawActionsArchive,
     CAW_CHALLENGE_RELAY_ADDRESS: l2.CawChallengeRelay,
+    // V2 additions — Population B / sponsor flow:
+    CAW_ACTIONS_ERC1271_ADDRESS: storageChainKey === 'L1' ? l1.CawActionsERC1271 : l2.CawActionsERC1271,
+    SMART_EOA_ADDRESS: l1.SmartEOA,
   };
   const staticConsts = {
     WETH_ADDRESS: '0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2',

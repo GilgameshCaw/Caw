@@ -3439,7 +3439,7 @@ console.log("succeededKeys", succeededKeys)
     // before getL2bContracts() has been called — only correct when the
     // operator's storage chain happens to equal their replication chain
     // (rare, but harmless when it's true).
-    let OPTIMISTIC_ARCHIVE_ADDRESS = CAW_ACTIONS_ARCHIVE_ADDRESS
+    let OPTIMISTIC_ARCHIVE_ADDRESS: string = CAW_ACTIONS_ARCHIVE_ADDRESS
     // One-shot guard so the CLI stake-setup prompt prints once per process,
     // not every 30s when the replicator loop re-fires.
     let underStakedWarned = false
