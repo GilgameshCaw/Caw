@@ -93,7 +93,8 @@ export default function CaptiveSplash() {
         </p>
 
         {/* CTA buttons */}
-        <div className="flex flex-col sm:flex-row items-center gap-4 mb-12">
+        <div className="flex flex-col items-center gap-4 mb-12">
+          <div className="flex flex-col sm:flex-row items-center gap-4">
           {!isConnected ? (
             <button
               onClick={openConnectModal}
@@ -127,6 +128,19 @@ export default function CaptiveSplash() {
           >
             {t('main_layout.learn_more')}
           </Link>
+          </div>
+
+          {/* Discovery link for users who don't have a crypto wallet yet */}
+          {!isConnected && (
+            <Link
+              to="/onboarding"
+              className={`text-sm transition-colors ${
+                isDark ? 'text-white/40 hover:text-white/70' : 'text-gray-400 hover:text-gray-600'
+              }`}
+            >
+              {t('captive_splash.no_wallet')}
+            </Link>
+          )}
         </div>
 
         {/* Feature highlights */}
