@@ -141,6 +141,17 @@ export default function CaptiveSplash() {
               {t('captive_splash.no_wallet')}
             </Link>
           )}
+          {/* Recovery entry point for users who have lost their device */}
+          {!isConnected && (
+            <Link
+              to="/recovery"
+              className={`text-sm transition-colors ${
+                isDark ? 'text-white/40 hover:text-white/70' : 'text-gray-400 hover:text-gray-600'
+              }`}
+            >
+              {t('captive_splash.have_backup_file')}
+            </Link>
+          )}
         </div>
 
         {/* Feature highlights */}

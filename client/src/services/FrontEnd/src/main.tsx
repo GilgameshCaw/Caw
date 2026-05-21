@@ -21,6 +21,7 @@ import "@rainbow-me/rainbowkit/styles.css";
 import App from "./App.tsx";
 import Web3Provider from "./config/Web3Provider";
 import StateProvider from "./config/StateProvider.tsx";
+import { RecoveryProvider } from "./components/identity/RecoveryProvider.tsx";
 import { IdentitySigningProvider } from "./components/identity/IdentitySigningProvider.tsx";
 import { QueryClient, focusManager } from '@tanstack/react-query'
 
@@ -195,9 +196,11 @@ createRoot(document.getElementById("root")!).render(
     <Sentry.ErrorBoundary fallback={<p>Something went wrong. The error has been reported.</p>}>
       <Web3Provider queryClient={queryClient}>
         <StateProvider>
-          <IdentitySigningProvider>
-            <App />
-          </IdentitySigningProvider>
+          <RecoveryProvider>
+            <IdentitySigningProvider>
+              <App />
+            </IdentitySigningProvider>
+          </RecoveryProvider>
         </StateProvider>
       </Web3Provider>
     </Sentry.ErrorBoundary>

@@ -28,6 +28,7 @@ import { themeLayoutShell } from '~/utils/theme'
 import Avatar from '~/components/Avatar';
 import { getUserAvatar } from '~/utils/defaultAvatar';
 import { useTokenDataStore } from '~/store/tokenDataStore';
+import RecoveryBanner from '~/components/identity/RecoveryBanner';
 
 const BoidsBg = lazy(() => import('~/components/BoidsBg'))
 
@@ -416,6 +417,7 @@ const MainLayout = ({ children, hideSidebars: hideSidebarsProp }: MainLayoutProp
           </Suspense>
         )}
         <div className={`flex-1 min-h-0 ${hideSidebars ? 'pb-24 relative z-10' : ''}`}>
+          <RecoveryBanner />
           {children}
         </div>
       </main>

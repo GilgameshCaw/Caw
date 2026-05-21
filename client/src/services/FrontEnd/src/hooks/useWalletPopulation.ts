@@ -15,6 +15,7 @@
 import { useMemo } from 'react'
 import { useAccount, usePublicClient } from 'wagmi'
 import { useQuery } from '@tanstack/react-query'
+import { useRecoveryContext } from '~/components/identity/RecoveryProvider'
 
 export type WalletPopulation = 'A' | 'B' | 'C' | 'none'
 
@@ -48,6 +49,7 @@ export function classifyBytecode(code: string | undefined): 'A' | 'B' | 'C' {
 export function useWalletPopulation(): UseWalletPopulationReturn {
   const { address, isConnected } = useAccount()
   const publicClient = usePublicClient()
+  const recoveryCtx = useRecoveryContext()
 
   const { data: bytecode, isLoading } = useQuery({
     queryKey: ['wallet-bytecode', address],
@@ -62,16 +64,26 @@ export function useWalletPopulation(): UseWalletPopulationReturn {
   })
 
   const population = useMemo<WalletPopulation>(() => {
-    if (!isConnected || !address) return 'none'
+    // Recovery mode: no wagmi wallet connected, but the user signed in via their
+    // backup file. Treat as Population B (secp256k1 ecdsaFallback path).
+    if (!isConnected || !address) {
+      if (recoveryCtx.isInRecoveryMode) return 'B'
+      return 'none'
+    }
     if (isLoading) return 'none'
     // bytecode from getCode is Hex | undefined; convert to string for classifier
     const code = bytecode === undefined ? undefined : (bytecode as string)
     return classifyBytecode(code)
-  }, [isConnected, address, isLoading, bytecode])
+  }, [isConnected, address, isLoading, bytecode, recoveryCtx.isInRecoveryMode])
+
+  // In recovery mode return the recovered address instead of the wagmi address.
+  const effectiveAddress = (!isConnected && recoveryCtx.isInRecoveryMode)
+    ? (recoveryCtx.address ?? undefined)
+    : address
 
   return {
     population,
     loading: isConnected && !!address && isLoading,
-    address,
+    address: effectiveAddress,
   }
 }

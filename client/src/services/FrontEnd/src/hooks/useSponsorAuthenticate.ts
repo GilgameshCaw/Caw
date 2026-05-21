@@ -22,6 +22,7 @@
 import { useCallback, useState } from 'react'
 import { usePublicClient } from 'wagmi'
 import { useWalletPopulation } from '~/hooks/useWalletPopulation'
+import { useRecoveryContext } from '~/components/identity/RecoveryProvider'
 import {
   getSponsorApiClient,
   isSponsorSuccess,
@@ -32,6 +33,7 @@ import {
   type AuthenticatePermitOpts,
 } from '~/services/identity/eip712Permits'
 import { signWithPasskey } from '~/services/identity/passkey'
+import { signDigestForOnChain } from '~/services/identity/secp256k1Key'
 import { CAW_NAMES_MINTER_ADDRESS } from '~/../../../abi/addresses'
 import { chains } from '~/config/chains'
 
@@ -67,6 +69,7 @@ export interface UseSponsorAuthenticateReturn {
 export function useSponsorAuthenticate(): UseSponsorAuthenticateReturn {
   const { population } = useWalletPopulation()
   const publicClient = usePublicClient()
+  const recovery = useRecoveryContext()
   const [status, setStatus] = useState<SponsorAuthStatus>('idle')
 
   const authenticate = useCallback(async (params: SponsorAuthenticateParams): Promise<SponsorAuthenticateResult> => {
@@ -101,13 +104,26 @@ export function useSponsorAuthenticate(): UseSponsorAuthenticateReturn {
 
       const digest = buildAuthenticatePermitDigest(digestOpts)
 
-      const rpId = params.rpId ?? (typeof window !== 'undefined' ? window.location.hostname : 'app.caw.social')
-
-      const sigResult = await signWithPasskey({
-        credentialId: params.credentialId,
-        digest,
-        rpId,
-      })
+      // Recovery mode: sign with secp256k1 ecdsaFallback key instead of passkey.
+      // The 65-byte ECDSA blob is accepted by SmartEOA's ecdsaFallback dispatch path.
+      let sigHex: `0x${string}`
+      if (recovery.isInRecoveryMode && recovery.privateKey) {
+        const keyHex = recovery.privateKey.startsWith('0x')
+          ? recovery.privateKey.slice(2)
+          : recovery.privateKey
+        const keyBytes = new Uint8Array(
+          keyHex.match(/.{2}/g)!.map(b => parseInt(b, 16))
+        )
+        sigHex = signDigestForOnChain(keyBytes, digest)
+      } else {
+        const rpId = params.rpId ?? (typeof window !== 'undefined' ? window.location.hostname : 'app.caw.social')
+        const sigResult = await signWithPasskey({
+          credentialId: params.credentialId,
+          digest,
+          rpId,
+        })
+        sigHex = sigResult.sig as `0x${string}`
+      }
 
       const sponsorClient = getSponsorApiClient()
       const response = await sponsorClient.sponsorAuthenticate({
@@ -116,7 +132,7 @@ export function useSponsorAuthenticate(): UseSponsorAuthenticateReturn {
         lzDestId,
         lzTokenAmount: DEFAULT_LZ_TOKEN_AMOUNT.toString(),
         permitNonce: params.permitNonce.toString(),
-        sig: sigResult.sig,
+        sig: sigHex,
       })
 
       if (isSponsorSuccess(response)) {
@@ -137,7 +153,7 @@ export function useSponsorAuthenticate(): UseSponsorAuthenticateReturn {
         error: err instanceof Error ? err.message : 'Sponsor authenticate failed',
       }
     }
-  }, [population, publicClient])
+  }, [population, publicClient, recovery])
 
   return { authenticate, status, population }
 }

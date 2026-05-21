@@ -89,6 +89,7 @@ const WelcomePage = lazyWithReload(() => import("./pages/WelcomePage"));
 const Marketplace = lazyWithReload(() => import("./pages/Marketplace"));
 const AddressTokens = lazyWithReload(() => import("./pages/AddressTokens"));
 const OnboardingPage = lazyWithReload(() => import("./pages/Onboarding"));
+const RecoveryPage = lazyWithReload(() => import("./pages/Recovery"));
 
 // Routes are split into two groups so `<MainLayout>` can be hoisted to a
 // single shared parent route. The layout stays mounted across navigation
@@ -166,6 +167,7 @@ export const layoutRoutes: RouteDef[] = [
 // welcome screen, admin shells. These never had MainLayout pre-hoist.
 export const bareRoutes: RouteDef[] = [
   { path: "/onboarding", component: <OnboardingPage /> },
+  { path: "/recovery", component: <RecoveryPage /> },
   { path: "/welcome", component: <CaptiveSplash /> },
   { path: "/welcome/:username", component: <WelcomePage /> },
   { path: "/admin", component: <AdminGate><Admin /></AdminGate> },

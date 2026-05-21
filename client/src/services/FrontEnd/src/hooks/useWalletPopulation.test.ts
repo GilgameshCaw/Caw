@@ -56,6 +56,18 @@ vi.mock('wagmi', () => ({
   usePublicClient: vi.fn(),
 }))
 
+// Mock RecoveryProvider — default: not in recovery mode
+const mockUseRecoveryContext = vi.fn(() => ({
+  privateKey: null,
+  address: null,
+  isInRecoveryMode: false,
+  setKey: vi.fn(),
+  clearKey: vi.fn(),
+}))
+vi.mock('~/components/identity/RecoveryProvider', () => ({
+  useRecoveryContext: () => mockUseRecoveryContext(),
+}))
+
 // @tanstack/react-query is used internally by the hook; provide a real
 // QueryClientProvider wrapper so the hook renders properly.
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
@@ -138,5 +150,28 @@ describe('useWalletPopulation', () => {
 
     await waitFor(() => expect(result.current.loading).toBe(false))
     expect(result.current.population).toBe<WalletPopulation>('C')
+  })
+
+  it('returns B with recovery address when no wagmi account but in recovery mode', async () => {
+    const recoveryAddr = '0xaAbBcCdDeEfF001122334455667788990011aabb' as `0x${string}`
+    // No wagmi wallet connected
+    mockUseAccount.mockReturnValue({ address: undefined, isConnected: false })
+    mockUsePublicClient.mockReturnValue(null)
+    // Recovery mode active
+    mockUseRecoveryContext.mockReturnValue({
+      privateKey: '0x4c0883a69102937d6231471b5dbb6e538eba2ef3ab91d3d82b2c54ea5d282d69' as `0x${string}`,
+      address: recoveryAddr,
+      isInRecoveryMode: true,
+      setKey: vi.fn(),
+      clearKey: vi.fn(),
+    })
+
+    const { result } = renderHook(() => useWalletPopulation(), {
+      wrapper: makeWrapper(),
+    })
+
+    expect(result.current.population).toBe<WalletPopulation>('B')
+    expect(result.current.address).toBe(recoveryAddr)
+    expect(result.current.loading).toBe(false)
   })
 })
