@@ -301,9 +301,12 @@ contract CawProfileL2 is
   event ERC1271SiblingSet(address sibling);
 
   /// @notice Set the ERC-1271 sibling contract. Owner-only; can only be called once.
-  /// @dev OnlyOnce guard makes the binding tamper-evident at deploy and bricks any
-  ///      second call regardless of owner-renouncement timing.
-  function setERC1271Sibling(address _sibling) external onlyOwner onlyOnce(keccak256("setERC1271Sibling")) {
+  /// @dev Inline one-shot guard (vs OnlyOnce mapping) to save ~130 bytes — CawProfileL2
+  ///      is within 100 bytes of the EIP-170 cap and the mapping overhead was the
+  ///      only thing pushing it over. Semantically equivalent to OnlyOnce: first
+  ///      call binds, all subsequent calls revert.
+  function setERC1271Sibling(address _sibling) external onlyOwner {
+    if (erc1271Sibling != address(0)) revert SiblingSet();
     if (_sibling == address(0)) revert ZeroSibling();
     erc1271Sibling = _sibling;
     emit ERC1271SiblingSet(_sibling);
