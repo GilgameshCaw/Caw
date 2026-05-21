@@ -200,7 +200,7 @@ contract VaultConservationTest is Test {
         cawProfile.setMinter(address(this));
 
         // storageChainEid must be > 0; use 2 (same as L2 LZ ID)
-        networkManager.createNetwork("TestNet", address(this), 2, 0, 0, 0, 0, 0);
+        networkManager.createNetwork("TestNet", address(this), 2, 0, 0, 0, 0);
 
         for (uint256 i = 0; i < 5; i++) {
             actors[i]   = vm.addr(i + 1);

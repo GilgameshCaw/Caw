@@ -199,7 +199,7 @@ async function fullSetup(accounts) {
   await l2Endpoint.setDestLzEndpoint(cawProfile.address, l1Endpoint.address);
   await cawProfile.setL2Peer(l2, cawProfileL2.address);
 
-  await networkManager.createNetwork("Test Network", accounts[0], l2, 0, 0, 0, 0, 0);
+  await networkManager.createNetwork("Test Network", accounts[0], l2, 0, 0, 0, 0);
   const networkId = 1;
   const minter = await CawProfileMinter.new(token.address, cawProfile.address, mockRouter.address);
   await cawProfile.setMinter(minter.address);

@@ -15,12 +15,20 @@ struct CawNetwork {
   // historical event scan to [creationBlock, current] instead of scanning
   // the entire contract history. Set once in createNetwork(); never changes.
   uint256 creationBlock;
-  // Per-network upper bound on every individual fee (withdraw/deposit/auth/
-  // mint). Set once at createNetwork() time and can only be *lowered* via
-  // lowerFeeCeiling() — never raised. Every fee setter rejects values that
-  // would exceed this ceiling, so a network owner can publicly commit to a
-  // ceiling and users can rely on it without trusting future behavior.
-  uint256 feeCeiling;
+  // Per-fee upper bounds. Each ceiling is set once at createNetwork() time and
+  // can only be *lowered* via lowerXFeeCeiling() — never raised. The
+  // corresponding fee setter rejects values that would exceed that fee's
+  // ceiling, so a network owner can publicly commit to e.g.
+  // "mint stays free forever" (mintFeeCeiling=0) independently of the other
+  // fee categories.
+  //
+  // @dev Indexers: the NetworkCreated event payload carries all four ceilings
+  //      via this struct. lowerXFeeCeiling events carry old+new ceiling for
+  //      each category separately.
+  uint256 withdrawFeeCeiling;
+  uint256 depositFeeCeiling;
+  uint256 authFeeCeiling;
+  uint256 mintFeeCeiling;
 }
 
 /**
@@ -64,6 +72,11 @@ contract CawNetworkManager {
   ///         typical L2 gas prices.
   uint128 public constant MAX_GAS_OVERRIDE = 100_000;
 
+  /// @notice Emitted when a network is created. The `network` payload includes
+  ///         all four per-fee ceilings (withdrawFeeCeiling, depositFeeCeiling,
+  ///         authFeeCeiling, mintFeeCeiling) set at creation time. Indexers that
+  ///         previously read a single `feeCeiling` field must be updated to read
+  ///         the four individual ceiling fields from this struct.
   event NetworkCreated(uint32 indexed networkId, CawNetwork network);
   event NetworkFeesLocked(uint32 indexed networkId);
   event NetworkOwnershipLocked(uint32 indexed networkId);
@@ -73,10 +86,13 @@ contract CawNetworkManager {
   ///         every fee category — cheaper than four separate events for an admin-only
   ///         path that fires rarely. setFeeAddress has its own event (FeeAddressUpdated).
   event NetworkFeeUpdated(uint32 indexed networkId, string feeType, uint256 newFee);
-  /// @notice Emitted whenever a network owner ratchets feeCeiling down. The
-  ///         ceiling is monotonically non-increasing post-creation, so indexers
-  ///         can rely on the latest event being the current ceiling.
-  event FeeCeilingLowered(uint32 indexed networkId, uint256 oldCeiling, uint256 newCeiling);
+  /// @notice Emitted whenever a network owner ratchets a specific fee ceiling down.
+  ///         Each ceiling is monotonically non-increasing post-creation, so indexers
+  ///         can rely on the latest event being the current ceiling for that fee type.
+  event WithdrawFeeCeilingLowered(uint32 indexed networkId, uint256 oldCeiling, uint256 newCeiling);
+  event DepositFeeCeilingLowered(uint32 indexed networkId, uint256 oldCeiling, uint256 newCeiling);
+  event AuthFeeCeilingLowered(uint32 indexed networkId, uint256 oldCeiling, uint256 newCeiling);
+  event MintFeeCeilingLowered(uint32 indexed networkId, uint256 oldCeiling, uint256 newCeiling);
 
   // ============================================
   // INSTANCE REGISTRY
@@ -178,42 +194,51 @@ contract CawNetworkManager {
 
   /**
    * @dev Creates a new CawNetwork with the caller as the owner.
-   * @param feeAddress The address to receive fees.
-   * @param storageChainEid The L2 chain where this network's actions are processed.
-   * @param feeCeiling Upper bound on every individual fee for the lifetime of
-   *        the network. Can be lowered later via lowerFeeCeiling(), never raised.
-   *        Pass 0 to publicly commit to a permanently-free network (all fees
-   *        forced to 0). Each initial fee must be <= feeCeiling.
+   *      Initial fees are set equal to their respective ceilings. Operators
+   *      lower fees via setWithdrawFee / setDepositFee / setAuthFee /
+   *      setMintFee after creation. Ceilings can only be lowered (never raised)
+   *      via lowerWithdrawFeeCeiling / lowerDepositFeeCeiling /
+   *      lowerAuthFeeCeiling / lowerMintFeeCeiling.
+   *
+   *      Pass 0 for a ceiling to publicly commit to a permanently-free fee
+   *      in that category. The initial fee for that category is also set to 0.
+   *
+   * @param name         Human-readable network name.
+   * @param feeAddress   Address that receives fees for this network.
+   * @param storageChainEid  LayerZero EID of the L2 where this network's actions
+   *                         are processed.
+   * @param withdrawFeeCeiling  Upper bound on withdrawFee, forever.
+   * @param depositFeeCeiling   Upper bound on depositFee, forever.
+   * @param authFeeCeiling      Upper bound on authFee, forever.
+   * @param mintFeeCeiling      Upper bound on mintFee, forever.
    */
   function createNetwork(
     string calldata name,
     address feeAddress,
     uint32 storageChainEid,
-    uint256 withdrawFee,
-    uint256 depositFee,
-    uint256 authFee,
-    uint256 mintFee,
-    uint256 feeCeiling
+    uint256 withdrawFeeCeiling,
+    uint256 depositFeeCeiling,
+    uint256 authFeeCeiling,
+    uint256 mintFeeCeiling
   ) public {
     require(storageChainEid > 0, "Storage chain required");
     require(bytes(name).length > 0, "Name required");
     require(feeAddress != address(0), "Fee address required");
-    require(withdrawFee <= feeCeiling, "withdrawFee exceeds ceiling");
-    require(depositFee <= feeCeiling, "depositFee exceeds ceiling");
-    require(authFee <= feeCeiling, "authFee exceeds ceiling");
-    require(mintFee <= feeCeiling, "mintFee exceeds ceiling");
     networks[nextNetworkId] = CawNetwork({
       id: nextNetworkId,
       storageChainEid: storageChainEid,
       name: name,
       feeAddress: feeAddress,
       ownerAddress: msg.sender,
-      withdrawFee: withdrawFee,
-      depositFee: depositFee,
-      authFee: authFee,
-      mintFee: mintFee,
+      withdrawFee: withdrawFeeCeiling,
+      depositFee: depositFeeCeiling,
+      authFee: authFeeCeiling,
+      mintFee: mintFeeCeiling,
       creationBlock: block.number,
-      feeCeiling: feeCeiling
+      withdrawFeeCeiling: withdrawFeeCeiling,
+      depositFeeCeiling: depositFeeCeiling,
+      authFeeCeiling: authFeeCeiling,
+      mintFeeCeiling: mintFeeCeiling
     });
 
     emit NetworkCreated(nextNetworkId, networks[nextNetworkId]);
@@ -236,7 +261,7 @@ contract CawNetworkManager {
     * @param fee The new withdraw fee.
       */
   function setWithdrawFee(uint32 networkId, uint256 fee) public onlyNetworkOwnerNotFeeLocked(networkId) {
-    require(fee <= networks[networkId].feeCeiling, "exceeds fee ceiling");
+    require(fee <= networks[networkId].withdrawFeeCeiling, "fee exceeds ceiling");
     networks[networkId].withdrawFee = fee;
     emit NetworkFeeUpdated(networkId, "withdraw", fee);
   }
@@ -247,7 +272,7 @@ contract CawNetworkManager {
    * @param fee The new auth fee.
    */
   function setAuthFee(uint32 networkId, uint256 fee) public onlyNetworkOwnerNotFeeLocked(networkId) {
-    require(fee <= networks[networkId].feeCeiling, "exceeds fee ceiling");
+    require(fee <= networks[networkId].authFeeCeiling, "fee exceeds ceiling");
     networks[networkId].authFee = fee;
     emit NetworkFeeUpdated(networkId, "auth", fee);
   }
@@ -258,13 +283,13 @@ contract CawNetworkManager {
    * @param fee The new deposit fee.
    */
   function setDepositFee(uint32 networkId, uint256 fee) public onlyNetworkOwnerNotFeeLocked(networkId) {
-    require(fee <= networks[networkId].feeCeiling, "exceeds fee ceiling");
+    require(fee <= networks[networkId].depositFeeCeiling, "fee exceeds ceiling");
     networks[networkId].depositFee = fee;
     emit NetworkFeeUpdated(networkId, "deposit", fee);
   }
 
   function setMintFee(uint32 networkId, uint256 fee) public onlyNetworkOwnerNotFeeLocked(networkId) {
-    require(fee <= networks[networkId].feeCeiling, "exceeds fee ceiling");
+    require(fee <= networks[networkId].mintFeeCeiling, "fee exceeds ceiling");
     networks[networkId].mintFee = fee;
     emit NetworkFeeUpdated(networkId, "mint", fee);
   }
@@ -280,11 +305,10 @@ contract CawNetworkManager {
    */
   function setFees(uint32 networkId, uint256 withdrawFee, uint256 depositFee, uint256 authFee, uint256 mintFee) public onlyNetworkOwnerNotFeeLocked(networkId) {
     CawNetwork storage network = networks[networkId];
-    uint256 ceiling = network.feeCeiling;
-    require(withdrawFee <= ceiling, "exceeds fee ceiling");
-    require(depositFee <= ceiling, "exceeds fee ceiling");
-    require(authFee <= ceiling, "exceeds fee ceiling");
-    require(mintFee <= ceiling, "exceeds fee ceiling");
+    require(withdrawFee <= network.withdrawFeeCeiling, "fee exceeds ceiling");
+    require(depositFee <= network.depositFeeCeiling, "fee exceeds ceiling");
+    require(authFee <= network.authFeeCeiling, "fee exceeds ceiling");
+    require(mintFee <= network.mintFeeCeiling, "fee exceeds ceiling");
     network.withdrawFee = withdrawFee;
     network.depositFee = depositFee;
     network.authFee = authFee;
@@ -308,29 +332,85 @@ contract CawNetworkManager {
   }
 
   /**
-   * @notice Lower the fee ceiling for a network. Strictly monotonic: the new
-   *         ceiling must be **less than** the current ceiling, and must not
-   *         drop below any currently-set fee (otherwise existing fees would
-   *         become retroactively illegal).
-   * @dev Subject to the same owner + fee-lock gate as the per-fee setters,
-   *      since making fees harder to raise is a fee-policy change.
-   * @param networkId The ID of the network.
-   * @param newCeiling The new upper bound on every individual fee.
+   * @notice Lower the withdraw fee ceiling for a network. Strictly monotonic:
+   *         the new ceiling must be **less than** the current ceiling, and must
+   *         not drop below the currently-set withdrawFee (otherwise the existing
+   *         fee would become retroactively illegal).
+   * @dev Subject to the same owner + fee-lock gate as the per-fee setters.
+   * @param networkId  The ID of the network.
+   * @param newCeiling The new upper bound on withdrawFee.
    */
-  function lowerFeeCeiling(uint32 networkId, uint256 newCeiling) public onlyNetworkOwnerNotFeeLocked(networkId) {
+  function lowerWithdrawFeeCeiling(uint32 networkId, uint256 newCeiling) public onlyNetworkOwnerNotFeeLocked(networkId) {
     CawNetwork storage network = networks[networkId];
-    uint256 oldCeiling = network.feeCeiling;
+    uint256 oldCeiling = network.withdrawFeeCeiling;
     require(newCeiling < oldCeiling, "must be lower");
     require(newCeiling >= network.withdrawFee, "below withdrawFee");
-    require(newCeiling >= network.depositFee, "below depositFee");
-    require(newCeiling >= network.authFee, "below authFee");
-    require(newCeiling >= network.mintFee, "below mintFee");
-    network.feeCeiling = newCeiling;
-    emit FeeCeilingLowered(networkId, oldCeiling, newCeiling);
+    network.withdrawFeeCeiling = newCeiling;
+    emit WithdrawFeeCeilingLowered(networkId, oldCeiling, newCeiling);
   }
 
-  function getFeeCeiling(uint32 networkId) public view returns (uint256) {
-    return networks[networkId].feeCeiling;
+  /**
+   * @notice Lower the deposit fee ceiling for a network. Strictly monotonic:
+   *         the new ceiling must be **less than** the current ceiling, and must
+   *         not drop below the currently-set depositFee.
+   * @param networkId  The ID of the network.
+   * @param newCeiling The new upper bound on depositFee.
+   */
+  function lowerDepositFeeCeiling(uint32 networkId, uint256 newCeiling) public onlyNetworkOwnerNotFeeLocked(networkId) {
+    CawNetwork storage network = networks[networkId];
+    uint256 oldCeiling = network.depositFeeCeiling;
+    require(newCeiling < oldCeiling, "must be lower");
+    require(newCeiling >= network.depositFee, "below depositFee");
+    network.depositFeeCeiling = newCeiling;
+    emit DepositFeeCeilingLowered(networkId, oldCeiling, newCeiling);
+  }
+
+  /**
+   * @notice Lower the auth fee ceiling for a network. Strictly monotonic:
+   *         the new ceiling must be **less than** the current ceiling, and must
+   *         not drop below the currently-set authFee.
+   * @param networkId  The ID of the network.
+   * @param newCeiling The new upper bound on authFee.
+   */
+  function lowerAuthFeeCeiling(uint32 networkId, uint256 newCeiling) public onlyNetworkOwnerNotFeeLocked(networkId) {
+    CawNetwork storage network = networks[networkId];
+    uint256 oldCeiling = network.authFeeCeiling;
+    require(newCeiling < oldCeiling, "must be lower");
+    require(newCeiling >= network.authFee, "below authFee");
+    network.authFeeCeiling = newCeiling;
+    emit AuthFeeCeilingLowered(networkId, oldCeiling, newCeiling);
+  }
+
+  /**
+   * @notice Lower the mint fee ceiling for a network. Strictly monotonic:
+   *         the new ceiling must be **less than** the current ceiling, and must
+   *         not drop below the currently-set mintFee.
+   * @param networkId  The ID of the network.
+   * @param newCeiling The new upper bound on mintFee.
+   */
+  function lowerMintFeeCeiling(uint32 networkId, uint256 newCeiling) public onlyNetworkOwnerNotFeeLocked(networkId) {
+    CawNetwork storage network = networks[networkId];
+    uint256 oldCeiling = network.mintFeeCeiling;
+    require(newCeiling < oldCeiling, "must be lower");
+    require(newCeiling >= network.mintFee, "below mintFee");
+    network.mintFeeCeiling = newCeiling;
+    emit MintFeeCeilingLowered(networkId, oldCeiling, newCeiling);
+  }
+
+  function getWithdrawFeeCeiling(uint32 networkId) public view returns (uint256) {
+    return networks[networkId].withdrawFeeCeiling;
+  }
+
+  function getDepositFeeCeiling(uint32 networkId) public view returns (uint256) {
+    return networks[networkId].depositFeeCeiling;
+  }
+
+  function getAuthFeeCeiling(uint32 networkId) public view returns (uint256) {
+    return networks[networkId].authFeeCeiling;
+  }
+
+  function getMintFeeCeiling(uint32 networkId) public view returns (uint256) {
+    return networks[networkId].mintFeeCeiling;
   }
 
   // ============================================

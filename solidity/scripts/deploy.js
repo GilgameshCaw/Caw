@@ -158,10 +158,13 @@ const CHAINS = {
     lzEndpoint: '0x6EDCE65403992e310A62460808c4b910D972f10f',
     lzEid: 40161,
     dvn: '0x8eebf8b423b73bfca51a1db4b7354aa0bfca9193',
-    // CawActions on L1 is the bypassLZ storage chain path — ZK path supported
-    // but L1 is not the primary action chain. Look up canonical address at:
-    // https://docs.succinct.xyz/onchain-verification
-    sp1Verifier: '<TBD before testnetL1 deploy: look up canonical Succinct SP1Verifier on Sepolia>',
+    // L1 is not the primary action-processing chain on testnet (the Public CAW
+    // Network points at Base Sepolia L2). ZK path is disabled here — pass
+    // address(0) to CawActions._zkVerifier. processActionsWithZkSigs will
+    // revert with ZkNotConfigured(); the standard sig path is unaffected.
+    // To enable later: look up the canonical Succinct SP1Verifier on Sepolia
+    // at https://docs.succinct.xyz/onchain-verification and swap in.
+    sp1Verifier: '0x0000000000000000000000000000000000000000',
     // Canonical Uniswap V2 Router 02 on Sepolia. Listed on the official
     // deployments page (developers.uniswap.org/contracts/v2/reference/
     // smart-contracts/v2-deployments) and verified on sepolia.etherscan.io.
@@ -185,8 +188,12 @@ const CHAINS = {
     lzEndpoint: '0x6EDCE65403992e310A62460808c4b910D972f10f',
     lzEid: 40231,
     dvn: '0x8eebf8b423b73bfca51a1db4b7354aa0bfca9193',
-    // Look up canonical address at https://docs.succinct.xyz/onchain-verification
-    sp1Verifier: '<TBD before testnetL2b deploy: look up canonical Succinct SP1Verifier on Arbitrum Sepolia>',
+    // Arbitrum Sepolia is the archive chain on testnet; CawActions deploys
+    // here so any L2 can use it as an archive. ZK path disabled — pass
+    // address(0) to CawActions._zkVerifier. To enable later: look up the
+    // canonical Succinct SP1Verifier on Arbitrum Sepolia at
+    // https://docs.succinct.xyz/onchain-verification and swap in.
+    sp1Verifier: '0x0000000000000000000000000000000000000000',
   },
   devL1: {
     name: 'Local L1',
@@ -665,8 +672,10 @@ const LINKING_STEPS = [
     phase: 2,
     contract: 'CawNetworkManager',
     method: 'createNetwork',
-    // Fees: ~$3 each at ETH=$2000 → 0.0015 ETH = 1500000000000000 wei
-    args: (state, chainConfig) => ['CAW Protocol', state.deployerAddress, CHAINS[chainConfig.env + 'L2'].lzEid, '1500000000000000', '1500000000000000', '1500000000000000', '1500000000000000'],
+    // Fee ceilings: ~$2 each at ETH=$2000 (initial fees = ceilings) → 0.001 ETH = 1000000000000000 wei.
+    // Default Network is the "Public CAW Network" — low fees to keep
+    // onboarding friction minimal during the public-test era.
+    args: (state, chainConfig) => ['Uruk', state.deployerAddress, CHAINS[chainConfig.env + 'L2'].lzEid, '1000000000000000', '1000000000000000', '1000000000000000', '1000000000000000'],
     condition: (state) => state.addresses.CawNetworkManager,
     skipIf: async (state, deployer) => {
       return state.linking?.networkCreated === true;

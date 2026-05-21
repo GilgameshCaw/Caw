@@ -646,7 +646,7 @@ contract('CawProfiles', function(accounts, x) {
     await l2Endpoint.setDestLzEndpoint(cawProfiles.address, l1Endpoint.address);
     await cawProfiles.setL2Peer(l2, cawProfilesL2.address);
 
-    await networkManager.createNetwork("Test Network", gilg, l2, 1,1,1,1, web3.utils.toWei('100000'));
+    await networkManager.createNetwork("Test Network", gilg, l2, 1,1,1,1);
 
 
     cawProfilesL2Mainnet = cawProfilesL2Mainnet || await CawProfileL2.new(l1, l1Endpoint.address, "0x0000000000000000000000000000000000000000");
@@ -1158,7 +1158,7 @@ contract('CawProfiles', function(accounts, x) {
 
 
 
-    await networkManager.createNetwork("Test Network", gilg, l2, 1,1,1,1, web3.utils.toWei('100000'));
+    await networkManager.createNetwork("Test Network", gilg, l2, 1,1,1,1);
 
 
 
@@ -1198,7 +1198,7 @@ contract('CawProfiles', function(accounts, x) {
 
 
     // Another unauthed caw that becomes authed by depositing:
-    await networkManager.createNetwork("Test Network", gilg, l2, 1,1,1,1, web3.utils.toWei('100000'));
+    await networkManager.createNetwork("Test Network", gilg, l2, 1,1,1,1);
 
     var unauthedCaw = {
       actionType: 'caw',
@@ -1328,7 +1328,7 @@ contract("CawProfile - Transfer & Replication Gas", function(accounts) {
     await l2Endpoint.setDestLzEndpoint(localCawProfiles.address, l1Endpoint.address);
     await localCawProfiles.setL2Peer(l2, localCawProfilesL2.address);
 
-    await localNetworkManager.createNetwork("Local Test", accounts[0], l2, 1, 1, 1, 1, web3.utils.toWei('100000'));
+    await localNetworkManager.createNetwork("Local Test", accounts[0], l2, 1, 1, 1, 1);
 
     localMinter = await CawProfileMinter.new(localToken.address, localCawProfiles.address, mr.address);
     await localCawProfiles.setMinter(localMinter.address);
@@ -1527,7 +1527,7 @@ contract("CawProfileMinter - mintAndDeposit", function(accounts) {
     await localCawProfiles.setL2Peer(l2, localCawProfilesL2.address);
 
     // Network with fees: mint=1, deposit=1, auth=1, withdraw=1
-    await localNetworkManager.createNetwork("Test Network", accounts[0], l2, 1, 1, 1, 1, web3.utils.toWei('100000'));
+    await localNetworkManager.createNetwork("Test Network", accounts[0], l2, 1, 1, 1, 1);
 
     localMinter = await CawProfileMinter.new(localToken.address, localCawProfiles.address, mr.address);
     await localCawProfiles.setMinter(localMinter.address);
@@ -1696,9 +1696,9 @@ contract("CawProfileMinter - mintAndAuth", function(accounts) {
     await localCawProfilesL2Mainnet.setCawActions(localCawActionsMainnet.address);
 
     // Two networks: one L2-storage, one L1-storage (so we cover both branches)
-    await localNetworkManager.createNetwork("L2 Network", accounts[0], l2, 1, 1, 1, 1, web3.utils.toWei('100000'));
+    await localNetworkManager.createNetwork("L2 Network", accounts[0], l2, 1, 1, 1, 1);
     l2NetworkId = 1;
-    await localNetworkManager.createNetwork("L1 Network", accounts[0], l1, 1, 1, 1, 1, web3.utils.toWei('100000'));
+    await localNetworkManager.createNetwork("L1 Network", accounts[0], l1, 1, 1, 1, 1);
     l1NetworkId = 2;
 
     localMinter = await CawProfileMinter.new(localToken.address, localCawProfiles.address, mr.address);
@@ -1938,7 +1938,7 @@ contract("CawProfile - depositFor", function(accounts) {
     await localCawProfiles.setL2Peer(l2, localCawProfilesL2.address);
 
     // Network with fees: mint=1, deposit=1, auth=1, withdraw=1
-    await localNetworkManager.createNetwork("Test Network", accounts[0], l2, 1, 1, 1, 1, web3.utils.toWei('100000'));
+    await localNetworkManager.createNetwork("Test Network", accounts[0], l2, 1, 1, 1, 1);
 
     localMinter = await CawProfileMinter.new(localToken.address, localCawProfiles.address, mr.address);
     await localCawProfiles.setMinter(localMinter.address);
@@ -1999,7 +1999,7 @@ contract("CawProfile - depositFor", function(accounts) {
     this.timeout(60000);
 
     // Create a second network
-    await localNetworkManager.createNetwork("Network 2", accounts[0], l2, 1, 1, 1, 1, web3.utils.toWei('100000'));
+    await localNetworkManager.createNetwork("Network 2", accounts[0], l2, 1, 1, 1, 1);
     var networkId = 2;
 
     var tokenId = await localCawProfiles.nextId() - 1;
@@ -2144,8 +2144,12 @@ contract("CawProfile - locked withdraw fee + fee withdrawal", function(accounts)
 
     feeRecipientMock = await FeeRecipientMock.new();
 
-    // Create network with the fee mock as feeAddress, so we can test contract recipients receiving fees
-    await localNetworkManager.createNetwork("LockedFeeClient", feeRecipientMock.address, l2, INITIAL_WITHDRAW_FEE, DEPOSIT_FEE, AUTH_FEE, MINT_FEE, web3.utils.toWei('100000'));
+    // Create network with the fee mock as feeAddress, so we can test contract recipients receiving fees.
+    // Ceilings: withdrawFeeCeiling = RAISED_WITHDRAW_FEE so the fee can be raised later in tests;
+    // other ceilings match their initial fee. Initial fees are set equal to ceilings at createNetwork,
+    // so we immediately lower withdrawFee to INITIAL_WITHDRAW_FEE.
+    await localNetworkManager.createNetwork("LockedFeeClient", feeRecipientMock.address, l2, RAISED_WITHDRAW_FEE, DEPOSIT_FEE, AUTH_FEE, MINT_FEE);
+    await localNetworkManager.setWithdrawFee(1, INITIAL_WITHDRAW_FEE);
 
     localMinter = await CawProfileMinter.new(localToken.address, localCawProfiles.address, localMockRouter.address);
     await localCawProfiles.setMinter(localMinter.address);
@@ -2493,8 +2497,8 @@ contract("CawProfile - Buy and Burn", function(accounts) {
     await localEndpointL2.setDestLzEndpoint(localCawProfiles.address, localEndpointL1.address);
     await localCawProfiles.setL2Peer(l2, localCawProfilesL2.address);
 
-    // Network with meaningful fees — feeAddress = accounts[0]
-    await localNetworkManager.createNetwork("BuyBurn Network", accounts[0], l2, WITHDRAW_FEE, DEPOSIT_FEE, AUTH_FEE, MINT_FEE, web3.utils.toWei('100000'));
+    // Network with meaningful fees — feeAddress = accounts[0]. Ceilings = initial fees.
+    await localNetworkManager.createNetwork("BuyBurn Network", accounts[0], l2, WITHDRAW_FEE, DEPOSIT_FEE, AUTH_FEE, MINT_FEE);
 
     localMinter = await CawProfileMinter.new(localToken.address, localCawProfiles.address, localMockRouter.address);
     await localCawProfiles.setMinter(localMinter.address);
@@ -2650,9 +2654,9 @@ contract("CawNetworkManager - lockdown + gas override", function(accounts) {
     var bb = await CawBuyAndBurn.new(token.address, mr.address);
     networkManager = await CawNetworkManager.new(bb.address);
 
-    await networkManager.createNetwork("Network A", owner, l2, 1, 1, 1, 1, web3.utils.toWei('100000'), { from: owner });
+    await networkManager.createNetwork("Network A", owner, l2, 1, 1, 1, 1, { from: owner });
     networkId = 1;
-    await networkManager.createNetwork("Network B", owner, l2, 1, 1, 1, 1, web3.utils.toWei('100000'), { from: owner });
+    await networkManager.createNetwork("Network B", owner, l2, 1, 1, 1, 1, { from: owner });
     otherNetworkId = 2;
   });
 
@@ -2704,7 +2708,8 @@ contract("CawNetworkManager - lockdown + gas override", function(accounts) {
 
   it("lockNetworkFees: blocks fee setters but NOT setGasOverride or changeOwner", async function() {
     var freshOwner = accounts[3];
-    await networkManager.createNetwork("Lockable", freshOwner, l2, 1, 1, 1, 1, web3.utils.toWei('100000'), { from: freshOwner });
+    // mintFeeCeiling=1000 so the test can call setMintFee(99) within the ceiling
+    await networkManager.createNetwork("Lockable", freshOwner, l2, 1, 1, 1, 1000, { from: freshOwner });
     var cid = 3;
 
     await networkManager.setMintFee(cid, 99, { from: freshOwner });
@@ -2727,7 +2732,8 @@ contract("CawNetworkManager - lockdown + gas override", function(accounts) {
 
   it("lockNetworkOwnership: blocks changeOwner but NOT setGasOverride or fee setters", async function() {
     var freshOwner = accounts[5];
-    await networkManager.createNetwork("OwnLockable", freshOwner, l2, 1, 1, 1, 1, web3.utils.toWei('100000'), { from: freshOwner });
+    // mintFeeCeiling=1000 so the test can call setMintFee(42) within the ceiling
+    await networkManager.createNetwork("OwnLockable", freshOwner, l2, 1, 1, 1, 1000, { from: freshOwner });
     var cid = 4;
 
     await networkManager.lockNetworkOwnership(cid, { from: freshOwner });
@@ -2745,7 +2751,7 @@ contract("CawNetworkManager - lockdown + gas override", function(accounts) {
 
   it("both locks together: network is fully renounce-equivalent except for gas override", async function() {
     var freshOwner = accounts[7];
-    await networkManager.createNetwork("FullLock", freshOwner, l2, 1, 1, 1, 1, web3.utils.toWei('100000'), { from: freshOwner });
+    await networkManager.createNetwork("FullLock", freshOwner, l2, 1, 1, 1, 1, { from: freshOwner });
     var cid = 5;
 
     await networkManager.lockNetworkFees(cid, { from: freshOwner });
@@ -2815,9 +2821,9 @@ contract("CawProfileMinter - Bundled Quick Sign", function(accounts) {
     await localCawProfiles.setL2Peer(l1, localCawProfilesL2Mainnet.address);
 
     // Two networks to exercise both branches
-    await localNetworkManager.createNetwork("L2 Network", accounts[0], l2, 0, 0, 0, 0, 0);
+    await localNetworkManager.createNetwork("L2 Network", accounts[0], l2, 0, 0, 0, 0);
     l2NetworkId = 1;
-    await localNetworkManager.createNetwork("L1 Network", accounts[0], l1, 0, 0, 0, 0, 0);
+    await localNetworkManager.createNetwork("L1 Network", accounts[0], l1, 0, 0, 0, 0);
     l1NetworkId = 2;
 
     localMinter = await CawProfileMinter.new(localToken.address, localCawProfiles.address, mr.address);
