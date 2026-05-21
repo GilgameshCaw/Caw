@@ -1,0 +1,200 @@
+[
+  {
+    "label": "_name",
+    "slot": "0",
+    "offset": 0,
+    "type": "t_string_storage"
+  },
+  {
+    "label": "_symbol",
+    "slot": "1",
+    "offset": 0,
+    "type": "t_string_storage"
+  },
+  {
+    "label": "_owners",
+    "slot": "2",
+    "offset": 0,
+    "type": "t_mapping(t_uint256,t_address)"
+  },
+  {
+    "label": "_balances",
+    "slot": "3",
+    "offset": 0,
+    "type": "t_mapping(t_address,t_uint256)"
+  },
+  {
+    "label": "_tokenApprovals",
+    "slot": "4",
+    "offset": 0,
+    "type": "t_mapping(t_uint256,t_address)"
+  },
+  {
+    "label": "_operatorApprovals",
+    "slot": "5",
+    "offset": 0,
+    "type": "t_mapping(t_address,t_mapping(t_address,t_bool))"
+  },
+  {
+    "label": "_ownedTokens",
+    "slot": "6",
+    "offset": 0,
+    "type": "t_mapping(t_address,t_mapping(t_uint256,t_uint256))"
+  },
+  {
+    "label": "_ownedTokensIndex",
+    "slot": "7",
+    "offset": 0,
+    "type": "t_mapping(t_uint256,t_uint256)"
+  },
+  {
+    "label": "_allTokens",
+    "slot": "8",
+    "offset": 0,
+    "type": "t_array(t_uint256)dyn_storage"
+  },
+  {
+    "label": "_allTokensIndex",
+    "slot": "9",
+    "offset": 0,
+    "type": "t_mapping(t_uint256,t_uint256)"
+  },
+  {
+    "label": "_owner",
+    "slot": "10",
+    "offset": 0,
+    "type": "t_address"
+  },
+  {
+    "label": "_used",
+    "slot": "11",
+    "offset": 0,
+    "type": "t_mapping(t_bytes32,t_bool)"
+  },
+  {
+    "label": "peers",
+    "slot": "12",
+    "offset": 0,
+    "type": "t_mapping(t_uint32,t_bytes32)"
+  },
+  {
+    "label": "uriGenerator",
+    "slot": "13",
+    "offset": 0,
+    "type": "t_contract(CawProfileURI)10730"
+  },
+  {
+    "label": "cawProfileL2",
+    "slot": "14",
+    "offset": 0,
+    "type": "t_contract(CawProfileL2)8669"
+  },
+  {
+    "label": "totalCaw",
+    "slot": "15",
+    "offset": 0,
+    "type": "t_uint256"
+  },
+  {
+    "label": "minter",
+    "slot": "16",
+    "offset": 0,
+    "type": "t_address"
+  },
+  {
+    "label": "mainnetLzId",
+    "slot": "16",
+    "offset": 20,
+    "type": "t_uint32"
+  },
+  {
+    "label": "usernames",
+    "slot": "17",
+    "offset": 0,
+    "type": "t_array(t_string_storage)dyn_storage"
+  },
+  {
+    "label": "fromLZ",
+    "slot": "18",
+    "offset": 0,
+    "type": "t_bool"
+  },
+  {
+    "label": "gasBaseFor",
+    "slot": "19",
+    "offset": 0,
+    "type": "t_mapping(t_bytes4,t_uint128)"
+  },
+  {
+    "label": "authenticated",
+    "slot": "20",
+    "offset": 0,
+    "type": "t_mapping(t_uint32,t_mapping(t_uint32,t_bool))"
+  },
+  {
+    "label": "lockedWithdrawFee",
+    "slot": "21",
+    "offset": 0,
+    "type": "t_mapping(t_uint32,t_mapping(t_uint32,t_uint256))"
+  },
+  {
+    "label": "withdrawFeeLocked",
+    "slot": "22",
+    "offset": 0,
+    "type": "t_mapping(t_uint32,t_mapping(t_uint32,t_bool))"
+  },
+  {
+    "label": "withdrawable",
+    "slot": "23",
+    "offset": 0,
+    "type": "t_mapping(t_uint32,t_uint256)"
+  },
+  {
+    "label": "chosenChainIds",
+    "slot": "24",
+    "offset": 0,
+    "type": "t_mapping(t_uint32,t_struct(UintSet)21012_storage)"
+  },
+  {
+    "label": "peerIds",
+    "slot": "25",
+    "offset": 0,
+    "type": "t_struct(UintSet)21012_storage"
+  },
+  {
+    "label": "pendingTransfers",
+    "slot": "27",
+    "offset": 0,
+    "type": "t_mapping(t_uint32,t_mapping(t_uint256,t_uint32))"
+  },
+  {
+    "label": "pendingTransferStart",
+    "slot": "28",
+    "offset": 0,
+    "type": "t_mapping(t_uint32,t_uint256)"
+  },
+  {
+    "label": "pendingTransferEnd",
+    "slot": "29",
+    "offset": 0,
+    "type": "t_mapping(t_uint32,t_uint256)"
+  },
+  {
+    "label": "networkManager",
+    "slot": "30",
+    "offset": 0,
+    "type": "t_contract(CawNetworkManager)1647"
+  },
+  {
+    "label": "buyAndBurn",
+    "slot": "31",
+    "offset": 0,
+    "type": "t_contract(CawBuyAndBurn)262"
+  },
+  {
+    "label": "accruedFees",
+    "slot": "32",
+    "offset": 0,
+    "type": "t_mapping(t_address,t_uint256)"
+  }
+]

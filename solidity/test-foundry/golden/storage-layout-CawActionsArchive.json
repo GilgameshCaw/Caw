@@ -1,0 +1,86 @@
+[
+  {
+    "label": "_owner",
+    "slot": "0",
+    "offset": 0,
+    "type": "t_address"
+  },
+  {
+    "label": "_status",
+    "slot": "1",
+    "offset": 0,
+    "type": "t_uint256"
+  },
+  {
+    "label": "_used",
+    "slot": "2",
+    "offset": 0,
+    "type": "t_mapping(t_bytes32,t_bool)"
+  },
+  {
+    "label": "peers",
+    "slot": "3",
+    "offset": 0,
+    "type": "t_mapping(t_uint32,t_bytes32)"
+  },
+  {
+    "label": "nextSubmissionId",
+    "slot": "4",
+    "offset": 0,
+    "type": "t_uint256"
+  },
+  {
+    "label": "submissions",
+    "slot": "5",
+    "offset": 0,
+    "type": "t_mapping(t_uint256,t_struct(Submission)40_storage)"
+  },
+  {
+    "label": "stakes",
+    "slot": "6",
+    "offset": 0,
+    "type": "t_mapping(t_address,t_uint256)"
+  },
+  {
+    "label": "pendingCount",
+    "slot": "7",
+    "offset": 0,
+    "type": "t_mapping(t_address,t_uint256)"
+  },
+  {
+    "label": "validatorSubmissions",
+    "slot": "8",
+    "offset": 0,
+    "type": "t_mapping(t_address,t_array(t_uint256)dyn_storage)"
+  },
+  {
+    "label": "validatorSubmissionsIndexPlusOne",
+    "slot": "9",
+    "offset": 0,
+    "type": "t_mapping(t_uint256,t_uint256)"
+  },
+  {
+    "label": "checkpointClaimed",
+    "slot": "10",
+    "offset": 0,
+    "type": "t_mapping(t_uint32,t_mapping(t_uint256,t_uint256))"
+  },
+  {
+    "label": "checkpointClaimReopensAt",
+    "slot": "11",
+    "offset": 0,
+    "type": "t_mapping(t_uint32,t_mapping(t_uint256,t_uint64))"
+  },
+  {
+    "label": "challengeHash",
+    "slot": "12",
+    "offset": 0,
+    "type": "t_mapping(t_uint256,t_mapping(t_uint256,t_bytes32))"
+  },
+  {
+    "label": "challengeDelivered",
+    "slot": "13",
+    "offset": 0,
+    "type": "t_mapping(t_uint256,t_mapping(t_uint256,t_bool))"
+  }
+]

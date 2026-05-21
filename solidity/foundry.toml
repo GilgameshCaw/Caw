@@ -12,6 +12,10 @@ via_ir = true
 # Match the Truffle/Hardhat target: only the contracts/ tree + the new test-foundry/ tree.
 auto_detect_remappings = false
 fs_permissions = [{ access = "read", path = "./" }]
+# ffi enabled for StorageLayoutSnapshot.t.sol which shells out to node to compare
+# storage-layout goldens. Intentional — the test is only checking layouts, not
+# running untrusted code.
+ffi = true
 
 [fuzz]
 # Tight memory budget on the dev machine; 1000 runs per fuzz test by default.

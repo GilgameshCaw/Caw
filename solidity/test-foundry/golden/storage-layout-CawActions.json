@@ -1,0 +1,62 @@
+[
+  {
+    "label": "_owner",
+    "slot": "0",
+    "offset": 0,
+    "type": "t_address"
+  },
+  {
+    "label": "networkActionCount",
+    "slot": "1",
+    "offset": 0,
+    "type": "t_mapping(t_uint32,t_uint256)"
+  },
+  {
+    "label": "networkCurrentHash",
+    "slot": "2",
+    "offset": 0,
+    "type": "t_mapping(t_uint32,t_bytes32)"
+  },
+  {
+    "label": "networkHashAtCheckpoint",
+    "slot": "3",
+    "offset": 0,
+    "type": "t_mapping(t_uint32,t_mapping(t_uint256,t_bytes32))"
+  },
+  {
+    "label": "usedCawonce",
+    "slot": "4",
+    "offset": 0,
+    "type": "t_mapping(t_uint32,t_mapping(t_uint256,t_uint256))"
+  },
+  {
+    "label": "currentCawonceMap",
+    "slot": "5",
+    "offset": 0,
+    "type": "t_mapping(t_uint32,t_uint256)"
+  },
+  {
+    "label": "sessionSpent",
+    "slot": "6",
+    "offset": 0,
+    "type": "t_mapping(t_address,t_mapping(t_address,t_uint256))"
+  },
+  {
+    "label": "capState",
+    "slot": "7",
+    "offset": 0,
+    "type": "t_struct(CapState)146_storage"
+  },
+  {
+    "label": "_pendingWithdrawIds",
+    "slot": "8",
+    "offset": 0,
+    "type": "t_array(t_uint32)dyn_storage"
+  },
+  {
+    "label": "_pendingWithdrawAmounts",
+    "slot": "9",
+    "offset": 0,
+    "type": "t_array(t_uint256)dyn_storage"
+  }
+]

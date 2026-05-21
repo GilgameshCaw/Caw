@@ -1,0 +1,20 @@
+[
+  {
+    "label": "buf",
+    "slot": "0",
+    "offset": 0,
+    "type": "t_array(t_struct(Sample)62_storage)1024_storage"
+  },
+  {
+    "label": "samplesWritten",
+    "slot": "1024",
+    "offset": 0,
+    "type": "t_uint64"
+  },
+  {
+    "label": "lastPushAttemptAt",
+    "slot": "1024",
+    "offset": 8,
+    "type": "t_uint64"
+  }
+]

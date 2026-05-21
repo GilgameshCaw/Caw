@@ -1,0 +1,140 @@
+[
+  {
+    "label": "_owner",
+    "slot": "0",
+    "offset": 0,
+    "type": "t_address"
+  },
+  {
+    "label": "_used",
+    "slot": "1",
+    "offset": 0,
+    "type": "t_mapping(t_bytes32,t_bool)"
+  },
+  {
+    "label": "peers",
+    "slot": "2",
+    "offset": 0,
+    "type": "t_mapping(t_uint32,t_bytes32)"
+  },
+  {
+    "label": "totalCaw",
+    "slot": "3",
+    "offset": 0,
+    "type": "t_uint256"
+  },
+  {
+    "label": "cawActions",
+    "slot": "4",
+    "offset": 0,
+    "type": "t_contract(ICawActions)11425"
+  },
+  {
+    "label": "erc1271Sibling",
+    "slot": "5",
+    "offset": 0,
+    "type": "t_address"
+  },
+  {
+    "label": "ownerOf",
+    "slot": "6",
+    "offset": 0,
+    "type": "t_mapping(t_uint256,t_address)"
+  },
+  {
+    "label": "usernames",
+    "slot": "7",
+    "offset": 0,
+    "type": "t_mapping(t_uint32,t_string_storage)"
+  },
+  {
+    "label": "authenticated",
+    "slot": "8",
+    "offset": 0,
+    "type": "t_mapping(t_uint32,t_mapping(t_uint32,t_bool))"
+  },
+  {
+    "label": "cawOwnership",
+    "slot": "9",
+    "offset": 0,
+    "type": "t_mapping(t_uint32,t_uint256)"
+  },
+  {
+    "label": "rewardMultiplier",
+    "slot": "10",
+    "offset": 0,
+    "type": "t_uint256"
+  },
+  {
+    "label": "precision",
+    "slot": "11",
+    "offset": 0,
+    "type": "t_uint256"
+  },
+  {
+    "label": "fromLZ",
+    "slot": "12",
+    "offset": 0,
+    "type": "t_bool"
+  },
+  {
+    "label": "bypassLZ",
+    "slot": "12",
+    "offset": 1,
+    "type": "t_bool"
+  },
+  {
+    "label": "cawProfile",
+    "slot": "12",
+    "offset": 2,
+    "type": "t_contract(CawProfile)4774"
+  },
+  {
+    "label": "sessions",
+    "slot": "13",
+    "offset": 0,
+    "type": "t_mapping(t_address,t_mapping(t_address,t_struct(StoredSession)4928_storage))"
+  },
+  {
+    "label": "lastOwnerUpdateBlock",
+    "slot": "14",
+    "offset": 0,
+    "type": "t_mapping(t_uint32,t_uint64)"
+  },
+  {
+    "label": "ownerSessionEpoch",
+    "slot": "15",
+    "offset": 0,
+    "type": "t_mapping(t_address,t_uint32)"
+  },
+  {
+    "label": "tokenSessionEpoch",
+    "slot": "16",
+    "offset": 0,
+    "type": "t_mapping(t_uint32,t_uint32)"
+  },
+  {
+    "label": "sessionNonce",
+    "slot": "17",
+    "offset": 0,
+    "type": "t_mapping(t_address,t_uint256)"
+  },
+  {
+    "label": "tokenSessionNonce",
+    "slot": "18",
+    "offset": 0,
+    "type": "t_mapping(t_uint32,t_uint256)"
+  },
+  {
+    "label": "consumedSessionMessage",
+    "slot": "19",
+    "offset": 0,
+    "type": "t_mapping(t_bytes32,t_bool)"
+  },
+  {
+    "label": "setWithdrawableSelector",
+    "slot": "20",
+    "offset": 0,
+    "type": "t_bytes4"
+  }
+]

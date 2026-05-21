@@ -1,0 +1,56 @@
+[
+  {
+    "label": "_status",
+    "slot": "0",
+    "offset": 0,
+    "type": "t_uint256"
+  },
+  {
+    "label": "listings",
+    "slot": "1",
+    "offset": 0,
+    "type": "t_mapping(t_uint256,t_struct(Listing)52_storage)"
+  },
+  {
+    "label": "listingByTokenId",
+    "slot": "2",
+    "offset": 0,
+    "type": "t_mapping(t_uint32,t_uint256)"
+  },
+  {
+    "label": "allowedPaymentTokens",
+    "slot": "3",
+    "offset": 0,
+    "type": "t_mapping(t_address,t_bool)"
+  },
+  {
+    "label": "pendingReturns",
+    "slot": "4",
+    "offset": 0,
+    "type": "t_mapping(t_address,t_mapping(t_uint256,t_uint256))"
+  },
+  {
+    "label": "pendingPayouts",
+    "slot": "5",
+    "offset": 0,
+    "type": "t_mapping(t_address,t_uint256)"
+  },
+  {
+    "label": "offers",
+    "slot": "6",
+    "offset": 0,
+    "type": "t_mapping(t_uint256,t_struct(Offer)65_storage)"
+  },
+  {
+    "label": "nextOfferId",
+    "slot": "7",
+    "offset": 0,
+    "type": "t_uint256"
+  },
+  {
+    "label": "nextListingId",
+    "slot": "8",
+    "offset": 0,
+    "type": "t_uint256"
+  }
+]
