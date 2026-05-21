@@ -45,7 +45,7 @@
     "label": "capState",
     "slot": "7",
     "offset": 0,
-    "type": "t_struct(CapState)146_storage"
+    "type": "t_struct(CapState)_storage"
   },
   {
     "label": "_pendingWithdrawIds",

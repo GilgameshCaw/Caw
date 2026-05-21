@@ -9,7 +9,7 @@
     "label": "listings",
     "slot": "1",
     "offset": 0,
-    "type": "t_mapping(t_uint256,t_struct(Listing)52_storage)"
+    "type": "t_mapping(t_uint256,t_struct(Listing)_storage)"
   },
   {
     "label": "listingByTokenId",
@@ -39,7 +39,7 @@
     "label": "offers",
     "slot": "6",
     "offset": 0,
-    "type": "t_mapping(t_uint256,t_struct(Offer)65_storage)"
+    "type": "t_mapping(t_uint256,t_struct(Offer)_storage)"
   },
   {
     "label": "nextOfferId",

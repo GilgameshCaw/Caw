@@ -29,6 +29,17 @@ const CONTRACTS = [
   'CawChallengeRelay',
 ];
 
+/**
+ * Strip AST node IDs embedded in struct/enum type strings so goldens are
+ * stable across recompilations. Example:
+ *   "t_struct(CawNetwork)457_storage" → "t_struct(CawNetwork)_storage"
+ *   "t_mapping(t_uint32,t_struct(CawNetwork)457_storage)" → normalised recursively
+ */
+function normaliseType(t) {
+  // Replace )NNN_ (AST ID embedded between closing paren and underscore) with )_
+  return t.replace(/\)(\d+)_/g, ')_');
+}
+
 function getStorageLayout(contractName) {
   const raw = execSync(
     `forge inspect ${contractName} storageLayout --json`,
@@ -37,12 +48,13 @@ function getStorageLayout(contractName) {
   const parsed = JSON.parse(raw);
   // Normalise: only keep label, slot, offset, type for each slot.
   // Omit astId (changes between compilations without semantic change).
+  // Strip embedded AST IDs from type strings (t_struct(X)NNN_storage -> t_struct(X)_storage).
   // Sort by (slot, offset) to be deterministic.
   const normalised = (parsed.storage || []).map(s => ({
     label: s.label,
     slot: s.slot,
     offset: s.offset,
-    type: s.type,
+    type: normaliseType(s.type),
   }));
   normalised.sort((a, b) => {
     const slotDiff = Number(a.slot) - Number(b.slot);

@@ -27,7 +27,7 @@
     "label": "cawActions",
     "slot": "4",
     "offset": 0,
-    "type": "t_contract(ICawActions)11425"
+    "type": "t_contract(ICawActions)16564"
   },
   {
     "label": "erc1271Sibling",
@@ -87,13 +87,13 @@
     "label": "cawProfile",
     "slot": "12",
     "offset": 2,
-    "type": "t_contract(CawProfile)4774"
+    "type": "t_contract(CawProfile)9900"
   },
   {
     "label": "sessions",
     "slot": "13",
     "offset": 0,
-    "type": "t_mapping(t_address,t_mapping(t_address,t_struct(StoredSession)4928_storage))"
+    "type": "t_mapping(t_address,t_mapping(t_address,t_struct(StoredSession)_storage))"
   },
   {
     "label": "lastOwnerUpdateBlock",

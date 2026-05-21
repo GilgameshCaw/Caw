@@ -81,13 +81,13 @@
     "label": "uriGenerator",
     "slot": "13",
     "offset": 0,
-    "type": "t_contract(CawProfileURI)10730"
+    "type": "t_contract(CawProfileURI)15856"
   },
   {
     "label": "cawProfileL2",
     "slot": "14",
     "offset": 0,
-    "type": "t_contract(CawProfileL2)8669"
+    "type": "t_contract(CawProfileL2)13795"
   },
   {
     "label": "totalCaw",
@@ -153,13 +153,13 @@
     "label": "chosenChainIds",
     "slot": "24",
     "offset": 0,
-    "type": "t_mapping(t_uint32,t_struct(UintSet)21012_storage)"
+    "type": "t_mapping(t_uint32,t_struct(UintSet)_storage)"
   },
   {
     "label": "peerIds",
     "slot": "25",
     "offset": 0,
-    "type": "t_struct(UintSet)21012_storage"
+    "type": "t_struct(UintSet)_storage"
   },
   {
     "label": "pendingTransfers",
@@ -183,13 +183,13 @@
     "label": "networkManager",
     "slot": "30",
     "offset": 0,
-    "type": "t_contract(CawNetworkManager)1647"
+    "type": "t_contract(CawNetworkManager)6773"
   },
   {
     "label": "buyAndBurn",
     "slot": "31",
     "offset": 0,
-    "type": "t_contract(CawBuyAndBurn)262"
+    "type": "t_contract(CawBuyAndBurn)5388"
   },
   {
     "label": "accruedFees",

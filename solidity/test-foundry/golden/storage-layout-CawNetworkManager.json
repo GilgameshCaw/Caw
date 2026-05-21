@@ -9,7 +9,7 @@
     "label": "networks",
     "slot": "1",
     "offset": 0,
-    "type": "t_mapping(t_uint32,t_struct(CawNetwork)457_storage)"
+    "type": "t_mapping(t_uint32,t_struct(CawNetwork)_storage)"
   },
   {
     "label": "networkFeesLocked",
