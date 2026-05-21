@@ -53,7 +53,7 @@ export function useWalletPopulation(): UseWalletPopulationReturn {
     queryKey: ['wallet-bytecode', address],
     queryFn: async () => {
       if (!publicClient || !address) return undefined
-      return publicClient.getBytecode({ address })
+      return publicClient.getCode({ address })
     },
     enabled: isConnected && !!address && !!publicClient,
     // Match project-wide staleTime of 5 min (project_infura_quota_dials.md)
@@ -64,7 +64,7 @@ export function useWalletPopulation(): UseWalletPopulationReturn {
   const population = useMemo<WalletPopulation>(() => {
     if (!isConnected || !address) return 'none'
     if (isLoading) return 'none'
-    // bytecode from getBytecode is Hex | undefined; convert to string for classifier
+    // bytecode from getCode is Hex | undefined; convert to string for classifier
     const code = bytecode === undefined ? undefined : (bytecode as string)
     return classifyBytecode(code)
   }, [isConnected, address, isLoading, bytecode])

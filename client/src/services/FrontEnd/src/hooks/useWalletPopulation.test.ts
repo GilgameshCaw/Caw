@@ -95,7 +95,7 @@ describe('useWalletPopulation', () => {
     const addr = '0x1234567890123456789012345678901234567890' as `0x${string}`
     mockUseAccount.mockReturnValue({ address: addr, isConnected: true })
     mockUsePublicClient.mockReturnValue({
-      getBytecode: vi.fn().mockResolvedValue(undefined),
+      getCode: vi.fn().mockResolvedValue(undefined),
     })
 
     const { result } = renderHook(() => useWalletPopulation(), {
@@ -113,7 +113,7 @@ describe('useWalletPopulation', () => {
     const code7702 = '0xef0100' + 'aAbBcCdDeEfF001122334455667788990011aabb'
     mockUseAccount.mockReturnValue({ address: addr, isConnected: true })
     mockUsePublicClient.mockReturnValue({
-      getBytecode: vi.fn().mockResolvedValue(code7702),
+      getCode: vi.fn().mockResolvedValue(code7702),
     })
 
     const { result } = renderHook(() => useWalletPopulation(), {
@@ -129,7 +129,7 @@ describe('useWalletPopulation', () => {
     const safeCode = '0x608060405234801561001057600080fd5b50'
     mockUseAccount.mockReturnValue({ address: addr, isConnected: true })
     mockUsePublicClient.mockReturnValue({
-      getBytecode: vi.fn().mockResolvedValue(safeCode),
+      getCode: vi.fn().mockResolvedValue(safeCode),
     })
 
     const { result } = renderHook(() => useWalletPopulation(), {
