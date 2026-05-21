@@ -5,6 +5,7 @@ import {
 } from '~/hooks/useSessionKey'
 import { getCurrentMarketTip, getTipTiers } from '~/api/actions'
 import { usePriceStore } from '~/store/tokenDataStore'
+import { formatUsd } from '~/utils/numberFormat'
 
 /** Dollar-denominated spend limit presets */
 const DOLLAR_PRESETS = [
@@ -14,16 +15,14 @@ const DOLLAR_PRESETS = [
   { label: '$100',  usd: 100 },
 ]
 
+// Both helpers now route through the shared `formatUsd` from
+// ~/utils/numberFormat — that helper gives 2 decimals for >= $0.02 and
+// auto-precision (2 trailing non-zero digits) for sub-cent values, so
+// the local "5-decimal small" case is covered without a separate function.
 function fmtUsd(amount: number): string {
-  const rounded = Math.round(amount * 100) / 100
-  return rounded === Math.floor(rounded) ? `$${Math.round(rounded)}` : `$${rounded.toFixed(2)}`
+  return `$${formatUsd(amount)}`
 }
-
-/** Format small USD amounts with 5 decimal places (used for per-action tips which are fractions of a cent). */
-function fmtUsdSmall(amount: number): string {
-  if (amount === 0) return '$0'
-  return `$${amount.toFixed(5)}`
-}
+const fmtUsdSmall = fmtUsd
 
 function formatSpendLimit(value: bigint): string {
   if (value === BigInt(0)) return 'no limit'

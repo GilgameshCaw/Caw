@@ -8,6 +8,7 @@ import ModalHeader from './ModalHeader'
 import { useTheme } from '~/hooks/useTheme'
 import { useT } from '~/i18n/I18nProvider'
 import { themeTextSecondary, themeTextMuted, themeBgSubtle, themeSecondaryButton } from '~/utils/theme'
+import { formatUsd } from '~/utils/numberFormat'
 import { useSyncTransferStore } from '~/store/syncTransferStore'
 import { chains } from '~/config/chains'
 import { CAW_NAMES_ADDRESS, CAW_NAME_QUOTER_ADDRESS } from '~/../../../abi/addresses'
@@ -124,7 +125,7 @@ const SyncTransferModal: React.FC = () => {
         {/* Show LZ fee estimate */}
         {lzFee !== null && lzFee > 0n && (
           <div className={`mb-4 p-3 rounded-lg text-xs ${themeBgSubtle(isDark)} ${themeTextMuted(isDark)}`}>
-            {t('sync_transfer.fee_label')}: ~{formatEther(lzFee)} ETH{ethPrice > 0 && ` (~$${(Number(formatEther(lzFee)) * ethPrice).toFixed(2)})`}
+            {t('sync_transfer.fee_label')}: ~{formatEther(lzFee)} ETH{ethPrice > 0 && ` (~$${formatUsd(Number(formatEther(lzFee)) * ethPrice)})`}
           </div>
         )}
 

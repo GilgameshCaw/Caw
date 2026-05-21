@@ -4,6 +4,7 @@ import { apiFetch } from '~/api/client'
 import { useVerifyWalletStore } from '~/store/verifyWalletStore'
 import { useTheme } from '~/hooks/useTheme'
 import { useActiveToken, usePriceStore } from '~/store/tokenDataStore'
+import { formatUsd } from '~/utils/numberFormat'
 import { useMarketplaceStore } from '~/store/marketplaceStore'
 import { formatEther, formatUnits } from 'viem'
 import {
@@ -630,7 +631,7 @@ const Notifications: React.FC = () => {
           const formatted = cawNum >= 1_000_000 ? `${(cawNum / 1_000_000).toFixed(1)}M`
             : cawNum >= 1_000 ? `${(cawNum / 1_000).toFixed(1)}K`
             : cawNum.toFixed(0)
-          const usd = cawPrice > 0 ? ` (~$${(cawNum * cawPrice).toFixed(2)})` : ''
+          const usd = cawPrice > 0 ? ` (~$${formatUsd(cawNum * cawPrice)})` : ''
           tipLabel = ` ${formatted} CAW${usd}`
         }
         return notification.caw

@@ -22,6 +22,7 @@ import { CAW_ADDRESS, CAW_NAMES_ADDRESS, CAW_NAME_QUOTER_ADDRESS } from '~/../..
 import { cawProfileAbi, cawProfileQuoterAbi } from '~/../../../abi/generated'
 import { chains } from '~/config/chains'
 import { handleError } from '~/utils'
+import { formatUsd } from '~/utils/numberFormat'
 import { apiFetch, retryOnIndexing } from '~/api/client'
 
 import NetworkFeesPanel from '~/components/NetworkFeesPanel'
@@ -986,7 +987,7 @@ const PostMintOnboarding: React.FC<PostMintOnboardingProps> = ({ username, token
                     <div className={`flex justify-between text-xs px-2 ${tc.textSubtle}`}>
                       <span>Available: {availableBalance.toLocaleString('en-US', { maximumFractionDigits: 0 })} CAW</span>
                       {amount && parseFloat(amount) > 0 && cawPrice > 0 && (
-                        <span>~${(parseFloat(amount) * cawPrice).toFixed(2)}</span>
+                        <span>~${formatUsd(parseFloat(amount) * cawPrice)}</span>
                       )}
                     </div>
                   </div>

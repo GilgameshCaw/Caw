@@ -2,6 +2,7 @@
 import React, { useState, useEffect, useRef } from "react";
 import { useTokenDataStore, useActiveToken, usePriceStore } from "~/store/tokenDataStore";
 import { formatAddress, formatUnitsCompact, convertToText } from "~/utils";
+import { formatUsd } from "~/utils/numberFormat";
 import UsernameSvg from "./UsernameSvg";
 import { Link } from '~/utils/localizedRouter'
 import { TokenData } from "~/types";
@@ -539,17 +540,15 @@ const ProfileChooser: React.FC<{ compact?: boolean }> = ({ compact = false }) =>
             const isPositive = delta > 0n
             const absValue = isPositive ? delta : -delta
             // CAW is denominated tiny in USD (≈ $3.8e-8 / CAW), so action
-            // costs like 26k CAW look huge. Showing the USD equivalent
-            // alongside prevents sticker-shock — 26k CAW reads as "~$0.001".
+            // costs like 26k CAW look huge. Show the USD equivalent
+            // alongside via formatUsd (auto-precision for sub-cent values
+            // so "$0.0011" reads correctly instead of being clamped to "$0.00").
             // Falls back to CAW-only if the price feed hasn't loaded yet.
             let usdLabel = ''
             if (cawPriceUsd !== undefined && cawPriceUsd > 0) {
               const cawWhole = Number(absValue / 10n**18n) + Number(absValue % 10n**18n) / 1e18
               const usd = cawWhole * cawPriceUsd
-              // Format: <$0.01 → "<$0.01"; <$1 → "$0.XX"; ≥$1 → "$X.XX"
-              if (usd < 0.01) usdLabel = ' (<$0.01)'
-              else if (usd < 1) usdLabel = ` (~$${usd.toFixed(2)})`
-              else usdLabel = ` (~$${usd.toFixed(2)})`
+              usdLabel = ` (~$${formatUsd(usd)})`
             }
             return (
               <div className={`text-2xs ${isPositive ? 'text-yellow-500' : 'text-gray-400'}`}>

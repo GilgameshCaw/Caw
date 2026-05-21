@@ -6,6 +6,7 @@ import { usePriceStore } from '~/store/tokenDataStore'
 import { useT } from '~/i18n/I18nProvider'
 import { apiFetch } from '~/api/client'
 import { getUserAvatar } from '~/utils/defaultAvatar'
+import { formatUsd } from '~/utils/numberFormat'
 import type { CawItem } from '~/types'
 
 const PRESET_USD_AMOUNTS = [1, 5, 10, 20]
@@ -54,8 +55,8 @@ const usdToCaw = (usd: number, cawPrice: number): number => {
   return Math.max(1, Math.round(usd / cawPrice))
 }
 
-const formatUsd = (n: number): string =>
-  n < 1 ? `$${n.toFixed(2)}` : `$${n.toLocaleString(undefined, { maximumFractionDigits: 2 })}`
+// formatUsd is imported from ~/utils/numberFormat (auto-precision for
+// sub-cent values so e.g. a $0.0011 tip preset doesn't display as "$0.00").
 
 // Pull @mentions out of the post text in the order they appear. We use the
 // same pattern HighlightedTextarea highlights, so what the user sees
@@ -243,7 +244,7 @@ const SingleTipPicker: React.FC<PickerProps> = ({
                 ? 'bg-yellow-500 text-black'
                 : isDark ? 'bg-white/10 text-white hover:bg-white/20' : 'bg-gray-100 text-gray-900 hover:bg-gray-200'
             }`}>
-            {formatUsd(preset)}
+            ${formatUsd(preset)}
           </button>
         ))}
       </div>
