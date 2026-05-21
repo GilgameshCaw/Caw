@@ -31,6 +31,53 @@ import { loadBackupBlobFromFile } from './cloudBackup'
 import { signAuthorizationTuple } from './eip7702'
 import { bootstrapNewUser } from './bootstrap'
 
+// ─── argon2-browser mock ──────────────────────────────────────────────────────
+//
+// argon2-browser ships an Emscripten WASM module that is incompatible with
+// Node 22's WebAssembly.instantiateStreaming (which requires a file:// URL, not
+// a bare path). We mock the module so the unit tests can exercise the full
+// encrypt→decrypt plumbing without needing the real WASM binary.
+//
+// The mock uses PBKDF2-SHA256 as a stand-in hash (same interface, deterministic
+// for identical inputs). Both encrypt and decrypt see the same mock, so the
+// round-trip test is a valid integration check of vaultPassword.ts +
+// backupBlob.ts. The actual Argon2id algorithm is tested by argon2-browser's
+// own test suite.
+//
+// vi.mock() is hoisted to the top of the file by Vitest — this declaration
+// must live here, not inside a describe/it block.
+vi.mock('argon2-browser', () => {
+  const ArgonType = { Argon2d: 0, Argon2i: 1, Argon2id: 2 } as const
+  return {
+    ArgonType,
+    hash: async (opts: {
+      pass: string | Uint8Array
+      salt: string | Uint8Array
+      type?: number
+      mem?: number
+      time?: number
+      parallelism?: number
+      hashLen?: number
+    }) => {
+      // Deterministic PBKDF2-SHA256 stand-in (256-bit output, 1 iteration)
+      const enc = new TextEncoder()
+      const passBytes = typeof opts.pass === 'string' ? enc.encode(opts.pass) : opts.pass
+      const saltBytes = typeof opts.salt === 'string' ? enc.encode(opts.salt) : opts.salt
+      const hashLen = opts.hashLen ?? 32
+
+      const baseKey = await crypto.subtle.importKey('raw', passBytes, 'PBKDF2', false, ['deriveBits'])
+      const bits = await crypto.subtle.deriveBits(
+        { name: 'PBKDF2', salt: saltBytes, iterations: 1, hash: 'SHA-256' },
+        baseKey,
+        hashLen * 8,
+      )
+      const hash = new Uint8Array(bits)
+      const hashHex = Array.from(hash).map(b => b.toString(16).padStart(2, '0')).join('')
+      return { hash, hashHex, encoded: `$argon2id$mock$${hashHex}` }
+    },
+  }
+})
+
 // ─── secp256k1Key ─────────────────────────────────────────────────────────────
 
 describe('generateSecp256k1Keypair', () => {
@@ -128,13 +175,58 @@ describe('encryptBackupBlob / decryptBackupBlob', () => {
     expect(b1.ciphertext).not.toBe(b2.ciphertext)
   })
 
-  it('records the correct kdf metadata (PBKDF2 fallback path: memorySize === 0)', async () => {
+  it('records Argon2id kdf metadata (memorySize > 0) when argon2-browser is wired in', async () => {
     const kp = generateSecp256k1Keypair()
     const blob = await encryptBackupBlob(kp.privateKey, 'test-pw!', kp.address)
-    // Currently PBKDF2 fallback because argon2-browser is not installed.
-    // When Argon2id is wired in, this assertion should flip to > 0.
-    expect(typeof blob.argon2.memorySize).toBe('number')
+    expect(blob.argon2.memorySize).toBeGreaterThan(0) // Argon2id path active
     expect(blob.argon2.iterations).toBeGreaterThan(0)
+    expect(blob.argon2.parallelism).toBe(1)
+  })
+
+  it('Argon2id round-trip: encrypt with Argon2id → decrypt → same private key', async () => {
+    const kp = generateSecp256k1Keypair()
+    const password = 'argon2id-test-password-42!'
+    const blob = await encryptBackupBlob(kp.privateKey, password, kp.address)
+
+    // Confirm Argon2id was used
+    expect(blob.argon2.memorySize).toBe(65536) // 64 MiB
+    expect(blob.argon2.iterations).toBe(3)
+    expect(blob.argon2.parallelism).toBe(1)
+
+    // Decrypt and confirm key matches
+    const recovered = await decryptBackupBlob(blob, password)
+    expect(recovered.length).toBe(32)
+    expect(Array.from(recovered)).toEqual(Array.from(kp.privateKey))
+  }, 30_000) // Argon2id at 64 MiB takes 100–500ms; allow up to 30s for CI
+
+  it('legacy PBKDF2 blobs (memorySize === 0) still decrypt correctly', async () => {
+    // Simulate a blob written before argon2-browser was wired in.
+    // We call deriveKeyPbkdf2 directly and build the blob manually.
+    const { deriveKeyPbkdf2 } = await import('./vaultPassword')
+    const kp = generateSecp256k1Keypair()
+    const password = 'legacy-pbkdf2-password!'
+
+    const salt = crypto.getRandomValues(new Uint8Array(16))
+    const iv = crypto.getRandomValues(new Uint8Array(12))
+    const pbkdf2Key = await deriveKeyPbkdf2(password, salt)
+    const ciphertextBuf = await crypto.subtle.encrypt(
+      { name: 'AES-GCM', iv },
+      pbkdf2Key,
+      kp.privateKey,
+    )
+
+    const legacyBlob = {
+      version: 1 as const,
+      argon2: { memorySize: 0, iterations: 600_000, parallelism: 1 },
+      salt: ('0x' + Array.from(salt).map(b => b.toString(16).padStart(2, '0')).join('')) as `0x${string}`,
+      iv: ('0x' + Array.from(iv).map(b => b.toString(16).padStart(2, '0')).join('')) as `0x${string}`,
+      ciphertext: ('0x' + Array.from(new Uint8Array(ciphertextBuf)).map(b => b.toString(16).padStart(2, '0')).join('')) as `0x${string}`,
+      pubkeyAddress: kp.address,
+    }
+
+    const recovered = await decryptBackupBlob(legacyBlob, password)
+    expect(recovered.length).toBe(32)
+    expect(Array.from(recovered)).toEqual(Array.from(kp.privateKey))
   })
 })
 

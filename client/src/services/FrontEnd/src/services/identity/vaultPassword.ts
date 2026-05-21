@@ -4,34 +4,18 @@
  * Key derivation for the vault password that protects the user's
  * secp256k1 backup blob.
  *
- * Preferred algorithm: Argon2id (as specified in BACKUP_AND_RECOVERY.md §5
- * and plan-smart-eoa-passkey-sponsorship.md §1 Scenario G mitigations).
- * Argon2id is memory-hard and significantly stronger than PBKDF2 against
- * GPU/ASIC offline brute-force attacks.
+ * Algorithm: Argon2id (memory-hard) via argon2-browser, per
+ * BACKUP_AND_RECOVERY.md §5 and plan-smart-eoa-passkey-sponsorship.md
+ * §1 Scenario G mitigations. Argon2id is significantly stronger than
+ * PBKDF2 against GPU/ASIC offline brute-force attacks.
  *
- * argon2-browser is NOT currently in package.json. This file ships a
- * PBKDF2-SHA512 fallback using the browser's native Web Crypto API and
- * documents the security gap explicitly. When argon2-browser is added as a
- * dependency, swap `deriveKey` to call `deriveKeyArgon2` instead.
- *
- * SECURITY NOTE — PBKDF2 vs Argon2id:
- *   PBKDF2-SHA512 is time-hard but NOT memory-hard. A GPU can parallelize
- *   many PBKDF2 attempts at low memory cost. Against a determined offline
- *   attacker with the backup blob, the effective security margin for a
- *   10-character password is many orders of magnitude weaker than Argon2id
- *   at the parameters below. The PBKDF2 fallback is acceptable for the
- *   browser build while argon2-browser is not yet wired in, but MUST be
- *   replaced before production launch. Track this in the pre-launch checklist
- *   (project_production_prep.md).
- *
- *   The gap is flagged in BackupBlob.argon2.memorySize: when memorySize === 0
- *   the blob was encrypted under PBKDF2, not Argon2id. The decrypt path
- *   checks this field and routes accordingly.
- *
- * Dependencies: Web Crypto (always available in secure contexts). No new
- * npm deps needed for the PBKDF2 path.
+ * Forward-compat: blobs written before argon2-browser was wired in used
+ * PBKDF2-SHA512 (flagged by BackupBlob.argon2.memorySize === 0). Those
+ * blobs can still be decrypted: backupBlob.ts routes to `deriveKeyPbkdf2`
+ * (exported) when it reads memorySize === 0 from the blob metadata.
  */
 
+import * as argon2 from 'argon2-browser'
 import { requireSecureCrypto } from '~/utils/secureContext'
 
 // ─── Constants ───────────────────────────────────────────────────────────────
@@ -49,8 +33,8 @@ export const ARGON2_PARAMS = {
 } as const
 
 /**
- * PBKDF2 fallback parameters. High iteration count to slow down single-
- * threaded attack vectors, but NOT memory-hard. See security note above.
+ * PBKDF2 fallback parameters (used only for decrypting legacy blobs where
+ * memorySize === 0). New blobs always use Argon2id.
  */
 export const PBKDF2_FALLBACK_PARAMS = {
   iterations: 600_000, // OWASP 2023 recommendation for PBKDF2-HMAC-SHA512
@@ -70,11 +54,8 @@ export type DerivedKeyResult = {
 }
 
 /**
- * Derive an AES-GCM-256 CryptoKey from a vault password and a 16-byte salt.
- *
- * Currently routes to the PBKDF2 fallback because argon2-browser is not
- * installed. When argon2-browser is added to package.json, update this
- * function to call `deriveKeyArgon2` and set `usedArgon2: true`.
+ * Derive an AES-GCM-256 CryptoKey from a vault password and a 16-byte salt
+ * using Argon2id.
  *
  * @param password  The user's vault password (plaintext string).
  * @param salt      16-byte random salt. Must be different for every key
@@ -90,18 +71,44 @@ export async function deriveKey(
     throw new Error(`Salt must be 16 bytes; got ${salt.length}`)
   }
 
-  // TODO: replace with Argon2id once argon2-browser is installed.
-  // import argon2 from 'argon2-browser'
-  // return deriveKeyArgon2(password, salt)
-  const key = await deriveKeyPbkdf2(password, salt)
-  return { key, usedArgon2: false }
+  const key = await deriveKeyArgon2(password, salt)
+  return { key, usedArgon2: true }
 }
 
 /**
- * PBKDF2-SHA512 fallback implementation.
- * Internal — not exported; callers always go through `deriveKey`.
+ * Argon2id key derivation.
+ * Internal — callers always go through `deriveKey`.
  */
-async function deriveKeyPbkdf2(
+async function deriveKeyArgon2(
+  password: string,
+  salt: Uint8Array,
+): Promise<CryptoKey> {
+  const result = await argon2.hash({
+    pass: password,
+    salt,
+    type: argon2.ArgonType.Argon2id,
+    mem: ARGON2_PARAMS.memorySize,
+    time: ARGON2_PARAMS.iterations,
+    parallelism: ARGON2_PARAMS.parallelism,
+    hashLen: ARGON2_PARAMS.outputLength,
+  })
+  return crypto.subtle.importKey(
+    'raw',
+    result.hash,
+    { name: 'AES-GCM' },
+    false,
+    ['encrypt', 'decrypt'],
+  )
+}
+
+/**
+ * PBKDF2-SHA512 key derivation.
+ *
+ * Exported for backward-compat: `backupBlob.ts` calls this directly when
+ * decrypting a blob where `argon2.memorySize === 0` (written before
+ * argon2-browser was wired in). All new blobs use Argon2id (`deriveKey`).
+ */
+export async function deriveKeyPbkdf2(
   password: string,
   salt: Uint8Array,
 ): Promise<CryptoKey> {
@@ -126,30 +133,3 @@ async function deriveKeyPbkdf2(
     ['encrypt', 'decrypt'],
   )
 }
-
-/**
- * Argon2id key derivation stub.
- *
- * Uncomment and implement when argon2-browser is added to package.json:
- *
- *   import argon2 from 'argon2-browser'
- *
- *   async function deriveKeyArgon2(password: string, salt: Uint8Array): Promise<CryptoKey> {
- *     const result = await argon2.hash({
- *       pass: password,
- *       salt,
- *       type: argon2.ArgonType.Argon2id,
- *       mem: ARGON2_PARAMS.memorySize,
- *       time: ARGON2_PARAMS.iterations,
- *       parallelism: ARGON2_PARAMS.parallelism,
- *       hashLen: ARGON2_PARAMS.outputLength,
- *     })
- *     return crypto.subtle.importKey(
- *       'raw',
- *       result.hash,
- *       { name: 'AES-GCM' },
- *       false,
- *       ['encrypt', 'decrypt'],
- *     )
- *   }
- */
