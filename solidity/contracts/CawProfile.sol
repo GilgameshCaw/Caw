@@ -19,6 +19,8 @@ import "./CawL1PriceReader.sol";
 import { OApp, Origin, MessagingFee } from "@layerzerolabs/lz-evm-oapp-v2/contracts/oapp/OApp.sol";
 import { CawNetworkManager } from "./CawNetworkManager.sol";
 
+/// @dev Audit-trail tags in this contract (e.g. "H-N", "M-N", "Round N",
+///      "Audit fix YYYY-MM-DD") are decoded in `docs/AUDIT_TRAIL.md`.
 contract CawProfile is
   Context,
   ERC721Enumerable,

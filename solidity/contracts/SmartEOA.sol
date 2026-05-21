@@ -22,6 +22,9 @@ pragma solidity ^0.8.22;
 /// @dev SECURITY: This contract owns user funds and can authorize L1 actions on
 ///      behalf of users.  All callers are traced in the Caller Audit at the bottom
 ///      of this file.  No function should be changed without re-running the audit.
+///
+/// @dev Audit-trail tags in this contract (e.g. "H-N", "M-N", "Round N",
+///      "Audit fix YYYY-MM-DD") are decoded in `docs/AUDIT_TRAIL.md`.
 contract SmartEOA {
 
     // =========================================================================

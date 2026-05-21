@@ -15,6 +15,8 @@ import "./SigVerification.sol";
 
 import { OApp, Origin, MessagingFee } from "@layerzerolabs/lz-evm-oapp-v2/contracts/oapp/OApp.sol";
 
+/// @dev Audit-trail tags in this contract (e.g. "H-N", "M-N", "Round N",
+///      "Audit fix YYYY-MM-DD") are decoded in `docs/AUDIT_TRAIL.md`.
 contract CawProfileL2 is
   Context,
   Ownable,

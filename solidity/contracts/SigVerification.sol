@@ -15,6 +15,9 @@ import "@openzeppelin/contracts/interfaces/IERC1271.sol";
 ///         `CawActions._checkERC1271`. A future refactor can consolidate that
 ///         one here too; out of scope for the v1 ERC-1271 session-registration
 ///         change.
+///
+/// @dev Audit-trail tags in this contract (e.g. "H-N", "M-N", "Round N",
+///      "Audit fix YYYY-MM-DD") are decoded in `docs/AUDIT_TRAIL.md`.
 library SigVerification {
 
   /// @dev Forwarded to malicious / buggy 1271 contracts so they can't drain the

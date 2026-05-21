@@ -29,6 +29,9 @@ import "./OnlyOnce.sol";
  *     one peer per source EID via setPeer, then ownership is renounced — zero
  *     admin post-setup.
  *   - At least one honest validator must monitor within CHALLENGE_PERIOD.
+ *
+ * @dev Audit-trail tags in this contract (e.g. "H-N", "M-N", "Round N",
+ *      "Audit fix YYYY-MM-DD") are decoded in `docs/AUDIT_TRAIL.md`.
  */
 contract CawActionsArchive is Ownable, ReentrancyGuard, OnlyOnce, OApp {
 

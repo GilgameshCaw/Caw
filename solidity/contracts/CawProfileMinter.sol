@@ -9,6 +9,8 @@ import "./interfaces/IMint.sol";
 import "./interfaces/ISmartEOA.sol";
 import "./ISwapRouter.sol";
 
+/// @dev Audit-trail tags in this contract (e.g. "H-N", "M-N", "Round N",
+///      "Audit fix YYYY-MM-DD") are decoded in `docs/AUDIT_TRAIL.md`.
 contract CawProfileMinter is Context {
 
   mapping(string => uint32) public idByUsername;

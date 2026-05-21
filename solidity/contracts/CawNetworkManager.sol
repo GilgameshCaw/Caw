@@ -39,6 +39,9 @@ struct CawNetwork {
  *      configuration on the validator (REPLICATE_NETWORK_IDS env), not chain state.
  *      The on-chain part is just identity, fees, owner, storageChainEid, and
  *      instance registry.
+ *
+ * @dev Audit-trail tags in this contract (e.g. "H-N", "M-N", "Round N",
+ *      "Audit fix YYYY-MM-DD") are decoded in `docs/AUDIT_TRAIL.md`.
  */
 contract CawNetworkManager {
 

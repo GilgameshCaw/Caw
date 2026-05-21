@@ -23,6 +23,9 @@ import "./interfaces/IUniswapV2Pair.sol";
 ///         Returned price is the cumulative of (WETH per CAW), so a TWAP
 ///         derived from it gives ETH/CAW directly. The cumulative is a UQ112.112
 ///         fixed-point value as defined by Uniswap V2.
+///
+/// @dev    Audit-trail tags in this contract (e.g. "H-N", "M-N", "Round N",
+///         "Audit fix YYYY-MM-DD") are decoded in `docs/AUDIT_TRAIL.md`.
 contract CawL1PriceReader {
   IUniswapV2Pair public immutable pair;
 

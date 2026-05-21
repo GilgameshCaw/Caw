@@ -28,6 +28,9 @@ import "./ISwapRouter.sol";
 ///         OpenZeppelin-derived and reverts on failure, so the missing return
 ///         check is a no-op. SafeERC20 would be defensive style only — not
 ///         a security gap on the deployed token.
+///
+/// @dev Audit-trail tags in this contract (e.g. "H-N", "M-N", "Round N",
+///      "Audit fix YYYY-MM-DD") are decoded in `docs/AUDIT_TRAIL.md`.
 contract CawBuyAndBurn {
 
   IERC20 public immutable CAW;

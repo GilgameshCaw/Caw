@@ -24,6 +24,9 @@ import "./interfaces/ICawActions.sol";
 ///
 ///         Per-action caps are immutable constants. The full economic model
 ///         (which actions cap, at what ETH ceiling) is baked at deploy time.
+///
+/// @dev    Audit-trail tags in this contract (e.g. "H-N", "M-N", "Round N",
+///         "Audit fix YYYY-MM-DD") are decoded in `docs/AUDIT_TRAIL.md`.
 contract CawCapOracle {
   // ─── Constants ────────────────────────────────────────────────────────────
 

@@ -21,6 +21,9 @@ interface ICawActionsCheckpoints {
  *      that delivers that bytes32 to the archive, and the archive's peer lock
  *      authenticates that the message originated from this relay (not that
  *      LayerZero attests to the value).
+ *
+ * @dev Audit-trail tags in this contract (e.g. "H-N", "M-N", "Round N",
+ *      "Audit fix YYYY-MM-DD") are decoded in `docs/AUDIT_TRAIL.md`.
  */
 contract CawChallengeRelay is OnlyOnce, OApp {
   using OptionsBuilder for bytes;

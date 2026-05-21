@@ -20,6 +20,8 @@ import "@openzeppelin/contracts/interfaces/IERC1271.sol";
 import "./CawProfileL2.sol";
 import "./interfaces/ICawActions.sol";
 
+/// @dev Audit-trail tags in this contract (e.g. "H-N", "M-N", "Round N",
+///      "Audit fix YYYY-MM-DD") are decoded in `docs/AUDIT_TRAIL.md`.
 contract CawActionsERC1271 {
 
   ICawActions   public immutable cawActions;

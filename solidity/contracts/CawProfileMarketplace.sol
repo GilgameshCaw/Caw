@@ -22,6 +22,9 @@ interface ICawProfileTransfer is IERC721 {
  *      addresses), and ETH (address(0)) is always allowed. There is no
  *      post-deploy way to add or remove a payment token. If the ecosystem
  *      decides a different set is desirable, deploy a sibling marketplace.
+ *
+ * @dev Audit-trail tags in this contract (e.g. "H-N", "M-N", "Round N",
+ *      "Audit fix YYYY-MM-DD") are decoded in `docs/AUDIT_TRAIL.md`.
  */
 contract CawProfileMarketplace is ReentrancyGuard {
     using SafeERC20 for IERC20;
