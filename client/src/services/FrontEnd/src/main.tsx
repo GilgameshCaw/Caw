@@ -23,6 +23,7 @@ import Web3Provider from "./config/Web3Provider";
 import StateProvider from "./config/StateProvider.tsx";
 import { RecoveryProvider } from "./components/identity/RecoveryProvider.tsx";
 import { IdentitySigningProvider } from "./components/identity/IdentitySigningProvider.tsx";
+import { ErrorFallback } from "./components/ErrorFallback.tsx";
 import { QueryClient, focusManager } from '@tanstack/react-query'
 
 // staleTime tuned for L2 chain reads + API responses. wagmi's
@@ -193,7 +194,7 @@ if (typeof window !== 'undefined' && localStorage.getItem('cawRpcDebug') === '1'
 
 createRoot(document.getElementById("root")!).render(
   <StrictMode>
-    <Sentry.ErrorBoundary fallback={<p>Something went wrong. The error has been reported.</p>}>
+    <Sentry.ErrorBoundary fallback={<ErrorFallback />}>
       <Web3Provider queryClient={queryClient}>
         <StateProvider>
           <RecoveryProvider>

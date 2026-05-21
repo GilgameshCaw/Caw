@@ -18,9 +18,9 @@ import { useNavigate, Link } from '~/utils/localizedRouter'
 import StakingRewardsInfo from '~/components/StakingRewardsInfo'
 import { HiInformationCircle } from 'react-icons/hi'
 import { useTheme } from '~/hooks/useTheme'
-import { CLIENT_ID } from '~/api/actions'
+import { CLIENT_ID, getTipTiers } from '~/api/actions'
 import { useT } from '~/i18n/I18nProvider'
-import { getDefaultSpendLimit, DEFAULT_SESSION_DURATION } from '~/hooks/useSessionKey'
+import { getDefaultSpendLimit, getDefaultTipCeiling, DEFAULT_SESSION_DURATION } from '~/hooks/useSessionKey'
 import { useSessionKeyStore } from '~/store/sessionKeyStore'
 import { usePoolReserves, useMinCawOut, suggestedSlippageBps } from '~/hooks/useZapQuote'
 import NetworkFeesPanel from '~/components/NetworkFeesPanel'
@@ -565,7 +565,11 @@ console.log("BALANCE:", balance)
     functionName: 'mintAndDepositAndQuickSign',
     abi:      cawProfileMinterAbi,
     address: CAW_NAMES_MINTER_ADDRESS,
-    args:         [CLIENT_ID, username, depositAmountWei, chains.l2.layerZero, lzTokenAmount, qsSessionAddress, BigInt(qsExpiry), qsSpendLimit],
+    // V2 added trailing perActionTipRate: uint64 — default to the "fast" tip
+    // tier (BASE_VALIDATOR_TIP * 3 ≈ $0.003 / action at standard CAW pricing,
+    // gives validators priority-lane compensation). Matches what the
+    // standalone QuickSign flow uses by default.
+    args:         [CLIENT_ID, username, depositAmountWei, chains.l2.layerZero, lzTokenAmount, qsSessionAddress, BigInt(qsExpiry), qsSpendLimit, getDefaultTipCeiling(getTipTiers().fast)],
     disabled:     !depositEnabled || !quickSignEnabled || !address || !isValid || needsApproval || depositAmountWei === 0n || qsSessionAddress === '0x0000000000000000000000000000000000000000',
     onPending:    hash => {
       console.log('mintAndDepositAndQuickSign tx pending', hash)
@@ -681,7 +685,10 @@ console.log("BALANCE:", balance)
     functionName: 'mintAndDepositAndQuickSignZap',
     abi: cawProfileMinterAbi,
     address: CAW_NAMES_MINTER_ADDRESS,
-    args: [CLIENT_ID, username, ethAmountWei, zapQuote.minCawOut, qsSessionAddress, BigInt(qsExpiry), qsSpendLimit, chains.l2.layerZero, lzTokenAmount],
+    // V2 inserted perActionTipRate: uint64 between spendLimit and lzDestId.
+    // Default to fast-tier tip (~$0.003 at ~$3.8e-8/CAW pricing) for parity
+    // with the standalone QuickSign flow.
+    args: [CLIENT_ID, username, ethAmountWei, zapQuote.minCawOut, qsSessionAddress, BigInt(qsExpiry), qsSpendLimit, getDefaultTipCeiling(getTipTiers().fast), chains.l2.layerZero, lzTokenAmount],
     disabled: paymentMode !== 'eth' || !quickSignEnabled || !address || !isValid || ethAmountWei === 0n || !zapQuote.loaded || qsSessionAddress === '0x0000000000000000000000000000000000000000',
     onPending: hash => { console.log('mintAndDepositAndQuickSignZap tx pending', hash); setHasResetForm(false) },
     onSuccess: async (hash) => {

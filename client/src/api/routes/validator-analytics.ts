@@ -15,7 +15,10 @@ router.get('/tip-config', async (_req, res) => {
       where: { key: { in: ['validatorBaseTip', 'priorityTip'] } }
     })
     const map = new Map(rows.map(r => [r.key, r.value]))
-    const baseTip = map.get('validatorBaseTip') || process.env.VALIDATOR_BASE_TIP || '1000'
+    // Default fallback: ~26,000 CAW ≈ $0.001 / action at CAW ≈ $3.8e-8.
+    // Real config lives in admin DB (`validatorBaseTip` row) or
+    // VALIDATOR_BASE_TIP env. Update both when CAW price moves materially.
+    const baseTip = map.get('validatorBaseTip') || process.env.VALIDATOR_BASE_TIP || '26000'
     res.json({
       baseTip,
       priorityTip: map.get('priorityTip') || String(BigInt(baseTip) * 3n),

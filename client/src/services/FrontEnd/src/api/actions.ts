@@ -93,9 +93,15 @@ if (!Number.isFinite(CLIENT_ID) || CLIENT_ID <= 0) {
  * Validator tip (in whole CAW tokens - contract multiplies by 10^18)
  *
  * Base tip is fetched from the server (set via admin settings page).
- * Falls back to VITE_VALIDATOR_TIP env var, then 1000.
+ * Falls back to VITE_VALIDATOR_TIP env var, then 26000.
+ *
+ * Sizing: target ~$0.001 / action at ~$3.8e-8 / CAW → ≈ 26,000 CAW.
+ * Server config is the source of truth; this fallback only kicks in
+ * if the server's `/api/validator-analytics/tip-config` endpoint is
+ * unreachable at startup. Update both the env var and the server admin
+ * setting if the CAW price moves materially.
  */
-let BASE_VALIDATOR_TIP = BigInt(import.meta.env.VITE_VALIDATOR_TIP || "1000")
+let BASE_VALIDATOR_TIP = BigInt(import.meta.env.VITE_VALIDATOR_TIP || "26000")
 /** Priority tip threshold — actions at/above this get fast-lane processing. */
 let PRIORITY_TIP = BASE_VALIDATOR_TIP * 3n
 
