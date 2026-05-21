@@ -29,7 +29,6 @@ import { downloadBackupBlob } from '~/services/identity/cloudBackup'
 import {
   getSponsorApiClient,
   isSponsorSuccess,
-  type SponsorErrorResponse,
 } from '~/services/identity/sponsorApiClient'
 import { buildMintDepositPermitDigest } from '~/services/identity/eip712Permits'
 import { signWithPasskey, type PasskeyPubkey } from '~/services/identity/passkey'
@@ -102,7 +101,7 @@ export default function BackupStep({
           }
         : {
             getChainId: async () => chains.l1?.chainId ?? 11155111,
-            getTransactionCount: async (_params: { address: `0x${string}` }) => 0,
+            getTransactionCount: async () => 0,
           }
 
       // Derive the SmartEOA address from config.
