@@ -12,10 +12,10 @@
  *      b. Download JSON file.
  *   3. Show success state.
  *
- * Flow when in-memory key is NOT available (Wave 4 placeholder):
- *   Show a notice: "Please sign in with your backup file first" and
- *   a hint that full re-download without in-memory key will be wired
- *   in Wave 4. This prevents the dialog from being silently broken.
+ * Flow when in-memory key is NOT available:
+ *   Show a notice directing the user to sign in via /recovery first.
+ *   The dialog cannot produce a new backup file without the in-memory
+ *   key, so it blocks rather than silently producing a wrong result.
  *
  * The `inMemoryPrivateKey` prop is the raw 32-byte key from the
  * session state (never logged, never persisted). The parent is
@@ -128,7 +128,7 @@ export function ReDownloadBackupDialog({
     : 'bg-gray-50 border-gray-300 text-gray-900 placeholder-gray-400 focus:border-yellow-500'
 
   // ─────────────────────────────────────────────────────────────────────────
-  // Render: no in-memory key (Wave 4 placeholder)
+  // Render: no in-memory key — user must sign in via /recovery first
   // ─────────────────────────────────────────────────────────────────────────
   if (!inMemoryPrivateKey) {
     return (
@@ -163,8 +163,6 @@ export function ReDownloadBackupDialog({
                 <p className={`text-sm mt-1 ${isDark ? 'text-yellow-400/70' : 'text-yellow-700'}`}>
                   {t('identity.redownload.no_key_body')}
                 </p>
-                {/* Wave 4 placeholder — sign-in-with-backup-file flow not yet built */}
-                {/* TODO(wave-4): add link to /recovery or sign-in-with-backup flow */}
               </div>
             </div>
           </div>
