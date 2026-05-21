@@ -667,15 +667,29 @@ for (const L of L2_CHAIN_KEYS) {
 const LINKING_STEPS = [
   // Phase 2 linking (L1)
   {
-    name: 'Create first network on NetworkManager',
+    name: 'Create first network on NetworkManager (Uruk (testnet))',
     chain: 'L1',
     phase: 2,
     contract: 'CawNetworkManager',
     method: 'createNetwork',
-    // Fee ceilings: ~$2 each at ETH=$2000 (initial fees = ceilings) → 0.001 ETH = 1000000000000000 wei.
-    // Default Network is the "Public CAW Network" — low fees to keep
-    // onboarding friction minimal during the public-test era.
-    args: (state, chainConfig) => ['Uruk', state.deployerAddress, CHAINS[chainConfig.env + 'L2'].lzEid, '1000000000000000', '1000000000000000', '1000000000000000', '1000000000000000'],
+    // Uruk fee ceilings at ETH=$2000 (initial fees = ceilings; lowered to
+    // their final values by the next linking step):
+    //   withdrawFeeCeiling = 0.0025 ETH (~$5) — initial fee 0.001 ETH
+    //   depositFeeCeiling  = 0.0025 ETH (~$5) — initial fee 0.001 ETH
+    //   authFeeCeiling     = 0.001  ETH (~$2) — initial fee 0.00025 ETH
+    //   mintFeeCeiling     = 0.001  ETH (~$2) — initial fee 0.00025 ETH
+    // Ceilings are permanent upper bounds; the active fees can be lowered
+    // any time by the Network owner (you) via setXFee.
+    // Storage chain: L2 (Base Sepolia).
+    args: (state, chainConfig) => [
+      'Uruk (testnet)',
+      state.deployerAddress,
+      CHAINS[chainConfig.env + 'L2'].lzEid,
+      '2500000000000000', // withdrawFeeCeiling = 0.0025 ETH
+      '2500000000000000', // depositFeeCeiling  = 0.0025 ETH
+      '1000000000000000', // authFeeCeiling     = 0.001  ETH
+      '1000000000000000', // mintFeeCeiling     = 0.001  ETH
+    ],
     condition: (state) => state.addresses.CawNetworkManager,
     skipIf: async (state, deployer) => {
       return state.linking?.networkCreated === true;
@@ -683,6 +697,86 @@ const LINKING_STEPS = [
     onSuccess: (state) => {
       state.linking = state.linking || {};
       state.linking.networkCreated = true;
+    },
+  },
+  {
+    name: 'Lower initial Uruk fees (under ceilings)',
+    chain: 'L1',
+    phase: 2,
+    contract: 'CawNetworkManager',
+    method: 'setFees',
+    // Initial post-deploy fees (each < its ceiling):
+    //   withdrawFee = 0.001   ETH (ceiling 0.0025)
+    //   depositFee  = 0.001   ETH (ceiling 0.0025)
+    //   authFee     = 0.00025 ETH (ceiling 0.001)
+    //   mintFee     = 0.00025 ETH (ceiling 0.001)
+    // setFees(networkId, withdrawFee, depositFee, authFee, mintFee)
+    args: (state) => [
+      1,
+      '1000000000000000', // withdrawFee = 0.001   ETH
+      '1000000000000000', // depositFee  = 0.001   ETH
+      '250000000000000',  // authFee     = 0.00025 ETH
+      '250000000000000',  // mintFee     = 0.00025 ETH
+    ],
+    condition: (state) => state.addresses.CawNetworkManager && state.linking?.networkCreated === true,
+    skipIf: async (state, deployer) => {
+      return state.linking?.urukFeesLowered === true;
+    },
+    onSuccess: (state) => {
+      state.linking = state.linking || {};
+      state.linking.urukFeesLowered = true;
+    },
+  },
+  {
+    name: 'Create second network on NetworkManager (Babylon (testnet))',
+    chain: 'L1',
+    phase: 2,
+    contract: 'CawNetworkManager',
+    method: 'createNetwork',
+    // Babylon — second Network, same fee shape as Uruk for cross-Network
+    // comparison during testing. Storage chain: L2b (Arbitrum Sepolia).
+    // Exercising both sides of the storage/archive mesh from day one
+    // (Uruk's actions land on L2, get archived to L2b; Babylon's land on
+    // L2b, get archived to L2).
+    args: (state, chainConfig) => [
+      'Babylon (testnet)',
+      state.deployerAddress,
+      CHAINS[chainConfig.env + 'L2b'].lzEid,
+      '2500000000000000', // withdrawFeeCeiling = 0.0025 ETH
+      '2500000000000000', // depositFeeCeiling  = 0.0025 ETH
+      '1000000000000000', // authFeeCeiling     = 0.001  ETH
+      '1000000000000000', // mintFeeCeiling     = 0.001  ETH
+    ],
+    condition: (state) => state.addresses.CawNetworkManager && state.linking?.urukFeesLowered === true,
+    skipIf: async (state, deployer) => {
+      return state.linking?.babylonCreated === true;
+    },
+    onSuccess: (state) => {
+      state.linking = state.linking || {};
+      state.linking.babylonCreated = true;
+    },
+  },
+  {
+    name: 'Lower initial Babylon fees (under ceilings)',
+    chain: 'L1',
+    phase: 2,
+    contract: 'CawNetworkManager',
+    method: 'setFees',
+    // setFees(networkId=2, withdrawFee, depositFee, authFee, mintFee)
+    args: (state) => [
+      2,
+      '1000000000000000', // withdrawFee = 0.001   ETH
+      '1000000000000000', // depositFee  = 0.001   ETH
+      '250000000000000',  // authFee     = 0.00025 ETH
+      '250000000000000',  // mintFee     = 0.00025 ETH
+    ],
+    condition: (state) => state.addresses.CawNetworkManager && state.linking?.babylonCreated === true,
+    skipIf: async (state, deployer) => {
+      return state.linking?.babylonFeesLowered === true;
+    },
+    onSuccess: (state) => {
+      state.linking = state.linking || {};
+      state.linking.babylonFeesLowered = true;
     },
   },
   {
@@ -1372,7 +1466,8 @@ class MultiChainDeployer {
     if (config.predictedSiblingKey && !this.state.addresses[config.predictedSiblingKey]) {
       const nonce = await wallet.getNonce();
       // This contract lands at nonce; sibling lands at nonce+1.
-      const siblingAddr = ethers.getContractAddress({ from: wallet.address, nonce: nonce + 1 });
+      // ethers v6 renamed getContractAddress → getCreateAddress.
+      const siblingAddr = ethers.getCreateAddress({ from: wallet.address, nonce: nonce + 1 });
       this.state.predictedAddresses = this.state.predictedAddresses || {};
       this.state.predictedAddresses[config.predictedSiblingKey] = siblingAddr;
       console.log(`   Predicted ${config.predictedSiblingKey} address (nonce ${nonce + 1}): ${siblingAddr}`);
