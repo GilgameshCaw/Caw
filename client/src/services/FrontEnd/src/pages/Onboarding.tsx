@@ -5,14 +5,13 @@
  * wallet" link on the connect modal. Builds a phone-first (EIP-7702 /
  * Population B) identity without requiring the user to already own a wallet.
  *
- * Wave 1: UI skeleton only — no backend wiring.
- * Wave 2 will call bootstrapNewUser() + passkey enrollment + blob download.
- *
  * Steps:
- *  1. username   — pick & verify username availability
- *  2. deposit    — choose CAW deposit amount
+ *  1. username       — pick & verify username availability
+ *  2. deposit        — choose CAW deposit amount
  *  3. vault-password — set vault password protecting the backup blob
- *  4. next       — Wave-2 stub
+ *  4. passkey        — enroll WebAuthn passkey (Face ID / Touch ID / Windows Hello)
+ *  5. backup         — bootstrapNewUser() + download recovery file
+ *  6. confirm        — success + txHash + navigate to feed
  */
 
 import { useState, useCallback } from 'react'
@@ -21,39 +20,74 @@ import { useT } from '~/i18n/I18nProvider'
 import UsernameStep from './onboarding/UsernameStep'
 import DepositStep, { MIN_DEPOSIT_CAW } from './onboarding/DepositStep'
 import VaultPasswordStep from './onboarding/VaultPasswordStep'
+import PasskeyStep from './onboarding/PasskeyStep'
+import BackupStep from './onboarding/BackupStep'
+import ConfirmStep from './onboarding/ConfirmStep'
+import type { PasskeyPubkey } from '~/services/identity/passkey'
+import type { BootstrapResult } from '~/services/identity/bootstrap'
 
-type OnboardingStep = 'username' | 'deposit' | 'vault-password' | 'next'
+type OnboardingStep =
+  | 'username'
+  | 'deposit'
+  | 'vault-password'
+  | 'passkey'
+  | 'backup'
+  | 'confirm'
 
 interface OnboardingState {
   step: OnboardingStep
   username: string
   usernameAvailable: boolean | null
+  usernameError: string | null
   depositAmount: bigint
   vaultPassword: string
   vaultPasswordConfirm: string
+  enrolledPasskey: PasskeyPubkey | null
+  bootstrapResult: BootstrapResult | null
 }
 
 const INITIAL_STATE: OnboardingState = {
   step: 'username',
   username: '',
   usernameAvailable: null,
+  usernameError: null,
   depositAmount: MIN_DEPOSIT_CAW,
   vaultPassword: '',
   vaultPasswordConfirm: '',
+  enrolledPasskey: null,
+  bootstrapResult: null,
 }
 
-const STEP_ORDER: OnboardingStep[] = ['username', 'deposit', 'vault-password', 'next']
+// Steps that show in the progress indicator (exclude the confirm step).
+const PROGRESS_STEPS: OnboardingStep[] = [
+  'username',
+  'deposit',
+  'vault-password',
+  'passkey',
+  'backup',
+]
+
+const ALL_STEPS: OnboardingStep[] = [
+  'username',
+  'deposit',
+  'vault-password',
+  'passkey',
+  'backup',
+  'confirm',
+]
 
 function stepIndex(step: OnboardingStep): number {
-  return STEP_ORDER.indexOf(step)
+  return ALL_STEPS.indexOf(step)
 }
 
 function stepLabel(step: OnboardingStep, t: (k: string) => string): string {
   switch (step) {
-    case 'username': return t('onboarding.step.username')
-    case 'deposit': return t('onboarding.step.deposit')
+    case 'username':       return t('onboarding.step.username')
+    case 'deposit':        return t('onboarding.step.deposit')
     case 'vault-password': return t('onboarding.step.vault_password')
-    case 'next': return t('onboarding.step.next')
+    case 'passkey':        return t('onboarding.step.passkey')
+    case 'backup':         return t('onboarding.step.backup')
+    case 'confirm':        return t('onboarding.step.confirm')
   }
 }
 
@@ -63,7 +97,9 @@ export default function Onboarding() {
   const [state, setState] = useState<OnboardingState>(INITIAL_STATE)
 
   const currentIndex = stepIndex(state.step)
-  const totalSteps = STEP_ORDER.length - 1 // exclude stub "next" from progress display
+  const totalSteps = PROGRESS_STEPS.length
+  const showProgress = PROGRESS_STEPS.includes(state.step as typeof PROGRESS_STEPS[number])
+  const progressIndex = PROGRESS_STEPS.indexOf(state.step as typeof PROGRESS_STEPS[number])
 
   const mutedClass = isDark ? 'text-white/50' : 'text-gray-500'
   const strongClass = isDark ? 'text-white' : 'text-gray-900'
@@ -72,22 +108,22 @@ export default function Onboarding() {
 
   const goNext = useCallback(() => {
     const nextIndex = stepIndex(state.step) + 1
-    if (nextIndex < STEP_ORDER.length) {
-      setState(s => ({ ...s, step: STEP_ORDER[nextIndex] }))
+    if (nextIndex < ALL_STEPS.length) {
+      setState(s => ({ ...s, step: ALL_STEPS[nextIndex] }))
     }
   }, [state.step])
 
   const goBack = useCallback(() => {
     const prevIndex = stepIndex(state.step) - 1
     if (prevIndex >= 0) {
-      setState(s => ({ ...s, step: STEP_ORDER[prevIndex] }))
+      setState(s => ({ ...s, step: ALL_STEPS[prevIndex] }))
     }
   }, [state.step])
 
   // ── State setters ─────────────────────────────────────────────────────────
 
   const handleUsernameChange = useCallback((username: string) => {
-    setState(s => ({ ...s, username, usernameAvailable: null }))
+    setState(s => ({ ...s, username, usernameAvailable: null, usernameError: null }))
   }, [])
 
   const handleAvailabilityChange = useCallback((available: boolean | null) => {
@@ -106,9 +142,25 @@ export default function Onboarding() {
     setState(s => ({ ...s, vaultPasswordConfirm }))
   }, [])
 
-  // ── Progress indicator (shown for steps 0–2; hidden on stub) ─────────────
+  // PasskeyStep → advances to 'backup' after successful enrollment
+  const handlePasskeyEnrolled = useCallback((passkey: PasskeyPubkey) => {
+    setState(s => ({ ...s, enrolledPasskey: passkey, step: 'backup' }))
+  }, [])
 
-  const showProgress = state.step !== 'next'
+  // BackupStep → advances to 'confirm' after successful bootstrap
+  const handleBootstrapDone = useCallback((result: BootstrapResult) => {
+    setState(s => ({ ...s, bootstrapResult: result, step: 'confirm' }))
+  }, [])
+
+  // BackupStep → USERNAME_TAKEN: return to username step with error hint
+  const handleUsernameTaken = useCallback(() => {
+    setState(s => ({
+      ...s,
+      step: 'username',
+      usernameAvailable: false,
+      usernameError: t('onboarding.username.taken_retry'),
+    }))
+  }, [t])
 
   return (
     <div className={`min-h-screen flex flex-col ${isDark ? 'bg-black' : 'bg-white'}`}>
@@ -116,8 +168,8 @@ export default function Onboarding() {
       <div className={`sticky top-0 z-10 border-b px-6 py-4 ${isDark ? 'bg-black/90 border-white/10' : 'bg-white/90 border-gray-200'} backdrop-blur-sm`}>
         <div className="max-w-lg mx-auto flex items-center justify-between">
           <div className="flex items-center gap-3">
-            {/* Back arrow — hidden on first step */}
-            {currentIndex > 0 && state.step !== 'next' && (
+            {/* Back arrow — hidden on first step and confirm */}
+            {currentIndex > 0 && state.step !== 'confirm' && (
               <button
                 onClick={goBack}
                 className={`p-1 rounded-lg transition-colors cursor-pointer ${isDark ? 'hover:bg-white/10 text-white/70' : 'hover:bg-gray-100 text-gray-600'}`}
@@ -135,7 +187,7 @@ export default function Onboarding() {
               {showProgress && (
                 <p className={`text-xs ${mutedClass}`}>
                   {t('onboarding.step_of', {
-                    current: String(currentIndex + 1),
+                    current: String(progressIndex + 1),
                     total: String(totalSteps),
                   })}
                 </p>
@@ -157,7 +209,7 @@ export default function Onboarding() {
         <div className={`h-0.5 ${isDark ? 'bg-white/10' : 'bg-gray-100'}`}>
           <div
             className="h-full bg-yellow-500 transition-all duration-500"
-            style={{ width: `${((currentIndex + 1) / totalSteps) * 100}%` }}
+            style={{ width: `${((progressIndex + 1) / totalSteps) * 100}%` }}
           />
         </div>
       )}
@@ -195,26 +247,31 @@ export default function Onboarding() {
             />
           )}
 
-          {state.step === 'next' && (
-            <div className="space-y-6 text-center">
-              <div className={`w-16 h-16 mx-auto rounded-full flex items-center justify-center ${isDark ? 'bg-yellow-500/20' : 'bg-yellow-100'}`}>
-                <svg className="w-8 h-8 text-yellow-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 6v6m0 0v6m0-6h6m-6 0H6" />
-                </svg>
-              </div>
-              <h2 className={`text-2xl font-bold ${strongClass}`}>
-                {t('onboarding.next.title')}
-              </h2>
-              <p className={`text-sm ${mutedClass} max-w-sm mx-auto`}>
-                Wave 2 wires this up — passkey enrollment + backup blob + sponsor call go here.
-              </p>
-              <div className={`rounded-xl p-4 text-left space-y-2 ${isDark ? 'bg-white/5' : 'bg-gray-50'}`}>
-                <p className={`text-xs font-mono ${mutedClass}`}>Selected: @{state.username}</p>
-                <p className={`text-xs font-mono ${mutedClass}`}>
-                  Deposit: {(Number(state.depositAmount / 10n ** 18n)).toLocaleString()} CAW
-                </p>
-              </div>
-            </div>
+          {state.step === 'passkey' && (
+            <PasskeyStep
+              username={state.username}
+              onNext={handlePasskeyEnrolled}
+              onBack={goBack}
+            />
+          )}
+
+          {state.step === 'backup' && state.enrolledPasskey && (
+            <BackupStep
+              username={state.username}
+              depositAmount={state.depositAmount}
+              vaultPassword={state.vaultPassword}
+              passkey={state.enrolledPasskey}
+              onNext={handleBootstrapDone}
+              onUsernameTaken={handleUsernameTaken}
+              onBack={goBack}
+            />
+          )}
+
+          {state.step === 'confirm' && state.bootstrapResult && (
+            <ConfirmStep
+              username={state.username}
+              txHash={state.bootstrapResult.txHash}
+            />
           )}
         </div>
       </div>

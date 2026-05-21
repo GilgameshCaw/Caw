@@ -54,7 +54,44 @@ vi.mock('~/../../../abi/addresses', () => ({
 }))
 
 vi.mock('~/config/chains', () => ({
-  chains: { l1: { chainId: 11155111 }, l2: { chainId: 84532 } },
+  chains: { l1: { chainId: 11155111 }, l2: { chainId: 84532, layerZero: 40245 } },
+}))
+
+vi.mock('~/utils/localizedRouter', () => ({
+  useNavigate: vi.fn(() => vi.fn()),
+  Link: ({ children }: { children: React.ReactNode }) => React.createElement('a', null, children),
+}))
+
+// ─── Identity service mocks ────────────────────────────────────────────────────
+
+const mockEnrollPasskey = vi.fn()
+const mockBootstrapNewUser = vi.fn()
+const mockDownloadBackupBlob = vi.fn()
+const mockSignWithPasskey = vi.fn()
+const mockGetSponsorApiClient = vi.fn()
+
+vi.mock('~/services/identity/passkey', () => ({
+  enrollPasskey: (...args: unknown[]) => mockEnrollPasskey(...args),
+  signWithPasskey: (...args: unknown[]) => mockSignWithPasskey(...args),
+}))
+
+vi.mock('~/services/identity/bootstrap', () => ({
+  bootstrapNewUser: (...args: unknown[]) => mockBootstrapNewUser(...args),
+}))
+
+vi.mock('~/services/identity/cloudBackup', () => ({
+  downloadBackupBlob: (...args: unknown[]) => mockDownloadBackupBlob(...args),
+}))
+
+vi.mock('~/services/identity/sponsorApiClient', () => ({
+  getSponsorApiClient: (...args: unknown[]) => mockGetSponsorApiClient(...args),
+  isSponsorSuccess: (r: unknown) => 'txHash' in (r as object),
+}))
+
+vi.mock('~/services/identity/eip712Permits', () => ({
+  buildMintDepositPermitDigest: vi.fn(() => '0xdeadbeef' as `0x${string}`),
+  buildDepositForPermitDigest: vi.fn(() => '0xdeadbeef00' as `0x${string}`),
+  buildAuthenticatePermitDigest: vi.fn(() => '0xdeadbeef01' as `0x${string}`),
 }))
 
 // ─── Test helpers ──────────────────────────────────────────────────────────────
@@ -113,6 +150,20 @@ describe('Onboarding state machine', () => {
       // Click the Next button on deposit (default 1M CAW is valid)
       const nextBtns = screen.getAllByText('common.next')
       fireEvent.click(nextBtns[0])
+    })
+  }
+
+  // Helper: navigate through to the passkey step
+  async function navigateToPasskey() {
+    await navigateToVault()
+    await act(async () => {
+      const pwInput = screen.getByPlaceholderText('onboarding.vault.password_placeholder')
+      fireEvent.change(pwInput, { target: { value: 'Str0ngPassword!' } })
+      const confirmInput = screen.getByPlaceholderText('onboarding.vault.confirm_placeholder')
+      fireEvent.change(confirmInput, { target: { value: 'Str0ngPassword!' } })
+    })
+    await act(async () => {
+      fireEvent.click(screen.getAllByText('common.next')[0])
     })
   }
 
@@ -237,23 +288,11 @@ describe('Onboarding state machine', () => {
     expect(screen.getAllByText('common.next')[0]).not.toBeDisabled()
   })
 
-  it('advances vault → stub next step', async () => {
+  it('advances vault → passkey step', async () => {
     mockUseReadContract.mockReturnValue({ data: 0, isLoading: false, error: null })
     render(React.createElement(Onboarding), { wrapper: makeWrapper() })
-    await navigateToVault()
-
-    await act(async () => {
-      const pwInput = screen.getByPlaceholderText('onboarding.vault.password_placeholder')
-      fireEvent.change(pwInput, { target: { value: 'Str0ngPassword!' } })
-      const confirmInput = screen.getByPlaceholderText('onboarding.vault.confirm_placeholder')
-      fireEvent.change(confirmInput, { target: { value: 'Str0ngPassword!' } })
-    })
-
-    await act(async () => {
-      fireEvent.click(screen.getAllByText('common.next')[0])
-    })
-
-    expect(screen.getByText('onboarding.next.title')).toBeInTheDocument()
+    await navigateToPasskey()
+    expect(screen.getByText('onboarding.passkey.title')).toBeInTheDocument()
   })
 
   it('back button on deposit returns to username step', async () => {
@@ -264,5 +303,341 @@ describe('Onboarding state machine', () => {
       fireEvent.click(screen.getByText('common.back'))
     })
     expect(screen.getByText('onboarding.username.title')).toBeInTheDocument()
+  })
+})
+
+// ─── PasskeyStep tests ────────────────────────────────────────────────────────
+
+describe('PasskeyStep', () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+    vi.useFakeTimers()
+    mockUseReadContract.mockReturnValue({ data: 0, isLoading: false, error: null })
+  })
+
+  afterEach(() => {
+    vi.useRealTimers()
+  })
+
+  async function navigateToPasskeyStep() {
+    render(React.createElement(Onboarding), { wrapper: makeWrapper() })
+
+    // Username
+    const input = screen.getByPlaceholderText('onboarding.username.placeholder')
+    await act(async () => {
+      fireEvent.change(input, { target: { value: 'alice' } })
+      vi.advanceTimersByTime(600)
+    })
+    await act(async () => { fireEvent.click(screen.getByText('common.next')) })
+
+    // Deposit
+    await act(async () => { fireEvent.click(screen.getAllByText('common.next')[0]) })
+
+    // Vault password
+    await act(async () => {
+      const pwInput = screen.getByPlaceholderText('onboarding.vault.password_placeholder')
+      fireEvent.change(pwInput, { target: { value: 'Str0ngPassword!' } })
+      const confirmInput = screen.getByPlaceholderText('onboarding.vault.confirm_placeholder')
+      fireEvent.change(confirmInput, { target: { value: 'Str0ngPassword!' } })
+    })
+    await act(async () => { fireEvent.click(screen.getAllByText('common.next')[0]) })
+
+    // Now on passkey step
+    expect(screen.getByText('onboarding.passkey.title')).toBeInTheDocument()
+  }
+
+  it('shows passkey title and CTA button', async () => {
+    await navigateToPasskeyStep()
+    expect(screen.getByText('onboarding.passkey.cta')).toBeInTheDocument()
+  })
+
+  it('advances to backup step on successful passkey enrollment', async () => {
+    const fakePubkey = {
+      pubkeyX: '0xaabbcc' as `0x${string}`,
+      pubkeyY: '0xddeeff' as `0x${string}`,
+      credentialId: 'fakecredentialid',
+    }
+    mockEnrollPasskey.mockResolvedValueOnce(fakePubkey)
+
+    await navigateToPasskeyStep()
+    await act(async () => {
+      fireEvent.click(screen.getByText('onboarding.passkey.cta'))
+    })
+
+    expect(screen.getByText('onboarding.backup.title')).toBeInTheDocument()
+  })
+
+  it('shows error and retry button on passkey enrollment failure', async () => {
+    mockEnrollPasskey.mockRejectedValueOnce(new Error('User cancelled'))
+
+    await navigateToPasskeyStep()
+    await act(async () => {
+      fireEvent.click(screen.getByText('onboarding.passkey.cta'))
+    })
+
+    expect(screen.getByText('User cancelled')).toBeInTheDocument()
+    expect(screen.getByText('common.try_again')).toBeInTheDocument()
+  })
+})
+
+// ─── BackupStep / bootstrapNewUser error handling tests ────────────────────────
+
+describe('BackupStep error handling', () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+    vi.useFakeTimers()
+    mockUseReadContract.mockReturnValue({ data: 0, isLoading: false, error: null })
+  })
+
+  afterEach(() => {
+    vi.useRealTimers()
+  })
+
+  const fakePubkey = {
+    pubkeyX: '0xaabbcc' as `0x${string}`,
+    pubkeyY: '0xddeeff' as `0x${string}`,
+    credentialId: 'fakecredentialid',
+  }
+
+  const fakeBootstrapResult = {
+    txHash: '0xdeadbeef12345678',
+    backupBlob: {
+      version: 1 as const,
+      argon2: { memorySize: 65536, iterations: 3, parallelism: 1 },
+      salt: '0xabcd' as `0x${string}`,
+      iv: '0x1234' as `0x${string}`,
+      ciphertext: '0x5678' as `0x${string}`,
+      pubkeyAddress: '0xabc123' as `0x${string}`,
+    },
+    ecdsaAddress: '0xabc123' as `0x${string}`,
+  }
+
+  async function navigateToBackupStep() {
+    render(React.createElement(Onboarding), { wrapper: makeWrapper() })
+
+    // Username
+    const input = screen.getByPlaceholderText('onboarding.username.placeholder')
+    await act(async () => {
+      fireEvent.change(input, { target: { value: 'alice' } })
+      vi.advanceTimersByTime(600)
+    })
+    await act(async () => { fireEvent.click(screen.getByText('common.next')) })
+    // Deposit
+    await act(async () => { fireEvent.click(screen.getAllByText('common.next')[0]) })
+    // Vault password
+    await act(async () => {
+      const pwInput = screen.getByPlaceholderText('onboarding.vault.password_placeholder')
+      fireEvent.change(pwInput, { target: { value: 'Str0ngPassword!' } })
+      const confirmInput = screen.getByPlaceholderText('onboarding.vault.confirm_placeholder')
+      fireEvent.change(confirmInput, { target: { value: 'Str0ngPassword!' } })
+    })
+    await act(async () => { fireEvent.click(screen.getAllByText('common.next')[0]) })
+    // Passkey
+    mockEnrollPasskey.mockResolvedValueOnce(fakePubkey)
+    await act(async () => { fireEvent.click(screen.getByText('onboarding.passkey.cta')) })
+    // Now on backup step
+    expect(screen.getByText('onboarding.backup.title')).toBeInTheDocument()
+  }
+
+  it('advances to confirm step on successful bootstrap', async () => {
+    mockBootstrapNewUser.mockResolvedValueOnce(fakeBootstrapResult)
+    mockDownloadBackupBlob.mockReturnValue(undefined)
+
+    await navigateToBackupStep()
+    await act(async () => {
+      fireEvent.click(screen.getByText('onboarding.backup.cta'))
+    })
+
+    expect(screen.getByText('onboarding.confirm.title')).toBeInTheDocument()
+    expect(mockDownloadBackupBlob).toHaveBeenCalledOnce()
+  })
+
+  it('shows INSUFFICIENT_FUNDS error with retry button', async () => {
+    const err = new Error('Sponsor out of funds') as Error & { code: string }
+    err.code = 'INSUFFICIENT_FUNDS'
+    mockBootstrapNewUser.mockRejectedValueOnce(err)
+
+    await navigateToBackupStep()
+    await act(async () => {
+      fireEvent.click(screen.getByText('onboarding.backup.cta'))
+    })
+
+    expect(screen.getByText('onboarding.backup.error_no_funds')).toBeInTheDocument()
+    expect(screen.getByText('common.try_again')).toBeInTheDocument()
+  })
+
+  it('shows RATE_LIMITED error with retry button', async () => {
+    const err = new Error('Rate limited') as Error & { code: string }
+    err.code = 'RATE_LIMITED'
+    mockBootstrapNewUser.mockRejectedValueOnce(err)
+
+    await navigateToBackupStep()
+    await act(async () => {
+      fireEvent.click(screen.getByText('onboarding.backup.cta'))
+    })
+
+    expect(screen.getByText('onboarding.backup.error_rate_limited')).toBeInTheDocument()
+    expect(screen.getByText('common.try_again')).toBeInTheDocument()
+  })
+
+  it('shows generic error with retry button for unknown errors', async () => {
+    mockBootstrapNewUser.mockRejectedValueOnce(new Error('Network timeout'))
+
+    await navigateToBackupStep()
+    await act(async () => {
+      fireEvent.click(screen.getByText('onboarding.backup.cta'))
+    })
+
+    // Generic error includes the error message
+    const errorEl = screen.getByText((content) =>
+      content.includes('onboarding.backup.error_generic') ||
+      content.includes('Network timeout')
+    )
+    expect(errorEl).toBeInTheDocument()
+    expect(screen.getByText('common.try_again')).toBeInTheDocument()
+  })
+
+  it('returns to username step on USERNAME_TAKEN error', async () => {
+    const err = new Error('Username taken') as Error & { code: string }
+    err.code = 'USERNAME_TAKEN'
+    mockBootstrapNewUser.mockRejectedValueOnce(err)
+
+    await navigateToBackupStep()
+    await act(async () => {
+      fireEvent.click(screen.getByText('onboarding.backup.cta'))
+    })
+
+    // Should be back on username step
+    expect(screen.getByText('onboarding.username.title')).toBeInTheDocument()
+  })
+})
+
+// ─── Action-layer population switch tests ─────────────────────────────────────
+
+import { renderHook } from '@testing-library/react'
+import { useSponsorDeposit } from '~/hooks/useSponsorDeposit'
+import { useSponsorAuthenticate } from '~/hooks/useSponsorAuthenticate'
+
+vi.mock('~/hooks/useWalletPopulation', () => ({
+  useWalletPopulation: vi.fn(() => ({ population: 'A', loading: false, address: undefined })),
+}))
+
+import * as walletPopMod from '~/hooks/useWalletPopulation'
+const mockUseWalletPopulation = walletPopMod.useWalletPopulation as ReturnType<typeof vi.fn>
+
+describe('useSponsorDeposit population switch', () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+    ;(wagmiMod.usePublicClient as ReturnType<typeof vi.fn>).mockReturnValue(null)
+    mockGetSponsorApiClient.mockReturnValue({
+      sponsorDeposit: vi.fn().mockResolvedValue({ txHash: '0xabc' }),
+    })
+    mockSignWithPasskey.mockResolvedValue({
+      sig: '0xsig',
+      authenticatorData: '0xauthdata',
+      clientDataJSON: '{}',
+      r: '0xr',
+      s: '0xs',
+    })
+  })
+
+  const depositParams = {
+    tokenId: 1,
+    networkId: 1,
+    amount: 1000n,
+    permitNonce: 0n,
+    credentialId: 'credid',
+  }
+
+  it('Population A: returns { population: A } without calling sponsor', async () => {
+    mockUseWalletPopulation.mockReturnValue({ population: 'A', loading: false, address: '0x1' })
+    const { result } = renderHook(() => useSponsorDeposit(), {
+      wrapper: makeWrapper(),
+    })
+    const res = await result.current.deposit(depositParams)
+    expect(res.population).toBe('A')
+    expect(res.txHash).toBeUndefined()
+  })
+
+  it('Population B: calls sponsor and returns txHash', async () => {
+    mockUseWalletPopulation.mockReturnValue({ population: 'B', loading: false, address: '0x1' })
+    const mockSponsorDeposit = vi.fn().mockResolvedValue({ txHash: '0xb_hash' })
+    mockGetSponsorApiClient.mockReturnValue({ sponsorDeposit: mockSponsorDeposit })
+
+    const { result } = renderHook(() => useSponsorDeposit(), {
+      wrapper: makeWrapper(),
+    })
+    const res = await act(async () => result.current.deposit(depositParams))
+    expect(res.population).toBe('B')
+    expect(res.txHash).toBe('0xb_hash')
+    expect(mockSponsorDeposit).toHaveBeenCalledOnce()
+  })
+
+  it('Population C: returns error without calling sponsor', async () => {
+    mockUseWalletPopulation.mockReturnValue({ population: 'C', loading: false, address: '0x1' })
+    const { result } = renderHook(() => useSponsorDeposit(), {
+      wrapper: makeWrapper(),
+    })
+    const res = await result.current.deposit(depositParams)
+    expect(res.population).toBe('C')
+    expect(res.error).toContain('not yet supported')
+  })
+})
+
+describe('useSponsorAuthenticate population switch', () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+    ;(wagmiMod.usePublicClient as ReturnType<typeof vi.fn>).mockReturnValue(null)
+    mockGetSponsorApiClient.mockReturnValue({
+      sponsorAuthenticate: vi.fn().mockResolvedValue({ txHash: '0xabc' }),
+    })
+    mockSignWithPasskey.mockResolvedValue({
+      sig: '0xsig',
+      authenticatorData: '0xauthdata',
+      clientDataJSON: '{}',
+      r: '0xr',
+      s: '0xs',
+    })
+  })
+
+  const authParams = {
+    tokenId: 1,
+    networkId: 1,
+    permitNonce: 0n,
+    credentialId: 'credid',
+  }
+
+  it('Population A: returns { population: A } without calling sponsor', async () => {
+    mockUseWalletPopulation.mockReturnValue({ population: 'A', loading: false, address: '0x1' })
+    const { result } = renderHook(() => useSponsorAuthenticate(), {
+      wrapper: makeWrapper(),
+    })
+    const res = await result.current.authenticate(authParams)
+    expect(res.population).toBe('A')
+    expect(res.txHash).toBeUndefined()
+  })
+
+  it('Population B: calls sponsor and returns txHash', async () => {
+    mockUseWalletPopulation.mockReturnValue({ population: 'B', loading: false, address: '0x1' })
+    const mockSponsorAuth = vi.fn().mockResolvedValue({ txHash: '0xb_auth_hash' })
+    mockGetSponsorApiClient.mockReturnValue({ sponsorAuthenticate: mockSponsorAuth })
+
+    const { result } = renderHook(() => useSponsorAuthenticate(), {
+      wrapper: makeWrapper(),
+    })
+    const res = await act(async () => result.current.authenticate(authParams))
+    expect(res.population).toBe('B')
+    expect(res.txHash).toBe('0xb_auth_hash')
+    expect(mockSponsorAuth).toHaveBeenCalledOnce()
+  })
+
+  it('Population C: returns error without calling sponsor', async () => {
+    mockUseWalletPopulation.mockReturnValue({ population: 'C', loading: false, address: '0x1' })
+    const { result } = renderHook(() => useSponsorAuthenticate(), {
+      wrapper: makeWrapper(),
+    })
+    const res = await result.current.authenticate(authParams)
+    expect(res.population).toBe('C')
+    expect(res.error).toContain('not yet supported')
   })
 })
