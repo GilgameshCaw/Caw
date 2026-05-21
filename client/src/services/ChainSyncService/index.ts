@@ -726,6 +726,139 @@ async function syncL2Events(): Promise<void> {
 }
 
 // ============================================================================
+// L1 NetworkManager Fee Event Indexing (V2: NetworkFeeUpdated + ceiling events)
+// ============================================================================
+
+// Minimal ABI fragments for the five V2 fee events on CawNetworkManager.
+// The full generated ABI is already bound to `clientManager`; we keep a
+// separate minimal ABI here so the Contract instance can be created without
+// importing the entire generated artifact again.
+const NETWORK_FEE_EVENT_ABI = [
+  'event NetworkFeeUpdated(uint32 indexed networkId, string feeType, uint256 newFee)',
+  'event WithdrawFeeCeilingLowered(uint32 indexed networkId, uint256 oldCeiling, uint256 newCeiling)',
+  'event DepositFeeCeilingLowered(uint32 indexed networkId, uint256 oldCeiling, uint256 newCeiling)',
+  'event AuthFeeCeilingLowered(uint32 indexed networkId, uint256 oldCeiling, uint256 newCeiling)',
+  'event MintFeeCeilingLowered(uint32 indexed networkId, uint256 oldCeiling, uint256 newCeiling)',
+] as const
+
+const L1_FEE_SYNC_BLOCK_KEY = 'l1_fee_events_last_synced_block'
+const L1_FEE_EVENT_CHUNK_SIZE = 2000   // blocks per getLogs call (stays under free-tier 50 K cap)
+const L1_FEE_EVENT_BOOTSTRAP_LOOKBACK = 50000 // if no cursor, start this many L1 blocks back
+
+async function getLastSyncedL1FeeBlock(): Promise<number | null> {
+  try {
+    const row = await prisma.chainData.findUnique({ where: { key: L1_FEE_SYNC_BLOCK_KEY } })
+    const value = row?.value as any
+    return typeof value?.block === 'number' ? value.block : null
+  } catch {
+    return null
+  }
+}
+
+async function setLastSyncedL1FeeBlock(block: number): Promise<void> {
+  await prisma.chainData.upsert({
+    where: { key: L1_FEE_SYNC_BLOCK_KEY },
+    update: { value: { block } },
+    create: { key: L1_FEE_SYNC_BLOCK_KEY, value: { block } },
+  })
+}
+
+async function syncL1FeeEvents(): Promise<void> {
+  if (!l1Provider || !NETWORK_MANAGER_ADDRESS) {
+    console.log('[ChainSync:L1FeeEvents] Skipping — L1 provider not available')
+    return
+  }
+
+  const contract = new Contract(NETWORK_MANAGER_ADDRESS, NETWORK_FEE_EVENT_ABI as any, l1Provider)
+
+  let fromBlock = await getLastSyncedL1FeeBlock()
+  const latestBlock = await l1Provider.getBlockNumber()
+
+  if (fromBlock === null) {
+    fromBlock = Math.max(0, latestBlock - L1_FEE_EVENT_BOOTSTRAP_LOOKBACK)
+    console.log(`[ChainSync:L1FeeEvents] Bootstrapping from block ${fromBlock}`)
+  }
+
+  if (fromBlock >= latestBlock) return
+
+  let cursor = fromBlock + 1
+  let totalEvents = 0
+
+  while (cursor <= latestBlock) {
+    const toBlock = Math.min(cursor + L1_FEE_EVENT_CHUNK_SIZE - 1, latestBlock)
+
+    try {
+      const feeUpdated      = await contract.queryFilter(contract.filters.NetworkFeeUpdated(), cursor, toBlock)
+      const withdrawCeiling = await contract.queryFilter(contract.filters.WithdrawFeeCeilingLowered(), cursor, toBlock)
+      const depositCeiling  = await contract.queryFilter(contract.filters.DepositFeeCeilingLowered(), cursor, toBlock)
+      const authCeiling     = await contract.queryFilter(contract.filters.AuthFeeCeilingLowered(), cursor, toBlock)
+      const mintCeiling     = await contract.queryFilter(contract.filters.MintFeeCeilingLowered(), cursor, toBlock)
+
+      const combined = [
+        ...feeUpdated.map(e      => ({ ev: e, kind: 'NetworkFeeUpdated'      as const })),
+        ...withdrawCeiling.map(e => ({ ev: e, kind: 'WithdrawFeeCeilingLowered' as const })),
+        ...depositCeiling.map(e  => ({ ev: e, kind: 'DepositFeeCeilingLowered'  as const })),
+        ...authCeiling.map(e     => ({ ev: e, kind: 'AuthFeeCeilingLowered'     as const })),
+        ...mintCeiling.map(e     => ({ ev: e, kind: 'MintFeeCeilingLowered'     as const })),
+      ].sort((a, b) => {
+        if (a.ev.blockNumber !== b.ev.blockNumber) return a.ev.blockNumber - b.ev.blockNumber
+        return (a.ev as any).logIndex - (b.ev as any).logIndex
+      })
+
+      for (const { ev, kind } of combined) {
+        const args = (ev as any).args
+        if (!args) continue
+
+        if (kind === 'NetworkFeeUpdated') {
+          const networkId = Number(args.networkId)
+          const feeType   = String(args.feeType)
+          const newFee    = BigInt(args.newFee?.toString() || '0')
+          console.log(`[ChainSync:L1FeeEvents] NetworkFeeUpdated: networkId=${networkId}, type=${feeType}, newFee=${newFee.toString()}`)
+          // TODO: invalidate any cached fee state for this networkId
+        } else if (kind === 'WithdrawFeeCeilingLowered') {
+          const networkId  = Number(args.networkId)
+          const oldCeiling = BigInt(args.oldCeiling?.toString() || '0')
+          const newCeiling = BigInt(args.newCeiling?.toString() || '0')
+          console.log(`[ChainSync:L1FeeEvents] WithdrawFeeCeilingLowered: networkId=${networkId}, ${oldCeiling} → ${newCeiling}`)
+          // TODO: invalidate any cached fee state for this networkId
+        } else if (kind === 'DepositFeeCeilingLowered') {
+          const networkId  = Number(args.networkId)
+          const oldCeiling = BigInt(args.oldCeiling?.toString() || '0')
+          const newCeiling = BigInt(args.newCeiling?.toString() || '0')
+          console.log(`[ChainSync:L1FeeEvents] DepositFeeCeilingLowered: networkId=${networkId}, ${oldCeiling} → ${newCeiling}`)
+          // TODO: invalidate any cached fee state for this networkId
+        } else if (kind === 'AuthFeeCeilingLowered') {
+          const networkId  = Number(args.networkId)
+          const oldCeiling = BigInt(args.oldCeiling?.toString() || '0')
+          const newCeiling = BigInt(args.newCeiling?.toString() || '0')
+          console.log(`[ChainSync:L1FeeEvents] AuthFeeCeilingLowered: networkId=${networkId}, ${oldCeiling} → ${newCeiling}`)
+          // TODO: invalidate any cached fee state for this networkId
+        } else if (kind === 'MintFeeCeilingLowered') {
+          const networkId  = Number(args.networkId)
+          const oldCeiling = BigInt(args.oldCeiling?.toString() || '0')
+          const newCeiling = BigInt(args.newCeiling?.toString() || '0')
+          console.log(`[ChainSync:L1FeeEvents] MintFeeCeilingLowered: networkId=${networkId}, ${oldCeiling} → ${newCeiling}`)
+          // TODO: invalidate any cached fee state for this networkId
+        }
+      }
+
+      totalEvents += combined.length
+      await setLastSyncedL1FeeBlock(toBlock)
+    } catch (err: any) {
+      console.error(`[ChainSync:L1FeeEvents] getLogs failed for range ${cursor}-${toBlock}:`, err.message?.slice(0, 200))
+      // Break out — next tick will retry from the current cursor
+      return
+    }
+
+    cursor = toBlock + 1
+  }
+
+  if (totalEvents > 0) {
+    console.log(`[ChainSync:L1FeeEvents] Indexed ${totalEvents} fee events through block ${latestBlock}`)
+  }
+}
+
+// ============================================================================
 // Task Management
 // ============================================================================
 
@@ -806,6 +939,20 @@ export const chainSyncService = {
       sync: syncAllClients
     })
     ctx.declareLoop('ChainSync:Clients', 90 * 60_000) // 3× interval
+
+    // V2: poll for NetworkFeeUpdated + *FeeCeilingLowered events from
+    // CawNetworkManager on L1. Logs at INFO only for now; cache invalidation
+    // is a follow-up. Runs every 5 minutes — fee changes are rare and the
+    // L2_EVENT_CHUNK_SIZE cap keeps each call well under the free-tier 50K
+    // block getLogs ceiling.
+    if (resolvedCfg.l1RpcUrl) {
+      registerTask({
+        name: 'L1FeeEvents',
+        interval: 5 * 60 * 1000, // 5 minutes
+        sync: syncL1FeeEvents,
+      })
+      ctx.declareLoop('ChainSync:L1FeeEvents', 15 * 60_000) // 3× interval
+    }
 
     // Only register price sync if we have mainnet RPC
     if (resolvedCfg.ethMainnetRpcUrl) {

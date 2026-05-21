@@ -3447,8 +3447,14 @@ console.log("succeededKeys", succeededKeys)
     let skippedL1ClientsWarned = false
     const ethers_formatStake = (wei: bigint) => (Number(wei) / 1e18).toFixed(4).replace(/0+$/, '').replace(/\.$/, '')
     const CHALLENGE_RELAY_ADDRESS = CAW_CHALLENGE_RELAY_ADDRESS
-    const OPTIMISTIC_MIN_STAKE = BigInt('10000000000000000')     // 0.01 ETH
-    const OPTIMISTIC_INITIAL_DEPOSIT = BigInt('20000000000000000') // 0.02 ETH
+    // V2 CawActionsArchive.MIN_STAKE = 0.05 ETH (raised from 0.01 in V1 after the
+    // Round-2 censorship-drill finding that an attacker at 0.01 stake could
+    // economically sustain ~2000 slash-grief cycles). Must match the on-chain
+    // constant — too low here and submitReplication() reverts with InsufficientStake.
+    const OPTIMISTIC_MIN_STAKE = BigInt('50000000000000000')      // 0.05 ETH
+    // Deposit 2× MIN_STAKE on first run so the validator comfortably clears the
+    // floor even with minor gas-estimation drift. (V1 was 0.02 ETH = 2× 0.01.)
+    const OPTIMISTIC_INITIAL_DEPOSIT = BigInt('100000000000000000') // 0.10 ETH (2× MIN_STAKE)
     const OPTIMISTIC_CHECKPOINT_INTERVAL = 32
 
     const archiveAbi = [
@@ -4033,6 +4039,10 @@ console.log("succeededKeys", succeededKeys)
         // how many we queued. For honest operation this bounds exposure
         // during LZ/monitor latency windows; for fraud-testing it prevents
         // the runaway "pre-slash spam" we kept observing.
+        // V2 CawActionsArchive.MAX_PENDING_PER_VALIDATOR = 16 (on-chain hard cap).
+        // The env default of 1 is intentionally conservative — operators raising
+        // MAX_PENDING_SUBMISSIONS must keep it at or below 16 or the next
+        // submitReplication() call will revert with TooManyPendingSubmissions.
         const maxPending = Number(process.env.MAX_PENDING_SUBMISSIONS || '1')
         const pending = Number(await archive.pendingCount(w.getAddress()))
         if (pending >= maxPending) {
