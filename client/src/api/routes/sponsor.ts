@@ -67,6 +67,15 @@ async function checkSponsorRateLimit(ip: string, op: 'bootstrap' | 'deposit' | '
 const hex32Schema = z.string().regex(/^0x[0-9a-fA-F]{64}$/, 'must be 0x-prefixed 32-byte hex')
 const addressSchema = z.string().regex(/^0x[0-9a-fA-F]{40}$/, 'must be 0x-prefixed 20-byte address')
 const hexBytesSchema = z.string().regex(/^0x([0-9a-fA-F]{2})*$/, 'must be 0x-prefixed even-length hex')
+// Signature-specific schema (L-2): 65-byte ECDSA = 132 chars. WebAuthn blobs are
+// larger (encodes authenticatorData + clientDataJSON + r + s as bytes, bytes,
+// bytes32, bytes32) — typically <1500 bytes. Cap at ~8 KB with margin for any
+// reasonable WebAuthn payload. Multi-MB hex payloads are never valid and would
+// let a caller fill the request body parser up to its limit on every call.
+const sigHexSchema = z.string()
+  .regex(/^0x[0-9a-fA-F]+$/, 'must be 0x-prefixed hex')
+  .refine(s => s.length % 2 === 0, 'odd-length hex')
+  .refine(s => s.length <= 8194, 'sig too long; max 8194 chars (~4 KB)')
 // bigint from string/number (JSON doesn't support BigInt natively)
 const bigintSchema = z.union([
   z.string().regex(/^\d+$/).transform(v => BigInt(v)),
@@ -83,14 +92,16 @@ const BootstrapBodySchema = z.object({
   passkeyPubkeyX:     hex32Schema as z.ZodType<`0x${string}`>,
   passkeyPubkeyY:     hex32Schema as z.ZodType<`0x${string}`>,
   ecdsaFallbackAddr:  addressSchema as z.ZodType<`0x${string}`>,
-  username:           z.string().min(1).max(32),
+  // L-3: mirror the contract's isValidUsername constraint ([a-z0-9], 1-32 chars)
+  // to fail-fast before spending any RPC calls or gas.
+  username:           z.string().min(1).max(32).regex(/^[a-z0-9]+$/, 'username must be lowercase alphanumeric only'),
   depositAmountCAW:   bigintSchema,
   networkId:          z.number().int().nonnegative(),
   lzDestId:           z.number().int().nonnegative(),
   lzTokenAmount:      bigintSchema,
   authTupleSignature: authTupleSignatureSchema,
   authTupleNonce:     bigintSchema,
-  permitSig:          hexBytesSchema as z.ZodType<`0x${string}`>,
+  permitSig:          sigHexSchema as z.ZodType<`0x${string}`>,  // L-2: cap at 8 KB
   permitNonce:        bigintSchema,
 })
 
@@ -101,7 +112,7 @@ const DepositBodySchema = z.object({
   lzDestId:       z.number().int().nonnegative(),
   lzTokenAmount:  bigintSchema,
   permitNonce:    bigintSchema,
-  permitSig:      hexBytesSchema as z.ZodType<`0x${string}`>,
+  permitSig:      sigHexSchema as z.ZodType<`0x${string}`>,  // L-2: cap at 8 KB
 })
 
 const AuthenticateBodySchema = z.object({
@@ -110,7 +121,7 @@ const AuthenticateBodySchema = z.object({
   lzDestId:       z.number().int().nonnegative(),
   lzTokenAmount:  bigintSchema,
   permitNonce:    bigintSchema,
-  permitSig:      hexBytesSchema as z.ZodType<`0x${string}`>,
+  permitSig:      sigHexSchema as z.ZodType<`0x${string}`>,  // L-2: cap at 8 KB
 })
 
 // ─── Helper to get real client IP ────────────────────────────────────────────
@@ -129,7 +140,13 @@ router.post('/bootstrap', async (req, res) => {
     return res.status(503).json({ error: 'SPONSOR_DISABLED', detail: 'Sponsored minting is not enabled on this node' })
   }
 
-  // Rate limit
+  // Rate limit (L-1): intentionally checked BEFORE sig verification. This means
+  // a legitimate user with a typo'd sig will consume one quota slot on each
+  // failed attempt. The trade-off is deliberate: checking rate limits first
+  // prevents probing attacks where an adversary burns through sig verification
+  // CPU (or on-chain simulation budget) before the quota fires. A user who
+  // typo'd their sig gets a correct error on the next attempt (within their
+  // remaining quota) — acceptable UX for a 3/day operation.
   const ip = clientIp(req)
   const allowed = await checkSponsorRateLimit(ip, 'bootstrap')
   if (!allowed) {
@@ -222,5 +239,8 @@ router.post('/authenticate', async (req, res) => {
   }
   return res.status(200).json(result)
 })
+
+// Named exports for test-only schema access (L-3 validation tests)
+export { BootstrapBodySchema }
 
 export default router

@@ -87,6 +87,8 @@ export type SponsorErrorCode =
   | 'BAD_SIG'
   | 'NONCE_MISMATCH'
   | 'ZERO_DEPOSIT'
+  | 'DEPOSIT_TOO_LARGE'
+  | 'LZ_FEE_TOO_LARGE'
   | 'LZ_UNDERPAID'
   | 'TREASURY_LOW'
   | 'RECIPIENT_NOT_DELEGATED'
@@ -124,6 +126,8 @@ const REVERT_SUBSTRINGS: Record<SponsorErrorCode, string[]> = {
   BAD_SIG:                 ['bad sig', 'invalid signature', 'sig invalid'],
   NONCE_MISMATCH:          ['nonce mismatch', 'invalid nonce'],
   ZERO_DEPOSIT:            ['zero deposit', 'amount is 0'],
+  DEPOSIT_TOO_LARGE:       [],    // generated locally, never from contract
+  LZ_FEE_TOO_LARGE:        [],    // generated locally, never from contract
   LZ_UNDERPAID:            ['lz fee', 'insufficient fee', 'lzsend'],
   TREASURY_LOW:            [],    // generated locally, never from contract
   RECIPIENT_NOT_DELEGATED: ['direct submit required', 'not delegated', 'code.length'],
@@ -153,6 +157,10 @@ export interface SponsorServiceOpts {
   smartEoaAddress: string
   /** Minimum CAW required for a bootstrap call (prevents dust-mint spam). */
   minDepositCAW?: bigint
+  /** Maximum CAW allowed per bootstrap/deposit call (M-1 anti-drain cap). Default 10M CAW. */
+  maxDepositCAW?: bigint
+  /** Maximum LZ fee (wei) allowed per call (M-2 anti-drain cap). Default 0.005 ETH. */
+  maxLzFeeWei?: bigint
 }
 
 export class SponsorService {
@@ -162,6 +170,8 @@ export class SponsorService {
   private readonly cawProfileAddress: string
   private readonly smartEoaAddress: string
   private readonly minDepositCAW: bigint
+  private readonly maxDepositCAW: bigint
+  private readonly maxLzFeeWei: bigint
   private readonly l1ChainId: number | undefined
 
   // Lazily resolved from provider on first call; cached for subsequent calls.
@@ -175,6 +185,8 @@ export class SponsorService {
     this.cawProfileAddress = opts.cawProfileAddress
     this.smartEoaAddress = opts.smartEoaAddress
     this.minDepositCAW = opts.minDepositCAW ?? BigInt(0)
+    this.maxDepositCAW = opts.maxDepositCAW ?? 10_000_000n * 10n ** 18n  // 10M CAW
+    this.maxLzFeeWei = opts.maxLzFeeWei ?? 5_000_000_000_000_000n         // 0.005 ETH
     this.l1ChainId = opts.l1ChainId
   }
 
@@ -205,6 +217,24 @@ export class SponsorService {
         }
       }
 
+      // 1b. Maximum deposit check (M-1): prevents an attacker from forcing the
+      //     sponsor to transfer up to its full CAW allowance in a single call.
+      if (params.depositAmountCAW > this.maxDepositCAW) {
+        return {
+          error: 'DEPOSIT_TOO_LARGE',
+          detail: `depositAmountCAW ${params.depositAmountCAW} exceeds SPONSOR_MAX_DEPOSIT_CAW (${this.maxDepositCAW})`,
+        }
+      }
+
+      // 1c. Maximum LZ fee check (M-2): prevents forcing the sponsor to send
+      //     up to its full ETH balance as a LayerZero fee in a single call.
+      if (params.lzTokenAmount > this.maxLzFeeWei) {
+        return {
+          error: 'LZ_FEE_TOO_LARGE',
+          detail: `lzTokenAmount ${params.lzTokenAmount} exceeds SPONSOR_MAX_LZ_FEE_WEI (${this.maxLzFeeWei})`,
+        }
+      }
+
       // 2. Recover user's EOA address from their 7702 auth tuple sig.
       //    The auth tuple hash is: keccak256(0x05 || rlp([chainId, smartEoaAddress, nonce]))
       //    verifyAuthorization does exactly this.
@@ -224,6 +254,19 @@ export class SponsorService {
         userEoaAddress = verifyAuthorization(authForRecovery, sigComponents as any)
       } catch (e) {
         return { error: 'BAD_SIG', detail: `Could not recover EOA from auth tuple: ${e}` }
+      }
+
+      // 2b. Preflight: confirm FE-supplied authTupleNonce matches user's current
+      //     EOA nonce. If stale, the 7702 auth-list entry is silently dropped by
+      //     the EVM (nonce mismatch causes that entry to be skipped, not a revert)
+      //     and we'd burn sponsor gas running mintAndDepositSponsored against an
+      //     un-delegated EOA (L-4).
+      const currentEoaNonce = await this.provider.getTransactionCount(userEoaAddress, 'pending')
+      if (BigInt(currentEoaNonce) !== params.authTupleNonce) {
+        return {
+          error: 'NONCE_MISMATCH',
+          detail: `authTupleNonce ${params.authTupleNonce} doesn't match user's current EOA nonce ${currentEoaNonce}`,
+        }
       }
 
       // 3. Username availability pre-check (best-effort; contract enforces atomically)
@@ -328,6 +371,22 @@ export class SponsorService {
         return { error: 'ZERO_DEPOSIT', detail: 'amount must be > 0' }
       }
 
+      // M-1: cap per-call deposit amount to prevent sponsor CAW drain.
+      if (params.amount > this.maxDepositCAW) {
+        return {
+          error: 'DEPOSIT_TOO_LARGE',
+          detail: `amount ${params.amount} exceeds SPONSOR_MAX_DEPOSIT_CAW (${this.maxDepositCAW})`,
+        }
+      }
+
+      // M-2: cap per-call LZ fee to prevent sponsor ETH drain.
+      if (params.lzTokenAmount > this.maxLzFeeWei) {
+        return {
+          error: 'LZ_FEE_TOO_LARGE',
+          detail: `lzTokenAmount ${params.lzTokenAmount} exceeds SPONSOR_MAX_LZ_FEE_WEI (${this.maxLzFeeWei})`,
+        }
+      }
+
       // Treasury check
       const sponsorBalance = await this.provider.getBalance(this.wallet.address)
       if (sponsorBalance < MIN_TREASURY_ETH) {
@@ -370,6 +429,14 @@ export class SponsorService {
    */
   async sponsorAuthenticate(params: AuthenticateParams): Promise<SponsorResult> {
     try {
+      // M-2: cap per-call LZ fee to prevent sponsor ETH drain.
+      if (params.lzTokenAmount > this.maxLzFeeWei) {
+        return {
+          error: 'LZ_FEE_TOO_LARGE',
+          detail: `lzTokenAmount ${params.lzTokenAmount} exceeds SPONSOR_MAX_LZ_FEE_WEI (${this.maxLzFeeWei})`,
+        }
+      }
+
       // Treasury check
       const sponsorBalance = await this.provider.getBalance(this.wallet.address)
       if (sponsorBalance < MIN_TREASURY_ETH) {
@@ -452,6 +519,12 @@ export function getSponsorService(): SponsorService | null {
   const minDepositRaw = process.env.SPONSOR_MIN_DEPOSIT_CAW
   const minDepositCAW = minDepositRaw ? BigInt(minDepositRaw) : 1_000_000n * 10n ** 18n
 
+  const maxDepositRaw = process.env.SPONSOR_MAX_DEPOSIT_CAW
+  const maxDepositCAW = maxDepositRaw ? BigInt(maxDepositRaw) : 10_000_000n * 10n ** 18n  // 10M CAW
+
+  const maxLzFeeRaw = process.env.SPONSOR_MAX_LZ_FEE_WEI
+  const maxLzFeeWei = maxLzFeeRaw ? BigInt(maxLzFeeRaw) : 5_000_000_000_000_000n  // 0.005 ETH
+
   _instance = new SponsorService({
     l1ProviderUrl,
     l1RpcSecret,
@@ -461,6 +534,8 @@ export function getSponsorService(): SponsorService | null {
     cawProfileAddress,
     smartEoaAddress,
     minDepositCAW,
+    maxDepositCAW,
+    maxLzFeeWei,
   })
 
   return _instance

@@ -34,6 +34,8 @@ import {
   type DepositParams,
   type AuthenticateParams,
 } from '../../../src/services/SponsorService'
+import { ZodError } from 'zod'
+import { BootstrapBodySchema } from '../../../src/api/routes/sponsor'
 
 // ─── Mock provider ────────────────────────────────────────────────────────────
 
@@ -42,6 +44,9 @@ interface MockProviderOpts {
   chainId?: number
   idByUsername?: bigint   // 0 = available, >0 = taken
   txCountSponsor?: number
+  /** Overrides getTransactionCount for addresses OTHER than the sponsor wallet.
+   *  Used to simulate the user's EOA nonce for the L-4 preflight check. */
+  txCountUser?: number
   simulateRevert?: string // if set, eth_call throws with this message
   broadcastedTxHash?: string
 }
@@ -54,7 +59,9 @@ function makeMockProvider(opts: MockProviderOpts = {}): any {
   const balance = opts.balance ?? 100_000_000_000_000_000n  // 0.1 ETH by default
   const chainId = opts.chainId ?? 11155111
   const idByUsername = opts.idByUsername ?? 0n
-  const txCount = opts.txCountSponsor ?? 0
+  const txCountSponsor = opts.txCountSponsor ?? 0
+  // txCountUser defaults to same as sponsor unless explicitly set (used for L-4 tests)
+  const txCountUser = opts.txCountUser ?? txCountSponsor
   const txHash = opts.broadcastedTxHash ?? '0xdeadbeef' + '00'.repeat(28)
 
   // ABI-encode the idByUsername return value (uint32)
@@ -72,7 +79,10 @@ function makeMockProvider(opts: MockProviderOpts = {}): any {
       return { chainId: BigInt(chainId), name: 'test' }
     },
     async getTransactionCount(_addr: string): Promise<number> {
-      return txCount
+      // Return user nonce for non-sponsor addresses (L-4 preflight), sponsor nonce otherwise.
+      // Since both sponsor + user txCounts default to txCountSponsor, existing tests are unaffected.
+      // Tests that set txCountUser explicitly get the user-specific value here (L-4 nonce tests).
+      return txCountUser
     },
     async getFeeData() {
       return {
@@ -114,7 +124,7 @@ function makeMockProvider(opts: MockProviderOpts = {}): any {
         case 'eth_getBalance':
           return balanceHex
         case 'eth_getTransactionCount':
-          return toBeHex(txCount)
+          return toBeHex(txCountUser)
         case 'eth_gasPrice':
           return toBeHex(10_000_000_000n)
         case 'eth_call':
@@ -200,7 +210,21 @@ function baseBootstrapParams(authSig: Awaited<ReturnType<typeof buildAuthTupleSi
 
 // ─── Reusable service factory ─────────────────────────────────────────────────
 
-function buildService(providerOpts: MockProviderOpts = {}): SponsorService {
+interface BuildServiceOpts {
+  providerOpts?: MockProviderOpts
+  maxDepositCAW?: bigint
+  maxLzFeeWei?: bigint
+}
+
+function buildService(providerOrOpts: MockProviderOpts | BuildServiceOpts = {}): SponsorService {
+  // Accept either the legacy (MockProviderOpts) or the new composite opts shape.
+  const isComposite = (o: any): o is BuildServiceOpts =>
+    'providerOpts' in o || 'maxDepositCAW' in o || 'maxLzFeeWei' in o
+  const providerOpts: MockProviderOpts = isComposite(providerOrOpts)
+    ? (providerOrOpts.providerOpts ?? {})
+    : (providerOrOpts as MockProviderOpts)
+  const svcOpts = isComposite(providerOrOpts) ? providerOrOpts : {}
+
   const svc = new SponsorService({
     l1ProviderUrl: 'http://localhost:8545',  // overridden by mock
     l1ChainId: 11155111,
@@ -209,6 +233,8 @@ function buildService(providerOpts: MockProviderOpts = {}): SponsorService {
     cawProfileAddress: MOCK_PROFILE_ADDRESS,
     smartEoaAddress: MOCK_SMART_EOA_ADDRESS,
     minDepositCAW: 1_000_000n * 10n ** 18n,
+    maxDepositCAW: (svcOpts as BuildServiceOpts).maxDepositCAW,
+    maxLzFeeWei: (svcOpts as BuildServiceOpts).maxLzFeeWei,
   })
   // Monkey-patch the provider after construction — the factory wires the real
   // makeJsonRpcProvider; we replace it with the mock before any calls fire.
@@ -314,6 +340,59 @@ describe('SponsorService', () => {
         expect(result.error).to.equal('TX_REVERTED')
       }
     })
+
+    // ── M-1: depositAmountCAW cap ────────────────────────────────────────────
+
+    it('M-1: depositAmountCAW above max → DEPOSIT_TOO_LARGE', async () => {
+      // Set maxDepositCAW to 5M CAW; supply 6M CAW → rejected.
+      const svc = buildService({
+        providerOpts: {},
+        maxDepositCAW: 5_000_000n * 10n ** 18n,
+      })
+      const params = {
+        ...baseBootstrapParams(authSig),
+        depositAmountCAW: 6_000_000n * 10n ** 18n,
+      }
+      const result = await svc.sponsorBootstrap(params)
+      expect(isSponsorError(result)).to.equal(true)
+      if (isSponsorError(result)) {
+        expect(result.error).to.equal('DEPOSIT_TOO_LARGE')
+      }
+    })
+
+    // ── M-2: lzTokenAmount cap ───────────────────────────────────────────────
+
+    it('M-2: lzTokenAmount above max → LZ_FEE_TOO_LARGE', async () => {
+      // Set maxLzFeeWei to 0.001 ETH; supply 0.01 ETH → rejected.
+      const svc = buildService({
+        providerOpts: {},
+        maxLzFeeWei: 1_000_000_000_000_000n,  // 0.001 ETH cap
+      })
+      const params = {
+        ...baseBootstrapParams(authSig),
+        lzTokenAmount: 10_000_000_000_000_000n,  // 0.01 ETH — above cap
+      }
+      const result = await svc.sponsorBootstrap(params)
+      expect(isSponsorError(result)).to.equal(true)
+      if (isSponsorError(result)) {
+        expect(result.error).to.equal('LZ_FEE_TOO_LARGE')
+      }
+    })
+
+    // ── L-4: authTupleNonce preflight ────────────────────────────────────────
+
+    it('L-4: stale authTupleNonce → NONCE_MISMATCH (pre-broadcast, not on-chain)', async () => {
+      // Mock provider returns txCountUser=5 (user's current EOA nonce).
+      // baseBootstrapParams uses authTupleNonce=0n → mismatch → server-side rejection.
+      const svc = buildService({ txCountUser: 5 })
+      const result = await svc.sponsorBootstrap(baseBootstrapParams(authSig))
+      expect(isSponsorError(result)).to.equal(true)
+      if (isSponsorError(result)) {
+        expect(result.error).to.equal('NONCE_MISMATCH')
+        // Confirm it's the server-side preflight check, not an on-chain revert.
+        expect(result.detail).to.include('authTupleNonce')
+      }
+    })
   })
 
   // ── Deposit ───────────────────────────────────────────────────────────────
@@ -364,6 +443,36 @@ describe('SponsorService', () => {
         expect(result.error).to.equal('TREASURY_LOW')
       }
     })
+
+    it('M-1: amount above max → DEPOSIT_TOO_LARGE', async () => {
+      const svc = buildService({
+        providerOpts: {},
+        maxDepositCAW: 100_000n * 10n ** 18n,  // 100K CAW cap
+      })
+      const result = await svc.sponsorDeposit({
+        ...depositParams,
+        amount: 500_000n * 10n ** 18n,  // 500K — above cap
+      })
+      expect(isSponsorError(result)).to.equal(true)
+      if (isSponsorError(result)) {
+        expect(result.error).to.equal('DEPOSIT_TOO_LARGE')
+      }
+    })
+
+    it('M-2: lzTokenAmount above max → LZ_FEE_TOO_LARGE', async () => {
+      const svc = buildService({
+        providerOpts: {},
+        maxLzFeeWei: 500_000_000_000_000n,  // 0.0005 ETH cap
+      })
+      const result = await svc.sponsorDeposit({
+        ...depositParams,
+        lzTokenAmount: 1_000_000_000_000_000n,  // 0.001 ETH — above cap
+      })
+      expect(isSponsorError(result)).to.equal(true)
+      if (isSponsorError(result)) {
+        expect(result.error).to.equal('LZ_FEE_TOO_LARGE')
+      }
+    })
   })
 
   // ── Authenticate ──────────────────────────────────────────────────────────
@@ -402,6 +511,21 @@ describe('SponsorService', () => {
       expect(isSponsorError(result)).to.equal(true)
       if (isSponsorError(result)) {
         expect(result.error).to.equal('TREASURY_LOW')
+      }
+    })
+
+    it('M-2: lzTokenAmount above max → LZ_FEE_TOO_LARGE', async () => {
+      const svc = buildService({
+        providerOpts: {},
+        maxLzFeeWei: 500_000_000_000_000n,  // 0.0005 ETH cap
+      })
+      const result = await svc.sponsorAuthenticate({
+        ...authParams,
+        lzTokenAmount: 1_000_000_000_000_000n,  // 0.001 ETH — above cap
+      })
+      expect(isSponsorError(result)).to.equal(true)
+      if (isSponsorError(result)) {
+        expect(result.error).to.equal('LZ_FEE_TOO_LARGE')
       }
     })
   })
@@ -511,5 +635,64 @@ describe('Sponsor route layer', () => {
     // With SPONSOR_ENABLED=0 it short-circuits at step 1. Validation is
     // tested separately in the unit tests.
     expect([400, 503]).to.include(res.status)
+  })
+})
+
+// ─── L-3: username regex — Zod schema tests ──────────────────────────────────
+//
+// We test BootstrapBodySchema directly (it's exported from the route module for
+// this purpose). This avoids the module-patching complexity needed to get the
+// SPONSOR_ENABLED guard out of the way while still verifying the exact schema
+// the route uses at parse time.
+
+describe('BootstrapBodySchema — L-3 username regex', () => {
+  const validBase = {
+    passkeyPubkeyX: '0x' + 'aa'.repeat(32),
+    passkeyPubkeyY: '0x' + 'bb'.repeat(32),
+    ecdsaFallbackAddr: '0x' + 'cc'.repeat(20),
+    depositAmountCAW: '2000000000000000000000000',
+    networkId: 1,
+    lzDestId: 40245,
+    lzTokenAmount: '1000000000000000',
+    authTupleSignature: { yParity: 0, r: '0x' + 'aa'.repeat(32), s: '0x' + 'bb'.repeat(32) },
+    authTupleNonce: '0',
+    permitSig: '0x' + 'ff'.repeat(65),
+    permitNonce: '0',
+  }
+
+  it('L-3: uppercase username → ZodError (username must be lowercase alphanumeric)', () => {
+    let threw = false
+    try {
+      BootstrapBodySchema.parse({ ...validBase, username: 'Foo' })
+    } catch (e) {
+      threw = true
+      expect(e).to.be.instanceOf(ZodError)
+      const issues = (e as ZodError).issues
+      const usernameIssue = issues.find(i => i.path.includes('username'))
+      expect(usernameIssue).to.exist
+      expect(usernameIssue!.message).to.include('lowercase alphanumeric')
+    }
+    expect(threw).to.equal(true)
+  })
+
+  it('L-3: username with hyphen → ZodError', () => {
+    let threw = false
+    try {
+      BootstrapBodySchema.parse({ ...validBase, username: 'foo-bar' })
+    } catch (e) {
+      threw = true
+      expect(e).to.be.instanceOf(ZodError)
+      const issues = (e as ZodError).issues
+      expect(issues.some(i => i.path.includes('username'))).to.equal(true)
+    }
+    expect(threw).to.equal(true)
+  })
+
+  it('L-3: valid lowercase alphanumeric username → no error', () => {
+    expect(() => BootstrapBodySchema.parse({ ...validBase, username: 'foobar42' })).to.not.throw()
+  })
+
+  it('L-3: username with numbers only → no error', () => {
+    expect(() => BootstrapBodySchema.parse({ ...validBase, username: '123abc' })).to.not.throw()
   })
 })

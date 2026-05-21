@@ -90,6 +90,8 @@ export interface SponsorErrorResponse {
     | 'USERNAME_TAKEN'
     | 'BAD_SIG'
     | 'NONCE_MISMATCH'
+    | 'DEPOSIT_TOO_LARGE'
+    | 'LZ_FEE_TOO_LARGE'
     | 'INSUFFICIENT_FUNDS'
     | 'RATE_LIMITED'
     | 'SERVER_ERROR'
@@ -212,6 +214,8 @@ const KNOWN_ERROR_CODES = new Set<string>([
   'USERNAME_TAKEN',
   'BAD_SIG',
   'NONCE_MISMATCH',
+  'DEPOSIT_TOO_LARGE',
+  'LZ_FEE_TOO_LARGE',
   'INSUFFICIENT_FUNDS',
   'RATE_LIMITED',
   'SERVER_ERROR',
