@@ -64,7 +64,13 @@ interface BootstrapError {
 const DEFAULT_NETWORK_ID = 1
 const DEFAULT_LZ_DEST_ID = chains.l2?.layerZero ?? 40245 // Base Sepolia LZ ID
 const DEFAULT_LZ_TOKEN_AMOUNT = 0n
-const DEFAULT_PERMIT_NONCE = 0n
+
+// Bootstrap-only path: the SmartEOA is freshly initialized in the same tx,
+// so its nonceOf(minter, ACTION_MINT_DEPOSIT) is guaranteed to be 0. Subsequent
+// deposit / authenticate / addPasskey calls use a live nonce read at sign time
+// (see useSponsorDeposit / useSponsorAuthenticate). Do NOT reuse this constant
+// outside the bootstrap flow — those flows are NOT freshly-initialized.
+const BOOTSTRAP_PERMIT_NONCE = 0n
 
 export default function BackupStep({
   username,
@@ -126,7 +132,7 @@ export default function BackupStep({
         depositAmount,
         lzDestId: DEFAULT_LZ_DEST_ID,
         lzTokenAmount: DEFAULT_LZ_TOKEN_AMOUNT,
-        nonce: DEFAULT_PERMIT_NONCE,
+        nonce: BOOTSTRAP_PERMIT_NONCE,
       })
 
       // Passkey signer adapter: wraps signWithPasskey() to match the
@@ -167,7 +173,7 @@ export default function BackupStep({
             },
             authTupleNonce: params.authTupleSignature.nonce.toString(),
             permitSig: params.permitSig,
-            permitNonce: DEFAULT_PERMIT_NONCE.toString(),
+            permitNonce: BOOTSTRAP_PERMIT_NONCE.toString(),
           }
           const response = await sponsorClientRaw.sponsorBootstrap(req)
           if (isSponsorSuccess(response)) {
