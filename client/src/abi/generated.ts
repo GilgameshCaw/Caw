@@ -509,6 +509,13 @@ export const cawActionsArchiveAbi = [
   {
     type: 'function',
     inputs: [],
+    name: 'CLAIM_COOLDOWN',
+    outputs: [{ name: '', internalType: 'uint64', type: 'uint64' }],
+    stateMutability: 'view',
+  },
+  {
+    type: 'function',
+    inputs: [],
     name: 'MAX_CHECKPOINTS_PER_SUBMISSION',
     outputs: [{ name: '', internalType: 'uint256', type: 'uint256' }],
     stateMutability: 'view',
@@ -570,6 +577,16 @@ export const cawActionsArchiveAbi = [
     ],
     name: 'challengeHash',
     outputs: [{ name: '', internalType: 'bytes32', type: 'bytes32' }],
+    stateMutability: 'view',
+  },
+  {
+    type: 'function',
+    inputs: [
+      { name: '', internalType: 'uint32', type: 'uint32' },
+      { name: '', internalType: 'uint256', type: 'uint256' },
+    ],
+    name: 'checkpointClaimReopensAt',
+    outputs: [{ name: '', internalType: 'uint64', type: 'uint64' }],
     stateMutability: 'view',
   },
   {
@@ -1564,11 +1581,10 @@ export const cawNetworkManagerAbi = [
       { name: 'name', internalType: 'string', type: 'string' },
       { name: 'feeAddress', internalType: 'address', type: 'address' },
       { name: 'storageChainEid', internalType: 'uint32', type: 'uint32' },
-      { name: 'withdrawFee', internalType: 'uint256', type: 'uint256' },
-      { name: 'depositFee', internalType: 'uint256', type: 'uint256' },
-      { name: 'authFee', internalType: 'uint256', type: 'uint256' },
-      { name: 'mintFee', internalType: 'uint256', type: 'uint256' },
-      { name: 'feeCeiling', internalType: 'uint256', type: 'uint256' },
+      { name: 'withdrawFeeCeiling', internalType: 'uint256', type: 'uint256' },
+      { name: 'depositFeeCeiling', internalType: 'uint256', type: 'uint256' },
+      { name: 'authFeeCeiling', internalType: 'uint256', type: 'uint256' },
+      { name: 'mintFeeCeiling', internalType: 'uint256', type: 'uint256' },
     ],
     name: 'createNetwork',
     outputs: [],
@@ -1611,6 +1627,13 @@ export const cawNetworkManagerAbi = [
   {
     type: 'function',
     inputs: [{ name: 'networkId', internalType: 'uint32', type: 'uint32' }],
+    name: 'getAuthFeeCeiling',
+    outputs: [{ name: '', internalType: 'uint256', type: 'uint256' }],
+    stateMutability: 'view',
+  },
+  {
+    type: 'function',
+    inputs: [{ name: 'networkId', internalType: 'uint32', type: 'uint32' }],
     name: 'getDepositFee',
     outputs: [{ name: '', internalType: 'uint256', type: 'uint256' }],
     stateMutability: 'view',
@@ -1628,7 +1651,7 @@ export const cawNetworkManagerAbi = [
   {
     type: 'function',
     inputs: [{ name: 'networkId', internalType: 'uint32', type: 'uint32' }],
-    name: 'getFeeCeiling',
+    name: 'getDepositFeeCeiling',
     outputs: [{ name: '', internalType: 'uint256', type: 'uint256' }],
     stateMutability: 'view',
   },
@@ -1652,6 +1675,13 @@ export const cawNetworkManagerAbi = [
   {
     type: 'function',
     inputs: [{ name: 'networkId', internalType: 'uint32', type: 'uint32' }],
+    name: 'getMintFeeCeiling',
+    outputs: [{ name: '', internalType: 'uint256', type: 'uint256' }],
+    stateMutability: 'view',
+  },
+  {
+    type: 'function',
+    inputs: [{ name: 'networkId', internalType: 'uint32', type: 'uint32' }],
     name: 'getNetwork',
     outputs: [
       {
@@ -1669,7 +1699,18 @@ export const cawNetworkManagerAbi = [
           { name: 'mintFee', internalType: 'uint256', type: 'uint256' },
           { name: 'authFee', internalType: 'uint256', type: 'uint256' },
           { name: 'creationBlock', internalType: 'uint256', type: 'uint256' },
-          { name: 'feeCeiling', internalType: 'uint256', type: 'uint256' },
+          {
+            name: 'withdrawFeeCeiling',
+            internalType: 'uint256',
+            type: 'uint256',
+          },
+          {
+            name: 'depositFeeCeiling',
+            internalType: 'uint256',
+            type: 'uint256',
+          },
+          { name: 'authFeeCeiling', internalType: 'uint256', type: 'uint256' },
+          { name: 'mintFeeCeiling', internalType: 'uint256', type: 'uint256' },
         ],
       },
     ],
@@ -1708,6 +1749,13 @@ export const cawNetworkManagerAbi = [
   },
   {
     type: 'function',
+    inputs: [{ name: 'networkId', internalType: 'uint32', type: 'uint32' }],
+    name: 'getWithdrawFeeCeiling',
+    outputs: [{ name: '', internalType: 'uint256', type: 'uint256' }],
+    stateMutability: 'view',
+  },
+  {
+    type: 'function',
     inputs: [{ name: '', internalType: 'uint32', type: 'uint32' }],
     name: 'instanceActive',
     outputs: [{ name: '', internalType: 'bool', type: 'bool' }],
@@ -1740,7 +1788,37 @@ export const cawNetworkManagerAbi = [
       { name: 'networkId', internalType: 'uint32', type: 'uint32' },
       { name: 'newCeiling', internalType: 'uint256', type: 'uint256' },
     ],
-    name: 'lowerFeeCeiling',
+    name: 'lowerAuthFeeCeiling',
+    outputs: [],
+    stateMutability: 'nonpayable',
+  },
+  {
+    type: 'function',
+    inputs: [
+      { name: 'networkId', internalType: 'uint32', type: 'uint32' },
+      { name: 'newCeiling', internalType: 'uint256', type: 'uint256' },
+    ],
+    name: 'lowerDepositFeeCeiling',
+    outputs: [],
+    stateMutability: 'nonpayable',
+  },
+  {
+    type: 'function',
+    inputs: [
+      { name: 'networkId', internalType: 'uint32', type: 'uint32' },
+      { name: 'newCeiling', internalType: 'uint256', type: 'uint256' },
+    ],
+    name: 'lowerMintFeeCeiling',
+    outputs: [],
+    stateMutability: 'nonpayable',
+  },
+  {
+    type: 'function',
+    inputs: [
+      { name: 'networkId', internalType: 'uint32', type: 'uint32' },
+      { name: 'newCeiling', internalType: 'uint256', type: 'uint256' },
+    ],
+    name: 'lowerWithdrawFeeCeiling',
     outputs: [],
     stateMutability: 'nonpayable',
   },
@@ -1783,7 +1861,10 @@ export const cawNetworkManagerAbi = [
       { name: 'mintFee', internalType: 'uint256', type: 'uint256' },
       { name: 'authFee', internalType: 'uint256', type: 'uint256' },
       { name: 'creationBlock', internalType: 'uint256', type: 'uint256' },
-      { name: 'feeCeiling', internalType: 'uint256', type: 'uint256' },
+      { name: 'withdrawFeeCeiling', internalType: 'uint256', type: 'uint256' },
+      { name: 'depositFeeCeiling', internalType: 'uint256', type: 'uint256' },
+      { name: 'authFeeCeiling', internalType: 'uint256', type: 'uint256' },
+      { name: 'mintFeeCeiling', internalType: 'uint256', type: 'uint256' },
     ],
     stateMutability: 'view',
   },
@@ -1920,7 +2001,32 @@ export const cawNetworkManagerAbi = [
         indexed: false,
       },
     ],
-    name: 'FeeCeilingLowered',
+    name: 'AuthFeeCeilingLowered',
+  },
+  {
+    type: 'event',
+    anonymous: false,
+    inputs: [
+      {
+        name: 'networkId',
+        internalType: 'uint32',
+        type: 'uint32',
+        indexed: true,
+      },
+      {
+        name: 'oldCeiling',
+        internalType: 'uint256',
+        type: 'uint256',
+        indexed: false,
+      },
+      {
+        name: 'newCeiling',
+        internalType: 'uint256',
+        type: 'uint256',
+        indexed: false,
+      },
+    ],
+    name: 'DepositFeeCeilingLowered',
   },
   {
     type: 'event',
@@ -2021,6 +2127,31 @@ export const cawNetworkManagerAbi = [
         indexed: true,
       },
       {
+        name: 'oldCeiling',
+        internalType: 'uint256',
+        type: 'uint256',
+        indexed: false,
+      },
+      {
+        name: 'newCeiling',
+        internalType: 'uint256',
+        type: 'uint256',
+        indexed: false,
+      },
+    ],
+    name: 'MintFeeCeilingLowered',
+  },
+  {
+    type: 'event',
+    anonymous: false,
+    inputs: [
+      {
+        name: 'networkId',
+        internalType: 'uint32',
+        type: 'uint32',
+        indexed: true,
+      },
+      {
         name: 'network',
         internalType: 'struct CawNetwork',
         type: 'tuple',
@@ -2035,7 +2166,18 @@ export const cawNetworkManagerAbi = [
           { name: 'mintFee', internalType: 'uint256', type: 'uint256' },
           { name: 'authFee', internalType: 'uint256', type: 'uint256' },
           { name: 'creationBlock', internalType: 'uint256', type: 'uint256' },
-          { name: 'feeCeiling', internalType: 'uint256', type: 'uint256' },
+          {
+            name: 'withdrawFeeCeiling',
+            internalType: 'uint256',
+            type: 'uint256',
+          },
+          {
+            name: 'depositFeeCeiling',
+            internalType: 'uint256',
+            type: 'uint256',
+          },
+          { name: 'authFeeCeiling', internalType: 'uint256', type: 'uint256' },
+          { name: 'mintFeeCeiling', internalType: 'uint256', type: 'uint256' },
         ],
         indexed: false,
       },
@@ -2117,6 +2259,31 @@ export const cawNetworkManagerAbi = [
       },
     ],
     name: 'NetworkOwnershipLocked',
+  },
+  {
+    type: 'event',
+    anonymous: false,
+    inputs: [
+      {
+        name: 'networkId',
+        internalType: 'uint32',
+        type: 'uint32',
+        indexed: true,
+      },
+      {
+        name: 'oldCeiling',
+        internalType: 'uint256',
+        type: 'uint256',
+        indexed: false,
+      },
+      {
+        name: 'newCeiling',
+        internalType: 'uint256',
+        type: 'uint256',
+        indexed: false,
+      },
+    ],
+    name: 'WithdrawFeeCeilingLowered',
   },
 ] as const
 
