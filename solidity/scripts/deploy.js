@@ -396,16 +396,19 @@ const CONTRACTS = {
     phase: 2,
     dependencies: [],
     // _pair: Uniswap V2 CAW/WETH pair; _cawToken: CAW token address.
-    // address(0) for both disables the oracle on L2 (cap stays dormant).
+    // The contract's constructor calls _pair.token0() / token1() with no
+    // null-check, so deploying with address(0) reverts. We deploy ONLY
+    // when CAW_WETH_PAIR is set; otherwise CawL1PriceReader is skipped
+    // and CawProfile accepts address(0) for priceReader (no oracle).
     constructorArgs: (state, _chain, env) => {
       const cawToken = state.addresses.MintableCaw;
       const pairAddr = process.env.CAW_WETH_PAIR || ethers.ZeroAddress;
-      // If pair or caw is not configured, deploy with address(0) to disable.
-      // CawProfile accepts address(0) for priceReader = no oracle.
-      if (!cawToken || pairAddr === ethers.ZeroAddress) return [ethers.ZeroAddress, ethers.ZeroAddress];
       return [pairAddr, cawToken];
     },
-    condition: () => true, // always deploy; cap stays dormant if no pair configured
+    // Only deploy if CAW_WETH_PAIR is configured. Without a pair address
+    // the price oracle has nothing to read, and the contract reverts at
+    // construction time (token0()/token1() on address(0)).
+    condition: () => !!process.env.CAW_WETH_PAIR,
   },
   CawProfile: {
     chain: 'L1',
@@ -413,9 +416,13 @@ const CONTRACTS = {
     // CawProfile depends on every L2's CawProfileL2 (so we know each peer's
     // address at L1 deploy time for setL2Peer wiring later). Built from
     // L2_CHAIN_KEYS so adding a new L2 doesn't require editing this list.
+    // CawL1PriceReader is intentionally NOT a dependency: the constructor
+    // arg accepts address(0) (no price oracle), so when CAW_WETH_PAIR is
+    // unset and CawL1PriceReader is skipped, CawProfile still deploys with
+    // priceReader = address(0).
     dependencies: [
       ...L2_CHAIN_KEYS.map(L => `CawProfileL2_${L}`),
-      'CawProfileURI', 'CawNetworkManager', 'CawBuyAndBurn', 'CawL1PriceReader',
+      'CawProfileURI', 'CawNetworkManager', 'CawBuyAndBurn',
     ],
     constructorArgs: (state, chain) => [
       state.addresses.MintableCaw,
@@ -499,11 +506,19 @@ const CONTRACTS = {
   SmartEOA: {
     chain: 'L1',
     phase: 2,
-    // No dependencies — SmartEOA is a standalone immutable contract that
-    // serves as the EIP-7702 delegate implementation for CAW user EOAs.
-    // No constructor args; user-specific state lives in each delegated EOA's
-    // storage slots, not in the implementation contract.
-    dependencies: [],
+    // SmartEOA is a standalone immutable contract that serves as the EIP-7702
+    // delegate implementation for CAW user EOAs. No constructor args;
+    // user-specific state lives in each delegated EOA's storage slots, not
+    // in the implementation contract.
+    //
+    // Dependency on CawActionsERC1271_L1 (terminal of the nonce chain) is
+    // intentional even though there is no functional dependency: it pins
+    // SmartEOA to land AFTER the L1 nonce-prediction chain completes.
+    // Without this pin, the scheduler can interleave a SmartEOA deploy
+    // between CawCapOracle_L1 and CawActions_L1, breaking the predicted
+    // sibling address that CawCapOracle bakes in as an immutable.
+    // (Same defensive pattern as CawProfileMinter / Quoter / Marketplace.)
+    dependencies: ['CawActionsERC1271_L1'],
     constructorArgs: () => [],
   },
   CawActions_L1: {
