@@ -1,3 +1,4 @@
+/// <reference types="vitest" />
 import path from "path";
 import { execSync } from "child_process";
 import { defineConfig, Plugin } from "vite";
@@ -195,5 +196,16 @@ export default defineConfig({
       { find: "~", replacement: path.resolve(__dirname, "src") }
     ],
     conditions: ['import', 'module', 'browser', 'default'],
+  },
+  test: {
+    environment: 'happy-dom',
+    globals: true,
+    setupFiles: ['./src/test-setup.ts'],
+    // passkey.test.ts uses node:test, not vitest — exclude it from this runner
+    exclude: [
+      '**/node_modules/**',
+      '**/dist/**',
+      '**/src/services/identity/passkey.test.ts',
+    ],
   },
 });

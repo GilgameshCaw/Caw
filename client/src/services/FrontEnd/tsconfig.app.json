@@ -22,6 +22,9 @@
     "noFallthroughCasesInSwitch": true,
     "noUncheckedSideEffectImports": true,
 
+    /* Test types */
+    "types": ["vite/client", "vitest/globals"],
+
     /* Paths */
     "baseUrl": ".",
     "paths": {
