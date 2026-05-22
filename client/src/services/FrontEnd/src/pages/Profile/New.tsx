@@ -1103,7 +1103,7 @@ console.log("BALANCE:", balance)
     submitText = t('staking.button.insufficient_balance')
   else if (paymentMode === 'eth') {
     if (ethAmountWei === 0n) submitText = "Enter ETH amount"
-    else if (zapQuote.loaded && zapQuote.minCawOut < cost) submitText = "Increase ETH or reduce slippage"
+    else if (zapQuote.loaded && zapQuote.minCawOut < cost) submitText = "Increase ETH Amount"
     else submitText = "Create & Deposit (ETH)"
   }
   else submitText = depositEnabled && depositAmountWei > 0n ? t('new_profile.create_and_deposit') : t('new_profile.create')
@@ -1395,11 +1395,16 @@ console.log("BALANCE:", balance)
                 </div>
                 {ethAmountWei > 0n && ethPrice > 0 && (
                   <div className={`flex justify-between items-center text-xs ${isDark ? 'text-gray-400' : 'text-gray-600'}`}>
-                    {/* Left: CAW deposit estimate (swap output minus burn cost).
-                        Only shown once the pool reserves have loaded, since
-                        zapQuote.expectedCawOut is 0 before then. */}
+                    {/* Left cell: either a red "below burn cost" warning (when
+                        the swap output won't cover the username's CAW burn) or
+                        a green-ish "~X CAW deposited" estimate. Same row as the
+                        ETH→USD readout so the layout stays stable. */}
                     <span>
-                      {reserves.loaded && zapQuote.expectedCawOut > cost ? (
+                      {reserves.loaded && zapQuote.minCawOut < cost ? (
+                        <span className="text-red-400">
+                          Below the {formatNumberCompact(convertToNumber(cost, 18))} CAW burn cost — increase ETH.
+                        </span>
+                      ) : reserves.loaded && zapQuote.expectedCawOut > cost ? (
                         <>
                           ~<span className={`font-mono ${isDark ? 'text-white' : 'text-gray-900'}`}>
                             {formatNumberCompact(convertToNumber(zapQuote.expectedCawOut - cost, 18))} CAW
@@ -1408,11 +1413,6 @@ console.log("BALANCE:", balance)
                       ) : ''}
                     </span>
                     <span>~${formatUsd(Number(ethAmount) * ethPrice)}</span>
-                  </div>
-                )}
-                {ethAmountWei > 0n && reserves.loaded && zapQuote.minCawOut < cost && (
-                  <div className="text-xs text-red-400">
-                    Below the {formatNumberCompact(convertToNumber(cost, 18))} CAW burn cost — increase ETH.
                   </div>
                 )}
               </div>
