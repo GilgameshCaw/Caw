@@ -1178,26 +1178,6 @@ console.log("BALANCE:", balance)
                     <DepositInfoPopover />
                   </span>
                 </div>
-                <div className="relative">
-                  <input
-                    type="text"
-                    inputMode="decimal"
-                    value={ethAmount}
-                    onChange={e => setEthAmount(e.target.value.replace(/[^0-9.]/g, ''))}
-                    placeholder="0.05"
-                    className={`w-full px-4 py-2.5 rounded-full focus:outline-none text-sm ${
-                      isDark
-                        ? 'bg-black border border-white/20 text-white placeholder-white/30 focus:border-white/30'
-                        : 'bg-white border border-gray-300 text-black placeholder-gray-400 focus:border-gray-400'
-                    }`}
-                  />
-                  <span className="absolute right-4 top-1/2 -translate-y-1/2 text-gray-500 text-sm">ETH</span>
-                </div>
-                {ethAmountWei > 0n && ethPrice > 0 && (
-                  <div className={`text-xs text-right ${isDark ? 'text-gray-400' : 'text-gray-600'}`}>
-                    ~${formatUsd(Number(ethAmount) * ethPrice)}
-                  </div>
-                )}
                 {/* Quick-pick dollar amounts. The amount-in-ETH is derived
                     from the current ETH/USD price; if the price isn't loaded
                     yet, the buttons are disabled. */}
@@ -1227,6 +1207,26 @@ console.log("BALANCE:", balance)
                     )
                   })}
                 </div>
+                <div className="relative">
+                  <input
+                    type="text"
+                    inputMode="decimal"
+                    value={ethAmount}
+                    onChange={e => setEthAmount(e.target.value.replace(/[^0-9.]/g, ''))}
+                    placeholder="0.05"
+                    className={`w-full px-4 py-2.5 rounded-full focus:outline-none text-sm ${
+                      isDark
+                        ? 'bg-black border border-white/20 text-white placeholder-white/30 focus:border-white/30'
+                        : 'bg-white border border-gray-300 text-black placeholder-gray-400 focus:border-gray-400'
+                    }`}
+                  />
+                  <span className="absolute right-4 top-1/2 -translate-y-1/2 text-gray-500 text-sm">ETH</span>
+                </div>
+                {ethAmountWei > 0n && ethPrice > 0 && (
+                  <div className={`text-xs text-right ${isDark ? 'text-gray-400' : 'text-gray-600'}`}>
+                    ~${formatUsd(Number(ethAmount) * ethPrice)}
+                  </div>
+                )}
                 {ethAmountWei > 0n && reserves.loaded && (
                   <div className={`text-xs space-y-1 ${isDark ? 'text-gray-400' : 'text-gray-600'}`}>
                     {(() => {
