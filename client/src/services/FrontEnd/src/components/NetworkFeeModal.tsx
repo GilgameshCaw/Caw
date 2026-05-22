@@ -220,7 +220,7 @@ const NetworkFeeModal: React.FC<NetworkFeeModalProps> = ({
                     </button>
                     <span
                       role="tooltip"
-                      className={`pointer-events-none absolute z-50 bottom-full mb-2 left-0 w-60 rounded-lg border px-3 py-2 text-[11px] leading-relaxed normal-case tracking-normal opacity-0 group-hover:opacity-100 group-focus-within:opacity-100 transition-opacity shadow-lg ${
+                      className={`pointer-events-none absolute z-50 bottom-full mb-2 left-0 w-[269px] rounded-lg border px-3 py-2 text-[11px] leading-relaxed normal-case tracking-normal opacity-0 group-hover:opacity-100 group-focus-within:opacity-100 transition-opacity shadow-lg ${
                         isDark ? 'bg-black border-white/20 text-white/80' : 'bg-white border-gray-200 text-gray-700'
                       }`}
                     >
@@ -253,7 +253,7 @@ const NetworkFeeModal: React.FC<NetworkFeeModalProps> = ({
                     </button>
                     <span
                       role="tooltip"
-                      className={`pointer-events-none absolute z-50 bottom-full mb-2 left-0 w-60 rounded-lg border px-3 py-2 text-[11px] leading-relaxed normal-case tracking-normal opacity-0 group-hover:opacity-100 group-focus-within:opacity-100 transition-opacity shadow-lg ${
+                      className={`pointer-events-none absolute z-50 bottom-full mb-2 left-0 w-[269px] rounded-lg border px-3 py-2 text-[11px] leading-relaxed normal-case tracking-normal opacity-0 group-hover:opacity-100 group-focus-within:opacity-100 transition-opacity shadow-lg ${
                         isDark ? 'bg-black border-white/20 text-white/80' : 'bg-white border-gray-200 text-gray-700'
                       }`}
                     >
