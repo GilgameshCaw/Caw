@@ -118,18 +118,23 @@ const SectionHeader: React.FC<{
 const FeeTableRow: React.FC<{
   label: string
   current: string
-  ceiling: string
+  ceiling?: string
   isDark: boolean
-}> = ({ label, current, ceiling, isDark }) => {
+  /** When true, suppresses the top border (used for the first data row so
+   *  the table header doesn't get an extra divider line floating under it). */
+  firstRow?: boolean
+}> = ({ label, current, ceiling, isDark, firstRow }) => {
   const mutedClass = isDark ? 'text-white/60' : 'text-gray-500'
   const strongClass = isDark ? 'text-white' : 'text-gray-900'
   const borderClass = isDark ? 'border-white/10' : 'border-gray-200'
 
   return (
-    <tr className={`border-t ${borderClass}`}>
+    <tr className={firstRow ? '' : `border-t ${borderClass}`}>
       <td className={`py-2 pr-4 text-sm ${mutedClass}`}>{label}</td>
       <td className={`py-2 pr-4 text-sm font-mono ${strongClass}`}>{current}</td>
-      <td className={`py-2 text-sm font-mono ${mutedClass}`}>{ceiling}</td>
+      {ceiling !== undefined && (
+        <td className={`py-2 text-sm font-mono ${mutedClass}`}>{ceiling}</td>
+      )}
     </tr>
   )
 }
@@ -224,6 +229,7 @@ const NetworkFeeModal: React.FC<NetworkFeeModalProps> = ({
                   current={weiToUsd(fees.mintFee, ethPrice)}
                   ceiling={weiToUsd(fees.mintFeeCeiling, ethPrice)}
                   isDark={isDark}
+                  firstRow
                 />
                 <FeeTableRow
                   label="Deposit CAW"
@@ -244,20 +250,43 @@ const NetworkFeeModal: React.FC<NetworkFeeModalProps> = ({
 
         {/* ── Section 2: Withdraw fee ─────────────────────────────────────── */}
         <div>
-          <SectionHeader
-            title="Withdraw fee"
-            tooltip="Locked in when you deposit. You always pay the lower of that locked rate and the current rate — never more."
-            headerClass={headerClass}
-            isDark={isDark}
-          />
           <div className="overflow-x-auto">
             <table className="w-full">
+              <thead>
+                <tr>
+                  <th className={`pb-2 text-left text-xs uppercase tracking-wide ${headerClass}`}>
+                    Withdraw
+                  </th>
+                  <th className={`pb-2 text-left text-xs uppercase tracking-wide ${headerClass}`}>
+                    <span className="relative group inline-flex items-center gap-1">
+                      <span>Your max withdraw fee</span>
+                      <button
+                        type="button"
+                        aria-label="Withdraw fee info"
+                        className={`inline-flex items-center justify-center transition-colors ${
+                          isDark ? 'text-white/40 hover:text-white/80' : 'text-gray-400 hover:text-gray-700'
+                        }`}
+                      >
+                        <HiInformationCircle className="w-3.5 h-3.5" />
+                      </button>
+                      <span
+                        role="tooltip"
+                        className={`pointer-events-none absolute z-50 bottom-full mb-2 left-1/2 -translate-x-1/2 w-60 rounded-lg border px-3 py-2 text-[11px] leading-relaxed normal-case tracking-normal opacity-0 group-hover:opacity-100 group-focus-within:opacity-100 transition-opacity shadow-lg ${
+                          isDark ? 'bg-black border-white/20 text-white/80' : 'bg-white border-gray-200 text-gray-700'
+                        }`}
+                      >
+                        Locked in when you deposit. You always pay the lower of that locked rate and the current rate — never more.
+                      </span>
+                    </span>
+                  </th>
+                </tr>
+              </thead>
               <tbody>
                 <FeeTableRow
                   label="Withdraw CAW"
                   current={weiToUsd(fees.withdrawFee, ethPrice)}
-                  ceiling={weiToUsd(fees.withdrawFeeCeiling, ethPrice)}
                   isDark={isDark}
+                  firstRow
                 />
               </tbody>
             </table>
@@ -275,7 +304,7 @@ const NetworkFeeModal: React.FC<NetworkFeeModalProps> = ({
           <div className="overflow-x-auto">
             <table className="w-full">
               <tbody>
-                <tr className={`border-t ${borderClass}`}>
+                <tr>
                   <td className={`py-2 pr-4 text-sm ${mutedClass}`}>
                     LayerZero message fee
                   </td>
