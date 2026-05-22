@@ -162,8 +162,12 @@ export default function useTokenDataUpdate() {
     if (!rawTokens || balancesLoading || !viewedAddress || !l2TokenData) return
 
     const updated: TokenData[] = rawTokens.map(l1Token => {
+      // L2 mirror may not yet have this token if the L1 mint just landed
+      // and the LayerZero relay is still in flight. Fall back to zeros
+      // (mirrors the connected-fetch branch below); the next refetch
+      // after L2 catches up will replace the row with real data.
       const l2Token = l2TokenData.find(item => item.tokenId === l1Token.tokenId);
-      const onChainCawonce = Number(l2Token!.nextCawonce);
+      const onChainCawonce = l2Token ? Number(l2Token.nextCawonce) : 0;
 
       // Get existing token data to preserve any previously fetched min-cawonce
       const existingTokens = tokensByAddress[viewedAddress.toLowerCase() as Address] || [];
@@ -181,7 +185,7 @@ export default function useTokenDataUpdate() {
         ownerBalance: l1Token.ownerBalance,
         address: viewedAddress!,
         owner: l1Token.owner!,
-        stakedAmount:   l2Token!.cawBalance,
+        stakedAmount: l2Token?.cawBalance ?? 0n,
         cawonce,
       }
     });
