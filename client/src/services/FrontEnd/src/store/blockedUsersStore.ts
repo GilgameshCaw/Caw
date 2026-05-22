@@ -18,6 +18,7 @@ interface BlockedUsersState {
 
   // Actions
   fetchBlocks: (userId: number) => Promise<void>
+  resetBlocks: () => void
   blockUser: (blockerId: number, blockedId: number, username: string) => Promise<void>
   unblockUser: (blockerId: number, blockedId: number) => Promise<void>
   isBlocked: (tokenId: number) => boolean
@@ -28,6 +29,8 @@ export const useBlockedUsersStore = create<BlockedUsersState>()(
   (set, get) => ({
     blockedUsers: [],
     initialized: false,
+
+    resetBlocks: () => set({ initialized: false, blockedUsers: [] }),
 
     fetchBlocks: async (userId: number) => {
       if (get().initialized) return

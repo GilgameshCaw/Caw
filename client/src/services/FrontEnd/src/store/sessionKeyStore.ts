@@ -186,24 +186,35 @@ export const useSessionKeyStore = create<SessionKeyState>()(
     }),
     {
       name: 'caw-session-keys',
-      migrate: (persisted: any) => {
+      migrate: (persisted: any, version: number) => {
+        let state = persisted
+
         // v0/v1 → v3: single session → per-wallet map
-        if (persisted.session && !persisted.sessions) {
-          const wallet = persisted.session.ownerAddress?.toLowerCase() || 'legacy'
-          return {
-            sessions: { [wallet]: persisted.session },
+        if (state.session && !state.sessions) {
+          const wallet = state.session.ownerAddress?.toLowerCase() || 'legacy'
+          state = {
+            sessions: { [wallet]: state.session },
             activeWallet: null,
-            enabled: persisted.enabled ?? false,
-            hasSeenPrompt: persisted.hasSeenPrompt ?? false,
+            enabled: state.enabled ?? false,
+            hasSeenPrompt: state.hasSeenPrompt ?? false,
           }
         }
-        // v2 had sessions map already, just pass through
-        if (persisted.sessions) {
-          return persisted
+
+        // v3 → v4: sweep expired entries (plaintext private keys must not linger past expiry)
+        if (state.sessions) {
+          const nowSeconds = Date.now() / 1000
+          const pruned: Record<string, SessionKeyEntry> = {}
+          for (const [wallet, entry] of Object.entries(state.sessions as Record<string, SessionKeyEntry>)) {
+            if ((entry as SessionKeyEntry).expiry >= nowSeconds) {
+              pruned[wallet] = entry as SessionKeyEntry
+            }
+          }
+          state = { ...state, sessions: pruned }
         }
-        return persisted
+
+        return state
       },
-      version: 3,
+      version: 4,
     }
   )
 )

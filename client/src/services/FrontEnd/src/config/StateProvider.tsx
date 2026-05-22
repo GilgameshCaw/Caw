@@ -3,7 +3,8 @@ import { useTokenDataStore } from "~/store/tokenDataStore"
 import { useFetchPrices } from "~/hooks/useFetchPrices";
 import { useEffect, useRef } from 'react';
 import { useAccount } from "wagmi";
-import { clearKeyCache } from "~/services/DmCryptoService";
+import { clearKeyCache } from "~/services/DmCryptoService"
+import { useBlockedUsersStore } from "~/store/blockedUsersStore";
 
 
 interface StateProviderProps {
@@ -31,10 +32,12 @@ export default function StateProvider({ children }: StateProviderProps) {
     if (address && prevAddress.current && prevAddress.current !== address) {
       useTokenDataStore.getState().removeActiveToken()
       try { clearKeyCache() } catch { /* clearing in-memory state can't really fail */ }
+      useBlockedUsersStore.getState().resetBlocks()
     }
     // Also clear on disconnect (address goes from defined → undefined).
     if (!address && prevAddress.current) {
       try { clearKeyCache() } catch { /* same */ }
+      useBlockedUsersStore.getState().resetBlocks()
     }
     prevAddress.current = address
   }, [address])

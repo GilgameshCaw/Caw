@@ -174,6 +174,7 @@ export function useCreateSession() {
     console.log('[QuickSign] Request created:', result.requestId)
 
     // Poll for completion (backend handles L2 sync waiting + tx submission)
+    let confirmed = false
     for (let i = 0; i < 80; i++) { // max ~4 minutes (covers 3min sync + tx time)
       await new Promise(r => setTimeout(r, 3000))
       try {
@@ -190,6 +191,7 @@ export function useCreateSession() {
           onProgress?.('Confirming transaction...')
         } else if (status.status === 'confirmed') {
           console.log('[QuickSign] Confirmed:', status.txHash, 'block:', status.blockNumber)
+          confirmed = true
           break
         } else if (status.status === 'failed') {
           console.error('[QuickSign] Registration failed:', status.error, 'Full status:', JSON.stringify(status))
@@ -199,6 +201,16 @@ export function useCreateSession() {
         if (e.message && !e.message.includes('API')) throw e
         // Ignore transient polling errors
       }
+    }
+
+    if (!confirmed) {
+      // Loop exhausted without on-chain confirmation. Do NOT store the session
+      // key — it was never registered and using it would silently fail every
+      // action. Surface a clear error so the user can retry.
+      console.error('[QuickSign] Timed out waiting for on-chain confirmation (requestId:', result.requestId, ')')
+      throw new Error(
+        'Session registration timed out. The transaction may still be pending — check your wallet or try again in a few minutes.'
+      )
     }
 
     // Store session locally after confirmation

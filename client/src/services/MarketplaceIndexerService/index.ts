@@ -26,6 +26,7 @@ const MARKETPLACE_ABI = [
   'event BidReclaimed(uint256 indexed listingId, address bidder, uint256 amount)',
   'event ListingCancelled(uint256 indexed listingId)',
   'event AuctionSettled(uint256 indexed listingId, address winner, uint256 price)',
+  'event AuctionDefaulted(uint256 indexed listingId, address indexed bidder, uint256 amount)',
   'event OfferCreated(uint256 indexed offerId, uint32 indexed tokenId, address offerer, address paymentToken, uint256 amount, uint64 expiry)',
   'event OfferAccepted(uint256 indexed offerId, uint32 indexed tokenId, address seller, address buyer, uint256 price, address paymentToken)',
   'event OfferCancelled(uint256 indexed offerId)',
@@ -123,7 +124,7 @@ export const marketplaceIndexerService: Service = {
       // ten separate queryFilter calls that each hit eth_getLogs independently.
       const EVENT_NAMES = [
         'Listed', 'Sale', 'BidPlaced', 'BidWithdrawn', 'BidReclaimed',
-        'ListingCancelled', 'AuctionSettled',
+        'ListingCancelled', 'AuctionSettled', 'AuctionDefaulted',
         'OfferCreated', 'OfferAccepted', 'OfferCancelled',
         // V2 payout events
         'PayoutQueued', 'PayoutWithdrawn',
@@ -179,14 +180,15 @@ export const marketplaceIndexerService: Service = {
           const bidReclaimed = byName.BidReclaimed
           const cancelled = byName.ListingCancelled
           const settled = byName.AuctionSettled
+          const defaulted = byName.AuctionDefaulted
           const offersCreated = byName.OfferCreated
           const offersAccepted = byName.OfferAccepted
           const offersCancelled = byName.OfferCancelled
           const payoutsQueued = byName.PayoutQueued
           const payoutsWithdrawn = byName.PayoutWithdrawn
 
-          if (listed.length || sales.length || bids.length || bidWithdrawals.length || bidReclaimed.length || cancelled.length || settled.length || offersCreated.length || offersAccepted.length || offersCancelled.length || payoutsQueued.length || payoutsWithdrawn.length) {
-            console.log(`[MarketplaceIndexer] Found events: ${listed.length} listed, ${sales.length} sales, ${bids.length} bids, ${bidWithdrawals.length} bid-withdrawn, ${bidReclaimed.length} bid-reclaimed, ${cancelled.length} cancelled, ${settled.length} settled, ${offersCreated.length} offers created, ${offersAccepted.length} offers accepted, ${offersCancelled.length} offers cancelled, ${payoutsQueued.length} payouts-queued, ${payoutsWithdrawn.length} payouts-withdrawn`)
+          if (listed.length || sales.length || bids.length || bidWithdrawals.length || bidReclaimed.length || cancelled.length || settled.length || defaulted.length || offersCreated.length || offersAccepted.length || offersCancelled.length || payoutsQueued.length || payoutsWithdrawn.length) {
+            console.log(`[MarketplaceIndexer] Found events: ${listed.length} listed, ${sales.length} sales, ${bids.length} bids, ${bidWithdrawals.length} bid-withdrawn, ${bidReclaimed.length} bid-reclaimed, ${cancelled.length} cancelled, ${settled.length} settled, ${defaulted.length} defaulted, ${offersCreated.length} offers created, ${offersAccepted.length} offers accepted, ${offersCancelled.length} offers cancelled, ${payoutsQueued.length} payouts-queued, ${payoutsWithdrawn.length} payouts-withdrawn`)
           }
 
           // Process Listed events
@@ -518,6 +520,33 @@ export const marketplaceIndexerService: Service = {
               } catch (err) {
                 console.warn('[Marketplace] Failed to create AUCTION_WON notification:', err)
               }
+            }
+          }
+
+          // Process AuctionDefaulted events.
+          // Emitted by refundDefaultedAuction() when the NFT was transferred
+          // away from the marketplace after a bid was placed but before
+          // settlement — the contract clears listing.active and credits the
+          // bidder via pendingReturns (PayoutQueued is emitted in the same tx).
+          // Mark the listing CANCELLED and the active bid OUTBID so it
+          // shows up in the bidder's claimable-refunds list. The corresponding
+          // PayoutQueued event is processed separately by the existing handler.
+          for (const event of defaulted) {
+            const ev = event as ethers.EventLog
+            const onChainListingId = Number(ev.args[0])
+            const bidder = String(ev.args[1]).toLowerCase()
+
+            const listing = await prisma.marketplaceListing.findUnique({ where: { listingId: onChainListingId } })
+            if (listing) {
+              await prisma.marketplaceListing.update({
+                where: { listingId: onChainListingId },
+                data: { status: 'CANCELLED' },
+              })
+              await prisma.marketplaceBid.updateMany({
+                where: { listingId: listing.id, bidder, status: 'ACTIVE' },
+                data: { status: 'OUTBID' },
+              })
+              console.log(`[MarketplaceIndexer] AuctionDefaulted: listing ${onChainListingId} → CANCELLED, bidder ${bidder.slice(0, 10)}... bid → OUTBID`)
             }
           }
 
