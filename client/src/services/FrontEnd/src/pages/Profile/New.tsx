@@ -44,6 +44,56 @@ const COST_SCHEDULE: Record<number, bigint> = {
 const DEFAULT_COST = 1_000_000n  // 8+ chars
 
 /**
+ * Format a USD amount compactly for quick-pick buttons:
+ *   $20, $300, $1.5k, $12k, $45k, $1.2M.
+ */
+function formatDollarsCompact(dollars: number): string {
+  if (dollars < 1_000) return `$${dollars}`
+  if (dollars < 1_000_000) {
+    const k = dollars / 1_000
+    // Drop trailing .0 (e.g. $2k not $2.0k); keep .5 (e.g. $1.5k).
+    return Number.isInteger(k) ? `$${k}k` : `$${k.toFixed(1)}k`
+  }
+  const m = dollars / 1_000_000
+  return Number.isInteger(m) ? `$${m}M` : `$${m.toFixed(1)}M`
+}
+
+/**
+ * Compute the four quick-pick dollar amounts for the "Pay with ETH" tab.
+ *
+ * Rule: when the username's USD cost is < $25, return the default
+ * starter set ($20/$50/$100/$300). Otherwise pick a step matched to
+ * the cost's order of magnitude, round the cost UP to the next multiple
+ * of that step, and emit 4 consecutive multiples starting there.
+ *
+ * Worked examples (cost → buttons):
+ *   $256    → $500, $1k, $1.5k, $2k       (step $500)
+ *   $1,234  → $1.5k, $2k, $2.5k, $3k      (step $500)
+ *   $2,560  → $3k, $3.5k, $4k, $4.5k      (step $500)
+ *   $10,143 → $12k, $14k, $16k, $18k      (step $2k)
+ *   $42,123 → $45k, $50k, $55k, $60k      (step $5k)
+ */
+function ethQuickPicksForUsernameCost(costUsd: number | null): number[] {
+  const DEFAULT = [20, 50, 100, 300]
+  if (costUsd == null || costUsd < 25) return DEFAULT
+
+  // Step size by order of magnitude.
+  let step: number
+  if (costUsd < 5_000) step = 500
+  else if (costUsd < 20_000) step = 2_000
+  else if (costUsd < 100_000) step = 5_000
+  else step = 20_000
+
+  // Round cost UP to next multiple of step. If costUsd is already an
+  // exact multiple, bump by one step so the first button leaves at least
+  // some headroom above the username cost (otherwise clicking the first
+  // option would mint with effectively zero deposit).
+  let firstButton = Math.ceil(costUsd / step) * step
+  if (firstButton === costUsd) firstButton += step
+  return [0, 1, 2, 3].map(i => firstButton + i * step)
+}
+
+/**
  * Tap-aware popover for the (i) icon next to "Deposit CAW". The whole row
  * is wrapped in a <label> that toggles the deposit on click — so the icon
  * needs to stop propagation, otherwise tapping it on mobile flips the
@@ -311,6 +361,14 @@ export const NewProfile: React.FC = () => {
     const cawAmount = convertToNumber(cost, 18)
     return cawPrice > 0 ? (cawAmount * cawPrice) : null
   }, [cost, cawPrice])
+
+  // Quick-pick dollar buttons on the "Pay with ETH" tab. Default starter
+  // set when the username's USD cost is small; otherwise scales to a
+  // sequence that starts above the username cost.
+  const ethQuickPickDollars = useMemo(
+    () => ethQuickPicksForUsernameCost(costInDollars),
+    [costInDollars]
+  )
 
   const { data: existingId, isLoading: checkingUsername } = useReadContract({
     address:      CAW_NAMES_MINTER_ADDRESS,
@@ -1182,7 +1240,7 @@ console.log("BALANCE:", balance)
                     from the current ETH/USD price; if the price isn't loaded
                     yet, the buttons are disabled. */}
                 <div className="flex gap-2">
-                  {[20, 50, 100, 300].map(dollars => {
+                  {ethQuickPickDollars.map(dollars => {
                     // 4-decimal ETH precision is plenty given we display in USD.
                     const ethAmountForDollars = ethPrice > 0
                       ? (dollars / ethPrice).toFixed(4).replace(/0+$/, '').replace(/\.$/, '')
@@ -1202,7 +1260,7 @@ console.log("BALANCE:", balance)
                               : 'border-[#BBB] text-gray-600 hover:text-gray-900 hover:border-gray-500'
                         } disabled:opacity-30 disabled:cursor-not-allowed`}
                       >
-                        ${dollars}
+                        {formatDollarsCompact(dollars)}
                       </button>
                     )
                   })}
