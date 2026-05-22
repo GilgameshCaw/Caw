@@ -18,6 +18,7 @@ import * as Sentry from '@sentry/react';
 
 import "./index.css";
 import "@rainbow-me/rainbowkit/styles.css";
+import "./rainbowkit-overrides.css";
 import App from "./App.tsx";
 import Web3Provider from "./config/Web3Provider";
 import StateProvider from "./config/StateProvider.tsx";

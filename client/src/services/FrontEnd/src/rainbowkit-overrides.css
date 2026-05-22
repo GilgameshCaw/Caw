@@ -1,0 +1,27 @@
+/*
+ * RainbowKit DOM overrides
+ *
+ * Loaded AFTER @rainbow-me/rainbowkit/styles.css in main.tsx so the rules
+ * here win specificity.
+ */
+
+/*
+ * Hide the wallet/profile avatar wrapper entirely.
+ *
+ * Web3Provider passes `avatar={() => null}` to <RainbowKitProvider>, which
+ * suppresses the inner AvatarComponent — but RainbowKit's outer wrapping
+ * <Box aria-hidden="true"> still reserves layout space via inline
+ * height/width styles (e.g. 74px in the profile-modal context).
+ *
+ * Avatar.tsx (in @rainbow-me/rainbowkit/dist/index.js, ~line 515-565)
+ * renders TWO nested aria-hidden="true" Boxes. AsyncImage (used for
+ * wallet logos / network icons) uses role="img" + aria-label INSTEAD of
+ * aria-hidden, so the `:has(> [aria-hidden="true"])` selector below
+ * doesn't catch wallet logos.
+ *
+ * The outer Avatar Box drops out of layout; with flex `gap` between
+ * siblings, the visual gap collapses too.
+ */
+[data-rk] [aria-hidden="true"]:has(> [aria-hidden="true"]) {
+  display: none !important;
+}
