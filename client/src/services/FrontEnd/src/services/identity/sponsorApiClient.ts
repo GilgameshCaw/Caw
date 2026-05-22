@@ -21,6 +21,11 @@
 // ---------------------------------------------------------------------------
 
 export interface SponsorBootstrapRequest {
+  /**
+   * Invite code (required). Server validates against SponsorCode table
+   * with constant-time response. See client/src/api/middleware/validateSponsorCode.ts.
+   */
+  code: string
   /** P-256 passkey X coordinate (32 bytes, 0x-prefixed hex) */
   passkeyPubkeyX: `0x${string}`
   /** P-256 passkey Y coordinate (32 bytes, 0x-prefixed hex) */

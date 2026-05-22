@@ -49,6 +49,12 @@ import { signAuthorizationTuple, type SignedAuthorizationTuple } from './eip7702
  * 65 bytes for secp256k1 ECDSA).
  */
 export type BootstrapParams = {
+  /**
+   * Invite code (required). Threaded all the way through to the
+   * /api/sponsor/bootstrap call, where it's validated against the
+   * SponsorCode table. Server returns INVALID_CODE/IP_BANNED/etc on miss.
+   */
+  code: string
   /** P-256 public key X coordinate (32 bytes, hex). */
   passkeyPubkeyX: `0x${string}`
   /** P-256 public key Y coordinate (32 bytes, hex). */
@@ -161,6 +167,7 @@ export type BootstrapResult = {
  *                                 sponsor server's internal digest derivation logic.
  */
 export async function bootstrapNewUser(opts: {
+  code: string
   vaultPassword: string
   username: string
   depositAmountCAW: bigint
@@ -175,6 +182,7 @@ export async function bootstrapNewUser(opts: {
   permitDigest: `0x${string}`
 }): Promise<BootstrapResult> {
   const {
+    code,
     vaultPassword,
     username,
     depositAmountCAW,
@@ -232,6 +240,7 @@ export async function bootstrapNewUser(opts: {
   //   calldata: SmartEOA.initialize(pkX, pkY, ecdsaFallback, mintParams)
   // which internally calls CawProfileMinter.mintAndDepositSponsored.
   const bootstrapParams: BootstrapParams = {
+    code,
     passkeyPubkeyX,
     passkeyPubkeyY,
     ecdsaFallbackAddr: keypair.address,

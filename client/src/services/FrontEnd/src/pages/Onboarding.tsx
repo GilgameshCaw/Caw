@@ -14,7 +14,8 @@
  *  6. confirm        — success + txHash + navigate to feed
  */
 
-import React, { useState, useCallback } from 'react'
+import React, { useState, useCallback, useMemo } from 'react'
+import { useSearchParams } from 'react-router-dom'
 import { useTheme } from '~/hooks/useTheme'
 import { useT } from '~/i18n/I18nProvider'
 import { useNavigate } from '~/utils/localizedRouter'
@@ -106,6 +107,26 @@ function stepIndex(step: OnboardingStep): number {
   return ALL_STEPS.indexOf(step)
 }
 
+/**
+ * Normalize a user-provided invite code: uppercase, strip dashes/whitespace.
+ * Matches the server's normalization in validateSponsorCode.ts so HMAC lines up.
+ */
+function normalizeCode(raw: string): string {
+  return raw.replace(/[-\s]/g, '').toUpperCase()
+}
+
+/**
+ * Loose client-side format gate. Tighter validation happens server-side
+ * (HMAC + DB lookup, constant-time). 8–64 chars of alphanumeric after
+ * normalization is the broadest accepting filter; rejects empty, way-too-short,
+ * and obviously-garbage URL params without leaking entropy info.
+ */
+function isPlausibleCodeFormat(raw: string | null): boolean {
+  if (!raw) return false
+  const n = normalizeCode(raw)
+  return /^[A-Z0-9]{8,64}$/.test(n)
+}
+
 function stepLabel(step: OnboardingStep, t: (k: string) => string): string {
   switch (step) {
     case 'username':       return t('onboarding.step.username')
@@ -122,6 +143,18 @@ export default function Onboarding() {
   const t = useT()
   const navigate = useNavigate()
   const [state, setState] = useState<OnboardingState>(INITIAL_STATE)
+
+  // Invite-code gate. The sponsor server requires a code for every
+  // bootstrap call — without one we render an "invite-only" stub and
+  // never expose any of the multi-step flow. The raw URL code is
+  // normalized (uppercase, dashes stripped) once on mount.
+  const [searchParams] = useSearchParams()
+  const rawCode = searchParams.get('code')
+  const normalizedCode = useMemo(
+    () => (rawCode ? normalizeCode(rawCode) : ''),
+    [rawCode],
+  )
+  const codeValid = isPlausibleCodeFormat(rawCode)
 
   const showProgress = PROGRESS_STEPS.includes(state.step as typeof PROGRESS_STEPS[number])
   const progressIndex = PROGRESS_STEPS.indexOf(state.step as typeof PROGRESS_STEPS[number])
@@ -200,6 +233,44 @@ export default function Onboarding() {
       usernameError: t('onboarding.username.taken_retry'),
     }))
   }, [t])
+
+  // Invite-only stub — no code in URL, or the code fails the loose format
+  // check. We render this BEFORE the multi-step flow so the user can't see
+  // (or screenshot) any of the steps without a code. Server-side validation
+  // is the real gate; this just blocks the obvious "open /onboarding directly"
+  // case so we don't waste the user's time.
+  if (!codeValid) {
+    return (
+      <div className={`fixed inset-0 z-[100] overflow-y-auto overflow-x-hidden ${outerBg}`}>
+        <BoidsBg isDark={isDark} />
+        <div className="absolute top-3 right-3 z-[110]">
+          <LanguageSwitcher />
+        </div>
+        <div className="relative z-10 px-4 py-8 min-h-screen flex items-center justify-center">
+          <div className={`w-full max-w-md rounded-2xl border p-6 text-center ${
+            isDark ? 'border-white/10 bg-black/60' : 'border-gray-200 bg-white/90'
+          }`}>
+            <h2 className={`text-xl font-bold mb-2 ${textPrimary}`}>
+              {t('onboarding.invite_only.title')}
+            </h2>
+            <p className={`text-sm ${textFaint}`}>
+              {t('onboarding.invite_only.body')}
+            </p>
+            <button
+              onClick={() => navigate('/')}
+              className={`mt-4 px-4 py-2 rounded-full text-sm font-medium transition-colors cursor-pointer ${
+                isDark
+                  ? 'bg-white/10 text-white hover:bg-white/15'
+                  : 'bg-black/5 text-gray-900 hover:bg-black/10'
+              }`}
+            >
+              {t('common.back_home')}
+            </button>
+          </div>
+        </div>
+      </div>
+    )
+  }
 
   return (
     <div className={`fixed inset-0 z-[100] overflow-y-auto overflow-x-hidden ${outerBg}`}>
@@ -320,6 +391,7 @@ export default function Onboarding() {
 
           {state.step === 'backup' && state.enrolledPasskey && (
             <BackupStep
+              code={normalizedCode}
               username={state.username}
               depositAmount={state.depositAmount}
               vaultPassword={state.vaultPassword}

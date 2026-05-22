@@ -37,6 +37,12 @@ import { chains } from '~/config/chains'
 import { usePublicClient } from 'wagmi'
 
 export interface BackupStepProps {
+  /**
+   * Sponsor invite code, read from /onboarding?code=... and threaded down
+   * through Onboarding state. Required: the sponsor server rejects bootstrap
+   * requests without a code. See client/src/api/middleware/validateSponsorCode.ts.
+   */
+  code: string
   username: string
   depositAmount: bigint
   vaultPassword: string
@@ -51,8 +57,24 @@ type LoadingPhase = 'sponsor' | 'chain' | null
 type ErrorKind =
   | 'INSUFFICIENT_FUNDS'
   | 'RATE_LIMITED'
+  | 'CODE_REJECTED'
   | 'generic'
   | null
+
+/**
+ * Sponsor-code error codes from the server. All collapse to a single
+ * "code rejected" UI to avoid leaking which kind of failure occurred
+ * (defeats brute-force probing — see validateSponsorCode.ts).
+ */
+const SPONSOR_CODE_ERROR_CODES = new Set<string>([
+  'INVALID_CODE',
+  'CODE_EXPIRED',
+  'CODE_EXHAUSTED',
+  'BUDGET_EXCEEDED',
+  'IP_BANNED',
+  'USERNAME_TOO_SHORT',
+  'INVALID_CODE_LOCKDOWN',
+])
 
 interface BootstrapError {
   kind: ErrorKind
@@ -73,6 +95,7 @@ const DEFAULT_LZ_TOKEN_AMOUNT = 0n
 const BOOTSTRAP_PERMIT_NONCE = 0n
 
 export default function BackupStep({
+  code,
   username,
   depositAmount,
   vaultPassword,
@@ -158,6 +181,7 @@ export default function BackupStep({
         sponsorBootstrap: async (params: Parameters<typeof sponsorClientRaw.sponsorBootstrap>[0]) => {
           // Build the full SponsorBootstrapRequest from the BootstrapParams.
           const req = {
+            code: params.code,
             passkeyPubkeyX: params.passkeyPubkeyX,
             passkeyPubkeyY: params.passkeyPubkeyY,
             ecdsaFallbackAddr: params.ecdsaFallbackAddr,
@@ -187,6 +211,7 @@ export default function BackupStep({
       }
 
       const result = await bootstrapNewUser({
+        code,
         vaultPassword,
         username,
         depositAmountCAW: depositAmount,
@@ -223,6 +248,12 @@ export default function BackupStep({
       } else if (code === 'RATE_LIMITED') {
         kind = 'RATE_LIMITED'
         detail = (err as Error & { detail?: string })?.detail
+      } else if (code && SPONSOR_CODE_ERROR_CODES.has(code)) {
+        // Collapse all sponsor-code errors into one generic UI. Surfacing
+        // the specific error (e.g. CODE_EXPIRED vs INVALID_CODE) would let
+        // an attacker probe code validity. The server-side response is
+        // already constant-time; FE-side message has to match.
+        kind = 'CODE_REJECTED'
       } else {
         detail = err instanceof Error ? err.message : undefined
       }
@@ -245,6 +276,9 @@ export default function BackupStep({
         msg = error.detail
           ? t('onboarding.backup.error_rate_limited_detail', { detail: error.detail })
           : t('onboarding.backup.error_rate_limited')
+        break
+      case 'CODE_REJECTED':
+        msg = t('onboarding.backup.error_code_rejected')
         break
       default:
         msg = error.detail
