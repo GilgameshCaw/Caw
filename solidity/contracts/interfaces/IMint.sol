@@ -48,6 +48,12 @@ interface IMint {
   ///         which address must supply the ERC-1271 permit sig.
   function ownerOf(uint256 tokenId) external view returns (address);
 
+  // ── Sponsored-flow refund-routing trampoline (audit H-1, 2026-05-22) ───
+  /// @notice Minter-only: call an existing CawProfile entry point while routing
+  ///         the LZ fee refund to `refundTo` instead of tx.origin.
+  ///         Used by the three sponsored flows in CawProfileMinter.
+  function sponsoredLzSend(bytes calldata inner, address payable refundTo) external payable;
+
   /// @notice Authenticate a token to a network via the registered minter.
   ///         msg.sender must be the minter; trust chain: owner sig verified at
   ///         Minter → Minter trusted by CawProfile.

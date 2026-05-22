@@ -393,7 +393,17 @@ contract CawProfileMinter is Context {
     ));
     bytes32 digest = keccak256(abi.encodePacked("\x19\x01", DOMAIN_SEPARATOR, structHash));
     _checkPermit(recipient, ACTION_MINT_DEPOSIT, permitNonce, digest, sig);
-    mintAndDepositFor(networkId, recipient, username, depositAmount, lzDestId, lzTokenAmount);
+    // Route through mintAndDepositR so excess LZ fee is returned to `recipient`
+    // (the user's smart-wallet), not to the sponsor server that is tx.origin.
+    // Audit fix 2026-05-22 (H-1: tx.origin as LZ refund in sponsored flows).
+    uint32 newId = _burnAndAssignId(username, depositAmount);
+    if (depositAmount > 0) {
+      CAW.transferFrom(_msgSender(), address(this), depositAmount);
+      CAW.approve(address(CawProfile), depositAmount);
+    }
+    CawProfile.mintAndDepositR{value: msg.value}(
+      networkId, recipient, username, newId, depositAmount, lzDestId, lzTokenAmount, "", payable(recipient)
+    );
   }
 
   /// @notice Deposit additional CAW into an existing token owned by a smart-contract wallet.
@@ -451,7 +461,10 @@ contract CawProfileMinter is Context {
     // Integration audit 2026-05-21 HIGH-1.
     CAW.transferFrom(_msgSender(), address(this), amount);
     CAW.approve(address(CawProfile), amount);
-    CawProfile.depositFor{value: msg.value}(networkId, tokenId, amount, lzDestId, lzTokenAmount);
+    // Route through depositForR so excess LZ fee is returned to the token owner
+    // (the user), not to the sponsor server that is tx.origin.
+    // Audit fix 2026-05-22 (H-1: tx.origin as LZ refund in sponsored flows).
+    CawProfile.depositForR{value: msg.value}(networkId, tokenId, amount, lzDestId, lzTokenAmount, payable(owner));
   }
 
   /// @notice Authenticate an existing profile to a second CAW network via the Minter.
@@ -486,7 +499,10 @@ contract CawProfileMinter is Context {
     ));
     bytes32 digest = keccak256(abi.encodePacked("\x19\x01", DOMAIN_SEPARATOR, structHash));
     _checkPermit(owner, ACTION_AUTHENTICATE, permitNonce, digest, sig);
-    CawProfile.authenticateForMinter{value: msg.value}(networkId, tokenId, lzDestId, owner, lzTokenAmount);
+    // Route through authenticateForMinterR so excess LZ fee is returned to `owner`
+    // (the user), not to the sponsor server that is tx.origin.
+    // Audit fix 2026-05-22 (H-1: tx.origin as LZ refund in sponsored flows).
+    CawProfile.authenticateForMinterR{value: msg.value}(networkId, tokenId, lzDestId, owner, lzTokenAmount, payable(owner));
   }
 
   /// @dev Shared permit-verification logic for all three sponsor entry points.

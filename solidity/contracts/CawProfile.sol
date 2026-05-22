@@ -66,6 +66,14 @@ contract CawProfile is
   uint32 public mainnetLzId;
   string[] public usernames;
   bool private fromLZ;
+  /// @dev Transient refund-address override for sponsored LZ sends.
+  ///      Zero = use tx.origin (default / non-sponsored path). Set by the
+  ///      three *ForR entry points before calling into existing logic; cleared
+  ///      after lzSend returns. The existing `fromLZ` flag already relies on
+  ///      the same "set→call→clear" pattern — see _lzReceive. Re-entrancy safe:
+  ///      the LZ endpoint is trusted and does not re-enter CawProfile.
+  ///      Audit fix 2026-05-22 (H-1 refundTo plumbing for sponsored flows).
+  address payable private _lzRefundTo;
 
   // Precomputed L2 handler selectors. Stored as internal state (no public getter
   // bytecode overhead); explicit view wrappers below satisfy CawProfileQuoter.
@@ -877,16 +885,21 @@ contract CawProfile is
       (cumulative, priceTs) = priceReader.readSample();
     }
 
-    // Refund excess LZ fee to tx.origin — the EOA that actually paid.
-    // Using msg.sender would break when called through an intermediary contract
-    // (e.g. CawProfileMarketplace.acceptOffer -> transferAndSync) because the contract
-    // wouldn't have a receive() function to accept the refund.
+    // Refund excess LZ fee. Default: tx.origin — the EOA that actually paid.
+    // tx.origin is used (not msg.sender) because msg.sender may be a contract
+    // without a receive() (e.g. CawProfileMarketplace.acceptOffer → transferAndSync).
+    //
+    // Sponsored-flow override: when _lzRefundTo is set by a *ForR entry point,
+    // the refund goes to the beneficiary (the user whose operation is sponsored)
+    // rather than to the paymaster/bundler that is tx.origin. This fixes the
+    // Population B (EIP-7702 sponsor) path from audit H-1 (2026-05-22).
+    address payable refundAddr = _lzRefundTo != address(0) ? _lzRefundTo : payable(tx.origin);
     _lzSend(
       lzDestId, // Destination chain's endpoint ID.
       abi.encodePacked(cumulative, priceTs, payload), // price prefix + original payload
       _options, // Message execution options (e.g., gas to use on destination).
       MessagingFee(lzEthAmount, lzTokenAmount), // Fee struct containing native gas and ZRO token.
-      payable(tx.origin) // Refund excess LZ fee to the tx originator (the EOA paying)
+      refundAddr // Refund excess LZ fee to the resolved address (user or tx.origin)
     );
   }
 
@@ -949,6 +962,41 @@ contract CawProfile is
       _depositRegisterSessionSelector,
       _mintAuthRegisterSessionSelector
     );
+  }
+
+  // ============================================
+  // SPONSORED-FLOW REFUND-ROUTING ENTRY POINT
+  // ============================================
+  /// @notice Minter-only trampoline that routes excess LZ fee to `refundTo`
+  ///         (the user/beneficiary) instead of to tx.origin (the sponsor server).
+  ///
+  ///         Used by CawProfileMinter's three sponsored entry points:
+  ///           mintAndDepositSponsored → encodes mintAndDeposit call
+  ///           depositForSponsored     → encodes depositFor call
+  ///           authenticateSponsored   → encodes authenticateForMinter call
+  ///
+  ///         Security model (mirrors the existing `fromLZ` flag pattern):
+  ///         - Only callable by the minter (set once via setMinter, onlyOnce).
+  ///         - Sets _lzRefundTo, then self-calls into an existing entry point,
+  ///           then clears the override.
+  ///         - Re-entrancy safe: the LZ endpoint (only external callee inside
+  ///           lzSend) is trusted and does not re-enter CawProfile.
+  ///         - `inner` must be a valid selector from this contract's existing
+  ///           public entry points; the call reverts if the target function
+  ///           reverts, which clears _lzRefundTo via the EVM rollback.
+  ///
+  ///         Audit fix 2026-05-22 (H-1: tx.origin refund breaks sponsored flows).
+  ///
+  /// @param inner    ABI-encoded call to an existing CawProfile public function.
+  /// @param refundTo Address that receives excess LZ fee (typically the user wallet).
+  function sponsoredLzSend(bytes calldata inner, address payable refundTo) external payable {
+    if (minter != _msgSender()) revert NotMinter();
+    _lzRefundTo = refundTo;
+    (bool ok, bytes memory ret) = address(this).call{value: msg.value}(inner);
+    _lzRefundTo = payable(address(0));
+    if (!ok) {
+      assembly { revert(add(ret, 32), mload(ret)) }
+    }
   }
 
   receive() external payable {}
