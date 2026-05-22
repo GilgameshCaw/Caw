@@ -94,6 +94,14 @@ export type SponsorErrorCode =
   | 'RECIPIENT_NOT_DELEGATED'
   | 'TX_REVERTED'
   | 'INTERNAL'
+  // ── Sponsor-code gating errors (validateSponsorCode) ──────────────────────
+  | 'INVALID_CODE'
+  | 'CODE_EXPIRED'
+  | 'CODE_EXHAUSTED'
+  | 'BUDGET_EXCEEDED'
+  | 'IP_BANNED'
+  | 'USERNAME_TOO_SHORT'
+  | 'INVALID_CODE_LOCKDOWN'
 
 export interface SponsorError {
   error: SponsorErrorCode
@@ -133,6 +141,14 @@ const REVERT_SUBSTRINGS: Record<SponsorErrorCode, string[]> = {
   RECIPIENT_NOT_DELEGATED: ['direct submit required', 'not delegated', 'code.length'],
   TX_REVERTED:             [],    // fallback for unmatched reverts
   INTERNAL:                [],    // internal service errors
+  // ── Sponsor-code errors: never returned from on-chain reverts ────────────
+  INVALID_CODE:            [],
+  CODE_EXPIRED:            [],
+  CODE_EXHAUSTED:          [],
+  BUDGET_EXCEEDED:         [],
+  IP_BANNED:               [],
+  USERNAME_TOO_SHORT:      [],
+  INVALID_CODE_LOCKDOWN:   [],
 }
 
 function parseRevertError(err: unknown): SponsorError {
@@ -496,6 +512,14 @@ let _instance: SponsorService | null = null
  */
 export function getSponsorService(): SponsorService | null {
   if (process.env.SPONSOR_ENABLED !== '1') return null
+
+  // SPONSOR_CODE_HMAC_SECRET is required when sponsor is enabled. Fail at
+  // startup rather than at first redemption attempt.
+  if (!process.env.SPONSOR_CODE_HMAC_SECRET) {
+    throw new Error(
+      '[SponsorService] SPONSOR_CODE_HMAC_SECRET must be set (32+ random bytes hex) when SPONSOR_ENABLED=1',
+    )
+  }
 
   if (_instance) return _instance
 

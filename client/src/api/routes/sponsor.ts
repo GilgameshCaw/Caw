@@ -25,6 +25,12 @@ import {
   getSponsorService,
   isSponsorError,
 } from '../../services/SponsorService'
+import {
+  validateSponsorCode,
+  commitRedemption,
+  computeRedemptionBudget,
+} from '../middleware/validateSponsorCode'
+import { getCawPriceCache, getEthPriceCache } from '../../services/ChainSyncService'
 
 const router = Router()
 
@@ -39,6 +45,10 @@ const redis = process.env.REDIS_URL
 const BOOTSTRAP_RATE_LIMIT     = 3
 const DEPOSIT_AUTH_RATE_LIMIT  = 30
 const RATE_WINDOW_SECONDS      = 24 * 60 * 60   // 24 hours
+
+// Gas limit for bootstrap tx — mirrors the constant in SponsorService/index.ts.
+// Used in the per-redemption budget computation.
+const GAS_LIMIT_BOOTSTRAP_BUDGET = 400_000n
 
 /**
  * Increment-and-check by IP for the given operation.
@@ -102,6 +112,8 @@ const BootstrapBodySchema = z.object({
   authTupleNonce:     bigintSchema,
   permitSig:          sigHexSchema as z.ZodType<`0x${string}`>,  // L-2: cap at 8 KB
   permitNonce:        bigintSchema,
+  // Invite code — required; without a valid code the bootstrap is rejected.
+  code:               z.string().min(8).max(64),
 })
 
 const DepositBodySchema = z.object({
@@ -164,12 +176,85 @@ router.post('/bootstrap', async (req, res) => {
     return res.status(400).json({ error: 'VALIDATION', detail })
   }
 
-  // Dispatch
+  // ── Sponsor-code gate ─────────────────────────────────────────────────────
+  // Compute a best-effort budget breakdown from cached price data.
+  // If prices are unavailable we still allow the request through the budget
+  // check (budget=undefined), but the code's usesRemaining and maxDeposit
+  // guards still apply.
+  let budget: ReturnType<typeof computeRedemptionBudget> | undefined
+  const cawPrice = getCawPriceCache()
+  const ethPrice = getEthPriceCache()
+  if (cawPrice && ethPrice) {
+    // ethUsdCents: usdPerEth is in units of 1e6 (6 decimal places) per
+    // ChainSyncService. Convert to cents (multiply by 100, divide by 1e6 = /1e4).
+    const ethUsdCents = Number(ethPrice.usdPerEth) / 1e4
+    // cawUsdCents: ethPerCaw is in 1e18 units (wei per 1 CAW), convert to USD cents.
+    const ethPerCawFloat = Number(cawPrice.ethPerCaw) / 1e18
+    const cawUsdCents = ethPerCawFloat * ethUsdCents
+    // Approximate gas price: use 20 gwei as a safe upper bound when we don't
+    // have a live estimate (avoids an RPC call per request per the no-RPC rule).
+    const gasPriceWei = 20_000_000_000n  // 20 gwei
+    budget = computeRedemptionBudget({
+      gasPriceWei,
+      gasLimitBootstrap: GAS_LIMIT_BOOTSTRAP_BUDGET,
+      // netFees: 2×(mintFee + authFee + depositFee). Approximate with 0.003 ETH
+      // as a safe upper bound since we don't want to do an RPC call here.
+      netFeesWei: 3_000_000_000_000_000n,  // 0.003 ETH
+      lzFeeWei: params.lzTokenAmount,
+      depositAmountCAW: params.depositAmountCAW,
+      ethUsdCents,
+      cawUsdCents,
+    })
+  }
+
+  const codeValidation = await validateSponsorCode(
+    params.code,
+    { username: params.username, depositAmountCAW: params.depositAmountCAW },
+    ip,
+    budget,
+  )
+  if (!codeValidation.ok) {
+    const statusMap: Record<string, number> = {
+      INVALID_CODE_LOCKDOWN: 503,
+      IP_BANNED: 403,
+      BUDGET_EXCEEDED: 400,
+      CODE_EXPIRED: 400,
+      CODE_EXHAUSTED: 400,
+      DEPOSIT_TOO_LARGE: 400,
+      USERNAME_TOO_SHORT: 400,
+      INVALID_CODE: 400,
+    }
+    const status = statusMap[codeValidation.error] ?? 400
+    return res.status(status).json({ error: codeValidation.error, detail: codeValidation.detail })
+  }
+
+  // ── Dispatch ──────────────────────────────────────────────────────────────
   const result = await service.sponsorBootstrap(params)
   if (isSponsorError(result)) {
+    // Bootstrap failed — do NOT decrement usesRemaining (caller can retry).
     const status = result.error === 'TREASURY_LOW' ? 503 : 400
     return res.status(status).json(result)
   }
+
+  // Success: commit the redemption audit row asynchronously.
+  // We fire-and-forget so a DB hiccup doesn't break the user's UX.
+  // The txHash is available; recipient is recovered from the auth tuple
+  // during sponsorBootstrap (we don't re-derive it here — the service
+  // doesn't expose the recovered address yet, so we use an empty string
+  // as a placeholder for now and can backfill from on-chain if needed).
+  commitRedemption({
+    codeHash: codeValidation.codeHash,
+    recipient: '',  // TODO: expose recovered EOA from SponsorService.sponsorBootstrap
+    txHash: result.txHash,
+    budget: budget ?? {
+      gasCostUsdCents: 0,
+      netFeesUsdCents: 0,
+      lzFeeUsdCents: 0,
+      depositUsdCents: 0,
+      totalUsdCents: 0,
+    },
+  }).catch(err => console.error('[sponsor] commitRedemption failed:', err))
+
   return res.status(200).json(result)
 })
 

@@ -40,6 +40,7 @@ import verifyRouter from './routes/verify'
 import adminDbRouter from './routes/admin-db'
 import adminUsersRouter from './routes/admin-users'
 import adminValidatorRouter from './routes/admin-validator'
+import adminSponsorCodesRouter from './routes/admin-sponsor-codes'
 import moderationRouter from './routes/moderation'
 import ogRouter from './routes/og'
 import sitemapRouter from './routes/sitemap'
@@ -370,6 +371,7 @@ export function createApp() {
   app.use('/api/admin/db', adminDbRouter)
   app.use('/api/admin/users', adminUsersRouter)
   app.use('/api/admin/validator', adminValidatorRouter)
+  app.use('/api/admin/sponsor-codes', adminSponsorCodesRouter)
   app.use('/api/moderation', moderationRouter)
   app.use('/api/og', ogRouter)
   // /sitemap.xml + /robots.txt mounted at root, ahead of the SPA prerender

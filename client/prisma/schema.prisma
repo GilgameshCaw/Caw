@@ -1473,3 +1473,68 @@ model CawOwnershipCurrent {
   ownership String
   updatedAt DateTime @default(now())
 }
+
+/// Sponsor invite codes — two-tier gating for /api/sponsor/bootstrap.
+/// Tier 1: short pretty codes (24-bit entropy, URUK-LAUNCH-7K2 format).
+/// Tier 2: long random codes (128-bit entropy, CAWS-XXXX-... base32 format).
+///
+/// codeHash = HMAC-SHA256(SPONSOR_CODE_HMAC_SECRET, normalizedCode)
+/// for both tiers. Normalized = uppercase, dashes stripped.
+/// The raw code is NEVER stored in the DB — only the HMAC.
+model SponsorCode {
+  /// HMAC-SHA256(secret, normalizedCode). Used as PK — no raw code stored.
+  codeHash             String              @id
+  /// 'short' (Tier 1) or 'long' (Tier 2). Affects validation strictness.
+  tier                 String
+  /// Optional human label for audit ("gilgamesh-launch-tweet")
+  label                String?
+  /// Per-redemption hard cap in USD cents. Tier 1 <= 1000, Tier 2 <= 10000.
+  budgetCapUsdCents    Int
+  /// Max CAW the user can deposit on this code (wei as string for BigInt safety).
+  /// If requested deposit exceeds this, redemption fails before budget-cap check.
+  maxDepositCawWei     String
+  /// null = unlimited (until expiry); 1 for the typical case
+  maxUses              Int?
+  /// Decremented on each redemption. null when maxUses is null.
+  usesRemaining        Int?
+  /// 0 = no minimum username length cap
+  minUsernameLength    Int                 @default(0)
+  /// Optional Network operator who pays. null = platform default sponsor.
+  networkOwnerAddress  String?
+  expiresAt            DateTime
+  /// Admin wallet that created this code
+  createdBy            String?
+  createdAt            DateTime            @default(now())
+  redemptions          SponsorRedemption[]
+}
+
+/// One row per successful sponsor-code redemption.
+model SponsorRedemption {
+  id               Int         @id @default(autoincrement())
+  codeHash         String
+  sponsorCode      SponsorCode @relation(fields: [codeHash], references: [codeHash])
+  /// The smart-EOA address that received the sponsored bootstrap
+  recipient        String
+  txHash           String?
+  /// USD cost breakdown in cents (for audit / rate-analysis)
+  gasCostUsdCents  Int
+  netFeesUsdCents  Int
+  lzFeeUsdCents    Int
+  depositUsdCents  Int
+  totalUsdCents    Int
+  redeemedAt       DateTime    @default(now())
+
+  @@index([codeHash])
+  @@index([recipient])
+  @@index([redeemedAt])
+}
+
+/// Tracks invalid-code attempts per IP for the 3/24h IP-ban rule.
+/// Rows older than 24h are effectively dead; cleaned by a periodic job.
+model SponsorCodeAttempt {
+  id          Int      @id @default(autoincrement())
+  ip          String
+  attemptedAt DateTime @default(now())
+
+  @@index([ip, attemptedAt])
+}
