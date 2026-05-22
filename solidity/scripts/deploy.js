@@ -689,10 +689,12 @@ const LINKING_STEPS = [
     method: 'createNetwork',
     // Uruk fee ceilings at ETH=$2000 (initial fees = ceilings; lowered to
     // their final values by the next linking step):
-    //   withdrawFeeCeiling = 0.0025 ETH (~$5) — initial fee 0.001 ETH
-    //   depositFeeCeiling  = 0.0025 ETH (~$5) — initial fee 0.001 ETH
-    //   authFeeCeiling     = 0.001  ETH (~$2) — initial fee 0.00025 ETH
-    //   mintFeeCeiling     = 0.001  ETH (~$2) — initial fee 0.00025 ETH
+    //   withdrawFeeCeiling = 0.0025 ETH (~$5) — initial fee 0.00075 ETH
+    //   depositFeeCeiling  = 0.001  ETH (~$2) — initial fee 0.0005   ETH
+    //   authFeeCeiling     = 0.001  ETH (~$2) — initial fee 0.000125 ETH
+    //   mintFeeCeiling     = 0.001  ETH (~$2) — initial fee 0.000125 ETH
+    // depositFeeCeiling matches mint/auth so all three sit at the same cap
+    // (deliberate: lowered from 0.0025 → 0.001 to give users more headroom).
     // Ceilings are permanent upper bounds; the active fees can be lowered
     // any time by the Network owner (you) via setXFee.
     // Storage chain: L2 (Base Sepolia).
@@ -701,7 +703,7 @@ const LINKING_STEPS = [
       state.deployerAddress,
       CHAINS[chainConfig.env + 'L2'].lzEid,
       '2500000000000000', // withdrawFeeCeiling = 0.0025 ETH
-      '2500000000000000', // depositFeeCeiling  = 0.0025 ETH
+      '1000000000000000', // depositFeeCeiling  = 0.001  ETH
       '1000000000000000', // authFeeCeiling     = 0.001  ETH
       '1000000000000000', // mintFeeCeiling     = 0.001  ETH
     ],
@@ -721,17 +723,17 @@ const LINKING_STEPS = [
     contract: 'CawNetworkManager',
     method: 'setFees',
     // Initial post-deploy fees (each < its ceiling):
-    //   withdrawFee = 0.001   ETH (ceiling 0.0025)
-    //   depositFee  = 0.001   ETH (ceiling 0.0025)
-    //   authFee     = 0.00025 ETH (ceiling 0.001)
-    //   mintFee     = 0.00025 ETH (ceiling 0.001)
+    //   withdrawFee = 0.00075  ETH (ceiling 0.0025)
+    //   depositFee  = 0.0005   ETH (ceiling 0.001)
+    //   authFee     = 0.000125 ETH (ceiling 0.001)
+    //   mintFee     = 0.000125 ETH (ceiling 0.001)
     // setFees(networkId, withdrawFee, depositFee, authFee, mintFee)
     args: (state) => [
       1,
-      '1000000000000000', // withdrawFee = 0.001   ETH
-      '1000000000000000', // depositFee  = 0.001   ETH
-      '250000000000000',  // authFee     = 0.00025 ETH
-      '250000000000000',  // mintFee     = 0.00025 ETH
+      '750000000000000',  // withdrawFee = 0.00075  ETH
+      '500000000000000',  // depositFee  = 0.0005   ETH
+      '125000000000000',  // authFee     = 0.000125 ETH
+      '125000000000000',  // mintFee     = 0.000125 ETH
     ],
     condition: (state) => state.addresses.CawNetworkManager && state.linking?.networkCreated === true,
     skipIf: async (state, deployer) => {

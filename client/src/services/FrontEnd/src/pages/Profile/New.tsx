@@ -204,7 +204,10 @@ const QuickSignInfoPopover: React.FC = () => {
       </button>
       {open && (
         <div
-          className="absolute top-full left-0 mt-2 z-50 w-[min(380px,90vw)] bg-gray-900 text-white/90 rounded-lg shadow-lg p-4 text-xs leading-relaxed space-y-2"
+          // Style mirrors DepositInfoPopover for visual parity: dark card,
+          // centered above the icon, fixed shadow. Positioning above (bottom-full)
+          // avoids overflow when the popover sits near the bottom of the page.
+          className="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 z-50 w-[min(380px,90vw)] bg-gray-900 rounded-lg shadow-lg p-4 text-xs leading-relaxed text-gray-300 space-y-2"
           onClick={(e) => e.stopPropagation()}
         >
           <div className="font-semibold text-white">How Quick Sign works</div>
