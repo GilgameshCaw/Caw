@@ -1481,7 +1481,7 @@ console.log("BALANCE:", balance)
                   <p className="text-yellow-500/80 text-xs mt-0.5">
                     Delegate funds to your device to skip wallet sigs
                   </p>
-                  <p className="text-gray-500 text-xs mt-0.5">Configure later in settings</p>
+                  <p className="text-gray-500 text-xs mt-0.5">You can configure later in settings</p>
                 </div>
               </label>
               {quickSignEnabled && quickSignExpanded && (
