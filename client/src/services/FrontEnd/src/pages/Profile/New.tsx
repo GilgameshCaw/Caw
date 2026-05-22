@@ -158,6 +158,93 @@ const DepositInfoPopover: React.FC = () => {
   )
 }
 
+/**
+ * Tap-aware popover for the (i) next to "Quick Sign — one-click actions".
+ * Same pattern as DepositInfoPopover — sits inside the wrapping <label>,
+ * so the click handler stops propagation to avoid toggling the Quick Sign
+ * switch when the user taps the icon.
+ */
+const QuickSignInfoPopover: React.FC = () => {
+  const [open, setOpen] = useState(false)
+  const ref = useRef<HTMLDivElement>(null)
+
+  useEffect(() => {
+    if (!open) return
+    const onPointerDown = (e: PointerEvent) => {
+      const target = e.target as Node | null
+      if (!target || !ref.current?.contains(target)) setOpen(false)
+    }
+    const onScroll = () => setOpen(false)
+    // 12s is plenty of reading time without the popover lingering forever.
+    const autoHide = setTimeout(() => setOpen(false), 12000)
+    document.addEventListener('pointerdown', onPointerDown)
+    window.addEventListener('scroll', onScroll, true)
+    return () => {
+      document.removeEventListener('pointerdown', onPointerDown)
+      window.removeEventListener('scroll', onScroll, true)
+      clearTimeout(autoHide)
+    }
+  }, [open])
+
+  return (
+    <div ref={ref} className="relative inline-flex">
+      <button
+        type="button"
+        aria-label="How Quick Sign works"
+        onClick={(e) => {
+          e.preventDefault()
+          e.stopPropagation()
+          setOpen((v) => !v)
+        }}
+        onMouseEnter={() => setOpen(true)}
+        onMouseLeave={() => setOpen(false)}
+        className="flex items-center cursor-help"
+      >
+        <HiInformationCircle className="w-4 h-4 text-gray-400" />
+      </button>
+      {open && (
+        <div
+          className="absolute top-full left-0 mt-2 z-50 w-[min(380px,90vw)] bg-gray-900 text-white/90 rounded-lg shadow-lg p-4 text-xs leading-relaxed space-y-2"
+          onClick={(e) => e.stopPropagation()}
+        >
+          <div className="font-semibold text-white">How Quick Sign works</div>
+          <p>
+            A one-time wallet signature delegates a small, capped portion of
+            your deposit to a key stored only on this device. The on-chain
+            session has a hard spend limit and an expiry — both visible below.
+          </p>
+          <p>
+            After that, normal actions (post, like, follow, recaw) sign
+            instantly with the device key. No wallet popup, no per-action gas.
+            Posts cost CAW from your deposit, not ETH.
+          </p>
+          <div className="font-semibold text-white pt-1">Why it's safe</div>
+          <ul className="list-disc list-outside pl-4 space-y-1">
+            <li>
+              The device key can <span className="text-white">never</span>{' '}
+              withdraw your deposit, transfer your profile, or spend ETH.
+              Only normal social actions.
+            </li>
+            <li>
+              The spend cap is enforced on-chain. Even if the device key
+              were stolen, the worst case is the remaining session budget —
+              not your whole deposit.
+            </li>
+            <li>
+              You can revoke the session anytime from Settings; revocation
+              is a single on-chain tx.
+            </li>
+            <li>
+              Sessions auto-expire. After expiry, your wallet has to sign
+              again to renew — a natural checkpoint.
+            </li>
+          </ul>
+        </div>
+      )}
+    </div>
+  )
+}
+
 export const NewProfile: React.FC = () => {
   const { isDark } = useTheme()
   const t = useT()
@@ -1463,13 +1550,15 @@ console.log("BALANCE:", balance)
                   }`} />
                 </button>
                 <div className="flex-1">
-                  <button
-                    type="button"
-                    onClick={() => setQuickSignExpanded(v => !v)}
-                    className="text-left w-full"
-                  >
+                  {/* Title row — plain span so a click bubbles to the
+                      wrapping <label> and toggles the switch (parity with
+                      the rest of the label). The (i) popover next to it
+                      stops propagation so it can open without flipping
+                      Quick Sign off. */}
+                  <div className="flex items-center gap-1.5">
                     <span className={`text-sm font-medium ${isDark ? 'text-white' : 'text-gray-900'}`}>Quick Sign — one-click actions</span>
-                  </button>
+                    <QuickSignInfoPopover />
+                  </div>
                   <p className="text-yellow-500/80 text-xs mt-0.5">
                     Delegate funds to your device to skip wallet sigs
                   </p>
