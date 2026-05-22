@@ -212,7 +212,7 @@ router.get('/check-landed/:id',
  * notifications by the DataCleaner.
  */
 router.get('/failed-cawonce/:senderId',
-  requireAuth({ lookup: async (req) => Number(req.params.senderId) }),
+  requireAuth({ lookup: async (req) => Number(req.params.senderId), verifyOwnership: true }),
   async (req, res) => {
   try {
     const senderId = parseInt(req.params.senderId, 10)

@@ -3,6 +3,7 @@ import { randomBytes } from 'crypto'
 import { prisma } from '../../prismaClient'
 import { publicUrl } from '../util/publicUrl'
 import { isSafePublicUrl } from '../util/ssrfGuard'
+import { requireAuth } from '../middleware/auth'
 
 const router = Router()
 
@@ -184,7 +185,7 @@ export async function extractMetadata(url: string): Promise<{
 }
 
 // POST /api/shorturl - Create a new short URL
-router.post('/', async (req, res) => {
+router.post('/', requireAuth({ anySession: true }), async (req, res) => {
   try {
     const { url } = req.body
 
@@ -288,7 +289,7 @@ router.post('/', async (req, res) => {
 })
 
 // POST /api/shorturl/bulk - Shorten multiple URLs at once
-router.post('/bulk', async (req, res) => {
+router.post('/bulk', requireAuth({ anySession: true }), async (req, res) => {
   try {
     const { urls } = req.body
     const domain = getShortUrlDomain()

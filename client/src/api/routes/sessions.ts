@@ -320,7 +320,12 @@ router.post('/', async (req: any, res: any) => {
     }
 
     // Recover signer from personal_sign
-    const recoveredAddress = ethers.verifyMessage(message, signature).toLowerCase()
+    let recoveredAddress: string
+    try {
+      recoveredAddress = ethers.verifyMessage(message, signature).toLowerCase()
+    } catch {
+      return res.status(400).json({ error: 'Invalid signature' })
+    }
 
     // Rate limit by full recovered address (Redis-backed)
     if (!await checkRateLimit(recoveredAddress)) {
@@ -407,6 +412,67 @@ async function checkRevokeRateLimit(scope: string, key: string, max: number): Pr
   return true
 }
 
+async function processRevokeRequest(
+  requestId: string,
+  owner: string,
+  sessionKey: string,
+  signature: string,
+): Promise<void> {
+  console.log(`[Sessions] Processing revocation ${requestId}`)
+  try {
+    const cawProfileL2 = getContract()
+    const sig = ethers.Signature.from(signature)
+    await setSessionRequest(requestId, { status: 'submitting' })
+
+    const tx = await cawProfileL2.revokeSessionBySig(
+      owner,
+      sessionKey,
+      sig.v,
+      sig.r,
+      sig.s,
+    )
+    console.log(`[Sessions] Revocation tx submitted: ${tx.hash}`)
+    await setSessionRequest(requestId, { status: 'pending', txHash: tx.hash })
+
+    const receipt = await tx.wait()
+    console.log(`[Sessions] Session revoked on-chain in block ${receipt.blockNumber}`)
+    await setSessionRequest(requestId, { status: 'confirmed', txHash: tx.hash, blockNumber: receipt.blockNumber })
+
+    // Record in ValidatorTx for analytics
+    const gasUsed = receipt.gasUsed.toString()
+    const gasPrice = (receipt.gasPrice ?? tx.gasPrice ?? 0n).toString()
+    const ethCost = (BigInt(gasUsed) * BigInt(gasPrice)).toString()
+    try {
+      await prisma.validatorTx.create({
+        data: {
+          txHash: tx.hash,
+          blockNumber: receipt.blockNumber ? BigInt(receipt.blockNumber) : null,
+          txType: 'sessionRevoke',
+          actionCount: 0,
+          gasUsed,
+          gasPrice,
+          ethCost,
+          tipCaw: '0',
+          tipEthValue: '0',
+          profit: `-${ethCost}`,
+          validatorId: 0,
+          status: 'confirmed',
+          sessionUser: owner.toLowerCase(),
+        }
+      })
+    } catch (err: any) {
+      console.error(`[Sessions] Failed to record revocation tx analytics:`, err.message)
+    }
+  } catch (err: any) {
+    console.error(`[Sessions] Revocation error for ${requestId}:`, err.message)
+    await setSessionRequest(requestId, { status: 'failed', error: 'Failed to revoke session. Please try again.' })
+  } finally {
+    inFlight.delete(owner.toLowerCase())
+    // Clean up after 10 minutes
+    setTimeout(() => requests.delete(requestId), 10 * 60 * 1000)
+  }
+}
+
 router.delete('/', async (req: any, res: any) => {
   try {
     const { owner, sessionKey, signature } = req.body
@@ -435,48 +501,23 @@ router.delete('/', async (req: any, res: any) => {
       return res.status(429).json({ error: 'Rate limit: too many revocation requests for this owner' })
     }
 
-    const cawProfileL2 = getContract()
-    const sig = ethers.Signature.from(signature)
-
-    const tx = await cawProfileL2.revokeSessionBySig(
-      owner,
-      sessionKey,
-      sig.v,
-      sig.r,
-      sig.s,
-    )
-
-    console.log(`[Sessions] Revocation tx submitted: ${tx.hash}`)
-    const receipt = await tx.wait()
-    console.log(`[Sessions] Session revoked on-chain in block ${receipt.blockNumber}`)
-
-    // Record in ValidatorTx for analytics
-    const gasUsed = receipt.gasUsed.toString()
-    const gasPrice = (receipt.gasPrice ?? tx.gasPrice ?? 0n).toString()
-    const ethCost = (BigInt(gasUsed) * BigInt(gasPrice)).toString()
-    try {
-      await prisma.validatorTx.create({
-        data: {
-          txHash: tx.hash,
-          blockNumber: receipt.blockNumber ? BigInt(receipt.blockNumber) : null,
-          txType: 'sessionRevoke',
-          actionCount: 0,
-          gasUsed,
-          gasPrice,
-          ethCost,
-          tipCaw: '0',
-          tipEthValue: '0',
-          profit: `-${ethCost}`,
-          validatorId: 0,
-          status: 'confirmed',
-          sessionUser: owner.toLowerCase(),
-        }
-      })
-    } catch (err: any) {
-      console.error(`[Sessions] Failed to record revocation tx analytics:`, err.message)
+    // Block concurrent submissions for the same owner (mirrors POST pattern)
+    if (inFlight.has(owner.toLowerCase())) {
+      return res.status(409).json({ error: 'A revocation is already in progress for this owner' })
     }
 
-    return res.json({ success: true, txHash: tx.hash })
+    // TODO(FE): the FE currently awaits a sync response from DELETE /api/sessions.
+    // It should be updated to poll /api/sessions/status/:requestId for confirmed
+    // status, matching the POST flow. Until then the FE will observe 202 and
+    // the session will be revoked asynchronously; on-chain event via ChainSyncService
+    // will prune the DB row when the tx confirms.
+    const requestId = randomUUID()
+    await setSessionRequest(requestId, { status: 'submitting' })
+    inFlight.add(owner.toLowerCase())
+
+    processRevokeRequest(requestId, owner, sessionKey, signature)
+
+    return res.status(202).json({ requestId, status: 'pending' })
   } catch (err: any) {
     console.error('[Sessions] Revocation error:', err.message)
     return res.status(500).json({ error: 'Failed to revoke session' })

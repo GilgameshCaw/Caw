@@ -29,6 +29,7 @@ const router = Router()
 // active cross-replay surface and the FE updates atomically with this
 // change.
 const MESSAGE_PREFIX = 'Verify wallet ownership for CAW\n'
+const EXPECTED_CHAIN_ID = Number(process.env.L2_CHAIN_ID ?? 84532)
 const DM_MESSAGE_PREFIX = 'CAW Protocol\nEnable DMs\n@'
 const MAX_MESSAGE_AGE_MS = 5 * 60 * 1000 // 5 minutes
 
@@ -91,6 +92,10 @@ router.post('/verify', async (req, res) => {
     const claimedChainId = chainIdLine.slice('ChainId: '.length).trim()
     if (!/^\d+$/.test(claimedChainId)) {
       res.status(400).json({ error: 'Invalid chainId in message' })
+      return
+    }
+    if (Number(claimedChainId) !== EXPECTED_CHAIN_ID) {
+      res.status(400).json({ error: 'Invalid chainId' })
       return
     }
 
