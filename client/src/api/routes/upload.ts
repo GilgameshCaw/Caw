@@ -13,6 +13,39 @@ const MIME_TO_EXT: Record<string, string> = {
   'video/x-msvideo': '.avi', 'video/x-matroska': '.mkv', 'video/ogg': '.ogv',
 }
 
+// Allowlist for base64-route uploads. Only the four image formats the
+// multer route already accepts. Any other MIME — including image/svg+xml,
+// application/*, text/html — is rejected before the buffer is stored.
+const SAFE_MIMES = new Set(['image/jpeg', 'image/png', 'image/gif', 'image/webp'])
+
+// Hard-coded extension map for base64 routes: derived from the validated
+// allowlist, never from imageType.split('/')[1] (which would produce
+// '.javascript' for 'application/javascript').
+const BASE64_MIME_TO_EXT: Record<string, string> = {
+  'image/jpeg': 'jpg',
+  'image/png': 'png',
+  'image/gif': 'gif',
+  'image/webp': 'webp',
+}
+
+// Quick magic-byte sanity check (mirrors looksLikeImage in og.ts).
+// Returns true only when the buffer header matches one of the four safe
+// image formats. Rejects polyglots where the MIME is valid but the bytes
+// are not (e.g., a renamed HTML file).
+function looksLikeImage(buf: Buffer): boolean {
+  if (buf.length < 12) return false
+  // PNG: 89 50 4E 47
+  if (buf[0] === 0x89 && buf[1] === 0x50 && buf[2] === 0x4e && buf[3] === 0x47) return true
+  // JPEG: FF D8 FF
+  if (buf[0] === 0xff && buf[1] === 0xd8 && buf[2] === 0xff) return true
+  // GIF: GIF87a / GIF89a
+  if (buf[0] === 0x47 && buf[1] === 0x49 && buf[2] === 0x46) return true
+  // WebP: RIFF....WEBP
+  if (buf[0] === 0x52 && buf[1] === 0x49 && buf[2] === 0x46 && buf[3] === 0x46
+      && buf[8] === 0x57 && buf[9] === 0x45 && buf[10] === 0x42 && buf[11] === 0x50) return true
+  return false
+}
+
 function generateFilename(mimetype: string): string {
   const uniqueId = randomBytes(4).toString('hex')
   const ext = MIME_TO_EXT[mimetype] || '.bin'
@@ -272,11 +305,12 @@ router.post('/image', requireAuth({ field: 'tokenId', verifyOwnership: true }), 
     if (!matches || matches.length !== 3) return res.status(400).json({ error: 'Invalid image format' })
 
     const imageType = matches[1]
+    if (!SAFE_MIMES.has(imageType)) return res.status(400).json({ error: 'Unsupported image type' })
     const buffer = Buffer.from(matches[2], 'base64')
     if (buffer.length > 10 * 1024 * 1024) return res.status(400).json({ error: 'Image too large (max 10MB)' })
+    if (!looksLikeImage(buffer)) return res.status(400).json({ error: 'Invalid image data' })
 
-    const SAFE_EXT: Record<string, string> = { 'image/jpeg': 'jpg', 'image/png': 'png', 'image/gif': 'gif', 'image/webp': 'webp' }
-    const fileExtension = SAFE_EXT[imageType] || 'jpg'
+    const fileExtension = BASE64_MIME_TO_EXT[imageType]
     const fileName = `${tokenId}_${Date.now()}_${randomBytes(8).toString('hex')}.${fileExtension}`
     const url = await mediaStorage().put('images', fileName, buffer, imageType)
 
@@ -298,9 +332,11 @@ router.post('/images', requireAuth({ field: 'tokenId', verifyOwnership: true }),
       const matches = image.match(/^data:([A-Za-z-+\/]+);base64,(.+)$/)
       if (!matches || matches.length !== 3) continue
       const imageType = matches[1]
+      if (!SAFE_MIMES.has(imageType)) continue
       const buffer = Buffer.from(matches[2], 'base64')
       if (buffer.length > 10 * 1024 * 1024) continue
-      const fileExtension = imageType.split('/')[1] || 'jpg'
+      if (!looksLikeImage(buffer)) continue
+      const fileExtension = BASE64_MIME_TO_EXT[imageType]
       const fileName = `${tokenId}_${Date.now()}_${randomBytes(8).toString('hex')}.${fileExtension}`
       uploadedUrls.push(await storage.put('images', fileName, buffer, imageType))
     }

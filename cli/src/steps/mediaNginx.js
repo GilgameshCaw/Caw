@@ -179,6 +179,8 @@ ${tlsListen}
         proxy_cache_lock on;
         add_header X-Cache-Status $upstream_cache_status always;
         add_header Cache-Control "public, max-age=31536000, immutable" always;
+        add_header X-Content-Type-Options "nosniff" always;
+        add_header Content-Security-Policy "default-src 'none'" always;
         add_header Access-Control-Allow-Origin '*' always;
         add_header Access-Control-Expose-Headers 'Content-Length, Content-Type, ETag, X-Cache-Status' always;
 
