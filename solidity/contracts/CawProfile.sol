@@ -889,10 +889,9 @@ contract CawProfile is
     // tx.origin is used (not msg.sender) because msg.sender may be a contract
     // without a receive() (e.g. CawProfileMarketplace.acceptOffer → transferAndSync).
     //
-    // Sponsored-flow override: when _lzRefundTo is set by a *ForR entry point,
-    // the refund goes to the beneficiary (the user whose operation is sponsored)
-    // rather than to the paymaster/bundler that is tx.origin. This fixes the
-    // Population B (EIP-7702 sponsor) path from audit H-1 (2026-05-22).
+    // Sponsored-flow override: when _lzRefundTo is non-zero (set via setLzRefundTo
+    // by CawProfileMinter before the sponsored call), the refund goes to the user
+    // rather than the sponsor server that is tx.origin. Audit fix 2026-05-22 (H-1).
     address payable refundAddr = _lzRefundTo != address(0) ? _lzRefundTo : payable(tx.origin);
     _lzSend(
       lzDestId, // Destination chain's endpoint ID.
@@ -965,38 +964,26 @@ contract CawProfile is
   }
 
   // ============================================
-  // SPONSORED-FLOW REFUND-ROUTING ENTRY POINT
+  // SPONSORED-FLOW REFUND-ROUTING
   // ============================================
-  /// @notice Minter-only trampoline that routes excess LZ fee to `refundTo`
-  ///         (the user/beneficiary) instead of to tx.origin (the sponsor server).
+  /// @notice Minter-only: set the LZ fee refund recipient for the NEXT lzSend
+  ///         call in this transaction. Used by CawProfileMinter's sponsored entry
+  ///         points so excess LZ fee goes to the user (not to tx.origin = sponsor).
   ///
-  ///         Used by CawProfileMinter's three sponsored entry points:
-  ///           mintAndDepositSponsored → encodes mintAndDeposit call
-  ///           depositForSponsored     → encodes depositFor call
-  ///           authenticateSponsored   → encodes authenticateForMinter call
+  ///         Usage pattern (all in one tx, no re-entrancy risk):
+  ///           1. CawProfile.setLzRefundTo(payable(user))
+  ///           2. CawProfile.<depositFor|mintAndDeposit|authenticateForMinter>(...)
+  ///           3. CawProfile.setLzRefundTo(payable(0))   ← clear for next caller
   ///
-  ///         Security model (mirrors the existing `fromLZ` flag pattern):
-  ///         - Only callable by the minter (set once via setMinter, onlyOnce).
-  ///         - Sets _lzRefundTo, then self-calls into an existing entry point,
-  ///           then clears the override.
-  ///         - Re-entrancy safe: the LZ endpoint (only external callee inside
-  ///           lzSend) is trusted and does not re-enter CawProfile.
-  ///         - `inner` must be a valid selector from this contract's existing
-  ///           public entry points; the call reverts if the target function
-  ///           reverts, which clears _lzRefundTo via the EVM rollback.
-  ///
+  ///         Step 3 is important: CawProfileMinter MUST clear after use to avoid
+  ///         leaking refundTo across separate sponsored operations. The `lzSend`
+  ///         override resets _lzRefundTo to zero after each send as a backstop.
   ///         Audit fix 2026-05-22 (H-1: tx.origin refund breaks sponsored flows).
   ///
-  /// @param inner    ABI-encoded call to an existing CawProfile public function.
-  /// @param refundTo Address that receives excess LZ fee (typically the user wallet).
-  function sponsoredLzSend(bytes calldata inner, address payable refundTo) external payable {
+  /// @param refundTo Address to refund excess LZ fee to (0 = revert to tx.origin).
+  function setLzRefundTo(address payable refundTo) external {
     if (minter != _msgSender()) revert NotMinter();
     _lzRefundTo = refundTo;
-    (bool ok, bytes memory ret) = address(this).call{value: msg.value}(inner);
-    _lzRefundTo = payable(address(0));
-    if (!ok) {
-      assembly { revert(add(ret, 32), mload(ret)) }
-    }
   }
 
   receive() external payable {}

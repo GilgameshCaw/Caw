@@ -182,6 +182,22 @@ contract MockProfile {
         _owner[tokenId] = owner;
         if (tokenId >= _nextId) _nextId = tokenId + 1;
     }
+
+    // ── setLzRefundTo (audit H-1 fix 2026-05-22) ────────────────────────────
+    // Records the non-zero refundTo set by CawProfileMinter before each sponsored
+    // call. The real CawProfile stores it in _lzRefundTo and reads it inside lzSend;
+    // this mock stores it for test assertion purposes only.
+    // The test checks that the final non-zero value equals the expected beneficiary.
+    address public lastRefundTo;
+
+    function setLzRefundTo(address payable refundTo) external {
+        require(msg.sender == minter, "NotMinter");
+        if (refundTo != address(0)) {
+            // Only record non-zero sets — the clear (address(0)) at the end of each
+            // sponsored call would overwrite the value we want to assert.
+            lastRefundTo = refundTo;
+        }
+    }
 }
 
 // =============================================================================
@@ -868,6 +884,77 @@ contract MinterSponsorTest is Test {
         assertTrue(dsOnCurrent != dsOnBase, "DS must differ across chainIds");
         assertTrue(dsOnCurrent != bytes32(0), "DS must be non-zero");
         assertTrue(dsOnBase != bytes32(0), "DS must be non-zero");
+    }
+
+    // =========================================================================
+    // H-1 fix (audit 2026-05-22): refundTo routing in sponsored flows
+    //
+    // Verify that excess LZ fee is routed to the beneficiary (user wallet),
+    // not to tx.origin (sponsor server).
+    //
+    // The MockProfile.setLzRefundTo records `lastRefundTo` (the non-zero set)
+    // so we can assert the correct beneficiary address was supplied by the Minter
+    // without needing a real LZ endpoint.
+    // =========================================================================
+
+    /// @notice mintAndDepositSponsored routes refund to `recipient`, not tx.origin.
+    function test_H1_mintAndDepositSponsored_refundTo_isRecipient() public {
+        address eoa = _deployDelegatedEOA(USER_EOA_PK);
+
+        uint256 nonce = SmartEOA(payable(eoa)).nonceOf(address(minter), 1);
+        bytes32 digest = _mintDepositDigest(1, eoa, "refundtest1", 0, 0, 0, nonce);
+        _registerP256(digest, SIG_R_A, SIG_S_A, PK1_X, PK1_Y);
+        bytes memory sig = _buildPasskeySig(digest);
+
+        // Sponsor submits (this contract is tx.origin in foundry)
+        minter.mintAndDepositSponsored{value: 0}(1, eoa, "refundtest1", 0, 0, 0, nonce, sig);
+
+        // MockProfile.lastRefundTo should be the user EOA, not address(this) (tx.origin/sponsor)
+        address gotRefund = profile.lastRefundTo();
+        assertEq(gotRefund, eoa, "H-1: refund must go to recipient, not tx.origin");
+    }
+
+    /// @notice depositForSponsored routes refund to the token owner, not tx.origin.
+    function test_H1_depositForSponsored_refundTo_isOwner() public {
+        address eoa = _deployDelegatedEOA(USER_EOA_PK);
+        profile.seedToken(30, eoa);
+
+        uint256 depositAmt = 1e18;
+        uint256 nonce = SmartEOA(payable(eoa)).nonceOf(address(minter), 2);
+        bytes32 digest = _depositForDigest(1, 30, depositAmt, 0, 0, nonce);
+        _registerP256(digest, SIG_R_A, SIG_S_A, PK1_X, PK1_Y);
+        bytes memory sig = _buildPasskeySig(digest);
+
+        // Sponsor must hold CAW; already minted in setUp (this contract has max balance)
+        minter.depositForSponsored{value: 0}(1, 30, depositAmt, 0, 0, nonce, sig);
+
+        assertEq(profile.lastRefundTo(), eoa, "H-1: refund must go to token owner, not tx.origin");
+    }
+
+    /// @notice authenticateSponsored routes refund to the token owner, not tx.origin.
+    function test_H1_authenticateSponsored_refundTo_isOwner() public {
+        address eoa = _deployDelegatedEOA(USER_EOA_PK);
+        profile.seedToken(31, eoa);
+
+        uint256 nonce = SmartEOA(payable(eoa)).nonceOf(address(minter), 3);
+        bytes32 digest = _authenticateDigest(2, 31, 0, 0, nonce);
+        _registerP256(digest, SIG_R_A, SIG_S_A, PK1_X, PK1_Y);
+        bytes memory sig = _buildPasskeySig(digest);
+
+        minter.authenticateSponsored{value: 0}(2, 31, 0, 0, nonce, sig);
+
+        assertEq(profile.lastRefundTo(), eoa, "H-1: refund must go to token owner, not tx.origin");
+    }
+
+    /// @notice Verify back-compat: non-sponsored mintAndDepositFor still works.
+    ///         setLzRefundTo is not called; profile.lastRefundTo stays zero.
+    function test_H1_backcompat_nonSponsored_mintAndDepositFor_unchanged() public {
+        // Non-sponsored path (mintAndDepositFor) does NOT call setLzRefundTo,
+        // so MockProfile.lastRefundTo is never set.
+        minter.mintAndDeposit{value: 0}(1, "backcompat1", 0, 0, 0);
+        // lastRefundTo was never written by a sponsored flow — should be zero
+        assertEq(profile.lastRefundTo(), address(0), "H-1: non-sponsored path must not touch lastRefundTo");
+        assertEq(profile.ownerOf(1), address(this), "non-sponsored mint must assign token to msg.sender");
     }
 
     receive() external payable {}
