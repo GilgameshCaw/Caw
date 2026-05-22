@@ -75,44 +75,6 @@ function weiToUsd(wei: bigint | null | undefined, ethPrice: number): string {
 }
 
 /**
- * Section header with an optional info-tooltip "?" icon.
- * Tooltip is hover/focus-revealed and positions above the icon.
- */
-const SectionHeader: React.FC<{
-  title: string
-  tooltip?: string
-  headerClass: string
-  isDark: boolean
-}> = ({ title, tooltip, headerClass, isDark }) => {
-  return (
-    <h3 className={`text-xs uppercase tracking-wide mb-1.5 flex items-center gap-1 ${headerClass}`}>
-      <span>{title}</span>
-      {tooltip && (
-        <span className="relative group inline-flex">
-          <button
-            type="button"
-            aria-label={`${title} info`}
-            className={`inline-flex items-center justify-center transition-colors ${
-              isDark ? 'text-white/40 hover:text-white/80' : 'text-gray-400 hover:text-gray-700'
-            }`}
-          >
-            <HiInformationCircle className="w-3.5 h-3.5" />
-          </button>
-          <span
-            role="tooltip"
-            className={`pointer-events-none absolute z-50 bottom-full mb-2 left-1/2 -translate-x-1/2 w-60 rounded-lg border px-3 py-2 text-[11px] leading-relaxed normal-case tracking-normal opacity-0 group-hover:opacity-100 group-focus-within:opacity-100 transition-opacity shadow-lg ${
-              isDark ? 'bg-black border-white/20 text-white/80' : 'bg-white border-gray-200 text-gray-700'
-            }`}
-          >
-            {tooltip}
-          </span>
-        </span>
-      )}
-    </h3>
-  )
-}
-
-/**
  * Single table row. Shows "—" when fee or ceiling hasn't loaded yet.
  */
 const FeeTableRow: React.FC<{
@@ -183,137 +145,142 @@ const NetworkFeeModal: React.FC<NetworkFeeModalProps> = ({
         border={false}
       />
 
-      <div className="px-4 pb-5 space-y-5">
+      <div className="px-4 pb-5 space-y-4">
 
-        {/* ── Section 1: per-action Network fees ─────────────────────────── */}
-        <div>
-          <div className="overflow-x-auto">
-            <table className="w-full">
-              <thead>
-                <tr>
-                  <th className={`pb-2 text-left text-xs uppercase tracking-wide ${headerClass}`}>
-                    Network fees
-                  </th>
-                  <th className={`pb-2 text-left text-xs uppercase tracking-wide ${headerClass}`}>
-                    Current
-                  </th>
-                  <th className={`pb-2 text-left text-xs uppercase tracking-wide ${headerClass}`}>
-                    <span className="relative group inline-flex items-center gap-1">
-                      <span>Ceiling</span>
-                      <button
-                        type="button"
-                        aria-label="Ceiling info"
-                        className={`inline-flex items-center justify-center transition-colors ${
-                          isDark ? 'text-white/40 hover:text-white/80' : 'text-gray-400 hover:text-gray-700'
-                        }`}
-                      >
-                        <HiInformationCircle className="w-3.5 h-3.5" />
-                      </button>
-                      <span
-                        role="tooltip"
-                        className={`pointer-events-none absolute z-50 bottom-full mb-2 left-1/2 -translate-x-1/2 w-60 rounded-lg border px-3 py-2 text-[11px] leading-relaxed normal-case tracking-normal opacity-0 group-hover:opacity-100 group-focus-within:opacity-100 transition-opacity shadow-lg ${
-                          isDark ? 'bg-black border-white/20 text-white/80' : 'bg-white border-gray-200 text-gray-700'
-                        }`}
-                      >
-                        Permanent cap — operators can lower it, never raise it.
-                      </span>
+        {/* Single unified fee table — keeps column widths consistent across
+            per-action fees, the cross-chain LZ row, and the deferred
+            withdraw fee. A "Pay later" divider row separates pay-now from
+            pay-at-withdrawal. */}
+        <div className="overflow-x-auto">
+          <table className="w-full">
+            <thead>
+              <tr>
+                <th className={`pb-2 text-left text-xs uppercase tracking-wide ${headerClass}`}>
+                  Fee
+                </th>
+                <th className={`pb-2 text-left text-xs uppercase tracking-wide ${headerClass}`}>
+                  Current
+                </th>
+                <th className={`pb-2 text-left text-xs uppercase tracking-wide ${headerClass}`}>
+                  <span className="relative group inline-flex items-center gap-1">
+                    <span>Ceiling</span>
+                    <button
+                      type="button"
+                      aria-label="Ceiling info"
+                      className={`inline-flex items-center justify-center transition-colors ${
+                        isDark ? 'text-white/40 hover:text-white/80' : 'text-gray-400 hover:text-gray-700'
+                      }`}
+                    >
+                      <HiInformationCircle className="w-3.5 h-3.5" />
+                    </button>
+                    <span
+                      role="tooltip"
+                      className={`pointer-events-none absolute z-50 bottom-full mb-2 left-1/2 -translate-x-1/2 w-60 rounded-lg border px-3 py-2 text-[11px] leading-relaxed normal-case tracking-normal opacity-0 group-hover:opacity-100 group-focus-within:opacity-100 transition-opacity shadow-lg ${
+                        isDark ? 'bg-black border-white/20 text-white/80' : 'bg-white border-gray-200 text-gray-700'
+                      }`}
+                    >
+                      Permanent cap — operators can lower it, never raise it.
                     </span>
-                  </th>
-                </tr>
-              </thead>
-              <tbody>
-                <FeeTableRow
-                  label="Mint username"
-                  current={weiToUsd(fees.mintFee, ethPrice)}
-                  ceiling={weiToUsd(fees.mintFeeCeiling, ethPrice)}
-                  isDark={isDark}
-                />
-                <FeeTableRow
-                  label="Deposit CAW"
-                  current={weiToUsd(fees.depositFee, ethPrice)}
-                  ceiling={weiToUsd(fees.depositFeeCeiling, ethPrice)}
-                  isDark={isDark}
-                />
-                <FeeTableRow
-                  label="Authenticate (extra Network)"
-                  current={weiToUsd(fees.authFee, ethPrice)}
-                  ceiling={weiToUsd(fees.authFeeCeiling, ethPrice)}
-                  isDark={isDark}
-                />
-              </tbody>
-            </table>
-          </div>
-        </div>
-
-        {/* ── Section 2: Withdraw fee ─────────────────────────────────────── */}
-        <div>
-          <div className="overflow-x-auto">
-            <table className="w-full">
-              <thead>
-                <tr>
-                  <th className={`pb-2 text-left text-xs uppercase tracking-wide ${headerClass}`}>
-                    Withdraw
-                  </th>
-                  <th className={`pb-2 text-left text-xs uppercase tracking-wide ${headerClass}`}>
-                    <span className="relative group inline-flex items-center gap-1">
-                      <span>Your max withdraw fee</span>
-                      <button
-                        type="button"
-                        aria-label="Withdraw fee info"
-                        className={`inline-flex items-center justify-center transition-colors ${
-                          isDark ? 'text-white/40 hover:text-white/80' : 'text-gray-400 hover:text-gray-700'
-                        }`}
-                      >
-                        <HiInformationCircle className="w-3.5 h-3.5" />
-                      </button>
-                      <span
-                        role="tooltip"
-                        className={`pointer-events-none absolute z-50 bottom-full mb-2 left-1/2 -translate-x-1/2 w-60 rounded-lg border px-3 py-2 text-[11px] leading-relaxed normal-case tracking-normal opacity-0 group-hover:opacity-100 group-focus-within:opacity-100 transition-opacity shadow-lg ${
-                          isDark ? 'bg-black border-white/20 text-white/80' : 'bg-white border-gray-200 text-gray-700'
-                        }`}
-                      >
-                        Locked in when you deposit. You always pay the lower of that locked rate and the current rate — never more.
-                      </span>
+                  </span>
+                </th>
+              </tr>
+            </thead>
+            <tbody>
+              <FeeTableRow
+                label="Mint username"
+                current={weiToUsd(fees.mintFee, ethPrice)}
+                ceiling={weiToUsd(fees.mintFeeCeiling, ethPrice)}
+                isDark={isDark}
+              />
+              <FeeTableRow
+                label="Deposit CAW"
+                current={weiToUsd(fees.depositFee, ethPrice)}
+                ceiling={weiToUsd(fees.depositFeeCeiling, ethPrice)}
+                isDark={isDark}
+              />
+              <FeeTableRow
+                label="Authenticate (extra Network)"
+                current={weiToUsd(fees.authFee, ethPrice)}
+                ceiling={weiToUsd(fees.authFeeCeiling, ethPrice)}
+                isDark={isDark}
+              />
+              {/* Cross-chain LZ row — not a Network fee, hover the label for context */}
+              <tr className={`border-t ${borderClass}`}>
+                <td className={`py-2 pr-4 text-sm ${mutedClass}`}>
+                  <span className="relative group inline-flex items-center gap-1">
+                    <span>LayerZero message fee</span>
+                    <button
+                      type="button"
+                      aria-label="LayerZero fee info"
+                      className={`inline-flex items-center justify-center transition-colors ${
+                        isDark ? 'text-white/40 hover:text-white/80' : 'text-gray-400 hover:text-gray-700'
+                      }`}
+                    >
+                      <HiInformationCircle className="w-3.5 h-3.5" />
+                    </button>
+                    <span
+                      role="tooltip"
+                      className={`pointer-events-none absolute z-50 bottom-full mb-2 left-0 w-60 rounded-lg border px-3 py-2 text-[11px] leading-relaxed normal-case tracking-normal opacity-0 group-hover:opacity-100 group-focus-within:opacity-100 transition-opacity shadow-lg ${
+                        isDark ? 'bg-black border-white/20 text-white/80' : 'bg-white border-gray-200 text-gray-700'
+                      }`}
+                    >
+                      Paid to the LayerZero bridge — not a {displayName} fee, and not part of buy-and-burn.
                     </span>
-                  </th>
-                </tr>
-              </thead>
-              <tbody>
-                <FeeTableRow
-                  label="Withdraw CAW"
-                  current={weiToUsd(fees.withdrawFee, ethPrice)}
-                  isDark={isDark}
-                />
-              </tbody>
-            </table>
-          </div>
-        </div>
+                  </span>
+                </td>
+                <td className={`py-2 pr-4 text-sm font-mono ${isDark ? 'text-white' : 'text-gray-900'}`}>
+                  {lzCurrentUsd}
+                </td>
+                <td className={`py-2 text-sm ${mutedClass}`}>
+                  (varies)
+                </td>
+              </tr>
 
-        {/* ── Section 3: Cross-chain (LayerZero) — separate from Network fees ─ */}
-        <div>
-          <SectionHeader
-            title="Cross-chain"
-            tooltip={`Paid to the LayerZero bridge — not a ${displayName} fee, and not part of buy-and-burn.`}
-            headerClass={headerClass}
-            isDark={isDark}
-          />
-          <div className="overflow-x-auto">
-            <table className="w-full">
-              <tbody>
-                <tr className={`border-t ${borderClass}`}>
-                  <td className={`py-2 pr-4 text-sm ${mutedClass}`}>
-                    LayerZero message fee
-                  </td>
-                  <td className={`py-2 pr-4 text-sm font-mono ${isDark ? 'text-white' : 'text-gray-900'}`}>
-                    {lzCurrentUsd}
-                  </td>
-                  <td className={`py-2 text-sm ${mutedClass}`}>
-                    (varies)
-                  </td>
-                </tr>
-              </tbody>
-            </table>
-          </div>
+              {/* "Pay later" amber divider — separates pay-now from withdraw */}
+              <tr className={`border-t-2 ${isDark ? 'border-amber-500/40' : 'border-amber-400/70'}`}>
+                <td
+                  colSpan={3}
+                  className={`pt-3 pb-1 text-[11px] uppercase tracking-wide ${isDark ? 'text-amber-500' : 'text-amber-700'}`}
+                >
+                  Pay later
+                </td>
+              </tr>
+
+              {/* Withdraw row — single cell value spans Current+Ceiling so it
+                  visually communicates "this number is both current AND your
+                  permanent max". Label carries the lock-in tooltip. */}
+              <tr>
+                <td className={`py-2 pr-4 text-sm ${mutedClass}`}>
+                  <span className="relative group inline-flex items-center gap-1">
+                    <span>Withdraw CAW</span>
+                    <button
+                      type="button"
+                      aria-label="Withdraw fee info"
+                      className={`inline-flex items-center justify-center transition-colors ${
+                        isDark ? 'text-white/40 hover:text-white/80' : 'text-gray-400 hover:text-gray-700'
+                      }`}
+                    >
+                      <HiInformationCircle className="w-3.5 h-3.5" />
+                    </button>
+                    <span
+                      role="tooltip"
+                      className={`pointer-events-none absolute z-50 bottom-full mb-2 left-0 w-60 rounded-lg border px-3 py-2 text-[11px] leading-relaxed normal-case tracking-normal opacity-0 group-hover:opacity-100 group-focus-within:opacity-100 transition-opacity shadow-lg ${
+                        isDark ? 'bg-black border-white/20 text-white/80' : 'bg-white border-gray-200 text-gray-700'
+                      }`}
+                    >
+                      Locked in when you deposit. You always pay the lower of that locked rate and the current rate — never more.
+                    </span>
+                  </span>
+                </td>
+                <td className={`py-2 pr-4 text-sm font-mono ${isDark ? 'text-white' : 'text-gray-900'}`}>
+                  {weiToUsd(fees.withdrawFee, ethPrice)}
+                </td>
+                <td className={`py-2 text-sm font-mono ${mutedClass}`}>
+                  (your max)
+                </td>
+              </tr>
+            </tbody>
+          </table>
         </div>
 
         {/* Buy-and-burn note */}
