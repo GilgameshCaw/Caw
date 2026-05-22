@@ -68,6 +68,25 @@ async function pickWorkingRpc(urls, perAttemptTimeoutMs = 4000) {
 }
 
 /**
+ * Display-name aliases for on-chain Network names. CawNetworkManager.name
+ * is set at registerNetwork() time and is NOT mutable — once a Network is
+ * registered with a name, that name is permanent on that contract
+ * deployment. Testnet's first Network is named "Uruk (testnet)" on-chain;
+ * we display it as "Sepolia-Uruk" so the brand "Uruk" stays free for the
+ * first mainnet Network. Keep in sync with
+ * client/src/services/FrontEnd/src/utils/networkNameAlias.ts.
+ *
+ * TODO[mainnet]: delete this aliasing before mainnet — testnet-only concern.
+ */
+const NETWORK_NAME_ALIASES = {
+  'Uruk (testnet)': 'Sepolia-Uruk',
+}
+function displayNetworkName(name) {
+  if (name == null) return name
+  return NETWORK_NAME_ALIASES[name] ?? name
+}
+
+/**
  * Pull the Network roster directly from on-chain state.
  * Returns [{ id, name, ownerAddress }, …] sorted by id.
  */
@@ -85,7 +104,7 @@ async function loadNetworks(provider, networkManagerAddress) {
       // Network structs with ownerAddress=0x0 are deleted/never-existed
       // (defensive — current contract doesn't actually delete them).
       if (c.ownerAddress && c.ownerAddress !== '0x0000000000000000000000000000000000000000') {
-        networks.push({ id, name: c.name, ownerAddress: c.ownerAddress })
+        networks.push({ id, name: displayNetworkName(c.name), ownerAddress: c.ownerAddress })
       }
     } catch { /* skip individual failures, keep going */ }
   }

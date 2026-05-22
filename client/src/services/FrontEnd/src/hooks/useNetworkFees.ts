@@ -2,9 +2,15 @@ import { useReadContracts } from 'wagmi'
 import { cawNetworkManagerAbi } from '~/../../../abi/generated'
 import { NETWORK_MANAGER_ADDRESS } from '~/../../../abi/addresses'
 import { chains } from '~/config/chains'
+import { displayNetworkName } from '~/utils/networkNameAlias'
 
 export interface NetworkFees {
-  /** Network name from CawNetwork.name (e.g., "Uruk (testnet)"). */
+  /**
+   * Network name to render in the UI. Read from CawNetwork.name on-chain
+   * and passed through `displayNetworkName()`, so testnet's on-chain
+   * "Uruk (testnet)" surfaces here as "Sepolia-Uruk". See
+   * `utils/networkNameAlias.ts`. Delete the aliasing on mainnet.
+   */
   name: string | null
   depositFee: bigint | null
   authFee: bigint | null
@@ -107,7 +113,7 @@ export function useNetworkFees(networkId: number | undefined, enabled = true): N
   const networkStruct = data?.[8]?.result as { name?: string } | undefined
 
   return {
-    name: networkStruct?.name ?? null,
+    name: displayNetworkName(networkStruct?.name),
     depositFee:  (data?.[0]?.result as bigint | undefined) ?? null,
     authFee:     (data?.[1]?.result as bigint | undefined) ?? null,
     withdrawFee: (data?.[2]?.result as bigint | undefined) ?? null,
