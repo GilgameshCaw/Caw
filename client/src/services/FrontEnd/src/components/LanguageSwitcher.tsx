@@ -19,9 +19,15 @@ export function getStoredViewerLanguage(): string {
 
 interface Props {
   className?: string
+  // 'bottom' (default): panel drops below the button — desktop header /
+  //   in-app placements that have room underneath.
+  // 'right': panel opens to the right of the button, aligned to its top.
+  //   Used in the mobile landing drawer, where the button sits low-left
+  //   and a downward panel would collide with the mobile browser chrome.
+  placement?: 'bottom' | 'right'
 }
 
-const LanguageSwitcher: React.FC<Props> = ({ className = '' }) => {
+const LanguageSwitcher: React.FC<Props> = ({ className = '', placement = 'bottom' }) => {
   const { isDark } = useTheme()
   const activeToken = useActiveToken()
   const tokenId = activeToken?.tokenId
@@ -84,7 +90,10 @@ const LanguageSwitcher: React.FC<Props> = ({ className = '' }) => {
       ? 'bg-white/10 text-white border-transparent hover:border-white/40'
       : 'bg-black/5 text-black border-transparent hover:border-black/30'
   }`
-  const panelClass = `absolute right-0 mt-1 w-56 rounded-xl border shadow-lg z-[60] overflow-hidden ${
+  const panelPos = placement === 'right'
+    ? 'left-0 top-0'
+    : 'right-0 mt-1'
+  const panelClass = `absolute ${panelPos} w-56 rounded-xl border shadow-lg z-[60] overflow-hidden ${
     isDark ? 'bg-neutral-900 border-white/10' : 'bg-white border-gray-200'
   }`
 

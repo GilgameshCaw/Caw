@@ -48,7 +48,7 @@ export const FreeSpeech = () => {
         </div>
 
         {/* Image with noise particle overlay */}
-        <div className="max-w-[280px] sm:max-w-sm md:max-w-md lg:max-w-xl w-full mx-auto relative -mb-2 hero-vignette">
+        <div className="max-w-[340px] sm:max-w-sm md:max-w-md lg:max-w-xl w-full mx-auto relative -mt-12 sm:mt-0 -mb-2 hero-vignette">
           <img
             src={freeSpeechImg}
             alt="Free Speech"

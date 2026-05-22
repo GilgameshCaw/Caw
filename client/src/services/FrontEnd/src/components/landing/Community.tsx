@@ -80,7 +80,7 @@ export const Community = () => {
         </div>
 
         {/* Mobile: Image below title */}
-        <div className="flex justify-start md:hidden mb-6 ml-8">
+        <div className="flex justify-start md:hidden mb-6 ml-3">
           <div className="max-w-[340px] w-full relative z-0">
             <div className="relative w-full overflow-hidden rounded-lg hero-vignette">
               <img
@@ -112,12 +112,12 @@ export const Community = () => {
         </div>
 
         {/* Mobile: Text boxes below image */}
-        <div className="flex flex-col items-center gap-2 mb-4 sm:hidden">
+        <div className="flex flex-col items-center gap-2.5 mb-4 sm:hidden translate-x-2">
           {['No partners projects', 'There are no official socials', 'Decentralized system'].map((txt, i) => (
             <div key={i} className={`bg-black z-10 transition-all duration-500 ${
               i === 0 ? 'delay-300' : i === 1 ? 'delay-400' : 'delay-500'
             } ${showContent ? 'opacity-100 translate-y-0' : 'opacity-0 translate-y-4'}`}>
-              <div className="rounded-lg border border-dashed border-white/40 px-4 py-2 text-xs whitespace-nowrap">
+              <div className="rounded-lg border border-dashed border-white/40 px-6 py-3 text-base whitespace-nowrap">
                 {txt}
               </div>
             </div>

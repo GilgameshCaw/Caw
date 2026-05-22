@@ -55,7 +55,7 @@ export default function CaptiveSplash() {
 
   return (
     <div
-      className={`h-[100svh] overflow-y-auto overflow-x-hidden snap-y snap-mandatory relative ${isDark ? 'bg-black text-white' : 'bg-white text-black'}`}
+      className={`h-[100svh] overflow-y-auto overflow-x-hidden relative ${isDark ? 'bg-black text-white' : 'bg-white text-black'}`}
       onScroll={(e) => setScrolled(e.currentTarget.scrollTop > 24)}
     >
       <BoidsBg isDark={isDark} />
@@ -72,12 +72,12 @@ export default function CaptiveSplash() {
           picker. Same component used by ManifestoPage. */}
       <LandingHeader fixed />
       {/* Hero — one full viewport, snaps so only the hero shows at top */}
-      <div className="min-h-[100svh] snap-start flex flex-col items-center justify-center px-6 py-6 relative z-10">
+      <div className="min-h-[100svh] flex flex-col items-center justify-center px-6 py-6 relative z-10">
         {/* 3D Crow shape — lazy loaded */}
         <Suspense fallback={
           <div className="my-1 w-64 h-64 md:w-80 md:h-72" />
         }>
-          <Caw3D className="my-1 w-64 h-64 md:w-80 md:h-72" isDark={isDark} />
+          <Caw3D className="my-1 w-64 h-64 md:w-80 md:h-72 translate-y-3" isDark={isDark} />
         </Suspense>
 
         {/* Tagline */}
@@ -85,7 +85,7 @@ export default function CaptiveSplash() {
           {t('captive_splash.tagline_prefix')}
           <br />
           <span
-            className={`text-yellow-500 inline-block text-[2.7rem] md:text-7xl whitespace-nowrap transition-all duration-400 ${
+            className={`text-yellow-500 inline-block text-[2.15rem] md:text-7xl whitespace-nowrap transition-all duration-400 ${
               isAnimating
                 ? 'opacity-0 translate-y-3'
                 : 'opacity-100 translate-y-0'
@@ -144,34 +144,34 @@ export default function CaptiveSplash() {
       </div>
 
       {/* Landing sections ported from caw-landing (below the hero/CTA).
-          Each section is one full viewport + snap-start so scrolling
-          settles on exactly one module at a time. */}
-      <div className="min-h-[100svh] snap-start flex flex-col justify-center relative z-10">
+          Each section is one full viewport tall; the page scrolls freely
+          (no scroll-snap). */}
+      <div className="min-h-[100svh] flex flex-col justify-center relative z-10 pt-20 sm:pt-0">
         <Suspense fallback={<div className="py-20" />}>
           <Features />
         </Suspense>
       </div>
 
-      <div className="min-h-[100svh] snap-start flex flex-col justify-center relative z-10">
+      <div className="min-h-[100svh] flex flex-col justify-center relative z-10 pt-20 sm:pt-0">
         <Suspense fallback={<div className="py-20" />}>
           <Community />
         </Suspense>
       </div>
 
-      <div className="min-h-[100svh] snap-start flex flex-col justify-center relative z-10">
+      <div className="min-h-[100svh] flex flex-col justify-center relative z-10">
         <Suspense fallback={<div className="py-20" />}>
           <FreeSpeech />
         </Suspense>
       </div>
 
-      <div className="min-h-[100svh] snap-start flex flex-col justify-center relative z-10">
+      <div className="min-h-[100svh] flex flex-col justify-center relative z-10">
         <Suspense fallback={<div className="py-20" />}>
           <Cawmmunity />
         </Suspense>
       </div>
 
       {/* Footer - resource links */}
-      <LandingFooter className="snap-start" />
+      <LandingFooter />
     </div>
   )
 }

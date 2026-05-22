@@ -1,3 +1,5 @@
+import { useState } from 'react'
+import { HiMenu, HiX } from 'react-icons/hi'
 import { Link } from '~/utils/localizedRouter'
 import { useTheme } from '~/hooks/useTheme'
 import { useT } from '~/i18n/I18nProvider'
@@ -27,6 +29,10 @@ export const RESOURCE_LINKS: { to: string; tKey?: string; label?: string }[] = [
 // CAW logo lockup + resource links top-left, LanguageSwitcher + active-user
 // avatar top-right.
 //
+// Below `md` the clusters would collide on a phone-width viewport, so the
+// resource links + language picker + avatar collapse behind a burger button
+// that slides in a right-side drawer.
+//
 // `fixed=false` (default): clusters are `absolute` — they scroll away with
 //   the page. The host must be `position: relative`. Used by ManifestoPage
 //   (natural document scroll) and WhitepaperPage (root doesn't scroll).
@@ -42,21 +48,39 @@ export default function LandingHeader({ fixed = false }: { fixed?: boolean }) {
     ? (avatarsByTokenId[activeToken.tokenId] || getUserAvatar({ tokenId: activeToken.tokenId }))
     : null
 
+  const [menuOpen, setMenuOpen] = useState(false)
+  const closeMenu = () => setMenuOpen(false)
+
   return (
     <>
-      {/* Top-right: language picker + active-user avatar. */}
+      {/* Top-right cluster. Desktop: language picker + avatar. Mobile:
+          a burger that opens the drawer below. */}
       <div className={`${pos} top-5 right-6 sm:right-10 lg:right-16 z-20 flex items-center gap-2`}>
-        <LanguageSwitcher />
-        {activeToken?.username && activeAvatarSrc && (
-          <Link
-            to={`/users/${activeToken.username}`}
-            aria-label={activeToken.username}
-            title={activeToken.username}
-            className="w-9 h-9 rounded-full overflow-hidden block border border-white/20 hover:border-white/50 transition-colors"
-          >
-            <Avatar src={activeAvatarSrc} size="small" className="w-full h-full object-cover" />
-          </Link>
-        )}
+        <div className="hidden md:flex items-center gap-2">
+          <LanguageSwitcher />
+          {activeToken?.username && activeAvatarSrc && (
+            <Link
+              to={`/users/${activeToken.username}`}
+              aria-label={activeToken.username}
+              title={activeToken.username}
+              className="w-9 h-9 rounded-full overflow-hidden block border border-white/20 hover:border-white/50 transition-colors"
+            >
+              <Avatar src={activeAvatarSrc} size="small" className="w-full h-full object-cover" />
+            </Link>
+          )}
+        </div>
+        <button
+          type="button"
+          onClick={() => setMenuOpen(true)}
+          aria-label="Open menu"
+          className={`md:hidden w-9 h-9 rounded-lg flex items-center justify-center border transition-colors ${
+            isDark
+              ? 'bg-white/10 text-white border-transparent hover:border-white/40'
+              : 'bg-black/5 text-black border-transparent hover:border-black/30'
+          }`}
+        >
+          <HiMenu className="w-5 h-5" />
+        </button>
       </div>
 
       {/* Top-left: CAW logo lockup + resource links. */}
@@ -88,10 +112,8 @@ export default function LandingHeader({ fixed = false }: { fixed?: boolean }) {
             CAW
           </span>
         </Link>
-        {/* Hidden below md — the left and right clusters would collide on a
-            phone-width viewport. CaptiveSplash keeps them reachable in its
-            footer on mobile. */}
-        <nav className="hidden md:flex items-center gap-x-4 ml-2 text-sm">
+        {/* Resource links — desktop only; on mobile they live in the drawer. */}
+        <nav className="hidden md:flex items-center gap-x-4 ml-8 text-sm">
           {RESOURCE_LINKS.map(l => (
             <Link
               key={l.to}
@@ -102,6 +124,82 @@ export default function LandingHeader({ fixed = false }: { fixed?: boolean }) {
             </Link>
           ))}
         </nav>
+      </div>
+
+      {/* Mobile drawer — resource links, with the language picker + avatar
+          pinned to the bottom. Always mounted so it can slide; pointer
+          events are off while closed. md+ never opens it (no burger). */}
+      <div className={`fixed inset-0 z-40 md:hidden ${menuOpen ? '' : 'pointer-events-none'}`}>
+        <div
+          onClick={closeMenu}
+          className={`absolute inset-0 bg-black/60 transition-opacity duration-200 ${
+            menuOpen ? 'opacity-100' : 'opacity-0'
+          }`}
+        />
+        <div
+          className={`absolute top-0 right-0 h-full w-72 max-w-[80vw] flex flex-col transition-transform duration-200 ${
+            menuOpen ? 'translate-x-0' : 'translate-x-full'
+          } ${isDark ? 'bg-black border-l border-white/10' : 'bg-white border-l border-gray-200'}`}
+        >
+          <div className="flex justify-end p-4">
+            <button
+              type="button"
+              onClick={closeMenu}
+              aria-label="Close menu"
+              className={`w-9 h-9 rounded-lg flex items-center justify-center border transition-colors ${
+                isDark
+                  ? 'bg-white/10 text-white border-transparent hover:border-white/40'
+                  : 'bg-black/5 text-black border-transparent hover:border-black/30'
+              }`}
+            >
+              <HiX className="w-5 h-5" />
+            </button>
+          </div>
+
+          <nav className="flex flex-col px-3 gap-1 overflow-y-auto">
+            {RESOURCE_LINKS.map(l => (
+              <Link
+                key={l.to}
+                to={l.to}
+                onClick={closeMenu}
+                className={`px-3 py-2.5 rounded-lg text-sm transition-colors ${
+                  isDark ? 'text-white/70 hover:bg-white/10' : 'text-gray-700 hover:bg-black/5'
+                }`}
+              >
+                {l.tKey ? t(l.tKey) : l.label}
+              </Link>
+            ))}
+          </nav>
+
+          {/* Language picker — a control, so it sits with the nav links
+              just under Faucet. Kept OUT of the overflow-y-auto <nav> so
+              its absolute dropdown panel isn't clipped. Scaled down. */}
+          <div className="px-6 pt-2 origin-left scale-90">
+            <LanguageSwitcher placement="right" />
+          </div>
+
+          {/* Bottom: active-user avatar, pinned to the foot of the drawer. */}
+          {activeToken?.username && activeAvatarSrc && (
+            <div
+              className={`mt-auto border-t p-4 ${isDark ? 'border-white/10' : 'border-gray-200'}`}
+            >
+              <Link
+                to={`/users/${activeToken.username}`}
+                onClick={closeMenu}
+                aria-label={activeToken.username}
+                title={activeToken.username}
+                className="flex items-center gap-2 min-w-0"
+              >
+                <span className="w-9 h-9 rounded-full overflow-hidden block border border-white/20">
+                  <Avatar src={activeAvatarSrc} size="small" className="w-full h-full object-cover" />
+                </span>
+                <span className={`text-sm truncate ${isDark ? 'text-white/80' : 'text-gray-700'}`}>
+                  {activeToken.username}
+                </span>
+              </Link>
+            </div>
+          )}
+        </div>
       </div>
     </>
   )
