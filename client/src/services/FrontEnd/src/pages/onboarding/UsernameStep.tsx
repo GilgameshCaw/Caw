@@ -8,7 +8,7 @@
  * Availability check is debounced so we don't fire per-keystroke RPC calls.
  */
 
-import { useState, useEffect, useMemo } from 'react'
+import { useState, useEffect, useMemo, useRef } from 'react'
 import { useReadContract } from 'wagmi'
 import { cawProfileMinterAbi } from '~/../../../abi/generated'
 import { CAW_NAMES_MINTER_ADDRESS } from '~/../../../abi/addresses'
@@ -68,6 +68,18 @@ export default function UsernameStep({
   const { isDark } = useTheme()
   const t = useT()
   const cawPriceUsd = usePriceStore(s => s.priceMap['a-hunters-dream']) as number | undefined
+
+  const [showPricingTooltip, setShowPricingTooltip] = useState(false)
+  const tooltipCloseTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
+
+  const openTooltip = () => {
+    if (tooltipCloseTimer.current) clearTimeout(tooltipCloseTimer.current)
+    setShowPricingTooltip(true)
+  }
+  const scheduleCloseTooltip = () => {
+    if (tooltipCloseTimer.current) clearTimeout(tooltipCloseTimer.current)
+    tooltipCloseTimer.current = setTimeout(() => setShowPricingTooltip(false), 120)
+  }
 
   // Cost depends on username length — shorter = much more expensive. The
   // burn cost is paid in CAW at mint time and locked forever.
@@ -178,9 +190,70 @@ export default function UsernameStep({
         <div className="min-h-[1.25rem] flex items-start justify-between gap-3">
           <div className="flex-1 text-left">
             {cawCost > 0 && (
-              <p className={`text-xs ${mutedClass}`}>
-                Mint cost: <span className={strongClass}>{formatCawCompact(cawCost)} CAW</span>
-                {usdCost !== null && <span className={mutedClass}> (~${formatUsd(usdCost)})</span>}
+              <p className={`text-xs ${mutedClass} flex items-center gap-1`}>
+                <span>Mint cost:</span>
+                <span className={strongClass}>{formatCawCompact(cawCost)} CAW</span>
+                {usdCost !== null && <span className={mutedClass}>(~${formatUsd(usdCost)})</span>}
+                {/* Tooltip trigger — hovering the "?" reveals the full
+                    pricing schedule. Matches the pattern used inside the
+                    username input on pages/Profile/New.tsx. */}
+                <span
+                  className="relative inline-flex"
+                  onMouseEnter={openTooltip}
+                  onMouseLeave={scheduleCloseTooltip}
+                >
+                  <button
+                    type="button"
+                    aria-label={t('new_profile.pricing_title')}
+                    className={`inline-flex items-center justify-center transition-colors ${
+                      isDark ? 'text-white/40 hover:text-white' : 'text-gray-400 hover:text-gray-700'
+                    }`}
+                    onFocus={openTooltip}
+                    onBlur={scheduleCloseTooltip}
+                  >
+                    <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                    </svg>
+                  </button>
+                  {showPricingTooltip && (
+                    <div
+                      onMouseEnter={openTooltip}
+                      onMouseLeave={scheduleCloseTooltip}
+                      className={`absolute z-50 bottom-full mb-2 left-1/2 -translate-x-1/2 w-64 border rounded-lg p-4 shadow-lg ${
+                        isDark ? 'bg-black border-white/20' : 'bg-white border-gray-200'
+                      }`}
+                    >
+                      <div className={`text-sm font-medium text-center mb-3 ${strongClass}`}>
+                        {t('new_profile.pricing_title')}
+                      </div>
+                      <div className="space-y-2">
+                        {[
+                          { label: t('new_profile.chars.1'), cawWhole: COST_SCHEDULE[1], compact: '1T' },
+                          { label: t('new_profile.chars.2'), cawWhole: COST_SCHEDULE[2], compact: '240B' },
+                          { label: t('new_profile.chars.3'), cawWhole: COST_SCHEDULE[3], compact: '60B' },
+                          { label: t('new_profile.chars.4'), cawWhole: COST_SCHEDULE[4], compact: '6B' },
+                          { label: t('new_profile.chars.5'), cawWhole: COST_SCHEDULE[5], compact: '200M' },
+                          { label: t('new_profile.chars.6'), cawWhole: COST_SCHEDULE[6], compact: '20M' },
+                          { label: t('new_profile.chars.7'), cawWhole: COST_SCHEDULE[7], compact: '10M' },
+                          { label: t('new_profile.chars.8plus'), cawWhole: DEFAULT_COST, compact: '1M' },
+                        ].map(({ label, cawWhole, compact }) => {
+                          const usd = cawPriceUsd !== undefined ? cawWhole * cawPriceUsd : null
+                          return (
+                            <div key={label} className="flex justify-between text-xs items-baseline">
+                              <span className={isDark ? 'text-gray-300' : 'text-gray-600'}>{label}</span>
+                              <span>
+                                <span className={`font-mono ${strongClass}`}>{compact} CAW</span>
+                                {usd !== null && (
+                                  <span className={`${mutedClass} ml-2`}>(~${formatUsd(usd)})</span>
+                                )}
+                              </span>
+                            </div>
+                          )
+                        })}
+                      </div>
+                    </div>
+                  )}
+                </span>
               </p>
             )}
             {username.length > 0 && !isValidFormat && !isTyping && (
@@ -203,38 +276,6 @@ export default function UsernameStep({
           </div>
         </div>
       </div>
-
-      {/* Pricing table — mirrors new_profile.pricing in pages/Profile/New.tsx.
-          Collapsed by default to keep the step focused on the input row;
-          users who want the schedule can expand it. */}
-      <details className={`rounded-xl border ${isDark ? 'border-white/10 bg-white/[0.03]' : 'border-gray-200 bg-gray-50'}`}>
-        <summary className={`px-4 py-3 cursor-pointer text-xs font-medium select-none ${strongClass}`}>
-          {t('new_profile.pricing_title')}
-        </summary>
-        <div className="px-4 pb-3 space-y-1.5">
-          {[
-            { label: t('new_profile.chars.1'), cawWhole: COST_SCHEDULE[1], compact: '1T' },
-            { label: t('new_profile.chars.2'), cawWhole: COST_SCHEDULE[2], compact: '240B' },
-            { label: t('new_profile.chars.3'), cawWhole: COST_SCHEDULE[3], compact: '60B' },
-            { label: t('new_profile.chars.4'), cawWhole: COST_SCHEDULE[4], compact: '6B' },
-            { label: t('new_profile.chars.5'), cawWhole: COST_SCHEDULE[5], compact: '200M' },
-            { label: t('new_profile.chars.6'), cawWhole: COST_SCHEDULE[6], compact: '20M' },
-            { label: t('new_profile.chars.7'), cawWhole: COST_SCHEDULE[7], compact: '10M' },
-            { label: t('new_profile.chars.8plus'), cawWhole: DEFAULT_COST, compact: '1M' },
-          ].map(({ label, cawWhole, compact }) => {
-            const usd = cawPriceUsd !== undefined ? cawWhole * cawPriceUsd : null
-            return (
-              <div key={label} className="flex justify-between items-baseline text-xs">
-                <span className={mutedClass}>{label}</span>
-                <span>
-                  <span className={`font-mono ${strongClass}`}>{compact} CAW</span>
-                  {usd !== null && <span className={`${mutedClass} ml-2`}>(~${formatUsd(usd)})</span>}
-                </span>
-              </div>
-            )
-          })}
-        </div>
-      </details>
 
       <button
         onClick={onNext}
