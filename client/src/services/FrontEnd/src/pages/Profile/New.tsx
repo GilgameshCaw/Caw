@@ -1172,7 +1172,7 @@ console.log("BALANCE:", balance)
                 isDark ? 'border-white/10 bg-[#0D0D0D]/85' : 'border-gray-200 bg-gray-50'
               }`}>
                 <div className="text-sm font-medium">
-                  ETH to spend - buys and deposits CAW into your profile.
+                  ETH to spend <span className={`text-xs font-normal ${isDark ? 'text-gray-400' : 'text-gray-600'}`}>- buys and deposits CAW into your profile.</span>
                   <span className="flex items-center gap-1.5 mt-0.5 text-yellow-500/80 text-xs">
                     {t('new_profile.deposit.bullet3')}
                     <DepositInfoPopover />
