@@ -120,16 +120,13 @@ const FeeTableRow: React.FC<{
   current: string
   ceiling?: string
   isDark: boolean
-  /** When true, suppresses the top border (used for the first data row so
-   *  the table header doesn't get an extra divider line floating under it). */
-  firstRow?: boolean
-}> = ({ label, current, ceiling, isDark, firstRow }) => {
+}> = ({ label, current, ceiling, isDark }) => {
   const mutedClass = isDark ? 'text-white/60' : 'text-gray-500'
   const strongClass = isDark ? 'text-white' : 'text-gray-900'
   const borderClass = isDark ? 'border-white/10' : 'border-gray-200'
 
   return (
-    <tr className={firstRow ? '' : `border-t ${borderClass}`}>
+    <tr className={`border-t ${borderClass}`}>
       <td className={`py-2 pr-4 text-sm ${mutedClass}`}>{label}</td>
       <td className={`py-2 pr-4 text-sm font-mono ${strongClass}`}>{current}</td>
       {ceiling !== undefined && (
@@ -183,6 +180,7 @@ const NetworkFeeModal: React.FC<NetworkFeeModalProps> = ({
         onClose={onClose}
         icon={<HiInformationCircle className="w-5 h-5 text-yellow-500" />}
         iconBg="bg-yellow-500/20"
+        border={false}
       />
 
       <div className="px-4 pb-5 space-y-5">
@@ -229,7 +227,6 @@ const NetworkFeeModal: React.FC<NetworkFeeModalProps> = ({
                   current={weiToUsd(fees.mintFee, ethPrice)}
                   ceiling={weiToUsd(fees.mintFeeCeiling, ethPrice)}
                   isDark={isDark}
-                  firstRow
                 />
                 <FeeTableRow
                   label="Deposit CAW"
@@ -286,7 +283,6 @@ const NetworkFeeModal: React.FC<NetworkFeeModalProps> = ({
                   label="Withdraw CAW"
                   current={weiToUsd(fees.withdrawFee, ethPrice)}
                   isDark={isDark}
-                  firstRow
                 />
               </tbody>
             </table>
@@ -304,7 +300,7 @@ const NetworkFeeModal: React.FC<NetworkFeeModalProps> = ({
           <div className="overflow-x-auto">
             <table className="w-full">
               <tbody>
-                <tr>
+                <tr className={`border-t ${borderClass}`}>
                   <td className={`py-2 pr-4 text-sm ${mutedClass}`}>
                     LayerZero message fee
                   </td>
