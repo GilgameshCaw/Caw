@@ -76,7 +76,10 @@ const LanguageSwitcher: React.FC<Props> = ({ className = '' }) => {
     }
   }
 
-  const buttonClass = `w-9 h-9 rounded-full flex items-center justify-center transition-colors cursor-pointer border ${
+  // rounded-lg (not full) so the button reads as a square-ish control,
+  // visually distinct from the circular profile avatar that can sit
+  // next to it in the captive header.
+  const buttonClass = `w-9 h-9 rounded-lg flex items-center justify-center transition-colors cursor-pointer border ${
     isDark
       ? 'bg-white/10 text-white border-transparent hover:border-white/40'
       : 'bg-black/5 text-black border-transparent hover:border-black/30'

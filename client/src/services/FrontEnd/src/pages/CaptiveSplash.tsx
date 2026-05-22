@@ -6,9 +6,8 @@ import { useTheme } from '~/hooks/useTheme'
 import { useT } from '~/i18n/I18nProvider'
 import { useState, useEffect, useRef, lazy, Suspense } from 'react'
 import BoidsBg from '~/components/BoidsBg'
-import LanguageSwitcher from '~/components/LanguageSwitcher'
-import WalletAccountButton from '~/components/buttons/WalletAccountButton'
-import { HiDocumentText } from 'react-icons/hi'
+import LandingHeader from '~/components/landing/LandingHeader'
+import LandingFooter from '~/components/landing/LandingFooter'
 
 const Caw3D = lazy(() => import('~/components/Caw3D'))
 const Features = lazy(() => import('~/components/landing/Features'))
@@ -38,6 +37,11 @@ export default function CaptiveSplash() {
   const [isAnimating, setIsAnimating] = useState(false)
   const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null)
 
+  // Header backing: transparent over the hero, fades in a translucent
+  // blurred strip once the user scrolls past the top so the header
+  // elements don't float over the scrolling content.
+  const [scrolled, setScrolled] = useState(false)
+
   useEffect(() => {
     intervalRef.current = setInterval(() => {
       setIsAnimating(true)
@@ -50,37 +54,23 @@ export default function CaptiveSplash() {
   }, [])
 
   return (
-    <div className={`h-[100svh] overflow-y-auto overflow-x-hidden snap-y snap-mandatory relative ${isDark ? 'bg-black text-white' : 'bg-white text-black'}`}>
+    <div
+      className={`h-[100svh] overflow-y-auto overflow-x-hidden snap-y snap-mandatory relative ${isDark ? 'bg-black text-white' : 'bg-white text-black'}`}
+      onScroll={(e) => setScrolled(e.currentTarget.scrollTop > 24)}
+    >
       <BoidsBg isDark={isDark} />
-      {/* Language picker — top-right so a non-English visitor can pick
-          their language before reading anything else. Persisted in
-          localStorage; promoted to User.preferredLanguage post-mint. */}
-      <div className="absolute top-3 right-3 z-20 flex items-center gap-2">
-        {/* Whitepaper CTA: icon on mobile, text button on md+. */}
-        <Link
-          to="/help/whitepaper"
-          className="inline-flex md:hidden items-center justify-center w-9 h-9 rounded-md border border-white/20 bg-black/40 text-white transition-colors hover:bg-white hover:text-black hover:border-white"
-          aria-label="Open whitepaper"
-          title="Whitepaper"
-        >
-          <HiDocumentText className="w-5 h-5" />
-        </Link>
-        <Link
-          to="/help/whitepaper"
-          className="hidden md:inline-flex items-center justify-center gap-2 px-3 py-2 rounded-md border border-white/20 bg-black/40 text-white text-sm font-semibold transition-colors hover:bg-white hover:text-black hover:border-white"
-        >
-          <HiDocumentText className="w-4 h-4" />
-          Whitepaper
-        </Link>
-        <LanguageSwitcher />
-      </div>
-      {/* Wallet pill — top-left. Lets a connected user reach the account
-          modal (and Disconnect) when no other chrome is rendered on this
-          captive page. Hidden when no wallet connected — the page's own
-          "Sign In" CTA leads that case. */}
-      <div className="absolute top-3 left-3 z-20">
-        <WalletAccountButton />
-      </div>
+      {/* Translucent blurred strip behind the header — hidden over the
+          hero, fades in once scrolled. z-20 so it paints above the
+          content sections (which are also z-10); the header clusters are
+          z-20 too but come later in the DOM, so they stay on top. */}
+      <div
+        className={`fixed top-0 left-0 right-0 h-[4.75rem] z-20 pointer-events-none border-b backdrop-blur transition-opacity duration-200 ${
+          scrolled ? 'opacity-100' : 'opacity-0'
+        } ${isDark ? 'bg-black/95 border-white/10' : 'bg-white/95 border-gray-200'}`}
+      />
+      {/* Shared landing header — logo lockup + resource links + language
+          picker. Same component used by ManifestoPage. */}
+      <LandingHeader fixed />
       {/* Hero — one full viewport, snaps so only the hero shows at top */}
       <div className="min-h-[100svh] snap-start flex flex-col items-center justify-center px-6 py-6 relative z-10">
         {/* 3D Crow shape — lazy loaded */}
@@ -181,22 +171,7 @@ export default function CaptiveSplash() {
       </div>
 
       {/* Footer - resource links */}
-      <footer className={`snap-start border-t py-8 px-6 relative z-10 backdrop-blur-[2px] ${isDark ? 'border-white/10 bg-black/10' : 'border-gray-200 bg-white/10'}`}>
-        <div className="max-w-2xl mx-auto">
-          <div className="flex flex-wrap justify-center gap-x-6 gap-y-3 text-sm">
-            <Link to="/help/faq" className={`transition-colors ${isDark ? 'text-white/50 hover:text-white' : 'text-gray-500 hover:text-gray-800'}`}>{t('captive_splash.footer.faq')}</Link>
-            <Link to="/help/manifesto" className={`transition-colors ${isDark ? 'text-white/50 hover:text-white' : 'text-gray-500 hover:text-gray-800'}`}>{t('captive_splash.footer.manifesto')}</Link>
-            <Link to="/help/history" className={`transition-colors ${isDark ? 'text-white/50 hover:text-white' : 'text-gray-500 hover:text-gray-800'}`}>{t('captive_splash.footer.history')}</Link>
-            <Link to="/help/howto" className={`transition-colors ${isDark ? 'text-white/50 hover:text-white' : 'text-gray-500 hover:text-gray-800'}`}>{t('captive_splash.footer.how_it_works')}</Link>
-            <Link to="/help/developers" className={`transition-colors ${isDark ? 'text-white/50 hover:text-white' : 'text-gray-500 hover:text-gray-800'}`}>{t('captive_splash.footer.developers')}</Link>
-            <Link to="/help/resources" className={`transition-colors ${isDark ? 'text-white/50 hover:text-white' : 'text-gray-500 hover:text-gray-800'}`}>{t('captive_splash.footer.resources')}</Link>
-            <Link to="/faucet" className={`transition-colors ${isDark ? 'text-white/50 hover:text-white' : 'text-gray-500 hover:text-gray-800'}`}>{t('captive_splash.footer.faucet')}</Link>
-          </div>
-          <p className={`text-center text-xs mt-4 ${isDark ? 'text-white/30' : 'text-gray-400'}`}>
-            {t('captive_splash.footer.tagline')}
-          </p>
-        </div>
-      </footer>
+      <LandingFooter className="snap-start" />
     </div>
   )
 }

@@ -1,6 +1,5 @@
 import React, { useEffect, useMemo, useState } from 'react'
 import { useTheme } from '~/hooks/useTheme'
-import { Link } from '~/utils/localizedRouter'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import GithubSlugger from 'github-slugger'
@@ -9,6 +8,9 @@ import { HiChevronRight } from 'react-icons/hi'
 // Source of truth: repo root docs/WHITEPAPER.md
 // Vite allows workspace-root file access via searchForWorkspaceRoot().
 import whitepaperMd from '../../../../../../docs/WHITEPAPER.md?raw'
+
+import LandingHeader from '~/components/landing/LandingHeader'
+import LandingFooter from '~/components/landing/LandingFooter'
 
 const WhitepaperPage: React.FC = () => {
   const { isDark } = useTheme()
@@ -185,60 +187,45 @@ const WhitepaperPage: React.FC = () => {
   const activeMd = activeId ? (sectionMdById[activeId] ?? '') : ''
 
   return (
-    <div className={isDark ? 'h-[100svh] bg-black text-white overflow-hidden flex flex-col' : 'h-[100svh] bg-white text-black overflow-hidden flex flex-col'}>
-      {/* Minimal /docs-like shell: top header + left nav + content. */}
-      <div className={isDark ? 'sticky top-0 z-50 border-b border-white/10 bg-black/60 backdrop-blur' : 'sticky top-0 z-50 border-b border-gray-200 bg-white/80 backdrop-blur'}>
-        <div className="max-w-6xl mx-auto px-4 sm:px-6 h-14 flex items-center gap-3">
-          <button
-            type="button"
-            onClick={() => setMobileNavOpen(v => !v)}
-            className={isDark
-              ? 'lg:hidden w-9 h-9 rounded-md border border-white/15 hover:border-white/30 hover:bg-white/5'
-              : 'lg:hidden w-9 h-9 rounded-md border border-black/10 hover:border-black/20 hover:bg-black/5'
-            }
-            aria-label="Toggle navigation"
-          >
-            <div className="w-full h-full flex items-center justify-center">
-              <div className={isDark ? 'text-white/80' : 'text-black/70'}>≡</div>
-            </div>
-          </button>
-
-          {/* Breadcrumb-ish header like caw-landing /docs */}
-          <div className={isDark ? 'text-white/70 text-sm' : 'text-black/70 text-sm'}>
-            <span className={isDark ? 'hidden md:inline text-white/50' : 'hidden md:inline text-black/50'}>
-              Building Your Application
-            </span>
-            <span className={isDark ? 'hidden md:inline text-white/40 px-2' : 'hidden md:inline text-black/30 px-2'}>
-              /
-            </span>
-            <span className={isDark ? 'text-white' : 'text-black'}>
-              Whitepaper
-            </span>
-          </div>
-
-          <div className="ml-auto flex items-center gap-2">
-            <Link
-              to="/help/resources"
-              className={isDark
-                ? 'px-3 py-1.5 rounded-md border border-white/15 hover:border-white/30 hover:bg-white/5 text-sm'
-                : 'px-3 py-1.5 rounded-md border border-black/10 hover:border-black/20 hover:bg-black/5 text-sm'
-              }
-            >
-              Resources
-            </Link>
-          </div>
-        </div>
-      </div>
+    <div className={isDark ? 'relative h-[100svh] bg-black text-white overflow-hidden flex flex-col' : 'relative h-[100svh] bg-white text-black overflow-hidden flex flex-col'}>
+      {/* Blurred backing strip behind the header. WhitepaperPage scrolls
+          its content in an inner overflow area while the header stays put,
+          so without this the scrolling text shows through the (transparent)
+          LandingHeader. z-10 sits above the content, below the header (z-20). */}
+      <div
+        className={`absolute top-0 left-0 right-0 h-[4.75rem] z-10 pointer-events-none border-b backdrop-blur ${
+          isDark ? 'bg-black/70 border-white/10' : 'bg-white/80 border-gray-200'
+        }`}
+      />
+      {/* Shared landing header — same logo + resource links + language
+          picker as welcome / manifesto. Replaces the old /docs-style bar. */}
+      <LandingHeader />
 
       <div className="flex-1 overflow-y-auto">
-        <div className="max-w-6xl mx-auto px-4 sm:px-6 py-6 grid grid-cols-1 lg:grid-cols-[260px_1fr] gap-6 min-w-0">
+        {/* pt-20 clears the absolutely-positioned LandingHeader. */}
+        <div className="max-w-6xl mx-auto px-4 sm:px-6 pt-20 pb-6 min-w-0">
+        {/* Mobile TOC toggle — LandingHeader has no hamburger, so the
+            sidebar collapse control lives here on small screens. */}
+        <button
+          type="button"
+          onClick={() => setMobileNavOpen(v => !v)}
+          className={isDark
+            ? 'lg:hidden mb-4 px-3 py-2 rounded-md border border-white/15 hover:border-white/30 hover:bg-white/5 text-sm flex items-center gap-2'
+            : 'lg:hidden mb-4 px-3 py-2 rounded-md border border-black/10 hover:border-black/20 hover:bg-black/5 text-sm flex items-center gap-2'
+          }
+          aria-label="Toggle navigation"
+        >
+          <span aria-hidden>≡</span>
+          <span>Contents</span>
+        </button>
+        <div className="grid grid-cols-1 lg:grid-cols-[260px_1fr] gap-6 min-w-0">
         {/* Sidebar */}
         <aside className={`${mobileNavOpen ? 'block' : 'hidden'} lg:block min-w-0`}
           aria-label="Whitepaper navigation"
         >
           <div className={isDark
-            ? 'rounded-xl border border-white/10 bg-black/60 p-3 lg:sticky lg:top-6 lg:max-h-[calc(100svh-7.5rem)] overflow-y-auto overscroll-contain thin-scrollbar'
-            : 'rounded-xl border border-gray-200 bg-white/80 p-3 lg:sticky lg:top-6 lg:max-h-[calc(100svh-7.5rem)] overflow-y-auto overscroll-contain thin-scrollbar'
+            ? 'rounded-xl border border-white/10 bg-black/60 p-3 lg:sticky lg:top-20 lg:max-h-[calc(100svh-9rem)] overflow-y-auto overscroll-contain thin-scrollbar'
+            : 'rounded-xl border border-gray-200 bg-white/80 p-3 lg:sticky lg:top-20 lg:max-h-[calc(100svh-9rem)] overflow-y-auto overscroll-contain thin-scrollbar'
           }>
             <div className={isDark ? 'text-xs uppercase tracking-wider text-white/50 px-2 py-2' : 'text-xs uppercase tracking-wider text-black/50 px-2 py-2'}>
               Whitepaper
@@ -347,6 +334,8 @@ const WhitepaperPage: React.FC = () => {
           )}
         </main>
         </div>
+        </div>
+        <LandingFooter />
       </div>
     </div>
   )
