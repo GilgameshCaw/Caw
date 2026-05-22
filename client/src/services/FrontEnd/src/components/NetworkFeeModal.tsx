@@ -242,7 +242,7 @@ const NetworkFeeModal: React.FC<NetworkFeeModalProps> = ({
               <tr className={`border-t ${borderClass} text-[#6c6c6c]`}>
                 <td className="py-2 pr-4 text-sm">
                   <span className="relative group inline-flex items-center gap-1">
-                    <span>Maximum withdraw fee — pay later</span>
+                    <span>Maximum withdraw fee</span>
                     <button
                       type="button"
                       aria-label="Withdraw fee info"
@@ -266,7 +266,7 @@ const NetworkFeeModal: React.FC<NetworkFeeModalProps> = ({
                   colSpan={2}
                   className="py-2 pr-4 text-sm font-mono text-center"
                 >
-                  {weiToUsd(fees.withdrawFee, ethPrice)}
+                  {weiToUsd(fees.withdrawFee, ethPrice)} <span className="font-sans">(pay later)</span>
                 </td>
               </tr>
             </tbody>
