@@ -68,8 +68,12 @@ export default function useTokenDataUpdate() {
       viewedAddress,
       tokenCount: rawTokens?.length ?? 'loading',
       tokens: rawTokens?.map(t => `#${t.tokenId} ${t.username}`),
+      isError,
+      isLoading,
+      errorMsg: error?.message?.slice(0, 300),
+      lensAddress: CAW_PROFILE_LENS_ADDRESS,
     })
-  }, [rawTokens, viewedAddress])
+  }, [rawTokens, viewedAddress, isError, isLoading, error])
 
   useEffect(() => {
     if (!needsConnectedFetch) return
