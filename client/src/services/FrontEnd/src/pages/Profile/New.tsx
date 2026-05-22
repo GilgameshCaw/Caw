@@ -1358,7 +1358,8 @@ console.log("BALANCE:", balance)
             <div className={`border rounded-xl p-4 space-y-3 mt-3 ${
               isDark ? 'border-white/10 bg-[#0D0D0D]/85' : 'border-gray-200 bg-gray-50'
             }`}>
-              <label className="flex items-center gap-3 cursor-pointer">
+              {/* Override space-y-3 gap below this label to 5px */}
+              <label className="flex items-center gap-3 cursor-pointer [&+*]:!mt-[5px]">
                 <button
                   type="button"
                   onClick={() => { setQuickSignEnabled(!quickSignEnabled); setQuickSignExpanded(true) }}
