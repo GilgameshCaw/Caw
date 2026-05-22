@@ -126,6 +126,35 @@ const OnrampOnboarding: React.FC = () => {
   const t = useT()
   const navigate = useNavigate()
 
+  // Mirror operators who haven't configured Moonpay (no biz registration,
+  // or sandbox-only dev install) get a polite "not configured" stub
+  // rather than a broken iframe. Matches the SignInModal gating.
+  const moonpayConfigured = !!import.meta.env.VITE_MOONPAY_API_KEY
+  if (!moonpayConfigured) {
+    return (
+      <div className={`fixed inset-0 z-[100] overflow-y-auto overflow-x-hidden ${isDark ? 'bg-black' : 'bg-white'}`}>
+        <div className="relative z-10 px-4 py-8 min-h-screen flex items-center justify-center">
+          <div className={`w-full max-w-md rounded-2xl border p-6 text-center ${
+            isDark ? 'border-white/10 bg-black/60 text-white' : 'border-gray-200 bg-white/90 text-gray-900'
+          }`}>
+            <h2 className="text-xl font-bold mb-2">Card payment not configured</h2>
+            <p className={`text-sm ${isDark ? 'text-white/60' : 'text-gray-500'}`}>
+              This mirror has not enabled card-payment onboarding. Use a wallet to sign in, or try a different CAW mirror.
+            </p>
+            <button
+              onClick={() => navigate('/')}
+              className={`mt-4 px-4 py-2 rounded-full text-sm font-medium transition-colors cursor-pointer ${
+                isDark ? 'bg-white/10 hover:bg-white/15' : 'bg-black/5 hover:bg-black/10'
+              }`}
+            >
+              {t('common.back_home')}
+            </button>
+          </div>
+        </div>
+      </div>
+    )
+  }
+
   const ethPriceUsd = usePriceStore(s => s.priceMap['ethereum'] ?? 0)
   const minUsd = useMemo(() => computeMinUsd(ethPriceUsd), [ethPriceUsd])
   const minEth = useMemo(() => usdToEth(minUsd, ethPriceUsd), [minUsd, ethPriceUsd])

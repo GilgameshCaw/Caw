@@ -58,16 +58,21 @@ export default function SignInModal({ isOpen: propIsOpen, onClose: propOnClose, 
               {t('common.sign_in')}
             </button>
             {/* Card-payment path: generates a fresh EOA, user buys ETH from
-                Moonpay and continues into the normal Pop A mint flow. */}
-            <button
-              onClick={() => {
-                onClose()
-                navigate('/onboarding/onramp')
-              }}
-              className="w-full py-2.5 text-sm font-semibold rounded-full border border-yellow-500/40 text-yellow-500 hover:bg-yellow-500/10 transition-colors cursor-pointer"
-            >
-              {t('signin_modal.buy_with_card')}
-            </button>
+                Moonpay and continues into the normal Pop A mint flow.
+                Only rendered when the operator has configured a Moonpay
+                key on this install — mirrors without Moonpay biz
+                registration see no card-payment UI. */}
+            {import.meta.env.VITE_MOONPAY_API_KEY && (
+              <button
+                onClick={() => {
+                  onClose()
+                  navigate('/onboarding/onramp')
+                }}
+                className="w-full py-2.5 text-sm font-semibold rounded-full border border-yellow-500/40 text-yellow-500 hover:bg-yellow-500/10 transition-colors cursor-pointer"
+              >
+                {t('signin_modal.buy_with_card')}
+              </button>
+            )}
           </div>
         ) : !activeToken?.username ? (
           <Link
