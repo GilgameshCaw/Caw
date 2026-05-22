@@ -1481,6 +1481,7 @@ console.log("BALANCE:", balance)
                   <p className="text-yellow-500/80 text-xs mt-0.5">
                     Delegate funds to your device to skip wallet sigs
                   </p>
+                  <p className="text-gray-500 text-xs mt-0.5">You can change these defaults later in Settings.</p>
                 </div>
               </label>
               {quickSignEnabled && quickSignExpanded && (
@@ -1496,7 +1497,6 @@ console.log("BALANCE:", balance)
                       {Math.round(DEFAULT_SESSION_DURATION / 86400)} days
                     </span>
                   </div>
-                  <div className="text-gray-500">You can change these defaults later in Settings.</div>
                 </div>
               )}
             </div>
