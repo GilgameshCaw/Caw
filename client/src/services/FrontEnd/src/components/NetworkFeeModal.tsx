@@ -208,7 +208,7 @@ const NetworkFeeModal: React.FC<NetworkFeeModalProps> = ({
         </div>
 
         {/* Buy-and-burn note */}
-        <p className={`text-xs leading-relaxed pt-1 border-t ${borderClass} ${isDark ? 'text-yellow-600' : 'text-amber-700'}`}>
+        <p className={`text-xs leading-relaxed text-center pt-1 border-t ${borderClass} ${isDark ? 'text-yellow-600' : 'text-amber-700'}`}>
           Half of all protocol fees are used to buy and burn CAW.
         </p>
       </div>
