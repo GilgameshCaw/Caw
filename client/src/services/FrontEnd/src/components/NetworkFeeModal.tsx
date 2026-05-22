@@ -142,68 +142,108 @@ const NetworkFeeModal: React.FC<NetworkFeeModalProps> = ({
         iconBg="bg-yellow-500/20"
       />
 
-      <div className="px-4 pb-5 space-y-4">
+      <div className="px-4 pb-5 space-y-5">
         {/* Intro */}
         <p className={`text-sm leading-relaxed ${mutedClass}`}>
-          Fees for minting, depositing, auth, and withdrawing on{' '}
+          Fees on{' '}
           <span className={isDark ? 'text-white' : 'text-gray-900'}>{displayName}</span>.
           The ceiling is a permanent cap — operators can lower it, never raise it.
         </p>
 
-        {/* Fee table */}
-        <div className="overflow-x-auto">
-          <table className="w-full">
-            <thead>
-              <tr>
-                <th className={`pb-2 text-left text-xs uppercase tracking-wide ${headerClass}`}>
-                  Fee
-                </th>
-                <th className={`pb-2 text-left text-xs uppercase tracking-wide ${headerClass}`}>
-                  Current
-                </th>
-                <th className={`pb-2 text-left text-xs uppercase tracking-wide ${headerClass}`}>
-                  Ceiling
-                </th>
-              </tr>
-            </thead>
-            <tbody>
-              <FeeTableRow
-                label="Mint username"
-                current={weiToUsd(fees.mintFee, ethPrice)}
-                ceiling={weiToUsd(fees.mintFeeCeiling, ethPrice)}
-                isDark={isDark}
-              />
-              <FeeTableRow
-                label="Deposit CAW"
-                current={weiToUsd(fees.depositFee, ethPrice)}
-                ceiling={weiToUsd(fees.depositFeeCeiling, ethPrice)}
-                isDark={isDark}
-              />
-              <FeeTableRow
-                label="Authenticate (extra Network)"
-                current={weiToUsd(fees.authFee, ethPrice)}
-                ceiling={weiToUsd(fees.authFeeCeiling, ethPrice)}
-                isDark={isDark}
-              />
-              <FeeTableRow
-                label="Withdraw CAW"
-                current={weiToUsd(fees.withdrawFee, ethPrice)}
-                ceiling={weiToUsd(fees.withdrawFeeCeiling, ethPrice)}
-                isDark={isDark}
-              />
-              <tr className={`border-t ${borderClass}`}>
-                <td className={`py-2 pr-4 text-sm ${mutedClass}`}>
-                  LayerZero message fee
-                </td>
-                <td className={`py-2 pr-4 text-sm font-mono ${isDark ? 'text-white' : 'text-gray-900'}`}>
-                  {lzCurrentUsd}
-                </td>
-                <td className={`py-2 text-sm ${mutedClass}`}>
-                  (varies)
-                </td>
-              </tr>
-            </tbody>
-          </table>
+        {/* ── Section 1: Per-action fees on Sepolia-Uruk ─────────────────── */}
+        <div>
+          <h3 className={`text-xs uppercase tracking-wide mb-1.5 ${headerClass}`}>
+            Per-action fees
+          </h3>
+          <div className="overflow-x-auto">
+            <table className="w-full">
+              <thead>
+                <tr>
+                  <th className={`pb-2 text-left text-xs uppercase tracking-wide ${headerClass}`}>
+                    Fee
+                  </th>
+                  <th className={`pb-2 text-left text-xs uppercase tracking-wide ${headerClass}`}>
+                    Current
+                  </th>
+                  <th className={`pb-2 text-left text-xs uppercase tracking-wide ${headerClass}`}>
+                    Ceiling
+                  </th>
+                </tr>
+              </thead>
+              <tbody>
+                <FeeTableRow
+                  label="Mint username"
+                  current={weiToUsd(fees.mintFee, ethPrice)}
+                  ceiling={weiToUsd(fees.mintFeeCeiling, ethPrice)}
+                  isDark={isDark}
+                />
+                <FeeTableRow
+                  label="Deposit CAW"
+                  current={weiToUsd(fees.depositFee, ethPrice)}
+                  ceiling={weiToUsd(fees.depositFeeCeiling, ethPrice)}
+                  isDark={isDark}
+                />
+                <FeeTableRow
+                  label="Authenticate (extra Network)"
+                  current={weiToUsd(fees.authFee, ethPrice)}
+                  ceiling={weiToUsd(fees.authFeeCeiling, ethPrice)}
+                  isDark={isDark}
+                />
+              </tbody>
+            </table>
+          </div>
+        </div>
+
+        {/* ── Section 2: Withdraw fee ─────────────────────────────────────── */}
+        <div>
+          <h3 className={`text-xs uppercase tracking-wide mb-1.5 ${headerClass}`}>
+            Withdraw fee
+          </h3>
+          <div className="overflow-x-auto">
+            <table className="w-full">
+              <tbody>
+                <FeeTableRow
+                  label="Withdraw CAW"
+                  current={weiToUsd(fees.withdrawFee, ethPrice)}
+                  ceiling={weiToUsd(fees.withdrawFeeCeiling, ethPrice)}
+                  isDark={isDark}
+                />
+              </tbody>
+            </table>
+          </div>
+          <p className={`text-xs leading-relaxed mt-2 ${mutedClass}`}>
+            Locked in the first time you authenticate. You always pay the lower
+            of the locked rate and the current rate — the Network operator
+            can never raise withdraw fees on you after you've deposited.
+          </p>
+        </div>
+
+        {/* ── Section 3: Cross-chain (LayerZero) — separate from Network fees ─ */}
+        <div>
+          <h3 className={`text-xs uppercase tracking-wide mb-1.5 ${headerClass}`}>
+            Cross-chain
+          </h3>
+          <div className="overflow-x-auto">
+            <table className="w-full">
+              <tbody>
+                <tr className={`border-t ${borderClass}`}>
+                  <td className={`py-2 pr-4 text-sm ${mutedClass}`}>
+                    LayerZero message fee
+                  </td>
+                  <td className={`py-2 pr-4 text-sm font-mono ${isDark ? 'text-white' : 'text-gray-900'}`}>
+                    {lzCurrentUsd}
+                  </td>
+                  <td className={`py-2 text-sm ${mutedClass}`}>
+                    (varies)
+                  </td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+          <p className={`text-xs leading-relaxed mt-2 ${mutedClass}`}>
+            Paid to the LayerZero bridge for cross-chain delivery — not a{' '}
+            {displayName} fee, and not part of buy-and-burn.
+          </p>
         </div>
 
         {/* Buy-and-burn note */}
