@@ -1172,9 +1172,10 @@ console.log("BALANCE:", balance)
                 isDark ? 'border-white/10 bg-[#0D0D0D]/85' : 'border-gray-200 bg-gray-50'
               }`}>
                 <div className="text-sm font-medium">
-                  ETH to spend
-                  <span className={`block text-xs mt-0.5 ${isDark ? 'text-gray-400' : 'text-gray-600'}`}>
-                    Burns the username cost, deposits the remainder. One tx.
+                  ETH to spend - buys and deposits CAW into your profile.
+                  <span className="flex items-center gap-1.5 mt-0.5 text-yellow-500/80 text-xs">
+                    {t('new_profile.deposit.bullet3')}
+                    <DepositInfoPopover />
                   </span>
                 </div>
                 <div className="relative">
@@ -1193,10 +1194,39 @@ console.log("BALANCE:", balance)
                   <span className="absolute right-4 top-1/2 -translate-y-1/2 text-gray-500 text-sm">ETH</span>
                 </div>
                 {ethAmountWei > 0n && ethPrice > 0 && (
-                  <div className={`text-xs ${isDark ? 'text-gray-400' : 'text-gray-600'}`}>
+                  <div className={`text-xs text-right ${isDark ? 'text-gray-400' : 'text-gray-600'}`}>
                     ~${formatUsd(Number(ethAmount) * ethPrice)}
                   </div>
                 )}
+                {/* Quick-pick dollar amounts. The amount-in-ETH is derived
+                    from the current ETH/USD price; if the price isn't loaded
+                    yet, the buttons are disabled. */}
+                <div className="flex gap-2">
+                  {[20, 50, 100, 300].map(dollars => {
+                    // 4-decimal ETH precision is plenty given we display in USD.
+                    const ethAmountForDollars = ethPrice > 0
+                      ? (dollars / ethPrice).toFixed(4).replace(/0+$/, '').replace(/\.$/, '')
+                      : ''
+                    const active = ethAmount === ethAmountForDollars && ethAmountForDollars !== ''
+                    return (
+                      <button
+                        key={dollars}
+                        type="button"
+                        onClick={() => setEthAmount(ethAmountForDollars)}
+                        disabled={ethPrice <= 0}
+                        className={`flex-1 py-1.5 text-xs rounded-full border transition-colors cursor-pointer ${
+                          active
+                            ? 'border-yellow-500 text-yellow-400'
+                            : isDark
+                              ? 'border-white/10 text-gray-400 hover:text-white hover:border-white/30'
+                              : 'border-[#BBB] text-gray-600 hover:text-gray-900 hover:border-gray-500'
+                        } disabled:opacity-30 disabled:cursor-not-allowed`}
+                      >
+                        ${dollars}
+                      </button>
+                    )
+                  })}
+                </div>
                 {ethAmountWei > 0n && reserves.loaded && (
                   <div className={`text-xs space-y-1 ${isDark ? 'text-gray-400' : 'text-gray-600'}`}>
                     {(() => {
@@ -1352,9 +1382,12 @@ console.log("BALANCE:", balance)
 
             {/* Quick Sign option — appears alongside any deposit-bearing flow
                 (CAW-mode mintAndDeposit OR ETH-mode mintAndDepositZap, since
-                both bundled selectors include the session leg). */}
+                both bundled selectors include the session leg).
+                ETH-mode always shows it (even before the user types) so the
+                option is discoverable; the bundled selector only fires when
+                ethAmountWei > 0, but the toggle itself doesn't need to wait. */}
             {((paymentMode === 'caw' && depositEnabled && depositAmountWei > 0n) ||
-              (paymentMode === 'eth' && ethAmountWei > 0n)) && (
+              paymentMode === 'eth') && (
             <div className={`border rounded-xl p-4 space-y-3 mt-3 ${
               isDark ? 'border-white/10 bg-[#0D0D0D]/85' : 'border-gray-200 bg-gray-50'
             }`}>
