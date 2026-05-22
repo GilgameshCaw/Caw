@@ -1437,17 +1437,17 @@ console.log("BALANCE:", balance)
 
             {/* Rolled-up network fee row */}
             {(() => {
-              // Sum all protocol fees that apply to the current flow
-              let protocolFeesWei = networkFees.mintFee ?? 0n
-              if (depositEnabled || paymentMode === 'eth') {
-                protocolFeesWei += networkFees.depositFee ?? 0n
-              }
-              if (quickSignEnabled && (depositEnabled || paymentMode === 'eth')) {
-                protocolFeesWei += networkFees.authFee ?? 0n
-              }
+              // `quote.nativeFee` from the Quoter is the FULL msg.value (per-Network
+              // storage fees ×2 + true LZ message fee). Don't add storage fees
+              // separately or we'd double-count. Gas is the only addend.
+              const includesDeposit = depositEnabled || paymentMode === 'eth'
+              const includesAuth = includesDeposit  // Quoter charges auth on every mint+deposit path
+              let applicableStorageFeesWei = networkFees.mintFee ?? 0n
+              if (includesDeposit) applicableStorageFeesWei += networkFees.depositFee ?? 0n
+              if (includesAuth) applicableStorageFeesWei += networkFees.authFee ?? 0n
               const lzFeeWei = quote?.nativeFee ?? 0n
               const gasWei = gasCostEth != null ? BigInt(Math.round(gasCostEth * 1e18)) : 0n
-              const totalWei = protocolFeesWei + lzFeeWei + gasWei
+              const totalWei = lzFeeWei + gasWei
               const totalEth = Number(formatEther(totalWei))
               const totalUsd = ethPrice > 0 ? totalEth * ethPrice : null
               return (
@@ -1474,6 +1474,14 @@ console.log("BALANCE:", balance)
               networkId={CLIENT_ID}
               ethPrice={ethPrice}
               lzFeeWei={quote?.nativeFee ?? 0n}
+              applicableStorageFeesWei={(() => {
+                const includesDeposit = depositEnabled || paymentMode === 'eth'
+                const includesAuth = includesDeposit
+                let s = networkFees.mintFee ?? 0n
+                if (includesDeposit) s += networkFees.depositFee ?? 0n
+                if (includesAuth) s += networkFees.authFee ?? 0n
+                return s
+              })()}
             />
         </div>
             </div>

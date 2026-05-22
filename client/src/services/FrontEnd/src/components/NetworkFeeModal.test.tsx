@@ -126,8 +126,33 @@ describe('NetworkFeeModal', () => {
 
   it('shows the LZ fee when provided', () => {
     // 0.002 ETH = 2e15 wei → $4.00 at $2000/ETH
+    // No applicableStorageFeesWei → fall-back path: raw lzFeeWei is rendered.
     render(<NetworkFeeModal {...DEFAULT_PROPS} lzFeeWei={2_000_000_000_000_000n} />)
     expect(screen.getByText('~$4.00')).toBeTruthy()
+  })
+
+  it('subtracts 2× applicableStorageFeesWei from lzFeeWei to show true LZ leg', () => {
+    // Quoter packs nativeFee = storageFees*2 + lzMsgFee.
+    //   nativeFee     = 0.0033 ETH (~$6.60 @ $2000)
+    //   storage (1×)  = 0.0015 ETH (~$3.00 @ $2000)
+    //   storage × 2   = 0.0030 ETH
+    //   true LZ       = 0.0003 ETH (~$0.60)
+    render(<NetworkFeeModal
+      {...DEFAULT_PROPS}
+      lzFeeWei={3_300_000_000_000_000n}
+      applicableStorageFeesWei={1_500_000_000_000_000n}
+    />)
+    expect(screen.getByText('~$0.60')).toBeTruthy()
+  })
+
+  it('clamps true LZ to 0 if 2× storage fees exceeds lzFeeWei', () => {
+    // Pathological: storage*2 > nativeFee. Display "$0.00" rather than going negative.
+    render(<NetworkFeeModal
+      {...DEFAULT_PROPS}
+      lzFeeWei={1_000_000_000_000_000n}
+      applicableStorageFeesWei={1_000_000_000_000_000n}
+    />)
+    expect(screen.getByText('~$0.00')).toBeTruthy()
   })
 
   it('shows — for LZ fee when lzFeeWei is not provided', () => {

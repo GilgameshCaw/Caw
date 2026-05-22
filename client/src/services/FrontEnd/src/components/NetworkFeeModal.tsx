@@ -37,8 +37,30 @@ interface NetworkFeeModalProps {
   networkName?: string
   /** ETH/USD price in dollars (from usePriceStore) */
   ethPrice: number
-  /** Current LZ native fee in wei (from quote?.nativeFee) */
+  /**
+   * Current LZ native fee in wei (from `quote.nativeFee` on the Quoter).
+   *
+   * IMPORTANT: `quote.nativeFee` returned by the on-chain Quoter is the full
+   * msg.value the user must send — it is NOT just the LZ message cost. It
+   * already includes the per-Network storage fees ×2 (once charged on L1 and
+   * once forwarded for the L2-side mirror update). To display the pure LZ
+   * message leg, pass `applicableStorageFeesWei` so we can subtract `2×` that
+   * out of `lzFeeWei`. Without it we would double-count storage fees here.
+   */
   lzFeeWei?: bigint
+  /**
+   * Sum of per-Network storage fees applicable to the current flow (single
+   * set, NOT doubled). Subtracted ×2 from `lzFeeWei` so the "LayerZero
+   * message fee" row shows the true cross-chain leg only.
+   *
+   * Flow → fees included (mirrors CawProfileQuoter.sol):
+   *   mintQuote                       → mintFee
+   *   mintAndDepositQuote             → mintFee + depositFee + authFee
+   *   mintAndDepositAndQuickSignQuote → mintFee + depositFee + authFee
+   *   mintAndAuthQuote                → mintFee + authFee
+   *   mintAndAuthAndQuickSignQuote    → mintFee + authFee
+   */
+  applicableStorageFeesWei?: bigint
 }
 
 /**
@@ -81,6 +103,7 @@ const NetworkFeeModal: React.FC<NetworkFeeModalProps> = ({
   networkName,
   ethPrice,
   lzFeeWei,
+  applicableStorageFeesWei,
 }) => {
   const { isDark } = useTheme()
   const fees = useNetworkFees(networkId, isOpen)
@@ -93,7 +116,16 @@ const NetworkFeeModal: React.FC<NetworkFeeModalProps> = ({
   const headerClass = isDark ? 'text-white/40' : 'text-gray-400'
   const borderClass = isDark ? 'border-white/10' : 'border-gray-200'
 
-  const lzCurrentUsd = weiToUsd(lzFeeWei, ethPrice)
+  // Subtract 2× storage fees from `lzFeeWei` to show the pure LZ leg.
+  // Quoter packs `nativeFee = storageFees*2 + lzMessageFee`. If the caller
+  // didn't supply the storage offset (legacy callsite), fall back to the raw
+  // value to avoid silently showing 0 — but the label will then be inflated.
+  let trueLzWei: bigint | undefined = lzFeeWei
+  if (lzFeeWei != null && applicableStorageFeesWei != null) {
+    const offset = applicableStorageFeesWei * 2n
+    trueLzWei = lzFeeWei > offset ? lzFeeWei - offset : 0n
+  }
+  const lzCurrentUsd = weiToUsd(trueLzWei, ethPrice)
 
   return (
     <ModalWrapper
