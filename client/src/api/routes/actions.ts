@@ -101,15 +101,33 @@ import { checkFreeActionRate } from '../freeActionRateLimit'
 let _readProvider: JsonRpcProvider | WebSocketProvider | null = null
 let _readContract: Contract | null = null
 
+// Read L2 chain ID from env; falls back to Base Sepolia (84532).
+const L2_CHAIN_ID = process.env.L2_CHAIN_ID ? Number(process.env.L2_CHAIN_ID) : 84532
+
+// Lazy init guard: if provider construction is in flight, don't start a second.
+let _readProviderInitPromise: Promise<void> | null = null
+
+async function getReadContractAsync(): Promise<Contract> {
+  if (_readContract) return _readContract
+  if (_readProviderInitPromise) {
+    await _readProviderInitPromise
+    return _readContract!
+  }
+  _readProviderInitPromise = (async () => {
+    const rpcUrl = getL2HttpRpcUrl()
+    if (!rpcUrl) throw new Error('L2 RPC not configured')
+    _readProvider = rpcUrl.startsWith('wss://') || rpcUrl.startsWith('ws://')
+      ? await makeVerifiedWebSocketProvider(rpcUrl, L2_CHAIN_ID)
+      : await makeVerifiedJsonRpcProvider(rpcUrl, L2_CHAIN_ID)
+    _readContract = new Contract(CAW_NAMES_L2_ADDRESS, cawProfileL2Abi as any, _readProvider)
+  })()
+  await _readProviderInitPromise
+  return _readContract!
+}
+
 function getReadContract(): Contract {
   if (_readContract) return _readContract
-  const rpcUrl = getL2HttpRpcUrl()
-  if (!rpcUrl) throw new Error('L2 RPC not configured')
-  _readProvider = rpcUrl.startsWith('wss://') || rpcUrl.startsWith('ws://')
-    ? makeWebSocketProvider(rpcUrl, 84532)
-    : makeJsonRpcProvider(rpcUrl, 84532)
-  _readContract = new Contract(CAW_NAMES_L2_ADDRESS, cawProfileL2Abi as any, _readProvider)
-  return _readContract
+  throw new Error('getReadContract() called before provider was initialized — await getReadContractAsync() first')
 }
 
 interface SessionKeyCheck {
@@ -170,7 +188,7 @@ async function checkSessionKeyOnChain(
   // --- Slow path: not in DB yet (brand-new session, or indexer catching up).
   // Make a live RPC call, then persist so future requests hit the fast path.
   try {
-    const contract = getReadContract()
+    const contract = await getReadContractAsync()
     const session = await contract.sessions(owner, sessionAddr)
     const expirySec = Number(session.expiry)
     const scopeBitmap = Number(session.scopeBitmap)
