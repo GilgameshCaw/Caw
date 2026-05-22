@@ -1,6 +1,6 @@
 import { create } from 'zustand'
 import { persist } from 'zustand/middleware'
-import { getDecryptedKey, clearDecryptedKey } from '~/services/sessionKeyEncryption'
+import { getDecryptedKey, clearDecryptedKey, initBroadcastVerification } from '~/services/sessionKeyEncryption'
 
 export interface SessionKeyEntry {
   privateKey: `0x${string}`
@@ -207,3 +207,12 @@ export const useSessionKeyStore = create<SessionKeyState>()(
     }
   )
 )
+
+// H-3 fix: register the ciphertext-lookup callback so that incoming
+// BroadcastChannel key-response messages are verified against the stored
+// ciphertext before being written into the in-memory key map.
+// This runs once at module load time (after the store is created).
+initBroadcastVerification((walletAddress: string) => {
+  const sessions = useSessionKeyStore.getState().sessions
+  return sessions[walletAddress.toLowerCase()]?.encryptedKey
+})

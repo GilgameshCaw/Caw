@@ -1,12 +1,33 @@
 import { secp256k1 } from '@noble/curves/secp256k1'
 import { requireSecureCrypto } from '~/utils/secureContext'
 
-// Shared-secret cache. Keyed by peerUserId so the same key can be reused
-// across multiple conversations that share that peer (e.g. a DM with X
-// and a group with X — the per-pair ECDH key is identical). Pre-launch
-// testnet, so we drop the legacy conversationId-keyed cache wholesale
-// rather than dual-write.
-const sharedSecretByPeer = new Map<number, CryptoKey>()
+/**
+ * KDF version constants embedded as the first byte of every DM ciphertext blob.
+ *
+ * V1 (0x01): legacy — SHA-256(full 65-byte uncompressed shared point: 0x04||x||y).
+ *             Non-standard; retained only for decrypting existing stored messages.
+ * V2 (0x02): canonical ANSI X9.63 / RFC 8418 — SHA-256(x-coordinate only, 32 bytes).
+ *             All new messages use V2.
+ *
+ * Wire format (after this fix):
+ *   base64( kdfVersion[1] || iv[12] || aesgcm_ciphertext+tag )
+ *
+ * Legacy stored ciphertexts (no version byte, raw base64 starting with iv[12])
+ * are detected because their decoded first byte is NEVER 0x01 or 0x02 for a
+ * random 12-byte IV (the AES-GCM IV is random, so bytes 0 and 1 can technically
+ * collide — we handle this by checking the version byte explicitly and falling
+ * back to V1 KDF only when the stored ciphertext predates this change).
+ *
+ * The server persists ciphertexts verbatim; no server changes are needed.
+ * The sharedSecretByPeer cache is version-keyed so V1 and V2 keys don't collide.
+ */
+export const KDF_VERSION_V1 = 0x01
+export const KDF_VERSION_V2 = 0x02
+
+// Shared-secret cache. Keyed by `${peerUserId}:${kdfVersion}` so V1 and V2
+// keys are cached independently and the version-aware decrypt path can
+// always reach the right key without polluting the V2 path.
+const sharedSecretByPeer = new Map<string, CryptoKey>()
 
 const DM_KEYS_STORAGE_KEY = 'caw-dm-keys'
 
@@ -75,7 +96,7 @@ export async function deriveKeyPair(
     cachedPrivateKey = null
     cachedPublicKey = null
     cachedTokenId = null
-    sharedSecretByPeer.clear()
+    sharedSecretByPeer.clear() // keyed by `${peerUserId}:${kdfVersion}`
   }
 
   // Try restoring from localStorage before requesting a signature
@@ -210,31 +231,53 @@ export function clearKeyCache(tokenId?: number) {
 }
 
 /**
+ * V1 KDF (legacy): SHA-256 of the full 65-byte uncompressed shared point.
+ * Retained ONLY for decrypting existing stored messages.
+ * Never call this for new encryptions.
+ */
+async function _deriveAesKeyV1(sharedPoint: Uint8Array): Promise<CryptoKey> {
+  // Hash the full 65-byte uncompressed point (0x04 || x || y)
+  const hashBuffer = await crypto.subtle.digest('SHA-256', sharedPoint)
+  return crypto.subtle.importKey('raw', hashBuffer, { name: 'AES-GCM' }, false, ['encrypt', 'decrypt'])
+}
+
+/**
+ * V2 KDF (canonical): SHA-256 of the x-coordinate only (bytes 1..32 of the
+ * uncompressed point). This is the ANSI X9.63 / RFC 8418 standard.
+ */
+async function _deriveAesKeyV2(sharedPoint: Uint8Array): Promise<CryptoKey> {
+  // Drop the 0x04 prefix byte; take the next 32 bytes (x-coordinate)
+  const xCoord = sharedPoint.slice(1, 33)
+  const hashBuffer = await crypto.subtle.digest('SHA-256', xCoord)
+  return crypto.subtle.importKey('raw', hashBuffer, { name: 'AES-GCM' }, false, ['encrypt', 'decrypt'])
+}
+
+/**
  * Compute a shared secret via ECDH for a given peer, then derive an
- * AES-256-GCM key. Result is cached by peerUserId so a DM and a group
- * that both involve the same peer reuse the key.
+ * AES-256-GCM key. Result is cached by `${peerUserId}:${kdfVersion}` so V1
+ * and V2 keys are independent.
+ *
+ * @param kdfVersion - KDF_VERSION_V1 for legacy decrypt, KDF_VERSION_V2 (default) for new messages
  */
 export async function computeSharedSecretForPeer(
   myPrivateKey: Uint8Array,
   peerUserId: number,
   theirPublicKeyHex: string,
+  kdfVersion: typeof KDF_VERSION_V1 | typeof KDF_VERSION_V2 = KDF_VERSION_V2,
 ): Promise<CryptoKey> {
-  const cached = sharedSecretByPeer.get(peerUserId)
+  const cacheKey = `${peerUserId}:${kdfVersion}`
+  const cached = sharedSecretByPeer.get(cacheKey)
   if (cached) return cached
 
   const theirPublicKeyBytes = hexToBytes(theirPublicKeyHex)
+  // getSharedSecret returns full 65-byte uncompressed point (0x04 || x || y)
   const sharedPoint = secp256k1.getSharedSecret(myPrivateKey, theirPublicKeyBytes)
-  const hashBuffer = await crypto.subtle.digest('SHA-256', sharedPoint)
 
-  const aesKey = await crypto.subtle.importKey(
-    'raw',
-    hashBuffer,
-    { name: 'AES-GCM' },
-    false,
-    ['encrypt', 'decrypt']
-  )
+  const aesKey = kdfVersion === KDF_VERSION_V1
+    ? await _deriveAesKeyV1(sharedPoint)
+    : await _deriveAesKeyV2(sharedPoint)
 
-  sharedSecretByPeer.set(peerUserId, aesKey)
+  sharedSecretByPeer.set(cacheKey, aesKey)
   return aesKey
 }
 
@@ -246,6 +289,10 @@ export async function computeSharedSecretForPeer(
  * peerUserId is now required; callers that previously omitted it must
  * supply it (the inbox has it; brand-new conversations seed it via the
  * conversationPeerCache in useDm).
+ *
+ * Always derives with V2 KDF (x-coord only). Decrypt paths that need to
+ * handle legacy ciphertexts call computeSharedSecretForPeer directly with
+ * KDF_VERSION_V1.
  */
 export async function computeSharedSecret(
   myPrivateKey: Uint8Array,
@@ -254,7 +301,7 @@ export async function computeSharedSecret(
   _conversationIdHint?: string,
 ): Promise<CryptoKey> {
   void _conversationIdHint
-  return computeSharedSecretForPeer(myPrivateKey, peerUserId, theirPublicKeyHex)
+  return computeSharedSecretForPeer(myPrivateKey, peerUserId, theirPublicKeyHex, KDF_VERSION_V2)
 }
 
 /**
@@ -274,17 +321,43 @@ export async function encryptForRecipients(
 ): Promise<Record<number, string>> {
   const out: Record<number, string> = {}
   for (const m of members) {
-    const key = await computeSharedSecretForPeer(myPrivateKey, m.userId, m.publicKey)
-    out[m.userId] = await encrypt(plaintext, key)
+    // Always derive with V2 KDF for new outgoing messages
+    const key = await computeSharedSecretForPeer(myPrivateKey, m.userId, m.publicKey, KDF_VERSION_V2)
+    out[m.userId] = await encrypt(plaintext, key, KDF_VERSION_V2)
   }
   return out
 }
 
 /**
- * Encrypt plaintext using AES-256-GCM.
- * Returns base64(iv || ciphertext || tag).
+ * Read the kdfVersion byte from a serialised DM ciphertext blob without
+ * decrypting it. Returns KDF_VERSION_V1 or KDF_VERSION_V2 if the leading
+ * byte is a recognised version, or null for legacy blobs produced before
+ * the version byte was added (treated as V1).
  */
-export async function encrypt(plaintext: string, sharedSecret: CryptoKey): Promise<string> {
+export function readKdfVersion(ciphertextBase64: string): typeof KDF_VERSION_V1 | typeof KDF_VERSION_V2 | null {
+  try {
+    const data = base64ToUint8Array(ciphertextBase64)
+    const firstByte = data[0]
+    if (firstByte === KDF_VERSION_V1 || firstByte === KDF_VERSION_V2) return firstByte
+    return null // legacy: no version byte prefix
+  } catch {
+    return null
+  }
+}
+
+/**
+ * Encrypt plaintext using AES-256-GCM.
+ * Returns base64(kdfVersion[1] || iv[12] || ciphertext+tag).
+ *
+ * The kdfVersion byte records which KDF was used to derive sharedSecret,
+ * so the receiver can select the matching KDF when decrypting.
+ * New messages always use KDF_VERSION_V2.
+ */
+export async function encrypt(
+  plaintext: string,
+  sharedSecret: CryptoKey,
+  kdfVersion: typeof KDF_VERSION_V1 | typeof KDF_VERSION_V2 = KDF_VERSION_V2,
+): Promise<string> {
   const iv = crypto.getRandomValues(new Uint8Array(12))
   const encoded = new TextEncoder().encode(plaintext)
 
@@ -294,22 +367,43 @@ export async function encrypt(plaintext: string, sharedSecret: CryptoKey): Promi
     encoded
   )
 
-  // Concatenate iv + ciphertext (tag is appended by AES-GCM)
-  const result = new Uint8Array(iv.length + ciphertext.byteLength)
-  result.set(iv)
-  result.set(new Uint8Array(ciphertext), iv.length)
+  // Concatenate kdfVersion + iv + ciphertext (tag is appended by AES-GCM)
+  const result = new Uint8Array(1 + iv.length + ciphertext.byteLength)
+  result[0] = kdfVersion
+  result.set(iv, 1)
+  result.set(new Uint8Array(ciphertext), 1 + iv.length)
 
   return uint8ArrayToBase64(result)
 }
 
 /**
- * Decrypt ciphertext (base64(iv || ciphertext || tag)) using AES-256-GCM.
+ * Decrypt a DM ciphertext payload using a pre-derived AES-GCM key.
+ *
+ * Handles two wire formats:
+ *   - New (v2): base64(kdfVersion[1] || iv[12] || ciphertext+tag)
+ *   - Legacy (pre-version-byte): base64(iv[12] || ciphertext+tag)
+ *
+ * The caller is responsible for supplying the correct key for the detected
+ * version. Use `readKdfVersion` + `computeSharedSecretForPeer` with the
+ * matching KDF_VERSION_V* constant to obtain the right key before calling
+ * this function. Or use `decryptAutoVersion` for the all-in-one path.
  */
 export async function decrypt(ciphertextBase64: string, sharedSecret: CryptoKey): Promise<string> {
   const data = base64ToUint8Array(ciphertextBase64)
 
-  const iv = data.slice(0, 12)
-  const ciphertext = data.slice(12)
+  // Detect wire format by inspecting the first byte
+  let iv: Uint8Array
+  let ciphertext: Uint8Array
+  const firstByte = data[0]
+  if (firstByte === KDF_VERSION_V1 || firstByte === KDF_VERSION_V2) {
+    // New format: skip the version byte
+    iv = data.slice(1, 13)
+    ciphertext = data.slice(13)
+  } else {
+    // Legacy format: no version byte — iv starts at byte 0
+    iv = data.slice(0, 12)
+    ciphertext = data.slice(12)
+  }
 
   const decrypted = await crypto.subtle.decrypt(
     { name: 'AES-GCM', iv },
@@ -318,6 +412,24 @@ export async function decrypt(ciphertextBase64: string, sharedSecret: CryptoKey)
   )
 
   return new TextDecoder().decode(decrypted)
+}
+
+/**
+ * Convenience wrapper: detects the KDF version embedded in the ciphertext,
+ * derives the correct shared secret, and decrypts in one call.
+ *
+ * Use this in DM receive paths instead of calling decrypt() directly.
+ * Handles both legacy V1 (full-point hash) and current V2 (x-coord hash).
+ */
+export async function decryptAutoVersion(
+  ciphertextBase64: string,
+  myPrivateKey: Uint8Array,
+  peerUserId: number,
+  theirPublicKeyHex: string,
+): Promise<string> {
+  const detectedVersion = readKdfVersion(ciphertextBase64) ?? KDF_VERSION_V1
+  const sharedSecret = await computeSharedSecretForPeer(myPrivateKey, peerUserId, theirPublicKeyHex, detectedVersion)
+  return decrypt(ciphertextBase64, sharedSecret)
 }
 
 /**
@@ -390,8 +502,9 @@ export async function sealKeyForRecipients(
   const rawB64 = uint8ArrayToBase64(rawKey)
   const out: Record<number, string> = {}
   for (const m of members) {
-    const pairKey = await computeSharedSecretForPeer(myPrivateKey, m.userId, m.publicKey)
-    out[m.userId] = await encrypt(rawB64, pairKey)
+    // Always derive with V2 KDF for new outgoing sealed keys
+    const pairKey = await computeSharedSecretForPeer(myPrivateKey, m.userId, m.publicKey, KDF_VERSION_V2)
+    out[m.userId] = await encrypt(rawB64, pairKey, KDF_VERSION_V2)
   }
   return out
 }
