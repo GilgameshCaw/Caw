@@ -1,13 +1,7 @@
 import { Router } from 'express'
 import { prisma } from '../../prismaClient'
 import {
-  requireAdmin,
   requireModerator,
-  loginAdmin,
-  revokeAdminToken,
-  extractAdminToken,
-  adminCookieOptions,
-  ADMIN_COOKIE_NAME,
   extractSession,
 } from '../middleware/auth'
 import Redis from 'ioredis'
@@ -33,44 +27,6 @@ async function checkReportRate(ip: string, hasSession: boolean): Promise<boolean
   await redis.expire(k, REPORT_WINDOW)
   return true
 }
-
-/**
- * POST /api/bug-reports/login
- * Authenticate with password. Sets an HttpOnly admin session cookie.
- * The response body no longer contains the token — it lives only in the cookie
- * so JS (and any XSS) can't read it.
- */
-router.post('/login', (req, res): void => {
-  const { password } = req.body
-  const result = loginAdmin(password)
-  if (!result) {
-    res.status(401).json({ error: 'Invalid password' })
-    return
-  }
-
-  res.cookie(ADMIN_COOKIE_NAME, result.token, adminCookieOptions())
-  res.json({ ok: true, expiresAt: result.expiresAt })
-})
-
-/**
- * POST /api/bug-reports/logout
- * Revoke the current admin session and clear the cookie.
- */
-router.post('/logout', (req, res): void => {
-  const token = extractAdminToken(req)
-  revokeAdminToken(token)
-  res.clearCookie(ADMIN_COOKIE_NAME, { path: '/' })
-  res.json({ ok: true })
-})
-
-/**
- * GET /api/bug-reports/me
- * Lightweight check used by the frontend AdminGate to verify the current
- * cookie is still valid without hitting a real admin endpoint.
- */
-router.get('/me', requireAdmin, (_req, res): void => {
-  res.json({ ok: true })
-})
 
 /**
  * POST /api/bug-reports

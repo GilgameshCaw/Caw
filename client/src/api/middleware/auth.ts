@@ -1,6 +1,5 @@
 import { Request, Response, NextFunction } from 'express'
 import jwt from 'jsonwebtoken'
-import { randomBytes, timingSafeEqual, createHash } from 'crypto'
 import { getSession, SessionData } from '../sessionStore'
 import { prisma } from '../../prismaClient'
 
@@ -17,13 +16,8 @@ declare global {
       tokenOwnerAddress?: string
       // Set by requireModerator on success. Identifies WHICH of the
       // user's authorized tokens holds the moderator role, so audit
-      // logs can attribute the action. NULL means the request was
-      // authorized via the admin password cookie (no wallet identity).
+      // logs can attribute the action.
       moderatorActorTokenId?: number | null
-      // Set by requireModerator. True iff the request was authorized
-      // via the admin password cookie. Used by handlers that gate
-      // certain actions to admins only (e.g. role assignment).
-      isAdminCookie?: boolean
     }
   }
 }
@@ -32,15 +26,6 @@ const JWT_SECRET = process.env.JWT_SECRET
 if (!JWT_SECRET) {
   console.warn('[Auth] WARNING: JWT_SECRET not set. JWT authentication will reject all tokens.')
 }
-
-// --- Admin token auth ---
-const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD
-if (!ADMIN_PASSWORD) {
-  console.warn('[Auth] WARNING: ADMIN_PASSWORD not set. Admin login will be disabled.')
-}
-const adminTokens = new Map<string, number>() // token -> expiry timestamp
-const ADMIN_TOKEN_TTL = 24 * 60 * 60 * 1000 // 24 hours
-export const ADMIN_COOKIE_NAME = 'caw_admin'
 
 // --- Wallet session cookie ---
 // The wallet session token (from sessionStore.ts, created in /api/auth/verify)
@@ -55,50 +40,6 @@ export const SESSION_COOKIE_NAME = 'caw_session'
 // 1 year — matches SESSION_TTL in sessionStore.ts so cookie and Redis entry
 // expire together.
 const SESSION_COOKIE_MAX_AGE = 365 * 24 * 60 * 60 * 1000
-
-export function generateAdminToken(): string {
-  return randomBytes(32).toString('hex')
-}
-
-/**
- * Verify the password and create a session. Returns the token (for cookie) and its expiry.
- *
- * Constant-time compare via SHA-256 hashing both sides to fixed-length
- * 32-byte buffers — `password !== ADMIN_PASSWORD` leaks length and a
- * prefix-match timing signal. Audit fix 2026-05-09 (Round 5 VPS M-9).
- */
-export function loginAdmin(password: string): { token: string; expiresAt: number } | null {
-  if (!ADMIN_PASSWORD) return null
-  if (typeof password !== 'string') return null
-  const a = createHash('sha256').update(password).digest()
-  const b = createHash('sha256').update(ADMIN_PASSWORD).digest()
-  if (!timingSafeEqual(a, b)) return null
-  const token = generateAdminToken()
-  const expiresAt = Date.now() + ADMIN_TOKEN_TTL
-  adminTokens.set(token, expiresAt)
-  return { token, expiresAt }
-}
-
-export function revokeAdminToken(token: string | undefined): void {
-  if (token) adminTokens.delete(token)
-}
-
-/**
- * Build the Set-Cookie options string used for admin auth.
- * HttpOnly so JS can't read it (XSS can't exfiltrate).
- * SameSite=Strict defeats CSRF.
- * Secure in production.
- */
-export function adminCookieOptions() {
-  const isProd = process.env.NODE_ENV === 'production'
-  return {
-    httpOnly: true,
-    sameSite: 'strict' as const,
-    secure: isProd,
-    path: '/',
-    maxAge: ADMIN_TOKEN_TTL,
-  }
-}
 
 /**
  * Cookie options for the wallet session.
@@ -139,88 +80,59 @@ function readCookie(req: Request, name: string): string | undefined {
   return undefined
 }
 
+// --- Wallet-bound admin/moderator auth ---
+//
+// Bootstrap admins — comma-separated list of tokenIds treated as ADMIN
+// even if their User.role is still 'USER' in the DB. Lets a fresh
+// deploy promote the first admin without a manual SQL update.
+// Empty list means no env-admins; token must have role=ADMIN in DB.
+const ADMIN_TOKEN_IDS = (() => {
+  return (process.env.ADMIN_TOKEN_IDS ?? '')
+    .split(',')
+    .map(s => Number(s.trim()))
+    .filter(n => Number.isFinite(n) && n > 0)
+})()
+
 /**
- * Extract the admin token from either the HttpOnly cookie (preferred) or
- * the legacy Authorization: Bearer header (kept temporarily so in-flight
- * admin sessions created before this change don't all get kicked out).
- *
- * TODO: drop the Bearer fallback once the old localStorage tokens have aged out (24h TTL).
+ * Resolve the first authorized tokenId that qualifies as an admin,
+ * first checking ADMIN_TOKEN_IDS env list then the DB role.
+ * Returns the matching tokenId or null.
  */
-export function extractAdminToken(req: Request): string | undefined {
-  const cookieToken = readCookie(req, ADMIN_COOKIE_NAME)
-  if (cookieToken) return cookieToken
-  const authHeader = req.headers.authorization
-  if (authHeader?.startsWith('Bearer ')) return authHeader.slice(7)
-  return undefined
+async function resolveAdminTokenId(authorized: number[]): Promise<number | null> {
+  if (authorized.length === 0) return null
+  const bootstrapHit = authorized.find(id => ADMIN_TOKEN_IDS.includes(id))
+  if (bootstrapHit !== undefined) return bootstrapHit
+  const elevated = await prisma.user.findFirst({
+    where: { tokenId: { in: authorized }, role: 'ADMIN' },
+    select: { tokenId: true },
+  })
+  return elevated?.tokenId ?? null
 }
 
-export function requireAdmin(req: Request, res: Response, next: NextFunction): void {
-  const token = extractAdminToken(req)
-  if (!token) {
-    res.status(401).json({ error: 'Unauthorized' })
+export async function requireAdmin(req: Request, res: Response, next: NextFunction): Promise<void> {
+  await extractSession(req)
+  if (!req.sessionData) {
+    res.status(401).json({ error: 'AUTH_REQUIRED', message: 'Session token required' })
     return
   }
-
-  const expiry = adminTokens.get(token)
-  if (!expiry || Date.now() > expiry) {
-    adminTokens.delete(token)
-    res.status(401).json({ error: 'Unauthorized' })
+  const authorized = req.sessionData.authorizedTokenIds || []
+  const tokenId = await resolveAdminTokenId(authorized)
+  if (tokenId === null) {
+    res.status(403).json({ error: 'NOT_ADMIN', message: 'Account is not authorized for this action' })
     return
   }
-
-  // Mark this request as admin-cookie-authed so downstream handlers can
-  // gate ADMIN-only operations (role assignment, etc.) without a second
-  // pass.
-  req.isAdminCookie = true
+  req.moderatorActorTokenId = tokenId
   next()
 }
 
 // --- Wallet-bound moderator auth ---
 //
-// Accepts EITHER:
-//   1) a valid admin password cookie (admins remain superusers), OR
-//   2) a wallet session whose authorizedTokenIds includes a User with
-//      role MODERATOR or ADMIN.
+// Accepts a wallet session whose authorizedTokenIds includes a User with
+// role MODERATOR or ADMIN (or is in ADMIN_TOKEN_IDS env list).
 //
 // On success, sets req.moderatorActorTokenId to the tokenId that holds
-// the role (NULL when authorized via cookie). Audit-log writers should
-// use it as the actor.
-//
-// Bootstrap admins — comma-separated list of tokenIds treated as ADMIN
-// even if their User.role is still 'USER' in the DB. Lets a fresh
-// deploy promote the first admin without a manual SQL update.
-//
-// Default: VALIDATOR_ID. The operator running the validator is the
-// natural "node-runner" identity, so on a fresh install they're admin
-// without any extra config. Override with BOOTSTRAP_ADMIN_TOKEN_IDS
-// when you want a different person (or additional people) bootstrapped
-// — e.g. the operator runs the node but a separate account does the
-// moderation.
-const BOOTSTRAP_ADMIN_TOKEN_IDS = (() => {
-  const explicit = (process.env.BOOTSTRAP_ADMIN_TOKEN_IDS ?? '')
-    .split(',')
-    .map(s => Number(s.trim()))
-    .filter(n => Number.isFinite(n) && n > 0)
-  if (explicit.length > 0) return explicit
-  const validatorId = Number(process.env.VALIDATOR_ID)
-  return Number.isFinite(validatorId) && validatorId > 0 ? [validatorId] : []
-})()
-
+// the role. Audit-log writers should use it as the actor.
 export async function requireModerator(req: Request, res: Response, next: NextFunction): Promise<void> {
-  // Admin password path first — cheaper than a DB read.
-  const adminToken = extractAdminToken(req)
-  if (adminToken) {
-    const expiry = adminTokens.get(adminToken)
-    if (expiry && Date.now() <= expiry) {
-      req.moderatorActorTokenId = null
-      req.isAdminCookie = true
-      next()
-      return
-    }
-    if (expiry) adminTokens.delete(adminToken)
-  }
-
-  // Wallet session path.
   await extractSession(req)
   if (!req.sessionData) {
     res.status(401).json({ error: 'AUTH_REQUIRED', message: 'Session token required' })
@@ -233,18 +145,15 @@ export async function requireModerator(req: Request, res: Response, next: NextFu
     return
   }
 
-  // Bootstrap fast path: BOOTSTRAP_ADMIN_TOKEN_IDS skips the DB read.
-  const bootstrapHit = authorized.find(id => BOOTSTRAP_ADMIN_TOKEN_IDS.includes(id))
+  // Bootstrap fast path: ADMIN_TOKEN_IDS skips the DB read.
+  const bootstrapHit = authorized.find(id => ADMIN_TOKEN_IDS.includes(id))
   if (bootstrapHit !== undefined) {
     req.moderatorActorTokenId = bootstrapHit
-    req.isAdminCookie = false
     next()
     return
   }
 
   // Find any authorized token whose User has role MODERATOR or ADMIN.
-  // tokenId is unique on User, so a tokenId-in list query is the right
-  // shape — no separate by-tokenId lookups.
   const elevated = await prisma.user.findFirst({
     where: { tokenId: { in: authorized }, role: { in: ['MODERATOR', 'ADMIN'] } },
     select: { tokenId: true },
@@ -255,27 +164,13 @@ export async function requireModerator(req: Request, res: Response, next: NextFu
   }
 
   req.moderatorActorTokenId = elevated.tokenId
-  req.isAdminCookie = false
   next()
 }
 
-// Stricter sibling: same flow, but rejects MODERATOR — wallet must have
-// role=ADMIN, OR the request is admin-cookie-authed. Used for role
-// assignment and other admin-only knobs.
+// Stricter sibling: rejects MODERATOR — wallet must have role=ADMIN
+// (or be in ADMIN_TOKEN_IDS env list). Used for role assignment and
+// other admin-only knobs.
 export async function requireWalletAdmin(req: Request, res: Response, next: NextFunction): Promise<void> {
-  // Admin cookie still satisfies.
-  const adminToken = extractAdminToken(req)
-  if (adminToken) {
-    const expiry = adminTokens.get(adminToken)
-    if (expiry && Date.now() <= expiry) {
-      req.moderatorActorTokenId = null
-      req.isAdminCookie = true
-      next()
-      return
-    }
-    if (expiry) adminTokens.delete(adminToken)
-  }
-
   await extractSession(req)
   if (!req.sessionData) {
     res.status(401).json({ error: 'AUTH_REQUIRED', message: 'Session token required' })
@@ -283,25 +178,13 @@ export async function requireWalletAdmin(req: Request, res: Response, next: Next
   }
 
   const authorized = req.sessionData.authorizedTokenIds || []
-  const bootstrapHit = authorized.find(id => BOOTSTRAP_ADMIN_TOKEN_IDS.includes(id))
-  if (bootstrapHit !== undefined) {
-    req.moderatorActorTokenId = bootstrapHit
-    req.isAdminCookie = false
-    next()
-    return
-  }
-
-  const elevated = await prisma.user.findFirst({
-    where: { tokenId: { in: authorized }, role: 'ADMIN' },
-    select: { tokenId: true },
-  })
-  if (!elevated) {
+  const tokenId = await resolveAdminTokenId(authorized)
+  if (tokenId === null) {
     res.status(403).json({ error: 'NOT_ADMIN', message: 'Account is not authorized for this action' })
     return
   }
 
-  req.moderatorActorTokenId = elevated.tokenId
-  req.isAdminCookie = false
+  req.moderatorActorTokenId = tokenId
   next()
 }
 

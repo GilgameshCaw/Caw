@@ -43,9 +43,7 @@ router.get('/elevated', requireWalletAdmin, async (_req, res) => {
  *
  * Self-demotion guard: an admin cannot demote themselves below ADMIN —
  * removes the "I locked myself out" footgun. Bypassable only via
- * BOOTSTRAP_ADMIN_TOKEN_IDS env var (see middleware/auth.ts) or direct
- * SQL. Admin-cookie callers can demote anyone since they have no
- * tokenId attached.
+ * ADMIN_TOKEN_IDS env var (see middleware/auth.ts) or direct SQL.
  */
 router.post('/:tokenId/role', requireWalletAdmin, async (req, res) => {
   try {

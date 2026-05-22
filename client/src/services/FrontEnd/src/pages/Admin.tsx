@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react'
 import { useTheme } from '~/hooks/useTheme'
-import { Link, useNavigate } from '~/utils/localizedRouter'
+import { Link } from '~/utils/localizedRouter'
 import { apiFetch } from '~/api/client'
 
 interface Stats {
@@ -101,7 +101,6 @@ const adminPages = [
 
 const Admin: React.FC = () => {
   const { isDark } = useTheme()
-  const navigate = useNavigate()
   const [stats, setStats] = useState<Stats | null>(null)
 
   const bg = isDark ? 'bg-black' : 'bg-gray-50'
@@ -109,16 +108,6 @@ const Admin: React.FC = () => {
   const text = isDark ? 'text-white' : 'text-gray-900'
   const muted = isDark ? 'text-white/50' : 'text-gray-500'
   const hover = isDark ? 'hover:bg-white/5 hover:border-white/20' : 'hover:bg-gray-50 hover:border-gray-300'
-
-  const logout = async () => {
-    try {
-      await apiFetch('/api/bug-reports/logout', { method: 'POST' })
-    } catch {
-      // ignore — we're logging out anyway
-    }
-    // Force AdminGate to re-check and show the login form
-    navigate(0)
-  }
 
   // Fetch stats on mount — AdminGate guarantees we're authenticated
   useEffect(() => {
@@ -163,10 +152,7 @@ const Admin: React.FC = () => {
   return (
     <div className={`min-h-screen ${bg} p-6`}>
       <div className="max-w-3xl mx-auto">
-        <div className="flex items-center justify-between mb-6">
-          <h1 className={`text-2xl font-bold ${text}`}>Admin</h1>
-          <button onClick={logout} className={`text-sm ${muted} hover:underline`}>Logout</button>
-        </div>
+        <h1 className={`text-2xl font-bold ${text} mb-6`}>Admin</h1>
 
         {/* Quick Stats */}
         {statCards && (

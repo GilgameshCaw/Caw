@@ -1,52 +1,29 @@
-import { useEffect, useState, useCallback } from 'react'
+import { useEffect, useState } from 'react'
 import { apiFetch } from '~/api/client'
 import { useTheme } from '~/hooks/useTheme'
 
 /**
- * Wraps admin sub-routes. Verifies the HttpOnly admin session cookie with the
- * backend before rendering. Shows an inline login form if unauthenticated.
- *
- * The admin token lives ONLY in an HttpOnly, SameSite=Strict cookie set by
- * POST /api/bug-reports/login — JS cannot read it, so XSS cannot exfiltrate
- * it. This gate just asks the server "is my cookie still good?" via /me.
+ * Wraps admin-only routes. Asks /api/me/role with the current wallet
+ * session and only renders children when role is ADMIN.
+ * Falls back to a "you don't have access" message — admins are
+ * assigned server-side, not self-served via a password form.
  */
 export default function AdminGate({ children }: { children: React.ReactNode }) {
   const { isDark } = useTheme()
   const [status, setStatus] = useState<'checking' | 'ok' | 'denied'>('checking')
-  const [password, setPassword] = useState('')
-  const [authError, setAuthError] = useState('')
-  const [authLoading, setAuthLoading] = useState(false)
-
-  const verify = useCallback(async () => {
-    try {
-      await apiFetch('/api/bug-reports/me', { credentials: 'include' })
-      setStatus('ok')
-    } catch {
-      setStatus('denied')
-    }
-  }, [])
 
   useEffect(() => {
-    verify()
-  }, [verify])
-
-  const login = async () => {
-    setAuthLoading(true)
-    setAuthError('')
-    try {
-      await apiFetch('/api/bug-reports/login', {
-        method: 'POST',
-        credentials: 'include',
-        body: JSON.stringify({ password }),
+    let cancelled = false
+    apiFetch<{ role: 'USER' | 'MODERATOR' | 'ADMIN' }>('/api/me/role')
+      .then(r => {
+        if (cancelled) return
+        setStatus(r.role === 'ADMIN' ? 'ok' : 'denied')
       })
-      setPassword('')
-      setStatus('ok')
-    } catch {
-      setAuthError('Invalid password')
-    } finally {
-      setAuthLoading(false)
-    }
-  }
+      .catch(() => {
+        if (!cancelled) setStatus('denied')
+      })
+    return () => { cancelled = true }
+  }, [])
 
   if (status === 'checking') return null
 
@@ -54,31 +31,14 @@ export default function AdminGate({ children }: { children: React.ReactNode }) {
     const bg = isDark ? 'bg-black' : 'bg-gray-50'
     const card = isDark ? 'bg-gray-950 border-white/10' : 'bg-white border-gray-200'
     const text = isDark ? 'text-white' : 'text-gray-900'
-    const input = isDark
-      ? 'bg-black border-white/20 text-white placeholder-white/30'
-      : 'bg-white border-gray-300 text-gray-900 placeholder-gray-400'
-
+    const muted = isDark ? 'text-white/60' : 'text-gray-500'
     return (
       <div className={`min-h-screen flex items-center justify-center ${bg}`}>
-        <div className={`p-8 rounded-2xl border max-w-sm w-full ${card}`}>
-          <h1 className={`text-xl font-bold mb-4 ${text}`}>Admin</h1>
-          <input
-            type="password"
-            value={password}
-            onChange={e => setPassword(e.target.value)}
-            onKeyDown={e => e.key === 'Enter' && login()}
-            placeholder="Admin password"
-            className={`w-full px-3 py-2 rounded-lg border text-sm mb-3 focus:outline-none focus:ring-2 focus:ring-blue-500/50 ${input}`}
-            autoFocus
-          />
-          {authError && <p className="text-error-dim text-xs mb-2">{authError}</p>}
-          <button
-            onClick={login}
-            disabled={authLoading}
-            className="w-full py-2 rounded-lg bg-blue-600 text-white text-sm font-medium hover:bg-blue-700 disabled:opacity-50"
-          >
-            {authLoading ? 'Logging in...' : 'Login'}
-          </button>
+        <div className={`p-8 rounded-2xl border max-w-sm w-full text-center ${card}`}>
+          <h1 className={`text-xl font-bold mb-2 ${text}`}>Admin access required</h1>
+          <p className={`text-sm ${muted}`}>
+            Admin access required. Your wallet is not in the admin list.
+          </p>
         </div>
       </div>
     )
