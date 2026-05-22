@@ -17,6 +17,7 @@
 import React, { useState, useCallback } from 'react'
 import { useTheme } from '~/hooks/useTheme'
 import { useT } from '~/i18n/I18nProvider'
+import { useNavigate } from '~/utils/localizedRouter'
 import UsernameStep from './onboarding/UsernameStep'
 import DepositStep, { MIN_DEPOSIT_CAW } from './onboarding/DepositStep'
 import VaultPasswordStep from './onboarding/VaultPasswordStep'
@@ -119,9 +120,9 @@ function stepLabel(step: OnboardingStep, t: (k: string) => string): string {
 export default function Onboarding() {
   const { isDark } = useTheme()
   const t = useT()
+  const navigate = useNavigate()
   const [state, setState] = useState<OnboardingState>(INITIAL_STATE)
 
-  const currentIndex = stepIndex(state.step)
   const showProgress = PROGRESS_STEPS.includes(state.step as typeof PROGRESS_STEPS[number])
   const progressIndex = PROGRESS_STEPS.indexOf(state.step as typeof PROGRESS_STEPS[number])
 
@@ -144,8 +145,13 @@ export default function Onboarding() {
     const prevIndex = stepIndex(state.step) - 1
     if (prevIndex >= 0) {
       setState(s => ({ ...s, step: ALL_STEPS[prevIndex] }))
+    } else {
+      // First step → back arrow takes the user to the home page rather
+      // than dead-ending. Matches user expectation that "Back" always
+      // does something.
+      navigate('/')
     }
-  }, [state.step])
+  }, [state.step, navigate])
 
   // ── State setters ─────────────────────────────────────────────────────────
 
@@ -210,19 +216,19 @@ export default function Onboarding() {
           {/* Slim segmented stepper — hidden on the confirm success screen */}
           {showProgress && (
             <>
-              {/* Back chevron inline above the stepper — hidden on first step */}
-              {currentIndex > 0 && (
-                <button
-                  onClick={goBack}
-                  className={`mb-3 flex items-center gap-1 text-sm transition-colors cursor-pointer ${textFaint} hover:${textPrimary}`}
-                  aria-label={t('common.back')}
-                >
-                  <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
-                  </svg>
-                  <span>{t('common.back')}</span>
-                </button>
-              )}
+              {/* Back chevron inline above the stepper. Always present so
+                  the user can always go back — on the first step it
+                  navigates to home rather than the previous step. */}
+              <button
+                onClick={goBack}
+                className={`mb-3 flex items-center gap-1 text-sm transition-colors cursor-pointer ${textFaint} hover:${textPrimary}`}
+                aria-label={t('common.back')}
+              >
+                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
+                </svg>
+                <span>{t('common.back')}</span>
+              </button>
 
               {/* Segmented stepper bar */}
               <div className="flex items-center justify-center gap-2 mb-6">

@@ -30,6 +30,14 @@ type Status = 'idle' | 'enrolling' | 'error'
  * proper hyperlink instead of pasting it inline in the body text.
  */
 function humanizeWebAuthnError(raw: string): { text: string; learnMoreUrl?: string } {
+  // Fall through to a friendly catch-all if the raw message is empty or
+  // unhelpful. Chrome sometimes throws DOMExceptions with empty .message,
+  // which would otherwise render an empty red error container.
+  const GENERIC = "We couldn't create your passkey. Try again, and if it keeps failing make sure your device's biometrics are set up and you're on https (or localhost)."
+
+  if (!raw || raw.trim() === '') {
+    return { text: GENERIC }
+  }
   // The browser throws `NotAllowedError: The operation either timed out
   // or was not allowed. See: https://www.w3.org/TR/webauthn-2/...`
   if (/timed out|was not allowed|NotAllowedError/i.test(raw)) {
@@ -49,7 +57,7 @@ function humanizeWebAuthnError(raw: string): { text: string; learnMoreUrl?: stri
   }
   // Fallback: strip any trailing inline URL so it doesn't render as plain text.
   const stripped = raw.replace(/See:?\s+https?:\/\/\S+\.?/i, '').trim()
-  return { text: stripped || raw }
+  return { text: stripped || GENERIC }
 }
 
 export default function PasskeyStep({ username, onNext, onBack }: PasskeyStepProps) {

@@ -667,7 +667,7 @@
   "new_profile.placeholder.username": "Enter your username",
   "new_profile.placeholder.deposit_amount": "Amount to deposit",
   "new_profile.deposit.bullet1": "Required to post, like, and follow",
-  "new_profile.deposit.bullet2": "You earn tokens from every action on the protocol based on your deposit",
+  "new_profile.deposit.bullet2": "You earn yield from every action on the protocol based on your deposit",
   "new_profile.deposit.bullet3": "The more you deposit, the more you earn",
   "new_profile.pricing_title": "Username Pricing",
   "new_profile.chars.1": "1 Character",

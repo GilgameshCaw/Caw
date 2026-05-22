@@ -1249,11 +1249,22 @@ console.log("BALANCE:", balance)
                     <span className={`text-sm font-medium ${isDark ? 'text-white' : 'text-gray-900'}`}>{username ? t('new_profile.deposit_as', { username }) : t('staking.button.deposit')}</span>
                     <DepositInfoPopover />
                   </div>
-                  <ul className="text-yellow-500/80 text-xs mt-0.5 list-disc list-outside pl-4 space-y-0.5">
-                    <li>{t('new_profile.deposit.bullet1')}</li>
-                    <li>{t('new_profile.deposit.bullet2')}</li>
-                    <li>{t('new_profile.deposit.bullet3')}</li>
-                  </ul>
+                  {/* When deposit is OFF, surface the full "why bother"
+                      pitch so the user understands the trade. Once they
+                      flip it on, collapse to just the encouragement line
+                      — the (i) popover holds the full yield rundown for
+                      anyone who wants more detail. */}
+                  {!depositEnabled ? (
+                    <ul className="text-yellow-500/80 text-xs mt-0.5 list-disc list-outside pl-4 space-y-0.5">
+                      <li>{t('new_profile.deposit.bullet1')}</li>
+                      <li>{t('new_profile.deposit.bullet2')}</li>
+                      <li>{t('new_profile.deposit.bullet3')}</li>
+                    </ul>
+                  ) : (
+                    <p className="text-yellow-500/80 text-xs mt-0.5">
+                      {t('new_profile.deposit.bullet3')}
+                    </p>
+                  )}
                 </div>
               </label>
 
