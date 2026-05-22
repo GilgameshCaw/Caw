@@ -10,12 +10,13 @@ import 'dotenv/config'
 import { z } from 'zod'
 import { ethers } from 'ethers'
 import Redis from 'ioredis'
-import { makeJsonRpcProvider, getL1HttpRpcUrl, redactRpcUrl } from '../../utils/rpcProvider'
+import { makeJsonRpcProvider, makeVerifiedJsonRpcProvider, getL1HttpRpcUrl, redactRpcUrl } from '../../utils/rpcProvider'
 import { Service } from '../../Service'
 import { prisma } from '../../prismaClient'
 import { CAW_NAMES_ADDRESS } from '../../abi/addresses'
 import { findOrCreateUser, StaleTokenError } from '../UserService'
 import { pruneTokenIdFromAllSessions } from '../../api/sessionStore'
+import dmWebSocketService from '../DmService/websocket'
 
 const Config = z.object({
   l1RpcUrl:            z.string().optional(),
@@ -175,9 +176,10 @@ export const nftTransferWatcherService: Service = {
       if (!rpcUrl) throw new Error('[NftTransferWatcher] No L1 RPC URL configured')
       await prisma.$connect()
 
-      const provider = makeJsonRpcProvider(rpcUrl, cfg.chainId)
+      const expectedL1ChainId = process.env.L1_CHAIN_ID ? Number(process.env.L1_CHAIN_ID) : cfg.chainId
+      const provider = await makeVerifiedJsonRpcProvider(rpcUrl, expectedL1ChainId)
       const contract = new ethers.Contract(contractAddress, TRANSFER_ABI, provider)
-      console.log(`[NftTransferWatcher] Started — contract=${contractAddress}, chainId=${cfg.chainId}, rpc=${redactRpcUrl(rpcUrl)}`)
+      console.log(`[NftTransferWatcher] Started — contract=${contractAddress}, chainId=${expectedL1ChainId}, rpc=${redactRpcUrl(rpcUrl)}`)
 
       // Resolve start block from checkpoint, then configured startBlock, then
       // current head (never scan from 0 — blockchain-wide scans are never
@@ -298,6 +300,7 @@ export const nftTransferWatcherService: Service = {
                     try {
                       const n = await pruneTokenIdFromAllSessions(tokenId)
                       if (n > 0) console.log(`[NftTransferWatcher] Pruned tokenId=${tokenId} from ${n} stale session(s)`)
+                      dmWebSocketService.disconnectUser(tokenId, 'token transferred')
                     } catch (err: any) {
                       console.warn(`[NftTransferWatcher] Session prune failed for tokenId=${tokenId}:`, err?.message)
                     }
@@ -311,6 +314,7 @@ export const nftTransferWatcherService: Service = {
                   try {
                     const n = await pruneTokenIdFromAllSessions(tokenId)
                     if (n > 0) console.log(`[NftTransferWatcher] Pruned tokenId=${tokenId} from ${n} stale session(s)`)
+                    dmWebSocketService.disconnectUser(tokenId, 'token transferred')
                   } catch (err: any) {
                     console.warn(`[NftTransferWatcher] Session prune failed for tokenId=${tokenId}:`, err?.message)
                   }

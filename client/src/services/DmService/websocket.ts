@@ -222,6 +222,31 @@ export class DmWebSocketService {
   }) {
     this.emitToConversation(conversationId, payload.added ? 'reaction-added' : 'reaction-removed', payload)
   }
+
+  /**
+   * Force-disconnect all active WebSocket connections for a given userId.
+   * Emits 'session-revoked' with { reason } before disconnecting so the
+   * client can show a meaningful message. Safe to call when the user is
+   * not connected — no-op in that case.
+   *
+   * Called by NftTransferWatcher after pruneTokenIdFromAllSessions() so
+   * the previous NFT owner's open browser tab stops receiving live DM
+   * events immediately on transfer.
+   */
+  disconnectUser(userId: number, reason: string): void {
+    if (!this.io) return
+    const socketIds = this.userSockets.get(userId)
+    if (!socketIds || socketIds.size === 0) return
+
+    for (const socketId of Array.from(socketIds)) {
+      const socket = this.io.sockets.sockets.get(socketId)
+      if (socket) {
+        socket.emit('session-revoked', { reason })
+        socket.disconnect(true)
+      }
+    }
+    this.userSockets.delete(userId)
+  }
 }
 
 export default new DmWebSocketService()
