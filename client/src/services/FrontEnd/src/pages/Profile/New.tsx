@@ -1476,7 +1476,7 @@ console.log("BALANCE:", balance)
                     onClick={() => setQuickSignExpanded(v => !v)}
                     className="text-left w-full"
                   >
-                    <span className={`text-sm font-medium ${isDark ? 'text-white' : 'text-gray-900'}`}>Quick Sign — one-click posting</span>
+                    <span className={`text-sm font-medium ${isDark ? 'text-white' : 'text-gray-900'}`}>Quick Sign — one-click actions</span>
                   </button>
                   <p className="text-yellow-500/80 text-xs mt-0.5">
                     Delegate funds to your device to skip wallet sigs
