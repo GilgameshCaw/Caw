@@ -135,7 +135,7 @@ router.post('/', upload.array('media', 10), requireAuth({ field: 'tokenId', veri
     res.json({ success: true, urls, count: files.length })
   } catch (error) {
     console.error('Media upload error:', error)
-    res.status(500).json({ success: false, error: error instanceof Error ? error.message : 'Failed to upload media' })
+    res.status(500).json({ success: false, error: 'Upload failed' })
   }
 })
 

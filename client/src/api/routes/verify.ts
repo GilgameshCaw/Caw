@@ -189,13 +189,7 @@ router.post('/x/start-popup', requireAuth({ field: 'tokenId', verifyOwnership: t
     return res.json({ url: `${X_AUTH_URL}?${params.toString()}` })
   } catch (err: any) {
     console.error('[/api/verify/x/start-popup] error:', err?.message || err)
-    // Surface env-config and validation errors verbatim so misconfig is
-    // obvious instead of hiding behind a generic 500.
-    const msg = typeof err?.message === 'string'
-      && (/not configured/.test(err.message) || /redirectUri/.test(err.message))
-      ? err.message
-      : 'Failed to start X verification'
-    return res.status(500).json({ error: msg })
+    return res.status(500).json({ error: 'X verification is not available on this node' })
   }
 })
 

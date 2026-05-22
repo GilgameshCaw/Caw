@@ -1,7 +1,7 @@
 import { Router } from 'express'
 import { ethers, JsonRpcProvider, WebSocketProvider, Contract } from 'ethers'
 import { createHash } from 'crypto'
-import { makeJsonRpcProvider, makeWebSocketProvider, getL2HttpRpcUrl } from '../../utils/rpcProvider'
+import { makeVerifiedJsonRpcProvider, makeVerifiedWebSocketProvider, getL2HttpRpcUrl } from '../../utils/rpcProvider'
 import SmlTxt from 'smltxt'
 import { prisma } from '../../prismaClient'
 
@@ -1983,7 +1983,7 @@ router.post('/batch', async (req, res) => {
     res.status(201).json({ results })
   } catch (err: any) {
     console.error('POST /api/actions/batch error:', err?.message || String(err), err?.code)
-    res.status(500).json({ error: err.message || 'Internal error' })
+    res.status(500).json({ error: 'Internal error' })
   }
 })
 

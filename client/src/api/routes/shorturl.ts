@@ -289,16 +289,14 @@ router.post('/', async (req, res) => {
 
 // POST /api/shorturl/bulk - Shorten multiple URLs at once
 router.post('/bulk', async (req, res) => {
-  console.log('[ShortURL] /bulk request body:', req.body)
   try {
     const { urls } = req.body
     const domain = getShortUrlDomain()
 
     if (!urls || !Array.isArray(urls)) {
-      console.log('[ShortURL] Invalid request - urls is not an array:', urls)
       return res.status(400).json({ error: 'URLs array is required' })
     }
-    console.log('[ShortURL] Processing URLs:', urls)
+    console.log('[ShortURL] /bulk request with', urls.length, 'URLs')
 
     if (urls.length > 10) {
       return res.status(400).json({ error: 'Maximum 10 URLs per request' })

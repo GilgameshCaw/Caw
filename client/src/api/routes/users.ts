@@ -85,13 +85,12 @@ router.post('/ensure', async (req, res) => {
       })
     }
 
-    console.log(`[/api/users/ensure] SUCCESS in ${totalDuration}ms, user=${JSON.stringify(user)}`)
+    console.log(`[/api/users/ensure] SUCCESS in ${totalDuration}ms, tokenId=${user.tokenId}`)
     return res.json({ user })
   } catch (error: any) {
     const totalDuration = Date.now() - startTime
-    console.error(`[/api/users/ensure] ERROR after ${totalDuration}ms:`, error.message)
-    console.error('Stack trace:', error.stack)
-    return res.status(500).json({ error: error.message || 'Failed to ensure user' })
+    console.error(`[/api/users/ensure] ERROR after ${totalDuration}ms:`, error)
+    return res.status(500).json({ error: 'Internal error' })
   }
 })
 

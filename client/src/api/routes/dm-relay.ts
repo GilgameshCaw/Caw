@@ -146,7 +146,7 @@ router.post('/', async (req, res) => {
       recoveredAddr = await recoverAddressFromCanonical(canonicalizeEnvelope(envelope), signature)
     } catch (err: any) {
       console.warn(`[DM Relay] 403 sig recover failed from ${remote} (sourceInstance=${sourceInstanceId}): ${err.message}`)
-      return res.status(403).json({ error: 'Signature verification failed', detail: err.message })
+      return res.status(403).json({ error: 'Signature verification failed' })
     }
     if (recoveredAddr.toLowerCase() !== source.validatorAddress.toLowerCase()) {
       console.warn(`[DM Relay] 403 sig mismatch from ${remote} (sourceInstance=${sourceInstanceId}): recovered=${recoveredAddr} expected=${source.validatorAddress}`)

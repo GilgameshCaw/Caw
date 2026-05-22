@@ -64,7 +64,7 @@ router.post('/identity',
       return res.json(identity)
     } catch (error: any) {
       console.error('POST /api/dm/identity error:', error)
-      return res.status(500).json({ error: error.message })
+      return res.status(500).json({ error: 'Internal error' })
     }
   }
 )
@@ -115,7 +115,8 @@ router.post('/identity/relay', async (req: Request, res: Response) => {
         signature,
       )
     } catch (err: any) {
-      return res.status(403).json({ error: 'Signature verification failed', detail: err.message })
+      console.warn('[DM Identity Relay] sig recover failed:', err.message)
+      return res.status(403).json({ error: 'Signature verification failed' })
     }
     if (recoveredAddr.toLowerCase() !== source.validatorAddress.toLowerCase()) {
       return res.status(403).json({ error: 'Signature does not match source instance validator' })
@@ -182,7 +183,7 @@ router.get('/identity/batch', async (req: Request, res: Response) => {
     return res.json({ identities })
   } catch (error: any) {
     console.error('GET /api/dm/identity/batch error:', error)
-    return res.status(500).json({ error: error.message })
+    return res.status(500).json({ error: 'Internal error' })
   }
 })
 
@@ -199,7 +200,7 @@ router.get('/identity/:userId', async (req: Request, res: Response) => {
     return res.json({ userId, publicKey, hasIdentity })
   } catch (error: any) {
     console.error('GET /api/dm/identity/:userId error:', error)
-    return res.status(500).json({ error: error.message })
+    return res.status(500).json({ error: 'Internal error' })
   }
 })
 
@@ -275,7 +276,7 @@ router.post('/conversations',
       return res.json(conversation)
     } catch (error: any) {
       console.error('POST /api/dm/conversations error:', error)
-      return res.status(500).json({ error: error.message })
+      return res.status(500).json({ error: 'Internal error' })
     }
   }
 )
@@ -312,7 +313,7 @@ router.get('/conversations',
       return res.json({ conversations: filtered, hasMore })
     } catch (error: any) {
       console.error('GET /api/dm/conversations error:', error)
-      return res.status(500).json({ error: error.message })
+      return res.status(500).json({ error: 'Internal error' })
     }
   }
 )
@@ -333,7 +334,7 @@ router.get('/conversations/request-count',
       return res.json({ count })
     } catch (error: any) {
       console.error('GET /api/dm/conversations/request-count error:', error)
-      return res.status(500).json({ error: error.message })
+      return res.status(500).json({ error: 'Internal error' })
     }
   }
 )
@@ -354,7 +355,7 @@ router.post('/conversations/:id/accept',
       return res.json({ status: 'accepted', conversationId })
     } catch (error: any) {
       console.error('POST /api/dm/conversations/:id/accept error:', error)
-      return res.status(500).json({ error: error.message })
+      return res.status(500).json({ error: 'Internal error' })
     }
   }
 )
@@ -612,7 +613,7 @@ router.post('/messages',
       return res.json(message)
     } catch (error: any) {
       console.error('POST /api/dm/messages error:', error)
-      return res.status(500).json({ error: error.message })
+      return res.status(500).json({ error: 'Internal error' })
     }
   }
 )
@@ -638,7 +639,7 @@ router.get('/conversations/:id/messages',
       return res.json({ messages: result.messages, peerLastReadAt: result.peerLastReadAt })
     } catch (error: any) {
       console.error('GET /api/dm/conversations/:id/messages error:', error)
-      return res.status(500).json({ error: error.message })
+      return res.status(500).json({ error: 'Internal error' })
     }
   }
 )
@@ -657,7 +658,7 @@ router.post('/messages/read',
       return res.json(result)
     } catch (error: any) {
       console.error('POST /api/dm/messages/read error:', error)
-      return res.status(500).json({ error: error.message })
+      return res.status(500).json({ error: 'Internal error' })
     }
   }
 )
@@ -751,7 +752,7 @@ router.patch('/messages/:messageId',
       return res.json({ success: true, message: updated })
     } catch (error: any) {
       console.error('PATCH /api/dm/messages/:messageId error:', error)
-      return res.status(500).json({ error: error.message })
+      return res.status(500).json({ error: 'Internal error' })
     }
   }
 )
@@ -788,7 +789,7 @@ router.post('/messages/:messageId/hide',
       return res.json({ success: true })
     } catch (error: any) {
       console.error('POST /api/dm/messages/:messageId/hide error:', error)
-      return res.status(500).json({ error: error.message })
+      return res.status(500).json({ error: 'Internal error' })
     }
   }
 )
@@ -829,7 +830,7 @@ router.delete('/messages/:messageId',
       return res.json({ success: true })
     } catch (error: any) {
       console.error('DELETE /api/dm/messages/:messageId error:', error)
-      return res.status(500).json({ error: error.message })
+      return res.status(500).json({ error: 'Internal error' })
     }
   }
 )
@@ -874,7 +875,7 @@ router.post('/messages/:messageId/reactions',
       return res.json({ added: result.added })
     } catch (error: any) {
       console.error('POST /api/dm/messages/:messageId/reactions error:', error)
-      return res.status(500).json({ error: error.message })
+      return res.status(500).json({ error: 'Internal error' })
     }
   }
 )
@@ -898,7 +899,7 @@ router.get('/settings',
       })
     } catch (error: any) {
       console.error('GET /api/dm/settings error:', error)
-      res.status(500).json({ error: error.message })
+      res.status(500).json({ error: 'Internal error' })
     }
   }
 )
@@ -944,7 +945,7 @@ router.put('/settings',
       res.json({ success: true, ...updated })
     } catch (error: any) {
       console.error('PUT /api/dm/settings error:', error)
-      res.status(500).json({ error: error.message })
+      res.status(500).json({ error: 'Internal error' })
     }
   }
 )
