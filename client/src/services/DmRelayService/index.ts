@@ -68,13 +68,32 @@ interface RelayParams {
 
 let cachedSigner: ValidatorSigner | null = null
 let signerInitTried = false
+// One-shot address-mismatch guard. Fires on the first relay attempt after
+// both the signer and ownInstanceId are resolved. If DM_RELAY_PRIVATE_KEY
+// derives a different address than the on-chain validatorAddress for this
+// instance, peers will reject our envelopes — so we hard-error and disable
+// the relay loop rather than silently waste relay attempts.
+let addressCheckDone = false
 function getSigner(): ValidatorSigner | null {
   if (cachedSigner) return cachedSigner
   if (signerInitTried) return null
   signerInitTried = true
   try {
     // No provider needed — relay only calls signDigest, never sends txs.
-    cachedSigner = getValidatorSigner({})
+    // Prefer DM_RELAY_PRIVATE_KEY so the DM signing key is isolated from
+    // the chain-submission key. Falls back to VALIDATOR_PRIVATE_KEY for
+    // back-compat (logs a startup warning below).
+    const hasDmKey = Boolean(process.env.DM_RELAY_PRIVATE_KEY)
+    if (!hasDmKey) {
+      console.warn(
+        '[DmRelay] DM_RELAY_PRIVATE_KEY not set — falling back to VALIDATOR_PRIVATE_KEY. ' +
+        'Key compromise on chain validator now extends to DM forge surface. ' +
+        'See messages/audit-2026-05-22/dm-relay-validator-trust.md.'
+      )
+    }
+    cachedSigner = getValidatorSigner({
+      privateKeyEnv: hasDmKey ? 'DM_RELAY_PRIVATE_KEY' : 'VALIDATOR_PRIVATE_KEY',
+    })
     return cachedSigner
   } catch (err: any) {
     console.error('[DmRelay] Signer init failed:', err.message)
@@ -107,6 +126,40 @@ export async function relayDmToPeers(params: RelayParams): Promise<{ attempted: 
   }
 
   const clientId = requireClientId()
+
+  // Address-mismatch guard (one-shot). Verifies the signing address derived
+  // from DM_RELAY_PRIVATE_KEY (or fallback VALIDATOR_PRIVATE_KEY) matches
+  // the on-chain validatorAddress registered for this instance. If they
+  // differ, peers will reject every envelope we send, so we disable the
+  // relay loop and log a hard error to force operator action.
+  if (!addressCheckDone) {
+    addressCheckDone = true
+    const signingAddress = signer.getAddress().toLowerCase()
+    const allPeers = getPeers(clientId)
+    const ownEntry = allPeers.find(p => p.instanceId === sourceInstanceId)
+    if (ownEntry) {
+      const registeredAddress = ownEntry.validatorAddress.toLowerCase()
+      const match = signingAddress === registeredAddress
+      console.log(
+        `[DmRelay] Address check — signing: ${signingAddress} | on-chain: ${registeredAddress} | ${match ? 'OK' : 'MISMATCH'}`
+      )
+      if (!match) {
+        console.error(
+          '[DmRelay] HARD ERROR: DM signing address does not match on-chain validatorAddress for this instance. ' +
+          'Peers will reject all relay envelopes. Relay loop DISABLED. ' +
+          'Register the DM_RELAY_PRIVATE_KEY address on-chain via CawNetworkManager.updateInstance() then restart.'
+        )
+        // Poison the cache so future calls skip without re-checking.
+        cachedSigner = null
+        return { attempted: 0 }
+      }
+    } else {
+      // Own entry not in cache yet — selfRegister may still be in progress.
+      // Reset the flag so the check runs again on the next relay attempt.
+      addressCheckDone = false
+    }
+  }
+
   const peers = getPeers(clientId).filter(p => p.active && p.instanceId !== sourceInstanceId)
   if (peers.length === 0) return { attempted: 0 }
 

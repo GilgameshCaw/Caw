@@ -3581,9 +3581,17 @@ console.log("succeededKeys", succeededKeys)
 
       l2bProvider = provider
 
-      // Submitter uses REPLICATOR_PRIVATE_KEY if present (test mode), else main validator.
-      // Both go through the signer abstraction so they can be swapped to a
+      // Submitter uses REPLICATOR_PRIVATE_KEY when present (production default),
+      // else falls back to VALIDATOR_PRIVATE_KEY for back-compat. Both go
+      // through the signer abstraction so they can be swapped to a
       // KMS/HSM/socket backend later without touching the submission code.
+      if (!REPLICATOR_PRIVATE_KEY) {
+        console.warn(
+          '[ValidatorService] REPLICATOR_PRIVATE_KEY not set — submitter and monitor share VALIDATOR_PRIVATE_KEY. ' +
+          'A leak compromises both submitter fraud AND self-monitor detection. ' +
+          'See messages/audit-2026-05-22/v04-signer.md HIGH-1.'
+        )
+      }
       l2bSubmitter = requireValidatorSigner({
         provider: l2bProvider,
         privateKeyEnv: REPLICATOR_PRIVATE_KEY ? 'REPLICATOR_PRIVATE_KEY' : 'VALIDATOR_PRIVATE_KEY',
