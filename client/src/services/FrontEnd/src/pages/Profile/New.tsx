@@ -1448,33 +1448,6 @@ console.log("BALANCE:", balance)
 
               {depositEnabled && (
                 <div className="space-y-2">
-                  <div className="relative">
-                    <input
-                      type="text"
-                      inputMode="numeric"
-                      value={depositAmount ? depositAmount.replace(/\B(?=(\d{3})+(?!\d))/g, ',') : ''}
-                      onChange={e => { setDepositAmount(e.target.value.replace(/[^0-9]/g, '')); setDepositDefaultSet(true) }}
-                      placeholder={t('new_profile.placeholder.deposit_amount')}
-                      className={`w-full px-4 py-2.5 rounded-full focus:outline-none text-sm ${
-                        isDark
-                          ? 'bg-black border border-white/20 text-white placeholder-white/30 focus:border-white/30'
-                          : 'bg-white border border-gray-300 text-black placeholder-gray-400 focus:border-gray-400'
-                      }`}
-                    />
-                    <span className="absolute right-4 top-1/2 -translate-y-1/2 text-gray-500 text-sm">CAW</span>
-                  </div>
-                  <div className="flex justify-between items-center text-xs text-gray-500 px-1">
-                    <span>
-                      {depositAmountWei > 0n && cawPrice > 0
-                        ? `~$${(convertToNumber(depositAmountWei, 18) * cawPrice).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
-                        : ''}
-                    </span>
-                    <span>
-                      {balance !== undefined
-                        ? `Available: ${formatNumber(convertToNumber(balance, 18), 0)} CAW`
-                        : ''}
-                    </span>
-                  </div>
                   <div className="flex gap-2">
                     {DOLLAR_PRESETS.map(dollars => {
                       const cawAmount = dollarToCaw(dollars)
@@ -1516,6 +1489,33 @@ console.log("BALANCE:", balance)
                     >
                       Max
                     </button>
+                  </div>
+                  <div className="relative">
+                    <input
+                      type="text"
+                      inputMode="numeric"
+                      value={depositAmount ? depositAmount.replace(/\B(?=(\d{3})+(?!\d))/g, ',') : ''}
+                      onChange={e => { setDepositAmount(e.target.value.replace(/[^0-9]/g, '')); setDepositDefaultSet(true) }}
+                      placeholder={t('new_profile.placeholder.deposit_amount')}
+                      className={`w-full px-4 py-2.5 rounded-full focus:outline-none text-sm ${
+                        isDark
+                          ? 'bg-black border border-white/20 text-white placeholder-white/30 focus:border-white/30'
+                          : 'bg-white border border-gray-300 text-black placeholder-gray-400 focus:border-gray-400'
+                      }`}
+                    />
+                    <span className="absolute right-4 top-1/2 -translate-y-1/2 text-gray-500 text-sm">CAW</span>
+                  </div>
+                  <div className="flex justify-between items-center text-xs text-gray-500 px-1">
+                    <span>
+                      {depositAmountWei > 0n && cawPrice > 0
+                        ? `~$${(convertToNumber(depositAmountWei, 18) * cawPrice).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
+                        : ''}
+                    </span>
+                    <span>
+                      {balance !== undefined
+                        ? `Available: ${formatNumber(convertToNumber(balance, 18), 0)} CAW`
+                        : ''}
+                    </span>
                   </div>
                   {depositAmountWei > 0n && (
                     <div className="text-xs text-gray-500 text-center">
