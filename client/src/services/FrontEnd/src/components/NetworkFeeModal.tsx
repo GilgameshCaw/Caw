@@ -75,6 +75,44 @@ function weiToUsd(wei: bigint | null | undefined, ethPrice: number): string {
 }
 
 /**
+ * Section header with an optional info-tooltip "?" icon.
+ * Tooltip is hover/focus-revealed and positions above the icon.
+ */
+const SectionHeader: React.FC<{
+  title: string
+  tooltip?: string
+  headerClass: string
+  isDark: boolean
+}> = ({ title, tooltip, headerClass, isDark }) => {
+  return (
+    <h3 className={`text-xs uppercase tracking-wide mb-1.5 flex items-center gap-1 ${headerClass}`}>
+      <span>{title}</span>
+      {tooltip && (
+        <span className="relative group inline-flex">
+          <button
+            type="button"
+            aria-label={`${title} info`}
+            className={`inline-flex items-center justify-center transition-colors ${
+              isDark ? 'text-white/40 hover:text-white/80' : 'text-gray-400 hover:text-gray-700'
+            }`}
+          >
+            <HiInformationCircle className="w-3.5 h-3.5" />
+          </button>
+          <span
+            role="tooltip"
+            className={`pointer-events-none absolute z-50 bottom-full mb-2 left-1/2 -translate-x-1/2 w-60 rounded-lg border px-3 py-2 text-[11px] leading-relaxed normal-case tracking-normal opacity-0 group-hover:opacity-100 group-focus-within:opacity-100 transition-opacity shadow-lg ${
+              isDark ? 'bg-black border-white/20 text-white/80' : 'bg-white border-gray-200 text-gray-700'
+            }`}
+          >
+            {tooltip}
+          </span>
+        </span>
+      )}
+    </h3>
+  )
+}
+
+/**
  * Single table row. Shows "—" when fee or ceiling hasn't loaded yet.
  */
 const FeeTableRow: React.FC<{
@@ -143,18 +181,15 @@ const NetworkFeeModal: React.FC<NetworkFeeModalProps> = ({
       />
 
       <div className="px-4 pb-5 space-y-5">
-        {/* Intro */}
-        <p className={`text-sm leading-relaxed ${mutedClass}`}>
-          Fees on{' '}
-          <span className={isDark ? 'text-white' : 'text-gray-900'}>{displayName}</span>.
-          The ceiling is a permanent cap — operators can lower it, never raise it.
-        </p>
 
-        {/* ── Section 1: Per-action fees on Sepolia-Uruk ─────────────────── */}
+        {/* ── Section 1: Per-action fees on the Network ──────────────────── */}
         <div>
-          <h3 className={`text-xs uppercase tracking-wide mb-1.5 ${headerClass}`}>
-            Per-action fees
-          </h3>
+          <SectionHeader
+            title="Per-action fees"
+            tooltip="Ceiling is a permanent cap — operators can lower it, never raise it."
+            headerClass={headerClass}
+            isDark={isDark}
+          />
           <div className="overflow-x-auto">
             <table className="w-full">
               <thead>
@@ -196,9 +231,12 @@ const NetworkFeeModal: React.FC<NetworkFeeModalProps> = ({
 
         {/* ── Section 2: Withdraw fee ─────────────────────────────────────── */}
         <div>
-          <h3 className={`text-xs uppercase tracking-wide mb-1.5 ${headerClass}`}>
-            Withdraw fee
-          </h3>
+          <SectionHeader
+            title="Withdraw fee"
+            tooltip="Locked at first auth. You pay min(locked, current) — operator can lower, never raise."
+            headerClass={headerClass}
+            isDark={isDark}
+          />
           <div className="overflow-x-auto">
             <table className="w-full">
               <tbody>
@@ -211,18 +249,16 @@ const NetworkFeeModal: React.FC<NetworkFeeModalProps> = ({
               </tbody>
             </table>
           </div>
-          <p className={`text-xs leading-relaxed mt-2 ${mutedClass}`}>
-            Locked in the first time you authenticate. You always pay the lower
-            of the locked rate and the current rate — the Network operator
-            can never raise withdraw fees on you after you've deposited.
-          </p>
         </div>
 
         {/* ── Section 3: Cross-chain (LayerZero) — separate from Network fees ─ */}
         <div>
-          <h3 className={`text-xs uppercase tracking-wide mb-1.5 ${headerClass}`}>
-            Cross-chain
-          </h3>
+          <SectionHeader
+            title="Cross-chain"
+            tooltip={`Paid to the LayerZero bridge — not a ${displayName} fee, and not part of buy-and-burn.`}
+            headerClass={headerClass}
+            isDark={isDark}
+          />
           <div className="overflow-x-auto">
             <table className="w-full">
               <tbody>
@@ -240,10 +276,6 @@ const NetworkFeeModal: React.FC<NetworkFeeModalProps> = ({
               </tbody>
             </table>
           </div>
-          <p className={`text-xs leading-relaxed mt-2 ${mutedClass}`}>
-            Paid to the LayerZero bridge for cross-chain delivery — not a{' '}
-            {displayName} fee, and not part of buy-and-burn.
-          </p>
         </div>
 
         {/* Buy-and-burn note */}
