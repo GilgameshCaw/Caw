@@ -104,7 +104,7 @@ export const FollowButton: React.FC<FollowButtonProps> = ({
       disabled={wrongWallet || disabled}
       onMouseEnter={() => setIsHovered(true)}
       onMouseLeave={() => setIsHovered(false)}
-      className={`rounded-full font-medium transition-all duration-200 ${
+      className={`rounded-full font-medium ${
         wrongWallet || disabled ? 'opacity-50 cursor-not-allowed' :
         isPending ? 'opacity-90 cursor-pointer' :
         'cursor-pointer'

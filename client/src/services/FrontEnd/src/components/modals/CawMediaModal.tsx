@@ -71,6 +71,11 @@ export default function CawMediaModal() {
     count: 0,
     setIndex: () => {},
   })
+
+  // Touch-swipe state for the image viewer (#259). `swiped` flags that the
+  // gesture crossed the swipe threshold so the panel's close-on-tap onClick
+  // can ignore the trailing click.
+  const swipeRef = useRef<{ x: number; y: number; swiped: boolean } | null>(null)
   useEffect(() => {
     const onKeyDown = (e: KeyboardEvent) => {
       if (e.key === 'Escape') {
@@ -291,6 +296,34 @@ export default function CawMediaModal() {
 
   const current = mediaItems[activeIndex]
 
+  // Horizontal touch-swipe to change image — left = next, right = prev
+  // (X-style). Purely additive: the arrow buttons and ←/→ keys still work.
+  const SWIPE_THRESHOLD = 50
+  const onViewerTouchStart = (e: React.TouchEvent) => {
+    if (e.touches.length !== 1) { swipeRef.current = null; return }
+    swipeRef.current = { x: e.touches[0].clientX, y: e.touches[0].clientY, swiped: false }
+  }
+  const onViewerTouchMove = (e: React.TouchEvent) => {
+    const s = swipeRef.current
+    if (!s || e.touches.length !== 1) return
+    const dx = e.touches[0].clientX - s.x
+    const dy = e.touches[0].clientY - s.y
+    // Commit to a swipe once it clearly beats the vertical motion.
+    if (Math.abs(dx) > SWIPE_THRESHOLD && Math.abs(dx) > Math.abs(dy)) s.swiped = true
+  }
+  const onViewerTouchEnd = (e: React.TouchEvent) => {
+    const s = swipeRef.current
+    if (!s || mediaItems.length <= 1) return
+    const t = e.changedTouches[0]
+    if (!t) return
+    const dx = t.clientX - s.x
+    const dy = t.clientY - s.y
+    if (Math.abs(dx) < SWIPE_THRESHOLD || Math.abs(dx) <= Math.abs(dy)) return
+    s.swiped = true
+    if (dx < 0 && activeIndex < mediaItems.length - 1) setIndex(activeIndex + 1)
+    else if (dx > 0 && activeIndex > 0) setIndex(activeIndex - 1)
+  }
+
   const postPanelInner = loading
     ? <div className={`${isDark ? 'text-white/70' : 'text-gray-700'}`}>Loading…</div>
     : error || !caw
@@ -408,10 +441,16 @@ export default function CawMediaModal() {
             // Tap/click the empty area around the image closes the modal.
             // Use click (not pointerdown) to avoid click-through after unmount.
             if (e.target !== e.currentTarget) return
+            // A horizontal swipe ends with a synthetic click — ignore it so
+            // swiping over the empty margin doesn't also close the modal.
+            if (swipeRef.current?.swiped) { swipeRef.current = null; return }
             e.preventDefault()
             e.stopPropagation()
             close()
           }}
+          onTouchStart={onViewerTouchStart}
+          onTouchMove={onViewerTouchMove}
+          onTouchEnd={onViewerTouchEnd}
         >
           {/* Nav arrows */}
           {mediaItems.length > 1 && (
