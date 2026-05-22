@@ -1,12 +1,13 @@
 import * as Sentry from '@sentry/node'
 
+const dsn = process.env.SENTRY_DSN
 const REDACTED = '[REDACTED]'
 const SENSITIVE_HEADER = /(token|password|signature)/i
 const ALWAYS_SCRUB = new Set(['x-session-token', 'authorization', 'cookie'])
 
-if (process.env.SENTRY_DSN) {
+if (dsn) {
   Sentry.init({
-    dsn: process.env.SENTRY_DSN,
+    dsn,
     environment: process.env.NODE_ENV || 'development',
     tracesSampleRate: process.env.NODE_ENV === 'production' ? 0.1 : 1.0,
     beforeSend(event) {

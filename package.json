@@ -9,9 +9,9 @@
     "web": "cd client && npm run web"
   },
   "devDependencies": {
-    "prisma": "^6.18.0"
+    "prisma": "~6.18.0"
   },
   "dependencies": {
-    "@prisma/client": "^6.18.0"
+    "@prisma/client": "~6.18.0"
   }
 }
