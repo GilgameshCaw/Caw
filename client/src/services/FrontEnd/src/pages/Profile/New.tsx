@@ -1379,7 +1379,7 @@ console.log("BALANCE:", balance)
                     <span className={`text-sm font-medium ${isDark ? 'text-white' : 'text-gray-900'}`}>Quick Sign — one-click posting</span>
                   </button>
                   <p className="text-yellow-500/80 text-xs mt-0.5">
-                    Skip wallet popups for posts, likes, follows, and tips. Withdrawals always require your wallet.
+                    Delegate funds to your device to skip wallet sigs
                   </p>
                 </div>
               </label>
