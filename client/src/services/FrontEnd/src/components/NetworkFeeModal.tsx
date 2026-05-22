@@ -246,7 +246,7 @@ const NetworkFeeModal: React.FC<NetworkFeeModalProps> = ({
         <div>
           <SectionHeader
             title="Withdraw fee"
-            tooltip="Locked at first auth. You pay min(locked, current) — operator can lower, never raise."
+            tooltip="Locked in when you deposit. You always pay the lower of that locked rate and the current rate — never more."
             headerClass={headerClass}
             isDark={isDark}
           />
