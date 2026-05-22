@@ -237,9 +237,10 @@ const NetworkFeeModal: React.FC<NetworkFeeModalProps> = ({
               </tr>
 
               {/* Withdraw row — label communicates the lock-in semantics
-                  inline; tooltip below has the full explanation. */}
-              <tr className={`border-t ${borderClass}`}>
-                <td className={`py-2 pr-4 text-sm ${mutedClass}`}>
+                  inline; tooltip below has the full explanation. Row is
+                  visually dimmed because the fee isn't paid now. */}
+              <tr className={`border-t ${borderClass} text-[#C6C6C6]`}>
+                <td className="py-2 pr-4 text-sm">
                   <span className="relative group inline-flex items-center gap-1">
                     <span>Maximum withdraw fee — pay later</span>
                     <button
@@ -263,7 +264,7 @@ const NetworkFeeModal: React.FC<NetworkFeeModalProps> = ({
                 </td>
                 <td
                   colSpan={2}
-                  className={`py-2 pr-4 text-sm font-mono ${isDark ? 'text-white' : 'text-gray-900'}`}
+                  className="py-2 pr-4 text-sm font-mono text-center"
                 >
                   {weiToUsd(fees.withdrawFee, ethPrice)}
                 </td>
