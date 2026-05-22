@@ -2785,7 +2785,7 @@ const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess, placehol
                     disabled={isDisabled}
                     onClick={handleSubmit}
                   >
-                    {wrongWallet ? t('post_form.button.wrong_wallet') : uploadProgress ? uploadProgress : signingProgress ? <>{t('post_form.button.signing_progress')} <span ref={signingCountRef1}>1</span>/{signingProgress.total}...</> : isSubmitting ? t('post_form.button.signing') : isThreadMode ? t('post_form.button.thread', { count: submittableChunkCount }) : replyTo ? t('post_form.button.reply') : t('post_form.button.post')}
+                    {wrongWallet ? t('post_form.button.wrong_wallet') : uploadProgress ? uploadProgress : signingProgress ? <span className="inline-flex items-center justify-center gap-1.5"><span className="w-4 h-4 border-2 border-black/30 border-t-black rounded-full animate-spin" /><span ref={signingCountRef1}>1</span>/{signingProgress.total}</span> : isSubmitting ? <span className="inline-flex items-center justify-center"><span className="w-4 h-4 border-2 border-black/30 border-t-black rounded-full animate-spin" /></span> : isThreadMode ? t('post_form.button.thread', { count: submittableChunkCount }) : replyTo ? t('post_form.button.reply') : t('post_form.button.post')}
                   </button>
                 )
                 return tooltipText ? <Tooltip text={tooltipText}>{btn}</Tooltip> : btn
@@ -3552,7 +3552,7 @@ const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess, placehol
                     disabled={isDisabled2}
                     onClick={handleSubmit}
                   >
-                    {wrongWallet2 ? t('post_form.button.wrong_wallet') : hasNoToken ? t('post_form.button.create_account') : uploadProgress ? uploadProgress : signingProgress ? <>{t('post_form.button.signing_progress')} <span ref={signingCountRef2}>1</span>/{signingProgress.total}...</> : isSubmitting ? t('post_form.button.signing') : isThreadMode ? t('post_form.button.thread', { count: submittableChunkCount }) : replyTo ? t('post_form.button.reply') : t('post_form.button.post')}
+                    {wrongWallet2 ? t('post_form.button.wrong_wallet') : hasNoToken ? t('post_form.button.create_account') : uploadProgress ? uploadProgress : signingProgress ? <span className="inline-flex items-center justify-center gap-1.5"><span className="w-4 h-4 border-2 border-black/30 border-t-black rounded-full animate-spin" /><span ref={signingCountRef2}>1</span>/{signingProgress.total}</span> : isSubmitting ? <span className="inline-flex items-center justify-center"><span className="w-4 h-4 border-2 border-black/30 border-t-black rounded-full animate-spin" /></span> : isThreadMode ? t('post_form.button.thread', { count: submittableChunkCount }) : replyTo ? t('post_form.button.reply') : t('post_form.button.post')}
                   </button>
                 )
                 return tooltipText2 ? <Tooltip text={tooltipText2}>{btn2}</Tooltip> : btn2

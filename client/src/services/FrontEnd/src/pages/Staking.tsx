@@ -946,7 +946,7 @@ const Staking = () => {
         isDark ? 'bg-black border-white/20' : 'bg-white border-gray-200'
       }`}>
         <div className="flex items-start space-x-3">
-          <div className={`w-6 h-6 rounded-full flex items-center justify-center transition-colors duration-300 ${
+          <div className={`w-6 h-6 rounded-full flex items-center justify-center flex-shrink-0 transition-colors duration-300 ${
             isDark ? 'bg-white/10' : 'bg-gray-200'
           }`}>
             <HiOutlineInformationCircle className={`w-4 h-4 transition-colors duration-300 ${
@@ -973,7 +973,7 @@ const Staking = () => {
         isDark ? 'bg-black border-white/20' : 'bg-white border-gray-200'
       }`}>
         <div className="flex items-start space-x-3">
-          <div className={`w-6 h-6 rounded-full flex items-center justify-center transition-colors duration-300 ${
+          <div className={`w-6 h-6 rounded-full flex items-center justify-center flex-shrink-0 transition-colors duration-300 ${
             isDark ? 'bg-white/10' : 'bg-gray-200'
           }`}>
             <HiOutlineInformationCircle className={`w-4 h-4 transition-colors duration-300 ${
@@ -1000,7 +1000,7 @@ const Staking = () => {
         isDark ? 'bg-black border-white/20' : 'bg-white border-gray-200'
       }`}>
         <div className="flex items-start space-x-3">
-          <div className={`w-6 h-6 rounded-full flex items-center justify-center transition-colors duration-300 ${
+          <div className={`w-6 h-6 rounded-full flex items-center justify-center flex-shrink-0 transition-colors duration-300 ${
             isDark ? 'bg-white/10' : 'bg-gray-200'
           }`}>
             <HiOutlineInformationCircle className={`w-4 h-4 transition-colors duration-300 ${
