@@ -236,23 +236,12 @@ const NetworkFeeModal: React.FC<NetworkFeeModalProps> = ({
                 </td>
               </tr>
 
-              {/* "Pay later" amber divider — separates pay-now from withdraw */}
-              <tr className={`border-t-2 ${isDark ? 'border-amber-500/40' : 'border-amber-400/70'}`}>
-                <td
-                  colSpan={3}
-                  className={`pt-3 pb-1 text-[11px] uppercase tracking-wide ${isDark ? 'text-amber-500' : 'text-amber-700'}`}
-                >
-                  Pay later
-                </td>
-              </tr>
-
-              {/* Withdraw row — single cell value spans Current+Ceiling so it
-                  visually communicates "this number is both current AND your
-                  permanent max". Label carries the lock-in tooltip. */}
-              <tr>
+              {/* Withdraw row — label communicates the lock-in semantics
+                  inline; tooltip below has the full explanation. */}
+              <tr className={`border-t ${borderClass}`}>
                 <td className={`py-2 pr-4 text-sm ${mutedClass}`}>
                   <span className="relative group inline-flex items-center gap-1">
-                    <span>Withdraw CAW</span>
+                    <span>Maximum withdraw fee — pay later</span>
                     <button
                       type="button"
                       aria-label="Withdraw fee info"
