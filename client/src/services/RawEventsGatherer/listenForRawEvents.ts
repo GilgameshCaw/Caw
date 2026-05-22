@@ -2,7 +2,7 @@
 import { ContractEventPayload, WebSocketProvider, Contract, Interface, keccak256, toUtf8Bytes, getBytes, concat } from 'ethers'
 import type { Log } from '@ethersproject/abstract-provider'
 import { CAW_ACTIONS_ADDRESS, CAW_ACTIONS_ERC1271_ADDRESS } from '../../abi/addresses'
-import { makeFallbackJsonRpcProvider, makeWebSocketProvider, getL2HttpRpcUrls, getL2WsSecret, waitForRateLimit, redactRpcUrl } from '../../utils/rpcProvider'
+import { makeFallbackJsonRpcProvider, makeVerifiedFallbackJsonRpcProvider, makeWebSocketProvider, getL2HttpRpcUrls, getL2WsSecret, waitForRateLimit, redactRpcUrl } from '../../utils/rpcProvider'
 import { scanLogsForward } from '../../utils/chunkedLogs'
 import delay from '../../tools/delay'
 import SmlTxt from 'smltxt'
@@ -139,7 +139,8 @@ export default async function listenForRawEvents(
   // sepolia.base.org is more reliable). Operators should keep that in mind
   // when choosing fallback URLs — pruning produces empty results, not errors.
   const l2HttpRpcUrls = getL2HttpRpcUrls(config.rpcUrl)
-  const httpProvider = makeFallbackJsonRpcProvider(l2HttpRpcUrls, config.chainId)
+  const expectedL2ChainId = process.env.L2_CHAIN_ID ? Number(process.env.L2_CHAIN_ID) : config.chainId
+  const httpProvider = await makeVerifiedFallbackJsonRpcProvider(l2HttpRpcUrls, expectedL2ChainId)
   if (l2HttpRpcUrls.length > 1) {
     console.log(`[RawEventsGatherer] HTTP RPC (with ${l2HttpRpcUrls.length - 1} fallback(s)): ${redactRpcUrl(l2HttpRpcUrls[0])}`)
   }

@@ -21,7 +21,7 @@ import { z } from 'zod'
 import 'dotenv/config'
 import { Service } from '../../Service'
 import { Contract, AbstractProvider, Interface } from 'ethers'
-import { makeJsonRpcProvider, getL1HttpRpcUrl } from '../../utils/rpcProvider'
+import { makeVerifiedJsonRpcProvider, getL1HttpRpcUrl } from '../../utils/rpcProvider'
 import { getValidatorSigner, type ValidatorSigner } from '../../utils/signer'
 import { scanLogsBackward } from '../../utils/chunkedLogs'
 import { cawNetworkManagerAbi } from '../../abi/generated'
@@ -312,31 +312,24 @@ export const instanceRegistryService: Service = {
     const apiUrl = process.env.INSTANCE_API_URL || cfg.apiUrl
     const pollIntervalMs = cfg.pollIntervalMs ?? 60_000
 
-    const provider = makeJsonRpcProvider(l1RpcUrl, 11155111)
-    const signer: ValidatorSigner | null = getValidatorSigner({ provider })
-
-    // Even without a signer we still want peer discovery — a
-    // frontend-api node has no validator wallet but still benefits from
-    // knowing about peers so its FE bundle can fall back to them.
-    const canRegister = !!(signer && apiUrl)
-    if (!signer) {
-      console.log('[InstanceRegistry] No validator key configured — peer discovery only (no self-registration)')
-    } else if (!apiUrl) {
-      console.log('[InstanceRegistry] No INSTANCE_API_URL — peer discovery only (no self-registration)')
-    }
+    const expectedL1ChainId = process.env.L1_CHAIN_ID ? Number(process.env.L1_CHAIN_ID) : 11155111
 
     let instanceId: number | null = null
     let pollTimer: NodeJS.Timeout | null = null
     let stopped = false
 
-    const clientManager = signer
-      ? new Contract(NETWORK_MANAGER_ADDRESS, cawNetworkManagerAbi, signer.asEthersSigner())
-      : new Contract(NETWORK_MANAGER_ADDRESS, cawNetworkManagerAbi, provider)
+    // provider, signer, canRegister, clientManager are initialised inside the
+    // started IIFE so the chain-ID verification probe (async) completes before
+    // any RPC calls are made. Variables are hoisted here and assigned there.
+    let _provider: AbstractProvider
+    let _signer: ValidatorSigner | null
+    let _canRegister: boolean
+    let _clientManager: Contract
 
     /** First refresh: populates the cache. Subsequent refreshes log diffs. */
     async function refreshAndLog() {
       try {
-        const { added, changed } = await refreshPeers(provider, NETWORK_MANAGER_ADDRESS, clientId)
+        const { added, changed } = await refreshPeers(_provider, NETWORK_MANAGER_ADDRESS, clientId)
         for (const p of added) {
           console.log(
             `[InstanceRegistry] Peer discovered — instance #${p.instanceId} ` +
@@ -356,8 +349,8 @@ export const instanceRegistryService: Service = {
 
     /** Self-registration. Reads the cache populated by refreshAndLog. */
     async function selfRegister() {
-      if (!canRegister || !signer) return
-      const validatorAddress = signer.getAddress()
+      if (!_canRegister || !_signer) return
+      const validatorAddress = _signer.getAddress()
       console.log(`[InstanceRegistry] Checking registration for network ${clientId}, validator ${validatorAddress}, url ${apiUrl}`)
 
       // Find an existing instance owned by us pointing at our apiUrl.
@@ -381,15 +374,15 @@ export const instanceRegistryService: Service = {
           console.log(`[InstanceRegistry] Already registered as instance #${instanceId} for this URL`)
           if (existingPeer.validatorAddress.toLowerCase() !== validatorAddress.toLowerCase()) {
             console.log(`[InstanceRegistry] Updating validator address on instance #${instanceId}`)
-            const updateTx = await clientManager.updateInstance(instanceId, apiUrl, validatorAddress)
+            const updateTx = await _clientManager.updateInstance(instanceId, apiUrl, validatorAddress)
             await updateTx.wait()
             console.log(`[InstanceRegistry] Instance #${instanceId} updated`)
           }
         } else {
           console.log(`[InstanceRegistry] Registering new instance for network ${clientId}, url ${apiUrl}...`)
-          const tx = await clientManager.registerInstance(clientId, apiUrl, validatorAddress)
+          const tx = await _clientManager.registerInstance(clientId, apiUrl, validatorAddress)
           const receipt = await tx.wait()
-          const iface = clientManager.interface
+          const iface = _clientManager.interface
           for (const log of receipt.logs) {
             try {
               const parsed = iface.parseLog(log)
@@ -411,6 +404,20 @@ export const instanceRegistryService: Service = {
     }
 
     const started = (async () => {
+      // Chain-ID-verified provider construction (async probe). Falls through
+      // with a warning on transient RPC failure — service stays up.
+      _provider = await makeVerifiedJsonRpcProvider(l1RpcUrl, expectedL1ChainId)
+      _signer = getValidatorSigner({ provider: _provider as any })
+      _canRegister = !!(_signer && apiUrl)
+      if (!_signer) {
+        console.log('[InstanceRegistry] No validator key configured — peer discovery only (no self-registration)')
+      } else if (!apiUrl) {
+        console.log('[InstanceRegistry] No INSTANCE_API_URL — peer discovery only (no self-registration)')
+      }
+      _clientManager = _signer
+        ? new Contract(NETWORK_MANAGER_ADDRESS, cawNetworkManagerAbi, _signer.asEthersSigner())
+        : new Contract(NETWORK_MANAGER_ADDRESS, cawNetworkManagerAbi, _provider)
+
       await refreshAndLog()
       await selfRegister()
       // Kick off the periodic refresh. Subsequent ticks log only diffs

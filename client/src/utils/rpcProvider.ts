@@ -442,6 +442,45 @@ function buildAuthenticatedFetchRequest(url: string, explicitSecret?: string): F
 // ============================================
 
 /**
+ * Probe a freshly-constructed provider to verify it is serving the expected
+ * chain. Called once at construction time by the makeVerified* helpers.
+ *
+ * Timeout-tolerant: if the probe itself throws or times out (transient RPC
+ * unavailability at startup), we log a warning and return — the caller keeps
+ * the provider with staticNetwork. Only a *confirmed* mismatch throws.
+ *
+ * The warning message explicitly tells the operator to check L*_RPC_URL_HTTP
+ * so they can act on it without grepping source code.
+ */
+async function verifyChainId(provider: { getNetwork(): Promise<{ chainId: bigint } > }, expectedChainId: number, url: string): Promise<void> {
+  const PROBE_TIMEOUT_MS = 10_000
+  let net: { chainId: bigint }
+  try {
+    net = await Promise.race([
+      provider.getNetwork(),
+      new Promise<never>((_, reject) =>
+        setTimeout(() => reject(new Error('probe timeout')), PROBE_TIMEOUT_MS)
+      ),
+    ])
+  } catch (e: any) {
+    console.warn(
+      `[rpcProvider] chain-ID probe failed for ${redactRpcUrl(url)} — ` +
+      `continuing with staticNetwork (expected chainId ${expectedChainId}). ` +
+      `If this persists, the RPC may be down OR pointing to the wrong chain — ` +
+      `verify L*_RPC_URL_HTTP. Error: ${e?.message || e}`
+    )
+    return
+  }
+  const actual = Number(net.chainId)
+  if (actual !== expectedChainId) {
+    throw new Error(
+      `ChainIdMismatchError: expected ${expectedChainId} got ${actual} on ${redactRpcUrl(url)}. ` +
+      `This is a DNS/BGP trust boundary violation. Check L*_RPC_URL_HTTP points at the right chain.`
+    )
+  }
+}
+
+/**
  * Create a JsonRpcProvider with staticNetwork + throttle.
  * Pass chainId to skip the initial eth_chainId call.
  *
@@ -549,4 +588,50 @@ export function makeWebSocketProvider(url: string, chainId?: number, secret?: st
     }
   }
   return wrapSend(provider)
+}
+
+// ============================================
+// VERIFIED PROVIDER FACTORIES
+// ============================================
+// These wrappers call makeJsonRpcProvider / makeFallbackJsonRpcProvider /
+// makeWebSocketProvider and then probe the RPC once via getNetwork() to
+// assert the returned chainId matches the expected value. Protects indexers
+// against DNS hijack / BGP poisoning / misconfigured RPC URLs that could
+// route them to the wrong chain and produce slashable submissions.
+//
+// DO NOT use these for the ValidatorService archive provider — that path
+// already has its own post-construction check (ValidatorService.ts:3568,
+// audit fix 2026-05-13 V3) and must remain independent.
+
+/**
+ * Like makeJsonRpcProvider but probes eth_chainId once at construction.
+ * Throws ChainIdMismatchError on confirmed mismatch; warns and falls through
+ * on transient RPC failure (indexer startup must tolerate unavailability).
+ */
+export async function makeVerifiedJsonRpcProvider(url: string, expectedChainId: number, secret?: string): Promise<JsonRpcProvider> {
+  const provider = makeJsonRpcProvider(url, expectedChainId, secret)
+  await verifyChainId(provider, expectedChainId, url)
+  return provider
+}
+
+/**
+ * Like makeFallbackJsonRpcProvider but probes the primary URL's chainId once.
+ * Uses the first URL for the probe (it's the operator-configured primary).
+ */
+export async function makeVerifiedFallbackJsonRpcProvider(urls: string[], expectedChainId: number): Promise<AbstractProvider> {
+  const provider = makeFallbackJsonRpcProvider(urls, expectedChainId)
+  // Probe via the first URL — FallbackProvider doesn't expose getNetwork()
+  // in the same way, so we build a throw-away single provider for the probe only.
+  const probe = makeJsonRpcProvider(urls[0], expectedChainId)
+  await verifyChainId(probe, expectedChainId, urls[0])
+  return provider
+}
+
+/**
+ * Like makeWebSocketProvider but probes eth_chainId once at construction.
+ */
+export async function makeVerifiedWebSocketProvider(url: string, expectedChainId: number, secret?: string): Promise<WebSocketProvider> {
+  const provider = makeWebSocketProvider(url, expectedChainId, secret)
+  await verifyChainId(provider, expectedChainId, url)
+  return provider
 }
