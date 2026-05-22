@@ -365,10 +365,18 @@ export const NewProfile: React.FC = () => {
   // Quick-pick dollar buttons on the "Pay with ETH" tab. Default starter
   // set when the username's USD cost is small; otherwise scales to a
   // sequence that starts above the username cost.
-  const ethQuickPickDollars = useMemo(
-    () => ethQuickPicksForUsernameCost(costInDollars),
-    [costInDollars]
-  )
+  //
+  // While the captive typewriter is animating the username field, freeze
+  // the buttons so they don't flicker through 4-5 different value tiers
+  // as the typewriter types each new word.
+  const ethQuickPickDollarsRef = useRef<number[]>([20, 50, 100, 300])
+  const ethQuickPickDollars = useMemo(() => {
+    const animating = isCaptive && !typewriterStopped
+    if (animating) return ethQuickPickDollarsRef.current
+    const next = ethQuickPicksForUsernameCost(costInDollars)
+    ethQuickPickDollarsRef.current = next
+    return next
+  }, [costInDollars, isCaptive, typewriterStopped])
 
   const { data: existingId, isLoading: checkingUsername } = useReadContract({
     address:      CAW_NAMES_MINTER_ADDRESS,
