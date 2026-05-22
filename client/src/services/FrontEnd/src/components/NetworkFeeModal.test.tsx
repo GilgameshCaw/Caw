@@ -100,13 +100,15 @@ describe('NetworkFeeModal', () => {
     expect(dashes.length).toBeGreaterThanOrEqual(8)
   })
 
-  it('renders USD-converted fee when fees are loaded', () => {
-    // mintFee = 0.001 ETH = 1e15 wei → $2 at $2000/ETH
+  it('renders USD-converted fee when fees are loaded (doubled — operator + buy-and-burn)', () => {
+    // payFee() in CawProfile charges 2× the per-Network fee: half to the
+    // operator, half to buy-and-burn. The modal therefore renders 2× the
+    // raw on-chain value so the user sees what they actually pay.
     mockNetworkFees = {
       ...mockNetworkFees,
-      mintFee: 1_000_000_000_000_000n,
-      mintFeeCeiling: 2_000_000_000_000_000n,
-      depositFee: 500_000_000_000_000n,
+      mintFee: 1_000_000_000_000_000n,         // 0.001 ETH → displayed as 0.002 ETH = $4.00
+      mintFeeCeiling: 2_000_000_000_000_000n,  // 0.002 ETH → displayed as 0.004 ETH = $8.00
+      depositFee: 500_000_000_000_000n,        // 0.0005 ETH → displayed as 0.001 ETH = $2.00
       depositFeeCeiling: 1_000_000_000_000_000n,
       authFee: 0n,
       authFeeCeiling: 0n,
@@ -117,11 +119,10 @@ describe('NetworkFeeModal', () => {
 
     render(<NetworkFeeModal {...DEFAULT_PROPS} />)
 
-    // mintFee: 0.001 ETH × $2000 = $2.00
-    // (may appear in both current + ceiling columns; use getAllByText)
+    // mintFee doubled: 0.001 × 2 × $2000 = $4.00
+    expect(screen.getAllByText('~$4.00').length).toBeGreaterThanOrEqual(1)
+    // depositFee doubled: 0.0005 × 2 × $2000 = $2.00
     expect(screen.getAllByText('~$2.00').length).toBeGreaterThanOrEqual(1)
-    // depositFee: 0.0005 ETH × $2000 = $1.00
-    expect(screen.getAllByText('~$1.00').length).toBeGreaterThanOrEqual(1)
   })
 
   it('shows the LZ fee when provided', () => {

@@ -75,6 +75,16 @@ function weiToUsd(wei: bigint | null | undefined, ethPrice: number): string {
 }
 
 /**
+ * Double a wei value (null/undefined passthrough). Used to display the
+ * total amount the user pays per fee event: `CawProfile.payFee()` charges
+ * `2× fee` — half to the Network operator, half to buy-and-burn — so the
+ * raw per-Network fee on `CawNetworkManager` is one side of that pair.
+ */
+function dbl(wei: bigint | null | undefined): bigint | null | undefined {
+  return wei == null ? wei : wei * 2n
+}
+
+/**
  * Single table row. Shows "—" when fee or ceiling hasn't loaded yet.
  */
 const FeeTableRow: React.FC<{
@@ -188,20 +198,20 @@ const NetworkFeeModal: React.FC<NetworkFeeModalProps> = ({
             <tbody>
               <FeeTableRow
                 label="Mint username"
-                current={weiToUsd(fees.mintFee, ethPrice)}
-                ceiling={weiToUsd(fees.mintFeeCeiling, ethPrice)}
+                current={weiToUsd(dbl(fees.mintFee), ethPrice)}
+                ceiling={weiToUsd(dbl(fees.mintFeeCeiling), ethPrice)}
                 isDark={isDark}
               />
               <FeeTableRow
                 label="Deposit CAW"
-                current={weiToUsd(fees.depositFee, ethPrice)}
-                ceiling={weiToUsd(fees.depositFeeCeiling, ethPrice)}
+                current={weiToUsd(dbl(fees.depositFee), ethPrice)}
+                ceiling={weiToUsd(dbl(fees.depositFeeCeiling), ethPrice)}
                 isDark={isDark}
               />
               <FeeTableRow
                 label="Authenticate (extra Network)"
-                current={weiToUsd(fees.authFee, ethPrice)}
-                ceiling={weiToUsd(fees.authFeeCeiling, ethPrice)}
+                current={weiToUsd(dbl(fees.authFee), ethPrice)}
+                ceiling={weiToUsd(dbl(fees.authFeeCeiling), ethPrice)}
                 isDark={isDark}
               />
               {/* Cross-chain LZ row — not a Network fee, hover the label for context */}
@@ -239,7 +249,7 @@ const NetworkFeeModal: React.FC<NetworkFeeModalProps> = ({
               {/* Withdraw row — label communicates the lock-in semantics
                   inline; tooltip below has the full explanation. Row is
                   visually dimmed because the fee isn't paid now. */}
-              <tr className={`border-t ${borderClass} text-[#6c6c6c]`}>
+              <tr className="border-t border-[#4f3c0096] text-[#6c6c6c]">
                 <td className="py-2 pr-4 text-sm">
                   <span className="relative group inline-flex items-center gap-1">
                     <span>Maximum withdraw fee</span>
@@ -266,7 +276,7 @@ const NetworkFeeModal: React.FC<NetworkFeeModalProps> = ({
                   colSpan={2}
                   className="py-2 pr-4 text-sm font-mono text-center"
                 >
-                  {weiToUsd(fees.withdrawFee, ethPrice)} <span className="font-sans">(pay later)</span>
+                  {weiToUsd(dbl(fees.withdrawFee), ethPrice)} <span className="font-sans">(pay later)</span>
                 </td>
               </tr>
             </tbody>
