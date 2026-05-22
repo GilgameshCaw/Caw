@@ -140,6 +140,10 @@ export default function Web3Provider({ children, queryClient }: Web3ProviderProp
       <QueryClientProvider client={queryClient}>
         <RainbowKitProvider
           theme={darkTheme({ accentColor: "#f7b72b", accentColorForeground: "#10101d", borderRadius: "medium" })}
+          // Suppress RainbowKit's built-in avatar (gradient blockie / ENS image)
+          // in the wallet menu — the app renders its own profile avatar elsewhere
+          // and the RK one was visually competing inside the connected-account chip.
+          avatar={() => null}
         >
           {children}
         </RainbowKitProvider>
