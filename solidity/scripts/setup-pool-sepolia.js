@@ -55,10 +55,11 @@ const MCAW_ADDRESS = '0x56817dc696448135203C0556f702c6a953260411';
 const SPONSOR_WALLET = '0xF71338f3eAa483aA66125598B09BA1988e694a95'; // same as deployer for now
 const SPONSOR_TARGET_MCAW = ethers.parseUnits('100000000', 18); // 100M mCAW
 
-// Pool sizing. Implied ratio: 1 ETH = 100M mCAW (close to historical mainnet).
-// Steep enough to exercise slippage logic without sinking too much Sepolia ETH.
+// Pool sizing. Implied ratio: 0.1 ETH ↔ 4.8B mCAW (mainnet ratio: 1 ETH ↔ 48B CAW).
+// Matches mainnet so the FE's USD math is accurate; testnet pool is small enough
+// that an opportunistic drain costs the deployer ~0.1 Sepolia ETH, not real money.
 const POOL_ETH_AMOUNT  = ethers.parseEther('0.1');
-const POOL_MCAW_AMOUNT = ethers.parseUnits('10000000', 18); // 10M mCAW
+const POOL_MCAW_AMOUNT = ethers.parseUnits('4800000000', 18); // 4.8B mCAW
 
 // Threshold below which we re-add liquidity (allows recovery from a half-failed run).
 const POOL_REFILL_THRESHOLD_BPS = 5000; // 50% of target
