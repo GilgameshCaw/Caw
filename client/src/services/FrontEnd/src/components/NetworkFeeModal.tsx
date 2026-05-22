@@ -145,10 +145,9 @@ const NetworkFeeModal: React.FC<NetworkFeeModalProps> = ({
       <div className="px-4 pb-5 space-y-4">
         {/* Intro */}
         <p className={`text-sm leading-relaxed ${mutedClass}`}>
-          These are the fees you pay when you mint, deposit, authenticate, or
-          withdraw on <span className={isDark ? 'text-white' : 'text-gray-900'}>{displayName}</span>.
-          The ceiling is a permanent upper bound the Network operator committed to —
-          they can lower it, never raise it.
+          Fees for minting, depositing, auth, and withdrawing on{' '}
+          <span className={isDark ? 'text-white' : 'text-gray-900'}>{displayName}</span>.
+          The ceiling is a permanent cap — operators can lower it, never raise it.
         </p>
 
         {/* Fee table */}
