@@ -24,12 +24,40 @@ export interface PasskeyStepProps {
 
 type Status = 'idle' | 'enrolling' | 'error'
 
+/**
+ * Humanizes the raw WebAuthn DOMException messages the browser throws.
+ * Returns { text, learnMoreUrl? } so the UI can render the URL as a
+ * proper hyperlink instead of pasting it inline in the body text.
+ */
+function humanizeWebAuthnError(raw: string): { text: string; learnMoreUrl?: string } {
+  // The browser throws `NotAllowedError: The operation either timed out
+  // or was not allowed. See: https://www.w3.org/TR/webauthn-2/...`
+  if (/timed out|was not allowed|NotAllowedError/i.test(raw)) {
+    return {
+      text: 'The passkey prompt was cancelled or timed out. Try again — when the prompt appears, accept it within a few seconds.',
+      learnMoreUrl: 'https://www.w3.org/TR/webauthn-2/#sctn-privacy-considerations-client',
+    }
+  }
+  if (/InvalidStateError/i.test(raw)) {
+    return { text: 'A passkey for this account already exists on this device.' }
+  }
+  if (/SecurityError/i.test(raw)) {
+    return { text: "This page can't create a passkey (the origin doesn't match the relying party). If you're on a fresh local dev server, try via https or localhost." }
+  }
+  if (/NotSupportedError/i.test(raw)) {
+    return { text: "Your device or browser doesn't support passkeys yet." }
+  }
+  // Fallback: strip any trailing inline URL so it doesn't render as plain text.
+  const stripped = raw.replace(/See:?\s+https?:\/\/\S+\.?/i, '').trim()
+  return { text: stripped || raw }
+}
+
 export default function PasskeyStep({ username, onNext, onBack }: PasskeyStepProps) {
   const { isDark } = useTheme()
   const t = useT()
 
   const [status, setStatus] = useState<Status>('idle')
-  const [errorMsg, setErrorMsg] = useState<string | null>(null)
+  const [errorMsg, setErrorMsg] = useState<{ text: string; learnMoreUrl?: string } | null>(null)
 
   const mutedClass = isDark ? 'text-white/50' : 'text-gray-500'
   const strongClass = isDark ? 'text-white' : 'text-gray-900'
@@ -48,9 +76,9 @@ export default function PasskeyStep({ username, onNext, onBack }: PasskeyStepPro
       // Success — advance immediately with the pubkey
       onNext(pubkey)
     } catch (err: unknown) {
-      const msg =
+      const raw =
         err instanceof Error ? err.message : t('onboarding.passkey.error_generic')
-      setErrorMsg(msg)
+      setErrorMsg(humanizeWebAuthnError(raw))
       setStatus('error')
     }
   }
@@ -89,11 +117,25 @@ export default function PasskeyStep({ username, onNext, onBack }: PasskeyStepPro
         </ul>
       </div>
 
-      {/* Error message */}
+      {/* Error message — text body, optional "Learn more" link rendered
+          as a real hyperlink (not pasted inline). */}
       {status === 'error' && errorMsg && (
         <div className={`rounded-xl p-4 border ${isDark ? 'bg-red-500/10 border-red-500/30' : 'bg-red-50 border-red-200'}`}>
           <p className={`text-sm ${isDark ? 'text-red-400' : 'text-red-700'}`}>
-            {errorMsg}
+            {errorMsg.text}
+            {errorMsg.learnMoreUrl && (
+              <>
+                {' '}
+                <a
+                  href={errorMsg.learnMoreUrl}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="underline hover:opacity-80"
+                >
+                  Learn more
+                </a>
+              </>
+            )}
           </p>
         </div>
       )}

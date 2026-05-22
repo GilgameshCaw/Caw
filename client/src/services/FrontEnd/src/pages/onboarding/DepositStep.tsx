@@ -13,6 +13,7 @@ import { useState, useCallback } from 'react'
 import { useTheme } from '~/hooks/useTheme'
 import { useT } from '~/i18n/I18nProvider'
 import { usePriceStore } from '~/store/tokenDataStore'
+import { formatUsd } from '~/utils/numberFormat'
 
 // Coingecko ID used in the price map for CAW
 const CAW_PRICE_KEY = 'a-hunters-dream'
@@ -23,9 +24,17 @@ export const MIN_DEPOSIT_CAW = 1_000_000n * 10n ** 18n
 /** Human-readable minimum (used in UI labels) */
 const MIN_HUMAN = 1_000_000
 
-/** Slider range: 1M → 50M CAW (human units) */
-const SLIDER_MIN_HUMAN = MIN_HUMAN
-const SLIDER_MAX_HUMAN = 50_000_000
+/**
+ * Slider USD range. At CAW ≈ $3.8e-8, $120 ≈ 3.16B CAW — a reasonable
+ * upper bound for "I want a fully-funded profile to mint + caw freely
+ * for months without topping up." Slider CAW bounds derive from this
+ * USD ceiling + the live price, so when CAW price moves the slider
+ * automatically rescales. The on-chain contract floor (MIN_DEPOSIT_CAW)
+ * is still respected — when the live USD price puts the contract floor
+ * above the slider $0 mark we clamp to the contract minimum.
+ */
+const SLIDER_USD_MIN = 0
+const SLIDER_USD_MAX = 120
 
 /** Convert human CAW units to base unit bigint */
 function humanToBigInt(human: number): bigint {
@@ -72,20 +81,25 @@ export default function DepositStep({
   const cawPriceUsd: number | undefined = priceMap[CAW_PRICE_KEY]
   const usdEstimate =
     cawPriceUsd !== undefined
-      ? (currentHuman * cawPriceUsd).toLocaleString('en-US', {
-          style: 'currency',
-          currency: 'USD',
-          maximumFractionDigits: 2,
-        })
+      ? `$${formatUsd(currentHuman * cawPriceUsd)}`
       : undefined
 
+  // Slider's value is in USD cents (so the range can be 0–12000 with
+  // step 100 = $1 increments). We convert USD → CAW on the way in.
   const handleSliderChange = useCallback(
     (e: React.ChangeEvent<HTMLInputElement>) => {
-      const human = parseInt(e.target.value, 10)
-      setInputValue(human.toString())
-      onDepositChange(humanToBigInt(human))
+      const usdCents = parseInt(e.target.value, 10)
+      const usd = usdCents / 100
+      // Convert USD → CAW using the live price. If price isn't loaded yet,
+      // treat one slider unit as 1M CAW so the slider still feels responsive.
+      const cawHuman = cawPriceUsd && cawPriceUsd > 0
+        ? Math.round(usd / cawPriceUsd)
+        : usdCents * 10_000  // fallback: 1¢ ≈ 10K CAW (works around $3.8e-8)
+      const clamped = Math.max(cawHuman, MIN_HUMAN)
+      setInputValue(clamped.toString())
+      onDepositChange(humanToBigInt(clamped))
     },
-    [onDepositChange],
+    [onDepositChange, cawPriceUsd],
   )
 
   const handleInputChange = useCallback(
@@ -109,9 +123,13 @@ export default function DepositStep({
     }
   }, [inputValue, onDepositChange])
 
+  // Derive slider position from the current CAW amount in USD cents.
+  // Clamped to [0, SLIDER_USD_MAX * 100] so it stays inside the visible
+  // track even if the user typed a precise larger amount above the slider's range.
+  const currentUsd = cawPriceUsd && cawPriceUsd > 0 ? currentHuman * cawPriceUsd : 0
   const sliderValue = Math.min(
-    Math.max(currentHuman, SLIDER_MIN_HUMAN),
-    SLIDER_MAX_HUMAN,
+    Math.max(Math.round(currentUsd * 100), SLIDER_USD_MIN * 100),
+    SLIDER_USD_MAX * 100,
   )
 
   return (
@@ -135,20 +153,22 @@ export default function DepositStep({
         )}
       </div>
 
-      {/* Slider */}
+      {/* Slider — USD-denominated. Range $0–$120, step $1. The CAW
+          equivalent slides under the hood; the contract floor
+          (MIN_DEPOSIT_CAW) is enforced after slider-to-CAW conversion. */}
       <div className="space-y-2">
         <input
           type="range"
-          min={SLIDER_MIN_HUMAN}
-          max={SLIDER_MAX_HUMAN}
-          step={100_000}
+          min={SLIDER_USD_MIN * 100}
+          max={SLIDER_USD_MAX * 100}
+          step={100}
           value={sliderValue}
           onChange={handleSliderChange}
           className="w-full accent-yellow-500 cursor-pointer"
         />
         <div className={`flex justify-between text-xs ${mutedClass}`}>
-          <span>{formatCaw(SLIDER_MIN_HUMAN)} CAW</span>
-          <span>{formatCaw(SLIDER_MAX_HUMAN)} CAW</span>
+          <span>${SLIDER_USD_MIN}</span>
+          <span>${SLIDER_USD_MAX}</span>
         </div>
       </div>
 

@@ -1461,7 +1461,7 @@
   "onboarding.vault.title": "Create a vault password",
   "onboarding.vault.subtitle": "This password encrypts your recovery file. Keep it safe — we cannot reset it.",
   "onboarding.vault.warning_title": "No recovery without this password",
-  "onboarding.vault.warning_body": "Your vault password and recovery file together are the only way to restore your account on a new device. We cannot help you recover it.",
+  "onboarding.vault.warning_body": "Your vault password and recovery file are the only way to restore your account on a new device. We can't help recover them.",
   "onboarding.vault.password_label": "Vault password",
   "onboarding.vault.password_placeholder": "Enter a strong password",
   "onboarding.vault.confirm_label": "Confirm password",

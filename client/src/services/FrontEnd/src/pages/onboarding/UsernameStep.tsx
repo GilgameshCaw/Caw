@@ -8,18 +8,47 @@
  * Availability check is debounced so we don't fire per-keystroke RPC calls.
  */
 
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useMemo } from 'react'
 import { useReadContract } from 'wagmi'
 import { cawProfileMinterAbi } from '~/../../../abi/generated'
 import { CAW_NAMES_MINTER_ADDRESS } from '~/../../../abi/addresses'
 import { chains } from '~/config/chains'
 import { useTheme } from '~/hooks/useTheme'
 import { useT } from '~/i18n/I18nProvider'
+import { usePriceStore } from '~/store/tokenDataStore'
+import { formatUsd } from '~/utils/numberFormat'
 
 const DEBOUNCE_MS = 500
 
 // Lowercase alphanumeric + underscore; min 3, max 24 chars
 const USERNAME_REGEX = /^[a-z0-9_]{3,24}$/
+
+// Username burn cost schedule (whole CAW, length → cost). Mirrors
+// COST_SCHEDULE in pages/Profile/New.tsx — keep these in sync, or
+// extract to a shared module if a third callsite ever shows up.
+const COST_SCHEDULE: Record<number, number> = {
+  1: 1_000_000_000_000,
+  2:   240_000_000_000,
+  3:    60_000_000_000,
+  4:     6_000_000_000,
+  5:       200_000_000,
+  6:        20_000_000,
+  7:        10_000_000,
+}
+const DEFAULT_COST = 1_000_000  // 8+ chars
+
+function cawCostForLength(len: number): number {
+  if (len === 0) return 0
+  return COST_SCHEDULE[len] ?? DEFAULT_COST
+}
+
+function formatCawCompact(caw: number): string {
+  if (caw >= 1_000_000_000_000) return `${(caw / 1_000_000_000_000).toFixed(0)}T`
+  if (caw >= 1_000_000_000) return `${(caw / 1_000_000_000).toFixed(0)}B`
+  if (caw >= 1_000_000) return `${(caw / 1_000_000).toFixed(0)}M`
+  if (caw >= 1_000) return `${(caw / 1_000).toFixed(0)}K`
+  return caw.toString()
+}
 
 export interface UsernameStepProps {
   username: string
@@ -38,6 +67,14 @@ export default function UsernameStep({
 }: UsernameStepProps) {
   const { isDark } = useTheme()
   const t = useT()
+  const cawPriceUsd = usePriceStore(s => s.priceMap['a-hunters-dream']) as number | undefined
+
+  // Cost depends on username length — shorter = much more expensive. The
+  // burn cost is paid in CAW at mint time and locked forever.
+  const cawCost = useMemo(() => cawCostForLength(username.length), [username])
+  const usdCost = cawPriceUsd !== undefined && cawCost > 0
+    ? cawCost * cawPriceUsd
+    : null
 
   // Debounced value used for the RPC call — avoids a query per keystroke
   const [debouncedUsername, setDebouncedUsername] = useState(username)
@@ -135,25 +172,69 @@ export default function UsernameStep({
           </div>
         </div>
 
-        {/* Hint messages below the input */}
-        <div className="min-h-[1.25rem]">
-          {username.length > 0 && !isValidFormat && !isTyping && (
-            <p className="text-xs text-red-500">
-              {t('onboarding.username.format_hint')}
-            </p>
-          )}
-          {!isTyping && usernameAvailable === true && (
-            <p className="text-xs text-green-500">
-              {t('onboarding.username.available')}
-            </p>
-          )}
-          {!isTyping && usernameAvailable === false && (
-            <p className="text-xs text-red-500">
-              {t('onboarding.username.taken')}
-            </p>
-          )}
+        {/* Hint row: cost on the left, availability state on the right.
+            Both lines share the same min-height so the form doesn't jitter
+            while typing / RPC checking. */}
+        <div className="min-h-[1.25rem] flex items-start justify-between gap-3">
+          <div className="flex-1 text-left">
+            {cawCost > 0 && (
+              <p className={`text-xs ${mutedClass}`}>
+                Mint cost: <span className={strongClass}>{formatCawCompact(cawCost)} CAW</span>
+                {usdCost !== null && <span className={mutedClass}> (~${formatUsd(usdCost)})</span>}
+              </p>
+            )}
+            {username.length > 0 && !isValidFormat && !isTyping && (
+              <p className="text-xs text-red-500 mt-0.5">
+                {t('onboarding.username.format_hint')}
+              </p>
+            )}
+          </div>
+          <div className="text-right">
+            {!isTyping && usernameAvailable === true && (
+              <p className="text-xs text-green-500">
+                {t('onboarding.username.available')}
+              </p>
+            )}
+            {!isTyping && usernameAvailable === false && (
+              <p className="text-xs text-red-500">
+                {t('onboarding.username.taken')}
+              </p>
+            )}
+          </div>
         </div>
       </div>
+
+      {/* Pricing table — mirrors new_profile.pricing in pages/Profile/New.tsx.
+          Collapsed by default to keep the step focused on the input row;
+          users who want the schedule can expand it. */}
+      <details className={`rounded-xl border ${isDark ? 'border-white/10 bg-white/[0.03]' : 'border-gray-200 bg-gray-50'}`}>
+        <summary className={`px-4 py-3 cursor-pointer text-xs font-medium select-none ${strongClass}`}>
+          {t('new_profile.pricing_title')}
+        </summary>
+        <div className="px-4 pb-3 space-y-1.5">
+          {[
+            { label: t('new_profile.chars.1'), cawWhole: COST_SCHEDULE[1], compact: '1T' },
+            { label: t('new_profile.chars.2'), cawWhole: COST_SCHEDULE[2], compact: '240B' },
+            { label: t('new_profile.chars.3'), cawWhole: COST_SCHEDULE[3], compact: '60B' },
+            { label: t('new_profile.chars.4'), cawWhole: COST_SCHEDULE[4], compact: '6B' },
+            { label: t('new_profile.chars.5'), cawWhole: COST_SCHEDULE[5], compact: '200M' },
+            { label: t('new_profile.chars.6'), cawWhole: COST_SCHEDULE[6], compact: '20M' },
+            { label: t('new_profile.chars.7'), cawWhole: COST_SCHEDULE[7], compact: '10M' },
+            { label: t('new_profile.chars.8plus'), cawWhole: DEFAULT_COST, compact: '1M' },
+          ].map(({ label, cawWhole, compact }) => {
+            const usd = cawPriceUsd !== undefined ? cawWhole * cawPriceUsd : null
+            return (
+              <div key={label} className="flex justify-between items-baseline text-xs">
+                <span className={mutedClass}>{label}</span>
+                <span>
+                  <span className={`font-mono ${strongClass}`}>{compact} CAW</span>
+                  {usd !== null && <span className={`${mutedClass} ml-2`}>(~${formatUsd(usd)})</span>}
+                </span>
+              </div>
+            )
+          })}
+        </div>
+      </details>
 
       <button
         onClick={onNext}
