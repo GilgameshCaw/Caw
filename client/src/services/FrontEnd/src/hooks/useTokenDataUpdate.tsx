@@ -4,8 +4,8 @@ import { useEffect, useCallback, useMemo } from "react"
 import { useAccount, useReadContract } from "wagmi"
 import { Address } from "viem"
 import { baseSepolia, sepolia } from "wagmi/chains"
-import { CAW_NAMES_L2_ADDRESS, CAW_NAMES_ADDRESS } from "~/../../../abi/addresses";
-import { cawProfileAbi, cawProfileL2Abi } from "~/../../../abi/generated"
+import { CAW_NAMES_L2_ADDRESS, CAW_PROFILE_LENS_ADDRESS } from "~/../../../abi/addresses";
+import { cawProfileLensAbi, cawProfileL2Abi } from "~/../../../abi/generated"
 import { useTokenDataStore } from "~/store/tokenDataStore"
 import TOKENS from "~/constants/tokens"
 // import { useQuery } from "@tanstack/react-query"
@@ -36,10 +36,13 @@ export default function useTokenDataUpdate() {
   const connectedAddress = address?.toLowerCase() as Address | undefined
   const needsConnectedFetch = !!connectedAddress && connectedAddress !== viewedAddress
 
+  // CawProfileLens.tokens() — the V2 replacement for the removed
+  // CawProfile.tokens() view. Same shape returned (tokenId, username,
+  // owner, ownerBalance, withdrawable) — see solidity/contracts/CawProfileLens.sol.
   const { data: rawTokens, isError, error, isLoading, isLoadingError, refetch: refetchL1 } = useReadContract({
-    address: CAW_NAMES_ADDRESS,
+    address: CAW_PROFILE_LENS_ADDRESS,
     chainId: sepolia.id,
-    abi: cawProfileAbi,
+    abi: cawProfileLensAbi,
     functionName: "tokens",
     args: [viewedAddress as Address],
 
@@ -50,9 +53,9 @@ export default function useTokenDataUpdate() {
 
   // Also fetch tokens for the connected address if it differs from viewedAddress
   const { data: connectedTokens, refetch: refetchConnected } = useReadContract({
-    address: CAW_NAMES_ADDRESS,
+    address: CAW_PROFILE_LENS_ADDRESS,
     chainId: sepolia.id,
-    abi: cawProfileAbi,
+    abi: cawProfileLensAbi,
     functionName: "tokens",
     args: [connectedAddress as Address],
     query: {
