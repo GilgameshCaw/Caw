@@ -26,6 +26,15 @@
     <meta name="apple-mobile-web-app-title" content="CAW" />
     <meta name="apple-mobile-web-app-capable" content="yes" />
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+    <!--
+      Build version stamp read by bfcacheGuard.ts. When a bfcache
+      restoration is detected (pageshow + event.persisted), the guard
+      fetches /index.html no-store and compares this value to the
+      __CLIENT_VERSION__ baked into the running JS. If they differ the SW
+      has activated a newer build while the tab was hidden; a hard-reload
+      picks up the new chunks and avoids a blank screen.
+    -->
+    <meta name="caw-client-version" content="%VITE_CLIENT_VERSION%" />
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link

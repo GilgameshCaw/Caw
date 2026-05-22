@@ -132,12 +132,13 @@ router.get('/badges', requireAuth({ lookup: async (req) => Number(req.query.user
       dmConversationsPromise,
     ])
 
-    // Notifications
-    const notifWhere: any = { userId, isRead: false, hidden: false }
-    if (blockedIds.length > 0) {
-      notifWhere.actorId = { notIn: blockedIds }
-    }
-    const notifications = await prisma.notification.count({ where: notifWhere })
+    // Bell-badge count = unread GROUPS, matching /api/notifications and
+    // /api/notifications/unread-count. Counting raw Notification rows here
+    // produced badges (99+) that didn't match the rolled-up group count
+    // the user actually sees in the notification list.
+    const notifications = await prisma.notificationGroup.count({
+      where: { userId, isRead: false },
+    })
 
     // Marketplace sales (tab-scoped subset of notifications, cleared on tab view)
     const salesWhere: any = {

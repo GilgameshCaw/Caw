@@ -30,6 +30,10 @@ function buildClientVersion(): string {
   }
 }
 const CLIENT_VERSION = buildClientVersion();
+// Expose to index.html templating (%VITE_CLIENT_VERSION%) so the
+// bfcacheGuard freshness probe can read the deployed version from a
+// <meta name="caw-client-version"> tag without extra JS entrypoints.
+process.env.VITE_CLIENT_VERSION = CLIENT_VERSION;
 
 // Plugin to add COEP headers to worker responses (only on localhost for security)
 function coepHeadersPlugin(): Plugin {

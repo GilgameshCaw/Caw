@@ -1,5 +1,6 @@
 import './instrument';
 import './utils/polyfills';
+import { installBfcacheGuard } from './utils/bfcacheGuard';
 import { StrictMode } from "react";
 
 // We manage scroll restoration ourselves (per-feed anchors in Feed.tsx).
@@ -62,6 +63,11 @@ if (typeof document !== 'undefined') {
   updateFocus()
   document.addEventListener('visibilitychange', updateFocus)
 }
+
+// Guard against bfcache restoration onto a stale build. If the SW
+// activated a new build while the tab was hidden, the snapshot's chunk
+// references may be evicted → blank screen on restore. See bfcacheGuard.ts.
+installBfcacheGuard()
 
 // Ctrl+W = delete word back, on any editable surface. The browser's
 // default Ctrl+W (close tab) is one of the most-hostile defaults for

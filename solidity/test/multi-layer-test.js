@@ -1102,7 +1102,7 @@ contract('CawProfiles', function(accounts, x) {
         (args.reason == 'Session invalid' || args.reason == 'Low-level exception');
     });
 
-    console.log("PENDING TRANSFERS:", await cawProfiles.pendingTransferUpdates(l2));
+    console.log("PENDING TRANSFERS:", await cawProfiles.pendingTransferUpdates(l2, ethers.constants.AddressZero, 0));
 
     //
     tx = await deposit(accounts[2], 2, 2000000);

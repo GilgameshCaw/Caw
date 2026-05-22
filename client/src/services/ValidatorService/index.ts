@@ -1166,9 +1166,18 @@ export const validatorService: Service = {
       // Fetch more candidates than we might use so we can stop at the size limit.
       // Base Sepolia transaction size limit is 128KB. We target ~80KB of action
       // data to leave headroom for signatures, arrays, and ABI encoding overhead.
+      //
+      // Secondary `id: 'asc'` is load-bearing: thread / batch submissions insert
+      // every row in a single Promise.all so they share createdAt to the
+      // millisecond. Without a tiebreaker, Postgres returns them in heap order
+      // (typically reverse insert order), and `buildMultiActionData` then packs
+      // them in the wrong sequence — the actionsHash computed on submission
+      // diverges from what the user signed, ecrecover returns a random address,
+      // the contract reverts with "Session expired or not found". Auto-increment
+      // id is strictly monotonic per insert; chunk 0 always has the lower id.
       const candidates = await prisma.txQueue.findMany({
         where: { status: 'pending' },
-        orderBy: { createdAt: 'asc' },
+        orderBy: [{ createdAt: 'asc' }, { id: 'asc' }],
         take: 256,
       })
 

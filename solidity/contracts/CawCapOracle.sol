@@ -95,6 +95,14 @@ contract CawCapOracle {
   ///         all slots are populated.
   uint64 public samplesWritten;
 
+  /// @notice Timestamp of the last time _maybePushRatio was entered (whether
+  ///         or not it ultimately pushed a new ratio). Used by pushRatioIfStale
+  ///         to rate-limit permissionless callers. Updated on every path that
+  ///         enters _maybePushRatio — both the recordSample trampoline and the
+  ///         external pushRatioIfStale function — so the 5-minute interval
+  ///         applies uniformly across both callers.
+  uint64 public lastPushAttemptAt;
+
   // ─── Errors / Events ──────────────────────────────────────────────────────
 
   event SampleRecorded(uint64 indexed index, uint256 cumulative, uint32 timestamp);
@@ -170,6 +178,36 @@ contract CawCapOracle {
   ///      callable from this contract itself; any other caller is rejected.
   function _maybePushRatioExternal() external {
     require(msg.sender == address(this), "self-only");
+    lastPushAttemptAt = uint64(block.timestamp);
+    _maybePushRatio();
+  }
+
+  /// @notice Permissionless freshness-recovery entry point.
+  ///
+  ///         Problem addressed (H-9/H-10): `_maybePushRatio` is normally
+  ///         triggered only by `recordSample`, which is itself triggered by
+  ///         incoming L1→L2 LayerZero messages. If the L1 chain is idle for
+  ///         >24 h, no fresh sample arrives and CawActions retains a stale
+  ///         ratio for up to 48 h (24 h oracle staleness + 24 h CawActions
+  ///         backstop) before the cap goes dormant.
+  ///
+  ///         This function lets any account trigger a ratio evaluation with no
+  ///         special permissions. Two guards keep it spam-free:
+  ///          1. 5-minute rate limit via `lastPushAttemptAt` — callers who
+  ///             invoke more frequently than once every 5 minutes waste their
+  ///             own gas and get nothing.
+  ///          2. The existing hysteresis check inside `_maybePushRatio`
+  ///             (100 bps threshold) — if the ratio hasn't moved materially,
+  ///             no external call to CawActions is made.
+  ///
+  ///         The function does not guarantee that a push will occur; it simply
+  ///         ensures the oracle re-evaluates its current TWAP and pushes only
+  ///         if warranted. In the idle-chain scenario, the most recent samples
+  ///         are already in the buffer; this call just re-runs the evaluation
+  ///         that `recordSample` would have triggered if a new message arrived.
+  function pushRatioIfStale() external {
+    require(block.timestamp >= lastPushAttemptAt + 5 minutes, "TooSoon");
+    lastPushAttemptAt = uint64(block.timestamp);
     _maybePushRatio();
   }
 
@@ -212,6 +250,11 @@ contract CawCapOracle {
     // Cap binds. Hysteresis: only push if ratio moved > 100 bps from stored,
     // or if transitioning from dormant (currentRatio == 0) to active.
     if (currentRatio == 0 || _movedMoreThanBps(uint256(currentRatio), newRatio, 100)) {
+      // H-8: explicit overflow guard before narrowing cast.
+      // At astronomical CAW prices the UQ112.112 TWAP could theoretically exceed
+      // uint192.max (≈ 6.28e57); silent truncation would push a wrong ratio to
+      // CawActions. Revert instead — the cap goes dormant (safe side).
+      require(newRatio <= type(uint192).max, "RatioOverflow");
       cawActions.setCapRatio(uint192(newRatio));
     }
   }

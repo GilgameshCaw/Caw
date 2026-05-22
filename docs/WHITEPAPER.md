@@ -403,11 +403,29 @@ WebAuthn assertion blobs are large — 200 to 400 bytes per signature, well beyo
 
 Critically, the sibling path supports WITHDRAW. Session keys cannot delegate WITHDRAW because a compromised session key would otherwise be able to drain the wallet. A passkey-backed smart account is not a "delegated session"; it *is* the wallet, with the user's biometric as the unlock. Therefore the sibling path is the canonical mechanism by which a passkey-backed user withdraws their CAW back to L1.
 
-Browser support is the near-term focus. WebAuthn is fully available in modern browsers — Touch ID on Mac Safari/Chrome, Windows Hello, Android Chrome with biometric, iPhone via Safari. The smart-account contract (forked from an audited reference such as Daimo's `P256Account` or written as a minimal in-house equivalent) is deployed once per user at a counterfactual address derived from the passkey's public key, with the relayer paying the deploy gas on first action. Once deployed, the user's wallet "is" their passkey, with no seed phrase to back up.
+Browser support is the near-term focus. WebAuthn is fully available in modern browsers — Touch ID on Mac Safari/Chrome, Windows Hello, Android Chrome with biometric, iPhone via Safari. The smart-account contract is `SmartEOA.sol`, an in-house EIP-7702 delegate written specifically for CAW (not a fork of Daimo's `P256Account` or any other external reference). It implements **dual-sig dispatch**: a WebAuthn P-256 passkey (verified via the EIP-7951 precompile at `0x0100`) is the primary signer, and a secp256k1 `ecdsaFallback` key acts as a recovery anchor. Either key alone satisfies `isValidSignature` for ordinary actions. Passkey rotation is 24-hour timelocked; removal below one remaining passkey requires the `ecdsaFallback` key as a second factor, preventing accidental lockout. The contract uses a per-(`verifyingContract`, `actionType`) nonce mapping, ensuring sponsored operations and direct user actions cannot replay across each other.
 
-Native iOS and Android clients use the same architecture, with backups via password-encrypted cloud storage (Argon2id + AES-256-GCM) for users whose passkeys are not synced across devices. For depth, see `/native/docs/`.
+For users who cannot rely on passkey sync across devices — or who choose a browser-first flow without a native app — the web frontend offers a **backup blob** path: the `ecdsaFallback` secp256k1 key is encrypted with Argon2id (64 MiB, 3 iterations, parallelism 1, 32-byte output) followed by AES-GCM-256, producing a small ciphertext the user saves to iCloud Drive, Google Drive, or a USB device. Recovery is available at `/recovery`: the user uploads the blob and enters their vault password; the key is derived into memory only and used to sign a passkey-rotation transaction. No seed phrase is involved at any point. Native iOS and Android clients use the same architecture for users whose passkeys are not synced across devices; for depth on native specifics, see `/native/docs/`.
 
-## 6.6 Direct messages
+## 6.6 Sponsored entry points and the three signing populations
+
+Not every user arrives with MetaMask installed. CAW classifies signers into three populations at the frontend layer:
+
+- **Population A** (plain EOA) — signs directly via `wagmi writeContract`; no sponsor needed; full protocol surface available immediately.
+- **Population B** (EIP-7702-delegated EOA with passkey + secp256k1 backup) — the phone-first path. The user's EOA is pointed at `SmartEOA.sol` via a type-0x04 authorization. A **sponsor server** — a trusted operator holding CAW — submits transactions on their behalf so the user pays zero gas.
+- **Population C** (other smart-contract accounts — Safe, Argent, etc.) — supported where the contract implements `ISmartEOA`'s nonce surface; otherwise the user must provide a shim. Full-feature support is scoped to a subsequent upgrade.
+
+For Population B, `CawProfileMinter` exposes three sponsored entry points, each authenticated with EIP-712 + ERC-1271 + `ISmartEOA` nonce verification:
+
+1. **`mintAndDepositSponsored`** — bootstraps a new user: mints the username NFT and funds the L2 profile balance in one transaction. The sponsor holds the required CAW and submits the tx.
+2. **`depositForSponsored`** — tops up an existing profile's L2 CAW balance on behalf of the user.
+3. **`authenticateSponsored`** — proves active control of the profile for L2-side operations without requiring the user to sign a separate on-chain transaction.
+
+The sponsor's trust surface is deliberately narrow. The CAW it supplies is immediately credited to the user's on-chain `tokenId` balance; the sponsor never acquires a claim over it. `MAX_DEPOSIT_CAW` and `MAX_LZ_FEE_WEI` constants cap each sponsored call so a misbehaving sponsor cannot over-commit the user's account. The `ISmartEOA` per-(`verifyingContract`, `actionType`) nonce used in each sponsored operation is consumed exactly once; any replay or reorder reverts.
+
+**`withdrawTo` is not sponsored, and this is intentional.** A sponsor submitting a withdrawal on behalf of a user would mean the sponsor can move user CAW back to L1 on a schedule the user does not control. The v5 design decision is that WITHDRAW is always a direct user action — signed by the passkey or the `ecdsaFallback` key, never routed through a sponsored entry point. This is a property of `CawProfileMinter.sol`; there is no admin override or future-upgrade path for it.
+
+## 6.8 Direct messages
 
 DMs are end-to-end encrypted with ECIES (ECDH over the recipient's published encryption key, followed by AES-256-GCM with an HKDF-derived key). The encrypted payload is stored on the sender's and recipient's Mirrors; replication between Mirrors is via signed HTTP envelopes (the sender's wallet signs the envelope; peer Mirrors verify against the registered DM identity).
 
@@ -415,7 +433,7 @@ DMs are intentionally outside the protocol's on-chain economic loop. They cost n
 
 For depth, see `docs/DIRECT_MESSAGING.md`.
 
-## 6.7 One-time-use authentication signatures
+## 6.9 One-time-use authentication signatures
 
 Some off-chain operations (e.g. linking an X account, enabling DMs) require a user to sign a message that the server consumes once. The server stores `sha256(message || signature)` in Redis with `SET NX EX 300`, making the signature reusable nowhere within a five-minute window and unusable thereafter (because the message itself carries a timestamp that rejects after the window).
 
@@ -717,7 +735,7 @@ This section enumerates the actors who might attempt to harm CAW, the capabiliti
 | Reentrancy / re-org          | Standard EVM attacks                                       | EIP-712 typed signing; cawonce nonce; hash chain advance               | Documented EVM-level risks                     |
 | Replay across chains         | Sign on chain X, replay on chain Y                        | EIP-712 domain hash includes chainId + contract address                | None (cryptographic)                            |
 | Replay across deployments    | Sign for old `CawActions`, replay on new                  | EIP-712 domain hash includes contract address; vkey for ZK path immutable | None                                          |
-| Forged WebAuthn assertion    | Submit a crafted ERC-1271 sig that wrongly validates       | `CawActionsERC1271` calls owner's `isValidSignature` with 50K gas cap; smart-account contract verifies P-256 via EIP-7951 precompile | Reduces to soundness of the smart-account contract (audited reference) |
+| Forged WebAuthn assertion    | Submit a crafted ERC-1271 sig that wrongly validates       | `CawActionsERC1271` calls owner's `isValidSignature` with 50K gas cap; `SmartEOA.sol` verifies P-256 via EIP-7951 precompile at 0x0100 | Reduces to soundness of `SmartEOA.sol` (in-house contract; 8 audit passes before deploy) |
 
 ## 9.2 The biggest residual risks
 
@@ -727,7 +745,7 @@ This section enumerates the actors who might attempt to harm CAW, the capabiliti
 
 **LayerZero as a trust dependency.** LayerZero's DVN/Executor model has known properties; the protocol inherits them. A LayerZero-level compromise could allow forged cross-chain messages, which in turn could trigger spurious slashes or block legitimate ones. The 150% fee buffer on slash-adjacent paths mitigates fee-related stalls; the try/catch wrapper on `_lzReceive` prevents a single bad payload from blocking the channel forever. A full LayerZero compromise would be a serious event, and the response would be a new `CawChallengeRelay` deployment via `PathwayExpander.addPeer()`.
 
-**Smart-account contract soundness (passkey path).** The ERC-1271 sibling path delegates signature soundness to whatever smart-account contract owns the username NFT. A bug in that contract — for instance, an `isValidSignature` implementation that wrongly accepts arbitrary input — would let an attacker forge actions for that owner. The mitigation is that the reference smart-account contract is forked from an audited open-source implementation (Daimo's `P256Account` or equivalent) with a minimal surface (one stored public key, one `isValidSignature` function, one precompile call), and the per-user instances are deterministic deployments of the same audited code.
+**Smart-account contract soundness (passkey path).** The ERC-1271 sibling path delegates signature soundness to whatever smart-account contract owns the username NFT. A bug in that contract — for instance, an `isValidSignature` implementation that wrongly accepts arbitrary input — would let an attacker forge actions for that owner. The mitigation is that the smart-account contract for CAW's passkey population is `SmartEOA.sol`, an in-house EIP-7702 delegate (not a fork of Daimo's `P256Account` or any other external codebase). Its surface is intentionally small: dual-sig dispatch (passkey P-256 + secp256k1 `ecdsaFallback`), ERC-1271, the `ISmartEOA` per-(`verifyingContract`, `actionType`) nonce mapping, a 24-hour timelocked `addPasskey`, and an N-of-M quorum `removePasskey` with fallback protection when only one passkey remains. The contract underwent 8 audit passes before deployment. Per-user instances are deterministic deployments of this single audited bytecode.
 
 **No upgrade path.** This is also a feature, but for a critical bug, the protocol's only response is redeploy + social fork. There is no emergency switch. CAW users accept this trade-off in exchange for the immutability guarantee.
 
@@ -1025,7 +1043,7 @@ The protocol does not anticipate or curate which Networks emerge. The permission
 
 ## 13.2 Native passkey client
 
-A native iOS/Android client is in active development alongside the browser-first passkey path. The architecture (documented in `native/docs/`) uses EIP-7702 for authority delegation and WebAuthn (EIP-7951) for biometric-protected signing. Backup is via password-encrypted cloud storage (Argon2id + AES-256-GCM) with offline seed phrase and keystore-JSON export.
+A native iOS/Android client is in active development alongside the browser-first passkey path. The architecture (documented in `native/docs/`) uses EIP-7702 for authority delegation and WebAuthn (EIP-7951) for biometric-protected signing. Backup is via a password-encrypted blob (Argon2id + AES-GCM-256) stored to iCloud Drive, Google Drive, or local export; there is no seed phrase. The same `SmartEOA.sol` contract and backup format underpin both browser and native clients.
 
 The native client's primary user-experience claim is: a user with no Web3 experience can buy CAW with Apple Pay or Google Pay, mint a username, and start posting — all with biometric unlocks and no seed phrase to manage. The wager is that this is the experience needed to bring CAW to a mainstream audience without abandoning the protocol's non-custodial guarantees.
 
@@ -1140,6 +1158,8 @@ This is the manifesto's vision realized:
 | PathwayExpander                | L1 + L2 + archive | `solidity/contracts/PathwayExpander.sol`                              | 🔒 (after Phase 4) |
 | OnlyOnce                       | (mixin)      | `solidity/contracts/OnlyOnce.sol`                                          | n/a (abstract) |
 | SigVerification                | (library)    | `solidity/contracts/SigVerification.sol`                                   | n/a (library) |
+| SmartEOA                       | (delegate)   | `solidity/contracts/SmartEOA.sol`                                          | n/a (deployed once; users' EOAs delegate to it via EIP-7702 type-0x04 authorization) |
+| ISmartEOA                      | (interface)  | `solidity/contracts/ISmartEOA.sol`                                         | n/a (interface) |
 
 For per-contract function inventory and natspec, see `solidity/contracts/` directly.
 

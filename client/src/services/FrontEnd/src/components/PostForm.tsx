@@ -31,8 +31,39 @@ import MentionAutocomplete from './MentionAutocomplete'
 import GifPicker from './GifPicker'
 import PollComposer from './PollComposer'
 import TipAttachmentControl, { type TipAttachment } from './TipAttachmentControl'
+import AiProviderConnectModal from './modals/AiProviderConnectModal'
+import AiImageGenerateModal from './modals/AiImageGenerateModal'
+import { useAIProviderStore } from '~/store/aiProviderStore'
+import { useNavigate } from '~/utils/localizedRouter'
 import { HiOutlineChartBar } from 'react-icons/hi'
 import { buildPollMarker, imageUrlToPollHash, imageUrlToMeta } from '~/../../../tools/pollMarker'
+
+// AI button icon: just sparkles.
+// Rationale: letters/frames read like a sticker and look off next to toolbar icons.
+// IMPORTANT: keep strokeWeight consistent with the rest of the toolbar (2).
+const AiGlitterIcon: React.FC<{ sizeClass: string }> = ({ sizeClass }) => (
+  <svg className={sizeClass} viewBox="0 0 24 24" fill="none" stroke="currentColor" aria-hidden="true">
+    {/* Sparkles — outline, centered */}
+    {/* Slightly larger and nudged down to visually center inside circular button */}
+    {/* NOTE: sparkles read visually heavier than other outline icons; use slightly thinner stroke */}
+    <g transform="translate(12 12) scale(1.12) translate(-12 -12) translate(-1.6 2.6)">
+      <path
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        strokeWidth={1.8}
+        vectorEffect="non-scaling-stroke"
+        d="M12 3.5l.8 2.7a3.6 3.6 0 002.5 2.5l2.7.8-2.7.8a3.6 3.6 0 00-2.5 2.5l-.8 2.7-.8-2.7a3.6 3.6 0 00-2.5-2.5l-2.7-.8 2.7-.8a3.6 3.6 0 002.5-2.5L12 3.5z"
+      />
+      <path
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        strokeWidth={1.8}
+        vectorEffect="non-scaling-stroke"
+        d="M18 6.2l.3 1a2.1 2.1 0 001.4 1.4l1 .3-1 .3a2.1 2.1 0 00-1.4 1.4l-.3 1-.3-1a2.1 2.1 0 00-1.4-1.4l-1-.3 1-.3a2.1 2.1 0 001.4-1.4l.3-1z"
+      />
+    </g>
+  </svg>
+)
 
 /** Extract a short, meaningful search query from post text for GIF search.
  *  Drops articles/prepositions/conjunctions, URLs, and @mentions,
@@ -314,9 +345,16 @@ interface PostFormProps {
   composeMode?: boolean;
   /** when true, publish draft state to the compose store so the mobile bottom nav can hide while typing */
   trackDraft?: boolean;
+  /**
+   * Focus the textarea on mount. Default true (modals/reply boxes the user
+   * opened intentionally want the caret ready). The inline home-feed
+   * composer passes false: tapping the bottom-nav home icon mounts it and
+   * an unconditional focus pops the iOS keyboard with no input intent (#202).
+   */
+  autoFocus?: boolean;
 }
 
-const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess, placeholder, composeMode = false, trackDraft = false }) => {
+const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess, placeholder, composeMode = false, trackDraft = false, autoFocus = true }) => {
   const { isConnected } = useAccount();
   const { openConnectModal } = useConnectModal();
   const hasActiveSession = useHasActiveSession();
@@ -324,12 +362,28 @@ const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess, placehol
   const { isDark } = useTheme()
   const t = useT()
 
-  // Auto-focus the textarea when component mounts (e.g., when modal opens)
+  const [aiModalOpen, setAiModalOpen] = useState(false)
+  const [aiGenOpen, setAiGenOpen] = useState(false)
+  const aiNavigate = useNavigate()
+  const aiConnected = useAIProviderStore((s) => !!s.apiKey && !!s.provider)
+  // AI-images entry point: generate when a provider is connected, otherwise
+  // prompt to connect one (modal -> /settings/ai-provider).
+  const openAiImages = () => (aiConnected ? setAiGenOpen(true) : setAiModalOpen(true))
+  const handleAiImage = (file: File) => {
+    if (selectedMedia.filter((m: any) => m.type === 'image' || m.type === 'gif').length >= 4) return
+    setSelectedMedia((prev: any[]) => [...prev, {
+      file, type: 'image', preview: URL.createObjectURL(file), size: file.size, storageType: 'off-chain',
+    }])
+  }
+
+  // Auto-focus the textarea when component mounts (e.g., when modal opens).
+  // Skipped for the inline home-feed composer (autoFocus=false) so landing
+  // on /home via the bottom-nav home icon doesn't pop the iOS keyboard (#202).
   useEffect(() => {
-    if (textareaRef.current) {
+    if (autoFocus && textareaRef.current) {
       textareaRef.current.focus()
     }
-  }, [])
+  }, [autoFocus])
 
   // Tab key in textarea moves focus to the submit button
   useEffect(() => {
@@ -442,6 +496,8 @@ const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess, placehol
   const [isDragOverTextarea, setIsDragOverTextarea] = useState(false)
   const [showGifPicker, setShowGifPicker] = useState(false)
   const [showEmojiPicker, setShowEmojiPicker] = useState(false)
+  // #207: true while the picker is fading out before unmount (close-on-scroll).
+  const [emojiClosing, setEmojiClosing] = useState(false)
   type AnchorRect = { left: number; right: number; top: number; bottom: number }
   const [emojiPopover, setEmojiPopover] = useState<null | {
     x: number
@@ -2111,7 +2167,10 @@ const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess, placehol
       }
     }
     if (allChunksSelected) {
-      // Copy/Cut → write master text to clipboard; cut also clears.
+      // Copy/Cut → write master text to clipboard.
+      // Copy is non-destructive; KEEP the all-selected highlight so the
+      // user can hit Copy again or extend the action (Cut, Delete, etc.).
+      // Cut clears the master text AND deselects.
       if (modKey && (e.key === 'c' || e.key === 'x') && !e.shiftKey && !e.altKey) {
         e.preventDefault()
         // Best-effort: use the Clipboard API; fall back to execCommand if
@@ -2122,8 +2181,8 @@ const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess, placehol
         if (e.key === 'x') {
           setText('')
           pendingMasterCursorRef.current = 0
+          setAllChunksSelected(false)
         }
-        setAllChunksSelected(false)
         return
       }
       // Backspace / Delete → clear master text.
@@ -2313,6 +2372,30 @@ const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess, placehol
     acquireScrollLock()
     return () => { releaseScrollLock() }
   }, [hasInlineFeedDraft])
+
+  // #207: the emoji picker is a transient fixed/portaled popover whose grid
+  // is too short to scroll, so wheel/touch over it falls through and the page
+  // scrolls behind it. Rather than fighting the scroll container (the real
+  // vertical scroller is <html>, not body — see scrollLock notes), close the
+  // picker on the first scroll with a short fade-out. This is the common
+  // popover pattern (X, GitHub) and is robust regardless of which element
+  // owns the scroll. emojiClosing drives the opacity transition; the picker
+  // unmounts ~160ms later so the fade is visible.
+  useEffect(() => {
+    if (!showEmojiPicker) return
+    setEmojiClosing(false) // fresh open is fully opaque
+    const onScroll = () => {
+      setEmojiClosing(true)
+      window.setTimeout(() => {
+        setShowEmojiPicker(false)
+        setEmojiClosing(false)
+      }, 160)
+    }
+    window.addEventListener('scroll', onScroll, { passive: true, capture: true })
+    return () => window.removeEventListener('scroll', onScroll, { capture: true } as EventListenerOptions)
+  }, [showEmojiPicker])
+  // Reusable fade class for the picker containers (close-on-scroll, #207).
+  const emojiFadeClass = `transition-opacity duration-150 ${emojiClosing ? 'opacity-0' : 'opacity-100'}`
   const desktopRows = replyTo
     ? Math.max(2, Math.min(lineCount, 10))
     : hasMedia
@@ -2454,7 +2537,7 @@ const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess, placehol
                     onDragOver={handleTextareaDragOver}
                     onDragLeave={handleTextareaDragLeave}
                     onDrop={handleTextareaDrop}
-                    rows={1}
+                    rows={replyTo ? 3 : 1}
                     placeholder={
                       replyTo
                         ? `Reply to @${replyTo.user.username}`
@@ -2654,6 +2737,28 @@ const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess, placehol
                 onChange={setTipAttachments}
                 iconSizeClass="w-5 h-5"
               />
+
+              {/* AI image generation — available in every composer (incl.
+                  replies + quotes). The narrow-context overflow is handled
+                  by the outer flex-wrap on the toolbar row. -ml-0.5 nudges
+                  it back inside the toolbar's hitbox rhythm. */}
+              <button
+                type="button"
+                onClick={openAiImages}
+                title={t('post_form.ai.tooltip')}
+                aria-label={t('post_form.ai.aria')}
+                className={`relative p-1 -ml-0.5 rounded-full transition-all duration-200 cursor-pointer ${
+                  text.trim()
+                    ? (isDark
+                        ? 'text-yellow-400 hover:text-yellow-300 hover:bg-yellow-400/10'
+                        : 'text-yellow-600 hover:text-yellow-500 hover:bg-yellow-200/50')
+                    : (isDark
+                        ? 'text-yellow-400/70 hover:text-yellow-400 hover:bg-yellow-400/10'
+                        : 'text-yellow-600/70 hover:text-yellow-600 hover:bg-yellow-200/50')
+                }`}
+              >
+                <AiGlitterIcon sizeClass="w-5 h-5" />
+              </button>
             </div>
 
             {/* Right side - Action buttons (Post/etc.) */}
@@ -2788,7 +2893,7 @@ const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess, placehol
             {/* Floating panel — opens near the emoji button in mobile feed */}
             <div
               ref={emojiPopoverRef}
-              className={`fixed z-50 rounded-xl shadow-2xl max-h-[40vh] overflow-auto overscroll-contain ${isDark ? 'border border-white/10 bg-black' : 'border border-gray-200 bg-white'}`}
+              className={`fixed z-50 rounded-xl shadow-2xl max-h-[40vh] overflow-auto overscroll-contain ${emojiFadeClass} ${isDark ? 'border border-white/10 bg-black' : 'border border-gray-200 bg-white'}`}
               style={emojiPopover
                 ? {
                     left: emojiPopover.x,
@@ -3071,14 +3176,34 @@ const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess, placehol
         <div className={composeMode ? `shrink-0 px-2 pt-2 pb-[max(env(safe-area-inset-bottom),0.5rem)] border-t md:p-0 md:border-0 md:pb-0 ${isDark ? 'bg-black border-white/10' : 'bg-white border-gray-200'}` : ''}>
 
         {/* Functionality Icons */}
-        <div className={`flex items-center justify-between gap-2 ${replyTo ? 'mt-1.5' : 'mt-4'} ${
+        {/* Outer row: Post button stays pinned right (items-start so on the
+            two-row icons case the Post button doesn't jump to mid-height).
+            The icons block on the left is the only thing that wraps. */}
+        <div className={`flex items-start justify-between gap-2 ${replyTo ? 'mt-1.5' : 'mt-4'} ${
           hasInlineFeedDraft
             ? `fixed md:static bottom-0 left-0 right-0 z-[60] px-4 py-3 pb-[max(env(safe-area-inset-bottom),0.75rem)] border-t ${isDark ? 'bg-black border-white/10' : 'bg-white border-gray-200'}`
             : composeMode
               ? ''
               : ''
         }`}>
-          <div className={`flex items-center min-w-0 ${composeMode ? 'space-x-1' : 'space-x-3'}`}>
+          {/* Icons split into two groups so the toolbar collapses into a
+              clean 3 + 4 split when wrapped instead of breaking one icon
+              at a time. The first group (content embedding — Media / GIF /
+              Emoji) sits inline with the Post button on the top row; the
+              second group (post attributes — Schedule / Poll / Tip / AI)
+              wraps to a second row when there isn't enough width.
+
+              Outer gap-x mirrors the inner groups' gap-x so the inter-group
+              spacing (Emoji ↔ Schedule) matches the intra-group spacing.
+              Without this the parent kept gap-x-3 in compose/reply mode
+              while the groups dropped to gap-x-1 → 8px asymmetric hole. */}
+          <div className={`flex flex-wrap items-center min-w-0 gap-y-1 flex-1 ${
+            composeMode || replyTo ? 'gap-x-1' : 'gap-x-1 sm:gap-x-3'
+          }`}>
+            {/* Group 1 — content embedding (3 icons) */}
+            <div className={`flex items-center ${
+              composeMode || replyTo ? 'gap-x-1' : 'gap-x-1 sm:gap-x-3'
+            }`}>
             {/* Media Upload */}
             <button
               onClick={() => fileInputRef.current?.click()}
@@ -3269,7 +3394,7 @@ const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess, placehol
                     return (
                       <>
                         <div
-                          className={`md:hidden fixed inset-x-3 bottom-3 z-[100] max-w-[420px] mx-auto p-3 border rounded-xl shadow-2xl ${
+                          className={`md:hidden fixed inset-x-3 bottom-3 z-[100] max-w-[420px] mx-auto p-3 border rounded-xl shadow-2xl ${emojiFadeClass} ${
                             isDark ? 'border-white/10 bg-black' : 'border-gray-200 bg-white'
                           }`}
                         >
@@ -3277,7 +3402,7 @@ const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess, placehol
                         </div>
                         {rect && createPortal(
                           <div
-                            className={`hidden md:block fixed z-[100] p-3 border rounded-xl shadow-2xl ${
+                            className={`hidden md:block fixed z-[100] p-3 border rounded-xl shadow-2xl ${emojiFadeClass} ${
                               isDark ? 'border-white/10 bg-black' : 'border-gray-200 bg-white'
                             }`}
                             style={desktopStyle}
@@ -3292,6 +3417,14 @@ const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess, placehol
                 </>
               )}
             </div>
+            </div>
+            {/* Group 2 — post attributes (4 icons). flex-1 lets it fill
+                the row width on wrap; justify-start hugs them to the left
+                edge of that filled width (matches the alignment of group
+                1 above, which also pins left). */}
+            <div className={`flex flex-1 items-center justify-start ${
+              composeMode || replyTo ? 'gap-x-1' : 'gap-x-1 sm:gap-x-3'
+            }`}>
 
             {/* Schedule Post (not for replies/quotes) */}
             {!replyTo && !quote && (
@@ -3354,10 +3487,36 @@ const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess, placehol
               iconSizeClass="w-6 h-6"
             />
 
+            {/* AI image generation — available in every composer (incl.
+                replies + quotes). Narrow-context overflow is handled by
+                the outer flex-wrap on the toolbar row. -ml-1 nudges the
+                hitbox to line up with the rest of the toolbar. */}
+            <button
+              type="button"
+              onClick={openAiImages}
+              title={t('post_form.ai.tooltip')}
+              aria-label={t('post_form.ai.aria')}
+              className={`relative p-2 -ml-1 rounded-full transition-all duration-200 cursor-pointer ${
+                text.trim()
+                  ? (isDark
+                      ? 'text-yellow-400 hover:text-yellow-300 hover:bg-yellow-400/10'
+                      : 'text-yellow-600 hover:text-yellow-500 hover:bg-yellow-200/50')
+                  : (isDark
+                      ? 'text-yellow-400/70 hover:text-yellow-400 hover:bg-yellow-400/10'
+                      : 'text-yellow-600/70 hover:text-yellow-600 hover:bg-yellow-200/50')
+              }`}
+            >
+              <AiGlitterIcon sizeClass="w-6 h-6" />
+            </button>
+            </div>
+
           </div>
 
-          {/* Character counter, token status and Post Button */}
-          <div className="flex items-center space-x-3">
+          {/* Character counter, token status and Post Button. The outer
+              justify-between pins this right; items-start on the outer
+              row keeps it top-aligned when the icons block wraps to two
+              rows so the Post button stays where the eye expects it. */}
+          <div className="flex items-center space-x-3 flex-shrink-0">
             {/* Token ownership and character counter */}
             <div className="flex items-center space-x-3">
               {isThreadMode && !composeMode && (
@@ -3389,7 +3548,7 @@ const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess, placehol
                 const btn2 = (
                   <button
                     ref={submitBtnRef}
-                    className="px-5 py-2 bg-yellow-500 text-black font-semibold text-base rounded-full hover:bg-yellow-400 disabled:opacity-50 disabled:cursor-not-allowed transition-all duration-200 shadow-lg hover:shadow-xl cursor-pointer flex-shrink-0 whitespace-nowrap"
+                    className="px-3 sm:px-5 py-2 bg-yellow-500 text-black font-semibold text-sm sm:text-base rounded-full hover:bg-yellow-400 disabled:opacity-50 disabled:cursor-not-allowed transition-all duration-200 shadow-lg hover:shadow-xl cursor-pointer min-w-0 truncate"
                     disabled={isDisabled2}
                     onClick={handleSubmit}
                   >
@@ -3518,6 +3677,25 @@ const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess, placehol
           </div>
         </div>
       )}
+
+      <AiProviderConnectModal
+        isOpen={aiModalOpen}
+        onClose={() => setAiModalOpen(false)}
+        onConnect={() => {
+          setAiModalOpen(false)
+          // Close the host composer modal (ComposePostModal passes its
+          // onClose as onSuccess) so we don't navigate to settings with the
+          // post modal still floating on top. No-op for the inline feed
+          // composer (it just refreshes; it unmounts on navigation anyway).
+          onSuccess?.()
+          aiNavigate('/settings/ai-provider')
+        }}
+      />
+      <AiImageGenerateModal
+        isOpen={aiGenOpen}
+        onClose={() => setAiGenOpen(false)}
+        onImage={handleAiImage}
+      />
     </div>
   )
 }

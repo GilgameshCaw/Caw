@@ -58,9 +58,21 @@ contract CawActionsArchive is Ownable, ReentrancyGuard, OnlyOnce, OApp {
   // ============================================
 
   uint256 public constant CHALLENGE_PERIOD = 2 days;
-  uint256 public constant MIN_STAKE = 0.01 ether;
+  // Round-2 censorship drill: after a slash zeroed checkpointClaimed, attacker bots
+  // reclaimed within 1-2 blocks (~2s on Base). 10-minute window lets honest validators
+  // comfortably win the post-cooldown race with periodic re-submission loops.
+  uint64 public constant CLAIM_COOLDOWN = 10 minutes;
+  // Round-2 censorship drill: at 0.01 ETH per grief cycle a $50K attacker could sustain
+  // ~2,000 slash-grief cycles. 0.05 ETH (5x) makes selective-censorship costly enough
+  // given the existing off-chain fraud monitors; full fund-loss exposure stays zero so
+  // we don't need a defender-prohibitive deposit.
+  uint256 public constant MIN_STAKE = 0.05 ether;
   uint256 public constant CHECKPOINT_INTERVAL = 32;
   uint256 public constant MAX_CHECKPOINTS_PER_SUBMISSION = 256;
+  /// @notice H-6 fix: cap pending submissions per validator so the slash loop
+  ///         (which iterates validatorSubmissions[]) can never exceed L2 block
+  ///         gas. 16 pending × 256 checkpoints each = 4096 SSTORE worst case.
+  uint256 public constant MAX_PENDING_PER_VALIDATOR = 16;
 
   // ============================================
   // STATE
@@ -93,6 +105,11 @@ contract CawActionsArchive is Ownable, ReentrancyGuard, OnlyOnce, OApp {
 
   /// @notice networkId => checkpointId => submissionId that covers it
   mapping(uint32 => mapping(uint256 => uint256)) public checkpointClaimed;
+
+  /// @notice networkId => checkpointId => earliest timestamp at which the checkpoint can be
+  ///         re-claimed. Set to block.timestamp + CLAIM_COOLDOWN on every slash so attacker
+  ///         bots cannot immediately re-claim within 1-2 blocks after a slash.
+  mapping(uint32 => mapping(uint256 => uint64)) public checkpointClaimReopensAt;
 
   /// @notice submissionId => checkpointId => correctHash from LZ
   mapping(uint256 => mapping(uint256 => bytes32)) public challengeHash;
@@ -225,6 +242,8 @@ contract CawActionsArchive is Ownable, ReentrancyGuard, OnlyOnce, OApp {
     bytes32 entryHash
   ) external {
     require(stakes[msg.sender] >= MIN_STAKE, "Insufficient stake");
+    // H-6: cap pending submissions so slash-loop work stays within L2 block gas.
+    require(pendingCount[msg.sender] < MAX_PENDING_PER_VALIDATOR, "TooManyPending");
     require(startCheckpointId > 0, "Invalid start");
     require(endCheckpointId >= startCheckpointId, "Invalid range");
 
@@ -238,9 +257,22 @@ contract CawActionsArchive is Ownable, ReentrancyGuard, OnlyOnce, OApp {
     require(r.length == expectedActions, "r length mismatch");
     require(merkleRoot != bytes32(0), "Empty merkle root");
 
-    // Ensure no checkpoint in the range is already claimed
+    // H-5: walk the packedActions byte layout to verify it contains exactly
+    // `actionCount` well-formed actions with no trailing garbage. Without this,
+    // a malformed blob can be submitted and then cause slashIncoherentRoot to
+    // revert on _actionSliceEnd — making that fraud class permanently unslashable.
+    {
+      uint256 pos = 2; // skip the 2-byte actionCount header
+      for (uint256 i = 0; i < actionCount; i++) {
+        pos = _actionSliceEnd(packedActions, pos);
+      }
+      require(pos == packedActions.length, "Malformed packedActions");
+    }
+
+    // Ensure no checkpoint in the range is already claimed or within its post-slash cooldown
     for (uint256 cp = startCheckpointId; cp <= endCheckpointId; ) {
       require(checkpointClaimed[networkId][cp] == 0, "Checkpoint already claimed");
+      require(block.timestamp >= checkpointClaimReopensAt[networkId][cp], "Claim cooldown");
       unchecked { ++cp; }
     }
 
@@ -467,9 +499,10 @@ contract CawActionsArchive is Ownable, ReentrancyGuard, OnlyOnce, OApp {
       Submission storage s = submissions[sid];
       if (s.status == Status.PENDING) {
         s.status = Status.SLASHED;
-        // Release checkpoint claims
+        // Release checkpoint claims and impose post-slash cooldown
         for (uint256 cp = s.startCheckpointId; cp <= s.endCheckpointId; ) {
           checkpointClaimed[s.networkId][cp] = 0;
+          checkpointClaimReopensAt[s.networkId][cp] = uint64(block.timestamp + CLAIM_COOLDOWN);
           unchecked { ++cp; }
         }
       }
@@ -571,8 +604,10 @@ contract CawActionsArchive is Ownable, ReentrancyGuard, OnlyOnce, OApp {
       Submission storage s = submissions[sid];
       if (s.status == Status.PENDING) {
         s.status = Status.SLASHED;
+        // Release checkpoint claims and impose post-slash cooldown
         for (uint256 cp = s.startCheckpointId; cp <= s.endCheckpointId; ) {
           checkpointClaimed[s.networkId][cp] = 0;
+          checkpointClaimReopensAt[s.networkId][cp] = uint64(block.timestamp + CLAIM_COOLDOWN);
           unchecked { ++cp; }
         }
       }

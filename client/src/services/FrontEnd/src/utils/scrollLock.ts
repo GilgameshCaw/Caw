@@ -15,7 +15,7 @@
 
 let lockCount = 0
 let savedScrollY = 0
-let savedStyles: { overflow: string; position: string; top: string; width: string } | null = null
+let savedStyles: { overflow: string; htmlOverflow: string; position: string; top: string; width: string } | null = null
 
 function isIosSafari(): boolean {
   if (typeof navigator === 'undefined') return false
@@ -29,13 +29,19 @@ export function acquireScrollLock() {
   if (lockCount === 0) {
     savedScrollY = window.scrollY
     const body = document.body
+    const html = document.documentElement
     savedStyles = {
       overflow: body.style.overflow,
+      // index.css sets `html { overflow-x: hidden }`, which per spec makes
+      // html's overflow-y compute to `auto` — so <html>, not <body>, owns
+      // the page scroll. Locking only body is a no-op on desktop (#210).
+      htmlOverflow: html.style.overflow,
       position: body.style.position,
       top: body.style.top,
       width: body.style.width,
     }
     body.style.overflow = 'hidden'
+    html.style.overflow = 'hidden'
     if (isIosSafari()) {
       body.style.position = 'fixed'
       body.style.top = `-${savedScrollY}px`
@@ -51,6 +57,7 @@ export function releaseScrollLock() {
     const body = document.body
     const wasIosLock = body.style.position === 'fixed'
     body.style.overflow = savedStyles.overflow
+    document.documentElement.style.overflow = savedStyles.htmlOverflow
     body.style.position = savedStyles.position
     body.style.top = savedStyles.top
     body.style.width = savedStyles.width

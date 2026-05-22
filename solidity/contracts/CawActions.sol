@@ -79,6 +79,7 @@ contract CawActions is Ownable {
   error TooManyRecipients();
   error WithdrawZeroAmount();
   error InvalidValidator();
+  error WrongProfileForSession(); // token-scoped session used for a different tokenId
 
   enum ActionType { CAW, LIKE, UNLIKE, RECAW, FOLLOW, UNFOLLOW, WITHDRAW, OTHER }
 
@@ -509,6 +510,7 @@ contract CawActions is Ownable {
       // ZK path. (Audit finding 2026-05-08, Issue B.)
       CawProfileL2.StoredSession memory s = cawProfile.validSession(owner, signer);
       if (s.expiry <= block.timestamp) revert SessionExpired();
+      if (s.profileId != 0 && s.profileId != senderId0) revert WrongProfileForSession();
       ba.isSessionKey = true;
       ba.owner = owner;
       ba.scopeBitmap = s.scopeBitmap;
@@ -694,7 +696,7 @@ contract CawActions is Ownable {
     ba.r = r;
     if (isSessionKey) {
       ba.owner = cawProfile.ownerOf(action.senderId);
-      { CawProfileL2.StoredSession memory _s = cawProfile.validSession(ba.owner, ba.signer); ba.scopeBitmap = _s.scopeBitmap; ba.spendLimit = _s.spendLimit; ba.perActionTipRate = _s.perActionTipRate; }
+      { CawProfileL2.StoredSession memory _s = cawProfile.validSession(ba.owner, ba.signer); ba.scopeBitmap = _s.scopeBitmap; ba.spendLimit = _s.spendLimit; ba.perActionTipRate = _s.perActionTipRate; if (_s.profileId != 0 && _s.profileId != action.senderId) revert WrongProfileForSession(); }
     }
     c.implicitTipOwed += _applyAction(validatorId, action, ba, packedActions[actionStart:nextPos], c);
     c.actionsSeen += 1;
@@ -732,7 +734,7 @@ contract CawActions is Ownable {
     ba.r = r;
     if (ba.isSessionKey) {
       ba.owner = cawProfile.ownerOf(groupActions[0].senderId);
-      { CawProfileL2.StoredSession memory _s = cawProfile.validSession(ba.owner, ba.signer); ba.scopeBitmap = _s.scopeBitmap; ba.spendLimit = _s.spendLimit; ba.perActionTipRate = _s.perActionTipRate; }
+      { CawProfileL2.StoredSession memory _s = cawProfile.validSession(ba.owner, ba.signer); ba.scopeBitmap = _s.scopeBitmap; ba.spendLimit = _s.spendLimit; ba.perActionTipRate = _s.perActionTipRate; if (_s.profileId != 0 && _s.profileId != groupActions[0].senderId) revert WrongProfileForSession(); }
     }
 
     _applyBatch(validatorId, packedActions, groupActions, sliceStarts, sliceEnds, ba, c);
@@ -1051,7 +1053,7 @@ contract CawActions is Ownable {
       (ba.signer, ba.isSessionKey) = _verifySignatureMem(v, r, s, groupActions[0]);
       if (ba.isSessionKey) {
         ba.owner = cawProfile.ownerOf(groupActions[0].senderId);
-        { CawProfileL2.StoredSession memory _s = cawProfile.validSession(ba.owner, ba.signer); ba.scopeBitmap = _s.scopeBitmap; ba.spendLimit = _s.spendLimit; ba.perActionTipRate = _s.perActionTipRate; }
+        { CawProfileL2.StoredSession memory _s = cawProfile.validSession(ba.owner, ba.signer); ba.scopeBitmap = _s.scopeBitmap; ba.spendLimit = _s.spendLimit; ba.perActionTipRate = _s.perActionTipRate; if (_s.profileId != 0 && _s.profileId != groupActions[0].senderId) revert WrongProfileForSession(); }
       }
     } else {
       for (uint256 i = 1; i < groupSize; ) {
@@ -1068,7 +1070,7 @@ contract CawActions is Ownable {
       );
       if (ba.isSessionKey) {
         ba.owner = cawProfile.ownerOf(groupActions[0].senderId);
-        { CawProfileL2.StoredSession memory _s = cawProfile.validSession(ba.owner, ba.signer); ba.scopeBitmap = _s.scopeBitmap; ba.spendLimit = _s.spendLimit; ba.perActionTipRate = _s.perActionTipRate; }
+        { CawProfileL2.StoredSession memory _s = cawProfile.validSession(ba.owner, ba.signer); ba.scopeBitmap = _s.scopeBitmap; ba.spendLimit = _s.spendLimit; ba.perActionTipRate = _s.perActionTipRate; if (_s.profileId != 0 && _s.profileId != groupActions[0].senderId) revert WrongProfileForSession(); }
       }
     }
 
@@ -1116,7 +1118,7 @@ contract CawActions is Ownable {
     ba.r = r;
     if (isSessionKey) {
       ba.owner = cawProfile.ownerOf(action.senderId);
-      { CawProfileL2.StoredSession memory _s = cawProfile.validSession(ba.owner, ba.signer); ba.scopeBitmap = _s.scopeBitmap; ba.spendLimit = _s.spendLimit; ba.perActionTipRate = _s.perActionTipRate; }
+      { CawProfileL2.StoredSession memory _s = cawProfile.validSession(ba.owner, ba.signer); ba.scopeBitmap = _s.scopeBitmap; ba.spendLimit = _s.spendLimit; ba.perActionTipRate = _s.perActionTipRate; if (_s.profileId != 0 && _s.profileId != action.senderId) revert WrongProfileForSession(); }
     }
     BatchCursor memory localCursor;
     localCursor.firstNetworkId = action.networkId;
@@ -1260,7 +1262,7 @@ contract CawActions is Ownable {
     if (ba.isSessionKey && actionCost > 0) {
       if (ba.owner == address(0)) {
         ba.owner = cawProfile.ownerOf(action.senderId);
-        { CawProfileL2.StoredSession memory _s = cawProfile.validSession(ba.owner, ba.signer); ba.spendLimit = _s.spendLimit; ba.perActionTipRate = _s.perActionTipRate; }
+        { CawProfileL2.StoredSession memory _s = cawProfile.validSession(ba.owner, ba.signer); ba.spendLimit = _s.spendLimit; ba.perActionTipRate = _s.perActionTipRate; if (_s.profileId != 0 && _s.profileId != action.senderId) revert WrongProfileForSession(); }
       }
       if (ba.spendLimit > 0) {
         if (!ba.groupSpentLoaded) {

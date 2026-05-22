@@ -310,18 +310,19 @@ export function patchMainNginxConfig(installDir) {
     return { status: 'skipped', reason: 'not root' }
   }
 
-  // Derive the domain from client/.env PUBLIC_URL — same source the
-  // backend's publicUrl() uses, so we always agree on which host this
-  // install is.
+  // Derive the domain from client/.env. The canonical key is
+  // SHORTURL_DOMAIN (matches what the backend's publicUrl() reads in
+  // client/src/api/util/publicUrl.ts). PUBLIC_URL is honored as a
+  // legacy fallback for installs that set it under the old name.
   const envPath = path.join(installDir, 'client', '.env')
   if (!fs.existsSync(envPath)) return { status: 'no-config', reason: 'client/.env missing' }
   const envText = fs.readFileSync(envPath, 'utf8')
-  const m = /^PUBLIC_URL=(.+)$/m.exec(envText)
-  if (!m) return { status: 'no-config', reason: 'PUBLIC_URL not set in client/.env' }
+  const m = /^SHORTURL_DOMAIN=(.+)$/m.exec(envText) || /^PUBLIC_URL=(.+)$/m.exec(envText)
+  if (!m) return { status: 'no-config', reason: 'SHORTURL_DOMAIN not set in client/.env' }
   let domain
   try { domain = new URL(m[1].replace(/^["']|["']$/g, '').trim()).hostname }
-  catch { return { status: 'no-config', reason: `PUBLIC_URL is not a valid URL: ${m[1]}` } }
-  if (!domain) return { status: 'no-config', reason: 'Could not derive hostname from PUBLIC_URL' }
+  catch { return { status: 'no-config', reason: `SHORTURL_DOMAIN is not a valid URL: ${m[1]}` } }
+  if (!domain) return { status: 'no-config', reason: 'Could not derive hostname from SHORTURL_DOMAIN' }
 
   const sitesAvailable = `/etc/nginx/sites-available/${domain}`
   if (!fs.existsSync(sitesAvailable)) {

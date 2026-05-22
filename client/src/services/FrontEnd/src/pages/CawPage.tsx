@@ -172,7 +172,15 @@ export const CawPage: React.FC = () => {
         const sig = `${comm.user.tokenId}:${comm.content?.trim()}`
         return !pendingReplies.some(p => `${p.user?.tokenId}:${p.content?.trim()}` === sig)
       })
-      .sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime())
+      .sort((a, b) => {
+        // Timestamp ASC for the reply thread. Pending chunks of a thread
+        // submission share a wall-clock millisecond, so the tie-break on
+        // cawonce ASC ensures 1/N renders above 2/N regardless of the
+        // pendingPostsStore's insertion order (which is LIFO).
+        const dt = new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime()
+        if (dt !== 0) return dt
+        return (a.cawonce ?? 0) - (b.cawonce ?? 0)
+      })
 
     const rootId = String(caw?.id ?? id ?? '')
     const replyIds = new Set(replies.map(reply => String(reply.id)))

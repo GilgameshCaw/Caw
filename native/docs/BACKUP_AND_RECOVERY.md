@@ -141,6 +141,34 @@ Non-negotiable, because they're the difference between "acceptable risk" and "th
 - **Opt-out of cloud backup.** Users who want MetaMask-equivalent posture should be able to disable backend mirroring entirely and rely on seed phrase. Make this a real option, not a buried setting.
 - **Transparency.** In the security settings page, explain plainly: "If our backend is breached and you have a weak password, an attacker could eventually decrypt your wallet offline." Let users make an informed choice.
 
+### ecdsaFallback is the ultimate authority — onboarding must say this explicitly
+
+For Population B users (phone-first, 7702 + passkey), the SmartEOA stores an `ecdsaFallback` address. This is the secp256k1 EOA whose private key lives inside the encrypted backup blob. The on-chain contract grants this key bypass authority over every passkey: it can call `removePasskey` on any device without quorum, `rotateEcdsaFallback` to swap itself out, and `addPasskey` to enroll a new device — all without any passkey signature. See `messages/plan-smart-eoa-passkey-sponsorship.md` §1 Scenario D and §2 for the on-chain rules.
+
+This is the right contract behavior — the fallback key has to be unconditionally trusted because it's the user's last-resort recovery anchor. But it means the vault password (which decrypts the backup blob to reveal the secp256k1 private key) is functionally **the master credential for the account.** Anyone who learns the vault password and gets access to the backup blob can wipe every passkey and take over.
+
+**The onboarding flow must convey this in plain language.** Two failure modes to defend against:
+
+1. **User chooses a weak vault password** because they think "the passkey is the real security." Wrong — the passkey is the convenient daily-driver. The vault password is the master. A weak password + a leaked backup blob = compromised account.
+2. **User reuses a password they already use somewhere else.** If that other site is breached, the attacker has a credential-stuffing attempt that, combined with a leaked backup blob, drains the account.
+
+**Required onboarding UX:**
+
+- During vault-password creation, a paragraph explaining: "This password unlocks your recovery key. The recovery key is the ultimate authority over your account — it can replace your passkey if your device is lost. Anyone who learns this password AND has a copy of your backup file could take over your account. Treat it like the master password it is."
+- A password-strength meter that **gates** account creation. Require a meaningful entropy threshold (no "Password1!" — recommend zxcvbn score ≥ 3, or equivalent length+character-class requirement).
+- An explicit warning if the password resembles common patterns or is found in a breach dictionary (HaveIBeenPwned's hashed-password API works without leaking the password).
+- A "no password manager? Here's a phrase generator" affordance offering a 4-6 word passphrase (Diceware-style). For mainstream users who won't use a password manager, an unfamiliar passphrase is significantly stronger than a familiar password.
+
+**Required security-settings UX:**
+
+- A "Rotate recovery key" action that calls `SmartEOA.rotateEcdsaFallback(newAddress, webauthnSig)`. Document that this is the only way to render a leaked backup blob useless — the old blob, even if eventually cracked, no longer corresponds to a key the contract recognizes.
+- A "View enrolled passkeys" list with `enrolledAt` timestamps. If the user sees a passkey they don't recognize (Scenario F — iCloud compromise), they need to know which devices are currently authorized.
+- A "Last activity from recovery key" indicator. If the ecdsaFallback key has been used recently and the user didn't initiate it, that's the alarm bell that says "your password leaked, rotate now."
+
+**Why this lives in the onboarding spec, not in the contract:** the contract correctly grants the fallback key its authority. Restricting that authority would break legitimate recovery. The defense against weak-password compromise lives in the FE — strong-password enforcement, clear language about what the password protects, and rotation primitives that let users respond to a leak.
+
+This is not a one-time onboarding screen; the language about "vault password = master credential" should also appear in the security settings page, the password-change flow, and any rotation flow that touches the fallback key.
+
 ## Future recovery options
 
 These are real improvements we should keep on the roadmap but aren't shipping with v1. Captured here so they're considered, not lost:

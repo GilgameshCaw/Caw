@@ -8,6 +8,7 @@ import BugIcon from "~/components/icons/BugIcon";
 import { useTheme } from "~/hooks/useTheme";
 import Tooltip from "~/components/Tooltip";
 import { useT } from "~/i18n/I18nProvider";
+import { acquireScrollLock, releaseScrollLock } from "~/utils/scrollLock";
 import { useState, useEffect, useRef, lazy, Suspense } from "react";
 import { HiOutlineMenu, HiOutlineX, HiOutlinePencilAlt, HiOutlineHome, HiOutlineSearch, HiOutlineColorSwatch, HiOutlineBell, HiOutlineUser, HiOutlineChat } from "react-icons/hi";
 import { useLocation } from "react-router-dom";
@@ -45,7 +46,11 @@ const MainLayout = ({ children, hideSidebars: hideSidebarsProp }: MainLayoutProp
   const { isConnected } = useAccount()
   const { openConnectModal } = useConnectModal()
   const openModal = useModalStore(s => s.openModal)
-  const dmUnreadCount = useDmUnreadStore(s => s.totalUnread)
+  // Drawer badge shows COUNT OF CONVERSATIONS with unread messages, not
+  // total unread messages. "5 friends are waiting on me" reads better
+  // than "23 unread messages" — the per-conversation counters in the
+  // Messages list still show the message count per thread.
+  const dmUnreadCount = useDmUnreadStore(s => s.unreadConversations)
   const notifUnreadCount = useNotificationUnreadStore(s => s.unreadCount)
   const offersUnreadCount = useOffersUnreadStore(s => s.unreadCount)
   const hasInlineDraft = useComposeDraftStore(s => s.hasInlineDraft)
@@ -247,6 +252,16 @@ const MainLayout = ({ children, hideSidebars: hideSidebarsProp }: MainLayoutProp
     }
   }, [showBottomNav, hasInlineDraft])
 
+  // Lock background scroll while the mobile drawer is open so the feed
+  // behind the backdrop doesn't scroll under the finger. Reuses the same
+  // refcounted lock as modals — handles iOS Safari (which ignores
+  // overflow:hidden) via position:fixed and restores scrollY on close.
+  useEffect(() => {
+    if (!isMobileMenuOpen) return
+    acquireScrollLock()
+    return () => releaseScrollLock()
+  }, [isMobileMenuOpen])
+
   return (
     <>
     {/* Fixed backdrop so scrolling doesn't reveal the root gradient */}
@@ -289,6 +304,7 @@ const MainLayout = ({ children, hideSidebars: hideSidebarsProp }: MainLayoutProp
           <Link
             to="/messages"
             aria-label="Messages"
+            onClick={() => { clearInlineDrawerStyles(); setIsMobileMenuOpen(false) }}
             className={`absolute right-4 translate-y-[2px] p-2 rounded-lg transition-colors duration-200 ${
               isDark ? 'text-white hover:bg-white/10' : 'text-black hover:bg-gray-100'
             }`}
@@ -496,7 +512,14 @@ const MainLayout = ({ children, hideSidebars: hideSidebarsProp }: MainLayoutProp
           // suggest the row is interactive but the click lands on the nav
           // (bug #215). The nav reclaims pointer events as soon as scroll
           // settles, so its own buttons remain usable.
-          className={`md:hidden fixed bottom-0 left-0 right-0 z-[55] flex items-center justify-around h-14 pb-[env(safe-area-inset-bottom)] [height:calc(theme(height.14)+env(safe-area-inset-bottom))] border-t transition-all duration-200 ${
+          // Padding-top proportional to the bottom safe-area inset. Only
+          // takes effect on hardware with a home-bar (iPhone X+ adds
+          // ~34px → pt ≈ 17px → icon shifts ~9px down, well clear of
+          // the FAB tap zone above). On Android / emulators without a
+          // safe-area the value is 0 and the layout matches the pre-fix
+          // behaviour exactly. Fixes #287 without over-correcting on
+          // safe-area-less environments.
+          className={`md:hidden fixed bottom-0 left-0 right-0 z-[55] flex items-center justify-around h-14 pt-[calc(env(safe-area-inset-bottom)/2)] pb-[env(safe-area-inset-bottom)] [height:calc(theme(height.14)+env(safe-area-inset-bottom))] border-t transition-all duration-200 ${
             hasInlineDraft ? 'opacity-0 translate-y-full pointer-events-none' : isScrolling ? 'opacity-30 pointer-events-none' : 'opacity-100'
           } ${
             isDark ? 'bg-black border-white/10' : 'bg-white border-gray-200'

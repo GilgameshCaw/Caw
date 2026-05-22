@@ -360,13 +360,18 @@ const Notifications: React.FC = () => {
     const { actionType, receiverUsername, targetCaw } = payload
     // payload.text is smltxt-compressed hex from the signed action — decompress
     // to plaintext for display. Falls back to empty string on decode failure.
-    const plaintext = payload.text ? decompressSignedText(payload.text) : ''
+    // Strip the ::poll: marker so a failed-action snippet doesn't leak the raw
+    // marker into the notification body.
+    const plaintext = stripPollMarker(payload.text ? decompressSignedText(payload.text) : '')
     const userTextTrim = plaintext.trim()
     const userSnippet = userTextTrim
       ? (userTextTrim.length > 140 ? userTextTrim.slice(0, 140) + '…' : userTextTrim)
       : ''
+    // Same scrub on the target caw's content snippet — the caw being liked /
+    // recawed / replied to may itself carry a poll marker.
+    const targetContent = targetCaw ? stripPollMarker(targetCaw.content) : ''
     const targetSnippet = targetCaw
-      ? `@${targetCaw.authorUsername}: "${targetCaw.content.length > 100 ? targetCaw.content.slice(0, 100) + '…' : targetCaw.content}"`
+      ? `@${targetCaw.authorUsername}: "${targetContent.length > 100 ? targetContent.slice(0, 100) + '…' : targetContent}"`
       : ''
 
     switch (actionType) {
@@ -386,7 +391,7 @@ const Notifications: React.FC = () => {
       case 1: // like
         return {
           title: targetCaw ? `Like on @${targetCaw.authorUsername}'s caw failed` : 'Like failed',
-          snippet: targetSnippet ? `"${targetCaw!.content.length > 100 ? targetCaw!.content.slice(0, 100) + '…' : targetCaw!.content}"` : undefined,
+          snippet: targetSnippet ? `"${targetContent.length > 100 ? targetContent.slice(0, 100) + '…' : targetContent}"` : undefined,
         }
       case 3: {
         // recaw (plain) vs quote (has text)
@@ -400,7 +405,7 @@ const Notifications: React.FC = () => {
         }
         return {
           title: targetCaw ? `Recaw of @${targetCaw.authorUsername}'s caw failed` : 'Recaw failed',
-          snippet: targetCaw ? `"${targetCaw.content.length > 100 ? targetCaw.content.slice(0, 100) + '…' : targetCaw.content}"` : undefined,
+          snippet: targetCaw ? `"${targetContent.length > 100 ? targetContent.slice(0, 100) + '…' : targetContent}"` : undefined,
         }
       }
       case 4: // follow

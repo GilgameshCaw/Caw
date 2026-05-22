@@ -406,6 +406,10 @@ const TipAttachmentControl: React.FC<Props> = ({
   }
 
   // Tip-button active-state styling — mirrors the poll button pattern.
+  // Note: the inactive states use opacity-70 on the icon itself (handled
+  // below) instead of putting alpha on text-yellow-*/70, so the SVG's
+  // overlapping outline + "$" strokes don't compound their alpha at the
+  // intersection points. Put alpha on the group, not on per-path stroke.
   const activeClasses = hasTips
     ? 'text-yellow-500 bg-yellow-400/10'
     : text.trim()
@@ -413,8 +417,12 @@ const TipAttachmentControl: React.FC<Props> = ({
           ? 'text-yellow-400 hover:text-yellow-300 hover:bg-yellow-400/10'
           : 'text-yellow-600 hover:text-yellow-500 hover:bg-yellow-200/50')
       : (isDark
-          ? 'text-yellow-400/70 hover:text-yellow-400 hover:bg-yellow-400/10'
-          : 'text-yellow-600/70 hover:text-yellow-600 hover:bg-yellow-200/50')
+          ? 'text-yellow-400 hover:text-yellow-400 hover:bg-yellow-400/10'
+          : 'text-yellow-600 hover:text-yellow-600 hover:bg-yellow-200/50')
+
+  // True only for the dim "inactive with no draft" state. Drives the SVG
+  // opacity-70 below so the overlap-hot-spot from per-stroke alpha is gone.
+  const dimIcon = !hasTips && !text.trim()
 
   // The tooltip on the trigger summarises the attached total.
   const triggerAriaLabel = hasTips
@@ -437,19 +445,49 @@ const TipAttachmentControl: React.FC<Props> = ({
         disabled={disabled}
         title={title || t('post_form.tip.tooltip', { defaultValue: 'Attach tips to your post' })}
         aria-label={triggerAriaLabel}
-        className={`relative p-1 rounded-full transition-all duration-200 ${
+        className={`relative p-2 rounded-full transition-all duration-200 ${
           disabled ? 'opacity-30 cursor-not-allowed' : 'cursor-pointer'
         } ${activeClasses}`}
       >
-        {/* Dollar-sign coin icon. Filled when tips are attached, outline when not. */}
-        <svg className={iconSizeClass} fill={hasTips ? 'currentColor' : 'none'} stroke="currentColor" viewBox="0 0 24 24">
+        {/* Tip icon: noun-money 5805672. Filled coin + "$" glyph when a
+            tip is attached; outline-only "ring + $" when inactive so the
+            icon weight matches the other toolbar icons (which are all
+            stroke-based when inactive). Both states use currentColor so
+            the active/inactive colour swap is handled by activeClasses. */}
+        <svg
+          className={`${iconSizeClass} ${dimIcon ? 'opacity-70' : ''}`}
+          fill={hasTips ? 'currentColor' : 'none'}
+          stroke="currentColor"
+          viewBox="0 0 24 24"
+          aria-hidden="true"
+        >
           {hasTips ? (
-            <path fillRule="evenodd" clipRule="evenodd" d="M12 2a10 10 0 100 20 10 10 0 000-20zm.75 5a.75.75 0 00-1.5 0v.5h-.5a2.25 2.25 0 000 4.5h2a.75.75 0 010 1.5h-3a.75.75 0 000 1.5h1.5v.5a.75.75 0 001.5 0V15h.5a2.25 2.25 0 000-4.5h-2a.75.75 0 010-1.5h3a.75.75 0 000-1.5h-1.5V7z" />
+            // Filled coin with $ cut out. The original 100-square path
+            // works inside viewBox 0 0 24 24 via a containing transform so
+            // we don't have to re-author. evenodd makes the $ a hole.
+            <g transform="scale(0.24)" fillRule="evenodd">
+              <path
+                stroke="none"
+                d="M49.9999313,2.5001991c-26.249855,0-47.4999313,21.2498207-47.4999313,47.4999275c0,26.2498512,21.2500782,47.4996758,47.4999313,47.4996758s47.4999313-21.2498245,47.4999313-47.4996758C97.5621719,23.7500191,76.2497864,2.5001991,49.9999313,2.5001991z M63.6875267,68.750061c-2.0627289,2.4998856-4.7500458,4.1875-7.9375954,5.0623398c-1.3750648,0.3751068-1.9999123,1.1250763-1.937603,2.5001373c0.062561,1.3748169,0,2.812439,0,4.1872559c0,1.2501984-0.6248474,1.9375992-1.8747902,1.9375992c-1.5001907,0.062561-3.0001221,0.062561-4.5626183,0c-1.3125038,0-1.9373512-0.7499619-1.9373512-2.0624695V77.3125c0-2.2501602-0.1251183-2.3750229-2.2501526-2.6875763c-2.812439-0.4374161-5.5000114-1.0625153-8.0624619-2.3124619c-1.9999123-0.9999542-2.1873398-1.4999313-1.6250572-3.5624008c0.4376717-1.5625,0.8750916-3.1249924,1.3125076-4.6874847c0.5625381-1.8124847,1.0625153-2.0001678,2.6875725-1.1876373c2.812439,1.4376221,5.812561,2.3124619,8.9375496,2.6875687c1.9999123,0.2499924,3.9998207,0.062561,5.8748665-0.7499619c3.5000992-1.5001907,4.0626373-5.5625763,1.0625153-8.0001564c-0.9999542-0.8122749-2.1250305-1.4373741-3.3124161-1.9373512c-3.0624275-1.3750648-6.2499771-2.3750229-9.1249771-4.1249428c-4.6874847-2.812439-7.6876068-6.6876488-7.3124962-12.3750877c0.3748589-6.4374065,4.0623856-10.4997902,9.9375076-12.6248226c2.4373283-0.8750877,2.4373283-0.8750877,2.4373283-3.3749771v-2.5624504c0.062561-1.9376049,0.3751106-2.2501545,2.3124619-2.3127155h1.7501755c4.0623856,0,4.0623856,0,4.1249466,4.0626373c0,2.875,0,2.875,2.875,3.374979c2.1873398,0.374855,4.3123703,0.9999542,6.3125381,1.8750439c1.1248245,0.4999771,1.5624924,1.2499447,1.1873856,2.4373283c-0.4999771,1.7499218-0.999958,3.5626602-1.5624962,5.2500229c-0.5625381,1.6250534-1.0625191,1.875042-2.6250114,1.1250763c-3.1875496-1.5624962-6.4999657-2.1875954-10.0623741-2.0001678C49.3748322,33.6875229,48.5,33.812645,47.6249084,34.1875c-3.0624275,1.3125076-3.5624046,4.6874847-0.9373932,6.749958c1.3125038,1.0625153,2.812439,1.8124809,4.3749313,2.4375801c2.6875725,1.1248245,5.3748894,2.1873398,7.9373398,3.6249695C67.1873703,51.500061,69.4372711,61.7498589,63.6875267,68.750061z"
+              />
+            </g>
           ) : (
-            <>
-              <circle cx="12" cy="12" r="9" strokeWidth={2} />
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M14.5 9.5a3 3 0 00-3-1.5h-1a2 2 0 000 4h2a2 2 0 010 4h-1.5a3 3 0 01-3-1.5M12 7v1.5m0 7V17" />
-            </>
+            // Outline coin + stroked "$" collapsed into a SINGLE path. Two
+            // overlapping painted elements would compound their alpha at
+            // intersection points when currentColor carries opacity (e.g.
+            // text-white/70 on the toolbar) — multi-path overlaps become
+            // visible hot-spots. One path = one fill of the stroke geometry
+            // = no compounding at the points where the $ touches the ring.
+            // Same visual weight as the other outline-only toolbar icons.
+            <path
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              strokeWidth={2}
+              d="M21 12a9 9 0 11-18 0 9 9 0 0118 0z
+                 M14.5 9a3 3 0 00-2.5-1.3h-.8a2 2 0 100 4h1.6a2 2 0 010 4h-1a3 3 0 01-2.8-1.5
+                 M12 6v1.7
+                 M12 16.3V18"
+            />
           )}
         </svg>
         {hasTips && (

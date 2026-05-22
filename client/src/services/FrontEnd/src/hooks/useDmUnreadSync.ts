@@ -26,10 +26,10 @@ export function useDmUnreadSync() {
         )
         if (cancelled) return
         const mutedIds = useDmMuteStore.getState().mutedConversations
-        const total = (data.conversations || [])
-          .filter(c => !mutedIds.includes(c.id))
-          .reduce((sum, c) => sum + (c.unreadCount || 0), 0)
-        useDmUnreadStore.getState().setTotalUnread(total)
+        useDmUnreadStore.getState().setUnreadFromConversations(
+          data.conversations || [],
+          mutedIds,
+        )
       } catch {
         // Silently fail — user may not have DMs enabled
       }

@@ -166,8 +166,9 @@ async function collectRpcPair(label, required, expectedChainId) {
     console.log(dim('    • Outages happen with no warning'))
     console.log(dim('    • The RPC operator sees every read + every tx you sign'))
     console.log(dim('    • A misbehaving public RPC can return stale state — bad for a validator'))
-    console.log(dim('    Fine for trying things out; for a real node, use a paid provider'))
-    console.log(dim('    (Infura, Alchemy, QuickNode all have free tiers).'))
+    console.log(dim('    Fine for trying things out; for a real node, use a paid provider.'))
+    console.log(dim('    Recommended free tiers for CAW: Infura, dRPC (5 keys/account), QuickNode.'))
+    console.log(dim('    AVOID Alchemy free tier — its 10-block eth_getLogs cap breaks the indexer.'))
     console.log()
   }
 
@@ -346,7 +347,10 @@ export async function collectL1Rpc(nodeType, network = 'testnet') {
     '(wss://) is optional and only enables real-time event subscription;',
     'with no WSS, the indexers fall back to HTTP polling (works fine).',
     '',
-    'Free options: Infura, Alchemy, QuickNode (all have free tiers).',
+    'Recommended free tiers for CAW: Infura, dRPC (5 keys/account), QuickNode.',
+    'AVOID Alchemy free tier — its 10-block eth_getLogs cap silently breaks',
+    'the indexer + validator. Multiple operators have hit this.',
+    '',
     'For Infura URLs, the WSS endpoint is offered as a default so you can',
     'just press Enter.',
   ])
@@ -478,8 +482,9 @@ export async function collectL2Rpc(nodeType, storageChainLabel) {
     'Every action your node submits or indexes flows through this chain,',
     'so a reliable RPC matters more here than for L1.',
     '',
-    'Same rules as the L1 step: HTTP required, WSS optional. Free tiers',
-    'on Infura / Alchemy / QuickNode all support Base + Arbitrum.',
+    'Same rules as the L1 step: HTTP required, WSS optional. For free tiers,',
+    'Infura / dRPC / QuickNode all support Base + Arbitrum. AVOID Alchemy',
+    'free tier here too — same 10-block eth_getLogs cap problem.',
   ])
 
   const expectedChainId = STORAGE_LABEL_TO_CHAIN_ID[storageChainLabel] || null

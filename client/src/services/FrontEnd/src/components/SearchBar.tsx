@@ -90,7 +90,7 @@ const SearchBar: React.FC = () => {
     if (finalQuery.startsWith('#')) {
       navigate(`/hashtags/${finalQuery.substring(1)}`)
     } else if (finalQuery.startsWith('@')) {
-      navigate(`/profile/${finalQuery.substring(1)}`)
+      navigate(`/users/${finalQuery.substring(1)}`)
     } else {
       navigate(`/search?q=${encodeURIComponent(finalQuery)}`)
     }
@@ -157,7 +157,7 @@ const SearchBar: React.FC = () => {
           onFocus={() => setShowSuggestions(true)}
           onKeyDown={handleKeyDown}
           placeholder={t('search.placeholder')}
-          className={`w-full rounded-full py-3 pl-12 pr-10 transition-all duration-300 focus:outline-none ${
+          className={`w-full rounded-full py-3 pl-12 pr-10 text-[16px] transition-all duration-300 focus:outline-none ${
             isDark
               ? 'bg-black border-yellow-500/30 text-white placeholder-white/50 focus:border-yellow-500/50 focus:bg-black'
               : 'bg-white border-gray-200 text-black placeholder-gray-500 focus:border-gray-300 focus:bg-white'

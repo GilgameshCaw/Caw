@@ -1,5 +1,6 @@
 import { Router } from 'express'
 import { prisma } from '../../prismaClient'
+import { recomputePinnedCount } from '../../utils/pinnedCount'
 import { extractSession } from '../middleware/auth'
 
 const router = Router()
@@ -77,36 +78,36 @@ router.post('/:cawId', async (req, res) => {
       select: { id: true, pending: true, pendingUnpin: true },
     })
 
+    // #222: pinnedCawCount is derived from the deduped rows, not delta-
+    // mutated, so it can't drift under racing confirm paths. Recompute in
+    // the same tx as every row change.
     if (!existing) {
-      await prisma.$transaction([
-        prisma.pinnedCaw.create({
+      await prisma.$transaction(async (tx) => {
+        await tx.pinnedCaw.create({
           data: { userId, cawId, pending: false },
-        }),
-        prisma.user.update({
-          where: { tokenId: userId },
-          data: { pinnedCawCount: { increment: 1 } },
-        }),
-      ])
+        })
+        await recomputePinnedCount(tx, userId)
+      })
     } else if (existing.pending) {
       // Pending pin getting confirmed off-chain. Clear pendingUnpin too
       // in case a stale unpin flag survived a re-pin cycle.
-      await prisma.$transaction([
-        prisma.pinnedCaw.update({
+      await prisma.$transaction(async (tx) => {
+        await tx.pinnedCaw.update({
           where: { id: existing.id },
           data: { pending: false, pendingUnpin: false },
-        }),
-        prisma.user.update({
-          where: { tokenId: userId },
-          data: { pinnedCawCount: { increment: 1 } },
-        }),
-      ])
+        })
+        await recomputePinnedCount(tx, userId)
+      })
     } else if (existing.pendingUnpin) {
       // Already-confirmed pin with an on-chain unpin in flight. The new
-      // pin supersedes it; clear the flag without re-incrementing count
-      // (the original confirmed pin was already counted).
-      await prisma.pinnedCaw.update({
-        where: { id: existing.id },
-        data: { pendingUnpin: false },
+      // pin supersedes it; clearing pendingUnpin makes the row visible and
+      // counted again — recompute picks that up.
+      await prisma.$transaction(async (tx) => {
+        await tx.pinnedCaw.update({
+          where: { id: existing.id },
+          data: { pendingUnpin: false },
+        })
+        await recomputePinnedCount(tx, userId)
       })
     }
     // else: already confirmed and not unpin-pending — idempotent no-op.
@@ -138,19 +139,13 @@ router.delete('/:cawId', async (req, res) => {
       return res.json({ success: true })
     }
 
-    // Only decrement if we're removing a confirmed pin — pending rows
-    // weren't counted.
-    if (existing.pending) {
-      await prisma.pinnedCaw.delete({ where: { id: existing.id } })
-    } else {
-      await prisma.$transaction([
-        prisma.pinnedCaw.delete({ where: { id: existing.id } }),
-        prisma.user.update({
-          where: { tokenId: userId },
-          data: { pinnedCawCount: { decrement: 1 } },
-        }),
-      ])
-    }
+    // Derive the count from the remaining rows — handles confirmed vs
+    // pending uniformly (pending rows aren't counted, so removing one is
+    // a recompute no-op) and self-heals any prior drift.
+    await prisma.$transaction(async (tx) => {
+      await tx.pinnedCaw.delete({ where: { id: existing.id } })
+      await recomputePinnedCount(tx, userId)
+    })
 
     res.json({ success: true })
   } catch (err) {

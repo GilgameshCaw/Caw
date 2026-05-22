@@ -47,7 +47,12 @@ const CACHE_TTL = 60_000 // 1 minute — background refresh if stale
 // Anchors to the topmost visible item by id (with its viewport offset),
 // not to a raw scrollY — that survives async image loads, layout shifts,
 // and feed mutations. Keyed by the same cacheKey as feedCache.
-type ScrollAnchor = { cawId: string; offset: number }
+//
+// scrollY is captured as a backup: if the anchor element doesn't appear
+// in the DOM within the retry budget (data still loading, item filtered
+// out, etc.) we fall through to it. Bug #296 was the user landing at
+// scrollY=0 on back-from-thread when the anchor restore failed silently.
+type ScrollAnchor = { cawId: string; offset: number; scrollY: number }
 const feedScrollAnchors = new Map<string, ScrollAnchor>()
 
 // Session-scoped pins: replies the current user authored this session, keyed
@@ -133,15 +138,20 @@ const Feed = forwardRef<FeedRef, Props>(({ filter, username, apiEndpoint, title 
     let rafId: number | null = null
     const captureAnchor = () => {
       rafId = null
+      const scrollY = window.scrollY
       const els = document.querySelectorAll<HTMLElement>('[data-caw-id]')
       for (const el of els) {
         const rect = el.getBoundingClientRect()
         if (rect.bottom > 0) {
           const cawId = el.getAttribute('data-caw-id')
-          if (cawId) feedScrollAnchors.set(cacheKey, { cawId, offset: rect.top })
+          if (cawId) feedScrollAnchors.set(cacheKey, { cawId, offset: rect.top, scrollY })
           return
         }
       }
+      // No visible feed item found (e.g., scrolled below the list) — still
+      // record the raw scrollY so we can at least approximate on restore.
+      const existing = feedScrollAnchors.get(cacheKey)
+      if (existing) feedScrollAnchors.set(cacheKey, { ...existing, scrollY })
     }
     const onScroll = () => { if (rafId == null) rafId = requestAnimationFrame(captureAnchor) }
     window.addEventListener('scroll', onScroll, { passive: true })
@@ -154,11 +164,27 @@ const Feed = forwardRef<FeedRef, Props>(({ filter, username, apiEndpoint, title 
   // Restore on mount by anchoring to the saved feed item. Retries via rAF
   // until the layout stabilizes (image loads etc. can shift heights for a
   // few frames after items render).
+  //
+  // Retry budget = 120 frames (~2s at 60fps). Previous 30 was too tight when
+  // the feed data hadn't populated by the time the effect ran — the anchor
+  // element wasn't in the DOM yet and we'd give up before it arrived,
+  // leaving the user at scrollY=0 (bug #296). If we exhaust the budget
+  // without finding the anchor element, fall back to the raw scrollY we
+  // captured alongside the anchor — imperfect but better than scrolling
+  // to top.
   useLayoutEffect(() => {
     const anchor = feedScrollAnchors.get(cacheKey)
     if (!anchor) return
     let cancelled = false
     let attempts = 0
+    const MAX_ATTEMPTS = 120
+
+    // Pre-emptively jump near the saved position so the user doesn't see
+    // a flash at scrollY=0 while we're searching for the anchor element.
+    // The anchor-based fine-tune below corrects any drift once the element
+    // appears.
+    if (anchor.scrollY > 0) window.scrollTo(0, anchor.scrollY)
+
     const tryRestore = () => {
       if (cancelled) return
       const el = document.querySelector<HTMLElement>(`[data-caw-id="${anchor.cawId}"]`)
@@ -167,11 +193,13 @@ const Feed = forwardRef<FeedRef, Props>(({ filter, username, apiEndpoint, title 
         const delta = rect.top - anchor.offset
         if (Math.abs(delta) > 1) {
           window.scrollBy(0, delta)
-          if (++attempts < 30) requestAnimationFrame(tryRestore)
+          if (++attempts < MAX_ATTEMPTS) requestAnimationFrame(tryRestore)
         }
         return
       }
-      if (++attempts < 30) requestAnimationFrame(tryRestore)
+      if (++attempts < MAX_ATTEMPTS) requestAnimationFrame(tryRestore)
+      // If we time out without finding the element, the pre-emptive
+      // scrollTo above is the fallback — we already landed there.
     }
     requestAnimationFrame(tryRestore)
     return () => { cancelled = true }

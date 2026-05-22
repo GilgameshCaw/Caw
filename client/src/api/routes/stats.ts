@@ -19,9 +19,12 @@ function mintCostByLength(len: number): bigint {
   }
 }
 
-// Cache burned total for 1 hour — the only input is username lengths, which
-// only change when someone mints a new name. 1-hour staleness is fine for
-// a stats page. Previous 5-min TTL was overkill and made cache misses expensive.
+// Cache burned total for 30 seconds. The query is ~5ms (groups by length,
+// returns ~20 rows on a 50k-user table), so cache is just to coalesce
+// concurrent /api/stats calls — not to avoid the DB. Long TTLs here were
+// observed user-facing: bug #209 reported "200+ NFTs minted but burns
+// stuck at 46.6T" during the May bot wave, which lined up with hour-long
+// staleness in this cache when minting velocity spiked.
 let burnedCache: { value: string; expiry: number } | null = null
 
 async function getTotalCawBurned(): Promise<string> {
@@ -40,7 +43,7 @@ async function getTotalCawBurned(): Promise<string> {
     total += mintCostByLength(g.len) * BigInt(g.count)
   }
   const result = total.toString()
-  burnedCache = { value: result, expiry: Date.now() + 60 * 60 * 1000 }
+  burnedCache = { value: result, expiry: Date.now() + 30 * 1000 }
   return result
 }
 

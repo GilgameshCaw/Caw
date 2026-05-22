@@ -42,7 +42,10 @@ Uses Truffle for deployment and testing. Networks configured include:
 
 ### Smart Contracts
 - **CawActions.sol** - Core contract for CAW social actions (post, like, follow, etc.). Maintains a per-Network hash-chain checkpoint (`networkHashAtCheckpoint`) that the optimistic-archive flow commits to.
-- **CawProfile.sol** / **CawProfileL2.sol** - Name-service / profile-balance contracts for L1/L2. CAW tokens are locked on L1 and bookkept per-tokenId on L2; withdrawals route back to L1 via LayerZero.
+- **CawProfile.sol** / **CawProfileL2.sol** - Name-service / profile-balance contracts for L1/L2. CAW tokens are locked on L1 and bookkept per-tokenId on L2; withdrawals route back to L1 via LayerZero. Exposes `authenticateForMinter` (minter-gated) so CawProfileMinter can authenticate tokens on behalf of smart-wallet users without requiring them to hold ETH.
+- **CawProfileMinter.sol** - Handles minting and deposits. Contains three sponsored entry points (`mintAndDepositSponsored`, `depositForSponsored`, `authenticateSponsored`) for EIP-7702 / smart-wallet users. Each uses EIP-712 + ERC-1271 + ISmartEOA nonce verification to authorize operations without the user paying gas directly. Sponsor server (trusted operator) submits the tx and holds CAW.
+- **SmartEOA.sol** - EIP-7702 delegate implementation for Population B (phone-first) users. Deployed once; users' EOAs point at it via a type-0x04 authorization. Supports WebAuthn P-256 passkeys (via EIP-7951 precompile at 0x0100) and a secp256k1 `ecdsaFallback` key as recovery anchor. Implements ERC-1271 and the `ISmartEOA` nonce surface required by CawProfileMinter's sponsor entry points.
+- **ISmartEOA.sol** - Interface for the per-(verifyingContract, actionType) nonce model. Required by CawProfileMinter's `_checkPermit`. Wallets that do not implement this interface cannot use the sponsored entry points.
 - **CawNetworkManager.sol** - Network registry. Each Network picks its own L2 venue and archive chain at registration. ("Network" = the operator-tier entity that owns a hosted CAW deployment; distinct from "client" in any other sense.)
 - **CawActionsArchive.sol** - Archive contract deployed on archive chains. Validators stake ETH once and submit *optimistic* checkpoint replications (merkle root + packed actions). After a 2-day challenge window, submissions finalize. If a challenger proves fraud, the validator's entire stake is slashed and all their pending submissions are invalidated.
 - **CawChallengeRelay.sol** - Deployed on each source L2. Reads canonical checkpoint hashes from `CawActions` and relays them via LayerZero to the archive as fraud proofs. Permissionless; anyone can challenge.
@@ -98,6 +101,20 @@ Detailed write-up: `docs/ZK_SIG_PATH.md`. Crate: `solidity/zk/sig-recovery/READM
 - **Zustand** for state management
 - **React Query** for server state
 - **Framer Motion** for animations
+
+### Population routing (FE)
+
+The FE classifies every connected wallet into one of four populations via `useWalletPopulation()` (reads wagmi `useAccount()` + viem `getCode`):
+- **A** — plain EOA (empty code). Uses wagmi `writeContract` directly to the V2 contracts.
+- **B** — EIP-7702-delegated EOA (`code` starts with `0xef0100`, 23 bytes total). Routes through the sponsor server's three entry points (`mintAndDepositSponsored`, `depositForSponsored`, `authenticateSponsored`) signed by a WebAuthn passkey (default) or the secp256k1 ecdsaFallback key (recovery mode). `withdrawTo` is always direct, never sponsored.
+- **C** — other contract account (Safe / Argent / CSW). Not yet supported via sponsor path — needs an ISmartEOA shim (v2 scope).
+- **none** — no wallet connected. Recovery mode upgrades this to **B** when `RecoveryProvider.isInRecoveryMode === true`.
+
+New routes:
+- `/onboarding` — Population B signup (passkey enroll + secp256k1 keygen + Argon2id-encrypted backup blob + sponsor `bootstrap`).
+- `/recovery` — sign in with backup file + vault password. The recovered secp256k1 key lives ONLY in `RecoveryProvider` React state; never persisted to localStorage / sessionStorage / IndexedDB.
+
+Identity management lives under the existing AccountSettings page (Population B users only): enrolled passkeys list, add-passkey (24h timelock), rotate ecdsaFallback, re-download backup file. The `IdentitySigningProvider` shows a global biometric-prompt overlay during `navigator.credentials.get()` ceremonies.
 
 ### Database & Infrastructure
 - **PostgreSQL** with Prisma ORM

@@ -535,15 +535,21 @@ const MessagesPage: React.FC = () => {
     }
   }, [selectedConversationId, messages.length])
 
-  // Function to go back to inbox. Only navigates — the URL-change
-  // useEffect (no urlUsername + currentView === 'chat') handles
-  // leaving the conversation room and resetting state. Doing both
-  // here AND in the effect caused a double state update → visible
-  // rebound flicker on mobile.
+  // Function to go back to inbox. Resets state directly because group
+  // chats stay at /messages (no urlUsername transition fires the
+  // URL-watching effect at line ~872). The effect remains as a safety
+  // net for direct URL navigation; it self-skips when currentView is
+  // already 'inbox', so the synchronous setCurrentView('inbox') here
+  // pre-empts the second update without a visible flicker.
   const goBackToInbox = () => {
+    if (selectedConversationId) {
+      leaveConversation(selectedConversationId)
+    }
+    setCurrentView('inbox')
+    setSelectedConversationId(null)
+    setShowChatOptionsMenu(false)
     navigate('/messages', { replace: true })
-    // Refresh conversations to show latest messages after the URL effect
-    // has cleared the chat view.
+    // Refresh conversations to show latest messages.
     refreshConversations()
   }
 
@@ -2248,7 +2254,7 @@ const MessagesPage: React.FC = () => {
                           </button>
                         )}
 
-                        <div className={`flex items-start gap-1 group ${message.isFromCurrentUser ? 'flex-row-reverse' : 'flex-row'}`}>
+                        <div className={`flex w-full items-start gap-1 group ${message.isFromCurrentUser ? 'flex-row-reverse' : 'flex-row'}`}>
                           {/* Message bubble — full timestamp lives on the
                               "X minutes ago" line below now, so the bubble
                               itself isn't a tooltip trigger and doesn't
@@ -3192,7 +3198,7 @@ const MessagesPage: React.FC = () => {
                       ? 'text-white placeholder-gray-500'
                       : 'text-black placeholder-gray-500'
                   }`}
-                  style={{ maxHeight: '96px' }}
+                  style={{ maxHeight: '240px' }}
                 />
 
                 {/* @mention autocomplete for the DM composer. Surfaces
@@ -3388,7 +3394,7 @@ const MessagesPage: React.FC = () => {
                       placeholder={t('messages.search.people')}
                       value={newMessageSearch}
                       onChange={(e) => setNewMessageSearch(e.target.value)}
-                      className={`w-full pl-10 pr-4 py-2 rounded-full border transition-all duration-300 focus:outline-none focus:ring-2 focus:ring-yellow-500/30 ${
+                      className={`w-full pl-10 pr-4 py-2 rounded-full border text-[16px] sm:text-[15px] transition-all duration-300 focus:outline-none focus:ring-2 focus:ring-yellow-500/30 ${
                         isDark
                           ? 'bg-black border-gray-600 text-white placeholder-gray-500'
                           : 'bg-white border-gray-300 text-black placeholder-gray-400'
