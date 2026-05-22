@@ -261,11 +261,11 @@ const NetworkFeeModal: React.FC<NetworkFeeModalProps> = ({
                     </span>
                   </span>
                 </td>
-                <td className={`py-2 pr-4 text-sm font-mono ${isDark ? 'text-white' : 'text-gray-900'}`}>
+                <td
+                  colSpan={2}
+                  className={`py-2 pr-4 text-sm font-mono ${isDark ? 'text-white' : 'text-gray-900'}`}
+                >
                   {weiToUsd(fees.withdrawFee, ethPrice)}
-                </td>
-                <td className={`py-2 text-sm font-mono ${mutedClass}`}>
-                  (your max)
                 </td>
               </tr>
             </tbody>
