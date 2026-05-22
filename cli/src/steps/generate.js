@@ -517,6 +517,36 @@ function buildEnvVars(nodeType, config) {
   //   off prevents the bypass-nginx-and-hit-port-4000 footgun.
   env.BIND_HOST = nodeType === 'api-only' ? '0.0.0.0' : '127.0.0.1'
 
+  // ALLOWED_ORIGINS lets the originGate middleware accept cross-origin
+  // requests. In production the frontend and API share the same hostname via
+  // nginx, so same-origin requests pass without this var. In dev the Vite
+  // dev server runs on :5274 and the API on :4000 — different origins —
+  // so we set it explicitly to avoid a wall of CORS errors on first run.
+  if (config.deployment === 'dev') {
+    env.ALLOWED_ORIGINS = 'http://localhost:5274'
+  }
+
+  // Sponsor signups. The server fails at boot with a clear error when
+  // SPONSOR_ENABLED=1 but SPONSOR_CODE_HMAC_SECRET is missing, so we
+  // only write these together.
+  if (config.sponsorEnabled) {
+    env.SPONSOR_ENABLED = '1'
+    env.SPONSOR_CODE_HMAC_SECRET = config.sponsorCodeHmacSecret
+    if (config.sponsorWalletPrivateKey) {
+      env.SPONSOR_WALLET_PRIVATE_KEY = config.sponsorWalletPrivateKey
+    }
+    if (config.sponsorMaxDepositCaw) {
+      env.SPONSOR_MAX_DEPOSIT_CAW = config.sponsorMaxDepositCaw
+    }
+  }
+
+  // Moonpay backend secret key. Only needed (and only written) for
+  // production mode — it signs the URLs that Moonpay validates. Leaving it
+  // out of sandbox installs means one fewer sensitive var in the .env.
+  if (config.moonpayMode === 'production' && config.moonpaySecretKey) {
+    env.MOONPAY_SECRET_KEY = config.moonpaySecretKey
+  }
+
   return env
 }
 
@@ -559,6 +589,14 @@ function buildFrontendEnv(nodeType, config) {
   // events by source so one DSN works for both.
   if (config.sentryDsn) {
     env.VITE_SENTRY_DSN = config.sentryDsn
+  }
+
+  // Moonpay card-payment onramp. Both vars are publishable — they ship in
+  // the public bundle. When disabled (or not collected because this is an
+  // api-only node), we write nothing and the FE auto-hides the button.
+  if (config.moonpayMode && config.moonpayMode !== 'disabled' && config.moonpayApiKey) {
+    env.VITE_MOONPAY_API_KEY = config.moonpayApiKey
+    env.VITE_MOONPAY_BASE_URL = config.moonpayBaseUrl
   }
 
   return env

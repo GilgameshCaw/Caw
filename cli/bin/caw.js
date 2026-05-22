@@ -40,6 +40,7 @@ import { chainLabels } from '../src/steps/networkAndMode.js'
 import { collectValidatorConfig } from '../src/steps/validator.js'
 import { collectReplicationConfig } from '../src/steps/replication.js'
 import { collectInfraEarly, collectInfraLate } from '../src/steps/infrastructure.js'
+import { collectOnboardingFeatures } from '../src/steps/onboardingFeatures.js'
 import { setNetwork as setAddressesNetwork } from '../src/addresses.js'
 import { generateConfig } from '../src/steps/generate.js'
 import { runInstall, startServices } from '../src/steps/install.js'
@@ -108,6 +109,16 @@ const ENV_TO_CAW = {
   VALIDATOR_USERNAME: 'CAW_VALIDATOR_USERNAME',
   ADMIN_PASSWORD: 'CAW_ADMIN_PASSWORD',
   NETWORK_ID: 'CAW_NETWORK_ID',
+  // Sponsor signups — HMAC secret must persist across re-runs (rotating it
+  // breaks all existing invite codes). Private key not preloaded by default
+  // (sensitive), but honored when explicitly in environment.
+  SPONSOR_ENABLED: 'CAW_SPONSOR_ENABLED',
+  SPONSOR_CODE_HMAC_SECRET: 'CAW_SPONSOR_CODE_HMAC_SECRET',
+  SPONSOR_MAX_DEPOSIT_CAW: 'CAW_SPONSOR_MAX_DEPOSIT_CAW',
+  // Moonpay — API key and mode persist across re-runs. Secret key handled
+  // separately (not preloaded from file to avoid log-on-disk; honored from
+  // explicit shell env via CAW_MOONPAY_SECRET_KEY).
+  MOONPAY_MODE: 'CAW_MOONPAY_MODE',
   // VITE_PROJECT_ID lives in the FRONTEND .env, handled separately.
 }
 
@@ -139,6 +150,12 @@ const EXPECTED_DROPS = new Set([
   'SHORTURL_DOMAIN',
   // Generated each install but the value doesn't matter (logger flags etc).
   'NODE_ENV',
+  // Sponsor/Moonpay vars written by generate.js but not mapped through
+  // ENV_TO_CAW (private key not preloaded from file; derived vars re-derived).
+  'SPONSOR_WALLET_PRIVATE_KEY',
+  'MOONPAY_SECRET_KEY',
+  'ALLOWED_ORIGINS',
+  'BIND_HOST',
 ])
 
 // When --env points at a previous install, read every supported value out
@@ -199,6 +216,19 @@ function preloadFromEnv(envFilePath, frontendEnvFilePath) {
   // VITE_PROJECT_ID from the frontend .env — same skip-the-prompt pattern.
   if (frontend.VITE_PROJECT_ID && !process.env.CAW_WALLETCONNECT_PROJECT_ID) {
     process.env.CAW_WALLETCONNECT_PROJECT_ID = frontend.VITE_PROJECT_ID
+    loaded++
+  }
+  // VITE_MOONPAY_API_KEY from the frontend .env — lets the operator skip the
+  // Moonpay prompt on re-runs without having to re-paste the key.
+  if (frontend.VITE_MOONPAY_API_KEY && !process.env.CAW_MOONPAY_API_KEY) {
+    process.env.CAW_MOONPAY_API_KEY = frontend.VITE_MOONPAY_API_KEY
+    loaded++
+  }
+  // VITE_MOONPAY_BASE_URL tells us which mode was chosen last time.
+  if (frontend.VITE_MOONPAY_BASE_URL && !process.env.CAW_MOONPAY_MODE) {
+    process.env.CAW_MOONPAY_MODE = frontend.VITE_MOONPAY_BASE_URL.includes('sandbox')
+      ? 'sandbox'
+      : 'production'
     loaded++
   }
   return { loaded, unrecognized }
@@ -335,6 +365,11 @@ program
       // chain-aware steps to keep the natural flow.
       const infraLate = await collectInfraLate(nodeType)
 
+      // Step 9: Optional onboarding features — sponsored signups (invite codes)
+      // and Moonpay card-payment onramp. Both are fully skippable. Placed after
+      // infra so the operator finishes all "required" decisions first.
+      const onboardingFeatures = await collectOnboardingFeatures(nodeType)
+
       // Merge all config
       const fullConfig = {
         ...networkConfig,
@@ -344,6 +379,7 @@ program
         ...replicationConfig,
         ...infraEarly,
         ...infraLate,
+        ...onboardingFeatures,
       }
 
       // Step 5: Generate config files
