@@ -17,6 +17,7 @@ export default defineConfig({
         "CawProfileL2.sol/*.json",
         "CawProfileMinter.sol/*.json",
         "CawProfileQuoter.sol/*.json",
+        "CawProfileLens.sol/*.json",
         "CawProfileURI.sol/*.json",
         "CawProfileMarketplace.sol/*.json",
         "MintableCaw.sol/*.json",

@@ -4302,6 +4302,109 @@ export const cawProfileL2Abi = [
 ] as const
 
 //////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+// CawProfileLens
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+export const cawProfileLensAbi = [
+  {
+    type: 'constructor',
+    inputs: [
+      { name: '_cawProfile', internalType: 'address', type: 'address' },
+      { name: '_cawProfileMinter', internalType: 'address', type: 'address' },
+    ],
+    stateMutability: 'nonpayable',
+  },
+  {
+    type: 'function',
+    inputs: [],
+    name: 'cawProfile',
+    outputs: [
+      { name: '', internalType: 'contract ICawProfile', type: 'address' },
+    ],
+    stateMutability: 'view',
+  },
+  {
+    type: 'function',
+    inputs: [],
+    name: 'cawProfileMinter',
+    outputs: [
+      { name: '', internalType: 'contract ICawProfileMinter', type: 'address' },
+    ],
+    stateMutability: 'view',
+  },
+  {
+    type: 'function',
+    inputs: [
+      { name: 'owner', internalType: 'address', type: 'address' },
+      { name: 'networkId', internalType: 'uint32', type: 'uint32' },
+    ],
+    name: 'profilesWithNetworkState',
+    outputs: [
+      {
+        name: 'result',
+        internalType: 'struct CawProfileLens.TokenWithNetworkState[]',
+        type: 'tuple[]',
+        components: [
+          { name: 'tokenId', internalType: 'uint32', type: 'uint32' },
+          { name: 'username', internalType: 'string', type: 'string' },
+          { name: 'owner', internalType: 'address', type: 'address' },
+          { name: 'ownerBalance', internalType: 'uint256', type: 'uint256' },
+          { name: 'withdrawable', internalType: 'uint256', type: 'uint256' },
+          { name: 'authenticated', internalType: 'bool', type: 'bool' },
+          { name: 'withdrawFeeLocked', internalType: 'bool', type: 'bool' },
+          {
+            name: 'lockedWithdrawFee',
+            internalType: 'uint256',
+            type: 'uint256',
+          },
+        ],
+      },
+    ],
+    stateMutability: 'view',
+  },
+  {
+    type: 'function',
+    inputs: [{ name: 'username', internalType: 'string', type: 'string' }],
+    name: 'tokenByUsername',
+    outputs: [
+      {
+        name: 'result',
+        internalType: 'struct CawProfileLens.Token',
+        type: 'tuple',
+        components: [
+          { name: 'tokenId', internalType: 'uint32', type: 'uint32' },
+          { name: 'username', internalType: 'string', type: 'string' },
+          { name: 'owner', internalType: 'address', type: 'address' },
+          { name: 'ownerBalance', internalType: 'uint256', type: 'uint256' },
+          { name: 'withdrawable', internalType: 'uint256', type: 'uint256' },
+        ],
+      },
+    ],
+    stateMutability: 'view',
+  },
+  {
+    type: 'function',
+    inputs: [{ name: 'owner', internalType: 'address', type: 'address' }],
+    name: 'tokens',
+    outputs: [
+      {
+        name: 'result',
+        internalType: 'struct CawProfileLens.Token[]',
+        type: 'tuple[]',
+        components: [
+          { name: 'tokenId', internalType: 'uint32', type: 'uint32' },
+          { name: 'username', internalType: 'string', type: 'string' },
+          { name: 'owner', internalType: 'address', type: 'address' },
+          { name: 'ownerBalance', internalType: 'uint256', type: 'uint256' },
+          { name: 'withdrawable', internalType: 'uint256', type: 'uint256' },
+        ],
+      },
+    ],
+    stateMutability: 'view',
+  },
+] as const
+
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 // CawProfileMarketplace
 //////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
@@ -5657,6 +5760,88 @@ export const iCawFontDataAbi = [
 ] as const
 
 //////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+// ICawProfile
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+export const iCawProfileAbi = [
+  {
+    type: 'function',
+    inputs: [],
+    name: 'CAW',
+    outputs: [{ name: '', internalType: 'contract IERC20', type: 'address' }],
+    stateMutability: 'view',
+  },
+  {
+    type: 'function',
+    inputs: [
+      { name: 'networkId', internalType: 'uint32', type: 'uint32' },
+      { name: 'tokenId', internalType: 'uint32', type: 'uint32' },
+    ],
+    name: 'authenticated',
+    outputs: [{ name: '', internalType: 'bool', type: 'bool' }],
+    stateMutability: 'view',
+  },
+  {
+    type: 'function',
+    inputs: [{ name: 'owner', internalType: 'address', type: 'address' }],
+    name: 'balanceOf',
+    outputs: [{ name: '', internalType: 'uint256', type: 'uint256' }],
+    stateMutability: 'view',
+  },
+  {
+    type: 'function',
+    inputs: [
+      { name: 'networkId', internalType: 'uint32', type: 'uint32' },
+      { name: 'tokenId', internalType: 'uint32', type: 'uint32' },
+    ],
+    name: 'lockedWithdrawFee',
+    outputs: [{ name: '', internalType: 'uint256', type: 'uint256' }],
+    stateMutability: 'view',
+  },
+  {
+    type: 'function',
+    inputs: [{ name: 'tokenId', internalType: 'uint256', type: 'uint256' }],
+    name: 'ownerOf',
+    outputs: [{ name: '', internalType: 'address', type: 'address' }],
+    stateMutability: 'view',
+  },
+  {
+    type: 'function',
+    inputs: [
+      { name: 'owner', internalType: 'address', type: 'address' },
+      { name: 'index', internalType: 'uint256', type: 'uint256' },
+    ],
+    name: 'tokenOfOwnerByIndex',
+    outputs: [{ name: '', internalType: 'uint256', type: 'uint256' }],
+    stateMutability: 'view',
+  },
+  {
+    type: 'function',
+    inputs: [{ name: 'index', internalType: 'uint256', type: 'uint256' }],
+    name: 'usernames',
+    outputs: [{ name: '', internalType: 'string', type: 'string' }],
+    stateMutability: 'view',
+  },
+  {
+    type: 'function',
+    inputs: [
+      { name: 'networkId', internalType: 'uint32', type: 'uint32' },
+      { name: 'tokenId', internalType: 'uint32', type: 'uint32' },
+    ],
+    name: 'withdrawFeeLocked',
+    outputs: [{ name: '', internalType: 'bool', type: 'bool' }],
+    stateMutability: 'view',
+  },
+  {
+    type: 'function',
+    inputs: [{ name: 'tokenId', internalType: 'uint32', type: 'uint32' }],
+    name: 'withdrawable',
+    outputs: [{ name: '', internalType: 'uint256', type: 'uint256' }],
+    stateMutability: 'view',
+  },
+] as const
+
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 // ICawProfileForQuoter
 //////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
@@ -5774,6 +5959,20 @@ export const iCawProfileForQuoterAbi = [
     ],
     name: 'withdrawFeeLocked',
     outputs: [{ name: '', internalType: 'bool', type: 'bool' }],
+    stateMutability: 'view',
+  },
+] as const
+
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+// ICawProfileMinter
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+export const iCawProfileMinterAbi = [
+  {
+    type: 'function',
+    inputs: [{ name: 'username', internalType: 'string', type: 'string' }],
+    name: 'idByUsername',
+    outputs: [{ name: '', internalType: 'uint32', type: 'uint32' }],
     stateMutability: 'view',
   },
 ] as const

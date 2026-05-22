@@ -490,6 +490,19 @@ const CONTRACTS = {
     dependencies: ['CawProfile', 'CawActionsERC1271_L1'],
     constructorArgs: (state) => [state.addresses.CawProfile],
   },
+  CawProfileLens: {
+    chain: 'L1',
+    phase: 2,
+    // Sibling read-only contract that exposes bulk-read views the FE used
+    // to get from CawProfile.tokens() (which was pulled out for EIP-170).
+    // Pairs with Quoter as the second view-only sibling. Needs both
+    // CawProfile (for the token + username arrays + per-network state)
+    // and CawProfileMinter (for the idByUsername reverse lookup).
+    // Dep-pin on CawActionsERC1271_L1 mirrors Quoter/Marketplace/Minter
+    // to keep the nonce-prediction chain deterministic.
+    dependencies: ['CawProfile', 'CawProfileMinter', 'CawActionsERC1271_L1'],
+    constructorArgs: (state) => [state.addresses.CawProfile, state.addresses.CawProfileMinter],
+  },
   CawProfileMarketplace: {
     chain: 'L1',
     phase: 2,
@@ -1817,7 +1830,7 @@ class MultiChainDeployer {
         'CawProfileL2_L1', 'CawProfileL2_L2', 'CawProfileL2_L2b',
         'CawActions_L1', 'CawActions_L2', 'CawActions_L2b',
         'CawActionsArchive_L2b', 'CawChallengeRelay_L2',
-        'CawProfileMinter', 'CawProfileQuoter', 'CawProfileMarketplace',
+        'CawProfileMinter', 'CawProfileQuoter', 'CawProfileLens', 'CawProfileMarketplace',
       ];
       for (const key of forceInclude) {
         if (CONTRACTS[key]) toRedeploy.add(key);
@@ -1960,6 +1973,7 @@ async function writeAddressesForLocalInstall(deployer) {
     CAW_ADDRESS: l1.MintableCaw,
     CAW_NAMES_ADDRESS: l1.CawProfile,
     CAW_NAME_QUOTER_ADDRESS: l1.CawProfileQuoter,
+    CAW_PROFILE_LENS_ADDRESS: l1.CawProfileLens,
     CAW_NAMES_MINTER_ADDRESS: l1.CawProfileMinter,
     URI_GENERATOR_ADDRESS: l1.CawProfileURI,
     NETWORK_MANAGER_ADDRESS: l1.CawNetworkManager,
@@ -2020,7 +2034,7 @@ function buildEnvBlock(env, addresses) {
   // L1 contracts (per the buildDeploymentsBlock layout)
   const l1Keys = [
     'MintableCaw', 'CawProfile', 'CawProfileL2_L1', 'CawNetworkManager',
-    'CawProfileMinter', 'CawProfileQuoter', 'CawProfileMarketplace',
+    'CawProfileMinter', 'CawProfileQuoter', 'CawProfileLens', 'CawProfileMarketplace',
     'CawProfileURI', 'CawFontDataA', 'CawFontDataB', 'CawBuyAndBurn',
     'MockSwapRouter', 'CawActions_L1',
   ];
