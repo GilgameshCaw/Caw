@@ -953,6 +953,21 @@ console.log("BALANCE:", balance)
     minterAllowance: minterAllowance?.toString(),
     cost: cost?.toString(),
     minterAllowanceNeeded: minterAllowanceNeeded.toString(),
+    // ETH-mode submit gate
+    paymentMode,
+    ethAmount,
+    ethAmountWei: ethAmountWei.toString(),
+    zapLoaded: zapQuote.loaded,
+    zapExpectedCawOut: zapQuote.expectedCawOut.toString(),
+    zapMinCawOut: zapQuote.minCawOut.toString(),
+    zapMinCawOut_lt_cost: zapQuote.minCawOut < cost,
+    quickSignEnabled,
+    usernameTaken,
+    waiting,
+    wrongChain,
+    chainId,
+    reservesLoaded: reserves.loaded,
+    insufficientBalance,
   })
 
   // Generate the Quick Sign session keypair lazily, just before the bundled
