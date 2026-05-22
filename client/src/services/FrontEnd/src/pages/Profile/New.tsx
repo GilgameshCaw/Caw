@@ -1289,33 +1289,25 @@ console.log("BALANCE:", balance)
                   <span className="absolute right-4 top-1/2 -translate-y-1/2 text-gray-500 text-sm">ETH</span>
                 </div>
                 {ethAmountWei > 0n && ethPrice > 0 && (
-                  <div className={`text-xs text-right ${isDark ? 'text-gray-400' : 'text-gray-600'}`}>
-                    ~${formatUsd(Number(ethAmount) * ethPrice)}
+                  <div className={`flex justify-between items-center text-xs ${isDark ? 'text-gray-400' : 'text-gray-600'}`}>
+                    {/* Left: CAW deposit estimate (swap output minus burn cost).
+                        Only shown once the pool reserves have loaded, since
+                        zapQuote.expectedCawOut is 0 before then. */}
+                    <span>
+                      {reserves.loaded && zapQuote.expectedCawOut > cost ? (
+                        <>
+                          ~<span className={`font-mono ${isDark ? 'text-white' : 'text-gray-900'}`}>
+                            {formatNumberCompact(convertToNumber(zapQuote.expectedCawOut - cost, 18))} CAW
+                          </span>{' '}deposited
+                        </>
+                      ) : ''}
+                    </span>
+                    <span>~${formatUsd(Number(ethAmount) * ethPrice)}</span>
                   </div>
                 )}
-                {ethAmountWei > 0n && reserves.loaded && (
-                  <div className={`text-xs space-y-1 ${isDark ? 'text-gray-400' : 'text-gray-600'}`}>
-                    {(() => {
-                      const depositCaw = zapQuote.expectedCawOut > cost ? zapQuote.expectedCawOut - cost : 0n
-                      const depositWhole = convertToNumber(depositCaw, 18)
-                      const depositUsd = cawPrice > 0 ? depositWhole * cawPrice : null
-                      return (
-                        <div>
-                          You&apos;ll deposit &asymp;&nbsp;
-                          <span className={`font-mono ${isDark ? 'text-white' : 'text-gray-900'}`}>
-                            {formatNumberCompact(depositWhole)} CAW
-                          </span>
-                          {depositUsd != null && (
-                            <span className="ml-1">(~${formatUsd(depositUsd)})</span>
-                          )}
-                        </div>
-                      )
-                    })()}
-                    {zapQuote.minCawOut < cost && (
-                      <div className="text-red-400">
-                        Below the {formatNumberCompact(convertToNumber(cost, 18))} CAW burn cost — increase ETH.
-                      </div>
-                    )}
+                {ethAmountWei > 0n && reserves.loaded && zapQuote.minCawOut < cost && (
+                  <div className="text-xs text-red-400">
+                    Below the {formatNumberCompact(convertToNumber(cost, 18))} CAW burn cost — increase ETH.
                   </div>
                 )}
               </div>
