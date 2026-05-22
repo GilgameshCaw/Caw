@@ -137,7 +137,7 @@ contract CawProfile is
   CawBuyAndBurn public buyAndBurn;
 
   constructor(address _caw, address _gui, address _buyAndBurn, address _networkManager, address _endpoint, uint32 mainnetEid, address _priceReader)
-    ERC721("CAW NAME", "cawNAME")
+    ERC721("CAW PROFILE", "cawPROFILE")
     OApp(_endpoint, msg.sender)
   {
     networkManager = CawNetworkManager(payable(_networkManager));
