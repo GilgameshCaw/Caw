@@ -32,23 +32,37 @@ import getActionType from '../src/abi/getActionType'
 
 const APPLY = process.argv.includes('--apply')
 const senderArgIdx = process.argv.indexOf('--sender')
-const SENDER_FILTER = senderArgIdx >= 0 ? Number(process.argv[senderArgIdx + 1]) : null
+const _rawSender = senderArgIdx >= 0 ? Number(process.argv[senderArgIdx + 1]) : null
+// H-1 audit fix 2026-05-23: validate SENDER_FILTER before use so the pattern
+// is safe even if the arg source ever widens beyond process.argv.
+if (_rawSender !== null && (!Number.isInteger(_rawSender) || _rawSender <= 0)) {
+  throw new Error(`Invalid --sender value: ${process.argv[senderArgIdx + 1]}`)
+}
+const SENDER_FILTER: number | null = _rawSender
 
 type OrphanRow = { id: number; chainId: number; data: any }
 
 async function findOrphans(): Promise<OrphanRow[]> {
-  const senderClause = SENDER_FILTER != null
-    ? `AND (re.data->>'senderId')::int = ${SENDER_FILTER}`
-    : ''
-  const rows = await prisma.$queryRawUnsafe<OrphanRow[]>(`
+  // Use $queryRaw tagged template so all interpolations are parameterised.
+  // Prisma does not support optional WHERE clauses in a single template, so
+  // we branch on SENDER_FILTER presence and let Postgres handle the int cast.
+  if (SENDER_FILTER !== null) {
+    return prisma.$queryRaw<OrphanRow[]>`
+      SELECT re.id, re."chainId", re.data
+      FROM "RawEvent" re
+      WHERE re."contractAddress" = ${CAW_ACTIONS_ADDRESS}
+        AND NOT EXISTS (SELECT 1 FROM "Action" a WHERE a."rawEventId" = re.id)
+        AND (re.data->>'senderId')::int = ${SENDER_FILTER}
+      ORDER BY re.id ASC
+    `
+  }
+  return prisma.$queryRaw<OrphanRow[]>`
     SELECT re.id, re."chainId", re.data
     FROM "RawEvent" re
-    WHERE re."contractAddress" = '${CAW_ACTIONS_ADDRESS}'
+    WHERE re."contractAddress" = ${CAW_ACTIONS_ADDRESS}
       AND NOT EXISTS (SELECT 1 FROM "Action" a WHERE a."rawEventId" = re.id)
-      ${senderClause}
     ORDER BY re.id ASC
-  `)
-  return rows
+  `
 }
 
 function summarize(orphans: OrphanRow[]) {

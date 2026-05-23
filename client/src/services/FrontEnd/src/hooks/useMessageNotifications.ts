@@ -120,7 +120,8 @@ export function useMessageNotifications({
       path: '/dm-ws/',
       auth: { ...(sessionToken ? { sessionToken } : {}), userId, username },
       withCredentials: true,
-      transports: ['websocket', 'polling'],
+      // audit-2026-05-22 ws-handshake M-1: WebSocket only. See useDmWebSocket.ts.
+      transports: ['websocket'],
       reconnection: true,
       reconnectionAttempts: 5,
       reconnectionDelay: 1000

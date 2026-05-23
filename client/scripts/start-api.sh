@@ -1,9 +1,10 @@
 #!/usr/bin/env bash
-# Run prisma push, then launch the API with day-stamped log tee'd to logs/.
+# Launch the API with day-stamped log tee'd to logs/.
+# NOTE: do NOT add prisma db push / prisma:push here — it is destructive.
+# Schema changes must go through prisma db execute per project_prisma_migrations.md.
 
 set -euo pipefail
 
-npm run prisma:push
 mkdir -p logs
 
 LOG_FILE="logs/caw-client-$(date +%Y-%m-%d).log"

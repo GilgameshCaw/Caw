@@ -61,7 +61,10 @@ export function useDmWebSocket({ userId, username, enabled = true, onNewMessage,
       path: '/dm-ws/',
       auth: { ...(sessionToken ? { sessionToken } : {}), userId, username },
       withCredentials: true,
-      transports: ['websocket', 'polling'],
+      // audit-2026-05-22 ws-handshake M-1: WebSocket only, no polling fallback.
+      // Polling exposes replayable SIDs in nginx logs and bypasses WS-specific
+      // origin checks. WebSocket support is universal since Safari 6 (2012).
+      transports: ['websocket'],
       reconnection: true,
       reconnectionAttempts: 5,
       reconnectionDelay: 1000

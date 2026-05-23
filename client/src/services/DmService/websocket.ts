@@ -8,6 +8,49 @@ interface AuthenticatedSocket extends Socket {
   username?: string
 }
 
+// ---------------------------------------------------------------------------
+// Per-socket token-bucket rate limiter (M-2)
+// ---------------------------------------------------------------------------
+interface Bucket { tokens: number; lastRefill: number }
+interface SocketBuckets { typing: Bucket; markRead: Bucket }
+
+const eventBuckets = new Map<string, SocketBuckets>()
+
+function makeBucket(maxTokens: number): Bucket {
+  return { tokens: maxTokens, lastRefill: Date.now() }
+}
+
+function consumeToken(
+  socketId: string,
+  event: 'typing' | 'markRead',
+  maxTokens: number,
+  refillPerSec: number
+): boolean {
+  if (!eventBuckets.has(socketId)) {
+    eventBuckets.set(socketId, {
+      typing: makeBucket(5),
+      markRead: makeBucket(10)
+    })
+  }
+
+  const buckets = eventBuckets.get(socketId)!
+  const bucket = buckets[event]
+  const now = Date.now()
+  const elapsed = (now - bucket.lastRefill) / 1000
+  const refilled = Math.floor(elapsed * refillPerSec)
+
+  if (refilled > 0) {
+    bucket.tokens = Math.min(maxTokens, bucket.tokens + refilled)
+    bucket.lastRefill = now
+  }
+
+  if (bucket.tokens <= 0) return false
+  bucket.tokens -= 1
+  return true
+}
+
+// ---------------------------------------------------------------------------
+
 export class DmWebSocketService {
   private io: SocketIOServer | null = null
   private userSockets: Map<number, Set<string>> = new Map()
@@ -21,7 +64,10 @@ export class DmWebSocketService {
         methods: ['GET', 'POST'],
         credentials: true
       },
-      path: '/dm-ws/'
+      path: '/dm-ws/',
+      // M-1: polling removed — WS-only; polling SIDs appear in nginx logs
+      // and are replayable. Modern browsers (2020+) universally support WS.
+      transports: ['websocket']
     })
 
     // Authentication middleware — uses the same session token system as the REST API.
@@ -96,6 +142,8 @@ export class DmWebSocketService {
       })
 
       socket.on('typing', (data: { conversationId: string; isTyping: boolean }) => {
+        // M-2: 5-token bucket, refill 1/sec
+        if (!consumeToken(socket.id, 'typing', 5, 1)) return
         socket.to(`conversation:${data.conversationId}`).emit('user-typing', {
           userId: socket.userId,
           username: socket.username,
@@ -104,8 +152,35 @@ export class DmWebSocketService {
       })
 
       socket.on('mark-read', async (data: { messageIds: string[] }) => {
+        // L-2: hard cap on array length
+        if (!Array.isArray(data.messageIds) || data.messageIds.length > 100) return
+
+        // M-2: 10-token bucket, refill 1/sec
+        if (!consumeToken(socket.id, 'markRead', 10, 1)) return
+
+        // H-2: verify each messageId belongs to a conversation where
+        // socket.userId is a participant; silently drop non-member ids.
+        const rawMessages = await prisma.message.findMany({
+          where: { id: { in: data.messageIds } },
+          select: { id: true, conversationId: true, senderId: true }
+        })
+
+        if (rawMessages.length === 0) return
+
+        const convIds = [...new Set(rawMessages.map(m => m.conversationId))]
+        const memberships = await prisma.conversationParticipant.findMany({
+          where: { conversationId: { in: convIds }, userId: socket.userId! },
+          select: { conversationId: true }
+        })
+        const memberConvIds = new Set(memberships.map(p => p.conversationId))
+
+        const allowedMessages = rawMessages.filter(m => memberConvIds.has(m.conversationId))
+        if (allowedMessages.length === 0) return
+
+        const allowedIds = allowedMessages.map(m => m.id)
+
         await prisma.messageReceipt.createMany({
-          data: data.messageIds.map(messageId => ({
+          data: allowedIds.map(messageId => ({
             messageId,
             userId: socket.userId!,
             readAt: new Date()
@@ -113,14 +188,9 @@ export class DmWebSocketService {
           skipDuplicates: true
         })
 
-        const messages = await prisma.message.findMany({
-          where: { id: { in: data.messageIds } },
-          select: { senderId: true, conversationId: true }
-        })
-
-        for (const message of messages) {
+        for (const message of allowedMessages) {
           this.emitToUser(message.senderId, 'message-read', {
-            messageIds: data.messageIds,
+            messageIds: allowedIds,
             readBy: socket.userId,
             conversationId: message.conversationId
           })
@@ -134,6 +204,8 @@ export class DmWebSocketService {
             this.userSockets.delete(socket.userId)
           }
         }
+        // M-2: clean up rate-limit buckets
+        eventBuckets.delete(socket.id)
       })
     })
   }

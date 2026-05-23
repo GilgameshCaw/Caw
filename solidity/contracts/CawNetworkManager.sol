@@ -227,6 +227,10 @@ contract CawNetworkManager {
     require(storageChainEid > 0, "Storage chain required");
     require(bytes(name).length > 0, "Name required");
     require(feeAddress != address(0), "Fee address required");
+    // H-1 audit fix 2026-05-23: feeAddress == buyAndBurn causes payFee to
+    // credit buyAndBurn twice per fee event; _withdrawFees then underflows
+    // when subtracting protocolAmount from the already-zeroed slot → locked.
+    require(feeAddress != buyAndBurnAddress, "Fee address is buyAndBurn");
     networks[nextNetworkId] = CawNetwork({
       id: nextNetworkId,
       storageChainEid: storageChainEid,
@@ -331,6 +335,8 @@ contract CawNetworkManager {
     // standard ERC-20s, stranding the network's accrued fees forever).
     // Audit fix 2026-05-08 (CCM-1).
     require(feeAddress != address(0), "Fee address required");
+    // H-1 audit fix 2026-05-23: mirror the buyAndBurn guard from createNetwork.
+    require(feeAddress != buyAndBurnAddress, "Fee address is buyAndBurn");
     networks[networkId].feeAddress = feeAddress;
   }
 
