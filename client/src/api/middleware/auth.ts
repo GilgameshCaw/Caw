@@ -27,6 +27,20 @@ if (!JWT_SECRET) {
   console.warn('[Auth] WARNING: JWT_SECRET not set. JWT authentication will reject all tokens.')
 }
 
+// Explicit opt-in for Secure cookie flag. Set COOKIE_SECURE=true in prod.env.
+// Gating on NODE_ENV is unreliable — operators often leave it unset on VPS,
+// which would silently send caw_session over plaintext HTTP on port 4000.
+// Hard-warn (not hard-fail) at boot so a missing flag surfaces in logs
+// immediately rather than being discovered during a security review.
+// Audit fix 2026-05-23 (fe-headers H-1).
+const COOKIE_SECURE = process.env.COOKIE_SECURE === 'true'
+if (!COOKIE_SECURE && process.env.NODE_ENV === 'production') {
+  console.warn(
+    '[Auth] WARNING: COOKIE_SECURE is not set to "true" but NODE_ENV=production. ' +
+    'Session cookies will be sent without the Secure flag. Set COOKIE_SECURE=true in client/.env for production deploys.'
+  )
+}
+
 // --- Wallet session cookie ---
 // The wallet session token (from sessionStore.ts, created in /api/auth/verify)
 // can now also ride on an HttpOnly cookie. JS can't read it, so an XSS payload
@@ -55,11 +69,14 @@ const SESSION_COOKIE_MAX_AGE = 365 * 24 * 60 * 60 * 1000
  * HttpOnly so JS can't read or exfiltrate it on XSS. Secure in production.
  */
 export function sessionCookieOptions() {
-  const isProd = process.env.NODE_ENV === 'production'
   return {
     httpOnly: true,
     sameSite: 'lax' as const,
-    secure: isProd,
+    // Gate on explicit COOKIE_SECURE=true, not NODE_ENV. An operator running
+    // with NODE_ENV unset (or =development) on a prod VPS would otherwise get
+    // cookies sent without Secure over plain HTTP on port 4000. COOKIE_SECURE
+    // must be set to "true" in client/.env for production deploys.
+    secure: COOKIE_SECURE,
     path: '/',
     maxAge: SESSION_COOKIE_MAX_AGE,
   }
@@ -75,7 +92,16 @@ function readCookie(req: Request, name: string): string | undefined {
     const idx = part.indexOf('=')
     if (idx === -1) continue
     const k = part.slice(0, idx).trim()
-    if (k === name) return decodeURIComponent(part.slice(idx + 1).trim())
+    if (k === name) {
+      try {
+        return decodeURIComponent(part.slice(idx + 1).trim())
+      } catch {
+        // Malformed percent-encoding — treat as absent rather than throwing a
+        // 500 or, worse, letting the caller's catch block silently treat auth
+        // as passed. Audit fix 2026-05-23 (fe-headers M-4).
+        return undefined
+      }
+    }
   }
   return undefined
 }
@@ -253,6 +279,13 @@ export function requireAuth(opts: RequireAuthOpts) {
       res.status(401).json({ error: 'AUTH_REQUIRED', message: 'Session token required' })
       return
     }
+
+    // Authenticated responses must not be stored by any shared cache
+    // (CDN, corporate proxy, bfcache). Without this a cached session-token
+    // response served to a second user is a full session-hijack. Set it
+    // before any early-return below so every authenticated path gets it.
+    // Audit fix 2026-05-23 (fe-headers H-3).
+    res.set('Cache-Control', 'no-store')
 
     // If only requiring any valid session, we're done
     if ('anySession' in opts && opts.anySession) {

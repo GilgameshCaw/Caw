@@ -181,6 +181,17 @@ export function createApp() {
     `object-src 'none'`,
   ].join('; ')
 
+  // Mirror HSTS in Express as defense-in-depth. nginx sets this for all TLS
+  // traffic, but if Express is ever reachable directly (BIND_HOST=0.0.0.0
+  // misconfiguration, container networking, etc.) the header would otherwise
+  // be absent. Only emit over connections that are secure or behind a TLS
+  // proxy — emitting HSTS over plain HTTP causes browsers to HSTS-pin a
+  // plaintext host, which is worse than not setting it. Audit fix 2026-05-23
+  // (fe-headers H-2). To submit to the HSTS preload list:
+  //   https://hstspreload.org
+  const isProduction = process.env.COOKIE_SECURE === 'true' || process.env.NODE_ENV === 'production'
+  const HSTS_VALUE = 'max-age=31536000; includeSubDomains; preload'
+
   app.use((req, res, next) => {
     // Don't apply security headers to /uploads — that path has its
     // own stricter CSP (default-src 'none') already set by the static
@@ -193,6 +204,11 @@ export function createApp() {
     // X-Frame-Options is the legacy companion to frame-ancestors.
     // Some old browsers honor only this one.
     res.set('X-Frame-Options', 'DENY')
+    // HSTS — only emit on production or when we know TLS is in play.
+    // req.secure = Express saw TLS directly; x-forwarded-proto=https = nginx proxy.
+    if (isProduction && (req.secure || req.headers['x-forwarded-proto'] === 'https')) {
+      res.set('Strict-Transport-Security', HSTS_VALUE)
+    }
     next()
   })
 
@@ -332,6 +348,12 @@ export function createApp() {
   app.get('/api/health', (_req, res) => { res.json({ status: 'ok' }) })
 
   // API routes
+  // Auth endpoints return session tokens, authorizedTokenIds, and expiry — none
+  // of which should ever be stored by a shared cache or bfcache. Apply
+  // Cache-Control: no-store to every /api/auth/* response unconditionally.
+  // requireAuth also sets this header so all authenticated endpoints are
+  // covered automatically. Audit fix 2026-05-23 (fe-headers H-3).
+  app.use('/api/auth', (_req, res, next) => { res.set('Cache-Control', 'no-store'); next() })
   app.use('/api/auth', authRouter)
   app.use('/api/actions', actionsRouter)
   app.use('/api/caws', cawRouter)

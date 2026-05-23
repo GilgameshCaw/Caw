@@ -609,7 +609,10 @@ ${nginxSupportsHttp2Directive
     # The 'sha256-...' hash covers the inline theme-flash-prevention
     # script in dist/index.html. If that script changes, regenerate:
     #   node -e "require('crypto').createHash('sha256').update(\$SCRIPT).digest('base64')"
-    add_header Strict-Transport-Security "max-age=31536000; includeSubDomains" always;
+    # max-age=31536000 + includeSubDomains are required for preload list
+    # submission. To register this domain for HSTS preload (browser-level
+    # TOFU protection), visit https://hstspreload.org after deploying.
+    add_header Strict-Transport-Security "max-age=31536000; includeSubDomains; preload" always;
     add_header Content-Security-Policy "default-src 'self'; script-src 'self' 'wasm-unsafe-eval' 'sha256-xkVMad1A/6ozRonIOqWni0BBYrgJP5OHmcnrwTlUgGc='; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com data:; img-src 'self' data: blob: https:; media-src 'self' blob: https:; connect-src 'self' https://*.caw.social wss://*.caw.social https://*.alchemyapi.io https://*.infura.io https://*.publicnode.com https://api.x.com https://*.filebase.io; frame-src 'none'; frame-ancestors 'none'; base-uri 'self'; form-action 'self'; object-src 'none'" always;
     add_header X-Content-Type-Options "nosniff" always;
     add_header X-Frame-Options "DENY" always;
