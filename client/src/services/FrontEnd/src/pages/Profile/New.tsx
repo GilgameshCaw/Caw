@@ -1605,18 +1605,21 @@ console.log("BALANCE:", balance)
                 </div>
               </label>
               {quickSignEnabled && quickSignExpanded && (
-                <div className={`text-xs space-y-1 pl-[52px] ${isDark ? 'text-gray-400' : 'text-gray-600'}`}>
-                  <div>Spend limit:&nbsp;
+                <div className={`text-xs ${isDark ? 'text-gray-400' : 'text-gray-600'}`}>
+                  <span>
+                    Spend limit:&nbsp;
                     <span className={`font-mono ${isDark ? 'text-white' : 'text-gray-900'}`}>
                       {formatNumberCompact(Number(qsSpendLimit))} CAW
                     </span>
                     <span className="text-gray-500 ml-1">(~$10)</span>
-                  </div>
-                  <div>Expires in:&nbsp;
+                  </span>
+                  <span className="mx-2 text-gray-500">•</span>
+                  <span>
+                    Expires in:&nbsp;
                     <span className={`font-mono ${isDark ? 'text-white' : 'text-gray-900'}`}>
                       {Math.round(DEFAULT_SESSION_DURATION / 86400)} days
                     </span>
-                  </div>
+                  </span>
                 </div>
               )}
             </div>
