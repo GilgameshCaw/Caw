@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react'
 import { useLocation } from 'react-router-dom'
 import { useNavigate } from '~/utils/localizedRouter'
 import { useActiveToken } from '~/store/tokenDataStore'
-import { apiFetch } from '~/api/client'
+import { apiFetch, retryOnIndexing } from '~/api/client'
 
 /** Pages that should NOT be redirected away from */
 const EXEMPT_PREFIXES = ['/welcome', '/usernames/new', '/help', '/faucet', '/admin']
@@ -26,7 +26,15 @@ export default function OnboardingGuard() {
     // Don't check on exempt pages
     if (EXEMPT_PREFIXES.some(p => location.pathname.startsWith(p))) return
 
-    apiFetch<{ onboardingStep: number }>(`/api/users/onboarding/${username}`)
+    // Wrap in retryOnIndexing: the backend returns 202 when the User row
+    // hasn't been indexed yet (fresh mint, NftTransferWatcher still
+    // catching up). Without the retry, we'd treat the 202 as a generic
+    // error in .catch(), mark the username "checked", and never redirect
+    // — user gets stranded on /home post-mint instead of seeing the
+    // welcome flow. Symptom: intermittently missing welcome after zap.
+    retryOnIndexing(() =>
+      apiFetch<{ onboardingStep: number }>(`/api/users/onboarding/${username}`)
+    )
       .then(res => {
         setChecked(username)
         if (res.onboardingStep >= 0 && res.onboardingStep < 5) {

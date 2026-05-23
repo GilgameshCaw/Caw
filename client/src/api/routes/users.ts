@@ -718,7 +718,18 @@ router.get('/onboarding/:username', async (req, res) => {
     })
 
     if (!user) {
-      return res.json({ onboardingStep: -1 })
+      // User row not yet indexed by NftTransferWatcher. Return 202 +
+      // Retry-After so the FE's retryOnIndexing helper backs off and
+      // retries until the row lands. Without this the original FE
+      // path (OnboardingGuard) treats -1 as "done", marks the username
+      // checked, and never redirects to /welcome — the user gets
+      // stranded on /home post-mint. Symptom: intermittently missing
+      // welcome flow after a successful zap.
+      res.setHeader('Retry-After', '3')
+      return res.status(202).json({
+        error: 'user not yet indexed',
+        retryAfterSeconds: 3,
+      })
     }
 
     return res.json({ onboardingStep: user.onboardingStep })
