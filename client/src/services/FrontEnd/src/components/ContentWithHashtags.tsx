@@ -354,6 +354,14 @@ const ContentWithHashtags: React.FC<Props> = ({ content, className = '', postId,
     event.stopPropagation()
     // Strip the leading sigil (ASCII @ OR fullwidth ＠ from CJK keyboards).
     const username = mention.replace(/^[@＠]/, '')
+    // Homograph guard: CAW usernames are [a-z0-9] only (on-chain claim).
+    // NFKC-normalize then reject non-ASCII slugs so Cyrillic lookalikes
+    // (e.g. Cyrillic а vs Latin a) can't route to an impersonating path.
+    const normalized = username.normalize('NFKC')
+    if (!/^[a-z0-9]+$/.test(normalized) || normalized !== username) {
+      // Non-canonical mention — no routable profile exists.
+      return
+    }
     navigate(`/users/${username}`)
   }
 

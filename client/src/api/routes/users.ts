@@ -26,6 +26,28 @@ const PROFILE_FIELD_LIMITS: Record<string, number> = {
   coverPhotoUrl: 500,
 }
 
+// Profile text fields that are rendered as plain text (no XSS) but can carry
+// bidi-override or zero-width chars that cause visual impersonation.
+// Strip before storage so length caps apply to visible chars only.
+const BIDI_ZERO_WIDTH_RE = /[​-‏‪-‮﻿⁠-⁤]/g
+
+function stripBidiAndZeroWidth(s: string): string {
+  return s.replace(BIDI_ZERO_WIDTH_RE, '')
+}
+
+// Profile free-text fields that need bidi/zero-width stripping.
+const STRIP_BIDI_FIELDS = new Set(['displayName', 'bio', 'location'])
+
+function isValidWebsiteUrl(value: string): boolean {
+  if (value === '') return true // allow clearing the field
+  try {
+    const u = new URL(value)
+    return u.protocol === 'http:' || u.protocol === 'https:'
+  } catch {
+    return false
+  }
+}
+
 const router = Router()
 
 /**
@@ -852,7 +874,16 @@ router.patch(
         if (rawValue !== null && typeof rawValue !== 'string') {
           return res.status(400).json({ error: `${field} must be a string` })
         }
-        const trimmed = (rawValue ?? '').toString().trim()
+        let trimmed = (rawValue ?? '').toString().trim()
+        // Strip bidi-override and zero-width chars from display text fields
+        // BEFORE applying length cap so attackers can't bypass cap via padding.
+        if (STRIP_BIDI_FIELDS.has(field)) {
+          trimmed = stripBidiAndZeroWidth(trimmed)
+        }
+        // Validate website scheme server-side (prevents javascript: URI storage).
+        if (field === 'website' && !isValidWebsiteUrl(trimmed)) {
+          return res.status(400).json({ error: 'website must be a valid http or https URL, or empty' })
+        }
         const limit = PROFILE_FIELD_LIMITS[field]
         updateData[field] = limit && trimmed.length > limit ? trimmed.substring(0, limit) : trimmed
       }

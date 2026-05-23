@@ -39,8 +39,6 @@ const exec = promisify(execFile)
 // Configuration
 // ---------------------------------------------------------------------------
 
-const DEFAULT_DIR = '/var/www/test.caw.social/uploads/images'
-
 // Feed-image variant widths (96 is avatar-thumb only, not generated here).
 const VARIANT_WIDTHS = [320, 640, 2048] as const
 
@@ -63,12 +61,17 @@ const FFMPEG_TIMEOUT_MS = 30_000
 
 function parseArgs(): { dir: string; dryRun: boolean } {
   const args = process.argv.slice(2)
-  let dir = process.env.UPLOADS_DIR || DEFAULT_DIR
+  let dir: string | undefined = process.env.UPLOADS_DIR
   let dryRun = false
   for (let i = 0; i < args.length; i++) {
     if (args[i] === '--dry-run') { dryRun = true; continue }
     if (args[i] === '--dir' && args[i + 1]) { dir = args[++i]; continue }
     if (args[i].startsWith('--dir=')) { dir = args[i].slice(6); continue }
+  }
+  if (!dir) {
+    console.error('ERROR: uploads directory is required. Pass --dir <path> or set UPLOADS_DIR.')
+    console.error('  Example: npx tsx scripts/backfill-image-variants.ts --dir /var/www/uploads/images')
+    process.exit(1)
   }
   return { dir, dryRun }
 }

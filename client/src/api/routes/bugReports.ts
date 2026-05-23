@@ -115,6 +115,8 @@ router.get('/', requireModerator, async (req, res) => {
   }
 })
 
+const VALID_BUG_REPORT_STATUSES = ['PENDING', 'REVIEWED', 'ACTIONED', 'DISMISSED'] as const
+
 /**
  * PATCH /api/bug-reports/:id
  * Update a bug report status (admin only)
@@ -123,6 +125,11 @@ router.patch('/:id', requireModerator, async (req, res) => {
   try {
     const id = parseInt(req.params.id)
     const { status, resolution } = req.body
+
+    if (status !== undefined && !VALID_BUG_REPORT_STATUSES.includes(status)) {
+      res.status(400).json({ error: `Invalid status. Must be one of: ${VALID_BUG_REPORT_STATUSES.join(', ')}` })
+      return
+    }
 
     const report = await prisma.bugReport.update({
       where: { id },

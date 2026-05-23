@@ -65,6 +65,13 @@ export function linkifyText(text: string, linkClassName?: string): React.ReactNo
       // Strip the @ / ＠ sigil for the URL slug; render the raw token so
       // ＠fancy renders ＠fancy but links to /users/fancy.
       const username = part.replace(new RegExp(`^${MENTION_SIGIL_CLASS}`, 'u'), '')
+      // Homograph guard: CAW usernames are [a-z0-9] only (on-chain claim).
+      // NFKC-normalize then reject non-ASCII slugs so Cyrillic lookalikes
+      // can't route to an impersonating path. Render as plain text if invalid.
+      const normalized = username.normalize('NFKC')
+      if (!/^[a-z0-9]+$/.test(normalized) || normalized !== username) {
+        return <span key={key}>{part}</span>
+      }
       return (
         <a
           key={key}
