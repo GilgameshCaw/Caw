@@ -83,6 +83,52 @@ const checkpointKey = (chainId: number, contract: string) =>
  * Burned tokens (ownerOf reverts) are caught by findOrCreateUser as
  * StaleTokenError; we log + skip them.
  */
+/**
+ * Reconcile tentative DmIdentity rows for a tokenId after its on-chain
+ * owner address is now known.
+ *
+ * When an identity-relay arrives while the local User row is absent
+ * (indexer lag), the relay receiver writes the relayed walletAddress into
+ * DmIdentity.relayedWalletAddress and marks the row tentative. Once
+ * NftTransferWatcher writes User.address from a real Transfer event, this
+ * function checks whether the recorded relayedWalletAddress matches the
+ * now-authoritative address. Mismatches tombstone the row (revoked=true)
+ * so future message-encrypt calls don't use a potentially-forged public key.
+ *
+ * Non-fatal: failures log but do not surface to the caller.
+ *
+ * Audit: 2026-05-22 DM-2
+ */
+async function reconcileDmIdentity(tokenId: number, canonicalAddress: string): Promise<void> {
+  try {
+    const identity = await prisma.dmIdentity.findUnique({
+      where: { userId: tokenId },
+      select: { relayedWalletAddress: true, revoked: true },
+    })
+    if (!identity || identity.revoked) return
+    if (!identity.relayedWalletAddress) return // canonical local registration — no reconcile needed
+
+    if (identity.relayedWalletAddress.toLowerCase() !== canonicalAddress.toLowerCase()) {
+      await prisma.dmIdentity.update({
+        where: { userId: tokenId },
+        data: { revoked: true },
+      })
+      console.warn(
+        `[NftTransferWatcher] DmIdentity reconcile: tokenId=${tokenId} REVOKED` +
+        ` — relayed wallet ${identity.relayedWalletAddress} ≠ on-chain ${canonicalAddress}`,
+      )
+    } else {
+      // Addresses match: clear the tentative flag so future re-reconciles are no-ops.
+      await prisma.dmIdentity.update({
+        where: { userId: tokenId },
+        data: { relayedWalletAddress: null },
+      })
+    }
+  } catch (err: any) {
+    console.warn(`[NftTransferWatcher] DmIdentity reconcile failed for tokenId=${tokenId}:`, err?.message)
+  }
+}
+
 // Re-entrancy guard. A backfill can take tens of seconds on a large
 // gap (per-token ownerOf + usernameById RPC calls, throttled). If the
 // 1-hour timer ticks before the previous backfill finishes we used to
@@ -291,6 +337,9 @@ export const nftTransferWatcherService: Service = {
                       where: { tokenId },
                       data: { address: toAddr },
                     })
+                    // Reconcile any tentative DmIdentity row now that we have
+                    // a canonical address. Fire-and-forget — non-fatal.
+                    reconcileDmIdentity(tokenId, toAddr).catch(() => {})
                     // Prune stale session authorizations: any session that
                     // signed in as the previous owner still has this tokenId
                     // in authorizedTokenIds and would otherwise be allowed
@@ -311,6 +360,8 @@ export const nftTransferWatcherService: Service = {
                     where: { tokenId },
                     data: { address: toAddr },
                   })
+                  // Reconcile any tentative DmIdentity row now that address changed.
+                  reconcileDmIdentity(tokenId, toAddr).catch(() => {})
                   try {
                     const n = await pruneTokenIdFromAllSessions(tokenId)
                     if (n > 0) console.log(`[NftTransferWatcher] Pruned tokenId=${tokenId} from ${n} stale session(s)`)

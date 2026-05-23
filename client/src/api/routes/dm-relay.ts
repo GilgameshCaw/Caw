@@ -103,11 +103,11 @@ router.post('/', async (req, res) => {
       return res.status(400).json({ error: 'Missing required fields' })
     }
 
-    // Replay window. ±5min covers clock skew between operators; -1min
-    // tolerance also accepts envelopes timestamped slightly in the
-    // future (NTP drift) without going crazy.
+    // Replay window. ±5min covers clock skew between operators (audit 2026-05-22 L-3).
+    // Symmetric: future-dated envelopes beyond +5min are rejected, closing the
+    // asymmetric window that previously allowed up to +1min → 5m59s effective replay.
     const age = Date.now() - Number(timestamp)
-    if (age > 5 * 60 * 1000 || age < -60 * 1000) {
+    if (age > 5 * 60 * 1000 || age < -5 * 60 * 1000) {
       console.warn(`[DM Relay] 400 timestamp out of range from ${remote} (sourceInstance=${sourceInstanceId}): age=${age}ms (envelope ts=${timestamp}, now=${Date.now()})`)
       return res.status(400).json({ error: 'Message timestamp out of range' })
     }

@@ -18,6 +18,20 @@
 // /api/instances HTTP route reads from, so deactivations on chain
 // flow through (per commit 26b1e60). We don't maintain a duplicate
 // scan anymore.
+//
+// SSRF / URL-injection notes (audit 2026-05-22 M-2, M-3):
+//   M-3 (URL path injection): All outbound peer fetches use buildPeerUrl()
+//   which constructs the URL via `new URL()` and asserts no query string
+//   or fragment in the base — prevents an injected apiUrl like
+//   "https://evil.com?x=" from absorbing our path into a query param.
+//   M-2 (DNS-rebind window): `isSafePublicUrl` in ssrfGuard.ts checks DNS
+//   at peer-cache-warm time (InstanceRegistryService), NOT at fetch time.
+//   Between cache-warm and the actual fetch, DNS can rebind to a private IP
+//   (e.g. 169.254.169.254). Full mitigation requires pinning the resolved IP
+//   and fetching via that IP with a Host header override, which breaks TLS
+//   SNI / common-name validation on standard Node https.Agent. Residual risk
+//   accepted for now: attacker must control both the peer's on-chain apiUrl
+//   AND the DNS resolver that serves this node. Documented here per audit.
 
 import 'dotenv/config'
 import { getPeers, getOwnInstanceId } from '../InstanceRegistryService'
@@ -27,6 +41,29 @@ import type { RelayEnvelope } from '../../api/routes/dm-relay'
 import { canonicalizeEnvelope } from '../../api/routes/dm-relay'
 import crypto from 'crypto'
 import { getNetworkId } from '../../utils/networkId'
+
+/**
+ * Build a peer fetch URL using `new URL()` so path injection via a
+ * maliciously-crafted apiUrl (e.g. "https://evil.com?x=") is blocked.
+ *
+ * Rules enforced (audit 2026-05-22 M-3):
+ *   - apiUrl must not contain a query string or fragment — if it does,
+ *     the path would be silently absorbed into the query param, sending
+ *     the request to the wrong host.
+ *   - The pathname is set (overwritten) explicitly to the given path so
+ *     any trailing-path component in apiUrl also can't interfere.
+ *
+ * Throws on malformed apiUrl or disallowed query/fragment — callers
+ * should catch and skip the peer rather than crashing the relay loop.
+ */
+function buildPeerUrl(apiUrl: string, path: string): string {
+  const target = new URL(apiUrl)
+  if (target.search || target.hash) {
+    throw new Error(`peer apiUrl must have no query string or fragment: ${apiUrl}`)
+  }
+  target.pathname = path
+  return target.toString()
+}
 
 function requireClientId(): number {
   const raw = getNetworkId()
@@ -192,7 +229,14 @@ export async function relayDmToPeers(params: RelayParams): Promise<{ attempted: 
   })
 
   for (const peer of peers) {
-    fetch(`${peer.apiUrl}/api/dm/relay`, {
+    let peerUrl: string
+    try {
+      peerUrl = buildPeerUrl(peer.apiUrl, '/api/dm/relay')
+    } catch (urlErr: any) {
+      console.warn(`[DmRelay] Skipping peer ${peer.instanceId} — invalid apiUrl: ${urlErr.message}`)
+      continue
+    }
+    fetch(peerUrl, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body,
@@ -287,7 +331,14 @@ export async function relayDmIdentityToPeers(params: {
   const body = JSON.stringify({ ...envelope, signature })
 
   for (const peer of peers) {
-    fetch(`${peer.apiUrl}/api/dm/identity/relay`, {
+    let peerUrl: string
+    try {
+      peerUrl = buildPeerUrl(peer.apiUrl, '/api/dm/identity/relay')
+    } catch (urlErr: any) {
+      console.warn(`[DmRelay] Skipping peer ${peer.instanceId} — invalid apiUrl: ${urlErr.message}`)
+      continue
+    }
+    fetch(peerUrl, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body,

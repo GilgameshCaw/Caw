@@ -799,6 +799,30 @@ console.log("BALANCE:", balance)
           setMintedTokenId(newToken.tokenId)
           setActiveTokenId(newToken.tokenId)
           setMintSuccess(true)
+          // Persist the +X CAW pending hint so ProfileChooser renders the
+          // arriving deposit immediately (the L2 mirror takes a moment via
+          // LayerZero). ZAP deposit amount = swap output - username burn.
+          // Mirrors the CAW-mode mintAndDeposit branch above.
+          const zapDeposit = zapQuote.expectedCawOut > cost ? zapQuote.expectedCawOut - cost : 0n
+          console.log('[New/zap] pendingDeposit hint:', { tokenId: newToken.tokenId, zapDeposit: zapDeposit.toString() })
+          if (zapDeposit > 0n) {
+            try {
+              const { readOnChainStakeForHint } = await import('~/api/actions')
+              const onChainBaseline = await readOnChainStakeForHint(newToken.tokenId)
+              localStorage.setItem(
+                `caw:pendingDeposit:${newToken.tokenId}`,
+                JSON.stringify({
+                  amount: zapDeposit.toString(),
+                  txHash: hash,
+                  at: Date.now(),
+                  stakedAtHintTime: onChainBaseline.toString(),
+                })
+              )
+              window.dispatchEvent(new CustomEvent('caw:pendingDepositChanged', { detail: { tokenId: newToken.tokenId } }))
+            } catch (e) {
+              console.warn('[New/zap] failed to persist pendingDeposit hint:', e)
+            }
+          }
         } else {
           refetchTokenData?.()
           setTimeout(checkForNewToken, 3000)
@@ -864,6 +888,28 @@ console.log("BALANCE:", balance)
           setMintedTokenId(newToken.tokenId)
           setActiveTokenId(newToken.tokenId)
           setMintSuccess(true)
+          // Persist the +X CAW pending hint — see mintAndDepositZap branch
+          // for the rationale. Same shape; deposit = swap output minus burn.
+          const zapDeposit = zapQuote.expectedCawOut > cost ? zapQuote.expectedCawOut - cost : 0n
+          console.log('[New/zapQs] pendingDeposit hint:', { tokenId: newToken.tokenId, zapDeposit: zapDeposit.toString() })
+          if (zapDeposit > 0n) {
+            try {
+              const { readOnChainStakeForHint } = await import('~/api/actions')
+              const onChainBaseline = await readOnChainStakeForHint(newToken.tokenId)
+              localStorage.setItem(
+                `caw:pendingDeposit:${newToken.tokenId}`,
+                JSON.stringify({
+                  amount: zapDeposit.toString(),
+                  txHash: hash,
+                  at: Date.now(),
+                  stakedAtHintTime: onChainBaseline.toString(),
+                })
+              )
+              window.dispatchEvent(new CustomEvent('caw:pendingDepositChanged', { detail: { tokenId: newToken.tokenId } }))
+            } catch (e) {
+              console.warn('[New/zapQs] failed to persist pendingDeposit hint:', e)
+            }
+          }
         } else {
           refetchTokenData?.()
           setTimeout(checkForNewToken, 3000)

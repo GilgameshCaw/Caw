@@ -88,9 +88,9 @@ router.post('/identity/relay', async (req: Request, res: Response) => {
       return res.status(400).json({ error: 'Missing required fields' })
     }
 
-    // Replay window. Same ±5min as the message relay.
+    // Replay window. ±5min — symmetric to match the message relay (audit 2026-05-22 L-3).
     const age = Date.now() - Number(timestamp)
-    if (age > 5 * 60 * 1000 || age < -60 * 1000) {
+    if (age > 5 * 60 * 1000 || age < -5 * 60 * 1000) {
       return res.status(400).json({ error: 'Identity timestamp out of range' })
     }
 
@@ -141,7 +141,24 @@ router.post('/identity/relay', async (req: Request, res: Response) => {
       })
     }
 
+    // Tentative accept: local User row absent (indexer lag). Record the
+    // relayed walletAddress so the reconciliation pass can verify it once
+    // NftTransferWatcher populates User.address.
+    const isTentative = !localUser || !localUser.address
     await dmService.registerIdentity(Number(userId), walletAddress, publicKey)
+    if (isTentative) {
+      // Write relayedWalletAddress so the reconciler can tombstone this row
+      // if the on-chain owner turns out to differ. Use upsert-style update
+      // rather than wrapping registerIdentity (which may itself upsert).
+      await prisma.dmIdentity.update({
+        where: { userId: Number(userId) },
+        data: { relayedWalletAddress: walletAddress },
+      }).catch(err => {
+        // Non-fatal: worst case the reconciler won't have the address to
+        // compare against, which is no worse than the pre-fix behavior.
+        console.warn('[DM Identity Relay] Failed to record relayedWalletAddress:', err.message)
+      })
+    }
     return res.json({ status: 'synced', userId: Number(userId) })
   } catch (error: any) {
     console.error('[DM Identity Relay] Error:', error.message)
