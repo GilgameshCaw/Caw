@@ -579,6 +579,16 @@ model DmIdentity {
   // Opt-out for direct add-to-group. Hitting an invite URL is explicit
   // consent and bypasses this gate.
   allowGroupInvites  Boolean                   @default(true)
+  // Set by the identity-relay receiver when it accepts a row tentatively
+  // (i.e. local User.address was null at accept time). Once the NftTransferWatcher
+  // populates User.address, a reconciliation pass compares against this value and
+  // tombstones the row if they differ. Null means the row was registered locally
+  // (canonical path), not accepted via a cross-instance relay while lagged.
+  relayedWalletAddress String?
+  // Tombstone set by the reconciliation pass when relayedWalletAddress ≠
+  // User.address (after indexer catches up). Revoked rows are ignored by
+  // identity lookups and must not be used to encrypt new messages.
+  revoked            Boolean                   @default(false)
   createdAt          DateTime                  @default(now())
   updatedAt          DateTime                  @updatedAt
   conversations      ConversationParticipant[]
@@ -798,6 +808,7 @@ model WithdrawalRequest {
   updatedAt   DateTime  @updatedAt
   completedAt DateTime?
 
+  @@unique([userId, cawonce])
   @@index([userId, status])
   @@index([status])
   @@index([cawonce])

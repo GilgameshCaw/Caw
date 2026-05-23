@@ -67,10 +67,15 @@ export async function handleCawAction(
   // (PostForm, /api/actions, scripts) emits one. The previous
   // prefix-required regex silently dropped every video into raw text,
   // leaving hasVideo=false on every video post.
-  const imageUrlRegex = /(https?:\/\/[^\s]+\/uploads\/images\/[^\s]+\.(jpg|jpeg|png|gif|webp))/gi
+  // Tightened to canonical path shape: /uploads/{images,videos}/<8hex>.<ext>
+  // (M-4: feedback_url_sanitizer_path_not_host.md — validate path shape, not host).
+  // Anchors \/[0-9a-f]{8}\. ensure only filenames produced by the upload
+  // pipeline's randomBytes(4) generator are accepted — prevents traversal
+  // strings like ../../etc/passwd from matching.
+  const imageUrlRegex = /(https?:\/\/[^\s]+\/uploads\/images\/[0-9a-f]{8}\.(jpg|jpeg|png|gif|webp))/gi
   const imageUrls = rawAction.text?.match(imageUrlRegex) || []
 
-  const videoUrlRegex = /(https?:\/\/[^\s]+\/uploads\/videos\/[^\s]+\.(mp4|webm|mov|avi|mkv|ogg|ogv))/gi
+  const videoUrlRegex = /(https?:\/\/[^\s]+\/uploads\/videos\/[0-9a-f]{8}\.(mp4|webm|mov))/gi
   const videoUrls = rawAction.text?.match(videoUrlRegex) || []
 
   // Remove image and video URLs from the text content for cleaner display
@@ -900,8 +905,30 @@ export async function handleOtherAction(
               updateData[field] = trimmedValue.substring(0, 100)
             } else if (field === 'website' && trimmedValue.length > 200) {
               updateData[field] = trimmedValue.substring(0, 200)
-            } else if ((field === 'avatarUrl' || field === 'coverPhotoUrl') && trimmedValue.length > 500) {
-              updateData[field] = trimmedValue.substring(0, 500)
+            } else if (field === 'avatarUrl' || field === 'coverPhotoUrl') {
+              // M-5: validate path shape before storing.
+              // Only accept URLs whose path matches /uploads/{images,videos}/<8hex>.<ext>
+              // (same canonical shape as the upload pipeline's randomBytes(4) filenames).
+              // Empty string is allowed (clears the field). Anything else — including
+              // tracking pixels pointing at attacker-controlled hosts — is silently
+              // dropped. Validates path shape, not host equality, per
+              // feedback_url_sanitizer_path_not_host.md.
+              if (trimmedValue === '') {
+                updateData[field] = trimmedValue
+              } else {
+                let parsedUrl: URL | null = null
+                try { parsedUrl = new URL(trimmedValue) } catch { /* invalid URL */ }
+                const UPLOAD_PATH_RE = /^\/uploads\/(images|videos)\/[0-9a-f]{8}\.[a-z0-9]{1,8}$/i
+                if (
+                  parsedUrl &&
+                  (parsedUrl.protocol === 'http:' || parsedUrl.protocol === 'https:') &&
+                  UPLOAD_PATH_RE.test(parsedUrl.pathname)
+                ) {
+                  updateData[field] = trimmedValue
+                } else {
+                  console.warn(`[handleOtherAction] Rejected invalid ${field} URL for user ${authorId}: ${trimmedValue}`)
+                }
+              }
             } else {
               updateData[field] = trimmedValue
             }
@@ -1037,28 +1064,27 @@ export async function handleWithdrawAction(
   // The first amount is the withdrawal amount in whole CAW units (not wei, due to uint64 limitation in action struct)
   const withdrawalAmount = rawAction.amounts?.[0]?.toString() || '0'
 
-  // Create or update withdrawal request
+  // Create or update withdrawal request.
+  // Upsert keyed on the composite-unique (userId, cawonce) so concurrent
+  // replay workers can't race to insert two rows for the same withdrawal
+  // (M-3: duplicate-create guard).
   try {
-    const existingRequest = await tx.withdrawalRequest.findFirst({
+    const withdrawalRequest = await tx.withdrawalRequest.upsert({
       where: {
+        userId_cawonce: {
+          userId: action.senderId,
+          cawonce: rawAction.cawonce
+        }
+      },
+      update: {},
+      create: {
         userId: action.senderId,
-        cawonce: rawAction.cawonce
+        amount: withdrawalAmount,
+        cawonce: rawAction.cawonce,
+        status: 'pending'
       }
     })
-
-    if (existingRequest) {
-      console.log('[handleWithdrawAction] Withdrawal request already exists:', existingRequest.id)
-    } else {
-      const withdrawalRequest = await tx.withdrawalRequest.create({
-        data: {
-          userId: action.senderId,
-          amount: withdrawalAmount,
-          cawonce: rawAction.cawonce,
-          status: 'pending'
-        }
-      })
-      console.log('[handleWithdrawAction] Created withdrawal request:', withdrawalRequest.id)
-    }
+    console.log('[handleWithdrawAction] Upserted withdrawal request:', withdrawalRequest.id)
   } catch (err) {
     console.error('[handleWithdrawAction] Error creating withdrawal request:', err)
     throw err
