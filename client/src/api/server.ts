@@ -47,6 +47,8 @@ import sitemapRouter from './routes/sitemap'
 import rpcProxyRouter from './routes/rpc-proxy'
 import aiProxyRouter from './routes/ai-proxy'
 import sponsorRouter from './routes/sponsor'
+import stripeRouter from './routes/stripe'
+import moonpayRouter from './routes/moonpay'
 import { spaPrerender } from './util/spaPrerender'
 import { cawPath, parseCawIdSlug } from './util/cawUrl'
 import { parseLocaleFromPath, withLocalePrefix } from './util/localePrefix'
@@ -408,6 +410,13 @@ export function createApp() {
   // failover, and rate limiting.
   app.use('/api/rpc', rpcProxyRouter)
   app.use('/api/sponsor', sponsorRouter)
+
+  // Stripe card-payment checkout + webhook. The webhook route MUST receive
+  // raw body (not json-parsed) for Stripe signature verification — mount
+  // express.raw() on the specific path BEFORE the router.
+  app.use('/api/stripe/webhook', express.raw({ type: 'application/json' }))
+  app.use('/api/stripe', stripeRouter)
+  app.use('/api/moonpay', moonpayRouter)
 
   // BYOK AI image gen proxy for providers that don't allow browser-direct
   // calls (OpenAI, xAI). Gemini stays browser-direct in utils/aiImage.ts

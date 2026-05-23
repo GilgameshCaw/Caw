@@ -20,6 +20,7 @@ export default defineConfig({
         "CawProfileLens.sol/*.json",
         "CawProfileURI.sol/*.json",
         "CawProfileMarketplace.sol/*.json",
+        "CivicKycVerifier.sol/*.json",
         "MintableCaw.sol/*.json",
         "SmartEOA.sol/*.json",
       ],

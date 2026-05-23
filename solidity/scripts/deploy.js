@@ -506,6 +506,19 @@ const CONTRACTS = {
     dependencies: ['CawProfile', 'CawProfileMinter', 'CawActionsERC1271_L1'],
     constructorArgs: (state) => [state.addresses.CawProfile, state.addresses.CawProfileMinter],
   },
+  CivicKycVerifier: {
+    chain: 'L1',
+    phase: 2,
+    // Civic Pass adapter implementing IKycVerifier. Only deployed when
+    // the operator has configured CIVIC_GATEWAY_ADDRESS (the canonical
+    // IGatewayTokenVerifier address for this chain).
+    dependencies: ['CawActionsERC1271_L1'],
+    constructorArgs: () => [
+      process.env.CIVIC_GATEWAY_ADDRESS || '0x0000000000000000000000000000000000000000',
+      process.env.CIVIC_GATEKEEPER_NETWORK || '0',
+    ],
+    condition: () => !!process.env.CIVIC_GATEWAY_ADDRESS,
+  },
   CawProfileMarketplace: {
     chain: 'L1',
     phase: 2,

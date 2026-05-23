@@ -1549,3 +1549,21 @@ model SponsorCodeAttempt {
 
   @@index([ip, attemptedAt])
 }
+
+/// Tracks card-funded profile purchases via Stripe.
+model StripePurchase {
+  id               Int       @id @default(autoincrement())
+  stripeSessionId  String    @unique
+  username         String
+  walletAddress    String
+  amountUsdCents   Int
+  depositAmountCaw String    // BigInt as string (CAW wei)
+  networkId        Int
+  txHash           String?   // on-chain mint tx hash; null until confirmed
+  status           String    @default("pending") // pending | minted | failed
+  createdAt        DateTime  @default(now())
+  mintedAt         DateTime?
+
+  @@index([walletAddress])
+  @@index([status])
+}
