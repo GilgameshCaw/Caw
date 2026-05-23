@@ -425,13 +425,25 @@ export async function recordAction(
     // run concurrently, and the 15s tx timeout fires before any of them
     // get their connection. Sequential keeps the per-tx connection
     // footprint at 1 (held by the outer tx itself).
-    const finalByToken = new Map<number, bigint>()
-    for (const t of touches) finalByToken.set(t.tokenId, t.finalOwnership)
-    for (const [tokenId, ownership] of finalByToken) {
+    const finalByToken = new Map<number, { ownership: bigint; balance: bigint }>()
+    for (const t of touches) finalByToken.set(t.tokenId, { ownership: t.finalOwnership, balance: t.finalBalance })
+    const now = new Date()
+    for (const [tokenId, { ownership, balance }] of finalByToken) {
       await tx.cawOwnershipCurrent.upsert({
         where: { tokenId },
         create: { tokenId, ownership: ownership.toString() },
-        update: { ownership: ownership.toString(), updatedAt: new Date() },
+        update: { ownership: ownership.toString(), updatedAt: now },
+      })
+      // Mirror the contract-equivalent balance into User.onChainStakeWei so
+      // /api/users/by-token reads see post-action state — same pattern as
+      // recordDeposit. updateMany no-ops if the User row hasn't landed yet
+      // (NftTransferWatcher will create it later).
+      await tx.user.updateMany({
+        where: { tokenId },
+        data: {
+          onChainStakeWei: balance.toString(),
+          onChainStakeUpdatedAt: now,
+        },
       })
     }
   }
@@ -513,6 +525,21 @@ export async function recordDeposit(
     where: { tokenId },
     create: { tokenId, ownership: after.ownership.toString() },
     update: { ownership: after.ownership.toString(), updatedAt: new Date() },
+  })
+  // Mirror the post-deposit balance into User.onChainStakeWei. /api/users/by-token
+  // reads from this column and previously only got refreshed for users with a
+  // non-null pendingDepositAmount — which the zap (ETH→profile+deposit) and
+  // sponsored-mint flows don't set, so the FE saw 0 even though L2 had the CAW.
+  // after.balance matches what cawBalanceOf(tokenId) returns on L2 (same
+  // ownership × multiplier / 1e18 model — see contractMath.ts:18). Best-effort:
+  // if the User row hasn't been indexed yet (Mint event lagging), the update
+  // misses 0 rows and NftTransferWatcher will pick it up later.
+  await tx.user.updateMany({
+    where: { tokenId },
+    data: {
+      onChainStakeWei: after.balance.toString(),
+      onChainStakeUpdatedAt: new Date(),
+    },
   })
   await tx.stakeLedgerState.upsert({
     where: { networkId: CAW_CLIENT_ID },
