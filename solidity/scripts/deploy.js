@@ -810,6 +810,36 @@ const LINKING_STEPS = [
     },
   },
   {
+    // Propagate free-auth state to L2 if the first network was registered with authFee==0.
+    // When authFee==0, users can post without a prior authenticate() call; the L2 mirror
+    // must know this. When authFee>0 (default), allowFreeAuth is false by default on L2
+    // so no broadcast is needed. If you change the network's authFee to/from 0 post-deploy,
+    // call CawProfile.broadcastAllowFreeAuth(networkId, lzDestId, 0) manually.
+    name: 'Broadcast allowFreeAuth for first network if authFee==0',
+    chain: 'L1',
+    phase: 2,
+    contract: 'CawProfile',
+    method: 'broadcastAllowFreeAuth',
+    // args: [networkId=1, lzDestId=L1_local_eid (bypassLZ), lzTokenAmount=0]
+    // Using mainnetLzId so bypassLZ path is taken (direct call, no LZ fee needed).
+    args: (state, chainConfig) => [1, CHAINS[chainConfig.env + 'L1'].lzEid, 0],
+    condition: (state) => state.addresses.CawProfile && state.addresses.CawNetworkManager,
+    skipIf: async (state, deployer) => {
+      // Only broadcast if the first network has authFee==0; otherwise it's a no-op (saves gas).
+      if (state.linking?.allowFreeAuthBroadcast === true) return true;
+      const nm = deployer.getContract('CawNetworkManager');
+      if (!nm) return true;
+      try {
+        const authFee = await nm.getAuthFee(1);
+        return authFee.toString() !== '0'; // skip if non-zero (L2 default allowFreeAuth=false is already correct)
+      } catch { return true; }
+    },
+    onSuccess: (state) => {
+      state.linking = state.linking || {};
+      state.linking.allowFreeAuthBroadcast = true;
+    },
+  },
+  {
     name: 'Set L1 peer on CawProfileL2_L1 (bypassLZ=true)',
     chain: 'L1',
     phase: 2,

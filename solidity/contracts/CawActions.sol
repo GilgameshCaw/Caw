@@ -47,8 +47,6 @@ import "./interfaces/ICawCapOracle.sol";
 import { ISP1Verifier } from "./IZKActionsVerifier.sol";
 import { MessagingFee } from "@layerzerolabs/lz-evm-oapp-v2/contracts/oapp/OApp.sol";
 
-/// @dev Audit-trail tags in this contract (e.g. "H-N", "M-N", "Round N",
-///      "Audit fix YYYY-MM-DD") are decoded in `docs/AUDIT_TRAIL.md`.
 contract CawActions is Ownable {
   error NotSibling();
   error OnlySelf();
@@ -1190,7 +1188,8 @@ contract CawActions is Ownable {
     BatchCursor memory c
   ) internal returns (uint256 implicitTipOwed) {
     if (isCawonceUsed(action.senderId, action.cawonce)) revert CawonceUsed();
-    if (!cawProfile.authenticated(action.networkId, action.senderId)) revert UserNotAuth();
+    if (!cawProfile.authenticated(action.networkId, action.senderId)
+        && !cawProfile.allowFreeAuth(action.networkId)) revert UserNotAuth();
     if (action.text.length > 420) revert TextTooLong();
 
     // Fixed protocol costs per action type (in whole CAW tokens).

@@ -2400,6 +2400,17 @@ export const cawProfileAbi = [
   },
   {
     type: 'function',
+    inputs: [
+      { name: 'networkId', internalType: 'uint32', type: 'uint32' },
+      { name: 'lzDestId', internalType: 'uint32', type: 'uint32' },
+      { name: 'lzTokenAmount', internalType: 'uint256', type: 'uint256' },
+    ],
+    name: 'broadcastAllowFreeAuth',
+    outputs: [],
+    stateMutability: 'payable',
+  },
+  {
+    type: 'function',
     inputs: [],
     name: 'buyAndBurn',
     outputs: [
@@ -2757,6 +2768,13 @@ export const cawProfileAbi = [
     name: 'safeTransferFrom',
     outputs: [],
     stateMutability: 'nonpayable',
+  },
+  {
+    type: 'function',
+    inputs: [],
+    name: 'selectorAllowFreeAuth',
+    outputs: [{ name: '', internalType: 'bytes4', type: 'bytes4' }],
+    stateMutability: 'pure',
   },
   {
     type: 'function',
@@ -3315,6 +3333,13 @@ export const cawProfileL2Abi = [
   },
   {
     type: 'function',
+    inputs: [{ name: 'networkId', internalType: 'uint32', type: 'uint32' }],
+    name: 'allowFreeAuth',
+    outputs: [{ name: '', internalType: 'bool', type: 'bool' }],
+    stateMutability: 'view',
+  },
+  {
+    type: 'function',
     inputs: [
       {
         name: 'origin',
@@ -3488,13 +3513,6 @@ export const cawProfileL2Abi = [
     inputs: [],
     name: 'erc1271Sibling',
     outputs: [{ name: '', internalType: 'address', type: 'address' }],
-    stateMutability: 'view',
-  },
-  {
-    type: 'function',
-    inputs: [],
-    name: 'generateDomainHash',
-    outputs: [{ name: '', internalType: 'bytes32', type: 'bytes32' }],
     stateMutability: 'view',
   },
   {
@@ -3839,6 +3857,16 @@ export const cawProfileL2Abi = [
       { name: 'spendLimit', internalType: 'uint256', type: 'uint256' },
     ],
     stateMutability: 'view',
+  },
+  {
+    type: 'function',
+    inputs: [
+      { name: 'networkId', internalType: 'uint32', type: 'uint32' },
+      { name: 'allow', internalType: 'bool', type: 'bool' },
+    ],
+    name: 'setAllowFreeAuth',
+    outputs: [],
+    stateMutability: 'nonpayable',
   },
   {
     type: 'function',
@@ -5361,6 +5389,27 @@ export const cawProfileQuoterAbi = [
   },
   {
     type: 'function',
+    inputs: [
+      { name: 'networkId', internalType: 'uint32', type: 'uint32' },
+      { name: 'lzDestId', internalType: 'uint32', type: 'uint32' },
+      { name: 'payInLzToken', internalType: 'bool', type: 'bool' },
+    ],
+    name: 'broadcastAllowFreeAuthQuote',
+    outputs: [
+      {
+        name: 'quote',
+        internalType: 'struct MessagingFee',
+        type: 'tuple',
+        components: [
+          { name: 'nativeFee', internalType: 'uint256', type: 'uint256' },
+          { name: 'lzTokenFee', internalType: 'uint256', type: 'uint256' },
+        ],
+      },
+    ],
+    stateMutability: 'view',
+  },
+  {
+    type: 'function',
     inputs: [],
     name: 'cawProfile',
     outputs: [
@@ -5927,6 +5976,13 @@ export const iCawProfileForQuoterAbi = [
       { name: '', internalType: 'uint64[]', type: 'uint64[]' },
     ],
     stateMutability: 'view',
+  },
+  {
+    type: 'function',
+    inputs: [],
+    name: 'selectorAllowFreeAuth',
+    outputs: [{ name: '', internalType: 'bytes4', type: 'bytes4' }],
+    stateMutability: 'pure',
   },
   {
     type: 'function',

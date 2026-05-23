@@ -15,8 +15,6 @@ import "./SigVerification.sol";
 
 import { OApp, Origin, MessagingFee } from "@layerzerolabs/lz-evm-oapp-v2/contracts/oapp/OApp.sol";
 
-/// @dev Audit-trail tags in this contract (e.g. "H-N", "M-N", "Round N",
-///      "Audit fix YYYY-MM-DD") are decoded in `docs/AUDIT_TRAIL.md`.
 contract CawProfileL2 is
   Context,
   Ownable,
@@ -79,6 +77,11 @@ contract CawProfileL2 is
 
   // Keeping track of networks to which the user has authenticated
   mapping(uint32 => mapping(uint32 => bool)) public authenticated;
+
+  /// @notice True if a network allows actions without per-token authentication.
+  ///         Set via LZ from L1 when authFee crosses the zero boundary.
+  mapping(uint32 => bool) private _allowFreeAuth;
+  function allowFreeAuth(uint32 networkId) external view returns (bool) { return _allowFreeAuth[networkId]; }
 
   mapping(uint32 => uint256) public cawOwnership;
 
@@ -202,7 +205,7 @@ contract CawProfileL2 is
   ///      sum-of-deposits-minus-recorded-withdrawals.
   event Withdrawn(uint32 indexed tokenId, uint256 amount);
 
-  bytes4 public setWithdrawableSelector = bytes4(keccak256("setWithdrawable(uint32[],uint256[])"));
+  bytes4 public constant setWithdrawableSelector = bytes4(keccak256("setWithdrawable(uint32[],uint256[])"));
 
   struct Token {
     uint256 tokenId;
@@ -223,8 +226,10 @@ contract CawProfileL2 is
     capOracle = ICawCapOracle(_capOracle); // address(0) permitted — cap stays dormant
   }
 
-  /// @notice Compute the EIP-712 domain separator hash. Cached in `eip712DomainHash` at construction.
-  function generateDomainHash() public view returns (bytes32) {
+  /// @dev Compute the EIP-712 domain separator hash. Cached in `eip712DomainHash` at construction.
+  ///      Read `eip712DomainHash` directly for the pre-computed value; off-chain callers
+  ///      do not need to call this function.
+  function generateDomainHash() internal view returns (bytes32) {
     return keccak256(
       abi.encode(
         EIP712_DOMAIN_TYPEHASH,
@@ -389,6 +394,15 @@ contract CawProfileL2 is
     if (!(fromLZ)) revert OnlyLZ();
     authenticated[cawNetworkId][tokenId] = true;
     updateOwners(tokenIds, owners, stamps);
+  }
+
+  /// @notice Set the free-auth flag for a network.
+  ///         Callable via LZ message (_lzReceive sets fromLZ) or directly by the co-deployed
+  ///         L1 CawProfile contract (bypassLZ mode). Permissionless in neither path: both
+  ///         require the LZ peer or the trusted CawProfile address.
+  function setAllowFreeAuth(uint32 networkId, bool allow) public {
+    if (!(fromLZ || (bypassLZ && _msgSender() == address(cawProfile)))) revert OnlyLZ();
+    _allowFreeAuth[networkId] = allow;
   }
 
   /// @notice Credit a deposit, mark as authenticated, and apply pending ownership updates.
@@ -1175,7 +1189,8 @@ contract CawProfileL2 is
       selector == bytes4(keccak256("mintAuthAndUpdateOwners(uint32,uint32,address,string,uint32[],address[],uint64[])")) ||
       selector == bytes4(keccak256("depositAndRegisterSessionAndUpdateOwners(uint32,uint32,uint256,address,address,uint64,uint256,uint64,uint32[],address[],uint64[])")) ||
       selector == bytes4(keccak256("mintAuthAndRegisterSessionAndUpdateOwners(uint32,uint32,address,string,address,uint64,uint256,uint64,uint32[],address[],uint64[])")) ||
-      selector == bytes4(keccak256("updateOwners(uint32[],address[],uint64[])"));
+      selector == bytes4(keccak256("updateOwners(uint32[],address[],uint64[])")) ||
+      selector == bytes4(keccak256("setAllowFreeAuth(uint32,bool)"));
   }
 
   /// @notice Subtract CAW from a token's balance (used during withdraw flows). CawActions only.

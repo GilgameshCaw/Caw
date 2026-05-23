@@ -19,8 +19,6 @@ import "./CawL1PriceReader.sol";
 import { OApp, Origin, MessagingFee } from "@layerzerolabs/lz-evm-oapp-v2/contracts/oapp/OApp.sol";
 import { CawNetworkManager } from "./CawNetworkManager.sol";
 
-/// @dev Audit-trail tags in this contract (e.g. "H-N", "M-N", "Round N",
-///      "Audit fix YYYY-MM-DD") are decoded in `docs/AUDIT_TRAIL.md`.
 contract CawProfile is
   Context,
   ERC721Enumerable,
@@ -66,14 +64,6 @@ contract CawProfile is
   uint32 public mainnetLzId;
   string[] public usernames;
   bool private fromLZ;
-  /// @dev Transient refund-address override for sponsored LZ sends.
-  ///      Zero = use tx.origin (default / non-sponsored path). Set by the
-  ///      three *ForR entry points before calling into existing logic; cleared
-  ///      after lzSend returns. The existing `fromLZ` flag already relies on
-  ///      the same "set→call→clear" pattern — see _lzReceive. Re-entrancy safe:
-  ///      the LZ endpoint is trusted and does not re-enter CawProfile.
-  ///      Audit fix 2026-05-22 (H-1 refundTo plumbing for sponsored flows).
-  address payable private _lzRefundTo;
 
   // Precomputed L2 handler selectors. Stored as internal state (no public getter
   // bytecode overhead); explicit view wrappers below satisfy CawProfileQuoter.
@@ -94,6 +84,7 @@ contract CawProfile is
   bytes4 internal constant _mintAuthSelector                = bytes4(keccak256("mintAuthAndUpdateOwners(uint32,uint32,address,string,uint32[],address[],uint64[])"));
   bytes4 internal constant _depositRegisterSessionSelector  = bytes4(keccak256("depositAndRegisterSessionAndUpdateOwners(uint32,uint32,uint256,address,address,uint64,uint256,uint64,uint32[],address[],uint64[])"));
   bytes4 internal constant _mintAuthRegisterSessionSelector = bytes4(keccak256("mintAuthAndRegisterSessionAndUpdateOwners(uint32,uint32,address,string,address,uint64,uint256,uint64,uint32[],address[],uint64[])"));
+  bytes4 internal constant _allowFreeAuthSelector           = bytes4(keccak256("setAllowFreeAuth(uint32,bool)"));
 
   /// @dev Per-selector base gas limit (the constant component; per-update overhead is added
   ///      separately in `gasLimitFor`). Initialized in the constructor. An unset selector
@@ -145,7 +136,7 @@ contract CawProfile is
   CawBuyAndBurn public buyAndBurn;
 
   constructor(address _caw, address _gui, address _buyAndBurn, address _networkManager, address _endpoint, uint32 mainnetEid, address _priceReader)
-    ERC721("CAW PROFILE", "cawPROFILE")
+    ERC721("CAW NAME", "cawNAME")
     OApp(_endpoint, msg.sender)
   {
     networkManager = CawNetworkManager(payable(_networkManager));
@@ -170,6 +161,9 @@ contract CawProfile is
     gasBaseFor[_mintAuthSelector]                = 155_000;
     gasBaseFor[_depositRegisterSessionSelector]  = 225_000;
     gasBaseFor[_mintAuthRegisterSessionSelector] = 240_000;
+    // setAllowFreeAuth: one SSTORE (5k cold → 2.1k warm) + minimal ABI decode.
+    // Budget 35k to cover cold storage + dispatcher overhead + LZ executor tail.
+    gasBaseFor[_allowFreeAuthSelector]           =  35_000;
   }
 
   function setL2Peer(uint32 _eid, address _peer)
@@ -537,6 +531,32 @@ contract CawProfile is
     }
   }
 
+  /// @notice Broadcast the current allow-free-auth state for `networkId` to `lzDestId`.
+  ///         The state is derived from the network's authFee: zero fee → allow=true, non-zero → allow=false.
+  ///         Callers must supply enough msg.value to cover the LZ fee (use
+  ///         `broadcastAllowFreeAuthQuote` on CawProfileQuoter). Any excess is refunded to tx.origin.
+  ///
+  ///         Operator discipline: call this AFTER `setAuthFee` whenever the fee transitions
+  ///         between zero and non-zero. Within-bucket changes (0.001→0.002) need no broadcast.
+  ///
+  /// @dev Permissionless: anyone can call this. Reading the current authFee from NetworkManager
+  ///      and sending it via LZ is idempotent and non-harmful — the worst a griefing caller
+  ///      can do is re-send the current state (no-op on L2) at their own gas cost.
+  /// @param networkId The network whose free-auth state to propagate.
+  /// @param lzDestId The L2 endpoint ID (storage chain EID for this network).
+  /// @param lzTokenAmount LZ ZRO token amount (0 to pay in native gas).
+  function broadcastAllowFreeAuth(uint32 networkId, uint32 lzDestId, uint256 lzTokenAmount) external payable {
+    bool allow = (networkManager.getAuthFee(networkId) == 0);
+    bytes memory payload = abi.encodeWithSelector(_allowFreeAuthSelector, networkId, allow);
+    if (lzDestId == mainnetLzId) {
+      cawProfileL2.setAllowFreeAuth(networkId, allow);
+      _refundUnusedLzEth(msg.value);
+    } else {
+      // n=0: no per-token ownership entries in this payload.
+      lzSend(networkId, lzDestId, _allowFreeAuthSelector, 0, payload, msg.value, lzTokenAmount);
+    }
+  }
+
   /// @notice Deposit CAW into a token on behalf of its owner. CAW is pulled from msg.sender
   ///         (not the token owner), so the caller must have approved this contract for CAW.
   ///         This allows router contracts to collect CAW from the user and deposit in one flow.
@@ -885,20 +905,16 @@ contract CawProfile is
       (cumulative, priceTs) = priceReader.readSample();
     }
 
-    // Refund excess LZ fee. Default: tx.origin — the EOA that actually paid.
-    // tx.origin is used (not msg.sender) because msg.sender may be a contract
-    // without a receive() (e.g. CawProfileMarketplace.acceptOffer → transferAndSync).
-    //
-    // Sponsored-flow override: when _lzRefundTo is non-zero (set via setLzRefundTo
-    // by CawProfileMinter before the sponsored call), the refund goes to the user
-    // rather than the sponsor server that is tx.origin. Audit fix 2026-05-22 (H-1).
-    address payable refundAddr = _lzRefundTo != address(0) ? _lzRefundTo : payable(tx.origin);
+    // Refund excess LZ fee to tx.origin — the EOA that actually paid.
+    // Using msg.sender would break when called through an intermediary contract
+    // (e.g. CawProfileMarketplace.acceptOffer -> transferAndSync) because the contract
+    // wouldn't have a receive() function to accept the refund.
     _lzSend(
       lzDestId, // Destination chain's endpoint ID.
       abi.encodePacked(cumulative, priceTs, payload), // price prefix + original payload
       _options, // Message execution options (e.g., gas to use on destination).
       MessagingFee(lzEthAmount, lzTokenAmount), // Fee struct containing native gas and ZRO token.
-      refundAddr // Refund excess LZ fee to the resolved address (user or tx.origin)
+      payable(tx.origin) // Refund excess LZ fee to the tx originator (the EOA paying)
     );
   }
 
@@ -963,28 +979,9 @@ contract CawProfile is
     );
   }
 
-  // ============================================
-  // SPONSORED-FLOW REFUND-ROUTING
-  // ============================================
-  /// @notice Minter-only: set the LZ fee refund recipient for the NEXT lzSend
-  ///         call in this transaction. Used by CawProfileMinter's sponsored entry
-  ///         points so excess LZ fee goes to the user (not to tx.origin = sponsor).
-  ///
-  ///         Usage pattern (all in one tx, no re-entrancy risk):
-  ///           1. CawProfile.setLzRefundTo(payable(user))
-  ///           2. CawProfile.<depositFor|mintAndDeposit|authenticateForMinter>(...)
-  ///           3. CawProfile.setLzRefundTo(payable(0))   ← clear for next caller
-  ///
-  ///         Step 3 is important: CawProfileMinter MUST clear after use to avoid
-  ///         leaking refundTo across separate sponsored operations. The `lzSend`
-  ///         override resets _lzRefundTo to zero after each send as a backstop.
-  ///         Audit fix 2026-05-22 (H-1: tx.origin refund breaks sponsored flows).
-  ///
-  /// @param refundTo Address to refund excess LZ fee to (0 = revert to tx.origin).
-  function setLzRefundTo(address payable refundTo) external {
-    if (minter != _msgSender()) revert NotMinter();
-    _lzRefundTo = refundTo;
-  }
+  /// @notice Returns the L2 handler selector for setAllowFreeAuth. Used by CawProfileQuoter
+  ///         to build the broadcastAllowFreeAuthQuote without hardcoding the selector.
+  function selectorAllowFreeAuth() external pure returns (bytes4) { return _allowFreeAuthSelector; }
 
   receive() external payable {}
   fallback() external payable {}

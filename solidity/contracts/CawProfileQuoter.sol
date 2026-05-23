@@ -25,6 +25,7 @@ interface ICawProfileForQuoter {
   function peerWithMaxPendingTransfers() external view returns (uint32);
   function mainnetLzId() external view returns (uint32);
   function selectors() external pure returns (bytes4 mint, bytes4 addToBalance, bytes4 auth, bytes4 updateOwners, bytes4 mintAuth, bytes4 depositRegisterSession, bytes4 mintAuthRegisterSession);
+  function selectorAllowFreeAuth() external pure returns (bytes4);
   function lzQuote(uint32 cawNetworkId, bytes4 selector, uint256 n, bytes memory payload, uint32 lzDestId, bool _payInLzToken) external view returns (MessagingFee memory quote);
 }
 
@@ -297,6 +298,22 @@ contract CawProfileQuoter {
     );
     // updateOwners isn't bound to a single networkId — use 0 (no override).
     return cawProfile.lzQuote(0, s.updateOwners, tokenIds.length, payload, lzDestId, payInLzToken);
+  }
+
+  /// @notice Quote the LZ fee for `CawProfile.broadcastAllowFreeAuth`.
+  /// @dev In bypassLZ mode (lzDestId == mainnetLzId) the L2 mirror is updated via a direct call
+  ///      (no LZ message), so the quote is zero. On cross-chain deployments the fee covers one
+  ///      LZ message to the storage chain with a single SSTORE handler. No ownership-update
+  ///      tail is carried by this message, so n=0 is used for gas sizing.
+  /// @param networkId The network whose free-auth flag is being propagated.
+  /// @param lzDestId The L2 storage chain endpoint ID.
+  /// @param payInLzToken True to quote in ZRO token, false for native gas.
+  function broadcastAllowFreeAuthQuote(uint32 networkId, uint32 lzDestId, bool payInLzToken) public view returns (MessagingFee memory quote) {
+    if (lzDestId == cawProfile.mainnetLzId()) return MessagingFee(0, 0);
+    bytes4 sel = cawProfile.selectorAllowFreeAuth();
+    // Payload: selector(4) + networkId(32) + allow(32) = 68 bytes. Matches what broadcastAllowFreeAuth sends.
+    bytes memory payload = abi.encodeWithSelector(sel, networkId, false);
+    return cawProfile.lzQuote(networkId, sel, 0, payload, lzDestId, payInLzToken);
   }
 
   /**

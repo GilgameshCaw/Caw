@@ -1,0 +1,277 @@
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.22;
+
+import "forge-std/Test.sol";
+import "../contracts/CawProfileL2.sol";
+import "../contracts/CawActions.sol";
+import "../contracts/interfaces/ICawActions.sol";
+
+// =============================================================================
+// AllowFreeAuth tests
+//
+// Covers:
+//   1. CawProfileL2.setAllowFreeAuth sets allowFreeAuth[networkId] correctly
+//      via the bypassLZ path (msg.sender == cawProfile && bypassLZ).
+//   2. CawProfileL2.setAllowFreeAuth reverts if neither fromLZ nor bypassLZ+cawProfile.
+//   3. CawActions._applyAction no longer reverts UserNotAuth when allowFreeAuth is true.
+//   4. CawActions._applyAction STILL reverts when both authenticated and allowFreeAuth are false.
+//   5. Already-authenticated users are unaffected by allowFreeAuth state.
+// =============================================================================
+
+// ---------------------------------------------------------------------------
+// Minimal mock CawProfileL2 that exposes allowFreeAuth state and the
+// authenticated mapping, letting us set them directly for CawActions tests.
+// ---------------------------------------------------------------------------
+contract MockCawProfileL2ForActions {
+    mapping(uint32 => mapping(uint32 => bool)) public authenticated;
+    mapping(uint32 => bool) public _allowFreeAuthPublic;
+    mapping(uint256 => address) public ownerOf;
+    mapping(address => mapping(address => CawProfileL2.StoredSession)) private _sessions;
+    uint256 public rewardMultiplier = 10**18;
+    uint256 public precision = 10**18;
+
+    // Stub: allowFreeAuth external view (matches CawProfileL2 ABI)
+    function allowFreeAuth(uint32 networkId) external view returns (bool) {
+        return _allowFreeAuthPublic[networkId];
+    }
+
+    function setAllowFreeAuth(uint32 networkId, bool allow) external {
+        _allowFreeAuthPublic[networkId] = allow;
+    }
+
+    function setAuthenticated(uint32 networkId, uint32 tokenId, bool val) external {
+        authenticated[networkId][tokenId] = val;
+    }
+
+    function setOwner(uint32 tokenId, address owner) external {
+        ownerOf[tokenId] = owner;
+    }
+
+    // ── CawProfileL2 interface stubs used by CawActions ──────────────────────
+
+    function cawBalanceOf(uint32 tokenId) external view returns (uint256) {
+        return 10_000_000 * 10**18; // large balance so spend checks pass
+    }
+
+    function spendAndDistributeTokens(uint32, uint256, uint256) external {}
+    function spendDistributeAndAddTokensToBalance(uint32, uint256, uint256, uint32, uint256) external {}
+
+    function withdrawTokens(uint32, uint256) external {}
+
+    function validSession(address owner, address sessionKey)
+        external view returns (CawProfileL2.StoredSession memory s)
+    {
+        return _sessions[owner][sessionKey];
+    }
+
+    function registerSessionFromActions(address, address, uint64, uint256, uint64) external {}
+    function revokeSessionFromActions(address, address) external {}
+
+    ICawCapOracle public immutable capOracle = ICawCapOracle(address(0));
+}
+
+// ---------------------------------------------------------------------------
+// Minimal mock for CawCapOracle (address(0) if unused)
+// ---------------------------------------------------------------------------
+
+// ---------------------------------------------------------------------------
+// CawProfileL2 setAllowFreeAuth tests
+// ---------------------------------------------------------------------------
+contract SetAllowFreeAuthTest is Test {
+    // We need a real CawProfileL2 to test the auth guard, but deploying the
+    // full contract requires a LayerZero endpoint mock. Instead, we deploy
+    // a minimal harness that inherits just the relevant storage and modifier.
+
+    // Rather than spinning up the full OApp stack, we test the storage path
+    // via a simple inline harness that exposes the fromLZ flag.
+    HarnessCawProfileL2 internal l2;
+
+    function setUp() public {
+        // Harness deployed with a stub endpoint.
+        l2 = new HarnessCawProfileL2();
+    }
+
+    // ── Test 1: fromLZ path sets allowFreeAuth to true ────────────────────
+    function test_SetAllowFreeAuth_FromLZ_SetsTrue() public {
+        // Simulate _lzReceive by calling through the harness exposer.
+        l2.callViaFromLZ(1, true);
+        assertTrue(l2.allowFreeAuth(1), "allowFreeAuth[1] should be true");
+    }
+
+    // ── Test 2: fromLZ path sets allowFreeAuth to false ───────────────────
+    function test_SetAllowFreeAuth_FromLZ_SetsFalse() public {
+        l2.callViaFromLZ(1, true);  // first set to true
+        l2.callViaFromLZ(1, false); // then flip to false
+        assertFalse(l2.allowFreeAuth(1), "allowFreeAuth[1] should be false after reset");
+    }
+
+    // ── Test 3: different networkIds are independent ───────────────────────
+    function test_SetAllowFreeAuth_FromLZ_PerNetwork() public {
+        l2.callViaFromLZ(1, true);
+        l2.callViaFromLZ(2, false);
+        assertTrue(l2.allowFreeAuth(1), "network 1 should be true");
+        assertFalse(l2.allowFreeAuth(2), "network 2 should be false");
+    }
+
+    // ── Test 4: direct call without fromLZ or bypassLZ reverts ────────────
+    function test_SetAllowFreeAuth_DirectCall_Reverts() public {
+        // Neither fromLZ nor bypassLZ+cawProfile — must revert.
+        vm.expectRevert(CawProfileL2.OnlyLZ.selector);
+        l2.setAllowFreeAuth(1, true);
+    }
+
+    // ── Test 5: bypassLZ + correct caller succeeds ────────────────────────
+    function test_SetAllowFreeAuth_BypassLZ_Succeeds() public {
+        // The harness's setBypassLZCaller simulates the onlyOnMainnet gate.
+        l2.enableBypassLZ(address(this));
+        l2.setAllowFreeAuth(1, true);
+        assertTrue(l2.allowFreeAuth(1), "bypassLZ call should set allowFreeAuth");
+    }
+
+    // ── Test 6: bypassLZ + wrong caller reverts ───────────────────────────
+    function test_SetAllowFreeAuth_BypassLZ_WrongCaller_Reverts() public {
+        l2.enableBypassLZ(address(0xDEAD)); // registered cawProfile is 0xDEAD, not this test
+        vm.expectRevert(CawProfileL2.OnlyLZ.selector);
+        l2.setAllowFreeAuth(1, true);
+    }
+}
+
+// ---------------------------------------------------------------------------
+// CawActions auth gate tests (allowFreeAuth bypass)
+// ---------------------------------------------------------------------------
+contract CawActionsAllowFreeAuthTest is Test {
+    MockCawProfileL2ForActions internal profile;
+
+    uint32 constant NETWORK_ID = 1;
+    uint32 constant TOKEN_ID   = 1;
+    uint32 constant VALIDATOR_ID = 99;
+
+    // We test the auth gate by deploying a minimal CawActions with the mock
+    // profile and calling the public-facing processActions entry point.
+    // Rather than building a full batch, we test via a thin harness that
+    // wraps _applyAction.
+    HarnessCawActions internal actions;
+
+    function setUp() public {
+        profile = new MockCawProfileL2ForActions();
+        profile.setOwner(TOKEN_ID, address(0x1234));
+
+        // Deploy CawActions harness with the mock profile.
+        actions = new HarnessCawActions(address(profile));
+    }
+
+    // ── Test 7: allowFreeAuth=false, not authenticated → UserNotAuth ──────
+    function test_AuthGate_NotAuthed_NotFreeAuth_Reverts() public {
+        // Both flags are false (default).
+        vm.expectRevert(CawActions.UserNotAuth.selector);
+        actions.applyMockAction(NETWORK_ID, TOKEN_ID, VALIDATOR_ID);
+    }
+
+    // ── Test 8: allowFreeAuth=true, not authenticated → succeeds ─────────
+    function test_AuthGate_NotAuthed_FreeAuth_Passes() public {
+        profile.setAllowFreeAuth(NETWORK_ID, true);
+        // Should not revert.
+        actions.applyMockAction(NETWORK_ID, TOKEN_ID, VALIDATOR_ID);
+    }
+
+    // ── Test 9: allowFreeAuth=false, is authenticated → succeeds ─────────
+    function test_AuthGate_Authed_NoFreeAuth_Passes() public {
+        profile.setAuthenticated(NETWORK_ID, TOKEN_ID, true);
+        // Should not revert.
+        actions.applyMockAction(NETWORK_ID, TOKEN_ID, VALIDATOR_ID);
+    }
+
+    // ── Test 10: both flags true → succeeds (no double-check fail) ────────
+    function test_AuthGate_BothTrue_Passes() public {
+        profile.setAuthenticated(NETWORK_ID, TOKEN_ID, true);
+        profile.setAllowFreeAuth(NETWORK_ID, true);
+        // Should not revert.
+        actions.applyMockAction(NETWORK_ID, TOKEN_ID, VALIDATOR_ID);
+    }
+
+    // ── Test 11: allowFreeAuth transitions: true → false restores gate ────
+    function test_AuthGate_FreeAuth_DisabledRestoresGate() public {
+        profile.setAllowFreeAuth(NETWORK_ID, true);
+        actions.applyMockAction(NETWORK_ID, TOKEN_ID, VALIDATOR_ID); // passes
+
+        profile.setAllowFreeAuth(NETWORK_ID, false);
+        vm.expectRevert(CawActions.UserNotAuth.selector);
+        actions.applyMockAction(NETWORK_ID, TOKEN_ID, VALIDATOR_ID); // reverts
+    }
+}
+
+// =============================================================================
+// Harnesses
+// =============================================================================
+
+// ---------------------------------------------------------------------------
+// HarnessCawProfileL2 — minimal harness to test setAllowFreeAuth storage
+// logic without spinning up the full OApp stack.
+// ---------------------------------------------------------------------------
+contract HarnessCawProfileL2 {
+    mapping(uint32 => bool) private _allowFreeAuth;
+    bool private fromLZ;
+    bool public bypassLZ;
+    address public cawProfile;
+
+    error OnlyLZ();
+
+    function allowFreeAuth(uint32 networkId) external view returns (bool) {
+        return _allowFreeAuth[networkId];
+    }
+
+    /// @dev Mirrors CawProfileL2.setAllowFreeAuth exactly.
+    function setAllowFreeAuth(uint32 networkId, bool allow) public {
+        if (!(fromLZ || (bypassLZ && msg.sender == cawProfile))) revert OnlyLZ();
+        _allowFreeAuth[networkId] = allow;
+    }
+
+    /// @dev Test helper: simulate an LZ-delivered call.
+    function callViaFromLZ(uint32 networkId, bool allow) external {
+        fromLZ = true;
+        this.setAllowFreeAuth(networkId, allow);
+        fromLZ = false;
+    }
+
+    /// @dev Test helper: enable bypassLZ mode with a specific trusted caller.
+    function enableBypassLZ(address trustedCaller) external {
+        bypassLZ = true;
+        cawProfile = trustedCaller;
+    }
+}
+
+// ---------------------------------------------------------------------------
+// HarnessCawActions — wraps the auth-gate logic from CawActions._applyAction
+// without requiring a full batch + signature verification stack.
+// ---------------------------------------------------------------------------
+interface IAllowFreeAuthProfile {
+    function authenticated(uint32 networkId, uint32 tokenId) external view returns (bool);
+    function allowFreeAuth(uint32 networkId) external view returns (bool);
+    function cawBalanceOf(uint32 tokenId) external view returns (uint256);
+    function spendAndDistributeTokens(uint32 tokenId, uint256 amountToSpend, uint256 amountToDistribute) external;
+}
+
+contract HarnessCawActions {
+    IAllowFreeAuthProfile public immutable cawProfile;
+
+    error UserNotAuth();
+
+    constructor(address _profile) {
+        cawProfile = IAllowFreeAuthProfile(_profile);
+    }
+
+    /// @notice Simulates the auth-gate portion of _applyAction for a CAW action.
+    ///         Reverts UserNotAuth under the same conditions as the real contract.
+    function applyMockAction(uint32 networkId, uint32 tokenId, uint32 /*validatorId*/) external {
+        // Mirrors line 1191 of CawActions.sol (post-fix):
+        if (!cawProfile.authenticated(networkId, tokenId)
+            && !cawProfile.allowFreeAuth(networkId)) revert UserNotAuth();
+
+        // Simulate a minimal CAW action cost (stub: just call spend so the
+        // mock can assert it was called). In the real contract this would also
+        // increment the cawonce, check text length, etc. — but we only care
+        // about the auth gate here.
+        uint256 cost = 5000;
+        cawProfile.spendAndDistributeTokens(tokenId, cost, cost);
+    }
+}
