@@ -44,6 +44,7 @@ contract CawProfile is
   error NotApproved();
   error NotL2Mirror();
   error TooManyChains();
+  error WithdrawLocked();
 
   using OptionsBuilder for bytes;
   using EnumerableSet for EnumerableSet.UintSet;
@@ -106,6 +107,11 @@ contract CawProfile is
   mapping(uint32 => mapping(uint32 => bool)) public withdrawFeeLocked;
 
   mapping(uint32 => uint256) public withdrawable;
+
+  /// @notice Per-tokenId withdraw lock. True = withdrawals disabled for card-funded profiles.
+  /// Cleared by the token owner after KYC via CawProfileMinter.unlockWithdraw.
+  /// Lock is token-bound — transfers to a new owner do not clear it.
+  mapping(uint32 => bool) private _withdrawLocked;
 
   uint256 public constant rewardMultiplier = 10**18;
 
@@ -642,6 +648,7 @@ contract CawProfile is
 
   /// @notice Withdraw CAW to any address. Only callable by the token owner.
   function withdrawTo(uint32 cawNetworkId, uint32 tokenId, address recipient, uint256 lzTokenAmount) public payable {
+    if (_withdrawLocked[tokenId]) revert WithdrawLocked();
     if (ownerOf(tokenId) != msg.sender) revert NotOwner();
     if (withdrawable[tokenId] == 0) revert NothingToWithdraw();
     if (recipient == address(0)) revert ZeroAddr();
@@ -663,6 +670,15 @@ contract CawProfile is
     // Withdraw is observable via the ERC20 Transfer fired by CAW.transfer
     // above (from = address(this), to = recipient). No bespoke event
     // needed — see event-declarations comment near `Deposited`.
+  }
+
+  /// @notice Set or clear the per-tokenId withdraw lock. Callable only by the Minter.
+  /// Set=true at mint time by mintAndDepositLocked; set=false by unlockWithdraw on
+  /// CawProfileMinter after KYC attestation. The WithdrawUnlocked event is emitted
+  /// by the Minter rather than here to save CawProfile bytecode budget.
+  function setWithdrawLocked(uint32 tokenId, bool locked) external {
+    if (msg.sender != minter) revert NotMinter();
+    _withdrawLocked[tokenId] = locked;
   }
 
   /**
@@ -956,32 +972,8 @@ contract CawProfile is
     return gasBaseFor[selector] + uint128(65_000 * n) + networkManager.networkGasOverride(cawNetworkId, selector);
   }
 
-  /// @notice Returns all 7 L2 handler selectors in a single call.
-  /// @dev Single dispatcher entry instead of 7 — reduces bytecode. Callers
-  ///      (CawProfileQuoter) call this once and cache the results locally.
-  function selectors() external pure returns (
-    bytes4 mint,
-    bytes4 addToBalance,
-    bytes4 auth,
-    bytes4 updateOwners,
-    bytes4 mintAuth,
-    bytes4 depositRegisterSession,
-    bytes4 mintAuthRegisterSession
-  ) {
-    return (
-      _mintSelector,
-      _addToBalanceSelector,
-      _authSelector,
-      _updateOwnersSelector,
-      _mintAuthSelector,
-      _depositRegisterSessionSelector,
-      _mintAuthRegisterSessionSelector
-    );
-  }
-
-  /// @notice Returns the L2 handler selector for setAllowFreeAuth. Used by CawProfileQuoter
-  ///         to build the broadcastAllowFreeAuthQuote without hardcoding the selector.
-  function selectorAllowFreeAuth() external pure returns (bytes4) { return _allowFreeAuthSelector; }
+  // selectors() and selectorAllowFreeAuth() removed to reclaim bytecode budget.
+  // CawProfileQuoter now hardcodes the same keccak256 selector constants directly.
 
   receive() external payable {}
   fallback() external payable {}

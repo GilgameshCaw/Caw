@@ -481,6 +481,9 @@ const CONTRACTS = {
       state.addresses.MintableCaw,
       state.addresses.CawProfile,
       state.addresses.MockSwapRouter || requireUniswapRouter(chainKey),
+      // admin: deployer address initially; call transferAdmin(address(0)) post-KYC-verifier-config.
+      // RENOUNCE_ON_DEPLOY=1 sets admin=address(0) at deploy to skip the config window entirely.
+      process.env.RENOUNCE_ON_DEPLOY === '1' ? ethers.ZeroAddress : (state.deployerAddress || ethers.ZeroAddress),
     ],
   },
   CawProfileQuoter: {

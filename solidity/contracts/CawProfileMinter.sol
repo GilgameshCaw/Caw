@@ -9,11 +9,51 @@ import "./interfaces/IMint.sol";
 import "./interfaces/ISmartEOA.sol";
 import "./ISwapRouter.sol";
 
+// ============================================
+// KYC VERIFIER INTERFACE
+// ============================================
+/// @notice Minimal interface for on-chain KYC attestation providers (Civic Pass, zkMe SBT, etc.).
+///         CawProfileMinter.unlockWithdraw delegates the KYC check to the deployed adapter.
+///         Adapter contracts (CivicKycVerifier, ZkMeKycVerifier) implement this interface.
+interface IKycVerifier {
+  /// @notice Returns true if `account` holds a valid KYC attestation from this provider.
+  function isVerified(address account) external view returns (bool);
+}
+
 /// @dev Audit-trail tags in this contract (e.g. "H-N", "M-N", "Round N",
 ///      "Audit fix YYYY-MM-DD") are decoded in `docs/AUDIT_TRAIL.md`.
 contract CawProfileMinter is Context {
 
   mapping(string => uint32) public idByUsername;
+
+  // ============================================
+  // KYC VERIFIER STATE
+  // ============================================
+  /// @notice On-chain KYC attestation verifier. address(0) = no provider configured yet.
+  ///         Set by admin via setKycVerifier. Must be configured before unlockWithdraw is callable.
+  IKycVerifier public kycVerifier;
+
+  /// @notice Admin address that can configure the kycVerifier. Set to address(0) at or
+  ///         before mainnet deploy to permanently lock the configuration. Only the admin
+  ///         can call setKycVerifier and transferAdmin. No admin = verifier is immutable.
+  address public admin;
+
+  /// @notice Per-tokenId withdraw lock state, mirrored from CawProfile._withdrawLocked.
+  ///         CawProfile keeps the mapping private (bytecode budget); this public mapping
+  ///         exposes the same state for off-chain consumers (FE, indexers).
+  ///         Invariant: mintedLocked[id] == true iff CawProfile._withdrawLocked[id] == true,
+  ///         since the Minter is the only caller of CawProfile.setWithdrawLocked.
+  mapping(uint32 => bool) public mintedLocked;
+
+  error NotAdmin();
+  error AlreadyUnlocked();
+  error KycRequired();
+  error KycNotConfigured();
+  error NotTokenOwner();
+
+  event KycVerifierSet(address indexed verifier);
+  event WithdrawLocked(uint32 indexed tokenId);
+  event WithdrawUnlocked(uint32 indexed tokenId);
 
   IMint CawProfile;
   IERC20 CAW;
@@ -60,11 +100,12 @@ contract CawProfileMinter is Context {
     "Authenticate(uint32 networkId,uint32 tokenId,uint32 lzDestId,uint256 lzTokenAmount,uint256 nonce)"
   );
 
-  constructor(address _caw, address _cawProfiles, address _router) {
+  constructor(address _caw, address _cawProfiles, address _router, address _admin) {
     CAW = IERC20(_caw);
     CawProfile = IMint(_cawProfiles);
     swapRouter = ISwapRouter(_router);
     WETH = swapRouter.WETH();
+    admin = _admin;
 
     // Compute EIP-712 domain separator once at deploy time.
     DOMAIN_SEPARATOR = keccak256(abi.encode(
@@ -74,6 +115,24 @@ contract CawProfileMinter is Context {
       block.chainid,
       address(this)
     ));
+  }
+
+  // ============================================
+  // ADMIN — KYC CONFIGURATION
+  // ============================================
+  /// @notice Set the KYC verifier adapter contract. Callable only by admin.
+  ///         Pass address(0) to disable the verifier (unlockWithdraw will revert KycNotConfigured).
+  ///         Set admin to address(0) post-config to permanently lock this setting.
+  function setKycVerifier(address _verifier) external {
+    if (msg.sender != admin) revert NotAdmin();
+    kycVerifier = IKycVerifier(_verifier);
+    emit KycVerifierSet(_verifier);
+  }
+
+  /// @notice Transfer admin rights. Pass address(0) to renounce permanently.
+  function transferAdmin(address _newAdmin) external {
+    if (msg.sender != admin) revert NotAdmin();
+    admin = _newAdmin;
   }
 
   // ============================================
@@ -168,6 +227,66 @@ contract CawProfileMinter is Context {
       CAW.approve(address(CawProfile), depositAmount);
     }
     CawProfile.mintAndDeposit{value: msg.value}(networkId, recipient, username, newId, depositAmount, lzDestId, lzTokenAmount, "");
+  }
+
+  // ============================================
+  // CARD-FUNDED PROFILE PATH — withdraw-locked mint + KYC unlock
+  // ============================================
+
+  /// @notice Mint a profile and deposit CAW on behalf of `recipient` with withdrawals
+  ///         locked at the contract level. Intended for profiles funded via Stripe
+  ///         (fiat card), where the deposit represents stored value and not crypto.
+  ///
+  ///         The withdraw lock is set on CawProfile immediately after the mint.
+  ///         The lock travels with the tokenId on transfer — a buyer inherits the lock
+  ///         and must also complete KYC to unlock. See CawProfile.setWithdrawLocked.
+  ///
+  ///         Only available to the msg.sender that holds CAW (burn + deposit). Emits
+  ///         WithdrawLocked(tokenId) so indexers can track the initial lock state.
+  ///
+  /// @param networkId       CAW network to register on.
+  /// @param recipient       Address that will own the new profile NFT.
+  /// @param username        Desired username.
+  /// @param depositAmount   CAW to lock as balance (pulled from msg.sender). Zero is allowed.
+  /// @param lzDestId        LayerZero destination chain ID.
+  /// @param lzTokenAmount   Optional LZ ZRO payment (pass 0 for ETH-only fee).
+  function mintAndDepositLocked(
+    uint32 networkId,
+    address recipient,
+    string memory username,
+    uint256 depositAmount,
+    uint32 lzDestId,
+    uint256 lzTokenAmount
+  ) external payable {
+    uint32 newId = _burnAndAssignId(username, depositAmount);
+    if (depositAmount > 0) {
+      CAW.transferFrom(_msgSender(), address(this), depositAmount);
+      CAW.approve(address(CawProfile), depositAmount);
+    }
+    CawProfile.mintAndDeposit{value: msg.value}(networkId, recipient, username, newId, depositAmount, lzDestId, lzTokenAmount, "");
+    // Set the withdraw lock AFTER the mint so newId is valid.
+    CawProfile.setWithdrawLocked(newId, true);
+    mintedLocked[newId] = true;
+    emit WithdrawLocked(newId);
+  }
+
+  /// @notice Unlock withdrawals for a card-funded profile after the token owner
+  ///         presents a valid KYC attestation via the configured IKycVerifier adapter.
+  ///         Only callable by the current token owner (not transferable).
+  ///
+  ///         The lock state on CawProfile is cleared atomically with this call.
+  ///         mintedLocked is cleared in parallel so off-chain consumers see consistent state.
+  ///         The Minter emits WithdrawUnlocked so indexers can update their state.
+  ///
+  /// @param tokenId The profile whose withdrawals to unlock.
+  function unlockWithdraw(uint32 tokenId) external {
+    if (CawProfile.ownerOf(tokenId) != msg.sender) revert NotTokenOwner();
+    if (!mintedLocked[tokenId]) revert AlreadyUnlocked();
+    if (address(kycVerifier) == address(0)) revert KycNotConfigured();
+    if (!kycVerifier.isVerified(msg.sender)) revert KycRequired();
+    CawProfile.setWithdrawLocked(tokenId, false);
+    mintedLocked[tokenId] = false;
+    emit WithdrawUnlocked(tokenId);
   }
 
   /// @dev Shared prologue for every mint path: validate the username, take the burn cost

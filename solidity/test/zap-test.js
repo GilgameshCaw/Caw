@@ -87,7 +87,7 @@ contract("CawProfileMinter — ZAP (pay-with-ETH) flows", function(accounts) {
     await networkManager.createNetwork("L1 Network", accounts[0], l1, 0, 0, 0, 0);
     l1NetworkId = 2;
 
-    minter = await CawProfileMinter.new(token.address, cawProfile.address, mockRouter.address);
+    minter = await CawProfileMinter.new(token.address, cawProfile.address, mockRouter.address, accounts[0]);
     await cawProfile.setMinter(minter.address);
     quoter = await CawProfileQuoter.new(cawProfile.address);
   });

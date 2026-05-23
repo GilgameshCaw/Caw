@@ -48,7 +48,8 @@ contract("CawProfileMarketplace", (accounts) => {
     minter = await CawProfileMinter.new(
       token.address,
       cawProfiles.address,
-      mockRouter.address
+      mockRouter.address,
+      accounts[0]
     );
 
     await cawProfiles.setMinter(minter.address);

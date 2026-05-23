@@ -216,7 +216,7 @@ async function fullSetup(accounts) {
   await networkManager.createNetwork("Test Network", accounts[0], l2, 0, 0, 0, 0);
   const networkId = 1;
 
-  const minter = await CawProfileMinter.new(token.address, cawProfile.address, mockRouter.address);
+  const minter = await CawProfileMinter.new(token.address, cawProfile.address, mockRouter.address, accounts[0]);
   await cawProfile.setMinter(minter.address);
   const quoter = await CawProfileQuoter.new(cawProfile.address);
 

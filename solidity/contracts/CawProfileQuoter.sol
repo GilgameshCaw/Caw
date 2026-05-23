@@ -24,8 +24,6 @@ interface ICawProfileForQuoter {
   function pendingTransferUpdates(uint32 lzDestId, address newOwner, uint32 tokenId) external view returns (uint32[] memory, address[] memory, uint64[] memory);
   function peerWithMaxPendingTransfers() external view returns (uint32);
   function mainnetLzId() external view returns (uint32);
-  function selectors() external pure returns (bytes4 mint, bytes4 addToBalance, bytes4 auth, bytes4 updateOwners, bytes4 mintAuth, bytes4 depositRegisterSession, bytes4 mintAuthRegisterSession);
-  function selectorAllowFreeAuth() external pure returns (bytes4);
   function lzQuote(uint32 cawNetworkId, bytes4 selector, uint256 n, bytes memory payload, uint32 lzDestId, bool _payInLzToken) external view returns (MessagingFee memory quote);
 }
 
@@ -39,15 +37,32 @@ contract CawProfileQuoter {
 
   ICawProfileForQuoter public immutable cawProfile;
 
+  // L2 handler selectors — keccak256-derived, must stay in sync with CawProfile's internal constants.
+  // These were formerly returned by CawProfile.selectors() / selectorAllowFreeAuth(), removed from
+  // CawProfile to reclaim bytecode budget. Hardcoded here as compile-time constants — identical
+  // values, zero external call overhead.
+  bytes4 private constant _mintSel              = bytes4(keccak256("mintAndUpdateOwners(uint32,address,string,uint32[],address[],uint64[])"));
+  bytes4 private constant _addToBalanceSel      = bytes4(keccak256("depositAndUpdateOwners(uint32,uint32,uint256,uint32[],address[],uint64[])"));
+  bytes4 private constant _authSel              = bytes4(keccak256("authenticateAndUpdateOwners(uint32,uint32,uint32[],address[],uint64[])"));
+  bytes4 private constant _updateOwnersSel      = bytes4(keccak256("updateOwners(uint32[],address[],uint64[])"));
+  bytes4 private constant _mintAuthSel          = bytes4(keccak256("mintAuthAndUpdateOwners(uint32,uint32,address,string,uint32[],address[],uint64[])"));
+  bytes4 private constant _depositRegSessSel    = bytes4(keccak256("depositAndRegisterSessionAndUpdateOwners(uint32,uint32,uint256,address,address,uint64,uint256,uint64,uint32[],address[],uint64[])"));
+  bytes4 private constant _mintAuthRegSessSel   = bytes4(keccak256("mintAuthAndRegisterSessionAndUpdateOwners(uint32,uint32,address,string,address,uint64,uint256,uint64,uint32[],address[],uint64[])"));
+  bytes4 private constant _allowFreeAuthSel     = bytes4(keccak256("setAllowFreeAuth(uint32,bool)"));
+
   constructor(address _cawProfile) {
     cawProfile = ICawProfileForQuoter(_cawProfile);
   }
 
-  /// @dev Fetches all 7 selectors in one call and returns them as a struct.
-  ///      Each public quote function calls this once to avoid 7 separate external calls.
-  function _s() private view returns (CawProfileSelectors memory s) {
-    (s.mint, s.addToBalance, s.auth, s.updateOwners, s.mintAuth, s.depositRegisterSession, s.mintAuthRegisterSession)
-      = cawProfile.selectors();
+  /// @dev Returns all 7 L2 handler selectors as a struct, sourced from compile-time constants.
+  function _s() private pure returns (CawProfileSelectors memory s) {
+    s.mint                    = _mintSel;
+    s.addToBalance            = _addToBalanceSel;
+    s.auth                    = _authSel;
+    s.updateOwners            = _updateOwnersSel;
+    s.mintAuth                = _mintAuthSel;
+    s.depositRegisterSession  = _depositRegSessSel;
+    s.mintAuthRegisterSession = _mintAuthRegSessSel;
   }
 
   function authenticateQuote(uint32 networkId, uint32 tokenId, uint32 lzDestId, bool payInLzToken) public view returns (MessagingFee memory quote) {
@@ -310,10 +325,9 @@ contract CawProfileQuoter {
   /// @param payInLzToken True to quote in ZRO token, false for native gas.
   function broadcastAllowFreeAuthQuote(uint32 networkId, uint32 lzDestId, bool payInLzToken) public view returns (MessagingFee memory quote) {
     if (lzDestId == cawProfile.mainnetLzId()) return MessagingFee(0, 0);
-    bytes4 sel = cawProfile.selectorAllowFreeAuth();
     // Payload: selector(4) + networkId(32) + allow(32) = 68 bytes. Matches what broadcastAllowFreeAuth sends.
-    bytes memory payload = abi.encodeWithSelector(sel, networkId, false);
-    return cawProfile.lzQuote(networkId, sel, 0, payload, lzDestId, payInLzToken);
+    bytes memory payload = abi.encodeWithSelector(_allowFreeAuthSel, networkId, false);
+    return cawProfile.lzQuote(networkId, _allowFreeAuthSel, 0, payload, lzDestId, payInLzToken);
   }
 
   /**
