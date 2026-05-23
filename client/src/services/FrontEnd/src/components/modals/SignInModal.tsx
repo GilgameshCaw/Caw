@@ -57,24 +57,28 @@ export default function SignInModal({ isOpen: propIsOpen, onClose: propOnClose, 
             >
               {t('common.sign_in')}
             </button>
-            {/* Card-payment path: generates a fresh EOA, user buys ETH from
-                Moonpay and continues into the normal Pop A mint flow.
-                Gated on VITE_MOONPAY_BASE_URL — the operator opts in by
-                setting that to https://buy-sandbox.moonpay.com or
-                https://buy.moonpay.com. The widget itself works even
-                without an apiKey (raw consumer flow); the apiKey is
-                only required for dApp branding + Moonpay TOS in prod. */}
-            {import.meta.env.VITE_MOONPAY_BASE_URL && (
-              <button
-                onClick={() => {
-                  onClose()
-                  navigate('/onboarding/onramp')
-                }}
-                className="w-full py-2.5 text-sm font-semibold rounded-full border border-yellow-500/40 text-yellow-500 hover:bg-yellow-500/10 transition-colors cursor-pointer"
-              >
-                {t('signin_modal.buy_with_card')}
-              </button>
-            )}
+            {/* Card-payment path. Stripe is preferred when configured (hosted
+                checkout, lower friction). Moonpay is the fallback for
+                operators who have only VITE_MOONPAY_BASE_URL set. If both are
+                set Stripe wins. Neither set → button is hidden. */}
+            {(() => {
+              const stripeConfigured = !!import.meta.env.VITE_STRIPE_PUBLISHABLE_KEY
+              const moonpayConfigured = !!import.meta.env.VITE_MOONPAY_BASE_URL
+              const showCardButton = stripeConfigured || moonpayConfigured
+              const cardPath = stripeConfigured ? '/checkout' : '/onboarding/onramp'
+              if (!showCardButton) return null
+              return (
+                <button
+                  onClick={() => {
+                    onClose()
+                    navigate(cardPath)
+                  }}
+                  className="w-full py-2.5 text-sm font-semibold rounded-full border border-yellow-500/40 text-yellow-500 hover:bg-yellow-500/10 transition-colors cursor-pointer"
+                >
+                  {t('signin_modal.buy_with_card')}
+                </button>
+              )
+            })()}
           </div>
         ) : !activeToken?.username ? (
           <Link

@@ -90,6 +90,7 @@ const Marketplace = lazyWithReload(() => import("./pages/Marketplace"));
 const AddressTokens = lazyWithReload(() => import("./pages/AddressTokens"));
 const OnboardingPage = lazyWithReload(() => import("./pages/Onboarding"));
 const OnrampOnboarding = lazyWithReload(() => import("./pages/OnrampOnboarding"));
+const CardCheckout = lazyWithReload(() => import("./pages/CardCheckout"));
 const RecoveryPage = lazyWithReload(() => import("./pages/Recovery"));
 
 // Routes are split into two groups so `<MainLayout>` can be hoisted to a
@@ -173,6 +174,10 @@ export const bareRoutes: RouteDef[] = [
   // arrival, then drops them into the normal Pop A mint flow.
   { path: "/onboarding/onramp", component: <OnrampOnboarding /> },
   { path: "/onboarding/onramp/complete", component: <OnrampOnboarding /> },
+  // Stripe-based card checkout: username + deposit amount → Stripe hosted
+  // page → webhook mints the profile. Preferred over /onboarding/onramp
+  // when VITE_STRIPE_PUBLISHABLE_KEY is set.
+  { path: "/checkout", component: <CardCheckout /> },
   { path: "/recovery", component: <RecoveryPage /> },
   { path: "/welcome", component: <CaptiveSplash /> },
   { path: "/welcome/:username", component: <WelcomePage /> },

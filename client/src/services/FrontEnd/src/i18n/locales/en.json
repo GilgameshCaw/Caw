@@ -1599,5 +1599,19 @@
   "identity.remove_passkey.error_bad_json": "This file doesn't look like a valid CAW backup.",
   "identity.remove_passkey.error_wrong_password": "Password incorrect. Try again.",
   "identity.remove_passkey.error_wrong_address": "This backup belongs to a different recovery key.",
-  "identity.remove_passkey.verifying": "Verifying…"
+  "identity.remove_passkey.verifying": "Verifying…",
+  "checkout.title": "Get your CAW profile",
+  "checkout.subtitle": "Choose your username and deposit amount, then pay with card.",
+  "checkout.username_label": "Username",
+  "checkout.deposit_label": "Deposit amount (USD)",
+  "checkout.total_label": "Total",
+  "checkout.pay_cta": "Pay with card",
+  "checkout.processing": "Redirecting to payment...",
+  "checkout.error": "Something went wrong. Please try again.",
+  "checkout.stripe_not_configured": "Card payment is not configured on this mirror.",
+  "withdraw_lock.title": "Withdraw locked",
+  "withdraw_lock.body": "Your profile was created with a card payment. To withdraw your CAW deposit, verify your identity once.",
+  "withdraw_lock.verify_cta": "Verify identity",
+  "withdraw_lock.not_available": "Identity verification is not yet available. Check back soon.",
+  "withdraw_lock.unlocked": "Withdrawals unlocked!"
 }

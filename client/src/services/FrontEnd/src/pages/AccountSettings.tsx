@@ -21,6 +21,7 @@ import { formatAddress } from '~/utils'
 import { ThumbtackIcon } from '~/components/icons/ThumbtackIcon'
 import { useT } from '~/i18n/I18nProvider'
 import { IdentitySection } from '~/components/identity/IdentitySection'
+import { WithdrawLockStatus } from '~/components/WithdrawLockStatus'
 
 // 401s on the X verification flow are expected when the user's session
 // has expired or never authenticated for the active token — apiFetch's
@@ -954,6 +955,9 @@ const AccountSettings: React.FC = () => {
             />
           </section>
         )}
+
+        {/* Withdraw lock status — only visible for card-funded (locked) profiles */}
+        <WithdrawLockStatus tokenId={activeTokenId} />
 
         {/* Connected Accounts */}
         {activeTokenId && (
