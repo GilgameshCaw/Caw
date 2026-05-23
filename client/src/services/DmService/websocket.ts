@@ -85,9 +85,11 @@ export class DmWebSocketService {
           ? decodeURIComponent(cookieToken)
           : (socket.handshake.auth.sessionToken as string | undefined)
         const userId = Number(socket.handshake.auth.userId)
-        const username = socket.handshake.auth.username
+        // Intentionally ignore client-supplied username — it is resolved from
+        // the DB below after session validation to prevent impersonation.
+        // (L-2: client-supplied username in handshake.)
 
-        if (!sessionToken || !userId || !username) {
+        if (!sessionToken || !userId) {
           return next(new Error('Authentication required'))
         }
 
@@ -102,8 +104,14 @@ export class DmWebSocketService {
           return next(new Error('Token not authorized in session'))
         }
 
+        // Resolve username from DB — never trust the client-supplied value.
+        const dbUser = await prisma.user.findUnique({
+          where: { tokenId: userId },
+          select: { username: true },
+        })
+
         socket.userId = userId
-        socket.username = username
+        socket.username = dbUser?.username ?? null
 
         if (!this.userSockets.has(socket.userId)) {
           this.userSockets.set(socket.userId, new Set())

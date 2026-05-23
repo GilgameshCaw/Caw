@@ -445,9 +445,14 @@ router.get('/:model/:id', async (req, res) => {
   }
 })
 
+/** Models whose PATCH always requires a `reason` field in the request body. */
+const PATCH_REQUIRES_REASON = new Set(['user', 'txQueue', 'withdrawalRequest'])
+
 /**
  * PATCH /api/admin/db/:model/:id
- * Update a record. Only allowed for writable models.
+ * Update a record. Only allowed for writable models. Writes a ModeratorAction
+ * audit row on success (M-3 audit fix 2026-05-23). Requires `reason` in the
+ * request body for sensitive models (user, txQueue, withdrawalRequest).
  */
 router.patch('/:model/:id', async (req, res) => {
   const { model, id } = req.params
@@ -458,6 +463,13 @@ router.patch('/:model/:id', async (req, res) => {
 
   if (!meta.writable) {
     return res.status(403).json({ error: `Model ${model} is read-only` })
+  }
+
+  if (PATCH_REQUIRES_REASON.has(model)) {
+    const reason = typeof req.body?.reason === 'string' ? req.body.reason.trim() : ''
+    if (!reason) {
+      return res.status(400).json({ error: `reason field is required for admin PATCH on ${model}` })
+    }
   }
 
   const delegate = getDelegate(model)
@@ -482,12 +494,32 @@ router.patch('/:model/:id', async (req, res) => {
     if (allowed.has(k) && !ADMIN_WRITE_BLOCKLIST.has(k)) data[k] = req.body[k]
   }
 
+  // Best-effort attribution (mirrors DELETE pattern).
+  const actorTokenId = (req as any).sessionData?.authorizedTokenIds?.[0] ?? null
+
   try {
     const { idField, idValue } = resolveIdForLookup(model, id)
     const record = await delegate.update({
       where: { [idField]: idValue },
       data,
     })
+
+    // Audit row — same pattern as DELETE. Best-effort: failure here does
+    // not roll back the update (two-tx split per project convention).
+    const reason = typeof req.body?.reason === 'string' ? req.body.reason.trim() : null
+    try {
+      await prisma.moderatorAction.create({
+        data: {
+          actorTokenId,
+          type: `admin_db_patch:${model}`,
+          reason: reason
+            ? `Updated ${model}/${idValue}: ${reason}`.slice(0, 1000)
+            : `Updated ${model}/${idValue}`.slice(0, 1000),
+        },
+      })
+    } catch (auditErr: any) {
+      console.error('[AdminDB] Failed to write PATCH audit row:', auditErr.message)
+    }
 
     res.json({
       record: JSON.parse(JSON.stringify(record, (_key, value) =>

@@ -121,7 +121,11 @@ router.get('/', requireModerator, async (req, res) => {
 router.patch('/:id', requireModerator, async (req, res) => {
   try {
     const { id } = req.params
-    const { status, resolution, reviewedBy } = req.body
+    const { status, resolution } = req.body
+    // reviewedBy is intentionally NOT taken from req.body — any moderator
+    // could otherwise falsify audit attribution. Derive from the session
+    // identity that passed requireModerator. (M-2 audit fix 2026-05-23.)
+    const reviewedBy = req.moderatorActorTokenId ?? null
 
     if (!status || !Object.values(ReportStatus).includes(status)) {
       return res.status(400).json({ error: 'Valid status is required' })
@@ -132,7 +136,7 @@ router.patch('/:id', requireModerator, async (req, res) => {
       data: {
         status: status as ReportStatus,
         resolution: resolution || null,
-        reviewedBy: reviewedBy || null,
+        reviewedBy: reviewedBy !== null ? String(reviewedBy) : null,
         reviewedAt: new Date()
       }
     })

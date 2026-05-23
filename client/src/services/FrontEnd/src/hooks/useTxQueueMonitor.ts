@@ -10,6 +10,48 @@ import { useSessionKeyStore } from '~/store/sessionKeyStore'
 import { privateKeyToAccount } from 'viem/accounts'
 import { useAutoRetryStore } from '~/store/autoRetryStore'
 import { TYPES, DOMAIN, allocateCawonces, retryBatchByBatchId } from '~/api/actions'
+import { keccak256 } from 'viem'
+
+// ---------------------------------------------------------------------------
+// Payload integrity: store a keccak256 hash of the signed amounts+recipients
+// at submit time so the retry path can detect server-side mutation before
+// re-signing (feedback_validator_amounts_padding.md).
+// ---------------------------------------------------------------------------
+const PAYLOAD_HASH_KEY = 'caw:payloadHashes'
+
+function loadPayloadHashes(): Map<string, string> {
+  try {
+    const raw = sessionStorage.getItem(PAYLOAD_HASH_KEY)
+    if (raw) return new Map(JSON.parse(raw))
+  } catch {}
+  return new Map()
+}
+
+function savePayloadHashes(m: Map<string, string>) {
+  try { sessionStorage.setItem(PAYLOAD_HASH_KEY, JSON.stringify([...m])) } catch {}
+}
+
+const payloadHashes = loadPayloadHashes()
+
+/** Compute a stable hash of amounts + recipients for integrity checking. */
+function hashPayload(amounts: unknown, recipients: unknown): string {
+  const stable = JSON.stringify({ amounts, recipients }, (_k, v) =>
+    typeof v === 'bigint' ? v.toString() : v
+  )
+  // keccak256 accepts Uint8Array; TextEncoder is available in all modern browsers.
+  return keccak256(new TextEncoder().encode(stable))
+}
+
+/**
+ * Store a payload hash keyed by tempId (string) or txQueueId (number → string).
+ * Called at submit time from the pending-post registration path.
+ */
+export function storePayloadHash(key: string | number, amounts: unknown, recipients: unknown) {
+  payloadHashes.set(String(key), hashPayload(amounts, recipients))
+  savePayloadHashes(payloadHashes)
+}
+
+// ---------------------------------------------------------------------------
 
 // Track retry counts per TxQueue ID to prevent infinite loops.
 // Persisted to sessionStorage so retries don't reset on page refresh.
@@ -253,6 +295,24 @@ export function useTxQueueMonitor() {
                       return
                     }
 
+                    // Integrity check: verify the server-returned amounts+recipients
+                    // match what was originally signed locally. If a validator or
+                    // middleware mutated the payload between submit and retry, the
+                    // hash will differ and we must NOT re-sign the mutated version.
+                    // (feedback_validator_amounts_padding.md — mutated amounts break
+                    // ecrecover on the validator side and may carry unexpected value.)
+                    const storedHash = payloadHashes.get(String(status.id))
+                    if (storedHash) {
+                      const serverHash = hashPayload(originalData.amounts, originalData.recipients)
+                      if (storedHash !== serverHash) {
+                        console.error(
+                          `[TxQueueMonitor] Payload integrity check failed for TxQueue ${status.id} — server amounts/recipients differ from original. Aborting auto-retry.`
+                        )
+                        useQuickSignRenewStore.getState().show('expired', undefined)
+                        return
+                      }
+                    }
+
                     // Re-use the original message but swap in the fresh cawonce.
                     // Do NOT go through buildTypedData — the original amounts already
                     // include the validator tip, and buildTypedData would add a second one.
@@ -458,6 +518,20 @@ export function useTxQueueMonitor() {
           useAutoRetryStore.getState().startRetry(entry.id)
 
           try {
+            // Integrity check: abort if server-returned payload differs from
+            // what was originally signed locally (same guard as polling path).
+            const storedHash = payloadHashes.get(String(entry.id))
+            if (storedHash) {
+              const serverHash = hashPayload(originalData.amounts, originalData.recipients)
+              if (storedHash !== serverHash) {
+                console.error(
+                  `[TxQueueMonitor] Mount-retry payload integrity check failed for TxQueue ${entry.id} — aborting.`
+                )
+                useAutoRetryStore.getState().endRetry(entry.id)
+                break
+              }
+            }
+
             const message = { ...originalData, cawonce: freshCawonce }
             const signature = await sessionAccount.signTypedData({
               domain: DOMAIN,
