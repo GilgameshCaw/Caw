@@ -1567,6 +1567,13 @@ export const cawNetworkManagerAbi = [
   },
   {
     type: 'function',
+    inputs: [],
+    name: 'cawProfile',
+    outputs: [{ name: '', internalType: 'address', type: 'address' }],
+    stateMutability: 'view',
+  },
+  {
+    type: 'function',
     inputs: [
       { name: 'networkId', internalType: 'uint32', type: 'uint32' },
       { name: 'newOwner', internalType: 'address', type: 'address' },
@@ -1901,6 +1908,13 @@ export const cawNetworkManagerAbi = [
     ],
     name: 'setAuthFee',
     outputs: [],
+    stateMutability: 'payable',
+  },
+  {
+    type: 'function',
+    inputs: [{ name: '_cawProfile', internalType: 'address', type: 'address' }],
+    name: 'setCawProfile',
+    outputs: [],
     stateMutability: 'nonpayable',
   },
   {
@@ -1934,7 +1948,7 @@ export const cawNetworkManagerAbi = [
     ],
     name: 'setFees',
     outputs: [],
-    stateMutability: 'nonpayable',
+    stateMutability: 'payable',
   },
   {
     type: 'function',
@@ -2002,6 +2016,19 @@ export const cawNetworkManagerAbi = [
       },
     ],
     name: 'AuthFeeCeilingLowered',
+  },
+  {
+    type: 'event',
+    anonymous: false,
+    inputs: [
+      {
+        name: 'cawProfile',
+        internalType: 'address',
+        type: 'address',
+        indexed: false,
+      },
+    ],
+    name: 'CawProfileSet',
   },
   {
     type: 'event',
@@ -5887,6 +5914,24 @@ export const iCawProfileAbi = [
     name: 'withdrawable',
     outputs: [{ name: '', internalType: 'uint256', type: 'uint256' }],
     stateMutability: 'view',
+  },
+] as const
+
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+// ICawProfileForAuthFeePropagation
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+export const iCawProfileForAuthFeePropagationAbi = [
+  {
+    type: 'function',
+    inputs: [
+      { name: 'networkId', internalType: 'uint32', type: 'uint32' },
+      { name: 'lzDestId', internalType: 'uint32', type: 'uint32' },
+      { name: 'lzTokenAmount', internalType: 'uint256', type: 'uint256' },
+    ],
+    name: 'broadcastAllowFreeAuth',
+    outputs: [],
+    stateMutability: 'payable',
   },
 ] as const
 

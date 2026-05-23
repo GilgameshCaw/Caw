@@ -199,7 +199,9 @@ contract VaultConservationTest is Test {
         cawProfileL2.setL1Peer(MAINNET_LZ_ID, payable(address(cawProfile)), true);
         cawProfile.setMinter(address(this));
 
-        // storageChainEid must be > 0; use 2 (same as L2 LZ ID)
+        // storageChainEid must be > 0; use 2 (same as L2 LZ ID).
+        // V2 createNetwork takes 4 per-fee ceilings instead of a single feeCeiling
+        // — all set to 0 here (free network for testing).
         networkManager.createNetwork("TestNet", address(this), 2, 0, 0, 0, 0);
 
         for (uint256 i = 0; i < 5; i++) {

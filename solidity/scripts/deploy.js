@@ -887,6 +887,26 @@ const LINKING_STEPS = [
     // This linking step exists because CawProfileURI has cascadeBreak=true:
     // redeploying CawProfileURI does NOT redeploy CawProfile, so we need to
     // rewire the URI generator address here via the setter.
+    // Wire CawProfile into CawNetworkManager so setAuthFee auto-propagates
+    // allowFreeAuth to L2 when the zero/non-zero boundary is crossed.
+    // One-shot: reverts on second call. skipIf reads the live cawProfile slot.
+    name: 'Wire CawProfile into CawNetworkManager (setCawProfile)',
+    chain: 'L1',
+    phase: 2,
+    contract: 'CawNetworkManager',
+    method: 'setCawProfile',
+    args: (state) => [state.addresses.CawProfile],
+    condition: (state) => state.addresses.CawNetworkManager && state.addresses.CawProfile,
+    skipIf: async (state, deployer) => {
+      const contract = deployer.getContract('CawNetworkManager');
+      if (!contract) return false;
+      try {
+        const current = await contract.cawProfile();
+        return current !== '0x0000000000000000000000000000000000000000';
+      } catch { return false; }
+    },
+  },
+  {
     name: 'Link CawProfile to CawProfileURI',
     chain: 'L1',
     phase: 2,

@@ -1,6 +1,15 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.20;
 
+/// @dev Minimal interface to CawProfile used ONLY for the auth-fee propagation
+///      callout. Typed as a narrow interface so CawNetworkManager doesn't need
+///      to import the full CawProfile ABI (saving bytecode and avoiding a
+///      circular-import risk). CawNetworkManager calls this externally and
+///      forwards msg.value so CawProfile can pay the LZ fee.
+interface ICawProfileForAuthFeePropagation {
+  function broadcastAllowFreeAuth(uint32 networkId, uint32 lzDestId, uint256 lzTokenAmount) external payable;
+}
+
 struct CawNetwork {
   uint32 id;
   uint32 storageChainEid; // The L2 chain where this network's actions are processed
@@ -46,6 +55,13 @@ struct CawNetwork {
 contract CawNetworkManager {
 
   address public immutable buyAndBurnAddress;
+
+  /// @notice CawProfile address used to propagate authFee 0/non-zero state
+  ///         to L2 via broadcastAllowFreeAuth. Set exactly once via
+  ///         setCawProfile() after both contracts are deployed.
+  address public cawProfile;
+  /// @dev One-shot guard for setCawProfile. Once set, cawProfile is permanent.
+  bool private _cawProfileSet;
 
   uint32 public nextNetworkId = 1;
   mapping(uint32 => CawNetwork) public networks;
@@ -113,8 +129,37 @@ contract CawNetworkManager {
   event InstanceDeactivated(uint32 indexed instanceId);
   event InstanceActivated(uint32 indexed instanceId);
 
+  /// @notice Emitted once when CawProfile is wired in via setCawProfile().
+  event CawProfileSet(address cawProfile);
+
   constructor(address _buyAndBurn) {
     buyAndBurnAddress = _buyAndBurn;
+  }
+
+  /// @notice One-shot setter for the CawProfile address. Set by the deploy
+  ///         script after both contracts are deployed; subsequent calls
+  ///         revert. cawProfile is permissionless from this contract's POV —
+  ///         it's only called via _maybeBroadcastFreeAuth, and broadcastAllowFreeAuth
+  ///         on CawProfile reads NetworkManager.getAuthFee on-chain (cannot lie).
+  function setCawProfile(address _cawProfile) external {
+    require(!_cawProfileSet, "CawProfile already set");
+    require(_cawProfile != address(0), "Zero address");
+    _cawProfileSet = true;
+    cawProfile = _cawProfile;
+    emit CawProfileSet(_cawProfile);
+  }
+
+  /// @dev When the authFee crosses the 0/non-zero boundary, propagate the new
+  ///      allowFreeAuth state to L2 via CawProfile.broadcastAllowFreeAuth.
+  ///      No-op when cawProfile == address(0) (pre-wire window) — same discipline
+  ///      fallback as if this code didn't exist. msg.value is forwarded so the
+  ///      LZ fee is paid in the same tx as setAuthFee.
+  function _maybeBroadcastFreeAuth(uint32 networkId, bool wasZero, bool isZero) internal {
+    if (wasZero == isZero) return; // within-bucket change, no propagation needed
+    address cp = cawProfile;
+    if (cp == address(0)) return; // pre-wire: operator must broadcast manually
+    uint32 destEid = networks[networkId].storageChainEid;
+    ICawProfileForAuthFeePropagation(cp).broadcastAllowFreeAuth{value: msg.value}(networkId, destEid, 0);
   }
 
   modifier onlyNetworkOwner(uint32 networkId) {
@@ -278,10 +323,12 @@ contract CawNetworkManager {
    * @param networkId The ID of the network.
    * @param fee The new auth fee.
    */
-  function setAuthFee(uint32 networkId, uint256 fee) public onlyNetworkOwnerNotFeeLocked(networkId) {
+  function setAuthFee(uint32 networkId, uint256 fee) public payable onlyNetworkOwnerNotFeeLocked(networkId) {
     require(fee <= networks[networkId].authFeeCeiling, "fee exceeds ceiling");
+    bool wasZero = networks[networkId].authFee == 0;
     networks[networkId].authFee = fee;
     emit NetworkFeeUpdated(networkId, "auth", fee);
+    _maybeBroadcastFreeAuth(networkId, wasZero, fee == 0);
   }
 
   /**
@@ -310,12 +357,13 @@ contract CawNetworkManager {
    * @param authFee New auth fee
    * @param mintFee New mint fee
    */
-  function setFees(uint32 networkId, uint256 withdrawFee, uint256 depositFee, uint256 authFee, uint256 mintFee) public onlyNetworkOwnerNotFeeLocked(networkId) {
+  function setFees(uint32 networkId, uint256 withdrawFee, uint256 depositFee, uint256 authFee, uint256 mintFee) public payable onlyNetworkOwnerNotFeeLocked(networkId) {
     CawNetwork storage network = networks[networkId];
     require(withdrawFee <= network.withdrawFeeCeiling, "fee exceeds ceiling");
     require(depositFee <= network.depositFeeCeiling, "fee exceeds ceiling");
     require(authFee <= network.authFeeCeiling, "fee exceeds ceiling");
     require(mintFee <= network.mintFeeCeiling, "fee exceeds ceiling");
+    bool wasZero = network.authFee == 0;
     network.withdrawFee = withdrawFee;
     network.depositFee = depositFee;
     network.authFee = authFee;
@@ -326,6 +374,7 @@ contract CawNetworkManager {
     emit NetworkFeeUpdated(networkId, "deposit", depositFee);
     emit NetworkFeeUpdated(networkId, "auth", authFee);
     emit NetworkFeeUpdated(networkId, "mint", mintFee);
+    _maybeBroadcastFreeAuth(networkId, wasZero, authFee == 0);
   }
 
   function setFeeAddress(uint32 networkId, address feeAddress) public onlyNetworkOwnerNotFeeLocked(networkId) {

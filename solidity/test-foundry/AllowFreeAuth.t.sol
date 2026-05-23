@@ -5,6 +5,7 @@ import "forge-std/Test.sol";
 import "../contracts/CawProfileL2.sol";
 import "../contracts/CawActions.sol";
 import "../contracts/interfaces/ICawActions.sol";
+import "../contracts/CawNetworkManager.sol";
 
 // =============================================================================
 // AllowFreeAuth tests
@@ -273,5 +274,226 @@ contract HarnessCawActions {
         // about the auth gate here.
         uint256 cost = 5000;
         cawProfile.spendAndDistributeTokens(tokenId, cost, cost);
+    }
+}
+
+// =============================================================================
+// MockCawProfileForPropagation
+// Records all broadcastAllowFreeAuth calls so tests can assert on them.
+// =============================================================================
+contract MockCawProfileForPropagation {
+    struct BroadcastCall {
+        uint32 networkId;
+        uint32 lzDestId;
+        uint256 lzTokenAmount;
+        uint256 value;
+    }
+
+    BroadcastCall[] public calls;
+
+    function broadcastAllowFreeAuth(uint32 networkId, uint32 lzDestId, uint256 lzTokenAmount) external payable {
+        calls.push(BroadcastCall({
+            networkId: networkId,
+            lzDestId: lzDestId,
+            lzTokenAmount: lzTokenAmount,
+            value: msg.value
+        }));
+    }
+
+    function callCount() external view returns (uint256) {
+        return calls.length;
+    }
+
+    function resetCount() external {
+        delete calls;
+    }
+}
+
+// =============================================================================
+// NetworkManager auto-propagation tests (tests 12-20)
+//
+// Covers:
+//  12. setAuthFee (0→nonzero) triggers broadcastAllowFreeAuth
+//  13. setAuthFee (nonzero→0) triggers broadcastAllowFreeAuth
+//  14. setAuthFee (nonzero→different-nonzero) does NOT trigger broadcast
+//  15. setAuthFee (0→0) does NOT trigger broadcast
+//  16. setFees with authFee crossing zero triggers broadcast
+//  17. setFees with within-bucket authFee change does NOT trigger broadcast
+//  18. When cawProfile == address(0), setAuthFee succeeds without broadcast
+//  19. setCawProfile can only be called once (reverts on second call)
+//  20. broadcastAllowFreeAuth receives the network's storageChainEid as lzDestId
+// =============================================================================
+contract NetworkManagerPropagationTest is Test {
+    CawNetworkManager internal manager;
+    MockCawProfileForPropagation internal mockProfile;
+
+    uint32 constant STORAGE_EID = 40245; // Base Sepolia EID
+    uint32 constant NETWORK_ID  = 1;
+    uint256 constant CEILING    = 1 ether;
+
+    address internal networkOwner;
+
+    function setUp() public {
+        networkOwner = address(0xBEEF);
+
+        manager = new CawNetworkManager(address(0x1)); // buyAndBurn stub
+        mockProfile = new MockCawProfileForPropagation();
+
+        // Wire the mock profile.
+        manager.setCawProfile(address(mockProfile));
+
+        // Create a network owned by networkOwner. V2 per-fee-ceiling shape:
+        // createNetwork(name, fee, eid, withdrawCeiling, depositCeiling,
+        // authCeiling, mintCeiling). Initial fees default to ceilings.
+        // We start with all ceilings at CEILING (so authFee starts at CEILING,
+        // not 0), then call setAuthFee(0) to drop to free-auth state.
+        // The mock's callCount tracks broadcasts triggered by the boundary
+        // crossing CEILING→0, so we record that baseline and assert deltas
+        // in each test rather than absolute counts.
+        vm.prank(networkOwner);
+        manager.createNetwork(
+            "TestNet",
+            address(0xFEE),     // feeAddress
+            STORAGE_EID,        // storageChainEid
+            CEILING,            // withdrawFeeCeiling
+            CEILING,            // depositFeeCeiling
+            CEILING,            // authFeeCeiling
+            CEILING             // mintFeeCeiling
+        );
+        // Drop authFee to 0 to put the test in the "free auth" baseline.
+        // This triggers ONE broadcast (CEILING→0); resetCount() zeroes the
+        // mock so each test assertion is a clean delta from authFee==0.
+        vm.deal(networkOwner, 1 ether);
+        vm.prank(networkOwner);
+        manager.setAuthFee{value: 0.01 ether}(NETWORK_ID, 0);
+        mockProfile.resetCount();
+    }
+
+    // ── Test 12: setAuthFee 0→nonzero triggers broadcast ─────────────────────
+    function test_SetAuthFee_ZeroToNonZero_TriggersBroadcast() public {
+        vm.deal(networkOwner, 1 ether);
+        vm.prank(networkOwner);
+        manager.setAuthFee{value: 0.01 ether}(NETWORK_ID, 0.001 ether);
+
+        assertEq(mockProfile.callCount(), 1, "should have 1 broadcast call");
+        (uint32 nid, uint32 destEid,,) = mockProfile.calls(0);
+        assertEq(nid, NETWORK_ID, "networkId mismatch");
+        assertEq(destEid, STORAGE_EID, "destEid should be network's storageChainEid");
+    }
+
+    // ── Test 13: setAuthFee nonzero→0 triggers broadcast ─────────────────────
+    function test_SetAuthFee_NonZeroToZero_TriggersBroadcast() public {
+        // First set to non-zero (no broadcast expected — pre-wire call)
+        // Actually manager is already wired. Start from a non-zero state:
+        // Deploy a fresh manager with non-zero authFee from creation.
+        CawNetworkManager m2 = new CawNetworkManager(address(0x1));
+        MockCawProfileForPropagation mp2 = new MockCawProfileForPropagation();
+        m2.setCawProfile(address(mp2));
+
+        // V2 createNetwork: 7 args (name, fee, eid, 4 ceilings). Initial fees
+        // default to ceilings. Net2 wants authFee=0.001 initial; we achieve
+        // that by registering with authFeeCeiling=CEILING (so authFee=CEILING),
+        // then setAuthFee(0.001). The first setAuthFee triggers a broadcast
+        // (CEILING→0.001 is non-zero→non-zero — within-bucket — no trigger
+        // actually). Reset the mock after to isolate the test's transition.
+        vm.deal(networkOwner, 1 ether);
+        vm.prank(networkOwner);
+        m2.createNetwork("Net2", address(0xFEE), STORAGE_EID, CEILING, CEILING, CEILING, CEILING);
+        vm.prank(networkOwner);
+        m2.setAuthFee(NETWORK_ID, 0.001 ether); // CEILING → 0.001 ether (within-bucket, no broadcast)
+        mp2.resetCount();
+
+        // Now transition non-zero → 0.
+        vm.deal(networkOwner, 1 ether);
+        vm.prank(networkOwner);
+        m2.setAuthFee{value: 0.01 ether}(NETWORK_ID, 0);
+
+        assertEq(mp2.callCount(), 1, "should have 1 broadcast call on nonzero to 0");
+    }
+
+    // ── Test 14: setAuthFee nonzero→different-nonzero does NOT trigger ────────
+    function test_SetAuthFee_NonZeroToNonZero_NoBroadcast() public {
+        // Setup: set authFee to 0.001 (triggers broadcast 0→nonzero).
+        vm.deal(networkOwner, 1 ether);
+        vm.prank(networkOwner);
+        manager.setAuthFee{value: 0.01 ether}(NETWORK_ID, 0.001 ether);
+        uint256 countAfterFirst = mockProfile.callCount();
+
+        // Now change within-bucket: 0.001 → 0.002. Should NOT broadcast.
+        vm.prank(networkOwner);
+        manager.setAuthFee(NETWORK_ID, 0.002 ether);
+
+        assertEq(mockProfile.callCount(), countAfterFirst, "within-bucket change must not broadcast");
+    }
+
+    // ── Test 15: setAuthFee 0→0 (no-op) does NOT trigger broadcast ───────────
+    function test_SetAuthFee_ZeroToZero_NoBroadcast() public {
+        // authFee is already 0 from setUp.
+        vm.prank(networkOwner);
+        manager.setAuthFee(NETWORK_ID, 0);
+
+        assertEq(mockProfile.callCount(), 0, "0 to 0 must not broadcast");
+    }
+
+    // ── Test 16: setFees with authFee crossing zero triggers broadcast ─────────
+    function test_SetFees_AuthFeeCrossesZero_TriggersBroadcast() public {
+        // authFee starts at 0; setFees sets it to 0.001 — crossing the boundary.
+        vm.deal(networkOwner, 1 ether);
+        vm.prank(networkOwner);
+        manager.setFees{value: 0.01 ether}(NETWORK_ID, 0, 0, 0.001 ether, 0);
+
+        assertEq(mockProfile.callCount(), 1, "setFees authFee boundary crossing should broadcast");
+    }
+
+    // ── Test 17: setFees within-bucket authFee change does NOT broadcast ──────
+    function test_SetFees_WithinBucketAuthFee_NoBroadcast() public {
+        // First get to a non-zero state.
+        vm.deal(networkOwner, 1 ether);
+        vm.prank(networkOwner);
+        manager.setAuthFee{value: 0.01 ether}(NETWORK_ID, 0.001 ether);
+        uint256 countAfterFirst = mockProfile.callCount();
+
+        // setFees with 0.001 → 0.002 (within-bucket).
+        vm.prank(networkOwner);
+        manager.setFees(NETWORK_ID, 0, 0, 0.002 ether, 0);
+
+        assertEq(mockProfile.callCount(), countAfterFirst, "within-bucket setFees must not broadcast");
+    }
+
+    // ── Test 18: pre-wire (cawProfile==address(0)) setAuthFee succeeds silently
+    function test_SetAuthFee_PreWire_NoBroadcastNoRevert() public {
+        // Deploy a fresh manager without wiring cawProfile.
+        CawNetworkManager m3 = new CawNetworkManager(address(0x1));
+        vm.prank(networkOwner);
+        // 7-arg createNetwork; authFeeCeiling=CEILING. Initial authFee=CEILING.
+        m3.createNetwork("Net3", address(0xFEE), STORAGE_EID, CEILING, CEILING, CEILING, CEILING);
+
+        // Drop authFee to 0 (CEILING→0, would cross boundary), then back to
+        // 0.001 (0→non-zero, would cross boundary). cawProfile == address(0)
+        // means both calls should succeed silently, no revert, no broadcast.
+        vm.prank(networkOwner);
+        m3.setAuthFee(NETWORK_ID, 0); // CEILING → 0; pre-wire so no broadcast attempt
+        vm.prank(networkOwner);
+        m3.setAuthFee(NETWORK_ID, 0.001 ether); // 0 → non-zero; pre-wire so no broadcast attempt
+
+        // Verify the fee was stored.
+        assertEq(m3.getAuthFee(NETWORK_ID), 0.001 ether, "authFee should be stored");
+    }
+
+    // ── Test 19: setCawProfile is one-shot ────────────────────────────────────
+    function test_SetCawProfile_SecondCall_Reverts() public {
+        // manager already has cawProfile set in setUp.
+        vm.expectRevert("CawProfile already set");
+        manager.setCawProfile(address(0xDEAD));
+    }
+
+    // ── Test 20: broadcastAllowFreeAuth receives network's storageChainEid ────
+    function test_SetAuthFee_CorrectDestEid_Forwarded() public {
+        vm.deal(networkOwner, 1 ether);
+        vm.prank(networkOwner);
+        manager.setAuthFee{value: 0.01 ether}(NETWORK_ID, 0.005 ether);
+
+        (, uint32 destEid,,) = mockProfile.calls(0);
+        assertEq(destEid, STORAGE_EID, "LZ destEid must equal network's storageChainEid");
     }
 }
