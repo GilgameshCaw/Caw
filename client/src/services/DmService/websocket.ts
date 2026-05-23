@@ -111,7 +111,7 @@ export class DmWebSocketService {
         })
 
         socket.userId = userId
-        socket.username = dbUser?.username ?? null
+        socket.username = dbUser?.username ?? undefined
 
         if (!this.userSockets.has(socket.userId)) {
           this.userSockets.set(socket.userId, new Set())

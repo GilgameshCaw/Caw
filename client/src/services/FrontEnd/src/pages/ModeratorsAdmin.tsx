@@ -165,7 +165,7 @@ export default function ModeratorsAdmin() {
           {!loading && users.length === 0 && (
             <p className={`text-sm ${muted}`}>
               No elevated users yet. Promote one above, or set
-              <code> BOOTSTRAP_ADMIN_TOKEN_IDS</code> in .env to bootstrap your first admin.
+              <code> ADMIN_TOKEN_IDS</code> in .env to bootstrap your first admin.
             </p>
           )}
           {users.length > 0 && (
