@@ -238,18 +238,22 @@ router.post('/verify-dm', async (req, res) => {
       return
     }
 
-    // Replay-guard the DM-auth signature the same way we guard the main
-    // wallet-verify signature: one-time use via Redis SET NX. Without this,
-    // a captured signature is reusable. Note: the DM-auth message currently
-    // has no timestamp binding (fixed format `@username`), which is a
-    // separate longer-lived replay risk worth fixing — but burning the
-    // exact sig once at least closes the easy automation path. Audit fix
-    // 2026-05-13.
-    const fresh = await consumeAuthSignatureOnce(message, signature)
-    if (!fresh) {
-      res.status(400).json({ error: 'Signature already used. Please sign again.' })
-      return
-    }
+    // No replay-guard here. The DM-auth signature is INTENTIONALLY
+    // deterministic — message is `CAW Protocol\nEnable DMs\n@<username>`,
+    // and SHA-256(sig) is also the user's DM encryption key. Re-signing
+    // the same wallet+username must produce the same key so the user
+    // can decrypt their historical DMs on any device. Guarding the sig
+    // once would lock out the legitimate "re-enable on a new device"
+    // and "retry after a transient failure" paths within the 5-min
+    // window (see commits 78deb20f → revert chain — single-sig design
+    // is intentional).
+    //
+    // The replay-attack value here is also low: a captured DM-auth sig
+    // only lets the attacker create a session for the same (wallet,
+    // tokenId) pair the legitimate user already has — no token attached
+    // to an attacker-controlled session, no impersonation. The main
+    // /verify route remains replay-guarded since its signed message is
+    // a fresh per-call nonce.
 
     // Verify the recovered address owns this tokenId.
     //
