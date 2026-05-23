@@ -1,6 +1,7 @@
 import { Router } from 'express'
 import { randomBytes } from 'crypto'
 import multer from 'multer'
+import sharp from 'sharp'
 import { requireAuth } from '../middleware/auth'
 import { mediaStorage } from '../util/mediaStorage'
 import { reserveUpload, refundReservation } from '../util/uploadQuota'
@@ -44,6 +45,22 @@ function looksLikeImage(buf: Buffer): boolean {
   if (buf[0] === 0x52 && buf[1] === 0x49 && buf[2] === 0x46 && buf[3] === 0x46
       && buf[8] === 0x57 && buf[9] === 0x45 && buf[10] === 0x42 && buf[11] === 0x50) return true
   return false
+}
+
+// Strip EXIF metadata and auto-orient the image (L-1: privacy leak fix).
+// .rotate() reads the EXIF Orientation tag, applies it, then re-encodes
+// WITHOUT any EXIF payload. Result: no GPS, no device serial, no timestamp.
+// Rejects oversized bitmaps (L-2: pixel-bomb / decompression-bomb DoS fix):
+// 1 MB PNG can decode to 400 MP; 8000×8000 px cap blocks Satori/Resvg OOM.
+async function stripExifAndCheckDimensions(buffer: Buffer): Promise<Buffer> {
+  const image = sharp(buffer)
+  const { width, height } = await image.metadata()
+  if ((width ?? 0) > 8000 || (height ?? 0) > 8000) {
+    const err = new Error('Image too large (max 8000x8000)')
+    ;(err as any).statusCode = 400
+    throw err
+  }
+  return image.rotate().toBuffer()
 }
 
 function generateFilename(mimetype: string): string {
@@ -123,12 +140,17 @@ router.post('/', upload.array('media', 10), requireAuth({ field: 'tokenId', veri
         const isVideo = file.mimetype.startsWith('video/')
         const kind = isVideo ? 'videos' : 'images'
         const filename = generateFilename(file.mimetype)
-        return storage.put(kind, filename, file.buffer, file.mimetype)
+        // Strip EXIF + check dimensions for images (L-1/L-2 audit fixes).
+        const buf = isVideo ? file.buffer : await stripExifAndCheckDimensions(file.buffer)
+        return storage.put(kind, filename, buf, file.mimetype)
       }))
-    } catch (storageErr) {
-      // Storage failed — refund the reservation so the user isn't
-      // permanently penalized for a transient failure.
+    } catch (storageErr: any) {
+      // Storage (or EXIF-strip) failed — refund the reservation so the user
+      // isn't permanently penalized for a transient failure.
       await refundReservation('post', Number(tokenId), totalBytes)
+      if (storageErr?.statusCode === 400) {
+        return res.status(400).json({ error: storageErr.message })
+      }
       throw storageErr
     }
 
@@ -310,9 +332,17 @@ router.post('/image', requireAuth({ field: 'tokenId', verifyOwnership: true }), 
     if (buffer.length > 10 * 1024 * 1024) return res.status(400).json({ error: 'Image too large (max 10MB)' })
     if (!looksLikeImage(buffer)) return res.status(400).json({ error: 'Invalid image data' })
 
+    // Strip EXIF (GPS/serial/timestamp) + enforce pixel-bomb dimension cap (L-1/L-2).
+    let stripped: Buffer
+    try {
+      stripped = await stripExifAndCheckDimensions(buffer)
+    } catch (e: any) {
+      return res.status(400).json({ error: e.message })
+    }
+
     const fileExtension = BASE64_MIME_TO_EXT[imageType]
     const fileName = `${tokenId}_${Date.now()}_${randomBytes(8).toString('hex')}.${fileExtension}`
-    const url = await mediaStorage().put('images', fileName, buffer, imageType)
+    const url = await mediaStorage().put('images', fileName, stripped, imageType)
 
     res.json({ success: true, url, filename: fileName })
   } catch (error) {
@@ -336,9 +366,17 @@ router.post('/images', requireAuth({ field: 'tokenId', verifyOwnership: true }),
       const buffer = Buffer.from(matches[2], 'base64')
       if (buffer.length > 10 * 1024 * 1024) continue
       if (!looksLikeImage(buffer)) continue
+      // Strip EXIF + enforce pixel-bomb dimension cap (L-1/L-2 audit fixes).
+      let stripped: Buffer
+      try {
+        stripped = await stripExifAndCheckDimensions(buffer)
+      } catch (e: any) {
+        // Skip this image — return 400 so the caller knows at least one failed.
+        return res.status(400).json({ error: e.message })
+      }
       const fileExtension = BASE64_MIME_TO_EXT[imageType]
       const fileName = `${tokenId}_${Date.now()}_${randomBytes(8).toString('hex')}.${fileExtension}`
-      uploadedUrls.push(await storage.put('images', fileName, buffer, imageType))
+      uploadedUrls.push(await storage.put('images', fileName, stripped, imageType))
     }
 
     res.json({ success: true, urls: uploadedUrls })

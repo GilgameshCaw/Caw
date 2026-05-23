@@ -2429,7 +2429,7 @@ function wrapTreeInOgCanvas(tree: any, innerHeight: number, _backgroundColor: st
 }
 
 // Twemoji disk cache (one SVG per codepoint sequence). Twemoji files
-// live on jsdelivr at /gh/twitter/twemoji@latest/assets/svg/<codepoints>.svg
+// live on jsdelivr at /gh/twitter/twemoji@14.0.2/assets/svg/<codepoints>.svg
 // — codepoints are hyphen-joined hex, with fe0f variation selectors
 // stripped because Twemoji's filenames omit them.
 const TWEMOJI_CACHE = path.join(CACHE_DIR, 'twemoji')
@@ -2450,7 +2450,8 @@ async function loadTwemojiSvg(emoji: string): Promise<string> {
       const buf = fs.readFileSync(cacheFile)
       return `data:image/svg+xml;base64,${buf.toString('base64')}`
     }
-    const url = `https://cdn.jsdelivr.net/gh/twitter/twemoji@latest/assets/svg/${slug}.svg`
+    // Pinned to avoid supply-chain risk via @latest (audit-2026-05-22 media-storage M-2).
+    const url = `https://cdn.jsdelivr.net/gh/twitter/twemoji@14.0.2/assets/svg/${slug}.svg`
     const ctrl = new AbortController()
     const t = setTimeout(() => ctrl.abort(), 4000)
     const res = await fetch(url, { signal: ctrl.signal })
