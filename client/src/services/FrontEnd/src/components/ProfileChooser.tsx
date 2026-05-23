@@ -240,7 +240,12 @@ const ProfileChooser: React.FC<{ compact?: boolean }> = ({ compact = false }) =>
         }
     }
     check()
-  }, [activeToken?.tokenId, byTokenData])
+    // Re-evaluate the landing check whenever stakedAmount changes too,
+    // not just on token-switch + backend-poll. Otherwise the wagmi L2
+    // read landing (stakedAmount: 0 → 264M) doesn't trigger hint
+    // clearing until the next 15s /api/users/by-token poll, leaving
+    // the "pending" lines stuck for up to 15s after CAW already shows.
+  }, [activeToken?.tokenId, activeToken?.stakedAmount, byTokenData])
 
   const setLastAddress = useTokenDataStore(s => s.setLastAddress)
   const setActiveTokenId = useTokenDataStore(state => state.setActiveTokenId);;
@@ -540,20 +545,27 @@ const ProfileChooser: React.FC<{ compact?: boolean }> = ({ compact = false }) =>
             const isPositive = delta > 0n
             const absValue = isPositive ? delta : -delta
             // CAW is denominated tiny in USD (≈ $3.8e-8 / CAW), so action
-            // costs like 26k CAW look huge. Show the USD equivalent
-            // alongside via formatUsd (auto-precision for sub-cent values
-            // so "$0.0011" reads correctly instead of being clamped to "$0.00").
-            // Falls back to CAW-only if the price feed hasn't loaded yet.
-            let usdLabel = ''
+            // costs like 26k CAW look huge. Lead with the USD on its own
+            // yellow line (the "actually informative" number for most
+            // users), then show the raw CAW delta underneath in muted
+            // grey. Falls back to CAW-only line when price isn't loaded.
+            let usdLabel: string | null = null
             if (cawPriceUsd !== undefined && cawPriceUsd > 0) {
               const cawWhole = Number(absValue / 10n**18n) + Number(absValue % 10n**18n) / 1e18
               const usd = cawWhole * cawPriceUsd
-              usdLabel = ` (~$${formatUsd(usd)})`
+              usdLabel = `~$${formatUsd(usd)}`
             }
+            const sign = isPositive ? '+' : '-'
+            const cawLine = `${sign}${formatUnitsCompact(absValue, 18)} CAW`
             return (
-              <div className={`text-2xs ${isPositive ? 'text-yellow-500' : 'text-gray-400'}`}>
-                {isPositive ? '+' : '-'}{formatUnitsCompact(absValue, 18)} CAW{usdLabel} pending
-              </div>
+              <>
+                <div className={`text-2xs ${isPositive ? 'text-yellow-500' : 'text-gray-400'}`}>
+                  {usdLabel ? `${usdLabel} pending` : `${cawLine} pending`}
+                </div>
+                {usdLabel && (
+                  <div className="text-2xs text-gray-400">{cawLine}</div>
+                )}
+              </>
             )
           })()}
           {notCurrentAddress && (
