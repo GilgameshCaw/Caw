@@ -126,10 +126,12 @@ const OnrampOnboarding: React.FC = () => {
   const t = useT()
   const navigate = useNavigate()
 
-  // Mirror operators who haven't configured Moonpay (no biz registration,
-  // or sandbox-only dev install) get a polite "not configured" stub
-  // rather than a broken iframe. Matches the SignInModal gating.
-  const moonpayConfigured = !!import.meta.env.VITE_MOONPAY_API_KEY
+  // Mirror operators who haven't configured Moonpay get a polite "not
+  // configured" stub rather than a broken iframe. The opt-in signal is
+  // VITE_MOONPAY_BASE_URL — when set (sandbox or prod), the widget loads
+  // even without an apiKey (Moonpay's consumer flow works unsigned;
+  // apiKey only adds branding + is required for prod by Moonpay's TOS).
+  const moonpayConfigured = !!import.meta.env.VITE_MOONPAY_BASE_URL
   if (!moonpayConfigured) {
     return (
       <div className={`fixed inset-0 z-[100] overflow-y-auto overflow-x-hidden ${isDark ? 'bg-black' : 'bg-white'}`}>

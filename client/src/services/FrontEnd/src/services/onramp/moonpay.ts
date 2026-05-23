@@ -50,7 +50,22 @@ export function buildMoonpayUrl(params: MoonpayWidgetParams): string {
   const apiKey =
     (import.meta.env.VITE_MOONPAY_API_KEY as string | undefined) ?? ''
 
+  if (!apiKey && import.meta.env.DEV) {
+    // Sandbox + the consumer prod URL both accept an empty apiKey — the
+    // raw flow loads and the user can complete a purchase. Production
+    // deployments should still register with Moonpay (free for sandbox
+    // keys, biz registration required for live keys) so attribution +
+    // branding work. Log once at iframe load time to keep the warning
+    // out of normal runtime.
+    // eslint-disable-next-line no-console
+    console.warn(
+      '[Moonpay] VITE_MOONPAY_API_KEY is unset. Widget will load in raw consumer mode (no dApp branding, no attribution). Get a free sandbox key at https://moonpay.com/business.'
+    )
+  }
+
   const args = new URLSearchParams({
+    // Empty apiKey is intentional when the operator has only set the
+    // base URL. Moonpay's URL parser accepts it.
     apiKey,
     currencyCode: 'eth',
     defaultCurrencyCode: 'eth',

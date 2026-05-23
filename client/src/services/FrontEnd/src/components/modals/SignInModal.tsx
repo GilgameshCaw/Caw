@@ -59,10 +59,12 @@ export default function SignInModal({ isOpen: propIsOpen, onClose: propOnClose, 
             </button>
             {/* Card-payment path: generates a fresh EOA, user buys ETH from
                 Moonpay and continues into the normal Pop A mint flow.
-                Only rendered when the operator has configured a Moonpay
-                key on this install — mirrors without Moonpay biz
-                registration see no card-payment UI. */}
-            {import.meta.env.VITE_MOONPAY_API_KEY && (
+                Gated on VITE_MOONPAY_BASE_URL — the operator opts in by
+                setting that to https://buy-sandbox.moonpay.com or
+                https://buy.moonpay.com. The widget itself works even
+                without an apiKey (raw consumer flow); the apiKey is
+                only required for dApp branding + Moonpay TOS in prod. */}
+            {import.meta.env.VITE_MOONPAY_BASE_URL && (
               <button
                 onClick={() => {
                   onClose()
