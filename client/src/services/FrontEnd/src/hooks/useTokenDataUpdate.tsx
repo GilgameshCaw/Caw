@@ -166,7 +166,13 @@ export default function useTokenDataUpdate() {
       // and the LayerZero relay is still in flight. Fall back to zeros
       // (mirrors the connected-fetch branch below); the next refetch
       // after L2 catches up will replace the row with real data.
-      const l2Token = l2TokenData.find(item => item.tokenId === l1Token.tokenId);
+      //
+      // viem auto-decodes the lens Token.tokenId (uint32) as a JS number
+      // and the L2 Token.tokenId (uint256) as a BigInt. Compare both as
+      // BigInt or the find() silently never matches and every token's
+      // stakedAmount stays 0 forever.
+      const l1TokenIdBI = BigInt(l1Token.tokenId)
+      const l2Token = l2TokenData.find(item => BigInt(item.tokenId) === l1TokenIdBI);
       const onChainCawonce = l2Token ? Number(l2Token.nextCawonce) : 0;
 
       // Get existing token data to preserve any previously fetched min-cawonce
@@ -200,7 +206,9 @@ export default function useTokenDataUpdate() {
     if (!needsConnectedFetch || !connectedTokens || connectedBalancesLoading || !connectedAddress || !connectedL2TokenData) return
 
     const updated: TokenData[] = connectedTokens.map(l1Token => {
-      const l2Token = connectedL2TokenData.find(item => item.tokenId === l1Token.tokenId);
+      // BigInt-vs-number coercion: see the viewed-tokens branch above.
+      const l1TokenIdBI = BigInt(l1Token.tokenId)
+      const l2Token = connectedL2TokenData.find(item => BigInt(item.tokenId) === l1TokenIdBI);
       const onChainCawonce = l2Token ? Number(l2Token.nextCawonce) : 0;
 
       const existingTokens = tokensByAddress[connectedAddress as Address] || [];
