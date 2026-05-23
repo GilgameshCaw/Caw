@@ -85,7 +85,7 @@ contract CawProfile is
   bytes4 internal constant _mintAuthSelector                = bytes4(keccak256("mintAuthAndUpdateOwners(uint32,uint32,address,string,uint32[],address[],uint64[])"));
   bytes4 internal constant _depositRegisterSessionSelector  = bytes4(keccak256("depositAndRegisterSessionAndUpdateOwners(uint32,uint32,uint256,address,address,uint64,uint256,uint64,uint32[],address[],uint64[])"));
   bytes4 internal constant _mintAuthRegisterSessionSelector = bytes4(keccak256("mintAuthAndRegisterSessionAndUpdateOwners(uint32,uint32,address,string,address,uint64,uint256,uint64,uint32[],address[],uint64[])"));
-  bytes4 internal constant _allowFreeAuthSelector           = bytes4(keccak256("setAllowFreeAuth(uint32,bool)"));
+  bytes4 internal constant _allowFreeAuthSelector           = bytes4(keccak256("setAllowFreeAuth(uint32,bool,uint64)"));
 
   /// @dev Per-selector base gas limit (the constant component; per-update overhead is added
   ///      separately in `gasLimitFor`). Initialized in the constructor. An unset selector
@@ -96,6 +96,15 @@ contract CawProfile is
 
   // Keeping track of networks to which the user has authenticated
   mapping(uint32 => mapping(uint32 => bool)) public authenticated;
+
+  /// @notice Monotonically increasing sequence counter per network for allowFreeAuth
+  ///         LZ messages. Incremented each time broadcastAllowFreeAuth is called.
+  ///         The L2 receiver only applies updates whose seq > lastAllowFreeAuthSeq[networkId],
+  ///         preventing stale or replayed LZ messages from rolling back free-auth state.
+  ///         (Audit fix 2026-05-23.)
+  /// @dev Internal: the seq value is embedded in every LZ message, so indexers/monitors
+  ///      can reconstruct it from events rather than from a storage getter.
+  mapping(uint32 => uint64) internal allowFreeAuthSeq;
 
   /// @notice Withdraw fee locked in at the moment a token first authenticates with a network.
   /// @dev Once set, this fee floor is honored forever — networks cannot retroactively raise
@@ -121,8 +130,10 @@ contract CawProfile is
 
   // lzDestId => index => tokenId
   mapping(uint32 => mapping(uint256 => uint32)) public pendingTransfers;
-  uint256 public constant transferUpdateLimit = 50;
-  uint256 public constant MAX_CHOSEN_CHAINS = 128;
+  /// @dev Only used internally; no external caller needs an ABI getter.
+  uint256 internal constant transferUpdateLimit = 50;
+  /// @dev Only used internally; no external caller needs an ABI getter.
+  uint256 internal constant MAX_CHOSEN_CHAINS = 128;
 
   // lzDestId => value
   mapping(uint32 => uint256) internal pendingTransferStart;
@@ -553,9 +564,10 @@ contract CawProfile is
   /// @param lzTokenAmount LZ ZRO token amount (0 to pay in native gas).
   function broadcastAllowFreeAuth(uint32 networkId, uint32 lzDestId, uint256 lzTokenAmount) external payable {
     bool allow = (networkManager.getAuthFee(networkId) == 0);
-    bytes memory payload = abi.encodeWithSelector(_allowFreeAuthSelector, networkId, allow);
+    uint64 seq = ++allowFreeAuthSeq[networkId];
+    bytes memory payload = abi.encodeWithSelector(_allowFreeAuthSelector, networkId, allow, seq);
     if (lzDestId == mainnetLzId) {
-      cawProfileL2.setAllowFreeAuth(networkId, allow);
+      cawProfileL2.setAllowFreeAuth(networkId, allow, seq);
       _refundUnusedLzEth(msg.value);
     } else {
       // n=0: no per-token ownership entries in this payload.

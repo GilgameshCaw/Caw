@@ -17,6 +17,9 @@ import "../contracts/CawNetworkManager.sol";
 //   3. CawActions._applyAction no longer reverts UserNotAuth when allowFreeAuth is true.
 //   4. CawActions._applyAction STILL reverts when both authenticated and allowFreeAuth are false.
 //   5. Already-authenticated users are unaffected by allowFreeAuth state.
+//   6. Stale seq (seq <= last seen) is silently ignored; state does not roll back.
+//   7. setCawProfile is gated on deployer (Fix 1).
+//   8. No-op broadcast refunds msg.value to caller (Fix 2).
 // =============================================================================
 
 // ---------------------------------------------------------------------------
@@ -36,7 +39,7 @@ contract MockCawProfileL2ForActions {
         return _allowFreeAuthPublic[networkId];
     }
 
-    function setAllowFreeAuth(uint32 networkId, bool allow) external {
+    function setAllowFreeAuth(uint32 networkId, bool allow, uint64 /*seq*/) external {
         _allowFreeAuthPublic[networkId] = allow;
     }
 
@@ -118,14 +121,14 @@ contract SetAllowFreeAuthTest is Test {
     function test_SetAllowFreeAuth_DirectCall_Reverts() public {
         // Neither fromLZ nor bypassLZ+cawProfile — must revert.
         vm.expectRevert(CawProfileL2.OnlyLZ.selector);
-        l2.setAllowFreeAuth(1, true);
+        l2.setAllowFreeAuth(1, true, 1);
     }
 
     // ── Test 5: bypassLZ + correct caller succeeds ────────────────────────
     function test_SetAllowFreeAuth_BypassLZ_Succeeds() public {
         // The harness's setBypassLZCaller simulates the onlyOnMainnet gate.
         l2.enableBypassLZ(address(this));
-        l2.setAllowFreeAuth(1, true);
+        l2.setAllowFreeAuth(1, true, 1);
         assertTrue(l2.allowFreeAuth(1), "bypassLZ call should set allowFreeAuth");
     }
 
@@ -133,7 +136,22 @@ contract SetAllowFreeAuthTest is Test {
     function test_SetAllowFreeAuth_BypassLZ_WrongCaller_Reverts() public {
         l2.enableBypassLZ(address(0xDEAD)); // registered cawProfile is 0xDEAD, not this test
         vm.expectRevert(CawProfileL2.OnlyLZ.selector);
-        l2.setAllowFreeAuth(1, true);
+        l2.setAllowFreeAuth(1, true, 1);
+    }
+
+    // ── Test 6b: stale seq is silently ignored ────────────────────────────
+    // Call with seq=2 (sets allowFreeAuth=true), then call with seq=1
+    // (stale) and assert the state stays at the seq=2 value.
+    function test_SetAllowFreeAuth_StaleSeqIgnored() public {
+        l2.enableBypassLZ(address(this));
+
+        // seq=2: set to true
+        l2.setAllowFreeAuth(1, true, 2);
+        assertTrue(l2.allowFreeAuth(1), "seq=2 should set allowFreeAuth=true");
+
+        // seq=1: stale — must be silently ignored (state does not flip back)
+        l2.setAllowFreeAuth(1, false, 1);
+        assertTrue(l2.allowFreeAuth(1), "seq=1 is stale; state must remain true");
     }
 }
 
@@ -170,7 +188,7 @@ contract CawActionsAllowFreeAuthTest is Test {
 
     // ── Test 8: allowFreeAuth=true, not authenticated → succeeds ─────────
     function test_AuthGate_NotAuthed_FreeAuth_Passes() public {
-        profile.setAllowFreeAuth(NETWORK_ID, true);
+        profile.setAllowFreeAuth(NETWORK_ID, true, 1);
         // Should not revert.
         actions.applyMockAction(NETWORK_ID, TOKEN_ID, VALIDATOR_ID);
     }
@@ -185,17 +203,17 @@ contract CawActionsAllowFreeAuthTest is Test {
     // ── Test 10: both flags true → succeeds (no double-check fail) ────────
     function test_AuthGate_BothTrue_Passes() public {
         profile.setAuthenticated(NETWORK_ID, TOKEN_ID, true);
-        profile.setAllowFreeAuth(NETWORK_ID, true);
+        profile.setAllowFreeAuth(NETWORK_ID, true, 1);
         // Should not revert.
         actions.applyMockAction(NETWORK_ID, TOKEN_ID, VALIDATOR_ID);
     }
 
     // ── Test 11: allowFreeAuth transitions: true → false restores gate ────
     function test_AuthGate_FreeAuth_DisabledRestoresGate() public {
-        profile.setAllowFreeAuth(NETWORK_ID, true);
+        profile.setAllowFreeAuth(NETWORK_ID, true, 1);
         actions.applyMockAction(NETWORK_ID, TOKEN_ID, VALIDATOR_ID); // passes
 
-        profile.setAllowFreeAuth(NETWORK_ID, false);
+        profile.setAllowFreeAuth(NETWORK_ID, false, 2);
         vm.expectRevert(CawActions.UserNotAuth.selector);
         actions.applyMockAction(NETWORK_ID, TOKEN_ID, VALIDATOR_ID); // reverts
     }
@@ -211,6 +229,7 @@ contract CawActionsAllowFreeAuthTest is Test {
 // ---------------------------------------------------------------------------
 contract HarnessCawProfileL2 {
     mapping(uint32 => bool) private _allowFreeAuth;
+    mapping(uint32 => uint64) internal lastAllowFreeAuthSeq;
     bool private fromLZ;
     bool public bypassLZ;
     address public cawProfile;
@@ -221,16 +240,19 @@ contract HarnessCawProfileL2 {
         return _allowFreeAuth[networkId];
     }
 
-    /// @dev Mirrors CawProfileL2.setAllowFreeAuth exactly.
-    function setAllowFreeAuth(uint32 networkId, bool allow) public {
+    /// @dev Mirrors CawProfileL2.setAllowFreeAuth exactly (including seq guard).
+    function setAllowFreeAuth(uint32 networkId, bool allow, uint64 seq) public {
         if (!(fromLZ || (bypassLZ && msg.sender == cawProfile))) revert OnlyLZ();
+        if (seq <= lastAllowFreeAuthSeq[networkId]) return; // stale, ignore
+        lastAllowFreeAuthSeq[networkId] = seq;
         _allowFreeAuth[networkId] = allow;
     }
 
-    /// @dev Test helper: simulate an LZ-delivered call.
+    /// @dev Test helper: simulate an LZ-delivered call (seq starts at 1).
     function callViaFromLZ(uint32 networkId, bool allow) external {
         fromLZ = true;
-        this.setAllowFreeAuth(networkId, allow);
+        lastAllowFreeAuthSeq[networkId] = 0; // reset so each test call is fresh
+        this.setAllowFreeAuth(networkId, allow, 1);
         fromLZ = false;
     }
 
@@ -310,7 +332,7 @@ contract MockCawProfileForPropagation {
 }
 
 // =============================================================================
-// NetworkManager auto-propagation tests (tests 12-20)
+// NetworkManager auto-propagation tests (tests 12-24)
 //
 // Covers:
 //  12. setAuthFee (0→nonzero) triggers broadcastAllowFreeAuth
@@ -322,6 +344,10 @@ contract MockCawProfileForPropagation {
 //  18. When cawProfile == address(0), setAuthFee succeeds without broadcast
 //  19. setCawProfile can only be called once (reverts on second call)
 //  20. broadcastAllowFreeAuth receives the network's storageChainEid as lzDestId
+//  21. setCawProfile reverts if called by non-deployer (Fix 1)
+//  22. No-op broadcast (within-bucket) refunds msg.value to caller (Fix 2)
+//  23. No-op broadcast (pre-wire) refunds msg.value to caller (Fix 2)
+//  24. Normal broadcast forwards msg.value to CawProfile (not refunded)
 // =============================================================================
 contract NetworkManagerPropagationTest is Test {
     CawNetworkManager internal manager;
@@ -480,9 +506,10 @@ contract NetworkManagerPropagationTest is Test {
         assertEq(m3.getAuthFee(NETWORK_ID), 0.001 ether, "authFee should be stored");
     }
 
-    // ── Test 19: setCawProfile is one-shot ────────────────────────────────────
+    // ── Test 19: setCawProfile is one-shot (second call by deployer reverts) ────
     function test_SetCawProfile_SecondCall_Reverts() public {
-        // manager already has cawProfile set in setUp.
+        // manager already has cawProfile set in setUp (called by this test contract
+        // which is the deployer). A second call from the deployer must also revert.
         vm.expectRevert("CawProfile already set");
         manager.setCawProfile(address(0xDEAD));
     }
@@ -495,5 +522,71 @@ contract NetworkManagerPropagationTest is Test {
 
         (, uint32 destEid,,) = mockProfile.calls(0);
         assertEq(destEid, STORAGE_EID, "LZ destEid must equal network's storageChainEid");
+    }
+
+    // ── Test 21: setCawProfile reverts if called by non-deployer (Fix 1) ─────
+    function test_SetCawProfile_NotDeployer_Reverts() public {
+        // Deploy a fresh manager (this test contract is the deployer).
+        CawNetworkManager fresh = new CawNetworkManager(address(0x1));
+
+        // A different address trying to set CawProfile must revert.
+        address notDeployer = address(0xCAFE);
+        vm.prank(notDeployer);
+        vm.expectRevert("Not deployer");
+        fresh.setCawProfile(address(0xABCD));
+
+        // The deployer itself can still set it (sanity check).
+        // (address(this) is the deployer of `fresh`.)
+        fresh.setCawProfile(address(0xABCD));
+        assertEq(fresh.cawProfile(), address(0xABCD), "deployer should succeed");
+    }
+
+    // ── Test 22: no-op broadcast (within-bucket) refunds msg.value (Fix 2) ──
+    function test_SetAuthFee_NoOpBroadcast_RefundsETH() public {
+        // authFee is at 0 in setUp. Set it to 0 again (no boundary crossing).
+        // Attach ETH — it should be refunded.
+        vm.deal(networkOwner, 1 ether);
+        uint256 balanceBefore = networkOwner.balance;
+
+        vm.prank(networkOwner);
+        manager.setAuthFee{value: 0.05 ether}(NETWORK_ID, 0); // 0→0 no-op
+
+        // No broadcast should have been triggered.
+        assertEq(mockProfile.callCount(), 0, "within-bucket: no broadcast expected");
+
+        // The ETH should be refunded (minus gas, but since vm.prank gas is free
+        // in tests, balance returns to pre-call value).
+        assertEq(networkOwner.balance, balanceBefore, "msg.value should be refunded on no-op");
+    }
+
+    // ── Test 23: no-op broadcast (pre-wire) refunds msg.value (Fix 2) ────────
+    function test_SetAuthFee_PreWire_RefundsETH() public {
+        // Deploy fresh manager WITHOUT wiring cawProfile.
+        CawNetworkManager m4 = new CawNetworkManager(address(0x1));
+        vm.prank(networkOwner);
+        m4.createNetwork("Net4", address(0xFEE), STORAGE_EID, CEILING, CEILING, CEILING, CEILING);
+
+        vm.deal(networkOwner, 1 ether);
+        uint256 balanceBefore = networkOwner.balance;
+
+        // authFee starts at CEILING. Dropping to 0 crosses the boundary, BUT
+        // cawProfile == address(0) so it should refund.
+        vm.prank(networkOwner);
+        m4.setAuthFee{value: 0.05 ether}(NETWORK_ID, 0);
+
+        assertEq(networkOwner.balance, balanceBefore, "pre-wire: msg.value must be refunded");
+    }
+
+    // ── Test 24: normal broadcast forwards msg.value to CawProfile ───────────
+    function test_SetAuthFee_NormalBroadcast_ForwardsETH() public {
+        // authFee is at 0. Set it to non-zero (boundary crossing → broadcast).
+        vm.deal(networkOwner, 1 ether);
+        vm.prank(networkOwner);
+        manager.setAuthFee{value: 0.01 ether}(NETWORK_ID, 0.001 ether);
+
+        // The broadcast should have fired and forwarded ETH to the mock profile.
+        assertEq(mockProfile.callCount(), 1, "normal broadcast expected");
+        (,,, uint256 fwdValue) = mockProfile.calls(0);
+        assertEq(fwdValue, 0.01 ether, "msg.value must be forwarded on normal broadcast");
     }
 }

@@ -2343,13 +2343,6 @@ export const cawProfileAbi = [
   },
   {
     type: 'function',
-    inputs: [],
-    name: 'MAX_CHOSEN_CHAINS',
-    outputs: [{ name: '', internalType: 'uint256', type: 'uint256' }],
-    stateMutability: 'view',
-  },
-  {
-    type: 'function',
     inputs: [{ name: '', internalType: 'address', type: 'address' }],
     name: 'accruedFees',
     outputs: [{ name: '', internalType: 'uint256', type: 'uint256' }],
@@ -2798,36 +2791,6 @@ export const cawProfileAbi = [
   },
   {
     type: 'function',
-    inputs: [],
-    name: 'selectorAllowFreeAuth',
-    outputs: [{ name: '', internalType: 'bytes4', type: 'bytes4' }],
-    stateMutability: 'pure',
-  },
-  {
-    type: 'function',
-    inputs: [],
-    name: 'selectors',
-    outputs: [
-      { name: 'mint', internalType: 'bytes4', type: 'bytes4' },
-      { name: 'addToBalance', internalType: 'bytes4', type: 'bytes4' },
-      { name: 'auth', internalType: 'bytes4', type: 'bytes4' },
-      { name: 'updateOwners', internalType: 'bytes4', type: 'bytes4' },
-      { name: 'mintAuth', internalType: 'bytes4', type: 'bytes4' },
-      {
-        name: 'depositRegisterSession',
-        internalType: 'bytes4',
-        type: 'bytes4',
-      },
-      {
-        name: 'mintAuthRegisterSession',
-        internalType: 'bytes4',
-        type: 'bytes4',
-      },
-    ],
-    stateMutability: 'pure',
-  },
-  {
-    type: 'function',
     inputs: [
       { name: 'operator', internalType: 'address', type: 'address' },
       { name: 'approved', internalType: 'bool', type: 'bool' },
@@ -2874,6 +2837,16 @@ export const cawProfileAbi = [
     type: 'function',
     inputs: [{ name: '_gui', internalType: 'address', type: 'address' }],
     name: 'setUriGenerator',
+    outputs: [],
+    stateMutability: 'nonpayable',
+  },
+  {
+    type: 'function',
+    inputs: [
+      { name: 'tokenId', internalType: 'uint32', type: 'uint32' },
+      { name: 'locked', internalType: 'bool', type: 'bool' },
+    ],
+    name: 'setWithdrawLocked',
     outputs: [],
     stateMutability: 'nonpayable',
   },
@@ -2977,13 +2950,6 @@ export const cawProfileAbi = [
     name: 'transferOwnership',
     outputs: [],
     stateMutability: 'nonpayable',
-  },
-  {
-    type: 'function',
-    inputs: [],
-    name: 'transferUpdateLimit',
-    outputs: [{ name: '', internalType: 'uint256', type: 'uint256' }],
-    stateMutability: 'view',
   },
   {
     type: 'function',
@@ -3313,6 +3279,7 @@ export const cawProfileAbi = [
   { type: 'error', inputs: [], name: 'RefundFailed' },
   { type: 'error', inputs: [], name: 'TooManyChains' },
   { type: 'error', inputs: [], name: 'Unauthorized' },
+  { type: 'error', inputs: [], name: 'WithdrawLocked' },
   { type: 'error', inputs: [], name: 'ZeroAddr' },
   { type: 'error', inputs: [], name: 'ZeroDeposit' },
 ] as const
@@ -3330,13 +3297,6 @@ export const cawProfileL2Abi = [
       { name: '_capOracle', internalType: 'address', type: 'address' },
     ],
     stateMutability: 'nonpayable',
-  },
-  {
-    type: 'function',
-    inputs: [],
-    name: 'MAX_SESSION_SPEND',
-    outputs: [{ name: '', internalType: 'uint256', type: 'uint256' }],
-    stateMutability: 'view',
   },
   {
     type: 'function',
@@ -3462,13 +3422,6 @@ export const cawProfileL2Abi = [
     outputs: [
       { name: '', internalType: 'contract CawProfile', type: 'address' },
     ],
-    stateMutability: 'view',
-  },
-  {
-    type: 'function',
-    inputs: [{ name: '', internalType: 'bytes32', type: 'bytes32' }],
-    name: 'consumedSessionMessage',
-    outputs: [{ name: '', internalType: 'bool', type: 'bool' }],
     stateMutability: 'view',
   },
   {
@@ -3890,6 +3843,7 @@ export const cawProfileL2Abi = [
     inputs: [
       { name: 'networkId', internalType: 'uint32', type: 'uint32' },
       { name: 'allow', internalType: 'bool', type: 'bool' },
+      { name: 'seq', internalType: 'uint64', type: 'uint64' },
     ],
     name: 'setAllowFreeAuth',
     outputs: [],
@@ -5133,6 +5087,7 @@ export const cawProfileMinterAbi = [
       { name: '_caw', internalType: 'address', type: 'address' },
       { name: '_cawProfiles', internalType: 'address', type: 'address' },
       { name: '_router', internalType: 'address', type: 'address' },
+      { name: '_admin', internalType: 'address', type: 'address' },
     ],
     stateMutability: 'nonpayable',
   },
@@ -5148,6 +5103,13 @@ export const cawProfileMinterAbi = [
     type: 'function',
     inputs: [],
     name: 'WETH',
+    outputs: [{ name: '', internalType: 'address', type: 'address' }],
+    stateMutability: 'view',
+  },
+  {
+    type: 'function',
+    inputs: [],
+    name: 'admin',
     outputs: [{ name: '', internalType: 'address', type: 'address' }],
     stateMutability: 'view',
   },
@@ -5214,6 +5176,15 @@ export const cawProfileMinterAbi = [
     name: 'isValidUsername',
     outputs: [{ name: '', internalType: 'bool', type: 'bool' }],
     stateMutability: 'pure',
+  },
+  {
+    type: 'function',
+    inputs: [],
+    name: 'kycVerifier',
+    outputs: [
+      { name: '', internalType: 'contract IKycVerifier', type: 'address' },
+    ],
+    stateMutability: 'view',
   },
   {
     type: 'function',
@@ -5338,6 +5309,20 @@ export const cawProfileMinterAbi = [
       { name: 'depositAmount', internalType: 'uint256', type: 'uint256' },
       { name: 'lzDestId', internalType: 'uint32', type: 'uint32' },
       { name: 'lzTokenAmount', internalType: 'uint256', type: 'uint256' },
+    ],
+    name: 'mintAndDepositLocked',
+    outputs: [],
+    stateMutability: 'payable',
+  },
+  {
+    type: 'function',
+    inputs: [
+      { name: 'networkId', internalType: 'uint32', type: 'uint32' },
+      { name: 'recipient', internalType: 'address', type: 'address' },
+      { name: 'username', internalType: 'string', type: 'string' },
+      { name: 'depositAmount', internalType: 'uint256', type: 'uint256' },
+      { name: 'lzDestId', internalType: 'uint32', type: 'uint32' },
+      { name: 'lzTokenAmount', internalType: 'uint256', type: 'uint256' },
       { name: 'permitNonce', internalType: 'uint256', type: 'uint256' },
       { name: 'sig', internalType: 'bytes', type: 'bytes' },
     ],
@@ -5373,6 +5358,20 @@ export const cawProfileMinterAbi = [
   },
   {
     type: 'function',
+    inputs: [{ name: '', internalType: 'uint32', type: 'uint32' }],
+    name: 'mintedLocked',
+    outputs: [{ name: '', internalType: 'bool', type: 'bool' }],
+    stateMutability: 'view',
+  },
+  {
+    type: 'function',
+    inputs: [{ name: '_verifier', internalType: 'address', type: 'address' }],
+    name: 'setKycVerifier',
+    outputs: [],
+    stateMutability: 'nonpayable',
+  },
+  {
+    type: 'function',
     inputs: [],
     name: 'swapRouter',
     outputs: [
@@ -5380,6 +5379,64 @@ export const cawProfileMinterAbi = [
     ],
     stateMutability: 'view',
   },
+  {
+    type: 'function',
+    inputs: [{ name: '_newAdmin', internalType: 'address', type: 'address' }],
+    name: 'transferAdmin',
+    outputs: [],
+    stateMutability: 'nonpayable',
+  },
+  {
+    type: 'function',
+    inputs: [{ name: 'tokenId', internalType: 'uint32', type: 'uint32' }],
+    name: 'unlockWithdraw',
+    outputs: [],
+    stateMutability: 'nonpayable',
+  },
+  {
+    type: 'event',
+    anonymous: false,
+    inputs: [
+      {
+        name: 'verifier',
+        internalType: 'address',
+        type: 'address',
+        indexed: true,
+      },
+    ],
+    name: 'KycVerifierSet',
+  },
+  {
+    type: 'event',
+    anonymous: false,
+    inputs: [
+      {
+        name: 'tokenId',
+        internalType: 'uint32',
+        type: 'uint32',
+        indexed: true,
+      },
+    ],
+    name: 'WithdrawLocked',
+  },
+  {
+    type: 'event',
+    anonymous: false,
+    inputs: [
+      {
+        name: 'tokenId',
+        internalType: 'uint32',
+        type: 'uint32',
+        indexed: true,
+      },
+    ],
+    name: 'WithdrawUnlocked',
+  },
+  { type: 'error', inputs: [], name: 'AlreadyUnlocked' },
+  { type: 'error', inputs: [], name: 'KycNotConfigured' },
+  { type: 'error', inputs: [], name: 'KycRequired' },
+  { type: 'error', inputs: [], name: 'NotAdmin' },
+  { type: 'error', inputs: [], name: 'NotTokenOwner' },
 ] as const
 
 //////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -6024,36 +6081,6 @@ export const iCawProfileForQuoterAbi = [
   },
   {
     type: 'function',
-    inputs: [],
-    name: 'selectorAllowFreeAuth',
-    outputs: [{ name: '', internalType: 'bytes4', type: 'bytes4' }],
-    stateMutability: 'pure',
-  },
-  {
-    type: 'function',
-    inputs: [],
-    name: 'selectors',
-    outputs: [
-      { name: 'mint', internalType: 'bytes4', type: 'bytes4' },
-      { name: 'addToBalance', internalType: 'bytes4', type: 'bytes4' },
-      { name: 'auth', internalType: 'bytes4', type: 'bytes4' },
-      { name: 'updateOwners', internalType: 'bytes4', type: 'bytes4' },
-      { name: 'mintAuth', internalType: 'bytes4', type: 'bytes4' },
-      {
-        name: 'depositRegisterSession',
-        internalType: 'bytes4',
-        type: 'bytes4',
-      },
-      {
-        name: 'mintAuthRegisterSession',
-        internalType: 'bytes4',
-        type: 'bytes4',
-      },
-    ],
-    stateMutability: 'pure',
-  },
-  {
-    type: 'function',
     inputs: [
       { name: 'networkId', internalType: 'uint32', type: 'uint32' },
       { name: 'tokenId', internalType: 'uint32', type: 'uint32' },
@@ -6245,6 +6272,20 @@ export const iCawProfileTransferAbi = [
       },
     ],
     name: 'Transfer',
+  },
+] as const
+
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+// IKycVerifier
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+export const iKycVerifierAbi = [
+  {
+    type: 'function',
+    inputs: [{ name: 'account', internalType: 'address', type: 'address' }],
+    name: 'isVerified',
+    outputs: [{ name: '', internalType: 'bool', type: 'bool' }],
+    stateMutability: 'view',
   },
 ] as const
 

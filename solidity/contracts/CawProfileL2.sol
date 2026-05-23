@@ -83,6 +83,13 @@ contract CawProfileL2 is
   mapping(uint32 => bool) private _allowFreeAuth;
   function allowFreeAuth(uint32 networkId) external view returns (bool) { return _allowFreeAuth[networkId]; }
 
+  /// @notice Last accepted sequence number for allowFreeAuth LZ messages per network.
+  ///         Messages with seq <= lastAllowFreeAuthSeq[networkId] are stale and ignored,
+  ///         preventing out-of-order or replayed LZ delivery from rolling back state.
+  ///         (Audit fix 2026-05-23.)
+  /// @dev Internal: no public getter needed — callers verify via allowFreeAuth() state.
+  mapping(uint32 => uint64) internal lastAllowFreeAuthSeq;
+
   mapping(uint32 => uint256) public cawOwnership;
 
   uint256 public rewardMultiplier = 10**18;
@@ -151,7 +158,9 @@ contract CawProfileL2 is
   ///         signature being one-shot. Without this, an attacker holding a
   ///         user's signed message could re-register a revoked session at
   ///         any time before the message's expiry. Audit fix 2026-05-08.
-  mapping(bytes32 => bool) public consumedSessionMessage;
+  /// @dev Internal: the replay guard is security state, but no external caller
+  ///      needs to query it — the revert is the observable signal. Saves getter bytecode.
+  mapping(bytes32 => bool) internal consumedSessionMessage;
 
   /// @notice Returns the StoredSession for (owner, sessionKey), zero-ed if the
   ///         session's epoch != current epoch or the session is expired.
@@ -188,7 +197,8 @@ contract CawProfileL2 is
   /// @notice Absolute upper bound on any session spend limit. Prevents phishing
   ///         pages from submitting an inflated value (e.g. "999B CAW") after
   ///         showing the user a lower figure. Finding NEW-4, audit 2026-05-19.
-  uint256 public constant MAX_SESSION_SPEND = 1_000_000_000 ether; // 1B CAW
+  ///         Internal: no external getter needed — no caller reads this constant.
+  uint256 internal constant MAX_SESSION_SPEND = 1_000_000_000 ether; // 1B CAW
 
   event OwnerSet(uint32 tokenId, address newOwner);
   event UsernameMinted(uint32 tokenId, address owner);
@@ -400,8 +410,15 @@ contract CawProfileL2 is
   ///         Callable via LZ message (_lzReceive sets fromLZ) or directly by the co-deployed
   ///         L1 CawProfile contract (bypassLZ mode). Permissionless in neither path: both
   ///         require the LZ peer or the trusted CawProfile address.
-  function setAllowFreeAuth(uint32 networkId, bool allow) public {
+  ///
+  ///         seq must be strictly greater than lastAllowFreeAuthSeq[networkId]. Stale or
+  ///         replayed messages (seq <= last seen) are silently ignored to prevent
+  ///         out-of-order LZ delivery from rolling back free-auth state.
+  ///         (Audit fix 2026-05-23.)
+  function setAllowFreeAuth(uint32 networkId, bool allow, uint64 seq) public {
     if (!(fromLZ || (bypassLZ && _msgSender() == address(cawProfile)))) revert OnlyLZ();
+    if (seq <= lastAllowFreeAuthSeq[networkId]) return; // stale, ignore
+    lastAllowFreeAuthSeq[networkId] = seq;
     _allowFreeAuth[networkId] = allow;
   }
 
@@ -1190,7 +1207,7 @@ contract CawProfileL2 is
       selector == bytes4(keccak256("depositAndRegisterSessionAndUpdateOwners(uint32,uint32,uint256,address,address,uint64,uint256,uint64,uint32[],address[],uint64[])")) ||
       selector == bytes4(keccak256("mintAuthAndRegisterSessionAndUpdateOwners(uint32,uint32,address,string,address,uint64,uint256,uint64,uint32[],address[],uint64[])")) ||
       selector == bytes4(keccak256("updateOwners(uint32[],address[],uint64[])")) ||
-      selector == bytes4(keccak256("setAllowFreeAuth(uint32,bool)"));
+      selector == bytes4(keccak256("setAllowFreeAuth(uint32,bool,uint64)"));
   }
 
   /// @notice Subtract CAW from a token's balance (used during withdraw flows). CawActions only.

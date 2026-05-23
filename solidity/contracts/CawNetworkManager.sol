@@ -56,6 +56,12 @@ contract CawNetworkManager {
 
   address public immutable buyAndBurnAddress;
 
+  /// @dev Deployer address. Gates setCawProfile so only the original deployer
+  ///      can wire in CawProfile — prevents a front-runner from setting a
+  ///      malicious address during the deploy-then-wire window.
+  ///      (Audit fix 2026-05-23.)
+  address private immutable _deployer;
+
   /// @notice CawProfile address used to propagate authFee 0/non-zero state
   ///         to L2 via broadcastAllowFreeAuth. Set exactly once via
   ///         setCawProfile() after both contracts are deployed.
@@ -134,14 +140,21 @@ contract CawNetworkManager {
 
   constructor(address _buyAndBurn) {
     buyAndBurnAddress = _buyAndBurn;
+    _deployer = msg.sender;
   }
 
-  /// @notice One-shot setter for the CawProfile address. Set by the deploy
-  ///         script after both contracts are deployed; subsequent calls
-  ///         revert. cawProfile is permissionless from this contract's POV —
-  ///         it's only called via _maybeBroadcastFreeAuth, and broadcastAllowFreeAuth
-  ///         on CawProfile reads NetworkManager.getAuthFee on-chain (cannot lie).
+  /// @notice One-shot setter for the CawProfile address. Only callable by the
+  ///         original deployer (captured in constructor) — prevents a front-runner
+  ///         from setting a malicious address during the deploy-then-wire window.
+  ///         After the first successful call, cawProfile is permanent.
+  ///
+  ///         broadcastAllowFreeAuth on CawProfile reads NetworkManager.getAuthFee
+  ///         on-chain (cannot lie), so the deployer gate is the only privilege
+  ///         this function needs.
+  ///
+  ///         (Audit fix 2026-05-23.)
   function setCawProfile(address _cawProfile) external {
+    require(msg.sender == _deployer, "Not deployer");
     require(!_cawProfileSet, "CawProfile already set");
     require(_cawProfile != address(0), "Zero address");
     _cawProfileSet = true;
@@ -151,15 +164,30 @@ contract CawNetworkManager {
 
   /// @dev When the authFee crosses the 0/non-zero boundary, propagate the new
   ///      allowFreeAuth state to L2 via CawProfile.broadcastAllowFreeAuth.
-  ///      No-op when cawProfile == address(0) (pre-wire window) — same discipline
-  ///      fallback as if this code didn't exist. msg.value is forwarded so the
-  ///      LZ fee is paid in the same tx as setAuthFee.
+  ///      At both short-circuit paths (within-bucket change or pre-wire), any
+  ///      attached msg.value is refunded to msg.sender rather than being stuck
+  ///      in the contract.  (Audit fix 2026-05-23.)
   function _maybeBroadcastFreeAuth(uint32 networkId, bool wasZero, bool isZero) internal {
-    if (wasZero == isZero) return; // within-bucket change, no propagation needed
+    if (wasZero == isZero) {
+      _refundIfAny();
+      return;
+    }
     address cp = cawProfile;
-    if (cp == address(0)) return; // pre-wire: operator must broadcast manually
+    if (cp == address(0)) {
+      _refundIfAny();
+      return;
+    }
     uint32 destEid = networks[networkId].storageChainEid;
     ICawProfileForAuthFeePropagation(cp).broadcastAllowFreeAuth{value: msg.value}(networkId, destEid, 0);
+  }
+
+  /// @dev Refund msg.value to msg.sender when a broadcast short-circuits.
+  ///      Uses .call to avoid gas-limit issues with contract receivers.
+  ///      Only called at short-circuit paths where no LZ fee is consumed.
+  function _refundIfAny() private {
+    if (msg.value == 0) return;
+    (bool ok, ) = msg.sender.call{value: msg.value}("");
+    require(ok, "Refund failed");
   }
 
   modifier onlyNetworkOwner(uint32 networkId) {
