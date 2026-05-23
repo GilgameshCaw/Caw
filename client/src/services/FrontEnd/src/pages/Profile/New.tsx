@@ -1605,7 +1605,9 @@ console.log("BALANCE:", balance)
                 </div>
               </label>
               {quickSignEnabled && quickSignExpanded && (
-                <div className={`text-xs ${isDark ? 'text-gray-400' : 'text-gray-600'}`}>
+                <div className={`flex justify-around items-center text-xs pt-2 mt-2 border-t ${
+                  isDark ? 'border-white/10 text-gray-400' : 'border-gray-200 text-gray-600'
+                }`}>
                   <span>
                     Spend limit:&nbsp;
                     <span className={`font-mono ${isDark ? 'text-white' : 'text-gray-900'}`}>
@@ -1613,7 +1615,6 @@ console.log("BALANCE:", balance)
                     </span>
                     <span className="text-gray-500 ml-1">(~$10)</span>
                   </span>
-                  <span className="mx-2 text-gray-500">•</span>
                   <span>
                     Expires in:&nbsp;
                     <span className={`font-mono ${isDark ? 'text-white' : 'text-gray-900'}`}>
