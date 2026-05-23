@@ -36,6 +36,12 @@ contract CawProfileMinter is Context {
   // ERC-1271 magic value from the standard.
   bytes4 internal constant ERC1271_MAGIC = 0x1626ba7e;
 
+  /// @dev Gas cap for the ERC-1271 isValidSignature staticcall — matches
+  ///      CawActions.ERC1271_GAS_LIMIT (50k). SmartEOA P-256 verify uses ~8k;
+  ///      capping prevents arbitrary ERC-1271 wallets from consuming 300k and
+  ///      causing the sponsor tx to OOG.
+  uint256 internal constant ERC1271_GAS_LIMIT = 50_000;
+
   // EIP-712 domain separator — bakes chainId + address(this) at deploy time
   // so permits signed for one chain/deployment cannot be replayed on another.
   bytes32 public immutable DOMAIN_SEPARATOR;
@@ -519,9 +525,10 @@ contract CawProfileMinter is Context {
   ///          Passing address(this) means the Minter's own nonce sequence is read —
   ///          the gate in SmartEOA ensures only the Minter can advance that sequence.
   ///       2. Require caller-supplied permitNonce matches (prevents stale permit use).
-  ///       3. Staticcall signer.isValidSignature(digest, sig).
-  ///          We do NOT cap gas here; SmartEOA P-256 verify uses ~8k, which is well
-  ///          within the 50k CawActions uses. Any wallet that reverts here is rejected.
+  ///       3. Staticcall signer.isValidSignature(digest, sig) with gas cap
+  ///          ERC1271_GAS_LIMIT (50k). SmartEOA P-256 verify uses ~8k. The cap
+  ///          prevents arbitrary ERC-1271 wallets from consuming 300k and OOG-ing
+  ///          the sponsor tx. Matches CawActions.ERC1271_GAS_LIMIT.
   ///       4. Consume the nonce via signer.consumeNonce(address(this), actionType).
   ///          Because consumeNonce is gated to msg.sender == verifyingContract and
   ///          msg.sender here is address(this) (the Minter), the call will succeed
@@ -541,7 +548,7 @@ contract CawProfileMinter is Context {
   ) internal {
     uint256 currentNonce = ISmartEOA(signer).nonceOf(address(this), actionType);
     require(permitNonce == currentNonce, "Nonce mismatch");
-    (bool ok, bytes memory ret) = signer.staticcall(
+    (bool ok, bytes memory ret) = signer.staticcall{gas: ERC1271_GAS_LIMIT}(
       abi.encodeWithSelector(IERC1271.isValidSignature.selector, digest, sig)
     );
     require(

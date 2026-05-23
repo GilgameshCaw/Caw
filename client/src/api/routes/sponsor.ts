@@ -100,7 +100,10 @@ const authTupleSignatureSchema = z.object({
 const BootstrapBodySchema = z.object({
   passkeyPubkeyX:     hex32Schema as z.ZodType<`0x${string}`>,
   passkeyPubkeyY:     hex32Schema as z.ZodType<`0x${string}`>,
-  ecdsaFallbackAddr:  addressSchema as z.ZodType<`0x${string}`>,
+  ecdsaFallbackAddr:  (addressSchema.refine(
+    v => v.toLowerCase() !== '0x0000000000000000000000000000000000000000',
+    { message: 'ecdsaFallbackAddr cannot be zero address' },
+  ) as z.ZodType<`0x${string}`>),
   // L-3: mirror the contract's isValidUsername constraint ([a-z0-9], 1-32 chars)
   // to fail-fast before spending any RPC calls or gas.
   username:           z.string().min(1).max(32).regex(/^[a-z0-9]+$/, 'username must be lowercase alphanumeric only'),

@@ -1,7 +1,12 @@
 import { Router } from 'express'
+import Redis from 'ioredis'
 import { prisma } from '../../prismaClient'
 import { requireAuth } from '../middleware/auth'
 import { createNotificationWithGroup } from '../../services/NotificationService'
+
+const redis = process.env.REDIS_URL
+  ? new Redis(process.env.REDIS_URL)
+  : new Redis({ port: 6379, host: '127.0.0.1' })
 
 const router = Router()
 
@@ -484,15 +489,15 @@ router.post('/offers/:offerId/accepted', requireAuth({ anySession: true }), asyn
       return res.status(403).json({ error: 'Session is not authorized as the seller (current token owner)' })
     }
 
-    await prisma.marketplaceOffer.update({
-      where: { offerId },
-      data: { status: 'ACCEPTED' },
-    })
-
-    // NOTE: We deliberately do NOT update User.address here. See
-    // /listings/:id/sold for the rationale — the indexer handles it.
-    console.log(`[marketplace] Offer ${offerId} marked as accepted by seller ${sellerLc} (status only; ownership update deferred to indexer, tx: ${txHash}, claimed buyer: ${buyer})`)
-    res.json({ ok: true })
+    // Logging-only — do NOT write status=ACCEPTED optimistically.
+    // If the on-chain tx fails the DB row would stay ACCEPTED permanently
+    // because the indexer only consumes OfferAccepted events; it has no
+    // "ACCEPTED-but-no-matching-event" reconciliation pass.
+    // MarketplaceIndexerService handles the OfferAccepted event → that is
+    // the canonical state machine for this transition.
+    // Pattern mirrors /listings/:id/sold (refactored 2026-05-09 audit HIGH-3).
+    console.log('[Marketplace] /offers/:id/accepted called by owner', sellerLc)
+    res.status(202).json({ ok: true, message: 'Event will be processed by indexer' })
   } catch (err: any) {
     console.error('[marketplace] accept offer error:', err)
     res.status(500).json({ error: 'Internal server error' })
@@ -685,6 +690,13 @@ router.post('/offers/notify', requireAuth({ field: 'senderTokenId', verifyOwners
     let offer = await prisma.marketplaceOffer.findFirst({ where: { txHash } })
 
     if (!offer) {
+      // Dedup: SET NX 60s prevents the same txHash from spawning multiple
+      // background goroutines (e.g., attacker POSTs same txHash repeatedly).
+      const dedupKey = `marketplace:notify:${txHash}`
+      const acquired = await redis.set(dedupKey, '1', 'EX', 60, 'NX')
+      if (!acquired) {
+        return res.status(202).json({ ok: true, status: 'already-processing' })
+      }
       // Fire-and-forget background retry. We respond 202 immediately
       // so the client doesn't hold a socket open.
       void backgroundNotifyOnIndex(senderTid, sender.address.toLowerCase(), txHash)
