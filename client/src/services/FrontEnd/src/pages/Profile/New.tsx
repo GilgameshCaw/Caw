@@ -17,6 +17,7 @@ import { formatUsd } from '~/utils/numberFormat'
 import { useSearchParams } from 'react-router-dom'
 import { useNavigate, Link } from '~/utils/localizedRouter'
 import StakingRewardsInfo from '~/components/StakingRewardsInfo'
+import QuickSignHowItWorks from '~/components/QuickSignHowItWorks'
 import { HiInformationCircle } from 'react-icons/hi'
 import { useTheme } from '~/hooks/useTheme'
 import { CLIENT_ID, getTipTiers } from '~/api/actions'
@@ -204,44 +205,15 @@ const QuickSignInfoPopover: React.FC = () => {
       </button>
       {open && (
         <div
-          // Style mirrors DepositInfoPopover for visual parity: dark card,
-          // centered above the icon, fixed shadow. Positioning above (bottom-full)
-          // avoids overflow when the popover sits near the bottom of the page.
-          className="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 z-50 w-[min(380px,90vw)] bg-gray-900 rounded-lg shadow-lg p-4 text-xs leading-relaxed text-gray-300 space-y-2"
+          // Style mirrors DepositInfoPopover for visual parity: dark
+          // bg-gray-900 outer card, the shared QuickSignHowItWorks
+          // component (also used in Settings + onboarding) renders its
+          // own padded content. Position above the icon so it doesn't
+          // overflow when the section sits near the bottom of the page.
+          className="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 z-50 w-[min(450px,90vw)] bg-gray-900 rounded-lg shadow-lg"
           onClick={(e) => e.stopPropagation()}
         >
-          <div className="font-semibold text-white">How Quick Sign works</div>
-          <p>
-            A one-time wallet signature delegates a small, capped portion of
-            your deposit to a key stored only on this device. The on-chain
-            session has a hard spend limit and an expiry — both visible below.
-          </p>
-          <p>
-            After that, normal actions (post, like, follow, recaw) sign
-            instantly with the device key. No wallet popup, no per-action gas.
-            Posts cost CAW from your deposit, not ETH.
-          </p>
-          <div className="font-semibold text-white pt-1">Why it's safe</div>
-          <ul className="list-disc list-outside pl-4 space-y-1">
-            <li>
-              The device key can <span className="text-white">never</span>{' '}
-              withdraw your deposit, transfer your profile, or spend ETH.
-              Only normal social actions.
-            </li>
-            <li>
-              The spend cap is enforced on-chain. Even if the device key
-              were stolen, the worst case is the remaining session budget —
-              not your whole deposit.
-            </li>
-            <li>
-              You can revoke the session anytime from Settings; revocation
-              is a single on-chain tx.
-            </li>
-            <li>
-              Sessions auto-expire. After expiry, your wallet has to sign
-              again to renew — a natural checkpoint.
-            </li>
-          </ul>
+          <QuickSignHowItWorks isDark />
         </div>
       )}
     </div>
@@ -737,8 +709,38 @@ console.log("BALANCE:", balance)
     },
     onSuccess:    async (hash) => {
       console.log('bundled mint+deposit+QuickSign succeeded!', hash)
-      await refetchTokenData?.()
+      // Persist the QuickSign session IMMEDIATELY — see the zap variant's
+      // onSuccess for the rationale (don't gate on the indexer-polling
+      // closure, which gets GC'd if the user navigates away mid-poll).
       const sess = sessionRef.current
+      if (sess && useAddress) {
+        const owner = (useAddress as string).toLowerCase()
+        try {
+          setSession({
+            privateKey: sess.privateKey,
+            address: sess.address,
+            ownerAddress: owner,
+            expiry: sess.expiry,
+            scopeBitmap: QUICK_SIGN_DEFAULT_SCOPE,
+            spendLimit: sess.spendLimit.toString(),
+          })
+          setSessionEnabled(true)
+          localStorage.setItem(
+            `caw:pendingQuickSign:${owner}`,
+            JSON.stringify({
+              sessionKey: sess.address,
+              expiry: sess.expiry,
+              spendLimit: sess.spendLimit.toString(),
+              txHash: hash,
+              submittedAt: Date.now(),
+            })
+          )
+          window.dispatchEvent(new CustomEvent('caw:pendingQuickSignChanged', { detail: { owner } }))
+        } catch (e) {
+          console.warn('[New] failed to persist QuickSign session:', e)
+        }
+      }
+      await refetchTokenData?.()
       const checkForNewToken = async () => {
         const allTokens = useTokenDataStore.getState().allTokens()
         const newToken = allTokens.find((t: any) => t.username.toLowerCase() === username.toLowerCase())
@@ -762,38 +764,6 @@ console.log("BALANCE:", balance)
               )
               window.dispatchEvent(new CustomEvent('caw:pendingDepositChanged', { detail: { tokenId: newToken.tokenId } }))
             } catch {}
-          }
-          // Persist the session locally + write a 'pending' localStorage hint so
-          // useSessionKey-aware UI can fall back to it while the L2 mirror catches
-          // up. Cleared when ChainSyncService indexes the SessionCreated event
-          // (server-side) and the client refetches; for now keep both — the
-          // session store is the source of truth for client-side action signing.
-          if (sess && useAddress) {
-            const owner = (useAddress as string).toLowerCase()
-            try {
-              setSession({
-                privateKey: sess.privateKey,
-                address: sess.address,
-                ownerAddress: owner,
-                expiry: sess.expiry,
-                scopeBitmap: QUICK_SIGN_DEFAULT_SCOPE,
-                spendLimit: sess.spendLimit.toString(),
-              })
-              setSessionEnabled(true)
-              localStorage.setItem(
-                `caw:pendingQuickSign:${owner}`,
-                JSON.stringify({
-                  sessionKey: sess.address,
-                  expiry: sess.expiry,
-                  spendLimit: sess.spendLimit.toString(),
-                  txHash: hash,
-                  submittedAt: Date.now(),
-                })
-              )
-              window.dispatchEvent(new CustomEvent('caw:pendingQuickSignChanged', { detail: { owner } }))
-            } catch (e) {
-              console.warn('[New] failed to persist QuickSign session:', e)
-            }
           }
         } else {
           refetchTokenData?.()
@@ -853,8 +823,40 @@ console.log("BALANCE:", balance)
     onPending: hash => { console.log('mintAndDepositAndQuickSignZap tx pending', hash); setHasResetForm(false) },
     onSuccess: async (hash) => {
       console.log('mintAndDepositAndQuickSignZap success!', hash)
-      await refetchTokenData?.()
+      // Persist the QuickSign session IMMEDIATELY — don't wait for the L2
+      // mirror to index the new token. The session keypair is already
+      // committed on-chain by this tx; gating persistence on the indexer
+      // polling loop means a user who navigates away mid-poll loses the
+      // session entirely (the recursive setTimeout closure gets GC'd).
       const sess = sessionRef.current
+      if (sess && useAddress) {
+        const owner = (useAddress as string).toLowerCase()
+        try {
+          setSession({
+            privateKey: sess.privateKey,
+            address: sess.address,
+            ownerAddress: owner,
+            expiry: sess.expiry,
+            scopeBitmap: QUICK_SIGN_DEFAULT_SCOPE,
+            spendLimit: sess.spendLimit.toString(),
+          })
+          setSessionEnabled(true)
+          localStorage.setItem(
+            `caw:pendingQuickSign:${owner}`,
+            JSON.stringify({
+              sessionKey: sess.address,
+              expiry: sess.expiry,
+              spendLimit: sess.spendLimit.toString(),
+              txHash: hash,
+              submittedAt: Date.now(),
+            })
+          )
+          window.dispatchEvent(new CustomEvent('caw:pendingQuickSignChanged', { detail: { owner } }))
+        } catch (e) {
+          console.warn('[New] failed to persist QuickSign session:', e)
+        }
+      }
+      await refetchTokenData?.()
       const checkForNewToken = async () => {
         const allTokens = useTokenDataStore.getState().allTokens()
         const newToken = allTokens.find((t: any) => t.username.toLowerCase() === username.toLowerCase())
@@ -862,33 +864,6 @@ console.log("BALANCE:", balance)
           setMintedTokenId(newToken.tokenId)
           setActiveTokenId(newToken.tokenId)
           setMintSuccess(true)
-          if (sess && useAddress) {
-            const owner = (useAddress as string).toLowerCase()
-            try {
-              setSession({
-                privateKey: sess.privateKey,
-                address: sess.address,
-                ownerAddress: owner,
-                expiry: sess.expiry,
-                scopeBitmap: QUICK_SIGN_DEFAULT_SCOPE,
-                spendLimit: sess.spendLimit.toString(),
-              })
-              setSessionEnabled(true)
-              localStorage.setItem(
-                `caw:pendingQuickSign:${owner}`,
-                JSON.stringify({
-                  sessionKey: sess.address,
-                  expiry: sess.expiry,
-                  spendLimit: sess.spendLimit.toString(),
-                  txHash: hash,
-                  submittedAt: Date.now(),
-                })
-              )
-              window.dispatchEvent(new CustomEvent('caw:pendingQuickSignChanged', { detail: { owner } }))
-            } catch (e) {
-              console.warn('[New] failed to persist QuickSign session:', e)
-            }
-          }
         } else {
           refetchTokenData?.()
           setTimeout(checkForNewToken, 3000)
