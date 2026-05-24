@@ -2,6 +2,7 @@ import { Server as HttpServer } from 'http'
 import { Server as SocketIOServer, Socket } from 'socket.io'
 import { prisma } from '../../prismaClient'
 import { getSession } from '../../api/sessionStore'
+import { SESSION_COOKIE_NAME } from '../../api/middleware/auth'
 
 interface AuthenticatedSocket extends Socket {
   userId?: number
@@ -80,7 +81,8 @@ export class DmWebSocketService {
     this.io.use(async (socket: AuthenticatedSocket, next) => {
       try {
         const cookieHeader = socket.handshake.headers.cookie || ''
-        const cookieToken = cookieHeader.match(/(?:^|;\s*)caw_session=([^;]+)/)?.[1]
+        const cookieRe = new RegExp(`(?:^|;\\s*)${SESSION_COOKIE_NAME.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}=([^;]+)`)
+        const cookieToken = cookieHeader.match(cookieRe)?.[1]
         const sessionToken = cookieToken
           ? decodeURIComponent(cookieToken)
           : (socket.handshake.auth.sessionToken as string | undefined)

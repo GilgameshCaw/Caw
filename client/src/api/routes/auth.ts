@@ -169,8 +169,9 @@ router.post('/verify', async (req, res) => {
     // Get or create session. Cookie (HttpOnly) is the new canonical source;
     // x-session-token header is the legacy path kept for the migration
     // window so live FE sessions don't all get kicked out.
+    const cookieRe1 = new RegExp(`(?:^|;\\s*)${SESSION_COOKIE_NAME.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}=([^;]+)`)
     let sessionToken =
-      (req.headers.cookie?.match(/(?:^|;\s*)caw_session=([^;]+)/)?.[1]) ||
+      (req.headers.cookie?.match(cookieRe1)?.[1]) ||
       (req.headers['x-session-token'] as string | undefined)
     let session = sessionToken ? await getSession(sessionToken) : null
 
@@ -300,8 +301,9 @@ router.post('/verify-dm', async (req, res) => {
     const tokenIds = users.map(u => u.tokenId)
 
     // Create or extend auth session. Cookie first, header fallback.
+    const cookieRe2 = new RegExp(`(?:^|;\\s*)${SESSION_COOKIE_NAME.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}=([^;]+)`)
     let sessionToken =
-      (req.headers.cookie?.match(/(?:^|;\s*)caw_session=([^;]+)/)?.[1]) ||
+      (req.headers.cookie?.match(cookieRe2)?.[1]) ||
       (req.headers['x-session-token'] as string | undefined)
     let session = sessionToken ? await getSession(sessionToken) : null
 
@@ -412,8 +414,9 @@ router.post('/refresh', async (req, res) => {
 router.post('/logout', async (req, res) => {
   try {
     // Cookie first (new path), header fallback (legacy clients).
+    const cookieRe3 = new RegExp(`(?:^|;\\s*)${SESSION_COOKIE_NAME.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}=([^;]+)`)
     const token =
-      (req.headers.cookie?.match(/(?:^|;\s*)caw_session=([^;]+)/)?.[1]) ||
+      (req.headers.cookie?.match(cookieRe3)?.[1]) ||
       (req.headers['x-session-token'] as string | undefined)
     if (token) {
       await deleteSession(token)

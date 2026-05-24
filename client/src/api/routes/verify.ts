@@ -116,12 +116,17 @@ function validateRedirectUri(raw: unknown): string {
  * Returns the URL string on success; returns null on missing/invalid so
  * the caller can fall back to the close-page (popup) flow.
  */
-function validateReturnTo(raw: unknown): string | null {
+function validateReturnTo(raw: unknown, allowedOrigin: string | null): string | null {
   if (typeof raw !== 'string' || !raw) return null
   let parsed: URL
   try { parsed = new URL(raw) } catch { return null }
   const isLocalhost = parsed.hostname === 'localhost' || parsed.hostname === '127.0.0.1'
   if (parsed.protocol !== 'https:' && !(parsed.protocol === 'http:' && isLocalhost)) return null
+  // Same-origin check: returnTo must be on the same origin as the FE that
+  // initiated the OAuth flow. Prevents an adversarial operator from setting
+  // returnTo to a phishing domain. The FE always sends window.location.href
+  // (its own origin), so legitimate flows always pass. Fix: audit H-3.
+  if (allowedOrigin && parsed.origin !== allowedOrigin) return null
   return parsed.toString()
 }
 
@@ -157,7 +162,18 @@ router.post('/x/start-popup', requireAuth({ field: 'tokenId', verifyOwnership: t
     // top-level redirect; the callback page navigates the user back
     // here when finished. Falsy → desktop popup flow → callback page
     // self-closes instead.
-    const returnTo = validateReturnTo(req.body?.returnTo)
+    //
+    // Same-origin enforcement: derive the allowed FE origin from the
+    // request's Origin header (present on cross-origin fetch) or fall
+    // back to reconstructing it from Host + protocol. This prevents an
+    // adversarial operator node from injecting a foreign returnTo and
+    // redirecting users to a phishing page. Fix: audit H-3.
+    const feOrigin = req.headers.origin
+      ?? (req.headers.host ? `${req.protocol}://${req.headers.host}` : null)
+    if (!feOrigin && req.body?.returnTo) {
+      return res.status(400).json({ error: 'returnTo requires Origin header' })
+    }
+    const returnTo = validateReturnTo(req.body?.returnTo, feOrigin ?? null)
 
     // verifyOwnership made requireAuth check that the session is still
     // authorized for this token's CURRENT owner. The middleware also

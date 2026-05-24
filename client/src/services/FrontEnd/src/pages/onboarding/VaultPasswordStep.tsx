@@ -163,7 +163,7 @@ export default function VaultPasswordStep({
             value={vaultPassword}
             onChange={e => onPasswordChange(e.target.value)}
             placeholder={t('onboarding.vault.password_placeholder')}
-            autoComplete="new-password"
+            autoComplete="off"
             className={`
               w-full px-4 py-3 pr-10 rounded-xl border text-sm transition-colors
               ${inputBg} ${strongClass} ${borderBase} ${borderFocus}
@@ -220,7 +220,7 @@ export default function VaultPasswordStep({
             value={vaultPasswordConfirm}
             onChange={e => onConfirmChange(e.target.value)}
             placeholder={t('onboarding.vault.confirm_placeholder')}
-            autoComplete="new-password"
+            autoComplete="off"
             className={`
               w-full px-4 py-3 pr-10 rounded-xl border text-sm transition-colors
               ${inputBg} ${strongClass}

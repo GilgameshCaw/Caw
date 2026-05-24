@@ -50,7 +50,12 @@ if (!COOKIE_SECURE && process.env.NODE_ENV === 'production') {
 // We keep the x-session-token header path during a migration window so
 // existing browser sessions don't all get kicked out. Once the cookie path is
 // in production for a while, the header path can be removed.
-export const SESSION_COOKIE_NAME = 'caw_session'
+// __Host- prefix forces Secure + forbids Domain attribute + requires path=/.
+// This closes the subdomain-set cookie attack (e.g. uploads.caw.social
+// overwriting caw_session for the parent). BREAKING: existing caw_session
+// cookies on test.caw.social are invalidated; users must re-sign-in.
+// Fix: audit M-4.
+export const SESSION_COOKIE_NAME = '__Host-caw_session'
 // 1 year — matches SESSION_TTL in sessionStore.ts so cookie and Redis entry
 // expire together.
 const SESSION_COOKIE_MAX_AGE = 365 * 24 * 60 * 60 * 1000

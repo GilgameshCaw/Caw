@@ -160,6 +160,7 @@ const ConnectedAccountsSection: React.FC<{ isDark: boolean; tokenId: number }> =
 
   useEffect(() => {
     const STORAGE_KEY = 'caw:xverify:result'
+    const PENDING_KEY = 'caw:xverify:pending'
     const consume = (raw: string | null) => {
       if (!raw) return
       let env: any
@@ -168,6 +169,7 @@ const ConnectedAccountsSection: React.FC<{ isDark: boolean; tokenId: number }> =
       // Clear the key BEFORE acting so we never re-fire on the next
       // storage event (different tab pattern, same browser session).
       try { localStorage.removeItem(STORAGE_KEY) } catch {}
+      try { localStorage.removeItem(PENDING_KEY) } catch {}
       handleResult(env.payload)
     }
     const onStorage = (e: StorageEvent) => {
@@ -179,7 +181,28 @@ const ConnectedAccountsSection: React.FC<{ isDark: boolean; tokenId: number }> =
     // If the callback page wrote the key BEFORE we mounted (race on slow
     // initial render), pick it up on mount.
     consume(typeof localStorage !== 'undefined' ? localStorage.getItem(STORAGE_KEY) : null)
-    return () => window.removeEventListener('storage', onStorage)
+
+    // pageshow fires on bfcache restore AND on fresh load after top-level
+    // redirect. If iOS killed the origin tab mid-OAuth and recreated it,
+    // we'll catch the pending result here. Also covers the case where the
+    // callback page wrote the result key before this component mounted.
+    // Fix: audit H-1 (iOS tab kill) + H-2 (PWA storage-event dead-zone).
+    const onPageShow = () => {
+      const hasPending = typeof localStorage !== 'undefined' &&
+        !!localStorage.getItem(PENDING_KEY)
+      const hasResult = typeof localStorage !== 'undefined' &&
+        !!localStorage.getItem(STORAGE_KEY)
+      if (hasPending || hasResult) {
+        setBusy(true)
+        consume(typeof localStorage !== 'undefined' ? localStorage.getItem(STORAGE_KEY) : null)
+      }
+    }
+    window.addEventListener('pageshow', onPageShow)
+
+    return () => {
+      window.removeEventListener('storage', onStorage)
+      window.removeEventListener('pageshow', onPageShow)
+    }
   }, [handleResult])
 
   const startOAuth = useCallback(() => {
@@ -213,7 +236,19 @@ const ConnectedAccountsSection: React.FC<{ isDark: boolean; tokenId: number }> =
     // listener can't fire on it when this attempt completes.
     try { localStorage.removeItem('caw:xverify:result') } catch {}
 
-    const isMobile = isMobileDevice()
+    // Force PWA standalone mode (any viewport width) onto the redirect path.
+    // In standalone mode, storage events from external-URL returns don't
+    // propagate reliably (iOS 15-16 PWA dead-zone). Redirect path bypasses
+    // storage events entirely — pageshow fires on return and picks up the
+    // result. Fix: audit H-2.
+    const isStandalone = typeof window !== 'undefined' &&
+      window.matchMedia('(display-mode: standalone)').matches
+    const isMobile = isMobileDevice() || isStandalone
+    // Set pending marker so pageshow handler knows OAuth is in-flight.
+    // Cleared in consume() when the result arrives. Fix: audit H-1.
+    if (isMobile) {
+      try { localStorage.setItem('caw:xverify:pending', '1') } catch {}
+    }
     let popup: Window | null = null
 
     if (!isMobile) {

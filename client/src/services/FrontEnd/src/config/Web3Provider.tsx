@@ -98,12 +98,26 @@ const walletList = [
   },
 ];
 
+// Loud-fail in production if VITE_PROJECT_ID is unset or still placeholder.
+// Mobile users (no injected wallet) depend entirely on WalletConnect — a
+// missing or placeholder projectId silently breaks every mobile wallet.
+// Fail at module init time so the error surfaces clearly in the React error
+// boundary or console rather than manifesting as "no wallet options appear".
+// Fix: audit L-3.
+const _projectId = import.meta.env.VITE_PROJECT_ID || "your_project_id_here"
+if (import.meta.env.PROD && (!_projectId || _projectId === 'your_project_id_here')) {
+  throw new Error(
+    'VITE_PROJECT_ID is unset or placeholder in production build. ' +
+    'WalletConnect will not work. Set a valid WalletConnect Cloud project ID.'
+  )
+}
+
 export const wagmiConfig = getDefaultConfig({
   appName: "CAW",
   appDescription: "A trustless and decentralized social clearing-house committed to making freedom of speech unstoppable.",
   appUrl: APP_URL,
   appIcon: `${APP_URL}/logo.jpeg`,
-  projectId: import.meta.env.VITE_PROJECT_ID || "your_project_id_here",
+  projectId: _projectId,
   wallets: walletList,
   chains: [sepolia, baseSepolia, mainnet],
   pollingInterval: BLOCK_POLLING_INTERVAL_MS,
@@ -127,10 +141,11 @@ export default function Web3Provider({ children, queryClient }: Web3ProviderProp
   // The placeholder-id check catches missing VITE_PROJECT_ID (the most common
   // cause of "QR scans but never opens the dApp" symptoms).
   useEffect(() => {
-    const projectId = import.meta.env.VITE_PROJECT_ID || "your_project_id_here";
     const origin = typeof window !== 'undefined' ? window.location.origin : '(no window)';
-    console.log(`[Web3Provider] projectId=${projectId} origin=${origin}`);
-    if (projectId === "your_project_id_here") {
+    console.log(`[Web3Provider] projectId=${_projectId} origin=${origin}`);
+    // In dev mode the module-level throw is skipped; warn instead so the
+    // developer sees a clear message rather than silent WC failures.
+    if (!import.meta.env.PROD && _projectId === "your_project_id_here") {
       console.warn('[Web3Provider] WARNING: VITE_PROJECT_ID is unset; WalletConnect will not work');
     }
   }, []);
