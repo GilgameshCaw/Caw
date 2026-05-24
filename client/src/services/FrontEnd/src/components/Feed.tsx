@@ -892,17 +892,37 @@ const Feed = forwardRef<FeedRef, Props>(({ filter, username, apiEndpoint, title 
         const renderPendingAtTop = [...pendingAtTop].sort(byCawonce)
         const sortPendingChildren = (arr: any[]) => [...arr].sort(byCawonce)
 
+        // At render time, resolve any pending post whose `id` still starts
+        // with `pending-` against the server-fetched feed via (cawonce,
+        // tokenId). When the server-side row is already in `items` with
+        // its real id, swap it in here so the FeedItem click navigates
+        // to `/users/<u>/caw/<id>-<slug>` — not `/caws/pending-…`. The
+        // effect at line 211 also does this swap eventually but renders
+        // BETWEEN server response and that effect running otherwise leak
+        // the pending URL to clicks. Stable id (no swap) when no match.
+        const resolveRealId = (p: any): any => {
+          const idStr = String(p.id || '')
+          if (!idStr.startsWith('pending-')) return p
+          if (p.cawonce == null || !p.user?.tokenId) return p
+          const match = items.find(
+            i => i.cawonce === p.cawonce && i.user?.tokenId === p.user?.tokenId,
+          )
+          if (!match || String(match.id).startsWith('pending-')) return p
+          return { ...p, id: match.id }
+        }
+
         return (
           <>
             {renderPendingAtTop.map(post => {
               const inlineUnderPending = sortPendingChildren(
                 pendingRepliesByPendingParent.get(post.tempId) || []
               )
+              const resolved = resolveRealId(post)
               return (
                 <React.Fragment key={post.tempId}>
-                  <FeedItem item={post as CawItem} />
+                  <FeedItem item={resolved as CawItem} />
                   {inlineUnderPending.map(child => (
-                    <FeedItem key={child.tempId} item={child as CawItem} hideParentPreview />
+                    <FeedItem key={child.tempId} item={resolveRealId(child) as CawItem} hideParentPreview />
                   ))}
                 </React.Fragment>
               )
@@ -952,7 +972,7 @@ const Feed = forwardRef<FeedRef, Props>(({ filter, username, apiEndpoint, title 
                     />
                   ))}
                   {inlinePending.map(post => (
-                    <FeedItem key={post.tempId} item={post as CawItem} hideParentPreview />
+                    <FeedItem key={post.tempId} item={resolveRealId(post) as CawItem} hideParentPreview />
                   ))}
                 </React.Fragment>
               )
