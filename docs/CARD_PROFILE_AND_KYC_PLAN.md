@@ -1,380 +1,303 @@
-# Card-Funded Profiles + Network-Level KYC Policy
+# Card-Funded Profiles — Fiat Onramp Architecture
 
 ## Overview
 
-Users who onboard via card payment (Stripe) receive a profile with
-withdrawals disabled. Unlocking withdrawals requires identity
-verification. **The Network operator — not the protocol — decides
-whether KYC is required and what level**, at Network registration
-time. This keeps the protocol neutral while letting operators
-comply with their own jurisdiction's rules.
+CAW supports two ways to get a profile:
 
----
+1. **Self-funded (Population A)**: user has a wallet, has ETH/CAW,
+   calls `mintAndDeposit` directly. **No lock, no KYC, no gate. Ever.**
+   The protocol has zero regulatory exposure from these users.
 
-## Architecture
+2. **Sponsor-funded via fiat (card profiles)**: user pays with a card
+   (Stripe), a sponsor server mints the profile on their behalf. The
+   sponsor server — the entity that accepted fiat — decides at mint
+   time whether the profile needs KYC before withdrawing.
 
-```
-                      ┌──────────────────┐
-                      │  CawNetworkManager │
-  Network operator    │                    │
-  at registration     │  kycVerifier: addr │ ← per-Network
-  time sets:          │  kycRequired: bool │ ← per-Network
-                      └────────┬───────────┘
-                               │
-             ┌─────────────────┼─────────────────┐
-             │                 │                 │
-        ┌────▼────┐      ┌────▼────┐      ┌─────▼─────┐
-        │ Uruk    │      │ Babylon │      │ Community │
-        │ KYC: ID │      │ KYC: no │      │ KYC: uniq │
-        │ doc     │      │         │      │ (liveness)│
-        └─────────┘      └─────────┘      └───────────┘
-```
-
-Each Network has:
-- `kycVerifier`: address of the `IKycVerifier` adapter contract
-  (Civic Pass, zkMe, or address(0) = no KYC)
-- `kycRequired`: whether card-funded profiles on THIS Network
-  must KYC before withdrawing
-
-When both are set, `CawProfileMinter.unlockWithdraw(networkId,
-tokenId)` checks `IKycVerifier(kycVerifier).isVerified(msg.sender)`.
-When `kycRequired == false` or `kycVerifier == address(0)`,
-withdrawals are not gated (even for card-funded profiles on that
-Network).
+**The protocol doesn't mandate KYC.** It provides optional
+infrastructure that the fiat-accepting entity can activate if they
+face regulatory pressure. Crypto-native users never see it.
 
 ---
 
 ## Who decides what
 
-| Decision | Who | When | Mutable? |
-|---|---|---|---|
-| Whether KYC is needed on this Network | Network operator | At `createNetwork()` or via `setKycPolicy()` | Yes, by operator only (before fee-lock) |
-| Which KYC provider to use | Network operator | `setKycVerifier(networkId, verifierAddr)` | Yes, by operator only |
-| KYC level (CAPTCHA / uniqueness / ID doc) | Network operator | Determined by which `IKycVerifier` adapter they deploy | Deploy-time choice |
-| Whether a SPECIFIC profile is withdraw-locked | Minter contract | At `mintAndDepositLocked()` time (card path) | No — lock is set once; cleared only by owner + KYC |
-| Whether to unlock | Profile owner | `unlockWithdraw(networkId, tokenId)` | One-way: locked → unlocked. Cannot re-lock. |
+```
+Population A (self-funded):
+  User → mintAndDeposit(...)
+  No lock. No KYC. No time-lock. Permissionless forever.
+
+Population B / Card (sponsor-funded via fiat):
+  Stripe → Sponsor Server → mintAndDepositLocked(..., kycLevel)
+  kycLevel decided by the SPONSOR SERVER at call time.
+  Default: 0 (time-lock only, no KYC).
+  Can be flipped to 2 or 3 if the server operator faces regulatory pressure.
+```
+
+| Decision | Who decides | When |
+|---|---|---|
+| Whether to accept fiat | Sponsor server operator | Server config |
+| Whether card profiles need KYC at withdraw | Sponsor server operator | At mint time (kycLevel parameter) |
+| KYC level (0/1/2/3) | Sponsor server operator | At mint time |
+| What KYC provider to use | Protocol deployer | CawProfile.kycVerifiers mapping (set once, pre-renouncement) |
+| Whether a self-funded profile is locked | Nobody — it's not | N/A |
+
+**The Minter contract is a stateless relay.** It doesn't store policy,
+doesn't have an admin, doesn't make decisions. It forwards the
+caller's parameters to CawProfile.
 
 ---
 
-## Contract changes needed
+## The kycLevel parameter
 
-### CawNetworkManager
+Passed at mint time by the caller of `mintAndDepositLocked`:
 
-Add to `CawNetwork` struct:
+| Level | Name | What it checks | When to use |
+|---|---|---|---|
+| 0 | None | Time-lock only (180 days) then auto-unlock | Default for card profiles. No KYC ever. |
+| 1 | CAPTCHA | Bot resistance (Civic network 1) | Sybil defense only |
+| 2 | Uniqueness | Liveness check, no document (Civic network 10) | Moderate defense, no PII collected |
+| 3 | ID Document | Passport/ID scan + selfie (Civic network 17) | Full KYC for jurisdictions that require it |
+
+Level 0 means: withdraw is locked for 180 days, then unlocks
+automatically. No verification, no identity, no friction. The
+time-lock is enough to make the stored-value argument ("this isn't
+a fiat-to-crypto bridge — value lives on-platform for months").
+
+Levels 1-3 are **dormant by default.** They exist in the contract
+so a sponsor server operator can flip them on without a protocol
+redeploy if a regulator demands it. The community never sees them
+unless regulatory force-majeure requires it.
+
+---
+
+## Contract design
+
+### CawProfile (L1)
 
 ```solidity
-/// KYC policy for card-funded profiles on this Network.
-/// address(0) = no KYC required (withdraw is permissionless).
-/// Non-zero = IKycVerifier adapter that checks isVerified(owner).
-address kycVerifier;
-```
+// Per-tokenId withdraw gate. 0 = no lock (self-funded profiles).
+// Non-zero = the kycLevel set at mint time by the Minter.
+mapping(uint32 => uint8) public withdrawKycLevel;
 
-Add setter (operator-only, pre-fee-lock):
+// Per-level verifier addresses. Set by contract owner pre-renouncement.
+// Level 0 has no verifier (time-lock only).
+mapping(uint8 => address) public kycVerifiers;
 
-```solidity
-function setKycVerifier(uint32 networkId, address verifier)
-    external onlyNetworkOwnerNotFeeLocked(networkId)
-{
-    networks[networkId].kycVerifier = verifier;
-    emit KycVerifierSet(networkId, verifier);
+// Time-lock: card profiles with kycLevel=0 auto-unlock after this
+// many seconds from mint time.
+uint256 public constant WITHDRAW_TIMELOCK = 180 days;
+
+// Mint timestamp per tokenId (for time-lock calculation).
+mapping(uint32 => uint256) public mintedAt;
+
+// Withdraw gate (in withdrawTo, before fee logic):
+function _checkWithdrawLock(uint32 tokenId) internal view {
+    uint8 level = withdrawKycLevel[tokenId];
+    if (level == 0) {
+        // Self-funded profiles have level=0 AND mintedAt=0 (never set).
+        // Card profiles have level=0 AND mintedAt>0 (set by Minter).
+        if (mintedAt[tokenId] == 0) return; // self-funded, no gate
+        if (block.timestamp >= mintedAt[tokenId] + WITHDRAW_TIMELOCK) return; // time-lock expired
+        revert WithdrawTimelocked();
+    }
+    // Level 1-3: check the KYC verifier
+    address verifier = kycVerifiers[level];
+    if (verifier == address(0)) revert KycNotConfigured();
+    if (!IKycVerifier(verifier).isVerified(msg.sender)) revert KycRequired();
 }
-```
 
-New event:
-```solidity
-event KycVerifierSet(uint32 indexed networkId, address indexed verifier);
+// Called by Minter at mint time:
+function setWithdrawKycLevel(uint32 tokenId, uint8 level) external {
+    if (msg.sender != minter) revert NotMinter();
+    withdrawKycLevel[tokenId] = level;
+    mintedAt[tokenId] = block.timestamp;
+}
+
+// Owner can skip the time-lock by verifying early (if KYC is configured
+// for level 0, which it isn't by default — this is a no-op today):
+function unlockWithdraw(uint32 tokenId) external {
+    if (ownerOf(tokenId) != msg.sender) revert NotOwner();
+    uint8 level = withdrawKycLevel[tokenId];
+    if (level == 0 && mintedAt[tokenId] == 0) revert AlreadyUnlocked();
+    if (level == 0) {
+        // Time-locked profile — check if time expired
+        if (block.timestamp >= mintedAt[tokenId] + WITHDRAW_TIMELOCK) {
+            withdrawKycLevel[tokenId] = 0;
+            mintedAt[tokenId] = 0;
+            return;
+        }
+        revert WithdrawTimelocked();
+    }
+    // Level 1-3: check KYC verifier
+    address verifier = kycVerifiers[level];
+    if (verifier == address(0)) revert KycNotConfigured();
+    if (!IKycVerifier(verifier).isVerified(msg.sender)) revert KycRequired();
+    withdrawKycLevel[tokenId] = 0;
+    mintedAt[tokenId] = 0;
+    emit WithdrawUnlocked(tokenId);
+}
+
+// Set by contract owner before renouncement:
+function setKycVerifier(uint8 level, address verifier) external onlyOwner {
+    kycVerifiers[level] = verifier;
+}
 ```
 
 ### CawProfileMinter
 
-Change `unlockWithdraw` to accept `networkId` and read the verifier
-from the Network:
+No admin. No policy state. Just relays:
 
 ```solidity
-function unlockWithdraw(uint32 networkId, uint32 tokenId) external {
-    if (cawProfile.ownerOf(tokenId) != msg.sender) revert NotOwner();
-    if (!mintedLocked[tokenId]) revert AlreadyUnlocked();
-
-    // Read the KYC policy from the Network the user is withdrawing on
-    address verifier = cawProfile.networkManager().getKycVerifier(networkId);
-
-    // If the Network doesn't require KYC, unlock immediately
-    if (verifier == address(0)) {
-        // Network has no KYC requirement — operator's choice
-        mintedLocked[tokenId] = false;
-        cawProfile.setWithdrawLocked(tokenId, false);
-        emit WithdrawUnlocked(tokenId);
-        return;
-    }
-
-    // Network requires KYC — check the verifier
-    if (!IKycVerifier(verifier).isVerified(msg.sender)) revert KycRequired();
-    mintedLocked[tokenId] = false;
-    cawProfile.setWithdrawLocked(tokenId, false);
-    emit WithdrawUnlocked(tokenId);
+function mintAndDepositLocked(
+    uint32 networkId,
+    address recipient,
+    string memory username,
+    uint256 depositAmount,
+    uint32 lzDestId,
+    uint256 lzTokenAmount,
+    uint8 kycLevel  // caller decides: 0=time-lock, 1=captcha, 2=uniqueness, 3=id-doc
+) external payable {
+    // ... normal mint + deposit logic ...
+    cawProfile.setWithdrawKycLevel(newId, kycLevel);
 }
 ```
 
-This means:
-- Uruk sets `kycVerifier = CivicKycVerifier(ID_DOC)` → users must
-  scan their ID to unlock withdrawals
-- Babylon sets `kycVerifier = address(0)` → card-funded profiles
-  can unlock immediately (operator chose no KYC)
-- A community Network sets `kycVerifier = CivicKycVerifier(UNIQUENESS)`
-  → users do a liveness check (no document) to unlock
-
-### CawProfile (L1)
-
-No changes needed. `withdrawLocked` per-tokenId + `setWithdrawLocked`
-(minter-only) are already in place from commit `10fbed91`.
-
-The withdraw gate in `withdrawTo` already checks:
-```solidity
-if (_withdrawLocked[tokenId]) revert WithdrawLocked();
-```
-
-### CawActions (L2)
-
-No changes needed. The free-auth path (`allowFreeAuth[networkId]`)
-is already wired end-to-end.
+The regular `mintAndDeposit` (called by self-funding users) does
+NOT call `setWithdrawKycLevel`. Those profiles have `withdrawKycLevel
+= 0` and `mintedAt = 0` — which means no lock at all.
 
 ---
 
-## KYC verifier adapters
-
-Each KYC level is a separate contract implementing `IKycVerifier`:
-
-```solidity
-interface IKycVerifier {
-    function isVerified(address account) external view returns (bool);
-}
-```
-
-### Available adapters
-
-| Adapter | KYC level | What it checks | Registration needed |
-|---|---|---|---|
-| `CivicKycVerifier` (CAPTCHA network) | Bot resistance | User solved a CAPTCHA on civic.me | None — free, email signup |
-| `CivicKycVerifier` (Uniqueness network) | Liveness | User's face is unique (no doc scan) | Civic dev account (email) |
-| `CivicKycVerifier` (ID Doc network) | Full KYC | Passport/ID scan + selfie + liveness | Civic dev account + data-processing agreement |
-| `ZkMeKycVerifier` (future) | ZK-KYC | Zero-knowledge proof of identity | zkMe integration (similar to Civic) |
-| `address(0)` | None | No check — unlock is immediate | Nothing |
-
-The `CivicKycVerifier` contract is already built (`solidity/contracts/
-CivicKycVerifier.sol`). It's parameterized by `gatekeeperNetwork` —
-different Civic network IDs correspond to different verification
-levels. One deploy per level:
+## Flow: self-funded user (Population A)
 
 ```
-CivicKycVerifier(civicGateway, 1)   → CAPTCHA
-CivicKycVerifier(civicGateway, 10)  → Uniqueness
-CivicKycVerifier(civicGateway, 17)  → ID Document
+User has wallet + ETH/CAW
+  → calls mintAndDeposit(...) on CawProfileMinter
+  → profile created with withdrawKycLevel = 0, mintedAt = 0
+  → withdraw is fully permissionless from second zero
+  → no KYC. ever. the protocol doesn't know or care who they are.
 ```
 
-A Network operator deploys the adapter for their chosen level, then
-calls `setKycVerifier(networkId, adapterAddress)`.
-
----
-
-## Flow: card-funded user lifecycle
-
-### Onboarding (no KYC)
+## Flow: card-funded user (default — kycLevel = 0, time-lock only)
 
 ```
 User clicks "Buy a profile — $25"
-    → Stripe Checkout (card / Apple Pay / Google Pay)
-    → Stripe webhook fires
-    → Server calls mintAndDepositLocked(networkId, wallet, username, caw, ...)
-    → Profile minted with withdrawLocked = true
-    → User can post, like, follow, earn yield immediately
+  → Stripe Checkout
+  → webhook fires on sponsor server
+  → server calls mintAndDepositLocked(..., kycLevel = 0)
+  → profile created with withdrawKycLevel = 0, mintedAt = block.timestamp
+  → user can post, like, follow, earn yield immediately
+  → withdraw is locked for 180 days (time-lock)
+  → after 180 days: withdraw auto-unlocks. no KYC needed.
+  → user never scanned an ID, never proved who they are
 ```
 
-### Using the platform (no KYC)
+## Flow: card-funded user (if regulator demands KYC — kycLevel = 3)
 
 ```
-User posts, likes, follows, earns yield
-    → All actions work normally via CawActions
-    → Deposit earns staking rewards
-    → Rewards accumulate but are withdraw-locked (same as deposit)
-    → User can transfer/sell their profile NFT on the marketplace
-```
-
-### Unlocking withdrawals (KYC only if Network requires it)
-
-```
-User clicks "Unlock withdrawals" in Settings
-    → FE reads networkManager.getKycVerifier(networkId)
-
-    If address(0):
-        → unlockWithdraw(networkId, tokenId) succeeds immediately
-        → No KYC needed — this Network chose not to require it
-
-    If non-zero:
-        → FE shows the Civic Pass widget (or zkMe widget)
-        → User completes verification (30s for liveness, 2min for doc)
-        → Civic/zkMe issues a Gateway Token (SBT) to user's wallet
-        → User calls unlockWithdraw(networkId, tokenId)
-        → Contract checks IKycVerifier.isVerified(msg.sender) → true
-        → withdrawLocked[tokenId] = false
-        → Withdrawals permanently unlocked for this profile
-```
-
-### Withdrawing (post-KYC)
-
-```
-User calls withdraw(networkId, tokenId, ...)
-    → Normal withdraw flow — no additional check beyond the existing
-      lockedWithdrawFee + fee logic
-    → CAW transferred to user's wallet
-    → User sells CAW on Uniswap if they want fiat
+Sponsor server operator flips CARD_KYC_LEVEL=3 in server config
+  → webhook calls mintAndDepositLocked(..., kycLevel = 3)
+  → profile created with withdrawKycLevel = 3, mintedAt = block.timestamp
+  → user can post, like, follow, earn yield immediately
+  → withdraw requires Civic Pass ID-document verification
+  → user clicks "Unlock withdrawals" → scans passport → unlocks
+  → existing profiles minted at kycLevel=0 are NOT affected
 ```
 
 ---
 
 ## Transfer semantics
 
-- **Withdraw lock travels with the tokenId**, not the wallet.
-- If a locked profile is transferred (sold on marketplace), the
-  new owner inherits the lock. They must KYC to unlock.
-- This is intentional: the lock represents "this profile's deposit
-  was funded with fiat and has never been KYC'd."
-- A buyer who wants the staked CAW must verify — same as buying
-  CAW from a regulated exchange.
+- Lock travels with the tokenId, not the wallet.
+- Self-funded profiles: no lock, transfers are clean.
+- Card profiles: lock transfers with the NFT. New owner inherits
+  the time-lock (or KYC requirement). Same rules apply.
+- A buyer on the marketplace who buys a locked profile knows
+  what they're getting (the lock state is readable on-chain).
 
 ---
 
-## Regulatory analysis
+## Do we need Moonpay?
 
-### What we are NOT
+**No.** With the Stripe path, Moonpay is redundant for the primary
+use case (fiat onboarding). Here's why:
 
-- NOT a money transmitter (we don't move fiat; Stripe does)
-- NOT a crypto exchange (we don't sell crypto; the user buys platform
-  access)
-- NOT a KYC provider (Civic/zkMe are; we just check their SBT)
+| | Stripe (card profiles) | Moonpay |
+|---|---|---|
+| What user gets | A withdraw-locked CAW profile | ETH in their wallet |
+| KYC at purchase | None | Always (birthday, address, phone) |
+| Friction | 2 seconds (standard card checkout) | 2-5 minutes + phone verification |
+| Who holds fiat | Partner entity (Stripe merchant) | Moonpay |
+| User needs a wallet? | No (server mints for them) | Yes (ETH has to go somewhere) |
+| Regulatory burden | Stored-value exemption (digital good) | Moonpay is the MSB |
+| Withdrawal | Time-locked 180 days (default) | Permissionless (they have ETH) |
 
-### What we ARE
+**Moonpay makes sense only for users who specifically want ETH in
+their own wallet** — i.e., users who already understand crypto and
+want to self-custody from the start. Those users probably already
+have a wallet and can use the normal Population A path.
 
-- A software provider selling digital goods (platform access +
-  staking deposit)
-- The staking deposit is closed-loop: can't be withdrawn without KYC
-- This falls under the **stored-value exemption** (FinCEN):
-  - Closed-loop: value usable only within the CAW protocol
-  - Single merchant: the CAW protocol
-  - Daily load under $2,000 for typical users
-- **Risk factor**: CAW is tradeable on Uniswap. A creative regulator
-  could argue the NFT's transferability breaks the closed-loop.
-  Whether that argument holds is untested. The withdraw-lock
-  + KYC-at-withdraw is our defense: even if the NFT transfers, the
-  CAW deposit stays locked until someone KYCs.
+### Recommendation
 
-### Per-Network flexibility
-
-Different Networks in different jurisdictions can set their own
-KYC levels:
-
-- **US-focused Network**: ID Document tier (strongest defense against
-  regulatory challenge)
-- **EU-focused Network**: ID Document tier (MiCA compliance)
-- **Crypto-native Network**: No KYC (operator accepts the regulatory
-  risk; users who onboarded via crypto never had withdraw-lock anyway)
-- **Community Network**: Uniqueness tier (sybil resistance without
-  collecting PII)
-
-The protocol doesn't mandate KYC — it provides the plumbing. Each
-Network operator makes their own compliance decision.
+- **Keep Moonpay code** (it's built, gated behind env vars, costs
+  nothing to maintain).
+- **Don't promote it.** The "Buy with card" button routes to Stripe,
+  not Moonpay.
+- **Remove Moonpay from the sign-in modal** (or keep it as a hidden
+  option for operators who have Moonpay biz registration).
+- **Moonpay becomes a "power user" feature** for operators who want
+  to offer direct ETH onramp alongside Stripe. Most operators won't.
 
 ---
 
 ## What's already built
 
-| Component | Status | Commit |
-|---|---|---|
-| `withdrawLocked` per-tokenId (CawProfile) | ✅ Built | `10fbed91` |
-| `mintAndDepositLocked` (CawProfileMinter) | ✅ Built | `10fbed91` |
-| `unlockWithdraw` (CawProfileMinter) | ✅ Built | `10fbed91` |
-| `IKycVerifier` interface | ✅ Built | `10fbed91` |
-| `CivicKycVerifier` adapter | ✅ Built | `755a12d4` |
-| `setKycVerifier` on Minter (admin-only) | ✅ Built | `10fbed91` |
-| Stripe checkout + webhook routes | ✅ Built | `755a12d4` |
-| `StripePurchase` Prisma model | ✅ Built | `755a12d4` |
-| Moonpay URL-signing route | ✅ Built | `755a12d4` |
-| FE: CardCheckout page | ✅ Built | `a221ce12` |
-| FE: WithdrawLockStatus component | ✅ Built | `a221ce12` |
-| FE: useWithdrawLocked hook | ✅ Built | `a221ce12` |
-| Free-auth path (CawActions + CawProfileL2) | ✅ Built | Pre-existing |
-| `broadcastAllowFreeAuth` relay (L1→L2) | ✅ Built | Pre-existing |
-
-## What needs building (next deploy)
-
 | Component | Status | Notes |
 |---|---|---|
-| `kycVerifier` field on CawNetwork struct | ❌ Not built | Add to CawNetworkManager |
-| `setKycVerifier` on NetworkManager | ❌ Not built | Operator-only setter, gated like fee setters |
-| `getKycVerifier(networkId)` view | ❌ Not built | Used by Minter's unlockWithdraw |
-| `unlockWithdraw` reads Network's verifier | ❌ Not built | Currently reads from Minter's admin-set verifier; needs to read from Network |
-| `sponsorCardMint` price-oracle wiring | ❌ Not built | USD → CAW conversion at webhook time |
-| FE: Civic Pass widget integration | ❌ Placeholder | Currently shows a toast; real widget when gateway is deployed |
-| Deploy CivicKycVerifier to Sepolia | ❌ Not deployed | Need CIVIC_GATEWAY_ADDRESS for the testnet |
-| CLI installer: Stripe + KYC prompts | ❌ Not built | Add to onboardingFeatures.js |
+| `withdrawLocked` per-tokenId (CawProfile) | ✅ Built | Needs refactor: replace bool with uint8 kycLevel + add mintedAt |
+| `mintAndDepositLocked` (Minter) | ✅ Built | Needs refactor: add kycLevel param, remove admin role |
+| `IKycVerifier` interface | ✅ Built | No changes needed |
+| `CivicKycVerifier` adapter | ✅ Built | No changes needed |
+| Stripe checkout + webhook routes | ✅ Built | Needs: pass kycLevel from server config |
+| StripePurchase Prisma model | ✅ Built | No changes needed |
+| Moonpay URL-signing route | ✅ Built | Keep as-is, deprioritize |
+| FE: CardCheckout page | ✅ Built | No changes needed |
+| FE: WithdrawLockStatus component | ✅ Built | Update to show time-lock countdown vs KYC prompt |
+| FE: useWithdrawLocked hook | ✅ Built | Update to read kycLevel + mintedAt |
+| Free-auth path (CawActions) | ✅ Built | No changes needed |
+| broadcastAllowFreeAuth relay | ✅ Built | No changes needed |
+
+## What needs refactoring (next deploy)
+
+| Component | Change |
+|---|---|
+| CawProfile | Replace `_withdrawLocked` bool with `withdrawKycLevel` uint8 + `mintedAt` uint256. Add time-lock check in `_checkWithdrawLock`. Add `setKycVerifier(level, addr)` owner-only. |
+| CawProfileMinter | Remove `admin` role + `kycVerifier` state + `transferAdmin`. Add `kycLevel` param to `mintAndDepositLocked`. Remove `unlockWithdraw` (move to CawProfile). |
+| Stripe webhook handler | Read `CARD_KYC_LEVEL` from env (default 0). Pass to `mintAndDepositLocked`. |
+| FE WithdrawLockStatus | Read `withdrawKycLevel(tokenId)` + `mintedAt(tokenId)`. Show countdown for level 0, KYC prompt for level 1-3. |
+| deploy.js | Update CawProfileMinter constructor (remove admin param). |
+| Tests | Update constructor calls (remove admin). Add time-lock tests. |
 
 ---
 
-## Civic Pass integration details
+## Env vars (sponsor server config)
 
-### Registration
-
-- **Sign up**: civic.me — free, email only
-- **Create a gatekeeper network**: pick verification level
-  - Network 1 = CAPTCHA (bot resistance)
-  - Network 10 = Uniqueness (liveness, no doc)
-  - Network 17 = ID Document (full KYC)
-- **No business entity required** for CAPTCHA or Uniqueness tiers
-- **ID Document tier**: agree to Civic's data-processing terms
-  (click-through; the Singapore partner entity could be the data
-  controller if needed)
-
-### On-chain addresses
-
-Civic's `GatewayTokenVerifier` is deployed on:
-- Ethereum mainnet: `0xF65b6396dF6B7e2D8a6270E3AB6c7BB08BAEF22E`
-- Sepolia: check civic docs for testnet address
-- Base: check civic docs
-- Arbitrum: check civic docs
-
-Our `CivicKycVerifier` contract wraps their verifier for the
-`IKycVerifier` interface our Minter expects.
-
-### FE SDK
-
-Civic provides `@civic/gateway-react` — a React component that
-renders the verification widget. When the user passes, a Gateway
-Token (SBT) is issued to their wallet. The component can be dropped
-into AccountSettings where the `WithdrawLockStatus` card is.
-
-### Cost
-
-- CAPTCHA: free
-- Uniqueness: free up to 1k/month
-- ID Document: ~$1-2/verification, first 100 free
-
-At scale (10k+ users/month), negotiate volume pricing with Civic.
-
----
-
-## Moonpay vs Stripe: the final picture
-
-| | Moonpay | Stripe |
+| Var | Default | Effect |
 |---|---|---|
-| What it is | Crypto onramp (MSB) | Payment processor |
-| KYC at purchase | Always (birthday, address, phone) | None (standard card checkout) |
-| Who receives fiat | Moonpay | You (or partner entity) |
-| Who receives crypto | User's wallet (ETH) | Nobody — your server mints with its own reserves |
-| User gets | ETH in their wallet | A withdraw-locked CAW profile |
-| Withdrawal | Permissionless (they have their own ETH) | Requires KYC unlock (per Network policy) |
-| Business entity needed | Yes (for production) | Yes (for Stripe merchant account) |
-| Friction | High (KYC at purchase) | Low (standard card checkout) |
-| Best for | Users who want to hold their own crypto | Users who just want to use the platform |
+| `CARD_KYC_LEVEL` | `0` | KYC level passed to `mintAndDepositLocked` for card-funded profiles. 0 = time-lock only. 1-3 = KYC required. |
+| `CARD_TIMELOCK_DAYS` | `180` | (FE display only — the contract constant is immutable at 180 days) |
+| `STRIPE_SECRET_KEY` | unset | Gates the Stripe checkout routes |
+| `STRIPE_WEBHOOK_SECRET` | unset | Stripe signature verification |
+| `VITE_STRIPE_PUBLISHABLE_KEY` | unset | FE Stripe checkout |
 
-**Both paths coexist.** Stripe is the default card path (lower
-friction). Moonpay remains available for operators who have registered
-and for users who specifically want ETH in their own wallet.
+---
+
+## Summary
+
+The protocol is KYC-neutral. Self-funded users are never locked.
+Card-funded users get a time-lock (180 days) by default — no KYC,
+no identity, no friction. If a specific sponsor server operator
+faces regulatory pressure, they flip `CARD_KYC_LEVEL` in their
+server config and future card mints require verification. Existing
+profiles are unaffected. The community never sees KYC unless a
+fiat-accepting operator is forced to turn it on.
