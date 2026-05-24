@@ -392,6 +392,7 @@ const OnrampOnboarding: React.FC = () => {
               src={moonpayUrl}
               title="Moonpay — buy ETH with card"
               allow="accelerometer; autoplay; camera; gyroscope; payment"
+              sandbox="allow-scripts allow-same-origin allow-forms allow-popups"
               className="w-full h-full border-0"
             />
           </div>

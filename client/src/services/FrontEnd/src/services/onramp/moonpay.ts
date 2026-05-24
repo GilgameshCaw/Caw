@@ -42,10 +42,32 @@ export interface MoonpayWidgetParams {
  * the URL works without a signature. In production the caller is responsible
  * for signing the query string — see the TODO comment at the top of this file.
  */
+const ALLOWED_MOONPAY_HOSTS = new Set([
+  'buy.moonpay.com',
+  'buy-sandbox.moonpay.com',
+  'buy-staging.moonpay.com',
+])
+
 export function buildMoonpayUrl(params: MoonpayWidgetParams): string {
   const baseUrl =
     (import.meta.env.VITE_MOONPAY_BASE_URL as string | undefined) ??
     'https://buy-sandbox.moonpay.com'
+
+  // Validate: only accept known Moonpay domains. A malicious operator
+  // (or compromised env var) could point this at an attacker-controlled
+  // URL that loads inside our iframe — even though the sandbox attribute
+  // blocks top-frame navigation, an attacker page could still phish
+  // card details or show a convincing fake UI.
+  try {
+    const host = new URL(baseUrl).hostname
+    if (!ALLOWED_MOONPAY_HOSTS.has(host)) {
+      console.error(`[Moonpay] VITE_MOONPAY_BASE_URL points at disallowed host "${host}". Refusing to build URL.`)
+      return ''
+    }
+  } catch {
+    console.error('[Moonpay] VITE_MOONPAY_BASE_URL is not a valid URL. Refusing to build URL.')
+    return ''
+  }
 
   const apiKey =
     (import.meta.env.VITE_MOONPAY_API_KEY as string | undefined) ?? ''
