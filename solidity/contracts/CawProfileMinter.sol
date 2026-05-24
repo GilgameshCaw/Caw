@@ -9,51 +9,11 @@ import "./interfaces/IMint.sol";
 import "./interfaces/ISmartEOA.sol";
 import "./ISwapRouter.sol";
 
-// ============================================
-// KYC VERIFIER INTERFACE
-// ============================================
-/// @notice Minimal interface for on-chain KYC attestation providers (Civic Pass, zkMe SBT, etc.).
-///         CawProfileMinter.unlockWithdraw delegates the KYC check to the deployed adapter.
-///         Adapter contracts (CivicKycVerifier, ZkMeKycVerifier) implement this interface.
-interface IKycVerifier {
-  /// @notice Returns true if `account` holds a valid KYC attestation from this provider.
-  function isVerified(address account) external view returns (bool);
-}
-
 /// @dev Audit-trail tags in this contract (e.g. "H-N", "M-N", "Round N",
 ///      "Audit fix YYYY-MM-DD") are decoded in `docs/AUDIT_TRAIL.md`.
 contract CawProfileMinter is Context {
 
   mapping(string => uint32) public idByUsername;
-
-  // ============================================
-  // KYC VERIFIER STATE
-  // ============================================
-  /// @notice On-chain KYC attestation verifier. address(0) = no provider configured yet.
-  ///         Set by admin via setKycVerifier. Must be configured before unlockWithdraw is callable.
-  IKycVerifier public kycVerifier;
-
-  /// @notice Admin address that can configure the kycVerifier. Set to address(0) at or
-  ///         before mainnet deploy to permanently lock the configuration. Only the admin
-  ///         can call setKycVerifier and transferAdmin. No admin = verifier is immutable.
-  address public admin;
-
-  /// @notice Per-tokenId withdraw lock state, mirrored from CawProfile._withdrawLocked.
-  ///         CawProfile keeps the mapping private (bytecode budget); this public mapping
-  ///         exposes the same state for off-chain consumers (FE, indexers).
-  ///         Invariant: mintedLocked[id] == true iff CawProfile._withdrawLocked[id] == true,
-  ///         since the Minter is the only caller of CawProfile.setWithdrawLocked.
-  mapping(uint32 => bool) public mintedLocked;
-
-  error NotAdmin();
-  error AlreadyUnlocked();
-  error KycRequired();
-  error KycNotConfigured();
-  error NotTokenOwner();
-
-  event KycVerifierSet(address indexed verifier);
-  event WithdrawLocked(uint32 indexed tokenId);
-  event WithdrawUnlocked(uint32 indexed tokenId);
 
   IMint CawProfile;
   IERC20 CAW;
@@ -100,12 +60,12 @@ contract CawProfileMinter is Context {
     "Authenticate(uint32 networkId,uint32 tokenId,uint32 lzDestId,uint256 lzTokenAmount,uint256 nonce)"
   );
 
-  constructor(address _caw, address _cawProfiles, address _router, address _admin) {
+  constructor(address _caw, address _cawProfiles, address _router) {
     CAW = IERC20(_caw);
     CawProfile = IMint(_cawProfiles);
     swapRouter = ISwapRouter(_router);
     WETH = swapRouter.WETH();
-    admin = _admin;
+    kycAdmin = msg.sender;
 
     // Compute EIP-712 domain separator once at deploy time.
     DOMAIN_SEPARATOR = keccak256(abi.encode(
@@ -115,24 +75,6 @@ contract CawProfileMinter is Context {
       block.chainid,
       address(this)
     ));
-  }
-
-  // ============================================
-  // ADMIN — KYC CONFIGURATION
-  // ============================================
-  /// @notice Set the KYC verifier adapter contract. Callable only by admin.
-  ///         Pass address(0) to disable the verifier (unlockWithdraw will revert KycNotConfigured).
-  ///         Set admin to address(0) post-config to permanently lock this setting.
-  function setKycVerifier(address _verifier) external {
-    if (msg.sender != admin) revert NotAdmin();
-    kycVerifier = IKycVerifier(_verifier);
-    emit KycVerifierSet(_verifier);
-  }
-
-  /// @notice Transfer admin rights. Pass address(0) to renounce permanently.
-  function transferAdmin(address _newAdmin) external {
-    if (msg.sender != admin) revert NotAdmin();
-    admin = _newAdmin;
   }
 
   // ============================================
@@ -230,7 +172,7 @@ contract CawProfileMinter is Context {
   }
 
   // ============================================
-  // CARD-FUNDED PROFILE PATH — withdraw-locked mint + KYC unlock
+  // CARD-FUNDED PROFILE PATH — withdraw-locked mint
   // ============================================
 
   /// @notice Mint a profile and deposit CAW on behalf of `recipient` with withdrawals
@@ -239,10 +181,9 @@ contract CawProfileMinter is Context {
   ///
   ///         The withdraw lock is set on CawProfile immediately after the mint.
   ///         The lock travels with the tokenId on transfer — a buyer inherits the lock
-  ///         and must also complete KYC to unlock. See CawProfile.setWithdrawLocked.
+  ///         and must satisfy the same kycLevel to unlock. See CawProfile.setWithdrawKycLevel.
   ///
-  ///         Only available to the msg.sender that holds CAW (burn + deposit). Emits
-  ///         WithdrawLocked(tokenId) so indexers can track the initial lock state.
+  ///         Only available to the msg.sender that holds CAW (burn + deposit).
   ///
   /// @param networkId       CAW network to register on.
   /// @param recipient       Address that will own the new profile NFT.
@@ -250,13 +191,15 @@ contract CawProfileMinter is Context {
   /// @param depositAmount   CAW to lock as balance (pulled from msg.sender). Zero is allowed.
   /// @param lzDestId        LayerZero destination chain ID.
   /// @param lzTokenAmount   Optional LZ ZRO payment (pass 0 for ETH-only fee).
+  /// @param kycLevel        0 = time-lock only (180 days). 1-3 = KYC required at that level.
   function mintAndDepositLocked(
     uint32 networkId,
     address recipient,
     string memory username,
     uint256 depositAmount,
     uint32 lzDestId,
-    uint256 lzTokenAmount
+    uint256 lzTokenAmount,
+    uint8 kycLevel
   ) external payable {
     uint32 newId = _burnAndAssignId(username, depositAmount);
     if (depositAmount > 0) {
@@ -264,28 +207,104 @@ contract CawProfileMinter is Context {
       CAW.approve(address(CawProfile), depositAmount);
     }
     CawProfile.mintAndDeposit{value: msg.value}(networkId, recipient, username, newId, depositAmount, lzDestId, lzTokenAmount, "");
-    // Set the withdraw lock AFTER the mint so newId is valid.
-    CawProfile.setWithdrawLocked(newId, true);
-    mintedLocked[newId] = true;
-    emit WithdrawLocked(newId);
+    // Record the KYC level locally — gate is enforced by checkWithdrawAllowed
+    // when CawProfile.withdrawTo calls back into this contract.
+    withdrawKycLevel[newId] = kycLevel;
+    mintedAt[newId] = block.timestamp;
   }
 
-  /// @notice Unlock withdrawals for a card-funded profile after the token owner
-  ///         presents a valid KYC attestation via the configured IKycVerifier adapter.
-  ///         Only callable by the current token owner (not transferable).
-  ///
-  ///         The lock state on CawProfile is cleared atomically with this call.
-  ///         mintedLocked is cleared in parallel so off-chain consumers see consistent state.
-  ///         The Minter emits WithdrawUnlocked so indexers can update their state.
-  ///
-  /// @param tokenId The profile whose withdrawals to unlock.
+  // ============================================
+  // WITHDRAW GATE — implements ICawWithdrawGate
+  // ============================================
+  // KYC state lives here (not on CawProfile) — CawProfile is near the EIP-170
+  // 24,576-byte cap. CawProfile.withdrawTo calls checkWithdrawAllowed(tokenId, owner)
+  // on this contract as an external view; if the gate is closed this reverts.
+
+  /// @dev Per-tokenId withdraw lock state. Set by mintAndDepositLocked at mint time.
+  ///      0 = unlocked (no restriction). 1-3 = KYC level required.
+  mapping(uint32 => uint8) public withdrawKycLevel;
+  /// @dev Mint timestamp for time-lock calculation. 0 = not locked.
+  mapping(uint32 => uint256) public mintedAt;
+
+  uint256 internal constant WITHDRAW_TIMELOCK = 180 days;
+
+  /// @notice Per-level KYC verifier adapter addresses.
+  ///         level 0 = time-lock only (no verifier needed).
+  ///         level 1-3 = IKycVerifier adapters (Civic Pass networks).
+  mapping(uint8 => address) public kycVerifiers;
+
+  address public kycAdmin;
+
+  error KycRequired();
+  error KycNotConfigured();
+  error AlreadyUnlocked();
+  error NotTokenOwner();
+  error WithdrawTimelocked();
+
+  event KycVerifierSet(uint8 indexed level, address indexed verifier);
+  event WithdrawUnlocked(uint32 indexed tokenId);
+  event KycAdminSet(address indexed admin);
+
+  /// @notice Set or change kycAdmin. Only callable by current kycAdmin.
+  function setKycAdmin(address _admin) external {
+    require(msg.sender == kycAdmin, "Not kycAdmin");
+    kycAdmin = _admin;
+    emit KycAdminSet(_admin);
+  }
+
+  /// @notice Configure the IKycVerifier adapter for a given level.
+  ///         Only callable by kycAdmin. Pass address(0) to disable a level.
+  function setKycVerifier(uint8 level, address verifier) external {
+    require(msg.sender == kycAdmin, "Not kycAdmin");
+    kycVerifiers[level] = verifier;
+    emit KycVerifierSet(level, verifier);
+  }
+
+  /// @notice Returns the verifier address for a given KYC level.
+  function kycVerifierFor(uint8 level) external view returns (address) {
+    return kycVerifiers[level];
+  }
+
+  /// @notice Called by CawProfile.withdrawTo to enforce the withdraw gate.
+  ///         Reverts if the token is still locked. No-op if not locked.
+  /// @param tokenId    The profile token to check.
+  /// @param tokenOwner Address of the token owner (supplied by CawProfile to avoid
+  ///                   a second ownerOf call inside the gate check).
+  function checkWithdrawAllowed(uint32 tokenId, address tokenOwner) external view {
+    uint8 level = withdrawKycLevel[tokenId];
+    uint256 minted = mintedAt[tokenId];
+    if (minted == 0) return; // not locked
+    if (level == 0) {
+      if (block.timestamp >= minted + WITHDRAW_TIMELOCK) return;
+      revert WithdrawTimelocked();
+    }
+    address verifier = kycVerifiers[level];
+    if (verifier == address(0)) revert KycNotConfigured();
+    (bool ok, bytes memory ret) = verifier.staticcall(
+      abi.encodeWithSignature("isVerified(address)", tokenOwner)
+    );
+    if (!ok || ret.length < 32 || !abi.decode(ret, (bool))) revert KycRequired();
+  }
+
+  /// @notice Token owner calls this to unlock withdrawals once KYC or time-lock is satisfied.
+  ///         Clears the lock state — subsequent withdrawals are unrestricted.
   function unlockWithdraw(uint32 tokenId) external {
     if (CawProfile.ownerOf(tokenId) != msg.sender) revert NotTokenOwner();
-    if (!mintedLocked[tokenId]) revert AlreadyUnlocked();
-    if (address(kycVerifier) == address(0)) revert KycNotConfigured();
-    if (!kycVerifier.isVerified(msg.sender)) revert KycRequired();
-    CawProfile.setWithdrawLocked(tokenId, false);
-    mintedLocked[tokenId] = false;
+    uint8 level = withdrawKycLevel[tokenId];
+    uint256 minted = mintedAt[tokenId];
+    if (minted == 0) revert AlreadyUnlocked();
+    if (level == 0) {
+      require(block.timestamp >= minted + WITHDRAW_TIMELOCK, "Timelock active");
+    } else {
+      address verifier = kycVerifiers[level];
+      if (verifier == address(0)) revert KycNotConfigured();
+      (bool ok, bytes memory ret) = verifier.staticcall(
+        abi.encodeWithSignature("isVerified(address)", msg.sender)
+      );
+      require(ok && ret.length >= 32 && abi.decode(ret, (bool)), "KycRequired");
+    }
+    delete withdrawKycLevel[tokenId];
+    delete mintedAt[tokenId];
     emit WithdrawUnlocked(tokenId);
   }
 

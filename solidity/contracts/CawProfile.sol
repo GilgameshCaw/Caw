@@ -19,6 +19,15 @@ import "./CawL1PriceReader.sol";
 import { OApp, Origin, MessagingFee } from "@layerzerolabs/lz-evm-oapp-v2/contracts/oapp/OApp.sol";
 import { CawNetworkManager, CawNetwork } from "./CawNetworkManager.sol";
 
+/// @dev Minter-side interface used by CawProfile.withdrawTo to enforce the
+///      withdraw gate. The Minter stores withdrawKycLevel and mintedAt per
+///      tokenId; CawProfile only stores balance + delegates the gate check here.
+interface ICawWithdrawGate {
+  /// @notice Reverts if the token's withdraw gate is not satisfied.
+  ///         Must revert with a reason string or custom error if blocked.
+  function checkWithdrawAllowed(uint32 tokenId, address tokenOwner) external view;
+}
+
 contract CawProfile is
   Context,
   ERC721Enumerable,
@@ -44,7 +53,6 @@ contract CawProfile is
   error NotApproved();
   error NotL2Mirror();
   error TooManyChains();
-  error WithdrawLocked();
 
   using OptionsBuilder for bytes;
   using EnumerableSet for EnumerableSet.UintSet;
@@ -121,9 +129,9 @@ contract CawProfile is
 
   mapping(uint32 => uint256) public withdrawable;
 
-  /// @dev Withdraw lock flag — packed into high bit of withdrawable[tokenId] for
-  ///      cheaper combined reads. This slot is kept to preserve the storage layout
-  ///      from the 10fbed91 deployment; it is not written by the current code.
+  /// @dev Withdraw lock flag — kept for storage layout compatibility with
+  ///      deployments before the KYC refactor. The slot is never written post-refactor;
+  ///      the gate is now enforced by CawProfileMinter.checkWithdrawAllowed.
   mapping(uint32 => bool) private _withdrawLocked;
 
   uint256 public constant rewardMultiplier = 10**18;
@@ -661,8 +669,11 @@ contract CawProfile is
 
   /// @notice Withdraw CAW to any address. Only callable by the token owner.
   function withdrawTo(uint32 cawNetworkId, uint32 tokenId, address recipient, uint256 lzTokenAmount) public payable {
+    // Withdraw gate check — delegated to Minter which stores per-tokenId
+    // KYC level and mintedAt. If minter is set, the call reverts if the gate
+    // is not satisfied. No-op for unlocked tokens (returns without reverting).
+    if (minter != address(0)) ICawWithdrawGate(minter).checkWithdrawAllowed(tokenId, ownerOf(tokenId));
     uint256 raw = withdrawable[tokenId];
-    if (raw >> 255 != 0) revert WithdrawLocked();
     if (ownerOf(tokenId) != msg.sender) revert NotOwner();
     if (raw == 0) revert NothingToWithdraw();
     if (recipient == address(0)) revert ZeroAddr();
@@ -683,16 +694,6 @@ contract CawProfile is
     // Withdraw is observable via the ERC20 Transfer fired by CAW.transfer
     // above (from = address(this), to = recipient). No bespoke event
     // needed — see event-declarations comment near `Deposited`.
-  }
-
-  /// @notice Set or clear the per-tokenId withdraw lock. Callable only by the Minter.
-  /// Set=true at mint time by mintAndDepositLocked; set=false by unlockWithdraw on
-  /// CawProfileMinter after KYC attestation. The WithdrawUnlocked event is emitted
-  /// by the Minter rather than here to save CawProfile bytecode budget.
-  function setWithdrawLocked(uint32 tokenId, bool locked) external {
-    if (msg.sender != minter) revert NotMinter();
-    if (locked) withdrawable[tokenId] |= (1 << 255);
-    else withdrawable[tokenId] &= type(uint256).max >> 1;
   }
 
   /**
@@ -760,9 +761,8 @@ contract CawProfile is
     chosenChainIds[tokenId].add(uint256(lzDestId));
   }
 
-  function getChosenChainIdAtIndex(uint32 token, uint256 index) external view returns (uint256) {
-    return chosenChainIds[token].at(index);
-  }
+  // getChosenChainIdAtIndex removed — off-chain consumers can read from CawProfileLens
+  // or via eth_getStorageAt. The ABI-getter was ~30 bytes; reclaimed for KYC refactor.
 
   function _afterTokenTransfer(address from, address to, uint256 tokenId, uint256 batchSize) internal virtual override {
     uint32 token = uint32(tokenId);

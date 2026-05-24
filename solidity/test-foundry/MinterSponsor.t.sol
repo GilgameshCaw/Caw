@@ -328,7 +328,7 @@ contract MinterSponsorTest is Test {
         // Use vm.computeCreateAddress to predict the minter address:
         address predictedMinter = vm.computeCreateAddress(address(this), vm.getNonce(address(this)) + 1);
         profile  = new MockProfile(predictedMinter, address(caw));
-        minter   = new CawProfileMinter(address(caw), address(profile), address(router), address(this));
+        minter   = new CawProfileMinter(address(caw), address(profile), address(router));
         require(address(minter) == predictedMinter, "address prediction mismatch");
 
         scwMock  = new SmartContractWalletMock();
@@ -876,8 +876,7 @@ contract MinterSponsorTest is Test {
         CawProfileMinter minterOnBase = new CawProfileMinter(
             address(caw),
             address(profile),  // re-uses the same profile mock; just for DS
-            address(router),
-            address(this)
+            address(router)
         );
         bytes32 dsOnBase = minterOnBase.DOMAIN_SEPARATOR();
         vm.chainId(originalChainId);

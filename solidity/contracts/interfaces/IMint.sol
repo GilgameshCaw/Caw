@@ -65,8 +65,4 @@ interface IMint {
     uint256 lzTokenAmount
   ) external payable;
 
-  /// @notice Set or clear the per-tokenId withdraw lock. Callable only by the registered minter.
-  /// Used by mintAndDepositLocked (locked=true) and unlockWithdraw on the Minter (locked=false).
-  function setWithdrawLocked(uint32 tokenId, bool locked) external;
-
 }

@@ -247,7 +247,7 @@ async function fullSetup(accounts) {
   await networkManager.createNetwork("Test Network", accounts[0], l2, 0, 0, 0, 0);
   const networkId = 1;
 
-  const minter = await CawProfileMinter.new(token.address, cawProfile.address, mockRouter.address, accounts[0]);
+  const minter = await CawProfileMinter.new(token.address, cawProfile.address, mockRouter.address);
   await cawProfile.setMinter(minter.address);
   const quoter = await CawProfileQuoter.new(cawProfile.address);
   const cawActions = await CawActions.new(cawProfileL2.address, "0x0000000000000000000000000000000000000000", "0x0000000000000000000000000000000000000000000000000000000000000000", "0x0000000000000000000000000000000000000000", "0x0000000000000000000000000000000000000000");
@@ -534,7 +534,7 @@ async function fullSetupWithSibling(accounts) {
   await networkManager.createNetwork("Test Network 2", accounts[0], l2, 0, 0, 0, 0);
   const networkId = 1;
 
-  const minter = await CawProfileMinter.new(token.address, cawProfile.address, mockRouter.address, accounts[0]);
+  const minter = await CawProfileMinter.new(token.address, cawProfile.address, mockRouter.address);
   await cawProfile.setMinter(minter.address);
   const quoter = await CawProfileQuoter.new(cawProfile.address);
 
