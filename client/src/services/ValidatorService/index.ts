@@ -69,14 +69,6 @@ function zkCacheKey(packedActions: string, packedSigs: string): string {
   return keccak256(solidityPacked(['bytes', 'bytes'], [packedActions, packedSigs]))
 }
 
-/**
- * Stage a proof for a batch the validator will submit later. Producer side
- * of the cache. Called from the (still dormant) background prover.
- */
-export function stageZkProof(p: StagedZkProof): void {
-  zkProofCache.set(zkCacheKey(p.packedActions, p.packedSigs), p)
-}
-
 /** Non-mutating: returns the staged proof if any. */
 function peekZkProof(packedActions: string, packedSigs: string): StagedZkProof | null {
   return zkProofCache.get(zkCacheKey(packedActions, packedSigs)) ?? null
@@ -95,35 +87,117 @@ function isZkProverEnabled(): boolean {
   return process.env.ZK_PROVER_ENABLED === '1'
 }
 
+// Break-even threshold: ZK path costs ~265K gas for verifier + ~7.4K per action
+// saved vs ecrecover. Sig path costs ~8.6K per action. Cross-over is n≈70.
+// Configurable so operators can tune for their gas price environment.
+const ZK_BREAKEVEN_THRESHOLD = Number(process.env.ZK_BREAKEVEN_THRESHOLD ?? 70)
+
+// Pre-flight constants fetched once at validator startup (M-1, M-2).
+// Populated by initZkPreflightConstants() which is called after initializeConnection().
+// null = not yet fetched; mismatched proofs are rejected before encodeProcessActionsCalldata
+// is reached.
+let EXPECTED_DOMAIN_HASH: string | null = null
+let EXPECTED_ZK_VKEY: string | null = null
+
+// Minimal ABI entries for zkProgramVKey — not in the generated ABI because it
+// was added after the last codegen run.
+const ZK_VIEW_ABI = [
+  'function zkProgramVKey() view returns (bytes32)',
+]
+const zkViewIface = new Interface(ZK_VIEW_ABI)
+
+/**
+ * Fetch eip712DomainHash and zkProgramVKey from the deployed CawActions contract
+ * once at startup. Safe to re-call on reconnect — values are immutable on-chain.
+ * Failures are non-fatal: constants remain null and the ZK checks below become
+ * no-ops (i.e. a misconfigured validator still submits; it just wastes gas rather
+ * than crashing). A CRITICAL log on startup makes the failure visible.
+ */
+export async function initZkPreflightConstants(provider: { call: (tx: { to: string; data: string }) => Promise<string> }): Promise<void> {
+  try {
+    // eip712DomainHash() is in the generated cawActionsAbi
+    const domainIface = new Interface([
+      'function eip712DomainHash() view returns (bytes32)',
+    ])
+    const domainData = domainIface.encodeFunctionData('eip712DomainHash', [])
+    const domainResult = await provider.call({ to: CAW_ACTIONS_ADDRESS, data: domainData })
+    EXPECTED_DOMAIN_HASH = domainIface.decodeFunctionResult('eip712DomainHash', domainResult)[0] as string
+    console.log(`[Validator/ZK] Cached eip712DomainHash: ${EXPECTED_DOMAIN_HASH}`)
+  } catch (err: any) {
+    console.error(`[Validator/ZK] CRITICAL: Failed to fetch eip712DomainHash — domainSeparator pre-flight disabled: ${err.message}`)
+  }
+  try {
+    const vkeyData = zkViewIface.encodeFunctionData('zkProgramVKey', [])
+    const vkeyResult = await provider.call({ to: CAW_ACTIONS_ADDRESS, data: vkeyData })
+    EXPECTED_ZK_VKEY = zkViewIface.decodeFunctionResult('zkProgramVKey', vkeyResult)[0] as string
+    console.log(`[Validator/ZK] Cached zkProgramVKey: ${EXPECTED_ZK_VKEY}`)
+  } catch (err: any) {
+    console.error(`[Validator/ZK] CRITICAL: Failed to fetch zkProgramVKey — vkey pre-flight disabled: ${err.message}`)
+  }
+}
+
+/**
+ * Stage a proof for a batch the validator will submit later. Producer side
+ * of the cache. Called from the (still dormant) background prover.
+ *
+ * Rejects the proof immediately if its vkey doesn't match the deployed
+ * zkProgramVKey immutable (M-2). A mismatch means the prover binary is stale
+ * relative to the on-chain deployment.
+ */
+export function stageZkProof(p: StagedZkProof & { vkey: string }): void {
+  if (EXPECTED_ZK_VKEY !== null && p.vkey !== EXPECTED_ZK_VKEY) {
+    console.error(
+      `[Validator/ZK] CRITICAL: stageZkProof rejected — vkey mismatch. ` +
+      `Prover returned ${p.vkey}, deployed contract expects ${EXPECTED_ZK_VKEY}. ` +
+      `Falling back to sig path. Update the prover binary.`
+    )
+    return
+  }
+  zkProofCache.set(zkCacheKey(p.packedActions, p.packedSigs), p)
+}
+
 /**
  * Pick the right CawActions calldata for this batch.
  *
  * Returns ZK-path calldata if (a) the env flag is on AND (b) a matching
- * proof is staged in the cache. Otherwise returns the sig-path calldata
- * exactly as before (the cache miss is the no-op fallback). Callers don't
- * branch on the result — they just send the bytes.
+ * proof is staged in the cache AND (c) batch size meets the break-even
+ * threshold AND (d) the staged proof's domainSeparator matches the deployed
+ * contract. Otherwise returns the sig-path calldata. Callers don't branch
+ * on the result — they just send the bytes.
  */
 function encodeProcessActionsCalldata(
   validatorId: number,
-  multiData: { packedActions: string; packedSigs: string },
+  multiData: { actions: { length: number }; packedActions: string; packedSigs: string },
   quote: { withdrawFee: bigint; withdrawLzTokenAmount: bigint },
   opts: { consume: boolean },
 ): { calldata: string; isZk: boolean } {
   if (isZkProverEnabled()) {
-    const staged = opts.consume
-      ? consumeZkProof(multiData.packedActions, multiData.packedSigs)
-      : peekZkProof(multiData.packedActions, multiData.packedSigs)
-    if (staged) {
-      const calldata = packedIface.encodeFunctionData('processActionsWithZkSigs', [
-        validatorId,
-        multiData.packedActions,
-        multiData.packedSigs,
-        staged.signers,
-        staged.proof,
-        quote.withdrawFee,
-        quote.withdrawLzTokenAmount,
-      ])
-      return { calldata, isZk: true }
+    // L-1: Below break-even, sig path is cheaper (~25% less gas at n<70).
+    if (multiData.actions.length >= ZK_BREAKEVEN_THRESHOLD) {
+      const staged = opts.consume
+        ? consumeZkProof(multiData.packedActions, multiData.packedSigs)
+        : peekZkProof(multiData.packedActions, multiData.packedSigs)
+      if (staged) {
+        // M-1: Reject proof if domainSeparator doesn't match deployed contract.
+        if (EXPECTED_DOMAIN_HASH !== null && staged.domainSeparator !== EXPECTED_DOMAIN_HASH) {
+          console.error(
+            `[Validator/ZK] CRITICAL: Proof domainSeparator mismatch — dropping staged proof, falling back to sig path. ` +
+            `Staged: ${staged.domainSeparator}, expected: ${EXPECTED_DOMAIN_HASH}`
+          )
+          // Proof is already consumed from cache if consume=true; don't re-stage it.
+        } else {
+          const calldata = packedIface.encodeFunctionData('processActionsWithZkSigs', [
+            validatorId,
+            multiData.packedActions,
+            multiData.packedSigs,
+            staged.signers,
+            staged.proof,
+            quote.withdrawFee,
+            quote.withdrawLzTokenAmount,
+          ])
+          return { calldata, isZk: true }
+        }
+      }
     }
   }
   const calldata = packedIface.encodeFunctionData('processActions', [
@@ -1115,10 +1189,16 @@ export const validatorService: Service = {
       }
     }
 
-    // Initialize connection
-    initializeConnection().catch(e => {
-      console.log('[Validator] Error during initial connection, will retry:', e.message)
-    })
+    // Initialize connection; then prime the ZK pre-flight constants (M-1, M-2).
+    // initZkPreflightConstants uses httpProvider which is available immediately
+    // (it's built before initializeConnection is called). We chain here so the
+    // log ordering is predictable and the ZK constants are ready before the
+    // first poll fires (checkInterval ≥ 10 s; two eth_calls are << 1 s).
+    initializeConnection()
+      .then(() => initZkPreflightConstants(httpProvider))
+      .catch(e => {
+        console.log('[Validator] Error during initial connection / ZK preflight, will retry:', e.message)
+      })
 
     // On startup, reset ALL 'processing' entries back to 'pending'
     // These are definitely stale since we just started
@@ -1904,11 +1984,45 @@ export const validatorService: Service = {
         if (err.message?.includes('oversized data') && multiData.actions.length > 1) {
           const halfLen = Math.floor(multiData.actions.length / 2)
           console.warn(`[submitProcessActions] Oversized tx (${multiData.actions.length} actions). Splitting in half — sending first ${halfLen}, deferring the rest.`)
+          const slicedActions = multiData.actions.slice(0, halfLen)
+          const slicedV = multiData.v.slice(0, halfLen)
+          const slicedR = multiData.r.slice(0, halfLen)
+          const slicedS = multiData.s.slice(0, halfLen)
+          // H-1: repack the sliced sub-arrays so the recursive call receives valid
+          // packed bytes instead of undefined (which caused an ABI-encode throw or
+          // zero-length calldata → on-chain revert).
+          //
+          // For packedActions: same mapping buildMultiActionData uses at line ~1463.
+          // For packedSigs: multiData.v/r/s are FLAT per-action arrays; the grouped
+          // structure (groupSize > 1 for ActionBatch rows) is not preserved in
+          // multiData. We use packSignatures (groupSize=1 per action) here because:
+          //   (a) The calldata-size cap in fetchBoundedCandidates already rolls back
+          //       any partial ActionBatch group before it overflows, so in practice
+          //       all batch-group rows either fit together or are deferred — meaning
+          //       the oversized-data split won't bisect a live batch group.
+          //   (b) Even if it did, the on-chain revert is the same behaviour as the
+          //       existing bug (which crashed before even reaching the RPC).
+          // A future improvement is to carry groups[] in multiData and slice them
+          // here, but that requires broader refactoring beyond this surgical fix.
           const firstHalf = {
-            actions: multiData.actions.slice(0, halfLen),
-            v: multiData.v.slice(0, halfLen),
-            r: multiData.r.slice(0, halfLen),
-            s: multiData.s.slice(0, halfLen),
+            actions: slicedActions,
+            v: slicedV,
+            r: slicedR,
+            s: slicedS,
+            packedActions: bytesToHex(packActions(slicedActions.map((a: any) => ({
+              actionType: Number(a.actionType),
+              senderId: Number(a.senderId),
+              receiverId: Number(a.receiverId || 0),
+              receiverCawonce: Number(a.receiverCawonce || 0),
+              clientId: Number(a.clientId),
+              cawonce: Number(a.cawonce),
+              recipients: (a.recipients || []).map(Number),
+              amounts: a.amounts.map((x: any) => BigInt(x)),
+              text: a.text || '0x',
+            })))),
+            packedSigs: bytesToHex(packSignatures(
+              slicedV.map((v: number, i: number) => ({ v, r: slicedR[i], s: slicedS[i] }))
+            )),
           }
           // Note: quote was computed for the full batch. The withdraw-related
           // portion should still be ≥ what we need for this smaller batch.
