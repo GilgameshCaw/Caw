@@ -1,5 +1,5 @@
 import { prisma } from '../../prismaClient'
-import { JsonRpcProvider, WebSocketProvider, Contract } from 'ethers'
+import { ethers, JsonRpcProvider, WebSocketProvider, Contract } from 'ethers'
 import { makeJsonRpcProvider, makeWebSocketProvider, getL2HttpRpcUrl } from '../../utils/rpcProvider'
 import { dataCleanerLogger as logger } from '../../utils/dataCleanerLogger'
 import { markTxQueueFailed } from '../../utils/txQueueFailure'
@@ -1015,6 +1015,134 @@ async function cleanupPendingMintDeposits() {
 }
 
 /**
+ * Promote waiting_for_session TxQueue rows back to 'pending' once the sender's
+ * Quick Sign session has actually landed on L2 (i.e. the SessionKey row has
+ * been indexed by the L2Events listener in ChainSyncService).
+ *
+ * Flow:
+ *   1. Load all waiting_for_session rows (bounded — cap is 10 per sender).
+ *   2. For each row, recover the signer address from the signed payload.
+ *   3. Look up SessionKey by (ownerAddress, signerAddress). If a valid
+ *      (non-revoked, non-expired, non-zero-expiry) row exists, the LZ message
+ *      has landed — promote the TxQueue row to 'pending'.
+ *   4. Rows older than 20 min with no session are failed with a clear reason.
+ *      The ValidatorService has its own 25-min safety-net for belt-and-suspenders.
+ */
+async function cleanupPendingSessionRegistrations() {
+  try {
+    const waitingRows = await prisma.txQueue.findMany({
+      where: { status: 'waiting_for_session' },
+      select: { id: true, senderId: true, createdAt: true, payload: true, signedTx: true }
+    })
+
+    if (waitingRows.length === 0) return
+
+    logger.log(`[PendingSession] ${waitingRows.length} waiting_for_session rows — checking SessionKey table...`)
+
+    const twentyMinutesAgo = new Date(Date.now() - 20 * 60 * 1000)
+    const nowSec = Math.floor(Date.now() / 1000)
+
+    // Build a lookup of ownerAddress by senderId (one query for all senders).
+    const senderIds = [...new Set(waitingRows.map(r => r.senderId))]
+    const users = await prisma.user.findMany({
+      where: { tokenId: { in: senderIds } },
+      select: { tokenId: true, address: true }
+    })
+    const ownerByTokenId = new Map(users.map(u => [u.tokenId, u.address.toLowerCase()]))
+
+    for (const row of waitingRows) {
+      try {
+        const payload = row.payload as any
+        const { data, domain, types } = payload ?? {}
+        if (!data || !domain || !types?.ActionData) {
+          // Malformed payload — fail immediately
+          await markTxQueueFailed(
+            prisma,
+            row.id,
+            'Malformed payload in waiting_for_session row',
+            row.senderId,
+            data ?? {}
+          )
+          continue
+        }
+
+        // Recover the session-key signer address from the stored signature.
+        let signerAddress: string
+        try {
+          signerAddress = ethers.verifyTypedData(
+            domain,
+            { ActionData: types.ActionData },
+            data,
+            row.signedTx
+          ).toLowerCase()
+        } catch {
+          // Unrecoverable signature — fail the row
+          await markTxQueueFailed(
+            prisma,
+            row.id,
+            'Cannot recover signer from waiting_for_session row',
+            row.senderId,
+            data
+          )
+          continue
+        }
+
+        const ownerAddress = ownerByTokenId.get(row.senderId)
+        if (!ownerAddress) {
+          // No User row yet — User indexer hasn't caught up. Hold the row
+          // (don't fail — the Mint event may still be in flight).
+          continue
+        }
+
+        // Check local SessionKey table — populated by the L2Events indexer.
+        const sessionRow = await prisma.sessionKey.findUnique({
+          where: { ownerAddress_sessionAddress: { ownerAddress, sessionAddress: signerAddress } }
+        })
+
+        const sessionValid = sessionRow &&
+          !sessionRow.revokedAt &&
+          Number(sessionRow.expiry) > 0 &&
+          Number(sessionRow.expiry) > nowSec
+
+        if (sessionValid) {
+          // Session has landed on L2 — promote to pending so the validator
+          // can simulate normally.
+          await prisma.txQueue.update({
+            where: { id: row.id },
+            data: {
+              status: 'pending',
+              pendingQuickSignTxHash: null,
+              reason: null,
+              // Back-fill implicitTip from the now-available SessionKey row.
+              implicitTip: sessionRow!.perActionTipRate ?? '0',
+            }
+          })
+          logger.log(`[PendingSession] TxQueue ${row.id} (sender ${row.senderId}): session landed — promoted to pending`)
+          continue
+        }
+
+        // Session not yet visible — check timeout
+        if (row.createdAt < twentyMinutesAgo) {
+          await markTxQueueFailed(
+            prisma,
+            row.id,
+            'Quick Sign session did not register on L2 in time. Please try again.',
+            row.senderId,
+            data
+          )
+          logger.log(`[PendingSession] TxQueue ${row.id} (sender ${row.senderId}): timed out (>20 min, no session)`)
+        }
+        // else: still within window, hold and retry next tick
+      } catch (err: any) {
+        logger.error(`[PendingSession] Row ${row.id} check failed: ${err.message}`)
+      }
+    }
+  } catch (err: any) {
+    logger.error(`[PendingSession] Fatal: ${err.message}`)
+  }
+}
+
+/**
  * Main cleanup function that runs all data cleaning tasks
  */
 async function runDataCleanup() {
@@ -1049,6 +1177,9 @@ async function runDataCleanup() {
 
   // Promote waiting_for_deposit rows once their L1 deposit has landed on L2
   await cleanupPendingMintDeposits()
+
+  // Promote waiting_for_session rows once their Quick Sign session has landed on L2
+  await cleanupPendingSessionRegistrations()
 
   // Refresh User.onChainStakeWei for users with a pending L1→L2 deposit so
   // /api/users/by-token can read the cached value instead of hitting L2 RPC.

@@ -364,16 +364,33 @@ router.post('/', async (req, res) => {
     // a second DB read per action. perActionTipRate is null for owner sigs.
     let perActionTipRate: bigint | null = null
 
+    // Flag set when we should park the row as waiting_for_session instead of
+    // rejecting. Only true when reason is exactly 'Session key not registered'
+    // AND the client provided a pendingQuickSignTxHash hint.
+    let parkAsWaitingForSession = false
+
     if (!isOwner) {
       // Check if signer is a valid session key for this owner
       const actionType = typeof data.actionType === 'number' ? data.actionType : undefined
       const sessionCheck = await checkSessionKeyOnChain(ownerAddress, recoveredAddress, actionType)
 
       if (!sessionCheck.valid) {
-        console.warn(`[Actions] Rejected: signer ${recoveredAddress} not authorized for owner ${ownerAddress}: ${sessionCheck.reason}`)
-        return res.status(403).json({ error: sessionCheck.reason || 'Signer is not authorized for this token' })
+        // Short-circuit: if the session hasn't landed on L2 yet and the client
+        // told us it's in-flight (pendingQuickSignTxHash), park rather than 403.
+        // Any other failure reason (revoked, expired, out-of-scope, spend limit)
+        // still hard-rejects — those are permanent, not transient.
+        if (
+          sessionCheck.reason === 'Session key not registered' &&
+          sanitizedPendingQuickSignTxHash !== null
+        ) {
+          parkAsWaitingForSession = true
+        } else {
+          console.warn(`[Actions] Rejected: signer ${recoveredAddress} not authorized for owner ${ownerAddress}: ${sessionCheck.reason}`)
+          return res.status(403).json({ error: sessionCheck.reason || 'Signer is not authorized for this token' })
+        }
+      } else {
+        perActionTipRate = sessionCheck.perActionTipRate ?? 0n
       }
-      perActionTipRate = sessionCheck.perActionTipRate ?? 0n
     }
     mark('sessionCheck')
 
@@ -474,6 +491,14 @@ router.post('/', async (req, res) => {
       })
       if (existingWaiting >= 10) {
         return res.status(429).json({ error: 'Too many actions waiting for deposit. Please wait for them to process.' })
+      }
+    }
+    if (parkAsWaitingForSession) {
+      const existingWaitingSession = await prisma.txQueue.count({
+        where: { senderId: data.senderId, status: 'waiting_for_session' }
+      })
+      if (existingWaitingSession >= 10) {
+        return res.status(429).json({ error: 'Too many actions waiting for session registration. Please wait for them to process.' })
       }
     }
     {
@@ -1254,17 +1279,26 @@ router.post('/', async (req, res) => {
       }
     }
 
-    // Per-sender cap on waiting_for_deposit slots. An attacker who knows a sender's
-    // tokenId could spam actions with a fake pendingDepositTxHash to fill the queue
-    // with rows that sit waiting for 20 min. Capping at 10 in-flight waiting rows
-    // per sender limits the blast radius to their own queue (which they already
-    // control anyway — they'd have to sign each action themselves).
+    // Per-sender cap on waiting_for_deposit / waiting_for_session slots.
+    // An attacker who knows a sender's tokenId could spam actions with a
+    // fake pendingDepositTxHash / pendingQuickSignTxHash to fill the queue
+    // with rows that sit waiting for 20 min. Capping at 10 in-flight waiting
+    // rows per sender limits the blast radius to their own queue (which they
+    // already control anyway — they'd have to sign each action themselves).
     if (sanitizedPendingDepositTxHash) {
       const existingWaiting = await prisma.txQueue.count({
         where: { senderId: data.senderId, status: 'waiting_for_deposit' }
       })
       if (existingWaiting >= 10) {
         return res.status(429).json({ error: 'Too many actions waiting for deposit. Please wait for them to process.' })
+      }
+    }
+    if (parkAsWaitingForSession) {
+      const existingWaitingSession = await prisma.txQueue.count({
+        where: { senderId: data.senderId, status: 'waiting_for_session' }
+      })
+      if (existingWaitingSession >= 10) {
+        return res.status(429).json({ error: 'Too many actions waiting for session registration. Please wait for them to process.' })
       }
     }
 
@@ -1391,7 +1425,15 @@ router.post('/', async (req, res) => {
             clientVersion: provenance.clientVersion,
             clientOrigin: provenance.clientOrigin,
             signerKind: isOwner ? 'owner' : 'session',
-            implicitTip: perActionTipRate !== null ? perActionTipRate.toString() : null,
+            // When parking for a pending session registration, perActionTipRate
+            // is unknown (the session record hasn't landed on L2 yet). Set
+            // implicitTip to null; the ValidatorService will re-read it from
+            // the SessionKey row once the row is promoted back to 'pending'.
+            implicitTip: parkAsWaitingForSession ? null : (perActionTipRate !== null ? perActionTipRate.toString() : null),
+            // Park as waiting_for_session when the session key hasn't landed on
+            // L2 yet. The DataCleaner will promote to 'pending' once it appears.
+            status: parkAsWaitingForSession ? 'waiting_for_session' : 'pending',
+            reason: parkAsWaitingForSession ? 'Waiting for Quick Sign session to register on L2' : undefined,
           }
         })
         return created
@@ -1665,11 +1707,22 @@ router.post('/batch', async (req, res) => {
 
     // If not owner, check session key once
     const isOwner = firstSigner === ownerAddress
+    // Set when the session hasn't landed on L2 yet but the client sent a
+    // pendingQuickSignTxHash hint — park all rows as waiting_for_session
+    // instead of 403-ing. Same pattern as the single-action endpoint.
+    let batchParkAsWaitingForSession = false
     if (!isOwner) {
       const firstActionType = typeof actions[0].data.actionType === 'number' ? actions[0].data.actionType : undefined
       const sessionCheck = await checkSessionKeyOnChain(ownerAddress, firstSigner, firstActionType)
       if (!sessionCheck.valid) {
-        return res.status(403).json({ error: sessionCheck.reason || 'Signer is not authorized' })
+        if (
+          sessionCheck.reason === 'Session key not registered' &&
+          sanitizedPendingQuickSignTxHash !== null
+        ) {
+          batchParkAsWaitingForSession = true
+        } else {
+          return res.status(403).json({ error: sessionCheck.reason || 'Signer is not authorized' })
+        }
       }
     }
 
@@ -1814,6 +1867,13 @@ router.post('/batch', async (req, res) => {
                 pendingQuickSignTxHash: sanitizedPendingQuickSignTxHash,
                 clientVersion: provenance.clientVersion,
                 clientOrigin: provenance.clientOrigin,
+                // Park as waiting_for_session when the Quick Sign session
+                // hasn't landed on L2 yet. DataCleaner promotes once the
+                // SessionKey row appears in the local DB.
+                ...(batchParkAsWaitingForSession ? {
+                  status: 'waiting_for_session',
+                  reason: 'Waiting for Quick Sign session to register on L2',
+                } : {}),
               }
             }))
           )

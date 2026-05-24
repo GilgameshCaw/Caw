@@ -1284,20 +1284,48 @@ export const validatorService: Service = {
       // the deposit hold above. The bundled mintAndDeposit+QuickSign flow registers
       // the session on L2 via the same LZ message that lands the deposit; until
       // that lands, simulating an action signed by the session key would fail with
-      // "Session expired or not found". Reuse waiting_for_deposit as the holding
-      // status — it already gets re-promoted on the same L2-watch cadence.
+      // "Session expired or not found". Use the dedicated waiting_for_session
+      // status so the DataCleaner can run a session-specific re-promote sweep
+      // (checking the local SessionKey table rather than L2 auth+balance).
+      // Note: rows arriving here from the API already carry status='waiting_for_session';
+      // this sweep catches any 'pending' rows with a pendingQuickSignTxHash that
+      // slipped through (e.g. submitted before the API-side gate was deployed).
       const sessionHeldCount = await prisma.txQueue.updateMany({
         where: {
           status: 'pending',
           pendingQuickSignTxHash: { not: null }
         },
         data: {
-          status: 'waiting_for_deposit',
+          status: 'waiting_for_session',
           reason: 'Waiting for L1 Quick Sign session to land on L2'
         }
       })
       if (sessionHeldCount.count > 0) {
-        console.log(`[Validator] Pre-sim hold: moved ${sessionHeldCount.count} session-pending rows to waiting_for_deposit`)
+        console.log(`[Validator] Pre-sim hold: moved ${sessionHeldCount.count} session-pending rows to waiting_for_session`)
+      }
+
+      // Safety net: hard-fail waiting_for_session rows older than 25 min.
+      // The DataCleaner's cleanupPendingSessionRegistrations sweep handles
+      // the normal promotion path and its own 20-min timeout; this is the
+      // last-resort backstop in case the DataCleaner is temporarily down.
+      const staleSessionRows = await prisma.txQueue.findMany({
+        where: {
+          status: 'waiting_for_session',
+          createdAt: { lt: twentyFiveMinutesAgo }
+        },
+        select: { id: true, senderId: true, payload: true }
+      })
+      if (staleSessionRows.length > 0) {
+        console.log(`[Validator] Safety net: failing ${staleSessionRows.length} waiting_for_session rows older than 25 min`)
+        for (const row of staleSessionRows) {
+          const data = (row.payload as any)?.data ?? {}
+          await markTxQueueFailed(
+            row.id,
+            'Quick Sign session did not register on L2 in time. Please try again.',
+            row.senderId,
+            data
+          )
+        }
       }
 
       // awaiting_indexer recheck: rows where simulation reported "Cawonce

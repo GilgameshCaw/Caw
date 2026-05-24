@@ -1,0 +1,13 @@
+-- Add waiting_for_session to the set of recognised TxQueue status values.
+-- TxQueue.status is a plain String column (no DB enum), so no ALTER TYPE needed.
+-- This migration is a no-op against the DB schema itself; it exists as a
+-- record-keeping marker that documents the new status value and its intent.
+--
+-- waiting_for_session: row is parked here when the client supplied a
+-- pendingQuickSignTxHash and checkSessionKeyOnChain returned
+-- 'Session key not registered'. The session-key L1→L2 LayerZero message
+-- has not yet landed. The DataCleaner's cleanupPendingSessionRegistrations
+-- sweep re-checks on each tick and promotes to 'pending' once the
+-- SessionKey row appears in the local DB (mirrored from the L2 indexer).
+-- Rows older than 20 min without a landed session are failed.
+SELECT 1; -- no-op; status is a free-text String column, not a DB enum
