@@ -26,7 +26,13 @@
     "CawActionsArchive_L2": "0x506c5c09B064fcFf6861B1e08b6530D997715159",
     "CawActionsArchive_L2b": "0x56BC0Ef3E55CcCb9e0E6ad7E8d8Ce332B368E06b",
     "CawChallengeRelay_L2": "0x166FD4aa0379D01251beFAdcc3646004D5be9e91",
-    "CawChallengeRelay_L2b": "0x5e8fFC6fe6F2902970b6733f064B8bF82E5c4D0e"
+    "CawChallengeRelay_L2b": "0x5e8fFC6fe6F2902970b6733f064B8bF82E5c4D0e",
+    "CawL1PriceReader": "0x239a26a0C73e37FC9E50572D969266EA57ca2cA5",
+    "CawProfileViews": "0xC3caa23100d2D9Aa9d230aD9014649c5D4297A59",
+    "CawProfileLens": "0x2aD8c556F7ABf752db022b6EFe8f954c9e140ef5",
+    "PathwayExpander_L2b": "0x9bE0FBd31BeBB3Bf535cC5fA43999B72D05e1637",
+    "PathwayExpander_L2": "0x9da6ea2120c7E78FFf8b9cE10c35cDB5b9B88dbC",
+    "PathwayExpander_L1": "0x3bfCDA8D78d20C7C6098B4E81F3F9d213059CeF9"
   },
   "linking": {
     "networkCreated": true,
@@ -46,5 +52,8 @@
     "CawActions_L1": "0x0b498D4402E8F5bCDD7da7e245B537588263f5Bb",
     "CawActionsERC1271_L1": "0x6b0e5c11d8e97Af59E03b08d631c1BA7DD4fDF1e"
   },
-  "l2DeployBlock": 41803659
+  "l2DeployBlock": 41839702,
+  "external": {
+    "cawWethPair": "0x6289Fa33B3542ccc6730599f6F3D87F565Ce5d35"
+  }
 }
