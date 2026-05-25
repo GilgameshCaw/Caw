@@ -1313,17 +1313,8 @@ export function useSignAndSubmitAction() {
     try {
       let signature: `0x${string}`
 
-      // Auto-switch to L2 before signing if the wallet is on the wrong chain.
-      // Without this, the wallet happily signs for the wrong chainId and the
-      // server rejects the signature with a 400.
-      if (!canUseSession) {
-        if (walletChainId !== baseSepolia.id) {
-          await switchChainAsync({ chainId: baseSepolia.id })
-        }
-      }
-
       if (canUseSession) {
-        // Sign with session key — no wallet popup
+        // Sign with session key — no wallet popup, no chain dependency
         const sessionAccount = privateKeyToAccount(activeSession.privateKey)
         signature = await sessionAccount.signTypedData({
           domain,
@@ -1332,13 +1323,36 @@ export function useSignAndSubmitAction() {
           message,
         })
       } else {
-        // Fall back to wallet signature (MetaMask popup)
-        signature = await signTypedDataAsync({
-          domain,
-          types:       { ActionData: TYPES.ActionData },
-          primaryType,
-          message,
-        })
+        // Wallet signature. EIP-712 signatures are chain-agnostic: the
+        // domain.chainId is hashed into the digest regardless of which
+        // chain the wallet is currently on. Most modern wallets (MetaMask
+        // 2024+, Rainbow, Coinbase, WalletConnect v2) accept cross-chain
+        // typed-data signing without switching. If the wallet rejects
+        // (some hardware wallets / older versions), catch and retry after
+        // switching to the L2.
+        try {
+          signature = await signTypedDataAsync({
+            domain,
+            types:       { ActionData: TYPES.ActionData },
+            primaryType,
+            message,
+          })
+        } catch (sigErr: unknown) {
+          // If the wallet rejected because of chain mismatch, switch and retry
+          const msg = sigErr instanceof Error ? sigErr.message : ''
+          const isChainMismatch = /chain.*mismatch|wrong.*chain|network.*mismatch|switch.*network/i.test(msg)
+          if (isChainMismatch && walletChainId !== baseSepolia.id) {
+            await switchChainAsync({ chainId: baseSepolia.id })
+            signature = await signTypedDataAsync({
+              domain,
+              types:       { ActionData: TYPES.ActionData },
+              primaryType,
+              message,
+            })
+          } else {
+            throw sigErr
+          }
+        }
       }
 
       // If there's a pending mint/deposit in localStorage for this sender, forward
