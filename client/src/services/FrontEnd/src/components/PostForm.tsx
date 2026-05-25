@@ -59,7 +59,7 @@ const AiGlitterIcon: React.FC<{ sizeClass: string }> = ({ sizeClass }) => (
         strokeLinejoin="round"
         strokeWidth={1.8}
         vectorEffect="non-scaling-stroke"
-        d="M18 6.2l.3 1a2.1 2.1 0 001.4 1.4l1 .3-1 .3a2.1 2.1 0 00-1.4 1.4l-.3 1-.3-1a2.1 2.1 0 00-1.4-1.4l-1-.3 1-.3a2.1 2.1 0 001.4-1.4l.3-1z"
+        d="M20 2.5l.3 1a2.1 2.1 0 001.4 1.4l1 .3-1 .3a2.1 2.1 0 00-1.4 1.4l-.3 1-.3-1a2.1 2.1 0 00-1.4-1.4l-1-.3 1-.3a2.1 2.1 0 001.4-1.4l.3-1z"
       />
     </g>
   </svg>
@@ -747,6 +747,13 @@ const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess, placehol
 
   // Handle text change and cursor position for mention autocomplete
   const handleTextChange = (e: React.ChangeEvent<HTMLTextAreaElement>) => {
+    // Skip intermediate events fired by the IME while a CJK composition is
+    // open — committing that interim text to React state re-renders the
+    // controlled textarea and kills the IME candidate window mid-selection
+    // (#322, reported by a JA user who couldn't type past ~140 JA chars).
+    // The final composed value is committed via handleCompositionEnd below.
+    // Latin input has isComposing=false → handler runs normally, no change.
+    if ((e.nativeEvent as any).isComposing) return
     const cursor = e.target.selectionStart
     // Single-mode → thread-mode transition: when this keystroke pushes the
     // text past POST_CHAR_LIMIT, the single textarea will unmount and the
@@ -757,6 +764,16 @@ const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess, placehol
     // local since there's only one chunk, so cursor IS the master offset.
     pendingMasterCursorRef.current = cursor
     setText(e.target.value)
+    setCursorPosition(cursor)
+  }
+
+  // IME commit — pushes the final composed text into state. Pairs with
+  // the isComposing skip in handleTextChange above (#322).
+  const handleCompositionEnd = (e: React.CompositionEvent<HTMLTextAreaElement>) => {
+    const ta = e.currentTarget
+    const cursor = ta.selectionStart
+    pendingMasterCursorRef.current = cursor
+    setText(ta.value)
     setCursorPosition(cursor)
   }
 
@@ -1677,7 +1694,23 @@ const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess, placehol
     setTipAttachments([])
     onSuccess?.()
     } catch (error: any) {
-      // Ignore errors (user may have rejected signature)
+      // Surface real failures so the user knows what happened — #326 was
+      // reported as "stuck on the posting screen" because the prior catch
+      // swallowed every error silently, leaving the modal open with the
+      // typed text and zero feedback. Wallet rejections stay silent
+      // (intentional UX); anything else gets a toast. Mirrors the
+      // schedule path's error handling (see the schedule try/finally
+      // above), just routed through a toast since the regular composer
+      // has no inline error slot.
+      const isUserRejection = error?.code === 4001 || /rejected|denied|cancelled/i.test(error?.message || '')
+      if (!isUserRejection) {
+        console.error('[PostForm] submit failed:', error)
+        const raw = error?.message || 'Something went wrong while posting.'
+        // apiFetch wraps server messages as "API <status>: <detail>" — strip
+        // the prefix so the toast reads like a normal sentence.
+        const cleaned = raw.replace(/^API\s+\d+(?:\s+[A-Za-z ]+)?:\s*/, '')
+        toast.error(cleaned)
+      }
     } finally {
       setIsSubmitting(false)
       setSigningProgress(null)
@@ -2532,6 +2565,7 @@ const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess, placehol
                   <HighlightedTextarea
                     value={text}
                     onChange={handleTextChange}
+                    onCompositionEnd={handleCompositionEnd}
                     onClick={handleTextClick}
                     onKeyUp={handleTextKeyUp}
                     onDragOver={handleTextareaDragOver}
@@ -3022,6 +3056,7 @@ const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess, placehol
               <HighlightedTextarea
                 value={text}
                 onChange={handleTextChange}
+                onCompositionEnd={handleCompositionEnd}
                 onClick={handleTextClick}
                 onKeyUp={handleTextKeyUp}
                 onDragOver={handleTextareaDragOver}
