@@ -512,13 +512,12 @@ const MainLayout = ({ children, hideSidebars: hideSidebarsProp }: MainLayoutProp
           // suggest the row is interactive but the click lands on the nav
           // (bug #215). The nav reclaims pointer events as soon as scroll
           // settles, so its own buttons remain usable.
-          // Padding-top proportional to the bottom safe-area inset. Only
-          // takes effect on hardware with a home-bar (iPhone X+ adds
-          // ~34px → pt ≈ 17px → icon shifts ~9px down, well clear of
-          // the FAB tap zone above). On Android / emulators without a
-          // safe-area the value is 0 and the layout matches the pre-fix
-          // behaviour exactly. Fixes #287 without over-correcting on
-          // safe-area-less environments.
+          // Padding-top proportional to the bottom safe-area inset — only
+          // takes effect on iPhone X+ home-bar hardware (~17px) where it
+          // shifts the icons down out of the FAB's tap zone. On Android /
+          // emulators the value is 0 and the icons stay perfectly centered
+          // in the nav (the FAB-vs-icon clearance for Android is solved by
+          // raising the FAB itself — see the FAB's bottom-24 below, #287).
           className={`md:hidden fixed bottom-0 left-0 right-0 z-[55] flex items-center justify-around h-14 pt-[calc(env(safe-area-inset-bottom)/2)] pb-[env(safe-area-inset-bottom)] [height:calc(theme(height.14)+env(safe-area-inset-bottom))] border-t transition-all duration-200 ${
             hasInlineDraft ? 'opacity-0 translate-y-full pointer-events-none' : isScrolling ? 'opacity-30 pointer-events-none' : 'opacity-100'
           } ${
@@ -589,7 +588,7 @@ const MainLayout = ({ children, hideSidebars: hideSidebarsProp }: MainLayoutProp
           // Mirrors the bottom-nav rule: pointer-events-none while
           // scrolling so the semi-transparent FAB doesn't intercept
           // taps meant for the post action row sitting behind it.
-          className={`md:hidden fixed right-6 bottom-20 z-[60] w-12 h-12 rounded-full bg-yellow-500 hover:bg-yellow-400 active:bg-yellow-600 text-black flex items-center justify-center shadow-lg shadow-black/30 transition-all duration-200 cursor-pointer ${
+          className={`md:hidden fixed right-6 bottom-24 z-[60] w-12 h-12 rounded-full bg-yellow-500 hover:bg-yellow-400 active:bg-yellow-600 text-black flex items-center justify-center shadow-lg shadow-black/30 transition-all duration-200 cursor-pointer ${
             hasInlineDraft ? 'opacity-0 translate-y-24 pointer-events-none' : isScrolling ? 'opacity-30 pointer-events-none' : 'opacity-100'
           }`}
         >

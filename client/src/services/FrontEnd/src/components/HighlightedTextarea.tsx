@@ -5,6 +5,11 @@ import { TAG_CHAR_CLASS, HASHTAG_SIGIL_CLASS, MENTION_SIGIL_CLASS } from '~/../.
 interface HighlightedTextareaProps {
   value: string
   onChange: (e: React.ChangeEvent<HTMLTextAreaElement>) => void
+  // Fired when an IME composition (CJK candidate selection) commits. The
+  // textarea's normal onChange events are skipped by the parent while a
+  // composition is open (#322); this is how the parent learns the final
+  // composed text. Optional — non-IME callers can ignore it.
+  onCompositionEnd?: (e: React.CompositionEvent<HTMLTextAreaElement>) => void
   onClick?: (e: React.MouseEvent<HTMLTextAreaElement>) => void
   onKeyUp?: (e: React.KeyboardEvent<HTMLTextAreaElement>) => void
   onKeyDown?: (e: React.KeyboardEvent<HTMLTextAreaElement>) => void
@@ -47,6 +52,7 @@ interface HighlightedTextareaProps {
 const HighlightedTextarea: React.FC<HighlightedTextareaProps> = ({
   value,
   onChange,
+  onCompositionEnd,
   onClick,
   onKeyUp,
   onKeyDown,
@@ -390,6 +396,7 @@ const HighlightedTextarea: React.FC<HighlightedTextareaProps> = ({
         placeholder={placeholder}
         value={value}
         onChange={onChange}
+        onCompositionEnd={onCompositionEnd}
         onClick={onClick}
         onKeyUp={onKeyUp}
         onKeyDown={onKeyDown}

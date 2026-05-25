@@ -149,11 +149,19 @@ export default defineConfig({
     // tells vite-plugin-pwa not to emit its own competing one or
     // re-link it from index.html.
     //
-    // registerType: 'autoUpdate' = new SW takes control on next page
-    // load instead of stalling on a "waiting" state. Combined with
-    // skipWaiting + clientsClaim, this avoids the classic PWA
-    // problem where every deploy strands users on the previous bundle
-    // until they manually close every tab.
+    // registerType: 'autoUpdate' + skipWaiting = the new SW activates
+    // immediately on deploy instead of stalling on a "waiting" state,
+    // avoiding the classic PWA problem where every deploy strands users
+    // on the previous bundle until they manually close every tab.
+    //
+    // clientsClaim is intentionally OFF (#319): with it on, the SW that
+    // installs on the FIRST visit claims the still-loading page mid-flight
+    // — in-flight asset requests get rerouted through a half-warmed cache
+    // and Safari/iOS in particular falls back to the index.html shell for
+    // JS chunks, leaving the user staring at a blank or partial render
+    // until they reload. Without clientsClaim the first visit completes
+    // over plain network (clean render), and the SW takes control on the
+    // next navigation/reload — same end state, no first-load race.
     //
     // navigateFallback: SPA shell fallback for offline navigation.
     // navigateFallbackDenylist excludes API + uploads + the OG/short-URL
@@ -177,7 +185,9 @@ export default defineConfig({
           /^\/s\//,
         ],
         cleanupOutdatedCaches: true,
-        clientsClaim: true,
+        // clientsClaim intentionally omitted — see the block comment above
+        // the VitePWA call. Keeping skipWaiting alone is enough for the
+        // fast-deploy behaviour without the first-install race.
         skipWaiting: true,
         // Bump for large vendor chunks (rainbowkit ~1.8MB) so they get
         // precached instead of skipped with a "size exceeded" warning.
