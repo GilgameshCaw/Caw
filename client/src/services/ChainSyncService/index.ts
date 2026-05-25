@@ -775,7 +775,7 @@ export const chainSyncService = {
         interval: 60 * 1000, // 60 seconds (was 15s — too aggressive for Infura rate limits)
         sync: syncL2Events,
       })
-      ctx.declareLoop('ChainSync:L2Events', 60 * 1000) // 4× interval
+      ctx.declareLoop('ChainSync:L2Events', 4 * 60 * 1000) // 4× interval (240s)
     }
 
     // Start all tasks
