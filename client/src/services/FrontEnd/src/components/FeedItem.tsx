@@ -699,10 +699,16 @@ const FeedItem: React.FC<{ item: CawItem; isMainPost?: boolean; isReply?: boolea
     // Quotes act as their own posts, so reply to the quote itself (item).
     const replyTarget = (isRecaw && !isQuote) ? useItem : item
 
-    // Desktop UX: navigate to the post page to reply inline.
-    // Mobile UX stays modal for now. Same in-memory seed as
-    // handleCardClick so the post renders without a full-page spinner.
-    if (typeof window !== 'undefined' && window.matchMedia('(min-width: 768px)').matches) {
+    // Refuse to navigate to a still-pending caw's reply page — the URL
+    // would carry the temp `pending-…` id and CawPage couldn't load any
+    // replies until the real id surfaces. Fall through to the mobile-
+    // modal flow which doesn't need a route at all.
+    if (typeof window !== 'undefined'
+        && window.matchMedia('(min-width: 768px)').matches
+        && !String(replyTarget.id).startsWith('pending-')) {
+      // Desktop UX: navigate to the post page to reply inline.
+      // Same in-memory seed as handleCardClick so the post renders
+      // without a full-page spinner.
       navigate(`${cawUrl(replyTarget)}?reply=1`, { state: { caw: replyTarget } })
       return
     }
@@ -1078,10 +1084,18 @@ const FeedItem: React.FC<{ item: CawItem; isMainPost?: boolean; isReply?: boolea
       return
     }
     // Don't navigate for failed posts — there's nothing useful to render at
-    // the dedicated page (no replies, can't be linked to). Pending posts DO
-    // navigate: CawPage seeds the post from location.state and skips API
-    // fetches until the tempId resolves to a real DB id.
+    // the dedicated page (no replies, can't be linked to).
     if (item.status === 'FAILED') {
+      return
+    }
+    // Don't navigate while the id is still pending. We render the pending
+    // row in the feed (so the user sees their post immediately) but the
+    // detail page has nothing to show until the real id lands. Feed.tsx
+    // already swaps pending→real at render time when items has caught up
+    // — if useItem.id still starts with `pending-` here, the server-side
+    // row hasn't surfaced yet and a click would land on /caws/pending-…
+    // which leaks the temp id into the URL bar.
+    if (String(useItem.id).startsWith('pending-')) {
       return
     }
     const url = cawUrl(useItem)
