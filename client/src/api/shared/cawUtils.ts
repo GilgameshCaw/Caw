@@ -235,8 +235,17 @@ export interface PaginationResult<T> {
 export function handlePagination<T>(items: T[], limit: number, getId: (item: T) => number): PaginationResult<T> {
   let nextCursor: number | undefined
   if (items.length > limit) {
-    const last = items.pop()!
-    nextCursor = getId(last)
+    // Discard the +1 probe row; it only signals "there is a next page".
+    // The cursor must be the LAST KEPT row's id, NOT the probe's id —
+    // callers pass `cursor: { id }, skip: 1` to Prisma, which means
+    // "start AT this row, then skip it." If we returned the probe's id,
+    // page N+1 would skip the probe AND we'd lose that row entirely
+    // (the gap between page N's last item and page N+1's first item).
+    // Bug pre-2026-05-25: returned probe id → caws fell into the gap
+    // between pages whenever `(createdAt, id)` weren't monotonic together.
+    items.pop()
+    const last = items[items.length - 1]
+    if (last) nextCursor = getId(last)
   }
   return { items, nextCursor }
 }
