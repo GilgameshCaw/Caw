@@ -1,7 +1,8 @@
 // src/pages/NewProfile.tsx
 import { SubmitButton } from "~/components/buttons/SubmitButton"
 import React, { useState, useCallback, useMemo, useEffect, useRef } from 'react'
-import { useReadContract, useAccount, useSwitchChain } from 'wagmi'
+import { useReadContract, useAccount, useSwitchChain, useBalance } from 'wagmi'
+import { useConnectModal } from '@rainbow-me/rainbowkit'
 import { generatePrivateKey, privateKeyToAccount } from 'viem/accounts'
 import useAllowance from "~/hooks/useAllowance";
 import { maxUint256, parseUnits, erc20Abi, formatEther, parseEther } from "viem";
@@ -31,6 +32,11 @@ import NetworkFeeModal from '~/components/NetworkFeeModal'
 // Quick Sign default scope: all actions except WITHDRAW (bit 6) — matches the
 // 0xBF hard-wired on L2 in the bundled session register flow.
 const QUICK_SIGN_DEFAULT_SCOPE = 0xBF
+
+// ETH left behind when user clicks "Balance" to max-fill the ETH-to-spend
+// input. Covers gas for the ZAP tx itself. Conservative enough to not strand
+// users in normal L1 conditions.
+const ETH_GAS_RESERVE_WEI = 1_000_000_000_000_000n // 0.001 ETH
 
 // cost schedule (raw CAW)
 const COST_SCHEDULE: Record<number, bigint> = {
@@ -220,6 +226,63 @@ const QuickSignInfoPopover: React.FC = () => {
   )
 }
 
+/**
+ * Tap-aware popover for the (i) next to "Authenticate with this network".
+ * Explains the auth gate + reassures users that names are still tradeable
+ * without paying the auth fee.
+ */
+const AuthInfoPopover: React.FC = () => {
+  const [open, setOpen] = useState(false)
+  const ref = useRef<HTMLDivElement>(null)
+
+  useEffect(() => {
+    if (!open) return
+    const onPointerDown = (e: PointerEvent) => {
+      const target = e.target as Node | null
+      if (!target || !ref.current?.contains(target)) setOpen(false)
+    }
+    const onScroll = () => setOpen(false)
+    const autoHide = setTimeout(() => setOpen(false), 12000)
+    document.addEventListener('pointerdown', onPointerDown)
+    window.addEventListener('scroll', onScroll, true)
+    return () => {
+      document.removeEventListener('pointerdown', onPointerDown)
+      window.removeEventListener('scroll', onScroll, true)
+      clearTimeout(autoHide)
+    }
+  }, [open])
+
+  return (
+    <div ref={ref} className="relative inline-flex">
+      <button
+        type="button"
+        aria-label="How network authentication works"
+        onClick={(e) => { e.preventDefault(); e.stopPropagation(); setOpen((v) => !v) }}
+        onMouseEnter={() => setOpen(true)}
+        onMouseLeave={() => setOpen(false)}
+        className="flex items-center cursor-help"
+      >
+        <HiInformationCircle className="w-4 h-4 text-gray-400" />
+      </button>
+      {open && (
+        <div
+          className="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 z-50 w-[min(380px,90vw)] bg-gray-900 rounded-lg shadow-lg p-4 text-xs text-gray-200 space-y-2"
+          onClick={(e) => e.stopPropagation()}
+        >
+          <p>
+            Only users who authenticate with a network and pay its auth fee can
+            interact on that network (post, like, follow, etc).
+          </p>
+          <p className="text-gray-400">
+            Usernames can still be bought and sold on the marketplace without
+            authenticating. You can authenticate later from your profile settings.
+          </p>
+        </div>
+      )}
+    </div>
+  )
+}
+
 export const NewProfile: React.FC = () => {
   const { isDark } = useTheme()
   const t = useT()
@@ -272,6 +335,13 @@ export const NewProfile: React.FC = () => {
   // away doesn't burn an unused session in localStorage.
   const [quickSignEnabled, setQuickSignEnabled] = useState(true)
   const [quickSignExpanded, setQuickSignExpanded] = useState(true)
+
+  // Authenticate-with-network toggle (mint-only / no-deposit path on CAW mode).
+  // When deposit is ON, auth is always bundled (no contract path skips auth on
+  // mintAndDeposit). Default ON when the Network charges an authFee — matches
+  // the historic always-auth behavior; user can flip OFF to mint just the
+  // username (marketplace-tradeable) without paying the auth fee.
+  const [authEnabled, setAuthEnabled] = useState(true)
   const setSession = useSessionKeyStore(s => s.setSession)
   const setSessionEnabled = useSessionKeyStore(s => s.setEnabled)
   // Privately-held session params that are active for this submission.
@@ -451,6 +521,14 @@ export const NewProfile: React.FC = () => {
 
   const usernameTaken = !checkingUsername && !!existingId;
 
+  const { data: ethBalanceData } = useBalance({
+    address,
+    chainId: chains.l1.chainId,
+    query: { enabled: !!address && paymentMode === 'eth' },
+  })
+
+  const { openConnectModal } = useConnectModal()
+
 
   const { data: balance } = useReadContract({
     address:      CAW_ADDRESS,
@@ -471,7 +549,15 @@ console.log("BALANCE:", balance)
     functionName: "mintQuote",
     address: CAW_NAME_QUOTER_ADDRESS,
     args: [ CLIENT_ID, false ],
-    query: { enabled: !depositEnabled }
+    query: { enabled: !depositEnabled && !authEnabled }
+  })
+  const { data: mintAndAuthQuote } = useReadContract({
+    abi: cawProfileQuoterAbi,
+    chainId: chains.l1.chainId,
+    functionName: "mintAndAuthQuote",
+    address: CAW_NAME_QUOTER_ADDRESS,
+    args: [ CLIENT_ID, chains.l2.layerZero, false ],
+    query: { enabled: !depositEnabled && authEnabled }
   })
   const { data: mintAndDepositQuote, error: mintAndDepositQuoteError, isLoading: mintAndDepositQuoteLoading } = useReadContract({
     abi: cawProfileQuoterAbi,
@@ -517,7 +603,7 @@ console.log("BALANCE:", balance)
   const quote = paymentMode === 'eth'
     ? (quickSignEnabled ? bundledZapQuote : mintAndDepositZapQuote)
     : (!depositEnabled
-        ? mintOnlyQuote
+        ? (authEnabled ? mintAndAuthQuote : mintOnlyQuote)
         : (quickSignEnabled ? bundledQuote : mintAndDepositQuote))
 
   const lzTokenAmount = 0n;
@@ -584,42 +670,49 @@ console.log("BALANCE:", balance)
     onError: () => setIsApprovePending(false),
   });
 
-  // hook into mint function (mint-only)
+  // Shared post-mint success handler (mintOnly + mintAndAuth share the same
+  // "find the new token, navigate to /welcome" tail).
+  const onMintOnlySuccess = async (hash: `0x${string}`) => {
+    console.log('minted!', hash)
+    await refetchTokenData?.()
+    const checkForNewToken = () => {
+      const allTokens = useTokenDataStore.getState().allTokens()
+      const newToken = allTokens.find((t: any) => t.username.toLowerCase() === username.toLowerCase())
+      if (newToken) {
+        setMintedTokenId(newToken.tokenId)
+        setActiveTokenId(newToken.tokenId)
+        setMintSuccess(true)
+      } else {
+        refetchTokenData?.()
+        setTimeout(checkForNewToken, 3000)
+      }
+    }
+    setTimeout(checkForNewToken, 1000)
+  }
+
+  // hook into mint function (mint-only, no auth)
   const { call: mintOnly, status: mintOnlyStatus, gasCostEth: mintOnlyGas }: UseContractCallReturn = useContractCall({
     value:        quote?.nativeFee || 0n,
     functionName: 'mint',
     abi:      cawProfileMinterAbi,
     address: CAW_NAMES_MINTER_ADDRESS,
     args:         [CLIENT_ID, username, lzTokenAmount],
-    disabled:     depositEnabled || !address || !isValid || needsApproval,
-    onPending:    hash => {
-      console.log('tx pending', hash)
-      setHasResetForm(false)
-    },
-    onSuccess:    async (hash) => {
-      console.log('minted!', hash)
+    disabled:     depositEnabled || authEnabled || !address || !isValid || needsApproval,
+    onPending:    hash => { console.log('tx pending', hash); setHasResetForm(false) },
+    onSuccess:    onMintOnlySuccess,
+    onError:      err  => console.error(err),
+  })
 
-      // Refetch token data from chain, then check for the new token
-      await refetchTokenData?.()
-
-      const checkForNewToken = () => {
-        const allTokens = useTokenDataStore.getState().allTokens()
-        const newToken = allTokens.find((t: any) => t.username.toLowerCase() === username.toLowerCase())
-
-        if (newToken) {
-          setMintedTokenId(newToken.tokenId)
-          setActiveTokenId(newToken.tokenId)
-          setMintSuccess(true)
-        } else {
-          // Token data may not be processed yet, refetch and check again
-          refetchTokenData?.()
-          setTimeout(checkForNewToken, 3000)
-        }
-      }
-
-      // Give a moment for the refetch to process
-      setTimeout(checkForNewToken, 1000)
-    },
+  // hook into mintAndAuth function (mint + authenticate, no deposit)
+  const { call: mintAndAuth, status: mintAndAuthStatus, gasCostEth: mintAndAuthGas }: UseContractCallReturn = useContractCall({
+    value:        quote?.nativeFee || 0n,
+    functionName: 'mintAndAuth',
+    abi:      cawProfileMinterAbi,
+    address: CAW_NAMES_MINTER_ADDRESS,
+    args:         [CLIENT_ID, username, chains.l2.layerZero, lzTokenAmount],
+    disabled:     depositEnabled || !authEnabled || !address || !isValid || needsApproval,
+    onPending:    hash => { console.log('mintAndAuth tx pending', hash); setHasResetForm(false) },
+    onSuccess:    onMintOnlySuccess,
     onError:      err  => console.error(err),
   })
 
@@ -925,17 +1018,39 @@ console.log("BALANCE:", balance)
     ? (quickSignEnabled ? bundledZapStatus : mintAndDepositZapStatus)
     : (depositEnabled
         ? (quickSignEnabled ? bundledStatus : mintAndDepositStatus)
-        : mintOnlyStatus)
+        : (authEnabled ? mintAndAuthStatus : mintOnlyStatus))
   const gasCostEth = paymentMode === 'eth'
     ? (quickSignEnabled ? bundledZapGas : mintAndDepositZapGas)
     : (depositEnabled
         ? (quickSignEnabled ? bundledGas : mintAndDepositGas)
-        : mintOnlyGas)
+        : (authEnabled ? mintAndAuthGas : mintOnlyGas))
+  // DEBUG: dump all six paths' gas estimates side-by-side to diagnose
+  // the CAW-vs-ETH fee discrepancy. Remove after identifying the cause.
+  console.log('[NetworkFee debug]', {
+    paymentMode,
+    depositEnabled,
+    quickSignEnabled,
+    authEnabled,
+    activePath:
+      paymentMode === 'eth'
+        ? (quickSignEnabled ? 'bundledZap' : 'mintAndDepositZap')
+        : (depositEnabled ? (quickSignEnabled ? 'bundled' : 'mintAndDeposit') : (authEnabled ? 'mintAndAuth' : 'mintOnly')),
+    activeGasCostEth: gasCostEth,
+    activeQuoteNativeFee: (quote as any)?.nativeFee?.toString(),
+    allGas: {
+      mintOnly: mintOnlyGas,
+      mintAndAuth: mintAndAuthGas,
+      mintAndDeposit: mintAndDepositGas,
+      bundled: bundledGas,
+      mintAndDepositZap: mintAndDepositZapGas,
+      bundledZap: bundledZapGas,
+    },
+  })
   const mint = paymentMode === 'eth'
     ? (quickSignEnabled ? mintAndDepositAndQuickSignZap : mintAndDepositZap)
     : (depositEnabled
         ? (quickSignEnabled ? mintAndDepositAndQuickSign : mintAndDeposit)
-        : mintOnly)
+        : (authEnabled ? mintAndAuth : mintOnly))
 
   const waiting = isApprovePending || Boolean(mintStatus.match(/pending/))
 
@@ -1133,7 +1248,7 @@ console.log("BALANCE:", balance)
   // useLayoutStore effect above hides MainLayout's chrome for this state.
   if (showMintingTakeover) {
     return (
-      <div className="min-h-screen flex items-start justify-center pt-12" ref={el => { if (el) window.scrollTo(0, 0) }}>
+      <div className="min-h-screen flex items-start justify-center pt-32" ref={el => { if (el) window.scrollTo(0, 0) }}>
           <div className={`max-w-xl w-full mx-auto p-8 rounded-2xl backdrop-blur-[2px] ${
             isDark ? 'bg-white/5 border border-white/10' : 'bg-gray-200/50 border-2 border-gray-300/50'
           }`}>
@@ -1160,7 +1275,13 @@ console.log("BALANCE:", balance)
               </div>
 
               {depositEnabled && depositAmountWei > 0n && (
-                <p className="text-yellow-500 text-sm">{Number(depositAmount).toLocaleString()} CAW deposit pending</p>
+                <p className="text-yellow-500 text-sm">
+                  {Number(depositAmount).toLocaleString()} CAW
+                  {cawPrice > 0 && (
+                    <> (~${formatUsd(Number(depositAmount) * cawPrice)})</>
+                  )}
+                  {' '}deposit pending
+                </p>
               )}
 
               <div className="space-y-4">
@@ -1414,28 +1535,53 @@ console.log("BALANCE:", balance)
                   />
                   <span className="absolute right-4 top-1/2 -translate-y-1/2 text-gray-500 text-sm">ETH</span>
                 </div>
-                {ethAmountWei > 0n && ethPrice > 0 && (
-                  <div className={`flex justify-between items-center text-xs ${isDark ? 'text-gray-400' : 'text-gray-600'}`}>
-                    {/* Left cell: either a red "below burn cost" warning (when
-                        the swap output won't cover the username's CAW burn) or
-                        a green-ish "~X CAW deposited" estimate. Same row as the
-                        ETH→USD readout so the layout stays stable. */}
-                    <span>
-                      {reserves.loaded && zapQuote.minCawOut < cost ? (
-                        <span className="text-red-400">
-                          Below the {formatNumberCompact(convertToNumber(cost, 18))} CAW burn cost — increase ETH.
-                        </span>
-                      ) : reserves.loaded && zapQuote.expectedCawOut > cost ? (
-                        <>
-                          ~<span className={`font-mono ${isDark ? 'text-white' : 'text-gray-900'}`}>
-                            {formatNumberCompact(convertToNumber(zapQuote.expectedCawOut - cost, 18))} CAW
-                          </span>{' '}deposited
-                        </>
-                      ) : ''}
-                    </span>
-                    <span>~${formatUsd(Number(ethAmount) * ethPrice)}</span>
-                  </div>
-                )}
+                <div className={`flex justify-between items-center text-xs ${isDark ? 'text-gray-400' : 'text-gray-600'}`}>
+                  {/* Left cell: either a red "below burn cost" warning (when
+                      the swap output won't cover the username's CAW burn) or
+                      the combined "~$X.XX (~Y CAW)" readout. Right cell: the
+                      user's L1 ETH balance for quick reference. */}
+                  <span>
+                    {ethAmountWei > 0n && ethPrice > 0 && reserves.loaded && zapQuote.minCawOut < cost ? (
+                      <span className="text-red-400">
+                        Below the {formatNumberCompact(convertToNumber(cost, 18))} CAW burn cost — increase ETH.
+                      </span>
+                    ) : ethAmountWei > 0n && ethPrice > 0 && reserves.loaded && zapQuote.expectedCawOut > cost ? (
+                      <>
+                        ~<span className={`font-mono ${isDark ? 'text-white' : 'text-gray-900'}`}>
+                          ${formatUsd(Number(ethAmount) * ethPrice)}
+                        </span>{' '}(~{formatNumberCompact(convertToNumber(zapQuote.expectedCawOut - cost, 18))} CAW)
+                      </>
+                    ) : ethAmountWei > 0n && ethPrice > 0 ? (
+                      <>~<span className={`font-mono ${isDark ? 'text-white' : 'text-gray-900'}`}>${formatUsd(Number(ethAmount) * ethPrice)}</span></>
+                    ) : ''}
+                  </span>
+                  {ethBalanceData ? (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        const max = ethBalanceData.value > ETH_GAS_RESERVE_WEI
+                          ? ethBalanceData.value - ETH_GAS_RESERVE_WEI
+                          : 0n
+                        setEthAmount(Number(formatEther(max)).toFixed(6).replace(/\.?0+$/, ''))
+                      }}
+                      className="hover:underline cursor-pointer"
+                      title="Use max (leaves ~0.001 ETH for gas)"
+                    >
+                      {t('new_profile.balance_label')}{' '}
+                      <span className={`font-mono ${isDark ? 'text-white' : 'text-gray-900'}`}>
+                        {Number(formatEther(ethBalanceData.value)).toLocaleString(undefined, { maximumFractionDigits: 4 })} ETH
+                      </span>
+                    </button>
+                  ) : !address ? (
+                    <button
+                      type="button"
+                      onClick={() => openConnectModal?.()}
+                      className="hover:underline cursor-pointer text-yellow-500"
+                    >
+                      Connect wallet
+                    </button>
+                  ) : null}
+                </div>
               </div>
             )}
 
@@ -1564,6 +1710,41 @@ console.log("BALANCE:", balance)
             </div>
             )}
 
+            {/* Authenticate-with-network toggle — only shown when deposit is OFF
+                AND the Network charges a non-zero authFee. mintAndDeposit always
+                bundles auth on-chain (no contract path skips it), so this toggle
+                is only meaningful in the bare-mint case. */}
+            {paymentMode === 'caw' && !depositEnabled && (networkFees.authFee ?? 0n) > 0n && (
+            <div className={`border rounded-xl p-4 space-y-3 mt-3 ${
+              isDark ? 'border-white/10 bg-[#0D0D0D]/85' : 'border-gray-200 bg-gray-50'
+            }`}>
+              <label className="flex items-center gap-3 cursor-pointer">
+                <button
+                  type="button"
+                  onClick={() => setAuthEnabled(!authEnabled)}
+                  className={`relative w-10 min-w-[40px] h-6 rounded-full transition-colors duration-200 cursor-pointer flex-shrink-0 ${
+                    authEnabled ? 'bg-yellow-500' : 'bg-gray-600'
+                  }`}
+                >
+                  <div className={`absolute top-0.5 w-5 h-5 rounded-full bg-white shadow transition-transform duration-200 ${
+                    authEnabled ? 'translate-x-4' : 'translate-x-0.5'
+                  }`} />
+                </button>
+                <div className="flex-1">
+                  <div className="flex items-center gap-1.5">
+                    <span className={`text-sm font-medium ${isDark ? 'text-white' : 'text-gray-900'}`}>
+                      Authenticate with this network{networkFees.name ? ` (${networkFees.name})` : ''}
+                    </span>
+                    <AuthInfoPopover />
+                  </div>
+                  <p className="text-yellow-500/80 text-xs mt-0.5">
+                    Required to post, like, follow, etc. on this network
+                  </p>
+                </div>
+              </label>
+            </div>
+            )}
+
             {/* Quick Sign option — appears alongside any deposit-bearing flow
                 (CAW-mode mintAndDeposit OR ETH-mode mintAndDepositZap, since
                 both bundled selectors include the session leg).
@@ -1665,7 +1846,9 @@ console.log("BALANCE:", balance)
               // storage fees ×2 + true LZ message fee). Don't add storage fees
               // separately or we'd double-count. Gas is the only addend.
               const includesDeposit = depositEnabled || paymentMode === 'eth'
-              const includesAuth = includesDeposit  // Quoter charges auth on every mint+deposit path
+              // Auth is bundled with every mint+deposit path, AND with mint-only
+              // when the user opts in via the `authEnabled` toggle.
+              const includesAuth = includesDeposit || (!includesDeposit && authEnabled)
               let applicableStorageFeesWei = networkFees.mintFee ?? 0n
               if (includesDeposit) applicableStorageFeesWei += networkFees.depositFee ?? 0n
               if (includesAuth) applicableStorageFeesWei += networkFees.authFee ?? 0n
@@ -1700,7 +1883,7 @@ console.log("BALANCE:", balance)
               lzFeeWei={quote?.nativeFee ?? 0n}
               applicableStorageFeesWei={(() => {
                 const includesDeposit = depositEnabled || paymentMode === 'eth'
-                const includesAuth = includesDeposit
+                const includesAuth = includesDeposit || (!includesDeposit && authEnabled)
                 let s = networkFees.mintFee ?? 0n
                 if (includesDeposit) s += networkFees.depositFee ?? 0n
                 if (includesAuth) s += networkFees.authFee ?? 0n

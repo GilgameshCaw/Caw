@@ -408,7 +408,7 @@ const MainLayout = ({ children, hideSidebars: hideSidebarsProp }: MainLayoutProp
       {/* Main Content */}
       <main className={`flex-1 min-w-0 transition-colors duration-300 flex flex-col ${
         hideSidebars
-          ? `pt-0 relative overflow-hidden ${isDark ? 'text-white' : 'text-black'}`
+          ? `${isCaptive ? 'pt-20' : 'pt-0'} relative overflow-hidden ${isDark ? 'text-white' : 'text-black'}`
           : `${isDark ? 'bg-black text-white' : 'bg-white text-black'} ${isMobileMenuOpen ? 'md:pt-0 pt-[var(--app-mobile-header-h)]' : 'pt-[var(--app-mobile-header-h)] md:pt-0'}`
       }`}>
         {hideSidebars && (
@@ -447,9 +447,9 @@ const MainLayout = ({ children, hideSidebars: hideSidebarsProp }: MainLayoutProp
       )}
       <Modals />
 
-      {/* Captive banner — fixed bottom bar for unauthenticated users on public pages */}
+      {/* Captive banner — fixed top bar for unauthenticated users on public pages */}
       {hideSidebars && isCaptive && (
-        <div className={`fixed bottom-0 left-0 right-0 z-50 border-t backdrop-blur-[2px] ${
+        <div className={`fixed top-0 left-0 right-0 z-50 border-b backdrop-blur-[2px] ${
           isDark ? 'bg-black/10 border-white/10' : 'bg-white/10 border-gray-200'
         }`}>
           <div className="max-w-3xl mx-auto flex items-center justify-between px-5 py-3">

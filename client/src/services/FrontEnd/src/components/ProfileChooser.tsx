@@ -164,6 +164,19 @@ const ProfileChooser: React.FC<{ compact?: boolean }> = ({ compact = false }) =>
     activeToken?.tokenId,
     pendingDepositWei !== null ? 15_000 : undefined,
   )
+
+  // While a deposit hint is live, poll L2 directly every 5s so a delivered
+  // LZ message is reflected within ~5s, not the 30s wagmi-block-polling
+  // default. Without this, the FE can show "pending" for tens of seconds
+  // after LZ Scan already reports "delivered" — wagmi's getTokens cache
+  // only refreshes on block-number change (BLOCK_POLLING_INTERVAL_MS=30s).
+  useEffect(() => {
+    if (pendingDepositWei === null || pendingDepositWei === 0n) return
+    const id = setInterval(() => {
+      try { useTokenDataStore.getState().refetchTokenData?.() } catch {}
+    }, 5_000)
+    return () => clearInterval(id)
+  }, [pendingDepositWei])
   useEffect(() => {
     if (!activeToken?.tokenId) return
     const data = byTokenData
@@ -286,6 +299,20 @@ const ProfileChooser: React.FC<{ compact?: boolean }> = ({ compact = false }) =>
     };
   }, [isDropdownOpen]);
 
+  // All remaining hooks must come BEFORE the conditional early returns
+  // below — Rules of Hooks. Previously `useFollowerCounts` lived after
+  // the `if (!selectedToken) return null` guard, so removing a wallet
+  // (selectedToken transitions to null between renders) changed the
+  // hook count and crashed the component. The data here doesn't depend
+  // on selectedToken, only on tokensByAddress + address, so it's safe
+  // to compute regardless.
+  const allTokenIdsForHooks: number[] = []
+  for (const list of Object.values(tokensByAddress)) {
+    for (const t of (list || [])) allTokenIdsForHooks.push(t.tokenId)
+  }
+  const followerCounts = useFollowerCounts(allTokenIdsForHooks)
+  const pinnedAt = usePinnedProfilesStore(s => s.pinnedAt)
+
   if (hasHydrated && !selectedToken) {
     // Check if there are ANY profiles in the browser
     const hasAnyProfiles = Object.values(tokensByAddress).some(tokens => tokens.length > 0);
@@ -396,12 +423,10 @@ const ProfileChooser: React.FC<{ compact?: boolean }> = ({ compact = false }) =>
   // otherwise push it outside the top-3 within its wallet.
   const MAX_PROFILES_PER_WALLET = 3
   const MAX_WALLETS = 3
-  const allTokenIds: number[] = []
-  for (const list of Object.values(visibleTokensByAddress)) {
-    for (const t of (list || [])) allTokenIds.push(t.tokenId)
-  }
-  const followerCounts = useFollowerCounts(allTokenIds)
-  const pinnedAt = usePinnedProfilesStore(s => s.pinnedAt)
+  // followerCounts + pinnedAt are now computed above the early returns
+  // (Rules of Hooks). The allTokenIds variable was only used to feed
+  // useFollowerCounts; that call moved up so this block is no longer
+  // needed here.
 
   const activeOwnerKey = activeToken?.address?.toLowerCase()
   const limitedTokensByAddress: Record<string, TokenData[]> = {}
@@ -458,6 +483,24 @@ const ProfileChooser: React.FC<{ compact?: boolean }> = ({ compact = false }) =>
     const visibleIds = new Set(slice.map(t => t.tokenId))
     hiddenTokensByAddress[addrKey] = full.filter(t => !visibleIds.has(t.tokenId))
   }
+
+  // Net in-flight CAW delta for the active profile. Computed once here so
+  // both the inline "pending" badge AND the QuickSign hint below can react
+  // to it — when there's a real pending value (in or out) the "(Quick Sign)"
+  // line is hidden so the two states don't fight for the same row.
+  const activeTid = activeToken?.tokenId
+  const pendingDep = pendingDepositWei ?? 0n
+  const recentIncoming = activeTid == null ? 0n : balanceWindows.reduce(
+    (acc, w) => (w.delta > 0n && w.tokenId === activeTid) ? acc + w.delta : acc,
+    0n,
+  )
+  let pendingSpendForActive = 0n
+  if (activeTid != null) {
+    for (const [idStr, amount] of Object.entries(pendingByTxQueue)) {
+      if (tokenIdByTxQueue[Number(idStr)] === activeTid) pendingSpendForActive += amount
+    }
+  }
+  const pendingCawDelta = pendingDep + recentIncoming - pendingSpendForActive
 
   // --- main render when tokens exist ---
   return (
@@ -521,49 +564,30 @@ const ProfileChooser: React.FC<{ compact?: boolean }> = ({ compact = false }) =>
             //   no pending deposit, liked 3 posts (9k) → "-9k pending"
             //   no pending, someone liked your caw (+1600) → "+1k6 pending"
             // Hidden only when the delta is exactly zero.
-            const pendingDep = pendingDepositWei ?? 0n
-            // Per-token isolation: only count incoming windows tagged with
-            // the active token id. Untagged windows (older callers) are
-            // ignored here on purpose — better to under-count than to
-            // bleed credits across sibling profiles on the same wallet.
-            const activeTid = activeToken?.tokenId
-            const recentIncoming = activeTid == null ? 0n : balanceWindows.reduce(
-              (acc, w) => (w.delta > 0n && w.tokenId === activeTid) ? acc + w.delta : acc,
-              0n,
-            )
-            // Per-token spend: sum only entries whose tokenId matches the
-            // active profile. The wallet-wide `pendingSpend` total stays
-            // available for the mobile counter that needs it.
-            let pendingSpend = 0n
-            if (activeTid != null) {
-              for (const [idStr, amount] of Object.entries(pendingByTxQueue)) {
-                if (tokenIdByTxQueue[Number(idStr)] === activeTid) pendingSpend += amount
-              }
-            }
-            const delta = pendingDep + recentIncoming - pendingSpend
-            if (delta === 0n) return null
-            const isPositive = delta > 0n
-            const absValue = isPositive ? delta : -delta
+            if (pendingCawDelta === 0n) return null
+            const isPositive = pendingCawDelta > 0n
+            const absValue = isPositive ? pendingCawDelta : -pendingCawDelta
             // CAW is denominated tiny in USD (≈ $3.8e-8 / CAW), so action
             // costs like 26k CAW look huge. Lead with the USD on its own
             // yellow line (the "actually informative" number for most
-            // users), then show the raw CAW delta underneath in muted
-            // grey. Falls back to CAW-only line when price isn't loaded.
+            // users), then show the raw CAW delta underneath in the same
+            // color. Falls back to CAW-only line when price isn't loaded.
+            const sign = isPositive ? '+' : '-'
             let usdLabel: string | null = null
             if (cawPriceUsd !== undefined && cawPriceUsd > 0) {
               const cawWhole = Number(absValue / 10n**18n) + Number(absValue % 10n**18n) / 1e18
               const usd = cawWhole * cawPriceUsd
-              usdLabel = `~$${formatUsd(usd)}`
+              usdLabel = `${sign}$${formatUsd(usd)}`
             }
-            const sign = isPositive ? '+' : '-'
             const cawLine = `${sign}${formatUnitsCompact(absValue, 18)} CAW`
+            const colorClass = isPositive ? 'text-yellow-500' : 'text-gray-400'
             return (
               <>
-                <div className={`text-2xs ${isPositive ? 'text-yellow-500' : 'text-gray-400'}`}>
+                <div className={`text-2xs ${colorClass}`}>
                   {usdLabel ? `${usdLabel} pending` : `${cawLine} pending`}
                 </div>
                 {usdLabel && (
-                  <div className="text-2xs text-gray-400">{cawLine}</div>
+                  <div className={`text-2xs opacity-70 ${colorClass}`}>{cawLine}</div>
                 )}
               </>
             )
@@ -590,7 +614,7 @@ const ProfileChooser: React.FC<{ compact?: boolean }> = ({ compact = false }) =>
               </span>
             </div>
           )}
-          {quickSignWithWrongWallet && (
+          {quickSignWithWrongWallet && pendingCawDelta === 0n && (
             <div className="text-2xs text-yellow-500">
               (Quick Sign)
             </div>
