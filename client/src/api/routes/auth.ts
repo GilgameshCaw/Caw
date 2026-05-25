@@ -33,6 +33,21 @@ const EXPECTED_CHAIN_ID = Number(process.env.L2_CHAIN_ID ?? 84532)
 const DM_MESSAGE_PREFIX = 'CAW Protocol\nEnable DMs\n@'
 const MAX_MESSAGE_AGE_MS = 5 * 60 * 1000 // 5 minutes
 
+// Acceptable Host: aliases for the host-binding check on /verify. In dev,
+// Vite's proxy rewrites the client's Host header (changeOrigin: true) so the
+// API sees `localhost:4000` while the browser signs `localhost:5274`. Adding
+// the FE port as an alias lets dev work without weakening prod (where nginx
+// preserves the public host). Operator opts in by setting AUTH_HOST_ALIASES
+// to a comma-separated list (e.g. "localhost:5274,127.0.0.1:5274").
+// Audit context: auth-surface H-1 binding was added 7c06bb57; this alias
+// list is the dev-mode escape hatch, not a security relaxation in prod.
+const AUTH_HOST_ALIASES: Set<string> = new Set(
+  (process.env.AUTH_HOST_ALIASES ?? '')
+    .split(',')
+    .map(s => s.trim().toLowerCase())
+    .filter(Boolean)
+)
+
 /**
  * POST /api/auth/verify
  * Verify wallet ownership via personal_sign.
@@ -84,7 +99,7 @@ router.post('/verify', async (req, res) => {
     // the same. They line up.
     const claimedHost = hostLine.slice('Host: '.length).trim().toLowerCase()
     const expectedHost = ((req.headers.host as string | undefined) || '').toLowerCase()
-    if (!expectedHost || claimedHost !== expectedHost) {
+    if (!expectedHost || (claimedHost !== expectedHost && !AUTH_HOST_ALIASES.has(claimedHost))) {
       res.status(400).json({ error: 'Message host does not match this API origin' })
       return
     }
