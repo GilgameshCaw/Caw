@@ -36,6 +36,69 @@ const CLIENT_VERSION = buildClientVersion();
 // <meta name="caw-client-version"> tag without extra JS entrypoints.
 process.env.VITE_CLIENT_VERSION = CLIENT_VERSION;
 
+// Emit dist/build-manifest.json after build: every file shipped to clients,
+// keyed by its served path, paired with its SHA-256. The standalone verifier
+// at verify.caw.social uses this to detect tampered mirrors — it fetches the
+// mirror's manifest, hashes the served files itself, and cross-checks against
+// the canonical manifest published in the upstream repo. Mirrors can't lie
+// about file content without also lying about the manifest, and the verifier
+// reads the canonical manifest from a host you control, not from the mirror.
+function buildManifestPlugin(clientVersion: string): Plugin {
+  return {
+    name: 'caw-build-manifest',
+    apply: 'build',
+    async closeBundle() {
+      const fs = await import('fs/promises');
+      const crypto = await import('crypto');
+      const distDir = path.resolve(__dirname, 'dist');
+      // Files we never want in the manifest:
+      // - service-worker artifacts (sw.js / workbox-*.js): content depends on
+      //   workbox internals and the manifest of OTHER files, which is itself
+      //   what we're emitting — chicken/egg. The PWA install integrity is a
+      //   separate concern from "is this the upstream bundle".
+      // - the manifest itself.
+      const skip = new Set(['build-manifest.json', 'sw.js']);
+      const skipPrefix = ['workbox-'];
+      async function walk(dir: string, prefix: string): Promise<Array<[string, string]>> {
+        const entries = await fs.readdir(dir, { withFileTypes: true });
+        const out: Array<[string, string]> = [];
+        for (const e of entries) {
+          const full = path.join(dir, e.name);
+          const rel = prefix ? `${prefix}/${e.name}` : e.name;
+          if (e.isDirectory()) {
+            out.push(...await walk(full, rel));
+          } else if (e.isFile()) {
+            if (skip.has(rel)) continue;
+            if (skipPrefix.some(p => e.name.startsWith(p))) continue;
+            const buf = await fs.readFile(full);
+            const sha = crypto.createHash('sha256').update(buf).digest('hex');
+            out.push([rel, `sha256-${sha}`]);
+          }
+        }
+        return out;
+      }
+      const entries = await walk(distDir, '');
+      // Stable sort so the manifest is deterministic for byte-level diffs
+      // across re-runs of the same commit.
+      entries.sort(([a], [b]) => a.localeCompare(b));
+      const manifest = {
+        version: 1,
+        clientVersion,
+        builtAt: new Date().toISOString(),
+        files: Object.fromEntries(entries),
+      };
+      await fs.writeFile(
+        path.join(distDir, 'build-manifest.json'),
+        JSON.stringify(manifest, null, 2),
+        'utf8',
+      );
+      const distinct = entries.length;
+      // eslint-disable-next-line no-console
+      console.log(`[build-manifest] wrote dist/build-manifest.json (${distinct} files, version ${clientVersion})`);
+    }
+  };
+}
+
 // Plugin to add COEP headers to worker responses (only on localhost for security)
 function coepHeadersPlugin(): Plugin {
   return {
@@ -144,6 +207,7 @@ export default defineConfig({
   // hand-optimized; user-uploaded images go through the browser-side
   // compressImage.ts pipeline, not this plugin. Net loss: ~zero.
   plugins: [
+    buildManifestPlugin(CLIENT_VERSION),
     coepHeadersPlugin(),
     tailwindcss(),
     react(),
