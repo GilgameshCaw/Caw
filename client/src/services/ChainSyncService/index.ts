@@ -2,7 +2,7 @@
 // Generic service for syncing on-chain data to the database
 
 import { prisma } from '../../prismaClient'
-import { JsonRpcProvider, Contract } from 'ethers'
+import { JsonRpcProvider, Contract, verifyTypedData } from 'ethers'
 import { makeJsonRpcProvider, getL1HttpRpcUrl, getL2HttpRpcUrl, getEthMainnetHttpRpcUrl, redactRpcUrl } from '../../utils/rpcProvider'
 import { cawNetworkManagerAbi } from '../../abi/generated'
 import { NETWORK_MANAGER_ADDRESS, CAW_NAMES_L2_ADDRESS } from '../../abi/addresses'
@@ -641,6 +641,47 @@ async function handleSessionCreated(args: any) {
         })
         if (promoted.count > 0) {
           console.log(`[ChainSync:L2Events] Promoted ${promoted.count} session-held rows back to pending for senderId=${user.tokenId}`)
+        }
+
+        // Recovery: if a previous DataCleaner / Validator sweep already
+        // failed a TxQueue row because the session timeout elapsed BEFORE
+        // we indexed this SessionCreated event, the row's signedTx is
+        // still valid (the signer matches the session that just landed).
+        // Recover it by recomputing the signer from the stored payload
+        // and unfailing any matching rows.
+        const failedRows = await prisma.txQueue.findMany({
+          where: {
+            senderId: user.tokenId,
+            status: 'failed',
+            reason: { startsWith: 'Quick Sign session did not register' },
+          },
+          select: { id: true, signedTx: true, payload: true },
+        })
+        for (const row of failedRows) {
+          try {
+            const payload = row.payload as any
+            const { data, domain, types } = payload ?? {}
+            if (!data || !domain || !types?.ActionData) continue
+            const signer = verifyTypedData(
+              domain,
+              { ActionData: types.ActionData },
+              data,
+              row.signedTx,
+            ).toLowerCase()
+            if (signer !== sessionAddress) continue
+            // Match — the row was signed by the session that just landed.
+            await prisma.txQueue.update({
+              where: { id: row.id },
+              data: {
+                status: 'pending',
+                reason: null,
+                pendingQuickSignTxHash: null,
+              },
+            })
+            console.log(`[ChainSync:L2Events] Recovery: unfailed TxQueue ${row.id} (signer ${signer} matches newly-landed session)`)
+          } catch {
+            // Bad signature / payload — leave the row failed.
+          }
         }
       }
     } catch (err: any) {

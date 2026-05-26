@@ -1025,8 +1025,11 @@ async function cleanupPendingMintDeposits() {
  *   3. Look up SessionKey by (ownerAddress, signerAddress). If a valid
  *      (non-revoked, non-expired, non-zero-expiry) row exists, the LZ message
  *      has landed — promote the TxQueue row to 'pending'.
- *   4. Rows older than 20 min with no session are failed with a clear reason.
- *      The ValidatorService has its own 25-min safety-net for belt-and-suspenders.
+ *   4. Rows older than 2 hours with no session are failed with a clear reason.
+ *      The ValidatorService has its own ~2h15m safety-net for belt-and-suspenders.
+ *      The handleSessionCreated handler in ChainSyncService also unfails matching
+ *      failed rows when the session finally lands (recovery path), so this
+ *      timeout is only the final backstop for genuinely-doomed cases.
  */
 async function cleanupPendingSessionRegistrations() {
   try {
@@ -1039,7 +1042,14 @@ async function cleanupPendingSessionRegistrations() {
 
     logger.log(`[PendingSession] ${waitingRows.length} waiting_for_session rows — checking SessionKey table...`)
 
-    const twentyMinutesAgo = new Date(Date.now() - 20 * 60 * 1000)
+    // 2h tolerance window. LZ Base Sepolia is normally 1-5 min, but laptop
+    // sleep / internet drop / indexer crash can extend the window much
+    // further. 20 min was too tight — repeatedly hit by users who minted +
+    // posted in one session, then closed their laptop before the L1→L2
+    // bridge completed. Recovery path also exists in ChainSyncService
+    // (handleSessionCreated unfails matching rows when the session finally
+    // lands), so this timeout is just a backstop for genuinely-doomed cases.
+    const sessionTimeoutAgo = new Date(Date.now() - 2 * 60 * 60 * 1000) // 2h
     const nowSec = Math.floor(Date.now() / 1000)
 
     // Build a lookup of ownerAddress by senderId (one query for all senders).
@@ -1122,7 +1132,7 @@ async function cleanupPendingSessionRegistrations() {
         }
 
         // Session not yet visible — check timeout
-        if (row.createdAt < twentyMinutesAgo) {
+        if (row.createdAt < sessionTimeoutAgo) {
           await markTxQueueFailed(
             prisma,
             row.id,

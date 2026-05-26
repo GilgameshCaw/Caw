@@ -1304,19 +1304,25 @@ export const validatorService: Service = {
         console.log(`[Validator] Pre-sim hold: moved ${sessionHeldCount.count} session-pending rows to waiting_for_session`)
       }
 
-      // Safety net: hard-fail waiting_for_session rows older than 25 min.
+      // Safety net: hard-fail waiting_for_session rows older than 2h15m.
       // The DataCleaner's cleanupPendingSessionRegistrations sweep handles
-      // the normal promotion path and its own 20-min timeout; this is the
+      // the normal promotion path and its own 2h timeout; this is the
       // last-resort backstop in case the DataCleaner is temporarily down.
+      // 2h tolerance accounts for laptop sleep, internet drop, and slow LZ;
+      // the recovery path in ChainSyncService.handleSessionCreated unfails
+      // matching rows when the session lands AFTER timeout, so this is the
+      // backstop for truly stuck cases (e.g. the user signed against a
+      // session that never made it on-chain).
+      const sessionSafetyNetAgo = new Date(Date.now() - 2 * 60 * 60 * 1000 - 15 * 60 * 1000) // 2h15m
       const staleSessionRows = await prisma.txQueue.findMany({
         where: {
           status: 'waiting_for_session',
-          createdAt: { lt: twentyFiveMinutesAgo }
+          createdAt: { lt: sessionSafetyNetAgo }
         },
         select: { id: true, senderId: true, payload: true }
       })
       if (staleSessionRows.length > 0) {
-        console.log(`[Validator] Safety net: failing ${staleSessionRows.length} waiting_for_session rows older than 25 min`)
+        console.log(`[Validator] Safety net: failing ${staleSessionRows.length} waiting_for_session rows older than 2h15m`)
         for (const row of staleSessionRows) {
           const data = (row.payload as any)?.data ?? {}
           await markTxQueueFailed(
