@@ -260,12 +260,16 @@ const Feed = forwardRef<FeedRef, Props>(({ filter, username, apiEndpoint, title 
 
     const isReply = (it: CawItem) => it.parent?.id && !it.isQuote && it.action !== 'RECAW'
     const isHomeFeed = filter === 'For you' || filter === 'Following'
-    // On the home feeds, dedupe by "underlying caw" so the same post never
-    // appears twice no matter how it surfaces — bare recaw + original + a
-    // quote of it all collapse to the FIRST occurrence in desc order. The
-    // quote/recaw wrapper IS the surface kept on screen when it's first,
-    // so the user still sees who quoted; subsequent occurrences (whether
-    // another recaw, another quote, or the original itself) drop out.
+    const isProfileFeed = filter === 'profile' || filter === 'profile-replies' || filter === 'profile-media'
+    // On the home AND profile feeds, dedupe by "underlying caw" so the
+    // same post never appears twice no matter how it surfaces — a bare
+    // recaw + the original it points at collapse to the FIRST occurrence
+    // in desc order. Quotes (RECAW with content) and replies keep their
+    // own distinct underlying-id so they still render alongside the
+    // original. Profile feeds previously had no such guard; #329 reports
+    // perception of duplicate posts on a profile view, this closes the
+    // most likely gap (a user who bare-recaw'd their own caw would see
+    // both the recaw and the original side-by-side on their own profile).
     const seenUnderlying = new Set<string>()
 
     const filtered = items.filter(item => {
@@ -288,12 +292,17 @@ const Feed = forwardRef<FeedRef, Props>(({ filter, username, apiEndpoint, title 
       if (item.status === 'PENDING') {
         if (pendingPostSignatures.has(pendingSig(item))) return false
       }
-      if (isHomeFeed) {
+      if (isHomeFeed || isProfileFeed) {
         // Quotes ARE RECAW rows with content; bare recaws are RECAW
         // rows with empty content. Both reference an underlying
         // (parent) caw — collapse against it. Regular caws collapse
         // against their own id. First occurrence wins, all later
         // occurrences (recaw, quote, or the original) are dropped.
+        //
+        // On home feed: catches "user follows recaw + you also see the
+        // original" sort of double-surfacing.
+        // On profile feed (#329 fix): catches "user recaw'd or quoted
+        // their own post and the profile shows both rows side by side."
         const underlyingId = item.action === 'RECAW' ? (item.parent?.id ?? item.id) : item.id
         if (seenUnderlying.has(underlyingId)) return false
         seenUnderlying.add(underlyingId)
