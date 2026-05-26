@@ -2425,12 +2425,29 @@ console.log("succeededKeys", succeededKeys)
     }
 
     function computeTotalTip(
-      entries: Array<{ payload: any }>
+      entries: Array<{ payload: any; implicitTip?: string | null }>
     ): bigint {
+      // Two tip sources, mirroring validateActionTip():
+      //   - amounts[last]  : explicit tip in the user-signed action (owner sigs,
+      //                      or session sigs where the user picked a custom tip).
+      //   - implicitTip    : pre-resolved session perActionTipRate stamped on the
+      //                      TxQueue row at submission time. Used when amounts is
+      //                      empty (Quick Sign default — the contract reads the
+      //                      rate from the on-chain session record).
+      // Without the implicitTip fallback, session-signed actions with empty
+      // amounts[] cause the aggregate batch check to fail with "Insufficient
+      // tip: 0 CAW" even though per-action validation passed.
       return entries.reduce((sum, e) => {
         const amounts = (e.payload as any).data.amounts as string[]
-        const lastAmt = amounts[amounts.length - 1] ?? '0'
-        return sum + BigInt(lastAmt)
+        if (amounts.length > 0) {
+          const lastAmt = amounts[amounts.length - 1] ?? '0'
+          return sum + BigInt(lastAmt)
+        }
+        const implicit = (e as any).implicitTip
+        if (implicit != null) {
+          return sum + BigInt(implicit)
+        }
+        return sum
       }, BigInt(0))
     }
 
