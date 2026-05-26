@@ -2126,6 +2126,19 @@ const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess, placehol
   // still works inside the current textarea via the browser's native
   // handling; we only intercept when the user is at a HARD boundary.
   const handleChunkArrow = (e: React.KeyboardEvent<HTMLTextAreaElement>, i: number) => {
+    // Cmd/Ctrl+Enter — submit. Works in both single-chunk and thread mode.
+    // Re-evaluates the same gating the button uses; bails silently when
+    // disabled so the keystroke doesn't insert a newline AND fail to submit.
+    if ((e.metaKey || e.ctrlKey) && e.key === 'Enter') {
+      const threadTooLong = isThreadMode && submittableChunkCount > MAX_THREAD_LENGTH
+      const submitDisabled = (!text && selectedMedia.length === 0 && !pollMarker)
+        || isOverLimit || !canPost || isSubmitting || isScheduling
+        || threadTooLong || pollInvalid
+      if (submitDisabled) { e.preventDefault(); return }
+      e.preventDefault()
+      void handleSubmit()
+      return
+    }
     if (!isThreadMode) return
     const ta = e.currentTarget
     const pos = ta.selectionStart ?? 0
