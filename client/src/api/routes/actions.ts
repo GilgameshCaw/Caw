@@ -1711,6 +1711,11 @@ router.post('/batch', async (req, res) => {
     // pendingQuickSignTxHash hint — park all rows as waiting_for_session
     // instead of 403-ing. Same pattern as the single-action endpoint.
     let batchParkAsWaitingForSession = false
+    // Implicit tip pre-resolved from the session — stamped on every row in
+    // this batch so the validator's empty-amounts tip check passes.
+    // Null for owner-signed batches (those carry explicit tip in amounts[]).
+    // Mirrors the single-action endpoint's perActionTipRate plumbing.
+    let perActionTipRate: bigint | null = null
     if (!isOwner) {
       const firstActionType = typeof actions[0].data.actionType === 'number' ? actions[0].data.actionType : undefined
       const sessionCheck = await checkSessionKeyOnChain(ownerAddress, firstSigner, firstActionType)
@@ -1723,6 +1728,8 @@ router.post('/batch', async (req, res) => {
         } else {
           return res.status(403).json({ error: sessionCheck.reason || 'Signer is not authorized' })
         }
+      } else {
+        perActionTipRate = sessionCheck.perActionTipRate ?? 0n
       }
     }
 
@@ -1867,6 +1874,12 @@ router.post('/batch', async (req, res) => {
                 pendingQuickSignTxHash: sanitizedPendingQuickSignTxHash,
                 clientVersion: provenance.clientVersion,
                 clientOrigin: provenance.clientOrigin,
+                signerKind: isOwner ? 'owner' : 'session',
+                // Stamp the session's per-action tip so the validator's
+                // empty-amounts tip check passes (mirrors single-action endpoint).
+                // Null when parked for a pending session register — DataCleaner
+                // back-fills implicitTip from the SessionKey row at promote time.
+                implicitTip: batchParkAsWaitingForSession ? null : (perActionTipRate !== null ? perActionTipRate.toString() : null),
                 // Park as waiting_for_session when the Quick Sign session
                 // hasn't landed on L2 yet. DataCleaner promotes once the
                 // SessionKey row appears in the local DB.
