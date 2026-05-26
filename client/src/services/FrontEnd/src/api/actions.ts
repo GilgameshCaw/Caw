@@ -1764,67 +1764,75 @@ export function useSignAndSubmitAction() {
       : getValidatorTip()
 
     // Build typed data for every action (no signing yet — needed to compute
-    // the per-action packed slice each batch sig commits to).
+    // the per-action packed slice each batch sig commits to). Wrapped in a
+    // closure so the cawonce-collision retry path can rebuild the entire
+    // sig-set against a fresh contiguous cawonce range.
     const sessionAccount = privateKeyToAccount(activeSession.privateKey)
-    const typedItems: Array<{ params: ActionParams; data: any; domain: any; types: any }> = []
-    for (let i = 0; i < allParams.length; i++) {
-      const p = allParams[i]
-      // Batch-sig path is by definition session-key signing — omit the tip
-      // slot so the contract uses the implicit per-action rate from the
-      // session record.
-      const { domain, types, message } = buildTypedData(p, effectiveTip, { sessionKeySigning: true })
-      typedItems.push({ params: p, data: message, domain, types })
+    type TypedItem = { params: ActionParams; data: any; domain: any; types: any }
+    let typedItems: TypedItem[] = []
+    let batchDomain: any
+    let batchTypeDef: any
+    let batchSig: `0x${string}` = '0x'
+    let batchPayload: any[] = []
+
+    const buildAndSignBatch = async () => {
+      typedItems = []
+      for (let i = 0; i < allParams.length; i++) {
+        const p = allParams[i]
+        // Batch-sig path is by definition session-key signing — omit the tip
+        // slot so the contract uses the implicit per-action rate from the
+        // session record.
+        const { domain, types, message } = buildTypedData(p, effectiveTip, { sessionKeySigning: true })
+        typedItems.push({ params: p, data: message, domain, types })
+      }
+
+      // ONE ActionBatch signature covers all N actions. Mirrors the contract's
+      // batch path: hash each per-action packed slice, then keccak the concat,
+      // then sign ActionBatch(senderId, firstCawonce, actionCount, actionsHash).
+      // The validator clusters txQueue rows by batchId and emits one sig group
+      // for the whole thread, replacing N ecrecovers with 1 on-chain.
+      const sanitizedForPack = typedItems.map(item => ({
+        actionType: Number(item.data.actionType),
+        senderId: Number(item.data.senderId),
+        receiverId: Number(item.data.receiverId || 0),
+        receiverCawonce: Number(item.data.receiverCawonce || 0),
+        networkId: Number(item.data.networkId),
+        cawonce: Number(item.data.cawonce),
+        recipients: (item.data.recipients || []).map(Number),
+        amounts: (item.data.amounts || []).map((x: any) => BigInt(x)),
+        text: item.data.text || '0x',
+      }))
+      const packedBytes = packActions(sanitizedForPack)
+      const slices = getPackedActionSlices(packedBytes)
+      const perActionHashes = slices.map((s: Uint8Array) => keccak256(s))
+      const actionsHash = keccak256(concat(perActionHashes))
+
+      batchDomain = typedItems[0].domain
+      batchTypeDef = {
+        ActionBatch: [
+          { name: 'senderId', type: 'uint32' },
+          { name: 'firstCawonce', type: 'uint32' },
+          { name: 'actionCount', type: 'uint32' },
+          { name: 'actionsHash', type: 'bytes32' },
+        ],
+      }
+      const batchMessage = {
+        senderId: Number(typedItems[0].data.senderId),
+        firstCawonce: Number(typedItems[0].data.cawonce),
+        actionCount: typedItems.length,
+        actionsHash,
+      }
+      batchSig = await sessionAccount.signTypedData({
+        domain: batchDomain as any,
+        types: batchTypeDef,
+        primaryType: 'ActionBatch',
+        message: batchMessage,
+      })
+      batchPayload = typedItems.map(item => ({ data: item.data }))
     }
 
-    // ONE ActionBatch signature covers all N actions. Mirrors the contract's
-    // batch path: hash each per-action packed slice, then keccak the concat,
-    // then sign ActionBatch(senderId, firstCawonce, actionCount, actionsHash).
-    // The validator clusters txQueue rows by batchId and emits one sig group
-    // for the whole thread, replacing N ecrecovers with 1 on-chain.
-    const sanitizedForPack = typedItems.map(item => ({
-      actionType: Number(item.data.actionType),
-      senderId: Number(item.data.senderId),
-      receiverId: Number(item.data.receiverId || 0),
-      receiverCawonce: Number(item.data.receiverCawonce || 0),
-      networkId: Number(item.data.networkId),
-      cawonce: Number(item.data.cawonce),
-      recipients: (item.data.recipients || []).map(Number),
-      amounts: (item.data.amounts || []).map((x: any) => BigInt(x)),
-      text: item.data.text || '0x',
-    }))
-    const packedBytes = packActions(sanitizedForPack)
-    const slices = getPackedActionSlices(packedBytes)
-    // viem's keccak256(ByteArray) returns Hex; concat(Hex[]) → Hex; keccak256(Hex) → Hex.
-    const perActionHashes = slices.map((s: Uint8Array) => keccak256(s))
-    const actionsHash = keccak256(concat(perActionHashes))
-
-    const batchDomain = typedItems[0].domain
-    const batchTypeDef = {
-      ActionBatch: [
-        { name: 'senderId', type: 'uint32' },
-        { name: 'firstCawonce', type: 'uint32' },
-        { name: 'actionCount', type: 'uint32' },
-        { name: 'actionsHash', type: 'bytes32' },
-      ],
-    }
-    const batchMessage = {
-      senderId: Number(typedItems[0].data.senderId),
-      firstCawonce: Number(typedItems[0].data.cawonce),
-      actionCount: typedItems.length,
-      actionsHash,
-    }
-    const batchSig = await sessionAccount.signTypedData({
-      domain: batchDomain as any,
-      types: batchTypeDef,
-      primaryType: 'ActionBatch',
-      message: batchMessage,
-    })
+    await buildAndSignBatch()
     onProgress?.({ signed: typedItems.length, submitted: 0, total: typedItems.length })
-
-    // Phase 2: single batch POST. The server verifies the batch sig once,
-    // creates N TxQueue rows sharing batchId + signedTx, and the validator
-    // re-clusters them into one sig group when packing the on-chain submission.
-    const batchPayload = typedItems.map(item => ({ data: item.data }))
 
     // Forward pending mint/deposit hint (same logic as single-action path) so
     // threads posted during LZ propagation get parked in waiting_for_deposit
@@ -1871,27 +1879,57 @@ export function useSignAndSubmitAction() {
     } catch { /* ignore */ }
 
     let batchResponse: any
-    try {
-      // Wrap in retryOnIndexing for parity with the single-action path:
-      // /api/actions/batch returns 202 when the sender row isn't indexed
-      // yet (fresh-mint case). Without this wrap, IndexingError would
-      // surface as a flat batch failure to the user.
-      batchResponse = await retryOnIndexing(() => apiFetch('/api/actions/batch', {
-        method: 'POST',
-        body: JSON.stringify({
-          actions: batchPayload,
-          batchSig,
-          domain: batchDomain,
-          types: batchTypeDef,
-          ...(pendingDepositTxHash ? { pendingDepositTxHash } : {}),
-          ...(pendingQuickSignTxHash ? { pendingQuickSignTxHash } : {}),
-        }),
-      }))
-    } catch (err: any) {
-      console.error('[submitMany] Batch submit failed:', err.message)
-      // Fill all with error so caller sees consistent shape
-      const results = typedItems.map(() => ({ error: err.message || 'batch submission failed' }))
-      return results
+    const MAX_BATCH_RETRIES = 3
+    let batchAttempt = 0
+    while (true) {
+      try {
+        // Wrap in retryOnIndexing for parity with the single-action path:
+        // /api/actions/batch returns 202 when the sender row isn't indexed
+        // yet (fresh-mint case). Without this wrap, IndexingError would
+        // surface as a flat batch failure to the user.
+        batchResponse = await retryOnIndexing(() => apiFetch('/api/actions/batch', {
+          method: 'POST',
+          body: JSON.stringify({
+            actions: batchPayload,
+            batchSig,
+            domain: batchDomain,
+            types: batchTypeDef,
+            ...(pendingDepositTxHash ? { pendingDepositTxHash } : {}),
+            ...(pendingQuickSignTxHash ? { pendingQuickSignTxHash } : {}),
+          }),
+        }))
+        break // success
+      } catch (err: any) {
+        // Cawonce collision — bump local floor, re-allocate the entire
+        // contiguous range, mutate allParams in place, and re-sign the
+        // batch. Same recovery pattern as the single-action path but
+        // re-signs ALL items because the batch sig commits to every
+        // cawonce in the range.
+        if (err?.name === 'CawonceCollisionError' && batchAttempt < MAX_BATCH_RETRIES) {
+          batchAttempt++
+          if (activeTokenId && typeof err.suggestedCawonce === 'number') {
+            console.log(`[submitMany] Batch cawonce collision (attempt ${batchAttempt}/${MAX_BATCH_RETRIES}) — bumping local watermark to ${err.suggestedCawonce} and re-signing`)
+            setLocalCawonceFloor(activeTokenId, err.suggestedCawonce)
+          }
+          const newCawonces = await allocateCawonces(activeTokenId!, allParams.length)
+          for (let i = 0; i < allParams.length; i++) {
+            allParams[i].cawonce = newCawonces[i]
+            // Re-thread receiverCawonce for thread-reply chains: if action i
+            // referenced action 0 as parent, update the reference too.
+            if (i > 0 && allParams[i].receiverCawonce != null) {
+              const prevIdx = typedItems.findIndex(t => Number(t.data.cawonce) === Number(allParams[i].receiverCawonce))
+              if (prevIdx >= 0 && prevIdx < i) {
+                allParams[i].receiverCawonce = newCawonces[prevIdx]
+              }
+            }
+          }
+          await buildAndSignBatch()
+          continue
+        }
+        console.error('[submitMany] Batch submit failed:', err.message)
+        const results = typedItems.map(() => ({ error: err.message || 'batch submission failed' }))
+        return results
+      }
     }
 
     const results: any[] = new Array(allParams.length)
