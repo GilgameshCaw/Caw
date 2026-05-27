@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react'
+import { useQueryClient } from '@tanstack/react-query'
 import { HiCamera, HiLink, HiLocationMarker } from 'react-icons/hi'
 import Tooltip from '~/components/Tooltip'
 import { apiFetch } from '~/api/client'
@@ -63,6 +64,10 @@ const ProfileEditForm: React.FC<ProfileEditFormProps> = ({
   const containerSpacing = compactFields ? '' : 'space-y-6'
   const signAndSubmit = useSignAndSubmitAction()
   const setAvatar = useTokenDataStore(s => s.setAvatar)
+  // For invalidating user-data caches after a profile save so the new
+  // avatar / fields show up on the profile page, feed items, mentions, etc.
+  // without waiting for the natural refetch. See #330.
+  const queryClient = useQueryClient()
 
   const providerDomain = typeof window !== 'undefined' ? window.location.hostname : ''
 
@@ -270,6 +275,11 @@ const ProfileEditForm: React.FC<ProfileEditFormProps> = ({
       if (activeToken.tokenId) {
         setAvatar(activeToken.tokenId, getUserAvatar(res.user) || null)
       }
+      // #330 — invalidate the user-data caches so the new avatar / fields
+      // reflect immediately on the profile page, FeedItem, mentions, etc.
+      // (setAvatar above only refreshes the Zustand-backed sidebar/header).
+      if (activeToken.username) queryClient.invalidateQueries({ queryKey: ['user', activeToken.username] })
+      if (activeToken.tokenId) queryClient.invalidateQueries({ queryKey: ['userByToken', activeToken.tokenId] })
       setAvatarPreview(undefined)
       setCoverPreview(undefined)
       setAvatarUrl(undefined)
@@ -321,6 +331,10 @@ const ProfileEditForm: React.FC<ProfileEditFormProps> = ({
       if (avatarUrl && activeToken.tokenId) {
         setAvatar(activeToken.tokenId, avatarUrl)
       }
+      // #330 — same invalidation as the off-chain path; the on-chain save
+      // also mutates the same user-data caches so subscribers refetch.
+      if (activeToken.username) queryClient.invalidateQueries({ queryKey: ['user', activeToken.username] })
+      if (activeToken.tokenId) queryClient.invalidateQueries({ queryKey: ['userByToken', activeToken.tokenId] })
 
       const offChainChanges: Record<string, string> = {}
       if (formData.displayName !== (profileData?.displayName || '')) offChainChanges.displayName = formData.displayName
