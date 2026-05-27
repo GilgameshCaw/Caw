@@ -25,6 +25,14 @@ function releaseAudio(el: HTMLVideoElement) {
   if (audioCoordinator.current === el) audioCoordinator.current = null
 }
 
+// Session-sticky "user wants audio" flag (#336). Once the user unmutes
+// any video, subsequent videos they swipe into auto-unmute too — same
+// behaviour as TikTok / X. Cleared when the user explicitly mutes via
+// our toggle. Coordinator-driven mutes (when another video claims the
+// audio slot) intentionally DON'T clear it: that mute reflects video
+// switching, not the user wanting silence.
+let userWantsAudio = false
+
 /** Video player for posts. Mobile = native browser controls (familiar UX,
  * accessibility, buffering indicator). Desktop = custom hover overlay
  * (no browser chrome, cleaner look, fullscreen modal). */
@@ -76,6 +84,16 @@ const PostVideo: React.FC<{ url: string; onError?: () => void }> = ({ url, onErr
           if (!videoUserPausedRef.current && el.paused) {
             void el.play().catch(() => { /* autoplay blocked: ignore */ })
           }
+          // #336 — if the user already unmuted a previous video this
+          // session, carry that preference into this one too. claimAudio
+          // mutes any other unmuted video so we still play at most one
+          // at a time. Browsers permit programmatic unmute once the user
+          // has interacted with the page (which they did by unmuting the
+          // first video), so this doesn't trip autoplay-with-audio.
+          if (userWantsAudio && el.muted) {
+            el.muted = false
+            claimAudio(el)
+          }
         } else {
           if (!el.paused) el.pause()
           // Reset audio state when leaving the viewport. Without this,
@@ -114,7 +132,15 @@ const PostVideo: React.FC<{ url: string; onError?: () => void }> = ({ url, onErr
     if (!el) return
     const onVolumeChange = () => {
       setIsMuted(el.muted)
-      if (!el.muted) claimAudio(el)
+      if (!el.muted) {
+        claimAudio(el)
+        // #336 — any unmute (toggle button OR native controls) means the
+        // user wants audio for the session. Don't clear on mute here:
+        // we can't distinguish a user mute from a coordinator force-mute,
+        // and clearing on the latter would defeat the sticky behaviour.
+        // Explicit user mutes flow through toggleMute below and clear it.
+        userWantsAudio = true
+      }
       else releaseAudio(el)
     }
     el.addEventListener('volumechange', onVolumeChange)
@@ -147,8 +173,13 @@ const PostVideo: React.FC<{ url: string; onError?: () => void }> = ({ url, onErr
       // Claim the global audio slot so any other unmuted PostVideo
       // gets re-muted before this one starts producing sound.
       claimAudio(v)
+      // #336 — explicit user unmute → sticky for the session.
+      userWantsAudio = true
     } else {
       releaseAudio(v)
+      // #336 — explicit user mute via our toggle → clears the session
+      // preference. Coordinator-driven mutes don't reach this path.
+      userWantsAudio = false
     }
   }
   const seek = (e: React.ChangeEvent<HTMLInputElement>) => {
