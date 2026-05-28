@@ -616,10 +616,19 @@ console.log("BALANCE:", balance)
     : (!balance || totalCawNeeded > balance);
 
   // Total ETH msg.value for the ZAP tx: swap-input + LZ/storage fees.
+  //
+  // Pad the LZ fee +5%. KNOWN bug: CawProfileQuoter still references the
+  // old per-flow selectors (depositRegisterSession etc) deleted when we
+  // consolidated 6 LZ entry points into lzDepositMintSession. The quoter
+  // returns LZ fee for the old gas budget (225k); the actual tx uses the
+  // new unified-dispatcher budget (250k). Delta = 25k gas × dest gas price
+  // ≈ 1.5% shortfall. Refunded by CawProfile._refundUnusedLzEth so excess
+  // is harmless. Permanent fix: redeploy CawProfileQuoter with new selectors.
   const zapTxValue = useMemo(() => {
     if (paymentMode !== 'eth' || !quote) return 0n
     const nativeFee = (quote as { nativeFee?: bigint }).nativeFee ?? 0n
-    return ethAmountWei + BigInt(nativeFee)
+    const paddedFee = (BigInt(nativeFee) * 105n) / 100n
+    return ethAmountWei + paddedFee
   }, [paymentMode, ethAmountWei, quote])
 
   const wrongChain = chainId !== chains.l1.chainId;
@@ -697,10 +706,10 @@ console.log("BALANCE:", balance)
     abi:      cawProfileMinterAbi,
     address: CAW_NAMES_MINTER_ADDRESS,
     args:         [CLIENT_ID, username, lzTokenAmount],
-    disabled:     depositEnabled || authEnabled || !address || !isValid || needsApproval,
+    disabled:     paymentMode === 'eth' || depositEnabled || authEnabled || !address || !isValid || needsApproval,
     onPending:    hash => { console.log('tx pending', hash); setHasResetForm(false) },
     onSuccess:    onMintOnlySuccess,
-    onError:      err  => console.error(err),
+    onError:      err  => { console.error(err); setHasResetForm(true) },
   })
 
   // hook into mintAndAuth function (mint + authenticate, no deposit)
@@ -710,10 +719,10 @@ console.log("BALANCE:", balance)
     abi:      cawProfileMinterAbi,
     address: CAW_NAMES_MINTER_ADDRESS,
     args:         [CLIENT_ID, username, chains.l2.layerZero, lzTokenAmount],
-    disabled:     depositEnabled || !authEnabled || !address || !isValid || needsApproval,
+    disabled:     paymentMode === 'eth' || depositEnabled || !authEnabled || !address || !isValid || needsApproval,
     onPending:    hash => { console.log('mintAndAuth tx pending', hash); setHasResetForm(false) },
     onSuccess:    onMintOnlySuccess,
-    onError:      err  => console.error(err),
+    onError:      err  => { console.error(err); setHasResetForm(true) },
   })
 
   // hook into mintAndDeposit function
@@ -723,7 +732,7 @@ console.log("BALANCE:", balance)
     abi:      cawProfileMinterAbi,
     address: CAW_NAMES_MINTER_ADDRESS,
     args:         [CLIENT_ID, username, depositAmountWei, chains.l2.layerZero, lzTokenAmount],
-    disabled:     !depositEnabled || quickSignEnabled || !address || !isValid || needsApproval || depositAmountWei === 0n,
+    disabled:     paymentMode === 'eth' || !depositEnabled || quickSignEnabled || !address || !isValid || needsApproval || depositAmountWei === 0n,
     onPending:    hash => {
       console.log('mintAndDeposit tx pending', hash)
       setHasResetForm(false)
@@ -772,7 +781,7 @@ console.log("BALANCE:", balance)
       }
       setTimeout(checkForNewToken, 1000)
     },
-    onError:      err  => console.error(err),
+    onError:      err  => { console.error(err); setHasResetForm(true) },
   })
 
   // Quick Sign session params used by the bundled hook below. We update these
@@ -795,7 +804,7 @@ console.log("BALANCE:", balance)
     // gives validators priority-lane compensation). Matches what the
     // standalone QuickSign flow uses by default.
     args:         [CLIENT_ID, username, depositAmountWei, chains.l2.layerZero, lzTokenAmount, qsSessionAddress, BigInt(qsExpiry), qsSpendLimit, getDefaultTipCeiling(getTipTiers().fast)],
-    disabled:     !depositEnabled || !quickSignEnabled || !address || !isValid || needsApproval || depositAmountWei === 0n || qsSessionAddress === '0x0000000000000000000000000000000000000000',
+    disabled:     paymentMode === 'eth' || !depositEnabled || !quickSignEnabled || !address || !isValid || needsApproval || depositAmountWei === 0n || qsSessionAddress === '0x0000000000000000000000000000000000000000',
     onPending:    hash => {
       console.log('mintAndDepositAndQuickSign tx pending', hash)
       setHasResetForm(false)
@@ -865,7 +874,7 @@ console.log("BALANCE:", balance)
       }
       setTimeout(checkForNewToken, 1000)
     },
-    onError:      err  => console.error(err),
+    onError:      err  => { console.error(err); setHasResetForm(true) },
   })
 
   // ============================================
@@ -923,7 +932,7 @@ console.log("BALANCE:", balance)
       }
       setTimeout(checkForNewToken, 1000)
     },
-    onError: err => console.error(err),
+    onError: err => { console.error(err); setHasResetForm(true) },
   })
 
   // mintAndDepositAndQuickSignZap — bundled ETH + QuickSign onboarding.
@@ -1010,7 +1019,7 @@ console.log("BALANCE:", balance)
       }
       setTimeout(checkForNewToken, 1000)
     },
-    onError: err => console.error(err),
+    onError: err => { console.error(err); setHasResetForm(true) },
   })
 
   // Unified status — pick from whichever path is active
@@ -1187,6 +1196,11 @@ console.log("BALANCE:", balance)
 
   const handleSubmit = useCallback(async () => {
     console.log('[New] handleSubmit called', { wrongChain, needsMinterApproval })
+    // Reset the form-dismissal flag so the "Creating…" takeover shows on this
+    // attempt. Without this, a previous tx that errored (onError sets the flag
+    // true to dismiss the takeover) leaves the flag stuck and the next submit
+    // never shows the takeover.
+    setHasResetForm(false)
     if (wrongChain) {
       const switched = await handleSwitchChain()
       if (!switched) return
@@ -1274,15 +1288,37 @@ console.log("BALANCE:", balance)
                 </div>
               </div>
 
-              {depositEnabled && depositAmountWei > 0n && (
-                <p className="text-yellow-500 text-sm">
-                  {Number(depositAmount).toLocaleString()} CAW
-                  {cawPrice > 0 && (
-                    <> (~${formatUsd(Number(depositAmount) * cawPrice)})</>
-                  )}
-                  {' '}deposit pending
-                </p>
-              )}
+              {depositEnabled && (() => {
+                // ETH mode: actual CAW deposited = zap output minus username cost.
+                // CAW mode: user typed the deposit amount directly.
+                const pendingWei = paymentMode === 'eth'
+                  ? (zapQuote.expectedCawOut > cost ? zapQuote.expectedCawOut - cost : 0n)
+                  : depositAmountWei
+                if (pendingWei === 0n) return null
+                const pendingCaw = Number(pendingWei) / 1e18
+                // USD basis: in ETH mode, derive from what the user actually
+                // paid (ETH × ethPrice scaled by deposit/totalOut), NOT from
+                // CoinGecko's cawPrice — on testnet the pool ratio diverges
+                // wildly from the public CAW price and pendingCaw × cawPrice
+                // can be 5x off. CAW mode falls back to cawPrice as before.
+                let usd: number | null = null
+                if (paymentMode === 'eth' && ethPrice > 0 && zapQuote.expectedCawOut > 0n) {
+                  const ethPaid = Number(ethAmount) || 0
+                  const ratio = Number(pendingWei) / Number(zapQuote.expectedCawOut)
+                  usd = ethPaid * ethPrice * ratio
+                } else if (cawPrice > 0) {
+                  usd = pendingCaw * cawPrice
+                }
+                return (
+                  <p className="text-yellow-500 text-sm">
+                    {pendingCaw.toLocaleString(undefined, { maximumFractionDigits: 0 })} CAW
+                    {usd != null && (
+                      <> (~${formatUsd(usd)})</>
+                    )}
+                    {' '}deposit pending
+                  </p>
+                )
+              })()}
 
               <div className="space-y-4">
                 {mintStatus === 'pending' && (
@@ -1307,7 +1343,7 @@ console.log("BALANCE:", balance)
         className={`${isCaptive ? 'max-w-4xl' : 'max-w-md'} mx-auto p-6 ${isCaptive ? '' : 'space-y-4 mt-8'}`}
         style={isCaptive ? undefined : { paddingBottom: 'calc(var(--bottom-nav-h, 0px) + 24px)' }}
       >
-        <div className={isCaptive ? 'flex flex-col md:flex-row gap-8 md:gap-0 items-start md:divide-x md:divide-white/10 pt-12 md:pt-20' : ''}>
+        <div className={isCaptive ? 'flex flex-col md:flex-row gap-8 md:gap-0 items-start md:divide-x md:divide-white/10 pt-6' : ''}>
           {/* Left column (captive) or full-width header (normal) */}
           <div className={isCaptive ? 'w-full md:w-[45%] md:sticky md:top-8 md:pr-8' : ''}>
             <div className={isCaptive ? `px-6 py-6 rounded-2xl backdrop-blur-sm ${isDark ? 'bg-white/[0.04] border border-white/10' : 'bg-black/[0.03] border border-black/10'}` : ''}>
