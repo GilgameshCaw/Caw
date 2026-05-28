@@ -732,6 +732,7 @@ const LINKING_STEPS = [
       '1000000000000000', // depositFeeCeiling  = 0.001  ETH
       '1000000000000000', // authFeeCeiling     = 0.001  ETH
       '1000000000000000', // mintFeeCeiling     = 0.001  ETH
+      '500000000000',     // tipCeilingWei      = 5e11   (~$0.001 at ETH=$2k)
     ],
     condition: (state) => state.addresses.CawNetworkManager,
     skipIf: async (state, deployer) => {
@@ -789,6 +790,7 @@ const LINKING_STEPS = [
       '2500000000000000', // depositFeeCeiling  = 0.0025 ETH
       '1000000000000000', // authFeeCeiling     = 0.001  ETH
       '1000000000000000', // mintFeeCeiling     = 0.001  ETH
+      '500000000000',     // tipCeilingWei      = 5e11   (~$0.001 at ETH=$2k)
     ],
     condition: (state) => state.addresses.CawNetworkManager && state.linking?.urukFeesLowered === true,
     skipIf: async (state, deployer) => {

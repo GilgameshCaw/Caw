@@ -13,7 +13,7 @@ contract("CawNetworkManager - Instance Registry", (accounts) => {
   before(async () => {
     networkManager = await CawNetworkManager.new(buyAndBurn, { from: owner });
     // Create a network so we can register instances against it
-    await networkManager.createNetwork("Test Network", owner, l2Eid, 1, 1, 1, 1, { from: owner });
+    await networkManager.createNetwork("Test Network", owner, l2Eid, 1, 1, 1, 1, "500000000000", { from: owner });
   });
 
   describe("registerInstance", () => {

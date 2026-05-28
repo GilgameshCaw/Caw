@@ -82,9 +82,9 @@ contract("CawProfileMinter — ZAP (pay-with-ETH) flows", function(accounts) {
     await cawProfile.setL2Peer(l1, cawProfileL2Mainnet.address);
 
     // Two networks to exercise both branches (zero fees to keep ETH math clean)
-    await networkManager.createNetwork("L2 Network", accounts[0], l2, 0, 0, 0, 0);
+    await networkManager.createNetwork("L2 Network", accounts[0], l2, 0, 0, 0, 0, "500000000000");
     l2NetworkId = 1;
-    await networkManager.createNetwork("L1 Network", accounts[0], l1, 0, 0, 0, 0);
+    await networkManager.createNetwork("L1 Network", accounts[0], l1, 0, 0, 0, 0, "500000000000");
     l1NetworkId = 2;
 
     minter = await CawProfileMinter.new(token.address, cawProfile.address, mockRouter.address);

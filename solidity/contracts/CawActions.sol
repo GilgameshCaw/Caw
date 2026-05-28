@@ -188,6 +188,8 @@ contract CawActions is Ownable {
   ///      Mirrors CawCapOracle.STALE_THRESHOLD — both must stay in sync.
   uint64 private constant CAP_STALE_THRESHOLD = 24 hours;
 
+  uint256 private constant BASELINE_TIP_CAW = 50_000;
+
   // ============================================
   // ZK SIG-RECOVERY PATH (immutable hooks)
   // ============================================
@@ -633,6 +635,8 @@ contract CawActions is Ownable {
     bytes32 networkHash;          // in-memory mirror of networkCurrentHash[firstNetworkId]
     uint256 networkActionCount;   // in-memory mirror of networkActionCount[firstNetworkId]
     bool    networkHashLoaded;    // false until first action loads from storage
+    uint256 networkTipCAW;        // oracle-adjusted tip target (whole CAW), computed once per batch
+    bool    networkTipLoaded;     // false until first session-signed action triggers the load
   }
 
   /// @dev Read a sig group header from `sigs` at `sigPos` and advance.
@@ -1253,7 +1257,7 @@ contract CawActions is Ownable {
 
     // Distribute amounts (recipient transfers + tip handling)
     uint256 wholeTokens;
-    (wholeTokens, implicitTipOwed) = _distributeAmountsMem(validatorId, action, ba);
+    (wholeTokens, implicitTipOwed) = _distributeAmountsMem(validatorId, action, ba, c);
     actionCost += wholeTokens;
 
     // Session spend limit. Accumulated in BatchAuth.groupSpent across the
@@ -1555,7 +1559,7 @@ contract CawActions is Ownable {
   ///      `totalWholeTokens` is the action's contribution to the user's session
   ///      spend (recipient distributions + implicit tip if applicable). Manual-
   ///      sign explicit-tip flows use the trailing-amount value as before.
-  function _distributeAmountsMem(uint32 validatorId, ActionData memory action, BatchAuth memory ba)
+  function _distributeAmountsMem(uint32 validatorId, ActionData memory action, BatchAuth memory ba, BatchCursor memory c)
     internal returns (uint256 totalWholeTokens, uint256 implicitTipOwed)
   {
     uint256 numRecipients = action.recipients.length;
@@ -1588,8 +1592,18 @@ contract CawActions is Ownable {
     // (Round 7 econ HIGH-1 extension to OTHER).
     if (numRecipients == 0 && !hasExplicitTip) {
       if (ba.isSessionKey && ba.perActionTipRate > 0) {
-        implicitTipOwed = uint256(ba.perActionTipRate);
-        totalWholeTokens = implicitTipOwed;
+        if (!c.networkTipLoaded) {
+          uint256 _tipWei = cawProfile.networkTipTargetWei(c.firstNetworkId);
+          c.networkTipCAW = _tipWei > 0 ? _getCost(BASELINE_TIP_CAW, _tipWei) : 0;
+          c.networkTipLoaded = true;
+        }
+        uint256 ceiling = uint256(ba.perActionTipRate);
+        uint256 target = c.networkTipCAW;
+        implicitTipOwed = target < ceiling ? target : ceiling;
+        if (implicitTipOwed > 0) {
+          cawProfile.spendAndDistribute(action.senderId, implicitTipOwed * 10**18, 0);
+          totalWholeTokens = implicitTipOwed;
+        }
       } else if (action.actionType == ActionType.OTHER) {
         _requireValidatorExists(validatorId);
         uint256 otherCost = _getCost(1000, 1e11);
@@ -1623,10 +1637,18 @@ contract CawActions is Ownable {
       // expected to use the empty-tip-slot path and amortize via batch end.)
       cawProfile.addTokensToBalance(validatorId, uint256(action.amounts[numAmounts - 1]));
     } else if (ba.isSessionKey && ba.perActionTipRate > 0) {
-      // Recipient distribution + implicit session tip — defer the validator
-      // credit to the batch-end accumulator.
-      implicitTipOwed = uint256(ba.perActionTipRate);
-      totalWholeTokens += implicitTipOwed;
+      if (!c.networkTipLoaded) {
+        uint256 _tipWei = cawProfile.networkTipTargetWei(c.firstNetworkId);
+        c.networkTipCAW = _tipWei > 0 ? _getCost(BASELINE_TIP_CAW, _tipWei) : 0;
+        c.networkTipLoaded = true;
+      }
+      uint256 ceiling = uint256(ba.perActionTipRate);
+      uint256 target = c.networkTipCAW;
+      implicitTipOwed = target < ceiling ? target : ceiling;
+      if (implicitTipOwed > 0) {
+        cawProfile.spendAndDistribute(action.senderId, implicitTipOwed * 10**18, 0);
+        totalWholeTokens += implicitTipOwed;
+      }
     }
   }
 

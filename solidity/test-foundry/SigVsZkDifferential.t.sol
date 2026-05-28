@@ -229,7 +229,7 @@ contract L2BalanceDifferentialTest is Test {
         MockLayerZeroEndpoint lzL2b = new MockLayerZeroEndpoint(3);
 
         networkManager = new CawNetworkManager(address(buyAndBurn));
-        networkManager.createNetwork("TestNet", address(this), 2, 0, 0, 0, 0);
+        networkManager.createNetwork("TestNet", address(this), 2, 0, 0, 0, 0, 5e11);
 
         // Deploy two CawProfileL2 instances
         l2A = new CawProfileL2(MAINNET_LZ_ID, address(lzL2a), address(0));
