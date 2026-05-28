@@ -1,7 +1,9 @@
 import React, { useEffect, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { useBalanceChangeStore } from '~/store/balanceChangeStore'
+import { usePriceStore } from '~/store/tokenDataStore'
 import { formatUnitsCompact } from '~/utils'
+import { formatUsd } from '~/utils/numberFormat'
 
 /**
  * Floating CAW balance-change indicator.
@@ -22,6 +24,7 @@ const SWEEP_INTERVAL_MS = 250
 const BalanceChangeToast: React.FC = () => {
   const windows = useBalanceChangeStore(s => s.windows)
   const sweep = useBalanceChangeStore(s => s.sweep)
+  const cawPriceUsd = usePriceStore(s => s.priceMap['a-hunters-dream']) as number | undefined
   // Track whether to render the portal at all. We keep the DOM mounted
   // during slide-down so the CSS transition can play, then unmount after.
   const [visible, setVisible] = useState(false)
@@ -85,7 +88,16 @@ const BalanceChangeToast: React.FC = () => {
         className={`bg-black rounded-full shadow-[0_4px_16px_rgba(0,0,0,0.5)] px-3 py-1 text-xs font-medium whitespace-nowrap ${colorClass}`}
         style={{ minWidth: 60, height: 25, lineHeight: '17px', textAlign: 'center' }}
       >
-        {sign}{formatUnitsCompact(abs, 18)} CAW{anyPending ? ' pending' : ''}
+        {(() => {
+          // USD-only label. CAW numbers are unintuitive (~$3.8e-8/CAW), so
+          // a "-26k CAW" reads as catastrophic but is ~$0.001. Falls back to
+          // CAW only when the price feed isn't loaded yet.
+          if (cawPriceUsd !== undefined && cawPriceUsd > 0) {
+            const cawWhole = Number(abs / 10n**18n) + Number(abs % 10n**18n) / 1e18
+            return `${sign}$${formatUsd(cawWhole * cawPriceUsd)}`
+          }
+          return `${sign}${formatUnitsCompact(abs, 18)} CAW`
+        })()}{anyPending ? ' pending' : ''}
       </div>
     </div>,
     document.body

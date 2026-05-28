@@ -1,6 +1,13 @@
 import React, { useState } from 'react'
 import { HiChevronDown } from 'react-icons/hi'
+import { useReadContract } from 'wagmi'
 import { useT } from '~/i18n/I18nProvider'
+import { usePriceStore } from '~/store/tokenDataStore'
+import { cawNetworkManagerAbi } from '~/../../../abi/generated'
+import { NETWORK_MANAGER_ADDRESS } from '~/../../../abi/addresses'
+import { CLIENT_ID } from '~/api/actions'
+import { chains } from '~/config/chains'
+import { formatUsd } from '~/utils/numberFormat'
 
 interface StakingRewardsInfoProps {
   /** Always use dark styling (e.g. onboarding). Default false = theme-aware. */
@@ -18,6 +25,22 @@ const StakingRewardsInfo: React.FC<StakingRewardsInfoProps> = ({
   const t = useT()
   const dark = alwaysDark || isDark
   const [expanded, setExpanded] = useState(!defaultCollapsed)
+
+  // Network's per-action tip target in ETH wei (set by Network admin).
+  // Convert to USD using the current ETH price for a human-readable rate.
+  const { data: tipTargetWei } = useReadContract({
+    abi: cawNetworkManagerAbi,
+    chainId: chains.l1.chainId,
+    address: NETWORK_MANAGER_ADDRESS,
+    functionName: 'getTipTargetWei',
+    args: [CLIENT_ID],
+  })
+  const ethPrice = usePriceStore(s => s.priceMap['ethereum'] ?? 0)
+  let tipUsdLabel: string | null = null
+  if (tipTargetWei !== undefined && tipTargetWei > 0n && ethPrice > 0) {
+    const tipEth = Number(tipTargetWei) / 1e18
+    tipUsdLabel = `~$${formatUsd(tipEth * ethPrice)}`
+  }
 
   const REWARDS = [
     { action: t('staking.rewards.action.post'), cost: '5,000 CAW', parts: [t('staking.rewards.split.100_depositors')] },
@@ -76,6 +99,9 @@ const StakingRewardsInfo: React.FC<StakingRewardsInfoProps> = ({
           </ul>
           <p className={`text-xs mt-3 ${dark ? 'text-gray-500' : 'text-gray-400'}`}>
             {t('staking.rewards.footer')}
+          </p>
+          <p className={`text-xs mt-2 ${dark ? 'text-gray-500' : 'text-gray-400'}`}>
+            Actions submitted cost {tipUsdLabel ?? '~$0.001'} paid in CAW
           </p>
         </div>
       </div>

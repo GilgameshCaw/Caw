@@ -33,6 +33,9 @@ import { useEnsureWallet } from '~/hooks/useEnsureWallet'
 import { CLIENT_ID } from '~/api/actions'
 import { useT } from '~/i18n/I18nProvider'
 import NetworkFeesPanel from '~/components/NetworkFeesPanel'
+import NetworkFeeModal from '~/components/NetworkFeeModal'
+import { useNetworkFees } from '~/hooks/useNetworkFees'
+import { HiInformationCircle } from 'react-icons/hi'
 
 type StakingTab = 'stake' | 'unstake' | 'info'
 
@@ -65,6 +68,8 @@ const Staking = () => {
   const [amount, setAmount] = useState<string>("")
   const [depositFee, setDepositFee] = useState<bigint>(0n)
   const [withdrawFee, setWithdrawFee] = useState<bigint>(0n)
+  const [showFeeModal, setShowFeeModal] = useState(false)
+  const networkFees = useNetworkFees(CLIENT_ID)
   // Pay-with-ETH (ZAP) — contract swaps ETH→CAW via Uniswap V2 then deposits.
   const [paymentMode, setPaymentMode] = useState<'caw' | 'eth'>('caw')
   const [ethAmount, setEthAmount] = useState<string>("")
@@ -833,11 +838,34 @@ const Staking = () => {
       </div>
       )}
 
-      <NetworkFeesPanel
+      {/* Rolled-up Network fee row: deposit current + (i) opens the
+          per-action / withdraw / LZ breakdown matching the same modal
+          used during username creation. */}
+      <div className={`flex items-center justify-between rounded-lg border px-3 py-2 ${
+        isDark ? 'bg-[#171202]/40 border-white/15 text-gray-300' : 'bg-yellow-50 border-gray-200 text-gray-700'
+      }`}>
+        <span className="text-sm">Network fees</span>
+        <button
+          type="button"
+          aria-label="Network fee details"
+          onClick={() => setShowFeeModal(true)}
+          className="flex items-center gap-1 cursor-pointer text-gray-400 hover:text-yellow-500 transition-colors"
+        >
+          <span className="text-sm font-mono">
+            {ethPrice > 0 && depositFee > 0n
+              ? `~$${(Number(formatEther(depositFee)) * ethPrice).toFixed(4)}`
+              : 'See breakdown'}
+          </span>
+          <HiInformationCircle className="w-4 h-4" />
+        </button>
+      </div>
+      <NetworkFeeModal
+        isOpen={showFeeModal}
+        onClose={() => setShowFeeModal(false)}
         networkId={CLIENT_ID}
-        show={['deposit']}
-        showCacheExplainer
-        omitZeroRows
+        ethPrice={ethPrice}
+        lzFeeWei={depositQuote?.nativeFee ?? 0n}
+        applicableStorageFeesWei={networkFees.depositFee ?? 0n}
       />
 
       {/* Stake Button */}

@@ -1541,6 +1541,10 @@ const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess, placehol
               replyToId: replyTo?.id,
               parent: replyTo || quote || undefined,
               isQuote: !!quote,
+              // Seed the optimistic first-post with the count of trailing
+              // thread chunks so the feed badge isn't stuck at 0 until the
+              // indexer catches up. Server response overwrites on confirm.
+              commentCount: chunks.length > 1 ? chunks.length - 1 : 0,
             } : {
               replyToId: firstPendingId,
               parent: firstPendingPost,
@@ -1616,6 +1620,9 @@ const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess, placehol
           // First chunk gets the poll images when the poll lands here
           // (single-chunk posts always; threads with pollPosition='start').
           ...(pollLandsInFirstChunk && pollOptionImages.some(s => s) ? { pollOptionImages } : {}),
+          // Seed the reply count with the thread's trailing chunks so the
+          // feed badge isn't stuck at 0 until the indexer catches up.
+          commentCount: chunks.length > 1 ? chunks.length - 1 : 0,
         })
         if (response.txQueueId) updatePostWithTxQueueId(firstPendingId, response.txQueueId)
         firstPendingPost = {
@@ -2413,7 +2420,7 @@ const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess, placehol
   // composite during keyboard input. The only property we actually
   // want to fade is background-color on the dark/light toggle.
   return (
-      <div className={`${composeMode ? 'px-0 py-4' : replyTo ? 'p-2' : 'p-4'} transition-colors duration-300 ${isDark ? 'bg-black' : 'bg-white'} ${
+      <div className={`${composeMode ? 'px-0 py-4' : replyTo ? 'p-2' : 'p-4'} transition-colors duration-300 ${isDark ? 'bg-black' : 'bg-white'} md:max-h-[550px] md:overflow-y-auto ${
         hasInlineFeedDraft ? 'md:static md:p-4 md:pt-4 md:pb-4 fixed left-0 right-0 bottom-0 top-16 z-[60] overflow-y-auto pt-14 pb-[calc(env(safe-area-inset-bottom)+90px)]' : ''
       } ${composeMode ? 'flex-1 min-h-0 flex flex-col md:block md:min-h-0' : ''}`}>
       {hasInlineFeedDraft && (
@@ -2457,8 +2464,8 @@ const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess, placehol
                         <div
                           style={{
                             borderTop: '1px dashed #f0b1005e',
-                            marginLeft: '20px',
-                            marginRight: '20px',
+                            marginLeft: '8px',
+                            marginRight: '8px',
                             marginTop: '10px',
                             marginBottom: '10px',
                           }}
@@ -2949,8 +2956,8 @@ const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess, placehol
                     <div
                       style={{
                         borderTop: '1px dashed #f0b1005e',
-                        marginLeft: '20px',
-                        marginRight: '20px',
+                        marginLeft: '8px',
+                        marginRight: '8px',
                         marginTop: '10px',
                         marginBottom: '10px',
                       }}

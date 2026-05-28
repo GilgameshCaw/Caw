@@ -3,6 +3,8 @@ import { formatUnits } from 'viem'
 import { useTheme } from '~/hooks/useTheme'
 import { useT } from '~/i18n/I18nProvider'
 import { useNetworkFees, NetworkFees } from '~/hooks/useNetworkFees'
+import { usePriceStore } from '~/store/tokenDataStore'
+import { formatUsd } from '~/utils/numberFormat'
 
 type FeeKey = 'deposit' | 'auth' | 'withdraw' | 'mint'
 
@@ -27,12 +29,21 @@ export interface NetworkFeesPanelProps {
   className?: string
 }
 
-const formatCaw = (wei: bigint): string => {
-  const whole = Number(formatUnits(wei, 18))
-  if (whole === 0) return '0'
-  if (whole < 0.0001) return whole.toExponential(2)
-  if (whole < 1) return whole.toFixed(4)
-  return whole.toLocaleString('en-US', { maximumFractionDigits: 2 })
+/** Render a network fee. Fees are stored on-chain as ETH wei; we display
+ *  in USD using the live ETH price. Falls back to ETH amount when the
+ *  price feed hasn't loaded.
+ *  (Historically this was named formatCaw and rendered "X CAW" — the unit
+ *  was wrong, fees were always ETH-denominated.) */
+const formatFee = (wei: bigint, ethPrice: number): string => {
+  const ethWhole = Number(formatUnits(wei, 18))
+  if (ethWhole === 0) return '$0'
+  if (ethPrice > 0) {
+    return `$${formatUsd(ethWhole * ethPrice)}`
+  }
+  // No price feed: show the ETH amount as a fallback.
+  if (ethWhole < 0.0001) return `${ethWhole.toExponential(2)} ETH`
+  if (ethWhole < 1) return `${ethWhole.toFixed(4)} ETH`
+  return `${ethWhole.toLocaleString('en-US', { maximumFractionDigits: 4 })} ETH`
 }
 
 const FeeRow: React.FC<{
@@ -44,12 +55,13 @@ const FeeRow: React.FC<{
   highlight?: boolean
   subline?: string
 }> = ({ label, value, isDark, freeLabel, loadingLabel, highlight, subline }) => {
+  const ethPrice = usePriceStore(s => s.priceMap['ethereum'] ?? 0)
   const display =
     value == null
       ? loadingLabel
       : value === 0n
       ? freeLabel
-      : `${formatCaw(value)} CAW`
+      : formatFee(value, ethPrice)
 
   return (
     <div className="flex items-baseline justify-between gap-3 text-sm">
@@ -93,6 +105,7 @@ export const FeeLineWithCeiling: React.FC<{
   highlight?: boolean
   feeSubline?: string
 }> = ({ label, fee, ceiling, isDark, freeLabel, loadingLabel, ceilingNote, highlight, feeSubline }) => {
+  const ethPrice = usePriceStore(s => s.priceMap['ethereum'] ?? 0)
   const showCeilingNote =
     ceiling != null &&
     ceiling > 0n &&
@@ -112,7 +125,7 @@ export const FeeLineWithCeiling: React.FC<{
       />
       {showCeilingNote && (
         <div className={`flex justify-end text-[10px] ${isDark ? 'text-white/35' : 'text-gray-400'}`}>
-          max {formatCaw(ceiling)} CAW — {ceilingNote}
+          max {formatFee(ceiling, ethPrice)} — {ceilingNote}
         </div>
       )}
     </div>

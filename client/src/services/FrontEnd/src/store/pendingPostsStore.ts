@@ -15,7 +15,7 @@ interface PendingPost extends Partial<CawItem> {
 
 interface PendingPostsStore {
   pendingPosts: PendingPost[]
-  addPendingPost: (post: { content: string; username: string; tokenId: number; displayName?: string; image?: string; avatarUrl?: string; replyToId?: string; parent?: CawItem; cawonce?: number; isQuote?: boolean; action?: string; pollOptionImages?: string[] }) => string
+  addPendingPost: (post: { content: string; username: string; tokenId: number; displayName?: string; image?: string; avatarUrl?: string; replyToId?: string; parent?: CawItem; cawonce?: number; isQuote?: boolean; action?: string; pollOptionImages?: string[]; commentCount?: number }) => string
   updatePostWithTxQueueId: (tempId: string, txQueueId: number) => void
   /** Update a pending post's id once the real caw ID is known */
   updatePostId: (cawonce: number, userId: number, realId: string) => void
@@ -70,11 +70,19 @@ export const usePendingPostsStore = create<PendingPostsStore>((set) => ({
         id: post.tokenId
       },
       likeCount: 0,
-      commentCount: 0,
+      // Thread first-post: caller passes commentCount = chunks.length - 1 so
+      // the feed badge reflects the in-flight replies that are also being
+      // optimistically created. Indexer overwrites this on confirm.
+      commentCount: post.commentCount ?? 0,
       recawCount: 0,
       viewCount: 0,
       hasLiked: false,
       hasRecawed: false,
+      // Thread first-post: the same user is posting the reply chunks, so
+      // hasReplied should already be true optimistically. Indexer confirms
+      // it (matches the post-confirm state). Inferred from commentCount > 0
+      // — only set by the thread-submit path on the first chunk.
+      hasReplied: (post.commentCount ?? 0) > 0,
       cawonce: post.cawonce || 0,
       isPending: true,
       replyToId: post.replyToId,

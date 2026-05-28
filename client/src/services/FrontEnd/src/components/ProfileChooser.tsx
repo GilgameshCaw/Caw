@@ -545,7 +545,16 @@ const ProfileChooser: React.FC<{ compact?: boolean }> = ({ compact = false }) =>
           <div className={`${compact ? 'text-xs' : 'text-sm'} transition-all duration-300 ${
             isDark ? 'text-gray-300' : 'text-gray-700'
           }`}>
-            {selectedToken.stakedAmount > 0n ? formatUnitsCompact((selectedToken.stakedAmount / 10n**18n) * 10n**18n, 18) : "No"} CAW
+            {(() => {
+              if (selectedToken.stakedAmount === 0n) return 'No CAW'
+              const cawCompact = formatUnitsCompact((selectedToken.stakedAmount / 10n**18n) * 10n**18n, 18)
+              if (cawPriceUsd !== undefined && cawPriceUsd > 0) {
+                const cawWhole = Number(selectedToken.stakedAmount / 10n**18n) + Number(selectedToken.stakedAmount % 10n**18n) / 1e18
+                const usd = cawWhole * cawPriceUsd
+                return `$${formatUsd(usd)} (${cawCompact} CAW)`
+              }
+              return `${cawCompact} CAW`
+            })()}
           </div>
           {(() => {
             // Live in-flight CAW meter. Shows the net delta between funds the
@@ -567,29 +576,21 @@ const ProfileChooser: React.FC<{ compact?: boolean }> = ({ compact = false }) =>
             if (pendingCawDelta === 0n) return null
             const isPositive = pendingCawDelta > 0n
             const absValue = isPositive ? pendingCawDelta : -pendingCawDelta
-            // CAW is denominated tiny in USD (≈ $3.8e-8 / CAW), so action
-            // costs like 26k CAW look huge. Lead with the USD on its own
-            // yellow line (the "actually informative" number for most
-            // users), then show the raw CAW delta underneath in the same
-            // color. Falls back to CAW-only line when price isn't loaded.
+            // USD-only display. CAW numbers are unintuitive to users
+            // (26k CAW reads as "a lot" but is ~$0.001) and the USD figure
+            // is the only one that matters. Falls back to CAW only if the
+            // price feed is unavailable.
             const sign = isPositive ? '+' : '-'
-            let usdLabel: string | null = null
+            const colorClass = isPositive ? 'text-yellow-500' : 'text-gray-400'
+            let label: string
             if (cawPriceUsd !== undefined && cawPriceUsd > 0) {
               const cawWhole = Number(absValue / 10n**18n) + Number(absValue % 10n**18n) / 1e18
-              const usd = cawWhole * cawPriceUsd
-              usdLabel = `${sign}$${formatUsd(usd)}`
+              label = `${sign}$${formatUsd(cawWhole * cawPriceUsd)}`
+            } else {
+              label = `${sign}${formatUnitsCompact(absValue, 18)} CAW`
             }
-            const cawLine = `${sign}${formatUnitsCompact(absValue, 18)} CAW`
-            const colorClass = isPositive ? 'text-yellow-500' : 'text-gray-400'
             return (
-              <>
-                <div className={`text-2xs ${colorClass}`}>
-                  {usdLabel ? `${usdLabel} pending` : `${cawLine} pending`}
-                </div>
-                {usdLabel && (
-                  <div className={`text-2xs opacity-70 ${colorClass}`}>{cawLine}</div>
-                )}
-              </>
+              <div className={`text-2xs ${colorClass}`}>{label} pending</div>
             )
           })()}
           {notCurrentAddress && (
