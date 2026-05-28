@@ -616,18 +616,12 @@ console.log("BALANCE:", balance)
     : (!balance || totalCawNeeded > balance);
 
   // Total ETH msg.value for the ZAP tx: swap-input + LZ/storage fees.
-  //
-  // Pad the LZ fee +5%. KNOWN bug: CawProfileQuoter still references the
-  // old per-flow selectors (depositRegisterSession etc) deleted when we
-  // consolidated 6 LZ entry points into lzDepositMintSession. The quoter
-  // returns LZ fee for the old gas budget (225k); the actual tx uses the
-  // new unified-dispatcher budget (250k). Delta = 25k gas × dest gas price
-  // ≈ 1.5% shortfall. Refunded by CawProfile._refundUnusedLzEth so excess
-  // is harmless. Permanent fix: redeploy CawProfileQuoter with new selectors.
+  // Pad +2% for genuine LZ price-feed drift between quote read and
+  // submit (multi-block delay). Excess refunds via _refundUnusedLzEth.
   const zapTxValue = useMemo(() => {
     if (paymentMode !== 'eth' || !quote) return 0n
     const nativeFee = (quote as { nativeFee?: bigint }).nativeFee ?? 0n
-    const paddedFee = (BigInt(nativeFee) * 105n) / 100n
+    const paddedFee = (BigInt(nativeFee) * 102n) / 100n
     return ethAmountWei + paddedFee
   }, [paymentMode, ethAmountWei, quote])
 
