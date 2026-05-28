@@ -563,6 +563,8 @@ contract CawProfile is
     }
   }
 
+  /// @notice Permissionless: relays the current tip target to L2. Idempotent — worst-case
+  ///         grief is re-sending the same value at the caller's own LZ fee cost.
   function broadcastTipTarget(uint32 networkId, uint32 lzDestId, uint256 lzTokenAmount) external payable {
     uint256 target = networkManager.getTipTargetWei(networkId);
     uint64 seq;

@@ -1594,7 +1594,7 @@ contract CawActions is Ownable {
       if (ba.isSessionKey && ba.perActionTipRate > 0) {
         if (!c.networkTipLoaded) {
           uint256 _tipWei = cawProfile.networkTipTargetWei(c.firstNetworkId);
-          c.networkTipCAW = _tipWei > 0 ? _getCost(BASELINE_TIP_CAW, _tipWei) : BASELINE_TIP_CAW;
+          c.networkTipCAW = _tipWei > 0 ? _getCost(BASELINE_TIP_CAW, _tipWei) : 0;
           c.networkTipLoaded = true;
         }
         uint256 ceiling = uint256(ba.perActionTipRate);
@@ -1639,7 +1639,7 @@ contract CawActions is Ownable {
     } else if (ba.isSessionKey && ba.perActionTipRate > 0) {
       if (!c.networkTipLoaded) {
         uint256 _tipWei = cawProfile.networkTipTargetWei(c.firstNetworkId);
-        c.networkTipCAW = _tipWei > 0 ? _getCost(BASELINE_TIP_CAW, _tipWei) : BASELINE_TIP_CAW;
+        c.networkTipCAW = _tipWei > 0 ? _getCost(BASELINE_TIP_CAW, _tipWei) : 0;
         c.networkTipLoaded = true;
       }
       uint256 ceiling = uint256(ba.perActionTipRate);
