@@ -10,6 +10,11 @@ interface ICawProfileForAuthFeePropagation {
   function broadcastAllowFreeAuth(uint32 networkId, uint32 lzDestId, uint256 lzTokenAmount) external payable;
 }
 
+/// @dev Same narrow-interface pattern, for the tip-target propagation callout.
+interface ICawProfileForTipTargetPropagation {
+  function broadcastTipTarget(uint32 networkId, uint32 lzDestId, uint256 lzTokenAmount) external payable;
+}
+
 struct CawNetwork {
   uint32 id;
   uint32 storageChainEid; // The L2 chain where this network's actions are processed
@@ -192,6 +197,19 @@ contract CawNetworkManager {
     ICawProfileForAuthFeePropagation(cp).broadcastAllowFreeAuth{value: msg.value}(networkId, destEid, 0);
   }
 
+  /// @dev Push the current tipTargetWei to L2 on every change. Refunds msg.value
+  ///      when CawProfile isn't wired yet (pre-link state) so callers don't lose
+  ///      ETH attached for the LZ fee. Mirrors _maybeBroadcastFreeAuth.
+  function _broadcastTipTarget(uint32 networkId) internal {
+    address cp = cawProfile;
+    if (cp == address(0)) {
+      _refundIfAny();
+      return;
+    }
+    uint32 destEid = networks[networkId].storageChainEid;
+    ICawProfileForTipTargetPropagation(cp).broadcastTipTarget{value: msg.value}(networkId, destEid, 0);
+  }
+
   /// @dev Refund msg.value to msg.sender when a broadcast short-circuits.
   ///      Uses .call to avoid gas-limit issues with contract receivers.
   ///      Only called at short-circuit paths where no LZ fee is consumed.
@@ -310,7 +328,7 @@ contract CawNetworkManager {
     uint256 authFeeCeiling,
     uint256 mintFeeCeiling,
     uint256 tipCeilingWei
-  ) public {
+  ) public payable {
     require(storageChainEid > 0, "Storage chain required");
     require(bytes(name).length > 0, "Name required");
     require(feeAddress != address(0), "Fee address required");
@@ -339,7 +357,13 @@ contract CawNetworkManager {
     });
 
     emit NetworkCreated(nextNetworkId, networks[nextNetworkId]);
+    uint32 createdId = nextNetworkId;
     nextNetworkId++;
+    // Broadcast initial tip target to L2 if CawProfile is already wired.
+    // In the typical deploy sequence, createNetwork runs before setCawProfile,
+    // so this is a no-op + msg.value refund at creation time. The Network
+    // owner can call setTipTarget(networkId, tipCeilingWei) post-link to push.
+    _broadcastTipTarget(createdId);
   }
 
   /**
@@ -520,19 +544,22 @@ contract CawNetworkManager {
   // TIP TARGET (per-network, ETH-denominated)
   // ============================================
 
-  function setTipTarget(uint32 networkId, uint256 target) public onlyNetworkOwnerNotFeeLocked(networkId) {
+  function setTipTarget(uint32 networkId, uint256 target) public payable onlyNetworkOwnerNotFeeLocked(networkId) {
     require(target <= networks[networkId].tipCeilingWei, "target exceeds ceiling");
     networks[networkId].tipTargetWei = target;
     emit NetworkFeeUpdated(networkId, "tip", target);
+    _broadcastTipTarget(networkId);
   }
 
-  function lowerTipCeiling(uint32 networkId, uint256 newCeiling) public onlyNetworkOwnerNotFeeLocked(networkId) {
+  function lowerTipCeiling(uint32 networkId, uint256 newCeiling) public payable onlyNetworkOwnerNotFeeLocked(networkId) {
     CawNetwork storage n = networks[networkId];
     uint256 old = n.tipCeilingWei;
     require(newCeiling < old, "must be lower");
     require(newCeiling >= n.tipTargetWei, "below tipTarget");
     n.tipCeilingWei = newCeiling;
     emit TipCeilingLowered(networkId, old, newCeiling);
+    // tipTargetWei doesn't change here (require above), so no broadcast needed.
+    _refundIfAny();
   }
 
   function getTipTargetWei(uint32 networkId) external view returns (uint256) {

@@ -322,6 +322,14 @@ contract MockCawProfileForPropagation {
         }));
     }
 
+    // Stub for the auto-broadcast triggered by setTipTarget / createNetwork.
+    // Tracked separately from allowFreeAuth broadcasts so existing tests aren't
+    // perturbed; current tests don't assert on tip broadcasts.
+    uint256 public tipBroadcastCalls;
+    function broadcastTipTarget(uint32, uint32, uint256) external payable {
+        tipBroadcastCalls++;
+    }
+
     function callCount() external view returns (uint256) {
         return calls.length;
     }
