@@ -3640,9 +3640,13 @@ console.log("succeededKeys", succeededKeys)
     // economically sustain ~2000 slash-grief cycles). Must match the on-chain
     // constant — too low here and submitReplication() reverts with InsufficientStake.
     const OPTIMISTIC_MIN_STAKE = BigInt('50000000000000000')      // 0.05 ETH
-    // Deposit 2× MIN_STAKE on first run so the validator comfortably clears the
-    // floor even with minor gas-estimation drift. (V1 was 0.02 ETH = 2× 0.01.)
-    const OPTIMISTIC_INITIAL_DEPOSIT = BigInt('100000000000000000') // 0.10 ETH (2× MIN_STAKE)
+    // Deposit MIN_STAKE + 10% buffer so the validator clears the floor
+    // comfortably without overcommitting. The buffer absorbs:
+    //   - tx-cost rounding when the on-chain stake reads back
+    //   - a small slash without immediately re-warning
+    // V1 was 0.02 ETH (= 2× the 0.01 floor); the V2 jump to 2× 0.05 was
+    // unnecessarily large for normal use.
+    const OPTIMISTIC_INITIAL_DEPOSIT = BigInt('55000000000000000')  // 0.055 ETH (1.1× MIN_STAKE)
     const OPTIMISTIC_CHECKPOINT_INTERVAL = 32
 
     const archiveAbi = [
@@ -4200,7 +4204,7 @@ console.log("succeededKeys", succeededKeys)
           if (process.env.AUTO_RESTAKE !== 'true') {
             if (!underStakedWarned) {
               const archiveAddr = OPTIMISTIC_ARCHIVE_ADDRESS
-              const amountEth = (Number(OPTIMISTIC_INITIAL_DEPOSIT) / 1e18).toFixed(2)
+              const amountEth = (Number(OPTIMISTIC_INITIAL_DEPOSIT) / 1e18).toFixed(3).replace(/0+$/, '').replace(/\.$/, '')
               const role = REPLICATOR_PRIVATE_KEY ? 'REPLICATOR' : 'VALIDATOR'
               console.warn(
                 `\n` +
