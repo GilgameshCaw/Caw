@@ -7,13 +7,7 @@ import { MessagingFee } from "@layerzerolabs/lz-evm-oapp-v2/contracts/oapp/OApp.
 import { CawNetworkManager } from "./CawNetworkManager.sol";
 
 struct CawProfileSelectors {
-  bytes4 mint;
-  bytes4 addToBalance;
-  bytes4 auth;
   bytes4 updateOwners;
-  bytes4 mintAuth;
-  bytes4 depositRegisterSession;
-  bytes4 mintAuthRegisterSession;
 }
 
 interface ICawProfileForQuoter {
@@ -37,58 +31,49 @@ contract CawProfileQuoter {
 
   ICawProfileForQuoter public immutable cawProfile;
 
-  // L2 handler selectors — keccak256-derived, must stay in sync with CawProfile's internal constants.
-  // These were formerly returned by CawProfile.selectors() / selectorAllowFreeAuth(), removed from
-  // CawProfile to reclaim bytecode budget. Hardcoded here as compile-time constants — identical
-  // values, zero external call overhead.
-  bytes4 private constant _mintSel              = bytes4(keccak256("mintAndUpdateOwners(uint32,address,string,uint32[],address[],uint64[])"));
-  bytes4 private constant _addToBalanceSel      = bytes4(keccak256("depositAndUpdateOwners(uint32,uint32,uint256,uint32[],address[],uint64[])"));
-  bytes4 private constant _authSel              = bytes4(keccak256("authenticateAndUpdateOwners(uint32,uint32,uint32[],address[],uint64[])"));
-  bytes4 private constant _updateOwnersSel      = bytes4(keccak256("updateOwners(uint32[],address[],uint64[])"));
-  bytes4 private constant _mintAuthSel          = bytes4(keccak256("mintAuthAndUpdateOwners(uint32,uint32,address,string,uint32[],address[],uint64[])"));
-  bytes4 private constant _depositRegSessSel    = bytes4(keccak256("depositAndRegisterSessionAndUpdateOwners(uint32,uint32,uint256,address,address,uint64,uint256,uint64,uint32[],address[],uint64[])"));
-  bytes4 private constant _mintAuthRegSessSel   = bytes4(keccak256("mintAuthAndRegisterSessionAndUpdateOwners(uint32,uint32,address,string,address,uint64,uint256,uint64,uint32[],address[],uint64[])"));
-  bytes4 private constant _allowFreeAuthSel     = bytes4(keccak256("setAllowFreeAuth(uint32,bool)"));
+  // Unified L2 dispatcher selector — matches CawProfileL2.lzDepositMintSession exactly.
+  // Replaces the 6 deleted per-flow selectors (depositAndUpdateOwners, authenticateAndUpdateOwners,
+  // mintAndUpdateOwners, mintAuthAndUpdateOwners, depositAndRegisterSessionAndUpdateOwners,
+  // mintAuthAndRegisterSessionAndUpdateOwners).
+  bytes4 private constant _lzBundleSelector = bytes4(keccak256(
+    "lzDepositMintSession(uint32,uint32,uint256,string,address,uint64,uint256,uint64,uint32[],address[],uint64[])"
+  ));
+
+  // Remaining single-purpose selectors still present on CawProfileL2.
+  bytes4 private constant _updateOwnersSel  = bytes4(keccak256("updateOwners(uint32[],address[],uint64[])"));
+  bytes4 private constant _allowFreeAuthSel = bytes4(keccak256("setAllowFreeAuth(uint32,bool)"));
 
   constructor(address _cawProfile) {
     cawProfile = ICawProfileForQuoter(_cawProfile);
   }
 
-  /// @dev Returns all 7 L2 handler selectors as a struct, sourced from compile-time constants.
+  /// @dev Returns the updateOwners selector struct (kept for syncTransfer / updateOwner quote paths).
   function _s() private pure returns (CawProfileSelectors memory s) {
-    s.mint                    = _mintSel;
-    s.addToBalance            = _addToBalanceSel;
-    s.auth                    = _authSel;
-    s.updateOwners            = _updateOwnersSel;
-    s.mintAuth                = _mintAuthSel;
-    s.depositRegisterSession  = _depositRegSessSel;
-    s.mintAuthRegisterSession = _mintAuthRegSessSel;
+    s.updateOwners = _updateOwnersSel;
   }
 
   function authenticateQuote(uint32 networkId, uint32 tokenId, uint32 lzDestId, bool payInLzToken) public view returns (MessagingFee memory quote) {
-    CawProfileSelectors memory s = _s();
     uint32[] memory tokenIds; address[] memory owners; uint64[] memory stamps;
     (tokenIds, owners, stamps) = cawProfile.pendingTransferUpdates(lzDestId, msg.sender, tokenId);
 
     bytes memory payload = abi.encodeWithSelector(
-      s.auth, networkId, tokenId, tokenIds, owners, stamps
+      _lzBundleSelector, networkId, tokenId, uint256(0), "", address(0), uint64(0), uint256(0), uint64(0), tokenIds, owners, stamps
     );
 
-    quote = cawProfile.lzQuote(networkId, s.auth, tokenIds.length, payload, lzDestId, payInLzToken);
+    quote = cawProfile.lzQuote(networkId, _lzBundleSelector, tokenIds.length, payload, lzDestId, payInLzToken);
     quote.nativeFee += cawProfile.networkManager().getAuthFee(networkId) * 2;
     return quote;
   }
 
   function depositQuote(uint32 networkId, uint32 tokenId, uint256 amount, uint32 lzDestId, bool payInLzToken) public view returns (MessagingFee memory quote) {
-    CawProfileSelectors memory s = _s();
     uint32[] memory tokenIds; address[] memory owners; uint64[] memory stamps;
     (tokenIds, owners, stamps) = cawProfile.pendingTransferUpdates(lzDestId, msg.sender, tokenId);
 
     bytes memory payload = abi.encodeWithSelector(
-      s.addToBalance, networkId, tokenId, amount, tokenIds, owners, stamps
+      _lzBundleSelector, networkId, tokenId, amount, "", address(0), uint64(0), uint256(0), uint64(0), tokenIds, owners, stamps
     );
 
-    quote = cawProfile.lzQuote(networkId, s.addToBalance, tokenIds.length, payload, lzDestId, payInLzToken);
+    quote = cawProfile.lzQuote(networkId, _lzBundleSelector, tokenIds.length, payload, lzDestId, payInLzToken);
     quote.nativeFee += cawProfile.networkManager().getDepositFee(networkId) * 2;
 
     if (!cawProfile.authenticated(networkId, tokenId))
@@ -113,15 +98,14 @@ contract CawProfileQuoter {
     // (lzDestId == mainnetLzId) the L2 mirror is updated via a direct call.
     if (lzDestId == cawProfile.mainnetLzId()) return quote;
 
-    CawProfileSelectors memory s = _s();
     uint32[] memory tokenIds; address[] memory owners; uint64[] memory stamps;
     (tokenIds, owners, stamps) = cawProfile.pendingTransferUpdates(lzDestId, msg.sender, 0);
 
     bytes memory payload = abi.encodeWithSelector(
-      s.addToBalance, networkId, uint32(0), depositAmount, tokenIds, owners, stamps
+      _lzBundleSelector, networkId, uint32(0), depositAmount, "", address(0), uint64(0), uint256(0), uint64(0), tokenIds, owners, stamps
     );
 
-    MessagingFee memory lz = cawProfile.lzQuote(networkId, s.addToBalance, tokenIds.length, payload, lzDestId, payInLzToken);
+    MessagingFee memory lz = cawProfile.lzQuote(networkId, _lzBundleSelector, tokenIds.length, payload, lzDestId, payInLzToken);
     quote.nativeFee += lz.nativeFee;
     quote.lzTokenFee += lz.lzTokenFee;
     return quote;
@@ -139,22 +123,25 @@ contract CawProfileQuoter {
     // path doesn't revert with NoPeer.)
     if (lzDestId == cawProfile.mainnetLzId()) return quote;
 
-    CawProfileSelectors memory s = _s();
     uint32[] memory tokenIds; address[] memory owners; uint64[] memory stamps;
     (tokenIds, owners, stamps) = cawProfile.pendingTransferUpdates(lzDestId, msg.sender, 0);
 
     bytes memory payload = abi.encodeWithSelector(
-      s.mintAuth,
+      _lzBundleSelector,
       networkId,
       uint32(0),
-      msg.sender,
+      uint256(0),
       "placeholdr",  // ~10-char placeholder username for sizing
+      address(0),
+      uint64(0),
+      uint256(0),
+      uint64(0),
       tokenIds,
       owners,
       stamps
     );
 
-    MessagingFee memory lz = cawProfile.lzQuote(networkId, s.mintAuth, tokenIds.length, payload, lzDestId, payInLzToken);
+    MessagingFee memory lz = cawProfile.lzQuote(networkId, _lzBundleSelector, tokenIds.length, payload, lzDestId, payInLzToken);
     quote.nativeFee += lz.nativeFee;
     quote.lzTokenFee += lz.lzTokenFee;
     return quote;
@@ -174,26 +161,22 @@ contract CawProfileQuoter {
 
     if (lzDestId == cawProfile.mainnetLzId()) return quote;
 
-    CawProfileSelectors memory s = _s();
     uint32[] memory tokenIds; address[] memory owners; uint64[] memory stamps;
     (tokenIds, owners, stamps) = cawProfile.pendingTransferUpdates(lzDestId, msg.sender, 0);
 
-    bytes4 selector;
     bytes memory payload;
     if (sessionKey == address(0)) {
-      selector = s.addToBalance;
       payload = abi.encodeWithSelector(
-        selector, networkId, uint32(0), depositAmount, tokenIds, owners, stamps
+        _lzBundleSelector, networkId, uint32(0), depositAmount, "", address(0), uint64(0), uint256(0), uint64(0), tokenIds, owners, stamps
       );
     } else {
-      selector = s.depositRegisterSession;
       payload = abi.encodeWithSelector(
-        selector, networkId, uint32(0), depositAmount, msg.sender,
+        _lzBundleSelector, networkId, uint32(0), depositAmount, "",
         sessionKey, uint64(0), uint256(0), uint64(0), tokenIds, owners, stamps
       );
     }
 
-    MessagingFee memory lz = cawProfile.lzQuote(networkId, selector, tokenIds.length, payload, lzDestId, payInLzToken);
+    MessagingFee memory lz = cawProfile.lzQuote(networkId, _lzBundleSelector, tokenIds.length, payload, lzDestId, payInLzToken);
     quote.nativeFee += lz.nativeFee;
     quote.lzTokenFee += lz.lzTokenFee;
     return quote;
@@ -211,26 +194,22 @@ contract CawProfileQuoter {
 
     if (lzDestId == cawProfile.mainnetLzId()) return quote;
 
-    CawProfileSelectors memory s = _s();
     uint32[] memory tokenIds; address[] memory owners; uint64[] memory stamps;
     (tokenIds, owners, stamps) = cawProfile.pendingTransferUpdates(lzDestId, msg.sender, 0);
 
-    bytes4 selector;
     bytes memory payload;
     if (sessionKey == address(0)) {
-      selector = s.mintAuth;
       payload = abi.encodeWithSelector(
-        selector, networkId, uint32(0), msg.sender, "placeholdr", tokenIds, owners, stamps
+        _lzBundleSelector, networkId, uint32(0), uint256(0), "placeholdr", address(0), uint64(0), uint256(0), uint64(0), tokenIds, owners, stamps
       );
     } else {
-      selector = s.mintAuthRegisterSession;
       payload = abi.encodeWithSelector(
-        selector, networkId, uint32(0), msg.sender, "placeholdr",
+        _lzBundleSelector, networkId, uint32(0), uint256(0), "placeholdr",
         sessionKey, uint64(0), uint256(0), uint64(0), tokenIds, owners, stamps
       );
     }
 
-    MessagingFee memory lz = cawProfile.lzQuote(networkId, selector, tokenIds.length, payload, lzDestId, payInLzToken);
+    MessagingFee memory lz = cawProfile.lzQuote(networkId, _lzBundleSelector, tokenIds.length, payload, lzDestId, payInLzToken);
     quote.nativeFee += lz.nativeFee;
     quote.lzTokenFee += lz.lzTokenFee;
     return quote;
@@ -259,16 +238,15 @@ contract CawProfileQuoter {
     // short-circuit added in 48e37cb.
     if (lzDestId == cawProfile.mainnetLzId()) return quote;
 
-    CawProfileSelectors memory s = _s();
     // Cross-chain (true L2 storage): include the LZ messaging cost.
     uint32[] memory tokenIds; address[] memory owners; uint64[] memory stamps;
     (tokenIds, owners, stamps) = cawProfile.pendingTransferUpdates(lzDestId, msg.sender, tokenId);
 
     // Use 0 as placeholder for `amount` — it doesn't affect LZ payload size.
     bytes memory payload = abi.encodeWithSelector(
-      s.addToBalance, cawNetworkId, tokenId, uint256(0), tokenIds, owners, stamps
+      _lzBundleSelector, cawNetworkId, tokenId, uint256(0), "", address(0), uint64(0), uint256(0), uint64(0), tokenIds, owners, stamps
     );
-    MessagingFee memory lz = cawProfile.lzQuote(cawNetworkId, s.addToBalance, tokenIds.length, payload, lzDestId, payInLzToken);
+    MessagingFee memory lz = cawProfile.lzQuote(cawNetworkId, _lzBundleSelector, tokenIds.length, payload, lzDestId, payInLzToken);
     quote.nativeFee += lz.nativeFee;
     quote.lzTokenFee += lz.lzTokenFee;
     return quote;
