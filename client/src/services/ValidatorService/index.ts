@@ -807,6 +807,14 @@ const liveSettings = {
    *  If false (default), zero-tip actions are rejected and must be processed by a validator
    *  that opts in. Allows users to set "No tip" in Quick Sign for free-but-slow processing. */
   acceptZeroTip: false,
+  /** Minimum implicit tip (whole CAW) this validator will accept per action.
+   *  Defaults to validatorBaseTip. Configurable via ValidatorSetting key
+   *  'minAcceptableTipCAW' (decimal string).
+   *  Distinct from validatorBaseTip (network-wide floor in calculateMinimumTip):
+   *  this is the validator's OWN economic floor. When the Network's tipTarget ×
+   *  oracle ratio drops below this, the validator refuses session-signed actions
+   *  rather than processing at a loss. */
+  minAcceptableTipCAW: DEFAULT_VALIDATOR_TIP,
 }
 
 /** Load settings from ValidatorSetting table, falling back to defaults */
@@ -821,6 +829,8 @@ async function refreshSettings(configCheckInterval?: number) {
     if (map.has('maxWaitTime'))         liveSettings.maxWaitTime = Number(map.get('maxWaitTime')!) || 10_000
     if (map.has('replicationInterval')) liveSettings.replicationInterval = Number(map.get('replicationInterval')!) || 120_000
     if (map.has('acceptZeroTip'))       liveSettings.acceptZeroTip = map.get('acceptZeroTip') === 'true'
+    if (map.has('minAcceptableTipCAW')) liveSettings.minAcceptableTipCAW = BigInt(map.get('minAcceptableTipCAW')!)
+    else                                liveSettings.minAcceptableTipCAW = liveSettings.validatorBaseTip
   } catch (e: any) {
     console.error('[Validator] Failed to refresh settings from DB:', e.message)
   }
@@ -867,7 +877,13 @@ async function validateActionTip(
   action: any,
   entryImplicitTip?: bigint | null,
 ): Promise<{ valid: boolean; reason?: string; required?: bigint; provided?: bigint }> {
-  const requiredTip = calculateMinimumTip()
+  // Effective floor = max(network-wide minimum, this validator's own floor).
+  // The network minimum (calculateMinimumTip) prevents free-riding across all
+  // validators; minAcceptableTipCAW lets THIS validator refuse below-cost work
+  // when the Network's tipTarget × oracle ratio drops too low.
+  const networkRequired = calculateMinimumTip()
+  const validatorFloor = liveSettings.minAcceptableTipCAW
+  const requiredTip = networkRequired > validatorFloor ? networkRequired : validatorFloor
 
   // Get the tip from the action's amounts array (last element is the tip)
   const amounts = action.amounts || []
