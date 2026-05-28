@@ -1109,36 +1109,8 @@ const LINKING_STEPS = [
       return owner.toLowerCase() === state.addresses.PathwayExpander_L1.toLowerCase();
     },
   },
-  {
-    name: '[Phase 7] Renounce CawActions_L1',
-    chain: 'L1',
-    phase: 7,
-    contract: 'CawActions_L1',
-    method: 'renounceOwnership',
-    args: () => [],
-    condition: (state) => RENOUNCE_ON_DEPLOY && state.addresses.CawActions_L1,
-    skipIf: async (state, deployer) => {
-      const c = deployer.getContract('CawActions_L1');
-      if (!c) return false;
-      const owner = await c.owner();
-      return owner === '0x0000000000000000000000000000000000000000';
-    },
-  },
-  {
-    name: '[Phase 7] Renounce CawProfileURI',
-    chain: 'L1',
-    phase: 7,
-    contract: 'CawProfileURI',
-    method: 'renounceOwnership',
-    args: () => [],
-    condition: (state) => RENOUNCE_ON_DEPLOY && state.addresses.CawProfileURI,
-    skipIf: async (state, deployer) => {
-      const c = deployer.getContract('CawProfileURI');
-      if (!c) return false;
-      const owner = await c.owner();
-      return owner === '0x0000000000000000000000000000000000000000';
-    },
-  },
+  // CawActions and CawProfileURI no longer inherit Ownable (no admin
+  // surface), so no Phase-7 renounce step is needed for them.
   // Per-L2 phase-7 entries (transfers + renounces) are appended below
   // from L2_CHAIN_KEYS — same pattern as phases 3/5.
 ];

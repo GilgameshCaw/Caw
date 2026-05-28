@@ -38,7 +38,6 @@ pragma solidity ^0.8.20;
 // Circuit + prover infrastructure: solidity/zk/sig-recovery/.
 // =============================================================================
 
-import "@openzeppelin/contracts/access/Ownable.sol";
 import "@openzeppelin/contracts/utils/Strings.sol";
 import "@openzeppelin/contracts/interfaces/IERC1271.sol";
 
@@ -47,7 +46,7 @@ import "./interfaces/ICawCapOracle.sol";
 import { ISP1Verifier } from "./IZKActionsVerifier.sol";
 import { MessagingFee } from "@layerzerolabs/lz-evm-oapp-v2/contracts/oapp/OApp.sol";
 
-contract CawActions is Ownable {
+contract CawActions {
   error NotSibling();
   error OnlySelf();
   error NotCapOracle();

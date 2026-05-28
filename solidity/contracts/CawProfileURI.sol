@@ -2,7 +2,6 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.20;
 
-import "@openzeppelin/contracts/access/Ownable.sol";
 import "@openzeppelin/contracts/utils/Strings.sol";
 import "@openzeppelin/contracts/utils/Base64.sol";
 
@@ -19,8 +18,8 @@ interface ICawFontData {
 ///         the 270×270 viewport. The glyph paths are stored in two companion
 ///         data contracts (CawFontDataA and CawFontDataB) because they exceed
 ///         the 24,576-byte per-contract bytecode limit.
-contract CawProfileURI is Ownable {
-  string public description = "CAW NAMEs are username NFTs the CAW social network on the ethereum chain.";
+contract CawProfileURI {
+  string public constant description = "CAW NAMEs are username NFTs the CAW social network on the ethereum chain.";
 
   /// @notice Address of the data contract holding glyph paths for slots 0-38.
   address public immutable fontDataA;
@@ -106,10 +105,6 @@ contract CawProfileURI is Ownable {
   // ============================================
   // PUBLIC ENTRY POINTS
   // ============================================
-
-  function setDescription(string memory _description) external onlyOwner {
-    description = _description;
-  }
 
   /// @notice Build the full `data:application/json;base64,...` URI for a name.
   function generate(string memory name) public view returns (string memory) {
