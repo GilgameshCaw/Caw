@@ -3,9 +3,8 @@ import { HiPencil } from 'react-icons/hi'
 import {
   SESSION_DURATION_OPTIONS,
 } from '~/hooks/useSessionKey'
-import { getCurrentMarketTip, getTipTiers } from '~/api/actions'
+import { getTipTiers } from '~/api/actions'
 import { usePriceStore } from '~/store/tokenDataStore'
-import { formatUsd } from '~/utils/numberFormat'
 
 /** Dollar-denominated spend limit presets */
 const DOLLAR_PRESETS = [
@@ -15,14 +14,16 @@ const DOLLAR_PRESETS = [
   { label: '$100',  usd: 100 },
 ]
 
-// Both helpers now route through the shared `formatUsd` from
-// ~/utils/numberFormat — that helper gives 2 decimals for >= $0.02 and
-// auto-precision (2 trailing non-zero digits) for sub-cent values, so
-// the local "5-decimal small" case is covered without a separate function.
 function fmtUsd(amount: number): string {
-  return `$${formatUsd(amount)}`
+  const rounded = Math.round(amount * 100) / 100
+  return rounded === Math.floor(rounded) ? `$${Math.round(rounded)}` : `$${rounded.toFixed(2)}`
 }
-const fmtUsdSmall = fmtUsd
+
+/** Format small USD amounts with 5 decimal places (used for per-action tips which are fractions of a cent). */
+function fmtUsdSmall(amount: number): string {
+  if (amount === 0) return '$0'
+  return `$${amount.toFixed(5)}`
+}
 
 function formatSpendLimit(value: bigint): string {
   if (value === BigInt(0)) return 'no limit'
@@ -77,13 +78,7 @@ const QuickSignOptions: React.FC<QuickSignOptionsProps> = ({
   }, [cawPrice])
 
   // Tip tiers from the validator's config. These MUST be before the early return (Rules of Hooks).
-  const currentMarketTip = useMemo(() => getCurrentMarketTip(), [])
   const tiers = useMemo(() => getTipTiers(), [])
-  const tipPresets = useMemo(() => [
-    { label: 'Slow',      caw: tiers.slow,     speed: 'slower posts'   },
-    { label: 'Standard',  caw: tiers.standard, speed: 'balanced'       },
-    { label: 'Fast',      caw: tiers.fast,     speed: 'fastest posts'  },
-  ], [tiers])
 
   // Check which dollar preset matches the current spend limit (if any)
   const matchedPreset = dollarOptions?.find(o => spendLimit === o.caw)
@@ -167,7 +162,6 @@ const QuickSignOptions: React.FC<QuickSignOptionsProps> = ({
   }
 
   const isNoTip = tipCeiling === 0n
-  const matchedTipPreset = tipPresets.find(p => tipCeiling !== undefined && tipCeiling === p.caw)
 
   if (!expanded) {
     return (
@@ -284,33 +278,40 @@ const QuickSignOptions: React.FC<QuickSignOptionsProps> = ({
         </div>
       </div>
 
-      {/* Tip speed — determines how quickly validators process your actions */}
+      {/* Max tip per action — user sets their ceiling; Network drives the actual rate */}
       {onTipCeilingChange && (
         <div>
-          <p className={labelClass}>Tip speed</p>
+          <p className={labelClass}>Max tip per action (CAW)</p>
           <p className={descClass}>
-            The CAW Protocol is made possible by validators who pay LayerZero fees to
-            publish your actions on-chain. Your tip rewards them — higher tips get
-            faster processing.
+            The Network sets the actual rate; this is your maximum.
           </p>
-          <div className="flex flex-wrap gap-1">
-            {tipPresets.map(p => (
-              <button
-                key={p.label}
-                type="button"
-                onClick={() => onTipCeilingChange(p.caw)}
-                className={`rounded-lg text-sm font-medium transition-all cursor-pointer ${btnClass(matchedTipPreset?.label === p.label)}`}
-                style={{ padding: '5px 8px' }}
-                title={p.speed}
-              >
-                {p.label} ({formatSpendLimit(p.caw)})
-              </button>
-            ))}
+          <div className="flex items-center gap-2">
+            <input
+              type="number"
+              min="0"
+              step="1"
+              value={isNoTip ? '' : String(tipCeiling ?? 0n)}
+              placeholder={isNoTip ? '0' : undefined}
+              disabled={isNoTip}
+              onChange={e => {
+                const raw = e.target.value.trim()
+                if (raw === '' || raw === '0') {
+                  onTipCeilingChange(0n)
+                } else {
+                  const parsed = parseInt(raw, 10)
+                  if (!isNaN(parsed) && parsed >= 0) onTipCeilingChange(BigInt(parsed))
+                }
+              }}
+              className={`w-36 px-3 py-1.5 rounded-lg text-sm font-medium border transition-colors ${
+                themed && !isDark
+                  ? 'bg-white text-black border-gray-300 focus:border-yellow-500'
+                  : 'bg-white/10 text-white border-white/20 focus:border-yellow-500'
+              } disabled:opacity-40`}
+            />
             <button
               type="button"
-              onClick={() => onTipCeilingChange(0n)}
-              className={`rounded-lg text-sm font-medium transition-all cursor-pointer ${btnClass(isNoTip)}`}
-              style={{ padding: '5px 8px' }}
+              onClick={() => onTipCeilingChange(isNoTip ? tiers.fast : 0n)}
+              className={`rounded-lg text-sm font-medium transition-all cursor-pointer px-3 py-1.5 ${btnClass(isNoTip)}`}
             >
               No tip
             </button>
@@ -323,7 +324,7 @@ const QuickSignOptions: React.FC<QuickSignOptionsProps> = ({
           )}
           {!isNoTip && tipCeiling !== undefined && tipCeiling > 0n && (
             <p className={`text-xs mt-1.5 text-left ${mutedLightClass}`}>
-              {matchedTipPreset?.speed} — ~{formatTipCaw(tipCeiling)} per action
+              ~{formatTipCaw(tipCeiling)} per action
             </p>
           )}
         </div>
