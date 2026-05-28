@@ -97,6 +97,13 @@ const RETRY_ATTEMPTS = 5;
 const RETRY_DELAY_MS = 3000;
 const STATE_FILE = path.join(__dirname, '../.deploy-state.json');
 
+// Gas price multiplier — applied to feeData.maxFeePerGas and
+// maxPriorityFeePerGas on every deploy tx to prevent "replacement fee too
+// low" mempool rejections on Sepolia. At 1.5× the first-attempt tx is
+// priced 50% above the current base fee, making mempool replacement
+// unnecessary. Set DEPLOY_GAS_MULTIPLIER=1 to use raw network prices.
+const DEPLOY_GAS_MULTIPLIER = parseFloat(process.env.DEPLOY_GAS_MULTIPLIER || '1.5');
+
 // Phase 7 (renounce / additions-only) is opt-in. With this off, the
 // deployer EOA stays the owner of every contract — useful during active
 // dev when we may need to redeploy or rewire. Flip on for the
@@ -1574,9 +1581,27 @@ class MultiChainDeployer {
 
     const factory = new ethers.ContractFactory(artifact.abi, artifact.bytecode, wallet);
 
+    // Pre-fetch fee data once so every retry attempt in this deploy uses the
+    // same (multiplied) gas price. Retrying with a fresh feeData per attempt
+    // would re-enter the replacement-fee loop if the first tx already landed
+    // in the mempool; using a fixed upfront price keeps the nonce stable.
+    const feeData = await wallet.provider.getFeeData();
+    const gasOverrides = {};
+    if (feeData.maxFeePerGas !== null) {
+      const mult = BigInt(Math.round(DEPLOY_GAS_MULTIPLIER * 100));
+      gasOverrides.maxFeePerGas = feeData.maxFeePerGas * mult / 100n;
+      gasOverrides.maxPriorityFeePerGas = feeData.maxPriorityFeePerGas !== null
+        ? feeData.maxPriorityFeePerGas * mult / 100n
+        : gasOverrides.maxFeePerGas / 4n;
+      console.log(`   Gas: maxFeePerGas=${ethers.formatUnits(gasOverrides.maxFeePerGas, 'gwei')} gwei, maxPriorityFeePerGas=${ethers.formatUnits(gasOverrides.maxPriorityFeePerGas, 'gwei')} gwei (${DEPLOY_GAS_MULTIPLIER}× multiplier)`);
+    } else if (feeData.gasPrice !== null) {
+      gasOverrides.gasPrice = feeData.gasPrice * BigInt(Math.round(DEPLOY_GAS_MULTIPLIER * 100)) / 100n;
+      console.log(`   Gas: gasPrice=${ethers.formatUnits(gasOverrides.gasPrice, 'gwei')} gwei (${DEPLOY_GAS_MULTIPLIER}× multiplier)`);
+    }
+
     const contract = await this.retry(async () => {
       // Use higher gas limit for large contracts like CawProfile
-      const overrides = {};
+      const overrides = { ...gasOverrides };
       if (contractKey === 'CawProfile') {
         overrides.gasLimit = 12000000n;
       }
