@@ -30,11 +30,11 @@ contract NetworkManagerFeeGuardTest is Test {
 
     function test_createNetwork_revertsWhenFeeAddressIsBuyAndBurn() public {
         vm.expectRevert("Fee address is buyAndBurn");
-        networkManager.createNetwork("BadNet", buyAndBurn, STORAGE_EID, 0, 0, 0, 0, 5e11);
+        networkManager.createNetwork("BadNet", buyAndBurn, STORAGE_EID, 0, 0, 0, 0);
     }
 
     function test_createNetwork_succeedsWithLegitFeeAddress() public {
-        networkManager.createNetwork("GoodNet", feeAddr, STORAGE_EID, 0, 0, 0, 0, 5e11);
+        networkManager.createNetwork("GoodNet", feeAddr, STORAGE_EID, 0, 0, 0, 0);
         assertEq(networkManager.getNetwork(1).feeAddress, feeAddr);
     }
 
@@ -43,13 +43,13 @@ contract NetworkManagerFeeGuardTest is Test {
     // -------------------------------------------------------------------------
 
     function test_setFeeAddress_revertsWhenFeeAddressIsBuyAndBurn() public {
-        networkManager.createNetwork("Net", feeAddr, STORAGE_EID, 0, 0, 0, 0, 5e11);
+        networkManager.createNetwork("Net", feeAddr, STORAGE_EID, 0, 0, 0, 0);
         vm.expectRevert("Fee address is buyAndBurn");
         networkManager.setFeeAddress(1, buyAndBurn);
     }
 
     function test_setFeeAddress_succeedsWithLegitFeeAddress() public {
-        networkManager.createNetwork("Net", feeAddr, STORAGE_EID, 0, 0, 0, 0, 5e11);
+        networkManager.createNetwork("Net", feeAddr, STORAGE_EID, 0, 0, 0, 0);
         address newFee = makeAddr("newFee");
         networkManager.setFeeAddress(1, newFee);
         assertEq(networkManager.getNetwork(1).feeAddress, newFee);

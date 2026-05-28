@@ -384,8 +384,7 @@ contract NetworkManagerPropagationTest is Test {
             CEILING,            // withdrawFeeCeiling
             CEILING,            // depositFeeCeiling
             CEILING,            // authFeeCeiling
-            CEILING,            // mintFeeCeiling
-            5e11                // tipCeilingWei
+            CEILING             // mintFeeCeiling
         );
         // Drop authFee to 0 to put the test in the "free auth" baseline.
         // This triggers ONE broadcast (CEILING→0); resetCount() zeroes the
@@ -425,7 +424,7 @@ contract NetworkManagerPropagationTest is Test {
         // actually). Reset the mock after to isolate the test's transition.
         vm.deal(networkOwner, 1 ether);
         vm.prank(networkOwner);
-        m2.createNetwork("Net2", address(0xFEE), STORAGE_EID, CEILING, CEILING, CEILING, CEILING, 5e11);
+        m2.createNetwork("Net2", address(0xFEE), STORAGE_EID, CEILING, CEILING, CEILING, CEILING);
         vm.prank(networkOwner);
         m2.setAuthFee(NETWORK_ID, 0.001 ether); // CEILING → 0.001 ether (within-bucket, no broadcast)
         mp2.resetCount();
@@ -493,7 +492,7 @@ contract NetworkManagerPropagationTest is Test {
         CawNetworkManager m3 = new CawNetworkManager(address(0x1));
         vm.prank(networkOwner);
         // 7-arg createNetwork; authFeeCeiling=CEILING. Initial authFee=CEILING.
-        m3.createNetwork("Net3", address(0xFEE), STORAGE_EID, CEILING, CEILING, CEILING, CEILING, 5e11);
+        m3.createNetwork("Net3", address(0xFEE), STORAGE_EID, CEILING, CEILING, CEILING, CEILING);
 
         // Drop authFee to 0 (CEILING→0, would cross boundary), then back to
         // 0.001 (0→non-zero, would cross boundary). cawProfile == address(0)
@@ -565,7 +564,7 @@ contract NetworkManagerPropagationTest is Test {
         // Deploy fresh manager WITHOUT wiring cawProfile.
         CawNetworkManager m4 = new CawNetworkManager(address(0x1));
         vm.prank(networkOwner);
-        m4.createNetwork("Net4", address(0xFEE), STORAGE_EID, CEILING, CEILING, CEILING, CEILING, 5e11);
+        m4.createNetwork("Net4", address(0xFEE), STORAGE_EID, CEILING, CEILING, CEILING, CEILING);
 
         vm.deal(networkOwner, 1 ether);
         uint256 balanceBefore = networkOwner.balance;

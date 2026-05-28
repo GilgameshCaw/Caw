@@ -38,11 +38,6 @@ struct CawNetwork {
   uint256 depositFeeCeiling;
   uint256 authFeeCeiling;
   uint256 mintFeeCeiling;
-  // ETH-denominated validator tip target (wei). The oracle on L2 converts
-  // this to CAW; session-signed actions pay min(networkTipCAW, userCeiling).
-  // tipCeilingWei is set once at createNetwork and can only decrease.
-  uint256 tipTargetWei;
-  uint256 tipCeilingWei;
 }
 
 /**
@@ -102,11 +97,6 @@ contract CawNetworkManager {
   ///         typical L2 gas prices.
   uint128 public constant MAX_GAS_OVERRIDE = 100_000;
 
-  /// @notice Protocol-wide cap on tipCeilingWei at network creation.
-  ///         ~$0.01 per action at ETH = $2 000. Networks on cheap L2s (Base)
-  ///         lower their own ceiling; this cap is a sanity guardrail.
-  uint256 public constant MAX_TIP_TARGET_WEI = 5e12;
-
   /// @notice Emitted when a network is created. The `network` payload includes
   ///         all four per-fee ceilings (withdrawFeeCeiling, depositFeeCeiling,
   ///         authFeeCeiling, mintFeeCeiling) set at creation time. Indexers that
@@ -128,7 +118,6 @@ contract CawNetworkManager {
   event DepositFeeCeilingLowered(uint32 indexed networkId, uint256 oldCeiling, uint256 newCeiling);
   event AuthFeeCeilingLowered(uint32 indexed networkId, uint256 oldCeiling, uint256 newCeiling);
   event MintFeeCeilingLowered(uint32 indexed networkId, uint256 oldCeiling, uint256 newCeiling);
-  event TipCeilingLowered(uint32 indexed networkId, uint256 oldCeiling, uint256 newCeiling);
 
   // ============================================
   // INSTANCE REGISTRY
@@ -298,8 +287,6 @@ contract CawNetworkManager {
    * @param depositFeeCeiling   Upper bound on depositFee, forever.
    * @param authFeeCeiling      Upper bound on authFee, forever.
    * @param mintFeeCeiling      Upper bound on mintFee, forever.
-   * @param tipCeilingWei       ETH-denominated tip ceiling (<= MAX_TIP_TARGET_WEI).
-   *                            tipTargetWei starts at this value; both can only decrease.
    */
   function createNetwork(
     string calldata name,
@@ -308,8 +295,7 @@ contract CawNetworkManager {
     uint256 withdrawFeeCeiling,
     uint256 depositFeeCeiling,
     uint256 authFeeCeiling,
-    uint256 mintFeeCeiling,
-    uint256 tipCeilingWei
+    uint256 mintFeeCeiling
   ) public {
     require(storageChainEid > 0, "Storage chain required");
     require(bytes(name).length > 0, "Name required");
@@ -318,7 +304,6 @@ contract CawNetworkManager {
     // credit buyAndBurn twice per fee event; _withdrawFees then underflows
     // when subtracting protocolAmount from the already-zeroed slot → locked.
     require(feeAddress != buyAndBurnAddress, "Fee address is buyAndBurn");
-    require(tipCeilingWei <= MAX_TIP_TARGET_WEI, "tip ceiling above protocol cap");
     networks[nextNetworkId] = CawNetwork({
       id: nextNetworkId,
       storageChainEid: storageChainEid,
@@ -333,9 +318,7 @@ contract CawNetworkManager {
       withdrawFeeCeiling: withdrawFeeCeiling,
       depositFeeCeiling: depositFeeCeiling,
       authFeeCeiling: authFeeCeiling,
-      mintFeeCeiling: mintFeeCeiling,
-      tipTargetWei: tipCeilingWei,
-      tipCeilingWei: tipCeilingWei
+      mintFeeCeiling: mintFeeCeiling
     });
 
     emit NetworkCreated(nextNetworkId, networks[nextNetworkId]);
@@ -514,33 +497,6 @@ contract CawNetworkManager {
 
   function getMintFeeCeiling(uint32 networkId) public view returns (uint256) {
     return networks[networkId].mintFeeCeiling;
-  }
-
-  // ============================================
-  // TIP TARGET (per-network, ETH-denominated)
-  // ============================================
-
-  function setTipTarget(uint32 networkId, uint256 target) public onlyNetworkOwnerNotFeeLocked(networkId) {
-    require(target <= networks[networkId].tipCeilingWei, "target exceeds ceiling");
-    networks[networkId].tipTargetWei = target;
-    emit NetworkFeeUpdated(networkId, "tip", target);
-  }
-
-  function lowerTipCeiling(uint32 networkId, uint256 newCeiling) public onlyNetworkOwnerNotFeeLocked(networkId) {
-    CawNetwork storage n = networks[networkId];
-    uint256 old = n.tipCeilingWei;
-    require(newCeiling < old, "must be lower");
-    require(newCeiling >= n.tipTargetWei, "below tipTarget");
-    n.tipCeilingWei = newCeiling;
-    emit TipCeilingLowered(networkId, old, newCeiling);
-  }
-
-  function getTipTargetWei(uint32 networkId) external view returns (uint256) {
-    return networks[networkId].tipTargetWei;
-  }
-
-  function getTipCeilingWei(uint32 networkId) external view returns (uint256) {
-    return networks[networkId].tipCeilingWei;
   }
 
   // ============================================

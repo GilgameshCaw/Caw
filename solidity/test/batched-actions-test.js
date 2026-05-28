@@ -272,7 +272,7 @@ async function fullSetup(accounts) {
 
   // Create a network. createNetwork signature is (name, feeAddress, storageChainEid, withdrawFeeCeiling, depositFeeCeiling, authFeeCeiling, mintFeeCeiling).
   // Use 0 ceilings to keep tests focused on action processing, not fees.
-  await networkManager.createNetwork("Test Network", accounts[0], l2, 0, 0, 0, 0, "500000000000");
+  await networkManager.createNetwork("Test Network", accounts[0], l2, 0, 0, 0, 0);
   const networkId = 1;
 
   const minter = await CawProfileMinter.new(token.address, cawProfile.address, mockRouter.address);
