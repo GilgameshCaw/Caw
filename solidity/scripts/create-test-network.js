@@ -79,6 +79,7 @@ async function main() {
     FEE_WEI, // depositFee
     FEE_WEI, // authFee
     FEE_WEI, // mintFee
+    "500000000000", // tipCeilingWei (~$0.001 at ETH=$2k)
   )
   console.log(`Submitted tx: ${tx.hash}`)
   const receipt = await tx.wait()

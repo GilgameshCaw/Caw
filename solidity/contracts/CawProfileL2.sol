@@ -90,6 +90,9 @@ contract CawProfileL2 is
   /// @dev Internal: no public getter needed — callers verify via allowFreeAuth() state.
   mapping(uint32 => uint64) internal lastAllowFreeAuthSeq;
 
+  // Per-network tip target (wei). Packed: high 64 bits = last seq, low 192 bits = tipTargetWei.
+  mapping(uint32 => uint256) private _tipTargetPacked;
+
   mapping(uint32 => uint256) public cawOwnership;
 
   uint256 public rewardMultiplier = 10**18;
@@ -397,13 +400,56 @@ contract CawProfileL2 is
     addToBalance(tokenId, amount * 10**18);
   }
 
-  /// @notice Mark a token as authenticated with a network and apply a batch of ownership updates.
-  /// @dev Only callable from `_lzReceive` (the `fromLZ` flag is set there). The `updateOwners`
-  ///      array carries pending L1→L2 ownership transfers piggybacked on this LZ message.
-  function authenticateAndUpdateOwners(uint32 cawNetworkId, uint32 tokenId, uint32[] calldata tokenIds, address[] calldata owners, uint64[] calldata stamps) public {
+  /// @notice Unified LZ receiver. Conditionally deposits, mints, authenticates, registers
+  ///         a session, and updates owners — based on which params are non-zero/non-empty.
+  ///         Replaces the prior per-combination entry points (depositAndUpdateOwners,
+  ///         mintAuthAndUpdateOwners, etc.) to reduce deployed bytecode.
+  /// @param cawNetworkId  Network to authenticate with. 0 = skip auth.
+  /// @param tokenId       Token being operated on.
+  /// @param amount        CAW to deposit (18-decimal wei). 0 = skip deposit.
+  /// @param username      Username for mint. Empty = skip mint.
+  /// @param sessionKey    Session key to register. address(0) = skip session.
+  /// @param expiry        Session expiry (unix seconds). Ignored if sessionKey == 0.
+  /// @param spendLimit    Session spend limit. Ignored if sessionKey == 0.
+  /// @param perActionTipRate  Session tip rate. Ignored if sessionKey == 0.
+  /// @param tokenIds      Piggybacked ownership updates.
+  /// @param owners        Corresponding new owners.
+  /// @param stamps        Corresponding transfer timestamps.
+  function lzDepositMintSession(
+    uint32 cawNetworkId,
+    uint32 tokenId,
+    uint256 amount,
+    string memory username,
+    address sessionKey,
+    uint64 expiry,
+    uint256 spendLimit,
+    uint64 perActionTipRate,
+    uint32[] calldata tokenIds,
+    address[] calldata owners,
+    uint64[] calldata stamps
+  ) public {
     if (!(fromLZ)) revert OnlyLZ();
-    authenticated[cawNetworkId][tokenId] = true;
+    if (bytes(username).length > 0) {
+      usernames[tokenId] = username;
+      emit UsernameMinted(tokenId, owners.length > 0 ? owners[owners.length - 1] : address(0));
+    }
+    if (amount > 0) {
+      totalCaw += amount;
+      addToBalance(tokenId, amount);
+    }
+    if (cawNetworkId > 0) {
+      authenticated[cawNetworkId][tokenId] = true;
+      emit Authenticated(cawNetworkId, tokenId);
+    }
+    // Apply ownership updates BEFORE session registration so ownerOf[tokenId]
+    // is current when we read it for the session nonce bump.
     updateOwners(tokenIds, owners, stamps);
+    if (sessionKey != address(0)) {
+      if (expiry <= block.timestamp) revert Expired();
+      address owner = ownerOf[tokenId];
+      sessionNonce[owner]++;
+      _writeWalletSession(owner, sessionKey, expiry, 0xBF, perActionTipRate, spendLimit);
+    }
   }
 
   /// @notice Set the free-auth flag for a network.
@@ -422,13 +468,21 @@ contract CawProfileL2 is
     _allowFreeAuth[networkId] = allow;
   }
 
-  /// @notice Credit a deposit, mark as authenticated, and apply pending ownership updates.
-  /// @dev Only callable from `_lzReceive`. Triggered by L1 `deposit()` calls forwarded via LayerZero.
-  function depositAndUpdateOwners(uint32 cawNetworkId, uint32 tokenId, uint256 amount, uint32[] calldata tokenIds, address[] calldata owners, uint64[] calldata stamps) public {
-    if (!(fromLZ)) revert OnlyLZ();
-    totalCaw += amount;
-    addToBalance(tokenId, amount);
-    authenticateAndUpdateOwners(cawNetworkId, tokenId, tokenIds, owners, stamps);
+  function networkTipTargetWei(uint32 networkId) external view returns (uint256) {
+    return uint192(_tipTargetPacked[networkId]);
+  }
+
+  function setNetworkTipTarget(uint32 networkId, uint256 targetWei, uint64 seq) public {
+    if (!(fromLZ || (bypassLZ && msg.sender == address(cawProfile)))) revert OnlyLZ();
+    assembly {
+      mstore(0x00, networkId)
+      mstore(0x20, _tipTargetPacked.slot)
+      let slot := keccak256(0x00, 0x40)
+      let packed := sload(slot)
+      if gt(seq, shr(192, packed)) {
+        sstore(slot, or(shl(192, seq), and(targetWei, sub(shl(192, 1), 1))))
+      }
+    }
   }
 
   /// @notice Add CAW (raw 18-decimal amount) to a token's balance.
@@ -454,41 +508,7 @@ contract CawProfileL2 is
       _setOwnerOf(tokenIds[i], owners[i], stamps[i]);
   }
 
-  /// @notice Mint a new token (mirror of an L1 mint) and apply pending ownership updates.
-  /// @dev Only callable from `_lzReceive`. Sets username + owner atomically. Currently
-  ///      unreachable because L1's mint() does not lzSend — kept wired so a future
-  ///      "mint + authenticate (no deposit)" flow can be added without contract changes.
-  ///      The trailing entry of (tokenIds, owners, stamps) carries this token's owner.
-  function mintAndUpdateOwners(uint32 tokenId, address owner, string memory username, uint32[] calldata tokenIds, address[] calldata owners, uint64[] calldata stamps) public {
-    if (!(fromLZ)) revert OnlyLZ();
-    usernames[tokenId] = username;
-    updateOwners(tokenIds, owners, stamps);
-  }
 
-  /// @notice Mint a new token mirror, mark it authenticated with `cawNetworkId`, and
-  ///         apply pending ownership updates — all in one LZ-delivered message.
-  /// @dev Only callable from `_lzReceive`. Used by the L1 `mintAndAuth` flow: a user
-  ///      pays mint+auth fees on L1, the L1 NFT is minted, and this function brings
-  ///      the L2 mirror in line with no balance change. Posts will still revert
-  ///      until the user does a separate `deposit()` to fund their cawBalance.
-  function mintAuthAndUpdateOwners(
-    uint32 cawNetworkId,
-    uint32 tokenId,
-    address owner,
-    string memory username,
-    uint32[] calldata tokenIds,
-    address[] calldata owners,
-    uint64[] calldata stamps
-  ) public {
-    if (!(fromLZ)) revert OnlyLZ();
-    emit UsernameMinted(tokenId, owner);
-    emit Authenticated(cawNetworkId, tokenId);
-    usernames[tokenId] = username;
-    authenticated[cawNetworkId][tokenId] = true;
-
-    // Trailing entry of (tokenIds, owners, stamps) is this token's owner; _setOwnerOf via updateOwners.
-    updateOwners(tokenIds, owners, stamps);
-  }
 
   /// @notice Co-deployment (bypassLZ) variant: mint the L2 mirror AND auth in one call.
   /// @dev Only callable when `bypassLZ` is true and the caller is the L1 CawProfile contract.
@@ -504,76 +524,7 @@ contract CawProfileL2 is
     authenticated[cawNetworkId][tokenId] = true;
   }
 
-  /// @notice Bundled L2 receiver: deposit + mark authenticated + register a Quick Sign session.
-  ///         Only callable from `_lzReceive`. Used by the L1 mintAndDepositAndQuickSign flow.
-  /// @dev WITHDRAW is permanently non-delegatable: scopeBitmap is hard-wired to 0xBF here, NOT
-  ///      accepted as a parameter. The L1 caller's trust boundary (only-minter on the L1
-  ///      function) covers `owner`, so we don't need an EIP-712 signature on this side.
-  function depositAndRegisterSessionAndUpdateOwners(
-    uint32 cawNetworkId,
-    uint32 tokenId,
-    uint256 amount,
-    address owner,
-    address sessionKey,
-    uint64 expiry,
-    uint256 spendLimit,
-    uint64 perActionTipRate,
-    uint32[] calldata tokenIds,
-    address[] calldata owners,
-    uint64[] calldata stamps
-  ) public {
-    if (!(fromLZ)) revert OnlyLZ();
-    if (sessionKey == address(0)) revert ZeroKey();
-    if (expiry <= block.timestamp) revert Expired();
 
-    totalCaw += amount;
-    addToBalance(tokenId, amount);
-    authenticated[cawNetworkId][tokenId] = true;
-    emit Authenticated(cawNetworkId, tokenId);
-
-    // Apply ownership updates BEFORE registering the session so the session
-    // gets stamped with the current ownerSessionEpoch (post-update).
-    updateOwners(tokenIds, owners, stamps);
-
-    // Bump sessionNonce for cross-path coherence: any pending registerSession-by-sig
-    // payload the user signed (and never submitted) is invalidated by this on-chain
-    // session write. Without this, an old by-sig payload could be submitted later by
-    // anyone to register an additional, unintended session under the same owner.
-    sessionNonce[owner]++;
-    _writeWalletSession(owner, sessionKey, expiry, 0xBF, perActionTipRate, spendLimit);
-  }
-
-  /// @notice Bundled L2 receiver: mint mirror + mark authenticated + register a Quick Sign
-  ///         session — no deposit. Only callable from `_lzReceive`.
-  function mintAuthAndRegisterSessionAndUpdateOwners(
-    uint32 cawNetworkId,
-    uint32 tokenId,
-    address owner,
-    string memory username,
-    address sessionKey,
-    uint64 expiry,
-    uint256 spendLimit,
-    uint64 perActionTipRate,
-    uint32[] calldata tokenIds,
-    address[] calldata owners,
-    uint64[] calldata stamps
-  ) public {
-    if (!(fromLZ)) revert OnlyLZ();
-    if (sessionKey == address(0)) revert ZeroKey();
-    if (expiry <= block.timestamp) revert Expired();
-
-    emit UsernameMinted(tokenId, owner);
-    emit Authenticated(cawNetworkId, tokenId);
-    usernames[tokenId] = username;
-    authenticated[cawNetworkId][tokenId] = true;
-
-    // Apply ownership updates first (stamps trailing entry sets owner).
-    updateOwners(tokenIds, owners, stamps);
-
-    // Same nonce-bump rationale as depositAndRegisterSessionAndUpdateOwners.
-    sessionNonce[owner]++;
-    _writeWalletSession(owner, sessionKey, expiry, 0xBF, perActionTipRate, spendLimit);
-  }
 
   /// @notice Co-deployment (bypassLZ) helper for the bundled mint+quicksign flows. Registers a
   ///         session on behalf of `owner` without an EIP-712 signature, trusting the L1
@@ -1172,15 +1123,11 @@ contract CawProfileL2 is
     //
     // SECURITY NOTE (audited 2026-04-06): The fromLZ + delegatecall pattern is intentional and safe.
     // - The OApp base class already verifies msg.sender == endpoint and the peer before _lzReceive runs.
-    // - All authorized functions (depositAndUpdateOwners, authenticateAndUpdateOwners,
-    //   mintAndUpdateOwners, mintAuthAndUpdateOwners, depositAndRegisterSessionAndUpdateOwners,
-    //   mintAuthAndRegisterSessionAndUpdateOwners, updateOwners) perform only storage writes.
+    // - All authorized functions (lzDepositMintSession, updateOwners, setAllowFreeAuth,
+    //   setNetworkTipTarget) perform only storage writes.
     // - fromLZ cannot get stuck: on success it resets below; on revert the entire tx rolls back.
     // - The endpoint is immutable (set once in constructor, can never change).
     // - These contracts are immutable post-deployment, so no new authorized functions can be added.
-    // - An alternative like msg.sender == endpoint would not work here because the authorized functions
-    //   are public (required for delegatecall dispatch), and fromLZ is needed to distinguish the
-    //   _lzReceive call path from direct external calls.
     fromLZ = true;
     (bool success, bytes memory returnData) = address(this).delegatecall(bytes.concat(decodedSelector, args));
     fromLZ = false;
@@ -1196,18 +1143,11 @@ contract CawProfileL2 is
   }
 
   /// @notice Whitelist of selectors allowed via delegatecall from LayerZero messages.
-  /// @dev Security: verified that no authorized selector collides with any inherited
-  ///      function from OApp, Ownable, or Context. Since the contract is immutable
-  ///      post-deployment, no new selectors can ever be added to this list.
   function isAuthorizedFunction(bytes4 selector) private pure returns (bool) {
-    return selector == bytes4(keccak256("depositAndUpdateOwners(uint32,uint32,uint256,uint32[],address[],uint64[])")) ||
-      selector == bytes4(keccak256("authenticateAndUpdateOwners(uint32,uint32,uint32[],address[],uint64[])")) ||
-      selector == bytes4(keccak256("mintAndUpdateOwners(uint32,address,string,uint32[],address[],uint64[])")) ||
-      selector == bytes4(keccak256("mintAuthAndUpdateOwners(uint32,uint32,address,string,uint32[],address[],uint64[])")) ||
-      selector == bytes4(keccak256("depositAndRegisterSessionAndUpdateOwners(uint32,uint32,uint256,address,address,uint64,uint256,uint64,uint32[],address[],uint64[])")) ||
-      selector == bytes4(keccak256("mintAuthAndRegisterSessionAndUpdateOwners(uint32,uint32,address,string,address,uint64,uint256,uint64,uint32[],address[],uint64[])")) ||
+    return selector == bytes4(keccak256("lzDepositMintSession(uint32,uint32,uint256,string,address,uint64,uint256,uint64,uint32[],address[],uint64[])")) ||
       selector == bytes4(keccak256("updateOwners(uint32[],address[],uint64[])")) ||
-      selector == bytes4(keccak256("setAllowFreeAuth(uint32,bool,uint64)"));
+      selector == bytes4(keccak256("setAllowFreeAuth(uint32,bool,uint64)")) ||
+      selector == bytes4(keccak256("setNetworkTipTarget(uint32,uint256,uint64)"));
   }
 
   /// @notice Subtract CAW from a token's balance (used during withdraw flows). CawActions only.
