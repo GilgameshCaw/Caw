@@ -1553,6 +1553,13 @@ export const cawNetworkManagerAbi = [
   },
   {
     type: 'function',
+    inputs: [],
+    name: 'MAX_TIP_TARGET_WEI',
+    outputs: [{ name: '', internalType: 'uint256', type: 'uint256' }],
+    stateMutability: 'view',
+  },
+  {
+    type: 'function',
     inputs: [{ name: 'instanceId', internalType: 'uint32', type: 'uint32' }],
     name: 'activateInstance',
     outputs: [],
@@ -1592,10 +1599,11 @@ export const cawNetworkManagerAbi = [
       { name: 'depositFeeCeiling', internalType: 'uint256', type: 'uint256' },
       { name: 'authFeeCeiling', internalType: 'uint256', type: 'uint256' },
       { name: 'mintFeeCeiling', internalType: 'uint256', type: 'uint256' },
+      { name: 'tipCeilingWei', internalType: 'uint256', type: 'uint256' },
     ],
     name: 'createNetwork',
     outputs: [],
-    stateMutability: 'nonpayable',
+    stateMutability: 'payable',
   },
   {
     type: 'function',
@@ -1718,6 +1726,8 @@ export const cawNetworkManagerAbi = [
           },
           { name: 'authFeeCeiling', internalType: 'uint256', type: 'uint256' },
           { name: 'mintFeeCeiling', internalType: 'uint256', type: 'uint256' },
+          { name: 'tipTargetWei', internalType: 'uint256', type: 'uint256' },
+          { name: 'tipCeilingWei', internalType: 'uint256', type: 'uint256' },
         ],
       },
     ],
@@ -1735,6 +1745,20 @@ export const cawNetworkManagerAbi = [
     inputs: [{ name: 'networkId', internalType: 'uint32', type: 'uint32' }],
     name: 'getStorageChainEid',
     outputs: [{ name: '', internalType: 'uint32', type: 'uint32' }],
+    stateMutability: 'view',
+  },
+  {
+    type: 'function',
+    inputs: [{ name: 'networkId', internalType: 'uint32', type: 'uint32' }],
+    name: 'getTipCeilingWei',
+    outputs: [{ name: '', internalType: 'uint256', type: 'uint256' }],
+    stateMutability: 'view',
+  },
+  {
+    type: 'function',
+    inputs: [{ name: 'networkId', internalType: 'uint32', type: 'uint32' }],
+    name: 'getTipTargetWei',
+    outputs: [{ name: '', internalType: 'uint256', type: 'uint256' }],
     stateMutability: 'view',
   },
   {
@@ -1825,6 +1849,16 @@ export const cawNetworkManagerAbi = [
       { name: 'networkId', internalType: 'uint32', type: 'uint32' },
       { name: 'newCeiling', internalType: 'uint256', type: 'uint256' },
     ],
+    name: 'lowerTipCeiling',
+    outputs: [],
+    stateMutability: 'payable',
+  },
+  {
+    type: 'function',
+    inputs: [
+      { name: 'networkId', internalType: 'uint32', type: 'uint32' },
+      { name: 'newCeiling', internalType: 'uint256', type: 'uint256' },
+    ],
     name: 'lowerWithdrawFeeCeiling',
     outputs: [],
     stateMutability: 'nonpayable',
@@ -1872,6 +1906,8 @@ export const cawNetworkManagerAbi = [
       { name: 'depositFeeCeiling', internalType: 'uint256', type: 'uint256' },
       { name: 'authFeeCeiling', internalType: 'uint256', type: 'uint256' },
       { name: 'mintFeeCeiling', internalType: 'uint256', type: 'uint256' },
+      { name: 'tipTargetWei', internalType: 'uint256', type: 'uint256' },
+      { name: 'tipCeilingWei', internalType: 'uint256', type: 'uint256' },
     ],
     stateMutability: 'view',
   },
@@ -1970,6 +2006,16 @@ export const cawNetworkManagerAbi = [
     name: 'setMintFee',
     outputs: [],
     stateMutability: 'nonpayable',
+  },
+  {
+    type: 'function',
+    inputs: [
+      { name: 'networkId', internalType: 'uint32', type: 'uint32' },
+      { name: 'target', internalType: 'uint256', type: 'uint256' },
+    ],
+    name: 'setTipTarget',
+    outputs: [],
+    stateMutability: 'payable',
   },
   {
     type: 'function',
@@ -2205,6 +2251,8 @@ export const cawNetworkManagerAbi = [
           },
           { name: 'authFeeCeiling', internalType: 'uint256', type: 'uint256' },
           { name: 'mintFeeCeiling', internalType: 'uint256', type: 'uint256' },
+          { name: 'tipTargetWei', internalType: 'uint256', type: 'uint256' },
+          { name: 'tipCeilingWei', internalType: 'uint256', type: 'uint256' },
         ],
         indexed: false,
       },
@@ -2286,6 +2334,31 @@ export const cawNetworkManagerAbi = [
       },
     ],
     name: 'NetworkOwnershipLocked',
+  },
+  {
+    type: 'event',
+    anonymous: false,
+    inputs: [
+      {
+        name: 'networkId',
+        internalType: 'uint32',
+        type: 'uint32',
+        indexed: true,
+      },
+      {
+        name: 'oldCeiling',
+        internalType: 'uint256',
+        type: 'uint256',
+        indexed: false,
+      },
+      {
+        name: 'newCeiling',
+        internalType: 'uint256',
+        type: 'uint256',
+        indexed: false,
+      },
+    ],
+    name: 'TipCeilingLowered',
   },
   {
     type: 'event',
@@ -2431,6 +2504,17 @@ export const cawProfileAbi = [
   },
   {
     type: 'function',
+    inputs: [
+      { name: 'networkId', internalType: 'uint32', type: 'uint32' },
+      { name: 'lzDestId', internalType: 'uint32', type: 'uint32' },
+      { name: 'lzTokenAmount', internalType: 'uint256', type: 'uint256' },
+    ],
+    name: 'broadcastTipTarget',
+    outputs: [],
+    stateMutability: 'payable',
+  },
+  {
+    type: 'function',
     inputs: [],
     name: 'buyAndBurn',
     outputs: [
@@ -2491,16 +2575,6 @@ export const cawProfileAbi = [
     inputs: [{ name: 'tokenId', internalType: 'uint256', type: 'uint256' }],
     name: 'getApproved',
     outputs: [{ name: '', internalType: 'address', type: 'address' }],
-    stateMutability: 'view',
-  },
-  {
-    type: 'function',
-    inputs: [
-      { name: 'token', internalType: 'uint32', type: 'uint32' },
-      { name: 'index', internalType: 'uint256', type: 'uint256' },
-    ],
-    name: 'getChosenChainIdAtIndex',
-    outputs: [{ name: '', internalType: 'uint256', type: 'uint256' }],
     stateMutability: 'view',
   },
   {
@@ -2818,6 +2892,15 @@ export const cawProfileAbi = [
   },
   {
     type: 'function',
+    inputs: [
+      { name: 'refundTo', internalType: 'address payable', type: 'address' },
+    ],
+    name: 'setLzRefundTo',
+    outputs: [],
+    stateMutability: 'nonpayable',
+  },
+  {
+    type: 'function',
     inputs: [{ name: '_minter', internalType: 'address', type: 'address' }],
     name: 'setMinter',
     outputs: [],
@@ -2837,16 +2920,6 @@ export const cawProfileAbi = [
     type: 'function',
     inputs: [{ name: '_gui', internalType: 'address', type: 'address' }],
     name: 'setUriGenerator',
-    outputs: [],
-    stateMutability: 'nonpayable',
-  },
-  {
-    type: 'function',
-    inputs: [
-      { name: 'tokenId', internalType: 'uint32', type: 'uint32' },
-      { name: 'locked', internalType: 'bool', type: 'bool' },
-    ],
-    name: 'setWithdrawLocked',
     outputs: [],
     stateMutability: 'nonpayable',
   },
@@ -3279,7 +3352,6 @@ export const cawProfileAbi = [
   { type: 'error', inputs: [], name: 'RefundFailed' },
   { type: 'error', inputs: [], name: 'TooManyChains' },
   { type: 'error', inputs: [], name: 'Unauthorized' },
-  { type: 'error', inputs: [], name: 'WithdrawLocked' },
   { type: 'error', inputs: [], name: 'ZeroAddr' },
   { type: 'error', inputs: [], name: 'ZeroDeposit' },
 ] as const
@@ -3356,19 +3428,6 @@ export const cawProfileL2Abi = [
   {
     type: 'function',
     inputs: [
-      { name: 'cawNetworkId', internalType: 'uint32', type: 'uint32' },
-      { name: 'tokenId', internalType: 'uint32', type: 'uint32' },
-      { name: 'tokenIds', internalType: 'uint32[]', type: 'uint32[]' },
-      { name: 'owners', internalType: 'address[]', type: 'address[]' },
-      { name: 'stamps', internalType: 'uint64[]', type: 'uint64[]' },
-    ],
-    name: 'authenticateAndUpdateOwners',
-    outputs: [],
-    stateMutability: 'nonpayable',
-  },
-  {
-    type: 'function',
-    inputs: [
       { name: '', internalType: 'uint32', type: 'uint32' },
       { name: '', internalType: 'uint32', type: 'uint32' },
     ],
@@ -3432,39 +3491,6 @@ export const cawProfileL2Abi = [
       { name: 'amount', internalType: 'uint256', type: 'uint256' },
     ],
     name: 'deposit',
-    outputs: [],
-    stateMutability: 'nonpayable',
-  },
-  {
-    type: 'function',
-    inputs: [
-      { name: 'cawNetworkId', internalType: 'uint32', type: 'uint32' },
-      { name: 'tokenId', internalType: 'uint32', type: 'uint32' },
-      { name: 'amount', internalType: 'uint256', type: 'uint256' },
-      { name: 'owner', internalType: 'address', type: 'address' },
-      { name: 'sessionKey', internalType: 'address', type: 'address' },
-      { name: 'expiry', internalType: 'uint64', type: 'uint64' },
-      { name: 'spendLimit', internalType: 'uint256', type: 'uint256' },
-      { name: 'perActionTipRate', internalType: 'uint64', type: 'uint64' },
-      { name: 'tokenIds', internalType: 'uint32[]', type: 'uint32[]' },
-      { name: 'owners', internalType: 'address[]', type: 'address[]' },
-      { name: 'stamps', internalType: 'uint64[]', type: 'uint64[]' },
-    ],
-    name: 'depositAndRegisterSessionAndUpdateOwners',
-    outputs: [],
-    stateMutability: 'nonpayable',
-  },
-  {
-    type: 'function',
-    inputs: [
-      { name: 'cawNetworkId', internalType: 'uint32', type: 'uint32' },
-      { name: 'tokenId', internalType: 'uint32', type: 'uint32' },
-      { name: 'amount', internalType: 'uint256', type: 'uint256' },
-      { name: 'tokenIds', internalType: 'uint32[]', type: 'uint32[]' },
-      { name: 'owners', internalType: 'address[]', type: 'address[]' },
-      { name: 'stamps', internalType: 'uint64[]', type: 'uint64[]' },
-    ],
-    name: 'depositAndUpdateOwners',
     outputs: [],
     stateMutability: 'nonpayable',
   },
@@ -3552,6 +3578,25 @@ export const cawProfileL2Abi = [
   {
     type: 'function',
     inputs: [
+      { name: 'cawNetworkId', internalType: 'uint32', type: 'uint32' },
+      { name: 'tokenId', internalType: 'uint32', type: 'uint32' },
+      { name: 'amount', internalType: 'uint256', type: 'uint256' },
+      { name: 'username', internalType: 'string', type: 'string' },
+      { name: 'sessionKey', internalType: 'address', type: 'address' },
+      { name: 'expiry', internalType: 'uint64', type: 'uint64' },
+      { name: 'spendLimit', internalType: 'uint256', type: 'uint256' },
+      { name: 'perActionTipRate', internalType: 'uint64', type: 'uint64' },
+      { name: 'tokenIds', internalType: 'uint32[]', type: 'uint32[]' },
+      { name: 'owners', internalType: 'address[]', type: 'address[]' },
+      { name: 'stamps', internalType: 'uint64[]', type: 'uint64[]' },
+    ],
+    name: 'lzDepositMintSession',
+    outputs: [],
+    stateMutability: 'nonpayable',
+  },
+  {
+    type: 'function',
+    inputs: [
       {
         name: '_origin',
         internalType: 'struct Origin',
@@ -3598,51 +3643,10 @@ export const cawProfileL2Abi = [
   },
   {
     type: 'function',
-    inputs: [
-      { name: 'tokenId', internalType: 'uint32', type: 'uint32' },
-      { name: 'owner', internalType: 'address', type: 'address' },
-      { name: 'username', internalType: 'string', type: 'string' },
-      { name: 'tokenIds', internalType: 'uint32[]', type: 'uint32[]' },
-      { name: 'owners', internalType: 'address[]', type: 'address[]' },
-      { name: 'stamps', internalType: 'uint64[]', type: 'uint64[]' },
-    ],
-    name: 'mintAndUpdateOwners',
-    outputs: [],
-    stateMutability: 'nonpayable',
-  },
-  {
-    type: 'function',
-    inputs: [
-      { name: 'cawNetworkId', internalType: 'uint32', type: 'uint32' },
-      { name: 'tokenId', internalType: 'uint32', type: 'uint32' },
-      { name: 'owner', internalType: 'address', type: 'address' },
-      { name: 'username', internalType: 'string', type: 'string' },
-      { name: 'sessionKey', internalType: 'address', type: 'address' },
-      { name: 'expiry', internalType: 'uint64', type: 'uint64' },
-      { name: 'spendLimit', internalType: 'uint256', type: 'uint256' },
-      { name: 'perActionTipRate', internalType: 'uint64', type: 'uint64' },
-      { name: 'tokenIds', internalType: 'uint32[]', type: 'uint32[]' },
-      { name: 'owners', internalType: 'address[]', type: 'address[]' },
-      { name: 'stamps', internalType: 'uint64[]', type: 'uint64[]' },
-    ],
-    name: 'mintAuthAndRegisterSessionAndUpdateOwners',
-    outputs: [],
-    stateMutability: 'nonpayable',
-  },
-  {
-    type: 'function',
-    inputs: [
-      { name: 'cawNetworkId', internalType: 'uint32', type: 'uint32' },
-      { name: 'tokenId', internalType: 'uint32', type: 'uint32' },
-      { name: 'owner', internalType: 'address', type: 'address' },
-      { name: 'username', internalType: 'string', type: 'string' },
-      { name: 'tokenIds', internalType: 'uint32[]', type: 'uint32[]' },
-      { name: 'owners', internalType: 'address[]', type: 'address[]' },
-      { name: 'stamps', internalType: 'uint64[]', type: 'uint64[]' },
-    ],
-    name: 'mintAuthAndUpdateOwners',
-    outputs: [],
-    stateMutability: 'nonpayable',
+    inputs: [{ name: 'networkId', internalType: 'uint32', type: 'uint32' }],
+    name: 'networkTipTargetWei',
+    outputs: [{ name: '', internalType: 'uint256', type: 'uint256' }],
+    stateMutability: 'view',
   },
   {
     type: 'function',
@@ -3878,6 +3882,17 @@ export const cawProfileL2Abi = [
       { name: '_bypassLZ', internalType: 'bool', type: 'bool' },
     ],
     name: 'setL1Peer',
+    outputs: [],
+    stateMutability: 'nonpayable',
+  },
+  {
+    type: 'function',
+    inputs: [
+      { name: 'networkId', internalType: 'uint32', type: 'uint32' },
+      { name: 'targetWei', internalType: 'uint256', type: 'uint256' },
+      { name: 'seq', internalType: 'uint64', type: 'uint64' },
+    ],
+    name: 'setNetworkTipTarget',
     outputs: [],
     stateMutability: 'nonpayable',
   },
@@ -5087,7 +5102,6 @@ export const cawProfileMinterAbi = [
       { name: '_caw', internalType: 'address', type: 'address' },
       { name: '_cawProfiles', internalType: 'address', type: 'address' },
       { name: '_router', internalType: 'address', type: 'address' },
-      { name: '_admin', internalType: 'address', type: 'address' },
     ],
     stateMutability: 'nonpayable',
   },
@@ -5108,13 +5122,6 @@ export const cawProfileMinterAbi = [
   },
   {
     type: 'function',
-    inputs: [],
-    name: 'admin',
-    outputs: [{ name: '', internalType: 'address', type: 'address' }],
-    stateMutability: 'view',
-  },
-  {
-    type: 'function',
     inputs: [
       { name: 'networkId', internalType: 'uint32', type: 'uint32' },
       { name: 'tokenId', internalType: 'uint32', type: 'uint32' },
@@ -5126,6 +5133,16 @@ export const cawProfileMinterAbi = [
     name: 'authenticateSponsored',
     outputs: [],
     stateMutability: 'payable',
+  },
+  {
+    type: 'function',
+    inputs: [
+      { name: 'tokenId', internalType: 'uint32', type: 'uint32' },
+      { name: 'tokenOwner', internalType: 'address', type: 'address' },
+    ],
+    name: 'checkWithdrawAllowed',
+    outputs: [],
+    stateMutability: 'view',
   },
   {
     type: 'function',
@@ -5180,10 +5197,22 @@ export const cawProfileMinterAbi = [
   {
     type: 'function',
     inputs: [],
-    name: 'kycVerifier',
-    outputs: [
-      { name: '', internalType: 'contract IKycVerifier', type: 'address' },
-    ],
+    name: 'kycAdmin',
+    outputs: [{ name: '', internalType: 'address', type: 'address' }],
+    stateMutability: 'view',
+  },
+  {
+    type: 'function',
+    inputs: [{ name: 'level', internalType: 'uint8', type: 'uint8' }],
+    name: 'kycVerifierFor',
+    outputs: [{ name: '', internalType: 'address', type: 'address' }],
+    stateMutability: 'view',
+  },
+  {
+    type: 'function',
+    inputs: [{ name: '', internalType: 'uint8', type: 'uint8' }],
+    name: 'kycVerifiers',
+    outputs: [{ name: '', internalType: 'address', type: 'address' }],
     stateMutability: 'view',
   },
   {
@@ -5309,6 +5338,7 @@ export const cawProfileMinterAbi = [
       { name: 'depositAmount', internalType: 'uint256', type: 'uint256' },
       { name: 'lzDestId', internalType: 'uint32', type: 'uint32' },
       { name: 'lzTokenAmount', internalType: 'uint256', type: 'uint256' },
+      { name: 'kycLevel', internalType: 'uint8', type: 'uint8' },
     ],
     name: 'mintAndDepositLocked',
     outputs: [],
@@ -5359,13 +5389,23 @@ export const cawProfileMinterAbi = [
   {
     type: 'function',
     inputs: [{ name: '', internalType: 'uint32', type: 'uint32' }],
-    name: 'mintedLocked',
-    outputs: [{ name: '', internalType: 'bool', type: 'bool' }],
+    name: 'mintedAt',
+    outputs: [{ name: '', internalType: 'uint256', type: 'uint256' }],
     stateMutability: 'view',
   },
   {
     type: 'function',
-    inputs: [{ name: '_verifier', internalType: 'address', type: 'address' }],
+    inputs: [{ name: '_admin', internalType: 'address', type: 'address' }],
+    name: 'setKycAdmin',
+    outputs: [],
+    stateMutability: 'nonpayable',
+  },
+  {
+    type: 'function',
+    inputs: [
+      { name: 'level', internalType: 'uint8', type: 'uint8' },
+      { name: 'verifier', internalType: 'address', type: 'address' },
+    ],
     name: 'setKycVerifier',
     outputs: [],
     stateMutability: 'nonpayable',
@@ -5381,22 +5421,36 @@ export const cawProfileMinterAbi = [
   },
   {
     type: 'function',
-    inputs: [{ name: '_newAdmin', internalType: 'address', type: 'address' }],
-    name: 'transferAdmin',
-    outputs: [],
-    stateMutability: 'nonpayable',
-  },
-  {
-    type: 'function',
     inputs: [{ name: 'tokenId', internalType: 'uint32', type: 'uint32' }],
     name: 'unlockWithdraw',
     outputs: [],
     stateMutability: 'nonpayable',
   },
   {
+    type: 'function',
+    inputs: [{ name: '', internalType: 'uint32', type: 'uint32' }],
+    name: 'withdrawKycLevel',
+    outputs: [{ name: '', internalType: 'uint8', type: 'uint8' }],
+    stateMutability: 'view',
+  },
+  {
     type: 'event',
     anonymous: false,
     inputs: [
+      {
+        name: 'admin',
+        internalType: 'address',
+        type: 'address',
+        indexed: true,
+      },
+    ],
+    name: 'KycAdminSet',
+  },
+  {
+    type: 'event',
+    anonymous: false,
+    inputs: [
+      { name: 'level', internalType: 'uint8', type: 'uint8', indexed: true },
       {
         name: 'verifier',
         internalType: 'address',
@@ -5417,26 +5471,13 @@ export const cawProfileMinterAbi = [
         indexed: true,
       },
     ],
-    name: 'WithdrawLocked',
-  },
-  {
-    type: 'event',
-    anonymous: false,
-    inputs: [
-      {
-        name: 'tokenId',
-        internalType: 'uint32',
-        type: 'uint32',
-        indexed: true,
-      },
-    ],
     name: 'WithdrawUnlocked',
   },
   { type: 'error', inputs: [], name: 'AlreadyUnlocked' },
   { type: 'error', inputs: [], name: 'KycNotConfigured' },
   { type: 'error', inputs: [], name: 'KycRequired' },
-  { type: 'error', inputs: [], name: 'NotAdmin' },
   { type: 'error', inputs: [], name: 'NotTokenOwner' },
+  { type: 'error', inputs: [], name: 'WithdrawTimelocked' },
 ] as const
 
 //////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -5862,6 +5903,48 @@ export const cawProfileUriAbi = [
 ] as const
 
 //////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+// CivicKycVerifier
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+export const civicKycVerifierAbi = [
+  {
+    type: 'constructor',
+    inputs: [
+      { name: '_civic', internalType: 'address', type: 'address' },
+      { name: '_network', internalType: 'uint256', type: 'uint256' },
+    ],
+    stateMutability: 'nonpayable',
+  },
+  {
+    type: 'function',
+    inputs: [],
+    name: 'civic',
+    outputs: [
+      {
+        name: '',
+        internalType: 'contract IGatewayTokenVerifier',
+        type: 'address',
+      },
+    ],
+    stateMutability: 'view',
+  },
+  {
+    type: 'function',
+    inputs: [],
+    name: 'gatekeeperNetwork',
+    outputs: [{ name: '', internalType: 'uint256', type: 'uint256' }],
+    stateMutability: 'view',
+  },
+  {
+    type: 'function',
+    inputs: [{ name: 'account', internalType: 'address', type: 'address' }],
+    name: 'isVerified',
+    outputs: [{ name: '', internalType: 'bool', type: 'bool' }],
+    stateMutability: 'view',
+  },
+] as const
+
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 // ICawActionsCheckpoints
 //////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
@@ -6092,6 +6175,24 @@ export const iCawProfileForQuoterAbi = [
 ] as const
 
 //////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+// ICawProfileForTipTargetPropagation
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+export const iCawProfileForTipTargetPropagationAbi = [
+  {
+    type: 'function',
+    inputs: [
+      { name: 'networkId', internalType: 'uint32', type: 'uint32' },
+      { name: 'lzDestId', internalType: 'uint32', type: 'uint32' },
+      { name: 'lzTokenAmount', internalType: 'uint256', type: 'uint256' },
+    ],
+    name: 'broadcastTipTarget',
+    outputs: [],
+    stateMutability: 'payable',
+  },
+] as const
+
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 // ICawProfileMinter
 //////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
@@ -6272,6 +6373,40 @@ export const iCawProfileTransferAbi = [
       },
     ],
     name: 'Transfer',
+  },
+] as const
+
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+// ICawWithdrawGate
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+export const iCawWithdrawGateAbi = [
+  {
+    type: 'function',
+    inputs: [
+      { name: 'tokenId', internalType: 'uint32', type: 'uint32' },
+      { name: 'tokenOwner', internalType: 'address', type: 'address' },
+    ],
+    name: 'checkWithdrawAllowed',
+    outputs: [],
+    stateMutability: 'view',
+  },
+] as const
+
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+// IGatewayTokenVerifier
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+export const iGatewayTokenVerifierAbi = [
+  {
+    type: 'function',
+    inputs: [
+      { name: 'owner', internalType: 'address', type: 'address' },
+      { name: 'network', internalType: 'uint256', type: 'uint256' },
+    ],
+    name: 'verifyToken',
+    outputs: [{ name: '', internalType: 'bool', type: 'bool' }],
+    stateMutability: 'view',
   },
 ] as const
 
