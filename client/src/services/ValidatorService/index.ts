@@ -3004,7 +3004,14 @@ console.log("succeededKeys", succeededKeys)
 
       if (succeededEntries.length === 0) {
         console.log("[Validator] No entries passed simulation - all rejected. Not submitting transaction.")
-        // The rejections will be handled in the next section
+        // Mark each rejected entry with its per-entry reason via the same
+        // path used by the insufficient-tip branch below. Without this
+        // explicit handling, falling through would submit an empty batch
+        // that wastes gas and reverts; just returning without
+        // updateQueueStatuses would leave rejected rows pending and
+        // re-simulated forever.
+        await updateQueueStatuses(validatedEntries, [], rejectionMessages)
+        return
       }
 
       // rebuild your call data only with the succeeded entries
