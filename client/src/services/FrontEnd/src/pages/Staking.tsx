@@ -646,13 +646,21 @@ const Staking = () => {
     })
   }, [activeToken, isConnected, isMainnet, withdraw, ensureWallet])
 
-  // Handle unstake initialization (on L2)
+  // Handle unstake initialization. EIP-712 signatures are chain-agnostic
+  // (domain.chainId is hashed into the digest regardless of the wallet's
+  // current chain), so we DON'T proactively switch the user to L2 here —
+  // it's a UX papercut to bounce them between L1 and L2 for a sign-only
+  // action. Most modern wallets sign cross-chain typed data without
+  // complaint; if a wallet rejects with a chain-mismatch error,
+  // signAndSubmit (api/actions.ts:1340-1351) catches that and switches
+  // to L2 on the retry. So: pass null for the chainId target — only
+  // require the wallet is connected.
   const handleUnstakeInit = useCallback(async () => {
     if (!activeToken) return
     console.log('[Staking] handleUnstakeInit called', { isConnected, amount, isMainnet })
-    await ensureWallet({ chainId: chains.l2.chainId }, async () => {
+    await ensureWallet(null, async () => {
       try {
-        console.log('[Staking] Submitting withdraw action to L2')
+        console.log('[Staking] Submitting withdraw action to L2 (signing from current chain)')
         await signAndSubmit({
           senderId: activeToken.tokenId,
           actionType: 'withdraw',
