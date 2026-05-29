@@ -726,14 +726,15 @@ const LINKING_STEPS = [
     method: 'createNetwork',
     // Uruk fee ceilings at ETH=$2000 (initial fees = ceilings; lowered to
     // their final values by the next linking step):
-    //   withdrawFeeCeiling = 0.0025 ETH (~$5) — initial fee 0.00075 ETH
-    //   depositFeeCeiling  = 0.001  ETH (~$2) — initial fee 0.0005   ETH
-    //   authFeeCeiling     = 0.001  ETH (~$2) — initial fee 0.000125 ETH
-    //   mintFeeCeiling     = 0.001  ETH (~$2) — initial fee 0.000125 ETH
-    // depositFeeCeiling matches mint/auth so all three sit at the same cap
-    // (deliberate: lowered from 0.0025 → 0.001 to give users more headroom).
-    // Ceilings are permanent upper bounds; the active fees can be lowered
-    // any time by the Network owner (you) via setXFee.
+    //   withdrawFeeCeiling = 0.0025 ETH (~$5)  — initial fee 0.00075 ETH
+    //   depositFeeCeiling  = 0.001  ETH (~$2)  — initial fee 0.0005   ETH
+    //   authFeeCeiling     = 0                 — permanently free
+    //   mintFeeCeiling     = 0                 — permanently free
+    // Auth + mint are locked at 0 (ceiling AND initial fee) so users joining
+    // Uruk pay only at deposit/withdraw time. Ceilings can only decrease, so
+    // starting at 0 is irreversible and matches the "open by default" stance.
+    // The remaining ceilings (deposit, withdraw) are permanent upper bounds;
+    // their active fees can be lowered any time via setXFee.
     // Storage chain: L2 (Base Sepolia).
     args: (state, chainConfig) => [
       'Uruk (testnet)',
@@ -741,8 +742,8 @@ const LINKING_STEPS = [
       CHAINS[chainConfig.env + 'L2'].lzEid,
       '2500000000000000', // withdrawFeeCeiling = 0.0025 ETH
       '1000000000000000', // depositFeeCeiling  = 0.001  ETH
-      '1000000000000000', // authFeeCeiling     = 0.001  ETH
-      '1000000000000000', // mintFeeCeiling     = 0.001  ETH
+      '0',                // authFeeCeiling     = 0  (permanently free)
+      '0',                // mintFeeCeiling     = 0  (permanently free)
       '500000000000',     // tipCeilingWei      = 5e11   (~$0.001 at ETH=$2k)
     ],
     condition: (state) => state.addresses.CawNetworkManager,
@@ -760,18 +761,18 @@ const LINKING_STEPS = [
     phase: 2,
     contract: 'CawNetworkManager',
     method: 'setFees',
-    // Initial post-deploy fees (each < its ceiling):
+    // Initial post-deploy fees (each <= its ceiling):
     //   withdrawFee = 0.00075  ETH (ceiling 0.0025)
     //   depositFee  = 0.0005   ETH (ceiling 0.001)
-    //   authFee     = 0.000125 ETH (ceiling 0.001)
-    //   mintFee     = 0.000125 ETH (ceiling 0.001)
+    //   authFee     = 0                (ceiling 0 — permanently free)
+    //   mintFee     = 0                (ceiling 0 — permanently free)
     // setFees(networkId, withdrawFee, depositFee, authFee, mintFee)
     args: (state) => [
       1,
       '750000000000000',  // withdrawFee = 0.00075  ETH
       '500000000000000',  // depositFee  = 0.0005   ETH
-      '125000000000000',  // authFee     = 0.000125 ETH
-      '125000000000000',  // mintFee     = 0.000125 ETH
+      '0',                // authFee     = 0
+      '0',                // mintFee     = 0
     ],
     condition: (state) => state.addresses.CawNetworkManager && state.linking?.networkCreated === true,
     skipIf: async (state, deployer) => {

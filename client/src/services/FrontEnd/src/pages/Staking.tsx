@@ -13,7 +13,7 @@ import { TokenData } from "~/types";
 import { handleError, convertToText, formatUnitsCompact } from "~/utils";
 import useContractCall from "~/hooks/useContractCall";
 import useAllowance from "~/hooks/useAllowance";
-import { useAccount, useConnections, useReadContract, useSwitchChain, useChainId } from "wagmi"
+import { useAccount, useBalance, useConnections, useReadContract, useSwitchChain, useChainId } from "wagmi"
 import { useConnectModal } from "@rainbow-me/rainbowkit"
 import { useActiveToken, useTokenDataStore, usePriceStore } from "~/store/tokenDataStore"
 import { cawProfileAbi, cawProfileL2Abi, cawProfileQuoterAbi, cawProfileMinterAbi } from "~/../../../abi/generated"
@@ -34,6 +34,7 @@ import { CLIENT_ID } from '~/api/actions'
 import { useT } from '~/i18n/I18nProvider'
 import NetworkFeesPanel from '~/components/NetworkFeesPanel'
 import NetworkFeeModal from '~/components/NetworkFeeModal'
+import EthSpendInput from '~/components/EthSpendInput'
 import { useNetworkFees } from '~/hooks/useNetworkFees'
 import { HiInformationCircle } from 'react-icons/hi'
 
@@ -169,6 +170,13 @@ const Staking = () => {
     if (paymentMode !== 'eth' || !ethAmount) return 0n
     try { return parseEther(ethAmount) } catch { return 0n }
   }, [paymentMode, ethAmount])
+  // L1 ETH balance — passed to the shared EthSpendInput for its "use max"
+  // button so users can fast-fill without leaving the page.
+  const { data: ethBalanceData } = useBalance({
+    address,
+    chainId: chains.l1.chainId,
+    query: { enabled: !!address && paymentMode === 'eth' },
+  })
   const reserves = usePoolReserves(CAW_PAIR_ADDRESS as `0x${string}`, chains.l1.chainId)
   useEffect(() => {
     if (slippageAutoSet || ethAmountWei === 0n || !reserves.loaded) return
@@ -724,43 +732,34 @@ const Staking = () => {
         </div>
       )}
 
-      {/* ETH input + slippage slider (visible only in ETH mode) */}
+      {/* ETH input + slippage slider (visible only in ETH mode). Input UI lives
+          in EthSpendInput (shared with /usernames/new). Slippage slider stays
+          here because it's deposit-page-specific (New.tsx hides this concept
+          behind a single "guidance" line). */}
       {paymentMode === 'eth' && (
-        <div className={`border rounded-xl p-4 space-y-3 ${
-          isDark ? 'border-white/10 bg-[#0D0D0D]/85' : 'border-gray-200 bg-gray-50'
-        }`}>
-          <div className="text-sm font-medium">ETH to deposit</div>
-          <div className="relative">
-            <input
-              type="text"
-              inputMode="decimal"
-              value={ethAmount}
-              onChange={e => setEthAmount(e.target.value.replace(/[^0-9.]/g, ''))}
-              placeholder="0.05"
-              className={`w-full px-4 py-2.5 rounded-full focus:outline-none text-sm ${
-                isDark
-                  ? 'bg-black border border-white/20 text-white placeholder-white/30 focus:border-white/30'
-                  : 'bg-white border border-gray-300 text-black placeholder-gray-400 focus:border-gray-400'
-              }`}
-            />
-            <span className="absolute right-4 top-1/2 -translate-y-1/2 text-gray-500 text-sm">ETH</span>
-          </div>
+        <>
+          <EthSpendInput
+            title="ETH to deposit"
+            subtitle=" - buys CAW and deposits it into your profile."
+            ethAmount={ethAmount}
+            setEthAmount={setEthAmount}
+            ethPrice={ethPrice}
+            quickPickDollars={[20, 50, 100, 300]}
+            expectedCawOut={zapQuote.expectedCawOut}
+            reservesLoaded={reserves.loaded}
+            ethBalanceWei={ethBalanceData?.value}
+          />
           {ethAmountWei > 0n && reserves.loaded && (
-            <div className={`text-xs space-y-1 ${isDark ? 'text-gray-400' : 'text-gray-600'}`}>
-              <div>
-                Expected: <span className={`font-mono ${isDark ? 'text-white' : 'text-gray-900'}`}>
-                  {Number(zapQuote.expectedCawOut / 10n**18n).toLocaleString('en-US')} CAW
-                </span>
-              </div>
-              <div>
-                Minimum (after {(slippageBps / 100).toFixed(2)}% slippage):&nbsp;
-                <span className={`font-mono ${isDark ? 'text-white' : 'text-gray-900'}`}>
-                  {Number(zapQuote.minCawOut / 10n**18n).toLocaleString('en-US')} CAW
-                </span>
-              </div>
+            <div className={`text-xs ${isDark ? 'text-gray-400' : 'text-gray-600'} px-4`}>
+              Minimum (after {(slippageBps / 100).toFixed(2)}% slippage):&nbsp;
+              <span className={`font-mono ${isDark ? 'text-white' : 'text-gray-900'}`}>
+                {Number(zapQuote.minCawOut / 10n**18n).toLocaleString('en-US')} CAW
+              </span>
             </div>
           )}
-          <div className="space-y-1">
+          <div className={`border rounded-xl p-4 space-y-1 ${
+            isDark ? 'border-white/10 bg-[#0D0D0D]/85' : 'border-gray-200 bg-gray-50'
+          }`}>
             <div className="flex justify-between items-center text-xs">
               <span className={isDark ? 'text-gray-400' : 'text-gray-600'}>Slippage tolerance</span>
               <span className={`font-mono ${isDark ? 'text-white' : 'text-gray-900'}`}>{(slippageBps / 100).toFixed(2)}%</span>
@@ -775,7 +774,7 @@ const Staking = () => {
               className="w-full"
             />
           </div>
-        </div>
+        </>
       )}
 
       {/* Amount to Stake (CAW mode only) */}
@@ -834,6 +833,14 @@ const Staking = () => {
           >
             {t('staking.available', { amount: mockData.availableBalance.toLocaleString('en-US', { maximumFractionDigits: 2 }) })}
           </button>
+          {/* USD value of the entered CAW. Hidden when the user hasn't entered
+              anything yet or when the price feed hasn't loaded. Mirrors the
+              ProfileChooser balance/pending-delta convention. */}
+          {cawPrice > 0 && parseFloat(amount) > 0 && (
+            <span className={`text-xs font-mono ${isDark ? 'text-gray-400' : 'text-gray-600'}`}>
+              ≈ ${(parseFloat(amount) * cawPrice).toFixed(parseFloat(amount) * cawPrice < 0.01 ? 4 : 2)}
+            </span>
+          )}
         </div>
       </div>
       )}
@@ -1333,7 +1340,7 @@ const Staking = () => {
             }`} style={{ paddingTop: '10px' }}>
               {/* Question mark icon in top right */}
               <div className="absolute top-1.5 right-1.5">
-                <Tooltip text={t('staking.withdrawable_tooltip')} position="top">
+                <Tooltip text={t('staking.withdrawable_tooltip')} position="top" forceBlack>
                   <HiQuestionMarkCircle className={`w-4 h-4 cursor-help ${isDark ? 'text-gray-400' : 'text-gray-500'}`} />
                 </Tooltip>
               </div>

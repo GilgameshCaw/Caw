@@ -24,7 +24,11 @@ export interface NetworkFeesPanelProps {
    * differs, both are shown so the user can see the delta.
    */
   cachedWithdrawFee?: bigint | null
-  /** Hide rows whose value is exactly 0 instead of rendering "Free". */
+  /**
+   * Legacy: zero-fee rows used to be opt-in to hide. Now hidden by default
+   * when BOTH fee and ceiling are 0 (permanently free). Kept on the interface
+   * so existing callers don't break — value is ignored.
+   */
   omitZeroRows?: boolean
   className?: string
 }
@@ -137,7 +141,6 @@ const NetworkFeesPanel: React.FC<NetworkFeesPanelProps> = ({
   show,
   showCacheExplainer,
   cachedWithdrawFee,
-  omitZeroRows,
   className,
 }) => {
   const { isDark } = useTheme()
@@ -180,7 +183,12 @@ const NetworkFeesPanel: React.FC<NetworkFeesPanelProps> = ({
         </div>
       ) : (
         <>
-          {show.includes('deposit') && !(omitZeroRows && fees.depositFee === 0n) && (
+          {/* Each row is hidden when the Network has both `fee` and `ceiling` at
+              0 — that's the "permanently free" combo (ceiling can only drop, so
+              once it's 0 the fee can never come back). The legacy `omitZeroRows`
+              flag only checked the current fee, which incorrectly hid temporarily-
+              zero rows where the ceiling still allowed the operator to raise. */}
+          {show.includes('deposit') && !(fees.depositFee === 0n && fees.depositFeeCeiling === 0n) && (
             <FeeLineWithCeiling
               label={t('network.deposit_fee')}
               fee={fees.depositFee}
@@ -192,9 +200,11 @@ const NetworkFeesPanel: React.FC<NetworkFeesPanelProps> = ({
             />
           )}
 
-          {show.includes('auth') && !(omitZeroRows && fees.authFee === 0n) && (
+          {show.includes('auth') && !(fees.authFee === 0n && fees.authFeeCeiling === 0n) && (
             <FeeLineWithCeiling
-              label={t('network.auth_fee')}
+              // If a Network charges any auth fee at all, every action triggers
+              // it (it's not opt-in / extra-network), so make the copy explicit.
+              label={t('network.auth_fee_required')}
               fee={fees.authFee}
               ceiling={fees.authFeeCeiling}
               isDark={isDark}
@@ -204,7 +214,7 @@ const NetworkFeesPanel: React.FC<NetworkFeesPanelProps> = ({
             />
           )}
 
-          {show.includes('mint') && !(omitZeroRows && fees.mintFee === 0n) && (
+          {show.includes('mint') && !(fees.mintFee === 0n && fees.mintFeeCeiling === 0n) && (
             <FeeLineWithCeiling
               label={t('network.mint_fee')}
               fee={fees.mintFee}
@@ -216,7 +226,7 @@ const NetworkFeesPanel: React.FC<NetworkFeesPanelProps> = ({
             />
           )}
 
-          {show.includes('withdraw') && !(omitZeroRows && fees.withdrawFee === 0n) && (
+          {show.includes('withdraw') && !(fees.withdrawFee === 0n && fees.withdrawFeeCeiling === 0n) && (
             <>
               {cachedWithdrawFee != null ? (
                 <>

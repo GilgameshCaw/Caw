@@ -28,15 +28,12 @@ import { useSessionKeyStore } from '~/store/sessionKeyStore'
 import { usePoolReserves, useMinCawOut, suggestedSlippageBps } from '~/hooks/useZapQuote'
 import { useNetworkFees } from '~/hooks/useNetworkFees'
 import NetworkFeeModal from '~/components/NetworkFeeModal'
+import EthSpendInput from '~/components/EthSpendInput'
 
 // Quick Sign default scope: all actions except WITHDRAW (bit 6) — matches the
 // 0xBF hard-wired on L2 in the bundled session register flow.
 const QUICK_SIGN_DEFAULT_SCOPE = 0xBF
 
-// ETH left behind when user clicks "Balance" to max-fill the ETH-to-spend
-// input. Covers gas for the ZAP tx itself. Conservative enough to not strand
-// users in normal L1 conditions.
-const ETH_GAS_RESERVE_WEI = 1_000_000_000_000_000n // 0.001 ETH
 
 // cost schedule (raw CAW)
 const COST_SCHEDULE: Record<number, bigint> = {
@@ -49,21 +46,6 @@ const COST_SCHEDULE: Record<number, bigint> = {
   7:        10_000_000n,
 }
 const DEFAULT_COST = 1_000_000n  // 8+ chars
-
-/**
- * Format a USD amount compactly for quick-pick buttons:
- *   $20, $300, $1.5k, $12k, $45k, $1.2M.
- */
-function formatDollarsCompact(dollars: number): string {
-  if (dollars < 1_000) return `$${dollars}`
-  if (dollars < 1_000_000) {
-    const k = dollars / 1_000
-    // Drop trailing .0 (e.g. $2k not $2.0k); keep .5 (e.g. $1.5k).
-    return Number.isInteger(k) ? `$${k}k` : `$${k.toFixed(1)}k`
-  }
-  const m = dollars / 1_000_000
-  return Number.isInteger(m) ? `$${m}M` : `$${m.toFixed(1)}M`
-}
 
 /**
  * Compute the four quick-pick dollar amounts for the "Pay with ETH" tab.
@@ -1509,109 +1491,31 @@ console.log("BALANCE:", balance)
               </button>
             </div>
 
-            {/* ETH-mode input */}
+            {/* ETH-mode input — shared component, see components/EthSpendInput.tsx.
+                Pass usernameCostCaw so the readout handles the "below burn cost"
+                warning + the deposit-remainder math. */}
             {paymentMode === 'eth' && (
-              <div className={`border rounded-xl p-4 space-y-3 mt-3 ${
-                isDark ? 'border-white/10 bg-[#0D0D0D]/85' : 'border-gray-200 bg-gray-50'
-              }`}>
-                <div className="text-sm font-medium">
-                  ETH to spend <span className={`text-xs font-normal ${isDark ? 'text-gray-400' : 'text-gray-600'}`}>- buys and deposits CAW into your profile.</span>
-                  <span className="flex items-center gap-1.5 mt-0.5 text-yellow-500/80 text-xs">
-                    {t('new_profile.deposit.bullet3')}
-                    <DepositInfoPopover />
-                  </span>
-                </div>
-                {/* Quick-pick dollar amounts. The amount-in-ETH is derived
-                    from the current ETH/USD price; if the price isn't loaded
-                    yet, the buttons are disabled. */}
-                <div className="flex gap-2">
-                  {ethQuickPickDollars.map(dollars => {
-                    // 4-decimal ETH precision is plenty given we display in USD.
-                    const ethAmountForDollars = ethPrice > 0
-                      ? (dollars / ethPrice).toFixed(4).replace(/0+$/, '').replace(/\.$/, '')
-                      : ''
-                    const active = ethAmount === ethAmountForDollars && ethAmountForDollars !== ''
-                    return (
-                      <button
-                        key={dollars}
-                        type="button"
-                        onClick={() => setEthAmount(ethAmountForDollars)}
-                        disabled={ethPrice <= 0}
-                        className={`flex-1 py-1.5 text-xs rounded-full border transition-colors cursor-pointer ${
-                          active
-                            ? 'border-yellow-500 text-yellow-400'
-                            : isDark
-                              ? 'border-white/10 text-gray-400 hover:text-white hover:border-white/30'
-                              : 'border-[#BBB] text-gray-600 hover:text-gray-900 hover:border-gray-500'
-                        } disabled:opacity-30 disabled:cursor-not-allowed`}
-                      >
-                        {formatDollarsCompact(dollars)}
-                      </button>
-                    )
-                  })}
-                </div>
-                <div className="relative">
-                  <input
-                    type="text"
-                    inputMode="decimal"
-                    value={ethAmount}
-                    onChange={e => setEthAmount(e.target.value.replace(/[^0-9.]/g, ''))}
-                    placeholder="0.05"
-                    className={`w-full px-4 py-2.5 rounded-full focus:outline-none text-sm ${
-                      isDark
-                        ? 'bg-black border border-white/20 text-white placeholder-white/30 focus:border-white/30'
-                        : 'bg-white border border-gray-300 text-black placeholder-gray-400 focus:border-gray-400'
-                    }`}
-                  />
-                  <span className="absolute right-4 top-1/2 -translate-y-1/2 text-gray-500 text-sm">ETH</span>
-                </div>
-                <div className={`flex justify-between items-center text-xs ${isDark ? 'text-gray-400' : 'text-gray-600'}`}>
-                  {/* Left cell: either a red "below burn cost" warning (when
-                      the swap output won't cover the username's CAW burn) or
-                      the combined "~$X.XX (~Y CAW)" readout. Right cell: the
-                      user's L1 ETH balance for quick reference. */}
-                  <span>
-                    {ethAmountWei > 0n && ethPrice > 0 && reserves.loaded && zapQuote.minCawOut < cost ? (
-                      <span className="text-red-400">
-                        Below the {formatNumberCompact(convertToNumber(cost, 18))} CAW burn cost — increase ETH.
-                      </span>
-                    ) : ethAmountWei > 0n && ethPrice > 0 && reserves.loaded && zapQuote.expectedCawOut > cost ? (
-                      <>
-                        ~<span className={`font-mono ${isDark ? 'text-white' : 'text-gray-900'}`}>
-                          ${formatUsd(Number(ethAmount) * ethPrice)}
-                        </span>{' '}(~{formatNumberCompact(convertToNumber(zapQuote.expectedCawOut - cost, 18))} CAW)
-                      </>
-                    ) : ethAmountWei > 0n && ethPrice > 0 ? (
-                      <>~<span className={`font-mono ${isDark ? 'text-white' : 'text-gray-900'}`}>${formatUsd(Number(ethAmount) * ethPrice)}</span></>
-                    ) : ''}
-                  </span>
-                  {ethBalanceData ? (
-                    <button
-                      type="button"
-                      onClick={() => {
-                        const max = ethBalanceData.value > ETH_GAS_RESERVE_WEI
-                          ? ethBalanceData.value - ETH_GAS_RESERVE_WEI
-                          : 0n
-                        setEthAmount(Number(formatEther(max)).toFixed(6).replace(/\.?0+$/, ''))
-                      }}
-                      className="hover:underline cursor-pointer"
-                      title="Use max (leaves ~0.001 ETH for gas)"
-                    >
-                      {t('new_profile.balance_label')}{' '}
-                      <span className={`font-mono ${isDark ? 'text-white' : 'text-gray-900'}`}>
-                        {Number(formatEther(ethBalanceData.value)).toLocaleString(undefined, { maximumFractionDigits: 4 })} ETH
-                      </span>
-                    </button>
-                  ) : !address ? (
-                    <button
-                      type="button"
-                      onClick={() => openConnectModal?.()}
-                      className="hover:underline cursor-pointer text-yellow-500"
-                    >
-                      Connect wallet
-                    </button>
-                  ) : null}
-                </div>
+              <div className="mt-3">
+                <EthSpendInput
+                  title="ETH to spend"
+                  subtitle=" - buys and deposits CAW into your profile."
+                  titleSuffix={
+                    <span className="flex items-center gap-1.5 mt-0.5 text-yellow-500/80 text-xs">
+                      {t('new_profile.deposit.bullet3')}
+                      <DepositInfoPopover />
+                    </span>
+                  }
+                  ethAmount={ethAmount}
+                  setEthAmount={setEthAmount}
+                  ethPrice={ethPrice}
+                  quickPickDollars={ethQuickPickDollars}
+                  expectedCawOut={zapQuote.expectedCawOut}
+                  reservesLoaded={reserves.loaded}
+                  usernameCostCaw={cost}
+                  ethBalanceWei={ethBalanceData?.value}
+                  onConnectClick={!address ? openConnectModal : undefined}
+                  balanceLabel={t('new_profile.balance_label')}
+                />
               </div>
             )}
 

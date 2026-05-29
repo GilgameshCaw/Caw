@@ -101,7 +101,7 @@ const StakingRewardsInfo: React.FC<StakingRewardsInfoProps> = ({
             {t('staking.rewards.footer')}
           </p>
           <p className={`text-xs mt-2 ${dark ? 'text-gray-500' : 'text-gray-400'}`}>
-            Actions submitted cost {tipUsdLabel ?? '~$0.001'} paid in CAW
+            Actions require an additional validation fee of {tipUsdLabel ?? '~$0.001'} paid in CAW
           </p>
         </div>
       </div>

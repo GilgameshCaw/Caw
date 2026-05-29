@@ -196,24 +196,36 @@ const NetworkFeeModal: React.FC<NetworkFeeModalProps> = ({
               </tr>
             </thead>
             <tbody>
-              <FeeTableRow
-                label="Mint username"
-                current={weiToUsd(dbl(fees.mintFee), ethPrice)}
-                ceiling={weiToUsd(dbl(fees.mintFeeCeiling), ethPrice)}
-                isDark={isDark}
-              />
-              <FeeTableRow
-                label="Deposit CAW"
-                current={weiToUsd(dbl(fees.depositFee), ethPrice)}
-                ceiling={weiToUsd(dbl(fees.depositFeeCeiling), ethPrice)}
-                isDark={isDark}
-              />
-              <FeeTableRow
-                label="Authenticate (extra Network)"
-                current={weiToUsd(dbl(fees.authFee), ethPrice)}
-                ceiling={weiToUsd(dbl(fees.authFeeCeiling), ethPrice)}
-                isDark={isDark}
-              />
+              {/* Hide rows where both current and ceiling are 0 — that combo means the
+                  Network has permanently waived this fee (ceiling can only decrease, so
+                  0/0 is irreversible). Showing "$0 / $0" rows is just noise. */}
+              {!(fees.mintFee === 0n && fees.mintFeeCeiling === 0n) && (
+                <FeeTableRow
+                  label="Mint username"
+                  current={weiToUsd(dbl(fees.mintFee), ethPrice)}
+                  ceiling={weiToUsd(dbl(fees.mintFeeCeiling), ethPrice)}
+                  isDark={isDark}
+                />
+              )}
+              {!(fees.depositFee === 0n && fees.depositFeeCeiling === 0n) && (
+                <FeeTableRow
+                  label="Deposit CAW"
+                  current={weiToUsd(dbl(fees.depositFee), ethPrice)}
+                  ceiling={weiToUsd(dbl(fees.depositFeeCeiling), ethPrice)}
+                  isDark={isDark}
+                />
+              )}
+              {!(fees.authFee === 0n && fees.authFeeCeiling === 0n) && (
+                <FeeTableRow
+                  // When the Network charges an auth fee at all, it's required for every
+                  // action (not just opt-in extras), so the label needs to be honest about
+                  // that. The previous "(extra Network)" copy implied it was optional.
+                  label="Authenticate (required for all actions)"
+                  current={weiToUsd(dbl(fees.authFee), ethPrice)}
+                  ceiling={weiToUsd(dbl(fees.authFeeCeiling), ethPrice)}
+                  isDark={isDark}
+                />
+              )}
               {/* Cross-chain LZ row — not a Network fee, hover the label for context */}
               <tr className={`border-t ${borderClass}`}>
                 <td className={`py-2 pr-4 text-sm ${mutedClass}`}>
@@ -248,7 +260,9 @@ const NetworkFeeModal: React.FC<NetworkFeeModalProps> = ({
 
               {/* Withdraw row — label communicates the lock-in semantics
                   inline; tooltip below has the full explanation. Row is
-                  visually dimmed because the fee isn't paid now. */}
+                  visually dimmed because the fee isn't paid now. Hidden
+                  when both current and ceiling are 0 (permanently free). */}
+              {!(fees.withdrawFee === 0n && fees.withdrawFeeCeiling === 0n) && (
               <tr className="border-t border-[#4f3c0096] text-[#6c6c6c]">
                 <td className="py-2 pr-4 text-sm">
                   <span className="relative group inline-flex items-center gap-1">
@@ -279,6 +293,7 @@ const NetworkFeeModal: React.FC<NetworkFeeModalProps> = ({
                   {weiToUsd(dbl(fees.withdrawFee), ethPrice)} <span className="font-sans">(pay later)</span>
                 </td>
               </tr>
+              )}
             </tbody>
           </table>
         </div>
