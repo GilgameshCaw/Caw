@@ -209,7 +209,7 @@ async function fullSetup(accounts) {
   // arbitrary in tests — the mock ignores it.
   const mockVerifier = await MockSP1Verifier.new();
   const dummyVKey = "0x" + "11".repeat(32);
-  const cawActions = await CawActions.new(cawProfileL2.address, mockVerifier.address, dummyVKey, "0x0000000000000000000000000000000000000000", "0x0000000000000000000000000000000000000000");
+  const cawActions = await CawActions.new(cawProfileL2.address, mockVerifier.address, dummyVKey, "0x0000000000000000000000000000000000000000", "0x0000000000000000000000000000000000000000", 0, 0);
   await cawProfileL2.setCawActions(cawActions.address);
 
   return { token, cawProfile, cawProfileL2, minter, quoter, cawActions, networkManager, networkId, mockVerifier };
@@ -482,7 +482,8 @@ contract('CawActions — processActionsWithZkSigs', function (accounts) {
       "0x0000000000000000000000000000000000000000",
       "0x0000000000000000000000000000000000000000000000000000000000000000",
       "0x0000000000000000000000000000000000000000",
-      "0x0000000000000000000000000000000000000000"
+      "0x0000000000000000000000000000000000000000",
+      0, 0   // bootstrapRatio=0, bootstrapExpiry=0 (bootstrap disabled)
     );
 
     const action = {

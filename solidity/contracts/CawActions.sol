@@ -148,6 +148,13 @@ contract CawActions {
   ///         (backward-compatible null-oracle fallback, parallel to zkVerifier).
   ICawCapOracle public immutable capOracle;
 
+  /// @notice Packed bootstrap fallback: low 192 bits = ratio (UQ112.112 WETH-per-CAW,
+  ///         matches CapState.ratio units); high 64 bits = expiry timestamp.
+  ///         Used by `_getCost` while `block.timestamp < expiry` and the live
+  ///         oracle hasn't pushed a real ratio yet. Both halves = 0 disables it.
+  ///         Single immutable so both halves fit in one read.
+  uint256 internal immutable _bootstrap;
+
   // Precomputed type hashes for EIP712
   bytes32 private constant EIP712_DOMAIN_TYPEHASH = keccak256(
     "EIP712Domain(string name,string version,uint256 chainId,address verifyingContract)"
@@ -220,7 +227,21 @@ contract CawActions {
     bytes32 batchHash
   );
 
-  constructor(address _cawProfiles, address _zkVerifier, bytes32 _zkProgramVKey, address _erc1271Sibling, address _capOracle) {
+  /// @param _bootstrapRatio   UQ112.112 WETH-per-CAW measured off-chain at deploy
+  ///                          (e.g. read from the live Uniswap V2 pair). Used by
+  ///                          `_getCost` until `_bootstrapExpiry`, then ignored.
+  ///                          Pass 0 to disable (baseline applies during warm-up).
+  /// @param _bootstrapExpiry  Unix timestamp past which `_bootstrapRatio` is ignored.
+  ///                          Typically deploy time + 24h.
+  constructor(
+    address _cawProfiles,
+    address _zkVerifier,
+    bytes32 _zkProgramVKey,
+    address _erc1271Sibling,
+    address _capOracle,
+    uint192 _bootstrapRatio,
+    uint64  _bootstrapExpiry
+  ) {
     eip712DomainHash = generateDomainHash();
     externalSelf = CawActions(this);
     cawProfile = CawProfileL2(_cawProfiles);
@@ -228,6 +249,17 @@ contract CawActions {
     zkProgramVKey = _zkProgramVKey;
     erc1271Sibling = _erc1271Sibling;
     capOracle = ICawCapOracle(_capOracle); // address(0) = cap dormant (backward-compatible)
+    _bootstrap = (uint256(_bootstrapExpiry) << 192) | uint256(_bootstrapRatio);
+  }
+
+  /// @notice Bootstrap ratio (low 192 bits of `_bootstrap`).
+  function bootstrapRatio() external view returns (uint192) {
+    return uint192(_bootstrap);
+  }
+
+  /// @notice Bootstrap expiry (high 64 bits of `_bootstrap`).
+  function bootstrapExpiry() external view returns (uint64) {
+    return uint64(_bootstrap >> 192);
   }
 
   // ============================================
@@ -1165,11 +1197,19 @@ contract CawActions {
   ///      Single SLOAD reads both fields of CapState (one 256-bit slot).
   ///      Zero capOracle (null-oracle deploy) also returns baseline — the capState
   ///      slot is always zero in that case (setCapRatio is permanently unreachable).
+  ///      Bootstrap window: while block.timestamp < bootstrapExpiry and the
+  ///      oracle hasn't yet pushed a real ratio, use the deploy-time bootstrap
+  ///      ratio instead of the baseline. Both immutables = 0 disables this path.
   function _getCost(uint256 baseline, uint256 ethCap) private view returns (uint256) {
     CapState memory s = capState; // single SLOAD
-    if (s.ratio == 0) return baseline;
-    if (block.timestamp - s.lastUpdatedAt > CAP_STALE_THRESHOLD) return baseline;
-    uint256 capped = (ethCap << 112) / uint256(s.ratio) / 1e18;
+    uint256 ratio;
+    if (s.ratio != 0 && block.timestamp - s.lastUpdatedAt <= CAP_STALE_THRESHOLD) {
+      ratio = uint256(s.ratio);
+    } else if (block.timestamp < (_bootstrap >> 192)) {
+      ratio = uint192(_bootstrap);
+    }
+    if (ratio == 0) return baseline;
+    uint256 capped = (ethCap << 112) / ratio / 1e18;
     if (capped == 0) capped = 1;
     return capped < baseline ? capped : baseline;
   }

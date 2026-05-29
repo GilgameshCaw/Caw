@@ -250,7 +250,7 @@ async function fullSetup(accounts) {
   const minter = await CawProfileMinter.new(token.address, cawProfile.address, mockRouter.address);
   await cawProfile.setMinter(minter.address);
   const quoter = await CawProfileQuoter.new(cawProfile.address);
-  const cawActions = await CawActions.new(cawProfileL2.address, "0x0000000000000000000000000000000000000000", "0x0000000000000000000000000000000000000000000000000000000000000000", "0x0000000000000000000000000000000000000000", "0x0000000000000000000000000000000000000000");
+  const cawActions = await CawActions.new(cawProfileL2.address, "0x0000000000000000000000000000000000000000", "0x0000000000000000000000000000000000000000000000000000000000000000", "0x0000000000000000000000000000000000000000", "0x0000000000000000000000000000000000000000", 0, 0);
   await cawProfileL2.setCawActions(cawActions.address);
 
   return { token, cawProfile, cawProfileL2, minter, quoter, cawActions, networkManager, networkId };
@@ -575,6 +575,7 @@ async function fullSetupWithSibling(accounts) {
     '0x0000000000000000000000000000000000000000000000000000000000000000',
     predictedSiblingAddr,
     '0x0000000000000000000000000000000000000000',
+    0, 0,  // bootstrapRatio=0, bootstrapExpiry=0 (bootstrap disabled)
     { from: accounts[0] }
   );
   const sibling = await CawActionsERC1271.new(cawActions.address, { from: accounts[0] });

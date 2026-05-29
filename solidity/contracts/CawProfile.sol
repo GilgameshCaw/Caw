@@ -173,8 +173,18 @@ contract CawProfile is
     // slightly but that's fine — gas budget is a ceiling, not a bill.
     gasBaseFor[_lzBundleSelector]                = 250_000;
     gasBaseFor[_updateOwnersSelector]            =  40_000;
-    gasBaseFor[_allowFreeAuthSelector]           =  35_000;
-    gasBaseFor[_setNetworkTipTargetSelector]     =  35_000;
+    // _allowFreeAuth and _setNetworkTipTarget bodies are ~2 SSTOREs each
+    // (~25k), but every L1->L2 message also runs the piggybacked
+    // CawCapOracle.recordSample on receipt (SSTORE on samplesWritten +
+    // SSTORE on the ring-buffer slot + SampleRecorded event + try/catch
+    // frame ≈ 30-35k). The earlier 35k baseline covered the body but
+    // starved the piggyback, causing executor simulation reverts
+    // (CouldNotParseError 0x) on testnet 2026-05-28 — those messages
+    // never delivered. 80k absorbs piggyback + body + delegatecall
+    // overhead with headroom, while leaving the full 100k network-owner
+    // override room available on top for future EVM/L2 changes.
+    gasBaseFor[_allowFreeAuthSelector]           =  80_000;
+    gasBaseFor[_setNetworkTipTargetSelector]     =  80_000;
   }
 
   function setL2Peer(uint32 _eid, address _peer)

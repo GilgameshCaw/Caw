@@ -570,6 +570,8 @@ const CONTRACTS = {
       ZK_PROGRAM_VKEY,
       state.predictedAddresses?.CawActionsERC1271_L1 || ethers.ZeroAddress,
       state.addresses.CawCapOracle_L1 || ethers.ZeroAddress,
+      state.bootstrap?.ratio || '0',
+      state.bootstrap?.expiry || '0',
     ],
   },
   CawActionsERC1271_L1: {
@@ -671,6 +673,8 @@ for (const L of L2_CHAIN_KEYS) {
       ZK_PROGRAM_VKEY,
       state.predictedAddresses?.[`CawActionsERC1271_${L}`] || ethers.ZeroAddress,
       state.addresses[`CawCapOracle_${L}`] || ethers.ZeroAddress,
+      state.bootstrap?.ratio || '0',
+      state.bootstrap?.expiry || '0',
     ],
   };
   CONTRACTS[`CawActionsERC1271_${L}`] = {
@@ -1452,6 +1456,120 @@ class MultiChainDeployer {
     }
   }
 
+  /**
+   * Compute the deploy-time bootstrap ratio that CawActions (L1 + every L2)
+   * uses during the first 24h, before the L2 CawCapOracle accumulates enough
+   * samples to span MIN_WINDOW. Reads the same Uniswap V2 pair that
+   * CawL1PriceReader watches on L1, computes the UQ112.112 WETH-per-CAW
+   * ratio with the same math, and stashes it in
+   * `state.bootstrap = { ratio, expiry }` so each chain's CawActions
+   * constructorArgs can read it synchronously.
+   *
+   * Disabled when CAW_WETH_PAIR is unset (matches the no-oracle deploy mode
+   * for CawL1PriceReader). Stashes (0, 0) so CawActions deploys with bootstrap
+   * permanently off; behavior is the legacy "baseline applies during warm-up".
+   *
+   * Idempotent: re-running on a partial deploy overwrites state.bootstrap with
+   * a fresh reading. That's intentional — if the deployer re-ran the script
+   * 12h after the first try, we want the second CawActions deploy (if any)
+   * to see a fresh ratio, not a stale 12h-old one.
+   */
+  async computeBootstrap() {
+    const pairAddr = process.env.CAW_WETH_PAIR;
+    if (!pairAddr) {
+      console.log('\n   CAW_WETH_PAIR unset → bootstrap disabled (warm-up uses baseline).');
+      this.state.bootstrap = { ratio: '0', expiry: '0' };
+      this.saveState();
+      return;
+    }
+
+    const cawToken = this.state.addresses.MintableCaw || process.env.MINTABLE_CAW_ADDRESS;
+    if (!cawToken) {
+      console.warn('   MintableCaw address unknown — skipping bootstrap computation.');
+      this.state.bootstrap = { ratio: '0', expiry: '0' };
+      this.saveState();
+      return;
+    }
+
+    const l1ChainKey = this.getChainKey('L1');
+    const provider = this.providers[l1ChainKey] || this.wallets[l1ChainKey]?.provider;
+    if (!provider) {
+      console.warn('   No L1 provider available — skipping bootstrap computation.');
+      this.state.bootstrap = { ratio: '0', expiry: '0' };
+      this.saveState();
+      return;
+    }
+
+    // Minimal V2 pair ABI — just the three view fns we need.
+    const pairAbi = [
+      'function token0() view returns (address)',
+      'function token1() view returns (address)',
+      'function getReserves() view returns (uint112 reserve0, uint112 reserve1, uint32 blockTimestampLast)',
+    ];
+    const pair = new ethers.Contract(pairAddr, pairAbi, provider);
+
+    let token0, reserves;
+    try {
+      [token0, reserves] = await Promise.all([
+        pair.token0(),
+        pair.getReserves(),
+      ]);
+    } catch (e) {
+      console.warn(`   Failed to read pair ${pairAddr}: ${e.message}`);
+      console.warn('   Bootstrap disabled (warm-up uses baseline).');
+      this.state.bootstrap = { ratio: '0', expiry: '0' };
+      this.saveState();
+      return;
+    }
+
+    const cawIsToken0 = token0.toLowerCase() === cawToken.toLowerCase();
+    const r0 = BigInt(reserves[0]);
+    const r1 = BigInt(reserves[1]);
+    if (r0 === 0n || r1 === 0n) {
+      console.warn('   Pair reserves are zero — bootstrap disabled.');
+      this.state.bootstrap = { ratio: '0', expiry: '0' };
+      this.saveState();
+      return;
+    }
+
+    // Mirror CawL1PriceReader.readSample math exactly: WETH-per-CAW =
+    // other_reserve / caw_reserve, formatted as UQ112.112.
+    //   CAW=token0 → (r1 << 112) / r0
+    //   CAW=token1 → (r0 << 112) / r1
+    const ratioU192 = cawIsToken0
+      ? (r1 << 112n) / r0
+      : (r0 << 112n) / r1;
+
+    // Sanity check: uint192 fits up to ~6.28e57. A real WETH/CAW UQ112.112
+    // is well under 1e40. If we somehow blow past that, bail rather than
+    // silently truncating.
+    const MAX_U192 = (1n << 192n) - 1n;
+    if (ratioU192 > MAX_U192) {
+      console.warn(`   Bootstrap ratio ${ratioU192} exceeds uint192 — disabled.`);
+      this.state.bootstrap = { ratio: '0', expiry: '0' };
+      this.saveState();
+      return;
+    }
+
+    // Expiry: 24 hours from now. MIN_WINDOW = 1d on the L2 oracle, so by
+    // expiry the buffer will have spanned a full TWAP-eligible window.
+    const block = await provider.getBlock('latest');
+    const expiry = BigInt(block.timestamp) + 24n * 3600n;
+
+    this.state.bootstrap = {
+      ratio: ratioU192.toString(),
+      expiry: expiry.toString(),
+    };
+    this.saveState();
+
+    console.log(`\n   Bootstrap ratio (CawActions warm-up):`);
+    console.log(`     pair:       ${pairAddr}`);
+    console.log(`     cawIsToken0:${cawIsToken0}`);
+    console.log(`     reserves:   ${r0} / ${r1}`);
+    console.log(`     ratio (Q):  ${ratioU192}`);
+    console.log(`     expiry:     ${expiry}  (block ${block.number} + 24h)`);
+  }
+
   loadArtifact(contractName) {
     if (this.artifacts[contractName]) {
       return this.artifacts[contractName];
@@ -1815,6 +1933,13 @@ class MultiChainDeployer {
       await this.initChain(k);
       await new Promise(r => setTimeout(r, 3000)); // 3s between connections
     }
+
+    // Pre-compute bootstrap ratio for CawActions warm-up window. Reads
+    // current WETH-per-CAW from the live Uniswap V2 pair so the first 24h
+    // after deploy compute tip+cap from real pool state instead of falling
+    // back to the flat CAW baseline. Stashed for both L1 and L2 CawActions
+    // constructorArgs to read synchronously. See computeBootstrap() below.
+    await this.computeBootstrap();
 
     // Deploy in phases. Phase 6 is LZ DVN reconciliation (mainnet only,
     // no-op on testnet/dev environments). Phase 7 is the renounce/

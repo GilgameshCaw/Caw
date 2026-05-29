@@ -50,7 +50,8 @@ contract("CawActions.setCapRatio — auth guard", (accounts) => {
       ZERO,         // zkVerifier
       ZERO_BYTES32, // zkProgramVKey
       ZERO,         // erc1271Sibling
-      oracle.address
+      oracle.address,
+      0, 0          // bootstrapRatio=0, bootstrapExpiry=0 (bootstrap disabled)
     );
     await cawProfileL2.setCawActions(cawActions.address);
   });
@@ -95,7 +96,7 @@ contract("CawActions._getCost — pushed-ratio end-to-end", (accounts) => {
 
     // Deploy real CawActions with the real oracle (for auth test)
     cawActions = await CawActions.new(
-      cawProfileL2.address, ZERO, ZERO_BYTES32, ZERO, oracle.address
+      cawProfileL2.address, ZERO, ZERO_BYTES32, ZERO, oracle.address, 0, 0
     );
     await cawProfileL2.setCawActions(cawActions.address);
   });
@@ -183,7 +184,7 @@ contract("CawActions.capState — storage accessors", (accounts) => {
     oracle = await CawCapOracle.new(cawProfileL2.address, mockTarget.address);
 
     cawActions = await CawActions.new(
-      cawProfileL2.address, ZERO, ZERO_BYTES32, ZERO, oracle.address
+      cawProfileL2.address, ZERO, ZERO_BYTES32, ZERO, oracle.address, 0, 0
     );
     await cawProfileL2.setCawActions(cawActions.address);
   });
@@ -236,7 +237,7 @@ contract("CawActions._getCost — stale-ratio fallback after CAP_STALE_THRESHOLD
     // Deploy CawActions with oracle as capOracle so setCapRatio is auth-gated
     // to oracle.address. We call setCapRatio directly from oracle to seed state.
     cawActions = await CawActions.new(
-      cawProfileL2.address, ZERO, ZERO_BYTES32, ZERO, oracle.address
+      cawProfileL2.address, ZERO, ZERO_BYTES32, ZERO, oracle.address, 0, 0
     );
   });
 
