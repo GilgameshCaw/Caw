@@ -100,7 +100,13 @@ const SessionKeySettings: React.FC = () => {
   }
 
   const handleActivate = async () => {
-    await ensureWallet({ chainId: chains.l2.chainId }, async () => {
+    // createSession (useSessionKey) uses signMessageAsync (personal_sign) —
+    // which is completely chain-agnostic. The on-chain session registration
+    // happens server-side (validator submits the L2 tx after the FE POSTs
+    // the signed payload), so the user's wallet never sends an L2 tx for
+    // this flow. Don't proactively switch chains — saves a wallet round-trip
+    // (painful on mobile MetaMask).
+    await ensureWallet(null, async () => {
     setLoading(true)
     setError(null)
     try {

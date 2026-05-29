@@ -1,6 +1,6 @@
 import { useCallback, useEffect } from 'react'
 import { generatePrivateKey, privateKeyToAccount } from 'viem/accounts'
-import { useSignMessage, useSwitchChain, useChainId, useAccount } from 'wagmi'
+import { useSignMessage, useChainId, useAccount } from 'wagmi'
 import { useConnectModal } from '@rainbow-me/rainbowkit'
 import { baseSepolia } from 'wagmi/chains'
 import { apiFetch } from '~/api/client'
@@ -103,7 +103,6 @@ const SESSION_DOMAIN = {
 
 export function useCreateSession() {
   const { signMessageAsync } = useSignMessage()
-  const { switchChainAsync } = useSwitchChain()
   const { isConnected, address: connectedAddress } = useAccount()
   const { openConnectModal } = useConnectModal()
   const chainId = useChainId()
@@ -131,12 +130,15 @@ export function useCreateSession() {
       )
     }
 
-    // Ensure wallet is on Base Sepolia (where CawProfileL2 lives)
-    if (chainId !== baseSepolia.id) {
-      onProgress?.('Switching network...')
-      await switchChainAsync({ chainId: baseSepolia.id })
-    }
-
+    // Note: we used to proactively switch to Base Sepolia here, but the
+    // wallet doesn't need to be on L2 for this flow. The session-creation
+    // signature uses personal_sign (signMessageAsync below), which is
+    // completely chain-agnostic — there's no domain.chainId for the wallet
+    // to react to. And the on-chain registration happens server-side
+    // (validator submits the tx after the FE POSTs the signed payload),
+    // so the user's wallet never sends an L2 tx. Skipping the switch saves
+    // a wallet round-trip — especially painful on mobile MetaMask where
+    // every programmatic chain-switch is a context activation.
     onProgress?.('Generating session key...')
 
     const expiry = Math.floor(Date.now() / 1000) + durationSeconds
@@ -247,7 +249,7 @@ export function useCreateSession() {
     }
 
     return { address: sessionAccount.address, expiry }
-  }, [isConnected, connectedAddress, openConnectModal, chainId, signMessageAsync, switchChainAsync, setSession, activeToken])
+  }, [isConnected, connectedAddress, openConnectModal, chainId, signMessageAsync, setSession, activeToken])
 }
 
 export function useRevokeSession() {

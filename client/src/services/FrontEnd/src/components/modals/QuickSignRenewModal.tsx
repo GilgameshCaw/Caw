@@ -1,5 +1,5 @@
 import React, { useState } from 'react'
-import { useAccount, useChainId, useSwitchChain } from 'wagmi'
+import { useAccount, useChainId } from 'wagmi'
 import ModalWrapper from './ModalWrapper'
 import { useEnsureWallet } from '~/hooks/useEnsureWallet'
 import { useTheme } from '~/hooks/useTheme'
@@ -11,7 +11,6 @@ import { getTipTiers } from '~/api/actions'
 import { HiLightningBolt } from 'react-icons/hi'
 import QuickSignOptions from '~/components/QuickSignOptions'
 import Tooltip from '~/components/Tooltip'
-import { chains } from '~/config/chains'
 import { create } from 'zustand'
 
 type RenewReason = 'expired' | 'spend_limit'
@@ -42,7 +41,6 @@ const QuickSignRenewModal: React.FC = () => {
   const { address, isConnected } = useAccount()
   const ensureWallet = useEnsureWallet()
   const chainId = useChainId()
-  const { switchChain } = useSwitchChain()
   const activeToken = useActiveToken()
   const [loading, setLoading] = useState(false)
   const [status, setStatus] = useState('')
@@ -55,7 +53,6 @@ const QuickSignRenewModal: React.FC = () => {
   const wrongWallet = isConnected && activeToken && address
     ? activeToken.address.toLowerCase() !== address.toLowerCase()
     : false
-  const wrongChain = isConnected && !wrongWallet && chainId !== chains.l2.chainId
 
   // Clear stale errors when connection state changes
   React.useEffect(() => { setError(null) }, [isConnected, address, chainId])
@@ -96,7 +93,14 @@ const QuickSignRenewModal: React.FC = () => {
   }
 
   const handleSignManually = () => {
-    ensureWallet({ chainId: chains.l2.chainId }, async () => {
+    // Don't proactively switch to L2 here. onRetry() ultimately calls
+    // signAndSubmit which uses signTypedData; some wallets (Rabby silently,
+    // mobile MM with a prompt) will auto-switch to match domain.chainId on
+    // their own, so adding our switch on top of that wastes a wallet round-
+    // trip. signAndSubmit's catch-and-retry path (api/actions.ts:1340-1351
+    // and 1634-1641) is the safety net for the handful of wallets that
+    // reject cross-chain typed-data signing instead of auto-switching.
+    ensureWallet(null, async () => {
       if (wrongWallet) return
 
       // Temporarily disable Quick Sign so the retry uses wallet signature,
@@ -117,11 +121,10 @@ const QuickSignRenewModal: React.FC = () => {
     })
   }
 
-  const signManuallyNote = wrongWallet
-    ? null // Handled by the dedicated wrong wallet message above buttons
-    : wrongChain
-      ? t('quick_sign_renew.switch_network_first')
-      : null
+  // Note: we used to show a "switch network first" hint here when the
+  // wallet was on the wrong chain. Removed because we no longer require
+  // L2 to sign — the wallet (or signAndSubmit's catch-and-retry path)
+  // handles the chain on its own.
 
   const title = reason === 'expired'
     ? t('quick_sign_renew.title_expired')
@@ -204,13 +207,6 @@ const QuickSignRenewModal: React.FC = () => {
             return <div className="flex-1">{wrongWallet ? <Tooltip text={t('quick_sign_renew.connect_correct_wallet', { username: activeToken?.username || '' })}>{manualBtn}</Tooltip> : manualBtn}</div>
           })()}
         </div>
-        {signManuallyNote && !wrongWallet && (
-          <p className={`text-center text-xs whitespace-nowrap mt-2 ${isDark ? 'text-white/40' : 'text-gray-400'}`}>
-            <button onClick={() => wrongChain && switchChain({ chainId: chains.l2.chainId })} className="underline hover:opacity-80 cursor-pointer">
-              {signManuallyNote}
-            </button>
-          </p>
-        )}
       </div>
     </ModalWrapper>
   )
