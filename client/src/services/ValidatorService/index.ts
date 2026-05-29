@@ -1716,8 +1716,18 @@ export const validatorService: Service = {
 
         // Use the HTTP provider for simulation — WSS hangs on large eth_call
         // payloads (50+ actions worth of calldata saturates the socket).
-        console.log(`[Validator] Calling httpProvider.call() to ${CAW_ACTIONS_ADDRESS} with value ${quote?.nativeFee?.toString() || '0'}`)
+        //
+        // CRITICAL: pass `from` so eth_call's tx.origin matches the real
+        // sendTransaction below. CawProfileL2.lzSend's LZ refund target is
+        // payable(tx.origin) — if tx.origin defaults to address(0) in the
+        // simulation, any overpayment-refund path reverts inside LZ's
+        // Transfer library with Transfer_ToAddressIsZero(). The real tx is
+        // signed by the validator so its tx.origin is set correctly; this
+        // line just makes the simulation match. Diagnosed 2026-05-29.
+        const validatorAddress = signer.getAddress()
+        console.log(`[Validator] Calling httpProvider.call() to ${CAW_ACTIONS_ADDRESS} with value ${quote?.nativeFee?.toString() || '0'} from ${validatorAddress}`)
         const callPromise = httpProvider.call({
+          from: validatorAddress,
           to: CAW_ACTIONS_ADDRESS,
           data: calldata,
           value: quote?.nativeFee
@@ -1890,7 +1900,19 @@ export const validatorService: Service = {
       const actionCount = multiData.actions.length
       const base = isZk ? 400_000 : 100_000
       const perAction = isZk ? 30_000 : 50_000
-      return BigInt(Math.ceil((base + actionCount * perAction) * 1.3));
+      // Withdraw actions trigger _executeWithdrawals → CawProfileL2.setWithdrawable
+      // → endpoint.send, which costs an additional ~150-250K gas inside the LZ
+      // OApp + endpoint code path (DVN bookkeeping, executor fee payment, refund
+      // call, packet hashing). The per-action 50k formula here only covers the
+      // _applyAction body; without this bump a single-withdraw batch revert with
+      // status=0 / gasUsed≈estimate (OOG inside setWithdrawable). Diagnosed via
+      // Tenderly trace 2026-05-29 on Base Sepolia tx
+      // 0x1f330dcc5184f234b359807e451f26875df943c915f2fbaa7c906fa4b5ea5b85.
+      const withdrawCount = multiData.actions.filter((a: any) =>
+        getActionType(a.actionType).toString() === 'WITHDRAW'
+      ).length
+      const withdrawBump = withdrawCount > 0 ? 250_000 + 50_000 * (withdrawCount - 1) : 0
+      return BigInt(Math.ceil((base + actionCount * perAction + withdrawBump) * 1.3));
     }
 
 
@@ -1964,6 +1986,36 @@ export const validatorService: Service = {
         }
         if (isZk) {
           console.log(`[submitProcessActions] ZK path: ${multiData.actions.length} action(s) with staged proof`)
+        }
+
+        // TEMPORARY (task #163 diagnostic): capture large-batch calldata so
+        // we can replay estimateGas against it on multiple RPCs to verify
+        // whether the April 21 "Infura fails on large calldata" issue still
+        // reproduces. Captures batches with ≥ 50 actions. Safe to delete
+        // once task #163 is complete.
+        if (multiData.actions.length >= 50) {
+          try {
+            const fs = require('fs')
+            const path = require('path')
+            const capture = {
+              ts: new Date().toISOString(),
+              actionsCount: multiData.actions.length,
+              calldataBytes: (txData.length - 2) / 2,
+              to: CAW_ACTIONS_ADDRESS,
+              from: signer.getAddress(),
+              data: txData,
+              value: quote.nativeFee.toString(),
+              gasLimit: rawGasLimit.toString(),
+              chainId: 84532,
+            }
+            const dir = '/tmp/caw-large-batch-captures'
+            fs.mkdirSync(dir, { recursive: true })
+            const file = path.join(dir, `batch-${multiData.actions.length}-${Date.now()}.json`)
+            fs.writeFileSync(file, JSON.stringify(capture, null, 2))
+            console.log(`[CAPTURE] Wrote large-batch payload (${multiData.actions.length} actions, ${capture.calldataBytes}B calldata) → ${file}`)
+          } catch (e) {
+            console.warn(`[CAPTURE] Failed to write batch capture: ${e}`)
+          }
         }
 
         // All params pre-populated so ethers makes exactly 1 RPC call (eth_sendRawTransaction)
