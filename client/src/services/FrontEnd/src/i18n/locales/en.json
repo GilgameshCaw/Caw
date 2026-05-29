@@ -1135,6 +1135,7 @@
   "network.deposit_fee": "Deposit fee",
   "network.auth_fee": "Auth fee",
   "network.auth_fee_required": "Auth fee (required for all actions)",
+  "network.your_capped_amount": "your capped amount",
   "network.withdraw_fee": "Withdrawal fee",
   "network.withdraw_fee_cached": "Your withdrawal fee",
   "network.withdraw_fee_current": "Current withdrawal fee",

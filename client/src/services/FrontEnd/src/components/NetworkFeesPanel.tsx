@@ -30,6 +30,14 @@ export interface NetworkFeesPanelProps {
    * so existing callers don't break — value is ignored.
    */
   omitZeroRows?: boolean
+  /**
+   * When true, the per-row "max X — Operator can never raise fees above this"
+   * subline is suppressed and a single right-aligned "your capped amount"
+   * label is rendered on the panel's NETWORK FEES title row instead. Used by
+   * the Staking withdraw panel where the value below the title is the user's
+   * deposit-time-locked ceiling, so the per-row ceiling note is noise.
+   */
+  headerCapHint?: boolean
   className?: string
 }
 
@@ -108,9 +116,13 @@ export const FeeLineWithCeiling: React.FC<{
   ceilingNote: string
   highlight?: boolean
   feeSubline?: string
-}> = ({ label, fee, ceiling, isDark, freeLabel, loadingLabel, ceilingNote, highlight, feeSubline }) => {
+  /** Suppress the per-row "max X — Operator..." subline. Used when the caller
+   *  is rendering the cap context elsewhere (e.g. as a panel-header hint). */
+  suppressCeilingNote?: boolean
+}> = ({ label, fee, ceiling, isDark, freeLabel, loadingLabel, ceilingNote, highlight, feeSubline, suppressCeilingNote }) => {
   const ethPrice = usePriceStore(s => s.priceMap['ethereum'] ?? 0)
   const showCeilingNote =
+    !suppressCeilingNote &&
     ceiling != null &&
     ceiling > 0n &&
     fee != null &&
@@ -141,6 +153,7 @@ const NetworkFeesPanel: React.FC<NetworkFeesPanelProps> = ({
   show,
   showCacheExplainer,
   cachedWithdrawFee,
+  headerCapHint,
   className,
 }) => {
   const { isDark } = useTheme()
@@ -169,12 +182,19 @@ const NetworkFeesPanel: React.FC<NetworkFeesPanelProps> = ({
         isDark ? 'border-white/10 bg-white/[0.03]' : 'border-gray-200 bg-gray-50'
       } ${className ?? ''}`}
     >
+      {/* Header row: "NETWORK FEES" on the left, optional right-aligned
+          "your capped amount" hint when the panel's value below is the user's
+          deposit-time-locked ceiling (Staking withdraw flow). Replaces the
+          per-row "max X — Operator can never raise" subline. */}
       <div
-        className={`text-[11px] uppercase tracking-wide mb-1 ${
+        className={`flex items-baseline justify-between text-[11px] uppercase tracking-wide mb-1 ${
           isDark ? 'text-white/40' : 'text-gray-500'
         }`}
       >
-        {t('network.fees_title')}
+        <span>{t('network.fees_title')}</span>
+        {headerCapHint && (
+          <span className="normal-case tracking-normal">{t('network.your_capped_amount')}</span>
+        )}
       </div>
 
       {permanentlyFree ? (
@@ -240,6 +260,7 @@ const NetworkFeesPanel: React.FC<NetworkFeesPanelProps> = ({
                     ceilingNote={ceilingNote}
                     highlight
                     feeSubline={t('network.applies_to_this_withdraw')}
+                    suppressCeilingNote={headerCapHint}
                   />
                   {fees.withdrawFee != null && fees.withdrawFee !== cachedWithdrawFee && (
                     <FeeLineWithCeiling
@@ -251,6 +272,7 @@ const NetworkFeesPanel: React.FC<NetworkFeesPanelProps> = ({
                       loadingLabel={loadingLabel}
                       ceilingNote={ceilingNote}
                       feeSubline={t('network.applies_to_future')}
+                      suppressCeilingNote={headerCapHint}
                     />
                   )}
                 </>
@@ -264,6 +286,7 @@ const NetworkFeesPanel: React.FC<NetworkFeesPanelProps> = ({
                   loadingLabel={loadingLabel}
                   ceilingNote={ceilingNote}
                   feeSubline={showCacheExplainer ? t('network.caches_at_deposit') : undefined}
+                  suppressCeilingNote={headerCapHint}
                 />
               )}
             </>

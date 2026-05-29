@@ -1121,6 +1121,7 @@ const Staking = () => {
         networkId={CLIENT_ID}
         show={['withdraw']}
         omitZeroRows
+        headerCapHint
       />
 
       {/* Unstake Button */}
