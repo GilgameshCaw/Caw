@@ -1064,7 +1064,15 @@ async function cleanupPendingSessionRegistrations() {
       try {
         const payload = row.payload as any
         const { data, domain, types } = payload ?? {}
-        if (!data || !domain || !types?.ActionData) {
+        // Two valid typed-data shapes can land here:
+        //   - single-action posts: types.ActionData (one ActionData per row)
+        //   - thread / batched-sig posts: types.ActionBatch (one sig over a
+        //     group of actions sharing the same senderId). Both signatures
+        //     are produced by the QuickSign session key, so the
+        //     waiting_for_session promotion logic below applies to either.
+        const hasActionData = !!types?.ActionData
+        const hasActionBatch = !!types?.ActionBatch
+        if (!data || !domain || (!hasActionData && !hasActionBatch)) {
           // Malformed payload — fail immediately
           await markTxQueueFailed(
             prisma,
@@ -1077,11 +1085,15 @@ async function cleanupPendingSessionRegistrations() {
         }
 
         // Recover the session-key signer address from the stored signature.
+        // Pass through whichever typed-data shape this row carries.
         let signerAddress: string
         try {
+          const verifyTypes: Record<string, any> = hasActionBatch
+            ? { ActionBatch: types.ActionBatch }
+            : { ActionData: types.ActionData }
           signerAddress = ethers.verifyTypedData(
             domain,
-            { ActionData: types.ActionData },
+            verifyTypes,
             data,
             row.signedTx
           ).toLowerCase()
