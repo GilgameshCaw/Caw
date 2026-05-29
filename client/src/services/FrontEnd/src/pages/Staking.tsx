@@ -106,7 +106,7 @@ const Staking = () => {
   const tokenId = activeToken?.tokenId
   const { address, isConnected } = useAccount()
   const chainId = useChainId()
-  const { switchChain } = useSwitchChain()
+  const { switchChain, switchChainAsync } = useSwitchChain()
   const { openConnectModal } = useConnectModal()
   const connections = useConnections()
   const signAndSubmit = useSignAndSubmitAction()
@@ -658,9 +658,16 @@ const Staking = () => {
   const handleUnstakeInit = useCallback(async () => {
     if (!activeToken) return
     console.log('[Staking] handleUnstakeInit called', { isConnected, amount, isMainnet })
+    // Remember the wallet's chain at click time so we can restore it after
+    // signing — some wallets (Rabby is the canonical example) silently
+    // auto-switch the active chain to match domain.chainId on signTypedData,
+    // even though EIP-712 signing is chain-agnostic at the protocol level.
+    // We can't block that on our side, but we can switch back once the
+    // signature has been collected so the user lands where they started.
+    const startingChainId = chainId
     await ensureWallet(null, async () => {
       try {
-        console.log('[Staking] Submitting withdraw action to L2 (signing from current chain)')
+        console.log('[Staking] Submitting withdraw action (signing from current chain)')
         await signAndSubmit({
           senderId: activeToken.tokenId,
           actionType: 'withdraw',
@@ -672,9 +679,27 @@ const Staking = () => {
         await fetchPendingWithdrawals()
       } catch (err) {
         console.error('[Staking] Withdraw init failed', err)
+      } finally {
+        // Some wallets (Rabby is the canonical example) silently auto-switch
+        // the active chain to match domain.chainId on signTypedData, even
+        // though EIP-712 signing is chain-agnostic at the protocol level. We
+        // can't block that, but we can switch back once signing completes so
+        // the user lands back on the chain they started on. Most wallets
+        // allow a programmatic switch to a previously-approved chain without
+        // a second confirmation. Skip the restore if the user was already on
+        // a non-L1 chain at click time (they had a reason to be there).
+        // Best-effort: swallow errors — if it fails the user can switch
+        // manually, no protocol consequence.
+        if (startingChainId === chains.l1.chainId) {
+          try {
+            await switchChainAsync({ chainId: chains.l1.chainId })
+          } catch (e) {
+            console.warn('[Staking] Failed to restore L1 chain after sign:', e)
+          }
+        }
       }
     })
-  }, [activeToken, isConnected, amount, isMainnet, signAndSubmit, fetchPendingWithdrawals, ensureWallet])
+  }, [activeToken, isConnected, amount, isMainnet, signAndSubmit, fetchPendingWithdrawals, ensureWallet, chainId, switchChainAsync])
 
   const renderStakePanel = () => (
     <div className="space-y-6">
