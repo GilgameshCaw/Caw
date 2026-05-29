@@ -748,49 +748,25 @@ const Staking = () => {
         </div>
       )}
 
-      {/* ETH input + slippage slider (visible only in ETH mode). Input UI lives
-          in EthSpendInput (shared with /usernames/new). Slippage slider stays
-          here because it's deposit-page-specific (New.tsx hides this concept
-          behind a single "guidance" line). */}
+      {/* ETH input (visible only in ETH mode). UI lives in EthSpendInput
+          (shared with /usernames/new). Slippage is auto-suggested from
+          reserves (suggestedSlippageBps in the effect above) and enforced
+          via minCawOut on the ZAP tx — no user-facing slider, since the
+          knob made the form harder to use without giving most users a
+          meaningful choice. The underlying slippageBps state is still
+          live and gates the tx, just not exposed in UI. */}
       {paymentMode === 'eth' && (
-        <>
-          <EthSpendInput
-            title="ETH to deposit"
-            subtitle=" - buys CAW and deposits it into your profile."
-            ethAmount={ethAmount}
-            setEthAmount={setEthAmount}
-            ethPrice={ethPrice}
-            quickPickDollars={[20, 50, 100, 300]}
-            expectedCawOut={zapQuote.expectedCawOut}
-            reservesLoaded={reserves.loaded}
-            ethBalanceWei={ethBalanceData?.value}
-          />
-          {ethAmountWei > 0n && reserves.loaded && (
-            <div className={`text-xs ${isDark ? 'text-gray-400' : 'text-gray-600'} px-4`}>
-              Minimum (after {(slippageBps / 100).toFixed(2)}% slippage):&nbsp;
-              <span className={`font-mono ${isDark ? 'text-white' : 'text-gray-900'}`}>
-                {Number(zapQuote.minCawOut / 10n**18n).toLocaleString('en-US')} CAW
-              </span>
-            </div>
-          )}
-          <div className={`border rounded-xl p-4 space-y-1 ${
-            isDark ? 'border-white/10 bg-[#0D0D0D]/85' : 'border-gray-200 bg-gray-50'
-          }`}>
-            <div className="flex justify-between items-center text-xs">
-              <span className={isDark ? 'text-gray-400' : 'text-gray-600'}>Slippage tolerance</span>
-              <span className={`font-mono ${isDark ? 'text-white' : 'text-gray-900'}`}>{(slippageBps / 100).toFixed(2)}%</span>
-            </div>
-            <input
-              type="range"
-              min={50}
-              max={1000}
-              step={50}
-              value={slippageBps}
-              onChange={e => { setSlippageBps(parseInt(e.target.value, 10)); setSlippageAutoSet(true) }}
-              className="w-full"
-            />
-          </div>
-        </>
+        <EthSpendInput
+          title="ETH to deposit"
+          subtitle=" - buys CAW and deposits it into your profile."
+          ethAmount={ethAmount}
+          setEthAmount={setEthAmount}
+          ethPrice={ethPrice}
+          quickPickDollars={[20, 50, 100, 300]}
+          expectedCawOut={zapQuote.expectedCawOut}
+          reservesLoaded={reserves.loaded}
+          ethBalanceWei={ethBalanceData?.value}
+        />
       )}
 
       {/* Amount to Stake (CAW mode only) */}
