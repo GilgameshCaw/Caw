@@ -215,7 +215,20 @@ export async function recordAction(
     const cost = ACTION_COST[rawTypeName as FixedCostActionType]
     const senderOwn = ownershipOf(s, senderId)
     const senderBalBefore = balanceOf(senderOwn, s.multiplier)
-    const r = spendAndDistribute(senderOwn, s, cost.spend * PRECISION, cost.communal * PRECISION)
+    let r: ReturnType<typeof spendAndDistribute>
+    try {
+      r = spendAndDistribute(senderOwn, s, cost.spend * PRECISION, cost.communal * PRECISION)
+    } catch (err: any) {
+      if (typeof err?.message === 'string' && err.message.includes('Insufficient CAW balance')) {
+        console.error(
+          `[StakeLedger] HALTED — insufficient balance, drift detected at step1 senderId=${senderId} action=${rawTypeName} ` +
+          `block=${blockNumber} logIndex=${logIndex}. Run npx tsx scripts/backfill-stake-ledger.ts [--reset] to recover`,
+        )
+        s.halted = true
+        return
+      }
+      throw err
+    }
     if (r.communalDistributed > 0n) {
       multiplierEvents.push({
         before: s.multiplier,
@@ -317,7 +330,20 @@ export async function recordAction(
     if (amountTotal > 0n) {
       const senderOwn = ownershipOf(s, senderId)
       const senderBalBefore = balanceOf(senderOwn, s.multiplier)
-      const r = spendAndDistribute(senderOwn, s, amountTotal, 0n)
+      let r: ReturnType<typeof spendAndDistribute>
+      try {
+        r = spendAndDistribute(senderOwn, s, amountTotal, 0n)
+      } catch (err: any) {
+        if (typeof err?.message === 'string' && err.message.includes('Insufficient CAW balance')) {
+          console.error(
+            `[StakeLedger] HALTED — insufficient balance, drift detected at step2 senderId=${senderId} action=${rawTypeName} ` +
+            `block=${blockNumber} logIndex=${logIndex}. Run npx tsx scripts/backfill-stake-ledger.ts [--reset] to recover`,
+          )
+          s.halted = true
+          return
+        }
+        throw err
+      }
       s.multiplier = r.multiplier // unchanged but assign for clarity
       s.ownership.set(senderId, r.senderOwnership)
       // recipientPortion: tagged ACTION_SPEND_TIP (the user's outgoing

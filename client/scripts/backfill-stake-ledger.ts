@@ -87,7 +87,7 @@ async function preflight() {
       await tx.cawOwnershipSnapshot.deleteMany()
       await tx.rewardMultiplierSnapshot.deleteMany()
       await tx.cawOwnershipCurrent.deleteMany()
-      await tx.stakeLedgerState.deleteMany({ where: { clientId: CAW_CLIENT_ID } })
+      await tx.stakeLedgerState.deleteMany({ where: { networkId: CAW_CLIENT_ID } })
     })
   }
 }
@@ -352,9 +352,9 @@ async function seedFromChain() {
   logProgress(`seeded ownership + balance trajectory for ${read}/${users.length} users`)
 
   await prisma.stakeLedgerState.upsert({
-    where: { clientId: CAW_CLIENT_ID },
+    where: { networkId: CAW_CLIENT_ID },
     create: {
-      clientId: CAW_CLIENT_ID,
+      networkId: CAW_CLIENT_ID,
       totalCaw: totalCaw.toString(),
       multiplier: multiplier.toString(),
       lastBlock,
