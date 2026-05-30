@@ -1132,16 +1132,27 @@ const PostMintOnboarding: React.FC<PostMintOnboardingProps> = ({ username, token
                         <p className={`text-sm font-medium ${setupQsDone ? 'text-green-400' : tc.textPrimary}`}>
                           Quick Sign
                         </p>
-                        <button
-                          type="button"
-                          onClick={() => setShowQsInfo(v => !v)}
-                          className={`transition-colors cursor-pointer ${isDark ? 'text-white/40 hover:text-white/70' : 'text-black/40 hover:text-black/70'}`}
-                          aria-label="Learn about Quick Sign"
-                        >
-                          <HiInformationCircle className="w-4 h-4" />
-                        </button>
+                        {setupQsDone && hasActiveSession && (
+                          <span className={`text-xs px-1.5 py-0.5 rounded font-medium bg-green-500/20 text-green-400`}>
+                            Already enabled
+                          </span>
+                        )}
+                        {!setupQsDone && (
+                          <button
+                            type="button"
+                            onClick={() => setShowQsInfo(v => !v)}
+                            className={`transition-colors cursor-pointer ${isDark ? 'text-white/40 hover:text-white/70' : 'text-black/40 hover:text-black/70'}`}
+                            aria-label="Learn about Quick Sign"
+                          >
+                            <HiInformationCircle className="w-4 h-4" />
+                          </button>
+                        )}
                       </div>
-                      <p className={`text-xs ${tc.textSubtle}`}>Post and interact without wallet popups</p>
+                      <p className={`text-xs ${tc.textSubtle}`}>
+                        {setupQsDone && hasActiveSession
+                          ? 'Your session key is active — no wallet popup needed to post.'
+                          : 'Post and interact without wallet popups'}
+                      </p>
                     </div>
                   </div>
                   {showQsInfo && (

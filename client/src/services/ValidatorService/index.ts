@@ -1889,30 +1889,42 @@ export const validatorService: Service = {
     ): Promise<bigint> {
       // Peek at the ZK cache (don't consume here — the actual submit happens
       // later in submitProcessActions). The estimate just needs to know which
-      // path we'll take so the gas budget is right.
-      const { isZk } = encodeProcessActionsCalldata(validatorId, multiData, quote, { consume: false });
+      // path we'll take so the gas budget is right. Also pulls the encoded
+      // calldata so we can hand it to estimateGas without re-encoding.
+      const { calldata: txData, isZk } = encodeProcessActionsCalldata(validatorId, multiData, quote, { consume: false });
 
-      // Calculate gas limit from action count instead of estimateGas.
-      // Infura's estimateGas fails with "missing revert data" on large calldata
-      // even when eth_call succeeds. Sig path: ~50K gas/action + 100K base.
-      // ZK path: ~300K verifier + 30K/action + 100K base (verifier dominates
-      // at small batches, per-action cost is lower because no in-EVM ecrecover).
+      // Formula fallback. Sig path: ~50K gas/action + 100K base. ZK path:
+      // ~300K verifier + 30K/action + 100K base. Withdraw actions add a
+      // ~250K LZ-send bump (CawProfileL2.setWithdrawable → endpoint.send,
+      // diagnosed via Tenderly on Base Sepolia tx
+      // 0x1f330dcc5184f234b359807e451f26875df943c915f2fbaa7c906fa4b5ea5b85).
+      // 30% buffer.
       const actionCount = multiData.actions.length
       const base = isZk ? 400_000 : 100_000
       const perAction = isZk ? 30_000 : 50_000
-      // Withdraw actions trigger _executeWithdrawals → CawProfileL2.setWithdrawable
-      // → endpoint.send, which costs an additional ~150-250K gas inside the LZ
-      // OApp + endpoint code path (DVN bookkeeping, executor fee payment, refund
-      // call, packet hashing). The per-action 50k formula here only covers the
-      // _applyAction body; without this bump a single-withdraw batch revert with
-      // status=0 / gasUsed≈estimate (OOG inside setWithdrawable). Diagnosed via
-      // Tenderly trace 2026-05-29 on Base Sepolia tx
-      // 0x1f330dcc5184f234b359807e451f26875df943c915f2fbaa7c906fa4b5ea5b85.
       const withdrawCount = multiData.actions.filter((a: any) =>
         getActionType(a.actionType).toString() === 'WITHDRAW'
       ).length
       const withdrawBump = withdrawCount > 0 ? 250_000 + 50_000 * (withdrawCount - 1) : 0
-      return BigInt(Math.ceil((base + actionCount * perAction + withdrawBump) * 1.3));
+      const formulaGas = BigInt(Math.ceil((base + actionCount * perAction + withdrawBump) * 1.3))
+
+      // estimateGas-first: ask the node for the real number, apply a 20%
+      // buffer. Falls back to the formula on RPC failure (e.g. older Infura
+      // reverts with "missing revert data" on large calldata even when
+      // eth_call succeeds — kept as a safety net while we monitor whether
+      // that quirk has been resolved upstream).
+      try {
+        const estimated = await httpProvider.estimateGas({
+          to:    CAW_ACTIONS_ADDRESS,
+          data:  txData,
+          value: quote.nativeFee,
+          from:  signer.getAddress(),
+        })
+        return (estimated * 120n) / 100n
+      } catch (gasErr: any) {
+        console.warn(`[estimateGasLimit] estimateGas failed (${gasErr?.shortMessage || gasErr?.message}), using formula fallback`)
+        return formulaGas
+      }
     }
 
 
