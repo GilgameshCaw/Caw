@@ -1,326 +1,279 @@
 // client/src/services/FrontEnd/src/hooks/useTokenDataUpdate.tsx
 
 import { useEffect, useCallback, useMemo } from "react"
-import { useAccount, useReadContract, useReadContracts } from "wagmi"
-import { Address, erc20Abi } from "viem"
-import { chains } from "~/config/chains"
-import { CAW_NAMES_L2_ADDRESS, CAW_NAMES_ADDRESS, CAW_ADDRESS } from "~/../../../abi/addresses";
-import { cawProfileAbi, cawProfileL2Abi } from "~/../../../abi/generated"
+import { useAccount, useReadContract } from "wagmi"
+import { Address } from "viem"
+import { baseSepolia, sepolia } from "wagmi/chains"
+import { CAW_NAMES_L2_ADDRESS, CAW_PROFILE_LENS_ADDRESS } from "~/../../../abi/addresses";
+import { cawProfileLensAbi, cawProfileL2Abi } from "~/../../../abi/generated"
 import { useTokenDataStore } from "~/store/tokenDataStore"
+import TOKENS from "~/constants/tokens"
+// import { useQuery } from "@tanstack/react-query"
 import { TokenData } from "~/types";
 import { apiFetch } from "~/api/client";
 
-// ---------------------------------------------------------------------------
-// V2 CawProfile dropped the `tokens(address)` convenience view to fit under
-// EIP-170. We reconstruct equivalent data from ERC-721Enumerable primitives:
-//   L1: balanceOf → tokenOfOwnerByIndex[]  →  withdrawable[]+ownerOf[] per token
-//   L1: CAW ERC-20 balanceOf(owner)        →  ownerBalance
-//   L2: getTokens([tokenIds])              →  username, cawBalance, nextCawonce
-// ---------------------------------------------------------------------------
-
-// ---- per-address helpers --------------------------------------------------
-
-function useAddressTokenIds(address: Address | undefined, enabled: boolean) {
-  const { data: balanceRaw } = useReadContract({
-    address: CAW_NAMES_ADDRESS,
-    chainId: chains.l1.chainId,
-    abi: cawProfileAbi,
-    functionName: "balanceOf",
-    args: [address as Address],
-    query: { enabled: enabled && !!address },
-  })
-  const tokenCount = balanceRaw !== undefined ? Number(balanceRaw) : 0
-
-  const indexCalls = useMemo(
-    () =>
-      Array.from({ length: tokenCount }, (_, i) => ({
-        address: CAW_NAMES_ADDRESS as Address,
-        abi: cawProfileAbi,
-        functionName: "tokenOfOwnerByIndex" as const,
-        args: [address as Address, BigInt(i)] as const,
-        chainId: chains.l1.chainId,
-      })),
-    [tokenCount, address],
-  )
-
-  const { data: indexResults } = useReadContracts({
-    contracts: indexCalls,
-    query: { enabled: enabled && !!address && tokenCount > 0 },
-  })
-
-  const tokenIds: number[] = useMemo(() => {
-    if (!indexResults) return []
-    return indexResults
-      .map(r => (r.status === "success" && r.result !== undefined ? Number(r.result) : null))
-      .filter((id): id is number => id !== null)
-  }, [indexResults])
-
-  return { tokenIds, tokenCount }
+interface RawToken {
+  tokenId:       bigint
+  username:      string
+  owner:         Address
+  ownerBalance:  bigint
+  withdrawable:  bigint
 }
-
-function useAddressTokenDetails(
-  address: Address | undefined,
-  tokenIds: number[],
-  enabled: boolean,
-) {
-  // ---- L1: withdrawable + ownerOf per token --------------------------------
-  const l1Calls = useMemo(
-    () =>
-      tokenIds.flatMap(tid => [
-        {
-          address: CAW_NAMES_ADDRESS as Address,
-          abi: cawProfileAbi,
-          functionName: "withdrawable" as const,
-          // withdrawable(uint32): viem maps uint32 to number
-          args: [tid] as const,
-          chainId: chains.l1.chainId,
-        },
-        {
-          address: CAW_NAMES_ADDRESS as Address,
-          abi: cawProfileAbi,
-          functionName: "ownerOf" as const,
-          // ownerOf(uint256): viem maps uint256 to bigint
-          args: [BigInt(tid)] as const,
-          chainId: chains.l1.chainId,
-        },
-      ]),
-    [tokenIds],
-  )
-
-  const { data: l1Results, isLoading: l1Loading } = useReadContracts({
-    contracts: l1Calls,
-    query: { enabled: enabled && !!address && tokenIds.length > 0 },
-  })
-
-  // ---- L1: owner's CAW ERC-20 balance (ownerBalance) ----------------------
-  const { data: ownerBalanceRaw } = useReadContract({
-    address: CAW_ADDRESS,
-    abi: erc20Abi,
-    functionName: "balanceOf",
-    args: [address as Address],
-    chainId: chains.l1.chainId,
-    query: { enabled: enabled && !!address },
-  })
-
-  // ---- L2: username + cawBalance + nextCawonce -----------------------------
-  // getTokens(uint32[]): viem maps uint32[] to number[]
-  const { data: l2TokenData, isLoading: l2Loading, refetch: refetchL2 } = useReadContract({
-    address: CAW_NAMES_L2_ADDRESS,
-    chainId: chains.l2.chainId,
-    abi: cawProfileL2Abi,
-    functionName: "getTokens",
-    args: [tokenIds],
-    query: { enabled: enabled && !!address && tokenIds.length > 0 },
-  })
-
-  // ---- Assemble l1 per-token maps -----------------------------------------
-  const withdrawableMap = useMemo(() => {
-    const m = new Map<number, bigint>()
-    if (!l1Results) return m
-    tokenIds.forEach((tid, i) => {
-      const r = l1Results[i * 2]
-      if (r?.status === "success") m.set(tid, r.result as bigint)
-    })
-    return m
-  }, [l1Results, tokenIds])
-
-  const ownerOfMap = useMemo(() => {
-    const m = new Map<number, Address>()
-    if (!l1Results) return m
-    tokenIds.forEach((tid, i) => {
-      const r = l1Results[i * 2 + 1]
-      if (r?.status === "success") m.set(tid, r.result as Address)
-    })
-    return m
-  }, [l1Results, tokenIds])
-
-  const isLoading = l1Loading || l2Loading
-
-  return {
-    withdrawableMap,
-    ownerOfMap,
-    ownerBalance: ownerBalanceRaw ?? 0n,
-    l2TokenData,
-    isLoading,
-    refetchL2,
-  }
-}
-
-// ---- main hook -----------------------------------------------------------
 
 export default function useTokenDataUpdate() {
   const { address } = useAccount()
   const setTokensForAddress = useTokenDataStore(s => s.setTokensForAddress)
   const tokensByAddress = useTokenDataStore(s => s.tokensByAddress)
   const activeTokenIdByAddress = useTokenDataStore(s => s.activeTokenIdByAddress)
+
   const setActiveTokenIdForAddress = useTokenDataStore(s => s.setActiveTokenIdForAddress)
   const setLastAddress = useTokenDataStore(s => s.setLastAddress)
   const lastAddress = useTokenDataStore(s => s.lastAddress)
 
+  // Prefer lastAddress (tracks the active profile's owner) over connected wallet
+  // This ensures data refreshes when switching profiles, even to a different owner
   const viewedAddress = ((lastAddress ?? address)?.toLowerCase()) as Address | undefined
   const connectedAddress = address?.toLowerCase() as Address | undefined
   const needsConnectedFetch = !!connectedAddress && connectedAddress !== viewedAddress
 
-  // ---- tokenIds -----------------------------------------------------------
-  const { tokenIds: viewedTokenIds, tokenCount: viewedTokenCount } = useAddressTokenIds(
-    viewedAddress,
-    !!viewedAddress,
-  )
-  const { tokenIds: connectedTokenIds } = useAddressTokenIds(
-    connectedAddress,
-    needsConnectedFetch,
-  )
+  // CawProfileLens.tokens() — the V2 replacement for the removed
+  // CawProfile.tokens() view. Same shape returned (tokenId, username,
+  // owner, ownerBalance, withdrawable) — see solidity/contracts/CawProfileLens.sol.
+  const { data: rawTokens, isError, error, isLoading, isLoadingError, refetch: refetchL1 } = useReadContract({
+    address: CAW_PROFILE_LENS_ADDRESS,
+    chainId: sepolia.id,
+    abi: cawProfileLensAbi,
+    functionName: "tokens",
+    args: [viewedAddress as Address],
 
-  // ---- per-token details --------------------------------------------------
-  const {
-    withdrawableMap: viewedWithdrawableMap,
-    ownerOfMap: viewedOwnerOfMap,
-    ownerBalance: viewedOwnerBalance,
-    l2TokenData: viewedL2TokenData,
-    isLoading: viewedLoading,
-    refetchL2: refetchViewedL2,
-  } = useAddressTokenDetails(viewedAddress, viewedTokenIds, !!viewedAddress)
+    query: {
+      enabled: !!viewedAddress,
+    }
+  })
 
-  const {
-    withdrawableMap: connectedWithdrawableMap,
-    ownerOfMap: connectedOwnerOfMap,
-    ownerBalance: connectedOwnerBalance,
-    l2TokenData: connectedL2TokenData,
-    isLoading: connectedLoading,
-    refetchL2: refetchConnectedL2,
-  } = useAddressTokenDetails(connectedAddress, connectedTokenIds, needsConnectedFetch)
+  // Also fetch tokens for the connected address if it differs from viewedAddress
+  const { data: connectedTokens, refetch: refetchConnected } = useReadContract({
+    address: CAW_PROFILE_LENS_ADDRESS,
+    chainId: sepolia.id,
+    abi: cawProfileLensAbi,
+    functionName: "tokens",
+    args: [connectedAddress as Address],
+    query: {
+      enabled: needsConnectedFetch,
+    }
+  })
 
-  // ---- Set active token on first load -------------------------------------
-  if (viewedAddress && viewedTokenIds.length > 0) {
+  useEffect(() => {
+    console.log('[TokenData] L1 query (viewed):', {
+      viewedAddress,
+      tokenCount: rawTokens?.length ?? 'loading',
+      tokens: rawTokens?.map(t => `#${t.tokenId} ${t.username}`),
+      isError,
+      isLoading,
+      errorMsg: error?.message?.slice(0, 300),
+      lensAddress: CAW_PROFILE_LENS_ADDRESS,
+    })
+  }, [rawTokens, viewedAddress, isError, isLoading, error])
+
+  useEffect(() => {
+    if (!needsConnectedFetch) return
+    console.log('[TokenData] L1 query (connected):', {
+      connectedAddress,
+      tokenCount: connectedTokens?.length ?? 'loading',
+      tokens: connectedTokens?.map(t => `#${t.tokenId} ${t.username}`),
+    })
+  }, [connectedTokens, connectedAddress, needsConnectedFetch])
+
+  // Set active token for this address if not already set
+  if (viewedAddress && rawTokens && rawTokens.length > 0) {
     const activeTokenIdForAddress = activeTokenIdByAddress[viewedAddress]
     if (activeTokenIdForAddress === undefined) {
-      setActiveTokenIdForAddress(viewedAddress, viewedTokenIds[0])
+      setActiveTokenIdForAddress(viewedAddress, Number(rawTokens[0].tokenId))
     }
   }
 
-  // Set lastAddress on initial wallet connect
-  if (!!address && viewedTokenIds.length > 0 && !lastAddress) {
+  // Set lastAddress on initial load when wallet connects (if not already set from profile selection)
+  if (!!address && rawTokens && rawTokens.length > 0 && !lastAddress) {
     setLastAddress(address.toLowerCase())
   }
 
-  // Marketplace-buy recovery: viewed wallet has no tokens but connected wallet does
+  // Marketplace-buy recovery: when the viewed wallet has zero tokens left
+  // (e.g. the user transferred or sold their last profile) AND the connected
+  // wallet owns some, promote the connected wallet to lastAddress so the user
+  // doesn't get stuck on a profileless view. Importantly we DO NOT do this
+  // just because the connected wallet differs from the viewed one — that's
+  // a normal state when the user is deliberately viewing as a profile owned
+  // by a different wallet. Only the "viewed has nothing to show" case triggers.
   if (
     needsConnectedFetch &&
     connectedAddress &&
-    connectedTokenIds.length > 0 &&
-    viewedTokenCount === 0 &&
+    connectedTokens &&
+    connectedTokens.length > 0 &&
+    rawTokens && rawTokens.length === 0 &&
     lastAddress?.toLowerCase() !== connectedAddress
   ) {
     setLastAddress(connectedAddress)
   }
 
-  // ---- Build TokenData from viewed address --------------------------------
+
+  // Memoize the token-id arrays so React Query's cache key stays
+  // stable across renders. Without this, every parent re-render
+  // produced a fresh array reference and wagmi treated it as a new
+  // query — refiring getTokens() against L2 even though the contents
+  // were identical to the previous call.
+  const viewedTokenIds = useMemo(
+    () => (rawTokens ?? []).map(t => Number(t.tokenId)),
+    [rawTokens],
+  )
+  const connectedTokenIds = useMemo(
+    () => (connectedTokens ?? []).map(t => Number(t.tokenId)),
+    [connectedTokens],
+  )
+
+  const { data: l2TokenData, isLoading: balancesLoading, refetch: refetchL2 } = useReadContract({
+    address: CAW_NAMES_L2_ADDRESS,
+    chainId:      baseSepolia.id,
+    abi:          cawProfileL2Abi,
+    functionName: "getTokens",
+    query: {
+      enabled: !!rawTokens && rawTokens.length > 0,
+    },
+    args: [viewedTokenIds],
+  })
+
+  // L2 data for connected address tokens
+  const { data: connectedL2TokenData, isLoading: connectedBalancesLoading, refetch: refetchConnectedL2 } = useReadContract({
+    address: CAW_NAMES_L2_ADDRESS,
+    chainId: baseSepolia.id,
+    abi: cawProfileL2Abi,
+    functionName: "getTokens",
+    query: {
+      enabled: needsConnectedFetch && !!connectedTokens && connectedTokens.length > 0,
+    },
+    args: [connectedTokenIds],
+  })
+
+
+  // Get the active token ID for the current address
   const activeTokenId = activeTokenIdByAddress[viewedAddress?.toLowerCase() as Address]
 
+  // First effect: Update token data from on-chain (without min-cawonce API calls)
   useEffect(() => {
-    if (!viewedAddress || viewedLoading || !viewedL2TokenData) return
-    if (viewedTokenIds.length === 0) return
+    if (!rawTokens || balancesLoading || !viewedAddress || !l2TokenData) return
 
-    const updated: TokenData[] = viewedTokenIds.map(tid => {
-      const l2Token = viewedL2TokenData.find(item => Number(item.tokenId) === tid)
-      const onChainCawonce = l2Token ? Number(l2Token.nextCawonce) : 0
+    const updated: TokenData[] = rawTokens.map(l1Token => {
+      // L2 mirror may not yet have this token if the L1 mint just landed
+      // and the LayerZero relay is still in flight. Fall back to zeros
+      // (mirrors the connected-fetch branch below); the next refetch
+      // after L2 catches up will replace the row with real data.
+      //
+      // viem auto-decodes the lens Token.tokenId (uint32) as a JS number
+      // and the L2 Token.tokenId (uint256) as a BigInt. Compare both as
+      // BigInt or the find() silently never matches and every token's
+      // stakedAmount stays 0 forever.
+      const l1TokenIdBI = BigInt(l1Token.tokenId)
+      const l2Token = l2TokenData.find(item => BigInt(item.tokenId) === l1TokenIdBI);
+      const onChainCawonce = l2Token ? Number(l2Token.nextCawonce) : 0;
 
-      const existingTokens = tokensByAddress[viewedAddress.toLowerCase() as Address] || []
-      const existingToken = existingTokens.find(t => t.tokenId === tid)
-      const cawonce =
-        existingToken?.cawonce && existingToken.cawonce > onChainCawonce
-          ? existingToken.cawonce
-          : onChainCawonce
+      // Get existing token data to preserve any previously fetched min-cawonce
+      const existingTokens = tokensByAddress[viewedAddress.toLowerCase() as Address] || [];
+      const existingToken = existingTokens.find(t => t.tokenId === Number(l1Token.tokenId));
+
+      // Use existing cawonce if it's higher (from previous min-cawonce fetch), otherwise use on-chain
+      const cawonce = existingToken?.cawonce && existingToken.cawonce > onChainCawonce
+        ? existingToken.cawonce
+        : onChainCawonce;
 
       return {
-        tokenId: tid,
-        username: l2Token?.username ?? "",
-        withdrawable: viewedWithdrawableMap.get(tid) ?? 0n,
-        ownerBalance: viewedOwnerBalance,
-        address: viewedAddress,
-        owner: viewedOwnerOfMap.get(tid) ?? viewedAddress,
+        tokenId:      Number(l1Token.tokenId),
+        username:     l1Token.username,
+        withdrawable: l1Token.withdrawable,
+        ownerBalance: l1Token.ownerBalance,
+        address: viewedAddress!,
+        owner: l1Token.owner!,
         stakedAmount: l2Token?.cawBalance ?? 0n,
         cawonce,
       }
-    })
+    });
 
-    setTokensForAddress(viewedAddress as Address, updated)
-  }, [viewedTokenIds, viewedL2TokenData, viewedAddress, viewedLoading, viewedWithdrawableMap, viewedOwnerOfMap, viewedOwnerBalance, setTokensForAddress])
+    if (rawTokens.length > 0) {
+      setTokensForAddress(viewedAddress as Address, updated);
+    }
+  }, [rawTokens, l2TokenData, viewedAddress, setTokensForAddress, balancesLoading])
 
-  // ---- Build TokenData from connected address (when differs) --------------
+  // Process connected address tokens (when different from viewed address)
   useEffect(() => {
-    if (!needsConnectedFetch || !connectedAddress || connectedLoading || !connectedL2TokenData) return
-    if (connectedTokenIds.length === 0) return
+    if (!needsConnectedFetch || !connectedTokens || connectedBalancesLoading || !connectedAddress || !connectedL2TokenData) return
 
-    const updated: TokenData[] = connectedTokenIds.map(tid => {
-      const l2Token = connectedL2TokenData.find(item => Number(item.tokenId) === tid)
-      const onChainCawonce = l2Token ? Number(l2Token.nextCawonce) : 0
+    const updated: TokenData[] = connectedTokens.map(l1Token => {
+      // BigInt-vs-number coercion: see the viewed-tokens branch above.
+      const l1TokenIdBI = BigInt(l1Token.tokenId)
+      const l2Token = connectedL2TokenData.find(item => BigInt(item.tokenId) === l1TokenIdBI);
+      const onChainCawonce = l2Token ? Number(l2Token.nextCawonce) : 0;
 
-      const existingTokens = tokensByAddress[connectedAddress as Address] || []
-      const existingToken = existingTokens.find(t => t.tokenId === tid)
-      const cawonce =
-        existingToken?.cawonce && existingToken.cawonce > onChainCawonce
-          ? existingToken.cawonce
-          : onChainCawonce
+      const existingTokens = tokensByAddress[connectedAddress as Address] || [];
+      const existingToken = existingTokens.find(t => t.tokenId === Number(l1Token.tokenId));
+      const cawonce = existingToken?.cawonce && existingToken.cawonce > onChainCawonce
+        ? existingToken.cawonce : onChainCawonce;
 
       return {
-        tokenId: tid,
-        username: l2Token?.username ?? "",
-        withdrawable: connectedWithdrawableMap.get(tid) ?? 0n,
-        ownerBalance: connectedOwnerBalance,
-        address: connectedAddress,
-        owner: connectedOwnerOfMap.get(tid) ?? connectedAddress,
+        tokenId: Number(l1Token.tokenId),
+        username: l1Token.username,
+        withdrawable: l1Token.withdrawable,
+        ownerBalance: l1Token.ownerBalance,
+        address: connectedAddress!,
+        owner: l1Token.owner!,
         stakedAmount: l2Token?.cawBalance ?? 0n,
         cawonce,
       }
-    })
+    });
 
-    setTokensForAddress(connectedAddress as Address, updated)
-  }, [connectedTokenIds, connectedL2TokenData, connectedAddress, needsConnectedFetch, connectedLoading, connectedWithdrawableMap, connectedOwnerOfMap, connectedOwnerBalance, setTokensForAddress])
+    setTokensForAddress(connectedAddress as Address, updated);
+  }, [connectedTokens, connectedL2TokenData, connectedAddress, needsConnectedFetch, setTokensForAddress, connectedBalancesLoading])
 
-  // ---- min-cawonce fetch for active token ---------------------------------
   const setCawonce = useTokenDataStore(s => s.setCawonce)
 
+  // Second effect: Fetch min-cawonce only for the active token
   useEffect(() => {
-    if (!activeTokenId || !viewedL2TokenData) return
+    if (!activeTokenId || !l2TokenData) return
 
-    const l2Token = viewedL2TokenData.find(item => Number(item.tokenId) === activeTokenId)
-    if (!l2Token) return
+    const l2Token = l2TokenData.find(item => item.tokenId === BigInt(activeTokenId));
+    if (!l2Token) return;
 
-    const onChainCawonce = Number(l2Token.nextCawonce)
+    const onChainCawonce = Number(l2Token.nextCawonce);
 
     const fetchMinCawonce = async () => {
       try {
-        const minCawonceResponse = await apiFetch(`/api/users/min-cawonce/${activeTokenId}`)
+        const minCawonceResponse = await apiFetch(`/api/users/min-cawonce/${activeTokenId}`);
         if (minCawonceResponse.minSafeCawonce !== null) {
-          const effectiveCawonce = Math.max(onChainCawonce, minCawonceResponse.minSafeCawonce)
+          const effectiveCawonce = Math.max(onChainCawonce, minCawonceResponse.minSafeCawonce);
           if (effectiveCawonce > onChainCawonce) {
-            console.log(`[cawonce] Token ${activeTokenId}: Using min safe cawonce ${effectiveCawonce} (on-chain: ${onChainCawonce}) due to scheduled posts`)
-            setCawonce(activeTokenId, effectiveCawonce)
+            console.log(`[cawonce] Token ${activeTokenId}: Using min safe cawonce ${effectiveCawonce} (on-chain: ${onChainCawonce}) due to scheduled posts`);
+            setCawonce(activeTokenId, effectiveCawonce);
           }
         }
       } catch (err) {
-        console.warn(`Failed to fetch min-cawonce for token ${activeTokenId}:`, err)
+        console.warn(`Failed to fetch min-cawonce for token ${activeTokenId}:`, err);
       }
-    }
+    };
 
-    fetchMinCawonce()
-  }, [activeTokenId, viewedL2TokenData, setCawonce])
+    fetchMinCawonce();
+  }, [activeTokenId, l2TokenData, setCawonce])
 
-  // ---- Register refetch in store ------------------------------------------
+  // Register refetch function in the store so other components can trigger it
   const setRefetchTokenData = useTokenDataStore(s => s.setRefetchTokenData)
-
-  // We don't have direct refetch handles for the enumerable calls; wagmi will
-  // invalidate them automatically on block updates. Expose a no-op-safe refetch
-  // for the L2 getTokens calls (the most latency-sensitive path).
   const refetch = useCallback(() => {
-    refetchViewedL2()
+    refetchL1()
+    refetchL2()
     if (needsConnectedFetch) {
+      refetchConnected()
       refetchConnectedL2()
     }
-  }, [refetchViewedL2, refetchConnectedL2, needsConnectedFetch])
+  }, [refetchL1, refetchL2, needsConnectedFetch, refetchConnected, refetchConnectedL2])
 
   useEffect(() => {
     setRefetchTokenData(refetch)
   }, [refetch, setRefetchTokenData])
 }
+
+
