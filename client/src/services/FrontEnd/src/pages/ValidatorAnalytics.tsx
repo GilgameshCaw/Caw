@@ -501,6 +501,24 @@ const ValidatorAnalytics: React.FC = () => {
           )}
         </div>
 
+        {/* Pricing-source note for mirror operators. The USD figures on this
+            dashboard use the CAW/ETH price from THIS instance's chain (testnet
+            CAW has thin liquidity, so prices look distorted). The user-facing
+            FE pulls CAW spot from mainnet for display. Tip economics on chain
+            use the L2 oracle's TWAP, which is independent of either of those.
+            Operators of mirrors should expect the dashboard USD numbers to
+            disagree with what users see in the profile chooser — that's by
+            design, not a bug. */}
+        <div className={`mb-4 px-3 py-2 rounded text-xs border ${
+          isDark ? 'bg-blue-500/10 border-blue-500/20 text-white/70' : 'bg-blue-50 border-blue-200 text-gray-700'
+        }`}>
+          <span className="font-semibold">Pricing note for mirror operators:</span>{' '}
+          USD figures here use the CAW/ETH price observed on this instance's chain.
+          The user-facing app pulls CAW spot from mainnet for display, and on-chain
+          tip math uses the L2 oracle's TWAP. Expect the three sources to disagree —
+          especially on testnet, where CAW liquidity is thin.
+        </div>
+
         {error && <p className="text-red-500 text-sm mb-4">{error}</p>}
         {loading && <p className={`mb-4 ${isDark ? 'text-white/40' : 'text-gray-400'}`}>Loading...</p>}
 
