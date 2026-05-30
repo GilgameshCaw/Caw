@@ -20,5 +20,8 @@ export const CAW_NAMES_L2_ADDRESS = "0x1Bad9c3D16aEb988206c5f7eBA3154BFFa5d94d0"
 export const CAW_ACTIONS_ADDRESS = "0xc434874E80aC9B2Cda6B019978720f2e29BAD759" as const;
 export const CAW_ACTIONS_ARCHIVE_ADDRESS = "0x605Aa1F8bBcbe1d52FD176e3B3b77833d91D495D" as const;
 export const CAW_CHALLENGE_RELAY_ADDRESS = "0x09618138943087E8b6aBCC15c3366561710F64E0" as const;
-// export const CAW_ACTIONS_ERC1271_ADDRESS = '...' — not deployed for testnet/L2 yet
-// export const SMART_EOA_ADDRESS = '...' — not deployed for testnet/L2 yet
+// Empty-string sentinel: consumers gate on `addr !== ''` to skip ERC-1271 /
+// SmartEOA codepaths until these get deployed. Don't leave them unexported —
+// `undefined` slips past `!== ''` and crashes on `.toLowerCase()`.
+export const CAW_ACTIONS_ERC1271_ADDRESS = '' as const;
+export const SMART_EOA_ADDRESS = '' as const;
