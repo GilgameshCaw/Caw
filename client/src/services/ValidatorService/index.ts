@@ -4304,12 +4304,16 @@ console.log("succeededKeys", succeededKeys)
 
 
         const httpProvider = replicationHttpProvider
-        const cawActionsViewAbi = ['function clientActionCount(uint32) view returns (uint256)']
+        // V1→V2 rename: clientActionCount → networkActionCount. Calling the
+        // old name reverts with no data, which ethers wraps as a bare "Call
+        // exception" and the outer catch surfaces as "Failed for network N:
+        // Call exception" — silently halting all replication.
+        const cawActionsViewAbi = ['function networkActionCount(uint32) view returns (uint256)']
         const cawActionsView = new Contract(CAW_ACTIONS_ADDRESS, cawActionsViewAbi, httpProvider)
 
         for (const client of clients) {
           try {
-            const actionCount = Number(await cawActionsView.clientActionCount(client.id))
+            const actionCount = Number(await cawActionsView.networkActionCount(client.id))
             const totalCheckpoints = Math.floor(actionCount / OPTIMISTIC_CHECKPOINT_INTERVAL)
             if (totalCheckpoints === 0) continue
 
