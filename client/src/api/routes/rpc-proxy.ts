@@ -146,28 +146,85 @@ function getUpstream(chain: Chain): { url: string; auth: string | null } {
   }
 }
 
+/**
+ * Upstream forwarder with bounded timeout + one-shot retry on transient errors.
+ *
+ * Returns a JSON-RPC-shaped response in ALL failure modes (timeout, network
+ * error, upstream HTTP 5xx). NEVER throws. The caller (makeHandler) only
+ * needs to fall back to its own catch on truly unexpected exceptions (e.g.
+ * a config error from getUpstream throwing before we reach this fn).
+ *
+ * Why 200-with-error vs HTTP 500: viem/wagmi treats a non-2xx HTTP status
+ * as a hard transport failure and refuses to surface the body to the
+ * caller's `.error` handler — it just throws a CALL_EXCEPTION that
+ * propagates up through every read hook on the page (cawonce sync,
+ * balance reads, session-spent reads) and crashes the FE. Returning 200
+ * with a properly-shaped `error: { code, message }` body lets clients
+ * handle this gracefully (their `useReadContract` returns `error`, not
+ * an uncaught throw) and shows users a "RPC unavailable, retrying…"
+ * state instead of a blank screen.
+ */
+const UPSTREAM_TIMEOUT_MS = 8_000
+
+// Note: don't annotate the return type as `Response` — that name collides
+// with the Express `Response` imported at the top of this file. The native
+// fetch Response is implicit via the fetch() return.
+async function fetchWithTimeout(url: string, init: RequestInit, timeoutMs: number) {
+  const controller = new AbortController()
+  const timer = setTimeout(() => controller.abort(), timeoutMs)
+  try {
+    return await fetch(url, { ...init, signal: controller.signal })
+  } finally {
+    clearTimeout(timer)
+  }
+}
+
+function jsonRpcError(id: any, code: number, message: string): any {
+  return { jsonrpc: '2.0', id: id ?? null, error: { code, message } }
+}
+
 async function forwardUpstream(chain: Chain, body: any): Promise<any> {
   const { url, auth } = getUpstream(chain)
   if (!url) {
-    throw Object.assign(new Error('RPC upstream not configured'), { status: 503 })
+    return jsonRpcError((body as any)?.id, -32603, 'RPC upstream not configured')
   }
   const headers: Record<string, string> = { 'Content-Type': 'application/json' }
   if (auth) headers.Authorization = auth
-  const res = await fetch(url, {
-    method: 'POST',
-    headers,
-    body: JSON.stringify(body),
-  })
-  // Pass HTTP errors back as JSON-RPC errors so the FE handles them
-  // through the same code path as upstream JSON-RPC error responses.
-  if (!res.ok) {
-    return {
-      jsonrpc: '2.0',
-      id: (body as any)?.id ?? null,
-      error: { code: -32603, message: `Upstream HTTP ${res.status}` },
+
+  // One-shot retry: try, and if it's a transient failure (timeout / network /
+  // upstream 5xx) try once more after a short delay. Most Infura blips clear
+  // in <500ms; a single retry is enough to ride them out without amplifying
+  // sustained outages.
+  for (let attempt = 0; attempt < 2; attempt++) {
+    try {
+      const res = await fetchWithTimeout(url, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify(body),
+      }, UPSTREAM_TIMEOUT_MS)
+      if (res.ok) {
+        return res.json()
+      }
+      // Non-2xx: 4xx is a permanent client error (don't retry), 5xx is
+      // transient (retry once). Either way return shaped error if final.
+      if (res.status >= 500 && attempt === 0) {
+        await new Promise(r => setTimeout(r, 200))
+        continue
+      }
+      return jsonRpcError((body as any)?.id, -32603, `Upstream HTTP ${res.status}`)
+    } catch (e: any) {
+      const msg = e?.name === 'AbortError'
+        ? `Upstream timeout after ${UPSTREAM_TIMEOUT_MS}ms`
+        : `Upstream fetch failed: ${e?.message || 'unknown'}`
+      if (attempt === 0) {
+        await new Promise(r => setTimeout(r, 200))
+        continue
+      }
+      return jsonRpcError((body as any)?.id, -32603, msg)
     }
   }
-  return res.json()
+  // Unreachable, but TS wants a return.
+  return jsonRpcError((body as any)?.id, -32603, 'RPC upstream exhausted')
 }
 
 // ─────────────────────────────────────────────────────────────────
@@ -237,10 +294,18 @@ function makeHandler(chain: Chain) {
   return async (req: Request, res: Response) => {
     try {
       const result = await handleBody(chain, req.body)
+      // Always 200, even on per-call upstream errors. forwardUpstream() shapes
+      // failures into JSON-RPC error bodies; viem/wagmi surfaces those to the
+      // caller's `.error` handler instead of throwing a CALL_EXCEPTION. The
+      // FE then has a chance to retry or show a degraded state — without this,
+      // a single Infura blip blanks every contract read on the page.
       res.json(result)
     } catch (err: any) {
-      const status = err?.status || 500
-      res.status(status).json({
+      // Unexpected exception path (config errors before forwardUpstream gets
+      // called, malformed body, etc). Still return 200 + JSON-RPC error body
+      // so the FE handles it the same way as upstream errors.
+      console.error('[rpc-proxy] Unexpected handler error:', err?.message || err)
+      res.status(200).json({
         jsonrpc: '2.0',
         id: null,
         error: { code: -32603, message: err?.message || 'Proxy error' },
