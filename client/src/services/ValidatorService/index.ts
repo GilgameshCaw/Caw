@@ -1320,16 +1320,17 @@ export const validatorService: Service = {
         console.log(`[Validator] Pre-sim hold: moved ${sessionHeldCount.count} session-pending rows to waiting_for_session`)
       }
 
-      // Safety net: hard-fail waiting_for_session rows older than 2h15m.
+      // Safety net: hard-fail waiting_for_session rows older than 24h15m.
       // The DataCleaner's cleanupPendingSessionRegistrations sweep handles
-      // the normal promotion path and its own 2h timeout; this is the
-      // last-resort backstop in case the DataCleaner is temporarily down.
-      // 2h tolerance accounts for laptop sleep, internet drop, and slow LZ;
-      // the recovery path in ChainSyncService.handleSessionCreated unfails
-      // matching rows when the session lands AFTER timeout, so this is the
-      // backstop for truly stuck cases (e.g. the user signed against a
-      // session that never made it on-chain).
-      const sessionSafetyNetAgo = new Date(Date.now() - 2 * 60 * 60 * 1000 - 15 * 60 * 1000) // 2h15m
+      // the normal promotion path on its own 24h timeout (widened from 2h
+      // June 2026 after LZ testnet committers had a multi-hour outage —
+      // failing user CAWs while the upstream is the actual bottleneck is
+      // user-hostile). This validator-side backstop sits 15m beyond that
+      // so the DataCleaner always wins the race in normal operation.
+      // ChainSyncService.handleSessionCreated unfails matching rows when
+      // the session lands AFTER timeout, so this only catches truly stuck
+      // cases (signed against a session that never made it on-chain).
+      const sessionSafetyNetAgo = new Date(Date.now() - 24 * 60 * 60 * 1000 - 15 * 60 * 1000) // 24h15m
       const staleSessionRows = await prisma.txQueue.findMany({
         where: {
           status: 'waiting_for_session',

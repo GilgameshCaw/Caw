@@ -1049,7 +1049,13 @@ async function cleanupPendingSessionRegistrations() {
     // bridge completed. Recovery path also exists in ChainSyncService
     // (handleSessionCreated unfails matching rows when the session finally
     // lands), so this timeout is just a backstop for genuinely-doomed cases.
-    const sessionTimeoutAgo = new Date(Date.now() - 2 * 60 * 60 * 1000) // 2h
+    // 24h tolerance — LZ testnet has had multi-hour outages where DVNs sign
+    // but committer workers stall (June 2026 outage was ~6h). Failing the
+    // user's CAW while their session is legitimately still in flight is
+    // user-hostile when the bottleneck is upstream. The validator-side
+    // hard-fail (~2h15m in ValidatorService) should also be widened in
+    // tandem; this constant is the SOFTER outer bound.
+    const sessionTimeoutAgo = new Date(Date.now() - 24 * 60 * 60 * 1000)
     const nowSec = Math.floor(Date.now() / 1000)
 
     // Build a lookup of ownerAddress by senderId (one query for all senders).
@@ -1152,7 +1158,7 @@ async function cleanupPendingSessionRegistrations() {
             row.senderId,
             data
           )
-          logger.log(`[PendingSession] TxQueue ${row.id} (sender ${row.senderId}): timed out (>20 min, no session)`)
+          logger.log(`[PendingSession] TxQueue ${row.id} (sender ${row.senderId}): timed out (>24h, no session landed)`)
         }
         // else: still within window, hold and retry next tick
       } catch (err: any) {
