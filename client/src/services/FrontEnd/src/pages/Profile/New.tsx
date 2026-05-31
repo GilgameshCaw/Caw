@@ -21,7 +21,8 @@ import StakingRewardsInfo from '~/components/StakingRewardsInfo'
 import QuickSignHowItWorks from '~/components/QuickSignHowItWorks'
 import { HiInformationCircle } from 'react-icons/hi'
 import { useTheme } from '~/hooks/useTheme'
-import { CLIENT_ID, getTipTiers } from '~/api/actions'
+import { CLIENT_ID, getTipTiers, getCurrentValidatorMinTipWei } from '~/api/actions'
+import { useValidatorMinTips } from '~/hooks/useValidatorMinTips'
 import { useT } from '~/i18n/I18nProvider'
 import { getDefaultSpendLimit, getDefaultTipCeiling, DEFAULT_SESSION_DURATION } from '~/hooks/useSessionKey'
 import { useSessionKeyStore } from '~/store/sessionKeyStore'
@@ -202,6 +203,89 @@ const QuickSignInfoPopover: React.FC = () => {
           onClick={(e) => e.stopPropagation()}
         >
           <QuickSignHowItWorks isDark />
+        </div>
+      )}
+    </div>
+  )
+}
+
+/**
+ * Tap-aware popover for the (i) next to "Tip / action" in the Quick Sign
+ * expanded row. Explains the ETH-pegged tip mechanism + lists discovered
+ * mirrors with their published min-tip floors so users can see how many
+ * validators will accept their actions.
+ */
+const TipPerActionPopover: React.FC<{ isDark: boolean }> = ({ isDark }) => {
+  const [open, setOpen] = useState(false)
+  const ref = useRef<HTMLDivElement>(null)
+  const { minTipsMap, total } = useValidatorMinTips()
+
+  useEffect(() => {
+    if (!open) return
+    const onPointerDown = (e: PointerEvent) => {
+      const target = e.target as Node | null
+      if (!target || !ref.current?.contains(target)) setOpen(false)
+    }
+    const onScroll = () => setOpen(false)
+    const autoHide = setTimeout(() => setOpen(false), 12000)
+    document.addEventListener('pointerdown', onPointerDown)
+    window.addEventListener('scroll', onScroll, true)
+    return () => {
+      document.removeEventListener('pointerdown', onPointerDown)
+      window.removeEventListener('scroll', onScroll, true)
+      clearTimeout(autoHide)
+    }
+  }, [open])
+
+  const ethPrice = usePriceStore(s => s.priceMap['ethereum'] ?? 0)
+
+  return (
+    <div ref={ref} className="relative inline-flex">
+      <button
+        type="button"
+        aria-label="How tipping works"
+        onClick={(e) => { e.preventDefault(); e.stopPropagation(); setOpen(v => !v) }}
+        onMouseEnter={() => setOpen(true)}
+        onMouseLeave={() => setOpen(false)}
+        className="flex items-center cursor-help"
+      >
+        <HiInformationCircle className="w-3.5 h-3.5 text-gray-400" />
+      </button>
+      {open && (
+        <div
+          className={`absolute bottom-full left-1/2 -translate-x-1/2 mb-2 z-50 w-[min(360px,90vw)] rounded-lg shadow-lg p-3 text-left text-xs ${
+            isDark ? 'bg-gray-900 text-white/90' : 'bg-white text-gray-800 border border-gray-200'
+          }`}
+          onClick={(e) => e.stopPropagation()}
+        >
+          <p className="mb-2">
+            Each action you take pays a small tip to whichever validator processes it.
+            Validators publish their floor in ETH terms; on-chain, the protocol's oracle
+            converts to CAW at the current market price, so the dollar amount stays
+            roughly constant even as CAW's price moves.
+          </p>
+          {total > 0 && (
+            <div>
+              <p className="mb-1 font-medium">Discovered validators ({total}):</p>
+              <ul className="space-y-0.5 font-mono text-[11px]">
+                {Array.from(minTipsMap.entries()).map(([url, wei]) => {
+                  let host = url
+                  try { host = new URL(url).hostname } catch {}
+                  const tipUsd = ethPrice > 0 && wei > 0n ? (Number(wei) / 1e18) * ethPrice : null
+                  return (
+                    <li key={url} className="flex justify-between gap-2">
+                      <span className="truncate">{host}</span>
+                      <span className={isDark ? 'text-white/70' : 'text-gray-600'}>
+                        {tipUsd != null
+                          ? `~$${tipUsd < 0.01 ? tipUsd.toFixed(4) : tipUsd.toFixed(3)}`
+                          : (wei === 0n ? 'free' : '—')}
+                      </span>
+                    </li>
+                  )
+                })}
+              </ul>
+            </div>
+          )}
         </div>
       )}
     </div>
@@ -1720,11 +1804,16 @@ console.log("BALANCE:", balance)
                 </div>
               </label>
               {quickSignEnabled && quickSignExpanded && (() => {
-                // Tip ceiling matches the hardcoded "fast" tier used by both
-                // bundled hooks at lines ~782 / ~923 — keep these three values
-                // in sync if the tier ever becomes user-selectable here.
-                const qsTipCaw = getDefaultTipCeiling(getTipTiers().fast)
-                const qsTipUsd = cawPrice > 0 ? Number(qsTipCaw) * cawPrice : null
+                // Display THIS validator's published per-action minimum tip
+                // (ETH wei, sourced from /api/validator-analytics/tip-config).
+                // The on-chain oracle converts ETH→CAW at submission time; the
+                // user's CAW ceiling (still wired to getDefaultTipCeiling for
+                // session args at lines ~782 / ~923) is just a safety bound.
+                const validatorTipWei = getCurrentValidatorMinTipWei()
+                const validatorTipEth = Number(validatorTipWei) / 1e18
+                const validatorTipUsd = ethPrice > 0 && validatorTipWei > 0n
+                  ? validatorTipEth * ethPrice
+                  : null
                 return (
                   <div className={`flex justify-around items-start text-xs pt-2 mt-2 border-t ${
                     isDark ? 'border-white/10 text-gray-400' : 'border-gray-200 text-gray-600'
@@ -1736,9 +1825,12 @@ console.log("BALANCE:", balance)
                       </span>
                     </div>
                     <div className="flex flex-col items-center text-center">
-                      <span>Tip / action</span>
+                      <span className="inline-flex items-center gap-1">
+                        Tip / action
+                        <TipPerActionPopover isDark={isDark} />
+                      </span>
                       <span className={`font-mono ${isDark ? 'text-white' : 'text-gray-900'}`}>
-                        {qsTipUsd != null ? `~$${qsTipUsd < 0.01 ? qsTipUsd.toFixed(4) : qsTipUsd.toFixed(3)}` : '—'}
+                        {validatorTipUsd != null ? `~$${validatorTipUsd < 0.01 ? validatorTipUsd.toFixed(4) : validatorTipUsd.toFixed(3)}` : '—'}
                       </span>
                     </div>
                     <div className="flex flex-col items-center text-center">

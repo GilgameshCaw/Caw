@@ -104,17 +104,29 @@ if (!Number.isFinite(CLIENT_ID) || CLIENT_ID <= 0) {
 let BASE_VALIDATOR_TIP = BigInt(import.meta.env.VITE_VALIDATOR_TIP || "26000")
 /** Priority tip threshold — actions at/above this get fast-lane processing. */
 let PRIORITY_TIP = BASE_VALIDATOR_TIP * 3n
+/** Per-action minimum tip THIS validator accepts, in ETH wei. Populated from
+ *  server's /tip-config endpoint; 0n until first successful fetch. The validator
+ *  publishes this as the authoritative ETH-denominated floor (the protocol's
+ *  on-chain oracle converts to CAW at submission time). */
+let MIN_TIP_PER_ACTION_WEI: bigint = 0n
 
 // Fetch live tip config from server on startup
-apiFetch<{ baseTip: string; priorityTip: string }>('/api/validator-analytics/tip-config')
+apiFetch<{ baseTip: string; priorityTip: string; minTipPerActionWei?: string }>('/api/validator-analytics/tip-config')
   .then(cfg => {
     BASE_VALIDATOR_TIP = BigInt(cfg.baseTip)
     PRIORITY_TIP = BigInt(cfg.priorityTip)
-    console.log(`[Actions] Loaded tip config: base=${BASE_VALIDATOR_TIP} CAW, priority=${PRIORITY_TIP} CAW`)
+    if (cfg.minTipPerActionWei) MIN_TIP_PER_ACTION_WEI = BigInt(cfg.minTipPerActionWei)
+    console.log(`[Actions] Loaded tip config: base=${BASE_VALIDATOR_TIP} CAW, priority=${PRIORITY_TIP} CAW, minWei=${MIN_TIP_PER_ACTION_WEI}`)
   })
   .catch(() => {
     console.warn('[Actions] Could not fetch tip config, using defaults:', BASE_VALIDATOR_TIP.toString())
   })
+
+/** Returns THIS validator's published per-action min tip in ETH wei.
+ *  0n means either not-yet-loaded or operator hasn't set it (free actions). */
+export function getCurrentValidatorMinTipWei(): bigint {
+  return MIN_TIP_PER_ACTION_WEI
+}
 
 /**
  * Calculate the validator tip.
