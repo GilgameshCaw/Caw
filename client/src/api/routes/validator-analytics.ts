@@ -12,16 +12,14 @@ const router = Router()
 router.get('/tip-config', async (_req, res) => {
   try {
     const rows = await prisma.validatorSetting.findMany({
-      where: { key: { in: ['validatorBaseTip', 'priorityTip'] } }
+      where: { key: { in: ['validatorBaseTip', 'priorityTip', 'minTipPerActionWei'] } }
     })
     const map = new Map(rows.map(r => [r.key, r.value]))
-    // Default fallback: ~26,000 CAW ≈ $0.001 / action at CAW ≈ $3.8e-8.
-    // Real config lives in admin DB (`validatorBaseTip` row) or
-    // VALIDATOR_BASE_TIP env. Update both when CAW price moves materially.
-    const baseTip = map.get('validatorBaseTip') || process.env.VALIDATOR_BASE_TIP || '26000'
+    const baseTip = map.get('validatorBaseTip') || process.env.VALIDATOR_BASE_TIP || '1000'
     res.json({
       baseTip,
       priorityTip: map.get('priorityTip') || String(BigInt(baseTip) * 3n),
+      minTipPerActionWei: map.get('minTipPerActionWei') || '0',
     })
   } catch (err: any) {
     res.status(500).json({ error: 'Internal server error' })
