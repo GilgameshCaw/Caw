@@ -1731,22 +1731,14 @@ console.log("BALANCE:", balance)
                   }`}>
                     <div className="flex flex-col items-center text-center">
                       <span>Spend limit</span>
-                      <span>
-                        <span className={`font-mono ${isDark ? 'text-white' : 'text-gray-900'}`}>
-                          {formatNumberCompact(Number(qsSpendLimit))} CAW
-                        </span>
-                        <span className="text-gray-500 ml-1">(~$10)</span>
+                      <span className={`font-mono ${isDark ? 'text-white' : 'text-gray-900'}`}>
+                        ~$10
                       </span>
                     </div>
                     <div className="flex flex-col items-center text-center">
                       <span>Tip / action</span>
-                      <span>
-                        <span className={`font-mono ${isDark ? 'text-white' : 'text-gray-900'}`}>
-                          {formatNumberCompact(Number(qsTipCaw))} CAW
-                        </span>
-                        {qsTipUsd != null && (
-                          <span className="text-gray-500 ml-1">(~${qsTipUsd < 0.01 ? qsTipUsd.toFixed(4) : qsTipUsd.toFixed(3)})</span>
-                        )}
+                      <span className={`font-mono ${isDark ? 'text-white' : 'text-gray-900'}`}>
+                        {qsTipUsd != null ? `~$${qsTipUsd < 0.01 ? qsTipUsd.toFixed(4) : qsTipUsd.toFixed(3)}` : '—'}
                       </span>
                     </div>
                     <div className="flex flex-col items-center text-center">
