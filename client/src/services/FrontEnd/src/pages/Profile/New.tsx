@@ -1726,31 +1726,35 @@ console.log("BALANCE:", balance)
                 const qsTipCaw = getDefaultTipCeiling(getTipTiers().fast)
                 const qsTipUsd = cawPrice > 0 ? Number(qsTipCaw) * cawPrice : null
                 return (
-                  <div className={`flex justify-around items-center text-xs pt-2 mt-2 border-t ${
+                  <div className={`flex justify-around items-start text-xs pt-2 mt-2 border-t ${
                     isDark ? 'border-white/10 text-gray-400' : 'border-gray-200 text-gray-600'
                   }`}>
-                    <span>
-                      Spend limit:&nbsp;
-                      <span className={`font-mono ${isDark ? 'text-white' : 'text-gray-900'}`}>
-                        {formatNumberCompact(Number(qsSpendLimit))} CAW
+                    <div className="flex flex-col items-center text-center">
+                      <span>Spend limit</span>
+                      <span>
+                        <span className={`font-mono ${isDark ? 'text-white' : 'text-gray-900'}`}>
+                          {formatNumberCompact(Number(qsSpendLimit))} CAW
+                        </span>
+                        <span className="text-gray-500 ml-1">(~$10)</span>
                       </span>
-                      <span className="text-gray-500 ml-1">(~$10)</span>
-                    </span>
-                    <span>
-                      Tip / action:&nbsp;
-                      <span className={`font-mono ${isDark ? 'text-white' : 'text-gray-900'}`}>
-                        {formatNumberCompact(Number(qsTipCaw))} CAW
+                    </div>
+                    <div className="flex flex-col items-center text-center">
+                      <span>Tip / action</span>
+                      <span>
+                        <span className={`font-mono ${isDark ? 'text-white' : 'text-gray-900'}`}>
+                          {formatNumberCompact(Number(qsTipCaw))} CAW
+                        </span>
+                        {qsTipUsd != null && (
+                          <span className="text-gray-500 ml-1">(~${qsTipUsd < 0.01 ? qsTipUsd.toFixed(4) : qsTipUsd.toFixed(3)})</span>
+                        )}
                       </span>
-                      {qsTipUsd != null && (
-                        <span className="text-gray-500 ml-1">(~${qsTipUsd < 0.01 ? qsTipUsd.toFixed(4) : qsTipUsd.toFixed(3)})</span>
-                      )}
-                    </span>
-                    <span>
-                      Expires in:&nbsp;
+                    </div>
+                    <div className="flex flex-col items-center text-center">
+                      <span>Expires in</span>
                       <span className={`font-mono ${isDark ? 'text-white' : 'text-gray-900'}`}>
                         {Math.round(DEFAULT_SESSION_DURATION / 86400)} days
                       </span>
-                    </span>
+                    </div>
                   </div>
                 )
               })()}
