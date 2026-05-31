@@ -258,12 +258,13 @@ const TipPerActionPopover: React.FC<{ isDark: boolean }> = ({ isDark }) => {
           }`}
           onClick={(e) => e.stopPropagation()}
         >
-          <p className="mb-2">
-            Each action you take pays a small tip to whichever validator processes it.
-            Validators publish their floor in ETH terms; on-chain, the protocol's oracle
-            converts to CAW at the current market price, so the dollar amount stays
-            roughly constant even as CAW's price moves.
-          </p>
+          <p className="mb-2 font-medium">How tipping works</p>
+          <ul className={`space-y-1.5 mb-3 list-disc pl-4 ${isDark ? 'text-white/80' : 'text-gray-700'}`}>
+            <li>Each action pays a small tip to the validator that processes it.</li>
+            <li>Validators publish their floor in <span className="font-semibold">ETH terms</span>, not CAW.</li>
+            <li>On-chain, an oracle converts the ETH-pegged rate to CAW at the current market price.</li>
+            <li>Result: the dollar amount stays roughly constant even as CAW's price moves.</li>
+          </ul>
           {total > 0 && (
             <div>
               <p className="mb-1 font-medium">Discovered validators ({total}):</p>
