@@ -209,6 +209,20 @@ const QuickSignInfoPopover: React.FC = () => {
   )
 }
 
+/** Format a tiny USD amount with a deliberate round-DOWN at the last shown
+ *  digit so $0.001 shows as "$0.0009" — visually smaller, never misleadingly
+ *  rounding up. Used in the Tip/action display and the validators popover. */
+function formatTipUsd(usd: number): string {
+  if (usd <= 0) return '$0'
+  if (usd < 0.01) {
+    // 4-decimal display, round down by subtracting 1 at the 4th decimal
+    const v = Math.max(1, Math.floor(usd * 10000) - 1) / 10000
+    return `$${v.toFixed(4)}`
+  }
+  const v = Math.max(0.001, Math.floor(usd * 1000) - 1) / 1000
+  return `$${v.toFixed(3)}`
+}
+
 /**
  * Tap-aware popover for the (i) next to "Tip / action" in the Quick Sign
  * expanded row. Explains the ETH-pegged tip mechanism + lists discovered
@@ -265,7 +279,7 @@ const TipPerActionPopover: React.FC<{ isDark: boolean }> = ({ isDark }) => {
             <li>On-chain, an oracle converts the ETH-pegged rate to CAW at the current market price.</li>
             <li>Result: the dollar amount stays roughly constant even as CAW's price moves.</li>
           </ul>
-          {total > 0 && (
+          {total > 0 ? (
             <div>
               <p className="mb-1 font-medium">Discovered validators ({total}):</p>
               <ul className="space-y-0.5 font-mono text-[11px]">
@@ -278,7 +292,7 @@ const TipPerActionPopover: React.FC<{ isDark: boolean }> = ({ isDark }) => {
                       <span className="truncate">{host}</span>
                       <span className={isDark ? 'text-white/70' : 'text-gray-600'}>
                         {tipUsd != null
-                          ? `~$${tipUsd < 0.01 ? tipUsd.toFixed(4) : tipUsd.toFixed(3)}`
+                          ? `~${formatTipUsd(tipUsd)}`
                           : (wei === 0n ? 'free' : '—')}
                       </span>
                     </li>
@@ -286,6 +300,10 @@ const TipPerActionPopover: React.FC<{ isDark: boolean }> = ({ isDark }) => {
                 })}
               </ul>
             </div>
+          ) : (
+            <p className={`text-[11px] italic ${isDark ? 'text-white/50' : 'text-gray-500'}`}>
+              No other validators discovered yet. They'll appear here once registered on-chain.
+            </p>
           )}
         </div>
       )}
@@ -1831,7 +1849,7 @@ console.log("BALANCE:", balance)
                         <TipPerActionPopover isDark={isDark} />
                       </span>
                       <span className={`font-mono ${isDark ? 'text-white' : 'text-gray-900'}`}>
-                        {validatorTipUsd != null ? `~$${validatorTipUsd < 0.01 ? validatorTipUsd.toFixed(4) : validatorTipUsd.toFixed(3)}` : '—'}
+                        {validatorTipUsd != null ? `~${formatTipUsd(validatorTipUsd)}` : '—'}
                       </span>
                     </div>
                     <div className="flex flex-col items-center text-center">
