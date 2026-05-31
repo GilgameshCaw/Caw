@@ -6,19 +6,20 @@
  * once a Network is registered with a name, that name is permanent on
  * that contract deployment.
  *
- * The testnet's first Network is named "Uruk (testnet)" on-chain. We want
- * the same word "Uruk" available as the brand for the first mainnet
- * Network, so we display it on the FE/CLI as "Sepolia-Uruk" instead.
- * This is purely cosmetic; nothing in the contract or indexer cares.
+ * Current deploys write the correct on-chain names already (see deploy.js
+ * — mainnet gets "Uruk" / "Babylon", testnet gets "Sepolia-Uruk" /
+ * "Sepolia-Babylon"), so the table here is a defense-in-depth shim that
+ * also catches the older "Uruk (testnet)" string from the pre-2026-05-31
+ * deploy. New deploys pass through unchanged.
  *
- * TODO[mainnet]: delete this file (and its callers in useNetworkFees +
- * the CLI installer) before mainnet deploy — the aliasing is a testnet-
- * only concern and would just create confusion once the live "Uruk"
- * Network exists on mainnet.
+ * Safe to delete the legacy entries (the "(testnet)" suffixed ones) once
+ * no live deployment carries those names on-chain.
  */
 
 const ALIASES: Record<string, string> = {
-  'Uruk (testnet)': 'Sepolia-Uruk',
+  // Legacy pre-2026-05-31 testnet deploys — kept until those are retired.
+  'Uruk (testnet)':    'Sepolia-Uruk',
+  'Babylon (testnet)': 'Sepolia-Babylon',
 }
 
 /**

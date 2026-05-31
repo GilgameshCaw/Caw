@@ -719,7 +719,7 @@ for (const L of L2_CHAIN_KEYS) {
 const LINKING_STEPS = [
   // Phase 2 linking (L1)
   {
-    name: 'Create first network on NetworkManager (Uruk (testnet))',
+    name: 'Create first network on NetworkManager (Uruk / Sepolia-Uruk)',
     chain: 'L1',
     phase: 2,
     contract: 'CawNetworkManager',
@@ -737,7 +737,11 @@ const LINKING_STEPS = [
     // their active fees can be lowered any time via setXFee.
     // Storage chain: L2 (Base Sepolia).
     args: (state, chainConfig) => [
-      'Uruk (testnet)',
+      // Network name is immutable on CawNetworkManager. Reserve the bare
+      // "Uruk" / "Babylon" brand for mainnet; prefix testnet/dev so they're
+      // distinguishable both on-chain and in the FE (see displayNetworkName
+      // alias in client/src/services/FrontEnd/src/utils/networkNameAlias.ts).
+      chainConfig.env === 'mainnet' ? 'Uruk' : 'Sepolia-Uruk',
       state.deployerAddress,
       CHAINS[chainConfig.env + 'L2'].lzEid,
       '2500000000000000', // withdrawFeeCeiling = 0.0025 ETH
@@ -784,7 +788,7 @@ const LINKING_STEPS = [
     },
   },
   {
-    name: 'Create second network on NetworkManager (Babylon (testnet))',
+    name: 'Create second network on NetworkManager (Babylon / Sepolia-Babylon)',
     chain: 'L1',
     phase: 2,
     contract: 'CawNetworkManager',
@@ -795,7 +799,7 @@ const LINKING_STEPS = [
     // (Uruk's actions land on L2, get archived to L2b; Babylon's land on
     // L2b, get archived to L2).
     args: (state, chainConfig) => [
-      'Babylon (testnet)',
+      chainConfig.env === 'mainnet' ? 'Babylon' : 'Sepolia-Babylon',
       state.deployerAddress,
       CHAINS[chainConfig.env + 'L2b'].lzEid,
       '2500000000000000', // withdrawFeeCeiling = 0.0025 ETH
