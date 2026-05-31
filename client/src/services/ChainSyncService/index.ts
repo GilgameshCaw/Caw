@@ -5,7 +5,7 @@ import { prisma } from '../../prismaClient'
 import { JsonRpcProvider, Contract, verifyTypedData } from 'ethers'
 import { makeJsonRpcProvider, getL1HttpRpcUrl, getL2HttpRpcUrl, getEthMainnetHttpRpcUrl, redactRpcUrl } from '../../utils/rpcProvider'
 import { cawNetworkManagerAbi } from '../../abi/generated'
-import { NETWORK_MANAGER_ADDRESS, CAW_NAMES_L2_ADDRESS } from '../../abi/addresses'
+import { NETWORK_MANAGER_ADDRESS, CAW_NAMES_L2_ADDRESS, CAW_PAIR_ADDRESS, CAW_ADDRESS } from '../../abi/addresses'
 
 // Mainnet token addresses for price fetching (distinct from testnet contract addresses)
 const MAINNET_CAW_ADDRESS = '0xf3b9569F82B18aEf890De263B84189bd33EBe452'
@@ -27,6 +27,12 @@ const UNISWAP_V2_ROUTER_ABI = [
 ]
 
 const UNISWAP_V2_ROUTER = '0x7a250d5630B4cF539739dF2C5dAcb4c659F2488D'
+
+// Minimal Uniswap V2 Pair ABI for reading the testnet CAW/WETH pool directly.
+const UNISWAP_V2_PAIR_ABI = [
+  'function getReserves() view returns (uint112 reserve0, uint112 reserve1, uint32 blockTimestampLast)',
+  'function token0() view returns (address)',
+]
 
 // ============================================================================
 // Types
@@ -73,6 +79,10 @@ const syncTasks: Map<string, SyncTask> = new Map()
 // In-memory price caches (also persisted to DB)
 let cawPriceCache: CachedCawPrice | null = null
 let ethPriceCache: CachedEthPrice | null = null
+// Sepolia CAW/WETH pool spot — the actual price the testnet zap charges.
+// On mainnet deploys this stays null (CAW_PAIR_ADDRESS != mainnet pair) and
+// consumers fall back to the mainnet cawPriceCache for everything.
+let sepoliaCawPriceCache: CachedCawPrice | null = null
 
 // ============================================================================
 // Provider Initialization
@@ -284,6 +294,30 @@ async function syncCawPrice(): Promise<void> {
   }
 }
 
+/**
+ * Read the testnet CAW/WETH pool spot directly via getReserves(). Display
+ * mismatch fix: the user-facing zap actually trades against this pool, not
+ * mainnet's, so the FE needs both prices to render coherently. Silently
+ * skips when no pair address is configured or L1 provider is missing.
+ */
+async function syncSepoliaCawPrice(): Promise<void> {
+  if (!CAW_PAIR_ADDRESS || !l1Provider) return
+  try {
+    const pair = new Contract(CAW_PAIR_ADDRESS, UNISWAP_V2_PAIR_ABI, l1Provider)
+    const [reserves, token0] = await Promise.all([pair.getReserves(), pair.token0()])
+    const cawIsToken0 = (token0 as string).toLowerCase() === CAW_ADDRESS.toLowerCase()
+    const reserveCaw = BigInt(cawIsToken0 ? reserves[0] : reserves[1])
+    const reserveWeth = BigInt(cawIsToken0 ? reserves[1] : reserves[0])
+    if (reserveCaw === 0n || reserveWeth === 0n) return
+    // ethPerCaw scaled to 1e18 (wei per whole CAW).
+    const ethPerCaw = (reserveWeth * 10n ** 18n) / reserveCaw
+    const cawPerEth = (reserveCaw * 10n ** 18n) / reserveWeth
+    sepoliaCawPriceCache = { ethPerCaw, cawPerEth, updatedAt: Date.now() }
+  } catch (err: any) {
+    console.warn('[ChainSync:Prices] Sepolia pool read failed:', err?.message)
+  }
+}
+
 async function syncEthPrice(): Promise<void> {
   if (!uniswapRouter) {
     console.log('[ChainSync:Prices] Uniswap router not initialized, skipping ETH price')
@@ -345,6 +379,7 @@ async function syncEthPrice(): Promise<void> {
 async function syncPrices(): Promise<void> {
   await syncCawPrice()
   await syncEthPrice()
+  await syncSepoliaCawPrice()
 
   // Store price snapshots for historical tracking
   if (cawPriceCache && ethPriceCache) {
@@ -423,6 +458,14 @@ export function usdToCawCached(usdAmount: bigint): bigint | null {
   const ethAmount = (usdAmount * ethPriceCache.ethPerUsd) / BigInt(10 ** 6)
 
   return ethToCawCached(ethAmount)
+}
+
+/**
+ * Get the cached Sepolia CAW/WETH pool price (testnet display price).
+ * Returns null on mainnet deploys or when the pool isn't reachable.
+ */
+export function getSepoliaCawPriceCache(): CachedCawPrice | null {
+  return sepoliaCawPriceCache
 }
 
 /**

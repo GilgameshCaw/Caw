@@ -7,6 +7,8 @@ interface PriceResponse {
   usdPerCaw: number | null
   cawPerUsd: number | null
   usdPerEth: number | null
+  usdPerCawSepolia: number | null
+  cawPerUsdSepolia: number | null
   updatedAt: number | null
 }
 
@@ -23,6 +25,7 @@ export function useFetchPrices() {
         const prices: Record<string, number> = {}
         if (data.usdPerEth) prices['ethereum'] = data.usdPerEth
         if (data.usdPerCaw) prices['a-hunters-dream'] = data.usdPerCaw
+        if (data.usdPerCawSepolia) prices['a-hunters-dream-sepolia'] = data.usdPerCawSepolia
         return prices
       } catch (err) {
         console.error('[useFetchPrices] Failed:', err)

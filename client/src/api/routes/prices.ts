@@ -1,5 +1,5 @@
 import { Router } from 'express'
-import { getCawPriceCache, getEthPriceCache } from '../../services/ChainSyncService'
+import { getCawPriceCache, getEthPriceCache, getSepoliaCawPriceCache } from '../../services/ChainSyncService'
 import { prisma } from '../../prismaClient'
 import { requireAdmin } from '../middleware/auth'
 
@@ -13,6 +13,7 @@ const router = Router()
 router.get('/', async (_req, res) => {
   let cawPrice = getCawPriceCache()
   let ethPrice = getEthPriceCache()
+  const sepoliaPrice = getSepoliaCawPriceCache()
 
   // Fallback: read from DB if in-memory cache is empty
   if (!cawPrice || !ethPrice) {
@@ -46,6 +47,8 @@ router.get('/', async (_req, res) => {
       usdPerCaw: null,
       cawPerUsd: null,
       usdPerEth: null,
+      usdPerCawSepolia: null,
+      cawPerUsdSepolia: null,
       updatedAt: null,
     })
     return
@@ -56,10 +59,21 @@ router.get('/', async (_req, res) => {
   const usdPerCaw = ethPerCaw * usdPerEth
   const cawPerUsd = usdPerCaw > 0 ? 1 / usdPerCaw : 0
 
+  // Sepolia pool price — uses same ETH/USD denominator (sETH treated as = ETH for display)
+  let usdPerCawSepolia: number | null = null
+  let cawPerUsdSepolia: number | null = null
+  if (sepoliaPrice) {
+    const ethPerCawSepolia = Number(sepoliaPrice.ethPerCaw) / 1e18
+    usdPerCawSepolia = ethPerCawSepolia * usdPerEth
+    cawPerUsdSepolia = usdPerCawSepolia > 0 ? 1 / usdPerCawSepolia : 0
+  }
+
   res.json({
     usdPerCaw,
     cawPerUsd,
     usdPerEth,
+    usdPerCawSepolia,
+    cawPerUsdSepolia,
     updatedAt: Math.max(cawPrice.updatedAt, ethPrice.updatedAt),
   })
 })
