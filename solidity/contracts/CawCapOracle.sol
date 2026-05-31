@@ -98,13 +98,24 @@ contract CawCapOracle {
   ///         all slots are populated.
   uint64 public samplesWritten;
 
-  /// @notice Timestamp of the last time _maybePushRatio was entered (whether
-  ///         or not it ultimately pushed a new ratio). Used by pushRatioIfStale
-  ///         to rate-limit permissionless callers. Updated on every path that
-  ///         enters _maybePushRatio — both the recordSample trampoline and the
-  ///         external pushRatioIfStale function — so the 5-minute interval
-  ///         applies uniformly across both callers.
+  /// @notice Timestamp of the last time _maybePushCapRatio or _maybePushTipRatio
+  ///         was entered (whether or not it ultimately pushed a new ratio). Used
+  ///         by pushRatioIfStale to rate-limit permissionless callers. Updated on
+  ///         every path that enters the push logic — both the recordSample
+  ///         trampoline and the external pushRatioIfStale function — so the
+  ///         5-minute interval applies uniformly across both callers.
   uint64 public lastPushAttemptAt;
+
+  /// @notice Timestamp of the last time a push actually wrote a ratio to
+  ///         CawActions (cap or tip). Distinct from lastPushAttemptAt, which
+  ///         tracks attempts. Used by _maybePushTipRatio's 3-hour stale
+  ///         condition so slow markets still get a periodic refresh.
+  uint64 public lastSuccessfulPushAt;
+
+  /// @notice Minimum interval between organic pushes. If neither the cap nor
+  ///         the tip ratio moved more than 100 bps, a push still fires after
+  ///         this interval so CawActions doesn't hold ancient state.
+  uint64 public constant MIN_PUSH_REFRESH_INTERVAL = 3 hours;
 
   // ─── Errors / Events ──────────────────────────────────────────────────────
 
@@ -182,7 +193,8 @@ contract CawCapOracle {
   function _maybePushRatioExternal() external {
     require(msg.sender == address(this), "self-only");
     lastPushAttemptAt = uint64(block.timestamp);
-    _maybePushRatio();
+    _maybePushCapRatio();
+    _maybePushTipRatio();
   }
 
   /// @notice Permissionless freshness-recovery entry point.
@@ -211,7 +223,8 @@ contract CawCapOracle {
   function pushRatioIfStale() external {
     require(block.timestamp >= lastPushAttemptAt + 5 minutes, "TooSoon");
     lastPushAttemptAt = uint64(block.timestamp);
-    _maybePushRatio();
+    _maybePushCapRatio();
+    _maybePushTipRatio();
   }
 
   // ─── Push-ratio logic ────────────────────────────────────────────────────────
@@ -222,8 +235,8 @@ contract CawCapOracle {
   ///       - oracle stale / under-populated → push 0 if currently non-zero
   ///       - cap doesn't bind              → push 0 if currently non-zero
   ///       - cap binds + moved > 100 bps   → push new ratio
-  ///       - cap binds + within 100 bps    → no-op (hysteresis)
-  function _maybePushRatio() internal {
+  ///       - cap binds + within 100 bps    → no-op (hysteresis, unless 3h stale)
+  function _maybePushCapRatio() internal {
     (uint256 newRatio, bool fresh) = twapEthPerCaw();
 
     uint192 currentRatio = cawActions.capStateRatio();
@@ -233,6 +246,7 @@ contract CawCapOracle {
       // clear it so the cap goes dormant. Otherwise no-op.
       if (currentRatio != 0) {
         cawActions.setCapRatio(0);
+        lastSuccessfulPushAt = uint64(block.timestamp);
       }
       return;
     }
@@ -246,19 +260,55 @@ contract CawCapOracle {
       // Cap currently not binding. Clear stored ratio if non-zero.
       if (currentRatio != 0) {
         cawActions.setCapRatio(0);
+        lastSuccessfulPushAt = uint64(block.timestamp);
       }
       return;
     }
 
-    // Cap binds. Hysteresis: only push if ratio moved > 100 bps from stored,
-    // or if transitioning from dormant (currentRatio == 0) to active.
-    if (currentRatio == 0 || _movedMoreThanBps(uint256(currentRatio), newRatio, 100)) {
+    // Cap binds. Push if: ratio moved > 100 bps, transitioning from dormant,
+    // or 3-hour stale refresh (so CawActions never holds ancient state).
+    bool staleRefresh = block.timestamp - lastSuccessfulPushAt >= MIN_PUSH_REFRESH_INTERVAL;
+    if (currentRatio == 0 || _movedMoreThanBps(uint256(currentRatio), newRatio, 100) || staleRefresh) {
       // H-8: explicit overflow guard before narrowing cast.
       // At astronomical CAW prices the UQ112.112 TWAP could theoretically exceed
       // uint192.max (≈ 6.28e57); silent truncation would push a wrong ratio to
       // CawActions. Revert instead — the cap goes dormant (safe side).
       require(newRatio <= type(uint192).max, "RatioOverflow");
       cawActions.setCapRatio(uint192(newRatio));
+      lastSuccessfulPushAt = uint64(block.timestamp);
+    }
+  }
+
+  /// @dev Evaluate whether the tip state should be pushed to CawActions.
+  ///      Unlike _maybePushCapRatio, there is NO bindsNow gate — the tip ratio
+  ///      is pushed whenever the TWAP is fresh and one of these is true:
+  ///       - currentTipRatio == 0      (oracle activating from dormant)
+  ///       - ratio moved > 100 bps     (price moved materially)
+  ///       - >= MIN_PUSH_REFRESH_INTERVAL since last successful push (stale refresh)
+  ///      When the TWAP is stale / under-populated, push 0 to clear if non-zero.
+  function _maybePushTipRatio() internal {
+    (uint256 newRatio, bool fresh) = twapEthPerCaw();
+
+    (, uint192 currentTipRatio) = cawActions.tipState();
+
+    if (!fresh) {
+      // Oracle stale or under-populated. Clear if CawActions has a live tip ratio.
+      if (currentTipRatio != 0) {
+        cawActions.setTipRatio(0);
+        lastSuccessfulPushAt = uint64(block.timestamp);
+      }
+      return;
+    }
+
+    // Push if: activating from dormant, ratio moved significantly, OR 3-hour refresh.
+    bool shouldPush = (currentTipRatio == 0)
+      || _movedMoreThanBps(uint256(currentTipRatio), newRatio, 100)
+      || (block.timestamp - lastSuccessfulPushAt >= MIN_PUSH_REFRESH_INTERVAL);
+
+    if (shouldPush) {
+      require(newRatio <= type(uint192).max, "RatioOverflow");
+      cawActions.setTipRatio(uint192(newRatio));
+      lastSuccessfulPushAt = uint64(block.timestamp);
     }
   }
 

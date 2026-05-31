@@ -116,6 +116,18 @@ contract CawActions {
   }
   CapState public capState;
 
+  /// @notice Pushed-ratio tip state. Packed into one 256-bit slot.
+  ///         The oracle writes this via setTipRatio(); _getTipCost reads it
+  ///         with a single SLOAD — zero external calls per tip evaluation.
+  ///         Unlike capState, the tip ratio is always pushed when the TWAP is
+  ///         fresh — there is no bindsNow gate. This lets the session implicit
+  ///         tip track the live CAW price even when the cap isn't binding.
+  struct TipState {
+    uint64  lastUpdatedAt; // block.timestamp of last setTipRatio call
+    uint192 ratio;         // 0 = tip path dormant; else UQ112.112 WETH-per-CAW TWAP
+  }
+  TipState public tipState;
+
   /// @notice Commitment to a processed batch. The full `packedActions` payload lives
   ///         in the originating tx's calldata (the same bytes passed to
   ///         processActions / safeProcessActions); indexers fetch it via
@@ -133,6 +145,10 @@ contract CawActions {
   /// @notice Emitted whenever the cap oracle pushes a new ratio.
   ///         ratio == 0 means the cap is now dormant (baseline applies).
   event CapRatioUpdated(uint192 ratio, uint64 timestamp);
+
+  /// @notice Emitted whenever the cap oracle pushes a new tip ratio.
+  ///         ratio == 0 means the tip oracle is dormant.
+  event TipRatioUpdated(uint192 ratio, uint64 timestamp);
 
   CawProfileL2 public immutable cawProfile;
   CawActions public immutable externalSelf;
@@ -194,8 +210,6 @@ contract CawActions {
   ///      Mirrors CawCapOracle.STALE_THRESHOLD — both must stay in sync.
   uint64 private constant CAP_STALE_THRESHOLD = 24 hours;
 
-  uint256 private constant BASELINE_TIP_CAW = 50_000;
-
   // ============================================
   // ZK SIG-RECOVERY PATH (immutable hooks)
   // ============================================
@@ -250,16 +264,6 @@ contract CawActions {
     erc1271Sibling = _erc1271Sibling;
     capOracle = ICawCapOracle(_capOracle); // address(0) = cap dormant (backward-compatible)
     _bootstrap = (uint256(_bootstrapExpiry) << 192) | uint256(_bootstrapRatio);
-  }
-
-  /// @notice Bootstrap ratio (low 192 bits of `_bootstrap`).
-  function bootstrapRatio() external view returns (uint192) {
-    return uint192(_bootstrap);
-  }
-
-  /// @notice Bootstrap expiry (high 64 bits of `_bootstrap`).
-  function bootstrapExpiry() external view returns (uint64) {
-    return uint64(_bootstrap >> 192);
   }
 
   // ============================================
@@ -1193,6 +1197,35 @@ contract CawActions {
     return capState.ratio;
   }
 
+  /// @notice Called by CawCapOracle to update the stored tip ratio.
+  ///         ratio == 0 clears the tip state (tip path dormant).
+  ///         Otherwise it is a UQ112.112 TWAP of WETH-per-CAW pushed without a
+  ///         bindsNow gate — the tip ratio tracks price even when the action cap isn't binding.
+  function setTipRatio(uint192 newRatio) external {
+    if (msg.sender != address(capOracle)) revert NotCapOracle();
+    uint64 ts = uint64(block.timestamp);
+    tipState = TipState(ts, newRatio);
+    emit TipRatioUpdated(newRatio, ts);
+  }
+
+  /// @dev Helper: convert an ETH-denominated tip target (wei) to whole CAW using
+  ///      the stored tip ratio. No baseline parameter — the Network's tipTargetWei
+  ///      is itself the bound (validated against tipCeilingWei on L1 ratchet).
+  ///      Returns 0 if the tip oracle is dormant or stale, signalling "no network
+  ///      tip target active". The per-session perActionTipRate ceiling still applies
+  ///      at the caller via `min(target, ceiling)`, so a 0 return means the tip
+  ///      defaults to the session ceiling.
+  ///      If the ratio converts the ethCap to 0 whole CAW, returns 1 (floor).
+  function _getTipCost(uint256 ethCap) private view returns (uint256 r) {
+    TipState memory s = tipState; // single SLOAD
+    if (s.ratio == 0) return 0;
+    unchecked {
+      if (block.timestamp - s.lastUpdatedAt > CAP_STALE_THRESHOLD) return 0;
+      r = (ethCap << 112) / uint256(s.ratio) / 1e18;
+      if (r == 0) r = 1;
+    }
+  }
+
   /// @dev Helper: return pushed-ratio-capped cost, or baseline when cap is dormant.
   ///      Single SLOAD reads both fields of CapState (one 256-bit slot).
   ///      Zero capOracle (null-oracle deploy) also returns baseline — the capState
@@ -1633,7 +1666,7 @@ contract CawActions {
       if (ba.isSessionKey && ba.perActionTipRate > 0) {
         if (!c.networkTipLoaded) {
           uint256 _tipWei = cawProfile.networkTipTargetWei(c.firstNetworkId);
-          c.networkTipCAW = _tipWei > 0 ? _getCost(BASELINE_TIP_CAW, _tipWei) : 0;
+          c.networkTipCAW = _tipWei > 0 ? _getTipCost(_tipWei) : 0;
           c.networkTipLoaded = true;
         }
         uint256 ceiling = uint256(ba.perActionTipRate);
@@ -1678,7 +1711,7 @@ contract CawActions {
     } else if (ba.isSessionKey && ba.perActionTipRate > 0) {
       if (!c.networkTipLoaded) {
         uint256 _tipWei = cawProfile.networkTipTargetWei(c.firstNetworkId);
-        c.networkTipCAW = _tipWei > 0 ? _getCost(BASELINE_TIP_CAW, _tipWei) : 0;
+        c.networkTipCAW = _tipWei > 0 ? _getTipCost(_tipWei) : 0;
         c.networkTipLoaded = true;
       }
       uint256 ceiling = uint256(ba.perActionTipRate);

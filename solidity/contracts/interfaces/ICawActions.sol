@@ -16,6 +16,14 @@ interface ICawActions {
   ///         Caller must be the immutable capOracle address or the call reverts.
   function setCapRatio(uint192 newRatio) external;
 
+  /// @notice Returns the currently stored tip state (lastUpdatedAt, ratio).
+  ///         ratio == 0 means the tip oracle is dormant.
+  function tipState() external view returns (uint64 lastUpdatedAt, uint192 ratio);
+
+  /// @notice Called by CawCapOracle to push a new tip TWAP ratio.
+  ///         Caller must be the immutable capOracle address or the call reverts.
+  function setTipRatio(uint192 newRatio) external;
+
   // ── ERC-1271 sibling callbacks ────────────────────────────────────────────
   // Called by CawActionsERC1271 only.
 
