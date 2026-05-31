@@ -11,6 +11,8 @@ export const cawActionsAbi = [
       { name: '_zkProgramVKey', internalType: 'bytes32', type: 'bytes32' },
       { name: '_erc1271Sibling', internalType: 'address', type: 'address' },
       { name: '_capOracle', internalType: 'address', type: 'address' },
+      { name: '_bootstrapRatio', internalType: 'uint192', type: 'uint192' },
+      { name: '_bootstrapExpiry', internalType: 'uint64', type: 'uint64' },
     ],
     stateMutability: 'nonpayable',
   },
@@ -129,13 +131,6 @@ export const cawActionsAbi = [
   },
   {
     type: 'function',
-    inputs: [],
-    name: 'owner',
-    outputs: [{ name: '', internalType: 'address', type: 'address' }],
-    stateMutability: 'view',
-  },
-  {
-    type: 'function',
     inputs: [
       { name: 'validatorId', internalType: 'uint32', type: 'uint32' },
       {
@@ -220,13 +215,6 @@ export const cawActionsAbi = [
   },
   {
     type: 'function',
-    inputs: [],
-    name: 'renounceOwnership',
-    outputs: [],
-    stateMutability: 'nonpayable',
-  },
-  {
-    type: 'function',
     inputs: [
       { name: 'validatorId', internalType: 'uint32', type: 'uint32' },
       { name: 'packedActions', internalType: 'bytes', type: 'bytes' },
@@ -264,10 +252,20 @@ export const cawActionsAbi = [
   },
   {
     type: 'function',
-    inputs: [{ name: 'newOwner', internalType: 'address', type: 'address' }],
-    name: 'transferOwnership',
+    inputs: [{ name: 'newRatio', internalType: 'uint192', type: 'uint192' }],
+    name: 'setTipRatio',
     outputs: [],
     stateMutability: 'nonpayable',
+  },
+  {
+    type: 'function',
+    inputs: [],
+    name: 'tipState',
+    outputs: [
+      { name: 'lastUpdatedAt', internalType: 'uint64', type: 'uint64' },
+      { name: 'ratio', internalType: 'uint192', type: 'uint192' },
+    ],
+    stateMutability: 'view',
   },
   {
     type: 'function',
@@ -433,19 +431,19 @@ export const cawActionsAbi = [
     anonymous: false,
     inputs: [
       {
-        name: 'previousOwner',
-        internalType: 'address',
-        type: 'address',
-        indexed: true,
+        name: 'ratio',
+        internalType: 'uint192',
+        type: 'uint192',
+        indexed: false,
       },
       {
-        name: 'newOwner',
-        internalType: 'address',
-        type: 'address',
-        indexed: true,
+        name: 'timestamp',
+        internalType: 'uint64',
+        type: 'uint64',
+        indexed: false,
       },
     ],
-    name: 'OwnershipTransferred',
+    name: 'TipRatioUpdated',
   },
   { type: 'error', inputs: [], name: 'BadSigGroupCount' },
   { type: 'error', inputs: [], name: 'BatchSigInvalid' },
@@ -5852,53 +5850,6 @@ export const cawProfileUriAbi = [
     name: 'generate',
     outputs: [{ name: '', internalType: 'string', type: 'string' }],
     stateMutability: 'view',
-  },
-  {
-    type: 'function',
-    inputs: [],
-    name: 'owner',
-    outputs: [{ name: '', internalType: 'address', type: 'address' }],
-    stateMutability: 'view',
-  },
-  {
-    type: 'function',
-    inputs: [],
-    name: 'renounceOwnership',
-    outputs: [],
-    stateMutability: 'nonpayable',
-  },
-  {
-    type: 'function',
-    inputs: [{ name: '_description', internalType: 'string', type: 'string' }],
-    name: 'setDescription',
-    outputs: [],
-    stateMutability: 'nonpayable',
-  },
-  {
-    type: 'function',
-    inputs: [{ name: 'newOwner', internalType: 'address', type: 'address' }],
-    name: 'transferOwnership',
-    outputs: [],
-    stateMutability: 'nonpayable',
-  },
-  {
-    type: 'event',
-    anonymous: false,
-    inputs: [
-      {
-        name: 'previousOwner',
-        internalType: 'address',
-        type: 'address',
-        indexed: true,
-      },
-      {
-        name: 'newOwner',
-        internalType: 'address',
-        type: 'address',
-        indexed: true,
-      },
-    ],
-    name: 'OwnershipTransferred',
   },
 ] as const
 
