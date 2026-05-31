@@ -1217,6 +1217,12 @@ contract CawActions {
   ///      defaults to the session ceiling.
   ///      If the ratio converts the ethCap to 0 whole CAW, returns 1 (floor).
   function _getTipCost(uint256 ethCap) private view returns (uint256 r) {
+    // ethCap comes from CawProfileL2.networkTipTargetWei, which is fed by L1
+    // setTipTarget (capped at MAX_TIP_TARGET_WEI = 5e12 wei). The shift below
+    // is safe so long as ethCap << 112 fits in uint256 (≤ ~3.36e46 wei). The
+    // L1 cap gives ~7 orders of magnitude headroom. Audit fix M-1 (2026-05-31)
+    // considered an explicit bound check here but EIP-170 doesn't have the
+    // bytes — the L1 invariant is documented as load-bearing.
     TipState memory s = tipState; // single SLOAD
     if (s.ratio == 0) return 0;
     unchecked {

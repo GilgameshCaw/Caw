@@ -106,11 +106,17 @@ contract CawCapOracle {
   ///         5-minute interval applies uniformly across both callers.
   uint64 public lastPushAttemptAt;
 
-  /// @notice Timestamp of the last time a push actually wrote a ratio to
-  ///         CawActions (cap or tip). Distinct from lastPushAttemptAt, which
-  ///         tracks attempts. Used by _maybePushTipRatio's 3-hour stale
-  ///         condition so slow markets still get a periodic refresh.
-  uint64 public lastSuccessfulPushAt;
+  /// @notice Timestamp of the last successful CAP-ratio push to CawActions.
+  ///         L-1 audit fix: separate from the tip-push timer so neither path
+  ///         starves the other's 3-hour heartbeat. Previously a single shared
+  ///         lastSuccessfulPushAt meant frequent cap pushes (volatile market
+  ///         with cap binding) would suppress the tip 3-hour refresh and
+  ///         vice versa.
+  uint64 public lastSuccessfulCapPushAt;
+
+  /// @notice Timestamp of the last successful TIP-ratio push to CawActions.
+  ///         L-1 audit fix sibling — independent heartbeat for the tip path.
+  uint64 public lastSuccessfulTipPushAt;
 
   /// @notice Minimum interval between organic pushes. If neither the cap nor
   ///         the tip ratio moved more than 100 bps, a push still fires after
@@ -246,7 +252,7 @@ contract CawCapOracle {
       // clear it so the cap goes dormant. Otherwise no-op.
       if (currentRatio != 0) {
         cawActions.setCapRatio(0);
-        lastSuccessfulPushAt = uint64(block.timestamp);
+        lastSuccessfulCapPushAt = uint64(block.timestamp);
       }
       return;
     }
@@ -260,14 +266,14 @@ contract CawCapOracle {
       // Cap currently not binding. Clear stored ratio if non-zero.
       if (currentRatio != 0) {
         cawActions.setCapRatio(0);
-        lastSuccessfulPushAt = uint64(block.timestamp);
+        lastSuccessfulCapPushAt = uint64(block.timestamp);
       }
       return;
     }
 
     // Cap binds. Push if: ratio moved > 100 bps, transitioning from dormant,
     // or 3-hour stale refresh (so CawActions never holds ancient state).
-    bool staleRefresh = block.timestamp - lastSuccessfulPushAt >= MIN_PUSH_REFRESH_INTERVAL;
+    bool staleRefresh = block.timestamp - lastSuccessfulCapPushAt >= MIN_PUSH_REFRESH_INTERVAL;
     if (currentRatio == 0 || _movedMoreThanBps(uint256(currentRatio), newRatio, 100) || staleRefresh) {
       // H-8: explicit overflow guard before narrowing cast.
       // At astronomical CAW prices the UQ112.112 TWAP could theoretically exceed
@@ -275,7 +281,7 @@ contract CawCapOracle {
       // CawActions. Revert instead — the cap goes dormant (safe side).
       require(newRatio <= type(uint192).max, "RatioOverflow");
       cawActions.setCapRatio(uint192(newRatio));
-      lastSuccessfulPushAt = uint64(block.timestamp);
+      lastSuccessfulCapPushAt = uint64(block.timestamp);
     }
   }
 
@@ -295,7 +301,7 @@ contract CawCapOracle {
       // Oracle stale or under-populated. Clear if CawActions has a live tip ratio.
       if (currentTipRatio != 0) {
         cawActions.setTipRatio(0);
-        lastSuccessfulPushAt = uint64(block.timestamp);
+        lastSuccessfulTipPushAt = uint64(block.timestamp);
       }
       return;
     }
@@ -303,12 +309,12 @@ contract CawCapOracle {
     // Push if: activating from dormant, ratio moved significantly, OR 3-hour refresh.
     bool shouldPush = (currentTipRatio == 0)
       || _movedMoreThanBps(uint256(currentTipRatio), newRatio, 100)
-      || (block.timestamp - lastSuccessfulPushAt >= MIN_PUSH_REFRESH_INTERVAL);
+      || (block.timestamp - lastSuccessfulTipPushAt >= MIN_PUSH_REFRESH_INTERVAL);
 
     if (shouldPush) {
       require(newRatio <= type(uint192).max, "RatioOverflow");
       cawActions.setTipRatio(uint192(newRatio));
-      lastSuccessfulPushAt = uint64(block.timestamp);
+      lastSuccessfulTipPushAt = uint64(block.timestamp);
     }
   }
 
