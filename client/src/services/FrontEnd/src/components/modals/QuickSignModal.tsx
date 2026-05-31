@@ -5,7 +5,7 @@ import { useTheme } from '~/hooks/useTheme'
 import { useT } from '~/i18n/I18nProvider'
 import { useSessionKeyStore } from '~/store/sessionKeyStore'
 import { usePriceStore } from '~/store/tokenDataStore'
-import { useCreateSession, getDefaultSpendLimit, getDefaultTipCeiling, DEFAULT_SESSION_DURATION } from '~/hooks/useSessionKey'
+import { useCreateSession, getDefaultSpendLimit, getDefaultTipCeiling, DEFAULT_SESSION_DURATION, useNetworkTipTargetAsCAW } from '~/hooks/useSessionKey'
 import { getTipTiers } from '~/api/actions'
 import { HiLightningBolt } from 'react-icons/hi'
 import QuickSignOptions from '~/components/QuickSignOptions'
@@ -52,6 +52,7 @@ const QuickSignModal: React.FC<QuickSignModalProps> = (props) => {
   const createSession = useCreateSession()
   const setHasSeenPrompt = useSessionKeyStore(s => s.setHasSeenPrompt)
   const cawPrice = usePriceStore(s => s.priceMap['a-hunters-dream'] ?? 0)
+  const { tipCeilingCaw: networkTipCaw, tipCeilingFallbackCaw } = useNetworkTipTargetAsCAW()
   const [loading, setLoading] = useState(false)
   const [status, setStatus] = useState('')
   const [error, setError] = useState<string | null>(null)
@@ -61,15 +62,16 @@ const QuickSignModal: React.FC<QuickSignModalProps> = (props) => {
   const [dontShowAgain, setDontShowAgain] = useState(false)
   const [walletProtect, setWalletProtect] = useState(false)
 
-  // Reset state when modal opens
+  // Reset state when modal opens; pre-fill tip ceiling from network target once loaded
   useEffect(() => {
     if (isOpen) {
       setError(null)
       if (cawPrice > 0) setSpendLimit(BigInt(Math.round(5 / cawPrice)))
-      // Re-fetch market tip in case it changed since the component mounted
-      setTipCeiling(getDefaultTipCeiling(getTipTiers().fast))
+      // Use network's tip target if available; fall back to validator fast tier
+      const networkDefault = networkTipCaw ?? tipCeilingFallbackCaw
+      setTipCeiling(networkDefault)
     }
-  }, [isOpen, cawPrice])
+  }, [isOpen, cawPrice, networkTipCaw, tipCeilingFallbackCaw])
 
   const handleEnable = async () => {
     setLoading(true)

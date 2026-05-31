@@ -1,13 +1,15 @@
 import { useCallback, useEffect } from 'react'
 import { generatePrivateKey, privateKeyToAccount } from 'viem/accounts'
-import { useSignMessage, useChainId, useAccount } from 'wagmi'
+import { useSignMessage, useSwitchChain, useChainId, useAccount } from 'wagmi'
+import { useReadContract } from 'wagmi'
 import { useConnectModal } from '@rainbow-me/rainbowkit'
 import { baseSepolia } from 'wagmi/chains'
 import { apiFetch } from '~/api/client'
 import { useSessionKeyStore } from '~/store/sessionKeyStore'
-import { CAW_NAMES_L2_ADDRESS } from '~/../../../abi/addresses'
+import { CAW_NAMES_L2_ADDRESS, CAW_ACTIONS_ADDRESS } from '~/../../../abi/addresses'
 import { useActiveToken, usePriceStore } from '~/store/tokenDataStore'
 import { encryptPrivateKey, getEncryptionSignMessage, setDecryptedKey } from '~/services/sessionKeyEncryption'
+import { cawActionsAbi } from '~/../../../abi/generated'
 
 export const DEFAULT_SESSION_DURATION = 180 * 24 * 60 * 60 // 6 months
 
@@ -68,7 +70,19 @@ function formatSpendLimitForMessage(spendLimit: bigint): string {
   return `${Math.ceil(n / 1_000_000)}M`
 }
 
-function buildSessionMessage(sessionKeyAddress: string, spendLimit: bigint, perActionTipRate: bigint, expiryTimestamp: number): string {
+function formatTipCeilingForMessage(tipCeiling: bigint, cawPrice: number): string {
+  const cawStr = `${formatSpendLimitForMessage(tipCeiling)} CAW`
+  if (cawPrice > 0 && tipCeiling > 0n) {
+    const usd = Number(tipCeiling) * cawPrice
+    const usdStr = usd < 0.001
+      ? `~$${usd.toFixed(6)}`
+      : `~$${usd.toFixed(4)}`
+    return `${cawStr} (${usdStr})`
+  }
+  return cawStr
+}
+
+function buildSessionMessage(sessionKeyAddress: string, spendLimit: bigint, expiryTimestamp: number, tipCeiling: bigint = 0n, cawPrice: number = 0): string {
   const d = new Date(expiryTimestamp * 1000)
   const day = d.getUTCDate()
   const month = MONTHS[d.getUTCMonth()]
@@ -77,21 +91,23 @@ function buildSessionMessage(sessionKeyAddress: string, spendLimit: bigint, perA
   const mm = String(d.getUTCMinutes()).padStart(2, '0')
   const ss = String(d.getUTCSeconds()).padStart(2, '0')
 
-  return [
+  const lines = [
     'Enable Quick Sign',
     '------------------',
     'Spend limit:',
     `${formatSpendLimitForMessage(spendLimit)} CAW`,
     '',
     'Tip per action:',
-    `${perActionTipRate.toString()} CAW`,
+    tipCeiling === 0n ? 'none' : formatTipCeilingForMessage(tipCeiling, cawPrice),
     '',
     'Expires:',
     `${day} ${month} ${year} ${hh}:${mm}:${ss} UTC`,
     '',
     'CAW Key:',
     sessionKeyAddress,
-  ].join('\n')
+  ]
+
+  return lines.join('\n')
 }
 
 const SESSION_DOMAIN = {
@@ -103,11 +119,13 @@ const SESSION_DOMAIN = {
 
 export function useCreateSession() {
   const { signMessageAsync } = useSignMessage()
+  const { switchChainAsync } = useSwitchChain()
   const { isConnected, address: connectedAddress } = useAccount()
   const { openConnectModal } = useConnectModal()
   const chainId = useChainId()
   const setSession = useSessionKeyStore(s => s.setSession)
   const activeToken = useActiveToken()
+  const cawPrice = usePriceStore(s => s.priceMap['a-hunters-dream'] ?? 0)
 
   return useCallback(async (onProgress?: (status: string) => void, spendLimit: bigint = DEFAULT_SPEND_LIMIT, durationSeconds: number = DEFAULT_SESSION_DURATION, encryptWithWallet: boolean = false, tipCeiling: bigint = 0n) => {
     if (!isConnected) {
@@ -130,15 +148,12 @@ export function useCreateSession() {
       )
     }
 
-    // Note: we used to proactively switch to Base Sepolia here, but the
-    // wallet doesn't need to be on L2 for this flow. The session-creation
-    // signature uses personal_sign (signMessageAsync below), which is
-    // completely chain-agnostic — there's no domain.chainId for the wallet
-    // to react to. And the on-chain registration happens server-side
-    // (validator submits the tx after the FE POSTs the signed payload),
-    // so the user's wallet never sends an L2 tx. Skipping the switch saves
-    // a wallet round-trip — especially painful on mobile MetaMask where
-    // every programmatic chain-switch is a context activation.
+    // Ensure wallet is on Base Sepolia (where CawProfileL2 lives)
+    if (chainId !== baseSepolia.id) {
+      onProgress?.('Switching network...')
+      await switchChainAsync({ chainId: baseSepolia.id })
+    }
+
     onProgress?.('Generating session key...')
 
     const expiry = Math.floor(Date.now() / 1000) + durationSeconds
@@ -147,11 +162,7 @@ export function useCreateSession() {
     const privateKey = generatePrivateKey()
     const sessionAccount = privateKeyToAccount(privateKey)
 
-    // tipCeiling is the user-agreed maximum per-action validator tip — that's
-    // exactly what the contract stores as perActionTipRate on the session.
-    // The validator credits this amount per session-signed action and the
-    // user has already authorized it via this signature.
-    const message = buildSessionMessage(sessionAccount.address, spendLimit, tipCeiling, expiry)
+    const message = buildSessionMessage(sessionAccount.address, spendLimit, expiry, tipCeiling, cawPrice)
 
     console.log('[QuickSign] message:', message)
 
@@ -176,7 +187,6 @@ export function useCreateSession() {
     console.log('[QuickSign] Request created:', result.requestId)
 
     // Poll for completion (backend handles L2 sync waiting + tx submission)
-    let confirmed = false
     for (let i = 0; i < 80; i++) { // max ~4 minutes (covers 3min sync + tx time)
       await new Promise(r => setTimeout(r, 3000))
       try {
@@ -193,7 +203,6 @@ export function useCreateSession() {
           onProgress?.('Confirming transaction...')
         } else if (status.status === 'confirmed') {
           console.log('[QuickSign] Confirmed:', status.txHash, 'block:', status.blockNumber)
-          confirmed = true
           break
         } else if (status.status === 'failed') {
           console.error('[QuickSign] Registration failed:', status.error, 'Full status:', JSON.stringify(status))
@@ -203,16 +212,6 @@ export function useCreateSession() {
         if (e.message && !e.message.includes('API')) throw e
         // Ignore transient polling errors
       }
-    }
-
-    if (!confirmed) {
-      // Loop exhausted without on-chain confirmation. Do NOT store the session
-      // key — it was never registered and using it would silently fail every
-      // action. Surface a clear error so the user can retry.
-      console.error('[QuickSign] Timed out waiting for on-chain confirmation (requestId:', result.requestId, ')')
-      throw new Error(
-        'Session registration timed out. The transaction may still be pending — check your wallet or try again in a few minutes.'
-      )
     }
 
     // Store session locally after confirmation
@@ -249,7 +248,58 @@ export function useCreateSession() {
     }
 
     return { address: sessionAccount.address, expiry }
-  }, [isConnected, connectedAddress, openConnectModal, chainId, signMessageAsync, setSession, activeToken])
+  }, [isConnected, connectedAddress, openConnectModal, chainId, signMessageAsync, switchChainAsync, setSession, activeToken, cawPrice])
+}
+
+/**
+ * Reads the Network's on-chain tip target (denominated in CAW wei) from CawActions,
+ * converts it to a USD amount using ETH price, then to whole CAW tokens using CAW price.
+ *
+ * Returns:
+ *   - tipCeilingCaw: the converted amount in whole CAW (bigint), or undefined while loading
+ *   - tipCeilingUsd: the USD equivalent (number), or 0 if prices unavailable
+ *   - tipCeilingFallbackCaw: a $0.001-denominated fallback in whole CAW (always defined)
+ */
+export function useNetworkTipTargetAsCAW(networkId: number = 1): {
+  tipCeilingCaw: bigint | undefined
+  tipCeilingUsd: number
+  tipCeilingFallbackCaw: bigint
+} {
+  const cawPrice = usePriceStore(s => s.priceMap['a-hunters-dream'] ?? 0)
+
+  // Fallback: $0.001 worth of CAW
+  const USD_FALLBACK = 0.001
+  const tipCeilingFallbackCaw: bigint =
+    cawPrice > 0 ? BigInt(Math.max(1, Math.round(USD_FALLBACK / cawPrice))) : BigInt(1000)
+
+  const { data: tipTargetWei } = useReadContract({
+    address: CAW_ACTIONS_ADDRESS as `0x${string}`,
+    abi: cawActionsAbi,
+    functionName: 'networkTipTargetWei',
+    args: [networkId],
+    chainId: baseSepolia.id,
+    staleTime: 5 * 60 * 1000, // 5 minutes per project_infura_quota_dials
+  } as any)
+
+  if (tipTargetWei === undefined || tipTargetWei === null) {
+    return { tipCeilingCaw: undefined, tipCeilingUsd: 0, tipCeilingFallbackCaw }
+  }
+
+  const tipTargetBigInt = tipTargetWei as bigint
+
+  // tipTargetWei is in CAW-wei (18 decimals) — convert to whole CAW tokens
+  // If the target is 0 on-chain, fall back to the USD-denominated default
+  if (tipTargetBigInt === 0n) {
+    return { tipCeilingCaw: tipCeilingFallbackCaw, tipCeilingUsd: USD_FALLBACK, tipCeilingFallbackCaw }
+  }
+
+  const wholeCAW = tipTargetBigInt / BigInt(10 ** 18)
+  const tipCeilingCaw = wholeCAW > 0n ? wholeCAW : BigInt(1)
+
+  // USD value: whole CAW * cawPrice
+  const tipCeilingUsd = cawPrice > 0 ? Number(tipCeilingCaw) * cawPrice : 0
+
+  return { tipCeilingCaw, tipCeilingUsd, tipCeilingFallbackCaw }
 }
 
 export function useRevokeSession() {

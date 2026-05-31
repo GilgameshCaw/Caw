@@ -11,7 +11,7 @@ import { useVerifyWallet } from '~/hooks/useVerifyWallet'
 import { useAuthStore } from '~/store/authStore'
 import { useDmClient } from '~/hooks/useDm'
 import { useDmIdentity } from '~/hooks/useDmIdentity'
-import { useCreateSession, getDefaultSpendLimit, getDefaultTipCeiling, DEFAULT_SESSION_DURATION } from '~/hooks/useSessionKey'
+import { useCreateSession, getDefaultSpendLimit, DEFAULT_SESSION_DURATION, useNetworkTipTargetAsCAW } from '~/hooks/useSessionKey'
 import { getTipTiers } from '~/api/actions'
 import { useSessionKeyStore } from '~/store/sessionKeyStore'
 import { useHasActiveSession } from '~/hooks/useHasActiveSession'
@@ -22,10 +22,7 @@ import { CAW_ADDRESS, CAW_NAMES_ADDRESS, CAW_NAME_QUOTER_ADDRESS } from '~/../..
 import { cawProfileAbi, cawProfileQuoterAbi } from '~/../../../abi/generated'
 import { chains } from '~/config/chains'
 import { handleError } from '~/utils'
-import { formatUsd } from '~/utils/numberFormat'
 import { apiFetch, retryOnIndexing } from '~/api/client'
-
-import NetworkFeesPanel from '~/components/NetworkFeesPanel'
 
 const persistOnboardingStep = (username: string, step: number) => {
   apiFetch(`/api/users/onboarding/${username}`, {
@@ -427,12 +424,21 @@ const PostMintOnboarding: React.FC<PostMintOnboardingProps> = ({ username, token
   const [qsError, setQsError] = useState<string | null>(null)
   const [qsComplete, setQsComplete] = useState(false)
   const onboardingCawPrice = usePriceStore(s => s.priceMap['a-hunters-dream'] ?? 0)
+  const { tipCeilingCaw: networkTipCaw, tipCeilingFallbackCaw } = useNetworkTipTargetAsCAW()
   const qsDefaultLimit = getDefaultSpendLimit()
   const [qsSpendLimit, setQsSpendLimit] = useState<bigint>(qsDefaultLimit)
   const [qsDuration, setQsDuration] = useState<number>(DEFAULT_SESSION_DURATION)
-  const [qsTipCeiling, setQsTipCeiling] = useState<bigint>(() => getDefaultTipCeiling(getTipTiers().fast))
+  // Default tip ceiling: network tip target (once loaded), else $0.001 fallback; user can edit
+  const [qsTipCeiling, setQsTipCeiling] = useState<bigint>(() => tipCeilingFallbackCaw)
   const [qsWalletProtect, setQsWalletProtect] = useState(false)
   const [showQsInfo, setShowQsInfo] = useState(false)
+
+  // Once networkTipCaw resolves from the chain read, promote the default (only if user hasn't edited)
+  useEffect(() => {
+    if (networkTipCaw !== undefined) {
+      setQsTipCeiling(prev => prev === tipCeilingFallbackCaw ? networkTipCaw : prev)
+    }
+  }, [networkTipCaw, tipCeilingFallbackCaw])
 
   const handleEnableQuickSign = async () => {
     setQsLoading(true)
@@ -987,7 +993,7 @@ const PostMintOnboarding: React.FC<PostMintOnboardingProps> = ({ username, token
                     <div className={`flex justify-between text-xs px-2 ${tc.textSubtle}`}>
                       <span>Available: {availableBalance.toLocaleString('en-US', { maximumFractionDigits: 0 })} CAW</span>
                       {amount && parseFloat(amount) > 0 && cawPrice > 0 && (
-                        <span>~${formatUsd(parseFloat(amount) * cawPrice)}</span>
+                        <span>~${(parseFloat(amount) * cawPrice).toFixed(2)}</span>
                       )}
                     </div>
                   </div>
@@ -998,13 +1004,6 @@ const PostMintOnboarding: React.FC<PostMintOnboardingProps> = ({ username, token
                       <a href="https://app.uniswap.org/#/swap?inputCurrency=ETH&outputCurrency=0xf3b9569F82B18aEf890De263B84189bd33EBe452" target="_blank" rel="noopener noreferrer" className="underline hover:text-red-300">Buy more on Uniswap</a>
                     </p>
                   )}
-
-                  <NetworkFeesPanel
-                    networkId={CLIENT_ID}
-                    show={['deposit']}
-                    showCacheExplainer
-                    omitZeroRows
-                  />
 
                   <button
                     onClick={handleStake}
@@ -1132,27 +1131,16 @@ const PostMintOnboarding: React.FC<PostMintOnboardingProps> = ({ username, token
                         <p className={`text-sm font-medium ${setupQsDone ? 'text-green-400' : tc.textPrimary}`}>
                           Quick Sign
                         </p>
-                        {setupQsDone && hasActiveSession && (
-                          <span className={`text-xs px-1.5 py-0.5 rounded font-medium bg-green-500/20 text-green-400`}>
-                            Already enabled
-                          </span>
-                        )}
-                        {!setupQsDone && (
-                          <button
-                            type="button"
-                            onClick={() => setShowQsInfo(v => !v)}
-                            className={`transition-colors cursor-pointer ${isDark ? 'text-white/40 hover:text-white/70' : 'text-black/40 hover:text-black/70'}`}
-                            aria-label="Learn about Quick Sign"
-                          >
-                            <HiInformationCircle className="w-4 h-4" />
-                          </button>
-                        )}
+                        <button
+                          type="button"
+                          onClick={() => setShowQsInfo(v => !v)}
+                          className={`transition-colors cursor-pointer ${isDark ? 'text-white/40 hover:text-white/70' : 'text-black/40 hover:text-black/70'}`}
+                          aria-label="Learn about Quick Sign"
+                        >
+                          <HiInformationCircle className="w-4 h-4" />
+                        </button>
                       </div>
-                      <p className={`text-xs ${tc.textSubtle}`}>
-                        {setupQsDone && hasActiveSession
-                          ? 'Your session key is active — no wallet popup needed to post.'
-                          : 'Post and interact without wallet popups'}
-                      </p>
+                      <p className={`text-xs ${tc.textSubtle}`}>Post and interact without wallet popups</p>
                     </div>
                   </div>
                   {showQsInfo && (

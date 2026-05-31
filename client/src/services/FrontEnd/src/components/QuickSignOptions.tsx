@@ -1,10 +1,11 @@
-import React, { useState, useMemo } from 'react'
+import React, { useState, useMemo, useEffect, useRef } from 'react'
 import { HiPencil } from 'react-icons/hi'
 import {
   SESSION_DURATION_OPTIONS,
 } from '~/hooks/useSessionKey'
-import { getTipTiers } from '~/api/actions'
+import { getCurrentMarketTip, getTipTiers } from '~/api/actions'
 import { usePriceStore } from '~/store/tokenDataStore'
+import { useValidatorMinTips, countAcceptingValidators } from '~/hooks/useValidatorMinTips'
 
 /** Dollar-denominated spend limit presets */
 const DOLLAR_PRESETS = [
@@ -67,6 +68,11 @@ const QuickSignOptions: React.FC<QuickSignOptionsProps> = ({
 }) => {
   const [expanded, setExpanded] = useState(false)
   const cawPrice = usePriceStore(s => s.priceMap['a-hunters-dream'] ?? 0)
+  const ethPrice = usePriceStore(s => s.priceMap['ethereum'] ?? 0)
+  const { minTipsMap, total: validatorTotal, isLoading: validatorLoading } = useValidatorMinTips()
+  // Controlled USD input for tip ceiling
+  const [tipUsdInput, setTipUsdInput] = useState<string>('')
+  const [tipInputFocused, setTipInputFocused] = useState(false)
 
   // Convert dollar presets to CAW amounts based on live price
   const dollarOptions = useMemo(() => {
@@ -78,7 +84,13 @@ const QuickSignOptions: React.FC<QuickSignOptionsProps> = ({
   }, [cawPrice])
 
   // Tip tiers from the validator's config. These MUST be before the early return (Rules of Hooks).
+  const currentMarketTip = useMemo(() => getCurrentMarketTip(), [])
   const tiers = useMemo(() => getTipTiers(), [])
+  const tipPresets = useMemo(() => [
+    { label: 'Slow',      caw: tiers.slow,     speed: 'slower posts'   },
+    { label: 'Standard',  caw: tiers.standard, speed: 'balanced'       },
+    { label: 'Fast',      caw: tiers.fast,     speed: 'fastest posts'  },
+  ], [tiers])
 
   // Check which dollar preset matches the current spend limit (if any)
   const matchedPreset = dollarOptions?.find(o => spendLimit === o.caw)
@@ -162,6 +174,43 @@ const QuickSignOptions: React.FC<QuickSignOptionsProps> = ({
   }
 
   const isNoTip = tipCeiling === 0n
+  const matchedTipPreset = tipPresets.find(p => tipCeiling !== undefined && tipCeiling === p.caw)
+
+  // Keep the USD text input in sync with external tipCeiling changes (e.g. network default arriving)
+  // but don't clobber whatever the user is actively typing.
+  const prevTipCeilingRef = useRef<bigint | undefined>(tipCeiling)
+  useEffect(() => {
+    if (!tipInputFocused && tipCeiling !== prevTipCeilingRef.current) {
+      prevTipCeilingRef.current = tipCeiling
+      if (tipCeiling === undefined || tipCeiling === 0n) {
+        setTipUsdInput('')
+      } else if (cawPrice > 0) {
+        const usd = Number(tipCeiling) * cawPrice
+        // Show at least 4 decimal places for sub-cent values
+        const formatted = usd < 0.01 ? usd.toFixed(5) : usd.toFixed(3)
+        setTipUsdInput(formatted)
+      } else {
+        setTipUsdInput('')
+      }
+    }
+  }, [tipCeiling, cawPrice, tipInputFocused])
+
+  // Handler: user edits the USD input — convert to whole CAW and propagate
+  const handleTipUsdChange = (raw: string) => {
+    setTipUsdInput(raw)
+    if (!onTipCeilingChange) return
+    if (raw === '' || raw === '0') {
+      onTipCeilingChange(0n)
+      return
+    }
+    const usd = parseFloat(raw)
+    if (isNaN(usd) || usd < 0) return
+    if (cawPrice > 0) {
+      const caw = BigInt(Math.max(1, Math.round(usd / cawPrice)))
+      onTipCeilingChange(caw)
+      prevTipCeilingRef.current = caw
+    }
+  }
 
   if (!expanded) {
     return (
@@ -278,40 +327,64 @@ const QuickSignOptions: React.FC<QuickSignOptionsProps> = ({
         </div>
       </div>
 
-      {/* Max tip per action — user sets their ceiling; Network drives the actual rate */}
+      {/* Tip speed — determines how quickly validators process your actions */}
       {onTipCeilingChange && (
         <div>
-          <p className={labelClass}>Max tip per action (CAW)</p>
+          <p className={labelClass}>Tip per action</p>
           <p className={descClass}>
-            The Network sets the actual rate; this is your maximum.
+            The CAW Protocol is made possible by validators who pay LayerZero fees to
+            publish your actions on-chain. Your tip rewards them — higher tips get
+            faster processing. Enter a dollar amount or choose a preset.
           </p>
-          <div className="flex items-center gap-2">
+          {/* USD input */}
+          <div className="flex items-center gap-2 mb-2">
+            <span className={`text-sm ${mutedClass}`}>$</span>
             <input
               type="number"
               min="0"
-              step="1"
-              value={isNoTip ? '' : String(tipCeiling ?? 0n)}
-              placeholder={isNoTip ? '0' : undefined}
-              disabled={isNoTip}
-              onChange={e => {
-                const raw = e.target.value.trim()
-                if (raw === '' || raw === '0') {
-                  onTipCeilingChange(0n)
-                } else {
-                  const parsed = parseInt(raw, 10)
-                  if (!isNaN(parsed) && parsed >= 0) onTipCeilingChange(BigInt(parsed))
-                }
-              }}
-              className={`w-36 px-3 py-1.5 rounded-lg text-sm font-medium border transition-colors ${
+              step="0.00001"
+              value={tipUsdInput}
+              placeholder="0.001"
+              onFocus={() => setTipInputFocused(true)}
+              onBlur={() => setTipInputFocused(false)}
+              onChange={e => handleTipUsdChange(e.target.value)}
+              className={`w-28 px-2 py-1 rounded-lg text-sm border outline-none transition-colors ${
                 themed && !isDark
-                  ? 'bg-white text-black border-gray-300 focus:border-yellow-500'
+                  ? 'bg-white text-gray-900 border-gray-300 focus:border-yellow-500'
                   : 'bg-white/10 text-white border-white/20 focus:border-yellow-500'
-              } disabled:opacity-40`}
+              }`}
             />
+            {tipCeiling !== undefined && tipCeiling > 0n && (
+              <span className={`text-xs ${mutedLightClass}`}>
+                ≤ {formatSpendLimit(tipCeiling)} CAW
+              </span>
+            )}
+          </div>
+          {/* Speed presets */}
+          <div className="flex flex-wrap gap-1">
+            {tipPresets.map(p => (
+              <button
+                key={p.label}
+                type="button"
+                onClick={() => {
+                  onTipCeilingChange(p.caw)
+                  if (cawPrice > 0) {
+                    const usd = Number(p.caw) * cawPrice
+                    setTipUsdInput(usd < 0.01 ? usd.toFixed(5) : usd.toFixed(3))
+                  }
+                }}
+                className={`rounded-lg text-sm font-medium transition-all cursor-pointer ${btnClass(matchedTipPreset?.label === p.label)}`}
+                style={{ padding: '5px 8px' }}
+                title={p.speed}
+              >
+                {p.label}
+              </button>
+            ))}
             <button
               type="button"
-              onClick={() => onTipCeilingChange(isNoTip ? tiers.fast : 0n)}
-              className={`rounded-lg text-sm font-medium transition-all cursor-pointer px-3 py-1.5 ${btnClass(isNoTip)}`}
+              onClick={() => { onTipCeilingChange(0n); setTipUsdInput('') }}
+              className={`rounded-lg text-sm font-medium transition-all cursor-pointer ${btnClass(isNoTip)}`}
+              style={{ padding: '5px 8px' }}
             >
               No tip
             </button>
@@ -324,9 +397,47 @@ const QuickSignOptions: React.FC<QuickSignOptionsProps> = ({
           )}
           {!isNoTip && tipCeiling !== undefined && tipCeiling > 0n && (
             <p className={`text-xs mt-1.5 text-left ${mutedLightClass}`}>
-              ~{formatTipCaw(tipCeiling)} per action
+              {matchedTipPreset?.speed ?? 'custom'} — you commit to ≤ {formatTipCaw(tipCeiling)} / ≤ {formatSpendLimit(tipCeiling)} CAW per action
             </p>
           )}
+          {/* Validator acceptance indicator (#170) — shows how many discovered
+              mirrors will accept this ceiling. Validators publish their floor
+              via /api/validator-analytics/tip-config; min-tip wei is converted
+              against the user's signed CAW ceiling via current ETH/CAW spot. */}
+          {tipCeiling !== undefined && !validatorLoading && validatorTotal > 0 && (() => {
+            const { accepting, total: tot, minFloorWei } = countAcceptingValidators(
+              minTipsMap,
+              validatorTotal,
+              tipCeiling,
+              cawPrice,
+              ethPrice,
+            )
+            if (accepting === 0 && tot > 0) {
+              let minRequiredCaw = ''
+              if (minFloorWei > 0n && cawPrice > 0 && ethPrice > 0) {
+                const cawInEth = cawPrice / ethPrice
+                const minCaw = Math.ceil(Number(minFloorWei) / 1e18 / cawInEth)
+                minRequiredCaw = minCaw > 0 ? ` Raise to ≥ ${minCaw.toLocaleString()} CAW to be accepted by all.` : ''
+              }
+              return (
+                <p className="text-xs text-red-400 mt-1.5 text-left">
+                  No validators will process actions at this tip rate.{minRequiredCaw}
+                </p>
+              )
+            }
+            if (accepting < tot) {
+              return (
+                <p className={`text-xs mt-1.5 text-left ${mutedLightClass}`}>
+                  Accepted by {accepting} of {tot} validator{tot !== 1 ? 's' : ''}.
+                </p>
+              )
+            }
+            return (
+              <p className={`text-xs mt-1.5 text-left ${mutedLightClass}`}>
+                Accepted by all {tot} validator{tot !== 1 ? 's' : ''}.
+              </p>
+            )
+          })()}
         </div>
       )}
 
