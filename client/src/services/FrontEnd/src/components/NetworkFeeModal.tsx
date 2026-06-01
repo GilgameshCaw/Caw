@@ -266,7 +266,7 @@ const NetworkFeeModal: React.FC<NetworkFeeModalProps> = ({
               <tr className="border-t border-[#4f3c0096] text-[#6c6c6c]">
                 <td className="py-2 pr-4 text-sm">
                   <span className="relative group inline-flex items-center gap-1">
-                    <span>Maximum withdraw fee for you</span>
+                    <span>Maximum withdraw fee</span>
                     <button
                       type="button"
                       aria-label="Withdraw fee info"
