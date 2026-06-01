@@ -52,6 +52,10 @@ export type CawItem = {
   tipCount?: number // Total number of tips on this caw
   totalTipAmount?: number // Total CAW tipped on this caw
   likePending?: boolean // True when like is pending on-chain confirmation
+  /** Direction of the in-flight like action when likePending is true. Used
+   *  by FeedItem to render the optimistic heart-fill across refresh — without
+   *  it, the heart un-fills until the action confirms on chain. */
+  likePendingAction?: 'LIKE' | 'UNLIKE' | null
   recawPending?: boolean // True when recaw is pending on-chain confirmation
   replyPending?: boolean // True when reply is pending on-chain confirmation
   status?: 'SUCCESS' | 'PENDING' | 'FAILED' | 'HIDDEN' // Transaction status of the caw (HIDDEN = removed by author)

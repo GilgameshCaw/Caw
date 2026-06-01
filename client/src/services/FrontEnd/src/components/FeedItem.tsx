@@ -1837,9 +1837,21 @@ const FeedItem: React.FC<{ item: CawItem; isMainPost?: boolean; isReply?: boolea
 
               {/* Likes */}
               {(() => {
-                const effectiveHasLiked = (likeOverride !== null && likeOverride !== useItem.hasLiked)
-                  ? likeOverride
-                  : useItem.hasLiked
+                // Resolution order for the heart-fill:
+                //  1. In-component override (just-clicked, no server response yet)
+                //  2. Server's confirmed hasLiked
+                //  3. Server's likePendingAction — if a like/unlike is in flight
+                //     (e.g. after a refresh, when the override is gone) we should
+                //     still render the optimistic direction. Without this, the
+                //     heart un-fills on every refresh until the action confirms.
+                let effectiveHasLiked: boolean
+                if (likeOverride !== null && likeOverride !== useItem.hasLiked) {
+                  effectiveHasLiked = likeOverride
+                } else if (useItem.likePending && useItem.likePendingAction) {
+                  effectiveHasLiked = useItem.likePendingAction === 'LIKE'
+                } else {
+                  effectiveHasLiked = useItem.hasLiked
+                }
                 return (
               <Tooltip
                 text={

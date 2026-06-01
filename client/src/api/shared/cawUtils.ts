@@ -114,6 +114,11 @@ export interface ShapedCaw {
   // unpin hasn't confirmed yet. UI uses this for spinner / dim state.
   pinPending?: boolean
   likePending?: boolean
+  /** Direction of the in-flight like action, when likePending is true.
+   *  'LIKE'  = user just liked, waiting to confirm   → render as liked
+   *  'UNLIKE' = user just unliked, waiting to confirm → render as unliked
+   *  null/undefined when no pending action. */
+  likePendingAction?: 'LIKE' | 'UNLIKE' | null
   recawPending?: boolean
   replyPending?: boolean
   commentCount: number
@@ -199,6 +204,11 @@ export function shapeCaw(raw: CawRaw | any): ShapedCaw {
     //   pending UNLIKE   (in-flight undo)    → false (already undone)
     hasLiked: Boolean(userLike && !userLike.pending && (userLike.action ?? 'LIKE') === 'LIKE'),
     likePending: userLike?.pending,
+    // Surface the direction so the FE can render the optimistic heart-fill
+    // after a refresh (when its in-component override is gone). Without this
+    // the heart icon would un-fill itself on refresh even though the user's
+    // like is genuinely in-flight.
+    likePendingAction: userLike?.pending ? ((userLike.action ?? 'LIKE') as 'LIKE' | 'UNLIKE') : null,
     hasRecawed, // Only true if recawed AND confirmed
     recawPending,
     hasReplied, // Only true if replied AND confirmed
