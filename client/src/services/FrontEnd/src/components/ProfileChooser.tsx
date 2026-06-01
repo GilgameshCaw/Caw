@@ -394,7 +394,6 @@ const ProfileChooser: React.FC<{ compact?: boolean }> = ({ compact = false }) =>
 
   const walletMismatch = address?.toLowerCase() != activeToken?.owner?.toLowerCase();
   const notCurrentAddress = !hasActiveSession && walletMismatch;
-  const quickSignWithWrongWallet = hasActiveSession && walletMismatch && isConnected;
 
   // Normalize all addresses to lowercase to prevent duplicates with different cases
   const normalizedTokensByAddress: Record<Address, TokenData[]> = {}
@@ -484,10 +483,8 @@ const ProfileChooser: React.FC<{ compact?: boolean }> = ({ compact = false }) =>
     hiddenTokensByAddress[addrKey] = full.filter(t => !visibleIds.has(t.tokenId))
   }
 
-  // Net in-flight CAW delta for the active profile. Computed once here so
-  // both the inline "pending" badge AND the QuickSign hint below can react
-  // to it — when there's a real pending value (in or out) the "(Quick Sign)"
-  // line is hidden so the two states don't fight for the same row.
+  // Net in-flight CAW delta for the active profile — drives the inline
+  // "+X / -X pending" badge below the staked amount.
   const activeTid = activeToken?.tokenId
   const pendingDep = pendingDepositWei ?? 0n
   const recentIncoming = activeTid == null ? 0n : balanceWindows.reduce(
@@ -613,11 +610,6 @@ const ProfileChooser: React.FC<{ compact?: boolean }> = ({ compact = false }) =>
               >
                 {isConnected ? "(Wrong Address)" : "not connected"}
               </span>
-            </div>
-          )}
-          {quickSignWithWrongWallet && pendingCawDelta === 0n && (
-            <div className="text-2xs text-yellow-500">
-              (Quick Sign)
             </div>
           )}
         </div>
