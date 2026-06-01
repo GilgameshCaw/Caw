@@ -240,21 +240,24 @@ export async function apiFetch<T = any>(
     // fall through to the generic !res.ok handler below.
   }
 
-  // 403 TOKEN_OWNER_CHANGED — token was transferred to/from a wallet
-  // since this session was issued. Common case: user just bought an
-  // NFT in the marketplace and the indexer has now updated
-  // User.address, but the session's authorizedTokenIds doesn't yet
-  // include the new tokenId. /api/auth/refresh re-reads the DB and
-  // adds the new tokenId without requiring a fresh signature. Retry
-  // the original call exactly once after refresh succeeds.
-  //
-  // Bug #135: without this auto-refresh, the user has to manually
-  // re-sign in after every NFT purchase before they can post / like /
-  // recaw with the newly-owned profile.
-  if (res.status === 403 && !init?.[RETRY_FLAG]) {
+  // Auto-refresh session when the session is valid but its authorizedTokenIds
+  // doesn't include the requested tokenId. Two cases hit this:
+  //  - 403 TOKEN_OWNER_CHANGED: NFT transferred to/from a wallet since the
+  //    session was issued (e.g. marketplace purchase — bug #135).
+  //  - 401 TOKEN_NOT_AUTHORIZED: requested tokenId isn't in the session's
+  //    list at all (e.g. user just minted a NEW profile, the existing
+  //    wallet session predates it). Without auto-refresh the FE 401s on
+  //    the new profile's onboarding PATCH / notifications / etc. until
+  //    the user manually re-signs in.
+  // Both fixes are identical — call /api/auth/refresh (no signature
+  // required) and retry the original request exactly once.
+  const needsRefresh =
+    (res.status === 403 || res.status === 401) && !init?.[RETRY_FLAG]
+  if (needsRefresh) {
     let errorData: any = {}
     try { errorData = await res.clone().json() } catch {}
-    if (errorData?.error === 'TOKEN_OWNER_CHANGED') {
+    const refreshableErrors = ['TOKEN_OWNER_CHANGED', 'TOKEN_NOT_AUTHORIZED']
+    if (refreshableErrors.includes(errorData?.error)) {
       try {
         const refreshRes = await fetch(`${host}/api/auth/refresh`, {
           method: 'POST',
@@ -262,13 +265,26 @@ export async function apiFetch<T = any>(
           headers: buildHeaders({ method: 'POST' }),
         })
         if (refreshRes.ok) {
+          // Pull the refreshed session back into the FE store so consumers
+          // (isTokenAuthorized, badges, etc.) reflect the new authorized list.
+          try {
+            const refreshed = await refreshRes.json()
+            if (refreshed?.sessionToken) {
+              useAuthStore.getState().setSession(
+                refreshed.sessionToken,
+                refreshed.authorizedTokenIds ?? [],
+                refreshed.authorizedAddresses ?? [],
+                refreshed.expiresAt ?? Date.now() + 86400_000,
+              )
+            }
+          } catch {}
           return apiFetch<T>(path, { ...init, [RETRY_FLAG]: true })
         }
       } catch (err) {
-        console.warn('[apiFetch] auth refresh during TOKEN_OWNER_CHANGED retry failed:', err)
+        console.warn(`[apiFetch] auth refresh during ${errorData?.error} retry failed:`, err)
       }
       // Refresh didn't help — fall through to the standard error path
-      // so the caller still sees the 403.
+      // so the caller still sees the 401/403.
     }
   }
 
