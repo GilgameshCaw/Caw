@@ -4,7 +4,7 @@ import { useLocation } from 'react-router-dom'
 import { NavLink, useNavigate } from '~/utils/localizedRouter'
 import ProfileChooser           from '~/components/ProfileChooser'
 import { fetchTxPage }          from '../api/txs'
-import { useTokenDataStore, useActiveToken, usePriceStore } from "~/store/tokenDataStore";
+import { useTokenDataStore, useActiveToken, usePriceStore, usePriceSourceStore } from "~/store/tokenDataStore";
 import { useTheme } from "~/hooks/useTheme";
 import { useDmIdentity } from "~/hooks/useDmIdentity";
 import { useDmUnreadStore } from "~/store/dmUnreadStore";
@@ -75,6 +75,10 @@ function ApiHostIndicator() {
 
 function CawPriceTicker() {
   const cawPrice = usePriceStore(s => s.priceMap['a-hunters-dream'] ?? 0)
+  const mainnetPrice = usePriceStore(s => s.priceMap['a-hunters-dream-mainnet'] ?? 0)
+  const sepoliaPrice = usePriceStore(s => s.priceMap['a-hunters-dream-sepolia'] ?? 0)
+  const source = usePriceSourceStore(s => s.source)
+  const toggleSource = usePriceSourceStore(s => s.toggle)
   const { isDark } = useTheme()
 
   const formatAmount = (n: number): string => {
@@ -83,6 +87,10 @@ function CawPriceTicker() {
     if (n >= 1_000) return `${(n / 1_000).toFixed(1)}K`
     return n.toFixed(0)
   }
+
+  // Only allow toggling if BOTH sources are available — on production the
+  // sepolia mirror will be null and toggling would do nothing useful.
+  const canToggle = mainnetPrice > 0 && sepoliaPrice > 0
 
   if (!cawPrice || cawPrice <= 0) {
     return (
@@ -95,8 +103,15 @@ function CawPriceTicker() {
   const cawPerPenny = 0.01 / cawPrice
 
   return (
-    <div className={`mt-1 text-xs ml-[17px] ${isDark ? 'text-white/30' : 'text-gray-700'}`}>
+    <div
+      onClick={canToggle ? toggleSource : undefined}
+      title={canToggle ? `CAW price source: ${source} (click to switch)` : undefined}
+      className={`mt-1 text-xs ml-[17px] select-none ${canToggle ? 'cursor-pointer' : ''} ${isDark ? 'text-white/30 hover:text-white/50' : 'text-gray-700 hover:text-gray-900'}`}
+    >
       $0.01 ≈ {formatAmount(cawPerPenny)} CAW
+      {source === 'sepolia' && canToggle && (
+        <span className={`ml-1 ${isDark ? 'text-white/20' : 'text-gray-500'}`}>(s)</span>
+      )}
     </div>
   )
 }

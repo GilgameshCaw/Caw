@@ -353,3 +353,39 @@ export const usePriceStore = create<{
     setPriceMap: prices => set({ priceMap: prices }),
 }))
 
+/**
+ * Which liquidity pool the CAW $-display should resolve to.
+ *  - 'mainnet': real CAW/WETH pool on Ethereum mainnet (CAW spot from Uniswap V2)
+ *  - 'sepolia': testnet CAW/WETH pool on Sepolia (matches what the zap actually
+ *               charges, so users see the same $ value they actually paid)
+ *
+ * useFetchPrices mirrors the active source into priceMap['a-hunters-dream']
+ * so all consumers read the right value without per-callsite changes.
+ * Persisted to localStorage so the user's pick survives reloads.
+ */
+type PriceSource = 'mainnet' | 'sepolia'
+const PRICE_SOURCE_KEY = 'caw:priceSource'
+function loadPriceSource(): PriceSource {
+  if (typeof window === 'undefined') return 'mainnet'
+  try {
+    const v = localStorage.getItem(PRICE_SOURCE_KEY)
+    return v === 'sepolia' ? 'sepolia' : 'mainnet'
+  } catch { return 'mainnet' }
+}
+export const usePriceSourceStore = create<{
+  source: PriceSource
+  setSource: (s: PriceSource) => void
+  toggle: () => void
+}>((set, get) => ({
+  source: loadPriceSource(),
+  setSource: (source: PriceSource) => {
+    try { localStorage.setItem(PRICE_SOURCE_KEY, source) } catch {}
+    set({ source })
+  },
+  toggle: () => {
+    const next: PriceSource = get().source === 'mainnet' ? 'sepolia' : 'mainnet'
+    try { localStorage.setItem(PRICE_SOURCE_KEY, next) } catch {}
+    set({ source: next })
+  },
+}))
+

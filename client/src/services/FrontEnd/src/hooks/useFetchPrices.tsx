@@ -1,6 +1,6 @@
 import { useEffect } from "react"
 import { useQuery } from "@tanstack/react-query"
-import { usePriceStore } from "~/store/tokenDataStore"
+import { usePriceStore, usePriceSourceStore } from "~/store/tokenDataStore"
 import { apiFetch } from "~/api/client"
 
 interface PriceResponse {
@@ -14,6 +14,7 @@ interface PriceResponse {
 
 export function useFetchPrices() {
   const setPriceMap = usePriceStore(s => s.setPriceMap)
+  const priceSource = usePriceSourceStore(s => s.source)
 
   const query = useQuery({
     queryKey: ["tokenPrices"],
@@ -22,11 +23,7 @@ export function useFetchPrices() {
       try {
         const data = await apiFetch<PriceResponse>('/api/prices')
         console.log('[useFetchPrices] Response:', data)
-        const prices: Record<string, number> = {}
-        if (data.usdPerEth) prices['ethereum'] = data.usdPerEth
-        if (data.usdPerCaw) prices['a-hunters-dream'] = data.usdPerCaw
-        if (data.usdPerCawSepolia) prices['a-hunters-dream-sepolia'] = data.usdPerCawSepolia
-        return prices
+        return data
       } catch (err) {
         console.error('[useFetchPrices] Failed:', err)
         throw err
@@ -37,12 +34,24 @@ export function useFetchPrices() {
     retryDelay: 5000,
   })
 
+  // Re-derive the priceMap whenever the data OR the user's preferred source
+  // changes. Mirroring the active source into priceMap['a-hunters-dream']
+  // (the legacy key consumed by ~10 components) lets the toggle flip every
+  // display site at once without per-callsite changes.
   useEffect(() => {
-    console.log('[useFetchPrices] Query state:', { status: query.status, data: query.data, error: query.error?.message })
-    if (query.data && Object.keys(query.data).length > 0) {
-      setPriceMap(query.data)
-    }
-  }, [query.data, query.status, query.error, setPriceMap])
+    const data = query.data
+    if (!data) return
+    const prices: Record<string, number> = {}
+    if (data.usdPerEth) prices['ethereum'] = data.usdPerEth
+    if (data.usdPerCaw) prices['a-hunters-dream-mainnet'] = data.usdPerCaw
+    if (data.usdPerCawSepolia) prices['a-hunters-dream-sepolia'] = data.usdPerCawSepolia
+    // Effective key — what existing consumers read.
+    const effective = priceSource === 'sepolia'
+      ? (data.usdPerCawSepolia ?? data.usdPerCaw)
+      : (data.usdPerCaw ?? data.usdPerCawSepolia)
+    if (effective != null) prices['a-hunters-dream'] = effective
+    setPriceMap(prices)
+  }, [query.data, priceSource, setPriceMap])
 
   return query
 }
