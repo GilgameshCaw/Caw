@@ -150,8 +150,26 @@ const PostMintOnboarding: React.FC<PostMintOnboardingProps> = ({ username, token
     userCardBorder: isDark ? 'border-white/10' : 'border-black/10',
     avatarBorder: isDark ? 'border-white/20' : 'border-black/20',
   }
-  const depositPending = !!pendingDeposit
-  const pendingDepositAmount = pendingDeposit ? BigInt(pendingDeposit) : 0n
+  // Treat the deposit step as "in progress" whenever EITHER the router-state
+  // prop is set (fresh mint, this tab) OR a fresh localStorage pending hint
+  // exists for this token. The hint survives refresh and matches what the
+  // ProfileChooser uses to render the "+X pending" chip — same source of
+  // truth across the FE. Without this fallback, refreshing the welcome
+  // stepper after a successful zap would re-show the deposit step.
+  const pendingHintAmount: bigint | null = (() => {
+    if (!tokenId) return null
+    try {
+      const raw = localStorage.getItem(`caw:pendingDeposit:${tokenId}`)
+      if (!raw) return null
+      const parsed = JSON.parse(raw) as { amount?: string; at?: number }
+      if (!parsed?.amount) return null
+      // Match the ProfileChooser hint TTL (30 min hard expiry).
+      if (Date.now() - (parsed.at ?? 0) > 30 * 60 * 1000) return null
+      return BigInt(parsed.amount)
+    } catch { return null }
+  })()
+  const depositPending = !!pendingDeposit || (pendingHintAmount !== null && pendingHintAmount > 0n)
+  const pendingDepositAmount = pendingDeposit ? BigInt(pendingDeposit) : (pendingHintAmount ?? 0n)
   const [currentStep, setCurrentStep] = useState(initialStep)
   const [completedSteps, setCompletedSteps] = useState<Set<StepId>>(new Set())
   const [skippedSteps, setSkippedSteps] = useState<Set<StepId>>(new Set())

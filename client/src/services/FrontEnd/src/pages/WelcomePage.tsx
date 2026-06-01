@@ -139,6 +139,30 @@ const WelcomePage: React.FC = () => {
 
         if (cancelled) return
 
+        // Once a user has dismissed the welcome stepper (completed OR skipped
+        // through to the end), don't bring them back to it on subsequent
+        // refreshes. The server's onboardingStep can lag (e.g. last PATCH
+        // didn't make it through) but the user's intent ("I'm done with
+        // this") is recorded once via this localStorage marker. Cleared
+        // only by explicit "Show me the welcome flow again" action — there
+        // isn't one today, which is fine; the stepper is one-shot UX.
+        let stepperDismissed = false
+        try { stepperDismissed = localStorage.getItem(`caw:onboardingExited:${username}`) === '1' } catch {}
+
+        if (stepperDismissed) {
+          console.log('[WelcomePage] User previously exited stepper for this profile, redirecting to home')
+          // Best-effort: bump the server step so this short-circuit is consistent
+          // across devices/sessions next time too.
+          if (res.onboardingStep < 5) {
+            apiFetch(`/api/users/onboarding/${username}`, {
+              method: 'PATCH',
+              body: JSON.stringify({ step: 5 }),
+            }).catch(() => {})
+          }
+          navigate('/home', { replace: true })
+          return
+        }
+
         if (res.onboardingStep === -1) {
           // User not found in DB — for /welcome this is expected for fresh mints
           console.log('[WelcomePage] User not found in DB (expected for fresh mint), starting onboarding at step 0')
@@ -264,7 +288,9 @@ const WelcomePage: React.FC = () => {
       initialStep={initialStep}
       pendingDeposit={pendingDeposit}
       onComplete={() => {
-        // Mark onboarding complete
+        // Mark onboarding complete (server side, and locally so future refreshes
+        // bypass the stepper even if the server PATCH failed).
+        try { localStorage.setItem(`caw:onboardingExited:${username}`, '1') } catch {}
         apiFetch(`/api/users/onboarding/${username}`, {
           method: 'PATCH',
           body: JSON.stringify({ step: 5 }),
