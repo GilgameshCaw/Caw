@@ -700,7 +700,23 @@ const ProfileChooser: React.FC<{ compact?: boolean }> = ({ compact = false }) =>
                         <div className="min-w-0">
                           <div className="font-bold truncate">{token.username}</div>
                           <div className="text-xs text-gray-400">
-                            {token.stakedAmount > 0n ? convertToText((token.stakedAmount / 10n**18n) * 10n**18n) : "No"} CAW staked
+                            {(() => {
+                              // If staked > 0 → show "staked", no pending overlay (per UX spec).
+                              // If staked == 0 AND there's a pending deposit hint → show pending line instead of "No CAW".
+                              // Else → "No CAW staked".
+                              if (token.stakedAmount > 0n) {
+                                return `${convertToText((token.stakedAmount / 10n**18n) * 10n**18n)} CAW staked`
+                              }
+                              const pendingWei = readPendingHint(token.tokenId)
+                              if (pendingWei && pendingWei > 0n) {
+                                if (cawPriceUsd !== undefined && cawPriceUsd > 0) {
+                                  const cawWhole = Number(pendingWei / 10n**18n) + Number(pendingWei % 10n**18n) / 1e18
+                                  return `+$${formatUsd(cawWhole * cawPriceUsd)} pending`
+                                }
+                                return `+${formatUnitsCompact(pendingWei, 18)} CAW pending`
+                              }
+                              return 'No CAW staked'
+                            })()}
                           </div>
                         </div>
                       </div>
@@ -770,7 +786,23 @@ const ProfileChooser: React.FC<{ compact?: boolean }> = ({ compact = false }) =>
                                     <div className="min-w-0">
                                       <div className="font-bold truncate">{token.username}</div>
                                       <div className="text-xs text-gray-400">
-                                        {token.stakedAmount > 0n ? convertToText((token.stakedAmount / 10n**18n) * 10n**18n) : "No"} CAW staked
+                                        {(() => {
+                              // If staked > 0 → show "staked", no pending overlay (per UX spec).
+                              // If staked == 0 AND there's a pending deposit hint → show pending line instead of "No CAW".
+                              // Else → "No CAW staked".
+                              if (token.stakedAmount > 0n) {
+                                return `${convertToText((token.stakedAmount / 10n**18n) * 10n**18n)} CAW staked`
+                              }
+                              const pendingWei = readPendingHint(token.tokenId)
+                              if (pendingWei && pendingWei > 0n) {
+                                if (cawPriceUsd !== undefined && cawPriceUsd > 0) {
+                                  const cawWhole = Number(pendingWei / 10n**18n) + Number(pendingWei % 10n**18n) / 1e18
+                                  return `+$${formatUsd(cawWhole * cawPriceUsd)} pending`
+                                }
+                                return `+${formatUnitsCompact(pendingWei, 18)} CAW pending`
+                              }
+                              return 'No CAW staked'
+                            })()}
                                       </div>
                                     </div>
                                   </div>
