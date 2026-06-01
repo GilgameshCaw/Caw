@@ -1252,20 +1252,21 @@ export const validatorService: Service = {
       //     would cycle them right back to failed. Instead, the DataCleaner watcher
       //     reads L2 on-chain state (authenticated[networkId][tokenId] and
       //     cawBalanceOf(tokenId)) and promotes them back to 'pending' only when the
-      //     deposit has actually landed. The watcher also handles the 20-min timeout
-      //     and failure path. The validator's only job here is to hard-fail any
-      //     waiting row older than 25 minutes as a last-resort safety net in case
-      //     the watcher is down.
-      const twentyFiveMinutesAgo = new Date(Date.now() - 25 * 60 * 1000)
+      //     deposit has actually landed. The watcher also handles the 48h timeout
+      //     and failure path (widened from 20 min in June 2026 after multi-day LZ
+      //     committer outages were forcing users to redo work that would have
+      //     eventually succeeded). This validator-side backstop sits 15m beyond
+      //     so the DataCleaner always wins the race in normal operation.
+      const safetyNetAgo = new Date(Date.now() - 48 * 60 * 60 * 1000 - 15 * 60 * 1000) // 48h15m
       const staleWaitingRows = await prisma.txQueue.findMany({
         where: {
           status: 'waiting_for_deposit',
-          createdAt: { lt: twentyFiveMinutesAgo }
+          createdAt: { lt: safetyNetAgo }
         },
         select: { id: true, senderId: true, payload: true }
       })
       if (staleWaitingRows.length > 0) {
-        console.log(`[Validator] Safety net: failing ${staleWaitingRows.length} waiting_for_deposit rows older than 25 min`)
+        console.log(`[Validator] Safety net: failing ${staleWaitingRows.length} waiting_for_deposit rows older than 48h15m`)
         for (const row of staleWaitingRows) {
           const data = (row.payload as any)?.data ?? {}
           await markTxQueueFailed(

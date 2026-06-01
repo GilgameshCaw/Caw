@@ -925,7 +925,13 @@ async function cleanupPendingMintDeposits() {
       }
     }
 
-    const twentyMinutesAgo = new Date(Date.now() - 20 * 60 * 1000)
+    // 48h tolerance — LZ testnet committers have had multi-day outages
+    // and the recovery path (auth + cawBalance landing on L2) is the
+    // single source of truth for "deposit arrived." Failing the row at
+    // 20 min was making users re-do work that would have eventually
+    // succeeded on its own. The variable name is retained for diff
+    // continuity; the value is now 48 hours.
+    const twentyMinutesAgo = new Date(Date.now() - 48 * 60 * 60 * 1000)
     let contract: Contract
     try {
       contract = getCawProfileL2()
@@ -1003,7 +1009,7 @@ async function cleanupPendingMintDeposits() {
               actionData
             )
           }
-          logger.log(`[PendingMintDeposit] Sender ${senderId}: timed out ${staleRows.length} rows (>20 min)`)
+          logger.log(`[PendingMintDeposit] Sender ${senderId}: timed out ${staleRows.length} rows (>48h)`)
         }
       } catch (err: any) {
         logger.error(`[PendingMintDeposit] Sender ${senderId} check failed: ${err.message}`)
