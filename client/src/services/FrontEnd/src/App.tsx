@@ -11,6 +11,8 @@ import { useBadgeSync } from '~/hooks/useBadgeSync'
 import { useIncomingBalanceWatcher } from '~/hooks/useIncomingBalanceWatcher'
 import BalanceChangeToast from '~/components/BalanceChangeToast'
 import { useBlockedUsersStore } from '~/store/blockedUsersStore'
+import { useAuthStore } from '~/store/authStore'
+import { apiFetch } from '~/api/client'
 import { useTokenDataStore } from '~/store/tokenDataStore'
 import { useActionErrorStore } from '~/store/actionErrorStore'
 import { useInstanceStore } from '~/store/instanceStore'
@@ -133,6 +135,38 @@ function App() {
     }, 30 * 60 * 1000)
     return () => clearInterval(id)
   }, [fetchInstances])
+
+  // Rehydrate the wallet session on app startup. The HttpOnly caw_session
+  // cookie carries the real auth — but the FE's useAuthStore only persists
+  // the derived hints (authorizedTokenIds/Addresses). On any reload the
+  // store starts effectively empty even when the cookie is still valid;
+  // /api/auth/refresh reads the DB and hydrates those hints back without
+  // requiring a fresh wallet signature. Fires once per mount.
+  useEffect(() => {
+    let cancelled = false
+    apiFetch<{
+      sessionToken?: string
+      authorizedTokenIds?: number[]
+      authorizedAddresses?: string[]
+      expiresAt?: number
+    }>('/api/auth/refresh', { method: 'POST' })
+      .then(data => {
+        if (cancelled) return
+        if (data?.sessionToken) {
+          useAuthStore.getState().setSession(
+            data.sessionToken,
+            data.authorizedTokenIds ?? [],
+            data.authorizedAddresses ?? [],
+            data.expiresAt ?? Date.now() + 86400_000,
+          )
+        }
+      })
+      .catch(() => {
+        // No live cookie or already-invalid session — leave the store as-is.
+        // (clearSession on AUTH_REQUIRED is handled inside apiFetch; do nothing here.)
+      })
+    return () => { cancelled = true }
+  }, [])
 
   // Fetch blocked users from server on init
   const activeTokenId = useTokenDataStore(s => s.activeTokenId)
