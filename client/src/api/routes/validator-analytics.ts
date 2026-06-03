@@ -276,6 +276,10 @@ const VALID_SETTINGS = [
   'maxWaitTime',            // ms before force-submitting
   'replicationInterval',    // ms between replication checks
   'acceptZeroTip',          // boolean — opt into processing zero-tip actions
+  // ETH-wei per-action floor published to /tip-config so the FE Quick Sign
+  // step can render the "Tip / action" cost. Without a row here the FE shows
+  // "—" and the validator imposes no per-action ETH floor. Task #169.
+  'minTipPerActionWei',
 ]
 
 /**

@@ -25,6 +25,8 @@ const SETTINGS_FIELDS: SettingField[] = [
     description: 'How often the background replication loop checks for completed 256-action checkpoints that need to be archived to other chains via LayerZero.' },
   { key: 'acceptZeroTip', label: 'Accept Zero-Tip Actions', default: false, kind: 'boolean',
     description: 'If enabled, this validator processes actions that include no tip at all (public-goods mode). Users who choose "No tip" in Quick Sign rely on validators that opt into this. You will pay LayerZero fees out of pocket for these actions — only enable if you want to subsidize free posting.' },
+  { key: 'minTipPerActionWei', label: 'Min Tip Per Action (ETH wei)', default: 30000000000000,
+    description: 'ETH-denominated per-action floor. The on-chain oracle converts to CAW at submission. The FE Quick Sign step reads this to show users the "Tip / action" cost in USD before they sign. Leave at 0 to impose no ETH floor (the CAW base tip above still applies). 30000000000000 wei ≈ $0.0001/action at $3300/ETH.' },
 ]
 
 const ValidatorSettings: React.FC = () => {

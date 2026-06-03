@@ -20,5 +20,5 @@ export const CAW_NAMES_L2_ADDRESS = "0xe0A701C4eD80D0a08d316bfBB7BB0717CAb88338"
 export const CAW_ACTIONS_ADDRESS = "0xcb4afF5CEe90998CDbCCAFe8a84D24D0a4F6B89d" as const;
 export const CAW_ACTIONS_ARCHIVE_ADDRESS = "0x25e2dDD7fd841cF6eF35330DCD9371c575477E13" as const;
 export const CAW_CHALLENGE_RELAY_ADDRESS = "0xb0D4a13b7Df875048ED8c650FE90956876Cd2812" as const;
-// export const CAW_ACTIONS_ERC1271_ADDRESS = '...' — not deployed for testnet/L2 yet
-// export const SMART_EOA_ADDRESS = '...' — not deployed for testnet/L2 yet
+export const CAW_ACTIONS_ERC1271_ADDRESS = "0xF0fB48d43E44b73ECa21DBF5270215a191a9Fe39" as const;
+export const SMART_EOA_ADDRESS = "0x0cac4995FCEc670fea7B8CEaC7C7c70573510A13" as const;
