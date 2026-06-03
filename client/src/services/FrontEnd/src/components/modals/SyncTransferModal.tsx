@@ -49,7 +49,10 @@ const SyncTransferModal: React.FC = () => {
       address: CAW_NAME_QUOTER_ADDRESS,
       abi: cawProfileQuoterAbi,
       functionName: 'syncTransferQuote',
-      args: [0, '0x0000000000000000000000000000000000000000', false],
+      // Phase 1: signature gained `lzDestId` as 3rd arg. This modal syncs
+      // to the cross-chain L2 (matches the syncTransfer call below), so
+      // quote against the L2 LayerZero eid.
+      args: [0, '0x0000000000000000000000000000000000000000', chains.l2.layerZero, false],
       chainId: chains.l1.chainId
     })
       .then((quote: any) => {

@@ -114,7 +114,10 @@ const ListingCard: React.FC<{ listing: MarketplaceListing; showCancel?: boolean 
     abi: cawProfileQuoterAbi,
     chainId: chains.l1.chainId,
     functionName: 'syncTransferQuote',
-    args: [listing.tokenId, listing.highestBidder as `0x${string}`, false],
+    // Phase 1: signature gained `lzDestId` as 3rd arg. Marketplace ops
+    // run through the bypassLZ same-chain ledger — quote against the
+    // L1 LayerZero eid to match the marketplace's immutable lzDestId.
+    args: [listing.tokenId, listing.highestBidder as `0x${string}`, chains.l1.layerZero, false],
     query: { enabled: !!(canSettle && listing.highestBidder) },
   })
   useEffect(() => {

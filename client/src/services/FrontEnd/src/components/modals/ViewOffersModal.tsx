@@ -139,7 +139,10 @@ const ViewOffersModal: React.FC = () => {
       address: CAW_NAME_QUOTER_ADDRESS,
       abi: cawProfileQuoterAbi,
       functionName: 'syncTransferQuote',
-      args: [tokenId, address, false],
+      // Phase 1: signature gained `lzDestId` as 3rd arg. Marketplace ops
+      // run through the bypassLZ same-chain ledger — quote against the
+      // L1 LayerZero eid to match the marketplace's immutable lzDestId.
+      args: [tokenId, address, chains.l1.layerZero, false],
       chainId: chains.l1.chainId,
     }).then((quote: any) => {
       setLzFee((quote.nativeFee * 120n) / 100n)
