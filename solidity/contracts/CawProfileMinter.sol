@@ -49,7 +49,7 @@ contract CawProfileMinter is Context {
   // EIP-712 struct type hashes — keccak256 is evaluated at compile time as a
   // constant expression.
   bytes32 internal constant MINT_DEPOSIT_TYPEHASH = keccak256(
-    "MintAndDeposit(uint32 networkId,address recipient,string username,uint256 depositAmount,uint32 lzDestId,uint256 lzTokenAmount,uint256 nonce)"
+    "MintAndDeposit(uint32 networkId,address recipient,string username,uint256 depositAmount,uint32 lzDestId,uint256 lzTokenAmount,uint256 nonce,uint8 kycLevel,uint32 sponsorTokenId,uint256 repayAmount)"
   );
 
   bytes32 internal constant DEPOSIT_FOR_TYPEHASH = keccak256(
@@ -117,7 +117,7 @@ contract CawProfileMinter is Context {
     }
     bytes memory sessionExtra = abi.encode(sessionKey, expiry, spendLimit, perActionTipRate);
     CawProfile.mintAndDeposit{value: msg.value}(
-      networkId, msg.sender, username, newId, depositAmount, lzDestId, lzTokenAmount, sessionExtra
+      networkId, msg.sender, username, newId, depositAmount, lzDestId, lzTokenAmount, sessionExtra, 0, 0
     );
   }
 
@@ -168,7 +168,7 @@ contract CawProfileMinter is Context {
       CAW.transferFrom(_msgSender(), address(this), depositAmount);
       CAW.approve(address(CawProfile), depositAmount);
     }
-    CawProfile.mintAndDeposit{value: msg.value}(networkId, recipient, username, newId, depositAmount, lzDestId, lzTokenAmount, "");
+    CawProfile.mintAndDeposit{value: msg.value}(networkId, recipient, username, newId, depositAmount, lzDestId, lzTokenAmount, "", 0, 0);
   }
 
   // ============================================
@@ -206,7 +206,7 @@ contract CawProfileMinter is Context {
       CAW.transferFrom(_msgSender(), address(this), depositAmount);
       CAW.approve(address(CawProfile), depositAmount);
     }
-    CawProfile.mintAndDeposit{value: msg.value}(networkId, recipient, username, newId, depositAmount, lzDestId, lzTokenAmount, "");
+    CawProfile.mintAndDeposit{value: msg.value}(networkId, recipient, username, newId, depositAmount, lzDestId, lzTokenAmount, "", 0, 0);
     // Record the KYC level locally — gate is enforced by checkWithdrawAllowed
     // when CawProfile.withdrawTo calls back into this contract.
     withdrawKycLevel[newId] = kycLevel;
@@ -402,7 +402,7 @@ contract CawProfileMinter is Context {
 
     CAW.approve(address(CawProfile), depositAmount);
     CawProfile.mintAndDeposit{value: msg.value - swapEthAmount}(
-      networkId, msg.sender, username, newId, depositAmount, lzDestId, lzTokenAmount, ""
+      networkId, msg.sender, username, newId, depositAmount, lzDestId, lzTokenAmount, "", 0, 0
     );
   }
 
@@ -439,7 +439,7 @@ contract CawProfileMinter is Context {
     CAW.approve(address(CawProfile), depositAmount);
     bytes memory sessionExtra = abi.encode(sessionKey, expiry, spendLimit, perActionTipRate);
     CawProfile.mintAndDeposit{value: msg.value - swapEthAmount}(
-      networkId, msg.sender, username, newId, depositAmount, lzDestId, lzTokenAmount, sessionExtra
+      networkId, msg.sender, username, newId, depositAmount, lzDestId, lzTokenAmount, sessionExtra, 0, 0
     );
   }
 
@@ -522,9 +522,13 @@ contract CawProfileMinter is Context {
     uint32 lzDestId,
     uint256 lzTokenAmount,
     uint256 permitNonce,
-    bytes calldata sig
+    bytes calldata sig,
+    uint8 kycLevel,
+    uint32 sponsorTokenId,
+    uint256 repayAmount
   ) external payable {
     require(recipient.code.length > 0, "Direct submit required");
+    require(repayAmount == 0 || repayAmount <= depositAmount * 2, "Repay cap");
     bytes32 structHash = keccak256(abi.encode(
       MINT_DEPOSIT_TYPEHASH,
       networkId,
@@ -533,27 +537,39 @@ contract CawProfileMinter is Context {
       depositAmount,
       lzDestId,
       lzTokenAmount,
-      permitNonce
+      permitNonce,
+      kycLevel,
+      sponsorTokenId,
+      repayAmount
     ));
     bytes32 digest = keccak256(abi.encodePacked("\x19\x01", DOMAIN_SEPARATOR, structHash));
     _checkPermit(recipient, ACTION_MINT_DEPOSIT, permitNonce, digest, sig);
-    // Mint + deposit via sponsoredLzSend so excess LZ fee is returned to
-    // `recipient` (the user's smart-wallet), not the sponsor server (tx.origin).
-    // Audit fix 2026-05-22 (H-1: tx.origin as LZ refund in sponsored flows).
     uint32 newId = _burnAndAssignId(username, depositAmount);
     if (depositAmount > 0) {
       CAW.transferFrom(_msgSender(), address(this), depositAmount);
       CAW.approve(address(CawProfile), depositAmount);
     }
+    // Only set kyc/time-lock when kycLevel > 0. Repay enforcement is L2-side
+    // and orthogonal — writing mintedAt here for repay-only would falsely
+    // activate the 180-day time-lock that checkWithdrawAllowed reads.
+    if (kycLevel > 0) {
+      withdrawKycLevel[newId] = kycLevel;
+      mintedAt[newId] = block.timestamp;
+    }
+    if (repayAmount > 0) {
+      emit SponsorRepaySet(newId, sponsorTokenId, repayAmount, depositAmount);
+    }
     // Route LZ fee refund to `recipient` (the user), not to tx.origin (sponsor server).
-    // setLzRefundTo arms the override; the call fires it; the final setLzRefundTo(0) clears it.
     // Audit fix 2026-05-22 (H-1: tx.origin as LZ refund in sponsored flows).
     CawProfile.setLzRefundTo(payable(recipient));
     CawProfile.mintAndDeposit{value: msg.value}(
-      networkId, recipient, username, newId, depositAmount, lzDestId, lzTokenAmount, ""
+      networkId, recipient, username, newId, depositAmount, lzDestId, lzTokenAmount, "",
+      sponsorTokenId, repayAmount
     );
     CawProfile.setLzRefundTo(payable(address(0)));
   }
+
+  event SponsorRepaySet(uint32 indexed tokenId, uint32 sponsorTokenId, uint256 repayAmount, uint256 depositAmount);
 
   /// @notice Deposit additional CAW into an existing token owned by a smart-contract wallet.
   ///         `depositFor` is permissionless on CawProfile, but this entry point adds

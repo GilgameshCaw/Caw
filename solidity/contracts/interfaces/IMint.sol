@@ -22,7 +22,9 @@ interface IMint {
     uint256 depositAmount,
     uint32 lzDestId,
     uint256 lzTokenAmount,
-    bytes calldata sessionExtra
+    bytes calldata sessionExtra,
+    uint32 sponsorTokenId,
+    uint256 repayAmount
   ) external payable;
 
   function mintAndAuth(

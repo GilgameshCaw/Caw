@@ -48,6 +48,7 @@ contract CawProfile is
   error ZeroDeposit();
   error NothingToWithdraw();
   error NoPending();
+  error RepayCrossChainUnsupported();
   error Unauthorized();
   error DelegateFailed();
   error NotApproved();
@@ -313,7 +314,8 @@ contract CawProfile is
   ///      enforced on the L2 side.
   function mintAndDeposit(
     uint32 cawNetworkId, address owner, string memory username, uint32 newId,
-    uint256 depositAmount, uint32 lzDestId, uint256 lzTokenAmount, bytes calldata sessionExtra
+    uint256 depositAmount, uint32 lzDestId, uint256 lzTokenAmount, bytes calldata sessionExtra,
+    uint32 sponsorTokenId, uint256 repayAmount
   ) public payable {
     if (minter != msg.sender) revert NotMinter();
     usernames.push(username);
@@ -345,6 +347,9 @@ contract CawProfile is
         (address sk, uint64 ex, uint256 sl, uint64 tr) = _decodeSession(sessionExtra);
         cawProfileLedger.registerSessionFromL1(owner, sk, ex, sl, tr);
       }
+      if (repayAmount > 0) {
+        cawProfileLedger.registerSponsorRepayFromL1(newId, sponsorTokenId, repayAmount);
+      }
       _refundUnusedLzEth(lzEthAmount);
     } else {
       uint32[] memory tokenIds;
@@ -358,6 +363,10 @@ contract CawProfile is
         (address sk, uint64 ex, uint256 sl, uint64 tr) = _decodeSession(sessionExtra);
         payload = abi.encodeWithSelector(_lzBundleSelector, cawNetworkId, newId, depositAmount, "", sk, ex, sl, tr, tokenIds, owners, stamps);
       }
+      // Cross-chain repay registration is not yet supported. The Networks
+      // using cross-chain L2 storage (Base, Arbitrum...) don't enable
+      // sponsor repay on testnet. Add the LZ relay when those go live.
+      if (repayAmount > 0) revert RepayCrossChainUnsupported();
       lzSend(cawNetworkId, lzDestId, _lzBundleSelector, tokenIds.length, payload, lzEthAmount, lzTokenAmount);
     }
 
@@ -745,7 +754,7 @@ contract CawProfile is
     if (from != address(0)) emit TransferPendingSync(token, from, to);
   }
 
-  function updatesNeededForPeer(uint32 lzDestId) public view returns (uint256) {
+  function updatesNeededForPeer(uint32 lzDestId) internal view returns (uint256) {
     return Math.min(transferUpdateLimit, pendingTransferEnd[lzDestId] - pendingTransferStart[lzDestId]);
   }
 

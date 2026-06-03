@@ -513,6 +513,75 @@ contract CawProfileLedger is
       _setOwnerOf(tokenIds[i], owners[i], stamps[i]);
   }
 
+  // ----------------------------------------------------------------
+  // Sponsor Repay — trustless L2-side enforcement of sponsor gifts.
+  // The L1 minter declares `(sponsorTokenId, repayAmount)` at sponsored
+  // mint time. Repay is plumbed here over the same LZ path (or directly
+  // in bypassLZ mode) and stored. On withdraw, `sponsorSweepPreview`
+  // returns the amount to credit the sponsor (capped at outstanding
+  // repay and the user's withdrawal amount). The sponsor — verified by
+  // ownership of `sponsorTokenId` — can `forgiveSponsorRepay` to zero
+  // the obligation at any time.
+  //
+  // PHASE 2 SCOPE: registration + view + forgive land here. The
+  // auto-sweep-on-withdraw integration on CawActions is deferred until
+  // CawActions has byte-budget headroom (currently at EIP-170 minus 9
+  // bytes). `sweepSponsorRepay` is callable today but only by CawActions
+  // — wire its call site in CawActions in a future reclaim round.
+  // ----------------------------------------------------------------
+
+  /// @notice Outstanding repay obligation in wei, keyed by user's tokenId.
+  mapping(uint32 => uint256) public sponsorRepay;
+  /// @notice Sponsor's profile tokenId that receives sweep credits.
+  mapping(uint32 => uint32) public repaySponsorTokenId;
+
+  event SponsorRepayRegistered(uint32 indexed tokenId, uint32 sponsorTokenId, uint256 repayAmount);
+  event SponsorRepaySwept(uint32 indexed tokenId, uint32 sponsorTokenId, uint256 swept, uint256 remaining);
+  event SponsorRepayForgiven(uint32 indexed tokenId, uint32 sponsorTokenId);
+
+  /// @notice Register a sponsor-repay obligation from L1.
+  /// @dev Callable from `_lzReceive` (cross-chain) or directly by L1 CawProfile
+  ///      in bypassLZ mode. Idempotent: only writes if currently unset.
+  function registerSponsorRepayFromL1(uint32 tokenId, uint32 sponsorTokenId, uint256 repayAmount) external {
+    if (!(fromLZ || (bypassLZ && _msgSender() == address(cawProfile)))) revert OnlyLZ();
+    if (repayAmount == 0) return;
+    if (sponsorRepay[tokenId] != 0) return; // already set; do not overwrite
+    sponsorRepay[tokenId] = repayAmount;
+    repaySponsorTokenId[tokenId] = sponsorTokenId;
+    emit SponsorRepayRegistered(tokenId, sponsorTokenId, repayAmount);
+  }
+
+  /// @notice Preview the sweep amount for a hypothetical withdraw. CawActions
+  ///         calls this before `withdraw` to compute the user-side credit.
+  function sponsorSweepPreview(uint32 tokenId, uint256 amount) external view returns (uint256 swept) {
+    uint256 outstanding = sponsorRepay[tokenId];
+    swept = outstanding < amount ? outstanding : amount;
+  }
+
+  /// @notice Sweep the repay obligation onto the sponsor's balance.
+  ///         CawActions-only. Must be called in the same tx as `withdraw` so
+  ///         the user's L1 setWithdrawable credit is reduced by `swept`.
+  function sweepSponsorRepay(uint32 tokenId, uint256 amount) external returns (uint256 swept) {
+    if (!(address(cawActions) == _msgSender())) revert NotCa();
+    uint256 outstanding = sponsorRepay[tokenId];
+    swept = outstanding < amount ? outstanding : amount;
+    if (swept > 0) {
+      sponsorRepay[tokenId] = outstanding - swept;
+      uint32 sponsorId = repaySponsorTokenId[tokenId];
+      setCawBalance(sponsorId, cawBalanceOf(sponsorId) + swept);
+      emit SponsorRepaySwept(tokenId, sponsorId, swept, outstanding - swept);
+    }
+  }
+
+  /// @notice Sponsor — verified by ownership of `repaySponsorTokenId` — drops
+  ///         the obligation, freeing the user to withdraw without sweep.
+  function forgiveSponsorRepay(uint32 tokenId) external {
+    uint32 sponsorId = repaySponsorTokenId[tokenId];
+    if (ownerOf[sponsorId] != _msgSender()) revert Unauth();
+    sponsorRepay[tokenId] = 0;
+    emit SponsorRepayForgiven(tokenId, sponsorId);
+  }
+
 
 
   /// @notice Co-deployment (bypassLZ) variant: mint the L2 mirror AND auth in one call.
@@ -929,7 +998,8 @@ contract CawProfileLedger is
     return selector == bytes4(keccak256("lzDepositMintSession(uint32,uint32,uint256,string,address,uint64,uint256,uint64,uint32[],address[],uint64[])")) ||
       selector == bytes4(keccak256("updateOwners(uint32[],address[],uint64[])")) ||
       selector == bytes4(keccak256("setAllowFreeAuth(uint32,bool,uint64)")) ||
-      selector == bytes4(keccak256("setNetworkTipTarget(uint32,uint256,uint64)"));
+      selector == bytes4(keccak256("setNetworkTipTarget(uint32,uint256,uint64)")) ||
+      selector == bytes4(keccak256("registerSponsorRepayFromL1(uint32,uint32,uint256)"));
   }
 
   /// @notice Subtract CAW from a token's balance (used during withdraw flows). CawActions only.
