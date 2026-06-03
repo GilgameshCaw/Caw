@@ -13,7 +13,7 @@
 const MintableCaw = artifacts.require("MintableCaw");
 const CawNetworkManager = artifacts.require("CawNetworkManager");
 const CawProfile = artifacts.require("CawProfile");
-const CawProfileL2 = artifacts.require("CawProfileL2");
+const CawProfileLedger = artifacts.require("CawProfileLedger");
 const CawProfileMinter = artifacts.require("CawProfileMinter");
 const CawProfileQuoter = artifacts.require("CawProfileQuoter");
 const CawActions = artifacts.require("CawActions");
@@ -209,14 +209,14 @@ async function fullSetup(accounts) {
   const fontB = await CawFontDataB.new();
   const uri = await CawProfileURI.new(fontA.address, fontB.address);
 
-  const cawProfileL2 = await CawProfileL2.new(l1, l2Endpoint.address, "0x0000000000000000000000000000000000000000");
-  await l1Endpoint.setDestLzEndpoint(cawProfileL2.address, l2Endpoint.address);
+  const cawProfileLedger = await CawProfileLedger.new(l1, l2Endpoint.address, "0x0000000000000000000000000000000000000000");
+  await l1Endpoint.setDestLzEndpoint(cawProfileLedger.address, l2Endpoint.address);
 
   const cawProfile = await CawProfile.new(token.address, uri.address, buyAndBurn.address, networkManager.address, l1Endpoint.address, l1, "0x0000000000000000000000000000000000000000");
   await buyAndBurn.setCawProfile(cawProfile.address);
-  await cawProfileL2.setL1Peer(l1, cawProfile.address, false);
+  await cawProfileLedger.setL1Peer(l1, cawProfile.address, false);
   await l2Endpoint.setDestLzEndpoint(cawProfile.address, l1Endpoint.address);
-  await cawProfile.setL2Peer(l2, cawProfileL2.address);
+  await cawProfile.setL2Peer(l2, cawProfileLedger.address);
 
   await networkManager.createNetwork("Test Network", accounts[0], l2, 0, 0, 0, 0, "500000000000");
   const networkId = 1;
@@ -225,10 +225,10 @@ async function fullSetup(accounts) {
   await cawProfile.setMinter(minter.address);
   const quoter = await CawProfileQuoter.new(cawProfile.address);
 
-  const cawActions = await CawActions.new(cawProfileL2.address, "0x0000000000000000000000000000000000000000", "0x0000000000000000000000000000000000000000000000000000000000000000", "0x0000000000000000000000000000000000000000", "0x0000000000000000000000000000000000000000", 0, 0);
-  await cawProfileL2.setCawActions(cawActions.address);
+  const cawActions = await CawActions.new(cawProfileLedger.address, "0x0000000000000000000000000000000000000000", "0x0000000000000000000000000000000000000000000000000000000000000000", "0x0000000000000000000000000000000000000000", "0x0000000000000000000000000000000000000000", 0, 0);
+  await cawProfileLedger.setCawActions(cawActions.address);
 
-  return { token, cawProfile, cawProfileL2, minter, quoter, cawActions, networkManager, networkId };
+  return { token, cawProfile, cawProfileLedger, minter, quoter, cawActions, networkManager, networkId };
 }
 
 contract('CawActions — qs: / qx: OTHER session register/revoke', function (accounts) {
@@ -275,10 +275,10 @@ contract('CawActions — qs: / qx: OTHER session register/revoke', function (acc
     const sig = signActionData(userA, action, domain);
     const sigsHex = packGroupedSigs([{ groupSize: 1, ...sig }]);
 
-    const nonceBefore = Number(await setup.cawProfileL2.sessionNonce(userA));
+    const nonceBefore = Number(await setup.cawProfileLedger.sessionNonce(userA));
     await setup.cawActions.processActions(validatorTokenId, hex, sigsHex, 0, 0);
 
-    const session = await setup.cawProfileL2.sessions(userA, sessionKeyEoa);
+    const session = await setup.cawProfileLedger.sessions(userA, sessionKeyEoa);
     expect(Number(session.expiry)).to.equal(expiry);
     expect(Number(session.scopeBitmap)).to.equal(0xBF);
     expect(session.spendLimit.toString()).to.equal(spendLimit);
@@ -286,7 +286,7 @@ contract('CawActions — qs: / qx: OTHER session register/revoke', function (acc
 
     // Nonce bumps so any in-flight registerSession-by-sig with the same
     // nonce can't replay over this on-chain write.
-    expect(Number(await setup.cawProfileL2.sessionNonce(userA))).to.equal(nonceBefore + 1);
+    expect(Number(await setup.cawProfileLedger.sessionNonce(userA))).to.equal(nonceBefore + 1);
   });
 
   // --------------------------------------------
@@ -303,7 +303,7 @@ contract('CawActions — qs: / qx: OTHER session register/revoke', function (acc
     const { hex: regHex } = packActions([regAction]);
     const regSig = signActionData(userA, regAction, domain);
     await setup.cawActions.processActions(validatorTokenId, regHex, packGroupedSigs([{ groupSize: 1, ...regSig }]), 0, 0);
-    expect(Number((await setup.cawProfileL2.sessions(userA, otherSessionKey)).expiry)).to.equal(futureExpiry);
+    expect(Number((await setup.cawProfileLedger.sessions(userA, otherSessionKey)).expiry)).to.equal(futureExpiry);
 
     // Now revoke it.
     const rv = Number(await setup.cawActions.nextCawonce(userATokenId));
@@ -316,7 +316,7 @@ contract('CawActions — qs: / qx: OTHER session register/revoke', function (acc
     const rvSig = signActionData(userA, rvAction, domain);
     await setup.cawActions.processActions(validatorTokenId, rvHex, packGroupedSigs([{ groupSize: 1, ...rvSig }]), 0, 0);
 
-    const session = await setup.cawProfileL2.sessions(userA, otherSessionKey);
+    const session = await setup.cawProfileLedger.sessions(userA, otherSessionKey);
     expect(Number(session.expiry)).to.equal(0); // deleted
   });
 
@@ -330,11 +330,11 @@ contract('CawActions — qs: / qx: OTHER session register/revoke', function (acc
     // attempt the escalation with. Use the on-chain by-sig path so the
     // session is in place before the test action.
     const sessionKey = accounts[5];
-    const nonce = Number(await setup.cawProfileL2.sessionNonce(userA));
+    const nonce = Number(await setup.cawProfileLedger.sessionNonce(userA));
     const chainId = await web3.eth.getChainId();
     const data = {
       primaryType: 'SessionDelegation',
-      domain: { name: 'CawProfileL2', version: '1', chainId, verifyingContract: setup.cawProfileL2.address },
+      domain: { name: 'CawProfileLedger', version: '1', chainId, verifyingContract: setup.cawProfileLedger.address },
       types: {
         EIP712Domain: dataTypes.EIP712Domain,
         SessionDelegation: [
@@ -349,7 +349,7 @@ contract('CawActions — qs: / qx: OTHER session register/revoke', function (acc
       message: { sessionKey, expiry: futureExpiry, scopeBitmap: 0xBF, spendLimit: '5000000', perActionTipRate: 0, nonce },
     };
     const sigHex = signTypedData({ data, privateKey: privFor(userA), version: SignTypedDataVersion.V4 });
-    await setup.cawProfileL2.registerSession(userA, sessionKey, futureExpiry, 0xBF, '5000000', 0, nonce, sigHex);
+    await setup.cawProfileLedger.registerSession(userA, sessionKey, futureExpiry, 0xBF, '5000000', 0, nonce, sigHex);
 
     // Now try to use that session key to sign a qs: that registers a NEW session.
     const evilSessionKey = accounts[6];
@@ -370,7 +370,7 @@ contract('CawActions — qs: / qx: OTHER session register/revoke', function (acc
 
     // Cawonce was burned (action consumed) but the evil key was NOT registered.
     expect(await setup.cawActions.isCawonceUsed(userATokenId, cawonce)).to.equal(true);
-    expect(Number((await setup.cawProfileL2.sessions(userA, evilSessionKey)).expiry)).to.equal(0);
+    expect(Number((await setup.cawProfileLedger.sessions(userA, evilSessionKey)).expiry)).to.equal(0);
   });
 
   // --------------------------------------------
@@ -379,11 +379,11 @@ contract('CawActions — qs: / qx: OTHER session register/revoke', function (acc
   it('rejects direct calls to registerSessionFromActions / revokeSessionFromActions', async function () {
     // Both should revert with NotCa() since msg.sender isn't CawActions.
     await expectRevertWithCustomError(
-      setup.cawProfileL2.registerSessionFromActions(userA, sessionKeyEoa, futureExpiry, '1', 0),
+      setup.cawProfileLedger.registerSessionFromActions(userA, sessionKeyEoa, futureExpiry, '1', 0),
       'NotCa()'
     );
     await expectRevertWithCustomError(
-      setup.cawProfileL2.revokeSessionFromActions(userA, sessionKeyEoa),
+      setup.cawProfileLedger.revokeSessionFromActions(userA, sessionKeyEoa),
       'NotCa()'
     );
   });
@@ -412,7 +412,7 @@ contract('CawActions — qs: / qx: OTHER session register/revoke', function (acc
       networkId: setup.networkId, cawonce: start + 1,
       recipients: [], amounts: [0], text: '0x',
     };
-    const validatorBalanceBefore = await setup.cawProfileL2.cawBalanceOf(validatorTokenId);
+    const validatorBalanceBefore = await setup.cawProfileLedger.cawBalanceOf(validatorTokenId);
     const { hex } = packActions([qsAction, likeAction]);
     const sig0 = signActionData(userA, qsAction, domain);
     const sig1 = signActionData(userA, likeAction, domain);
@@ -421,11 +421,11 @@ contract('CawActions — qs: / qx: OTHER session register/revoke', function (acc
     await setup.cawActions.processActions(validatorTokenId, hex, sigsHex, 0, 0);
 
     // Session key registered.
-    expect(Number((await setup.cawProfileL2.sessions(userA, newKey)).expiry)).to.equal(futureExpiry);
+    expect(Number((await setup.cawProfileLedger.sessions(userA, newKey)).expiry)).to.equal(futureExpiry);
     // Validator collected something — exact amounts depend on like math
     // (implicit tip + recipient distribution); the point of this test is
     // that the qs: didn't block validator payment from happening.
-    const validatorBalanceAfter = await setup.cawProfileL2.cawBalanceOf(validatorTokenId);
+    const validatorBalanceAfter = await setup.cawProfileLedger.cawBalanceOf(validatorTokenId);
     expect(BigInt(validatorBalanceAfter.toString()) > BigInt(validatorBalanceBefore.toString())).to.equal(true);
     // Both cawonces consumed.
     expect(await setup.cawActions.isCawonceUsed(userATokenId, start)).to.equal(true);
@@ -483,13 +483,13 @@ contract('CawActions — qs: / qx: OTHER session register/revoke', function (acc
 
     const expiry = futureExpiry;
     const spendLimit = (10n ** 18n * 1_000_000n).toString();
-    const staleNonce = Number(await setup.cawProfileL2.sessionNonce(newOwner));
+    const staleNonce = Number(await setup.cawProfileLedger.sessionNonce(newOwner));
 
     // (1) User pre-signs a registerSession-by-sig payload. They never submit it.
     const chainId = await web3.eth.getChainId();
     const sigData = {
       primaryType: 'SessionDelegation',
-      domain: { name: 'CawProfileL2', version: '1', chainId, verifyingContract: setup.cawProfileL2.address },
+      domain: { name: 'CawProfileLedger', version: '1', chainId, verifyingContract: setup.cawProfileLedger.address },
       types: {
         EIP712Domain: dataTypes.EIP712Domain,
         SessionDelegation: [
@@ -516,15 +516,15 @@ contract('CawActions — qs: / qx: OTHER session register/revoke', function (acc
     );
 
     // The bundle registered the new session AND bumped the nonce.
-    expect(Number((await setup.cawProfileL2.sessions(newOwner, sessionKeyForBundle)).expiry)).to.equal(expiry);
-    expect(Number(await setup.cawProfileL2.sessionNonce(newOwner))).to.equal(staleNonce + 1);
+    expect(Number((await setup.cawProfileLedger.sessions(newOwner, sessionKeyForBundle)).expiry)).to.equal(expiry);
+    expect(Number(await setup.cawProfileLedger.sessionNonce(newOwner))).to.equal(staleNonce + 1);
 
     // (3) The pre-signed payload now reverts when anyone tries to submit it.
     //     The nonce mismatch triggers the BadNonce() custom error (was the
     //     "Invalid nonce" require-string before the v1-passkey refactor).
     let threw = false;
     try {
-      await setup.cawProfileL2.registerSession(newOwner, stalePayloadKey, expiry, 0xBF, spendLimit, 0, staleNonce, sigHex);
+      await setup.cawProfileLedger.registerSession(newOwner, stalePayloadKey, expiry, 0xBF, spendLimit, 0, staleNonce, sigHex);
     } catch (err) {
       threw = true;
       // 0x4bd574ec = bytes4(keccak256("BadNonce()")) — match either the
@@ -534,7 +534,7 @@ contract('CawActions — qs: / qx: OTHER session register/revoke', function (acc
     expect(threw).to.equal(true);
 
     // The stale session was NOT registered.
-    expect(Number((await setup.cawProfileL2.sessions(newOwner, stalePayloadKey)).expiry)).to.equal(0);
+    expect(Number((await setup.cawProfileLedger.sessions(newOwner, stalePayloadKey)).expiry)).to.equal(0);
   });
 
   // --------------------------------------------

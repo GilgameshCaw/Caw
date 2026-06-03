@@ -10,7 +10,7 @@ const NETWORK_MANAGER_ABI = [
 ]
 
 // Storage-chain options the CLI surfaces during createNetwork. Each entry
-// must have CawProfileL2 + CawActions deployed (or planned). The actual
+// must have CawProfileLedger + CawActions deployed (or planned). The actual
 // contract addresses live in client/src/abi/deployments.ts (written by the
 // deploy script); we only need labels + LZ EIDs here for the CLI to wire
 // things up.

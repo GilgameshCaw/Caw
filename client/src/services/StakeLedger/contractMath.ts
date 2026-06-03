@@ -1,5 +1,5 @@
-// Pure functions mirroring CawProfileL2 state transitions
-// (`solidity/contracts/CawProfileL2.sol:200-289`). Bigint arithmetic
+// Pure functions mirroring CawProfileLedger state transitions
+// (`solidity/contracts/CawProfileLedger.sol:200-289`). Bigint arithmetic
 // matches the EVM's truncating integer division bit-for-bit; the only
 // way these can diverge from the on-chain state is a bug here, which
 // the snapshotter's per-event rewardMultiplier checksum will catch
@@ -38,7 +38,7 @@ export interface SpendDistributeResult {
 }
 
 /**
- * Mirror of `CawProfileL2.spendAndDistribute(tokenId, amountToSpend, amountToDistribute)`
+ * Mirror of `CawProfileLedger.spendAndDistribute(tokenId, amountToSpend, amountToDistribute)`
  * — the inner call shared by spendAndDistributeTokens and
  * spendDistributeAndAddTokensToBalance.
  *
@@ -72,7 +72,7 @@ export function spendAndDistribute(
     newMultiplier = state.multiplier + (state.multiplier * amountToDistribute) / denominator
     communalDistributed = amountToDistribute
   } else {
-    // Refund-to-spender path. See `CawProfileL2.sol:237-242`.
+    // Refund-to-spender path. See `CawProfileLedger.sol:237-242`.
     newBalance += amountToDistribute
     refundedToSpender = true
   }
@@ -88,7 +88,7 @@ export function spendAndDistribute(
 }
 
 /**
- * Mirror of `CawProfileL2.addToBalance(tokenId, amount)` — used both
+ * Mirror of `CawProfileLedger.addToBalance(tokenId, amount)` — used both
  * for action recipients (via spendDistributeAndAddTokensToBalance after
  * the spend) and for L1->L2 deposits.
  *

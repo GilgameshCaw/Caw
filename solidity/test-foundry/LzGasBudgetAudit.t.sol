@@ -6,7 +6,7 @@ pragma solidity ^0.8.22;
 //
 // Pattern: same as SetWithdrawableGas.t.sol but extended to cover EVERY
 // selector that goes through gasLimitFor in CawProfile L1-side and
-// CawProfileL2's setWithdrawable path, plus the CawChallengeRelay→Archive path.
+// CawProfileLedger's setWithdrawable path, plus the CawChallengeRelay→Archive path.
 //
 // For EACH path we:
 //   1. Construct a minimal faithful harness that runs the same storage writes
@@ -30,7 +30,7 @@ pragma solidity ^0.8.22;
 //   - _depositRegisterSession = depositAndRegisterSession…  base=225k + 65k*n
 //   - _mintAuthRegisterSession = mintAuthAndRegisterSession… base=240k + 65k*n
 //
-// Selectors audited (CawProfileL2 → L1, `gasLimitFor(selector, n)`):
+// Selectors audited (CawProfileLedger → L1, `gasLimitFor(selector, n)`):
 //   - setWithdrawable: base=35k + 24k*n  (previously 22k+19k, updated post-measurement)
 //
 // Selectors audited (CawChallengeRelay → CawActionsArchive):
@@ -40,7 +40,7 @@ pragma solidity ^0.8.22;
 import "forge-std/Test.sol";
 
 // ---------------------------------------------------------------------------
-// Storage constants — CawProfileL2's cold-slot storage ops per token update.
+// Storage constants — CawProfileLedger's cold-slot storage ops per token update.
 // These match the comment in CawProfile.sol:gasLimitFor and the real contract.
 //
 // Per update in `_setOwnerOf` (cold slots, EIP-2929):
@@ -65,7 +65,7 @@ uint256 constant SAFETY_BUFFER = 5_000;
 // Plus fixed overhead: fromLZ toggle, isAuthorizedFunction, ABI decode.
 // ---------------------------------------------------------------------------
 contract DepositUpdateOwnersHarness {
-    // Mirrors the storage slots touched by CawProfileL2.depositAndUpdateOwners
+    // Mirrors the storage slots touched by CawProfileLedger.depositAndUpdateOwners
     bool private fromLZ;
 
     // totalCaw
@@ -322,7 +322,7 @@ contract LzGasBudgetAuditTest is Test {
     }
 
     // -----------------------------------------------------------------------
-    // Path 2: setWithdrawable (CawProfileL2 → L1)
+    // Path 2: setWithdrawable (CawProfileLedger → L1)
     // Formula: base=35_000 + 24_000 * n  (updated formula)
     // Also measure the OLD formula (22k+19k*n) for comparison
     // -----------------------------------------------------------------------

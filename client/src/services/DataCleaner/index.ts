@@ -4,7 +4,7 @@ import { makeJsonRpcProvider, makeWebSocketProvider, getL2HttpRpcUrl } from '../
 import { dataCleanerLogger as logger } from '../../utils/dataCleanerLogger'
 import { markTxQueueFailed } from '../../utils/txQueueFailure'
 import { sweep as sweepOrphanedMedia, pendingCount as orphanedMediaPendingCount } from '../../api/util/orphanedMedia'
-import { cawProfileL2Abi } from '../../abi/generated'
+import { cawProfileLedgerAbi } from '../../abi/generated'
 import { CAW_NAMES_L2_ADDRESS } from '../../abi/addresses'
 import { checkDomainObjectExists } from '../ActionProcessor/domainObjectChecks'
 import { processDomainEffects, resolveActionUsers } from '../ActionProcessor/domainProcessor'
@@ -16,17 +16,17 @@ import { getNetworkId } from '../../utils/networkId'
 // Lazy-initialized L2 read provider for the pending-mint-deposit watcher.
 // Reused across ticks so we don't churn sockets.
 let _l2Provider: JsonRpcProvider | WebSocketProvider | null = null
-let _cawProfileL2: Contract | null = null
+let _cawProfileLedger: Contract | null = null
 
-function getCawProfileL2(): Contract {
-  if (_cawProfileL2) return _cawProfileL2
+function getCawProfileLedger(): Contract {
+  if (_cawProfileLedger) return _cawProfileLedger
   const rpcUrl = getL2HttpRpcUrl()
   if (!rpcUrl) throw new Error('[DataCleaner] L2 RPC not configured')
   _l2Provider = rpcUrl.startsWith('wss://') || rpcUrl.startsWith('ws://')
     ? makeWebSocketProvider(rpcUrl, 84532)
     : makeJsonRpcProvider(rpcUrl, 84532)
-  _cawProfileL2 = new Contract(CAW_NAMES_L2_ADDRESS, cawProfileL2Abi as any, _l2Provider)
-  return _cawProfileL2
+  _cawProfileLedger = new Contract(CAW_NAMES_L2_ADDRESS, cawProfileLedgerAbi as any, _l2Provider)
+  return _cawProfileLedger
 }
 
 // Required at runtime. Defaulting to 1 would scope this node's
@@ -934,7 +934,7 @@ async function cleanupPendingMintDeposits() {
     const twentyMinutesAgo = new Date(Date.now() - 48 * 60 * 60 * 1000)
     let contract: Contract
     try {
-      contract = getCawProfileL2()
+      contract = getCawProfileLedger()
     } catch (err: any) {
       logger.error(`[PendingMintDeposit] Cannot get L2 contract, skipping pass: ${err.message}`)
       return
@@ -1277,7 +1277,7 @@ async function refreshOnChainStakeForPendingDeposits() {
 
     let contract: Contract
     try {
-      contract = getCawProfileL2()
+      contract = getCawProfileLedger()
     } catch (err: any) {
       logger.error(`[StakeRefresher] Cannot get L2 contract, skipping pass: ${err.message}`)
       return

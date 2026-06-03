@@ -581,7 +581,7 @@ export async function getClient(networkId: number) {
 // L2 Event Indexing (SessionKey + NetworkAuth)
 // ============================================================================
 
-// CawProfileL2 ABI fragments for event indexing
+// CawProfileLedger ABI fragments for event indexing
 const CAW_NAME_L2_EVENT_ABI = [
   'event SessionCreated(address indexed owner, address indexed sessionKey, uint64 expiry, uint8 scopeBitmap, uint256 spendLimit, uint64 perActionTipRate)',
   'event SessionRevoked(address indexed owner, address indexed sessionKey)',

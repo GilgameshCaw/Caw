@@ -2,7 +2,7 @@
 pragma solidity ^0.8.22;
 
 import "forge-std/Test.sol";
-import "../contracts/CawProfileL2.sol";
+import "../contracts/CawProfileLedger.sol";
 import "../contracts/CawActions.sol";
 import "../contracts/interfaces/ICawActions.sol";
 import "../contracts/CawNetworkManager.sol";
@@ -11,9 +11,9 @@ import "../contracts/CawNetworkManager.sol";
 // AllowFreeAuth tests
 //
 // Covers:
-//   1. CawProfileL2.setAllowFreeAuth sets allowFreeAuth[networkId] correctly
+//   1. CawProfileLedger.setAllowFreeAuth sets allowFreeAuth[networkId] correctly
 //      via the bypassLZ path (msg.sender == cawProfile && bypassLZ).
-//   2. CawProfileL2.setAllowFreeAuth reverts if neither fromLZ nor bypassLZ+cawProfile.
+//   2. CawProfileLedger.setAllowFreeAuth reverts if neither fromLZ nor bypassLZ+cawProfile.
 //   3. CawActions._applyAction no longer reverts UserNotAuth when allowFreeAuth is true.
 //   4. CawActions._applyAction STILL reverts when both authenticated and allowFreeAuth are false.
 //   5. Already-authenticated users are unaffected by allowFreeAuth state.
@@ -23,18 +23,18 @@ import "../contracts/CawNetworkManager.sol";
 // =============================================================================
 
 // ---------------------------------------------------------------------------
-// Minimal mock CawProfileL2 that exposes allowFreeAuth state and the
+// Minimal mock CawProfileLedger that exposes allowFreeAuth state and the
 // authenticated mapping, letting us set them directly for CawActions tests.
 // ---------------------------------------------------------------------------
-contract MockCawProfileL2ForActions {
+contract MockCawProfileLedgerForActions {
     mapping(uint32 => mapping(uint32 => bool)) public authenticated;
     mapping(uint32 => bool) public _allowFreeAuthPublic;
     mapping(uint256 => address) public ownerOf;
-    mapping(address => mapping(address => CawProfileL2.StoredSession)) private _sessions;
+    mapping(address => mapping(address => CawProfileLedger.StoredSession)) private _sessions;
     uint256 public rewardMultiplier = 10**18;
     uint256 public precision = 10**18;
 
-    // Stub: allowFreeAuth external view (matches CawProfileL2 ABI)
+    // Stub: allowFreeAuth external view (matches CawProfileLedger ABI)
     function allowFreeAuth(uint32 networkId) external view returns (bool) {
         return _allowFreeAuthPublic[networkId];
     }
@@ -51,7 +51,7 @@ contract MockCawProfileL2ForActions {
         ownerOf[tokenId] = owner;
     }
 
-    // ── CawProfileL2 interface stubs used by CawActions ──────────────────────
+    // ── CawProfileLedger interface stubs used by CawActions ──────────────────────
 
     function cawBalanceOf(uint32 tokenId) external view returns (uint256) {
         return 10_000_000 * 10**18; // large balance so spend checks pass
@@ -63,7 +63,7 @@ contract MockCawProfileL2ForActions {
     function withdrawTokens(uint32, uint256) external {}
 
     function validSession(address owner, address sessionKey)
-        external view returns (CawProfileL2.StoredSession memory s)
+        external view returns (CawProfileLedger.StoredSession memory s)
     {
         return _sessions[owner][sessionKey];
     }
@@ -79,20 +79,20 @@ contract MockCawProfileL2ForActions {
 // ---------------------------------------------------------------------------
 
 // ---------------------------------------------------------------------------
-// CawProfileL2 setAllowFreeAuth tests
+// CawProfileLedger setAllowFreeAuth tests
 // ---------------------------------------------------------------------------
 contract SetAllowFreeAuthTest is Test {
-    // We need a real CawProfileL2 to test the auth guard, but deploying the
+    // We need a real CawProfileLedger to test the auth guard, but deploying the
     // full contract requires a LayerZero endpoint mock. Instead, we deploy
     // a minimal harness that inherits just the relevant storage and modifier.
 
     // Rather than spinning up the full OApp stack, we test the storage path
     // via a simple inline harness that exposes the fromLZ flag.
-    HarnessCawProfileL2 internal l2;
+    HarnessCawProfileLedger internal l2;
 
     function setUp() public {
         // Harness deployed with a stub endpoint.
-        l2 = new HarnessCawProfileL2();
+        l2 = new HarnessCawProfileLedger();
     }
 
     // ── Test 1: fromLZ path sets allowFreeAuth to true ────────────────────
@@ -120,7 +120,7 @@ contract SetAllowFreeAuthTest is Test {
     // ── Test 4: direct call without fromLZ or bypassLZ reverts ────────────
     function test_SetAllowFreeAuth_DirectCall_Reverts() public {
         // Neither fromLZ nor bypassLZ+cawProfile — must revert.
-        vm.expectRevert(CawProfileL2.OnlyLZ.selector);
+        vm.expectRevert(CawProfileLedger.OnlyLZ.selector);
         l2.setAllowFreeAuth(1, true, 1);
     }
 
@@ -135,7 +135,7 @@ contract SetAllowFreeAuthTest is Test {
     // ── Test 6: bypassLZ + wrong caller reverts ───────────────────────────
     function test_SetAllowFreeAuth_BypassLZ_WrongCaller_Reverts() public {
         l2.enableBypassLZ(address(0xDEAD)); // registered cawProfile is 0xDEAD, not this test
-        vm.expectRevert(CawProfileL2.OnlyLZ.selector);
+        vm.expectRevert(CawProfileLedger.OnlyLZ.selector);
         l2.setAllowFreeAuth(1, true, 1);
     }
 
@@ -159,7 +159,7 @@ contract SetAllowFreeAuthTest is Test {
 // CawActions auth gate tests (allowFreeAuth bypass)
 // ---------------------------------------------------------------------------
 contract CawActionsAllowFreeAuthTest is Test {
-    MockCawProfileL2ForActions internal profile;
+    MockCawProfileLedgerForActions internal profile;
 
     uint32 constant NETWORK_ID = 1;
     uint32 constant TOKEN_ID   = 1;
@@ -172,7 +172,7 @@ contract CawActionsAllowFreeAuthTest is Test {
     HarnessCawActions internal actions;
 
     function setUp() public {
-        profile = new MockCawProfileL2ForActions();
+        profile = new MockCawProfileLedgerForActions();
         profile.setOwner(TOKEN_ID, address(0x1234));
 
         // Deploy CawActions harness with the mock profile.
@@ -224,10 +224,10 @@ contract CawActionsAllowFreeAuthTest is Test {
 // =============================================================================
 
 // ---------------------------------------------------------------------------
-// HarnessCawProfileL2 — minimal harness to test setAllowFreeAuth storage
+// HarnessCawProfileLedger — minimal harness to test setAllowFreeAuth storage
 // logic without spinning up the full OApp stack.
 // ---------------------------------------------------------------------------
-contract HarnessCawProfileL2 {
+contract HarnessCawProfileLedger {
     mapping(uint32 => bool) private _allowFreeAuth;
     mapping(uint32 => uint64) internal lastAllowFreeAuthSeq;
     bool private fromLZ;
@@ -240,7 +240,7 @@ contract HarnessCawProfileL2 {
         return _allowFreeAuth[networkId];
     }
 
-    /// @dev Mirrors CawProfileL2.setAllowFreeAuth exactly (including seq guard).
+    /// @dev Mirrors CawProfileLedger.setAllowFreeAuth exactly (including seq guard).
     function setAllowFreeAuth(uint32 networkId, bool allow, uint64 seq) public {
         if (!(fromLZ || (bypassLZ && msg.sender == cawProfile))) revert OnlyLZ();
         if (seq <= lastAllowFreeAuthSeq[networkId]) return; // stale, ignore

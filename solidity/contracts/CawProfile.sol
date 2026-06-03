@@ -11,7 +11,7 @@ import "@openzeppelin/contracts/utils/math/Math.sol";
 import "@openzeppelin/contracts/access/Ownable.sol";
 
 import "./CawProfileURI.sol";
-import "./CawProfileL2.sol";
+import "./CawProfileLedger.sol";
 import "./CawBuyAndBurn.sol";
 import "./OnlyOnce.sol";
 import "./CawL1PriceReader.sol";
@@ -64,7 +64,7 @@ contract CawProfile is
   ///         May be address(0) if no oracle is configured (cap dormant on L2).
   CawL1PriceReader public immutable priceReader;
 
-  CawProfileL2 public immutable cawProfileL2;
+  CawProfileLedger public immutable cawProfileLedger;
 
   uint256 public totalCaw;
 
@@ -147,7 +147,7 @@ contract CawProfile is
   CawNetworkManager public networkManager;
   CawBuyAndBurn public buyAndBurn;
 
-  constructor(address _caw, address _gui, address _buyAndBurn, address _networkManager, address _endpoint, uint32 mainnetEid, address _priceReader, address _cawProfileL2, address _pathwayExpander)
+  constructor(address _caw, address _gui, address _buyAndBurn, address _networkManager, address _endpoint, uint32 mainnetEid, address _priceReader, address _cawProfileLedger, address _pathwayExpander)
     ERC721("CAW NAME", "cawNAME")
     OApp(_endpoint, msg.sender)
   {
@@ -157,7 +157,7 @@ contract CawProfile is
     CAW = IERC20(_caw);
     mainnetLzId = mainnetEid;
     priceReader = CawL1PriceReader(_priceReader); // address(0) = no oracle
-    cawProfileL2 = CawProfileL2(_cawProfileL2);
+    cawProfileLedger = CawProfileLedger(_cawProfileLedger);
 
     // Per-selector base gas budgets. authSelector bumped from 50k → 85k after a
     // production OOG (Tenderly tx 0x3b8a0232... on Base Sepolia). Bundled session
@@ -274,10 +274,10 @@ contract CawProfile is
     uint256 lzEthAmount = msg.value - totalFeesPaid;
 
     if (lzDestId == mainnetLzId) {
-      cawProfileL2.mintAndAuth(newId, owner, username, cawNetworkId, uint64(block.number));
+      cawProfileLedger.mintAndAuth(newId, owner, username, cawNetworkId, uint64(block.number));
       if (sessionExtra.length > 0) {
         (address sk, uint64 ex, uint256 sl, uint64 tr) = _decodeSession(sessionExtra);
-        cawProfileL2.registerSessionFromL1(owner, sk, ex, sl, tr);
+        cawProfileLedger.registerSessionFromL1(owner, sk, ex, sl, tr);
       }
       _refundUnusedLzEth(lzEthAmount);
     } else {
@@ -340,10 +340,10 @@ contract CawProfile is
     uint256 lzEthAmount = msg.value - totalFeesPaid;
 
     if (lzDestId == mainnetLzId) {
-      cawProfileL2.deposit(cawNetworkId, newId, depositAmount);
+      cawProfileLedger.deposit(cawNetworkId, newId, depositAmount);
       if (sessionExtra.length > 0) {
         (address sk, uint64 ex, uint256 sl, uint64 tr) = _decodeSession(sessionExtra);
-        cawProfileL2.registerSessionFromL1(owner, sk, ex, sl, tr);
+        cawProfileLedger.registerSessionFromL1(owner, sk, ex, sl, tr);
       }
       _refundUnusedLzEth(lzEthAmount);
     } else {
@@ -519,7 +519,7 @@ contract CawProfile is
     _addChosenChain(tokenId, lzDestId);
 
     if (lzDestId == mainnetLzId) {
-      cawProfileL2.auth(tokenId, cawNetworkId);
+      cawProfileLedger.auth(tokenId, cawNetworkId);
       _refundUnusedLzEth(lzEthAmount);
     } else {
       uint32[] memory tokenIds;
@@ -549,7 +549,7 @@ contract CawProfile is
     bool allow = (networkManager.getAuthFee(networkId) == 0);
     uint64 seq = ++allowFreeAuthSeq[networkId];
     if (lzDestId == mainnetLzId) {
-      cawProfileL2.setAllowFreeAuth(networkId, allow, seq);
+      cawProfileLedger.setAllowFreeAuth(networkId, allow, seq);
       _refundUnusedLzEth(msg.value);
     } else {
       lzSend(networkId, lzDestId, _allowFreeAuthSelector, 0, abi.encodeWithSelector(_allowFreeAuthSelector, networkId, allow, seq), msg.value, lzTokenAmount);
@@ -563,7 +563,7 @@ contract CawProfile is
     uint64 seq;
     unchecked { seq = ++tipTargetSeq[networkId]; }
     if (lzDestId == mainnetLzId) {
-      cawProfileL2.setNetworkTipTarget(networkId, target, seq);
+      cawProfileLedger.setNetworkTipTarget(networkId, target, seq);
       _refundUnusedLzEth(msg.value);
     } else {
       lzSend(networkId, lzDestId, _setNetworkTipTargetSelector, 0, abi.encodeWithSelector(_setNetworkTipTargetSelector, networkId, target, seq), msg.value, lzTokenAmount);
@@ -606,7 +606,7 @@ contract CawProfile is
     uint256 lzEthAmount = msg.value - totalFeesPaid;
 
     if (lzDestId == mainnetLzId) {
-      cawProfileL2.deposit(cawNetworkId, tokenId, amount);
+      cawProfileLedger.deposit(cawNetworkId, tokenId, amount);
       _refundUnusedLzEth(lzEthAmount);
     } else {
       uint32[] memory tokenIds;
@@ -700,7 +700,7 @@ contract CawProfile is
   // Replication-chain sync to L2 has been removed. Per-validator REPLICATE_NETWORK_IDS
   // env config replaced the on-chain registry; no L1→L2 chain-list push is needed.
 
-  /// @notice Credit per-token withdraw amounts. Only callable via LayerZero from L2 CawProfileL2.
+  /// @notice Credit per-token withdraw amounts. Only callable via LayerZero from L2 CawProfileLedger.
   /// @dev SECURITY NOTE (audited 2026-04-07): No `tokenIds.length == amounts.length` check is
   ///      intentional. The only caller is `CawActions.setWithdrawable` (on L2), which constructs
   ///      both arrays from the same `withdrawCount` variable in lockstep — they are guaranteed
@@ -718,7 +718,7 @@ contract CawProfile is
     //      revert and the WITHDRAW action's L2 debit (which already
     //      happened in CawActions._applyAction.withdrawTokens) would
     //      have no L1 counterpart. Audit fix 2026-05-08 (C-1).
-    if (!(fromLZ || msg.sender == address(cawProfileL2))) revert NotL2Mirror();
+    if (!(fromLZ || msg.sender == address(cawProfileLedger))) revert NotL2Mirror();
     for (uint256 i = 0; i < tokenIds.length; i++)
       withdrawable[tokenIds[i]] += amounts[i];
   }
@@ -739,7 +739,7 @@ contract CawProfile is
     EnumerableSet.UintSet storage chainIds = chosenChainIds[token];
     for (uint256 i = 0; i < chainIds.length(); i++) {
       uint32 chainId = uint32(chainIds.at(i));
-      if (chainId == mainnetLzId) cawProfileL2.setOwnerOf(token, to, uint64(block.number));
+      if (chainId == mainnetLzId) cawProfileLedger.setOwnerOf(token, to, uint64(block.number));
       else pendingTransfers[chainId][pendingTransferEnd[chainId]++] = token;
     }
     if (from != address(0)) emit TransferPendingSync(token, from, to);
@@ -816,7 +816,7 @@ contract CawProfile is
     (tokenIds, owners, stamps) = extractPendingTransferUpdates(lzDestId, address(0), 0);
     if (tokenIds.length > 0) {
       if (lzDestId == mainnetLzId)
-        cawProfileL2.updateOwners(tokenIds, owners, stamps);
+        cawProfileLedger.updateOwners(tokenIds, owners, stamps);
       else {
         bytes memory payload = abi.encodeWithSelector(_updateOwnersSelector, tokenIds, owners, stamps);
         lzSend(0, lzDestId, _updateOwnersSelector, tokenIds.length, payload, lzEthAmount, lzTokenAmount);
@@ -877,7 +877,7 @@ contract CawProfile is
     bytes memory _options = OptionsBuilder.newOptions().addExecutorLzReceiveOption(gasLimitFor(cawNetworkId, selector, n), 0);
 
     // Piggyback a 36-byte price sample (uint256 cumulative + uint32 timestamp)
-    // onto every L1->L2 message. CawProfileL2._lzReceive strips this prefix
+    // onto every L1->L2 message. CawProfileLedger._lzReceive strips this prefix
     // and passes it to CawCapOracle.recordSample before dispatching the
     // primary payload. If no priceReader is configured the prefix is zeroed;
     // the L2 oracle silently skips samples with timestamp 0 (non-monotonic).

@@ -84,10 +84,10 @@
     "type": "t_contract(CawProfileURI)16412"
   },
   {
-    "label": "cawProfileL2",
+    "label": "cawProfileLedger",
     "slot": "14",
     "offset": 0,
-    "type": "t_contract(CawProfileL2)14351"
+    "type": "t_contract(CawProfileLedger)14351"
   },
   {
     "label": "totalCaw",

@@ -127,7 +127,7 @@ contract CawCapOracle {
 
   event SampleRecorded(uint64 indexed index, uint256 cumulative, uint32 timestamp);
 
-  /// @notice Only CawProfileL2 may write samples. Set in constructor,
+  /// @notice Only CawProfileLedger may write samples. Set in constructor,
   ///         immutable thereafter.
   address public immutable l2Writer;
 
@@ -141,7 +141,7 @@ contract CawCapOracle {
 
   // ─── Constructor ──────────────────────────────────────────────────────────
 
-  /// @param _l2Writer   Address of CawProfileL2 (the only contract permitted
+  /// @param _l2Writer   Address of CawProfileLedger (the only contract permitted
   ///                    to call `recordSample`).
   /// @param _cawActions Address of CawActions (required; receives setCapRatio
   ///                    calls when the cap state changes).
@@ -154,7 +154,7 @@ contract CawCapOracle {
 
   // ─── Sample ingestion ─────────────────────────────────────────────────────
 
-  /// @notice Record a price sample. Called by CawProfileL2 from each
+  /// @notice Record a price sample. Called by CawProfileLedger from each
   ///         L1→L2 message handler before dispatching the message's
   ///         primary effect.
   /// @dev    Silently no-ops on non-monotonic timestamps. LayerZero doesn't
@@ -185,7 +185,7 @@ contract CawCapOracle {
     // Push ratio to CawActions if the cap state has changed. A revert inside
     // _maybePushRatio (e.g. CawActions OOG or unexpected revert) is caught
     // here so sample ingestion always succeeds — the outer try/catch in
-    // CawProfileL2._lzReceive preserves L2 delivery and the STALE_THRESHOLD
+    // CawProfileLedger._lzReceive preserves L2 delivery and the STALE_THRESHOLD
     // backstop in CawActions makes the cap dormant within 24 h, bounding
     // exposure to a single missed push cycle.
     // solhint-disable-next-line no-empty-blocks

@@ -14,7 +14,7 @@ import { readContract } from '@wagmi/core'
 type TypedDataField = { name: string; type: string }
 import { useActiveToken, useTokenDataStore } from "~/store/tokenDataStore";
 import { CAW_ACTIONS_ADDRESS, CAW_NAMES_L2_ADDRESS } from '~/../../../abi/addresses'
-import { cawActionsAbi, cawProfileL2Abi } from '~/../../../abi/generated'
+import { cawActionsAbi, cawProfileLedgerAbi } from '~/../../../abi/generated'
 import { wagmiConfig } from '~/config/Web3Provider'
 import { hasMinimumStake, getRequiredStake, STAKING_REQUIREMENTS } from '~/constants/stakingRequirements'
 import { getActionTypeForModal } from '~/errors/InsufficientStakeError'
@@ -54,7 +54,7 @@ export async function readOnChainStakeForHint(tokenId: number): Promise<bigint> 
   try {
     const result = await readContract(wagmiConfig, {
       address: CAW_NAMES_L2_ADDRESS,
-      abi: cawProfileL2Abi,
+      abi: cawProfileLedgerAbi,
       functionName: 'cawBalanceOf',
       args: [tokenId],
       chainId: baseSepolia.id,
@@ -182,7 +182,7 @@ export async function findSafeCawonceStart(tokenId: number, start: number, count
 //
 //   1. chain.nextCawonce     — only authoritative source for confirmed
 //      actions. Cross-mirror, cross-tab, cross-device truth. Read from
-//      cawProfileL2.getTokens([tokenId]).nextCawonce.
+//      cawProfileLedger.getTokens([tokenId]).nextCawonce.
 //
 //   2. localCawonceHigh      — in-flight (signed but not yet confirmed)
 //      bookkeeping. Persisted to localStorage AND broadcast over a
@@ -459,7 +459,7 @@ async function doAllocate(tokenId: number): Promise<number> {
     try {
       const result = await readContract(wagmiConfig, {
         address: CAW_NAMES_L2_ADDRESS,
-        abi: cawProfileL2Abi,
+        abi: cawProfileLedgerAbi,
         functionName: 'getTokens',
         args: [[tokenId]],
         chainId: baseSepolia.id,
@@ -1102,7 +1102,7 @@ export function useSignAndSubmitAction() {
             try {
               isAuthed = !!(await readContract(wagmiConfig, {
                 address: CAW_NAMES_L2_ADDRESS,
-                abi: cawProfileL2Abi,
+                abi: cawProfileLedgerAbi,
                 functionName: 'authenticated',
                 args: [CLIENT_ID, activeTokenId],
                 chainId: baseSepolia.id,
@@ -1203,7 +1203,7 @@ export function useSignAndSubmitAction() {
     //     one at a time. We trust the input and don't allocate again.
     //
     //   - Default (single action): chain-only allocation via allocateCawonces.
-    //     Reads cawProfileL2.getTokens([tokenId]).nextCawonce from L2 and
+    //     Reads cawProfileLedger.getTokens([tokenId]).nextCawonce from L2 and
     //     bumps a per-tab local watermark to keep concurrent in-tab calls
     //     monotonic. The TxQueue partial unique index on (senderId, cawonce)
     //     catches any cross-tab / cross-server race; on collision the

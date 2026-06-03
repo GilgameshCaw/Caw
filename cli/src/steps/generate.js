@@ -178,10 +178,10 @@ export async function writeAddressesForNetwork(config, clientDir) {
     URI_GENERATOR_ADDRESS: l1.CawProfileURI,
     NETWORK_MANAGER_ADDRESS: l1.CawNetworkManager,
     CAW_NAME_MARKETPLACE_ADDRESS: l1.CawProfileMarketplace,
-    CAW_NAMES_L2_MAINNET_ADDRESS: l1.CawProfileL2,
+    CAW_NAMES_L2_MAINNET_ADDRESS: l1.CawProfileLedger,
     CAW_ACTIONS_MAINNET_ADDRESS: l1.CawActions,
     // Per-Network-storage-chain — resolved here, not multi-chain in the codebase.
-    CAW_NAMES_L2_ADDRESS: l2.CawProfileL2,
+    CAW_NAMES_L2_ADDRESS: l2.CawProfileLedger,
     CAW_ACTIONS_ADDRESS: l2.CawActions,
     CAW_ACTIONS_ARCHIVE_ADDRESS: l2.CawActionsArchive,
     CAW_CHALLENGE_RELAY_ADDRESS: l2.CawChallengeRelay,

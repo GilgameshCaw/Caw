@@ -31,7 +31,7 @@ contract CawProfileQuoter {
 
   ICawProfileForQuoter public immutable cawProfile;
 
-  // Unified L2 dispatcher selector — matches CawProfileL2.lzDepositMintSession exactly.
+  // Unified L2 dispatcher selector — matches CawProfileLedger.lzDepositMintSession exactly.
   // Replaces the 6 deleted per-flow selectors (depositAndUpdateOwners, authenticateAndUpdateOwners,
   // mintAndUpdateOwners, mintAuthAndUpdateOwners, depositAndRegisterSessionAndUpdateOwners,
   // mintAuthAndRegisterSessionAndUpdateOwners).
@@ -39,7 +39,7 @@ contract CawProfileQuoter {
     "lzDepositMintSession(uint32,uint32,uint256,string,address,uint64,uint256,uint64,uint32[],address[],uint64[])"
   ));
 
-  // Remaining single-purpose selectors still present on CawProfileL2.
+  // Remaining single-purpose selectors still present on CawProfileLedger.
   bytes4 private constant _updateOwnersSel  = bytes4(keccak256("updateOwners(uint32[],address[],uint64[])"));
   bytes4 private constant _allowFreeAuthSel = bytes4(keccak256("setAllowFreeAuth(uint32,bool)"));
 

@@ -4,7 +4,7 @@ pragma solidity ^0.8.22;
 import "forge-std/Test.sol";
 import "../contracts/CawCapOracle.sol";
 import "../contracts/CawActions.sol";
-import "../contracts/CawProfileL2.sol";
+import "../contracts/CawProfileLedger.sol";
 import "../contracts/test-helpers/MockCawActionsCapTarget.sol";
 import "../contracts/MockLayerZeroEndpoint.sol";
 
@@ -175,7 +175,7 @@ contract CapOracleTipRatioTest is Test {
         // Deploy a minimal CawActions with a controlled capOracle (we'll use an
         // EOA so we can call setTipRatio directly).
         MockLayerZeroEndpoint lzEp = new MockLayerZeroEndpoint(L2_EID);
-        CawProfileL2 profile = new CawProfileL2(L1_EID, address(lzEp), address(0));
+        CawProfileLedger profile = new CawProfileLedger(L1_EID, address(lzEp), address(0));
 
         address tipOracleEOA = makeAddr("tipOracle");
         CawActions actions = new CawActions(
@@ -214,7 +214,7 @@ contract CapOracleTipRatioTest is Test {
 
     function test_getCostUsesCapState_tipStateHasNoEffect() public {
         MockLayerZeroEndpoint lzEp = new MockLayerZeroEndpoint(L2_EID);
-        CawProfileL2 profile = new CawProfileL2(L1_EID, address(lzEp), address(0));
+        CawProfileLedger profile = new CawProfileLedger(L1_EID, address(lzEp), address(0));
 
         address oracleEOA = makeAddr("oracle6");
         CawActions actions = new CawActions(
@@ -247,7 +247,7 @@ contract CapOracleTipRatioTest is Test {
 
     function test_TipRatioUpdated_event() public {
         MockLayerZeroEndpoint lzEp = new MockLayerZeroEndpoint(L2_EID);
-        CawProfileL2 profile = new CawProfileL2(L1_EID, address(lzEp), address(0));
+        CawProfileLedger profile = new CawProfileLedger(L1_EID, address(lzEp), address(0));
         address oracleEOA = makeAddr("oracle7");
         CawActions actions = new CawActions(
             address(profile),
@@ -267,7 +267,7 @@ contract CapOracleTipRatioTest is Test {
 
     function test_setTipRatio_notCapOracle_reverts() public {
         MockLayerZeroEndpoint lzEp = new MockLayerZeroEndpoint(L2_EID);
-        CawProfileL2 profile = new CawProfileL2(L1_EID, address(lzEp), address(0));
+        CawProfileLedger profile = new CawProfileLedger(L1_EID, address(lzEp), address(0));
         address oracleEOA = makeAddr("oracle8");
         CawActions actions = new CawActions(
             address(profile),

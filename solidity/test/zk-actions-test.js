@@ -37,7 +37,7 @@
 const MintableCaw = artifacts.require("MintableCaw");
 const CawNetworkManager = artifacts.require("CawNetworkManager");
 const CawProfile = artifacts.require("CawProfile");
-const CawProfileL2 = artifacts.require("CawProfileL2");
+const CawProfileLedger = artifacts.require("CawProfileLedger");
 const CawProfileMinter = artifacts.require("CawProfileMinter");
 const CawProfileQuoter = artifacts.require("CawProfileQuoter");
 const CawActions = artifacts.require("CawActions");
@@ -190,14 +190,14 @@ async function fullSetup(accounts) {
   const fontB = await CawFontDataB.new();
   const uri = await CawProfileURI.new(fontA.address, fontB.address);
 
-  const cawProfileL2 = await CawProfileL2.new(l1, l2Endpoint.address, "0x0000000000000000000000000000000000000000");
-  await l1Endpoint.setDestLzEndpoint(cawProfileL2.address, l2Endpoint.address);
+  const cawProfileLedger = await CawProfileLedger.new(l1, l2Endpoint.address, "0x0000000000000000000000000000000000000000");
+  await l1Endpoint.setDestLzEndpoint(cawProfileLedger.address, l2Endpoint.address);
 
   const cawProfile = await CawProfile.new(token.address, uri.address, buyAndBurn.address, networkManager.address, l1Endpoint.address, l1, "0x0000000000000000000000000000000000000000");
   await buyAndBurn.setCawProfile(cawProfile.address);
-  await cawProfileL2.setL1Peer(l1, cawProfile.address, false);
+  await cawProfileLedger.setL1Peer(l1, cawProfile.address, false);
   await l2Endpoint.setDestLzEndpoint(cawProfile.address, l1Endpoint.address);
-  await cawProfile.setL2Peer(l2, cawProfileL2.address);
+  await cawProfile.setL2Peer(l2, cawProfileLedger.address);
 
   await networkManager.createNetwork("Test Network", accounts[0], l2, 0, 0, 0, 0, "500000000000");
   const networkId = 1;
@@ -209,10 +209,10 @@ async function fullSetup(accounts) {
   // arbitrary in tests — the mock ignores it.
   const mockVerifier = await MockSP1Verifier.new();
   const dummyVKey = "0x" + "11".repeat(32);
-  const cawActions = await CawActions.new(cawProfileL2.address, mockVerifier.address, dummyVKey, "0x0000000000000000000000000000000000000000", "0x0000000000000000000000000000000000000000", 0, 0);
-  await cawProfileL2.setCawActions(cawActions.address);
+  const cawActions = await CawActions.new(cawProfileLedger.address, mockVerifier.address, dummyVKey, "0x0000000000000000000000000000000000000000", "0x0000000000000000000000000000000000000000", 0, 0);
+  await cawProfileLedger.setCawActions(cawActions.address);
 
-  return { token, cawProfile, cawProfileL2, minter, quoter, cawActions, networkManager, networkId, mockVerifier };
+  return { token, cawProfile, cawProfileLedger, minter, quoter, cawActions, networkManager, networkId, mockVerifier };
 }
 
 async function buyUsername(user, name) {
@@ -238,11 +238,11 @@ async function depositAndAuth(user, tokenId, amountWholeCaw) {
 }
 
 async function registerSessionFor(owner, sessionKey, scopeBitmap, spendLimit, expiry, perActionTipRate = 0) {
-  const nonce = Number(await setup.cawProfileL2.sessionNonce(owner));
+  const nonce = Number(await setup.cawProfileLedger.sessionNonce(owner));
   const chainId = await web3.eth.getChainId();
   const data = {
     primaryType: 'SessionDelegation',
-    domain: { name: 'CawProfileL2', version: '1', chainId, verifyingContract: setup.cawProfileL2.address },
+    domain: { name: 'CawProfileLedger', version: '1', chainId, verifyingContract: setup.cawProfileLedger.address },
     types: {
       EIP712Domain: dataTypes.EIP712Domain,
       SessionDelegation: [
@@ -257,7 +257,7 @@ async function registerSessionFor(owner, sessionKey, scopeBitmap, spendLimit, ex
     message: { sessionKey, expiry, scopeBitmap, spendLimit, perActionTipRate, nonce },
   };
   const sigHex = signTypedData({ data, privateKey: privFor(owner), version: SignTypedDataVersion.V4 });
-  await setup.cawProfileL2.registerSession(owner, sessionKey, expiry, scopeBitmap, spendLimit, perActionTipRate, nonce, sigHex);
+  await setup.cawProfileLedger.registerSession(owner, sessionKey, expiry, scopeBitmap, spendLimit, perActionTipRate, nonce, sigHex);
 }
 
 // ============================================================================
@@ -476,7 +476,7 @@ contract('CawActions — processActionsWithZkSigs', function (accounts) {
   it('reverts "ZK path not configured" when the contract was deployed without a verifier', async function () {
     // Deploy a fresh CawActions with verifier = address(0).
     const tinyEndpoint = await MockLayerZeroEndpoint.new(l2);
-    const tinyL2 = await CawProfileL2.new(l1, tinyEndpoint.address, "0x0000000000000000000000000000000000000000");
+    const tinyL2 = await CawProfileLedger.new(l1, tinyEndpoint.address, "0x0000000000000000000000000000000000000000");
     const noVerifier = await CawActions.new(
       tinyL2.address,
       "0x0000000000000000000000000000000000000000",

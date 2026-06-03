@@ -19,7 +19,7 @@
  * live again until the message's expiry.
  */
 const MockLayerZeroEndpoint = artifacts.require("MockLayerZeroEndpoint");
-const CawProfileL2 = artifacts.require("CawProfileL2");
+const CawProfileLedger = artifacts.require("CawProfileLedger");
 
 const { ecsign, toBuffer, hashPersonalMessage } = require('ethereumjs-util');
 
@@ -30,15 +30,15 @@ const testKeys = {
   '0xf39fd6e51aad88f6f4ce6ab8827279cfffb92266': Buffer.from('ac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80', 'hex'),
 };
 
-contract('CawProfileL2 — registerSessionPersonal replay protection', function (accounts) {
+contract('CawProfileLedger — registerSessionPersonal replay protection', function (accounts) {
   const owner = accounts[0]; // MUST match a key in testKeys (Hardhat default[0])
   const sessionKey = '0x1234567890abcdef1234567890abcdef12345678';
 
-  let cawProfileL2;
+  let cawProfileLedger;
 
   before(async function () {
     const l2Endpoint = await MockLayerZeroEndpoint.new(l2);
-    cawProfileL2 = await CawProfileL2.new(l1, l2Endpoint.address, "0x0000000000000000000000000000000000000000");
+    cawProfileLedger = await CawProfileLedger.new(l1, l2Endpoint.address, "0x0000000000000000000000000000000000000000");
   });
 
   function buildPersonalMessage() {
@@ -76,13 +76,13 @@ contract('CawProfileL2 — registerSessionPersonal replay protection', function 
     const sigHex = signPersonal(message, privKey);
 
     // First submission — session registered.
-    await cawProfileL2.registerSessionPersonal(owner, messageHex, sigHex);
-    const session = await cawProfileL2.sessions(owner, sessionKey);
+    await cawProfileLedger.registerSessionPersonal(owner, messageHex, sigHex);
+    const session = await cawProfileLedger.sessions(owner, sessionKey);
     expect(Number(session.expiry), 'session is registered after first call').to.be.greaterThan(0);
 
     // User revokes (any reason).
-    await cawProfileL2.revokeSession(sessionKey, { from: owner });
-    const revoked = await cawProfileL2.sessions(owner, sessionKey);
+    await cawProfileLedger.revokeSession(sessionKey, { from: owner });
+    const revoked = await cawProfileLedger.sessions(owner, sessionKey);
     expect(Number(revoked.expiry), 'session zeroed after revoke').to.equal(0);
 
     // Replay the SAME signed message — must revert. The custom error is
@@ -91,7 +91,7 @@ contract('CawProfileL2 — registerSessionPersonal replay protection', function 
     let reverted = false;
     let reason = '';
     try {
-      await cawProfileL2.registerSessionPersonal(owner, messageHex, sigHex);
+      await cawProfileLedger.registerSessionPersonal(owner, messageHex, sigHex);
     } catch (err) {
       reverted = true;
       reason = (err.message || '').toLowerCase();
@@ -102,7 +102,7 @@ contract('CawProfileL2 — registerSessionPersonal replay protection', function 
     expect(reason).to.match(/replay|replayed|0xf6c62c02/);
 
     // Confirm session stayed revoked.
-    const stillRevoked = await cawProfileL2.sessions(owner, sessionKey);
+    const stillRevoked = await cawProfileLedger.sessions(owner, sessionKey);
     expect(Number(stillRevoked.expiry), 'session must remain zero after replay attempt').to.equal(0);
   });
 });

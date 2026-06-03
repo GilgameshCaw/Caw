@@ -1,5 +1,5 @@
 /**
- * Token-scoped session keys — CawProfileL2 + CawActions enforcement.
+ * Token-scoped session keys — CawProfileLedger + CawActions enforcement.
  *
  * Covers all design invariants:
  *  1. Wallet-scoped session still works (profileId=0 default path)
@@ -18,7 +18,7 @@
 const MintableCaw = artifacts.require("MintableCaw");
 const CawNetworkManager = artifacts.require("CawNetworkManager");
 const CawProfile = artifacts.require("CawProfile");
-const CawProfileL2 = artifacts.require("CawProfileL2");
+const CawProfileLedger = artifacts.require("CawProfileLedger");
 const CawProfileMinter = artifacts.require("CawProfileMinter");
 const CawProfileQuoter = artifacts.require("CawProfileQuoter");
 const CawActions = artifacts.require("CawActions");
@@ -168,7 +168,7 @@ function signActionData(signer, action, domain) {
 function signTokenSessionDelegation(signer, { profileId, sessionKey, expiry, scopeBitmap, spendLimit, perActionTipRate, nonce }, l2ContractAddress, chainId) {
   const data = {
     primaryType: 'TokenSessionDelegation',
-    domain: { name: 'CawProfileL2', version: '1', chainId, verifyingContract: l2ContractAddress },
+    domain: { name: 'CawProfileLedger', version: '1', chainId, verifyingContract: l2ContractAddress },
     types: {
       EIP712Domain: EIP712DomainTypes,
       TokenSessionDelegation: [
@@ -204,14 +204,14 @@ async function fullSetup(accounts) {
   const fontB = await CawFontDataB.new();
   const uri = await CawProfileURI.new(fontA.address, fontB.address);
 
-  const cawProfileL2 = await CawProfileL2.new(l1, l2Endpoint.address, "0x0000000000000000000000000000000000000000");
-  await l1Endpoint.setDestLzEndpoint(cawProfileL2.address, l2Endpoint.address);
+  const cawProfileLedger = await CawProfileLedger.new(l1, l2Endpoint.address, "0x0000000000000000000000000000000000000000");
+  await l1Endpoint.setDestLzEndpoint(cawProfileLedger.address, l2Endpoint.address);
 
   const cawProfile = await CawProfile.new(token.address, uri.address, buyAndBurn.address, networkManager.address, l1Endpoint.address, l1, "0x0000000000000000000000000000000000000000");
   await buyAndBurn.setCawProfile(cawProfile.address);
-  await cawProfileL2.setL1Peer(l1, cawProfile.address, false);
+  await cawProfileLedger.setL1Peer(l1, cawProfile.address, false);
   await l2Endpoint.setDestLzEndpoint(cawProfile.address, l1Endpoint.address);
-  await cawProfile.setL2Peer(l2, cawProfileL2.address);
+  await cawProfile.setL2Peer(l2, cawProfileLedger.address);
 
   await networkManager.createNetwork("Test Network", accounts[0], l2, 0, 0, 0, 0, "500000000000");
   const networkId = 1;
@@ -220,10 +220,10 @@ async function fullSetup(accounts) {
   await cawProfile.setMinter(minter.address);
   const quoter = await CawProfileQuoter.new(cawProfile.address);
 
-  const cawActions = await CawActions.new(cawProfileL2.address, "0x0000000000000000000000000000000000000000", "0x0000000000000000000000000000000000000000000000000000000000000000", "0x0000000000000000000000000000000000000000", "0x0000000000000000000000000000000000000000", 0, 0);
-  await cawProfileL2.setCawActions(cawActions.address);
+  const cawActions = await CawActions.new(cawProfileLedger.address, "0x0000000000000000000000000000000000000000", "0x0000000000000000000000000000000000000000000000000000000000000000", "0x0000000000000000000000000000000000000000", "0x0000000000000000000000000000000000000000", 0, 0);
+  await cawProfileLedger.setCawActions(cawActions.address);
 
-  return { token, cawProfile, cawProfileL2, minter, quoter, cawActions, networkManager, networkId };
+  return { token, cawProfile, cawProfileLedger, minter, quoter, cawActions, networkManager, networkId };
 }
 
 async function buyUsername(user, name) {
@@ -252,14 +252,14 @@ async function depositAndAuth(user, tokenId, amountWholeCaw) {
 // Register a wallet-scoped session via registerSession (EIP-712).
 async function registerWalletSession(ownerAddr, skAddr, opts) {
   const chainId = await web3.eth.getChainId();
-  const nonce = Number(await setup.cawProfileL2.sessionNonce(ownerAddr));
+  const nonce = Number(await setup.cawProfileLedger.sessionNonce(ownerAddr));
   const exp = opts.expiry;
   const bm = opts.scopeBitmap;
   const sl = opts.spendLimit;
   const tr = opts.perActionTipRate;
   const data = {
     primaryType: 'SessionDelegation',
-    domain: { name: 'CawProfileL2', version: '1', chainId, verifyingContract: setup.cawProfileL2.address },
+    domain: { name: 'CawProfileLedger', version: '1', chainId, verifyingContract: setup.cawProfileLedger.address },
     types: {
       EIP712Domain: EIP712DomainTypes,
       SessionDelegation: [
@@ -274,7 +274,7 @@ async function registerWalletSession(ownerAddr, skAddr, opts) {
     message: { sessionKey: skAddr, expiry: exp, scopeBitmap: bm, spendLimit: sl, perActionTipRate: tr, nonce },
   };
   const sigHex = signTypedData({ data, privateKey: privFor(ownerAddr), version: SignTypedDataVersion.V4 });
-  await setup.cawProfileL2.registerSession(ownerAddr, skAddr, exp, bm, sl, tr, nonce, sigHex);
+  await setup.cawProfileLedger.registerSession(ownerAddr, skAddr, exp, bm, sl, tr, nonce, sigHex);
 }
 
 // Register a token-scoped session via registerTokenScopedSession.
@@ -286,9 +286,9 @@ async function registerTokenSession(ownerAddr, opts) {
   const sl = opts.spendLimit;
   const tr = opts.perActionTipRate;
   const cid = await web3.eth.getChainId();
-  const nonce = Number(await setup.cawProfileL2.tokenSessionNonce(pid));
-  const { v, r, s } = signTokenSessionDelegation(ownerAddr, { profileId: pid, sessionKey: sk, expiry: exp, scopeBitmap: bm, spendLimit: sl, perActionTipRate: tr, nonce }, setup.cawProfileL2.address, cid);
-  await setup.cawProfileL2.registerTokenScopedSession(pid, sk, exp, bm, sl, tr, nonce, v, r, s);
+  const nonce = Number(await setup.cawProfileLedger.tokenSessionNonce(pid));
+  const { v, r, s } = signTokenSessionDelegation(ownerAddr, { profileId: pid, sessionKey: sk, expiry: exp, scopeBitmap: bm, spendLimit: sl, perActionTipRate: tr, nonce }, setup.cawProfileLedger.address, cid);
+  await setup.cawProfileLedger.registerTokenScopedSession(pid, sk, exp, bm, sl, tr, nonce, v, r, s);
 }
 
 // Process a single CAW action signed by `signer` for `senderId`.
@@ -348,7 +348,7 @@ contract('Token-scoped sessions', function (accounts) {
     await registerWalletSession(userA, walletSessionKey, {
       expiry: futureExpiry, scopeBitmap: 0xBF, spendLimit: '5000000', perActionTipRate: 0,
     });
-    const sess = await setup.cawProfileL2.sessions(userA, walletSessionKey);
+    const sess = await setup.cawProfileLedger.sessions(userA, walletSessionKey);
     expect(Number(sess.profileId)).to.equal(0, 'wallet-scoped: profileId must be 0');
     // Use the session key to sign a CAW action on tokenA
     await processCawAction(tokenA, walletSessionKey, validatorId, actionDomain);
@@ -362,7 +362,7 @@ contract('Token-scoped sessions', function (accounts) {
       profileId: tokenA, sessionKey: sessionKeyA, expiry: futureExpiry,
       scopeBitmap: 0xBF, spendLimit: '2000000', perActionTipRate: 0,
     });
-    const sess = await setup.cawProfileL2.sessions(userA, sessionKeyA);
+    const sess = await setup.cawProfileLedger.sessions(userA, sessionKeyA);
     expect(Number(sess.profileId)).to.equal(tokenA, 'profileId must be tokenA');
     // Action on tokenA using sessionKeyA → should succeed
     await processCawAction(tokenA, sessionKeyA, validatorId, actionDomain);
@@ -398,7 +398,7 @@ contract('Token-scoped sessions', function (accounts) {
       scopeBitmap: 0xBF, spendLimit: '1000000', perActionTipRate: 0,
     });
     // Confirm it's valid before transfer.
-    const sessBefore = await setup.cawProfileL2.validSession(userA, freshKey);
+    const sessBefore = await setup.cawProfileLedger.validSession(userA, freshKey);
     expect(Number(sessBefore.expiry)).to.be.greaterThan(0, 'session should be valid before transfer');
 
     // Transfer tokenA to userB via L1 transferAndSync (LZ mock mirrors to L2).
@@ -408,7 +408,7 @@ contract('Token-scoped sessions', function (accounts) {
     });
 
     // After transfer, the session should be zeroed (tokenSessionEpoch bumped).
-    const sessAfter = await setup.cawProfileL2.validSession(userA, freshKey);
+    const sessAfter = await setup.cawProfileLedger.validSession(userA, freshKey);
     expect(Number(sessAfter.expiry)).to.equal(0, 'session must be invalidated after transfer');
 
     // Transfer tokenA back to userA for subsequent tests.
@@ -429,7 +429,7 @@ contract('Token-scoped sessions', function (accounts) {
     // Each direction bumped ownerSessionEpoch on the FROM side.
     // userA's wallet-scoped session (registered before test 4) should now
     // be invalidated — userA was on the FROM side of both transfers.
-    const sessA = await setup.cawProfileL2.validSession(userA, walletSessionKey);
+    const sessA = await setup.cawProfileLedger.validSession(userA, walletSessionKey);
     expect(Number(sessA.expiry)).to.equal(0,
       'wallet-scoped session for the transferring wallet must be invalidated (CL-4 protection)');
 
@@ -442,7 +442,7 @@ contract('Token-scoped sessions', function (accounts) {
     await registerWalletSession(userB, userBWalletKey, {
       expiry: futureExpiry, scopeBitmap: 0xBF, spendLimit: '1000000', perActionTipRate: 0,
     });
-    const sessB = await setup.cawProfileL2.validSession(userB, userBWalletKey);
+    const sessB = await setup.cawProfileLedger.validSession(userB, userBWalletKey);
     expect(Number(sessB.expiry)).to.be.greaterThan(0,
       "userB's fresh wallet-scoped session must be valid (registered post-transfers)");
   });
@@ -456,12 +456,12 @@ contract('Token-scoped sessions', function (accounts) {
       profileId: tokenA, sessionKey: revokeKey, expiry: futureExpiry,
       scopeBitmap: 0xBF, spendLimit: '1000000', perActionTipRate: 0,
     });
-    const sessBefore = await setup.cawProfileL2.sessions(userA, revokeKey);
+    const sessBefore = await setup.cawProfileLedger.sessions(userA, revokeKey);
     expect(Number(sessBefore.expiry)).to.be.greaterThan(0);
 
-    await setup.cawProfileL2.revokeSession(revokeKey, { from: userA });
+    await setup.cawProfileLedger.revokeSession(revokeKey, { from: userA });
 
-    const sessAfter = await setup.cawProfileL2.sessions(userA, revokeKey);
+    const sessAfter = await setup.cawProfileLedger.sessions(userA, revokeKey);
     expect(Number(sessAfter.expiry)).to.equal(0, 'session must be deleted after revoke');
   });
 
@@ -492,11 +492,11 @@ contract('Token-scoped sessions', function (accounts) {
     });
 
     // tokenA session must be dead.
-    const sessA = await setup.cawProfileL2.validSession(userA, keyForA);
+    const sessA = await setup.cawProfileLedger.validSession(userA, keyForA);
     expect(Number(sessA.expiry)).to.equal(0, 'tokenA session must be invalidated after transfer');
 
     // tokenB session must still be alive.
-    const sessB = await setup.cawProfileL2.validSession(userB, keyForB);
+    const sessB = await setup.cawProfileLedger.validSession(userB, keyForB);
     expect(Number(sessB.expiry)).to.be.greaterThan(0, 'tokenB session must survive tokenA transfer');
 
     // Restore tokenA ownership for later tests.
@@ -510,8 +510,8 @@ contract('Token-scoped sessions', function (accounts) {
   // Test 8: Nonce isolation — tokenSessionNonce independent of sessionNonce
   // ----------------------------------------------------------------
   it('8. tokenSessionNonce[A] is independent of sessionNonce[owner]', async function () {
-    const ownerNonceBefore = Number(await setup.cawProfileL2.sessionNonce(userA));
-    const tokenNonceBefore = Number(await setup.cawProfileL2.tokenSessionNonce(tokenA));
+    const ownerNonceBefore = Number(await setup.cawProfileLedger.sessionNonce(userA));
+    const tokenNonceBefore = Number(await setup.cawProfileLedger.tokenSessionNonce(tokenA));
 
     // Register a token-scoped session → bumps tokenSessionNonce, NOT sessionNonce.
     await registerTokenSession(userA, {
@@ -519,8 +519,8 @@ contract('Token-scoped sessions', function (accounts) {
       scopeBitmap: 0xBF, spendLimit: '100', perActionTipRate: 0,
     });
 
-    const ownerNonceAfter = Number(await setup.cawProfileL2.sessionNonce(userA));
-    const tokenNonceAfter = Number(await setup.cawProfileL2.tokenSessionNonce(tokenA));
+    const ownerNonceAfter = Number(await setup.cawProfileLedger.sessionNonce(userA));
+    const tokenNonceAfter = Number(await setup.cawProfileLedger.tokenSessionNonce(tokenA));
     expect(ownerNonceAfter).to.equal(ownerNonceBefore, 'owner sessionNonce must not be bumped by token-scoped registration');
     expect(tokenNonceAfter).to.equal(tokenNonceBefore + 1, 'tokenSessionNonce must increment');
 
@@ -528,8 +528,8 @@ contract('Token-scoped sessions', function (accounts) {
     await registerWalletSession(userA, walletSessionKey, {
       expiry: futureExpiry, scopeBitmap: 0xBF, spendLimit: '100', perActionTipRate: 0,
     });
-    const ownerNonceAfter2 = Number(await setup.cawProfileL2.sessionNonce(userA));
-    const tokenNonceAfter2 = Number(await setup.cawProfileL2.tokenSessionNonce(tokenA));
+    const ownerNonceAfter2 = Number(await setup.cawProfileLedger.sessionNonce(userA));
+    const tokenNonceAfter2 = Number(await setup.cawProfileLedger.tokenSessionNonce(tokenA));
     expect(ownerNonceAfter2).to.equal(ownerNonceAfter + 1, 'sessionNonce must increment on wallet registration');
     expect(tokenNonceAfter2).to.equal(tokenNonceAfter, 'tokenSessionNonce must not change on wallet registration');
   });
@@ -543,7 +543,7 @@ contract('Token-scoped sessions', function (accounts) {
       profileId: tokenA, sessionKey: SK_EXTRA, expiry: futureExpiry,
       scopeBitmap: 0xFF, spendLimit: '100', perActionTipRate: 0,
     });
-    const sess = await setup.cawProfileL2.sessions(userA, SK_EXTRA);
+    const sess = await setup.cawProfileLedger.sessions(userA, SK_EXTRA);
     // Bit 6 (0x40) must be cleared → stored bitmap = 0xFF & 0xBF = 0xBF
     expect(Number(sess.scopeBitmap)).to.equal(0xBF, 'WITHDRAW bit must be force-cleared');
   });
@@ -574,15 +574,15 @@ contract('Token-scoped sessions', function (accounts) {
   // ----------------------------------------------------------------
   it('11. registerTokenScopedSession with non-owner sig reverts BadSig()', async function () {
     const scratchKey = SK_EXTRA2; // HH#2
-    const tokenNonce = Number(await setup.cawProfileL2.tokenSessionNonce(tokenA));
+    const tokenNonce = Number(await setup.cawProfileLedger.tokenSessionNonce(tokenA));
     // Sign as userB (not the owner of tokenA).
     const { v, r, s } = signTokenSessionDelegation(userB, {
       profileId: tokenA, sessionKey: scratchKey, expiry: futureExpiry,
       scopeBitmap: 0xBF, spendLimit: '100', perActionTipRate: 0, nonce: tokenNonce,
-    }, setup.cawProfileL2.address, chainId);
+    }, setup.cawProfileLedger.address, chainId);
 
     await expectRevertWithCustomError(
-      setup.cawProfileL2.registerTokenScopedSession(
+      setup.cawProfileLedger.registerTokenScopedSession(
         tokenA, scratchKey, futureExpiry, 0xBF, '100', 0, tokenNonce, v, r, s
       ),
       'BadSig()'

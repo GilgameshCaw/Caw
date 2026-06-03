@@ -13,7 +13,7 @@ interface IOAppOwner {
 }
 
 /// @title PathwayExpander
-/// @notice Becomes the owner of every CAW OApp (CawProfile, CawProfileL2,
+/// @notice Becomes the owner of every CAW OApp (CawProfile, CawProfileLedger,
 ///         CawActionsArchive, CawChallengeRelay) so that the deployer EOA
 ///         can renounce its direct authority over them while still leaving
 ///         the door open for ONE specific operation: adding peers for new

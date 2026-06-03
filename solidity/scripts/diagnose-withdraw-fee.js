@@ -3,7 +3,7 @@
  *
  * Diagnose why a withdraw revert happened on L2 processActions.
  *
- * Hypothesis: CawProfileL2.gasLimitFor(setWithdrawableSelector, n) =
+ * Hypothesis: CawProfileLedger.gasLimitFor(setWithdrawableSelector, n) =
  * 35_000 + 24_000*n is under-budgeted for the L1-side cold-slot SSTOREs,
  * so the quoted nativeFee from CawActions.withdrawQuote() is less than
  * what the L2 LZ Endpoint actually charges when setWithdrawable broadcasts.
@@ -48,7 +48,7 @@ const STATE = JSON.parse(
   fs.readFileSync(path.join(__dirname, '..', '.deploy-state.json'), 'utf8')
 );
 const CAW_ACTIONS_L2 = STATE.addresses.CawActions_L2;
-const CAW_PROFILE_L2 = STATE.addresses.CawProfileL2_L2;
+const CAW_PROFILE_L2 = STATE.addresses.CawProfileLedger_L2;
 
 // Base Sepolia LZ V2 endpoint (matches deploy.js CHAINS.testnetL2.lzEndpoint).
 const L2_ENDPOINT = '0x6EDCE65403992e310A62460808c4b910D972f10f';
@@ -101,10 +101,10 @@ function buildLzReceiveOption(gas, value = 0n) {
   return '0x' + buf.toString('hex');
 }
 
-// setWithdrawableSelector matches CawProfileL2.sol:221
+// setWithdrawableSelector matches CawProfileLedger.sol:221
 const SET_WITHDRAWABLE_SELECTOR = ethers.id('setWithdrawable(uint32[],uint256[])').slice(0, 10);
 
-// CawProfile gasLimitFor formula (CawProfileL2.sol:1248)
+// CawProfile gasLimitFor formula (CawProfileLedger.sol:1248)
 function contractGasBudget(n) {
   return 35_000n + 24_000n * BigInt(n);
 }
@@ -119,12 +119,12 @@ function staleGasBudget(n) {
 async function main() {
   const provider = new ethers.JsonRpcProvider(L2_RPC);
   const cawActions = new ethers.Contract(CAW_ACTIONS_L2, CAW_ACTIONS_ABI, provider);
-  const cawProfileL2 = new ethers.Contract(CAW_PROFILE_L2, CAW_PROFILE_L2_ABI, provider);
+  const cawProfileLedger = new ethers.Contract(CAW_PROFILE_L2, CAW_PROFILE_L2_ABI, provider);
   const endpoint = new ethers.Contract(L2_ENDPOINT, LZ_ENDPOINT_ABI, provider);
 
   console.log(`L2 chain:        Base Sepolia`);
   console.log(`CawActions_L2:   ${CAW_ACTIONS_L2}`);
-  console.log(`CawProfileL2_L2: ${CAW_PROFILE_L2}`);
+  console.log(`CawProfileLedger_L2: ${CAW_PROFILE_L2}`);
   console.log(`LZ Endpoint:     ${L2_ENDPOINT}`);
   console.log(`L1 dstEid:       ${L1_EID}`);
   console.log(`Withdraw probe:  tokenId=${TOKEN_ID}, amount=${AMOUNT_WHOLE} CAW (${AMOUNT_WEI} wei)`);
@@ -158,7 +158,7 @@ async function main() {
   const fullMessage = ethers.concat([SET_WITHDRAWABLE_SELECTOR, payload]);
 
   // OApp message structure: the endpoint receives the raw payload as bytes;
-  // CawProfileL2._lzSend passes `payload` directly. The OApp base prepends
+  // CawProfileLedger._lzSend passes `payload` directly. The OApp base prepends
   // a 1-byte header internally before stamping with the OApp framing — but
   // for the FEE calculation only `options + message length` matter, plus
   // dst/src/receiver. The cleanest approximation is to quote with the same

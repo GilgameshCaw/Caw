@@ -29,7 +29,7 @@ const path = require('path');
 const { execSync } = require('child_process');
 
 const CawActionsDigestExposer = artifacts.require("CawActionsDigestExposer");
-const CawProfileL2 = artifacts.require("CawProfileL2");
+const CawProfileLedger = artifacts.require("CawProfileLedger");
 const MockLayerZeroEndpoint = artifacts.require("MockLayerZeroEndpoint");
 
 const FIXTURE_PATH = path.join(__dirname, 'zk-digest-fixtures.json');
@@ -49,13 +49,13 @@ contract('ZK digest equivalence — Rust circuit ↔ Solidity _computeStructHash
   before(async function () {
     this.timeout(300000); // includes Rust release rebuild on first run
 
-    // Deploy a CawProfileL2 stub (CawActions ctor needs it). We never call
+    // Deploy a CawProfileLedger stub (CawActions ctor needs it). We never call
     // anything on it — just need a non-zero address that ownerOf can return
     // 0x0 from for non-existent token IDs (which is what we want for digest-
     // only tests; signature verification isn't exercised here).
     const l2Endpoint = await MockLayerZeroEndpoint.new(l2);
-    const cawProfileL2 = await CawProfileL2.new(l1, l2Endpoint.address, "0x0000000000000000000000000000000000000000");
-    exposer = await CawActionsDigestExposer.new(cawProfileL2.address);
+    const cawProfileLedger = await CawProfileLedger.new(l1, l2Endpoint.address, "0x0000000000000000000000000000000000000000");
+    exposer = await CawActionsDigestExposer.new(cawProfileLedger.address);
 
     // The helper's domain hash is keyed to its address + chainId, so it
     // changes every run. Regenerate fixtures with that exact domain so the

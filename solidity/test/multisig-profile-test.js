@@ -10,7 +10,7 @@
 const MintableCaw = artifacts.require("MintableCaw");
 const CawNetworkManager = artifacts.require("CawNetworkManager");
 const CawProfile = artifacts.require("CawProfile");
-const CawProfileL2 = artifacts.require("CawProfileL2");
+const CawProfileLedger = artifacts.require("CawProfileLedger");
 const CawProfileMinter = artifacts.require("CawProfileMinter");
 const CawProfileQuoter = artifacts.require("CawProfileQuoter");
 const CawActions = artifacts.require("CawActions");
@@ -154,14 +154,14 @@ async function fullSetup(accounts) {
   const fontB = await CawFontDataB.new();
   const uri = await CawProfileURI.new(fontA.address, fontB.address);
 
-  const cawProfileL2 = await CawProfileL2.new(l1, l2Endpoint.address, "0x0000000000000000000000000000000000000000");
-  await l1Endpoint.setDestLzEndpoint(cawProfileL2.address, l2Endpoint.address);
+  const cawProfileLedger = await CawProfileLedger.new(l1, l2Endpoint.address, "0x0000000000000000000000000000000000000000");
+  await l1Endpoint.setDestLzEndpoint(cawProfileLedger.address, l2Endpoint.address);
 
   const cawProfile = await CawProfile.new(token.address, uri.address, buyAndBurn.address, networkManager.address, l1Endpoint.address, l1, "0x0000000000000000000000000000000000000000");
   await buyAndBurn.setCawProfile(cawProfile.address);
-  await cawProfileL2.setL1Peer(l1, cawProfile.address, false);
+  await cawProfileLedger.setL1Peer(l1, cawProfile.address, false);
   await l2Endpoint.setDestLzEndpoint(cawProfile.address, l1Endpoint.address);
-  await cawProfile.setL2Peer(l2, cawProfileL2.address);
+  await cawProfile.setL2Peer(l2, cawProfileLedger.address);
 
   await networkManager.createNetwork("Test Network", accounts[0], l2, 0, 0, 0, 0, "500000000000");
   const networkId = 1;
@@ -169,10 +169,10 @@ async function fullSetup(accounts) {
   const minter = await CawProfileMinter.new(token.address, cawProfile.address, mockRouter.address);
   await cawProfile.setMinter(minter.address);
   const quoter = await CawProfileQuoter.new(cawProfile.address);
-  const cawActions = await CawActions.new(cawProfileL2.address, "0x0000000000000000000000000000000000000000", "0x0000000000000000000000000000000000000000000000000000000000000000", "0x0000000000000000000000000000000000000000", "0x0000000000000000000000000000000000000000", 0, 0);
-  await cawProfileL2.setCawActions(cawActions.address);
+  const cawActions = await CawActions.new(cawProfileLedger.address, "0x0000000000000000000000000000000000000000", "0x0000000000000000000000000000000000000000000000000000000000000000", "0x0000000000000000000000000000000000000000", "0x0000000000000000000000000000000000000000", 0, 0);
+  await cawProfileLedger.setCawActions(cawActions.address);
 
-  return { token, cawProfile, cawProfileL2, minter, quoter, cawActions, networkManager, networkId };
+  return { token, cawProfile, cawProfileLedger, minter, quoter, cawActions, networkManager, networkId };
 }
 
 contract('CawMultisigProfile — 2-of-3 multisig owning a profile', function (accounts) {
@@ -205,7 +205,7 @@ contract('CawMultisigProfile — 2-of-3 multisig owning a profile', function (ac
       from: profileBuyer, value: transferQuote.nativeFee.toString(),
     });
 
-    const l2Owner = await setup.cawProfileL2.ownerOf(multisigTokenId);
+    const l2Owner = await setup.cawProfileLedger.ownerOf(multisigTokenId);
     expect(l2Owner.toLowerCase()).to.equal(multisig.address.toLowerCase());
 
     domain = await getDomain(setup.cawActions);

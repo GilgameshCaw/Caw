@@ -1720,7 +1720,7 @@ export const validatorService: Service = {
         // payloads (50+ actions worth of calldata saturates the socket).
         //
         // CRITICAL: pass `from` so eth_call's tx.origin matches the real
-        // sendTransaction below. CawProfileL2.lzSend's LZ refund target is
+        // sendTransaction below. CawProfileLedger.lzSend's LZ refund target is
         // payable(tx.origin) — if tx.origin defaults to address(0) in the
         // simulation, any overpayment-refund path reverts inside LZ's
         // Transfer library with Transfer_ToAddressIsZero(). The real tx is
@@ -1897,7 +1897,7 @@ export const validatorService: Service = {
 
       // Formula fallback. Sig path: ~50K gas/action + 100K base. ZK path:
       // ~300K verifier + 30K/action + 100K base. Withdraw actions add a
-      // ~250K LZ-send bump (CawProfileL2.setWithdrawable → endpoint.send,
+      // ~250K LZ-send bump (CawProfileLedger.setWithdrawable → endpoint.send,
       // diagnosed via Tenderly on Base Sepolia tx
       // 0x1f330dcc5184f234b359807e451f26875df943c915f2fbaa7c906fa4b5ea5b85).
       // 30% buffer.

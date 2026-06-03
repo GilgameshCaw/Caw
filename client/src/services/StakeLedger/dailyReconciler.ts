@@ -15,7 +15,7 @@
 // 24h"), but the chart is a daily-bucket view anyway.
 
 import { prisma } from '../../prismaClient'
-import { getCawProfileL2 } from './cawProfileL2'
+import { getCawProfileLedger } from './cawProfileLedger'
 
 const ONE_DAY_MS = 24 * 60 * 60 * 1000
 
@@ -42,7 +42,7 @@ export async function runDailyReconciliation(): Promise<ReconcileResult> {
 
   let contract
   try {
-    contract = getCawProfileL2()
+    contract = getCawProfileLedger()
   } catch (err: any) {
     console.error('[StakeLedger] Reconciler: cannot get L2 contract:', err?.message ?? err)
     return { checked: 0, matched: 0, mismatched: 0, depositsDiscovered: 0, totalDepositAmount: 0n }

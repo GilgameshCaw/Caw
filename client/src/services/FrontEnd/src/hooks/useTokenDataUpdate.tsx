@@ -5,7 +5,7 @@ import { useAccount, useReadContract } from "wagmi"
 import { Address } from "viem"
 import { baseSepolia, sepolia } from "wagmi/chains"
 import { CAW_NAMES_L2_ADDRESS, CAW_PROFILE_LENS_ADDRESS } from "~/../../../abi/addresses";
-import { cawProfileLensAbi, cawProfileL2Abi } from "~/../../../abi/generated"
+import { cawProfileLensAbi, cawProfileLedgerAbi } from "~/../../../abi/generated"
 import { useTokenDataStore } from "~/store/tokenDataStore"
 import TOKENS from "~/constants/tokens"
 // import { useQuery } from "@tanstack/react-query"
@@ -133,7 +133,7 @@ export default function useTokenDataUpdate() {
   const { data: l2TokenData, isLoading: balancesLoading, refetch: refetchL2 } = useReadContract({
     address: CAW_NAMES_L2_ADDRESS,
     chainId:      baseSepolia.id,
-    abi:          cawProfileL2Abi,
+    abi:          cawProfileLedgerAbi,
     functionName: "getTokens",
     query: {
       enabled: !!rawTokens && rawTokens.length > 0,
@@ -145,7 +145,7 @@ export default function useTokenDataUpdate() {
   const { data: connectedL2TokenData, isLoading: connectedBalancesLoading, refetch: refetchConnectedL2 } = useReadContract({
     address: CAW_NAMES_L2_ADDRESS,
     chainId: baseSepolia.id,
-    abi: cawProfileL2Abi,
+    abi: cawProfileLedgerAbi,
     functionName: "getTokens",
     query: {
       enabled: needsConnectedFetch && !!connectedTokens && connectedTokens.length > 0,

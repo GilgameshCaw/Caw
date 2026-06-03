@@ -15,7 +15,7 @@
 const MintableCaw = artifacts.require("MintableCaw");
 const CawNetworkManager = artifacts.require("CawNetworkManager");
 const CawProfile = artifacts.require("CawProfile");
-const CawProfileL2 = artifacts.require("CawProfileL2");
+const CawProfileLedger = artifacts.require("CawProfileLedger");
 const CawProfileMinter = artifacts.require("CawProfileMinter");
 const CawProfileQuoter = artifacts.require("CawProfileQuoter");
 const CawActions = artifacts.require("CawActions");
@@ -174,11 +174,11 @@ function signActionBatch(signer, actions, domain) {
 }
 
 async function registerSessionFor(setup, owner, sessionKey, scopeBitmap, spendLimit, expiry, perActionTipRate = 0) {
-  const nonce = Number(await setup.cawProfileL2.sessionNonce(owner));
+  const nonce = Number(await setup.cawProfileLedger.sessionNonce(owner));
   const chainId = await web3.eth.getChainId();
   const data = {
     primaryType: 'SessionDelegation',
-    domain: { name: 'CawProfileL2', version: '1', chainId, verifyingContract: setup.cawProfileL2.address },
+    domain: { name: 'CawProfileLedger', version: '1', chainId, verifyingContract: setup.cawProfileLedger.address },
     types: {
       EIP712Domain: dataTypes.EIP712Domain,
       SessionDelegation: [
@@ -193,7 +193,7 @@ async function registerSessionFor(setup, owner, sessionKey, scopeBitmap, spendLi
     message: { sessionKey, expiry, scopeBitmap, spendLimit, perActionTipRate, nonce },
   };
   const sigHex = signTypedData({ data, privateKey: privFor(owner), version: SignTypedDataVersion.V4 });
-  await setup.cawProfileL2.registerSession(owner, sessionKey, expiry, scopeBitmap, spendLimit, perActionTipRate, nonce, sigHex);
+  await setup.cawProfileLedger.registerSession(owner, sessionKey, expiry, scopeBitmap, spendLimit, perActionTipRate, nonce, sigHex);
 }
 
 let setup;
@@ -235,14 +235,14 @@ async function fullSetup(accounts) {
   const fontB = await CawFontDataB.new();
   const uri = await CawProfileURI.new(fontA.address, fontB.address);
 
-  const cawProfileL2 = await CawProfileL2.new(l1, l2Endpoint.address, "0x0000000000000000000000000000000000000000");
-  await l1Endpoint.setDestLzEndpoint(cawProfileL2.address, l2Endpoint.address);
+  const cawProfileLedger = await CawProfileLedger.new(l1, l2Endpoint.address, "0x0000000000000000000000000000000000000000");
+  await l1Endpoint.setDestLzEndpoint(cawProfileLedger.address, l2Endpoint.address);
 
   const cawProfile = await CawProfile.new(token.address, uri.address, buyAndBurn.address, networkManager.address, l1Endpoint.address, l1, "0x0000000000000000000000000000000000000000");
   await buyAndBurn.setCawProfile(cawProfile.address);
-  await cawProfileL2.setL1Peer(l1, cawProfile.address, false);
+  await cawProfileLedger.setL1Peer(l1, cawProfile.address, false);
   await l2Endpoint.setDestLzEndpoint(cawProfile.address, l1Endpoint.address);
-  await cawProfile.setL2Peer(l2, cawProfileL2.address);
+  await cawProfile.setL2Peer(l2, cawProfileLedger.address);
 
   await networkManager.createNetwork("Test Network", accounts[0], l2, 0, 0, 0, 0, "500000000000");
   const networkId = 1;
@@ -250,10 +250,10 @@ async function fullSetup(accounts) {
   const minter = await CawProfileMinter.new(token.address, cawProfile.address, mockRouter.address);
   await cawProfile.setMinter(minter.address);
   const quoter = await CawProfileQuoter.new(cawProfile.address);
-  const cawActions = await CawActions.new(cawProfileL2.address, "0x0000000000000000000000000000000000000000", "0x0000000000000000000000000000000000000000000000000000000000000000", "0x0000000000000000000000000000000000000000", "0x0000000000000000000000000000000000000000", 0, 0);
-  await cawProfileL2.setCawActions(cawActions.address);
+  const cawActions = await CawActions.new(cawProfileLedger.address, "0x0000000000000000000000000000000000000000", "0x0000000000000000000000000000000000000000000000000000000000000000", "0x0000000000000000000000000000000000000000", "0x0000000000000000000000000000000000000000", 0, 0);
+  await cawProfileLedger.setCawActions(cawActions.address);
 
-  return { token, cawProfile, cawProfileL2, minter, quoter, cawActions, networkManager, networkId };
+  return { token, cawProfile, cawProfileLedger, minter, quoter, cawActions, networkManager, networkId };
 }
 
 contract('CawActions — ERC-1271 contract-owner signatures', function (accounts) {
@@ -295,7 +295,7 @@ contract('CawActions — ERC-1271 contract-owner signatures', function (accounts
     });
 
     // Sanity: L2 ownerOf reflects the contract address.
-    const l2Owner = await setup.cawProfileL2.ownerOf(contractOwnedTokenId);
+    const l2Owner = await setup.cawProfileLedger.ownerOf(contractOwnedTokenId);
     expect(l2Owner.toLowerCase()).to.equal(mockOwner.address.toLowerCase());
 
     domain = await getDomain(setup.cawActions);
@@ -419,7 +419,7 @@ contract('CawActions — ERC-1271 contract-owner signatures', function (accounts
   it('setERC1271Sibling reverts with ZeroSibling when called with address(0)', async function () {
     let didRevert = false;
     try {
-      await setup.cawProfileL2.setERC1271Sibling('0x0000000000000000000000000000000000000000', { from: accounts[0] });
+      await setup.cawProfileLedger.setERC1271Sibling('0x0000000000000000000000000000000000000000', { from: accounts[0] });
     } catch (e) {
       didRevert = true;
       // Custom error — message contains the selector or the error name.
@@ -432,9 +432,9 @@ contract('CawActions — ERC-1271 contract-owner signatures', function (accounts
   });
 
   it('setERC1271Sibling reverts with SiblingSet on second call', async function () {
-    // Use a fresh CawProfileL2 for isolation — the main setup instance has no sibling set yet.
+    // Use a fresh CawProfileLedger for isolation — the main setup instance has no sibling set yet.
     const l2Endpoint2 = await MockLayerZeroEndpoint.new(l2);
-    const freshL2 = await CawProfileL2.new(l1, l2Endpoint2.address, "0x0000000000000000000000000000000000000000");
+    const freshL2 = await CawProfileLedger.new(l1, l2Endpoint2.address, "0x0000000000000000000000000000000000000000");
     const someAddr = accounts[5];
     // First call should succeed.
     await freshL2.setERC1271Sibling(someAddr, { from: accounts[0] });
@@ -522,14 +522,14 @@ async function fullSetupWithSibling(accounts) {
   const fontB = await CawFontDataB.new();
   const uri = await CawProfileURI.new(fontA.address, fontB.address);
 
-  const cawProfileL2 = await CawProfileL2.new(l1, l2Endpoint.address, "0x0000000000000000000000000000000000000000");
-  await l1Endpoint.setDestLzEndpoint(cawProfileL2.address, l2Endpoint.address);
+  const cawProfileLedger = await CawProfileLedger.new(l1, l2Endpoint.address, "0x0000000000000000000000000000000000000000");
+  await l1Endpoint.setDestLzEndpoint(cawProfileLedger.address, l2Endpoint.address);
 
   const cawProfile = await CawProfile.new(token.address, uri.address, buyAndBurn.address, networkManager.address, l1Endpoint.address, l1, "0x0000000000000000000000000000000000000000");
   await buyAndBurn.setCawProfile(cawProfile.address);
-  await cawProfileL2.setL1Peer(l1, cawProfile.address, false);
+  await cawProfileLedger.setL1Peer(l1, cawProfile.address, false);
   await l2Endpoint.setDestLzEndpoint(cawProfile.address, l1Endpoint.address);
-  await cawProfile.setL2Peer(l2, cawProfileL2.address);
+  await cawProfile.setL2Peer(l2, cawProfileLedger.address);
 
   await networkManager.createNetwork("Test Network 2", accounts[0], l2, 0, 0, 0, 0, "500000000000");
   const networkId = 1;
@@ -570,7 +570,7 @@ async function fullSetupWithSibling(accounts) {
   const predictedSiblingAddr = createAddress(accounts[0], deployerNonce + 1);
 
   const cawActions = await CawActions.new(
-    cawProfileL2.address,
+    cawProfileLedger.address,
     '0x0000000000000000000000000000000000000000',
     '0x0000000000000000000000000000000000000000000000000000000000000000',
     predictedSiblingAddr,
@@ -583,9 +583,9 @@ async function fullSetupWithSibling(accounts) {
     throw new Error(`Sibling address mismatch: got ${sibling.address}, expected ${predictedSiblingAddr}`);
   }
 
-  await cawProfileL2.setCawActions(cawActions.address);
+  await cawProfileLedger.setCawActions(cawActions.address);
 
-  return { token, cawProfile, cawProfileL2, minter, quoter, cawActions, sibling, networkManager, networkId, l2 };
+  return { token, cawProfile, cawProfileLedger, minter, quoter, cawActions, sibling, networkManager, networkId, l2 };
 }
 
 contract('CawActionsERC1271 — trailing-bytes and withdraw-cap guards', function (accounts) {

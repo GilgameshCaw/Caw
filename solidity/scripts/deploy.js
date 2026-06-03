@@ -37,13 +37,13 @@
  *                   `L2_CHAIN_KEYS` below + a CHAINS entry per env to enable.
  *
  * DEPLOYMENT PHASES (generic across N L2s):
- *   Phase 1: For each L2 — deploy CawProfileL2 (peered with L1)
+ *   Phase 1: For each L2 — deploy CawProfileLedger (peered with L1)
  *   Phase 2: L1 — deploy CawProfile, CCM, Minter, Quoter, Marketplace, etc.
  *   Phase 3: For each L2 — deploy CawActions (storage chain role)
  *   Phase 4: For each L2 — deploy CawActionsArchive + CawChallengeRelay
  *            (any L2 can be both a storage chain AND an archive chain)
  *   Phase 5: Full-mesh peer wiring:
- *            - L1 CawProfile  ↔ each L2's CawProfileL2
+ *            - L1 CawProfile  ↔ each L2's CawProfileLedger
  *            - For every (storageL2, archiveL2) pair where storage != archive:
  *                CawChallengeRelay_<storage>  ↔  CawActionsArchive_<archive>
  *
@@ -113,7 +113,7 @@ const DEPLOY_GAS_MULTIPLIER = parseFloat(process.env.DEPLOY_GAS_MULTIPLIER || '1
 // What phase 7 does:
 //   1. Deploys one PathwayExpander per chain (owned by the deployer EOA).
 //   2. Transfers ownership of every LZ OApp on that chain to its expander
-//      (CawProfile + CawProfileL2_* on L1; CawProfileL2_<L>,
+//      (CawProfile + CawProfileLedger_* on L1; CawProfileLedger_<L>,
 //      CawActionsArchive_<L>, CawChallengeRelay_<L> on each L2).
 //   3. Renounces ownership on every other Ownable contract on that chain
 //      (CawActions_<L>, CawProfileURI on L1).
@@ -136,12 +136,12 @@ const RENOUNCE_ON_DEPLOY = process.env.RENOUNCE_ON_DEPLOY === '1';
 const EXPECTED_DEPLOYER = '0xF71338f3eAa483aA66125598B09BA1988e694a95';
 
 // L2 chain *abstract* keys. Every L2 in this list runs the full per-chain set
-// (CawProfileL2, CawActions, CawActionsArchive, CawChallengeRelay) so any
+// (CawProfileLedger, CawActions, CawActionsArchive, CawChallengeRelay) so any
 // network can pick any of them as its storage chain. Adding a new L2 = append
 // to this list + add a per-env CHAINS entry below.
 //
 // L1 is INTENTIONALLY NOT IN THIS LIST. L1 still gets a co-deployed
-// CawProfileL2_L1 + CawActions_L1 (in `bypassLZ` mode — see Phase 2 below)
+// CawProfileLedger_L1 + CawActions_L1 (in `bypassLZ` mode — see Phase 2 below)
 // so that a network can pick L1 as their `storageChainEid` at createNetwork
 // time and have actions land natively on mainnet. But L1 doesn't get a
 // CawActionsArchive or a CawChallengeRelay because:
@@ -338,7 +338,7 @@ const MARKETPLACE_PAYMENT_TOKENS = {
 };
 
 // Contract definitions with dependencies. The L2-specific entries
-// (CawProfileL2_<L>, CawActions_<L>, CawActionsArchive_<L>, CawChallengeRelay_<L>)
+// (CawProfileLedger_<L>, CawActions_<L>, CawActionsArchive_<L>, CawChallengeRelay_<L>)
 // are appended programmatically after this map is defined — see the
 // `for (const L of L2_CHAIN_KEYS)` block below.
 const CONTRACTS = {
@@ -420,10 +420,10 @@ const CONTRACTS = {
   CawProfile: {
     chain: 'L1',
     phase: 2,
-    // CawProfile depends on every L2's CawProfileL2 — the cross-chain peers
+    // CawProfile depends on every L2's CawProfileLedger — the cross-chain peers
     // get registered post-deploy via PathwayExpander.addPeer, AND the local
-    // L2 mirror (CawProfileL2_L1 / bypassLZ) is now passed straight into the
-    // constructor as the `_cawProfileL2` immutable.
+    // L2 mirror (CawProfileLedger_L1 / bypassLZ) is now passed straight into the
+    // constructor as the `_cawProfileLedger` immutable.
     //
     // CawL1PriceReader is intentionally NOT a dependency: the constructor
     // arg accepts address(0) (no price oracle), so when CAW_WETH_PAIR is
@@ -435,8 +435,8 @@ const CONTRACTS = {
     // at deploy time. When the flag is off, pass address(0) and the deployer
     // EOA retains ownership (no-op transfer).
     dependencies: [
-      ...L2_CHAIN_KEYS.map(L => `CawProfileL2_${L}`),
-      'CawProfileL2_L1',
+      ...L2_CHAIN_KEYS.map(L => `CawProfileLedger_${L}`),
+      'CawProfileLedger_L1',
       'CawProfileURI', 'CawNetworkManager', 'CawBuyAndBurn',
       ...(RENOUNCE_ON_DEPLOY ? ['PathwayExpander_L1'] : []),
     ],
@@ -448,21 +448,21 @@ const CONTRACTS = {
       CHAINS[chain].lzEndpoint,
       CHAINS[chain].lzEid,
       state.addresses.CawL1PriceReader || ethers.ZeroAddress,
-      // _cawProfileL2: the BYPASS-LZ local mirror. NOT a cross-chain peer.
+      // _cawProfileLedger: the BYPASS-LZ local mirror. NOT a cross-chain peer.
       // Used by every synchronous mainnet-direct call (lzDestId == mainnetLzId).
       // Cross-chain L2s (Base, Arbitrum, etc.) are registered later via
       // PathwayExpander.addPeer on their own eids.
-      state.addresses.CawProfileL2_L1 || ethers.ZeroAddress,
+      state.addresses.CawProfileLedger_L1 || ethers.ZeroAddress,
       // _pathwayExpander: when set, constructor transfers OApp ownership to it.
       // When zero (RENOUNCE_ON_DEPLOY off), deployer EOA retains ownership.
       RENOUNCE_ON_DEPLOY ? (state.addresses.PathwayExpander_L1 || ethers.ZeroAddress) : ethers.ZeroAddress,
     ],
   },
-  CawProfileL2_L1: {
-    // CawProfileL2 deployed on L1 (for local actions without cross-chain).
+  CawProfileLedger_L1: {
+    // CawProfileLedger deployed on L1 (for local actions without cross-chain).
     // Predicts CawCapOracle_L1 (deployed immediately after, nonce+1) so it can
     // pass the oracle address as an immutable constructor arg.
-    artifact: 'CawProfileL2',
+    artifact: 'CawProfileLedger',
     chain: 'L1',
     phase: 2,
     dependencies: [],
@@ -477,14 +477,14 @@ const CONTRACTS = {
     artifact: 'CawCapOracle',
     chain: 'L1',
     phase: 2,
-    // Deploy order: CawProfileL2_L1 (nonce N) → CawCapOracle_L1 (nonce N+1) →
+    // Deploy order: CawProfileLedger_L1 (nonce N) → CawCapOracle_L1 (nonce N+1) →
     // CawActions_L1 (nonce N+2) → CawActionsERC1271_L1 (nonce N+3).
-    // CawCapOracle_L1 takes the real l2Writer (CawProfileL2_L1) and predicts
+    // CawCapOracle_L1 takes the real l2Writer (CawProfileLedger_L1) and predicts
     // CawActions_L1 (nonce+1) as its cawActions push target.
-    dependencies: ['CawProfileL2_L1'],
+    dependencies: ['CawProfileLedger_L1'],
     predictedSiblingKey: 'CawActions_L1',
     constructorArgs: (state) => [
-      state.addresses.CawProfileL2_L1,
+      state.addresses.CawProfileLedger_L1,
       state.predictedAddresses?.CawActions_L1 || ethers.ZeroAddress,
     ],
   },
@@ -492,7 +492,7 @@ const CONTRACTS = {
     chain: 'L1',
     phase: 2,
     // CawActionsERC1271_L1 is the terminal link in the nonce-prediction chain:
-    //   CawProfileL2_L1 → CawCapOracle_L1 → CawActions_L1 → CawActionsERC1271_L1
+    //   CawProfileLedger_L1 → CawCapOracle_L1 → CawActions_L1 → CawActionsERC1271_L1
     // These three contracts don't use CawActions/CawCapOracle at all, but they
     // share the L1 chain. Adding CawActionsERC1271_L1 to deps guarantees the
     // entire nonce chain completes before any of these deploy — preventing a
@@ -577,14 +577,14 @@ const CONTRACTS = {
     artifact: 'CawActions',
     chain: 'L1',
     phase: 2,
-    // Deploy order: CawProfileL2_L1 (N) → CawCapOracle_L1 (N+1) →
+    // Deploy order: CawProfileLedger_L1 (N) → CawCapOracle_L1 (N+1) →
     // CawActions_L1 (N+2) → CawActionsERC1271_L1 (N+3).
     // CawCapOracle_L1 predicted CawActions_L1 at N+2; CawActions_L1
     // now predicts CawActionsERC1271_L1 at N+3.
     dependencies: ['CawCapOracle_L1'],
     predictedSiblingKey: 'CawActionsERC1271_L1',
     constructorArgs: (state, chainKey) => [
-      state.addresses.CawProfileL2_L1,
+      state.addresses.CawProfileLedger_L1,
       state.addresses.MockSP1Verifier_L1 || requireSp1Verifier(chainKey),
       ZK_PROGRAM_VKEY,
       state.predictedAddresses?.CawActionsERC1271_L1 || ethers.ZeroAddress,
@@ -611,7 +611,7 @@ const CONTRACTS = {
   // PathwayExpander on L1. Phase 1 (was phase 7) so its address is available
   // when CawProfile's constructor runs at phase 2 — CawProfile now transfers
   // OApp ownership to PathwayExpander directly via _transferOwnership at deploy
-  // time. PathwayExpander still owns CawProfileL2_L1 via the phase 7 linking
+  // time. PathwayExpander still owns CawProfileLedger_L1 via the phase 7 linking
   // step for that one (L2 hasn't moved to constructor-handover yet).
   //
   // Owner of the expander itself is the deployer EOA (constructor arg below);
@@ -628,8 +628,8 @@ const CONTRACTS = {
 };
 
 // Per-L2 contracts: for each L2 in L2_CHAIN_KEYS, expand to entries:
-//   CawProfileL2_<L>      (phase 1, predicts CawCapOracle at nonce+1)
-//   CawCapOracle_<L>      (phase 1, dep CawProfileL2, predicts CawActions at nonce+1)
+//   CawProfileLedger_<L>      (phase 1, predicts CawCapOracle at nonce+1)
+//   CawCapOracle_<L>      (phase 1, dep CawProfileLedger, predicts CawActions at nonce+1)
 //   CawActions_<L>        (phase 1, dep CawCapOracle, predicts CawActionsERC1271 at nonce+1)
 //   CawActionsERC1271_<L> (phase 1, dep CawActions)
 //   CawActionsArchive_<L> (phase 4, archive role on this chain)
@@ -640,8 +640,8 @@ const CONTRACTS = {
 for (const L of L2_CHAIN_KEYS) {
   // Deploy order for each L2 (single chain, all phase 1 to guarantee consecutive nonces):
   //   MockSP1Verifier_<L>  (nonce 0 in phase, dev-only, no deps — deploys before chain)
-  //   CawProfileL2_<L>     (nonce N,   predicts CawCapOracle at N+1)
-  //   CawCapOracle_<L>     (nonce N+1, dep CawProfileL2, predicts CawActions at N+2)
+  //   CawProfileLedger_<L>     (nonce N,   predicts CawCapOracle at N+1)
+  //   CawCapOracle_<L>     (nonce N+1, dep CawProfileLedger, predicts CawActions at N+2)
   //   CawActions_<L>       (nonce N+2, dep CawCapOracle, predicts CawActionsERC1271 at N+3)
   //   CawActionsERC1271_<L>(nonce N+3, dep CawActions)
   //
@@ -655,8 +655,8 @@ for (const L of L2_CHAIN_KEYS) {
     constructorArgs: () => [],
     condition: (_state, _deployer, env) => env === 'dev',
   };
-  CONTRACTS[`CawProfileL2_${L}`] = {
-    artifact: 'CawProfileL2',
+  CONTRACTS[`CawProfileLedger_${L}`] = {
+    artifact: 'CawProfileLedger',
     chain: L,
     phase: 1,
     // No deps — deploys first (after MockSP1Verifier if dev).
@@ -673,12 +673,12 @@ for (const L of L2_CHAIN_KEYS) {
     artifact: 'CawCapOracle',
     chain: L,
     phase: 1,
-    // dep on CawProfileL2_<L> so it deploys right after (nonce N+1).
+    // dep on CawProfileLedger_<L> so it deploys right after (nonce N+1).
     // Takes the real l2Writer and predicts CawActions_<L> at nonce+1 (N+2).
-    dependencies: [`CawProfileL2_${L}`],
+    dependencies: [`CawProfileLedger_${L}`],
     predictedSiblingKey: `CawActions_${L}`,
     constructorArgs: (state) => [
-      state.addresses[`CawProfileL2_${L}`],
+      state.addresses[`CawProfileLedger_${L}`],
       state.predictedAddresses?.[`CawActions_${L}`] || ethers.ZeroAddress,
     ],
   };
@@ -691,7 +691,7 @@ for (const L of L2_CHAIN_KEYS) {
     dependencies: [`CawCapOracle_${L}`],
     predictedSiblingKey: `CawActionsERC1271_${L}`,
     constructorArgs: (state, chainKey) => [
-      state.addresses[`CawProfileL2_${L}`],
+      state.addresses[`CawProfileLedger_${L}`],
       state.addresses[`MockSP1Verifier_${L}`] || requireSp1Verifier(chainKey),
       ZK_PROGRAM_VKEY,
       state.predictedAddresses?.[`CawActionsERC1271_${L}`] || ethers.ZeroAddress,
@@ -726,7 +726,7 @@ for (const L of L2_CHAIN_KEYS) {
     ],
   };
   // Phase 7: per-L2 PathwayExpander. Becomes the owner of the three LZ
-  // OApps on this chain (CawProfileL2_<L>, CawActionsArchive_<L>,
+  // OApps on this chain (CawProfileLedger_<L>, CawActionsArchive_<L>,
   // CawChallengeRelay_<L>).
   CONTRACTS[`PathwayExpander_${L}`] = {
     artifact: 'PathwayExpander',
@@ -894,19 +894,19 @@ const LINKING_STEPS = [
     },
   },
   {
-    name: 'Set L1 peer on CawProfileL2_L1 (bypassLZ=true)',
+    name: 'Set L1 peer on CawProfileLedger_L1 (bypassLZ=true)',
     chain: 'L1',
     phase: 2,
-    contract: 'CawProfileL2_L1',
+    contract: 'CawProfileLedger_L1',
     method: 'setL1Peer',
     args: (state, chainConfig) => [
       CHAINS[chainConfig.env + 'L1'].lzEid,
       state.addresses.CawProfile,
       true, // bypassLZ for local
     ],
-    condition: (state) => state.addresses.CawProfileL2_L1 && state.addresses.CawProfile,
+    condition: (state) => state.addresses.CawProfileLedger_L1 && state.addresses.CawProfile,
     skipIf: async (state, deployer) => {
-      const contract = deployer.getContract('CawProfileL2_L1');
+      const contract = deployer.getContract('CawProfileLedger_L1');
       if (!contract) return false;
       try {
         return await contract.bypassLZ();
@@ -953,14 +953,14 @@ const LINKING_STEPS = [
   // CawProfileURI's `cascadeBreak: true` means changing the URI generator now requires a CawProfile
   // redeploy too. Removed setter is intentional: see "no admin powers except path expansion" principle.
   {
-    name: 'Link CawProfileL2_L1 to CawActions_L1',
+    name: 'Link CawProfileLedger_L1 to CawActions_L1',
     chain: 'L1',
     phase: 2,
-    contract: 'CawProfileL2_L1',
+    contract: 'CawProfileLedger_L1',
     method: 'setCawActions',
     getter: 'cawActions',
     args: (state) => [state.addresses.CawActions_L1],
-    condition: (state) => state.addresses.CawProfileL2_L1 && state.addresses.CawActions_L1,
+    condition: (state) => state.addresses.CawProfileLedger_L1 && state.addresses.CawActions_L1,
   },
   {
     // Nonce-prediction correctness assertion. CawCapOracle_L1 bakes CawActions_L1
@@ -995,15 +995,15 @@ const LINKING_STEPS = [
   },
   {
     // One-shot setter — reverts if already set (SiblingSet). skipIf guards idempotency.
-    name: 'Set ERC-1271 sibling on CawProfileL2_L1',
+    name: 'Set ERC-1271 sibling on CawProfileLedger_L1',
     chain: 'L1',
     phase: 2,
-    contract: 'CawProfileL2_L1',
+    contract: 'CawProfileLedger_L1',
     method: 'setERC1271Sibling',
     args: (state) => [state.addresses.CawActionsERC1271_L1],
-    condition: (state) => state.addresses.CawProfileL2_L1 && state.addresses.CawActionsERC1271_L1,
+    condition: (state) => state.addresses.CawProfileLedger_L1 && state.addresses.CawActionsERC1271_L1,
     skipIf: async (state, deployer) => {
-      const contract = deployer.getContract('CawProfileL2_L1');
+      const contract = deployer.getContract('CawProfileLedger_L1');
       if (!contract) return false;
       try {
         const current = await contract.erc1271Sibling();
@@ -1026,7 +1026,7 @@ const LINKING_STEPS = [
     },
   },
   // Phase 3 + Phase 5 per-L2 linking is generated below from L2_CHAIN_KEYS.
-  //   Phase 3: each L2's CawProfileL2 ← L1 peer + setCawActions wiring.
+  //   Phase 3: each L2's CawProfileLedger ← L1 peer + setCawActions wiring.
   //   Phase 5: full mesh — every storage L2's CawChallengeRelay peers with
   //            every other L2's CawActionsArchive (and vice versa).
 
@@ -1100,17 +1100,17 @@ const LINKING_STEPS = [
     },
   },
   {
-    name: '[Phase 7] Transfer CawProfileL2_L1 ownership → PathwayExpander_L1',
+    name: '[Phase 7] Transfer CawProfileLedger_L1 ownership → PathwayExpander_L1',
     chain: 'L1',
     phase: 7,
-    contract: 'CawProfileL2_L1',
+    contract: 'CawProfileLedger_L1',
     method: 'transferOwnership',
     args: (state) => [state.addresses.PathwayExpander_L1],
     condition: (state) => RENOUNCE_ON_DEPLOY
-      && state.addresses.CawProfileL2_L1
+      && state.addresses.CawProfileLedger_L1
       && state.addresses.PathwayExpander_L1,
     skipIf: async (state, deployer) => {
-      const c = deployer.getContract('CawProfileL2_L1');
+      const c = deployer.getContract('CawProfileLedger_L1');
       if (!c) return false;
       const owner = await c.owner();
       return owner.toLowerCase() === state.addresses.PathwayExpander_L1.toLowerCase();
@@ -1127,14 +1127,14 @@ const LINKING_STEPS = [
 // =============================================================================
 //
 // For each L in L2_CHAIN_KEYS append:
-//   * Phase 2 (on L1): setL2Peer to that L's CawProfileL2.
+//   * Phase 2 (on L1): setL2Peer to that L's CawProfileLedger.
 //   * Phase 3 (on L itself): setL1Peer + setCawActions wiring.
 //   * Phase 5 (full mesh): for every other L2 L', wire CawChallengeRelay_L
 //     ↔ CawActionsArchive_L'. N×(N-1) directed pairs total.
 // =============================================================================
 
 for (const L of L2_CHAIN_KEYS) {
-  // Phase 7: L1's CawProfile peer for this L's CawProfileL2 — routed through
+  // Phase 7: L1's CawProfile peer for this L's CawProfileLedger — routed through
   // PathwayExpander.addPeer (PathwayExpander_L1 is now the OApp owner from
   // the CawProfile constructor handover; deployer EOA can't call setPeer
   // directly anymore). PathwayExpander enforces peers[eid] == 0 before
@@ -1146,7 +1146,7 @@ for (const L of L2_CHAIN_KEYS) {
   // transfers, so the full peer mesh is set up after all OApps exist on
   // their respective chains.
   LINKING_STEPS.push({
-    name: `[Phase 7] PathwayExpander_L1.addPeer(CawProfile, CawProfileL2_${L})`,
+    name: `[Phase 7] PathwayExpander_L1.addPeer(CawProfile, CawProfileLedger_${L})`,
     chain: 'L1',
     phase: 7,
     contract: 'PathwayExpander_L1',
@@ -1155,11 +1155,11 @@ for (const L of L2_CHAIN_KEYS) {
       state.addresses.CawProfile,
       CHAINS[chainConfig.env + L].lzEid,
       // PathwayExpander.addPeer takes bytes32 peer (LZ V2 convention).
-      ethers.zeroPadValue(state.addresses[`CawProfileL2_${L}`], 32),
+      ethers.zeroPadValue(state.addresses[`CawProfileLedger_${L}`], 32),
     ],
     condition: (state) => state.addresses.PathwayExpander_L1
       && state.addresses.CawProfile
-      && state.addresses[`CawProfileL2_${L}`],
+      && state.addresses[`CawProfileLedger_${L}`],
     skipIf: async (state, deployer) => {
       const c = deployer.getContract('CawProfile');
       if (!c) return false;
@@ -1173,46 +1173,46 @@ for (const L of L2_CHAIN_KEYS) {
     },
   });
 
-  // Phase 3: this L's CawProfileL2 setL1Peer (for cross-chain mints/auths).
+  // Phase 3: this L's CawProfileLedger setL1Peer (for cross-chain mints/auths).
   LINKING_STEPS.push({
-    name: `Set L1 peer on CawProfileL2_${L}`,
+    name: `Set L1 peer on CawProfileLedger_${L}`,
     chain: L,
     phase: 3,
-    contract: `CawProfileL2_${L}`,
+    contract: `CawProfileLedger_${L}`,
     method: 'setL1Peer',
     args: (state, chainConfig) => [
       CHAINS[chainConfig.env + 'L1'].lzEid,
       state.addresses.CawProfile,
       false, // don't bypass LZ for cross-chain
     ],
-    condition: (state) => state.addresses[`CawProfileL2_${L}`] && state.addresses.CawProfile,
+    condition: (state) => state.addresses[`CawProfileLedger_${L}`] && state.addresses.CawProfile,
   });
 
-  // Phase 3: link this L's CawProfileL2 to its CawActions.
+  // Phase 3: link this L's CawProfileLedger to its CawActions.
   LINKING_STEPS.push({
-    name: `Link CawProfileL2_${L} to CawActions_${L}`,
+    name: `Link CawProfileLedger_${L} to CawActions_${L}`,
     chain: L,
     phase: 3,
-    contract: `CawProfileL2_${L}`,
+    contract: `CawProfileLedger_${L}`,
     method: 'setCawActions',
     getter: 'cawActions',
     args: (state) => [state.addresses[`CawActions_${L}`]],
-    condition: (state) => state.addresses[`CawProfileL2_${L}`] && state.addresses[`CawActions_${L}`],
+    condition: (state) => state.addresses[`CawProfileLedger_${L}`] && state.addresses[`CawActions_${L}`],
   });
 
-  // Phase 3: set CawActionsERC1271 as the ERC-1271 sibling on CawProfileL2.
+  // Phase 3: set CawActionsERC1271 as the ERC-1271 sibling on CawProfileLedger.
   // One-shot: reverts on second call (SiblingSet error). skipIf guards idempotency.
   LINKING_STEPS.push({
-    name: `Set ERC-1271 sibling on CawProfileL2_${L}`,
+    name: `Set ERC-1271 sibling on CawProfileLedger_${L}`,
     chain: L,
     phase: 3,
-    contract: `CawProfileL2_${L}`,
+    contract: `CawProfileLedger_${L}`,
     method: 'setERC1271Sibling',
     args: (state) => [state.addresses[`CawActionsERC1271_${L}`]],
     condition: (state) =>
-      state.addresses[`CawProfileL2_${L}`] && state.addresses[`CawActionsERC1271_${L}`],
+      state.addresses[`CawProfileLedger_${L}`] && state.addresses[`CawActionsERC1271_${L}`],
     skipIf: async (state, deployer) => {
-      const contract = deployer.getContract(`CawProfileL2_${L}`);
+      const contract = deployer.getContract(`CawProfileLedger_${L}`);
       if (!contract) return false;
       try {
         const current = await contract.erc1271Sibling();
@@ -1284,11 +1284,11 @@ for (const L of L2_CHAIN_KEYS) {
   // Phase 7 per-L2 entries (mirror the L1 block's pattern).
   // -----------------------------------------------------------------
   // OApps owned by the per-L2 expander:
-  //   CawProfileL2_<L>, CawActionsArchive_<L>, CawChallengeRelay_<L>
+  //   CawProfileLedger_<L>, CawActionsArchive_<L>, CawChallengeRelay_<L>
   // Plain Ownables to renounce on this chain:
   //   CawActions_<L>
   // -----------------------------------------------------------------
-  for (const oapp of [`CawProfileL2_${L}`, `CawActionsArchive_${L}`, `CawChallengeRelay_${L}`]) {
+  for (const oapp of [`CawProfileLedger_${L}`, `CawActionsArchive_${L}`, `CawChallengeRelay_${L}`]) {
     LINKING_STEPS.push({
       name: `[Phase 7] Transfer ${oapp} ownership → PathwayExpander_${L}`,
       chain: L,
@@ -1335,7 +1335,7 @@ for (const L of L2_CHAIN_KEYS) {
 // inside L1/L2/L2b sub-blocks indexed by abstract chain key.
 //
 // L1 contains everything L1-only (Profile, CCM, Minter, Marketplace, etc.)
-// PLUS the L1-side bypassLZ co-deployments (CawProfileL2_L1 → CawProfileL2,
+// PLUS the L1-side bypassLZ co-deployments (CawProfileLedger_L1 → CawProfileLedger,
 // CawActions_L1 → CawActions). That's why a network choosing L1 as their
 // storage chain still has CawActions to talk to.
 //
@@ -1349,7 +1349,7 @@ function buildDeploymentsBlock(env, addresses) {
   const l1 = {
     MintableCaw: addresses.MintableCaw,
     CawProfile: addresses.CawProfile,
-    CawProfileL2: addresses.CawProfileL2_L1, // bypassLZ co-deployment on L1
+    CawProfileLedger: addresses.CawProfileLedger_L1, // bypassLZ co-deployment on L1
     CawNetworkManager: addresses.CawNetworkManager,
     CawProfileMinter: addresses.CawProfileMinter,
     CawProfileQuoter: addresses.CawProfileQuoter,
@@ -1372,7 +1372,7 @@ function buildDeploymentsBlock(env, addresses) {
   // ----- Each L2 -----
   for (const L of L2_CHAIN_KEYS) {
     const block = {
-      CawProfileL2: addresses[`CawProfileL2_${L}`],
+      CawProfileLedger: addresses[`CawProfileLedger_${L}`],
       CawActions: addresses[`CawActions_${L}`],
       CawActionsERC1271: addresses[`CawActionsERC1271_${L}`],
       CawActionsArchive: addresses[`CawActionsArchive_${L}`],
@@ -2035,14 +2035,14 @@ class MultiChainDeployer {
     }
 
     // If CawProfile (L1) is being redeployed, token IDs will change —
-    // all CawProfileL2 and CawActions contracts must also be redeployed,
+    // all CawProfileLedger and CawActions contracts must also be redeployed,
     // and the database must be reset (old actions reference stale token IDs).
-    const nameContracts = ['CawProfile', 'CawProfileL2_L1', 'CawProfileL2_L2', 'CawProfileL2_L2b'];
+    const nameContracts = ['CawProfile', 'CawProfileLedger_L1', 'CawProfileLedger_L2', 'CawProfileLedger_L2b'];
     const isNameRedeploy = nameContracts.some(c => toRedeploy.has(c));
     if (isNameRedeploy) {
       // Force-include all CawActions and related contracts
       const forceInclude = [
-        'CawProfileL2_L1', 'CawProfileL2_L2', 'CawProfileL2_L2b',
+        'CawProfileLedger_L1', 'CawProfileLedger_L2', 'CawProfileLedger_L2b',
         'CawActions_L1', 'CawActions_L2', 'CawActions_L2b',
         'CawActionsArchive_L2b', 'CawChallengeRelay_L2',
         'CawProfileMinter', 'CawProfileQuoter', 'CawProfileLens', 'CawProfileMarketplace',
@@ -2078,7 +2078,7 @@ class MultiChainDeployer {
     // we redeployed just CawActions_L2 — the indexer then missed every action
     // from the new contract until someone manually bumped `config.json`.
     const l2IndexedContracts = [
-      'CawActions_L2', 'CawProfileL2_L2', 'CawChallengeRelay_L2',
+      'CawActions_L2', 'CawProfileLedger_L2', 'CawChallengeRelay_L2',
     ];
     const isL2Redeploy = isNameRedeploy || l2IndexedContracts.some(c => toRedeploy.has(c));
     if (isL2Redeploy) {
@@ -2103,7 +2103,7 @@ class MultiChainDeployer {
     console.log('Addresses:');
     const l2List = L2_CHAIN_KEYS.join(' + ');
     const phases = {
-      1: `${l2List} CawProfileL2 (Phase 1)`,
+      1: `${l2List} CawProfileLedger (Phase 1)`,
       2: 'L1 (Phase 2)',
       3: `${l2List} CawActions (Phase 3)`,
       4: `${l2List} CawActionsArchive + CawChallengeRelay (Phase 4 — full mesh)`,
@@ -2193,11 +2193,11 @@ async function writeAddressesForLocalInstall(deployer) {
     URI_GENERATOR_ADDRESS: l1.CawProfileURI,
     NETWORK_MANAGER_ADDRESS: l1.CawNetworkManager,
     CAW_NAME_MARKETPLACE_ADDRESS: l1.CawProfileMarketplace,
-    CAW_NAMES_L2_MAINNET_ADDRESS: l1.CawProfileL2,
+    CAW_NAMES_L2_MAINNET_ADDRESS: l1.CawProfileLedger,
     CAW_ACTIONS_MAINNET_ADDRESS: l1.CawActions,
     // Per-network storage chain — for L1-storage networks these duplicate the
     // L1 entries above, which is fine; the codebase reads singular constants.
-    CAW_NAMES_L2_ADDRESS: storageChainKey === 'L1' ? l1.CawProfileL2 : l2.CawProfileL2,
+    CAW_NAMES_L2_ADDRESS: storageChainKey === 'L1' ? l1.CawProfileLedger : l2.CawProfileLedger,
     CAW_ACTIONS_ADDRESS: storageChainKey === 'L1' ? l1.CawActions : l2.CawActions,
     CAW_ACTIONS_ARCHIVE_ADDRESS: l2.CawActionsArchive,
     CAW_CHALLENGE_RELAY_ADDRESS: l2.CawChallengeRelay,
@@ -2248,15 +2248,15 @@ function buildEnvBlock(env, addresses) {
   const block = { L1: {} };
   // L1 contracts (per the buildDeploymentsBlock layout)
   const l1Keys = [
-    'MintableCaw', 'CawProfile', 'CawProfileL2_L1', 'CawNetworkManager',
+    'MintableCaw', 'CawProfile', 'CawProfileLedger_L1', 'CawNetworkManager',
     'CawProfileMinter', 'CawProfileQuoter', 'CawProfileLens', 'CawProfileMarketplace',
     'CawProfileURI', 'CawFontDataA', 'CawFontDataB', 'CawBuyAndBurn',
     'MockSwapRouter', 'CawActions_L1',
   ];
   for (const k of l1Keys) {
     if (addresses[k]) {
-      // CawProfileL2_L1 → CawProfileL2 in the deployments block; CawActions_L1 → CawActions.
-      const dst = k === 'CawProfileL2_L1' ? 'CawProfileL2'
+      // CawProfileLedger_L1 → CawProfileLedger in the deployments block; CawActions_L1 → CawActions.
+      const dst = k === 'CawProfileLedger_L1' ? 'CawProfileLedger'
                 : k === 'CawActions_L1'  ? 'CawActions'
                 : k;
       block.L1[dst] = addresses[k];
@@ -2264,7 +2264,7 @@ function buildEnvBlock(env, addresses) {
   }
   for (const L of L2_CHAIN_KEYS) {
     block[L] = {};
-    for (const role of ['CawProfileL2', 'CawActions', 'CawActionsArchive', 'CawChallengeRelay']) {
+    for (const role of ['CawProfileLedger', 'CawActions', 'CawActionsArchive', 'CawChallengeRelay']) {
       const flatKey = `${role}_${L}`;
       if (addresses[flatKey]) block[L][role] = addresses[flatKey];
     }
@@ -2342,16 +2342,16 @@ Options:
   --help              Show this help
 
 Deployment Phases:
-  Phase 1: Deploy CawProfileL2 on L2 + L2b (needed by L1 contracts)
+  Phase 1: Deploy CawProfileLedger on L2 + L2b (needed by L1 contracts)
   Phase 2: Deploy all L1 contracts and link them
-  Phase 3: Deploy CawActions on L2 + L2b and link them to CawProfileL2
+  Phase 3: Deploy CawActions on L2 + L2b and link them to CawProfileLedger
   Phase 4: Deploy CawActionsArchive on L2b and CawChallengeRelay on L2
   Phase 5: LZ peering between archive and relay + register network replication targets
 
 Architecture:
   L1 (Sepolia): CawProfile, CawNetworkManager, CawProfileMinter, CawProfileQuoter
-  L2 (Base Sepolia): CawProfileL2, CawActions, CawChallengeRelay
-  L2b (Arbitrum Sepolia): CawProfileL2, CawActions, CawActionsArchive
+  L2 (Base Sepolia): CawProfileLedger, CawActions, CawChallengeRelay
+  L2b (Arbitrum Sepolia): CawProfileLedger, CawActions, CawActionsArchive
 
 After deployment, ABIs are automatically regenerated for the frontend.
         `);

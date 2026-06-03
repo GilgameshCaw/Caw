@@ -7,11 +7,11 @@ pragma solidity ^0.8.22;
 // Property: CawProfile.totalCaw == ghost_realDeposited - ghost_realWithdrawn
 //           after EVERY deposit/withdraw operation. The vault must also be
 //           solvent: CAW.balanceOf(cawProfile) >= cawProfile.totalCaw().
-//           L2 mirror must track L1: cawProfileL2.totalCaw() == cawProfile.totalCaw().
+//           L2 mirror must track L1: cawProfileLedger.totalCaw() == cawProfile.totalCaw().
 //
-// Setup: full bypassLZ co-deployment (CawProfile ↔ CawProfileL2 on the same
+// Setup: full bypassLZ co-deployment (CawProfile ↔ CawProfileLedger on the same
 //        Foundry chain). Uses MintableCaw as the ERC-20. Real CawNetworkManager,
-//        real CawProfile, real CawProfileL2 — no mocks for the core vault logic.
+//        real CawProfile, real CawProfileLedger — no mocks for the core vault logic.
 //
 // Withdrawal simulation: vm.store writes withdrawable[tokenId] to model the
 //        real L2→L1 LZ path that CawActions uses, then withdrawTo is called
@@ -20,7 +20,7 @@ pragma solidity ^0.8.22;
 
 import "forge-std/Test.sol";
 import "../contracts/CawProfile.sol";
-import "../contracts/CawProfileL2.sol";
+import "../contracts/CawProfileLedger.sol";
 import "../contracts/MintableCaw.sol";
 import "../contracts/CawNetworkManager.sol";
 import "../contracts/MockLayerZeroEndpoint.sol";
@@ -45,7 +45,7 @@ contract StubCawProfileURI_VC {
 // ---------------------------------------------------------------------------
 contract VaultConservationHandler is Test {
     CawProfile        public cawProfile;
-    CawProfileL2      public cawProfileL2;
+    CawProfileLedger      public cawProfileLedger;
     MintableCaw       public cawToken;
 
     address[5] public actors;
@@ -65,7 +65,7 @@ contract VaultConservationHandler is Test {
 
     constructor(
         CawProfile    _cawProfile,
-        CawProfileL2  _cawProfileL2,
+        CawProfileLedger  _cawProfileLedger,
         MintableCaw   _cawToken,
         address[5] memory _actors,
         uint32[5]  memory _tokenIds,
@@ -75,7 +75,7 @@ contract VaultConservationHandler is Test {
         uint256 _l2TotalCawSlot
     ) {
         cawProfile          = _cawProfile;
-        cawProfileL2        = _cawProfileL2;
+        cawProfileLedger        = _cawProfileLedger;
         cawToken            = _cawToken;
         actors              = _actors;
         tokenIds            = _tokenIds;
@@ -140,9 +140,9 @@ contract VaultConservationHandler is Test {
         // decrements L2 totalCaw BEFORE setWithdrawable sends the LZ message to L1.
         // Without this the l2MirrorMatchesL1 invariant would always fail
         // because the test harness never calls L2.spendAndDistribute.
-        uint256 l2TotalCaw = cawProfileL2.totalCaw();
+        uint256 l2TotalCaw = cawProfileLedger.totalCaw();
         if (l2TotalCaw >= newAmount) {
-            vm.store(address(cawProfileL2), bytes32(l2TotalCawSlot), bytes32(l2TotalCaw - newAmount));
+            vm.store(address(cawProfileLedger), bytes32(l2TotalCawSlot), bytes32(l2TotalCaw - newAmount));
         }
 
         vm.prank(actor);
@@ -164,7 +164,7 @@ contract VaultConservationTest is Test {
     using stdStorage for StdStorage;
 
     CawProfile           cawProfile;
-    CawProfileL2         cawProfileL2;
+    CawProfileLedger         cawProfileLedger;
     MintableCaw          cawToken;
     CawNetworkManager    networkManager;
     StubBuyAndBurn_VC    buyAndBurn;
@@ -188,15 +188,15 @@ contract VaultConservationTest is Test {
 
         networkManager = new CawNetworkManager(address(buyAndBurn));
 
-        cawProfileL2 = new CawProfileL2(MAINNET_LZ_ID, address(lzL2), address(0));
+        cawProfileLedger = new CawProfileLedger(MAINNET_LZ_ID, address(lzL2), address(0));
 
         cawProfile = new CawProfile(
             address(cawToken), address(uriGen), address(buyAndBurn),
             address(networkManager), address(lzL1), MAINNET_LZ_ID, address(0),
-            address(cawProfileL2), address(0)
+            address(cawProfileLedger), address(0)
         );
 
-        cawProfileL2.setL1Peer(MAINNET_LZ_ID, payable(address(cawProfile)), true);
+        cawProfileLedger.setL1Peer(MAINNET_LZ_ID, payable(address(cawProfile)), true);
         cawProfile.setMinter(address(this));
 
         // storageChainEid must be > 0; use 2 (same as L2 LZ ID).
@@ -224,12 +224,12 @@ contract VaultConservationTest is Test {
             .sig("totalCaw()")
             .find();
         uint256 l2TotalCawSlot = stdstore
-            .target(address(cawProfileL2))
+            .target(address(cawProfileLedger))
             .sig("totalCaw()")
             .find();
 
         handler = new VaultConservationHandler(
-            cawProfile, cawProfileL2, cawToken,
+            cawProfile, cawProfileLedger, cawToken,
             actors, tokenIds, NETWORK_ID,
             withdrawableMapSlot, totalCawSlot, l2TotalCawSlot
         );
@@ -281,15 +281,15 @@ contract VaultConservationTest is Test {
 
     function invariant_l2MirrorMatchesL1() public view {
         assertEq(
-            cawProfileL2.totalCaw(),
+            cawProfileLedger.totalCaw(),
             cawProfile.totalCaw(),
-            "L2Mirror: cawProfileL2.totalCaw != cawProfile.totalCaw"
+            "L2Mirror: cawProfileLedger.totalCaw != cawProfile.totalCaw"
         );
     }
 
     function invariant_rewardMultiplierNonDecreasing() public view {
         assertGe(
-            cawProfileL2.rewardMultiplier(),
+            cawProfileLedger.rewardMultiplier(),
             1e18,
             "rewardMultiplier fell below initial value"
         );

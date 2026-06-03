@@ -213,7 +213,7 @@ async enrichUser(userId, tokenId)
 ```
 
 ### Data Sources
-- **L2 (CawProfileL2):** Wallet address, token info
+- **L2 (CawProfileLedger):** Wallet address, token info
 - **L1 (CawProfile):** Username lookup
 
 ### Features

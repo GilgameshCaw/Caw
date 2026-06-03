@@ -4,8 +4,8 @@ pragma solidity ^0.8.0;
 
 /// @title SessionMessageParser
 /// @notice External library for parsing the human-readable personal_sign session
-///         message used by `registerSessionPersonal` in CawProfileL2.
-///         Extracted to keep CawProfileL2 under the EIP-170 24,576-byte
+///         message used by `registerSessionPersonal` in CawProfileLedger.
+///         Extracted to keep CawProfileLedger under the EIP-170 24,576-byte
 ///         deployed-bytecode limit. `parseSessionMessage` and `uint2str` are
 ///         `external` so they live in the library's own deployed bytecode —
 ///         the consuming contract only carries a small delegatecall stub

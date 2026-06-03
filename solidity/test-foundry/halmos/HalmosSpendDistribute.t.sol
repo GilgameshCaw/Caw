@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT
 // test-foundry/halmos/HalmosSpendDistribute.t.sol
 //
-// Halmos symbolic-execution checks for CawProfileL2.spendAndDistribute.
+// Halmos symbolic-execution checks for CawProfileLedger.spendAndDistribute.
 //
 // Key properties:
 //   1. Spending reduces the token's balance by exactly amountToSpend.
@@ -17,11 +17,11 @@ pragma solidity ^0.8.22;
 
 import "forge-std/Test.sol";
 
-/// @dev Extracted arithmetic from CawProfileL2.spendAndDistribute.
+/// @dev Extracted arithmetic from CawProfileLedger.spendAndDistribute.
 ///      Production version: msg.sender == cawActions guard, replaced here
 ///      with an open call to keep the harness simple for symbolic execution.
 contract SpendDistributeHarness {
-    // Mirrors CawProfileL2 state
+    // Mirrors CawProfileLedger state
     uint256 public totalCaw;
     uint256 public rewardMultiplier = 10**18;
     uint256 public precision = 10**18;

@@ -3,7 +3,7 @@ import { randomUUID } from 'crypto'
 import { ethers, Contract, JsonRpcProvider, WebSocketProvider } from 'ethers'
 import { makeJsonRpcProvider, makeWebSocketProvider, getL2HttpRpcUrl } from '../../utils/rpcProvider'
 import { getValidatorSigner, type ValidatorSigner } from '../../utils/signer'
-import { cawProfileL2Abi } from '../../abi/generated'
+import { cawProfileLedgerAbi } from '../../abi/generated'
 import { CAW_NAMES_L2_ADDRESS } from '../../abi/addresses'
 import { prisma } from '../../prismaClient'
 // Tier 3 of the "RPC out of API request handlers" refactor (PROJECT_BACKLOG.md):
@@ -96,7 +96,7 @@ function getContract() {
     : makeJsonRpcProvider(rpcUrl, 84532)
   _signer = getValidatorSigner({ provider: _provider })
   if (!_signer) throw new Error('Validator not configured')
-  _contract = new Contract(CAW_NAMES_L2_ADDRESS, cawProfileL2Abi as any, _signer.asEthersSigner())
+  _contract = new Contract(CAW_NAMES_L2_ADDRESS, cawProfileLedgerAbi as any, _signer.asEthersSigner())
   return _contract
 }
 
@@ -144,7 +144,7 @@ async function processSessionRequest(
   console.log(`[Sessions] Processing request ${requestId}`)
 
   try {
-    const cawProfileL2 = getContract()
+    const cawProfileLedger = getContract()
 
     await setSessionRequest(requestId, { status: 'submitting' })
     console.log(`[Sessions] Using contract at: ${CAW_NAMES_L2_ADDRESS}`)
@@ -161,13 +161,13 @@ async function processSessionRequest(
     // which ethers surfaces as a generic `missing revert data` CALL_EXCEPTION
     // that hides the real cause. A 2M hint comfortably covers the real cost
     // (~265k measured) while satisfying Infura's need for a bounded estimate.
-    const estimated = await cawProfileL2.registerSessionPersonal.estimateGas(
+    const estimated = await cawProfileLedger.registerSessionPersonal.estimateGas(
       recoveredAddress, messageBytes, signature,
       { gasLimit: 2_000_000 }
     )
     const gasLimit = (estimated * 120n) / 100n // +20% headroom
 
-    const tx = await cawProfileL2.registerSessionPersonal(
+    const tx = await cawProfileLedger.registerSessionPersonal(
       recoveredAddress,
       messageBytes,
       signature,
@@ -420,11 +420,11 @@ async function processRevokeRequest(
 ): Promise<void> {
   console.log(`[Sessions] Processing revocation ${requestId}`)
   try {
-    const cawProfileL2 = getContract()
+    const cawProfileLedger = getContract()
     const sig = ethers.Signature.from(signature)
     await setSessionRequest(requestId, { status: 'submitting' })
 
-    const tx = await cawProfileL2.revokeSessionBySig(
+    const tx = await cawProfileLedger.revokeSessionBySig(
       owner,
       sessionKey,
       sig.v,

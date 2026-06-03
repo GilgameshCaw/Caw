@@ -80,7 +80,7 @@ async function main() {
   console.log('Addresses:')
   console.log(`  CAW (L1):         ${addrs.cawL1}`)
   console.log(`  CawProfile (L1):  ${addrs.profileL1}`)
-  console.log(`  CawProfileL2:     ${addrs.profileL2}`)
+  console.log(`  CawProfileLedger:     ${addrs.profileL2}`)
   console.log()
 
   const l1 = new ethers.JsonRpcProvider(l1Rpc)

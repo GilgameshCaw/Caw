@@ -1,6 +1,6 @@
 /**
  * Integration tests for ERC-1271 contract-signature support on
- * CawProfileL2.registerSession / registerSessionPersonal.
+ * CawProfileLedger.registerSession / registerSessionPersonal.
  *
  * Verifies that a smart-EOA (Safe, 7702-delegated, etc.) — modelled here
  * by a minimal mock contract — can authorize a Quick Sign session via
@@ -12,7 +12,7 @@
  * Cases covered:
  *  1. Smart-EOA owner registers a session via the bytes-form
  *     `registerSession` overload. The mock contract validates an inner
- *     ECDSA signature against an authorized signer; CawProfileL2 sees
+ *     ECDSA signature against an authorized signer; CawProfileLedger sees
  *     `code.length > 0` on the signer arg and routes to 1271.
  *  2. Smart-EOA owner with `alwaysReject = true` cannot register — must
  *     revert with BadSig (selector 0x05312688).
@@ -24,7 +24,7 @@
  *     human-readable Personal-Sign path also routes through 1271.
  */
 
-const CawProfileL2 = artifacts.require("CawProfileL2");
+const CawProfileLedger = artifacts.require("CawProfileLedger");
 const MockLayerZeroEndpoint = artifacts.require("MockLayerZeroEndpoint");
 const MockContractOwner = artifacts.require("MockContractOwner");
 
@@ -73,13 +73,13 @@ function packSigRSV(sigHex) {
   return '0x' + sans.slice(0, 64) + sans.slice(64, 128) + sans.slice(128, 130);
 }
 
-contract('CawProfileL2 — ERC-1271 register-session', function (accounts) {
+contract('CawProfileLedger — ERC-1271 register-session', function (accounts) {
   const eoaOwner = accounts[0];      // plain EOA owner; backwards-compat case
   const contractKey = accounts[1];   // EOA whose private key the mock contract authorizes
   const sessionKey = accounts[2];    // the ephemeral key we're delegating to
   const otherKey = accounts[3];      // for negative-test re-key flips
 
-  let cawProfileL2;
+  let cawProfileLedger;
   let chainId;
   let domain;
 
@@ -93,9 +93,9 @@ contract('CawProfileL2 — ERC-1271 register-session', function (accounts) {
   before(async function () {
     this.timeout(60000);
     const l2Endpoint = await MockLayerZeroEndpoint.new(l2);
-    cawProfileL2 = await CawProfileL2.new(l1, l2Endpoint.address, "0x0000000000000000000000000000000000000000");
+    cawProfileLedger = await CawProfileLedger.new(l1, l2Endpoint.address, "0x0000000000000000000000000000000000000000");
     chainId = await web3.eth.getChainId();
-    domain = { name: 'CawProfileL2', version: '1', chainId, verifyingContract: cawProfileL2.address };
+    domain = { name: 'CawProfileLedger', version: '1', chainId, verifyingContract: cawProfileLedger.address };
   });
 
   // ----- helpers -----
@@ -119,52 +119,52 @@ contract('CawProfileL2 — ERC-1271 register-session', function (accounts) {
 
   it('plain EOA can register via the bytes-form overload (backwards-compat)', async function () {
     const expiry = await chainTimePlus(3600);
-    const nonceBefore = Number(await cawProfileL2.sessionNonce(eoaOwner));
+    const nonceBefore = Number(await cawProfileLedger.sessionNonce(eoaOwner));
     const sig = await buildAndSign(eoaOwner, eoaOwner, {
       sessionKey, expiry, scopeBitmap: 0xBF, spendLimit: 1000000, perActionTipRate: 0, nonce: nonceBefore,
     });
 
-    await cawProfileL2.registerSession(eoaOwner, sessionKey, expiry, 0xBF, 1000000, 0, nonceBefore, sig);
+    await cawProfileLedger.registerSession(eoaOwner, sessionKey, expiry, 0xBF, 1000000, 0, nonceBefore, sig);
 
-    const session = await cawProfileL2.sessions(eoaOwner, sessionKey);
+    const session = await cawProfileLedger.sessions(eoaOwner, sessionKey);
     expect(Number(session.expiry)).to.equal(expiry);
     expect(Number(session.scopeBitmap)).to.equal(0xBF);
-    expect(Number(await cawProfileL2.sessionNonce(eoaOwner))).to.equal(nonceBefore + 1);
+    expect(Number(await cawProfileLedger.sessionNonce(eoaOwner))).to.equal(nonceBefore + 1);
   });
 
   it('smart-EOA (contract owner) can register via ERC-1271', async function () {
     const mockOwner = await MockContractOwner.new(contractKey);
     const expiry = await chainTimePlus(3600);
-    const nonceBefore = Number(await cawProfileL2.sessionNonce(mockOwner.address));
+    const nonceBefore = Number(await cawProfileLedger.sessionNonce(mockOwner.address));
 
     // The owner authorizes by signing with contractKey's private key. The
     // mock contract's isValidSignature recovers contractKey from the sig and
-    // matches against its authorizedSigner. CawProfileL2 sees the smart
+    // matches against its authorizedSigner. CawProfileLedger sees the smart
     // contract address (mockOwner.address) as `signer`, finds code.length > 0,
     // and routes to 1271.
     const sig = await buildAndSign(mockOwner.address, contractKey, {
       sessionKey, expiry, scopeBitmap: 0xBF, spendLimit: 1000000, perActionTipRate: 0, nonce: nonceBefore,
     });
 
-    await cawProfileL2.registerSession(mockOwner.address, sessionKey, expiry, 0xBF, 1000000, 0, nonceBefore, sig);
+    await cawProfileLedger.registerSession(mockOwner.address, sessionKey, expiry, 0xBF, 1000000, 0, nonceBefore, sig);
 
-    const session = await cawProfileL2.sessions(mockOwner.address, sessionKey);
+    const session = await cawProfileLedger.sessions(mockOwner.address, sessionKey);
     expect(Number(session.expiry), 'session was stored against the smart-EOA address').to.equal(expiry);
-    expect(Number(await cawProfileL2.sessionNonce(mockOwner.address))).to.equal(nonceBefore + 1);
+    expect(Number(await cawProfileLedger.sessionNonce(mockOwner.address))).to.equal(nonceBefore + 1);
   });
 
   it('smart-EOA registration is rejected when isValidSignature returns 0xffffffff', async function () {
     const mockOwner = await MockContractOwner.new(contractKey);
     await mockOwner.setAlwaysReject(true);
     const expiry = await chainTimePlus(3600);
-    const nonceBefore = Number(await cawProfileL2.sessionNonce(mockOwner.address));
+    const nonceBefore = Number(await cawProfileLedger.sessionNonce(mockOwner.address));
     const sig = await buildAndSign(mockOwner.address, contractKey, {
       sessionKey, expiry, scopeBitmap: 0xBF, spendLimit: 1000000, perActionTipRate: 0, nonce: nonceBefore,
     });
 
     let threw = false;
     try {
-      await cawProfileL2.registerSession(mockOwner.address, sessionKey, expiry, 0xBF, 1000000, 0, nonceBefore, sig);
+      await cawProfileLedger.registerSession(mockOwner.address, sessionKey, expiry, 0xBF, 1000000, 0, nonceBefore, sig);
     } catch (err) {
       threw = true;
       // 0x05312688 = bytes4(keccak256("BadSig()"))
@@ -172,14 +172,14 @@ contract('CawProfileL2 — ERC-1271 register-session', function (accounts) {
     }
     expect(threw, 'register should revert when 1271 returns invalid').to.equal(true);
 
-    const session = await cawProfileL2.sessions(mockOwner.address, sessionKey);
+    const session = await cawProfileLedger.sessions(mockOwner.address, sessionKey);
     expect(Number(session.expiry), 'no session should have been stored').to.equal(0);
   });
 
   it('smart-EOA rejects a sig from a non-authorized key (1271 returns invalid)', async function () {
     const mockOwner = await MockContractOwner.new(contractKey);
     const expiry = await chainTimePlus(3600);
-    const nonceBefore = Number(await cawProfileL2.sessionNonce(mockOwner.address));
+    const nonceBefore = Number(await cawProfileLedger.sessionNonce(mockOwner.address));
     // Sign with otherKey, not contractKey — mockOwner.isValidSignature should
     // recover otherKey and not match its authorizedSigner.
     const sig = await buildAndSign(mockOwner.address, otherKey, {
@@ -188,7 +188,7 @@ contract('CawProfileL2 — ERC-1271 register-session', function (accounts) {
 
     let threw = false;
     try {
-      await cawProfileL2.registerSession(mockOwner.address, sessionKey, expiry, 0xBF, 1000000, 0, nonceBefore, sig);
+      await cawProfileLedger.registerSession(mockOwner.address, sessionKey, expiry, 0xBF, 1000000, 0, nonceBefore, sig);
     } catch (err) {
       threw = true;
       expect(err.message).to.match(/BadSig|0x05312688/);
@@ -226,9 +226,9 @@ contract('CawProfileL2 — ERC-1271 register-session', function (accounts) {
     const sig = ecsign(digest, privFor(contractKey));
     const sigHex = '0x' + sig.r.toString('hex') + sig.s.toString('hex') + sig.v.toString(16).padStart(2, '0');
 
-    await cawProfileL2.registerSessionPersonal(mockOwner.address, messageHex, sigHex);
+    await cawProfileLedger.registerSessionPersonal(mockOwner.address, messageHex, sigHex);
 
-    const session = await cawProfileL2.sessions(mockOwner.address, sessionKey2);
+    const session = await cawProfileLedger.sessions(mockOwner.address, sessionKey2);
     expect(Number(session.expiry), 'session registered against the smart-EOA address').to.be.greaterThan(0);
     // scopeBitmap on the personal path is hardcoded to 0xBF (all except WITHDRAW).
     expect(Number(session.scopeBitmap)).to.equal(0xBF);
@@ -237,7 +237,7 @@ contract('CawProfileL2 — ERC-1271 register-session', function (accounts) {
   it('smart-EOA cannot register a session with WITHDRAW scope (bit 6)', async function () {
     const mockOwner = await MockContractOwner.new(contractKey);
     const expiry = await chainTimePlus(3600);
-    const nonceBefore = Number(await cawProfileL2.sessionNonce(mockOwner.address));
+    const nonceBefore = Number(await cawProfileLedger.sessionNonce(mockOwner.address));
     // 0x40 = WITHDRAW bit set — must revert with NoWithdraw().
     const sig = await buildAndSign(mockOwner.address, contractKey, {
       sessionKey, expiry, scopeBitmap: 0xFF, spendLimit: 1000000, perActionTipRate: 0, nonce: nonceBefore,
@@ -245,7 +245,7 @@ contract('CawProfileL2 — ERC-1271 register-session', function (accounts) {
 
     let threw = false;
     try {
-      await cawProfileL2.registerSession(mockOwner.address, sessionKey, expiry, 0xFF, 1000000, 0, nonceBefore, sig);
+      await cawProfileLedger.registerSession(mockOwner.address, sessionKey, expiry, 0xFF, 1000000, 0, nonceBefore, sig);
     } catch (err) {
       threw = true;
       // 0x297ae19c = bytes4(keccak256("NoWithdraw()"))
@@ -260,7 +260,7 @@ contract('CawProfileL2 — ERC-1271 register-session', function (accounts) {
     // We pass any signature; the zero-signer guard fires first.
     let threw = false;
     try {
-      await cawProfileL2.registerSession(
+      await cawProfileLedger.registerSession(
         '0x0000000000000000000000000000000000000000',
         sessionKey, expiry, 0xBF, 1000000, 0, 0,
         '0x' + '00'.repeat(65),

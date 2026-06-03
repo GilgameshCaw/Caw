@@ -39,7 +39,7 @@ contract CawActionsDigestExposer {
     ///      The argument is unused in digest computation; the domain hash
     ///      is computed against THIS contract's address, matching how
     ///      CawActions computes its own.
-    constructor(address /* _cawProfileL2 */) {
+    constructor(address /* _cawProfileLedger */) {
         eip712DomainHash = keccak256(abi.encode(
             EIP712_DOMAIN_TYPEHASH,
             keccak256(bytes("Caw Protocol")),

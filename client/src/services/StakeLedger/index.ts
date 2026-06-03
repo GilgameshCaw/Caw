@@ -1,4 +1,4 @@
-// StakeLedger snapshotter — mirrors CawProfileL2 state transitions in
+// StakeLedger snapshotter — mirrors CawProfileLedger state transitions in
 // TypeScript bigint, writing per-user delta rows and per-multiplier-
 // change rows. Hot path makes zero RPC reads. After each
 // ActionsProcessed event finishes its actions, the caller invokes
@@ -33,15 +33,15 @@ import {
   spendAndDistribute,
   addToBalance,
 } from './contractMath'
-import { getCawProfileL2 as _getCawProfileL2Real } from './cawProfileL2'
+import { getCawProfileLedger as _getCawProfileLedgerReal } from './cawProfileLedger'
 import { getNetworkId } from '../../utils/networkId'
 
 // Tests can override this to avoid real RPC calls.
 // eslint-disable-next-line prefer-const
-let _cawProfileL2Override: { rewardMultiplier: (...args: any[]) => Promise<any> } | null = null
+let _cawProfileLedgerOverride: { rewardMultiplier: (...args: any[]) => Promise<any> } | null = null
 
-function getCawProfileL2(): { rewardMultiplier: (...args: any[]) => Promise<any> } {
-  return (_cawProfileL2Override ?? _getCawProfileL2Real()) as any
+function getCawProfileLedger(): { rewardMultiplier: (...args: any[]) => Promise<any> } {
+  return (_cawProfileLedgerOverride ?? _getCawProfileLedgerReal()) as any
 }
 
 // One client per process — the snapshotter reads CLIENT_ID from env at
@@ -263,7 +263,7 @@ export async function recordAction(
       )
     }
   } else if (rawTypeName === 'WITHDRAW') {
-    // CawProfileL2.withdraw(): debits sender, decrements totalCaw.
+    // CawProfileLedger.withdraw(): debits sender, decrements totalCaw.
     // Modelled as ACTION_SPEND_BASE so the chart's outgoing stack
     // surfaces it the same way as other type-specific costs.
     const amount = (BigInt(rawAction.amounts?.[0] ?? 0)) * PRECISION
@@ -637,7 +637,7 @@ export async function verifyMultiplier(): Promise<void> {
 
   // Attempt a historical read at the block we've consumed through.
   try {
-    onChain = BigInt(await getCawProfileL2().rewardMultiplier({ blockTag: lastBlock }))
+    onChain = BigInt(await getCawProfileLedger().rewardMultiplier({ blockTag: lastBlock }))
   } catch (histErr: any) {
     const msg: string = histErr?.message ?? String(histErr)
 
@@ -652,7 +652,7 @@ export async function verifyMultiplier(): Promise<void> {
         _nonArchiveWarnEmitted = true
       }
       try {
-        onChain = BigInt(await getCawProfileL2().rewardMultiplier())
+        onChain = BigInt(await getCawProfileLedger().rewardMultiplier())
       } catch (headErr: any) {
         console.warn('[StakeLedger] verifyMultiplier HEAD fallback also failed; skipping check:', headErr?.message ?? headErr)
         return
@@ -668,7 +668,7 @@ export async function verifyMultiplier(): Promise<void> {
     console.error(
       `[StakeLedger] DIVERGENCE: chain rewardMultiplier=${onChain}, ledger=${s.multiplier} ` +
         `(checked at block ${lastBlock}). ` +
-        `Halting writes — operator must reseed (read CawProfileL2 state and overwrite StakeLedgerState + CawOwnershipCurrent).`,
+        `Halting writes — operator must reseed (read CawProfileLedger state and overwrite StakeLedgerState + CawOwnershipCurrent).`,
     )
     s.halted = true
   }
@@ -684,12 +684,12 @@ export function _resetForTests(): void {
   state = null
   bootPromise = null
   _nonArchiveWarnEmitted = false
-  _cawProfileL2Override = null
+  _cawProfileLedgerOverride = null
 }
 
 /** For tests: inject a mock contract so verifyMultiplier never hits a real RPC. */
 export function _setContractForTests(mock: { rewardMultiplier: (...args: any[]) => Promise<any> } | null): void {
-  _cawProfileL2Override = mock
+  _cawProfileLedgerOverride = mock
 }
 
 /** For tests: directly inject RuntimeState, bypassing Prisma boot. */

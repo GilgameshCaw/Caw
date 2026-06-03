@@ -7,7 +7,7 @@ import "@openzeppelin/contracts/token/ERC20/ERC20.sol";
 /// @title MintableCaw
 /// @notice TEST/DEV ONLY — a permissionless mintable ERC20 used as a stand-in for the real CAW
 ///         token on local testnets. The real CAW token is an already-deployed ERC20 on mainnet
-///         and L2 (a-hunters-dream); CawProfile / CawProfileL2 are configured to point at it directly.
+///         and L2 (a-hunters-dream); CawProfile / CawProfileLedger are configured to point at it directly.
 ///         This contract MUST NEVER be deployed to mainnet under any circumstances. The
 ///         unrestricted `mint()` function would let anyone create unlimited tokens.
 contract MintableCaw is ERC20 {

@@ -28,7 +28,7 @@ function decompressActionText(textField: unknown): string {
 import { countManager } from '../../services/CountManager'
 import { parsePoll, parseVoteText } from '../../tools/pollMarker'
 import { getSession, addAuthorization, createSession } from '../sessionStore'
-import { cawProfileL2Abi } from '../../abi/generated'
+import { cawProfileLedgerAbi } from '../../abi/generated'
 import { CAW_NAMES_L2_ADDRESS } from '../../abi/addresses'
 import { packActions, getPackedActionSlices } from '../../utils/packActions'
 
@@ -119,7 +119,7 @@ async function getReadContractAsync(): Promise<Contract> {
     _readProvider = rpcUrl.startsWith('wss://') || rpcUrl.startsWith('ws://')
       ? await makeVerifiedWebSocketProvider(rpcUrl, L2_CHAIN_ID)
       : await makeVerifiedJsonRpcProvider(rpcUrl, L2_CHAIN_ID)
-    _readContract = new Contract(CAW_NAMES_L2_ADDRESS, cawProfileL2Abi as any, _readProvider)
+    _readContract = new Contract(CAW_NAMES_L2_ADDRESS, cawProfileLedgerAbi as any, _readProvider)
   })()
   await _readProviderInitPromise
   return _readContract!

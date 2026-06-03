@@ -2,12 +2,12 @@
 pragma solidity ^0.8.22;
 
 import "forge-std/Test.sol";
-import "../contracts/CawProfileL2.sol";
+import "../contracts/CawProfileLedger.sol";
 import "../contracts/MockLayerZeroEndpoint.sol";
 
 /// @title SessionRegisterFuzzTest
 /// @notice Fuzz the EIP-712 `registerSession` (by-sig) path.
-///         CawProfileL2 is OApp-based — we deploy with `MockLayerZeroEndpoint`
+///         CawProfileLedger is OApp-based — we deploy with `MockLayerZeroEndpoint`
 ///         so the constructor's OAppCore call doesn't revert.
 ///
 /// @dev Invariants checked:
@@ -20,7 +20,7 @@ import "../contracts/MockLayerZeroEndpoint.sol";
 ///        4. WITHDRAW (bit 6) cannot be delegated.
 ///        5. Successful register bumps `sessionNonce` by exactly 1.
 contract SessionRegisterFuzzTest is Test {
-    CawProfileL2 internal profile;
+    CawProfileLedger internal profile;
     MockLayerZeroEndpoint internal lzEndpoint;
 
     bytes32 internal DOMAIN;
@@ -34,7 +34,7 @@ contract SessionRegisterFuzzTest is Test {
     function setUp() public {
         // EIDs are arbitrary; we don't actually send LZ messages.
         lzEndpoint = new MockLayerZeroEndpoint(40245);
-        profile = new CawProfileL2(30101, address(lzEndpoint), address(0));
+        profile = new CawProfileLedger(30101, address(lzEndpoint), address(0));
         DOMAIN = profile.eip712DomainHash();
     }
 
@@ -81,7 +81,7 @@ contract SessionRegisterFuzzTest is Test {
         bytes32 d = _digest(sessionKey, expiry, scope, spendLimit, tipRate, nonce);
         (uint8 v, bytes32 r, bytes32 s) = _sign(pk, d);
 
-        vm.expectRevert(abi.encodeWithSelector(CawProfileL2.Expired.selector));
+        vm.expectRevert(abi.encodeWithSelector(CawProfileLedger.Expired.selector));
         profile.registerSession(vm.addr(pk), sessionKey, expiry, scope, spendLimit, tipRate, nonce, abi.encodePacked(r, s, v));
     }
 
@@ -108,7 +108,7 @@ contract SessionRegisterFuzzTest is Test {
 
         // Replaying the EXACT same signature must revert with "Invalid nonce"
         // because sessionNonce[signer] is now nonce + 1.
-        vm.expectRevert(abi.encodeWithSelector(CawProfileL2.BadNonce.selector));
+        vm.expectRevert(abi.encodeWithSelector(CawProfileLedger.BadNonce.selector));
         profile.registerSession(signer, sessionKey, expiry, scope, 0, 0, nonce, abi.encodePacked(r, s, v));
     }
 
@@ -169,7 +169,7 @@ contract SessionRegisterFuzzTest is Test {
         bytes32 d = _digest(sessionKey, expiry, scope, 0, 0, nonce);
         (uint8 v, bytes32 r, bytes32 s) = _sign(pk, d);
 
-        vm.expectRevert(abi.encodeWithSelector(CawProfileL2.NoWithdraw.selector));
+        vm.expectRevert(abi.encodeWithSelector(CawProfileLedger.NoWithdraw.selector));
         profile.registerSession(vm.addr(pk), sessionKey, expiry, scope, 0, 0, nonce, abi.encodePacked(r, s, v));
     }
 
@@ -187,7 +187,7 @@ contract SessionRegisterFuzzTest is Test {
         bytes32 d = _digest(address(0), expiry, scope, 0, 0, nonce);
         (uint8 v, bytes32 r, bytes32 s) = _sign(pk, d);
 
-        vm.expectRevert(abi.encodeWithSelector(CawProfileL2.ZeroKey.selector));
+        vm.expectRevert(abi.encodeWithSelector(CawProfileLedger.ZeroKey.selector));
         profile.registerSession(vm.addr(pk), address(0), expiry, scope, 0, 0, nonce, abi.encodePacked(r, s, v));
     }
 }

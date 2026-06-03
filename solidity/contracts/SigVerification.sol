@@ -6,7 +6,7 @@ import "@openzeppelin/contracts/interfaces/IERC1271.sol";
 
 /// @title SigVerification
 /// @notice External library for signature verification with ERC-1271 fallback.
-///         Extracted to keep `CawProfileL2` under the EIP-170 24,576-byte
+///         Extracted to keep `CawProfileLedger` under the EIP-170 24,576-byte
 ///         deployed-bytecode limit. Functions are `external` so they live in
 ///         the library's own deployed bytecode — the consuming contract only
 ///         carries a small delegatecall stub (~50 bytes per linked function).
@@ -46,7 +46,7 @@ library SigVerification {
   ///      false; caller's revert keeps the error surface consistent.
   ///
   ///      `internal` so the implementation inlines — no library link step
-  ///      needed in tests/deploys. Size pressure on CawProfileL2 is managed
+  ///      needed in tests/deploys. Size pressure on CawProfileLedger is managed
   ///      by other reductions (dropping legacy (v,r,s) overloads, replacing
   ///      added require-strings with 4-byte custom errors).
   function recoverOrValidate(

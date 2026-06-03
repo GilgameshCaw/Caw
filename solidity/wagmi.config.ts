@@ -14,7 +14,7 @@ export default defineConfig({
         "CawChallengeRelay.sol/*.json",
         "CawNetworkManager.sol/*.json",
         "CawProfile.sol/*.json",
-        "CawProfileL2.sol/*.json",
+        "CawProfileLedger.sol/*.json",
         "CawProfileMinter.sol/*.json",
         "CawProfileQuoter.sol/*.json",
         "CawProfileLens.sol/*.json",

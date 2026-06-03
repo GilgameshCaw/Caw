@@ -13,21 +13,21 @@
  *
  * One Network = one storage chain. The CLI looks up the operator's networkId
  * on the L1 CawNetworkManager (getStorageChainEid), maps the eid back to a
- * chainKey, and pulls THIS Network's CawActions / CawProfileL2 / etc. from
+ * chainKey, and pulls THIS Network's CawActions / CawProfileLedger / etc. from
  * the matching block. addresses.ts ends up with singular constants — the
  * call-sites in the rest of the codebase don't have to be multi-chain aware.
  *
  * Per-chain contracts (one entry per L2):
  *   - CawActions       (storage chain — receives action submissions)
- *   - CawProfileL2     (per-chain balance/auth bookkeeping)
+ *   - CawProfileLedger     (per-chain balance/auth bookkeeping)
  *   - CawActionsArchive (storage chain doubles as archive — see deploy.js)
  *   - CawChallengeRelay (storage chain's relay for fraud proofs)
  *
  * L1-only contracts:
  *   - CawProfile, CawNetworkManager, CawProfileMinter, CawProfileQuoter,
- *     CawProfileMarketplace, CawProfileURI, MintableCaw, CawProfileL2_L1,
+ *     CawProfileMarketplace, CawProfileURI, MintableCaw, CawProfileLedger_L1,
  *     CawActions_L1
- *     (L1 hosts a co-deployed CawProfileL2 + CawActions in bypassLZ mode so
+ *     (L1 hosts a co-deployed CawProfileLedger + CawActions in bypassLZ mode so
  *     a Network can pick L1 as their storage chain. L1 doesn't get its own
  *     archive/relay — see L2_CHAIN_KEYS comment in deploy.js.)
  *
@@ -42,7 +42,7 @@ export interface ChainContracts {
   // L1-only contracts (only present on chainKey === 'L1'):
   MintableCaw?: `0x${string}`
   CawProfile?: `0x${string}`
-  CawProfileL2?: `0x${string}`     // On L1 this is the bypassLZ co-deployed mirror
+  CawProfileLedger?: `0x${string}`     // On L1 this is the bypassLZ co-deployed mirror
   CawNetworkManager?: `0x${string}`
   CawProfileMinter?: `0x${string}`
   CawProfileQuoter?: `0x${string}`
@@ -68,7 +68,7 @@ export const deployments: Deployments = {
     L1: {
       MintableCaw: '0x56817dc696448135203C0556f702c6a953260411',
       CawProfile: '0x773E40F664F4EC059d6f1a25eD5d42A8EfcE7e59',
-      CawProfileL2: '0x17f12c59E6A17e49C9c3E4eB8EfB2896c9c29Ee7',
+      CawProfileLedger: '0x17f12c59E6A17e49C9c3E4eB8EfB2896c9c29Ee7',
       CawNetworkManager: '0xa8016B714122d588294D4abDa3d9f11B065e0F06',
       CawProfileMinter: '0x9b5A9Ad2672EdC0F980E325efdEdC5A40287c77a',
       CawProfileQuoter: '0xD37a0f1518D7096cbB737a90EfBd7d251fe81A13',
@@ -82,14 +82,14 @@ export const deployments: Deployments = {
       CawActionsERC1271: '0x9801aAFBD42Be517Be4cab60C0211ff8d7b47FE1',
     },
     L2: {
-      CawProfileL2: '0x07C0b03f58B16aB95fa7f8842ea0031A811f69a1',
+      CawProfileLedger: '0x07C0b03f58B16aB95fa7f8842ea0031A811f69a1',
       CawActions: '0x93C2DbB6e75d00f472dE3Dc3b1909Fdd845A16a9',
       CawActionsERC1271: '0x696E2EcC9BAD57DFE79c5ACb9CA585D88180f159',
       CawActionsArchive: '0x6F112a3DF289b4B870E802ca4fd2165E8EA550A6',
       CawChallengeRelay: '0x32CF7AeC6532812Cd96eF53815C636bB1a58352f',
     },
     L2b: {
-      CawProfileL2: '0x65A68eb9df2aECa49D598016F8F49a7EF9F9A640',
+      CawProfileLedger: '0x65A68eb9df2aECa49D598016F8F49a7EF9F9A640',
       CawActions: '0xfAaD4D37051815A5f99491Ae53f633A07b1b752C',
       CawActionsERC1271: '0xAc81C1888587C8E18320088Fa11E8a74C38bFB14',
       CawActionsArchive: '0x22c71864314e1Ee78CB2495d7819f6b56F0A13cf',

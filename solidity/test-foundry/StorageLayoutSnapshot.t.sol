@@ -29,7 +29,7 @@ contract StorageLayoutSnapshotTest is Test {
 
     function setUp() public {
         CONTRACTS.push("CawProfile");
-        CONTRACTS.push("CawProfileL2");
+        CONTRACTS.push("CawProfileLedger");
         CONTRACTS.push("CawActions");
         CONTRACTS.push("CawActionsArchive");
         CONTRACTS.push("CawProfileMarketplace");
@@ -62,7 +62,7 @@ contract StorageLayoutSnapshotTest is Test {
     /// @notice Individual per-contract tests for granular failure attribution.
     ///         Named test_layout_<Contract> so forge --match-test can target them.
     function test_layout_CawProfile() public { _checkOne("CawProfile"); }
-    function test_layout_CawProfileL2() public { _checkOne("CawProfileL2"); }
+    function test_layout_CawProfileLedger() public { _checkOne("CawProfileLedger"); }
     function test_layout_CawActions() public { _checkOne("CawActions"); }
     function test_layout_CawActionsArchive() public { _checkOne("CawActionsArchive"); }
     function test_layout_CawProfileMarketplace() public { _checkOne("CawProfileMarketplace"); }

@@ -12,7 +12,7 @@ const CawFontDataA = artifacts.require("CawFontDataA");
 const CawFontDataB = artifacts.require("CawFontDataB");
 const CawNetworkManager = artifacts.require("CawNetworkManager");
 const CawProfile = artifacts.require("CawProfile");
-const CawProfileL2 = artifacts.require("CawProfileL2");
+const CawProfileLedger = artifacts.require("CawProfileLedger");
 const CawProfileMinter = artifacts.require("CawProfileMinter");
 const CawProfileQuoter = artifacts.require("CawProfileQuoter");
 const CawBuyAndBurn = artifacts.require("CawBuyAndBurn");
@@ -43,7 +43,7 @@ contract("CawProfileMinter — ZAP (pay-with-ETH) flows", function(accounts) {
   var l1Endpoint, l2Endpoint;
   var token, mockRouter, buyAndBurn;
   var networkManager, uriGen;
-  var cawProfile, cawProfileL2, cawProfileL2Mainnet;
+  var cawProfile, cawProfileLedger, cawProfileLedgerMainnet;
   var minter, quoter;
   var l2NetworkId, l1NetworkId;
 
@@ -63,8 +63,8 @@ contract("CawProfileMinter — ZAP (pay-with-ETH) flows", function(accounts) {
     uriGen = await deployURI();
 
     // L2-storage mirror (cross-chain)
-    cawProfileL2 = await CawProfileL2.new(l1, l2Endpoint.address, "0x0000000000000000000000000000000000000000");
-    await l1Endpoint.setDestLzEndpoint(cawProfileL2.address, l2Endpoint.address);
+    cawProfileLedger = await CawProfileLedger.new(l1, l2Endpoint.address, "0x0000000000000000000000000000000000000000");
+    await l1Endpoint.setDestLzEndpoint(cawProfileLedger.address, l2Endpoint.address);
 
     cawProfile = await CawProfile.new(
       token.address, uriGen.address, buyAndBurn.address,
@@ -72,14 +72,14 @@ contract("CawProfileMinter — ZAP (pay-with-ETH) flows", function(accounts) {
       "0x0000000000000000000000000000000000000000"
     );
     await buyAndBurn.setCawProfile(cawProfile.address);
-    await cawProfileL2.setL1Peer(l1, cawProfile.address, false);
+    await cawProfileLedger.setL1Peer(l1, cawProfile.address, false);
     await l2Endpoint.setDestLzEndpoint(cawProfile.address, l1Endpoint.address);
-    await cawProfile.setL2Peer(l2, cawProfileL2.address);
+    await cawProfile.setL2Peer(l2, cawProfileLedger.address);
 
     // L1-co-deployed mirror (bypassLZ)
-    cawProfileL2Mainnet = await CawProfileL2.new(l1, l1Endpoint.address, "0x0000000000000000000000000000000000000000");
-    await cawProfileL2Mainnet.setL1Peer(l1, cawProfile.address, true);
-    await cawProfile.setL2Peer(l1, cawProfileL2Mainnet.address);
+    cawProfileLedgerMainnet = await CawProfileLedger.new(l1, l1Endpoint.address, "0x0000000000000000000000000000000000000000");
+    await cawProfileLedgerMainnet.setL1Peer(l1, cawProfile.address, true);
+    await cawProfile.setL2Peer(l1, cawProfileLedgerMainnet.address);
 
     // Two networks to exercise both branches (zero fees to keep ETH math clean)
     await networkManager.createNetwork("L2 Network", accounts[0], l2, 0, 0, 0, 0, "500000000000");
@@ -126,14 +126,14 @@ contract("CawProfileMinter — ZAP (pay-with-ETH) flows", function(accounts) {
       var expectedCaw = expectedCawOut(swapEth);
       var minCawOut = expectedCaw * 97n / 100n;
 
-      var balBefore = BigInt((await cawProfileL2.cawBalanceOf(tokenId)).toString());
+      var balBefore = BigInt((await cawProfileLedger.cawBalanceOf(tokenId)).toString());
 
       await minter.depositZap(
         l2NetworkId, tokenId, swapEth, minCawOut.toString(), l2, 0,
         { from: owner, value: totalValue.toString() }
       );
 
-      var balAfter = BigInt((await cawProfileL2.cawBalanceOf(tokenId)).toString());
+      var balAfter = BigInt((await cawProfileLedger.cawBalanceOf(tokenId)).toString());
       var delta = balAfter - balBefore;
       // Mock router pays exactly expectedCaw — it should land on the L2 mirror.
       expect(delta.toString()).to.equal(expectedCaw.toString());
@@ -149,7 +149,7 @@ contract("CawProfileMinter — ZAP (pay-with-ETH) flows", function(accounts) {
         { from: owner, value: BigInt(bypassQuote.nativeFee).toString() }
       );
       var bypassTokenId = (await cawProfile.totalSupply()).toNumber();
-      var balBefore = BigInt((await cawProfileL2Mainnet.cawBalanceOf(bypassTokenId)).toString());
+      var balBefore = BigInt((await cawProfileLedgerMainnet.cawBalanceOf(bypassTokenId)).toString());
 
       var swapEth = web3.utils.toWei('0.02', 'ether');
       var depositLzQuote = await quoter.depositZapQuote(l1NetworkId, bypassTokenId, l1, false);
@@ -162,7 +162,7 @@ contract("CawProfileMinter — ZAP (pay-with-ETH) flows", function(accounts) {
         { from: owner, value: totalValue.toString() }
       );
 
-      var balAfter = BigInt((await cawProfileL2Mainnet.cawBalanceOf(bypassTokenId)).toString());
+      var balAfter = BigInt((await cawProfileLedgerMainnet.cawBalanceOf(bypassTokenId)).toString());
       expect((balAfter - balBefore).toString()).to.equal(expectedCaw.toString());
     });
 
@@ -242,7 +242,7 @@ contract("CawProfileMinter — ZAP (pay-with-ETH) flows", function(accounts) {
       expect((deadAfter - deadBefore).toString()).to.equal(burnCost.toString());
 
       // Remainder deposited to L2 mirror
-      var bal = BigInt((await cawProfileL2.cawBalanceOf(newId)).toString());
+      var bal = BigInt((await cawProfileLedger.cawBalanceOf(newId)).toString());
       expect(bal.toString()).to.equal(expectedDeposit.toString());
     });
 
@@ -266,7 +266,7 @@ contract("CawProfileMinter — ZAP (pay-with-ETH) flows", function(accounts) {
 
       var newId = (await cawProfile.totalSupply()).toNumber();
       expect(await cawProfile.ownerOf(newId)).to.equal(owner);
-      var bal = BigInt((await cawProfileL2Mainnet.cawBalanceOf(newId)).toString());
+      var bal = BigInt((await cawProfileLedgerMainnet.cawBalanceOf(newId)).toString());
       expect(bal.toString()).to.equal(expectedDeposit.toString());
     });
 
@@ -387,11 +387,11 @@ contract("CawProfileMinter — ZAP (pay-with-ETH) flows", function(accounts) {
 
       var newId = (await cawProfile.totalSupply()).toNumber();
       expect(await cawProfile.ownerOf(newId)).to.equal(owner);
-      var bal = BigInt((await cawProfileL2.cawBalanceOf(newId)).toString());
+      var bal = BigInt((await cawProfileLedger.cawBalanceOf(newId)).toString());
       expect(bal.toString()).to.equal(expectedDeposit.toString());
 
       // Session populated on L2 with 0xBF scope
-      var stored = await cawProfileL2.sessions(owner, sessionKey);
+      var stored = await cawProfileLedger.sessions(owner, sessionKey);
       expect(stored.expiry.toString()).to.equal(expiry.toString());
       expect(stored.scopeBitmap.toString()).to.equal('191'); // 0xBF
       expect(stored.spendLimit.toString()).to.equal(spendLimit);
@@ -422,10 +422,10 @@ contract("CawProfileMinter — ZAP (pay-with-ETH) flows", function(accounts) {
 
       var newId = (await cawProfile.totalSupply()).toNumber();
       expect(await cawProfile.ownerOf(newId)).to.equal(owner);
-      var bal = BigInt((await cawProfileL2Mainnet.cawBalanceOf(newId)).toString());
+      var bal = BigInt((await cawProfileLedgerMainnet.cawBalanceOf(newId)).toString());
       expect(bal.toString()).to.equal(expectedDeposit.toString());
 
-      var stored = await cawProfileL2Mainnet.sessions(owner, sessionKey);
+      var stored = await cawProfileLedgerMainnet.sessions(owner, sessionKey);
       expect(stored.expiry.toString()).to.equal(expiry.toString());
       expect(stored.scopeBitmap.toString()).to.equal('191');
       expect(stored.spendLimit.toString()).to.equal(spendLimit);

@@ -16,7 +16,7 @@ cawProfilesL2Address = '0x55C66CAbF9766AeFB3a770d9ea64E218dF195D9B';
 cawActionsAddress = "0xf3FF3891332be3Cb0A28B94218b416454133b26f";
 
 (async () => {
-  cawProfiles = await CawProfileL2.at(cawProfilesL2Address);
+  cawProfiles = await CawProfileLedger.at(cawProfilesL2Address);
   cawActions = await CawActions.at(cawActionsAddress);
 })();
 

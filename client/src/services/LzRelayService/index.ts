@@ -1,7 +1,7 @@
 // src/services/LzRelayService/index.ts
 //
 // Auto-relays stuck LayerZero V2 packets from L1 (Sepolia) to L2 (Base
-// Sepolia) for the CawProfile → CawProfileL2 OApp pathway.
+// Sepolia) for the CawProfile → CawProfileLedger OApp pathway.
 //
 // Background:
 //   LZ V2 message delivery is three steps:
@@ -101,7 +101,7 @@ const GUID_LEN   = 32
 
 // Our OApp addresses (from addresses.ts; defaults exported from deployments).
 const DEFAULT_L1_SENDER = CAW_NAMES_ADDRESS          // CawProfile (L1)
-const DEFAULT_L2_RECEIVER = CAW_NAMES_L2_ADDRESS      // CawProfileL2 (L2)
+const DEFAULT_L2_RECEIVER = CAW_NAMES_L2_ADDRESS      // CawProfileLedger (L2)
 
 // LZ endpoint IDs
 const SRC_EID = 40161  // Sepolia
@@ -130,7 +130,7 @@ interface Pathway {
 
 const PATHWAYS: Pathway[] = [
   {
-    label: 'CawProfile→CawProfileL2',
+    label: 'CawProfile→CawProfileLedger',
     senderL1: DEFAULT_L1_SENDER.toLowerCase(),
     receiverL2: DEFAULT_L2_RECEIVER,
     srcEid: SRC_EID,

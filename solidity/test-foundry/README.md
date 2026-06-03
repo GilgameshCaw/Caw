@@ -95,7 +95,7 @@ Pure-function fuzz of the documented shape-gate at the top of
   passes (this is the partition test that pins the audit fix in place).
 
 ### `SessionRegisterFuzz.t.sol`
-EIP-712 `registerSession` path on `CawProfileL2`. Fuzzes the signed-payload
+EIP-712 `registerSession` path on `CawProfileLedger`. Fuzzes the signed-payload
 fields and verifies:
 
 - expired sessions reject (`Already expired`)
@@ -108,13 +108,13 @@ fields and verifies:
 
 ## Known limitations
 
-- **No LayerZero messaging.** `CawProfileL2` is OApp-based; we deploy with
+- **No LayerZero messaging.** `CawProfileLedger` is OApp-based; we deploy with
   the existing `MockLayerZeroEndpoint` (vendored from
   `@layerzerolabs/test-devtools-evm-hardhat`) but never *send* an LZ
   message. Cross-chain flows (deposits, withdraws, transferAndSync) are
   unit-tested in the Truffle suite and not duplicated here.
 - **No full-stack `CawActions` fuzz.** `processActions` requires a deployed
-  `CawProfileL2 + LZ endpoint + funded NFT owner` graph and signed,
+  `CawProfileLedger + LZ endpoint + funded NFT owner` graph and signed,
   packed calldata — too heavy for a pure-property test. We instead use the
   shape harness above. A full-stack fuzz that crafts random valid
   `(packedActions, packedSigs)` pairs is a worthwhile follow-up.

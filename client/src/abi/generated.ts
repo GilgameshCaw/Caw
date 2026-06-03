@@ -47,7 +47,7 @@ export const cawActionsAbi = [
     inputs: [],
     name: 'cawProfile',
     outputs: [
-      { name: '', internalType: 'contract CawProfileL2', type: 'address' },
+      { name: '', internalType: 'contract CawProfileLedger', type: 'address' },
     ],
     stateMutability: 'view',
   },
@@ -2523,9 +2523,9 @@ export const cawProfileAbi = [
   {
     type: 'function',
     inputs: [],
-    name: 'cawProfileL2',
+    name: 'cawProfileLedger',
     outputs: [
-      { name: '', internalType: 'contract CawProfileL2', type: 'address' },
+      { name: '', internalType: 'contract CawProfileLedger', type: 'address' },
     ],
     stateMutability: 'view',
   },
@@ -3355,10 +3355,10 @@ export const cawProfileAbi = [
 ] as const
 
 //////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-// CawProfileL2
+// CawProfileLedger
 //////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
-export const cawProfileL2Abi = [
+export const cawProfileLedgerAbi = [
   {
     type: 'constructor',
     inputs: [
@@ -3526,7 +3526,7 @@ export const cawProfileL2Abi = [
     outputs: [
       {
         name: '',
-        internalType: 'struct CawProfileL2.Token[]',
+        internalType: 'struct CawProfileLedger.Token[]',
         type: 'tuple[]',
         components: [
           { name: 'tokenId', internalType: 'uint256', type: 'uint256' },
@@ -4017,7 +4017,7 @@ export const cawProfileL2Abi = [
     outputs: [
       {
         name: 's',
-        internalType: 'struct CawProfileL2.StoredSession',
+        internalType: 'struct CawProfileLedger.StoredSession',
         type: 'tuple',
         components: [
           { name: 'expiry', internalType: 'uint64', type: 'uint64' },

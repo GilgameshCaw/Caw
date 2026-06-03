@@ -20,7 +20,7 @@ const GOLDEN_DIR = path.join(SOLIDITY_DIR, 'test-foundry', 'golden');
 
 const CONTRACTS = [
   'CawProfile',
-  'CawProfileL2',
+  'CawProfileLedger',
   'CawActions',
   'CawActionsArchive',
   'CawProfileMarketplace',

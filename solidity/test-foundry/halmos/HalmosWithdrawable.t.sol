@@ -26,15 +26,15 @@ contract WithdrawableHarness {
 
     // CawProfile.setWithdrawable auth flags
     bool public fromLZ;
-    address public cawProfileL2;
+    address public cawProfileLedger;
 
     constructor(address _l2) {
-        cawProfileL2 = _l2;
+        cawProfileLedger = _l2;
     }
 
     /// @dev Mirrors setWithdrawable from CawProfile (auth stripped to harness-level).
     function setWithdrawable_auth(uint32[] memory tokenIds, uint256[] memory amounts) external {
-        require(fromLZ || msg.sender == cawProfileL2, "NotL2Mirror");
+        require(fromLZ || msg.sender == cawProfileLedger, "NotL2Mirror");
         for (uint256 i = 0; i < tokenIds.length; i++) {
             withdrawable[tokenIds[i]] += amounts[i];
         }
@@ -126,7 +126,7 @@ contract HalmosWithdrawableTest is Test {
     }
 
     // ── check 4 ──────────────────────────────────────────────────────────────
-    // setWithdrawable only credits when called by cawProfileL2 or fromLZ flag.
+    // setWithdrawable only credits when called by cawProfileLedger or fromLZ flag.
     // A random address must be rejected.
     function check_setWithdrawable_auth_rejects_random(
         address caller,

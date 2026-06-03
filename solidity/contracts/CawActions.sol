@@ -41,7 +41,7 @@ pragma solidity ^0.8.20;
 import "@openzeppelin/contracts/utils/Strings.sol";
 import "@openzeppelin/contracts/interfaces/IERC1271.sol";
 
-import "./CawProfileL2.sol";
+import "./CawProfileLedger.sol";
 import "./interfaces/ICawCapOracle.sol";
 import { ISP1Verifier } from "./IZKActionsVerifier.sol";
 import { MessagingFee } from "@layerzerolabs/lz-evm-oapp-v2/contracts/oapp/OApp.sol";
@@ -150,7 +150,7 @@ contract CawActions {
   ///         ratio == 0 means the tip oracle is dormant.
   event TipRatioUpdated(uint192 ratio, uint64 timestamp);
 
-  CawProfileL2 public immutable cawProfile;
+  CawProfileLedger public immutable cawProfile;
   CawActions public immutable externalSelf;
 
   /// @notice Sibling contract that handles variable-length ERC-1271 signatures
@@ -258,7 +258,7 @@ contract CawActions {
   ) {
     eip712DomainHash = generateDomainHash();
     externalSelf = CawActions(this);
-    cawProfile = CawProfileL2(_cawProfiles);
+    cawProfile = CawProfileLedger(_cawProfiles);
     zkVerifier = ISP1Verifier(_zkVerifier);
     zkProgramVKey = _zkProgramVKey;
     erc1271Sibling = _erc1271Sibling;
@@ -545,7 +545,7 @@ contract CawActions {
       // an authorized session key. Without an explicit expiry check here,
       // an expired or revoked session would still authorize actions in the
       // ZK path. (Audit finding 2026-05-08, Issue B.)
-      CawProfileL2.StoredSession memory s = cawProfile.validSession(owner, signer);
+      CawProfileLedger.StoredSession memory s = cawProfile.validSession(owner, signer);
       if (s.expiry <= block.timestamp) revert SessionExpired();
       if (s.profileId != 0 && s.profileId != senderId0) revert WrongProfileForSession();
       ba.isSessionKey = true;
@@ -735,7 +735,7 @@ contract CawActions {
     ba.r = r;
     if (isSessionKey) {
       ba.owner = cawProfile.ownerOf(action.senderId);
-      { CawProfileL2.StoredSession memory _s = cawProfile.validSession(ba.owner, ba.signer); ba.scopeBitmap = _s.scopeBitmap; ba.spendLimit = _s.spendLimit; ba.perActionTipRate = _s.perActionTipRate; if (_s.profileId != 0 && _s.profileId != action.senderId) revert WrongProfileForSession(); }
+      { CawProfileLedger.StoredSession memory _s = cawProfile.validSession(ba.owner, ba.signer); ba.scopeBitmap = _s.scopeBitmap; ba.spendLimit = _s.spendLimit; ba.perActionTipRate = _s.perActionTipRate; if (_s.profileId != 0 && _s.profileId != action.senderId) revert WrongProfileForSession(); }
     }
     c.implicitTipOwed += _applyAction(validatorId, action, ba, packedActions[actionStart:nextPos], c);
     c.actionsSeen += 1;
@@ -773,7 +773,7 @@ contract CawActions {
     ba.r = r;
     if (ba.isSessionKey) {
       ba.owner = cawProfile.ownerOf(groupActions[0].senderId);
-      { CawProfileL2.StoredSession memory _s = cawProfile.validSession(ba.owner, ba.signer); ba.scopeBitmap = _s.scopeBitmap; ba.spendLimit = _s.spendLimit; ba.perActionTipRate = _s.perActionTipRate; if (_s.profileId != 0 && _s.profileId != groupActions[0].senderId) revert WrongProfileForSession(); }
+      { CawProfileLedger.StoredSession memory _s = cawProfile.validSession(ba.owner, ba.signer); ba.scopeBitmap = _s.scopeBitmap; ba.spendLimit = _s.spendLimit; ba.perActionTipRate = _s.perActionTipRate; if (_s.profileId != 0 && _s.profileId != groupActions[0].senderId) revert WrongProfileForSession(); }
     }
 
     _applyBatch(validatorId, packedActions, groupActions, sliceStarts, sliceEnds, ba, c);
@@ -1092,7 +1092,7 @@ contract CawActions {
       (ba.signer, ba.isSessionKey) = _verifySignatureMem(v, r, s, groupActions[0]);
       if (ba.isSessionKey) {
         ba.owner = cawProfile.ownerOf(groupActions[0].senderId);
-        { CawProfileL2.StoredSession memory _s = cawProfile.validSession(ba.owner, ba.signer); ba.scopeBitmap = _s.scopeBitmap; ba.spendLimit = _s.spendLimit; ba.perActionTipRate = _s.perActionTipRate; if (_s.profileId != 0 && _s.profileId != groupActions[0].senderId) revert WrongProfileForSession(); }
+        { CawProfileLedger.StoredSession memory _s = cawProfile.validSession(ba.owner, ba.signer); ba.scopeBitmap = _s.scopeBitmap; ba.spendLimit = _s.spendLimit; ba.perActionTipRate = _s.perActionTipRate; if (_s.profileId != 0 && _s.profileId != groupActions[0].senderId) revert WrongProfileForSession(); }
       }
     } else {
       for (uint256 i = 1; i < groupSize; ) {
@@ -1109,7 +1109,7 @@ contract CawActions {
       );
       if (ba.isSessionKey) {
         ba.owner = cawProfile.ownerOf(groupActions[0].senderId);
-        { CawProfileL2.StoredSession memory _s = cawProfile.validSession(ba.owner, ba.signer); ba.scopeBitmap = _s.scopeBitmap; ba.spendLimit = _s.spendLimit; ba.perActionTipRate = _s.perActionTipRate; if (_s.profileId != 0 && _s.profileId != groupActions[0].senderId) revert WrongProfileForSession(); }
+        { CawProfileLedger.StoredSession memory _s = cawProfile.validSession(ba.owner, ba.signer); ba.scopeBitmap = _s.scopeBitmap; ba.spendLimit = _s.spendLimit; ba.perActionTipRate = _s.perActionTipRate; if (_s.profileId != 0 && _s.profileId != groupActions[0].senderId) revert WrongProfileForSession(); }
       }
     }
 
@@ -1157,7 +1157,7 @@ contract CawActions {
     ba.r = r;
     if (isSessionKey) {
       ba.owner = cawProfile.ownerOf(action.senderId);
-      { CawProfileL2.StoredSession memory _s = cawProfile.validSession(ba.owner, ba.signer); ba.scopeBitmap = _s.scopeBitmap; ba.spendLimit = _s.spendLimit; ba.perActionTipRate = _s.perActionTipRate; if (_s.profileId != 0 && _s.profileId != action.senderId) revert WrongProfileForSession(); }
+      { CawProfileLedger.StoredSession memory _s = cawProfile.validSession(ba.owner, ba.signer); ba.scopeBitmap = _s.scopeBitmap; ba.spendLimit = _s.spendLimit; ba.perActionTipRate = _s.perActionTipRate; if (_s.profileId != 0 && _s.profileId != action.senderId) revert WrongProfileForSession(); }
     }
     BatchCursor memory localCursor;
     localCursor.firstNetworkId = action.networkId;
@@ -1217,7 +1217,7 @@ contract CawActions {
   ///      defaults to the session ceiling.
   ///      If the ratio converts the ethCap to 0 whole CAW, returns 1 (floor).
   function _getTipCost(uint256 ethCap) private view returns (uint256 r) {
-    // ethCap comes from CawProfileL2.networkTipTargetWei, which is fed by L1
+    // ethCap comes from CawProfileLedger.networkTipTargetWei, which is fed by L1
     // setTipTarget (capped at MAX_TIP_TARGET_WEI = 5e12 wei). The shift below
     // is safe so long as ethCap << 112 fits in uint256 (≤ ~3.36e46 wei). The
     // L1 cap gives ~7 orders of magnitude headroom. Audit fix M-1 (2026-05-31)
@@ -1345,7 +1345,7 @@ contract CawActions {
     if (ba.isSessionKey && actionCost > 0) {
       if (ba.owner == address(0)) {
         ba.owner = cawProfile.ownerOf(action.senderId);
-        { CawProfileL2.StoredSession memory _s = cawProfile.validSession(ba.owner, ba.signer); ba.spendLimit = _s.spendLimit; ba.perActionTipRate = _s.perActionTipRate; if (_s.profileId != 0 && _s.profileId != action.senderId) revert WrongProfileForSession(); }
+        { CawProfileLedger.StoredSession memory _s = cawProfile.validSession(ba.owner, ba.signer); ba.spendLimit = _s.spendLimit; ba.perActionTipRate = _s.perActionTipRate; if (_s.profileId != 0 && _s.profileId != action.senderId) revert WrongProfileForSession(); }
       }
       if (ba.spendLimit > 0) {
         if (!ba.groupSpentLoaded) {
@@ -1534,7 +1534,7 @@ contract CawActions {
     if (signer == owner && signer != address(0)) return (signer, false);
 
     if (signer != address(0)) {
-      CawProfileL2.StoredSession memory sess = cawProfile.validSession(owner, signer);
+      CawProfileLedger.StoredSession memory sess = cawProfile.validSession(owner, signer);
       if (sess.expiry > block.timestamp) {
         if ((sess.scopeBitmap & (1 << uint8(data.actionType))) == 0) revert OutOfScope();
         return (signer, true);
@@ -1893,7 +1893,7 @@ contract CawActions {
   ///      considered: _executeWithdrawals → cawProfile.setWithdrawable →
   ///      lzSend → endpoint callback → re-entry into processActions.
   ///      Not reachable, because (1) the bypassLZ branch of
-  ///      CawProfileL2.setWithdrawable calls CawProfile.setWithdrawable
+  ///      CawProfileLedger.setWithdrawable calls CawProfile.setWithdrawable
   ///      on L1 which performs no external calls (see CawProfile.sol:820
   ///      audit note), and (2) the LZ branch hands the native fee to the
   ///      canonical OApp endpoint, which emits an event and does not

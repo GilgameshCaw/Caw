@@ -111,7 +111,7 @@ function buildSessionMessage(sessionKeyAddress: string, spendLimit: bigint, expi
 }
 
 const SESSION_DOMAIN = {
-  name:              'CawProfileL2',
+  name:              'CawProfileLedger',
   version:           '1',
   chainId:           baseSepolia.id,
   verifyingContract: CAW_NAMES_L2_ADDRESS,
@@ -148,7 +148,7 @@ export function useCreateSession() {
       )
     }
 
-    // Ensure wallet is on Base Sepolia (where CawProfileL2 lives)
+    // Ensure wallet is on Base Sepolia (where CawProfileLedger lives)
     if (chainId !== baseSepolia.id) {
       onProgress?.('Switching network...')
       await switchChainAsync({ chainId: baseSepolia.id })

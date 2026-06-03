@@ -23,7 +23,7 @@
   token = await MintableCaw.at(cawAddress);
   minter = await CawProfileMinter.at(cawProfilesMinterAddress);
   cawProfiles = await CawProfile.at(cawProfilesAddress);
-  cawProfilesL2Mainnet = await CawProfileL2.at(cawProfilesL2MainnetAddress);
+  cawProfilesL2Mainnet = await CawProfileLedger.at(cawProfilesL2MainnetAddress);
   defaultNetworkId = 1;
   //
   //
@@ -37,7 +37,7 @@
   // First L2 Deploy
 //   cawProfilesL2Address = '0x56817dc696448135203C0556f702c6a953260411';
 // cawActionsAddress = "0x4C49b7B1F3b02Aa0a0121968a6bC30B593bE7a19";
-  // n = await CawProfileL2.at(cawProfilesL2Address)
+  // n = await CawProfileLedger.at(cawProfilesL2Address)
 
   // cawProfilesL2;
   // cawActions;

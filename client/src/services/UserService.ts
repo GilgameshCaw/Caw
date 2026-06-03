@@ -11,7 +11,7 @@ export class StaleTokenError extends Error {
   }
 }
 
-const CawProfileL2Abi = [
+const CawProfileLedgerAbi = [
   'function ownerOf(uint256 tokenId) view returns (address)',
   'function getTokens(uint32[] tokenIds) view returns (tuple(uint256 tokenId, uint256 balance, string username, uint256 cawBalance, uint256 nextCawonce)[])'
 ]
@@ -124,7 +124,7 @@ async function getL2Provider() {
       l2Provider = await createWebSocketProvider(rpcUrl, 'L2', getL2WsSecret())
       l2NameContract = new Contract(
         CAW_NAMES_L2_ADDRESS,
-        CawProfileL2Abi,
+        CawProfileLedgerAbi,
         l2Provider
       )
       // Reset retry delay on success

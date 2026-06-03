@@ -7,7 +7,7 @@
  *   npx hardhat run scripts/measure-gas.js
  *
  * HOW IT WORKS:
- *   1. Deploys CawProfile, CawProfileL2, their mock LZ endpoints, and dependencies on
+ *   1. Deploys CawProfile, CawProfileLedger, their mock LZ endpoints, and dependencies on
  *      a fresh Hardhat node.
  *   2. Wires L1 <-> L2 peers.
  *   3. For each handler selector, impersonates the mock endpoint address and
@@ -157,8 +157,8 @@ async function main() {
   console.log('L2 endpoint:', await l2Endpoint.getAddress())
 
   // ----- Deploy L2 side -----
-  const cawProfileL2 = await deploy('CawProfileL2', [L1_EID, await l2Endpoint.getAddress()])
-  console.log('CawProfileL2:  ', await cawProfileL2.getAddress())
+  const cawProfileLedger = await deploy('CawProfileLedger', [L1_EID, await l2Endpoint.getAddress()])
+  console.log('CawProfileLedger:  ', await cawProfileLedger.getAddress())
 
   // ----- Deploy L1 side (CawProfile needs a network manager + URI generator + CAW token) -----
   const caw = await deploy('MintableCaw')
@@ -176,14 +176,14 @@ async function main() {
   console.log('CawProfile:    ', await cawProfile.getAddress())
 
   // ----- Wire endpoint <-> endpoint so EndpointV2Mock routes know the pair -----
-  await l1Endpoint.setDestLzEndpoint(await cawProfileL2.getAddress(), await l2Endpoint.getAddress())
+  await l1Endpoint.setDestLzEndpoint(await cawProfileLedger.getAddress(), await l2Endpoint.getAddress())
   await l2Endpoint.setDestLzEndpoint(await cawProfile.getAddress(), await l1Endpoint.getAddress())
 
   // ----- Configure peers -----
-  await cawProfile.setL2Peer(L2_EID, await cawProfileL2.getAddress())
-  await cawProfileL2.setL1Peer(L1_EID, await cawProfile.getAddress(), false)
+  await cawProfile.setL2Peer(L2_EID, await cawProfileLedger.getAddress())
+  await cawProfileLedger.setL1Peer(L1_EID, await cawProfile.getAddress(), false)
 
-  // `setClientChains` on CawProfileL2 is a plain event emitter in the optimistic
+  // `setClientChains` on CawProfileLedger is a plain event emitter in the optimistic
   // flow — no replicator target is required. Legacy replicator setup removed.
 
   // ----- Grab selectors (avoids recomputing) -----
@@ -192,7 +192,7 @@ async function main() {
   const updateOwnersSelector = await cawProfile.updateOwnersSelector()
   const authSelector = await cawProfile.authSelector()
   const setClientChainsSelector = await cawProfile.setClientChainsSelector()
-  const setWithdrawableSelector = await cawProfileL2.setWithdrawableSelector()
+  const setWithdrawableSelector = await cawProfileLedger.setWithdrawableSelector()
 
   // ----- Build payload factories -----
   const encoder = ethers.AbiCoder.defaultAbiCoder()
@@ -268,7 +268,7 @@ async function main() {
   const l2EndpointAddr = await l2Endpoint.getAddress()
   const l1EndpointAddr = await l1Endpoint.getAddress()
   const l1PeerOrigin = originTuple(L1_EID, await cawProfile.getAddress())
-  const l2PeerOrigin = originTuple(L2_EID, await cawProfileL2.getAddress())
+  const l2PeerOrigin = originTuple(L2_EID, await cawProfileLedger.getAddress())
 
   const sweepsL2 = [0, 1, 3, 5, 10, 25, 50]
   const sweepsL1 = [1, 3, 5, 10, 25, 50]                // L1 setWithdrawable needs n >= 1 (no-op otherwise)
@@ -293,19 +293,19 @@ async function main() {
   }
 
   console.log('\n--- L1→L2: updateOwners ---')
-  await runSweep('updateOwners', buildUpdateOwners, sweepsL2, cawProfileL2, l2EndpointAddr, l1PeerOrigin)
+  await runSweep('updateOwners', buildUpdateOwners, sweepsL2, cawProfileLedger, l2EndpointAddr, l1PeerOrigin)
 
   console.log('\n--- L1→L2: mintAndUpdateOwners ---')
-  await runSweep('mint', buildMint, sweepsL2, cawProfileL2, l2EndpointAddr, l1PeerOrigin)
+  await runSweep('mint', buildMint, sweepsL2, cawProfileLedger, l2EndpointAddr, l1PeerOrigin)
 
   console.log('\n--- L1→L2: depositAndUpdateOwners ---')
-  await runSweep('addToBalance', buildDeposit, sweepsL2, cawProfileL2, l2EndpointAddr, l1PeerOrigin)
+  await runSweep('addToBalance', buildDeposit, sweepsL2, cawProfileLedger, l2EndpointAddr, l1PeerOrigin)
 
   console.log('\n--- L1→L2: authenticateAndUpdateOwners ---')
-  await runSweep('auth', buildAuth, sweepsL2, cawProfileL2, l2EndpointAddr, l1PeerOrigin)
+  await runSweep('auth', buildAuth, sweepsL2, cawProfileLedger, l2EndpointAddr, l1PeerOrigin)
 
   console.log('\n--- L1→L2: setClientChains ---')
-  await runSweep('setClientChains', buildSetClientChains, sweepsChains, cawProfileL2, l2EndpointAddr, l1PeerOrigin, 1)
+  await runSweep('setClientChains', buildSetClientChains, sweepsChains, cawProfileLedger, l2EndpointAddr, l1PeerOrigin, 1)
 
   console.log('\n--- L2→L1: setWithdrawable ---')
   await runSweep('setWithdrawable', buildSetWithdrawable, sweepsL1, cawProfile, l1EndpointAddr, l2PeerOrigin, 1)
@@ -331,7 +331,7 @@ async function main() {
 
   // ----- Safety check: compare measured vs current contract formula -----
   // The source of the formula is whichever contract sends the message (CawProfile for the
-  // L1→L2 selectors, CawProfileL2 for setWithdrawable). That's also the contract whose ABI
+  // L1→L2 selectors, CawProfileLedger for setWithdrawable). That's also the contract whose ABI
   // exposes the right gasLimitFor.
   console.log('\n\n=== SAFETY CHECK vs current contract gasLimitFor(selector, n) ===\n')
   console.log('selector          |   n  | measured  | limit     | headroom | status')
@@ -343,7 +343,7 @@ async function main() {
     addToBalance:    { contract: cawProfile, sel: addToBalanceSelector },
     auth:            { contract: cawProfile, sel: authSelector },
     setClientChains: { contract: cawProfile, sel: setClientChainsSelector },
-    setWithdrawable: { contract: cawProfileL2, sel: setWithdrawableSelector },
+    setWithdrawable: { contract: cawProfileLedger, sel: setWithdrawableSelector },
   }
 
   let anyOverrun = false

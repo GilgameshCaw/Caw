@@ -16,7 +16,7 @@ import useAllowance from "~/hooks/useAllowance";
 import { useAccount, useBalance, useConnections, useReadContract, useSwitchChain, useChainId } from "wagmi"
 import { useConnectModal } from "@rainbow-me/rainbowkit"
 import { useActiveToken, useTokenDataStore, usePriceStore } from "~/store/tokenDataStore"
-import { cawProfileAbi, cawProfileL2Abi, cawProfileQuoterAbi, cawProfileMinterAbi } from "~/../../../abi/generated"
+import { cawProfileAbi, cawProfileLedgerAbi, cawProfileQuoterAbi, cawProfileMinterAbi } from "~/../../../abi/generated"
 import { CAW_ADDRESS, CAW_NAMES_ADDRESS, CAW_NAMES_L2_ADDRESS, CAW_NAME_QUOTER_ADDRESS, CAW_NAMES_MINTER_ADDRESS, CAW_PAIR_ADDRESS } from "~/../../../abi/addresses"
 import { maxUint256, parseUnits, parseEther, formatUnits, formatEther, erc20Abi } from "viem";
 import { usePoolReserves, useMinCawOut, suggestedSlippageBps } from '~/hooks/useZapQuote'

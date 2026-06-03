@@ -25,8 +25,8 @@ pragma solidity ^0.8.22;
 //     cawonce bitmap — which are the slots that differ between the sig and ZK
 //     paths only if there is a divergence bug.
 //
-//   Part B — Mock-based ZK vs Sig differential on CawProfileL2 balance math:
-//     Deploy TWO CawProfileL2 instances (A = sig-mode, B = ZK-mode with
+//   Part B — Mock-based ZK vs Sig differential on CawProfileLedger balance math:
+//     Deploy TWO CawProfileLedger instances (A = sig-mode, B = ZK-mode with
 //     MockSP1Verifier always-accept). Wire both to a shared CawProfile (bypassLZ).
 //     For each handler call: deposit the same amount to the same tokenId on
 //     both L2 instances and verify cawBalanceOf, totalCaw, rewardMultiplier
@@ -41,7 +41,7 @@ pragma solidity ^0.8.22;
 // =============================================================================
 
 import "forge-std/Test.sol";
-import "../contracts/CawProfileL2.sol";
+import "../contracts/CawProfileLedger.sol";
 import "../contracts/MintableCaw.sol";
 import "../contracts/CawNetworkManager.sol";
 import "../contracts/MockLayerZeroEndpoint.sol";
@@ -51,14 +51,14 @@ import "../contracts/test-helpers/MockSP1Verifier.sol";
 import "./CawonceCheckpointInvariant.t.sol" as T2;
 
 // ---------------------------------------------------------------------------
-// Mock CawActions — lets us call addToBalance / spendAndDistribute on CawProfileL2
+// Mock CawActions — lets us call addToBalance / spendAndDistribute on CawProfileLedger
 // without the full packed-calldata machinery.
 // ---------------------------------------------------------------------------
 contract MockCawActionsForL2 {
-    CawProfileL2 public immutable l2;
+    CawProfileLedger public immutable l2;
 
     constructor(address _l2) {
-        l2 = CawProfileL2(_l2);
+        l2 = CawProfileLedger(_l2);
     }
 
     function addBalance(uint32 tokenId, uint256 amount) external {
@@ -194,15 +194,15 @@ contract HashChainDifferentialTest is Test {
 }
 
 // ---------------------------------------------------------------------------
-// PART B: CawProfileL2 balance math differential
+// PART B: CawProfileLedger balance math differential
 // ---------------------------------------------------------------------------
 
-/// @notice Two CawProfileL2 instances (one for sig-path, one for ZK-path)
+/// @notice Two CawProfileLedger instances (one for sig-path, one for ZK-path)
 ///         wired to the same bypassLZ CawProfile. MockCawActions call addToBalance
 ///         and spendAndDistribute identically on both. Asserts state equality.
 contract L2BalanceDifferentialTest is Test {
-    CawProfileL2  l2A;  // "sig path" L2
-    CawProfileL2  l2B;  // "ZK path" L2 (functionally identical; MockSP1Verifier is a no-op)
+    CawProfileLedger  l2A;  // "sig path" L2
+    CawProfileLedger  l2B;  // "ZK path" L2 (functionally identical; MockSP1Verifier is a no-op)
 
     MockCawActionsForL2 mockActionsA;
     MockCawActionsForL2 mockActionsB;
@@ -231,9 +231,9 @@ contract L2BalanceDifferentialTest is Test {
         networkManager = new CawNetworkManager(address(buyAndBurn));
         networkManager.createNetwork("TestNet", address(this), 2, 0, 0, 0, 0, 5e11);
 
-        // Deploy two CawProfileL2 instances
-        l2A = new CawProfileL2(MAINNET_LZ_ID, address(lzL2a), address(0));
-        l2B = new CawProfileL2(MAINNET_LZ_ID, address(lzL2b), address(0));
+        // Deploy two CawProfileLedger instances
+        l2A = new CawProfileLedger(MAINNET_LZ_ID, address(lzL2a), address(0));
+        l2B = new CawProfileLedger(MAINNET_LZ_ID, address(lzL2b), address(0));
 
         // Deploy mock CawActions for each L2
         mockActionsA = new MockCawActionsForL2(address(l2A));
@@ -283,7 +283,7 @@ contract L2BalanceDifferentialTest is Test {
     }
 
     function _mintAndDeposit(
-        CawProfile cp, CawProfileL2 l2, address owner, uint32 tid, uint256 amount
+        CawProfile cp, CawProfileLedger l2, address owner, uint32 tid, uint256 amount
     ) internal {
         cp.mint(NETWORK_ID, owner, string(abi.encodePacked("u", vm.toString(tid))), tid, 0);
         // depositFor calls l2.deposit via bypassLZ

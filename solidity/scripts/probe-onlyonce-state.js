@@ -194,16 +194,16 @@ async function main() {
     row('Sepolia', 'CawProfile', A.CawProfile, p.owner, { delegate: p.delegate })
   }
   {
-    // CawProfileL2_L1 is co-deployed on Sepolia with bypassLZ=true.
-    const p = await probeProfileL2(providers.L1, A.CawProfileL2_L1, [eid.L1])
-    console.log('CawProfileL2_L1     ', A.CawProfileL2_L1)
+    // CawProfileLedger_L1 is co-deployed on Sepolia with bypassLZ=true.
+    const p = await probeProfileL2(providers.L1, A.CawProfileLedger_L1, [eid.L1])
+    console.log('CawProfileLedger_L1     ', A.CawProfileLedger_L1)
     console.log('  owner          :', fmt(p.owner))
     console.log('  endpoint       :', p.endpoint)
     console.log('  delegate       :', p.delegate)
     console.log('  bypassLZ       :', p.bypassLZ)
     console.log('  cawProfile     :', fmt(p.cawProfile),   '   →', p.cawProfile === ZERO_ADDR ? 'setL1Peer UNFILLED'    : 'setL1Peer consumed')
     console.log('  cawActions     :', fmt(p.cawActions),   '   →', p.cawActions === ZERO_ADDR ? 'setCawActions UNFILLED': 'setCawActions consumed')
-    row('Sepolia', 'CawProfileL2_L1', A.CawProfileL2_L1, p.owner, { delegate: p.delegate })
+    row('Sepolia', 'CawProfileLedger_L1', A.CawProfileLedger_L1, p.owner, { delegate: p.delegate })
   }
   {
     // CawActions is plain Ownable, no LZ surface.
@@ -216,8 +216,8 @@ async function main() {
   // ---------- Base Sepolia (L2) ----------
   console.log('\n--- Base Sepolia (L2) ---')
   {
-    const p = await probeProfileL2(providers.L2, A.CawProfileL2_L2, [eid.L1])
-    console.log('CawProfileL2_L2     ', A.CawProfileL2_L2)
+    const p = await probeProfileL2(providers.L2, A.CawProfileLedger_L2, [eid.L1])
+    console.log('CawProfileLedger_L2     ', A.CawProfileLedger_L2)
     console.log('  owner          :', fmt(p.owner))
     console.log('  endpoint       :', p.endpoint)
     console.log('  delegate       :', p.delegate)
@@ -226,7 +226,7 @@ async function main() {
     console.log('  cawActions     :', fmt(p.cawActions),   '   →', p.cawActions === ZERO_ADDR ? 'setCawActions UNFILLED': 'setCawActions consumed')
     console.log(`  peers(${eid.L1})  :`, fmtPeer(p.peers[eid.L1]),
       '   →', p.peers[eid.L1] === ZERO_BYTES ? `setPeer(${eid.L1}) UNFILLED (L1 peer not set)` : `setPeer(${eid.L1}) consumed`)
-    row('Base Sep', 'CawProfileL2_L2', A.CawProfileL2_L2, p.owner, { delegate: p.delegate })
+    row('Base Sep', 'CawProfileLedger_L2', A.CawProfileLedger_L2, p.owner, { delegate: p.delegate })
   }
   {
     const p = await probeOwnableOnly(providers.L2, A.CawActions_L2)
@@ -260,8 +260,8 @@ async function main() {
   // ---------- Arbitrum Sepolia (L2b) ----------
   console.log('\n--- Arbitrum Sepolia (L2b) ---')
   {
-    const p = await probeProfileL2(providers.L2b, A.CawProfileL2_L2b, [eid.L1])
-    console.log('CawProfileL2_L2b    ', A.CawProfileL2_L2b)
+    const p = await probeProfileL2(providers.L2b, A.CawProfileLedger_L2b, [eid.L1])
+    console.log('CawProfileLedger_L2b    ', A.CawProfileLedger_L2b)
     console.log('  owner          :', fmt(p.owner))
     console.log('  endpoint       :', p.endpoint)
     console.log('  delegate       :', p.delegate)
@@ -270,7 +270,7 @@ async function main() {
     console.log('  cawActions     :', fmt(p.cawActions),   '   →', p.cawActions === ZERO_ADDR ? 'setCawActions UNFILLED': 'setCawActions consumed')
     console.log(`  peers(${eid.L1})  :`, fmtPeer(p.peers[eid.L1]),
       '   →', p.peers[eid.L1] === ZERO_BYTES ? `setPeer(${eid.L1}) UNFILLED (L1 peer not set)` : `setPeer(${eid.L1}) consumed`)
-    row('Arb Sep', 'CawProfileL2_L2b', A.CawProfileL2_L2b, p.owner, { delegate: p.delegate })
+    row('Arb Sep', 'CawProfileLedger_L2b', A.CawProfileLedger_L2b, p.owner, { delegate: p.delegate })
   }
   {
     const p = await probeOwnableOnly(providers.L2b, A.CawActions_L2b)

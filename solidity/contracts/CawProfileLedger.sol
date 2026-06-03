@@ -1,6 +1,11 @@
-// contracts/CawProfile.sol
+// contracts/CawProfileLedger.sol
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.0;
+
+/// @dev Formerly CawProfileL2. Renamed 2026-06-03 — the contract is a per-tokenId
+///      CAW balance ledger that posting actions debit and withdraws drain, not
+///      necessarily an L2. In bypassLZ co-deployment mode it lives on the same
+///      chain as CawProfile; in cross-chain mode it lives on the target L2.
 
 import "@layerzerolabs/oapp-evm/contracts/oapp/libs/OptionsBuilder.sol";
 import "@openzeppelin/contracts/utils/cryptography/draft-EIP712.sol";
@@ -16,7 +21,7 @@ import { SessionMessageParser } from "./SessionMessageParser.sol";
 
 import { OApp, Origin, MessagingFee } from "@layerzerolabs/lz-evm-oapp-v2/contracts/oapp/OApp.sol";
 
-contract CawProfileL2 is
+contract CawProfileLedger is
   Context,
   Ownable,
   OnlyOnce,
@@ -27,7 +32,7 @@ contract CawProfileL2 is
   // Custom errors — bytecode-cheaper than `require(cond, "msg")` because the
   // selector is 4 bytes vs the variable-length string. Needed on 0.8.30 where
   // codegen grew the deployed bytecode close enough to the EIP-170 24,576-byte
-  // cap that the string form pushed CawProfileL2 over.
+  // cap that the string form pushed CawProfileLedger over.
   error OnlyLZ();
   error ZeroKey();
   error Expired();
@@ -63,7 +68,7 @@ contract CawProfileL2 is
   address public erc1271Sibling;
 
   // SECURITY NOTE (audited 2026-04-06): Unlike standard ERC721, this ownerOf intentionally returns
-  // address(0) for non-existent tokens instead of reverting. This is by design — CawProfileL2 is a
+  // address(0) for non-existent tokens instead of reverting. This is by design — CawProfileLedger is a
   // lightweight mirror synced from L1 via LayerZero, and tokens may be in a "not yet synced" state.
   // Reverting here would cascade failures through batch reads (CawProfile.sol:435,459), marketplace
   // operations (CawProfileMarketplace.sol:331 reclaimBid), and action processing (CawActions.sol:111).
@@ -213,7 +218,7 @@ contract CawProfileL2 is
   ///      happens here; the L1 setWithdrawable LZ message carries the amounts back to
   ///      L1 where the user eventually receives the underlying CAW. Indexers that
   ///      reconstruct net stake-flow from chain events need both sides — without this,
-  ///      the L2 decrement is invisible and `cawProfileL2.totalCaw()` drifts below
+  ///      the L2 decrement is invisible and `cawProfileLedger.totalCaw()` drifts below
   ///      sum-of-deposits-minus-recorded-withdrawals.
   event Withdrawn(uint32 indexed tokenId, uint256 amount);
 
@@ -245,7 +250,7 @@ contract CawProfileL2 is
     return keccak256(
       abi.encode(
         EIP712_DOMAIN_TYPEHASH,
-        keccak256(bytes("CawProfileL2")),
+        keccak256(bytes("CawProfileLedger")),
         keccak256(bytes("1")),
         block.chainid,
         address(this)
@@ -320,7 +325,7 @@ contract CawProfileL2 is
   event ERC1271SiblingSet(address sibling);
 
   /// @notice Set the ERC-1271 sibling contract. Owner-only; can only be called once.
-  /// @dev Inline one-shot guard (vs OnlyOnce mapping) to save ~130 bytes — CawProfileL2
+  /// @dev Inline one-shot guard (vs OnlyOnce mapping) to save ~130 bytes — CawProfileLedger
   ///      is within 100 bytes of the EIP-170 cap and the mapping overhead was the
   ///      only thing pushing it over. Semantically equivalent to OnlyOnce: first
   ///      call binds, all subsequent calls revert.
@@ -820,7 +825,7 @@ contract CawProfileL2 is
   // by the app/browser), so the ecrecover path is sufficient. A contract-style
   // session key (e.g., a smart-EOA delegated to a passkey, self-revoking) is
   // an interesting future case but doesn't exist today. Adding the overload
-  // pushes CawProfileL2 over the EIP-170 deployed-bytecode limit; revisit when
+  // pushes CawProfileLedger over the EIP-170 deployed-bytecode limit; revisit when
   // there's a real consumer.
 
   /// @notice OApp callback for receiving cross-chain messages from L1.
@@ -1026,7 +1031,7 @@ contract CawProfileL2 is
   }
 
   // Signature verification (ERC-1271 fallback included) lives in
-  // SigVerification.sol — extracted as a library to keep CawProfileL2's
+  // SigVerification.sol — extracted as a library to keep CawProfileLedger's
   // deployed bytecode under the EIP-170 24,576-byte cap.
 
 }

@@ -17,7 +17,7 @@ pragma solidity ^0.8.20;
 // =============================================================================
 
 import "@openzeppelin/contracts/interfaces/IERC1271.sol";
-import "./CawProfileL2.sol";
+import "./CawProfileLedger.sol";
 import "./interfaces/ICawActions.sol";
 
 /// @dev Audit-trail tags in this contract (e.g. "H-N", "M-N", "Round N",
@@ -25,7 +25,7 @@ import "./interfaces/ICawActions.sol";
 contract CawActionsERC1271 {
 
   ICawActions   public immutable cawActions;
-  CawProfileL2  public immutable cawProfile;
+  CawProfileLedger  public immutable cawProfile;
 
   uint256 private constant ERC1271_GAS_LIMIT = 50_000;
   bytes4  private constant ERC1271_MAGIC_VALUE = 0x1626ba7e;
@@ -63,7 +63,7 @@ contract CawActionsERC1271 {
 
   constructor(address _cawActions) {
     cawActions = ICawActions(_cawActions);
-    cawProfile = CawProfileL2(ICawActions(_cawActions).cawProfile());
+    cawProfile = CawProfileLedger(ICawActions(_cawActions).cawProfile());
   }
 
   /// @notice Process a batch of actions signed by ERC-1271 contract owners.

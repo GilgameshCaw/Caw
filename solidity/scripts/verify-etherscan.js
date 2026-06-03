@@ -209,9 +209,9 @@ const CONTRACTS = {
       state.addresses.CawL1PriceReader || ethers.ZeroAddress,
     ],
   },
-  // CawProfileL2 deployed on L1 (bypassLZ mode)
-  CawProfileL2_L1: {
-    artifact: 'CawProfileL2',
+  // CawProfileLedger deployed on L1 (bypassLZ mode)
+  CawProfileLedger_L1: {
+    artifact: 'CawProfileLedger',
     chain: 'L1',
     constructorArgs: (state, chainKey) => {
       const l2ChainKey = chainKey.replace('L1', 'L2');
@@ -228,7 +228,7 @@ const CONTRACTS = {
     artifact: 'CawCapOracle',
     chain: 'L1',
     constructorArgs: (state) => [
-      state.addresses.CawProfileL2_L1,
+      state.addresses.CawProfileLedger_L1,
       state.addresses.CawActions_L1
         || state.predictedAddresses?.CawActions_L1
         || ethers.ZeroAddress,
@@ -274,7 +274,7 @@ const CONTRACTS = {
     artifact: 'CawActions',
     chain: 'L1',
     constructorArgs: (state, chainKey) => [
-      state.addresses.CawProfileL2_L1,
+      state.addresses.CawProfileLedger_L1,
       resolvesp1Verifier(chainKey, state),
       ZK_PROGRAM_VKEY,
       state.addresses.CawActionsERC1271_L1
@@ -304,8 +304,8 @@ for (const L of L2_CHAIN_KEYS) {
     skipVerify: true,
     constructorArgs: () => [],
   };
-  CONTRACTS[`CawProfileL2_${L}`] = {
-    artifact: 'CawProfileL2',
+  CONTRACTS[`CawProfileLedger_${L}`] = {
+    artifact: 'CawProfileLedger',
     chain: L,
     constructorArgs: (state, chainKey) => {
       const l1ChainKey = chainKey.replace(/L2.*$/, 'L1');
@@ -322,7 +322,7 @@ for (const L of L2_CHAIN_KEYS) {
     artifact: 'CawCapOracle',
     chain: L,
     constructorArgs: (state) => [
-      state.addresses[`CawProfileL2_${L}`],
+      state.addresses[`CawProfileLedger_${L}`],
       state.addresses[`CawActions_${L}`]
         || state.predictedAddresses?.[`CawActions_${L}`]
         || ethers.ZeroAddress,
@@ -332,7 +332,7 @@ for (const L of L2_CHAIN_KEYS) {
     artifact: 'CawActions',
     chain: L,
     constructorArgs: (state, chainKey) => [
-      state.addresses[`CawProfileL2_${L}`],
+      state.addresses[`CawProfileLedger_${L}`],
       resolvesp1Verifier(chainKey, state),
       ZK_PROGRAM_VKEY,
       state.addresses[`CawActionsERC1271_${L}`]

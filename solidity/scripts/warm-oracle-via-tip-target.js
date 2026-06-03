@@ -3,7 +3,7 @@
  *
  * One-shot: re-broadcast each network's existing tipTargetWei twice. The
  * cross-chain LZ message piggybacks an oracle price sample on the L2 side
- * (see CawProfileL2._lzReceive piggyback). Two calls per network + the
+ * (see CawProfileLedger._lzReceive piggyback). Two calls per network + the
  * earlier baseline samples should push the CawCapOracle past its MIN_SAMPLES
  * floor and bring it out of dormancy.
  *

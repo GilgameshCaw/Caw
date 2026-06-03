@@ -102,7 +102,7 @@ contract SetWithdrawableHarness {
 contract SetWithdrawableGasTest is Test {
     SetWithdrawableHarness harness;
 
-    // Budget formula from CawProfileL2.sol:1269
+    // Budget formula from CawProfileLedger.sol:1269
     function budget(uint256 n) internal pure returns (uint256) {
         return 22_000 + 19_000 * n;
     }

@@ -181,9 +181,9 @@ function configMatches(current, expectedDvns) {
 function buildPathways(l2ChainKeys) {
   const pathways = [];
   for (const L of l2ChainKeys) {
-    // Profile: L1 CawProfile ↔ this L2's CawProfileL2_<L>
+    // Profile: L1 CawProfile ↔ this L2's CawProfileLedger_<L>
     pathways.push({ oapp: 'CawProfile',         srcChain: 'L1', destChain: L  });
-    pathways.push({ oapp: `CawProfileL2_${L}`,  srcChain: L,    destChain: 'L1' });
+    pathways.push({ oapp: `CawProfileLedger_${L}`,  srcChain: L,    destChain: 'L1' });
   }
   // Fraud-proof mesh: relay on L → archive on L' for every L != L'.
   for (const L of l2ChainKeys) {
@@ -284,14 +284,14 @@ async function configureLzDvns(state, deployer, chainConfig, chainsMap, l2ChainK
 /**
  * Look up the OApp key for the destination end of a pathway. Derived from
  * the source contract's role:
- *   * CawProfile (on L1) ↔ CawProfileL2_<destChain>
+ *   * CawProfile (on L1) ↔ CawProfileLedger_<destChain>
  *   * CawChallengeRelay_<src> ↔ CawActionsArchive_<dest>
  */
 function destOappKeyFor(pathway) {
-  // Profile L1 → L2: dest is the chain's CawProfileL2_<destChain>.
-  if (pathway.oapp === 'CawProfile') return `CawProfileL2_${pathway.destChain}`;
+  // Profile L1 → L2: dest is the chain's CawProfileLedger_<destChain>.
+  if (pathway.oapp === 'CawProfile') return `CawProfileLedger_${pathway.destChain}`;
   // Profile L2 → L1: dest is L1's CawProfile.
-  if (pathway.oapp.startsWith('CawProfileL2_')) return 'CawProfile';
+  if (pathway.oapp.startsWith('CawProfileLedger_')) return 'CawProfile';
   // Fraud-proof relay → archive: dest is the destChain's CawActionsArchive.
   if (pathway.oapp.startsWith('CawChallengeRelay_')) return `CawActionsArchive_${pathway.destChain}`;
   // Fraud-proof archive ← relay: dest is the destChain's CawChallengeRelay.
