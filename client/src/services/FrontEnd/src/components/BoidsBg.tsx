@@ -52,6 +52,7 @@ interface Boid {
   opacity: number  // per-bird opacity variation
   gradFlip: boolean // gradient direction for bright birds
   flapPhase: number // 0..1, position within flap cycle (random init so birds aren't in sync)
+  fright: number    // 0..1 panic scalar: spikes near cursor, decays ~1s, boosts flap+speed
 }
 
 
@@ -59,6 +60,13 @@ interface Boid {
 const OVERFLOW = 80
 const MOUSE_RADIUS = 120
 const MOUSE_FORCE = 0.8
+
+// Fright constants — panic response when cursor enters FRIGHT_RADIUS
+const FRIGHT_RADIUS      = 200   // px, larger detection zone than old MOUSE_RADIUS
+const FRIGHT_FORCE       = 2.8   // peak panic burst (quadratic, strongest at center)
+const FRIGHT_SPEED_BOOST = 1.8   // max speed multiplier while frightened
+const FRIGHT_FLAP_BOOST  = 3.0   // flap rate multiplier while frightened
+const FRIGHT_DECAY       = 0.028 // per-frame decay of fright scalar (~1.1s to 0 at 60fps)
 
 // Hero bird constants
 const HERO_COUNT   = 4
@@ -149,6 +157,7 @@ export default function BoidsBg({ isDark, heroBirds = true }: { isDark: boolean;
         opacity: 0.07 + Math.random() * 0.03,
         gradFlip: Math.random() < 0.5,
         flapPhase: Math.random(), // random init so birds aren't synchronized
+        fright: 0,
       })
     }
     boidsRef.current = boids
@@ -460,12 +469,23 @@ export default function BoidsBg({ isDark, heroBirds = true }: { isDark: boolean;
         b.vx += (Math.random() - 0.5) * wanderStrength
         b.vy += (Math.random() - 0.5) * wanderStrength
 
-        // Mouse repulsion
+        // Mouse fright — quadratic panic burst within FRIGHT_RADIUS; spikes fright scalar.
+        // Falls back to the old gentle repulsion in the inner zone for birds that slip through.
         if (mouseRef.current.active) {
           const mdx = b.x - mouseRef.current.x
           const mdy = b.y - mouseRef.current.y
           const mDistSq = mdx * mdx + mdy * mdy
-          if (mDistSq < MOUSE_RADIUS * MOUSE_RADIUS && mDistSq > 0) {
+          if (mDistSq < FRIGHT_RADIUS * FRIGHT_RADIUS && mDistSq > 0) {
+            const mDist = Math.sqrt(mDistSq)
+            const t = 1 - mDist / FRIGHT_RADIUS           // 0..1, 1 = cursor center
+            const force = FRIGHT_FORCE * t * t             // quadratic — sharp peak near cursor
+            b.vx += (mdx / mDist) * force
+            b.vy += (mdy / mDist) * force
+            // Spike fright; stays elevated even as cursor passes
+            const frightSpike = Math.min(1, t * t * 1.2 + 0.25)
+            b.fright = Math.max(b.fright, frightSpike)
+          } else if (mDistSq < MOUSE_RADIUS * MOUSE_RADIUS && mDistSq > 0) {
+            // Fallback: original gentle repulsion for any gap between old/new radii logic
             const mDist = Math.sqrt(mDistSq)
             const force = MOUSE_FORCE * (1 - mDist / MOUSE_RADIUS)
             b.vx += (mdx / mDist) * force
@@ -473,15 +493,19 @@ export default function BoidsBg({ isDark, heroBirds = true }: { isDark: boolean;
           }
         }
 
+        // Decay fright scalar each frame
+        b.fright = Math.max(0, b.fright - FRIGHT_DECAY)
+
         // Soft edge avoidance
         if (b.x < EDGE_MARGIN) b.vx += EDGE_TURN
         if (b.x > w - EDGE_MARGIN) b.vx -= EDGE_TURN
         if (b.y < EDGE_MARGIN) b.vy += EDGE_TURN
         if (b.y > h - EDGE_MARGIN) b.vy -= EDGE_TURN
 
-        // Clamp speed (white birds fly 20% faster)
+        // Clamp speed — frightened birds temporarily exceed normal cap
         const speedMult = b.bright === 'white' ? 1.2 : 1
-        const maxSpd = MAX_SPEED * speedMult
+        const panicBoost = 1 + b.fright * (FRIGHT_SPEED_BOOST - 1)
+        const maxSpd = MAX_SPEED * speedMult * panicBoost
         const minSpd = MIN_SPEED * speedMult
         const speed = Math.sqrt(b.vx * b.vx + b.vy * b.vy)
         if (speed > maxSpd) {
@@ -492,11 +516,12 @@ export default function BoidsBg({ isDark, heroBirds = true }: { isDark: boolean;
           b.vy = (b.vy / speed) * minSpd
         }
 
-        // Advance flap phase — rate scales with current speed
+        // Advance flap phase — rate scales with speed and panic level
         const currentSpeed = Math.sqrt(b.vx * b.vx + b.vy * b.vy)
         const speedFrac = Math.max(0, Math.min(1, (currentSpeed - MIN_SPEED) / (MAX_SPEED - MIN_SPEED)))
-        const flapHz = FLAP_BASE_HZ + speedFrac * (FLAP_MAX_HZ - FLAP_BASE_HZ)
-        b.flapPhase = (b.flapPhase + flapHz * dt) % 1.0
+        const baseHz = FLAP_BASE_HZ + speedFrac * (FLAP_MAX_HZ - FLAP_BASE_HZ)
+        const frightHz = baseHz * (1 + b.fright * (FRIGHT_FLAP_BOOST - 1))
+        b.flapPhase = (b.flapPhase + frightHz * dt) % 1.0
 
         b.x += b.vx
         b.y += b.vy
