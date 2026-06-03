@@ -58,13 +58,13 @@ contract CawProfile is
   using EnumerableSet for EnumerableSet.UintSet;
 
   IERC20 public immutable CAW;
-  CawProfileURI public uriGenerator;
+  CawProfileURI public immutable uriGenerator;
 
   /// @notice L1 price reader for piggybacking cumulative price onto L1→L2 messages.
   ///         May be address(0) if no oracle is configured (cap dormant on L2).
   CawL1PriceReader public immutable priceReader;
 
-  CawProfileL2 public cawProfileL2;
+  CawProfileL2 public immutable cawProfileL2;
 
   uint256 public totalCaw;
 
@@ -123,7 +123,6 @@ contract CawProfile is
 
   // tokenId => [lzDestId, lzDestId2, ...]
   mapping(uint32 => EnumerableSet.UintSet) private chosenChainIds;
-  EnumerableSet.UintSet peerIds;
 
   // lzDestId => index => tokenId
   mapping(uint32 => mapping(uint256 => uint32)) public pendingTransfers;
@@ -138,7 +137,6 @@ contract CawProfile is
 
   event MinterSet(address minter);
   event TransferPendingSync(uint32 indexed tokenId, address indexed from, address indexed to);
-  event L2PeerSet(uint32 indexed eid, address indexed peer);
   event Deposited(uint32 indexed cawNetworkId, uint32 indexed tokenId, uint256 amount, uint32 indexed lzDestId, address depositor);
   // NOTE: no L1-side `Withdrawn` event. The CAW token's ERC20 Transfer
   // (cawProfile → recipient) inside `withdrawTo` is already observable
@@ -149,7 +147,7 @@ contract CawProfile is
   CawNetworkManager public networkManager;
   CawBuyAndBurn public buyAndBurn;
 
-  constructor(address _caw, address _gui, address _buyAndBurn, address _networkManager, address _endpoint, uint32 mainnetEid, address _priceReader)
+  constructor(address _caw, address _gui, address _buyAndBurn, address _networkManager, address _endpoint, uint32 mainnetEid, address _priceReader, address _cawProfileL2, address _pathwayExpander)
     ERC721("CAW NAME", "cawNAME")
     OApp(_endpoint, msg.sender)
   {
@@ -159,6 +157,7 @@ contract CawProfile is
     CAW = IERC20(_caw);
     mainnetLzId = mainnetEid;
     priceReader = CawL1PriceReader(_priceReader); // address(0) = no oracle
+    cawProfileL2 = CawProfileL2(_cawProfileL2);
 
     // Per-selector base gas budgets. authSelector bumped from 50k → 85k after a
     // production OOG (Tenderly tx 0x3b8a0232... on Base Sepolia). Bundled session
@@ -185,30 +184,18 @@ contract CawProfile is
     // override room available on top for future EVM/L2 changes.
     gasBaseFor[_allowFreeAuthSelector]           =  80_000;
     gasBaseFor[_setNetworkTipTargetSelector]     =  80_000;
+
+    // Hand OApp ownership to PathwayExpander at deploy time so the only
+    // remaining admin lever on this contract is the addPeer lane for new
+    // eids. PathwayExpander.addPeer enforces peers[eid] == 0 (existing
+    // peers are immutable). Skip when _pathwayExpander == address(0) for
+    // dev deploys where the deployer EOA retains ownership.
+    if (_pathwayExpander != address(0)) _transferOwnership(_pathwayExpander);
   }
 
-  function setL2Peer(uint32 _eid, address _peer)
-    external
-    onlyOwner
-    onlyOnce(keccak256(abi.encode("setL2Peer", _eid)))
-  {
-    if (_peer == address(0)) revert ZeroAddr();
-    if (_eid != mainnetLzId) {
-      peerIds.add(uint256(_eid));
-      setPeer(_eid, bytes32(uint256(uint160(_peer))));
-    } else cawProfileL2 = CawProfileL2(_peer);
-    emit L2PeerSet(_eid, _peer);
-  }
-
-  /// @notice Lock the inherited OApp `setPeer` once per eid. Critical: a compromised
-  /// or rogue owner could otherwise swap a peer to a contract they control and start
-  /// delivering forged LZ messages. Once a peer for an eid is set (typically in deploy
-  /// phase 1), it can NEVER be changed — even by the owner. Adding NEW eids (new chains)
-  /// stays open by design.
-  ///
-  /// Note: other Ownable-gated inherited setters (setDelegate on OAppCore,
-  /// transferOwnership on Ownable) are not overridden here — they're handled by the
-  /// pre-mainnet checklist (multisig handoff or renounce).
+  /// @notice Inherited OApp `setPeer` override. Locked once per eid so a
+  /// compromised owner can never swap an existing peer (forged-LZ defense).
+  /// Adding NEW eids stays open via PathwayExpander.
   function setPeer(uint32 _eid, bytes32 _peer)
     public
     override
@@ -231,15 +218,6 @@ contract CawProfile is
     emit MinterSet(_minter);
   }
 
-  function setUriGenerator(address _gui)
-    external
-    onlyOwner
-    onlyOnce(keccak256("setUriGenerator"))
-  {
-    if (_gui == address(0)) revert ZeroAddr();
-    uriGenerator = CawProfileURI(_gui);
-  }
-
   function tokenURI(uint256 tokenId) override public view returns (string memory) {
     return uriGenerator.generate(usernames[uint32(tokenId) - 1]);
   }
@@ -250,9 +228,8 @@ contract CawProfile is
     _mint(owner, newId);
 
     (uint256 fee, address feeAddress) = networkManager.getMintFeeAndAddress(cawNetworkId);
-    uint256 lzEthAmount = msg.value - payFee(fee, feeAddress);
-
-    _updateNewOwners(peerWithMaxPendingTransfers(), lzEthAmount, lzTokenAmount);
+    _refundUnusedLzEth(msg.value - payFee(fee, feeAddress));
+    lzTokenAmount; // mint() does not send LZ messages; param kept for ABI stability.
   }
 
   /// @notice Mint a username and authenticate it with a network in one transaction,
@@ -299,7 +276,7 @@ contract CawProfile is
     if (lzDestId == mainnetLzId) {
       cawProfileL2.mintAndAuth(newId, owner, username, cawNetworkId, uint64(block.number));
       if (sessionExtra.length > 0) {
-        (address sk, uint64 ex, uint256 sl, uint64 tr) = abi.decode(sessionExtra, (address, uint64, uint256, uint64));
+        (address sk, uint64 ex, uint256 sl, uint64 tr) = _decodeSession(sessionExtra);
         cawProfileL2.registerSessionFromL1(owner, sk, ex, sl, tr);
       }
       _refundUnusedLzEth(lzEthAmount);
@@ -312,7 +289,7 @@ contract CawProfile is
       if (sessionExtra.length == 0) {
         payload = _bundleNoSession(cawNetworkId, newId, 0, username, tokenIds, owners, stamps);
       } else {
-        (address sk, uint64 ex, uint256 sl, uint64 tr) = abi.decode(sessionExtra, (address, uint64, uint256, uint64));
+        (address sk, uint64 ex, uint256 sl, uint64 tr) = _decodeSession(sessionExtra);
         payload = abi.encodeWithSelector(_lzBundleSelector, cawNetworkId, newId, 0, username, sk, ex, sl, tr, tokenIds, owners, stamps);
       }
       lzSend(cawNetworkId, lzDestId, _lzBundleSelector, tokenIds.length, payload, lzEthAmount, lzTokenAmount);
@@ -365,7 +342,7 @@ contract CawProfile is
     if (lzDestId == mainnetLzId) {
       cawProfileL2.deposit(cawNetworkId, newId, depositAmount);
       if (sessionExtra.length > 0) {
-        (address sk, uint64 ex, uint256 sl, uint64 tr) = abi.decode(sessionExtra, (address, uint64, uint256, uint64));
+        (address sk, uint64 ex, uint256 sl, uint64 tr) = _decodeSession(sessionExtra);
         cawProfileL2.registerSessionFromL1(owner, sk, ex, sl, tr);
       }
       _refundUnusedLzEth(lzEthAmount);
@@ -378,7 +355,7 @@ contract CawProfile is
       if (sessionExtra.length == 0) {
         payload = _bundleNoSession(cawNetworkId, newId, depositAmount, "", tokenIds, owners, stamps);
       } else {
-        (address sk, uint64 ex, uint256 sl, uint64 tr) = abi.decode(sessionExtra, (address, uint64, uint256, uint64));
+        (address sk, uint64 ex, uint256 sl, uint64 tr) = _decodeSession(sessionExtra);
         payload = abi.encodeWithSelector(_lzBundleSelector, cawNetworkId, newId, depositAmount, "", sk, ex, sl, tr, tokenIds, owners, stamps);
       }
       lzSend(cawNetworkId, lzDestId, _lzBundleSelector, tokenIds.length, payload, lzEthAmount, lzTokenAmount);
@@ -423,6 +400,12 @@ contract CawProfile is
   ///      2026-05-08 (L1 M-1).
   function _bundleNoSession(uint32 nid, uint32 tid, uint256 amt, string memory uname, uint32[] memory tids, address[] memory owns, uint64[] memory stmps) internal pure returns (bytes memory) {
     return abi.encodeWithSelector(_lzBundleSelector, nid, tid, amt, uname, address(0), 0, 0, 0, tids, owns, stmps);
+  }
+
+  /// @dev Decode the Quick Sign sessionExtra blob. Centralised so the
+  ///      (address, uint64, uint256, uint64) tuple type appears once.
+  function _decodeSession(bytes calldata sessionExtra) internal pure returns (address sk, uint64 ex, uint256 sl, uint64 tr) {
+    return abi.decode(sessionExtra, (address, uint64, uint256, uint64));
   }
 
   function _refundUnusedLzEth(uint256 amount) internal {
@@ -642,31 +625,6 @@ contract CawProfile is
     depositFor(cawNetworkId, tokenId, amount, lzDestId, lzTokenAmount);
   }
 
-  function peerWithMaxPendingTransfers() public view returns (uint32) {
-    // Empty peerIds set — no L2 peers configured (single-chain mainnet
-    // co-deploy). EnumerableSet.at(0) panics on empty set, which would
-    // brick mint() / withdrawTo() / transferAndSync() since they all
-    // call _updateNewOwners(peerWithMaxPendingTransfers(), ...). Return
-    // sentinel 0 and treat it as "nothing to flush" downstream.
-    // Audit fix 2026-05-08 (M-3, CawProfile-agent finding).
-    uint256 len = peerIds.length();
-    if (len == 0) return 0;
-
-    uint256 updatesNeeded;
-    uint256 peer = peerIds.at(0);
-    uint256 max = updatesNeededForPeer(uint32(peer));
-
-    for (uint256 i = 1; i < len; i++) {
-      updatesNeeded = updatesNeededForPeer(uint32(peerIds.at(i)));
-      if (updatesNeeded > max) {
-        max = updatesNeeded;
-        peer = peerIds.at(i);
-      }
-    }
-
-    return uint32(peer);
-  }
-
   function withdraw(uint32 cawNetworkId, uint32 tokenId, uint256 lzTokenAmount) public payable {
     withdrawTo(cawNetworkId, tokenId, msg.sender, lzTokenAmount);
   }
@@ -694,26 +652,34 @@ contract CawProfile is
     uint256 lzEthAmount = msg.value - payFee(fee, feeAddress);
 
     CAW.transfer(recipient, raw);
-    _updateNewOwners(peerWithMaxPendingTransfers(), lzEthAmount, lzTokenAmount);
+    _refundUnusedLzEth(lzEthAmount);
+    lzTokenAmount; // withdraw is L1-local; param kept for ABI stability.
     // Withdraw is observable via the ERC20 Transfer fired by CAW.transfer
     // above (from = address(this), to = recipient). No bespoke event
     // needed — see event-declarations comment near `Deposited`.
   }
 
   /**
-   * @notice Transfer a token and immediately sync ownership to L2 via LayerZero.
+   * @notice Transfer a token and immediately sync ownership to one specific L2 via LayerZero.
    * @dev Requires msg.value to cover the LZ fee. Use syncTransferQuote() on CawProfileQuoter to estimate.
-   *      Also flushes any other pending ownership transfers for the target chain.
+   *      Flushes the pending-transfer queue for lzDestId. Other chains the token authenticated
+   *      to are NOT flushed here — call syncTransfer(otherEid) per chain or wait for someone
+   *      else's mint/auth on that chain to amortize.
    * @param to The recipient address
    * @param tokenId The token to transfer
+   * @param lzDestId The destination chain whose pending-transfer queue to flush
    * @param lzTokenAmount LZ token amount for fees (usually 0)
    */
-  function transferAndSync(address to, uint256 tokenId, uint256 lzTokenAmount) external payable {
+  function transferAndSync(address to, uint256 tokenId, uint32 lzDestId, uint256 lzTokenAmount) external payable {
     address owner = ownerOf(tokenId);
     if (!(owner == msg.sender || isApprovedForAll(owner, msg.sender) || getApproved(tokenId) == msg.sender)) revert NotApproved();
     _transfer(owner, to, tokenId);
-    // _afterTokenTransfer queued this token — now flush the queue via LZ
-    _updateNewOwners(peerWithMaxPendingTransfers(), msg.value, lzTokenAmount);
+    // _afterTokenTransfer queued this token onto every chosen-chain — flush the
+    // caller-specified destination via LZ. Mainnet bypassLZ is handled
+    // synchronously by _afterTokenTransfer itself, so callers can safely pass
+    // mainnetLzId here (this branch will be a no-op for mainnet because the
+    // pending-transfer queue for mainnet stays empty).
+    _updateNewOwners(lzDestId, msg.value, lzTokenAmount);
   }
 
   /**

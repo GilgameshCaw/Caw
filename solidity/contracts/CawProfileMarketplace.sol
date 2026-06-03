@@ -8,7 +8,7 @@ import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import "@openzeppelin/contracts/token/ERC721/IERC721.sol";
 
 interface ICawProfileTransfer is IERC721 {
-    function transferAndSync(address to, uint256 tokenId, uint256 lzTokenAmount) external payable;
+    function transferAndSync(address to, uint256 tokenId, uint32 lzDestId, uint256 lzTokenAmount) external payable;
 }
 
 /**
@@ -55,6 +55,11 @@ contract CawProfileMarketplace is ReentrancyGuard {
     }
 
     ICawProfileTransfer public immutable cawProfile;
+    /// @dev LZ eid passed to transferAndSync. Mainnet/bypassLZ eid is the natural
+    ///      choice: on bypassLZ deployments it's a no-op (queue stays empty for
+    ///      mainnet eid). Cross-chain L2 owner-sync happens later via
+    ///      syncTransfer(otherEid); buyer can call that per chain they care about.
+    uint32 public immutable lzDestId;
 
     mapping(uint256 => Listing) public listings;
     mapping(uint32 => uint256) public listingByTokenId;  // tokenId => active listingId (1-indexed)
@@ -96,9 +101,10 @@ contract CawProfileMarketplace is ReentrancyGuard {
     ///        Pass an empty array for ETH-only. Duplicates and the zero address
     ///        are both fine — zero is treated as ETH (already on); duplicates
     ///        are idempotent.
-    constructor(address _cawProfile, address[] memory _paymentTokens) {
+    constructor(address _cawProfile, uint32 _lzDestId, address[] memory _paymentTokens) {
         require(_cawProfile != address(0), "Invalid CawProfile address");
         cawProfile = ICawProfileTransfer(_cawProfile);
+        lzDestId = _lzDestId;
 
         // ETH is always allowed.
         allowedPaymentTokens[address(0)] = true;
@@ -227,7 +233,7 @@ contract CawProfileMarketplace is ReentrancyGuard {
 
         // Transfer NFT to buyer and sync L2 ownership (excess ETH covers LZ fee)
         uint256 lzFee = msg.value - price;
-        cawProfile.transferAndSync{value: lzFee}(msg.sender, listing.tokenId, 0);
+        cawProfile.transferAndSync{value: lzFee}(msg.sender, listing.tokenId, lzDestId, 0);
 
         emit Sale(listingId, listing.tokenId, msg.sender, price, address(0));
     }
@@ -252,7 +258,7 @@ contract CawProfileMarketplace is ReentrancyGuard {
         IERC20(listing.paymentToken).safeTransferFrom(msg.sender, listing.seller, price);
 
         // Transfer NFT to buyer and sync L2 (msg.value covers LZ fee)
-        cawProfile.transferAndSync{value: msg.value}(msg.sender, listing.tokenId, 0);
+        cawProfile.transferAndSync{value: msg.value}(msg.sender, listing.tokenId, lzDestId, 0);
 
         emit Sale(listingId, listing.tokenId, msg.sender, price, listing.paymentToken);
     }
@@ -360,7 +366,7 @@ contract CawProfileMarketplace is ReentrancyGuard {
         }
 
         // Transfer NFT to winner and sync L2 (msg.value covers LZ fee)
-        cawProfile.transferAndSync{value: msg.value}(listing.highestBidder, listing.tokenId, 0);
+        cawProfile.transferAndSync{value: msg.value}(listing.highestBidder, listing.tokenId, lzDestId, 0);
 
         emit AuctionSettled(listingId, listing.highestBidder, listing.highestBid);
     }
@@ -593,7 +599,7 @@ contract CawProfileMarketplace is ReentrancyGuard {
         }
 
         // Transfer NFT to offerer and sync L2 (msg.value covers LZ fee)
-        cawProfile.transferAndSync{value: msg.value}(offer.offerer, tokenId, 0);
+        cawProfile.transferAndSync{value: msg.value}(offer.offerer, tokenId, lzDestId, 0);
 
         emit OfferAccepted(offerId, tokenId, msg.sender, offer.offerer, offer.amount, offer.paymentToken);
     }

@@ -246,18 +246,18 @@ contract L2BalanceDifferentialTest is Test {
 
         CawProfile cpA = new CawProfile(
             address(cawToken), address(uriGen), address(buyAndBurn),
-            address(networkManager), address(lzL1a), MAINNET_LZ_ID, address(0)
+            address(networkManager), address(lzL1a), MAINNET_LZ_ID, address(0),
+            address(l2A), address(0)
         );
         CawProfile cpB = new CawProfile(
             address(cawToken), address(uriGen), address(buyAndBurn),
-            address(networkManager), address(lzL1b), MAINNET_LZ_ID + 100, address(0)
+            address(networkManager), address(lzL1b), MAINNET_LZ_ID + 100, address(0),
+            address(l2B), address(0)
         );
 
-        cpA.setL2Peer(MAINNET_LZ_ID, address(l2A));
         l2A.setL1Peer(MAINNET_LZ_ID, payable(address(cpA)), true);
         l2A.setCawActions(address(mockActionsA));
 
-        cpB.setL2Peer(MAINNET_LZ_ID + 100, address(l2B));
         l2B.setL1Peer(MAINNET_LZ_ID + 100, payable(address(cpB)), true);
         l2B.setCawActions(address(mockActionsB));
 

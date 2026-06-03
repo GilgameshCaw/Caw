@@ -309,13 +309,15 @@ contract CawProfileQuoter {
   }
 
   /**
-   * @notice Quote the LZ fee for transferAndSync or syncTransfer.
-   * @dev Includes the given tokenId + new owner in the payload alongside any other pending transfers.
-   *      Call with tokenId=0 and newOwner=address(0) to quote just flushing existing pending transfers.
+   * @notice Quote the LZ fee for transferAndSync or syncTransfer to a specific destination.
+   * @dev Includes the given tokenId + new owner in the payload alongside any other pending
+   *      transfers for that destination. Call with tokenId=0 and newOwner=address(0) to
+   *      quote just flushing existing pending transfers. Returns (0,0) if the destination
+   *      is mainnet (synchronous bypassLZ path — no LZ message fires) or has no pending updates.
    */
-  function syncTransferQuote(uint32 tokenId, address newOwner, bool payInLzToken) public view returns (MessagingFee memory quote) {
+  function syncTransferQuote(uint32 tokenId, address newOwner, uint32 lzDestId, bool payInLzToken) public view returns (MessagingFee memory quote) {
+    if (lzDestId == cawProfile.mainnetLzId()) return MessagingFee(0, 0);
     CawProfileSelectors memory s = _s();
-    uint32 lzDestId = cawProfile.peerWithMaxPendingTransfers();
     uint32[] memory tokenIds; address[] memory owners; uint64[] memory stamps;
 
     if (tokenId > 0 && newOwner != address(0)) {

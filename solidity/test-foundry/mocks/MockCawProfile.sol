@@ -15,10 +15,10 @@ contract MockCawProfile is ERC721 {
         _safeMint(to, tokenId);
     }
 
-    /// @dev Mirrors `CawProfile.transferAndSync(to, tokenId, lzTokenAmount)`.
+    /// @dev Mirrors `CawProfile.transferAndSync(to, tokenId, lzDestId, lzTokenAmount)`.
     ///      Marketplace calls this with `value: lzFee` — we accept the ETH and
     ///      forward nothing onward (no LZ in the test).
-    function transferAndSync(address to, uint256 tokenId, uint256 /*lzTokenAmount*/)
+    function transferAndSync(address to, uint256 tokenId, uint32 /*lzDestId*/, uint256 /*lzTokenAmount*/)
         external
         payable
     {

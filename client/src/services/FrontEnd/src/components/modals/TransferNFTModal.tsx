@@ -49,7 +49,7 @@ const TransferNFTModal: React.FC = () => {
       address: CAW_NAME_QUOTER_ADDRESS,
       abi: cawProfileQuoterAbi,
       functionName: 'syncTransferQuote',
-      args: [tokenId, recipient as `0x${string}`, false],
+      args: [tokenId, recipient as `0x${string}`, chains.l1.layerZero, false],
       chainId: chains.l1.chainId
     })
       .then((quote: any) => {
@@ -100,12 +100,15 @@ const TransferNFTModal: React.FC = () => {
       if (!validateRecipient(recipient)) return
       if (!address || tokenId === null) return
 
-      // Use transferAndSync to transfer + sync L2 ownership in one tx
+      // Use transferAndSync to transfer + sync L2 ownership in one tx.
+      // lzDestId = L1's own LayerZero eid (mainnet/bypassLZ) — on a
+      // bypassLZ-co-deployment this is a no-op flush; cross-chain L2
+      // owner-sync happens later via syncTransfer(otherEid).
       writeContract({
         address: CAW_NAMES_ADDRESS,
         abi: cawProfileAbi,
         functionName: 'transferAndSync',
-        args: [recipient as `0x${string}`, BigInt(tokenId), 0n],
+        args: [recipient as `0x${string}`, BigInt(tokenId), chains.l1.layerZero, 0n],
         value: lzFee ?? 0n,
         chainId: chains.l1.chainId
       })

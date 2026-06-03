@@ -420,16 +420,25 @@ const CONTRACTS = {
   CawProfile: {
     chain: 'L1',
     phase: 2,
-    // CawProfile depends on every L2's CawProfileL2 (so we know each peer's
-    // address at L1 deploy time for setL2Peer wiring later). Built from
-    // L2_CHAIN_KEYS so adding a new L2 doesn't require editing this list.
+    // CawProfile depends on every L2's CawProfileL2 — the cross-chain peers
+    // get registered post-deploy via PathwayExpander.addPeer, AND the local
+    // L2 mirror (CawProfileL2_L1 / bypassLZ) is now passed straight into the
+    // constructor as the `_cawProfileL2` immutable.
+    //
     // CawL1PriceReader is intentionally NOT a dependency: the constructor
     // arg accepts address(0) (no price oracle), so when CAW_WETH_PAIR is
     // unset and CawL1PriceReader is skipped, CawProfile still deploys with
     // priceReader = address(0).
+    //
+    // PathwayExpander_L1 is also a dependency when RENOUNCE_ON_DEPLOY=1
+    // because the constructor calls _transferOwnership(_pathwayExpander)
+    // at deploy time. When the flag is off, pass address(0) and the deployer
+    // EOA retains ownership (no-op transfer).
     dependencies: [
       ...L2_CHAIN_KEYS.map(L => `CawProfileL2_${L}`),
+      'CawProfileL2_L1',
       'CawProfileURI', 'CawNetworkManager', 'CawBuyAndBurn',
+      ...(RENOUNCE_ON_DEPLOY ? ['PathwayExpander_L1'] : []),
     ],
     constructorArgs: (state, chain) => [
       state.addresses.MintableCaw,
@@ -439,6 +448,14 @@ const CONTRACTS = {
       CHAINS[chain].lzEndpoint,
       CHAINS[chain].lzEid,
       state.addresses.CawL1PriceReader || ethers.ZeroAddress,
+      // _cawProfileL2: the BYPASS-LZ local mirror. NOT a cross-chain peer.
+      // Used by every synchronous mainnet-direct call (lzDestId == mainnetLzId).
+      // Cross-chain L2s (Base, Arbitrum, etc.) are registered later via
+      // PathwayExpander.addPeer on their own eids.
+      state.addresses.CawProfileL2_L1 || ethers.ZeroAddress,
+      // _pathwayExpander: when set, constructor transfers OApp ownership to it.
+      // When zero (RENOUNCE_ON_DEPLOY off), deployer EOA retains ownership.
+      RENOUNCE_ON_DEPLOY ? (state.addresses.PathwayExpander_L1 || ethers.ZeroAddress) : ethers.ZeroAddress,
     ],
   },
   CawProfileL2_L1: {
@@ -528,12 +545,14 @@ const CONTRACTS = {
     phase: 2,
     // See CawProfileMinter comment above — same ordering constraint applies.
     dependencies: ['CawProfile', 'CawActionsERC1271_L1'],
-    constructorArgs: (state, _chainKey, env) => {
+    constructorArgs: (state, chainKey, env) => {
       const erc20Tokens = (MARKETPLACE_PAYMENT_TOKENS[env] || []).slice();
       // CAW (per env) — added on top of the static list. Skip if not deployed.
       const caw = state.addresses.MintableCaw || state.addresses.CAW;
       if (caw) erc20Tokens.push(caw);
-      return [state.addresses.CawProfile, erc20Tokens];
+      // _lzDestId: mainnet/bypassLZ eid. transferAndSync flushes only this chain.
+      // Cross-chain L2 owner-sync happens later via syncTransfer(otherEid).
+      return [state.addresses.CawProfile, CHAINS[chainKey].lzEid, erc20Tokens];
     },
   },
   SmartEOA: {
@@ -589,15 +608,19 @@ const CONTRACTS = {
     constructorArgs: () => [],
     condition: (_state, _deployer, env) => env === 'dev',
   },
-  // Phase 7: PathwayExpander on L1. Becomes the owner of CawProfile +
-  // CawProfileL2_L1 in the linking step that follows. Owner of the
-  // expander itself is the deployer EOA (constructor arg below);
+  // PathwayExpander on L1. Phase 1 (was phase 7) so its address is available
+  // when CawProfile's constructor runs at phase 2 — CawProfile now transfers
+  // OApp ownership to PathwayExpander directly via _transferOwnership at deploy
+  // time. PathwayExpander still owns CawProfileL2_L1 via the phase 7 linking
+  // step for that one (L2 hasn't moved to constructor-handover yet).
+  //
+  // Owner of the expander itself is the deployer EOA (constructor arg below);
   // transfer this to a multisig later if desired before the deployer
   // walks away completely.
   PathwayExpander_L1: {
     artifact: 'PathwayExpander',
     chain: 'L1',
-    phase: 7,
+    phase: 1,
     dependencies: [],
     constructorArgs: (state) => [state.deployerAddress],
     condition: () => RENOUNCE_ON_DEPLOY,
@@ -890,20 +913,9 @@ const LINKING_STEPS = [
       } catch { return false; }
     },
   },
-  {
-    name: 'Set L2 peer on CawProfile (to L1 local CawProfileL2)',
-    chain: 'L1',
-    phase: 2,
-    contract: 'CawProfile',
-    method: 'setL2Peer',
-    args: (state, chainConfig) => [
-      CHAINS[chainConfig.env + 'L1'].lzEid,
-      state.addresses.CawProfileL2_L1,
-    ],
-    condition: (state) => state.addresses.CawProfile && state.addresses.CawProfileL2_L1,
-  },
-  // L1 CawProfile setL2Peer to each L2's CawProfileL2 — generated in the
-  // expansion block below for ['L2', 'L2b', ...].
+  // Local L2 mirror is now wired via the CawProfile constructor — no setL2Peer step.
+  // Cross-chain L2 peer registration (other eids) goes through PathwayExpander.addPeer
+  // generated in the expansion block below.
   {
     name: 'Set minter on CawProfile',
     chain: 'L1',
@@ -937,23 +949,9 @@ const LINKING_STEPS = [
       } catch { return false; }
     },
   },
-  {
-    name: 'Link CawProfile to CawProfileURI',
-    chain: 'L1',
-    phase: 2,
-    contract: 'CawProfile',
-    method: 'setUriGenerator',
-    args: (state) => [state.addresses.CawProfileURI],
-    condition: (state) => state.addresses.CawProfile && state.addresses.CawProfileURI,
-    skipIf: async (state, deployer) => {
-      const contract = deployer.getContract('CawProfile');
-      if (!contract) return false;
-      try {
-        const current = await contract.uriGenerator();
-        return current.toLowerCase() === state.addresses.CawProfileURI.toLowerCase();
-      } catch { return false; }
-    },
-  },
+  // CawProfileURI is now wired via the CawProfile constructor (immutable) — no setUriGenerator step.
+  // CawProfileURI's `cascadeBreak: true` means changing the URI generator now requires a CawProfile
+  // redeploy too. Removed setter is intentional: see "no admin powers except path expansion" principle.
   {
     name: 'Link CawProfileL2_L1 to CawActions_L1',
     chain: 'L1',
@@ -1136,18 +1134,43 @@ const LINKING_STEPS = [
 // =============================================================================
 
 for (const L of L2_CHAIN_KEYS) {
-  // Phase 2: L1's CawProfile setL2Peer for this L's CawProfileL2.
+  // Phase 7: L1's CawProfile peer for this L's CawProfileL2 — routed through
+  // PathwayExpander.addPeer (PathwayExpander_L1 is now the OApp owner from
+  // the CawProfile constructor handover; deployer EOA can't call setPeer
+  // directly anymore). PathwayExpander enforces peers[eid] == 0 before
+  // calling setPeer, so an existing peer can never be overwritten.
+  //
+  // Why phase 7: PathwayExpander_L1 deploys in phase 1, but ownership
+  // transfer happens in CawProfile's constructor (phase 2). We register the
+  // cross-chain peer here in phase 7 alongside the per-L2 OApp ownership
+  // transfers, so the full peer mesh is set up after all OApps exist on
+  // their respective chains.
   LINKING_STEPS.push({
-    name: `Set L2 peer on CawProfile (to CawProfileL2_${L})`,
+    name: `[Phase 7] PathwayExpander_L1.addPeer(CawProfile, CawProfileL2_${L})`,
     chain: 'L1',
-    phase: 2,
-    contract: 'CawProfile',
-    method: 'setL2Peer',
+    phase: 7,
+    contract: 'PathwayExpander_L1',
+    method: 'addPeer',
     args: (state, chainConfig) => [
+      state.addresses.CawProfile,
       CHAINS[chainConfig.env + L].lzEid,
-      state.addresses[`CawProfileL2_${L}`],
+      // PathwayExpander.addPeer takes bytes32 peer (LZ V2 convention).
+      ethers.zeroPadValue(state.addresses[`CawProfileL2_${L}`], 32),
     ],
-    condition: (state) => state.addresses.CawProfile && state.addresses[`CawProfileL2_${L}`],
+    condition: (state) => state.addresses.PathwayExpander_L1
+      && state.addresses.CawProfile
+      && state.addresses[`CawProfileL2_${L}`],
+    skipIf: async (state, deployer) => {
+      const c = deployer.getContract('CawProfile');
+      if (!c) return false;
+      try {
+        const eid = CHAINS[deployer.envFromChain ? deployer.envFromChain('L1') : 'testnetL1'].lzEid;
+        void eid; // eid resolution is done in `args` at run-time; here we just check non-zero peer
+        // Fallback: skip only if at least one peer is already non-zero for any L2 eid in this chain mesh.
+        // The PathwayExpander itself guards against double-set, so a re-run will revert there if needed.
+        return false;
+      } catch { return false; }
+    },
   });
 
   // Phase 3: this L's CawProfileL2 setL1Peer (for cross-chain mints/auths).

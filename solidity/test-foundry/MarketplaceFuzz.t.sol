@@ -34,7 +34,7 @@ contract MarketplaceFuzzTest is Test {
     function setUp() public {
         nft = new MockCawProfile();
         address[] memory pts = new address[](0);
-        marketplace = new CawProfileMarketplace(address(nft), pts);
+        marketplace = new CawProfileMarketplace(address(nft), 1, pts);
 
         nft.mintTo(seller, TOKEN_ID);
 

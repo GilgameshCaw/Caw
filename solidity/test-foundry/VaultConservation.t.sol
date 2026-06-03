@@ -192,10 +192,10 @@ contract VaultConservationTest is Test {
 
         cawProfile = new CawProfile(
             address(cawToken), address(uriGen), address(buyAndBurn),
-            address(networkManager), address(lzL1), MAINNET_LZ_ID, address(0)
+            address(networkManager), address(lzL1), MAINNET_LZ_ID, address(0),
+            address(cawProfileL2), address(0)
         );
 
-        cawProfile.setL2Peer(MAINNET_LZ_ID, address(cawProfileL2));
         cawProfileL2.setL1Peer(MAINNET_LZ_ID, payable(address(cawProfile)), true);
         cawProfile.setMinter(address(this));
 
