@@ -81,6 +81,10 @@ export type CodeValidationErrorCode =
 export interface CodeValidationOk {
   ok: true
   codeHash: string
+  /// Phase 2 Sponsor Repay: basis points relative to deposit. 0 = no repay.
+  repayBps: number
+  /// Phase 2 Sponsor Repay: KYC level required at withdraw. 0 = no KYC.
+  requireKycLevel: number
 }
 
 export interface CodeValidationFail {
@@ -436,7 +440,12 @@ export async function validateSponsorCode(
   }
 
   // All checks passed — success (no sleep needed, the DB round-trip takes ~10ms)
-  return { ok: true, codeHash }
+  return {
+    ok: true,
+    codeHash,
+    repayBps:        code.repayBps ?? 0,
+    requireKycLevel: code.requireKycLevel ?? 0,
+  }
 }
 
 /**

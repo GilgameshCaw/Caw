@@ -59,6 +59,13 @@ export interface BootstrapParams {
   // EIP-712 permit sig from the user (passkey or secp256k1)
   permitSig: `0x${string}`
   permitNonce: bigint      // current SmartEOA.nonceOf(Minter, ACTION_MINT_DEPOSIT)
+  // Phase 2 Sponsor Repay — all default to 0 / unused.
+  // - kycLevel: 0 = no KYC required, 1+ = withdraw gate level
+  // - sponsorTokenId: the sponsor profile receiving sweeps when repayAmount > 0
+  // - repayAmount: wei. Contract enforces repayAmount <= depositAmount * 2.
+  kycLevel?: number
+  sponsorTokenId?: number
+  repayAmount?: bigint
 }
 
 export interface DepositParams {
@@ -310,6 +317,11 @@ export class SponsorService {
       // Minter as the final step of its execution. The sponsor's sig
       // check happens inside the Minter against the SmartEOA's storage
       // (already written in initialize step 2 before the external call).
+      //
+      // Phase 2 Sponsor Repay: the last 3 args (kycLevel/sponsorTokenId/
+      // repayAmount) default to zero — only set when /api/sponsor/bootstrap
+      // applied a non-zero sponsor-code policy. Zero values match the
+      // pre-Phase-2 behaviour exactly (no kyc gate, no repay obligation).
       const minterIface = new Interface(cawProfileMinterAbi as any)
       const mintCalldata = minterIface.encodeFunctionData('mintAndDepositSponsored', [
         params.networkId,
@@ -320,6 +332,9 @@ export class SponsorService {
         params.lzTokenAmount,
         params.permitNonce,
         params.permitSig,
+        params.kycLevel       ?? 0,
+        params.sponsorTokenId ?? 0,
+        params.repayAmount    ?? 0n,
       ])
 
       // ── Build SmartEOA.initialize calldata ───────────────────────────

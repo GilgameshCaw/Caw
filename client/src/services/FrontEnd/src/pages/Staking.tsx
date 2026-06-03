@@ -28,6 +28,7 @@ import { UserAvatar } from '~/components/Avatar'
 import QuickSignModal from '~/components/modals/QuickSignModal'
 import LayerZeroStatus from '~/components/LayerZeroStatus'
 import StakingRewardsInfo from '~/components/StakingRewardsInfo'
+import { RepayStatus } from '~/components/RepayStatus'
 import { useSessionKeyStore } from '~/store/sessionKeyStore'
 import { useEnsureWallet } from '~/hooks/useEnsureWallet'
 import { CLIENT_ID } from '~/api/actions'
@@ -482,9 +483,10 @@ const Staking = () => {
             try {
               const parsed = JSON.parse(existing) as { amount: string; at: number; stakedAtHintTime?: string }
               const age = now - (parsed?.at ?? 0)
-              // Only accumulate if the existing hint is still fresh (<30 min);
-              // otherwise treat it as stale and replace.
-              if (parsed?.amount && age < 30 * 60 * 1000) {
+              // Only accumulate if the existing hint is still fresh (<48h);
+              // otherwise treat it as stale and replace. 48h matches the
+              // ProfileChooser hint TTL + validator hold window.
+              if (parsed?.amount && age < 48 * 60 * 60 * 1000) {
                 combinedAmount = BigInt(parsed.amount) + depositWei
                 // Preserve the original stake baseline across accumulations —
                 // ProfileChooser compares the *current* stake against this
@@ -1256,6 +1258,9 @@ const Staking = () => {
             <span>{t('staking.subtitle')}</span>
           </div>
           <StakingRewardsInfo isDark={isDark} />
+          {/* Phase 2 Sponsor Repay — visible only when the active profile
+              has an on-chain obligation. Hidden when none. */}
+          <RepayStatus tokenId={tokenId} />
         </div>
 
         {/* Active Account */}

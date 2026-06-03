@@ -1510,6 +1510,13 @@ model SponsorCode {
   usesRemaining        Int?
   /// 0 = no minimum username length cap
   minUsernameLength    Int                 @default(0)
+  /// Sponsor Repay (Phase 2): basis points relative to deposit. 10000 = 1x
+  /// repay, 20000 = 2x cap (contract enforced), 0 = no repay obligation.
+  /// Applied by /api/sponsor/bootstrap to derive the on-chain repayAmount.
+  repayBps             Int                 @default(0)
+  /// Sponsor Repay (Phase 2): KYC level required at withdraw time. 0 = none.
+  /// Composable with repayBps: both protections can be active simultaneously.
+  requireKycLevel      Int                 @default(0)
   /// Optional Network operator who pays. null = platform default sponsor.
   networkOwnerAddress  String?
   expiresAt            DateTime
@@ -1538,6 +1545,33 @@ model SponsorRedemption {
   @@index([codeHash])
   @@index([recipient])
   @@index([redeemedAt])
+}
+
+/// Sponsor Repay (Phase 2) — on-chain repay obligation, written by indexer
+/// from L1 SponsorRepaySet + L2 SponsorRepayRegistered/Swept/Forgiven events.
+/// Source of truth is L2 CawProfileLedger.sponsorRepay; this row tracks it
+/// for FE reads. NEVER written by API request handlers — only by indexer.
+model SponsorRepay {
+  /// uint32 recipient profile id (the one with the obligation)
+  tokenId                Int       @id
+  /// uint32 sponsor's profile id (receives sweeps)
+  sponsorTokenId         Int
+  /// wei, set at SponsorRepayRegistered (L2)
+  originalRepayAmount    String
+  /// wei, decremented by SponsorRepaySwept, zeroed by SponsorRepayForgiven
+  currentRepayAmount     String
+  /// wei, snapshot from L1 SponsorRepaySet (for audit / FE display)
+  sponsoredDepositAmount String?
+  registeredAt           DateTime  @default(now())
+  forgivenAt             DateTime?
+  lastSweepAmount        String?
+  lastSweepAt            DateTime?
+  /// L1 SponsorRepaySet tx hash
+  txHashSet              String?
+  /// L2 SponsorRepayRegistered tx hash
+  txHashRegistered       String?
+
+  @@index([sponsorTokenId])
 }
 
 /// Tracks invalid-code attempts per IP for the 3/24h IP-ban rule.

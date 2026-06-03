@@ -21,6 +21,7 @@
 import { Router } from 'express'
 import { z, ZodError } from 'zod'
 import Redis from 'ioredis'
+import { prisma } from '../../prismaClient'
 import {
   getSponsorService,
   isSponsorError,
@@ -231,8 +232,33 @@ router.post('/bootstrap', async (req, res) => {
     return res.status(status).json({ error: codeValidation.error, detail: codeValidation.detail })
   }
 
+  // ── Phase 2 Sponsor Repay derivation ──────────────────────────────────────
+  // The sponsor-code policy (set by admin at code creation) drives both the
+  // repay obligation (repayBps) and any KYC gate (requireKycLevel). When
+  // both are zero, the call is byte-identical to the pre-Phase-2 flow.
+  let repayAmount = 0n
+  let sponsorTokenId = 0
+  if (codeValidation.repayBps > 0) {
+    repayAmount = (params.depositAmountCAW * BigInt(codeValidation.repayBps)) / 10000n
+    // Contract enforces repayAmount <= depositAmount * 2; mirror that check
+    // here so the user gets a clean error instead of an on-chain revert.
+    if (repayAmount > params.depositAmountCAW * 2n) {
+      return res.status(400).json({
+        error: 'VALIDATION',
+        detail: `Computed repayAmount exceeds the 2x deposit cap (repayBps=${codeValidation.repayBps}).`,
+      })
+    }
+    const envSponsorId = Number(process.env.PLATFORM_SPONSOR_TOKEN_ID ?? 1)
+    sponsorTokenId = Number.isInteger(envSponsorId) && envSponsorId > 0 ? envSponsorId : 1
+  }
+
   // ── Dispatch ──────────────────────────────────────────────────────────────
-  const result = await service.sponsorBootstrap(params)
+  const result = await service.sponsorBootstrap({
+    ...params,
+    kycLevel:       codeValidation.requireKycLevel,
+    sponsorTokenId,
+    repayAmount,
+  })
   if (isSponsorError(result)) {
     // Bootstrap failed — do NOT decrement usesRemaining (caller can retry).
     const status = result.error === 'TREASURY_LOW' ? 503 : 400
@@ -329,5 +355,46 @@ router.post('/authenticate', async (req, res) => {
 
 // Named exports for test-only schema access (L-3 validation tests)
 export { BootstrapBodySchema }
+
+// ─── Sponsor Repay read-only status ──────────────────────────────────────────
+// Public DB read. Returns the on-chain repay obligation for a given recipient
+// tokenId. Written exclusively by SponsorRepayIndexer + ChainSyncService from
+// L1+L2 events; never by API handlers. 404 when no row (no repay declared).
+//
+// Per project_no_rpc_in_request_handlers: this is a DB-only read; no RPC.
+router.get('/repay/:tokenId', async (req, res) => {
+  const tokenIdNum = Number(req.params.tokenId)
+  if (!Number.isInteger(tokenIdNum) || tokenIdNum < 0 || tokenIdNum > 0xFFFFFFFF) {
+    return res.status(400).json({ error: 'INVALID_TOKEN_ID' })
+  }
+
+  try {
+    const row = await prisma.sponsorRepay.findUnique({ where: { tokenId: tokenIdNum } })
+    if (!row) return res.status(404).json({ error: 'NOT_FOUND' })
+
+    // Resolve sponsor's username for FE display. tokenId == User.id in the
+    // schema (User.id is set to tokenId at creation). Tolerate missing.
+    const sponsor = await prisma.user.findUnique({
+      where: { id: row.sponsorTokenId },
+      select: { username: true },
+    }).catch(() => null)
+
+    return res.status(200).json({
+      tokenId:                row.tokenId,
+      sponsorTokenId:         row.sponsorTokenId,
+      sponsorUsername:        sponsor?.username ?? null,
+      currentRepayAmountWei:  row.currentRepayAmount,
+      originalRepayAmountWei: row.originalRepayAmount,
+      sponsoredDepositWei:    row.sponsoredDepositAmount,
+      registeredAt:           row.registeredAt,
+      forgivenAt:             row.forgivenAt,
+      lastSweepAmountWei:     row.lastSweepAmount,
+      lastSweepAt:            row.lastSweepAt,
+    })
+  } catch (err: any) {
+    console.error('[/sponsor/repay] error:', err?.message)
+    return res.status(500).json({ error: 'INTERNAL' })
+  }
+})
 
 export default router

@@ -15,6 +15,7 @@ import { nftTransferWatcherService } from './services/NftTransferWatcher';
 import { stakeLedgerReconcilerService } from './services/StakeLedger/service';
 import { depositWatcherService } from './services/DepositWatcher';
 import { lzRelayService } from './services/LzRelayService';
+import { sponsorRepayIndexerService } from './services/SponsorRepayIndexer';
 
 import delay from './tools/delay';
 
@@ -58,6 +59,7 @@ const availableServiceList: Service[] = [
   stakeLedgerReconcilerService,
   depositWatcherService,
   lzRelayService,
+  sponsorRepayIndexerService,
 ];
 
 const availableServices = new Map<string, Service>();
