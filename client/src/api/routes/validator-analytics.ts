@@ -9,6 +9,12 @@ const router = Router()
  * Public (no auth) — returns current tip settings so the frontend
  * can include the correct tip when signing actions.
  */
+// Default per-action ETH floor when the operator hasn't set a row yet.
+// 272727272727 wei ≈ $0.0009/action at $3300/ETH. Picked so the FE
+// "Tip / action" line shows a sensible cost out of the box; the operator
+// can override via PATCH /api/validator-analytics/settings.
+const DEFAULT_MIN_TIP_PER_ACTION_WEI = '272727272727'
+
 router.get('/tip-config', async (_req, res) => {
   try {
     const rows = await prisma.validatorSetting.findMany({
@@ -19,7 +25,9 @@ router.get('/tip-config', async (_req, res) => {
     res.json({
       baseTip,
       priorityTip: map.get('priorityTip') || String(BigInt(baseTip) * 3n),
-      minTipPerActionWei: map.get('minTipPerActionWei') || '0',
+      minTipPerActionWei: map.get('minTipPerActionWei')
+        || process.env.MIN_TIP_PER_ACTION_WEI
+        || DEFAULT_MIN_TIP_PER_ACTION_WEI,
     })
   } catch (err: any) {
     res.status(500).json({ error: 'Internal server error' })
