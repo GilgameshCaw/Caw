@@ -238,11 +238,13 @@ async function fullSetup(accounts) {
   const cawProfileLedger = await CawProfileLedger.new(l1, l2Endpoint.address, "0x0000000000000000000000000000000000000000");
   await l1Endpoint.setDestLzEndpoint(cawProfileLedger.address, l2Endpoint.address);
 
-  const cawProfile = await CawProfile.new(token.address, uri.address, buyAndBurn.address, networkManager.address, l1Endpoint.address, l1, "0x0000000000000000000000000000000000000000");
+  const toBytes32 = (addr) => "0x000000000000000000000000" + addr.slice(2).toLowerCase();
+
+  const cawProfile = await CawProfile.new(token.address, uri.address, buyAndBurn.address, networkManager.address, l1Endpoint.address, l1, "0x0000000000000000000000000000000000000000", cawProfileLedger.address, "0x0000000000000000000000000000000000000000");
   await buyAndBurn.setCawProfile(cawProfile.address);
   await cawProfileLedger.setL1Peer(l1, cawProfile.address, false);
   await l2Endpoint.setDestLzEndpoint(cawProfile.address, l1Endpoint.address);
-  await cawProfile.setL2Peer(l2, cawProfileLedger.address);
+  await cawProfile.setPeer(l2, toBytes32(cawProfileLedger.address));
 
   await networkManager.createNetwork("Test Network", accounts[0], l2, 0, 0, 0, 0, "500000000000");
   const networkId = 1;
@@ -289,8 +291,8 @@ contract('CawActions — ERC-1271 contract-owner signatures', function (accounts
     mockOwner = await MockContractOwner.new(contractKeyHolder);
 
     // Transfer the L1 NFT to the mock contract and sync ownership down to L2.
-    const transferQuote = await setup.quoter.syncTransferQuote(contractOwnedTokenId, mockOwner.address, false);
-    await setup.cawProfile.transferAndSync(mockOwner.address, contractOwnedTokenId, transferQuote.lzTokenFee, {
+    const transferQuote = await setup.quoter.syncTransferQuote(contractOwnedTokenId, mockOwner.address, l2, false);
+    await setup.cawProfile.transferAndSync(mockOwner.address, contractOwnedTokenId, l2, transferQuote.lzTokenFee, {
       from: contractKeyHolder, value: transferQuote.nativeFee.toString(),
     });
 
@@ -525,11 +527,13 @@ async function fullSetupWithSibling(accounts) {
   const cawProfileLedger = await CawProfileLedger.new(l1, l2Endpoint.address, "0x0000000000000000000000000000000000000000");
   await l1Endpoint.setDestLzEndpoint(cawProfileLedger.address, l2Endpoint.address);
 
-  const cawProfile = await CawProfile.new(token.address, uri.address, buyAndBurn.address, networkManager.address, l1Endpoint.address, l1, "0x0000000000000000000000000000000000000000");
+  const toBytes32 = (addr) => "0x000000000000000000000000" + addr.slice(2).toLowerCase();
+
+  const cawProfile = await CawProfile.new(token.address, uri.address, buyAndBurn.address, networkManager.address, l1Endpoint.address, l1, "0x0000000000000000000000000000000000000000", cawProfileLedger.address, "0x0000000000000000000000000000000000000000");
   await buyAndBurn.setCawProfile(cawProfile.address);
   await cawProfileLedger.setL1Peer(l1, cawProfile.address, false);
   await l2Endpoint.setDestLzEndpoint(cawProfile.address, l1Endpoint.address);
-  await cawProfile.setL2Peer(l2, cawProfileLedger.address);
+  await cawProfile.setPeer(l2, toBytes32(cawProfileLedger.address));
 
   await networkManager.createNetwork("Test Network 2", accounts[0], l2, 0, 0, 0, 0, "500000000000");
   const networkId = 1;
@@ -632,8 +636,8 @@ contract('CawActionsERC1271 — trailing-bytes and withdraw-cap guards', functio
 
     // Deploy mock and transfer NFT to it.
     mockOwner2 = await MockContractOwner.new(contractKeyHolder);
-    const tq = await s2.quoter.syncTransferQuote(contractOwnedTokenId2, mockOwner2.address, false);
-    await s2.cawProfile.transferAndSync(mockOwner2.address, contractOwnedTokenId2, tq.lzTokenFee, { from: contractKeyHolder, value: tq.nativeFee.toString() });
+    const tq = await s2.quoter.syncTransferQuote(contractOwnedTokenId2, mockOwner2.address, l2, false);
+    await s2.cawProfile.transferAndSync(mockOwner2.address, contractOwnedTokenId2, l2, tq.lzTokenFee, { from: contractKeyHolder, value: tq.nativeFee.toString() });
 
     domain2 = await getDomain(s2.cawActions);
   });

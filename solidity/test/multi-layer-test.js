@@ -637,21 +637,24 @@ contract('CawProfiles', function(accounts, x) {
     uriGenerator = uriGenerator || await deployURI();
     console.log("URI Generator addr", uriGenerator.address);
 
+    const toBytes32 = (addr) => "0x000000000000000000000000" + addr.slice(2).toLowerCase();
+
     cawProfilesL2 = cawProfilesL2 || await CawProfileLedger.new(l1, l2Endpoint.address, "0x0000000000000000000000000000000000000000");
     await l1Endpoint.setDestLzEndpoint(cawProfilesL2.address, l2Endpoint.address);
 
-    cawProfiles = cawProfiles || await CawProfile.new(token.address, uriGenerator.address, buyAndBurnAddress, networkManager.address, l1Endpoint.address, l1, "0x0000000000000000000000000000000000000000");
+    // bypassLZ mainnet ledger — deploy BEFORE CawProfile so it can be the immutable arg
+    cawProfilesL2Mainnet = cawProfilesL2Mainnet || await CawProfileLedger.new(l1, l1Endpoint.address, "0x0000000000000000000000000000000000000000");
+
+    cawProfiles = cawProfiles || await CawProfile.new(token.address, uriGenerator.address, buyAndBurnAddress, networkManager.address, l1Endpoint.address, l1, "0x0000000000000000000000000000000000000000", cawProfilesL2Mainnet.address, "0x0000000000000000000000000000000000000000");
     await buyAndBurn.setCawProfile(cawProfiles.address);
     await cawProfilesL2.setL1Peer(l1, cawProfiles.address, false);
     await l2Endpoint.setDestLzEndpoint(cawProfiles.address, l1Endpoint.address);
-    await cawProfiles.setL2Peer(l2, cawProfilesL2.address);
+    await cawProfiles.setPeer(l2, toBytes32(cawProfilesL2.address));
 
     await networkManager.createNetwork("Test Network", gilg, l2, 1,1,1,1, "500000000000");
 
-
-    cawProfilesL2Mainnet = cawProfilesL2Mainnet || await CawProfileLedger.new(l1, l1Endpoint.address, "0x0000000000000000000000000000000000000000");
+    // bypassLZ ledger: link to cawProfiles now that it exists
     await cawProfilesL2Mainnet.setL1Peer(l1, cawProfiles.address, true);
-    await cawProfiles.setL2Peer(l1, cawProfilesL2Mainnet.address);
 
     minter = minter || await CawProfileMinter.new(token.address, cawProfiles.address, mockRouter.address);
     await cawProfiles.setMinter(minter.address);
@@ -1314,19 +1317,22 @@ contract("CawProfile - Transfer & Replication Gas", function(accounts) {
 
     localNetworkManager = await CawNetworkManager.new(bb.address);
     localUriGenerator = await deployURI();
+    const _toBytes32_a = (addr) => "0x000000000000000000000000" + addr.slice(2).toLowerCase();
     localCawProfilesL2 = await CawProfileLedger.new(l1, l2Endpoint.address, "0x0000000000000000000000000000000000000000");
     await l1Endpoint.setDestLzEndpoint(localCawProfilesL2.address, l2Endpoint.address);
 
     localCawProfiles = await CawProfile.new(
       localToken.address, localUriGenerator.address, bb.address,
       localNetworkManager.address, l1Endpoint.address, l1,
+      "0x0000000000000000000000000000000000000000",
+      localCawProfilesL2.address,
       "0x0000000000000000000000000000000000000000"
     );
     await bb.setCawProfile(localCawProfiles.address);
 
     await localCawProfilesL2.setL1Peer(l1, localCawProfiles.address, false);
     await l2Endpoint.setDestLzEndpoint(localCawProfiles.address, l1Endpoint.address);
-    await localCawProfiles.setL2Peer(l2, localCawProfilesL2.address);
+    await localCawProfiles.setPeer(l2, _toBytes32_a(localCawProfilesL2.address));
 
     await localNetworkManager.createNetwork("Local Test", accounts[0], l2, 1, 1, 1, 1, "500000000000");
 
@@ -1361,10 +1367,10 @@ contract("CawProfile - Transfer & Replication Gas", function(accounts) {
     expect(owner).to.equal(tokenOwner);
 
     // transferAndSync requires ETH for LZ fee - quote it
-    var quote = await localQuoter.syncTransferQuote(1, recipient, false);
+    var quote = await localQuoter.syncTransferQuote(1, recipient, l2, false);
 
     // Call transferAndSync
-    var tx = await localCawProfiles.transferAndSync(recipient, 1, 0, {
+    var tx = await localCawProfiles.transferAndSync(recipient, 1, l2, 0, {
       from: tokenOwner,
       value: (BigInt(quote.nativeFee) * 110n / 100n).toString(),
     });
@@ -1382,7 +1388,7 @@ contract("CawProfile - Transfer & Replication Gas", function(accounts) {
     var nonOwner = accounts[1]; // no longer the owner after previous test
     var shouldFail = false;
     try {
-      await localCawProfiles.transferAndSync(accounts[4], 1, 0, {
+      await localCawProfiles.transferAndSync(accounts[4], 1, l2, 0, {
         from: nonOwner,
         value: web3.utils.toWei('0.001', 'ether'),
       });
@@ -1512,19 +1518,22 @@ contract("CawProfileMinter - mintAndDeposit", function(accounts) {
 
     localNetworkManager = await CawNetworkManager.new(bb.address);
     localUriGenerator = await deployURI();
+    const _toBytes32_b = (addr) => "0x000000000000000000000000" + addr.slice(2).toLowerCase();
     localCawProfilesL2 = await CawProfileLedger.new(l1, l2Endpoint.address, "0x0000000000000000000000000000000000000000");
     await l1Endpoint.setDestLzEndpoint(localCawProfilesL2.address, l2Endpoint.address);
 
     localCawProfiles = await CawProfile.new(
       localToken.address, localUriGenerator.address, bb.address,
       localNetworkManager.address, l1Endpoint.address, l1,
+      "0x0000000000000000000000000000000000000000",
+      localCawProfilesL2.address,
       "0x0000000000000000000000000000000000000000"
     );
     await bb.setCawProfile(localCawProfiles.address);
 
     await localCawProfilesL2.setL1Peer(l1, localCawProfiles.address, false);
     await l2Endpoint.setDestLzEndpoint(localCawProfiles.address, l1Endpoint.address);
-    await localCawProfiles.setL2Peer(l2, localCawProfilesL2.address);
+    await localCawProfiles.setPeer(l2, _toBytes32_b(localCawProfilesL2.address));
 
     // Network with fees: mint=1, deposit=1, auth=1, withdraw=1
     await localNetworkManager.createNetwork("Test Network", accounts[0], l2, 1, 1, 1, 1, "500000000000");
@@ -1669,25 +1678,30 @@ contract("CawProfileMinter - mintAndAuth", function(accounts) {
     localNetworkManager = await CawNetworkManager.new(bb.address);
     localUriGenerator = await deployURI();
 
+    const _toBytes32_c = (addr) => "0x000000000000000000000000" + addr.slice(2).toLowerCase();
+
     // Cross-chain L2 mirror (L2 storage)
     localCawProfilesL2 = await CawProfileLedger.new(l1, l2Endpoint.address, "0x0000000000000000000000000000000000000000");
     await l1Endpoint.setDestLzEndpoint(localCawProfilesL2.address, l2Endpoint.address);
 
+    // bypassLZ mainnet ledger — deploy BEFORE CawProfile so it can be the immutable arg
+    localCawProfilesL2Mainnet = await CawProfileLedger.new(l1, l1Endpoint.address, "0x0000000000000000000000000000000000000000");
+
     localCawProfiles = await CawProfile.new(
       localToken.address, localUriGenerator.address, bb.address,
       localNetworkManager.address, l1Endpoint.address, l1,
+      "0x0000000000000000000000000000000000000000",
+      localCawProfilesL2Mainnet.address,
       "0x0000000000000000000000000000000000000000"
     );
     await bb.setCawProfile(localCawProfiles.address);
 
     await localCawProfilesL2.setL1Peer(l1, localCawProfiles.address, false);
     await l2Endpoint.setDestLzEndpoint(localCawProfiles.address, l1Endpoint.address);
-    await localCawProfiles.setL2Peer(l2, localCawProfilesL2.address);
+    await localCawProfiles.setPeer(l2, _toBytes32_c(localCawProfilesL2.address));
 
-    // Co-deployment L1 mirror (L1-storage networks use this — bypassLZ branch)
-    localCawProfilesL2Mainnet = await CawProfileLedger.new(l1, l1Endpoint.address, "0x0000000000000000000000000000000000000000");
+    // bypassLZ ledger: link to localCawProfiles now that it exists
     await localCawProfilesL2Mainnet.setL1Peer(l1, localCawProfiles.address, true);
-    await localCawProfiles.setL2Peer(l1, localCawProfilesL2Mainnet.address);
 
     // CawActions on each L2 to exercise the "can't post without balance" check
     localCawActions = await CawActions.new(localCawProfilesL2.address, "0x0000000000000000000000000000000000000000", "0x0000000000000000000000000000000000000000000000000000000000000000", "0x0000000000000000000000000000000000000000", "0x0000000000000000000000000000000000000000", 0, 0);
@@ -1928,14 +1942,15 @@ contract("CawProfile - depositFor", function(accounts) {
     localNetworkManager = await CawNetworkManager.new(bb.address);
     localUriGenerator = await deployURI();
 
+    const _toBytes32_d = (addr) => "0x000000000000000000000000" + addr.slice(2).toLowerCase();
     localCawProfilesL2 = await CawProfileLedger.new(l1, localEndpointL2.address, "0x0000000000000000000000000000000000000000");
     await localEndpointL1.setDestLzEndpoint(localCawProfilesL2.address, localEndpointL2.address);
 
-    localCawProfiles = await CawProfile.new(localToken.address, localUriGenerator.address, bb.address, localNetworkManager.address, localEndpointL1.address, l1, "0x0000000000000000000000000000000000000000");
+    localCawProfiles = await CawProfile.new(localToken.address, localUriGenerator.address, bb.address, localNetworkManager.address, localEndpointL1.address, l1, "0x0000000000000000000000000000000000000000", localCawProfilesL2.address, "0x0000000000000000000000000000000000000000");
     await bb.setCawProfile(localCawProfiles.address);
     await localCawProfilesL2.setL1Peer(l1, localCawProfiles.address, false);
     await localEndpointL2.setDestLzEndpoint(localCawProfiles.address, localEndpointL1.address);
-    await localCawProfiles.setL2Peer(l2, localCawProfilesL2.address);
+    await localCawProfiles.setPeer(l2, _toBytes32_d(localCawProfilesL2.address));
 
     // Network with fees: mint=1, deposit=1, auth=1, withdraw=1
     await localNetworkManager.createNetwork("Test Network", accounts[0], l2, 1, 1, 1, 1, "500000000000");
@@ -2133,14 +2148,15 @@ contract("CawProfile - locked withdraw fee + fee withdrawal", function(accounts)
     localNetworkManager = await CawNetworkManager.new(localBuyAndBurn.address);
     localUriGenerator = await deployURI();
 
+    const _toBytes32_e = (addr) => "0x000000000000000000000000" + addr.slice(2).toLowerCase();
     localCawProfilesL2 = await CawProfileLedger.new(l1, localEndpointL2.address, "0x0000000000000000000000000000000000000000");
     await localEndpointL1.setDestLzEndpoint(localCawProfilesL2.address, localEndpointL2.address);
 
-    localCawProfiles = await CawProfile.new(localToken.address, localUriGenerator.address, localBuyAndBurn.address, localNetworkManager.address, localEndpointL1.address, l1, "0x0000000000000000000000000000000000000000");
+    localCawProfiles = await CawProfile.new(localToken.address, localUriGenerator.address, localBuyAndBurn.address, localNetworkManager.address, localEndpointL1.address, l1, "0x0000000000000000000000000000000000000000", localCawProfilesL2.address, "0x0000000000000000000000000000000000000000");
     await localBuyAndBurn.setCawProfile(localCawProfiles.address);
     await localCawProfilesL2.setL1Peer(l1, localCawProfiles.address, false);
     await localEndpointL2.setDestLzEndpoint(localCawProfiles.address, localEndpointL1.address);
-    await localCawProfiles.setL2Peer(l2, localCawProfilesL2.address);
+    await localCawProfiles.setPeer(l2, _toBytes32_e(localCawProfilesL2.address));
 
     feeRecipientMock = await FeeRecipientMock.new();
 
@@ -2484,18 +2500,21 @@ contract("CawProfile - Buy and Burn", function(accounts) {
     localNetworkManager = await CawNetworkManager.new(localBuyAndBurn.address);
     localUriGenerator = await deployURI();
 
+    const _toBytes32_f = (addr) => "0x000000000000000000000000" + addr.slice(2).toLowerCase();
     localCawProfilesL2 = await CawProfileLedger.new(l1, localEndpointL2.address, "0x0000000000000000000000000000000000000000");
     await localEndpointL1.setDestLzEndpoint(localCawProfilesL2.address, localEndpointL2.address);
 
     localCawProfiles = await CawProfile.new(
       localToken.address, localUriGenerator.address, localBuyAndBurn.address,
       localNetworkManager.address, localEndpointL1.address, l1,
+      "0x0000000000000000000000000000000000000000",
+      localCawProfilesL2.address,
       "0x0000000000000000000000000000000000000000"
     );
     await localBuyAndBurn.setCawProfile(localCawProfiles.address);
     await localCawProfilesL2.setL1Peer(l1, localCawProfiles.address, false);
     await localEndpointL2.setDestLzEndpoint(localCawProfiles.address, localEndpointL1.address);
-    await localCawProfiles.setL2Peer(l2, localCawProfilesL2.address);
+    await localCawProfiles.setPeer(l2, _toBytes32_f(localCawProfilesL2.address));
 
     // Network with meaningful fees — feeAddress = accounts[0]. Ceilings = initial fees.
     await localNetworkManager.createNetwork("BuyBurn Network", accounts[0], l2, WITHDRAW_FEE, DEPOSIT_FEE, AUTH_FEE, MINT_FEE, "500000000000");
@@ -2801,24 +2820,29 @@ contract("CawProfileMinter - Bundled Quick Sign", function(accounts) {
     localNetworkManager = await CawNetworkManager.new(bb.address);
     localUriGenerator = await deployURI();
 
+    const _toBytes32_g = (addr) => "0x000000000000000000000000" + addr.slice(2).toLowerCase();
+
     // L2-storage mirror (cross-chain)
     localCawProfilesL2 = await CawProfileLedger.new(l1, l2Endpoint.address, "0x0000000000000000000000000000000000000000");
     await l1Endpoint.setDestLzEndpoint(localCawProfilesL2.address, l2Endpoint.address);
 
+    // L1-co-deployed mirror (bypassLZ) — deploy BEFORE CawProfile for immutable arg
+    localCawProfilesL2Mainnet = await CawProfileLedger.new(l1, l1Endpoint.address, "0x0000000000000000000000000000000000000000");
+
     localCawProfiles = await CawProfile.new(
       localToken.address, localUriGenerator.address, bb.address,
       localNetworkManager.address, l1Endpoint.address, l1,
+      "0x0000000000000000000000000000000000000000",
+      localCawProfilesL2Mainnet.address,
       "0x0000000000000000000000000000000000000000"
     );
     await bb.setCawProfile(localCawProfiles.address);
     await localCawProfilesL2.setL1Peer(l1, localCawProfiles.address, false);
     await l2Endpoint.setDestLzEndpoint(localCawProfiles.address, l1Endpoint.address);
-    await localCawProfiles.setL2Peer(l2, localCawProfilesL2.address);
+    await localCawProfiles.setPeer(l2, _toBytes32_g(localCawProfilesL2.address));
 
-    // L1-co-deployed mirror (bypassLZ)
-    localCawProfilesL2Mainnet = await CawProfileLedger.new(l1, l1Endpoint.address, "0x0000000000000000000000000000000000000000");
+    // bypassLZ ledger: link to localCawProfiles now that it exists
     await localCawProfilesL2Mainnet.setL1Peer(l1, localCawProfiles.address, true);
-    await localCawProfiles.setL2Peer(l1, localCawProfilesL2Mainnet.address);
 
     // Two networks to exercise both branches
     await localNetworkManager.createNetwork("L2 Network", accounts[0], l2, 0, 0, 0, 0, "500000000000");

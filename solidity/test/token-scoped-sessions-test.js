@@ -207,11 +207,13 @@ async function fullSetup(accounts) {
   const cawProfileLedger = await CawProfileLedger.new(l1, l2Endpoint.address, "0x0000000000000000000000000000000000000000");
   await l1Endpoint.setDestLzEndpoint(cawProfileLedger.address, l2Endpoint.address);
 
-  const cawProfile = await CawProfile.new(token.address, uri.address, buyAndBurn.address, networkManager.address, l1Endpoint.address, l1, "0x0000000000000000000000000000000000000000");
+  const toBytes32 = (addr) => "0x000000000000000000000000" + addr.slice(2).toLowerCase();
+
+  const cawProfile = await CawProfile.new(token.address, uri.address, buyAndBurn.address, networkManager.address, l1Endpoint.address, l1, "0x0000000000000000000000000000000000000000", cawProfileLedger.address, "0x0000000000000000000000000000000000000000");
   await buyAndBurn.setCawProfile(cawProfile.address);
   await cawProfileLedger.setL1Peer(l1, cawProfile.address, false);
   await l2Endpoint.setDestLzEndpoint(cawProfile.address, l1Endpoint.address);
-  await cawProfile.setL2Peer(l2, cawProfileLedger.address);
+  await cawProfile.setPeer(l2, toBytes32(cawProfileLedger.address));
 
   await networkManager.createNetwork("Test Network", accounts[0], l2, 0, 0, 0, 0, "500000000000");
   const networkId = 1;
@@ -402,8 +404,8 @@ contract('Token-scoped sessions', function (accounts) {
     expect(Number(sessBefore.expiry)).to.be.greaterThan(0, 'session should be valid before transfer');
 
     // Transfer tokenA to userB via L1 transferAndSync (LZ mock mirrors to L2).
-    const quote = await setup.quoter.syncTransferQuote(tokenA, userB, false);
-    await setup.cawProfile.transferAndSync(userB, tokenA, quote.lzTokenFee, {
+    const quote = await setup.quoter.syncTransferQuote(tokenA, userB, l2, false);
+    await setup.cawProfile.transferAndSync(userB, tokenA, l2, quote.lzTokenFee, {
       from: userA, value: quote.nativeFee.toString(),
     });
 
@@ -412,8 +414,8 @@ contract('Token-scoped sessions', function (accounts) {
     expect(Number(sessAfter.expiry)).to.equal(0, 'session must be invalidated after transfer');
 
     // Transfer tokenA back to userA for subsequent tests.
-    const quote2 = await setup.quoter.syncTransferQuote(tokenA, userA, false);
-    await setup.cawProfile.transferAndSync(userA, tokenA, quote2.lzTokenFee, {
+    const quote2 = await setup.quoter.syncTransferQuote(tokenA, userA, l2, false);
+    await setup.cawProfile.transferAndSync(userA, tokenA, l2, quote2.lzTokenFee, {
       from: userB, value: quote2.nativeFee.toString(),
     });
   });
@@ -486,8 +488,8 @@ contract('Token-scoped sessions', function (accounts) {
     });
 
     // Transfer tokenA to userB.
-    const quote = await setup.quoter.syncTransferQuote(tokenA, userB, false);
-    await setup.cawProfile.transferAndSync(userB, tokenA, quote.lzTokenFee, {
+    const quote = await setup.quoter.syncTransferQuote(tokenA, userB, l2, false);
+    await setup.cawProfile.transferAndSync(userB, tokenA, l2, quote.lzTokenFee, {
       from: userA, value: quote.nativeFee.toString(),
     });
 
@@ -500,8 +502,8 @@ contract('Token-scoped sessions', function (accounts) {
     expect(Number(sessB.expiry)).to.be.greaterThan(0, 'tokenB session must survive tokenA transfer');
 
     // Restore tokenA ownership for later tests.
-    const quote2 = await setup.quoter.syncTransferQuote(tokenA, userA, false);
-    await setup.cawProfile.transferAndSync(userA, tokenA, quote2.lzTokenFee, {
+    const quote2 = await setup.quoter.syncTransferQuote(tokenA, userA, l2, false);
+    await setup.cawProfile.transferAndSync(userA, tokenA, l2, quote2.lzTokenFee, {
       from: userB, value: quote2.nativeFee.toString(),
     });
   });

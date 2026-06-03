@@ -34,6 +34,8 @@ contract("CawProfileMarketplace", (accounts) => {
     uriGenerator = await CawProfileURI.new(fontA.address, fontB.address);
     networkManager = await CawNetworkManager.new(deployer);
 
+    const toBytes32 = (addr) => "0x000000000000000000000000" + addr.slice(2).toLowerCase();
+
     cawProfiles = await CawProfile.new(
       token.address,
       uriGenerator.address,
@@ -41,7 +43,9 @@ contract("CawProfileMarketplace", (accounts) => {
       networkManager.address,
       lzEndpoint.address,
       l1Eid,
-      "0x0000000000000000000000000000000000000000"
+      "0x0000000000000000000000000000000000000000",
+      "0x0000000000000000000000000000000000000000", // no bypassLZ ledger in marketplace tests
+      "0x0000000000000000000000000000000000000000"  // no PathwayExpander
     );
 
     const mockRouter = await MockSwapRouter.new(token.address);
@@ -53,9 +57,9 @@ contract("CawProfileMarketplace", (accounts) => {
 
     await cawProfiles.setMinter(minter.address);
 
-    // Set up a dummy L2 peer (needed for mint to not revert on peerWithMaxPendingTransfers)
+    // Set up a dummy L2 peer (mint path needs at least one peer registered).
     const dummyL2Eid = 40245;
-    await cawProfiles.setL2Peer(dummyL2Eid, accounts[9]); // dummy peer address
+    await cawProfiles.setPeer(dummyL2Eid, toBytes32(accounts[9])); // dummy peer address
 
     // Create a network (needed for minting)
     await networkManager.createNetwork("Test Network", deployer, dummyL2Eid, 0, 0, 0, 0, "500000000000");
@@ -65,7 +69,7 @@ contract("CawProfileMarketplace", (accounts) => {
 
     // Deploy marketplace with the payment-token allowlist baked in.
     // The marketplace has no admin — allowed tokens are fixed at construction.
-    marketplace = await CawProfileMarketplace.new(cawProfiles.address, [paymentToken.address]);
+    marketplace = await CawProfileMarketplace.new(cawProfiles.address, dummyL2Eid, [paymentToken.address]);
 
     // Mint CAW tokens for users
     const mintAmount = web3.utils.toWei("1000000000000", "ether"); // 1T CAW
@@ -1026,7 +1030,7 @@ contract("CawProfileMarketplace", (accounts) => {
     });
 
     it("can deploy with no extra tokens (ETH-only marketplace)", async () => {
-      const ethOnly = await CawProfileMarketplace.new(cawProfiles.address, []);
+      const ethOnly = await CawProfileMarketplace.new(cawProfiles.address, 40245, []);
       assert.equal(await ethOnly.allowedPaymentTokens('0x0000000000000000000000000000000000000000'), true);
       assert.equal(await ethOnly.allowedPaymentTokens(paymentToken.address), false);
     });

@@ -62,24 +62,30 @@ contract("CawProfileMinter — ZAP (pay-with-ETH) flows", function(accounts) {
     networkManager = await CawNetworkManager.new(buyAndBurn.address);
     uriGen = await deployURI();
 
+    const toBytes32 = (addr) => "0x000000000000000000000000" + addr.slice(2).toLowerCase();
+
     // L2-storage mirror (cross-chain)
     cawProfileLedger = await CawProfileLedger.new(l1, l2Endpoint.address, "0x0000000000000000000000000000000000000000");
     await l1Endpoint.setDestLzEndpoint(cawProfileLedger.address, l2Endpoint.address);
 
+    // L1-co-deployed mirror (bypassLZ) — must be deployed BEFORE CawProfile
+    // so it can be passed as the immutable `cawProfileLedger` constructor arg.
+    cawProfileLedgerMainnet = await CawProfileLedger.new(l1, l1Endpoint.address, "0x0000000000000000000000000000000000000000");
+
     cawProfile = await CawProfile.new(
       token.address, uriGen.address, buyAndBurn.address,
       networkManager.address, l1Endpoint.address, l1,
+      "0x0000000000000000000000000000000000000000",
+      cawProfileLedgerMainnet.address,
       "0x0000000000000000000000000000000000000000"
     );
     await buyAndBurn.setCawProfile(cawProfile.address);
     await cawProfileLedger.setL1Peer(l1, cawProfile.address, false);
     await l2Endpoint.setDestLzEndpoint(cawProfile.address, l1Endpoint.address);
-    await cawProfile.setL2Peer(l2, cawProfileLedger.address);
+    await cawProfile.setPeer(l2, toBytes32(cawProfileLedger.address));
 
-    // L1-co-deployed mirror (bypassLZ)
-    cawProfileLedgerMainnet = await CawProfileLedger.new(l1, l1Endpoint.address, "0x0000000000000000000000000000000000000000");
+    // bypassLZ ledger: complete its L1 peer link now that cawProfile exists
     await cawProfileLedgerMainnet.setL1Peer(l1, cawProfile.address, true);
-    await cawProfile.setL2Peer(l1, cawProfileLedgerMainnet.address);
 
     // Two networks to exercise both branches (zero fees to keep ETH math clean)
     await networkManager.createNetwork("L2 Network", accounts[0], l2, 0, 0, 0, 0, "500000000000");
