@@ -1712,6 +1712,7 @@ class MultiChainDeployer {
       console.log(`   Predicted ${config.predictedSiblingKey} address (nonce ${nonce + 1}): ${siblingAddr}`);
     }
 
+
     const args = config.constructorArgs(this.state, chainKey, this.env);
     console.log(`\nDeploying ${contractKey} to ${chainKey}...`);
     console.log(`   Constructor args:`, args);

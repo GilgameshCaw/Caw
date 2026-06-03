@@ -186,12 +186,12 @@ contract CawProfile is
     gasBaseFor[_allowFreeAuthSelector]           =  80_000;
     gasBaseFor[_setNetworkTipTargetSelector]     =  80_000;
 
-    // Hand OApp ownership to PathwayExpander at deploy time so the only
-    // remaining admin lever on this contract is the addPeer lane for new
-    // eids. PathwayExpander.addPeer enforces peers[eid] == 0 (existing
-    // peers are immutable). Skip when _pathwayExpander == address(0) for
-    // dev deploys where the deployer EOA retains ownership.
-    if (_pathwayExpander != address(0)) _transferOwnership(_pathwayExpander);
+    // _pathwayExpander parameter retained for API compatibility but the
+    // constructor no longer transfers ownership here — that broke the
+    // post-deploy `setMinter` linking step. Ownership handover is done
+    // by the Phase 7 `transferOwnership → PathwayExpander_L1` linking step
+    // AFTER setMinter has run. Silence unused-param warning:
+    _pathwayExpander;
   }
 
   /// @notice Inherited OApp `setPeer` override. Locked once per eid so a
