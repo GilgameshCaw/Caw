@@ -505,9 +505,10 @@ contract CawProfileLedger is
   }
 
   /// @notice Apply a batch of ownership updates from L1 transfers.
-  /// @dev Only callable from `_lzReceive`. Each entry overwrites `ownerOf[tokenId]` with the new owner.
+  /// @dev Callable from `_lzReceive` (cross-chain) OR directly by the L1 CawProfile
+  ///      contract in bypassLZ co-deployment mode (same trust boundary).
   function updateOwners(uint32[] calldata tokenIds, address[] calldata owners, uint64[] calldata stamps) public {
-    if (!(fromLZ)) revert OnlyLZ();
+    if (!(fromLZ || (bypassLZ && _msgSender() == address(cawProfile)))) revert OnlyLZ();
     for (uint i = 0; i < tokenIds.length; i++)
       _setOwnerOf(tokenIds[i], owners[i], stamps[i]);
   }

@@ -367,11 +367,8 @@ const CONTRACTS = {
       state.addresses.CawFontDataA,
       state.addresses.CawFontDataB,
     ],
-    // Dependents (CawProfile) have a runtime setter (`setUriGenerator`) so a
-    // URI redeploy does NOT need to cascade. The post-deploy linking step
-    // `Link CawProfile to CawProfileURI` handles rewiring. This breaks the normal
-    // transitive-closure cascade at this node.
-    cascadeBreak: true,
+    // No cascadeBreak: `uriGenerator` is now immutable in CawProfile, so a URI
+    // redeploy MUST cascade to a CawProfile redeploy. There is no setter.
   },
   MockSwapRouter: {
     artifact: 'MockSwapRouter',
@@ -927,9 +924,6 @@ const LINKING_STEPS = [
     condition: (state) => state.addresses.CawProfile && state.addresses.CawProfileMinter,
   },
   {
-    // This linking step exists because CawProfileURI has cascadeBreak=true:
-    // redeploying CawProfileURI does NOT redeploy CawProfile, so we need to
-    // rewire the URI generator address here via the setter.
     // Wire CawProfile into CawNetworkManager so setAuthFee auto-propagates
     // allowFreeAuth to L2 when the zero/non-zero boundary is crossed.
     // One-shot: reverts on second call. skipIf reads the live cawProfile slot.
@@ -949,9 +943,9 @@ const LINKING_STEPS = [
       } catch { return false; }
     },
   },
-  // CawProfileURI is now wired via the CawProfile constructor (immutable) — no setUriGenerator step.
-  // CawProfileURI's `cascadeBreak: true` means changing the URI generator now requires a CawProfile
-  // redeploy too. Removed setter is intentional: see "no admin powers except path expansion" principle.
+  // CawProfileURI is wired via the CawProfile constructor (immutable) — no setUriGenerator step.
+  // A URI generator change requires a full CawProfile redeploy (cascade handles it).
+  // Removed setter is intentional: see "no admin powers except path expansion" principle.
   {
     name: 'Link CawProfileLedger_L1 to CawActions_L1',
     chain: 'L1',
