@@ -8,16 +8,6 @@ const BIRD_PATH = new Path2D(
 const SVG_W = 355.2
 const SVG_H = 190.29
 
-// Wing-flap poses: vertical scale factors applied around the bird's vertical center.
-// 0 = wings up, 1 = mid (natural spread), 2 = wings down.
-// We apply a non-uniform Y scale around SVG_H/2 to simulate the flap arc.
-const FLAP_POSES = [0.55, 1.0, 1.35] // scaleY per pose (3 frames: up, mid, down)
-const FLAP_POSES_COUNT = FLAP_POSES.length
-
-// Base flap rate in cycles per second, scales with bird speed
-const FLAP_BASE_HZ = 8   // flaps/sec at MIN_SPEED
-const FLAP_MAX_HZ  = 13  // flaps/sec at MAX_SPEED
-
 function getBoidCount(): number {
   const area = window.innerWidth * window.innerHeight
   // ~1000 at 1920x1080, scale linearly with screen area, min 150
@@ -47,11 +37,10 @@ interface Boid {
   vx: number
   vy: number
   bright: 'none' | 'gold' | 'white'
-  heading: number  // smoothed rotation angle
-  sepMult: number  // multiplier for separation radius
-  opacity: number  // per-bird opacity variation
+  heading: number // smoothed rotation angle
+  sepMult: number // multiplier for separation radius
+  opacity: number // per-bird opacity variation
   gradFlip: boolean // gradient direction for bright birds
-  flapPhase: number // 0..1, position within flap cycle (random init so birds aren't in sync)
 }
 
 
@@ -82,7 +71,6 @@ export default function BoidsBg({ isDark }: { isDark: boolean }) {
         sepMult: 0.5 + Math.random(), // multiplier for separation radius
         opacity: 0.07 + Math.random() * 0.03,
         gradFlip: Math.random() < 0.5,
-        flapPhase: Math.random(), // random init so birds aren't synchronized
       })
     }
     boidsRef.current = boids
@@ -114,96 +102,71 @@ export default function BoidsBg({ isDark }: { isDark: boolean }) {
     resize()
     window.addEventListener('resize', resize)
 
-    // Pre-render bird sprites onto offscreen canvases for performance.
-    // Each tier is now an array of per-pose canvases: sprites[pose].
-    // Total sprites: 3 poses × (5 dark-buckets + 5 light-buckets + 2 gold-flip + 2 white-flip) = 42 canvases.
-    const SPRITE_PAD = 14  // extra pad so wings-up pose (compressed) centers cleanly
+    // Pre-render bird sprites onto offscreen canvases for performance
+    const SPRITE_PAD = 10
     const spriteW = Math.ceil(SVG_W * BOID_SCALE) + SPRITE_PAD * 2
     const spriteH = Math.ceil(SVG_H * BOID_SCALE) + SPRITE_PAD * 2
 
-    // Render one pose of the bird. `wingScaleY` is applied around the bird's
-    // vertical center (SVG_H/2) so the body stays approximately anchored while wings arc.
-    function renderSprite(
-      fillFn: (sctx: CanvasRenderingContext2D) => void,
-      wingScaleY: number,
-    ): HTMLCanvasElement {
+    function renderSprite(fillFn: (sctx: CanvasRenderingContext2D) => void): HTMLCanvasElement {
       const c = document.createElement('canvas')
       c.width = spriteW
       c.height = spriteH
       const sctx = c.getContext('2d')!
       sctx.translate(SPRITE_PAD, SPRITE_PAD)
       sctx.scale(BOID_SCALE, BOID_SCALE)
-      // Apply non-uniform Y scale around SVG_H/2 to fake wing articulation
-      if (wingScaleY !== 1.0) {
-        const cy = SVG_H / 2
-        sctx.translate(0, cy)
-        sctx.scale(1, wingScaleY)
-        sctx.translate(0, -cy)
-      }
       fillFn(sctx)
       sctx.fill(BIRD_PATH)
       return c
     }
 
+    // Dim bird sprites (one per unique opacity — batch into a few buckets)
     const DIM_BUCKETS = 5
-
-    // dimSpritesDark[bucket][pose], dimSpritesLight[bucket][pose]
-    const dimSpritesDark: HTMLCanvasElement[][] = []
-    const dimSpritesLight: HTMLCanvasElement[][] = []
+    const dimSpritesDark: HTMLCanvasElement[] = []
+    const dimSpritesLight: HTMLCanvasElement[] = []
     for (let i = 0; i < DIM_BUCKETS; i++) {
       const opacity = 0.07 + (i / (DIM_BUCKETS - 1)) * 0.03
-      const darkPoses: HTMLCanvasElement[] = []
-      const lightPoses: HTMLCanvasElement[] = []
-      for (let p = 0; p < FLAP_POSES_COUNT; p++) {
-        const scaleY = FLAP_POSES[p]
-        darkPoses.push(renderSprite(sctx => {
-          const grad = sctx.createLinearGradient(0, 0, SVG_W, SVG_H)
-          const hi = `rgba(255,255,255,${(opacity * 1.3).toFixed(4)})`
-          const lo = `rgba(255,255,255,${(opacity * 0.7).toFixed(4)})`
-          grad.addColorStop(0, hi)
-          grad.addColorStop(0.5, lo)
-          grad.addColorStop(1, hi)
-          sctx.fillStyle = grad
-        }, scaleY))
-        lightPoses.push(renderSprite(sctx => {
-          const grad = sctx.createLinearGradient(0, 0, SVG_W, SVG_H)
-          const hi = `rgba(0,0,0,${(opacity * 1.3).toFixed(4)})`
-          const lo = `rgba(0,0,0,${(opacity * 0.7).toFixed(4)})`
-          grad.addColorStop(0, hi)
-          grad.addColorStop(0.5, lo)
-          grad.addColorStop(1, hi)
-          sctx.fillStyle = grad
-        }, scaleY))
-      }
-      dimSpritesDark.push(darkPoses)
-      dimSpritesLight.push(lightPoses)
+      dimSpritesDark.push(renderSprite(sctx => {
+        const grad = sctx.createLinearGradient(0, 0, SVG_W, SVG_H)
+        const hi = `rgba(255,255,255,${(opacity * 1.3).toFixed(4)})`
+        const lo = `rgba(255,255,255,${(opacity * 0.7).toFixed(4)})`
+        grad.addColorStop(0, hi)
+        grad.addColorStop(0.5, lo)
+        grad.addColorStop(1, hi)
+        sctx.fillStyle = grad
+      }))
+      dimSpritesLight.push(renderSprite(sctx => {
+        const grad = sctx.createLinearGradient(0, 0, SVG_W, SVG_H)
+        const hi = `rgba(0,0,0,${(opacity * 1.3).toFixed(4)})`
+        const lo = `rgba(0,0,0,${(opacity * 0.7).toFixed(4)})`
+        grad.addColorStop(0, hi)
+        grad.addColorStop(0.5, lo)
+        grad.addColorStop(1, hi)
+        sctx.fillStyle = grad
+      }))
     }
 
-    // goldSprites[flip][pose], whiteSprites[flip][pose]
-    const goldSprites: HTMLCanvasElement[][] = [false, true].map(flip =>
-      FLAP_POSES.map(scaleY => renderSprite(sctx => {
-        const grad = sctx.createLinearGradient(0, 0, SVG_W, SVG_H)
-        const edgeHi = 'rgba(255,230,120,0.75)'
-        const centerHi = 'rgba(255,230,120,0.50)'
-        const lo = 'rgba(200,160,40,0.45)'
-        grad.addColorStop(0, flip ? lo : edgeHi)
-        grad.addColorStop(0.5, flip ? centerHi : lo)
-        grad.addColorStop(1, flip ? lo : edgeHi)
-        sctx.fillStyle = grad
-      }, scaleY))
-    )
+    // Gold sprites (two variants for gradFlip)
+    const goldSprites = [false, true].map(flip => renderSprite(sctx => {
+      const grad = sctx.createLinearGradient(0, 0, SVG_W, SVG_H)
+      const edgeHi = 'rgba(255,230,120,0.75)'
+      const centerHi = 'rgba(255,230,120,0.50)'
+      const lo = 'rgba(200,160,40,0.45)'
+      grad.addColorStop(0, flip ? lo : edgeHi)
+      grad.addColorStop(0.5, flip ? centerHi : lo)
+      grad.addColorStop(1, flip ? lo : edgeHi)
+      sctx.fillStyle = grad
+    }))
 
-    const whiteSprites: HTMLCanvasElement[][] = [false, true].map(flip =>
-      FLAP_POSES.map(scaleY => renderSprite(sctx => {
-        const grad = sctx.createLinearGradient(0, 0, SVG_W, SVG_H)
-        const whi = isDark ? 'rgba(255,255,255,0.65)' : 'rgba(0,0,0,0.65)'
-        const wlo = isDark ? 'rgba(200,200,210,0.35)' : 'rgba(30,30,20,0.35)'
-        grad.addColorStop(0, flip ? wlo : whi)
-        grad.addColorStop(0.5, flip ? whi : wlo)
-        grad.addColorStop(1, flip ? wlo : whi)
-        sctx.fillStyle = grad
-      }, scaleY))
-    )
+    // White/black bright sprites (two variants for gradFlip)
+    const whiteSprites = [false, true].map(flip => renderSprite(sctx => {
+      const grad = sctx.createLinearGradient(0, 0, SVG_W, SVG_H)
+      const whi = isDark ? 'rgba(255,255,255,0.65)' : 'rgba(0,0,0,0.65)'
+      const wlo = isDark ? 'rgba(200,200,210,0.35)' : 'rgba(30,30,20,0.35)'
+      grad.addColorStop(0, flip ? wlo : whi)
+      grad.addColorStop(0.5, flip ? whi : wlo)
+      grad.addColorStop(1, flip ? wlo : whi)
+      sctx.fillStyle = grad
+    }))
 
     const onMouseMove = (e: MouseEvent) => {
       mouseRef.current.x = e.clientX + OVERFLOW
@@ -225,12 +188,8 @@ export default function BoidsBg({ isDark }: { isDark: boolean }) {
     window.addEventListener('touchend', onTouchEnd)
 
     let simHalf = 0 // alternate which half of boids we simulate
-    let lastTime = performance.now()
 
-    const tick = (now: number) => {
-      const dt = Math.min((now - lastTime) / 1000, 0.05) // seconds, capped at 50ms
-      lastTime = now
-
+    const tick = () => {
       const boids = boidsRef.current
       const { separationRadius, alignmentRadius, cohesionRadius, separationWeight, alignmentWeight, cohesionWeight, wanderStrength } = config
       ctx.clearRect(0, 0, w, h)
@@ -370,12 +329,6 @@ export default function BoidsBg({ isDark }: { isDark: boolean }) {
           b.vy = (b.vy / speed) * minSpd
         }
 
-        // Advance flap phase — rate scales with current speed
-        const currentSpeed = Math.sqrt(b.vx * b.vx + b.vy * b.vy)
-        const speedFrac = Math.max(0, Math.min(1, (currentSpeed - MIN_SPEED) / (MAX_SPEED - MIN_SPEED)))
-        const flapHz = FLAP_BASE_HZ + speedFrac * (FLAP_MAX_HZ - FLAP_BASE_HZ)
-        b.flapPhase = (b.flapPhase + flapHz * dt) % 1.0
-
         b.x += b.vx
         b.y += b.vy
       }
@@ -389,17 +342,14 @@ export default function BoidsBg({ isDark }: { isDark: boolean }) {
         while (delta < -Math.PI) delta += Math.PI * 2
         b.heading += delta * 0.03
 
-        // Select flap frame from current phase
-        const poseIdx = Math.floor(b.flapPhase * FLAP_POSES_COUNT) % FLAP_POSES_COUNT
-
         let sprite: HTMLCanvasElement
         if (b.bright === 'gold') {
-          sprite = goldSprites[b.gradFlip ? 1 : 0][poseIdx]
+          sprite = goldSprites[b.gradFlip ? 1 : 0]
         } else if (b.bright === 'white') {
-          sprite = whiteSprites[b.gradFlip ? 1 : 0][poseIdx]
+          sprite = whiteSprites[b.gradFlip ? 1 : 0]
         } else {
           const bucket = Math.min(DIM_BUCKETS - 1, Math.max(0, Math.round((b.opacity - 0.04) / 0.02 * (DIM_BUCKETS - 1))))
-          sprite = isDark ? dimSpritesDark[bucket][poseIdx] : dimSpritesLight[bucket][poseIdx]
+          sprite = isDark ? dimSpritesDark[bucket] : dimSpritesLight[bucket]
         }
 
         ctx.save()
