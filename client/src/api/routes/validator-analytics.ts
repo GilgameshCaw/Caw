@@ -10,10 +10,11 @@ const router = Router()
  * can include the correct tip when signing actions.
  */
 // Default per-action ETH floor when the operator hasn't set a row yet.
-// 272727272727 wei ≈ $0.0009/action at $3300/ETH. Picked so the FE
-// "Tip / action" line shows a sensible cost out of the box; the operator
-// can override via PATCH /api/validator-analytics/settings.
-const DEFAULT_MIN_TIP_PER_ACTION_WEI = '272727272727'
+// 450000000000 wei ≈ $0.0009/action at $2000/ETH (the conservative anchor).
+// Picked so the FE "Tip / action" line shows a sensible cost out of the box;
+// the operator can override via PATCH /api/validator-analytics/settings or
+// the MIN_TIP_PER_ACTION_WEI env var.
+const DEFAULT_MIN_TIP_PER_ACTION_WEI = '450000000000'
 
 router.get('/tip-config', async (_req, res) => {
   try {
