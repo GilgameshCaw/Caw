@@ -2400,6 +2400,8 @@ export const cawProfileAbi = [
       { name: '_endpoint', internalType: 'address', type: 'address' },
       { name: 'mainnetEid', internalType: 'uint32', type: 'uint32' },
       { name: '_priceReader', internalType: 'address', type: 'address' },
+      { name: '_cawProfileLedger', internalType: 'address', type: 'address' },
+      { name: '_pathwayExpander', internalType: 'address', type: 'address' },
     ],
     stateMutability: 'nonpayable',
   },
@@ -2707,6 +2709,8 @@ export const cawProfileAbi = [
       { name: 'lzDestId', internalType: 'uint32', type: 'uint32' },
       { name: 'lzTokenAmount', internalType: 'uint256', type: 'uint256' },
       { name: 'sessionExtra', internalType: 'bytes', type: 'bytes' },
+      { name: 'sponsorTokenId', internalType: 'uint32', type: 'uint32' },
+      { name: 'repayAmount', internalType: 'uint256', type: 'uint256' },
     ],
     name: 'mintAndDeposit',
     outputs: [],
@@ -2774,13 +2778,6 @@ export const cawProfileAbi = [
     inputs: [{ name: 'tokenId', internalType: 'uint256', type: 'uint256' }],
     name: 'ownerOf',
     outputs: [{ name: '', internalType: 'address', type: 'address' }],
-    stateMutability: 'view',
-  },
-  {
-    type: 'function',
-    inputs: [],
-    name: 'peerWithMaxPendingTransfers',
-    outputs: [{ name: '', internalType: 'uint32', type: 'uint32' }],
     stateMutability: 'view',
   },
   {
@@ -2881,16 +2878,6 @@ export const cawProfileAbi = [
   {
     type: 'function',
     inputs: [
-      { name: '_eid', internalType: 'uint32', type: 'uint32' },
-      { name: '_peer', internalType: 'address', type: 'address' },
-    ],
-    name: 'setL2Peer',
-    outputs: [],
-    stateMutability: 'nonpayable',
-  },
-  {
-    type: 'function',
-    inputs: [
       { name: 'refundTo', internalType: 'address payable', type: 'address' },
     ],
     name: 'setLzRefundTo',
@@ -2911,13 +2898,6 @@ export const cawProfileAbi = [
       { name: '_peer', internalType: 'bytes32', type: 'bytes32' },
     ],
     name: 'setPeer',
-    outputs: [],
-    stateMutability: 'nonpayable',
-  },
-  {
-    type: 'function',
-    inputs: [{ name: '_gui', internalType: 'address', type: 'address' }],
-    name: 'setUriGenerator',
     outputs: [],
     stateMutability: 'nonpayable',
   },
@@ -2998,6 +2978,7 @@ export const cawProfileAbi = [
     inputs: [
       { name: 'to', internalType: 'address', type: 'address' },
       { name: 'tokenId', internalType: 'uint256', type: 'uint256' },
+      { name: 'lzDestId', internalType: 'uint32', type: 'uint32' },
       { name: 'lzTokenAmount', internalType: 'uint256', type: 'uint256' },
     ],
     name: 'transferAndSync',
@@ -3021,13 +3002,6 @@ export const cawProfileAbi = [
     name: 'transferOwnership',
     outputs: [],
     stateMutability: 'nonpayable',
-  },
-  {
-    type: 'function',
-    inputs: [{ name: 'lzDestId', internalType: 'uint32', type: 'uint32' }],
-    name: 'updatesNeededForPeer',
-    outputs: [{ name: '', internalType: 'uint256', type: 'uint256' }],
-    stateMutability: 'view',
   },
   {
     type: 'function',
@@ -3226,15 +3200,6 @@ export const cawProfileAbi = [
     type: 'event',
     anonymous: false,
     inputs: [
-      { name: 'eid', internalType: 'uint32', type: 'uint32', indexed: true },
-      { name: 'peer', internalType: 'address', type: 'address', indexed: true },
-    ],
-    name: 'L2PeerSet',
-  },
-  {
-    type: 'event',
-    anonymous: false,
-    inputs: [
       {
         name: 'minter',
         internalType: 'address',
@@ -3348,6 +3313,7 @@ export const cawProfileAbi = [
     name: 'OnlyPeer',
   },
   { type: 'error', inputs: [], name: 'RefundFailed' },
+  { type: 'error', inputs: [], name: 'RepayCrossChainUnsupported' },
   { type: 'error', inputs: [], name: 'TooManyChains' },
   { type: 'error', inputs: [], name: 'Unauthorized' },
   { type: 'error', inputs: [], name: 'ZeroAddr' },
@@ -3518,6 +3484,13 @@ export const cawProfileLedgerAbi = [
     name: 'erc1271Sibling',
     outputs: [{ name: '', internalType: 'address', type: 'address' }],
     stateMutability: 'view',
+  },
+  {
+    type: 'function',
+    inputs: [{ name: 'tokenId', internalType: 'uint32', type: 'uint32' }],
+    name: 'forgiveSponsorRepay',
+    outputs: [],
+    stateMutability: 'nonpayable',
   },
   {
     type: 'function',
@@ -3757,6 +3730,17 @@ export const cawProfileLedgerAbi = [
   {
     type: 'function',
     inputs: [
+      { name: 'tokenId', internalType: 'uint32', type: 'uint32' },
+      { name: 'sponsorTokenId', internalType: 'uint32', type: 'uint32' },
+      { name: 'repayAmount', internalType: 'uint256', type: 'uint256' },
+    ],
+    name: 'registerSponsorRepayFromL1',
+    outputs: [],
+    stateMutability: 'nonpayable',
+  },
+  {
+    type: 'function',
+    inputs: [
       { name: 'profileId', internalType: 'uint32', type: 'uint32' },
       { name: 'sessionKey', internalType: 'address', type: 'address' },
       { name: 'expiry', internalType: 'uint64', type: 'uint64' },
@@ -3778,6 +3762,13 @@ export const cawProfileLedgerAbi = [
     name: 'renounceOwnership',
     outputs: [],
     stateMutability: 'nonpayable',
+  },
+  {
+    type: 'function',
+    inputs: [{ name: '', internalType: 'uint32', type: 'uint32' }],
+    name: 'repaySponsorTokenId',
+    outputs: [{ name: '', internalType: 'uint32', type: 'uint32' }],
+    stateMutability: 'view',
   },
   {
     type: 'function',
@@ -3966,6 +3957,33 @@ export const cawProfileLedgerAbi = [
     ],
     name: 'spendDistributeAndAddTokensToBalance',
     outputs: [],
+    stateMutability: 'nonpayable',
+  },
+  {
+    type: 'function',
+    inputs: [{ name: '', internalType: 'uint32', type: 'uint32' }],
+    name: 'sponsorRepay',
+    outputs: [{ name: '', internalType: 'uint256', type: 'uint256' }],
+    stateMutability: 'view',
+  },
+  {
+    type: 'function',
+    inputs: [
+      { name: 'tokenId', internalType: 'uint32', type: 'uint32' },
+      { name: 'amount', internalType: 'uint256', type: 'uint256' },
+    ],
+    name: 'sponsorSweepPreview',
+    outputs: [{ name: 'swept', internalType: 'uint256', type: 'uint256' }],
+    stateMutability: 'view',
+  },
+  {
+    type: 'function',
+    inputs: [
+      { name: 'tokenId', internalType: 'uint32', type: 'uint32' },
+      { name: 'amount', internalType: 'uint256', type: 'uint256' },
+    ],
+    name: 'sweepSponsorRepay',
+    outputs: [{ name: 'swept', internalType: 'uint256', type: 'uint256' }],
     stateMutability: 'nonpayable',
   },
   {
@@ -4239,6 +4257,81 @@ export const cawProfileLedgerAbi = [
         name: 'tokenId',
         internalType: 'uint32',
         type: 'uint32',
+        indexed: true,
+      },
+      {
+        name: 'sponsorTokenId',
+        internalType: 'uint32',
+        type: 'uint32',
+        indexed: false,
+      },
+    ],
+    name: 'SponsorRepayForgiven',
+  },
+  {
+    type: 'event',
+    anonymous: false,
+    inputs: [
+      {
+        name: 'tokenId',
+        internalType: 'uint32',
+        type: 'uint32',
+        indexed: true,
+      },
+      {
+        name: 'sponsorTokenId',
+        internalType: 'uint32',
+        type: 'uint32',
+        indexed: false,
+      },
+      {
+        name: 'repayAmount',
+        internalType: 'uint256',
+        type: 'uint256',
+        indexed: false,
+      },
+    ],
+    name: 'SponsorRepayRegistered',
+  },
+  {
+    type: 'event',
+    anonymous: false,
+    inputs: [
+      {
+        name: 'tokenId',
+        internalType: 'uint32',
+        type: 'uint32',
+        indexed: true,
+      },
+      {
+        name: 'sponsorTokenId',
+        internalType: 'uint32',
+        type: 'uint32',
+        indexed: false,
+      },
+      {
+        name: 'swept',
+        internalType: 'uint256',
+        type: 'uint256',
+        indexed: false,
+      },
+      {
+        name: 'remaining',
+        internalType: 'uint256',
+        type: 'uint256',
+        indexed: false,
+      },
+    ],
+    name: 'SponsorRepaySwept',
+  },
+  {
+    type: 'event',
+    anonymous: false,
+    inputs: [
+      {
+        name: 'tokenId',
+        internalType: 'uint32',
+        type: 'uint32',
         indexed: false,
       },
       {
@@ -4269,9 +4362,7 @@ export const cawProfileLedgerAbi = [
     ],
     name: 'Withdrawn',
   },
-  { type: 'error', inputs: [], name: 'BadDate' },
   { type: 'error', inputs: [], name: 'BadNonce' },
-  { type: 'error', inputs: [], name: 'BadParse' },
   { type: 'error', inputs: [], name: 'BadSig' },
   { type: 'error', inputs: [], name: 'Expired' },
   { type: 'error', inputs: [], name: 'InsufficientBalance' },
@@ -4435,6 +4526,7 @@ export const cawProfileMarketplaceAbi = [
     type: 'constructor',
     inputs: [
       { name: '_cawProfile', internalType: 'address', type: 'address' },
+      { name: '_lzDestId', internalType: 'uint32', type: 'uint32' },
       { name: '_paymentTokens', internalType: 'address[]', type: 'address[]' },
     ],
     stateMutability: 'nonpayable',
@@ -4603,6 +4695,13 @@ export const cawProfileMarketplaceAbi = [
       { name: 'highestBidder', internalType: 'address', type: 'address' },
       { name: 'active', internalType: 'bool', type: 'bool' },
     ],
+    stateMutability: 'view',
+  },
+  {
+    type: 'function',
+    inputs: [],
+    name: 'lzDestId',
+    outputs: [{ name: '', internalType: 'uint32', type: 'uint32' }],
     stateMutability: 'view',
   },
   {
@@ -5353,6 +5452,9 @@ export const cawProfileMinterAbi = [
       { name: 'lzTokenAmount', internalType: 'uint256', type: 'uint256' },
       { name: 'permitNonce', internalType: 'uint256', type: 'uint256' },
       { name: 'sig', internalType: 'bytes', type: 'bytes' },
+      { name: 'kycLevel', internalType: 'uint8', type: 'uint8' },
+      { name: 'sponsorTokenId', internalType: 'uint32', type: 'uint32' },
+      { name: 'repayAmount', internalType: 'uint256', type: 'uint256' },
     ],
     name: 'mintAndDepositSponsored',
     outputs: [],
@@ -5457,6 +5559,37 @@ export const cawProfileMinterAbi = [
       },
     ],
     name: 'KycVerifierSet',
+  },
+  {
+    type: 'event',
+    anonymous: false,
+    inputs: [
+      {
+        name: 'tokenId',
+        internalType: 'uint32',
+        type: 'uint32',
+        indexed: true,
+      },
+      {
+        name: 'sponsorTokenId',
+        internalType: 'uint32',
+        type: 'uint32',
+        indexed: false,
+      },
+      {
+        name: 'repayAmount',
+        internalType: 'uint256',
+        type: 'uint256',
+        indexed: false,
+      },
+      {
+        name: 'depositAmount',
+        internalType: 'uint256',
+        type: 'uint256',
+        indexed: false,
+      },
+    ],
+    name: 'SponsorRepaySet',
   },
   {
     type: 'event',
@@ -5755,6 +5888,7 @@ export const cawProfileQuoterAbi = [
     inputs: [
       { name: 'tokenId', internalType: 'uint32', type: 'uint32' },
       { name: 'newOwner', internalType: 'address', type: 'address' },
+      { name: 'lzDestId', internalType: 'uint32', type: 'uint32' },
       { name: 'payInLzToken', internalType: 'bool', type: 'bool' },
     ],
     name: 'syncTransferQuote',
@@ -6248,6 +6382,7 @@ export const iCawProfileTransferAbi = [
     inputs: [
       { name: 'to', internalType: 'address', type: 'address' },
       { name: 'tokenId', internalType: 'uint256', type: 'uint256' },
+      { name: 'lzDestId', internalType: 'uint32', type: 'uint32' },
       { name: 'lzTokenAmount', internalType: 'uint256', type: 'uint256' },
     ],
     name: 'transferAndSync',
