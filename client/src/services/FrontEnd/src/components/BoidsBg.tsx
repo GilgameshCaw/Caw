@@ -60,75 +60,9 @@ const OVERFLOW = 80
 const MOUSE_RADIUS = 120
 const MOUSE_FORCE = 0.8
 
-// Hero bird constants
-const HERO_COUNT   = 4
-const HERO_SCALE   = 2.5   // relative to BOID_SCALE
-const HERO_FLAP_HZ = 14    // they flap fast during the swoop
-const HERO_SPEED   = 0.0015 // t-units per ms (crosses screen in ~650ms)
-const HERO_WAIT_MIN = 3000  // ms before respawn
-const HERO_WAIT_MAX = 9000
-
-// Cubic Bézier helpers
-// Point on curve at t
-function bezierPt(t: number, p0: number, p1: number, p2: number, p3: number): number {
-  const u = 1 - t
-  return u * u * u * p0 + 3 * u * u * t * p1 + 3 * u * t * t * p2 + t * t * t * p3
-}
-// Tangent (derivative) on curve at t — used for heading
-function bezierTan(t: number, p0: number, p1: number, p2: number, p3: number): number {
-  const u = 1 - t
-  return 3 * (u * u * (p1 - p0) + 2 * u * t * (p2 - p1) + t * t * (p3 - p2))
-}
-
-interface HeroBird {
-  // Bézier control points (in canvas coords, including OVERFLOW)
-  x0: number; y0: number
-  x1: number; y1: number
-  x2: number; y2: number
-  x3: number; y3: number
-  t: number         // 0..1 progress along path
-  flapPhase: number
-  gradFlip: boolean
-  waiting: number   // ms remaining before this hero activates (0 = active)
-}
-
-// Generate a fresh random swooping path for a hero bird.
-// Entry/exit edges are randomised; control points create a convincing arc.
-function makeHeroPath(w: number, h: number): HeroBird {
-  // Pick two different edges (0=top,1=right,2=bottom,3=left)
-  const edgeA = Math.floor(Math.random() * 4)
-  let edgeB = Math.floor(Math.random() * 3)
-  if (edgeB >= edgeA) edgeB++
-
-  function edgePt(edge: number): [number, number] {
-    const pad = 60
-    switch (edge) {
-      case 0: return [pad + Math.random() * (w - 2 * pad), -40]   // top
-      case 1: return [w + 40, pad + Math.random() * (h - 2 * pad)] // right
-      case 2: return [pad + Math.random() * (w - 2 * pad), h + 40] // bottom
-      default: return [-40, pad + Math.random() * (h - 2 * pad)]   // left
-    }
-  }
-
-  const [x0, y0] = edgePt(edgeA)
-  const [x3, y3] = edgePt(edgeB)
-
-  // Control points: offset inward from each endpoint toward the screen center,
-  // then perturb for variety so arcs differ each swoop
-  const cx = w / 2, cy = h / 2
-  const spread = 0.35 + Math.random() * 0.3
-  const x1 = x0 + (cx - x0) * spread + (Math.random() - 0.5) * w * 0.4
-  const y1 = y0 + (cy - y0) * spread + (Math.random() - 0.5) * h * 0.4
-  const x2 = x3 + (cx - x3) * spread + (Math.random() - 0.5) * w * 0.4
-  const y2 = y3 + (cy - y3) * spread + (Math.random() - 0.5) * h * 0.4
-
-  return { x0, y0, x1, y1, x2, y2, x3, y3, t: 0, flapPhase: Math.random(), gradFlip: Math.random() < 0.5, waiting: 0 }
-}
-
-export default function BoidsBg({ isDark, heroBirds = true }: { isDark: boolean; heroBirds?: boolean }) {
+export default function BoidsBg({ isDark }: { isDark: boolean }) {
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const boidsRef = useRef<Boid[]>([])
-  const heroRef = useRef<HeroBird[]>([])
   const animRef = useRef<number>(0)
   const mouseRef = useRef<{ x: number, y: number, active: boolean }>({ x: 0, y: 0, active: false })
 
@@ -174,14 +108,6 @@ export default function BoidsBg({ isDark, heroBirds = true }: { isDark: boolean;
       const targetCount = getBoidCount()
       if (boidsRef.current.length === 0 || Math.abs(boidsRef.current.length - targetCount) > targetCount * 0.3) {
         initBoids(w, h)
-      }
-      // Init hero birds with staggered start delays
-      if (heroBirds && heroRef.current.length === 0) {
-        heroRef.current = Array.from({ length: HERO_COUNT }, (_, i) => {
-          const h2 = makeHeroPath(w, h)
-          h2.waiting = i * (HERO_WAIT_MAX / HERO_COUNT) // stagger entry
-          return h2
-        })
       }
     }
 
@@ -272,54 +198,6 @@ export default function BoidsBg({ isDark, heroBirds = true }: { isDark: boolean;
         const grad = sctx.createLinearGradient(0, 0, SVG_W, SVG_H)
         const whi = isDark ? 'rgba(255,255,255,0.65)' : 'rgba(0,0,0,0.65)'
         const wlo = isDark ? 'rgba(200,200,210,0.35)' : 'rgba(30,30,20,0.35)'
-        grad.addColorStop(0, flip ? wlo : whi)
-        grad.addColorStop(0.5, flip ? whi : wlo)
-        grad.addColorStop(1, flip ? wlo : whi)
-        sctx.fillStyle = grad
-      }, scaleY))
-    )
-
-    // Hero sprites: same renderSprite function but at HERO_SCALE.
-    // heroGoldSprites[flip][pose], heroWhiteSprites[flip][pose] — 2×3×2 = 12 canvases.
-    const heroSpriteW = Math.ceil(SVG_W * BOID_SCALE * HERO_SCALE) + SPRITE_PAD * 2
-    const heroSpriteH = Math.ceil(SVG_H * BOID_SCALE * HERO_SCALE) + SPRITE_PAD * 2
-
-    function renderHeroSprite(
-      fillFn: (sctx: CanvasRenderingContext2D) => void,
-      wingScaleY: number,
-    ): HTMLCanvasElement {
-      const c = document.createElement('canvas')
-      c.width = heroSpriteW
-      c.height = heroSpriteH
-      const sctx = c.getContext('2d')!
-      sctx.translate(SPRITE_PAD, SPRITE_PAD)
-      sctx.scale(BOID_SCALE * HERO_SCALE, BOID_SCALE * HERO_SCALE)
-      if (wingScaleY !== 1.0) {
-        const cy = SVG_H / 2
-        sctx.translate(0, cy)
-        sctx.scale(1, wingScaleY)
-        sctx.translate(0, -cy)
-      }
-      fillFn(sctx)
-      sctx.fill(BIRD_PATH)
-      return c
-    }
-
-    const heroGoldSprites: HTMLCanvasElement[][] = [false, true].map(flip =>
-      FLAP_POSES.map(scaleY => renderHeroSprite(sctx => {
-        const grad = sctx.createLinearGradient(0, 0, SVG_W, SVG_H)
-        grad.addColorStop(0, flip ? 'rgba(200,160,40,0.70)' : 'rgba(255,230,120,0.90)')
-        grad.addColorStop(0.5, flip ? 'rgba(255,230,120,0.65)' : 'rgba(200,160,40,0.60)')
-        grad.addColorStop(1, flip ? 'rgba(200,160,40,0.70)' : 'rgba(255,230,120,0.90)')
-        sctx.fillStyle = grad
-      }, scaleY))
-    )
-
-    const heroWhiteSprites: HTMLCanvasElement[][] = [false, true].map(flip =>
-      FLAP_POSES.map(scaleY => renderHeroSprite(sctx => {
-        const grad = sctx.createLinearGradient(0, 0, SVG_W, SVG_H)
-        const whi = isDark ? 'rgba(255,255,255,0.80)' : 'rgba(0,0,0,0.80)'
-        const wlo = isDark ? 'rgba(200,200,210,0.50)' : 'rgba(30,30,20,0.50)'
         grad.addColorStop(0, flip ? wlo : whi)
         grad.addColorStop(0.5, flip ? whi : wlo)
         grad.addColorStop(1, flip ? wlo : whi)
@@ -531,46 +409,6 @@ export default function BoidsBg({ isDark, heroBirds = true }: { isDark: boolean;
         ctx.restore()
       }
 
-      // Update and draw hero birds (on top of the flock)
-      if (heroBirds) {
-        const dtMs = dt * 1000
-        for (const hb of heroRef.current) {
-          if (hb.waiting > 0) {
-            hb.waiting -= dtMs
-            continue // not yet visible
-          }
-
-          // Advance along Bézier path
-          hb.t += HERO_SPEED * dtMs
-          hb.flapPhase = (hb.flapPhase + HERO_FLAP_HZ * dt) % 1.0
-
-          if (hb.t >= 1.0) {
-            // Respawn with a new path after a random delay
-            const fresh = makeHeroPath(w, h)
-            fresh.waiting = HERO_WAIT_MIN + Math.random() * (HERO_WAIT_MAX - HERO_WAIT_MIN)
-            Object.assign(hb, fresh)
-            continue
-          }
-
-          const hx = bezierPt(hb.t, hb.x0, hb.x1, hb.x2, hb.x3)
-          const hy = bezierPt(hb.t, hb.y0, hb.y1, hb.y2, hb.y3)
-          const tx = bezierTan(hb.t, hb.x0, hb.x1, hb.x2, hb.x3)
-          const ty = bezierTan(hb.t, hb.y0, hb.y1, hb.y2, hb.y3)
-          const heading = Math.atan2(ty, tx) + Math.PI / 2
-
-          const poseIdx = Math.floor(hb.flapPhase * FLAP_POSES_COUNT) % FLAP_POSES_COUNT
-          // Alternate hero birds between gold and white for variety
-          const heroSprites = heroRef.current.indexOf(hb) % 2 === 0 ? heroGoldSprites : heroWhiteSprites
-          const heroSprite = heroSprites[hb.gradFlip ? 1 : 0][poseIdx]
-
-          ctx.save()
-          ctx.translate(hx, hy)
-          ctx.rotate(heading)
-          ctx.drawImage(heroSprite, -heroSpriteW / 2, -heroSpriteH / 2)
-          ctx.restore()
-        }
-      }
-
       animRef.current = requestAnimationFrame(tick)
     }
 
@@ -578,14 +416,13 @@ export default function BoidsBg({ isDark, heroBirds = true }: { isDark: boolean;
 
     return () => {
       cancelAnimationFrame(animRef.current)
-      heroRef.current = [] // reset so a re-mount reinits hero paths with fresh w/h
       window.removeEventListener('resize', resize)
       window.removeEventListener('mousemove', onMouseMove)
       document.removeEventListener('mouseleave', onMouseLeave)
       window.removeEventListener('touchmove', onTouchMove)
       window.removeEventListener('touchend', onTouchEnd)
     }
-  }, [isDark, initBoids, heroBirds])
+  }, [isDark, initBoids])
 
   return (
     <canvas
