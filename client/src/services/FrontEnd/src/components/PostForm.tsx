@@ -485,6 +485,19 @@ const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess, placehol
   //   - Then a printable key (or onBeforeInput) → replace master with typed char
   //   - Any click / arrow / focus change → clear the all-selected state
   const [allChunksSelected, setAllChunksSelected] = useState(false)
+  // Simulated cross-chunk drag-selection (desktop only, thread mode only).
+  // masterStart/masterEnd are offsets into the master `text` string.
+  // A collapsed range (masterStart===masterEnd) counts as no selection.
+  const [threadSel, setThreadSel] = useState<{
+    startChunk: number; startOffset: number;
+    endChunk: number; endOffset: number;
+    masterStart: number; masterEnd: number;
+  } | null>(null)
+  const threadSelDragging = useRef(false)
+  // Master-text offset at the time the drag started (anchor point).
+  const dragAnchorRef = useRef(0)
+  // rAF gate: true while a mousemove setState is pending this frame.
+  const rafPendingRef = useRef(false)
   // Anchor refs for the GIF / emoji popovers. We portal the popovers
   // to document.body so they aren't clipped by overflow:hidden /
   // overflow:auto ancestors (the home inline composer, ComposeModal,
@@ -1352,7 +1365,11 @@ const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess, placehol
         if (hintRaw) {
           const hint = JSON.parse(hintRaw)
           const age = Date.now() - (hint?.at ?? 0)
-          if (hint?.amount && age < 30 * 60 * 1000) {
+          // 48h TTL matches ProfileChooser.HINT_TTL_MS — see comment there.
+          // Sepolia LZ can take hours, and the validator's waiting_for_deposit
+          // hold runs 48h; a stricter window here would lock the user out of
+          // posting while their deposit is still legitimately in flight.
+          if (hint?.amount && age < 48 * 60 * 60 * 1000) {
             try { localHintWei = BigInt(hint.amount) } catch {}
           }
         }
@@ -2116,6 +2133,25 @@ const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess, placehol
     return best.offset
   }
 
+  // Map a pointer position (clientX, clientY) to a (chunkIdx, localOffset)
+  // pair using the browser's caretRangeFromPoint / caretPositionFromPoint
+  // APIs. Returns null if the point doesn't land inside any chunk textarea.
+  const pointerToChunkOffset = (clientX: number, clientY: number): { chunkIdx: number; localOffset: number } | null => {
+    const range = (document as any).caretRangeFromPoint?.(clientX, clientY)
+      ?? (document as any).caretPositionFromPoint?.(clientX, clientY)
+    if (!range) return null
+    const node: Node = 'startContainer' in range ? range.startContainer : range.offsetNode
+    const offset: number = 'startOffset' in range ? range.startOffset : range.offset
+    for (let i = 0; i < chunkRefs.current.length; i++) {
+      const ta = chunkRefs.current[i]
+      if (ta && (ta === node || ta.contains(node))) {
+        const localOffset = Math.min(offset ?? 0, (chunkSlices[i] ?? '').length)
+        return { chunkIdx: i, localOffset }
+      }
+    }
+    return null
+  }
+
   // Arrow-key navigation BETWEEN chunks. In thread mode, the user expects
   // arrow keys to cross chunk boundaries the same way they cross newlines
   // in a single textarea:
@@ -2173,34 +2209,44 @@ const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess, placehol
         // is visible — only the yellow wrapper tint remains.
         ta.setSelectionRange(ta.value.length, ta.value.length)
         setAllChunksSelected(true)
+        // Clear any partial drag-selection — Cmd-A supersedes it.
+        setThreadSel(null)
         return
       }
     }
-    if (allChunksSelected) {
-      // Copy/Cut → write master text to clipboard.
-      // Copy is non-destructive; KEEP the all-selected highlight so the
-      // user can hit Copy again or extend the action (Cut, Delete, etc.).
-      // Cut clears the master text AND deselects.
+    // Compute the active range: allChunksSelected = whole text;
+    // partial drag-sel = [masterStart, masterEnd) if non-collapsed.
+    const partialRange = threadSel && threadSel.masterEnd > threadSel.masterStart ? threadSel : null
+    const activeRange = allChunksSelected
+      ? { masterStart: 0, masterEnd: text.length }
+      : partialRange
+    const clearBothSelections = () => { setAllChunksSelected(false); setThreadSel(null) }
+    if (activeRange) {
+      // Copy/Cut → write the selected slice to clipboard.
+      // Copy is non-destructive; KEEP the highlight so the user can hit
+      // Copy again or extend the action (Cut, Delete, etc.).
+      // Cut clears the selected range AND deselects.
       if (modKey && (e.key === 'c' || e.key === 'x') && !e.shiftKey && !e.altKey) {
         e.preventDefault()
         // Best-effort: use the Clipboard API; fall back to execCommand if
         // unavailable (e.g. non-secure context). Errors silently no-op —
         // not worth a user-facing toast for a clipboard hiccup.
-        try { void navigator.clipboard.writeText(text) }
+        const selectedText = text.slice(activeRange.masterStart, activeRange.masterEnd)
+        try { void navigator.clipboard.writeText(selectedText) }
         catch { try { document.execCommand('copy') } catch { /* no-op */ } }
         if (e.key === 'x') {
-          setText('')
-          pendingMasterCursorRef.current = 0
-          setAllChunksSelected(false)
+          setText(text.slice(0, activeRange.masterStart) + text.slice(activeRange.masterEnd))
+          pendingMasterCursorRef.current = activeRange.masterStart
+          clearBothSelections()
         }
         return
       }
-      // Backspace / Delete → clear master text.
+      // Backspace / Delete → remove the selected range.
       if (e.key === 'Backspace' || e.key === 'Delete') {
         e.preventDefault()
-        setText('')
-        pendingMasterCursorRef.current = 0
-        setAllChunksSelected(false)
+        setText(text.slice(0, activeRange.masterStart) + text.slice(activeRange.masterEnd))
+        pendingMasterCursorRef.current = activeRange.masterStart
+        clearBothSelections()
         return
       }
       // Arrow keys / Home / End / Escape → just clear the highlight
@@ -2208,19 +2254,19 @@ const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess, placehol
       if (e.key === 'ArrowLeft' || e.key === 'ArrowRight'
           || e.key === 'ArrowUp' || e.key === 'ArrowDown'
           || e.key === 'Home' || e.key === 'End' || e.key === 'Escape') {
-        setAllChunksSelected(false)
+        clearBothSelections()
         // Don't return — let the rest of the arrow-handler run too.
       }
-      // Printable single-char keys (and Enter / Tab) replace master text
+      // Printable single-char keys (and Enter) replace the selected range
       // with that char. onBeforeInput on the chunk textarea catches the
       // typed input path too, but doing it here covers Enter (which
       // doesn't go through onBeforeInput as a textInputType).
       else if (e.key.length === 1 || e.key === 'Enter') {
         e.preventDefault()
         const replacement = e.key === 'Enter' ? '\n' : e.key
-        setText(replacement)
-        pendingMasterCursorRef.current = replacement.length
-        setAllChunksSelected(false)
+        setText(text.slice(0, activeRange.masterStart) + replacement + text.slice(activeRange.masterEnd))
+        pendingMasterCursorRef.current = activeRange.masterStart + replacement.length
+        clearBothSelections()
         return
       }
     }
@@ -2420,7 +2466,7 @@ const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess, placehol
   // composite during keyboard input. The only property we actually
   // want to fade is background-color on the dark/light toggle.
   return (
-      <div className={`${composeMode ? 'px-0 py-4' : replyTo ? 'p-2' : 'p-4'} transition-colors duration-300 ${isDark ? 'bg-black' : 'bg-white'} md:max-h-[550px] md:overflow-y-auto ${
+      <div className={`${composeMode ? 'px-0 py-4' : replyTo ? 'p-2' : 'p-4'} transition-colors duration-300 ${isDark ? 'bg-black' : 'bg-white'} ${
         hasInlineFeedDraft ? 'md:static md:p-4 md:pt-4 md:pb-4 fixed left-0 right-0 bottom-0 top-16 z-[60] overflow-y-auto pt-14 pb-[calc(env(safe-area-inset-bottom)+90px)]' : ''
       } ${composeMode ? 'flex-1 min-h-0 flex flex-col md:block md:min-h-0' : ''}`}>
       {hasInlineFeedDraft && (
@@ -2946,7 +2992,55 @@ const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess, placehol
           desktop the whole block lays out naturally — md: prefixes
           neutralize the mobile-only flex split. */}
       <div className={`${composeMode ? 'flex flex-col flex-1 min-h-0 md:block' : 'hidden md:block'}`}>
-        <div className={`${composeMode ? 'flex-1 min-h-0 overflow-y-auto px-4 pt-2 pb-4 md:p-0 md:overflow-visible' : ''}`}>
+        <div
+          className={`${composeMode ? 'flex-1 min-h-0 overflow-y-auto px-4 pt-2 pb-4 md:p-0 md:max-h-[500px] md:overflow-y-auto' : 'md:max-h-[500px] md:overflow-y-auto'}`}
+          onMouseMove={(e) => {
+            // Throttle to one setState per animation frame.
+            if (!threadSelDragging.current || rafPendingRef.current) return
+            rafPendingRef.current = true
+            requestAnimationFrame(() => { rafPendingRef.current = false })
+            const hit = pointerToChunkOffset(e.clientX, e.clientY)
+            if (!hit) return
+            const curMasterOff = chunkBoundaries[hit.chunkIdx] + hit.localOffset
+            const anchor = dragAnchorRef.current
+            // Derive which chunk the drag anchor lives in.
+            let anchorChunkIdx = 0
+            for (let k = chunkBoundaries.length - 1; k >= 0; k--) {
+              if (chunkBoundaries[k] <= anchor) { anchorChunkIdx = k; break }
+            }
+            // Intra-chunk drag: let native textarea selection handle it; no yellow tint.
+            if (hit.chunkIdx === anchorChunkIdx) {
+              setThreadSel(null)
+              return
+            }
+            e.preventDefault()
+            const masterStart = Math.min(anchor, curMasterOff)
+            const masterEnd = Math.max(anchor, curMasterOff)
+            // Determine which endpoint came first in master text.
+            let startChunk: number, startOffset: number, endChunk: number, endOffset: number
+            if (anchor <= curMasterOff) {
+              // Dragging forward.
+              startChunk = 0
+              startOffset = anchor
+              for (let k = chunkBoundaries.length - 1; k >= 0; k--) {
+                if (chunkBoundaries[k] <= anchor) { startChunk = k; startOffset = anchor - chunkBoundaries[k]; break }
+              }
+              endChunk = hit.chunkIdx
+              endOffset = hit.localOffset
+            } else {
+              // Dragging backward.
+              startChunk = hit.chunkIdx
+              startOffset = hit.localOffset
+              endChunk = 0
+              endOffset = anchor
+              for (let k = chunkBoundaries.length - 1; k >= 0; k--) {
+                if (chunkBoundaries[k] <= anchor) { endChunk = k; endOffset = anchor - chunkBoundaries[k]; break }
+              }
+            }
+            setThreadSel({ startChunk, startOffset, endChunk, endOffset, masterStart, masterEnd })
+          }}
+          onMouseUp={() => { threadSelDragging.current = false }}
+        >
         <div className="relative">
           {isThreadMode ? (
             <>
@@ -2963,7 +3057,32 @@ const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess, placehol
                       }}
                     />
                   )}
-                  <div className={allChunksSelected ? 'bg-yellow-500/20 rounded' : ''}>
+                  <div
+                    className={
+                      (allChunksSelected ||
+                        (threadSel && threadSel.masterEnd > threadSel.masterStart &&
+                          i >= threadSel.startChunk && i <= threadSel.endChunk))
+                        ? 'bg-yellow-500/20 rounded'
+                        : ''
+                    }
+                    onMouseDown={(e) => {
+                      // Desktop-only cross-chunk drag selection. No-op if not
+                      // multi-chunk thread mode or if it's a right-click.
+                      if (!isThreadMode || chunkSlices.length < 2 || e.button !== 0) return
+                      const hit = pointerToChunkOffset(e.clientX, e.clientY)
+                      if (!hit) return
+                      const masterOff = chunkBoundaries[hit.chunkIdx] + hit.localOffset
+                      dragAnchorRef.current = masterOff
+                      threadSelDragging.current = true
+                      // Start as a collapsed range (no visual tint yet).
+                      setThreadSel({
+                        startChunk: hit.chunkIdx, startOffset: hit.localOffset,
+                        endChunk: hit.chunkIdx, endOffset: hit.localOffset,
+                        masterStart: masterOff, masterEnd: masterOff,
+                      })
+                      setAllChunksSelected(false)
+                    }}
+                  >
                   <HighlightedTextarea
                     value={slice}
                     onChange={(e) => {
@@ -2977,6 +3096,8 @@ const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess, placehol
                       setActiveChunkIndex(i)
                       setActiveChunkCursor((e.target as HTMLTextAreaElement).selectionStart ?? 0)
                       setAllChunksSelected(false)
+                      // Collapsed mousedown already set threadSel to a collapsed
+                      // range; treat that as no-selection (no extra clear needed).
                     }}
                     onKeyUp={(e) => {
                       setActiveChunkIndex(i)
@@ -2985,6 +3106,11 @@ const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess, placehol
                     onKeyDown={(e) => handleChunkArrow(e, i)}
                     onBeforeInput={(e) => {
                       const ta = e.currentTarget as HTMLTextAreaElement
+                      // If there is an active partial drag-selection, clear it
+                      // defensively here; keydown already handles replacement.
+                      if (threadSel && threadSel.masterEnd > threadSel.masterStart) {
+                        setThreadSel(null)
+                      }
                       preInputStateRef.current = {
                         chunkIdx: i,
                         preCursorPos: ta.selectionStart ?? 0,

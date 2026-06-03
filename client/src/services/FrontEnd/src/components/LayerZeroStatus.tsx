@@ -30,7 +30,6 @@ const LayerZeroStatus: React.FC<LayerZeroStatusProps> = ({
           }`}>
             {message}
             <br />
-            <br />
             <a
               href={scanUrl}
               target="_blank"
