@@ -28,6 +28,8 @@ const CawProfileLedger = artifacts.require("CawProfileLedger");
 const MockLayerZeroEndpoint = artifacts.require("MockLayerZeroEndpoint");
 const MockContractOwner = artifacts.require("MockContractOwner");
 
+const { linkSessionMessageParser } = require('./helpers/link-libraries');
+
 const { signTypedData, SignTypedDataVersion } = require('@metamask/eth-sig-util');
 const { ecsign, toBuffer, hashPersonalMessage } = require('ethereumjs-util');
 
@@ -93,6 +95,7 @@ contract('CawProfileLedger — ERC-1271 register-session', function (accounts) {
   before(async function () {
     this.timeout(60000);
     const l2Endpoint = await MockLayerZeroEndpoint.new(l2);
+    await linkSessionMessageParser();
     cawProfileLedger = await CawProfileLedger.new(l1, l2Endpoint.address, "0x0000000000000000000000000000000000000000");
     chainId = await web3.eth.getChainId();
     domain = { name: 'CawProfileLedger', version: '1', chainId, verifyingContract: cawProfileLedger.address };

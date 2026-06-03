@@ -25,6 +25,8 @@ const MockLayerZeroEndpoint = artifacts.require("MockLayerZeroEndpoint");
 const MockContractOwner = artifacts.require("MockContractOwner");
 const CawActionsERC1271 = artifacts.require("CawActionsERC1271");
 
+const { linkSessionMessageParser } = require('./helpers/link-libraries');
+
 const { signTypedData, SignTypedDataVersion } = require('@metamask/eth-sig-util');
 
 const l1 = 30101;
@@ -235,6 +237,7 @@ async function fullSetup(accounts) {
   const fontB = await CawFontDataB.new();
   const uri = await CawProfileURI.new(fontA.address, fontB.address);
 
+  await linkSessionMessageParser();
   const cawProfileLedger = await CawProfileLedger.new(l1, l2Endpoint.address, "0x0000000000000000000000000000000000000000");
   await l1Endpoint.setDestLzEndpoint(cawProfileLedger.address, l2Endpoint.address);
 
@@ -436,6 +439,7 @@ contract('CawActions — ERC-1271 contract-owner signatures', function (accounts
   it('setERC1271Sibling reverts with SiblingSet on second call', async function () {
     // Use a fresh CawProfileLedger for isolation — the main setup instance has no sibling set yet.
     const l2Endpoint2 = await MockLayerZeroEndpoint.new(l2);
+    await linkSessionMessageParser();
     const freshL2 = await CawProfileLedger.new(l1, l2Endpoint2.address, "0x0000000000000000000000000000000000000000");
     const someAddr = accounts[5];
     // First call should succeed.
@@ -524,6 +528,7 @@ async function fullSetupWithSibling(accounts) {
   const fontB = await CawFontDataB.new();
   const uri = await CawProfileURI.new(fontA.address, fontB.address);
 
+  await linkSessionMessageParser();
   const cawProfileLedger = await CawProfileLedger.new(l1, l2Endpoint.address, "0x0000000000000000000000000000000000000000");
   await l1Endpoint.setDestLzEndpoint(cawProfileLedger.address, l2Endpoint.address);
 

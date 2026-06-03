@@ -19,6 +19,8 @@ const CawBuyAndBurn = artifacts.require("CawBuyAndBurn");
 const MockSwapRouter = artifacts.require("MockSwapRouter");
 const MockLayerZeroEndpoint = artifacts.require("MockLayerZeroEndpoint");
 
+const { linkSessionMessageParser } = require('./helpers/link-libraries');
+
 const l1 = 30101;
 const l2 = 8453;
 
@@ -64,6 +66,7 @@ contract("CawProfileMinter — ZAP (pay-with-ETH) flows", function(accounts) {
 
     const toBytes32 = (addr) => "0x000000000000000000000000" + addr.slice(2).toLowerCase();
 
+    await linkSessionMessageParser();
     // L2-storage mirror (cross-chain)
     cawProfileLedger = await CawProfileLedger.new(l1, l2Endpoint.address, "0x0000000000000000000000000000000000000000");
     await l1Endpoint.setDestLzEndpoint(cawProfileLedger.address, l2Endpoint.address);

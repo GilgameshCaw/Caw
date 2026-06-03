@@ -32,6 +32,8 @@ const CawActionsDigestExposer = artifacts.require("CawActionsDigestExposer");
 const CawProfileLedger = artifacts.require("CawProfileLedger");
 const MockLayerZeroEndpoint = artifacts.require("MockLayerZeroEndpoint");
 
+const { linkSessionMessageParser } = require('./helpers/link-libraries');
+
 const FIXTURE_PATH = path.join(__dirname, 'zk-digest-fixtures.json');
 const SCRIPT_DIR = path.join(__dirname, '..', 'zk', 'sig-recovery', 'script');
 const FIXTURE_COUNT = process.env.ZK_DIGEST_FIXTURES_COUNT
@@ -54,6 +56,7 @@ contract('ZK digest equivalence — Rust circuit ↔ Solidity _computeStructHash
     // 0x0 from for non-existent token IDs (which is what we want for digest-
     // only tests; signature verification isn't exercised here).
     const l2Endpoint = await MockLayerZeroEndpoint.new(l2);
+    await linkSessionMessageParser();
     const cawProfileLedger = await CawProfileLedger.new(l1, l2Endpoint.address, "0x0000000000000000000000000000000000000000");
     exposer = await CawActionsDigestExposer.new(cawProfileLedger.address);
 

@@ -13,6 +13,8 @@ const MockSwapRouter = artifacts.require("MockSwapRouter");
 const MockLayerZeroEndpoint = artifacts.require("MockLayerZeroEndpoint");
 // const ethereumjs = require("ethereumjs-util");
 
+const { linkSessionMessageParser } = require('./helpers/link-libraries');
+
 const truffleAssert = require('truffle-assertions');
 
 // ============================================
@@ -639,6 +641,7 @@ contract('CawProfiles', function(accounts, x) {
 
     const toBytes32 = (addr) => "0x000000000000000000000000" + addr.slice(2).toLowerCase();
 
+    await linkSessionMessageParser();
     cawProfilesL2 = cawProfilesL2 || await CawProfileLedger.new(l1, l2Endpoint.address, "0x0000000000000000000000000000000000000000");
     await l1Endpoint.setDestLzEndpoint(cawProfilesL2.address, l2Endpoint.address);
 
@@ -1318,6 +1321,7 @@ contract("CawProfile - Transfer & Replication Gas", function(accounts) {
     localNetworkManager = await CawNetworkManager.new(bb.address);
     localUriGenerator = await deployURI();
     const _toBytes32_a = (addr) => "0x000000000000000000000000" + addr.slice(2).toLowerCase();
+    await linkSessionMessageParser();
     localCawProfilesL2 = await CawProfileLedger.new(l1, l2Endpoint.address, "0x0000000000000000000000000000000000000000");
     await l1Endpoint.setDestLzEndpoint(localCawProfilesL2.address, l2Endpoint.address);
 
@@ -1519,6 +1523,7 @@ contract("CawProfileMinter - mintAndDeposit", function(accounts) {
     localNetworkManager = await CawNetworkManager.new(bb.address);
     localUriGenerator = await deployURI();
     const _toBytes32_b = (addr) => "0x000000000000000000000000" + addr.slice(2).toLowerCase();
+    await linkSessionMessageParser();
     localCawProfilesL2 = await CawProfileLedger.new(l1, l2Endpoint.address, "0x0000000000000000000000000000000000000000");
     await l1Endpoint.setDestLzEndpoint(localCawProfilesL2.address, l2Endpoint.address);
 
@@ -1680,6 +1685,7 @@ contract("CawProfileMinter - mintAndAuth", function(accounts) {
 
     const _toBytes32_c = (addr) => "0x000000000000000000000000" + addr.slice(2).toLowerCase();
 
+    await linkSessionMessageParser();
     // Cross-chain L2 mirror (L2 storage)
     localCawProfilesL2 = await CawProfileLedger.new(l1, l2Endpoint.address, "0x0000000000000000000000000000000000000000");
     await l1Endpoint.setDestLzEndpoint(localCawProfilesL2.address, l2Endpoint.address);
@@ -1943,6 +1949,7 @@ contract("CawProfile - depositFor", function(accounts) {
     localUriGenerator = await deployURI();
 
     const _toBytes32_d = (addr) => "0x000000000000000000000000" + addr.slice(2).toLowerCase();
+    await linkSessionMessageParser();
     localCawProfilesL2 = await CawProfileLedger.new(l1, localEndpointL2.address, "0x0000000000000000000000000000000000000000");
     await localEndpointL1.setDestLzEndpoint(localCawProfilesL2.address, localEndpointL2.address);
 
@@ -2149,6 +2156,7 @@ contract("CawProfile - locked withdraw fee + fee withdrawal", function(accounts)
     localUriGenerator = await deployURI();
 
     const _toBytes32_e = (addr) => "0x000000000000000000000000" + addr.slice(2).toLowerCase();
+    await linkSessionMessageParser();
     localCawProfilesL2 = await CawProfileLedger.new(l1, localEndpointL2.address, "0x0000000000000000000000000000000000000000");
     await localEndpointL1.setDestLzEndpoint(localCawProfilesL2.address, localEndpointL2.address);
 
@@ -2501,6 +2509,7 @@ contract("CawProfile - Buy and Burn", function(accounts) {
     localUriGenerator = await deployURI();
 
     const _toBytes32_f = (addr) => "0x000000000000000000000000" + addr.slice(2).toLowerCase();
+    await linkSessionMessageParser();
     localCawProfilesL2 = await CawProfileLedger.new(l1, localEndpointL2.address, "0x0000000000000000000000000000000000000000");
     await localEndpointL1.setDestLzEndpoint(localCawProfilesL2.address, localEndpointL2.address);
 
@@ -2822,6 +2831,7 @@ contract("CawProfileMinter - Bundled Quick Sign", function(accounts) {
 
     const _toBytes32_g = (addr) => "0x000000000000000000000000" + addr.slice(2).toLowerCase();
 
+    await linkSessionMessageParser();
     // L2-storage mirror (cross-chain)
     localCawProfilesL2 = await CawProfileLedger.new(l1, l2Endpoint.address, "0x0000000000000000000000000000000000000000");
     await l1Endpoint.setDestLzEndpoint(localCawProfilesL2.address, l2Endpoint.address);

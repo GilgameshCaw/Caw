@@ -19,6 +19,8 @@ const MockSwapRouter = artifacts.require("MockSwapRouter");
 const MockLayerZeroEndpoint = artifacts.require("MockLayerZeroEndpoint");
 const CawMultisigProfile = artifacts.require("CawMultisigProfile");
 
+const { linkSessionMessageParser } = require('./helpers/link-libraries');
+
 const { TypedDataUtils, SignTypedDataVersion } = require('@metamask/eth-sig-util');
 
 const l1 = 30101;
@@ -154,6 +156,7 @@ async function fullSetup(accounts) {
   const fontB = await CawFontDataB.new();
   const uri = await CawProfileURI.new(fontA.address, fontB.address);
 
+  await linkSessionMessageParser();
   const cawProfileLedger = await CawProfileLedger.new(l1, l2Endpoint.address, "0x0000000000000000000000000000000000000000");
   await l1Endpoint.setDestLzEndpoint(cawProfileLedger.address, l2Endpoint.address);
 

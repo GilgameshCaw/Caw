@@ -455,6 +455,16 @@ const CONTRACTS = {
       RENOUNCE_ON_DEPLOY ? (state.addresses.PathwayExpander_L1 || ethers.ZeroAddress) : ethers.ZeroAddress,
     ],
   },
+  // SessionMessageParser is a separately-deployed library whose `external pure`
+  // functions are link-substituted into CawProfileLedger bytecode at deploy time.
+  // Holds no state. One instance per chain that hosts a CawProfileLedger.
+  SessionMessageParser_L1: {
+    artifact: 'SessionMessageParser',
+    chain: 'L1',
+    phase: 2,
+    dependencies: [],
+    constructorArgs: () => [],
+  },
   CawProfileLedger_L1: {
     // CawProfileLedger deployed on L1 (for local actions without cross-chain).
     // Predicts CawCapOracle_L1 (deployed immediately after, nonce+1) so it can
@@ -462,7 +472,10 @@ const CONTRACTS = {
     artifact: 'CawProfileLedger',
     chain: 'L1',
     phase: 2,
-    dependencies: [],
+    dependencies: ['SessionMessageParser_L1'],
+    linkLibraries: (state) => ({
+      'contracts/SessionMessageParser.sol:SessionMessageParser': state.addresses.SessionMessageParser_L1,
+    }),
     predictedSiblingKey: 'CawCapOracle_L1',
     constructorArgs: (state, chain) => [
       CHAINS[chain.replace('L1', 'L2')].lzEid, // peer network eid (L2)
@@ -652,13 +665,25 @@ for (const L of L2_CHAIN_KEYS) {
     constructorArgs: () => [],
     condition: (_state, _deployer, env) => env === 'dev',
   };
+  // SessionMessageParser library — one per chain hosting a CawProfileLedger.
+  // Same role as SessionMessageParser_L1; see comment there.
+  CONTRACTS[`SessionMessageParser_${L}`] = {
+    artifact: 'SessionMessageParser',
+    chain: L,
+    phase: 1,
+    dependencies: [],
+    constructorArgs: () => [],
+  };
   CONTRACTS[`CawProfileLedger_${L}`] = {
     artifact: 'CawProfileLedger',
     chain: L,
     phase: 1,
-    // No deps — deploys first (after MockSP1Verifier if dev).
     // Predicts CawCapOracle_<L> at nonce+1 and passes it as the capOracle arg.
-    dependencies: [],
+    // Library dep on SessionMessageParser_<L> is linked into bytecode at deploy.
+    dependencies: [`SessionMessageParser_${L}`],
+    linkLibraries: (state) => ({
+      'contracts/SessionMessageParser.sol:SessionMessageParser': state.addresses[`SessionMessageParser_${L}`],
+    }),
     predictedSiblingKey: `CawCapOracle_${L}`,
     constructorArgs: (state, chain) => [
       CHAINS[chain.replace(/L2.*$/, 'L1')].lzEid, // peer eid (L1)
@@ -1691,7 +1716,37 @@ class MultiChainDeployer {
     console.log(`\nDeploying ${contractKey} to ${chainKey}...`);
     console.log(`   Constructor args:`, args);
 
-    const factory = new ethers.ContractFactory(artifact.abi, artifact.bytecode, wallet);
+    // Link any external libraries by substituting their placeholders in the
+    // bytecode before constructing the factory. `linkLibraries(state)` returns
+    // a map of `<sourcePath>:<libraryName>` → deployed address.
+    let bytecode = artifact.bytecode;
+    if (config.linkLibraries) {
+      const libs = config.linkLibraries(this.state);
+      const linkRefs = artifact.linkReferences || {};
+      for (const [fullName, libAddr] of Object.entries(libs)) {
+        if (!libAddr || libAddr === ethers.ZeroAddress) {
+          throw new Error(`Library ${fullName} not deployed before ${contractKey}`);
+        }
+        const [src, libName] = fullName.split(':');
+        const refs = linkRefs[src]?.[libName];
+        if (!refs || refs.length === 0) {
+          console.log(`   Warning: no linkReferences for ${fullName} (already linked or unused?)`);
+          continue;
+        }
+        const addrNo0x = libAddr.slice(2).toLowerCase();
+        // Each linkReference gives a byte offset; bytecode is `0x` + 2 hex chars per byte.
+        // Replace 20-byte placeholder (40 hex chars) at each reference position.
+        const bcArr = bytecode.split('');
+        for (const ref of refs) {
+          const start = 2 + ref.start * 2; // +2 for "0x" prefix
+          for (let i = 0; i < 40; i++) bcArr[start + i] = addrNo0x[i];
+        }
+        bytecode = bcArr.join('');
+        console.log(`   Linked ${libName} → ${libAddr} (${refs.length} ref${refs.length === 1 ? '' : 's'})`);
+      }
+    }
+
+    const factory = new ethers.ContractFactory(artifact.abi, bytecode, wallet);
 
     // Pre-fetch fee data once so every retry attempt in this deploy uses the
     // same (multiplied) gas price. Retrying with a fresh feeData per attempt

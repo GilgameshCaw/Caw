@@ -46,6 +46,8 @@ const MockSwapRouter = artifacts.require("MockSwapRouter");
 const MockLayerZeroEndpoint = artifacts.require("MockLayerZeroEndpoint");
 const MockSP1Verifier = artifacts.require("MockSP1Verifier");
 
+const { linkSessionMessageParser } = require('./helpers/link-libraries');
+
 const { signTypedData, SignTypedDataVersion } = require('@metamask/eth-sig-util');
 
 const l1 = 30101;
@@ -190,6 +192,7 @@ async function fullSetup(accounts) {
   const fontB = await CawFontDataB.new();
   const uri = await CawProfileURI.new(fontA.address, fontB.address);
 
+  await linkSessionMessageParser();
   const cawProfileLedger = await CawProfileLedger.new(l1, l2Endpoint.address, "0x0000000000000000000000000000000000000000");
   await l1Endpoint.setDestLzEndpoint(cawProfileLedger.address, l2Endpoint.address);
 
@@ -478,6 +481,7 @@ contract('CawActions — processActionsWithZkSigs', function (accounts) {
   it('reverts "ZK path not configured" when the contract was deployed without a verifier', async function () {
     // Deploy a fresh CawActions with verifier = address(0).
     const tinyEndpoint = await MockLayerZeroEndpoint.new(l2);
+    await linkSessionMessageParser();
     const tinyL2 = await CawProfileLedger.new(l1, tinyEndpoint.address, "0x0000000000000000000000000000000000000000");
     const noVerifier = await CawActions.new(
       tinyL2.address,

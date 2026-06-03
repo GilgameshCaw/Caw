@@ -21,6 +21,8 @@
 const MockLayerZeroEndpoint = artifacts.require("MockLayerZeroEndpoint");
 const CawProfileLedger = artifacts.require("CawProfileLedger");
 
+const { linkSessionMessageParser } = require('./helpers/link-libraries');
+
 const { ecsign, toBuffer, hashPersonalMessage } = require('ethereumjs-util');
 
 const l1 = 30101;
@@ -38,6 +40,7 @@ contract('CawProfileLedger — registerSessionPersonal replay protection', funct
 
   before(async function () {
     const l2Endpoint = await MockLayerZeroEndpoint.new(l2);
+    await linkSessionMessageParser();
     cawProfileLedger = await CawProfileLedger.new(l1, l2Endpoint.address, "0x0000000000000000000000000000000000000000");
   });
 
