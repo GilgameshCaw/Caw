@@ -1,14 +1,14 @@
 // src/pages/NewProfile.tsx
 import { SubmitButton } from "~/components/buttons/SubmitButton"
 import React, { useState, useCallback, useMemo, useEffect, useRef } from 'react'
-import { useReadContract, useAccount, useSwitchChain, useBalance } from 'wagmi'
+import { useReadContract, useAccount, useSwitchChain, useBalance, usePublicClient } from 'wagmi'
 import { useConnectModal } from '@rainbow-me/rainbowkit'
 import { generatePrivateKey, privateKeyToAccount } from 'viem/accounts'
 import useAllowance from "~/hooks/useAllowance";
-import { maxUint256, parseUnits, erc20Abi, formatEther, parseEther } from "viem";
+import { maxUint256, parseUnits, erc20Abi, formatEther, parseEther, parseEventLogs } from "viem";
 import useContractCall, { UseContractCallReturn } from '~/hooks/useContractCall'
 import { useLayoutStore } from '~/store/layoutStore'
-import { CAW_ADDRESS, CAW_NAMES_MINTER_ADDRESS, CAW_NAME_QUOTER_ADDRESS, CAW_PAIR_ADDRESS } from '~/../../../abi/addresses'
+import { CAW_ADDRESS, CAW_NAMES_ADDRESS, CAW_NAMES_MINTER_ADDRESS, CAW_NAME_QUOTER_ADDRESS, CAW_PAIR_ADDRESS } from '~/../../../abi/addresses'
 import { cawProfileMinterAbi, cawProfileQuoterAbi } from '~/../../../abi/generated'
 import { useActiveToken, useTokenDataStore, usePriceStore } from "~/store/tokenDataStore";
 import { chains, isTestnet } from '~/config/chains'
@@ -22,6 +22,7 @@ import QuickSignHowItWorks from '~/components/QuickSignHowItWorks'
 import { HiInformationCircle } from 'react-icons/hi'
 import { useTheme } from '~/hooks/useTheme'
 import { CLIENT_ID, getTipTiers, getCurrentValidatorMinTipWei } from '~/api/actions'
+import { apiFetch, IndexingError } from '~/api/client'
 import { useValidatorMinTips } from '~/hooks/useValidatorMinTips'
 import { useT } from '~/i18n/I18nProvider'
 import { getDefaultSpendLimit, getDefaultTipCeiling, DEFAULT_SESSION_DURATION } from '~/hooks/useSessionKey'
@@ -47,6 +48,15 @@ const COST_SCHEDULE: Record<number, bigint> = {
   7:        10_000_000n,
 }
 const DEFAULT_COST = 1_000_000n  // 8+ chars
+
+const ERC721_TRANSFER_ABI = [{
+  type: 'event' as const, name: 'Transfer',
+  inputs: [
+    { name: 'from', type: 'address', indexed: true },
+    { name: 'to', type: 'address', indexed: true },
+    { name: 'tokenId', type: 'uint256', indexed: true },
+  ],
+}] as const
 
 /**
  * Compute the four quick-pick dollar amounts for the "Pay with ETH" tab.
@@ -388,6 +398,7 @@ export const NewProfile: React.FC = () => {
   const navigate = useNavigate();
   const activeToken = useActiveToken();
   const { address, chainId }      = useAccount()
+  const publicClient = usePublicClient()
   const [searchParams] = useSearchParams()
   const [username, setUsername] = useState(() => {
     // Allow pre-filling via ?username=foo (e.g. from "claim this profile" links)
@@ -733,6 +744,67 @@ console.log("BALANCE:", balance)
   const { allowance: minterAllowance, refetch: refetchMinterAllowance } = useAllowance(CAW_ADDRESS, CAW_NAMES_MINTER_ADDRESS, useAddress);
   const refetchTokenData = useTokenDataStore(s => s.refetchTokenData)
 
+  // ── Fast-path helpers ────────────────────────────────────────────────────
+  // Decode the minted tokenId from the Transfer(0x0 → owner) log emitted by
+  // the CawNames contract. Returns null on any error (missing receipt, wrong
+  // contract, no matching log).
+  const decodeMintTokenId = useCallback(async (hash: `0x${string}`): Promise<number | null> => {
+    if (!publicClient || !address) return null
+    try {
+      const receipt = await publicClient.getTransactionReceipt({ hash })
+      const logs = parseEventLogs({ abi: ERC721_TRANSFER_ABI, logs: receipt.logs })
+      const mintLog = logs.find(
+        (l) =>
+          l.address.toLowerCase() === CAW_NAMES_ADDRESS.toLowerCase() &&
+          (l.args as any).from === '0x0000000000000000000000000000000000000000' &&
+          (l.args as any).to?.toLowerCase() === address.toLowerCase()
+      )
+      if (!mintLog) return null
+      return Number((mintLog.args as any).tokenId)
+    } catch (e) {
+      console.warn('[New] decodeMintTokenId failed:', e)
+      return null
+    }
+  }, [publicClient, address])
+
+  // Hit POST /api/users/ensure with fromChain: true (first attempt) so the
+  // server reads L1 and upserts the row inline (~1-2s). Subsequent retries
+  // pass fromChain: false and wait for the normal indexer path.
+  const ensureUserFromChain = useCallback(async (tokenId: number): Promise<boolean> => {
+    for (let attempt = 0; attempt < 5; attempt++) {
+      try {
+        await apiFetch('/api/users/ensure', {
+          method: 'POST',
+          body: JSON.stringify({ tokenId, fromChain: attempt === 0 }),
+        })
+        return true
+      } catch (err) {
+        if (err instanceof IndexingError) {
+          if (attempt < 4) {
+            await new Promise(r => setTimeout(r, 1500))
+            continue
+          }
+          return false
+        } else {
+          console.warn('[New] ensureUserFromChain error:', err)
+          return false
+        }
+      }
+    }
+    return false
+  }, [])
+
+  // Combines decodeMintTokenId + ensureUserFromChain. Returns the numeric
+  // tokenId when the user row is confirmed ready, or null on any failure
+  // (falls back to the username-polling loop in each handler).
+  const resolveMintedTokenId = useCallback(async (hash: `0x${string}`): Promise<number | null> => {
+    const tokenId = await decodeMintTokenId(hash)
+    if (tokenId === null) return null
+    const ready = await ensureUserFromChain(tokenId)
+    return ready ? tokenId : null
+  }, [decodeMintTokenId, ensureUserFromChain])
+  // ── End fast-path helpers ────────────────────────────────────────────────
+
   // Minter needs allowance for burn cost + deposit amount (it pulls both from the user).
   // In ETH (ZAP) mode the user never spends CAW directly — the swap output IS
   // the CAW the contract uses — so no approval is needed.
@@ -762,14 +834,26 @@ console.log("BALANCE:", balance)
   // "find the new token, navigate to /welcome" tail).
   const onMintOnlySuccess = async (hash: `0x${string}`) => {
     console.log('minted!', hash)
+
+    // Fast path: decode tokenId from receipt + ensure server row via L1 read
+    const applySuccess = (resolvedTokenId: number) => {
+      setMintedTokenId(resolvedTokenId)
+      setActiveTokenId(resolvedTokenId)
+      setMintSuccess(true)
+    }
+    const fastTokenId = await resolveMintedTokenId(hash)
+    if (fastTokenId !== null) {
+      applySuccess(fastTokenId)
+      return
+    }
+
+    // Fallback: username-polling loop
     await refetchTokenData?.()
     const checkForNewToken = () => {
       const allTokens = useTokenDataStore.getState().allTokens()
       const newToken = allTokens.find((t: any) => t.username.toLowerCase() === username.toLowerCase())
       if (newToken) {
-        setMintedTokenId(newToken.tokenId)
-        setActiveTokenId(newToken.tokenId)
-        setMintSuccess(true)
+        applySuccess(newToken.tokenId)
       } else {
         refetchTokenData?.()
         setTimeout(checkForNewToken, 3000)
@@ -818,41 +902,54 @@ console.log("BALANCE:", balance)
     },
     onSuccess:    async (hash) => {
       console.log('minted and deposited!', hash)
-      // Refetch token data from chain, then check for the new token
+
+      // Side-effects shared by fast-path and fallback.
+      const applyDepositSuccess = async (resolvedTokenId: number) => {
+        setMintedTokenId(resolvedTokenId)
+        setActiveTokenId(resolvedTokenId)
+        setMintSuccess(true)
+        // Deposit info (lastStakedAt / pendingDepositAmount) is persisted by
+        // WelcomePage after /api/users/ensure so the follow buttons rendered
+        // in the onboarding stepper see it before the user can click them.
+        // Also write a localStorage hint so the profile chooser can render
+        // the "+X CAW pending" badge instantly without waiting for the API.
+        if (depositAmountWei > 0n) {
+          try {
+            // Capture the true L2 baseline from cawBalanceOf. For a fresh
+            // mint this should be 0 (the tokenId didn't exist on L2 yet),
+            // but we call the helper anyway so all three deposit paths
+            // (mint&deposit, stake page, onboarding deposit) follow the
+            // same ground-truth-from-L2 pattern.
+            const { readOnChainStakeForHint } = await import('~/api/actions')
+            const onChainBaseline = await readOnChainStakeForHint(resolvedTokenId)
+            localStorage.setItem(
+              `caw:pendingDeposit:${resolvedTokenId}`,
+              JSON.stringify({
+                amount: depositAmountWei.toString(),
+                txHash: hash,
+                at: Date.now(),
+                stakedAtHintTime: onChainBaseline.toString(),
+              })
+            )
+            window.dispatchEvent(new CustomEvent('caw:pendingDepositChanged', { detail: { tokenId: resolvedTokenId } }))
+          } catch {}
+        }
+      }
+
+      // Fast path: decode tokenId from receipt + ensure server row via L1 read
+      const fastTokenId = await resolveMintedTokenId(hash)
+      if (fastTokenId !== null) {
+        await applyDepositSuccess(fastTokenId)
+        return
+      }
+
+      // Fallback: username-polling loop
       await refetchTokenData?.()
       const checkForNewToken = async () => {
         const allTokens = useTokenDataStore.getState().allTokens()
         const newToken = allTokens.find((t: any) => t.username.toLowerCase() === username.toLowerCase())
         if (newToken) {
-          setMintedTokenId(newToken.tokenId)
-          setActiveTokenId(newToken.tokenId)
-          setMintSuccess(true)
-          // Deposit info (lastStakedAt / pendingDepositAmount) is persisted by
-          // WelcomePage after /api/users/ensure so the follow buttons rendered
-          // in the onboarding stepper see it before the user can click them.
-          // Also write a localStorage hint so the profile chooser can render
-          // the "+X CAW pending" badge instantly without waiting for the API.
-          if (depositAmountWei > 0n) {
-            try {
-              // Capture the true L2 baseline from cawBalanceOf. For a fresh
-              // mint this should be 0 (the tokenId didn't exist on L2 yet),
-              // but we call the helper anyway so all three deposit paths
-              // (mint&deposit, stake page, onboarding deposit) follow the
-              // same ground-truth-from-L2 pattern.
-              const { readOnChainStakeForHint } = await import('~/api/actions')
-              const onChainBaseline = await readOnChainStakeForHint(newToken.tokenId)
-              localStorage.setItem(
-                `caw:pendingDeposit:${newToken.tokenId}`,
-                JSON.stringify({
-                  amount: depositAmountWei.toString(),
-                  txHash: hash,
-                  at: Date.now(),
-                  stakedAtHintTime: onChainBaseline.toString(),
-                })
-              )
-              window.dispatchEvent(new CustomEvent('caw:pendingDepositChanged', { detail: { tokenId: newToken.tokenId } }))
-            } catch {}
-          }
+          await applyDepositSuccess(newToken.tokenId)
         } else {
           refetchTokenData?.()
           setTimeout(checkForNewToken, 3000)
@@ -921,31 +1018,45 @@ console.log("BALANCE:", balance)
           console.warn('[New] failed to persist QuickSign session:', e)
         }
       }
+
+      // Side-effects shared by fast-path and fallback.
+      const applyBundledSuccess = async (resolvedTokenId: number) => {
+        setMintedTokenId(resolvedTokenId)
+        setActiveTokenId(resolvedTokenId)
+        setMintSuccess(true)
+        // Persist deposit hint exactly like the non-QS branch.
+        if (depositAmountWei > 0n) {
+          try {
+            const { readOnChainStakeForHint } = await import('~/api/actions')
+            const onChainBaseline = await readOnChainStakeForHint(resolvedTokenId)
+            localStorage.setItem(
+              `caw:pendingDeposit:${resolvedTokenId}`,
+              JSON.stringify({
+                amount: depositAmountWei.toString(),
+                txHash: hash,
+                at: Date.now(),
+                stakedAtHintTime: onChainBaseline.toString(),
+              })
+            )
+            window.dispatchEvent(new CustomEvent('caw:pendingDepositChanged', { detail: { tokenId: resolvedTokenId } }))
+          } catch {}
+        }
+      }
+
+      // Fast path: decode tokenId from receipt + ensure server row via L1 read
+      const fastTokenId = await resolveMintedTokenId(hash)
+      if (fastTokenId !== null) {
+        await applyBundledSuccess(fastTokenId)
+        return
+      }
+
+      // Fallback: username-polling loop
       await refetchTokenData?.()
       const checkForNewToken = async () => {
         const allTokens = useTokenDataStore.getState().allTokens()
         const newToken = allTokens.find((t: any) => t.username.toLowerCase() === username.toLowerCase())
         if (newToken) {
-          setMintedTokenId(newToken.tokenId)
-          setActiveTokenId(newToken.tokenId)
-          setMintSuccess(true)
-          // Persist deposit hint exactly like the non-QS branch.
-          if (depositAmountWei > 0n) {
-            try {
-              const { readOnChainStakeForHint } = await import('~/api/actions')
-              const onChainBaseline = await readOnChainStakeForHint(newToken.tokenId)
-              localStorage.setItem(
-                `caw:pendingDeposit:${newToken.tokenId}`,
-                JSON.stringify({
-                  amount: depositAmountWei.toString(),
-                  txHash: hash,
-                  at: Date.now(),
-                  stakedAtHintTime: onChainBaseline.toString(),
-                })
-              )
-              window.dispatchEvent(new CustomEvent('caw:pendingDepositChanged', { detail: { tokenId: newToken.tokenId } }))
-            } catch {}
-          }
+          await applyBundledSuccess(newToken.tokenId)
         } else {
           refetchTokenData?.()
           setTimeout(checkForNewToken, 3000)
@@ -972,38 +1083,52 @@ console.log("BALANCE:", balance)
     onPending: hash => { console.log('mintAndDepositZap tx pending', hash); setHasResetForm(false) },
     onSuccess: async (hash) => {
       console.log('mintAndDepositZap success!', hash)
+
+      // Side-effects shared by fast-path and fallback.
+      const applyZapSuccess = async (resolvedTokenId: number) => {
+        setMintedTokenId(resolvedTokenId)
+        setActiveTokenId(resolvedTokenId)
+        setMintSuccess(true)
+        // Persist the +X CAW pending hint so ProfileChooser renders the
+        // arriving deposit immediately (the L2 mirror takes a moment via
+        // LayerZero). ZAP deposit amount = swap output - username burn.
+        // Mirrors the CAW-mode mintAndDeposit branch above.
+        const zapDeposit = zapQuote.expectedCawOut > cost ? zapQuote.expectedCawOut - cost : 0n
+        console.log('[New/zap] pendingDeposit hint:', { tokenId: resolvedTokenId, zapDeposit: zapDeposit.toString() })
+        if (zapDeposit > 0n) {
+          try {
+            const { readOnChainStakeForHint } = await import('~/api/actions')
+            const onChainBaseline = await readOnChainStakeForHint(resolvedTokenId)
+            localStorage.setItem(
+              `caw:pendingDeposit:${resolvedTokenId}`,
+              JSON.stringify({
+                amount: zapDeposit.toString(),
+                txHash: hash,
+                at: Date.now(),
+                stakedAtHintTime: onChainBaseline.toString(),
+              })
+            )
+            window.dispatchEvent(new CustomEvent('caw:pendingDepositChanged', { detail: { tokenId: resolvedTokenId } }))
+          } catch (e) {
+            console.warn('[New/zap] failed to persist pendingDeposit hint:', e)
+          }
+        }
+      }
+
+      // Fast path: decode tokenId from receipt + ensure server row via L1 read
+      const fastTokenId = await resolveMintedTokenId(hash)
+      if (fastTokenId !== null) {
+        await applyZapSuccess(fastTokenId)
+        return
+      }
+
+      // Fallback: username-polling loop
       await refetchTokenData?.()
       const checkForNewToken = async () => {
         const allTokens = useTokenDataStore.getState().allTokens()
         const newToken = allTokens.find((t: any) => t.username.toLowerCase() === username.toLowerCase())
         if (newToken) {
-          setMintedTokenId(newToken.tokenId)
-          setActiveTokenId(newToken.tokenId)
-          setMintSuccess(true)
-          // Persist the +X CAW pending hint so ProfileChooser renders the
-          // arriving deposit immediately (the L2 mirror takes a moment via
-          // LayerZero). ZAP deposit amount = swap output - username burn.
-          // Mirrors the CAW-mode mintAndDeposit branch above.
-          const zapDeposit = zapQuote.expectedCawOut > cost ? zapQuote.expectedCawOut - cost : 0n
-          console.log('[New/zap] pendingDeposit hint:', { tokenId: newToken.tokenId, zapDeposit: zapDeposit.toString() })
-          if (zapDeposit > 0n) {
-            try {
-              const { readOnChainStakeForHint } = await import('~/api/actions')
-              const onChainBaseline = await readOnChainStakeForHint(newToken.tokenId)
-              localStorage.setItem(
-                `caw:pendingDeposit:${newToken.tokenId}`,
-                JSON.stringify({
-                  amount: zapDeposit.toString(),
-                  txHash: hash,
-                  at: Date.now(),
-                  stakedAtHintTime: onChainBaseline.toString(),
-                })
-              )
-              window.dispatchEvent(new CustomEvent('caw:pendingDepositChanged', { detail: { tokenId: newToken.tokenId } }))
-            } catch (e) {
-              console.warn('[New/zap] failed to persist pendingDeposit hint:', e)
-            }
-          }
+          await applyZapSuccess(newToken.tokenId)
         } else {
           refetchTokenData?.()
           setTimeout(checkForNewToken, 3000)
@@ -1061,36 +1186,50 @@ console.log("BALANCE:", balance)
           console.warn('[New] failed to persist QuickSign session:', e)
         }
       }
+
+      // Side-effects shared by fast-path and fallback.
+      const applyZapQsSuccess = async (resolvedTokenId: number) => {
+        setMintedTokenId(resolvedTokenId)
+        setActiveTokenId(resolvedTokenId)
+        setMintSuccess(true)
+        // Persist the +X CAW pending hint — see mintAndDepositZap branch
+        // for the rationale. Same shape; deposit = swap output minus burn.
+        const zapDeposit = zapQuote.expectedCawOut > cost ? zapQuote.expectedCawOut - cost : 0n
+        console.log('[New/zapQs] pendingDeposit hint:', { tokenId: resolvedTokenId, zapDeposit: zapDeposit.toString() })
+        if (zapDeposit > 0n) {
+          try {
+            const { readOnChainStakeForHint } = await import('~/api/actions')
+            const onChainBaseline = await readOnChainStakeForHint(resolvedTokenId)
+            localStorage.setItem(
+              `caw:pendingDeposit:${resolvedTokenId}`,
+              JSON.stringify({
+                amount: zapDeposit.toString(),
+                txHash: hash,
+                at: Date.now(),
+                stakedAtHintTime: onChainBaseline.toString(),
+              })
+            )
+            window.dispatchEvent(new CustomEvent('caw:pendingDepositChanged', { detail: { tokenId: resolvedTokenId } }))
+          } catch (e) {
+            console.warn('[New/zapQs] failed to persist pendingDeposit hint:', e)
+          }
+        }
+      }
+
+      // Fast path: decode tokenId from receipt + ensure server row via L1 read
+      const fastTokenId = await resolveMintedTokenId(hash)
+      if (fastTokenId !== null) {
+        await applyZapQsSuccess(fastTokenId)
+        return
+      }
+
+      // Fallback: username-polling loop
       await refetchTokenData?.()
       const checkForNewToken = async () => {
         const allTokens = useTokenDataStore.getState().allTokens()
         const newToken = allTokens.find((t: any) => t.username.toLowerCase() === username.toLowerCase())
         if (newToken) {
-          setMintedTokenId(newToken.tokenId)
-          setActiveTokenId(newToken.tokenId)
-          setMintSuccess(true)
-          // Persist the +X CAW pending hint — see mintAndDepositZap branch
-          // for the rationale. Same shape; deposit = swap output minus burn.
-          const zapDeposit = zapQuote.expectedCawOut > cost ? zapQuote.expectedCawOut - cost : 0n
-          console.log('[New/zapQs] pendingDeposit hint:', { tokenId: newToken.tokenId, zapDeposit: zapDeposit.toString() })
-          if (zapDeposit > 0n) {
-            try {
-              const { readOnChainStakeForHint } = await import('~/api/actions')
-              const onChainBaseline = await readOnChainStakeForHint(newToken.tokenId)
-              localStorage.setItem(
-                `caw:pendingDeposit:${newToken.tokenId}`,
-                JSON.stringify({
-                  amount: zapDeposit.toString(),
-                  txHash: hash,
-                  at: Date.now(),
-                  stakedAtHintTime: onChainBaseline.toString(),
-                })
-              )
-              window.dispatchEvent(new CustomEvent('caw:pendingDepositChanged', { detail: { tokenId: newToken.tokenId } }))
-            } catch (e) {
-              console.warn('[New/zapQs] failed to persist pendingDeposit hint:', e)
-            }
-          }
+          await applyZapQsSuccess(newToken.tokenId)
         } else {
           refetchTokenData?.()
           setTimeout(checkForNewToken, 3000)

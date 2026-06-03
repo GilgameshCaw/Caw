@@ -14,7 +14,7 @@ import { ActionType } from '@prisma/client'
 import { getBlockedUserIds } from '../shared/blockUtils'
 import { requireAuth } from '../middleware/auth'
 import { markOrphan, markOrphanWithVariants } from '../util/orphanedMedia'
-import { isPlaceholderUser } from '../../services/UserService'
+import { isPlaceholderUser, findOrCreateUser, StaleTokenError } from '../../services/UserService'
 
 // Validation limits for profile fields (must match ActionProcessor)
 const PROFILE_FIELD_LIMITS: Record<string, number> = {
@@ -68,37 +68,78 @@ const router = Router()
 router.post('/ensure', async (req, res) => {
   const startTime = Date.now()
   try {
-    const { tokenId } = req.body
-    console.log(`[/api/users/ensure] START tokenId=${tokenId}`)
+    const { tokenId, fromChain } = req.body
+    console.log(`[/api/users/ensure] START tokenId=${tokenId} fromChain=${!!fromChain}`)
 
     if (!tokenId || isNaN(Number(tokenId))) {
       return res.status(400).json({ error: 'tokenId is required' })
     }
 
     const numericTokenId = Number(tokenId)
+    const dbSelect = { tokenId: true, username: true, address: true } as const
     const user = await prisma.user.findUnique({
       where: { tokenId: numericTokenId },
-      select: { tokenId: true, username: true, address: true }
+      select: dbSelect,
     })
     const totalDuration = Date.now() - startTime
 
-    if (!user) {
-      console.log(`[/api/users/ensure] tokenId=${numericTokenId} not yet indexed (${totalDuration}ms)`)
-      res.setHeader('Retry-After', '3')
-      return res.status(202).json({
-        error: 'user not yet indexed',
-        retryAfterSeconds: 3,
-      })
-    }
+    // Helper: true when the row is absent or is a placeholder (no real data yet).
+    const isMiss = !user || isPlaceholderUser(user)
 
-    // Placeholder rows (username=`user_<id>`, address='') exist when an
-    // action eager-FK'd against this tokenId before its Mint event was
-    // indexed locally — see actions.ts upsert paths. The DataCleaner
-    // sweep refreshes them in the background; from the FE's perspective
-    // it's the same "not yet indexed" state, so we return 202 and let
-    // it poll. Once the sweep populates real values, the next /ensure
-    // returns 200 and the profile renders.
-    if (isPlaceholderUser(user)) {
+    if (isMiss) {
+      // Fast-path: when the FE passes fromChain=true on the first post-mint call,
+      // we invoke findOrCreateUser() (idempotent L1 upsert) inline rather than
+      // returning 202 and waiting up to 60 s for NftTransferWatcher's next poll.
+      //
+      // This re-introduces a single RPC call into the request path, intentionally
+      // gated behind the flag — consistent with the Tier-1 refactor intent.
+      // The FE only sends fromChain=true once (immediately after the mint tx is
+      // confirmed); subsequent retries omit the flag and use the DB-only path,
+      // so this cannot become a per-poll RPC storm. StaleToken and other errors
+      // fall through to the standard 202 so onboarding polling continues safely.
+      if (fromChain === true) {
+        try {
+          await findOrCreateUser(numericTokenId)
+          // Re-read after the upsert; if the row is now real, return 200.
+          const refreshed = await prisma.user.findUnique({
+            where: { tokenId: numericTokenId },
+            select: dbSelect,
+          })
+          if (refreshed && !isPlaceholderUser(refreshed)) {
+            const duration = Date.now() - startTime
+            console.log(`[/api/users/ensure] fromChain fast-path SUCCESS in ${duration}ms, user=${JSON.stringify(refreshed)}`)
+            return res.json({ user: refreshed })
+          }
+          // Upsert ran but the row is still a placeholder — fall through to 202.
+        } catch (chainErr: any) {
+          if (chainErr instanceof StaleTokenError) {
+            // Token genuinely not on-chain yet; FE keeps polling via the DB-only path.
+            console.log(`[/api/users/ensure] tokenId=${numericTokenId} StaleTokenError on fromChain read — falling through to 202`)
+          } else {
+            // Unexpected error; log it and fall through gracefully. Never 500 here —
+            // onboarding must keep polling even if the chain read fails transiently.
+            console.error(`[/api/users/ensure] fromChain read error for tokenId=${numericTokenId}:`, chainErr.message)
+          }
+          // Fall through to the 202 responses below.
+        }
+      }
+
+      if (!user) {
+        console.log(`[/api/users/ensure] tokenId=${numericTokenId} not yet indexed (${totalDuration}ms)`)
+        res.setHeader('Retry-After', '3')
+        return res.status(202).json({
+          error: 'user not yet indexed',
+          retryAfterSeconds: 3,
+        })
+      }
+
+      // Placeholder rows (username=`user_<id>`, address='') exist when an
+      // action eager-FK'd against this tokenId before its Mint event was
+      // indexed locally — see actions.ts upsert paths. The DataCleaner
+      // sweep refreshes them in the background; from the FE's perspective
+      // it's the same "not yet indexed" state, so we return 202 and let
+      // it poll. Once the sweep populates real values, the next /ensure
+      // returns 200 and the profile renders.
       console.log(`[/api/users/ensure] tokenId=${numericTokenId} placeholder row, awaiting refresh`)
       res.setHeader('Retry-After', '5')
       return res.status(202).json({
@@ -432,6 +473,16 @@ router.get('/by-token/:tokenId', async (req, res) => {
       where: { senderId: tokenId, status: 'waiting_for_deposit' }
     })
 
+    // Separately surface waiting_for_session rows. Mint+deposit+QuickSign
+    // zaps leave the bundled session leg in waiting_for_session while the
+    // L1→L2 LZ packet for the session register is in flight (up to 24h
+    // tolerance window). ProfileChooser uses this to keep the optimistic
+    // "+X CAW pending" badge alive past the 30-min localStorage TTL when
+    // the backend still has authoritative in-flight work.
+    const waitingSessionCount = await prisma.txQueue.count({
+      where: { senderId: tokenId, status: 'waiting_for_session' }
+    })
+
     // X badge: link is wallet-scoped on WalletXLink; gated per-profile by
     // user.xBadgeVisible. Surface xHandle/xFollowerBucket only when both
     // a link exists AND this profile has the badge visible. The active
@@ -463,6 +514,7 @@ router.get('/by-token/:tokenId', async (req, res) => {
       likeCount: user.likesReceivedCount,
       likedCount: user.likedCount,
       waitingForDepositCount: waitingCount,
+      waitingForSessionCount: waitingSessionCount,
       xHandle,
       xFollowerBucket,
       xLinkedAt,
