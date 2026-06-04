@@ -229,7 +229,7 @@ export const cawActionsAbi = [
     name: 'safeProcessActions',
     outputs: [
       { name: 'successCount', internalType: 'uint256', type: 'uint256' },
-      { name: 'rejections', internalType: 'string[]', type: 'string[]' },
+      { name: 'rejections', internalType: 'bytes[]', type: 'bytes[]' },
     ],
     stateMutability: 'payable',
   },
@@ -330,12 +330,7 @@ export const cawActionsAbi = [
         type: 'uint32',
         indexed: false,
       },
-      {
-        name: 'reason',
-        internalType: 'string',
-        type: 'string',
-        indexed: false,
-      },
+      { name: 'reason', internalType: 'bytes', type: 'bytes', indexed: false },
     ],
     name: 'ActionRejected',
   },
@@ -3024,6 +3019,7 @@ export const cawProfileAbi = [
     inputs: [
       { name: 'cawNetworkId', internalType: 'uint32', type: 'uint32' },
       { name: 'tokenId', internalType: 'uint32', type: 'uint32' },
+      { name: 'lzDestId', internalType: 'uint32', type: 'uint32' },
       { name: 'lzTokenAmount', internalType: 'uint256', type: 'uint256' },
     ],
     name: 'withdraw',
@@ -3063,6 +3059,7 @@ export const cawProfileAbi = [
       { name: 'cawNetworkId', internalType: 'uint32', type: 'uint32' },
       { name: 'tokenId', internalType: 'uint32', type: 'uint32' },
       { name: 'recipient', internalType: 'address', type: 'address' },
+      { name: 'lzDestId', internalType: 'uint32', type: 'uint32' },
       { name: 'lzTokenAmount', internalType: 'uint256', type: 'uint256' },
     ],
     name: 'withdrawTo',
@@ -5867,7 +5864,7 @@ export const cawProfileQuoterAbi = [
     type: 'function',
     inputs: [
       { name: 'networkId', internalType: 'uint32', type: 'uint32' },
-      { name: 'payInLzToken', internalType: 'bool', type: 'bool' },
+      { name: '', internalType: 'bool', type: 'bool' },
     ],
     name: 'mintQuote',
     outputs: [
@@ -5907,7 +5904,10 @@ export const cawProfileQuoterAbi = [
   },
   {
     type: 'function',
-    inputs: [{ name: 'payInLzToken', internalType: 'bool', type: 'bool' }],
+    inputs: [
+      { name: 'lzDestId', internalType: 'uint32', type: 'uint32' },
+      { name: 'payInLzToken', internalType: 'bool', type: 'bool' },
+    ],
     name: 'updateOwnerQuote',
     outputs: [
       {
@@ -5926,6 +5926,7 @@ export const cawProfileQuoterAbi = [
     type: 'function',
     inputs: [
       { name: 'networkId', internalType: 'uint32', type: 'uint32' },
+      { name: 'lzDestId', internalType: 'uint32', type: 'uint32' },
       { name: 'payInLzToken', internalType: 'bool', type: 'bool' },
     ],
     name: 'withdrawQuote',
@@ -6223,13 +6224,6 @@ export const iCawProfileForQuoterAbi = [
     outputs: [
       { name: '', internalType: 'contract CawNetworkManager', type: 'address' },
     ],
-    stateMutability: 'view',
-  },
-  {
-    type: 'function',
-    inputs: [],
-    name: 'peerWithMaxPendingTransfers',
-    outputs: [{ name: '', internalType: 'uint32', type: 'uint32' }],
     stateMutability: 'view',
   },
   {
