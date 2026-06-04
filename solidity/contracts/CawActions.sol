@@ -140,7 +140,12 @@ contract CawActions {
     uint16 actionCount,
     bytes32 batchHash
   );
-  event ActionRejected(uint32 senderId, uint32 cawonce, string reason);
+  /// @dev `reason` is the raw revert returndata from `processGroupSingle`:
+  ///      - 4-byte custom-error selector + abi-encoded args (most reverts), or
+  ///      - 0x08c379a0 prefix + abi-encoded string (legacy require/revert("…")).
+  ///      Off-chain decoders look up the selector against the contract ABI and
+  ///      surface a human reason. Empty bytes means a panic with no return data.
+  event ActionRejected(uint32 senderId, uint32 cawonce, bytes reason);
 
   /// @notice Emitted whenever the cap oracle pushes a new ratio.
   ///         ratio == 0 means the cap is now dormant (baseline applies).
@@ -925,7 +930,7 @@ contract CawActions {
     bytes calldata sigs,
     uint256 withdrawFee,
     uint256 withdrawLzTokenAmount
-  ) external payable returns (uint256 successCount, string[] memory rejections) {
+  ) external payable returns (uint256 successCount, bytes[] memory rejections) {
     uint256 actionCount;
     assembly { actionCount := shr(240, calldataload(packedActions.offset)) }
     if (actionCount == 0) revert NoActions();
@@ -935,7 +940,7 @@ contract CawActions {
     assembly { numGroups := shr(240, calldataload(sigs.offset)) }
     if (numGroups == 0 || numGroups > actionCount) revert BadSigGroupCount();
 
-    rejections = new string[](actionCount);
+    rejections = new bytes[](actionCount);
     SafeCursor memory sc;
     sc.pos = 2;     // skip actionCount header
     sc.sigPos = 2;  // skip numGroups header
@@ -993,7 +998,7 @@ contract CawActions {
     bytes calldata packedActions,
     bytes calldata sigs,
     SafeCursor memory sc,
-    string[] memory rejections,
+    bytes[] memory rejections,
     uint256 actionCount
   ) internal {
     (uint256 groupSize, uint8 v, bytes32 r, bytes32 s) = _readSigGroup(sigs, sc.sigPos);
@@ -1033,16 +1038,13 @@ contract CawActions {
         }
         unchecked { ++i; }
       }
-    } catch Error(string memory reason) {
+    } catch (bytes memory errData) {
+      // Catches BOTH `Error(string)` reverts (errData = 0x08c379a0 + encoded
+      // string) and custom-error reverts (errData = 4-byte selector + encoded
+      // args). Off-chain decoders dispatch on the selector. See ActionRejected.
       for (uint256 i = 0; i < groupSize; ) {
-        rejections[sc.actionsSeen + i] = reason;
-        emit ActionRejected(senderIds[i], cawonces[i], reason);
-        unchecked { ++i; }
-      }
-    } catch (bytes memory) {
-      for (uint256 i = 0; i < groupSize; ) {
-        rejections[sc.actionsSeen + i] = "Low-level exception";
-        emit ActionRejected(senderIds[i], cawonces[i], "Low-level exception");
+        rejections[sc.actionsSeen + i] = errData;
+        emit ActionRejected(senderIds[i], cawonces[i], errData);
         unchecked { ++i; }
       }
     }
@@ -1323,12 +1325,14 @@ contract CawActions {
       // a session key (ba.isSessionKey) cannot escalate by writing more sessions.
       _handleSessionAction(action, ba);
     } else if (action.actionType == ActionType.UNLIKE || action.actionType == ActionType.UNFOLLOW) {
-      // Floor charge: 1000 CAW from sender to validator. Without this,
-      // UNLIKE/UNFOLLOW are pure validator-gas griefing. Audit fix
-      // 2026-05-09 (Round 7 econ HIGH-1).
-      uint256 cost = _getCost(1000, 1e11);
-      cawProfile.spendDistributeAndAddTokensToBalance(action.senderId, cost, 0, validatorId, cost);
-      actionCost = cost;
+      // No contract-side charge. The ETH-pegged validator floor
+      // (minTipPerActionWei + Network tipTarget) enforced off-chain at
+      // validator-acceptance time already prevents the gas-griefing path
+      // that audit Round 7 econ HIGH-1 originally guarded against — any
+      // session-signed UNLIKE/UNFOLLOW whose implicit tip falls below the
+      // validator's floor gets rejected before submission, so the
+      // contract-side 1000 CAW transfer was a usability tax with no
+      // remaining security purpose.
     } else {
       revert InvalidActionType();
     }
@@ -1666,8 +1670,9 @@ contract CawActions {
     // submissions (vote:, pi:, p:, hide:, qs:/qx: with empty amounts —
     // every OTHER subtype that doesn't otherwise pay). Other action
     // types either have a fixed protocol-cost (CAW/LIKE/RECAW/FOLLOW)
-    // or their own floor (UNLIKE/UNFOLLOW). Audit fix 2026-05-09
-    // (Round 7 econ HIGH-1 extension to OTHER).
+    // or charge nothing on-chain (UNLIKE/UNFOLLOW — griefing closed off
+    // off-chain by the validator's ETH-pegged tip floor). Audit fix
+    // 2026-05-09 (Round 7 econ HIGH-1 extension to OTHER).
     if (numRecipients == 0 && !hasExplicitTip) {
       if (ba.isSessionKey && ba.perActionTipRate > 0) {
         if (!c.networkTipLoaded) {

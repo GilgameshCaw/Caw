@@ -634,12 +634,19 @@ contract CawProfile is
     depositFor(cawNetworkId, tokenId, amount, lzDestId, lzTokenAmount);
   }
 
-  function withdraw(uint32 cawNetworkId, uint32 tokenId, uint256 lzTokenAmount) public payable {
-    withdrawTo(cawNetworkId, tokenId, msg.sender, lzTokenAmount);
+  function withdraw(uint32 cawNetworkId, uint32 tokenId, uint32 lzDestId, uint256 lzTokenAmount) public payable {
+    withdrawTo(cawNetworkId, tokenId, msg.sender, lzDestId, lzTokenAmount);
   }
 
   /// @notice Withdraw CAW to any address. Only callable by the token owner.
-  function withdrawTo(uint32 cawNetworkId, uint32 tokenId, address recipient, uint256 lzTokenAmount) public payable {
+  ///         Opportunistically flushes any pending owner-update queue for
+  ///         `lzDestId` (typically the active token's storage chain) so the
+  ///         L2 mirror stays in step without a separate syncTransfer call.
+  ///         Pass lzDestId == 0 (sentinel) or == mainnetLzId to skip the
+  ///         flush entirely — those callers should send only the Network
+  ///         withdraw fee as msg.value. _updateNewOwners handles both
+  ///         no-peer and bypassLZ branches.
+  function withdrawTo(uint32 cawNetworkId, uint32 tokenId, address recipient, uint32 lzDestId, uint256 lzTokenAmount) public payable {
     // Withdraw gate check — delegated to Minter which stores per-tokenId
     // KYC level and mintedAt. If minter is set, the call reverts if the gate
     // is not satisfied. No-op for unlocked tokens (returns without reverting).
@@ -661,8 +668,21 @@ contract CawProfile is
     uint256 lzEthAmount = msg.value - payFee(fee, feeAddress);
 
     CAW.transfer(recipient, raw);
-    _refundUnusedLzEth(lzEthAmount);
-    lzTokenAmount; // withdraw is L1-local; param kept for ABI stability.
+    // Opportunistic owner-update flush. lzSend's refund-on-overpay path
+    // returns excess LZ ETH to tx.origin — but only the LZ-firing branch
+    // of _updateNewOwners actually calls lzSend. On the early-return paths
+    // (lzDestId == 0, bypassLZ direct call, empty queue) the contract
+    // would otherwise strand lzEthAmount. Pre-check the queue and refund
+    // here when no LZ message will fire.
+    bool willFireLz = lzDestId != 0 && lzDestId != mainnetLzId && updatesNeededForPeer(lzDestId) > 0;
+    if (willFireLz) {
+      _updateNewOwners(lzDestId, lzEthAmount, lzTokenAmount);
+    } else {
+      // bypassLZ direct call still benefits from a flush (keeps L2 in step)
+      // and costs only gas — no LZ ETH consumed.
+      if (lzDestId == mainnetLzId) _updateNewOwners(lzDestId, 0, 0);
+      _refundUnusedLzEth(lzEthAmount);
+    }
     // Withdraw is observable via the ERC20 Transfer fired by CAW.transfer
     // above (from = address(this), to = recipient). No bespoke event
     // needed — see event-declarations comment near `Deposited`.

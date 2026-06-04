@@ -146,7 +146,10 @@ contract VaultConservationHandler is Test {
         }
 
         vm.prank(actor);
-        cawProfile.withdrawTo(networkId, tid, actor, 0);
+        // lzDestId=0 sentinel skips the opportunistic owner-update flush.
+        // Vault-conservation test only cares about CAW balance math, not
+        // cross-chain owner-update propagation.
+        cawProfile.withdrawTo(networkId, tid, actor, 0, 0);
 
         ghost_realWithdrawn += newAmount;
     }

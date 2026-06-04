@@ -418,10 +418,10 @@ async function processActions(actions, params) {
   );
 
   console.log("Simulation Result: ", result);
-  // result[0] = successCount, result[1] = rejections[]
+  // result[0] = successCount, result[1] = rejections[] (each: raw revert bytes, '0x' if none)
   var rejections = result[1];
-  // Filter to actions that weren't rejected (empty rejection string)
-  var filteredSignedActions = signedActions.filter((_, i) => !rejections[i] || rejections[i] === '');
+  // Filter to actions that weren't rejected (empty bytes => no revert).
+  var filteredSignedActions = signedActions.filter((_, i) => !rejections[i] || rejections[i] === '0x');
   var ids = filteredSignedActions.map(a => `${a.data.message.senderId}-${a.data.message.cawonce}`);
   console.log("successful IDS", ids);
   console.log("filtered Signed Actions", filteredSignedActions.length);
@@ -558,11 +558,8 @@ async function buyUsername(user, name) {
   var quote = await quoter.mintQuote(defaultNetworkId, false);
   console.log('mint quote returned:', quote);
 
-  var peer = await cawProfiles.peerWithMaxPendingTransfers();
-  console.log('max pending peer', peer);
-
-  var updatesNeeded = await cawProfiles.updatesNeededForPeer(BigInt(peer));
-  console.log('max pending peer', updatesNeeded);
+  // peerWithMaxPendingTransfers was removed (commit 4b33cadb byte reclaim).
+  // Test path no longer probes it; callers now pass an explicit lzDestId.
 
   // (removed dev-time getMintFeeAndAddress(0) probe — networkId=0 never exists,
   // so the call always reverts with "Network does not exist" and surfaces as a
@@ -882,10 +879,13 @@ contract('CawProfiles', function(accounts, x) {
     });
 
     console.log("Expect fail:")
+    // V2: ActionRejected.reason is raw revert bytes — leading 4 bytes are
+    // the custom-error selector. InsufficientBalance() lives on CawProfileLedger.
+    const INSUFFICIENT_BALANCE_SEL = errorSelector('InsufficientBalance()');
     truffleAssert.eventEmitted(result.tx, 'ActionRejected', (args) => {
       return args.cawonce.toString() == result.signedActions[0].data.message.cawonce.toString() &&
 				args.senderId.toString() == result.signedActions[0].data.message.senderId.toString() &&
-        (args.reason == 'Insufficient CAW balance' || args.reason == 'Low-level exception');
+        args.reason.toLowerCase().startsWith(INSUFFICIENT_BALANCE_SEL);
     });
 
     //^ this should fail, and the balance should be the same as it was:
@@ -928,7 +928,7 @@ contract('CawProfiles', function(accounts, x) {
     truffleAssert.eventEmitted(result.tx, 'ActionRejected', (args) => {
       return args.cawonce.toString() == result.signedActions[0].data.message.cawonce.toString() &&
 				args.senderId.toString() == result.signedActions[0].data.message.senderId.toString() &&
-        (args.reason == 'Insufficient CAW balance' || args.reason == 'Low-level exception');
+        args.reason.toLowerCase().startsWith(INSUFFICIENT_BALANCE_SEL);
     });
 
 
@@ -973,10 +973,12 @@ contract('CawProfiles', function(accounts, x) {
     });
 
     console.log("Expect fail:")
+    // CawonceUsed() custom error from CawActions.sol.
+    const CAWONCE_USED_SEL = errorSelector('CawonceUsed()');
     truffleAssert.eventEmitted(result.tx, 'ActionRejected', (args) => {
       return args.cawonce.toString() == result.signedActions[0].data.message.cawonce.toString() &&
 				args.senderId.toString() == result.signedActions[0].data.message.senderId.toString() &&
-        (args.reason == 'Cawonce already used' || args.reason == 'Low-level exception');
+        args.reason.toLowerCase().startsWith(CAWONCE_USED_SEL);
     });
 
 
@@ -1070,8 +1072,8 @@ contract('CawProfiles', function(accounts, x) {
 
 
     var tokenBalanceWas = BigInt(await token.balanceOf(accounts[2]))
-    var quote = await quoter.withdrawQuote(defaultNetworkId, false);
-    await cawProfiles.withdraw(defaultNetworkId, 1, 0, {
+    var quote = await quoter.withdrawQuote(defaultNetworkId, l2, false);
+    await cawProfiles.withdraw(defaultNetworkId, 1, l2, 0, {
       value: quote?.nativeFee,
       from: accounts[2]
     });
@@ -1124,8 +1126,8 @@ contract('CawProfiles', function(accounts, x) {
     });
 
     var tokenBalanceWas3 = BigInt(await token.balanceOf(accounts[3]))
-    var quote = await quoter.withdrawQuote(defaultNetworkId, false);
-    await cawProfiles.withdraw(defaultNetworkId, 1, 0, {
+    var quote = await quoter.withdrawQuote(defaultNetworkId, l2, false);
+    await cawProfiles.withdraw(defaultNetworkId, 1, l2, 0, {
       value: quote?.nativeFee,
       from: accounts[3]
     });
@@ -1424,24 +1426,20 @@ contract("CawProfile - Transfer & Replication Gas", function(accounts) {
     // Verify transfer happened
     expect(await localCawProfiles.ownerOf(1)).to.equal(newOwner);
 
-    // Check there are pending transfers
-    var peer = await localCawProfiles.peerWithMaxPendingTransfers();
+    // Check there are pending transfers on the known L2 peer.
+    // peerWithMaxPendingTransfers was removed; callers now pass an explicit
+    // lzDestId. Test pins it to the L2 eid set up at line 1341.
+    var updatesNeeded = await localCawProfiles.updatesNeededForPeer(l2);
 
-    if (peer.toString() !== '0') {
-      var updatesNeeded = await localCawProfiles.updatesNeededForPeer(peer);
-
-      if (updatesNeeded.toNumber() > 0) {
-        // syncTransfer should work
-        var tx = await localCawProfiles.syncTransfer(peer, 0, {
-          from: newOwner,
-          value: web3.utils.toWei('0.001', 'ether'),
-        });
-        console.log("syncTransfer succeeded with pending transfers");
-      } else {
-        console.log("No updates needed (transfers already synced via transferAndSync)");
-      }
+    if (updatesNeeded.toNumber() > 0) {
+      // syncTransfer should work
+      var tx = await localCawProfiles.syncTransfer(l2, 0, {
+        from: newOwner,
+        value: web3.utils.toWei('0.001', 'ether'),
+      });
+      console.log("syncTransfer succeeded with pending transfers");
     } else {
-      console.log("No pending peer (mock endpoint may auto-sync)");
+      console.log("No updates needed (transfers already synced via transferAndSync)");
     }
 
     console.log("syncTransfer test passed");

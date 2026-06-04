@@ -551,8 +551,12 @@ contract('CawActions — batched signatures', function (accounts) {
     expect(Number(result.successCount)).to.equal(0);
     expect(result.rejections.length).to.equal(2);
     expect(result.rejections[0]).to.equal(result.rejections[1]); // same reason for whole group
-    const selfFollowMsg = result.rejections[0];
-    expect(selfFollowMsg.includes('Cannot follow yourself') || selfFollowMsg.includes('SelfFollow') || selfFollowMsg.includes('Low-level exception')).to.equal(true, 'Expected self-follow rejection');
+    // rejections are now raw revert bytes (4-byte custom-error selector + abi-encoded args,
+    // or 0x08c379a0 + abi-encoded string for legacy Error(string) reverts). SelfFollow()
+    // has zero args, so the entire payload is just its 4-byte selector.
+    const SELF_FOLLOW_SELECTOR = '0x773685ef';
+    expect(result.rejections[0].toLowerCase().startsWith(SELF_FOLLOW_SELECTOR)).to.equal(true,
+      `Expected SelfFollow() selector (${SELF_FOLLOW_SELECTOR}); got ${result.rejections[0]}`);
   });
 
   // --------------------------------------------

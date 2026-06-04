@@ -16,7 +16,6 @@ interface ICawProfileForQuoter {
   function withdrawFeeLocked(uint32 networkId, uint32 tokenId) external view returns (bool);
   function lockedWithdrawFee(uint32 networkId, uint32 tokenId) external view returns (uint256);
   function pendingTransferUpdates(uint32 lzDestId, address newOwner, uint32 tokenId) external view returns (uint32[] memory, address[] memory, uint64[] memory);
-  function peerWithMaxPendingTransfers() external view returns (uint32);
   function mainnetLzId() external view returns (uint32);
   function lzQuote(uint32 cawNetworkId, bytes4 selector, uint256 n, bytes memory payload, uint32 lzDestId, bool _payInLzToken) external view returns (MessagingFee memory quote);
 }
@@ -82,9 +81,11 @@ contract CawProfileQuoter {
     return quote;
   }
 
-  function mintQuote(uint32 networkId, bool payInLzToken) public view returns (MessagingFee memory quote) {
-    quote = updateOwnerQuote(payInLzToken);
-    quote.nativeFee += cawProfile.networkManager().getMintFee(networkId) * 2;
+  /// @notice Quote for the plain `CawProfile.mint` entry point (no LZ message
+  ///         fires from this path — the L2 mirror picks up the new token on
+  ///         its next auth or deposit). Returns Network mint fee × 2 only.
+  function mintQuote(uint32 networkId, bool /*payInLzToken*/) public view returns (MessagingFee memory quote) {
+    quote.nativeFee = cawProfile.networkManager().getMintFee(networkId) * 2;
     return quote;
   }
 
@@ -260,8 +261,12 @@ contract CawProfileQuoter {
     return mintAndDepositAndQuickSignQuote(networkId, 0, lzDestId, payInLzToken, sessionKey);
   }
 
-  function withdrawQuote(uint32 networkId, bool payInLzToken) public view returns (MessagingFee memory quote) {
-    quote = updateOwnerQuote(payInLzToken);
+  /// @notice Quote for `CawProfile.withdrawTo`. Caller passes the destination
+  ///         L2 they want to opportunistically flush pending owner-updates to —
+  ///         typically the active token's storage chain. lzDestId == 0 skips
+  ///         the flush entirely (callers who don't want one).
+  function withdrawQuote(uint32 networkId, uint32 lzDestId, bool payInLzToken) public view returns (MessagingFee memory quote) {
+    quote = updateOwnerQuote(lzDestId, payInLzToken);
     quote.nativeFee += cawProfile.networkManager().getWithdrawFee(networkId) * 2;
     return quote;
   }
@@ -279,10 +284,17 @@ contract CawProfileQuoter {
     return current;
   }
 
-  function updateOwnerQuote(bool payInLzToken) public view returns (MessagingFee memory quote) {
+  /// @notice Quote the LZ fee for a standalone updateOwners flush to `lzDestId`.
+  /// @dev Callers (withdrawQuote, transferAndSync wrappers) pick the destination
+  ///      themselves — usually the storage chain associated with the tokenId of
+  ///      interest. lzDestId == 0 (sentinel) returns zero — no peer chosen.
+  ///      lzDestId == mainnetLzId is the bypassLZ co-deployment case (L2 mirror
+  ///      is updated synchronously, no LZ message fires) and likewise returns
+  ///      zero. If the queue for `lzDestId` is empty, also returns zero.
+  function updateOwnerQuote(uint32 lzDestId, bool payInLzToken) public view returns (MessagingFee memory quote) {
+    if (lzDestId == 0 || lzDestId == cawProfile.mainnetLzId()) return MessagingFee(0, 0);
     CawProfileSelectors memory s = _s();
     uint32[] memory tokenIds; address[] memory owners; uint64[] memory stamps;
-    uint32 lzDestId = cawProfile.peerWithMaxPendingTransfers();
     (tokenIds, owners, stamps) = cawProfile.pendingTransferUpdates(lzDestId, address(0), 0);
 
     if (tokenIds.length == 0) return MessagingFee(0, 0);
