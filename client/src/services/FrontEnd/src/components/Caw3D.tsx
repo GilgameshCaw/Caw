@@ -258,12 +258,25 @@ function CrowMesh({ isDark }: { isDark: boolean }) {
 
 export default function Caw3D({ className, isDark = true }: { className?: string; isDark?: boolean }) {
   return (
-    <div className={className} style={{ cursor: 'grab' }}>
+    // background:transparent on the wrapper is load-order insurance: the
+    // <canvas> element exists in the DOM for a beat before WebGL paints its
+    // first frame, and on some browsers it renders its default opaque (white)
+    // backdrop in that gap — visible as a brief white square on the splash.
+    // Forcing the wrapper AND the canvas transparent means there's nothing
+    // white to show through before the first gl.clear().
+    <div className={className} style={{ cursor: 'grab', background: 'transparent' }}>
       <Canvas
         camera={{ position: [0, 0, 5], fov: 45 }}
-        gl={{ alpha: true, antialias: true, powerPreference: 'low-power' }}
+        gl={{ alpha: true, antialias: true, premultipliedAlpha: false, powerPreference: 'low-power' }}
         dpr={[1, 1.5]}
         style={{ background: 'transparent' }}
+        onCreated={({ gl }) => {
+          // Clear to fully transparent from the very first frame so the
+          // canvas never flashes its default opaque backdrop before the
+          // crow is drawn.
+          gl.setClearColor(0x000000, 0)
+          gl.setClearAlpha(0)
+        }}
       >
         <ambientLight intensity={0.5} />
         <directionalLight position={[4, 3, 6]} intensity={1.8} color="#ebc046" />
