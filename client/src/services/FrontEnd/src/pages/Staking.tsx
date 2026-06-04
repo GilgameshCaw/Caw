@@ -82,6 +82,23 @@ const Staking = () => {
   const [loadingWithdrawals, setLoadingWithdrawals] = useState(false)
   const [isSwitchingNetwork, setIsSwitchingNetwork] = useState(false)
   const [isWithdrawPending, setIsWithdrawPending] = useState(false)
+
+  // Pending L1→L2 deposit hint — same shape as ProfileChooser's read. We re-
+  // read on tokenId change, on the cross-component `caw:pendingDepositChanged`
+  // event (dispatched by stake.onSuccess in this same file), and on storage
+  // events so the indicator appears immediately after the L1 tx confirms and
+  // disappears as soon as ProfileChooser clears the hint post-landing.
+  const readPendingDepositWei = useCallback((tokenId?: number): bigint | null => {
+    if (!tokenId) return null
+    try {
+      const raw = localStorage.getItem(`caw:pendingDeposit:${tokenId}`)
+      if (!raw) return null
+      const parsed = JSON.parse(raw) as { amount: string; at: number }
+      if (Date.now() - parsed.at > 30 * 60 * 1000) return null
+      return BigInt(parsed.amount)
+    } catch { return null }
+  }, [])
+  const [pendingDepositHintWei, setPendingDepositHintWei] = useState<bigint | null>(null)
   const [recentStakeTime, setRecentStakeTime] = useState<number | null>(() => {
     // Check localStorage on mount for persisted stake time
     const stored = localStorage.getItem('lastStakeTime')
@@ -192,7 +209,10 @@ const Staking = () => {
     abi: cawProfileQuoterAbi,
     chainId: chains.l1.chainId,
     functionName: "withdrawQuote",
-    args: [CLIENT_ID, false],
+    // lzDestId is the L2 the user's stake actually lives on. The quoter
+    // routes through the matching L2 peer to read withdrawFee + storage
+    // fee. Passing 0 reverts on the missing-peer guard.
+    args: [CLIENT_ID, chains.l2.layerZero, false],
     query: {
       enabled: !!tokenId && activeTab === 'unstake'
     }
@@ -287,6 +307,31 @@ const Staking = () => {
 
     return () => clearInterval(interval)
   }, [activeTab, fetchPendingWithdrawals])
+
+  // Keep pendingDepositHintWei in sync with ProfileChooser's write events,
+  // the storage event (cross-tab), and tokenId changes. The Staked tile
+  // shows a yellow dot + tooltip when this is non-null/positive.
+  useEffect(() => {
+    setPendingDepositHintWei(readPendingDepositWei(tokenId))
+    const onChanged = (e: Event) => {
+      const detail = (e as CustomEvent).detail as { tokenId?: number } | undefined
+      if (!detail?.tokenId || detail.tokenId === tokenId) {
+        setPendingDepositHintWei(readPendingDepositWei(tokenId))
+      }
+    }
+    const onStorage = (e: StorageEvent) => {
+      if (!tokenId) return
+      if (e.key === `caw:pendingDeposit:${tokenId}`) {
+        setPendingDepositHintWei(readPendingDepositWei(tokenId))
+      }
+    }
+    window.addEventListener('caw:pendingDepositChanged', onChanged)
+    window.addEventListener('storage', onStorage)
+    return () => {
+      window.removeEventListener('caw:pendingDepositChanged', onChanged)
+      window.removeEventListener('storage', onStorage)
+    }
+  }, [tokenId, readPendingDepositWei])
 
   // Clear switching state when chain changes
   useEffect(() => {
@@ -569,13 +614,17 @@ const Staking = () => {
     },
   })
 
-  // Withdraw CAW from L1
+  // Withdraw CAW from L1. `withdrawTo` is the canonical entry point — it
+  // takes the recipient explicitly (msg.sender for self-withdraw) and an
+  // lzDestId so the L1 contract can opportunistically flush a queued owner
+  // update on the same L2 the user is withdrawing from. lzTokenAmount=0n
+  // means we pay LZ fees in native (ETH), not LZ token.
   const withdraw = useContractCall({
     address: CAW_NAMES_ADDRESS,
     abi: cawProfileAbi,
-    functionName: "withdraw",
-    args: [CLIENT_ID, Number(tokenId ?? 0), 0n],
-    disabled: !tokenId || withdrawFee === 0n,
+    functionName: "withdrawTo",
+    args: [CLIENT_ID, Number(tokenId ?? 0), (address ?? '0x0000000000000000000000000000000000000000') as `0x${string}`, chains.l2.layerZero, 0n],
+    disabled: !tokenId || withdrawFee === 0n || !address,
     value: withdrawFee,
     onPending: () => {
       setIsWithdrawPending(true)
@@ -667,24 +716,37 @@ const Staking = () => {
   // any L1-requiring action will switch them back transparently.
   const handleUnstakeInit = useCallback(async () => {
     if (!activeToken) return
+    // Re-entrancy guard. Without this a double-click pops two signature
+    // prompts back-to-back (the wallet just queues the second, looking
+    // identical to the first) — the user can't tell they're now signing a
+    // duplicate withdrawal. Mirror the stake side's `isStakePending` flag.
+    if (isWithdrawPending) {
+      console.log('[Staking] handleUnstakeInit: already pending, ignoring re-entry')
+      return
+    }
+    setIsWithdrawPending(true)
     console.log('[Staking] handleUnstakeInit called', { isConnected, amount, isMainnet })
-    await ensureWallet(null, async () => {
-      try {
-        console.log('[Staking] Submitting withdraw action (signing from current chain)')
-        await signAndSubmit({
-          senderId: activeToken.tokenId,
-          actionType: 'withdraw',
-          recipients: [activeToken.tokenId],
-          amounts: [BigInt(Math.floor(parseFloat(amount)))],
-        })
-        setAmount("")
-        console.log('[Staking] Refreshing pending withdrawals')
-        await fetchPendingWithdrawals()
-      } catch (err) {
-        console.error('[Staking] Withdraw init failed', err)
-      }
-    })
-  }, [activeToken, isConnected, amount, isMainnet, signAndSubmit, fetchPendingWithdrawals, ensureWallet])
+    try {
+      await ensureWallet(null, async () => {
+        try {
+          console.log('[Staking] Submitting withdraw action (signing from current chain)')
+          await signAndSubmit({
+            senderId: activeToken.tokenId,
+            actionType: 'withdraw',
+            recipients: [activeToken.tokenId],
+            amounts: [BigInt(Math.floor(parseFloat(amount)))],
+          })
+          setAmount("")
+          console.log('[Staking] Refreshing pending withdrawals')
+          await fetchPendingWithdrawals()
+        } catch (err) {
+          console.error('[Staking] Withdraw init failed', err)
+        }
+      })
+    } finally {
+      setIsWithdrawPending(false)
+    }
+  }, [activeToken, isConnected, amount, isMainnet, signAndSubmit, fetchPendingWithdrawals, ensureWallet, isWithdrawPending])
 
   const renderStakePanel = () => (
     <div className="space-y-6">
@@ -964,19 +1026,35 @@ const Staking = () => {
               </div>
             </div>
 
-            {/* Right side: Button */}
+            {/* Right side: Button.
+                Disabled when:
+                - withdraw quote hasn't loaded yet (withdrawFee=0n means
+                  useReadContract returned undefined or 0; the call would
+                  bail with "Contract call is disabled"),
+                - the token isn't owned by the connected wallet,
+                - or a withdraw tx is already in flight. */}
             <button
               onClick={handleWithdraw}
-              className={`py-2 px-6 rounded-full text-sm font-semibold transition-all duration-300 cursor-pointer whitespace-nowrap ${
-                !isConnected
-                  ? 'bg-yellow-500 hover:bg-yellow-600 text-black'
-                  : (!isTokenOwner && activeToken && !wrongChainForUnstake)
-                  ? (isDark ? 'bg-gray-700 text-gray-400' : 'bg-gray-300 text-gray-600')
-                  : (withdraw.status === 'pending' || isWithdrawPending)
-                  ? 'bg-yellow-600 text-black'
-                  : 'bg-yellow-500 hover:bg-yellow-600 text-black'
+              className={`py-2 px-6 rounded-full text-sm font-semibold transition-all duration-300 cursor-pointer whitespace-nowrap bg-yellow-500 hover:bg-yellow-600 text-black ${
+                isDark
+                  ? 'disabled:bg-gray-700 disabled:text-gray-400 disabled:cursor-not-allowed disabled:hover:bg-gray-700'
+                  : 'disabled:bg-gray-300 disabled:text-gray-600 disabled:cursor-not-allowed disabled:hover:bg-gray-300'
               }`}
-              disabled={isConnected && ((!isTokenOwner && activeToken && !wrongChainForUnstake) || withdraw.status === 'pending' || isWithdrawPending)}
+              disabled={
+                isConnected && (
+                  (!isTokenOwner && activeToken && !wrongChainForUnstake) ||
+                  withdraw.status === 'pending' ||
+                  isWithdrawPending ||
+                  withdrawFee === 0n
+                )
+              }
+              title={
+                withdrawFee === 0n
+                  ? 'Loading withdraw fee from L2 quoter…'
+                  : !isTokenOwner && activeToken && !wrongChainForUnstake
+                  ? 'Connected wallet does not own this profile token'
+                  : undefined
+              }
             >
               {isSwitchingNetwork
                 ? t('staking.button.switching')
@@ -1118,17 +1196,30 @@ const Staking = () => {
         headerCapHint
       />
 
-      {/* Unstake Button */}
+      {/* Unstake Button.
+          Disable predicate runs regardless of `isMainnet` — the original
+          guard `isConnected && !isMainnet && ...` allowed the button to
+          stay active (yellow) when the user was on L1 with an invalid
+          amount, showing "Insufficient Staked" but still clickable. The
+          submit path always needs valid ownership + amount, so the gate
+          should always apply once connected. Disabled paint uses
+          `disabled:bg-*` so the greyed colors match the rest of the FE. */}
       <button
         onClick={handleUnstakeInit}
-        className={`w-full py-3 px-4 rounded-full font-semibold transition-all duration-300 cursor-pointer ${
-          !isConnected || isMainnet
-            ? 'bg-yellow-500 hover:bg-yellow-600 text-black'
-            : (!isTokenOwner && !isMainnet) || (!amount || parseFloat(amount) <= 0 || parseFloat(amount) > mockData.maxWithdrawAmount)
-            ? (isDark ? 'bg-gray-700 text-gray-400' : 'bg-gray-300 text-gray-600')
-            : 'bg-yellow-500 hover:bg-yellow-600 text-black'
+        className={`w-full py-3 px-4 rounded-full font-semibold transition-all duration-300 cursor-pointer bg-yellow-500 hover:bg-yellow-600 text-black ${
+          isDark
+            ? 'disabled:bg-gray-700 disabled:text-gray-400 disabled:cursor-not-allowed disabled:hover:bg-gray-700'
+            : 'disabled:bg-gray-300 disabled:text-gray-600 disabled:cursor-not-allowed disabled:hover:bg-gray-300'
         }`}
-        disabled={isConnected && !isMainnet && ((!isTokenOwner) || (!amount || parseFloat(amount) <= 0 || parseFloat(amount) > mockData.maxWithdrawAmount))}
+        disabled={
+          isWithdrawPending ||
+          (isConnected && (
+            !isTokenOwner ||
+            !amount ||
+            parseFloat(amount) <= 0 ||
+            parseFloat(amount) > mockData.maxWithdrawAmount
+          ))
+        }
       >
         {isSwitchingNetwork
           ? t('staking.button.switching')
@@ -1318,9 +1409,24 @@ const Staking = () => {
             </button>
           </div>
           <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
-            <div className={`px-1 pb-1 rounded-lg border transition-all duration-300 flex flex-col items-center justify-between ${isDark ? 'bg-black' : 'bg-white'} ${
+            <div className={`px-1 pb-1 rounded-lg border transition-all duration-300 flex flex-col items-center justify-between relative ${isDark ? 'bg-black' : 'bg-white'} ${
               isDark ? 'border-white/20' : 'border-gray-300'
             }`} style={{ paddingTop: '10px' }}>
+              {/* Pending L1→L2 deposit indicator. Yellow dot matches the
+                  ProfileChooser palette so the same in-flight state reads
+                  consistently across surfaces. Tooltip carries the exact
+                  pending CAW amount. */}
+              {pendingDepositHintWei != null && pendingDepositHintWei > 0n && (
+                <div className="absolute top-1.5 right-1.5">
+                  <Tooltip
+                    text={`+${formatUnitsCompact(pendingDepositHintWei, 18)} CAW pending — waiting for L2 to confirm your deposit`}
+                    position="top"
+                    forceBlack
+                  >
+                    <span className="block w-2.5 h-2.5 rounded-full bg-yellow-400 animate-pulse cursor-help" aria-label="Pending deposit" />
+                  </Tooltip>
+                </div>
+              )}
               <div className={`text-3xl font-bold transition-colors duration-300 text-center flex-1 flex items-center ${
                 isDark ? 'text-white' : 'text-black'
               }`}>

@@ -182,19 +182,17 @@ const NetworkFeesPanel: React.FC<NetworkFeesPanelProps> = ({
         isDark ? 'border-white/10 bg-white/[0.03]' : 'border-gray-200 bg-gray-50'
       } ${className ?? ''}`}
     >
-      {/* Header row: "NETWORK FEES" on the left, optional right-aligned
-          "your capped amount" hint when the panel's value below is the user's
-          deposit-time-locked ceiling (Staking withdraw flow). Replaces the
-          per-row "max X — Operator can never raise" subline. */}
+      {/* Header row: "NETWORK FEES". The headerCapHint prop still suppresses
+          the per-row "max X — Operator can never raise" subline below when the
+          panel value is the user's deposit-time-locked ceiling (Staking
+          withdraw flow); the right-aligned "your capped amount" label that
+          previously rendered here was removed as redundant noise. */}
       <div
         className={`flex items-baseline justify-between text-[11px] uppercase tracking-wide mb-1 ${
           isDark ? 'text-white/40' : 'text-gray-500'
         }`}
       >
         <span>{t('network.fees_title')}</span>
-        {headerCapHint && (
-          <span className="normal-case tracking-normal">{t('network.your_capped_amount')}</span>
-        )}
       </div>
 
       {permanentlyFree ? (
