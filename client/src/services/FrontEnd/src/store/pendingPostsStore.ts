@@ -19,6 +19,14 @@ interface PendingPostsStore {
   updatePostWithTxQueueId: (tempId: string, txQueueId: number) => void
   /** Update a pending post's id once the real caw ID is known */
   updatePostId: (cawonce: number, userId: number, realId: string) => void
+  /**
+   * Bump the like/reply/recaw counter (and matching hasX flag) on a pending
+   * caw when the current user acts against it. Match by (userId, cawonce) —
+   * stable across the pending→confirmed swap. Without this, navigating away
+   * from the home feed loses the per-FeedItem optimistic overrides; the
+   * pending caw on profile renders with the frozen-at-creation zeros.
+   */
+  bumpCounterOnPending: (targetUserId: number, targetCawonce: number, kind: 'like' | 'reply' | 'recaw', delta: 1 | -1) => void
   markPostAsFailed: (txQueueId: number) => void
   markPostAsConfirmed: (txQueueId: number) => void
   removePendingPost: (tempId: string) => void
@@ -121,6 +129,26 @@ export const usePendingPostsStore = create<PendingPostsStore>((set) => ({
           ? { ...post, id: realId }
           : post
       )
+    }))
+  },
+
+  bumpCounterOnPending: (targetUserId, targetCawonce, kind, delta) => {
+    set((state) => ({
+      pendingPosts: state.pendingPosts.map(post => {
+        if (post.user?.tokenId !== targetUserId || post.cawonce !== targetCawonce) return post
+        const next = { ...post }
+        if (kind === 'like') {
+          next.likeCount = Math.max(0, (post.likeCount ?? 0) + delta)
+          next.hasLiked = delta > 0
+        } else if (kind === 'reply') {
+          next.commentCount = Math.max(0, (post.commentCount ?? 0) + delta)
+          next.hasReplied = delta > 0
+        } else if (kind === 'recaw') {
+          next.recawCount = Math.max(0, (post.recawCount ?? 0) + delta)
+          next.hasRecawed = delta > 0
+        }
+        return next
+      })
     }))
   },
 

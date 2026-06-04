@@ -699,21 +699,6 @@ const FeedItem: React.FC<{ item: CawItem; isMainPost?: boolean; isReply?: boolea
     // Quotes act as their own posts, so reply to the quote itself (item).
     const replyTarget = (isRecaw && !isQuote) ? useItem : item
 
-    // Refuse to navigate to a still-pending caw's reply page — the URL
-    // would carry the temp `pending-…` id and CawPage couldn't load any
-    // replies until the real id surfaces. Fall through to the mobile-
-    // modal flow which doesn't need a route at all.
-    if (typeof window !== 'undefined'
-        && window.matchMedia('(min-width: 768px)').matches
-        && !String(replyTarget.id).startsWith('pending-')) {
-      // Desktop UX: navigate to the post page to reply inline.
-      // Same in-memory seed as handleCardClick so the post renders
-      // without a full-page spinner.
-      navigate(`${cawUrl(replyTarget)}?reply=1`, { state: { caw: replyTarget } })
-      return
-    }
-
-    // Mobile: open modal with onSuccess callback to set pending state.
     openModal('comment', replyTarget, () => {
       setReplyPending(true)
       setReplyCountAdj(1)

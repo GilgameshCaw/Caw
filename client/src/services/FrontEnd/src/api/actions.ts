@@ -1253,9 +1253,20 @@ export function useSignAndSubmitAction() {
     // Determine the effective tip for THIS action.
     // - If signing with a session key and the session has a tipCeiling, cap the tip at it.
     //   A ceiling of 0 means "no tip" (opt-out — explicit user choice at session activation).
-    // - Otherwise (manual signing) use the current market tip.
+    // - If the user has an active session BUT this action can't use it (notably
+    //   withdraw, which is permanently scope-excluded), still apply the
+    //   session's tipCeiling. Without this, manual-sign withdraws bottom out
+    //   at the validator's static BASE_VALIDATOR_TIP (often 1000 CAW),
+    //   undertipping by 10–25× vs the per-action rate the same user pays on
+    //   their session-signed actions.
+    // - Otherwise (no session at all) use the current market tip.
     let effectiveTip: bigint
     if (canUseSession && activeSession.tipCeiling !== undefined) {
+      const ceiling = BigInt(activeSession.tipCeiling || '0')
+      effectiveTip = getValidatorTip(ceiling)
+    } else if (activeSession && activeSession.tipCeiling !== undefined) {
+      // Out-of-scope session present (e.g. withdraw): honour the session's
+      // tipCeiling anyway so withdraw tips align with everything else.
       const ceiling = BigInt(activeSession.tipCeiling || '0')
       effectiveTip = getValidatorTip(ceiling)
     } else {
@@ -1460,6 +1471,29 @@ export function useSignAndSubmitAction() {
           response.senderId,
           String(response.cawId),
         )
+      }
+
+      // If this action targeted a still-pending caw of the current user
+      // (like / reply / recaw on it), bump the matching counter on the
+      // pending caw so the icon-fill and count survive the unmount/remount
+      // that happens when the user navigates to another page. FeedItem's
+      // local override state is per-instance; the store mutation is the
+      // only thing that persists across pages.
+      const _targetCawonce: number | undefined =
+        typeof params.receiverCawonce === 'number' ? params.receiverCawonce
+        : params.receiverCawonce != null ? Number(params.receiverCawonce)
+        : undefined
+      const _targetUserId: number | undefined =
+        typeof params.receiverId === 'number' ? params.receiverId
+        : params.receiverId != null ? Number(params.receiverId)
+        : undefined
+      if (_targetUserId != null && _targetCawonce != null && Number.isFinite(_targetCawonce)) {
+        const t = params.actionType
+        const bump = usePendingPostsStore.getState().bumpCounterOnPending
+        if (t === 'like')    bump(_targetUserId, _targetCawonce, 'like',  1)
+        else if (t === 'unlike')   bump(_targetUserId, _targetCawonce, 'like',  -1)
+        else if (t === 'recaw')    bump(_targetUserId, _targetCawonce, 'recaw', 1)
+        else if (t === 'caw' && params.receiverId)  bump(_targetUserId, _targetCawonce, 'reply', 1)
       }
 
       // Record pending spend so subsequent actions see reduced effective stake.
