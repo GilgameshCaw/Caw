@@ -733,6 +733,13 @@ console.log("BALANCE:", balance)
   // Navigate to onboarding page once mint succeeds
   useEffect(() => {
     if (mintSuccess && mintedTokenId && username) {
+      // Clear any stale "stepper-dismissed" marker for this username. If the
+      // user previously minted+dismissed and now re-minted the same name
+      // (testnet redeploy, name purchased back after expiry, …) the marker
+      // would short-circuit WelcomePage to /home before tokensByAddress has
+      // the new token — AuthGate then bounces them to the captive splash.
+      // A fresh mint is always intent to see the welcome flow.
+      try { localStorage.removeItem(`caw:onboardingExited:${username}`) } catch {}
       // Pass state indicating if we deposited (stake is pending via LayerZero)
       navigate(`/welcome/${username}`, {
         replace: true,
@@ -794,14 +801,18 @@ console.log("BALANCE:", balance)
     return false
   }, [])
 
-  // Combines decodeMintTokenId + ensureUserFromChain. Returns the numeric
-  // tokenId when the user row is confirmed ready, or null on any failure
-  // (falls back to the username-polling loop in each handler).
+  // Returns the numeric tokenId as soon as the L1 receipt is decoded.
+  // Previously this also blocked on /api/users/ensure (server-side L1 read +
+  // retries) which can stall 30–60s when the indexer / L1 RPC are slow. The
+  // user only cares about "is my mint confirmed?" — the on-chain receipt
+  // already answers that. We fire ensureUserFromChain in the background so
+  // WelcomePage's own /api/users/ensure call finds the row warm; we don't
+  // gate the takeover-dismiss on it.
   const resolveMintedTokenId = useCallback(async (hash: `0x${string}`): Promise<number | null> => {
     const tokenId = await decodeMintTokenId(hash)
     if (tokenId === null) return null
-    const ready = await ensureUserFromChain(tokenId)
-    return ready ? tokenId : null
+    ensureUserFromChain(tokenId).catch(() => { /* WelcomePage retries */ })
+    return tokenId
   }, [decodeMintTokenId, ensureUserFromChain])
   // ── End fast-path helpers ────────────────────────────────────────────────
 
