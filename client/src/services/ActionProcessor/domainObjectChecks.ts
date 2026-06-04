@@ -191,6 +191,51 @@ async function checkOtherExists(
   action: ProcessedAction,
   rawAction: RawAction
 ): Promise<boolean> {
+  // hide:caw:{cawonce} — already processed if the target caw is HIDDEN.
+  // Without this gate, every poll re-enters handleHideAction's
+  // updateMany(status: HIDDEN where status: SUCCESS), gets count=0, logs
+  // "No matching caw found", and we loop forever. Same feedback-loop class
+  // as the SUCCESS→HIDDEN bug documented in checkCawExists above; the
+  // CAW handler was fixed by checking any terminal status, but the
+  // domain-object check for hide actions was never added. Reported by Zin
+  // (167 MB log growth in hours).
+  if (rawAction.text?.startsWith('hide:caw:')) {
+    const targetCawonce = parseInt(rawAction.text.replace('hide:caw:', ''), 10)
+    if (Number.isNaN(targetCawonce)) return false
+    const senderId = await findOrCreateUser(action.senderId)
+    const targetCaw = await tx.caw.findFirst({
+      where: { userId: senderId, cawonce: targetCawonce },
+      select: { status: true },
+    })
+    return targetCaw?.status === 'HIDDEN'
+  }
+
+  // hide:recaw:{receiverId}:{receiverCawonce} — already processed if the
+  // sender's RECAW row for the original caw no longer exists. Mirrors the
+  // handleHideAction lookup chain: receiver+receiverCawonce → originalCaw.id
+  // → senderId+originalCawId RECAW row. If the row is gone, the undo-recaw
+  // already ran and we should skip. Null target → return false: if the
+  // original caw hasn't been indexed locally yet (mirror node case), let
+  // the handler run (it's a no-op + warn). Same pattern as checkLikeExists.
+  if (rawAction.text?.startsWith('hide:recaw:')) {
+    const parts = rawAction.text.replace('hide:recaw:', '').split(':')
+    const receiverTokenId = parseInt(parts[0], 10)
+    const receiverCawonce = parseInt(parts[1], 10)
+    if (Number.isNaN(receiverTokenId) || Number.isNaN(receiverCawonce)) return false
+    const receiverUserId = await findOrCreateUser(receiverTokenId)
+    const originalCaw = await tx.caw.findFirst({
+      where: { userId: receiverUserId, cawonce: receiverCawonce },
+      select: { id: true },
+    })
+    if (!originalCaw) return false  // not yet indexed locally; let handler run
+    const senderUserId = await findOrCreateUser(action.senderId)
+    const existingRecaw = await tx.caw.findFirst({
+      where: { userId: senderUserId, originalCawId: originalCaw.id, action: 'RECAW' },
+      select: { id: true },
+    })
+    return existingRecaw === null
+  }
+
   if (rawAction.text?.startsWith('tip:')) {
     const senderId = await findOrCreateUser(action.senderId)
     const existingTip = await tx.tip.findFirst({
