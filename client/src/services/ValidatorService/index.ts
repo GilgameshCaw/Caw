@@ -27,7 +27,7 @@ import { requireValidatorSigner, type ValidatorSigner } from '../../utils/signer
 // ABI for the new packed-calldata CawActions functions
 const PACKED_ABI = [
   'function processActions(uint32 validatorId, bytes packedActions, bytes sigs, uint256 withdrawFee, uint256 withdrawLzTokenAmount) payable',
-  'function safeProcessActions(uint32 validatorId, bytes packedActions, bytes sigs, uint256 withdrawFee, uint256 withdrawLzTokenAmount) payable returns (uint256 successCount, string[] rejections)',
+  'function safeProcessActions(uint32 validatorId, bytes packedActions, bytes sigs, uint256 withdrawFee, uint256 withdrawLzTokenAmount) payable returns (uint256 successCount, bytes[] rejections)',
   // ZK path. Only used when ZK_PROVER_ENABLED=1 AND a proof for this exact
   // (packedActions, packedSigs) tuple has been pre-staged in zkProofCache.
   // Falls back to processActions transparently if no proof is ready.
@@ -42,7 +42,11 @@ const PACKED_ABI = [
   // decodePackedActionsFromTx() to fetch and decode them from tx.data.
   'event ActionsProcessed(uint32 indexed networkId, uint32 indexed validatorId, uint16 actionCount, bytes32 batchHash)',
   'event ActionsProcessedZk(uint32 indexed networkId, uint32 indexed validatorId, uint16 actionCount, uint256 actionsExecutedBitmap, bytes32 batchHash)',
-  'event ActionRejected(uint32 senderId, uint32 cawonce, string reason)',
+  // V2: `reason` carries the raw revert returndata from processGroupSingle
+  // (4-byte custom-error selector + abi-encoded args, OR 0x08c379a0 + abi-encoded
+  // string for legacy Error(string) reverts). Use decodeRejectionBytes() to
+  // produce a human-readable string for logs / TxQueue.failureReason.
+  'event ActionRejected(uint32 senderId, uint32 cawonce, bytes reason)',
 ]
 const packedIface = new Interface(PACKED_ABI)
 
@@ -514,7 +518,7 @@ async function backstopCawonceFromCalldata(
     //   CAW_ACTIONS_ADDRESS        → processActions | safeProcessActions | processActionsWithZkSigs
     //   CAW_ACTIONS_ERC1271_ADDRESS → processActionsERC1271
     const emitter = txEmitter.get(txHash)!
-    const erc1271Addr: string = CAW_ACTIONS_ERC1271_ADDRESS
+    const erc1271Addr: string = CAW_ACTIONS_ERC1271_ADDRESS ?? ''
     const isERC1271Tx = erc1271Addr !== '' && emitter === erc1271Addr.toLowerCase()
 
     let packedHex: string | undefined
@@ -1304,21 +1308,72 @@ export const validatorService: Service = {
       // "Session expired or not found". Use the dedicated waiting_for_session
       // status so the DataCleaner can run a session-specific re-promote sweep
       // (checking the local SessionKey table rather than L2 auth+balance).
-      // Note: rows arriving here from the API already carry status='waiting_for_session';
-      // this sweep catches any 'pending' rows with a pendingQuickSignTxHash that
-      // slipped through (e.g. submitted before the API-side gate was deployed).
-      const sessionHeldCount = await prisma.txQueue.updateMany({
+      //
+      // The API now only stamps pendingQuickSignTxHash on rows it deliberately
+      // parked (post-fix), so this branch is mostly defensive. We still gate
+      // each candidate on whether the sender's owner address has ANY active
+      // SessionKey on file — if a session is already on-chain for that owner,
+      // there's nothing to wait for and the row should simulate normally.
+      // The "wrong session key" case (signer is a session that was never
+      // registered) is caught by the validator's simulation step, not here.
+      const sessionHoldCandidates = await prisma.txQueue.findMany({
         where: {
           status: 'pending',
           pendingQuickSignTxHash: { not: null }
         },
-        data: {
-          status: 'waiting_for_session',
-          reason: 'Waiting for L1 Quick Sign session to land on L2'
-        }
+        select: { id: true, senderId: true }
       })
-      if (sessionHeldCount.count > 0) {
-        console.log(`[Validator] Pre-sim hold: moved ${sessionHeldCount.count} session-pending rows to waiting_for_session`)
+      if (sessionHoldCandidates.length > 0) {
+        // Resolve senderId → owner address in bulk so we can ask "does this
+        // owner have any usable session on file?" with a single grouped
+        // findMany rather than one query per row.
+        const senderIds = Array.from(new Set(sessionHoldCandidates.map(r => r.senderId)))
+        const senders = await prisma.user.findMany({
+          where: { tokenId: { in: senderIds } },
+          select: { tokenId: true, address: true }
+        })
+        const addrByTokenId = new Map(senders.map(s => [s.tokenId, s.address?.toLowerCase()]))
+        const nowSec = BigInt(Math.floor(Date.now() / 1000))
+        const ownerAddrs = Array.from(new Set(senders.map(s => s.address?.toLowerCase()).filter(Boolean) as string[]))
+        const activeSessions = await prisma.sessionKey.findMany({
+          where: {
+            ownerAddress: { in: ownerAddrs },
+            revokedAt: null,
+            expiry: { gt: nowSec }
+          },
+          select: { ownerAddress: true }
+        })
+        const ownersWithSession = new Set(activeSessions.map(s => s.ownerAddress.toLowerCase()))
+
+        const toPark: number[] = []
+        const toClearHint: number[] = []
+        for (const row of sessionHoldCandidates) {
+          const owner = addrByTokenId.get(row.senderId)
+          if (owner && ownersWithSession.has(owner)) {
+            // Owner already has an on-chain session — no reason to wait.
+            // Clear the hint so the row simulates this tick.
+            toClearHint.push(row.id)
+          } else {
+            toPark.push(row.id)
+          }
+        }
+        if (toClearHint.length > 0) {
+          await prisma.txQueue.updateMany({
+            where: { id: { in: toClearHint } },
+            data: { pendingQuickSignTxHash: null }
+          })
+          console.log(`[Validator] Pre-sim hold: cleared stale pendingQuickSignTxHash on ${toClearHint.length} rows (owner already has on-chain session)`)
+        }
+        if (toPark.length > 0) {
+          await prisma.txQueue.updateMany({
+            where: { id: { in: toPark } },
+            data: {
+              status: 'waiting_for_session',
+              reason: 'Waiting for L1 Quick Sign session to land on L2'
+            }
+          })
+          console.log(`[Validator] Pre-sim hold: moved ${toPark.length} session-pending rows to waiting_for_session`)
+        }
       }
 
       // Safety net: hard-fail waiting_for_session rows older than 24h15m.
@@ -1669,7 +1724,17 @@ export const validatorService: Service = {
             const cacheKey = tokenIds.map((t: any, i: number) => `${t}:${amounts[i].toString()}`).sort().join(',')
             withdrawQuoteCache.set(cacheKey, { quote: withdrawQuote, cachedAt: Date.now() })
           } catch (err: any) {
-            console.error("[Validator] Failed to get withdraw quote:", err.message || err)
+            // Without a quote, safeProcessActions would revert with
+            // NoWithdrawFee at the post-loop withdraw gate. Submitting with
+            // withdrawFee=0 has zero chance of landing — pure waste. Mark
+            // every action with a "will retry" marker that the downstream
+            // hasTemporaryError check matches → rows stay pending and the
+            // next poll re-attempts the quote.
+            console.error("[Validator] Failed to get withdraw quote — keeping batch pending, will retry:", err.message || err)
+            const rejectionMessages = multiData.actions.map(() =>
+              `LZ withdraw quote failed (will retry): ${err.message || err}`
+            );
+            return { successfulActions: [], rejectionMessages, quote: { nativeFee: BigInt(0) } };
           }
         }
 
@@ -1755,14 +1820,21 @@ export const validatorService: Service = {
 
         console.log(`[Validator] Step 6: Decoding response...`)
         console.log(`Simulation completed in ${elapsed}ms`)
+        // ethers v6 returns `Result` (array-like); the function returns
+        // (uint, bytes[]) — V2 surface change: each rejection is the raw revert
+        // returndata, not a string. We decode at the boundary into the same
+        // string shape downstream code expects (empty string = not rejected).
         const decoded = packedIface.decodeFunctionResult(
           'safeProcessActions',
           returnData
-        ) as [ bigint, string[] ]  // [ successCount, rejectionMessages ]
-        console.log("decoded", decoded)
+        ) as unknown as [ bigint, string[] ]  // [ successCount, rejectionsHex ]
+        const successCount = decoded[0]
+        const rejectionsHex = decoded[1]
+        const rejectionMessages = rejectionsHex.map((hex: string) => decodeRejectionBytes(hex))
+        console.log("decoded", { successCount, rejectionMessages })
 
-        const [ successCount, rejectionMessages ] = decoded
-        // Build a minimal successfulActions array from the non-rejected entries
+        // Build a minimal successfulActions array from the non-rejected entries.
+        // Empty string => action ran successfully on simulation.
         const successfulActions = multiData.actions.filter((_: any, i: number) => !rejectionMessages[i])
 
         console.log("simulated:", Number(successCount), rejectionMessages)
@@ -1800,12 +1872,21 @@ export const validatorService: Service = {
 
         // Handle specific blockchain errors (these don't need retry)
         if (err.message?.includes('execution reverted')) {
+          // safeProcessActions itself can revert at the post-loop withdrawal
+          // gate (NoWithdrawFee, etc.) — the inner try/catch only covers
+          // processGroupSingle. When that happens, ethers wraps as
+          // "execution reverted (unknown custom error) (data='0x<selector>')".
+          // Route the raw selector through decodeCustomError so the operator
+          // sees the named error instead of an opaque hex tag.
+          const errData: string | undefined =
+            err?.data || err?.error?.data || err?.info?.error?.data
+          const decoded = errData ? decodeCustomError(errData) : null
           const revertMatch = err.message.match(/execution reverted: (.+)/);
-          const revertReason = revertMatch?.[1] || err.message;
+          const revertReason = decoded || revertMatch?.[1] || err.message;
           console.log(`Execution reverted with reason: ${revertReason}`);
 
           // Check for specific duplicate cawonce error
-          if (revertReason.includes('cawonce') || revertReason.includes('already processed')) {
+          if (revertReason.includes('cawonce') || revertReason.includes('already processed') || revertReason.includes('Cawonce already used')) {
             const rejectionMessages = multiData.actions.map(() =>
               `Transaction already processed - duplicate cawonce`
             );
@@ -2130,7 +2211,9 @@ export const validatorService: Service = {
               senderId: Number(a.senderId),
               receiverId: Number(a.receiverId || 0),
               receiverCawonce: Number(a.receiverCawonce || 0),
-              clientId: Number(a.clientId),
+              // v1→v2 rename leftover: ActionForPacking requires `networkId`.
+              // Source rows still surface the old `clientId` field, so accept either.
+              networkId: Number(a.networkId ?? a.clientId),
               cawonce: Number(a.cawonce),
               recipients: (a.recipients || []).map(Number),
               amounts: a.amounts.map((x: any) => BigInt(x)),
@@ -3580,10 +3663,76 @@ console.log("succeededKeys", succeededKeys)
 
         // OnlyOwner / generic Ownable
         if (selector === '0x82b42900') return 'Unauthorized — only owner'
+
+        // Error(string) — legacy `require(cond, "msg")` / `revert("msg")` revert.
+        // Surfaces here for batched processGroupSingle reverts caught as raw
+        // bytes by safeProcessActions and any other path that has the prefixed
+        // revert blob in hand.
+        if (selector === '0x08c379a0') {
+          const [msg] = coder.decode(['string'], body)
+          return String(msg)
+        }
+
+        // CawActions zero-arg custom errors. These are the per-action / per-batch
+        // revert reasons that surface from processGroupSingle when batched
+        // simulation fails. Keep in lock-step with CawActions.sol error declarations
+        // (lines 50-81). When adding a new error there, append its selector here.
+        const CAW_ACTIONS_ERRORS: Record<string, string> = {
+          '0x57781b8d': 'NotSibling',
+          '0x14d4a4e8': 'OnlySelf',
+          '0x07c78c5c': 'NotCapOracle',
+          '0x6ed22483': 'NoActions',
+          '0x11c763d6': 'TooManyActions',
+          '0x3500a0ed': 'BadSigGroupCount',
+          '0x51bab0cd': 'SigsIncomplete',
+          '0x1054cca6': 'TrailingBytes',
+          '0xc4871362': 'EmptyGroup',
+          '0x409c80b1': 'GroupOverflows',
+          '0xbca9544d': 'MixedNetworks',
+          '0xa61eea9e': 'ZkNotConfigured',
+          '0x28d5f1f4': 'ZkSignersMismatch',
+          '0x77703d13': 'CawonceUsed — Cawonce already used',
+          '0x3e330792': 'UserNotAuth — sender not authenticated on this Network',
+          '0xd88051b5': 'TextTooLong',
+          '0x734a00c1': 'NoWithdrawFee',
+          '0x10c74b03': 'SignerMismatch — group signer differs across batch',
+          '0x1fd05a4a': 'SessionInvalid — session key expired, unknown, or scope-mismatched',
+          '0x79258622': 'MixedSenders',
+          '0x5c43e582': 'NonContiguousCawonces',
+          '0x5fe11762': 'OutOfScope — session key not authorized for this action type',
+          '0x773685ef': 'SelfFollow — cannot follow yourself',
+          '0xa47c7960': 'SessionLimitExceeded — session spend cap reached',
+          '0x8fb02170': 'UnknownOwner — senderId has no recorded owner',
+          '0x88dd20d4': 'InvalidActionType',
+          '0x640b8ab0': 'BatchSigInvalid',
+          '0xc90c66b5': 'InvalidSig',
+          '0x5531b495': 'TooManyRecipients',
+          '0xa58d8412': 'WithdrawZeroAmount',
+          '0x682a6e7c': 'InvalidValidator',
+          '0x4d94cda0': 'WrongProfileForSession — token-scoped session used on a different tokenId',
+        }
+        if (CAW_ACTIONS_ERRORS[selector]) return CAW_ACTIONS_ERRORS[selector]
       } catch {
         // Decoder failed — fall through to return null
       }
       return null
+    }
+
+    /**
+     * Decode a per-action rejection blob from safeProcessActions' rejections[]
+     * (V2: each entry is now raw revert bytes, not a string). Empty bytes
+     * ('0x' or '') means the action was NOT rejected. Otherwise we route the
+     * payload through decodeCustomError and fall back to a hex selector tag
+     * when we don't yet recognize the error.
+     */
+    function decodeRejectionBytes(b: string | undefined | null): string {
+      if (!b || b === '0x') return ''
+      const decoded = decodeCustomError(b)
+      if (decoded) return decoded
+      // Unknown selector — surface it so an operator can map + add to the
+      // table above. We log the selector and the first 32 bytes of args.
+      const selector = b.length >= 10 ? b.slice(0, 10) : b
+      return `Unknown revert ${selector}${b.length > 10 ? ` data=${b.slice(0, 74)}…` : ''}`
     }
 
     function formatRpcError(err: any): string {
@@ -3978,9 +4127,9 @@ console.log("succeededKeys", succeededKeys)
         }
 
         const emitter = txEmitter.get(txHash)!
-        // Cast to string (not the "" literal) so TS doesn't narrow to never
-        // when CAW_ACTIONS_ERC1271_ADDRESS is typed as "" as const.
-        const erc1271Addr: string = CAW_ACTIONS_ERC1271_ADDRESS
+        // ERC1271 address is `undefined` until that contract variant is
+        // deployed; the existing isERC1271 check correctly falls through.
+        const erc1271Addr: string = CAW_ACTIONS_ERC1271_ADDRESS ?? ''
         const isERC1271 = erc1271Addr !== '' && emitter === erc1271Addr.toLowerCase()
 
         if (isERC1271) {

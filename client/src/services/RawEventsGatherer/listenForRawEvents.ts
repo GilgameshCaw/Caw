@@ -21,7 +21,7 @@ import { recordIndexerProgress } from '../../utils/indexerHealth'
 // instead of a single packed bytes sigs.
 const PROCESS_ACTIONS_IFACE = new Interface([
   'function processActions(uint32 validatorId, bytes packedActions, bytes sigs, uint256 withdrawFee, uint256 withdrawLzTokenAmount) payable',
-  'function safeProcessActions(uint32 validatorId, bytes packedActions, bytes sigs, uint256 withdrawFee, uint256 withdrawLzTokenAmount) payable returns (uint256 successCount, string[] rejections)',
+  'function safeProcessActions(uint32 validatorId, bytes packedActions, bytes sigs, uint256 withdrawFee, uint256 withdrawLzTokenAmount) payable returns (uint256 successCount, bytes[] rejections)',
   'function processActionsERC1271(uint32 validatorId, bytes packedActions, bytes[] sigs, bytes32[] rs, uint256 withdrawFee, uint256 withdrawLzTokenAmount) payable',
 ])
 
