@@ -128,3 +128,7 @@ solidity/test/zk-digest-fixtures.json
 # Local-only scratch — not part of the codebase.
 /messages/
 
+# HTML visualizations / decision aids drafted for the user to open locally.
+# Local-only scratch — not part of the codebase.
+/visualizations/
+

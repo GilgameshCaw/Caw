@@ -36,11 +36,12 @@ router.get('/', (req, res) => {
     : Number(getNetworkId() || 1)
 
   if (!Number.isFinite(clientId) || clientId <= 0) {
-    return res.status(400).json({ error: 'Invalid clientId' })
+    res.status(400).json({ error: 'Invalid clientId' })
+    return
   }
 
   const peers = getPeers(clientId)
-  return res.json({
+  res.json({
     clientId,
     instances: peers.map(p => ({
       instanceId: p.instanceId,

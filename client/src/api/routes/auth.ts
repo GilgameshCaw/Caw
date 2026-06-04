@@ -137,18 +137,6 @@ router.post('/verify', async (req, res) => {
       return
     }
 
-    // One-time-use guard against replay within the 5-minute freshness
-    // window. Without this, an attacker who captures the signed message
-    // (XSS, browser extension, leaked log, etc.) can replay it to attach
-    // the victim's wallet to an attacker-controlled session. The atomic
-    // SET NX in Redis means even parallel verify calls with the same
-    // signature can't both succeed. Audit fix 2026-05-13.
-    const fresh = await consumeAuthSignatureOnce(message, signature)
-    if (!fresh) {
-      res.status(400).json({ error: 'Signature already used. Please sign again.' })
-      return
-    }
-
     // Look up all tokenIds owned by this address (case-insensitive —
     // DB may store checksummed addresses while recovery returns lowercase).
     //
@@ -161,6 +149,11 @@ router.post('/verify', async (req, res) => {
     // ~25s, and on the final attempt the empty-array path lets the user
     // through with no authorized tokens (the same response shape they would
     // have gotten from a successful match with zero rows).
+    //
+    // IMPORTANT: do this BEFORE consumeAuthSignatureOnce so a 202 retry
+    // doesn't burn the sig's one-time-use slot. retryOnIndexing re-invokes
+    // the same closure with the same (message, signature), so consuming on
+    // the first attempt poisons every retry → "Signature already used" 400.
     const users = await prisma.user.findMany({
       where: { address: { equals: recoveredAddress, mode: 'insensitive' } },
       select: { tokenId: true }
@@ -178,6 +171,20 @@ router.post('/verify', async (req, res) => {
         error: 'ownership not yet indexed',
         retryAfterSeconds: 5,
       })
+      return
+    }
+
+    // One-time-use guard against replay within the 5-minute freshness
+    // window. Without this, an attacker who captures the signed message
+    // (XSS, browser extension, leaked log, etc.) can replay it to attach
+    // the victim's wallet to an attacker-controlled session. The atomic
+    // SET NX in Redis means even parallel verify calls with the same
+    // signature can't both succeed. Audit fix 2026-05-13.
+    //
+    // Consumed AFTER the 202-retry path above — see comment there.
+    const fresh = await consumeAuthSignatureOnce(message, signature)
+    if (!fresh) {
+      res.status(400).json({ error: 'Signature already used. Please sign again.' })
       return
     }
 

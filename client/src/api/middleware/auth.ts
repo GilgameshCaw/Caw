@@ -55,7 +55,12 @@ if (!COOKIE_SECURE && process.env.NODE_ENV === 'production') {
 // overwriting caw_session for the parent). BREAKING: existing caw_session
 // cookies on test.caw.social are invalidated; users must re-sign-in.
 // Fix: audit M-4.
-export const SESSION_COOKIE_NAME = '__Host-caw_session'
+//
+// Dev caveat: the __Host- prefix REQUIRES Secure per the browser spec, so
+// browsers silently reject any __Host- Set-Cookie sent over plain HTTP.
+// Local dev runs HTTP (with COOKIE_SECURE unset), so we fall back to the
+// plain name there. Prod (HTTPS + COOKIE_SECURE=true) keeps the prefix.
+export const SESSION_COOKIE_NAME = COOKIE_SECURE ? '__Host-caw_session' : 'caw_session'
 // 1 year — matches SESSION_TTL in sessionStore.ts so cookie and Redis entry
 // expire together.
 const SESSION_COOKIE_MAX_AGE = 365 * 24 * 60 * 60 * 1000

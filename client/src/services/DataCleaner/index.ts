@@ -310,6 +310,25 @@ async function cleanupPendingReplies() {
 
           logger.log(` Updated caw ${pendingReply.cawId} comment count to ${actualReplyCount}`)
         } else if (pendingReply.createdAt < thirtyMinutesAgo) {
+          // Before failing: same TxQueue hold-state guard as cleanupPendingCaws.
+          // A reply submitted via Quick Sign during the L1→L2 session-mirror
+          // window will sit in waiting_for_session for up to 24h, far past
+          // this 30-min stale threshold. Failing the reply here while the
+          // TxQueue is still working leaves the user looking at a "failed"
+          // comment that's actually queued.
+          const heldTx = await prisma.txQueue.findFirst({
+            where: {
+              senderId: pendingReply.replyCaw.userId,
+              cawonce: pendingReply.replyCaw.cawonce,
+              status: { in: ['waiting_for_session', 'waiting_for_deposit'] },
+            },
+            select: { id: true, status: true },
+          })
+          if (heldTx) {
+            logger.log(` Skipping reply ${pendingReply.id} — TxQueue ${heldTx.id} still in ${heldTx.status}`)
+            continue
+          }
+
           // Reply caw is still PENDING after 30 minutes — something is stuck
           logger.log(` Removing stale reply ${pendingReply.id} (pending > 30 min, replyCaw status: ${pendingReply.replyCaw.status})`)
 
@@ -413,6 +432,30 @@ async function cleanupPendingCaws() {
               data: { status: 'SUCCESS' }
             })
           } else if (pendingCaw.createdAt < thirtyMinutesAgo) {
+            // Before failing: check for a sibling TxQueue row in an active
+            // hold state. waiting_for_session (24h) and waiting_for_deposit
+            // (48h) both legitimately keep a row in flight for much longer
+            // than the caw's 30-min stale threshold — failing the caw out
+            // from under them creates a Caw=FAILED / TxQueue=waiting desync
+            // that surfaces to the user as "post failed" while the queue
+            // is actually still working.
+            //
+            // Both single-action and batch submits get one TxQueue row per
+            // action (see api/routes/actions.ts:1780-1786), so the cawonce
+            // is always at TxQueue.cawonce — no need to drill into payload.
+            const heldTx = await prisma.txQueue.findFirst({
+              where: {
+                senderId: pendingCaw.userId,
+                cawonce: pendingCaw.cawonce,
+                status: { in: ['waiting_for_session', 'waiting_for_deposit'] },
+              },
+              select: { id: true, status: true },
+            })
+            if (heldTx) {
+              logger.log(` Skipping caw ${pendingCaw.id} — TxQueue ${heldTx.id} still in ${heldTx.status}`)
+              continue
+            }
+
             // No action found after 30 minutes, mark as FAILED
             logger.log(` Marking caw ${pendingCaw.id} as FAILED (pending > 30 min, user ${pendingCaw.userId}, cawonce: ${pendingCaw.cawonce})`)
 

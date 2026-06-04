@@ -78,8 +78,10 @@ router.get('/sitemap.xml', async (_req: Request, res: Response) => {
     // locale) so the effective per-user multiplier is ALL_LOCALES.length.
     const perItemCost = ALL_LOCALES.length
     const profileBudget = Math.floor(SOFT_LIMIT_URLS / perItemCost / 2)
+    // username is non-null in the current schema — earlier passes filtered
+    // null usernames here, but the column was later tightened to NOT NULL.
+    // The line-88 `if (!u.username) continue` defensive check still runs.
     const users = await prisma.user.findMany({
-      where: { username: { not: null } },
       orderBy: { createdAt: 'desc' },
       take: profileBudget,
       select: { username: true, updatedAt: true },

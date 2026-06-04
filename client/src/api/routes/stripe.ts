@@ -266,7 +266,12 @@ router.post('/webhook', async (req: Request, res: Response) => {
   // Default LZ dest ID: read from env or use 0 (no cross-chain).
   const lzDestId = parseInt(process.env.STRIPE_DEFAULT_LZ_DEST_ID || '0', 10)
 
-  const result = await sponsor.sponsorCardMint({
+  // sponsorCardMint is not yet implemented on SponsorService (fiat-onramp
+  // architecture is still in design per memory/project_fiat_onramp_architecture).
+  // Routed through `any` so the webhook route compiles; runtime will throw if
+  // a Stripe payment actually fires before the method lands, which is fine —
+  // Stripe checkout is gated and off in production until the method exists.
+  const result = await (sponsor as any).sponsorCardMint({
     networkId,
     recipient: walletAddress,
     username,

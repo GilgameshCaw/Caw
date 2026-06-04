@@ -502,9 +502,12 @@ class ElasticsearchService {
         must.push({ term: { type: type === 'mentions' ? 'MENTION' : type } })
       }
 
+      // Body cast to any — @elastic/elasticsearch's `bool` typing is overly
+      // strict about `should` accepting an array, but the runtime accepts
+      // both shapes. Mirrors how the rest of this file's search calls work.
       const response = await this.client.search({
         index: 'notifications',
-        body: {
+        body: ({
           from: offset,
           size: 0, // We don't want individual hits, just aggregations
           query: {
@@ -557,7 +560,7 @@ class ElasticsearchService {
               }
             }
           }
-        }
+        } as any)
       })
 
       return response

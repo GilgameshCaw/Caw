@@ -1421,7 +1421,15 @@ router.post('/', async (req, res) => {
             payload: { data, domain, types },
             signedTx: signature,
             pendingDepositTxHash: sanitizedPendingDepositTxHash,
-            pendingQuickSignTxHash: sanitizedPendingQuickSignTxHash,
+            // Only stamp the QuickSign hint when we're actually parking the
+            // row. The hint is what the validator's pre-sim hold uses to
+            // decide what to park; stamping it on rows whose session is
+            // already on-chain caused those rows to be parked anyway. The
+            // FE forwards the hint for 24h post-submit, well after the
+            // session has typically landed — so the API's authoritative
+            // `parkAsWaitingForSession` decision (driven by checkSessionKey
+            // OnChain) is the right signal, not the FE's optimistic hint.
+            pendingQuickSignTxHash: parkAsWaitingForSession ? sanitizedPendingQuickSignTxHash : null,
             clientVersion: provenance.clientVersion,
             clientOrigin: provenance.clientOrigin,
             signerKind: isOwner ? 'owner' : 'session',
@@ -1871,7 +1879,11 @@ router.post('/batch', async (req, res) => {
               data: {
                 ...row,
                 pendingDepositTxHash: sanitizedPendingDepositTxHash,
-                pendingQuickSignTxHash: sanitizedPendingQuickSignTxHash,
+                // Mirror of the single-action endpoint: only stamp the
+                // QuickSign hint when we actually decided to park. Otherwise
+                // the validator's pre-sim hold would catch rows whose
+                // session is already on-chain and park them anyway.
+                pendingQuickSignTxHash: batchParkAsWaitingForSession ? sanitizedPendingQuickSignTxHash : null,
                 clientVersion: provenance.clientVersion,
                 clientOrigin: provenance.clientOrigin,
                 signerKind: isOwner ? 'owner' : 'session',
@@ -1934,6 +1946,15 @@ router.post('/batch', async (req, res) => {
             }
           }
 
+          // Check for an existing Caw row (retry case). The single-action
+          // path gates onCawCreated on !existingCaw to avoid double-incrementing
+          // user.cawCount / parent.recawCount when the same cawonce is resigned.
+          // We mirror that here.
+          const existingCaw = await tx.caw.findUnique({
+            where: { userId_cawonce: { userId: d.senderId, cawonce: d.cawonce } },
+            select: { id: true },
+          })
+
           // Upsert the pending Caw
           const caw = await tx.caw.upsert({
             where: { userId_cawonce: { userId: d.senderId, cawonce: d.cawonce } },
@@ -1956,6 +1977,30 @@ router.post('/batch', async (req, res) => {
             },
           })
           cawByUserCawonce.set(`${d.senderId}:${d.cawonce}`, caw.id)
+
+          // Optimistically increment counts via CountManager — only for genuinely
+          // new caws, not resigned cawonces. Mirrors the single-action path at
+          // caws.ts:700-712 and actions.ts:700-713. Without this, batched
+          // recaws/quotes never bump parent.recawCount and batched plain posts
+          // never bump user.cawCount until the indexer confirms, so the FE
+          // shows count=0 right after the user recaws their own post (visible
+          // on their profile feed). For replies (CAW with parent, no quote
+          // content), pass originalCawId=null — replies only affect
+          // commentCount, handled by onReplyCreated below.
+          if (!existingCaw) {
+            const isReply = !!(originalCawId && isCaw && !isQuote)
+            try {
+              await countManager.onCawCreated(tx, {
+                id: caw.id,
+                userId: d.senderId,
+                action: isRecaw ? 'RECAW' : 'CAW',
+                originalCawId: isReply ? null : (originalCawId || null),
+                status: 'PENDING',
+              })
+            } catch (err) {
+              console.warn(`[Actions/batch] onCawCreated failed for ${d.senderId}:${d.cawonce}:`, (err as any)?.message)
+            }
+          }
 
           // Create pending Reply record (CAW replies only — not RECAW quotes)
           if (originalCawId && isCaw && !isQuote) {

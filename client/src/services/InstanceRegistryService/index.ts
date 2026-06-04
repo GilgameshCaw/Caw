@@ -353,6 +353,21 @@ export const instanceRegistryService: Service = {
       const validatorAddress = _signer.getAddress()
       console.log(`[InstanceRegistry] Checking registration for network ${clientId}, validator ${validatorAddress}, url ${apiUrl}`)
 
+      // Skip self-registration when our apiUrl is localhost / loopback / private —
+      // such an entry only pollutes the registry: no other node can reach it
+      // anyway (the READ side at isAcceptablePeerApiUrl filters them out), and
+      // anyone scanning the registry has to pay an SLOAD per dead entry. Dev
+      // boxes and CI runs both want the validator/processor logic to RUN
+      // locally without leaving a stub on chain. The `apiUrl` may legitimately
+      // be unset in those scenarios — bail quietly when it's empty too.
+      if (!apiUrl || !(await isAcceptablePeerApiUrl(apiUrl))) {
+        console.log(
+          `[InstanceRegistry] Skipping self-registration — apiUrl ${apiUrl || '(unset)'} is not a public HTTPS URL. ` +
+          `Set INSTANCE_API_URL to a publicly-reachable https:// origin to advertise this node.`
+        )
+        return
+      }
+
       // Find an existing instance owned by us pointing at our apiUrl.
       const peers = peerCache.get(clientId)
       let existingInstanceId: number | null = null
