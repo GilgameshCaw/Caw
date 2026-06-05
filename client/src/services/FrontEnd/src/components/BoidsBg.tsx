@@ -39,6 +39,7 @@ interface Boid {
   bright: 'none' | 'gold' | 'white'
   heading: number // smoothed rotation angle
   sepMult: number // multiplier for separation radius
+  speedMult: number // per-bird natural speed multiplier (~0.7 to 1.3)
   opacity: number // per-bird opacity variation
   gradFlip: boolean // gradient direction for bright birds
 }
@@ -60,7 +61,17 @@ export default function BoidsBg({ isDark }: { isDark: boolean }) {
     const boids: Boid[] = []
     for (let i = 0; i < count; i++) {
       const angle = Math.random() * Math.PI * 2
-      const speed = MIN_SPEED + Math.random() * (MAX_SPEED - MIN_SPEED)
+      const isGold = i < 5
+      const isWhite = i >= 5 && i < 10
+      // White birds skew faster (1.0–1.3), gold birds skew slower-but-steady (0.9–1.1),
+      // regular birds get the full range (0.7–1.3) so the flock has visible variety.
+      const speedMult = isWhite
+        ? 1.0 + Math.random() * 0.3
+        : isGold
+          ? 0.9 + Math.random() * 0.2
+          : 0.7 + Math.random() * 0.6
+      const baseSpeed = MIN_SPEED + Math.random() * (MAX_SPEED - MIN_SPEED)
+      const speed = baseSpeed * speedMult
       boids.push({
         x: Math.random() * w,
         y: Math.random() * h,
@@ -69,6 +80,7 @@ export default function BoidsBg({ isDark }: { isDark: boolean }) {
         bright: i < 5 ? 'gold' : i < 10 ? 'white' : 'none',
         heading: angle + Math.PI / 2,
         sepMult: 0.5 + Math.random(), // multiplier for separation radius
+        speedMult,
         opacity: 0.07 + Math.random() * 0.03,
         gradFlip: Math.random() < 0.5,
       })
@@ -235,7 +247,7 @@ export default function BoidsBg({ isDark }: { isDark: boolean }) {
       for (let i = simStart; i < simEnd; i++) {
         const b = boids[i]
         let sepX = 0, sepY = 0
-        let alignX = 0, alignY = 0, alignCount = 0
+        let alignX = 0, alignY = 0, alignCount = 0, avgSpeed = 0
         let cohX = 0, cohY = 0, cohCount = 0
 
         const col = Math.max(0, Math.min(cols - 1, (b.x / cellSize) | 0))
@@ -266,6 +278,7 @@ export default function BoidsBg({ isDark }: { isDark: boolean }) {
               if (distSq < alignmentRadius * alignmentRadius) {
                 alignX += o.vx
                 alignY += o.vy
+                avgSpeed += Math.sqrt(o.vx * o.vx + o.vy * o.vy)
                 alignCount++
               }
               if (distSq < cohesionRadius * cohesionRadius) {
@@ -286,6 +299,36 @@ export default function BoidsBg({ isDark }: { isDark: boolean }) {
         if (alignCount > 0) {
           b.vx += (alignX / alignCount - b.vx) * alignmentWeight * influence
           b.vy += (alignY / alignCount - b.vy) * alignmentWeight * influence
+        }
+
+        // Speed contagion: nudge this bird's speed toward the local average,
+        // modulated by influence so gold birds resist contagion the same way they
+        // resist alignment. The natural-speed attractor below pulls it back to its
+        // preferred speed when neighbors aren't influencing it.
+        if (alignCount > 0) {
+          const localAvgSpeed = avgSpeed / alignCount
+          const mySpeed = Math.sqrt(b.vx * b.vx + b.vy * b.vy)
+          if (mySpeed > 0.001) {
+            const SPEED_CONTAGION = 0.05
+            const targetSpeed = mySpeed + (localAvgSpeed - mySpeed) * SPEED_CONTAGION * influence
+            b.vx = (b.vx / mySpeed) * targetSpeed
+            b.vy = (b.vy / mySpeed) * targetSpeed
+          }
+        }
+
+        // Natural-speed attractor: soft pull back toward this bird's preferred speed.
+        // Without this, contagion would just normalize everyone to the global mean
+        // and we'd lose the fast/slow variety. With it, contagion is a transient
+        // wave — each bird drifts back to its own pace when neighbors stop pushing.
+        {
+          const naturalSpeed = (MIN_SPEED + MAX_SPEED) * 0.5 * b.speedMult
+          const mySpeed = Math.sqrt(b.vx * b.vx + b.vy * b.vy)
+          if (mySpeed > 0.001) {
+            const NATURAL_PULL = 0.01
+            const targetSpeed = mySpeed + (naturalSpeed - mySpeed) * NATURAL_PULL
+            b.vx = (b.vx / mySpeed) * targetSpeed
+            b.vy = (b.vy / mySpeed) * targetSpeed
+          }
         }
 
         if (cohCount > 0) {
@@ -316,10 +359,12 @@ export default function BoidsBg({ isDark }: { isDark: boolean }) {
         if (b.y < EDGE_MARGIN) b.vy += EDGE_TURN
         if (b.y > h - EDGE_MARGIN) b.vy -= EDGE_TURN
 
-        // Clamp speed (white birds fly 20% faster)
-        const speedMult = b.bright === 'white' ? 1.2 : 1
-        const maxSpd = MAX_SPEED * speedMult
-        const minSpd = MIN_SPEED * speedMult
+        // Clamp speed using this bird's natural speed multiplier. The clamp is
+        // wider than the natural-speed attractor allows in practice — it's there
+        // to catch runaway contagion + alignment compounding, not to be the
+        // dominant force.
+        const maxSpd = MAX_SPEED * b.speedMult * 1.2  // 20% headroom over natural for transient contagion
+        const minSpd = MIN_SPEED * b.speedMult * 0.8  // 20% floor under natural
         const speed = Math.sqrt(b.vx * b.vx + b.vy * b.vy)
         if (speed > maxSpd) {
           b.vx = (b.vx / speed) * maxSpd
