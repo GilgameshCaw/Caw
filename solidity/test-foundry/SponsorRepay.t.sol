@@ -217,7 +217,12 @@ contract SponsorRepayTest is Test {
         // Predict minter address so MockProfile can bake it in at construction.
         address predictedMinter = vm.computeCreateAddress(address(this), vm.getNonce(address(this)) + 1);
         profile  = new SRMockProfile(predictedMinter, address(caw));
-        minter   = new CawProfileMinter(address(caw), address(profile), address(router));
+        minter   = new CawProfileMinter(
+            address(caw),
+            address(profile),
+            address(router),
+            address(this) // pathwayExpander — test contract acts as it
+        );
         require(address(minter) == predictedMinter, "minter address prediction mismatch");
 
         scwUser    = new SmartContractWalletMock();

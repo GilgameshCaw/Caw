@@ -12,6 +12,11 @@ interface IOAppOwner {
   function setPeer(uint32 eid, bytes32 peer) external;
 }
 
+/// @notice Minimal interface to CawProfileMinter's additions-only KYC slot.
+interface IKycRegistrar {
+  function addKycVerifier(uint8 level, address verifier) external;
+}
+
 /// @title PathwayExpander
 /// @notice Becomes the owner of every CAW OApp (CawProfile, CawProfileLedger,
 ///         CawActionsArchive, CawChallengeRelay) so that the deployer EOA
@@ -45,6 +50,7 @@ interface IOAppOwner {
 ///      ever again, but all existing pathways keep working).
 contract PathwayExpander is Ownable {
   event PeerAdded(address indexed oapp, uint32 indexed eid, bytes32 peer);
+  event KycVerifierAdded(address indexed minter, uint8 indexed level, address indexed verifier);
 
   constructor(address _owner) {
     require(_owner != address(0), "PathwayExpander: zero address");
@@ -88,5 +94,20 @@ contract PathwayExpander is Ownable {
 
     o.setPeer(eid, peer);
     emit PeerAdded(oapp, eid, peer);
+  }
+
+  /// @notice Register a new KYC verifier level on a CawProfileMinter that
+  ///         points its `pathwayExpander` slot at this contract. Forwards
+  ///         to Minter.addKycVerifier; the Minter itself enforces the
+  ///         additions-only rule (existing levels can't be rewritten).
+  /// @dev    Same trust profile as addPeer — a compromised expander key
+  ///         can grow the KYC surface but cannot redirect an existing
+  ///         level. To rotate an existing adapter, redeploy the Minter
+  ///         (and CawProfile, since CawProfile.minter is immutable).
+  function addKycVerifier(address minter, uint8 level, address verifier) external onlyOwner {
+    require(minter != address(0), "PathwayExpander: zero address");
+    require(verifier != address(0), "PathwayExpander: zero verifier");
+    IKycRegistrar(minter).addKycVerifier(level, verifier);
+    emit KycVerifierAdded(minter, level, verifier);
   }
 }

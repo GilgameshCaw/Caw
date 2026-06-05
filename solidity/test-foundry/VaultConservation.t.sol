@@ -193,14 +193,16 @@ contract VaultConservationTest is Test {
 
         cawProfileLedger = new CawProfileLedger(MAINNET_LZ_ID, address(lzL2), address(0));
 
+        // Minter immutable on CawProfile post-V2; test address acts as the
+        // minter so the test contract can call mint() directly. _pathwayExpander
+        // also non-zero (dummy — handover is fine, tests don't use addPeer).
         cawProfile = new CawProfile(
             address(cawToken), address(uriGen), address(buyAndBurn),
             address(networkManager), address(lzL1), MAINNET_LZ_ID, address(0),
-            address(cawProfileLedger), address(0)
+            address(cawProfileLedger), address(0xEAFEEDA1), address(this)
         );
 
         cawProfileLedger.setL1Peer(MAINNET_LZ_ID, payable(address(cawProfile)), true);
-        cawProfile.setMinter(address(this));
 
         // storageChainEid must be > 0; use 2 (same as L2 LZ ID).
         // V2 createNetwork takes 4 per-fee ceilings instead of a single feeCeiling

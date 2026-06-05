@@ -2,7 +2,6 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.20;
 
-import "@openzeppelin/contracts/access/Ownable.sol";
 import "@openzeppelin/contracts/security/ReentrancyGuard.sol";
 import "@openzeppelin/contracts/utils/cryptography/MerkleProof.sol";
 import { OApp, Origin, MessagingFee } from "@layerzerolabs/lz-evm-oapp-v2/contracts/oapp/OApp.sol";
@@ -33,7 +32,7 @@ import "./OnlyOnce.sol";
  * @dev Audit-trail tags in this contract (e.g. "H-N", "M-N", "Round N",
  *      "Audit fix YYYY-MM-DD") are decoded in `docs/AUDIT_TRAIL.md`.
  */
-contract CawActionsArchive is Ownable, ReentrancyGuard, OnlyOnce, OApp {
+contract CawActionsArchive is ReentrancyGuard, OnlyOnce, OApp {
 
   // ============================================
   // TYPES

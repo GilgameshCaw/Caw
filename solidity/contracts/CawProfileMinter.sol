@@ -60,12 +60,18 @@ contract CawProfileMinter is Context {
     "Authenticate(uint32 networkId,uint32 tokenId,uint32 lzDestId,uint256 lzTokenAmount,uint256 nonce)"
   );
 
-  constructor(address _caw, address _cawProfiles, address _router) {
+  constructor(
+    address _caw,
+    address _cawProfiles,
+    address _router,
+    address _pathwayExpander
+  ) {
+    if (_pathwayExpander == address(0)) revert ZeroAddr();
     CAW = IERC20(_caw);
     CawProfile = IMint(_cawProfiles);
     swapRouter = ISwapRouter(_router);
     WETH = swapRouter.WETH();
-    kycAdmin = msg.sender;
+    pathwayExpander = _pathwayExpander;
 
     // Compute EIP-712 domain separator once at deploy time.
     DOMAIN_SEPARATOR = keccak256(abi.encode(
@@ -78,7 +84,7 @@ contract CawProfileMinter is Context {
   }
 
   // ============================================
-  // PRIMARY ENTRYPOINTS — owner mints for themselves
+  // PRIMARY ENTRYPOINTS — user mints for themselves
   // ============================================
   // The plain `mint` / `mintAndAuth` / `mintAndDeposit` functions are thin
   // recipient=msg.sender wrappers. The real work lives in their `*For`
@@ -229,35 +235,46 @@ contract CawProfileMinter is Context {
   uint256 internal constant WITHDRAW_TIMELOCK = 180 days;
 
   /// @notice Per-level KYC verifier adapter addresses.
-  ///         level 0 = time-lock only (no verifier needed).
-  ///         level 1-3 = IKycVerifier adapters (Civic Pass networks).
+  ///         level 0 = time-lock only (no verifier needed; not stored here).
+  ///         level 1+ = IKycVerifier adapter (Civic Pass network, etc).
+  /// @dev    Additions-only: PathwayExpander can set a new level via
+  ///         `addKycVerifier`, but a level that already points at a non-zero
+  ///         verifier can never be rewritten. Same security pattern as
+  ///         PathwayExpander.addPeer (peers[eid] == 0 guard) — a compromised
+  ///         expander key can grow the KYC surface but can't redirect an
+  ///         existing level to an attacker-controlled adapter.
   mapping(uint8 => address) public kycVerifiers;
 
-  address public kycAdmin;
+  /// @notice The PathwayExpander on this chain. Sole address authorized to
+  ///         call `addKycVerifier`. Immutable; same role/lifecycle as
+  ///         CawProfile.owner() (set at deploy, never rotated).
+  address public immutable pathwayExpander;
 
   error KycRequired();
   error KycNotConfigured();
   error AlreadyUnlocked();
   error NotTokenOwner();
   error WithdrawTimelocked();
+  error ZeroAddr();
+  error NotPathwayExpander();
+  error LevelAlreadySet();
 
-  event KycVerifierSet(uint8 indexed level, address indexed verifier);
   event WithdrawUnlocked(uint32 indexed tokenId);
-  event KycAdminSet(address indexed admin);
+  event KycVerifierAdded(uint8 indexed level, address indexed verifier);
 
-  /// @notice Set or change kycAdmin. Only callable by current kycAdmin.
-  function setKycAdmin(address _admin) external {
-    require(msg.sender == kycAdmin, "Not kycAdmin");
-    kycAdmin = _admin;
-    emit KycAdminSet(_admin);
-  }
-
-  /// @notice Configure the IKycVerifier adapter for a given level.
-  ///         Only callable by kycAdmin. Pass address(0) to disable a level.
-  function setKycVerifier(uint8 level, address verifier) external {
-    require(msg.sender == kycAdmin, "Not kycAdmin");
+  /// @notice Register the IKycVerifier adapter for a new KYC level.
+  ///         Only PathwayExpander can call this. A level that already
+  ///         points at a non-zero verifier reverts — no rotation, only
+  ///         additions. To swap an adapter for an existing level, redeploy
+  ///         the whole Minter (CawProfile.minter is immutable, so this also
+  ///         forces a CawProfile redeploy — a clean break).
+  function addKycVerifier(uint8 level, address verifier) external {
+    if (msg.sender != pathwayExpander) revert NotPathwayExpander();
+    if (level == 0) revert KycNotConfigured(); // level 0 is the time-lock-only sentinel
+    if (verifier == address(0)) revert ZeroAddr();
+    if (kycVerifiers[level] != address(0)) revert LevelAlreadySet();
     kycVerifiers[level] = verifier;
-    emit KycVerifierSet(level, verifier);
+    emit KycVerifierAdded(level, verifier);
   }
 
   /// @notice Returns the verifier address for a given KYC level.

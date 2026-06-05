@@ -244,15 +244,19 @@ contract L2BalanceDifferentialTest is Test {
         MockLayerZeroEndpoint lzL1a = new MockLayerZeroEndpoint(MAINNET_LZ_ID);
         MockLayerZeroEndpoint lzL1b = new MockLayerZeroEndpoint(MAINNET_LZ_ID + 100);
 
+        // CawProfile now requires non-zero _pathwayExpander and _minter
+        // (both immutable, no setters). Test contract acts as the minter
+        // so mint flows below work without going through CawProfileMinter.
+        address dummyExpander = address(0xEAFEEDA1);
         CawProfile cpA = new CawProfile(
             address(cawToken), address(uriGen), address(buyAndBurn),
             address(networkManager), address(lzL1a), MAINNET_LZ_ID, address(0),
-            address(l2A), address(0)
+            address(l2A), dummyExpander, address(this)
         );
         CawProfile cpB = new CawProfile(
             address(cawToken), address(uriGen), address(buyAndBurn),
             address(networkManager), address(lzL1b), MAINNET_LZ_ID + 100, address(0),
-            address(l2B), address(0)
+            address(l2B), dummyExpander, address(this)
         );
 
         l2A.setL1Peer(MAINNET_LZ_ID, payable(address(cpA)), true);
@@ -261,9 +265,8 @@ contract L2BalanceDifferentialTest is Test {
         l2B.setL1Peer(MAINNET_LZ_ID + 100, payable(address(cpB)), true);
         l2B.setCawActions(address(mockActionsB));
 
-        // Seed identical initial state: mint same tokens + deposit same amounts on both
-        cpA.setMinter(address(this));
-        cpB.setMinter(address(this));
+        // Seed identical initial state: mint same tokens + deposit same amounts on both.
+        // (minter is now immutable, set at construction above.)
 
         address alice = vm.addr(1);
         address bob   = vm.addr(2);

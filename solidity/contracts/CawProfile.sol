@@ -8,7 +8,6 @@ import "@openzeppelin/contracts/utils/cryptography/draft-EIP712.sol";
 import "@openzeppelin/contracts/utils/structs/EnumerableSet.sol";
 import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import "@openzeppelin/contracts/utils/math/Math.sol";
-import "@openzeppelin/contracts/access/Ownable.sol";
 
 import "./CawProfileURI.sol";
 import "./CawProfileLedger.sol";
@@ -31,7 +30,6 @@ interface ICawWithdrawGate {
 contract CawProfile is
   Context,
   ERC721Enumerable,
-  Ownable,
   OnlyOnce,
   OApp
 {
@@ -69,7 +67,11 @@ contract CawProfile is
 
   uint256 public totalCaw;
 
-  address public minter;
+  /// @notice CawProfileMinter — set immutable in the constructor via deploy-
+  ///         time address prediction. No setter exists; the wiring is
+  ///         frozen at deploy. Zero-admin invariant: nothing on this contract
+  ///         can rotate the minter.
+  address public immutable minter;
 
   uint32 public mainnetLzId;
   string[] public usernames;
@@ -136,7 +138,6 @@ contract CawProfile is
   mapping(uint32 => uint256) internal pendingTransferStart;
   mapping(uint32 => uint256) internal pendingTransferEnd;
 
-  event MinterSet(address minter);
   event TransferPendingSync(uint32 indexed tokenId, address indexed from, address indexed to);
   event Deposited(uint32 indexed cawNetworkId, uint32 indexed tokenId, uint256 amount, uint32 indexed lzDestId, address depositor);
   // NOTE: no L1-side `Withdrawn` event. The CAW token's ERC20 Transfer
@@ -148,10 +149,12 @@ contract CawProfile is
   CawNetworkManager public networkManager;
   CawBuyAndBurn public buyAndBurn;
 
-  constructor(address _caw, address _gui, address _buyAndBurn, address _networkManager, address _endpoint, uint32 mainnetEid, address _priceReader, address _cawProfileLedger, address _pathwayExpander)
+  constructor(address _caw, address _gui, address _buyAndBurn, address _networkManager, address _endpoint, uint32 mainnetEid, address _priceReader, address _cawProfileLedger, address _pathwayExpander, address _minter)
     ERC721("CAW NAME", "cawNAME")
     OApp(_endpoint, msg.sender)
   {
+    if (_minter == address(0)) revert ZeroAddr();
+    if (_pathwayExpander == address(0)) revert ZeroAddr();
     networkManager = CawNetworkManager(payable(_networkManager));
     uriGenerator = CawProfileURI(_gui);
     buyAndBurn = CawBuyAndBurn(payable(_buyAndBurn));
@@ -159,6 +162,7 @@ contract CawProfile is
     mainnetLzId = mainnetEid;
     priceReader = CawL1PriceReader(_priceReader); // address(0) = no oracle
     cawProfileLedger = CawProfileLedger(_cawProfileLedger);
+    minter = _minter;
 
     // Per-selector base gas budgets. authSelector bumped from 50k → 85k after a
     // production OOG (Tenderly tx 0x3b8a0232... on Base Sepolia). Bundled session
@@ -186,12 +190,12 @@ contract CawProfile is
     gasBaseFor[_allowFreeAuthSelector]           =  80_000;
     gasBaseFor[_setNetworkTipTargetSelector]     =  80_000;
 
-    // _pathwayExpander parameter retained for API compatibility but the
-    // constructor no longer transfers ownership here — that broke the
-    // post-deploy `setMinter` linking step. Ownership handover is done
-    // by the Phase 7 `transferOwnership → PathwayExpander_L1` linking step
-    // AFTER setMinter has run. Silence unused-param warning:
-    _pathwayExpander;
+    // Phase 7 ownership handover happens RIGHT HERE in the constructor —
+    // the deployer EOA never holds owner authority on CawProfile post-
+    // deploy. The Minter wiring is also immutable (set above), so the only
+    // post-deploy admin surface is PathwayExpander.addPeer (per-eid OnlyOnce
+    // on this contract; the expander itself is additions-only by design).
+    _transferOwnership(_pathwayExpander);
   }
 
   /// @notice Inherited OApp `setPeer` override. Locked once per eid so a
@@ -208,16 +212,6 @@ contract CawProfile is
   /// @dev SECURITY NOTE — setDelegate hardening: the inherited setDelegate
   ///      is non-virtual; rely on owner renouncement post-deploy. See
   ///      CawActionsArchive.sol for full reasoning.
-
-  function setMinter(address _minter)
-    external
-    onlyOwner
-    onlyOnce(keccak256("setMinter"))
-  {
-    if (_minter == address(0)) revert ZeroAddr();
-    minter = _minter;
-    emit MinterSet(_minter);
-  }
 
   function tokenURI(uint256 tokenId) override public view returns (string memory) {
     return uriGenerator.generate(usernames[uint32(tokenId) - 1]);

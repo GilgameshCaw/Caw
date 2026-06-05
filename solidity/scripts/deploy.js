@@ -104,11 +104,9 @@ const STATE_FILE = path.join(__dirname, '../.deploy-state.json');
 // unnecessary. Set DEPLOY_GAS_MULTIPLIER=1 to use raw network prices.
 const DEPLOY_GAS_MULTIPLIER = parseFloat(process.env.DEPLOY_GAS_MULTIPLIER || '1.5');
 
-// Phase 7 (renounce / additions-only) is opt-in. With this off, the
-// deployer EOA stays the owner of every contract — useful during active
-// dev when we may need to redeploy or rewire. Flip on for the
-// trustlessness-finalizing run:
-//   RENOUNCE_ON_DEPLOY=1 node scripts/deploy.js
+// Phase 7 (renounce / additions-only) is ALWAYS on. Every deploy ends with
+// the same trustlessness-finalizing handover so testnet matches mainnet,
+// and so the "fresh deploy" code path is exercised end-to-end every time.
 //
 // What phase 7 does:
 //   1. Deploys one PathwayExpander per chain (owned by the deployer EOA).
@@ -130,7 +128,6 @@ const DEPLOY_GAS_MULTIPLIER = parseFloat(process.env.DEPLOY_GAS_MULTIPLIER || '1
 //     too, run a separate one-shot or call `setDelegate(0)` on each
 //     OApp via the expander before transferring ownership (which we do
 //     not do today; the additions-only design is for peers, not delegates).
-const RENOUNCE_ON_DEPLOY = process.env.RENOUNCE_ON_DEPLOY === '1';
 
 // The deployer wallet address (for verification)
 const EXPECTED_DEPLOYER = '0xF71338f3eAa483aA66125598B09BA1988e694a95';
@@ -427,16 +424,22 @@ const CONTRACTS = {
     // unset and CawL1PriceReader is skipped, CawProfile still deploys with
     // priceReader = address(0).
     //
-    // PathwayExpander_L1 is also a dependency when RENOUNCE_ON_DEPLOY=1
-    // because the constructor calls _transferOwnership(_pathwayExpander)
-    // at deploy time. When the flag is off, pass address(0) and the deployer
-    // EOA retains ownership (no-op transfer).
+    // PathwayExpander_L1 is a dependency because the constructor calls
+    // _transferOwnership(_pathwayExpander) at deploy time. The CawActions
+    // nonce-prediction chain is ALSO a dependency: it must complete before
+    // CawProfile lands so CawProfileMinter's address can be predicted at
+    // exactly CawProfile's nonce+1 without any sibling slipping in between.
     dependencies: [
       ...L2_CHAIN_KEYS.map(L => `CawProfileLedger_${L}`),
       'CawProfileLedger_L1',
       'CawProfileURI', 'CawNetworkManager', 'CawBuyAndBurn',
-      ...(RENOUNCE_ON_DEPLOY ? ['PathwayExpander_L1'] : []),
+      'PathwayExpander_L1',
+      'CawActionsERC1271_L1',
     ],
+    // CawProfileMinter lands at CawProfile's nonce+1 so we can pass its
+    // future address as the `_minter` immutable. Replaces the old
+    // post-deploy setMinter() linking step.
+    predictedSiblingKey: 'CawProfileMinter',
     constructorArgs: (state, chain) => [
       state.addresses.MintableCaw,
       state.addresses.CawProfileURI,
@@ -450,9 +453,13 @@ const CONTRACTS = {
       // Cross-chain L2s (Base, Arbitrum, etc.) are registered later via
       // PathwayExpander.addPeer on their own eids.
       state.addresses.CawProfileLedger_L1 || ethers.ZeroAddress,
-      // _pathwayExpander: when set, constructor transfers OApp ownership to it.
-      // When zero (RENOUNCE_ON_DEPLOY off), deployer EOA retains ownership.
-      RENOUNCE_ON_DEPLOY ? (state.addresses.PathwayExpander_L1 || ethers.ZeroAddress) : ethers.ZeroAddress,
+      // _pathwayExpander: constructor transfers OApp ownership to it so the
+      // deployer EOA never holds owner authority on CawProfile.
+      state.addresses.PathwayExpander_L1 || ethers.ZeroAddress,
+      // _minter: predicted at CawProfile's nonce+1. CawProfileMinter MUST
+      // deploy immediately after CawProfile on L1 or the address mismatches
+      // and the system bricks at first mint.
+      state.predictedAddresses?.CawProfileMinter || ethers.ZeroAddress,
     ],
   },
   // SessionMessageParser is a separately-deployed library whose `external pure`
@@ -501,20 +508,24 @@ const CONTRACTS = {
   CawProfileMinter: {
     chain: 'L1',
     phase: 2,
-    // CawActionsERC1271_L1 is the terminal link in the nonce-prediction chain:
-    //   CawProfileLedger_L1 → CawCapOracle_L1 → CawActions_L1 → CawActionsERC1271_L1
-    // These three contracts don't use CawActions/CawCapOracle at all, but they
-    // share the L1 chain. Adding CawActionsERC1271_L1 to deps guarantees the
-    // entire nonce chain completes before any of these deploy — preventing a
-    // round-robin scheduler from interleaving a Minter/Quoter/Marketplace deploy
-    // between CawCapOracle and CawActions and corrupting the nonce prediction.
+    // Must deploy immediately after CawProfile (same L1 chain, nonce+1) —
+    // CawProfile's _minter immutable is predicted from that nonce. No L1
+    // contract is allowed to slip between them. CawProfile carries the full
+    // CawActionsERC1271_L1 dep chain already, so the predicted-sibling
+    // contract is guaranteed to come AFTER all of those nonce-prediction
+    // siblings have landed.
     // MockSwapRouter is only a dependency on dev; on testnet/mainnet the Uniswap
     // V2 router is an existing contract — no deploy needed before this.
-    dependencies: ['CawProfile', 'CawActionsERC1271_L1'],
+    dependencies: ['CawProfile', 'PathwayExpander_L1'],
     constructorArgs: (state, chainKey) => [
       state.addresses.MintableCaw,
       state.addresses.CawProfile,
       state.addresses.MockSwapRouter || requireUniswapRouter(chainKey),
+      // pathwayExpander = sole address authorized to call addKycVerifier.
+      // KYC verifiers start unconfigured (mapping defaults to address(0));
+      // post-deploy linking steps below call PathwayExpander.addKycVerifier
+      // for each KYC_VERIFIER_L* env var that is set.
+      state.addresses.PathwayExpander_L1,
     ],
   },
   CawProfileQuoter: {
@@ -633,7 +644,6 @@ const CONTRACTS = {
     phase: 1,
     dependencies: [],
     constructorArgs: (state) => [state.deployerAddress],
-    condition: () => RENOUNCE_ON_DEPLOY,
   },
 };
 
@@ -756,7 +766,6 @@ for (const L of L2_CHAIN_KEYS) {
     phase: 7,
     dependencies: [],
     constructorArgs: (state) => [state.deployerAddress],
-    condition: () => RENOUNCE_ON_DEPLOY,
   };
 }
 
@@ -938,16 +947,8 @@ const LINKING_STEPS = [
   // Local L2 mirror is now wired via the CawProfile constructor — no setL2Peer step.
   // Cross-chain L2 peer registration (other eids) goes through PathwayExpander.addPeer
   // generated in the expansion block below.
-  {
-    name: 'Set minter on CawProfile',
-    chain: 'L1',
-    phase: 2,
-    contract: 'CawProfile',
-    method: 'setMinter',
-    getter: 'minter',
-    args: (state) => [state.addresses.CawProfileMinter],
-    condition: (state) => state.addresses.CawProfile && state.addresses.CawProfileMinter,
-  },
+  // CawProfileMinter is also wired via the CawProfile constructor (predicted
+  // address at nonce+1) — no post-deploy setMinter step exists.
   {
     // Wire CawProfile into CawNetworkManager so setAuthFee auto-propagates
     // allowFreeAuth to L2 when the zero/non-zero boundary is crossed.
@@ -1086,8 +1087,8 @@ const LINKING_STEPS = [
   // -----------------------------------------------------------------
   // Phase 7: renounce / additions-only finalization
   // -----------------------------------------------------------------
-  // Every step is gated on RENOUNCE_ON_DEPLOY. With it off, deployment
-  // ends after phase 6 and the deployer remains owner of everything.
+  // Always runs — every deploy ends with the trustlessness handover so
+  // testnet matches mainnet and the "fresh deploy" path stays exercised.
   //
   // Step style:
   //   - LZ OApps: transferOwnership(PathwayExpander_<chain>). The
@@ -1098,26 +1099,12 @@ const LINKING_STEPS = [
   //
   // Each step has a skipIf that compares the live owner to the target
   // (expander address for transfers, address(0) for renounces), so a
-  // re-run with RENOUNCE_ON_DEPLOY=1 is idempotent — the second run
-  // sees "already done" and exits the step without sending a tx.
+  // re-run is idempotent — the second run sees "already done" and exits
+  // the step without sending a tx.
   // -----------------------------------------------------------------
-  {
-    name: '[Phase 7] Transfer CawProfile ownership → PathwayExpander_L1',
-    chain: 'L1',
-    phase: 7,
-    contract: 'CawProfile',
-    method: 'transferOwnership',
-    args: (state) => [state.addresses.PathwayExpander_L1],
-    condition: (state) => RENOUNCE_ON_DEPLOY
-      && state.addresses.CawProfile
-      && state.addresses.PathwayExpander_L1,
-    skipIf: async (state, deployer) => {
-      const c = deployer.getContract('CawProfile');
-      if (!c) return false;
-      const owner = await c.owner();
-      return owner.toLowerCase() === state.addresses.PathwayExpander_L1.toLowerCase();
-    },
-  },
+  // CawProfile ownership handover moved INTO the constructor — see the
+  // CawProfile entry in CONTRACTS. The deployer EOA never owns CawProfile
+  // at all, so no Phase 7 transferOwnership step is needed.
   {
     name: '[Phase 7] Transfer CawProfileLedger_L1 ownership → PathwayExpander_L1',
     chain: 'L1',
@@ -1125,9 +1112,8 @@ const LINKING_STEPS = [
     contract: 'CawProfileLedger_L1',
     method: 'transferOwnership',
     args: (state) => [state.addresses.PathwayExpander_L1],
-    condition: (state) => RENOUNCE_ON_DEPLOY
-      && state.addresses.CawProfileLedger_L1
-      && state.addresses.PathwayExpander_L1,
+    condition: (state) =>
+      state.addresses.CawProfileLedger_L1 && state.addresses.PathwayExpander_L1,
     skipIf: async (state, deployer) => {
       const c = deployer.getContract('CawProfileLedger_L1');
       if (!c) return false;
@@ -1315,9 +1301,8 @@ for (const L of L2_CHAIN_KEYS) {
       contract: oapp,
       method: 'transferOwnership',
       args: (state) => [state.addresses[`PathwayExpander_${L}`]],
-      condition: (state) => RENOUNCE_ON_DEPLOY
-        && state.addresses[oapp]
-        && state.addresses[`PathwayExpander_${L}`],
+      condition: (state) =>
+        state.addresses[oapp] && state.addresses[`PathwayExpander_${L}`],
       skipIf: async (state, deployer) => {
         const c = deployer.getContract(oapp);
         if (!c) return false;
@@ -1327,21 +1312,11 @@ for (const L of L2_CHAIN_KEYS) {
     });
   }
 
-  LINKING_STEPS.push({
-    name: `[Phase 7] Renounce CawActions_${L}`,
-    chain: L,
-    phase: 7,
-    contract: `CawActions_${L}`,
-    method: 'renounceOwnership',
-    args: () => [],
-    condition: (state) => RENOUNCE_ON_DEPLOY && state.addresses[`CawActions_${L}`],
-    skipIf: async (state, deployer) => {
-      const c = deployer.getContract(`CawActions_${L}`);
-      if (!c) return false;
-      const owner = await c.owner();
-      return owner === '0x0000000000000000000000000000000000000000';
-    },
-  });
+  // CawActions has no Ownable / no owner() — the renounceOwnership step that
+  // used to live here was dead code (would revert with selector-not-found if
+  // it ever ran). Removed 2026-06-05 alongside the RENOUNCE_ON_DEPLOY=mandatory
+  // switch. CawActions has zero admin surface by construction; see
+  // commit 2e408f07 (refactor(solidity): drop Ownable from CawActions).
 }
 
 // ============================================
@@ -1917,8 +1892,9 @@ class MultiChainDeployer {
     console.log(`${'='.repeat(50)}`);
 
     // Get contracts for this phase. A `condition` predicate on a
-    // CONTRACTS entry lets us gate it on env / flags (e.g. phase 7's
-    // PathwayExpander is only deployed when RENOUNCE_ON_DEPLOY=1).
+    // CONTRACTS entry lets us gate it on env / flags (legacy hook — no
+    // contract currently uses `condition`, but the plumbing stays so a
+    // future env-gated artifact doesn't need to re-add the filter).
     const phaseContracts = Object.entries(CONTRACTS)
       .filter(([_, config]) => config.phase === phase)
       .filter(([_, config]) => !config.condition || config.condition(this.state, this, this.env))
@@ -2021,9 +1997,7 @@ class MultiChainDeployer {
 
     // Deploy in phases. Phase 6 is LZ DVN reconciliation (mainnet only,
     // no-op on testnet/dev environments). Phase 7 is the renounce/
-    // additions-only finalization (opt-in via RENOUNCE_ON_DEPLOY=1, and
-    // a no-op when off so re-runs during dev don't accidentally lock
-    // out the deployer).
+    // additions-only finalization — always runs so testnet matches mainnet.
     for (const phase of [1, 2, 3, 4, 5, 6, 7]) {
       await this.deployPhase(phase);
     }
@@ -2158,7 +2132,7 @@ class MultiChainDeployer {
       3: `${l2List} CawActions (Phase 3)`,
       4: `${l2List} CawActionsArchive + CawChallengeRelay (Phase 4 — full mesh)`,
       5: 'Cross-chain peer wiring (Phase 5)',
-      7: 'Renounce / additions-only (Phase 7 — opt-in via RENOUNCE_ON_DEPLOY=1)',
+      7: 'Renounce / additions-only (Phase 7)',
     };
     for (const phase of [1, 2, 3, 4, 5, 7]) {
       const phaseContracts = Object.entries(CONTRACTS).filter(([_, c]) => c.phase === phase);

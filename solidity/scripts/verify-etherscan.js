@@ -288,7 +288,7 @@ const CONTRACTS = {
     chain: 'L1',
     constructorArgs: (state) => [state.addresses.CawActions_L1],
   },
-  // Phase 7 expander on L1 — only present if RENOUNCE_ON_DEPLOY was set
+  // Phase 7 expander on L1 — always deployed (sole post-renounce admin).
   PathwayExpander_L1: {
     artifact: 'PathwayExpander',
     chain: 'L1',

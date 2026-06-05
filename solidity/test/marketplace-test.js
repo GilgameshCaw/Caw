@@ -10,6 +10,7 @@ const RevertingBidder = artifacts.require("RevertingBidder");
 
 const truffleAssert = require('truffle-assertions');
 const { BN, expectRevert, time } = require('@openzeppelin/test-helpers');
+const { ethers } = require('ethers');
 
 contract("CawProfileMarketplace", (accounts) => {
   const deployer = accounts[0];
@@ -34,7 +35,21 @@ contract("CawProfileMarketplace", (accounts) => {
     uriGenerator = await CawProfileURI.new(fontA.address, fontB.address);
     networkManager = await CawNetworkManager.new(deployer);
 
-    const toBytes32 = (addr) => "0x000000000000000000000000" + addr.slice(2).toLowerCase();
+    const dummyPathwayExpander = "0x000000000000000000000000000000000000bEEF";
+    const cpDeployer = deployer;
+
+    // L2 endpoint + ledger for the CawProfile constructor (deployed before nonce snapshot)
+    const l2Endpoint = await MockLayerZeroEndpoint.new(40245);
+    const CawProfileL2 = artifacts.require("CawProfileL2");
+    const cawProfileLedger = await CawProfileL2.new(l1Eid, l2Endpoint.address, "0x0000000000000000000000000000000000000000");
+    await lzEndpoint.setDestLzEndpoint(cawProfileLedger.address, l2Endpoint.address);
+
+    // MockSwapRouter deployed before nonce snapshot so it doesn't break the CawProfile→Minter pair
+    const mockRouter = await MockSwapRouter.new(token.address);
+
+    // Snapshot nonce: CawProfile lands at cpNonce, Minter at cpNonce+1
+    const cpNonce = await web3.eth.getTransactionCount(cpDeployer);
+    const predictedMinter = ethers.getCreateAddress({ from: cpDeployer, nonce: cpNonce + 1 });
 
     cawProfiles = await CawProfile.new(
       token.address,
@@ -44,32 +59,35 @@ contract("CawProfileMarketplace", (accounts) => {
       lzEndpoint.address,
       l1Eid,
       "0x0000000000000000000000000000000000000000",
-      "0x0000000000000000000000000000000000000000", // no bypassLZ ledger in marketplace tests
-      "0x0000000000000000000000000000000000000000"  // no PathwayExpander
+      cawProfileLedger.address,
+      dummyPathwayExpander,
+      predictedMinter
     );
-
-    const mockRouter = await MockSwapRouter.new(token.address);
+    // Deploy Minter immediately after CawProfile — no state-changing txs in between
     minter = await CawProfileMinter.new(
       token.address,
       cawProfiles.address,
-      mockRouter.address
+      mockRouter.address,
+      dummyPathwayExpander
     );
+    assert.equal(minter.address.toLowerCase(), predictedMinter.toLowerCase(), "minter address prediction mismatch — extra tx between CawProfile and Minter deploys?");
 
-    await cawProfiles.setMinter(minter.address);
+    await cawProfileLedger.setL1Peer(l1Eid, cawProfiles.address, false);
+    await l2Endpoint.setDestLzEndpoint(cawProfiles.address, lzEndpoint.address);
 
-    // Set up a dummy L2 peer (mint path needs at least one peer registered).
+    // Set up a dummy L2 peer (needed for mint to not revert on peerWithMaxPendingTransfers)
     const dummyL2Eid = 40245;
-    await cawProfiles.setPeer(dummyL2Eid, toBytes32(accounts[9])); // dummy peer address
+    await cawProfiles.setL2Peer(dummyL2Eid, cawProfileLedger.address);
 
     // Create a network (needed for minting)
-    await networkManager.createNetwork("Test Network", deployer, dummyL2Eid, 0, 0, 0, 0, "500000000000");
+    await networkManager.createNetwork("Test Network", deployer, dummyL2Eid, 0, 0, 0, 0, 0);
 
     // Use MintableCaw as payment token for ERC20 tests
     paymentToken = token;
 
     // Deploy marketplace with the payment-token allowlist baked in.
     // The marketplace has no admin — allowed tokens are fixed at construction.
-    marketplace = await CawProfileMarketplace.new(cawProfiles.address, dummyL2Eid, [paymentToken.address]);
+    marketplace = await CawProfileMarketplace.new(cawProfiles.address, [paymentToken.address]);
 
     // Mint CAW tokens for users
     const mintAmount = web3.utils.toWei("1000000000000", "ether"); // 1T CAW
@@ -1030,7 +1048,7 @@ contract("CawProfileMarketplace", (accounts) => {
     });
 
     it("can deploy with no extra tokens (ETH-only marketplace)", async () => {
-      const ethOnly = await CawProfileMarketplace.new(cawProfiles.address, 40245, []);
+      const ethOnly = await CawProfileMarketplace.new(cawProfiles.address, []);
       assert.equal(await ethOnly.allowedPaymentTokens('0x0000000000000000000000000000000000000000'), true);
       assert.equal(await ethOnly.allowedPaymentTokens(paymentToken.address), false);
     });
