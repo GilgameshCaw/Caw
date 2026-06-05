@@ -784,15 +784,17 @@ console.log("BALANCE:", balance)
     }
   }, [publicClient, address])
 
-  // Hit POST /api/users/ensure with fromChain: true (first attempt) so the
-  // server reads L1 and upserts the row inline (~1-2s). Subsequent retries
-  // pass fromChain: false and wait for the normal indexer path.
+  // Warm the DB row in the background. POST /api/users/ensure returns 202 on a
+  // miss and pokes NftTransferWatcher (via Redis) to index this tokenId
+  // immediately rather than on its next poll cycle; we retry until it lands so
+  // the row is warm by the time WelcomePage / the first post need it. No chain
+  // read happens in the request path — the watcher does it out-of-band.
   const ensureUserFromChain = useCallback(async (tokenId: number): Promise<boolean> => {
     for (let attempt = 0; attempt < 5; attempt++) {
       try {
         await apiFetch('/api/users/ensure', {
           method: 'POST',
-          body: JSON.stringify({ tokenId, fromChain: attempt === 0 }),
+          body: JSON.stringify({ tokenId }),
         })
         return true
       } catch (err) {

@@ -215,6 +215,43 @@ export const nftTransferWatcherService: Service = {
     const contractAddress = cfg.cawProfileAddress || CAW_NAMES_ADDRESS
     const redis = new Redis(cfg.redisUrl)
 
+    // Separate subscriber connection — ioredis connections in subscriber mode
+    // cannot run normal commands. Subscribe to the poke channel so the API
+    // can trigger an immediate targeted index without waiting for the poll cycle.
+    const subscriber = new Redis(cfg.redisUrl)
+    // In-flight de-dupe: skip concurrent findOrCreateUser calls for the same
+    // tokenId if a poke burst arrives before the first call completes.
+    const indexingInFlight = new Set<number>()
+
+    subscriber.subscribe('caw:index-token', (err) => {
+      if (err) {
+        console.warn('[NftTransferWatcher] Failed to subscribe to caw:index-token:', err.message)
+        return
+      }
+      console.log('[NftTransferWatcher] Listening on caw:index-token for reactive pokes')
+    })
+
+    subscriber.on('message', (_channel: string, message: string) => {
+      const tokenId = Number(message)
+      if (!Number.isInteger(tokenId) || tokenId <= 0) return
+      if (indexingInFlight.has(tokenId)) return
+      indexingInFlight.add(tokenId)
+      ;(async () => {
+        try {
+          await findOrCreateUser(tokenId, {})
+          console.log(`[NftTransferWatcher] poke: indexed tokenId=${tokenId}`)
+        } catch (err: any) {
+          if (err instanceof StaleTokenError) {
+            console.debug(`[NftTransferWatcher] poke: tokenId=${tokenId} not on chain yet — skipping`)
+          } else {
+            console.warn(`[NftTransferWatcher] poke: findOrCreateUser failed for tokenId=${tokenId}:`, err?.message)
+          }
+        } finally {
+          indexingInFlight.delete(tokenId)
+        }
+      })()
+    })
+
     let alive = true
     let pollTimer: ReturnType<typeof setTimeout> | null = null
 
@@ -413,7 +450,7 @@ export const nftTransferWatcherService: Service = {
       async stop() {
         alive = false
         if (pollTimer) clearTimeout(pollTimer)
-        await redis.quit()
+        await Promise.all([redis.quit(), subscriber.quit()])
       },
       async stats() {
         const cpKey = checkpointKey(cfg.chainId, contractAddress)

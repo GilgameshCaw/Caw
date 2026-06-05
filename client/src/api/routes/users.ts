@@ -14,7 +14,8 @@ import { ActionType } from '@prisma/client'
 import { getBlockedUserIds } from '../shared/blockUtils'
 import { requireAuth } from '../middleware/auth'
 import { markOrphan, markOrphanWithVariants } from '../util/orphanedMedia'
-import { isPlaceholderUser, findOrCreateUser, StaleTokenError } from '../../services/UserService'
+import { isPlaceholderUser } from '../../services/UserService'
+import { pokeIndexTokenId } from '../util/indexerPoke'
 
 // Validation limits for profile fields (must match ActionProcessor)
 const PROFILE_FIELD_LIMITS: Record<string, number> = {
@@ -54,10 +55,10 @@ const router = Router()
  * POST /api/users/ensure
  * Look up a user record by tokenId.
  *
- * Tier 1 of the "RPC out of API request handlers" refactor: this endpoint
- * no longer falls back to L1/L2 RPC reads on a DB miss. RawEventsGatherer
- * (Mint event listener) and NftTransferWatcher populate the User row
- * asynchronously — the frontend retries with backoff until that lands.
+ * Never calls RPC. On a DB miss, publishes a Redis poke so NftTransferWatcher
+ * indexes the token immediately instead of waiting for its next poll, then
+ * returns 202 so the frontend retries with backoff. RawEventsGatherer (Mint
+ * event listener) and NftTransferWatcher are the authoritative writers.
  *
  * - 200 + { user } when present in DB
  * - 202 + { error: 'user not yet indexed', retryAfterSeconds } when absent
@@ -68,8 +69,8 @@ const router = Router()
 router.post('/ensure', async (req, res) => {
   const startTime = Date.now()
   try {
-    const { tokenId, fromChain } = req.body
-    console.log(`[/api/users/ensure] START tokenId=${tokenId} fromChain=${!!fromChain}`)
+    const { tokenId } = req.body
+    console.log(`[/api/users/ensure] START tokenId=${tokenId}`)
 
     if (!tokenId || isNaN(Number(tokenId))) {
       return res.status(400).json({ error: 'tokenId is required' })
@@ -87,44 +88,11 @@ router.post('/ensure', async (req, res) => {
     const isMiss = !user || isPlaceholderUser(user)
 
     if (isMiss) {
-      // Fast-path: when the FE passes fromChain=true on the first post-mint call,
-      // we invoke findOrCreateUser() (idempotent L1 upsert) inline rather than
-      // returning 202 and waiting up to 60 s for NftTransferWatcher's next poll.
-      //
-      // This re-introduces a single RPC call into the request path, intentionally
-      // gated behind the flag — consistent with the Tier-1 refactor intent.
-      // The FE only sends fromChain=true once (immediately after the mint tx is
-      // confirmed); subsequent retries omit the flag and use the DB-only path,
-      // so this cannot become a per-poll RPC storm. StaleToken and other errors
-      // fall through to the standard 202 so onboarding polling continues safely.
-      if (fromChain === true) {
-        try {
-          await findOrCreateUser(numericTokenId)
-          // Re-read after the upsert; if the row is now real, return 200.
-          const refreshed = await prisma.user.findUnique({
-            where: { tokenId: numericTokenId },
-            select: dbSelect,
-          })
-          if (refreshed && !isPlaceholderUser(refreshed)) {
-            const duration = Date.now() - startTime
-            console.log(`[/api/users/ensure] fromChain fast-path SUCCESS in ${duration}ms, user=${JSON.stringify(refreshed)}`)
-            return res.json({ user: refreshed })
-          }
-          // Upsert ran but the row is still a placeholder — fall through to 202.
-        } catch (chainErr: any) {
-          if (chainErr instanceof StaleTokenError) {
-            // Token genuinely not on-chain yet; FE keeps polling via the DB-only path.
-            console.log(`[/api/users/ensure] tokenId=${numericTokenId} StaleTokenError on fromChain read — falling through to 202`)
-          } else {
-            // Unexpected error; log it and fall through gracefully. Never 500 here —
-            // onboarding must keep polling even if the chain read fails transiently.
-            console.error(`[/api/users/ensure] fromChain read error for tokenId=${numericTokenId}:`, chainErr.message)
-          }
-          // Fall through to the 202 responses below.
-        }
-      }
-
       if (!user) {
+        // Poke the indexer so NftTransferWatcher indexes this tokenId immediately
+        // rather than waiting for its next poll cycle. Fire-and-forget; never
+        // awaited — the request path does no chain reads.
+        pokeIndexTokenId(numericTokenId)
         console.log(`[/api/users/ensure] tokenId=${numericTokenId} not yet indexed (${totalDuration}ms)`)
         res.setHeader('Retry-After', '3')
         return res.status(202).json({
@@ -135,11 +103,12 @@ router.post('/ensure', async (req, res) => {
 
       // Placeholder rows (username=`user_<id>`, address='') exist when an
       // action eager-FK'd against this tokenId before its Mint event was
-      // indexed locally — see actions.ts upsert paths. The DataCleaner
-      // sweep refreshes them in the background; from the FE's perspective
-      // it's the same "not yet indexed" state, so we return 202 and let
-      // it poll. Once the sweep populates real values, the next /ensure
-      // returns 200 and the profile renders.
+      // indexed locally — see actions.ts upsert paths. Poke the indexer
+      // for a fast targeted backfill; DataCleaner also sweeps in the
+      // background. From the FE's perspective it's the same "not yet
+      // indexed" state, so we return 202 and let it poll. Once the row
+      // is populated, the next /ensure returns 200 and the profile renders.
+      pokeIndexTokenId(numericTokenId)
       console.log(`[/api/users/ensure] tokenId=${numericTokenId} placeholder row, awaiting refresh`)
       res.setHeader('Retry-After', '5')
       return res.status(202).json({

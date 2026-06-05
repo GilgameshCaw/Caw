@@ -74,6 +74,33 @@ const WelcomePage: React.FC = () => {
     const init = async () => {
       console.log(`[WelcomePage] Starting init for username=${username}, tokenId=${tokenId}`)
 
+      // Optimistic fast-path for a fresh mint. The L1 tx already confirmed
+      // (New.tsx decoded the tokenId from the receipt and handed it over via
+      // location.state), so we KNOW this is a brand-new profile that should
+      // start onboarding at step 0. Don't block the stepper on /ensure or
+      // /onboarding — those 202 until the indexer writes the row, which is
+      // exactly the ~minute stall (and RPC-timeout error) we're killing.
+      // Render the stepper now; converge the DB row + token store in the
+      // background so auth (useActiveToken) catches up a beat later.
+      if (freshMintTokenId !== undefined) {
+        console.log(`[WelcomePage] Fresh mint (tokenId=${freshMintTokenId}) — entering stepper optimistically at step 0`)
+        // Background, non-blocking: 202 from /ensure pokes the indexer to do a
+        // targeted backfill; retryOnIndexing polls until the row lands, then
+        // refetchTokenData pulls it into tokensByAddress so the new profile is
+        // the authed active token. None of this gates the stepper render.
+        retryOnIndexing(() => apiFetch('/api/users/ensure', {
+          method: 'POST',
+          body: JSON.stringify({ tokenId: freshMintTokenId }),
+        }))
+          .then(() => { useTokenDataStore.getState().refetchTokenData?.() })
+          .catch((e: any) => console.warn('[WelcomePage] background ensure failed (indexer/backfill will still cover it):', e?.message))
+        if (!cancelled) {
+          setInitialStep(0)
+          setLoading(false)
+        }
+        return
+      }
+
       try {
         // Ensure user record exists in DB (tokenId may be 0 for fresh mints — that's OK, ensure will handle it)
         if (tokenId) {
@@ -85,15 +112,14 @@ const WelcomePage: React.FC = () => {
             if (remainingTime > 0) {
               setLoadingMessage(t('welcome_page.connecting_chain'))
               const ensureStart = Date.now()
-              // fromChain on a fresh mint: the indexer hasn't written the row
-              // yet, so ask the server to read L1 and upsert it on demand
-              // rather than 202-looping via retryOnIndexing for ~45s. On a
-              // normal /welcome visit (no fresh-mint state) this is a plain
-              // DB read.
+              // Normal /welcome visit (NOT a fresh mint — that case short-
+              // circuited above). Plain DB read; on a miss the server pokes
+              // the indexer and 202s, and retryOnIndexing polls until the row
+              // lands.
               await Promise.race([
                 retryOnIndexing(() => apiFetch('/api/users/ensure', {
                   method: 'POST',
-                  body: JSON.stringify({ tokenId, fromChain: freshMintTokenId !== undefined }),
+                  body: JSON.stringify({ tokenId }),
                 })),
                 new Promise((_, reject) =>
                   setTimeout(() => reject(new Error('Timeout creating user record')), remainingTime)
@@ -101,16 +127,6 @@ const WelcomePage: React.FC = () => {
               ])
               const ensureDuration = Date.now() - ensureStart
               console.log(`[WelcomePage] /api/users/ensure completed in ${ensureDuration}ms`)
-
-              // Fresh mint: the row now exists in the DB (ensure fromChain just
-              // upserted it), but tokensByAddress hasn't been refreshed, so
-              // useActiveToken() still returns undefined and the user appears
-              // unauthed (and the profile chooser is empty). Kick a refetch so
-              // the store converges while the stepper is already on screen,
-              // instead of waiting ~45s for the indexer's next poll.
-              if (freshMintTokenId !== undefined) {
-                useTokenDataStore.getState().refetchTokenData?.()
-              }
 
               // Pending deposit info is now owned entirely by the client-side
               // localStorage hint (written in New.tsx) and the server-side

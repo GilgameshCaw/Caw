@@ -22,15 +22,10 @@ function decompressActionText(textField: unknown): string {
   for (let i = 0; i < bytes.length; i++) bytes[i] = parseInt(hex.slice(i * 2, i * 2 + 2), 16)
   try { return smlTxt().decompress(bytes) } catch { return '' }
 }
-// Tier 1 of the "RPC out of API request handlers" refactor: the request path
-// reads the sender row from the DB only. The one exception is a missing-sender
-// post: if the row is absent we attempt ONE inline findOrCreateUser (L1 read +
-// upsert) before 202'ing, so a freshly-minted user can post immediately
-// instead of waiting ~45s for the indexer's next poll. findOrCreateUser is
-// cached (30s) and throws StaleTokenError cheaply for non-existent tokens, so
-// the missing-sender L1 read can't become an RPC amplifier. Mirrors the
-// /api/users/ensure { fromChain } fast-path.
-import { findOrCreateUser, StaleTokenError } from '../../services/UserService'
+// Request path reads DB only; on a sender miss we 202 and let the indexer
+// backfill. We also poke NftTransferWatcher via Redis for a fast targeted
+// backfill so the user doesn't wait for the next poll cycle.
+import { pokeIndexTokenId } from '../util/indexerPoke'
 import { countManager } from '../../services/CountManager'
 import { parsePoll, parseVoteText } from '../../tools/pollMarker'
 import { getSession, addAuthorization, createSession } from '../sessionStore'
@@ -313,33 +308,16 @@ router.post('/', async (req, res) => {
     // This prevents queuing actions that will definitely fail on-chain.
     let recoveredAddress: string | null = null
     let ownerAddress: string | null = null
-    let sender = await prisma.user.findUnique({ where: { tokenId: data.senderId } })
+    const sender = await prisma.user.findUnique({ where: { tokenId: data.senderId } })
     mark('userLookup')
 
-    // Self-heal a freshly-minted sender: if the indexer hasn't written the row
-    // yet, do ONE inline L1 read + upsert so the user can post the moment their
-    // mint confirms (instead of 202-looping for ~45s until the next watcher
-    // poll). findOrCreateUser is idempotent + cached; StaleTokenError means the
-    // token genuinely isn't on-chain (e.g. a bogus senderId) → fall through to
-    // the 202 below. Any other error also falls through — never block posting
-    // on a transient RPC hiccup; the FE retry + indexer backfill still cover it.
+    // No RPC in the request path. If the sender row is missing, poke the
+    // indexer for a fast targeted backfill and 202 — DO NOT insert TxQueue
+    // rows for senderIds we haven't validated. The frontend retries with
+    // backoff; RawEventsGatherer's Mint listener (and NftTransferWatcher) will
+    // populate the row.
     if (!sender?.address) {
-      try {
-        await findOrCreateUser(data.senderId)
-        sender = await prisma.user.findUnique({ where: { tokenId: data.senderId } })
-        mark('senderSelfHeal')
-      } catch (healErr: any) {
-        if (!(healErr instanceof StaleTokenError)) {
-          console.warn(`[Actions] inline findOrCreateUser failed for senderId=${data.senderId}:`, healErr?.message)
-        }
-      }
-    }
-
-    // Tier 1: no further RPC fallback. If the row is still missing after the
-    // self-heal attempt, 202 — DO NOT insert TxQueue rows for senderIds we
-    // haven't validated. The frontend retries with backoff; RawEventsGatherer's
-    // Mint listener (and NftTransferWatcher for transfers) populates the row.
-    if (!sender?.address) {
+      pokeIndexTokenId(data.senderId)
       res.setHeader('Retry-After', '3')
       return res.status(202).json({
         error: 'user not yet indexed',
@@ -722,6 +700,10 @@ router.post('/', async (req, res) => {
         // Optimistically increment counts on the pending caw via CountManager.
         // For replies, do NOT pass originalCawId — replies only affect commentCount
         // (handled separately below), not recawCount on the parent.
+        // Passing isReply=true also tells CountManager to skip the user.cawCount
+        // bump — replies are derived on the fly by /api/users (SUCCESS filter on
+        // Caw rows) and bumping cawCount for a pending reply would inflate the
+        // Posts tab count by N and zero the Replies tab count until confirm.
         const isReply = !!(originalCawId && !isQuote && !isRecaw)
         if (!existingCaw) {
           try {
@@ -731,6 +713,7 @@ router.post('/', async (req, res) => {
               action: isRecaw ? 'RECAW' : 'CAW',
               originalCawId: isReply ? null : (originalCawId || null),
               status: 'PENDING',
+              isReply,
             })
           } catch (err) {
             console.error('Failed to optimistically increment counts via CountManager:', err)
@@ -2021,6 +2004,7 @@ router.post('/batch', async (req, res) => {
                 action: isRecaw ? 'RECAW' : 'CAW',
                 originalCawId: isReply ? null : (originalCawId || null),
                 status: 'PENDING',
+                isReply,
               })
             } catch (err) {
               console.warn(`[Actions/batch] onCawCreated failed for ${d.senderId}:${d.cawonce}:`, (err as any)?.message)
