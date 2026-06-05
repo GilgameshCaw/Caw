@@ -23,6 +23,14 @@ const WelcomePage: React.FC = () => {
   // pendingDeposit is the wei amount as a string, or null
   const pendingDeposit = (location.state as any)?.pendingDeposit as string | null ?? null
 
+  // tokenId decoded from the mint receipt and handed over by New.tsx on the
+  // optimistic-mint navigation. Present ONLY on a fresh mint; undefined on a
+  // normal /welcome visit. We trust it because the FE decoded it from the
+  // on-chain Transfer log — the mint is confirmed, so the token (and its
+  // username) exist regardless of whether the indexer has populated the
+  // local token store yet.
+  const freshMintTokenId = (location.state as any)?.mintedTokenId as number | undefined
+
   const [initialStep, setInitialStep] = useState<number | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
@@ -42,8 +50,12 @@ const WelcomePage: React.FC = () => {
     const token = allTokens.find(
       t => t.username?.toLowerCase() === username.toLowerCase()
     )
-    return token?.tokenId
-  }, [tokensByAddress, username])
+    // Prefer the store match; fall back to the receipt-decoded tokenId from
+    // New.tsx for the optimistic-mint case where the indexer hasn't populated
+    // tokensByAddress yet. Without this fallback the page can't resolve a
+    // tokenId, skips the ensure call, and bounces to /home unauthed.
+    return token?.tokenId ?? freshMintTokenId
+  }, [tokensByAddress, username, freshMintTokenId])
 
   // Ensure the active token is set to the user being onboarded
   useEffect(() => {
@@ -73,10 +85,15 @@ const WelcomePage: React.FC = () => {
             if (remainingTime > 0) {
               setLoadingMessage(t('welcome_page.connecting_chain'))
               const ensureStart = Date.now()
+              // fromChain on a fresh mint: the indexer hasn't written the row
+              // yet, so ask the server to read L1 and upsert it on demand
+              // rather than 202-looping via retryOnIndexing for ~45s. On a
+              // normal /welcome visit (no fresh-mint state) this is a plain
+              // DB read.
               await Promise.race([
                 retryOnIndexing(() => apiFetch('/api/users/ensure', {
                   method: 'POST',
-                  body: JSON.stringify({ tokenId }),
+                  body: JSON.stringify({ tokenId, fromChain: freshMintTokenId !== undefined }),
                 })),
                 new Promise((_, reject) =>
                   setTimeout(() => reject(new Error('Timeout creating user record')), remainingTime)
@@ -84,6 +101,16 @@ const WelcomePage: React.FC = () => {
               ])
               const ensureDuration = Date.now() - ensureStart
               console.log(`[WelcomePage] /api/users/ensure completed in ${ensureDuration}ms`)
+
+              // Fresh mint: the row now exists in the DB (ensure fromChain just
+              // upserted it), but tokensByAddress hasn't been refreshed, so
+              // useActiveToken() still returns undefined and the user appears
+              // unauthed (and the profile chooser is empty). Kick a refetch so
+              // the store converges while the stepper is already on screen,
+              // instead of waiting ~45s for the indexer's next poll.
+              if (freshMintTokenId !== undefined) {
+                useTokenDataStore.getState().refetchTokenData?.()
+              }
 
               // Pending deposit info is now owned entirely by the client-side
               // localStorage hint (written in New.tsx) and the server-side

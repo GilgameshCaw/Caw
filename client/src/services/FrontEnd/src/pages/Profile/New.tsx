@@ -740,10 +740,20 @@ console.log("BALANCE:", balance)
       // the new token — AuthGate then bounces them to the captive splash.
       // A fresh mint is always intent to see the welcome flow.
       try { localStorage.removeItem(`caw:onboardingExited:${username}`) } catch {}
-      // Pass state indicating if we deposited (stake is pending via LayerZero)
+      // Pass state indicating if we deposited (stake is pending via LayerZero),
+      // plus the freshly-decoded tokenId. WelcomePage normally derives the
+      // tokenId from tokensByAddress, but right after an optimistic mint that
+      // store hasn't been populated by the indexer yet (the whole point of the
+      // fast-path). Handing the tokenId through location.state lets WelcomePage
+      // proceed immediately and call /api/users/ensure { fromChain: true }
+      // instead of stalling — and bouncing to /home unauthed — until the
+      // indexer catches up.
       navigate(`/welcome/${username}`, {
         replace: true,
-        state: { pendingDeposit: depositEnabled && depositAmountWei > 0n ? depositAmountWei.toString() : null }
+        state: {
+          pendingDeposit: depositEnabled && depositAmountWei > 0n ? depositAmountWei.toString() : null,
+          mintedTokenId,
+        }
       })
     }
   }, [mintSuccess, mintedTokenId, username, depositEnabled, depositAmountWei])
