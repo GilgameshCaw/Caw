@@ -80,6 +80,24 @@ contract CawProfile is
   ///      Zero = use tx.origin (default). Set by CawProfileMinter's sponsored
   ///      entry points; cleared after the call. Audit fix 2026-05-22 (H-1).
   address payable private _lzRefundTo;
+  /// @dev Transient source-eid stash for the LZ delivery path. Set to
+  ///      `origin.srcEid` inside `_lzReceive` so `setWithdrawable` (run via
+  ///      delegatecall from inside _lzReceive) can debit the right per-peer
+  ///      deposit balance. Cleared after the call. For bypassLZ this slot
+  ///      is unused — `setWithdrawable` uses `mainnetLzId` on that path.
+  uint32 private _lzSrcEid;
+
+  /// @notice Running CAW total deposited to L1 via each LZ peer eid (or via
+  ///         bypassLZ co-deployment at `mainnetLzId`). Every `depositFor`
+  ///         increments this for the destination eid; every `setWithdrawable`
+  ///         debits this for the source eid. A withdraw from a peer cannot
+  ///         exceed the CAW that was actually bridged through that peer —
+  ///         this caps the blast radius of a compromised LZ pathway (forged
+  ///         DVN message, malicious peer added via expander, etc.) to AT
+  ///         MOST the legitimate deposits on that pathway. Vault drift
+  ///         monitor: `sum(cawDepositedByPeer) == CAW.balanceOf(this)
+  ///         - sum(withdrawable[])` holds as an invariant in steady state.
+  mapping(uint32 => uint256) public cawDepositedByPeer;
 
   bytes4 internal constant _lzBundleSelector                 = bytes4(keccak256("lzDepositMintSession(uint32,uint32,uint256,string,address,uint64,uint256,uint64,uint32[],address[],uint64[])"));
   bytes4 internal constant _updateOwnersSelector            = bytes4(keccak256("updateOwners(uint32[],address[],uint64[])"));
@@ -589,6 +607,12 @@ contract CawProfile is
     _addChosenChain(tokenId, lzDestId);
     CAW.transferFrom(msg.sender, address(this), amount);
     unchecked { totalCaw += amount; }
+    // Per-peer running balance. Bookkept against the destination eid so
+    // the matching `setWithdrawable` (received from that eid's Ledger
+    // peer) can debit and a withdraw cannot exceed deposits-by-pathway.
+    // See `cawDepositedByPeer` declaration for the vault-conservation
+    // invariant and the threat model this defends against.
+    cawDepositedByPeer[lzDestId] += amount;
 
     // Pay deposit + auth fees through their respective getters so the
     // accounting routes to the right addresses. NetworkManager today
@@ -742,8 +766,20 @@ contract CawProfile is
     //      happened in CawActions._applyAction.withdrawTokens) would
     //      have no L1 counterpart. Audit fix 2026-05-08 (C-1).
     if (!(fromLZ || msg.sender == address(cawProfileLedger))) revert NotL2Mirror();
-    for (uint256 i = 0; i < tokenIds.length; i++)
+    // Source eid for per-peer accounting:
+    //   - LZ path: stashed by `_lzReceive` from `origin.srcEid`
+    //   - bypassLZ: mainnetLzId by construction (L1 co-deployment)
+    uint32 srcEid = fromLZ ? _lzSrcEid : mainnetLzId;
+    uint256 totalAmount;
+    for (uint256 i = 0; i < tokenIds.length; i++) {
       withdrawable[tokenIds[i]] += amounts[i];
+      totalAmount += amounts[i];
+    }
+    // Per-peer debit. A forged setWithdrawable from a compromised LZ
+    // pathway (or from a malicious peer added later via PathwayExpander)
+    // cannot drain more than the legitimate deposits that flowed through
+    // that same peer eid. Underflow REVERTS — that is the defense.
+    cawDepositedByPeer[srcEid] -= totalAmount;
   }
 
   /// @dev Add lzDestId to the token's chosen-chain set. Reverts if the set would exceed
@@ -871,8 +907,10 @@ contract CawProfile is
     //   are public (required for delegatecall dispatch), and fromLZ is needed to distinguish the
     //   _lzReceive call path from direct external calls.
     fromLZ = true;
+    _lzSrcEid = _origin.srcEid; // stash for setWithdrawable per-peer debit
     (bool success, bytes memory returnData) = address(this).delegatecall(payload);
     fromLZ = false;
+    _lzSrcEid = 0;
 
     // Handle failure and revert with the error message
     if (!success) {
