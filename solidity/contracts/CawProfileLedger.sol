@@ -41,8 +41,7 @@ contract CawProfileLedger is
   error NoWithdraw();    // attempted to delegate WITHDRAW scope (bit 6)
   error BadNonce();      // session-registration nonce didn't match sessionNonce[signer]
   error Replayed();      // personal-sign digest already consumed
-  error SiblingSet();    // setERC1271Sibling already called
-  error ZeroSibling();   // setERC1271Sibling called with address(0)
+  error ZeroSibling();   // constructor _erc1271Sibling arg was address(0)
   error SpendLimitTooHigh(); // parsed or supplied spendLimit exceeds MAX_SESSION_SPEND
 
   using SigVerification for address;
@@ -210,7 +209,6 @@ contract CawProfileLedger is
   event OwnerSet(uint32 tokenId, address newOwner);
   event UsernameMinted(uint32 tokenId, address owner);
   event Authenticated(uint32 cawNetworkId, uint32 tokenId);
-  event CawActionsSet(address cawActions);
   event SessionCreated(address indexed owner, address indexed sessionKey, uint64 expiry, uint8 scopeBitmap, uint256 spendLimit, uint64 perActionTipRate);
   event SessionRevoked(address indexed owner, address indexed sessionKey);
   /// @notice Emitted when CawActions burns L2 stake on behalf of a token (withdraw flow).
@@ -232,15 +230,60 @@ contract CawProfileLedger is
     uint256 nextCawonce;
   }
 
-  /// @param _endpointId LayerZero EID of the L1 chain (the source of truth for ownership)
-  /// @param _endpoint Address of the LayerZero V2 EndpointV2 contract on this chain
-  /// @param _capOracle CawCapOracle address (address(0) = cap dormant, backward-compatible)
-  constructor(uint32 _endpointId, address _endpoint, address _capOracle)
+  /// @param _endpointId    LayerZero EID of the L1 chain (the source of truth for ownership).
+  /// @param _endpoint      Address of the LayerZero V2 EndpointV2 contract on this chain.
+  /// @param _capOracle     CawCapOracle address (address(0) = cap dormant, backward-compatible).
+  /// @param _cawProfile    Address of the L1 CawProfile contract. Required — this contract's
+  ///                       authorized L1 caller in bypassLZ mode and the LZ peer target in
+  ///                       cross-chain mode. Cannot be zero.
+  /// @param _cawActions    Address of the CawActions contract on this chain. Cannot be zero.
+  /// @param _erc1271Sibling Address of the CawActionsERC1271 sibling contract. Cannot be zero.
+  /// @param _bypassLZ      True for mainnet co-deployment (L1 calls directly), false for
+  ///                       cross-chain operation (LZ messages from L1 CawProfile peer).
+  ///
+  /// @dev  WHY THREE NEW ARGS — All three wiring addresses are now resolved at deploy time
+  ///       via nonce prediction (the same pattern CawProfile uses for its own ctor args),
+  ///       eliminating the post-deploy setL1Peer / setCawActions / setERC1271Sibling admin
+  ///       surface. Those setters existed so the deploy script could wire up circular
+  ///       dependencies after-the-fact; prediction breaks the circularity without any
+  ///       on-chain admin round-trips.
+  ///
+  /// @dev  WHY RENOUNCE-IN-CTOR — After this constructor runs there is nothing left for an
+  ///       owner to do: all wiring is immutable (stored in `cawProfile`, `cawActions`,
+  ///       `erc1271Sibling`) or handled by the defense-in-depth `setPeer` override (per-eid
+  ///       OnlyOnce). Holding owner authority any longer is pure attack surface. Pattern
+  ///       mirrors CawProfile.sol, which transfers ownership to PathwayExpander in its own
+  ///       constructor; here we renounce unconditionally because CawProfileLedger has no
+  ///       future additions-only surface (new L2 peers are added on the CawProfile side).
+  constructor(
+    uint32 _endpointId,
+    address _endpoint,
+    address _capOracle,
+    address _cawProfile,
+    address _cawActions,
+    address _erc1271Sibling,
+    bool    _bypassLZ
+  )
     OApp(_endpoint, msg.sender)
   {
+    if (_cawProfile == address(0)) revert ZeroAddress();
+    if (_cawActions == address(0)) revert ZeroAddress();
+    if (_erc1271Sibling == address(0)) revert ZeroSibling();
     layer1EndpointId = _endpointId;
     eip712DomainHash = generateDomainHash();
     capOracle = ICawCapOracle(_capOracle); // address(0) permitted — cap stays dormant
+    cawActions = ICawActions(_cawActions);
+    erc1271Sibling = _erc1271Sibling;
+    if (_bypassLZ) {
+      bypassLZ = true;
+      cawProfile = CawProfile(payable(_cawProfile));
+    } else {
+      // Cross-chain: wire _cawProfile as the L1 LZ peer for this eid.
+      // Consumes the per-eid OnlyOnce slot via the defense-in-depth setPeer override.
+      setPeer(_endpointId, bytes32(uint256(uint160(_cawProfile))));
+    }
+    // Zero admin from here on — no owner action is needed post-deploy.
+    renounceOwnership();
   }
 
   /// @dev Compute the EIP-712 domain separator hash. Cached in `eip712DomainHash` at construction.
@@ -276,64 +319,21 @@ contract CawProfileLedger is
     return userTokens;
   }
 
-  /// @notice Configure the L1 peer. Owner-only.
-  /// @dev If `_bypassLZ` is true, this contract is co-deployed on the same chain as CawProfile,
-  ///      and the L1 contract will call this contract directly instead of via LayerZero.
-  /// @param _eid LayerZero EID of the L1 chain
-  /// @param peer Address of the L1 CawProfile contract
-  /// @param _bypassLZ True for mainnet co-deployment, false for cross-chain operation
-  function setL1Peer(uint32 _eid, address payable peer, bool _bypassLZ)
-    external
-    onlyOwner
-    onlyOnce(keccak256("setL1Peer"))
-  {
-    if (peer == address(0)) revert ZeroAddress();
-    if (_bypassLZ) {
-      bypassLZ = true;
-      cawProfile = CawProfile(peer);
-    } else setPeer(_eid, bytes32(uint256(uint160(address(peer)))));
-  }
-
-  /// @notice Lock the inherited OApp `setPeer` once per eid. Once a peer is set
-  /// (typically the first call to setL1Peer in deploy), it can NEVER be changed —
-  /// even by the owner. Prevents a compromised owner from swapping the L1 peer to a
-  /// contract they control and forging LZ messages. New eids stay openable by design.
+  /// @notice Defense-in-depth: lock the inherited OApp `setPeer` once per eid so it
+  ///         can NEVER be changed post-deploy — even if owner were somehow recovered.
+  ///         The constructor calls this once (for the L1 eid in cross-chain mode);
+  ///         future new-eid calls would also be locked after the first invocation per eid.
+  ///         Owner is renounced at the end of the constructor, so only this path remains.
+  ///
+  /// @dev SECURITY NOTE — setDelegate hardening: the inherited setDelegate
+  ///      is non-virtual; its trust model relies on owner renouncement in the constructor.
+  ///      See CawActionsArchive.sol for full reasoning.
   function setPeer(uint32 _eid, bytes32 _peer)
     public
     override
     onlyOnce(keccak256(abi.encode("setPeer", _eid)))
   {
     super.setPeer(_eid, _peer);
-  }
-
-  /// @dev SECURITY NOTE — setDelegate hardening: the inherited setDelegate
-  ///      is non-virtual; rely on owner renouncement post-deploy. See
-  ///      CawActionsArchive.sol for full reasoning.
-
-  /// @notice Set the CawActions contract address. Owner-only, one-shot.
-  /// @dev CawActions is the only contract authorized to call spend/balance functions here.
-  function setCawActions(address _cawActions)
-    external
-    onlyOwner
-    onlyOnce(keccak256("setCawActions"))
-  {
-    if (_cawActions == address(0)) revert ZeroAddress();
-    cawActions = ICawActions(_cawActions);
-    emit CawActionsSet(_cawActions);
-  }
-
-  event ERC1271SiblingSet(address sibling);
-
-  /// @notice Set the ERC-1271 sibling contract. Owner-only; can only be called once.
-  /// @dev Inline one-shot guard (vs OnlyOnce mapping) to save ~130 bytes — CawProfileLedger
-  ///      is within 100 bytes of the EIP-170 cap and the mapping overhead was the
-  ///      only thing pushing it over. Semantically equivalent to OnlyOnce: first
-  ///      call binds, all subsequent calls revert.
-  function setERC1271Sibling(address _sibling) external onlyOwner {
-    if (erc1271Sibling != address(0)) revert SiblingSet();
-    if (_sibling == address(0)) revert ZeroSibling();
-    erc1271Sibling = _sibling;
-    emit ERC1271SiblingSet(_sibling);
   }
 
   /// @notice Get the CAW balance for a token, scaled by the global reward multiplier.

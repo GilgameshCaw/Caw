@@ -38,10 +38,21 @@ contract("CawProfileMarketplace", (accounts) => {
     const dummyPathwayExpander = "0x000000000000000000000000000000000000bEEF";
     const cpDeployer = deployer;
 
-    // L2 endpoint + ledger for the CawProfile constructor (deployed before nonce snapshot)
+    // L2 endpoint + ledger for the CawProfile constructor.
+    // Deploy order: l2Endpoint(+6) → cawProfileLedger(+7) → mockRouter(+8) → cawProfiles(+9).
     const l2Endpoint = await MockLayerZeroEndpoint.new(40245);
-    const CawProfileL2 = artifacts.require("CawProfileL2");
-    const cawProfileLedger = await CawProfileL2.new(l1Eid, l2Endpoint.address, "0x0000000000000000000000000000000000000000");
+
+    // Predict cawProfiles address (nonce+2 after ledger deploy).
+    const ledgerNonce = await web3.eth.getTransactionCount(cpDeployer);
+    const predictedCawProfiles = ethers.getCreateAddress({ from: cpDeployer, nonce: ledgerNonce + 2 });
+    const CawProfileLedger = artifacts.require("CawProfileLedger");
+    const cawProfileLedger = await CawProfileLedger.new(
+      l1Eid, l2Endpoint.address, "0x0000000000000000000000000000000000000000",
+      predictedCawProfiles,
+      "0x000000000000000000000000000000000000dEAD", // _cawActions: dummy (marketplace doesn't use it)
+      "0x000000000000000000000000000000000000cAFE", // _erc1271Sibling: dummy
+      false
+    );
     await lzEndpoint.setDestLzEndpoint(cawProfileLedger.address, l2Endpoint.address);
 
     // MockSwapRouter deployed before nonce snapshot so it doesn't break the CawProfile→Minter pair
@@ -63,6 +74,7 @@ contract("CawProfileMarketplace", (accounts) => {
       dummyPathwayExpander,
       predictedMinter
     );
+    assert.equal(cawProfiles.address.toLowerCase(), predictedCawProfiles.toLowerCase(), "cawProfiles nonce prediction mismatch");
     // Deploy Minter immediately after CawProfile — no state-changing txs in between
     minter = await CawProfileMinter.new(
       token.address,
@@ -71,8 +83,6 @@ contract("CawProfileMarketplace", (accounts) => {
       dummyPathwayExpander
     );
     assert.equal(minter.address.toLowerCase(), predictedMinter.toLowerCase(), "minter address prediction mismatch — extra tx between CawProfile and Minter deploys?");
-
-    await cawProfileLedger.setL1Peer(l1Eid, cawProfiles.address, false);
     await l2Endpoint.setDestLzEndpoint(cawProfiles.address, lzEndpoint.address);
 
     // Set up a dummy L2 peer (needed for mint to not revert on peerWithMaxPendingTransfers)

@@ -221,49 +221,70 @@ contract L2BalanceDifferentialTest is Test {
     uint32 constant TID3 = 3;
 
     function setUp() public {
-        cawToken   = new MintableCaw();
-        buyAndBurn = new StubBB_Diff();
-        uriGen     = new StubURI_Diff();
+        // ── Pre-deployment nonce prediction ───────────────────────────────────
+        // Deploy order (with nonce offsets from base):
+        //   +0 cawToken, +1 buyAndBurn, +2 uriGen,
+        //   +3 lzL2a, +4 lzL2b, +5 networkManager,
+        //   +6 l2A (CawProfileLedger), +7 l2B (CawProfileLedger),
+        //   +8 mockActionsA, +9 mockActionsB,
+        //   +10 lzL1a, +11 lzL1b,
+        //   +12 cpA (CawProfile), +13 cpB (CawProfile).
+        //
+        // l2A needs cpA (+12) and mockActionsA (+8).
+        // l2B needs cpB (+13) and mockActionsB (+9).
+        uint256 base = vm.getNonce(address(this));
+        address predictedCpA        = vm.computeCreateAddress(address(this), base + 12);
+        address predictedCpB        = vm.computeCreateAddress(address(this), base + 13);
+        address predictedMockActsA  = vm.computeCreateAddress(address(this), base + 8);
+        address predictedMockActsB  = vm.computeCreateAddress(address(this), base + 9);
 
-        MockLayerZeroEndpoint lzL2a = new MockLayerZeroEndpoint(2);
-        MockLayerZeroEndpoint lzL2b = new MockLayerZeroEndpoint(3);
+        cawToken   = new MintableCaw();       // base+0
+        buyAndBurn = new StubBB_Diff();       // base+1
+        uriGen     = new StubURI_Diff();      // base+2
 
-        networkManager = new CawNetworkManager(address(buyAndBurn));
-        networkManager.createNetwork("TestNet", address(this), 2, 0, 0, 0, 0, 5e11);
+        MockLayerZeroEndpoint lzL2a = new MockLayerZeroEndpoint(2);           // base+3
+        MockLayerZeroEndpoint lzL2b = new MockLayerZeroEndpoint(3);           // base+4
 
-        // Deploy two CawProfileLedger instances
-        l2A = new CawProfileLedger(MAINNET_LZ_ID, address(lzL2a), address(0));
-        l2B = new CawProfileLedger(MAINNET_LZ_ID, address(lzL2b), address(0));
+        networkManager = new CawNetworkManager(address(buyAndBurn));          // base+5
+        networkManager.createNetwork("TestNet", address(this), 2, 0, 0, 0, 0, 5e11); // no deploy
 
-        // Deploy mock CawActions for each L2
-        mockActionsA = new MockCawActionsForL2(address(l2A));
-        mockActionsB = new MockCawActionsForL2(address(l2B));
+        // Deploy two CawProfileLedger instances — ctor wires cawProfile + cawActions
+        l2A = new CawProfileLedger(   // base+6
+            MAINNET_LZ_ID, address(lzL2a), address(0),
+            predictedCpA, predictedMockActsA, address(0xcafe1), true
+        );
+        l2B = new CawProfileLedger(   // base+7
+            MAINNET_LZ_ID, address(lzL2b), address(0),
+            predictedCpB, predictedMockActsB, address(0xcafe2), true
+        );
+
+        // Deploy mock CawActions for each L2 (must match predicted addresses)
+        mockActionsA = new MockCawActionsForL2(address(l2A)); // base+8
+        mockActionsB = new MockCawActionsForL2(address(l2B)); // base+9
+        require(address(mockActionsA) == predictedMockActsA, "mockActionsA nonce mismatch");
+        require(address(mockActionsB) == predictedMockActsB, "mockActionsB nonce mismatch");
 
         // We need a CawProfile for bypassLZ — deploy one and wire to L2A.
         // L2B gets a separate CawProfile so both can be bypassLZ-mode.
-        MockLayerZeroEndpoint lzL1a = new MockLayerZeroEndpoint(MAINNET_LZ_ID);
-        MockLayerZeroEndpoint lzL1b = new MockLayerZeroEndpoint(MAINNET_LZ_ID + 100);
+        MockLayerZeroEndpoint lzL1a = new MockLayerZeroEndpoint(MAINNET_LZ_ID);        // base+10
+        MockLayerZeroEndpoint lzL1b = new MockLayerZeroEndpoint(MAINNET_LZ_ID + 100);  // base+11
 
         // CawProfile now requires non-zero _pathwayExpander and _minter
         // (both immutable, no setters). Test contract acts as the minter
         // so mint flows below work without going through CawProfileMinter.
         address dummyExpander = address(0xEAFEEDA1);
-        CawProfile cpA = new CawProfile(
+        CawProfile cpA = new CawProfile(   // base+12
             address(cawToken), address(uriGen), address(buyAndBurn),
             address(networkManager), address(lzL1a), MAINNET_LZ_ID, address(0),
             address(l2A), dummyExpander, address(this)
         );
-        CawProfile cpB = new CawProfile(
+        CawProfile cpB = new CawProfile(   // base+13
             address(cawToken), address(uriGen), address(buyAndBurn),
             address(networkManager), address(lzL1b), MAINNET_LZ_ID + 100, address(0),
             address(l2B), dummyExpander, address(this)
         );
-
-        l2A.setL1Peer(MAINNET_LZ_ID, payable(address(cpA)), true);
-        l2A.setCawActions(address(mockActionsA));
-
-        l2B.setL1Peer(MAINNET_LZ_ID + 100, payable(address(cpB)), true);
-        l2B.setCawActions(address(mockActionsB));
+        require(address(cpA) == predictedCpA, "cpA nonce mismatch");
+        require(address(cpB) == predictedCpB, "cpB nonce mismatch");
 
         // Seed identical initial state: mint same tokens + deposit same amounts on both.
         // (minter is now immutable, set at construction above.)

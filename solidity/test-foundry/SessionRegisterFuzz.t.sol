@@ -34,7 +34,18 @@ contract SessionRegisterFuzzTest is Test {
     function setUp() public {
         // EIDs are arbitrary; we don't actually send LZ messages.
         lzEndpoint = new MockLayerZeroEndpoint(40245);
-        profile = new CawProfileLedger(30101, address(lzEndpoint), address(0));
+        // The new 7-arg constructor requires non-zero _cawProfile, _cawActions,
+        // and _erc1271Sibling. This fuzz test doesn't exercise those wired-in fields
+        // so we pass non-zero dummies.
+        profile = new CawProfileLedger(
+            30101,
+            address(lzEndpoint),
+            address(0),         // capOracle (dormant)
+            address(0xbeef),    // _cawProfile: dummy non-zero
+            address(0xdead),    // _cawActions: dummy non-zero
+            address(0xcafe),    // _erc1271Sibling: dummy non-zero
+            true                // _bypassLZ: true (no LZ needed in fuzz test)
+        );
         DOMAIN = profile.eip712DomainHash();
     }
 

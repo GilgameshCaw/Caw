@@ -235,14 +235,26 @@ contract SponsorRepayTest is Test {
 
         // --- Ledger side ---
         lzEndpoint = new MockLayerZeroEndpoint(40245);
-        ledger     = new CawProfileLedger(30101, address(lzEndpoint), address(0));
-        mockCa     = new SRMockCawActions();
+
+        // Predict mockCa address (deployed at nonce+1 after ledger).
+        uint256 ledgerNonce = vm.getNonce(address(this));
+        address predictedMockCa = vm.computeCreateAddress(address(this), ledgerNonce + 1);
 
         mockCawProfile = address(0x1234c0de);
 
-        // Wire up bypassLZ so registerSponsorRepayFromL1 accepts calls from mockCawProfile.
-        ledger.setL1Peer(30101, payable(mockCawProfile), true);
-        ledger.setCawActions(address(mockCa));
+        // New 7-arg constructor: wire cawProfile + cawActions + erc1271Sibling directly.
+        // bypassLZ=true so registerSponsorRepayFromL1 accepts calls from mockCawProfile.
+        ledger = new CawProfileLedger(   // ledgerNonce
+            30101,
+            address(lzEndpoint),
+            address(0),        // capOracle (dormant)
+            mockCawProfile,    // _cawProfile: bypassLZ caller
+            predictedMockCa,   // _cawActions: predicted at ledgerNonce+1
+            address(0xcafe),   // _erc1271Sibling: dummy non-zero
+            true               // _bypassLZ
+        );
+        mockCa = new SRMockCawActions(); // ledgerNonce+1
+        require(address(mockCa) == predictedMockCa, "mockCa nonce mismatch");
     }
 
     // =========================================================================

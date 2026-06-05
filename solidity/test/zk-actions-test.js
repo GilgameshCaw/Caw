@@ -37,7 +37,7 @@
 const MintableCaw = artifacts.require("MintableCaw");
 const CawNetworkManager = artifacts.require("CawNetworkManager");
 const CawProfile = artifacts.require("CawProfile");
-const CawProfileL2 = artifacts.require("CawProfileL2");
+const CawProfileLedger = artifacts.require("CawProfileLedger");
 const CawProfileMinter = artifacts.require("CawProfileMinter");
 const CawProfileQuoter = artifacts.require("CawProfileQuoter");
 const CawActions = artifacts.require("CawActions");
@@ -191,20 +191,29 @@ async function fullSetup(accounts) {
   const fontB = await CawFontDataB.new();
   const uri = await CawProfileURI.new(fontA.address, fontB.address);
 
-  const cawProfileL2 = await CawProfileL2.new(l1, l2Endpoint.address, "0x0000000000000000000000000000000000000000");
-  await l1Endpoint.setDestLzEndpoint(cawProfileL2.address, l2Endpoint.address);
-
+  // ── Nonce prediction ─────────────────────────────────────────────────────
+  // Order: +9=Ledger, +10=Profile, +11=Minter, +12=Quoter, +13=MockSP1, +14=Actions
+  const deployer = accounts[0];
+  const baseNonce = await web3.eth.getTransactionCount(deployer);
+  const predictedCawProfile = ethers.getCreateAddress({ from: deployer, nonce: baseNonce + 10 });
+  const predictedCawActions  = ethers.getCreateAddress({ from: deployer, nonce: baseNonce + 14 });
   const dummyPathwayExpander = "0x000000000000000000000000000000000000bEEF";
-  const cpDeployer = accounts[0];
-  const cpNonce = await web3.eth.getTransactionCount(cpDeployer);
-  const predictedMinter = ethers.getCreateAddress({ from: cpDeployer, nonce: cpNonce + 1 });
-  const cawProfile = await CawProfile.new(token.address, uri.address, buyAndBurn.address, networkManager.address, l1Endpoint.address, l1, "0x0000000000000000000000000000000000000000", cawProfileL2.address, dummyPathwayExpander, predictedMinter);
+
+  const cawProfileLedger = await CawProfileLedger.new(
+    l1, l2Endpoint.address, "0x0000000000000000000000000000000000000000",
+    predictedCawProfile, predictedCawActions, "0x000000000000000000000000000000000000dEAD", false
+  );
+  await l1Endpoint.setDestLzEndpoint(cawProfileLedger.address, l2Endpoint.address);
+
+  const cpNonce = await web3.eth.getTransactionCount(deployer);
+  const predictedMinter = ethers.getCreateAddress({ from: deployer, nonce: cpNonce + 1 });
+  const cawProfile = await CawProfile.new(token.address, uri.address, buyAndBurn.address, networkManager.address, l1Endpoint.address, l1, "0x0000000000000000000000000000000000000000", cawProfileLedger.address, dummyPathwayExpander, predictedMinter);
+  assert.equal(cawProfile.address.toLowerCase(), predictedCawProfile.toLowerCase(), "cawProfile nonce prediction mismatch");
   const minter = await CawProfileMinter.new(token.address, cawProfile.address, mockRouter.address, dummyPathwayExpander);
   assert.equal(minter.address.toLowerCase(), predictedMinter.toLowerCase(), "minter address prediction mismatch");
   await buyAndBurn.setCawProfile(cawProfile.address);
-  await cawProfileL2.setL1Peer(l1, cawProfile.address, false);
   await l2Endpoint.setDestLzEndpoint(cawProfile.address, l1Endpoint.address);
-  await cawProfile.setL2Peer(l2, cawProfileL2.address);
+  await cawProfile.setL2Peer(l2, cawProfileLedger.address);
 
   await networkManager.createNetwork("Test Network", accounts[0], l2, 0, 0, 0, 0, 0);
   const networkId = 1;
@@ -214,10 +223,10 @@ async function fullSetup(accounts) {
   // arbitrary in tests — the mock ignores it.
   const mockVerifier = await MockSP1Verifier.new();
   const dummyVKey = "0x" + "11".repeat(32);
-  const cawActions = await CawActions.new(cawProfileL2.address, mockVerifier.address, dummyVKey, "0x0000000000000000000000000000000000000000", "0x0000000000000000000000000000000000000000");
-  await cawProfileL2.setCawActions(cawActions.address);
+  const cawActions = await CawActions.new(cawProfileLedger.address, mockVerifier.address, dummyVKey, "0x0000000000000000000000000000000000000000", "0x0000000000000000000000000000000000000000");
+  assert.equal(cawActions.address.toLowerCase(), predictedCawActions.toLowerCase(), "cawActions nonce prediction mismatch");
 
-  return { token, cawProfile, cawProfileL2, minter, quoter, cawActions, networkManager, networkId, mockVerifier };
+  return { token, cawProfile, cawProfileLedger, cawProfileL2: cawProfileLedger, minter, quoter, cawActions, networkManager, networkId, mockVerifier };
 }
 
 async function buyUsername(user, name) {
@@ -481,7 +490,14 @@ contract('CawActions — processActionsWithZkSigs', function (accounts) {
   it('reverts "ZK path not configured" when the contract was deployed without a verifier', async function () {
     // Deploy a fresh CawActions with verifier = address(0).
     const tinyEndpoint = await MockLayerZeroEndpoint.new(l2);
-    const tinyL2 = await CawProfileL2.new(l1, tinyEndpoint.address, "0x0000000000000000000000000000000000000000");
+    // Predict CawActions (at nonce+1 from tinyL2) so it can be passed to tinyL2 ctor.
+    const tinyDeployer = accounts[0];
+    const tinyBaseNonce = await web3.eth.getTransactionCount(tinyDeployer);
+    const predictedNoVerifier = ethers.getCreateAddress({ from: tinyDeployer, nonce: tinyBaseNonce + 1 });
+    const tinyL2 = await CawProfileLedger.new(
+      l1, tinyEndpoint.address, "0x0000000000000000000000000000000000000000",
+      "0x000000000000000000000000000000000000beef", predictedNoVerifier, "0x000000000000000000000000000000000000dead", true
+    );
     const noVerifier = await CawActions.new(
       tinyL2.address,
       "0x0000000000000000000000000000000000000000",

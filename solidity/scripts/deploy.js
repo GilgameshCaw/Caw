@@ -474,8 +474,17 @@ const CONTRACTS = {
   },
   CawProfileLedger_L1: {
     // CawProfileLedger deployed on L1 (for local actions without cross-chain).
-    // Predicts CawCapOracle_L1 (deployed immediately after, nonce+1) so it can
-    // pass the oracle address as an immutable constructor arg.
+    //
+    // Deploy-order on L1 (nonce-prediction chain):
+    //   N+0 CawProfileLedger_L1   ← THIS contract
+    //   N+1 CawCapOracle_L1       (predicted here via predictedSiblingKey)
+    //   N+2 CawActions_L1         (predicted here via predictedSiblings[1])
+    //   N+3 CawActionsERC1271_L1  (predicted here via predictedSiblings[2])
+    //   N+4 CawProfile            (predicted here via predictedSiblings[3])
+    //
+    // The circular dependency (Ledger→Profile, Profile→Ledger) is resolved by
+    // prediction: Ledger gets Profile's predicted address in its constructor,
+    // and Profile (deployed at N+4) gets the already-real Ledger address.
     artifact: 'CawProfileLedger',
     chain: 'L1',
     phase: 2,
@@ -483,11 +492,27 @@ const CONTRACTS = {
     linkLibraries: (state) => ({
       'contracts/SessionMessageParser.sol:SessionMessageParser': state.addresses.SessionMessageParser_L1,
     }),
+    // Single nonce+1 prediction (existing mechanism for CawCapOracle_L1).
     predictedSiblingKey: 'CawCapOracle_L1',
+    // Multi-offset predictions for the rest of the nonce chain.
+    predictedSiblings: [
+      { key: 'CawActions_L1',        offset: 2 },
+      { key: 'CawActionsERC1271_L1', offset: 3 },
+      { key: 'CawProfile',           offset: 4 },
+    ],
     constructorArgs: (state, chain) => [
-      CHAINS[chain.replace('L1', 'L2')].lzEid, // peer network eid (L2)
-      CHAINS[chain].lzEndpoint,
-      state.predictedAddresses?.CawCapOracle_L1 || ethers.ZeroAddress,
+      CHAINS[chain.replace('L1', 'L2')].lzEid, // _endpointId: peer L2 eid
+      CHAINS[chain].lzEndpoint,                 // _endpoint: LZ endpoint
+      state.predictedAddresses?.CawCapOracle_L1 || ethers.ZeroAddress,  // _capOracle
+      // _cawProfile: predicted at nonce+4. bypassLZ=true so this is the direct
+      // caller for co-deployment operations; no LZ peer registration needed.
+      state.predictedAddresses?.CawProfile      || ethers.ZeroAddress,
+      // _cawActions: predicted at nonce+2.
+      state.predictedAddresses?.CawActions_L1   || ethers.ZeroAddress,
+      // _erc1271Sibling: predicted at nonce+3.
+      state.predictedAddresses?.CawActionsERC1271_L1 || ethers.ZeroAddress,
+      // _bypassLZ: true — L1 co-deployment (CawProfile calls directly, no LZ).
+      true,
     ],
   },
   CawCapOracle_L1: {
@@ -688,17 +713,37 @@ for (const L of L2_CHAIN_KEYS) {
     artifact: 'CawProfileLedger',
     chain: L,
     phase: 1,
-    // Predicts CawCapOracle_<L> at nonce+1 and passes it as the capOracle arg.
+    // Deploy-order on each L2 (nonce-prediction chain):
+    //   N+0 CawProfileLedger_<L>   ← THIS contract
+    //   N+1 CawCapOracle_<L>       (predicted via predictedSiblingKey)
+    //   N+2 CawActions_<L>         (predicted via predictedSiblings[1])
+    //   N+3 CawActionsERC1271_<L>  (predicted via predictedSiblings[2])
+    //
+    // _cawProfile = L1 CawProfile, pre-predicted in deployAll() before phase 1.
+    // bypassLZ=false → Ledger registers CawProfile as the LZ peer for the L1 eid.
     // Library dep on SessionMessageParser_<L> is linked into bytecode at deploy.
     dependencies: [`SessionMessageParser_${L}`],
     linkLibraries: (state) => ({
       'contracts/SessionMessageParser.sol:SessionMessageParser': state.addresses[`SessionMessageParser_${L}`],
     }),
     predictedSiblingKey: `CawCapOracle_${L}`,
+    predictedSiblings: [
+      { key: `CawActions_${L}`,        offset: 2 },
+      { key: `CawActionsERC1271_${L}`, offset: 3 },
+    ],
     constructorArgs: (state, chain) => [
-      CHAINS[chain.replace(/L2.*$/, 'L1')].lzEid, // peer eid (L1)
-      CHAINS[chain].lzEndpoint,
-      state.predictedAddresses?.[`CawCapOracle_${L}`] || ethers.ZeroAddress,
+      CHAINS[chain.replace(/L2.*$/, 'L1')].lzEid,             // _endpointId: L1 eid
+      CHAINS[chain].lzEndpoint,                                // _endpoint
+      state.predictedAddresses?.[`CawCapOracle_${L}`] || ethers.ZeroAddress, // _capOracle
+      // _cawProfile: L1 CawProfile predicted in the pre-phase-1 hook.
+      // bypassLZ=false → registered as LZ peer, no direct-call semantics.
+      state.predictedAddresses?.CawProfile || state.addresses.CawProfile || ethers.ZeroAddress,
+      // _cawActions: predicted at nonce+2.
+      state.predictedAddresses?.[`CawActions_${L}`]        || ethers.ZeroAddress,
+      // _erc1271Sibling: predicted at nonce+3.
+      state.predictedAddresses?.[`CawActionsERC1271_${L}`] || ethers.ZeroAddress,
+      // _bypassLZ: false — cross-chain (real L2, not co-deployed on L1).
+      false,
     ],
   };
   CONTRACTS[`CawCapOracle_${L}`] = {
@@ -924,26 +969,8 @@ const LINKING_STEPS = [
       state.linking.allowFreeAuthBroadcast = true;
     },
   },
-  {
-    name: 'Set L1 peer on CawProfileLedger_L1 (bypassLZ=true)',
-    chain: 'L1',
-    phase: 2,
-    contract: 'CawProfileLedger_L1',
-    method: 'setL1Peer',
-    args: (state, chainConfig) => [
-      CHAINS[chainConfig.env + 'L1'].lzEid,
-      state.addresses.CawProfile,
-      true, // bypassLZ for local
-    ],
-    condition: (state) => state.addresses.CawProfileLedger_L1 && state.addresses.CawProfile,
-    skipIf: async (state, deployer) => {
-      const contract = deployer.getContract('CawProfileLedger_L1');
-      if (!contract) return false;
-      try {
-        return await contract.bypassLZ();
-      } catch { return false; }
-    },
-  },
+  // NOTE: setL1Peer on CawProfileLedger_L1 is now wired in its constructor
+  // (bypassLZ=true, _cawProfile predicted at nonce+4 from L1 chain). Deleted.
   // Local L2 mirror is now wired via the CawProfile constructor — no setL2Peer step.
   // Cross-chain L2 peer registration (other eids) goes through PathwayExpander.addPeer
   // generated in the expansion block below.
@@ -972,16 +999,8 @@ const LINKING_STEPS = [
   // CawProfileURI is wired via the CawProfile constructor (immutable) — no setUriGenerator step.
   // A URI generator change requires a full CawProfile redeploy (cascade handles it).
   // Removed setter is intentional: see "no admin powers except path expansion" principle.
-  {
-    name: 'Link CawProfileLedger_L1 to CawActions_L1',
-    chain: 'L1',
-    phase: 2,
-    contract: 'CawProfileLedger_L1',
-    method: 'setCawActions',
-    getter: 'cawActions',
-    args: (state) => [state.addresses.CawActions_L1],
-    condition: (state) => state.addresses.CawProfileLedger_L1 && state.addresses.CawActions_L1,
-  },
+  // NOTE: setCawActions on CawProfileLedger_L1 is now wired in its constructor.
+  // NOTE: setERC1271Sibling on CawProfileLedger_L1 is now wired in its constructor.
   {
     // Nonce-prediction correctness assertion. CawCapOracle_L1 bakes CawActions_L1
     // as an immutable. If the deploy scheduler ever interleaves another L1 contract
@@ -1012,24 +1031,6 @@ const LINKING_STEPS = [
       console.log(`   Assertion passed: oracle.cawActions() == CawActions_L1 (${actionsAddr})`);
     },
     condition: (state) => state.addresses.CawCapOracle_L1 && state.addresses.CawActions_L1,
-  },
-  {
-    // One-shot setter — reverts if already set (SiblingSet). skipIf guards idempotency.
-    name: 'Set ERC-1271 sibling on CawProfileLedger_L1',
-    chain: 'L1',
-    phase: 2,
-    contract: 'CawProfileLedger_L1',
-    method: 'setERC1271Sibling',
-    args: (state) => [state.addresses.CawActionsERC1271_L1],
-    condition: (state) => state.addresses.CawProfileLedger_L1 && state.addresses.CawActionsERC1271_L1,
-    skipIf: async (state, deployer) => {
-      const contract = deployer.getContract('CawProfileLedger_L1');
-      if (!contract) return false;
-      try {
-        const current = await contract.erc1271Sibling();
-        return current !== '0x0000000000000000000000000000000000000000';
-      } catch { return false; }
-    },
   },
   {
     name: 'Set CawProfile on BuyAndBurn',
@@ -1105,22 +1106,8 @@ const LINKING_STEPS = [
   // CawProfile ownership handover moved INTO the constructor — see the
   // CawProfile entry in CONTRACTS. The deployer EOA never owns CawProfile
   // at all, so no Phase 7 transferOwnership step is needed.
-  {
-    name: '[Phase 7] Transfer CawProfileLedger_L1 ownership → PathwayExpander_L1',
-    chain: 'L1',
-    phase: 7,
-    contract: 'CawProfileLedger_L1',
-    method: 'transferOwnership',
-    args: (state) => [state.addresses.PathwayExpander_L1],
-    condition: (state) =>
-      state.addresses.CawProfileLedger_L1 && state.addresses.PathwayExpander_L1,
-    skipIf: async (state, deployer) => {
-      const c = deployer.getContract('CawProfileLedger_L1');
-      if (!c) return false;
-      const owner = await c.owner();
-      return owner.toLowerCase() === state.addresses.PathwayExpander_L1.toLowerCase();
-    },
-  },
+  // CawProfileLedger_L1 renounces ownership IN its constructor — no phase-7
+  // transferOwnership step needed. It has zero admin surface post-deploy.
   // CawActions and CawProfileURI no longer inherit Ownable (no admin
   // surface), so no Phase-7 renounce step is needed for them.
   // Per-L2 phase-7 entries (transfers + renounces) are appended below
@@ -1178,53 +1165,8 @@ for (const L of L2_CHAIN_KEYS) {
     },
   });
 
-  // Phase 3: this L's CawProfileLedger setL1Peer (for cross-chain mints/auths).
-  LINKING_STEPS.push({
-    name: `Set L1 peer on CawProfileLedger_${L}`,
-    chain: L,
-    phase: 3,
-    contract: `CawProfileLedger_${L}`,
-    method: 'setL1Peer',
-    args: (state, chainConfig) => [
-      CHAINS[chainConfig.env + 'L1'].lzEid,
-      state.addresses.CawProfile,
-      false, // don't bypass LZ for cross-chain
-    ],
-    condition: (state) => state.addresses[`CawProfileLedger_${L}`] && state.addresses.CawProfile,
-  });
-
-  // Phase 3: link this L's CawProfileLedger to its CawActions.
-  LINKING_STEPS.push({
-    name: `Link CawProfileLedger_${L} to CawActions_${L}`,
-    chain: L,
-    phase: 3,
-    contract: `CawProfileLedger_${L}`,
-    method: 'setCawActions',
-    getter: 'cawActions',
-    args: (state) => [state.addresses[`CawActions_${L}`]],
-    condition: (state) => state.addresses[`CawProfileLedger_${L}`] && state.addresses[`CawActions_${L}`],
-  });
-
-  // Phase 3: set CawActionsERC1271 as the ERC-1271 sibling on CawProfileLedger.
-  // One-shot: reverts on second call (SiblingSet error). skipIf guards idempotency.
-  LINKING_STEPS.push({
-    name: `Set ERC-1271 sibling on CawProfileLedger_${L}`,
-    chain: L,
-    phase: 3,
-    contract: `CawProfileLedger_${L}`,
-    method: 'setERC1271Sibling',
-    args: (state) => [state.addresses[`CawActionsERC1271_${L}`]],
-    condition: (state) =>
-      state.addresses[`CawProfileLedger_${L}`] && state.addresses[`CawActionsERC1271_${L}`],
-    skipIf: async (state, deployer) => {
-      const contract = deployer.getContract(`CawProfileLedger_${L}`);
-      if (!contract) return false;
-      try {
-        const current = await contract.erc1271Sibling();
-        return current !== '0x0000000000000000000000000000000000000000';
-      } catch { return false; }
-    },
-  });
+  // NOTE: setL1Peer, setCawActions, setERC1271Sibling on CawProfileLedger_${L}
+  // are now wired in its 7-arg constructor (nonce prediction). No phase-3 steps needed.
 
   // Phase 5: full-mesh archive ↔ relay wiring. For every other L2 L':
   //   - On L (storage), CawChallengeRelay_L peers L'.lzEid → CawActionsArchive_L'.
@@ -1293,7 +1235,10 @@ for (const L of L2_CHAIN_KEYS) {
   // Plain Ownables to renounce on this chain:
   //   CawActions_<L>
   // -----------------------------------------------------------------
-  for (const oapp of [`CawProfileLedger_${L}`, `CawActionsArchive_${L}`, `CawChallengeRelay_${L}`]) {
+  // CawProfileLedger_${L} renounces ownership IN its constructor — no phase-7
+  // transferOwnership step. CawActionsArchive and CawChallengeRelay still need
+  // PathwayExpander as owner (they keep an admin surface for adding new L2 peers).
+  for (const oapp of [`CawActionsArchive_${L}`, `CawChallengeRelay_${L}`]) {
     LINKING_STEPS.push({
       name: `[Phase 7] Transfer ${oapp} ownership → PathwayExpander_${L}`,
       chain: L,
@@ -1687,6 +1632,23 @@ class MultiChainDeployer {
       console.log(`   Predicted ${config.predictedSiblingKey} address (nonce ${nonce + 1}): ${siblingAddr}`);
     }
 
+    // Multi-offset nonce-prediction. `predictedSiblings` is an array of
+    // { key, offset } entries allowing a contract to predict addresses at
+    // arbitrary nonce distances (not just nonce+1). A single nonce read is
+    // shared across all entries. If any sibling is already deployed
+    // (addresses[key] is set) its entry is skipped.
+    if (config.predictedSiblings && config.predictedSiblings.length > 0) {
+      const nonce = await wallet.getNonce();
+      this.state.predictedAddresses = this.state.predictedAddresses || {};
+      for (const { key, offset } of config.predictedSiblings) {
+        if (!this.state.addresses[key] && !this.state.predictedAddresses[key]) {
+          const addr = ethers.getCreateAddress({ from: wallet.address, nonce: nonce + offset });
+          this.state.predictedAddresses[key] = addr;
+          console.log(`   Predicted ${key} address (nonce ${nonce + offset}): ${addr}`);
+        }
+      }
+    }
+
 
     const args = config.constructorArgs(this.state, chainKey, this.env);
     console.log(`\nDeploying ${contractKey} to ${chainKey}...`);
@@ -1994,6 +1956,52 @@ class MultiChainDeployer {
     // back to the flat CAW baseline. Stashed for both L1 and L2 CawActions
     // constructorArgs to read synchronously. See computeBootstrap() below.
     await this.computeBootstrap();
+
+    // ── Pre-phase-1: predict L1 CawProfile address for cross-chain L2 Ledgers ──
+    // CawProfileLedger_${L} (phase 1, on L2) takes _cawProfile as a constructor
+    // arg (the L1 CawProfile) so it can register it as the LZ peer without any
+    // post-deploy setL1Peer admin step. CawProfile doesn't deploy until phase 2,
+    // so we predict its address here from the L1 wallet's current nonce.
+    //
+    // L1 phase-2 deploy order before CawProfile (counting only L1-chain contracts
+    // whose condition() passes in the current env):
+    //   SessionMessageParser_L1
+    //   CawProfileLedger_L1  (triggers its own multi-sibling predictions)
+    //   CawCapOracle_L1
+    //   CawActions_L1
+    //   CawActionsERC1271_L1
+    //   CawProfile ← target
+    //
+    // That's 5 deploys ahead of CawProfile on L1. However some of those are
+    // already recorded in state.addresses if this is a re-run. We count only
+    // the MISSING ones (i.e. the ones that will actually consume nonces).
+    if (!this.state.addresses.CawProfile) {
+      const l1ChainKey = this.getChainKey('L1');
+      await this.initChain(l1ChainKey);
+      const l1Wallet = this.wallets[l1ChainKey];
+      const l1Nonce = await l1Wallet.getNonce();
+
+      // Count contracts that will deploy on L1 before CawProfile in phase 2.
+      // Respects condition() predicates so env-gated contracts (CawL1PriceReader,
+      // MockSwapRouter, etc.) that won't deploy are not counted.
+      const l1Phase2BeforeProfile = ['SessionMessageParser_L1', 'CawProfileLedger_L1',
+        'CawCapOracle_L1', 'CawActions_L1', 'CawActionsERC1271_L1'];
+      let noncesAhead = 0;
+      for (const k of l1Phase2BeforeProfile) {
+        const cfg = CONTRACTS[k];
+        if (!this.state.addresses[k] && (!cfg.condition || cfg.condition(this.state, this, this.env))) {
+          noncesAhead++;
+        }
+      }
+      const predictedProfile = ethers.getCreateAddress({ from: l1Wallet.address, nonce: l1Nonce + noncesAhead });
+      this.state.predictedAddresses = this.state.predictedAddresses || {};
+      if (!this.state.predictedAddresses.CawProfile) {
+        this.state.predictedAddresses.CawProfile = predictedProfile;
+        console.log(`   Pre-predicted CawProfile address (L1 nonce+${noncesAhead}): ${predictedProfile}`);
+        this.saveState();
+      }
+    }
+    // ──────────────────────────────────────────────────────────────────────────
 
     // Deploy in phases. Phase 6 is LZ DVN reconciliation (mainnet only,
     // no-op on testnet/dev environments). Phase 7 is the renounce/

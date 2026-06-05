@@ -4,7 +4,7 @@ const CawFontDataA = artifacts.require("CawFontDataA");
 const CawFontDataB = artifacts.require("CawFontDataB");
 const CawNetworkManager = artifacts.require("CawNetworkManager");
 const CawProfile = artifacts.require("CawProfile");
-const CawProfileL2 = artifacts.require("CawProfileL2");
+const CawProfileLedger = artifacts.require("CawProfileLedger");
 const CawProfileMinter = artifacts.require("CawProfileMinter");
 const CawProfileQuoter = artifacts.require("CawProfileQuoter");
 const CawActions = artifacts.require("CawActions");
@@ -638,7 +638,7 @@ contract('CawProfiles', function(accounts, x) {
     uriGenerator = uriGenerator || await deployURI();
     console.log("URI Generator addr", uriGenerator.address);
 
-    cawProfilesL2 = cawProfilesL2 || await CawProfileL2.new(l1, l2Endpoint.address, "0x0000000000000000000000000000000000000000");
+    cawProfilesL2 = cawProfilesL2 || await CawProfileLedger.new(l1, l2Endpoint.address, "0x0000000000000000000000000000000000000000", "0x000000000000000000000000000000000000bEEF", "0x000000000000000000000000000000000000dEAD", "0x000000000000000000000000000000000000cAFE", false);
     await l1Endpoint.setDestLzEndpoint(cawProfilesL2.address, l2Endpoint.address);
 
     if (!cawProfiles) {
@@ -651,26 +651,26 @@ contract('CawProfiles', function(accounts, x) {
       assert.equal(minter.address.toLowerCase(), predictedMinter.toLowerCase(), "minter address prediction mismatch");
     }
     await buyAndBurn.setCawProfile(cawProfiles.address);
-    await cawProfilesL2.setL1Peer(l1, cawProfiles.address, false);
+    // REMOVED (now wired in ctor): await cawProfilesL2.setL1Peer(l1, cawProfiles.address, false);
     await l2Endpoint.setDestLzEndpoint(cawProfiles.address, l1Endpoint.address);
     await cawProfiles.setL2Peer(l2, cawProfilesL2.address);
 
     await networkManager.createNetwork("Test Network", gilg, l2, 1,1,1,1, web3.utils.toWei('100000'));
 
 
-    cawProfilesL2Mainnet = cawProfilesL2Mainnet || await CawProfileL2.new(l1, l1Endpoint.address, "0x0000000000000000000000000000000000000000");
-    await cawProfilesL2Mainnet.setL1Peer(l1, cawProfiles.address, true);
+    cawProfilesL2Mainnet = cawProfilesL2Mainnet || await CawProfileLedger.new(l1, l1Endpoint.address, "0x0000000000000000000000000000000000000000", "0x000000000000000000000000000000000000bEEF", "0x000000000000000000000000000000000000dEAD", "0x000000000000000000000000000000000000cAFE", false);
+    // REMOVED (now wired in ctor): await cawProfilesL2Mainnet.setL1Peer(l1, cawProfiles.address, true);
     await cawProfiles.setL2Peer(l1, cawProfilesL2Mainnet.address);
 
     quoter = quoter || await CawProfileQuoter.new(cawProfiles.address);
     // CawActions requires (cawProfilesL2Address) - replicator can be set later via setReplicator()
     cawActions = cawActions || await CawActions.new(cawProfilesL2.address, "0x0000000000000000000000000000000000000000", "0x0000000000000000000000000000000000000000000000000000000000000000", "0x0000000000000000000000000000000000000000", "0x0000000000000000000000000000000000000000");
 
-    await cawProfilesL2.setCawActions(cawActions.address);
+    // REMOVED (now wired in ctor): await cawProfilesL2.setCawActions(cawActions.address);
 
 
     cawActionsMainnet = cawActionsMainnet || await CawActions.new(cawProfilesL2Mainnet.address, "0x0000000000000000000000000000000000000000", "0x0000000000000000000000000000000000000000000000000000000000000000", "0x0000000000000000000000000000000000000000", "0x0000000000000000000000000000000000000000");
-    await cawProfilesL2Mainnet.setCawActions(cawActions.address);
+    // REMOVED (now wired in ctor): await cawProfilesL2Mainnet.setCawActions(cawActions.address);
   });
 
   it("", async function() {
@@ -1320,7 +1320,7 @@ contract("CawProfile - Transfer & Replication Gas", function(accounts) {
 
     localNetworkManager = await CawNetworkManager.new(bb.address);
     localUriGenerator = await deployURI();
-    localCawProfilesL2 = await CawProfileL2.new(l1, l2Endpoint.address, "0x0000000000000000000000000000000000000000");
+    localCawProfilesL2 = await CawProfileLedger.new(l1, l2Endpoint.address, "0x0000000000000000000000000000000000000000", "0x000000000000000000000000000000000000bEEF", "0x000000000000000000000000000000000000dEAD", "0x000000000000000000000000000000000000cAFE", false);
     await l1Endpoint.setDestLzEndpoint(localCawProfilesL2.address, l2Endpoint.address);
 
     const dummyPathwayExpander1 = "0x000000000000000000000000000000000000bEEF";
@@ -1336,7 +1336,7 @@ contract("CawProfile - Transfer & Replication Gas", function(accounts) {
     assert.equal(localMinter.address.toLowerCase(), predictedMinter1.toLowerCase(), "minter prediction mismatch");
     await bb.setCawProfile(localCawProfiles.address);
 
-    await localCawProfilesL2.setL1Peer(l1, localCawProfiles.address, false);
+    // REMOVED (now wired in ctor): await localCawProfilesL2.setL1Peer(l1, localCawProfiles.address, false);
     await l2Endpoint.setDestLzEndpoint(localCawProfiles.address, l1Endpoint.address);
     await localCawProfiles.setL2Peer(l2, localCawProfilesL2.address);
 
@@ -1521,7 +1521,7 @@ contract("CawProfileMinter - mintAndDeposit", function(accounts) {
 
     localNetworkManager = await CawNetworkManager.new(bb.address);
     localUriGenerator = await deployURI();
-    localCawProfilesL2 = await CawProfileL2.new(l1, l2Endpoint.address, "0x0000000000000000000000000000000000000000");
+    localCawProfilesL2 = await CawProfileLedger.new(l1, l2Endpoint.address, "0x0000000000000000000000000000000000000000", "0x000000000000000000000000000000000000bEEF", "0x000000000000000000000000000000000000dEAD", "0x000000000000000000000000000000000000cAFE", false);
     await l1Endpoint.setDestLzEndpoint(localCawProfilesL2.address, l2Endpoint.address);
 
     const dummyPathwayExpander2 = "0x000000000000000000000000000000000000bEEF";
@@ -1537,7 +1537,7 @@ contract("CawProfileMinter - mintAndDeposit", function(accounts) {
     assert.equal(localMinter.address.toLowerCase(), predictedMinter2.toLowerCase(), "minter prediction mismatch");
     await bb.setCawProfile(localCawProfiles.address);
 
-    await localCawProfilesL2.setL1Peer(l1, localCawProfiles.address, false);
+    // REMOVED (now wired in ctor): await localCawProfilesL2.setL1Peer(l1, localCawProfiles.address, false);
     await l2Endpoint.setDestLzEndpoint(localCawProfiles.address, l1Endpoint.address);
     await localCawProfiles.setL2Peer(l2, localCawProfilesL2.address);
 
@@ -1683,11 +1683,11 @@ contract("CawProfileMinter - mintAndAuth", function(accounts) {
     localUriGenerator = await deployURI();
 
     // Cross-chain L2 mirror (L2 storage)
-    localCawProfilesL2 = await CawProfileL2.new(l1, l2Endpoint.address, "0x0000000000000000000000000000000000000000");
+    localCawProfilesL2 = await CawProfileLedger.new(l1, l2Endpoint.address, "0x0000000000000000000000000000000000000000", "0x000000000000000000000000000000000000bEEF", "0x000000000000000000000000000000000000dEAD", "0x000000000000000000000000000000000000cAFE", false);
     await l1Endpoint.setDestLzEndpoint(localCawProfilesL2.address, l2Endpoint.address);
 
     // Co-deployment L1 mirror (deployed before nonce snapshot — no tx from accounts[0] between Profile and Minter)
-    localCawProfilesL2Mainnet = await CawProfileL2.new(l1, l1Endpoint.address, "0x0000000000000000000000000000000000000000");
+    localCawProfilesL2Mainnet = await CawProfileLedger.new(l1, l1Endpoint.address, "0x0000000000000000000000000000000000000000", "0x000000000000000000000000000000000000bEEF", "0x000000000000000000000000000000000000dEAD", "0x000000000000000000000000000000000000cAFE", false);
 
     const dummyPathwayExpander3 = "0x000000000000000000000000000000000000bEEF";
     const cpNonce3 = await web3.eth.getTransactionCount(accounts[0]);
@@ -1702,18 +1702,18 @@ contract("CawProfileMinter - mintAndAuth", function(accounts) {
     assert.equal(localMinter.address.toLowerCase(), predictedMinter3.toLowerCase(), "minter prediction mismatch");
     await bb.setCawProfile(localCawProfiles.address);
 
-    await localCawProfilesL2.setL1Peer(l1, localCawProfiles.address, false);
+    // REMOVED (now wired in ctor): await localCawProfilesL2.setL1Peer(l1, localCawProfiles.address, false);
     await l2Endpoint.setDestLzEndpoint(localCawProfiles.address, l1Endpoint.address);
     await localCawProfiles.setL2Peer(l2, localCawProfilesL2.address);
 
-    await localCawProfilesL2Mainnet.setL1Peer(l1, localCawProfiles.address, true);
+    // REMOVED (now wired in ctor): await localCawProfilesL2Mainnet.setL1Peer(l1, localCawProfiles.address, true);
     await localCawProfiles.setL2Peer(l1, localCawProfilesL2Mainnet.address);
 
     // CawActions on each L2 to exercise the "can't post without balance" check
     localCawActions = await CawActions.new(localCawProfilesL2.address, "0x0000000000000000000000000000000000000000", "0x0000000000000000000000000000000000000000000000000000000000000000", "0x0000000000000000000000000000000000000000", "0x0000000000000000000000000000000000000000");
-    await localCawProfilesL2.setCawActions(localCawActions.address);
+    // REMOVED (now wired in ctor): await localCawProfilesL2.setCawActions(localCawActions.address);
     localCawActionsMainnet = await CawActions.new(localCawProfilesL2Mainnet.address, "0x0000000000000000000000000000000000000000", "0x0000000000000000000000000000000000000000000000000000000000000000", "0x0000000000000000000000000000000000000000", "0x0000000000000000000000000000000000000000");
-    await localCawProfilesL2Mainnet.setCawActions(localCawActionsMainnet.address);
+    // REMOVED (now wired in ctor): await localCawProfilesL2Mainnet.setCawActions(localCawActionsMainnet.address);
 
     // Two networks: one L2-storage, one L1-storage (so we cover both branches)
     await localNetworkManager.createNetwork("L2 Network", accounts[0], l2, 1, 1, 1, 1, web3.utils.toWei('100000'));
@@ -1946,7 +1946,7 @@ contract("CawProfile - depositFor", function(accounts) {
     localNetworkManager = await CawNetworkManager.new(bb.address);
     localUriGenerator = await deployURI();
 
-    localCawProfilesL2 = await CawProfileL2.new(l1, localEndpointL2.address, "0x0000000000000000000000000000000000000000");
+    localCawProfilesL2 = await CawProfileLedger.new(l1, localEndpointL2.address, "0x0000000000000000000000000000000000000000", "0x000000000000000000000000000000000000bEEF", "0x000000000000000000000000000000000000dEAD", "0x000000000000000000000000000000000000cAFE", false);
     await localEndpointL1.setDestLzEndpoint(localCawProfilesL2.address, localEndpointL2.address);
 
     const dummyPathwayExpander4 = "0x000000000000000000000000000000000000bEEF";
@@ -1956,7 +1956,7 @@ contract("CawProfile - depositFor", function(accounts) {
     localMinter = await CawProfileMinter.new(localToken.address, localCawProfiles.address, mr.address, dummyPathwayExpander4);
     assert.equal(localMinter.address.toLowerCase(), predictedMinter4.toLowerCase(), "minter prediction mismatch");
     await bb.setCawProfile(localCawProfiles.address);
-    await localCawProfilesL2.setL1Peer(l1, localCawProfiles.address, false);
+    // REMOVED (now wired in ctor): await localCawProfilesL2.setL1Peer(l1, localCawProfiles.address, false);
     await localEndpointL2.setDestLzEndpoint(localCawProfiles.address, localEndpointL1.address);
     await localCawProfiles.setL2Peer(l2, localCawProfilesL2.address);
 
@@ -2153,7 +2153,7 @@ contract("CawProfile - locked withdraw fee + fee withdrawal", function(accounts)
     localNetworkManager = await CawNetworkManager.new(localBuyAndBurn.address);
     localUriGenerator = await deployURI();
 
-    localCawProfilesL2 = await CawProfileL2.new(l1, localEndpointL2.address, "0x0000000000000000000000000000000000000000");
+    localCawProfilesL2 = await CawProfileLedger.new(l1, localEndpointL2.address, "0x0000000000000000000000000000000000000000", "0x000000000000000000000000000000000000bEEF", "0x000000000000000000000000000000000000dEAD", "0x000000000000000000000000000000000000cAFE", false);
     await localEndpointL1.setDestLzEndpoint(localCawProfilesL2.address, localEndpointL2.address);
 
     feeRecipientMock = await FeeRecipientMock.new();
@@ -2165,7 +2165,7 @@ contract("CawProfile - locked withdraw fee + fee withdrawal", function(accounts)
     localMinter = await CawProfileMinter.new(localToken.address, localCawProfiles.address, localMockRouter.address, dummyPathwayExpander5);
     assert.equal(localMinter.address.toLowerCase(), predictedMinter5.toLowerCase(), "minter prediction mismatch");
     await localBuyAndBurn.setCawProfile(localCawProfiles.address);
-    await localCawProfilesL2.setL1Peer(l1, localCawProfiles.address, false);
+    // REMOVED (now wired in ctor): await localCawProfilesL2.setL1Peer(l1, localCawProfiles.address, false);
     await localEndpointL2.setDestLzEndpoint(localCawProfiles.address, localEndpointL1.address);
     await localCawProfiles.setL2Peer(l2, localCawProfilesL2.address);
 
@@ -2356,7 +2356,7 @@ contract("CawProfile - locked withdraw fee + fee withdrawal", function(accounts)
       // contracts and deploy a fresh CawActions.
       var CawActions = artifacts.require("CawActions");
       cawActions = await CawActions.new(localCawProfilesL2.address, "0x0000000000000000000000000000000000000000", "0x0000000000000000000000000000000000000000000000000000000000000000", "0x0000000000000000000000000000000000000000", "0x0000000000000000000000000000000000000000");
-      await localCawProfilesL2.setCawActions(cawActions.address);
+    // REMOVED (now wired in ctor): await localCawProfilesL2.setCawActions(cawActions.address);
 
       cawProfiles = localCawProfiles;
       cawProfilesL2 = localCawProfilesL2;
@@ -2503,7 +2503,7 @@ contract("CawProfile - Buy and Burn", function(accounts) {
     localNetworkManager = await CawNetworkManager.new(localBuyAndBurn.address);
     localUriGenerator = await deployURI();
 
-    localCawProfilesL2 = await CawProfileL2.new(l1, localEndpointL2.address, "0x0000000000000000000000000000000000000000");
+    localCawProfilesL2 = await CawProfileLedger.new(l1, localEndpointL2.address, "0x0000000000000000000000000000000000000000", "0x000000000000000000000000000000000000bEEF", "0x000000000000000000000000000000000000dEAD", "0x000000000000000000000000000000000000cAFE", false);
     await localEndpointL1.setDestLzEndpoint(localCawProfilesL2.address, localEndpointL2.address);
 
     const dummyPathwayExpander6 = "0x000000000000000000000000000000000000bEEF";
@@ -2518,7 +2518,7 @@ contract("CawProfile - Buy and Burn", function(accounts) {
     localMinter = await CawProfileMinter.new(localToken.address, localCawProfiles.address, localMockRouter.address, dummyPathwayExpander6);
     assert.equal(localMinter.address.toLowerCase(), predictedMinter6.toLowerCase(), "minter prediction mismatch");
     await localBuyAndBurn.setCawProfile(localCawProfiles.address);
-    await localCawProfilesL2.setL1Peer(l1, localCawProfiles.address, false);
+    // REMOVED (now wired in ctor): await localCawProfilesL2.setL1Peer(l1, localCawProfiles.address, false);
     await localEndpointL2.setDestLzEndpoint(localCawProfiles.address, localEndpointL1.address);
     await localCawProfiles.setL2Peer(l2, localCawProfilesL2.address);
 
@@ -2823,11 +2823,11 @@ contract("CawProfileMinter - Bundled Quick Sign", function(accounts) {
     localUriGenerator = await deployURI();
 
     // L2-storage mirror (cross-chain)
-    localCawProfilesL2 = await CawProfileL2.new(l1, l2Endpoint.address, "0x0000000000000000000000000000000000000000");
+    localCawProfilesL2 = await CawProfileLedger.new(l1, l2Endpoint.address, "0x0000000000000000000000000000000000000000", "0x000000000000000000000000000000000000bEEF", "0x000000000000000000000000000000000000dEAD", "0x000000000000000000000000000000000000cAFE", false);
     await l1Endpoint.setDestLzEndpoint(localCawProfilesL2.address, l2Endpoint.address);
 
     // L1-co-deployed mirror (deployed before nonce snapshot)
-    localCawProfilesL2Mainnet = await CawProfileL2.new(l1, l1Endpoint.address, "0x0000000000000000000000000000000000000000");
+    localCawProfilesL2Mainnet = await CawProfileLedger.new(l1, l1Endpoint.address, "0x0000000000000000000000000000000000000000", "0x000000000000000000000000000000000000bEEF", "0x000000000000000000000000000000000000dEAD", "0x000000000000000000000000000000000000cAFE", false);
 
     const dummyPathwayExpander7 = "0x000000000000000000000000000000000000bEEF";
     const cpNonce7 = await web3.eth.getTransactionCount(accounts[0]);
@@ -2841,11 +2841,11 @@ contract("CawProfileMinter - Bundled Quick Sign", function(accounts) {
     localMinter = await CawProfileMinter.new(localToken.address, localCawProfiles.address, mr.address, dummyPathwayExpander7);
     assert.equal(localMinter.address.toLowerCase(), predictedMinter7.toLowerCase(), "minter prediction mismatch");
     await bb.setCawProfile(localCawProfiles.address);
-    await localCawProfilesL2.setL1Peer(l1, localCawProfiles.address, false);
+    // REMOVED (now wired in ctor): await localCawProfilesL2.setL1Peer(l1, localCawProfiles.address, false);
     await l2Endpoint.setDestLzEndpoint(localCawProfiles.address, l1Endpoint.address);
     await localCawProfiles.setL2Peer(l2, localCawProfilesL2.address);
 
-    await localCawProfilesL2Mainnet.setL1Peer(l1, localCawProfiles.address, true);
+    // REMOVED (now wired in ctor): await localCawProfilesL2Mainnet.setL1Peer(l1, localCawProfiles.address, true);
     await localCawProfiles.setL2Peer(l1, localCawProfilesL2Mainnet.address);
 
     // Two networks to exercise both branches

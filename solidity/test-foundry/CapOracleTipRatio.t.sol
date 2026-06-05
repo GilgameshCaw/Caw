@@ -175,9 +175,23 @@ contract CapOracleTipRatioTest is Test {
         // Deploy a minimal CawActions with a controlled capOracle (we'll use an
         // EOA so we can call setTipRatio directly).
         MockLayerZeroEndpoint lzEp = new MockLayerZeroEndpoint(L2_EID);
-        CawProfileLedger profile = new CawProfileLedger(L1_EID, address(lzEp), address(0));
 
+        // Predict the CawActions address (deployed at nonce+1 after CawProfileLedger).
+        address predictedActions = vm.computeCreateAddress(address(this), vm.getNonce(address(this)) + 1);
         address tipOracleEOA = makeAddr("tipOracle");
+        // address(0xbeef) is a non-zero dummy for the profile address (bypassLZ=true here
+        // means CawProfile is only called in deposit/withdraw paths, which this test doesn't
+        // exercise). The real address would be wired in a full integration test.
+        address dummyProfile = address(0xbeef);
+        CawProfileLedger profile = new CawProfileLedger(
+            L1_EID,
+            address(lzEp),
+            address(0),         // capOracle (dormant — this test manages it separately)
+            dummyProfile,       // _cawProfile: dummy non-zero (bypassLZ not exercised)
+            predictedActions,   // _cawActions: predicted below
+            address(0xdead),    // _erc1271Sibling: dummy non-zero
+            true                // _bypassLZ: true (no LZ needed)
+        );
         CawActions actions = new CawActions(
             address(profile),
             address(0),       // zkVerifier disabled
@@ -186,7 +200,7 @@ contract CapOracleTipRatioTest is Test {
             tipOracleEOA,     // capOracle = EOA we control
             0, 0              // bootstrap disabled
         );
-        profile.setCawActions(address(actions));
+        require(address(actions) == predictedActions, "nonce prediction mismatch");
 
         // Initially tipState.ratio == 0 → _getTipCost returns 0.
         // Verify indirectly: tipState accessor should be zeroed.
@@ -214,16 +228,16 @@ contract CapOracleTipRatioTest is Test {
 
     function test_getCostUsesCapState_tipStateHasNoEffect() public {
         MockLayerZeroEndpoint lzEp = new MockLayerZeroEndpoint(L2_EID);
-        CawProfileLedger profile = new CawProfileLedger(L1_EID, address(lzEp), address(0));
-
         address oracleEOA = makeAddr("oracle6");
+        address predictedActions6 = vm.computeCreateAddress(address(this), vm.getNonce(address(this)) + 1);
+        CawProfileLedger profile = new CawProfileLedger(L1_EID, address(lzEp), address(0), address(0xbeef), predictedActions6, address(0xdead), true);
         CawActions actions = new CawActions(
             address(profile),
             address(0), bytes32(0), address(0),
             oracleEOA,
             0, 0
         );
-        profile.setCawActions(address(actions));
+        require(address(actions) == predictedActions6, "nonce mismatch T6");
 
         // Push a tip ratio but NOT a cap ratio.
         uint192 tipRatio = uint192(_uq(1e9));
@@ -247,14 +261,16 @@ contract CapOracleTipRatioTest is Test {
 
     function test_TipRatioUpdated_event() public {
         MockLayerZeroEndpoint lzEp = new MockLayerZeroEndpoint(L2_EID);
-        CawProfileLedger profile = new CawProfileLedger(L1_EID, address(lzEp), address(0));
         address oracleEOA = makeAddr("oracle7");
+        address predictedActions7 = vm.computeCreateAddress(address(this), vm.getNonce(address(this)) + 1);
+        CawProfileLedger profile = new CawProfileLedger(L1_EID, address(lzEp), address(0), address(0xbeef), predictedActions7, address(0xdead), true);
         CawActions actions = new CawActions(
             address(profile),
             address(0), bytes32(0), address(0),
             oracleEOA,
             0, 0
         );
+        require(address(actions) == predictedActions7, "nonce mismatch T7");
 
         uint192 ratio = uint192(_uq(1e9));
         vm.expectEmit(false, false, false, true);
@@ -267,14 +283,16 @@ contract CapOracleTipRatioTest is Test {
 
     function test_setTipRatio_notCapOracle_reverts() public {
         MockLayerZeroEndpoint lzEp = new MockLayerZeroEndpoint(L2_EID);
-        CawProfileLedger profile = new CawProfileLedger(L1_EID, address(lzEp), address(0));
         address oracleEOA = makeAddr("oracle8");
+        address predictedActions8 = vm.computeCreateAddress(address(this), vm.getNonce(address(this)) + 1);
+        CawProfileLedger profile = new CawProfileLedger(L1_EID, address(lzEp), address(0), address(0xbeef), predictedActions8, address(0xdead), true);
         CawActions actions = new CawActions(
             address(profile),
             address(0), bytes32(0), address(0),
             oracleEOA,
             0, 0
         );
+        require(address(actions) == predictedActions8, "nonce mismatch T8");
 
         vm.expectRevert(CawActions.NotCapOracle.selector);
         actions.setTipRatio(uint192(_uq(1e9)));

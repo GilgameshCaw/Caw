@@ -12,7 +12,7 @@ const CawFontDataA = artifacts.require("CawFontDataA");
 const CawFontDataB = artifacts.require("CawFontDataB");
 const CawNetworkManager = artifacts.require("CawNetworkManager");
 const CawProfile = artifacts.require("CawProfile");
-const CawProfileL2 = artifacts.require("CawProfileL2");
+const CawProfileLedger = artifacts.require("CawProfileLedger");
 const CawProfileMinter = artifacts.require("CawProfileMinter");
 const CawProfileQuoter = artifacts.require("CawProfileQuoter");
 const CawBuyAndBurn = artifacts.require("CawBuyAndBurn");
@@ -63,30 +63,46 @@ contract("CawProfileMinter — ZAP (pay-with-ETH) flows", function(accounts) {
     networkManager = await CawNetworkManager.new(buyAndBurn.address);
     uriGen = await deployURI();
 
-    // L2-storage mirror (cross-chain)
-    cawProfileL2 = await CawProfileL2.new(l1, l2Endpoint.address, "0x0000000000000000000000000000000000000000");
+    // ── Nonce prediction for circular ctor deps ─────────────────────────────
+    // +9=cawProfileL2, +10=cawProfileL2Mainnet, +11=cawProfile, +12=minter
+    const deployerZ = accounts[0];
+    const baseNonceZ = await web3.eth.getTransactionCount(deployerZ);
+    const predictedCawProfileZ = ethers.getCreateAddress({ from: deployerZ, nonce: baseNonceZ + 2 });
+    const dummyPathwayExpander = "0x000000000000000000000000000000000000bEEF";
+
+    // L2-storage mirror (cross-chain, bypassLZ=false)
+    cawProfileL2 = await CawProfileLedger.new(
+      l1, l2Endpoint.address, "0x0000000000000000000000000000000000000000",
+      predictedCawProfileZ,
+      "0x000000000000000000000000000000000000dEAD", // _cawActions: dummy (zap test doesn't process actions)
+      "0x000000000000000000000000000000000000cAFE", // _erc1271Sibling: dummy
+      false
+    );
     await l1Endpoint.setDestLzEndpoint(cawProfileL2.address, l2Endpoint.address);
 
-    // L1-co-deployed mirror (deployed before nonce snapshot)
-    cawProfileL2Mainnet = await CawProfileL2.new(l1, l1Endpoint.address, "0x0000000000000000000000000000000000000000");
+    // L1-co-deployed mirror (bypassLZ=true)
+    cawProfileL2Mainnet = await CawProfileLedger.new(
+      l1, l1Endpoint.address, "0x0000000000000000000000000000000000000000",
+      predictedCawProfileZ,
+      "0x000000000000000000000000000000000000dEAD",
+      "0x000000000000000000000000000000000000cAFE",
+      true
+    );
 
-    const dummyPathwayExpander = "0x000000000000000000000000000000000000bEEF";
-    const cpNonce = await web3.eth.getTransactionCount(accounts[0]);
-    const predictedMinter = ethers.getCreateAddress({ from: accounts[0], nonce: cpNonce + 1 });
+    const cpNonce = await web3.eth.getTransactionCount(deployerZ);
+    const predictedMinter = ethers.getCreateAddress({ from: deployerZ, nonce: cpNonce + 1 });
     cawProfile = await CawProfile.new(
       token.address, uriGen.address, buyAndBurn.address,
       networkManager.address, l1Endpoint.address, l1,
       "0x0000000000000000000000000000000000000000",
       cawProfileL2.address, dummyPathwayExpander, predictedMinter
     );
+    assert.equal(cawProfile.address.toLowerCase(), predictedCawProfileZ.toLowerCase(), "cawProfile nonce prediction mismatch");
     minter = await CawProfileMinter.new(token.address, cawProfile.address, mockRouter.address, dummyPathwayExpander);
     assert.equal(minter.address.toLowerCase(), predictedMinter.toLowerCase(), "minter address prediction mismatch");
     await buyAndBurn.setCawProfile(cawProfile.address);
-    await cawProfileL2.setL1Peer(l1, cawProfile.address, false);
     await l2Endpoint.setDestLzEndpoint(cawProfile.address, l1Endpoint.address);
     await cawProfile.setL2Peer(l2, cawProfileL2.address);
-
-    await cawProfileL2Mainnet.setL1Peer(l1, cawProfile.address, true);
     await cawProfile.setL2Peer(l1, cawProfileL2Mainnet.address);
 
     // Two networks to exercise both branches (zero fees to keep ETH math clean)

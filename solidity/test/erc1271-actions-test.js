@@ -15,7 +15,7 @@
 const MintableCaw = artifacts.require("MintableCaw");
 const CawNetworkManager = artifacts.require("CawNetworkManager");
 const CawProfile = artifacts.require("CawProfile");
-const CawProfileL2 = artifacts.require("CawProfileL2");
+const CawProfileLedger = artifacts.require("CawProfileLedger");
 const CawProfileMinter = artifacts.require("CawProfileMinter");
 const CawProfileQuoter = artifacts.require("CawProfileQuoter");
 const CawActions = artifacts.require("CawActions");
@@ -179,7 +179,7 @@ async function registerSessionFor(setup, owner, sessionKey, scopeBitmap, spendLi
   const chainId = await web3.eth.getChainId();
   const data = {
     primaryType: 'SessionDelegation',
-    domain: { name: 'CawProfileL2', version: '1', chainId, verifyingContract: setup.cawProfileL2.address },
+    domain: { name: 'CawProfileLedger', version: '1', chainId, verifyingContract: setup.cawProfileL2.address },
     types: {
       EIP712Domain: dataTypes.EIP712Domain,
       SessionDelegation: [
@@ -236,28 +236,47 @@ async function fullSetup(accounts) {
   const fontB = await CawFontDataB.new();
   const uri = await CawProfileURI.new(fontA.address, fontB.address);
 
-  const cawProfileL2 = await CawProfileL2.new(l1, l2Endpoint.address, "0x0000000000000000000000000000000000000000");
-  await l1Endpoint.setDestLzEndpoint(cawProfileL2.address, l2Endpoint.address);
-
+  // ── Nonce prediction for circular ctor deps ───────────────────────────
+  // Deploy order (from current nonce):
+  //   +0 CawProfileLedger  ← needs CawProfile(+1), CawActions(+3), ERC1271(+4 if used)
+  //   +1 CawProfile        ← needs CawProfileLedger(already deployed)
+  //   +2 CawProfileMinter
+  //   +3 CawActions
+  // CawActionsERC1271 is the erc1271Sibling; its address in the test setup
+  // is deployed AFTER CawActions and passed via prediction here.
+  const deployer = accounts[0];
+  const baseNonce = await web3.eth.getTransactionCount(deployer);
+  const predictedCawProfile = ethers.getCreateAddress({ from: deployer, nonce: baseNonce + 1 });
+  const predictedMinter     = ethers.getCreateAddress({ from: deployer, nonce: baseNonce + 2 });
+  const predictedCawActions = ethers.getCreateAddress({ from: deployer, nonce: baseNonce + 3 });
   const dummyPathwayExpander = "0x000000000000000000000000000000000000bEEF";
-  const cpDeployer = accounts[0];
-  const cpNonce = await web3.eth.getTransactionCount(cpDeployer);
-  const predictedMinter = ethers.getCreateAddress({ from: cpDeployer, nonce: cpNonce + 1 });
-  const cawProfile = await CawProfile.new(token.address, uri.address, buyAndBurn.address, networkManager.address, l1Endpoint.address, l1, "0x0000000000000000000000000000000000000000", cawProfileL2.address, dummyPathwayExpander, predictedMinter);
+  // ERC-1271 sibling is not deployed in this test — use dummy non-zero.
+  const dummyErc1271Sibling = "0x000000000000000000000000000000000000dEAD";
+
+  // Deploy CawProfileLedger first with predicted ctor args (bypassLZ=false:
+  // cawProfile is registered as LZ peer so L1→L2 messages work in tests).
+  const cawProfileLedger = await CawProfileLedger.new(
+    l1, l2Endpoint.address, "0x0000000000000000000000000000000000000000",
+    predictedCawProfile, predictedCawActions, dummyErc1271Sibling, false
+  );
+  await l1Endpoint.setDestLzEndpoint(cawProfileLedger.address, l2Endpoint.address);
+
+  // Deploy CawProfile (nonce+1) — takes the already-deployed ledger address.
+  const cawProfile = await CawProfile.new(token.address, uri.address, buyAndBurn.address, networkManager.address, l1Endpoint.address, l1, "0x0000000000000000000000000000000000000000", cawProfileLedger.address, dummyPathwayExpander, predictedMinter);
+  assert.equal(cawProfile.address.toLowerCase(), predictedCawProfile.toLowerCase(), "cawProfile nonce prediction mismatch");
   const minter = await CawProfileMinter.new(token.address, cawProfile.address, mockRouter.address, dummyPathwayExpander);
   assert.equal(minter.address.toLowerCase(), predictedMinter.toLowerCase(), "minter address prediction mismatch — extra tx between CawProfile and Minter deploys?");
   await buyAndBurn.setCawProfile(cawProfile.address);
-  await cawProfileL2.setL1Peer(l1, cawProfile.address, false);
   await l2Endpoint.setDestLzEndpoint(cawProfile.address, l1Endpoint.address);
-  await cawProfile.setL2Peer(l2, cawProfileL2.address);
+  await cawProfile.setL2Peer(l2, cawProfileLedger.address);
 
   await networkManager.createNetwork("Test Network", accounts[0], l2, 0, 0, 0, 0, 0);
   const networkId = 1;
   const quoter = await CawProfileQuoter.new(cawProfile.address);
-  const cawActions = await CawActions.new(cawProfileL2.address, "0x0000000000000000000000000000000000000000", "0x0000000000000000000000000000000000000000000000000000000000000000", "0x0000000000000000000000000000000000000000", "0x0000000000000000000000000000000000000000");
-  await cawProfileL2.setCawActions(cawActions.address);
+  const cawActions = await CawActions.new(cawProfileLedger.address, "0x0000000000000000000000000000000000000000", "0x0000000000000000000000000000000000000000000000000000000000000000", "0x0000000000000000000000000000000000000000", "0x0000000000000000000000000000000000000000");
+  assert.equal(cawActions.address.toLowerCase(), predictedCawActions.toLowerCase(), "cawActions nonce prediction mismatch");
 
-  return { token, cawProfile, cawProfileL2, minter, quoter, cawActions, networkManager, networkId };
+  return { token, cawProfile, cawProfileLedger, cawProfileL2: cawProfileLedger, minter, quoter, cawActions, networkManager, networkId };
 }
 
 contract('CawActions — ERC-1271 contract-owner signatures', function (accounts) {
@@ -417,44 +436,7 @@ contract('CawActions — ERC-1271 contract-owner signatures', function (accounts
     expect(await setup.cawActions.isCawonceUsed(contractOwnedTokenId, cawonce)).to.equal(false);
   });
 
-  // --------------------------------------------
-  // setERC1271Sibling one-shot guard
-  // --------------------------------------------
-  it('setERC1271Sibling reverts with ZeroSibling when called with address(0)', async function () {
-    let didRevert = false;
-    try {
-      await setup.cawProfileL2.setERC1271Sibling('0x0000000000000000000000000000000000000000', { from: accounts[0] });
-    } catch (e) {
-      didRevert = true;
-      // Custom error — message contains the selector or the error name.
-      expect(e.message.toLowerCase()).to.satisfy(
-        m => m.includes('zerosibling') || m.includes('revert') || m.includes('0x'),
-        `Unexpected error message: ${e.message}`
-      );
-    }
-    if (!didRevert) throw new Error('Expected a revert but the call succeeded');
-  });
-
-  it('setERC1271Sibling reverts with SiblingSet on second call', async function () {
-    // Use a fresh CawProfileL2 for isolation — the main setup instance has no sibling set yet.
-    const l2Endpoint2 = await MockLayerZeroEndpoint.new(l2);
-    const freshL2 = await CawProfileL2.new(l1, l2Endpoint2.address, "0x0000000000000000000000000000000000000000");
-    const someAddr = accounts[5];
-    // First call should succeed.
-    await freshL2.setERC1271Sibling(someAddr, { from: accounts[0] });
-    // Second call should revert with SiblingSet.
-    let didRevert = false;
-    try {
-      await freshL2.setERC1271Sibling(accounts[6], { from: accounts[0] });
-    } catch (e) {
-      didRevert = true;
-      expect(e.message.toLowerCase()).to.satisfy(
-        m => m.includes('siblingset') || m.includes('revert') || m.includes('0x'),
-        `Unexpected error message: ${e.message}`
-      );
-    }
-    if (!didRevert) throw new Error('Expected a revert but the call succeeded');
-  });
+  // setERC1271Sibling tests deleted — function removed (now wired in ctor).
 
   // --------------------------------------------
   // ERC-1271 rejection on batch path
@@ -526,73 +508,60 @@ async function fullSetupWithSibling(accounts) {
   const fontB = await CawFontDataB.new();
   const uri = await CawProfileURI.new(fontA.address, fontB.address);
 
-  const cawProfileL2 = await CawProfileL2.new(l1, l2Endpoint.address, "0x0000000000000000000000000000000000000000");
-  await l1Endpoint.setDestLzEndpoint(cawProfileL2.address, l2Endpoint.address);
-
+  // ── Nonce prediction for circular ctor deps ───────────────────────────
+  // Deploy order from current nonce:
+  //   +0 CawProfileLedger  ← needs cawProfile(+1), cawActions(+3), sibling(+4)
+  //   +1 CawProfile
+  //   +2 CawProfileMinter
+  //   +3 CawActions(erc1271Sibling=predict(+4))
+  //   +4 CawActionsERC1271 ← this is the sibling
+  const deployerS = accounts[0];
+  const baseNonceS = await web3.eth.getTransactionCount(deployerS);
+  const predictedCawProfileS = ethers.getCreateAddress({ from: deployerS, nonce: baseNonceS + 1 });
+  const predictedMinterS      = ethers.getCreateAddress({ from: deployerS, nonce: baseNonceS + 2 });
+  const predictedCawActionsS  = ethers.getCreateAddress({ from: deployerS, nonce: baseNonceS + 3 });
+  const predictedSiblingS     = ethers.getCreateAddress({ from: deployerS, nonce: baseNonceS + 4 });
   const dummyPathwayExpanderS = "0x000000000000000000000000000000000000bEEF";
-  const cpDeployerS = accounts[0];
-  const cpNonceS = await web3.eth.getTransactionCount(cpDeployerS);
-  const predictedMinterS = ethers.getCreateAddress({ from: cpDeployerS, nonce: cpNonceS + 1 });
-  const cawProfile = await CawProfile.new(token.address, uri.address, buyAndBurn.address, networkManager.address, l1Endpoint.address, l1, "0x0000000000000000000000000000000000000000", cawProfileL2.address, dummyPathwayExpanderS, predictedMinterS);
+
+  // +0: Deploy CawProfileLedger with all ctor args predicted.
+  const cawProfileLedger = await CawProfileLedger.new(
+    l1, l2Endpoint.address, "0x0000000000000000000000000000000000000000",
+    predictedCawProfileS, predictedCawActionsS, predictedSiblingS, false
+  );
+  await l1Endpoint.setDestLzEndpoint(cawProfileLedger.address, l2Endpoint.address);
+
+  // +1: Deploy CawProfile with real ledger address.
+  const cawProfile = await CawProfile.new(token.address, uri.address, buyAndBurn.address, networkManager.address, l1Endpoint.address, l1, "0x0000000000000000000000000000000000000000", cawProfileLedger.address, dummyPathwayExpanderS, predictedMinterS);
+  assert.equal(cawProfile.address.toLowerCase(), predictedCawProfileS.toLowerCase(), "cawProfile nonce prediction mismatch (sibling setup)");
+  // +2: Deploy CawProfileMinter.
   const minter = await CawProfileMinter.new(token.address, cawProfile.address, mockRouter.address, dummyPathwayExpanderS);
   assert.equal(minter.address.toLowerCase(), predictedMinterS.toLowerCase(), "minter address prediction mismatch (sibling setup)");
   await buyAndBurn.setCawProfile(cawProfile.address);
-  await cawProfileL2.setL1Peer(l1, cawProfile.address, false);
   await l2Endpoint.setDestLzEndpoint(cawProfile.address, l1Endpoint.address);
-  await cawProfile.setL2Peer(l2, cawProfileL2.address);
+  await cawProfile.setL2Peer(l2, cawProfileLedger.address);
 
   await networkManager.createNetwork("Test Network 2", accounts[0], l2, 0, 0, 0, 0, 0);
   const networkId = 1;
 
   const quoter = await CawProfileQuoter.new(cawProfile.address);
 
-  // Bootstrap: CawActions.erc1271Sibling is immutable; CawActionsERC1271
-  // reads cawActions.cawProfile() in its constructor. Break the cycle by
-  // predicting the sibling's CREATE address (nonce+1 from now), deploying
-  // CawActions first with that predicted sibling address, then deploying
-  // CawActionsERC1271 pointing at the just-deployed CawActions.
-  //
-  // At nonce N:   deploy CawActions(erc1271Sibling=predict(N+1))
-  // At nonce N+1: deploy CawActionsERC1271(cawActions) → address == predict(N+1) ✓
-  function rlpEncodeNonce(n) {
-    if (n === 0) return Buffer.from([0x80]);
-    if (n < 0x80) return Buffer.from([n]);
-    // Encode as minimal big-endian bytes with RLP length prefix.
-    let hex = n.toString(16);
-    if (hex.length % 2) hex = '0' + hex;
-    const bytes = Buffer.from(hex, 'hex');
-    return Buffer.concat([Buffer.from([0x80 + bytes.length]), bytes]);
-  }
-
-  function createAddress(addr, n) {
-    const addrBytes = Buffer.from(addr.replace(/^0x/, ''), 'hex');
-    const addrRlp   = Buffer.concat([Buffer.from([0x94]), addrBytes]);
-    const nonceRlp  = rlpEncodeNonce(n);
-    const list = Buffer.concat([addrRlp, nonceRlp]);
-    const rlp  = Buffer.concat([Buffer.from([0xc0 + list.length]), list]);
-    const hash = web3.utils.keccak256('0x' + rlp.toString('hex'));
-    return '0x' + hash.slice(-40);
-  }
-
-  const deployerNonce = await web3.eth.getTransactionCount(accounts[0]);
-  const predictedSiblingAddr = createAddress(accounts[0], deployerNonce + 1);
-
+  // +3: Deploy CawActions with predicted sibling address.
   const cawActions = await CawActions.new(
-    cawProfileL2.address,
+    cawProfileLedger.address,
     '0x0000000000000000000000000000000000000000',
     '0x0000000000000000000000000000000000000000000000000000000000000000',
-    predictedSiblingAddr,
+    predictedSiblingS,
     '0x0000000000000000000000000000000000000000',
     { from: accounts[0] }
   );
+  assert.equal(cawActions.address.toLowerCase(), predictedCawActionsS.toLowerCase(), "cawActions nonce prediction mismatch (sibling setup)");
+  // +4: Deploy CawActionsERC1271 — address must match predictedSiblingS.
   const sibling = await CawActionsERC1271.new(cawActions.address, { from: accounts[0] });
-  if (sibling.address.toLowerCase() !== predictedSiblingAddr.toLowerCase()) {
-    throw new Error(`Sibling address mismatch: got ${sibling.address}, expected ${predictedSiblingAddr}`);
+  if (sibling.address.toLowerCase() !== predictedSiblingS.toLowerCase()) {
+    throw new Error(`Sibling address mismatch: got ${sibling.address}, expected ${predictedSiblingS}`);
   }
 
-  await cawProfileL2.setCawActions(cawActions.address);
-
-  return { token, cawProfile, cawProfileL2, minter, quoter, cawActions, sibling, networkManager, networkId, l2 };
+  return { token, cawProfile, cawProfileLedger, cawProfileL2: cawProfileLedger, minter, quoter, cawActions, sibling, networkManager, networkId, l2 };
 }
 
 contract('CawActionsERC1271 — trailing-bytes and withdraw-cap guards', function (accounts) {

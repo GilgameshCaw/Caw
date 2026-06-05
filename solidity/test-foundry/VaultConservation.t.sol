@@ -182,27 +182,48 @@ contract VaultConservationTest is Test {
     uint32[5]  tokenIds;
 
     function setUp() public {
-        cawToken   = new MintableCaw();
-        buyAndBurn = new StubBuyAndBurn_VC();
-        uriGen     = new StubCawProfileURI_VC();
+        // ── Pre-deployment nonce prediction ───────────────────────────────────
+        // CawProfileLedger (nonce+6) needs CawProfile's address at construct time.
+        // CawProfile (nonce+7) needs CawProfileLedger's address at construct time.
+        // Deploy order: cawToken(+0) → buyAndBurn(+1) → uriGen(+2) → lzL1(+3) →
+        //               lzL2(+4) → networkManager(+5) → cawProfileLedger(+6) →
+        //               cawProfile(+7).
+        uint256 baseNonce = vm.getNonce(address(this));
+        address predictedLedger  = vm.computeCreateAddress(address(this), baseNonce + 6);
+        address predictedProfile = vm.computeCreateAddress(address(this), baseNonce + 7);
 
-        MockLayerZeroEndpoint lzL1 = new MockLayerZeroEndpoint(MAINNET_LZ_ID);
-        MockLayerZeroEndpoint lzL2 = new MockLayerZeroEndpoint(2);
+        cawToken   = new MintableCaw();           // nonce+0
+        buyAndBurn = new StubBuyAndBurn_VC();     // nonce+1
+        uriGen     = new StubCawProfileURI_VC();  // nonce+2
 
-        networkManager = new CawNetworkManager(address(buyAndBurn));
+        MockLayerZeroEndpoint lzL1 = new MockLayerZeroEndpoint(MAINNET_LZ_ID); // nonce+3
+        MockLayerZeroEndpoint lzL2 = new MockLayerZeroEndpoint(2);             // nonce+4
 
-        cawProfileLedger = new CawProfileLedger(MAINNET_LZ_ID, address(lzL2), address(0));
+        networkManager = new CawNetworkManager(address(buyAndBurn));           // nonce+5
 
+        // nonce+6: CawProfileLedger — takes predicted CawProfile address so it can
+        // call setOwnerOf / deposit / etc. directly (bypassLZ co-deployment mode).
+        cawProfileLedger = new CawProfileLedger(  // nonce+6
+            MAINNET_LZ_ID,
+            address(lzL2),
+            address(0),           // capOracle dormant
+            predictedProfile,     // _cawProfile: predicted at nonce+7
+            address(0xdead),      // _cawActions: dummy (vault test doesn't exercise actions)
+            address(0xcafe),      // _erc1271Sibling: dummy
+            true                  // _bypassLZ: co-deployment mode
+        );
+        require(address(cawProfileLedger) == predictedLedger, "ledger nonce mismatch");
+
+        // nonce+7: CawProfile — takes the already-deployed CawProfileLedger address.
         // Minter immutable on CawProfile post-V2; test address acts as the
         // minter so the test contract can call mint() directly. _pathwayExpander
         // also non-zero (dummy — handover is fine, tests don't use addPeer).
-        cawProfile = new CawProfile(
+        cawProfile = new CawProfile(  // nonce+7
             address(cawToken), address(uriGen), address(buyAndBurn),
             address(networkManager), address(lzL1), MAINNET_LZ_ID, address(0),
             address(cawProfileLedger), address(0xEAFEEDA1), address(this)
         );
-
-        cawProfileLedger.setL1Peer(MAINNET_LZ_ID, payable(address(cawProfile)), true);
+        require(address(cawProfile) == predictedProfile, "profile nonce mismatch");
 
         // storageChainEid must be > 0; use 2 (same as L2 LZ ID).
         // V2 createNetwork takes 4 per-fee ceilings instead of a single feeCeiling
