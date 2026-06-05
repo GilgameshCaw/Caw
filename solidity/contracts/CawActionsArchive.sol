@@ -167,7 +167,9 @@ contract CawActionsArchive is ReentrancyGuard, OnlyOnce, OApp {
   // CONSTRUCTOR
   // ============================================
 
-  constructor(address _endpoint) OApp(_endpoint, msg.sender) {}
+  constructor(address _endpoint, address _pathwayExpander) OApp(_endpoint, _pathwayExpander) {
+    require(_pathwayExpander != address(0), "CawActionsArchive: zero pathwayExpander");
+  }
 
   /// @notice Lock the inherited OApp `setPeer` once per eid. Once a peer is set
   /// in deploy, it can NEVER be changed — even by the owner. Critical here because

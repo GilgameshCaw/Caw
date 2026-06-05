@@ -51,7 +51,8 @@ contract("CawActionsArchive", function(accounts) {
 
   before(async function() {
     lzHelper = await LzReceiveHelper.new();
-    archive = await CawActionsArchive.new(lzHelper.address);
+    // 2nd arg: _pathwayExpander — use accounts[0] (test deployer) as dummy expander.
+    archive = await CawActionsArchive.new(lzHelper.address, accounts[0]);
     await archive.setPeer(L2_EID, RELAY_PEER);
   });
 

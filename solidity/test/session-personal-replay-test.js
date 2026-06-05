@@ -41,7 +41,7 @@ contract('CawProfileLedger — registerSessionPersonal replay protection', funct
   before(async function () {
     const l2Endpoint = await MockLayerZeroEndpoint.new(l2);
     await linkSessionMessageParser();
-    cawProfileLedger = await CawProfileLedger.new(l1, l2Endpoint.address, "0x0000000000000000000000000000000000000000");
+    cawProfileLedger = await CawProfileLedger.new(l1, l2Endpoint.address, "0x0000000000000000000000000000000000000000", "0x000000000000000000000000000000000000bEEF", "0x000000000000000000000000000000000000dEAD", "0x000000000000000000000000000000000000cAFE", false, accounts[0]);
   });
 
   function buildPersonalMessage() {

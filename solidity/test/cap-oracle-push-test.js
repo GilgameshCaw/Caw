@@ -36,7 +36,7 @@ contract("CawActions.setCapRatio — auth guard", (accounts) => {
   before(async () => {
     const l2Endpoint = await MockLayerZeroEndpoint.new(l2Eid);
     // CawProfileL2 with no capOracle so we can control later
-    const cawProfileL2 = await CawProfileLedger.new(l1Eid, l2Endpoint.address, ZERO, "0x000000000000000000000000000000000000bEEF", "0x000000000000000000000000000000000000dEAD", "0x000000000000000000000000000000000000cAFE", false);
+    const cawProfileL2 = await CawProfileLedger.new(l1Eid, l2Endpoint.address, ZERO, "0x000000000000000000000000000000000000bEEF", "0x000000000000000000000000000000000000dEAD", "0x000000000000000000000000000000000000cAFE", false, accounts[0]);
 
     // Deploy MockCawActionsCapTarget to satisfy CawCapOracle constructor
     const mockTarget = await MockCawActionsCapTarget.new();
@@ -85,7 +85,7 @@ contract("CawActions._getCost — pushed-ratio end-to-end", (accounts) => {
 
   before(async () => {
     const l2Endpoint = await MockLayerZeroEndpoint.new(l2Eid);
-    cawProfileL2 = await CawProfileLedger.new(l1Eid, l2Endpoint.address, ZERO, "0x000000000000000000000000000000000000bEEF", "0x000000000000000000000000000000000000dEAD", "0x000000000000000000000000000000000000cAFE", false);
+    cawProfileL2 = await CawProfileLedger.new(l1Eid, l2Endpoint.address, ZERO, "0x000000000000000000000000000000000000bEEF", "0x000000000000000000000000000000000000dEAD", "0x000000000000000000000000000000000000cAFE", false, accounts[0]);
 
     // mockTarget: CawActions substitute for oracle's push target
     mockTarget = await MockCawActionsCapTarget.new();
@@ -176,7 +176,7 @@ contract("CawActions.capState — storage accessors", (accounts) => {
 
   before(async () => {
     const l2Endpoint = await MockLayerZeroEndpoint.new(l2Eid);
-    cawProfileL2 = await CawProfileLedger.new(l1Eid, l2Endpoint.address, ZERO, "0x000000000000000000000000000000000000bEEF", "0x000000000000000000000000000000000000dEAD", "0x000000000000000000000000000000000000cAFE", false);
+    cawProfileL2 = await CawProfileLedger.new(l1Eid, l2Endpoint.address, ZERO, "0x000000000000000000000000000000000000bEEF", "0x000000000000000000000000000000000000dEAD", "0x000000000000000000000000000000000000cAFE", false, accounts[0]);
 
     // Use a real mock target so we can prime the ratio
     mockTarget = await MockCawActionsCapTarget.new();
@@ -222,7 +222,7 @@ contract("CawActions._getCost — stale-ratio fallback after CAP_STALE_THRESHOLD
 
   before(async () => {
     const l2Endpoint = await MockLayerZeroEndpoint.new(l2Eid);
-    const cawProfileL2 = await CawProfileLedger.new(l1Eid, l2Endpoint.address, ZERO, "0x000000000000000000000000000000000000bEEF", "0x000000000000000000000000000000000000dEAD", "0x000000000000000000000000000000000000cAFE", false);
+    const cawProfileL2 = await CawProfileLedger.new(l1Eid, l2Endpoint.address, ZERO, "0x000000000000000000000000000000000000bEEF", "0x000000000000000000000000000000000000dEAD", "0x000000000000000000000000000000000000cAFE", false, accounts[0]);
 
     // mockTarget is the oracle's push target (substitutes for CawActions in oracle setup)
     const MockCawActionsCapTarget = artifacts.require("MockCawActionsCapTarget");
@@ -250,7 +250,7 @@ contract("CawActions._getCost — stale-ratio fallback after CAP_STALE_THRESHOLD
     // CawActions with capOracle = accounts[1] (a real EOA) so we can call
     // setCapRatio directly from accounts[1].
     const l2Endpoint2 = await MockLayerZeroEndpoint.new(l2Eid);
-    const cawProfileL2b = await CawProfileLedger.new(l1Eid, l2Endpoint2.address, ZERO, "0x000000000000000000000000000000000000bEEF", "0x000000000000000000000000000000000000dEAD", "0x000000000000000000000000000000000000cAFE", false);
+    const cawProfileL2b = await CawProfileLedger.new(l1Eid, l2Endpoint2.address, ZERO, "0x000000000000000000000000000000000000bEEF", "0x000000000000000000000000000000000000dEAD", "0x000000000000000000000000000000000000cAFE", false, accounts[0]);
 
     // capOracle = accounts[1] (EOA) so we can call setCapRatio from tests
     const CawActionsArtifact = artifacts.require("CawActions");
@@ -276,7 +276,7 @@ contract("CawActions._getCost — stale-ratio fallback after CAP_STALE_THRESHOLD
   it("after evm_increaseTime past CAP_STALE_THRESHOLD, capState is stale → _getCost returns baseline", async () => {
     // Setup: deploy fresh CawActions with capOracle = accounts[1] (EOA)
     const l2Endpoint3 = await MockLayerZeroEndpoint.new(l2Eid);
-    const cawProfileL2c = await CawProfileLedger.new(l1Eid, l2Endpoint3.address, ZERO, "0x000000000000000000000000000000000000bEEF", "0x000000000000000000000000000000000000dEAD", "0x000000000000000000000000000000000000cAFE", false);
+    const cawProfileL2c = await CawProfileLedger.new(l1Eid, l2Endpoint3.address, ZERO, "0x000000000000000000000000000000000000bEEF", "0x000000000000000000000000000000000000dEAD", "0x000000000000000000000000000000000000cAFE", false, accounts[0]);
     const CawActionsArtifact = artifacts.require("CawActions");
     const cawActionsC = await CawActionsArtifact.new(
       cawProfileL2c.address, ZERO, ZERO_BYTES32, ZERO, accounts[1]

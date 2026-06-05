@@ -210,7 +210,8 @@ contract VaultConservationTest is Test {
             predictedProfile,     // _cawProfile: predicted at nonce+7
             address(0xdead),      // _cawActions: dummy (vault test doesn't exercise actions)
             address(0xcafe),      // _erc1271Sibling: dummy
-            true                  // _bypassLZ: co-deployment mode
+            true,                 // _bypassLZ: co-deployment mode
+            address(this)         // _pathwayExpander: test contract acts as it
         );
         require(address(cawProfileLedger) == predictedLedger, "ledger nonce mismatch");
 

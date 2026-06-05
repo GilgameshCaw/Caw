@@ -190,7 +190,8 @@ contract CapOracleTipRatioTest is Test {
             dummyProfile,       // _cawProfile: dummy non-zero (bypassLZ not exercised)
             predictedActions,   // _cawActions: predicted below
             address(0xdead),    // _erc1271Sibling: dummy non-zero
-            true                // _bypassLZ: true (no LZ needed)
+            true,               // _bypassLZ: true (no LZ needed)
+            address(this)       // _pathwayExpander: test contract acts as it
         );
         CawActions actions = new CawActions(
             address(profile),
@@ -230,7 +231,7 @@ contract CapOracleTipRatioTest is Test {
         MockLayerZeroEndpoint lzEp = new MockLayerZeroEndpoint(L2_EID);
         address oracleEOA = makeAddr("oracle6");
         address predictedActions6 = vm.computeCreateAddress(address(this), vm.getNonce(address(this)) + 1);
-        CawProfileLedger profile = new CawProfileLedger(L1_EID, address(lzEp), address(0), address(0xbeef), predictedActions6, address(0xdead), true);
+        CawProfileLedger profile = new CawProfileLedger(L1_EID, address(lzEp), address(0), address(0xbeef), predictedActions6, address(0xdead), true, address(this));
         CawActions actions = new CawActions(
             address(profile),
             address(0), bytes32(0), address(0),
@@ -263,7 +264,7 @@ contract CapOracleTipRatioTest is Test {
         MockLayerZeroEndpoint lzEp = new MockLayerZeroEndpoint(L2_EID);
         address oracleEOA = makeAddr("oracle7");
         address predictedActions7 = vm.computeCreateAddress(address(this), vm.getNonce(address(this)) + 1);
-        CawProfileLedger profile = new CawProfileLedger(L1_EID, address(lzEp), address(0), address(0xbeef), predictedActions7, address(0xdead), true);
+        CawProfileLedger profile = new CawProfileLedger(L1_EID, address(lzEp), address(0), address(0xbeef), predictedActions7, address(0xdead), true, address(this));
         CawActions actions = new CawActions(
             address(profile),
             address(0), bytes32(0), address(0),
@@ -285,7 +286,7 @@ contract CapOracleTipRatioTest is Test {
         MockLayerZeroEndpoint lzEp = new MockLayerZeroEndpoint(L2_EID);
         address oracleEOA = makeAddr("oracle8");
         address predictedActions8 = vm.computeCreateAddress(address(this), vm.getNonce(address(this)) + 1);
-        CawProfileLedger profile = new CawProfileLedger(L1_EID, address(lzEp), address(0), address(0xbeef), predictedActions8, address(0xdead), true);
+        CawProfileLedger profile = new CawProfileLedger(L1_EID, address(lzEp), address(0), address(0xbeef), predictedActions8, address(0xdead), true, address(this));
         CawActions actions = new CawActions(
             address(profile),
             address(0), bytes32(0), address(0),

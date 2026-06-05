@@ -257,7 +257,8 @@ async function fullSetup(accounts) {
   // cawProfile is registered as LZ peer so L1→L2 messages work in tests).
   const cawProfileLedger = await CawProfileLedger.new(
     l1, l2Endpoint.address, "0x0000000000000000000000000000000000000000",
-    predictedCawProfile, predictedCawActions, dummyErc1271Sibling, false
+    predictedCawProfile, predictedCawActions, dummyErc1271Sibling, false,
+    dummyPathwayExpander
   );
   await l1Endpoint.setDestLzEndpoint(cawProfileLedger.address, l2Endpoint.address);
 
@@ -526,7 +527,8 @@ async function fullSetupWithSibling(accounts) {
   // +0: Deploy CawProfileLedger with all ctor args predicted.
   const cawProfileLedger = await CawProfileLedger.new(
     l1, l2Endpoint.address, "0x0000000000000000000000000000000000000000",
-    predictedCawProfileS, predictedCawActionsS, predictedSiblingS, false
+    predictedCawProfileS, predictedCawActionsS, predictedSiblingS, false,
+    dummyPathwayExpanderS
   );
   await l1Endpoint.setDestLzEndpoint(cawProfileLedger.address, l2Endpoint.address);
 

@@ -256,16 +256,18 @@ contract CawProfileLedger is
   ///       constructor; here we renounce unconditionally because CawProfileLedger has no
   ///       future additions-only surface (new L2 peers are added on the CawProfile side).
   constructor(
-    uint32 _endpointId,
+    uint32  _endpointId,
     address _endpoint,
     address _capOracle,
     address _cawProfile,
     address _cawActions,
     address _erc1271Sibling,
-    bool    _bypassLZ
+    bool    _bypassLZ,
+    address _pathwayExpander
   )
-    OApp(_endpoint, msg.sender)
+    OApp(_endpoint, _pathwayExpander)
   {
+    if (_pathwayExpander == address(0)) revert ZeroAddress();
     if (_cawProfile == address(0)) revert ZeroAddress();
     if (_cawActions == address(0)) revert ZeroAddress();
     if (_erc1271Sibling == address(0)) revert ZeroSibling();

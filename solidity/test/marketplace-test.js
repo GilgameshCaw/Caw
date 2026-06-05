@@ -51,7 +51,8 @@ contract("CawProfileMarketplace", (accounts) => {
       predictedCawProfiles,
       "0x000000000000000000000000000000000000dEAD", // _cawActions: dummy (marketplace doesn't use it)
       "0x000000000000000000000000000000000000cAFE", // _erc1271Sibling: dummy
-      false
+      false,
+      accounts[0] // _pathwayExpander: dummy non-zero
     );
     await lzEndpoint.setDestLzEndpoint(cawProfileLedger.address, l2Endpoint.address);
 

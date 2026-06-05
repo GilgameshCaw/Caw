@@ -76,10 +76,16 @@ const LZ_LIBRARIES_MAINNET = {
   },
 };
 
-// LZ EndpointV2 setConfig / getConfig ABI fragments.
+// LZ EndpointV2 getConfig ABI fragment (read-only; we no longer call setConfig
+// on the endpoint directly — PathwayExpander is the delegate and handles that).
 const ENDPOINT_ABI = [
-  'function setConfig(address _oapp, address _lib, tuple(uint32 eid, uint32 configType, bytes config)[] _params) external',
   'function getConfig(address _oapp, address _lib, uint32 _eid, uint32 _configType) external view returns (bytes)',
+];
+
+// PathwayExpander ABI fragments needed for DVN config.
+const PATHWAY_EXPANDER_ABI = [
+  'function configureNewPathway(address oapp, address endpointAddr, address lib, uint32 eid, bytes calldata ulnConfig) external',
+  'function isPathwayConfigured(address oapp, address lib, uint32 eid) external view returns (bool)',
 ];
 
 // The ULN config type — LZ V2 has these standard ids.
@@ -247,6 +253,8 @@ async function configureLzDvns(state, deployer, chainConfig, chainsMap, l2ChainK
         libraryKind: 'sendUln302',
         peerEid: destEid,
         label: `SEND ${pathway.oapp} (${srcChainKey} → ${destChainKey})`,
+        state,
+        l2ChainAbstract: pathway.srcChain,
       });
       if (result === 'applied') applied++;
       else if (result === 'skipped') skipped++;
@@ -272,6 +280,8 @@ async function configureLzDvns(state, deployer, chainConfig, chainsMap, l2ChainK
         libraryKind: 'receiveUln302',
         peerEid: srcEid,
         label: `RECV ${destOappKey} (${srcChainKey} → ${destChainKey})`,
+        state,
+        l2ChainAbstract: pathway.destChain,
       });
       if (result === 'applied') applied++;
       else if (result === 'skipped') skipped++;
@@ -313,8 +323,18 @@ function getChainEid(chainsMap, deployer, abstractChain) {
 
 /**
  * Reconcile SEND or RECEIVE side for one pathway on one chain.
+ *
+ * Calls endpoint.getConfig (read-only) to check the current effective config,
+ * then — if an update is needed — routes through PathwayExpander.configureNewPathway
+ * instead of calling endpoint.setConfig directly. PathwayExpander is the
+ * registered LZ delegate for all CAW OApps, so only it can call setConfig on
+ * their behalf. The deployer EOA is never the delegate after this change.
+ *
+ * Idempotency: PathwayExpander.isPathwayConfigured is checked first. If the
+ * expander has already applied a config for this (oapp, lib, eid) triple it
+ * refuses to rewrite it — so re-running deploy is safe.
  */
-async function reconcileOneSide({ ethers, deployer, chainKey, oappAddress, libraryKind, peerEid, label }) {
+async function reconcileOneSide({ ethers, deployer, chainKey, oappAddress, libraryKind, peerEid, label, state, l2ChainAbstract }) {
   const libs = LZ_LIBRARIES_MAINNET[chainKey];
   if (!libs) {
     console.log(`     ${label}: no library addresses for ${chainKey}, skipping`);
@@ -325,27 +345,56 @@ async function reconcileOneSide({ ethers, deployer, chainKey, oappAddress, libra
   await deployer.initChain(chainKey);
   const wallet = deployer.wallets[chainKey];
   if (!wallet) throw new Error(`No wallet initialized for ${chainKey}`);
-  const endpoint = new ethers.Contract(libs.endpoint, ENDPOINT_ABI, wallet);
 
-  // Read current config
+  // Resolve PathwayExpander address for this chain.
+  // Convention: the per-chain expander key is PathwayExpander_<abstractChain>
+  // where abstractChain is the abstract name used in CONTRACTS (L1/L2/L2b…).
+  const expanderKey = `PathwayExpander_${l2ChainAbstract}`;
+  const expanderAddress = state.addresses[expanderKey];
+  if (!expanderAddress) {
+    console.log(`     ${label}: no PathwayExpander for ${chainKey} (key ${expanderKey}), skipping`);
+    return 'missing';
+  }
+  const expander = new ethers.Contract(expanderAddress, PATHWAY_EXPANDER_ABI, wallet);
+
+  // Check whether expander already applied this config (additions-only guard).
+  const alreadyConfigured = await expander.isPathwayConfigured(oappAddress, libAddress, peerEid);
+  if (alreadyConfigured) {
+    console.log(`     ${label}: expander already applied, skipping`);
+    return 'skipped';
+  }
+
+  // Also check effective on-chain config — if it already matches our 3-of-3
+  // target (e.g. from a prior deploy with the old direct-setConfig path), skip.
+  const endpoint = new ethers.Contract(libs.endpoint, ENDPOINT_ABI, wallet);
   let current = null;
   try {
     const raw = await endpoint.getConfig(oappAddress, libAddress, peerEid, CONFIG_TYPE_ULN);
     current = decodeUlnConfig(ethers, raw);
   } catch (e) {
-    // Fresh pathway — no config set yet. That's fine, we'll apply.
+    // getConfig may revert for unsupported eids on the test endpoint.
   }
 
   const expectedDvns = DVNS_BY_CHAIN_MAINNET[chainKey];
   if (configMatches(current, expectedDvns)) {
-    console.log(`     ${label}: already correct, skipping`);
+    console.log(`     ${label}: already correct on-chain, skipping`);
     return 'skipped';
   }
 
-  const params = buildUlnSetConfigParams(ethers, chainKey, peerEid);
+  // Build the raw ULN config bytes (the `config` field of SetConfigParam).
+  const ulnConfig = {
+    confirmations: 0n,
+    requiredDVNCount: 3,
+    optionalDVNCount: 0,
+    optionalDVNThreshold: 0,
+    requiredDVNs: DVNS_BY_CHAIN_MAINNET[chainKey],
+    optionalDVNs: [],
+  };
+  const ULN_TUPLE = 'tuple(uint64 confirmations, uint8 requiredDVNCount, uint8 optionalDVNCount, uint8 optionalDVNThreshold, address[] requiredDVNs, address[] optionalDVNs)';
+  const encodedUln = ethers.AbiCoder.defaultAbiCoder().encode([ULN_TUPLE], [ulnConfig]);
 
-  console.log(`     ${label}: applying 3-of-3 DVN config…`);
-  const tx = await endpoint.setConfig(oappAddress, libAddress, params);
+  console.log(`     ${label}: routing through PathwayExpander.configureNewPathway…`);
+  const tx = await expander.configureNewPathway(oappAddress, libs.endpoint, libAddress, peerEid, encodedUln);
   console.log(`       tx=${tx.hash}`);
   const receipt = await tx.wait();
   console.log(`       confirmed in block ${receipt.blockNumber}`);

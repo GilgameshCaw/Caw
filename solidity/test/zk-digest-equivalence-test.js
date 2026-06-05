@@ -57,7 +57,7 @@ contract('ZK digest equivalence — Rust circuit ↔ Solidity _computeStructHash
     // only tests; signature verification isn't exercised here).
     const l2Endpoint = await MockLayerZeroEndpoint.new(l2);
     await linkSessionMessageParser();
-    const cawProfileLedger = await CawProfileLedger.new(l1, l2Endpoint.address, "0x0000000000000000000000000000000000000000");
+    const cawProfileLedger = await CawProfileLedger.new(l1, l2Endpoint.address, "0x0000000000000000000000000000000000000000", "0x000000000000000000000000000000000000bEEF", "0x000000000000000000000000000000000000dEAD", "0x000000000000000000000000000000000000cAFE", false, accounts[0]);
     exposer = await CawActionsDigestExposer.new(cawProfileLedger.address);
 
     // The helper's domain hash is keyed to its address + chainId, so it

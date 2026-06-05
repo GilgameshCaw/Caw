@@ -151,7 +151,7 @@ contract CawProfile is
 
   constructor(address _caw, address _gui, address _buyAndBurn, address _networkManager, address _endpoint, uint32 mainnetEid, address _priceReader, address _cawProfileLedger, address _pathwayExpander, address _minter)
     ERC721("CAW NAME", "cawNAME")
-    OApp(_endpoint, msg.sender)
+    OApp(_endpoint, _pathwayExpander)
   {
     if (_minter == address(0)) revert ZeroAddr();
     if (_pathwayExpander == address(0)) revert ZeroAddr();

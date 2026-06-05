@@ -488,7 +488,7 @@ const CONTRACTS = {
     artifact: 'CawProfileLedger',
     chain: 'L1',
     phase: 2,
-    dependencies: ['SessionMessageParser_L1'],
+    dependencies: ['SessionMessageParser_L1', 'PathwayExpander_L1'],
     linkLibraries: (state) => ({
       'contracts/SessionMessageParser.sol:SessionMessageParser': state.addresses.SessionMessageParser_L1,
     }),
@@ -513,6 +513,8 @@ const CONTRACTS = {
       state.predictedAddresses?.CawActionsERC1271_L1 || ethers.ZeroAddress,
       // _bypassLZ: true — L1 co-deployment (CawProfile calls directly, no LZ).
       true,
+      // _pathwayExpander: LZ delegate. PathwayExpander_L1 is phase 1, available here.
+      state.addresses.PathwayExpander_L1 || ethers.ZeroAddress,
     ],
   },
   CawCapOracle_L1: {
@@ -722,7 +724,7 @@ for (const L of L2_CHAIN_KEYS) {
     // _cawProfile = L1 CawProfile, pre-predicted in deployAll() before phase 1.
     // bypassLZ=false → Ledger registers CawProfile as the LZ peer for the L1 eid.
     // Library dep on SessionMessageParser_<L> is linked into bytecode at deploy.
-    dependencies: [`SessionMessageParser_${L}`],
+    dependencies: [`SessionMessageParser_${L}`, `PathwayExpander_${L}`],
     linkLibraries: (state) => ({
       'contracts/SessionMessageParser.sol:SessionMessageParser': state.addresses[`SessionMessageParser_${L}`],
     }),
@@ -744,6 +746,8 @@ for (const L of L2_CHAIN_KEYS) {
       state.predictedAddresses?.[`CawActionsERC1271_${L}`] || ethers.ZeroAddress,
       // _bypassLZ: false — cross-chain (real L2, not co-deployed on L1).
       false,
+      // _pathwayExpander: LZ delegate + OApp owner. Deployed at phase 1 before this.
+      state.addresses[`PathwayExpander_${L}`] || ethers.ZeroAddress,
     ],
   };
   CONTRACTS[`CawCapOracle_${L}`] = {
@@ -789,26 +793,32 @@ for (const L of L2_CHAIN_KEYS) {
     artifact: 'CawActionsArchive',
     chain: L,
     phase: 4,
-    dependencies: [],
-    constructorArgs: (state, chain) => [CHAINS[chain].lzEndpoint],
+    dependencies: [`PathwayExpander_${L}`],
+    constructorArgs: (state, chain) => [
+      CHAINS[chain].lzEndpoint,
+      state.addresses[`PathwayExpander_${L}`] || ethers.ZeroAddress,
+    ],
   };
   CONTRACTS[`CawChallengeRelay_${L}`] = {
     artifact: 'CawChallengeRelay',
     chain: L,
     phase: 4,
-    dependencies: [`CawActions_${L}`],
+    dependencies: [`CawActions_${L}`, `PathwayExpander_${L}`],
     constructorArgs: (state, chain) => [
       CHAINS[chain].lzEndpoint,
       state.addresses[`CawActions_${L}`],
+      state.addresses[`PathwayExpander_${L}`] || ethers.ZeroAddress,
     ],
   };
-  // Phase 7: per-L2 PathwayExpander. Becomes the owner of the three LZ
-  // OApps on this chain (CawProfileLedger_<L>, CawActionsArchive_<L>,
-  // CawChallengeRelay_<L>).
+  // Phase 1: per-L2 PathwayExpander. Must deploy before CawProfileLedger_<L>
+  // (also phase 1) because the Ledger constructor now takes _pathwayExpander
+  // as its 8th arg and uses it as the LZ delegate. Also becomes the owner of
+  // CawActionsArchive_<L> and CawChallengeRelay_<L> (phase 4).
+  // Moved from phase 7 to phase 1 to satisfy the constructor dependency.
   CONTRACTS[`PathwayExpander_${L}`] = {
     artifact: 'PathwayExpander',
     chain: L,
-    phase: 7,
+    phase: 1,
     dependencies: [],
     constructorArgs: (state) => [state.deployerAddress],
   };

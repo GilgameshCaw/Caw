@@ -53,9 +53,11 @@ contract CawChallengeRelay is OnlyOnce, OApp {
 
   constructor(
     address _endpoint,
-    address _cawActions
-  ) OApp(_endpoint, msg.sender) {
-    require(_cawActions != address(0), "Invalid CawActions");
+    address _cawActions,
+    address _pathwayExpander
+  ) OApp(_endpoint, _pathwayExpander) {
+    require(_cawActions       != address(0), "Invalid CawActions");
+    require(_pathwayExpander  != address(0), "CawChallengeRelay: zero pathwayExpander");
     cawActions = ICawActionsCheckpoints(_cawActions);
   }
 

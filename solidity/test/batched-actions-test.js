@@ -271,7 +271,8 @@ async function fullSetup(accounts) {
 
   const cawProfileLedger = await CawProfileLedger.new(
     l1, l2Endpoint.address, "0x0000000000000000000000000000000000000000",
-    predictedCawProfile, predictedCawActions, "0x000000000000000000000000000000000000dEAD", false
+    predictedCawProfile, predictedCawActions, "0x000000000000000000000000000000000000dEAD", false,
+    dummyPathwayExpander
   );
   await l1Endpoint.setDestLzEndpoint(cawProfileLedger.address, l2Endpoint.address);
 

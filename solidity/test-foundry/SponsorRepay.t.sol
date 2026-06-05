@@ -242,7 +242,7 @@ contract SponsorRepayTest is Test {
 
         mockCawProfile = address(0x1234c0de);
 
-        // New 7-arg constructor: wire cawProfile + cawActions + erc1271Sibling directly.
+        // New 8-arg constructor: wire cawProfile + cawActions + erc1271Sibling + pathwayExpander directly.
         // bypassLZ=true so registerSponsorRepayFromL1 accepts calls from mockCawProfile.
         ledger = new CawProfileLedger(   // ledgerNonce
             30101,
@@ -251,7 +251,8 @@ contract SponsorRepayTest is Test {
             mockCawProfile,    // _cawProfile: bypassLZ caller
             predictedMockCa,   // _cawActions: predicted at ledgerNonce+1
             address(0xcafe),   // _erc1271Sibling: dummy non-zero
-            true               // _bypassLZ
+            true,              // _bypassLZ
+            address(this)      // _pathwayExpander: test contract acts as it
         );
         mockCa = new SRMockCawActions(); // ledgerNonce+1
         require(address(mockCa) == predictedMockCa, "mockCa nonce mismatch");

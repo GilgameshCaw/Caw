@@ -251,11 +251,13 @@ contract L2BalanceDifferentialTest is Test {
         // Deploy two CawProfileLedger instances — ctor wires cawProfile + cawActions
         l2A = new CawProfileLedger(   // base+6
             MAINNET_LZ_ID, address(lzL2a), address(0),
-            predictedCpA, predictedMockActsA, address(0xcafe1), true
+            predictedCpA, predictedMockActsA, address(0xcafe1), true,
+            address(this) // _pathwayExpander: test contract acts as it
         );
         l2B = new CawProfileLedger(   // base+7
             MAINNET_LZ_ID, address(lzL2b), address(0),
-            predictedCpB, predictedMockActsB, address(0xcafe2), true
+            predictedCpB, predictedMockActsB, address(0xcafe2), true,
+            address(this) // _pathwayExpander: test contract acts as it
         );
 
         // Deploy mock CawActions for each L2 (must match predicted addresses)

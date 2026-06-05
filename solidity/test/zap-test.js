@@ -76,7 +76,8 @@ contract("CawProfileMinter — ZAP (pay-with-ETH) flows", function(accounts) {
       predictedCawProfileZ,
       "0x000000000000000000000000000000000000dEAD", // _cawActions: dummy (zap test doesn't process actions)
       "0x000000000000000000000000000000000000cAFE", // _erc1271Sibling: dummy
-      false
+      false,
+      dummyPathwayExpander
     );
     await l1Endpoint.setDestLzEndpoint(cawProfileL2.address, l2Endpoint.address);
 
@@ -86,7 +87,8 @@ contract("CawProfileMinter — ZAP (pay-with-ETH) flows", function(accounts) {
       predictedCawProfileZ,
       "0x000000000000000000000000000000000000dEAD",
       "0x000000000000000000000000000000000000cAFE",
-      true
+      true,
+      dummyPathwayExpander
     );
 
     const cpNonce = await web3.eth.getTransactionCount(deployerZ);
