@@ -63,13 +63,14 @@ export default function BoidsBg({ isDark }: { isDark: boolean }) {
       const angle = Math.random() * Math.PI * 2
       const isGold = i < 5
       const isWhite = i >= 5 && i < 10
-      // White birds skew faster (1.0–1.3), gold birds skew slower-but-steady (0.9–1.1),
-      // regular birds get the full range (0.7–1.3) so the flock has visible variety.
+      // White birds are noticeably fast (1.2–1.7), gold birds steady (0.9–1.2),
+      // regular birds have dramatic variety (0.5–1.5) so the flock has obvious
+      // fast/slow mixing at rest.
       const speedMult = isWhite
-        ? 1.0 + Math.random() * 0.3
+        ? 1.2 + Math.random() * 0.5
         : isGold
-          ? 0.9 + Math.random() * 0.2
-          : 0.7 + Math.random() * 0.6
+          ? 0.9 + Math.random() * 0.3
+          : 0.5 + Math.random() * 1.0
       const baseSpeed = MIN_SPEED + Math.random() * (MAX_SPEED - MIN_SPEED)
       const speed = baseSpeed * speedMult
       boids.push({
@@ -309,8 +310,13 @@ export default function BoidsBg({ isDark }: { isDark: boolean }) {
           const localAvgSpeed = avgSpeed / alignCount
           const mySpeed = Math.sqrt(b.vx * b.vx + b.vy * b.vy)
           if (mySpeed > 0.001) {
-            const SPEED_CONTAGION = 0.05
-            const targetSpeed = mySpeed + (localAvgSpeed - mySpeed) * SPEED_CONTAGION * influence
+            const SPEED_CONTAGION = 0.15
+            // Speed contagion uses a softer influence curve than direction alignment.
+            // White birds shouldn't be STEERED by neighbors, but they should still
+            // participate in the speed-wave (otherwise leaders never accelerate when
+            // passing through fast clusters and the contagion stays invisible).
+            const speedInfluence = b.bright === 'white' ? 0.3 : b.bright === 'gold' ? 0.2 : 1.0
+            const targetSpeed = mySpeed + (localAvgSpeed - mySpeed) * SPEED_CONTAGION * speedInfluence
             b.vx = (b.vx / mySpeed) * targetSpeed
             b.vy = (b.vy / mySpeed) * targetSpeed
           }
@@ -324,7 +330,7 @@ export default function BoidsBg({ isDark }: { isDark: boolean }) {
           const naturalSpeed = (MIN_SPEED + MAX_SPEED) * 0.5 * b.speedMult
           const mySpeed = Math.sqrt(b.vx * b.vx + b.vy * b.vy)
           if (mySpeed > 0.001) {
-            const NATURAL_PULL = 0.01
+            const NATURAL_PULL = 0.005
             const targetSpeed = mySpeed + (naturalSpeed - mySpeed) * NATURAL_PULL
             b.vx = (b.vx / mySpeed) * targetSpeed
             b.vy = (b.vy / mySpeed) * targetSpeed
@@ -363,8 +369,8 @@ export default function BoidsBg({ isDark }: { isDark: boolean }) {
         // wider than the natural-speed attractor allows in practice — it's there
         // to catch runaway contagion + alignment compounding, not to be the
         // dominant force.
-        const maxSpd = MAX_SPEED * b.speedMult * 1.2  // 20% headroom over natural for transient contagion
-        const minSpd = MIN_SPEED * b.speedMult * 0.8  // 20% floor under natural
+        const maxSpd = MAX_SPEED * b.speedMult * 1.5  // 50% headroom — let contagion really pull
+        const minSpd = MIN_SPEED * b.speedMult * 0.5  // 50% floor — and let slow birds really drag
         const speed = Math.sqrt(b.vx * b.vx + b.vy * b.vy)
         if (speed > maxSpd) {
           b.vx = (b.vx / speed) * maxSpd
