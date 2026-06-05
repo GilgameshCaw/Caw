@@ -236,6 +236,43 @@ async function checkOtherExists(
     return existingRecaw === null
   }
 
+  // pi:{cawId} — already processed if a confirmed (pending=false) pinnedCaw
+  // row exists for (sender, cawId). When the row is absent OR pending, the
+  // handler still needs to run. Same feedback-loop class as the hide gate.
+  //
+  // We INTENTIONALLY do NOT check whether the target Caw exists or whether
+  // it's owned by the sender. If the target Caw isn't indexed locally yet
+  // (cross-mirror lag), the handler's "Caw not found" warn-and-return is
+  // the correct outcome — we want the action to retry next poll once the
+  // Caw arrives. Treating it as "already processed" here would silently
+  // discard a legitimate action. Same safe-retry pattern as checkLikeExists.
+  if (rawAction.text?.startsWith('pi:')) {
+    const cawId = parseInt(rawAction.text.replace('pi:', '').trim(), 10)
+    if (Number.isNaN(cawId) || cawId <= 0) return false
+    const senderId = await findOrCreateUser(action.senderId)
+    const existing = await tx.pinnedCaw.findUnique({
+      where: { userId_cawId: { userId: senderId, cawId } },
+      select: { pending: true },
+    })
+    return existing?.pending === false
+  }
+
+  // xpi:{cawId} — already processed if no pinnedCaw row exists for
+  // (sender, cawId). The handler's terminal state is "row absent"; if it's
+  // already absent, we're done. If a row exists, the handler still needs
+  // to delete it. "No row" also covers the legitimate "user never pinned
+  // this caw to begin with" case — handleUnpinAction is idempotent there.
+  if (rawAction.text?.startsWith('xpi:')) {
+    const cawId = parseInt(rawAction.text.replace('xpi:', '').trim(), 10)
+    if (Number.isNaN(cawId) || cawId <= 0) return false
+    const senderId = await findOrCreateUser(action.senderId)
+    const existing = await tx.pinnedCaw.findUnique({
+      where: { userId_cawId: { userId: senderId, cawId } },
+      select: { id: true },
+    })
+    return existing === null
+  }
+
   if (rawAction.text?.startsWith('tip:')) {
     const senderId = await findOrCreateUser(action.senderId)
     const existingTip = await tx.tip.findFirst({
