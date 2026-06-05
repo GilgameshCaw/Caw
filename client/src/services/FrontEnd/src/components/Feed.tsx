@@ -821,6 +821,11 @@ const Feed = forwardRef<FeedRef, Props>(({ filter, username, apiEndpoint, title 
           ? pendingPosts
               // Main feeds: don't render pending replies either.
               .filter(p => (filter === 'For you' || filter === 'Following') ? !(p.replyToId || p.parent?.id) : true)
+              // Profile (posts) tab: replies belong under "Replies", not here.
+              // Quotes (parent.id set, isQuote=true) DO belong on the posts tab —
+              // they read as new posts. Use replyToId as the reply signal since
+              // it's set only when the caw is an actual comment reply, not a quote.
+              .filter(p => filter === 'profile' ? !p.replyToId : true)
               .filter(p => filter === 'profile-replies' ? !!p.replyToId : true)
               .filter(p => {
                 if (!hashtagFilter) return true

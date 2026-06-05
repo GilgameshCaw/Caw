@@ -137,6 +137,19 @@ const countManager = {
       action: string
       originalCawId: number | null
       status: string
+      /**
+       * True when this CAW is a comment reply (has a parent and is NOT a
+       * recaw/quote). Replies should NOT bump user.cawCount — the profile's
+       * /api/users reply-count derives replies from on-the-fly Caw rows with
+       * `originalCawId not null && status=SUCCESS`, and subtracts replyCount
+       * from cawCount for display. If cawCount is bumped optimistically for a
+       * pending reply, the reply doesn't yet match the SUCCESS filter, so
+       * cawCount stays inflated until the reply confirms. End result: pending
+       * replies briefly appear on the Posts tab (count + content) instead of
+       * the Replies tab. Defaults false for backwards-compat with confirmed
+       * caws coming straight through from the indexer.
+       */
+      isReply?: boolean
     }
   ): Promise<void> {
     if (caw.status !== 'PENDING' && caw.status !== 'SUCCESS') {
@@ -153,8 +166,13 @@ const countManager = {
       // Plain recaws increment user.recawCount
       await safeIncrement(tx, 'User', 'tokenId', caw.userId, 'recawCount')
       log(`recawCount +1 on user ${caw.userId} (${label} recaw created, caw ${caw.id})`)
+    } else if (caw.isReply) {
+      // Replies do NOT bump user.cawCount. The /api/users replyCount is
+      // computed on-demand from Caw rows; the only cross-side bookkeeping for
+      // a reply is the parent's commentCount, handled by onReplyCreated.
+      log(`reply created, skipping user.cawCount bump (user ${caw.userId}, ${label} reply ${caw.id})`)
     } else {
-      // CAW posts and quotes increment user.cawCount
+      // Top-level CAW posts and quotes increment user.cawCount
       await safeIncrement(tx, 'User', 'tokenId', caw.userId, 'cawCount')
       log(`cawCount +1 on user ${caw.userId} (${label} caw created, caw ${caw.id})`)
     }
