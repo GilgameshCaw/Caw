@@ -826,6 +826,38 @@ console.log("BALANCE:", balance)
     ensureUserFromChain(tokenId).catch(() => { /* WelcomePage retries */ })
     return tokenId
   }, [decodeMintTokenId, ensureUserFromChain])
+
+  // Write the `caw:pendingDeposit:<tokenId>` hint that the onboarding stepper
+  // and ProfileChooser read to credit a still-pending (LayerZero-in-flight)
+  // deposit against the stake gates. CRITICAL: this is synchronous — the
+  // amount lands in localStorage before the caller flips setMintSuccess (which
+  // navigates to /welcome and mounts the stepper). The stepper reads the hint
+  // once, non-reactively, on mount; a late write would be missed and the user
+  // would see "need to stake 30K" despite a pending deposit. We seed the L2
+  // baseline at "0" (correct for a fresh mint — the tokenId didn't exist on L2
+  // yet) and refine it async best-effort; the amount is all the gate needs.
+  const writePendingDepositHint = useCallback((tokenId: number, amountWei: bigint, txHash: string) => {
+    try {
+      localStorage.setItem(
+        `caw:pendingDeposit:${tokenId}`,
+        JSON.stringify({ amount: amountWei.toString(), txHash, at: Date.now(), stakedAtHintTime: '0' })
+      )
+      window.dispatchEvent(new CustomEvent('caw:pendingDepositChanged', { detail: { tokenId } }))
+    } catch { /* localStorage unavailable — gate falls back to chain reads */ }
+    // Best-effort async refinement of the L2 baseline (used later to detect
+    // when the deposit lands). Never blocks the hint write above.
+    ;(async () => {
+      try {
+        const { readOnChainStakeForHint } = await import('~/api/actions')
+        const onChainBaseline = await readOnChainStakeForHint(tokenId)
+        const raw = localStorage.getItem(`caw:pendingDeposit:${tokenId}`)
+        if (!raw) return
+        const parsed = JSON.parse(raw)
+        parsed.stakedAtHintTime = onChainBaseline.toString()
+        localStorage.setItem(`caw:pendingDeposit:${tokenId}`, JSON.stringify(parsed))
+      } catch { /* baseline is best-effort */ }
+    })()
+  }, [])
   // ── End fast-path helpers ────────────────────────────────────────────────
 
   // Minter needs allowance for burn cost + deposit amount (it pulls both from the user).
@@ -928,35 +960,20 @@ console.log("BALANCE:", balance)
 
       // Side-effects shared by fast-path and fallback.
       const applyDepositSuccess = async (resolvedTokenId: number) => {
+        // Write the pending-deposit hint SYNCHRONOUSLY *before* setMintSuccess.
+        // setMintSuccess triggers the navigate to /welcome, where the onboarding
+        // stepper mounts and reads this hint (non-reactively) to credit the
+        // pending stake at the follow gate. If we awaited the L2 baseline read
+        // first (as before), the navigate/mount would win the race and the
+        // stepper would read an empty hint → "need to stake 30K" even though a
+        // deposit is pending. The amount is all the gate needs; the L2 baseline
+        // (used only to detect when the deposit lands) is backfilled async below.
+        if (depositAmountWei > 0n) {
+          writePendingDepositHint(resolvedTokenId, depositAmountWei, hash)
+        }
         setMintedTokenId(resolvedTokenId)
         setActiveTokenId(resolvedTokenId)
         setMintSuccess(true)
-        // Deposit info (lastStakedAt / pendingDepositAmount) is persisted by
-        // WelcomePage after /api/users/ensure so the follow buttons rendered
-        // in the onboarding stepper see it before the user can click them.
-        // Also write a localStorage hint so the profile chooser can render
-        // the "+X CAW pending" badge instantly without waiting for the API.
-        if (depositAmountWei > 0n) {
-          try {
-            // Capture the true L2 baseline from cawBalanceOf. For a fresh
-            // mint this should be 0 (the tokenId didn't exist on L2 yet),
-            // but we call the helper anyway so all three deposit paths
-            // (mint&deposit, stake page, onboarding deposit) follow the
-            // same ground-truth-from-L2 pattern.
-            const { readOnChainStakeForHint } = await import('~/api/actions')
-            const onChainBaseline = await readOnChainStakeForHint(resolvedTokenId)
-            localStorage.setItem(
-              `caw:pendingDeposit:${resolvedTokenId}`,
-              JSON.stringify({
-                amount: depositAmountWei.toString(),
-                txHash: hash,
-                at: Date.now(),
-                stakedAtHintTime: onChainBaseline.toString(),
-              })
-            )
-            window.dispatchEvent(new CustomEvent('caw:pendingDepositChanged', { detail: { tokenId: resolvedTokenId } }))
-          } catch {}
-        }
       }
 
       // Fast path: decode tokenId from receipt + ensure server row via L1 read
@@ -1044,26 +1061,13 @@ console.log("BALANCE:", balance)
 
       // Side-effects shared by fast-path and fallback.
       const applyBundledSuccess = async (resolvedTokenId: number) => {
+        // Synchronous hint write before setMintSuccess — see writePendingDepositHint.
+        if (depositAmountWei > 0n) {
+          writePendingDepositHint(resolvedTokenId, depositAmountWei, hash)
+        }
         setMintedTokenId(resolvedTokenId)
         setActiveTokenId(resolvedTokenId)
         setMintSuccess(true)
-        // Persist deposit hint exactly like the non-QS branch.
-        if (depositAmountWei > 0n) {
-          try {
-            const { readOnChainStakeForHint } = await import('~/api/actions')
-            const onChainBaseline = await readOnChainStakeForHint(resolvedTokenId)
-            localStorage.setItem(
-              `caw:pendingDeposit:${resolvedTokenId}`,
-              JSON.stringify({
-                amount: depositAmountWei.toString(),
-                txHash: hash,
-                at: Date.now(),
-                stakedAtHintTime: onChainBaseline.toString(),
-              })
-            )
-            window.dispatchEvent(new CustomEvent('caw:pendingDepositChanged', { detail: { tokenId: resolvedTokenId } }))
-          } catch {}
-        }
       }
 
       // Fast path: decode tokenId from receipt + ensure server row via L1 read
@@ -1109,33 +1113,18 @@ console.log("BALANCE:", balance)
 
       // Side-effects shared by fast-path and fallback.
       const applyZapSuccess = async (resolvedTokenId: number) => {
-        setMintedTokenId(resolvedTokenId)
-        setActiveTokenId(resolvedTokenId)
-        setMintSuccess(true)
-        // Persist the +X CAW pending hint so ProfileChooser renders the
-        // arriving deposit immediately (the L2 mirror takes a moment via
-        // LayerZero). ZAP deposit amount = swap output - username burn.
-        // Mirrors the CAW-mode mintAndDeposit branch above.
+        // ZAP deposit amount = swap output - username burn. Write the hint
+        // SYNCHRONOUSLY before setMintSuccess so the onboarding stepper credits
+        // it at the follow gate (this was the "need to stake 30K despite a
+        // pending zap deposit" bug — the awaited L2 read let the navigate win).
         const zapDeposit = zapQuote.expectedCawOut > cost ? zapQuote.expectedCawOut - cost : 0n
         console.log('[New/zap] pendingDeposit hint:', { tokenId: resolvedTokenId, zapDeposit: zapDeposit.toString() })
         if (zapDeposit > 0n) {
-          try {
-            const { readOnChainStakeForHint } = await import('~/api/actions')
-            const onChainBaseline = await readOnChainStakeForHint(resolvedTokenId)
-            localStorage.setItem(
-              `caw:pendingDeposit:${resolvedTokenId}`,
-              JSON.stringify({
-                amount: zapDeposit.toString(),
-                txHash: hash,
-                at: Date.now(),
-                stakedAtHintTime: onChainBaseline.toString(),
-              })
-            )
-            window.dispatchEvent(new CustomEvent('caw:pendingDepositChanged', { detail: { tokenId: resolvedTokenId } }))
-          } catch (e) {
-            console.warn('[New/zap] failed to persist pendingDeposit hint:', e)
-          }
+          writePendingDepositHint(resolvedTokenId, zapDeposit, hash)
         }
+        setMintedTokenId(resolvedTokenId)
+        setActiveTokenId(resolvedTokenId)
+        setMintSuccess(true)
       }
 
       // Fast path: decode tokenId from receipt + ensure server row via L1 read
@@ -1212,31 +1201,16 @@ console.log("BALANCE:", balance)
 
       // Side-effects shared by fast-path and fallback.
       const applyZapQsSuccess = async (resolvedTokenId: number) => {
-        setMintedTokenId(resolvedTokenId)
-        setActiveTokenId(resolvedTokenId)
-        setMintSuccess(true)
-        // Persist the +X CAW pending hint — see mintAndDepositZap branch
-        // for the rationale. Same shape; deposit = swap output minus burn.
+        // Synchronous hint write before setMintSuccess — see applyZapSuccess /
+        // writePendingDepositHint. deposit = swap output minus burn.
         const zapDeposit = zapQuote.expectedCawOut > cost ? zapQuote.expectedCawOut - cost : 0n
         console.log('[New/zapQs] pendingDeposit hint:', { tokenId: resolvedTokenId, zapDeposit: zapDeposit.toString() })
         if (zapDeposit > 0n) {
-          try {
-            const { readOnChainStakeForHint } = await import('~/api/actions')
-            const onChainBaseline = await readOnChainStakeForHint(resolvedTokenId)
-            localStorage.setItem(
-              `caw:pendingDeposit:${resolvedTokenId}`,
-              JSON.stringify({
-                amount: zapDeposit.toString(),
-                txHash: hash,
-                at: Date.now(),
-                stakedAtHintTime: onChainBaseline.toString(),
-              })
-            )
-            window.dispatchEvent(new CustomEvent('caw:pendingDepositChanged', { detail: { tokenId: resolvedTokenId } }))
-          } catch (e) {
-            console.warn('[New/zapQs] failed to persist pendingDeposit hint:', e)
-          }
+          writePendingDepositHint(resolvedTokenId, zapDeposit, hash)
         }
+        setMintedTokenId(resolvedTokenId)
+        setActiveTokenId(resolvedTokenId)
+        setMintSuccess(true)
       }
 
       // Fast path: decode tokenId from receipt + ensure server row via L1 read

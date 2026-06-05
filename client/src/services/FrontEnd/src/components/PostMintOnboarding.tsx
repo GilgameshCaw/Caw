@@ -156,7 +156,14 @@ const PostMintOnboarding: React.FC<PostMintOnboardingProps> = ({ username, token
   // ProfileChooser uses to render the "+X pending" chip — same source of
   // truth across the FE. Without this fallback, refreshing the welcome
   // stepper after a successful zap would re-show the deposit step.
-  const pendingHintAmount: bigint | null = (() => {
+  // Read the pending-deposit hint for this token. Reactive (state + listener)
+  // rather than a one-shot read: the hint can be written by New.tsx a hair
+  // before OR after this component mounts (optimistic-mint race), and on the
+  // fallback mint path it lands later still. A non-reactive read missed those
+  // writes → the follow gate showed "need to stake 30K" despite a pending
+  // deposit. We re-read on the caw:pendingDepositChanged event and on storage
+  // events (other tabs).
+  const readPendingHint = useCallback((): bigint | null => {
     if (!tokenId) return null
     try {
       const raw = localStorage.getItem(`caw:pendingDeposit:${tokenId}`)
@@ -167,7 +174,22 @@ const PostMintOnboarding: React.FC<PostMintOnboardingProps> = ({ username, token
       if (Date.now() - (parsed.at ?? 0) > 30 * 60 * 1000) return null
       return BigInt(parsed.amount)
     } catch { return null }
-  })()
+  }, [tokenId])
+  const [pendingHintAmount, setPendingHintAmount] = useState<bigint | null>(() => readPendingHint())
+  useEffect(() => {
+    setPendingHintAmount(readPendingHint())
+    const refresh = () => setPendingHintAmount(readPendingHint())
+    const onChanged = (e: Event) => {
+      const detail = (e as CustomEvent).detail
+      if (!detail || detail.tokenId === tokenId) refresh()
+    }
+    window.addEventListener('caw:pendingDepositChanged', onChanged as EventListener)
+    window.addEventListener('storage', refresh)
+    return () => {
+      window.removeEventListener('caw:pendingDepositChanged', onChanged as EventListener)
+      window.removeEventListener('storage', refresh)
+    }
+  }, [readPendingHint, tokenId])
   const depositPending = !!pendingDeposit || (pendingHintAmount !== null && pendingHintAmount > 0n)
   const pendingDepositAmount = pendingDeposit ? BigInt(pendingDeposit) : (pendingHintAmount ?? 0n)
   const [currentStep, setCurrentStep] = useState(initialStep)
