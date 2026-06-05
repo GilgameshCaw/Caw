@@ -68,7 +68,7 @@ const CHAINS = {
     lzEid: 40161,
     sp1Verifier: '0x0000000000000000000000000000000000000000',
     uniswapV2Router: '0xeE567Fe1712Faf6149d80dA1E6934E354124CfE3',
-    etherscanApi: 'https://api-sepolia.etherscan.io/api',
+    etherscanApi: 'https://api.etherscan.io/v2/api?chainid=11155111',
     etherscanBrowser: 'https://sepolia.etherscan.io',
   },
   testnetL2: {
@@ -77,7 +77,7 @@ const CHAINS = {
     lzEndpoint: '0x6EDCE65403992e310A62460808c4b910D972f10f',
     lzEid: 40245,
     sp1Verifier: '0x397A5f7f3dBd538f23DE225B51f532c34448dA9B',
-    etherscanApi: 'https://api-sepolia.basescan.org/api',
+    etherscanApi: 'https://api.etherscan.io/v2/api?chainid=84532',
     etherscanBrowser: 'https://sepolia.basescan.org',
   },
   testnetL2b: {
@@ -86,7 +86,7 @@ const CHAINS = {
     lzEndpoint: '0x6EDCE65403992e310A62460808c4b910D972f10f',
     lzEid: 40231,
     sp1Verifier: '0x0000000000000000000000000000000000000000',
-    etherscanApi: 'https://api-sepolia.arbiscan.io/api',
+    etherscanApi: 'https://api.etherscan.io/v2/api?chainid=421614',
     etherscanBrowser: 'https://sepolia.arbiscan.io',
   },
   mainnetL1: {
@@ -96,7 +96,7 @@ const CHAINS = {
     lzEid: 30101,
     sp1Verifier: null, // set before mainnet deploy
     uniswapV2Router: '0x7a250d5630B4cF539739dF2C5dAcb4c659F2488D',
-    etherscanApi: 'https://api.etherscan.io/api',
+    etherscanApi: 'https://api.etherscan.io/v2/api?chainid=1',
     etherscanBrowser: 'https://etherscan.io',
   },
   mainnetL2: {
@@ -105,7 +105,7 @@ const CHAINS = {
     lzEndpoint: '0x1a44076050125825900e736c501f859c50fe728c',
     lzEid: 30184,
     sp1Verifier: null, // set before mainnet deploy
-    etherscanApi: 'https://api.basescan.org/api',
+    etherscanApi: 'https://api.etherscan.io/v2/api?chainid=8453',
     etherscanBrowser: 'https://basescan.org',
   },
   mainnetL2b: {
@@ -114,7 +114,7 @@ const CHAINS = {
     lzEndpoint: '0x1a44076050125825900e736c501f859c50fe728c',
     lzEid: 30110,
     sp1Verifier: null, // set before mainnet deploy
-    etherscanApi: 'https://api.arbiscan.io/api',
+    etherscanApi: 'https://api.etherscan.io/v2/api?chainid=42161',
     etherscanBrowser: 'https://arbiscan.io',
   },
 };
@@ -198,6 +198,8 @@ const CONTRACTS = {
   },
   CawProfile: {
     chain: 'L1',
+    // 10-arg ctor: _caw, _gui, _buyAndBurn, _networkManager, _endpoint,
+    // mainnetEid, _priceReader, _cawProfileLedger, _pathwayExpander, _minter
     constructorArgs: (state, chainKey) => [
       state.addresses.MintableCaw,
       state.addresses.CawProfileURI,
@@ -207,9 +209,14 @@ const CONTRACTS = {
       CHAINS[chainKey].lzEndpoint,
       CHAINS[chainKey].lzEid,
       state.addresses.CawL1PriceReader || ethers.ZeroAddress,
+      state.addresses.CawProfileLedger_L1 || ethers.ZeroAddress,
+      state.addresses.PathwayExpander_L1 || ethers.ZeroAddress,
+      state.addresses.CawProfileMinter || ethers.ZeroAddress,
     ],
   },
-  // CawProfileLedger deployed on L1 (bypassLZ mode)
+  // CawProfileLedger deployed on L1 (bypassLZ=true mode)
+  // 8-arg ctor: _endpointId, _endpoint, _capOracle, _cawProfile,
+  //             _cawActions, _erc1271Sibling, _bypassLZ, _pathwayExpander
   CawProfileLedger_L1: {
     artifact: 'CawProfileLedger',
     chain: 'L1',
@@ -218,9 +225,12 @@ const CONTRACTS = {
       return [
         CHAINS[l2ChainKey]?.lzEid || CHAINS.testnetL2.lzEid,
         CHAINS[chainKey].lzEndpoint,
-        state.addresses.CawCapOracle_L1
-          || state.predictedAddresses?.CawCapOracle_L1
-          || ethers.ZeroAddress,
+        state.addresses.CawCapOracle_L1 || ethers.ZeroAddress,
+        state.addresses.CawProfile || ethers.ZeroAddress,
+        state.addresses.CawActions_L1 || ethers.ZeroAddress,
+        state.addresses.CawActionsERC1271_L1 || ethers.ZeroAddress,
+        true,
+        state.addresses.PathwayExpander_L1 || ethers.ZeroAddress,
       ];
     },
   },
@@ -229,25 +239,36 @@ const CONTRACTS = {
     chain: 'L1',
     constructorArgs: (state) => [
       state.addresses.CawProfileLedger_L1,
-      state.addresses.CawActions_L1
-        || state.predictedAddresses?.CawActions_L1
-        || ethers.ZeroAddress,
+      state.addresses.CawActions_L1 || ethers.ZeroAddress,
     ],
+  },
+  // SessionMessageParser library — no constructor args.
+  SessionMessageParser_L1: {
+    artifact: 'SessionMessageParser',
+    chain: 'L1',
+    constructorArgs: () => [],
   },
   CawProfileMinter: {
     chain: 'L1',
+    // 4-arg ctor: _caw, _cawProfiles, _router, _pathwayExpander
     constructorArgs: (state, chainKey) => [
       state.addresses.MintableCaw,
       state.addresses.CawProfile,
       resolveUniswapRouter(chainKey, state),
+      state.addresses.PathwayExpander_L1 || ethers.ZeroAddress,
     ],
   },
   CawProfileQuoter: {
     chain: 'L1',
     constructorArgs: (state) => [state.addresses.CawProfile],
   },
+  CawProfileLens: {
+    chain: 'L1',
+    constructorArgs: (state) => [state.addresses.CawProfile, state.addresses.CawProfileMinter],
+  },
   CawProfileMarketplace: {
     chain: 'L1',
+    // 3-arg ctor: _cawProfile, _lzDestId, _paymentTokens
     constructorArgs: (state, chainKey, env) => {
       // Marketplace payment tokens — same logic as deploy.js.
       // ETH (address(0)) is always allowed by the contract itself.
@@ -263,7 +284,7 @@ const CONTRACTS = {
       const erc20Tokens = (MARKETPLACE_PAYMENT_TOKENS[env] || []).slice();
       const caw = state.addresses.MintableCaw || state.addresses.CAW;
       if (caw) erc20Tokens.push(caw);
-      return [state.addresses.CawProfile, erc20Tokens];
+      return [state.addresses.CawProfile, CHAINS[chainKey].lzEid, erc20Tokens];
     },
   },
   SmartEOA: {
@@ -273,14 +294,16 @@ const CONTRACTS = {
   CawActions_L1: {
     artifact: 'CawActions',
     chain: 'L1',
+    // 7-arg ctor: _cawProfiles, _zkVerifier, _zkProgramVKey,
+    //             _erc1271Sibling, _capOracle, _bootstrapRatio, _bootstrapExpiry
     constructorArgs: (state, chainKey) => [
       state.addresses.CawProfileLedger_L1,
       resolvesp1Verifier(chainKey, state),
       ZK_PROGRAM_VKEY,
-      state.addresses.CawActionsERC1271_L1
-        || state.predictedAddresses?.CawActionsERC1271_L1
-        || ethers.ZeroAddress,
+      state.addresses.CawActionsERC1271_L1 || ethers.ZeroAddress,
       state.addresses.CawCapOracle_L1 || ethers.ZeroAddress,
+      state.bootstrap?.ratio || '0',
+      state.bootstrap?.expiry || '0',
     ],
   },
   CawActionsERC1271_L1: {
@@ -288,7 +311,7 @@ const CONTRACTS = {
     chain: 'L1',
     constructorArgs: (state) => [state.addresses.CawActions_L1],
   },
-  // Phase 7 expander on L1 — always deployed (sole post-renounce admin).
+  // PathwayExpander on L1 — always deployed (sole post-renounce admin).
   PathwayExpander_L1: {
     artifact: 'PathwayExpander',
     chain: 'L1',
@@ -304,17 +327,28 @@ for (const L of L2_CHAIN_KEYS) {
     skipVerify: true,
     constructorArgs: () => [],
   };
+  // SessionMessageParser library — one per L2 chain hosting a CawProfileLedger.
+  CONTRACTS[`SessionMessageParser_${L}`] = {
+    artifact: 'SessionMessageParser',
+    chain: L,
+    constructorArgs: () => [],
+  };
   CONTRACTS[`CawProfileLedger_${L}`] = {
     artifact: 'CawProfileLedger',
     chain: L,
+    // 8-arg ctor: _endpointId, _endpoint, _capOracle, _cawProfile,
+    //             _cawActions, _erc1271Sibling, _bypassLZ, _pathwayExpander
     constructorArgs: (state, chainKey) => {
       const l1ChainKey = chainKey.replace(/L2.*$/, 'L1');
       return [
         CHAINS[l1ChainKey]?.lzEid || CHAINS.testnetL1.lzEid,
         CHAINS[chainKey].lzEndpoint,
-        state.addresses[`CawCapOracle_${L}`]
-          || state.predictedAddresses?.[`CawCapOracle_${L}`]
-          || ethers.ZeroAddress,
+        state.addresses[`CawCapOracle_${L}`] || ethers.ZeroAddress,
+        state.addresses.CawProfile || ethers.ZeroAddress,
+        state.addresses[`CawActions_${L}`] || ethers.ZeroAddress,
+        state.addresses[`CawActionsERC1271_${L}`] || ethers.ZeroAddress,
+        false,
+        state.addresses[`PathwayExpander_${L}`] || ethers.ZeroAddress,
       ];
     },
   };
@@ -323,22 +357,22 @@ for (const L of L2_CHAIN_KEYS) {
     chain: L,
     constructorArgs: (state) => [
       state.addresses[`CawProfileLedger_${L}`],
-      state.addresses[`CawActions_${L}`]
-        || state.predictedAddresses?.[`CawActions_${L}`]
-        || ethers.ZeroAddress,
+      state.addresses[`CawActions_${L}`] || ethers.ZeroAddress,
     ],
   };
   CONTRACTS[`CawActions_${L}`] = {
     artifact: 'CawActions',
     chain: L,
+    // 7-arg ctor: _cawProfiles, _zkVerifier, _zkProgramVKey,
+    //             _erc1271Sibling, _capOracle, _bootstrapRatio, _bootstrapExpiry
     constructorArgs: (state, chainKey) => [
       state.addresses[`CawProfileLedger_${L}`],
       resolvesp1Verifier(chainKey, state),
       ZK_PROGRAM_VKEY,
-      state.addresses[`CawActionsERC1271_${L}`]
-        || state.predictedAddresses?.[`CawActionsERC1271_${L}`]
-        || ethers.ZeroAddress,
+      state.addresses[`CawActionsERC1271_${L}`] || ethers.ZeroAddress,
       state.addresses[`CawCapOracle_${L}`] || ethers.ZeroAddress,
+      state.bootstrap?.ratio || '0',
+      state.bootstrap?.expiry || '0',
     ],
   };
   CONTRACTS[`CawActionsERC1271_${L}`] = {
@@ -349,14 +383,20 @@ for (const L of L2_CHAIN_KEYS) {
   CONTRACTS[`CawActionsArchive_${L}`] = {
     artifact: 'CawActionsArchive',
     chain: L,
-    constructorArgs: (state, chainKey) => [CHAINS[chainKey].lzEndpoint],
+    // 2-arg ctor: _endpoint, _pathwayExpander
+    constructorArgs: (state, chainKey) => [
+      CHAINS[chainKey].lzEndpoint,
+      state.addresses[`PathwayExpander_${L}`] || ethers.ZeroAddress,
+    ],
   };
   CONTRACTS[`CawChallengeRelay_${L}`] = {
     artifact: 'CawChallengeRelay',
     chain: L,
+    // 3-arg ctor: _endpoint, _cawActions, _pathwayExpander
     constructorArgs: (state, chainKey) => [
       CHAINS[chainKey].lzEndpoint,
       state.addresses[`CawActions_${L}`],
+      state.addresses[`PathwayExpander_${L}`] || ethers.ZeroAddress,
     ],
   };
   CONTRACTS[`PathwayExpander_${L}`] = {
