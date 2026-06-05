@@ -481,7 +481,10 @@ export const cawActionsAbi = [
 export const cawActionsArchiveAbi = [
   {
     type: 'constructor',
-    inputs: [{ name: '_endpoint', internalType: 'address', type: 'address' }],
+    inputs: [
+      { name: '_endpoint', internalType: 'address', type: 'address' },
+      { name: '_pathwayExpander', internalType: 'address', type: 'address' },
+    ],
     stateMutability: 'nonpayable',
   },
   { type: 'receive', stateMutability: 'payable' },
@@ -1155,6 +1158,7 @@ export const cawChallengeRelayAbi = [
     inputs: [
       { name: '_endpoint', internalType: 'address', type: 'address' },
       { name: '_cawActions', internalType: 'address', type: 'address' },
+      { name: '_pathwayExpander', internalType: 'address', type: 'address' },
     ],
     stateMutability: 'nonpayable',
   },
@@ -2397,6 +2401,7 @@ export const cawProfileAbi = [
       { name: '_priceReader', internalType: 'address', type: 'address' },
       { name: '_cawProfileLedger', internalType: 'address', type: 'address' },
       { name: '_pathwayExpander', internalType: 'address', type: 'address' },
+      { name: '_minter', internalType: 'address', type: 'address' },
     ],
     stateMutability: 'nonpayable',
   },
@@ -2881,13 +2886,6 @@ export const cawProfileAbi = [
   },
   {
     type: 'function',
-    inputs: [{ name: '_minter', internalType: 'address', type: 'address' }],
-    name: 'setMinter',
-    outputs: [],
-    stateMutability: 'nonpayable',
-  },
-  {
-    type: 'function',
     inputs: [
       { name: '_eid', internalType: 'uint32', type: 'uint32' },
       { name: '_peer', internalType: 'bytes32', type: 'bytes32' },
@@ -3198,19 +3196,6 @@ export const cawProfileAbi = [
     anonymous: false,
     inputs: [
       {
-        name: 'minter',
-        internalType: 'address',
-        type: 'address',
-        indexed: false,
-      },
-    ],
-    name: 'MinterSet',
-  },
-  {
-    type: 'event',
-    anonymous: false,
-    inputs: [
-      {
         name: 'previousOwner',
         internalType: 'address',
         type: 'address',
@@ -3328,6 +3313,11 @@ export const cawProfileLedgerAbi = [
       { name: '_endpointId', internalType: 'uint32', type: 'uint32' },
       { name: '_endpoint', internalType: 'address', type: 'address' },
       { name: '_capOracle', internalType: 'address', type: 'address' },
+      { name: '_cawProfile', internalType: 'address', type: 'address' },
+      { name: '_cawActions', internalType: 'address', type: 'address' },
+      { name: '_erc1271Sibling', internalType: 'address', type: 'address' },
+      { name: '_bypassLZ', internalType: 'bool', type: 'bool' },
+      { name: '_pathwayExpander', internalType: 'address', type: 'address' },
     ],
     stateMutability: 'nonpayable',
   },
@@ -3841,33 +3831,8 @@ export const cawProfileLedgerAbi = [
   },
   {
     type: 'function',
-    inputs: [{ name: '_cawActions', internalType: 'address', type: 'address' }],
-    name: 'setCawActions',
-    outputs: [],
-    stateMutability: 'nonpayable',
-  },
-  {
-    type: 'function',
     inputs: [{ name: '_delegate', internalType: 'address', type: 'address' }],
     name: 'setDelegate',
-    outputs: [],
-    stateMutability: 'nonpayable',
-  },
-  {
-    type: 'function',
-    inputs: [{ name: '_sibling', internalType: 'address', type: 'address' }],
-    name: 'setERC1271Sibling',
-    outputs: [],
-    stateMutability: 'nonpayable',
-  },
-  {
-    type: 'function',
-    inputs: [
-      { name: '_eid', internalType: 'uint32', type: 'uint32' },
-      { name: 'peer', internalType: 'address payable', type: 'address' },
-      { name: '_bypassLZ', internalType: 'bool', type: 'bool' },
-    ],
-    name: 'setL1Peer',
     outputs: [],
     stateMutability: 'nonpayable',
   },
@@ -4105,32 +4070,6 @@ export const cawProfileLedgerAbi = [
       },
     ],
     name: 'Authenticated',
-  },
-  {
-    type: 'event',
-    anonymous: false,
-    inputs: [
-      {
-        name: 'cawActions',
-        internalType: 'address',
-        type: 'address',
-        indexed: false,
-      },
-    ],
-    name: 'CawActionsSet',
-  },
-  {
-    type: 'event',
-    anonymous: false,
-    inputs: [
-      {
-        name: 'sibling',
-        internalType: 'address',
-        type: 'address',
-        indexed: false,
-      },
-    ],
-    name: 'ERC1271SiblingSet',
   },
   {
     type: 'event',
@@ -4401,7 +4340,6 @@ export const cawProfileLedgerAbi = [
     name: 'OnlyPeer',
   },
   { type: 'error', inputs: [], name: 'Replayed' },
-  { type: 'error', inputs: [], name: 'SiblingSet' },
   { type: 'error', inputs: [], name: 'SpendLimitTooHigh' },
   { type: 'error', inputs: [], name: 'Unauth' },
   { type: 'error', inputs: [], name: 'UnauthorizedSelector' },
@@ -5196,6 +5134,7 @@ export const cawProfileMinterAbi = [
       { name: '_caw', internalType: 'address', type: 'address' },
       { name: '_cawProfiles', internalType: 'address', type: 'address' },
       { name: '_router', internalType: 'address', type: 'address' },
+      { name: '_pathwayExpander', internalType: 'address', type: 'address' },
     ],
     stateMutability: 'nonpayable',
   },
@@ -5213,6 +5152,16 @@ export const cawProfileMinterAbi = [
     name: 'WETH',
     outputs: [{ name: '', internalType: 'address', type: 'address' }],
     stateMutability: 'view',
+  },
+  {
+    type: 'function',
+    inputs: [
+      { name: 'level', internalType: 'uint8', type: 'uint8' },
+      { name: 'verifier', internalType: 'address', type: 'address' },
+    ],
+    name: 'addKycVerifier',
+    outputs: [],
+    stateMutability: 'nonpayable',
   },
   {
     type: 'function',
@@ -5287,13 +5236,6 @@ export const cawProfileMinterAbi = [
     name: 'isValidUsername',
     outputs: [{ name: '', internalType: 'bool', type: 'bool' }],
     stateMutability: 'pure',
-  },
-  {
-    type: 'function',
-    inputs: [],
-    name: 'kycAdmin',
-    outputs: [{ name: '', internalType: 'address', type: 'address' }],
-    stateMutability: 'view',
   },
   {
     type: 'function',
@@ -5492,20 +5434,10 @@ export const cawProfileMinterAbi = [
   },
   {
     type: 'function',
-    inputs: [{ name: '_admin', internalType: 'address', type: 'address' }],
-    name: 'setKycAdmin',
-    outputs: [],
-    stateMutability: 'nonpayable',
-  },
-  {
-    type: 'function',
-    inputs: [
-      { name: 'level', internalType: 'uint8', type: 'uint8' },
-      { name: 'verifier', internalType: 'address', type: 'address' },
-    ],
-    name: 'setKycVerifier',
-    outputs: [],
-    stateMutability: 'nonpayable',
+    inputs: [],
+    name: 'pathwayExpander',
+    outputs: [{ name: '', internalType: 'address', type: 'address' }],
+    stateMutability: 'view',
   },
   {
     type: 'function',
@@ -5534,19 +5466,6 @@ export const cawProfileMinterAbi = [
     type: 'event',
     anonymous: false,
     inputs: [
-      {
-        name: 'admin',
-        internalType: 'address',
-        type: 'address',
-        indexed: true,
-      },
-    ],
-    name: 'KycAdminSet',
-  },
-  {
-    type: 'event',
-    anonymous: false,
-    inputs: [
       { name: 'level', internalType: 'uint8', type: 'uint8', indexed: true },
       {
         name: 'verifier',
@@ -5555,7 +5474,7 @@ export const cawProfileMinterAbi = [
         indexed: true,
       },
     ],
-    name: 'KycVerifierSet',
+    name: 'KycVerifierAdded',
   },
   {
     type: 'event',
@@ -5604,8 +5523,11 @@ export const cawProfileMinterAbi = [
   { type: 'error', inputs: [], name: 'AlreadyUnlocked' },
   { type: 'error', inputs: [], name: 'KycNotConfigured' },
   { type: 'error', inputs: [], name: 'KycRequired' },
+  { type: 'error', inputs: [], name: 'LevelAlreadySet' },
+  { type: 'error', inputs: [], name: 'NotPathwayExpander' },
   { type: 'error', inputs: [], name: 'NotTokenOwner' },
   { type: 'error', inputs: [], name: 'WithdrawTimelocked' },
+  { type: 'error', inputs: [], name: 'ZeroAddr' },
 ] as const
 
 //////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////

@@ -1633,7 +1633,11 @@ class MultiChainDeployer {
     // sibling's future address BEFORE evaluating constructorArgs so the sibling
     // address can be wired in as an immutable constructor arg.
     if (config.predictedSiblingKey && !this.state.addresses[config.predictedSiblingKey]) {
-      const nonce = await wallet.getNonce();
+      // Use "pending" so we see ALL queued txs from this wallet, not just
+      // those that have already mined. Otherwise parallel/concurrent deploys
+      // earlier in the run can leave us reading a stale latest-block nonce
+      // and predicting at an address that gets shifted by the inflight txs.
+      const nonce = await wallet.getNonce("pending");
       // This contract lands at nonce; sibling lands at nonce+1.
       // ethers v6 renamed getContractAddress → getCreateAddress.
       const siblingAddr = ethers.getCreateAddress({ from: wallet.address, nonce: nonce + 1 });
@@ -1645,15 +1649,25 @@ class MultiChainDeployer {
     // Multi-offset nonce-prediction. `predictedSiblings` is an array of
     // { key, offset } entries allowing a contract to predict addresses at
     // arbitrary nonce distances (not just nonce+1). A single nonce read is
-    // shared across all entries. If any sibling is already deployed
-    // (addresses[key] is set) its entry is skipped.
+    // shared across all entries.
+    //
+    // We OVERWRITE any previous predictedAddresses[key] entry — the contract
+    // running predictedSiblings is typically the closest predictor (smallest
+    // nonce distance) and thus the most reliable. The pre-deploy hook for
+    // L1 CawProfile predicts at a much larger distance (many phase-2 entries
+    // ahead) and can drift if any of them are mis-counted; the L1 Ledger's
+    // local +4 prediction overrides that with the authoritative value.
     if (config.predictedSiblings && config.predictedSiblings.length > 0) {
-      const nonce = await wallet.getNonce();
+      const nonce = await wallet.getNonce("pending");
       this.state.predictedAddresses = this.state.predictedAddresses || {};
       for (const { key, offset } of config.predictedSiblings) {
-        if (!this.state.addresses[key] && !this.state.predictedAddresses[key]) {
-          const addr = ethers.getCreateAddress({ from: wallet.address, nonce: nonce + offset });
-          this.state.predictedAddresses[key] = addr;
+        if (this.state.addresses[key]) continue; // already deployed; skip
+        const addr = ethers.getCreateAddress({ from: wallet.address, nonce: nonce + offset });
+        const prev = this.state.predictedAddresses[key];
+        this.state.predictedAddresses[key] = addr;
+        if (prev && prev.toLowerCase() !== addr.toLowerCase()) {
+          console.log(`   Re-predicted ${key} address (nonce ${nonce + offset}): ${addr} (was ${prev})`);
+        } else {
           console.log(`   Predicted ${key} address (nonce ${nonce + offset}): ${addr}`);
         }
       }
@@ -1973,35 +1987,82 @@ class MultiChainDeployer {
     // post-deploy setL1Peer admin step. CawProfile doesn't deploy until phase 2,
     // so we predict its address here from the L1 wallet's current nonce.
     //
-    // L1 phase-2 deploy order before CawProfile (counting only L1-chain contracts
-    // whose condition() passes in the current env):
-    //   SessionMessageParser_L1
-    //   CawProfileLedger_L1  (triggers its own multi-sibling predictions)
-    //   CawCapOracle_L1
-    //   CawActions_L1
-    //   CawActionsERC1271_L1
-    //   CawProfile ← target
+    // Pre-predict L1 CawProfile address so cross-chain L2 Ledgers (phase 1)
+    // can wire it into their immutable cawProfile slot before CawProfile
+    // itself is deployed (phase 2).
     //
-    // That's 5 deploys ahead of CawProfile on L1. However some of those are
-    // already recorded in state.addresses if this is a re-run. We count only
-    // the MISSING ones (i.e. the ones that will actually consume nonces).
+    // The count of nonces-ahead is computed DYNAMICALLY by walking every
+    // CONTRACTS entry whose chain==='L1' and phase<=2, in CONTRACTS-table
+    // declaration order, and counting each one that:
+    //   (a) isn't already in state.addresses (i.e. will actually deploy)
+    //   (b) passes its condition() predicate in the current env
+    // This is the same loop that deployPhase() uses, so the count CANNOT
+    // drift from the actual deploy order. Hardcoded lists previously got
+    // stale (CawFontDataA, FontDataB, URI, BuyAndBurn, NetworkManager,
+    // PriceReader were missing → predicted CawProfile at the wrong nonce
+    // → contracts were wired to wrong addresses, see 2026-06-05 testnet
+    // redeploy post-mortem).
     if (!this.state.addresses.CawProfile) {
       const l1ChainKey = this.getChainKey('L1');
       await this.initChain(l1ChainKey);
       const l1Wallet = this.wallets[l1ChainKey];
-      const l1Nonce = await l1Wallet.getNonce();
+      // Use "pending" so any inflight phase-1 txs (PathwayExpander_L1,
+      // SessionMessageParser_L2*, MintableCaw, etc.) are accounted for if
+      // they haven't been mined into a fresh block yet. Phase 1 deploys
+      // happen on L1 BEFORE this hook fires, but parallel chain-cross
+      // deploys can leave the L1 chain in a "block-just-arrived" state
+      // where getNonce() returns the pre-tx count.
+      const l1Nonce = await l1Wallet.getNonce("pending");
 
-      // Count contracts that will deploy on L1 before CawProfile in phase 2.
-      // Respects condition() predicates so env-gated contracts (CawL1PriceReader,
-      // MockSwapRouter, etc.) that won't deploy are not counted.
-      const l1Phase2BeforeProfile = ['SessionMessageParser_L1', 'CawProfileLedger_L1',
-        'CawCapOracle_L1', 'CawActions_L1', 'CawActionsERC1271_L1'];
-      let noncesAhead = 0;
-      for (const k of l1Phase2BeforeProfile) {
-        const cfg = CONTRACTS[k];
-        if (!this.state.addresses[k] && (!cfg.condition || cfg.condition(this.state, this, this.env))) {
-          noncesAhead++;
+      // Simulate the deployPhase() scheduler to determine the deploy order
+      // for L1 phase 1 + phase 2 — but ONLY count those that land before
+      // CawProfile. Hardcoded counts have proven fragile (FontData/URI/etc
+      // are NOT in CawProfile's transitive deps but DO deploy first), so
+      // we mirror the actual scheduler.
+      //
+      // Pretend any non-L1 deps of CawProfile are already deployed —
+      // L2 Ledgers, L2b Ledgers etc are phase 1 on their own chains, so
+      // by the time CawProfile actually deploys on L1, they're available.
+      // We don't simulate cross-chain ordering, just count L1 nonces.
+      const simAddresses = { ...this.state.addresses };
+      const MARKER = '0x' + 'ff'.repeat(20);
+      for (const [key, cfg] of Object.entries(CONTRACTS)) {
+        if (cfg.chain !== 'L1' && !simAddresses[key]) simAddresses[key] = MARKER;
+      }
+      const passes = (cfg) => !cfg.condition || cfg.condition(this.state, this, this.env);
+      const allPhase12L1 = Object.entries(CONTRACTS)
+        .filter(([k, cfg]) => cfg.chain === 'L1' && (cfg.phase === 1 || cfg.phase === 2))
+        .filter(([k, cfg]) => passes(cfg))
+        .map(([k]) => k);
+      const remaining = new Set(allPhase12L1);
+      const deployOrder = [];
+      while (remaining.size > 0) {
+        // Pick the first contract (CONTRACTS iteration order) whose deps are met.
+        let picked = null;
+        for (const key of allPhase12L1) {
+          if (!remaining.has(key)) continue;
+          const deps = CONTRACTS[key].dependencies || [];
+          if (deps.every(d => simAddresses[d])) {
+            picked = key;
+            break;
+          }
         }
+        if (!picked) {
+          // Should not happen if deps are satisfiable, but bail to avoid infinite loop.
+          console.warn(`   [pre-predict] could not resolve deploy order; remaining: ${[...remaining].join(', ')}`);
+          break;
+        }
+        deployOrder.push(picked);
+        simAddresses[picked] = MARKER; // marker as "deployed"
+        remaining.delete(picked);
+      }
+      // Count contracts in deployOrder that come before CawProfile AND
+      // aren't already actually deployed.
+      let noncesAhead = 0;
+      for (const key of deployOrder) {
+        if (key === 'CawProfile') break;
+        if (this.state.addresses[key]) continue; // already-deployed re-run case
+        noncesAhead++;
       }
       const predictedProfile = ethers.getCreateAddress({ from: l1Wallet.address, nonce: l1Nonce + noncesAhead });
       this.state.predictedAddresses = this.state.predictedAddresses || {};
