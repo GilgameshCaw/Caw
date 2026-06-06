@@ -344,6 +344,12 @@ model TxQueue {
   // and the DataCleaner watcher to promote it when L2 catches up.
   pendingDepositTxHash String?
 
+  // If non-null, the client claims a pending QuickSign session-register tx
+  // (mintAndDeposit+QuickSign / zap) that should land the session key on-chain.
+  // Presence parks the row waiting_for_session until the key is registered.
+  // (Column added by migration 20260428200000_add_pending_quicksign_hash.)
+  pendingQuickSignTxHash String?
+
   // Groups txqueue rows that share an ActionBatch signature. Adjacent rows
   // (in createdAt/cawonce order) with the same batchId are sent on-chain
   // as one signature group. signedTx must match across rows in the group —
@@ -366,6 +372,13 @@ model TxQueue {
   // Both nullable so old rows + non-FE submitters (curl, scripts) are fine.
   clientVersion String?
   clientOrigin  String?
+
+  // Who signed the action: 'owner' (wallet) or 'session' (QuickSign key).
+  // implicitTip is the per-action tip the validator should apply when the
+  // signed payload carries no explicit tip (amounts empty). Both added by
+  // migration 20260506200000_session_per_action_tip_rate.
+  signerKind  String? @default("owner")
+  implicitTip String?
 
   @@index([senderId, status])
   @@index([batchId])
