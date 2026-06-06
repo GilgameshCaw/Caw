@@ -55,60 +55,106 @@ function getCrowCount(): number {
 }
 
 // ─── Crow geometry — CAW logo silhouette ───────────────────────────────────────
-// Reshaped from Mr.doob's 3-triangle crow to read like the CAW logo bird: a
-// swept-back "W" wing pair with a notched inner edge and a forked tail, kept as
-// flapping 3D geometry (wingtips animate in Y; whole body pitches/banks).
+// Hand-built low-poly crow to read like the CAW logo bird:
+//   - BODY: a spearhead — sharp pointed head (+x, forward), widens to shoulders,
+//     pinches slightly at waist, then FLARES to a wide tail at the back (-x).
+//     The tail is wider than the shoulders (per crow-body.svg flared tail).
+//   - WINGS: long SHALLOW BLADE per crow-wing.svg — span (z) >> chord (x).
+//     Leading edge runs nearly flat from body shoulder out to a sharp outer tip.
+//     The tip is out to the SIDE (large ±z) with only a slight -x rearward offset.
+//     NOT swept up-and-back. Two tris per wing form the blade.
+//   - Wings HINGE at body shoulders. Inner/root verts stay in y≈0 plane.
+//     Outer WINGTIP verts animate in Y for the flap.
 //
 // Axes:  x = forward (beak) / back (tail)   z = wingspan (L/R)   y = up (flap)
 //
-// The CAW logo wings angle UP-AND-BACK from the body with a step where each wing
-// meets the body, and the tail is a shallow fork. We capture that with 10 verts:
+// 16 vertices (v0..v15):
 //
-//   v0 beak           ( 5.5,  0,    0  )  pointed nose
-//   v1 body back      (-3.0,  0,    0  )  spine, between the tail fork
-//   v2 L inner notch  (-0.5,  0.6, -1.6)  where left wing steps off the body
-//   v3 L wingtip      (-3.5,  2.4, -6.5)  swept BACK + up   ← animated (Y)
-//   v4 R inner notch  (-0.5,  0.6,  1.6)  where right wing steps off the body
-//   v5 R wingtip      (-3.5,  2.4,  6.5)  swept BACK + up   ← animated (Y)
-//   v6 body front     ( 1.8,  0,    0  )  shoulders
-//   v7 L tail tip     (-5.5, -1.2, -1.4)  fork prong
-//   v8 R tail tip     (-5.5, -1.2,  1.4)  fork prong
-//   v9 wing trail     (-4.2,  0.3,  0  )  rear point the wings sweep toward
+//  BODY (all y=0, body in xz plane):
+//   v0  HEAD tip      ( 7.0,  0,    0  )  sharp beak point, forward
+//   v1  L shoulder    ( 2.5,  0,   -1.8)  where left wing attaches
+//   v2  R shoulder    ( 2.5,  0,    1.8)  where right wing attaches
+//   v3  L waist       ( 0.2,  0,   -0.8)  body pinches after shoulders
+//   v4  R waist       ( 0.2,  0,    0.8)
+//   v5  L tail corner (-4.8,  0,   -2.6)  tail FLARES wider than shoulders
+//   v6  R tail corner (-4.8,  0,    2.6)
+//   v7  tail notch    (-4.0,  0,    0  )  central notch on the tail's back edge
 //
-// Faces: each wing = 2 tris (leading + trailing panel) to show the swept "W";
-// plus the two tail-fork tris off the spine.
+//  LEFT WING (blade, attaches near L shoulder):
+//   v8  L inner lead  ( 3.0,  0,   -2.2)  leading edge root, near shoulder (slightly forward)
+//   v9  L inner trail ( 0.5,  0,   -2.2)  trailing edge root
+//   v10 L wing mid    ( 1.0,  0,   -5.5)  blade midpoint, nearly same x as root
+//   v11 L WINGTIP     (-0.2,  0,   -9.5)  outer tip: large -z, only tiny -x  ← FLAP Y
 //
-// Scale factor 0.08 brings the ~11-unit crow into ~0.9 world units — readable
-// at our camera distance of ~22 without dominating the frame.
+//  RIGHT WING (mirror of left):
+//   v12 R inner lead  ( 3.0,  0,    2.2)
+//   v13 R inner trail ( 0.5,  0,    2.2)
+//   v14 R wing mid    ( 1.0,  0,    5.5)
+//   v15 R WINGTIP     (-0.2,  0,    9.5)  ← FLAP Y
+//
+// Body tris (6):  head fan + tail flare
+// Wing tris (4):  2 per wing (inner-lead,inner-trail,mid) + (inner-lead,mid,tip)
+//
+// CROW_SCALE 0.072 brings the ~19-unit raw span into ~0.96 world units — similar
+// on-screen size to before.
 
-const CROW_SCALE = 0.08
+const CROW_SCALE = 0.072
 
 const BASE_VERTS: readonly number[] = [
-  /* v0 beak        */  5.5,  0.0,  0.0,
-  /* v1 body back   */ -3.0,  0.0,  0.0,
-  /* v2 L notch     */ -0.5,  0.6, -1.6,
-  /* v3 L wingtip   */ -3.5,  2.4, -6.5,
-  /* v4 R notch     */ -0.5,  0.6,  1.6,
-  /* v5 R wingtip   */ -3.5,  2.4,  6.5,
-  /* v6 body front  */  1.8,  0.0,  0.0,
-  /* v7 L tail tip  */ -5.5, -1.2, -1.4,
-  /* v8 R tail tip  */ -5.5, -1.2,  1.4,
-  /* v9 wing trail  */ -4.2,  0.3,  0.0,
+  /* v0  HEAD tip       */  7.0,  0.0,   0.0,
+  /* v1  L shoulder     */  2.5,  0.0,  -1.8,
+  /* v2  R shoulder     */  2.5,  0.0,   1.8,
+  /* v3  L waist        */  0.2,  0.0,  -0.8,
+  /* v4  R waist        */  0.2,  0.0,   0.8,
+  /* v5  L tail corner  */ -4.8,  0.0,  -2.6,
+  /* v6  R tail corner  */ -4.8,  0.0,   2.6,
+  /* v7  tail notch     */ -4.0,  0.0,   0.0,
+  /* v8  L inner lead   */  3.0,  0.0,  -2.2,
+  /* v9  L inner trail  */  0.5,  0.0,  -2.2,
+  /* v10 L wing mid     */  1.0,  0.0,  -5.5,
+  /* v11 L WINGTIP      */ -0.2,  0.0,  -9.5,
+  /* v12 R inner lead   */  3.0,  0.0,   2.2,
+  /* v13 R inner trail  */  0.5,  0.0,   2.2,
+  /* v14 R wing mid     */  1.0,  0.0,   5.5,
+  /* v15 R WINGTIP      */ -0.2,  0.0,   9.5,
 ]
 
-// Faces (CCW-ish; material is DoubleSide so winding isn't critical):
-//   Left wing  : leading (beak→notch→tip) + trailing (notch→trail→tip)
-//   Right wing : leading (beak→tip→notch) + trailing (notch→tip→trail)
-//   Tail fork  : (body front→body back→L tail) + (body front→R tail→body back)
+// Faces (DoubleSide material so winding is not critical):
+//  Body: 6 tris fully tile the body polygon (head/shoulders/waist/tail)
+//  Wings: 2 tris per wing = 4 tris
+//  Total: 10 triangles
+//
+// Body triangulation (outline: v0→v2→v4→v6→v7→v5→v3→v1→v0):
+//   Front half: (0,2,1) head; (1,2,4) shoulder band; (1,4,3) waist band
+//   Back half:  (3,4,7) center trunk; (3,7,5) L tail flare; (4,6,7) R tail flare
+// All 8 body verts covered, no gaps.
 const CROW_INDICES = new Uint8Array([
-  0, 2, 3,   2, 9, 3,    // left  wing: leading (beak→notch→tip) + trailing (notch→trail→tip)
-  0, 5, 4,   4, 5, 9,    // right wing: leading (beak→tip→notch) + trailing (notch→tip→trail)
-  6, 1, 7,   6, 8, 1,    // tail fork (two prongs off the spine)
+  // Body — front half
+  0,  2,  1,   // head → R shoulder → L shoulder  (front cap)
+  1,  2,  4,   // L shoulder → R shoulder → R waist  (shoulder band)
+  1,  4,  3,   // L shoulder → R waist → L waist  (waist band)
+  // Body — back half (tail)
+  3,  4,  7,   // L waist → R waist → tail notch  (center trunk)
+  3,  7,  5,   // L waist → tail notch → L tail corner  (L flare)
+  4,  6,  7,   // R waist → R tail corner → tail notch  (R flare)
+  // Left wing blade
+  8,  9, 10,   // inner-lead → inner-trail → mid
+  8, 10, 11,   // inner-lead → mid → tip
+  // Right wing blade
+ 12, 14, 13,   // inner-lead → mid → inner-trail
+ 12, 15, 14,   // inner-lead → tip → mid
 ])
 
-// Wing vertex indices inside the position flat array (stride 3) — wingtips flap.
-const IDX_V4_Y = 3 * 3 + 1  // 10 — left  wingtip Y (v3)
-const IDX_V5_Y = 5 * 3 + 1  // 16 — right wingtip Y (v5)
+// Stride-3 Y-component indices for the WINGTIP verts that animate during flap.
+// v11 = index 11 → flat-array offset 11*3+1 = 34
+// v15 = index 15 → flat-array offset 15*3+1 = 46
+const IDX_V4_Y = 11 * 3 + 1  // 34 — left  wingtip Y  (v11)
+const IDX_V5_Y = 15 * 3 + 1  // 46 — right wingtip Y  (v15)
+
+// Optional: also animate the mid-wing verts at a fraction of the tip for a
+// smoother bend. v10 Y = 10*3+1 = 31, v14 Y = 14*3+1 = 43
+const IDX_MID_L_Y = 10 * 3 + 1  // 31 — left  mid-wing Y  (v10)
+const IDX_MID_R_Y = 14 * 3 + 1  // 43 — right mid-wing Y  (v14)
 
 function makeCrowGeometry(): THREE.BufferGeometry {
   const geo = new THREE.BufferGeometry()
@@ -121,6 +167,51 @@ function makeCrowGeometry(): THREE.BufferGeometry {
   return geo
 }
 
+// ─── Color tiers — match the old 2D BoidsBg.tsx tier pattern ─────────────────
+// Three tiers assigned at init by bird index (same split as 2D version):
+//   i < 5              → GOLD   (~5 birds): CAW gold #ffe678, opacity 0.70 — POPS
+//   i < 10             → SILVER (~5 birds): dark=white / light=near-black, opacity 0.65
+//   else               → DIM    (~90%): low alpha, recedes against the background
+
+type ColorTier = 'gold' | 'silver' | 'dim'
+
+function getTier(i: number): ColorTier {
+  if (i < 5)  return 'gold'
+  if (i < 10) return 'silver'
+  return 'dim'
+}
+
+// Materials are created once per isDark change (in useMemo) and shared across
+// all birds of the same tier. Each bird still has its OWN geometry for mutable
+// wingtip positions. No allocations in the per-frame loop.
+
+function makeTierMaterials(isDark: boolean): Record<ColorTier, THREE.MeshBasicMaterial> {
+  return {
+    gold: new THREE.MeshBasicMaterial({
+      color: new THREE.Color(1.0, 0.902, 0.471),  // #ffe678 — CAW accent gold
+      side: THREE.DoubleSide,
+      transparent: true,
+      opacity: 0.70,
+    }),
+    silver: new THREE.MeshBasicMaterial({
+      color: isDark
+        ? new THREE.Color(1.0, 1.0, 1.0)          // pure white on dark
+        : new THREE.Color(0.08, 0.07, 0.06),       // near-black on light
+      side: THREE.DoubleSide,
+      transparent: true,
+      opacity: 0.65,
+    }),
+    dim: new THREE.MeshBasicMaterial({
+      color: isDark
+        ? new THREE.Color(0.78, 0.82, 0.86)        // light grey-blue on dark
+        : new THREE.Color(0.08, 0.07, 0.06),       // near-black on light
+      side: THREE.DoubleSide,
+      transparent: true,
+      opacity: isDark ? 0.15 : 0.12,               // faint / transparent — they recede
+    }),
+  }
+}
+
 // ─── Per-crow state ───────────────────────────────────────────────────────────
 
 interface CrowState {
@@ -128,6 +219,7 @@ interface CrowState {
   vx: number; vy: number; vz: number   // velocity
   phase: number                          // wing-flap phase (radians)
   fright: number                         // 0..1 panic scalar: spikes near cursor, decays
+  tier: ColorTier                        // assigned at init, immutable
 }
 
 function makeCrowStates(count: number): CrowState[] {
@@ -146,6 +238,7 @@ function makeCrowStates(count: number): CrowState[] {
       vz: Math.sin(theta) * Math.cos(phi) * spd,
       phase: Math.random() * Math.PI * 2,
       fright: 0,
+      tier: getTier(i),
     })
   }
   return states
@@ -162,20 +255,6 @@ interface MouseWorld {
 function FlockScene({ isDark }: { isDark: boolean }) {
   const { gl, camera, size } = useThree()
 
-  // One material per scene (shared across all meshes — THREE reuses it fine).
-  // Birds must CONTRAST the page background: the splash is bg-black in dark
-  // mode, so near-black birds were invisible (black-on-black). Use a light
-  // silhouette on dark bg, and a dark silhouette on light bg.
-  const material = useMemo(() => {
-    const col = isDark
-      ? new THREE.Color(0xcdd3dc)   // light grey-blue — visible on black
-      : new THREE.Color(0x15120e)   // near-black — visible on white
-    return new THREE.MeshBasicMaterial({
-      color: col,
-      side: THREE.DoubleSide,
-    })
-  }, [isDark])
-
   // Fog fades distant crows toward the background for depth. It must match the
   // page bg (black in dark mode, white in light) so birds dissolve into the
   // "sky" rather than into a mismatched grey haze.
@@ -191,6 +270,9 @@ function FlockScene({ isDark }: { isDark: boolean }) {
     return () => { scene.fog = null }
   }, [scene, fogColor])
 
+  // Per-tier materials — recreated only when isDark changes, shared across birds
+  const tierMaterials = useMemo(() => makeTierMaterials(isDark), [isDark])
+
   // Build per-crow meshes + geometry (each crow owns its geometry for mutable wing verts)
   const count = useMemo(() => getCrowCount(), [])
 
@@ -198,11 +280,21 @@ function FlockScene({ isDark }: { isDark: boolean }) {
     const arr: THREE.Mesh[] = []
     for (let i = 0; i < count; i++) {
       const geo = makeCrowGeometry()
-      const m = new THREE.Mesh(geo, material)
+      const tier = getTier(i)
+      const m = new THREE.Mesh(geo, tierMaterials[tier])
       arr.push(m)
     }
     return arr
-  }, [count, material])
+  }, [count, tierMaterials])
+
+  // When tierMaterials change (isDark toggle), update all mesh materials in-place
+  // so we don't rebuild the geometry array.
+  useEffect(() => {
+    for (let i = 0; i < meshes.length; i++) {
+      const tier = getTier(i)
+      meshes[i].material = tierMaterials[tier]
+    }
+  }, [meshes, tierMaterials])
 
   // Group holds all crows — added to the scene as a single node
   const groupRef = useRef<THREE.Group>(null)
@@ -401,8 +493,12 @@ function FlockScene({ isDark }: { isDark: boolean }) {
 
       const posAttr = mesh.geometry.attributes['position'] as THREE.BufferAttribute
       const arr = posAttr.array as Float32Array
-      arr[IDX_V4_Y] = wingY   // left  wingtip Y
-      arr[IDX_V5_Y] = wingY   // right wingtip Y (symmetric flap)
+      // Animate outer wingtips (v11 left, v15 right) — symmetric flap
+      arr[IDX_V4_Y] = wingY   // left  wingtip Y  (v11)
+      arr[IDX_V5_Y] = wingY   // right wingtip Y  (v15)
+      // Also lift the mid-wing verts at 55% of tip travel for a smooth blade bend
+      arr[IDX_MID_L_Y] = wingY * 0.55   // v10 left  mid-wing
+      arr[IDX_MID_R_Y] = wingY * 0.55   // v14 right mid-wing
       posAttr.needsUpdate = true
     }
   })
