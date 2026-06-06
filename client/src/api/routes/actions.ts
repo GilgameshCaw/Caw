@@ -515,6 +515,163 @@ router.post('/', async (req, res) => {
       }
     }
 
+    // Create the transaction queue entry BEFORE optimistic domain writes so
+    // that if any domain write throws, the TxQueue row still exists and the
+    // action will submit on-chain. The inverse (TxQueue without optimistic row)
+    // is self-healing: the indexer creates the confirmed row on chain land.
+    // If a retry, atomically mark the original as 'retried' in the same
+    // transaction so we never mark-without-creating or create-without-marking.
+    let txQueueEntry
+    const parsedRetryId = retriedTxQueueId != null ? Number(retriedTxQueueId) : null
+    if (parsedRetryId != null && isNaN(parsedRetryId)) {
+      return res.status(400).json({ error: 'Invalid retriedTxQueueId' })
+    }
+
+    // Cawonce collision pre-check: the DB partial unique index only covers
+    // active statuses (pending/processing/awaiting_indexer/waiting_for_deposit).
+    // A row that has already transitioned to done/failed/retried — common
+    // when the user re-submits hours later from a different device after
+    // localStorage TTL expired — would slip past the index and produce a
+    // duplicate TxQueue row. Pre-check across ALL statuses and return 409
+    // so the FE's CawonceCollisionError handler bumps the local watermark
+    // and re-signs at a fresh slot. Diagnosed 2026-05-11 against a wave of
+    // duplicate TxQueue rows with {done, failed} status pairs hours apart.
+    const cawonceTaken = await prisma.txQueue.findFirst({
+      where: { senderId: data.senderId, cawonce: data.cawonce },
+      select: { id: true, status: true },
+    })
+    if (cawonceTaken) {
+      const highest = await highestKnownCawonce(data.senderId)
+      const suggestedCawonce = (highest ?? data.cawonce) + 1
+      console.log(`[Actions] Cawonce collision (pre-insert, existing row id=${cawonceTaken.id} status=${cawonceTaken.status}): senderId=${data.senderId} cawonce=${data.cawonce} — suggesting ${suggestedCawonce}`)
+      return res.status(409).json({
+        error: 'cawonce_collision',
+        message: 'Another action by this sender is already using this cawonce. Re-read chain and re-sign.',
+        senderId: data.senderId,
+        cawonce: data.cawonce,
+        suggestedCawonce,
+      })
+    }
+
+    // Recent-duplicate-content guard. Pattern observed 2026-05-11 on
+    // test.caw.social: when validator simulation rejects with "Session
+    // expired or not found" (or similar early-fail), the FE shows a
+    // failure and the user re-clicks Post. Each click signs a FRESH
+    // payload with a fresh cawonce, so the per-cawonce dedup above
+    // doesn't fire. Result: 4-6 identical Caw rows at consecutive
+    // cawonces. Found one user with 6 identical posts in a 3-minute
+    // window.
+    //
+    // Strategy: if we just saw this sender submit the same content
+    // (same actionType + recipients + text bytes) within the last
+    // 2 minutes AND the prior row is still in-flight OR very recently
+    // succeeded, return the existing row's id so the FE resumes
+    // tracking it instead of creating another duplicate.
+    //
+    // Bypassed when retriedTxQueueId is set — that's an explicit
+    // "retry this exact failed row" call and the caller knows what
+    // they're doing (the original row was already marked retried in
+    // the txn below).
+    if (parsedRetryId == null) {
+      const fp = contentFingerprint(data)
+      const recentSameContent = await prisma.txQueue.findFirst({
+        where: {
+          senderId: data.senderId,
+          // Match active rows of any age + recently-succeeded rows.
+          // The 2-min window mirrors a typical optimistic-UX horizon —
+          // long enough that a frustrated user's re-click is caught,
+          // short enough that legitimate "I want to post the same thing
+          // later" is not blocked.
+          OR: [
+            { status: { in: ['pending', 'processing', 'awaiting_indexer', 'waiting_for_deposit'] } },
+            { status: { in: ['done', 'validated_by_peer'] }, updatedAt: { gte: new Date(Date.now() - 2 * 60_000) } },
+          ],
+          createdAt: { gte: new Date(Date.now() - 5 * 60_000) },
+        },
+        orderBy: { id: 'desc' },
+        select: { id: true, status: true, cawonce: true, payload: true },
+      })
+      if (recentSameContent && contentFingerprint((recentSameContent.payload as any)?.data) === fp) {
+        console.log(`[Actions] Duplicate content guard: senderId=${data.senderId} cawonce=${data.cawonce} matches recent TxQueue ${recentSameContent.id} (status=${recentSameContent.status}, cawonce=${recentSameContent.cawonce}); returning existing row`)
+        return res.json({
+          txQueueId: recentSameContent.id,
+          status: recentSameContent.status,
+          deduped: true,
+          reason: 'identical content recently submitted by this sender',
+        })
+      }
+    }
+
+    try {
+      txQueueEntry = await prisma.$transaction(async (tx) => {
+        if (parsedRetryId != null) {
+          const updated = await tx.txQueue.updateMany({
+            where: { id: parsedRetryId, status: 'failed' },
+            data: { status: 'retried' }
+          })
+          if (updated.count === 0) {
+            throw Object.assign(new Error('Original txQueue is not in failed state — retry already submitted'), { retryConflict: true })
+          }
+          console.log(`[Actions] Marked TxQueue ${parsedRetryId} as retried`)
+        }
+
+        const provenance = extractClientProvenance(req)
+        const created = await tx.txQueue.create({
+          data: {
+            senderId: data.senderId,
+            cawonce: data.cawonce,
+            payload: { data, domain, types },
+            signedTx: signature,
+            pendingDepositTxHash: sanitizedPendingDepositTxHash,
+            // Only stamp the QuickSign hint when we're actually parking the
+            // row. The hint is what the validator's pre-sim hold uses to
+            // decide what to park; stamping it on rows whose session is
+            // already on-chain caused those rows to be parked anyway. The
+            // FE forwards the hint for 24h post-submit, well after the
+            // session has typically landed — so the API's authoritative
+            // `parkAsWaitingForSession` decision (driven by checkSessionKey
+            // OnChain) is the right signal, not the FE's optimistic hint.
+            pendingQuickSignTxHash: parkAsWaitingForSession ? sanitizedPendingQuickSignTxHash : null,
+            clientVersion: provenance.clientVersion,
+            clientOrigin: provenance.clientOrigin,
+            signerKind: isOwner ? 'owner' : 'session',
+            // When parking for a pending session registration, perActionTipRate
+            // is unknown (the session record hasn't landed on L2 yet). Set
+            // implicitTip to null; the ValidatorService will re-read it from
+            // the SessionKey row once the row is promoted back to 'pending'.
+            implicitTip: parkAsWaitingForSession ? null : (perActionTipRate !== null ? perActionTipRate.toString() : null),
+            // Park as waiting_for_session when the session key hasn't landed on
+            // L2 yet. The DataCleaner will promote to 'pending' once it appears.
+            status: parkAsWaitingForSession ? 'waiting_for_session' : 'pending',
+            reason: parkAsWaitingForSession ? 'Waiting for Quick Sign session to register on L2' : undefined,
+          }
+        })
+        return created
+      })
+    } catch (err: any) {
+      if (err.retryConflict) {
+        return res.status(409).json({ error: err.message })
+      }
+      // P2002 = unique constraint violation. The partial unique index on
+      // active (senderId, cawonce) fires when two near-simultaneous
+      // submissions race past the pre-check above. Returns the same 409
+      // shape as the pre-check path so the FE has one code path to handle.
+      if (err?.code === 'P2002') {
+        const highest = await highestKnownCawonce(data.senderId)
+        const suggestedCawonce = (highest ?? data.cawonce) + 1
+        console.log(`[Actions] Cawonce collision (P2002 race): senderId=${data.senderId} cawonce=${data.cawonce} — suggesting ${suggestedCawonce}`)
+        return res.status(409).json({
+          error: 'cawonce_collision',
+          message: 'Another action by this sender is already using this cawonce. Re-read chain and re-sign.',
+          senderId: data.senderId,
+          cawonce: data.cawonce,
+          suggestedCawonce,
+        })
+      }
+      throw err
+    }
+    console.log(`Created TxQueue entry ${txQueueEntry.id} for action type ${data.actionType}, senderId ${data.senderId}, cawonce ${data.cawonce}`)
+
     // Handle hide actions optimistically — hide the caw or delete the recaw immediately
     if ((data.actionType === 7 || data.actionType === 'other') && plaintext?.startsWith('hide:')) {
       try {
@@ -1286,197 +1443,6 @@ router.post('/', async (req, res) => {
         // Continue even if withdrawal request creation fails
       }
     }
-
-    // Per-sender cap on waiting_for_deposit / waiting_for_session slots.
-    // An attacker who knows a sender's tokenId could spam actions with a
-    // fake pendingDepositTxHash / pendingQuickSignTxHash to fill the queue
-    // with rows that sit waiting for 20 min. Capping at 10 in-flight waiting
-    // rows per sender limits the blast radius to their own queue (which they
-    // already control anyway — they'd have to sign each action themselves).
-    if (sanitizedPendingDepositTxHash) {
-      const existingWaiting = await prisma.txQueue.count({
-        where: { senderId: data.senderId, status: 'waiting_for_deposit' }
-      })
-      if (existingWaiting >= 10) {
-        return res.status(429).json({ error: 'Too many actions waiting for deposit. Please wait for them to process.' })
-      }
-    }
-    if (parkAsWaitingForSession) {
-      const existingWaitingSession = await prisma.txQueue.count({
-        where: { senderId: data.senderId, status: 'waiting_for_session' }
-      })
-      if (existingWaitingSession >= 10) {
-        return res.status(429).json({ error: 'Too many actions waiting for session registration. Please wait for them to process.' })
-      }
-    }
-
-    // Create the transaction queue entry (or return existing if duplicate signature).
-    // If this is a retry, atomically mark the original as 'retried' in the same transaction
-    // so we never mark-without-creating or create-without-marking.
-    let txQueueEntry
-    const parsedRetryId = retriedTxQueueId != null ? Number(retriedTxQueueId) : null
-    if (parsedRetryId != null && isNaN(parsedRetryId)) {
-      return res.status(400).json({ error: 'Invalid retriedTxQueueId' })
-    }
-
-    // Single-action dedup: if this exact signature is already queued (and
-    // not part of a batch), return the existing row. signedTx is no longer
-    // @unique at the schema level (the batched-sig path reuses one sig
-    // across N rows), so we look it up explicitly. batchId IS NULL filters
-    // out batch rows where the dedup semantics don't apply.
-    const dup = await prisma.txQueue.findFirst({
-      where: { signedTx: signature, batchId: null },
-      orderBy: { id: 'asc' },
-    })
-    if (dup) {
-      console.log(`Duplicate submission for txQueue ${dup.id}, returning existing entry`)
-      return res.json({ txQueueId: dup.id, status: dup.status })
-    }
-
-    // Cawonce collision pre-check: the DB partial unique index only covers
-    // active statuses (pending/processing/awaiting_indexer/waiting_for_deposit).
-    // A row that has already transitioned to done/failed/retried — common
-    // when the user re-submits hours later from a different device after
-    // localStorage TTL expired — would slip past the index and produce a
-    // duplicate TxQueue row. Pre-check across ALL statuses and return 409
-    // so the FE's CawonceCollisionError handler bumps the local watermark
-    // and re-signs at a fresh slot. Diagnosed 2026-05-11 against a wave of
-    // duplicate TxQueue rows with {done, failed} status pairs hours apart.
-    const cawonceTaken = await prisma.txQueue.findFirst({
-      where: { senderId: data.senderId, cawonce: data.cawonce },
-      select: { id: true, status: true },
-    })
-    if (cawonceTaken) {
-      const highest = await highestKnownCawonce(data.senderId)
-      const suggestedCawonce = (highest ?? data.cawonce) + 1
-      console.log(`[Actions] Cawonce collision (pre-insert, existing row id=${cawonceTaken.id} status=${cawonceTaken.status}): senderId=${data.senderId} cawonce=${data.cawonce} — suggesting ${suggestedCawonce}`)
-      return res.status(409).json({
-        error: 'cawonce_collision',
-        message: 'Another action by this sender is already using this cawonce. Re-read chain and re-sign.',
-        senderId: data.senderId,
-        cawonce: data.cawonce,
-        suggestedCawonce,
-      })
-    }
-
-    // Recent-duplicate-content guard. Pattern observed 2026-05-11 on
-    // test.caw.social: when validator simulation rejects with "Session
-    // expired or not found" (or similar early-fail), the FE shows a
-    // failure and the user re-clicks Post. Each click signs a FRESH
-    // payload with a fresh cawonce, so the per-cawonce dedup above
-    // doesn't fire. Result: 4-6 identical Caw rows at consecutive
-    // cawonces. Found one user with 6 identical posts in a 3-minute
-    // window.
-    //
-    // Strategy: if we just saw this sender submit the same content
-    // (same actionType + recipients + text bytes) within the last
-    // 2 minutes AND the prior row is still in-flight OR very recently
-    // succeeded, return the existing row's id so the FE resumes
-    // tracking it instead of creating another duplicate.
-    //
-    // Bypassed when retriedTxQueueId is set — that's an explicit
-    // "retry this exact failed row" call and the caller knows what
-    // they're doing (the original row was already marked retried in
-    // the txn below).
-    if (parsedRetryId == null) {
-      const fp = contentFingerprint(data)
-      const recentSameContent = await prisma.txQueue.findFirst({
-        where: {
-          senderId: data.senderId,
-          // Match active rows of any age + recently-succeeded rows.
-          // The 2-min window mirrors a typical optimistic-UX horizon —
-          // long enough that a frustrated user's re-click is caught,
-          // short enough that legitimate "I want to post the same thing
-          // later" is not blocked.
-          OR: [
-            { status: { in: ['pending', 'processing', 'awaiting_indexer', 'waiting_for_deposit'] } },
-            { status: { in: ['done', 'validated_by_peer'] }, updatedAt: { gte: new Date(Date.now() - 2 * 60_000) } },
-          ],
-          createdAt: { gte: new Date(Date.now() - 5 * 60_000) },
-        },
-        orderBy: { id: 'desc' },
-        select: { id: true, status: true, cawonce: true, payload: true },
-      })
-      if (recentSameContent && contentFingerprint((recentSameContent.payload as any)?.data) === fp) {
-        console.log(`[Actions] Duplicate content guard: senderId=${data.senderId} cawonce=${data.cawonce} matches recent TxQueue ${recentSameContent.id} (status=${recentSameContent.status}, cawonce=${recentSameContent.cawonce}); returning existing row`)
-        return res.json({
-          txQueueId: recentSameContent.id,
-          status: recentSameContent.status,
-          deduped: true,
-          reason: 'identical content recently submitted by this sender',
-        })
-      }
-    }
-
-    try {
-      txQueueEntry = await prisma.$transaction(async (tx) => {
-        if (parsedRetryId != null) {
-          const updated = await tx.txQueue.updateMany({
-            where: { id: parsedRetryId, status: 'failed' },
-            data: { status: 'retried' }
-          })
-          if (updated.count === 0) {
-            throw Object.assign(new Error('Original txQueue is not in failed state — retry already submitted'), { retryConflict: true })
-          }
-          console.log(`[Actions] Marked TxQueue ${parsedRetryId} as retried`)
-        }
-
-        const provenance = extractClientProvenance(req)
-        const created = await tx.txQueue.create({
-          data: {
-            senderId: data.senderId,
-            cawonce: data.cawonce,
-            payload: { data, domain, types },
-            signedTx: signature,
-            pendingDepositTxHash: sanitizedPendingDepositTxHash,
-            // Only stamp the QuickSign hint when we're actually parking the
-            // row. The hint is what the validator's pre-sim hold uses to
-            // decide what to park; stamping it on rows whose session is
-            // already on-chain caused those rows to be parked anyway. The
-            // FE forwards the hint for 24h post-submit, well after the
-            // session has typically landed — so the API's authoritative
-            // `parkAsWaitingForSession` decision (driven by checkSessionKey
-            // OnChain) is the right signal, not the FE's optimistic hint.
-            pendingQuickSignTxHash: parkAsWaitingForSession ? sanitizedPendingQuickSignTxHash : null,
-            clientVersion: provenance.clientVersion,
-            clientOrigin: provenance.clientOrigin,
-            signerKind: isOwner ? 'owner' : 'session',
-            // When parking for a pending session registration, perActionTipRate
-            // is unknown (the session record hasn't landed on L2 yet). Set
-            // implicitTip to null; the ValidatorService will re-read it from
-            // the SessionKey row once the row is promoted back to 'pending'.
-            implicitTip: parkAsWaitingForSession ? null : (perActionTipRate !== null ? perActionTipRate.toString() : null),
-            // Park as waiting_for_session when the session key hasn't landed on
-            // L2 yet. The DataCleaner will promote to 'pending' once it appears.
-            status: parkAsWaitingForSession ? 'waiting_for_session' : 'pending',
-            reason: parkAsWaitingForSession ? 'Waiting for Quick Sign session to register on L2' : undefined,
-          }
-        })
-        return created
-      })
-    } catch (err: any) {
-      if (err.retryConflict) {
-        return res.status(409).json({ error: err.message })
-      }
-      // P2002 = unique constraint violation. The partial unique index on
-      // active (senderId, cawonce) fires when two near-simultaneous
-      // submissions race past the pre-check above. Returns the same 409
-      // shape as the pre-check path so the FE has one code path to handle.
-      if (err?.code === 'P2002') {
-        const highest = await highestKnownCawonce(data.senderId)
-        const suggestedCawonce = (highest ?? data.cawonce) + 1
-        console.log(`[Actions] Cawonce collision (P2002 race): senderId=${data.senderId} cawonce=${data.cawonce} — suggesting ${suggestedCawonce}`)
-        return res.status(409).json({
-          error: 'cawonce_collision',
-          message: 'Another action by this sender is already using this cawonce. Re-read chain and re-sign.',
-          senderId: data.senderId,
-          cawonce: data.cawonce,
-          suggestedCawonce,
-        })
-      }
-      throw err
-    }
-    console.log(`Created TxQueue entry ${txQueueEntry.id} for action type ${data.actionType}, senderId ${data.senderId}, cawonce ${data.cawonce}`)
 
     // Verify pending caw was created if this is a CAW action
     if (data.actionType === 0 || data.actionType === 'caw') {
