@@ -224,7 +224,7 @@ export class NotificationService {
    * caw created in this same tx (e.g. cawes ingested via RawEventsGatherer
    * from remote nodes, which have no pre-existing pending row).
    */
-  static async createMentionNotifications(cawId: number, content: string, actorId: number, client: Pick<typeof prisma, 'user' | 'notification' | 'notificationGroup'> = prisma) {
+  static async createMentionNotifications(cawId: number, content: string, actorId: number, client: Pick<typeof prisma, 'user' | 'notification' | 'notificationGroup' | 'caw' | 'tip'> = prisma) {
     const mentions = this.extractMentions(content)
 
     if (mentions.length === 0) return
@@ -234,7 +234,12 @@ export class NotificationService {
       where: {
         username: { in: mentions },
         tokenId: { not: actorId } // Don't notify the actor of their own mention
-      }
+      },
+      select: {
+        tokenId: true,
+        username: true,
+        notificationTipRequired: true,
+      },
     })
 
     // Filter out users who have muted or blocked the actor
@@ -244,6 +249,66 @@ export class NotificationService {
       if (!isMutedOrBlocked) {
         filteredUsers.push(user)
       }
+    }
+
+    // Tip-gate: users with notificationTipRequired > 0 only receive a
+    // mention notification when the caw carries an embedded tip of at
+    // least that many whole CAW units directed at them.
+    //
+    // Exemptions:
+    //  - actorId === user.tokenId is already filtered above (no self-mentions).
+    //  - Reply-to-parent-author: if this caw is a direct reply and the
+    //    mentioned user is the parent author, skip the gate (they already
+    //    receive a reply notification via createReplyNotification).
+    const tipGatedUsers: typeof filteredUsers = []
+    const usersNeedingGate = filteredUsers.filter(u => u.notificationTipRequired > 0)
+    if (usersNeedingGate.length > 0) {
+      // Resolve parent author once (same caw for all users in the loop).
+      let parentAuthorTokenId: number | null = null
+      const cawRow = await client.caw.findUnique({
+        where: { id: cawId },
+        select: { originalCawId: true },
+      })
+      if (cawRow?.originalCawId != null) {
+        const parentCaw = await client.caw.findUnique({
+          where: { id: cawRow.originalCawId },
+          select: { userId: true },
+        })
+        parentAuthorTokenId = parentCaw?.userId ?? null
+      }
+
+      // Fetch confirmed tips on this caw keyed by recipientId.
+      const gatedTokenIds = usersNeedingGate.map(u => u.tokenId)
+      const tips = await client.tip.findMany({
+        where: { cawId, recipientId: { in: gatedTokenIds }, pending: false },
+        select: { recipientId: true, amount: true },
+      })
+      const tipSumByRecipient = new Map<number, number>()
+      for (const t of tips) {
+        tipSumByRecipient.set(t.recipientId, (tipSumByRecipient.get(t.recipientId) ?? 0) + t.amount)
+      }
+
+      for (const user of filteredUsers) {
+        if (user.notificationTipRequired === 0) {
+          tipGatedUsers.push(user)
+          continue
+        }
+        // Reply-to-parent-author exemption.
+        if (parentAuthorTokenId !== null && user.tokenId === parentAuthorTokenId) {
+          tipGatedUsers.push(user)
+          continue
+        }
+        const tipReceived = tipSumByRecipient.get(user.tokenId) ?? 0
+        if (tipReceived >= user.notificationTipRequired) {
+          tipGatedUsers.push(user)
+        } else {
+          console.debug(
+            `[NotificationService] mention gate: skipping user ${user.tokenId} (threshold=${user.notificationTipRequired}, tip=${tipReceived}, cawId=${cawId})`
+          )
+        }
+      }
+    } else {
+      tipGatedUsers.push(...filteredUsers)
     }
 
     // Idempotency dedupe via groupKey. If this function gets called
@@ -257,18 +322,18 @@ export class NotificationService {
     // notifications in 59 minutes for the same caw on test.caw.social
     // before the underlying status-flip-loop was caught.
     const groupKey = `mention_${cawId}`
-    if (filteredUsers.length === 0) return
+    if (tipGatedUsers.length === 0) return
 
     const existing = await client.notification.findMany({
       where: {
         type: NotificationType.MENTION,
         groupKey,
-        userId: { in: filteredUsers.map(u => u.tokenId) },
+        userId: { in: tipGatedUsers.map(u => u.tokenId) },
       },
       select: { userId: true },
     })
     const alreadyNotified = new Set(existing.map(n => n.userId))
-    const notifications = filteredUsers
+    const notifications = tipGatedUsers
       .filter(user => !alreadyNotified.has(user.tokenId))
       .map(user => ({
         userId: user.tokenId,

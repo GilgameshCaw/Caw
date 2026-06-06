@@ -15,7 +15,6 @@ import { getBlockedUserIds } from '../shared/blockUtils'
 import { requireAuth } from '../middleware/auth'
 import { markOrphan, markOrphanWithVariants } from '../util/orphanedMedia'
 import { isPlaceholderUser } from '../../services/UserService'
-import { pokeIndexTokenId } from '../util/indexerPoke'
 
 // Validation limits for profile fields (must match ActionProcessor)
 const PROFILE_FIELD_LIMITS: Record<string, number> = {
@@ -27,38 +26,16 @@ const PROFILE_FIELD_LIMITS: Record<string, number> = {
   coverPhotoUrl: 500,
 }
 
-// Profile text fields that are rendered as plain text (no XSS) but can carry
-// bidi-override or zero-width chars that cause visual impersonation.
-// Strip before storage so length caps apply to visible chars only.
-const BIDI_ZERO_WIDTH_RE = /[​-‏‪-‮﻿⁠-⁤]/g
-
-function stripBidiAndZeroWidth(s: string): string {
-  return s.replace(BIDI_ZERO_WIDTH_RE, '')
-}
-
-// Profile free-text fields that need bidi/zero-width stripping.
-const STRIP_BIDI_FIELDS = new Set(['displayName', 'bio', 'location'])
-
-function isValidWebsiteUrl(value: string): boolean {
-  if (value === '') return true // allow clearing the field
-  try {
-    const u = new URL(value)
-    return u.protocol === 'http:' || u.protocol === 'https:'
-  } catch {
-    return false
-  }
-}
-
 const router = Router()
 
 /**
  * POST /api/users/ensure
  * Look up a user record by tokenId.
  *
- * Never calls RPC. On a DB miss, publishes a Redis poke so NftTransferWatcher
- * indexes the token immediately instead of waiting for its next poll, then
- * returns 202 so the frontend retries with backoff. RawEventsGatherer (Mint
- * event listener) and NftTransferWatcher are the authoritative writers.
+ * Tier 1 of the "RPC out of API request handlers" refactor: this endpoint
+ * no longer falls back to L1/L2 RPC reads on a DB miss. RawEventsGatherer
+ * (Mint event listener) and NftTransferWatcher populate the User row
+ * asynchronously — the frontend retries with backoff until that lands.
  *
  * - 200 + { user } when present in DB
  * - 202 + { error: 'user not yet indexed', retryAfterSeconds } when absent
@@ -77,38 +54,29 @@ router.post('/ensure', async (req, res) => {
     }
 
     const numericTokenId = Number(tokenId)
-    const dbSelect = { tokenId: true, username: true, address: true } as const
     const user = await prisma.user.findUnique({
       where: { tokenId: numericTokenId },
-      select: dbSelect,
+      select: { tokenId: true, username: true, address: true }
     })
     const totalDuration = Date.now() - startTime
 
-    // Helper: true when the row is absent or is a placeholder (no real data yet).
-    const isMiss = !user || isPlaceholderUser(user)
+    if (!user) {
+      console.log(`[/api/users/ensure] tokenId=${numericTokenId} not yet indexed (${totalDuration}ms)`)
+      res.setHeader('Retry-After', '3')
+      return res.status(202).json({
+        error: 'user not yet indexed',
+        retryAfterSeconds: 3,
+      })
+    }
 
-    if (isMiss) {
-      if (!user) {
-        // Poke the indexer so NftTransferWatcher indexes this tokenId immediately
-        // rather than waiting for its next poll cycle. Fire-and-forget; never
-        // awaited — the request path does no chain reads.
-        pokeIndexTokenId(numericTokenId)
-        console.log(`[/api/users/ensure] tokenId=${numericTokenId} not yet indexed (${totalDuration}ms)`)
-        res.setHeader('Retry-After', '3')
-        return res.status(202).json({
-          error: 'user not yet indexed',
-          retryAfterSeconds: 3,
-        })
-      }
-
-      // Placeholder rows (username=`user_<id>`, address='') exist when an
-      // action eager-FK'd against this tokenId before its Mint event was
-      // indexed locally — see actions.ts upsert paths. Poke the indexer
-      // for a fast targeted backfill; DataCleaner also sweeps in the
-      // background. From the FE's perspective it's the same "not yet
-      // indexed" state, so we return 202 and let it poll. Once the row
-      // is populated, the next /ensure returns 200 and the profile renders.
-      pokeIndexTokenId(numericTokenId)
+    // Placeholder rows (username=`user_<id>`, address='') exist when an
+    // action eager-FK'd against this tokenId before its Mint event was
+    // indexed locally — see actions.ts upsert paths. The DataCleaner
+    // sweep refreshes them in the background; from the FE's perspective
+    // it's the same "not yet indexed" state, so we return 202 and let
+    // it poll. Once the sweep populates real values, the next /ensure
+    // returns 200 and the profile renders.
+    if (isPlaceholderUser(user)) {
       console.log(`[/api/users/ensure] tokenId=${numericTokenId} placeholder row, awaiting refresh`)
       res.setHeader('Retry-After', '5')
       return res.status(202).json({
@@ -117,12 +85,13 @@ router.post('/ensure', async (req, res) => {
       })
     }
 
-    console.log(`[/api/users/ensure] SUCCESS in ${totalDuration}ms, tokenId=${user.tokenId}`)
+    console.log(`[/api/users/ensure] SUCCESS in ${totalDuration}ms, user=${JSON.stringify(user)}`)
     return res.json({ user })
   } catch (error: any) {
     const totalDuration = Date.now() - startTime
-    console.error(`[/api/users/ensure] ERROR after ${totalDuration}ms:`, error)
-    return res.status(500).json({ error: 'Internal error' })
+    console.error(`[/api/users/ensure] ERROR after ${totalDuration}ms:`, error.message)
+    console.error('Stack trace:', error.stack)
+    return res.status(500).json({ error: error.message || 'Failed to ensure user' })
   }
 })
 
@@ -390,6 +359,7 @@ router.get('/by-token/:tokenId', async (req, res) => {
       xBadgeVisible: true,
       preferredLanguage: true,
       autoTranslate: true,
+      notificationTipRequired: true,
     } as const
 
     const user = await prisma.user.findUnique({
@@ -442,16 +412,6 @@ router.get('/by-token/:tokenId', async (req, res) => {
       where: { senderId: tokenId, status: 'waiting_for_deposit' }
     })
 
-    // Separately surface waiting_for_session rows. Mint+deposit+QuickSign
-    // zaps leave the bundled session leg in waiting_for_session while the
-    // L1→L2 LZ packet for the session register is in flight (up to 24h
-    // tolerance window). ProfileChooser uses this to keep the optimistic
-    // "+X CAW pending" badge alive past the 30-min localStorage TTL when
-    // the backend still has authoritative in-flight work.
-    const waitingSessionCount = await prisma.txQueue.count({
-      where: { senderId: tokenId, status: 'waiting_for_session' }
-    })
-
     // X badge: link is wallet-scoped on WalletXLink; gated per-profile by
     // user.xBadgeVisible. Surface xHandle/xFollowerBucket only when both
     // a link exists AND this profile has the badge visible. The active
@@ -483,7 +443,6 @@ router.get('/by-token/:tokenId', async (req, res) => {
       likeCount: user.likesReceivedCount,
       likedCount: user.likedCount,
       waitingForDepositCount: waitingCount,
-      waitingForSessionCount: waitingSessionCount,
       xHandle,
       xFollowerBucket,
       xLinkedAt,
@@ -497,11 +456,11 @@ router.get('/by-token/:tokenId', async (req, res) => {
 /**
  * GET /api/users/client-auth/:tokenId?clientId=1
  *
- * Returns whether the given tokenId is authenticated with the given networkId,
+ * Returns whether the given tokenId is authenticated with the given clientId,
  * based on the indexed ClientAuth table (populated by ChainSyncService's
  * L2Events indexer). Lets the frontend skip a live readContract call.
  *
- * Auth is a one-way flag: once true, always true for that (networkId, tokenId)
+ * Auth is a one-way flag: once true, always true for that (clientId, tokenId)
  * pair. So `authenticated: false` here doesn't mean "never will be" — it
  * means "we haven't seen the Authenticated event yet". The frontend may
  * still want to fall back to a live RPC in that case, or rely on the
@@ -513,7 +472,7 @@ router.get('/client-auth/:tokenId', async (req, res) => {
   try {
     const tokenId = Number(req.params.tokenId)
     const clientId = Number(req.query.clientId) || 1
-    // Bound the inputs — tokenIds and networkIds are uint32 on-chain, so they're
+    // Bound the inputs — tokenIds and clientIds are uint32 on-chain, so they're
     // positive and fit in a Postgres Int4. Reject anything that wouldn't map.
     if (!Number.isInteger(tokenId) || tokenId <= 0 || tokenId > 2_147_483_647) {
       return res.status(400).json({ error: 'Invalid tokenId' })
@@ -522,8 +481,8 @@ router.get('/client-auth/:tokenId', async (req, res) => {
       return res.status(400).json({ error: 'Invalid clientId' })
     }
 
-    const row = await prisma.networkAuth.findUnique({
-      where: { networkId_tokenId: { networkId: clientId, tokenId } },
+    const row = await prisma.clientAuth.findUnique({
+      where: { clientId_tokenId: { clientId, tokenId } },
       select: { authenticated: true, lastSyncedAt: true },
     })
 
@@ -739,18 +698,7 @@ router.get('/onboarding/:username', async (req, res) => {
     })
 
     if (!user) {
-      // User row not yet indexed by NftTransferWatcher. Return 202 +
-      // Retry-After so the FE's retryOnIndexing helper backs off and
-      // retries until the row lands. Without this the original FE
-      // path (OnboardingGuard) treats -1 as "done", marks the username
-      // checked, and never redirects to /welcome — the user gets
-      // stranded on /home post-mint. Symptom: intermittently missing
-      // welcome flow after a successful zap.
-      res.setHeader('Retry-After', '3')
-      return res.status(202).json({
-        error: 'user not yet indexed',
-        retryAfterSeconds: 3,
-      })
+      return res.json({ onboardingStep: -1 })
     }
 
     return res.json({ onboardingStep: user.onboardingStep })
@@ -871,6 +819,49 @@ router.patch(
 )
 
 /**
+ * PATCH /api/users/:tokenId/notification-tip-gate
+ *
+ * Owner-only update of the minimum tip (whole CAW units) required for an
+ * @-mention to create a Notification row. 0 disables the gate.
+ *
+ * IMPORTANT: must be defined BEFORE /:username to avoid conflicts.
+ */
+router.patch(
+  '/:tokenId/notification-tip-gate',
+  requireAuth({ lookup: async (req) => Number(req.params.tokenId), verifyOwnership: true }),
+  async (req, res) => {
+    try {
+      const tokenId = Number(req.params.tokenId)
+      if (!tokenId || isNaN(tokenId)) {
+        return res.status(400).json({ error: 'Invalid tokenId' })
+      }
+
+      const { notificationTipRequired } = req.body ?? {}
+      if (
+        typeof notificationTipRequired !== 'number' ||
+        !Number.isInteger(notificationTipRequired) ||
+        notificationTipRequired < 0 ||
+        notificationTipRequired > 1_000_000
+      ) {
+        return res.status(400).json({
+          error: 'notificationTipRequired must be a non-negative integer (max 1000000)',
+        })
+      }
+
+      const updated = await prisma.user.update({
+        where: { tokenId },
+        data: { notificationTipRequired },
+        select: { tokenId: true, notificationTipRequired: true },
+      })
+      return res.json(updated)
+    } catch (err: any) {
+      console.error('PATCH /api/users/:tokenId/notification-tip-gate error', err)
+      return res.status(500).json({ error: 'Internal server error' })
+    }
+  },
+)
+
+/**
  * PATCH /api/users/:tokenId/profile
  * Off-chain profile update. Saves profile fields directly to the DB without
  * touching the chain. Requires a valid session that owns the target tokenId.
@@ -906,16 +897,7 @@ router.patch(
         if (rawValue !== null && typeof rawValue !== 'string') {
           return res.status(400).json({ error: `${field} must be a string` })
         }
-        let trimmed = (rawValue ?? '').toString().trim()
-        // Strip bidi-override and zero-width chars from display text fields
-        // BEFORE applying length cap so attackers can't bypass cap via padding.
-        if (STRIP_BIDI_FIELDS.has(field)) {
-          trimmed = stripBidiAndZeroWidth(trimmed)
-        }
-        // Validate website scheme server-side (prevents javascript: URI storage).
-        if (field === 'website' && !isValidWebsiteUrl(trimmed)) {
-          return res.status(400).json({ error: 'website must be a valid http or https URL, or empty' })
-        }
+        const trimmed = (rawValue ?? '').toString().trim()
         const limit = PROFILE_FIELD_LIMITS[field]
         updateData[field] = limit && trimmed.length > limit ? trimmed.substring(0, limit) : trimmed
       }
@@ -1018,6 +1000,7 @@ router.get('/:username', async (req, res) => {
         likesReceivedCount: true,
         pinnedCawCount: true,
         xBadgeVisible: true,
+        notificationTipRequired: true,
       }
     })
 
