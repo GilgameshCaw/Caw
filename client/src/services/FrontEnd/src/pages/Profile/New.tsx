@@ -19,7 +19,7 @@ import { useSearchParams } from 'react-router-dom'
 import { useNavigate, Link } from '~/utils/localizedRouter'
 import StakingRewardsInfo from '~/components/StakingRewardsInfo'
 import QuickSignHowItWorks from '~/components/QuickSignHowItWorks'
-import { HiInformationCircle } from 'react-icons/hi'
+import { HiInformationCircle, HiCheckCircle } from 'react-icons/hi'
 import { useTheme } from '~/hooks/useTheme'
 import { CLIENT_ID, getTipTiers, getCurrentValidatorMinTipWei } from '~/api/actions'
 import { apiFetch, IndexingError } from '~/api/client'
@@ -431,6 +431,33 @@ export const NewProfile: React.FC = () => {
   // away doesn't burn an unused session in localStorage.
   const [quickSignEnabled, setQuickSignEnabled] = useState(true)
   const [quickSignExpanded, setQuickSignExpanded] = useState(true)
+
+  // Quick Sign is delegated per OWNER ADDRESS, not per profile — one device
+  // session covers every profile the address owns. So if the connected wallet
+  // already has a live (non-expired) session, a freshly-minted profile under
+  // the same address inherits it; there's nothing to enable here. Detect that
+  // and render the toggle as on + locked with a cross-profile explanation,
+  // rather than offering to set up a redundant session. We check the raw
+  // sessions map (not getActiveSessionForAddress, which also requires the key
+  // to be unlocked) — a locked-but-valid session still counts as "enabled".
+  const sessionsByWallet = useSessionKeyStore(s => s.sessions)
+  const hasExistingSessionForAddress = useMemo(() => {
+    if (!address) return false
+    const raw = sessionsByWallet[address.toLowerCase()]
+    // Key purely on "a non-expired session exists for this address" — NOT on
+    // the global `enabled` preference (that's "use session keys vs. sign every
+    // action", orthogonal to whether a session exists to inherit).
+    return !!raw && raw.expiry > Date.now() / 1000
+  }, [sessionsByWallet, address])
+
+  // When a session already exists for this address, don't bundle a redundant
+  // session leg into the mint tx — route through the plain (non-QS) contract
+  // path. The toggle still RENDERS as on (inherited), but quickSignEnabled,
+  // which drives the bundled selector / hooks, must be false so we mint via
+  // mintAndDeposit(Zap) rather than mintAndDepositAndQuickSign(Zap).
+  useEffect(() => {
+    if (hasExistingSessionForAddress) setQuickSignEnabled(false)
+  }, [hasExistingSessionForAddress])
 
   // Authenticate-with-network toggle (mint-only / no-deposit path on CAW mode).
   // When deposit is ON, auth is always bundled (no contract path skips auth on
@@ -1930,18 +1957,26 @@ console.log("BALANCE:", balance)
               isDark ? 'border-white/10 bg-[#0D0D0D]/85' : 'border-gray-200 bg-gray-50'
             }`}>
               {/* Override space-y-3 gap below this label to 5px */}
-              <label className="flex items-center gap-3 cursor-pointer [&+*]:!mt-[5px]">
-                <button
-                  type="button"
-                  onClick={() => { setQuickSignEnabled(!quickSignEnabled); setQuickSignExpanded(true) }}
-                  className={`relative w-10 min-w-[40px] h-6 rounded-full transition-colors duration-200 cursor-pointer flex-shrink-0 ${
-                    quickSignEnabled ? 'bg-yellow-500' : 'bg-gray-600'
-                  }`}
-                >
-                  <div className={`absolute top-0.5 w-5 h-5 rounded-full bg-white shadow transition-transform duration-200 ${
-                    quickSignEnabled ? 'translate-x-4' : 'translate-x-0.5'
-                  }`} />
-                </button>
+              <label className={`flex items-center gap-3 [&+*]:!mt-[5px] ${hasExistingSessionForAddress ? 'cursor-default' : 'cursor-pointer'}`}>
+                {hasExistingSessionForAddress ? (
+                  // Already enabled for this owner address — Quick Sign is
+                  // delegated per address and the new profile inherits the
+                  // existing session, so there's nothing to toggle. Show a
+                  // checkmark instead of a switch.
+                  <HiCheckCircle className="w-6 h-6 text-yellow-500 flex-shrink-0" aria-label="Quick Sign already enabled" />
+                ) : (
+                  <button
+                    type="button"
+                    onClick={() => { setQuickSignEnabled(!quickSignEnabled); setQuickSignExpanded(true) }}
+                    className={`relative w-10 min-w-[40px] h-6 rounded-full transition-colors duration-200 cursor-pointer flex-shrink-0 ${
+                      quickSignEnabled ? 'bg-yellow-500' : 'bg-gray-600'
+                    }`}
+                  >
+                    <div className={`absolute top-0.5 w-5 h-5 rounded-full bg-white shadow transition-transform duration-200 ${
+                      quickSignEnabled ? 'translate-x-4' : 'translate-x-0.5'
+                    }`} />
+                  </button>
+                )}
                 <div className="flex-1">
                   {/* Title row — plain span so a click bubbles to the
                       wrapping <label> and toggles the switch (parity with
@@ -1952,10 +1987,18 @@ console.log("BALANCE:", balance)
                     <span className={`text-sm font-medium ${isDark ? 'text-white' : 'text-gray-900'}`}>Quick Sign — one-click actions</span>
                     <QuickSignInfoPopover />
                   </div>
-                  <p className="text-yellow-500/80 text-xs mt-0.5">
-                    Delegate funds to your device to skip wallet sigs
-                  </p>
-                  <p className="text-gray-500 text-xs mt-0.5">You can configure later in settings</p>
+                  {hasExistingSessionForAddress ? (
+                    <p className="text-yellow-500/80 text-xs mt-0.5">
+                      Already enabled — Quick Sign works across all profiles on this wallet.
+                    </p>
+                  ) : (
+                    <>
+                      <p className="text-yellow-500/80 text-xs mt-0.5">
+                        Delegate funds to your device to skip wallet sigs
+                      </p>
+                      <p className="text-gray-500 text-xs mt-0.5">You can configure later in settings</p>
+                    </>
+                  )}
                 </div>
               </label>
               {quickSignEnabled && quickSignExpanded && (() => {
