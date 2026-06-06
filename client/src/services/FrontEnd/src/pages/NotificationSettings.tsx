@@ -1,8 +1,10 @@
-import React, { useState, useEffect } from 'react'
+import React, { useState, useEffect, useCallback } from 'react'
 import { Link } from '~/utils/localizedRouter'
 import { useTheme } from '~/hooks/useTheme'
-import { HiArrowLeft, HiBell, HiHeart, HiChat, HiUserAdd, HiAtSymbol, HiVolumeOff } from 'react-icons/hi'
+import { HiArrowLeft, HiBell, HiHeart, HiChat, HiUserAdd, HiAtSymbol, HiVolumeOff, HiCurrencyDollar } from 'react-icons/hi'
 import { useT } from '~/i18n/I18nProvider'
+import { useActiveToken } from '~/store/tokenDataStore'
+import { apiFetch } from '~/api/client'
 
 interface NotificationPreferences {
   likes: boolean
@@ -30,6 +32,51 @@ const NotificationSettings: React.FC = () => {
   const { isDark } = useTheme()
   const t = useT()
   const [preferences, setPreferences] = useState<NotificationPreferences>(defaultPreferences)
+  const activeToken = useActiveToken()
+  const myTokenId = activeToken?.tokenId
+
+  // Mention tip floor state
+  const [tipFloor, setTipFloor] = useState<number>(0)
+  const [tipFloorInput, setTipFloorInput] = useState<string>('0')
+  const [tipFloorLoading, setTipFloorLoading] = useState(false)
+  const [tipFloorSaving, setTipFloorSaving] = useState(false)
+  const [tipFloorSaved, setTipFloorSaved] = useState(false)
+  const [tipFloorError, setTipFloorError] = useState<string | null>(null)
+
+  // Load tip floor from server
+  useEffect(() => {
+    if (!myTokenId) return
+    setTipFloorLoading(true)
+    apiFetch<{ notificationTipRequired?: number }>(`/api/users/by-token/${myTokenId}`)
+      .then(data => {
+        const v = data?.notificationTipRequired ?? 0
+        setTipFloor(v)
+        setTipFloorInput(String(v))
+      })
+      .catch(() => {})
+      .finally(() => setTipFloorLoading(false))
+  }, [myTokenId])
+
+  const saveTipFloor = useCallback(async () => {
+    if (!myTokenId) return
+    const parsed = parseInt(tipFloorInput, 10)
+    if (isNaN(parsed) || parsed < 0 || parsed > 1_000_000) return
+    setTipFloorSaving(true)
+    setTipFloorError(null)
+    try {
+      await apiFetch(`/api/users/${myTokenId}/notification-tip-gate`, {
+        method: 'PATCH',
+        body: JSON.stringify({ notificationTipRequired: parsed }),
+      })
+      setTipFloor(parsed)
+      setTipFloorSaved(true)
+      setTimeout(() => setTipFloorSaved(false), 2000)
+    } catch (e: unknown) {
+      setTipFloorError(e instanceof Error ? e.message : 'Save failed')
+    } finally {
+      setTipFloorSaving(false)
+    }
+  }, [myTokenId, tipFloorInput])
 
   // Load preferences from localStorage
   useEffect(() => {
@@ -209,6 +256,88 @@ const NotificationSettings: React.FC = () => {
             onChange={(v) => updatePreference('groupSimilar', v)}
           />
         </section>
+
+        {/* Mention Tip Floor Section */}
+        {myTokenId && (
+          <section className="mb-8">
+            <h2 className={`text-sm font-semibold mb-2 uppercase tracking-wide ${
+              isDark ? 'text-white/40' : 'text-gray-400'
+            }`}>
+              {t('notifications_settings.section.tip_gate', { defaultValue: 'Mention tip floor' })}
+            </h2>
+
+            <div className={`rounded-xl border p-4 space-y-3 ${
+              isDark ? 'border-white/10 bg-white/5' : 'border-gray-100 bg-gray-50'
+            }`}>
+              <div className="flex items-start gap-3">
+                <div className={`mt-0.5 ${isDark ? 'text-white/60' : 'text-gray-500'}`}>
+                  <HiCurrencyDollar className="w-5 h-5" />
+                </div>
+                <div className="flex-1">
+                  <h3 className={`font-medium ${isDark ? 'text-white' : 'text-gray-900'}`}>
+                    {t('notifications_settings.tip_floor.title', { defaultValue: 'Require a tip to notify you' })}
+                  </h3>
+                  <p className={`text-sm mt-0.5 ${isDark ? 'text-white/50' : 'text-gray-500'}`}>
+                    {tipFloor === 0
+                      ? t('notifications_settings.tip_floor.disabled_hint', { defaultValue: 'Disabled — you receive all @mention notifications. Set a value above 0 to require a minimum CAW tip.' })
+                      : t('notifications_settings.tip_floor.enabled_hint', { defaultValue: `You only receive @mention notifications when the post tips you at least ${tipFloor.toLocaleString()} CAW. Set to 0 to disable.` })}
+                  </p>
+                </div>
+              </div>
+
+              {tipFloorLoading ? (
+                <div className={`text-sm ${isDark ? 'text-white/40' : 'text-gray-400'}`}>
+                  {t('notifications_settings.tip_floor.loading', { defaultValue: 'Loading…' })}
+                </div>
+              ) : (
+                <div className="flex items-center gap-2">
+                  <input
+                    type="number"
+                    min={0}
+                    max={1_000_000}
+                    step={1}
+                    value={tipFloorInput}
+                    onChange={e => {
+                      setTipFloorInput(e.target.value)
+                      setTipFloorSaved(false)
+                      setTipFloorError(null)
+                    }}
+                    className={`w-36 px-3 py-1.5 rounded-lg text-sm outline-none transition-colors ${
+                      isDark
+                        ? 'bg-white/10 text-white border border-white/20 focus:border-yellow-500/50 placeholder-gray-500'
+                        : 'bg-white text-gray-900 border border-gray-200 focus:border-yellow-500 placeholder-gray-400'
+                    }`}
+                  />
+                  <span className={`text-sm ${isDark ? 'text-white/50' : 'text-gray-500'}`}>
+                    {t('notifications_settings.tip_floor.unit', { defaultValue: 'CAW' })}
+                  </span>
+                  <button
+                    type="button"
+                    onClick={saveTipFloor}
+                    disabled={tipFloorSaving}
+                    className={`px-3 py-1.5 rounded-lg text-sm font-medium transition-colors cursor-pointer ${
+                      tipFloorSaved
+                        ? (isDark ? 'bg-green-500/20 text-green-400' : 'bg-green-100 text-green-700')
+                        : tipFloorSaving
+                          ? 'opacity-50 bg-yellow-500 text-black cursor-not-allowed'
+                          : 'bg-yellow-500 text-black hover:bg-yellow-400'
+                    }`}
+                  >
+                    {tipFloorSaved
+                      ? t('notifications_settings.tip_floor.saved', { defaultValue: 'Saved' })
+                      : tipFloorSaving
+                        ? t('notifications_settings.tip_floor.saving', { defaultValue: 'Saving…' })
+                        : t('notifications_settings.tip_floor.save', { defaultValue: 'Save' })}
+                  </button>
+                </div>
+              )}
+
+              {tipFloorError && (
+                <p className="text-sm text-red-500">{tipFloorError}</p>
+              )}
+            </div>
+          </section>
+        )}
 
         {/* Muted Content Link */}
         <Link

@@ -558,6 +558,11 @@ const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess, placehol
   useEffect(() => {
     setTipAttachments([])
   }, [replyTo?.id, quote?.id])
+
+  // Mention tip-gate suggestion chips — state only; logic lives after activeToken is declared.
+  const [tipGateCache, setTipGateCache] = useState<Map<string, { tokenId: number; username: string; required: number }>>(new Map())
+  const [tipGateDismissed, setTipGateDismissed] = useState<Set<string>>(new Set())
+
   const [isSubmitting, setIsSubmitting] = useState(false)
   const [signingProgress, setSigningProgress] = useState<{ current: number; total: number } | null>(null)
   const signingTotal = signingProgress?.total ?? 0
@@ -630,6 +635,64 @@ const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess, placehol
   const activeToken = useActiveToken();
   const avatars = useTokenDataStore(s => s.avatarsByTokenId);
   const { data: activeUserData } = useUserByUsername(activeToken?.username);
+
+  // Mirror of backend /@(\w+)/ pattern (catches both usernames and numeric IDs).
+  const mentionedHandles = useMemo<string[]>(() => {
+    const re = /@(\w+)/g
+    const seen = new Set<string>()
+    const out: string[] = []
+    let m: RegExpExecArray | null
+    while ((m = re.exec(text)) !== null) {
+      const h = m[1].toLowerCase()
+      if (!seen.has(h)) { seen.add(h); out.push(m[1]) }
+    }
+    return out
+  }, [text])
+
+  // Lazily fetch notificationTipRequired for each unique mention.
+  useEffect(() => {
+    if (mentionedHandles.length === 0) return
+    let cancelled = false
+    const ownTokenId = activeToken?.tokenId
+    for (const handle of mentionedHandles) {
+      const key = handle.toLowerCase()
+      if (tipGateCache.has(key)) continue
+      const isNumeric = /^\d+$/.test(handle)
+      const url = isNumeric
+        ? `/api/users/by-token/${handle}`
+        : `/api/users/${encodeURIComponent(handle)}`
+      apiFetch<{ tokenId?: number; username?: string; notificationTipRequired?: number }>(url)
+        .then(data => {
+          if (cancelled || !data?.tokenId || !data?.username) return
+          if (ownTokenId && data.tokenId === ownTokenId) return
+          setTipGateCache(prev => {
+            const next = new Map(prev)
+            next.set(key, { tokenId: data.tokenId!, username: data.username!, required: data.notificationTipRequired ?? 0 })
+            return next
+          })
+        })
+        .catch(() => {})
+    }
+    return () => { cancelled = true }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [mentionedHandles.join(','), activeToken?.tokenId])
+
+  // Compute which gated users need a chip (not yet covered, not dismissed).
+  const tipGateSuggestions = useMemo(() => {
+    const out: { key: string; tokenId: number; username: string; required: number; delta: number }[] = []
+    for (const handle of mentionedHandles) {
+      const key = handle.toLowerCase()
+      const info = tipGateCache.get(key)
+      if (!info || info.required <= 0) continue
+      if (tipGateDismissed.has(key)) continue
+      const existing = tipAttachments.find(t => t.recipientTokenId === info.tokenId)
+      const alreadyTipped = existing?.tipAmountCaw ?? 0
+      if (alreadyTipped >= info.required) continue
+      out.push({ key, tokenId: info.tokenId, username: info.username, required: info.required, delta: info.required - alreadyTipped })
+    }
+    return out
+  }, [mentionedHandles, tipGateCache, tipGateDismissed, tipAttachments])
+
   const signAndSubmit = useSignAndSubmitAction()
   const { signTypedDataAsync } = useSignTypedData()
   const bumpCawonce = useTokenDataStore(s => s.bumpCawonce)
@@ -1689,6 +1752,7 @@ const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess, placehol
     setPollOptionImages([])
     setPollMultiSelect(false)
     setTipAttachments([])
+    setTipGateDismissed(new Set())
     onSuccess?.()
     } catch (error: any) {
       // Ignore errors (user may have rejected signature)
@@ -2653,6 +2717,48 @@ const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess, placehol
             </div>
 
           </div>
+
+          {/* Mention tip-gate suggestion chips */}
+          {tipGateSuggestions.length > 0 && (
+            <div className="flex flex-col gap-1.5 mt-2">
+              {tipGateSuggestions.map(s => (
+                <div key={s.key} className={`flex items-center justify-between gap-2 px-3 py-1.5 rounded-lg text-sm ${
+                  isDark ? 'bg-yellow-500/10 border border-yellow-500/20' : 'bg-yellow-50 border border-yellow-200'
+                }`}>
+                  <span className={isDark ? 'text-yellow-300' : 'text-yellow-800'}>
+                    @{s.username} {t('post_form.tip_gate.requires', { defaultValue: 'requires a' })} {s.required.toLocaleString()} CAW {t('post_form.tip_gate.tip', { defaultValue: 'tip to notify them' })}
+                  </span>
+                  <div className="flex items-center gap-1.5 flex-shrink-0">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setTipAttachments(prev => {
+                          const existing = prev.findIndex(t => t.recipientTokenId === s.tokenId)
+                          if (existing !== -1) {
+                            const next = [...prev]
+                            next[existing] = { ...next[existing], tipAmountCaw: next[existing].tipAmountCaw + s.delta, tipUsd: 0 }
+                            return next
+                          }
+                          return [...prev, { recipientTokenId: s.tokenId, recipientUsername: s.username, tipAmountCaw: s.delta, tipUsd: 0 }]
+                        })
+                      }}
+                      className="px-2 py-0.5 rounded-md text-xs font-semibold bg-yellow-500 text-black hover:bg-yellow-400 cursor-pointer transition-colors"
+                    >
+                      {t('post_form.tip_gate.add_tip', { defaultValue: 'Add tip' })}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setTipGateDismissed(prev => new Set([...prev, s.key]))}
+                      aria-label="Dismiss suggestion"
+                      className={`text-lg leading-none cursor-pointer transition-colors ${isDark ? 'text-yellow-500/60 hover:text-yellow-300' : 'text-yellow-600/60 hover:text-yellow-800'}`}
+                    >
+                      ×
+                    </button>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
 
           {/* Poll composer (mobile) */}
           {pollEnabled && (
