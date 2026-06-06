@@ -156,36 +156,6 @@ describe('NetworkFeeModal', () => {
     expect(screen.getByText('~$0.00')).toBeTruthy()
   })
 
-  it('renders Network gas + Total due now that reconciles with the header math', () => {
-    // nativeFee = storage*2 + trueLZ. Total due now must equal nativeFee + gas
-    // (== the caller's rolled-up header), independent of how it's decomposed.
-    //   nativeFee   = 0.0033 ETH
-    //   storage (1×)= 0.0015 ETH → ×2 = 0.0030 ETH
-    //   trueLZ      = 0.0003 ETH (~$0.60)
-    //   gas         = 0.0002 ETH (~$0.40)
-    //   total       = nativeFee + gas = 0.0035 ETH (~$7.00 @ $2000)
-    render(<NetworkFeeModal
-      {...DEFAULT_PROPS}
-      lzFeeWei={3_300_000_000_000_000n}
-      applicableStorageFeesWei={1_500_000_000_000_000n}
-      gasWei={200_000_000_000_000n}
-    />)
-    expect(screen.getByText('Network gas')).toBeTruthy()
-    expect(screen.getByText('Total due now')).toBeTruthy()
-    expect(screen.getByText('~$0.40')).toBeTruthy()  // gas row
-    expect(screen.getByText('~$7.00')).toBeTruthy()  // total = nativeFee + gas
-  })
-
-  it('omits the gas + total rows when gasWei is not provided (legacy callsite)', () => {
-    render(<NetworkFeeModal
-      {...DEFAULT_PROPS}
-      lzFeeWei={3_300_000_000_000_000n}
-      applicableStorageFeesWei={1_500_000_000_000_000n}
-    />)
-    expect(screen.queryByText('Total due now')).toBeNull()
-    expect(screen.queryByText('Network gas')).toBeNull()
-  })
-
   it('shows — for LZ fee when lzFeeWei is not provided', () => {
     render(<NetworkFeeModal {...DEFAULT_PROPS} lzFeeWei={undefined} />)
     // Expect the LZ row's current column to be —

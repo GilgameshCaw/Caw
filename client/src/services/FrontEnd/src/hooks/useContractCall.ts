@@ -1,4 +1,4 @@
-import { useCallback, useMemo, useRef } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useAccount, useEstimateGas, useGasPrice, useWriteContract, usePublicClient } from "wagmi";
 import {
   Abi,
@@ -7,6 +7,7 @@ import {
   encodeFunctionData,
   EncodeFunctionDataParameters,
   formatEther,
+  type StateOverride,
 } from "viem";
 
 interface UseContractCallParams {
@@ -22,6 +23,13 @@ export interface UseContractCallArgs extends UseContractCallParams {
   functionName: string;
   args?: readonly unknown[];
   value?: bigint;
+  /**
+   * When provided, gas is estimated with this viem stateOverride AND with the
+   * estimate enabled even while `disabled` is true. Lets the caller simulate a
+   * call that would otherwise revert pre-approval (e.g. fake CAW balance +
+   * allowance) to show a display-only gas figure. Never used for the real tx.
+   */
+  gasEstimateStateOverride?: StateOverride;
 }
 
 export interface UseContractCallReturn {
@@ -40,6 +48,7 @@ export default function useContractCall<
   args: _args,
   value,
   disabled,
+  gasEstimateStateOverride,
   onPending,
   onSuccess,
   onError,
@@ -56,20 +65,60 @@ export default function useContractCall<
     to: address,
     data,
     value,
-    query: { enabled: !!account && !disabled },
+    query: { enabled: !!account && !disabled && !gasEstimateStateOverride },
   });
   const { data: gasPrice } = useGasPrice();
 
-  const gasCostEth = useMemo(() => {
-    if (gasError) console.warn(`[useContractCall] ${functionName} gas estimate failed:`, gasError.message?.slice(0, 200));
-    if (!gasLimit || !gasPrice) return;
-    const wei = gasLimit * gasPrice;
-    const eth = Number(formatEther(wei));
-    return eth;
-  }, [gasLimit, gasPrice, gasError, functionName]);
-
   const { writeContractAsync, status } = useWriteContract();
   const publicClient = usePublicClient();
+
+  // Override-estimate path: when gasEstimateStateOverride is provided, run a
+  // manual publicClient.estimateGas with stateOverride so the estimate succeeds
+  // even when the call would revert without real balance/allowance. This is
+  // purely display-only — the override never affects the actual tx.
+  const [overrideGasLimit, setOverrideGasLimit] = useState<bigint | undefined>();
+  // Stable identity ref for stateOverride to avoid spurious re-runs
+  useEffect(() => {
+    if (!gasEstimateStateOverride || !account || !publicClient) {
+      setOverrideGasLimit(undefined);
+      return;
+    }
+    let cancelled = false;
+    publicClient
+      .estimateGas({
+        account,
+        to: address,
+        data,
+        value,
+        stateOverride: gasEstimateStateOverride,
+      })
+      .then((limit) => {
+        if (!cancelled) setOverrideGasLimit(limit);
+      })
+      .catch((err) => {
+        if (!cancelled) {
+          console.warn(`[useContractCall] ${functionName} override gas estimate failed:`, (err as Error).message?.slice(0, 200));
+          setOverrideGasLimit(undefined);
+        }
+      });
+    return () => { cancelled = true; };
+  // Re-run when call params change. JSON.stringify(gasEstimateStateOverride) is
+  // intentional: StateOverride is an array of plain objects so this gives stable
+  // identity without requiring the caller to memoise the array reference.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [account, address, data, value, JSON.stringify(gasEstimateStateOverride), publicClient]);
+
+  const gasCostEth = useMemo(() => {
+    // Prefer override estimate when provided (enables display even pre-approval)
+    const effectiveGasLimit = gasEstimateStateOverride ? overrideGasLimit : gasLimit;
+    if (!gasEstimateStateOverride && gasError) {
+      console.warn(`[useContractCall] ${functionName} gas estimate failed:`, gasError.message?.slice(0, 200));
+    }
+    if (!effectiveGasLimit || !gasPrice) return;
+    const wei = effectiveGasLimit * gasPrice;
+    const eth = Number(formatEther(wei));
+    return eth;
+  }, [overrideGasLimit, gasLimit, gasPrice, gasError, gasEstimateStateOverride, functionName]);
 
   // Use refs so the call always reads the latest values regardless of closure timing
   const disabledRef = useRef(disabled);

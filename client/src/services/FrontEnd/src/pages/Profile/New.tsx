@@ -5,7 +5,7 @@ import { useReadContract, useAccount, useSwitchChain, useBalance, usePublicClien
 import { useConnectModal } from '@rainbow-me/rainbowkit'
 import { generatePrivateKey, privateKeyToAccount } from 'viem/accounts'
 import useAllowance from "~/hooks/useAllowance";
-import { maxUint256, parseUnits, erc20Abi, formatEther, parseEther, parseEventLogs } from "viem";
+import { maxUint256, parseUnits, erc20Abi, formatEther, parseEther, parseEventLogs, keccak256, encodeAbiParameters, toHex, type StateOverride } from "viem";
 import useContractCall, { UseContractCallReturn } from '~/hooks/useContractCall'
 import { useLayoutStore } from '~/store/layoutStore'
 import { CAW_ADDRESS, CAW_NAMES_ADDRESS, CAW_NAMES_MINTER_ADDRESS, CAW_NAME_QUOTER_ADDRESS, CAW_PAIR_ADDRESS } from '~/../../../abi/addresses'
@@ -579,6 +579,49 @@ export const NewProfile: React.FC = () => {
     }
   }
 
+  // ── CAW state-override for pre-approval gas estimates ───────────────────
+  // Builds a viem StateOverride that fakes MAX CAW balance + MAX allowance for
+  // the connected user, so publicClient.estimateGas can simulate the full
+  // mintAndDeposit call without the user having approved the minter yet.
+  // Display-only — this override is NEVER passed to the real tx.
+  //
+  // CAW ERC20 storage slot layout for the gas-estimate stateOverride. Differs by
+  // environment because testnet points at MintableCaw (OZ 4.x: _balances slot 0,
+  // _allowances slot 1) while mainnet points at the real CAW token
+  // (a-hunters-dream, 0xf3b9569f82b18aef890de263b84189bd33ebe452).
+  //
+  // TESTNET values are verified (MintableCaw = standard OZ 4.x ERC20).
+  // MAINNET values are NOT yet verified against the real token's layout — set to
+  // the common OZ layout as a best guess. If they're wrong, estimateGas reverts
+  // and the "Gas cost" line simply falls back to its placeholder (harmless); fix
+  // the mainnet slots here once confirmed (e.g. via a storage-layout check or
+  // trial against a mainnet fork).
+  const CAW_TOKEN_SLOTS = isTestnet
+    ? { balances: 0n, allowances: 1n }
+    : { balances: 0n, allowances: 1n }  // TODO(mainnet): verify against real CAW token
+
+  const gasOverride = useMemo((): StateOverride | undefined => {
+    if (paymentMode !== 'caw' || !address) return undefined
+    const user = address as `0x${string}`
+    const minter = CAW_NAMES_MINTER_ADDRESS as `0x${string}`
+    // balanceOf[user] = keccak256(abi.encode(user, uint256(balances_slot)))
+    const balSlot = keccak256(encodeAbiParameters([{ type: 'address' }, { type: 'uint256' }], [user, CAW_TOKEN_SLOTS.balances]))
+    // allowance[user][minter]:
+    //   innerBase = keccak256(abi.encode(user, uint256(allowances_slot)))
+    //   finalSlot = keccak256(abi.encode(minter, uint256(innerBase)))
+    const innerBase = keccak256(encodeAbiParameters([{ type: 'address' }, { type: 'uint256' }], [user, CAW_TOKEN_SLOTS.allowances]))
+    const allowSlot = keccak256(encodeAbiParameters([{ type: 'address' }, { type: 'uint256' }], [minter, BigInt(innerBase)]))
+    const MAX = toHex(maxUint256, { size: 32 })
+    return [{
+      address: CAW_ADDRESS as `0x${string}`,
+      stateDiff: [
+        { slot: balSlot, value: MAX },
+        { slot: allowSlot, value: MAX },
+      ],
+    }]
+  }, [paymentMode, address])
+  // ────────────────────────────────────────────────────────────────────────
+
   const depositAmountWei = useMemo(() => {
     if (!depositEnabled || !depositAmount) return 0n
     try { return parseUnits(depositAmount, 18) } catch { return 0n }
@@ -952,6 +995,7 @@ console.log("BALANCE:", balance)
     address: CAW_NAMES_MINTER_ADDRESS,
     args:         [CLIENT_ID, username, lzTokenAmount],
     disabled:     paymentMode === 'eth' || depositEnabled || authEnabled || !address || !isValid || needsApproval,
+    gasEstimateStateOverride: gasOverride,
     onPending:    hash => { console.log('tx pending', hash); setHasResetForm(false) },
     onSuccess:    onMintOnlySuccess,
     onError:      err  => { console.error(err); setHasResetForm(true) },
@@ -965,6 +1009,7 @@ console.log("BALANCE:", balance)
     address: CAW_NAMES_MINTER_ADDRESS,
     args:         [CLIENT_ID, username, chains.l2.layerZero, lzTokenAmount],
     disabled:     paymentMode === 'eth' || depositEnabled || !authEnabled || !address || !isValid || needsApproval,
+    gasEstimateStateOverride: gasOverride,
     onPending:    hash => { console.log('mintAndAuth tx pending', hash); setHasResetForm(false) },
     onSuccess:    onMintOnlySuccess,
     onError:      err  => { console.error(err); setHasResetForm(true) },
@@ -978,6 +1023,7 @@ console.log("BALANCE:", balance)
     address: CAW_NAMES_MINTER_ADDRESS,
     args:         [CLIENT_ID, username, depositAmountWei, chains.l2.layerZero, lzTokenAmount],
     disabled:     paymentMode === 'eth' || !depositEnabled || quickSignEnabled || !address || !isValid || needsApproval || depositAmountWei === 0n,
+    gasEstimateStateOverride: gasOverride,
     onPending:    hash => {
       console.log('mintAndDeposit tx pending', hash)
       setHasResetForm(false)
@@ -1054,6 +1100,9 @@ console.log("BALANCE:", balance)
     // standalone QuickSign flow uses by default.
     args:         [CLIENT_ID, username, depositAmountWei, chains.l2.layerZero, lzTokenAmount, qsSessionAddress, BigInt(qsExpiry), qsSpendLimit, qsTipCeiling],
     disabled:     paymentMode === 'eth' || !depositEnabled || !quickSignEnabled || !address || !isValid || needsApproval || depositAmountWei === 0n || qsSessionAddress === '0x0000000000000000000000000000000000000000',
+    // gasOverride enables display-only estimate before approval. The zero
+    // qsSessionAddress in args is fine — it's just a ballpark figure.
+    gasEstimateStateOverride: gasOverride,
     onPending:    hash => {
       console.log('mintAndDepositAndQuickSign tx pending', hash)
       setHasResetForm(false)
@@ -1289,28 +1338,6 @@ console.log("BALANCE:", balance)
     : (depositEnabled
         ? (quickSignEnabled ? bundledGas : mintAndDepositGas)
         : (authEnabled ? mintAndAuthGas : mintOnlyGas))
-  // DEBUG: dump all six paths' gas estimates side-by-side to diagnose
-  // the CAW-vs-ETH fee discrepancy. Remove after identifying the cause.
-  console.log('[NetworkFee debug]', {
-    paymentMode,
-    depositEnabled,
-    quickSignEnabled,
-    authEnabled,
-    activePath:
-      paymentMode === 'eth'
-        ? (quickSignEnabled ? 'bundledZap' : 'mintAndDepositZap')
-        : (depositEnabled ? (quickSignEnabled ? 'bundled' : 'mintAndDeposit') : (authEnabled ? 'mintAndAuth' : 'mintOnly')),
-    activeGasCostEth: gasCostEth,
-    activeQuoteNativeFee: (quote as any)?.nativeFee?.toString(),
-    allGas: {
-      mintOnly: mintOnlyGas,
-      mintAndAuth: mintAndAuthGas,
-      mintAndDeposit: mintAndDepositGas,
-      bundled: bundledGas,
-      mintAndDepositZap: mintAndDepositZapGas,
-      bundledZap: bundledZapGas,
-    },
-  })
   const mint = paymentMode === 'eth'
     ? (quickSignEnabled ? mintAndDepositAndQuickSignZap : mintAndDepositZap)
     : (depositEnabled
@@ -2090,37 +2117,51 @@ console.log("BALANCE:", balance)
               </div>
             )}
 
-            {/* Rolled-up network fee row */}
+            {/* Network fee + gas cost — shown as two separate lines. The
+                "Network fee" is the protocol/LZ cost (`quote.nativeFee`, the
+                FULL msg.value = per-Network storage fees ×2 + true LZ leg);
+                gas is the L1 execution cost and is NOT a protocol fee, so it
+                gets its own "Gas cost" line rather than being rolled in. */}
             {(() => {
-              // `quote.nativeFee` from the Quoter is the FULL msg.value (per-Network
-              // storage fees ×2 + true LZ message fee). Don't add storage fees
-              // separately or we'd double-count. Gas is the only addend.
-              const includesDeposit = depositEnabled || paymentMode === 'eth'
-              // Auth is bundled with every mint+deposit path, AND with mint-only
-              // when the user opts in via the `authEnabled` toggle.
-              const includesAuth = includesDeposit || (!includesDeposit && authEnabled)
-              let applicableStorageFeesWei = networkFees.mintFee ?? 0n
-              if (includesDeposit) applicableStorageFeesWei += networkFees.depositFee ?? 0n
-              if (includesAuth) applicableStorageFeesWei += networkFees.authFee ?? 0n
               const lzFeeWei = quote?.nativeFee ?? 0n
-              const gasWei = gasCostEth != null ? BigInt(Math.round(gasCostEth * 1e18)) : 0n
-              const totalWei = lzFeeWei + gasWei
-              const totalEth = Number(formatEther(totalWei))
-              const totalUsd = ethPrice > 0 ? totalEth * ethPrice : null
+              const feeUsd = ethPrice > 0 ? Number(formatEther(lzFeeWei)) * ethPrice : null
+              // Gas is estimated via useEstimateGas, which only runs once the
+              // active contract call is enabled. Before that, gasCostEth is
+              // undefined — show a placeholder rather than a fake $0.00 (which
+              // read as "gas is free"). The reason it's pending depends on the
+              // path: CAW mode is gated by the minter approval; ETH/zap mode
+              // needs no approval (the swap output IS the CAW) so it just
+              // resolves once the quote/inputs settle — don't promise an
+              // "approval" step that won't happen.
+              const hasGas = gasCostEth != null && gasCostEth > 0
+              const gasUsd = hasGas && ethPrice > 0 ? gasCostEth * ethPrice : null
+              const gasPendingLabel = (paymentMode === 'caw' && needsMinterApproval)
+                ? 'estimated after approval'
+                : 'estimated before signing'
               return (
-                <div className="flex items-center justify-center gap-1 text-sm text-gray-500">
-                  <span>Network fee:</span>
-                  <span className={isDark ? 'text-white' : 'text-gray-900'}>
-                    {totalUsd != null ? `~$${formatUsd(totalUsd)}` : '—'}
-                  </span>
-                  <button
-                    type="button"
-                    aria-label="Network fee details"
-                    onClick={() => setShowFeeModal(true)}
-                    className="flex items-center cursor-pointer text-gray-400 hover:text-yellow-500 transition-colors"
-                  >
-                    <HiInformationCircle className="w-4 h-4" />
-                  </button>
+                <div className="space-y-0.5">
+                  <div className="flex items-center justify-center gap-1 text-sm text-gray-500">
+                    <span>Network fee:</span>
+                    <span className={isDark ? 'text-white' : 'text-gray-900'}>
+                      {feeUsd != null ? `~$${formatUsd(feeUsd)}` : '—'}
+                    </span>
+                    <button
+                      type="button"
+                      aria-label="Network fee details"
+                      onClick={() => setShowFeeModal(true)}
+                      className="flex items-center cursor-pointer text-gray-400 hover:text-yellow-500 transition-colors"
+                    >
+                      <HiInformationCircle className="w-4 h-4" />
+                    </button>
+                  </div>
+                  <div className="flex items-center justify-center gap-1 text-sm text-gray-500">
+                    <span>Gas cost:</span>
+                    <span className={isDark ? 'text-white' : 'text-gray-900'}>
+                      {gasUsd != null
+                        ? `~$${formatUsd(gasUsd)}`
+                        : <span className="text-gray-500 italic">{gasPendingLabel}</span>}
+                    </span>
+                  </div>
                 </div>
               )
             })()}
@@ -2131,7 +2172,6 @@ console.log("BALANCE:", balance)
               networkId={CLIENT_ID}
               ethPrice={ethPrice}
               lzFeeWei={quote?.nativeFee ?? 0n}
-              gasWei={gasCostEth != null ? BigInt(Math.round(gasCostEth * 1e18)) : 0n}
               applicableStorageFeesWei={(() => {
                 const includesDeposit = depositEnabled || paymentMode === 'eth'
                 const includesAuth = includesDeposit || (!includesDeposit && authEnabled)
