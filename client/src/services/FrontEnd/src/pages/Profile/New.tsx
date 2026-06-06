@@ -483,6 +483,10 @@ export const NewProfile: React.FC = () => {
     spendLimit: bigint
   } | null>(null)
   const [pendingMintAfterSession, setPendingMintAfterSession] = useState(false)
+  // Set when doApproveOrMint discovers (post-unlock) that the address already
+  // has a session and flips quickSignEnabled off. We must wait for the reactive
+  // mint/quote selectors to re-settle on the non-QS path before re-minting.
+  const [pendingMintAfterUnlockRecheck, setPendingMintAfterUnlockRecheck] = useState(false)
   const useAddress = address || activeToken?.owner;
   const setActiveTokenId = useTokenDataStore(state => state.setActiveTokenId);
   const cawPrice = usePriceStore(s => s.priceMap['a-hunters-dream'] ?? 0)
@@ -1433,6 +1437,27 @@ console.log("BALANCE:", balance)
         needsApproval,
         depositAmountWei: depositAmountWei.toString(),
       })
+      // Locked-wallet race guard: at click time the wallet may have been
+      // locked/disconnected, so `address` (and thus hasExistingSessionForAddress)
+      // was unknown and quickSignEnabled stayed true. By the time we get here the
+      // wallet is connected, so re-read the session store fresh for the connected
+      // address. If a live session already exists, this profile inherits it —
+      // routing through the bundled QuickSign mint path would waste gas minting a
+      // redundant session leg. Force quickSignEnabled off so the reactive mint/
+      // quote selectors fall back to the plain mintAndDeposit(Zap) path, then
+      // defer one tick for those selectors to settle before minting.
+      const connectedOwner = (address || activeToken?.owner)?.toLowerCase()
+      const liveSession = connectedOwner
+        ? useSessionKeyStore.getState().sessions[connectedOwner]
+        : undefined
+      const sessionAlreadyExists = !!liveSession && liveSession.expiry > Date.now() / 1000
+      if (sessionAlreadyExists && quickSignEnabled) {
+        console.log('[New] existing session found post-unlock — routing through plain (non-QS) mint to avoid wasted gas')
+        setQuickSignEnabled(false)
+        setPendingMintAfterUnlockRecheck(true)
+        return
+      }
+
       // Bundled flow needs a session keypair generated first. Generate it,
       // wait for the hook's `args` to settle on the new address, then mint.
       // Triggered by either CAW-mode or ETH-mode bundled flows.
@@ -1447,7 +1472,17 @@ console.log("BALANCE:", balance)
       }
       await mint();
     }
-  }, [needsMinterApproval, approveMinter, mint, depositEnabled, quickSignEnabled, pendingSession, generatePendingSession, paymentMode, ethAmountWei]);
+  }, [needsMinterApproval, approveMinter, mint, depositEnabled, quickSignEnabled, pendingSession, generatePendingSession, paymentMode, ethAmountWei, address, activeToken?.owner]);
+
+  // Post-unlock recheck: doApproveOrMint flipped quickSignEnabled off because
+  // the connected address already has a session. Once that propagates (the
+  // mint/quote selectors now point at the plain path), re-enter the mint flow.
+  useEffect(() => {
+    if (pendingMintAfterUnlockRecheck && !quickSignEnabled) {
+      setPendingMintAfterUnlockRecheck(false)
+      doApproveOrMint()
+    }
+  }, [pendingMintAfterUnlockRecheck, quickSignEnabled, doApproveOrMint])
 
   // After session params land in state and the wagmi hook re-renders with the
   // fresh args, fire the actual mint call. Same pattern as
