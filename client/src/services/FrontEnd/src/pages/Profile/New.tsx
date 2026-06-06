@@ -1035,6 +1035,12 @@ console.log("BALANCE:", balance)
   const qsExpiry = pendingSession?.expiry ?? Math.floor(Date.now() / 1000) + DEFAULT_SESSION_DURATION
   const qsSpendLimit = pendingSession?.spendLimit ?? (quickSignEnabled ? getDefaultSpendLimit() : 0n)
   const qsSessionAddress = pendingSession?.address ?? '0x0000000000000000000000000000000000000000' as `0x${string}`
+  // The validator tip ceiling baked into the bundled session. MUST be used for
+  // BOTH the on-chain contract arg AND the local setSession persistence below —
+  // they were out of sync (contract got the value, the stored session record
+  // omitted it), so SessionKeySettings showed "none (legacy session)" for a
+  // freshly-created session. Whole CAW tokens; stored as a string on the entry.
+  const qsTipCeiling = getDefaultTipCeiling(getTipTiers().fast)
 
   // hook into mintAndDepositAndQuickSign — bundled flow with session leg.
   const { call: mintAndDepositAndQuickSign, status: bundledStatus, gasCostEth: bundledGas }: UseContractCallReturn = useContractCall({
@@ -1046,7 +1052,7 @@ console.log("BALANCE:", balance)
     // tier (BASE_VALIDATOR_TIP * 3 ≈ $0.003 / action at standard CAW pricing,
     // gives validators priority-lane compensation). Matches what the
     // standalone QuickSign flow uses by default.
-    args:         [CLIENT_ID, username, depositAmountWei, chains.l2.layerZero, lzTokenAmount, qsSessionAddress, BigInt(qsExpiry), qsSpendLimit, getDefaultTipCeiling(getTipTiers().fast)],
+    args:         [CLIENT_ID, username, depositAmountWei, chains.l2.layerZero, lzTokenAmount, qsSessionAddress, BigInt(qsExpiry), qsSpendLimit, qsTipCeiling],
     disabled:     paymentMode === 'eth' || !depositEnabled || !quickSignEnabled || !address || !isValid || needsApproval || depositAmountWei === 0n || qsSessionAddress === '0x0000000000000000000000000000000000000000',
     onPending:    hash => {
       console.log('mintAndDepositAndQuickSign tx pending', hash)
@@ -1068,6 +1074,10 @@ console.log("BALANCE:", balance)
             expiry: sess.expiry,
             scopeBitmap: QUICK_SIGN_DEFAULT_SCOPE,
             spendLimit: sess.spendLimit.toString(),
+            // Persist the SAME tip ceiling baked into the on-chain session args
+            // (qsTipCeiling). Omitting it left the stored session with
+            // tipCeiling=undefined → "none (legacy session)" in settings.
+            tipCeiling: qsTipCeiling.toString(),
           })
           setSessionEnabled(true)
           localStorage.setItem(
@@ -1187,7 +1197,7 @@ console.log("BALANCE:", balance)
     // V2 inserted perActionTipRate: uint64 between spendLimit and lzDestId.
     // Default to fast-tier tip (~$0.003 at ~$3.8e-8/CAW pricing) for parity
     // with the standalone QuickSign flow.
-    args: [CLIENT_ID, username, ethAmountWei, zapQuote.minCawOut, qsSessionAddress, BigInt(qsExpiry), qsSpendLimit, getDefaultTipCeiling(getTipTiers().fast), chains.l2.layerZero, lzTokenAmount],
+    args: [CLIENT_ID, username, ethAmountWei, zapQuote.minCawOut, qsSessionAddress, BigInt(qsExpiry), qsSpendLimit, qsTipCeiling, chains.l2.layerZero, lzTokenAmount],
     disabled: paymentMode !== 'eth' || !quickSignEnabled || !address || !isValid || ethAmountWei === 0n || !zapQuote.loaded || qsSessionAddress === '0x0000000000000000000000000000000000000000',
     onPending: hash => { console.log('mintAndDepositAndQuickSignZap tx pending', hash); setHasResetForm(false) },
     onSuccess: async (hash) => {
@@ -1208,6 +1218,10 @@ console.log("BALANCE:", balance)
             expiry: sess.expiry,
             scopeBitmap: QUICK_SIGN_DEFAULT_SCOPE,
             spendLimit: sess.spendLimit.toString(),
+            // Persist the SAME tip ceiling baked into the on-chain session args
+            // (qsTipCeiling). Omitting it left the stored session with
+            // tipCeiling=undefined → "none (legacy session)" in settings.
+            tipCeiling: qsTipCeiling.toString(),
           })
           setSessionEnabled(true)
           localStorage.setItem(
