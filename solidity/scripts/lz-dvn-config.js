@@ -68,30 +68,41 @@
 // L2_CHAIN_KEYS in deploy.js, add a CHAINS entry, and add an entry here
 // + in LZ_LIBRARIES_MAINNET below. The PATHWAYS list regenerates from
 // L2_CHAIN_KEYS so no code changes needed in this file.
-// TODO BEFORE MAINNET DEPLOY: fill in the Canary + Horizen sentinels below
-// with verified addresses from
-//   https://docs.layerzero.network/v2/deployments/dvn-addresses
-// Re-verify LZ Labs addresses on the same page before signing any tx.
+// Addresses pulled from the LZ metadata API
+//   https://metadata.layerzero-api.com/v1/metadata/dvns
+// on 2026-06-07. Each entry is the canonical, NON-deprecated,
+// NON-lzReadCompatible V2 deployment for that (chain, provider) — the
+// "regular" DVN that signs ordinary OApp send/receive messages. The
+// lzRead sibling deployments for the same provider/chain DO NOT sign
+// regular messages and would silently stall every cross-chain tx if
+// configured here.
+//
+// Pre-existing pitfall: the Base mainnet LZ Labs address that lived in
+// this file before 2026-06-07 was the lzRead variant
+// (0xb1473ac9f58fb27597a21710da9d1071841e8163, lzReadCompatible: true).
+// It has been replaced with 0x9e059a54... — the regular Base DVN.
+// Verify ALL nine addresses against the metadata endpoint before signing.
+//
 // .sort() at array construction enforces the lowercase-ascending ordering
 // LZ's UlnConfig requires.
 const DVNS_BY_CHAIN_MAINNET = {
   // Ethereum mainnet (lzEid 30101)
   mainnetL1: [
-    '0x__CANARY_ETHEREUM__',                    // TODO: Canary
-    '0x589dedbd617e0cbcb916a9223f4d1300c294236b', // LayerZero Labs (verified 2026-06-06)
-    '0x__HORIZEN_ETHEREUM__',                   // TODO: Horizen
+    '0xa4fe5a5b9a846458a70cd0748228aed3bf65c2cd', // Canary           (id: canary)
+    '0x589dedbd617e0cbcb916a9223f4d1300c294236b', // LayerZero Labs   (id: layerzero-labs)
+    '0x380275805876ff19055ea900cdb2b46a94ecf20d', // Horizen          (id: horizen-labs)
   ].sort(),
   // Base mainnet (lzEid 30184)
   mainnetL2: [
-    '0x__CANARY_BASE__',                        // TODO: Canary
-    '0xb1473ac9f58fb27597a21710da9d1071841e8163', // LayerZero Labs (verified 2026-06-06)
-    '0x__HORIZEN_BASE__',                       // TODO: Horizen
+    '0x554833698ae0fb22ecc90b01222903fd62ca4b47', // Canary           (id: canary)
+    '0x9e059a54699a285714207b43b055483e78faac25', // LayerZero Labs   (id: layerzero-labs)
+    '0xa7b5189bca84cd304d8553977c7c614329750d99', // Horizen          (id: horizen-labs)
   ].sort(),
   // Arbitrum mainnet (lzEid 30110)
   mainnetL2b: [
-    '0x__CANARY_ARBITRUM__',                    // TODO: Canary
-    '0x2f55c492897526677c5b68fb199ea31e2c126416', // LayerZero Labs (verified 2026-06-06)
-    '0x__HORIZEN_ARBITRUM__',                   // TODO: Horizen
+    '0xf2e380c90e6c09721297526dbc74f870e114dfcb', // Canary           (id: canary)
+    '0x2f55c492897526677c5b68fb199ea31e2c126416', // LayerZero Labs   (id: layerzero-labs)
+    '0x19670df5e16bea2ba9b9e68b48c054c5baea06b8', // Horizen          (id: horizen-labs)
   ].sort(),
 };
 
