@@ -377,7 +377,7 @@ model TxQueue {
   // implicitTip is the per-action tip the validator should apply when the
   // signed payload carries no explicit tip (amounts empty). Both added by
   // migration 20260506200000_session_per_action_tip_rate.
-  signerKind  String? @default("owner")
+  signerKind  String  @default("owner")
   implicitTip String?
 
   @@index([senderId, status])
@@ -1306,6 +1306,11 @@ model SessionKey {
   scopeBitmap    Int // contract uint8, bit i = action type i allowed
   spendLimit     String // bigint as string (whole CAW tokens, not wei)
   spent          String    @default("0") // locally-tracked spend total
+  // Per-action validator tip baked into the session at registration. Session-
+  // signed actions sign with empty amounts[]; the contract reads this rate and
+  // credits the validator once at batch end. bigint-as-string (whole CAW).
+  // Added by migration 20260506200000_session_per_action_tip_rate.
+  perActionTipRate String  @default("0")
   revokedAt      DateTime? // set when SessionRevoked event indexed
   lastSyncedAt   DateTime  @default(now())
   createdAt      DateTime  @default(now())
