@@ -1274,6 +1274,74 @@ for (const L of L2_CHAIN_KEYS) {
   // commit 2e408f07 (refactor(solidity): drop Ownable from CawActions).
 }
 
+// =============================================================================
+// Phase 8 — seeding: mint well-known bot/system profiles
+// =============================================================================
+//
+// Runs after all wiring (phase 7) is complete. Each step is gated on
+// CAW_WETH_PAIR being set (mintAndDepositZap needs a live Uniswap pool) and
+// uses an on-chain idByUsername read for idempotency — not the state.linking
+// flag — so a partial deploy that stored the flag but never confirmed the tx
+// will re-attempt correctly.
+
+LINKING_STEPS.push({
+  name: '[Phase 8] Seed @cawai profile (mintAndDepositZap, ~$10 CAW deposit)',
+  chain: 'L1',
+  phase: 8,
+  // Gate: requires a live CAW/WETH Uniswap pool (same env var the priceReader uses).
+  // On testnet this is intentionally absent — the step is silently skipped until
+  // mainnet when CAW_WETH_PAIR will be set.
+  condition: (state, _deployer, _env) => {
+    return !!process.env.CAW_WETH_PAIR && !!state.addresses.CawProfileMinter;
+  },
+  custom: async (state, deployer, chainConfig) => {
+    const minter = deployer.getContract('CawProfileMinter');
+    if (!minter) throw new Error('CawProfileMinter handle missing');
+
+    // Idempotency: check on-chain, not state.linking. A partial run that wrote
+    // state.linking.cawAiTokenId without confirming the tx would silently skip
+    // if we relied on the flag alone.
+    const existingId = await minter.idByUsername('cawai');
+    if (existingId !== 0n) {
+      console.log(`   @cawai already minted (tokenId=${existingId}) — skipping`);
+      state.linking = state.linking || {};
+      state.linking.cawAiTokenId = Number(existingId);
+      return;
+    }
+
+    // lzDestId = L1's own lzEid → mintAndDepositZap treats this as bypassLZ
+    // (no actual LayerZero message sent; deposit is applied directly on L1).
+    const lzDestId      = CHAINS[chainConfig.env + 'L1'].lzEid;
+    const swapEthAmount = ethers.parseEther('0.005'); // ~$10 at ETH=$2 000
+    const txValue       = ethers.parseEther('0.006'); // swap + LZ/storage buffer
+    const networkId     = 1;                          // Uruk (first registered network)
+    const lzTokenAmount = 0n;                         // no LZ fee for bypassLZ path
+    const minCawOut     = 0n;                         // deploy script; deployer is sole caller
+
+    console.log(
+      `   Minting @cawai (networkId=${networkId}, swapEth=${ethers.formatEther(swapEthAmount)} ETH, ` +
+      `lzDestId=${lzDestId})…`
+    );
+    const tx = await minter.mintAndDepositZap(
+      networkId,
+      'cawai',
+      swapEthAmount,
+      minCawOut,
+      lzDestId,
+      lzTokenAmount,
+      { value: txValue }
+    );
+    await tx.wait();
+
+    // Record tokenId in state so verify-deploy-wiring and CawAI env setup can
+    // consume it. The CawAI service reads CAW_AI_TOKEN_ID from env at runtime.
+    const tokenId = await minter.idByUsername('cawai');
+    state.linking = state.linking || {};
+    state.linking.cawAiTokenId = Number(tokenId);
+    console.log(`   @cawai minted as tokenId=${tokenId}`);
+  },
+});
+
 // ============================================
 // DEPLOYMENTS.TS WRITER
 // ============================================
