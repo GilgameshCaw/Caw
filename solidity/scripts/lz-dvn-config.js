@@ -1,31 +1,64 @@
 /**
  * LayerZero V2 DVN configuration for CAW mainnet pathways.
  *
- * We enforce a 3-of-3 required DVN set on every cross-chain pathway:
- *   - LayerZero Labs
- *   - Nethermind
- *   - Google Cloud
+ * We use a 2-of-3 OPTIONAL DVN set on every cross-chain pathway:
+ *   - Canary           (LZ-built, used as the client-diverse anchor today)
+ *   - LayerZero Labs   (LZ-built)
+ *   - Horizen          (LZ-built)
  *
- * WHY 3 AND NOT 1: a single-DVN ULN config means one compromised verifier
- * can forge messages and drain cross-chain state. 3-of-3 required makes
- * any single DVN compromise non-fatal — all three must sign for a
- * message to be delivered. This is the same guidance LZ gives to
- * production OApps and matches the aftermath of the 1-DVN hacks of
- * earlier 2026.
+ * WHY OPTIONAL 2-OF-3 INSTEAD OF REQUIRED 3-OF-3:
+ *
+ *   Required DVNs form a unanimity gate: if ANY required DVN goes offline or
+ *   withholds signatures, every message on that pathway stalls permanently.
+ *   A 3-of-3 required set gives each individual DVN an unconditional veto
+ *   over the protocol — too much power for a set that is still largely
+ *   LZ-operated.
+ *
+ *   Optional DVNs with a threshold of 2 mean: any 2 of the 3 must sign.
+ *   A single DVN going offline (or going rogue) cannot halt the chain — the
+ *   remaining two still carry messages through. Two would need to collude
+ *   to forge, vs. one under the required model.
+ *
+ * ESCALATION PATH (on-chain, additions-only):
+ *
+ *   PathwayExpander.addDvnToPathway (commit 5052e454) lets the owner ADD a
+ *   single optional DVN at a time along a fixed schedule:
+ *     step 0 → 1: optional 3 → 4, threshold 2 → 3
+ *     step 1 → 2: optional 4 → 5, threshold stays 3
+ *     step 2+   : LOCKED
+ *   At every step the honest-DVN majority is preserved. The plan is to
+ *   escalate to 3-of-4 then 3-of-5 as client-diverse DVNs (not LZ-built)
+ *   come online — per Dane at LZ, that is a couple of months out from
+ *   the initial mainnet deploy. This script only handles the initial
+ *   configureNewPathway write; escalation is a separate operator action
+ *   that runs addDvnToPathway directly.
+ *
+ * DVN DIVERSITY NOTE:
+ *
+ *   The starting 3 (Canary, LZ Labs, Horizen) are operator-diverse (separate
+ *   organizations) but all three are LZ-build projects, so they're not yet
+ *   client-diverse. Canary is the most independent in practice. True
+ *   client-diverse DVNs (independent codebases) will be added in the first
+ *   escalation step. This asymmetry is documented so future reviewers know
+ *   why 3-of-5 is the eventual target, not the start.
  *
  * TESTNET IS INTENTIONALLY NOT COVERED: not every DVN operates on every
  * LZ testnet, and the security value on testnet is minimal. Testnet
  * stays on LayerZero's default ULN config.
  *
  * DVN MISMATCH PROTECTION: LZ's docs call out that if a sender sets
- * `requiredDVNs: [A]` and the receiver sets `requiredDVNs: [A, B]`, every
+ * `optionalDVNs: [A]` and the receiver sets `optionalDVNs: [A, B]`, every
  * message is blocked because DVN B was never paid to sign on the send
  * side. We avoid this by configuring SEND and RECEIVE sides of each
  * pathway with the SAME provider set (the 3 above), sourced from the
  * same DVNS table keyed by chain. Symmetric by construction.
  *
- * DVN addresses verified against LayerZero's public metadata API
- * (metadata.layerzero-api.com/v1/metadata/dvns) on 2026-04-24.
+ * DVN addresses verified against LayerZero's public deployments page
+ * (https://docs.layerzero.network/v2/deployments/dvn-addresses) on 2026-06-06.
+ * Canary + Horizen addresses ARE NOT YET FILLED — sentinels left as TODO
+ * for the deployer to look up + verify on the day of deploy. The deploy
+ * script will throw on the TODO sentinels rather than silently submit
+ * invalid configs.
  */
 
 // DVN addresses per mainnet chain, provided in ASCENDING order by address
@@ -35,25 +68,31 @@
 // L2_CHAIN_KEYS in deploy.js, add a CHAINS entry, and add an entry here
 // + in LZ_LIBRARIES_MAINNET below. The PATHWAYS list regenerates from
 // L2_CHAIN_KEYS so no code changes needed in this file.
+// TODO BEFORE MAINNET DEPLOY: fill in the Canary + Horizen sentinels below
+// with verified addresses from
+//   https://docs.layerzero.network/v2/deployments/dvn-addresses
+// Re-verify LZ Labs addresses on the same page before signing any tx.
+// .sort() at array construction enforces the lowercase-ascending ordering
+// LZ's UlnConfig requires.
 const DVNS_BY_CHAIN_MAINNET = {
   // Ethereum mainnet (lzEid 30101)
   mainnetL1: [
-    '0x589dedbd617e0cbcb916a9223f4d1300c294236b', // LayerZero Labs
-    '0xd56e4eab23cb81f43168f9f45211eb027b9ac7cc', // Google Cloud
-    '0xf4064220871e3b94ca6ab3b0cee8e29178bf47de', // Nethermind
-  ],
+    '0x__CANARY_ETHEREUM__',                    // TODO: Canary
+    '0x589dedbd617e0cbcb916a9223f4d1300c294236b', // LayerZero Labs (verified 2026-06-06)
+    '0x__HORIZEN_ETHEREUM__',                   // TODO: Horizen
+  ].sort(),
   // Base mainnet (lzEid 30184)
   mainnetL2: [
-    '0xb1473ac9f58fb27597a21710da9d1071841e8163', // LayerZero Labs
-    '0xcd37ca043f8479064e10635020c65ffc005d36f6', // Nethermind
-    '0xd56e4eab23cb81f43168f9f45211eb027b9ac7cc', // Google Cloud
-  ],
+    '0x__CANARY_BASE__',                        // TODO: Canary
+    '0xb1473ac9f58fb27597a21710da9d1071841e8163', // LayerZero Labs (verified 2026-06-06)
+    '0x__HORIZEN_BASE__',                       // TODO: Horizen
+  ].sort(),
   // Arbitrum mainnet (lzEid 30110)
   mainnetL2b: [
-    '0x14e570a1684c7ca883b35e1b25d2f7cec98a16cd', // Nethermind
-    '0x2f55c492897526677c5b68fb199ea31e2c126416', // LayerZero Labs
-    '0xd56e4eab23cb81f43168f9f45211eb027b9ac7cc', // Google Cloud
-  ],
+    '0x__CANARY_ARBITRUM__',                    // TODO: Canary
+    '0x2f55c492897526677c5b68fb199ea31e2c126416', // LayerZero Labs (verified 2026-06-06)
+    '0x__HORIZEN_ARBITRUM__',                   // TODO: Horizen
+  ].sort(),
 };
 
 // LayerZero V2 send/receive library addresses per chain. Also from the
@@ -113,14 +152,22 @@ const ULN_CONFIG_TUPLE = 'tuple(uint64 confirmations, uint8 requiredDVNCount, ui
 function buildUlnSetConfigParams(ethers, chainKey, destEid) {
   const dvns = DVNS_BY_CHAIN_MAINNET[chainKey];
   if (!dvns) throw new Error(`No DVN config for chain ${chainKey}`);
+  for (const d of dvns) {
+    if (d.includes('__')) throw new Error(
+      `DVN sentinel ${d} for ${chainKey} not filled — see lz-dvn-config.js header TODO`
+    );
+  }
 
+  // 2-of-3 optional. Required is empty: no DVN has unilateral veto. The
+  // escalation contract (PathwayExpander.addDvnToPathway) can later bump
+  // this to 3-of-4 then 3-of-5 as client-diverse DVNs come online.
   const ulnConfig = {
     confirmations: 0n, // 0 = use default
-    requiredDVNCount: 3,
-    optionalDVNCount: 0,
-    optionalDVNThreshold: 0,
-    requiredDVNs: dvns,
-    optionalDVNs: [],
+    requiredDVNCount: 0,
+    optionalDVNCount: 3,
+    optionalDVNThreshold: 2,
+    requiredDVNs: [],
+    optionalDVNs: dvns,
   };
 
   const encoded = ethers.AbiCoder.defaultAbiCoder().encode(
@@ -157,18 +204,21 @@ function decodeUlnConfig(ethers, encoded) {
 
 /**
  * True iff the on-chain ULN config already matches what we'd set.
+ * Checks the 2-of-3 optional scheme: no required DVNs, correct optional set,
+ * count 3, threshold 2.
  */
 function configMatches(current, expectedDvns) {
   if (!current) return false;
   const expectedSet = expectedDvns.map(a => a.toLowerCase()).sort();
-  const currentSet = [...current.requiredDVNs].sort();
+  const currentSet = [...current.optionalDVNs].sort();
   if (currentSet.length !== expectedSet.length) return false;
   for (let i = 0; i < currentSet.length; i++) {
     if (currentSet[i] !== expectedSet[i]) return false;
   }
-  return current.requiredDVNCount === expectedDvns.length
-      && current.optionalDVNCount === 0
-      && current.optionalDVNThreshold === 0;
+  return current.optionalDVNCount === expectedDvns.length
+      && current.optionalDVNThreshold === 2
+      && current.requiredDVNCount === 0
+      && current.requiredDVNs.length === 0;
 }
 
 /**
@@ -204,7 +254,7 @@ function buildPathways(l2ChainKeys) {
 
 /**
  * Runs the full DVN config reconciliation. For each pathway:
- *  1. Read current SEND config on source. If already matches 3-of-3, skip.
+ *  1. Read current SEND config on source. If already matches 2-of-3, skip.
  *  2. If mismatch, call setConfig on source endpoint's SEND library.
  *  3. Same for RECEIVE config on destination.
  *
@@ -225,7 +275,7 @@ async function configureLzDvns(state, deployer, chainConfig, chainsMap, l2ChainK
 
   const pathways = buildPathways(l2ChainKeys);
   console.log(`\n  Reconciling DVN config across ${pathways.length} pathway(s)…`);
-  console.log(`  Required DVNs: LayerZero Labs + Nethermind + Google Cloud (3-of-3).`);
+  console.log(`  Optional DVNs: Canary + LayerZero Labs + Horizen (2-of-3 threshold).`);
 
   let applied = 0;
   let skipped = 0;
@@ -364,8 +414,8 @@ async function reconcileOneSide({ ethers, deployer, chainKey, oappAddress, libra
     return 'skipped';
   }
 
-  // Also check effective on-chain config — if it already matches our 3-of-3
-  // target (e.g. from a prior deploy with the old direct-setConfig path), skip.
+  // Also check effective on-chain config — if it already matches our 2-of-3
+  // optional target (e.g. from a prior deploy run that completed), skip.
   const endpoint = new ethers.Contract(libs.endpoint, ENDPOINT_ABI, wallet);
   let current = null;
   try {
@@ -382,13 +432,19 @@ async function reconcileOneSide({ ethers, deployer, chainKey, oappAddress, libra
   }
 
   // Build the raw ULN config bytes (the `config` field of SetConfigParam).
+  // 2-of-3 optional, no required. See module header for rationale + escalation path.
+  for (const d of expectedDvns) {
+    if (d.includes('__')) throw new Error(
+      `DVN sentinel ${d} for ${chainKey} not filled — see lz-dvn-config.js header TODO`
+    );
+  }
   const ulnConfig = {
     confirmations: 0n,
-    requiredDVNCount: 3,
-    optionalDVNCount: 0,
-    optionalDVNThreshold: 0,
-    requiredDVNs: DVNS_BY_CHAIN_MAINNET[chainKey],
-    optionalDVNs: [],
+    requiredDVNCount: 0,
+    optionalDVNCount: 3,
+    optionalDVNThreshold: 2,
+    requiredDVNs: [],
+    optionalDVNs: expectedDvns,
   };
   const ULN_TUPLE = 'tuple(uint64 confirmations, uint8 requiredDVNCount, uint8 optionalDVNCount, uint8 optionalDVNThreshold, address[] requiredDVNs, address[] optionalDVNs)';
   const encodedUln = ethers.AbiCoder.defaultAbiCoder().encode([ULN_TUPLE], [ulnConfig]);
