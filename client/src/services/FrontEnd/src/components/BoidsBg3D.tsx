@@ -31,10 +31,15 @@ const BOUND_MARGIN_Y = 2.5
 const BOUND_MARGIN_Z = 2.5
 const BOUND_TURN = 0.003
 
-// Mouse repulsion
-const MOUSE_WORLD_RADIUS = 6.0
-const MOUSE_FRIGHT_PEAK = 0.22  // force at distance=0
-const MOUSE_PLANE_Z = 0         // project cursor onto z=0 plane
+// Mouse repulsion / fright — birds panic and dart away from the cursor. Wide
+// radius sweeps a big swath of the flock; high peak force + a per-bird fright
+// scalar that temporarily lifts the speed cap means nearby birds genuinely
+// BOLT (not just nudge), then settle back to cruising over ~1s.
+const MOUSE_WORLD_RADIUS = 10.0   // detection zone around the cursor
+const MOUSE_FRIGHT_PEAK = 1.4     // force at distance=0 (≫ MAX_SPEED → hard dart)
+const MOUSE_PLANE_Z = 0           // project cursor onto z=0 plane
+const FRIGHT_SPEED_BOOST = 3.5    // max speed cap multiplier while fully frightened
+const FRIGHT_DECAY = 0.02         // per-frame decay of the fright scalar (~0.8s to settle)
 
 // Fog / depth shading
 const FOG_NEAR = 12
@@ -49,43 +54,61 @@ function getCrowCount(): number {
   return 100
 }
 
-// ─── Crow geometry ────────────────────────────────────────────────────────────
-// 8 vertices, 3 triangles — Mr.doob's original layout from thewildernessdowntown.
+// ─── Crow geometry — CAW logo silhouette ───────────────────────────────────────
+// Reshaped from Mr.doob's 3-triangle crow to read like the CAW logo bird: a
+// swept-back "W" wing pair with a notched inner edge and a forked tail, kept as
+// flapping 3D geometry (wingtips animate in Y; whole body pitches/banks).
 //
-// v0 ( 5, 0, 0)   beak
-// v1 (-5,-2, 1)   tail tip A
-// v2 (-5, 0, 0)   tail center
-// v3 (-5,-2,-1)   tail tip B
-// v4 ( 0, 2,-6)   LEFT  wingtip  ← animated
-// v5 ( 0, 2, 6)   RIGHT wingtip  ← animated
-// v6 ( 2, 0, 0)   body front
-// v7 (-3, 0, 0)   body back
+// Axes:  x = forward (beak) / back (tail)   z = wingspan (L/R)   y = up (flap)
 //
-// Faces: (0,2,1) body/tail   (4,7,6) left wing   (5,6,7) right wing
+// The CAW logo wings angle UP-AND-BACK from the body with a step where each wing
+// meets the body, and the tail is a shallow fork. We capture that with 10 verts:
 //
-// Scale factor 0.08 brings the 10-unit crow into ~0.8 world units — readable
+//   v0 beak           ( 5.5,  0,    0  )  pointed nose
+//   v1 body back      (-3.0,  0,    0  )  spine, between the tail fork
+//   v2 L inner notch  (-0.5,  0.6, -1.6)  where left wing steps off the body
+//   v3 L wingtip      (-3.5,  2.4, -6.5)  swept BACK + up   ← animated (Y)
+//   v4 R inner notch  (-0.5,  0.6,  1.6)  where right wing steps off the body
+//   v5 R wingtip      (-3.5,  2.4,  6.5)  swept BACK + up   ← animated (Y)
+//   v6 body front     ( 1.8,  0,    0  )  shoulders
+//   v7 L tail tip     (-5.5, -1.2, -1.4)  fork prong
+//   v8 R tail tip     (-5.5, -1.2,  1.4)  fork prong
+//   v9 wing trail     (-4.2,  0.3,  0  )  rear point the wings sweep toward
+//
+// Faces: each wing = 2 tris (leading + trailing panel) to show the swept "W";
+// plus the two tail-fork tris off the spine.
+//
+// Scale factor 0.08 brings the ~11-unit crow into ~0.9 world units — readable
 // at our camera distance of ~22 without dominating the frame.
 
 const CROW_SCALE = 0.08
 
-// Flat positions array for the 9 vertices (v0..v7, index matches above)
 const BASE_VERTS: readonly number[] = [
-  /* v0 beak      */  5,  0,  0,
-  /* v1 tail A    */ -5, -2,  1,
-  /* v2 tail ctr  */ -5,  0,  0,
-  /* v3 tail B    */ -5, -2, -1,
-  /* v4 L wing    */  0,  2, -6,
-  /* v5 R wing    */  0,  2,  6,
-  /* v6 body fnt  */  2,  0,  0,
-  /* v7 body bck  */ -3,  0,  0,
+  /* v0 beak        */  5.5,  0.0,  0.0,
+  /* v1 body back   */ -3.0,  0.0,  0.0,
+  /* v2 L notch     */ -0.5,  0.6, -1.6,
+  /* v3 L wingtip   */ -3.5,  2.4, -6.5,
+  /* v4 R notch     */ -0.5,  0.6,  1.6,
+  /* v5 R wingtip   */ -3.5,  2.4,  6.5,
+  /* v6 body front  */  1.8,  0.0,  0.0,
+  /* v7 L tail tip  */ -5.5, -1.2, -1.4,
+  /* v8 R tail tip  */ -5.5, -1.2,  1.4,
+  /* v9 wing trail  */ -4.2,  0.3,  0.0,
 ]
 
-// Triangle index triplets: (0,2,1), (4,7,6), (5,6,7)
-const CROW_INDICES = new Uint8Array([0, 2, 1,  4, 7, 6,  5, 6, 7])
+// Faces (CCW-ish; material is DoubleSide so winding isn't critical):
+//   Left wing  : leading (beak→notch→tip) + trailing (notch→trail→tip)
+//   Right wing : leading (beak→tip→notch) + trailing (notch→tip→trail)
+//   Tail fork  : (body front→body back→L tail) + (body front→R tail→body back)
+const CROW_INDICES = new Uint8Array([
+  0, 2, 3,   2, 9, 3,    // left  wing: leading (beak→notch→tip) + trailing (notch→trail→tip)
+  0, 5, 4,   4, 5, 9,    // right wing: leading (beak→tip→notch) + trailing (notch→tip→trail)
+  6, 1, 7,   6, 8, 1,    // tail fork (two prongs off the spine)
+])
 
-// Wing vertex indices inside the position flat array (stride 3)
-const IDX_V4_Y = 4 * 3 + 1  // 13 — left  wingtip Y
-const IDX_V5_Y = 5 * 3 + 1  // 16 — right wingtip Y
+// Wing vertex indices inside the position flat array (stride 3) — wingtips flap.
+const IDX_V4_Y = 3 * 3 + 1  // 10 — left  wingtip Y (v3)
+const IDX_V5_Y = 5 * 3 + 1  // 16 — right wingtip Y (v5)
 
 function makeCrowGeometry(): THREE.BufferGeometry {
   const geo = new THREE.BufferGeometry()
@@ -104,6 +127,7 @@ interface CrowState {
   px: number; py: number; pz: number   // position
   vx: number; vy: number; vz: number   // velocity
   phase: number                          // wing-flap phase (radians)
+  fright: number                         // 0..1 panic scalar: spikes near cursor, decays
 }
 
 function makeCrowStates(count: number): CrowState[] {
@@ -121,6 +145,7 @@ function makeCrowStates(count: number): CrowState[] {
       vy: Math.sin(phi) * spd,
       vz: Math.sin(theta) * Math.cos(phi) * spd,
       phase: Math.random() * Math.PI * 2,
+      fright: 0,
     })
   }
   return states
@@ -137,20 +162,25 @@ interface MouseWorld {
 function FlockScene({ isDark }: { isDark: boolean }) {
   const { gl, camera, size } = useThree()
 
-  // One material per scene (shared across all meshes — THREE reuses it fine)
+  // One material per scene (shared across all meshes — THREE reuses it fine).
+  // Birds must CONTRAST the page background: the splash is bg-black in dark
+  // mode, so near-black birds were invisible (black-on-black). Use a light
+  // silhouette on dark bg, and a dark silhouette on light bg.
   const material = useMemo(() => {
     const col = isDark
-      ? new THREE.Color(0x0a0a0b)   // near-black for dark mode
-      : new THREE.Color(0x3a3028)   // warm dark-grey on light bg
+      ? new THREE.Color(0xcdd3dc)   // light grey-blue — visible on black
+      : new THREE.Color(0x15120e)   // near-black — visible on white
     return new THREE.MeshBasicMaterial({
       color: col,
       side: THREE.DoubleSide,
     })
   }, [isDark])
 
-  // Fog color matches the bg so distant crows recede naturally
+  // Fog fades distant crows toward the background for depth. It must match the
+  // page bg (black in dark mode, white in light) so birds dissolve into the
+  // "sky" rather than into a mismatched grey haze.
   const fogColor = useMemo(
-    () => isDark ? new THREE.Color(0x050507) : new THREE.Color(0xf5f0ea),
+    () => isDark ? new THREE.Color(0x000000) : new THREE.Color(0xffffff),
     [isDark]
   )
 
@@ -302,7 +332,9 @@ function FlockScene({ isDark }: { isDark: boolean }) {
       if (b.pz < -WORLD_Z + BOUND_MARGIN_Z) b.vz += BOUND_TURN * (WORLD_Z * 2)
       if (b.pz >  WORLD_Z - BOUND_MARGIN_Z) b.vz -= BOUND_TURN * (WORLD_Z * 2)
 
-      // Mouse fright — repulsion from projected cursor point
+      // Mouse fright — repulsion from projected cursor point. Birds within the
+      // (wide) radius get a hard outward shove AND spike their `fright` scalar,
+      // which temporarily lifts their speed cap so the dart actually lands.
       if (mw.active) {
         const mdx = b.px - mw.x
         const mdy = b.py - mw.y
@@ -316,13 +348,19 @@ function FlockScene({ isDark }: { isDark: boolean }) {
           b.vx += (mdx / mDist) * force
           b.vy += (mdy / mDist) * force
           b.vz += (mdz / mDist) * force
+          // Spike fright (stays elevated as the cursor passes, then decays)
+          b.fright = Math.max(b.fright, Math.min(1, t * 1.3 + 0.2))
         }
       }
 
-      // Speed clamp
+      // Decay the fright scalar each frame so panic lingers ~1s then settles.
+      if (b.fright > 0) b.fright = Math.max(0, b.fright - FRIGHT_DECAY)
+
+      // Speed clamp — frightened birds may temporarily exceed normal MAX_SPEED.
+      const maxSpd = MAX_SPEED * (1 + b.fright * (FRIGHT_SPEED_BOOST - 1))
       const spd = Math.sqrt(b.vx * b.vx + b.vy * b.vy + b.vz * b.vz)
-      if (spd > MAX_SPEED) {
-        const inv = MAX_SPEED / spd
+      if (spd > maxSpd) {
+        const inv = maxSpd / spd
         b.vx *= inv; b.vy *= inv; b.vz *= inv
       } else if (spd < MIN_SPEED && spd > 0) {
         const inv = MIN_SPEED / spd
@@ -354,9 +392,10 @@ function FlockScene({ isDark }: { isDark: boolean }) {
       mesh.rotation.x = 0
 
       // ── Wing flap ─────────────────────────────────────────────────────────
-      // Phase advances faster when climbing steeply — effort coupling
+      // Phase advances faster when climbing steeply (effort coupling) and when
+      // frightened (panic flapping) — up to ~3× while fully spooked.
       const pitchAngle = mesh.rotation.z  // positive = nose up
-      b.phase += Math.max(0, pitchAngle - 0.5) + 0.1
+      b.phase += (Math.max(0, pitchAngle - 0.5) + 0.1) * (1 + b.fright * 2)
 
       const wingY = Math.sin(b.phase % (Math.PI * 2)) * WING_AMP * CROW_SCALE
 
