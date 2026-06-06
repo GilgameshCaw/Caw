@@ -149,7 +149,7 @@ function App() {
       authorizedTokenIds?: number[]
       authorizedAddresses?: string[]
       expiresAt?: number
-    }>('/api/auth/refresh', { method: 'POST' })
+    }>('/api/auth/refresh', { method: 'POST', skipAuthModal: true })
       .then(data => {
         if (cancelled) return
         if (data?.sessionToken) {

@@ -177,7 +177,7 @@ const RETRY_FLAG = Symbol('apiFetchRetried')
 
 export async function apiFetch<T = any>(
   path: string,
-  init?: RequestInit & { [RETRY_FLAG]?: boolean }
+  init?: RequestInit & { [RETRY_FLAG]?: boolean; skipAuthModal?: boolean }
 ): Promise<T> {
   const headers = buildHeaders(init)
 
@@ -296,9 +296,13 @@ export async function apiFetch<T = any>(
       useAuthStore.getState().clearSession()
     }
     const method = (init?.method || 'GET').toUpperCase()
-    if (method !== 'GET' && (errorData.error === 'AUTH_REQUIRED' || errorData.error === 'TOKEN_NOT_AUTHORIZED')) {
+    if (method !== 'GET' && !init?.skipAuthModal && (errorData.error === 'AUTH_REQUIRED' || errorData.error === 'TOKEN_NOT_AUTHORIZED')) {
       // Don't show verify modal if Quick Sign is active — the next Quick Sign
       // action will passively establish the HTTP session for this token's owner.
+      // skipAuthModal=true is for probe-style calls (e.g. /api/auth/refresh on
+      // app mount) where 401 is the expected "not logged in" response, not a
+      // privileged-action failure — showing the modal there would pop it for
+      // every incognito / fresh visitor before they've had a chance to connect.
       const { useSessionKeyStore } = await import('~/store/sessionKeyStore')
       const sessionStore = useSessionKeyStore.getState()
       const hasQuickSign = sessionStore.enabled && Object.values(sessionStore.sessions).some(
