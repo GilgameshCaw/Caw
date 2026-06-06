@@ -589,31 +589,38 @@ export const NewProfile: React.FC = () => {
   // mintAndDeposit call without the user having approved the minter yet.
   // Display-only — this override is NEVER passed to the real tx.
   //
-  // CAW ERC20 storage slot layout for the gas-estimate stateOverride. Differs by
-  // environment because testnet points at MintableCaw (OZ 4.x: _balances slot 0,
-  // _allowances slot 1) while mainnet points at the real CAW token
-  // (a-hunters-dream, 0xf3b9569f82b18aef890de263b84189bd33ebe452).
-  //
-  // TESTNET values are verified (MintableCaw = standard OZ 4.x ERC20).
-  // MAINNET values are NOT yet verified against the real token's layout — set to
-  // the common OZ layout as a best guess. If they're wrong, estimateGas reverts
-  // and the "Gas cost" line simply falls back to its placeholder (harmless); fix
-  // the mainnet slots here once confirmed (e.g. via a storage-layout check or
-  // trial against a mainnet fork).
-  const CAW_TOKEN_SLOTS = isTestnet
-    ? { balances: 0n, allowances: 1n }
-    : { balances: 0n, allowances: 1n }  // TODO(mainnet): verify against real CAW token
+  // Slot indices are auto-discovered at runtime via override-readback (see
+  // erc20SlotDiscovery.ts) so this works for any token on any network without
+  // hardcoded or guessed values. Until discovery resolves, gasOverride is
+  // undefined and the gas line shows its placeholder.
+  const [cawSlots, setCawSlots] = useState<{ balances: bigint; allowances: bigint } | null>(null)
+
+  useEffect(() => {
+    if (paymentMode !== 'caw' || !address || !publicClient) return
+    let cancelled = false
+    import('~/utils/erc20SlotDiscovery').then(({ discoverErc20Slots }) => {
+      discoverErc20Slots(
+        publicClient as Parameters<typeof discoverErc20Slots>[0],
+        CAW_ADDRESS as `0x${string}`,
+        CAW_NAMES_MINTER_ADDRESS as `0x${string}`,
+        address as `0x${string}`,
+      ).then(result => {
+        if (!cancelled) setCawSlots(result)
+      })
+    })
+    return () => { cancelled = true }
+  }, [paymentMode, address, publicClient])
 
   const gasOverride = useMemo((): StateOverride | undefined => {
-    if (paymentMode !== 'caw' || !address) return undefined
+    if (paymentMode !== 'caw' || !address || !cawSlots) return undefined
     const user = address as `0x${string}`
     const minter = CAW_NAMES_MINTER_ADDRESS as `0x${string}`
     // balanceOf[user] = keccak256(abi.encode(user, uint256(balances_slot)))
-    const balSlot = keccak256(encodeAbiParameters([{ type: 'address' }, { type: 'uint256' }], [user, CAW_TOKEN_SLOTS.balances]))
+    const balSlot = keccak256(encodeAbiParameters([{ type: 'address' }, { type: 'uint256' }], [user, cawSlots.balances]))
     // allowance[user][minter]:
     //   innerBase = keccak256(abi.encode(user, uint256(allowances_slot)))
     //   finalSlot = keccak256(abi.encode(minter, uint256(innerBase)))
-    const innerBase = keccak256(encodeAbiParameters([{ type: 'address' }, { type: 'uint256' }], [user, CAW_TOKEN_SLOTS.allowances]))
+    const innerBase = keccak256(encodeAbiParameters([{ type: 'address' }, { type: 'uint256' }], [user, cawSlots.allowances]))
     const allowSlot = keccak256(encodeAbiParameters([{ type: 'address' }, { type: 'uint256' }], [minter, BigInt(innerBase)]))
     const MAX = toHex(maxUint256, { size: 32 })
     return [{
@@ -623,7 +630,7 @@ export const NewProfile: React.FC = () => {
         { slot: allowSlot, value: MAX },
       ],
     }]
-  }, [paymentMode, address])
+  }, [paymentMode, address, cawSlots])
   // ────────────────────────────────────────────────────────────────────────
 
   const depositAmountWei = useMemo(() => {
