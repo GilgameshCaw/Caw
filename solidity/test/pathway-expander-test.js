@@ -1,5 +1,6 @@
 const PathwayExpander = artifacts.require("PathwayExpander");
 const MockOAppOwnable = artifacts.require("MockOAppOwnable");
+const MockLzEndpointSimple = artifacts.require("MockLzEndpointSimple");
 const truffleAssert = require('truffle-assertions');
 
 const ZERO_ADDR = '0x0000000000000000000000000000000000000000';
@@ -221,6 +222,232 @@ contract("PathwayExpander", (accounts) => {
       );
       // But existing peers still work — i.e. ownership of the OApp didn't move.
       assert.equal(await oapp1.owner(), expander.address);
+    });
+  });
+
+  // ---------------------------------------------------------------------------
+  // configureNewPathway tests (added for commit 5052e454 coverage)
+  // ---------------------------------------------------------------------------
+
+  describe("configureNewPathway", () => {
+    // UlnConfig struct layout (mirrors PathwayExpander.sol):
+    //   uint64    confirmations
+    //   uint8     requiredDVNCount
+    //   uint8     optionalDVNCount
+    //   uint8     optionalDVNThreshold
+    //   address[] requiredDVNs
+    //   address[] optionalDVNs
+    //
+    // web3.eth.abi.encodeParameter with tuple type mirrors Solidity abi.encode(cfg).
+    function makeUlnConfig(confirmations, requiredDVNs, optionalDVNs, threshold) {
+      return web3.eth.abi.encodeParameter(
+        {
+          components: [
+            { name: 'confirmations',        type: 'uint64'    },
+            { name: 'requiredDVNCount',     type: 'uint8'     },
+            { name: 'optionalDVNCount',     type: 'uint8'     },
+            { name: 'optionalDVNThreshold', type: 'uint8'     },
+            { name: 'requiredDVNs',         type: 'address[]' },
+            { name: 'optionalDVNs',         type: 'address[]' },
+          ],
+          name: '',
+          type: 'tuple',
+        },
+        {
+          confirmations:        String(confirmations),
+          requiredDVNCount:     requiredDVNs.length,
+          optionalDVNCount:     optionalDVNs.length,
+          optionalDVNThreshold: threshold,
+          requiredDVNs:         requiredDVNs,
+          optionalDVNs:         optionalDVNs,
+        }
+      );
+    }
+
+    const EID_NEW = 30101;
+
+    let endpoint;
+    let lib;
+    let dvn1, dvn2, dvn3, dvn4;
+
+    beforeEach(async () => {
+      endpoint = await MockLzEndpointSimple.new({ from: deployer });
+      // Use stable addresses from accounts to avoid any freshly-deployed-contract issues
+      lib  = accounts[8];
+      dvn1 = accounts[3];
+      dvn2 = accounts[4];
+      dvn3 = accounts[5];
+      dvn4 = accounts[6];
+    });
+
+    // ------------------------------------------------------------------
+    // 1. Happy path: emits event + writes state + calls endpoint once
+    // ------------------------------------------------------------------
+    it("happy path: isPathwayConfigured becomes true, PathwayConfigured event fires, endpoint called once", async () => {
+      const ulnConfig = makeUlnConfig(15, [], [dvn1, dvn2, dvn3], 2);
+
+      assert.equal(
+        await expander.isPathwayConfigured(oapp1.address, lib, EID_NEW),
+        false,
+        "should be unconfigured before the call"
+      );
+
+      const tx = await expander.configureNewPathway(
+        oapp1.address, endpoint.address, lib, EID_NEW, ulnConfig,
+        { from: expanderOwner }
+      );
+
+      // State written
+      assert.equal(
+        await expander.isPathwayConfigured(oapp1.address, lib, EID_NEW),
+        true,
+        "isPathwayConfigured should be true after"
+      );
+
+      // Event emitted with correct args
+      truffleAssert.eventEmitted(tx, 'PathwayConfigured', (ev) =>
+        ev.oapp === oapp1.address &&
+        ev.lib  === lib &&
+        ev.eid.toString() === String(EID_NEW) &&
+        ev.config === ulnConfig
+      );
+
+      // Endpoint received exactly one setConfig call with the right args
+      assert.equal((await endpoint.callCount()).toString(), '1', "endpoint.callCount should be 1");
+      assert.equal(await endpoint.lastOapp(), oapp1.address, "endpoint.lastOapp mismatch");
+      assert.equal(await endpoint.lastLib(),  lib,           "endpoint.lastLib mismatch");
+      assert.equal((await endpoint.lastEid()).toString(), String(EID_NEW), "endpoint.lastEid mismatch");
+      assert.equal((await endpoint.lastConfigType()).toString(), '2', "configType should be CONFIG_TYPE_ULN=2");
+      assert.equal(await endpoint.lastConfig(), ulnConfig, "endpoint.lastConfig mismatch");
+    });
+
+    // ------------------------------------------------------------------
+    // 2. Zero-address / empty-config guard rails (4 sub-tests)
+    // ------------------------------------------------------------------
+    it("rejects zero oapp address", async () => {
+      const ulnConfig = makeUlnConfig(15, [], [dvn1, dvn2, dvn3], 2);
+      await truffleAssert.reverts(
+        expander.configureNewPathway(
+          ZERO_ADDR, endpoint.address, lib, EID_NEW, ulnConfig,
+          { from: expanderOwner }
+        ),
+        "PathwayExpander: zero oapp"
+      );
+    });
+
+    it("rejects zero endpoint address", async () => {
+      const ulnConfig = makeUlnConfig(15, [], [dvn1, dvn2, dvn3], 2);
+      await truffleAssert.reverts(
+        expander.configureNewPathway(
+          oapp1.address, ZERO_ADDR, lib, EID_NEW, ulnConfig,
+          { from: expanderOwner }
+        ),
+        "PathwayExpander: zero endpoint"
+      );
+    });
+
+    it("rejects zero lib address", async () => {
+      const ulnConfig = makeUlnConfig(15, [], [dvn1, dvn2, dvn3], 2);
+      await truffleAssert.reverts(
+        expander.configureNewPathway(
+          oapp1.address, endpoint.address, ZERO_ADDR, EID_NEW, ulnConfig,
+          { from: expanderOwner }
+        ),
+        "PathwayExpander: zero lib"
+      );
+    });
+
+    it("rejects empty ulnConfig bytes", async () => {
+      await truffleAssert.reverts(
+        expander.configureNewPathway(
+          oapp1.address, endpoint.address, lib, EID_NEW, '0x',
+          { from: expanderOwner }
+        ),
+        "PathwayExpander: empty config"
+      );
+    });
+
+    // ------------------------------------------------------------------
+    // 3. Double-configure reverts
+    // ------------------------------------------------------------------
+    it("double-configure same (oapp, lib, eid) reverts with 'pathway already configured'", async () => {
+      const ulnConfig = makeUlnConfig(15, [], [dvn1, dvn2, dvn3], 2);
+      await expander.configureNewPathway(
+        oapp1.address, endpoint.address, lib, EID_NEW, ulnConfig,
+        { from: expanderOwner }
+      );
+      await truffleAssert.reverts(
+        expander.configureNewPathway(
+          oapp1.address, endpoint.address, lib, EID_NEW, ulnConfig,
+          { from: expanderOwner }
+        ),
+        "PathwayExpander: pathway already configured"
+      );
+      // Endpoint should still only have been called once (second call never reached it)
+      assert.equal((await endpoint.callCount()).toString(), '1', "endpoint should only be called once");
+    });
+
+    // ------------------------------------------------------------------
+    // 4. Per-(oapp, lib, eid) independence + addDvnToPathway state isolation
+    // ------------------------------------------------------------------
+    it("different oapps with same lib+eid are independent; addDvnToPathway on oappA leaves oappB unchanged", async () => {
+      const ulnConfig  = makeUlnConfig(15, [], [dvn1, dvn2, dvn3], 2);
+      const step1Config = makeUlnConfig(15, [], [dvn1, dvn2, dvn3, dvn4], 3);
+
+      // Configure both oapps with the same (lib, eid) — both must succeed
+      await expander.configureNewPathway(
+        oapp1.address, endpoint.address, lib, EID_NEW, ulnConfig,
+        { from: expanderOwner }
+      );
+      await expander.configureNewPathway(
+        oapp2.address, endpoint.address, lib, EID_NEW, ulnConfig,
+        { from: expanderOwner }
+      );
+
+      // Both are configured
+      assert.equal(await expander.isPathwayConfigured(oapp1.address, lib, EID_NEW), true, "oapp1 should be configured");
+      assert.equal(await expander.isPathwayConfigured(oapp2.address, lib, EID_NEW), true, "oapp2 should be configured");
+
+      // Both start at step 0
+      assert.equal(
+        (await expander.dvnEscalationStep(oapp1.address, lib, EID_NEW)).toString(), '0',
+        "oapp1 escalation step should be 0"
+      );
+      assert.equal(
+        (await expander.dvnEscalationStep(oapp2.address, lib, EID_NEW)).toString(), '0',
+        "oapp2 escalation step should be 0"
+      );
+
+      // Escalate only oapp1
+      await expander.addDvnToPathway(
+        oapp1.address, endpoint.address, lib, EID_NEW,
+        ulnConfig, step1Config,
+        { from: expanderOwner }
+      );
+
+      // oapp1 advanced to step 1; oapp2 must stay at step 0 (state isolation)
+      assert.equal(
+        (await expander.dvnEscalationStep(oapp1.address, lib, EID_NEW)).toString(), '1',
+        "oapp1 escalation step should be 1 after addDvnToPathway"
+      );
+      assert.equal(
+        (await expander.dvnEscalationStep(oapp2.address, lib, EID_NEW)).toString(), '0',
+        "oapp2 escalation step must remain 0 (state isolation)"
+      );
+    });
+
+    // ------------------------------------------------------------------
+    // 5. Non-owner cannot call configureNewPathway
+    // ------------------------------------------------------------------
+    it("rejects calls from non-owner of the expander", async () => {
+      const ulnConfig = makeUlnConfig(15, [], [dvn1, dvn2, dvn3], 2);
+      await truffleAssert.reverts(
+        expander.configureNewPathway(
+          oapp1.address, endpoint.address, lib, EID_NEW, ulnConfig,
+          { from: stranger }
+        ),
+        "Ownable: caller is not the owner"
+      );
     });
   });
 });
