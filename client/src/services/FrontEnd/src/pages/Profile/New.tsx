@@ -2131,6 +2131,7 @@ console.log("BALANCE:", balance)
               networkId={CLIENT_ID}
               ethPrice={ethPrice}
               lzFeeWei={quote?.nativeFee ?? 0n}
+              gasWei={gasCostEth != null ? BigInt(Math.round(gasCostEth * 1e18)) : 0n}
               applicableStorageFeesWei={(() => {
                 const includesDeposit = depositEnabled || paymentMode === 'eth'
                 const includesAuth = includesDeposit || (!includesDeposit && authEnabled)

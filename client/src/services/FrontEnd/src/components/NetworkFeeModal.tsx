@@ -59,8 +59,21 @@ interface NetworkFeeModalProps {
    *   mintAndDepositAndQuickSignQuote → mintFee + depositFee + authFee
    *   mintAndAuthQuote                → mintFee + authFee
    *   mintAndAuthAndQuickSignQuote    → mintFee + authFee
+   *
+   * Also used to compute the "Total due now" row: 2× this (the storage fees
+   * are charged doubled by payFee) + the pure LZ leg + gas == the rolled-up
+   * header total on the caller. Pass it whenever you pass `gasWei` so the
+   * breakdown reconciles with the header.
    */
   applicableStorageFeesWei?: bigint
+  /**
+   * Estimated execution gas for the active flow, in wei (gasCostEth × 1e18 on
+   * the caller). When provided alongside `applicableStorageFeesWei`, the modal
+   * renders a "Network gas" row and a bold "Total due now" row so the line
+   * items add up to the caller's header number. Omit on callsites that don't
+   * have a gas estimate (the rows are simply not shown).
+   */
+  gasWei?: bigint
 }
 
 /**
@@ -116,6 +129,7 @@ const NetworkFeeModal: React.FC<NetworkFeeModalProps> = ({
   ethPrice,
   lzFeeWei,
   applicableStorageFeesWei,
+  gasWei,
 }) => {
   const { isDark } = useTheme()
   const fees = useNetworkFees(networkId, isOpen)
@@ -138,6 +152,17 @@ const NetworkFeeModal: React.FC<NetworkFeeModalProps> = ({
     trueLzWei = lzFeeWei > offset ? lzFeeWei - offset : 0n
   }
   const lzCurrentUsd = weiToUsd(trueLzWei, ethPrice)
+
+  // "Total due now" reconciles with the caller's rolled-up header:
+  //   2× applicable storage fees (payFee charges double)  ← Mint+Deposit+Auth rows
+  //   + pure LZ leg                                        ← LayerZero row
+  //   + execution gas                                      ← Network gas row
+  // Only rendered when we have both the storage offset AND a gas estimate, so
+  // legacy callsites that omit them keep the plain schedule with no total.
+  const showTotal = applicableStorageFeesWei != null && gasWei != null && lzFeeWei != null
+  const totalNowWei = showTotal
+    ? applicableStorageFeesWei! * 2n + (trueLzWei ?? 0n) + gasWei!
+    : null
 
   return (
     <ModalWrapper
@@ -257,6 +282,33 @@ const NetworkFeeModal: React.FC<NetworkFeeModalProps> = ({
                   (varies)
                 </td>
               </tr>
+
+              {/* Network gas (execution) — the L1 tx gas for this flow. Part of
+                  the rolled-up header total but not a per-Network fee, so it
+                  sits below the schedule with the LZ leg. */}
+              {showTotal && (
+                <tr className={`border-t ${borderClass}`}>
+                  <td className={`py-2 pr-4 text-sm ${mutedClass}`}>Network gas</td>
+                  <td className={`py-2 pr-4 text-sm font-mono ${isDark ? 'text-white' : 'text-gray-900'}`}>
+                    {weiToUsd(gasWei, ethPrice)}
+                  </td>
+                  <td className={`py-2 text-sm ${mutedClass}`}>(varies)</td>
+                </tr>
+              )}
+
+              {/* Total due now — sums every pay-now row above (storage fees ×2 +
+                  LZ leg + gas) so the breakdown matches the caller's header. */}
+              {showTotal && (
+                <tr className={`border-t-2 ${isDark ? 'border-white/20' : 'border-gray-300'}`}>
+                  <td className={`py-2 pr-4 text-sm font-semibold ${isDark ? 'text-white' : 'text-gray-900'}`}>
+                    Total due now
+                  </td>
+                  <td className={`py-2 pr-4 text-sm font-mono font-semibold ${isDark ? 'text-white' : 'text-gray-900'}`}>
+                    {weiToUsd(totalNowWei, ethPrice)}
+                  </td>
+                  <td />
+                </tr>
+              )}
 
               {/* Withdraw row — label communicates the lock-in semantics
                   inline; tooltip below has the full explanation. Row is
