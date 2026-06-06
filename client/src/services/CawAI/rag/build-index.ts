@@ -5,15 +5,16 @@
 // per line.
 //
 // Usage (from repo root):
-//   ANTHROPIC_API_KEY=... ts-node client/src/services/CawAI/rag/build-index.ts
+//   CAW_AI_VOYAGE_API_KEY=... ts-node client/src/services/CawAI/rag/build-index.ts [output-path]
 //
 // Walks a fixed include-list of repo paths (see CORPUS below). Chunks
 // each file token-aware at ~512 tokens with 64-token overlap. Embeds
-// each chunk via the embedding endpoint. Writes incrementally so a
-// crash mid-build leaves a resumable partial file.
+// each chunk via Voyage AI (voyage-3.5, input_type='document'). Writes
+// incrementally so a crash mid-build leaves a resumable partial file.
 
 import { promises as fs } from 'fs'
 import path from 'path'
+import 'dotenv/config'
 
 const CORPUS: string[] = [
   // Source of truth: smart contracts
@@ -34,13 +35,56 @@ const EXTS = new Set(['.sol', '.md', '.txt'])
 const CHUNK_TOKENS = 512
 const OVERLAP_TOKENS = 64
 
+// Voyage AI embedding endpoint. Model: voyage-3.5
+// Docs: https://docs.voyageai.com/reference/embeddings-api
+const VOYAGE_URL = 'https://api.voyageai.com/v1/embeddings'
+const VOYAGE_MODEL = 'voyage-3.5'
+// Voyage allows up to 128 documents per request in the free tier.
+const VOYAGE_BATCH_SIZE = 128
+
+async function embedBatch(texts: string[], voyageKey: string): Promise<number[][]> {
+  const res = await fetch(VOYAGE_URL, {
+    method: 'POST',
+    headers: {
+      'Authorization': `Bearer ${voyageKey}`,
+      'content-type': 'application/json',
+    },
+    body: JSON.stringify({
+      input: texts,
+      model: VOYAGE_MODEL,
+      input_type: 'document',
+    }),
+  })
+  if (!res.ok) {
+    const body = await res.text().catch(() => '')
+    throw new Error(`voyage embed ${res.status}: ${body}`)
+  }
+  const { data } = await res.json() as { data: Array<{ embedding: number[] }> }
+  return data.map(d => d.embedding)
+}
+
 async function main() {
+  const voyageKey = process.env.CAW_AI_VOYAGE_API_KEY
+  if (!voyageKey) {
+    console.error('[build-rag] CAW_AI_VOYAGE_API_KEY is required')
+    process.exit(1)
+  }
+
   const repoRoot = path.resolve(__dirname, '../../../../..')
   const outPath = process.argv[2] || path.join(process.cwd(), 'rag-index.jsonl')
 
   console.log(`[build-rag] walking ${CORPUS.length} corpus paths under ${repoRoot}`)
   console.log(`[build-rag] writing ${outPath}`)
   const out = await fs.open(outPath, 'w')
+
+  // Collect all chunks first so we can batch-embed efficiently.
+  type PendingChunk = {
+    id: string
+    path: string
+    span: string
+    text: string
+  }
+  const pending: PendingChunk[] = []
 
   for (const entry of CORPUS) {
     const abs = path.join(repoRoot, entry)
@@ -50,24 +94,38 @@ async function main() {
         const text = await fs.readFile(filePath, 'utf8')
         const chunks = chunkTokenAware(text, CHUNK_TOKENS, OVERLAP_TOKENS)
         for (const c of chunks) {
-          // TODO: embed via Anthropic embedding endpoint or Voyage-3.
-          // For now: empty embedding array; build-index needs the
-          // embed call wired before the index is useful.
-          const embedding: number[] = []
-          const record = {
+          pending.push({
             id: `${path.relative(repoRoot, filePath)}#${c.start}-${c.end}`,
             path: path.relative(repoRoot, filePath),
             span: `L${c.start}-L${c.end}`,
             text: c.text,
-            embedding,
-          }
-          await out.write(JSON.stringify(record) + '\n')
+          })
         }
       })
     } catch (e) {
       console.warn(`[build-rag] skip ${entry}: ${(e as Error).message}`)
     }
   }
+
+  console.log(`[build-rag] ${pending.length} chunks; embedding in batches of ${VOYAGE_BATCH_SIZE}`)
+
+  // Batch-embed in groups of VOYAGE_BATCH_SIZE.
+  for (let i = 0; i < pending.length; i += VOYAGE_BATCH_SIZE) {
+    const batch = pending.slice(i, i + VOYAGE_BATCH_SIZE)
+    const embeddings = await embedBatch(batch.map(c => c.text), voyageKey)
+    for (let j = 0; j < batch.length; j++) {
+      const record = {
+        id: batch[j].id,
+        path: batch[j].path,
+        span: batch[j].span,
+        text: batch[j].text,
+        embedding: embeddings[j],
+      }
+      await out.write(JSON.stringify(record) + '\n')
+    }
+    console.log(`[build-rag] embedded ${Math.min(i + VOYAGE_BATCH_SIZE, pending.length)}/${pending.length}`)
+  }
+
   await out.close()
   console.log(`[build-rag] done`)
 }
@@ -82,14 +140,15 @@ async function walk(p: string, visit: (file: string) => Promise<void>): Promise<
   }
 }
 
-// Naive line-based chunker. Token-aware proper chunking lives in the
-// real implementation — this stub gives the right shape so the index
-// file format is settled.
+// Naive line-based chunker producing ~512-token windows with ~64-token
+// overlap. We approximate 1 token ≈ 4 chars, so 512 tokens ≈ 2048
+// chars ≈ ~20 lines of typical source code. The overlap keeps context
+// across chunk boundaries for adjacent references.
 function chunkTokenAware(text: string, _maxTok: number, _overlapTok: number) {
   const lines = text.split('\n')
   const out: { text: string; start: number; end: number }[] = []
-  const STEP = 80
-  const WIN = 100
+  const STEP = 80   // lines per step forward
+  const WIN  = 100  // lines per window
   for (let i = 0; i < lines.length; i += STEP) {
     const slice = lines.slice(i, i + WIN)
     if (slice.length === 0) break

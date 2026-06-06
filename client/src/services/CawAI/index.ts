@@ -21,13 +21,54 @@
 
 import { Service, HeartbeatContext } from '../../Service'
 import { loadConfig, CawAIConfig } from './config'
-import { fetchNewMentions, markReplied, Cursor } from './mentionWatcher'
-import { generateReply, clampReply } from './claude'
+import { fetchNewMentions, markReplied, Cursor, loadCursor, saveCursor } from './mentionWatcher'
+import { generateReply, clampReply, embedQuery } from './claude'
 import { postReply } from './reply'
 import { BudgetTracker } from './budget'
 import { RagIndex } from './rag/search'
 
 const SERVICE_NAME = 'CawAI'
+
+// S3 cursor persistence for Lambda deployments where /tmp is ephemeral.
+// Gated on cfg.s3Bucket being set — if absent, falls back to the
+// local file path in mentionWatcher.ts.
+
+async function loadCursorFromS3(cfg: CawAIConfig): Promise<Cursor> {
+  if (!cfg.s3Bucket || !cfg.s3CursorKey) return loadCursor()
+  try {
+    const { S3Client, GetObjectCommand } = await import('@aws-sdk/client-s3')
+    const s3 = new S3Client({})
+    const resp = await s3.send(new GetObjectCommand({
+      Bucket: cfg.s3Bucket,
+      Key: cfg.s3CursorKey,
+    }))
+    const body = await resp.Body?.transformToString('utf8')
+    if (body) return JSON.parse(body) as Cursor
+  } catch {
+    // Object doesn't exist yet (first run) or S3 error — start fresh.
+  }
+  return { lastSeenNotificationId: 0 }
+}
+
+async function saveCursorToS3(cfg: CawAIConfig, cursor: Cursor): Promise<void> {
+  if (!cfg.s3Bucket || !cfg.s3CursorKey) {
+    await saveCursor(cursor)
+    return
+  }
+  try {
+    const { S3Client, PutObjectCommand } = await import('@aws-sdk/client-s3')
+    const s3 = new S3Client({})
+    await s3.send(new PutObjectCommand({
+      Bucket: cfg.s3Bucket,
+      Key: cfg.s3CursorKey,
+      Body: JSON.stringify(cursor),
+      ContentType: 'application/json',
+    }))
+  } catch (e) {
+    console.error('[CawAI] failed to save cursor to S3:', e)
+    // Fall through — don't crash the whole pass on a cursor save failure.
+  }
+}
 
 async function runOnce(
   cfg: CawAIConfig,
@@ -53,10 +94,16 @@ async function runOnce(
       break
     }
 
-    // RAG retrieve. Empty index = empty context = bot falls back to
-    // its system-prompt-trained "I don't know" behavior.
-    // TODO: embed m.cawText for the query
-    const retrieved = await rag.search([], 8)
+    // Embed the mention text using Voyage (input_type='query') so the
+    // RAG retrieval finds contextually relevant chunks.
+    let queryEmbedding: number[] = []
+    try {
+      queryEmbedding = await embedQuery(m.cawText, cfg.voyageApiKey)
+    } catch (e) {
+      console.warn(`[CawAI] embed query failed for cawId=${m.cawId}: ${(e as Error).message} — proceeding with empty context`)
+    }
+
+    const retrieved = await rag.search(queryEmbedding, 8)
     const context = rag.formatForPrompt(retrieved)
 
     const gen = await generateReply(cfg, {
@@ -112,6 +159,7 @@ export const cawAIService: Service = {
     const started = (async () => {
       await rag.load(cfg.ragIndexPath)
       await budget.load()
+      cursor = await loadCursor()
       console.log(`[CawAI] started; profile=${cfg.profileTokenId} poll=${cfg.pollIntervalMs}ms cap=$${cfg.dailyUsdBudget}`)
     })()
 
@@ -156,7 +204,13 @@ export async function lambdaHandler(): Promise<{ ok: true }> {
   await rag.load(cfg.ragIndexPath)
   const budget = new BudgetTracker('/tmp/cawai-budget.json', cfg.dailyUsdBudget)
   await budget.load()
-  const cursor: Cursor = { lastSeenNotificationId: 0 } // TODO: load from S3
-  await runOnce(cfg, rag, budget, cursor)
+
+  // Load cursor from S3 at Lambda cold-start; /tmp is ephemeral.
+  const cursor = await loadCursorFromS3(cfg)
+  const newCursor = await runOnce(cfg, rag, budget, cursor)
+
+  // Persist updated cursor back to S3 before exiting.
+  await saveCursorToS3(cfg, newCursor)
+
   return { ok: true }
 }

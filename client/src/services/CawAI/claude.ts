@@ -15,6 +15,9 @@ import { SYSTEM_PROMPT, REPLY_INSTRUCTION } from './persona'
 const ANTHROPIC_URL = 'https://api.anthropic.com/v1/messages'
 const MODEL = 'claude-haiku-4-5-20251001' // cheap, fast, fits the budget
 
+const VOYAGE_EMBED_URL = 'https://api.voyageai.com/v1/embeddings'
+const VOYAGE_MODEL = 'voyage-3.5'
+
 export type GenerateInput = {
   userContent: string         // the @-mentioning caw text, untrusted
   authorHandle: string        // username for context; NOT used as instruction
@@ -48,16 +51,57 @@ export async function generateReply(
     REPLY_INSTRUCTION,
   ].join('\n')
 
-  // TODO: actual fetch() with the Anthropic key from cfg.anthropicApiKey.
   // Key is read from Node env here; never inlined into prompts.
-  void ANTHROPIC_URL; void MODEL; void cfg; void userMessage; void SYSTEM_PROMPT
-
-  return {
-    text: '',
-    inputTokens: 0,
-    outputTokens: 0,
-    usdCost: 0,
+  const res = await fetch(ANTHROPIC_URL, {
+    method: 'POST',
+    headers: {
+      'x-api-key': cfg.anthropicApiKey,
+      'anthropic-version': '2023-06-01',
+      'content-type': 'application/json',
+    },
+    body: JSON.stringify({
+      model: MODEL,
+      max_tokens: 512,
+      system: SYSTEM_PROMPT,
+      messages: [{ role: 'user', content: userMessage }],
+    }),
+  })
+  if (!res.ok) throw new Error(`anthropic ${res.status}: ${await res.text()}`)
+  const json = await res.json() as {
+    content: Array<{ type: string; text: string }>
+    usage: { input_tokens: number; output_tokens: number }
   }
+  const text = json.content.filter(b => b.type === 'text').map(b => b.text).join('').trim()
+  // Haiku 4.5 pricing (as of 2026-06): $0.80/Mtok input, $4.00/Mtok output
+  const usdCost = (json.usage.input_tokens * 0.80 + json.usage.output_tokens * 4.00) / 1_000_000
+  return {
+    text,
+    inputTokens: json.usage.input_tokens,
+    outputTokens: json.usage.output_tokens,
+    usdCost,
+  }
+}
+
+/**
+ * Embed a query string using Voyage AI for RAG retrieval.
+ * Uses input_type='query' (vs 'document' used at index-build time).
+ */
+export async function embedQuery(text: string, voyageApiKey: string): Promise<number[]> {
+  const res = await fetch(VOYAGE_EMBED_URL, {
+    method: 'POST',
+    headers: {
+      'Authorization': `Bearer ${voyageApiKey}`,
+      'content-type': 'application/json',
+    },
+    body: JSON.stringify({
+      input: [text],
+      model: VOYAGE_MODEL,
+      input_type: 'query',
+    }),
+  })
+  if (!res.ok) throw new Error(`voyage embed ${res.status}: ${await res.text()}`)
+  const { data } = await res.json() as { data: Array<{ embedding: number[] }> }
+  return data[0].embedding
 }
 
 // Hard character clamp applied to model output BEFORE posting. Never

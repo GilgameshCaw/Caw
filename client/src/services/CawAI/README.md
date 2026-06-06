@@ -8,7 +8,7 @@ Designed to be **forkable** — operators can stand up their own
 `@MyBotName` variant by:
 1. Minting a profile with their desired username.
 2. Pointing `CAW_AI_PROFILE_TOKEN_ID` at it.
-3. Funding `CAW_AI_SPONSOR_PRIVATE_KEY` with CAW + ETH.
+3. Funding `CAW_AI_DEPLOYER_PRIVATE_KEY` wallet with CAW + ETH.
 4. Editing `persona.ts` if they want a different voice.
 
 ## Threat model
@@ -52,11 +52,23 @@ CawAI/
 | Var | Purpose | Example |
 |---|---|---|
 | `CAW_AI_PROFILE_TOKEN_ID` | Bot's profile tokenId | `7` |
-| `CAW_AI_SPONSOR_PRIVATE_KEY` | Hex private key for the sponsor wallet | `0x...` |
+| `CAW_AI_DEPLOYER_PRIVATE_KEY` | Deployer wallet that owns the bot profile (hex) | `0x...` |
 | `CAW_AI_ANTHROPIC_API_KEY` | Claude API key | `sk-ant-...` |
+| `CAW_AI_VOYAGE_API_KEY` | Voyage AI key for RAG embeddings | `pa-...` |
 | `CAW_AI_API_URL` | Which mirror's API to poll | `https://test.caw.social` |
+| `CAW_AI_CAWACTIONS_ADDRESS` | L2 CawActions contract address | `0x...` |
+| `CAW_AI_CHAIN_ID` | L2 chain id (EIP-712 domain) | `84532` |
 | `CAW_AI_POLL_INTERVAL_MS` | Polling cadence | `900000` (15 min) |
 | `CAW_AI_DAILY_USD_BUDGET` | Hard cap on inference spend | `20` |
+
+### Optional env vars (Lambda cursor persistence via S3)
+
+| Var | Purpose | Example |
+|---|---|---|
+| `CAW_AI_S3_BUCKET` | S3 bucket for cursor state | `my-cawai-state` |
+| `CAW_AI_S3_CURSOR_KEY` | S3 object key for cursor JSON | `cawai-cursor.json` |
+
+When `CAW_AI_S3_BUCKET` is absent the cursor falls back to `./state/cawai-cursor.json` on disk.
 
 ## Deployment
 
@@ -82,8 +94,10 @@ Walks:
 - The orchestrator's memory directory if present in the deploy bundle
 
 Chunks files (token-aware, ~512 tokens per chunk with 64-token overlap),
-embeds via Anthropic's embedding endpoint or Voyage-3, stores as a
-single JSONL file. Bundle it with the service deploy.
+Embeds via Voyage AI (`voyage-3.5`, `input_type=document`). Requires
+`CAW_AI_VOYAGE_API_KEY`. Batches chunks in groups of 128. Stores as a
+single JSONL file — one record per line with `id`, `path`, `span`,
+`text`, and `embedding` fields. Bundle it with the service deploy.
 
 ## Why the budget cap
 
