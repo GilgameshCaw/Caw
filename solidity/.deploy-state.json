@@ -162,6 +162,76 @@
       "verified": true,
       "ts": "2026-06-07T14:53:25.015Z",
       "message": "Pass - Verified"
+    },
+    "CawCapOracle_L2": {
+      "verified": true,
+      "ts": "2026-06-07T14:54:11.141Z",
+      "message": "Pass - Verified"
+    },
+    "CawActions_L2": {
+      "verified": true,
+      "ts": "2026-06-07T14:54:57.123Z",
+      "message": "Pass - Verified"
+    },
+    "CawActionsERC1271_L2": {
+      "verified": true,
+      "ts": "2026-06-07T14:55:32.407Z",
+      "message": "Pass - Verified"
+    },
+    "CawActionsArchive_L2": {
+      "verified": true,
+      "ts": "2026-06-07T14:56:07.942Z",
+      "message": "Pass - Verified"
+    },
+    "CawChallengeRelay_L2": {
+      "verified": true,
+      "ts": "2026-06-07T14:56:43.464Z",
+      "message": "Pass - Verified"
+    },
+    "PathwayExpander_L2": {
+      "verified": true,
+      "ts": "2026-06-07T14:57:30.602Z",
+      "message": "Pass - Verified"
+    },
+    "SessionMessageParser_L2b": {
+      "verified": true,
+      "ts": "2026-06-07T14:57:44.528Z",
+      "message": "Already Verified"
+    },
+    "CawProfileLedger_L2b": {
+      "verified": true,
+      "ts": "2026-06-07T14:58:20.321Z",
+      "message": "Pass - Verified"
+    },
+    "CawCapOracle_L2b": {
+      "verified": true,
+      "ts": "2026-06-07T14:59:07.368Z",
+      "message": "Pass - Verified"
+    },
+    "CawActions_L2b": {
+      "verified": true,
+      "ts": "2026-06-07T14:59:42.801Z",
+      "message": "Pass - Verified"
+    },
+    "CawActionsERC1271_L2b": {
+      "verified": true,
+      "ts": "2026-06-07T15:00:18.356Z",
+      "message": "Pass - Verified"
+    },
+    "CawActionsArchive_L2b": {
+      "verified": true,
+      "ts": "2026-06-07T15:00:53.618Z",
+      "message": "Pass - Verified"
+    },
+    "CawChallengeRelay_L2b": {
+      "verified": true,
+      "ts": "2026-06-07T15:01:39.764Z",
+      "message": "Pass - Verified"
+    },
+    "PathwayExpander_L2b": {
+      "verified": true,
+      "ts": "2026-06-07T15:02:25.849Z",
+      "message": "Pass - Verified"
     }
   }
 }
