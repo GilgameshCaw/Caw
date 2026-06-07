@@ -152,11 +152,11 @@ export const Features = () => {
                     }
                   }}
                 />
-                {/* Particle overlay for noise effect. Capped at 50% so the
-                    underlying artwork stays dominant on the small cards. */}
+                {/* Particle overlay for noise effect. Capped at 85% so the
+                    underlying artwork stays present on the small cards. */}
                 <div
                   className={`hero-vignette absolute inset-0 pointer-events-none z-[1] overflow-hidden mix-blend-screen transition-opacity duration-300 ${
-                    imageStates[index]?.showBoth ? 'opacity-50' : 'opacity-0'
+                    imageStates[index]?.showBoth ? 'opacity-85' : 'opacity-0'
                   }`}
                 >
                   <ParticleSystemManifesto
