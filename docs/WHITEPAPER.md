@@ -79,7 +79,7 @@ CAW contracts are not behind transparent or UUPS proxies. There is no migration 
 
 The protocol contracts validate signatures, enforce costs, and emit events. They do not curate, rank, or filter. Display is the frontend's job.
 
-This means a feature like a "block list" or "muted users" is a frontend feature; the protocol records the action ("hide", a typed `OTHER` action whose payload prefix is `hide:`) and lets the frontend decide what to do with it. Two frontends watching the same Network can present radically different views of the same data.
+This means a feature like a "block list" or "muted users" is a pure frontend feature — those preferences live in the user's browser, never on chain. In some cases the protocol *does* record the action because the user has chosen to commit it (for example, hiding a specific caw from one's own feed via the `OTHER` action with payload prefix `hide:`, which lets the user's choice follow them across Mirrors), but the frontend remains free to decide what to do with the recorded data. Two frontends watching the same Network can present radically different views of the same data.
 
 ## 3.4 ==Calldata== as the source of truth
 
