@@ -1,3 +1,7 @@
 node_modules/
 .env
 dist
+
+# Playwright e2e artifacts (regenerated each run)
+playwright-report/
+test-results/
