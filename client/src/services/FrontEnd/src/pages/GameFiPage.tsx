@@ -115,44 +115,46 @@ const GameFiPage: React.FC = () => {
 
         {/* Top Navigation */}
         <div className="mb-6">
-          <div className="flex justify-center sm:justify-start space-x-6 border-b border-white/10">
-            {/* Pestañas para mobile (solo Dashboard y My Games) - Centradas */}
-            {mobileTabs.map((tab) => (
-              <button
-                key={tab.id}
-                onClick={() => setActiveTab(tab.id)}
-                className={`py-2 px-3 text-base font-medium transition-all duration-200 cursor-pointer sm:hidden ${
-                  activeTab === tab.id
-                    ? isDark
-                      ? 'text-white border-b-2 border-white'
-                      : 'text-black border-b-2 border-black'
-                    : isDark
-                      ? 'text-gray-400 hover:text-white hover:bg-white/5'
-                      : 'text-gray-600 hover:text-black hover:bg-gray-100'
-                }`}
-              >
-                {tab.label}
-              </button>
-            ))}
-            
-            {/* Pestañas para desktop (todas) - Alineadas a la izquierda */}
-            {desktopTabs.map((tab) => (
-              <button
-                key={tab.id}
-                onClick={() => setActiveTab(tab.id)}
-                className={`py-2 px-3 text-base font-medium transition-all duration-200 cursor-pointer hidden sm:block ${
-                  activeTab === tab.id
-                    ? isDark
-                      ? 'text-white border-b-2 border-white'
-                      : 'text-black border-b-2 border-black'
-                    : isDark
-                      ? 'text-gray-400 hover:text-white hover:bg-white/5'
-                      : 'text-gray-600 hover:text-black hover:bg-gray-100'
-                }`}
-              >
-                {tab.label}
-              </button>
-            ))}
+          <div className={`-mx-6 border-b ${isDark ? 'border-white/10' : 'border-gray-200'}`}>
+            <div className="px-6 flex justify-center sm:justify-start space-x-6">
+              {/* Pestañas para mobile (solo Dashboard y My Games) - Centradas */}
+              {mobileTabs.map((tab) => (
+                <button
+                  key={tab.id}
+                  onClick={() => setActiveTab(tab.id)}
+                  className={`py-2 px-3 text-base font-medium transition-all duration-200 cursor-pointer sm:hidden ${
+                    activeTab === tab.id
+                      ? isDark
+                        ? 'text-white border-b-2 border-white'
+                        : 'text-black border-b-2 border-black'
+                      : isDark
+                        ? 'text-gray-400 hover:text-white hover:bg-white/5'
+                        : 'text-gray-600 hover:text-black hover:bg-gray-100'
+                  }`}
+                >
+                  {tab.label}
+                </button>
+              ))}
+
+              {/* Pestañas para desktop (todas) - Alineadas a la izquierda */}
+              {desktopTabs.map((tab) => (
+                <button
+                  key={tab.id}
+                  onClick={() => setActiveTab(tab.id)}
+                  className={`py-2 px-3 text-base font-medium transition-all duration-200 cursor-pointer hidden sm:block ${
+                    activeTab === tab.id
+                      ? isDark
+                        ? 'text-white border-b-2 border-white'
+                        : 'text-black border-b-2 border-black'
+                      : isDark
+                        ? 'text-gray-400 hover:text-white hover:bg-white/5'
+                        : 'text-gray-600 hover:text-black hover:bg-gray-100'
+                  }`}
+                >
+                  {tab.label}
+                </button>
+              ))}
+            </div>
           </div>
         </div>
 
@@ -218,14 +220,16 @@ const GameFiPage: React.FC = () => {
               {recentActivity.map((activity, index) => (
                 <div
                   key={activity.id}
-                  className={`flex items-center p-4 transition-all duration-300 hover:bg-gray-500/5 cursor-pointer ${
-                    index < recentActivity.length - 1 ? `border-b ${isDark ? 'border-gray-800' : 'border-gray-200'}` : ''
-                  }`}
+                  className={`-mx-6 ${index < recentActivity.length - 1 ? `border-b ${isDark ? 'border-gray-800' : 'border-gray-200'}` : ''}`}
                 >
-                  <activity.icon className={`w-4 h-4 mr-3 ${isDark ? 'text-yellow-500' : 'text-yellow-600'}`} />
-                  <div className="flex-1">
-                    <p className={`text-sm ${isDark ? 'text-white' : 'text-black'}`}>{activity.description}</p>
-                    <span className={`text-xs ${isDark ? 'text-gray-400' : 'text-gray-600'}`}>{activity.time}</span>
+                  <div className="px-6">
+                    <div className="flex items-center p-4 transition-all duration-300 hover:bg-gray-500/5 cursor-pointer">
+                      <activity.icon className={`w-4 h-4 mr-3 ${isDark ? 'text-yellow-500' : 'text-yellow-600'}`} />
+                      <div className="flex-1">
+                        <p className={`text-sm ${isDark ? 'text-white' : 'text-black'}`}>{activity.description}</p>
+                        <span className={`text-xs ${isDark ? 'text-gray-400' : 'text-gray-600'}`}>{activity.time}</span>
+                      </div>
+                    </div>
                   </div>
                 </div>
               ))}

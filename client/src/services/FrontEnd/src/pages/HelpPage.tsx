@@ -251,19 +251,22 @@ const HelpPage: React.FC<HelpPageProps> = ({ defaultTab }) => {
           </div>
         </div>
 
-        {/* Tab Navigation - Desktop */}
-        <div className={`hidden md:flex border-b mb-6 ${isDark ? 'border-white/10' : 'border-gray-200'}`}>
-          <TabButton tab="faq" label={t('help.tab.faq')} />
-          <TabButton tab="history" label={t('help.tab.history')} />
-          <TabButton tab="manifesto" label={t('help.tab.manifesto')} />
-          <TabButton tab="gettingstarted" label={t('help.tab.getting_started')} />
-          <TabButton tab="developers" label={t('help.tab.developers')} />
-          <TabButton tab="resources" label={t('help.tab.resources')} />
-        </div>
+        {/* Tab Navigation */}
+        <div className={`-mx-6 mb-6 border-b ${isDark ? 'border-white/10' : 'border-gray-200'}`}>
+          <div className="px-6">
+            {/* Desktop */}
+            <div className="hidden md:flex">
+              <TabButton tab="faq" label={t('help.tab.faq')} />
+              <TabButton tab="history" label={t('help.tab.history')} />
+              <TabButton tab="manifesto" label={t('help.tab.manifesto')} />
+              <TabButton tab="gettingstarted" label={t('help.tab.getting_started')} />
+              <TabButton tab="developers" label={t('help.tab.developers')} />
+              <TabButton tab="resources" label={t('help.tab.resources')} />
+            </div>
 
-        {/* Tab Navigation - Mobile with dropdowns */}
-        <div className={`md:hidden flex border-b mb-6 ${isDark ? 'border-white/10' : 'border-gray-200'}`} ref={dropdownRef}>
-          {/* FAQ Dropdown */}
+            {/* Mobile with dropdowns */}
+            <div className="md:hidden flex" ref={dropdownRef}>
+              {/* FAQ Dropdown */}
           <div className="relative flex-1">
             <button
               onClick={() => setMobileDropdown(mobileDropdown === 'faq' ? null : 'faq')}
@@ -381,6 +384,8 @@ const HelpPage: React.FC<HelpPageProps> = ({ defaultTab }) => {
             )}
           </button>
         </div>
+      </div>
+    </div>
 
         {/* FAQ Section */}
         {activeSection === 'faq' && (

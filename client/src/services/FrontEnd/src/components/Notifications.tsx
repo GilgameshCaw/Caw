@@ -918,41 +918,44 @@ const Notifications: React.FC = () => {
       </div>
 
       {/* Tabs */}
-      <div className={`flex border-b mb-3 ${isDark ? 'border-white/20' : 'border-gray-300'}`}>
-        <button
-          onClick={() => setActiveTab('all')}
-          className={`py-4 px-8 flex-1 text-center font-medium text-lg transition-all duration-200 cursor-pointer ${
-            activeTab === 'all'
-              ? isDark
-                ? 'border-b-2 border-white text-white'
-                : 'border-b-2 border-black text-black'
-              : isDark
-                ? 'text-gray-400 hover:text-white hover:bg-white/5'
-                : 'text-gray-600 hover:text-black hover:bg-gray-100'
-          }`}
-        >
-          {t('notifications.tab.all')}
-          {unreadCount > 0 && activeTab !== 'all' && (
-            <span className="ml-2 px-2 py-0.5 text-xs rounded-full bg-red-500 text-white">
-              {unreadCount}
-            </span>
-          )}
-        </button>
-        <button
-          onClick={() => setActiveTab('mentions')}
-          className={`py-4 px-8 flex-1 text-center font-medium text-lg transition-all duration-200 cursor-pointer flex items-center justify-center space-x-2 ${
-            activeTab === 'mentions'
-              ? isDark
-                ? 'border-b-2 border-white text-white'
-                : 'border-b-2 border-black text-black'
-              : isDark
-                ? 'text-gray-400 hover:text-white hover:bg-white/5'
-                : 'text-gray-600 hover:text-black hover:bg-gray-100'
-          }`}
-        >
-          <HiAtSymbol className="w-4 h-4" />
-          <span>{t('notifications.tab.mentions')}</span>
-        </button>
+      {/* Full-bleed divider like feed rows, without changing inner gutter. */}
+      <div className={`-mx-6 mb-3 border-b ${isDark ? 'border-white/20' : 'border-gray-300'}`}>
+        <div className="px-6 flex">
+          <button
+            onClick={() => setActiveTab('all')}
+            className={`py-4 px-8 flex-1 text-center font-medium text-lg transition-all duration-200 cursor-pointer ${
+              activeTab === 'all'
+                ? isDark
+                  ? 'border-b-2 border-yellow-500 text-white'
+                  : 'border-b-2 border-yellow-500 text-black'
+                : isDark
+                  ? 'text-gray-400 hover:text-white hover:bg-white/5'
+                  : 'text-gray-600 hover:text-black hover:bg-gray-100'
+            }`}
+          >
+            {t('notifications.tab.all')}
+            {unreadCount > 0 && activeTab !== 'all' && (
+              <span className="ml-2 px-2 py-0.5 text-xs rounded-full bg-red-500 text-white">
+                {unreadCount}
+              </span>
+            )}
+          </button>
+          <button
+            onClick={() => setActiveTab('mentions')}
+            className={`py-4 px-8 flex-1 text-center font-medium text-lg transition-all duration-200 cursor-pointer flex items-center justify-center space-x-2 ${
+              activeTab === 'mentions'
+                ? isDark
+                  ? 'border-b-2 border-yellow-500 text-white'
+                  : 'border-b-2 border-yellow-500 text-black'
+                : isDark
+                  ? 'text-gray-400 hover:text-white hover:bg-white/5'
+                  : 'text-gray-600 hover:text-black hover:bg-gray-100'
+            }`}
+          >
+            <HiAtSymbol className="w-4 h-4" />
+            <span>{t('notifications.tab.mentions')}</span>
+          </button>
+        </div>
       </div>
 
       {/* Notifications List */}
@@ -1042,7 +1045,8 @@ const Notifications: React.FC = () => {
               : ageHours < 72
                 ? 'bg-yellow-500/5 hover:bg-yellow-500/10'
                 : (isDark ? 'hover:bg-white/5' : 'hover:bg-gray-50')
-            const rowClass = `block px-4 py-4 transition cursor-pointer no-underline ${
+            // Full-bleed row dividers: cancel page gutter so the border reaches the column edges.
+            const rowClass = `block -mx-6 px-6 py-4 transition cursor-pointer no-underline ${
               !notification.isRead
                 ? unreadTint
                 : isDark ? 'hover:bg-white/5' : 'hover:bg-gray-50'

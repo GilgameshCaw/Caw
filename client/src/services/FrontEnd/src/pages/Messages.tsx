@@ -1415,7 +1415,7 @@ const MessagesPage: React.FC = () => {
               {currentView === 'chat' && (
                 <button
                   onClick={goBackToInbox}
-                  className={`relative z-[80] p-2 rounded-full transition-all duration-300 hover:bg-gray-500/20 ${
+                  className={`relative z-[80] p-2 rounded-full transition-all duration-300 hover:bg-gray-500/20 cursor-pointer ${
                     isDark ? 'text-white' : 'text-black'
                   }`}
                 >
@@ -1551,7 +1551,7 @@ const MessagesPage: React.FC = () => {
               <div className="relative" ref={chatMenuRef}>
                 <button
                   onClick={() => setShowChatOptionsMenu(!showChatOptionsMenu)}
-                  className={`p-2 rounded-full transition-all duration-300 hover:bg-gray-500/20 ${
+                  className={`p-2 rounded-full transition-all duration-300 hover:bg-gray-500/20 cursor-pointer ${
                     isDark ? 'text-white' : 'text-black'
                   }`}
                 >

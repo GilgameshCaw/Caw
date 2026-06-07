@@ -845,7 +845,7 @@ router.patch(
       // Handle defaultAvatarId separately (integer, not string)
       if (defaultAvatarId !== undefined) {
         const id = parseInt(String(defaultAvatarId))
-        if (id >= 1 && id <= 100) updateData.defaultAvatarId = id
+        if (id >= 1 && id <= 131) updateData.defaultAvatarId = id
       }
 
       for (const [field, rawValue] of Object.entries(incoming)) {

@@ -1,11 +1,12 @@
 import React, { useState, useEffect, useRef } from 'react'
-import { HiCamera, HiLink, HiLocationMarker } from 'react-icons/hi'
-import Tooltip from '~/components/Tooltip'
+import { useQueryClient } from '@tanstack/react-query'
+import { HiCamera, HiLink, HiLocationMarker, HiX } from 'react-icons/hi'
 import { apiFetch } from '~/api/client'
 import { useSignAndSubmitAction } from '~/api/actions'
 import { useTokenDataStore } from '~/store/tokenDataStore'
 import InsufficientStakeModal from '~/components/modals/InsufficientStakeModal'
 import AvatarCropperModal from '~/components/modals/AvatarCropperModal'
+import AvatarPicker from '~/components/AvatarPicker'
 import CoverCropperModal from '~/components/modals/CoverCropperModal'
 import { getUserAvatar } from '~/utils/defaultAvatar'
 import { useT } from '~/i18n/I18nProvider'
@@ -63,6 +64,11 @@ const ProfileEditForm: React.FC<ProfileEditFormProps> = ({
   const containerSpacing = compactFields ? '' : 'space-y-6'
   const signAndSubmit = useSignAndSubmitAction()
   const setAvatar = useTokenDataStore(s => s.setAvatar)
+  // Invalidates the React Query user-data caches after a save so the new
+  // avatar / cover / fields show up across the app (profile page, FeedItem
+  // authors, mentions) without waiting for the natural refetch — without
+  // this, deleting the cover would re-appear next time the profile loaded.
+  const queryClient = useQueryClient()
 
   const providerDomain = typeof window !== 'undefined' ? window.location.hostname : ''
 
@@ -96,15 +102,35 @@ const ProfileEditForm: React.FC<ProfileEditFormProps> = ({
 
   // Default avatar cycling — changes defaultAvatarId, not avatarUrl.
   // Start with a random one if the user doesn't have one assigned yet.
-  const randomFallback = useRef(activeToken?.tokenId ? (activeToken.tokenId % 100) + 1 : 1)
+  const randomFallback = useRef(activeToken?.tokenId ? (activeToken.tokenId % 131) + 1 : 1)
   const [selectedDefaultId, setSelectedDefaultId] = useState<number | null>(null)
   const currentDefaultId = selectedDefaultId ?? ((profileData as any)?.defaultAvatarId || randomFallback.current)
   // A "custom" avatar is one the user uploaded — not a default /images/avatars/ path
   const profileHasCustomAvatar = profileData?.avatarUrl && !profileData.avatarUrl.includes('/images/avatars/')
   const hasCustomAvatar = !!avatarPreview || !!avatarUrl || !!profileHasCustomAvatar
+  // Mirror for cover: any cover present (new preview, just-uploaded URL, or
+  // a stored one that still loads) means the ✕ overlay should show.
+  const hasCustomCover = !!coverPreview || !!coverUrl || (!!profileData?.coverPhotoUrl && !coverImgFailed)
+
+  const clearAvatar = () => {
+    setAvatarPreview(undefined)
+    setAvatarUrl('')
+    if (profileData) (profileData as any).avatarUrl = null
+  }
+  const clearCover = () => {
+    setCoverPreview(undefined)
+    // Use '' sentinel (NOT undefined) so the save logic sends an explicit
+    // clear to the server. The off-chain save below uses `coverUrl !==
+    // undefined` to detect the change.
+    setCoverUrl('')
+    // Also wipe the stored URL on profileData so the displayed thumbnail
+    // doesn't keep showing the pre-clear cover (the preview render reads
+    // straight from profileData.coverPhotoUrl). Mirrors clearAvatar above.
+    if (profileData) (profileData as any).coverPhotoUrl = null
+  }
 
   const cycleDefaultAvatar = (delta: number) => {
-    const next = ((currentDefaultId - 1 + delta + 100) % 100) + 1
+    const next = ((currentDefaultId - 1 + delta + 131) % 131) + 1
     setSelectedDefaultId(next)
   }
   const [isUploading, setIsUploading] = useState(false)
@@ -115,8 +141,20 @@ const ProfileEditForm: React.FC<ProfileEditFormProps> = ({
   const [profileError, setProfileError] = useState<string | null>(null)
   const [showCostExplanation, setShowCostExplanation] = useState(false)
   const [showInsufficientStake, setShowInsufficientStake] = useState(false)
+  const [showAvatarPicker, setShowAvatarPicker] = useState(false)
+  const [showAvatarMenu, setShowAvatarMenu] = useState(false)
+  const avatarMenuRef = useRef<HTMLDivElement>(null)
   const [cropperFile, setCropperFile] = useState<File | null>(null)
   const [coverCropperFile, setCoverCropperFile] = useState<File | null>(null)
+
+  useEffect(() => {
+    if (!showAvatarMenu) return
+    const handleClickOutside = (e: MouseEvent) => {
+      if (avatarMenuRef.current && !avatarMenuRef.current.contains(e.target as Node)) setShowAvatarMenu(false)
+    }
+    document.addEventListener('mousedown', handleClickOutside)
+    return () => document.removeEventListener('mousedown', handleClickOutside)
+  }, [showAvatarMenu])
 
   const triggerFileInput = (type: 'avatar' | 'cover') => {
     setTimeout(() => {
@@ -215,7 +253,15 @@ const ProfileEditForm: React.FC<ProfileEditFormProps> = ({
 
   const defaultAvatarChanged = selectedDefaultId !== null && selectedDefaultId !== ((profileData as any)?.defaultAvatarId || 0)
   const hasOnChainChanges = Object.keys(changedData).length > 0
-  const hasChanges = hasOnChainChanges || defaultAvatarChanged
+  // "Off-chain-only" change = clearing the avatar or cover. The on-chain
+  // payload uses truthy checks that miss '' (intentional — we don't want
+  // to pay gas to set a field to empty on-chain), so a pure clear yields
+  // hasOnChainChanges=false. Without this flag, the Save button would
+  // stay disabled (gated on updateCost > 0) and the user couldn't
+  // persist the delete via the off-chain save path. Detected here so
+  // the gating below sees it.
+  const hasOffChainOnlyChange = coverUrl === '' || avatarUrl === ''
+  const hasChanges = hasOnChainChanges || defaultAvatarChanged || hasOffChainOnlyChange
   const actionText = hasChanges ? `p:${JSON.stringify(changedData)}` : ''
   const actionTextLength = actionText.length
   const overLimit = actionTextLength > MAX_ACTION_TEXT
@@ -252,7 +298,9 @@ const ProfileEditForm: React.FC<ProfileEditFormProps> = ({
     if (formData.location !== (profileData?.location || '')) changes.location = formData.location
     if (formData.website !== (profileData?.website || '')) changes.website = formData.website
     if (avatarUrl !== undefined) changes.avatarUrl = avatarUrl
-    if (coverUrl) changes.coverPhotoUrl = coverUrl
+    // Mirror avatar's !== undefined so clearing the cover (setCoverUrl(''))
+    // sends `coverPhotoUrl: ''` and the server actually wipes it.
+    if (coverUrl !== undefined) changes.coverPhotoUrl = coverUrl
     if (selectedDefaultId !== null) (changes as any).defaultAvatarId = String(selectedDefaultId)
 
     if (Object.keys(changes).length === 0) {
@@ -270,6 +318,12 @@ const ProfileEditForm: React.FC<ProfileEditFormProps> = ({
       if (activeToken.tokenId) {
         setAvatar(activeToken.tokenId, getUserAvatar(res.user) || null)
       }
+      // Invalidate user-data caches so the new avatar / cover / fields
+      // show up everywhere immediately — without this, the cover delete
+      // (or any change) appears to revert when you come back to the
+      // profile because React Query is still serving stale data.
+      if (activeToken.username) queryClient.invalidateQueries({ queryKey: ['user', activeToken.username] })
+      if (activeToken.tokenId) queryClient.invalidateQueries({ queryKey: ['userByToken', activeToken.tokenId] })
       setAvatarPreview(undefined)
       setCoverPreview(undefined)
       setAvatarUrl(undefined)
@@ -321,14 +375,22 @@ const ProfileEditForm: React.FC<ProfileEditFormProps> = ({
       if (avatarUrl && activeToken.tokenId) {
         setAvatar(activeToken.tokenId, avatarUrl)
       }
+      // Same invalidation as the off-chain path — on-chain save also
+      // mutates the same user-data caches so subscribers need to refetch.
+      if (activeToken.username) queryClient.invalidateQueries({ queryKey: ['user', activeToken.username] })
+      if (activeToken.tokenId) queryClient.invalidateQueries({ queryKey: ['userByToken', activeToken.tokenId] })
 
       const offChainChanges: Record<string, string> = {}
       if (formData.displayName !== (profileData?.displayName || '')) offChainChanges.displayName = formData.displayName
       if (formData.description !== (profileData?.bio || '')) offChainChanges.bio = formData.description
       if (formData.location !== (profileData?.location || '')) offChainChanges.location = formData.location
       if (formData.website !== (profileData?.website || '')) offChainChanges.website = formData.website
-      if (avatarUrl) offChainChanges.avatarUrl = avatarUrl
-      if (coverUrl) offChainChanges.coverPhotoUrl = coverUrl
+      // !== undefined so clearing (avatarUrl='' / coverUrl='') also syncs
+      // off-chain. The on-chain payload above intentionally uses truthy
+      // (we don't want to set empty on-chain), but the off-chain DB still
+      // needs the wipe.
+      if (avatarUrl !== undefined) offChainChanges.avatarUrl = avatarUrl
+      if (coverUrl !== undefined) offChainChanges.coverPhotoUrl = coverUrl
       if (Object.keys(offChainChanges).length > 0) {
         apiFetch(`/api/users/${activeToken.tokenId}/profile`, {
           method: 'PATCH',
@@ -365,8 +427,21 @@ const ProfileEditForm: React.FC<ProfileEditFormProps> = ({
   }
 
   const saveDisabled =
-    isSaving || isSavingOffChain || isUploading || updateCost === 0 ||
-    (saveOnChain && overLimit)
+    isSaving || isSavingOffChain || isUploading || !hasChanges ||
+    (saveOnChain && (updateCost === 0 || overLimit))
+
+  if (showAvatarPicker) {
+    return (
+      <div className="flex flex-col">
+        <AvatarPicker
+          currentId={currentDefaultId}
+          isDark={isDark}
+          onAccept={(id) => { setSelectedDefaultId(id); setShowAvatarPicker(false); }}
+          onBack={() => setShowAvatarPicker(false)}
+        />
+      </div>
+    )
+  }
 
   return (
     <div className="flex flex-col">
@@ -397,12 +472,26 @@ const ProfileEditForm: React.FC<ProfileEditFormProps> = ({
         <div className="flex items-center space-x-6" style={{ whiteSpace: 'break-spaces' }}>
           {/* Avatar */}
           <div className="flex flex-col items-center ml-[7px]">
-            <button
+            {/* Relative wrapper just for the avatar circle + its ✕ overlay,
+                so the X doesn't shift when the "click to upload" caption
+                renders below. */}
+            <div className="relative">
+              {hasCustomAvatar && (
+                <button
+                  type="button"
+                  aria-label="Remove avatar"
+                  onClick={(e) => { e.preventDefault(); e.stopPropagation(); clearAvatar() }}
+                  className="absolute -top-1 -right-1 z-10 w-5 h-5 rounded-full bg-black/70 text-white hover:bg-black/90 flex items-center justify-center cursor-pointer transition-colors border border-white/20"
+                >
+                  <HiX className="w-3 h-3" />
+                </button>
+              )}
+              <button
               type="button"
               className={`w-20 h-20 rounded-full border-2 border-dashed transition-all duration-300 hover:border-yellow-500 hover:bg-yellow-500/10 cursor-pointer ${
                 isDark ? 'border-gray-600 bg-gray-800/50' : 'border-gray-300 bg-gray-50'
               }`}
-              onClick={(e) => { e.preventDefault(); e.stopPropagation(); triggerFileInput('avatar') }}
+              onClick={(e) => { e.preventDefault(); e.stopPropagation(); setShowAvatarMenu(v => !v) }}
               onDragOver={(e) => {
                 e.preventDefault()
                 e.stopPropagation()
@@ -418,49 +507,81 @@ const ProfileEditForm: React.FC<ProfileEditFormProps> = ({
                 handleImageDrop('avatar', e)
               }}
             >
-              <Tooltip text="Click or drag image to upload custom avatar" position="top" className="h-full">
-                <div className="relative w-full h-full">
-                  <div className="w-full h-full overflow-hidden rounded-full">
-                    <img
-                      src={
-                        hasCustomAvatar && !avatarImgFailed
-                          ? (avatarPreview || avatarUrl || profileData?.avatarUrl || `/images/avatars/${currentDefaultId}.png`)
-                          : `/images/avatars/${currentDefaultId}.png`
-                      }
-                      alt=""
-                      className="w-full h-full object-cover"
-                      onError={() => setAvatarImgFailed(true)}
-                    />
-                  </div>
-                  {/* Pencil badge floats OUTSIDE overflow-hidden so it isn't clipped */}
-                  <div className={`absolute -top-0.5 -right-0.5 w-5 h-5 rounded-full flex items-center justify-center shadow-sm ${
-                    isDark ? 'bg-gray-600' : 'bg-gray-400'
-                  }`}>
-                    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" className="w-3 h-3 text-white">
-                      <path d="M2.695 14.763l-1.262 3.154a.5.5 0 00.65.65l3.155-1.262a4 4 0 001.343-.885L17.5 5.5a2.121 2.121 0 00-3-3L3.58 13.42a4 4 0 00-.885 1.343z" />
-                    </svg>
-                  </div>
+              <div className="relative w-full h-full">
+                <div className="w-full h-full overflow-hidden rounded-full">
+                  <img
+                    src={
+                      hasCustomAvatar && !avatarImgFailed
+                        ? (avatarPreview || avatarUrl || profileData?.avatarUrl || `/images/avatars/${currentDefaultId}.png`)
+                        : `/images/avatars/${currentDefaultId}.png`
+                    }
+                    alt=""
+                    className="w-full h-full object-cover"
+                    onError={() => setAvatarImgFailed(true)}
+                  />
                 </div>
-              </Tooltip>
-            </button>
-            {!hasCustomAvatar && (
-              <div className="flex items-center gap-3">
-                <button
-                  type="button"
-                  onClick={(e) => { e.stopPropagation(); cycleDefaultAvatar(-1); }}
-                  className={`text-lg px-1 rounded hover:bg-white/10 ${isDark ? 'text-gray-400' : 'text-gray-500'}`}
-                >‹</button>
-                <button
-                  type="button"
-                  onClick={(e) => { e.stopPropagation(); cycleDefaultAvatar(1); }}
-                  className={`text-lg px-1 rounded hover:bg-white/10 ${isDark ? 'text-gray-400' : 'text-gray-500'}`}
-                >›</button>
+                <div className={`absolute -top-0.5 -right-0.5 w-5 h-5 rounded-full flex items-center justify-center shadow-sm ${
+                  isDark ? 'bg-gray-600' : 'bg-gray-400'
+                }`}>
+                  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" className="w-3 h-3 text-white">
+                    <path d="M2.695 14.763l-1.262 3.154a.5.5 0 00.65.65l3.155-1.262a4 4 0 001.343-.885L17.5 5.5a2.121 2.121 0 00-3-3L3.58 13.42a4 4 0 00-.885 1.343z" />
+                  </svg>
+                </div>
               </div>
+            </button>
+            {showAvatarMenu && (
+              <>
+                <div className="fixed inset-0 z-40" onClick={() => setShowAvatarMenu(false)} />
+                <div
+                  ref={avatarMenuRef}
+                  className={`absolute left-0 top-full mt-2 w-48 rounded-lg shadow-lg z-50 overflow-hidden ${
+                    isDark ? 'bg-black border border-white/20' : 'bg-white border border-gray-200'
+                  }`}
+                >
+                  <button
+                    type="button"
+                    onClick={(e) => { e.stopPropagation(); setShowAvatarMenu(false); triggerFileInput('avatar') }}
+                    className={`flex items-center gap-2 w-full px-4 py-3 text-left text-sm transition-colors cursor-pointer ${
+                      isDark ? 'hover:bg-white/10 text-white' : 'hover:bg-gray-100 text-gray-900'
+                    }`}
+                  >
+                    <HiCamera className="w-4 h-4" />
+                    Upload photo
+                  </button>
+                  <button
+                    type="button"
+                    onClick={(e) => { e.stopPropagation(); setShowAvatarMenu(false); setShowAvatarPicker(true) }}
+                    className={`flex items-center gap-2 w-full px-4 py-3 text-left text-sm transition-colors cursor-pointer ${
+                      isDark ? 'hover:bg-white/10 text-white' : 'hover:bg-gray-100 text-gray-900'
+                    }`}
+                  >
+                    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" className="w-4 h-4">
+                      <path fillRule="evenodd" d="M4.25 2A2.25 2.25 0 002 4.25v2.5A2.25 2.25 0 004.25 9h2.5A2.25 2.25 0 009 6.75v-2.5A2.25 2.25 0 006.75 2h-2.5zm0 9A2.25 2.25 0 002 13.25v2.5A2.25 2.25 0 004.25 18h2.5A2.25 2.25 0 009 15.75v-2.5A2.25 2.25 0 006.75 11h-2.5zm9-9A2.25 2.25 0 0011 4.25v2.5A2.25 2.25 0 0013.25 9h2.5A2.25 2.25 0 0018 6.75v-2.5A2.25 2.25 0 0015.75 2h-2.5zm0 9A2.25 2.25 0 0011 13.25v2.5A2.25 2.25 0 0013.25 18h2.5A2.25 2.25 0 0018 15.75v-2.5A2.25 2.25 0 0015.75 11h-2.5z" clipRule="evenodd" />
+                    </svg>
+                    Avatar gallery
+                  </button>
+                </div>
+              </>
             )}
+          </div>
           </div>
 
           {/* Cover */}
-          <div className="flex-1">
+          <div className="flex-1 relative">
+            {/* ✕ overlay to remove the cover. Sibling of the upload button
+                (HTML doesn't allow nested <button>s); positioned absolute to
+                this `relative` wrapper. Click stops propagation so it doesn't
+                also trigger the file picker. */}
+            {hasCustomCover && (
+              <button
+                type="button"
+                aria-label="Remove cover"
+                onClick={(e) => { e.preventDefault(); e.stopPropagation(); clearCover() }}
+                className="absolute top-1 right-1 z-10 w-6 h-6 rounded-full bg-black/60 text-white hover:bg-black/80 flex items-center justify-center cursor-pointer transition-colors"
+              >
+                <HiX className="w-4 h-4" />
+              </button>
+            )}
             <button
               type="button"
               className={`relative h-20 w-full rounded-lg border-2 border-dashed transition-all duration-300 hover:border-yellow-500 hover:bg-yellow-500/10 cursor-pointer ${
@@ -521,38 +642,8 @@ const ProfileEditForm: React.FC<ProfileEditFormProps> = ({
           </div>
         </div>
 
-        {(hasCustomAvatar || coverPreview) && (
-          <div className="flex space-x-4 mt-2">
-            {hasCustomAvatar && (
-              <button
-                type="button"
-                onClick={(e) => {
-                  e.preventDefault(); e.stopPropagation()
-                  setAvatarPreview(undefined)
-                  setAvatarUrl('')
-                  if (profileData) (profileData as any).avatarUrl = null
-                }}
-                className={`px-3 py-1 text-xs rounded-full cursor-pointer ${
-                  isDark ? 'bg-red-600/20 text-red-400 hover:bg-red-600/30' : 'bg-red-100 text-red-600 hover:bg-red-200'
-                }`}
-              >
-                Clear Avatar
-              </button>
-            )}
-            {coverPreview && (
-              <button
-                type="button"
-                onClick={(e) => { e.preventDefault(); e.stopPropagation(); setCoverPreview(undefined); setCoverUrl(undefined) }}
-                className={`px-3 py-1 text-xs rounded-full ${
-                  isDark ? 'bg-red-600/20 text-red-400 hover:bg-red-600/30' : 'bg-red-100 text-red-600 hover:bg-red-200'
-                }`}
-              >
-                Clear Cover
-              </button>
-            )}
-          </div>
-        )}
-        <div />
+        {/* Old "Clear Avatar" / "Clear Cover" text buttons removed — replaced
+            by the ✕ overlays sitting on top of each thumbnail above. */}
       </div>
 
       {/* Display Name */}

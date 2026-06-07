@@ -352,9 +352,12 @@ interface PostFormProps {
    * an unconditional focus pops the iOS keyboard with no input intent (#202).
    */
   autoFocus?: boolean;
+
+  /** Mobile-only: show divider under the compact toolbar row. */
+  mobileToolbarDivider?: boolean;
 }
 
-const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess, placeholder, composeMode = false, trackDraft = false, autoFocus = true }) => {
+const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess, placeholder, composeMode = false, trackDraft = false, autoFocus = true, mobileToolbarDivider = true }) => {
   const { isConnected } = useAccount();
   const { openConnectModal } = useConnectModal();
   const hasActiveSession = useHasActiveSession();
@@ -2617,7 +2620,7 @@ const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess, placehol
           )}
 
           {/* Mobile Icons Row */}
-          <div className={`flex items-center justify-between mt-4 pb-3 border-b ${
+          <div className={`flex items-center justify-between mt-4 pb-3 ${mobileToolbarDivider ? 'border-b' : 'border-b-0'} ${
             isDark ? 'border-white/10' : 'border-gray-200'
           } ${replyTo ? 'pt-0.5' : ''}`}>
             {/* Left side - media icons */}

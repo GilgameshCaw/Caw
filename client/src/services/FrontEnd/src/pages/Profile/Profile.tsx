@@ -933,10 +933,21 @@ export const Profile: React.FC = () => {
               onError={() => setCoverImgFailed(true)}
             />
           ) : (
-            <div
-              className={`w-full h-full ${isDark ? 'bg-gradient-to-b from-black via-gray-900 to-black' : ''}`}
-              style={isDark ? undefined : { background: 'linear-gradient(to bottom, white, #282828, white)' }}
-            />
+            // Standard "no cover" — subtle CAW-yellow tinted gradient that
+            // slowly drifts (CSS-only animation, see .caw-no-cover in
+            // index.css). Replaces the prior white→dark→white band that
+            // looked like a glitch in light mode.
+            <div className={`w-full h-full ${isDark ? 'caw-no-cover' : 'caw-no-cover-light'}`}>
+              <div className="absolute inset-0 pointer-events-none overflow-hidden">
+                <div
+                  className={`absolute top-[4.5rem] sm:top-[5.5rem] right-4 sm:right-6 text-4xl sm:text-5xl font-semibold tracking-tight whitespace-nowrap select-none ${
+                    isDark ? 'text-white/[0.07]' : 'text-black/[0.06]'
+                  }`}
+                >
+                  @{profileData?.username || displayUsername}
+                </div>
+              </div>
+            </div>
           )}
           <button
             type="button"
@@ -985,21 +996,26 @@ export const Profile: React.FC = () => {
         <div className={`pt-24 pb-6 px-6 transition-all duration-300 ${
           isDark ? 'bg-black text-white' : 'bg-white text-black'
         }`}>
-          {/* Layout principal: 2 columnas */}
-          <div className="flex justify-between items-start gap-4">
+          {/* Layout estilo X: acciones (Edit/Follow) pegadas al corte de portada,
+              y nombre/username en un renglón dedicado debajo. */}
+          <div className="relative">
             {/* Columna izquierda: Username, Joined, Stats */}
-            <div className="flex-1 min-w-0">
+            <div className="min-w-0 md:-mt-4">
               {/* Display Name, Username, and Joined */}
-              <div className="mb-4 min-w-0 pl-4 sm:pl-0">
-                <h1 className={`text-2xl font-bold transition-all duration-300 flex items-center gap-1.5 ${
+              <div className={`mb-4 min-w-0 ${
+                // En perfiles ajenos en mobile, reservamos un "gutter" a la derecha
+                // para que el nombre largo no se meta debajo del bloque Follow+iconos.
+                isOwnProfile ? '' : 'pr-28 sm:pr-0'
+              }`}>
+                <h1 className={`text-2xl font-bold transition-all duration-300 flex items-center flex-wrap gap-1.5 ${
                   isDark ? 'text-white' : 'text-black'
-                } truncate`}>
+                }`}>
                   {profileData?.displayName || profileData?.username || displayUsername}
                   <XBadge xHandle={profileData?.xHandle} xFollowerBucket={profileData?.xFollowerBucket} size="md" />
                 </h1>
                 <p className={`text-base mt-0.5 transition-all duration-300 ${
                   isDark ? 'text-gray-400' : 'text-gray-600'
-                } truncate`}>
+                } break-all`}>
                   @{profileData?.username || displayUsername}
                 </p>
                 {profileData?.address && (
@@ -1092,7 +1108,7 @@ export const Profile: React.FC = () => {
 
               {/* Stats - Alineadas horizontalmente */}
               {/* Mobile alignment: keep in sync with the name block (pl-4). */}
-              <div className="flex gap-5 sm:gap-8 mb-6 pl-4 sm:pl-0">
+              <div className="flex gap-5 sm:gap-8 mb-6">
                 <div className="text-center">
                   <div className={`text-lg font-bold transition-all duration-300 ${
                     isDark ? 'text-white' : 'text-black'
@@ -1196,7 +1212,17 @@ export const Profile: React.FC = () => {
             </div>
 
             {/* Columna derecha: Solo Edit Button */}
-            <div className="ml-4 flex flex-col items-end flex-shrink-0">
+            {/*
+              En X/Twitter, el CTA (Edit/Follow) vive pegado al corte de la portada,
+              no alineado con el nombre. Lo logramos "subiendo" esta columna.
+            */}
+            <div
+              className={`absolute top-0 -mt-20 sm:-mt-16 flex flex-col items-end ${
+                // En perfiles ajenos, pegalo un toque más al borde derecho (mobile)
+                // para que Follow + iconos queden mejor balanceados.
+                isOwnProfile ? 'right-6' : 'right-3 sm:right-6'
+              }`}
+            >
               {/* Edit Button */}
               <div>
                 {isOwnProfile ? (
@@ -1479,13 +1505,16 @@ export const Profile: React.FC = () => {
         )}
 
         {/* Tabs */}
+        {/* Keep tab layout untouched; only the divider line goes full-bleed. */}
         <div className="px-6 mb-6">
           <Tabs<ProfileTab>
             tabs={profileTabs}
             active={activeTab}
             onChange={setActiveTab}
             density="compact"
+            showDivider={false}
           />
+          <div className={`-mx-6 border-b ${isDark ? 'border-white/20' : 'border-gray-300'}`} />
         </div>
 
         {/* Posts Feed - Same format as other pages */}

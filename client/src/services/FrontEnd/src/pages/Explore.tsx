@@ -69,28 +69,35 @@ const ExplorePage: React.FC = () => {
         </div>
 
         {/* Tabs */}
-        <div className="mb-6 flex-shrink-0">
-          {/* Mobile tabs - only For You and Community */}
-          <div className="md:hidden">
-            <Tabs<ExploreTab>
-              tabs={mobileTabs}
-              active={activeTab}
-              onChange={setActiveTab}
-            />
-          </div>
+        {/* Full-bleed divider like feed rows, without changing inner gutter. */}
+        <div className={`-mx-6 mb-6 flex-shrink-0 border-b ${isDark ? 'border-white/20' : 'border-gray-300'}`}>
+          <div className="px-6">
+            {/* Mobile tabs - only For You and Community */}
+            <div className="md:hidden">
+              <Tabs<ExploreTab>
+                tabs={mobileTabs}
+                active={activeTab}
+                onChange={setActiveTab}
+                showDivider={false}
+              />
+            </div>
 
-          {/* Desktop tabs - all 4 tabs */}
-          <div className="hidden md:block">
-            <Tabs<ExploreTab>
-              tabs={desktopTabs}
-              active={activeTab}
-              onChange={setActiveTab}
-            />
+            {/* Desktop tabs - all 4 tabs */}
+            <div className="hidden md:block">
+              <Tabs<ExploreTab>
+                tabs={desktopTabs}
+                active={activeTab}
+                onChange={setActiveTab}
+                showDivider={false}
+              />
+            </div>
           </div>
         </div>
 
         {/* Content Area */}
-        <div className="flex-1 overflow-y-auto custom-scrollbar-alt">
+        {/* NOTE: avoid overflow-y-auto here: it can implicitly clip overflow-x,
+            which breaks FeedItem's negative-margins full-bleed hover. */}
+        <div className="flex-1 overflow-x-visible">
           {activeTab === 'foryou' && (
             <div>
               <Feed filter="For you" title={

@@ -301,7 +301,8 @@ const ScheduledPage: React.FC = () => {
         </div>
 
         {/* Tabs */}
-        <div className={`flex border-b mb-4 ${isDark ? 'border-white/10' : 'border-gray-200'}`}>
+        {/* Full-bleed divider within the page gutter (matches feed dividers). */}
+        <div className={`-mx-6 px-6 flex border-b mb-4 ${isDark ? 'border-white/10' : 'border-gray-200'}`}>
           {tabs.map(tab => (
             <button
               key={tab.id}

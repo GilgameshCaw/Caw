@@ -599,13 +599,41 @@ export const CawPage: React.FC = () => {
     },
   ]
 
+  // DEV-only visual test: inflate engagement counts for a specific deep-link
+  // so we can eyeball mobile layout without farming interactions.
+  const cawForDisplay = (() => {
+    try {
+      if (typeof window === 'undefined') return caw
+      if (window.location.hostname !== 'localhost') return caw
+      if (Number(caw.id) !== 171978) return caw
+      return {
+        ...caw,
+        likeCount: 350,
+        commentCount: 150,
+        recawCount: 1500,
+        viewCount: 2000,
+      }
+    } catch {
+      return caw
+    }
+  })()
+
+  // Thread-mode (this post is part of a reply chain) hides the main FeedItem divider.
+  // On mobile we still want a full-bleed separator above the reply composer.
+  const mainPostHidesDivider = ((!!caw?.parent && (replyRows.length > 0 || pendingReplies.length > 0)) || (replyRows[0]?.children.length ?? 0) > 0)
+
   return (
       <div
-        className="max-w-2xl mx-auto px-0 md:px-6 py-4"
+        // Match the app's standard gutter on mobile. FeedItem uses
+        // negative margins for full-bleed hover; without a gutter here,
+        // the action row ends up hugging the viewport edges.
+        className="max-w-2xl mx-auto px-3 sm:px-6 py-4"
         style={{ paddingBottom: 'calc(var(--bottom-nav-h, 0px) + 96px)' }}
       >
         {/* Header with back button and title */}
-        <div className="flex items-center space-x-4 mb-6 pb-4 border-b border-white/20">
+        {/* Keep header layout intact; make the divider full-bleed like feed rows. */}
+        <div className="mb-6">
+          <div className="flex items-center space-x-4 pb-4">
           {showingInteractions ? (
             <button
               onClick={() => {
@@ -646,6 +674,8 @@ export const CawPage: React.FC = () => {
           }`}>
             {showingInteractions ? t('caw_page.interactions_title') : t('caw_page.feed_title')}
           </h1>
+          </div>
+          <div className={`-mx-3 sm:-mx-6 border-b ${isDark ? 'border-white/20' : 'border-gray-200'}`} />
         </div>
 
         {/* Main content area: Post view OR Interactions view */}
@@ -967,17 +997,17 @@ export const CawPage: React.FC = () => {
                   <span>Pending — waiting for on-chain confirmation</span>
                 </div>
               )}
-              <div className="relative">
-                {((!!caw?.parent && (replyRows.length > 0 || pendingReplies.length > 0)) || (replyRows[0]?.children.length ?? 0) > 0) && (
+             <div className="relative">
+                {mainPostHidesDivider && (
                   <div className={`pointer-events-none absolute left-[40px] md:left-[48px] top-9 bottom-[-72px] z-0 w-px ${isDark ? 'bg-white/20' : 'bg-gray-300'}`} />
                 )}
                 <FeedItem
-                  item={caw}
+                  item={cawForDisplay}
                   isMainPost={true}
                   showReplyRail={false}
                   hideParentPreview={true}
-                  hideBottomBorder={(!!caw?.parent && (replyRows.length > 0 || pendingReplies.length > 0)) || (replyRows[0]?.children.length ?? 0) > 0}
-                  inThread={(!!caw?.parent && (replyRows.length > 0 || pendingReplies.length > 0)) || (replyRows[0]?.children.length ?? 0) > 0}
+                  hideBottomBorder={mainPostHidesDivider}
+                  inThread={mainPostHidesDivider}
                   onReplyStateChange={(cawId, replyPending) => {
                     if (caw && caw.id === cawId) {
                       setCaw({ ...caw, replyPending })
@@ -1010,9 +1040,17 @@ export const CawPage: React.FC = () => {
 
             {/* Reply Form — above replies (Twitter-style). */}
             {isAuthenticated && (
-              <div id="caw-reply-form" className="border-b border-white/20 mb-2">
+              <div
+                id="caw-reply-form"
+                // Mobile: keep a single full-bleed separator under the composer (between composer and replies).
+                className={`-mx-3 sm:-mx-6 px-3 sm:px-6 mb-2 border-b ${
+                  isDark ? 'border-white/20' : 'border-gray-200'
+                }`}
+              >
                 <PostForm
                   replyTo={caw}
+                  // Mobile: avoid the inset divider inside PostForm; page-level dividers are full-bleed.
+                  mobileToolbarDivider={false}
                   onSuccess={() => {
                     setCaw(prev => prev ? { ...prev, replyPending: true } : prev)
                     refreshComments()
@@ -1057,7 +1095,8 @@ export const CawPage: React.FC = () => {
                           isReply={true}
                           hideParentPreview={true}
                           showReplyRail={false}
-                          hideBottomBorder={!isLastRow}
+                          // Divider belongs to the row above; hide it ONLY on the last row.
+                          hideBottomBorder={isLastRow}
                           inThread={!!caw?.parent}
                           onLikeStateChange={(cawId, likePending) => {
                             setComments(current =>
@@ -1107,7 +1146,8 @@ export const CawPage: React.FC = () => {
                               isReply={true}
                               hideParentPreview={true}
                               showReplyRail={false}
-                              hideBottomBorder={!isLastChild}
+                              // Divider belongs to the row above; hide it ONLY on the last child.
+                              hideBottomBorder={isLastChild}
                               inThread={true}
                               onLikeStateChange={(cawId, likePending) => {
                                 setComments(current =>

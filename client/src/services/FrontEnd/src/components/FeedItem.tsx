@@ -77,7 +77,7 @@ import { formatTimeAgo } from '~/utils/formatTimeAgo'
 import { CawThumbnail, pickCawThumbnail, type CawThumbnailSource } from '~/utils/cawThumbnail'
 
 
-const FeedItem: React.FC<{ item: CawItem; isMainPost?: boolean; isReply?: boolean; hideParentPreview?: boolean; hideMedia?: boolean; contentClassName?: string; uiDensity?: 'normal' | 'compact'; showReplyRail?: boolean; hideBottomBorder?: boolean; inThread?: boolean; onBookmarkUpdate?: (cawId: number, isBookmarked: boolean) => void; onLikeStateChange?: (cawId: string, likePending: boolean) => void; onRecawStateChange?: (cawId: string, recawPending: boolean) => void; onReplyStateChange?: (cawId: string, replyPending: boolean) => void; onTipStateChange?: (cawId: string, tipPending: boolean) => void; onPinUpdate?: (cawId: string, isPinned: boolean) => void }> = ({ item, isMainPost = false, isReply = false, hideParentPreview = false, hideMedia = false, contentClassName, uiDensity = 'normal', showReplyRail = true, hideBottomBorder = false, inThread = false, onBookmarkUpdate, onLikeStateChange, onRecawStateChange, onReplyStateChange, onTipStateChange, onPinUpdate }) => {
+const FeedItem: React.FC<{ item: CawItem; isMainPost?: boolean; isReply?: boolean; hideParentPreview?: boolean; hideMedia?: boolean; contentClassName?: string; uiDensity?: 'normal' | 'compact'; showReplyRail?: boolean; hideBottomBorder?: boolean; inThread?: boolean; userHoverPortal?: boolean; onBookmarkUpdate?: (cawId: number, isBookmarked: boolean) => void; onLikeStateChange?: (cawId: string, likePending: boolean) => void; onRecawStateChange?: (cawId: string, recawPending: boolean) => void; onReplyStateChange?: (cawId: string, replyPending: boolean) => void; onTipStateChange?: (cawId: string, tipPending: boolean) => void; onPinUpdate?: (cawId: string, isPinned: boolean) => void }> = ({ item, isMainPost = false, isReply = false, hideParentPreview = false, hideMedia = false, contentClassName, uiDensity = 'normal', showReplyRail = true, hideBottomBorder = false, inThread = false, userHoverPortal = false, onBookmarkUpdate, onLikeStateChange, onRecawStateChange, onReplyStateChange, onTipStateChange, onPinUpdate }) => {
   // For plain recaws, pending states and counts should reflect the original post (parent),
   // not the recaw wrapper. useItem is set to item.parent for recaws further below, but
   // we need the right source for initial state here. Quotes act as their own posts.
@@ -1109,7 +1109,7 @@ const FeedItem: React.FC<{ item: CawItem; isMainPost?: boolean; isReply?: boolea
   return (
     <>
       <div onClick={handleCardClick} className="block" data-caw-id={item.id}>
-        <div className={`p-4 transition-all duration-300 feed-item-hover cursor-pointer ${hideBottomBorder ? 'feed-item-no-divider' : 'border-b'} ${
+        <div className={`-mx-3 sm:-mx-6 px-3 sm:px-6 py-4 transition-all duration-300 feed-item-hover cursor-pointer ${hideBottomBorder ? 'feed-item-no-divider' : 'border-b'} ${
           isDark ? 'border-gray-800' : 'border-gray-200'
         } ${
           item.status === 'FAILED' ? 'opacity-60' : ''
@@ -1262,7 +1262,7 @@ const FeedItem: React.FC<{ item: CawItem; isMainPost?: boolean; isReply?: boolea
 
                   {/* First line: Display name, username, time, and status badges */}
                   <div className="flex flex-wrap items-center gap-x-2 gap-y-1 mb-0.5">
-                    <UserHoverCard username={useItem.user.username}>
+                    <UserHoverCard username={useItem.user.username} portal={userHoverPortal}>
                       <Link
                         to={`/users/${useItem.user.username}`}
                         className={`font-semibold transition-colors duration-300 cursor-pointer hover:underline ${
@@ -2469,6 +2469,7 @@ export default React.memo(FeedItem, (prev, next) => {
     prev.isReply === next.isReply &&
     prev.hideParentPreview === next.hideParentPreview &&
     prev.hideBottomBorder === next.hideBottomBorder &&
-    prev.inThread === next.inThread
+    prev.inThread === next.inThread &&
+    prev.userHoverPortal === next.userHoverPortal
   )
 })

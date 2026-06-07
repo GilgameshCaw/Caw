@@ -159,14 +159,16 @@ const Marketplace: React.FC = () => {
         </div>
 
         {/* Marketplace section */}
-        <div className={`border-t pt-6 ${themeBorder(isDark)}`}>
+        {/* Full-bleed divider within the page gutter (matches feed dividers). */}
+        <div className={`-mx-6 px-6 border-t pt-6 ${themeBorder(isDark)}`}>
           <h2 className={`text-3xl font-bold mb-4 ${themeText(isDark)}`}>{t('marketplace.title')}</h2>
 
           {/* Claimable refunds (outbid bids + cancelled/reclaimed auctions) */}
           <RefundsBanner />
 
           {/* Tabs */}
-          <div id="usernames-tabs" className={`flex gap-1 mb-6 border-b ${themeBorder(isDark)}`}>
+          {/* Full-bleed divider under tabs (keep tab content padding intact). */}
+          <div id="usernames-tabs" className={`-mx-6 px-6 flex gap-1 mb-6 border-b ${themeBorder(isDark)}`}>
             <TabButton active={activeTab === 'listings'} onClick={() => setActiveTab('listings')} isDark={isDark}>
               {t('marketplace.tab.for_sale')}
             </TabButton>

@@ -133,19 +133,29 @@ export const Main: React.FC = () => {
   // tab change.
   const initialTranslate = slideFrom === 1 ? '24px' : slideFrom === -1 ? '-24px' : '0px'
 
-  return (
+    return (
     <div className="max-w-2xl md:max-w-none lg:max-w-2xl mx-auto px-3 sm:px-6 py-4">
-      <Tabs<MainTab>
-        tabs={mainTabs}
-        active={activeTab}
-        onChange={setActiveTab}
-      />
+      {/* Full-bleed divider like feed rows, without changing inner gutter. */}
+      <div className={`-mx-3 sm:-mx-6 border-b ${isDark ? 'border-white/20' : 'border-gray-300'}`}>
+        <div className="px-3 sm:px-6">
+          <Tabs<MainTab>
+            tabs={mainTabs}
+            active={activeTab}
+            onChange={setActiveTab}
+            showDivider={false}
+          />
+        </div>
+      </div>
       {/* PostForm - Always visible */}
-      <div className={`border-b ${isDark ? 'border-white/10' : 'border-gray-200'}`}>
-        <PostForm onSuccess={() => feedRef.current?.refresh()} composeMode trackDraft autoFocus={false}/>
+      {/* Keep the composer divider consistent with FeedItem full-bleed rows
+          (FeedItem uses -mx-* to reach the column edges). */}
+      <div className={`-mx-3 sm:-mx-6 px-3 sm:px-6 border-b ${isDark ? 'border-white/10' : 'border-gray-200'}`}>
+        <PostForm onSuccess={() => feedRef.current?.refresh()} composeMode trackDraft autoFocus={false} />
       </div>
       <div
-        className="w-full overflow-x-hidden"
+        // NOTE: Need overflow-x-visible so FeedItem can use negative margins
+        // for full-bleed hover up to the column edges (X-style).
+        className="w-full overflow-x-visible"
         onTouchStart={onFeedTouchStart}
         onTouchMove={onFeedTouchMove}
         onTouchEnd={onFeedTouchEnd}

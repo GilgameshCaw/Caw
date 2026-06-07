@@ -16,6 +16,8 @@ type Props<T extends string> = {
   tabs:   TabItem<T>[]
   active: T
   onChange: (tab: T) => void
+  /** Render the bottom divider line under the tab row. */
+  showDivider?: boolean
   /**
    * Layout density.
    *   'default' — equal-width tabs centered across the row, generous
@@ -32,12 +34,12 @@ type Props<T extends string> = {
   density?: 'default' | 'compact'
 }
 
-export function Tabs<T extends string>({ tabs, active, onChange, density = 'default' }: Props<T>) {
+export function Tabs<T extends string>({ tabs, active, onChange, density = 'default', showDivider = true }: Props<T>) {
   const { isDark } = useTheme()
 
   const containerClasses = density === 'compact'
-    ? 'flex justify-stretch sm:justify-between border-b transition-all duration-300 overflow-x-auto thin-scrollbar'
-    : 'flex justify-center sm:justify-center border-b transition-all duration-300'
+    ? 'flex w-full justify-stretch sm:justify-between transition-all duration-300 overflow-x-auto thin-scrollbar'
+    : 'flex w-full justify-center sm:justify-center transition-all duration-300'
 
   const buttonLayoutClasses = density === 'compact'
     ? 'py-3 px-1.5 sm:px-2.5 flex-1 sm:flex-initial text-center font-medium text-base'
@@ -45,7 +47,7 @@ export function Tabs<T extends string>({ tabs, active, onChange, density = 'defa
 
   return (
     <div className={`${containerClasses} ${
-      isDark ? 'border-white/20' : 'border-gray-300'
+      showDivider ? (isDark ? 'border-b border-white/20' : 'border-b border-gray-300') : ''
     }`}>
       {tabs.map(t => (
         <button
@@ -54,8 +56,8 @@ export function Tabs<T extends string>({ tabs, active, onChange, density = 'defa
           className={`${buttonLayoutClasses} transition-all duration-200 cursor-pointer whitespace-nowrap ${
             t.id === active
               ? `${isDark
-                  ? 'text-white border-white'
-                  : 'text-black border-black'
+                  ? 'text-white border-yellow-500'
+                  : 'text-black border-yellow-500'
                 } border-b-2`
               : `${isDark
                   ? 'text-gray-400 hover:text-white hover:bg-white/5'

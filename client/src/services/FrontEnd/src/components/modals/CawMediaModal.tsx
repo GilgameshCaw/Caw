@@ -297,29 +297,34 @@ export default function CawMediaModal() {
       ? <div className={`${isDark ? 'text-white/70' : 'text-gray-700'}`}>{error || 'Could not load post'}</div>
       : (
         <>
-          <FeedItem
-            item={caw}
-            isMainPost={true}
-            hideMedia={true}
-            uiDensity="compact"
-            contentClassName="text-base md:text-lg leading-relaxed"
-          />
+           <FeedItem
+             item={caw}
+             isMainPost={true}
+             hideMedia={true}
+             uiDensity="compact"
+             userHoverPortal={true}
+             contentClassName="text-base md:text-lg leading-relaxed"
+           />
 
           {/* Keep separators minimal in modal: FeedItem already includes its own divider. */}
 
           {isAuthenticated && (
-            <PostForm
-              replyTo={caw}
-              onSuccess={() => {
-                // Refresh replies after posting
-                apiFetch<{ caw: CawItem; comments: CawItem[] }>(`/api/caws/${id}`)
-                  .then(d => {
-                    setCaw(d.caw)
-                    setComments(d.comments)
-                  })
-                  .catch(() => {})
-              }}
-            />
+            // Match feed dividers: keep PostForm layout intact, but add a full-width
+            // separator under it so the reply box doesn't "float" into the first reply.
+            <div className={`-mx-4 px-4 border-b ${isDark ? 'border-white/10' : 'border-gray-200'}`}>
+              <PostForm
+                replyTo={caw}
+                onSuccess={() => {
+                  // Refresh replies after posting
+                  apiFetch<{ caw: CawItem; comments: CawItem[] }>(`/api/caws/${id}`)
+                    .then(d => {
+                      setCaw(d.caw)
+                      setComments(d.comments)
+                    })
+                    .catch(() => {})
+                }}
+              />
+            </div>
           )}
 
           {/* Replies */}
@@ -327,13 +332,13 @@ export default function CawMediaModal() {
             <div className="space-y-0 mt-3">
               {pendingReplies.map((post: any) => (
                 <div key={post.tempId} className="relative">
-                  <FeedItem item={post as CawItem} isReply={true} hideParentPreview={true} hideMedia={true} uiDensity="compact" />
+                  <FeedItem item={post as CawItem} isReply={true} hideParentPreview={true} hideMedia={true} uiDensity="compact" userHoverPortal={true} />
                 </div>
               ))}
 
               {dedupedComments.map((comm) => (
                 <div key={comm.id} className="relative">
-                  <FeedItem item={comm} isReply={true} hideParentPreview={true} hideMedia={true} uiDensity="compact" />
+                  <FeedItem item={comm} isReply={true} hideParentPreview={true} hideMedia={true} uiDensity="compact" userHoverPortal={true} />
                 </div>
               ))}
             </div>
@@ -386,7 +391,8 @@ export default function CawMediaModal() {
       <div className="absolute inset-0 flex flex-col md:flex-row">
         {/* LEFT PANEL: post + actions + comments */}
         <div className={`hidden md:block md:w-[300px] lg:w-[340px] xl:w-[380px] h-full overflow-hidden border-r ${isDark ? 'border-white/10 bg-black' : 'border-gray-200 bg-white'}`}>
-          <div className="h-full overflow-y-auto">
+          {/* Prevent tiny horizontal overflow from FeedItem negative margins. */}
+          <div className="h-full overflow-y-auto overflow-x-hidden">
             <div className="px-4 py-4">
               {postPanelInner}
             </div>
@@ -503,7 +509,8 @@ export default function CawMediaModal() {
             </button>
 
             {/* Sheet content */}
-            <div className="h-[calc(75vh-64px)] overflow-y-auto px-4 pb-6">
+            {/* Prevent horizontal scrollbar from full-bleed FeedItem styles. */}
+            <div className="h-[calc(75vh-64px)] overflow-y-auto overflow-x-hidden px-4 pb-6">
               <div className="pt-1">
                 {postPanelInner}
               </div>
