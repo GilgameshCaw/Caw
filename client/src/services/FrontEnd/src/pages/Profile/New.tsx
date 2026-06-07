@@ -2251,7 +2251,12 @@ console.log("BALANCE:", balance)
                 {submitText}
             </SubmitButton>
 
-            {insufficientBalance && !waiting && (
+            {/* Faucet / Buy-CAW CTA. On testnet this is ALWAYS rendered so
+                the modal height doesn't jump when the user's balance crosses
+                the threshold mid-animation — the link is informative either
+                way (a new user is likely to need it next). On mainnet we
+                keep it gated on `insufficientBalance`. */}
+            {(isTestnet || (insufficientBalance && !waiting)) && (
               <div className="text-center mt-2">
                 {isTestnet ? (
                   <Link
