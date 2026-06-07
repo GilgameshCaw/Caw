@@ -103,7 +103,15 @@ export const FreeSpeech = () => {
           >
             <h4 className="font-semibold mb-1.5 text-xs md:text-base">Open Protocols</h4>
             <p className="text-xs text-gray-400">
-              Built on open standards for interoperability and composability.
+              <a
+                href="https://github.com/GilgameshCaw/Caw"
+                target="_blank"
+                rel="noopener noreferrer"
+                className="text-yellow-400 hover:underline"
+              >
+                Open source
+              </a>
+              {' '}and built on open standards for interoperability and composability.
             </p>
           </div>
 
