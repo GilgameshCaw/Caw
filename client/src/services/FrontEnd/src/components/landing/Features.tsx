@@ -17,7 +17,7 @@ export const Features = () => {
     },
     {
       title: "CAW Economy",
-      description: "Posts cost CAW. Stakers earn from every action. The protocol pays itself.",
+      description: "Stake CAW, and earn yield from every action taken.",
       image: feature2,
     },
     {
