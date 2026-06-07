@@ -44,11 +44,6 @@ export default function CaptiveSplash() {
   const [showSignInChoice, setShowSignInChoice] = useState(false)
   const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null)
 
-  // Header backing: transparent over the hero, fades in a translucent
-  // blurred strip once the user scrolls past the top so the header
-  // elements don't float over the scrolling content.
-  const [scrolled, setScrolled] = useState(false)
-
   // Surface a compact Sign-in button in the LandingHeader's right cluster
   // once the hero CTA has scrolled out of view, so the user always has
   // a one-tap path back to sign-in without scrolling back to the top.
@@ -82,18 +77,8 @@ export default function CaptiveSplash() {
   return (
     <div
       className={`h-[100svh] overflow-y-auto overflow-x-hidden relative ${isDark ? 'bg-black text-white' : 'bg-white text-black'}`}
-      onScroll={(e) => setScrolled(e.currentTarget.scrollTop > 24)}
     >
       <BoidsBg isDark={isDark} />
-      {/* Translucent blurred strip behind the header — hidden over the
-          hero, fades in once scrolled. z-20 so it paints above the
-          content sections (which are also z-10); the header clusters are
-          z-20 too but come later in the DOM, so they stay on top. */}
-      <div
-        className={`fixed top-0 left-0 right-0 h-[4.75rem] z-20 pointer-events-none border-b backdrop-blur transition-opacity duration-200 ${
-          scrolled ? 'opacity-100' : 'opacity-0'
-        } ${isDark ? 'bg-black/95 border-white/10' : 'bg-white/95 border-gray-200'}`}
-      />
       {/* Shared landing header — logo lockup + resource links + language
           picker. Same component used by ManifestoPage. Once the hero CTA
           has scrolled off-screen, surface a compact Sign-in / Create /

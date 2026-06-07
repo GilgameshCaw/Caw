@@ -53,6 +53,18 @@ export default function LandingHeader({ fixed = false, rightExtra }: { fixed?: b
 
   return (
     <>
+      {/* Semi-transparent backing strip behind the header. Spans the full
+          viewport width, ~4.75rem tall to cover the top-5 cluster rows
+          plus breathing room. z-[15] sits below the clusters (z-20) but
+          above page content. pointer-events-none so the logo/link click
+          targets behind it still work. Light enough to let backgrounds
+          (CaptiveSplash's 3D crow, manifesto particles) show through. */}
+      <div
+        className={`${pos} top-0 left-0 right-0 h-[4.75rem] z-[15] pointer-events-none backdrop-blur-[2px] ${
+          isDark ? 'bg-black/30' : 'bg-white/30'
+        }`}
+      />
+
       {/* Top-right cluster. Desktop: optional rightExtra + language picker + avatar.
           Mobile: optional rightExtra + a burger that opens the drawer below. */}
       <div className={`${pos} top-5 right-6 sm:right-10 lg:right-16 z-20 flex items-center gap-2`}>
