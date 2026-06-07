@@ -109,7 +109,11 @@ export default defineConfig({
     proxy: {
       '/api': {
         target: 'http://localhost:4000',
-        changeOrigin: true,
+        // Keep the browser's Host header (localhost:5274) intact. The
+        // wallet-auth domain binding in api/routes/auth.ts compares the
+        // signed message's Host against req.headers.host; changeOrigin:true
+        // would rewrite it to localhost:4000 and 400 every login in dev.
+        changeOrigin: false,
       },
       // Uploaded media files (avatars, post images, videos). The API
       // returns absolute URLs built from publicUrl(), which in dev points
