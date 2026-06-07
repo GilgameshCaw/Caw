@@ -26,94 +26,59 @@ model RawEvent {
 }
 
 model User {
-  id                    Int                         @id // Set to tokenId when creating user
-  address               String                      @default("")
-  createdAt             DateTime                    @default(now())
-  updatedAt             DateTime                    @updatedAt
-  cawCount              Int                         @default(0)
-  recawCount            Int                         @default(0) // recaws + quotes by this user
-  followerCount         Int                         @default(0)
-  followingCount        Int                         @default(0)
-  image                 String?
-  // Cached like counters. Both maintained by CountManager on like/unlike/failure.
-  // - likedCount         = likes this user has GIVEN (was the field formerly named `likeCount`).
-  // - likesReceivedCount = total likes this user's caws have RECEIVED.
-  // Both are read-and-self-heal: routes recompute from the Like table when displaying
-  // and fire-and-forget an UPDATE if the cache drifts.
-  likedCount            Int                         @default(0)
-  likesReceivedCount    Int                         @default(0)
-  tokenId               Int                         @unique // Kept for backwards compatibility, always equals id
-  username              String                      @unique
-  avatarUrl             String?
-  defaultAvatarId       Int                         @default(0) // 1-100; which default avatar to show when avatarUrl is null
-  bio                   String?
-  coverPhotoUrl         String?
-  displayName           String?
-  location              String?
-  profileUpdatePending  Boolean                     @default(false)
-  profileSource         String                      @default("onchain") // "onchain" or "offchain"
-  website               String?
-  onboardingStep        Int                         @default(0)
-  lastStakedAt          DateTime?
-  pendingDepositAmount  String? // wei amount as string, pending L1→L2 bridge
-  // Cached L2 on-chain CAW staked balance, refreshed by DataCleaner. Tier 2
-  // of the "RPC out of API request handlers" refactor — see PROJECT_BACKLOG.md.
-  // /api/users/by-token reads this directly instead of calling cawBalanceOf
-  // on every request. Wei stored as a string so the JSON layer can pass it
-  // around without precision loss.
-  onChainStakeWei       String?
-  onChainStakeUpdatedAt DateTime?
-  lastViewedOffersAt    DateTime? // When the user last viewed the My Offers tab
-  // X badge visibility per profile. The X link itself lives on
-  // WalletXLink (one row per wallet) since proving control of an X
-  // handle is a wallet-level fact — every CAW profile owned by that
-  // wallet inherits the link. This boolean lets the user opt each
-  // profile in or out of showing the badge. Default true so the
-  // profile that initiated the OAuth flow wins by default; UI flips
-  // sibling profiles to false at link time.
-  xBadgeVisible         Boolean                     @default(true)
-  // BCP-47 primary subtag (e.g. "en", "es"). Null = follow browser locale.
-  // Used by FeedItem to decide whether to surface the inline Translate
-  // affordance and (when autoTranslate=true) to auto-translate posts whose
-  // detected source language differs.
-  preferredLanguage     String?
-  autoTranslate         Boolean                     @default(false)
-  // Minimum tip (whole CAW units) required for a mention to create a
-  // Notification row. 0 = no gate (default). Non-zero lets high-attention
-  // accounts (e.g. CawAI bot) silence mention-spam unless the post carries
-  // a sufficient embedded tip directed at this user.
-  notificationTipRequired Int                       @default(0)
-  caws                  Caw[]
-  followers             Follow[]                    @relation("Follower")
-  follows               Follow[]                    @relation("Following")
-  likes                 Like[]
-  replies               Reply[]
-  notificationsSent     Notification[]              @relation("NotificationActor")
-  notificationsReceived Notification[]              @relation("NotificationRecipient")
-  notificationGroups    NotificationGroup[]
-  scheduledCaws         ScheduledCaw[]
-  dmIdentity            DmIdentity?
-  tipsSent              Tip[]                       @relation("TipsSent")
-  tipsReceived          Tip[]                       @relation("TipsReceived")
-  blocksGiven           Block[]                     @relation("BlocksGiven")
-  blocksReceived        Block[]                     @relation("BlocksReceived")
-  bookmarks             Bookmark[]
-  pinnedCaws            PinnedCaw[]
-  // Cached count of CONFIRMED pinned caws (pending=false). Maintained
-  // by the same write paths that touch PinnedCaw — incremented when a
-  // pending row flips to confirmed, decremented when a confirmed row
-  // is deleted. Read by the FeedItem owner menu to grey out the "Pin"
-  // option at 3/3. The cap is a client affordance, not a server
-  // invariant — the read path filters to top-3 regardless.
-  pinnedCawCount        Int                         @default(0)
-  votes                 Vote[]
-  offerDismissals       MarketplaceOfferDismissal[]
-  // Moderation tier. USER is the default. MODERATOR can hide caws and
-  // triage reports; ADMIN can do everything plus assign roles, validator
-  // settings, RPC config, DB admin. Promotions go through
-  // POST /api/admin/users/:tokenId/role.
-  role                  UserRole                    @default(USER)
-  moderatorActions      ModeratorAction[]           @relation("ModeratorActor")
+  id                      Int                         @id
+  address                 String                      @default("")
+  createdAt               DateTime                    @default(now())
+  updatedAt               DateTime                    @updatedAt
+  cawCount                Int                         @default(0)
+  recawCount              Int                         @default(0)
+  followerCount           Int                         @default(0)
+  followingCount          Int                         @default(0)
+  image                   String?
+  likedCount              Int                         @default(0)
+  likesReceivedCount      Int                         @default(0)
+  tokenId                 Int                         @unique
+  username                String                      @unique
+  avatarUrl               String?
+  defaultAvatarId         Int                         @default(0)
+  bio                     String?
+  coverPhotoUrl           String?
+  displayName             String?
+  location                String?
+  profileUpdatePending    Boolean                     @default(false)
+  profileSource           String                      @default("onchain")
+  website                 String?
+  onboardingStep          Int                         @default(0)
+  lastStakedAt            DateTime?
+  pendingDepositAmount    String?
+  onChainStakeWei         String?
+  onChainStakeUpdatedAt   DateTime?
+  lastViewedOffersAt      DateTime?
+  xBadgeVisible           Boolean                     @default(true)
+  preferredLanguage       String?
+  autoTranslate           Boolean                     @default(false)
+  pinnedCawCount          Int                         @default(0)
+  role                    UserRole                    @default(USER)
+  notificationTipRequired Int                         @default(0)
+  blocksReceived          Block[]                     @relation("BlocksReceived")
+  blocksGiven             Block[]                     @relation("BlocksGiven")
+  bookmarks               Bookmark[]
+  caws                    Caw[]
+  dmIdentity              DmIdentity?
+  followers               Follow[]                    @relation("Follower")
+  follows                 Follow[]                    @relation("Following")
+  likes                   Like[]
+  offerDismissals         MarketplaceOfferDismissal[]
+  moderatorActions        ModeratorAction[]           @relation("ModeratorActor")
+  notificationsSent       Notification[]              @relation("NotificationActor")
+  notificationsReceived   Notification[]              @relation("NotificationRecipient")
+  notificationGroups      NotificationGroup[]
+  pinnedCaws              PinnedCaw[]
+  replies                 Reply[]
+  scheduledCaws           ScheduledCaw[]
+  tipsReceived            Tip[]                       @relation("TipsReceived")
+  tipsSent                Tip[]                       @relation("TipsSent")
+  votes                   Vote[]
 
   @@index([address])
   @@index([cawCount, followerCount])
@@ -134,28 +99,25 @@ model Caw {
   updatedAt      DateTime       @updatedAt
   hasImage       Boolean        @default(false)
   hasVideo       Boolean        @default(false)
-  // Detected source language (BCP-47 primary subtag) populated lazily on
-  // the first successful translate. Null = not yet detected; UI always
-  // surfaces a manual Translate button in that case.
   sourceLanguage String?
   imageData      String?
   status         CawStatus      @default(SUCCESS)
   reason         String?
   videoData      String?
   viewCount      Int            @default(0)
+  bookmarkCount  Int            @default(0)
+  bookmarks      Bookmark[]
   parent         Caw?           @relation("CawToRecaws", fields: [originalCawId], references: [id])
   recaws         Caw[]          @relation("CawToRecaws")
   user           User           @relation(fields: [userId], references: [tokenId])
   hashtags       CawHashtag[]
   likes          Like[]
+  notifications  Notification[]
+  pinnedBy       PinnedCaw[]
+  poll           Poll?
   repliesOnThis  Reply[]        @relation("RepliesOnCaw")
   isReplyTo      Reply[]        @relation("ReplyCaw")
-  notifications  Notification[]
   tips           Tip[]
-  bookmarks      Bookmark[]
-  bookmarkCount  Int            @default(0)
-  poll           Poll?
-  pinnedBy       PinnedCaw[]
 
   @@unique([userId, cawonce])
   @@index([userId, action, createdAt])
@@ -163,72 +125,34 @@ model Caw {
   @@index([originalCawId])
   @@index([originalCawId, action])
   @@index([status, userId])
-  // Covers the dominant profile-feed + main-feed query shape:
-  // `where: { userId, status: 'SUCCESS' } orderBy: { createdAt: desc }`.
-  // The existing `(userId, action, createdAt)` and `(status, userId)`
-  // composites each handle two of the three predicates; this one closes
-  // the index gap so Postgres can serve the query without a sort step.
-  // Audit 2026-05-13.
   @@index([userId, status, createdAt])
 }
 
-// Poll attached to a Caw. Created in the same transaction as the Caw row by
-// either the API submit path (optimistic) or the indexer (catch-up from a
-// remote node), driven by a ::poll:opt1:opt2:...:: marker in the caw text.
-//
-// Options are stored positionally: votes target by optionIndex, never by
-// option-text. Editing a poll isn't supported (matches "no caw edits").
-//
-// Per-option vote counts are derived at query time via Prisma groupBy on
-// Vote (no denormalized counters that could drift). totalVotes IS
-// denormalized — single atomic counter, cheap to keep accurate, and the
-// "12 votes" badge reads it without a count query.
 model Poll {
-  id           Int      @id @default(autoincrement())
-  cawId        Int      @unique
+  id           Int       @id @default(autoincrement())
+  cawId        Int       @unique
   /// When voting closes. Computed at indexer-write time from the caw's
   /// block timestamp plus the duration in the ::pd:<dur>:: marker
   /// sidecar. NULL means the poll has no expiry (legacy polls created
   /// before the duration sidecar was added).
   endsAt       DateTime?
-  options      String[] // PG text[]; positional. ≤ 6 entries enforced at write time.
-  // Optional per-option image URLs. Positional, parallel to `options` —
-  // empty string in slot i means "no image for option i". Default to an
-  // empty array so older Poll rows (created before images were added)
-  // keep working without backfill. URLs point at the image-upload
-  // endpoint's CDN path; same /uploads/images/... layout that media
-  // attachments use. Off-chain only — the on-chain ::poll:...:: marker
-  // stays text-only, so mirror nodes see the poll but not the images
-  // unless they fetch from the original instance.
-  optionImages String[] @default([])
+  options      String[]
+  optionImages String[]  @default([])
   /// When true, voters can pick any subset of options (checkbox UI;
   /// each vote action toggles one option). Encoded on-chain via the
   /// `::pm::` marker sidecar. Default false = single-select (radio UI;
   /// each vote replaces the prior choice). Legacy polls created
   /// before the sidecar always parse as single-select.
-  multiSelect  Boolean  @default(false)
-  totalVotes   Int      @default(0)
-  createdAt    DateTime @default(now())
-  updatedAt    DateTime @updatedAt
-  caw          Caw      @relation(fields: [cawId], references: [id], onDelete: Cascade)
+  multiSelect  Boolean   @default(false)
+  totalVotes   Int       @default(0)
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
+  caw          Caw       @relation(fields: [cawId], references: [id], onDelete: Cascade)
   votes        Vote[]
 
   @@index([cawId])
 }
 
-// One Vote row per (poll, voter). Latest vote wins — when a user changes
-// their mind, we UPDATE the existing row's optionIndex rather than
-// inserting a new row. Unvote is implemented as deleting the row and
-// decrementing Poll.totalVotes.
-//
-// `pending` mirrors the pattern in Like / Reply / Tip: the API writes the
-// row optimistically, the indexer flips pending → false (or for unvote,
-// deletes the row) when the on-chain action confirms. Failed actions get
-// cleaned up by cleanupOptimisticRows in utils/txQueueFailure.ts.
-//
-// `cawonce` carries the OTHER action's cawonce so cleanupOptimisticRows
-// can find the right pending vote row to roll back when its TxQueue entry
-// fails — same pattern Tip uses.
 model Vote {
   id          Int      @id @default(autoincrement())
   pollId      Int
@@ -241,14 +165,6 @@ model Vote {
   poll        Poll     @relation(fields: [pollId], references: [id], onDelete: Cascade)
   voter       User     @relation(fields: [voterId], references: [tokenId])
 
-  /// Uniqueness on (pollId, voterId, optionIndex) so multi-select polls
-  /// can have multiple Vote rows per voter — one per picked option.
-  /// Single-select polls still get one row per voter in practice
-  /// because the FE only emits one vote action per voter (replaces on
-  /// change); the broader uniqueness key just stops being the
-  /// constraint enforced. Existing rows satisfy the new constraint
-  /// because (pollId, voterId) was already unique and adding
-  /// optionIndex preserves that.
   @@unique([pollId, voterId, optionIndex])
   @@index([pollId, optionIndex])
   @@index([voterId])
@@ -272,16 +188,15 @@ model Like {
 
 model Reply {
   id         Int      @id @default(autoincrement())
-  userId     Int // replier's tokenId
-  cawId      Int // the post being replied to
-  replyCawId Int // the caw that IS the reply (links to Caw.id)
+  userId     Int
+  cawId      Int
+  replyCawId Int
   pending    Boolean  @default(false)
   createdAt  DateTime @default(now())
   updatedAt  DateTime @updatedAt
-
-  caw      Caw  @relation("RepliesOnCaw", fields: [cawId], references: [id])
-  replyCaw Caw  @relation("ReplyCaw", fields: [replyCawId], references: [id])
-  user     User @relation(fields: [userId], references: [tokenId])
+  caw        Caw      @relation("RepliesOnCaw", fields: [cawId], references: [id])
+  replyCaw   Caw      @relation("ReplyCaw", fields: [replyCawId], references: [id])
+  user       User     @relation(fields: [userId], references: [tokenId])
 
   @@unique([userId, cawId, replyCawId])
   @@index([cawId])
@@ -303,10 +218,6 @@ model Follow {
   @@unique([followerId, followingId])
   @@index([followerId, status])
   @@index([followingId, status])
-  // Covers the home-feed "is this author in my follows?" check: the feed
-  // join filters by `followerId == me, action='FOLLOW', status='SUCCESS'`,
-  // which the existing `(followerId, status)` indexes only partially.
-  // Audit 2026-05-13.
   @@index([followerId, action, status])
 }
 
@@ -316,8 +227,8 @@ model Block {
   blockedId Int
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
-  blocker   User     @relation("BlocksGiven", fields: [blockerId], references: [tokenId])
   blocked   User     @relation("BlocksReceived", fields: [blockedId], references: [tokenId])
+  blocker   User     @relation("BlocksGiven", fields: [blockerId], references: [tokenId])
 
   @@unique([blockerId, blockedId])
   @@index([blockerId])
@@ -325,60 +236,22 @@ model Block {
 }
 
 model TxQueue {
-  id                   Int      @id @default(autoincrement())
-  payload              Json
-  // signedTx was @unique under the legacy 1-sig-per-action model. Batched
-  // sigs reuse one ActionBatch signature across every row in the group, so
-  // uniqueness is no longer true at the column level. Replaced with a
-  // plain index — the single-action dedup path (POST /api/actions) catches
-  // duplicates with a findFirst lookup that's still bounded by the index.
-  signedTx             String
-  status               String   @default("pending")
-  createdAt            DateTime @default(now())
-  updatedAt            DateTime @updatedAt
-  senderId             Int
-  reason               String?
-  // If non-null, the client claims a pending L1 deposit tx that should credit
-  // this sender's balance once it lands on L2. Presence of this field causes
-  // the validator to mark the row waiting_for_deposit without simulating,
-  // and the DataCleaner watcher to promote it when L2 catches up.
-  pendingDepositTxHash String?
-
-  // If non-null, the client claims a pending QuickSign session-register tx
-  // (mintAndDeposit+QuickSign / zap) that should land the session key on-chain.
-  // Presence parks the row waiting_for_session until the key is registered.
-  // (Column added by migration 20260428200000_add_pending_quicksign_hash.)
+  id                     Int      @id @default(autoincrement())
+  payload                Json
+  signedTx               String
+  status                 String   @default("pending")
+  createdAt              DateTime @default(now())
+  updatedAt              DateTime @updatedAt
+  senderId               Int
+  reason                 String?
+  pendingDepositTxHash   String?
+  batchId                Int?
+  cawonce                Int?
+  clientVersion          String?
+  clientOrigin           String?
   pendingQuickSignTxHash String?
-
-  // Groups txqueue rows that share an ActionBatch signature. Adjacent rows
-  // (in createdAt/cawonce order) with the same batchId are sent on-chain
-  // as one signature group. signedTx must match across rows in the group —
-  // it's the batch sig that covers all of them.
-  batchId Int?
-
-  // Denormalized cawonce from payload.data.cawonce. Backs the partial
-  // unique index TxQueue_senderId_cawonce_active_unique (defined in
-  // a raw migration since Prisma's @@unique can't express partial
-  // constraints). Catches the same-sender-same-cawonce race at insert
-  // time — duplicate gets a P2002, the API responds 409, the frontend
-  // re-reads chain and re-signs. Replaces the CawonceReservation
-  // system that didn't see actions submitted by other servers.
-  cawonce Int?
-
-  // Diagnostic provenance. clientVersion is the build-time git SHA from
-  // the FE that submitted the action (X-Caw-Client-Version header).
-  // clientOrigin is the browser-supplied Origin header — useful as we
-  // expand to mirrors / FE-only peers that submit on behalf of users.
-  // Both nullable so old rows + non-FE submitters (curl, scripts) are fine.
-  clientVersion String?
-  clientOrigin  String?
-
-  // Who signed the action: 'owner' (wallet) or 'session' (QuickSign key).
-  // implicitTip is the per-action tip the validator should apply when the
-  // signed payload carries no explicit tip (amounts empty). Both added by
-  // migration 20260506200000_session_per_action_tip_rate.
-  signerKind  String  @default("owner")
-  implicitTip String?
+  implicitTip            String?
+  signerKind             String   @default("owner")
 
   @@index([senderId, status])
   @@index([batchId])
@@ -408,11 +281,7 @@ model Action {
 
 model Hashtag {
   id          Int          @id @default(autoincrement())
-  // Canonical lowercase form — used for uniqueness, joins, route keys.
   name        String       @unique
-  // Original casing as typed by the first author to use this hashtag.
-  // Read paths prefer this when rendering; falls back to `name` when null
-  // (older rows pre-dating this column).
   displayName String?
   usageCount  Int          @default(0)
   createdAt   DateTime     @default(now())
@@ -450,9 +319,9 @@ model ScheduledCaw {
   updatedAt    DateTime @updatedAt
   signedAction Json?
   cawonce      Int?
-  threadId     String? // shared id across all chunks of one scheduled thread; null = single post
-  threadIndex  Int? // 0-based position of this chunk within its thread
-  threadTotal  Int? // total chunks in the thread
+  threadId     String?
+  threadIndex  Int?
+  threadTotal  Int?
   user         User     @relation(fields: [userId], references: [tokenId], onDelete: Cascade)
 
   @@index([userId])
@@ -472,120 +341,91 @@ model ScheduledCaw {
 /// not O(raw notifications).
 ///
 /// "targetKey" semantics per type:
-///   LIKE / REPOST / QUOTE / REPLY / TIP / MENTION → cawId as string
-///   OFFER → tokenId as string
-///   FOLLOW → null (one global follow bucket per user)
-///   ACTION_FAILED → null (each failure is its own row, ungrouped)
+/// LIKE / REPOST / QUOTE / REPLY / TIP / MENTION → cawId as string
+/// OFFER → tokenId as string
+/// FOLLOW → null (one global follow bucket per user)
+/// ACTION_FAILED → null (each failure is its own row, ungrouped)
 ///
 /// Marking a group read closes it: the next event on the same target
 /// starts a fresh group so users can see "5 new likes since last
 /// time" instead of one ever-growing rollup. A group stays open
 /// indefinitely while unread — no time-based closure.
 model NotificationGroup {
-  id                   Int      @id @default(autoincrement())
+  id                   Int              @id @default(autoincrement())
   userId               Int
   type                 NotificationType
   /// Disambiguator within (userId, type). String so we can stuff
   /// cawId / offerId / etc. into the same column without per-type
   /// joins; null means "global for this type".
   targetKey            String?
-  openedAt             DateTime @default(now())
+  openedAt             DateTime         @default(now())
   /// Updated whenever a notification is added to this group. Drives
   /// the order on the feed (DESC).
-  lastEventAt          DateTime @default(now())
-  isRead               Boolean  @default(false)
+  lastEventAt          DateTime         @default(now())
+  isRead               Boolean          @default(false)
   /// Quick pointer to the most-recent member for renderer lead
   /// actor / caw thumbnail / offer payload. Updated on every join.
   latestNotificationId Int
   /// Confirmed-row count for the rollup. Updated atomically with
   /// notification inserts inside the same transaction.
-  count                Int      @default(1)
-  user                 User     @relation(fields: [userId], references: [tokenId], onDelete: Cascade)
+  count                Int              @default(1)
   notifications        Notification[]
+  user                 User             @relation(fields: [userId], references: [tokenId], onDelete: Cascade)
 
-  /// Two read indexes:
-  ///   - feed read: ORDER BY lastEventAt DESC over (userId)
-  ///   - open-group lookup / atomic upsert: partial unique index on
-  ///     (userId, type, COALESCE(targetKey,'')) WHERE isRead=false
-  ///     (hand-rolled in migration; Prisma can't express partial uniques)
   @@index([userId, lastEventAt])
   @@index([userId, type, targetKey, isRead, lastEventAt])
 }
 
 model Notification {
-  id            Int               @id @default(autoincrement())
+  id            Int                @id @default(autoincrement())
   userId        Int
   actorId       Int
   type          NotificationType
   cawId         Int?
-  offerId       Int? // Links to MarketplaceOffer for OFFER notifications
+  offerId       Int?
   groupKey      String?
   /// Persistent NotificationGroup this row belongs to. Null only for
   /// rows created before the group-table migration; backfill flips
   /// them to a per-row synthetic group in the migration.
   groupId       Int?
-  isRead        Boolean           @default(false)
-  hidden        Boolean           @default(false)
-  // For ACTION_FAILED: the original failed action payload, sufficient to
-  // reconstruct and retry the action. For other notification types, null.
-  // Shape: { actionType, receiverId?, receiverCawonce?, text?, recipients?, amounts?, originalTxQueueId, reason }
+  isRead        Boolean            @default(false)
+  hidden        Boolean            @default(false)
   actionPayload Json?
-  createdAt     DateTime          @default(now())
-  updatedAt     DateTime          @updatedAt
-  actor         User              @relation("NotificationActor", fields: [actorId], references: [tokenId], onDelete: Cascade)
-  caw           Caw?              @relation(fields: [cawId], references: [id], onDelete: Cascade)
-  offer         MarketplaceOffer? @relation(fields: [offerId], references: [id], onDelete: Cascade)
-  user          User              @relation("NotificationRecipient", fields: [userId], references: [tokenId], onDelete: Cascade)
-  group         NotificationGroup? @relation(fields: [groupId], references: [id], onDelete: SetNull)
-  // Note: the previous standalone @@index([createdAt]) was dropped — every
-  // real query path filters by userId first, and the userId-prefixed
-  // composites above already handle every observed read. The lone-column
-  // index just cost write overhead on this append-heavy table. Audit 2026-05-13.
+  createdAt     DateTime           @default(now())
+  updatedAt     DateTime           @updatedAt
+  actor         User               @relation("NotificationActor", fields: [actorId], references: [tokenId], onDelete: Cascade)
+  caw           Caw?               @relation(fields: [cawId], references: [id], onDelete: Cascade)
+  group         NotificationGroup? @relation(fields: [groupId], references: [id])
+  offer         MarketplaceOffer?  @relation(fields: [offerId], references: [id], onDelete: Cascade)
+  user          User               @relation("NotificationRecipient", fields: [userId], references: [tokenId], onDelete: Cascade)
 
   @@index([userId, isRead, createdAt])
   @@index([userId, hidden, createdAt])
   @@index([userId, type])
   @@index([userId, actorId, type])
   @@index([groupKey])
-  /// Lets the notifications-list GROUP BY query in
-  /// api/routes/notifications.ts use an index-only scan to bucket a
-  /// user's notifications by groupKey. Without this, fetching the
-  /// notifications page for users with thousands of rows did a full
-  /// scan + HashAggregate (~hundreds of ms for the 4K-row heavy users
-  /// on test.caw.social).
   @@index([userId, groupKey, createdAt])
 }
 
 model DmIdentity {
-  id                 Int                       @id @default(autoincrement())
-  userId             Int                       @unique
-  walletAddress      String
-  publicKey          String // hex-encoded secp256k1 public key
-  // Wallet-signed proof that walletAddress authorized publicKey as its
-  // DM signing key. The wallet personal_signs:
-  //   "CAW DM identity\nuserId:<id>\npublicKey:<hex>"
-  // and the result lives here. Cross-instance identity-relay forwards
-  // this so peer mirrors can verify the (userId, publicKey, walletAddress)
-  // triple without trusting the source instance's claim. Optional during
-  // the migration window; required for newly-registered identities once
-  // the FE update lands.
-  walletProof        String?
-  dmPrivacy          DmPrivacy                 @default(EVERYONE)
-  // Per-user customization for the 5-emoji quick-reaction strip on DMs.
-  // Empty array = use server defaults; otherwise expected to hold exactly
-  // five emojis. We don't enforce length at the column level — UI clamps.
-  defaultDmReactions String[]                  @default([])
-  // Opt-out for direct add-to-group. Hitting an invite URL is explicit
-  // consent and bypasses this gate.
-  allowGroupInvites  Boolean                   @default(true)
-  createdAt          DateTime                  @default(now())
-  updatedAt          DateTime                  @updatedAt
-  conversations      ConversationParticipant[]
-  sentMessages       Message[]                 @relation("MessageSender")
-  reactions          MessageReaction[]
-  recipientPayloads  MessageRecipientPayload[]
-  invitesCreated     GroupInvite[]             @relation("GroupInviteCreator")
-  user               User                      @relation(fields: [userId], references: [tokenId])
+  id                   Int                       @id @default(autoincrement())
+  userId               Int                       @unique
+  walletAddress        String
+  publicKey            String
+  walletProof          String?
+  dmPrivacy            DmPrivacy                 @default(EVERYONE)
+  defaultDmReactions   String[]                  @default([])
+  allowGroupInvites    Boolean                   @default(true)
+  createdAt            DateTime                  @default(now())
+  updatedAt            DateTime                  @updatedAt
+  relayedWalletAddress String?
+  revoked              Boolean                   @default(false)
+  conversations        ConversationParticipant[]
+  user                 User                      @relation(fields: [userId], references: [tokenId])
+  invitesCreated       GroupInvite[]             @relation("GroupInviteCreator")
+  sentMessages         Message[]                 @relation("MessageSender")
+  reactions            MessageReaction[]
+  recipientPayloads    MessageRecipientPayload[]
 
   @@index([walletAddress])
 }
@@ -594,7 +434,6 @@ model Conversation {
   id            String                    @id @default(uuid())
   type          ConversationType          @default(DM)
   creatorId     Int
-  // Group-only metadata. Both null on DM rows.
   name          String?
   avatarUrl     String?
   lastMessageAt DateTime?
@@ -602,12 +441,9 @@ model Conversation {
   createdAt     DateTime                  @default(now())
   updatedAt     DateTime                  @updatedAt
   participants  ConversationParticipant[]
-  messages      Message[]
   invites       GroupInvite[]
+  messages      Message[]
 
-  // Conversations are almost always reached via ConversationParticipant
-  // (userId filter), not by a global lastMessageAt sort, so the
-  // standalone @@index([lastMessageAt]) was dropped. Audit 2026-05-13.
   @@index([creatorId])
 }
 
@@ -618,19 +454,8 @@ model ConversationParticipant {
   joinedAt       DateTime                      @default(now())
   lastReadAt     DateTime?
   unreadCount    Int                           @default(0)
-  // Inbox segregation. ACCEPTED for existing rows + for participants who
-  // initiated the conversation; REQUEST for an inbound DM where the
-  // recipient has no consent baseline (no prior outbound, no follow
-  // either way) — those land in the Requests tab. Flips to ACCEPTED on
-  // first reply or explicit accept. BLOCKED mirrors Block table.
   status         ConversationParticipantStatus @default(ACCEPTED)
-  // Group role. OWNER = can add/remove/rename/mint-invite. Cap of 1
-  // owner per group enforced at the service layer (transfer on leave).
   role           ConversationParticipantRole   @default(MEMBER)
-  // Removed-or-left timestamp. NULL = active. The participant lookup
-  // for write paths MUST add `leftAt IS NULL` so removed members
-  // can't send/react/edit. Keeping the row preserves system-message
-  // attribution and unread-count history.
   leftAt         DateTime?
   conversation   Conversation                  @relation(fields: [conversationId], references: [id], onDelete: Cascade)
   identity       DmIdentity                    @relation(fields: [userId], references: [userId])
@@ -640,68 +465,32 @@ model ConversationParticipant {
   @@index([conversationId])
   @@index([userId, status])
   @@index([conversationId, leftAt])
-  // DM inbox queries filter by all three: userId + leftAt IS NULL +
-  // optional status='REQUEST' for the Requests tab. None of the existing
-  // composites cover the multi-filter. Runs on every DM inbox load.
-  // Audit 2026-05-13.
   @@index([userId, leftAt, status])
-}
-
-enum ConversationParticipantStatus {
-  ACCEPTED
-  REQUEST
-  BLOCKED
 }
 
 model Message {
   id                String                    @id @default(uuid())
   conversationId    String
   senderId          Int
-  // null on group rows (per-recipient ciphertext lives in
-  // MessageRecipientPayload), null on system rows, null when deleted
-  // for everyone (tombstone), set on DM rows.
   encryptedPayload  String?
-  contentType       String                    @default("text") // "text", "deleted", "system:created", "system:added", "system:removed", "system:left", "system:renamed", "system:avatarChanged", "system:ownerTransferred"
-  editHistory       String? // encrypted JSON array of previous versions
-  // System-event metadata (added/removed userIds, oldName/newName, ...).
-  // Null on every non-system row.
+  contentType       String                    @default("text")
+  editHistory       String?
   systemPayload     Json?
   status            MessageStatus             @default(SENT)
-  shadowBlocked     Boolean                   @default(false) // hidden from recipient, visible to sender
-  // Inner sender signature over the message envelope. The FE signs
-  //   keccak256(encryptedPayload || senderId || recipientId
-  //             || conversationId || contentType || timestamp)
-  // with the user's DmIdentity secp256k1 private key (which is itself
-  // wallet-derived). Receivers recover the address and check it matches
-  // DmIdentity.walletAddress for senderId — closes the cross-instance
-  // forgery vector where any registered relay node could put words in
-  // any user's mouth. NULL on legacy rows + the FE migration window;
-  // verifiedSender below tracks the outcome so renderers don't have to
-  // re-recover.
+  shadowBlocked     Boolean                   @default(false)
   senderSig         String?
-  // Whether the inner sig recovered to the wallet address registered
-  // for senderId on receive. Indexed messages without senderSig (legacy
-  // / migration window) get verifiedSender = null. Receivers stamp this
-  // on the way in (both /api/dm/messages and /api/dm/relay) so badge +
-  // thread-render decisions don't redo the recovery on every read.
   verifiedSender    Boolean?
-  // Cross-node relay dedup. Home node generates a UUID per relayed
-  // message; receivers reject replays via the partial unique index
-  // (NULL for any message that was never relayed, e.g. pre-relay rows).
   relayId           String?                   @unique
-  // Self-reference for replies. SetNull (not Cascade) so deleting a parent
-  // doesn't delete every reply — replies just lose their thread anchor and
-  // the UI falls back to "Original message unavailable".
   replyToMessageId  String?
-  replyTo           Message?                  @relation("MessageReplies", fields: [replyToMessageId], references: [id], onDelete: SetNull)
-  replies           Message[]                 @relation("MessageReplies")
   createdAt         DateTime                  @default(now())
   updatedAt         DateTime                  @updatedAt
   conversation      Conversation              @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  replyTo           Message?                  @relation("MessageReplies", fields: [replyToMessageId], references: [id])
+  replies           Message[]                 @relation("MessageReplies")
   sender            DmIdentity                @relation("MessageSender", fields: [senderId], references: [userId])
-  receipts          MessageReceipt[]
   deletions         MessageDeletion[]
   reactions         MessageReaction[]
+  receipts          MessageReceipt[]
   recipientPayloads MessageRecipientPayload[]
 
   @@index([conversationId, createdAt])
@@ -709,9 +498,6 @@ model Message {
   @@index([replyToMessageId])
 }
 
-// Sealed-per-recipient ciphertext for group messages. One row per
-// (message, active recipient including sender). For DM rows this table
-// is unused — DM ciphertext stays on Message.encryptedPayload.
 model MessageRecipientPayload {
   id               BigInt     @id @default(autoincrement())
   messageId        String
@@ -741,23 +527,15 @@ model GroupInvite {
   @@index([conversationId])
 }
 
-// Plaintext reactions on a DM. Unlike the message body, the emoji isn't
-// encrypted: the server doesn't need to read the message to know "user X
-// reacted with ❤️", and keeping reactions cleartext avoids a per-recipient
-// ciphertext fan-out on every reaction tap. Both peers see them; the
-// server-as-adversary already knows who is talking to whom.
 model MessageReaction {
   id        Int        @id @default(autoincrement())
   messageId String
   userId    Int
-  emoji     String // Unicode emoji string (e.g. "❤️", "🌙")
+  emoji     String
   createdAt DateTime   @default(now())
   message   Message    @relation(fields: [messageId], references: [id], onDelete: Cascade)
   user      DmIdentity @relation(fields: [userId], references: [userId])
 
-  // Same user can stack different emojis on one message but can't double-
-  // react with the same emoji. Toggling re-uses this constraint as a
-  // delete-on-second-tap signal.
   @@unique([messageId, userId, emoji])
   @@index([messageId])
   @@index([userId])
@@ -797,6 +575,7 @@ model WithdrawalRequest {
   updatedAt   DateTime  @updatedAt
   completedAt DateTime?
 
+  @@unique([userId, cawonce], map: "WithdrawalRequest_userId_cawonce_unique")
   @@index([userId, status])
   @@index([status])
   @@index([cawonce])
@@ -828,9 +607,9 @@ model Tip {
   pending     Boolean  @default(false)
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
-  sender      User     @relation("TipsSent", fields: [senderId], references: [tokenId])
-  recipient   User     @relation("TipsReceived", fields: [recipientId], references: [tokenId])
   caw         Caw?     @relation(fields: [cawId], references: [id])
+  recipient   User     @relation("TipsReceived", fields: [recipientId], references: [tokenId])
+  sender      User     @relation("TipsSent", fields: [senderId], references: [tokenId])
 
   @@index([senderId])
   @@index([senderId, recipientId, cawId])
@@ -838,10 +617,550 @@ model Tip {
   @@index([recipientId])
   @@index([cawId])
   @@index([pending])
-  // Covers the "tips received on profile" view: filter by recipientId +
-  // pending=false, sort by createdAt desc. Existing indexes only handle
-  // pieces of this. Audit 2026-05-13.
   @@index([recipientId, pending, createdAt])
+}
+
+model ChainData {
+  key       String   @id
+  value     Json
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+model Report {
+  id           Int          @id @default(autoincrement())
+  reporterId   Int
+  postId       Int
+  postAuthorId Int
+  reason       ReportReason
+  details      String?
+  status       ReportStatus @default(PENDING)
+  reviewedAt   DateTime?
+  reviewedBy   String?
+  resolution   String?
+  createdAt    DateTime     @default(now())
+  updatedAt    DateTime     @updatedAt
+
+  @@index([status])
+  @@index([postId])
+  @@index([reporterId])
+  @@index([reporterId, postId])
+  @@index([postAuthorId])
+  @@index([createdAt])
+}
+
+/// Audit trail for moderator-tier mutations (hide caw, ban user, etc.).
+/// Append-only — never updated, never deleted. Lets admins answer "who
+/// hid this caw and why" without grep-archaeology of server logs.
+model ModeratorAction {
+  id           Int      @id @default(autoincrement())
+  /// Tokenid of the moderator who performed the action. NULL means the
+  /// action was taken by the password-cookie admin (no wallet identity
+  /// available in that path).
+  actorTokenId Int?
+  /// Free-form action verb: "hide_caw", "unhide_caw", "ban_user", etc.
+  /// Kept as a string instead of an enum so we can add new verbs without
+  /// migrations during early iteration.
+  type         String
+  targetCawId  Int?
+  targetUserId Int?
+  reason       String?
+  createdAt    DateTime @default(now())
+  actor        User?    @relation("ModeratorActor", fields: [actorTokenId], references: [tokenId])
+
+  @@index([actorTokenId, createdAt])
+  @@index([type, createdAt])
+  @@index([targetCawId])
+  @@index([targetUserId])
+}
+
+model BugReport {
+  id           Int          @id @default(autoincrement())
+  type         String       @default("bug")
+  userId       Int?
+  username     String?
+  stakedAmount String?
+  description  String
+  imageUrls    String?
+  page         String?
+  userAgent    String?
+  status       ReportStatus @default(PENDING)
+  resolution   String?
+  reviewedAt   DateTime?
+  createdAt    DateTime     @default(now())
+  updatedAt    DateTime     @updatedAt
+
+  @@index([status])
+  @@index([createdAt])
+  @@index([type])
+}
+
+model PriceSnapshot {
+  id        Int      @id @default(autoincrement())
+  token     String
+  usdPrice  Float
+  ethPrice  Float?
+  createdAt DateTime @default(now())
+
+  @@index([token, createdAt])
+  @@index([createdAt])
+}
+
+/// Tracks every validator-submitted transaction for analytics
+model ValidatorTx {
+  id              Int      @id @default(autoincrement())
+  txHash          String   @unique
+  blockNumber     BigInt?
+  txType          String   @default("processActions")
+  actionCount     Int
+  actionBreakdown Json?
+  gasUsed         String
+  gasPrice        String
+  ethCost         String
+  tipCaw          String
+  tipEthValue     String
+  profit          String
+  validatorId     Int
+  status          String   @default("confirmed")
+  failReason      String?
+  avgWaitMs       Int?
+  sessionUser     String?
+  createdAt       DateTime @default(now())
+
+  @@index([createdAt])
+  @@index([validatorId, createdAt])
+  @@index([txType, createdAt])
+}
+
+/// Tracks every optimistic replication submission to the L2b archive.
+/// Status transitions: confirmed → challenged → slashed (on fraud).
+model ReplicationTx {
+  id              Int      @id @default(autoincrement())
+  txHash          String   @unique
+  blockNumber     BigInt?
+  checkpointId    Int
+  endCheckpointId Int?
+  actionCount     Int      @default(256)
+  gasUsed         String
+  gasPrice        String
+  ethCost         String
+  totalCost       String
+  status          String   @default("confirmed")
+  failReason      String?
+  submitter       String?
+  createdAt       DateTime @default(now())
+  networkId       Int
+
+  @@index([createdAt])
+  @@index([submitter, createdAt])
+  @@index([networkId, createdAt])
+}
+
+/// Admin-configurable validator settings (DB-backed, overrides env vars)
+model ValidatorSetting {
+  key       String   @id
+  value     String
+  updatedAt DateTime @updatedAt
+}
+
+/// Coordinates the fraud-challenge pipeline across multiple validator nodes
+/// that share a database. A lock is claimed via INSERT...ON CONFLICT DO NOTHING
+/// before sending a challenge or calling resolveChallenge, so only one node
+/// does the work. `expiresAt` lets stale locks (node crashed mid-call) be
+/// reclaimed. `kind` scopes the lock to a specific pipeline stage so, for
+/// example, the relay stage doesn't block the resolve stage.
+model ChallengeLock {
+  /// Composite natural key built as "{kind}:{submissionId}:{checkpointId}"
+  /// so a single INSERT can claim atomically.
+  key          String   @id
+  kind         String
+  submissionId BigInt
+  checkpointId BigInt
+  holder       String
+  claimedAt    DateTime @default(now())
+  expiresAt    DateTime
+  outcome      String?
+  txHash       String?
+
+  @@index([kind, submissionId])
+  @@index([expiresAt])
+}
+
+model MarketplaceListing {
+  id             Int                 @id @default(autoincrement())
+  listingId      Int                 @unique
+  tokenId        Int
+  seller         String
+  listingType    MarketListingType
+  paymentToken   String
+  paymentAddress String
+  startPrice     String
+  endPrice       String?
+  startTime      DateTime
+  endTime        DateTime?
+  status         MarketListingStatus @default(ACTIVE)
+  highestBid     String?
+  highestBidder  String?
+  username       String
+  usernameLength Int
+  stakedCaw      String?
+  txHash         String?
+  createdAt      DateTime            @default(now())
+  updatedAt      DateTime            @updatedAt
+  bids           MarketplaceBid[]
+  sale           MarketplaceSale?
+
+  @@index([status, createdAt])
+  @@index([status, usernameLength])
+  @@index([tokenId])
+}
+
+model MarketplaceBid {
+  id        Int                @id @default(autoincrement())
+  listingId Int
+  bidder    String
+  amount    String
+  txHash    String?
+  status    BidStatus          @default(ACTIVE)
+  createdAt DateTime           @default(now())
+  listing   MarketplaceListing @relation(fields: [listingId], references: [id])
+
+  @@index([listingId, status])
+  @@index([bidder])
+}
+
+model MarketplaceSale {
+  id           Int                @id @default(autoincrement())
+  listingId    Int                @unique
+  buyer        String
+  seller       String
+  tokenId      Int
+  price        String
+  paymentToken String
+  username     String
+  txHash       String?
+  createdAt    DateTime           @default(now())
+  listing      MarketplaceListing @relation(fields: [listingId], references: [id])
+
+  @@index([createdAt])
+  @@index([tokenId])
+}
+
+model MarketplaceOffer {
+  id             Int                         @id @default(autoincrement())
+  offerId        Int                         @unique
+  tokenId        Int
+  offerer        String
+  paymentToken   String
+  paymentAddress String
+  amount         String
+  expiry         DateTime
+  status         OfferStatus                 @default(ACTIVE)
+  username       String
+  txHash         String?
+  createdAt      DateTime                    @default(now())
+  updatedAt      DateTime                    @updatedAt
+  dismissals     MarketplaceOfferDismissal[]
+  notifications  Notification[]
+
+  @@index([tokenId, status])
+  @@index([offerer, status])
+  @@index([status, createdAt])
+}
+
+model MarketplaceOfferDismissal {
+  id        Int              @id @default(autoincrement())
+  offerId   Int
+  userId    Int
+  createdAt DateTime         @default(now())
+  offer     MarketplaceOffer @relation(fields: [offerId], references: [id], onDelete: Cascade)
+  user      User             @relation(fields: [userId], references: [tokenId], onDelete: Cascade)
+
+  @@unique([offerId, userId])
+  @@index([userId])
+}
+
+model Bookmark {
+  id        Int      @id @default(autoincrement())
+  userId    Int
+  cawId     Int
+  createdAt DateTime @default(now())
+  caw       Caw      @relation(fields: [cawId], references: [id], onDelete: Cascade)
+  user      User     @relation(fields: [userId], references: [tokenId], onDelete: Cascade)
+
+  @@unique([userId, cawId])
+  @@index([userId, createdAt])
+  @@index([cawId])
+}
+
+model PinnedCaw {
+  id           Int      @id @default(autoincrement())
+  userId       Int
+  cawId        Int
+  pending      Boolean  @default(false)
+  pendingUnpin Boolean  @default(false)
+  createdAt    DateTime @default(now())
+  caw          Caw      @relation(fields: [cawId], references: [id], onDelete: Cascade)
+  user         User     @relation(fields: [userId], references: [tokenId], onDelete: Cascade)
+
+  @@unique([userId, cawId])
+  @@index([userId, createdAt])
+  @@index([cawId])
+}
+
+/// Indexed mirror of CawNameL2.sessions[owner][sessionKey] state.
+/// Written by the event indexer listening for SessionCreated / SessionRevoked
+/// on L2. Read by /api/actions to validate session-key-signed submissions
+/// without a live RPC call per action.
+model SessionKey {
+  id               Int       @id @default(autoincrement())
+  ownerAddress     String
+  sessionAddress   String
+  expiry           BigInt
+  scopeBitmap      Int
+  spendLimit       String
+  spent            String    @default("0")
+  revokedAt        DateTime?
+  lastSyncedAt     DateTime  @default(now())
+  createdAt        DateTime  @default(now())
+  updatedAt        DateTime  @updatedAt
+  perActionTipRate String    @default("0")
+  profileId        Int       @default(0)
+
+  @@unique([ownerAddress, sessionAddress])
+  @@index([ownerAddress])
+  @@index([sessionAddress])
+  @@index([profileId])
+}
+
+/// X (Twitter) account link, scoped to a wallet address. The /api/verify/x
+/// OAuth flow proves the wallet controls the X handle; we capture a bucketed
+/// follower count once at link time (and on user-initiated refresh) and
+/// discard the OAuth tokens.
+///
+/// Wallet-scoped (not per-User) because every CAW profile owned by the
+/// linked wallet inherits the link. xUserId is X's stable id (handles can
+/// change) and is the conflict key for first-link-wins enforcement at the
+/// DB level. Per-profile show/hide is on User.xBadgeVisible.
+///
+/// Address is stored lowercased — read paths and write paths both
+/// normalize so the unique key behaves like a case-insensitive index.
+model WalletXLink {
+  id                 Int      @id @default(autoincrement())
+  address            String   @unique
+  xUserId            String   @unique
+  xHandle            String
+  xFollowerBucket    Int?
+  linkedAt           DateTime @default(now())
+  followersUpdatedAt DateTime @default(now())
+
+  @@index([xHandle])
+}
+
+/// Per-user CAW balance change ledger written by the StakeLedger
+/// snapshotter. Mirrors CawProfileL2.cawOwnership state transitions
+/// bit-for-bit using TS bigint. One row per touched user per action
+/// (sender + recipient if any), plus rows for L1->L2 deposits and
+/// withdrawals. Communal rewards are computed at query time from
+/// RewardMultiplierSnapshot deltas, not stored as rows here.
+///
+/// All NUMERIC(78,0) values are stored as String to avoid precision
+/// loss across the JSON layer — same pattern as User.onChainStakeWei.
+model CawOwnershipSnapshot {
+  id                  BigInt   @id @default(autoincrement())
+  tokenId             Int
+  blockNumber         BigInt
+  blockTimestamp      DateTime
+  txHash              String
+  logIndex            Int
+  actionIndex         Int?
+  ownership           String
+  multiplier          String
+  balance             String
+  delta               String
+  reason              String
+  actionType          String?
+  counterpartyTokenId Int?
+  createdAt           DateTime @default(now())
+
+  @@index([tokenId, blockTimestamp])
+  @@index([blockTimestamp])
+}
+
+/// One row per global rewardMultiplier change. Used to attribute
+/// communal rewards to a user across a window:
+/// communal[user, t0..t1] = SUM over events e in window of
+/// cawOwnership_at(user, e.timestamp) * (multiplierAfter - multiplierBefore) / 1e18
+model RewardMultiplierSnapshot {
+  blockNumber      BigInt
+  txHash           String
+  logIndex         Int
+  actionIndex      Int
+  blockTimestamp   DateTime
+  multiplierBefore String
+  multiplierAfter  String
+  communalAmount   String
+  /// Resolved action type that triggered this distribution (CAW,
+  /// LIKE, RECAW, FOLLOW, TIP, OTHER). Lets the activity chart break
+  /// down "CAW distributed to stakers" by action type at the system
+  /// level. Nullable for legacy rows from before this column existed.
+  actionType       String?
+
+  @@id([blockNumber, logIndex, actionIndex])
+  @@index([blockTimestamp])
+}
+
+/// Persisted running state of the StakeLedger snapshotter so a
+/// process restart resumes without replaying from genesis.
+model StakeLedgerState {
+  totalCaw     String
+  multiplier   String
+  lastBlock    BigInt
+  lastLogIndex Int
+  updatedAt    DateTime @default(now())
+  networkId    Int      @id
+}
+
+/// Latest cawOwnership[tokenId] mirroring contract state. Lets the
+/// snapshotter cold-start without a full CawOwnershipSnapshot scan,
+/// and gives the daily reconciler a cheap target to compare against
+/// the on-chain cawOwnership(tokenId) read.
+model CawOwnershipCurrent {
+  tokenId   Int      @id
+  ownership String
+  updatedAt DateTime @default(now())
+}
+
+model MarketplacePayout {
+  id              Int       @id @default(autoincrement())
+  seller          String
+  amount          BigInt
+  status          String    @default("pending")
+  queuedAt        DateTime  @default(now())
+  queuedTxHash    String
+  withdrawnAt     DateTime?
+  withdrawnTxHash String?
+  recipient       String?
+
+  @@index([queuedTxHash])
+  @@index([seller, status])
+  @@index([status])
+}
+
+model Network {
+  id                 Int       @id(map: "Client_pkey")
+  ownerAddress       String
+  feeAddress         String
+  mintFee            String    @default("0")
+  depositFee         String    @default("0")
+  withdrawFee        String    @default("0")
+  authFee            String    @default("0")
+  createdAt          DateTime  @default(now())
+  updatedAt          DateTime
+  lastSyncedAt       DateTime?
+  lastSyncedBlock    BigInt?
+  creationBlock      BigInt?
+  withdrawFeeCeiling BigInt    @default(0)
+  depositFeeCeiling  BigInt    @default(0)
+  authFeeCeiling     BigInt    @default(0)
+  mintFeeCeiling     BigInt    @default(0)
+
+  @@index([ownerAddress], map: "Client_ownerAddress_idx")
+}
+
+model NetworkAuth {
+  id            Int      @id(map: "ClientAuth_pkey") @default(autoincrement())
+  networkId     Int
+  tokenId       Int
+  authenticated Boolean  @default(false)
+  lastSyncedAt  DateTime @default(now())
+  createdAt     DateTime @default(now())
+
+  @@unique([networkId, tokenId])
+  @@index([tokenId], map: "ClientAuth_tokenId_idx")
+}
+
+model SponsorCode {
+  codeHash            String              @id
+  tier                String
+  label               String?
+  budgetCapUsdCents   Int
+  maxDepositCawWei    String
+  maxUses             Int?
+  usesRemaining       Int?
+  minUsernameLength   Int                 @default(0)
+  networkOwnerAddress String?
+  expiresAt           DateTime            @db.Timestamptz(6)
+  createdBy           String?
+  createdAt           DateTime            @default(now()) @db.Timestamptz(6)
+  repayBps            Int                 @default(0)
+  requireKycLevel     Int                 @default(0)
+  SponsorRedemption   SponsorRedemption[]
+}
+
+model SponsorCodeAttempt {
+  id          Int      @id @default(autoincrement())
+  ip          String
+  attemptedAt DateTime @default(now()) @db.Timestamptz(6)
+
+  @@index([ip, attemptedAt])
+}
+
+model SponsorRedemption {
+  id              Int         @id @default(autoincrement())
+  codeHash        String
+  recipient       String
+  txHash          String?
+  gasCostUsdCents Int
+  netFeesUsdCents Int
+  lzFeeUsdCents   Int
+  depositUsdCents Int
+  totalUsdCents   Int
+  redeemedAt      DateTime    @default(now()) @db.Timestamptz(6)
+  SponsorCode     SponsorCode @relation(fields: [codeHash], references: [codeHash])
+
+  @@index([codeHash])
+  @@index([recipient])
+  @@index([redeemedAt])
+}
+
+model SponsorRepay {
+  tokenId                Int       @id
+  sponsorTokenId         Int
+  originalRepayAmount    String
+  currentRepayAmount     String
+  sponsoredDepositAmount String?
+  registeredAt           DateTime  @default(now()) @db.Timestamptz(6)
+  forgivenAt             DateTime? @db.Timestamptz(6)
+  lastSweepAmount        String?
+  lastSweepAt            DateTime? @db.Timestamptz(6)
+  txHashSet              String?
+  txHashRegistered       String?
+
+  @@index([sponsorTokenId])
+}
+
+model StripePurchase {
+  id               Int       @id @default(autoincrement())
+  stripeSessionId  String    @unique
+  username         String
+  walletAddress    String
+  amountUsdCents   Int
+  depositAmountCaw String
+  networkId        Int
+  txHash           String?
+  status           String    @default("pending")
+  createdAt        DateTime  @default(now())
+  mintedAt         DateTime?
+
+  @@index([status])
+  @@index([walletAddress])
+}
+
+enum ConversationParticipantStatus {
+  ACCEPTED
+  REQUEST
+  BLOCKED
 }
 
 enum ActionType {
@@ -900,93 +1219,15 @@ enum ConversationParticipantRole {
 }
 
 enum DmPrivacy {
-  EVERYONE // Anyone with DMs enabled can message me
-  FOLLOWERS // My followers + people I follow can message me
-  FOLLOWING // Only people I follow can message me
-}
-
-model Client {
-  id              Int       @id // clientId from chain
-  ownerAddress    String
-  feeAddress      String
-  mintFee         String    @default("0") // Store as string for BigInt
-  depositFee      String    @default("0")
-  withdrawFee     String    @default("0")
-  authFee         String    @default("0")
-  createdAt       DateTime  @default(now())
-  updatedAt       DateTime  @updatedAt
-  lastSyncedAt    DateTime?
-  lastSyncedBlock BigInt?
-  // Block at which this client was created on-chain. Used as the L2 indexer's
-  // historical scan lower bound so a fresh DB doesn't replay events from
-  // before this client existed. Nullable for clients created before the
-  // field was added — backend falls back to configured startBlock when null.
-  // Once the on-chain CawClient struct carries this field, ChainSyncService
-  // populates it from the contract. Until then it's manually seeded or
-  // derived from the ClientCreated event block.
-  creationBlock   BigInt?
-
-  @@index([ownerAddress])
-}
-
-model ChainData {
-  key       String   @id // e.g., "caw_eth_price", "gas_price"
-  value     Json // Flexible storage for different data types
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
-}
-
-model Report {
-  id           Int          @id @default(autoincrement())
-  reporterId   Int // The user who submitted the report (tokenId)
-  postId       Int // The caw being reported
-  postAuthorId Int // The author of the reported post
-  reason       ReportReason
-  details      String? // Optional additional details from reporter
-  status       ReportStatus @default(PENDING)
-  reviewedAt   DateTime?
-  reviewedBy   String? // Admin who reviewed (could be wallet address)
-  resolution   String? // Notes from admin review
-  createdAt    DateTime     @default(now())
-  updatedAt    DateTime     @updatedAt
-
-  @@index([status])
-  @@index([postId])
-  @@index([reporterId])
-  @@index([reporterId, postId])
-  @@index([postAuthorId])
-  @@index([createdAt])
+  EVERYONE
+  FOLLOWERS
+  FOLLOWING
 }
 
 enum UserRole {
   USER
   MODERATOR
   ADMIN
-}
-
-/// Audit trail for moderator-tier mutations (hide caw, ban user, etc.).
-/// Append-only — never updated, never deleted. Lets admins answer "who
-/// hid this caw and why" without grep-archaeology of server logs.
-model ModeratorAction {
-  id           Int      @id @default(autoincrement())
-  /// Tokenid of the moderator who performed the action. NULL means the
-  /// action was taken by the password-cookie admin (no wallet identity
-  /// available in that path).
-  actorTokenId Int?
-  /// Free-form action verb: "hide_caw", "unhide_caw", "ban_user", etc.
-  /// Kept as a string instead of an enum so we can add new verbs without
-  /// migrations during early iteration.
-  type         String
-  targetCawId  Int?
-  targetUserId Int?
-  reason       String?
-  createdAt    DateTime @default(now())
-  actor        User?    @relation("ModeratorActor", fields: [actorTokenId], references: [tokenId], onDelete: SetNull)
-
-  @@index([actorTokenId, createdAt])
-  @@index([type, createdAt])
-  @@index([targetCawId])
-  @@index([targetUserId])
 }
 
 enum ReportReason {
@@ -1004,182 +1245,6 @@ enum ReportStatus {
   REVIEWED
   ACTIONED
   DISMISSED
-}
-
-model BugReport {
-  id           Int          @id @default(autoincrement())
-  type         String       @default("bug") // "bug" or "feature"
-  userId       Int? // Reporter's tokenId (null if not signed in)
-  username     String?
-  stakedAmount String? // Staked CAW amount as string
-  description  String
-  imageUrls    String? // Pipe-separated image URLs
-  page         String? // URL/route where the bug was encountered
-  userAgent    String?
-  status       ReportStatus @default(PENDING)
-  resolution   String?
-  reviewedAt   DateTime?
-  createdAt    DateTime     @default(now())
-  updatedAt    DateTime     @updatedAt
-
-  @@index([status])
-  @@index([createdAt])
-  @@index([type])
-}
-
-model PriceSnapshot {
-  id        Int      @id @default(autoincrement())
-  token     String // "caw" or "eth"
-  usdPrice  Float // Price in USD
-  ethPrice  Float? // Price in ETH (for CAW only)
-  createdAt DateTime @default(now())
-
-  @@index([token, createdAt])
-  @@index([createdAt])
-}
-
-/// Tracks every validator-submitted transaction for analytics
-model ValidatorTx {
-  id              Int      @id @default(autoincrement())
-  txHash          String   @unique
-  blockNumber     BigInt?
-  txType          String   @default("processActions") // processActions | sessionRegister | sessionRevoke
-  actionCount     Int // Number of actions in the batch (0 for session txs)
-  actionBreakdown Json? // { CAW: 3, LIKE: 2, FOLLOW: 1, ... }
-  gasUsed         String // Actual gas used (from receipt)
-  gasPrice        String // Effective gas price (wei)
-  ethCost         String // gasUsed * gasPrice in wei
-  tipCaw          String // Total CAW tip earned from the batch
-  tipEthValue     String // Tip converted to ETH (wei) at submission time
-  profit          String // tipEthValue - ethCost (can be negative)
-  validatorId     Int
-  status          String   @default("confirmed") // confirmed | failed | reverted
-  failReason      String?
-  avgWaitMs       Int? // Avg time from TxQueue.createdAt to submission
-  sessionUser     String? // Address of user who requested the session (for session txs)
-  createdAt       DateTime @default(now())
-
-  @@index([createdAt])
-  @@index([validatorId, createdAt])
-  @@index([txType, createdAt])
-}
-
-/// Tracks every optimistic replication submission to the L2b archive.
-/// Status transitions: confirmed → challenged → slashed (on fraud).
-model ReplicationTx {
-  id              Int      @id @default(autoincrement())
-  txHash          String   @unique
-  blockNumber     BigInt?
-  clientId        Int
-  checkpointId    Int // start checkpoint ID
-  endCheckpointId Int? // end checkpoint ID (for multibatch, null = single)
-  actionCount     Int      @default(256)
-  gasUsed         String
-  gasPrice        String
-  ethCost         String
-  totalCost       String
-  status          String   @default("confirmed")
-  failReason      String?
-  submitter       String? // L2b address that submitted (lowercase hex)
-  createdAt       DateTime @default(now())
-
-  @@index([createdAt])
-  @@index([clientId, createdAt])
-  @@index([submitter, createdAt])
-}
-
-/// Admin-configurable validator settings (DB-backed, overrides env vars)
-model ValidatorSetting {
-  key       String   @id
-  value     String
-  updatedAt DateTime @updatedAt
-}
-
-/// Coordinates the fraud-challenge pipeline across multiple validator nodes
-/// that share a database. A lock is claimed via INSERT...ON CONFLICT DO NOTHING
-/// before sending a challenge or calling resolveChallenge, so only one node
-/// does the work. `expiresAt` lets stale locks (node crashed mid-call) be
-/// reclaimed. `kind` scopes the lock to a specific pipeline stage so, for
-/// example, the relay stage doesn't block the resolve stage.
-model ChallengeLock {
-  /// Composite natural key built as "{kind}:{submissionId}:{checkpointId}"
-  /// so a single INSERT can claim atomically.
-  key          String   @id
-  kind         String // e.g. "relay", "resolve", "slashIncoherent"
-  submissionId BigInt
-  checkpointId BigInt // unused for submission-level locks; stored as 0
-  holder       String // validator address or instance ID
-  claimedAt    DateTime @default(now())
-  expiresAt    DateTime
-  outcome      String? // "success", "error", null while in-flight
-  txHash       String?
-
-  @@index([kind, submissionId])
-  @@index([expiresAt])
-}
-
-// ============================================
-// MARKETPLACE
-// ============================================
-
-model MarketplaceListing {
-  id             Int                 @id @default(autoincrement())
-  listingId      Int                 @unique
-  tokenId        Int
-  seller         String
-  listingType    MarketListingType
-  paymentToken   String // "ETH", "CAW", "WETH", "USDC", "USDT"
-  paymentAddress String
-  startPrice     String
-  endPrice       String?
-  startTime      DateTime
-  endTime        DateTime?
-  status         MarketListingStatus @default(ACTIVE)
-  highestBid     String?
-  highestBidder  String?
-  username       String
-  usernameLength Int
-  stakedCaw      String?
-  txHash         String?
-  createdAt      DateTime            @default(now())
-  updatedAt      DateTime            @updatedAt
-  bids           MarketplaceBid[]
-  sale           MarketplaceSale?
-
-  @@index([status, createdAt])
-  @@index([status, usernameLength])
-  @@index([tokenId])
-}
-
-model MarketplaceBid {
-  id        Int                @id @default(autoincrement())
-  listingId Int
-  bidder    String
-  amount    String
-  txHash    String?
-  status    BidStatus          @default(ACTIVE)
-  createdAt DateTime           @default(now())
-  listing   MarketplaceListing @relation(fields: [listingId], references: [id])
-
-  @@index([listingId, status])
-  @@index([bidder])
-}
-
-model MarketplaceSale {
-  id           Int                @id @default(autoincrement())
-  listingId    Int                @unique
-  buyer        String
-  seller       String
-  tokenId      Int
-  price        String
-  paymentToken String
-  username     String
-  txHash       String?
-  createdAt    DateTime           @default(now())
-  listing      MarketplaceListing @relation(fields: [listingId], references: [id])
-
-  @@index([createdAt])
-  @@index([tokenId])
 }
 
 enum MarketListingType {
@@ -1202,235 +1267,9 @@ enum BidStatus {
   WITHDRAWN
 }
 
-model MarketplaceOffer {
-  id             Int                         @id @default(autoincrement())
-  offerId        Int                         @unique // on-chain offer ID
-  tokenId        Int
-  offerer        String // wallet address
-  paymentToken   String // "ETH", "CAW", "WETH", "USDC", "USDT"
-  paymentAddress String // token contract address
-  amount         String // offer amount in wei
-  expiry         DateTime
-  status         OfferStatus                 @default(ACTIVE)
-  username       String
-  txHash         String?
-  createdAt      DateTime                    @default(now())
-  updatedAt      DateTime                    @updatedAt
-  notifications  Notification[]
-  dismissals     MarketplaceOfferDismissal[]
-
-  @@index([tokenId, status])
-  @@index([offerer, status])
-  @@index([status, createdAt])
-}
-
 enum OfferStatus {
   ACTIVE
   ACCEPTED
   CANCELLED
   EXPIRED
-}
-
-// Per-recipient "I dismissed this offer from my view" record. Distinct from
-// MarketplaceOffer.status (which is mirrored from chain by MarketplaceIndexer
-// and would get clobbered if we tried to overload it). One row per (offer,
-// dismisser) so each owner of the targeted username can dismiss independently.
-model MarketplaceOfferDismissal {
-  id        Int              @id @default(autoincrement())
-  offerId   Int
-  userId    Int
-  createdAt DateTime         @default(now())
-  offer     MarketplaceOffer @relation(fields: [offerId], references: [id], onDelete: Cascade)
-  user      User             @relation(fields: [userId], references: [tokenId], onDelete: Cascade)
-
-  @@unique([offerId, userId])
-  @@index([userId])
-}
-
-model Bookmark {
-  id        Int      @id @default(autoincrement())
-  userId    Int
-  cawId     Int
-  createdAt DateTime @default(now())
-  user      User     @relation(fields: [userId], references: [tokenId], onDelete: Cascade)
-  caw       Caw      @relation(fields: [cawId], references: [id], onDelete: Cascade)
-
-  @@unique([userId, cawId])
-  @@index([userId, createdAt])
-  @@index([cawId])
-}
-
-// Profile pin. One row per (user, pinned caw). Mirrors the Bookmark
-// shape with one extra field — `pending` flag, same lifecycle as
-// Like.pending: API sets pending=true on optimistic insert, indexer
-// flips to false on confirm, tx-fail rollback deletes the row (for
-// pi:) or flips pending back (for xpi:, where we kept the original).
-//
-// Cap: NOT enforced server-side. The read path (caws.ts profile feed)
-// shows only the 3 most recently pinned. If parallel pin txs race
-// past 3, the older ones simply never render until the user unpins
-// one of the visible 3.
-model PinnedCaw {
-  id        Int      @id @default(autoincrement())
-  userId    Int
-  cawId     Int
-  // True when an optimistic pin write has landed but the on-chain
-  // action hasn't confirmed yet. Indexer flips to false on confirm.
-  pending   Boolean  @default(false)
-  // True when the user has submitted an unpin but the on-chain action
-  // hasn't confirmed yet. The row still exists (so the indexer can
-  // delete it on confirm), but read paths must suppress it. Set by
-  // /api/actions on xpi:; cleared either by the indexer deleting the
-  // row, or by a re-pin (pi:) on the same cawId.
-  pendingUnpin Boolean @default(false)
-  createdAt DateTime @default(now())
-  user      User     @relation(fields: [userId], references: [tokenId], onDelete: Cascade)
-  caw       Caw      @relation(fields: [cawId], references: [id], onDelete: Cascade)
-
-  @@unique([userId, cawId])
-  // Profile-feed read sorts by createdAt desc to surface the 3 most
-  // recently pinned; this index makes that lookup index-only.
-  @@index([userId, createdAt])
-  @@index([cawId])
-}
-
-/// Indexed mirror of CawNameL2.sessions[owner][sessionKey] state.
-/// Written by the event indexer listening for SessionCreated / SessionRevoked
-/// on L2. Read by /api/actions to validate session-key-signed submissions
-/// without a live RPC call per action.
-model SessionKey {
-  id             Int       @id @default(autoincrement())
-  ownerAddress   String // lowercase owner (token owner)
-  sessionAddress String // lowercase session key address
-  expiry         BigInt // unix seconds, matches contract uint64
-  scopeBitmap    Int // contract uint8, bit i = action type i allowed
-  spendLimit     String // bigint as string (whole CAW tokens, not wei)
-  spent          String    @default("0") // locally-tracked spend total
-  // Per-action validator tip baked into the session at registration. Session-
-  // signed actions sign with empty amounts[]; the contract reads this rate and
-  // credits the validator once at batch end. bigint-as-string (whole CAW).
-  // Added by migration 20260506200000_session_per_action_tip_rate.
-  perActionTipRate String  @default("0")
-  revokedAt      DateTime? // set when SessionRevoked event indexed
-  lastSyncedAt   DateTime  @default(now())
-  createdAt      DateTime  @default(now())
-  updatedAt      DateTime  @updatedAt
-
-  @@unique([ownerAddress, sessionAddress])
-  @@index([ownerAddress])
-  @@index([sessionAddress])
-}
-
-/// Indexed mirror of CawNameL2.authenticated[clientId][tokenId] state.
-/// Written by the event indexer listening for Authenticated on L2.
-/// Auth is a one-way flag (once true, always true for that pair) — set
-/// when the token's owner deposits CAW for this client.
-model ClientAuth {
-  id            Int      @id @default(autoincrement())
-  clientId      Int
-  tokenId       Int
-  authenticated Boolean  @default(false)
-  lastSyncedAt  DateTime @default(now())
-  createdAt     DateTime @default(now())
-
-  @@unique([clientId, tokenId])
-  @@index([tokenId])
-}
-
-/// X (Twitter) account link, scoped to a wallet address. The /api/verify/x
-/// OAuth flow proves the wallet controls the X handle; we capture a bucketed
-/// follower count once at link time (and on user-initiated refresh) and
-/// discard the OAuth tokens.
-///
-/// Wallet-scoped (not per-User) because every CAW profile owned by the
-/// linked wallet inherits the link. xUserId is X's stable id (handles can
-/// change) and is the conflict key for first-link-wins enforcement at the
-/// DB level. Per-profile show/hide is on User.xBadgeVisible.
-///
-/// Address is stored lowercased — read paths and write paths both
-/// normalize so the unique key behaves like a case-insensitive index.
-model WalletXLink {
-  id                 Int      @id @default(autoincrement())
-  address            String   @unique
-  xUserId            String   @unique
-  xHandle            String
-  xFollowerBucket    Int?
-  linkedAt           DateTime @default(now())
-  followersUpdatedAt DateTime @default(now())
-
-  @@index([xHandle])
-}
-
-/// Per-user CAW balance change ledger written by the StakeLedger
-/// snapshotter. Mirrors CawProfileL2.cawOwnership state transitions
-/// bit-for-bit using TS bigint. One row per touched user per action
-/// (sender + recipient if any), plus rows for L1->L2 deposits and
-/// withdrawals. Communal rewards are computed at query time from
-/// RewardMultiplierSnapshot deltas, not stored as rows here.
-///
-/// All NUMERIC(78,0) values are stored as String to avoid precision
-/// loss across the JSON layer — same pattern as User.onChainStakeWei.
-model CawOwnershipSnapshot {
-  id                  BigInt   @id @default(autoincrement())
-  tokenId             Int
-  blockNumber         BigInt
-  blockTimestamp      DateTime
-  txHash              String
-  logIndex            Int
-  actionIndex         Int?
-  ownership           String
-  multiplier          String
-  balance             String
-  delta               String
-  reason              String // ACTION_SENDER | ACTION_RECIPIENT | DEPOSIT | WITHDRAW
-  actionType          String? // CAW | LIKE | RECAW | FOLLOW | TIP | null for deposit/withdraw
-  counterpartyTokenId Int?
-  createdAt           DateTime @default(now())
-
-  @@index([tokenId, blockTimestamp])
-  @@index([blockTimestamp])
-}
-
-/// One row per global rewardMultiplier change. Used to attribute
-/// communal rewards to a user across a window:
-/// communal[user, t0..t1] = SUM over events e in window of
-///   cawOwnership_at(user, e.timestamp) * (multiplierAfter - multiplierBefore) / 1e18
-model RewardMultiplierSnapshot {
-  blockNumber      BigInt
-  txHash           String
-  logIndex         Int
-  actionIndex      Int
-  blockTimestamp   DateTime
-  multiplierBefore String
-  multiplierAfter  String
-  communalAmount   String
-  /// Resolved action type that triggered this distribution (CAW,
-  /// LIKE, RECAW, FOLLOW, TIP, OTHER). Lets the activity chart break
-  /// down "CAW distributed to stakers" by action type at the system
-  /// level. Nullable for legacy rows from before this column existed.
-  actionType       String?
-
-  @@id([blockNumber, logIndex, actionIndex])
-  @@index([blockTimestamp])
-}
-
-/// Persisted running state of the StakeLedger snapshotter so a
-/// process restart resumes without replaying from genesis.
-model StakeLedgerState {
-  clientId     Int      @id
-  totalCaw     String
-  multiplier   String
-  lastBlock    BigInt
-  lastLogIndex Int
-  updatedAt    DateTime @default(now())
-}
-
-/// Latest cawOwnership[tokenId] mirroring contract state. Lets the
-/// snapshotter cold-start without a full CawOwnershipSnapshot scan,
-/// and gives the daily reconciler a cheap target to compare against
-/// the on-chain cawOwnership(tokenId) read.
-model CawOwnershipCurrent {
-  tokenId   Int      @id
-  ownership String
-  updatedAt DateTime @default(now())
 }
