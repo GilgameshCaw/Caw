@@ -61,5 +61,177 @@
     "CawActionsERC1271_L1": "0x22B31A7F4DEBdBd5eD94e00F31D148D906c98426",
     "CawProfileMinter": "0x2BA12B8e58Ce80579F663a3a5D53A2d1A8698244"
   },
-  "l2DeployBlock": 42436977
+  "l2DeployBlock": 42436977,
+  "verification": {
+    "PathwayExpander_L1": {
+      "verified": true,
+      "ts": "2026-06-05T09:48:44.632Z",
+      "message": "Pass - Verified"
+    },
+    "CawProfile": {
+      "verified": true,
+      "ts": "2026-06-05T09:49:27.213Z",
+      "message": "Pass - Verified"
+    },
+    "CawFontDataA": {
+      "verified": true,
+      "ts": "2026-06-05T09:52:47.489Z",
+      "message": "Pass - Verified"
+    },
+    "CawFontDataB": {
+      "verified": true,
+      "ts": "2026-06-05T09:53:26.439Z",
+      "message": "Pass - Verified"
+    },
+    "CawProfileURI": {
+      "verified": true,
+      "ts": "2026-06-05T09:54:13.683Z",
+      "message": "Pass - Verified"
+    },
+    "CawBuyAndBurn": {
+      "verified": true,
+      "ts": "2026-06-05T09:54:54.903Z",
+      "message": "Pass - Verified"
+    },
+    "CawNetworkManager": {
+      "verified": true,
+      "ts": "2026-06-05T09:55:33.855Z",
+      "message": "Pass - Verified"
+    },
+    "CawL1PriceReader": {
+      "verified": true,
+      "ts": "2026-06-05T09:56:12.375Z",
+      "message": "Pass - Verified"
+    },
+    "CawProfileLedger_L1": {
+      "verified": true,
+      "ts": "2026-06-05T09:57:03.339Z",
+      "message": "Pass - Verified"
+    },
+    "CawCapOracle_L1": {
+      "verified": true,
+      "ts": "2026-06-05T09:57:44.013Z",
+      "message": "Pass - Verified"
+    },
+    "SessionMessageParser_L1": {
+      "verified": true,
+      "ts": "2026-06-05T09:58:21.947Z",
+      "message": "Pass - Verified"
+    },
+    "CawProfileMinter": {
+      "verified": true,
+      "ts": "2026-06-05T09:59:10.307Z",
+      "message": "Pass - Verified"
+    },
+    "CawProfileQuoter": {
+      "verified": true,
+      "ts": "2026-06-05T09:59:50.033Z",
+      "message": "Pass - Verified"
+    },
+    "CawProfileLens": {
+      "verified": true,
+      "ts": "2026-06-05T10:00:37.736Z",
+      "message": "Pass - Verified"
+    },
+    "CawProfileMarketplace": {
+      "verified": true,
+      "ts": "2026-06-05T10:01:15.017Z",
+      "message": "Pass - Verified"
+    },
+    "SmartEOA": {
+      "verified": true,
+      "ts": "2026-06-05T10:01:52.875Z",
+      "message": "Pass - Verified"
+    },
+    "CawActions_L1": {
+      "verified": true,
+      "ts": "2026-06-05T10:02:35.681Z",
+      "message": "Pass - Verified"
+    },
+    "CawActionsERC1271_L1": {
+      "verified": true,
+      "ts": "2026-06-05T10:03:24.443Z",
+      "message": "Pass - Verified"
+    },
+    "SessionMessageParser_L2": {
+      "verified": true,
+      "ts": "2026-06-05T10:04:07.210Z",
+      "message": "Pass - Verified"
+    },
+    "CawProfileLedger_L2": {
+      "verified": true,
+      "ts": "2026-06-05T10:04:45.741Z",
+      "message": "Pass - Verified"
+    },
+    "CawCapOracle_L2": {
+      "verified": true,
+      "ts": "2026-06-05T10:05:37.073Z",
+      "message": "Pass - Verified"
+    },
+    "CawActions_L2": {
+      "verified": true,
+      "ts": "2026-06-05T10:06:42.874Z",
+      "message": "Pass - Verified"
+    },
+    "CawActionsERC1271_L2": {
+      "verified": true,
+      "ts": "2026-06-05T10:07:26.391Z",
+      "message": "Pass - Verified"
+    },
+    "CawActionsArchive_L2": {
+      "verified": true,
+      "ts": "2026-06-05T10:08:11.770Z",
+      "message": "Pass - Verified"
+    },
+    "CawChallengeRelay_L2": {
+      "verified": true,
+      "ts": "2026-06-05T10:08:54.201Z",
+      "message": "Pass - Verified"
+    },
+    "PathwayExpander_L2": {
+      "verified": true,
+      "ts": "2026-06-05T10:09:34.987Z",
+      "message": "Pass - Verified"
+    },
+    "SessionMessageParser_L2b": {
+      "verified": true,
+      "ts": "2026-06-05T10:10:22.846Z",
+      "message": "Pass - Verified"
+    },
+    "CawProfileLedger_L2b": {
+      "verified": true,
+      "ts": "2026-06-05T10:11:19.017Z",
+      "message": "Pass - Verified"
+    },
+    "CawCapOracle_L2b": {
+      "verified": true,
+      "ts": "2026-06-05T10:12:01.015Z",
+      "message": "Pass - Verified"
+    },
+    "CawActions_L2b": {
+      "verified": true,
+      "ts": "2026-06-05T10:12:37.328Z",
+      "message": "Pass - Verified"
+    },
+    "CawActionsERC1271_L2b": {
+      "verified": true,
+      "ts": "2026-06-05T10:13:13.699Z",
+      "message": "Pass - Verified"
+    },
+    "CawActionsArchive_L2b": {
+      "verified": true,
+      "ts": "2026-06-05T10:14:01.285Z",
+      "message": "Pass - Verified"
+    },
+    "CawChallengeRelay_L2b": {
+      "verified": true,
+      "ts": "2026-06-05T10:14:50.095Z",
+      "message": "Pass - Verified"
+    },
+    "PathwayExpander_L2b": {
+      "verified": true,
+      "ts": "2026-06-05T10:15:27.767Z",
+      "message": "Pass - Verified"
+    }
+  }
 }
