@@ -23,6 +23,7 @@ import { useLayoutStore } from "~/store/layoutStore";
 import { useConnectModal } from "@rainbow-me/rainbowkit";
 import { useAccount } from "wagmi";
 import WalletAccountButton from "~/components/buttons/WalletAccountButton";
+import LandingHeader from "~/components/landing/LandingHeader";
 import cawLogo from '~/assets/images/caw-logo.png';
 import { themeLayoutShell } from '~/utils/theme'
 import Avatar from '~/components/Avatar';
@@ -416,7 +417,10 @@ const MainLayout = ({ children, hideSidebars: hideSidebarsProp }: MainLayoutProp
             <BoidsBg isDark={isDark} />
           </Suspense>
         )}
-        <div className={`flex-1 min-h-0 ${hideSidebars ? 'pb-24 relative z-10' : ''}`}>
+        {/* When captive (LandingHeader is mounted as the top chrome), pad
+            top by 20 to clear it. pb is dropped — the captive UI is now
+            top-anchored, not bottom-anchored. */}
+        <div className={`flex-1 min-h-0 ${hideSidebars && isCaptive ? 'pt-20 relative z-10' : hideSidebars ? 'pb-24 relative z-10' : ''}`}>
           <RecoveryBanner />
           {children}
         </div>
@@ -447,36 +451,23 @@ const MainLayout = ({ children, hideSidebars: hideSidebarsProp }: MainLayoutProp
       )}
       <Modals />
 
-      {/* Captive banner — fixed bottom bar for unauthenticated users on public pages */}
+      {/* Captive top header — for unauthenticated users on public pages
+          (/help/*, /usernames/*, /faucet). Reuses LandingHeader so the
+          chrome stays consistent with CaptiveSplash / ManifestoPage /
+          WhitepaperPage. The action cluster (Wallet pill + primary CTA)
+          rides on the right via rightExtra; LandingHeader handles the
+          logo lockup, resource links, language picker, and mobile
+          burger. Replaces the old fixed-bottom captive banner. */}
       {hideSidebars && isCaptive && (
-        <div className={`fixed bottom-0 left-0 right-0 z-50 border-t backdrop-blur-[2px] ${
-          isDark ? 'bg-black/10 border-white/10' : 'bg-white/10 border-gray-200'
-        }`}>
-          <div className="max-w-3xl mx-auto flex items-center justify-between px-5 py-3">
-            <Link to="/welcome" className="caw-logo-lockup flex items-center gap-2.5">
-              <img src={cawLogo} alt="CAW" width={48} height={48} decoding="sync" loading="eager" fetchPriority="high" className="caw-logo-mark w-12 h-12 object-contain" />
-              <span
-                className="text-4xl"
-                style={{
-                  fontFamily: 'Inter, sans-serif',
-                  fontWeight: 800,
-                  color: '#ebc046',
-                  letterSpacing: '3px',
-                  textShadow: '0 1px 2px rgba(0, 0, 0, 0.6), 0 0 4px rgba(0, 0, 0, 0.3)',
-                }}
-              >
-                CAW
-              </span>
-            </Link>
+        <LandingHeader
+          fixed
+          rightExtra={
             <div className="flex items-center gap-2">
-              {/* Wallet pill — gives connected captive users a path to
-                  the account modal (and Disconnect). Hidden when not
-                  connected; the primary CTA below leads that case. */}
               <WalletAccountButton />
               {location.pathname.startsWith('/usernames') ? (
                 <Link
                   to="/help/faq"
-                  className={`px-6 py-2.5 font-semibold text-base rounded-full border transition-all ${
+                  className={`px-3 sm:px-4 py-1.5 font-semibold text-sm rounded-full border transition-all whitespace-nowrap ${
                     isDark
                       ? 'border-white/20 text-white/80 hover:bg-white/10'
                       : 'border-gray-300 text-gray-700 hover:bg-gray-100'
@@ -487,21 +478,21 @@ const MainLayout = ({ children, hideSidebars: hideSidebarsProp }: MainLayoutProp
               ) : !isConnected ? (
                 <button
                   onClick={openConnectModal}
-                  className="px-6 py-2.5 bg-yellow-500 text-black font-bold text-base rounded-full hover:bg-yellow-400 transition-all shadow-lg cursor-pointer"
+                  className="px-3 sm:px-4 py-1.5 bg-yellow-500 text-black font-bold text-sm rounded-full hover:bg-yellow-400 transition-all shadow cursor-pointer whitespace-nowrap"
                 >
                   {t('common.sign_in')}
                 </button>
               ) : (
                 <Link
                   to="/usernames/new"
-                  className="px-6 py-2.5 bg-yellow-500 text-black font-bold text-base rounded-full hover:bg-yellow-400 transition-all shadow-lg"
+                  className="px-3 sm:px-4 py-1.5 bg-yellow-500 text-black font-bold text-sm rounded-full hover:bg-yellow-400 transition-all shadow whitespace-nowrap"
                 >
                   {t('main_layout.create_profile')}
                 </Link>
               )}
             </div>
-          </div>
-        </div>
+          }
+        />
       )}
 
       {/* Mobile bottom nav */}
