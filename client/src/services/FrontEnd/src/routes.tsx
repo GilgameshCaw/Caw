@@ -73,6 +73,8 @@ const AccountSettings = lazyWithReload(() => import("./pages/AccountSettings"));
 const SessionKeySettings = lazyWithReload(() => import("./pages/SessionKeySettings"));
 const AIProviderSettings = lazyWithReload(() => import("./pages/AIProviderSettings"));
 const HelpPage = lazyWithReload(() => import("./pages/HelpPage"));
+const WhitepaperPage = lazyWithReload(() => import("./pages/WhitepaperPage"));
+const ManifestoPage = lazyWithReload(() => import("./pages/ManifestoPage"));
 const MessagesPage = lazyWithReload(() => import("./pages/Messages"));
 const InviteRedeemPage = lazyWithReload(() => import("./pages/InviteRedeemPage"));
 const BookmarksPage = lazyWithReload(() => import("./pages/Bookmarks"));
@@ -186,6 +188,14 @@ export const bareRoutes: RouteDef[] = [
   { path: "/recovery", component: <RecoveryPage /> },
   { path: "/welcome", component: <CaptiveSplash /> },
   { path: "/welcome/:username", component: <WelcomePage /> },
+  // Whitepaper is intentionally a bare route so it doesn't mount MainLayout
+  // (the social app chrome / network-specific flows).
+  { path: "/help/whitepaper", component: <WhitepaperPage /> },
+  // The CAW Manifesto — landing-style page ported from caw-landing. Bare
+  // route (no MainLayout), top-level path so it never collides with the
+  // dynamic /welcome/:username route. Distinct from /help/manifesto, which
+  // stays the in-app Help tab.
+  { path: "/manifesto", component: <ManifestoPage /> },
   { path: "/admin", component: <AdminGate><Admin /></AdminGate> },
   { path: "/admin/bugs", component: <AdminGate><BugReportsAdmin /></AdminGate> },
   { path: "/admin/reports", component: <AdminGate><ReportsAdmin /></AdminGate> },

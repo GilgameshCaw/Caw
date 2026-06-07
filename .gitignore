@@ -56,6 +56,14 @@ artifacts
 .DS_Store
 .env*
 
+# Windows download metadata (shows up as foo.png:Zone.Identifier)
+**/*:Zone.Identifier
+
+# Local backup scraps (should never be committed)
+client/src/abi/addresses.ts.local-bak
+ecosystem.config.cjs.backup*
+ecosystem.config.js.backup*
+
 # debug
 npm-debug.log*
 yarn-debug.log*
