@@ -392,6 +392,20 @@ function FlockScene({ isDark }: { isDark: boolean }) {
     }
   }, [meshes, tierMaterials])
 
+  // Dispose the per-crow GPU geometries when this meshes set is replaced or the
+  // component unmounts — otherwise each mount/unmount (or count change) leaks
+  // ~100–200 BufferGeometries on the GPU. (<Canvas> tears down the GL context,
+  // but the geometry buffers are ours to free.)
+  useEffect(() => {
+    return () => { for (const m of meshes) m.geometry.dispose() }
+  }, [meshes])
+
+  // Dispose the tier materials when the theme changes (new set created) or on
+  // unmount, so repeated dark/light toggles don't accumulate materials.
+  useEffect(() => {
+    return () => { for (const mat of Object.values(tierMaterials)) mat.dispose() }
+  }, [tierMaterials])
+
   // Group holds all crows — added to the scene as a single node
   const groupRef = useRef<THREE.Group>(null)
 

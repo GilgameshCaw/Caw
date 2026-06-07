@@ -129,6 +129,20 @@ function CrowMesh({ isDark }: { isDark: boolean }) {
   const mousePos = useRef({ x: 0, y: 0 })
   const { gl } = useThree()
 
+  // Dispose the extruded geometry, the outline LineGeometries, and the shared
+  // LineMaterial when this result is replaced or the component unmounts — they're
+  // created with `new THREE.*` in useExtrudedCrow and aren't freed by r3f otherwise.
+  useEffect(() => {
+    if (!result) return
+    return () => {
+      result.mesh.dispose()
+      result.frontLine.dispose()
+      result.backLine.dispose()
+      for (const g of result.connectGeos) g.dispose()
+      result.lineMat.dispose()
+    }
+  }, [result])
+
   useEffect(() => {
     const canvas = gl.domElement
 

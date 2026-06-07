@@ -41,6 +41,22 @@ interface FeedCache {
 }
 const feedCache = new Map<string, FeedCache>()
 const CACHE_TTL = 60_000 // 1 minute — background refresh if stale
+// Cap the number of cached feeds so a long session that visits many distinct
+// feeds (home, following, search, lots of profiles) can't grow the cache without
+// bound. Maps preserve insertion order, so the first key is the oldest; evict it
+// (and its matching scroll anchor) once over the cap. ~15 covers realistic
+// back-and-forth navigation while keeping retained feed items in check.
+const MAX_FEED_CACHE = 15
+function setFeedCache(key: string, value: FeedCache) {
+  if (feedCache.size >= MAX_FEED_CACHE && !feedCache.has(key)) {
+    const oldest = feedCache.keys().next().value
+    if (oldest !== undefined) {
+      feedCache.delete(oldest)
+      feedScrollAnchors.delete(oldest) // keep the sibling map from outliving it
+    }
+  }
+  feedCache.set(key, value)
+}
 
 // Per-feed scroll anchors, persisted across mount/unmount so navigating
 // into a post and back returns the user to where they were in the feed.
@@ -455,7 +471,7 @@ const Feed = forwardRef<FeedRef, Props>(({ filter, username, apiEndpoint, title 
         setItems(current => {
           const merged = force ? newItems : [...current, ...newItems]
           const key = feedCacheKey(currentFilter, currentTokenId, currentApiEndpoint, currentUsername)
-          if (merged.length > 0) feedCache.set(key, { items: merged, nextCursor: newCursor, hasMore: finalHasMore, ts: Date.now() })
+          if (merged.length > 0) setFeedCache(key, { items: merged, nextCursor: newCursor, hasMore: finalHasMore, ts: Date.now() })
           return merged
         })
         setNextCursor(newCursor)
@@ -509,7 +525,7 @@ const Feed = forwardRef<FeedRef, Props>(({ filter, username, apiEndpoint, title 
             return true
           })
         const key = feedCacheKey(currentFilter, currentTokenId, currentApiEndpoint, currentUsername)
-        if (merged.length > 0) feedCache.set(key, { items: merged, nextCursor: newCursor, hasMore: finalHasMore, ts: Date.now() })
+        if (merged.length > 0) setFeedCache(key, { items: merged, nextCursor: newCursor, hasMore: finalHasMore, ts: Date.now() })
         return merged
       })
 
