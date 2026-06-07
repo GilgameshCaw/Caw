@@ -1,7 +1,7 @@
 // src/pages/NewProfile.tsx
 import { SubmitButton } from "~/components/buttons/SubmitButton"
 import React, { useState, useCallback, useMemo, useEffect, useRef } from 'react'
-import { useReadContract, useAccount, useSwitchChain, useBalance, usePublicClient } from 'wagmi'
+import { useReadContract, useAccount, useSwitchChain, useBalance, usePublicClient, useSignMessage } from 'wagmi'
 import { useConnectModal } from '@rainbow-me/rainbowkit'
 import { generatePrivateKey, privateKeyToAccount } from 'viem/accounts'
 import useAllowance from "~/hooks/useAllowance";
@@ -26,6 +26,8 @@ import { apiFetch, IndexingError } from '~/api/client'
 import { useValidatorMinTips } from '~/hooks/useValidatorMinTips'
 import { useT } from '~/i18n/I18nProvider'
 import { getDefaultSpendLimit, getDefaultTipCeiling, DEFAULT_SESSION_DURATION } from '~/hooks/useSessionKey'
+import { encryptPrivateKey, getEncryptionSignMessage, setDecryptedKey } from '~/services/sessionKeyEncryption'
+import QuickSignOptions from '~/components/QuickSignOptions'
 import { useSessionKeyStore } from '~/store/sessionKeyStore'
 import { usePoolReserves, useMinCawOut, suggestedSlippageBps } from '~/hooks/useZapQuote'
 import { useNetworkFees } from '~/hooks/useNetworkFees'
@@ -398,6 +400,7 @@ export const NewProfile: React.FC = () => {
   const navigate = useNavigate();
   const activeToken = useActiveToken();
   const { address, chainId }      = useAccount()
+  const { signMessageAsync } = useSignMessage()
   const publicClient = usePublicClient()
   const [searchParams] = useSearchParams()
   const [username, setUsername] = useState(() => {
@@ -432,6 +435,15 @@ export const NewProfile: React.FC = () => {
   const [quickSignEnabled, setQuickSignEnabled] = useState(true)
   const [quickSignExpanded, setQuickSignExpanded] = useState(true)
 
+  // User-editable Quick Sign params for the bundled registration. Defaults
+  // match the previous hardcoded values so behaviour is unchanged until the
+  // user edits them via the QuickSignOptions picker (which owns its own
+  // summary/edit expand state).
+  const [qsSpendLimitState, setQsSpendLimitState] = useState<bigint>(() => getDefaultSpendLimit())
+  const [qsDuration, setQsDuration] = useState<number>(DEFAULT_SESSION_DURATION)
+  const [qsTipCeilingState, setQsTipCeilingState] = useState<bigint>(() => getDefaultTipCeiling(getTipTiers().fast))
+  const [qsWalletProtect, setQsWalletProtect] = useState(false)
+
   // Quick Sign is delegated per OWNER ADDRESS, not per profile — one device
   // session covers every profile the address owns. So if the connected wallet
   // already has a live (non-expired) session, a freshly-minted profile under
@@ -442,13 +454,35 @@ export const NewProfile: React.FC = () => {
   // to be unlocked) — a locked-but-valid session still counts as "enabled".
   const sessionsByWallet = useSessionKeyStore(s => s.sessions)
   const hasExistingSessionForAddress = useMemo(() => {
-    if (!address) return false
-    const raw = sessionsByWallet[address.toLowerCase()]
+    // Effective owner: the connected wallet, or — when the wallet is locked/
+    // disconnected — the active profile's owner, since that's the address the
+    // user will most likely mint under. Without the fallback, a locked wallet
+    // shows the "enable Quick Sign" toggle even though the active profile's
+    // address already has a session the new profile would inherit.
+    const owner = (address ?? activeToken?.owner)?.toLowerCase()
+    if (!owner) return false
+    const raw = sessionsByWallet[owner]
     // Key purely on "a non-expired session exists for this address" — NOT on
     // the global `enabled` preference (that's "use session keys vs. sign every
     // action", orthogonal to whether a session exists to inherit).
     return !!raw && raw.expiry > Date.now() / 1000
-  }, [sessionsByWallet, address])
+  }, [sessionsByWallet, address, activeToken?.owner])
+
+  // Authoritative guard for the setSession persistence at mint-success time.
+  // Reads the store FRESH (not the render-time memo) because success fires
+  // async after the tx. If the owner already has a live local session, we must
+  // NOT overwrite it with the freshly-generated one: the local store is
+  // single-key-per-owner, but a redundant new key may not have registered
+  // on-chain — overwriting then leaves local pointing at an unregistered key,
+  // and every post fails the server's "Session key not registered" check while
+  // the OLD (registered) key is silently lost. On-chain sessions are keyed by
+  // (owner, sessionKey) so multi-device still works — each browser keeps its
+  // own local slot; this only prevents clobbering a working key in THIS browser.
+  const ownerHasLiveLocalSession = (addr: string | undefined): boolean => {
+    if (!addr) return false
+    const raw = useSessionKeyStore.getState().sessions[addr.toLowerCase()]
+    return !!raw && raw.expiry > Date.now() / 1000
+  }
 
   // When a session already exists for this address, don't bundle a redundant
   // session leg into the mint tx — route through the plain (non-QS) contract
@@ -458,6 +492,25 @@ export const NewProfile: React.FC = () => {
   useEffect(() => {
     if (hasExistingSessionForAddress) setQuickSignEnabled(false)
   }, [hasExistingSessionForAddress])
+
+  // Whether the GAS-DISPLAY estimate should assume the bundled AndQuickSign
+  // path (which adds a session-registration leg). Two regimes:
+  //   • Address present → use the real intent: quickSignEnabled (already false
+  //     when the address has an inherited session, true otherwise).
+  //   • No address yet → predict. If there's a current profile, the user will
+  //     most likely mint under that same owner address; if THAT address already
+  //     has a session, the new profile inherits it → estimate the plain path.
+  //     With no current profile (or one without a session), assume AndQuickSign.
+  const displayUsesQuickSign = useMemo(() => {
+    if (address) return quickSignEnabled
+    const profileOwner = activeToken?.owner?.toLowerCase()
+    if (profileOwner) {
+      const raw = sessionsByWallet[profileOwner]
+      const ownerHasSession = !!raw && raw.expiry > Date.now() / 1000
+      return !ownerHasSession
+    }
+    return true // no address, no profile → assume a fresh session is bundled
+  }, [address, quickSignEnabled, activeToken?.owner, sessionsByWallet])
 
   // Authenticate-with-network toggle (mint-only / no-deposit path on CAW mode).
   // When deposit is ON, auth is always bundled (no contract path skips auth on
@@ -595,25 +648,36 @@ export const NewProfile: React.FC = () => {
   // undefined and the gas line shows its placeholder.
   const [cawSlots, setCawSlots] = useState<{ balances: bigint; allowances: bigint } | null>(null)
 
+  // The `from` address used for the DISPLAY gas estimate. eth_estimateGas needs
+  // a from-address, but the estimate is fully synthetic (stateOverride fakes the
+  // balances/allowance for this exact address), so it doesn't need to be the
+  // real signer. Priority: connected wallet → current profile's owner (the user
+  // will most likely mint under the same address) → a deterministic placeholder
+  // when there's neither. This lets the "Gas cost" line populate even before the
+  // user connects — the override makes the chosen address solvent + approved
+  // regardless of its real on-chain state.
+  const GAS_ESTIMATE_FALLBACK_FROM = '0x000000000000000000000000000000000000dEaD' as const
+  const estimateFrom = (address ?? activeToken?.owner ?? GAS_ESTIMATE_FALLBACK_FROM) as `0x${string}`
+
   useEffect(() => {
-    if (paymentMode !== 'caw' || !address || !publicClient) return
+    if (paymentMode !== 'caw' || !publicClient) return
     let cancelled = false
     import('~/utils/erc20SlotDiscovery').then(({ discoverErc20Slots }) => {
       discoverErc20Slots(
         publicClient as Parameters<typeof discoverErc20Slots>[0],
         CAW_ADDRESS as `0x${string}`,
         CAW_NAMES_MINTER_ADDRESS as `0x${string}`,
-        address as `0x${string}`,
+        estimateFrom,
       ).then(result => {
         if (!cancelled) setCawSlots(result)
       })
     })
     return () => { cancelled = true }
-  }, [paymentMode, address, publicClient])
+  }, [paymentMode, estimateFrom, publicClient])
 
   const gasOverride = useMemo((): StateOverride | undefined => {
-    if (paymentMode !== 'caw' || !address || !cawSlots) return undefined
-    const user = address as `0x${string}`
+    if (paymentMode !== 'caw' || !cawSlots) return undefined
+    const user = estimateFrom
     const minter = CAW_NAMES_MINTER_ADDRESS as `0x${string}`
     // balanceOf[user] = keccak256(abi.encode(user, uint256(balances_slot)))
     const balSlot = keccak256(encodeAbiParameters([{ type: 'address' }, { type: 'uint256' }], [user, cawSlots.balances]))
@@ -623,14 +687,25 @@ export const NewProfile: React.FC = () => {
     const innerBase = keccak256(encodeAbiParameters([{ type: 'address' }, { type: 'uint256' }], [user, cawSlots.allowances]))
     const allowSlot = keccak256(encodeAbiParameters([{ type: 'address' }, { type: 'uint256' }], [minter, BigInt(innerBase)]))
     const MAX = toHex(maxUint256, { size: 32 })
-    return [{
-      address: CAW_ADDRESS as `0x${string}`,
-      stateDiff: [
-        { slot: balSlot, value: MAX },
-        { slot: allowSlot, value: MAX },
-      ],
-    }]
-  }, [paymentMode, address, cawSlots])
+    return [
+      {
+        address: CAW_ADDRESS as `0x${string}`,
+        stateDiff: [
+          { slot: balSlot, value: MAX },
+          { slot: allowSlot, value: MAX },
+        ],
+      },
+      // Also fund the user's NATIVE (ETH) balance for the simulation. The mint
+      // carries msg.value = the LZ native fee; estimateGas reverts with
+      // "insufficient funds" if the connected account can't cover `value`, which
+      // a fresh wallet often can't. Overriding the native balance lets the
+      // estimate succeed regardless. Display-only, like the CAW overrides.
+      {
+        address: user,
+        balance: maxUint256,
+      },
+    ]
+  }, [paymentMode, estimateFrom, cawSlots])
   // ────────────────────────────────────────────────────────────────────────
 
   const depositAmountWei = useMemo(() => {
@@ -776,7 +851,6 @@ console.log("BALANCE:", balance)
     args: [ CLIENT_ID, useAddress as `0x${string}` ?? '0x0000000000000000000000000000000000000001', chains.l2.layerZero, false ],
     query: { enabled: paymentMode === 'eth' && quickSignEnabled }
   })
-  console.log('[New] mintAndDepositQuote:', { data: mintAndDepositQuote, error: mintAndDepositQuoteError?.message, loading: mintAndDepositQuoteLoading, enabled: depositEnabled && depositAmountWei > 0n, depositAmountWei: depositAmountWei.toString(), CLIENT_ID, layerZero: chains.l2.layerZero })
   const quote = paymentMode === 'eth'
     ? (quickSignEnabled ? bundledZapQuote : mintAndDepositZapQuote)
     : (!depositEnabled
@@ -1007,6 +1081,7 @@ console.log("BALANCE:", balance)
     args:         [CLIENT_ID, username, lzTokenAmount],
     disabled:     paymentMode === 'eth' || depositEnabled || authEnabled || !address || !isValid || needsApproval,
     gasEstimateStateOverride: gasOverride,
+    gasEstimateAccount: estimateFrom,
     onPending:    hash => { console.log('tx pending', hash); setHasResetForm(false) },
     onSuccess:    onMintOnlySuccess,
     onError:      err  => { console.error(err); setHasResetForm(true) },
@@ -1021,13 +1096,14 @@ console.log("BALANCE:", balance)
     args:         [CLIENT_ID, username, chains.l2.layerZero, lzTokenAmount],
     disabled:     paymentMode === 'eth' || depositEnabled || !authEnabled || !address || !isValid || needsApproval,
     gasEstimateStateOverride: gasOverride,
+    gasEstimateAccount: estimateFrom,
     onPending:    hash => { console.log('mintAndAuth tx pending', hash); setHasResetForm(false) },
     onSuccess:    onMintOnlySuccess,
     onError:      err  => { console.error(err); setHasResetForm(true) },
   })
 
   // hook into mintAndDeposit function
-  const { call: mintAndDeposit, status: mintAndDepositStatus, gasCostEth: mintAndDepositGas }: UseContractCallReturn = useContractCall({
+  const { call: mintAndDeposit, status: mintAndDepositStatus, gasCostEth: mintAndDepositGas, gasPriceWei: liveGasPriceWei }: UseContractCallReturn = useContractCall({
     value:        quote?.nativeFee || 0n,
     functionName: 'mintAndDeposit',
     abi:      cawProfileMinterAbi,
@@ -1035,6 +1111,7 @@ console.log("BALANCE:", balance)
     args:         [CLIENT_ID, username, depositAmountWei, chains.l2.layerZero, lzTokenAmount],
     disabled:     paymentMode === 'eth' || !depositEnabled || quickSignEnabled || !address || !isValid || needsApproval || depositAmountWei === 0n,
     gasEstimateStateOverride: gasOverride,
+    gasEstimateAccount: estimateFrom,
     onPending:    hash => {
       console.log('mintAndDeposit tx pending', hash)
       setHasResetForm(false)
@@ -1089,15 +1166,24 @@ console.log("BALANCE:", balance)
   // `args` reflect the freshly-generated session keypair. Until generated,
   // the bundled hook is `disabled` so the placeholder zero address never
   // makes it into a real call.
-  const qsExpiry = pendingSession?.expiry ?? Math.floor(Date.now() / 1000) + DEFAULT_SESSION_DURATION
-  const qsSpendLimit = pendingSession?.spendLimit ?? (quickSignEnabled ? getDefaultSpendLimit() : 0n)
+  // qsExpiry is derived from the user-chosen duration (state), not hardcoded.
+  // If the session was already generated (pendingSession exists), its expiry wins.
+  const qsExpiry = pendingSession?.expiry ?? Math.floor(Date.now() / 1000) + qsDuration
+  // effectiveQsSpendLimit: if a session was already generated use its value;
+  // otherwise use the user-chosen limit (0 when QS is disabled). Cap at 1B CAW
+  // (MAX_SESSION_SPEND) to prevent contract revert.
+  const MAX_SESSION_SPEND_CAW = 1_000_000_000n
+  const effectiveQsSpendLimit = pendingSession?.spendLimit
+    ?? (quickSignEnabled ? (qsSpendLimitState > MAX_SESSION_SPEND_CAW ? MAX_SESSION_SPEND_CAW : qsSpendLimitState) : 0n)
+  // Back-compat alias so existing call-sites that reference `qsSpendLimit` keep compiling.
+  const qsSpendLimit = effectiveQsSpendLimit
   const qsSessionAddress = pendingSession?.address ?? '0x0000000000000000000000000000000000000000' as `0x${string}`
   // The validator tip ceiling baked into the bundled session. MUST be used for
   // BOTH the on-chain contract arg AND the local setSession persistence below —
   // they were out of sync (contract got the value, the stored session record
   // omitted it), so SessionKeySettings showed "none (legacy session)" for a
   // freshly-created session. Whole CAW tokens; stored as a string on the entry.
-  const qsTipCeiling = getDefaultTipCeiling(getTipTiers().fast)
+  const qsTipCeiling = qsTipCeilingState
 
   // hook into mintAndDepositAndQuickSign — bundled flow with session leg.
   const { call: mintAndDepositAndQuickSign, status: bundledStatus, gasCostEth: bundledGas }: UseContractCallReturn = useContractCall({
@@ -1114,6 +1200,7 @@ console.log("BALANCE:", balance)
     // gasOverride enables display-only estimate before approval. The zero
     // qsSessionAddress in args is fine — it's just a ballpark figure.
     gasEstimateStateOverride: gasOverride,
+    gasEstimateAccount: estimateFrom,
     onPending:    hash => {
       console.log('mintAndDepositAndQuickSign tx pending', hash)
       setHasResetForm(false)
@@ -1124,21 +1211,51 @@ console.log("BALANCE:", balance)
       // onSuccess for the rationale (don't gate on the indexer-polling
       // closure, which gets GC'd if the user navigates away mid-poll).
       const sess = sessionRef.current
-      if (sess && useAddress) {
+      if (sess && useAddress && !ownerHasLiveLocalSession(useAddress)) {
         const owner = (useAddress as string).toLowerCase()
         try {
-          setSession({
-            privateKey: sess.privateKey,
-            address: sess.address,
-            ownerAddress: owner,
-            expiry: sess.expiry,
-            scopeBitmap: QUICK_SIGN_DEFAULT_SCOPE,
-            spendLimit: sess.spendLimit.toString(),
-            // Persist the SAME tip ceiling baked into the on-chain session args
-            // (qsTipCeiling). Omitting it left the stored session with
-            // tipCeiling=undefined → "none (legacy session)" in settings.
-            tipCeiling: qsTipCeiling.toString(),
-          })
+          if (qsWalletProtect) {
+            try {
+              const walletSig = await signMessageAsync({ message: getEncryptionSignMessage() })
+              const encryptedKey = await encryptPrivateKey(sess.privateKey, walletSig)
+              setDecryptedKey(owner, sess.privateKey)
+              setSession({
+                privateKey: '0xencrypted' as `0x${string}`,
+                address: sess.address,
+                ownerAddress: owner,
+                expiry: sess.expiry,
+                scopeBitmap: QUICK_SIGN_DEFAULT_SCOPE,
+                spendLimit: sess.spendLimit.toString(),
+                tipCeiling: qsTipCeiling.toString(),
+                encrypted: true,
+                encryptedKey,
+              })
+            } catch (encErr) {
+              console.warn('[New] wallet-protect encryption failed, falling back to unencrypted session:', encErr)
+              setSession({
+                privateKey: sess.privateKey,
+                address: sess.address,
+                ownerAddress: owner,
+                expiry: sess.expiry,
+                scopeBitmap: QUICK_SIGN_DEFAULT_SCOPE,
+                spendLimit: sess.spendLimit.toString(),
+                tipCeiling: qsTipCeiling.toString(),
+              })
+            }
+          } else {
+            setSession({
+              privateKey: sess.privateKey,
+              address: sess.address,
+              ownerAddress: owner,
+              expiry: sess.expiry,
+              scopeBitmap: QUICK_SIGN_DEFAULT_SCOPE,
+              spendLimit: sess.spendLimit.toString(),
+              // Persist the SAME tip ceiling baked into the on-chain session args
+              // (qsTipCeiling). Omitting it left the stored session with
+              // tipCeiling=undefined → "none (legacy session)" in settings.
+              tipCeiling: qsTipCeiling.toString(),
+            })
+          }
           setSessionEnabled(true)
           localStorage.setItem(
             `caw:pendingQuickSign:${owner}`,
@@ -1268,21 +1385,51 @@ console.log("BALANCE:", balance)
       // polling loop means a user who navigates away mid-poll loses the
       // session entirely (the recursive setTimeout closure gets GC'd).
       const sess = sessionRef.current
-      if (sess && useAddress) {
+      if (sess && useAddress && !ownerHasLiveLocalSession(useAddress)) {
         const owner = (useAddress as string).toLowerCase()
         try {
-          setSession({
-            privateKey: sess.privateKey,
-            address: sess.address,
-            ownerAddress: owner,
-            expiry: sess.expiry,
-            scopeBitmap: QUICK_SIGN_DEFAULT_SCOPE,
-            spendLimit: sess.spendLimit.toString(),
-            // Persist the SAME tip ceiling baked into the on-chain session args
-            // (qsTipCeiling). Omitting it left the stored session with
-            // tipCeiling=undefined → "none (legacy session)" in settings.
-            tipCeiling: qsTipCeiling.toString(),
-          })
+          if (qsWalletProtect) {
+            try {
+              const walletSig = await signMessageAsync({ message: getEncryptionSignMessage() })
+              const encryptedKey = await encryptPrivateKey(sess.privateKey, walletSig)
+              setDecryptedKey(owner, sess.privateKey)
+              setSession({
+                privateKey: '0xencrypted' as `0x${string}`,
+                address: sess.address,
+                ownerAddress: owner,
+                expiry: sess.expiry,
+                scopeBitmap: QUICK_SIGN_DEFAULT_SCOPE,
+                spendLimit: sess.spendLimit.toString(),
+                tipCeiling: qsTipCeiling.toString(),
+                encrypted: true,
+                encryptedKey,
+              })
+            } catch (encErr) {
+              console.warn('[New] wallet-protect encryption failed, falling back to unencrypted session:', encErr)
+              setSession({
+                privateKey: sess.privateKey,
+                address: sess.address,
+                ownerAddress: owner,
+                expiry: sess.expiry,
+                scopeBitmap: QUICK_SIGN_DEFAULT_SCOPE,
+                spendLimit: sess.spendLimit.toString(),
+                tipCeiling: qsTipCeiling.toString(),
+              })
+            }
+          } else {
+            setSession({
+              privateKey: sess.privateKey,
+              address: sess.address,
+              ownerAddress: owner,
+              expiry: sess.expiry,
+              scopeBitmap: QUICK_SIGN_DEFAULT_SCOPE,
+              spendLimit: sess.spendLimit.toString(),
+              // Persist the SAME tip ceiling baked into the on-chain session args
+              // (qsTipCeiling). Omitting it left the stored session with
+              // tipCeiling=undefined → "none (legacy session)" in settings.
+              tipCeiling: qsTipCeiling.toString(),
+            })
+          }
           setSessionEnabled(true)
           localStorage.setItem(
             `caw:pendingQuickSign:${owner}`,
@@ -1349,6 +1496,19 @@ console.log("BALANCE:", balance)
     : (depositEnabled
         ? (quickSignEnabled ? bundledGas : mintAndDepositGas)
         : (authEnabled ? mintAndAuthGas : mintOnlyGas))
+  // Gas figure for the "Gas cost" display line. Picks the bundled-vs-plain
+  // estimate via displayUsesQuickSign (address-aware: real intent when an
+  // address is present, predicted from the current profile otherwise). The
+  // BUNDLED estimate is undefined before click (its args carry a zero session
+  // address that reverts simulation), so when we'd show bundled but it isn't
+  // available, fall back to the non-QS equivalent — gas is within a small
+  // constant, so the user still sees a real "~$" figure. Display-only; the
+  // actual tx uses the precise active path (gasCostEth) above.
+  const displayGasCostEth = paymentMode === 'eth'
+    ? ((displayUsesQuickSign ? bundledZapGas : mintAndDepositZapGas) ?? mintAndDepositZapGas)
+    : (depositEnabled
+        ? ((displayUsesQuickSign ? bundledGas : mintAndDepositGas) ?? mintAndDepositGas)
+        : (authEnabled ? mintAndAuthGas : mintOnlyGas))
   const mint = paymentMode === 'eth'
     ? (quickSignEnabled ? mintAndDepositAndQuickSignZap : mintAndDepositZap)
     : (depositEnabled
@@ -1381,34 +1541,7 @@ console.log("BALANCE:", balance)
     }
   }, [showMintingTakeover, setHideChromeOverride])
 
-  console.log('[New] mint disabled conditions:', {
-    depositEnabled,
-    quote: !!quote,
-    address: !!address,
-    isValid,
-    needsApproval,
-    needsMinterApproval,
-    depositAmountWei: depositAmountWei.toString(),
-    minterAllowance: minterAllowance?.toString(),
-    cost: cost?.toString(),
-    minterAllowanceNeeded: minterAllowanceNeeded.toString(),
-    // ETH-mode submit gate
-    paymentMode,
-    ethAmount,
-    ethAmountWei: ethAmountWei.toString(),
-    zapLoaded: zapQuote.loaded,
-    zapExpectedCawOut: zapQuote.expectedCawOut.toString(),
-    zapMinCawOut: zapQuote.minCawOut.toString(),
-    zapMinCawOut_lt_cost: zapQuote.minCawOut < cost,
-    quickSignEnabled,
-    usernameTaken,
-    waiting,
-    wrongChain,
-    chainId,
-    reservesLoaded: reserves.loaded,
-    insufficientBalance,
-  })
-
+  
   // Generate the Quick Sign session keypair lazily, just before the bundled
   // mint. We don't want to burn an unused session in localStorage if the user
   // changes their mind on the form. This sets `pendingSession` state which
@@ -1417,17 +1550,19 @@ console.log("BALANCE:", balance)
   const generatePendingSession = useCallback(() => {
     const privateKey = generatePrivateKey()
     const sessionAccount = privateKeyToAccount(privateKey)
-    const spendLimit = getDefaultSpendLimit()
-    const expiry = Math.floor(Date.now() / 1000) + DEFAULT_SESSION_DURATION
+    // Use the user-chosen spend limit (clamped to MAX_SESSION_SPEND_CAW) and
+    // duration so the generated session reflects what they configured.
+    const spendLimit = qsSpendLimitState > MAX_SESSION_SPEND_CAW ? MAX_SESSION_SPEND_CAW : qsSpendLimitState
+    const expiry = Math.floor(Date.now() / 1000) + qsDuration
     sessionRef.current = {
       privateKey,
       address: sessionAccount.address as `0x${string}`,
       spendLimit,
-      duration: DEFAULT_SESSION_DURATION,
+      duration: qsDuration,
       expiry,
     }
     setPendingSession({ address: sessionAccount.address as `0x${string}`, expiry, spendLimit })
-  }, [])
+  }, [qsSpendLimitState, qsDuration])
 
   const doApproveOrMint = useCallback(async () => {
     if (needsMinterApproval) {
@@ -2065,7 +2200,8 @@ console.log("BALANCE:", balance)
                       wrapping <label> and toggles the switch (parity with
                       the rest of the label). The (i) popover next to it
                       stops propagation so it can open without flipping
-                      Quick Sign off. */}
+                      Quick Sign off. The pencil icon (edit params) also
+                      stops propagation for the same reason. */}
                   <div className="flex items-center gap-1.5">
                     <span className={`text-sm font-medium ${isDark ? 'text-white' : 'text-gray-900'}`}>Quick Sign — one-click actions</span>
                     <QuickSignInfoPopover />
@@ -2084,45 +2220,23 @@ console.log("BALANCE:", balance)
                   )}
                 </div>
               </label>
-              {quickSignEnabled && quickSignExpanded && (() => {
-                // Display THIS validator's published per-action minimum tip
-                // (ETH wei, sourced from /api/validator-analytics/tip-config).
-                // The on-chain oracle converts ETH→CAW at submission time; the
-                // user's CAW ceiling (still wired to getDefaultTipCeiling for
-                // session args at lines ~782 / ~923) is just a safety bound.
-                const validatorTipWei = getCurrentValidatorMinTipWei()
-                const validatorTipEth = Number(validatorTipWei) / 1e18
-                const validatorTipUsd = ethPrice > 0 && validatorTipWei > 0n
-                  ? validatorTipEth * ethPrice
-                  : null
-                return (
-                  <div className={`flex justify-around items-start text-xs pt-2 mt-2 border-t ${
-                    isDark ? 'border-white/10 text-gray-400' : 'border-gray-200 text-gray-600'
-                  }`}>
-                    <div className="flex flex-col items-center text-center">
-                      <span>Spend limit</span>
-                      <span className={`font-mono ${isDark ? 'text-white' : 'text-gray-900'}`}>
-                        ~$10
-                      </span>
-                    </div>
-                    <div className="flex flex-col items-center text-center">
-                      <span className="inline-flex items-center gap-1">
-                        Tip / action
-                        <TipPerActionPopover isDark={isDark} />
-                      </span>
-                      <span className={`font-mono ${isDark ? 'text-white' : 'text-gray-900'}`}>
-                        {validatorTipUsd != null ? `~${formatTipUsd(validatorTipUsd)}` : '—'}
-                      </span>
-                    </div>
-                    <div className="flex flex-col items-center text-center">
-                      <span>Expires in</span>
-                      <span className={`font-mono ${isDark ? 'text-white' : 'text-gray-900'}`}>
-                        {Math.round(DEFAULT_SESSION_DURATION / 86400)} days
-                      </span>
-                    </div>
-                  </div>
-                )
-              })()}
+              {quickSignEnabled && quickSignExpanded && (
+                // QuickSignOptions owns both states: a 3-column summary
+                // (spend limit / tip per action / expiry) when collapsed, and
+                // the full editable picker when its pencil is clicked.
+                <QuickSignOptions
+                  spendLimit={qsSpendLimitState}
+                  onSpendLimitChange={setQsSpendLimitState}
+                  duration={qsDuration}
+                  onDurationChange={setQsDuration}
+                  tipCeiling={qsTipCeilingState}
+                  onTipCeilingChange={setQsTipCeilingState}
+                  walletProtect={qsWalletProtect}
+                  onWalletProtectChange={setQsWalletProtect}
+                  themed
+                  isDark={isDark}
+                />
+              )}
             </div>
             )}
 
@@ -2175,8 +2289,24 @@ console.log("BALANCE:", balance)
               // needs no approval (the swap output IS the CAW) so it just
               // resolves once the quote/inputs settle — don't promise an
               // "approval" step that won't happen.
-              const hasGas = gasCostEth != null && gasCostEth > 0
-              const gasUsd = hasGas && ethPrice > 0 ? gasCostEth * ethPrice : null
+              const hasGas = displayGasCostEth != null && displayGasCostEth > 0
+              // Sepolia's base fee floats ~50× above mainnet (testnet gas is
+              // free, so its fee market is meaningless). A raw estimate reads as
+              // a scary ~$12 that no real user will ever pay. On testnet, clamp
+              // the gas PRICE used for the displayed cost to a realistic ceiling
+              // (1 gwei) so the figure reflects production. Mainnet shows the
+              // live price untouched. We rescale displayGasCostEth (computed at
+              // the live price) by cappedPrice/livePrice.
+              const TESTNET_GAS_PRICE_CAP_WEI = 1_000_000_000n // 1 gwei
+              let displayGasUsd: number | null = null
+              if (hasGas && ethPrice > 0) {
+                let costEth = displayGasCostEth as number
+                if (isTestnet && liveGasPriceWei && liveGasPriceWei > TESTNET_GAS_PRICE_CAP_WEI) {
+                  costEth = costEth * (Number(TESTNET_GAS_PRICE_CAP_WEI) / Number(liveGasPriceWei))
+                }
+                displayGasUsd = costEth * ethPrice
+              }
+              const gasUsd = displayGasUsd
               const gasPendingLabel = (paymentMode === 'caw' && needsMinterApproval)
                 ? 'estimated after approval'
                 : 'estimated before signing'
@@ -2203,6 +2333,9 @@ console.log("BALANCE:", balance)
                         ? `~$${formatUsd(gasUsd)}`
                         : <span className="text-gray-500 italic">{gasPendingLabel}</span>}
                     </span>
+                    {gasUsd != null && isTestnet && (
+                      <span className="text-gray-500 italic text-xs">(testnet est.)</span>
+                    )}
                   </div>
                 </div>
               )

@@ -3,7 +3,6 @@ import { HiPencil } from 'react-icons/hi'
 import {
   SESSION_DURATION_OPTIONS,
 } from '~/hooks/useSessionKey'
-import { getCurrentMarketTip, getTipTiers } from '~/api/actions'
 import { usePriceStore } from '~/store/tokenDataStore'
 import { useValidatorMinTips, countAcceptingValidators } from '~/hooks/useValidatorMinTips'
 
@@ -13,6 +12,16 @@ const DOLLAR_PRESETS = [
   { label: '$10',   usd: 10 },
   { label: '$25',   usd: 25 },
   { label: '$100',  usd: 100 },
+]
+
+/** Dollar-denominated per-action tip presets, ordered most→least (left→right).
+ *  $0.0009 is the max and the recommended default (accepted by the most
+ *  validators / fastest). Tips are fractions of a cent, so the steps are tiny.
+ *  "No tip" is rendered separately after these. */
+const TIP_USD_PRESETS = [
+  { usd: 0.0009, recommended: true },
+  { usd: 0.0005 },
+  { usd: 0.0002 },
 ]
 
 function fmtUsd(amount: number): string {
@@ -83,14 +92,16 @@ const QuickSignOptions: React.FC<QuickSignOptionsProps> = ({
     }))
   }, [cawPrice])
 
-  // Tip tiers from the validator's config. These MUST be before the early return (Rules of Hooks).
-  const currentMarketTip = useMemo(() => getCurrentMarketTip(), [])
-  const tiers = useMemo(() => getTipTiers(), [])
-  const tipPresets = useMemo(() => [
-    { label: 'Slow',      caw: tiers.slow,     speed: 'slower posts'   },
-    { label: 'Standard',  caw: tiers.standard, speed: 'balanced'       },
-    { label: 'Fast',      caw: tiers.fast,     speed: 'fastest posts'  },
-  ], [tiers])
+  // Per-action tip presets in dollars → CAW. Label is the dollar amount.
+  const tipDollarOptions = useMemo(() => {
+    if (!cawPrice || cawPrice <= 0) return null
+    return TIP_USD_PRESETS.map(p => ({
+      ...p,
+      label: fmtUsdSmall(p.usd).replace(/0+$/, '').replace(/\.$/, ''),
+      caw: BigInt(Math.max(1, Math.round(p.usd / cawPrice))),
+    }))
+  }, [cawPrice])
+
 
   // Check which dollar preset matches the current spend limit (if any)
   const matchedPreset = dollarOptions?.find(o => spendLimit === o.caw)
@@ -174,7 +185,6 @@ const QuickSignOptions: React.FC<QuickSignOptionsProps> = ({
   }
 
   const isNoTip = tipCeiling === 0n
-  const matchedTipPreset = tipPresets.find(p => tipCeiling !== undefined && tipCeiling === p.caw)
 
   // Keep the USD text input in sync with external tipCeiling changes (e.g. network default arriving)
   // but don't clobber whatever the user is actively typing.
@@ -213,32 +223,60 @@ const QuickSignOptions: React.FC<QuickSignOptionsProps> = ({
   }
 
   if (!expanded) {
+    // Collapsed summary: a compact 3-column read-out of the current params
+    // (spend limit / tip per action / expiry) with an edit pencil that opens
+    // the full picker. Owning both states here means every consumer
+    // (onboarding, renew modal) gets the same summary-then-edit UX.
+    const spendDisplay = spendLimit === 0n
+      ? 'no limit'
+      : cawPrice > 0
+        ? fmtUsd(Number(spendLimit) * cawPrice)
+        : `${formatSpendLimit(spendLimit)} CAW`
+    const tipDisplay = tipCeiling === undefined
+      ? '—'
+      : isNoTip
+        ? formatTipCaw(tipCeiling)
+        : `~${formatTipCaw(tipCeiling)}`
+    const colLabel = themed ? (isDark ? 'text-gray-400' : 'text-gray-600') : 'text-gray-400'
+    const colValue = themed ? (isDark ? 'text-white' : 'text-gray-900') : 'text-white'
     return (
-      <div>
-        <button
-          type="button"
-          onClick={() => setExpanded(true)}
-          className={`w-full flex items-center justify-center gap-2 px-3 rounded-lg text-center transition-colors cursor-pointer border ${
-            themed && !isDark ? 'bg-gray-50 hover:bg-gray-100 border-gray-200' : ''
-          }`}
-          style={!themed || isDark ? { backgroundColor: 'rgba(20, 20, 20, 0.85)', borderColor: '#1A1A1A' } : undefined}
-        >
-          <span className={`text-sm ${mutedClass} p-2`}>
-            {/* Strong items use the theme-appropriate body color so the
-                "bold" reads as emphasis against the muted summary text.
-                Hardcoding text-white was invisible in light mode. */}
-            Enable for <strong className={strongClass}>{formatDuration(duration)}</strong> with a security limit of <strong className={spendLimit === 0n ? 'text-red-400' : strongClass}>
-              {spendLimit === 0n
-                ? 'no limit'
-                : cawPrice > 0
-                  ? fmtUsd(Number(spendLimit) * cawPrice)
-                  : `${formatSpendLimit(spendLimit)} CAW`
-              }
-            </strong> from your deposits.<br className="hidden sm:block" /><br className="hidden sm:block" />
-            Validator tips <strong className={isNoTip ? 'text-yellow-500' : strongClass}>{tipCeiling !== undefined ? (isNoTip ? formatTipCaw(tipCeiling) : `~${formatTipCaw(tipCeiling)}`) : '—'}</strong> per action<br />and <strong className={strongClass}>{walletProtect ? 'wallet unlock required' : 'no need for wallet unlock per-session'}</strong>
-          </span>
-          <HiPencil className={`w-4.5 h-4.5 flex-shrink-0 ${themed ? (isDark ? 'text-white' : 'text-gray-600') : 'text-white'}`} />
-        </button>
+      <div className={`pt-2 mt-2 border-t ${
+        themed && !isDark ? 'border-gray-200' : 'border-white/10'
+      }`}>
+        <div className="flex items-center justify-between gap-2">
+          <div className="flex-1 flex justify-around items-start text-xs">
+            <div className="flex flex-col items-center text-center">
+              <span className={colLabel}>Spend limit</span>
+              <span className={`font-mono ${spendLimit === 0n ? 'text-red-400' : colValue}`}>{spendDisplay}</span>
+            </div>
+            <div className="flex flex-col items-center text-center">
+              <span className={colLabel}>Tip / action</span>
+              <span className={`font-mono ${isNoTip ? 'text-yellow-500' : colValue}`}>{tipDisplay}</span>
+            </div>
+            <div className="flex flex-col items-center text-center">
+              <span className={colLabel}>Expires in</span>
+              <span className={`font-mono ${colValue}`}>{formatDuration(duration)}</span>
+            </div>
+          </div>
+          <button
+            type="button"
+            aria-label="Edit Quick Sign parameters"
+            onClick={(e) => { e.preventDefault(); e.stopPropagation(); setExpanded(true) }}
+            className={`flex items-center cursor-pointer flex-shrink-0 ${
+              themed ? (isDark ? 'text-gray-400 hover:text-white' : 'text-gray-500 hover:text-gray-900') : 'text-white/70 hover:text-white'
+            }`}
+          >
+            <HiPencil className="w-4 h-4" />
+          </button>
+        </div>
+        {onWalletProtectChange && (
+          <div className={`flex items-center justify-center gap-1 mt-2 pt-2 border-t text-xs ${
+            themed && !isDark ? 'border-gray-200' : 'border-white/10'
+          }`}>
+            <span className={colLabel}>Quick Sign Key:</span>
+            <span className={`font-mono ${colValue}`}>{walletProtect ? 'Require unlock' : 'Always unlocked'}</span>
+          </div>
+        )}
       </div>
     )
   }
@@ -332,9 +370,10 @@ const QuickSignOptions: React.FC<QuickSignOptionsProps> = ({
         <div>
           <p className={labelClass}>Tip per action</p>
           <p className={descClass}>
-            The CAW Protocol is made possible by validators who pay LayerZero fees to
-            publish your actions on-chain. Your tip rewards them — higher tips get
-            faster processing. Enter a dollar amount or choose a preset.
+            Validators pay LayerZero fees to publish your actions on-chain; your tip
+            rewards them. Each validator sets the minimum tip it will accept, and
+            those preferences can change at any time — a higher tip is accepted by
+            more validators and gets your actions processed faster.
           </p>
           {/* USD input */}
           <div className="flex items-center gap-2 mb-2">
@@ -354,30 +393,22 @@ const QuickSignOptions: React.FC<QuickSignOptionsProps> = ({
                   : 'bg-white/10 text-white border-white/20 focus:border-yellow-500'
               }`}
             />
-            {tipCeiling !== undefined && tipCeiling > 0n && (
-              <span className={`text-xs ${mutedLightClass}`}>
-                ≤ {formatSpendLimit(tipCeiling)} CAW
-              </span>
-            )}
           </div>
-          {/* Speed presets */}
+          {/* Dollar presets — $0.0009 is the max + recommended default. */}
           <div className="flex flex-wrap gap-1">
-            {tipPresets.map(p => (
+            {(tipDollarOptions ?? []).map(p => (
               <button
-                key={p.label}
+                key={p.usd}
                 type="button"
                 onClick={() => {
                   onTipCeilingChange(p.caw)
-                  if (cawPrice > 0) {
-                    const usd = Number(p.caw) * cawPrice
-                    setTipUsdInput(usd < 0.01 ? usd.toFixed(5) : usd.toFixed(3))
-                  }
+                  setTipUsdInput(p.usd.toFixed(5).replace(/0+$/, '').replace(/\.$/, ''))
                 }}
-                className={`rounded-lg text-sm font-medium transition-all cursor-pointer ${btnClass(matchedTipPreset?.label === p.label)}`}
+                className={`rounded-lg text-sm font-medium transition-all cursor-pointer ${btnClass(tipCeiling === p.caw)}`}
                 style={{ padding: '5px 8px' }}
-                title={p.speed}
+                title={p.recommended ? 'Recommended — accepted by the most validators' : undefined}
               >
-                {p.label}
+                {p.label}{p.recommended ? ' ★' : ''}
               </button>
             ))}
             <button
@@ -393,11 +424,6 @@ const QuickSignOptions: React.FC<QuickSignOptionsProps> = ({
             <p className="text-xs text-red-400 mt-1.5 text-left">
               Your posts will be extremely slow, and may not get included at all.
               Most validators reject zero-tip actions.
-            </p>
-          )}
-          {!isNoTip && tipCeiling !== undefined && tipCeiling > 0n && (
-            <p className={`text-xs mt-1.5 text-left ${mutedLightClass}`}>
-              {matchedTipPreset?.speed ?? 'custom'} — you commit to ≤ {formatTipCaw(tipCeiling)} / ≤ {formatSpendLimit(tipCeiling)} CAW per action
             </p>
           )}
           {/* Validator acceptance indicator (#170) — shows how many discovered

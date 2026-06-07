@@ -14,7 +14,6 @@ import { cawActionsAbi } from '~/../../../abi/generated'
 export const DEFAULT_SESSION_DURATION = 180 * 24 * 60 * 60 // 6 months
 
 export const SESSION_DURATION_OPTIONS = [
-  { label: '1 week',    value: 7 * 24 * 60 * 60 },
   { label: '1 month',   value: 30 * 24 * 60 * 60 },
   { label: '3 months',  value: 90 * 24 * 60 * 60 },
   { label: '6 months',  value: 180 * 24 * 60 * 60 },

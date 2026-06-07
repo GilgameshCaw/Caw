@@ -20,16 +20,28 @@ interface QuickSignRenewState {
   reason: RenewReason
   /** Callback to retry the action (will use wallet signature since QS is disabled) */
   onRetry: (() => Promise<any> | void) | null
-  show: (reason: RenewReason, onRetry?: () => Promise<any> | void) => void
+  /** Fired when the modal is dismissed WITHOUT renewing/retrying. Lets the
+   *  caller (signAndSubmit) reject its pending promise so the submit unwinds
+   *  and the Post button resets from "Signing…" back to "Post". */
+  onCancel: (() => void) | null
+  show: (reason: RenewReason, onRetry?: () => Promise<any> | void, onCancel?: () => void) => void
   close: () => void
 }
 
-export const useQuickSignRenewStore = create<QuickSignRenewState>((set) => ({
+export const useQuickSignRenewStore = create<QuickSignRenewState>((set, get) => ({
   isOpen: false,
   reason: 'expired',
   onRetry: null,
-  show: (reason, onRetry) => set({ isOpen: true, reason, onRetry: onRetry || null }),
-  close: () => set({ isOpen: false, onRetry: null }),
+  onCancel: null,
+  show: (reason, onRetry, onCancel) => set({ isOpen: true, reason, onRetry: onRetry || null, onCancel: onCancel || null }),
+  // Dismiss = cancel: fire onCancel once (so the awaiting submit rejects) and
+  // clear both callbacks. handleRenew/handleSignManually null out onCancel
+  // first when they take over, so this only fires on a genuine dismiss.
+  close: () => {
+    const { onCancel } = get()
+    set({ isOpen: false, onRetry: null, onCancel: null })
+    if (onCancel) onCancel()
+  },
 }))
 
 const QuickSignRenewModal: React.FC = () => {
@@ -73,6 +85,9 @@ const QuickSignRenewModal: React.FC = () => {
       // (the session IS valid now), just leaves the user with a stale
       // failed-notification they can click manually.
       const retry = onRetry
+      // Renewing IS the success path — don't let close() fire onCancel (which
+      // would reject the awaiting submit). Clear it first.
+      useQuickSignRenewStore.setState({ onCancel: null })
       close()
       if (retry) {
         setTimeout(async () => {
@@ -107,6 +122,9 @@ const QuickSignRenewModal: React.FC = () => {
       // but don't clear the session — re-enable if the user cancels
       setEnabled(false)
       const retry = onRetry
+      // "Sign manually" is also a deliberate retry, not a dismiss — clear
+      // onCancel so close() doesn't reject the awaiting submit.
+      useQuickSignRenewStore.setState({ onCancel: null })
       close()
       if (retry) {
         setTimeout(async () => {

@@ -883,7 +883,17 @@ export function useSignAndSubmitAction() {
   // but we still set the store optimistically so any UI showing
   // "next post will be #N" stays roughly accurate.
   const setCawonce    = useTokenDataStore(s => s.setCawonce)
-  const activeTokenId = activeToken?.tokenId
+  // Prefer the store's EXPLICIT activeTokenId (what the user/mint selected) over
+  // the id of the token useActiveToken() resolved. Right after an optimistic
+  // mint the new token isn't in tokensByAddress yet, so useActiveToken() falls
+  // back to a STALE token (the previous profile or allTokens[0]) — and keying
+  // off its id made signAndSubmit operate on the wrong profile: e.g. the
+  // pending-deposit hint (written under the new tokenId) was looked up under
+  // the stale id and missed, so a freshly-zapped deposit read as 0 ("Remaining:
+  // 0 CAW") on the first post. The store's activeTokenId was set explicitly by
+  // the mint, so it's the right source of truth for WHICH profile is active.
+  const storeActiveTokenId = useTokenDataStore(s => s.activeTokenId)
+  const activeTokenId = storeActiveTokenId ?? activeToken?.tokenId
 
   // ⬇️ buffer for the action the user tried to do before they were connected
   const [pendingParams, setPendingParams] = useState<ActionParams | null>(null)
@@ -1242,7 +1252,7 @@ export function useSignAndSubmitAction() {
             const result = await requestAndSubmit(params)
             resolve(result)
           } catch (err) { reject(err) }
-        })
+        }, () => reject(new Error('Quick Sign renewal cancelled')))
       })
     }
 
@@ -1327,7 +1337,7 @@ export function useSignAndSubmitAction() {
                 const result = await requestAndSubmit(params)
                 resolve(result)
               } catch (err) { reject(err) }
-            })
+            }, () => reject(new Error('Quick Sign renewal cancelled')))
           })
         }
       }
@@ -1675,6 +1685,12 @@ export function useSignAndSubmitAction() {
       // to amplify a transient error into a guaranteed conflict.
 
       const errMsg = (error?.message || error?.shortMessage || '').toLowerCase()
+      // Surface the REAL failure before we classify it. The deployed CawActions
+      // reverts "Session invalid" from several distinct causes (stale ledger
+      // address, stale localStorage session, signed-payload mutation, batch
+      // split) — all of which the heuristics below collapse into "expired".
+      // Logging the raw message is the only way to tell them apart.
+      console.warn('[signAndSubmit] submit failed — raw error:', error?.shortMessage || error?.message || error)
 
       // Wrong chain — switch and retry
       if (errMsg.includes('chainid should be same') || errMsg.includes('chain mismatch')) {
@@ -1714,7 +1730,7 @@ export function useSignAndSubmitAction() {
               const result = await requestAndSubmit(params)
               resolve(result)
             } catch (err) { reject(err) }
-          })
+          }, () => reject(new Error('Quick Sign renewal cancelled')))
         })
       }
 
