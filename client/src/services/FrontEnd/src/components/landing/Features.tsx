@@ -129,12 +129,12 @@ export const Features = () => {
                 <img
                   src={feature.image}
                   alt={feature.title}
-                  className={`w-full object-contain relative z-0 transition-opacity duration-300 ${
+                  className={`w-full object-contain relative z-0 transition-opacity duration-[1200ms] ease-out ${
                     index === 0 || index === 1
                       ? 'h-[120px] sm:h-[270px]'
                       : 'h-[110px] sm:h-[224px]'
                   } ${
-                    imageStates[index]?.showBoth ? 'opacity-100' : 'opacity-0'
+                    imageStates[index]?.imageLoaded ? 'opacity-100' : 'opacity-0'
                   }`}
                   loading="eager"
                   fetchPriority="high"
@@ -155,8 +155,8 @@ export const Features = () => {
                 {/* Particle overlay for noise effect. Capped at 85% so the
                     underlying artwork stays present on the small cards. */}
                 <div
-                  className={`hero-vignette absolute inset-0 pointer-events-none z-[1] overflow-hidden mix-blend-screen transition-opacity duration-300 ${
-                    imageStates[index]?.showBoth ? 'opacity-85' : 'opacity-0'
+                  className={`hero-vignette absolute inset-0 pointer-events-none z-[1] overflow-hidden mix-blend-screen transition-opacity duration-[1200ms] ease-out ${
+                    imageStates[index]?.particlesReady ? 'opacity-85' : 'opacity-0'
                   }`}
                 >
                   <ParticleSystemManifesto

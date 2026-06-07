@@ -52,8 +52,8 @@ export const FreeSpeech = () => {
           <img
             src={freeSpeechImg}
             alt="Free Speech"
-            className={`w-full h-auto relative z-0 transition-opacity duration-300 ${
-              showBoth ? "opacity-100" : "opacity-0"
+            className={`w-full h-auto relative z-0 transition-opacity duration-[1200ms] ease-out ${
+              imageLoaded ? "opacity-100" : "opacity-0"
             }`}
             loading="eager"
             fetchPriority="high"
@@ -62,8 +62,8 @@ export const FreeSpeech = () => {
           />
 
           <div
-            className={`absolute inset-0 pointer-events-none z-[1] overflow-hidden transition-opacity duration-300 ${
-              showBoth ? "opacity-100" : "opacity-0"
+            className={`absolute inset-0 pointer-events-none z-[1] overflow-hidden transition-opacity duration-[1200ms] ease-out ${
+              particlesReady ? "opacity-100" : "opacity-0"
             }`}
           >
             <ParticleSystemManifesto

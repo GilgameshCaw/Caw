@@ -86,8 +86,8 @@ export const Community = () => {
               <img
                 src={ethereumImg}
                 alt="Ethereum"
-                className={`w-full h-auto relative z-0 transition-opacity duration-300 ${
-                  showBoth ? 'opacity-100' : 'opacity-0'
+                className={`w-full h-auto relative z-0 transition-opacity duration-[1200ms] ease-out ${
+                  imageLoaded ? 'opacity-100' : 'opacity-0'
                 }`}
                 loading="eager"
                 fetchPriority="high"
@@ -95,8 +95,8 @@ export const Community = () => {
                 onLoad={() => setImageLoaded(true)}
                 onError={() => setImageLoaded(true)}
               />
-              <div className={`absolute inset-0 pointer-events-none z-[1] transition-opacity duration-300 ${
-                showBoth ? 'opacity-100' : 'opacity-0'
+              <div className={`absolute inset-0 pointer-events-none z-[1] transition-opacity duration-[1200ms] ease-out ${
+                particlesReady ? 'opacity-100' : 'opacity-0'
               }`}>
                 <ParticleSystemManifesto
                   imageUrl={ethereumImg}
@@ -154,8 +154,8 @@ export const Community = () => {
               <img
                 src={ethereumImg}
                 alt="Ethereum"
-                className={`w-full h-auto relative z-0 transition-opacity duration-300 ${
-                  showBoth ? 'opacity-100' : 'opacity-0'
+                className={`w-full h-auto relative z-0 transition-opacity duration-[1200ms] ease-out ${
+                  imageLoaded ? 'opacity-100' : 'opacity-0'
                 }`}
                 loading="eager"
                 fetchPriority="high"
@@ -163,8 +163,8 @@ export const Community = () => {
                 onLoad={() => setImageLoaded(true)}
                 onError={() => setImageLoaded(true)}
               />
-              <div className={`absolute inset-0 pointer-events-none z-[1] transition-opacity duration-300 ${
-                showBoth ? 'opacity-100' : 'opacity-0'
+              <div className={`absolute inset-0 pointer-events-none z-[1] transition-opacity duration-[1200ms] ease-out ${
+                particlesReady ? 'opacity-100' : 'opacity-0'
               }`}>
                 <ParticleSystemManifesto
                   imageUrl={ethereumImg}
