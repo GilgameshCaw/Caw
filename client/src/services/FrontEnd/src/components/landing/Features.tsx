@@ -166,7 +166,7 @@ export const Features = () => {
                     }
                     particleDensity={256}
                     tint={tint}
-                    minIntensity={0.3}
+                    minIntensity={0.15}
                     className="w-full h-full"
                     onReady={() => {
                       updateImageState(index, { particlesReady: true });

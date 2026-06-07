@@ -70,7 +70,7 @@ export const FreeSpeech = () => {
               imageUrl={freeSpeechImg}
               particleDensity={256}
               tint={tint}
-              minIntensity={0.3}
+              minIntensity={0.15}
               className="w-full h-full"
               onReady={() => setParticlesReady(true)}
             />

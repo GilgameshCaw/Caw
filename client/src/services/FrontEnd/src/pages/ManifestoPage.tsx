@@ -129,7 +129,7 @@ const ManifestoPage: React.FC = () => {
                       imageUrl={manifestoImg}
                       particleDensity={256}
                       tint={tint}
-                      minIntensity={0.3}
+                      minIntensity={0.15}
                       className="w-full h-full"
                       onReady={() => setParticlesReady(true)}
                     />
@@ -242,7 +242,7 @@ const ManifestoPage: React.FC = () => {
                       imageUrl={decentralizationImg}
                       particleDensity={256}
                       tint={tint}
-                      minIntensity={0.3}
+                      minIntensity={0.15}
                       className="w-full h-full"
                       onReady={() => setDecParticlesReady(true)}
                     />
@@ -699,7 +699,7 @@ const ManifestoPage: React.FC = () => {
                     imageUrl={dreamsImg}
                     particleDensity={256}
                     tint={tint}
-                    minIntensity={0.3}
+                    minIntensity={0.15}
                     className="w-full h-full"
                     onReady={() => setDreamsParticlesReady(true)}
                   />
