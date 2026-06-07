@@ -65,7 +65,7 @@ The principles below are not aspirational. Each is enforced by deployed code; th
 ## 3.1 ==Renounced== ownership
 
 > *"After deployment, the deployer must renounce any keys they have to the contracts. There will be no multi-sig, no upgradeable proxies. It will not matter who deployed because they will be equal with all with no specific benefit nor advantage. Just get the contract right."*
-> — `docs/manifesto.txt`
+> — [`docs/manifesto.txt`](/manifesto)
 
 Every production contract is Ownable, and every production contract has its owner transferred to `address(0)` after deployment. The single exception is the cross-chain expansion surface, which retains a constrained owner (the `PathwayExpander` — see §11) precisely so the protocol can be extended to new chains, new LayerZero DVN verifiers, and new KYC levels without becoming reconfigurable. Every extension function on `PathwayExpander` is additions-only — existing peers, DVN configs, and KYC slots are unmodifiable, only un-set slots can be filled.
 
@@ -415,6 +415,20 @@ For depth, see `docs/DIRECT_MESSAGING.md`.
 Some off-chain operations (e.g. linking an X account, enabling DMs) require a user to sign a message that the server consumes once. The server stores `sha256(message || signature)` in Redis with `SET NX EX 300`, making the signature reusable nowhere within a five-minute window and unusable thereafter (because the message itself carries a timestamp that rejects after the window).
 
 This is a small but important defense-in-depth: at no point does the server hand out a long-lived bearer token derived from a wallet signature without binding it to a single use.
+
+## 6.10 The user ==never needs L2 ETH==
+
+A property worth calling out explicitly: a CAW user's wallet only ever needs gas on **one** chain — L1 Ethereum (or whatever rollup hosts their `CawProfile` deployment). The L2 venue, the archive chain, and any cross-chain LayerZero hops are entirely invisible to the user from a gas-token perspective. They do not bridge ETH. They do not fund a separate L2 account. They do not receive prompts to "switch network and approve."
+
+Three mechanisms together guarantee this:
+
+1. **LayerZero `lzReceive` is permissionless on the destination chain.** Every cross-chain message originating from a user's L1 action (mint, deposit, authenticate, withdraw quote) is delivered to the L2 by whoever is willing to pay the L2 gas. In practice this is the LayerZero DVN/executor infrastructure paid via the `nativeFee` the user attaches on L1 — meaning the user pays once, in ETH, on L1, and the L2-side cost is settled inside that fee. The L1 transaction quotes the LayerZero fee live (via `quote()`); refunds for any overage flow back to a calldata-supplied `refundTo` address.
+2. **Quick Sign session keys mean the validator owns L2 gas, not the user.** Once a user authorizes a session, ordinary social actions (post, like, follow, etc.) are signed locally by the session key and submitted by the **validator**, which calls `processActions` on L2 and pays L2 gas itself. The validator recovers that cost via the per-action CAW tip embedded in each action. The user signs in-browser; the validator settles on-chain.
+3. **Sponsored entry points cover the cold-start case** ([§6.6](#66-sponsored-entry-points-and-the-three-signing-populations)). For Population B (phone-first / passkey) users, the sponsor server submits the initial L1 mint+deposit transaction itself, paying the L1 gas and forwarding the LayerZero fee. By the time the user takes their first social action, they have a Quick Sign session and L2 traffic is the validator's responsibility. The user can complete signup, mint a profile, and post their first CAW without ever holding ETH on either chain.
+
+There are exactly two places where this asymmetry is visible: **withdrawal**, where the user-signed L1 `withdrawTo` transaction must include the LayerZero fee for the L2→L1 message that updates the L2 balance (still L1-side ETH only); and **direct on-chain authentication** for Population A wallets that choose not to use Quick Sign for a session, which is itself an L1 action. Neither path requires the user to hold L2 gas.
+
+This property is not a UX courtesy — it is a structural consequence of pushing the user-facing contract surface (`CawProfile`, `CawProfileMinter`) to L1 and confining the high-throughput action stream (`CawActionsL2`, `CawProfileLedger`) to an L2 venue where gas is settled by parties with economic incentive to absorb it (validators via tips, DVNs via the user's bundled L1 fee).
 
 ---
 
@@ -1232,7 +1246,7 @@ Frontends are free to introduce additional OTHER prefixes for new social primiti
 
 # Appendix E — The ==Manifesto==
 
-The text below is reproduced verbatim from `docs/manifesto.txt`. It is the canonical philosophical source for CAW and predates this implementation.
+The text below is reproduced verbatim from [`docs/manifesto.txt`](/manifesto). It is the canonical philosophical source for CAW and predates this implementation.
 
 > A Manifesto on a Decentralized Social Clearing House ...(AKA) CAW
 >
@@ -1250,7 +1264,7 @@ The text below is reproduced verbatim from `docs/manifesto.txt`. It is the canon
 >     2. It is strongly recommended that a peer group is formed to develop and review smart contracts. as there is no leader in this process, all types will attempt to claim ownership of the process. there will those everso helpful who claim to be able to 'do it all' but will write the perfect code with the perfect backdoor   Only a cawmmunity reviewed and accepted contract on a public github will be acceptable
 >     3. After deployment, the deployer must renounce any keys they have to the contracts. There will be no multi-sig,  no upgradeable proxyies. It will not matter who deployed because they will be equal with all with no specfic benefit nor advantage. Just get the contract right.
 
-The full manifesto includes the user-facing protocol specification (mint costs, action costs, DM design, marketplace, image hosting) and is preserved at `docs/manifesto.txt` for reference. The protocol described in this white paper is the implementation of that specification.
+The full manifesto includes the user-facing protocol specification (mint costs, action costs, DM design, marketplace, image hosting) and is preserved at [`docs/manifesto.txt`](/manifesto) for reference. The protocol described in this white paper is the implementation of that specification.
 
 ---
 
@@ -1290,7 +1304,7 @@ The white paper references documents in the repository. The most useful for dept
 - `docs/MIGRATIONS.md` — database/contract migration procedures
 
 **Philosophy:**
-- `docs/manifesto.txt` — the canonical source (reproduced in Appendix E)
+- [`docs/manifesto.txt`](/manifesto) — the canonical source (reproduced in Appendix E)
 
 For source-of-truth, the contracts at `solidity/contracts/*.sol` and the service implementations at `client/src/services/` are themselves the spec.
 
