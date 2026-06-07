@@ -12,7 +12,7 @@ export const Features = () => {
   const features = useMemo(() => [
     {
       title: "Username NFTs",
-      description: "Your name is an NFT. Mint it once, own it forever, take it anywhere CAW runs.",
+      description: "Your name is an NFT. Mint it once, own it forever, sell it, or take it anywhere CAW runs.",
       image: feature1,
     },
     {
