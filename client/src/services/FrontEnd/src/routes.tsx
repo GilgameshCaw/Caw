@@ -21,7 +21,12 @@ function lazyWithReload<T extends ComponentType<any>>(
   return lazy(() =>
     loader().catch((err: unknown) => {
       const msg = err instanceof Error ? err.message : String(err)
-      const isChunkError = /Failed to fetch dynamically imported module|Loading chunk|ChunkLoadError|error loading dynamically imported module/i.test(msg)
+      // A stale chunk 404 (post-deploy) words its failure differently per
+      // engine — match all of them. Missing the Safari/iOS variant
+      // ("Importing a module script failed") meant iOS users hit the
+      // root error boundary instead of the one-shot reload (#306), while
+      // Chrome/Android recovered silently.
+      const isChunkError = /Failed to fetch dynamically imported module|Loading chunk|ChunkLoadError|error loading dynamically imported module|Importing a module script failed/i.test(msg)
       if (isChunkError && !sessionStorage.getItem(RELOADED_KEY)) {
         sessionStorage.setItem(RELOADED_KEY, '1')
         window.location.reload()

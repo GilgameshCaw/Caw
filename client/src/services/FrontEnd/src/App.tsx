@@ -142,6 +142,8 @@ function App() {
   // store starts effectively empty even when the cookie is still valid;
   // /api/auth/refresh reads the DB and hydrates those hints back without
   // requiring a fresh wallet signature. Fires once per mount.
+  // skipAuthModal=true: 401 here just means "no live session" — not a
+  // privileged-action failure — so we must not open the verify modal.
   useEffect(() => {
     let cancelled = false
     apiFetch<{
