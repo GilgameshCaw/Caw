@@ -5,6 +5,7 @@ import { useActiveToken } from '~/store/tokenDataStore'
 import { useTheme } from '~/hooks/useTheme'
 import { useT } from '~/i18n/I18nProvider'
 import { useState, useEffect, useRef, lazy, Suspense } from 'react'
+import { HiChevronDown } from 'react-icons/hi'
 import BoidsBg from '~/components/BoidsBg3D'
 import LanguageSwitcher from '~/components/LanguageSwitcher'
 import WalletAccountButton from '~/components/buttons/WalletAccountButton'
@@ -49,6 +50,8 @@ export default function CaptiveSplash() {
   // a one-tap path back to sign-in without scrolling back to the top.
   const heroCtaRef = useRef<HTMLDivElement | null>(null)
   const [heroCtaOut, setHeroCtaOut] = useState(false)
+  // First content section below the hero — the down-arrow scrolls here.
+  const featuresRef = useRef<HTMLDivElement | null>(null)
   useEffect(() => {
     const el = heroCtaRef.current
     if (!el) return
@@ -190,13 +193,26 @@ export default function CaptiveSplash() {
           onPasskeyPath={() => navigate('/onboarding')}
         />
 
+        {/* Scroll cue — a gently bouncing down-arrow at the bottom of the hero
+            so it's clear there's more below. Clicking scrolls to the first
+            content section. Fades out once the user has scrolled past the hero. */}
+        <button
+          type="button"
+          aria-label={t('captive_splash.scroll_down') || 'Scroll down'}
+          onClick={() => featuresRef.current?.scrollIntoView({ behavior: 'smooth' })}
+          className={`absolute bottom-6 left-1/2 -translate-x-1/2 z-20 p-2 rounded-full transition-opacity duration-300 animate-bounce ${
+            heroCtaOut ? 'opacity-0 pointer-events-none' : 'opacity-70 hover:opacity-100'
+          } ${isDark ? 'text-white' : 'text-black'}`}
+        >
+          <HiChevronDown className="w-8 h-8" />
+        </button>
 
       </div>
 
       {/* Landing sections ported from caw-landing (below the hero/CTA).
           Each section is one full viewport tall; the page scrolls freely
           (no scroll-snap). */}
-      <div className="min-h-[100svh] flex flex-col justify-center relative z-10 pt-20 sm:pt-0">
+      <div ref={featuresRef} className="min-h-[100svh] flex flex-col justify-center relative z-10 pt-20 sm:pt-0">
         <Suspense fallback={<div className="py-20" />}>
           <Features />
         </Suspense>

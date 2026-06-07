@@ -1,4 +1,6 @@
 import React, { useEffect, useMemo, useState } from 'react'
+import { useParams } from 'react-router-dom'
+import { useNavigate } from '~/utils/localizedRouter'
 import { useTheme } from '~/hooks/useTheme'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
@@ -11,6 +13,65 @@ import whitepaperMd from '../../../../../../docs/WHITEPAPER.md?raw'
 
 import LandingHeader from '~/components/landing/LandingHeader'
 import LandingFooter from '~/components/landing/LandingFooter'
+
+// Base for turning in-doc file references into GitHub source links. Change here
+// if the canonical public repo / branch moves.
+const REPO_BASE = 'https://github.com/GilgameshCaw/Caw/blob/master/'
+
+// Inline-code file references that resolve to an existing repo path get linked to
+// GitHub. Keys are the token AS WRITTEN in the markdown (bare contract names are
+// aliased to their solidity/contracts path; the service path is aliased too).
+// Refs NOT in this map render as plain styled code (no dead links).
+const REPO_FILES: Record<string, string> = {
+  'CawActions.sol': 'solidity/contracts/CawActions.sol',
+  'CawActionsArchive.sol': 'solidity/contracts/CawActionsArchive.sol',
+  'CawActionsERC1271.sol': 'solidity/contracts/CawActionsERC1271.sol',
+  'CawCapOracle.sol': 'solidity/contracts/CawCapOracle.sol',
+  'CawChallengeRelay.sol': 'solidity/contracts/CawChallengeRelay.sol',
+  'CawProfile.sol': 'solidity/contracts/CawProfile.sol',
+  'CawProfileMinter.sol': 'solidity/contracts/CawProfileMinter.sol',
+  'SigVerification.sol': 'solidity/contracts/SigVerification.sol',
+  'SmartEOA.sol': 'solidity/contracts/SmartEOA.sol',
+  'ValidatorService/index.ts': 'client/src/services/ValidatorService/index.ts',
+  'docs/ACTION_COST_CAP.md': 'docs/ACTION_COST_CAP.md',
+  'docs/ARCHITECTURE.md': 'docs/ARCHITECTURE.md',
+  'docs/DATA_FLOW.md': 'docs/DATA_FLOW.md',
+  'docs/DIRECT_MESSAGING.md': 'docs/DIRECT_MESSAGING.md',
+  'docs/ELASTICSEARCH_SETUP.md': 'docs/ELASTICSEARCH_SETUP.md',
+  'docs/IMAGE_UPLOAD_SYSTEM.md': 'docs/IMAGE_UPLOAD_SYSTEM.md',
+  'docs/MARKETPLACE.md': 'docs/MARKETPLACE.md',
+  'docs/MIGRATIONS.md': 'docs/MIGRATIONS.md',
+  'docs/MULTI_CHAIN_STORAGE.md': 'docs/MULTI_CHAIN_STORAGE.md',
+  'docs/REPLICATION_AND_SLASHING.md': 'docs/REPLICATION_AND_SLASHING.md',
+  'docs/SESSION_KEYS.md': 'docs/SESSION_KEYS.md',
+  'docs/SOLANA_OPTION.md': 'docs/SOLANA_OPTION.md',
+  'docs/VALIDATOR_MESH_NETWORK.md': 'docs/VALIDATOR_MESH_NETWORK.md',
+  'docs/ZK_SIG_PATH.md': 'docs/ZK_SIG_PATH.md',
+  'native/docs/BACKUP_AND_RECOVERY.md': 'native/docs/BACKUP_AND_RECOVERY.md',
+  'native/docs/ERC4337_REASSESSMENT.md': 'native/docs/ERC4337_REASSESSMENT.md',
+  'native/docs/ROADMAP.md': 'native/docs/ROADMAP.md',
+  'native/docs/WALLET.md': 'native/docs/WALLET.md',
+  'solidity/contracts/CawActions.sol': 'solidity/contracts/CawActions.sol',
+  'solidity/contracts/CawActionsArchive.sol': 'solidity/contracts/CawActionsArchive.sol',
+  'solidity/contracts/CawActionsERC1271.sol': 'solidity/contracts/CawActionsERC1271.sol',
+  'solidity/contracts/CawBuyAndBurn.sol': 'solidity/contracts/CawBuyAndBurn.sol',
+  'solidity/contracts/CawCapOracle.sol': 'solidity/contracts/CawCapOracle.sol',
+  'solidity/contracts/CawChallengeRelay.sol': 'solidity/contracts/CawChallengeRelay.sol',
+  'solidity/contracts/CawFontDataA.sol': 'solidity/contracts/CawFontDataA.sol',
+  'solidity/contracts/CawFontDataB.sol': 'solidity/contracts/CawFontDataB.sol',
+  'solidity/contracts/CawL1PriceReader.sol': 'solidity/contracts/CawL1PriceReader.sol',
+  'solidity/contracts/CawNetworkManager.sol': 'solidity/contracts/CawNetworkManager.sol',
+  'solidity/contracts/CawProfile.sol': 'solidity/contracts/CawProfile.sol',
+  'solidity/contracts/CawProfileMarketplace.sol': 'solidity/contracts/CawProfileMarketplace.sol',
+  'solidity/contracts/CawProfileMinter.sol': 'solidity/contracts/CawProfileMinter.sol',
+  'solidity/contracts/CawProfileURI.sol': 'solidity/contracts/CawProfileURI.sol',
+  'solidity/contracts/MintableCaw.sol': 'solidity/contracts/MintableCaw.sol',
+  'solidity/contracts/OnlyOnce.sol': 'solidity/contracts/OnlyOnce.sol',
+  'solidity/contracts/PathwayExpander.sol': 'solidity/contracts/PathwayExpander.sol',
+  'solidity/contracts/SigVerification.sol': 'solidity/contracts/SigVerification.sol',
+  'solidity/contracts/SmartEOA.sol': 'solidity/contracts/SmartEOA.sol',
+  'solidity/contracts/sp1-vendor/SP1VerifierGroth16.sol': 'solidity/contracts/sp1-vendor/SP1VerifierGroth16.sol',
+}
 
 const WhitepaperPage: React.FC = () => {
   const { isDark } = useTheme()
@@ -31,7 +92,9 @@ const WhitepaperPage: React.FC = () => {
       const m = lines[i].match(/^(#{1,2})\s+(.+?)\s*$/)
       if (!m) continue
       const depth = m[1].length as 1 | 2
-      const label = m[2].replace(/\s+#+\s*$/, '').trim()
+      // Strip ==highlight== markers so the TOC label + slug match the rendered
+      // (marker-free) heading text and anchors stay stable.
+      const label = m[2].replace(/\s+#+\s*$/, '').replace(/==/g, '').trim()
       const id = slugger.slug(label)
       headings.push({ id, depth, label, line: i })
     }
@@ -101,14 +164,28 @@ const WhitepaperPage: React.FC = () => {
     return { toc, sectionMdById, headingIdFor, initialId, parentById }
   }, [])
 
-  const [activeId, setActiveId] = useState<string>('')
+  // The URL is the source of truth for the active section, so each section is
+  // deep-linkable and back/forward works. /help/whitepaper/<section-slug>.
+  const { sectionId } = useParams<{ sectionId?: string }>()
+  const navigate = useNavigate()
+
+  // The active section resolves from the URL param when it's a known section,
+  // otherwise the default (Foreword / first). No separate state to drift.
+  const activeId = (sectionId && sectionMdById[sectionId]) ? sectionId : initialId
+
+  // Navigating to a section = pushing its slug to the URL (activeId follows).
+  const selectSection = (id: string) => navigate(`/help/whitepaper/${id}`)
 
   // Collapsible parents (dropdown-like). Default: expand the active section's parent.
   const [expandedParents, setExpandedParents] = useState<Record<string, boolean>>({})
 
+  // If the URL has no (or an unknown) section, canonicalize to the default so the
+  // address bar always reflects what's shown.
   useEffect(() => {
-    if (!activeId && initialId) setActiveId(initialId)
-  }, [activeId, initialId])
+    if (initialId && (!sectionId || !sectionMdById[sectionId])) {
+      navigate(`/help/whitepaper/${initialId}`, { replace: true })
+    }
+  }, [sectionId, initialId, sectionMdById, navigate])
 
   useEffect(() => {
     if (!activeId) return
@@ -126,16 +203,32 @@ const WhitepaperPage: React.FC = () => {
       return ''
     }
 
+    // Render heading text, turning ==highlighted== spans gold so the most
+    // important word(s) of a title pop (authored per-heading in WHITEPAPER.md).
+    // The slug id is computed from the marker-free text so anchors stay stable.
+    const renderHighlighted = (text: string) => {
+      const parts = text.split(/==(.+?)==/g) // odd indices are the highlighted bits
+      return parts.map((part, i) =>
+        i % 2 === 1
+          ? <span key={i} className="text-yellow-400">{part}</span>
+          : part
+      )
+    }
+
     const Heading = (Tag: any, level: number) => {
       return ({ children, ...rest }: any) => {
-        const label = toText(children).trim()
+        const raw = toText(children).trim()
+        const label = raw.replace(/==/g, '') // marker-free for slug/anchor
         const id = headingIdFor(label)
         const cls = level === 1
           ? 'mt-10 first:mt-0 text-2xl sm:text-3xl font-bold'
           : level === 2
             ? 'mt-8 text-xl sm:text-2xl font-semibold'
             : 'mt-6 text-lg font-semibold'
-        return <Tag id={id} className={cls} {...rest}>{children}</Tag>
+        // If the heading carried a ==marker==, render our highlighted version;
+        // otherwise pass children through untouched (preserves any inline md).
+        const content = raw.includes('==') ? renderHighlighted(raw) : children
+        return <Tag id={id} className={cls} {...rest}>{content}</Tag>
       }
     }
 
@@ -144,6 +237,9 @@ const WhitepaperPage: React.FC = () => {
       h2: Heading('h2', 2),
       h3: Heading('h3', 3),
       p: ({ children }: any) => <p className={isDark ? 'mt-3 text-white/70 leading-relaxed' : 'mt-3 text-black/70 leading-relaxed'}>{children}</p>,
+      // Bold pops brighter than the muted body text — white in dark mode,
+      // full-strength near-black in light mode.
+      strong: ({ children }: any) => <strong className={isDark ? 'font-semibold text-white' : 'font-semibold text-black'}>{children}</strong>,
       // The source markdown uses thematic breaks (---) as section dividers.
       // In our UI they look like random horizontal rules, so we suppress them.
       hr: () => null,
@@ -154,7 +250,33 @@ const WhitepaperPage: React.FC = () => {
       ),
       ul: ({ children }: any) => <ul className="mt-3 list-disc pl-6 space-y-1">{children}</ul>,
       ol: ({ children }: any) => <ol className="mt-3 list-decimal pl-6 space-y-1">{children}</ol>,
-      li: ({ children }: any) => <li className={isDark ? 'text-white/70' : 'text-black/70'}>{children}</li>,
+      li: ({ children }: any) => {
+        // Definition-style item: "`Term` — description". When a list item starts
+        // with an inline-code term immediately followed by an em-dash, render that
+        // leading term highlighted (bold gold) so the defined thing stands out.
+        const kids = Array.isArray(children) ? children : [children]
+        const first = kids[0]
+        const second = kids[1]
+        const isCodeEl = first && typeof first === 'object' && (first as any).type === 'code'
+        const secondText = typeof second === 'string' ? second : ''
+        if (isCodeEl && /^\s*[—–-]\s/.test(secondText)) {
+          const termText = toText((first as any).props?.children).trim()
+          const goldCls = isDark ? 'font-semibold text-yellow-400' : 'font-semibold text-yellow-700'
+          const repoPath = REPO_FILES[termText]
+          // If the defined term is a linkable repo file, keep it clickable AND
+          // highlighted; otherwise just highlight it.
+          const styled = repoPath ? (
+            <a key="term" href={REPO_BASE + repoPath} target="_blank" rel="noreferrer"
+              className={`${goldCls} underline decoration-dotted underline-offset-2 hover:opacity-90`}>
+              {termText}
+            </a>
+          ) : (
+            <strong key="term" className={goldCls}>{termText}</strong>
+          )
+          return <li className={isDark ? 'text-white/70' : 'text-black/70'}>{[styled, ...kids.slice(1)]}</li>
+        }
+        return <li className={isDark ? 'text-white/70' : 'text-black/70'}>{children}</li>
+      },
       blockquote: ({ children }: any) => (
         <blockquote className={isDark ? 'mt-4 border-l-2 border-white/20 pl-4 text-white/70 italic' : 'mt-4 border-l-2 border-black/10 pl-4 text-black/70 italic'}>
           {children}
@@ -162,7 +284,25 @@ const WhitepaperPage: React.FC = () => {
       ),
       code: ({ inline, children }: any) => {
         if (inline) {
-          return <code className={isDark ? 'px-1 py-0.5 rounded bg-white/10 text-white/90' : 'px-1 py-0.5 rounded bg-black/10 text-black/90'}>{children}</code>
+          // All inline code renders bold + bright (white on dark / black on light)
+          // so identifiers, fields, and call signatures all pop from the body text.
+          const codeCls = isDark
+            ? 'px-1 py-0.5 rounded bg-white/10 font-semibold text-white'
+            : 'px-1 py-0.5 rounded bg-black/10 font-semibold text-black'
+          // Known repo file references additionally link to GitHub source. Unknown
+          // refs (or internal files not in the map) stay plain so we never emit a
+          // dead link.
+          const token = toText(children).trim()
+          const repoPath = REPO_FILES[token]
+          if (repoPath) {
+            return (
+              <a href={REPO_BASE + repoPath} target="_blank" rel="noreferrer"
+                className={`${codeCls} underline decoration-dotted underline-offset-2 hover:opacity-90`}>
+                {children}
+              </a>
+            )
+          }
+          return <code className={codeCls}>{children}</code>
         }
         return <code>{children}</code>
       },
@@ -243,7 +383,7 @@ const WhitepaperPage: React.FC = () => {
                         type="button"
                         onClick={() => {
                           setExpandedParents(prev => ({ ...prev, [item.id]: !(prev[item.id] ?? false) }))
-                          setActiveId(item.id)
+                          selectSection(item.id)
                           setMobileNavOpen(false)
                         }}
                         className={
@@ -279,7 +419,7 @@ const WhitepaperPage: React.FC = () => {
                                   <button
                                     key={child.id}
                                     type="button"
-                                    onClick={() => { setActiveId(child.id); setMobileNavOpen(false) }}
+                                    onClick={() => { selectSection(child.id); setMobileNavOpen(false) }}
                                     className={
                                       (isDark
                                         ? `w-full text-left px-2 py-2 rounded-lg text-sm hover:bg-white/10 ${isActiveChild ? 'bg-white/10 text-white' : 'text-white/70'}`
@@ -305,7 +445,7 @@ const WhitepaperPage: React.FC = () => {
                   <button
                     key={item.id}
                     type="button"
-                    onClick={() => { setActiveId(item.id); setMobileNavOpen(false) }}
+                    onClick={() => { selectSection(item.id); setMobileNavOpen(false) }}
                     className={
                       (isDark
                         ? `w-full text-left px-2 py-2 rounded-lg text-sm hover:bg-white/10 ${isActive ? 'bg-white/10 text-white' : 'text-white/80'}`

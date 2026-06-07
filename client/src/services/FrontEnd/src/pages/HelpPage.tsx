@@ -3,6 +3,8 @@ import { useLocation } from 'react-router-dom'
 import { Link, useNavigate } from '~/utils/localizedRouter'
 import { useTheme } from '~/hooks/useTheme'
 import { useT } from '~/i18n/I18nProvider'
+import { useActiveToken } from '~/store/tokenDataStore'
+import ManifestoContent from '~/components/ManifestoContent'
 import { HiArrowLeft, HiChevronDown, HiChevronUp, HiExternalLink, HiCode, HiDocumentText, HiGlobe, HiCurrencyDollar, HiUserGroup, HiChartBar, HiBeaker } from 'react-icons/hi'
 import { useChainId } from 'wagmi'
 import { chains } from '~/config/chains'
@@ -23,6 +25,10 @@ interface HelpPageProps {
 const HelpPage: React.FC<HelpPageProps> = ({ defaultTab }) => {
   const { isDark } = useTheme()
   const t = useT()
+  // Captive (no profile) → MainLayout hides the sidebars, so the help content
+  // can use more width; otherwise keep the narrower post-standard container.
+  const activeToken = useActiveToken()
+  const isCaptive = !activeToken?.username
   const location = useLocation()
   const navigate = useNavigate()
   const [expandedFAQ, setExpandedFAQ] = useState<number | null>(null)
@@ -90,6 +96,12 @@ const HelpPage: React.FC<HelpPageProps> = ({ defaultTab }) => {
       url: '/help/manifesto'
     },
     {
+      icon: <HiDocumentText className="w-6 h-6" />,
+      title: t('help.resources.official.whitepaper.title'),
+      description: t('help.resources.official.whitepaper.description'),
+      url: '/help/whitepaper'
+    },
+    {
       icon: <HiCode className="w-6 h-6" />,
       title: t('help.resources.official.github.title'),
       description: t('help.resources.official.github.description'),
@@ -152,7 +164,11 @@ const HelpPage: React.FC<HelpPageProps> = ({ defaultTab }) => {
           <h3 className={`font-medium ${isDark ? 'text-white' : 'text-gray-900'}`}>
             {item.title}
           </h3>
-          <HiExternalLink className={`w-4 h-4 ${isDark ? 'text-white/40' : 'text-gray-400'}`} />
+          {/* Only external links get the "opens elsewhere" icon — internal
+              routes (manifesto, white paper) shouldn't look external. */}
+          {!isInternal && (
+            <HiExternalLink className={`w-4 h-4 ${isDark ? 'text-white/40' : 'text-gray-400'}`} />
+          )}
         </div>
         <p className={`text-sm truncate ${isDark ? 'text-white/50' : 'text-gray-500'}`}>
           {item.description}
@@ -230,7 +246,7 @@ const HelpPage: React.FC<HelpPageProps> = ({ defaultTab }) => {
   )
 
   return (
-      <div className={`max-w-2xl mx-auto px-6 py-4 ${isDark ? 'bg-black/80' : 'bg-white/90'} backdrop-blur-sm`}>
+      <div className={`${isCaptive ? 'max-w-[850px]' : 'max-w-2xl'} mx-auto px-6 py-4 ${isDark ? 'bg-black/80' : 'bg-white/90'} backdrop-blur-sm`}>
         {/* Header */}
         <div className="flex items-center gap-4 mb-6">
           <Link
@@ -451,194 +467,10 @@ const HelpPage: React.FC<HelpPageProps> = ({ defaultTab }) => {
         )}
 
         {/* Manifesto Section */}
+        {/* The manifesto body (shared with the standalone /manifesto route)
+            renders below the Help tab bar. */}
         {activeSection === 'manifesto' && (
-          <div className="space-y-6">
-            <div className={`p-6 rounded-xl ${isDark ? 'bg-[#0D0D0D]/85' : 'bg-gray-50 shadow-xl'}`}>
-              <p className={`text-xs mb-4 ${isDark ? 'text-white/40' : 'text-gray-400'}`}>
-                {t('help.manifesto.attribution_before_link')}
-                <Link to="/help/history" className={`underline ${isDark ? 'text-yellow-500/60 hover:text-yellow-500' : 'text-yellow-700/60 hover:text-yellow-700'}`}>{t('help.manifesto.attribution_link_text')}</Link>
-              </p>
-              <h2 className={`text-xl font-bold mb-4 ${isDark ? 'text-white' : 'text-gray-900'}`}>
-                {t('help.manifesto.heading')}
-              </h2>
-
-              <div className={`space-y-4 text-sm leading-relaxed ${isDark ? 'text-white/80' : 'text-gray-700'}`}>
-                <p>
-                  {t('help.manifesto.p1')}
-                </p>
-
-                <p>
-                  {t('help.manifesto.p2')}
-                </p>
-
-                <p>
-                  {t('help.manifesto.p3')}
-                </p>
-
-                <p>
-                  {t('help.manifesto.p4')}
-                </p>
-
-                <p>
-                  {t('help.manifesto.p5')}
-                </p>
-
-                <div className="pl-4 space-y-2">
-                  <p>{t('help.manifesto.preamble.item1')}</p>
-                  <p>{t('help.manifesto.preamble.item2')}</p>
-                  <p>{t('help.manifesto.preamble.item3')}</p>
-                </div>
-
-                <h3 className={`text-lg font-semibold mt-6 mb-2 ${isDark ? 'text-white' : 'text-gray-900'}`}>
-                  {t('help.manifesto.propose.heading')}
-                </h3>
-                <p>
-                  {t('help.manifesto.propose.a')}
-                </p>
-                <p>
-                  {t('help.manifesto.propose.b')}
-                </p>
-                <p>
-                  {t('help.manifesto.propose.general_function')}
-                </p>
-
-                <div className="space-y-3 pl-2">
-                  <p><strong>i.</strong> {t('help.manifesto.proto.i')}</p>
-                  <p className="pl-4">{t('help.manifesto.proto.i_a')}</p>
-                  <p className="pl-4">{t('help.manifesto.proto.i_b')}</p>
-
-                  <p><strong>ii.</strong> {t('help.manifesto.proto.ii')}</p>
-
-                  <p><strong>iii.</strong> {t('help.manifesto.proto.iii')}</p>
-
-                  <p><strong>iv.</strong> {t('help.manifesto.proto.iv')}</p>
-
-                  <p><strong>v.</strong> {t('help.manifesto.proto.v')}</p>
-                  <div className="pl-4 space-y-2">
-                    <p><strong>i.</strong> {t('help.manifesto.proto.v_i')}</p>
-                    <p className="pl-4">{t('help.manifesto.proto.v_i_a')}</p>
-                    <p><strong>ii.</strong> {t('help.manifesto.proto.v_ii')}</p>
-                    <p className="pl-4">{t('help.manifesto.proto.v_ii_a')}</p>
-                    <p><strong>iii.</strong> {t('help.manifesto.proto.v_iii')}</p>
-                    <p className="pl-4">{t('help.manifesto.proto.v_iii_a')}</p>
-                  </div>
-
-                  <p><strong>vi.</strong> {t('help.manifesto.proto.vi')}</p>
-                  <p className="pl-4">{t('help.manifesto.proto.vi_a')}</p>
-                  <p className="pl-4">{t('help.manifesto.proto.vi_b')}</p>
-
-                  <p><strong>vii.</strong> {t('help.manifesto.proto.vii')}</p>
-
-                  <p><strong>viii.</strong> {t('help.manifesto.proto.viii')}</p>
-
-                  <p>{t('help.manifesto.proto.data_storage')}</p>
-                </div>
-
-                <p>
-                  {t('help.manifesto.frontends_intro_a')}
-                </p>
-                <p>
-                  {t('help.manifesto.frontends_intro_b')}
-                </p>
-
-                <h3 className={`text-lg font-semibold mt-6 mb-2 ${isDark ? 'text-white' : 'text-gray-900'}`}>
-                  {t('help.manifesto.frontends.heading')}
-                </h3>
-                <p>
-                  {t('help.manifesto.frontends.p1')}
-                </p>
-                <p>
-                  {t('help.manifesto.frontends.p2')}
-                </p>
-                <p>
-                  <strong className={isDark ? 'text-white' : 'text-gray-900'}>{t('help.manifesto.frontends.p3_strong')}</strong>
-                </p>
-
-                <h3 className={`text-lg font-semibold mt-6 mb-2 ${isDark ? 'text-white' : 'text-gray-900'}`}>
-                  {t('help.manifesto.appendix.heading')}
-                </h3>
-
-                <p><strong>a.</strong> {t('help.manifesto.appendix.a')}</p>
-                <p>
-                  {t('help.manifesto.appendix.a_followup')}
-                </p>
-
-                <p className="mt-4"><strong>b.</strong> {t('help.manifesto.appendix.b')}</p>
-                <p>
-                  {t('help.manifesto.appendix.b_mc_i')}<br />
-                  {t('help.manifesto.appendix.b_mc_ii')}<br />
-                  {t('help.manifesto.appendix.b_mc_iii')}
-                </p>
-                <p>
-                  {t('help.manifesto.appendix.b_caveat')}
-                </p>
-                <p>{t('help.manifesto.appendix.cost_calcs_intro')}</p>
-                <p className="pl-4">
-                  {t('help.manifesto.appendix.cost_i')}<br />
-                  {t('help.manifesto.appendix.cost_ii')}<br />
-                  {t('help.manifesto.appendix.cost_iii')}<br />
-                  {t('help.manifesto.appendix.cost_iv')}
-                </p>
-                <p>
-                  {t('help.manifesto.appendix.math_explanation')}
-                </p>
-                <p>{t('help.manifesto.appendix.recommended_intro')}</p>
-                <ul className={`space-y-1 pl-2 ${isDark ? 'text-white/80' : 'text-gray-700'}`}>
-                  <li>{t('help.manifesto.appendix.cost.username_1')}</li>
-                  <li>{t('help.manifesto.appendix.cost.username_2')}</li>
-                  <li>{t('help.manifesto.appendix.cost.username_3')}</li>
-                  <li>{t('help.manifesto.appendix.cost.username_4')}</li>
-                  <li>{t('help.manifesto.appendix.cost.username_5')}</li>
-                  <li>{t('help.manifesto.appendix.cost.username_6')}</li>
-                  <li>{t('help.manifesto.appendix.cost.username_7')}</li>
-                  <li>{t('help.manifesto.appendix.cost.username_8')}</li>
-                </ul>
-
-                <ul className={`space-y-1 pl-2 mt-2 ${isDark ? 'text-white/80' : 'text-gray-700'}`}>
-                  <li>{t('help.manifesto.appendix.cost.follow')}</li>
-                  <li>{t('help.manifesto.appendix.cost.send_caw')}</li>
-                  <li>{t('help.manifesto.appendix.cost.like')}</li>
-                  <li>{t('help.manifesto.appendix.cost.recaw')}</li>
-                </ul>
-
-                <p className="mt-4"><strong>c.</strong> {t('help.manifesto.appendix.c')}</p>
-                <p className="pl-4">
-                  {t('help.manifesto.appendix.c_i')}<br />
-                  {t('help.manifesto.appendix.c_ii')}
-                </p>
-                <p>
-                  {t('help.manifesto.appendix.c_example')}
-                </p>
-                <p>
-                  {t('help.manifesto.appendix.c_example_explanation')}
-                </p>
-
-                <div className={`mt-6 pt-4 border-t ${isDark ? 'border-white/10' : 'border-gray-200'}`}>
-                  <p className={`italic ${isDark ? 'text-white/60' : 'text-gray-500'}`}>
-                    {t('help.manifesto.signoff')}
-                  </p>
-                  <p className="mt-4">
-                    {t('help.manifesto.ps')}
-                  </p>
-                </div>
-              </div>
-            </div>
-
-            {/* Link to full manifesto */}
-            <a
-              href="https://github.com/cawdevelopment/manifesto"
-              target="_blank"
-              rel="noopener noreferrer"
-              className={`flex items-center justify-center gap-2 py-3 px-4 rounded-lg transition-colors ${
-                isDark
-                  ? 'bg-yellow-500/10 text-yellow-500 hover:bg-yellow-500/20'
-                  : 'bg-yellow-50 text-yellow-700 hover:bg-yellow-100'
-              }`}
-            >
-              {t('help.manifesto.view_on_github')}
-              <HiExternalLink className="w-4 h-4" />
-            </a>
-          </div>
+          <ManifestoContent />
         )}
 
         {/* Getting Started Section */}

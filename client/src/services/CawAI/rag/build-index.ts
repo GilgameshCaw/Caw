@@ -91,7 +91,10 @@ async function main() {
     try {
       await walk(abs, async (filePath) => {
         if (!EXTS.has(path.extname(filePath))) return
-        const text = await fs.readFile(filePath, 'utf8')
+        let text = await fs.readFile(filePath, 'utf8')
+        // Strip ==highlight== markers (a FE-only heading-emphasis convention in
+        // WHITEPAPER.md) so they don't pollute embeddings/search text.
+        text = text.replace(/==(.+?)==/g, '$1')
         const chunks = chunkTokenAware(text, CHUNK_TOKENS, OVERLAP_TOKENS)
         for (const c of chunks) {
           pending.push({
