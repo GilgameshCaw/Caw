@@ -4,7 +4,7 @@
 
 ---
 
-## Foreword
+## ==Foreword==
 
 CAW began without a developer, without official socials, and without a roadmap. A contract was deployed, and a community formed around it. What follows is not the story of a startup; it is the specification for a public utility — one that, once deployed, no party can shut down, fee-extract, censor, or upgrade against its users.
 
@@ -14,32 +14,7 @@ This paper is for the reader who wants to verify rather than be told. Every cons
 
 ---
 
-## Table of Contents
-
-1.  Abstract
-2.  The Problem
-3.  Design Principles
-4.  Architecture
-5.  The Action Lifecycle
-6.  Cryptography & Identity
-7.  Economics
-8.  Optimistic Archive & Slashing
-9.  Threat Model
-10. The Mesh: Multi-Network, Multi-Mirror, Multi-Chain
-11. Governance by Renunciation
-12. Comparison & Positioning
-13. Roadmap
-
-Appendix A — Glossary
-Appendix B — Contract Inventory
-Appendix C — Constants Reference
-Appendix D — Action Types & Cost Table
-Appendix E — The Manifesto
-Appendix F — Further Reading
-
----
-
-# 1. Abstract
+# 1. ==Abstract==
 
 CAW Protocol is a fully on-chain social network. Every user action — a post, a like, a follow, a tip — is an EIP-712-signed message that becomes part of the durable record of an L2 blockchain. Identity is an ERC-721 NFT minted on Ethereum mainnet by burning CAW tokens. The supply of usernames is bounded by the cost of burning, with shorter names burning exponentially more.
 
@@ -57,7 +32,7 @@ The remainder of this paper describes how each of these claims is realized in co
 
 ---
 
-# 2. The Problem
+# 2. The ==Problem==
 
 Every centralized social platform begins as a product and ends as a tax. The platform owner accumulates control over identity, distribution, and content moderation, and over time monetizes each in ways that diverge from user interest. A user who has spent a decade building an audience on such a platform cannot port that audience anywhere; the platform's owners can — and do — sell access to it, restrict its visibility, or remove it.
 
@@ -83,42 +58,42 @@ CAW's wager is that separating the *protocol* (which is forever) from the *front
 
 ---
 
-# 3. Design Principles
+# 3. Design ==Principles==
 
 The principles below are not aspirational. Each is enforced by deployed code; the relevant enforcement mechanism is named.
 
-## 3.1 Renounced ownership
+## 3.1 ==Renounced== ownership
 
 > *"After deployment, the deployer must renounce any keys they have to the contracts. There will be no multi-sig, no upgradeable proxies. It will not matter who deployed because they will be equal with all with no specific benefit nor advantage. Just get the contract right."*
 > — `docs/manifesto.txt`
 
-Every production contract is Ownable, and every production contract has its owner transferred to `address(0)` after deployment. The single exception is the cross-chain peer-wiring surface, which retains a constrained owner (the `PathwayExpander` — see §11) precisely so the protocol can be extended to new chains without becoming reconfigurable.
+Every production contract is Ownable, and every production contract has its owner transferred to `address(0)` after deployment. The single exception is the cross-chain expansion surface, which retains a constrained owner (the `PathwayExpander` — see §11) precisely so the protocol can be extended to new chains, new LayerZero DVN verifiers, and new KYC levels without becoming reconfigurable. Every extension function on `PathwayExpander` is additions-only — existing peers, DVN configs, and KYC slots are unmodifiable, only un-set slots can be filled.
 
 The renounce is not a future promise. It is a transaction call on every Ownable contract, irreversible by design.
 
-## 3.2 No upgradeable proxies, no multisig
+## 3.2 ==No upgradeable proxies==, no multisig
 
 CAW contracts are not behind transparent or UUPS proxies. There is no migration path. If a critical bug is discovered, the response is the same as Bitcoin's response to a critical bug: redeploy, and let the social consensus of users, frontends, and Networks migrate. This is a feature. A protocol with an upgrade path has an attack surface that a protocol without one does not.
 
-## 3.3 Protocol/frontend separation
+## 3.3 Protocol/frontend ==separation==
 
 The protocol contracts validate signatures, enforce costs, and emit events. They do not curate, rank, or filter. Display is the frontend's job.
 
 This means a feature like a "block list" or "muted users" is a frontend feature; the protocol records the action ("hide", a typed `OTHER` action whose payload prefix is `hide:`) and lets the frontend decide what to do with it. Two frontends watching the same Network can present radically different views of the same data.
 
-## 3.4 Calldata as the source of truth
+## 3.4 ==Calldata== as the source of truth
 
 When a validator submits a batch to `CawActions.processActions(...)`, the batch's *bytes* — the packed actions, the signatures, the per-action recipients and amounts — live in the transaction's calldata, not in contract storage. The contract emits an event whose payload is a 32-byte commitment (`batchHash = keccak256(packedActions)`), and indexers reconstruct the social state by fetching the original transaction, validating against `batchHash`, and unpacking.
 
 This is a deliberate cost-of-permanence choice. SSTOREs are expensive; calldata is permanent and cheap. The protocol pays the cheap price and accepts that "the chain is the truth, mirrors are caches" is the architecture's defining property.
 
-## 3.5 Cost in CAW, ceiling in ETH
+## 3.5 Cost in CAW, ==ceiling in ETH==
 
 Action costs are denominated in CAW tokens with values fixed at deploy. To prevent the protocol from becoming unusable if the CAW token appreciates significantly, each action type has an **ETH-denominated upper bound**, enforced by a seven-day TWAP of a Uniswap V2 CAW/WETH pair whose LP tokens are 99.99% burned (the oracle source cannot be rugged). When the cap binds, the distribution percentages — receiver, depositor pool, validator — are preserved. The cap is self-deactivating: when CAW is cheap, baseline applies; when CAW is expensive, the cap binds; the cap has no floor (CAW falling never reduces baseline cost).
 
 The cap is the mechanism that lets a renounced protocol survive a thousand-fold price appreciation without breaking its user experience.
 
-## 3.6 The negative manifesto
+## 3.6 The ==negative manifesto==
 
 It is sometimes more useful to specify what a protocol is *not*:
 
@@ -131,11 +106,11 @@ It is sometimes more useful to specify what a protocol is *not*:
 
 ---
 
-# 4. Architecture
+# 4. ==Architecture==
 
 CAW's architecture is organized around three tiers of chains, each tier doing a job that the others cannot.
 
-## 4.1 The Three Worlds
+## 4.1 The ==Three Worlds==
 
 ```
                     ┌───────────────────────────────────┐
@@ -186,7 +161,7 @@ CAW's architecture is organized around three tiers of chains, each tier doing a 
 
 The Three Worlds are connected by LayerZero (for L1↔L2 messaging and L2→archive fraud-proof messaging). Cross-chain ordering is bounded by LayerZero's delivery semantics, with conservative fee buffers (120% for routine paths, 150% for slash-adjacent paths).
 
-## 4.2 Contract inventory at a glance
+## 4.2 ==Contract inventory== at a glance
 
 Appendix B lists every production contract with file paths and constants. The summary below names the contracts and their job at the protocol level.
 
@@ -222,7 +197,7 @@ Appendix B lists every production contract with file paths and constants. The su
 
 For depth on each contract's interface, see `docs/ARCHITECTURE.md`.
 
-## 4.3 The off-chain layer
+## 4.3 The ==off-chain layer==
 
 Each Network runs a set of **Mirrors**: FE/server pairs that index the chain and serve the user-facing application. A Mirror runs roughly twenty services, of which the load-bearing ones are:
 
@@ -237,11 +212,11 @@ For the full service inventory, see `docs/ARCHITECTURE.md`.
 
 ---
 
-# 5. The Action Lifecycle
+# 5. The Action ==Lifecycle==
 
 This section follows one signed action from a user's click to its permanent place in the chain.
 
-## 5.1 Compose and sign
+## 5.1 ==Compose and sign==
 
 A user composes a caw — up to 420 characters after smltxt compression, which yields roughly a 3× to 5× ratio over UTF-8. The frontend builds an EIP-712 `ActionData` structure binding the action type, sender tokenId, recipient tokenId (where applicable), per-action `cawonce` (a monotonic per-user nonce), text bytes, recipients array, and amounts array.
 
@@ -253,24 +228,24 @@ The user signs the structure via one of three mechanisms:
 
 The cryptographic detail of these paths is the subject of §6.
 
-## 5.2 Submit to a Mirror
+## 5.2 Submit to a ==Mirror==
 
 The signed action POSTs to one of the Network's Mirrors (typically the user's "home" Mirror, but the browser may fan out to multiple Mirrors in parallel for redundancy). The Mirror's API performs pre-flight checks:
 
 - **Cawonce collision** — server's TxQueue has a partial unique index on `(senderId, cawonce)`. A duplicate returns HTTP 409 with a `suggestedCawonce`.
 - **Content fingerprint dedup** — exact-content posts within a two-minute window are rejected.
-- **Free-action rate limit** — UNLIKE and UNFOLLOW are zero-cost in CAW (validator collects the 1,000 CAW griefing floor as a tip), so they are rate-limited per user.
+- **Free-action rate limit** — UNLIKE and UNFOLLOW have no protocol-side CAW cost. The validator's ETH-pegged tip floor closes the gas-griefing path at acceptance time, but a per-user rate limit at the Mirror is a cheaper first line of defense.
 - **Session spend-limit check** — if signed with a session key, the cumulative `sessionSpent` is checked against the session's `spendLimit`.
 
 If the action passes, the Mirror writes optimistic rows (`Caw` with `status=PENDING`, plus `Like`/`Follow`/`Reply`/`Poll` as applicable) and queues a `TxQueue` row containing the signed payload. The user sees the post appear immediately.
 
-## 5.3 Peer mirror fan-out (browser-initiated)
+## 5.3 ==Peer mirror fan-out== (browser-initiated)
 
 Cross-Mirror redundancy is achieved by the browser submitting to multiple Mirrors in parallel, not by server-to-server forwarding. Server-to-server forwarding is structurally forbidden in CAW: with N Mirrors each forwarding to N−1 others, naive fan-out would loop infinitely, so the rule is that only browsers fan out.
 
 Each Mirror writes its own `TxQueue` row independently. The chain's `cawonce` uniqueness is what eventually resolves conflicts: the first validator to land the submission wins, and the others see a 409 on next attempt.
 
-## 5.4 Batching and submission
+## 5.4 ==Batching== and submission
 
 The `ValidatorService` polls `TxQueue` every ~10 seconds, fetches up to 256 pending rows, groups them under the contract's "max 4 unique senders per batch" rule, simulates the call via `eth_call`, and trims to the 30KB `packedActions` calldata cap.
 
@@ -282,7 +257,7 @@ The validator then chooses between three on-chain entry points:
 
 All three paths produce identical on-chain state under a single `ActionsProcessed` event stream — one hash chain, one cawonce bitmap, one batch-commitment scheme. The chosen path is signed with the validator's key (`VALIDATOR_PRIVATE_KEY`) and submitted to the L2. Gas-bump retry covers ephemeral failures.
 
-## 5.5 On-chain execution
+## 5.5 ==On-chain execution==
 
 `CawActions` is the protocol's central state machine. For each action in the batch it:
 
@@ -295,17 +270,17 @@ All three paths produce identical on-chain state under a single `ActionsProcesse
 
 The action's text, signatures, and per-action data live in the transaction's calldata, recoverable forever via `eth_getTransactionByHash`.
 
-## 5.6 Indexing
+## 5.6 ==Indexing==
 
 The Mirror's `RawEventsGatherer` captures the emitted event over WebSocket, writes a `RawEvent` row, and publishes to a Redis channel. The `ActionProcessor` consumes Redis, fetches the original L2 calldata, validates against `batchHash`, unpacks actions, and writes the canonical domain rows (`Caw` flipped from `PENDING` to `SUCCESS`, plus `Like`, `Follow`, `Reply`, `Poll`, and downstream updates to counts, search, and notifications). The user sees confirmation.
 
 This is the end of the *fast path*. The action is final on L2 calldata forever. The remaining steps are about replicating that finality to other chains.
 
-## 5.7 Archive replication
+## 5.7 ==Archive replication==
 
 The `ValidatorService` runs a separate **optimistic replication loop** every ~120 seconds. It groups checkpoints (32 actions each) into a submission (up to 256 checkpoints), builds a merkle root over the checkpoint hashes, and submits to `CawActionsArchive.submitReplication()`. The validator stakes 0.01 ETH once; the same stake covers every subsequent submission. The submission carries a `dataCommitment = keccak256(packedActions)` so the bytes are recoverable from the archive transaction itself.
 
-## 5.8 Challenge window and finalization
+## 5.8 ==Challenge window== and finalization
 
 The submission is *not* immediately canonical. For the next **two days**, any honest observer may dispute it via one of two slash paths (see §8 for the mechanics):
 
@@ -320,17 +295,17 @@ If two days pass without a successful challenge, anyone may call `finalizeSubmis
 
 ---
 
-# 6. Cryptography & Identity
+# 6. ==Cryptography & Identity==
 
 CAW relies on a small, well-understood set of cryptographic primitives. This section describes them and explains why each was chosen.
 
-## 6.1 EIP-712 typed actions
+## 6.1 ==EIP-712== typed actions
 
 Every CAW action is signed using EIP-712. The struct definition pins the action to a domain that includes the chain ID and the deployed `CawActions` contract address; signatures are not transferable across chains or across deployments. This is what makes the multi-Network design safe: a Network on Base and a Network on Polygon use different `CawActions` deployments, hence different domain hashes, hence non-cross-replayable signatures.
 
 EIP-712 was chosen over raw message signing because the typed-data form lets wallets render human-readable parameters (action type, recipient, amount) rather than an opaque hash, reducing the user's exposure to blind-signing phishing.
 
-## 6.2 The signer identity model
+## 6.2 The ==signer identity== model
 
 A CAW user is, at root, the holder of an ERC-721 username NFT on L1. The owner address of that NFT is the canonical signer for any action belonging to the username's `tokenId`. Three mechanisms extend this without weakening it:
 
@@ -340,7 +315,7 @@ A CAW user is, at root, the holder of an ERC-721 username NFT on L1. The owner a
 
 In every case, the action either resolves to a signature by the NFT owner address, or to a signature by an explicitly-authorized session key registered under that owner.
 
-## 6.3 Quick Sign session keys
+## 6.3 ==Quick Sign== session keys
 
 Wallet popups are friction. A user who wants to scroll, like, and follow at the cadence of a normal social experience cannot tolerate a wallet prompt every few seconds. CAW solves this with **session keys**: an ephemeral secp256k1 keypair generated client-side, authorized by a single wallet signature, and registered on L2 (`CawProfileL2.registerSession`) with the following bounds enforced in the contract:
 
@@ -374,7 +349,7 @@ The NFT-transfer-invalidation property is worth emphasizing. When a username NFT
 
 For full mechanics, see `docs/SESSION_KEYS.md`.
 
-## 6.4 The ZK signature-recovery path
+## 6.4 The ==ZK signature-recovery== path
 
 `CawActions.processActionsWithZkSigs` is a second on-chain entry point that takes a Groth16 proof attesting "I recovered every signer in this batch correctly off-chain." The contract verifies the proof once (~265K gas via the canonical SP1 Groth16 verifier published by Succinct Labs) and then walks the verified `signers[]` array without performing per-action ecrecover.
 
@@ -393,7 +368,7 @@ A second important property: on cawonce conflict, the ZK path *skips* the confli
 
 For depth, see `docs/ZK_SIG_PATH.md`.
 
-## 6.5 The passkey path (EIP-7702 + WebAuthn)
+## 6.5 The ==passkey path== (EIP-7702 + WebAuthn)
 
 The friction of session keys is small but nonzero: the user must perform an initial wallet signature, and the WITHDRAW action remains permanently scope-excluded from session keys for safety. To support a user who never wants to touch a traditional wallet at all — and who needs a path to authorize WITHDRAW without one — CAW combines **EIP-7702** (which allows an EOA to temporarily delegate to contract code) with **WebAuthn / EIP-7951** (which enables on-chain verification of P-256 signatures from passkeys).
 
@@ -407,7 +382,7 @@ Browser support is the near-term focus. WebAuthn is fully available in modern br
 
 For users who cannot rely on passkey sync across devices — or who choose a browser-first flow without a native app — the web frontend offers a **backup blob** path: the `ecdsaFallback` secp256k1 key is encrypted with Argon2id (64 MiB, 3 iterations, parallelism 1, 32-byte output) followed by AES-GCM-256, producing a small ciphertext the user saves to iCloud Drive, Google Drive, or a USB device. Recovery is available at `/recovery`: the user uploads the blob and enters their vault password; the key is derived into memory only and used to sign a passkey-rotation transaction. No seed phrase is involved at any point. Native iOS and Android clients use the same architecture for users whose passkeys are not synced across devices; for depth on native specifics, see `/native/docs/`.
 
-## 6.6 Sponsored entry points and the three signing populations
+## 6.6 ==Sponsored entry points== and the three signing populations
 
 Not every user arrives with MetaMask installed. CAW classifies signers into three populations at the frontend layer:
 
@@ -425,15 +400,17 @@ The sponsor's trust surface is deliberately narrow. The CAW it supplies is immed
 
 **`withdrawTo` is not sponsored, and this is intentional.** A sponsor submitting a withdrawal on behalf of a user would mean the sponsor can move user CAW back to L1 on a schedule the user does not control. The v5 design decision is that WITHDRAW is always a direct user action — signed by the passkey or the `ecdsaFallback` key, never routed through a sponsored entry point. This is a property of `CawProfileMinter.sol`; there is no admin override or future-upgrade path for it.
 
-## 6.8 Direct messages
+## 6.8 ==Direct messages==
 
 DMs are end-to-end encrypted with ECIES (ECDH over the recipient's published encryption key, followed by AES-256-GCM with an HKDF-derived key). The encrypted payload is stored on the sender's and recipient's Mirrors; replication between Mirrors is via signed HTTP envelopes (the sender's wallet signs the envelope; peer Mirrors verify against the registered DM identity).
 
 DMs are intentionally outside the protocol's on-chain economic loop. They cost no CAW. There is no on-chain economic gate against spam; spam mitigation is at the relay layer (rate limits, ignore lists). This is a deliberate choice rooted in the manifesto: communication is free.
 
+**Group messages.** The manifesto's original guidance was to not bother — multi-recipient encrypted messaging tends to invite scope creep. In practice, both the technical feasibility and the user demand turned out higher than expected, so a deliberately *limited* group-message surface ships as part of the protocol: small fixed member caps, no rolling-key forward secrecy, and no protocol-level moderation primitives. Each member's per-message envelope is sealed independently using the same ECIES primitive as 1:1 DMs (random per-message AES key sealed once per recipient), which means the cryptographic envelope is symmetric to direct messaging and adds no new primitive to audit. Group membership is a frontend concept maintained by the creator; the protocol's contribution is just "deliver this sealed envelope to N addresses," which is what the existing DM relay already does. This is the smallest possible step beyond 1:1 that still serves the most-requested social use case.
+
 For depth, see `docs/DIRECT_MESSAGING.md`.
 
-## 6.9 One-time-use authentication signatures
+## 6.9 ==One-time-use== authentication signatures
 
 Some off-chain operations (e.g. linking an X account, enabling DMs) require a user to sign a message that the server consumes once. The server stores `sha256(message || signature)` in Redis with `SET NX EX 300`, making the signature reusable nowhere within a five-minute window and unusable thereafter (because the message itself carries a timestamp that rejects after the window).
 
@@ -441,13 +418,13 @@ This is a small but important defense-in-depth: at no point does the server hand
 
 ---
 
-# 7. Economics
+# 7. ==Economics==
 
 CAW's economic structure has four participants: **users** (who spend CAW to act), **stakers** (any CAW holder on L2, earning passive yield from the depositor pool), **validators** (who batch and submit actions, earning CAW tips and staking ETH on archives), and **Network operators** (who run Mirrors and collect ETH fee gates on mint/auth/deposit/withdraw). Every CAW in the system is in one of four states: held, redistributed, burned, or in flight.
 
 There is no protocol treasury. There is no team allocation. There is no foundation. The token's distribution at deploy is the distribution.
 
-## 7.1 Action costs and splits
+## 7.1 Action ==costs and splits==
 
 The fixed CAW costs per action type, with their distribution rules:
 
@@ -457,7 +434,7 @@ The fixed CAW costs per action type, with their distribution rules:
 | LIKE              |      2,000 | 80% receiver / 20% depositor pool           |
 | RECAW             |      4,000 | 50% receiver / 50% depositor pool           |
 | FOLLOW            |     30,000 | 80% followee / 20% depositor pool           |
-| UNLIKE / UNFOLLOW |      1,000 | 100% → validator (griefing floor)           |
+| UNLIKE / UNFOLLOW |          0 | no on-chain charge (griefing closed off off-chain) |
 | WITHDRAW          | gas + LZ fee only | —                                    |
 | OTHER (tip, etc.) | user-set    | varies by sub-prefix                        |
 
@@ -465,9 +442,11 @@ Source: `solidity/contracts/CawActions.sol`.
 
 The **depositor pool** is every account that currently holds a CAW balance on the relevant L2. Yield accrues passively in proportion to balance; there is no opt-in staking contract, no lock-up, and no slashing risk for stakers. The protocol treats *holding CAW on L2* as staking.
 
-The validator's compensation comes from two sources: the 1,000-CAW griefing floor on UNLIKE and UNFOLLOW (which is paid entirely to the validator), and the optional per-action `amounts[]` tip a user may attach to any action. The implicit tip captured at session-registration time also accrues to the validator on every session-signed action.
+UNLIKE and UNFOLLOW carry no protocol-side CAW charge. The gas-griefing path that a free undo-action would otherwise enable is closed off by the validator's ETH-pegged tip floor (`minTipPerActionWei` + the per-Network `tipTarget`): any session-signed UNLIKE/UNFOLLOW whose implicit tip falls below the validator's floor is rejected before submission. A contract-side CAW transfer is therefore not needed; the floor is enforced off-chain at acceptance time.
 
-## 7.2 The action cost cap
+The validator's compensation comes from the per-action `amounts[]` tip a user may attach to any action, plus the implicit tip captured at session-registration time which accrues to the validator on every session-signed action.
+
+## 7.2 The action ==cost cap==
 
 > When CAW becomes too valuable to spend, the cap kicks in.
 
@@ -481,13 +460,13 @@ Each action has an **ETH-denominated upper bound** baked in at deploy:
 | RECAW             | 4 × 10¹¹     | $0.02                   |
 | CAW (post)        | 5 × 10¹¹     | $0.025                  |
 | FOLLOW            | 30 × 10¹¹    | $0.15                   |
-| UNLIKE / UNFOLLOW | 1 × 10¹¹     | $0.005                  |
+| UNLIKE / UNFOLLOW | —             | no on-chain cost; no cap |
 
 The cap rule is `cost_in_CAW = min(baseline_caw, max_eth_per_action / TWAP_eth_per_caw)`. When the cap binds, every internal distribution amount is scaled by `cost_in_CAW / baseline_caw`. **The split percentages do not change.** A LIKE that today is `2000 = 1600 receiver + 400 depositors` becomes, when the cap binds at e.g. 500 CAW: `500 = 400 receiver + 100 depositors`, still 80%/20%.
 
 The cap is **self-deactivating**. While CAW is cheap (`max_eth / TWAP > baseline`), the baseline applies byte-for-byte. The cap is a ceiling, not a floor: CAW falling never reduces baseline cost.
 
-### How the price reaches the cap
+### How the price ==reaches the cap==
 
 ```
    L1: Burned-LP Uniswap V2 CAW/WETH pair
@@ -532,18 +511,18 @@ If no L1 → L2 message arrives for over 24 hours (unlikely under normal traffic
 
 For full math and design rationale, see `docs/ACTION_COST_CAP.md`.
 
-## 7.3 Validator and staker yield
+## 7.3 Validator and staker ==yield==
 
 Validators stake **0.01 ETH** on a `CawActionsArchive` contract — a single stake that covers all the validator's subsequent submissions. The stake is at risk: a successful slash takes the entire amount. The economic argument for staking is the income from validator tips:
 
-- **Direct user tips.** Any action's `amounts[]` array may include an entry for the validator (or any other party). On UNLIKE and UNFOLLOW, the 1,000-CAW griefing floor goes 100% to the validator.
+- **Direct user tips.** Any action's `amounts[]` array may include an entry for the validator (or any other party). The ETH-pegged tip floor (`minTipPerActionWei` + the per-Network `tipTarget`) enforced at validator-acceptance time ensures every accepted action carries at least the configured tip — including UNLIKE and UNFOLLOW, which carry no other protocol-side cost.
 - **Implicit per-session tips.** A session key may carry a per-action tip rate locked at registration; this accrues to the validator on every session-signed action.
 
 Stakers — every CAW holder on the Network's L2 — earn from the depositor pool, which is funded by 20% of every LIKE/FOLLOW, 50% of every RECAW, and 100% of every CAW post. Yield is proportional to balance, accrued continuously, and withdrawable to L1 at any time via `CawProfile.withdraw()`.
 
 There is no staking contract, no lock-up, and no minimum balance for stakers. The protocol treats holding as staking and lets the underlying L2 token-balance mechanism do the accounting.
 
-## 7.4 Username mint cost (the deflationary burn)
+## 7.4 Username mint cost (the ==deflationary burn==)
 
 From the manifesto, baked into the protocol:
 
@@ -560,7 +539,7 @@ From the manifesto, baked into the protocol:
 
 Burned CAW goes to `0xdead`. Permanent supply contraction. The cost structure exponentially scales rarity: a single-character username is, by design, a six-figure commitment at low market caps and an eight-figure commitment at high ones. The protocol creates artificial scarcity in the namespace without giving any party the power to award or revoke names.
 
-## 7.5 Network operator economics
+## 7.5 ==Network operator== economics
 
 A Network operator runs Mirrors, indexes the chain, hosts a frontend, and serves users. The protocol compensates this work through **ETH-denominated fee gates** that the Network configures via `CawNetworkManager`. There are four such gates:
 
@@ -573,7 +552,7 @@ Each fee is split 50/50: half is sent (as CAW, swapped via `CawBuyAndBurn`) to t
 
 When the Network later withdraws accumulated fees, all collected ETH is swapped to CAW in a single Uniswap V2 trade, with half going to the operator's address and half to `0xdead`. Operators receive CAW rather than ETH, which aligns incentives: a bad `minCawOut` slippage parameter hurts the operator's payout equally, making sandwich attacks self-punishing. Only `CawProfile` may call `swapAndSplit()`, so there is no public MEV griefing surface.
 
-### Withdraw fee locking
+### ==Withdraw fee locking==
 
 Withdraw is the one fee with special user-protection semantics. When a user first authenticates or deposits with a Network, the *current* withdraw fee is **locked** for that `(Network, tokenId)` pair. On withdrawal, the user pays `min(locked, current)`:
 
@@ -582,13 +561,13 @@ Withdraw is the one fee with special user-protection semantics. When a user firs
 
 The user is therefore never punished retroactively for choices a Network operator makes after they've already committed. This asymmetric guarantee (the user always gets the better of locked vs current) is what makes it safe to deposit into a Network whose operator might, hypothetically, behave adversarially in the future.
 
-### Architectural property: the protocol takes nothing
+### Architectural property: the protocol ==takes nothing==
 
 Note what does *not* happen on this path: the protocol itself receives no fees, holds no treasury, and runs no governance over fee parameters. The 50% burn portion of every fee is sent to `0xdead`, not to a protocol address. The Network operator's portion is paid directly to the operator. The protocol's only role is enforcing the 50/50 split and the withdraw-fee locking semantics.
 
 A Network that charges high fees risks losing users to a Network that charges lower fees. The protocol assumes that competition between Networks under one L1 anchor is the pricing-discipline mechanism.
 
-## 7.6 The CAW supply loop
+## 7.6 The CAW ==supply loop==
 
 ```
    USER BUYS CAW (DEX)
@@ -624,25 +603,25 @@ Every loop either redistributes or destroys CAW. The supply is monotonically dec
 
 ---
 
-# 8. Optimistic Archive & Slashing
+# 8. ==Optimistic Archive== & Slashing
 
 The L2 chain hosts every action permanently in its calldata, but the protocol provides a second layer of durability: **optimistic replication** to one or more archive chains. The archive layer is not a pass-through replica of every action. It is an *economically secured* commitment.
 
-## 8.1 The trust model in one paragraph
+## 8.1 The ==trust model== in one paragraph
 
 A validator stakes ETH on an archive chain. The validator may then submit replication batches cheaply — no LayerZero fee per batch, no per-action cost beyond gas. If the validator ever submits something fraudulent, *any* honest observer can challenge: the challenger reads the canonical per-Network checkpoint hash from the source L2, sends it via LayerZero to the archive, and the archive slashes the validator's entire stake to whoever submitted the resolving transaction. The system tolerates any number of dishonest validators as long as at least one honest observer monitors during the two-day challenge window.
 
-## 8.2 Submission
+## 8.2 ==Submission==
 
 `ValidatorService.optimisticReplicationLoop()` periodically searches for unclaimed checkpoint ranges on the archive and calls `CawActionsArchive.submitReplication(networkId, startCp, endCp, packedActions, r[], merkleRoot, entryHash)`. The contract requires `stakes[msg.sender] >= MIN_STAKE` (0.01 ETH), requires that the checkpoint range is unclaimed, stores `dataCommitment = keccak256(keccak(packed), keccak(r), entryHash)`, sets `finalizedAt = block.timestamp + 2 days`, and emits `SubmissionCreated` plus `ActionsArchived`.
 
 After two days, anyone may call `finalizeSubmission(submissionId)` and the data is permanently archived.
 
-## 8.3 Backpressure: MAX_PENDING_SUBMISSIONS
+## 8.3 ==Backpressure==: MAX_PENDING_SUBMISSIONS
 
 `MAX_PENDING_SUBMISSIONS` (default `1`) caps how many unfinalized submissions a single validator may have outstanding. Without this, a compromised validator could pile up many fraudulent batches before the first slash lands. With it, one bad submission equals one slash, and the validator's loop pauses until that submission resolves (or all pending submissions are bulk-invalidated by the slash).
 
-## 8.4 Detection: two fraud modes
+## 8.4 Detection: ==two fraud modes==
 
 The monitor service (which any party may run; no allowlist) reads each `ActionsArchived` event to obtain the submitter's own `packedActions + r[]`, rebuilds the hash chain locally via `foldCheckpointHashes`, rebuilds the merkle tree, and compares.
 
@@ -664,13 +643,13 @@ The monitor service (which any party may run; no allowlist) reads each `ActionsA
 └─────────────────────────────────────┴──────────────────┴─────────────┘
 ```
 
-### Mode A — incoherent root
+### Mode A — ==incoherent root==
 
 The submitter published packed actions and a merkleRoot, but `rebuildRootFrom(packedActions) ≠ merkleRoot`. The fraud is locally provable on the archive chain. Anyone calls `CawActionsArchive.slashIncoherentRoot(submissionId, packed, r, entryHash)`. The contract re-folds on-chain, verifies the `dataCommitment` pin, and slashes if the rebuilt root differs from the claimed one.
 
 Single transaction. No LayerZero. Total time: under one minute.
 
-### Mode B — fraudulent leaf
+### Mode B — ==fraudulent leaf==
 
 The submitter's tree is internally consistent — every leaf hashes correctly to the published root — but at least one leaf differs from the canonical L2 hash for the same checkpoint. The fraud is not locally provable on the archive chain (the archive chain has no view of the source L2's state), so the challenge must bridge the canonical hash across chains.
 
@@ -678,7 +657,7 @@ The challenger calls `CawChallengeRelay.relayChallengeBatch(destEid, submissionI
 
 Two transactions across two chains. LayerZero fee paid by challenger (with 150% buffer — challenge paths are slashing-adjacent). Total time: roughly two to five minutes.
 
-## 8.5 Slash effects
+## 8.5 ==Slash effects==
 
 A successful slash, regardless of mode:
 
@@ -688,7 +667,7 @@ A successful slash, regardless of mode:
 - Reward (the slashed stake) is sent to `msg.sender` of the resolving transaction. Not the LayerZero relayer. Not the protocol. Whoever finalized the slash gets paid.
 - `validatorSubmissions[validator]` is `delete`d, so a re-staked validator starts fresh.
 
-## 8.6 Why optimistic, not pessimistic?
+## 8.6 Why ==optimistic==, not pessimistic?
 
 A pessimistic archive — one where every batch is mirrored synchronously across chains via LayerZero — would multiply the protocol's per-action cost by the number of archive chains. CAW's traffic is high-volume (a single post is one action; a single user's session may produce many actions per minute), and the per-LZ-message cost would dominate the user's CAW cost.
 
@@ -696,7 +675,7 @@ Optimistic replication amortizes the cost. A validator pays one LayerZero fee pe
 
 The trade is that finality is delayed by two days. For social actions — where the L2 calldata is already canonical from `t=0` and the archive is providing additional durability rather than primary settlement — this is a fair trade.
 
-## 8.7 Operational invariants
+## 8.7 Operational ==invariants==
 
 These are properties the system maintains by code, not policy:
 
@@ -706,7 +685,7 @@ These are properties the system maintains by code, not policy:
 4. **At least one honest monitor must observe within two days.** This is the optimistic-rollup liveness assumption. If nobody challenges, bad data finalizes. The protocol assumes that the bounty (the full 0.01 ETH stake) is a sufficient incentive for at least one observer.
 5. **The archive contract has no owner functions affecting funds.** The only `onlyOwner` function is `setPeer` (LayerZero peer wiring at deploy), which the deployer calls once and then transfers to `PathwayExpander` before renouncing.
 
-## 8.8 The twin-key fraud-test gate
+## 8.8 The ==twin-key fraud-test== gate
 
 To stress-test the slashing infrastructure, validators may run fraud-injection modes. To prevent accidental activation in production, this requires *two* independent environment variables: `CORRUPT_REPLICATION=true` and `CORRUPT_MODE=A` (or `B`). Either variable alone is rejected at startup with an explicit refusal log. When the twin-key gate is active, the validator emits a loud warning on every replication cycle, making accidental drift impossible to miss.
 
@@ -716,11 +695,11 @@ For depth on operator concerns (deposit, stake management, fraud-test recipes), 
 
 ---
 
-# 9. Threat Model
+# 9. ==Threat Model==
 
 This section enumerates the actors who might attempt to harm CAW, the capabilities each has, the defenses in place, and the residual risk. The framing is "who can attack what, and what's at stake."
 
-## 9.1 Actor table
+## 9.1 ==Actor table==
 
 | Actor                        | Capability                                                | Defense                                                                | Residual risk                                  |
 |------------------------------|-----------------------------------------------------------|------------------------------------------------------------------------|------------------------------------------------|
@@ -737,7 +716,7 @@ This section enumerates the actors who might attempt to harm CAW, the capabiliti
 | Replay across deployments    | Sign for old `CawActions`, replay on new                  | EIP-712 domain hash includes contract address; vkey for ZK path immutable | None                                          |
 | Forged WebAuthn assertion    | Submit a crafted ERC-1271 sig that wrongly validates       | `CawActionsERC1271` calls owner's `isValidSignature` with 50K gas cap; `SmartEOA.sol` verifies P-256 via EIP-7951 precompile at 0x0100 | Reduces to soundness of `SmartEOA.sol` (in-house contract; 8 audit passes before deploy) |
 
-## 9.2 The biggest residual risks
+## 9.2 The biggest ==residual risks==
 
 **Live-ness of the honest-monitor assumption.** The two-day challenge window is sufficient *if* at least one honest, well-resourced party is watching every archive submission. The bounty (the full 0.01 ETH stake per fraudulent validator) is meant to incentivize this watching. The protocol assumes — and this is an assumption, not a proof — that the bounty plus the social/economic interest of CAW holders is enough. If a regime change in CAW's userbase produced a moment where no party was watching, fraudulent submissions could finalize. The mitigation: the bounty scales with the number of slashes (zero-sum recovery), and the monitor service is open-source and runnable by any operator.
 
@@ -751,11 +730,11 @@ This section enumerates the actors who might attempt to harm CAW, the capabiliti
 
 ---
 
-# 10. The Mesh: Multi-Network, Multi-Mirror, Multi-Chain
+# 10. The ==Mesh==: Multi-Network, Multi-Mirror, Multi-Chain
 
 CAW is not a single deployment. It is a mesh of Networks (each at the operator tier), and each Network is itself a mesh of Mirrors (at the host tier). This section describes how the mesh stays coherent.
 
-## 10.1 Multi-Network: one L1, many L2s
+## 10.1 ==Multi-Network==: one L1, many L2s
 
 A **Network** is registered via `CawNetworkManager.createNetwork()` on L1. The registration is permissionless: anyone may register a Network. The registration specifies, among other parameters, the `storageChainEid` — the LayerZero endpoint ID of the L2 chain where this Network's `CawActions` and `CawProfileL2` live. Different Networks may select different L2s.
 
@@ -763,7 +742,7 @@ Networks share the L1 anchor: the same CAW token, the same NFT identity space, t
 
 The architectural implication: a user who holds a username NFT has the *option* to participate in any Network. The username is portable across the entire mesh because it lives on L1, and the L2 reflection on each Network is derived from the L1 ground truth via LayerZero. But participation is per-Network: each Network is its own social context.
 
-## 10.2 Multi-Mirror: peer Mirrors within a Network
+## 10.2 ==Multi-Mirror==: peer Mirrors within a Network
 
 Within a Network, multiple Mirrors run in parallel. Each Mirror is a complete FE/server stack — an Express API, a Postgres database, a Redis cache, a RawEventsGatherer, an ActionProcessor — and indexes the Network's L2 independently.
 
@@ -798,7 +777,7 @@ Within a Network, multiple Mirrors run in parallel. Each Mirror is a complete FE
 
 The chain serializes between Mirrors. Cawonce uniqueness on `CawActions` is what eventually adjudicates conflicts: if two Mirrors each try to submit the same `cawonce` for the same `tokenId`, the second submission reverts at the contract level, the first wins, and the loser's TxQueue row is invalidated by the resulting 409 collision.
 
-## 10.3 The cawonce allocator
+## 10.3 The ==cawonce allocator==
 
 The frontend's challenge is to allocate cawonces without colliding across browser tabs, across devices, and across Mirrors. The allocator uses three layers:
 
@@ -825,19 +804,19 @@ The frontend's challenge is to allocate cawonces without colliding across browse
 
 This is defense-in-depth. Layer 2 alone wouldn't catch cross-Mirror conflicts. Layer 3 alone would cost a signature redo for every action. Together, the common case (no conflict) costs nothing extra, and the rare cross-Mirror conflict is recoverable with at most one re-sign.
 
-## 10.4 Why server-to-server fan-out is forbidden
+## 10.4 Why server-to-server fan-out is ==forbidden==
 
 If a Mirror that receives an action forwarded it to all peer Mirrors, and those Mirrors forwarded it to *their* peers, the message count would grow N² per post. The protocol's rule is therefore that **only the browser fans out**. Each Mirror is independent; cross-Mirror state convergence is achieved by the chain, not by direct coordination.
 
 DMs are an exception (they're off-chain and have their own peer-relay path via `DmRelayService`), but the chain-economy actions never fan out server-to-server.
 
-## 10.5 Mirror discovery
+## 10.5 ==Mirror discovery==
 
 Each Mirror, on startup, performs **self-registration** by submitting a `registerInstance()` transaction to `CawNetworkManager` on L1. Peer Mirrors **discover** each other by scanning `CawNetworkManager` event logs (chunked at 50,000 blocks per RPC call due to free-tier RPC limits) and caching the `PeerInstance[]` list. Discovery refreshes every ~30 minutes.
 
 The InstanceRegistry mechanism is itself permissionless and contract-mediated; no central directory or DNS dependency.
 
-## 10.6 What's local vs what's shared
+## 10.6 What's ==local== vs what's ==shared==
 
 | Data                                     | Local to Mirror | Shared via chain |
 |------------------------------------------|----------------:|-----------------:|
@@ -852,7 +831,7 @@ The InstanceRegistry mechanism is itself permissionless and contract-mediated; n
 
 "Row missing on Mirror A" is not fraud — peer-authored actions arrive via L2 indexing, with delay bounded by RawEventsGatherer's polling cadence. The chain is the truth; Mirrors are caches.
 
-## 10.7 Rebuildability
+## 10.7 ==Rebuildability==
 
 If a Mirror loses its database, it can fully recover by re-indexing from the L2 chain. Every domain row is derived from L2 events; RawEventsGatherer scans from genesis (or last checkpoint), ActionProcessor unpacks each batch's calldata, and the database is reconstructed. NFT ownership and marketplace state are re-fetched from L1. Counts are recomputed via CountManager.
 
@@ -862,11 +841,11 @@ This is the meaning of "the chain is truth, Mirrors are caches."
 
 ---
 
-# 11. Governance by Renunciation
+# 11. Governance by ==Renunciation==
 
 CAW's governance model is the absence of governance. This is not absence-by-omission; it is absence-by-construction. Every Ownable contract is renounced post-deploy. The protocol cannot be paused, upgraded, fee-modified, or otherwise altered by any party. This section describes what that means in code and why the design is deliberate.
 
-## 11.1 The renounce timeline
+## 11.1 The ==renounce timeline==
 
 ```
    PHASE 1 — DEPLOY
@@ -886,14 +865,19 @@ CAW's governance model is the absence of governance. This is not absence-by-omis
      CawProfile, CawProfileL2, CawActionsArchive, CawChallengeRelay
      transfer their Ownable ownership to PathwayExpander.
 
-     PathwayExpander's permitted actions:
-       ✓ addPeer(oapp, eid, peerAddress)   ← only when peers[eid]==0
+     PathwayExpander's permitted actions (all additions-only):
+       ✓ addPeer(oapp, eid, peerAddress)        ← only when peers[eid]==0
+       ✓ configureNewPathway(...)              ← only on (oapp,lib,eid) never configured
+       ✓ addDvnToPathway(...)                  ← schedule 2-of-3 → 3-of-4 → 3-of-5, then LOCKED
+       ✓ addKycVerifier(minter, level, addr)   ← only when level slot is unset
        ✗ setPeer                ← cannot reconfigure existing peers
+       ✗ reconfigure existing DVN sets, lower thresholds, or remove DVNs
+       ✗ replace an existing KYC verifier
        ✗ transferOwnership / renounce on the OApp
        ✗ any administrative function
-       ✗ anything else
 
-     Status: extensible to new chains; NOT mutable on existing ones.
+     Status: extensible to new chains, new DVN providers, and new KYC
+             levels; NOT mutable on anything already configured.
 
    PHASE 4 — RENOUNCE EVERYTHING
    ─────────────────────────────────────────────────────────────
@@ -906,17 +890,22 @@ CAW's governance model is the absence of governance. This is not absence-by-omis
 
 After Phase 4, the protocol's only mutation surface is whatever its public-facing functions allow — and those functions never accept admin input. There is no setter for fees, no setter for action costs, no setter for the verifier address, no pause function.
 
-## 11.2 The PathwayExpander mechanic
+## 11.2 The ==PathwayExpander== mechanic
 
-The reason Phase 4 exists as a separate decision (rather than being merged into Phase 3) is that LayerZero OApps must have a configured peer for each chain they communicate with. If the deployer renounces ownership entirely at Phase 3, the protocol can never add a new chain to the mesh. That is too aggressive: CAW should be able to extend to chains that don't exist yet (Solana via LZ Sol-EVM, or new EVM L2s).
+The reason Phase 4 exists as a separate decision (rather than being merged into Phase 3) is that some cross-chain wiring inherently expands over the protocol's lifetime: LayerZero OApps must have a configured peer for each chain they communicate with; LZ DVN sets gain new operator-diverse and client-diverse providers as the ecosystem matures; KYC providers come online for new jurisdictional levels. If the deployer renounces ownership entirely at Phase 3, none of these extensions are ever possible again. That is too aggressive: CAW should be able to extend to chains that don't exist yet (Solana via LZ Sol-EVM, or new EVM L2s), to harden DVN verification when more independent providers ship, and to wire new KYC adapters when needed.
 
-`PathwayExpander` is the surgical compromise. It is the owner of every LayerZero OApp after Phase 3. Its ABI exposes exactly one mutating function — `addPeer(oapp, eid, peerAddress)` — and that function reverts unless `oapp.peers[eid] == 0`. In other words: PathwayExpander can add a peer for a chain that doesn't have one, but it can never overwrite an existing peer.
+`PathwayExpander` is the surgical compromise. It is the owner of every LayerZero OApp after Phase 3, and it also holds the additions-only entry points on `CawProfileMinter`'s KYC registry. Its mutating ABI is small, fixed, and additions-only:
 
-Why this matters: a malicious deployer who retained PathwayExpander ownership could still not change *anything about existing chains*. They could only extend the mesh. And the deployer can — and should — renounce PathwayExpander itself in Phase 4, terminating even that capability.
+- **`addPeer(oapp, eid, peer)`** — reverts unless `oapp.peers[eid] == 0`. New chains can be wired in; existing peers cannot be overwritten.
+- **`configureNewPathway(oapp, lib, eid, ulnConfig)`** — reverts if the `(oapp, lib, eid)` triple has already been configured. The initial DVN set on a brand-new pathway can be set; existing ones cannot be reconfigured.
+- **`addDvnToPathway(oapp, lib, eid, currentCfg, newCfg)`** — a tightly-bounded escalation surface. The contract walks a fixed schedule: starting at 2-of-3 optional DVNs, the owner can step to 3-of-4 and then to 3-of-5. After step 2, the function is permanently locked for that pathway. Each step adds exactly one new optional DVN; existing DVNs cannot be removed, the threshold cannot be lowered, the required-DVN set cannot be touched, and the schedule cannot be skipped. At every step the honest-DVN majority is preserved: even at 3-of-5 the owner has appended at most 2 DVNs, so passing threshold still needs at least one independent collude.
+- **`addKycVerifier(minter, level, verifier)`** — reverts unless `kycVerifiers[level] == 0`. New KYC adapters for new compliance levels can be wired; existing levels are unmodifiable.
 
-The result: a protocol that is provably extensible (the OApp peer model allows new chains) and provably immutable (existing peers and ownership are non-mutable, and the only extender contract is itself renounced).
+Why this matters: a malicious actor who retained PathwayExpander ownership could only extend the mesh, add new pathway DVN configs (on pathways the protocol doesn't yet use), step a few specific DVN sets along a pre-committed schedule, or wire new KYC adapters for unused levels. They could not change *anything about chains, pathways, DVN sets, or KYC levels that already exist*. And the deployer can — and should — eventually renounce PathwayExpander itself, terminating even that constrained capability.
 
-## 11.3 What about critical bugs?
+The result: a protocol that is provably extensible (every cross-chain surface allows growth) and provably immutable (everything already configured is non-mutable), with the only authority surface itself being either constrained additions-only or, post-renounce, gone entirely.
+
+## 11.3 What about ==critical bugs==?
 
 If a critical bug is discovered in a CAW contract, there is no upgrade path. The response is the same as Bitcoin's response to a critical bug: redeploy, and let the social consensus of users, frontends, and Networks decide which deployment is canonical.
 
@@ -924,7 +913,7 @@ This is a deliberate trade. A protocol with an upgrade path has a permanent atta
 
 CAW accepts the trade. The mitigation is rigor in the deploy: extensive testing, fork-testing against real bytecode, equivalence-testing of the ZK circuit against the Solidity implementation, multi-pass security review, and a candid public statement that the deploy is permanent.
 
-## 11.4 What about fee evolution?
+## 11.4 What about ==fee evolution==?
 
 A Network operator may adjust their own fee gates (via `CawNetworkManager`), and a fee lockdown flag lets a Network commit to never raising fees on a given lever. Action costs and the cap parameters are baked into `CawActions` and cannot change after deploy. The protocol's economic parameters are therefore split:
 
@@ -934,7 +923,7 @@ A Network operator may adjust their own fee gates (via `CawNetworkManager`), and
 
 If a critical economic parameter needs adjustment, the response is the same as for a critical bug: redeploy + fork. The protocol's economic constitution, like its code, is meant to be fork-able rather than upgradable.
 
-## 11.5 Why ownerlessness is a feature, not a bug
+## 11.5 Why ==ownerlessness== is a feature, not a bug
 
 The recurring critique of immutable systems is "but what if you're wrong about X?" The honest answer is: "then we're wrong about X, and the protocol is wrong about X, until either users migrate or we redeploy." CAW chooses this because the alternative — a protocol with admin keys — has a strictly worse failure mode: admin compromise, governance capture, regulatory subpoena. Those failure modes are *not hypothetical*. They are observed in production on every social platform that has admin keys.
 
@@ -944,11 +933,11 @@ For the manifesto's own statement of this, see §3.1 and Appendix E.
 
 ---
 
-# 12. Comparison & Positioning
+# 12. ==Comparison & Positioning==
 
 This section places CAW alongside the major alternatives in decentralized social. The comparison is necessarily imperfect — each system optimizes for different properties — but mapping CAW against incumbents is the fastest way to understand what it is and is not.
 
-## 12.1 vs Twitter/X (centralized social)
+## 12.1 vs ==Twitter/X== (centralized social)
 
 | Axis                  | Twitter/X                                       | CAW                                                                |
 |-----------------------|-------------------------------------------------|--------------------------------------------------------------------|
@@ -963,7 +952,7 @@ This section places CAW alongside the major alternatives in decentralized social
 
 Twitter/X is custodial, ad-funded, and centrally moderated. CAW is non-custodial, user-paid, and protocol-immoderate. The two are not direct substitutes in the experience sense — Twitter offers a curated, ad-funded river of attention; CAW offers a paid, permanent record — but they target the same human use case (broadcast short messages to a network of followers).
 
-## 12.2 vs Nostr (relay-based)
+## 12.2 vs ==Nostr== (relay-based)
 
 | Axis                  | Nostr                                           | CAW                                                                |
 |-----------------------|-------------------------------------------------|--------------------------------------------------------------------|
@@ -980,7 +969,7 @@ Nostr and CAW share an ideological alignment (decentralization, censorship resis
 
 Nostr's lack of an identity anchor is also significant. A Nostr key compromise is permanent; there is no recovery mechanism comparable to Ethereum's NFT-based ownership. CAW's identity-as-NFT means standard wallet recovery (hardware wallet, seed phrase, social recovery wallets) all apply.
 
-## 12.3 vs Bluesky / AT-Proto (federated)
+## 12.3 vs ==Bluesky / AT-Proto== (federated)
 
 | Axis                  | Bluesky / AT-Proto                              | CAW                                                                |
 |-----------------------|-------------------------------------------------|--------------------------------------------------------------------|
@@ -997,7 +986,7 @@ Bluesky/AT-Proto is the closest in spirit among federated protocols — it expli
 
 The trade is performance and cost. Bluesky is faster (no on-chain settlement) and free at the point of use. CAW is permanent (chain-anchored) and paid.
 
-## 12.4 vs Farcaster (hub-topology hybrid)
+## 12.4 vs ==Farcaster== (hub-topology hybrid)
 
 | Axis                  | Farcaster                                       | CAW                                                                |
 |-----------------------|-------------------------------------------------|--------------------------------------------------------------------|
@@ -1013,7 +1002,7 @@ Farcaster pioneered the "anchor identity on-chain, store activity off-chain" pat
 
 Farcaster also has governance (the Farcaster Foundation, protocol-level decisions) whereas CAW has none. This is a deliberate philosophical divergence: Farcaster bets on stewarded evolution; CAW bets on petrification.
 
-## 12.5 What CAW does that nobody else does
+## 12.5 What CAW does that ==nobody else does==
 
 Three architectural choices distinguish CAW from each of the above:
 
@@ -1027,11 +1016,11 @@ CAW does not claim to be better at every axis. It is slower than Bluesky, more e
 
 ---
 
-# 13. Roadmap
+# 13. ==Roadmap==
 
 CAW is not roadmap-driven in the conventional sense — the protocol is immutable, so it cannot "ship features" the way a software product can. What evolves is the surrounding ecosystem: Networks, frontends, native clients, additional L2 venues. The protocol's deploy-time decisions enable or constrain that evolution; this section sketches the directions the design supports.
 
-## 13.1 Multi-Network ecosystem
+## 13.1 ==Multi-Network== ecosystem
 
 CAW's structure supports many Networks under one L1 anchor. The roadmap envisions:
 
@@ -1041,24 +1030,24 @@ CAW's structure supports many Networks under one L1 anchor. The roadmap envision
 
 The protocol does not anticipate or curate which Networks emerge. The permissionless registration via `CawNetworkManager` is the only gatekeeping.
 
-## 13.2 Native passkey client
+## 13.2 ==Native passkey== client
 
 A native iOS/Android client is in active development alongside the browser-first passkey path. The architecture (documented in `native/docs/`) uses EIP-7702 for authority delegation and WebAuthn (EIP-7951) for biometric-protected signing. Backup is via a password-encrypted blob (Argon2id + AES-GCM-256) stored to iCloud Drive, Google Drive, or local export; there is no seed phrase. The same `SmartEOA.sol` contract and backup format underpin both browser and native clients.
 
 The native client's primary user-experience claim is: a user with no Web3 experience can buy CAW with Apple Pay or Google Pay, mint a username, and start posting — all with biometric unlocks and no seed phrase to manage. The wager is that this is the experience needed to bring CAW to a mainstream audience without abandoning the protocol's non-custodial guarantees.
 
-## 13.3 Additional L2 venues via PathwayExpander
+## 13.3 Additional L2 venues via ==PathwayExpander==
 
 If a future L2 — for instance, a zkEVM rollup or a new optimistic rollup — becomes attractive as an action-processing venue, the path to support it is:
 
 1. Deploy `CawActions`, `CawActionsERC1271`, `CawProfileL2`, `CawChallengeRelay`, `CawCapOracle` to the new chain.
 2. Configure the new contracts' LayerZero endpoints.
-3. Use `PathwayExpander.addPeer()` to wire the new chain into the existing OApp mesh.
+3. Use `PathwayExpander.addPeer()` to wire the new chain into the existing OApp mesh, and `PathwayExpander.configureNewPathway()` to set the initial DVN set for each new pathway. Subsequent DVN hardening on those new pathways follows the 2-of-3 → 3-of-4 → 3-of-5 escalation schedule via `addDvnToPathway`.
 4. Networks may now register with the new chain as their `storageChainEid`.
 
 This is a permissionless extension. The deployer of the new contracts is not the deployer of the protocol; they merely deploy and register. The protocol does not endorse, audit, or guarantee any particular L2 venue — the same way DNS doesn't audit individual top-level domains.
 
-## 13.4 Solana option
+## 13.4 ==Solana== option
 
 A speculative analysis of a Solana deployment lives in `docs/SOLANA_OPTION.md`. The case for Solana is **not** gas savings — at CAW's batch sizes, Solana's 1232-byte transaction-size limit collapses the batching advantage that makes EVM cheap, and per-action cost works out roughly the same or marginally worse than on Base. The case is **chain-survival hedge**: Solana is an L1 (not an L2 that depends on Ethereum settlement, on a rollup operator, or on a multisig-controlled bridge), with a validator set several thousand strong, two independent client implementations (Firedancer and Agave), and its own validator economics. Client diversity at the consensus layer is something no EVM L2 currently offers.
 
@@ -1066,7 +1055,7 @@ What this would buy CAW, if it were ever pursued, is a chain-survival hedge for 
 
 This is not on the deployment roadmap. The honest scope is ~10–14 months of parallel implementation: Solidity does not port to Rust; every contract is rewritten. The analysis is documented so that the protocol's structure does not preclude non-EVM extensions, and so that if the community wishes to develop and fund such an effort — likely triggered by an EVM-side incident or a Solana-experienced contributor stepping forward — the design path exists.
 
-## 13.5 Petrification
+## 13.5 ==Petrification==
 
 The end state of CAW, as conceived, is **petrification**. The contracts are deployed; the OApps are wired; the deployer renounces; the PathwayExpander is renounced. From that moment, the protocol is a public utility — a fixed shape that anyone can build on, criticize, fork, or ignore, but that nobody can change.
 
@@ -1078,7 +1067,7 @@ This is the manifesto's vision realized:
 
 ---
 
-# Appendix A — Glossary
+# Appendix A — ==Glossary==
 
 **Action** — A single CAW operation (post, like, follow, etc.) signed by a user via EIP-712 and processed atomically by `CawActions.processActions()`, `CawActions.processActionsWithZkSigs()`, or `CawActionsERC1271.processActionsERC1271()`.
 
@@ -1134,7 +1123,7 @@ This is the manifesto's vision realized:
 
 ---
 
-# Appendix B — Contract Inventory
+# Appendix B — ==Contract Inventory==
 
 | Contract                       | Layer        | File path                                                                  | Renounced? |
 |--------------------------------|--------------|----------------------------------------------------------------------------|:----------:|
@@ -1165,7 +1154,7 @@ For per-contract function inventory and natspec, see `solidity/contracts/` direc
 
 ---
 
-# Appendix C — Constants Reference
+# Appendix C — ==Constants Reference==
 
 | Constant                          | Value                | Source                                                |
 |-----------------------------------|----------------------|-------------------------------------------------------|
@@ -1194,7 +1183,7 @@ For per-contract function inventory and natspec, see `solidity/contracts/` direc
 | Baseline CAW, LIKE                | 2,000                | `CawActions.sol`                                      |
 | Baseline CAW, RECAW               | 4,000                | `CawActions.sol`                                      |
 | Baseline CAW, FOLLOW              | 30,000               | `CawActions.sol`                                      |
-| Baseline CAW, UNLIKE/UNFOLLOW     | 1,000                | `CawActions.sol`                                      |
+| Baseline CAW, UNLIKE/UNFOLLOW     | 0 (no on-chain charge) | `CawActions.sol`                                    |
 | Quick Sign max expiry             | 30 days              | (server-enforced)                                     |
 | Quick Sign scope: WITHDRAW excluded | bit 6 always 0     | `CawProfileL2.sol`                                    |
 | Quick Sign default scope bitmap   | 0xBF                 | (server default)                                      |
@@ -1211,22 +1200,22 @@ For per-contract function inventory and natspec, see `solidity/contracts/` direc
 
 ---
 
-# Appendix D — Action Types & Cost Table
+# Appendix D — ==Action Types & Cost Table==
 
 | Type | Wire enum | Cost (CAW) | Split                                       | Scope bit | ETH cap (wei)  |
 |------|----------:|-----------:|---------------------------------------------|----------:|---------------:|
 | CAW (post)  | 0 |  5,000 | 100% depositor pool                        | 0         | 5 × 10¹¹       |
 | LIKE        | 1 |  2,000 | 80% receiver / 20% depositor pool          | 1         | 2 × 10¹¹       |
-| UNLIKE      | 2 |  1,000 | 100% validator                              | 2         | 1 × 10¹¹       |
+| UNLIKE      | 2 |      0 | no on-chain charge (validator tip-floor closes griefing) | 2 | n/a       |
 | RECAW       | 3 |  4,000 | 50% receiver / 50% depositor pool          | 3         | 4 × 10¹¹       |
 | FOLLOW      | 4 | 30,000 | 80% followee / 20% depositor pool          | 4         | 30 × 10¹¹      |
-| UNFOLLOW    | 5 |  1,000 | 100% validator                              | 5         | 1 × 10¹¹       |
+| UNFOLLOW    | 5 |      0 | no on-chain charge (validator tip-floor closes griefing) | 5 | n/a       |
 | WITHDRAW    | 6 | gas + LZ | (no protocol distribution)                 | **6 (excluded from session-key scope)** | uncapped |
 | OTHER       | 7 | varies | depends on prefix (see below)              | 7         | uncapped       |
 
 WITHDRAW cannot be signed by a session key; it must be signed by the NFT owner's wallet directly, or — for passkey-backed contract-owned profiles — by the owner via the `CawActionsERC1271` sibling path.
 
-### OTHER prefix multiplexing
+### ==OTHER== prefix multiplexing
 
 | Prefix     | Subtype           | Notes                                                    |
 |------------|-------------------|----------------------------------------------------------|
@@ -1241,7 +1230,7 @@ Frontends are free to introduce additional OTHER prefixes for new social primiti
 
 ---
 
-# Appendix E — The Manifesto
+# Appendix E — The ==Manifesto==
 
 The text below is reproduced verbatim from `docs/manifesto.txt`. It is the canonical philosophical source for CAW and predates this implementation.
 
@@ -1265,7 +1254,7 @@ The full manifesto includes the user-facing protocol specification (mint costs, 
 
 ---
 
-# Appendix F — Further Reading
+# Appendix F — ==Further Reading==
 
 The white paper references documents in the repository. The most useful for depth:
 
