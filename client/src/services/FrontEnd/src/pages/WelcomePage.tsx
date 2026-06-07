@@ -6,7 +6,7 @@ import { apiFetch, retryOnIndexing } from '~/api/client'
 import PostMintOnboarding from '~/components/PostMintOnboarding'
 import BugReportModal from '~/components/modals/BugReportModal'
 import BugIcon from '~/components/icons/BugIcon'
-import BoidsBg from '~/components/BoidsBg'
+import BoidsBg from '~/components/BoidsBg3D'
 import { useTheme } from '~/hooks/useTheme'
 import { useT } from '~/i18n/I18nProvider'
 

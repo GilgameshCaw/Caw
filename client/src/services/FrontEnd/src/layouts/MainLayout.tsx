@@ -30,7 +30,7 @@ import { getUserAvatar } from '~/utils/defaultAvatar';
 import { useTokenDataStore } from '~/store/tokenDataStore';
 import RecoveryBanner from '~/components/identity/RecoveryBanner';
 
-const BoidsBg = lazy(() => import('~/components/BoidsBg'))
+const BoidsBg = lazy(() => import('~/components/BoidsBg3D'))
 
 interface MainLayoutProps {
   children: React.ReactNode;

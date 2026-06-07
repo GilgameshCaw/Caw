@@ -25,7 +25,7 @@ import VaultPasswordStep from './onboarding/VaultPasswordStep'
 import PasskeyStep from './onboarding/PasskeyStep'
 import BackupStep from './onboarding/BackupStep'
 import ConfirmStep from './onboarding/ConfirmStep'
-import BoidsBg from '~/components/BoidsBg'
+import BoidsBg from '~/components/BoidsBg3D'
 import LanguageSwitcher from '~/components/LanguageSwitcher'
 import {
   HiAtSymbol,

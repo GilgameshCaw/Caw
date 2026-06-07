@@ -32,7 +32,7 @@ import { formatUsd } from '~/utils/numberFormat'
 import { generateOnrampAccount } from '~/services/onramp/keyManager'
 import { createStripeCheckout } from '~/services/stripe/checkout'
 import { CLIENT_ID } from '~/api/actions'
-import BoidsBg from '~/components/BoidsBg'
+import BoidsBg from '~/components/BoidsBg3D'
 import LanguageSwitcher from '~/components/LanguageSwitcher'
 
 // ---------------------------------------------------------------------------

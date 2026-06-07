@@ -4,32 +4,52 @@ import * as THREE from 'three'
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 
-// World half-extents — birds live roughly inside this box
-const WORLD_X = 18
-const WORLD_Y = 11
+// World half-extents — birds live roughly inside this box. Sized slightly LARGER
+// than the visible frustum (camera z=22, fov 55° → visible half-height ≈ 11.5 at
+// z=0, half-width ≈ that × aspect) so birds drift just a little off the edges
+// before the soft boundary turns them back.
+const WORLD_X = 22   // small overflow past the left/right edges
+const WORLD_Y = 12.5 // small overflow past top/bottom
 const WORLD_Z = 10
-
-const MIN_SPEED = 0.04
-const MAX_SPEED = 0.14
 
 // Wing-flap amplitude (vertex units, matching Mr.doob's original scale factor)
 const WING_AMP = 5
 
-// Boids radii (world units)
-const SEP_RADIUS = 2.2
-const ALI_RADIUS = 4.5
-const COH_RADIUS = 4.0
+// ── Live-tunable flock params ───────────────────────────────────────────────────
+// These control how the flock FLOWS. They live in a mutable object so a dev-only
+// slider overlay (import.meta.env.DEV) can adjust them live; the sim reads from
+// `tune` every frame. Once dialled in, bake the values back as the defaults here.
+const tune = {
+  minSpeed: 0.02,
+  maxSpeed: 0.04,
+  // How fast the displayed heading catches up to the velocity direction (0..1).
+  // Lower = slower, smoother turns.
+  turnRate: 0.05,
+  // Boids neighbour radii (world units)
+  sepRadius: 2,
+  aliRadius: 4.5,
+  cohRadius: 4.0,
+  // Boids weights — lower = calmer, less constant course-correcting ("freaking out")
+  sepWeight: 0.02,
+  aliWeight: 0.2,
+  cohWeight: 0.0045,
+  // Per-frame velocity damping toward smooth gliding (1 = no damping). <1 bleeds off
+  // jitter so birds coast in straight-ish lines unless a force acts on them.
+  velDamp: 1,
+  // Soft world-boundary turn force
+  boundTurn: 0.02,
+  // Per-bird display size multiplier (applied via mesh.scale; 1 = baked CROW_SCALE).
+  size: 0.65,
+  // Wing-flap speed multiplier (1 = base rate).
+  flapSpeed: 1.0,
+  // Hard ceiling on per-frame flap phase advance — caps how fast wings can EVER
+  // beat (e.g. during panic). Lower = wings never blur.
+  maxFlapRate: 0.1,
+}
 
-// Boids weights
-const SEP_WEIGHT = 0.14
-const ALI_WEIGHT = 0.06
-const COH_WEIGHT = 0.004
-
-// Soft-boundary turn force
 const BOUND_MARGIN_X = 3.5
 const BOUND_MARGIN_Y = 2.5
 const BOUND_MARGIN_Z = 2.5
-const BOUND_TURN = 0.003
 
 // Mouse repulsion / fright — birds panic and dart away from the cursor. Wide
 // radius sweeps a big swath of the flock; high peak force + a per-bird fright
@@ -37,21 +57,32 @@ const BOUND_TURN = 0.003
 // BOLT (not just nudge), then settle back to cruising over ~1s.
 const MOUSE_WORLD_RADIUS = 10.0   // detection zone around the cursor
 const MOUSE_FRIGHT_PEAK = 1.4     // force at distance=0 (≫ MAX_SPEED → hard dart)
-const MOUSE_PLANE_Z = 0           // project cursor onto z=0 plane
+// Cursor's x,y are projected onto the flock mid-plane (so it lines up with where the
+// birds are). Birds flee mostly SIDEWAYS in that plane; only a small fraction of the
+// push goes into the screen depth (−z) so they drift back / shrink a little but don't
+// punch straight away from the cursor.
+const MOUSE_PLANE_Z = 0           // x,y projection plane (flock centre)
+const FRIGHT_Z_SCALE = 0.12       // how much of the flee goes into depth (small = sideways)
 const FRIGHT_SPEED_BOOST = 3.5    // max speed cap multiplier while fully frightened
 const FRIGHT_DECAY = 0.02         // per-frame decay of the fright scalar (~0.8s to settle)
 
-// Fog / depth shading
-const FOG_NEAR = 12
-const FOG_FAR = 30
+// Fog / depth shading — kept thin: it only lightly fades the very farthest birds.
+// Camera z=22, flock z∈[−10,10] → distance-from-camera ≈ 12 (near) to ≈ 32 (far).
+// NEAR well past the nearest birds, FAR pushed beyond the farthest so nothing is
+// fully swallowed — just a gentle depth cue.
+const FOG_NEAR = 20
+const FOG_FAR = 44
 
 // ─── Crow count (scale by device capability) ──────────────────────────────────
 
 function getCrowCount(): number {
+  // NOTE: the boids neighbour scan is O(n²), so cost ~4× from 100→200. Smooth on
+  // desktop; mobile kept lower. If 200 ever stutters, a spatial grid (like the 2D
+  // BoidsBg) would drop this back to ~O(n).
   const isMobile = /Mobi|Android|iPhone|iPad/i.test(navigator.userAgent)
   const dpr = window.devicePixelRatio || 1
-  if (isMobile || dpr < 1.5) return 60
-  return 100
+  if (isMobile || dpr < 1.5) return 100
+  return 200
 }
 
 // ─── Crow geometry — CAW logo silhouette ───────────────────────────────────────
@@ -100,61 +131,108 @@ function getCrowCount(): number {
 
 const CROW_SCALE = 0.072
 
+// ── Crow vertices (x forward, y up=flap, z sideways) ────────────────────────────
+// Authored in the crow-wing-editor (visualizations/crow-wing-editor.html) to match
+// the CAW logo. Body outline = head → shoulder → waist → (mid1,mid2) → tail → notch,
+// mirrored L/R. Each wing = 14 points around a blade: leading edge (in-lead, lead1..5,
+// out-lead) then trailing edge (WINGTIP, trail1..5, in-trail). All y=0 at rest; the
+// wing verts flap in y at runtime weighted by how far out they are (see WING_FLAP_W).
 const BASE_VERTS: readonly number[] = [
-  /* v0  HEAD tip       */  7.0,  0.0,   0.0,
-  /* v1  L shoulder     */  2.5,  0.0,  -1.8,
-  /* v2  R shoulder     */  2.5,  0.0,   1.8,
-  /* v3  L waist        */  0.2,  0.0,  -0.8,
-  /* v4  R waist        */  0.2,  0.0,   0.8,
-  /* v5  L tail corner  */ -4.8,  0.0,  -2.6,
-  /* v6  R tail corner  */ -4.8,  0.0,   2.6,
-  /* v7  tail notch     */ -4.0,  0.0,   0.0,
-  /* v8  L inner lead   */  3.0,  0.0,  -2.2,
-  /* v9  L inner trail  */  0.5,  0.0,  -2.2,
-  /* v10 L wing mid     */  1.0,  0.0,  -5.5,
-  /* v11 L WINGTIP      */ -0.2,  0.0,  -9.5,
-  /* v12 R inner lead   */  3.0,  0.0,   2.2,
-  /* v13 R inner trail  */  0.5,  0.0,   2.2,
-  /* v14 R wing mid     */  1.0,  0.0,   5.5,
-  /* v15 R WINGTIP      */ -0.2,  0.0,   9.5,
+  /* v0  HEAD        */   7.0,  0.0,    0.0,
+  /* v1  L shoulder  */   3.2,  0.0,   -1.5,
+  /* v2  R shoulder  */   3.2,  0.0,    1.5,
+  /* v3  L waist     */  -1.3,  0.0,   -1.2,
+  /* v4  R waist     */  -1.3,  0.0,    1.2,
+  /* v5  L body-mid1 */  -2.5,  0.0,   -1.3,  // between waist & tail
+  /* v6  R body-mid1 */  -2.5,  0.0,    1.3,
+  /* v7  L body-mid2 */  -4.4,  0.0,   -1.7,  // between waist & tail
+  /* v8  R body-mid2 */  -4.4,  0.0,    1.7,
+  /* v9  L tail      */  -5.6,  0.0,   -2.0,
+  /* v10 R tail      */  -5.6,  0.0,    2.0,
+  /* v11 tail notch  */  -5.8,  0.0,    0.0,
+  // Left wing (v12..v25): leading edge then trailing edge
+  /* v12 L in-lead   */   3.5,  0.0,   -0.7,
+  /* v13 L lead1     */   4.2,  0.0,   -1.7,
+  /* v14 L lead2     */   4.5,  0.0,   -2.4,
+  /* v15 L lead3     */   4.8,  0.0,   -3.0,
+  /* v16 L lead4     */   4.8,  0.0,   -3.8,
+  /* v17 L lead5     */   4.7,  0.0,   -5.0,
+  /* v18 L out-lead  */   4.4,  0.0,   -7.0,
+  /* v19 L WINGTIP   */  -1.0,  0.0,  -10.6,
+  /* v20 L trail1    */  -0.6,  0.0,   -7.6,
+  /* v21 L trail2    */  -0.3,  0.0,   -4.7,
+  /* v22 L trail3    */  -0.4,  0.0,   -3.6,
+  /* v23 L trail4    */  -0.6,  0.0,   -2.5,
+  /* v24 L trail5    */  -1.2,  0.0,   -1.6,
+  /* v25 L in-trail  */  -2.0,  0.0,   -0.9,
+  // Right wing (v26..v39): mirror of left across z
+  /* v26 R in-lead   */   3.5,  0.0,    0.7,
+  /* v27 R lead1     */   4.2,  0.0,    1.7,
+  /* v28 R lead2     */   4.5,  0.0,    2.4,
+  /* v29 R lead3     */   4.8,  0.0,    3.0,
+  /* v30 R lead4     */   4.8,  0.0,    3.8,
+  /* v31 R lead5     */   4.7,  0.0,    5.0,
+  /* v32 R out-lead  */   4.4,  0.0,    7.0,
+  /* v33 R WINGTIP   */  -1.0,  0.0,   10.6,
+  /* v34 R trail1    */  -0.6,  0.0,    7.6,
+  /* v35 R trail2    */  -0.3,  0.0,    4.7,
+  /* v36 R trail3    */  -0.4,  0.0,    3.6,
+  /* v37 R trail4    */  -0.6,  0.0,    2.5,
+  /* v38 R trail5    */  -1.2,  0.0,    1.6,
+  /* v39 R in-trail  */  -2.0,  0.0,    0.9,
 ]
 
-// Faces (DoubleSide material so winding is not critical):
-//  Body: 6 tris fully tile the body polygon (head/shoulders/waist/tail)
-//  Wings: 2 tris per wing = 4 tris
-//  Total: 10 triangles
-//
-// Body triangulation (outline: v0→v2→v4→v6→v7→v5→v3→v1→v0):
-//   Front half: (0,2,1) head; (1,2,4) shoulder band; (1,4,3) waist band
-//   Back half:  (3,4,7) center trunk; (3,7,5) L tail flare; (4,6,7) R tail flare
-// All 8 body verts covered, no gaps.
-const CROW_INDICES = new Uint8Array([
-  // Body — front half
-  0,  2,  1,   // head → R shoulder → L shoulder  (front cap)
-  1,  2,  4,   // L shoulder → R shoulder → R waist  (shoulder band)
-  1,  4,  3,   // L shoulder → R waist → L waist  (waist band)
-  // Body — back half (tail)
-  3,  4,  7,   // L waist → R waist → tail notch  (center trunk)
-  3,  7,  5,   // L waist → tail notch → L tail corner  (L flare)
-  4,  6,  7,   // R waist → R tail corner → tail notch  (R flare)
-  // Left wing blade
-  8,  9, 10,   // inner-lead → inner-trail → mid
-  8, 10, 11,   // inner-lead → mid → tip
-  // Right wing blade
- 12, 14, 13,   // inner-lead → mid → inner-trail
- 12, 15, 14,   // inner-lead → tip → mid
+const L_WING_BASE = 12   // first left-wing vert (in-lead)
+const R_WING_BASE = 26   // first right-wing vert
+const WING_PTS = 14      // verts per wing
+const WING_BASES = [L_WING_BASE, R_WING_BASE] as const
+
+// Body triangulation. Outline down each side: head → shoulder → waist → mid1 →
+// mid2 → tail → (notch). Filled as a fan/strip so all body verts are covered.
+const BODY_TRIS = [
+  0, 2, 1,    // head cap
+  1, 2, 4,    // shoulder band
+  1, 4, 3,
+  3, 4, 6,    // waist → mid1 band
+  3, 6, 5,
+  5, 6, 8,    // mid1 → mid2 band
+  5, 8, 7,
+  7, 8, 10,   // mid2 → tail band
+  7, 10, 9,
+  9, 10, 11,  // tail → notch (closes the back)
+]
+
+// Wing = triangle fan from in-lead around its 14-point outline.
+function wingFanTris(base: number): number[] {
+  const t: number[] = []
+  for (let k = 1; k < WING_PTS - 1; k++) t.push(base, base + k, base + k + 1)
+  return t
+}
+
+const CROW_INDICES = new Uint16Array([
+  ...BODY_TRIS,
+  ...wingFanTris(L_WING_BASE),
+  ...wingFanTris(R_WING_BASE),
 ])
 
-// Stride-3 Y-component indices for the WINGTIP verts that animate during flap.
-// v11 = index 11 → flat-array offset 11*3+1 = 34
-// v15 = index 15 → flat-array offset 15*3+1 = 46
-const IDX_V4_Y = 11 * 3 + 1  // 34 — left  wingtip Y  (v11)
-const IDX_V5_Y = 15 * 3 + 1  // 46 — right wingtip Y  (v15)
-
-// Optional: also animate the mid-wing verts at a fraction of the tip for a
-// smoother bend. v10 Y = 10*3+1 = 31, v14 Y = 14*3+1 = 43
-const IDX_MID_L_Y = 10 * 3 + 1  // 31 — left  mid-wing Y  (v10)
-const IDX_MID_R_Y = 14 * 3 + 1  // 43 — right mid-wing Y  (v14)
+// Per-vertex flap weights: 0 for body verts (never move), ramping 0→1 along each
+// wing by how far OUT the vertex is (|z| relative to the wingtip). The wingtip
+// flaps fullest; roots near the body barely move. Computed once from BASE_VERTS.
+const WING_FLAP_W: Float32Array = (() => {
+  const w = new Float32Array(BASE_VERTS.length / 3)
+  // The WINGTIP is vert (base + 7); use its |z| as the maximum span.
+  const maxZ = Math.abs(BASE_VERTS[(L_WING_BASE + 7) * 3 + 2])
+  for (const base of [L_WING_BASE, R_WING_BASE]) {
+    for (let k = 0; k < WING_PTS; k++) {
+      const vi = base + k
+      const z = Math.abs(BASE_VERTS[vi * 3 + 2])
+      // ease so the bend is gentle near the root and strong toward the tip
+      const t = Math.min(1, z / maxZ)
+      w[vi] = t * t
+    }
+  }
+  return w
+})()
 
 function makeCrowGeometry(): THREE.BufferGeometry {
   const geo = new THREE.BufferGeometry()
@@ -167,47 +245,57 @@ function makeCrowGeometry(): THREE.BufferGeometry {
   return geo
 }
 
-// ─── Color tiers — match the old 2D BoidsBg.tsx tier pattern ─────────────────
-// Three tiers assigned at init by bird index (same split as 2D version):
-//   i < 5              → GOLD   (~5 birds): CAW gold #ffe678, opacity 0.70 — POPS
-//   i < 10             → SILVER (~5 birds): dark=white / light=near-black, opacity 0.65
-//   else               → DIM    (~90%): low alpha, recedes against the background
+// ─── Color tiers ─────────────────────────────────────────────────────────────
+// Three tiers: a few GOLD and SILVER "hero" birds, the rest a dark GREY.
+// Fixed counts: 3 gold + 2 silver, everything else grey.
+// Gold & silver also BEHAVE differently — they care less about the flock (lower
+// flock weights) so they keep flying through rather than bouncing off others, and
+// fly a bit faster. Silver is the more extreme of the two; gold milder.
 
-type ColorTier = 'gold' | 'silver' | 'dim'
+type ColorTier = 'gold' | 'silver' | 'grey'
+
+const GOLD_COUNT = 3
+const SILVER_COUNT = 2
 
 function getTier(i: number): ColorTier {
-  if (i < 5)  return 'gold'
-  if (i < 10) return 'silver'
-  return 'dim'
+  if (i < GOLD_COUNT) return 'gold'
+  if (i < GOLD_COUNT + SILVER_COUNT) return 'silver'
+  return 'grey'
 }
 
-// Materials are created once per isDark change (in useMemo) and shared across
-// all birds of the same tier. Each bird still has its OWN geometry for mutable
-// wingtip positions. No allocations in the per-frame loop.
+// Per-tier BEHAVIOUR. flockMul scales the boids forces (sep/ali/coh) — lower means
+// the bird ignores its neighbours more and flies through smoothly. speedMul scales
+// the bird's min/max cruising speed.
+const TIER_BEHAVIOR: Record<ColorTier, { flockMul: number; speedMul: number }> = {
+  grey:   { flockMul: 1.0,  speedMul: 1.0 },
+  gold:   { flockMul: 0.45, speedMul: 1.25 },  // milder loner, a little faster
+  silver: { flockMul: 0.15, speedMul: 1.7 },   // strong loner, noticeably faster
+}
+
+// Materials are created once per isDark change (in useMemo) and shared across all
+// birds of a tier. Each bird still owns its geometry for mutable wingtip flap.
 
 function makeTierMaterials(isDark: boolean): Record<ColorTier, THREE.MeshBasicMaterial> {
+  // FULLY OPAQUE: the bird is several overlapping triangles (body + 2 wings); with
+  // transparency the overlaps stack and darken, so the bird isn't one flat colour.
   return {
     gold: new THREE.MeshBasicMaterial({
-      color: new THREE.Color(1.0, 0.902, 0.471),  // #ffe678 — CAW accent gold
+      color: new THREE.Color(0xf5b829),            // richer CAW gold
       side: THREE.DoubleSide,
-      transparent: true,
-      opacity: 0.70,
+      fog: false,                                  // immune to depth fog so gold always POPS
     }),
     silver: new THREE.MeshBasicMaterial({
       color: isDark
-        ? new THREE.Color(1.0, 1.0, 1.0)          // pure white on dark
-        : new THREE.Color(0.08, 0.07, 0.06),       // near-black on light
+        ? new THREE.Color(0.85, 0.87, 0.92)        // bright silver-white on dark
+        : new THREE.Color(0.30, 0.30, 0.33),       // mid silver on light
       side: THREE.DoubleSide,
-      transparent: true,
-      opacity: 0.65,
+      fog: false,                                  // pops like gold
     }),
-    dim: new THREE.MeshBasicMaterial({
+    grey: new THREE.MeshBasicMaterial({
       color: isDark
-        ? new THREE.Color(0.78, 0.82, 0.86)        // light grey-blue on dark
-        : new THREE.Color(0.08, 0.07, 0.06),       // near-black on light
+        ? new THREE.Color(0.25, 0.25, 0.20)        // dark warm grey on dark
+        : new THREE.Color(0.10, 0.09, 0.09),       // near-black on light
       side: THREE.DoubleSide,
-      transparent: true,
-      opacity: isDark ? 0.15 : 0.12,               // faint / transparent — they recede
     }),
   }
 }
@@ -220,25 +308,33 @@ interface CrowState {
   phase: number                          // wing-flap phase (radians)
   fright: number                         // 0..1 panic scalar: spikes near cursor, decays
   tier: ColorTier                        // assigned at init, immutable
+  yaw: number                            // DISPLAYED yaw, damped toward velocity heading
+  pitch: number                          // DISPLAYED pitch, damped toward velocity heading
 }
 
 function makeCrowStates(count: number): CrowState[] {
   const states: CrowState[] = []
   for (let i = 0; i < count; i++) {
-    const spd = MIN_SPEED + Math.random() * (MAX_SPEED - MIN_SPEED)
+    const tier = getTier(i)
+    const beh = TIER_BEHAVIOR[tier]
+    const spd = (tune.minSpeed + Math.random() * (tune.maxSpeed - tune.minSpeed)) * beh.speedMul
     // Random unit direction
     const theta = Math.random() * Math.PI * 2
     const phi = (Math.random() - 0.5) * Math.PI
+    const vx = Math.cos(theta) * Math.cos(phi) * spd
+    const vy = Math.sin(phi) * spd
+    const vz = Math.sin(theta) * Math.cos(phi) * spd
     states.push({
       px: (Math.random() - 0.5) * WORLD_X * 2,
       py: (Math.random() - 0.5) * WORLD_Y * 2,
       pz: (Math.random() - 0.5) * WORLD_Z * 2,
-      vx: Math.cos(theta) * Math.cos(phi) * spd,
-      vy: Math.sin(phi) * spd,
-      vz: Math.sin(theta) * Math.cos(phi) * spd,
+      vx, vy, vz,
       phase: Math.random() * Math.PI * 2,
       fright: 0,
-      tier: getTier(i),
+      tier,
+      // seed displayed angles from initial velocity so there's no first-frame snap
+      yaw: Math.atan2(-vz, vx),
+      pitch: Math.asin(Math.max(-1, Math.min(1, vy / (spd || 1)))),
     })
   }
   return states
@@ -383,63 +479,85 @@ function FlockScene({ isDark }: { isDark: boolean }) {
         const dz = o.pz - b.pz
         const distSq = dx * dx + dy * dy + dz * dz
 
-        if (distSq < SEP_RADIUS * SEP_RADIUS && distSq > 0) {
+        if (distSq < tune.sepRadius * tune.sepRadius && distSq > 0) {
           const dist = Math.sqrt(distSq)
           _sep.x -= dx / dist
           _sep.y -= dy / dist
           _sep.z -= dz / dist
         }
-        if (distSq < ALI_RADIUS * ALI_RADIUS) {
+        if (distSq < tune.aliRadius * tune.aliRadius) {
           _ali.x += o.vx; _ali.y += o.vy; _ali.z += o.vz
           aliCount++
         }
-        if (distSq < COH_RADIUS * COH_RADIUS) {
+        if (distSq < tune.cohRadius * tune.cohRadius) {
           _coh.x += o.px; _coh.y += o.py; _coh.z += o.pz
           cohCount++
         }
       }
 
-      // Apply forces
-      b.vx += _sep.x * SEP_WEIGHT
-      b.vy += _sep.y * SEP_WEIGHT
-      b.vz += _sep.z * SEP_WEIGHT
+      // Apply forces — scaled by this bird's tier flock-multiplier (gold/silver
+      // care less about neighbours, so they fly through instead of bouncing off).
+      const fm = TIER_BEHAVIOR[b.tier].flockMul
+      b.vx += _sep.x * tune.sepWeight * fm
+      b.vy += _sep.y * tune.sepWeight * fm
+      b.vz += _sep.z * tune.sepWeight * fm
 
       if (aliCount > 0) {
-        b.vx += (_ali.x / aliCount - b.vx) * ALI_WEIGHT
-        b.vy += (_ali.y / aliCount - b.vy) * ALI_WEIGHT
-        b.vz += (_ali.z / aliCount - b.vz) * ALI_WEIGHT
+        b.vx += (_ali.x / aliCount - b.vx) * tune.aliWeight * fm
+        b.vy += (_ali.y / aliCount - b.vy) * tune.aliWeight * fm
+        b.vz += (_ali.z / aliCount - b.vz) * tune.aliWeight * fm
       }
 
       if (cohCount > 0) {
-        b.vx += (_coh.x / cohCount - b.px) * COH_WEIGHT
-        b.vy += (_coh.y / cohCount - b.py) * COH_WEIGHT
-        b.vz += (_coh.z / cohCount - b.pz) * COH_WEIGHT
+        b.vx += (_coh.x / cohCount - b.px) * tune.cohWeight * fm
+        b.vy += (_coh.y / cohCount - b.py) * tune.cohWeight * fm
+        b.vz += (_coh.z / cohCount - b.pz) * tune.cohWeight * fm
       }
 
-      // Soft world-boundary avoidance
-      if (b.px < -WORLD_X + BOUND_MARGIN_X) b.vx += BOUND_TURN * (WORLD_X * 2)
-      if (b.px >  WORLD_X - BOUND_MARGIN_X) b.vx -= BOUND_TURN * (WORLD_X * 2)
-      if (b.py < -WORLD_Y + BOUND_MARGIN_Y) b.vy += BOUND_TURN * (WORLD_Y * 2)
-      if (b.py >  WORLD_Y - BOUND_MARGIN_Y) b.vy -= BOUND_TURN * (WORLD_Y * 2)
-      if (b.pz < -WORLD_Z + BOUND_MARGIN_Z) b.vz += BOUND_TURN * (WORLD_Z * 2)
-      if (b.pz >  WORLD_Z - BOUND_MARGIN_Z) b.vz -= BOUND_TURN * (WORLD_Z * 2)
+      // Soft world-boundary avoidance — a GENTLE nudge that ramps up with how far
+      // past the margin the bird is (not a hard wall). SKIPPED while frightened so a
+      // fleeing bird can punch through and fly off-screen rather than pinning to the
+      // edge and jittering against an invisible wall next to the cursor.
+      if (b.fright < 0.05) {
+        const bt = tune.boundTurn
+        if (b.px < -WORLD_X + BOUND_MARGIN_X) b.vx += bt * (-WORLD_X + BOUND_MARGIN_X - b.px)
+        if (b.px >  WORLD_X - BOUND_MARGIN_X) b.vx -= bt * (b.px - (WORLD_X - BOUND_MARGIN_X))
+        if (b.py < -WORLD_Y + BOUND_MARGIN_Y) b.vy += bt * (-WORLD_Y + BOUND_MARGIN_Y - b.py)
+        if (b.py >  WORLD_Y - BOUND_MARGIN_Y) b.vy -= bt * (b.py - (WORLD_Y - BOUND_MARGIN_Y))
+        if (b.pz < -WORLD_Z + BOUND_MARGIN_Z) b.vz += bt * (-WORLD_Z + BOUND_MARGIN_Z - b.pz)
+        if (b.pz >  WORLD_Z - BOUND_MARGIN_Z) b.vz -= bt * (b.pz - (WORLD_Z - BOUND_MARGIN_Z))
+      }
+      // Hard backstop: birds can roam well off-screen, but never escape to infinity.
+      // A wide clamp catches anyone the gentle nudge let slip too far.
+      const HARD = 1.4
+      if (b.px < -WORLD_X * HARD) { b.px = -WORLD_X * HARD; b.vx = Math.abs(b.vx) * 0.5 }
+      if (b.px >  WORLD_X * HARD) { b.px =  WORLD_X * HARD; b.vx = -Math.abs(b.vx) * 0.5 }
+      if (b.py < -WORLD_Y * HARD) { b.py = -WORLD_Y * HARD; b.vy = Math.abs(b.vy) * 0.5 }
+      if (b.py >  WORLD_Y * HARD) { b.py =  WORLD_Y * HARD; b.vy = -Math.abs(b.vy) * 0.5 }
+      if (b.pz < -WORLD_Z * HARD) { b.pz = -WORLD_Z * HARD; b.vz = Math.abs(b.vz) * 0.5 }
+      if (b.pz >  WORLD_Z * HARD) { b.pz =  WORLD_Z * HARD; b.vz = -Math.abs(b.vz) * 0.5 }
 
-      // Mouse fright — repulsion from projected cursor point. Birds within the
-      // (wide) radius get a hard outward shove AND spike their `fright` scalar,
-      // which temporarily lifts their speed cap so the dart actually lands.
+      // Mouse fright — birds flee MOSTLY SIDEWAYS (across the screen: left/right/up/
+      // down) out of the cursor's path, with only a slight backward drift. The flee
+      // direction is normalised in the screen plane (x,y); the depth (z) push is
+      // scaled way down by FRIGHT_Z_SCALE so they don't just punch straight back.
       if (mw.active) {
         const mdx = b.px - mw.x
         const mdy = b.py - mw.y
-        const mdz = b.pz - MOUSE_PLANE_Z
-        const mDistSq = mdx * mdx + mdy * mdy + mdz * mdz
-        if (mDistSq < MOUSE_WORLD_RADIUS * MOUSE_WORLD_RADIUS && mDistSq > 0) {
-          const mDist = Math.sqrt(mDistSq)
-          // Quadratic fall-off: strongest at origin, zero at radius edge
-          const t = 1 - mDist / MOUSE_WORLD_RADIUS
-          const force = MOUSE_FRIGHT_PEAK * t * t
-          b.vx += (mdx / mDist) * force
-          b.vy += (mdy / mDist) * force
-          b.vz += (mdz / mDist) * force
+        const screenDistSq = mdx * mdx + mdy * mdy
+        if (screenDistSq < MOUSE_WORLD_RADIUS * MOUSE_WORLD_RADIUS) {
+          const screenDist = Math.sqrt(screenDistSq)
+          const t = 1 - screenDist / MOUSE_WORLD_RADIUS   // 0..1, 1 = under cursor
+          const force = MOUSE_FRIGHT_PEAK * t * t          // quadratic fall-off
+          // Screen-plane escape direction (normalised on x,y only). If the bird is
+          // almost exactly under the cursor, nudge it to a random side so it still
+          // scatters sideways rather than going purely backward.
+          let dx = mdx, dy = mdy
+          if (screenDist < 0.001) { const a = i * 2.399963; dx = Math.cos(a); dy = Math.sin(a) }
+          const inv = 1 / (Math.hypot(dx, dy) || 1)
+          b.vx += dx * inv * force
+          b.vy += dy * inv * force
+          b.vz += -force * FRIGHT_Z_SCALE                  // small drift into the screen
           // Spike fright (stays elevated as the cursor passes, then decays)
           b.fright = Math.max(b.fright, Math.min(1, t * 1.3 + 0.2))
         }
@@ -448,14 +566,24 @@ function FlockScene({ isDark }: { isDark: boolean }) {
       // Decay the fright scalar each frame so panic lingers ~1s then settles.
       if (b.fright > 0) b.fright = Math.max(0, b.fright - FRIGHT_DECAY)
 
-      // Speed clamp — frightened birds may temporarily exceed normal MAX_SPEED.
-      const maxSpd = MAX_SPEED * (1 + b.fright * (FRIGHT_SPEED_BOOST - 1))
+      // Velocity damping — bleed off accumulated jitter so birds coast smoothly
+      // in straight-ish lines unless a force acts. (Skip while frightened so the
+      // panic dart isn't damped away.) This is the main "calm them down" knob.
+      if (b.fright < 0.05) {
+        b.vx *= tune.velDamp; b.vy *= tune.velDamp; b.vz *= tune.velDamp
+      }
+
+      // Speed clamp — per-tier cruising speed (gold/silver fly faster); frightened
+      // birds may temporarily exceed it.
+      const sm = TIER_BEHAVIOR[b.tier].speedMul
+      const maxSpd = tune.maxSpeed * sm * (1 + b.fright * (FRIGHT_SPEED_BOOST - 1))
+      const minSpd = tune.minSpeed * sm
       const spd = Math.sqrt(b.vx * b.vx + b.vy * b.vy + b.vz * b.vz)
       if (spd > maxSpd) {
         const inv = maxSpd / spd
         b.vx *= inv; b.vy *= inv; b.vz *= inv
-      } else if (spd < MIN_SPEED && spd > 0) {
-        const inv = MIN_SPEED / spd
+      } else if (spd < minSpd && spd > 0) {
+        const inv = minSpd / spd
         b.vx *= inv; b.vy *= inv; b.vz *= inv
       }
 
@@ -470,35 +598,47 @@ function FlockScene({ isDark }: { isDark: boolean }) {
       const b = cs[i]
       const mesh = meshes[i]
 
-      // ── Position ──────────────────────────────────────────────────────────
+      // ── Position & size ───────────────────────────────────────────────────
       mesh.position.set(b.px, b.py, b.pz)
+      mesh.scale.setScalar(tune.size)   // live size knob (geometry baked at 1×)
 
-      // ── Orientation (the key Wilderness effect) ───────────────────────────
+      // ── Orientation (the key Wilderness effect), DAMPED ───────────────────
       // yaw:  crow banks/turns left-right following horizontal direction
       // pitch: nose-up when climbing, nose-down when diving
+      // The displayed yaw/pitch are LERPed toward the velocity heading so the bird
+      // turns over several frames instead of snapping — no jarring rapid flips.
       const spd = Math.sqrt(b.vx * b.vx + b.vy * b.vy + b.vz * b.vz)
-      mesh.rotation.y = Math.atan2(-b.vz, b.vx)
-      // Clamp arg to avoid NaN from floating-point edge cases
-      const pitchArg = spd > 0 ? Math.max(-1, Math.min(1, b.vy / spd)) : 0
-      mesh.rotation.z = Math.asin(pitchArg)
+      const targetYaw = Math.atan2(-b.vz, b.vx)
+      const targetPitch = Math.asin(spd > 0 ? Math.max(-1, Math.min(1, b.vy / spd)) : 0)
+      // yaw wraps at ±π — take the shortest angular path before lerping
+      let dYaw = targetYaw - b.yaw
+      while (dYaw > Math.PI) dYaw -= Math.PI * 2
+      while (dYaw < -Math.PI) dYaw += Math.PI * 2
+      b.yaw += dYaw * tune.turnRate
+      b.pitch += (targetPitch - b.pitch) * tune.turnRate
+      mesh.rotation.y = b.yaw
+      mesh.rotation.z = b.pitch
       mesh.rotation.x = 0
 
       // ── Wing flap ─────────────────────────────────────────────────────────
       // Phase advances faster when climbing steeply (effort coupling) and when
       // frightened (panic flapping) — up to ~3× while fully spooked.
       const pitchAngle = mesh.rotation.z  // positive = nose up
-      b.phase += (Math.max(0, pitchAngle - 0.5) + 0.1) * (1 + b.fright * 2)
+      const flapAdvance = (Math.max(0, pitchAngle - 0.5) + 0.1) * (1 + b.fright * 2) * tune.flapSpeed
+      b.phase += Math.min(flapAdvance, tune.maxFlapRate)   // cap so wings never blur
 
       const wingY = Math.sin(b.phase % (Math.PI * 2)) * WING_AMP * CROW_SCALE
 
       const posAttr = mesh.geometry.attributes['position'] as THREE.BufferAttribute
       const arr = posAttr.array as Float32Array
-      // Animate outer wingtips (v11 left, v15 right) — symmetric flap
-      arr[IDX_V4_Y] = wingY   // left  wingtip Y  (v11)
-      arr[IDX_V5_Y] = wingY   // right wingtip Y  (v15)
-      // Also lift the mid-wing verts at 55% of tip travel for a smooth blade bend
-      arr[IDX_MID_L_Y] = wingY * 0.55   // v10 left  mid-wing
-      arr[IDX_MID_R_Y] = wingY * 0.55   // v14 right mid-wing
+      // Flap the whole wing blade: each wing vert's Y = wingY × its outward weight,
+      // so the tips travel fullest and the roots barely move (smooth bend).
+      for (const base of WING_BASES) {
+        for (let k = 0; k < WING_PTS; k++) {
+          const vi = base + k
+          arr[vi * 3 + 1] = wingY * WING_FLAP_W[vi]
+        }
+      }
       posAttr.needsUpdate = true
     }
   })

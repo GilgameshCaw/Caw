@@ -62,7 +62,7 @@ vi.mock('~/utils/localizedRouter', () => ({
   Link: ({ children }: { children: React.ReactNode }) => React.createElement('a', null, children),
 }))
 
-vi.mock('~/components/BoidsBg', () => ({
+vi.mock('~/components/BoidsBg3D', () => ({
   default: () => null,
 }))
 
