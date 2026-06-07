@@ -178,65 +178,41 @@ contract CawProfileMinter is Context {
   }
 
   // ============================================
-  // CARD-FUNDED PROFILE PATH — withdraw-locked mint
-  // ============================================
-
-  /// @notice Mint a profile and deposit CAW on behalf of `recipient` with withdrawals
-  ///         locked at the contract level. Intended for profiles funded via Stripe
-  ///         (fiat card), where the deposit represents stored value and not crypto.
-  ///
-  ///         The withdraw lock is set on CawProfile immediately after the mint.
-  ///         The lock travels with the tokenId on transfer — a buyer inherits the lock
-  ///         and must satisfy the same kycLevel to unlock. See CawProfile.setWithdrawKycLevel.
-  ///
-  ///         Only available to the msg.sender that holds CAW (burn + deposit).
-  ///
-  /// @param networkId       CAW network to register on.
-  /// @param recipient       Address that will own the new profile NFT.
-  /// @param username        Desired username.
-  /// @param depositAmount   CAW to lock as balance (pulled from msg.sender). Zero is allowed.
-  /// @param lzDestId        LayerZero destination chain ID.
-  /// @param lzTokenAmount   Optional LZ ZRO payment (pass 0 for ETH-only fee).
-  /// @param kycLevel        0 = time-lock only (180 days). 1-3 = KYC required at that level.
-  function mintAndDepositLocked(
-    uint32 networkId,
-    address recipient,
-    string memory username,
-    uint256 depositAmount,
-    uint32 lzDestId,
-    uint256 lzTokenAmount,
-    uint8 kycLevel
-  ) external payable {
-    uint32 newId = _burnAndAssignId(username, depositAmount);
-    if (depositAmount > 0) {
-      CAW.transferFrom(_msgSender(), address(this), depositAmount);
-      CAW.approve(address(CawProfile), depositAmount);
-    }
-    CawProfile.mintAndDeposit{value: msg.value}(networkId, recipient, username, newId, depositAmount, lzDestId, lzTokenAmount, "", 0, 0);
-    // Record the KYC level locally — gate is enforced by checkWithdrawAllowed
-    // when CawProfile.withdrawTo calls back into this contract.
-    withdrawKycLevel[newId] = kycLevel;
-    mintedAt[newId] = block.timestamp;
-  }
-
-  // ============================================
   // WITHDRAW GATE — implements ICawWithdrawGate
   // ============================================
   // KYC state lives here (not on CawProfile) — CawProfile is near the EIP-170
   // 24,576-byte cap. CawProfile.withdrawTo calls checkWithdrawAllowed(tokenId, owner)
   // on this contract as an external view; if the gate is closed this reverts.
+  //
+  // Levels:
+  //   0 = no gate (sponsor gift / repay-only / casual sponsorship)
+  //   1 = 180-day time-lock, no KYC ("stored-value" regulatory framing for fiat mints)
+  //   2+ = KYC verifier required at that level (IKycVerifier adapter, e.g. Civic Pass)
+  //
+  // The level is chosen by the sponsor at mint time and stored per-tokenId. Levels
+  // 1 and ≥2 are mutually exclusive paths — level 1 cannot be unlocked early by
+  // KYC, and levels ≥2 cannot be waited out. Self-funded mints never write
+  // mintedAt and are unconditionally lock-free regardless of any level value.
 
-  /// @dev Per-tokenId withdraw lock state. Set by mintAndDepositLocked at mint time.
-  ///      0 = unlocked (no restriction). 1-3 = KYC level required.
+  /// @dev Per-tokenId withdraw lock level. Set by mintAndDepositSponsored at mint
+  ///      time when kycLevel > 0. 0 = unlocked (no restriction). 1 = time-lock.
+  ///      2+ = KYC verifier required.
   mapping(uint32 => uint8) public withdrawKycLevel;
   /// @dev Mint timestamp for time-lock calculation. 0 = not locked.
   mapping(uint32 => uint256) public mintedAt;
 
   uint256 internal constant WITHDRAW_TIMELOCK = 180 days;
 
+  /// @dev Sentinel level for the time-lock-only path. Verifier slots start at 2 —
+  ///      addKycVerifier rejects this slot so a future PathwayExpander owner can't
+  ///      install a verifier that checkWithdrawAllowed would never reach (the
+  ///      level == TIME_LOCK_LEVEL branch returns before the verifier lookup).
+  uint8 internal constant TIME_LOCK_LEVEL = 1;
+
   /// @notice Per-level KYC verifier adapter addresses.
-  ///         level 0 = time-lock only (no verifier needed; not stored here).
-  ///         level 1+ = IKycVerifier adapter (Civic Pass network, etc).
+  ///         level 0 = no gate (no verifier needed; not stored here).
+  ///         level 1 = time-lock only (no verifier needed; not stored here).
+  ///         level 2+ = IKycVerifier adapter (Civic Pass network, etc).
   /// @dev    Additions-only: PathwayExpander can set a new level via
   ///         `addKycVerifier`, but a level that already points at a non-zero
   ///         verifier can never be rewritten. Same security pattern as
@@ -270,7 +246,11 @@ contract CawProfileMinter is Context {
   ///         forces a CawProfile redeploy — a clean break).
   function addKycVerifier(uint8 level, address verifier) external {
     if (msg.sender != pathwayExpander) revert NotPathwayExpander();
-    if (level == 0) revert KycNotConfigured(); // level 0 is the time-lock-only sentinel
+    // Verifier slots start at level 2. Level 0 = no gate, level 1 = time-lock.
+    // Neither has (or needs) a verifier; installing one at those slots would be
+    // dead state, since checkWithdrawAllowed's level == TIME_LOCK_LEVEL branch
+    // (and the level == 0 early-return) never reaches the verifier lookup.
+    if (level < 2) revert KycNotConfigured();
     if (verifier == address(0)) revert ZeroAddr();
     if (kycVerifiers[level] != address(0)) revert LevelAlreadySet();
     kycVerifiers[level] = verifier;
@@ -290,11 +270,12 @@ contract CawProfileMinter is Context {
   function checkWithdrawAllowed(uint32 tokenId, address tokenOwner) external view {
     uint8 level = withdrawKycLevel[tokenId];
     uint256 minted = mintedAt[tokenId];
-    if (minted == 0) return; // not locked
-    if (level == 0) {
+    if (minted == 0) return; // not locked (level 0, or never gated)
+    if (level == TIME_LOCK_LEVEL) {
       if (block.timestamp >= minted + WITHDRAW_TIMELOCK) return;
       revert WithdrawTimelocked();
     }
+    // level >= 2: KYC verifier required, no time-fallback
     address verifier = kycVerifiers[level];
     if (verifier == address(0)) revert KycNotConfigured();
     (bool ok, bytes memory ret) = verifier.staticcall(
@@ -310,9 +291,10 @@ contract CawProfileMinter is Context {
     uint8 level = withdrawKycLevel[tokenId];
     uint256 minted = mintedAt[tokenId];
     if (minted == 0) revert AlreadyUnlocked();
-    if (level == 0) {
+    if (level == TIME_LOCK_LEVEL) {
       require(block.timestamp >= minted + WITHDRAW_TIMELOCK, "Timelock active");
     } else {
+      // level >= 2: KYC verifier required, no time-fallback
       address verifier = kycVerifiers[level];
       if (verifier == address(0)) revert KycNotConfigured();
       (bool ok, bytes memory ret) = verifier.staticcall(
@@ -531,6 +513,11 @@ contract CawProfileMinter is Context {
   /// @param lzTokenAmount   Optional LZ ZRO payment (pass 0 for ETH-only fee).
   /// @param permitNonce     Must match recipient.nonceOf(address(this), ACTION_MINT_DEPOSIT).
   /// @param sig             ERC-1271 sig from recipient over the EIP-712 digest.
+  /// @param kycLevel        Withdraw gate. 0 = no gate (gift / repay-only / casual).
+  ///                        1 = 180-day time-lock, no KYC. 2+ = KYC verifier required
+  ///                        at that level. See withdrawKycLevel comment for full table.
+  /// @param sponsorTokenId  Sponsor's profile (L2-side repay credit destination). 0 if unused.
+  /// @param repayAmount     L2-side repay obligation (wei). Capped at depositAmount * 2.
   function mintAndDepositSponsored(
     uint32 networkId,
     address recipient,
@@ -566,9 +553,10 @@ contract CawProfileMinter is Context {
       CAW.transferFrom(_msgSender(), address(this), depositAmount);
       CAW.approve(address(CawProfile), depositAmount);
     }
-    // Only set kyc/time-lock when kycLevel > 0. Repay enforcement is L2-side
-    // and orthogonal — writing mintedAt here for repay-only would falsely
-    // activate the 180-day time-lock that checkWithdrawAllowed reads.
+    // Only write gate state when kycLevel > 0. Level 0 = no gate (gift / repay-
+    // only / casual sponsorship). Repay enforcement is L2-side and orthogonal —
+    // skipping the mintedAt write at level 0 also prevents repay-only sponsors
+    // from accidentally activating a time-lock the gate would later read.
     if (kycLevel > 0) {
       withdrawKycLevel[newId] = kycLevel;
       mintedAt[newId] = block.timestamp;

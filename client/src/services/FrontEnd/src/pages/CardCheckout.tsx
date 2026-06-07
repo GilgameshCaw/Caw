@@ -11,9 +11,9 @@
  *         If no wallet is connected a fresh EOA is generated and persisted via
  *         keyManager.ts so the webhook-driven mint can target an address.
  *
- * After Stripe payment the webhook on the server calls mintAndDepositLocked(),
- * and the user lands on /welcome/:username where the existing post-mint flow
- * polls for the new profile.
+ * After Stripe payment the webhook on the server calls mintAndDepositSponsored()
+ * with kycLevel = 1 (180-day time-lock) — the regulatory-framing path for fiat
+ * mints. User lands on /welcome/:username where the post-mint flow polls.
  *
  * Bare route (no MainLayout), same pattern as /onboarding.
  */

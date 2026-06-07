@@ -853,5 +853,95 @@ contract SponsorRepayTest is Test {
     //
     // Coverage status: DOCUMENTED — not runnable as unit test without full harness.
 
+    // =========================================================================
+    // KYC LEVEL REMAP (2026-06-08): 0=no gate, 1=time-lock, 2+=KYC verifier
+    // =========================================================================
+
+    /// @notice Stub IKycVerifier for testing the level-≥2 path.
+    function isVerified(address /*who*/) external pure returns (bool) { return true; }
+
+    // -------------------------------------------------------------------------
+    // level 1 (time-lock) is enforced by checkWithdrawAllowed — reverts before
+    // 180 days, returns after.
+    // -------------------------------------------------------------------------
+    function test_checkWithdrawAllowed_level1_timeLock() public {
+        uint256 depositAmount = 100_000 * 10**18;
+        uint256 nonce = scwUser.nonceOf(address(minter), 1);
+
+        minter.mintAndDepositSponsored(
+            1, address(scwUser), "timelocked", depositAmount, 0, 0, nonce, ANY_SIG,
+            1 /*kycLevel = time-lock*/, 0, 0
+        );
+
+        // Before 180 days: reverts
+        vm.expectRevert(CawProfileMinter.WithdrawTimelocked.selector);
+        minter.checkWithdrawAllowed(1, address(scwUser));
+
+        // After 180 days: returns successfully (no revert)
+        vm.warp(block.timestamp + 180 days + 1);
+        minter.checkWithdrawAllowed(1, address(scwUser));
+    }
+
+    // -------------------------------------------------------------------------
+    // level 2 (KYC required) does NOT fall through to the time-lock path —
+    // it always requires the verifier, regardless of how long has passed.
+    // -------------------------------------------------------------------------
+    function test_checkWithdrawAllowed_level2_kycPath_noVerifier_reverts() public {
+        uint256 depositAmount = 100_000 * 10**18;
+        uint256 nonce = scwUser.nonceOf(address(minter), 1);
+
+        minter.mintAndDepositSponsored(
+            1, address(scwUser), "kycgated", depositAmount, 0, 0, nonce, ANY_SIG,
+            2 /*kycLevel = KYC verifier required*/, 0, 0
+        );
+
+        // Verifier not configured → KycNotConfigured
+        vm.expectRevert(CawProfileMinter.KycNotConfigured.selector);
+        minter.checkWithdrawAllowed(1, address(scwUser));
+
+        // Wait 200 days — STILL reverts (no time-fallback on level ≥ 2)
+        vm.warp(block.timestamp + 200 days);
+        vm.expectRevert(CawProfileMinter.KycNotConfigured.selector);
+        minter.checkWithdrawAllowed(1, address(scwUser));
+    }
+
+    // -------------------------------------------------------------------------
+    // level 2 with verifier wired returns successfully when isVerified is true.
+    // -------------------------------------------------------------------------
+    function test_checkWithdrawAllowed_level2_kycPath_withVerifier_passes() public {
+        // Test contract acts as PathwayExpander AND as the IKycVerifier stub
+        // (isVerified is defined above on this same contract).
+        minter.addKycVerifier(2, address(this));
+
+        uint256 depositAmount = 100_000 * 10**18;
+        uint256 nonce = scwUser.nonceOf(address(minter), 1);
+
+        minter.mintAndDepositSponsored(
+            1, address(scwUser), "kycpass", depositAmount, 0, 0, nonce, ANY_SIG,
+            2, 0, 0
+        );
+
+        // Verifier returns true → no revert
+        minter.checkWithdrawAllowed(1, address(scwUser));
+    }
+
+    // -------------------------------------------------------------------------
+    // addKycVerifier rejects level < 2 (level 0 and level 1 are verifier-free).
+    // -------------------------------------------------------------------------
+    function test_addKycVerifier_rejectsLevel0() public {
+        vm.expectRevert(CawProfileMinter.KycNotConfigured.selector);
+        minter.addKycVerifier(0, address(this));
+    }
+
+    function test_addKycVerifier_rejectsLevel1_timeLockSlot() public {
+        vm.expectRevert(CawProfileMinter.KycNotConfigured.selector);
+        minter.addKycVerifier(1, address(this));
+    }
+
+    function test_addKycVerifier_acceptsLevel2() public {
+        minter.addKycVerifier(2, address(this));
+        assertEq(minter.kycVerifierFor(2), address(this));
+    }
+
     receive() external payable {}
 }

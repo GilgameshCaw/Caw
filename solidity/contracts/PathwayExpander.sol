@@ -168,7 +168,9 @@ contract PathwayExpander is Ownable {
   /// @notice Register a new KYC verifier level on a CawProfileMinter that
   ///         points its `pathwayExpander` slot at this contract. Forwards
   ///         to Minter.addKycVerifier; the Minter itself enforces the
-  ///         additions-only rule (existing levels can't be rewritten).
+  ///         additions-only rule (existing levels can't be rewritten) AND
+  ///         the level >= 2 floor (level 0 = no gate, level 1 = time-lock;
+  ///         both are verifier-free paths in the withdraw-gate state machine).
   /// @dev    Same trust profile as addPeer — a compromised expander key
   ///         can grow the KYC surface but cannot redirect an existing
   ///         level. To rotate an existing adapter, redeploy the Minter

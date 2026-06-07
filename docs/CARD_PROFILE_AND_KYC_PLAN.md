@@ -49,24 +49,39 @@ caller's parameters to CawProfile.
 
 ## The kycLevel parameter
 
-Passed at mint time by the caller of `mintAndDepositLocked`:
+Passed at mint time by the caller of `mintAndDepositSponsored` (the
+wallet-direct `mintAndDepositLocked` path was removed 2026-06-08; all
+gated mints now flow through the sponsored permit path).
 
 | Level | Name | What it checks | When to use |
 |---|---|---|---|
-| 0 | None | Time-lock only (180 days) then auto-unlock | Default for card profiles. No KYC ever. |
-| 1 | CAPTCHA | Bot resistance (Civic network 1) | Sybil defense only |
-| 2 | Uniqueness | Liveness check, no document (Civic network 10) | Moderate defense, no PII collected |
-| 3 | ID Document | Passport/ID scan + selfie (Civic network 17) | Full KYC for jurisdictions that require it |
+| 0 | None | No gate at all | Sponsor gift / repay-only sponsorship / casual mint. Default. |
+| 1 | Time-lock | 180-day auto-unlock, no KYC ever | Stored-value framing for fiat-card mints. |
+| 2 | CAPTCHA | Bot resistance (Civic network 1) | Sybil defense only |
+| 3 | Uniqueness | Liveness check, no document (Civic network 10) | Moderate defense, no PII collected |
+| 4 | ID Document | Passport/ID scan + selfie (Civic network 17) | Full KYC for jurisdictions that require it |
 
-Level 0 means: withdraw is locked for 180 days, then unlocks
-automatically. No verification, no identity, no friction. The
-time-lock is enough to make the stored-value argument ("this isn't
-a fiat-to-crypto bridge — value lives on-platform for months").
+Level 0 is the **default for any sponsored mint** — gifts, repay-only
+sponsorships, casual mints. No gate, no time-lock, no KYC. Identical
+withdraw behavior to a self-funded mint.
 
-Levels 1-3 are **dormant by default.** They exist in the contract
-so a sponsor server operator can flip them on without a protocol
-redeploy if a regulator demands it. The community never sees them
-unless regulatory force-majeure requires it.
+Level 1 is the **stored-value framing**: withdraw is locked for 180
+days, then unlocks automatically. No verification, no identity, no
+friction. The time-lock alone is enough to make the regulatory
+argument ("this isn't a fiat-to-crypto bridge — value lives
+on-platform for months").
+
+Levels 2-4 are **dormant by default.** They exist in the contract so
+a sponsor server operator can flip them on without a protocol redeploy
+if a regulator demands it. The community never sees them unless
+regulatory force-majeure requires it.
+
+The level is **one-shot at mint time** and stored per-tokenId. Levels
+1 and ≥2 are **mutually exclusive paths** — a level-1 token can't be
+unlocked early by KYC, and a level-≥2 token can't be waited out. The
+sponsor chooses which gate (if any) at mint time, and the user lives
+with that choice for the life of the profile (or until `unlockWithdraw`
+clears it under the matching condition).
 
 ---
 

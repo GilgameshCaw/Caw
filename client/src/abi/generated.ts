@@ -2524,6 +2524,13 @@ export const cawProfileAbi = [
   },
   {
     type: 'function',
+    inputs: [{ name: '', internalType: 'uint32', type: 'uint32' }],
+    name: 'cawDepositedByPeer',
+    outputs: [{ name: '', internalType: 'uint256', type: 'uint256' }],
+    stateMutability: 'view',
+  },
+  {
+    type: 'function',
     inputs: [],
     name: 'cawProfileLedger',
     outputs: [
@@ -5362,21 +5369,6 @@ export const cawProfileMinterAbi = [
       { name: 'lzTokenAmount', internalType: 'uint256', type: 'uint256' },
     ],
     name: 'mintAndDepositFor',
-    outputs: [],
-    stateMutability: 'payable',
-  },
-  {
-    type: 'function',
-    inputs: [
-      { name: 'networkId', internalType: 'uint32', type: 'uint32' },
-      { name: 'recipient', internalType: 'address', type: 'address' },
-      { name: 'username', internalType: 'string', type: 'string' },
-      { name: 'depositAmount', internalType: 'uint256', type: 'uint256' },
-      { name: 'lzDestId', internalType: 'uint32', type: 'uint32' },
-      { name: 'lzTokenAmount', internalType: 'uint256', type: 'uint256' },
-      { name: 'kycLevel', internalType: 'uint8', type: 'uint8' },
-    ],
-    name: 'mintAndDepositLocked',
     outputs: [],
     stateMutability: 'payable',
   },

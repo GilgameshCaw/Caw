@@ -60,7 +60,10 @@ export interface BootstrapParams {
   permitSig: `0x${string}`
   permitNonce: bigint      // current SmartEOA.nonceOf(Minter, ACTION_MINT_DEPOSIT)
   // Phase 2 Sponsor Repay — all default to 0 / unused.
-  // - kycLevel: 0 = no KYC required, 1+ = withdraw gate level
+  // - kycLevel withdraw gate (set at mint, stored per-tokenId on Minter):
+  //     0 = no gate (gift / repay-only / casual sponsorship — default)
+  //     1 = 180-day time-lock, no KYC ("stored-value" fiat-mint framing)
+  //     2+ = KYC verifier required at that level (Civic Pass adapter, etc.)
   // - sponsorTokenId: the sponsor profile receiving sweeps when repayAmount > 0
   // - repayAmount: wei. Contract enforces repayAmount <= depositAmount * 2.
   kycLevel?: number
