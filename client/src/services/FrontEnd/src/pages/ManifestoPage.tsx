@@ -178,7 +178,7 @@ const ManifestoPage: React.FC = () => {
 
             {/* Decentralization */}
             <div
-              className={`space-y-6 transition-all duration-500 delay-300 ${
+              className={`space-y-6 max-w-[600px] mx-auto transition-all duration-500 delay-300 ${
                 showContent ? 'opacity-100 translate-y-0' : 'opacity-0 translate-y-4'
               }`}
             >

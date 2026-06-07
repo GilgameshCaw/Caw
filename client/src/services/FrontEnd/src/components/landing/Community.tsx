@@ -113,7 +113,7 @@ export const Community = () => {
 
         {/* Mobile: Text boxes below image */}
         <div className="flex flex-col items-center gap-2.5 mb-4 sm:hidden translate-x-2">
-          {['No partners projects', 'There are no official socials', 'Decentralized system'].map((txt, i) => (
+          {['All data on chain', 'Immutable forever', 'Anyone can run a node'].map((txt, i) => (
             <div key={i} className={`bg-black z-10 transition-all duration-500 ${
               i === 0 ? 'delay-300' : i === 1 ? 'delay-400' : 'delay-500'
             } ${showContent ? 'opacity-100 translate-y-0' : 'opacity-0 translate-y-4'}`}>
@@ -130,7 +130,7 @@ export const Community = () => {
             showContent ? 'opacity-100 translate-y-0' : 'opacity-0 translate-y-4'
           }`}>
             <div className="rounded-lg border border-dashed border-white/40 px-6 py-3 text-sm md:text-base whitespace-nowrap">
-              No partners projects
+              All data on chain
             </div>
             <svg className="absolute left-full top-1/2 -translate-y-1/2 z-0 pointer-events-none h-px w-32 md:w-40 lg:w-56" style={{ marginLeft: '8px' }}>
               <line x1="0" y1="0" x2="100%" y2="0" stroke="white" strokeWidth="1" opacity="0.4" />
@@ -141,7 +141,7 @@ export const Community = () => {
             showContent ? 'opacity-100 translate-y-0' : 'opacity-0 translate-y-4'
           }`}>
             <div className="rounded-lg border border-dashed border-white/40 px-6 py-3 text-sm md:text-base whitespace-nowrap z-10 relative">
-              There are no official socials
+              Immutable forever
             </div>
             <svg className="absolute left-full top-1/2 -translate-y-1/2 z-0 pointer-events-none h-px w-32 md:w-48 lg:w-64" style={{ marginLeft: '8px' }}>
               <line x1="0" y1="0" x2="100%" y2="0" stroke="white" strokeWidth="1" opacity="0.35" />
@@ -193,7 +193,7 @@ export const Community = () => {
             showContent ? 'opacity-100 translate-y-0' : 'opacity-0 translate-y-4'
           }`}>
             <div className="rounded-lg border border-dashed border-white/40 px-6 py-3 text-sm md:text-base whitespace-nowrap">
-              Decentralized system
+              Anyone can run a node
             </div>
             <svg className="absolute left-full top-1/2 -translate-y-1/2 z-0 pointer-events-none h-px w-16 md:w-24 lg:w-28" style={{ marginLeft: '8px' }}>
               <line x1="0" y1="0" x2="100%" y2="0" stroke="white" strokeWidth="1" opacity="0.4" />

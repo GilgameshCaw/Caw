@@ -12,22 +12,22 @@ export const Features = () => {
   const features = useMemo(() => [
     {
       title: "Username NFTs",
-      description: "Automatically register tools, prompts, and resources with zero configuration.",
+      description: "Your name is an NFT. Mint it once, own it forever, take it anywhere CAW runs.",
       image: feature1,
     },
     {
       title: "CAW Economy",
-      description: "Secure access with Better Auth's integration and monetize with Polar.",
+      description: "Posts cost CAW. Stakers earn from every action. The protocol pays itself.",
       image: feature2,
     },
     {
       title: "Encrypted Messages",
-      description: "End-to-end encrypted · AES-256-GCM technology",
+      description: "End-to-end encrypted DMs. Group chats included. We can't read them.",
       image: feature3,
     },
     {
       title: "On-chain Identity & Wallet",
-      description: "Built with TypeScript, hot reload, and modern tooling for the best DX.",
+      description: "Sign in with a passkey. Recover with a backup. No seed phrases, no app installs.",
       image: feature4,
     },
   ], []);
