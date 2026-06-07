@@ -108,6 +108,7 @@ export const Cawmmunity = () => {
                   imageUrl={cawmmunityImg}
                   particleDensity={256}
                   tint={tint}
+                  minIntensity={0.6}
                   className="w-full h-full"
                   onReady={() => setParticlesReady(true)}
                 />

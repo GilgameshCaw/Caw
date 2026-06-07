@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useState, type ReactNode } from 'react'
 import { HiMenu, HiX } from 'react-icons/hi'
 import { Link } from '~/utils/localizedRouter'
 import { useTheme } from '~/hooks/useTheme'
@@ -38,7 +38,7 @@ export const RESOURCE_LINKS: { to: string; tKey?: string; label?: string }[] = [
 //   (natural document scroll) and WhitepaperPage (root doesn't scroll).
 // `fixed=true`: clusters are `fixed` — they stay pinned while the page
 //   scrolls. Used by CaptiveSplash, whose root is itself the scroll area.
-export default function LandingHeader({ fixed = false }: { fixed?: boolean }) {
+export default function LandingHeader({ fixed = false, rightExtra }: { fixed?: boolean; rightExtra?: ReactNode }) {
   const { isDark } = useTheme()
   const pos = fixed ? 'fixed' : 'absolute'
   const t = useT()
@@ -53,9 +53,10 @@ export default function LandingHeader({ fixed = false }: { fixed?: boolean }) {
 
   return (
     <>
-      {/* Top-right cluster. Desktop: language picker + avatar. Mobile:
-          a burger that opens the drawer below. */}
+      {/* Top-right cluster. Desktop: optional rightExtra + language picker + avatar.
+          Mobile: optional rightExtra + a burger that opens the drawer below. */}
       <div className={`${pos} top-5 right-6 sm:right-10 lg:right-16 z-20 flex items-center gap-2`}>
+        {rightExtra}
         <div className="hidden md:flex items-center gap-2">
           <LanguageSwitcher />
           {activeToken?.username && activeAvatarSrc && (

@@ -49,6 +49,25 @@ export default function CaptiveSplash() {
   // elements don't float over the scrolling content.
   const [scrolled, setScrolled] = useState(false)
 
+  // Surface a compact Sign-in button in the LandingHeader's right cluster
+  // once the hero CTA has scrolled out of view, so the user always has
+  // a one-tap path back to sign-in without scrolling back to the top.
+  const heroCtaRef = useRef<HTMLDivElement | null>(null)
+  const [heroCtaOut, setHeroCtaOut] = useState(false)
+  useEffect(() => {
+    const el = heroCtaRef.current
+    if (!el) return
+    // Root null = use the viewport (the scroll container is the page
+    // root :100svh div, but IntersectionObserver against that root works
+    // identically here since the CTA lives inside it).
+    const io = new IntersectionObserver(
+      ([entry]) => setHeroCtaOut(!entry.isIntersecting),
+      { threshold: 0 }
+    )
+    io.observe(el)
+    return () => io.disconnect()
+  }, [])
+
   useEffect(() => {
     intervalRef.current = setInterval(() => {
       setIsAnimating(true)
@@ -76,8 +95,37 @@ export default function CaptiveSplash() {
         } ${isDark ? 'bg-black/95 border-white/10' : 'bg-white/95 border-gray-200'}`}
       />
       {/* Shared landing header — logo lockup + resource links + language
-          picker. Same component used by ManifestoPage. */}
-      <LandingHeader fixed />
+          picker. Same component used by ManifestoPage. Once the hero CTA
+          has scrolled off-screen, surface a compact Sign-in / Create /
+          Go-to-feed action in the right cluster so the user always has
+          a one-tap path back to the primary CTA. */}
+      <LandingHeader
+        fixed
+        rightExtra={heroCtaOut && (
+          !isConnected && !isInRecoveryMode ? (
+            <button
+              onClick={() => setShowSignInChoice(true)}
+              className="px-3 sm:px-4 py-1.5 bg-yellow-500 text-black font-bold text-sm rounded-full hover:bg-yellow-400 transition-all shadow cursor-pointer whitespace-nowrap"
+            >
+              {t('common.sign_in')}
+            </button>
+          ) : !activeToken?.username ? (
+            <Link
+              to="/usernames/new"
+              className="px-3 sm:px-4 py-1.5 bg-yellow-500 text-black font-bold text-sm rounded-full hover:bg-yellow-400 transition-all shadow whitespace-nowrap"
+            >
+              {t('main_layout.create_profile')}
+            </Link>
+          ) : (
+            <Link
+              to="/home"
+              className="px-3 sm:px-4 py-1.5 bg-yellow-500 text-black font-bold text-sm rounded-full hover:bg-yellow-400 transition-all shadow whitespace-nowrap"
+            >
+              {t('captive_splash.go_to_feed')}
+            </Link>
+          )
+        )}
+      />
       {/* Hero — one full viewport, snaps so only the hero shows at top */}
       <div className="min-h-[100svh] flex flex-col items-center justify-center px-6 py-6 relative z-10">
         {/* 3D Crow shape — lazy loaded */}
@@ -111,7 +159,7 @@ export default function CaptiveSplash() {
         </p>
 
         {/* CTA buttons (mobile: side-by-side) */}
-        <div className="flex flex-col items-center gap-4 mb-12">
+        <div ref={heroCtaRef} className="flex flex-col items-center gap-4 mb-12">
           <div className="flex flex-row items-center justify-center gap-3 sm:gap-4">
           {!isConnected && !isInRecoveryMode ? (
             <button
