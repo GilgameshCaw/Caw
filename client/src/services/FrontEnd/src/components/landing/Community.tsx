@@ -102,7 +102,7 @@ export const Community = () => {
                   imageUrl={ethereumImg}
                   particleDensity={256}
                   tint={tint}
-                  minIntensity={0.15}
+                  minIntensity={0.3}
                   className="w-full h-full"
                   onReady={() => setParticlesReady(true)}
                 />
@@ -170,7 +170,7 @@ export const Community = () => {
                   imageUrl={ethereumImg}
                   particleDensity={256}
                   tint={tint}
-                  minIntensity={0.15}
+                  minIntensity={0.3}
                   className="w-full h-full"
                   onReady={() => setParticlesReady(true)}
                 />
