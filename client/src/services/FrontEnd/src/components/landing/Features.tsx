@@ -4,33 +4,35 @@ import feature3 from "~/assets/landing/messaging.png";
 import feature4 from "~/assets/landing/Identity.png";
 import ParticleSystemManifesto from "./ParticleSystemManifesto";
 import { useState, useEffect, useMemo } from "react";
+import { useT } from "~/i18n/I18nProvider";
 
 export const Features = () => {
   const tint = "#F9C337";
+  const t = useT();
   const [showContent, setShowContent] = useState(false);
 
   const features = useMemo(() => [
     {
-      title: "Username NFTs",
-      description: "Your name is an NFT. Mint it once, own it forever, sell it, or take it anywhere CAW runs.",
+      title: t("landing.features.username_nfts.title"),
+      description: t("landing.features.username_nfts.description"),
       image: feature1,
     },
     {
-      title: "CAW Economy",
-      description: "Stake CAW, and earn yield from every action taken.",
+      title: t("landing.features.economy.title"),
+      description: t("landing.features.economy.description"),
       image: feature2,
     },
     {
-      title: "Encrypted Messages",
-      description: "End-to-end encrypted DMs. Group chats included. We can't read them.",
+      title: t("landing.features.messages.title"),
+      description: t("landing.features.messages.description"),
       image: feature3,
     },
     {
-      title: "On-chain Identity & Wallet",
-      description: "Sign in with a passkey. Recover with a backup. No seed phrases, no app installs.",
+      title: t("landing.features.identity.title"),
+      description: t("landing.features.identity.description"),
       image: feature4,
     },
-  ], []);
+  ], [t]);
 
   const [imageStates, setImageStates] = useState<Record<number, { imageLoaded: boolean; particlesReady: boolean; showBoth: boolean }>>({
     0: { imageLoaded: false, particlesReady: false, showBoth: false },
@@ -95,12 +97,12 @@ export const Features = () => {
             : 'opacity-0 translate-y-4'
         }`}>
           <h3 className="text-2xl sm:text-3xl md:text-4xl font-semibold relative z-30">
-            The architecture of
+            {t("landing.features.heading_before")}
             <br />
-            <span className="text-[#F9C337]">decentralized communication</span>
+            <span className="text-[#F9C337]">{t("landing.features.heading_accent")}</span>
           </h3>
           <p className="text-gray-400 text-sm sm:text-lg max-w-2xl mx-auto relative z-30">
-            Your words, your wallet, your identity — all on-chain.
+            {t("landing.features.subheading")}
           </p>
         </div>
         <div className="grid grid-cols-2 md:grid-cols-2 gap-5 sm:gap-8 -mt-6 sm:-mt-8">

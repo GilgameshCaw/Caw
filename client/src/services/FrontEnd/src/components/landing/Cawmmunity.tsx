@@ -1,10 +1,16 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import ParticleSystemManifesto from "./ParticleSystemManifesto";
+import { useT } from "~/i18n/I18nProvider";
 
 import cawmmunityImg from "~/assets/landing/cawmmunity.png";
 
 const RotatingWordCawmmunity = () => {
-  const WORDS = ["Cawmmunity", "Revolution"];
+  const tr = useT();
+  // Local `t` shadows the typing-timer variable name below — alias to tr.
+  const WORDS = useMemo(
+    () => [tr("landing.cawmmunity.rotator.cawmmunity"), tr("landing.cawmmunity.rotator.revolution")],
+    [tr]
+  );
   const [display, setDisplay] = useState(WORDS[0]);
   const [deleting, setDeleting] = useState(false);
   const [idx, setIdx] = useState(0);
@@ -29,7 +35,7 @@ const RotatingWordCawmmunity = () => {
       }, typingSpeed);
     }
     return () => clearTimeout(t);
-  }, [display, deleting, current]);
+  }, [display, deleting, current, WORDS]);
 
   const maxWidth = Math.max(...WORDS.map(w => w.length));
 
@@ -45,6 +51,7 @@ const RotatingWordCawmmunity = () => {
 
 export const Cawmmunity = () => {
   const tint = "#F9C337";
+  const t = useT();
   const [showContent, setShowContent] = useState(false);
   const [imageLoaded, setImageLoaded] = useState(false);
   const [particlesReady, setParticlesReady] = useState(false);
@@ -83,7 +90,7 @@ export const Cawmmunity = () => {
             <div className="relative w-full max-w-[90%] sm:max-w-xl mx-auto lg:max-w-lg hero-vignette">
               <img
                 src={cawmmunityImg}
-                alt="Cawmmunity"
+                alt={t("landing.cawmmunity.image_alt")}
                 className={`w-full h-auto relative z-0 transition-opacity duration-[1200ms] ease-out scale-[1.15] lg:scale-100 ${
                   imageLoaded ? "opacity-100" : "opacity-0"
                 }`}
@@ -123,10 +130,10 @@ export const Cawmmunity = () => {
             }`}
           >
             <h2 className="text-3xl sm:text-4xl md:text-5xl lg:text-6xl font-semibold">
-              Join Teh <RotatingWordCawmmunity />
+              {t("landing.cawmmunity.heading_lead")} <RotatingWordCawmmunity />
             </h2>
             <p className="text-gray-400 text-base sm:text-lg max-w-xl mx-auto lg:mx-0">
-              Connect with fellow builders, share ideas, and be part of the decentralized future.
+              {t("landing.cawmmunity.body")}
             </p>
 
             <div className="flex justify-center lg:justify-start pt-2">
@@ -139,7 +146,7 @@ export const Cawmmunity = () => {
                 <svg className="w-5 h-5" viewBox="0 0 24 24" fill="currentColor" xmlns="http://www.w3.org/2000/svg">
                   <path d="M12 0C5.373 0 0 5.373 0 12s5.373 12 12 12 12-5.373 12-12S18.627 0 12 0zm5.894 8.221l-1.97 9.28c-.145.658-.537.818-1.084.508l-3-2.21-1.446 1.394c-.14.18-.357.295-.6.295-.002 0-.003 0-.005 0l.213-3.054 5.56-5.022c.24-.213-.054-.334-.373-.121l-6.869 4.326-2.96-.924c-.64-.203-.658-.64.135-.954l11.566-4.458c.538-.196 1.006.128.832.941z"/>
                 </svg>
-                <span>Join Telegram</span>
+                <span>{t("landing.cawmmunity.cta")}</span>
               </a>
             </div>
           </div>

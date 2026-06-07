@@ -1,10 +1,12 @@
 import ParticleSystemManifesto from "./ParticleSystemManifesto";
 import { useEffect, useState } from "react";
+import { useT } from "~/i18n/I18nProvider";
 
 import freeSpeechImg from "~/assets/landing/freespeech.png";
 
 export const FreeSpeech = () => {
   const tint = "#F9C337";
+  const t = useT();
   const [imageLoaded, setImageLoaded] = useState(false);
   const [particlesReady, setParticlesReady] = useState(false);
   const [showBoth, setShowBoth] = useState(false);
@@ -40,10 +42,10 @@ export const FreeSpeech = () => {
           }`}
         >
           <h3 className="text-2xl sm:text-3xl md:text-4xl font-semibold">
-            Freedom of <span className="text-[#F9C337]">Speech</span>
+            {t("landing.free_speech.heading_before")} <span className="text-[#F9C337]">{t("landing.free_speech.heading_accent")}</span>
           </h3>
           <p className="text-gray-400 text-sm sm:text-lg max-w-2xl mx-auto mt-4">
-            A censorship-resistant social graph where your words live on-chain.
+            {t("landing.free_speech.subheading")}
           </p>
         </div>
 
@@ -51,7 +53,7 @@ export const FreeSpeech = () => {
         <div className="max-w-[340px] sm:max-w-sm md:max-w-md lg:max-w-xl w-full mx-auto relative -mt-12 sm:mt-0 -mb-2 hero-vignette">
           <img
             src={freeSpeechImg}
-            alt="Free Speech"
+            alt={t("landing.free_speech.image_alt")}
             className={`w-full h-auto relative z-0 transition-opacity duration-[1200ms] ease-out ${
               imageLoaded ? "opacity-100" : "opacity-0"
             }`}
@@ -89,9 +91,9 @@ export const FreeSpeech = () => {
             }`}
             style={{ transitionDelay: "300ms" }}
           >
-            <h4 className="font-semibold mb-1.5 text-xs md:text-base">On-chain Identity</h4>
+            <h4 className="font-semibold mb-1.5 text-xs md:text-base">{t("landing.free_speech.identity.title")}</h4>
             <p className="text-xs text-gray-400">
-              Your wallet is your username — portable and self-sovereign.
+              {t("landing.free_speech.identity.body")}
             </p>
           </div>
 
@@ -101,17 +103,18 @@ export const FreeSpeech = () => {
             }`}
             style={{ transitionDelay: "400ms" }}
           >
-            <h4 className="font-semibold mb-1.5 text-xs md:text-base">Open Protocols</h4>
+            <h4 className="font-semibold mb-1.5 text-xs md:text-base">{t("landing.free_speech.open.title")}</h4>
             <p className="text-xs text-gray-400">
+              {t("landing.free_speech.open.before_link")}
               <a
                 href="https://github.com/GilgameshCaw/Caw"
                 target="_blank"
                 rel="noopener noreferrer"
                 className="text-yellow-400 hover:underline"
               >
-                Open source
+                {t("landing.free_speech.open.link_text")}
               </a>
-              {' '}and built on open standards for interoperability and composability.
+              {t("landing.free_speech.open.after_link")}
             </p>
           </div>
 
@@ -121,9 +124,9 @@ export const FreeSpeech = () => {
             }`}
             style={{ transitionDelay: "500ms" }}
           >
-            <h4 className="font-semibold mb-1.5 text-xs md:text-base">Censorship Resistance</h4>
+            <h4 className="font-semibold mb-1.5 text-xs md:text-base">{t("landing.free_speech.censorship.title")}</h4>
             <p className="text-xs text-gray-400">
-              Verifiable messages resilient to centralized takedowns.
+              {t("landing.free_speech.censorship.body")}
             </p>
           </div>
         </div>

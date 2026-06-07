@@ -1,15 +1,21 @@
 import ParticleSystemManifesto from "./ParticleSystemManifesto";
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import ethereumImg from "~/assets/landing/ethereum.png";
-
-const ROTATING = ["Teh Community", "for Teh People"];
+import { useT } from "~/i18n/I18nProvider";
 
 const RotatingWordCommunity = () => {
-  const [display, setDisplay] = useState(ROTATING[0]);
+  const t = useT();
+  // Re-derive rotator words on locale change so a language switch flips
+  // the typed text on the next cycle instead of leaving stale English.
+  const rotating = useMemo(
+    () => [t("landing.community.rotator.community"), t("landing.community.rotator.people")],
+    [t]
+  );
+  const [display, setDisplay] = useState(rotating[0]);
   const [deleting, setDeleting] = useState(false);
   const [idx, setIdx] = useState(0);
 
-  const current = ROTATING[idx];
+  const current = rotating[idx];
   const typingSpeed = deleting ? 45 : 85;
   const pauseTime = 2500;
 
@@ -19,7 +25,7 @@ const RotatingWordCommunity = () => {
       timeout = window.setTimeout(() => setDeleting(true), pauseTime);
     } else if (deleting && display === "") {
       setDeleting(false);
-      setIdx((i) => (i + 1) % ROTATING.length);
+      setIdx((i) => (i + 1) % rotating.length);
     } else {
       timeout = window.setTimeout(() => {
         const next = deleting
@@ -29,9 +35,9 @@ const RotatingWordCommunity = () => {
       }, typingSpeed);
     }
     return () => clearTimeout(timeout);
-  }, [display, deleting, current]);
+  }, [display, deleting, current, rotating.length]);
 
-  const maxWidth = Math.max(...ROTATING.map(w => w.length));
+  const maxWidth = Math.max(...rotating.map(w => w.length));
 
   return (
     <span className="text-[#F9C337] inline-block align-baseline" style={{ whiteSpace: "nowrap", minWidth: `${maxWidth}ch` }}>
@@ -42,6 +48,7 @@ const RotatingWordCommunity = () => {
 
 export const Community = () => {
   const tint = "#F9C337";
+  const t = useT();
   const [imageLoaded, setImageLoaded] = useState(false);
   const [particlesReady, setParticlesReady] = useState(false);
   const [showBoth, setShowBoth] = useState(false);
@@ -74,7 +81,7 @@ export const Community = () => {
           showContent ? 'opacity-100 translate-y-0' : 'opacity-0 translate-y-4'
         }`}>
           <h3 className="text-3xl font-semibold leading-tight">
-            <span className="block">Built by</span>
+            <span className="block">{t("landing.community.heading_lead")}</span>
             <RotatingWordCommunity />
           </h3>
         </div>
@@ -85,7 +92,7 @@ export const Community = () => {
             <div className="relative w-full overflow-hidden rounded-lg hero-vignette">
               <img
                 src={ethereumImg}
-                alt="Ethereum"
+                alt={t("landing.community.ethereum_alt")}
                 className={`w-full h-auto relative z-0 transition-opacity duration-[1200ms] ease-out ${
                   imageLoaded ? 'opacity-100' : 'opacity-0'
                 }`}
@@ -113,7 +120,7 @@ export const Community = () => {
 
         {/* Mobile: Text boxes below image */}
         <div className="flex flex-col items-center gap-2.5 mb-4 sm:hidden translate-x-2">
-          {['All data on chain', 'Immutable forever', 'Anyone can run a node'].map((txt, i) => (
+          {[t("landing.community.pill.on_chain"), t("landing.community.pill.immutable"), t("landing.community.pill.node")].map((txt, i) => (
             <div key={i} className={`bg-black z-10 transition-all duration-[1200ms] ease-out ${
               i === 0 ? 'delay-300' : i === 1 ? 'delay-400' : 'delay-500'
             } ${showContent ? 'opacity-100 translate-y-0' : 'opacity-0 translate-y-4'}`}>
@@ -130,7 +137,7 @@ export const Community = () => {
             showContent ? 'opacity-100 translate-y-0' : 'opacity-0 translate-y-4'
           }`}>
             <div className="rounded-lg border border-dashed border-white/40 px-6 py-3 text-sm md:text-base whitespace-nowrap">
-              All data on chain
+              {t("landing.community.pill.on_chain")}
             </div>
             <svg className="absolute left-full top-1/2 -translate-y-1/2 z-0 pointer-events-none h-px w-32 md:w-40 lg:w-56" style={{ marginLeft: '8px' }}>
               <line x1="0" y1="0" x2="100%" y2="0" stroke="white" strokeWidth="1" opacity="0.4" />
@@ -141,7 +148,7 @@ export const Community = () => {
             showContent ? 'opacity-100 translate-y-0' : 'opacity-0 translate-y-4'
           }`}>
             <div className="rounded-lg border border-dashed border-white/40 px-6 py-3 text-sm md:text-base whitespace-nowrap z-10 relative">
-              Immutable forever
+              {t("landing.community.pill.immutable")}
             </div>
             <svg className="absolute left-full top-1/2 -translate-y-1/2 z-0 pointer-events-none h-px w-32 md:w-48 lg:w-64" style={{ marginLeft: '8px' }}>
               <line x1="0" y1="0" x2="100%" y2="0" stroke="white" strokeWidth="1" opacity="0.35" />
@@ -153,7 +160,7 @@ export const Community = () => {
             <div className="relative w-full overflow-hidden rounded-lg hero-vignette">
               <img
                 src={ethereumImg}
-                alt="Ethereum"
+                alt={t("landing.community.ethereum_alt")}
                 className={`w-full h-auto relative z-0 transition-opacity duration-[1200ms] ease-out ${
                   imageLoaded ? 'opacity-100' : 'opacity-0'
                 }`}
@@ -183,7 +190,7 @@ export const Community = () => {
               showContent ? 'opacity-100 translate-y-0' : 'opacity-0 translate-y-4'
             }`}>
             <h3 className="text-2xl sm:text-4xl md:text-5xl lg:text-6xl font-semibold leading-tight">
-              <span className="block">Built by</span>
+              <span className="block">{t("landing.community.heading_lead")}</span>
               <RotatingWordCommunity />
             </h3>
           </div>
@@ -193,7 +200,7 @@ export const Community = () => {
             showContent ? 'opacity-100 translate-y-0' : 'opacity-0 translate-y-4'
           }`}>
             <div className="rounded-lg border border-dashed border-white/40 px-6 py-3 text-sm md:text-base whitespace-nowrap">
-              Anyone can run a node
+              {t("landing.community.pill.node")}
             </div>
             <svg className="absolute left-full top-1/2 -translate-y-1/2 z-0 pointer-events-none h-px w-16 md:w-24 lg:w-28" style={{ marginLeft: '8px' }}>
               <line x1="0" y1="0" x2="100%" y2="0" stroke="white" strokeWidth="1" opacity="0.4" />
