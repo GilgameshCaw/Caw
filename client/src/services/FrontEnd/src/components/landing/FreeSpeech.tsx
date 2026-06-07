@@ -35,7 +35,7 @@ export const FreeSpeech = () => {
       <div className="max-w-6xl mx-auto relative z-10">
         {/* Section title */}
         <div
-          className={`text-center mb-6 transition-all duration-500 ${
+          className={`text-center mb-6 transition-all duration-[1200ms] ease-out ${
             showContent ? "opacity-100 translate-y-0" : "opacity-0 translate-y-4"
           }`}
         >
@@ -79,12 +79,12 @@ export const FreeSpeech = () => {
 
         {/* Key points */}
         <div
-          className={`grid grid-cols-1 md:grid-cols-3 gap-3 sm:gap-4 mt-2 transition-all duration-500 delay-200 ${
+          className={`grid grid-cols-1 md:grid-cols-3 gap-3 sm:gap-4 mt-2 transition-all duration-[1200ms] ease-out delay-200 ${
             showContent ? "opacity-100 translate-y-0" : "opacity-0 translate-y-4"
           }`}
         >
           <div
-            className={`bg-black md:bg-transparent rounded-lg border border-dashed border-white/40 md:border-white/30 px-4 py-2 md:p-4 text-center transition-all duration-500 ${
+            className={`bg-black md:bg-transparent rounded-lg border border-dashed border-white/40 md:border-white/30 px-4 py-2 md:p-4 text-center transition-all duration-[1200ms] ease-out ${
               showContent ? "opacity-100 translate-y-0" : "opacity-0 translate-y-4"
             }`}
             style={{ transitionDelay: "300ms" }}
@@ -96,7 +96,7 @@ export const FreeSpeech = () => {
           </div>
 
           <div
-            className={`bg-black md:bg-transparent rounded-lg border border-dashed border-white/40 md:border-white/30 px-4 py-2 md:p-4 text-center transition-all duration-500 ${
+            className={`bg-black md:bg-transparent rounded-lg border border-dashed border-white/40 md:border-white/30 px-4 py-2 md:p-4 text-center transition-all duration-[1200ms] ease-out ${
               showContent ? "opacity-100 translate-y-0" : "opacity-0 translate-y-4"
             }`}
             style={{ transitionDelay: "400ms" }}
@@ -116,7 +116,7 @@ export const FreeSpeech = () => {
           </div>
 
           <div
-            className={`bg-black md:bg-transparent rounded-lg border border-dashed border-white/40 md:border-white/30 px-4 py-2 md:p-4 text-center transition-all duration-500 ${
+            className={`bg-black md:bg-transparent rounded-lg border border-dashed border-white/40 md:border-white/30 px-4 py-2 md:p-4 text-center transition-all duration-[1200ms] ease-out ${
               showContent ? "opacity-100 translate-y-0" : "opacity-0 translate-y-4"
             }`}
             style={{ transitionDelay: "500ms" }}

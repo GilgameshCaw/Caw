@@ -89,7 +89,7 @@ export const Features = () => {
     <section className="relative py-12 sm:py-16 lg:py-20 px-4 sm:px-6 overflow-hidden">
       <div className="max-w-3xl mx-auto relative z-10"></div>
       <div className="max-w-3xl mx-auto relative z-30">
-        <div className={`text-center mb-4 space-y-2 sm:space-y-4 relative z-30 transition-all duration-500 ${
+        <div className={`text-center mb-4 space-y-2 sm:space-y-4 relative z-30 transition-all duration-[1200ms] ease-out ${
           showContent
             ? 'opacity-100 translate-y-0'
             : 'opacity-0 translate-y-4'
@@ -107,7 +107,7 @@ export const Features = () => {
           {features.map((feature, index) => (
             <div
               key={index}
-              className={`relative flex flex-col transition-all duration-500 ${
+              className={`relative flex flex-col transition-all duration-[1200ms] ease-out ${
                 showContent
                   ? 'opacity-100 translate-y-0'
                   : 'opacity-0 translate-y-4'
@@ -179,7 +179,7 @@ export const Features = () => {
               {/* Text content - tucked up under the artwork. Image height
                   is fixed per row (above), so the negative margin lands
                   every title in the row at the exact same Y. */}
-              <div className={`relative z-30 ${index === 0 || index === 1 ? '-mt-4 sm:-mt-14' : '-mt-2 sm:-mt-6'} space-y-1.5 sm:space-y-2 text-center transition-all duration-500 delay-300 ${
+              <div className={`relative z-30 ${index === 0 || index === 1 ? '-mt-4 sm:-mt-14' : '-mt-2 sm:-mt-6'} space-y-1.5 sm:space-y-2 text-center transition-all duration-[1200ms] ease-out delay-300 ${
                 showContent
                   ? 'opacity-100 translate-y-0'
                   : 'opacity-0 translate-y-4'

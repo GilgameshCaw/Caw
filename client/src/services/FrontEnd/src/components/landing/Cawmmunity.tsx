@@ -76,7 +76,7 @@ export const Cawmmunity = () => {
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-8 lg:gap-12 items-center">
           {/* Left side - Image (NO background layer per request) */}
           <div
-            className={`order-2 lg:order-1 transition-all duration-500 ${
+            className={`order-2 lg:order-1 transition-all duration-[1200ms] ease-out ${
               showContent ? "opacity-100 translate-x-0" : "opacity-0 -translate-x-8"
             }`}
           >
@@ -118,7 +118,7 @@ export const Cawmmunity = () => {
 
           {/* Right side - Text and CTA */}
           <div
-            className={`order-1 lg:order-2 text-center lg:text-left space-y-6 transition-all duration-500 delay-200 ${
+            className={`order-1 lg:order-2 text-center lg:text-left space-y-6 transition-all duration-[1200ms] ease-out delay-200 ${
               showContent ? "opacity-100 translate-x-0" : "opacity-0 translate-x-8"
             }`}
           >

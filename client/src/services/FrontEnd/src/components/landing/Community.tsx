@@ -70,7 +70,7 @@ export const Community = () => {
     <section className="relative py-12 sm:py-16 lg:py-20 px-4 sm:px-6 overflow-hidden">
       <div className="max-w-6xl mx-auto relative z-10">
         {/* Mobile: Title above image */}
-        <div className={`text-center mb-6 md:hidden transition-all duration-500 delay-200 ${
+        <div className={`text-center mb-6 md:hidden transition-all duration-[1200ms] ease-out delay-200 ${
           showContent ? 'opacity-100 translate-y-0' : 'opacity-0 translate-y-4'
         }`}>
           <h3 className="text-3xl font-semibold leading-tight">
@@ -114,7 +114,7 @@ export const Community = () => {
         {/* Mobile: Text boxes below image */}
         <div className="flex flex-col items-center gap-2.5 mb-4 sm:hidden translate-x-2">
           {['All data on chain', 'Immutable forever', 'Anyone can run a node'].map((txt, i) => (
-            <div key={i} className={`bg-black z-10 transition-all duration-500 ${
+            <div key={i} className={`bg-black z-10 transition-all duration-[1200ms] ease-out ${
               i === 0 ? 'delay-300' : i === 1 ? 'delay-400' : 'delay-500'
             } ${showContent ? 'opacity-100 translate-y-0' : 'opacity-0 translate-y-4'}`}>
               <div className="rounded-lg border border-dashed border-white/40 px-6 py-3 text-base whitespace-nowrap">
@@ -126,7 +126,7 @@ export const Community = () => {
 
         {/* Desktop: icon with side text boxes + connector lines */}
         <div className="relative flex items-center justify-center mb-12 md:-translate-x-8 lg:-translate-x-12">
-          <div className={`absolute left-0 sm:left-4 md:left-12 lg:left-24 top-[35%] -translate-y-1/2 bg-black z-10 transition-all duration-500 delay-300 hidden sm:block ${
+          <div className={`absolute left-0 sm:left-4 md:left-12 lg:left-24 top-[35%] -translate-y-1/2 bg-black z-10 transition-all duration-[1200ms] ease-out delay-300 hidden sm:block ${
             showContent ? 'opacity-100 translate-y-0' : 'opacity-0 translate-y-4'
           }`}>
             <div className="rounded-lg border border-dashed border-white/40 px-6 py-3 text-sm md:text-base whitespace-nowrap">
@@ -137,7 +137,7 @@ export const Community = () => {
             </svg>
           </div>
 
-          <div className={`absolute left-0 sm:left-4 md:left-12 lg:left-24 top-1/2 -translate-y-1/2 bg-black z-10 group transition-all duration-500 delay-400 hidden sm:block ${
+          <div className={`absolute left-0 sm:left-4 md:left-12 lg:left-24 top-1/2 -translate-y-1/2 bg-black z-10 group transition-all duration-[1200ms] ease-out delay-400 hidden sm:block ${
             showContent ? 'opacity-100 translate-y-0' : 'opacity-0 translate-y-4'
           }`}>
             <div className="rounded-lg border border-dashed border-white/40 px-6 py-3 text-sm md:text-base whitespace-nowrap z-10 relative">
@@ -179,7 +179,7 @@ export const Community = () => {
           </div>
 
           {/* Title at right of icon — desktop only */}
-          <div className={`absolute -right-4 sm:-right-8 md:-right-16 lg:-right-24 top-[40%] -translate-y-1/2 text-center z-10 scale-75 sm:scale-90 origin-right w-max transition-all duration-500 delay-200 hidden md:block ${
+          <div className={`absolute -right-4 sm:-right-8 md:-right-16 lg:-right-24 top-[40%] -translate-y-1/2 text-center z-10 scale-75 sm:scale-90 origin-right w-max transition-all duration-[1200ms] ease-out delay-200 hidden md:block ${
               showContent ? 'opacity-100 translate-y-0' : 'opacity-0 translate-y-4'
             }`}>
             <h3 className="text-2xl sm:text-4xl md:text-5xl lg:text-6xl font-semibold leading-tight">
@@ -189,7 +189,7 @@ export const Community = () => {
           </div>
 
           {/* Right text box — desktop only */}
-          <div className={`absolute left-0 sm:left-4 md:left-12 lg:left-24 top-[65%] -translate-y-1/2 transition-all duration-500 delay-500 hidden sm:block ${
+          <div className={`absolute left-0 sm:left-4 md:left-12 lg:left-24 top-[65%] -translate-y-1/2 transition-all duration-[1200ms] ease-out delay-500 hidden sm:block ${
             showContent ? 'opacity-100 translate-y-0' : 'opacity-0 translate-y-4'
           }`}>
             <div className="rounded-lg border border-dashed border-white/40 px-6 py-3 text-sm md:text-base whitespace-nowrap">
