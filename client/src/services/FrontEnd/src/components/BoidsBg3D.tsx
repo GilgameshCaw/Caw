@@ -8,9 +8,9 @@ import * as THREE from 'three'
 // than the visible frustum (camera z=22, fov 55° → visible half-height ≈ 11.5 at
 // z=0, half-width ≈ that × aspect) so birds drift just a little off the edges
 // before the soft boundary turns them back.
-const WORLD_X = 22   // small overflow past the left/right edges
-const WORLD_Y = 12.5 // small overflow past top/bottom
-const WORLD_Z = 10
+const WORLD_X = 24.2  // small overflow past the left/right edges
+const WORLD_Y = 13.75 // small overflow past top/bottom
+const WORLD_Z = 13    // deeper box so birds can recede farther from the screen
 
 // Wing-flap amplitude (vertex units, matching Mr.doob's original scale factor)
 const WING_AMP = 5
@@ -20,8 +20,8 @@ const WING_AMP = 5
 // slider overlay (import.meta.env.DEV) can adjust them live; the sim reads from
 // `tune` every frame. Once dialled in, bake the values back as the defaults here.
 const tune = {
-  minSpeed: 0.02,
-  maxSpeed: 0.04,
+  minSpeed: 0.01,
+  maxSpeed: 0.02,
   // How fast the displayed heading catches up to the velocity direction (0..1).
   // Lower = slower, smoother turns.
   turnRate: 0.05,
@@ -38,6 +38,9 @@ const tune = {
   velDamp: 1,
   // Soft world-boundary turn force
   boundTurn: 0.02,
+  // Tiny random wander each frame — breaks up dead-straight paths so birds don't
+  // ping-pong forever between two walls; they gently meander and pick new routes.
+  wander: 0.0016,
   // Per-bird display size multiplier (applied via mesh.scale; 1 = baked CROW_SCALE).
   size: 0.65,
   // Wing-flap speed multiplier (1 = base rate).
@@ -234,13 +237,73 @@ const WING_FLAP_W: Float32Array = (() => {
   return w
 })()
 
+// Resting Y offset per vertex — gives the otherwise-flat bird some THICKNESS:
+//  • body verts are domed up along the centre spine (full lift at z≈0, none at the
+//    wide edges) so the body has a rounded cross-section instead of a flat sheet;
+//  • wing verts get a slight upward dihedral that grows toward the tip (a shallow
+//    V), so the wings aren't coplanar with the body even at rest.
+// The flap oscillation is ADDED on top of this resting height (see useFrame).
+const BODY_DOME = 0.9     // peak spine lift (raw units, pre-scale)
+const WING_DIHEDRAL = 1.6 // wingtip resting lift (raw units)
+const REST_Y: Float32Array = (() => {
+  const ry = new Float32Array(BASE_VERTS.length / 3)
+  const tipZ = Math.abs(BASE_VERTS[(L_WING_BASE + 7) * 3 + 2])
+  // widest body vert |z| (tail corners) to normalise the dome falloff
+  let bodyMaxZ = 0
+  for (let v = 0; v < L_WING_BASE; v++) bodyMaxZ = Math.max(bodyMaxZ, Math.abs(BASE_VERTS[v * 3 + 2]))
+  for (let v = 0; v < L_WING_BASE; v++) {
+    const z = Math.abs(BASE_VERTS[v * 3 + 2])
+    ry[v] = BODY_DOME * (1 - z / bodyMaxZ)   // spine high, edges flat
+  }
+  for (const base of [L_WING_BASE, R_WING_BASE]) {
+    for (let k = 0; k < WING_PTS; k++) {
+      const vi = base + k
+      const t = Math.min(1, Math.abs(BASE_VERTS[vi * 3 + 2]) / tipZ)
+      ry[vi] = WING_DIHEDRAL * t            // rises toward the tip
+    }
+  }
+  return ry
+})()
+
+// Per-vertex brightness tint baked as vertex colours: 1.0 at the body, fading to
+// WINGTIP_DARKEN toward the wingtips so each wing has a subtle darker-at-the-tip
+// gradient. Multiplies the material's base colour (so it darkens every tier
+// proportionally). Reuses the same outward measure as the flap weights.
+const WINGTIP_DARKEN = 0.7   // tips render at 70% brightness of the body
+const WING_TINT: Float32Array = (() => {
+  const nVerts = BASE_VERTS.length / 3
+  const tint = new Float32Array(nVerts).fill(1)   // body verts stay full brightness
+  const maxZ = Math.abs(BASE_VERTS[(L_WING_BASE + 7) * 3 + 2])
+  for (const base of [L_WING_BASE, R_WING_BASE]) {
+    for (let k = 0; k < WING_PTS; k++) {
+      const vi = base + k
+      const t = Math.min(1, Math.abs(BASE_VERTS[vi * 3 + 2]) / maxZ)  // 0 root → 1 tip
+      tint[vi] = 1 - t * (1 - WINGTIP_DARKEN)
+    }
+  }
+  return tint
+})()
+
 function makeCrowGeometry(): THREE.BufferGeometry {
   const geo = new THREE.BufferGeometry()
   const positions = new Float32Array(BASE_VERTS.length)
   for (let i = 0; i < BASE_VERTS.length; i++) {
     positions[i] = (BASE_VERTS[i] as number) * CROW_SCALE
   }
+  // Bake the resting Y (body dome + wing dihedral) so even before any flap the
+  // bird has thickness instead of being a flat sheet at y=0.
+  for (let v = 0; v < REST_Y.length; v++) {
+    positions[v * 3 + 1] = REST_Y[v] * CROW_SCALE
+  }
   geo.setAttribute('position', new THREE.BufferAttribute(positions, 3))
+  // Vertex colours = grayscale tint (white body → darker tips). With the material's
+  // vertexColors:true this multiplies the base colour for the wingtip gradient.
+  const colors = new Float32Array(BASE_VERTS.length)
+  for (let v = 0; v < WING_TINT.length; v++) {
+    const c = WING_TINT[v]
+    colors[v * 3] = c; colors[v * 3 + 1] = c; colors[v * 3 + 2] = c
+  }
+  geo.setAttribute('color', new THREE.BufferAttribute(colors, 3))
   geo.setIndex(new THREE.BufferAttribute(CROW_INDICES, 1))
   return geo
 }
@@ -272,35 +335,41 @@ const TIER_BEHAVIOR: Record<ColorTier, { flockMul: number; speedMul: number }> =
   silver: { flockMul: 0.15, speedMul: 1.7 },   // strong loner, noticeably faster
 }
 
+// Tier colours (dark-mode values), RGB in 0..1.
+const TIER_COLORS = {
+  grey:   { r: 0.06, g: 0.06, b: 0.06 },   // near-black
+  gold:   { r: 1,    g: 0.42, b: 0 },      // saturated orange-gold
+  silver: { r: 0.85, g: 0.87, b: 0.92 },
+}
+
 // Materials are created once per isDark change (in useMemo) and shared across all
 // birds of a tier. Each bird still owns its geometry for mutable wingtip flap.
 
 function makeTierMaterials(isDark: boolean): Record<ColorTier, THREE.MeshBasicMaterial> {
   // FULLY OPAQUE: the bird is several overlapping triangles (body + 2 wings); with
   // transparency the overlaps stack and darken, so the bird isn't one flat colour.
-  return {
-    gold: new THREE.MeshBasicMaterial({
-      color: new THREE.Color(0xf5b829),            // richer CAW gold
+  const mk = (c: { r: number; g: number; b: number }, light: THREE.Color, fog: boolean) =>
+    new THREE.MeshBasicMaterial({
+      color: isDark ? new THREE.Color(c.r, c.g, c.b) : light,
       side: THREE.DoubleSide,
-      fog: false,                                  // immune to depth fog so gold always POPS
-    }),
-    silver: new THREE.MeshBasicMaterial({
-      color: isDark
-        ? new THREE.Color(0.85, 0.87, 0.92)        // bright silver-white on dark
-        : new THREE.Color(0.30, 0.30, 0.33),       // mid silver on light
-      side: THREE.DoubleSide,
-      fog: false,                                  // pops like gold
-    }),
-    grey: new THREE.MeshBasicMaterial({
-      color: isDark
-        ? new THREE.Color(0.25, 0.25, 0.20)        // dark warm grey on dark
-        : new THREE.Color(0.10, 0.09, 0.09),       // near-black on light
-      side: THREE.DoubleSide,
-    }),
+      vertexColors: true,   // baked grayscale tint darkens the wingtips
+      fog,
+    })
+  const mats = {
+    gold:   mk(TIER_COLORS.gold,   new THREE.Color(0xf5b829),       false),
+    silver: mk(TIER_COLORS.silver, new THREE.Color(0.30, 0.30, 0.33), false),
+    grey:   mk(TIER_COLORS.grey,   new THREE.Color(0.10, 0.09, 0.09), true),
   }
+  return mats
 }
 
 // ─── Per-crow state ───────────────────────────────────────────────────────────
+
+// Number of independent flocks. Each bird is permanently assigned to one group
+// and only flocks (alignment/cohesion/separation) with its OWN group, so the
+// groups stay independent — they drift, cross, and pass through each other but
+// never merge into a single blob.
+const NUM_GROUPS = 3
 
 interface CrowState {
   px: number; py: number; pz: number   // position
@@ -308,6 +377,7 @@ interface CrowState {
   phase: number                          // wing-flap phase (radians)
   fright: number                         // 0..1 panic scalar: spikes near cursor, decays
   tier: ColorTier                        // assigned at init, immutable
+  group: number                          // 0..NUM_GROUPS-1, fixed flock membership
   yaw: number                            // DISPLAYED yaw, damped toward velocity heading
   pitch: number                          // DISPLAYED pitch, damped toward velocity heading
 }
@@ -332,6 +402,7 @@ function makeCrowStates(count: number): CrowState[] {
       phase: Math.random() * Math.PI * 2,
       fright: 0,
       tier,
+      group: i % NUM_GROUPS,   // even thirds; spreads gold/silver across groups
       // seed displayed angles from initial velocity so there's no first-frame snap
       yaw: Math.atan2(-vz, vx),
       pitch: Math.asin(Math.max(-1, Math.min(1, vy / (spd || 1)))),
@@ -493,12 +564,16 @@ function FlockScene({ isDark }: { isDark: boolean }) {
         const dz = o.pz - b.pz
         const distSq = dx * dx + dy * dy + dz * dz
 
+        // Separation applies to ALL birds (so crossing groups don't overlap)...
         if (distSq < tune.sepRadius * tune.sepRadius && distSq > 0) {
           const dist = Math.sqrt(distSq)
           _sep.x -= dx / dist
           _sep.y -= dy / dist
           _sep.z -= dz / dist
         }
+        // ...but alignment & cohesion only consider SAME-GROUP birds, so the
+        // groups fly as independent flocks and never merge into one.
+        if (o.group !== b.group) continue
         if (distSq < tune.aliRadius * tune.aliRadius) {
           _ali.x += o.vx; _ali.y += o.vy; _ali.z += o.vz
           aliCount++
@@ -527,6 +602,12 @@ function FlockScene({ isDark }: { isDark: boolean }) {
         b.vy += (_coh.y / cohCount - b.py) * tune.cohWeight * fm
         b.vz += (_coh.z / cohCount - b.pz) * tune.cohWeight * fm
       }
+
+      // Wander — small random steering so birds never settle into a dead-straight
+      // line that ping-pongs between two walls forever. Keeps paths varied.
+      b.vx += (Math.random() - 0.5) * tune.wander
+      b.vy += (Math.random() - 0.5) * tune.wander
+      b.vz += (Math.random() - 0.5) * tune.wander
 
       // Soft world-boundary avoidance — a GENTLE nudge that ramps up with how far
       // past the margin the bird is (not a hard wall). SKIPPED while frightened so a
@@ -645,12 +726,13 @@ function FlockScene({ isDark }: { isDark: boolean }) {
 
       const posAttr = mesh.geometry.attributes['position'] as THREE.BufferAttribute
       const arr = posAttr.array as Float32Array
-      // Flap the whole wing blade: each wing vert's Y = wingY × its outward weight,
-      // so the tips travel fullest and the roots barely move (smooth bend).
+      // Flap the whole wing blade: each wing vert's Y = its RESTING height (the
+      // dihedral) PLUS the flap oscillation × its outward weight — so the tips
+      // travel fullest, the roots barely move, and the resting V is preserved.
       for (const base of WING_BASES) {
         for (let k = 0; k < WING_PTS; k++) {
           const vi = base + k
-          arr[vi * 3 + 1] = wingY * WING_FLAP_W[vi]
+          arr[vi * 3 + 1] = REST_Y[vi] * CROW_SCALE + wingY * WING_FLAP_W[vi]
         }
       }
       posAttr.needsUpdate = true
