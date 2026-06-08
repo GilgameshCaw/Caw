@@ -124,9 +124,19 @@ export default function UsernameStep({
     [cawCost],
   )
 
-  // Is the name too expensive for the gift?
+  // On-chain deposit floor: the sponsor server rejects a bootstrap whose
+  // deposit is below SPONSOR_MIN_DEPOSIT_CAW (default 1,000,000 CAW) with
+  // ZERO_DEPOSIT. So the username burn must leave AT LEAST this much, not just
+  // a non-zero remainder — otherwise the name "fits the gift" in the FE but the
+  // mint fails server-side. 1M CAW in wei.
+  const MIN_DEPOSIT_WEI = 1_000_000n * 10n ** 18n
+
+  // Is the name too expensive? It's too expensive if the burn cost would leave
+  // less than the minimum deposit (i.e. burn > gift - MIN_DEPOSIT). This also
+  // covers the exact-spend case (burn === gift) — the user must keep enough to
+  // fund a real profile, never spend the whole gift on the name.
   const nameTooExpensive = useMemo(
-    () => giftCaw !== undefined && burnCostWei > giftCaw,
+    () => giftCaw !== undefined && burnCostWei > giftCaw - MIN_DEPOSIT_WEI,
     [giftCaw, burnCostWei],
   )
 
@@ -136,11 +146,12 @@ export default function UsernameStep({
     [minUsernameLength, username.length],
   )
 
-  // Deposit the user will receive after username burn
+  // Deposit the user will receive after username burn. Null when it wouldn't
+  // clear the deposit floor (nameTooExpensive already blocks Next in that case).
   const depositAmount = useMemo((): bigint | null => {
     if (giftCaw === undefined) return null
     const remainder = giftCaw - burnCostWei
-    return remainder > 0n ? remainder : null
+    return remainder >= MIN_DEPOSIT_WEI ? remainder : null
   }, [giftCaw, burnCostWei])
 
   // Debounced value used for the RPC call — avoids a query per keystroke
@@ -166,9 +177,21 @@ export default function UsernameStep({
     query: { enabled: isValidForRpc },
   })
 
-  // Sync availability to parent whenever it changes
+  // Sync availability to parent whenever the input or check result changes.
+  //
+  // The `username` (live value) dependency is load-bearing. The parent resets
+  // usernameAvailable→null on EVERY keystroke (handleUsernameChange). wagmi
+  // caches idByUsername, so deleting a char and retyping the SAME name returns
+  // the identical cached `existingId` with `checkingUsername` false, and the
+  // debounced value never actually changes (setState bails an equal value) — so
+  // without depending on the live `username` the effect would NOT re-run after
+  // the keystrokes blanked the parent's state, leaving it stuck at null ("checks
+  // a name once, won't re-confirm it"). Depending on `username` re-runs the
+  // effect every keystroke; we only PUSH a definitive result once typing has
+  // settled (username === debouncedUsername), otherwise we report null (typing).
   useEffect(() => {
-    if (!isValidForRpc || checkingUsername) {
+    const settled = username === debouncedUsername
+    if (!settled || !isValidForRpc || checkingUsername) {
       onAvailabilityChange(null)
       return
     }
@@ -176,7 +199,7 @@ export default function UsernameStep({
     // idByUsername returns uint32 — wagmi types it as number
     const available = existingId === undefined || existingId === 0
     onAvailabilityChange(available)
-  }, [existingId, checkingUsername, isValidForRpc, onAvailabilityChange])
+  }, [existingId, checkingUsername, isValidForRpc, username, debouncedUsername, onAvailabilityChange])
 
   const isTyping = username !== debouncedUsername || checkingUsername
 
