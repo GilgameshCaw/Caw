@@ -1,10 +1,38 @@
 import { Router } from 'express'
 import { randomBytes } from 'crypto'
 import multer from 'multer'
-import sharp from 'sharp'
 import { requireAuth } from '../middleware/auth'
 import { mediaStorage } from '../util/mediaStorage'
 import { reserveUpload, refundReservation } from '../util/uploadQuota'
+
+// sharp is a NATIVE module (libvips bindings). Its prebuilt binary requires an
+// x86-64-v2 CPU and a recent libvips; some VPS hosts expose an older v1 virtual
+// CPU where the binary won't load, and a from-source build needs a libvips the
+// distro may not ship. Rather than let a sharp load-failure crash the whole API
+// at boot (it's a top-level dependency of the upload route), we load it LAZILY
+// and tolerate its absence. The server runs fine without it — only IMAGE
+// uploads are affected, and those FAIL CLOSED (rejected, not passed through)
+// so we never bypass the EXIF-stripping + dimension-bomb guards below.
+let sharpModule: typeof import('sharp') | null = null
+let sharpLoadAttempted = false
+let sharpLoadError: string | null = null
+
+function getSharp(): typeof import('sharp') | null {
+  if (!sharpLoadAttempted) {
+    sharpLoadAttempted = true
+    try {
+      // eslint-disable-next-line @typescript-eslint/no-require-imports
+      sharpModule = require('sharp')
+    } catch (e: any) {
+      sharpLoadError = e?.message || String(e)
+      console.error(
+        '[upload] sharp failed to load — image uploads will be REJECTED ' +
+        '(EXIF-strip + dimension checks require it). Cause: ' + sharpLoadError,
+      )
+    }
+  }
+  return sharpModule
+}
 
 const router = Router()
 
@@ -53,6 +81,15 @@ function looksLikeImage(buf: Buffer): boolean {
 // Rejects oversized bitmaps (L-2: pixel-bomb / decompression-bomb DoS fix):
 // 1 MB PNG can decode to 400 MP; 8000×8000 px cap blocks Satori/Resvg OOM.
 async function stripExifAndCheckDimensions(buffer: Buffer): Promise<Buffer> {
+  const sharp = getSharp()
+  if (!sharp) {
+    // Fail closed: without sharp we cannot strip EXIF or bound dimensions, so
+    // we must NOT store the image. 503 = transient/operational, not the user's
+    // fault — points the operator at the missing native dep.
+    const err = new Error('Image processing is unavailable on this server (sharp not loaded)')
+    ;(err as any).statusCode = 503
+    throw err
+  }
   const image = sharp(buffer)
   const { width, height } = await image.metadata()
   if ((width ?? 0) > 8000 || (height ?? 0) > 8000) {

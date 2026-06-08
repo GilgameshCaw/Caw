@@ -320,9 +320,15 @@ export function buildServiceList(nodeType, config) {
     services.push({ service: 'MarketplaceIndexer', config: {} })
     services.push({
       service: 'InstanceRegistry',
+      // The service's zod schema (InstanceRegistryService/index.ts) REQUIRES the
+      // key `clientId` — it predates the V1→V2 "client"→"network" rename and was
+      // never renamed there. Emitting `networkId` here makes the service fail
+      // config validation at boot ("InstanceRegistry config validation: 1
+      // failure(s) / Required") and crash-loop. Keep this key as `clientId`
+      // until the service schema is renamed in lockstep.
       config: {
         l1RpcUrl: '${L1_RPC_URL}',
-        networkId: config.networkId,
+        clientId: config.networkId,
       },
     })
   }
