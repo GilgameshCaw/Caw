@@ -284,17 +284,35 @@ function normalizeSignatureComponent(raw: Uint8Array): Uint8Array {
 //   Bytes 60–91: Y (32 bytes)
 
 function extractP256XYFromSpki(spki: Uint8Array): { x: Uint8Array; y: Uint8Array } {
-  // P-256 SPKI for an uncompressed point is exactly 91 bytes.
-  // The DER prefix is fixed; byte 27 is the 0x04 uncompressed marker; the
-  // next 64 bytes are X || Y. Reject any other shape — lastIndexOf-style
-  // scanning can be fooled by a 0x04 byte appearing inside the OID prefix.
-  if (spki.length !== 91) {
-    throw new Error(`extractP256XYFromSpki: P-256 SPKI must be 91 bytes, got ${spki.length}`)
+  // P-256 SPKI for an uncompressed point is *typically* 91 bytes with the 0x04
+  // marker at byte 27 — but the exact DER prefix length is NOT guaranteed across
+  // authenticators. Cross-device / hybrid (caBLE) passkeys and some platform
+  // authenticators return a structurally-valid SPKI whose AlgorithmIdentifier or
+  // length encoding shifts the marker off byte 27. Hard-coding the offset broke
+  // those (symptom: "uncompressed point marker not at byte 27" on phone-relayed
+  // sign-in).
+  //
+  // Robust parse: the public key is the trailing `0x04 || X(32) || Y(32)` = 65
+  // bytes. We don't need to walk the whole DER — for an uncompressed P-256 point
+  // the last 65 bytes are exactly that, and the byte at position len-65 MUST be
+  // the 0x04 uncompressed marker. This is unambiguous: the only place a 65-byte
+  // `0x04`-prefixed run lands is the BIT STRING payload at the very end of SPKI.
+  // The trailing 65 bytes of any uncompressed-point SPKI are exactly
+  // `0x04 || X(32) || Y(32)` — the BIT STRING payload always sits at the end,
+  // so the marker is at len-65 no matter how long the DER prefix is. Validate
+  // that anchor (rejects a corrupt / non-uncompressed key) and slice.
+  const PT_LEN = 65 // 0x04 + 32-byte X + 32-byte Y
+  if (spki.length < PT_LEN) {
+    throw new Error(`extractP256XYFromSpki: SPKI too short (${spki.length} bytes, need ≥ ${PT_LEN})`)
   }
-  if (spki[26] !== 0x00 || spki[27] !== 0x04) {
-    throw new Error('extractP256XYFromSpki: P-256 SPKI uncompressed point marker not at byte 27')
+  const markerIdx = spki.length - PT_LEN
+  if (spki[markerIdx] !== 0x04) {
+    throw new Error(
+      `extractP256XYFromSpki: expected 0x04 uncompressed-point marker at byte ${markerIdx} ` +
+      `(len=${spki.length}), got 0x${spki[markerIdx].toString(16).padStart(2, '0')}`,
+    )
   }
-  return { x: spki.slice(28, 60), y: spki.slice(60, 92) }
+  return { x: spki.slice(markerIdx + 1, markerIdx + 33), y: spki.slice(markerIdx + 33, markerIdx + 65) }
 }
 
 // ---------------------------------------------------------------------------

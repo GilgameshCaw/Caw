@@ -1,4 +1,5 @@
-import { useRef, useMemo, useEffect, useCallback } from 'react'
+import { useRef, useMemo, useEffect, useCallback, Component } from 'react'
+import type { ReactNode } from 'react'
 import { Canvas, useFrame, useThree } from '@react-three/fiber'
 import * as THREE from 'three'
 
@@ -748,6 +749,53 @@ function FlockScene({ isDark }: { isDark: boolean }) {
   )
 }
 
+// ─── Mobile / low-end resilience ────────────────────────────────────────────
+//
+// This is a PURELY DECORATIVE background. It must never take the page down.
+// Two failure modes we guard against:
+//   1. WebGL unavailable — some mobile browsers, locked-down/older devices, or
+//      a backgrounded tab can't get a WebGL context. Mounting <Canvas> there
+//      throws. We probe once up front and render nothing if WebGL is absent.
+//   2. R3F / three throws mid-render (driver quirk, OOM on a weak GPU). A local
+//      error boundary catches it and renders nothing, so the real UI behind
+//      this fixed full-screen layer shows through instead of a black screen.
+//
+// Symptom this fixes: "passkey sign-in → black screen on phone" — the onboarding
+// page renders this background, and a WebGL failure here blacked out the whole
+// fixed-position overlay.
+
+let _webglOk: boolean | null = null
+function webglAvailable(): boolean {
+  if (_webglOk !== null) return _webglOk
+  try {
+    const canvas = document.createElement('canvas')
+    _webglOk = !!(
+      window.WebGLRenderingContext &&
+      (canvas.getContext('webgl') || canvas.getContext('experimental-webgl'))
+    )
+  } catch {
+    _webglOk = false
+  }
+  return _webglOk
+}
+
+class BgErrorBoundary extends Component<{ children: ReactNode }, { failed: boolean }> {
+  constructor(props: { children: ReactNode }) {
+    super(props)
+    this.state = { failed: false }
+  }
+  static getDerivedStateFromError() {
+    return { failed: true }
+  }
+  componentDidCatch(err: unknown) {
+    // Decorative-only — log and swallow. Never bubble to the app boundary.
+    console.warn('[BoidsBg3D] background disabled after render error:', err)
+  }
+  render() {
+    return this.state.failed ? null : this.props.children
+  }
+}
+
 // ─── Public component ─────────────────────────────────────────────────────────
 
 export default function BoidsBg3D({
@@ -757,6 +805,11 @@ export default function BoidsBg3D({
   isDark?: boolean
   className?: string
 }) {
+  // Bail out entirely when WebGL isn't usable — render nothing so the page
+  // behind this background shows normally (vs. a crashed black screen).
+  if (typeof window !== 'undefined' && !webglAvailable()) {
+    return null
+  }
   // Camera pulled back enough to see the full world box; slight downward tilt
   // puts the horizon through the middle of the frame.
   return (
@@ -769,18 +822,20 @@ export default function BoidsBg3D({
         pointerEvents: 'none',
       }}
     >
-      <Canvas
-        camera={{ position: [0, 2, 22], fov: 55 }}
-        gl={{ alpha: true, antialias: false, powerPreference: 'low-power' }}
-        dpr={[1, 1.5]}
-        style={{ background: 'transparent' }}
-        onCreated={({ gl }) => {
-          // Belt-and-suspenders: ensure no white flash on Safari
-          gl.setClearColor(0x000000, 0)
-        }}
-      >
-        <FlockScene isDark={isDark} />
-      </Canvas>
+      <BgErrorBoundary>
+        <Canvas
+          camera={{ position: [0, 2, 22], fov: 55 }}
+          gl={{ alpha: true, antialias: false, powerPreference: 'low-power' }}
+          dpr={[1, 1.5]}
+          style={{ background: 'transparent' }}
+          onCreated={({ gl }) => {
+            // Belt-and-suspenders: ensure no white flash on Safari
+            gl.setClearColor(0x000000, 0)
+          }}
+        >
+          <FlockScene isDark={isDark} />
+        </Canvas>
+      </BgErrorBoundary>
     </div>
   )
 }
