@@ -60,12 +60,31 @@ class ElasticsearchService {
   private maxReconnectAttempts: number = 5
   private reconnectDelay: number = 30000 // 30 seconds
 
+  // Per-install index names. ES_INDEX_PREFIX isolates installs that share one
+  // ES cluster (e.g. test.caw.social + test2.caw.social on one box) so their
+  // flat "caws"/"users"/"notifications" indices don't collide. install.sh
+  // derives the prefix from the domain and generate.js writes it to .env;
+  // empty prefix (single-install / dev) keeps the original bare names.
+  private readonly cawsIndex: string
+  private readonly usersIndex: string
+  private readonly notificationsIndex: string
+
   constructor() {
     // Initialize with environment variables or defaults
     const node = process.env.ELASTICSEARCH_NODE || 'http://localhost:9200'
     const auth = process.env.ELASTICSEARCH_API_KEY ? {
       apiKey: process.env.ELASTICSEARCH_API_KEY
     } : undefined
+
+    // Sanitize + normalize the prefix: ES index names must be lowercase and
+    // cannot contain most punctuation. We append a separating underscore only
+    // when a prefix is set, so an unset prefix yields exactly "caws" (no churn
+    // for existing single-install deployments).
+    const rawPrefix = (process.env.ES_INDEX_PREFIX || '').toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_+|_+$/g, '')
+    const p = rawPrefix ? `${rawPrefix}_` : ''
+    this.cawsIndex = `${p}caws`
+    this.usersIndex = `${p}users`
+    this.notificationsIndex = `${p}notifications`
 
     this.client = new Client({
       node,
@@ -172,10 +191,10 @@ class ElasticsearchService {
 
     try {
       // Caws index
-      const cawsIndexExists = await this.client.indices.exists({ index: 'caws' })
+      const cawsIndexExists = await this.client.indices.exists({ index: this.cawsIndex })
       if (!cawsIndexExists) {
       await this.client.indices.create({
-        index: 'caws',
+        index: this.cawsIndex,
         body: {
           mappings: {
             properties: {
@@ -239,10 +258,10 @@ class ElasticsearchService {
     }
 
     // Notifications index
-    const notificationsIndexExists = await this.client.indices.exists({ index: 'notifications' })
+    const notificationsIndexExists = await this.client.indices.exists({ index: this.notificationsIndex })
     if (!notificationsIndexExists) {
       await this.client.indices.create({
-        index: 'notifications',
+        index: this.notificationsIndex,
         body: {
           mappings: {
             properties: {
@@ -265,10 +284,10 @@ class ElasticsearchService {
     }
 
     // Users index
-    const usersIndexExists = await this.client.indices.exists({ index: 'users' })
+    const usersIndexExists = await this.client.indices.exists({ index: this.usersIndex })
     if (!usersIndexExists) {
       await this.client.indices.create({
-        index: 'users',
+        index: this.usersIndex,
         body: {
           mappings: {
             properties: {
@@ -335,7 +354,7 @@ class ElasticsearchService {
       }
 
       await this.client.index({
-        index: 'caws',
+        index: this.cawsIndex,
         id: caw.id.toString(),
         body: document
       })
@@ -366,7 +385,7 @@ class ElasticsearchService {
       }
 
       await this.client.index({
-        index: 'notifications',
+        index: this.notificationsIndex,
         id: notification.id.toString(),
         body: document
       })
@@ -404,7 +423,7 @@ class ElasticsearchService {
       }
 
       await this.client.index({
-        index: 'users',
+        index: this.usersIndex,
         id: user.tokenId.toString(),
         body: document
       })
@@ -423,9 +442,13 @@ class ElasticsearchService {
     }
 
     try {
-      const indices = type === 'all' ? ['caws', 'users'] :
-                     type === 'hashtags' ? ['caws'] :
-                     [type]
+      // Resolve the search-kind enum to the per-install (prefixed) index
+      // names. `type` is one of all | users | caws | hashtags — never a raw
+      // index literal — so map each kind through the prefixed fields.
+      const indices = type === 'all' ? [this.cawsIndex, this.usersIndex] :
+                     type === 'hashtags' ? [this.cawsIndex] :
+                     type === 'users' ? [this.usersIndex] :
+                     [this.cawsIndex]
 
       // For user search, combine fuzzy full-token matching with prefix matching
       // so short queries like "gilg" can find "gilgatwo" (fuzziness alone caps
@@ -506,7 +529,7 @@ class ElasticsearchService {
       // strict about `should` accepting an array, but the runtime accepts
       // both shapes. Mirrors how the rest of this file's search calls work.
       const response = await this.client.search({
-        index: 'notifications',
+        index: this.notificationsIndex,
         body: ({
           from: offset,
           size: 0, // We don't want individual hits, just aggregations
@@ -578,7 +601,7 @@ class ElasticsearchService {
 
     try {
       const response = await this.client.search({
-        index: 'caws',
+        index: this.cawsIndex,
         body: {
           size: 0,
           query: {
