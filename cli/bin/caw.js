@@ -383,6 +383,9 @@ program
       const replicationConfig = await collectReplicationConfig(nodeType, {
         network: networkConfig.network,
         storageChainKey: infraEarly.storageChain?.key,
+        // Infura fast-path stash from the L1 step — lets the archive-chain
+        // RPC derive from the same project key instead of re-prompting.
+        infura: l1RpcConfig._infura,
       })
 
       // Step 8: Infrastructure phase 2 — DB / Redis / Elasticsearch / API

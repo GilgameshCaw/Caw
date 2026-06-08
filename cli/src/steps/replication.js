@@ -1,6 +1,7 @@
 import inquirer from 'inquirer'
 import crypto from 'crypto'
 import { section, dim, tipBlock, brand, success, warn, err } from '../utils/ui.js'
+import { infuraUrls, withSecret } from '../utils/rpc.js'
 
 // Replication chain options. Each entry maps to one archive chain that
 // CawActionsArchive has been deployed to. We pick by network so operators
@@ -227,6 +228,20 @@ export async function collectReplicationConfig(nodeType, ctx = {}) {
   if (preloadRpc && preloadedChainEntry && preloadedChainEntry.key === replicationChain) {
     replicationRpcUrl = preloadRpc
     console.log(dim(`  Using replication RPC from --env preload.`))
+  }
+  // Infura fast path: the L1 step already collected a project key. The
+  // archive chain's label (e.g. "Arbitrum Sepolia") maps directly to an
+  // Infura host, so derive the URL from the same key instead of re-asking.
+  if (!replicationRpcUrl && ctx.infura?.projectId) {
+    const derived = infuraUrls(ctx.network || 'testnet', chosenChain.label, ctx.infura.projectId)
+    if (derived) {
+      // There's no separate REPLICATION_RPC_SECRET env var — the validator
+      // reads a single REPLICATION_RPC URL — so when the project needs a
+      // secret, embed it as Basic Auth in the URL (https://:SECRET@host/…).
+      replicationRpcUrl = withSecret(derived.http, ctx.infura.secret)
+      const shown = ctx.infura.secret ? `${derived.http} (with API Key Secret)` : derived.http
+      console.log(dim(`  ✓ Derived ${chosenChain.label} RPC from your Infura key: ${shown}`))
+    }
   }
   while (!replicationRpcUrl) {
     const ans = await inquirer.prompt([
