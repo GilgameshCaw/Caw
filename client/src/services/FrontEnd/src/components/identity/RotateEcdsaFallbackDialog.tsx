@@ -121,8 +121,7 @@ export function RotateEcdsaFallbackDialog({
   const canRotate =
     !needsEthFunding &&
     newPassword.length >= MIN_VAULT_PASSWORD_LENGTH &&
-    newPassword === confirmPassword &&
-    phase.name === 'idle'
+    newPassword === confirmPassword
 
   const handleCopyAddress = useCallback(async () => {
     try {
@@ -135,7 +134,7 @@ export function RotateEcdsaFallbackDialog({
   }, [walletAddress])
 
   const handleRotate = useCallback(async () => {
-    if (!canRotate) return
+    if (!canRotate || phase.name !== 'idle') return
     setPhase({ name: 'submitting' })
 
     try {
@@ -163,7 +162,7 @@ export function RotateEcdsaFallbackDialog({
         message: err instanceof Error ? err.message : 'Rotation failed',
       })
     }
-  }, [canRotate, newPassword, onRotate, username])
+  }, [canRotate, newPassword, onRotate, username, phase])
 
   // ── Theme classes ──
   const strongClass = isDark ? 'text-white' : 'text-gray-900'

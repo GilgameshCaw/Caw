@@ -1,7 +1,7 @@
 /// <reference types="vitest" />
 import path from "path";
 import { execSync } from "child_process";
-import { defineConfig, Plugin } from "vite";
+import { defineConfig, type Plugin } from "vite";
 import tailwindcss from "@tailwindcss/vite";
 import react from "@vitejs/plugin-react-swc";
 import svgr from "vite-plugin-svgr";
@@ -283,6 +283,10 @@ export default defineConfig({
     ],
     conditions: ['import', 'module', 'browser', 'default'],
   },
+  // @ts-expect-error — vitest 3.x ships its own vite@7 internally; its
+  // UserConfig augmentation targets vite@7's interface, not the project's
+  // vite@6, so TypeScript doesn't merge the 'test' key into vite@6's
+  // UserConfig. The runtime config is read by vitest directly and is correct.
   test: {
     environment: 'happy-dom',
     globals: true,

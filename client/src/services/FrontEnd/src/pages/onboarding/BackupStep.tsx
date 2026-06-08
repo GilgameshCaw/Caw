@@ -24,7 +24,7 @@
 import { useState } from 'react'
 import { useTheme } from '~/hooks/useTheme'
 import { useT } from '~/i18n/I18nProvider'
-import { bootstrapNewUser, type BootstrapResult } from '~/services/identity/bootstrap'
+import { bootstrapNewUser, type BootstrapResult, type BootstrapParams } from '~/services/identity/bootstrap'
 import { downloadBackupBlob } from '~/services/identity/cloudBackup'
 import {
   getSponsorApiClient,
@@ -178,7 +178,7 @@ export default function BackupStep({
       // the SponsorApiClient interface expected by bootstrapNewUser().
       const sponsorClientRaw = getSponsorApiClient()
       const sponsorApi = {
-        sponsorBootstrap: async (params: Parameters<typeof sponsorClientRaw.sponsorBootstrap>[0]) => {
+        sponsorBootstrap: async (params: BootstrapParams) => {
           // Build the full SponsorBootstrapRequest from the BootstrapParams.
           const req = {
             code: params.code,

@@ -95,11 +95,10 @@ export function ReDownloadBackupDialog({
   const canDownload =
     !!inMemoryPrivateKey &&
     newPassword.length >= MIN_VAULT_PASSWORD_LENGTH &&
-    newPassword === confirmPassword &&
-    phase.name === 'idle'
+    newPassword === confirmPassword
 
   const handleDownload = useCallback(async () => {
-    if (!canDownload || !inMemoryPrivateKey) return
+    if (!canDownload || !inMemoryPrivateKey || phase.name !== 'idle') return
     setPhase({ name: 'encrypting' })
 
     try {
@@ -118,7 +117,7 @@ export function ReDownloadBackupDialog({
         message: err instanceof Error ? err.message : 'Encryption failed',
       })
     }
-  }, [canDownload, inMemoryPrivateKey, newPassword, ecdsaFallbackAddress, username])
+  }, [canDownload, inMemoryPrivateKey, newPassword, ecdsaFallbackAddress, username, phase])
 
   // ── Theme classes ──
   const strongClass = isDark ? 'text-white' : 'text-gray-900'
