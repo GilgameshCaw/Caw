@@ -280,17 +280,23 @@ export function computeRedemptionBudget(opts: {
   ethUsdCents: number    // current ETH price in USD cents
   cawUsdCents: number    // current CAW price in USD cents (fractional, e.g. 0.0001)
 }): RedemptionBudget {
-  const ETH_WEI = 10n ** 18n
+  // ethUsdCents is a FRACTIONAL number (e.g. 167877.3078 cents = $1678.77/ETH),
+  // so it must NOT be passed to BigInt() — that throws RangeError on any
+  // non-integer ("cannot be converted to a BigInt because it is not an
+  // integer"). Convert each wei amount to whole ETH as a float first, then
+  // multiply by the fractional cents value. The result is only used as a
+  // best-effort USD-cents estimate, so float precision here is fine.
+  const weiToEth = (wei: bigint): number => Number(wei) / 1e18
 
   // Gas cost: gasPrice * gasLimit in ETH, convert to USD cents.
   const gasCostWei  = opts.gasPriceWei * opts.gasLimitBootstrap
-  const gasCostUsdCents = Number(gasCostWei * BigInt(opts.ethUsdCents) / ETH_WEI)
+  const gasCostUsdCents = Math.round(weiToEth(gasCostWei) * opts.ethUsdCents)
 
   // Network fees (mintFee×2 + authFee×2 + depositFee×2) in USD cents.
-  const netFeesUsdCents = Number(opts.netFeesWei * BigInt(opts.ethUsdCents) / ETH_WEI)
+  const netFeesUsdCents = Math.round(weiToEth(opts.netFeesWei) * opts.ethUsdCents)
 
   // LayerZero fee in USD cents.
-  const lzFeeUsdCents = Number(opts.lzFeeWei * BigInt(opts.ethUsdCents) / ETH_WEI)
+  const lzFeeUsdCents = Math.round(weiToEth(opts.lzFeeWei) * opts.ethUsdCents)
 
   // Deposit cost: depositAmountCAW * cawUsdCents (CAW in 1e18 wei).
   // cawUsdCents is already fractional (e.g., 0.0001 cents per 1 CAW token).
