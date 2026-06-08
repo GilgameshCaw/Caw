@@ -245,8 +245,27 @@ async function collectZkProverConfig() {
  * problem — usernames are `[a-z0-9]+` on-chain so any sentinel string we
  * picked could in principle collide with a real username.
  */
+// Embed an Infura-style API Key Secret as Basic Auth in the RPC URL, the
+// same way the backend's makeJsonRpcProvider does (see
+// client/src/utils/rpcProvider.ts withSecret). Produces
+// `https://:SECRET@host/v3/KEY`; ethers' JsonRpcProvider over HTTPS forwards
+// the userinfo as a Basic Auth header automatically. Without this, a project
+// with "require API key secret" enabled rejects the lookup with a 403
+// ("rejected due to project ID settings"). Empty secret is a no-op.
+function withSecret(url, secret) {
+  if (!url || !secret) return url
+  try {
+    const u = new URL(url)
+    if (u.username || u.password) return url // operator already set auth
+    u.password = secret
+    return u.toString()
+  } catch {
+    return url
+  }
+}
+
 async function resolveValidatorByUsername(ctx) {
-  const { l1RpcUrl } = ctx
+  const { l1RpcUrl, l1RpcSecret } = ctx
   const minter = addr('CAW_NAMES_MINTER_ADDRESS')
   const profile = addr('CAW_NAMES_ADDRESS')
 
@@ -305,9 +324,17 @@ async function resolveValidatorByUsername(ctx) {
     ])
 
     let tokenId, owner
+    let provider
     try {
-      const { JsonRpcProvider, Contract } = await import('ethers')
-      const provider = new JsonRpcProvider(l1RpcUrl)
+      const { JsonRpcProvider, Contract, Network } = await import('ethers')
+      // staticNetwork stops ethers from background-polling for the chainId
+      // (and from spamming "failed to detect network, retry in 1s" forever
+      // when the RPC rejects us). We don't actually know the chainId here,
+      // so pass `null` to disable detection entirely — the two reads below
+      // don't need it, and we destroy() the provider before looping anyway.
+      provider = new JsonRpcProvider(withSecret(l1RpcUrl, l1RpcSecret), undefined, {
+        staticNetwork: Network.from(0),
+      })
       const minterContract = new Contract(minter, MINTER_ABI, provider)
       const profileContract = new Contract(profile, PROFILE_ABI, provider)
 
@@ -321,10 +348,51 @@ async function resolveValidatorByUsername(ctx) {
       }
       owner = await profileContract.ownerOf(tokenId)
     } catch (e) {
-      console.log(err(`  Lookup failed: ${e?.message || e}`))
-      console.log(dim('  Try a different username, or restart the install with a working L1 RPC.'))
+      const msg = e?.message || String(e)
+      // Distinguish "RPC rejected us" (auth / allowlist) from "username not
+      // found" so the operator knows it's an infra problem, not a typo.
+      if (/403|forbidden|project id|api key|unauthorized|401/i.test(msg)) {
+        console.log(err(`  RPC rejected the request (not a username problem):`))
+        console.log(dim(`    ${msg.split('\n')[0]}`))
+        console.log(dim('  Your L1 RPC key is likely missing its API Key Secret, or the project'))
+        console.log(dim('  has an allowlist blocking this server.'))
+        console.log()
+        // The on-chain lookup can't work with this RPC, so don't trap the
+        // operator re-typing usernames against a dead endpoint. Offer the
+        // two real escapes: enter the token ID directly, or abort + fix RPC.
+        const { recover } = await inquirer.prompt([{
+          type: 'list',
+          name: 'recover',
+          message: 'How do you want to proceed?',
+          choices: [
+            { value: 'tokenId', name: 'Enter the validator token ID directly (skip the lookup)' },
+            { value: 'retry', name: 'Try another username (only if you fixed the RPC elsewhere)' },
+            { value: 'abort', name: 'Abort — I\'ll fix the L1 RPC key/secret and re-run' },
+          ],
+          default: 'tokenId',
+        }])
+        if (recover === 'abort') {
+          console.log(dim('  Aborting install. Fix the L1 RPC, then re-run `caw install`.'))
+          process.exit(0)
+        }
+        if (recover === 'tokenId') {
+          const { tokenId: tid } = await inquirer.prompt([{
+            type: 'number', name: 'tokenId', message: 'Validator token ID:',
+            validate: (input) => input > 0 ? true : 'Token ID must be a positive number',
+          }])
+          return { validatorId: tid, validatorUsername: '' }
+        }
+        // recover === 'retry' falls through to the loop.
+      } else {
+        console.log(err(`  Lookup failed: ${msg.split('\n')[0]}`))
+        console.log(dim('  Try a different username, or restart the install with a working L1 RPC.'))
+      }
       console.log()
       continue
+    } finally {
+      // Always tear down the provider so its keep-alive / retry timers don't
+      // outlive this iteration and spam the console while we re-prompt.
+      try { provider?.destroy?.() } catch { /* noop */ }
     }
 
     console.log()

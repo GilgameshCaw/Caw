@@ -334,6 +334,12 @@ program
       // so we can look up the validator's tokenId by username on-chain.
       const validatorConfig = await collectValidatorConfig(nodeType, opts.dir, {
         l1RpcUrl: l1RpcConfig.l1RpcUrlHttp || l1RpcConfig.l1RpcUrl,
+        // Forward the Infura-style API Key Secret so the on-chain username
+        // lookup authenticates the same way the backend will. Without it, a
+        // project with "require API key secret" enabled 403s the lookup
+        // ("rejected due to project ID settings"), even though the username
+        // exists on-chain.
+        l1RpcSecret: l1RpcConfig.l1RpcSecret || '',
         network: networkConfig.network,
       })
 
@@ -431,19 +437,22 @@ program
         console.log()
       }
 
-      // RPC URL leak warning. The frontend bundles VITE_L1_RPC_URL /
-      // VITE_L2_RPC_URL into the built JS — they're visible in any browser's
-      // DevTools to anyone who loads the page. Without provider-side
-      // allowlists this lets randos burn through your free-tier quota or
-      // rack up your paid bill in a few hours.
+      // RPC URL lockdown reminder. By default the browser talks to the
+      // backend's /api/rpc proxy, so the Infura key stays server-side and
+      // is NOT in the public bundle — but the backend still makes RPC calls
+      // from this VPS's IP, so an IP allowlist at the provider is the right
+      // protection. (If you deliberately set VITE_L*_RPC_URL to bypass the
+      // proxy, that URL DOES ship in the bundle and needs a referer/domain
+      // allowlist too.)
       if (fullConfig.domain && ['full', 'frontend-api'].includes(nodeType)) {
-        console.log(brand('  ⚠  Lock down your RPC URLs at the provider'))
-        console.log(dim('     Your frontend RPC URLs ship in the public JS bundle and are'))
-        console.log(dim('     visible in DevTools to anyone who loads your site. Allowlist them'))
-        console.log(dim('     at your provider so other people can\'t use them on your dime.'))
+        console.log(brand('  ⚠  Lock down your RPC key at the provider'))
+        console.log(dim('     The browser uses this node\'s /api/rpc proxy, so your key stays'))
+        console.log(dim('     server-side (not in the public bundle). Still allowlist it so only'))
+        console.log(dim('     this VPS can use it — otherwise a leaked key burns your quota.'))
         console.log()
-        console.log(`     ${brand('HTTP referer / domain allowlist:')} https://${fullConfig.domain}`)
-        console.log(`     ${brand('Server IP allowlist (for backend calls):')} the public IP of this VPS`)
+        console.log(`     ${brand('Server IP allowlist (for the backend proxy):')} the public IP of this VPS`)
+        console.log(dim('     (Only add an HTTP-referer / domain allowlist if you set VITE_L*_RPC_URL'))
+        console.log(dim(`      to bypass the proxy — then also allow https://${fullConfig.domain})`))
         console.log()
         console.log(dim('     Provider docs:'))
         console.log(dim('       Infura:    Settings → Configure → Allowlists'))
