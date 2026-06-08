@@ -1,6 +1,7 @@
 import inquirer from 'inquirer'
 import { section, dim, tipBlock, warn, brand } from '../utils/ui.js'
 import { chainLabels } from './networkAndMode.js'
+import { withSecret } from '../utils/rpc.js'
 
 function inferWsFromHttp(httpUrl) {
   let ws = httpUrl
@@ -63,11 +64,17 @@ const CHAIN_ID_NAMES = {
 // if the call fails (network error, malformed response, timeout, etc.).
 // Caller treats null as "couldn't verify" — we don't punish the operator
 // for an offline RPC during install, just for one we proved is wrong.
-async function probeChainId(url, timeoutMs = 4000) {
+//
+// `secret` is the optional Infura-style API Key Secret. We embed it as Basic
+// Auth (withSecret) so the probe authenticates the same way the backend will.
+// Without it, a project with "require API key secret" enabled 403s the probe
+// and we'd warn "couldn't verify" on a URL that's actually fine — which is
+// exactly what happens if you probe BEFORE collecting the secret.
+async function probeChainId(url, timeoutMs = 4000, secret = '') {
   try {
     const ctrl = new AbortController()
     const t = setTimeout(() => ctrl.abort(), timeoutMs)
-    const res = await fetch(url, {
+    const res = await fetch(withSecret(url, secret), {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'eth_chainId', params: [] }),
@@ -105,7 +112,13 @@ async function collectRpcPair(label, required, expectedChainId) {
   // check, pasting e.g. an Ethereum mainnet URL into the Arbitrum Sepolia
   // prompt produces a working-looking install that explodes at first
   // contract read.
+  // Collect HTTP URL + (for Infura) the API Key Secret, THEN probe with the
+  // secret applied. Probing before collecting the secret 403s a
+  // secret-required project and falsely reports "couldn't verify" on a good
+  // URL. The secret is collected up front here and reused for the probe and
+  // returned for the runtime.
   let http
+  let secret = ''
   while (true) {
     const answer = await inquirer.prompt([{
       type: 'input',
@@ -121,16 +134,42 @@ async function collectRpcPair(label, required, expectedChainId) {
         return true
       },
     }])
-    http = answer.http
-    if (!http.trim()) break
+    http = answer.http.trim()
+    if (!http) break
+
+    // API Key Secret opt-in (Infura). Asked before the probe so the probe
+    // authenticates. Lets the operator lock the project's origin allowlist
+    // to their site (frontend bundle safe) while backend traffic bypasses
+    // it via Basic Auth. Non-Infura providers paste whatever serves the
+    // same role; leave blank if unsure.
+    secret = ''
+    if (isInfuraUrl(http)) {
+      const { hasSecret } = await inquirer.prompt([{
+        type: 'confirm',
+        name: 'hasSecret',
+        message: `Use Infura's API Key Secret on the backend? ${dim('(lets you lock the project to your domains while backend traffic still works)')}`,
+        default: false,
+      }])
+      if (hasSecret) {
+        const { secretInput } = await inquirer.prompt([{
+          type: 'password',
+          name: 'secretInput',
+          message: 'Infura API Key Secret:',
+          mask: '*',
+          validate: (input) => input.trim().length > 0 ? true : 'Cannot be empty (Ctrl+C to skip)',
+        }])
+        secret = secretInput.trim()
+      }
+    }
+
     if (!expectedChainId) break
 
-    // Probe eth_chainId. If the RPC returns the wrong chain, give the
-    // operator a chance to re-enter without crashing the whole install.
-    const actual = await probeChainId(http.trim())
+    // Probe eth_chainId WITH the secret. If the RPC returns the wrong chain,
+    // give the operator a chance to re-enter without crashing the install.
+    const actual = await probeChainId(http, 4000, secret)
     if (actual === null) {
-      // Couldn't verify — could be a transient network blip or a stricter
-      // RPC that needs auth headers we don't send. Warn but accept.
+      // Couldn't verify — could be a transient network blip or an RPC that
+      // needs auth we still don't have. Warn but accept.
       console.log(dim(`  (Couldn't verify chain ID via eth_chainId — RPC may be temporarily unreachable.)`))
       break
     }
@@ -203,33 +242,8 @@ async function collectRpcPair(label, required, expectedChainId) {
     console.log(dim(`  ✓ Infura detected — auto-filled WSS endpoint.`))
   }
 
-  // Optional API Key Secret for backend traffic. Lets the operator lock the
-  // project's origin allowlist down to their site (so the frontend bundle
-  // is safe to ship) while the backend bypasses that check via Basic Auth.
-  // Infura calls it "API Key Secret"; Alchemy and others have similar
-  // mechanisms. We just ask whether they have one and pass it through —
-  // the runtime helper (rpcProvider.ts withSecret) embeds it as Basic Auth
-  // in the URL. Non-Infura providers can paste whatever string serves the
-  // same role on their setup; if you don't know what this is, leave blank.
-  let secret = ''
-  if (isInfura) {
-    const { hasSecret } = await inquirer.prompt([{
-      type: 'confirm',
-      name: 'hasSecret',
-      message: `Use Infura's API Key Secret on the backend? ${dim('(lets you lock the project to your domains while backend traffic still works)')}`,
-      default: false,
-    }])
-    if (hasSecret) {
-      const { secretInput } = await inquirer.prompt([{
-        type: 'password',
-        name: 'secretInput',
-        message: 'Infura API Key Secret:',
-        mask: '*',
-        validate: (input) => input.trim().length > 0 ? true : 'Cannot be empty (Ctrl+C to skip)',
-      }])
-      secret = secretInput.trim()
-    }
-  }
+  // (The API Key Secret was already collected above, before the chain-ID
+  // probe, so the probe could authenticate. `secret` holds it here.)
 
   // NOTE (2026-06): we no longer ask for a separate frontend RPC URL.
   // The browser bundle talks to the backend's same-origin RPC proxy
@@ -335,7 +349,8 @@ export async function collectL1Rpc(nodeType, network = 'testnet') {
   // path indirectly: we don't ask for a WSS pair for the price feed, so
   // do a one-off prompt with the same chainId guard inlined.
   if (['full', 'validator'].includes(nodeType)) {
-    let ethMainnetRpcUrl
+    let ethMainnetRpcUrl = ''
+    let ethMainnetRpcSecret = ''
     while (true) {
       const ans = await inquirer.prompt([{
         type: 'input',
@@ -349,8 +364,36 @@ export async function collectL1Rpc(nodeType, network = 'testnet') {
           return true
         }
       }])
-      ethMainnetRpcUrl = ans.ethMainnetRpcUrl
-      const actual = await probeChainId(ethMainnetRpcUrl.trim())
+      ethMainnetRpcUrl = ans.ethMainnetRpcUrl.trim()
+
+      // Collect the Infura API Key Secret BEFORE the chain-ID probe — a
+      // secret-required project 403s an unauthenticated probe, which would
+      // make a perfectly good URL look "unverifiable". Same opt-in as the
+      // L1/L2 collector; mainnet reads (Uniswap price feeds in
+      // ChainSyncService / ValidatorService) are server-side, so the secret
+      // unblocks them without weakening frontend protection.
+      ethMainnetRpcSecret = ''
+      if (isInfuraUrl(ethMainnetRpcUrl)) {
+        const { hasSecret } = await inquirer.prompt([{
+          type: 'confirm',
+          name: 'hasSecret',
+          message: `Use Infura's API Key Secret on the mainnet RPC? ${dim('(server-side only)')}`,
+          default: false,
+        }])
+        if (hasSecret) {
+          const { secretInput } = await inquirer.prompt([{
+            type: 'password',
+            name: 'secretInput',
+            message: 'Mainnet Infura API Key Secret:',
+            mask: '*',
+            validate: (input) => input.trim().length > 0 ? true : 'Cannot be empty (Ctrl+C to skip)',
+          }])
+          ethMainnetRpcSecret = secretInput.trim()
+        }
+      }
+
+      // Now probe WITH the secret applied.
+      const actual = await probeChainId(ethMainnetRpcUrl, 4000, ethMainnetRpcSecret)
       if (actual === null || actual === 1) {
         if (actual === 1) console.log(dim(`  ✓ Chain ID 1 matches Ethereum Mainnet.`))
         else console.log(dim(`  (Couldn't verify chain ID via eth_chainId — RPC may be temporarily unreachable.)`))
@@ -370,30 +413,7 @@ export async function collectL1Rpc(nodeType, network = 'testnet') {
       if (!reenter) break
     }
     answers.ethMainnetRpcUrl = ethMainnetRpcUrl
-
-    // Same Infura secret opt-in as the L1/L2 collector — only meaningful
-    // when the operator has locked their mainnet project to a domain
-    // allowlist. ChainSyncService and ValidatorService do mainnet reads
-    // for Uniswap price feeds, both server-side, so the secret unblocks
-    // those without weakening frontend protection.
-    if (isInfuraUrl(ethMainnetRpcUrl)) {
-      const { hasSecret } = await inquirer.prompt([{
-        type: 'confirm',
-        name: 'hasSecret',
-        message: `Use Infura's API Key Secret on the mainnet RPC? ${dim('(server-side only)')}`,
-        default: false,
-      }])
-      if (hasSecret) {
-        const { secretInput } = await inquirer.prompt([{
-          type: 'password',
-          name: 'secretInput',
-          message: 'Mainnet Infura API Key Secret:',
-          mask: '*',
-          validate: (input) => input.trim().length > 0 ? true : 'Cannot be empty (Ctrl+C to skip)',
-        }])
-        answers.ethMainnetRpcSecret = secretInput.trim()
-      }
-    }
+    if (ethMainnetRpcSecret) answers.ethMainnetRpcSecret = ethMainnetRpcSecret
   }
 
   return answers
