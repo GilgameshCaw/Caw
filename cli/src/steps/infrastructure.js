@@ -15,7 +15,7 @@ import { pickNetworkAndApi } from './clientAndApiPicker.js'
  * once we know which Network the operator picked.
  *
  * Returns:
- *   • domain, adminPassword          — for nodes that serve HTTP
+ *   • domain, adminTokenIds          — for nodes that serve HTTP
  *   • networkId, storageChain        — { key, label, eid } or null when
  *                                       lookup fails / public Network
  *   • walletConnectProjectId
@@ -35,7 +35,11 @@ export async function collectInfraEarly(nodeType, ctx = {}) {
   // gospel — re-asking is friction. The only case we prompt is when the
   // Node CLI is run standalone (without install.sh), e.g. local dev.
   let domain = process.env.CAW_DOMAIN || ''
-  let adminPassword = ''
+  // Bootstrap admin(s): comma-separated profile tokenIds the backend treats
+  // as ADMIN even before a DB role is set (see api/middleware/auth.ts
+  // ADMIN_TOKEN_IDS). Replaced the old ADMIN_PASSWORD — admin auth is now
+  // wallet/token-based, not password-based.
+  let adminTokenIds = ''
 
   if (['full', 'frontend-api', 'api-only'].includes(nodeType) && !domain) {
     section('Domain & Access')
@@ -69,25 +73,33 @@ export async function collectInfraEarly(nodeType, ctx = {}) {
       section('Domain & Access')
       console.log(dim(`  Using domain ${domain} (from install.sh).`))
     }
-    // --env preload: reuse admin password rather than re-prompting. Re-typing
-    // a password the operator already chose is friction; silently rotating
-    // it (which is what re-prompting does) invalidates existing admin
-    // sessions. The .env value is a hash, not the plaintext, so this is
-    // just file-to-env passthrough.
-    if (process.env.CAW_ADMIN_PASSWORD) {
-      adminPassword = process.env.CAW_ADMIN_PASSWORD
-      console.log(dim('  Using admin password from --env preload.'))
+    // Bootstrap admin tokenId(s). Admin auth is wallet/token-based now (the
+    // backend's ADMIN_TOKEN_IDS env list grants ADMIN to those profiles even
+    // before a DB role is set — see api/middleware/auth.ts). The old
+    // ADMIN_PASSWORD is gone; nothing reads it. The operator running this
+    // node is almost always the first admin, so we default to their validator
+    // tokenId and just confirm.
+    const defaultAdminId = ctx.validatorId && ctx.validatorId > 0 ? String(ctx.validatorId) : ''
+    if (process.env.CAW_ADMIN_TOKEN_IDS) {
+      adminTokenIds = process.env.CAW_ADMIN_TOKEN_IDS
+      console.log(dim(`  Admin tokenId(s) from --env preload: ${adminTokenIds}`))
     } else {
-      const { adminPw } = await inquirer.prompt([
+      const { adminIds } = await inquirer.prompt([
         {
-          type: 'password',
-          name: 'adminPw',
-          message: 'Admin password (for the admin dashboard):',
-          mask: '*',
-          validate: (input) => input.length >= 8 ? true : 'Password must be at least 8 characters',
+          type: 'input',
+          name: 'adminIds',
+          message: `Admin profile tokenId(s) ${dim('(comma-separated; these accounts get the admin dashboard)')}:`,
+          default: defaultAdminId,
+          validate: (input) => {
+            const v = input.trim()
+            if (!v) return true // allowed — operator can grant admin later via DB role
+            const ok = v.split(',').every(s => /^\d+$/.test(s.trim()) && Number(s.trim()) > 0)
+            return ok ? true : 'Enter positive integer tokenId(s), comma-separated (or leave blank)'
+          },
         },
       ])
-      adminPassword = adminPw
+      // Normalize: trim each, drop blanks.
+      adminTokenIds = adminIds.split(',').map(s => s.trim()).filter(Boolean).join(',')
     }
   }
 
@@ -111,7 +123,7 @@ export async function collectInfraEarly(nodeType, ctx = {}) {
       // Look up the storage chain on-chain so the next step (L2 RPC)
       // can name it. Same lookup the regular path does later.
       if (ctx.l1RpcUrl) {
-        storageChain = await lookupNetworkStorageChain(networkId, ctx.l1RpcUrl, ctx.network)
+        storageChain = await lookupNetworkStorageChain(networkId, ctx.l1RpcUrl, ctx.network, ctx.l1RpcSecret)
         if (storageChain) {
           console.log(dim(`  Network #${networkId} stores on ${storageChain.label}.`))
         }
@@ -158,6 +170,7 @@ export async function collectInfraEarly(nodeType, ctx = {}) {
     } else {
       const created = await createNetworkFlow({
         l1RpcUrl: ctx.l1RpcUrl,
+        l1RpcSecret: ctx.l1RpcSecret,
         validatorPrivateKey: ctx.validatorPrivateKey,
         network: ctx.network,
       })
@@ -190,7 +203,7 @@ export async function collectInfraEarly(nodeType, ctx = {}) {
     // can name the actual chain. Lookup is best-effort — if it fails we'll
     // fall back to a generic L2 label.
     if (!storageChain && ctx.l1RpcUrl) {
-      storageChain = await lookupNetworkStorageChain(networkId, ctx.l1RpcUrl, ctx.network)
+      storageChain = await lookupNetworkStorageChain(networkId, ctx.l1RpcUrl, ctx.network, ctx.l1RpcSecret)
       if (storageChain) {
         console.log(dim(`  Network #${networkId} stores on ${storageChain.label}.`))
       } else {
@@ -236,7 +249,7 @@ export async function collectInfraEarly(nodeType, ctx = {}) {
     await collectSignozEndpoint(nodeType, { domain, networkId })
 
   result.domain = domain
-  result.adminPassword = adminPassword
+  result.adminTokenIds = adminTokenIds
   result.networkId = networkId
   result.storageChain = storageChain
   result.walletConnectProjectId = walletConnectProjectId

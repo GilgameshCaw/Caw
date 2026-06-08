@@ -2,6 +2,7 @@ import crypto from 'crypto'
 import fs from 'fs'
 import path from 'path'
 import { section, success, dim, brand, warn } from '../utils/ui.js'
+import { makeProvider } from '../utils/rpc.js'
 
 // Per-network constants. The CLI asks the operator which network they want;
 // everything chain-id-flavored derives from this single source so we never
@@ -35,7 +36,7 @@ export async function generateConfig(nodeType, config, installDir) {
   console.log(success(`  Created ${dim(configJsonPath)}`))
 
   // Build .env. Mode 0600 — backend .env carries VALIDATOR_PRIVATE_KEY,
-  // REPLICATOR_PRIVATE_KEY, JWT_SECRET, ADMIN_PASSWORD, and DB credentials.
+  // REPLICATOR_PRIVATE_KEY, JWT_SECRET, ADMIN_TOKEN_IDS, and DB credentials.
   // World-readable would let any user on the box read keys that authorize
   // L2 submissions and admin-dashboard access. {mode: 0o600} on the
   // initial write covers fresh installs; existing files we explicitly
@@ -146,7 +147,10 @@ export async function writeAddressesForNetwork(config, clientDir) {
     console.log(dim(`  Skipping addresses.ts (no CawNetworkManager in deployments[${env}].L1).`))
     return
   }
-  const provider = new ethers.JsonRpcProvider(l1RpcUrl)
+  // makeProvider injects the API Key Secret (Basic Auth) + disables network
+  // background-polling — same as every other CLI L1 read. A bare provider
+  // 403s on a secret-required Infura project.
+  const provider = makeProvider(ethers, l1RpcUrl, config.l1RpcSecret)
   const cnm = new ethers.Contract(
     cnmAddr,
     ['function getStorageChainEid(uint32 networkId) view returns (uint32)'],
@@ -159,6 +163,8 @@ export async function writeAddressesForNetwork(config, clientDir) {
     console.log(dim(`  Couldn't read storageChainEid for Network ${networkId} from L1: ${e.message?.slice(0, 80)}`))
     console.log(dim('  Skipping addresses.ts — verify the Network exists on-chain and rerun.'))
     return
+  } finally {
+    provider.destroy?.()
   }
   const chainKey = chainKeyForEid(env, eid)
   if (!chainKey) {
@@ -423,7 +429,10 @@ function buildEnvVars(nodeType, config) {
   // to the sig path, so writing this is safe even on hosts that can't
   // actually run a prover. See docs/ZK_SIG_PATH.md.
   if (config.zkProverEnabled) env.ZK_PROVER_ENABLED = '1'
-  if (config.adminPassword) env.ADMIN_PASSWORD = config.adminPassword
+  // Bootstrap admin profile tokenId(s) — the backend's ADMIN_TOKEN_IDS env
+  // list grants ADMIN to these accounts before any DB role is set. Replaces
+  // the old ADMIN_PASSWORD (admin auth is wallet/token-based now).
+  if (config.adminTokenIds) env.ADMIN_TOKEN_IDS = config.adminTokenIds
 
   // Giphy API key for the /api/giphy proxy that backs the GIF picker. No
   // VITE_ prefix — server-side only. When unset, /api/giphy returns 500

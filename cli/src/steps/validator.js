@@ -2,6 +2,7 @@ import inquirer from 'inquirer'
 import crypto from 'crypto'
 import { section, dim, tipBlock, brand, success, warn, err } from '../utils/ui.js'
 import { addr } from '../addresses.js'
+import { makeProvider } from '../utils/rpc.js'
 
 // Just enough ABI to look up token IDs and owners.
 const MINTER_ABI = [
@@ -245,25 +246,6 @@ async function collectZkProverConfig() {
  * problem — usernames are `[a-z0-9]+` on-chain so any sentinel string we
  * picked could in principle collide with a real username.
  */
-// Embed an Infura-style API Key Secret as Basic Auth in the RPC URL, the
-// same way the backend's makeJsonRpcProvider does (see
-// client/src/utils/rpcProvider.ts withSecret). Produces
-// `https://:SECRET@host/v3/KEY`; ethers' JsonRpcProvider over HTTPS forwards
-// the userinfo as a Basic Auth header automatically. Without this, a project
-// with "require API key secret" enabled rejects the lookup with a 403
-// ("rejected due to project ID settings"). Empty secret is a no-op.
-function withSecret(url, secret) {
-  if (!url || !secret) return url
-  try {
-    const u = new URL(url)
-    if (u.username || u.password) return url // operator already set auth
-    u.password = secret
-    return u.toString()
-  } catch {
-    return url
-  }
-}
-
 async function resolveValidatorByUsername(ctx) {
   const { l1RpcUrl, l1RpcSecret } = ctx
   const minter = addr('CAW_NAMES_MINTER_ADDRESS')
@@ -326,15 +308,12 @@ async function resolveValidatorByUsername(ctx) {
     let tokenId, owner
     let provider
     try {
-      const { JsonRpcProvider, Contract, Network } = await import('ethers')
-      // staticNetwork stops ethers from background-polling for the chainId
-      // (and from spamming "failed to detect network, retry in 1s" forever
-      // when the RPC rejects us). We don't actually know the chainId here,
-      // so pass `null` to disable detection entirely — the two reads below
-      // don't need it, and we destroy() the provider before looping anyway.
-      provider = new JsonRpcProvider(withSecret(l1RpcUrl, l1RpcSecret), undefined, {
-        staticNetwork: Network.from(0),
-      })
+      const ethers = await import('ethers')
+      const { Contract } = ethers
+      // makeProvider injects the API Key Secret (Basic Auth) and disables
+      // network background-polling (the source of the "failed to detect
+      // network, retry in 1s" spam). Destroyed in the finally below.
+      provider = makeProvider(ethers, l1RpcUrl, l1RpcSecret)
       const minterContract = new Contract(minter, MINTER_ABI, provider)
       const profileContract = new Contract(profile, PROFILE_ABI, provider)
 

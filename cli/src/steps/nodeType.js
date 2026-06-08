@@ -14,7 +14,7 @@ const NODE_TYPES = [
     ],
     pros: ['Earn validator tips', 'Serve your own users', 'Full sovereignty over your instance'],
     cons: ['Requires ETH for gas (validator submits L2 transactions)', 'Needs a domain + SSL', 'Highest resource usage (DB, Redis, Node.js)'],
-    requires: ['Validator private key (PEM)', 'Client ID', 'L1 + L2 RPC URLs', 'Domain name', 'PostgreSQL', 'Redis', 'Admin password']
+    requires: ['Validator private key (PEM)', 'Client ID', 'L1 + L2 RPC URLs', 'Domain name', 'PostgreSQL', 'Redis', 'Admin tokenId(s)']
   },
   {
     value: 'validator',
@@ -41,7 +41,7 @@ const NODE_TYPES = [
     ],
     pros: ['Serve your own users', 'No ETH needed for gas', 'Lower operational risk'],
     cons: ['No validator tip income', 'Depends on external validators to process actions', 'Still need DB + domain'],
-    requires: ['Client ID', 'L2 RPC URL', 'Domain name', 'PostgreSQL', 'Redis', 'Admin password']
+    requires: ['Client ID', 'L2 RPC URL', 'Domain name', 'PostgreSQL', 'Redis', 'Admin tokenId(s)']
   },
   {
     value: 'frontend-only',
@@ -68,7 +68,7 @@ const NODE_TYPES = [
     ],
     pros: ['Serve multiple frontends', 'Headless — flexible integration', 'Can combine with a validator for full backend'],
     cons: ['No user-facing frontend', 'Need DB + Redis', 'No direct user traffic unless frontends point at you'],
-    requires: ['L2 RPC URL', 'PostgreSQL', 'Redis', 'Admin password']
+    requires: ['L2 RPC URL', 'PostgreSQL', 'Redis', 'Admin tokenId(s)']
   }
 ]
 

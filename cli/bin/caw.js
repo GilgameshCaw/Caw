@@ -107,7 +107,7 @@ const ENV_TO_CAW = {
   VALIDATOR_PRIVATE_KEY: 'CAW_VALIDATOR_PRIVATE_KEY',
   VALIDATOR_ID: 'CAW_VALIDATOR_ID',
   VALIDATOR_USERNAME: 'CAW_VALIDATOR_USERNAME',
-  ADMIN_PASSWORD: 'CAW_ADMIN_PASSWORD',
+  ADMIN_TOKEN_IDS: 'CAW_ADMIN_TOKEN_IDS',
   NETWORK_ID: 'CAW_NETWORK_ID',
   // Sponsor signups — HMAC secret must persist across re-runs (rotating it
   // breaks all existing invite codes). Private key not preloaded by default
@@ -348,7 +348,13 @@ program
       // step 6 can name it in the L2 RPC prompt.
       const infraEarly = await collectInfraEarly(nodeType, {
         l1RpcUrl: l1RpcConfig.l1RpcUrlHttp || l1RpcConfig.l1RpcUrl,
+        // Same API Key Secret the validator + backend use — the Network
+        // storage-chain lookup and createNetwork flow both hit L1.
+        l1RpcSecret: l1RpcConfig.l1RpcSecret || '',
         validatorPrivateKey: validatorConfig.validatorPrivateKey,
+        // The operator running the node is almost always the first admin, so
+        // we default the bootstrap admin tokenId to their validator tokenId.
+        validatorId: validatorConfig.validatorId,
         network: networkConfig.network,
       })
 

@@ -1,6 +1,7 @@
 import inquirer from 'inquirer'
 import { section, dim, tipBlock, brand, success, warn, err } from '../utils/ui.js'
 import { addr } from '../addresses.js'
+import { makeProvider, withProvider } from '../utils/rpc.js'
 
 // Just the bits of CawNetworkManager we use here.
 const NETWORK_MANAGER_ABI = [
@@ -49,7 +50,7 @@ const STORAGE_CHAINS = {
  * Returns null if the user backs out at any prompt.
  */
 export async function createNetworkFlow(ctx) {
-  const { l1RpcUrl, validatorPrivateKey, network = 'testnet' } = ctx
+  const { l1RpcUrl, validatorPrivateKey, network = 'testnet', l1RpcSecret = '' } = ctx
   if (!l1RpcUrl || !validatorPrivateKey) {
     console.log(warn('  Missing L1 RPC or validator key — cannot create a Network from the CLI.'))
     return null
@@ -58,7 +59,10 @@ export async function createNetworkFlow(ctx) {
   section('Create a new Network')
 
   const { ethers } = await import('ethers')
-  const provider = new ethers.JsonRpcProvider(l1RpcUrl)
+  // makeProvider injects the API Key Secret (Basic Auth) + disables network
+  // background-polling. A bare provider here would 403 on a secret-required
+  // project and then spam "failed to detect network" forever.
+  const provider = makeProvider(ethers, l1RpcUrl, l1RpcSecret)
   const wallet = new ethers.Wallet(validatorPrivateKey, provider)
 
   // Show the operator who's about to spend gas + own the new Network.
@@ -242,19 +246,20 @@ export async function createNetworkFlow(ctx) {
  * Returns the matched STORAGE_CHAINS entry ({ key, label, eid, ... }) or
  * null if the Network doesn't exist or the chain isn't in our table.
  */
-export async function lookupNetworkStorageChain(networkId, l1RpcUrl, network = 'testnet') {
+export async function lookupNetworkStorageChain(networkId, l1RpcUrl, network = 'testnet', l1RpcSecret = '') {
   if (!l1RpcUrl || !networkId) return null
   let cmAddress
   try { cmAddress = addr('NETWORK_MANAGER_ADDRESS') } catch { return null }
   if (!cmAddress) return null
   try {
     const { ethers } = await import('ethers')
-    const provider = new ethers.JsonRpcProvider(l1RpcUrl)
-    const cm = new ethers.Contract(cmAddress, NETWORK_MANAGER_ABI, provider)
-    const cawNetwork = await cm.getNetwork(networkId)
-    const eid = Number(cawNetwork.storageChainEid)
-    const chains = STORAGE_CHAINS[network] || []
-    return chains.find(c => c.eid === eid) || null
+    return await withProvider(ethers, l1RpcUrl, l1RpcSecret, async (provider) => {
+      const cm = new ethers.Contract(cmAddress, NETWORK_MANAGER_ABI, provider)
+      const cawNetwork = await cm.getNetwork(networkId)
+      const eid = Number(cawNetwork.storageChainEid)
+      const chains = STORAGE_CHAINS[network] || []
+      return chains.find(c => c.eid === eid) || null
+    })
   } catch {
     return null
   }
