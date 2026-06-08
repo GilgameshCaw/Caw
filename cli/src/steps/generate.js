@@ -562,18 +562,22 @@ function buildFrontendEnv(nodeType, config) {
 
   env.VITE_NETWORK_ID = String(config.networkId || 1)
 
-  // Frontend RPC URLs. When the operator opted into a separate frontend
-  // key during the RPC step, use that — this is the two-key flow:
-  // backend gets L*_RPC_URL_HTTP (with optional secret); frontend gets
-  // a different VITE_L*_RPC_URL that's origin-locked at the provider.
-  // When no separate key was given, fall back to the shared URL (the
-  // single-key flow, where the backend secret unblocks the locked-down
-  // project for server traffic). Either way, never write a *_SECRET into
-  // VITE_* — those would end up in the public bundle.
-  const viteL1 = config.l1RpcUrlHttpFrontend || config.l1RpcUrlHttp
-  const viteL2 = config.l2RpcUrlHttpFrontend || config.l2RpcUrlHttp
-  if (viteL1) env.VITE_L1_RPC_URL = viteL1
-  if (viteL2) env.VITE_L2_RPC_URL = viteL2
+  // Frontend RPC URLs. By default we write NEITHER VITE_L1_RPC_URL nor
+  // VITE_L2_RPC_URL — the browser bundle talks to the backend's same-origin
+  // RPC proxy (/api/rpc/l1, /api/rpc/l2; Web3Provider.tsx falls through to it
+  // when these vars are unset). That keeps the Infura key out of the bundle
+  // and folds all browsers' identical reads into ~1× upstream fan-out.
+  //
+  // Writing the backend URL here (the old behavior) baked the RPC endpoint
+  // into the public bundle AND made the FE prefer it over the proxy, which
+  // defeated the proxy's caching + origin gate. We only emit a VITE var when
+  // the operator has EXPLICITLY supplied a separate frontend URL (rare;
+  // origin-locked browser key, or a static-host FE with no backend). The
+  // interactive installer no longer asks — `l*RpcUrlHttpFrontend` is empty
+  // unless preloaded via CAW_L*_RPC_URL_FRONTEND. Never write a *_SECRET
+  // into VITE_* — those would land in the public bundle.
+  if (config.l1RpcUrlHttpFrontend) env.VITE_L1_RPC_URL = config.l1RpcUrlHttpFrontend
+  if (config.l2RpcUrlHttpFrontend) env.VITE_L2_RPC_URL = config.l2RpcUrlHttpFrontend
 
   // WalletConnect / Reown project ID — per-operator, asked at install time.
   // When blank, Web3Provider.tsx falls back to a placeholder and WC wallets

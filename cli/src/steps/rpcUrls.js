@@ -231,57 +231,19 @@ async function collectRpcPair(label, required, expectedChainId) {
     }
   }
 
-  // Optional separate frontend RPC URL. Two-key flow: the URL above goes
-  // into the backend's .env (with secret if provided), while a *different*
-  // URL goes into VITE_L*_RPC_URL for the browser bundle. Useful when the
-  // operator wants the strongest separation: backend key is wide-open and
-  // secret-protected, frontend key is its own project that only allows
-  // requests from their domains. Either project alone leaking doesn't
-  // expose the other.
-  //
-  // If the operator says no, the same URL is used for both (the existing
-  // behavior — backend uses secret if set, frontend just uses the URL).
-  const { useDifferentFrontendUrl } = await inquirer.prompt([{
-    type: 'confirm',
-    name: 'useDifferentFrontendUrl',
-    message: `Use a different RPC URL for the frontend? ${dim('(if you have a separate origin-locked key for the browser)')}`,
-    default: false,
-  }])
-  let frontendHttp = ''
-  if (useDifferentFrontendUrl) {
-    while (true) {
-      const ans = await inquirer.prompt([{
-        type: 'input',
-        name: 'http',
-        message: `${label} HTTP RPC URL for the frontend (https://):`,
-        validate: (input) => {
-          if (!input.trim()) return 'Cannot be empty (or answer No to the previous question to reuse the backend URL)'
-          if (!input.startsWith('https://') && !input.startsWith('http://')) {
-            return 'URL must start with https:// or http://'
-          }
-          return true
-        },
-      }])
-      frontendHttp = ans.http.trim()
-      if (!expectedChainId) break
-      const actual = await probeChainId(frontendHttp)
-      if (actual === null || actual === expectedChainId) {
-        if (actual === expectedChainId) console.log(dim(`  ✓ Chain ID ${actual} matches expected.`))
-        else console.log(dim(`  (Couldn't verify chain ID — proceeding.)`))
-        break
-      }
-      const actualName = CHAIN_ID_NAMES[actual] || `chain ${actual}`
-      const expectedName = CHAIN_ID_NAMES[expectedChainId] || `chain ${expectedChainId}`
-      console.log()
-      console.log(warn(`  Chain mismatch: that URL responded with ${brand(actualName)} (chainId ${actual}); expected ${brand(expectedName)}.`))
-      const { reenter } = await inquirer.prompt([{
-        type: 'confirm', name: 'reenter', message: 'Re-enter?', default: true,
-      }])
-      if (!reenter) break
-    }
-  }
-
-  return { wss: wss.trim(), http, secret, frontendHttp }
+  // NOTE (2026-06): we no longer ask for a separate frontend RPC URL.
+  // The browser bundle talks to the backend's same-origin RPC proxy
+  // (/api/rpc/l1, /api/rpc/l2 — see api/routes/rpc-proxy.ts), which keeps
+  // the Infura key out of the bundle entirely and folds identical reads
+  // across all connected browsers into ~1× upstream fan-out. generate.js
+  // therefore does NOT write VITE_L*_RPC_URL by default; Web3Provider.tsx
+  // falls through to the proxy. An operator who genuinely needs to bypass
+  // the proxy (tests, or a static-hosted FE with no backend) can still set
+  // VITE_L1_RPC_URL / VITE_L2_RPC_URL by hand — the FE honors them as an
+  // override. We don't surface that as a prompt because for a normal node
+  // install it's the wrong choice (leaks the key into the bundle and
+  // bypasses the proxy's caching + origin gate).
+  return { wss: wss.trim(), http, secret, frontendHttp: '' }
 }
 
 /**
