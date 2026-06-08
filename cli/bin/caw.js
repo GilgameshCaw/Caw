@@ -119,6 +119,10 @@ const ENV_TO_CAW = {
   // separately (not preloaded from file to avoid log-on-disk; honored from
   // explicit shell env via CAW_MOONPAY_SECRET_KEY).
   MOONPAY_MODE: 'CAW_MOONPAY_MODE',
+  // Stripe card checkout — secret + webhook persist across re-runs.
+  // Publishable key lives in the FE .env, handled in preloadFromEnv below.
+  STRIPE_SECRET_KEY: 'CAW_STRIPE_SECRET_KEY',
+  STRIPE_WEBHOOK_SECRET: 'CAW_STRIPE_WEBHOOK_SECRET',
   // VITE_PROJECT_ID lives in the FRONTEND .env, handled separately.
 }
 
@@ -229,6 +233,12 @@ function preloadFromEnv(envFilePath, frontendEnvFilePath) {
     process.env.CAW_MOONPAY_MODE = frontend.VITE_MOONPAY_BASE_URL.includes('sandbox')
       ? 'sandbox'
       : 'production'
+    loaded++
+  }
+  // VITE_STRIPE_PUBLISHABLE_KEY from the frontend .env — lets the Stripe
+  // prompt skip on re-runs without re-pasting the publishable key.
+  if (frontend.VITE_STRIPE_PUBLISHABLE_KEY && !process.env.CAW_STRIPE_PUBLISHABLE_KEY) {
+    process.env.CAW_STRIPE_PUBLISHABLE_KEY = frontend.VITE_STRIPE_PUBLISHABLE_KEY
     loaded++
   }
   return { loaded, unrecognized }

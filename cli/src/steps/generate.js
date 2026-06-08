@@ -570,6 +570,14 @@ function buildEnvVars(nodeType, config) {
     env.MOONPAY_SECRET_KEY = config.moonpaySecretKey
   }
 
+  // Stripe card checkout — backend secret + webhook signing secret. The
+  // route 503s when STRIPE_SECRET_KEY is unset, so writing these is what
+  // turns the flow on. Publishable key goes in the FE .env (below).
+  if (config.stripeEnabled && config.stripeSecretKey) {
+    env.STRIPE_SECRET_KEY = config.stripeSecretKey
+    if (config.stripeWebhookSecret) env.STRIPE_WEBHOOK_SECRET = config.stripeWebhookSecret
+  }
+
   return env
 }
 
@@ -624,6 +632,13 @@ function buildFrontendEnv(nodeType, config) {
   if (config.moonpayMode && config.moonpayMode !== 'disabled' && config.moonpayApiKey) {
     env.VITE_MOONPAY_API_KEY = config.moonpayApiKey
     env.VITE_MOONPAY_BASE_URL = config.moonpayBaseUrl
+  }
+
+  // Stripe publishable key — shipped in the public bundle (that's its job;
+  // pk_ keys are safe to expose). The FE gates the card-checkout entry on
+  // VITE_STRIPE_PUBLISHABLE_KEY being set.
+  if (config.stripeEnabled && config.stripePublishableKey) {
+    env.VITE_STRIPE_PUBLISHABLE_KEY = config.stripePublishableKey
   }
 
   return env

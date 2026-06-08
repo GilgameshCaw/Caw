@@ -41,7 +41,14 @@ export async function collectOnboardingFeatures(nodeType, ctx = {}) {
     ? await collectMoonpayConfig()
     : { moonpayMode: 'disabled', moonpayApiKey: '', moonpayBaseUrl: '', moonpaySecretKey: '' }
 
-  return { ...sponsorResult, ...moonpayResult }
+  // Stripe card checkout needs BOTH the API (secret + webhook) and the FE
+  // (publishable key), so only offer it on a node that runs both.
+  const runsApiAndFe = ['full', 'frontend-api'].includes(nodeType)
+  const stripeResult = runsApiAndFe
+    ? await collectStripeConfig()
+    : { stripeEnabled: false, stripeSecretKey: '', stripeWebhookSecret: '', stripePublishableKey: '' }
+
+  return { ...sponsorResult, ...moonpayResult, ...stripeResult }
 }
 
 // ---------------------------------------------------------------------------
@@ -374,4 +381,98 @@ function moonpayBaseUrlForMode(mode) {
   if (mode === 'sandbox') return 'https://buy-sandbox.moonpay.com'
   if (mode === 'production') return 'https://buy.moonpay.com'
   return ''
+}
+
+// ---------------------------------------------------------------------------
+// Stripe card checkout (pay-with-card → webhook mints the profile)
+// ---------------------------------------------------------------------------
+
+async function collectStripeConfig() {
+  // --env preload: STRIPE_SECRET_KEY in the backend .env (or CAW_STRIPE_SECRET_KEY
+  // in the shell) means Stripe was configured last run.
+  const preloadSecret = process.env.CAW_STRIPE_SECRET_KEY || ''
+
+  if (preloadSecret) {
+    console.log(dim('  Using STRIPE_SECRET_KEY from --env preload.'))
+    return {
+      stripeEnabled: true,
+      stripeSecretKey: preloadSecret,
+      stripeWebhookSecret: process.env.CAW_STRIPE_WEBHOOK_SECRET || '',
+      stripePublishableKey: process.env.CAW_STRIPE_PUBLISHABLE_KEY || '',
+    }
+  }
+
+  section('Card checkout (Stripe)')
+  tipBlock([
+    'Stripe card checkout lets a user pay with a card for a username + CAW',
+    'deposit. They land on Stripe\'s hosted page; a webhook then mints the',
+    'profile to a fresh wallet. The preferred fiat path (Moonpay is the',
+    'older alternative).',
+    '',
+    `${brand('⚠  Untested:')} this flow is wired in code but has NOT been`,
+    'end-to-end tested on a live Stripe account yet. Enable it only if you',
+    'can verify the checkout → webhook → mint path yourself.',
+    '',
+    `${brand('⚠  Legal / KYC:')} taking card payments for crypto-adjacent value`,
+    'is regulated. To defend the "stored-value, not a crypto on-ramp" framing,',
+    'card-funded profiles should be minted with a WITHDRAW GATE — set a',
+    'kycLevel at sponsored-mint time so the deposit is locked (180-day',
+    'time-lock at level 1, or KYC-at-withdraw at level 2+). Without a gate,',
+    'a Stripe-funded mint looks like an unlicensed fiat-to-crypto exchange in',
+    'most jurisdictions. See docs/CARD_PROFILE_AND_KYC_PLAN.md + whitepaper',
+    '§6.11. This is the operator\'s legal call — the CLI does not set it for you.',
+  ])
+
+  const { stripeChoice } = await inquirer.prompt([
+    {
+      type: 'list',
+      name: 'stripeChoice',
+      message: 'Card checkout (Stripe):',
+      choices: [
+        { value: 'disabled', name: `${dim('Disabled')} — no card checkout (default)` },
+        { value: 'enabled', name: `${brand('Enable')} Stripe card checkout (untested; you accept the KYC/legal responsibility)` },
+      ],
+      default: 'disabled',
+    },
+  ])
+
+  if (stripeChoice === 'disabled') {
+    return { stripeEnabled: false, stripeSecretKey: '', stripeWebhookSecret: '', stripePublishableKey: '' }
+  }
+
+  console.log()
+  console.log(warn('  STRIPE_SECRET_KEY + STRIPE_WEBHOOK_SECRET go in client/.env (mode 0600).'))
+  console.log(dim('  Get these from your Stripe dashboard → Developers → API keys / Webhooks.'))
+  console.log(dim('  Use test keys (sk_test_… / whsec_… / pk_test_…) until you\'ve verified the flow.'))
+  console.log()
+
+  const { secretKey } = await inquirer.prompt([{
+    type: 'password',
+    name: 'secretKey',
+    message: 'Stripe secret key (sk_test_… or sk_live_…):',
+    mask: '*',
+    validate: (input) => /^sk_(test|live)_/.test(input.trim()) ? true : 'Expected a Stripe secret key starting with sk_test_ or sk_live_',
+  }])
+
+  const { webhookSecret } = await inquirer.prompt([{
+    type: 'password',
+    name: 'webhookSecret',
+    message: 'Stripe webhook signing secret (whsec_…):',
+    mask: '*',
+    validate: (input) => /^whsec_/.test(input.trim()) ? true : 'Expected a webhook signing secret starting with whsec_ (Stripe → Webhooks → your endpoint)',
+  }])
+
+  const { publishableKey } = await inquirer.prompt([{
+    type: 'input',
+    name: 'publishableKey',
+    message: 'Stripe publishable key (pk_test_… or pk_live_… — shipped in the FE bundle):',
+    validate: (input) => /^pk_(test|live)_/.test(input.trim()) ? true : 'Expected a Stripe publishable key starting with pk_test_ or pk_live_',
+  }])
+
+  return {
+    stripeEnabled: true,
+    stripeSecretKey: secretKey.trim(),
+    stripeWebhookSecret: webhookSecret.trim(),
+    stripePublishableKey: publishableKey.trim(),
+  }
 }
