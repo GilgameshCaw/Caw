@@ -71,8 +71,25 @@ export async function deriveKey(
     throw new Error(`Salt must be 16 bytes; got ${salt.length}`)
   }
 
-  const key = await deriveKeyArgon2(password, salt)
-  return { key, usedArgon2: true }
+  // Argon2id is preferred (memory-hard). But argon2-browser loads its hashing
+  // primitive from a base64-embedded WASM blob via atob(), and some production
+  // bundles / browsers mangle or fail to decode that blob — surfacing as
+  // "Failed to execute 'atob': string not correctly encoded" during backup.
+  // Rather than dead-end the user's onboarding on a transient WASM-load issue,
+  // fall back to PBKDF2-SHA512, which is already a fully-supported derivation
+  // path: blobs are tagged with argon2.memorySize === 0, and decryptBackupBlob
+  // routes those to deriveKeyPbkdf2 on recovery. The backup stays decryptable.
+  try {
+    const key = await deriveKeyArgon2(password, salt)
+    return { key, usedArgon2: true }
+  } catch (err) {
+    console.warn(
+      '[vaultPassword] Argon2id unavailable, falling back to PBKDF2-SHA512:',
+      err instanceof Error ? err.message : err,
+    )
+    const key = await deriveKeyPbkdf2(password, salt)
+    return { key, usedArgon2: false }
+  }
 }
 
 /**
