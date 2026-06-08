@@ -47,7 +47,7 @@ interface SyncTask {
 }
 
 interface ChainSyncConfig {
-  l1RpcUrl: string        // Ethereum L1 for client data
+  l1RpcUrl: string        // Ethereum L1 for network data
   l2RpcUrl?: string       // L2 for other data
   ethMainnetRpcUrl?: string // Mainnet for price data
 }
@@ -71,7 +71,7 @@ interface CachedEthPrice {
 let l1Provider: JsonRpcProvider | null = null
 let l2Provider: JsonRpcProvider | null = null
 let mainnetProvider: JsonRpcProvider | null = null
-let clientManager: Contract | null = null
+let networkManager: Contract | null = null
 let uniswapRouter: Contract | null = null
 
 const syncTasks: Map<string, SyncTask> = new Map()
@@ -99,7 +99,7 @@ function initializeProviders(config: ChainSyncConfig) {
     const l1Url = getL1HttpRpcUrl(config.l1RpcUrl)
     console.log('[ChainSync] L1 provider URL:', l1Url.slice(0, 40) + '...')
     l1Provider = makeJsonRpcProvider(l1Url, 11155111)
-    clientManager = new Contract(NETWORK_MANAGER_ADDRESS, cawNetworkManagerAbi, l1Provider)
+    networkManager = new Contract(NETWORK_MANAGER_ADDRESS, cawNetworkManagerAbi, l1Provider)
   }
 
   if (!l2Provider && config.l2RpcUrl) {
@@ -127,14 +127,14 @@ function initializeProviders(config: ChainSyncConfig) {
 // ============================================================================
 
 async function syncNetwork(networkId: number): Promise<boolean> {
-  if (!clientManager || !l1Provider) {
+  if (!networkManager || !l1Provider) {
     console.error('[ChainSync:Clients] Contract not initialized')
     return false
   }
 
   try {
     // V2: CawNetworkManager exposes getNetwork(); the struct includes 4 ceiling fields.
-    const network = await clientManager.getNetwork(networkId)
+    const network = await networkManager.getNetwork(networkId)
 
     if (network.ownerAddress === '0x0000000000000000000000000000000000000000') {
       return false
@@ -188,7 +188,7 @@ async function syncNetwork(networkId: number): Promise<boolean> {
 }
 
 async function syncAllNetworks(): Promise<void> {
-  if (!clientManager || !l1Provider) {
+  if (!networkManager || !l1Provider) {
     console.log('[ChainSync:Clients] Skipping — L1 provider not available')
     return
   }
@@ -547,7 +547,7 @@ async function loadPricesFromDb(): Promise<void> {
 }
 
 // ============================================================================
-// Public API - Client Access
+// Public API - Network Access
 // ============================================================================
 
 /**
@@ -558,11 +558,6 @@ export async function forceSyncNetwork(networkId: number, l1RpcUrl: string): Pro
   return syncNetwork(networkId)
 }
 
-/** @deprecated Use forceSyncNetwork */
-export async function forceSyncClient(networkId: number, l1RpcUrl: string): Promise<boolean> {
-  return forceSyncNetwork(networkId, l1RpcUrl)
-}
-
 /**
  * Get network from database
  */
@@ -570,11 +565,6 @@ export async function getNetwork(networkId: number) {
   return prisma.network.findUnique({
     where: { id: networkId }
   })
-}
-
-/** @deprecated Use getNetwork */
-export async function getClient(networkId: number) {
-  return getNetwork(networkId)
 }
 
 // ============================================================================
@@ -835,7 +825,7 @@ async function syncL2Events(): Promise<void> {
 // ============================================================================
 
 // Minimal ABI fragments for the V2 events on CawNetworkManager.
-// The full generated ABI is already bound to `clientManager`; we keep a
+// The full generated ABI is already bound to `networkManager`; we keep a
 // separate minimal ABI here so the Contract instance can be created without
 // importing the entire generated artifact again.
 const NETWORK_FEE_EVENT_ABI = [
