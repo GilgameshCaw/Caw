@@ -14,7 +14,7 @@ const Config = z.object({
   rpcUrl:          z.string(), // Validated at runtime after env var substitution
   redisUrl:        z.string().optional().default('redis://127.0.0.1:6379'),
   startBlock:      z.number().int().optional(), // Manual override — overrides creationBlock
-  clientId:        z.number().int().positive().optional(), // Defaults to CLIENT_ID env var
+  networkId:        z.number().int().positive().optional(), // Defaults to CLIENT_ID env var
 })
 
 type Config = z.infer<typeof Config>
@@ -48,8 +48,8 @@ export const rawEventsGathererService: Service = {
     // because NaN isn't nullish. Coerce with explicit env.CLIENT_ID check.
     const envClientIdRaw = getNetworkId()
     const envClientId = envClientIdRaw ? Number(envClientIdRaw) : undefined
-    const clientId = cfg.clientId ?? (envClientId && Number.isFinite(envClientId) ? envClientId : undefined)
-    if (clientId === undefined || !Number.isFinite(clientId) || clientId <= 0) {
+    const networkId = cfg.networkId ?? (envClientId && Number.isFinite(envClientId) ? envClientId : undefined)
+    if (networkId === undefined || !Number.isFinite(networkId) || networkId <= 0) {
       throw new Error('RawEventsGatherer: CLIENT_ID is required (set it in client/.env or config.json)')
     }
 
@@ -184,12 +184,12 @@ export const rawEventsGathererService: Service = {
       if (resolvedStartBlock === undefined) {
         try {
           const client = await prisma.network.findUnique({
-            where: { id: clientId },
+            where: { id: networkId },
             select: { creationBlock: true },
           })
           if (client?.creationBlock != null) {
             resolvedStartBlock = Number(client.creationBlock)
-            console.log(`[RawEventsGatherer] Using Network.creationBlock=${resolvedStartBlock} for networkId=${clientId}`)
+            console.log(`[RawEventsGatherer] Using Network.creationBlock=${resolvedStartBlock} for networkId=${networkId}`)
           }
         } catch (err: any) {
           console.warn(`[RawEventsGatherer] Failed to read Network.creationBlock: ${err?.message}`)
@@ -199,7 +199,7 @@ export const rawEventsGathererService: Service = {
       const listener = await listenForRawEvents({
         rpcUrl,
         chainId,
-        clientId,
+        networkId,
         contractAddress: CAW_ACTIONS_ADDRESS,
         startBlock: resolvedStartBlock,
         rawEventsProvider: {

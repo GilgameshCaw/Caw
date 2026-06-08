@@ -8,7 +8,7 @@ import { API_HOST } from '~/api/client'
 
 export interface Instance {
   instanceId: number
-  clientId: number
+  networkId: number
   owner: string
   apiUrl: string
   validatorAddress: string
@@ -27,7 +27,7 @@ interface InstanceState {
   /** The API host that last successfully responded */
   activeApiHost: string | null
   setActiveApiHost: (host: string) => void
-  fetchInstances: (clientId: number) => Promise<void>
+  fetchInstances: (networkId: number) => Promise<void>
   getActiveInstances: () => Instance[]
   getApiHosts: () => string[]
 }
@@ -47,8 +47,8 @@ const CHAIN_FALLBACK_COOLDOWN_MS = 60 * 60 * 1000
 let lastChainAttemptAt = 0
 
 // localStorage tier: cached peer list survives across sessions. Key is
-// scoped by clientId so a multi-client browser doesn't blend lists.
-const LS_KEY = (clientId: number) => `caw:instances:${clientId}`
+// scoped by networkId so a multi-client browser doesn't blend lists.
+const LS_KEY = (networkId: number) => `caw:instances:${networkId}`
 const LS_FRESH_THRESHOLD_MS = 60 * 60 * 1000  // 1h — accept stale data on bootstrap, refresh in background
 
 interface PersistedCache {
@@ -56,10 +56,10 @@ interface PersistedCache {
   fetchedAt: number
 }
 
-function loadFromLocalStorage(clientId: number): PersistedCache | null {
+function loadFromLocalStorage(networkId: number): PersistedCache | null {
   if (typeof localStorage === 'undefined') return null
   try {
-    const raw = localStorage.getItem(LS_KEY(clientId))
+    const raw = localStorage.getItem(LS_KEY(networkId))
     if (!raw) return null
     const parsed = JSON.parse(raw) as PersistedCache
     if (!parsed?.instances || !Array.isArray(parsed.instances)) return null
@@ -69,10 +69,10 @@ function loadFromLocalStorage(clientId: number): PersistedCache | null {
   }
 }
 
-function saveToLocalStorage(clientId: number, instances: Instance[]) {
+function saveToLocalStorage(networkId: number, instances: Instance[]) {
   if (typeof localStorage === 'undefined') return
   try {
-    localStorage.setItem(LS_KEY(clientId), JSON.stringify({
+    localStorage.setItem(LS_KEY(networkId), JSON.stringify({
       instances,
       fetchedAt: Date.now(),
     } satisfies PersistedCache))
@@ -145,9 +145,9 @@ function filterUsableInstances(instances: Instance[]): Instance[] {
  * null on any failure (network, non-200, malformed body) so the caller
  * can fall through to the next tier without special-casing.
  */
-async function fetchFromApi(host: string, clientId: number): Promise<Instance[] | null> {
+async function fetchFromApi(host: string, networkId: number): Promise<Instance[] | null> {
   if (!host) return null
-  const url = `${host}/api/instances?clientId=${clientId}`
+  const url = `${host}/api/instances?networkId=${networkId}`
   try {
     const ctrl = new AbortController()
     const t = setTimeout(() => ctrl.abort(), 5000)
@@ -158,7 +158,7 @@ async function fetchFromApi(host: string, clientId: number): Promise<Instance[] 
     if (!Array.isArray(data?.instances)) return null
     return data.instances.map((i: any) => ({
       instanceId: Number(i.instanceId),
-      clientId: Number(data.clientId ?? clientId),
+      networkId: Number(data.networkId ?? networkId),
       owner: String(i.owner ?? ''),
       apiUrl: String(i.apiUrl ?? ''),
       validatorAddress: String(i.validatorAddress ?? ''),
@@ -181,7 +181,7 @@ async function fetchFromApi(host: string, clientId: number): Promise<Instance[] 
 async function fetchFromAnyApi(
   primaryHost: string | null,
   knownHosts: string[],
-  clientId: number,
+  networkId: number,
 ): Promise<Instance[] | null> {
   const tried = new Set<string>()
   const candidates: string[] = []
@@ -192,7 +192,7 @@ async function fetchFromAnyApi(
   for (const host of candidates) {
     if (tried.has(host)) continue
     tried.add(host)
-    const result = await fetchFromApi(host, clientId)
+    const result = await fetchFromApi(host, networkId)
     if (result) return result
   }
   return null
@@ -255,7 +255,7 @@ async function chunkedGetLogs(
   return all
 }
 
-async function fetchFromChain(clientId: number): Promise<Instance[] | null> {
+async function fetchFromChain(networkId: number): Promise<Instance[] | null> {
   const publicClient = getPublicClient(wagmiConfig, { chainId: sepolia.id })
   if (!publicClient) return null
 
@@ -273,7 +273,7 @@ async function fetchFromChain(clientId: number): Promise<Instance[] | null> {
           { name: 'validatorAddress', type: 'address', indexed: false },
         ],
       },
-      eventArgs: { networkId: clientId },
+      eventArgs: { networkId: networkId },
     })
 
     const instanceMap = new Map<number, Instance>()
@@ -281,7 +281,7 @@ async function fetchFromChain(clientId: number): Promise<Instance[] | null> {
       const a = (log as any).args
       instanceMap.set(Number(a.instanceId), {
         instanceId: Number(a.instanceId),
-        clientId: Number(a.networkId),
+        networkId: Number(a.networkId),
         owner: a.owner,
         apiUrl: a.apiUrl,
         validatorAddress: a.validatorAddress,
@@ -347,15 +347,15 @@ export const useInstanceStore = create<InstanceState>((set, get) => ({
   activeApiHost: null,
   setActiveApiHost: (host: string) => set({ activeApiHost: host }),
 
-  fetchInstances: async (clientId: number) => {
+  fetchInstances: async (networkId: number) => {
     const state = get()
 
-    // In-memory cache: if we refreshed recently for this clientId, skip.
+    // In-memory cache: if we refreshed recently for this networkId, skip.
     if (
       state.lastFetchedAt &&
       Date.now() - state.lastFetchedAt < FRESH_THRESHOLD_MS &&
       state.instances.length > 0 &&
-      state.instances[0]?.clientId === clientId
+      state.instances[0]?.networkId === networkId
     ) {
       return
     }
@@ -363,7 +363,7 @@ export const useInstanceStore = create<InstanceState>((set, get) => ({
     // Tier 1: localStorage. Always populates the store immediately if a
     // cached entry exists, so the FE has a peer list to render with on
     // boot. We then fall through to a network refresh in the background.
-    const ls = loadFromLocalStorage(clientId)
+    const ls = loadFromLocalStorage(networkId)
     if (ls && ls.instances.length > 0) {
       set({
         instances: filterUsableInstances(ls.instances),
@@ -387,7 +387,7 @@ export const useInstanceStore = create<InstanceState>((set, get) => ({
     // was already loaded from.
     const originHost = (API_HOST || (typeof window !== 'undefined' ? window.location.origin : '')) || null
     const knownHosts = (ls?.instances ?? state.instances).map(i => i.apiUrl).filter(Boolean)
-    const fromApi = await fetchFromAnyApi(originHost, knownHosts, clientId)
+    const fromApi = await fetchFromAnyApi(originHost, knownHosts, networkId)
     if (fromApi) {
       const filtered = filterUsableInstances(fromApi)
       set({
@@ -397,7 +397,7 @@ export const useInstanceStore = create<InstanceState>((set, get) => ({
         isLoading: false,
         error: null,
       })
-      saveToLocalStorage(clientId, filtered)
+      saveToLocalStorage(networkId, filtered)
       return
     }
 
@@ -416,7 +416,7 @@ export const useInstanceStore = create<InstanceState>((set, get) => ({
       return
     }
     lastChainAttemptAt = Date.now()
-    const fromChain = await fetchFromChain(clientId)
+    const fromChain = await fetchFromChain(networkId)
     if (fromChain) {
       const filtered = filterUsableInstances(fromChain)
       set({
@@ -426,7 +426,7 @@ export const useInstanceStore = create<InstanceState>((set, get) => ({
         isLoading: false,
         error: null,
       })
-      saveToLocalStorage(clientId, filtered)
+      saveToLocalStorage(networkId, filtered)
       return
     }
 

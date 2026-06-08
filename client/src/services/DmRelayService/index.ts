@@ -162,7 +162,7 @@ export async function relayDmToPeers(params: RelayParams): Promise<{ attempted: 
     return { attempted: 0 }
   }
 
-  const clientId = requireClientId()
+  const networkId = requireClientId()
 
   // Address-mismatch guard (one-shot). Verifies the signing address derived
   // from DM_RELAY_PRIVATE_KEY (or fallback VALIDATOR_PRIVATE_KEY) matches
@@ -172,7 +172,7 @@ export async function relayDmToPeers(params: RelayParams): Promise<{ attempted: 
   if (!addressCheckDone) {
     addressCheckDone = true
     const signingAddress = signer.getAddress().toLowerCase()
-    const allPeers = getPeers(clientId)
+    const allPeers = getPeers(networkId)
     const ownEntry = allPeers.find(p => p.instanceId === sourceInstanceId)
     if (ownEntry) {
       const registeredAddress = ownEntry.validatorAddress.toLowerCase()
@@ -197,7 +197,7 @@ export async function relayDmToPeers(params: RelayParams): Promise<{ attempted: 
     }
   }
 
-  const peers = getPeers(clientId).filter(p => p.active && p.instanceId !== sourceInstanceId)
+  const peers = getPeers(networkId).filter(p => p.active && p.instanceId !== sourceInstanceId)
   if (peers.length === 0) return { attempted: 0 }
 
   const envelope: RelayEnvelope = {
@@ -308,8 +308,8 @@ export async function relayDmIdentityToPeers(params: {
     return { attempted: 0 }
   }
 
-  const clientId = requireClientId()
-  const peers = getPeers(clientId).filter(p => p.active && p.instanceId !== sourceInstanceId)
+  const networkId = requireClientId()
+  const peers = getPeers(networkId).filter(p => p.active && p.instanceId !== sourceInstanceId)
   if (peers.length === 0) return { attempted: 0 }
 
   const envelope: IdentityRelayEnvelope = {

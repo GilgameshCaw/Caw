@@ -11,7 +11,7 @@ import { span } from '../../utils/trace'
 import { recordIndexerProgress } from '../../utils/indexerHealth'
 
 // Calldata-decode interface. ActionsProcessed events now carry only
-// (clientId, validatorId, actionCount, batchHash) — the actual packedActions
+// (networkId, validatorId, actionCount, batchHash) — the actual packedActions
 // bytes live in the originating tx's calldata. We fetch tx.input via
 // eth_getTransactionByHash and decode the function args.
 //
@@ -102,7 +102,7 @@ export default async function listenForRawEvents(
     contractAddress: string
     chainId: number
     /** Scope this indexer to one client; actions for other clients are dropped. */
-    clientId: number
+    networkId: number
     startBlock?: number // Minimum block to start scanning from (avoids old contract events)
     rawEventsProvider: {
       getLastProcessedEvent(): Promise<{
@@ -210,7 +210,7 @@ export default async function listenForRawEvents(
       // chart needs the full action stream to attribute staking rewards
       // correctly. Cross-client likes/follows/tips on caws we have indexed
       // also need to land in our domain rows. The CAW/RECAW domain handlers
-      // gate on clientId so we don't pollute our feed with other clients'
+      // gate on networkId so we don't pollute our feed with other clients'
       // posts — see domainProcessor.ts.
       const batch: RawEventInput[] = []
       for (let i = 0; i < actions.length; i++) {
@@ -261,10 +261,10 @@ export default async function listenForRawEvents(
   // and retries on any single-window failure (e.g. when a chunk happens to
   // span an unusually log-dense block range).
   //
-  // NOTE: deliberately NOT filtering on the indexed clientId topic at the
+  // NOTE: deliberately NOT filtering on the indexed networkId topic at the
   // RPC level. Cross-client ingest (master commit f14ef50) is required for
   // the staking-rewards math to match chain truth — RewardMultiplier inflation
-  // is a global on-chain fact triggered by ANY client's actions. The clientId
+  // is a global on-chain fact triggered by ANY client's actions. The networkId
   // gate now lives in domainProcessor for CAW/RECAW only; everything else
   // processes regardless of submitting client.
   let past: Log[]
@@ -596,7 +596,7 @@ export default async function listenForRawEvents(
           console.log(`[RawEventsGatherer] Polling for events ${lastSyncedBlock + 1}..${toBlock}`)
         }
         const sigEvents = await httpContract.queryFilter(
-          httpContract.filters.ActionsProcessed(config.clientId),
+          httpContract.filters.ActionsProcessed(config.networkId),
           lastSyncedBlock + 1,
           toBlock
         ) as unknown as Log[]
@@ -604,7 +604,7 @@ export default async function listenForRawEvents(
         // Also poll the ERC-1271 sibling when deployed.
         const erc1271Events: Log[] = httpContractERC1271
           ? (await httpContractERC1271.queryFilter(
-              httpContractERC1271.filters.ActionsProcessed(config.clientId),
+              httpContractERC1271.filters.ActionsProcessed(config.networkId),
               lastSyncedBlock + 1,
               toBlock
             ) as unknown as Log[])

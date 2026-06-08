@@ -2212,8 +2212,7 @@ export const validatorService: Service = {
               receiverId: Number(a.receiverId || 0),
               receiverCawonce: Number(a.receiverCawonce || 0),
               // v1→v2 rename leftover: ActionForPacking requires `networkId`.
-              // Source rows still surface the old `clientId` field, so accept either.
-              networkId: Number(a.networkId ?? a.clientId),
+              networkId: Number(a.networkId),
               cawonce: Number(a.cawonce),
               recipients: (a.recipients || []).map(Number),
               amounts: a.amounts.map((x: any) => BigInt(x)),
@@ -2828,9 +2827,9 @@ console.log("succeededKeys", succeededKeys)
 
           const clientGroups = groupActionsByClient(allActions)
 
-          for (const [clientId, indices] of clientGroups.entries()) {
+          for (const [networkId, indices] of clientGroups.entries()) {
             const subBatchEntries = indices.map(idx => validatedEntries[idx])
-            console.log(`[Validator] Processing network ${clientId}: ${subBatchEntries.length} entries`)
+            console.log(`[Validator] Processing network ${networkId}: ${subBatchEntries.length} entries`)
 
             const subBatch = buildMultiActionData(subBatchEntries)
 
@@ -2838,10 +2837,10 @@ console.log("succeededKeys", succeededKeys)
               const simResult = await span('validator.simulate', {
                 'batch.size': subBatch.actions.length,
                 'batch.kind': 'sub',
-                'client.id': clientId,
+                'client.id': networkId,
               }, () => simulateActions(validatorId, subBatch))
               if (!simResult || !simResult.successfulActions?.length) {
-                console.log(`[Validator] Network ${clientId} simulation failed or no successful actions`)
+                console.log(`[Validator] Network ${networkId} simulation failed or no successful actions`)
                 await Promise.all(subBatchEntries.map(async (entry: any, idx) => {
                   const data = (entry.payload as any).data
                   const rejection = simResult?.rejectionMessages?.[idx] || ''
@@ -2903,9 +2902,9 @@ console.log("succeededKeys", succeededKeys)
               const { processed: finalized, receipt: subReceipt } = await span('validator.submit', {
                 'batch.size': succeededData.actions.length,
                 'batch.kind': 'sub',
-                'client.id': clientId,
+                'client.id': networkId,
               }, () => submitProcessActions(validatorId, succeededData, subQuote, gasLimit))
-              console.log(`[Validator] Network ${clientId}: ${finalized.length} actions finalized`)
+              console.log(`[Validator] Network ${networkId}: ${finalized.length} actions finalized`)
 
               // Record analytics
               if (subReceipt) {
@@ -2946,7 +2945,7 @@ console.log("succeededKeys", succeededKeys)
                 }
               }))
             } catch (err: any) {
-              console.error(`[Validator] Network ${clientId} batch failed:`, err.message)
+              console.error(`[Validator] Network ${networkId} batch failed:`, err.message)
               await Promise.all(subBatchEntries.map(async (entry) => {
                 const data = (entry.payload as any).data
                 await markTxQueueFailed(entry.id, err.message, data.senderId, data)
@@ -4027,7 +4026,7 @@ console.log("succeededKeys", succeededKeys)
      * Returns null if reconstruction fails (caller should skip/retry).
      */
     async function reconstructCheckpointData(
-      clientId: number,
+      networkId: number,
       startCheckpointId: number,
       endCheckpointId: number,
     ): Promise<{
@@ -4044,7 +4043,7 @@ console.log("succeededKeys", succeededKeys)
       // Read networkActionCount from CawActions to know total actions
       const cawActionsViewAbi = ['function networkActionCount(uint32) view returns (uint256)']
       const cawActionsView = new Contract(CAW_ACTIONS_ADDRESS, cawActionsViewAbi, httpProvider)
-      const actionCount = Number(await cawActionsView.networkActionCount(clientId))
+      const actionCount = Number(await cawActionsView.networkActionCount(networkId))
 
       const rangeStartPos = (startCheckpointId - 1) * OPTIMISTIC_CHECKPOINT_INTERVAL
       const actionsNeededFromEnd = actionCount - rangeStartPos
@@ -4071,14 +4070,14 @@ console.log("succeededKeys", succeededKeys)
         // batches back — much cheaper than the old "decode every event's
         // bytes to count" approach.
         const batch = await eventsContract.queryFilter(
-          eventsContract.filters.ActionsProcessed(clientId),
+          eventsContract.filters.ActionsProcessed(networkId),
           fromBlock,
           toBlock,
         )
         let batchERC1271: any[] = []
         if (eventsContractERC1271) {
           batchERC1271 = await eventsContractERC1271.queryFilter(
-            eventsContractERC1271.filters.ActionsProcessed(clientId),
+            eventsContractERC1271.filters.ActionsProcessed(networkId),
             fromBlock,
             toBlock,
           )
@@ -4182,7 +4181,7 @@ console.log("succeededKeys", succeededKeys)
               gIdx++
               prevSender = a.senderId
             }
-            if (a.networkId !== clientId) continue
+            if (a.networkId !== networkId) continue
             const groupR: string = rsArr[gIdx]
             orderedEntries.push({
               blockNumber: tx.blockNumber!,
@@ -4235,7 +4234,7 @@ console.log("succeededKeys", succeededKeys)
 
           for (let i = 0; i < unpackedActions.length; i++) {
             const a = unpackedActions[i]
-            if (a.networkId !== clientId) continue
+            if (a.networkId !== networkId) continue
             const sig = perActionSigs[i]
             orderedEntries.push({
               blockNumber: tx.blockNumber!,
@@ -4307,8 +4306,8 @@ console.log("succeededKeys", succeededKeys)
       const actionsView = new Contract(CAW_ACTIONS_ADDRESS, hashCheckAbi, httpProvider)
       const prevHash = startCheckpointId === 1
         ? '0x' + '00'.repeat(32)
-        : await actionsView.networkHashAtCheckpoint(clientId, startCheckpointId - 1)
-      const expectedFinalHash = await actionsView.networkHashAtCheckpoint(clientId, endCheckpointId)
+        : await actionsView.networkHashAtCheckpoint(networkId, startCheckpointId - 1)
+      const expectedFinalHash = await actionsView.networkHashAtCheckpoint(networkId, endCheckpointId)
 
       const actionSlices = getPackedActionSlices(packed)
       const checkpointHashes: string[] = []
@@ -4882,7 +4881,7 @@ console.log("succeededKeys", succeededKeys)
 
           const submissionId = Number(args[0] || args.submissionId)
           const submitter = args[1] || args.submitter
-          const clientId = Number(args[2] || args.networkId)
+          const networkId = Number(args[2] || args.networkId)
           const startCp = Number(args[3] || args.startCheckpointId)
           const endCp = Number(args[4] || args.endCheckpointId)
 
@@ -4952,7 +4951,7 @@ console.log("succeededKeys", succeededKeys)
 
             const entryHash = startCp === 1
               ? '0x' + '00'.repeat(32)
-              : await actionsView.networkHashAtCheckpoint(clientId, startCp - 1)
+              : await actionsView.networkHashAtCheckpoint(networkId, startCp - 1)
 
             const packedBytes = Buffer.from(submitterPackedHex.slice(2), 'hex')
             submitterHashes = foldCheckpointHashes(
@@ -5062,7 +5061,7 @@ console.log("succeededKeys", succeededKeys)
             const relayContract = new Contract(CHALLENGE_RELAY_ADDRESS, relayAbi, relaySigner.asEthersSigner())
 
             try {
-              const quote = await relayContract.quoteChallengeBatch(L2B_EID, submissionId, clientId, notYetDelivered, false)
+              const quote = await relayContract.quoteChallengeBatch(L2B_EID, submissionId, networkId, notYetDelivered, false)
               // Gas scales with cp count: ~100k base + ~40k per cp on the
               // source chain (endpoint + payload encoding). 200k + 60k/cp
               // with a buffer.
@@ -5074,7 +5073,7 @@ console.log("succeededKeys", succeededKeys)
               // during destination-chain congestion. Audit fix 2026-05-13
               // (validator V4).
               const relayTx = await relayContract.relayChallengeBatch(
-                L2B_EID, submissionId, clientId, notYetDelivered,
+                L2B_EID, submissionId, networkId, notYetDelivered,
                 { value: quote.nativeFee * 150n / 100n, gasLimit },
               )
               const relayReceipt = await relayTx.wait()
@@ -5124,7 +5123,7 @@ console.log("succeededKeys", succeededKeys)
                 // was caught above, so reaching here means entryHash matched.
                 const entryHash = startCp === 1
                   ? '0x' + '00'.repeat(32)
-                  : await actionsView.networkHashAtCheckpoint(clientId, startCp - 1)
+                  : await actionsView.networkHashAtCheckpoint(networkId, startCp - 1)
 
                 console.log(`[Monitor] Calling slashIncoherentRoot(${submissionId})...`)
                 // slashIncoherentRoot does: keccak check, full hash-chain
@@ -5158,7 +5157,7 @@ console.log("succeededKeys", succeededKeys)
               const claimedHash = submitterHashes[i]
               let l2Hash: string
               try {
-                l2Hash = await actionsView.networkHashAtCheckpoint(clientId, cpId)
+                l2Hash = await actionsView.networkHashAtCheckpoint(networkId, cpId)
               } catch {
                 console.warn(`[Monitor] Could not read L2 hash for checkpoint ${cpId}, skipping`)
                 continue
@@ -5176,7 +5175,7 @@ console.log("succeededKeys", succeededKeys)
               try { await relayBatch(fraudulentCps, 'mode B') }
               catch (e: any) { console.error(`[Monitor] Failed to relay batch for submission ${submissionId}: ${e?.shortMessage || e?.message}`) }
             } else {
-              console.log(`[Monitor] Submission ${submissionId} verified OK (network ${clientId}, ${startCp}..${endCp}, submitter ${submitter.slice(0, 10)}...)`)
+              console.log(`[Monitor] Submission ${submissionId} verified OK (network ${networkId}, ${startCp}..${endCp}, submitter ${submitter.slice(0, 10)}...)`)
             }
           } catch (err: any) {
             console.warn(`[Monitor] Error verifying submission ${submissionId}: ${err?.shortMessage || err?.message}`)

@@ -39,7 +39,7 @@ async function isAcceptablePeerApiUrl(rawUrl: string): Promise<boolean> {
 
 const InstanceRegistryConfig = z.object({
   l1RpcUrl: z.string(),
-  clientId: z.number().int(),
+  networkId: z.number().int(),
   apiUrl: z.string().optional(),
   /** How often to refresh the peer list. Defaults to 60s — registrations
    *  are rare so this can be slow. Set lower in tests if needed. */
@@ -56,7 +56,7 @@ type InstanceRegistryConfig = z.infer<typeof InstanceRegistryConfig>
 
 export interface PeerInstance {
   instanceId: number
-  clientId: number
+  networkId: number
   owner: string
   apiUrl: string
   validatorAddress: string
@@ -66,8 +66,8 @@ export interface PeerInstance {
 const peerCache = new Map<number /* networkId */, Map<number /* instanceId */, PeerInstance>>()
 
 /** Public read of the cached peer list for a given network. */
-export function getPeers(clientId: number): PeerInstance[] {
-  const m = peerCache.get(clientId)
+export function getPeers(networkId: number): PeerInstance[] {
+  const m = peerCache.get(networkId)
   if (!m) return []
   return [...m.values()].sort((a, b) => a.instanceId - b.instanceId)
 }
@@ -91,12 +91,12 @@ export function getOwnInstanceId(): number | null {
 // caller can log "new peer joined" / "peer URL changed" without keeping
 // before-state on hand.
 async function applyToCache(
-  clientId: number,
-  registered: { instanceId: number; clientId: number; owner: string; apiUrl: string; validatorAddress: string }[],
+  networkId: number,
+  registered: { instanceId: number; networkId: number; owner: string; apiUrl: string; validatorAddress: string }[],
   updates:    { instanceId: number; apiUrl: string; validatorAddress: string }[],
   activations: { instanceId: number; active: boolean }[],
 ): Promise<{ added: PeerInstance[]; changed: PeerInstance[] }> {
-  const cur = peerCache.get(clientId) ?? new Map<number, PeerInstance>()
+  const cur = peerCache.get(networkId) ?? new Map<number, PeerInstance>()
   const added: PeerInstance[] = []
   const changed: PeerInstance[] = []
 
@@ -149,7 +149,7 @@ async function applyToCache(
     }
   }
 
-  peerCache.set(clientId, cur)
+  peerCache.set(networkId, cur)
   return { added, changed }
 }
 
@@ -176,14 +176,14 @@ let lastScannedBlock = -1
 async function refreshPeers(
   provider: AbstractProvider,
   clientManagerAddress: string,
-  clientId: number,
+  networkId: number,
 ): Promise<{ added: PeerInstance[]; changed: PeerInstance[] }> {
   const iface = new Interface(cawNetworkManagerAbi)
   const regSig = iface.getEvent('InstanceRegistered')!.topicHash
   const updSig = iface.getEvent('InstanceUpdated')!.topicHash
   const deactSig = iface.getEvent('InstanceDeactivated')!.topicHash
   const actSig = iface.getEvent('InstanceActivated')!.topicHash
-  const clientIdTopic = '0x' + clientId.toString(16).padStart(64, '0')
+  const networkIdTopic = '0x' + networkId.toString(16).padStart(64, '0')
 
   const latestBlock = await provider.getBlockNumber()
   const isCold = lastScannedBlock < 0
@@ -209,7 +209,7 @@ async function refreshPeers(
       if (t0 === regSig) {
         // InstanceRegistered is the only one we filter by networkId.
         const t2 = (log.topics ?? [])[2]
-        if (t2 === clientIdTopic) regLogs.push(log)
+        if (t2 === networkIdTopic) regLogs.push(log)
       } else if (t0 === updSig)   updLogs.push(log)
         else if (t0 === deactSig) deactLogs.push(log)
         else if (t0 === actSig)   actLogs.push(log)
@@ -228,7 +228,7 @@ async function refreshPeers(
       const t0 = (log.topics ?? [])[0]
       if (t0 === regSig) {
         const t2 = (log.topics ?? [])[2]
-        if (t2 === clientIdTopic) regLogs.push(log)
+        if (t2 === networkIdTopic) regLogs.push(log)
       } else if (t0 === updSig)   updLogs.push(log)
         else if (t0 === deactSig) deactLogs.push(log)
         else if (t0 === actSig)   actLogs.push(log)
@@ -242,7 +242,7 @@ async function refreshPeers(
     if (!parsed) continue
     registered.push({
       instanceId: Number(parsed.args.instanceId),
-      clientId: Number(parsed.args.clientId),
+      networkId: Number(parsed.args.networkId),
       owner: parsed.args.owner,
       apiUrl: parsed.args.apiUrl,
       validatorAddress: parsed.args.validatorAddress,
@@ -290,7 +290,7 @@ async function refreshPeers(
   )
   const activations = ordered.map(o => ({ instanceId: o.instanceId, active: o.active }))
 
-  return await applyToCache(clientId, registered, updates, activations)
+  return await applyToCache(networkId, registered, updates, activations)
 }
 
 // =====================================================================
@@ -308,7 +308,7 @@ export const instanceRegistryService: Service = {
   start(rawCfg, _ctx) {
     const cfg = InstanceRegistryConfig.parse(rawCfg)
     const l1RpcUrl = getL1HttpRpcUrl() || cfg.l1RpcUrl
-    const clientId = Number(getNetworkId() || cfg.clientId)
+    const networkId = Number(getNetworkId() || cfg.networkId)
     const apiUrl = process.env.INSTANCE_API_URL || cfg.apiUrl
     const pollIntervalMs = cfg.pollIntervalMs ?? 60_000
 
@@ -329,11 +329,11 @@ export const instanceRegistryService: Service = {
     /** First refresh: populates the cache. Subsequent refreshes log diffs. */
     async function refreshAndLog() {
       try {
-        const { added, changed } = await refreshPeers(_provider, NETWORK_MANAGER_ADDRESS, clientId)
+        const { added, changed } = await refreshPeers(_provider, NETWORK_MANAGER_ADDRESS, networkId)
         for (const p of added) {
           console.log(
             `[InstanceRegistry] Peer discovered — instance #${p.instanceId} ` +
-            `network=${p.clientId} url=${p.apiUrl} validator=${p.validatorAddress}`,
+            `network=${p.networkId} url=${p.apiUrl} validator=${p.validatorAddress}`,
           )
         }
         for (const p of changed) {
@@ -351,7 +351,7 @@ export const instanceRegistryService: Service = {
     async function selfRegister() {
       if (!_canRegister || !_signer) return
       const validatorAddress = _signer.getAddress()
-      console.log(`[InstanceRegistry] Checking registration for network ${clientId}, validator ${validatorAddress}, url ${apiUrl}`)
+      console.log(`[InstanceRegistry] Checking registration for network ${networkId}, validator ${validatorAddress}, url ${apiUrl}`)
 
       // Skip self-registration when our apiUrl is localhost / loopback / private —
       // such an entry only pollutes the registry: no other node can reach it
@@ -369,7 +369,7 @@ export const instanceRegistryService: Service = {
       }
 
       // Find an existing instance owned by us pointing at our apiUrl.
-      const peers = peerCache.get(clientId)
+      const peers = peerCache.get(networkId)
       let existingInstanceId: number | null = null
       let existingPeer: PeerInstance | null = null
       if (peers) {
@@ -394,8 +394,8 @@ export const instanceRegistryService: Service = {
             console.log(`[InstanceRegistry] Instance #${instanceId} updated`)
           }
         } else {
-          console.log(`[InstanceRegistry] Registering new instance for network ${clientId}, url ${apiUrl}...`)
-          const tx = await _clientManager.registerInstance(clientId, apiUrl, validatorAddress)
+          console.log(`[InstanceRegistry] Registering new instance for network ${networkId}, url ${apiUrl}...`)
+          const tx = await _clientManager.registerInstance(networkId, apiUrl, validatorAddress)
           const receipt = await tx.wait()
           const iface = _clientManager.interface
           for (const log of receipt.logs) {
@@ -453,9 +453,9 @@ export const instanceRegistryService: Service = {
       stats: async () => ({
         registered: instanceId !== null,
         instanceId,
-        clientId,
+        networkId,
         apiUrl,
-        peerCount: peerCache.get(clientId)?.size ?? 0,
+        peerCount: peerCache.get(networkId)?.size ?? 0,
       }),
     }
   },

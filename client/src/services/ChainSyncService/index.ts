@@ -559,8 +559,8 @@ export async function forceSyncNetwork(networkId: number, l1RpcUrl: string): Pro
 }
 
 /** @deprecated Use forceSyncNetwork */
-export async function forceSyncClient(clientId: number, l1RpcUrl: string): Promise<boolean> {
-  return forceSyncNetwork(clientId, l1RpcUrl)
+export async function forceSyncClient(networkId: number, l1RpcUrl: string): Promise<boolean> {
+  return forceSyncNetwork(networkId, l1RpcUrl)
 }
 
 /**

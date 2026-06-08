@@ -1088,7 +1088,7 @@ export function useSignAndSubmitAction() {
         let isAuthed = false
         let backendReachable = false
         try {
-          const res = await apiFetch<{ authenticated: boolean }>(`/api/users/client-auth/${activeTokenId}?clientId=${CLIENT_ID}`)
+          const res = await apiFetch<{ authenticated: boolean }>(`/api/users/client-auth/${activeTokenId}?networkId=${CLIENT_ID}`)
           backendReachable = true
           isAuthed = !!res?.authenticated
         } catch { /* fall through to RPC fallback */ }
@@ -1815,7 +1815,7 @@ export function useSignAndSubmitAction() {
     // Prefer backend DB lookup over live RPC — much faster for cold starts.
     if (!clientAuthCache.get(activeTokenId)) {
       try {
-        const res = await apiFetch<{ authenticated: boolean }>(`/api/users/client-auth/${activeTokenId}?clientId=${CLIENT_ID}`)
+        const res = await apiFetch<{ authenticated: boolean }>(`/api/users/client-auth/${activeTokenId}?networkId=${CLIENT_ID}`)
         if (res?.authenticated) clientAuthCache.set(activeTokenId, true)
       } catch { /* non-fatal, server will validate; contract will enforce */ }
     }

@@ -27,22 +27,22 @@ router.get('/', (req, res) => {
   res.setHeader('Access-Control-Allow-Origin', '*')
   res.setHeader('Vary', 'Origin')
 
-  // Default to the configured CLIENT_ID; allow ?clientId=N override so
+  // Default to the configured CLIENT_ID; allow ?networkId=N override so
   // a frontend serving multiple networks (rare today but supported by
   // the protocol) can ask for any peer set.
-  const clientIdParam = req.query.clientId
-  const clientId = clientIdParam
-    ? Number(clientIdParam)
+  const networkIdParam = req.query.networkId
+  const networkId = networkIdParam
+    ? Number(networkIdParam)
     : Number(getNetworkId() || 1)
 
-  if (!Number.isFinite(clientId) || clientId <= 0) {
-    res.status(400).json({ error: 'Invalid clientId' })
+  if (!Number.isFinite(networkId) || networkId <= 0) {
+    res.status(400).json({ error: 'Invalid networkId' })
     return
   }
 
-  const peers = getPeers(clientId)
+  const peers = getPeers(networkId)
   res.json({
-    clientId,
+    networkId,
     instances: peers.map(p => ({
       instanceId: p.instanceId,
       apiUrl: p.apiUrl,
