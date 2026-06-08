@@ -32,6 +32,8 @@
  * shape. See plan-smart-eoa-passkey-sponsorship.md §4 for the full flow.
  */
 
+import { privateKeyToAccount } from 'viem/accounts'
+import { bytesToHex } from 'viem'
 import { generateSecp256k1Keypair } from './secp256k1Key'
 import { encryptBackupBlob, type BackupBlob } from './backupBlob'
 import { signAuthorizationTuple, type SignedAuthorizationTuple } from './eip7702'
@@ -139,6 +141,14 @@ export type BootstrapResult = {
   backupBlob: BackupBlob
   /** Ethereum address of the generated secp256k1 keypair (= ecdsaFallback in SmartEOA). */
   ecdsaAddress: `0x${string}`
+  /**
+   * One-shot signer for the post-mint /api/auth/verify sign-in. The minted
+   * profile is owned by `ecdsaAddress`, and this closure signs a personal_sign
+   * message with that key so the onboarding can establish a session WITHOUT
+   * persisting the raw private key anywhere. The key lives only inside this
+   * closure (already in memory for the bootstrap) — let it GC after use.
+   */
+  signVerifyMessage: (message: string) => Promise<`0x${string}`>
 }
 
 // ─── Public API ──────────────────────────────────────────────────────────────
@@ -256,9 +266,16 @@ export async function bootstrapNewUser(opts: {
 
   const { txHash } = await sponsorApi.sponsorBootstrap(bootstrapParams)
 
+  // Build a one-shot signer over the ecdsaFallback key for post-mint sign-in.
+  // viem's privateKeyToAccount gives an EIP-191 personal_sign signer matching
+  // what /api/auth/verify recovers via ethers.verifyMessage. Captures the key
+  // in a closure only — nothing new is persisted.
+  const verifyAccount = privateKeyToAccount(bytesToHex(keypair.privateKey))
+
   return {
     txHash,
     backupBlob,
     ecdsaAddress: keypair.address,
+    signVerifyMessage: (message: string) => verifyAccount.signMessage({ message }),
   }
 }

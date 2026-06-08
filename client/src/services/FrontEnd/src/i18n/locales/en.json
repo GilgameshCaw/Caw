@@ -1605,6 +1605,7 @@
   "onboarding.confirm.tx_label": "Transaction hash",
   "onboarding.confirm.tx_note": "Your profile is being confirmed on-chain. This usually takes a few seconds.",
   "onboarding.confirm.cta": "Continue to feed",
+  "onboarding.confirm.signing_in": "Signing you in…",
   "account.section.identity": "Identity",
   "identity.section.pop_b_label": "Signed in with passkey (Population B)",
   "identity.section.pop_b_description": "Your account is secured by a WebAuthn passkey and a secp256k1 recovery key.",

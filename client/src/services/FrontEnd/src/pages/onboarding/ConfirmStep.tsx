@@ -18,6 +18,8 @@ import { useNavigate } from '~/utils/localizedRouter'
 export interface ConfirmStepProps {
   username: string
   txHash: string
+  /** True while the post-mint sign-in is still establishing a session. */
+  signingIn?: boolean
 }
 
 function shortHash(hash: string): string {
@@ -25,7 +27,7 @@ function shortHash(hash: string): string {
   return `${hash.slice(0, 8)}…${hash.slice(-6)}`
 }
 
-export default function ConfirmStep({ username, txHash }: ConfirmStepProps) {
+export default function ConfirmStep({ username, txHash, signingIn = false }: ConfirmStepProps) {
   const { isDark } = useTheme()
   const t = useT()
   const navigate = useNavigate()
@@ -68,9 +70,12 @@ export default function ConfirmStep({ username, txHash }: ConfirmStepProps) {
 
       <button
         onClick={() => navigate('/')}
-        className="w-full py-3 rounded-full font-semibold text-sm bg-yellow-500 text-black hover:bg-yellow-400 transition-colors cursor-pointer"
+        disabled={signingIn}
+        className="w-full py-3 rounded-full font-semibold text-sm bg-yellow-500 text-black hover:bg-yellow-400 transition-colors cursor-pointer disabled:opacity-60 disabled:cursor-wait"
       >
-        {t('onboarding.confirm.cta')}
+        {signingIn
+          ? t('onboarding.confirm.signing_in')
+          : t('onboarding.confirm.cta')}
       </button>
     </div>
   )

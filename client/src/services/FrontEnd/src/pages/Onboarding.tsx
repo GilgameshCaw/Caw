@@ -38,7 +38,9 @@ import {
 } from 'react-icons/hi'
 import type { PasskeyPubkey } from '~/services/identity/passkey'
 import type { BootstrapResult } from '~/services/identity/bootstrap'
-import { apiFetch } from '~/api/client'
+import { apiFetch, retryOnIndexing } from '~/api/client'
+import { useAuthStore } from '~/store/authStore'
+import { baseSepolia } from 'wagmi/chains'
 
 type OnboardingStep =
   | 'username'
@@ -163,6 +165,10 @@ export default function Onboarding() {
   const t = useT()
   const navigate = useNavigate()
   const [state, setState] = useState<OnboardingState>(INITIAL_STATE)
+  const setSession = useAuthStore(s => s.setSession)
+  // True while the post-mint /api/auth/verify sign-in is in flight (shown on
+  // the confirm step so "Go to feed" waits for the session).
+  const [signingIn, setSigningIn] = useState(false)
 
   // Invite-code gate.
   const [searchParams] = useSearchParams()
@@ -272,7 +278,9 @@ export default function Onboarding() {
     setState(s => ({ ...s, enrolledPasskey: passkey, step: 'backup' }))
   }, [])
 
-  // BackupStep → advances to 'confirm' after successful bootstrap
+  // BackupStep → advances to 'confirm' after successful bootstrap, then
+  // establishes an auth session so "Go to feed" lands the user signed-in
+  // (without this they bounce to /welcome as a brand-new user).
   const handleBootstrapDone = useCallback((result: BootstrapResult) => {
     setState(s => ({
       ...s,
@@ -281,7 +289,56 @@ export default function Onboarding() {
       vaultPassword: '',
       vaultPasswordConfirm: '',
     }))
-  }, [])
+
+    // Post-mint sign-in. The minted profile is owned by result.ecdsaAddress;
+    // sign the standard /api/auth/verify message with that key (held only in
+    // the result's one-shot closure) — same flow as useVerifyWallet, but no
+    // wagmi wallet is connected. Mirror its message format EXACTLY (host +
+    // hardcoded chainId + unix-seconds timestamp) so the server's host/chain
+    // binding matches. Best-effort: if it fails (e.g. indexer not caught up
+    // after retries) we still let the user reach the confirm screen.
+    void (async () => {
+      setSigningIn(true)
+      try {
+        const timestamp = Math.floor(Date.now() / 1000)
+        const host = window.location.host.toLowerCase()
+        const message =
+          `Verify wallet ownership for CAW\n` +
+          `Host: ${host}\n` +
+          `ChainId: ${baseSepolia.id}\n` +
+          `Timestamp: ${timestamp}`
+        const signature = await result.signVerifyMessage(message)
+        // /api/auth/verify returns 202 while the fresh mint isn't indexed yet;
+        // retryOnIndexing backs off and re-tries the SAME (message, signature)
+        // — safe because the server's one-time-sig guard runs after the 202
+        // branch (see auth.ts).
+        const data = await retryOnIndexing(() =>
+          apiFetch<{
+            sessionToken: string
+            authorizedTokenIds: number[]
+            authorizedAddresses: string[]
+            expiresAt: number
+          }>('/api/auth/verify', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ message, signature }),
+          })
+        )
+        setSession(
+          data.sessionToken,
+          data.authorizedTokenIds,
+          data.authorizedAddresses,
+          data.expiresAt,
+        )
+      } catch (err) {
+        // Non-fatal: the mint succeeded; the user can sign in later via the
+        // passkey/recovery path. Log for diagnostics.
+        console.warn('[onboarding] post-mint sign-in failed (mint OK):', err)
+      } finally {
+        setSigningIn(false)
+      }
+    })()
+  }, [setSession])
 
   // BackupStep → USERNAME_TAKEN: return to username step with error hint
   const handleUsernameTaken = useCallback(() => {
@@ -454,6 +511,7 @@ export default function Onboarding() {
             <ConfirmStep
               username={state.username}
               txHash={state.bootstrapResult.txHash}
+              signingIn={signingIn}
             />
           )}
 
