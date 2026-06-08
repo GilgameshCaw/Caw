@@ -18,6 +18,61 @@
 // missing the secret. They surfaced one at a time as different lookups hit a
 // secret-required project. This helper exists so there's ONE correct builder.
 
+// Infura subdomain per (network, chain-role). One project ID + secret works
+// across all of these — you just swap the host. The CLI uses this to derive
+// every RPC URL from a single Infura project, so the operator answers one key
+// + one secret instead of three separate URL prompts.
+//   testnet: L1=Ethereum Sepolia, storage L2 = Base or Arbitrum Sepolia,
+//            price feed = Ethereum mainnet (always mainnet — price is real).
+//   mainnet: L1=Ethereum mainnet, storage L2 = Base or Arbitrum, price = mainnet.
+const INFURA_HOSTS = {
+  testnet: {
+    l1: 'sepolia.infura.io',
+    'Base Sepolia': 'base-sepolia.infura.io',
+    'Arbitrum Sepolia': 'arbitrum-sepolia.infura.io',
+    'Ethereum Sepolia (L1)': 'sepolia.infura.io',
+    ethMainnet: 'mainnet.infura.io',
+  },
+  mainnet: {
+    l1: 'mainnet.infura.io',
+    'Base': 'base-mainnet.infura.io',
+    'Arbitrum': 'arbitrum-mainnet.infura.io',
+    'Ethereum Mainnet (L1)': 'mainnet.infura.io',
+    ethMainnet: 'mainnet.infura.io',
+  },
+}
+
+/**
+ * Pull the Infura project ID (the 32-hex /v3/<ID> segment) out of any Infura
+ * URL — accepts either the full https URL or just the bare ID. Returns '' if
+ * it doesn't look like an Infura project ID.
+ */
+export function extractInfuraProjectId(input) {
+  if (!input) return ''
+  const s = input.trim()
+  // Bare 32-hex ID.
+  if (/^[0-9a-fA-F]{32}$/.test(s)) return s.toLowerCase()
+  // Full URL — grab the /v3/<id> or /ws/v3/<id> segment.
+  const m = s.match(/\/v3\/([0-9a-fA-F]{32})/)
+  return m ? m[1].toLowerCase() : ''
+}
+
+/**
+ * Build the HTTPS + WSS Infura URLs for a (network, chainKeyOrRole, projectId).
+ * `role` is either 'l1' / 'ethMainnet' or a storage-chain label like
+ * 'Base Sepolia'. Returns { http, wss } or null when the role/network has no
+ * known Infura host (operator falls back to a manual prompt for that chain).
+ */
+export function infuraUrls(network, role, projectId) {
+  const host = (INFURA_HOSTS[network] || {})[role]
+  if (!host || !projectId) return null
+  return {
+    http: `https://${host}/v3/${projectId}`,
+    // Infura WSS endpoint: same host, /ws/v3/ path.
+    wss: `wss://${host}/ws/v3/${projectId}`,
+  }
+}
+
 /**
  * Embed an Infura-style API Key Secret as Basic Auth in the RPC URL.
  * `https://host/v3/KEY` + secret → `https://:SECRET@host/v3/KEY`. ethers'

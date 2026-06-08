@@ -371,8 +371,11 @@ program
       // Step 6: L2 RPC, labeled by the actual storage chain (Base Sepolia /
       // Arbitrum Sepolia / Ethereum Sepolia / …) when we managed to look it
       // up. Falls back to the network's default L2 label otherwise.
+      // Thread `network` + the Infura fast-path stash from step 3 so
+      // collectL2Rpc can derive the L2 URL without re-prompting on the
+      // Infura path.
       const l2Label = infraEarly.storageChain?.label || chainLabels(networkConfig.network).l2
-      const l2RpcConfig = await collectL2Rpc(nodeType, l2Label)
+      const l2RpcConfig = await collectL2Rpc(nodeType, l2Label, networkConfig.network, { infura: l1RpcConfig._infura })
 
       // Step 7: Replication (optional). The replication step gets a hint
       // about the storage chain so it can sort the canonical pairing

@@ -1,7 +1,7 @@
 import inquirer from 'inquirer'
 import { section, dim, tipBlock, warn, brand } from '../utils/ui.js'
 import { chainLabels } from './networkAndMode.js'
-import { withSecret } from '../utils/rpc.js'
+import { withSecret, extractInfuraProjectId, infuraUrls } from '../utils/rpc.js'
 
 function inferWsFromHttp(httpUrl) {
   let ws = httpUrl
@@ -314,6 +314,100 @@ export async function collectL1Rpc(nodeType, network = 'testnet') {
   }
 
   section('L1 RPC')
+
+  // ── Infura fast path ──────────────────────────────────────────────────────
+  // Operators using Infura answer ONE project-key prompt + ONE secret prompt
+  // instead of three separate per-chain URL prompts (L1, L2, mainnet price
+  // feed). All three URLs are derived from the same project ID.
+  const { useInfura } = await inquirer.prompt([{
+    type: 'confirm',
+    name: 'useInfura',
+    message: `Are you using ${brand('Infura')} for your RPC endpoints? ${dim('(recommended provider)')}`,
+    default: true,
+  }])
+
+  if (useInfura) {
+    // Step a: collect the Infura project key (full URL or bare 32-hex ID).
+    let projectId = ''
+    while (!projectId) {
+      const { keyInput } = await inquirer.prompt([{
+        type: 'input',
+        name: 'keyInput',
+        message: `Infura project key ${dim('(full URL or bare 32-hex project ID):')}`,
+        validate: (input) => {
+          if (!input.trim()) return 'Project key is required'
+          const id = extractInfuraProjectId(input.trim())
+          if (!id) return 'Could not extract a 32-hex project ID — paste the full URL or the bare ID from your Infura dashboard'
+          return true
+        },
+      }])
+      projectId = extractInfuraProjectId(keyInput.trim())
+    }
+
+    // Step b: optional API Key Secret (one secret reused for all chains).
+    let infuraSecret = ''
+    const { hasSecret } = await inquirer.prompt([{
+      type: 'confirm',
+      name: 'hasSecret',
+      message: `Do you have an ${brand('API Key Secret')} for this project? ${dim('(lets you lock the project allowlist while backend traffic still authenticates)')}`,
+      default: false,
+    }])
+    if (hasSecret) {
+      const { secretInput } = await inquirer.prompt([{
+        type: 'password',
+        name: 'secretInput',
+        message: 'Infura API Key Secret:',
+        mask: '*',
+        validate: (input) => input.trim().length > 0 ? true : 'Cannot be empty (Ctrl+C to skip)',
+      }])
+      infuraSecret = secretInput.trim()
+    }
+
+    // Step c: one-time allowlist note.
+    const isMainnet = network === 'mainnet'
+    const neededNetworks = isMainnet
+      ? ['Ethereum Mainnet', 'Base', 'Arbitrum']
+      : ['Ethereum Sepolia', 'Base Sepolia', 'Arbitrum Sepolia', 'Ethereum Mainnet (price feed — always real mainnet)']
+    tipBlock([
+      `Enable these networks on your Infura project (${brand(projectId)}):`,
+      ...neededNetworks.map(n => `  • ${n}`),
+      '',
+      'Go to: dashboard.infura.io → your project → Networks.',
+      '',
+      'If you set an origin or IP allowlist on the project, the API Key Secret',
+      'you just provided overrides it for this node\'s server-side calls — so',
+      'backend RPC traffic works even with a locked-down project. The browser',
+      'talks to this node\'s /api/rpc proxy and never sees the secret.',
+    ])
+
+    // Step d: derive L1 + mainnet price-feed URLs (correct by construction,
+    // no probe needed).
+    const l1Derived = infuraUrls(network, 'l1', projectId)
+    const mainnetDerived = infuraUrls(network, 'ethMainnet', projectId)
+
+    console.log(dim(`  Derived L1 RPC:     ${l1Derived.http}`))
+    if (['full', 'validator'].includes(nodeType) && mainnetDerived) {
+      console.log(dim(`  Derived mainnet RPC: ${mainnetDerived.http} ${dim('(price feeds)')}`))
+    }
+    console.log()
+
+    // Step e: build answers.
+    const answers = {
+      l1RpcUrl: l1Derived.wss,
+      l1RpcUrlHttp: l1Derived.http,
+      l1RpcSecret: infuraSecret,
+      l1RpcUrlHttpFrontend: '',
+      // Stash for collectL2Rpc so it can derive the L2 URL without re-prompting.
+      _infura: { projectId, secret: infuraSecret },
+    }
+    if (['full', 'validator'].includes(nodeType) && mainnetDerived) {
+      answers.ethMainnetRpcUrl = mainnetDerived.http
+      if (infuraSecret) answers.ethMainnetRpcSecret = infuraSecret
+    }
+    return answers
+  }
+  // ── End Infura fast path ──────────────────────────────────────────────────
+
   tipBlock([
     'CAW uses Ethereum L1 for the canonical username registry — every',
     'install reads from L1 to look up usernames, validate signatures, and',
@@ -440,10 +534,16 @@ const STORAGE_LABEL_TO_CHAIN_ID = {
  * `storageChainLabel` is the human-readable name (e.g. "Base Sepolia").
  * Falls back to a generic label if the caller doesn't know the chain.
  *
+ * `network` ('testnet' | 'mainnet') is required when ctx.infura is set so
+ * infuraUrls() can pick the right host. Thread from caw.js alongside ctx.
+ *
+ * `ctx` is optional context from the L1 step. When `ctx.infura.projectId`
+ * is set (Infura fast path), the L2 URL is derived without prompting.
+ *
  * Returns: { l2RpcUrl, l2RpcUrlHttp }. Empty {} for frontend-only callers
  * that don't need to submit / index L2 events.
  */
-export async function collectL2Rpc(nodeType, storageChainLabel) {
+export async function collectL2Rpc(nodeType, storageChainLabel, network = 'testnet', ctx = {}) {
   if (nodeType === 'frontend-only') return {}
 
   // Skip the prompt if --env preloaded the L2 HTTP URL.
@@ -457,6 +557,29 @@ export async function collectL2Rpc(nodeType, storageChainLabel) {
       l2RpcSecret: process.env.CAW_L2_RPC_SECRET || '',
     }
   }
+
+  // ── Infura fast path ──────────────────────────────────────────────────────
+  // If collectL1Rpc used the Infura fast path, derive the L2 URL from the
+  // same project ID without re-prompting. infuraUrls() uses the storage-chain
+  // label directly as the role key (e.g. 'Base Sepolia', 'Arbitrum Sepolia').
+  if (ctx.infura?.projectId) {
+    const l2Derived = infuraUrls(network, storageChainLabel, ctx.infura.projectId)
+    if (l2Derived) {
+      section(`${storageChainLabel || 'L2'} RPC`)
+      console.log(dim(`  Derived from Infura project (fast path): ${l2Derived.http}`))
+      console.log()
+      return {
+        l2RpcUrl: l2Derived.wss,
+        l2RpcUrlHttp: l2Derived.http,
+        l2RpcSecret: ctx.infura.secret || '',
+        l2RpcUrlHttpFrontend: '',
+      }
+    }
+    // The storage chain isn't in INFURA_HOSTS (shouldn't happen for supported
+    // chains, but fall through to the manual prompt rather than crashing).
+    console.log(dim(`  (Infura fast path: no known host for "${storageChainLabel}" — falling back to manual prompt.)`))
+  }
+  // ── End Infura fast path ──────────────────────────────────────────────────
 
   section(`${storageChainLabel || 'L2'} RPC`)
   tipBlock([
@@ -488,6 +611,6 @@ export async function collectL2Rpc(nodeType, storageChainLabel) {
 export async function collectRpcUrls(nodeType, network = 'testnet') {
   const l1 = await collectL1Rpc(nodeType, network)
   const labels = chainLabels(network)
-  const l2 = await collectL2Rpc(nodeType, labels.l2)
+  const l2 = await collectL2Rpc(nodeType, labels.l2, network, { infura: l1._infura })
   return { ...l1, ...l2 }
 }
