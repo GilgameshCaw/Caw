@@ -180,12 +180,18 @@ export async function writeAddressesForNetwork(config, clientDir) {
     CAW_ADDRESS: l1.MintableCaw,
     CAW_NAMES_ADDRESS: l1.CawProfile,
     CAW_NAME_QUOTER_ADDRESS: l1.CawProfileQuoter,
+    CAW_PROFILE_LENS_ADDRESS: l1.CawProfileLens,
     CAW_NAMES_MINTER_ADDRESS: l1.CawProfileMinter,
     URI_GENERATOR_ADDRESS: l1.CawProfileURI,
     NETWORK_MANAGER_ADDRESS: l1.CawNetworkManager,
     CAW_NAME_MARKETPLACE_ADDRESS: l1.CawProfileMarketplace,
     CAW_NAMES_L2_MAINNET_ADDRESS: l1.CawProfileLedger,
     CAW_ACTIONS_MAINNET_ADDRESS: l1.CawActions,
+    // L1-side ERC-1271 sibling + the EIP-7702 SmartEOA delegate. The FE reads
+    // both (population routing + sponsored-flow signing), so they must be in
+    // addresses.ts — previously omitted, which broke the FE build (#196).
+    CAW_ACTIONS_ERC1271_ADDRESS: l1.CawActionsERC1271,
+    SMART_EOA_ADDRESS: l1.SmartEOA,
     // Per-Network-storage-chain — resolved here, not multi-chain in the codebase.
     CAW_NAMES_L2_ADDRESS: l2.CawProfileLedger,
     CAW_ACTIONS_ADDRESS: l2.CawActions,
@@ -212,8 +218,16 @@ export async function writeAddressesForNetwork(config, clientDir) {
     lines.push(`export const ${k} = "${v}" as const;`)
   }
   for (const [k, v] of Object.entries(consts)) {
-    if (v) lines.push(`export const ${k} = "${v}" as const;`)
-    else lines.push(`// export const ${k} = '...' — not deployed for ${env}/${chainKey} yet`)
+    if (v) {
+      lines.push(`export const ${k} = "${v}" as const;`)
+    } else {
+      // Still EXPORT the symbol (as undefined) rather than commenting it out.
+      // A commented-out export breaks `import { THAT_CONST }` at FE build time
+      // ("has no exported member") even for a const the page only uses
+      // conditionally. Emitting `= undefined` keeps the import resolvable;
+      // consumers already guard on a falsy address. (Fixes #196.)
+      lines.push(`export const ${k} = undefined; // not deployed for ${env}/${chainKey}`)
+    }
   }
   const out = lines.join('\n') + '\n'
   const outPath = path.join(clientDir, 'src/abi/addresses.ts')

@@ -46,6 +46,7 @@ export interface ChainContracts {
   CawNetworkManager?: `0x${string}`
   CawProfileMinter?: `0x${string}`
   CawProfileQuoter?: `0x${string}`
+  CawProfileLens?: `0x${string}`
   CawProfileMarketplace?: `0x${string}`
   CawProfileURI?: `0x${string}`
   CawFontDataA?: `0x${string}`
@@ -72,6 +73,7 @@ export const deployments: Deployments = {
       CawNetworkManager: '0xeCc4AD86C4213E54d1F328eda1E128E61EC68506',
       CawProfileMinter: '0x977e6D822290f36346118E819fdF77d9f410fE96',
       CawProfileQuoter: '0xbD354eC68E350b02A56453bA98b01f4Bc39b1b11',
+      CawProfileLens: '0x0d4F77910eD435DAc837c5FbE2dc93d2fb4f4158',
       CawProfileMarketplace: '0xd72EFcf334b8992CA9D19a464d0993535C0fb20F',
       SmartEOA: '0xa8CD52F7590ae3198713e562a3315dD604d949D9',
       CawProfileURI: '0x8097261879875fbA2BB1EE6aEfC96834C6370959',
