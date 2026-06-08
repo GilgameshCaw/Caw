@@ -233,6 +233,35 @@ export async function writeAddressesForNetwork(config, clientDir) {
   const outPath = path.join(clientDir, 'src/abi/addresses.ts')
   fs.writeFileSync(outPath, out)
   console.log(success(`  Wrote ${dim(outPath)} (Network ${networkId} → ${chainKey})`))
+
+  // SponsorService reads three of these addresses from process.env (NOT from
+  // addresses.ts): CAW_NAMES_MINTER_ADDRESS, CAW_NAMES_ADDRESS, SMART_EOA_ADDRESS.
+  // .env was written earlier in generateConfig() — before these addresses were
+  // resolved on-chain — so we append them here. Without this the sponsor server
+  // boots "disabled" and /api/sponsor/bootstrap 503s. Idempotent: skip a key
+  // that's already present (e.g. an operator who set it by hand or a re-run).
+  const sponsorEnvAddrs = {
+    CAW_NAMES_MINTER_ADDRESS: consts.CAW_NAMES_MINTER_ADDRESS,
+    CAW_NAMES_ADDRESS: consts.CAW_NAMES_ADDRESS,
+    SMART_EOA_ADDRESS: consts.SMART_EOA_ADDRESS,
+  }
+  const envPath = path.join(clientDir, '.env')
+  try {
+    const existing = fs.existsSync(envPath) ? fs.readFileSync(envPath, 'utf8') : ''
+    const toAppend = []
+    for (const [k, v] of Object.entries(sponsorEnvAddrs)) {
+      if (v && !new RegExp(`^${k}=`, 'm').test(existing)) {
+        toAppend.push(`${k}=${v}`)
+      }
+    }
+    if (toAppend.length) {
+      const sep = existing.endsWith('\n') || existing === '' ? '' : '\n'
+      fs.appendFileSync(envPath, sep + toAppend.join('\n') + '\n')
+      console.log(success(`  Appended ${toAppend.length} sponsor address var(s) to ${dim('.env')}`))
+    }
+  } catch (e) {
+    console.log(warn(`  Could not append sponsor addresses to .env: ${e.message}`))
+  }
 }
 
 /**
@@ -556,7 +585,10 @@ function buildEnvVars(nodeType, config) {
     env.SPONSOR_ENABLED = '1'
     env.SPONSOR_CODE_HMAC_SECRET = config.sponsorCodeHmacSecret
     if (config.sponsorWalletPrivateKey) {
-      env.SPONSOR_WALLET_PRIVATE_KEY = config.sponsorWalletPrivateKey
+      // SponsorService reads SPONSOR_HOT_WALLET_PRIVATE_KEY (index.ts) — this
+      // MUST match that exact name or the service boots "disabled" and
+      // /api/sponsor/bootstrap returns 503.
+      env.SPONSOR_HOT_WALLET_PRIVATE_KEY = config.sponsorWalletPrivateKey
     }
     // Deposit env vars are read as WEI by SponsorService (BigInt(raw)), but the
     // CLI collects WHOLE CAW for legibility. Scale here: whole CAW × 1e18.
