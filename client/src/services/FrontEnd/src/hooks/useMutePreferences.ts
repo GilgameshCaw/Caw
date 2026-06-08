@@ -114,6 +114,11 @@ export const COMMON_WORDS = new Set([
 
 // Extract meaningful words from post content
 export function extractMuteableWords(content: string): string[] {
+  // Guard against undefined/empty content. Pure recaws (a recaw with no
+  // text of its own) surface a parent object that may lack content, and a
+  // search result can route display to that parent — calling .matchAll()
+  // on undefined would throw and trip the whole error boundary.
+  if (!content) return []
   // Extract hashtags/cashtags (Unicode-aware; numeric-only tags ignored,
   // since they're never indexed as hashtags anyway).
   const hashtags: string[] = []
