@@ -204,6 +204,10 @@ router.post('/bootstrap', async (req, res) => {
     params = BootstrapBodySchema.parse(req.body)
   } catch (e) {
     const detail = e instanceof ZodError ? e.issues.map(i => `${i.path.join('.')}: ${i.message}`).join(', ') : String(e)
+    // Log the rejection so the reason is visible server-side — the FE only
+    // surfaces a generic "HTTP 400" to the user, so without this a malformed
+    // bootstrap payload is a black box from the operator's side.
+    console.warn(`[sponsor/bootstrap] 400 VALIDATION from ${ip}: ${detail}`)
     return res.status(400).json({ error: 'VALIDATION', detail })
   }
 

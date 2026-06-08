@@ -192,11 +192,18 @@ export class SponsorApiClient {
     if (isObject(data) && typeof (data as Record<string, unknown>).error === 'string') {
       const typed = data as Record<string, unknown>
       const errCode = typed.error as string
+      const detail = typeof typed.detail === 'string' ? typed.detail : undefined
       if (isKnownErrorCode(errCode)) {
-        return {
-          error: errCode,
-          detail: typeof typed.detail === 'string' ? typed.detail : undefined,
-        }
+        return { error: errCode, detail }
+      }
+      // Unknown-but-present error code (e.g. VALIDATION, ZERO_DEPOSIT,
+      // BUDGET_EXCEEDED, CODE_EXPIRED). PREVIOUSLY these fell through to a bare
+      // "HTTP <status>" with the detail discarded — a black hole that turned
+      // every server-side validation rejection into an opaque "HTTP 400". Pass
+      // the real error code + detail through so the user (and we) see WHY.
+      return {
+        error: 'SERVER_ERROR',
+        detail: detail ? `${errCode}: ${detail}` : `${errCode} (HTTP ${res.status})`,
       }
     }
 
