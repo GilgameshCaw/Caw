@@ -23,6 +23,7 @@ async function searchCawsWithPrisma(query: string, limit: number, offset: number
       parent: {
         select: {
           id: true,
+          content: true,
           user: { select: { tokenId: true, username: true, image: true } }
         }
       }
@@ -45,6 +46,7 @@ async function searchCawsWithPrisma(query: string, limit: number, offset: number
       },
       parent: caw.parent ? {
         id: caw.parent.id.toString(),
+        content: caw.parent.content,
         user: {
           id: caw.parent.user.tokenId,
           tokenId: caw.parent.user.tokenId,
@@ -93,6 +95,7 @@ async function searchCawsWithES(query: string, limit: number, offset: number) {
       parent: {
         select: {
           id: true,
+          content: true,
           user: { select: { tokenId: true, username: true, image: true } }
         }
       }
@@ -116,6 +119,7 @@ async function searchCawsWithES(query: string, limit: number, offset: number) {
       },
       parent: caw.parent ? {
         id: caw.parent.id.toString(),
+        content: caw.parent.content,
         user: {
           id: caw.parent.user.tokenId,
           tokenId: caw.parent.user.tokenId,
