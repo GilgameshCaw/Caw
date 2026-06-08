@@ -32,6 +32,7 @@ import {
   computeRedemptionBudget,
 } from '../middleware/validateSponsorCode'
 import { getCawPriceCache, getEthPriceCache } from '../../services/ChainSyncService'
+import { hashCode } from '../../services/SponsorService/codes'
 
 const router = Router()
 
@@ -46,6 +47,10 @@ const redis = process.env.REDIS_URL
 const BOOTSTRAP_RATE_LIMIT     = 3
 const DEPOSIT_AUTH_RATE_LIMIT  = 30
 const RATE_WINDOW_SECONDS      = 24 * 60 * 60   // 24 hours
+
+// Code-info: 30 lookups per IP per 10 minutes
+const CODE_INFO_RATE_LIMIT     = 30
+const CODE_INFO_WINDOW_SECONDS = 10 * 60         // 10 minutes
 
 // Gas limit for bootstrap tx — mirrors the constant in SponsorService/index.ts.
 // Used in the per-redemption budget computation.
@@ -70,6 +75,28 @@ async function checkSponsorRateLimit(ip: string, op: 'bootstrap' | 'deposit' | '
     return count <= limit
   } catch {
     return true  // fail open on Redis unavailability
+  }
+}
+
+/**
+ * Per-IP rate limit for GET /api/sponsor/code/:code.
+ * Returns true if allowed. Always does the DB lookup regardless (timing uniformity).
+ * On exceed returns false — caller responds { valid: false } (200, not 429) so
+ * the rate limiter itself is not a distinguishing oracle.
+ */
+async function checkCodeInfoRateLimit(ip: string): Promise<boolean> {
+  const key = `sponsor:codeinfo:${ip}`
+  try {
+    const count = await redis.incr(key)
+    if (count === 1) {
+      await redis.expire(key, CODE_INFO_WINDOW_SECONDS)
+    } else {
+      const ttl = await redis.ttl(key)
+      if (ttl < 0) await redis.expire(key, CODE_INFO_WINDOW_SECONDS)
+    }
+    return count <= CODE_INFO_RATE_LIMIT
+  } catch {
+    return true  // fail open
   }
 }
 
@@ -395,6 +422,56 @@ router.get('/repay/:tokenId', async (req, res) => {
     console.error('[/sponsor/repay] error:', err?.message)
     return res.status(500).json({ error: 'INTERNAL' })
   }
+})
+
+// ─── GET /api/sponsor/code/:code ─────────────────────────────────────────────
+// Read-only invite-code info for FE onboarding pre-flight.
+// Always returns HTTP 200 — never 404 — so the status code itself is not an
+// oracle for whether a code exists.
+//
+// Valid:   { valid: true,  giftCaw: "<wei string>", minUsernameLength: N, expiresAt: "<ISO>" }
+// Invalid: { valid: false }
+//
+// Anti-abuse: 30 lookups / IP / 10 min (Redis). On exceed: { valid: false }
+// (200) — the rate limiter is not a distinguishing signal. DB lookup runs
+// unconditionally for timing uniformity.
+router.get('/code/:code', async (req, res) => {
+  const ip = clientIp(req)
+  const allowed = await checkCodeInfoRateLimit(ip)
+
+  // Hash the raw code unconditionally — runs even on rate-limit so timing is
+  // similar whether or not the limit has fired.
+  let codeHash: string
+  try {
+    codeHash = hashCode(req.params.code)
+  } catch {
+    // SPONSOR_CODE_HMAC_SECRET not set — treat as invalid, same as not found.
+    return res.status(200).json({ valid: false })
+  }
+
+  // DB lookup runs unconditionally for timing uniformity.
+  const code = await prisma.sponsorCode.findUnique({ where: { codeHash } }).catch(() => null)
+
+  if (!allowed) {
+    return res.status(200).json({ valid: false })
+  }
+
+  const now = new Date()
+  const isValid =
+    code !== null &&
+    code.expiresAt > now &&
+    (code.usesRemaining === null || code.usesRemaining > 0)
+
+  if (!isValid) {
+    return res.status(200).json({ valid: false })
+  }
+
+  return res.status(200).json({
+    valid: true,
+    giftCaw: code.maxDepositCawWei,
+    minUsernameLength: code.minUsernameLength,
+    expiresAt: code.expiresAt.toISOString(),
+  })
 })
 
 export default router

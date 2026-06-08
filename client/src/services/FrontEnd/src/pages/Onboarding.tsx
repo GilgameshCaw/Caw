@@ -6,21 +6,23 @@
  * Population B) identity without requiring the user to already own a wallet.
  *
  * Steps:
- *  1. username       — pick & verify username availability
- *  2. deposit        — choose CAW deposit amount
- *  3. vault-password — set vault password protecting the backup blob
- *  4. passkey        — enroll WebAuthn passkey (Face ID / Touch ID / Windows Hello)
- *  5. backup         — bootstrapNewUser() + download recovery file
- *  6. confirm        — success + txHash + navigate to feed
+ *  1. username       — pick & verify username availability (gift info shown inline)
+ *  2. vault-password — set vault password protecting the backup blob
+ *  3. passkey        — enroll WebAuthn passkey (Face ID / Touch ID / Windows Hello)
+ *  4. backup         — bootstrapNewUser() + download recovery file
+ *  5. confirm        — success + txHash + navigate to feed
+ *
+ * The deposit amount is NOT chosen by the user. The invite code defines a fixed
+ * CAW gift (fetched from GET /api/sponsor/code/:code). The username burn cost is
+ * deducted from giftCaw; the remainder is auto-deposited. No deposit step.
  */
 
-import React, { useState, useCallback, useMemo } from 'react'
+import React, { useState, useCallback, useEffect, useMemo } from 'react'
 import { useSearchParams } from 'react-router-dom'
 import { useTheme } from '~/hooks/useTheme'
 import { useT } from '~/i18n/I18nProvider'
 import { useNavigate } from '~/utils/localizedRouter'
 import UsernameStep from './onboarding/UsernameStep'
-import DepositStep, { MIN_DEPOSIT_CAW } from './onboarding/DepositStep'
 import VaultPasswordStep from './onboarding/VaultPasswordStep'
 import PasskeyStep from './onboarding/PasskeyStep'
 import BackupStep from './onboarding/BackupStep'
@@ -29,7 +31,6 @@ import BoidsBg from '~/components/BoidsBg3D'
 import LanguageSwitcher from '~/components/LanguageSwitcher'
 import {
   HiAtSymbol,
-  HiCurrencyDollar,
   HiLockClosed,
   HiFingerPrint,
   HiCloudDownload,
@@ -37,10 +38,10 @@ import {
 } from 'react-icons/hi'
 import type { PasskeyPubkey } from '~/services/identity/passkey'
 import type { BootstrapResult } from '~/services/identity/bootstrap'
+import { apiFetch } from '~/api/client'
 
 type OnboardingStep =
   | 'username'
-  | 'deposit'
   | 'vault-password'
   | 'passkey'
   | 'backup'
@@ -51,33 +52,25 @@ interface OnboardingState {
   username: string
   usernameAvailable: boolean | null
   usernameError: string | null
-  depositAmount: bigint
   vaultPassword: string
   vaultPasswordConfirm: string
   enrolledPasskey: PasskeyPubkey | null
   bootstrapResult: BootstrapResult | null
 }
 
-// Per-mint default deposit. The installer computes this from a ~$0.10 target
-// at the live CAW price and writes it (in wei) to VITE_SPONSOR_DEFAULT_DEPOSIT_CAW.
-// Falls back to the on-chain floor when unset. Never below MIN_DEPOSIT_CAW.
-const DEFAULT_DEPOSIT_AMOUNT: bigint = (() => {
-  const raw = import.meta.env.VITE_SPONSOR_DEFAULT_DEPOSIT_CAW
-  if (!raw) return MIN_DEPOSIT_CAW
-  try {
-    const wei = BigInt(raw)
-    return wei > MIN_DEPOSIT_CAW ? wei : MIN_DEPOSIT_CAW
-  } catch {
-    return MIN_DEPOSIT_CAW
-  }
-})()
+/** Gift code metadata fetched from /api/sponsor/code/:code */
+interface SponsorCodeInfo {
+  valid: boolean
+  giftCaw?: bigint          // total CAW gifted, in wei
+  minUsernameLength?: number
+  expiresAt?: string
+}
 
 const INITIAL_STATE: OnboardingState = {
   step: 'username',
   username: '',
   usernameAvailable: null,
   usernameError: null,
-  depositAmount: DEFAULT_DEPOSIT_AMOUNT,
   vaultPassword: '',
   vaultPasswordConfirm: '',
   enrolledPasskey: null,
@@ -87,7 +80,6 @@ const INITIAL_STATE: OnboardingState = {
 // Steps that show in the segmented stepper (exclude the confirm step).
 const PROGRESS_STEPS: OnboardingStep[] = [
   'username',
-  'deposit',
   'vault-password',
   'passkey',
   'backup',
@@ -95,12 +87,29 @@ const PROGRESS_STEPS: OnboardingStep[] = [
 
 const ALL_STEPS: OnboardingStep[] = [
   'username',
-  'deposit',
   'vault-password',
   'passkey',
   'backup',
   'confirm',
 ]
+
+// Username burn cost schedule (whole CAW, length → cost). Mirrors UsernameStep
+// and pages/Profile/New.tsx — keep in sync.
+const COST_SCHEDULE: Record<number, number> = {
+  1: 1_000_000_000_000,
+  2:   240_000_000_000,
+  3:    60_000_000_000,
+  4:     6_000_000_000,
+  5:       200_000_000,
+  6:        20_000_000,
+  7:        10_000_000,
+}
+const DEFAULT_COST = 1_000_000  // 8+ chars
+
+function cawCostForLength(len: number): number {
+  if (len === 0) return 0
+  return COST_SCHEDULE[len] ?? DEFAULT_COST
+}
 
 interface StepMeta {
   id: OnboardingStep
@@ -110,11 +119,10 @@ interface StepMeta {
 
 // Icon size matches PostMintOnboarding (w-4 h-4 inside the label row)
 const STEP_META: StepMeta[] = [
-  { id: 'username',       icon: <HiAtSymbol className="w-4 h-4" />,      shortLabel: '@' },
-  { id: 'deposit',        icon: <HiCurrencyDollar className="w-4 h-4" />, shortLabel: 'CAW' },
-  { id: 'vault-password', icon: <HiLockClosed className="w-4 h-4" />,     shortLabel: 'Vault' },
-  { id: 'passkey',        icon: <HiFingerPrint className="w-4 h-4" />,    shortLabel: 'Key' },
-  { id: 'backup',         icon: <HiCloudDownload className="w-4 h-4" />,  shortLabel: 'Save' },
+  { id: 'username',       icon: <HiAtSymbol className="w-4 h-4" />,     shortLabel: '@' },
+  { id: 'vault-password', icon: <HiLockClosed className="w-4 h-4" />,   shortLabel: 'Vault' },
+  { id: 'passkey',        icon: <HiFingerPrint className="w-4 h-4" />,  shortLabel: 'Key' },
+  { id: 'backup',         icon: <HiCloudDownload className="w-4 h-4" />,shortLabel: 'Save' },
 ]
 
 function stepIndex(step: OnboardingStep): number {
@@ -132,8 +140,7 @@ function normalizeCode(raw: string): string {
 /**
  * Loose client-side format gate. Tighter validation happens server-side
  * (HMAC + DB lookup, constant-time). 8–64 chars of alphanumeric after
- * normalization is the broadest accepting filter; rejects empty, way-too-short,
- * and obviously-garbage URL params without leaking entropy info.
+ * normalization is the broadest accepting filter.
  */
 function isPlausibleCodeFormat(raw: string | null): boolean {
   if (!raw) return false
@@ -144,7 +151,6 @@ function isPlausibleCodeFormat(raw: string | null): boolean {
 function stepLabel(step: OnboardingStep, t: (k: string) => string): string {
   switch (step) {
     case 'username':       return t('onboarding.step.username')
-    case 'deposit':        return t('onboarding.step.deposit')
     case 'vault-password': return t('onboarding.step.vault_password')
     case 'passkey':        return t('onboarding.step.passkey')
     case 'backup':         return t('onboarding.step.backup')
@@ -158,10 +164,7 @@ export default function Onboarding() {
   const navigate = useNavigate()
   const [state, setState] = useState<OnboardingState>(INITIAL_STATE)
 
-  // Invite-code gate. The sponsor server requires a code for every
-  // bootstrap call — without one we render an "invite-only" stub and
-  // never expose any of the multi-step flow. The raw URL code is
-  // normalized (uppercase, dashes stripped) once on mount.
+  // Invite-code gate.
   const [searchParams] = useSearchParams()
   const rawCode = searchParams.get('code')
   const normalizedCode = useMemo(
@@ -169,6 +172,55 @@ export default function Onboarding() {
     [rawCode],
   )
   const codeValid = isPlausibleCodeFormat(rawCode)
+
+  // ── Gift code fetch ────────────────────────────────────────────────────────
+  // Fetched once on mount (when the code passes the loose format check).
+  // While loading, giftInfo is null — UsernameStep disables Next.
+  const [giftInfo, setGiftInfo] = useState<SponsorCodeInfo | null>(null)
+  const [giftLoading, setGiftLoading] = useState(false)
+
+  useEffect(() => {
+    if (!codeValid || !normalizedCode) return
+    let cancelled = false
+    setGiftLoading(true)
+    apiFetch<{
+      valid: boolean
+      giftCaw?: string
+      minUsernameLength?: number
+      expiresAt?: string
+    }>(`/api/sponsor/code/${encodeURIComponent(normalizedCode)}`)
+      .then((json) => {
+        if (cancelled) return
+        if (json.valid && json.giftCaw) {
+          setGiftInfo({
+            valid: true,
+            giftCaw: BigInt(json.giftCaw),
+            minUsernameLength: json.minUsernameLength,
+            expiresAt: json.expiresAt,
+          })
+        } else {
+          // Server says invalid — treat like bad code format.
+          setGiftInfo({ valid: false })
+        }
+      })
+      .catch(() => {
+        if (!cancelled) setGiftInfo({ valid: false })
+      })
+      .finally(() => {
+        if (!cancelled) setGiftLoading(false)
+      })
+    return () => { cancelled = true }
+  }, [codeValid, normalizedCode])
+
+  // ── Derived deposit amount ─────────────────────────────────────────────────
+  // giftCaw - (username burn cost in wei). Computed at render time from live
+  // username; never stored in state — always fresh from giftInfo.
+  const derivedDepositAmount = useMemo((): bigint => {
+    if (!giftInfo?.valid || !giftInfo.giftCaw) return 0n
+    const burnCostWei = BigInt(cawCostForLength(state.username.length)) * 10n ** 18n
+    const remainder = giftInfo.giftCaw - burnCostWei
+    return remainder > 0n ? remainder : 0n
+  }, [giftInfo, state.username])
 
   const showProgress = PROGRESS_STEPS.includes(state.step as typeof PROGRESS_STEPS[number])
   const progressIndex = PROGRESS_STEPS.indexOf(state.step as typeof PROGRESS_STEPS[number])
@@ -193,9 +245,6 @@ export default function Onboarding() {
     if (prevIndex >= 0) {
       setState(s => ({ ...s, step: ALL_STEPS[prevIndex] }))
     } else {
-      // First step → back arrow takes the user to the home page rather
-      // than dead-ending. Matches user expectation that "Back" always
-      // does something.
       navigate('/')
     }
   }, [state.step, navigate])
@@ -208,10 +257,6 @@ export default function Onboarding() {
 
   const handleAvailabilityChange = useCallback((available: boolean | null) => {
     setState(s => ({ ...s, usernameAvailable: available }))
-  }, [])
-
-  const handleDepositChange = useCallback((depositAmount: bigint) => {
-    setState(s => ({ ...s, depositAmount }))
   }, [])
 
   const handlePasswordChange = useCallback((vaultPassword: string) => {
@@ -248,12 +293,10 @@ export default function Onboarding() {
     }))
   }, [t])
 
-  // Invite-only stub — no code in URL, or the code fails the loose format
-  // check. We render this BEFORE the multi-step flow so the user can't see
-  // (or screenshot) any of the steps without a code. Server-side validation
-  // is the real gate; this just blocks the obvious "open /onboarding directly"
-  // case so we don't waste the user's time.
-  if (!codeValid) {
+  // Invite-only stub — no code in URL, code fails format check, or server
+  // says invalid.
+  const codeInvalid = !codeValid || (giftInfo !== null && !giftInfo.valid)
+  if (codeInvalid) {
     return (
       <div className={`fixed inset-0 z-[100] overflow-y-auto overflow-x-hidden ${outerBg}`}>
         <BoidsBg isDark={isDark} />
@@ -301,9 +344,7 @@ export default function Onboarding() {
           {/* Slim segmented stepper — hidden on the confirm success screen */}
           {showProgress && (
             <>
-              {/* Back chevron inline above the stepper. Always present so
-                  the user can always go back — on the first step it
-                  navigates to home rather than the previous step. */}
+              {/* Back chevron inline above the stepper */}
               <button
                 onClick={goBack}
                 className={`mb-3 flex items-center gap-1 text-sm transition-colors cursor-pointer ${textFaint} hover:${textPrimary}`}
@@ -326,7 +367,6 @@ export default function Onboarding() {
                       key={meta.id}
                       onClick={() => {
                         if (i < progressIndex) {
-                          // Only allow navigating back to completed steps
                           const targetStep = ALL_STEPS[i]
                           setState(s => ({ ...s, step: targetStep }))
                         }
@@ -372,15 +412,9 @@ export default function Onboarding() {
               onUsernameChange={handleUsernameChange}
               onAvailabilityChange={handleAvailabilityChange}
               onNext={goNext}
-            />
-          )}
-
-          {state.step === 'deposit' && (
-            <DepositStep
-              depositAmount={state.depositAmount}
-              onDepositChange={handleDepositChange}
-              onNext={goNext}
-              onBack={goBack}
+              giftCaw={giftInfo?.valid ? giftInfo.giftCaw : undefined}
+              minUsernameLength={giftInfo?.valid ? giftInfo.minUsernameLength : undefined}
+              giftLoading={giftLoading}
             />
           )}
 
@@ -407,7 +441,7 @@ export default function Onboarding() {
             <BackupStep
               code={normalizedCode}
               username={state.username}
-              depositAmount={state.depositAmount}
+              depositAmount={derivedDepositAmount}
               vaultPassword={state.vaultPassword}
               passkey={state.enrolledPasskey}
               onNext={handleBootstrapDone}
