@@ -558,8 +558,16 @@ function buildEnvVars(nodeType, config) {
     if (config.sponsorWalletPrivateKey) {
       env.SPONSOR_WALLET_PRIVATE_KEY = config.sponsorWalletPrivateKey
     }
+    // Deposit env vars are read as WEI by SponsorService (BigInt(raw)), but the
+    // CLI collects WHOLE CAW for legibility. Scale here: whole CAW × 1e18.
     if (config.sponsorMaxDepositCaw) {
-      env.SPONSOR_MAX_DEPOSIT_CAW = config.sponsorMaxDepositCaw
+      env.SPONSOR_MAX_DEPOSIT_CAW = (BigInt(config.sponsorMaxDepositCaw) * 10n ** 18n).toString()
+    }
+    if (config.sponsorDefaultDepositCaw) {
+      const defaultWei = (BigInt(config.sponsorDefaultDepositCaw) * 10n ** 18n).toString()
+      env.SPONSOR_DEFAULT_DEPOSIT_CAW = defaultWei
+      // FE reads this (wei) to seed the onboarding deposit slider's initial value.
+      env.VITE_SPONSOR_DEFAULT_DEPOSIT_CAW = defaultWei
     }
   }
 

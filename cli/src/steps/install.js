@@ -40,6 +40,71 @@ function runStreamed(command, args, options = {}) {
   })
 }
 
+/**
+ * Read total + free RAM (MB) from /proc/meminfo. Returns { totalMb, availMb }.
+ * Linux-only; returns zeros elsewhere (the swap/heap logic then no-ops).
+ */
+function readMemInfoMb() {
+  try {
+    const txt = fs.readFileSync('/proc/meminfo', 'utf8')
+    const grab = (k) => {
+      const m = txt.match(new RegExp(`^${k}:\\s+(\\d+)\\s+kB`, 'm'))
+      return m ? Math.floor(Number(m[1]) / 1024) : 0
+    }
+    return { totalMb: grab('MemTotal'), availMb: grab('MemAvailable'), swapMb: grab('SwapTotal') }
+  } catch {
+    return { totalMb: 0, availMb: 0, swapMb: 0 }
+  }
+}
+
+/**
+ * The Vite/Rollup production build of the frontend (wagmi/rainbowkit/viem dep
+ * graph + tsc) peaks well above 1 GB of RAM. On a small VPS where Elasticsearch
+ * already claimed a chunk, the kernel OOM-killer fires mid-build and `yarn
+ * build` dies with "Killed" / exit 137 — exactly the failure operators hit.
+ *
+ * Two-part mitigation, applied right before the build:
+ *   1. Ensure a swapfile exists so a low-RAM box can spill instead of being
+ *      killed. We add 2 GB at /swapfile when there's no swap and the box has
+ *      under ~4 GB RAM. Idempotent: skips if any swap is already active.
+ *   2. Cap Node's heap via NODE_OPTIONS sized to the box, so V8 GCs hard
+ *      instead of ballooning past physical RAM.
+ *
+ * Best-effort: swap setup needs root (the installer runs as root on a VPS). If
+ * it fails we log and continue — the NODE_OPTIONS cap still helps.
+ */
+async function ensureBuildMemoryHeadroom() {
+  const { totalMb, swapMb } = readMemInfoMb()
+  if (!totalMb) return ''  // not Linux / can't read — leave NODE_OPTIONS unset
+
+  // 1. Swap: only add when there's none and the box is small enough to need it.
+  if (swapMb === 0 && totalMb < 4096) {
+    const spinner = ora('Low RAM detected — adding 2 GB swap so the build doesn’t OOM...').start()
+    try {
+      // fallocate is fast; dd is the portable fallback for filesystems that
+      // reject fallocate (e.g. some overlay/ZFS setups).
+      execSync(
+        'swapon --show=NAME --noheadings | grep -q . || ' +
+        '{ ( fallocate -l 2G /swapfile 2>/dev/null || ' +
+        '    dd if=/dev/zero of=/swapfile bs=1M count=2048 ) && ' +
+        '  chmod 600 /swapfile && mkswap /swapfile && swapon /swapfile; }',
+        { stdio: 'pipe', shell: '/bin/bash' },
+      )
+      spinner.succeed('2 GB swap active for the build')
+    } catch (e) {
+      spinner.warn('Could not add swap automatically — build may still OOM on a tiny box')
+      console.log(dim(`    ${(e?.stderr?.toString?.() || e?.message || e).toString().trim().split('\n').slice(-2).join(' ')}`))
+    }
+  }
+
+  // 2. Heap cap. Leave ~25% headroom under total RAM, clamp to [1536, 4096] MB.
+  // Build wants ≥1.5 GB; more than 4 GB rarely helps and risks crowding ES.
+  let heapMb = Math.floor(totalMb * 0.75)
+  if (heapMb < 1536) heapMb = 1536
+  if (heapMb > 4096) heapMb = 4096
+  return `--max-old-space-size=${heapMb}`
+}
+
 export async function runInstall(nodeType, config, installDir) {
   section('Installing Dependencies')
 
@@ -107,9 +172,21 @@ export async function runInstall(nodeType, config, installDir) {
     // dist/ directly — no need for vite to keep running. Dev mode skips the
     // build and runs vite under pm2 like before.
     if (config.deployment === 'production') {
+      // Add swap + a sized Node heap so the Vite/Rollup build doesn't get
+      // OOM-killed (exit 137 / "Killed") on a small VPS where ES already took
+      // a chunk of RAM. Returns the --max-old-space-size flag to apply.
+      const nodeHeapFlag = await ensureBuildMemoryHeadroom()
+
       const spinner3b = ora('Building frontend (production)...').start()
       try {
-        await runStreamed('yarn', ['build'], { cwd: frontendDir })
+        await runStreamed('yarn', ['build'], {
+          cwd: frontendDir,
+          env: {
+            ...process.env,
+            // Preserve any operator-supplied NODE_OPTIONS, append our heap cap.
+            NODE_OPTIONS: `${process.env.NODE_OPTIONS || ''} ${nodeHeapFlag}`.trim(),
+          },
+        })
         spinner3b.succeed('Frontend built — dist/ ready for nginx')
       } catch (e) {
         spinner3b.fail('Frontend build failed')
@@ -119,6 +196,20 @@ export async function runInstall(nodeType, config, installDir) {
         // has no actionable signal.
         const out = (e?.stdout?.toString?.() || '').trim()
         const errOut = (e?.stderr?.toString?.() || '').trim()
+
+        // exit 137 = SIGKILL, almost always the kernel OOM-killer on a small
+        // box. The build's own output ("Killed") is unhelpful, so call it out
+        // explicitly with the one remedy that reliably works.
+        const looksOOM = e?.code === 137 ||
+          /\bKilled\b/.test(out) || /\bKilled\b/.test(errOut)
+        if (looksOOM) {
+          const { totalMb, swapMb } = readMemInfoMb()
+          console.log(err('  The build was killed — the box ran out of memory (exit 137).'))
+          console.log(dim(`    RAM: ${totalMb || '?'} MB total, swap: ${swapMb || 0} MB.`))
+          console.log(dim('    Fixes: add more RAM/swap, or move Elasticsearch off-box'))
+          console.log(dim('    (set CAW_ES_URL — see docs/SCALING.md) to free heap for the build.'))
+        }
+
         if (out) {
           console.log(err('  yarn build stdout:'))
           for (const line of out.split('\n').slice(-60)) console.log(dim('    ' + line))

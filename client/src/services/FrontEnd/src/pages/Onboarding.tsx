@@ -58,12 +58,26 @@ interface OnboardingState {
   bootstrapResult: BootstrapResult | null
 }
 
+// Per-mint default deposit. The installer computes this from a ~$0.10 target
+// at the live CAW price and writes it (in wei) to VITE_SPONSOR_DEFAULT_DEPOSIT_CAW.
+// Falls back to the on-chain floor when unset. Never below MIN_DEPOSIT_CAW.
+const DEFAULT_DEPOSIT_AMOUNT: bigint = (() => {
+  const raw = import.meta.env.VITE_SPONSOR_DEFAULT_DEPOSIT_CAW
+  if (!raw) return MIN_DEPOSIT_CAW
+  try {
+    const wei = BigInt(raw)
+    return wei > MIN_DEPOSIT_CAW ? wei : MIN_DEPOSIT_CAW
+  } catch {
+    return MIN_DEPOSIT_CAW
+  }
+})()
+
 const INITIAL_STATE: OnboardingState = {
   step: 'username',
   username: '',
   usernameAvailable: null,
   usernameError: null,
-  depositAmount: MIN_DEPOSIT_CAW,
+  depositAmount: DEFAULT_DEPOSIT_AMOUNT,
   vaultPassword: '',
   vaultPasswordConfirm: '',
   enrolledPasskey: null,

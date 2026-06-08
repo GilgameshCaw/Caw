@@ -114,7 +114,12 @@ const ENV_TO_CAW = {
   // (sensitive), but honored when explicitly in environment.
   SPONSOR_ENABLED: 'CAW_SPONSOR_ENABLED',
   SPONSOR_CODE_HMAC_SECRET: 'CAW_SPONSOR_CODE_HMAC_SECRET',
-  SPONSOR_MAX_DEPOSIT_CAW: 'CAW_SPONSOR_MAX_DEPOSIT_CAW',
+  // NOTE: SPONSOR_MAX_DEPOSIT_CAW / SPONSOR_DEFAULT_DEPOSIT_CAW are deliberately
+  // NOT preloaded here. generate.js writes them in WEI (whole CAW × 1e18), but
+  // the CLI prompts in WHOLE CAW — round-tripping the wei value back through the
+  // prompt would double-scale it (×1e18 again). On an --env re-run we'd rather
+  // re-ask (the live-price suggestion makes that one keystroke) than corrupt a
+  // real sponsor-wallet spend figure.
   // Moonpay — API key and mode persist across re-runs. Secret key handled
   // separately (not preloaded from file to avoid log-on-disk; honored from
   // explicit shell env via CAW_MOONPAY_SECRET_KEY).
@@ -399,6 +404,9 @@ program
       const onboardingFeatures = await collectOnboardingFeatures(nodeType, {
         // Lets the sponsor-wallet prompt offer "reuse the validator key".
         validatorPrivateKey: validatorConfig.validatorPrivateKey,
+        // Mainnet price reads (USD→CAW for the per-mint sponsored deposit) reuse
+        // the operator's Infura key — price is always read from real mainnet.
+        infura: l1RpcConfig._infura,
       })
 
       // Merge all config

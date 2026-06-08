@@ -13,7 +13,8 @@ import { section, dim, tipBlock, brand, warn } from '../utils/ui.js'
  *   sponsorEnabled          — boolean
  *   sponsorCodeHmacSecret   — 32-byte hex string (auto-generated)
  *   sponsorWalletPrivateKey — string | ''
- *   sponsorMaxDepositCaw    — string | ''  (optional cap, e.g. '1000')
+ *   sponsorMaxDepositCaw    — string | ''  (safety ceiling, e.g. '10000000')
+ *   sponsorDefaultDepositCaw — string | '' (per-mint default, whole CAW ~$0.10)
  *   moonpayMode             — 'sandbox' | 'production' | 'disabled'
  *   moonpayApiKey           — string | ''  (publishable, goes in FE bundle)
  *   moonpayBaseUrl          — string | ''
@@ -34,8 +35,8 @@ export async function collectOnboardingFeatures(nodeType, ctx = {}) {
   const runsFrontend = ['full', 'frontend-api', 'frontend-only'].includes(nodeType)
 
   const sponsorResult = runsApi
-    ? await collectSponsorConfig(ctx.validatorPrivateKey)
-    : { sponsorEnabled: false, sponsorCodeHmacSecret: '', sponsorWalletPrivateKey: '', sponsorMaxDepositCaw: '' }
+    ? await collectSponsorConfig(ctx.validatorPrivateKey, ctx.infura)
+    : { sponsorEnabled: false, sponsorCodeHmacSecret: '', sponsorWalletPrivateKey: '', sponsorMaxDepositCaw: '', sponsorDefaultDepositCaw: '' }
 
   const moonpayResult = runsFrontend
     ? await collectMoonpayConfig()
@@ -55,7 +56,7 @@ export async function collectOnboardingFeatures(nodeType, ctx = {}) {
 // Sponsored signups
 // ---------------------------------------------------------------------------
 
-async function collectSponsorConfig(validatorPrivateKey = '') {
+async function collectSponsorConfig(validatorPrivateKey = '', infura = null) {
   // --env preload: CAW_SPONSOR_ENABLED set to '1' means the previous run
   // had sponsor signups enabled. We still prompt for the wallet key (sensitive)
   // unless CAW_SPONSOR_WALLET_PRIVATE_KEY is also present.
@@ -106,6 +107,7 @@ async function collectSponsorConfig(validatorPrivateKey = '') {
         sponsorCodeHmacSecret: '',
         sponsorWalletPrivateKey: '',
         sponsorMaxDepositCaw: '',
+        sponsorDefaultDepositCaw: '',
       }
     }
   } else if (!preloadEnabled) {
@@ -115,6 +117,7 @@ async function collectSponsorConfig(validatorPrivateKey = '') {
       sponsorCodeHmacSecret: '',
       sponsorWalletPrivateKey: '',
       sponsorMaxDepositCaw: '',
+      sponsorDefaultDepositCaw: '',
     }
   }
 
@@ -192,22 +195,77 @@ async function collectSponsorConfig(validatorPrivateKey = '') {
     console.log(dim('  Using SPONSOR_WALLET_PRIVATE_KEY from environment.'))
   }
 
-  // Optional per-code CAW deposit cap. Unset → SponsorService uses its
-  // hardcoded default (not prompted unless CAW_SPONSOR_MAX_DEPOSIT_CAW is absent).
+  // ── Per-mint default deposit ──────────────────────────────────────────────
+  // This is the CAW that funds EACH sponsored profile by default — the amount
+  // a brand-new user starts with. $0.10 is a sensible starting gift: at the
+  // current CAW price that's roughly enough for ~70 actions plus an 8-character
+  // username. CAW has no fixed dollar value, so we read the LIVE mainnet price
+  // (same Uniswap pool the running node uses) to convert the dollar target into
+  // a CAW figure, and bake that CAW number into client/.env.
+  //
+  // Distinct from the MAX cap below: this is the *default funding amount*, the
+  // cap is an upper *safety ceiling* on any single sponsored deposit.
+  let defaultDepositCaw = process.env.CAW_SPONSOR_DEFAULT_DEPOSIT_CAW || ''
+
+  if (!defaultDepositCaw && !process.env.CAW_SPONSOR_ENABLED) {
+    const USD_TARGET = 0.10
+    let suggestion = ''
+    let priceNote = dim('  (could not read live CAW price — enter a CAW amount manually)')
+
+    if (infura && infura.projectId) {
+      const { ethers } = await import('ethers')
+      const { fetchCawUsdPrice, usdToWholeCaw, mainnetUrlFromInfura } = await import('../utils/price.js')
+      const mainnetUrl = mainnetUrlFromInfura(infura)
+      const usdPerCaw = await fetchCawUsdPrice(ethers, mainnetUrl, infura.secret)
+      if (usdPerCaw) {
+        const whole = usdToWholeCaw(USD_TARGET, usdPerCaw)
+        if (whole > 0n) {
+          suggestion = whole.toString()
+          priceNote = dim(`  Live price: 1 CAW ≈ $${usdPerCaw.toExponential(2)} → $${USD_TARGET.toFixed(2)} ≈ ${Number(whole).toLocaleString()} CAW`)
+        }
+      }
+    }
+
+    console.log()
+    console.log(brand('  Default CAW deposit per sponsored profile'))
+    console.log(dim(`  Funds each new profile. Target: ~$${USD_TARGET.toFixed(2)} (≈70 actions + an 8-char username).`))
+    console.log(priceNote)
+
+    const { defaultDeposit } = await inquirer.prompt([
+      {
+        type: 'input',
+        name: 'defaultDeposit',
+        message: `Default CAW deposit ${dim('(whole CAW; blank = use suggestion / server default)')}:`,
+        default: suggestion,
+        validate: (input) => {
+          if (!input.trim()) return true
+          const n = Number(input.trim())
+          if (!Number.isFinite(n) || n <= 0) return 'Must be a positive number of whole CAW (e.g. 2600000)'
+          return true
+        },
+      },
+    ])
+    // Stored as whole CAW; generate.js scales to wei when writing .env.
+    defaultDepositCaw = defaultDeposit.trim()
+  }
+
+  // ── Max deposit cap (safety ceiling) ──────────────────────────────────────
+  // Upper bound on ANY single sponsored deposit — a guard against a buggy/abused
+  // caller draining the sponsor wallet, NOT the normal funding amount. Blank →
+  // SponsorService's built-in 10M-CAW default.
   let maxDepositCaw = process.env.CAW_SPONSOR_MAX_DEPOSIT_CAW || ''
 
   if (!maxDepositCaw && !process.env.CAW_SPONSOR_ENABLED) {
-    // Only ask when we're doing this interactively (not on a preloaded re-run).
     const { maxDeposit } = await inquirer.prompt([
       {
         type: 'input',
         name: 'maxDeposit',
-        message: `Max CAW deposit per sponsored profile ${dim('(leave blank for server default)')}:`,
+        message: `Max CAW deposit per sponsored profile ${dim('(safety ceiling; blank = 10M CAW default)')}:`,
         default: '',
         validate: (input) => {
           if (!input.trim()) return true
           const n = Number(input.trim())
-          if (!Number.isFinite(n) || n <= 0) return 'Must be a positive number (e.g. 1000)'
+          if (!Number.isFinite(n) || n <= 0) return 'Must be a positive number (e.g. 10000000)'
           return true
         },
       },
@@ -220,6 +278,7 @@ async function collectSponsorConfig(validatorPrivateKey = '') {
     sponsorCodeHmacSecret: hmacSecret,
     sponsorWalletPrivateKey: walletPrivateKey,
     sponsorMaxDepositCaw: maxDepositCaw,
+    sponsorDefaultDepositCaw: defaultDepositCaw,
   }
 }
 
