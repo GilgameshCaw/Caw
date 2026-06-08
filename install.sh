@@ -415,9 +415,17 @@ node_needs_es()    { [[ "$CAW_NODE_TYPE" == "full" || "$CAW_NODE_TYPE" == "front
 ask_infra_mode() {
   local prompt='
   Where should Postgres, Redis, and Elasticsearch run?
-    1) Native install (recommended)
+
+    A CAW node'"'"'s database is a re-indexable cache, not a system of record
+    (the chain is the source of truth), so a single box is safer here than
+    for most apps — if the DB dies, you re-index from chain. Native is the
+    right default. When you outgrow one box, Elasticsearch is the first
+    service to move off (set CAW_ES_URL to a managed cluster); Postgres
+    second (CAW_DB_URL); Redis rarely. See docs/SCALING.md.
+
+    1) Native install (recommended to start)
     2) Docker (containers managed by docker compose)
-    3) Connect to existing services I already have
+    3) Connect to existing / managed services (set CAW_DB_URL / CAW_REDIS_URL / CAW_ES_URL)
 
   Choice [1]: '
   local answer
