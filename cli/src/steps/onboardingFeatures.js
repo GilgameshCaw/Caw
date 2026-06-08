@@ -29,12 +29,12 @@ import { section, dim, tipBlock, brand, warn } from '../utils/ui.js'
  * Both sections are still shown for 'full' and 'frontend-api', which cover
  * both sides. We skip silently for node types that don't need them.
  */
-export async function collectOnboardingFeatures(nodeType) {
+export async function collectOnboardingFeatures(nodeType, ctx = {}) {
   const runsApi = ['full', 'frontend-api', 'api-only'].includes(nodeType)
   const runsFrontend = ['full', 'frontend-api', 'frontend-only'].includes(nodeType)
 
   const sponsorResult = runsApi
-    ? await collectSponsorConfig()
+    ? await collectSponsorConfig(ctx.validatorPrivateKey)
     : { sponsorEnabled: false, sponsorCodeHmacSecret: '', sponsorWalletPrivateKey: '', sponsorMaxDepositCaw: '' }
 
   const moonpayResult = runsFrontend
@@ -48,7 +48,7 @@ export async function collectOnboardingFeatures(nodeType) {
 // Sponsored signups
 // ---------------------------------------------------------------------------
 
-async function collectSponsorConfig() {
+async function collectSponsorConfig(validatorPrivateKey = '') {
   // --env preload: CAW_SPONSOR_ENABLED set to '1' means the previous run
   // had sponsor signups enabled. We still prompt for the wallet key (sensitive)
   // unless CAW_SPONSOR_WALLET_PRIVATE_KEY is also present.
@@ -63,6 +63,15 @@ async function collectSponsorConfig() {
       "and the user's initial CAW deposit; per-code budget caps prevent abuse.",
       'Codes are managed via /api/admin/sponsor-codes (cookie-gated) or the',
       'client/scripts/create-sponsor-codes.ts CLI.',
+      '',
+      `${brand('Why this exists (the biometric / phone-first path):')}`,
+      '  CAW supports "Population B" users — people who sign in with a device',
+      '  passkey (Face ID / Touch ID / Windows Hello, via WebAuthn + EIP-7702)',
+      '  instead of a browser wallet. They hold no ETH, so they cannot pay gas',
+      '  to mint a profile or deposit CAW. The sponsor server signs and submits',
+      "  those transactions on their behalf — that's what these codes fund.",
+      '  Without sponsored signups, only users who already hold a funded wallet',
+      '  (Population A) can onboard; the biometric/no-wallet flow is disabled.',
     ])
 
     const { sponsorChoice } = await inquirer.prompt([
@@ -129,24 +138,49 @@ async function collectSponsorConfig() {
     console.log(dim('  Keep it funded but use a dedicated hot-wallet — not your main holdings.'))
     console.log()
 
-    const { key } = await inquirer.prompt([
-      {
-        type: 'password',
-        name: 'key',
-        message: 'Sponsor wallet private key (0x-prefixed hex):',
-        mask: '*',
-        validate: (input) => {
-          const v = input.trim()
-          if (!v) return 'Required — the sponsor wallet must be able to sign and send L1 transactions'
-          if (!/^0x[0-9a-fA-F]{64}$/.test(v)) {
-            return 'Expected a 0x-prefixed 32-byte hex private key (66 chars total)'
-          }
-          return true
-        },
-      },
-    ])
+    // Offer to reuse the validator key — same convenience option as the
+    // archiver/replicator key. Only meaningful when we actually have a
+    // validator key (full/validator nodes). Reuse is less isolated: the
+    // sponsor wallet HOLDS funds (CAW + ETH), so a leak there is costlier
+    // than the validator key alone — we recommend a separate hot-wallet,
+    // but reuse is fine for testnet / low-budget setups.
+    let keyChoice = 'import'
+    if (validatorPrivateKey && /^0x[0-9a-fA-F]{64}$/.test(validatorPrivateKey)) {
+      const ans = await inquirer.prompt([{
+        type: 'list',
+        name: 'keyChoice',
+        message: 'Sponsor wallet key:',
+        choices: [
+          { value: 'import', name: `${brand('Use a dedicated sponsor wallet')} ${dim('(recommended — separate funds)')}` },
+          { value: 'reuse', name: `${brand('Reuse the validator key')} ${dim('(simpler; the validator wallet then also holds sponsor funds)')}` },
+        ],
+        default: 'import',
+      }])
+      keyChoice = ans.keyChoice
+    }
 
-    walletPrivateKey = key.trim()
+    if (keyChoice === 'reuse') {
+      walletPrivateKey = validatorPrivateKey
+      console.log(dim('  ✓ Sponsor wallet will reuse the validator key. Fund that address with CAW + ETH.'))
+    } else {
+      const { key } = await inquirer.prompt([
+        {
+          type: 'password',
+          name: 'key',
+          message: 'Sponsor wallet private key (0x-prefixed hex):',
+          mask: '*',
+          validate: (input) => {
+            const v = input.trim()
+            if (!v) return 'Required — the sponsor wallet must be able to sign and send L1 transactions'
+            if (!/^0x[0-9a-fA-F]{64}$/.test(v)) {
+              return 'Expected a 0x-prefixed 32-byte hex private key (66 chars total)'
+            }
+            return true
+          },
+        },
+      ])
+      walletPrivateKey = key.trim()
+    }
   } else {
     console.log(dim('  Using SPONSOR_WALLET_PRIVATE_KEY from environment.'))
   }

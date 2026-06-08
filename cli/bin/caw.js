@@ -380,7 +380,10 @@ program
       // Step 9: Optional onboarding features — sponsored signups (invite codes)
       // and Moonpay card-payment onramp. Both are fully skippable. Placed after
       // infra so the operator finishes all "required" decisions first.
-      const onboardingFeatures = await collectOnboardingFeatures(nodeType)
+      const onboardingFeatures = await collectOnboardingFeatures(nodeType, {
+        // Lets the sponsor-wallet prompt offer "reuse the validator key".
+        validatorPrivateKey: validatorConfig.validatorPrivateKey,
+      })
 
       // Merge all config
       const fullConfig = {
