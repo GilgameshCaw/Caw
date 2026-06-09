@@ -29,6 +29,9 @@ import {
   toBeHex,
   verifyAuthorization,
   authorizationify,
+  AbiCoder,
+  toUtf8String,
+  TypedDataEncoder,
   type Provider,
   type ContractTransactionResponse,
   type Authorization,
@@ -313,6 +316,94 @@ export class SponsorService {
           error: 'TREASURY_LOW',
           detail: `Sponsor ETH balance (${sponsorBalance}) below minimum (${MIN_TREASURY_ETH})`,
         }
+      }
+
+      // 4b. DIGEST PRE-FLIGHT (diagnostic + gas-saver).
+      //     Recompute the EIP-712 MintAndDeposit digest the FE *should* have
+      //     signed, then decode the actual challenge the passkey signed out of
+      //     the WebAuthn permitSig blob, and compare. If they differ, the
+      //     on-chain SmartEOA.isValidSignature is GUARANTEED to fail with the
+      //     opaque MinterCallFailed — so we reject here with a precise diff
+      //     instead of burning sponsor gas on a certain revert. This also
+      //     prints exactly which field diverged, which is the fastest way to
+      //     tell whether the FE ran stale code.
+      try {
+        const chainIdNum = await this.getChainId()
+        const expectedDigest = TypedDataEncoder.hash(
+          {
+            name: 'CawProfileMinter',
+            version: '1',
+            chainId: BigInt(chainIdNum),
+            verifyingContract: this.minterAddress,
+          },
+          {
+            MintAndDeposit: [
+              { name: 'networkId', type: 'uint32' },
+              { name: 'recipient', type: 'address' },
+              { name: 'username', type: 'string' },
+              { name: 'depositAmount', type: 'uint256' },
+              { name: 'lzDestId', type: 'uint32' },
+              { name: 'lzTokenAmount', type: 'uint256' },
+              { name: 'nonce', type: 'uint256' },
+              { name: 'kycLevel', type: 'uint8' },
+              { name: 'sponsorTokenId', type: 'uint32' },
+              { name: 'repayAmount', type: 'uint256' },
+            ],
+          },
+          {
+            networkId: params.networkId,
+            recipient: userEoaAddress,
+            username: params.username,
+            depositAmount: params.depositAmountCAW,
+            lzDestId: params.lzDestId,
+            lzTokenAmount: params.lzTokenAmount,
+            nonce: params.permitNonce,
+            kycLevel: params.kycLevel ?? 0,
+            sponsorTokenId: params.sponsorTokenId ?? 0,
+            repayAmount: params.repayAmount ?? 0n,
+          },
+        )
+
+        // Decode the challenge the passkey actually signed. WebAuthn blob =
+        // abi.encode(bytes authenticatorData, bytes clientDataJSON, bytes32 r,
+        // bytes32 s). secp256k1 fallback (65-byte) blobs are not WebAuthn — skip.
+        let signedChallenge: string | null = null
+        if ((params.permitSig.length - 2) / 2 >= 224) {
+          try {
+            const [, clientDataJSON] = AbiCoder.defaultAbiCoder().decode(
+              ['bytes', 'bytes', 'bytes32', 'bytes32'],
+              params.permitSig,
+            )
+            const cdj = toUtf8String(clientDataJSON)
+            const m = cdj.match(/"challenge":"([^"]+)"/)
+            if (m) {
+              const b64 = m[1].replace(/-/g, '+').replace(/_/g, '/')
+              signedChallenge = '0x' + Buffer.from(b64, 'base64').toString('hex')
+            }
+          } catch { /* malformed blob — let the contract reject it */ }
+        }
+
+        console.log(
+          `[sponsor:bootstrap] preflight user=${params.username} recipient(recoveredEOA)=${userEoaAddress} ` +
+          `ecdsaFallback=${params.ecdsaFallbackAddr} expectedDigest=${expectedDigest} ` +
+          `signedChallenge=${signedChallenge ?? '(non-webauthn or undecodable)'} ` +
+          `match=${signedChallenge ? (signedChallenge.toLowerCase() === expectedDigest.toLowerCase()) : 'n/a'}`,
+        )
+
+        if (signedChallenge && signedChallenge.toLowerCase() !== expectedDigest.toLowerCase()) {
+          return {
+            error: 'BAD_SIG',
+            detail:
+              `Permit digest mismatch — the passkey signed ${signedChallenge} but the contract will ` +
+              `recompute ${expectedDigest} for recipient ${userEoaAddress}. This is a guaranteed on-chain ` +
+              `revert (MinterCallFailed), so it was rejected before spending gas. Almost always means the ` +
+              `frontend signed with stale code (e.g. wrong recipient or an old typehash). Fully clear the ` +
+              `site's service worker + cache and retry on the freshly-served bundle.`,
+          }
+        }
+      } catch (e) {
+        // Diagnostic only — never block a bootstrap because the preflight threw.
+        console.log(`[sponsor:bootstrap] preflight skipped (non-fatal): ${e}`)
       }
 
       // ── Build the mintAndDepositSponsored calldata ────────────────────
