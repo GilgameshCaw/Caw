@@ -32,12 +32,14 @@ import {
   AbiCoder,
   toUtf8String,
   TypedDataEncoder,
+  dataSlice,
+  id as ethersId,
   type Provider,
   type ContractTransactionResponse,
   type Authorization,
 } from 'ethers'
 import { makeJsonRpcProvider } from '../../utils/rpcProvider'
-import { cawProfileMinterAbi, smartEoaAbi } from '../../abi/generated'
+import { cawProfileMinterAbi, smartEoaAbi, cawProfileAbi } from '../../abi/generated'
 
 // ─── Param types ────────────────────────────────────────────────────────────
 
@@ -102,6 +104,7 @@ export type SponsorErrorCode =
   | 'ZERO_DEPOSIT'
   | 'DEPOSIT_TOO_LARGE'
   | 'LZ_FEE_TOO_LARGE'
+  | 'LZ_QUOTE_FAILED'
   | 'LZ_UNDERPAID'
   | 'TREASURY_LOW'
   | 'RECIPIENT_NOT_DELEGATED'
@@ -149,6 +152,7 @@ const REVERT_SUBSTRINGS: Record<SponsorErrorCode, string[]> = {
   ZERO_DEPOSIT:            ['zero deposit', 'amount is 0'],
   DEPOSIT_TOO_LARGE:       [],    // generated locally, never from contract
   LZ_FEE_TOO_LARGE:        [],    // generated locally, never from contract
+  LZ_QUOTE_FAILED:         [],    // generated locally, never from contract
   LZ_UNDERPAID:            ['lz fee', 'insufficient fee', 'lzsend'],
   TREASURY_LOW:            [],    // generated locally, never from contract
   RECIPIENT_NOT_DELEGATED: ['direct submit required', 'not delegated', 'code.length'],
@@ -459,14 +463,93 @@ export class SponsorService {
       const sponsorNonce = await this.provider.getTransactionCount(this.wallet.address, 'pending')
       const feeData = await this.provider.getFeeData()
 
+      // ── Quote the native LayerZero fee and set tx.value ─────────────────
+      //
+      // mintAndDeposit takes the CROSS-CHAIN branch when lzDestId ≠ mainnetLzId
+      // (e.g. L1=Sepolia/40161, L2=Base Sepolia/40245). That branch calls
+      // lzSend → _payNative(nativeFee), which requires msg.value >= nativeFee.
+      // The FE sends lzTokenAmount=0 (ZRO-token path unused), so setting
+      // tx.value = lzTokenAmount = 0 causes NotEnoughNative. We must quote
+      // and attach the actual ETH fee.
+      //
+      // LZ refund routing: CawProfileMinter.mintAndDepositSponsored calls
+      // CawProfile.setLzRefundTo(payable(recipient)) BEFORE mintAndDeposit and
+      // resets to address(0) after (audit fix H-1, 2026-05-22). Any excess ETH
+      // therefore refunds to the USER, not the sponsor — so overpaying slightly
+      // via the 20% buffer is safe; the user receives the excess back.
+      //
+      // _bundleNoSession signature (CawProfile.sol line 422):
+      //   abi.encodeWithSelector(_lzBundleSelector, nid, tid, amt, uname,
+      //     address(0), 0, 0, 0, tids, owns, stmps)
+      // For a fresh mint there are no pending transfer updates (empty arrays),
+      // and newId is unknown pre-mint so we use 0 as placeholder. LZ fees
+      // depend on message byte-length not content, so placeholder values give
+      // the correct size.
+      const LZ_BUNDLE_SELECTOR = dataSlice(
+        ethersId('lzDepositMintSession(uint32,uint32,uint256,string,address,uint64,uint256,uint64,uint32[],address[],uint64[])'),
+        0, 4,
+      ) as `0x${string}`
+
+      // Encode _bundleNoSession with empty arrays (fresh mint, no pending
+      // transfer updates) and placeholder newId=0.
+      const bundlePayload = AbiCoder.defaultAbiCoder().encode(
+        // encodeWithSelector = selector + abi.encode(args); replicate that shape:
+        // We use low-level encode and prepend the selector to match the contract.
+        ['uint32', 'uint32', 'uint256', 'string', 'address', 'uint64', 'uint256', 'uint64', 'uint32[]', 'address[]', 'uint64[]'],
+        [params.networkId, 0, params.depositAmountCAW, '', '0x0000000000000000000000000000000000000000', 0, 0, 0, [], [], []],
+      )
+      // Prepend the 4-byte selector to match abi.encodeWithSelector output.
+      const bundlePayloadWithSelector = LZ_BUNDLE_SELECTOR + bundlePayload.slice(2)
+
+      let paddedFee: bigint
+      try {
+        const cawProfileReadOnly = new Contract(
+          this.cawProfileAddress,
+          cawProfileAbi as any,
+          this.provider,
+        )
+        const quote = await cawProfileReadOnly.lzQuote(
+          params.networkId,
+          LZ_BUNDLE_SELECTOR,
+          0n,  // n=0: no pending transfer-update entries for a fresh mint
+          bundlePayloadWithSelector,
+          params.lzDestId,
+          false, // _payInLzToken=false: pay in native ETH
+        )
+        const nativeFee: bigint = quote.nativeFee ?? quote[0]
+        // 20% buffer to absorb fee drift between quote and inclusion.
+        // Excess ETH refunds to the user via setLzRefundTo (Minter H-1 fix).
+        paddedFee = (nativeFee * 120n) / 100n
+        console.log(
+          `[sponsor:bootstrap] lzQuote nativeFee=${nativeFee} paddedFee=${paddedFee} ` +
+          `lzDestId=${params.lzDestId} networkId=${params.networkId}`,
+        )
+      } catch (e) {
+        return {
+          error: 'LZ_QUOTE_FAILED',
+          detail: `lzQuote call failed — cannot determine LayerZero fee: ${e}`,
+        }
+      }
+
+      // Cap to prevent sponsor ETH drain via inflated fee quotes.
+      if (paddedFee > this.maxLzFeeWei) {
+        return {
+          error: 'LZ_FEE_TOO_LARGE',
+          detail: `Quoted LZ fee (padded) ${paddedFee} exceeds SPONSOR_MAX_LZ_FEE_WEI (${this.maxLzFeeWei})`,
+        }
+      }
+
       const tx = new Transaction()
       tx.type = 4
       tx.to = userEoaAddress
       tx.data = initCalldata
-      // msg.value flows through initialize → mintAndDepositSponsored to cover
-      // the LayerZero fee. Pass lzTokenAmount as the ETH value; the Minter
-      // uses it for the LZ send call.
-      tx.value = params.lzTokenAmount
+      // msg.value = paddedFee (the quoted+buffered native LZ fee).
+      // lzTokenAmount (ZRO-token path) is passed in calldata as a separate arg
+      // and remains 0 for normal ETH-fee operation; it does NOT go into tx.value.
+      // CawProfile.sol line 354: lzEthAmount = msg.value - totalFeesPaid;
+      // Uruk zeroed all mint/deposit/auth fees so totalFeesPaid=0, meaning the
+      // full msg.value flows to the LZ send call.
+      tx.value = paddedFee
       tx.nonce = sponsorNonce
       tx.chainId = BigInt(chainId)
       tx.gasLimit = GAS_LIMIT_BOOTSTRAP
