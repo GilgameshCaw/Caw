@@ -284,6 +284,22 @@ export async function bootstrapNewUser(opts: {
     },
   })
 
+  // TEMP DIAGNOSTIC (remove after sponsored-mint digest bug is closed): print
+  // the three addresses + nonce so we can see, in the browser console, whether
+  // the FE-recovered recipient matches keypair.address and what the server will
+  // independently recover from the same tuple.
+  // eslint-disable-next-line no-console
+  console.log('[bootstrap:diag]', JSON.stringify({
+    keypairAddress: keypair.address,
+    recoveredRecipient,
+    recoveredEqualsKeypair: recoveredRecipient.toLowerCase() === keypair.address.toLowerCase(),
+    authNonce: authResult.signedAuthorization.nonce,
+    authChainId: authResult.signedAuthorization.chainId,
+    authDelegateTarget: authResult.signedAuthorization.address,
+    permitNonce: permitNonce.toString(),
+    chainId,
+  }))
+
   const permitDigest = buildMintDepositPermitDigest({
     minterAddress,
     chainId,
