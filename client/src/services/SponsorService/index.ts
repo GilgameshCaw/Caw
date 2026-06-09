@@ -138,7 +138,18 @@ export function isSponsorError(r: SponsorResult): r is SponsorError {
 const MIN_TREASURY_ETH = BigInt('10000000000000000') // 0.01 ETH
 
 // ─── Gas limits — generous to avoid OOG without over-reserving ──────────────
-const GAS_LIMIT_BOOTSTRAP   = 400_000n
+// Bootstrap is the heaviest sponsored path: 7702 delegation + SmartEOA.initialize
+// + Minter.mintAndDepositSponsored → CawProfile.mintAndDeposit (CAW transferFrom,
+// _mint, fee loop, cross-chain lzSend) AND a WebAuthn P-256 signature verify
+// nested ~5 calls deep (Minter → SmartEOA.isValidSignature → self-staticcall →
+// _verifyWebAuthnExternal → P256 precompile). 400k was too low: under EIP-150's
+// 63/64 gas-forwarding rule the inner P-256 staticcall ran OUT OF GAS even while
+// the outer frame still had headroom (tx "used" 258k of 400k but the sub-call
+// OOG'd) — isValidSignature returned the ERC-1271 fail value, _checkPermit
+// reverted "Bad sig", surfacing as the opaque MinterCallFailed. Confirmed via
+// Infura debug_traceTransaction. The sponsor pays only gas actually used and
+// unused gas is refunded, so a high cap is free insurance against the nested OOG.
+const GAS_LIMIT_BOOTSTRAP   = 1_200_000n
 const GAS_LIMIT_DEPOSIT     = 250_000n
 const GAS_LIMIT_AUTHENTICATE = 250_000n
 
