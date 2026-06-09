@@ -36,11 +36,42 @@ contract CawProfileMinter is Context {
   // ERC-1271 magic value from the standard.
   bytes4 internal constant ERC1271_MAGIC = 0x1626ba7e;
 
-  /// @dev Gas cap for the ERC-1271 isValidSignature staticcall — matches
-  ///      CawActions.ERC1271_GAS_LIMIT (50k). SmartEOA P-256 verify uses ~8k;
-  ///      capping prevents arbitrary ERC-1271 wallets from consuming 300k and
-  ///      causing the sponsor tx to OOG.
-  uint256 internal constant ERC1271_GAS_LIMIT = 50_000;
+  /// @dev Gas cap for the ERC-1271 isValidSignature staticcall.
+  ///
+  ///      MEASURED COST (SmartEOAGas.t.sol, foundry mock P-256):
+  ///        1 enrolled passkey:   ~55,500 gas (direct isValidSignature call)
+  ///        3 enrolled passkeys:  ~61,000 gas (worst-case: match on last key)
+  ///        Real P-256 precompile adds ~6,500 gas over mock → ~67,500 worst-case
+  ///
+  ///      WHY THE OLD VALUE (50k) WAS WRONG:
+  ///        SmartEOA.isValidSignature (WebAuthn path) calls _verifyWebAuthnSafe,
+  ///        which does a SELF-STATICCALL to _verifyWebAuthnExternal.  The EVM
+  ///        63/64 gas forwarding rule means the inner call receives at most
+  ///        floor(gas_remaining * 63/64) gas.  On a 50k budget the inner call
+  ///        ran dry at ~49k gas used (confirmed: Sepolia tx
+  ///        0x4c15ab98c1a5dee747da8a7afa9906e9216651bae3f2371063110dafd7230a10
+  ///        via Infura debug_traceTransaction).  isValidSignature returned
+  ///        0xffffffff (fail value), _checkPermit reverted "Bad sig",
+  ///        SmartEOA.initialize wrapped as MinterCallFailed.
+  ///
+  ///      WHY 150k:
+  ///        Worst-case measured: ~67,500 gas (3 passkeys, real P-256 precompile).
+  ///        150k = ~2.2x headroom.  Handles clientDataJSON origin string variance,
+  ///        future passkey count growth (each additional key adds ~5,500 gas/miss),
+  ///        and any EVM repricing.
+  ///
+  ///      ABUSE PREVENTION is preserved:
+  ///        The cap still bounds a malicious ERC-1271 wallet to at most 150k gas
+  ///        wasted per _checkPermit call.  The sponsor sets the outer tx gas limit;
+  ///        a bad wallet cannot cause the sponsor tx to OOG beyond ERC1271_GAS_LIMIT.
+  ///        (The old 50k bound was tighter but broke legitimate SmartEOA users.)
+  ///
+  ///      NOTE: CawActions.sol and CawActionsERC1271.sol have their own copies of
+  ///        ERC1271_GAS_LIMIT = 50k (immutable on-chain).  Those only call
+  ///        isValidSignature with the 65-byte secp256k1 path (pass sig as r||s||v),
+  ///        which costs ~800 gas — so 50k is fine there.  The WebAuthn path is only
+  ///        exercised through the sponsored Minter entry points fixed here.
+  uint256 internal constant ERC1271_GAS_LIMIT = 150_000;
 
   // EIP-712 domain separator — bakes chainId + address(this) at deploy time
   // so permits signed for one chain/deployment cannot be replayed on another.
@@ -685,9 +716,10 @@ contract CawProfileMinter is Context {
   ///          the gate in SmartEOA ensures only the Minter can advance that sequence.
   ///       2. Require caller-supplied permitNonce matches (prevents stale permit use).
   ///       3. Staticcall signer.isValidSignature(digest, sig) with gas cap
-  ///          ERC1271_GAS_LIMIT (50k). SmartEOA P-256 verify uses ~8k. The cap
-  ///          prevents arbitrary ERC-1271 wallets from consuming 300k and OOG-ing
-  ///          the sponsor tx. Matches CawActions.ERC1271_GAS_LIMIT.
+  ///          ERC1271_GAS_LIMIT (150k). SmartEOA WebAuthn path uses ~55-68k
+  ///          (measured: includes self-staticcall + P-256 precompile + base64url
+  ///          decode). The cap prevents arbitrary ERC-1271 wallets from consuming
+  ///          unlimited gas; see ERC1271_GAS_LIMIT comment for full rationale.
   ///       4. Consume the nonce via signer.consumeNonce(address(this), actionType).
   ///          Because consumeNonce is gated to msg.sender == verifyingContract and
   ///          msg.sender here is address(this) (the Minter), the call will succeed

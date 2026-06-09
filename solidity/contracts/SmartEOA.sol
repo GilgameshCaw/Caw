@@ -957,7 +957,9 @@ contract SmartEOA {
     //     from caller.  May be 65-byte or WebAuthn.  Gas limit: 50,000 (ERC1271_GAS_LIMIT).
     //   - CawProfileMinter sponsor entry points (mintAndDepositSponsored,
     //     depositForSponsored, authenticateSponsored): staticcall via _checkPermit.
-    //     Gas limit uncapped; SmartEOA P-256 verify uses ~8,000 gas.
+    //     Gas limit: 150,000 (ERC1271_GAS_LIMIT in CawProfileMinter).
+    //     WebAuthn path measured at ~55-68k including self-staticcall overhead
+    //     and P-256 precompile (see SmartEOAGas.t.sol for measurements).
     //   - Any future ERC-1271 consumer: same isValidSignature(bytes32,bytes) ABI.
     //
     // initialize(bytes32, bytes32, address, address payable, bytes):
