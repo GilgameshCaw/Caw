@@ -495,8 +495,14 @@ function renderNginxConf({ domain, apiPort, frontendDist, uploadsDir, tls, nginx
         alias ${uploadsDir}/;
         # Filenames are random-hex and never collide on rewrite, so files
         # at a given URL never change content. Cache aggressively.
+        # add_header replaces inherited server-level headers, so re-add HSTS.
         expires 1y;
         add_header Cache-Control "public, max-age=31536000, immutable";
+        add_header Strict-Transport-Security "max-age=31536000; includeSubDomains; preload" always;
+        add_header X-Content-Type-Options "nosniff" always;
+        add_header X-Frame-Options "DENY" always;
+        add_header Referrer-Policy "strict-origin-when-cross-origin" always;
+        add_header Permissions-Policy "geolocation=(), microphone=(), camera=()" always;
         # If a file is missing (deleted post asset, future GC sweep), 404
         # immediately rather than falling through to the SPA index.
         try_files \$uri =404;
@@ -506,10 +512,43 @@ function renderNginxConf({ domain, apiPort, frontendDist, uploadsDir, tls, nginx
         access_log off;
     }
 
-    # Long cache for hashed asset bundles
+    # Long cache for hashed asset bundles. add_header inside a location
+    # block replaces ALL inherited server-level add_header directives, so
+    # we must re-state the full security header set here.
     location /assets/ {
         expires 1y;
         add_header Cache-Control "public, immutable";
+        add_header Strict-Transport-Security "max-age=31536000; includeSubDomains; preload" always;
+        add_header X-Content-Type-Options "nosniff" always;
+        add_header X-Frame-Options "DENY" always;
+        add_header Referrer-Policy "strict-origin-when-cross-origin" always;
+        add_header Permissions-Policy "geolocation=(), microphone=(), camera=()" always;
+    }
+
+    # Service-worker artifact: must always revalidate so a new SW is picked
+    # up immediately after deploy without users manually clearing caches.
+    # (The hashed /assets/* bundles stay immutable — only the SW bootstrap
+    # and workbox runtime need revalidation.)
+    location = /sw.js {
+        add_header Cache-Control "no-cache, must-revalidate" always;
+        add_header Strict-Transport-Security "max-age=31536000; includeSubDomains; preload" always;
+        add_header X-Content-Type-Options "nosniff" always;
+        add_header X-Frame-Options "DENY" always;
+        add_header Referrer-Policy "strict-origin-when-cross-origin" always;
+        add_header Permissions-Policy "geolocation=(), microphone=(), camera=()" always;
+        try_files \$uri =404;
+    }
+
+    # Workbox runtime chunks are referenced by sw.js. Keep them
+    # revalidating in lockstep to avoid SW version skew after a deploy.
+    location ~* ^/workbox-.*\\.js\$ {
+        add_header Cache-Control "no-cache, must-revalidate" always;
+        add_header Strict-Transport-Security "max-age=31536000; includeSubDomains; preload" always;
+        add_header X-Content-Type-Options "nosniff" always;
+        add_header X-Frame-Options "DENY" always;
+        add_header Referrer-Policy "strict-origin-when-cross-origin" always;
+        add_header Permissions-Policy "geolocation=(), microphone=(), camera=()" always;
+        try_files \$uri =404;
     }
 
     # SPA fallback. Real users get the static dist/index.html. Crawlers
@@ -518,6 +557,12 @@ function renderNginxConf({ domain, apiPort, frontendDist, uploadsDir, tls, nginx
     # up per-route data (profile / post / hashtag) and returns the same
     # HTML shell with og:* / twitter:* meta tags injected. Real users
     # never touch the API for the HTML shell — zero perf cost.
+    #
+    # Cache-Control no-cache covers every SPA route response whose body is
+    # the index.html shell (including /onboarding, /recovery, etc.) so a
+    # new deploy is picked up on the next navigation without manual cache
+    # clearing. add_header replaces inherited headers, so the full security
+    # header set is re-stated here too.
     location / {
         if (\$http_user_agent ~* "(twitterbot|facebookexternalhit|meta-externalagent|slackbot|slack-imgproxy|discordbot|telegrambot|whatsapp|linkedinbot|skypeuripreview|googlebot|bingbot|applebot|redditbot|mastodon|bluesky|cardyb|discoursebot|yandexbot|tumblr|wechat|line|twitchbot|vkshare|notion|pocket|preview|embedly|nuzzel|pinterest|rogerbot|showyoubot|outbrain|w3c_validator|cawbot)") {
             # Prefix the path with /__prerender and let nginx carry the
@@ -537,6 +582,12 @@ function renderNginxConf({ domain, apiPort, frontendDist, uploadsDir, tls, nginx
             # in the target preserves the original args automatically.
             rewrite ^ /__prerender\$uri last;
         }
+        add_header Cache-Control "no-cache, must-revalidate" always;
+        add_header Strict-Transport-Security "max-age=31536000; includeSubDomains; preload" always;
+        add_header X-Content-Type-Options "nosniff" always;
+        add_header X-Frame-Options "DENY" always;
+        add_header Referrer-Policy "strict-origin-when-cross-origin" always;
+        add_header Permissions-Policy "geolocation=(), microphone=(), camera=()" always;
         try_files \$uri \$uri/ /index.html;
     }
 
