@@ -44,6 +44,15 @@ export interface BackupStepProps {
   code: string
   username: string
   depositAmount: bigint
+  /**
+   * Sponsor-Repay (Phase 2): the CAW the user must repay on first withdrawal,
+   * derived in Onboarding as depositAmount * repayBps / 10000. 0 = plain gift.
+   * Folded into the signed permit digest AND sent as signedRepayAmount so the
+   * server can confirm it matches the code's policy before submitting.
+   */
+  repayAmount: bigint
+  /** Profile that collects the repayment (0 when repayAmount is 0). */
+  sponsorTokenId: number
   vaultPassword: string
   passkey: PasskeyPubkey
   onNext: (result: BootstrapResult) => void
@@ -93,10 +102,20 @@ const DEFAULT_LZ_TOKEN_AMOUNT = 0n
 // outside the bootstrap flow — those flows are NOT freshly-initialized.
 const BOOTSTRAP_PERMIT_NONCE = 0n
 
+/** Compact wei → "1.5M CAW" style label for the repay disclosure. */
+function formatCawWei(wei: bigint): string {
+  const whole = Number(wei / 10n ** 18n)
+  if (whole >= 1_000_000) return `${(whole / 1_000_000).toFixed(whole % 1_000_000 === 0 ? 0 : 1)}M CAW`
+  if (whole >= 1_000) return `${(whole / 1_000).toFixed(whole % 1_000 === 0 ? 0 : 1)}K CAW`
+  return `${whole.toLocaleString()} CAW`
+}
+
 export default function BackupStep({
   code,
   username,
   depositAmount,
+  repayAmount,
+  sponsorTokenId,
   vaultPassword,
   passkey,
   onNext,
@@ -185,6 +204,10 @@ export default function BackupStep({
             authTupleNonce: params.authTupleSignature.nonce.toString(),
             permitSig: params.permitSig,
             permitNonce: BOOTSTRAP_PERMIT_NONCE.toString(),
+            // Sponsor-Repay (Phase 2): tell the server the repayAmount we folded
+            // into the signed digest so it can confirm it matches the code's
+            // policy. Omit when 0 (plain gift) for byte-identical legacy behaviour.
+            ...(repayAmount > 0n ? { signedRepayAmount: repayAmount.toString() } : {}),
           }
           const response = await sponsorClientRaw.sponsorBootstrap(req)
           if (isSponsorSuccess(response)) {
@@ -213,10 +236,13 @@ export default function BackupStep({
         minterAddress: CAW_NAMES_MINTER_ADDRESS as `0x${string}`,
         permitNonce: BOOTSTRAP_PERMIT_NONCE,
         lzTokenAmount: DEFAULT_LZ_TOKEN_AMOUNT,
-        // kycLevel / sponsorTokenId / repayAmount default to a plain gift (0).
-        // When sponsor-code repay policy is wired end-to-end, thread the
-        // server-derived values here AND into the bootstrap request body so
-        // the signed digest matches what mintAndDepositSponsored receives.
+        // Sponsor-Repay (Phase 2): fold the code-derived repay obligation into
+        // the signed digest. kycLevel stays 0 (repay-only, no KYC gate). These
+        // MUST match the server's code-derived values (it recomputes from the
+        // same code + depositAmount) or the on-chain ERC-1271 check fails.
+        kycLevel: 0,
+        sponsorTokenId,
+        repayAmount,
       })
 
       // Trigger the file download while still in "sponsor" phase — it is a
@@ -336,6 +362,27 @@ export default function BackupStep({
           <li>{t('onboarding.backup.save_usb')}</li>
         </ul>
       </div>
+
+      {/* Sponsor-Repay disclosure — only when this code carries a repay
+          obligation. Makes the repay-at-withdrawal terms explicit BEFORE the
+          user signs the mint permit (your gift includes a repayment clause). */}
+      {repayAmount > 0n && (
+        <div className={`rounded-xl p-4 border ${isDark ? 'bg-orange-500/10 border-orange-500/30' : 'bg-orange-50 border-orange-200'}`}>
+          <div className="flex gap-3">
+            <svg className="w-5 h-5 text-orange-500 flex-shrink-0 mt-0.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8c-1.657 0-3 .895-3 2s1.343 2 3 2 3 .895 3 2-1.343 2-3 2m0-8c1.11 0 2.08.402 2.599 1M12 8V7m0 1v8m0 0v1m0-1c-1.11 0-2.08-.402-2.599-1M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+            </svg>
+            <div>
+              <p className={`text-sm font-semibold ${isDark ? 'text-orange-400' : 'text-orange-800'}`}>
+                {t('onboarding.backup.repay_title')}
+              </p>
+              <p className={`text-sm mt-1 ${isDark ? 'text-orange-300/80' : 'text-orange-700'}`}>
+                {t('onboarding.backup.repay_body', { amount: formatCawWei(repayAmount) })}
+              </p>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Loading state */}
       {isLoading && (

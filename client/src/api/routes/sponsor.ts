@@ -145,6 +145,13 @@ const BootstrapBodySchema = z.object({
   permitNonce:        bigintSchema,
   // Invite code — required; without a valid code the bootstrap is rejected.
   code:               z.string().min(8).max(64),
+  // Sponsor-Repay (Phase 2): the repayAmount the FE computed and SIGNED into
+  // the permit digest. Optional (absent = plain gift, signed repayAmount 0).
+  // The server recomputes the authoritative value from the code and rejects
+  // early on mismatch — this is a UX guard so the user gets a clean error
+  // instead of an opaque on-chain ERC-1271 failure, NOT a trust boundary
+  // (the on-chain call always uses the server's code-derived value).
+  signedRepayAmount:  bigintSchema.optional(),
 })
 
 const DepositBodySchema = z.object({
@@ -281,6 +288,20 @@ router.post('/bootstrap', async (req, res) => {
     }
     const envSponsorId = Number(process.env.PLATFORM_SPONSOR_TOKEN_ID ?? 1)
     sponsorTokenId = Number.isInteger(envSponsorId) && envSponsorId > 0 ? envSponsorId : 1
+  }
+
+  // UX guard: if the FE told us what repayAmount it signed, confirm it matches
+  // the authoritative server-derived value. On mismatch the permit digest would
+  // fail the on-chain ERC-1271 check (opaque MinterCallFailed) — fail early with
+  // a clear error instead. Absent signedRepayAmount = legacy plain-gift FE; the
+  // signed value is 0, which only matches when repayAmount is also 0.
+  const signedRepay = params.signedRepayAmount ?? 0n
+  if (signedRepay !== repayAmount) {
+    return res.status(400).json({
+      error: 'REPAY_MISMATCH',
+      detail: `Signed repayAmount (${signedRepay}) does not match the code's policy ` +
+        `(${repayAmount}). Refresh and retry — the invite code's repay terms may have changed.`,
+    })
   }
 
   // ── Dispatch ──────────────────────────────────────────────────────────────
@@ -470,11 +491,28 @@ router.get('/code/:code', async (req, res) => {
     return res.status(200).json({ valid: false })
   }
 
+  // Sponsor-Repay (Phase 2) disclosure. `repayBps` lets the FE compute the
+  // exact repayAmount it must sign over — the digest MUST match what the server
+  // passes to mintAndDepositSponsored (the server recomputes the same value
+  // from the same code below; a mismatch fails the on-chain ERC-1271 check).
+  // sponsorTokenId is the profile that collects repayments (PLATFORM_SPONSOR_
+  // TOKEN_ID, default 1 = the operator's own profile). Both surfaced so the
+  // onboarding UI can disclose the repay terms before the user signs.
+  const repayBps = code.repayBps ?? 0
+  const sponsorTokenId = repayBps > 0
+    ? (() => {
+        const envId = Number(process.env.PLATFORM_SPONSOR_TOKEN_ID ?? 1)
+        return Number.isInteger(envId) && envId > 0 ? envId : 1
+      })()
+    : 0
+
   return res.status(200).json({
     valid: true,
     giftCaw: code.maxDepositCawWei,
     minUsernameLength: code.minUsernameLength,
     expiresAt: code.expiresAt.toISOString(),
+    repayBps,
+    sponsorTokenId,
   })
 })
 

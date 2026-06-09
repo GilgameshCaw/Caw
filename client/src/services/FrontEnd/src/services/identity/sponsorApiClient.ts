@@ -50,6 +50,13 @@ export interface SponsorBootstrapRequest {
   permitSig: `0x${string}`
   /** Current nonce from SmartEOA.nonceOf(minterAddress, ACTION_MINT_DEPOSIT) */
   permitNonce: string
+  /**
+   * Sponsor-Repay (Phase 2): the repayAmount (wei, decimal string) the FE
+   * folded into the signed permit digest. Omitted = plain gift (signed 0).
+   * The server recomputes the authoritative value from the code and rejects
+   * on mismatch with a clean REPAY_MISMATCH error.
+   */
+  signedRepayAmount?: string
 }
 
 export interface SponsorDepositRequest {

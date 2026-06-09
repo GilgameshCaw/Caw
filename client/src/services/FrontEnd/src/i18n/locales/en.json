@@ -1592,6 +1592,8 @@
   "onboarding.backup.save_icloud": "iCloud Drive — tap Save to Files, choose iCloud Drive",
   "onboarding.backup.save_google": "Google Drive — save via the Files share sheet",
   "onboarding.backup.save_usb": "A USB stick or external drive",
+  "onboarding.backup.repay_title": "This gift includes a repayment",
+  "onboarding.backup.repay_body": "Your sponsor is fronting the network and bridge fees. When you first withdraw CAW, {{amount}} is repaid to your sponsor automatically before the rest reaches you. After that you owe nothing.",
   "onboarding.backup.cta": "Download recovery file",
   "onboarding.backup.loading_sponsor": "Waiting for sponsor server…",
   "onboarding.backup.loading_chain": "Confirming on-chain…",

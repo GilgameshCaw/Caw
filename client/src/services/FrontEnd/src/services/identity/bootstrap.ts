@@ -34,6 +34,7 @@
 
 import { privateKeyToAccount } from 'viem/accounts'
 import { bytesToHex } from 'viem'
+import { recoverAuthorizationAddress } from 'viem/utils'
 import { generateSecp256k1Keypair } from './secp256k1Key'
 import { encryptBackupBlob, type BackupBlob } from './backupBlob'
 import { signAuthorizationTuple, type SignedAuthorizationTuple } from './eip7702'
@@ -262,19 +263,32 @@ export async function bootstrapNewUser(opts: {
   })
 
   // Step 4b: Build the EIP-712 permit digest the passkey will sign.
-  // CRITICAL: this must be built HERE, not by the caller, because `recipient`
-  // binds to the user's delegated EOA — which is `keypair.address` (the EOA
-  // that the 7702 auth tuple above delegates to SmartEOA). The contract
-  // recovers the same address server-side and recomputes the digest with it;
-  // a placeholder recipient (e.g. address(0)) would never match. The repay/
-  // kyc/sponsorTokenId fields are likewise part of the deployed typehash and
-  // must be present (zero for a plain gift) or the digest mismatches and
-  // SmartEOA.isValidSignature fails (opaque MinterCallFailed revert).
+  // CRITICAL: `recipient` must be the delegated EOA the contract sees — which
+  // the sponsor server derives by RECOVERING the address from this exact auth
+  // tuple (verifyAuthorization), then passing it as `recipient`. We recover it
+  // the IDENTICAL way here so the FE-signed digest provably matches the
+  // server's. Do NOT substitute keypair.address: although the tuple is signed
+  // with keypair.privateKey, recovering from the signed tuple is the canonical
+  // source of truth and immune to any address-derivation skew. A mismatched
+  // recipient makes SmartEOA.isValidSignature fail (opaque MinterCallFailed).
+  const recoveredRecipient = await recoverAuthorizationAddress({
+    authorization: {
+      chainId: authResult.signedAuthorization.chainId,
+      address: authResult.signedAuthorization.address,
+      nonce: authResult.signedAuthorization.nonce,
+    },
+    signature: {
+      r: authResult.signedAuthorization.r,
+      s: authResult.signedAuthorization.s,
+      yParity: authResult.signedAuthorization.yParity,
+    },
+  })
+
   const permitDigest = buildMintDepositPermitDigest({
     minterAddress,
     chainId,
     networkId,
-    recipient: keypair.address as `0x${string}`,
+    recipient: recoveredRecipient,
     username,
     depositAmount: depositAmountCAW,
     lzDestId,

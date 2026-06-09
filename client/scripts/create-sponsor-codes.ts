@@ -49,6 +49,11 @@ const budgetCap      = getArgNum('budgetCap')
 const minUsernameLen = getArgNum('minUsernameLength', 0)!
 const expiresInHours = getArgNum('expiresInHours')
 const label          = getArg('label')
+// Sponsor-Repay (Phase 2): basis points of the deposit the user must repay on
+// first withdrawal. 0 = plain gift, 10000 = 1x deposit, 20000 = 2x (the cap the
+// contract enforces). requireKycLevel gates withdrawal behind KYC (0 = none).
+const repayBps         = getArgNum('repayBps', 0)!
+const requireKycLevel  = getArgNum('requireKycLevel', 0)!
 
 // ─── Validation ───────────────────────────────────────────────────────────────
 
@@ -69,6 +74,16 @@ if (tier === 'short' && budgetCap > 1000) {
 
 if (tier === 'long' && budgetCap > 10000) {
   console.error('Tier 2 (long) codes may not exceed $100 budget cap (10000 cents)')
+  process.exit(1)
+}
+
+if (repayBps < 0 || repayBps > 20000) {
+  console.error('--repayBps must be between 0 and 20000 (the contract caps repay at 2x deposit)')
+  process.exit(1)
+}
+
+if (requireKycLevel < 0 || requireKycLevel > 255) {
+  console.error('--requireKycLevel must be 0-255 (0 = no KYC gate)')
   process.exit(1)
 }
 
@@ -119,6 +134,8 @@ async function main() {
         maxUses:            actualMaxUses ?? null,
         usesRemaining:      actualUsesRemaining,
         minUsernameLength:  minUsernameLen,
+        repayBps,
+        requireKycLevel,
         expiresAt,
         createdBy:          null,
       },

@@ -66,6 +66,14 @@ interface SponsorCodeInfo {
   giftCaw?: bigint          // total CAW gifted, in wei
   minUsernameLength?: number
   expiresAt?: string
+  /**
+   * Sponsor-Repay policy (Phase 2). repayBps is basis points of the deposit
+   * the user must repay on first withdrawal (0 = plain gift, 20000 = 2x cap).
+   * sponsorTokenId is the profile that collects the repayment. Both must be
+   * folded into the signed permit digest, so they're fetched up-front.
+   */
+  repayBps?: number
+  sponsorTokenId?: number
 }
 
 const INITIAL_STATE: OnboardingState = {
@@ -194,6 +202,8 @@ export default function Onboarding() {
       giftCaw?: string
       minUsernameLength?: number
       expiresAt?: string
+      repayBps?: number
+      sponsorTokenId?: number
     }>(`/api/sponsor/code/${encodeURIComponent(normalizedCode)}`)
       .then((json) => {
         if (cancelled) return
@@ -203,6 +213,8 @@ export default function Onboarding() {
             giftCaw: BigInt(json.giftCaw),
             minUsernameLength: json.minUsernameLength,
             expiresAt: json.expiresAt,
+            repayBps: json.repayBps ?? 0,
+            sponsorTokenId: json.sponsorTokenId ?? 0,
           })
         } else {
           // Server says invalid — treat like bad code format.
@@ -227,6 +239,17 @@ export default function Onboarding() {
     const remainder = giftInfo.giftCaw - burnCostWei
     return remainder > 0n ? remainder : 0n
   }, [giftInfo, state.username])
+
+  // ── Derived repay obligation (Sponsor-Repay Phase 2) ───────────────────────
+  // repayAmount = depositAmount * repayBps / 10000, computed from the SAME
+  // depositAmount that gets signed and sent — the server recomputes identically
+  // from the code, so the signed digest matches the on-chain call. 0 = plain gift.
+  const repayBps = giftInfo?.valid ? (giftInfo.repayBps ?? 0) : 0
+  const repaySponsorTokenId = giftInfo?.valid ? (giftInfo.sponsorTokenId ?? 0) : 0
+  const derivedRepayAmount = useMemo((): bigint => {
+    if (repayBps <= 0) return 0n
+    return (derivedDepositAmount * BigInt(repayBps)) / 10000n
+  }, [derivedDepositAmount, repayBps])
 
   const showProgress = PROGRESS_STEPS.includes(state.step as typeof PROGRESS_STEPS[number])
   const progressIndex = PROGRESS_STEPS.indexOf(state.step as typeof PROGRESS_STEPS[number])
@@ -499,6 +522,8 @@ export default function Onboarding() {
               code={normalizedCode}
               username={state.username}
               depositAmount={derivedDepositAmount}
+              repayAmount={derivedRepayAmount}
+              sponsorTokenId={repaySponsorTokenId}
               vaultPassword={state.vaultPassword}
               passkey={state.enrolledPasskey}
               onNext={handleBootstrapDone}
