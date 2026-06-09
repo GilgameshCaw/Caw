@@ -31,7 +31,7 @@ import {
   isSponsorSuccess,
 } from '~/services/identity/sponsorApiClient'
 import { signWithPasskey, type PasskeyPubkey } from '~/services/identity/passkey'
-import { CAW_NAMES_MINTER_ADDRESS } from '~/../../../abi/addresses'
+import { CAW_NAMES_MINTER_ADDRESS, SMART_EOA_ADDRESS } from '~/../../../abi/addresses'
 import { chains } from '~/config/chains'
 import { usePublicClient } from 'wagmi'
 
@@ -151,12 +151,18 @@ export default function BackupStep({
             getTransactionCount: async () => 0,
           }
 
-      // Derive the SmartEOA address from config.
-      // The minter address is a reasonable proxy until a dedicated SMART_EOA_ADDRESS
-      // constant exists in the addresses file.
+      // The address the EIP-7702 auth tuple delegates the user's EOA to — this
+      // MUST be the deployed SmartEOA implementation, NOT the Minter. Getting it
+      // wrong delegates the EOA to the wrong contract, so the sponsor server
+      // recovers a different/phantom authority from the auth tuple and the
+      // permit digest's recipient no longer matches (→ MinterCallFailed).
+      // Generated into addresses.ts at deploy time; the env var is an optional
+      // override. The old `?? CAW_NAMES_MINTER_ADDRESS` fallback was the bug:
+      // VITE_SMART_EOA_ADDRESS is usually unset, so it silently delegated to
+      // the Minter.
       const smartEoaAddress = (
         (import.meta.env.VITE_SMART_EOA_ADDRESS as string | undefined) ??
-        CAW_NAMES_MINTER_ADDRESS
+        SMART_EOA_ADDRESS
       ) as `0x${string}`
 
       // The permit digest is built INSIDE bootstrapNewUser — it binds
