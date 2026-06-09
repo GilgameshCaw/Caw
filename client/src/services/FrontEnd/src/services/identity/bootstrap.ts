@@ -37,6 +37,7 @@ import { bytesToHex } from 'viem'
 import { generateSecp256k1Keypair } from './secp256k1Key'
 import { encryptBackupBlob, type BackupBlob } from './backupBlob'
 import { signAuthorizationTuple, type SignedAuthorizationTuple } from './eip7702'
+import { buildMintDepositPermitDigest } from './eip712Permits'
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
@@ -189,7 +190,25 @@ export async function bootstrapNewUser(opts: {
   rpcProvider: BootstrapRpcProvider
   passkeySigner: PasskeyPermitSigner
   sponsorApi: SponsorApiClient
-  permitDigest: `0x${string}`
+  /**
+   * CawProfileMinter address — the EIP-712 `verifyingContract`. Needed here
+   * (not a pre-built digest) because the digest binds `recipient` to the
+   * user's delegated EOA, which is the freshly-generated keypair address and
+   * therefore unknown until Step 1 below.
+   */
+  minterAddress: `0x${string}`
+  /** Permit nonce — must equal SmartEOA.nonceOf(Minter, ACTION_MINT_DEPOSIT) at submit. */
+  permitNonce: bigint
+  /** LZ ZRO token payment for the cross-chain deposit (0 on testnet). */
+  lzTokenAmount: bigint
+  /**
+   * Sponsor-Repay (Phase 2) policy, defaulted to a plain gift. These ride the
+   * signed permit struct and the on-chain call; they MUST match what the
+   * sponsor server passes to mintAndDepositSponsored or the digest won't match.
+   */
+  kycLevel?: number
+  sponsorTokenId?: number
+  repayAmount?: bigint
 }): Promise<BootstrapResult> {
   const {
     code,
@@ -204,7 +223,12 @@ export async function bootstrapNewUser(opts: {
     rpcProvider,
     passkeySigner,
     sponsorApi,
-    permitDigest,
+    minterAddress,
+    permitNonce,
+    lzTokenAmount,
+    kycLevel = 0,
+    sponsorTokenId = 0,
+    repayAmount = 0n,
   } = opts
 
   // Step 1: Generate the secp256k1 keypair.
@@ -235,6 +259,30 @@ export async function bootstrapNewUser(opts: {
     chainId,
     contractAddress: smartEoaAddress,
     nonce: BigInt(nonce),
+  })
+
+  // Step 4b: Build the EIP-712 permit digest the passkey will sign.
+  // CRITICAL: this must be built HERE, not by the caller, because `recipient`
+  // binds to the user's delegated EOA — which is `keypair.address` (the EOA
+  // that the 7702 auth tuple above delegates to SmartEOA). The contract
+  // recovers the same address server-side and recomputes the digest with it;
+  // a placeholder recipient (e.g. address(0)) would never match. The repay/
+  // kyc/sponsorTokenId fields are likewise part of the deployed typehash and
+  // must be present (zero for a plain gift) or the digest mismatches and
+  // SmartEOA.isValidSignature fails (opaque MinterCallFailed revert).
+  const permitDigest = buildMintDepositPermitDigest({
+    minterAddress,
+    chainId,
+    networkId,
+    recipient: keypair.address as `0x${string}`,
+    username,
+    depositAmount: depositAmountCAW,
+    lzDestId,
+    lzTokenAmount,
+    nonce: permitNonce,
+    kycLevel,
+    sponsorTokenId,
+    repayAmount,
   })
 
   // Step 5: Get the WebAuthn (passkey) assertion for the sponsor permit.

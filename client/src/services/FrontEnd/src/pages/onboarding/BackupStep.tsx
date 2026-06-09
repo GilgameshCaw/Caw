@@ -30,7 +30,6 @@ import {
   getSponsorApiClient,
   isSponsorSuccess,
 } from '~/services/identity/sponsorApiClient'
-import { buildMintDepositPermitDigest } from '~/services/identity/eip712Permits'
 import { signWithPasskey, type PasskeyPubkey } from '~/services/identity/passkey'
 import { CAW_NAMES_MINTER_ADDRESS } from '~/../../../abi/addresses'
 import { chains } from '~/config/chains'
@@ -141,22 +140,10 @@ export default function BackupStep({
         CAW_NAMES_MINTER_ADDRESS
       ) as `0x${string}`
 
-      const chainId = await rpcProvider.getChainId()
-
-      // Build the permit digest the passkey will sign over.
-      // In production the sponsor server provides the nonce; here we use a
-      // placeholder that matches the sponsor stub's expectation.
-      const permitDigest = buildMintDepositPermitDigest({
-        minterAddress: CAW_NAMES_MINTER_ADDRESS as `0x${string}`,
-        chainId,
-        networkId: DEFAULT_NETWORK_ID,
-        recipient: '0x0000000000000000000000000000000000000000' as `0x${string}`,
-        username,
-        depositAmount,
-        lzDestId: DEFAULT_LZ_DEST_ID,
-        lzTokenAmount: DEFAULT_LZ_TOKEN_AMOUNT,
-        nonce: BOOTSTRAP_PERMIT_NONCE,
-      })
+      // The permit digest is built INSIDE bootstrapNewUser — it binds
+      // `recipient` to the freshly-generated EOA (unknown until then) and must
+      // include the deployed Minter's repay/kyc fields. Building it here with a
+      // placeholder recipient is what produced the MinterCallFailed revert.
 
       // Passkey signer adapter: wraps signWithPasskey() to match the
       // PasskeyPermitSigner callback shape expected by bootstrapNewUser().
@@ -223,7 +210,13 @@ export default function BackupStep({
         rpcProvider,
         passkeySigner,
         sponsorApi,
-        permitDigest,
+        minterAddress: CAW_NAMES_MINTER_ADDRESS as `0x${string}`,
+        permitNonce: BOOTSTRAP_PERMIT_NONCE,
+        lzTokenAmount: DEFAULT_LZ_TOKEN_AMOUNT,
+        // kycLevel / sponsorTokenId / repayAmount default to a plain gift (0).
+        // When sponsor-code repay policy is wired end-to-end, thread the
+        // server-derived values here AND into the bootstrap request body so
+        // the signed digest matches what mintAndDepositSponsored receives.
       })
 
       // Trigger the file download while still in "sponsor" phase — it is a

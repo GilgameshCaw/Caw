@@ -387,6 +387,21 @@ export class SponsorService {
       const signedTx = await this.wallet.signTransaction(tx)
       const txResponse = await this.provider.broadcastTransaction(signedTx)
 
+      // Wait for the receipt and CHECK STATUS. The tx can be mined yet REVERT
+      // (e.g. the sponsor wallet hasn't approved the Minter to spend its CAW →
+      // SmartEOA returns MinterCallFailed). Returning the hash on broadcast
+      // alone made the FE treat a reverted mint as success — the user got a
+      // "done" screen and a profile that doesn't exist. Confirm the mint
+      // actually landed before reporting success.
+      const receipt = await txResponse.wait()
+      if (!receipt || receipt.status !== 1) {
+        return {
+          error: 'TX_REVERTED',
+          detail: `Bootstrap tx ${txResponse.hash} reverted on-chain (status ${receipt?.status ?? 'null'}). ` +
+            `Common cause: the sponsor wallet has not approved the Minter to spend CAW.`,
+        }
+      }
+
       return { txHash: txResponse.hash }
     } catch (err) {
       // Distinguish between pre-submit and on-chain reverts for caller.

@@ -11,6 +11,7 @@
  * while the tx finalizes.
  */
 
+import { sepolia } from 'wagmi/chains'
 import { useTheme } from '~/hooks/useTheme'
 import { useT } from '~/i18n/I18nProvider'
 import { useNavigate } from '~/utils/localizedRouter'
@@ -22,10 +23,10 @@ export interface ConfirmStepProps {
   signingIn?: boolean
 }
 
-function shortHash(hash: string): string {
-  if (hash.length < 12) return hash
-  return `${hash.slice(0, 8)}…${hash.slice(-6)}`
-}
+// The sponsored bootstrap tx lands on Ethereum L1 (Sepolia on testnet), so the
+// block explorer is sepolia.etherscan.io. Pulled from the wagmi chain so it
+// tracks the network rather than being hardcoded.
+const EXPLORER_TX_BASE = `${sepolia.blockExplorers.default.url}/tx/`
 
 export default function ConfirmStep({ username, txHash, signingIn = false }: ConfirmStepProps) {
   const { isDark } = useTheme()
@@ -55,14 +56,23 @@ export default function ConfirmStep({ username, txHash, signingIn = false }: Con
         </p>
       </div>
 
-      {/* Tx hash */}
+      {/* Transaction — link out to the block explorer rather than showing a
+          raw truncated hash (nothing the user can do with the hex string). */}
       <div className={`rounded-xl p-4 text-left space-y-2 ${isDark ? 'bg-white/5' : 'bg-gray-50'}`}>
         <p className={`text-xs font-medium ${mutedClass}`}>
           {t('onboarding.confirm.tx_label')}
         </p>
-        <p className={`text-sm font-mono break-all ${strongClass}`} title={txHash}>
-          {shortHash(txHash)}
-        </p>
+        <a
+          href={`${EXPLORER_TX_BASE}${txHash}`}
+          target="_blank"
+          rel="noopener noreferrer"
+          className={`inline-flex items-center gap-1 text-sm font-medium ${
+            isDark ? 'text-yellow-400 hover:text-yellow-300' : 'text-yellow-600 hover:text-yellow-700'
+          }`}
+        >
+          {t('onboarding.confirm.view_on_explorer')}
+          <span aria-hidden="true">↗</span>
+        </a>
         <p className={`text-xs ${mutedClass}`}>
           {t('onboarding.confirm.tx_note')}
         </p>

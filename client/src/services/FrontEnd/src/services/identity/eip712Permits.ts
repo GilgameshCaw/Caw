@@ -12,7 +12,8 @@
  * Type hashes (from CawProfileMinter.sol — must match exactly):
  *
  *   MintAndDeposit(uint32 networkId,address recipient,string username,
- *     uint256 depositAmount,uint32 lzDestId,uint256 lzTokenAmount,uint256 nonce)
+ *     uint256 depositAmount,uint32 lzDestId,uint256 lzTokenAmount,uint256 nonce,
+ *     uint8 kycLevel,uint32 sponsorTokenId,uint256 repayAmount)
  *
  *   DepositFor(uint32 networkId,uint32 tokenId,uint256 amount,
  *     uint32 lzDestId,uint256 lzTokenAmount,uint256 nonce)
@@ -42,6 +43,16 @@ export interface MintDepositPermitOpts {
   lzDestId: number
   lzTokenAmount: bigint
   nonce: bigint
+  /**
+   * Sponsor-Repay (Phase 2) fields. The deployed Minter's MINT_DEPOSIT_TYPEHASH
+   * carries all three — they MUST be present in the signed struct even for a
+   * plain zero-repay gift, or the contract-side digest won't match the passkey
+   * challenge and SmartEOA.isValidSignature returns the fail value (surfacing
+   * as the opaque MinterCallFailed revert). Default 0 = no KYC gate, no repay.
+   */
+  kycLevel?: number
+  sponsorTokenId?: number
+  repayAmount?: bigint
 }
 
 /**
@@ -67,17 +78,23 @@ export function buildMintDepositPermitDigest(opts: MintDepositPermitOpts): `0x${
         { name: 'lzDestId',        type: 'uint32'  },
         { name: 'lzTokenAmount',   type: 'uint256' },
         { name: 'nonce',           type: 'uint256' },
+        { name: 'kycLevel',        type: 'uint8'   },
+        { name: 'sponsorTokenId',  type: 'uint32'  },
+        { name: 'repayAmount',     type: 'uint256' },
       ],
     },
     primaryType: 'MintAndDeposit',
     message: {
-      networkId:     opts.networkId,
-      recipient:     opts.recipient,
-      username:      opts.username,
-      depositAmount: opts.depositAmount,
-      lzDestId:      opts.lzDestId,
-      lzTokenAmount: opts.lzTokenAmount,
-      nonce:         opts.nonce,
+      networkId:      opts.networkId,
+      recipient:      opts.recipient,
+      username:       opts.username,
+      depositAmount:  opts.depositAmount,
+      lzDestId:       opts.lzDestId,
+      lzTokenAmount:  opts.lzTokenAmount,
+      nonce:          opts.nonce,
+      kycLevel:       opts.kycLevel ?? 0,
+      sponsorTokenId: opts.sponsorTokenId ?? 0,
+      repayAmount:    opts.repayAmount ?? 0n,
     },
   })
 }
