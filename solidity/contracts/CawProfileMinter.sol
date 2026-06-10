@@ -147,7 +147,7 @@ contract CawProfileMinter is Context {
     address sessionKey, uint64 expiry, uint256 spendLimit, uint64 perActionTipRate
   ) public payable {
     require(sessionKey != address(0), "Zero session key");
-    uint32 newId = _burnAndAssignId(username, depositAmount);
+    uint32 newId = _burnAndAssignId(username, depositAmount, _msgSender());
     if (depositAmount > 0) {
       CAW.transferFrom(_msgSender(), address(this), depositAmount);
       CAW.approve(address(CawProfile), depositAmount);
@@ -165,7 +165,7 @@ contract CawProfileMinter is Context {
     address sessionKey, uint64 expiry, uint256 spendLimit, uint64 perActionTipRate
   ) public payable {
     require(sessionKey != address(0), "Zero session key");
-    uint32 newId = _burnAndAssignId(username, 0);
+    uint32 newId = _burnAndAssignId(username, 0, _msgSender());
     bytes memory sessionExtra = abi.encode(sessionKey, expiry, spendLimit, perActionTipRate);
     CawProfile.mintAndAuth{value: msg.value}(
       networkId, msg.sender, username, newId, lzDestId, lzTokenAmount, sessionExtra
@@ -184,20 +184,20 @@ contract CawProfileMinter is Context {
   ///         to `recipient`. Mirrors depositFor's pattern so external routers can offer
   ///         "pay in <other-currency>, get a CAW Profile" without holding the user's CAW.
   function mintFor(uint32 networkId, address recipient, string memory username, uint256 lzTokenAmount) public payable {
-    uint32 newId = _burnAndAssignId(username, 0);
+    uint32 newId = _burnAndAssignId(username, 0, _msgSender());
     CawProfile.mint{value: msg.value}(networkId, recipient, username, newId, lzTokenAmount);
   }
 
   /// @notice mintAndAuth on behalf of `recipient`. The burn cost is pulled from msg.sender.
   function mintAndAuthFor(uint32 networkId, address recipient, string memory username, uint32 lzDestId, uint256 lzTokenAmount) public payable {
-    uint32 newId = _burnAndAssignId(username, 0);
+    uint32 newId = _burnAndAssignId(username, 0, _msgSender());
     CawProfile.mintAndAuth{value: msg.value}(networkId, recipient, username, newId, lzDestId, lzTokenAmount, "");
   }
 
   /// @notice mintAndDeposit on behalf of `recipient`. burn + deposit CAW is pulled from
   ///         msg.sender; the NFT and the deposit credit go to `recipient`.
   function mintAndDepositFor(uint32 networkId, address recipient, string memory username, uint256 depositAmount, uint32 lzDestId, uint256 lzTokenAmount) public payable {
-    uint32 newId = _burnAndAssignId(username, depositAmount);
+    uint32 newId = _burnAndAssignId(username, depositAmount, _msgSender());
     if (depositAmount > 0) {
       // Pull the deposit portion into this contract and approve CawProfile to pull it back —
       // mirrors the original mintAndDeposit pattern (CawProfile expects the deposit CAW
@@ -339,19 +339,25 @@ contract CawProfileMinter is Context {
   }
 
   /// @dev Shared prologue for every mint path: validate the username, take the burn cost
-  ///      from msg.sender, register the new tokenId, and return it. `extraCawNeeded` is the
-  ///      additional CAW msg.sender must hold + have approved beyond burnAmount (e.g. the
+  ///      from `funder`, register the new tokenId, and return it. `extraCawNeeded` is the
+  ///      additional CAW `funder` must hold + have approved beyond burnAmount (e.g. the
   ///      deposit portion in mintAndDepositFor). Pulling the extra is the caller's job —
   ///      this function only verifies the headroom and burns the burn portion.
-  function _burnAndAssignId(string memory username, uint256 extraCawNeeded) internal returns (uint32 newId) {
+  ///
+  /// @param funder        Address whose CAW balance + allowance is checked and burned.
+  ///                      For normal (non-sponsored) paths this is _msgSender().
+  ///                      For sponsored (EIP-7702) paths this is tx.origin (the sponsor
+  ///                      server's EOA that broadcasts the type-0x04 tx and holds the CAW).
+  ///                      See _burnAndAssignIdFor note for full rationale.
+  function _burnAndAssignId(string memory username, uint256 extraCawNeeded, address funder) internal returns (uint32 newId) {
     require(idByUsername[username] == 0, "Username has already been taken");
     require(isValidUsername(username), "Username must only consist of 1-255 lowercase letters and numbers");
     uint256 burnAmount = costOfName(username);
     uint256 totalCawNeeded = burnAmount + extraCawNeeded;
 
-    require(CAW.balanceOf(_msgSender()) >= totalCawNeeded, "You do not have enough CAW to make this purchase");
-    require(CAW.allowance(_msgSender(), address(this)) >= totalCawNeeded, "You must approve spending of your CAW");
-    CAW.transferFrom(_msgSender(), address(0xdEAD000000000000000042069420694206942069), burnAmount);
+    require(CAW.balanceOf(funder) >= totalCawNeeded, "You do not have enough CAW to make this purchase");
+    require(CAW.allowance(funder, address(this)) >= totalCawNeeded, "You must approve spending of your CAW");
+    CAW.transferFrom(funder, address(0xdEAD000000000000000042069420694206942069), burnAmount);
 
     newId = CawProfile.nextId();
     idByUsername[username] = newId;
@@ -523,9 +529,13 @@ contract CawProfileMinter is Context {
   //   no funds are at risk, just a failed tx.
 
   /// @notice Mint a profile and deposit CAW on behalf of a smart-contract wallet.
-  ///         The CAW burn + deposit is pulled from msg.sender (the sponsor server's
-  ///         allowance); the NFT and deposit balance go to `recipient`.
-  ///         `recipient` must be a contract (7702-delegated EOA or smart wallet).
+  ///         The CAW burn + deposit is pulled from the sponsor's allowance; the NFT
+  ///         and deposit balance go to `recipient`.  `recipient` must be a contract
+  ///         (7702-delegated EOA or smart wallet).
+  ///
+  ///         SPONSOR ADDRESS SELECTION: see NatSpec below for the EIP-7702 funding
+  ///         model.  Short version: EOA caller → payer = msg.sender; contract caller
+  ///         (SmartEOA 7702 path) → payer = tx.origin (the broadcaster).
   ///
   ///         NOTE: `depositAmount = 0` is INTENTIONALLY permitted (matches the
   ///         non-sponsored `mintAndDepositFor` semantics — a user may want to
@@ -539,7 +549,7 @@ contract CawProfileMinter is Context {
   /// @param networkId       CAW network to register on.
   /// @param recipient       Smart-contract wallet that will own the new profile.
   /// @param username        Desired username (must pass isValidUsername).
-  /// @param depositAmount   CAW to lock as balance (pulled from msg.sender). Zero is allowed.
+  /// @param depositAmount   CAW to lock as balance (pulled from sponsor). Zero is allowed.
   /// @param lzDestId        LayerZero destination chain ID (0 = mainnet bypass).
   /// @param lzTokenAmount   Optional LZ ZRO payment (pass 0 for ETH-only fee).
   /// @param permitNonce     Must match recipient.nonceOf(address(this), ACTION_MINT_DEPOSIT).
@@ -549,6 +559,33 @@ contract CawProfileMinter is Context {
   ///                        at that level. See withdrawKycLevel comment for full table.
   /// @param sponsorTokenId  Sponsor's profile (L2-side repay credit destination). 0 if unused.
   /// @param repayAmount     L2-side repay obligation (wei). Capped at depositAmount * 2.
+  ///
+  /// @dev CAW FUNDING MODEL (EIP-7702 path):
+  ///      In the Population-B onboarding flow the transaction is a type-0x04 EIP-7702 tx
+  ///      where:
+  ///        tx.origin  = sponsor server's EOA (broadcasts + pays gas; holds the CAW pool)
+  ///        tx.to      = the user's SmartEOA address
+  ///        SmartEOA.initialize → calls this function, making msg.sender = SmartEOA
+  ///
+  ///      The user's SmartEOA holds 0 CAW at bootstrap time.  Pulling from msg.sender
+  ///      (the SmartEOA) would always revert "not enough CAW".  The correct payer is
+  ///      tx.origin — the sponsor server that CHOSE to broadcast this tx, holds the
+  ///      CAW pool, and pre-approved an unlimited allowance to this Minter.
+  ///
+  ///      SECURITY: tx.origin as payer is safe here because:
+  ///        1. The sponsor pre-approved the Minter.  Without that approval the transfer
+  ///           reverts, so no address can be drained involuntarily.
+  ///        2. The sponsor broadcasts the tx — controlling tx.origin is the same as
+  ///           consenting to the spend.  No third party can set tx.origin to the sponsor.
+  ///        3. The user-signed permit already binds the mint parameters (recipient,
+  ///           username, depositAmount, etc.), so the sponsor cannot redirect the
+  ///           user's registered name or deposit to another token.
+  ///        4. This pattern is equivalent to the *For variants on CawProfile where
+  ///           msg.sender (a router) fronts the CAW on behalf of the recipient.
+  ///
+  ///      For non-7702 direct callers the tx.origin == msg.sender, so existing Population-A
+  ///      sponsor flows that call mintAndDepositSponsored directly (not through a 7702 EOA)
+  ///      continue to work without change.
   function mintAndDepositSponsored(
     uint32 networkId,
     address recipient,
@@ -579,9 +616,19 @@ contract CawProfileMinter is Context {
     ));
     bytes32 digest = keccak256(abi.encodePacked("\x19\x01", DOMAIN_SEPARATOR, structHash));
     _checkPermit(recipient, ACTION_MINT_DEPOSIT, permitNonce, digest, sig);
-    uint32 newId = _burnAndAssignId(username, depositAmount);
+    // EIP-7702 fix: derive the CAW funder address.
+    //   - If msg.sender is an EOA (code.length == 0): payer = msg.sender.
+    //     This is the direct Population-A path: sponsor server calls the Minter
+    //     directly as an EOA, so msg.sender == tx.origin == sponsor.
+    //   - If msg.sender is a contract (code.length > 0): payer = tx.origin.
+    //     This is the Population-B 7702 path: SmartEOA.initialize calls the
+    //     Minter, making msg.sender = SmartEOA (0 CAW). tx.origin = the sponsor
+    //     server EOA that broadcast the type-0x04 tx, holds the CAW pool, and
+    //     pre-approved this Minter. See NatSpec above for full security rationale.
+    address sponsor = _msgSender().code.length == 0 ? _msgSender() : tx.origin;
+    uint32 newId = _burnAndAssignId(username, depositAmount, sponsor);
     if (depositAmount > 0) {
-      CAW.transferFrom(_msgSender(), address(this), depositAmount);
+      CAW.transferFrom(sponsor, address(this), depositAmount);
       CAW.approve(address(CawProfile), depositAmount);
     }
     // Only write gate state when kycLevel > 0. Level 0 = no gate (gift / repay-
@@ -653,14 +700,20 @@ contract CawProfileMinter is Context {
     bytes32 digest = keccak256(abi.encodePacked("\x19\x01", DOMAIN_SEPARATOR, structHash));
     _checkPermit(owner, ACTION_DEPOSIT_FOR, permitNonce, digest, sig);
 
-    // Pull CAW from the sponsor (msg.sender) into the Minter, then approve
-    // CawProfile to pull it back. Required because CawProfile.depositFor does
+    // Pull CAW from the sponsor into the Minter, then approve CawProfile to pull
+    // it back. Required because CawProfile.depositFor does
     // CAW.transferFrom(msg.sender, ...) where msg.sender is THIS contract — we
     // must have the balance + allowance before delegating. Matches the pattern
     // used by mintAndDepositFor at line ~159. The sponsor server must hold the
     // user's CAW and have pre-approved the Minter for at least `amount`.
     // Integration audit 2026-05-21 HIGH-1.
-    CAW.transferFrom(_msgSender(), address(this), amount);
+    //
+    // EIP-7702 fix: derive the CAW funder the same way as mintAndDepositSponsored:
+    //   msg.sender.code.length == 0  →  funder = msg.sender  (direct EOA call)
+    //   msg.sender.code.length > 0   →  funder = tx.origin   (7702/SmartEOA path)
+    // See mintAndDepositSponsored NatSpec for full security rationale.
+    address depositSponsor = _msgSender().code.length == 0 ? _msgSender() : tx.origin;
+    CAW.transferFrom(depositSponsor, address(this), amount);
     CAW.approve(address(CawProfile), amount);
     // Route LZ fee refund to the token owner (the user), not tx.origin (sponsor server).
     // Audit fix 2026-05-22 (H-1: tx.origin as LZ refund in sponsored flows).

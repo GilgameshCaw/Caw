@@ -233,6 +233,16 @@ contract SponsorRepayTest is Test {
         caw.approve(address(minter), type(uint256).max);
         vm.deal(address(this), 10 ether);
 
+        // EIP-7702 funding fix: _burnAndAssignId uses tx.origin when msg.sender
+        // has code (contract caller). Foundry's default tx.origin is DefaultSender
+        // (0x1804c8AB1F12E6bbf3894d4083f33e07309d1f38) when no prank is active.
+        // Fund it so existing tests that call mintAndDepositSponsored directly from
+        // the test contract (code.length > 0) pass the balance + allowance checks.
+        address defaultSender = address(0x1804c8AB1F12E6bbf3894d4083f33e07309d1f38);
+        caw.mint(defaultSender, 1_000_000_000 * 10**24);
+        vm.prank(defaultSender);
+        caw.approve(address(minter), type(uint256).max);
+
         // --- Ledger side ---
         lzEndpoint = new MockLayerZeroEndpoint(40245);
 
