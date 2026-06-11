@@ -98,6 +98,35 @@ contract SessionRegisterFuzzTest is Test {
     }
 
     // ------------------------------------------------------------------
+    // SES-1 (audit 2026-06-11): revoke must bump sessionNonce, so a
+    // registerSession the owner pre-signed at the current nonce can no longer
+    // be replayed after they revoke. Before the fix, revoke deleted the session
+    // but left the nonce, leaving the pre-signed register valid.
+    // ------------------------------------------------------------------
+    function test_SES1_revoke_invalidates_presigned_register() public {
+        uint256 pk = 0xA11CE;
+        address signer = vm.addr(pk);
+        address sessionKey = address(0xBEEF11);
+        uint64 expiry = uint64(block.timestamp + 30 days);
+
+        // Owner pre-signs a registerSession at the CURRENT nonce N (e.g. an
+        // API rotation request captured in-flight).
+        uint256 n = profile.sessionNonce(signer);
+        bytes32 d = _digest(sessionKey, expiry, 0xBF, 0, 0, n);
+        (uint8 v, bytes32 r, bytes32 s) = _sign(pk, d);
+
+        // Owner revokes some (other) session via the direct path BEFORE the
+        // pre-signed payload is submitted. This must bump the nonce.
+        vm.prank(signer);
+        profile.revokeSession(address(0xDEAD01));
+        assertEq(profile.sessionNonce(signer), n + 1, "SES-1: revokeSession must bump nonce");
+
+        // The captured pre-signed register at nonce N is now stale -> BadNonce.
+        vm.expectRevert(abi.encodeWithSelector(CawProfileLedger.BadNonce.selector));
+        profile.registerSession(signer, sessionKey, expiry, 0xBF, 0, 0, n, abi.encodePacked(r, s, v));
+    }
+
+    // ------------------------------------------------------------------
     // Property 2: replay protection — second submit with the same sig
     //             fails because the signer's nonce was bumped.
     // ------------------------------------------------------------------

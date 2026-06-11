@@ -832,6 +832,12 @@ contract CawProfileLedger is
 
   /// @notice Revoke a session key. Callable by the delegating wallet.
   function revokeSession(address sessionKey) external {
+    // SES-1 (audit 2026-06-11): bump sessionNonce so any in-flight
+    // registerSession-by-sig the owner pre-signed at the current nonce is
+    // invalidated by the revocation. Without this, an attacker holding a
+    // captured pre-signed registerSession could re-register the just-revoked
+    // key. Mirrors registerSessionFromActions' nonce bump.
+    sessionNonce[msg.sender]++;
     delete sessions[msg.sender][sessionKey];
     emit SessionRevoked(msg.sender, sessionKey);
   }
@@ -870,6 +876,7 @@ contract CawProfileLedger is
   /// @dev    Same auth gate + threat model as registerSessionFromActions.
   function revokeSessionFromActions(address owner, address sessionKey) external {
     if (!(msg.sender == address(cawActions))) revert NotCa();
+    sessionNonce[owner]++; // SES-1: invalidate pre-signed registerSession at current nonce
     delete sessions[owner][sessionKey];
     emit SessionRevoked(owner, sessionKey);
   }
@@ -900,6 +907,7 @@ contract CawProfileLedger is
     address signer = ecrecover(digest, v, r, s);
     if (!(signer == sessionKey)) revert BadSig();
 
+    sessionNonce[owner]++; // SES-1: invalidate pre-signed registerSession at current nonce
     delete sessions[owner][sessionKey];
     emit SessionRevoked(owner, sessionKey);
   }
