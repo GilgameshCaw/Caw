@@ -640,8 +640,17 @@ contract CawProfileMarketplace is ReentrancyGuard {
     function _refundOffer(Offer storage offer, address recipient) internal {
         offer.active = false;
         if (offer.paymentToken == address(0)) {
-            (bool sent,) = recipient.call{value: offer.amount}("");
-            require(sent, "ETH refund failed");
+            // MP-1 (audit 2026-06-11): pull-pattern fallback. cancelOffer is
+            // callable by ANYONE once the offer expires, so a direct ETH send
+            // that reverts (offerer is a non-ETH-receiving contract) would lock
+            // the offer active forever and strand the ETH. Try the direct send
+            // (gas-capped so a griefing fallback can't drain), and on failure
+            // queue the refund to pendingPayouts for the offerer to pull later.
+            (bool sent,) = recipient.call{value: offer.amount, gas: 30000}("");
+            if (!sent) {
+                pendingPayouts[recipient] += offer.amount;
+                emit PayoutQueued(recipient, offer.amount);
+            }
         } else {
             IERC20(offer.paymentToken).safeTransfer(recipient, offer.amount);
         }
