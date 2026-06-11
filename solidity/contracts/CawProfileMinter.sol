@@ -18,6 +18,26 @@ contract CawProfileMinter is Context {
   IMint CawProfile;
   IERC20 CAW;
 
+  error EthSweepFailed();
+
+  /// @notice FL-1 (audit 2026-06-11): every mint/deposit/auth entrypoint forwards
+  ///         the full msg.value to CawProfile, which refunds any unused LZ fee to
+  ///         its caller — i.e. back to THIS contract (msg.sender from CawProfile's
+  ///         view), not the original payer. The Minter has receive() but no sweep,
+  ///         so that residue was stranded forever. This modifier returns any ETH
+  ///         the contract holds after the call to the original caller. Runs last
+  ///         (after the body) so the refund has already landed here; sends to
+  ///         _msgSender() only, so no untrusted reentrancy target. The contract
+  ///         holds no ETH at rest, so sweeping the full balance is correct.
+  modifier sweepResidualEth() {
+    _;
+    uint256 bal = address(this).balance;
+    if (bal > 0) {
+      (bool ok, ) = payable(_msgSender()).call{value: bal}("");
+      if (!ok) revert EthSweepFailed();
+    }
+  }
+
   // Uniswap V2 router for ZAP flows: pay-with-ETH → swap → CAW → mint/deposit.
   // The path is always [WETH, CAW]. Slippage is enforced via user-supplied
   // `minCawOut`. The frontend reads pool reserves and computes the floor.
@@ -124,6 +144,10 @@ contract CawProfileMinter is Context {
   // and call `mintFor`/`mintAndAuthFor`/`mintAndDepositFor` on their behalf
   // (CAW for the burn + deposit comes from the router's balance).
 
+  // NOTE: the thin wrappers (mint/mintAndAuth/mintAndDeposit) do NOT carry
+  // sweepResidualEth — they delegate to their *For leaf, which carries it. A
+  // modifier on both would double-run (harmless but redundant). The leaf sweeps
+  // to _msgSender(), which is the same caller across the internal delegation.
   function mint(uint32 networkId, string memory username, uint256 lzTokenAmount) public payable {
     mintFor(networkId, msg.sender, username, lzTokenAmount);
   }
@@ -145,7 +169,7 @@ contract CawProfileMinter is Context {
   function mintAndDepositAndQuickSign(
     uint32 networkId, string memory username, uint256 depositAmount, uint32 lzDestId, uint256 lzTokenAmount,
     address sessionKey, uint64 expiry, uint256 spendLimit, uint64 perActionTipRate
-  ) public payable {
+  ) public payable sweepResidualEth {
     require(sessionKey != address(0), "Zero session key");
     uint32 newId = _burnAndAssignId(username, depositAmount, _msgSender());
     if (depositAmount > 0) {
@@ -163,7 +187,7 @@ contract CawProfileMinter is Context {
   function mintAndAuthAndQuickSign(
     uint32 networkId, string memory username, uint32 lzDestId, uint256 lzTokenAmount,
     address sessionKey, uint64 expiry, uint256 spendLimit, uint64 perActionTipRate
-  ) public payable {
+  ) public payable sweepResidualEth {
     require(sessionKey != address(0), "Zero session key");
     uint32 newId = _burnAndAssignId(username, 0, _msgSender());
     bytes memory sessionExtra = abi.encode(sessionKey, expiry, spendLimit, perActionTipRate);
@@ -183,20 +207,20 @@ contract CawProfileMinter is Context {
   ///         `msg.sender`, but the Profile NFT (and ownership of any future deposit) goes
   ///         to `recipient`. Mirrors depositFor's pattern so external routers can offer
   ///         "pay in <other-currency>, get a CAW Profile" without holding the user's CAW.
-  function mintFor(uint32 networkId, address recipient, string memory username, uint256 lzTokenAmount) public payable {
+  function mintFor(uint32 networkId, address recipient, string memory username, uint256 lzTokenAmount) public payable sweepResidualEth {
     uint32 newId = _burnAndAssignId(username, 0, _msgSender());
     CawProfile.mint{value: msg.value}(networkId, recipient, username, newId, lzTokenAmount);
   }
 
   /// @notice mintAndAuth on behalf of `recipient`. The burn cost is pulled from msg.sender.
-  function mintAndAuthFor(uint32 networkId, address recipient, string memory username, uint32 lzDestId, uint256 lzTokenAmount) public payable {
+  function mintAndAuthFor(uint32 networkId, address recipient, string memory username, uint32 lzDestId, uint256 lzTokenAmount) public payable sweepResidualEth {
     uint32 newId = _burnAndAssignId(username, 0, _msgSender());
     CawProfile.mintAndAuth{value: msg.value}(networkId, recipient, username, newId, lzDestId, lzTokenAmount, "");
   }
 
   /// @notice mintAndDeposit on behalf of `recipient`. burn + deposit CAW is pulled from
   ///         msg.sender; the NFT and the deposit credit go to `recipient`.
-  function mintAndDepositFor(uint32 networkId, address recipient, string memory username, uint256 depositAmount, uint32 lzDestId, uint256 lzTokenAmount) public payable {
+  function mintAndDepositFor(uint32 networkId, address recipient, string memory username, uint256 depositAmount, uint32 lzDestId, uint256 lzTokenAmount) public payable sweepResidualEth {
     uint32 newId = _burnAndAssignId(username, depositAmount, _msgSender());
     if (depositAmount > 0) {
       // Pull the deposit portion into this contract and approve CawProfile to pull it back —
@@ -402,7 +426,7 @@ contract CawProfileMinter is Context {
     uint256 minCawOut,
     uint32 lzDestId,
     uint256 lzTokenAmount
-  ) public payable {
+  ) public payable sweepResidualEth {
     require(swapEthAmount > 0 && swapEthAmount <= msg.value, "Bad swap amount");
     uint256 cawReceived = _swapEthForCaw(swapEthAmount, minCawOut);
     CAW.approve(address(CawProfile), cawReceived);
@@ -421,7 +445,7 @@ contract CawProfileMinter is Context {
     uint256 minCawOut,
     uint32 lzDestId,
     uint256 lzTokenAmount
-  ) public payable {
+  ) public payable sweepResidualEth {
     require(swapEthAmount > 0 && swapEthAmount <= msg.value, "Bad swap amount");
     require(idByUsername[username] == 0, "Username has already been taken");
     require(isValidUsername(username), "Username must only consist of 1-255 lowercase letters and numbers");
@@ -456,7 +480,7 @@ contract CawProfileMinter is Context {
     uint64 perActionTipRate,
     uint32 lzDestId,
     uint256 lzTokenAmount
-  ) public payable {
+  ) public payable sweepResidualEth {
     require(sessionKey != address(0), "Zero session key");
     require(swapEthAmount > 0 && swapEthAmount <= msg.value, "Bad swap amount");
     require(idByUsername[username] == 0, "Username has already been taken");
@@ -598,7 +622,7 @@ contract CawProfileMinter is Context {
     uint8 kycLevel,
     uint32 sponsorTokenId,
     uint256 repayAmount
-  ) external payable {
+  ) external payable sweepResidualEth {
     require(recipient.code.length > 0, "Direct submit required");
     require(repayAmount == 0 || repayAmount <= depositAmount * 2, "Repay cap");
     bytes32 structHash = keccak256(abi.encode(
@@ -680,7 +704,7 @@ contract CawProfileMinter is Context {
     uint256 lzTokenAmount,
     uint256 permitNonce,
     bytes calldata sig
-  ) external payable {
+  ) external payable sweepResidualEth {
     // Reject zero-amount calls BEFORE _checkPermit consumes the user's nonce.
     // CawProfile.depositFor has its own ZeroDeposit guard but it fires after the
     // nonce was already consumed by _checkPermit, wasting the owner's permit slot.
@@ -741,7 +765,7 @@ contract CawProfileMinter is Context {
     uint256 lzTokenAmount,
     uint256 permitNonce,
     bytes calldata sig
-  ) external payable {
+  ) external payable sweepResidualEth {
     address owner = CawProfile.ownerOf(tokenId);
     require(owner.code.length > 0, "Direct submit required");
     bytes32 structHash = keccak256(abi.encode(
