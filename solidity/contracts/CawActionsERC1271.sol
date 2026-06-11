@@ -27,7 +27,11 @@ contract CawActionsERC1271 {
   ICawActions   public immutable cawActions;
   CawProfileLedger  public immutable cawProfile;
 
-  uint256 private constant ERC1271_GAS_LIMIT = 50_000;
+  // 150k, not 50k: WebAuthn isValidSignature needs ~55-68k (P-256 + sha256 +
+  // clientDataJSON parse via SmartEOA's self-staticcall). 50k OOGs every
+  // Population-B verify → batch reverts. Must match CawActions.ERC1271_GAS_LIMIT.
+  // Audit 2026-06-11 XCHAIN-1.
+  uint256 private constant ERC1271_GAS_LIMIT = 150_000;
   bytes4  private constant ERC1271_MAGIC_VALUE = 0x1626ba7e;
 
   bytes32 private constant ACTIONDATA_TYPEHASH = keccak256(

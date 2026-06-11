@@ -207,7 +207,13 @@ contract CawActions {
   ///      "lookup authorized address + nonce" implementation but tight
   ///      enough to cap pathological ones. Honest implementers should keep
   ///      isValidSignature well under this budget.
-  uint256 private constant ERC1271_GAS_LIMIT = 50_000;
+  // 150k, not 50k: WebAuthn isValidSignature (base64url decode + JSON challenge
+  // parse + sha256 + P-256 precompile, routed through SmartEOA's self-staticcall
+  // with EIP-150 63/64 gas forwarding) needs ~55-68k. 50k OOGs every Population-B
+  // passkey verification → batch reverts. Matches the CawProfileMinter fix
+  // (a63cf604) which only patched the Minter; this contract + the ERC1271 sibling
+  // carried the same too-low cap. Audit 2026-06-11 XCHAIN-1.
+  uint256 private constant ERC1271_GAS_LIMIT = 150_000;
   bytes4  private constant ERC1271_MAGIC_VALUE = 0x1626ba7e;
 
   /// @dev If the cap oracle hasn't pushed a fresh ratio within this window,
