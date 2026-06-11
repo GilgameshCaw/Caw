@@ -39,7 +39,7 @@ import {
   type Authorization,
 } from 'ethers'
 import { makeJsonRpcProvider } from '../../utils/rpcProvider'
-import { cawProfileMinterAbi, smartEoaAbi, cawProfileAbi } from '../../abi/generated'
+import { cawProfileMinterAbi, smartEoaAbi, cawProfileAbi, cawNetworkManagerAbi } from '../../abi/generated'
 
 // ─── Param types ────────────────────────────────────────────────────────────
 
@@ -550,17 +550,45 @@ export class SponsorService {
         }
       }
 
+      // ── Quote the ETH-denominated network fees (sponsor pays these too) ──
+      // CawProfile.mintAndDeposit charges the network's mint + deposit + auth
+      // fees in ETH from msg.value, THEN forwards the remainder to the LZ send:
+      //   CawProfile.sol: lzEthAmount = msg.value - totalFeesPaid
+      // So msg.value must cover BOTH the network fees AND the LZ fee, or that
+      // subtraction underflows (panic 0x11). The withdraw fee is NOT charged at
+      // mint (it's locked for later), so only mint+deposit+auth count here.
+      // The sponsor fronts these ETH fees for the gifted user.
+      let networkFees = 0n
+      try {
+        const cawProfileForNm = new Contract(this.cawProfileAddress, cawProfileAbi as any, this.provider)
+        const nmAddress: string = await cawProfileForNm.networkManager()
+        const nm = new Contract(nmAddress, cawNetworkManagerAbi as any, this.provider)
+        const [mintFee] = await nm.getMintFeeAndAddress(params.networkId)
+        const [depositFee] = await nm.getDepositFeeAndAddress(params.networkId)
+        const [authFee] = await nm.getAuthFeeAndAddress(params.networkId)
+        networkFees = BigInt(mintFee) + BigInt(depositFee) + BigInt(authFee)
+        console.log(
+          `[sponsor:bootstrap] networkFees mint=${mintFee} deposit=${depositFee} auth=${authFee} ` +
+          `total=${networkFees} networkId=${params.networkId}`,
+        )
+      } catch (e) {
+        return {
+          error: 'LZ_QUOTE_FAILED',
+          detail: `Network-fee quote failed — cannot determine the ETH fees mintAndDeposit charges: ${e}`,
+        }
+      }
+
       const tx = new Transaction()
       tx.type = 4
       tx.to = userEoaAddress
       tx.data = initCalldata
-      // msg.value = paddedFee (the quoted+buffered native LZ fee).
-      // lzTokenAmount (ZRO-token path) is passed in calldata as a separate arg
-      // and remains 0 for normal ETH-fee operation; it does NOT go into tx.value.
-      // CawProfile.sol line 354: lzEthAmount = msg.value - totalFeesPaid;
-      // Uruk zeroed all mint/deposit/auth fees so totalFeesPaid=0, meaning the
-      // full msg.value flows to the LZ send call.
-      tx.value = paddedFee
+      // msg.value must cover the network mint+deposit+auth fees (charged in ETH
+      // by CawProfile.mintAndDeposit) PLUS the padded LZ fee (forwarded to the
+      // cross-chain send as msg.value - totalFeesPaid). The sponsor fronts both.
+      // lzTokenAmount (ZRO-token path) stays a calldata arg at 0; not in tx.value.
+      // Excess (the 20% LZ buffer) refunds to the user via the Minter's
+      // setLzRefundTo (audit H-1).
+      tx.value = networkFees + paddedFee
       tx.nonce = sponsorNonce
       tx.chainId = BigInt(chainId)
       tx.gasLimit = GAS_LIMIT_BOOTSTRAP
