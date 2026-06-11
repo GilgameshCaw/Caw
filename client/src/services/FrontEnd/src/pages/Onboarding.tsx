@@ -40,6 +40,8 @@ import type { PasskeyPubkey } from '~/services/identity/passkey'
 import type { BootstrapResult } from '~/services/identity/bootstrap'
 import { apiFetch, retryOnIndexing } from '~/api/client'
 import { useAuthStore } from '~/store/authStore'
+import { useTokenDataStore } from '~/store/tokenDataStore'
+import type { TokenData } from '~/types'
 import { baseSepolia } from 'wagmi/chains'
 
 type OnboardingStep =
@@ -377,38 +379,47 @@ export default function Onboarding() {
           data.expiresAt,
         )
 
-        // Mark onboarding COMPLETE (step 5). A sponsored Population-B user
-        // finishes the entire flow here in /onboarding — but the
-        // NftTransferWatcher creates their User row at onboardingStep=0 (the
-        // default for fresh mints, so legacy Population-A users still get the
-        // welcome stepper). Without this, OnboardingGuard sees step<5 and
-        // redirects the freshly-minted, freshly-signed-in user straight to
-        // /welcome/:username — which is exactly the "nothing happened" symptom.
-        // Best-effort: the tokenId comes from the verify response.
+        // Make the FE recognize this profile as the ACTIVE logged-in profile.
+        // A sponsored Population-B user has NO connected wagmi wallet, so the
+        // tokenDataStore (which is normally populated from on-chain token data
+        // for the connected address) stays empty → useActiveToken() returns
+        // nothing → AuthGate redirects to the bare /welcome captive splash
+        // ("sign in" button, looks logged-out). We must inject the minted
+        // profile into tokenDataStore and mark it active for the owner address.
+        // Pick the token owned by THIS user (recoveredRecipient), not just the
+        // first authorized id (the session may carry several).
         try {
-          const mintedTokenId = data.authorizedTokenIds?.[0]
+          const owner = (result.ecdsaAddress).toLowerCase()
+          // Find the minted tokenId: the authorized address that matches the
+          // profile owner, paired by index with authorizedTokenIds.
+          const idx = data.authorizedAddresses.findIndex(
+            a => a.toLowerCase() === owner,
+          )
+          const mintedTokenId =
+            idx >= 0 ? data.authorizedTokenIds[idx] : data.authorizedTokenIds[0]
           if (mintedTokenId != null) {
-            const profile = await apiFetch<{ username?: string }>(
+            const token = await apiFetch<TokenData>(
               `/api/users/by-token/${mintedTokenId}`,
             )
-            if (profile?.username) {
-              await apiFetch(`/api/users/onboarding/${profile.username}`, {
-                method: 'PATCH',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ step: 5 }),
-              })
+            if (token?.username) {
+              const ownerAddr = result.ecdsaAddress as `0x${string}`
+              const tds = useTokenDataStore.getState()
+              tds.setTokensForAddress(ownerAddr, [token])
+              tds.setActiveTokenIdForAddress(ownerAddr, mintedTokenId)
+              tds.setLastAddress(ownerAddr)
               // eslint-disable-next-line no-console
-              console.log('[signin:diag] onboarding marked complete (step 5)', {
-                username: profile.username,
+              console.log('[signin:diag] active profile set, navigating to feed', {
+                username: token.username,
                 tokenId: mintedTokenId,
               })
+              navigate('/home', { replace: true })
             }
           }
         } catch (e) {
-          // Non-fatal: the user is signed in; if this fails they'll be sent
-          // through the welcome stepper once, harmless. Log for diagnostics.
+          // Non-fatal: session is set; the user can reach their profile via the
+          // confirm screen's button. Log for diagnostics.
           // eslint-disable-next-line no-console
-          console.warn('[signin:diag] onboarding-complete PATCH failed (non-fatal):', e)
+          console.warn('[signin:diag] active-token set failed (non-fatal):', e)
         }
       } catch (err) {
         // Non-fatal: the mint succeeded; the user can sign in later via the
