@@ -566,10 +566,16 @@ export class SponsorService {
         const [mintFee] = await nm.getMintFeeAndAddress(params.networkId)
         const [depositFee] = await nm.getDepositFeeAndAddress(params.networkId)
         const [authFee] = await nm.getAuthFeeAndAddress(params.networkId)
-        networkFees = BigInt(mintFee) + BigInt(depositFee) + BigInt(authFee)
+        // CRITICAL: CawProfile.payFee returns fee * 2 — each fee is accrued to
+        // BOTH the network fee address AND the buy-and-burn contract, so the ETH
+        // that must be present in msg.value is DOUBLE the raw fee. totalFeesPaid
+        // in mintAndDeposit is the sum of these doubled values. Mirror that here
+        // or msg.value - totalFeesPaid underflows (panic 0x11).
+        const rawFees = BigInt(mintFee) + BigInt(depositFee) + BigInt(authFee)
+        networkFees = rawFees * 2n
         console.log(
           `[sponsor:bootstrap] networkFees mint=${mintFee} deposit=${depositFee} auth=${authFee} ` +
-          `total=${networkFees} networkId=${params.networkId}`,
+          `raw=${rawFees} doubled(payFee*2)=${networkFees} networkId=${params.networkId}`,
         )
       } catch (e) {
         return {
