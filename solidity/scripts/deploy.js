@@ -2411,18 +2411,29 @@ async function writeAddressesForLocalInstall(deployer) {
  */
 function buildEnvBlock(env, addresses) {
   const block = { L1: {} };
-  // L1 contracts (per the buildDeploymentsBlock layout)
+  // L1 contracts (per the buildDeploymentsBlock layout).
+  // NOTE: SmartEOA and CawActionsERC1271_L1 MUST be here — the addresses.ts
+  // writer reads l1.SmartEOA / l1.CawActionsERC1271 and emits SMART_EOA_ADDRESS /
+  // CAW_ACTIONS_ERC1271_ADDRESS. Omitting them (task #196) made the writer think
+  // they were "not deployed" and comment them out, breaking the FE build (which
+  // imports SMART_EOA_ADDRESS) and the sponsor server. They are L1 contracts, not
+  // L2 — so they belong in this L1 list.
   const l1Keys = [
     'MintableCaw', 'CawProfile', 'CawProfileLedger_L1', 'CawNetworkManager',
     'CawProfileMinter', 'CawProfileQuoter', 'CawProfileLens', 'CawProfileMarketplace',
     'CawProfileURI', 'CawFontDataA', 'CawFontDataB', 'CawBuyAndBurn',
-    'MockSwapRouter', 'CawActions_L1',
+    'MockSwapRouter', 'CawActions_L1', 'CawActionsERC1271_L1', 'SmartEOA',
   ];
   for (const k of l1Keys) {
     if (addresses[k]) {
-      // CawProfileLedger_L1 → CawProfileLedger in the deployments block; CawActions_L1 → CawActions.
-      const dst = k === 'CawProfileLedger_L1' ? 'CawProfileLedger'
-                : k === 'CawActions_L1'  ? 'CawActions'
+      // *_L1 suffixed state keys map to their unsuffixed role in the env block:
+      //   CawProfileLedger_L1   → CawProfileLedger
+      //   CawActions_L1         → CawActions
+      //   CawActionsERC1271_L1  → CawActionsERC1271
+      // SmartEOA has no suffix and maps through unchanged.
+      const dst = k === 'CawProfileLedger_L1'  ? 'CawProfileLedger'
+                : k === 'CawActions_L1'        ? 'CawActions'
+                : k === 'CawActionsERC1271_L1' ? 'CawActionsERC1271'
                 : k;
       block.L1[dst] = addresses[k];
     }
