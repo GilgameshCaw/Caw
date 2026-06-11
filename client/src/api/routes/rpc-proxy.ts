@@ -205,9 +205,21 @@ async function forwardUpstream(chain: Chain, body: any): Promise<any> {
       if (res.ok) {
         return res.json()
       }
-      // Non-2xx: 4xx is a permanent client error (don't retry), 5xx is
-      // transient (retry once). Either way return shaped error if final.
-      if (res.status >= 500 && attempt === 0) {
+      // Non-2xx retry policy:
+      //   5xx           → transient upstream fault, retry once.
+      //   401 / 429     → Infura surfaces per-second compute-unit burst
+      //                   throttling as 401 "project ID does not have
+      //                   access to this network" (NOT a clean 429) when
+      //                   many pollers share one key. These windows clear
+      //                   in <500ms, so a single retry after a short delay
+      //                   rides them out. A genuinely dead key returns 401
+      //                   on the retry too and we surface it then — we never
+      //                   loop, so a real auth failure still fails fast (one
+      //                   extra 200ms, acceptable). See memory
+      //                   project_infura_401_is_burst_contention.
+      //   other 4xx     → permanent client error, don't retry.
+      const isTransient = res.status >= 500 || res.status === 401 || res.status === 429
+      if (isTransient && attempt === 0) {
         await new Promise(r => setTimeout(r, 200))
         continue
       }
