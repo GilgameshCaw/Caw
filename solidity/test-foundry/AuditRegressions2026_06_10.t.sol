@@ -266,6 +266,63 @@ contract Vault1RegressionTest is AuditRegressionBase {
 }
 
 // =============================================================================
+// INFO-1 — vault conservation invariant
+//   sum(cawDepositedByPeer) + sum(withdrawable) == CAW.balanceOf(cawProfile)
+// This is the invariant VAULT-1 violated. Asserted after each fund-moving op
+// across a deterministic sequence (mint+deposit, depositFor, withdraw-credit).
+// =============================================================================
+contract Vault1ConservationTest is AuditRegressionBase {
+
+    // Tracked sums (the contract exposes only per-key mappings, not totals).
+    function _assertConservation(
+        uint256 expectedDepositedByPeer,
+        uint256 expectedWithdrawable,
+        string memory label
+    ) internal view {
+        // Single peer (MAINNET_LZ_ID) and single token used in this test, so the
+        // tracked scalars ARE the sums.
+        assertEq(
+            cawProfile.cawDepositedByPeer(MAINNET_LZ_ID) + expectedWithdrawable,
+            cawToken.balanceOf(address(cawProfile)),
+            label
+        );
+        // Sanity: the deposited-by-peer scalar matches what we expect at this step.
+        assertEq(cawProfile.cawDepositedByPeer(MAINNET_LZ_ID), expectedDepositedByPeer, label);
+    }
+
+    function test_info1_conservation_holds_across_lifecycle() public {
+        // Step 0: empty vault.
+        _assertConservation(0, 0, "INFO-1: empty");
+
+        // Step 1: mint + deposit 500. vault balance 500, depositedByPeer 500,
+        // withdrawable 0. Conservation: 500 + 0 == 500.
+        _mintAndDeposit(USER, TOKEN_ID, 500 ether);
+        _assertConservation(500 ether, 0, "INFO-1: after mintAndDeposit");
+
+        // Step 2: depositFor +200 on a SECOND token. vault 700, depositedByPeer
+        // 700, withdrawable 0. 700 + 0 == 700.
+        cawProfile.mint(NETWORK_ID, USER2, "second", TOKEN_ID2, 0);
+        vm.startPrank(USER2);
+        cawToken.approve(address(cawProfile), 200 ether);
+        cawProfile.depositFor(NETWORK_ID, TOKEN_ID2, 200 ether, MAINNET_LZ_ID, 0);
+        vm.stopPrank();
+        _assertConservation(700 ether, 0, "INFO-1: after depositFor");
+
+        // Step 3: withdraw-credit 300 for TOKEN_ID via setWithdrawable. This
+        // moves 300 from depositedByPeer into withdrawable; vault balance is
+        // unchanged (CAW only leaves on actual withdrawTo). depositedByPeer 400,
+        // withdrawable 300. Conservation: 400 + 300 == 700.
+        uint32[] memory tids = new uint32[](1);
+        uint256[] memory amts = new uint256[](1);
+        tids[0] = TOKEN_ID;
+        amts[0] = 300 ether;
+        vm.prank(address(cawProfileLedger));
+        cawProfile.setWithdrawable(tids, amts);
+        _assertConservation(400 ether, 300 ether, "INFO-1: after setWithdrawable");
+    }
+}
+
+// =============================================================================
 // RT-1 regression
 // =============================================================================
 contract RT1RegressionTest is AuditRegressionBase {
