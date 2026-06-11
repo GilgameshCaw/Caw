@@ -320,6 +320,17 @@ export default function Onboarding() {
     // hardcoded chainId + unix-seconds timestamp) so the server's host/chain
     // binding matches. Best-effort: if it fails (e.g. indexer not caught up
     // after retries) we still let the user reach the confirm screen.
+    // TEMP DIAGNOSTIC (#209): trace every step of the post-mint sign-in so we
+    // can see in the console exactly where it fails (it currently dumps the user
+    // to /welcome with no session and no server-side verify request). Remove
+    // once the auto-sign-in is confirmed working.
+    // eslint-disable-next-line no-console
+    console.log('[signin:diag] handleBootstrapDone fired', {
+      hasResult: !!result,
+      ecdsaAddress: result?.ecdsaAddress,
+      hasSigner: typeof result?.signVerifyMessage === 'function',
+      txHash: result?.txHash,
+    })
     void (async () => {
       setSigningIn(true)
       try {
@@ -330,7 +341,14 @@ export default function Onboarding() {
           `Host: ${host}\n` +
           `ChainId: ${baseSepolia.id}\n` +
           `Timestamp: ${timestamp}`
+        // eslint-disable-next-line no-console
+        console.log('[signin:diag] about to sign verify message', { host, message })
         const signature = await result.signVerifyMessage(message)
+        // eslint-disable-next-line no-console
+        console.log('[signin:diag] signed OK, posting /api/auth/verify', {
+          sigPrefix: signature?.slice(0, 14),
+          expectedOwner: result?.ecdsaAddress,
+        })
         // /api/auth/verify returns 202 while the fresh mint isn't indexed yet;
         // retryOnIndexing backs off and re-tries the SAME (message, signature)
         // — safe because the server's one-time-sig guard runs after the 202
@@ -347,6 +365,11 @@ export default function Onboarding() {
             body: JSON.stringify({ message, signature }),
           })
         )
+        // eslint-disable-next-line no-console
+        console.log('[signin:diag] verify SUCCESS, setting session', {
+          tokenIds: data?.authorizedTokenIds,
+          addresses: data?.authorizedAddresses,
+        })
         setSession(
           data.sessionToken,
           data.authorizedTokenIds,
@@ -357,6 +380,12 @@ export default function Onboarding() {
         // Non-fatal: the mint succeeded; the user can sign in later via the
         // passkey/recovery path. Log for diagnostics.
         console.warn('[onboarding] post-mint sign-in failed (mint OK):', err)
+        // eslint-disable-next-line no-console
+        console.warn('[signin:diag] FAILED detail', {
+          name: (err as Error)?.name,
+          message: (err as Error)?.message,
+          stack: (err as Error)?.stack?.split('\n').slice(0, 4).join(' | '),
+        })
       } finally {
         setSigningIn(false)
       }
