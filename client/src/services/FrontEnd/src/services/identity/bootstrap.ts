@@ -350,10 +350,19 @@ export async function bootstrapNewUser(opts: {
   // in a closure only — nothing new is persisted.
   const verifyAccount = privateKeyToAccount(bytesToHex(keypair.privateKey))
 
+  // CRITICAL: the minted profile is owned by `recoveredRecipient` (the delegated
+  // EOA the sponsor server set as `recipient` — recovered from the auth tuple),
+  // NOT keypair.address. /api/auth/verify looks up the User by the address the
+  // signature recovers to, so we MUST report the owner address as ecdsaAddress.
+  // verifyAccount signs with keypair.privateKey; for the verify to resolve to the
+  // profile owner, that recovered signer must equal recoveredRecipient — which it
+  // does, since recoveredRecipient is exactly the authority of the tuple signed by
+  // keypair.privateKey. Returning keypair.address here (≠ recoveredRecipient in
+  // practice) made verify look up a non-existent User → no session → /welcome.
   return {
     txHash,
     backupBlob,
-    ecdsaAddress: keypair.address,
+    ecdsaAddress: recoveredRecipient,
     signVerifyMessage: (message: string) => verifyAccount.signMessage({ message }),
   }
 }
