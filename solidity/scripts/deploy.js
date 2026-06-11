@@ -2,15 +2,9 @@
 /**
  * Multi-Chain Deployment Script for CAW Protocol
  *
- * !!! BRANCH GUARD !!!
- * The contracts on master have been renamed (Client → Network) but the
- * matching ABI regen + FE/backend rename live on `contract-support-v2`.
- * Running this from master would write `CawNetworkManager` keys into
- * client/src/abi/deployments.ts and break every consumer on master.
- * Deploy must be run from `contract-support-v2` (or the eventual merge
- * branch) where the FE/backend keys also expect the new names. The guard
- * below enforces this — override with CAW_DEPLOY_FROM_MASTER=1 only if
- * you know what you're doing.
+ * Deploys from master. (The former contract-support-v2 branch split for the
+ * Client→Network rename is obsolete — contract source and FE/backend consumers
+ * are reconciled on master.)
  *
  * This script replaces the old Truffle migrations (migrations/1_initial_migration.js).
  *
@@ -2448,24 +2442,9 @@ function buildEnvBlock(env, addresses) {
 // ============================================
 
 async function main() {
-  // Branch guard — see file header. The Client→Network rename split the
-  // contract surface from its FE/backend consumers; running this from
-  // master would emit deployments.ts keys the FE doesn't recognize.
-  if (!process.env.CAW_DEPLOY_FROM_MASTER) {
-    try {
-      const { execSync } = require('child_process');
-      const branch = execSync('git rev-parse --abbrev-ref HEAD', { encoding: 'utf8' }).trim();
-      if (branch === 'master' || branch === 'main') {
-        console.error('\n[deploy.js] Refusing to deploy from branch ' + branch + '.');
-        console.error('  The contract rename (Client → Network) is on master, but the');
-        console.error('  matching ABI + FE/backend rename lives on contract-support-v2.');
-        console.error('  Switch branches, or set CAW_DEPLOY_FROM_MASTER=1 to override.\n');
-        process.exit(1);
-      }
-    } catch (e) {
-      if (e.code !== 1) console.warn('[deploy.js] branch guard skipped: ' + e.message);
-    }
-  }
+  // Branch guard removed 2026-06-11: the Client→Network split with
+  // contract-support-v2 is obsolete — contract source + consumers are
+  // reconciled on master, so deploys run from master directly.
 
   const args = process.argv.slice(2);
 
