@@ -39,7 +39,13 @@ async function isAcceptablePeerApiUrl(rawUrl: string): Promise<boolean> {
 
 const InstanceRegistryConfig = z.object({
   l1RpcUrl: z.string(),
-  networkId: z.number().int(),
+  /** Operator-tier Network ID. Optional in config because start() resolves it
+   *  from the NETWORK_ID / legacy CLIENT_ID env via getNetworkId() first; the
+   *  config value is only a fallback. `clientId` is accepted as the pre-rename
+   *  alias so older local config.json files (client→network rename) still
+   *  validate. See utils/networkId.ts for the same env-fallback policy. */
+  networkId: z.number().int().optional(),
+  clientId: z.number().int().optional(),
   apiUrl: z.string().optional(),
   /** How often to refresh the peer list. Defaults to 60s — registrations
    *  are rare so this can be slow. Set lower in tests if needed. */
@@ -308,7 +314,7 @@ export const instanceRegistryService: Service = {
   start(rawCfg, _ctx) {
     const cfg = InstanceRegistryConfig.parse(rawCfg)
     const l1RpcUrl = getL1HttpRpcUrl() || cfg.l1RpcUrl
-    const networkId = Number(getNetworkId() || cfg.networkId)
+    const networkId = Number(getNetworkId() || cfg.networkId || cfg.clientId)
     const apiUrl = process.env.INSTANCE_API_URL || cfg.apiUrl
     const pollIntervalMs = cfg.pollIntervalMs ?? 60_000
 
