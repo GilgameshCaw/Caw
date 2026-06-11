@@ -446,6 +446,18 @@ contract CawNetworkManager {
     _maybeBroadcastFreeAuth(networkId, wasZero, authFee == 0);
   }
 
+  /// @dev ACCT-1 (audit 2026-06-11): fees are accrued per-ADDRESS in
+  ///      CawProfile.accruedFees, and CawProfile.withdrawFees() lets ANY address
+  ///      pull its own accrued balance at any time — independent of whether it is
+  ///      still the network's current feeAddress. So rotating feeAddress here does
+  ///      NOT orphan the old address's fees: the old address keeps its claim and
+  ///      can withdraw whenever it wants. We deliberately do NOT require the old
+  ///      address be drained first — that would let a non-withdrawing old address
+  ///      block fee-address changes (the opposite of what we want). The only
+  ///      unrecoverable case is an old feeAddress that is a contract which can
+  ///      neither call withdrawFees nor receive the swapped CAW — an operator
+  ///      self-inflicted edge, not a protocol fund risk. Operators SHOULD pull
+  ///      via withdrawFees before retiring an address.
   function setFeeAddress(uint32 networkId, address feeAddress) public onlyNetworkOwnerNotFeeLocked(networkId) {
     // createNetwork enforces non-zero feeAddress; mirror it here so a
     // network owner can't accidentally (or maliciously) zero it out and
