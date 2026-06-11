@@ -40,7 +40,11 @@ contract CawProfileQuoter {
 
   // Remaining single-purpose selectors still present on CawProfileLedger.
   bytes4 private constant _updateOwnersSel  = bytes4(keccak256("updateOwners(uint32[],address[],uint64[])"));
-  bytes4 private constant _allowFreeAuthSel = bytes4(keccak256("setAllowFreeAuth(uint32,bool)"));
+  // ACC-1 (audit 2026-06-11): must match the real 3-arg signature on
+  // CawProfileLedger (setAllowFreeAuth(uint32,bool,uint64)) — the stale 2-arg
+  // selector has no entry in CawProfile.gasBaseFor, so gasLimitFor returned 0 and
+  // the quote covered 0 destination gas, underfunding broadcastAllowFreeAuth.
+  bytes4 private constant _allowFreeAuthSel = bytes4(keccak256("setAllowFreeAuth(uint32,bool,uint64)"));
 
   constructor(address _cawProfile) {
     cawProfile = ICawProfileForQuoter(_cawProfile);
@@ -315,8 +319,10 @@ contract CawProfileQuoter {
   /// @param payInLzToken True to quote in ZRO token, false for native gas.
   function broadcastAllowFreeAuthQuote(uint32 networkId, uint32 lzDestId, bool payInLzToken) public view returns (MessagingFee memory quote) {
     if (lzDestId == cawProfile.mainnetLzId()) return MessagingFee(0, 0);
-    // Payload: selector(4) + networkId(32) + allow(32) = 68 bytes. Matches what broadcastAllowFreeAuth sends.
-    bytes memory payload = abi.encodeWithSelector(_allowFreeAuthSel, networkId, false);
+    // Payload: selector(4) + networkId(32) + allow(32) + seq(32) = 100 bytes.
+    // Matches what broadcastAllowFreeAuth sends (3-arg, includes the seq). The seq
+    // value doesn't affect the quote size, so a placeholder uint64(0) is fine here.
+    bytes memory payload = abi.encodeWithSelector(_allowFreeAuthSel, networkId, false, uint64(0));
     return cawProfile.lzQuote(networkId, _allowFreeAuthSel, 0, payload, lzDestId, payInLzToken);
   }
 
