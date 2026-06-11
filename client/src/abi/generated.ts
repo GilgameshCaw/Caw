@@ -929,6 +929,20 @@ export const cawActionsArchiveAbi = [
         type: 'uint256',
         indexed: true,
       },
+      { name: 'reason', internalType: 'uint8', type: 'uint8', indexed: false },
+    ],
+    name: 'ChallengeDropped',
+  },
+  {
+    type: 'event',
+    anonymous: false,
+    inputs: [
+      {
+        name: 'submissionId',
+        internalType: 'uint256',
+        type: 'uint256',
+        indexed: true,
+      },
       {
         name: 'checkpointId',
         internalType: 'uint256',
@@ -3378,6 +3392,7 @@ export const cawProfileLedgerAbi = [
     inputs: [
       { name: 'cawNetworkId', internalType: 'uint32', type: 'uint32' },
       { name: 'tokenId', internalType: 'uint32', type: 'uint32' },
+      { name: 'owner', internalType: 'address', type: 'address' },
     ],
     name: 'auth',
     outputs: [],
@@ -3447,6 +3462,7 @@ export const cawProfileLedgerAbi = [
       { name: 'cawNetworkId', internalType: 'uint32', type: 'uint32' },
       { name: 'tokenId', internalType: 'uint32', type: 'uint32' },
       { name: 'amount', internalType: 'uint256', type: 'uint256' },
+      { name: 'owner', internalType: 'address', type: 'address' },
     ],
     name: 'deposit',
     outputs: [],
@@ -5513,6 +5529,7 @@ export const cawProfileMinterAbi = [
     name: 'WithdrawUnlocked',
   },
   { type: 'error', inputs: [], name: 'AlreadyUnlocked' },
+  { type: 'error', inputs: [], name: 'EthSweepFailed' },
   { type: 'error', inputs: [], name: 'KycNotConfigured' },
   { type: 'error', inputs: [], name: 'KycRequired' },
   { type: 'error', inputs: [], name: 'LevelAlreadySet' },

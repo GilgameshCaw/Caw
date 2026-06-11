@@ -46,6 +46,7 @@
  * Usage:
  *   node scripts/verify-deploy-wiring.js
  */
+require('dotenv').config(); // load .env (RPC URLs) — deploy.js does this; standalone runs need it too
 const fs = require('fs');
 const path = require('path');
 const { ethers } = require('ethers');
