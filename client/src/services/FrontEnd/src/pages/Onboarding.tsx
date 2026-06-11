@@ -376,6 +376,40 @@ export default function Onboarding() {
           data.authorizedAddresses,
           data.expiresAt,
         )
+
+        // Mark onboarding COMPLETE (step 5). A sponsored Population-B user
+        // finishes the entire flow here in /onboarding — but the
+        // NftTransferWatcher creates their User row at onboardingStep=0 (the
+        // default for fresh mints, so legacy Population-A users still get the
+        // welcome stepper). Without this, OnboardingGuard sees step<5 and
+        // redirects the freshly-minted, freshly-signed-in user straight to
+        // /welcome/:username — which is exactly the "nothing happened" symptom.
+        // Best-effort: the tokenId comes from the verify response.
+        try {
+          const mintedTokenId = data.authorizedTokenIds?.[0]
+          if (mintedTokenId != null) {
+            const profile = await apiFetch<{ username?: string }>(
+              `/api/users/by-token/${mintedTokenId}`,
+            )
+            if (profile?.username) {
+              await apiFetch(`/api/users/onboarding/${profile.username}`, {
+                method: 'PATCH',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ step: 5 }),
+              })
+              // eslint-disable-next-line no-console
+              console.log('[signin:diag] onboarding marked complete (step 5)', {
+                username: profile.username,
+                tokenId: mintedTokenId,
+              })
+            }
+          }
+        } catch (e) {
+          // Non-fatal: the user is signed in; if this fails they'll be sent
+          // through the welcome stepper once, harmless. Log for diagnostics.
+          // eslint-disable-next-line no-console
+          console.warn('[signin:diag] onboarding-complete PATCH failed (non-fatal):', e)
+        }
       } catch (err) {
         // Non-fatal: the mint succeeded; the user can sign in later via the
         // passkey/recovery path. Log for diagnostics.
