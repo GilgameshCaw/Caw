@@ -617,16 +617,28 @@ contract CawProfileLedger is
   }
 
   /// @notice Mark a token as authenticated with a network. Only used in mainnet co-deployment mode.
-  function auth(uint32 cawNetworkId, uint32 tokenId) public onlyOnMainnet {
+  /// @dev RT-1 sibling (audit 2026-06-11): like `deposit`, when `owner != address(0)`
+  ///      this also sets the ledger's ownerOf. The standalone authenticate path
+  ///      (CawProfile._authenticateBody, bypassLZ) can run on a token whose ledger
+  ///      ownerOf was never set (plain `mint` then `authenticate`, no deposit) —
+  ///      leaving ownerOf == address(0) bricks every CawAction with SessionExpired.
+  ///      The internal `deposit` caller passes address(0) (it set ownerOf itself).
+  function auth(uint32 cawNetworkId, uint32 tokenId, address owner) public onlyOnMainnet {
     emit Authenticated(cawNetworkId, tokenId);
     authenticated[cawNetworkId][tokenId] = true;
+    if (owner != address(0)) _setOwnerOf(tokenId, owner, uint64(block.number));
   }
 
   /// @notice Credit a deposit from a co-deployed L1 contract (no LayerZero involved).
   /// @dev Only callable in mainnet co-deployment mode (`bypassLZ && msg.sender == cawProfile`).
-  function deposit(uint32 cawNetworkId, uint32 tokenId, uint256 amount) external onlyOnMainnet {
+  /// @dev RT-1 (audit 2026-06-10): when `owner != address(0)` (mint+deposit path)
+  ///      set the ledger ownerOf so the freshly minted token is operable. The
+  ///      existing-token `depositFor` path passes address(0) to skip it
+  ///      (re-setting would bump epochs and kill live sessions every deposit).
+  function deposit(uint32 cawNetworkId, uint32 tokenId, uint256 amount, address owner) external onlyOnMainnet {
     totalCaw += amount;
-    auth(cawNetworkId, tokenId);
+    if (owner != address(0)) _setOwnerOf(tokenId, owner, uint64(block.number));
+    auth(cawNetworkId, tokenId, address(0)); // ownerOf already handled above
     addToBalance(tokenId, amount);
   }
 

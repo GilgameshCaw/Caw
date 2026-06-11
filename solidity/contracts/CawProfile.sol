@@ -335,6 +335,13 @@ contract CawProfile is
 
     CAW.transferFrom(msg.sender, address(this), depositAmount);
     unchecked { totalCaw += depositAmount; }
+    // VAULT-1 (audit 2026-06-10): mirror `depositFor` — credit the per-peer
+    // deposit ledger. Without this, the matching `setWithdrawable` debit
+    // (`cawDepositedByPeer[srcEid] -= totalAmount`) underflow-reverts on the
+    // user's first withdraw, permanently locking the deposited CAW. Runs for
+    // BOTH branches because the debit fires for both (srcEid == lzDestId by
+    // construction on the return path).
+    cawDepositedByPeer[lzDestId] += depositAmount;
     _addChosenChain(newId, lzDestId);
 
     uint256 totalFeesPaid = 0;
@@ -354,7 +361,13 @@ contract CawProfile is
     uint256 lzEthAmount = msg.value - totalFeesPaid;
 
     if (lzDestId == mainnetLzId) {
-      cawProfileLedger.deposit(cawNetworkId, newId, depositAmount);
+      // RT-1 (audit 2026-06-10): pass `owner` so the ledger sets ownerOf for the
+      // freshly minted token (mint+deposit otherwise leaves ownerOf==address(0)
+      // and every CawAction reverts SessionExpired). depositFor passes
+      // address(0) below to skip the owner-set on existing tokens. Sync lives
+      // here (size-forced) rather than a separate ledger.mint call: the clean
+      // mint-mirror pushed CawProfile +68 bytes over EIP-170.
+      cawProfileLedger.deposit(cawNetworkId, newId, depositAmount, owner);
       if (sessionExtra.length > 0) {
         (address sk, uint64 ex, uint256 sl, uint64 tr) = _decodeSession(sessionExtra);
         cawProfileLedger.registerSessionFromL1(owner, sk, ex, sl, tr);
@@ -540,7 +553,12 @@ contract CawProfile is
     _addChosenChain(tokenId, lzDestId);
 
     if (lzDestId == mainnetLzId) {
-      cawProfileLedger.auth(tokenId, cawNetworkId);
+      // Args were previously swapped (tokenId, cawNetworkId) — both uint32 so it
+      // compiled, but set authenticated[tokenId][cawNetworkId] (wrong key).
+      // Correct order is (cawNetworkId, tokenId). Pass `owner` so the ledger sets
+      // ownerOf — the RT-1 sibling: a token authenticated without a prior deposit
+      // would otherwise keep ownerOf == address(0) and brick every CawAction.
+      cawProfileLedger.auth(cawNetworkId, tokenId, owner);
       _refundUnusedLzEth(lzEthAmount);
     } else {
       uint32[] memory tokenIds;
@@ -633,7 +651,8 @@ contract CawProfile is
     uint256 lzEthAmount = msg.value - totalFeesPaid;
 
     if (lzDestId == mainnetLzId) {
-      cawProfileLedger.deposit(cawNetworkId, tokenId, amount);
+      // address(0): existing token, ownerOf already set — do not re-set (RT-1).
+      cawProfileLedger.deposit(cawNetworkId, tokenId, amount, address(0));
       _refundUnusedLzEth(lzEthAmount);
     } else {
       uint32[] memory tokenIds;
@@ -717,6 +736,18 @@ contract CawProfile is
    * @param lzDestId The destination chain whose pending-transfer queue to flush
    * @param lzTokenAmount LZ token amount for fees (usually 0)
    */
+  /// @dev ACCEPTED RISK — MP-SESSION-1 (audit 2026-06-10): on cross-chain
+  ///      deployments (lzDestId != mainnetLzId) the L1 NFT transfers atomically
+  ///      here, but the L2 ledger only learns the new owner when the LZ
+  ///      `updateOwners` message lands (minutes–hours later). During that window
+  ///      the SELLER's pre-existing wallet-scoped session keys remain valid on
+  ///      L2, so the seller can spend/withdraw the token's L2 CAW balance after
+  ///      sale. This is a KNOWN, ACCEPTED window — NOT mitigated on-chain. The
+  ///      buyer is warned on the front end that the L2 balance is not guaranteed
+  ///      to transfer atomically with the NFT. (bypassLZ co-deployments are
+  ///      immune: `_afterTokenTransfer` calls `setOwnerOf` synchronously, which
+  ///      bumps the owner session epoch at handover.) Future hardening (escrow /
+  ///      L2 sale-pending freeze) is a deliberate post-launch enhancement.
   function transferAndSync(address to, uint256 tokenId, uint32 lzDestId, uint256 lzTokenAmount) external payable {
     address owner = ownerOf(tokenId);
     if (!(owner == msg.sender || isApprovedForAll(owner, msg.sender) || getApproved(tokenId) == msg.sender)) revert NotApproved();

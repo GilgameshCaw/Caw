@@ -1090,6 +1090,17 @@ contract CawActions {
     if (preVerifiedSigner != address(0)) {
       ba.signer = preVerifiedSigner;
       ba.isSessionKey = false;
+      // MIX-1 / MIX-1-ESC (audit 2026-06-10): the ERC-1271 sibling verifies the
+      // batch digest against ownerOf(senderId0) ONLY. Without enforcing that
+      // every action shares senderId0, a malicious ERC-1271 owner could mix a
+      // victim's senderId into the group and (a) force-spend the victim's CAW or
+      // (b) inject a session key onto the victim via a qs: OTHER action whose
+      // owner resolves to the victim. Mirror the MixedSenders guard the ECDSA
+      // multi-action path enforces below.
+      for (uint256 i = 1; i < groupSize; ) {
+        if (groupActions[i].senderId != groupActions[0].senderId) revert MixedSenders();
+        unchecked { ++i; }
+      }
     } else if (groupSize == 1) {
       (ba.signer, ba.isSessionKey) = _verifySignatureMem(v, r, s, groupActions[0]);
       if (ba.isSessionKey) {
