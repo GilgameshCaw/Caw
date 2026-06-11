@@ -371,7 +371,7 @@ const PostMintOnboarding: React.FC<PostMintOnboardingProps> = ({ username, token
       // Wait briefly for them to settle before calling the contract.
       for (let attempt = 0; attempt < 10; attempt++) {
         try {
-          setStakedAmountBefore(activeToken?.stakedAmount ?? 0n)
+          setStakedAmountBefore(typeof activeToken?.stakedAmount === 'bigint' ? activeToken.stakedAmount : 0n)
           if (needsApproval) {
             setIsApprovePending(true)
             await approve.call()
@@ -660,7 +660,7 @@ const PostMintOnboarding: React.FC<PostMintOnboardingProps> = ({ username, token
     const qsDone = qsComplete || hasActiveSession
     const checks: Record<StepId, boolean> = {
       verify:    isProfileAuthorized,
-      stake:     depositPending || stakeConfirmed || !!(activeToken?.stakedAmount && activeToken.stakedAmount > 0n),
+      stake:     depositPending || stakeConfirmed || (typeof activeToken?.stakedAmount === 'bigint' && activeToken.stakedAmount > 0n),
       dms:       dmDone,
       quicksign: qsDone,
       setup:     dmDone && qsDone,
@@ -686,7 +686,7 @@ const PostMintOnboarding: React.FC<PostMintOnboardingProps> = ({ username, token
   }, [isProfileAuthorized, activeToken?.stakedAmount, dmAlreadyEnabled, dmComplete, hasActiveSession, qsComplete, stakeConfirmed, currentStep, depositPending])
 
   // Auto-advance past steps that are already completed (but not when user explicitly clicked a step)
-  const isStakeComplete = depositPending || stakeConfirmed || !!(activeToken?.stakedAmount && activeToken.stakedAmount > 0n)
+  const isStakeComplete = depositPending || stakeConfirmed || (typeof activeToken?.stakedAmount === 'bigint' && activeToken.stakedAmount > 0n)
   const isDmsComplete = dmComplete || !!dmAlreadyEnabled
   const isQsComplete = qsComplete || hasActiveSession
   useEffect(() => {
@@ -883,7 +883,7 @@ const PostMintOnboarding: React.FC<PostMintOnboardingProps> = ({ username, token
           <div className="w-48 h-48 min-[800px]:w-64 min-[800px]:h-64 shadow-xl rounded-2xl overflow-hidden border border-yellow-500/30">
             <UsernameSvg username={username} />
           </div>
-          {activeToken?.stakedAmount != null && activeToken.stakedAmount > 0n && (
+          {typeof activeToken?.stakedAmount === 'bigint' && activeToken.stakedAmount > 0n && (
             <p className="text-yellow-500 text-sm mt-2 font-medium">
               {Number(formatUnits(activeToken.stakedAmount, 18)).toLocaleString('en-US', { maximumFractionDigits: 0 })} CAW staked
             </p>
@@ -1281,7 +1281,7 @@ const PostMintOnboarding: React.FC<PostMintOnboardingProps> = ({ username, token
 
         {/* ── Step 5: Follow Users (full-width, no two-column) ── */}
         {currentStep === 3 && (() => {
-          const stakedAmount = activeToken?.stakedAmount ?? 0n
+          const stakedAmount = typeof activeToken?.stakedAmount === 'bigint' ? activeToken.stakedAmount : 0n
           const effectiveStake = stakedAmount + (depositPending ? pendingDepositAmount : 0n)
           const MIN_STAKE_FOLLOW = 30000n * 10n**18n
           const hasEnoughStake = effectiveStake >= MIN_STAKE_FOLLOW || stakeConfirmed

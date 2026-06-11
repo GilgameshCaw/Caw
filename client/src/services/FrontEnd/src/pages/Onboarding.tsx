@@ -398,11 +398,29 @@ export default function Onboarding() {
           const mintedTokenId =
             idx >= 0 ? data.authorizedTokenIds[idx] : data.authorizedTokenIds[0]
           if (mintedTokenId != null) {
-            const token = await apiFetch<TokenData>(
+            // NOTE: /api/users/by-token returns the DB row shape — it does NOT
+            // carry the on-chain bigint fields TokenData declares
+            // (withdrawable / ownerBalance / stakedAmount). Casting the raw JSON
+            // to TokenData leaves those undefined, and any component doing
+            // `activeToken.stakedAmount > 0n` then throws "Cannot mix BigInt and
+            // other types" — crashing the feed + /welcome render. Build a
+            // properly-typed TokenData with real bigints (0n for a fresh mint;
+            // the on-chain refresh updates them once the deposit confirms).
+            const row = await apiFetch<{ username?: string; address?: string }>(
               `/api/users/by-token/${mintedTokenId}`,
             )
-            if (token?.username) {
+            if (row?.username) {
               const ownerAddr = result.ecdsaAddress as `0x${string}`
+              const token: TokenData = {
+                tokenId: mintedTokenId,
+                username: row.username,
+                address: ownerAddr,
+                owner: ownerAddr,
+                withdrawable: 0n,
+                ownerBalance: 0n,
+                stakedAmount: 0n,
+                cawonce: 0,
+              }
               const tds = useTokenDataStore.getState()
               tds.setTokensForAddress(ownerAddr, [token])
               tds.setActiveTokenIdForAddress(ownerAddr, mintedTokenId)
