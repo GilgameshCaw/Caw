@@ -396,6 +396,17 @@ contract CawActionsArchive is ReentrancyGuard, OnlyOnce, OApp {
   ///   it via setPeer for a fresh eid — existing peers are immutable).
   event ChallengeDeliveryFailed(bytes payload, bytes reason);
 
+  /// @notice Emitted when a delivered challenge is silently dropped by
+  ///         _processChallenge instead of recording challengeDelivered. Without
+  ///         this, a challenger who relayed with a wrong/stale networkId (or for
+  ///         an already-resolved submission) gets NO on-chain signal — they burn
+  ///         the LZ fee and only discover the no-op when resolveChallenge later
+  ///         reverts "No challenge delivered". The reason code lets monitors and
+  ///         the challenger detect+retry within the challenge window. (CCR-1,
+  ///         audit 2026-06-11.) reason: 1=not-pending, 2=networkId-mismatch,
+  ///         3=array-length-mismatch.
+  event ChallengeDropped(uint256 indexed submissionId, uint8 reason);
+
   /// @dev Receives correct checkpoint hash from CawChallengeRelay via LZ.
   ///      The default OAppReceiver peer check (msg.sender == endpoint, and
   ///      origin.sender == peers[srcEid]) restricts this to the canonical relay
@@ -446,9 +457,11 @@ contract CawActionsArchive is ReentrancyGuard, OnlyOnce, OApp {
       abi.decode(payload, (uint256, uint32, uint256[], bytes32[]));
 
     Submission storage sub = submissions[submissionId];
-    if (sub.status != Status.PENDING) return;
-    if (sub.networkId != networkId) return;
-    if (cps.length != hashes.length) return;
+    // CCR-1: signal each silent-drop so the challenger/monitors can detect+retry
+    // within the window instead of only learning at resolveChallenge time.
+    if (sub.status != Status.PENDING) { emit ChallengeDropped(submissionId, 1); return; }
+    if (sub.networkId != networkId)   { emit ChallengeDropped(submissionId, 2); return; }
+    if (cps.length != hashes.length)  { emit ChallengeDropped(submissionId, 3); return; }
 
     uint256 start = sub.startCheckpointId;
     uint256 end = sub.endCheckpointId;
