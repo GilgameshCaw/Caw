@@ -14,7 +14,7 @@
  * knows what they'll receive. No separate deposit step exists.
  */
 
-import { useState, useEffect, useMemo, useRef } from 'react'
+import { useState, useEffect, useMemo } from 'react'
 import { useReadContract } from 'wagmi'
 import { cawCostForLength } from '~/utils/cawCostSchedule'
 import { cawProfileMinterAbi } from '~/../../../abi/generated'
@@ -25,7 +25,7 @@ import { useT } from '~/i18n/I18nProvider'
 import { usePriceStore } from '~/store/tokenDataStore'
 import { formatUsd } from '~/utils/numberFormat'
 import UsernamePreviewCard from '~/components/username/UsernamePreviewCard'
-import UsernamePricingTable from '~/components/username/UsernamePricingTable'
+import UsernameInputCard, { BoxedPricingTrigger } from '~/components/username/UsernameInputCard'
 
 const DEBOUNCE_MS = 500
 
@@ -82,18 +82,6 @@ export default function UsernameStep({
   const { isDark } = useTheme()
   const t = useT()
   const cawPriceUsd = usePriceStore(s => s.priceMap['a-hunters-dream']) as number | undefined
-
-  const [showPricingTooltip, setShowPricingTooltip] = useState(false)
-  const tooltipCloseTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
-
-  const openTooltip = () => {
-    if (tooltipCloseTimer.current) clearTimeout(tooltipCloseTimer.current)
-    setShowPricingTooltip(true)
-  }
-  const scheduleCloseTooltip = () => {
-    if (tooltipCloseTimer.current) clearTimeout(tooltipCloseTimer.current)
-    tooltipCloseTimer.current = setTimeout(() => setShowPricingTooltip(false), 120)
-  }
 
   // Cost depends on username length — shorter = much more expensive. The
   // burn cost is paid in CAW at mint time and locked forever.
@@ -198,9 +186,14 @@ export default function UsernameStep({
 
   const mutedClass = isDark ? 'text-white/50' : 'text-gray-500'
   const strongClass = isDark ? 'text-white' : 'text-gray-900'
-  const borderBase = isDark ? 'border-white/20' : 'border-gray-300'
-  const borderFocus = 'focus:outline-none focus:ring-2 focus:ring-yellow-500/50 focus:border-yellow-500'
-  const inputBg = isDark ? 'bg-white/5' : 'bg-white'
+
+  // The shared UsernameInputCard's in-field status mark takes a single nullable
+  // bool. Collapse the page's three gate conditions (taken / too-expensive /
+  // below-min) into it so the green-check / red-x affordance matches the
+  // original inline logic exactly.
+  const showGreen = !isTyping && usernameAvailable === true && !nameTooExpensive && !belowMinLength
+  const showRed = !isTyping && (usernameAvailable === false || nameTooExpensive || belowMinLength) && username.length > 0
+  const availabilityForCard: boolean | null = showGreen ? true : showRed ? false : null
 
   return (
     <div className="flex flex-col md:flex-row md:gap-8 md:items-start">
@@ -252,125 +245,71 @@ export default function UsernameStep({
           {t('onboarding.username.label')}
         </label>
 
-        <div className="relative">
-          <input
-            type="text"
-            value={username}
-            onChange={e => onUsernameChange(e.target.value.toLowerCase())}
-            placeholder={t('onboarding.username.placeholder')}
-            maxLength={24}
-            autoComplete="off"
-            spellCheck={false}
-            className={`
-              w-full px-4 py-3 pr-10 rounded-xl border text-sm transition-colors
-              ${inputBg} ${strongClass} ${borderBase} ${borderFocus}
-            `}
-          />
-
-          {/* Status indicator */}
-          <div className="absolute right-3 top-1/2 -translate-y-1/2">
-            {isTyping && username.length > 0 && (
-              <svg
-                className="w-4 h-4 animate-spin text-yellow-500"
-                fill="none"
-                viewBox="0 0 24 24"
-              >
-                <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
-                <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
-              </svg>
-            )}
-            {!isTyping && usernameAvailable === true && !nameTooExpensive && !belowMinLength && (
-              <svg className="w-4 h-4 text-green-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
-              </svg>
-            )}
-            {!isTyping && (usernameAvailable === false || nameTooExpensive || belowMinLength) && username.length > 0 && (
-              <svg className="w-4 h-4 text-red-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
-              </svg>
-            )}
-          </div>
-        </div>
-
-        {/* Hint row: cost on the left, availability / gift-gate state on the right */}
-        <div className="min-h-[1.25rem] flex items-start justify-between gap-3">
-          <div className="flex-1 text-left">
-            {cawCost > 0 && (
-              <p className={`text-xs ${nameTooExpensive ? 'text-red-500' : mutedClass} flex items-center gap-1`}>
-                <span>Mint cost:</span>
-                <span className={nameTooExpensive ? 'text-red-500 font-semibold' : strongClass}>
-                  {formatCawCompact(cawCost)} CAW
-                </span>
-                {usdCost !== null && !nameTooExpensive && (
-                  <span className={mutedClass}>(~${formatUsd(usdCost)})</span>
+        {/* Username input + pricing popover — shared UsernameInputCard (boxed
+            variant), also used by /usernames/new (pill variant). The boxed
+            status mark (spinner / check / x) is driven by availabilityForCard,
+            which folds the gift-gate conditions into a single nullable bool.
+            The cost/hint row is page-specific (gift-gate copy) so it stays here;
+            BoxedPricingTrigger owns the inline pricing popover. */}
+        <UsernameInputCard
+          variant="boxed"
+          username={username}
+          onUsernameChange={val => onUsernameChange(val.toLowerCase())}
+          placeholder={t('onboarding.username.placeholder')}
+          maxLength={24}
+          cawPriceUsd={cawPriceUsd}
+          giftCaw={giftCaw}
+          isTyping={isTyping}
+          usernameAvailable={availabilityForCard}
+          showAvailabilityMark={true}
+          costRow={
+            <div className="min-h-[1.25rem] flex items-start justify-between gap-3">
+              <div className="flex-1 text-left">
+                {cawCost > 0 && (
+                  <p className={`text-xs ${nameTooExpensive ? 'text-red-500' : mutedClass} flex items-center gap-1`}>
+                    <span>Mint cost:</span>
+                    <span className={nameTooExpensive ? 'text-red-500 font-semibold' : strongClass}>
+                      {formatCawCompact(cawCost)} CAW
+                    </span>
+                    {usdCost !== null && !nameTooExpensive && (
+                      <span className={mutedClass}>(~${formatUsd(usdCost)})</span>
+                    )}
+                    <BoxedPricingTrigger cawPriceUsd={cawPriceUsd} giftCaw={giftCaw} />
+                  </p>
                 )}
-                {/* Tooltip trigger */}
-                <span
-                  className="relative inline-flex"
-                  onMouseEnter={openTooltip}
-                  onMouseLeave={scheduleCloseTooltip}
-                >
-                  <button
-                    type="button"
-                    aria-label={t('new_profile.pricing_title')}
-                    className={`inline-flex items-center justify-center transition-colors ${
-                      isDark ? 'text-white/40 hover:text-white' : 'text-gray-400 hover:text-gray-700'
-                    }`}
-                    onFocus={openTooltip}
-                    onBlur={scheduleCloseTooltip}
-                  >
-                    <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
-                    </svg>
-                  </button>
-                  {showPricingTooltip && (
-                    <div
-                      onMouseEnter={openTooltip}
-                      onMouseLeave={scheduleCloseTooltip}
-                      className={`absolute z-50 bottom-full mb-2 left-1/2 -translate-x-1/2 w-64 border rounded-lg p-4 shadow-lg ${
-                        isDark ? 'bg-black border-white/20' : 'bg-white border-gray-200'
-                      }`}
-                    >
-                      <div className={`text-sm font-medium text-center mb-3 ${strongClass}`}>
-                        {t('new_profile.pricing_title')}
-                      </div>
-                      <UsernamePricingTable cawPriceUsd={cawPriceUsd} giftCaw={giftCaw} />
-                    </div>
-                  )}
-                </span>
-              </p>
-            )}
-            {username.length > 0 && !isValidFormat && !isTyping && (
-              <p className="text-xs text-red-500 mt-0.5">
-                {t('onboarding.username.format_hint')}
-              </p>
-            )}
-            {/* Gift gate: name too expensive */}
-            {nameTooExpensive && giftCaw !== undefined && username.length > 0 && !isTyping && (
-              <p className="text-xs text-red-500 mt-0.5">
-                This name costs {formatCawCompact(cawCost)} CAW — your invite includes {formatWeiAsCaw(giftCaw)}. Try a longer name.
-              </p>
-            )}
-            {/* Gift gate: name too short per code minimum */}
-            {belowMinLength && minUsernameLength !== undefined && username.length > 0 && !isTyping && (
-              <p className="text-xs text-red-500 mt-0.5">
-                Your invite requires a username of at least {minUsernameLength} characters.
-              </p>
-            )}
-          </div>
-          <div className="text-right">
-            {!isTyping && usernameAvailable === true && !nameTooExpensive && !belowMinLength && (
-              <p className="text-xs text-green-500">
-                {t('onboarding.username.available')}
-              </p>
-            )}
-            {!isTyping && usernameAvailable === false && (
-              <p className="text-xs text-red-500">
-                {t('onboarding.username.taken')}
-              </p>
-            )}
-          </div>
-        </div>
+                {username.length > 0 && !isValidFormat && !isTyping && (
+                  <p className="text-xs text-red-500 mt-0.5">
+                    {t('onboarding.username.format_hint')}
+                  </p>
+                )}
+                {/* Gift gate: name too expensive */}
+                {nameTooExpensive && giftCaw !== undefined && username.length > 0 && !isTyping && (
+                  <p className="text-xs text-red-500 mt-0.5">
+                    This name costs {formatCawCompact(cawCost)} CAW — your invite includes {formatWeiAsCaw(giftCaw)}. Try a longer name.
+                  </p>
+                )}
+                {/* Gift gate: name too short per code minimum */}
+                {belowMinLength && minUsernameLength !== undefined && username.length > 0 && !isTyping && (
+                  <p className="text-xs text-red-500 mt-0.5">
+                    Your invite requires a username of at least {minUsernameLength} characters.
+                  </p>
+                )}
+              </div>
+              <div className="text-right">
+                {!isTyping && usernameAvailable === true && !nameTooExpensive && !belowMinLength && (
+                  <p className="text-xs text-green-500">
+                    {t('onboarding.username.available')}
+                  </p>
+                )}
+                {!isTyping && usernameAvailable === false && (
+                  <p className="text-xs text-red-500">
+                    {t('onboarding.username.taken')}
+                  </p>
+                )}
+              </div>
+            </div>
+          }
+        />
       </div>
 
       {/* Auto-deposit summary — shown when name is valid and gift is loaded */}

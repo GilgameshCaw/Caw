@@ -14,7 +14,7 @@ import { useActiveToken, useTokenDataStore, usePriceStore } from "~/store/tokenD
 import { chains, isTestnet } from '~/config/chains'
 import UsernameSvg from '~/components/UsernameSvg'
 import UsernamePreviewCard from '~/components/username/UsernamePreviewCard'
-import UsernamePricingTable from '~/components/username/UsernamePricingTable'
+import UsernameInputCard from '~/components/username/UsernameInputCard'
 import { formatNumber, formatNumberCompact, convertToNumber } from "~/utils";
 import { formatUsd } from '~/utils/numberFormat'
 import { useSearchParams } from 'react-router-dom'
@@ -402,7 +402,6 @@ export const NewProfile: React.FC = () => {
     const prefill = searchParams.get('username') || ''
     return prefill.toLowerCase().replace(/[^a-z0-9]/g, '').slice(0, 16)
   })
-  const [showPricingModal, setShowPricingModal] = useState(false)
   const [mintSuccess, setMintSuccess] = useState(false)
   const [mintedTokenId, setMintedTokenId] = useState<number | null>(null)
   const [hasResetForm, setHasResetForm] = useState(false)
@@ -1856,76 +1855,43 @@ console.log("BALANCE:", balance)
             )}
 
         <div className={`${isCaptive ? '' : 'mt-16'} space-y-4`}>
-            <div className="relative">
-                <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
-                    <svg className="h-5 w-5 text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z" />
-                    </svg>
-                </div>
-                <input
-                    ref={usernameInputRef}
-                    type="text"
-                    value={username}
-                    pattern="[A-Za-z0-9]*"
-                    onChange={e => { stopTypewriter(); setUsername(e.target.value.toLowerCase().replace(/[^a-z0-9]/g, '')); }}
-                    onFocus={stopTypewriter}
-                    className={`w-full pl-10 pr-12 py-3 rounded-full focus:outline-none transition-all duration-300 ${
-                      isDark
-                        ? 'bg-black border border-white/20 text-white placeholder-white/50 focus:border-white/30 focus:bg-black'
-                        : 'bg-gray-100 border border-gray-300 text-black placeholder-gray-400 focus:border-gray-400 focus:bg-white'
-                    }`}
-                    placeholder={t('new_profile.placeholder.username')}
-                />
-                <div className="absolute inset-y-0 right-0 pr-3 flex items-center">
-                    <div 
-                        className="relative"
-                        onMouseEnter={() => setShowPricingModal(true)}
-                        onMouseLeave={() => setShowPricingModal(false)}
-                    >
-                        <button 
-                            className="text-gray-400 hover:text-white transition-colors duration-200"
+            {/* Username input + pricing popover — shared UsernameInputCard
+                (pill variant), also used by the onboarding step (boxed variant).
+                The cost/hint row stays inline here (balance + taken-link + cost$)
+                since it differs from onboarding's gift-gated row. */}
+            <UsernameInputCard
+              variant="pill"
+              username={username}
+              onUsernameChange={val => { stopTypewriter(); setUsername(val.toLowerCase().replace(/[^a-z0-9]/g, '')); }}
+              inputRef={usernameInputRef}
+              onFocus={stopTypewriter}
+              placeholder={t('new_profile.placeholder.username')}
+              costRow={
+                <div className="flex justify-between items-center text-sm gap-2">
+                    {usernameTaken && username && typewriterStopped ? (
+                      <div className="text-red-400 text-left">
+                        {t('new_profile.already')}{' '}
+                        <a
+                          href={`/users/${username}`}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="underline"
                         >
-                            <svg className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
-                            </svg>
-                        </button>
-                        
-                        {/* Modal de precios */}
-                        {showPricingModal && (
-                            <div className={`absolute top-1/2 -translate-y-1/2 right-full mr-3 w-72 border rounded-lg p-5 z-50 ${
-                              isDark ? 'bg-black border-white/20' : 'bg-white border-gray-200'
-                            }`}>
-                                <div className={`text-sm font-medium text-center mb-3 ${isDark ? 'text-white' : 'text-gray-900'}`}>{t('new_profile.pricing_title')}</div>
-                                <UsernamePricingTable />
-                            </div>
-                        )}
+                          {t('new_profile.taken')}
+                        </a>.
+                      </div>
+                    ) : useAddress ? (
+                      <div className="text-gray-400">
+                        {t('new_profile.balance_label')} <span className={`font-mono ${isDark ? 'text-white' : 'text-gray-900'}`}>{formatNumberCompact(convertToNumber(balance))} CAW</span>
+                      </div>
+                    ) : <div />}
+                    <div className="text-gray-400">
+                        {t('new_profile.cost_label')} <span className={`font-mono ${isDark ? 'text-white' : 'text-gray-900'}`}>{formatNumberCompact(convertToNumber(cost, 18))} CAW</span>
+                        {costInDollars != null && <span className="text-gray-500 ml-1">(~${costInDollars < 0.01 ? '<0.01' : costInDollars.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })})</span>}
                     </div>
                 </div>
-            </div>
-
-            <div className="flex justify-between items-center text-sm gap-2">
-                {usernameTaken && username && typewriterStopped ? (
-                  <div className="text-red-400 text-left">
-                    {t('new_profile.already')}{' '}
-                    <a
-                      href={`/users/${username}`}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className="underline"
-                    >
-                      {t('new_profile.taken')}
-                    </a>.
-                  </div>
-                ) : useAddress ? (
-                  <div className="text-gray-400">
-                    {t('new_profile.balance_label')} <span className={`font-mono ${isDark ? 'text-white' : 'text-gray-900'}`}>{formatNumberCompact(convertToNumber(balance))} CAW</span>
-                  </div>
-                ) : <div />}
-                <div className="text-gray-400">
-                    {t('new_profile.cost_label')} <span className={`font-mono ${isDark ? 'text-white' : 'text-gray-900'}`}>{formatNumberCompact(convertToNumber(cost, 18))} CAW</span>
-                    {costInDollars != null && <span className="text-gray-500 ml-1">(~${costInDollars < 0.01 ? '<0.01' : costInDollars.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })})</span>}
-                </div>
-            </div>
+              }
+            />
 
             {/* Payment mode toggle: pay with CAW (default) or pay with ETH (ZAP).
                 In ETH mode the contract swaps via Uniswap V2 in the same tx;
