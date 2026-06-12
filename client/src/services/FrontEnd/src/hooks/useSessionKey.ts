@@ -8,6 +8,7 @@ import { apiFetch } from '~/api/client'
 import { useSessionKeyStore } from '~/store/sessionKeyStore'
 import { CAW_NAMES_L2_ADDRESS, CAW_ACTIONS_ADDRESS } from '~/../../../abi/addresses'
 import { useActiveToken, usePriceStore } from '~/store/tokenDataStore'
+import { useRootSigner } from '~/hooks/useRootSigner'
 import { encryptPrivateKey, getEncryptionSignMessage, setDecryptedKey } from '~/services/sessionKeyEncryption'
 import { cawActionsAbi } from '~/../../../abi/generated'
 
@@ -125,32 +126,44 @@ export function useCreateSession() {
   const setSession = useSessionKeyStore(s => s.setSession)
   const activeToken = useActiveToken()
   const cawPrice = usePriceStore(s => s.priceMap['a-hunters-dream'] ?? 0)
+  const rootSigner = useRootSigner()
 
   return useCallback(async (onProgress?: (status: string) => void, spendLimit: bigint = DEFAULT_SPEND_LIMIT, durationSeconds: number = DEFAULT_SESSION_DURATION, encryptWithWallet: boolean = false, tipCeiling: bigint = 0n) => {
-    if (!isConnected) {
-      openConnectModal?.()
-      return null as any // User will retry after connecting
-    }
+    // Population B (passkey, no wagmi wallet) authorizes the session via the
+    // root signer (ecdsaFallback in recovery mode); skip the wallet-connect
+    // and chain-switch flow entirely. Population A keeps the wagmi path.
+    const isPasskey = rootSigner.kind === 'passkey'
 
-    // Wallet may have switched accounts (or unlocked into a different one)
-    // since the user opened this profile. Refuse to ask for a signature
-    // from the wrong address — the resulting session would be bound to a
-    // wallet that doesn't own this token, and the user gets a confusing
-    // wallet popup for an account they didn't expect.
-    const expectedOwner = activeToken?.owner?.toLowerCase()
-    const actualOwner = connectedAddress?.toLowerCase()
-    if (expectedOwner && actualOwner && expectedOwner !== actualOwner) {
-      throw new Error(
-        `Wrong wallet connected. This profile is owned by ${activeToken!.owner!.slice(0, 6)}…${activeToken!.owner!.slice(-4)}, ` +
-        `but your wallet is connected as ${connectedAddress!.slice(0, 6)}…${connectedAddress!.slice(-4)}. ` +
-        `Switch accounts in your wallet and try again.`
-      )
-    }
+    if (!isPasskey) {
+      if (!isConnected) {
+        openConnectModal?.()
+        return null as any // User will retry after connecting
+      }
 
-    // Ensure wallet is on Base Sepolia (where CawProfileLedger lives)
-    if (chainId !== baseSepolia.id) {
-      onProgress?.('Switching network...')
-      await switchChainAsync({ chainId: baseSepolia.id })
+      // Wallet may have switched accounts (or unlocked into a different one)
+      // since the user opened this profile. Refuse to ask for a signature
+      // from the wrong address — the resulting session would be bound to a
+      // wallet that doesn't own this token, and the user gets a confusing
+      // wallet popup for an account they didn't expect.
+      const expectedOwner = activeToken?.owner?.toLowerCase()
+      const actualOwner = connectedAddress?.toLowerCase()
+      if (expectedOwner && actualOwner && expectedOwner !== actualOwner) {
+        throw new Error(
+          `Wrong wallet connected. This profile is owned by ${activeToken!.owner!.slice(0, 6)}…${activeToken!.owner!.slice(-4)}, ` +
+          `but your wallet is connected as ${connectedAddress!.slice(0, 6)}…${connectedAddress!.slice(-4)}. ` +
+          `Switch accounts in your wallet and try again.`
+        )
+      }
+
+      // Ensure wallet is on Base Sepolia (where CawProfileLedger lives)
+      if (chainId !== baseSepolia.id) {
+        onProgress?.('Switching network...')
+        await switchChainAsync({ chainId: baseSepolia.id })
+      }
+    } else {
+      // Passkey: throws a clear "use your backup file" error if no signer is
+      // available on this device, instead of popping a wallet modal.
+      await rootSigner.ensureReady()
     }
 
     onProgress?.('Generating session key...')
@@ -169,7 +182,10 @@ export function useCreateSession() {
 
     let signature: `0x${string}`
     try {
-      signature = await signMessageAsync({ message })
+      // rootSigner routes to wagmi (Pop A) or the ecdsaFallback key (Pop B
+      // recovery mode). Both produce a 65-byte ECDSA personal_sign that
+      // registerSessionPersonal validates on its ECDSA path.
+      signature = await rootSigner.signMessage(message)
     } catch (err) {
       console.error('[QuickSign] signMessage failed:', err)
       throw err
@@ -247,7 +263,7 @@ export function useCreateSession() {
     }
 
     return { address: sessionAccount.address, expiry }
-  }, [isConnected, connectedAddress, openConnectModal, chainId, signMessageAsync, switchChainAsync, setSession, activeToken, cawPrice])
+  }, [isConnected, connectedAddress, openConnectModal, chainId, signMessageAsync, switchChainAsync, setSession, activeToken, cawPrice, rootSigner])
 }
 
 /**

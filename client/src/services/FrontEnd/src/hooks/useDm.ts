@@ -3,6 +3,7 @@ import { useAccount, useWalletClient } from 'wagmi'
 import { apiFetch, API_HOST, getAuthHeaders, retryOnIndexing } from '~/api/client'
 import { useAuthStore } from '~/store/authStore'
 import { useVerifyWallet } from '~/hooks/useVerifyWallet'
+import { useRootSigner } from '~/hooks/useRootSigner'
 import { useActiveToken } from '~/store/tokenDataStore'
 import {
   deriveKeyPair,
@@ -121,6 +122,7 @@ export function useDmClient(tokenId?: number, username?: string) {
   const { address: connectedAddress } = useAccount()
   const activeToken = useActiveToken()
   const { verify } = useVerifyWallet()
+  const rootSigner = useRootSigner()
 
   const [isInitialized, setIsInitialized] = useState(false)
   const [needsKeyDerivation, setNeedsKeyDerivation] = useState(false) // identity exists but keys not in memory
@@ -388,12 +390,20 @@ export function useDmClient(tokenId?: number, username?: string) {
   }, [tokenId, loadConversations, refreshRequestCount])
 
   const initializeClient = useCallback(async () => {
-    console.log('[DM] initializeClient called, walletClient:', !!walletClient, 'tokenId:', tokenId)
-    if (!walletClient || !tokenId) {
+    const isPasskey = rootSigner.kind === 'passkey'
+    console.log('[DM] initializeClient called, walletClient:', !!walletClient, 'isPasskey:', isPasskey, 'tokenId:', tokenId)
+    // Population A needs a wagmi walletClient; Population B signs via rootSigner
+    // (ecdsaFallback in recovery mode). Either way we need a tokenId.
+    if (!tokenId || (!walletClient && !isPasskey)) {
       const err = new Error('Wallet not connected')
-      console.log('[DM] No wallet client or tokenId, throwing')
+      console.log('[DM] No signer or tokenId, throwing')
       setError(err)
       throw err
+    }
+    if (isPasskey) {
+      // Throws a clear "use your backup file" error if no signer is available
+      // on this device, instead of failing opaquely mid-derivation.
+      await rootSigner.ensureReady()
     }
 
     // Pre-flight: the connected wallet must own the active token. The
@@ -454,12 +464,10 @@ export function useDmClient(tokenId?: number, username?: string) {
     try {
       console.log('[DM] Deriving key pair...')
       const signMessage = async (message: string) => {
-        console.log('[DM] Requesting wallet signature for key derivation...')
-        const sig = await walletClient.signMessage({
-          account: walletClient.account,
-          message
-        })
-        return sig
+        console.log('[DM] Requesting root-signer signature for key derivation...')
+        // rootSigner → wagmi walletClient (Pop A) or ecdsaFallback (Pop B).
+        // Both are EIP-191 personal_sign; the DM key derivation is identical.
+        return rootSigner.signMessage(message)
       }
 
       const { privateKey, publicKeyHex, rawSignature, sigMessage } = await deriveKeyPair(
@@ -522,7 +530,7 @@ export function useDmClient(tokenId?: number, username?: string) {
     } finally {
       setIsLoading(false)
     }
-  }, [walletClient, tokenId, loadConversations])
+  }, [walletClient, tokenId, loadConversations, rootSigner])
 
   const startConversation = useCallback(async (peerUserId: number) => {
     if (!tokenId) throw new Error('Not initialized')

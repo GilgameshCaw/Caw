@@ -1,9 +1,8 @@
 import { useState } from 'react'
-import { useSignMessage, useAccount } from 'wagmi'
 import { baseSepolia } from 'wagmi/chains'
-import { useConnectModal } from '@rainbow-me/rainbowkit'
 import { useAuthStore } from '~/store/authStore'
 import { apiFetch, retryOnIndexing } from '~/api/client'
+import { useRootSigner } from '~/hooks/useRootSigner'
 
 // Sign with the L2 chainId the API expects (84532 Base Sepolia), NOT
 // the wallet's current chainId. personal_sign is chain-agnostic — the
@@ -14,20 +13,24 @@ const SIGNING_CHAIN_ID = baseSepolia.id
 
 export function useVerifyWallet() {
   const { sessionToken, setSession, addAuthorization } = useAuthStore()
-  const { signMessageAsync } = useSignMessage()
-  const { isConnected } = useAccount()
-  const { openConnectModal } = useConnectModal()
+  const rootSigner = useRootSigner()
   const [isVerifying, setIsVerifying] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
   const verify = async (): Promise<boolean> => {
-    if (!isConnected) {
-      openConnectModal?.()
-      return false
-    }
-
     setIsVerifying(true)
     setError(null)
+
+    try {
+      // Real wallet → opens connect modal if needed. Passkey → resolves if a
+      // credential/recovery key is present, else throws a clear "use your
+      // backup file" message (caught below) instead of a wallet modal.
+      await rootSigner.ensureReady()
+    } catch (err: any) {
+      setError(err?.message || 'Wallet not available')
+      setIsVerifying(false)
+      return false
+    }
 
     try {
       const timestamp = Math.floor(Date.now() / 1000)
@@ -47,7 +50,7 @@ export function useVerifyWallet() {
         `ChainId: ${SIGNING_CHAIN_ID}\n` +
         `Timestamp: ${timestamp}`
 
-      const signature = await signMessageAsync({ message })
+      const signature = await rootSigner.signMessage(message)
 
       // Tier 3 of the "RPC out of API request handlers" refactor: the API
       // returns 202 when the wallet's tokens haven't been indexed yet

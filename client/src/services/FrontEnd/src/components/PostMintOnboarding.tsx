@@ -4,6 +4,7 @@ import { useAccount, useConnections, useSwitchChain, useReadContract } from 'wag
 import { useConnectModal } from '@rainbow-me/rainbowkit'
 import WalletAccountButton from '~/components/buttons/WalletAccountButton'
 import { useEnsureWallet } from '~/hooks/useEnsureWallet'
+import { useRootSigner } from '~/hooks/useRootSigner'
 import { formatWalletError } from '~/utils/errorMessage'
 import { maxUint256, parseUnits, formatUnits, erc20Abi } from 'viem'
 import { useActiveToken, useTokenDataStore, usePriceStore } from '~/store/tokenDataStore'
@@ -222,6 +223,7 @@ const PostMintOnboarding: React.FC<PostMintOnboardingProps> = ({ username, token
   const { switchChain } = useSwitchChain()
   const { openConnectModal } = useConnectModal()
   const ensureWallet = useEnsureWallet()
+  const rootSigner = useRootSigner()
   const [amount, setAmount] = useState<string>('')
   const [depositFee, setDepositFee] = useState<bigint>(0n)
   const [isStakePending, setIsStakePending] = useState(false)
@@ -516,7 +518,7 @@ const PostMintOnboarding: React.FC<PostMintOnboardingProps> = ({ username, token
   const setupQsDone = qsComplete || hasActiveSession
 
   const handleCombinedSetup = async () => {
-    await ensureWallet(null, async () => {
+    const runSetup = async () => {
     setSetupBusy(true)
     setSetupError(null)
 
@@ -570,7 +572,22 @@ const PostMintOnboarding: React.FC<PostMintOnboardingProps> = ({ username, token
     setSetupSubStep('done')
     markComplete('setup')
     setSetupBusy(false)
-    })
+    }
+
+    // Population B (passkey, no wagmi wallet) signs DM-enable + Quick Sign via
+    // the root signer — skip the wallet-connect modal. ensureReady throws a
+    // clear "use your backup file" error if no signer is available on-device.
+    if (rootSigner.kind === 'passkey') {
+      try {
+        await rootSigner.ensureReady()
+      } catch (err: any) {
+        setSetupError(err?.message || 'Could not access your passkey on this device.')
+        return
+      }
+      await runSetup()
+    } else {
+      await ensureWallet(null, runSetup)
+    }
   }
 
   // ── Step 3: Profile ──
