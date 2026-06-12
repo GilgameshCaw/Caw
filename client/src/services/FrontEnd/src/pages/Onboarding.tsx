@@ -686,39 +686,48 @@ export default function Onboarding() {
             />
           )}
 
+          {/* Vault-password / passkey / backup steps are narrower than the
+              stepper (which keeps the 800px column above): cap their content at
+              600px and center it. */}
           {state.step === 'vault-password' && (
-            <VaultPasswordStep
-              vaultPassword={state.vaultPassword}
-              vaultPasswordConfirm={state.vaultPasswordConfirm}
-              onPasswordChange={handlePasswordChange}
-              onConfirmChange={handleConfirmChange}
-              onNext={goNext}
-              onBack={goBack}
-            />
+            <div className="max-w-[600px] mx-auto">
+              <VaultPasswordStep
+                vaultPassword={state.vaultPassword}
+                vaultPasswordConfirm={state.vaultPasswordConfirm}
+                onPasswordChange={handlePasswordChange}
+                onConfirmChange={handleConfirmChange}
+                onNext={goNext}
+                onBack={goBack}
+              />
+            </div>
           )}
 
           {state.step === 'passkey' && (
-            <PasskeyStep
-              username={state.username}
-              onNext={handlePasskeyEnrolled}
-              onBack={goBack}
-            />
+            <div className="max-w-[600px] mx-auto">
+              <PasskeyStep
+                username={state.username}
+                onNext={handlePasskeyEnrolled}
+                onBack={goBack}
+              />
+            </div>
           )}
 
           {state.step === 'backup' && state.enrolledPasskey && (
-            <BackupStep
-              code={normalizedCode}
-              xQualifiedToken={xQualifiedToken ?? undefined}
-              username={state.username}
-              depositAmount={derivedDepositAmount}
-              repayAmount={derivedRepayAmount}
-              sponsorTokenId={repaySponsorTokenId}
-              vaultPassword={state.vaultPassword}
-              passkey={state.enrolledPasskey}
-              onNext={handleBootstrapDone}
-              onUsernameTaken={handleUsernameTaken}
-              onBack={goBack}
-            />
+            <div className="max-w-[600px] mx-auto">
+              <BackupStep
+                code={normalizedCode}
+                xQualifiedToken={xQualifiedToken ?? undefined}
+                username={state.username}
+                depositAmount={derivedDepositAmount}
+                repayAmount={derivedRepayAmount}
+                sponsorTokenId={repaySponsorTokenId}
+                vaultPassword={state.vaultPassword}
+                passkey={state.enrolledPasskey}
+                onNext={handleBootstrapDone}
+                onUsernameTaken={handleUsernameTaken}
+                onBack={goBack}
+              />
+            </div>
           )}
 
           {state.step === 'confirm' && state.bootstrapResult && (
