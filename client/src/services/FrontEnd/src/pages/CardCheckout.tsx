@@ -47,22 +47,8 @@ const DEPOSIT_USD_MAX = 120
 const DEBOUNCE_MS = 500
 const USERNAME_REGEX = /^[a-z0-9_]{3,24}$/
 
-/** Username burn cost schedule (whole CAW, length → cost). Mirrors UsernameStep. */
-const COST_SCHEDULE: Record<number, number> = {
-  1: 1_000_000_000_000,
-  2:   240_000_000_000,
-  3:    60_000_000_000,
-  4:     6_000_000_000,
-  5:       200_000_000,
-  6:        20_000_000,
-  7:        10_000_000,
-}
-const DEFAULT_COST_CAW = 1_000_000 // 8+ chars
-
-function cawCostForLength(len: number): number {
-  if (len === 0) return 0
-  return COST_SCHEDULE[len] ?? DEFAULT_COST_CAW
-}
+// Username burn cost schedule — canonical table (utils/cawCostSchedule).
+import { COST_SCHEDULE, DEFAULT_COST as DEFAULT_COST_CAW, cawCostForLength } from '~/utils/cawCostSchedule'
 
 function formatCawCompact(caw: number): string {
   if (caw >= 1_000_000_000_000) return `${(caw / 1_000_000_000_000).toFixed(0)}T`

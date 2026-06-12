@@ -39,17 +39,9 @@ import EthSpendInput from '~/components/EthSpendInput'
 const QUICK_SIGN_DEFAULT_SCOPE = 0xBF
 
 
-// cost schedule (raw CAW)
-const COST_SCHEDULE: Record<number, bigint> = {
-  1: 1000_000_000_000n,
-  2:   240_000_000_000n,
-  3:    60_000_000_000n,
-  4:     6_000_000_000n,
-  5:       200_000_000n,
-  6:        20_000_000n,
-  7:        10_000_000n,
-}
-const DEFAULT_COST = 1_000_000n  // 8+ chars
+// Username burn cost schedule — canonical table shared across the username
+// flow (see utils/cawCostSchedule). bigint shape for on-chain wei math.
+import { COST_SCHEDULE_BIGINT, DEFAULT_COST_BIGINT } from '~/utils/cawCostSchedule'
 
 const ERC721_TRANSFER_ABI = [{
   type: 'event' as const, name: 'Transfer',
@@ -737,7 +729,7 @@ export const NewProfile: React.FC = () => {
   const cost = useMemo(() => {
     const len = username.length
     if (len === 0) return 0n
-    return (COST_SCHEDULE[len as keyof typeof COST_SCHEDULE] ?? DEFAULT_COST) *10n**18n
+    return (COST_SCHEDULE_BIGINT[len] ?? DEFAULT_COST_BIGINT) *10n**18n
   }, [username])
 
   const costInDollars = useMemo(() => {

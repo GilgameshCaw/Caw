@@ -16,6 +16,7 @@
 
 import { useState, useEffect, useMemo, useRef } from 'react'
 import { useReadContract } from 'wagmi'
+import { COST_SCHEDULE, DEFAULT_COST, cawCostForLength } from '~/utils/cawCostSchedule'
 import { cawProfileMinterAbi } from '~/../../../abi/generated'
 import { CAW_NAMES_MINTER_ADDRESS } from '~/../../../abi/addresses'
 import { chains } from '~/config/chains'
@@ -30,24 +31,6 @@ const DEBOUNCE_MS = 500
 // Lowercase alphanumeric + underscore; min 3, max 24 chars
 const USERNAME_REGEX = /^[a-z0-9_]{3,24}$/
 
-// Username burn cost schedule (whole CAW, length → cost). Mirrors
-// COST_SCHEDULE in pages/Profile/New.tsx — keep these in sync, or
-// extract to a shared module if a third callsite ever shows up.
-const COST_SCHEDULE: Record<number, number> = {
-  1: 1_000_000_000_000,
-  2:   240_000_000_000,
-  3:    60_000_000_000,
-  4:     6_000_000_000,
-  5:       200_000_000,
-  6:        20_000_000,
-  7:        10_000_000,
-}
-const DEFAULT_COST = 1_000_000  // 8+ chars
-
-function cawCostForLength(len: number): number {
-  if (len === 0) return 0
-  return COST_SCHEDULE[len] ?? DEFAULT_COST
-}
 
 function formatCawCompact(caw: number): string {
   if (caw >= 1_000_000_000_000) return `${(caw / 1_000_000_000_000).toFixed(0)}T`

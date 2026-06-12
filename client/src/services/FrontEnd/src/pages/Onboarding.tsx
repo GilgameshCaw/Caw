@@ -21,6 +21,7 @@ import React, { useState, useCallback, useEffect, useMemo } from 'react'
 import { useSearchParams } from 'react-router-dom'
 import { useTheme } from '~/hooks/useTheme'
 import { registerSponsoredSession } from '~/hooks/useSessionKey'
+import { cawCostForLength } from '~/utils/cawCostSchedule'
 import { useT } from '~/i18n/I18nProvider'
 import { useNavigate } from '~/utils/localizedRouter'
 import UsernameStep from './onboarding/UsernameStep'
@@ -105,24 +106,6 @@ const ALL_STEPS: OnboardingStep[] = [
   'backup',
   'confirm',
 ]
-
-// Username burn cost schedule (whole CAW, length → cost). Mirrors UsernameStep
-// and pages/Profile/New.tsx — keep in sync.
-const COST_SCHEDULE: Record<number, number> = {
-  1: 1_000_000_000_000,
-  2:   240_000_000_000,
-  3:    60_000_000_000,
-  4:     6_000_000_000,
-  5:       200_000_000,
-  6:        20_000_000,
-  7:        10_000_000,
-}
-const DEFAULT_COST = 1_000_000  // 8+ chars
-
-function cawCostForLength(len: number): number {
-  if (len === 0) return 0
-  return COST_SCHEDULE[len] ?? DEFAULT_COST
-}
 
 interface StepMeta {
   id: OnboardingStep
