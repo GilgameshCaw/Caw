@@ -132,6 +132,15 @@ contract E2EMockRouter {
 /// @dev Implements IMint so CawProfileMinter can call it without knowing it's a mock.
 ///      Real financial flows: CAW.transferFrom(minter, self, deposit).
 ///      LZ recording: tracks the ETH value forwarded as the LZ fee.
+
+/// @dev No-op NetworkManager for the Layer-2 sponsored-mint surface. No sponsor
+///      is authorized, so mints take the normal-fee path (behavior unchanged).
+contract NoopNetworkManager {
+    function isAuthorizedSponsor(uint32, address) external pure returns (bool) { return false; }
+    function flagDepositFeeExempt(uint32) external {}
+    function clearDepositFeeExempt() external {}
+}
+
 contract E2EMockProfile {
     E2EMockCAW public caw;
 
@@ -235,6 +244,10 @@ contract E2EMockProfile {
         lastRefundTo = refundTo;
         setLzRefundToCallCount++;
     }
+
+    // Layer-2: the Minter reads networkManager() then isAuthorizedSponsor on the
+    // sponsored path. Return a no-op NM (no sponsor authorized → normal fee).
+    address public networkManager = address(new NoopNetworkManager());
 
     // Accept ETH (lzSend calls may forward value).
     receive() external payable {}

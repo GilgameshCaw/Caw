@@ -44,6 +44,12 @@ contract CapOracleTipRatioTest is Test {
     function setUp() public {
         writer = makeAddr("writer");
         mockTarget = new MockCawActionsCapTarget();
+        // Foundry starts block.timestamp at 1. Tests that seed samples relative
+        // to `now` (via _seedOracle) compute `now - MIN_WINDOW - 60`, which
+        // underflows uint256 at timestamp 1. Warp to a realistic baseline so
+        // there's headroom. Tests that set absolute times via their own vm.warp
+        // are unaffected.
+        vm.warp(1_750_000_000);
     }
 
     // ─── Helpers ───────────────────────────────────────────────────────────────
@@ -156,17 +162,25 @@ contract CapOracleTipRatioTest is Test {
         CawCapOracle oracle = new CawCapOracle(writer, address(mockTarget));
         _seedOracle(oracle, PRICE_NON_BINDING_WEI_PER_CAW);
 
-        // First call should succeed.
-        oracle.pushRatioIfStale();
-        uint256 callsAfterFirst = mockTarget.setTipRatioCallCount();
+        // recordSample (inside _seedOracle) sets lastPushAttemptAt to the latest
+        // sample's timestamp (== BASE_TS, the setUp warp). pushRatioIfStale
+        // enforces a 5-minute gap since lastPushAttemptAt AND updates it on every
+        // call. Use absolute warps so the gaps are unambiguous (relative warps
+        // around vm.expectRevert are brittle).
+        uint256 BASE_TS = block.timestamp;
 
-        // Second call within 5 minutes should revert.
+        // T+6min: first push succeeds (gap from the seed's lastPushAttemptAt),
+        // sets lastPushAttemptAt = BASE_TS + 6min.
+        vm.warp(BASE_TS + 6 minutes);
+        oracle.pushRatioIfStale();
+
+        // Same timestamp: within 5 minutes of the push → reverts.
         vm.expectRevert("TooSoon");
         oracle.pushRatioIfStale();
 
-        // Advance past 5 minutes.
-        vm.warp(block.timestamp + 5 minutes + 1);
-        oracle.pushRatioIfStale(); // should not revert
+        // T+12min: > 5 minutes past the first push → succeeds.
+        vm.warp(BASE_TS + 12 minutes);
+        oracle.pushRatioIfStale();
     }
 
     // ─── T5: CawActions._getTipCost reads tipState ────────────────────────────

@@ -75,6 +75,14 @@ contract ForkMockRouter {
         external payable returns (uint256[] memory) { revert("unused"); }
 }
 
+/// @dev No-op NetworkManager for the Layer-2 sponsored-mint surface (no sponsor
+///      authorized → normal-fee path).
+contract NoopNetworkManager {
+    function isAuthorizedSponsor(uint32, address) external pure returns (bool) { return false; }
+    function flagDepositFeeExempt(uint32) external {}
+    function clearDepositFeeExempt() external {}
+}
+
 /// @dev Slim CawProfile mock: tracks owners, records last mint params.
 contract ForkMockProfile {
     mapping(uint256 => address) private _owner;
@@ -135,6 +143,10 @@ contract ForkMockProfile {
     }
 
     function setLzRefundTo(address payable) external {}
+
+    // Layer-2: Minter reads networkManager() → isAuthorizedSponsor on the
+    // sponsored path. No-op NM (no sponsor authorized → normal fee).
+    address public networkManager = address(new NoopNetworkManager());
 
     function seedToken(uint32 tokenId, address owner) external {
         _owner[tokenId] = owner;
