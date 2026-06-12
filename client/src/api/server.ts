@@ -47,6 +47,7 @@ import sitemapRouter from './routes/sitemap'
 import rpcProxyRouter from './routes/rpc-proxy'
 import aiProxyRouter from './routes/ai-proxy'
 import sponsorRouter from './routes/sponsor'
+import walletBlobRouter from './routes/wallet-blob'
 import stripeRouter from './routes/stripe'
 import moonpayRouter from './routes/moonpay'
 import { spaPrerender } from './util/spaPrerender'
@@ -410,6 +411,7 @@ export function createApp() {
   // failover, and rate limiting.
   app.use('/api/rpc', rpcProxyRouter)
   app.use('/api/sponsor', sponsorRouter)
+  app.use('/api/wallet', walletBlobRouter)
 
   // Stripe card-payment checkout + webhook. The webhook route MUST receive
   // raw body (not json-parsed) for Stripe signature verification — mount

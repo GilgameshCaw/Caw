@@ -26,6 +26,7 @@ import { useTheme } from '~/hooks/useTheme'
 import { useT } from '~/i18n/I18nProvider'
 import { bootstrapNewUser, type BootstrapResult, type BootstrapParams } from '~/services/identity/bootstrap'
 import { downloadBackupBlob } from '~/services/identity/cloudBackup'
+import { apiFetch } from '~/api/client'
 import {
   getSponsorApiClient,
   isSponsorSuccess,
@@ -251,8 +252,28 @@ export default function BackupStep({
         repayAmount,
       })
 
+      // Layered recovery (#217): store the ENCRYPTED blob on the server as the
+      // passkey-gated convenience copy (retrievable on a new device without the
+      // file). Ciphertext only — the vault password is never sent. Fire-and-
+      // forget: a store failure must not block onboarding (the download below is
+      // the fallback durable copy). If/when an email is collected, pass it here
+      // and the server emails the ciphertext as the durable backstop via Resend.
+      try {
+        void apiFetch('/api/wallet/blob', {
+          method: 'POST',
+          body: JSON.stringify({
+            address: result.ecdsaAddress,
+            blob: JSON.stringify(result.backupBlob),
+            username,
+            // email: <optional — wire an email input to enable the email backstop>
+          }),
+        }).catch(() => { /* non-fatal: download is the fallback */ })
+      } catch { /* non-fatal */ }
+
       // Trigger the file download while still in "sponsor" phase — it is a
       // synchronous DOM operation and does not need a separate loading state.
+      // (Still offered as the user's own durable copy; the server copy above is
+      // the convenience layer, and an emailed copy is the durable backstop.)
       downloadBackupBlob(result.backupBlob, `caw-recovery-${username}.json`)
 
       // Advance to confirm step.

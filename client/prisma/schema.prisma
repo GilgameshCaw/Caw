@@ -1273,3 +1273,18 @@ enum OfferStatus {
   CANCELLED
   EXPIRED
 }
+
+/// Server-stored encrypted backup blob for Population-B (passkey) recovery.
+/// Stores ONLY the Argon2id-encrypted ciphertext envelope (BackupBlob JSON) —
+/// the vault password that decrypts it is NEVER sent to or stored by the
+/// server. Keyed by the owner SmartEOA address (= BackupBlob.pubkeyAddress).
+/// Retrieval is gated by passkey ownership (verify-passkey challenge). This is
+/// the convenience copy; it dies with the server, so the durable backstop is
+/// the email/download copy. See project_root_signer_passkey_wallet.
+model WalletBlob {
+  address     String   @id // lowercase owner SmartEOA address
+  blob        String   // the BackupBlob JSON envelope (ciphertext only)
+  email       String?  // optional: address the durable backstop was emailed to
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+}
