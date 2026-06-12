@@ -5,7 +5,7 @@ import { useT } from '~/i18n/I18nProvider'
 import { usePriceStore } from '~/store/tokenDataStore'
 import { cawNetworkManagerAbi } from '~/../../../abi/generated'
 import { NETWORK_MANAGER_ADDRESS } from '~/../../../abi/addresses'
-import { CLIENT_ID } from '~/api/actions'
+import { CLIENT_ID, CLIENT_ID_VALID } from '~/api/actions'
 import { chains } from '~/config/chains'
 import { formatUsd } from '~/utils/numberFormat'
 
@@ -28,12 +28,16 @@ const StakingRewardsInfo: React.FC<StakingRewardsInfoProps> = ({
 
   // Network's per-action tip target in ETH wei (set by Network admin).
   // Convert to USD using the current ETH price for a human-readable rate.
+  // Guard: if CLIENT_ID is NaN/invalid (e.g. build missing VITE_NETWORK_ID),
+  // skip the read entirely. Passing NaN as the uint arg makes wagmi call
+  // BigInt(NaN) during arg-encoding → RangeError that crashes the whole tree.
   const { data: tipTargetWei } = useReadContract({
     abi: cawNetworkManagerAbi,
     chainId: chains.l1.chainId,
     address: NETWORK_MANAGER_ADDRESS,
     functionName: 'getTipTargetWei',
     args: [CLIENT_ID],
+    query: { enabled: CLIENT_ID_VALID },
   })
   const ethPrice = usePriceStore(s => s.priceMap['ethereum'] ?? 0)
   let tipUsdLabel: string | null = null

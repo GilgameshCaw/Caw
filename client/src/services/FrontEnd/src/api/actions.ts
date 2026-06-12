@@ -80,13 +80,20 @@ const ActionTypeMap = {
 
 export type ActionTypeKey = keyof typeof ActionTypeMap
 
-/** natstat: singleton client ID (one per front-end). Read from
- * VITE_CLIENT_ID at build time — the CLI writes it; running a build
- * without it produces a NaN here and breaks every contract call, which
- * is the failure mode we want (visible, not silently routing to client 1). */
-export const CLIENT_ID = Number(import.meta.env.VITE_CLIENT_ID)
-if (!Number.isFinite(CLIENT_ID) || CLIENT_ID <= 0) {
-  console.error('[CLIENT_ID] VITE_CLIENT_ID is missing or invalid — frontend will not be able to submit actions correctly. Rebuild with VITE_CLIENT_ID set in client/src/services/FrontEnd/.env')
+/** natstat: singleton Network ID (one per front-end). Read at build time
+ * from VITE_NETWORK_ID (the CLI writes it post client→network rename),
+ * falling back to the legacy VITE_CLIENT_ID for builds whose env hasn't
+ * been migrated. A build without either is still a visible failure — we
+ * log loudly below — but we no longer let a NaN reach wagmi's contract
+ * encoders, where BigInt(NaN) throws a RangeError that takes down the
+ * whole React tree (StakingRewardsInfo → WelcomePage → error boundary).
+ * CLIENT_ID_VALID lets render-path contract reads skip when the id is bad. */
+export const CLIENT_ID = Number(
+  import.meta.env.VITE_NETWORK_ID ?? import.meta.env.VITE_CLIENT_ID,
+)
+export const CLIENT_ID_VALID = Number.isInteger(CLIENT_ID) && CLIENT_ID > 0
+if (!CLIENT_ID_VALID) {
+  console.error('[CLIENT_ID] VITE_NETWORK_ID (or legacy VITE_CLIENT_ID) is missing or invalid — frontend will not be able to submit actions correctly. Rebuild with VITE_NETWORK_ID set in client/src/services/FrontEnd/.env')
 }
 
 /**
