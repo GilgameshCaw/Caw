@@ -23,6 +23,7 @@ import { useTheme } from '~/hooks/useTheme'
 import { useT } from '~/i18n/I18nProvider'
 import { usePriceStore } from '~/store/tokenDataStore'
 import { formatUsd } from '~/utils/numberFormat'
+import UsernameSvg from '~/components/UsernameSvg'
 
 const DEBOUNCE_MS = 500
 
@@ -218,7 +219,17 @@ export default function UsernameStep({
   const inputBg = isDark ? 'bg-white/5' : 'bg-white'
 
   return (
-    <div className="space-y-6">
+    <div className="flex flex-col md:flex-row md:gap-8 md:items-start">
+      {/* Left column: live NFT-style username preview — same module as
+          /usernames/new (Profile/New.tsx), driven by the typed username. */}
+      <div className="md:w-[45%] md:flex-shrink-0 mb-6 md:mb-0 md:sticky md:top-6">
+        <div className="max-w-xs mx-auto">
+          <UsernameSvg username={username || 'username'} textOpacity={username ? 1 : 0.5} />
+        </div>
+      </div>
+
+      {/* Right column: username input + cost + gift gating (existing form). */}
+      <div className="flex-1 space-y-6">
       <div>
         <h2 className={`text-xl font-bold mb-1 ${strongClass}`}>
           {t('onboarding.username.title')}
@@ -427,6 +438,7 @@ export default function UsernameStep({
       >
         {giftLoading ? 'Loading…' : t('common.next')}
       </button>
+      </div>
     </div>
   )
 }
