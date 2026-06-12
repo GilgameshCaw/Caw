@@ -16,7 +16,7 @@
 
 import { useState, useEffect, useMemo, useRef } from 'react'
 import { useReadContract } from 'wagmi'
-import { COST_SCHEDULE, DEFAULT_COST, cawCostForLength } from '~/utils/cawCostSchedule'
+import { cawCostForLength } from '~/utils/cawCostSchedule'
 import { cawProfileMinterAbi } from '~/../../../abi/generated'
 import { CAW_NAMES_MINTER_ADDRESS } from '~/../../../abi/addresses'
 import { chains } from '~/config/chains'
@@ -25,6 +25,7 @@ import { useT } from '~/i18n/I18nProvider'
 import { usePriceStore } from '~/store/tokenDataStore'
 import { formatUsd } from '~/utils/numberFormat'
 import UsernamePreviewCard from '~/components/username/UsernamePreviewCard'
+import UsernamePricingTable from '~/components/username/UsernamePricingTable'
 
 const DEBOUNCE_MS = 500
 
@@ -333,32 +334,7 @@ export default function UsernameStep({
                       <div className={`text-sm font-medium text-center mb-3 ${strongClass}`}>
                         {t('new_profile.pricing_title')}
                       </div>
-                      <div className="space-y-2">
-                        {[
-                          { label: t('new_profile.chars.1'), cawWhole: COST_SCHEDULE[1], compact: '1T' },
-                          { label: t('new_profile.chars.2'), cawWhole: COST_SCHEDULE[2], compact: '240B' },
-                          { label: t('new_profile.chars.3'), cawWhole: COST_SCHEDULE[3], compact: '60B' },
-                          { label: t('new_profile.chars.4'), cawWhole: COST_SCHEDULE[4], compact: '6B' },
-                          { label: t('new_profile.chars.5'), cawWhole: COST_SCHEDULE[5], compact: '200M' },
-                          { label: t('new_profile.chars.6'), cawWhole: COST_SCHEDULE[6], compact: '20M' },
-                          { label: t('new_profile.chars.7'), cawWhole: COST_SCHEDULE[7], compact: '10M' },
-                          { label: t('new_profile.chars.8plus'), cawWhole: DEFAULT_COST, compact: '1M' },
-                        ].map(({ label, cawWhole, compact }) => {
-                          const usd = cawPriceUsd !== undefined ? cawWhole * cawPriceUsd : null
-                          const tooExpensive = giftCaw !== undefined && BigInt(cawWhole) * 10n ** 18n > giftCaw
-                          return (
-                            <div key={label} className={`flex justify-between text-xs items-baseline ${tooExpensive ? 'opacity-40' : ''}`}>
-                              <span className={isDark ? 'text-gray-300' : 'text-gray-600'}>{label}</span>
-                              <span>
-                                <span className={`font-mono ${strongClass}`}>{compact} CAW</span>
-                                {usd !== null && (
-                                  <span className={`${mutedClass} ml-2`}>(~${formatUsd(usd)})</span>
-                                )}
-                              </span>
-                            </div>
-                          )
-                        })}
-                      </div>
+                      <UsernamePricingTable cawPriceUsd={cawPriceUsd} giftCaw={giftCaw} />
                     </div>
                   )}
                 </span>

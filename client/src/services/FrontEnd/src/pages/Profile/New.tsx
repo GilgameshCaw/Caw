@@ -14,6 +14,7 @@ import { useActiveToken, useTokenDataStore, usePriceStore } from "~/store/tokenD
 import { chains, isTestnet } from '~/config/chains'
 import UsernameSvg from '~/components/UsernameSvg'
 import UsernamePreviewCard from '~/components/username/UsernamePreviewCard'
+import UsernamePricingTable from '~/components/username/UsernamePricingTable'
 import { formatNumber, formatNumberCompact, convertToNumber } from "~/utils";
 import { formatUsd } from '~/utils/numberFormat'
 import { useSearchParams } from 'react-router-dom'
@@ -1895,23 +1896,7 @@ console.log("BALANCE:", balance)
                               isDark ? 'bg-black border-white/20' : 'bg-white border-gray-200'
                             }`}>
                                 <div className={`text-sm font-medium text-center mb-3 ${isDark ? 'text-white' : 'text-gray-900'}`}>{t('new_profile.pricing_title')}</div>
-                                <div className="space-y-2">
-                                    {[
-                                      { label: t('new_profile.chars.1'), cost: '1T' },
-                                      { label: t('new_profile.chars.2'), cost: '240B' },
-                                      { label: t('new_profile.chars.3'), cost: '60B' },
-                                      { label: t('new_profile.chars.4'), cost: '6B' },
-                                      { label: t('new_profile.chars.5'), cost: '200M' },
-                                      { label: t('new_profile.chars.6'), cost: '20M' },
-                                      { label: t('new_profile.chars.7'), cost: '10M' },
-                                      { label: t('new_profile.chars.8plus'), cost: '1M' },
-                                    ].map(({ label, cost }) => (
-                                      <div key={label} className="flex justify-between text-xs items-center">
-                                        <span className={isDark ? 'text-gray-300' : 'text-gray-600'}>{label}</span>
-                                        <span className={`font-mono ${isDark ? 'text-white' : 'text-gray-900'}`}>{t('new_profile.burn_cost', { cost })}</span>
-                                      </div>
-                                    ))}
-                                </div>
+                                <UsernamePricingTable />
                             </div>
                         )}
                     </div>
