@@ -432,11 +432,15 @@ export default function Onboarding() {
               tds.setActiveTokenIdForAddress(ownerAddr, mintedTokenId)
               tds.setLastAddress(ownerAddr)
               // eslint-disable-next-line no-console
-              console.log('[signin:diag] active profile set, navigating to feed', {
+              console.log('[signin:diag] active profile set, navigating to onboarding stepper', {
                 username: token.username,
                 tokenId: mintedTokenId,
               })
-              navigate('/home', { replace: true })
+              // Land on the post-mint onboarding stepper (signed in), NOT the
+              // feed — same destination as the non-sponsored mint (New.tsx) and
+              // OnboardingGuard. The stepper walks the user through deposit /
+              // Quick Sign / follow before they hit the feed.
+              navigate(`/welcome/${token.username}`, { replace: true })
             }
           }
         } catch (e) {
