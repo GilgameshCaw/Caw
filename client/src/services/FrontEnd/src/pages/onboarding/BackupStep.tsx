@@ -1,13 +1,17 @@
 /**
  * BackupStep.tsx
  *
- * Step 5 of /onboarding: run bootstrapNewUser() and trigger a backup blob
- * download.
+ * Step 5 of /onboarding — two phases:
  *
- * What happens here:
- *   1. bootstrapNewUser() → secp256k1 keygen + Argon2id encrypt + sponsor submit
- *   2. On success, downloadBackupBlob() triggers the OS save dialog
- *   3. Call onNext({ txHash, ecdsaAddress }) to advance to confirm step
+ * Phase 'mint':
+ *   Show title, warning, repay disclosure, and a "Create my account" button.
+ *   On success: stash BootstrapResult, POST /api/wallet/blob (no email),
+ *   advance to phase 'backup'.
+ *
+ * Phase 'backup':
+ *   Three explicit backup actions (download, email, host status-line).
+ *   Continue / Skip-backup link with a warning modal if no user-chosen
+ *   backup was completed.
  *
  * Error handling:
  *   USERNAME_TAKEN     → onUsernameTaken() callback (parent returns to username step)
@@ -18,7 +22,6 @@
  * Loading states:
  *   'sponsor'  → spinner + "Waiting for sponsor server…"
  *   'chain'    → spinner + "Confirming on-chain…"
- *   (not used in Wave 2 — receipt polling is Wave 3; tx hash is returned immediately)
  */
 
 import { useState } from 'react'
@@ -103,6 +106,8 @@ const DEFAULT_LZ_TOKEN_AMOUNT = 0n
 // outside the bootstrap flow — those flows are NOT freshly-initialized.
 const BOOTSTRAP_PERMIT_NONCE = 0n
 
+const EMAIL_REGEX = /^[^@\s]+@[^@\s]+\.[^@\s]+$/
+
 /** Compact wei → "1.5M CAW" style label for the repay disclosure. */
 function formatCawWei(wei: bigint): string {
   const whole = Number(wei / 10n ** 18n)
@@ -127,17 +132,36 @@ export default function BackupStep({
   const t = useT()
   const publicClient = usePublicClient()
 
+  // Which phase we're in
+  const [phase, setPhase] = useState<'mint' | 'backup'>('mint')
+  // Stash the result across phases
+  const [bootstrapResult, setBootstrapResult] = useState<BootstrapResult | null>(null)
+
+  // Mint-phase state
   const [loadingPhase, setLoadingPhase] = useState<LoadingPhase>(null)
   const [error, setError] = useState<BootstrapError>({ kind: null })
-  // Optional email for the durable recovery backstop (#217). If provided, the
-  // server emails the ENCRYPTED recovery file. Skippable — the download is the
-  // fallback durable copy.
+
+  // Backup-phase state
+  const [didDownload, setDidDownload] = useState(false)
   const [recoveryEmail, setRecoveryEmail] = useState('')
-  const emailValid = recoveryEmail === '' || /^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(recoveryEmail.trim())
+  const [emailSending, setEmailSending] = useState(false)
+  const [emailResult, setEmailResult] = useState<'sent' | 'sent_spam' | 'unavailable' | null>(null)
+  const [didEmail, setDidEmail] = useState(false)
+
+  // Host copy is stored automatically in phase 'mint' — always-on status line.
+  const didHost = bootstrapResult !== null
+
+  // Skip-warning modal
+  const [showSkipWarning, setShowSkipWarning] = useState(false)
 
   const mutedClass = isDark ? 'text-white/50' : 'text-gray-500'
   const strongClass = isDark ? 'text-white' : 'text-gray-900'
   const isLoading = loadingPhase !== null
+
+  const emailFormatValid = recoveryEmail === '' || EMAIL_REGEX.test(recoveryEmail.trim())
+  const canSendEmail = recoveryEmail.trim() !== '' && EMAIL_REGEX.test(recoveryEmail.trim()) && !emailSending && emailResult === null
+
+  // ── Phase 'mint' ──────────────────────────────────────────────────────────
 
   const handleBootstrap = async () => {
     setLoadingPhase('sponsor')
@@ -257,12 +281,9 @@ export default function BackupStep({
         repayAmount,
       })
 
-      // Layered recovery (#217): store the ENCRYPTED blob on the server as the
-      // passkey-gated convenience copy (retrievable on a new device without the
-      // file). Ciphertext only — the vault password is never sent. Fire-and-
-      // forget: a store failure must not block onboarding (the download below is
-      // the fallback durable copy). If/when an email is collected, pass it here
-      // and the server emails the ciphertext as the durable backstop via Resend.
+      // Server-hosted convenience copy (passkey-gated). No email at this stage —
+      // the user picks email explicitly in phase 'backup'.
+      // Fire-and-forget: a store failure must not block onboarding.
       try {
         void apiFetch('/api/wallet/blob', {
           method: 'POST',
@@ -270,24 +291,17 @@ export default function BackupStep({
             address: result.ecdsaAddress,
             blob: JSON.stringify(result.backupBlob),
             username,
-            // Durable backstop: if the user gave an email, the server emails the
-            // encrypted file. Omitted when blank.
-            email: recoveryEmail.trim() || undefined,
+            // email omitted — sent separately if the user chooses in phase 'backup'
           }),
-        }).catch(() => { /* non-fatal: download is the fallback */ })
+        }).catch(() => { /* non-fatal */ })
       } catch { /* non-fatal */ }
 
-      // Trigger the file download while still in "sponsor" phase — it is a
-      // synchronous DOM operation and does not need a separate loading state.
-      // (Still offered as the user's own durable copy; the server copy above is
-      // the convenience layer, and an emailed copy is the durable backstop.)
-      downloadBackupBlob(result.backupBlob, `caw-recovery-${username}.json`)
-
-      // Advance to confirm step.
-      onNext(result)
+      // Stash result and advance to backup phase.
+      setBootstrapResult(result)
+      setPhase('backup')
     } catch (err: unknown) {
-      const code = (err as Error & { code?: string })?.code
-      if (code === 'USERNAME_TAKEN') {
+      const errCode = (err as Error & { code?: string })?.code
+      if (errCode === 'USERNAME_TAKEN') {
         // Return to username step so the user can pick a different name.
         onUsernameTaken()
         return
@@ -296,12 +310,12 @@ export default function BackupStep({
       let kind: ErrorKind = 'generic'
       let detail: string | undefined
 
-      if (code === 'INSUFFICIENT_FUNDS') {
+      if (errCode === 'INSUFFICIENT_FUNDS') {
         kind = 'INSUFFICIENT_FUNDS'
-      } else if (code === 'RATE_LIMITED') {
+      } else if (errCode === 'RATE_LIMITED') {
         kind = 'RATE_LIMITED'
         detail = (err as Error & { detail?: string })?.detail
-      } else if (code && SPONSOR_CODE_ERROR_CODES.has(code)) {
+      } else if (errCode && SPONSOR_CODE_ERROR_CODES.has(errCode)) {
         // Collapse all sponsor-code errors into one generic UI. Surfacing
         // the specific error (e.g. CODE_EXPIRED vs INVALID_CODE) would let
         // an attacker probe code validity. The server-side response is
@@ -316,6 +330,63 @@ export default function BackupStep({
       setLoadingPhase(null)
     }
   }
+
+  // ── Phase 'backup' helpers ────────────────────────────────────────────────
+
+  const handleDownload = () => {
+    if (!bootstrapResult) return
+    downloadBackupBlob(bootstrapResult.backupBlob, `caw-recovery-${username}.json`)
+    setDidDownload(true)
+  }
+
+  const handleSendEmail = async () => {
+    if (!bootstrapResult || !canSendEmail) return
+    setEmailSending(true)
+    setEmailResult(null)
+    try {
+      const raw = await apiFetch('/api/wallet/blob', {
+        method: 'POST',
+        body: JSON.stringify({
+          address: bootstrapResult.ecdsaAddress,
+          blob: JSON.stringify(bootstrapResult.backupBlob),
+          username,
+          email: recoveryEmail.trim(),
+        }),
+      })
+      const json = await (raw as Response).json() as {
+        ok: boolean
+        emailed: boolean
+        usedFallback?: boolean
+        mailerConfigured?: boolean
+      }
+      if (json.emailed) {
+        setEmailResult(json.usedFallback ? 'sent_spam' : 'sent')
+        setDidEmail(true)
+      } else {
+        setEmailResult('unavailable')
+      }
+    } catch {
+      setEmailResult('unavailable')
+    } finally {
+      setEmailSending(false)
+    }
+  }
+
+  const handleContinue = () => {
+    if (!bootstrapResult) return
+    onNext(bootstrapResult)
+  }
+
+  const handleSkipClick = () => {
+    // didHost doesn't count as a user-chosen backup.
+    if (!didDownload && !didEmail) {
+      setShowSkipWarning(true)
+    } else {
+      handleContinue()
+    }
+  }
+
+  // ── Error renderer (mint phase) ───────────────────────────────────────────
 
   const renderError = () => {
     if (!error.kind) return null
@@ -348,41 +419,160 @@ export default function BackupStep({
     )
   }
 
-  return (
-    <div className="space-y-6">
-      <div>
-        <h2 className={`text-xl font-bold mb-1 ${strongClass}`}>
-          {t('onboarding.backup.title')}
-        </h2>
-        <p className={`text-sm ${mutedClass}`}>
-          {t('onboarding.backup.subtitle')}
-        </p>
-      </div>
+  // ── Skip-warning modal ────────────────────────────────────────────────────
 
-      {/* Recovery file icon */}
-      <div className="flex justify-center py-4">
-        <div className={`w-20 h-20 rounded-full flex items-center justify-center ${isDark ? 'bg-blue-500/15' : 'bg-blue-50'}`}>
-          <svg className="w-10 h-10 text-blue-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
-          </svg>
-        </div>
-      </div>
-
-      {/* Warning about importance */}
-      <div className={`rounded-xl p-4 border ${isDark ? 'bg-yellow-500/10 border-yellow-500/30' : 'bg-yellow-50 border-yellow-200'}`}>
-        <div className="flex gap-3">
-          <svg className="w-5 h-5 text-yellow-500 flex-shrink-0 mt-0.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
-          </svg>
-          <div>
-            <p className={`text-sm font-semibold ${isDark ? 'text-yellow-400' : 'text-yellow-800'}`}>
-              {t('onboarding.backup.warning_title')}
-            </p>
-            <p className={`text-sm mt-1 ${isDark ? 'text-yellow-300/80' : 'text-yellow-700'}`}>
-              {t('onboarding.backup.warning_body')}
-            </p>
+  const renderSkipWarning = () => {
+    if (!showSkipWarning) return null
+    return (
+      <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60">
+        <div className={`mx-4 max-w-sm w-full rounded-2xl p-6 space-y-4 ${isDark ? 'bg-gray-900 border border-white/10' : 'bg-white border border-gray-200'}`}>
+          <h3 className={`text-lg font-bold ${strongClass}`}>
+            {t('onboarding.backup.skip_warn_title')}
+          </h3>
+          <p className={`text-sm ${mutedClass}`}>
+            {t('onboarding.backup.skip_warn_body')}
+          </p>
+          <div className="flex gap-3">
+            <button
+              onClick={() => setShowSkipWarning(false)}
+              className={`flex-1 py-2.5 rounded-full font-semibold text-sm transition-all border cursor-pointer ${isDark ? 'border-white/20 text-white/70 hover:bg-white/5' : 'border-gray-300 text-gray-600 hover:bg-gray-50'}`}
+            >
+              {t('onboarding.backup.skip_go_back')}
+            </button>
+            <button
+              onClick={() => {
+                setShowSkipWarning(false)
+                if (bootstrapResult) onNext(bootstrapResult)
+              }}
+              className="flex-1 py-2.5 rounded-full font-semibold text-sm bg-red-500 text-white hover:bg-red-600 transition-all cursor-pointer"
+            >
+              {t('onboarding.backup.skip_confirm')}
+            </button>
           </div>
         </div>
+      </div>
+    )
+  }
+
+  // ── Render: phase 'mint' ──────────────────────────────────────────────────
+
+  if (phase === 'mint') {
+    return (
+      <div className="space-y-6">
+        {renderSkipWarning()}
+
+        <div>
+          <h2 className={`text-xl font-bold mb-1 ${strongClass}`}>
+            {t('onboarding.backup.title')}
+          </h2>
+          <p className={`text-sm ${mutedClass}`}>
+            {t('onboarding.backup.subtitle')}
+          </p>
+        </div>
+
+        {/* Warning about importance */}
+        <div className={`rounded-xl p-4 border ${isDark ? 'bg-yellow-500/10 border-yellow-500/30' : 'bg-yellow-50 border-yellow-200'}`}>
+          <div className="flex gap-3">
+            <svg className="w-5 h-5 text-yellow-500 flex-shrink-0 mt-0.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
+            </svg>
+            <div>
+              <p className={`text-sm font-semibold ${isDark ? 'text-yellow-400' : 'text-yellow-800'}`}>
+                {t('onboarding.backup.warning_title')}
+              </p>
+              <p className={`text-sm mt-1 ${isDark ? 'text-yellow-300/80' : 'text-yellow-700'}`}>
+                {t('onboarding.backup.warning_body')}
+              </p>
+            </div>
+          </div>
+        </div>
+
+        {/* Sponsor-Repay disclosure — only when this code carries a repay
+            obligation. Makes the repay-at-withdrawal terms explicit BEFORE the
+            user signs the mint permit (your gift includes a repayment clause). */}
+        {repayAmount > 0n && (
+          <div className={`rounded-xl p-4 border ${isDark ? 'bg-orange-500/10 border-orange-500/30' : 'bg-orange-50 border-orange-200'}`}>
+            <div className="flex gap-3">
+              <svg className="w-5 h-5 text-orange-500 flex-shrink-0 mt-0.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8c-1.657 0-3 .895-3 2s1.343 2 3 2 3 .895 3 2-1.343 2-3 2m0-8c1.11 0 2.08.402 2.599 1M12 8V7m0 1v8m0 0v1m0-1c-1.11 0-2.08-.402-2.599-1M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+              </svg>
+              <div>
+                <p className={`text-sm font-semibold ${isDark ? 'text-orange-400' : 'text-orange-800'}`}>
+                  {t('onboarding.backup.repay_title')}
+                </p>
+                <p className={`text-sm mt-1 ${isDark ? 'text-orange-300/80' : 'text-orange-700'}`}>
+                  {t('onboarding.backup.repay_body', { amount: formatCawWei(repayAmount) })}
+                </p>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* Loading state */}
+        {isLoading && (
+          <div className={`flex items-center gap-3 p-4 rounded-xl ${isDark ? 'bg-white/5' : 'bg-gray-50'}`}>
+            <div className="w-5 h-5 border-2 border-yellow-500 border-t-transparent rounded-full animate-spin flex-shrink-0" />
+            <p className={`text-sm ${mutedClass}`}>
+              {loadingPhase === 'sponsor'
+                ? t('onboarding.backup.loading_sponsor')
+                : t('onboarding.backup.loading_chain')}
+            </p>
+          </div>
+        )}
+
+        {/* Error */}
+        {renderError()}
+
+        <div className="flex gap-3">
+          <button
+            onClick={onBack}
+            disabled={isLoading}
+            className={`
+              flex-1 py-3 rounded-full font-semibold text-sm transition-all border
+              ${isLoading ? 'opacity-40 cursor-not-allowed' : 'cursor-pointer'}
+              ${isDark
+                ? 'border-white/20 text-white/70 hover:bg-white/5'
+                : 'border-gray-300 text-gray-600 hover:bg-gray-50'
+              }
+            `}
+          >
+            {t('common.back')}
+          </button>
+          <button
+            onClick={handleBootstrap}
+            disabled={isLoading}
+            className={`
+              flex-1 py-3 rounded-full font-semibold text-sm transition-all
+              ${isLoading
+                ? 'bg-yellow-500/50 text-black/60 cursor-not-allowed'
+                : 'bg-yellow-500 text-black hover:bg-yellow-400 cursor-pointer'
+              }
+            `}
+          >
+            {isLoading
+              ? t('onboarding.backup.loading_sponsor')
+              : error.kind
+                ? t('common.try_again')
+                : t('onboarding.backup.cta_create')}
+          </button>
+        </div>
+      </div>
+    )
+  }
+
+  // ── Render: phase 'backup' ────────────────────────────────────────────────
+
+  return (
+    <div className="space-y-6">
+      {renderSkipWarning()}
+
+      <div>
+        <h2 className={`text-xl font-bold mb-1 ${strongClass}`}>
+          {t('onboarding.backup.ready_title')}
+        </h2>
+        <p className={`text-sm ${mutedClass}`}>
+          {t('onboarding.backup.ready_subtitle')}
+        </p>
       </div>
 
       {/* Storage suggestions */}
@@ -397,98 +587,116 @@ export default function BackupStep({
         </ul>
       </div>
 
-      {/* Sponsor-Repay disclosure — only when this code carries a repay
-          obligation. Makes the repay-at-withdrawal terms explicit BEFORE the
-          user signs the mint permit (your gift includes a repayment clause). */}
-      {repayAmount > 0n && (
-        <div className={`rounded-xl p-4 border ${isDark ? 'bg-orange-500/10 border-orange-500/30' : 'bg-orange-50 border-orange-200'}`}>
-          <div className="flex gap-3">
-            <svg className="w-5 h-5 text-orange-500 flex-shrink-0 mt-0.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8c-1.657 0-3 .895-3 2s1.343 2 3 2 3 .895 3 2-1.343 2-3 2m0-8c1.11 0 2.08.402 2.599 1M12 8V7m0 1v8m0 0v1m0-1c-1.11 0-2.08-.402-2.599-1M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
-            </svg>
-            <div>
-              <p className={`text-sm font-semibold ${isDark ? 'text-orange-400' : 'text-orange-800'}`}>
-                {t('onboarding.backup.repay_title')}
-              </p>
-              <p className={`text-sm mt-1 ${isDark ? 'text-orange-300/80' : 'text-orange-700'}`}>
-                {t('onboarding.backup.repay_body', { amount: formatCawWei(repayAmount) })}
-              </p>
-            </div>
-          </div>
+      {/* ── Action 1: Download ── */}
+      <div className={`rounded-xl p-4 border ${isDark ? 'bg-white/5 border-white/10' : 'bg-gray-50 border-gray-200'}`}>
+        <div className="flex items-center justify-between gap-3">
+          <p className={`text-sm font-medium ${strongClass}`}>
+            {t('onboarding.backup.action_download_label')}
+          </p>
+          {didDownload ? (
+            <span className="flex items-center gap-1 text-green-500 text-sm font-medium shrink-0">
+              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+              </svg>
+              {t('onboarding.backup.action_saved')}
+            </span>
+          ) : (
+            <button
+              onClick={handleDownload}
+              className="shrink-0 px-4 py-2 rounded-full font-semibold text-sm bg-yellow-500 text-black hover:bg-yellow-400 transition-all cursor-pointer"
+            >
+              {t('onboarding.backup.action_download')}
+            </button>
+          )}
         </div>
-      )}
+      </div>
 
-      {/* Optional email backstop (#217): email the ENCRYPTED recovery file so
-          the user can recover even if they lose every device. Optional — the
-          download below is the fallback. */}
-      {!isLoading && (
-        <div className="space-y-1.5">
-          <label className={`block text-sm font-medium ${strongClass}`}>
-            {t('onboarding.backup.email_label')}
-          </label>
+      {/* ── Action 2: Email ── */}
+      <div className={`rounded-xl p-4 border ${isDark ? 'bg-white/5 border-white/10' : 'bg-gray-50 border-gray-200'} space-y-3`}>
+        <p className={`text-sm font-medium ${strongClass}`}>
+          {t('onboarding.backup.email_to_label')}
+        </p>
+        <div className="flex gap-2 items-center">
           <input
             type="email"
             value={recoveryEmail}
-            onChange={e => setRecoveryEmail(e.target.value)}
+            onChange={e => { setRecoveryEmail(e.target.value); setEmailResult(null) }}
             placeholder={t('onboarding.backup.email_placeholder')}
             autoComplete="email"
-            className={`w-full px-4 py-3 rounded-xl border text-sm transition-colors outline-none ${
-              isDark ? 'bg-white/5 border-white/20 text-white placeholder-white/30' : 'bg-white border-gray-300 text-gray-900 placeholder-gray-400'
-            } ${emailValid ? 'focus:border-yellow-500' : 'border-red-500'}`}
+            disabled={emailSending || emailResult === 'sent' || emailResult === 'sent_spam'}
+            className={`flex-1 min-w-0 px-4 py-2.5 rounded-xl border text-sm outline-none transition-colors ${
+              isDark
+                ? 'bg-white/5 border-white/20 text-white placeholder-white/30'
+                : 'bg-white border-gray-300 text-gray-900 placeholder-gray-400'
+            } ${!emailFormatValid ? 'border-red-500' : 'focus:border-yellow-500'} disabled:opacity-50`}
           />
-          <p className={`text-xs ${emailValid ? mutedClass : 'text-red-500'}`}>
-            {emailValid ? t('onboarding.backup.email_hint') : t('onboarding.backup.email_invalid')}
-          </p>
+          <button
+            onClick={handleSendEmail}
+            disabled={!canSendEmail}
+            className={`shrink-0 px-4 py-2.5 rounded-xl font-semibold text-sm transition-all flex items-center gap-2 ${
+              canSendEmail
+                ? 'bg-yellow-500 text-black hover:bg-yellow-400 cursor-pointer'
+                : 'bg-yellow-500/40 text-black/50 cursor-not-allowed'
+            }`}
+          >
+            {emailSending && (
+              <span className="w-4 h-4 border-2 border-black/40 border-t-black rounded-full animate-spin" />
+            )}
+            {t('onboarding.backup.email_send')}
+          </button>
         </div>
-      )}
+        {!emailFormatValid && recoveryEmail !== '' && (
+          <p className="text-xs text-red-500">{t('onboarding.backup.email_invalid')}</p>
+        )}
+        {emailResult === 'sent' && (
+          <p className="text-xs text-green-500">{t('onboarding.backup.email_sent')}</p>
+        )}
+        {emailResult === 'sent_spam' && (
+          <p className="text-xs text-green-500">{t('onboarding.backup.email_sent_spam')}</p>
+        )}
+        {emailResult === 'unavailable' && (
+          <p className={`text-xs ${mutedClass}`}>{t('onboarding.backup.email_unavailable')}</p>
+        )}
+        <p className={`text-xs ${mutedClass}`}>{t('onboarding.backup.email_privacy')}</p>
+      </div>
 
-      {/* Loading state */}
-      {isLoading && (
-        <div className={`flex items-center gap-3 p-4 rounded-xl ${isDark ? 'bg-white/5' : 'bg-gray-50'}`}>
-          <div className="w-5 h-5 border-2 border-yellow-500 border-t-transparent rounded-full animate-spin flex-shrink-0" />
-          <p className={`text-sm ${mutedClass}`}>
-            {loadingPhase === 'sponsor'
-              ? t('onboarding.backup.loading_sponsor')
-              : t('onboarding.backup.loading_chain')}
-          </p>
+      {/* ── Action 3: Host on this domain — always-on status line ── */}
+      <div className={`rounded-xl p-4 border ${
+        didHost
+          ? isDark ? 'bg-green-500/10 border-green-500/20' : 'bg-green-50 border-green-200'
+          : isDark ? 'bg-white/5 border-white/10' : 'bg-gray-50 border-gray-200'
+      }`}>
+        <div className="flex items-center gap-3">
+          <svg className={`w-4 h-4 shrink-0 ${didHost ? 'text-green-500' : mutedClass}`} fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+          </svg>
+          <div>
+            <p className={`text-sm font-medium ${didHost ? (isDark ? 'text-green-400' : 'text-green-700') : strongClass}`}>
+              {t('onboarding.backup.action_host')}
+            </p>
+            <p className={`text-xs mt-0.5 ${mutedClass}`}>
+              {t('onboarding.backup.host_hint')}
+            </p>
+          </div>
         </div>
-      )}
+      </div>
 
-      {/* Error */}
-      {renderError()}
-
-      <div className="flex gap-3">
+      {/* Continue / Skip */}
+      <div className="space-y-2">
         <button
-          onClick={onBack}
-          disabled={isLoading}
-          className={`
-            flex-1 py-3 rounded-full font-semibold text-sm transition-all border
-            ${isLoading ? 'opacity-40 cursor-not-allowed' : 'cursor-pointer'}
-            ${isDark
-              ? 'border-white/20 text-white/70 hover:bg-white/5'
-              : 'border-gray-300 text-gray-600 hover:bg-gray-50'
-            }
-          `}
+          onClick={handleContinue}
+          className="w-full py-3 rounded-full font-semibold text-sm bg-yellow-500 text-black hover:bg-yellow-400 transition-all cursor-pointer"
         >
-          {t('common.back')}
+          {t('onboarding.backup.done')}
         </button>
-        <button
-          onClick={handleBootstrap}
-          disabled={isLoading || !emailValid}
-          className={`
-            flex-1 py-3 rounded-full font-semibold text-sm transition-all
-            ${isLoading || !emailValid
-              ? 'bg-yellow-500/50 text-black/60 cursor-not-allowed'
-              : 'bg-yellow-500 text-black hover:bg-yellow-400 cursor-pointer'
-            }
-          `}
-        >
-          {isLoading
-            ? t('onboarding.backup.loading_sponsor')
-            : error.kind
-              ? t('common.try_again')
-              : t('onboarding.backup.cta')}
-        </button>
+        <div className="flex justify-center">
+          <button
+            onClick={handleSkipClick}
+            className={`text-sm underline transition-opacity hover:opacity-70 cursor-pointer ${mutedClass}`}
+          >
+            {t('onboarding.backup.skip')}
+          </button>
+        </div>
       </div>
     </div>
   )

@@ -114,15 +114,6 @@ export default function PasskeyStep({ username, onNext, onBack }: PasskeyStepPro
         </p>
       </div>
 
-      {/* Biometric icon */}
-      <div className="flex justify-center py-4">
-        <div className={`w-20 h-20 rounded-full flex items-center justify-center ${isDark ? 'bg-yellow-500/15' : 'bg-yellow-50'}`}>
-          <svg className="w-10 h-10 text-yellow-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M12 11c0-1.657 1.343-3 3-3s3 1.343 3 3v1m-6 0V9a3 3 0 00-3-3H6a3 3 0 00-3 3v3m0 0v4a3 3 0 003 3h12a3 3 0 003-3v-4m-6-4V7m0 4V7m-6 4V7" />
-          </svg>
-        </div>
-      </div>
-
       {/* Explanation */}
       <div className={`rounded-xl p-4 space-y-2 ${isDark ? 'bg-white/5' : 'bg-gray-50'}`}>
         <p className={`text-sm font-medium ${strongClass}`}>

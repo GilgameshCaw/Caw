@@ -1,14 +1,20 @@
 // api/util/resendMailer.ts
 //
-// Minimal Resend transactional-email sender, called via the Resend REST API
-// with fetch — no npm dependency. Env-gated on RESEND_KEY: if the key is
-// absent the sender is a no-op (returns false), so the app runs fine without
-// email configured.
+// Transactional-email sender for the layered-recovery backstop (#217): we email
+// the user their Argon2id-ENCRYPTED backup blob (ciphertext only — the vault
+// password is never included, so the email provider can't read the key). The
+// email is the durable copy that survives our server dying.
 //
-// Used by the layered-recovery backstop (#217): we email the user their
-// Argon2id-ENCRYPTED backup blob (ciphertext only — the vault password is never
-// included, so the email provider can't read the key). The email is the durable
-// copy that survives our server dying.
+// Two transports, preferred in order:
+//   1. Resend REST API (fetch, no npm dependency) when RESEND_KEY is set.
+//   2. Local `sendmail` binary (Postfix/sendmail) as a dev/self-host fallback
+//      when RESEND_KEY is absent — no npm dependency, no SMTP credentials. The
+//      catch is deliverability (mail from a bare VPS often lands in spam), so
+//      the UI tells the user to check their spam folder when this path is used.
+// If neither is available the sender is a graceful no-op (returns false), so the
+// app still runs with no email configured at all.
+
+import { spawn } from 'child_process'
 
 const RESEND_ENDPOINT = 'https://api.resend.com/emails'
 
@@ -17,9 +23,28 @@ function getKey(): string | null {
   return k && k.trim() ? k.trim() : null
 }
 
-/** True if Resend is configured (key present). */
+/**
+ * Which transport will actually be used, if any.
+ *   'resend'   → RESEND_KEY present (best deliverability)
+ *   'sendmail' → no key, but MAIL_FALLBACK_SENDMAIL=1 opts into local sendmail
+ *   'none'     → no transport; sends are no-ops
+ * sendmail is opt-in (not auto-on) so a misconfigured box doesn't silently
+ * blackhole recovery emails into a non-existent local MTA.
+ */
+export function mailerTransport(): 'resend' | 'sendmail' | 'none' {
+  if (getKey()) return 'resend'
+  if (process.env.MAIL_FALLBACK_SENDMAIL === '1') return 'sendmail'
+  return 'none'
+}
+
+/** True if SOME transport can send (Resend key or sendmail fallback). */
 export function isMailerConfigured(): boolean {
-  return getKey() !== null
+  return mailerTransport() !== 'none'
+}
+
+/** True only when the deliverable-but-spammy local sendmail path is in use. */
+export function isUsingSendmailFallback(): boolean {
+  return mailerTransport() === 'sendmail'
 }
 
 const FROM_ADDRESS = process.env.RESEND_FROM || 'CAW <recovery@caw.social>'
@@ -42,9 +67,16 @@ export async function sendEmail(opts: {
   text?: string
   attachments?: { filename: string; content: string /* base64 */ }[]
 }): Promise<SendEmailResult> {
-  const key = getKey()
-  if (!key) return { ok: false, error: 'RESEND_KEY not configured' }
+  const transport = mailerTransport()
+  if (transport === 'resend') return sendViaResend(getKey()!, opts)
+  if (transport === 'sendmail') return sendViaSendmail(opts)
+  return { ok: false, error: 'no mail transport configured' }
+}
 
+async function sendViaResend(
+  key: string,
+  opts: { to: string; subject: string; html: string; text?: string; attachments?: { filename: string; content: string }[] },
+): Promise<SendEmailResult> {
   try {
     const res = await fetch(RESEND_ENDPOINT, {
       method: 'POST',
@@ -70,6 +102,67 @@ export async function sendEmail(opts: {
   } catch (e: any) {
     return { ok: false, error: e?.message || 'Resend request failed' }
   }
+}
+
+/**
+ * Build a minimal MIME message and pipe it to the local `sendmail` binary. No
+ * SMTP credentials, no npm dependency — relies on the host having a working
+ * sendmail/Postfix. Multipart/mixed when there are attachments so the .json
+ * recovery file rides along. Resolves { ok:false } (never throws) on any error.
+ */
+function sendViaSendmail(opts: {
+  to: string
+  subject: string
+  html: string
+  text?: string
+  attachments?: { filename: string; content: string /* base64 */ }[]
+}): Promise<SendEmailResult> {
+  return new Promise(resolve => {
+    try {
+      const boundary = `caw_${Buffer.from(opts.subject).toString('hex').slice(0, 16)}_b`
+      const lines: string[] = [
+        `From: ${FROM_ADDRESS}`,
+        `To: ${opts.to}`,
+        `Subject: ${opts.subject}`,
+        'MIME-Version: 1.0',
+      ]
+      const atts = opts.attachments ?? []
+      if (atts.length === 0) {
+        lines.push('Content-Type: text/html; charset=utf-8', '', opts.html)
+      } else {
+        lines.push(`Content-Type: multipart/mixed; boundary="${boundary}"`, '')
+        lines.push(`--${boundary}`, 'Content-Type: text/html; charset=utf-8', '', opts.html, '')
+        for (const a of atts) {
+          lines.push(
+            `--${boundary}`,
+            'Content-Type: application/json',
+            'Content-Transfer-Encoding: base64',
+            `Content-Disposition: attachment; filename="${a.filename}"`,
+            '',
+            // a.content is already base64; wrap at 76 cols per RFC 2045.
+            a.content.replace(/(.{76})/g, '$1\n'),
+            '',
+          )
+        }
+        lines.push(`--${boundary}--`, '')
+      }
+      const message = lines.join('\r\n')
+
+      // -t reads recipients from the headers; -i prevents a lone "." truncating.
+      const child = spawn('sendmail', ['-t', '-i'], { stdio: ['pipe', 'ignore', 'ignore'] })
+      let settled = false
+      const done = (r: SendEmailResult) => { if (!settled) { settled = true; resolve(r) } }
+      child.on('error', e => done({ ok: false, error: `sendmail spawn failed: ${e?.message || e}` }))
+      child.on('close', codeNum =>
+        done(codeNum === 0 ? { ok: true } : { ok: false, error: `sendmail exited ${codeNum}` }),
+      )
+      child.stdin.on('error', () => { /* EPIPE if sendmail dies early — 'close' handles result */ })
+      child.stdin.write(message)
+      child.stdin.end()
+    } catch (e: any) {
+      resolve({ ok: false, error: e?.message || 'sendmail failed' })
+    }
+  })
 }
 
 /**

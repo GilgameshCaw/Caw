@@ -17,9 +17,29 @@ import {
   consumePasskeyChallenge,
   verifyPasskeyAssertionOnChain,
 } from '../util/passkeyVerify'
-import { sendRecoveryBackupEmail, isMailerConfigured } from '../util/resendMailer'
+import {
+  sendRecoveryBackupEmail,
+  isMailerConfigured,
+  isUsingSendmailFallback,
+} from '../util/resendMailer'
 
 const router = Router()
+
+/**
+ * Obfuscate an email for logs — keep the first char of the local part and the
+ * domain, mask the rest: "alice@example.com" → "a***@example.com". The user
+ * asked that we not store/expose their email; this keeps logs debuggable
+ * (which domain bounced) without printing the full address. Never log the raw
+ * string anywhere.
+ */
+function maskEmail(email: string): string {
+  const at = email.indexOf('@')
+  if (at <= 0) return '***'
+  const local = email.slice(0, at)
+  const domain = email.slice(at + 1)
+  const head = local[0]
+  return `${head}${'*'.repeat(Math.max(1, local.length - 1))}@${domain}`
+}
 
 const blobWriteLimit = rateLimit({
   windowMs: 5 * 60 * 1000,
@@ -76,15 +96,22 @@ router.post('/blob', blobWriteLimit, async (req, res) => {
       ? email.trim()
       : null
 
+    // We DO NOT persist the email. It is used transiently to send the backstop
+    // and then discarded — "we don't store your email, it's only for backup".
+    // WalletBlob.email is therefore always written null.
     await prisma.walletBlob.upsert({
       where: { address: addr },
-      create: { address: addr, blob, email: emailStr },
-      update: { blob, email: emailStr ?? undefined },
+      create: { address: addr, blob, email: null },
+      update: { blob, email: null },
     })
 
-    // Durable backstop: email the ciphertext if an email was provided and
-    // Resend is configured. Non-fatal — the server copy + download still exist.
+    // Durable backstop: email the ciphertext if an email was provided and a mail
+    // transport exists (Resend, or the opt-in local sendmail fallback). Non-fatal
+    // — the server copy + download still exist. `usedFallback` tells the FE to
+    // warn the user to check spam (bare-VPS mail often lands there). The email
+    // address is only ever logged masked.
     let emailed = false
+    let usedFallback = false
     if (emailStr && isMailerConfigured()) {
       const r = await sendRecoveryBackupEmail({
         to: emailStr,
@@ -92,10 +119,13 @@ router.post('/blob', blobWriteLimit, async (req, res) => {
         blobJson: blob,
       })
       emailed = r.ok
-      if (!r.ok) console.warn('[wallet-blob] recovery email failed (non-fatal):', r.error)
+      usedFallback = r.ok && isUsingSendmailFallback()
+      if (!r.ok) {
+        console.warn(`[wallet-blob] recovery email to ${maskEmail(emailStr)} failed (non-fatal):`, r.error)
+      }
     }
 
-    res.json({ ok: true, emailed, mailerConfigured: isMailerConfigured() })
+    res.json({ ok: true, emailed, usedFallback, mailerConfigured: isMailerConfigured() })
   } catch (error) {
     console.error('POST /api/wallet/blob error:', error)
     res.status(500).json({ error: 'Failed to store backup' })
