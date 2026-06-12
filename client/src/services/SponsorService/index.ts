@@ -36,10 +36,12 @@ import {
   id as ethersId,
   type Provider,
   type ContractTransactionResponse,
+  type TransactionReceipt,
   type Authorization,
 } from 'ethers'
 import { makeJsonRpcProvider } from '../../utils/rpcProvider'
 import { cawProfileMinterAbi, smartEoaAbi, cawProfileAbi, cawNetworkManagerAbi } from '../../abi/generated'
+import { pokeIndexTokenId } from '../../api/util/indexerPoke'
 
 // ─── Param types ────────────────────────────────────────────────────────────
 
@@ -126,6 +128,9 @@ export interface SponsorError {
 
 export interface SponsorSuccess {
   txHash: string
+  /** Freshly-minted profile tokenId, parsed from the mint Transfer log when
+   *  available (bootstrap path only). Used to reactively poke the indexer. */
+  tokenId?: number
 }
 
 export type SponsorResult = SponsorSuccess | SponsorError
@@ -621,11 +626,56 @@ export class SponsorService {
         }
       }
 
-      return { txHash: txResponse.hash }
+      // Reactively poke the indexer with the freshly-minted tokenId so the
+      // NftTransferWatcher creates the User row immediately (direct chain read)
+      // instead of waiting for its ~60s poll. Without this the FE's post-mint
+      // /api/auth/verify retries time out (~25s) before the watcher catches up,
+      // and the user bounces back to /welcome. The mint Transfer is
+      // Transfer(address(0) -> recipient, tokenId) on the CawProfile NFT.
+      const mintedTokenId = this.extractMintedTokenId(receipt)
+      if (mintedTokenId != null) {
+        pokeIndexTokenId(mintedTokenId)
+        console.log(`[SponsorService] bootstrap poked indexer for minted tokenId=${mintedTokenId}`)
+      }
+
+      return { txHash: txResponse.hash, tokenId: mintedTokenId ?? undefined }
     } catch (err) {
       // Distinguish between pre-submit and on-chain reverts for caller.
       return parseRevertError(err)
     }
+  }
+
+  /**
+   * Parse the freshly-minted profile tokenId from a bootstrap receipt by
+   * matching the ERC-721 mint Transfer — Transfer(address(0), to, tokenId) —
+   * emitted by the CawProfile NFT contract. Returns null if not found (the
+   * caller falls back to the indexer's own poll). Best-effort only: a parse
+   * failure must never break a successful mint.
+   */
+  private extractMintedTokenId(receipt: TransactionReceipt): number | null {
+    try {
+      const iface = new Interface(cawProfileAbi as any)
+      const target = this.cawProfileAddress.toLowerCase()
+      for (const log of receipt.logs) {
+        // Only the CawProfile NFT contract's logs are relevant.
+        if (log.address.toLowerCase() !== target) continue
+        let parsed
+        try {
+          parsed = iface.parseLog({ topics: log.topics as string[], data: log.data })
+        } catch {
+          continue
+        }
+        if (!parsed || parsed.name !== 'Transfer') continue
+        // Mint = transfer from the zero address.
+        const from = String(parsed.args[0]).toLowerCase()
+        if (from !== '0x0000000000000000000000000000000000000000') continue
+        const id = Number(parsed.args[2])
+        if (Number.isInteger(id) && id > 0) return id
+      }
+    } catch (e: any) {
+      console.warn('[SponsorService] extractMintedTokenId failed (non-fatal):', e?.message)
+    }
+    return null
   }
 
   /**

@@ -355,6 +355,11 @@ export default function Onboarding() {
         // retryOnIndexing backs off and re-tries the SAME (message, signature)
         // — safe because the server's one-time-sig guard runs after the 202
         // branch (see auth.ts).
+        // The sponsor server reactively pokes the indexer with the minted
+        // tokenId, so the row usually lands within a second. But if that poke
+        // ever misses (Redis blip), fall back to a budget that outlasts a full
+        // NftTransferWatcher poll cycle (~60s) instead of the ~25s default —
+        // otherwise we'd bounce the user to /welcome for a mint that's fine.
         const data = await retryOnIndexing(() =>
           apiFetch<{
             sessionToken: string
@@ -365,7 +370,8 @@ export default function Onboarding() {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ message, signature }),
-          })
+          }),
+          { maxAttempts: 8, maxDelayMs: 12_000 }
         )
         // eslint-disable-next-line no-console
         console.log('[signin:diag] verify SUCCESS, setting session', {
