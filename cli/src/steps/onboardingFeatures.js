@@ -49,7 +49,73 @@ export async function collectOnboardingFeatures(nodeType, ctx = {}) {
     ? await collectStripeConfig()
     : { stripeEnabled: false, stripeSecretKey: '', stripeWebhookSecret: '', stripePublishableKey: '' }
 
-  return { ...sponsorResult, ...moonpayResult, ...stripeResult }
+  // Resend (recovery-email backstop) is API-side: the server emails users their
+  // ENCRYPTED backup blob as a durable recovery copy. Only meaningful on a node
+  // that runs the API.
+  const resendResult = runsApi
+    ? await collectRecoveryEmailConfig()
+    : { resendKey: '' }
+
+  return { ...sponsorResult, ...moonpayResult, ...stripeResult, ...resendResult }
+}
+
+// ---------------------------------------------------------------------------
+// Recovery email (Resend)
+// ---------------------------------------------------------------------------
+
+async function collectRecoveryEmailConfig() {
+  // --env preload: CAW_RESEND_KEY (from a prior run's RESEND_KEY) skips the prompt.
+  const preload = process.env.CAW_RESEND_KEY || ''
+  if (preload) {
+    console.log(dim('  Using RESEND_KEY from --env preload.'))
+    return { resendKey: preload }
+  }
+
+  section('Recovery email (Resend)')
+  tipBlock([
+    'Passkey (Population B) users get an encrypted recovery file at signup.',
+    'With a Resend API key, the node can EMAIL that encrypted file to the user',
+    'as a durable backstop — so if they lose every device they can still recover',
+    'with the file + their vault password. The email only ever carries ciphertext;',
+    'the vault password is never sent or stored.',
+    '',
+    'Optional. Without it, users still get the in-browser download + the',
+    "passkey-gated server copy — they just don't get an emailed copy.",
+    '',
+    `${brand('Get a key:')} resend.com → API Keys. Free tier covers low volume.`,
+  ])
+
+  const { enableEmail } = await inquirer.prompt([
+    {
+      type: 'list',
+      name: 'enableEmail',
+      message: 'Email encrypted recovery files (Resend):',
+      choices: [
+        { value: false, name: `${dim('Disabled')} — no recovery emails (default)` },
+        { value: true, name: `${brand('Enable')} — provide a Resend API key` },
+      ],
+      default: false,
+    },
+  ])
+
+  if (!enableEmail) return { resendKey: '' }
+
+  console.log()
+  console.log(warn('  RESEND_KEY goes in client/.env (mode 0600).'))
+  console.log(dim('  Optionally set RESEND_FROM (e.g. "CAW <recovery@yourdomain>") — defaults to a CAW sender.'))
+  console.log()
+
+  const { resendKey } = await inquirer.prompt([
+    {
+      type: 'password',
+      name: 'resendKey',
+      mask: '*',
+      message: 'Resend API key (re_…):',
+      validate: (v) => (v && v.trim().length > 0 ? true : 'Enter a key or Ctrl-C to skip'),
+    },
+  ])
+
+  return { resendKey: resendKey.trim() }
 }
 
 // ---------------------------------------------------------------------------

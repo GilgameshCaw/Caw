@@ -128,6 +128,7 @@ const ENV_TO_CAW = {
   // Publishable key lives in the FE .env, handled in preloadFromEnv below.
   STRIPE_SECRET_KEY: 'CAW_STRIPE_SECRET_KEY',
   STRIPE_WEBHOOK_SECRET: 'CAW_STRIPE_WEBHOOK_SECRET',
+  RESEND_KEY: 'CAW_RESEND_KEY',
   // VITE_PROJECT_ID lives in the FRONTEND .env, handled separately.
 }
 

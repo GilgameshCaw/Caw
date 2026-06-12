@@ -618,6 +618,13 @@ function buildEnvVars(nodeType, config) {
     if (config.stripeWebhookSecret) env.STRIPE_WEBHOOK_SECRET = config.stripeWebhookSecret
   }
 
+  // Resend recovery-email backstop. The mailer is a no-op without this key, so
+  // writing it is what turns emailed recovery files on. RESEND_FROM is optional
+  // (defaults to a CAW sender) — set it manually if you want a custom From.
+  if (config.resendKey) {
+    env.RESEND_KEY = config.resendKey
+  }
+
   return env
 }
 
