@@ -9,6 +9,14 @@ import "./interfaces/IMint.sol";
 import "./interfaces/ISmartEOA.sol";
 import "./ISwapRouter.sol";
 
+/// @dev Minimal view into CawNetworkManager's Layer-2 authorized-sponsor
+///      fee-exemption surface. Reached via CawProfile.networkManager().
+interface ICawNetworkManagerSponsorExempt {
+  function isAuthorizedSponsor(uint32 networkId, address sponsor) external view returns (bool);
+  function flagDepositFeeExempt(uint32 networkId) external;
+  function clearDepositFeeExempt() external;
+}
+
 /// @dev Audit-trail tags in this contract (e.g. "H-N", "M-N", "Round N",
 ///      "Audit fix YYYY-MM-DD") are decoded in `docs/AUDIT_TRAIL.md`.
 contract CawProfileMinter is Context {
@@ -669,11 +677,38 @@ contract CawProfileMinter is Context {
     // Route LZ fee refund to `recipient` (the user), not to tx.origin (sponsor server).
     // Audit fix 2026-05-22 (H-1: tx.origin as LZ refund in sponsored flows).
     CawProfile.setLzRefundTo(payable(recipient));
+    // Layer 2: if the resolved sponsor is authorized for this network, flag the
+    // deposit fee exempt for exactly this mint (keyed to the Minter-resolved
+    // `sponsor`, never tx.origin/caller-supplied — a self-sponsoring attacker
+    // not in the set still pays the normal fee). Resolved through a try/catch
+    // helper so the exemption can NEVER break a mint: any failure to reach the
+    // NetworkManager just falls through to "no exemption / normal fee".
+    ICawNetworkManagerSponsorExempt nm = _resolveExemptNm(networkId, sponsor, depositAmount);
+    if (address(nm) != address(0)) nm.flagDepositFeeExempt(networkId);
     CawProfile.mintAndDeposit{value: msg.value}(
       networkId, recipient, username, newId, depositAmount, lzDestId, lzTokenAmount, "",
       sponsorTokenId, repayAmount
     );
+    if (address(nm) != address(0)) nm.clearDepositFeeExempt();
     CawProfile.setLzRefundTo(payable(address(0)));
+  }
+
+  /// @dev Returns the NetworkManager IFF the resolved sponsor is authorized for
+  ///      `networkId` and depositAmount > 0 — else address(0) (no exemption).
+  ///      Every external lookup is try/catch-guarded so a profile that doesn't
+  ///      expose networkManager(), or a NetworkManager that reverts, simply
+  ///      yields no exemption rather than failing the mint.
+  function _resolveExemptNm(uint32 networkId, address sponsor, uint256 depositAmount)
+    internal view returns (ICawNetworkManagerSponsorExempt)
+  {
+    if (depositAmount == 0) return ICawNetworkManagerSponsorExempt(address(0));
+    try IMint(address(CawProfile)).networkManager() returns (address nmAddr) {
+      if (nmAddr == address(0)) return ICawNetworkManagerSponsorExempt(address(0));
+      try ICawNetworkManagerSponsorExempt(nmAddr).isAuthorizedSponsor(networkId, sponsor) returns (bool ok) {
+        if (ok) return ICawNetworkManagerSponsorExempt(nmAddr);
+      } catch {}
+    } catch {}
+    return ICawNetworkManagerSponsorExempt(address(0));
   }
 
   event SponsorRepaySet(uint32 indexed tokenId, uint32 sponsorTokenId, uint256 repayAmount, uint256 depositAmount);

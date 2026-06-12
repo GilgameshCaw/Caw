@@ -51,12 +51,23 @@ contract SRMockRouter {
 /// @dev Slim CawProfile mock for Minter tests.
 ///      Tracks owners; records last mintAndDeposit call data including
 ///      the Phase 2 sponsorTokenId and repayAmount forwarded by the Minter.
+// Minimal NetworkManager stand-in for the Layer-2 fee-exemption surface the
+// Minter now touches on the sponsored path. Default: no sponsor authorized, so
+// these tests take the normal-fee path (behavior unchanged). flag/clear are
+// no-ops here.
+contract SRMockNetworkManager {
+    function isAuthorizedSponsor(uint32, address) external pure returns (bool) { return false; }
+    function flagDepositFeeExempt(uint32) external {}
+    function clearDepositFeeExempt() external {}
+}
+
 contract SRMockProfile {
     mapping(uint256 => address) private _owner;
     uint32 private _nextId = 1;
 
     address public minter;
     SRMockERC20 public caw;
+    address public networkManager;
 
     // Recorded Phase 2 call data from mintAndDeposit
     uint32  public lastMintedId;
@@ -67,6 +78,7 @@ contract SRMockProfile {
     constructor(address _minter, address _caw) {
         minter = _minter;
         caw = SRMockERC20(_caw);
+        networkManager = address(new SRMockNetworkManager());
     }
 
     function nextId() external returns (uint32) { return _nextId; }

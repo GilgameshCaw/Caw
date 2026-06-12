@@ -56,6 +56,11 @@ interface IMint {
   ///         so excess LZ fee is returned to the user, not to tx.origin (sponsor).
   function setLzRefundTo(address payable refundTo) external;
 
+  /// @notice The CawNetworkManager wired into CawProfile. The Minter reads it to
+  ///         reach the Layer-2 authorized-sponsor fee-exemption surface without
+  ///         needing its own constructor wiring.
+  function networkManager() external view returns (address);
+
   /// @notice Authenticate a token to a network via the registered minter.
   ///         msg.sender must be the minter; trust chain: owner sig verified at
   ///         Minter → Minter trusted by CawProfile.

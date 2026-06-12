@@ -79,6 +79,20 @@ contract CawNetworkManager {
   /// @dev One-shot guard for setCawProfile. Once set, cawProfile is permanent.
   bool private _cawProfileSet;
 
+  /// @notice CawProfileMinter address. Wired once via setMinter() after deploy
+  ///         (deployer-gated, one-shot). Only the Minter may flag a sponsored
+  ///         mint as deposit-fee-exempt (Layer 2). Permanent once set.
+  address public minter;
+  bool private _minterSet;
+
+  /// @dev Transient deposit-fee-exemption flag (Layer 2 authorized sponsors).
+  ///      Holds `networkId + 1` (so 0 = "no exemption pending") set by the Minter
+  ///      immediately before CawProfile.mintAndDeposit when the resolved sponsor
+  ///      is authorized; getDepositFeeAndAddress returns fee 0 for that network
+  ///      while set; the Minter clears it right after the mint. Lifetime is one
+  ///      synchronous mint call — it cannot leak across transactions.
+  uint32 private _feeExemptNetworkPlusOne;
+
   uint32 public nextNetworkId = 1;
   mapping(uint32 => CawNetwork) public networks;
 
@@ -176,6 +190,32 @@ contract CawNetworkManager {
     _cawProfileSet = true;
     cawProfile = _cawProfile;
     emit CawProfileSet(_cawProfile);
+  }
+
+  /// @notice One-shot, deployer-gated wiring of the Minter address (mirrors
+  ///         setCawProfile). Only the Minter may set the Layer-2 fee-exempt flag.
+  function setMinter(address _minter) external {
+    require(msg.sender == _deployer, "Not deployer");
+    require(!_minterSet, "Minter already set");
+    require(_minter != address(0), "Zero address");
+    _minterSet = true;
+    minter = _minter;
+  }
+
+  /// @notice Minter-gated: flag that the imminent CawProfile.mintAndDeposit for
+  ///         `networkId` is by an AUTHORIZED sponsor, so its deposit fee is 0.
+  ///         The Minter verifies isAuthorizedSponsor before calling this, then
+  ///         calls clearDepositFeeExempt right after the mint. The flag holds
+  ///         networkId+1; getDepositFeeAndAddress consumes it (returns fee 0).
+  function flagDepositFeeExempt(uint32 networkId) external {
+    require(msg.sender == minter, "Not minter");
+    _feeExemptNetworkPlusOne = networkId + 1;
+  }
+
+  /// @notice Minter-gated: clear the transient exemption flag after the mint.
+  function clearDepositFeeExempt() external {
+    require(msg.sender == minter, "Not minter");
+    _feeExemptNetworkPlusOne = 0;
   }
 
   /// @dev When the authFee crosses the 0/non-zero boundary, propagate the new
@@ -288,6 +328,13 @@ contract CawNetworkManager {
   function getDepositFeeAndAddress(uint32 networkId) public view returns (uint256, address) {
     require(_networkExists(networkId), "Network does not exist");
     CawNetwork storage network = networks[networkId];
+    // Layer 2: authorized-sponsor exemption. The Minter set this flag for
+    // exactly this mint after verifying the resolved sponsor is authorized;
+    // return a 0 deposit fee. feeAddress is still returned (payFee(0, addr) is
+    // a no-op). The Minter clears the flag immediately after the mint.
+    if (_feeExemptNetworkPlusOne == networkId + 1) {
+      return (0, network.feeAddress);
+    }
     return (network.depositFee, network.feeAddress);
   }
 
@@ -409,6 +456,38 @@ contract CawNetworkManager {
     require(fee <= networks[networkId].depositFeeCeiling, "fee exceeds ceiling");
     networks[networkId].depositFee = fee;
     emit NetworkFeeUpdated(networkId, "deposit", fee);
+  }
+
+  // ── Authorized sponsors (Layer 2: open sponsored mint fee exemption) ────────
+  // A per-network set of sponsor addresses whose sponsored mints are exempt from
+  // the deposit fee. Set by the NETWORK OWNER — the same category as the fee
+  // setters above (a tenant parameter, not a protocol privilege; the core
+  // contracts stay ownerless). Default empty = behaves exactly as before.
+  //
+  // SECURITY: the exemption is keyed to the Minter-RESOLVED sponsor address
+  // (CawProfileMinter resolves `_msgSender().code.length==0 ? _msgSender() :
+  // tx.origin`, then sets it on CawProfile, which checks it here). It is NEVER
+  // keyed on a raw tx.origin or a caller-supplied field — only the network's
+  // own authorized addresses get the exemption, so a self-sponsoring attacker
+  // (who is not in this set) pays the normal fee. See
+  // messages/open-sponsored-flow-design.md.
+  mapping(uint32 => mapping(address => bool)) private _authorizedSponsors;
+
+  event AuthorizedSponsorSet(uint32 indexed networkId, address indexed sponsor, bool authorized);
+
+  function addAuthorizedSponsor(uint32 networkId, address sponsor) external onlyNetworkOwnerNotFeeLocked(networkId) {
+    require(sponsor != address(0), "zero sponsor");
+    _authorizedSponsors[networkId][sponsor] = true;
+    emit AuthorizedSponsorSet(networkId, sponsor, true);
+  }
+
+  function removeAuthorizedSponsor(uint32 networkId, address sponsor) external onlyNetworkOwnerNotFeeLocked(networkId) {
+    _authorizedSponsors[networkId][sponsor] = false;
+    emit AuthorizedSponsorSet(networkId, sponsor, false);
+  }
+
+  function isAuthorizedSponsor(uint32 networkId, address sponsor) external view returns (bool) {
+    return _authorizedSponsors[networkId][sponsor];
   }
 
   function setMintFee(uint32 networkId, uint256 fee) public onlyNetworkOwnerNotFeeLocked(networkId) {

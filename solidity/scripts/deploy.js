@@ -1000,6 +1000,26 @@ const LINKING_STEPS = [
       } catch { return false; }
     },
   },
+  {
+    // Layer 2: wire the Minter into CawNetworkManager so only the Minter can set
+    // the authorized-sponsor deposit-fee-exempt flag. One-shot, deployer-gated;
+    // skipIf reads the live minter slot.
+    name: 'Wire CawProfileMinter into CawNetworkManager (setMinter)',
+    chain: 'L1',
+    phase: 2,
+    contract: 'CawNetworkManager',
+    method: 'setMinter',
+    args: (state) => [state.addresses.CawProfileMinter],
+    condition: (state) => state.addresses.CawNetworkManager && state.addresses.CawProfileMinter,
+    skipIf: async (state, deployer) => {
+      const contract = deployer.getContract('CawNetworkManager');
+      if (!contract) return false;
+      try {
+        const current = await contract.minter();
+        return current !== '0x0000000000000000000000000000000000000000';
+      } catch { return false; }
+    },
+  },
   // CawProfileURI is wired via the CawProfile constructor (immutable) — no setUriGenerator step.
   // A URI generator change requires a full CawProfile redeploy (cascade handles it).
   // Removed setter is intentional: see "no admin powers except path expansion" principle.

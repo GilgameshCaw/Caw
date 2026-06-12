@@ -157,8 +157,12 @@ async function main() {
 
   // CawNetworkManager state
   console.log('\nCawNetworkManager:');
-  const cnm = new ethers.Contract(A.CawNetworkManager, ['function cawProfile() view returns (address)'], l1);
+  const cnm = new ethers.Contract(A.CawNetworkManager, [
+    'function cawProfile() view returns (address)',
+    'function minter() view returns (address)',
+  ], l1);
   eq('CawNetworkManager.cawProfile', await cnm.cawProfile(), A.CawProfile);
+  eq('CawNetworkManager.minter', await cnm.minter(), A.CawProfileMinter);
 
   // CawProfileMinter state
   console.log('\nCawProfileMinter:');
