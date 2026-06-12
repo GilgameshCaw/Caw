@@ -129,6 +129,11 @@ export default function BackupStep({
 
   const [loadingPhase, setLoadingPhase] = useState<LoadingPhase>(null)
   const [error, setError] = useState<BootstrapError>({ kind: null })
+  // Optional email for the durable recovery backstop (#217). If provided, the
+  // server emails the ENCRYPTED recovery file. Skippable — the download is the
+  // fallback durable copy.
+  const [recoveryEmail, setRecoveryEmail] = useState('')
+  const emailValid = recoveryEmail === '' || /^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(recoveryEmail.trim())
 
   const mutedClass = isDark ? 'text-white/50' : 'text-gray-500'
   const strongClass = isDark ? 'text-white' : 'text-gray-900'
@@ -265,7 +270,9 @@ export default function BackupStep({
             address: result.ecdsaAddress,
             blob: JSON.stringify(result.backupBlob),
             username,
-            // email: <optional — wire an email input to enable the email backstop>
+            // Durable backstop: if the user gave an email, the server emails the
+            // encrypted file. Omitted when blank.
+            email: recoveryEmail.trim() || undefined,
           }),
         }).catch(() => { /* non-fatal: download is the fallback */ })
       } catch { /* non-fatal */ }
@@ -411,6 +418,30 @@ export default function BackupStep({
         </div>
       )}
 
+      {/* Optional email backstop (#217): email the ENCRYPTED recovery file so
+          the user can recover even if they lose every device. Optional — the
+          download below is the fallback. */}
+      {!isLoading && (
+        <div className="space-y-1.5">
+          <label className={`block text-sm font-medium ${strongClass}`}>
+            {t('onboarding.backup.email_label')}
+          </label>
+          <input
+            type="email"
+            value={recoveryEmail}
+            onChange={e => setRecoveryEmail(e.target.value)}
+            placeholder={t('onboarding.backup.email_placeholder')}
+            autoComplete="email"
+            className={`w-full px-4 py-3 rounded-xl border text-sm transition-colors outline-none ${
+              isDark ? 'bg-white/5 border-white/20 text-white placeholder-white/30' : 'bg-white border-gray-300 text-gray-900 placeholder-gray-400'
+            } ${emailValid ? 'focus:border-yellow-500' : 'border-red-500'}`}
+          />
+          <p className={`text-xs ${emailValid ? mutedClass : 'text-red-500'}`}>
+            {emailValid ? t('onboarding.backup.email_hint') : t('onboarding.backup.email_invalid')}
+          </p>
+        </div>
+      )}
+
       {/* Loading state */}
       {isLoading && (
         <div className={`flex items-center gap-3 p-4 rounded-xl ${isDark ? 'bg-white/5' : 'bg-gray-50'}`}>
@@ -443,10 +474,10 @@ export default function BackupStep({
         </button>
         <button
           onClick={handleBootstrap}
-          disabled={isLoading}
+          disabled={isLoading || !emailValid}
           className={`
             flex-1 py-3 rounded-full font-semibold text-sm transition-all
-            ${isLoading
+            ${isLoading || !emailValid
               ? 'bg-yellow-500/50 text-black/60 cursor-not-allowed'
               : 'bg-yellow-500 text-black hover:bg-yellow-400 cursor-pointer'
             }
