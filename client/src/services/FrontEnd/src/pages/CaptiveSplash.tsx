@@ -190,7 +190,7 @@ export default function CaptiveSplash() {
           open={showSignInChoice}
           onClose={() => setShowSignInChoice(false)}
           onWalletPath={() => openConnectModal?.()}
-          onPasskeyPath={() => navigate('/onboarding')}
+          onPasskeyPath={() => navigate('/signin/passkey')}
         />
 
         {/* Scroll cue — a gently bouncing down-arrow at the bottom of the hero

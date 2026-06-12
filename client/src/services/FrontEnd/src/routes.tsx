@@ -99,6 +99,7 @@ const OnboardingPage = lazyWithReload(() => import("./pages/Onboarding"));
 const OnrampOnboarding = lazyWithReload(() => import("./pages/OnrampOnboarding"));
 const CardCheckout = lazyWithReload(() => import("./pages/CardCheckout"));
 const RecoveryPage = lazyWithReload(() => import("./pages/Recovery"));
+const PasskeySignInPage = lazyWithReload(() => import("./pages/PasskeySignIn"));
 
 // Routes are split into two groups so `<MainLayout>` can be hoisted to a
 // single shared parent route. The layout stays mounted across navigation
@@ -186,6 +187,7 @@ export const bareRoutes: RouteDef[] = [
   // when VITE_STRIPE_PUBLISHABLE_KEY is set.
   { path: "/checkout", component: <CardCheckout /> },
   { path: "/recovery", component: <RecoveryPage /> },
+  { path: "/signin/passkey", component: <PasskeySignInPage /> },
   { path: "/welcome", component: <CaptiveSplash /> },
   { path: "/welcome/:username", component: <WelcomePage /> },
   // Whitepaper is intentionally a bare route so it doesn't mount MainLayout

@@ -214,6 +214,65 @@ export async function signWithPasskey(opts: {
   }
 }
 
+/**
+ * Sign a 32-byte digest with a DISCOVERABLE (resident) passkey — no credentialId
+ * required. For passkey sign-in on a fresh device (localStorage cleared): the
+ * authenticator surfaces the synced passkey for this rpId (iCloud Keychain /
+ * Google Password Manager) via an empty allowCredentials list, and the user
+ * picks it. Returns the same blob as signWithPasskey, plus the credentialId of
+ * the chosen credential (so the caller can persist it for next time).
+ */
+export async function signWithPasskeyDiscoverable(opts: {
+  digest: `0x${string}`
+  rpId: string
+}): Promise<PasskeySignResult & { credentialId: string }> {
+  if (!window.PublicKeyCredential) {
+    throw new Error('WebAuthn not supported in this browser')
+  }
+  const digestBytes = hexToBytes(opts.digest.slice(2) as string)
+  if (digestBytes.length !== 32) {
+    throw new Error('signWithPasskeyDiscoverable: digest must be exactly 32 bytes')
+  }
+
+  const assertion = await navigator.credentials.get({
+    publicKey: {
+      challenge: digestBytes,
+      rpId: opts.rpId,
+      // No allowCredentials → the platform offers any resident passkey for this
+      // rpId. This is what makes "sign in on a new device" work with no local
+      // credentialId.
+      userVerification: 'required',
+    },
+  })
+  if (!assertion || assertion.type !== 'public-key') {
+    throw new Error('signWithPasskeyDiscoverable: unexpected assertion type')
+  }
+
+  const pkAssertion = assertion as PublicKeyCredential
+  const response = pkAssertion.response as AuthenticatorAssertionResponse
+  const authData = new Uint8Array(response.authenticatorData)
+  const clientDataJSONBytes = new Uint8Array(response.clientDataJSON)
+  const clientDataJSONStr = new TextDecoder().decode(clientDataJSONBytes)
+  const { r, s } = decodeDerSignature(new Uint8Array(response.signature))
+
+  const authDataHex = ('0x' + bytesToHex(authData)) as `0x${string}`
+  const rHex = ('0x' + bytesToHex(r)) as `0x${string}`
+  const sHex = ('0x' + bytesToHex(s)) as `0x${string}`
+  const sig = encodeAbiParameters(
+    [{ type: 'bytes' }, { type: 'bytes' }, { type: 'bytes32' }, { type: 'bytes32' }],
+    [authDataHex, (('0x' + bytesToHex(clientDataJSONBytes)) as `0x${string}`), rHex, sHex],
+  )
+
+  return {
+    sig,
+    authenticatorData: authDataHex,
+    clientDataJSON: clientDataJSONStr,
+    r: rHex,
+    s: sHex,
+    credentialId: bufferToBase64url(pkAssertion.rawId),
+  }
+}
+
 // ---------------------------------------------------------------------------
 // DER ECDSA signature decoder
 // ---------------------------------------------------------------------------
