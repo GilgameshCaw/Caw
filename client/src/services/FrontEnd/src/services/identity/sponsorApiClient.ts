@@ -22,10 +22,14 @@
 
 export interface SponsorBootstrapRequest {
   /**
-   * Invite code (required). Server validates against SponsorCode table
-   * with constant-time response. See client/src/api/middleware/validateSponsorCode.ts.
+   * Gate: provide EXACTLY ONE of `code` or `xQualifiedToken`. `code` is the
+   * sponsor invite code (validated against SponsorCode table);
+   * `xQualifiedToken` is the proof from the open X-signup flow
+   * (/api/verify/x/signup-*). The server enforces exactly-one.
    */
-  code: string
+  code?: string
+  /** X-qualified token from the open X-signup gate (alternative to code). */
+  xQualifiedToken?: string
   /** P-256 passkey X coordinate (32 bytes, 0x-prefixed hex) */
   passkeyPubkeyX: `0x${string}`
   /** P-256 passkey Y coordinate (32 bytes, 0x-prefixed hex) */

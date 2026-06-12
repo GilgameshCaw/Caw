@@ -33,6 +33,7 @@ import {
 } from '../middleware/validateSponsorCode'
 import { getCawPriceCache, getEthPriceCache } from '../../services/ChainSyncService'
 import { hashCode } from '../../services/SponsorService/codes'
+import { consumeXQualifiedToken } from './xSignup'
 
 const router = Router()
 
@@ -143,8 +144,15 @@ const BootstrapBodySchema = z.object({
   authTupleNonce:     bigintSchema,
   permitSig:          sigHexSchema as z.ZodType<`0x${string}`>,  // L-2: cap at 8 KB
   permitNonce:        bigintSchema,
-  // Invite code — required; without a valid code the bootstrap is rejected.
-  code:               z.string().min(8).max(64),
+  // Gate (exactly one required): either an invite `code` OR an
+  // `xQualifiedToken` from the open X-signup flow (/api/verify/x/signup-*).
+  // Both optional at the schema level; the handler enforces exactly-one and
+  // rejects if neither is present.
+  code:               z.string().min(8).max(64).optional(),
+  // X-qualified token (base64url, 24 random bytes → 32 chars). Issued by
+  // /api/verify/x/signup-callback after age>90d-OR-verified passes. Consumed
+  // (burned) here; the WalletXLink written post-mint permanently spends the X id.
+  xQualifiedToken:    z.string().min(16).max(128).optional(),
   // Sponsor-Repay (Phase 2): the repayAmount the FE computed and SIGNED into
   // the permit digest. Optional (absent = plain gift, signed repayAmount 0).
   // The server recomputes the authoritative value from the code and rejects
@@ -218,29 +226,39 @@ router.post('/bootstrap', async (req, res) => {
     return res.status(400).json({ error: 'VALIDATION', detail })
   }
 
-  // ── Sponsor-code gate ─────────────────────────────────────────────────────
-  // Compute a best-effort budget breakdown from cached price data.
-  // If prices are unavailable we still allow the request through the budget
-  // check (budget=undefined), but the code's usesRemaining and maxDeposit
-  // guards still apply.
+  // ── Gate: exactly one of (sponsor code) OR (X-qualified token) ─────────────
+  const hasCode = typeof params.code === 'string' && params.code.length > 0
+  const hasXToken = typeof params.xQualifiedToken === 'string' && params.xQualifiedToken.length > 0
+  if (hasCode === hasXToken) {
+    return res.status(400).json({
+      error: 'GATE_REQUIRED',
+      detail: 'Provide exactly one of: a sponsor `code`, or an `xQualifiedToken` from X signup.',
+    })
+  }
+
+  // Downstream values both gates must produce. Defaults = plain gift, no repay,
+  // no KYC. The code path may override repay/KYC; the X path keeps the defaults.
+  let repayAmount = 0n
+  let sponsorTokenId = 0
+  let kycLevel = 0
+  let codeHash: string | null = null
+  // X-gate: set when the request authenticates via an X-qualified token so the
+  // post-mint step can write the WalletXLink that burns this X id's free mint.
+  let xGate: { xUserId: string; xHandle: string } | null = null
+
+  // Budget breakdown (best-effort from cached prices) — used by the code gate's
+  // budget guard and the redemption audit row. Computed for both paths.
   let budget: ReturnType<typeof computeRedemptionBudget> | undefined
   const cawPrice = getCawPriceCache()
   const ethPrice = getEthPriceCache()
   if (cawPrice && ethPrice) {
-    // ethUsdCents: usdPerEth is in units of 1e6 (6 decimal places) per
-    // ChainSyncService. Convert to cents (multiply by 100, divide by 1e6 = /1e4).
     const ethUsdCents = Number(ethPrice.usdPerEth) / 1e4
-    // cawUsdCents: ethPerCaw is in 1e18 units (wei per 1 CAW), convert to USD cents.
     const ethPerCawFloat = Number(cawPrice.ethPerCaw) / 1e18
     const cawUsdCents = ethPerCawFloat * ethUsdCents
-    // Approximate gas price: use 20 gwei as a safe upper bound when we don't
-    // have a live estimate (avoids an RPC call per request per the no-RPC rule).
     const gasPriceWei = 20_000_000_000n  // 20 gwei
     budget = computeRedemptionBudget({
       gasPriceWei,
       gasLimitBootstrap: GAS_LIMIT_BOOTSTRAP_BUDGET,
-      // netFees: 2×(mintFee + authFee + depositFee). Approximate with 0.003 ETH
-      // as a safe upper bound since we don't want to do an RPC call here.
       netFeesWei: 3_000_000_000_000_000n,  // 0.003 ETH
       lzFeeWei: params.lzTokenAmount,
       depositAmountCAW: params.depositAmountCAW,
@@ -249,65 +267,74 @@ router.post('/bootstrap', async (req, res) => {
     })
   }
 
-  const codeValidation = await validateSponsorCode(
-    params.code,
-    { username: params.username, depositAmountCAW: params.depositAmountCAW },
-    ip,
-    budget,
-  )
-  if (!codeValidation.ok) {
-    const statusMap: Record<string, number> = {
-      INVALID_CODE_LOCKDOWN: 503,
-      IP_BANNED: 403,
-      BUDGET_EXCEEDED: 400,
-      CODE_EXPIRED: 400,
-      CODE_EXHAUSTED: 400,
-      DEPOSIT_TOO_LARGE: 400,
-      USERNAME_TOO_SHORT: 400,
-      INVALID_CODE: 400,
-    }
-    const status = statusMap[codeValidation.error] ?? 400
-    return res.status(status).json({ error: codeValidation.error, detail: codeValidation.detail })
-  }
-
-  // ── Phase 2 Sponsor Repay derivation ──────────────────────────────────────
-  // The sponsor-code policy (set by admin at code creation) drives both the
-  // repay obligation (repayBps) and any KYC gate (requireKycLevel). When
-  // both are zero, the call is byte-identical to the pre-Phase-2 flow.
-  let repayAmount = 0n
-  let sponsorTokenId = 0
-  if (codeValidation.repayBps > 0) {
-    repayAmount = (params.depositAmountCAW * BigInt(codeValidation.repayBps)) / 10000n
-    // Contract enforces repayAmount <= depositAmount * 2; mirror that check
-    // here so the user gets a clean error instead of an on-chain revert.
-    if (repayAmount > params.depositAmountCAW * 2n) {
+  if (hasXToken) {
+    // ── X-qualified token gate (open signup) ────────────────────────────────
+    // Consume (burn) the token issued by /api/verify/x/signup-callback. It is
+    // single-use; a replay finds nothing. The X account already passed
+    // age>90d-OR-verified + not-already-linked at issue time. Repay/KYC stay 0
+    // (plain gift), so signedRepayAmount must be 0 — enforced below.
+    const consumed = await consumeXQualifiedToken(params.xQualifiedToken!)
+    if (!consumed) {
       return res.status(400).json({
-        error: 'VALIDATION',
-        detail: `Computed repayAmount exceeds the 2x deposit cap (repayBps=${codeValidation.repayBps}).`,
+        error: 'X_TOKEN_INVALID',
+        detail: 'X verification expired or already used. Re-verify your X account.',
       })
     }
-    const envSponsorId = Number(process.env.PLATFORM_SPONSOR_TOKEN_ID ?? 1)
-    sponsorTokenId = Number.isInteger(envSponsorId) && envSponsorId > 0 ? envSponsorId : 1
+    xGate = consumed
+  } else {
+    // ── Sponsor-code gate ───────────────────────────────────────────────────
+    const codeValidation = await validateSponsorCode(
+      params.code!,
+      { username: params.username, depositAmountCAW: params.depositAmountCAW },
+      ip,
+      budget,
+    )
+    if (!codeValidation.ok) {
+      const statusMap: Record<string, number> = {
+        INVALID_CODE_LOCKDOWN: 503,
+        IP_BANNED: 403,
+        BUDGET_EXCEEDED: 400,
+        CODE_EXPIRED: 400,
+        CODE_EXHAUSTED: 400,
+        DEPOSIT_TOO_LARGE: 400,
+        USERNAME_TOO_SHORT: 400,
+        INVALID_CODE: 400,
+      }
+      const status = statusMap[codeValidation.error] ?? 400
+      return res.status(status).json({ error: codeValidation.error, detail: codeValidation.detail })
+    }
+    codeHash = codeValidation.codeHash
+    kycLevel = codeValidation.requireKycLevel
+
+    // Phase 2 Sponsor Repay derivation (code policy drives repay + KYC).
+    if (codeValidation.repayBps > 0) {
+      repayAmount = (params.depositAmountCAW * BigInt(codeValidation.repayBps)) / 10000n
+      if (repayAmount > params.depositAmountCAW * 2n) {
+        return res.status(400).json({
+          error: 'VALIDATION',
+          detail: `Computed repayAmount exceeds the 2x deposit cap (repayBps=${codeValidation.repayBps}).`,
+        })
+      }
+      const envSponsorId = Number(process.env.PLATFORM_SPONSOR_TOKEN_ID ?? 1)
+      sponsorTokenId = Number.isInteger(envSponsorId) && envSponsorId > 0 ? envSponsorId : 1
+    }
   }
 
-  // UX guard: if the FE told us what repayAmount it signed, confirm it matches
-  // the authoritative server-derived value. On mismatch the permit digest would
-  // fail the on-chain ERC-1271 check (opaque MinterCallFailed) — fail early with
-  // a clear error instead. Absent signedRepayAmount = legacy plain-gift FE; the
-  // signed value is 0, which only matches when repayAmount is also 0.
+  // UX guard: confirm the FE-signed repayAmount matches the server-derived value
+  // (mismatch → opaque on-chain MinterCallFailed). X path always has repay 0.
   const signedRepay = params.signedRepayAmount ?? 0n
   if (signedRepay !== repayAmount) {
     return res.status(400).json({
       error: 'REPAY_MISMATCH',
-      detail: `Signed repayAmount (${signedRepay}) does not match the code's policy ` +
-        `(${repayAmount}). Refresh and retry — the invite code's repay terms may have changed.`,
+      detail: `Signed repayAmount (${signedRepay}) does not match the policy ` +
+        `(${repayAmount}). Refresh and retry.`,
     })
   }
 
   // ── Dispatch ──────────────────────────────────────────────────────────────
   const result = await service.sponsorBootstrap({
     ...params,
-    kycLevel:       codeValidation.requireKycLevel,
+    kycLevel,
     sponsorTokenId,
     repayAmount,
   })
@@ -317,24 +344,48 @@ router.post('/bootstrap', async (req, res) => {
     return res.status(status).json(result)
   }
 
-  // Success: commit the redemption audit row asynchronously.
-  // We fire-and-forget so a DB hiccup doesn't break the user's UX.
-  // The txHash is available; recipient is recovered from the auth tuple
-  // during sponsorBootstrap (we don't re-derive it here — the service
-  // doesn't expose the recovered address yet, so we use an empty string
-  // as a placeholder for now and can backfill from on-chain if needed).
-  commitRedemption({
-    codeHash: codeValidation.codeHash,
-    recipient: '',  // TODO: expose recovered EOA from SponsorService.sponsorBootstrap
-    txHash: result.txHash,
-    budget: budget ?? {
-      gasCostUsdCents: 0,
-      netFeesUsdCents: 0,
-      lzFeeUsdCents: 0,
-      depositUsdCents: 0,
-      totalUsdCents: 0,
-    },
-  }).catch(err => console.error('[sponsor] commitRedemption failed:', err))
+  // X-gate: burn the X account's free-mint eligibility by writing the
+  // WalletXLink for the freshly-minted recipient. WalletXLink.xUserId @unique is
+  // the global spent-set — this permanently prevents that X account from
+  // claiming another sponsored mint (and from linking to any other wallet). The
+  // unique constraint is also the authoritative backstop against a
+  // check→mint race: a concurrent second mint with the same xUserId fails here
+  // (caught + logged; the mint already succeeded, so we don't fail the response).
+  if (xGate && result.recipient) {
+    try {
+      await prisma.walletXLink.create({
+        data: {
+          address:            result.recipient.toLowerCase(),
+          xUserId:            xGate.xUserId,
+          xHandle:            xGate.xHandle,
+          xFollowerBucket:    null,
+          linkedAt:           new Date(),
+          followersUpdatedAt: new Date(),
+        },
+      })
+    } catch (err) {
+      // Unique-violation here means the X id (or wallet) was linked concurrently
+      // — the spent-set held. The mint is already on-chain; log and continue.
+      console.error('[sponsor/bootstrap] WalletXLink write (X-gate) failed:', err)
+    }
+  }
+
+  // Commit the redemption audit row (code path only — X path has no codeHash).
+  // Fire-and-forget so a DB hiccup doesn't break the user's UX.
+  if (codeHash) {
+    commitRedemption({
+      codeHash,
+      recipient: result.recipient ?? '',
+      txHash: result.txHash,
+      budget: budget ?? {
+        gasCostUsdCents: 0,
+        netFeesUsdCents: 0,
+        lzFeeUsdCents: 0,
+        depositUsdCents: 0,
+        totalUsdCents: 0,
+      },
+    }).catch(err => console.error('[sponsor] commitRedemption failed:', err))
+  }
 
   return res.status(200).json(result)
 })

@@ -1,134 +1,35 @@
 import { Router } from 'express'
-import crypto from 'crypto'
-import Redis from 'ioredis'
 import { prisma } from '../../prismaClient'
 import { requireAuth } from '../middleware/auth'
+import {
+  bucketFollowers,
+  buildAuthUrl,
+  closePagePostMessage as renderClosePage,
+  envOrThrow,
+  exchangeCodeForUser,
+  generatePkce,
+  newState,
+  putState,
+  redirectPageWithResult as renderRedirectPage,
+  takeState,
+  validateRedirectUri as coreValidateRedirectUri,
+  validateReturnTo,
+} from './xOauthCore'
 
 const router = Router()
 
-const redis = process.env.REDIS_URL
-  ? new Redis(process.env.REDIS_URL)
-  : new Redis({ port: 6379, host: '127.0.0.1' })
-
-// X kept the twitter.com hosts alive for backwards compat, but the
-// canonical OAuth host is now x.com — stick with it so the popup looks
-// right ("authorize on X" not "authorize on Twitter") and so we don't
-// rely on a redirect chain that could break later.
-const X_AUTH_URL  = 'https://x.com/i/oauth2/authorize'
-const X_TOKEN_URL = 'https://api.x.com/2/oauth2/token'
-const X_ME_URL    = 'https://api.x.com/2/users/me?user.fields=public_metrics'
-
-const STATE_TTL_SEC = 10 * 60
+// Account-LINKING flow state + close-page localStorage key. The signup flow
+// (xSignup.ts) uses its own prefix/key so the two never collide.
 const STATE_PREFIX  = 'caw:xverify:state:'
+const STORAGE_KEY   = 'caw:xverify:result'
+const CALLBACK_PATH = '/api/verify/x/callback'
 
-// Bucket boundaries (lower bounds). xFollowerBucket is the largest bucket
-// boundary <= the actual follower count. UI renders "<bucket>+ followers".
-// Steps: 1k, 5k, 10k, 25k, 50k, 75k, 100k, 150k, 200k, 250k, 300k, 350k,
-// then +50k forever. <1k is null (no badge enrichment shown).
-const FOLLOWER_BUCKETS: number[] = [
-  1_000, 5_000, 10_000, 25_000, 50_000, 75_000,
-  100_000, 150_000, 200_000, 250_000, 300_000, 350_000,
-]
-function bucketFollowers(count: number): number | null {
-  if (count < FOLLOWER_BUCKETS[0]) return null
-  let last = FOLLOWER_BUCKETS[0]
-  for (const b of FOLLOWER_BUCKETS) {
-    if (count >= b) last = b
-    else return last
-  }
-  // Past the last fixed bucket → step by 50k.
-  let b = last
-  while (count >= b + 50_000) b += 50_000
-  return b
-}
-
-function envOrThrow(key: string): string {
-  const v = process.env[key]
-  if (!v) throw new Error(`${key} not configured`)
-  return v
-}
-
-function b64url(buf: Buffer): string {
-  return buf.toString('base64').replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '')
-}
-
-function generatePkce(): { verifier: string; challenge: string } {
-  const verifier = b64url(crypto.randomBytes(32))
-  const challenge = b64url(crypto.createHash('sha256').update(verifier).digest())
-  return { verifier, challenge }
-}
-
-/**
- * Validate an FE-supplied X OAuth redirect URI. CAW is decentralized —
- * any FE host can talk to any API, so we don't gate redirects on a static
- * allowlist of CORS origins. The actual security boundary is the X dev
- * app: X rejects any redirect_uri not pre-registered on the app, so even
- * if a malicious FE tries to point us at evil.com/api/verify/x/callback,
- * X kills the flow before any harm.
- *
- * Our role here is sanity-checking that what the FE sent is a plausible
- * CAW callback URL:
- *   1. Path must end with /api/verify/x/callback (route is fixed).
- *   2. Scheme must be https, OR http on localhost / 127.0.0.1 (dev).
- * Beyond that, trust the X side.
- *
- * Returns the normalized URL (trailing-slash trimmed) on success;
- * throws on invalid input.
- */
-function validateRedirectUri(raw: unknown): string {
-  if (typeof raw !== 'string' || !raw) {
-    throw new Error('redirectUri is required')
-  }
-  let parsed: URL
-  try { parsed = new URL(raw) } catch { throw new Error('redirectUri is not a valid URL') }
-
-  if (parsed.pathname.replace(/\/+$/, '') !== '/api/verify/x/callback') {
-    throw new Error('redirectUri must end with /api/verify/x/callback')
-  }
-
-  const isLocalhost = parsed.hostname === 'localhost' || parsed.hostname === '127.0.0.1'
-  if (parsed.protocol !== 'https:' && !(parsed.protocol === 'http:' && isLocalhost)) {
-    throw new Error('redirectUri must use https (or http on localhost)')
-  }
-
-  // Strip query/hash so X's exact-match check doesn't see anything we
-  // didn't intend to send.
-  return `${parsed.origin}${parsed.pathname.replace(/\/+$/, '')}`
-}
-
-/**
- * Validate a returnTo URL the FE supplies for the mobile redirect path.
- * On mobile we replace the popup with a top-level redirect; the callback
- * page navigates back here when done.
- *
- * Requirements:
- *   - https (or http on localhost for dev)
- *   - parseable URL
- *
- * We don't enforce a same-origin / allowlist constraint because CAW is
- * decentralized — any FE host can talk to any API. The attack a stricter
- * check would prevent is "use the OAuth flow as an open-redirect to
- * evil.com" which has no real exploit value here: no state is leaked to
- * the destination, the user already initiated the click, and they'd
- * notice ending up on a foreign domain. Keep the bar low; it's a UX
- * affordance, not a trust boundary.
- *
- * Returns the URL string on success; returns null on missing/invalid so
- * the caller can fall back to the close-page (popup) flow.
- */
-function validateReturnTo(raw: unknown, allowedOrigin: string | null): string | null {
-  if (typeof raw !== 'string' || !raw) return null
-  let parsed: URL
-  try { parsed = new URL(raw) } catch { return null }
-  const isLocalhost = parsed.hostname === 'localhost' || parsed.hostname === '127.0.0.1'
-  if (parsed.protocol !== 'https:' && !(parsed.protocol === 'http:' && isLocalhost)) return null
-  // Same-origin check: returnTo must be on the same origin as the FE that
-  // initiated the OAuth flow. Prevents an adversarial operator from setting
-  // returnTo to a phishing domain. The FE always sends window.location.href
-  // (its own origin), so legitimate flows always pass. Fix: audit H-3.
-  if (allowedOrigin && parsed.origin !== allowedOrigin) return null
-  return parsed.toString()
-}
+// Thin wrappers so existing callsites stay terse and the close-pages bind the
+// link-flow storage key.
+const validateRedirectUri = (raw: unknown) => coreValidateRedirectUri(raw, CALLBACK_PATH)
+const closePagePostMessage = (payload: Record<string, any>) => renderClosePage(payload, STORAGE_KEY)
+const redirectPageWithResult = (payload: Record<string, any>, returnTo: string) =>
+  renderRedirectPage(payload, returnTo, STORAGE_KEY)
 
 /**
  * POST /api/verify/x/start-popup
@@ -183,26 +84,12 @@ router.post('/x/start-popup', requireAuth({ field: 'tokenId', verifyOwnership: t
 
     const clientId = envOrThrow('X_OAUTH_CLIENT_ID')
 
-    const state = b64url(crypto.randomBytes(24))
+    const state = newState()
     const { verifier, challenge } = generatePkce()
 
-    await redis.setex(
-      STATE_PREFIX + state,
-      STATE_TTL_SEC,
-      JSON.stringify({ tokenId, address, codeVerifier: verifier, redirectUri, returnTo })
-    )
+    await putState(STATE_PREFIX, state, { tokenId, address, codeVerifier: verifier, redirectUri, returnTo })
 
-    const params = new URLSearchParams({
-      response_type:         'code',
-      client_id:             clientId,
-      redirect_uri:          redirectUri,
-      scope:                 'users.read tweet.read offline.access',
-      state,
-      code_challenge:        challenge,
-      code_challenge_method: 'S256',
-    })
-
-    return res.json({ url: `${X_AUTH_URL}?${params.toString()}` })
+    return res.json({ url: buildAuthUrl({ clientId, redirectUri, state, challenge }) })
   } catch (err: any) {
     console.error('[/api/verify/x/start-popup] error:', err?.message || err)
     return res.status(500).json({ error: 'X verification is not available on this node' })
@@ -249,18 +136,15 @@ router.get('/x/callback', async (req, res) => {
   }
 
   try {
-    const stored = await redis.get(STATE_PREFIX + state)
-    if (!stored) {
-      return res.send(closePagePostMessage({ ok: false, error: 'invalid_state' }))
-    }
-    await redis.del(STATE_PREFIX + state)
-
-    const parsed = JSON.parse(stored) as {
+    const parsed = await takeState<{
       tokenId:      number
       address:      string
       codeVerifier: string
       redirectUri:  string
       returnTo?:    string | null
+    }>(STATE_PREFIX, state)
+    if (!parsed) {
+      return res.send(closePagePostMessage({ ok: false, error: 'invalid_state' }))
     }
     const { tokenId, address, codeVerifier, redirectUri } = parsed
     returnTo = parsed.returnTo || null
@@ -279,56 +163,16 @@ router.get('/x/callback', async (req, res) => {
       return respond({ ok: false, error: 'token_owner_changed_during_oauth' })
     }
 
-    const clientId     = envOrThrow('X_OAUTH_CLIENT_ID')
-    const clientSecret = envOrThrow('X_OAUTH_CLIENT_SECRET')
-
-    // Exchange code for access token. X requires HTTP Basic auth here even
-    // for confidential clients using PKCE. Use the SAME redirect_uri that
-    // /start-popup sent — X verifies they match.
-    const tokenBody = new URLSearchParams({
-      grant_type:    'authorization_code',
-      code,
-      redirect_uri:  redirectUri,
-      code_verifier: codeVerifier,
-      client_id:     clientId,
-    })
-    const tokenRes = await fetch(X_TOKEN_URL, {
-      method:  'POST',
-      headers: {
-        'Content-Type':  'application/x-www-form-urlencoded',
-        'Authorization': 'Basic ' + Buffer.from(`${clientId}:${clientSecret}`).toString('base64'),
-      },
-      body: tokenBody.toString(),
-    })
-    if (!tokenRes.ok) {
-      const text = await tokenRes.text().catch(() => '')
-      console.error('[/api/verify/x/callback] token exchange failed:', tokenRes.status, text)
-      return respond({ ok: false, error: 'token_exchange_failed' })
+    // Exchange code → access token → /2/users/me (shared core). The core
+    // throws a stable error code (token_exchange_failed / no_access_token /
+    // me_fetch_failed / malformed_x_response) which we surface verbatim.
+    let xProfile
+    try {
+      xProfile = await exchangeCodeForUser(code, codeVerifier, redirectUri)
+    } catch (e: any) {
+      return respond({ ok: false, error: e?.message || 'x_exchange_failed' })
     }
-    const tokenJson = await tokenRes.json() as { access_token?: string }
-    const accessToken = tokenJson.access_token
-    if (!accessToken) {
-      return respond({ ok: false, error: 'no_access_token' })
-    }
-
-    // Fetch the linked X account + follower count.
-    const meRes = await fetch(X_ME_URL, {
-      headers: { Authorization: `Bearer ${accessToken}` },
-    })
-    if (!meRes.ok) {
-      const text = await meRes.text().catch(() => '')
-      console.error('[/api/verify/x/callback] users/me failed:', meRes.status, text)
-      return respond({ ok: false, error: 'me_fetch_failed' })
-    }
-    const meJson = await meRes.json() as {
-      data?: { id?: string; username?: string; public_metrics?: { followers_count?: number } }
-    }
-    const xUserId   = meJson.data?.id
-    const xHandle   = meJson.data?.username
-    const followers = meJson.data?.public_metrics?.followers_count ?? 0
-    if (!xUserId || !xHandle) {
-      return respond({ ok: false, error: 'malformed_x_response' })
-    }
+    const { xUserId, xHandle, followers } = xProfile
 
     // First-link-wins on xUserId GLOBALLY: if this X account is already
     // linked to a different wallet, reject. The @unique constraint is
@@ -493,76 +337,5 @@ router.put('/x/visibility', requireAuth({ field: 'tokenId', verifyOwnership: tru
     return res.status(500).json({ error: 'Internal server error' })
   }
 })
-
-/**
- * Renders a tiny self-closing HTML page that signals the opener via
- * localStorage and then closes itself.
- *
- * Why localStorage and not postMessage(opener)? Modern browsers sever the
- * window.opener reference and lie about window.closed when the popup
- * navigates cross-origin (to x.com and back). That breaks both the
- * "postMessage to opener" channel and the "poll w.closed in opener" channel.
- *
- * The callback page is on the SAME ORIGIN as the opener (we just redirected
- * from x.com back to our own /api/verify/x/callback). So localStorage is
- * shared, and the `storage` event fires in OTHER same-origin documents
- * (i.e. the opener) when this popup writes a key. Cleanly sidesteps all
- * the opener-isolation gymnastics.
- *
- * Key shape: caw:xverify:result + a stamped nonce so a stale write from a
- * previous attempt doesn't get treated as the current one. The opener
- * filters by the nonce it stamped at start-popup time? No — simpler: we
- * write a fresh timestamp every time, and the opener uses the value's
- * presence (and freshness) to act exactly once per attempt by clearing
- * the key immediately on read.
- */
-function closePagePostMessage(payload: Record<string, any>): string {
-  const json = JSON.stringify(payload).replace(/</g, '\\u003c')
-  return `<!doctype html><meta charset="utf-8"><title>X verification</title>
-<script>
-(function () {
-  try {
-    var envelope = { source: 'caw-xverify', payload: ${json}, at: Date.now() };
-    localStorage.setItem('caw:xverify:result', JSON.stringify(envelope));
-  } catch (e) {}
-  window.close();
-  setTimeout(function(){ document.body.textContent = 'You can close this window.'; }, 200);
-})();
-</script>`
-}
-
-/**
- * Mobile redirect variant: writes the result to localStorage (same key the
- * popup flow uses), then top-level navigates back to the page that started
- * the OAuth flow. Origin-localStorage is shared with the destination, so
- * AccountSettings' mount-time read picks up the result with no
- * cross-window/postMessage choreography needed.
- *
- * The returnTo value was validated at /start-popup time
- * (https/localhost). It's still injected as a JS string literal here so
- * we JSON-encode it to defang any embedded quotes; the script then
- * passes it to window.location.replace which is a no-op on anything
- * that isn't a real URL.
- */
-function redirectPageWithResult(payload: Record<string, any>, returnTo: string): string {
-  const json     = JSON.stringify(payload).replace(/</g, '\\u003c')
-  const returnJs = JSON.stringify(returnTo).replace(/</g, '\\u003c')
-  return `<!doctype html><meta charset="utf-8"><title>Returning to CAW…</title>
-<style>body{font:14px system-ui;display:flex;align-items:center;justify-content:center;height:100vh;margin:0;background:#000;color:#fff}</style>
-<div>Returning to CAW…</div>
-<script>
-(function () {
-  try {
-    var envelope = { source: 'caw-xverify', payload: ${json}, at: Date.now() };
-    localStorage.setItem('caw:xverify:result', JSON.stringify(envelope));
-  } catch (e) {}
-  try {
-    window.location.replace(${returnJs});
-  } catch (e) {
-    document.body.textContent = 'Done. You can return to the app.';
-  }
-})();
-</script>`
-}
 
 export default router

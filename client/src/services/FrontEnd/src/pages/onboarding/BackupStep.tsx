@@ -41,11 +41,13 @@ import { usePublicClient } from 'wagmi'
 
 export interface BackupStepProps {
   /**
-   * Sponsor invite code, read from /onboarding?code=... and threaded down
-   * through Onboarding state. Required: the sponsor server rejects bootstrap
-   * requests without a code. See client/src/api/middleware/validateSponsorCode.ts.
+   * Gate: provide EXACTLY ONE of `code` or `xQualifiedToken`. `code` is the
+   * sponsor invite code (/onboarding?code=...); `xQualifiedToken` is the proof
+   * from the open X-signup flow. The sponsor server enforces exactly-one.
    */
   code: string
+  /** X-qualified token from the open X-signup gate (alternative to code). */
+  xQualifiedToken?: string
   username: string
   depositAmount: bigint
   /**
@@ -118,6 +120,7 @@ function formatCawWei(wei: bigint): string {
 
 export default function BackupStep({
   code,
+  xQualifiedToken,
   username,
   depositAmount,
   repayAmount,
@@ -222,8 +225,10 @@ export default function BackupStep({
       const sponsorApi = {
         sponsorBootstrap: async (params: BootstrapParams) => {
           // Build the full SponsorBootstrapRequest from the BootstrapParams.
+          // Exactly one of code / xQualifiedToken is present (server enforces).
           const req = {
-            code: params.code,
+            ...(params.code ? { code: params.code } : {}),
+            ...(params.xQualifiedToken ? { xQualifiedToken: params.xQualifiedToken } : {}),
             passkeyPubkeyX: params.passkeyPubkeyX,
             passkeyPubkeyY: params.passkeyPubkeyY,
             ecdsaFallbackAddr: params.ecdsaFallbackAddr,
@@ -257,7 +262,8 @@ export default function BackupStep({
       }
 
       const result = await bootstrapNewUser({
-        code,
+        ...(code ? { code } : {}),
+        ...(xQualifiedToken ? { xQualifiedToken } : {}),
         vaultPassword,
         username,
         depositAmountCAW: depositAmount,

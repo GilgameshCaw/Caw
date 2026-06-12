@@ -144,6 +144,18 @@ export default function PasskeySignIn() {
   return (
     <div className={`min-h-screen flex flex-col items-center justify-center px-6 py-12 ${isDark ? 'bg-black' : 'bg-gray-50'}`}>
       <div className={`w-full max-w-md rounded-2xl p-8 ${cardClass}`}>
+        {/* Back chevron — matches the Onboarding pattern. Returns to the
+            previous page, falling back to home if there's no history. */}
+        <button
+          onClick={() => { if (window.history.length > 1) navigate(-1); else navigate('/') }}
+          className={`mb-4 flex items-center gap-1 text-sm transition-colors cursor-pointer ${isDark ? 'text-white/50 hover:text-white/80' : 'text-gray-400 hover:text-gray-700'}`}
+          aria-label={t('common.back')}
+        >
+          <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
+          </svg>
+          <span>{t('common.back')}</span>
+        </button>
         <div className="text-center mb-8">
           <div className={`w-14 h-14 mx-auto mb-4 rounded-full flex items-center justify-center ${isDark ? 'bg-yellow-500/20' : 'bg-yellow-100'}`}>
             <svg className="w-7 h-7 text-yellow-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -181,6 +193,19 @@ export default function PasskeySignIn() {
             >
               {t('passkey_signin.use_backup_instead')}
             </button>
+
+            {/* New-user entry: a free sponsored account is available to anyone who
+                verifies an X account (age >90d or verified). Routes into the
+                onboarding flow's X gate. */}
+            <div className={`pt-4 mt-2 border-t text-center ${isDark ? 'border-white/10' : 'border-gray-200'}`}>
+              <p className={`text-xs mb-2 ${mutedClass}`}>{t('passkey_signin.no_account')}</p>
+              <button
+                onClick={() => navigate('/onboarding?signup=x')}
+                className={`w-full py-2.5 text-sm font-semibold rounded-xl transition-colors cursor-pointer ${isDark ? 'text-yellow-400 hover:text-yellow-300' : 'text-yellow-600 hover:text-yellow-700'}`}
+              >
+                {t('passkey_signin.create_with_x')}
+              </button>
+            </div>
           </div>
         )}
       </div>

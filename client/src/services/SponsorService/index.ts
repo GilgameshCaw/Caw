@@ -131,6 +131,10 @@ export interface SponsorSuccess {
   /** Freshly-minted profile tokenId, parsed from the mint Transfer log when
    *  available (bootstrap path only). Used to reactively poke the indexer. */
   tokenId?: number
+  /** Recovered user EOA address (the mint recipient). Bootstrap path only.
+   *  Used by the X-gated open-signup flow to write the WalletXLink that burns
+   *  the X account's free-mint eligibility. */
+  recipient?: string
 }
 
 export type SponsorResult = SponsorSuccess | SponsorError
@@ -638,7 +642,7 @@ export class SponsorService {
         console.log(`[SponsorService] bootstrap poked indexer for minted tokenId=${mintedTokenId}`)
       }
 
-      return { txHash: txResponse.hash, tokenId: mintedTokenId ?? undefined }
+      return { txHash: txResponse.hash, tokenId: mintedTokenId ?? undefined, recipient: userEoaAddress }
     } catch (err) {
       // Distinguish between pre-submit and on-chain reverts for caller.
       return parseRevertError(err)

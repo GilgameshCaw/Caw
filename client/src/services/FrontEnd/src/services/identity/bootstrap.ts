@@ -54,11 +54,13 @@ import { buildMintDepositPermitDigest } from './eip712Permits'
  */
 export type BootstrapParams = {
   /**
-   * Invite code (required). Threaded all the way through to the
-   * /api/sponsor/bootstrap call, where it's validated against the
-   * SponsorCode table. Server returns INVALID_CODE/IP_BANNED/etc on miss.
+   * Gate: provide EXACTLY ONE of `code` or `xQualifiedToken`. Threaded to
+   * /api/sponsor/bootstrap, which validates the code against the SponsorCode
+   * table, OR consumes the X-qualified token from the open X-signup flow.
    */
-  code: string
+  code?: string
+  /** X-qualified token from /api/verify/x/signup-callback (open signup gate). */
+  xQualifiedToken?: string
   /** P-256 public key X coordinate (32 bytes, hex). */
   passkeyPubkeyX: `0x${string}`
   /** P-256 public key Y coordinate (32 bytes, hex). */
@@ -179,7 +181,10 @@ export type BootstrapResult = {
  *                                 sponsor server's internal digest derivation logic.
  */
 export async function bootstrapNewUser(opts: {
-  code: string
+  /** Invite code. Provide this OR xQualifiedToken (the open X-signup gate). */
+  code?: string
+  /** X-qualified token from /api/verify/x/signup-callback. Alternative to code. */
+  xQualifiedToken?: string
   vaultPassword: string
   username: string
   depositAmountCAW: bigint
@@ -213,6 +218,7 @@ export async function bootstrapNewUser(opts: {
 }): Promise<BootstrapResult> {
   const {
     code,
+    xQualifiedToken,
     vaultPassword,
     username,
     depositAmountCAW,
@@ -328,7 +334,8 @@ export async function bootstrapNewUser(opts: {
   //   calldata: SmartEOA.initialize(pkX, pkY, ecdsaFallback, mintParams)
   // which internally calls CawProfileMinter.mintAndDepositSponsored.
   const bootstrapParams: BootstrapParams = {
-    code,
+    ...(code ? { code } : {}),
+    ...(xQualifiedToken ? { xQualifiedToken } : {}),
     passkeyPubkeyX,
     passkeyPubkeyY,
     ecdsaFallbackAddr: keypair.address,

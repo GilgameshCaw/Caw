@@ -21,6 +21,7 @@ import React, { useState, useCallback, useEffect, useMemo } from 'react'
 import { useSearchParams } from 'react-router-dom'
 import { useTheme } from '~/hooks/useTheme'
 import { registerSponsoredSession, getDefaultSpendLimit, getDefaultTipCeiling, DEFAULT_SESSION_DURATION } from '~/hooks/useSessionKey'
+import { useXSignupVerification } from '~/hooks/useXSignupVerification'
 import { getTipTiers } from '~/api/actions'
 import { usePriceStore } from '~/store/tokenDataStore'
 import { cawCostForLength } from '~/utils/cawCostSchedule'
@@ -174,6 +175,18 @@ export default function Onboarding() {
     [rawCode],
   )
   const codeValid = isPlausibleCodeFormat(rawCode)
+
+  // Open X-signup gate: an alternative to an invite code. Anyone who verifies a
+  // qualifying X account (age >90d or verified) gets a free sponsored mint. The
+  // FE reaches here via /onboarding?signup=x (the "create with X" CTA) or by
+  // landing without a code. On success we hold the X-qualified token and thread
+  // it into bootstrapNewUser instead of a code.
+  const xSignup = useXSignupVerification()
+  const [xQualifiedToken, setXQualifiedToken] = useState<string | null>(null)
+  useEffect(() => {
+    const r = xSignup.result
+    if (r?.ok && r.qualified && r.token) setXQualifiedToken(r.token)
+  }, [xSignup.result])
 
   // ── Gift code fetch ────────────────────────────────────────────────────────
   // Fetched once on mount (when the code passes the loose format check).
@@ -512,8 +525,15 @@ export default function Onboarding() {
 
   // Invite-only stub — no code in URL, code fails format check, or server
   // says invalid.
+  // The flow is gated by EITHER a valid invite code OR a completed X-signup
+  // verification (xQualifiedToken). Only block when neither is satisfied.
   const codeInvalid = !codeValid || (giftInfo !== null && !giftInfo.valid)
-  if (codeInvalid) {
+  const gateBlocked = codeInvalid && !xQualifiedToken
+  if (gateBlocked) {
+    const xRejected = xSignup.result?.ok && xSignup.result.qualified === false
+    const xRejectKey = xSignup.result?.reason === 'x_account_already_used'
+      ? 'onboarding.x_gate.already_used'
+      : 'onboarding.x_gate.not_qualified'
     return (
       <div className={`fixed inset-0 z-[100] overflow-y-auto overflow-x-hidden ${outerBg}`}>
         <BoidsBg isDark={isDark} />
@@ -525,14 +545,32 @@ export default function Onboarding() {
             isDark ? 'border-white/10 bg-black/60' : 'border-gray-200 bg-white/90'
           }`}>
             <h2 className={`text-xl font-bold mb-2 ${textPrimary}`}>
-              {t('onboarding.invite_only.title')}
+              {t('onboarding.x_gate.title')}
             </h2>
             <p className={`text-sm ${textFaint}`}>
-              {t('onboarding.invite_only.body')}
+              {t('onboarding.x_gate.body')}
             </p>
+
+            {xRejected && (
+              <p className="mt-3 text-sm text-red-500">{t(xRejectKey)}</p>
+            )}
+            {xSignup.error && (
+              <p className="mt-3 text-sm text-red-500">{t('onboarding.x_gate.error')}</p>
+            )}
+
+            <button
+              onClick={() => xSignup.start()}
+              disabled={xSignup.busy}
+              className={`mt-5 w-full px-4 py-3 rounded-xl text-sm font-bold transition-colors cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed ${
+                isDark ? 'bg-yellow-500 text-black hover:bg-yellow-400' : 'bg-yellow-500 text-black hover:bg-yellow-400'
+              }`}
+            >
+              {xSignup.busy ? t('onboarding.x_gate.connecting') : t('onboarding.x_gate.cta')}
+            </button>
+
             <button
               onClick={() => navigate('/')}
-              className={`mt-4 px-4 py-2 rounded-full text-sm font-medium transition-colors cursor-pointer ${
+              className={`mt-3 px-4 py-2 rounded-full text-sm font-medium transition-colors cursor-pointer ${
                 isDark
                   ? 'bg-white/10 text-white hover:bg-white/15'
                   : 'bg-black/5 text-gray-900 hover:bg-black/10'
@@ -670,6 +708,7 @@ export default function Onboarding() {
           {state.step === 'backup' && state.enrolledPasskey && (
             <BackupStep
               code={normalizedCode}
+              xQualifiedToken={xQualifiedToken ?? undefined}
               username={state.username}
               depositAmount={derivedDepositAmount}
               repayAmount={derivedRepayAmount}

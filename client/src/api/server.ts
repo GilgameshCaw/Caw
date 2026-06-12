@@ -37,6 +37,7 @@ import bookmarksRouter from './routes/bookmarks'
 import pinsRouter from './routes/pins'
 import meRouter from './routes/me'
 import verifyRouter from './routes/verify'
+import xSignupRouter from './routes/xSignup'
 import adminDbRouter from './routes/admin-db'
 import adminUsersRouter from './routes/admin-users'
 import adminValidatorRouter from './routes/admin-validator'
@@ -393,6 +394,7 @@ export function createApp() {
   app.use('/api/pins', pinsRouter)
   app.use('/api/me', meRouter)
   app.use('/api/verify', verifyRouter)
+  app.use('/api/verify', xSignupRouter)
   app.use('/api/admin/db', adminDbRouter)
   app.use('/api/admin/users', adminUsersRouter)
   app.use('/api/admin/validator', adminValidatorRouter)
