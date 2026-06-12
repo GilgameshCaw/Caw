@@ -110,12 +110,21 @@ router.post('/blob', blobWriteLimit, async (req, res) => {
     // — the server copy + download still exist. `usedFallback` tells the FE to
     // warn the user to check spam (bare-VPS mail often lands there). The email
     // address is only ever logged masked.
+    // Sanitize username before it reaches the mailer: it ends up in the
+    // attachment filename, which is written into a MIME Content-Disposition
+    // header on the sendmail path. This route is unauthenticated, so an
+    // unsanitized username could inject CRLF + extra headers (e.g. Bcc:) that
+    // `sendmail -t` would honor. Restrict to the same charset the sponsor route
+    // enforces on usernames; fall back to a safe literal otherwise.
+    const safeUsername =
+      typeof username === 'string' && /^[a-z0-9]{1,32}$/.test(username) ? username : 'there'
+
     let emailed = false
     let usedFallback = false
     if (emailStr && isMailerConfigured()) {
       const r = await sendRecoveryBackupEmail({
         to: emailStr,
-        username: typeof username === 'string' && username ? username : 'there',
+        username: safeUsername,
         blobJson: blob,
       })
       emailed = r.ok
@@ -125,7 +134,7 @@ router.post('/blob', blobWriteLimit, async (req, res) => {
       }
     }
 
-    res.json({ ok: true, emailed, usedFallback, mailerConfigured: isMailerConfigured() })
+    res.json({ ok: true, emailed, usedFallback })
   } catch (error) {
     console.error('POST /api/wallet/blob error:', error)
     res.status(500).json({ error: 'Failed to store backup' })

@@ -133,11 +133,15 @@ function sendViaSendmail(opts: {
         lines.push(`Content-Type: multipart/mixed; boundary="${boundary}"`, '')
         lines.push(`--${boundary}`, 'Content-Type: text/html; charset=utf-8', '', opts.html, '')
         for (const a of atts) {
+          // Defense-in-depth: never let a filename break out of the header line.
+          // Callers should pass sanitized names, but strip CR/LF/quotes here so a
+          // crafted filename can't inject extra MIME headers on the sendmail path.
+          const safeName = a.filename.replace(/[\r\n"]/g, '')
           lines.push(
             `--${boundary}`,
             'Content-Type: application/json',
             'Content-Transfer-Encoding: base64',
-            `Content-Disposition: attachment; filename="${a.filename}"`,
+            `Content-Disposition: attachment; filename="${safeName}"`,
             '',
             // a.content is already base64; wrap at 76 cols per RFC 2045.
             a.content.replace(/(.{76})/g, '$1\n'),
