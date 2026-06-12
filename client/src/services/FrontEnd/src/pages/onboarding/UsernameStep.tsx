@@ -24,7 +24,7 @@ import { useTheme } from '~/hooks/useTheme'
 import { useT } from '~/i18n/I18nProvider'
 import { usePriceStore } from '~/store/tokenDataStore'
 import { formatUsd } from '~/utils/numberFormat'
-import UsernamePreviewCard from '~/components/username/UsernamePreviewCard'
+import UsernameCaptiveBody from '~/components/username/UsernameCaptiveBody'
 import UsernameInputCard, { BoxedPricingTrigger } from '~/components/username/UsernameInputCard'
 import QuickSignCard from '~/components/username/QuickSignCard'
 
@@ -227,26 +227,21 @@ export default function UsernameStep({
   const availabilityForCard: boolean | null = showGreen ? true : showRed ? false : null
 
   return (
-    <div className="flex flex-col md:flex-row md:gap-8 md:items-start">
-      {/* Left column: the SAME preview card as /usernames/new (UsernamePreviewCard),
-          minus the heading/faucet/marketplace links — just the card + NFT preview. */}
-      <UsernamePreviewCard
-        username={username}
-        showHeading={false}
-        showFaucetLink={false}
-        showMarketplaceLink={false}
-      />
-
-      {/* Right column: username input + cost + gift gating (existing form). */}
-      <div className="flex-1 space-y-6">
-      <div>
-        <h2 className={`text-xl font-bold mb-1 ${strongClass}`}>
-          {t('onboarding.username.title')}
-        </h2>
-        <p className={`text-sm ${mutedClass}`}>
-          {t('onboarding.username.subtitle')}
-        </p>
-      </div>
+    /* The SAME two-column shell as /usernames/new (UsernameCaptiveBody): left
+       preview card + right form card. sponsoredAmount={giftCaw} marks this as
+       the sponsored flow (no deposit section). The heading uses the onboarding
+       copy; the subtitle + gift summary + form live in the children. */
+    <UsernameCaptiveBody
+      username={username}
+      sponsoredAmount={giftCaw}
+      heading={t('onboarding.username.title')}
+      showFaucetLink={false}
+      showMarketplaceLink={false}
+    >
+      <div className="space-y-6">
+      <p className={`text-sm ${mutedClass} -mt-2`}>
+        {t('onboarding.username.subtitle')}
+      </p>
 
       {/* Gift summary — shown once giftCaw is loaded */}
       {giftCaw !== undefined && (
@@ -391,6 +386,6 @@ export default function UsernameStep({
         {giftLoading ? 'Loading…' : t('common.next')}
       </button>
       </div>
-    </div>
+    </UsernameCaptiveBody>
   )
 }

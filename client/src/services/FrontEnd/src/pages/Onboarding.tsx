@@ -556,7 +556,7 @@ export default function Onboarding() {
       </div>
 
       <div className="relative z-10 px-4 py-8 min-h-screen flex items-start justify-center">
-        <div className="w-full max-w-lg">
+        <div className="w-full max-w-[800px]">
 
           {/* Slim segmented stepper — hidden on the confirm success screen */}
           {showProgress && (
