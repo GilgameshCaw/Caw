@@ -2440,7 +2440,12 @@ function buildEnvBlock(env, addresses) {
   }
   for (const L of L2_CHAIN_KEYS) {
     block[L] = {};
-    for (const role of ['CawProfileLedger', 'CawActions', 'CawActionsArchive', 'CawChallengeRelay']) {
+    // CawActionsERC1271 MUST be here: for an L2-storage network the addresses.ts
+    // writer reads l2.CawActionsERC1271 → CAW_ACTIONS_ERC1271_ADDRESS (line ~2370).
+    // Omitting it (task #196, L2 case) commented out the constant even though the
+    // sibling was deployed — RawEventsGatherer + ValidatorService import it and
+    // would silently stop indexing/validating the ERC1271 sibling's actions.
+    for (const role of ['CawProfileLedger', 'CawActions', 'CawActionsERC1271', 'CawActionsArchive', 'CawChallengeRelay']) {
       const flatKey = `${role}_${L}`;
       if (addresses[flatKey]) block[L][role] = addresses[flatKey];
     }
