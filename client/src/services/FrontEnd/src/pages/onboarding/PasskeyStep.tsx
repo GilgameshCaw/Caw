@@ -15,6 +15,8 @@ import { useState } from 'react'
 import { useTheme } from '~/hooks/useTheme'
 import { useT } from '~/i18n/I18nProvider'
 import { enrollPasskey, type PasskeyPubkey } from '~/services/identity/passkey'
+import { setJSON } from '~/utils/safeStorage'
+import { PASSKEY_CREDENTIAL_KEY, IDENTITY_KIND_KEY, IDENTITY_KIND_PASSKEY } from '~/constants/passkeyStorage'
 
 export interface PasskeyStepProps {
   username: string
@@ -81,6 +83,14 @@ export default function PasskeyStep({ username, onNext, onBack }: PasskeyStepPro
         userName: username,
         userDisplayName: `@${username}`,
       })
+      // Persist the (non-secret) credentialId so a returning Pop-B user can
+      // re-invoke signWithPasskey() on this device after onboarding. Without
+      // this, IdentitySection / useRootSigner have no credentialId on reload
+      // and fall back to the wallet-connect path. See project_root_signer.
+      setJSON(PASSKEY_CREDENTIAL_KEY, pubkey.credentialId)
+      // Mark this browser as a passkey (Population B) install so a returning
+      // user with no wagmi wallet still classifies as 'B' in useWalletPopulation.
+      setJSON(IDENTITY_KIND_KEY, IDENTITY_KIND_PASSKEY)
       // Success — advance immediately with the pubkey
       onNext(pubkey)
     } catch (err: unknown) {

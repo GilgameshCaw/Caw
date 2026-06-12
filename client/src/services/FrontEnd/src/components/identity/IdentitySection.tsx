@@ -32,14 +32,13 @@ import { HiKey, HiIdentification, HiPlus, HiRefresh, HiDownload, HiTrash } from 
 import { useTheme } from '~/hooks/useTheme'
 import { useT } from '~/i18n/I18nProvider'
 import { useWalletPopulation } from '~/hooks/useWalletPopulation'
+import { getJSON } from '~/utils/safeStorage'
+import { PASSKEY_CREDENTIAL_KEY } from '~/constants/passkeyStorage'
 import AddPasskeyDialog, { type PendingPasskeyRow } from './AddPasskeyDialog'
 import RotateEcdsaFallbackDialog from './RotateEcdsaFallbackDialog'
 import ReDownloadBackupDialog from './ReDownloadBackupDialog'
 import RemovePasskeyDialog from './RemovePasskeyDialog'
 
-// ─── localStorage key ─────────────────────────────────────────────────────────
-
-const PASSKEY_CREDENTIAL_STORAGE_KEY = 'caw:passkey-credential-id'
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -205,10 +204,11 @@ function IdentitySectionInner({
     staleTime: 5 * 60 * 1000,
   })
 
-  // Local credential ID badge.
+  // Local credential ID badge. Read via getJSON to match the setJSON write in
+  // PasskeyStep (raw getItem would return a quote-wrapped string).
   const localCredentialId = useMemo(() => {
     try {
-      return localStorage.getItem(PASSKEY_CREDENTIAL_STORAGE_KEY)
+      return getJSON<string | null>(PASSKEY_CREDENTIAL_KEY, null)
     } catch {
       return null
     }

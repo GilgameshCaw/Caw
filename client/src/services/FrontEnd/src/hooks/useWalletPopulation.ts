@@ -13,9 +13,13 @@
  */
 
 import { useMemo } from 'react'
+import type { Address } from 'viem'
 import { useAccount, usePublicClient } from 'wagmi'
 import { useQuery } from '@tanstack/react-query'
 import { useRecoveryContext } from '~/components/identity/RecoveryProvider'
+import { useTokenDataStore } from '~/store/tokenDataStore'
+import { getJSON } from '~/utils/safeStorage'
+import { IDENTITY_KIND_KEY, IDENTITY_KIND_PASSKEY } from '~/constants/passkeyStorage'
 
 export type WalletPopulation = 'A' | 'B' | 'C' | 'none'
 
@@ -50,6 +54,10 @@ export function useWalletPopulation(): UseWalletPopulationReturn {
   const { address, isConnected } = useAccount()
   const publicClient = usePublicClient()
   const recoveryCtx = useRecoveryContext()
+  // Reactive: re-evaluate population when the stored Pop-B owner address changes
+  // (set by Onboarding.tsx after a sponsored mint). Sponsored Population-B users
+  // never connect a wagmi wallet, so without this they classify as 'none'.
+  const lastAddress = useTokenDataStore(s => s.lastAddress) as Address | undefined
 
   const { data: bytecode, isLoading } = useQuery({
     queryKey: ['wallet-bytecode', address],
@@ -63,23 +71,34 @@ export function useWalletPopulation(): UseWalletPopulationReturn {
     // Reconnect / address change triggers a refetch automatically via queryKey
   })
 
+  // A returning passkey (Population B) install marks itself via localStorage at
+  // enroll (PasskeyStep). Sponsored Pop-B users never connect a wagmi wallet, so
+  // this flag — plus the stored owner address — is how we classify them on a
+  // cold load. Recovery mode (backup-file sign-in) is the other Pop-B signal.
+  const isPasskeyInstall = getJSON<string | null>(IDENTITY_KIND_KEY, null) === IDENTITY_KIND_PASSKEY
+
   const population = useMemo<WalletPopulation>(() => {
-    // Recovery mode: no wagmi wallet connected, but the user signed in via their
-    // backup file. Treat as Population B (secp256k1 ecdsaFallback path).
+    // No wagmi wallet connected. Two ways this is still Population B:
+    //   - recovery mode (signed in via backup file → secp256k1 ecdsaFallback)
+    //   - a passkey install with a known owner address (sponsored Pop-B user)
     if (!isConnected || !address) {
       if (recoveryCtx.isInRecoveryMode) return 'B'
+      if (isPasskeyInstall && lastAddress) return 'B'
       return 'none'
     }
     if (isLoading) return 'none'
     // bytecode from getCode is Hex | undefined; convert to string for classifier
     const code = bytecode === undefined ? undefined : (bytecode as string)
     return classifyBytecode(code)
-  }, [isConnected, address, isLoading, bytecode, recoveryCtx.isInRecoveryMode])
+  }, [isConnected, address, isLoading, bytecode, recoveryCtx.isInRecoveryMode, isPasskeyInstall, lastAddress])
 
-  // In recovery mode return the recovered address instead of the wagmi address.
+  // When there's no wagmi wallet, surface the Pop-B owner address:
+  // the recovered address (recovery mode) or the stored owner (passkey install).
   const effectiveAddress = (!isConnected && recoveryCtx.isInRecoveryMode)
     ? (recoveryCtx.address ?? undefined)
-    : address
+    : (!isConnected && isPasskeyInstall)
+      ? lastAddress
+      : address
 
   return {
     population,
