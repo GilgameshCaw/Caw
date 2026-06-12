@@ -3,6 +3,7 @@ import { Link } from '~/utils/localizedRouter'
 import { useReadContract, useAccount, useConnections, useSwitchChain } from 'wagmi'
 import { useConnectModal } from '@rainbow-me/rainbowkit'
 import { useEnsureWallet } from '~/hooks/useEnsureWallet'
+import { useRootSigner } from '~/hooks/useRootSigner'
 import { useTheme } from '~/hooks/useTheme'
 import { useT } from '~/i18n/I18nProvider'
 import { useActiveToken, usePriceStore } from '~/store/tokenDataStore'
@@ -20,6 +21,7 @@ const SessionKeySettings: React.FC = () => {
   const { isDark } = useTheme()
   const t = useT()
   const ensureWallet = useEnsureWallet()
+  const rootSigner = useRootSigner()
   const activeToken = useActiveToken()
   const enabled = useSessionKeyStore(s => s.enabled)
   const setEnabled = useSessionKeyStore(s => s.setEnabled)
@@ -106,7 +108,7 @@ const SessionKeySettings: React.FC = () => {
     // the signed payload), so the user's wallet never sends an L2 tx for
     // this flow. Don't proactively switch chains — saves a wallet round-trip
     // (painful on mobile MetaMask).
-    await ensureWallet(null, async () => {
+    const runCreate = async () => {
     setLoading(true)
     setError(null)
     try {
@@ -124,7 +126,21 @@ const SessionKeySettings: React.FC = () => {
       setLoading(false)
       setStatus('')
     }
-    })
+    }
+
+    // Population B (passkey, no wagmi wallet) re-issues a session via the root
+    // signer (ecdsaFallback in recovery mode) — skip the wallet-connect modal.
+    if (rootSigner.kind === 'passkey') {
+      try {
+        await rootSigner.ensureReady()
+      } catch (err: any) {
+        setError(err?.message || t('quick_sign.error.generic'))
+        return
+      }
+      await runCreate()
+    } else {
+      await ensureWallet(null, runCreate)
+    }
   }
 
   const handleRevoke = async () => {

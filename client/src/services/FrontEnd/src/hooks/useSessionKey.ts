@@ -267,6 +267,90 @@ export function useCreateSession() {
 }
 
 /**
+ * Register a Quick Sign session WITHOUT a wagmi wallet — for the sponsored
+ * Population-B onboarding flow, where the secp256k1 ecdsaFallback key is still
+ * in memory (via the bootstrap `signVerifyMessage` closure) right after mint.
+ *
+ * Signer-agnostic: pass a `signMessage(msg) => Promise<sig>` that produces a
+ * 65-byte ECDSA personal_sign (the ecdsaFallback closure does this), plus the
+ * `ownerAddress` the session is bound to. Builds the same "Enable Quick Sign"
+ * message as useCreateSession, POSTs /api/sessions, polls to confirmation, then
+ * persists to sessionKeyStore IMMEDIATELY (per feedback_persist_session_in_onSuccess
+ * — the key is GC'd if we navigate away mid-poll, so persist on success, not in
+ * a later closure).
+ *
+ * Standalone function (not a hook) so it can run inside Onboarding's async
+ * post-mint handler. Returns the session address + expiry, or throws.
+ */
+export async function registerSponsoredSession(opts: {
+  signMessage: (message: string) => Promise<`0x${string}`>
+  ownerAddress: `0x${string}`
+  spendLimit?: bigint
+  durationSeconds?: number
+  tipCeiling?: bigint
+  cawPrice?: number
+  onProgress?: (status: string) => void
+}): Promise<{ address: `0x${string}`; expiry: number }> {
+  const {
+    signMessage,
+    ownerAddress,
+    spendLimit = DEFAULT_SPEND_LIMIT,
+    durationSeconds = DEFAULT_SESSION_DURATION,
+    tipCeiling = 0n,
+    cawPrice = 0,
+    onProgress,
+  } = opts
+
+  const expiry = Math.floor(Date.now() / 1000) + durationSeconds
+  const privateKey = generatePrivateKey()
+  const sessionAccount = privateKeyToAccount(privateKey)
+
+  const message = buildSessionMessage(sessionAccount.address, spendLimit, expiry, tipCeiling, cawPrice)
+  onProgress?.('Sign to authorize key...')
+  const signature = await signMessage(message)
+
+  onProgress?.('Submitting...')
+  const result = await apiFetch<{ requestId: string; status: string }>('/api/sessions', {
+    method: 'POST',
+    body: JSON.stringify({ message, signature }),
+  })
+
+  // Poll for completion (backend handles L2 sync waiting + tx submission).
+  for (let i = 0; i < 80; i++) {
+    await new Promise(r => setTimeout(r, 3000))
+    try {
+      const status = await apiFetch<{ status: string; txHash?: string; error?: string }>(
+        `/api/sessions/status/${result.requestId}`,
+      )
+      if (status.status === 'waiting_for_sync') onProgress?.('Waiting for L2 sync...')
+      else if (status.status === 'submitting') onProgress?.('Registering on-chain...')
+      else if (status.status === 'pending') onProgress?.('Confirming transaction...')
+      else if (status.status === 'confirmed') break
+      else if (status.status === 'failed') {
+        throw new Error(status.error || 'Quick Sign registration failed. Please try again.')
+      }
+    } catch (e: any) {
+      if (e.message && !e.message.includes('API')) throw e
+      // Ignore transient polling errors.
+    }
+  }
+
+  // Persist immediately on success — before any navigation — so the in-memory
+  // session key isn't lost.
+  useSessionKeyStore.getState().setSession({
+    privateKey,
+    address: sessionAccount.address,
+    ownerAddress: ownerAddress.toLowerCase(),
+    expiry,
+    scopeBitmap: DEFAULT_SCOPE,
+    spendLimit: spendLimit.toString(),
+    tipCeiling: tipCeiling.toString(),
+  })
+
+  return { address: sessionAccount.address, expiry }
+}
+
+/**
  * Reads the Network's on-chain tip target (denominated in CAW wei) from CawActions,
  * converts it to a USD amount using ETH price, then to whole CAW tokens using CAW price.
  *

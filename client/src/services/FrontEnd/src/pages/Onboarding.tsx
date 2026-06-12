@@ -20,6 +20,7 @@
 import React, { useState, useCallback, useEffect, useMemo } from 'react'
 import { useSearchParams } from 'react-router-dom'
 import { useTheme } from '~/hooks/useTheme'
+import { registerSponsoredSession } from '~/hooks/useSessionKey'
 import { useT } from '~/i18n/I18nProvider'
 import { useNavigate } from '~/utils/localizedRouter'
 import UsernameStep from './onboarding/UsernameStep'
@@ -436,6 +437,28 @@ export default function Onboarding() {
                 username: token.username,
                 tokenId: mintedTokenId,
               })
+
+              // Phase 3: auto-derive a Quick Sign session NOW, while the
+              // ecdsaFallback key is still in memory (the signVerifyMessage
+              // closure signs a 65-byte ECDSA personal_sign that
+              // registerSessionPersonal validates). After this, the user can
+              // post immediately without a separate Quick Sign ceremony, and
+              // the stepper shows Quick Sign as done. Non-fatal: if it fails,
+              // the user can still enable Quick Sign manually on the stepper.
+              try {
+                // eslint-disable-next-line no-console
+                console.log('[signin:diag] auto-deriving Quick Sign session…')
+                await registerSponsoredSession({
+                  signMessage: result.signVerifyMessage,
+                  ownerAddress: ownerAddr,
+                })
+                // eslint-disable-next-line no-console
+                console.log('[signin:diag] Quick Sign session registered + persisted')
+              } catch (sessErr) {
+                // eslint-disable-next-line no-console
+                console.warn('[signin:diag] auto session register failed (non-fatal):', sessErr)
+              }
+
               // Land on the post-mint onboarding stepper (signed in), NOT the
               // feed — same destination as the non-sponsored mint (New.tsx) and
               // OnboardingGuard. The stepper walks the user through deposit /
