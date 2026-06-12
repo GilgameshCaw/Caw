@@ -23,7 +23,15 @@ library SigVerification {
   /// @dev Forwarded to malicious / buggy 1271 contracts so they can't drain the
   ///      relaying caller. OOG inside the staticcall surfaces as `false`,
   ///      identical to a 1271 reject.
-  uint256 internal constant ERC1271_GAS_LIMIT = 50_000;
+  ///
+  ///      150k (was 50k): WebAuthn/P-256 verification inside SmartEOA's ERC-1271
+  ///      isValidSignature costs ~55-68k (EIP-7951 precompile + clientDataJSON
+  ///      parse), so a 50k cap silently rejected passkey-signed
+  ///      registerSession / registerSessionPersonal as BadSig. 150k matches the
+  ///      ERC1271_GAS_LIMIT already used in CawProfileMinter + CawActions for the
+  ///      same WebAuthn path. Still bounded so a malicious 1271 contract can't
+  ///      grief the relayer. See project_erc1271_gas_cap_webauthn.
+  uint256 internal constant ERC1271_GAS_LIMIT = 150_000;
 
   /// @dev EIP-1271 magic-value: `bytes4(keccak256("isValidSignature(bytes32,bytes)"))`.
   bytes4  internal constant ERC1271_MAGIC_VALUE = 0x1626ba7e;
