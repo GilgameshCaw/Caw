@@ -15,13 +15,13 @@ import { chains, isTestnet } from '~/config/chains'
 import UsernameSvg from '~/components/UsernameSvg'
 import UsernamePreviewCard from '~/components/username/UsernamePreviewCard'
 import UsernameInputCard from '~/components/username/UsernameInputCard'
+import QuickSignCard from '~/components/username/QuickSignCard'
 import { formatNumber, formatNumberCompact, convertToNumber } from "~/utils";
 import { formatUsd } from '~/utils/numberFormat'
 import { useSearchParams } from 'react-router-dom'
 import { useNavigate, Link } from '~/utils/localizedRouter'
 import StakingRewardsInfo from '~/components/StakingRewardsInfo'
-import QuickSignHowItWorks from '~/components/QuickSignHowItWorks'
-import { HiInformationCircle, HiCheckCircle } from 'react-icons/hi'
+import { HiInformationCircle } from 'react-icons/hi'
 import { useTheme } from '~/hooks/useTheme'
 import { CLIENT_ID, getTipTiers, getCurrentValidatorMinTipWei } from '~/api/actions'
 import { apiFetch, IndexingError } from '~/api/client'
@@ -29,7 +29,6 @@ import { useValidatorMinTips } from '~/hooks/useValidatorMinTips'
 import { useT } from '~/i18n/I18nProvider'
 import { getDefaultSpendLimit, getDefaultTipCeiling, DEFAULT_SESSION_DURATION } from '~/hooks/useSessionKey'
 import { encryptPrivateKey, getEncryptionSignMessage, setDecryptedKey } from '~/services/sessionKeyEncryption'
-import QuickSignOptions from '~/components/QuickSignOptions'
 import { useSessionKeyStore } from '~/store/sessionKeyStore'
 import { usePoolReserves, useMinCawOut, suggestedSlippageBps } from '~/hooks/useZapQuote'
 import { useNetworkFees } from '~/hooks/useNetworkFees'
@@ -154,66 +153,6 @@ const DepositInfoPopover: React.FC = () => {
   )
 }
 
-/**
- * Tap-aware popover for the (i) next to "Quick Sign — one-click actions".
- * Same pattern as DepositInfoPopover — sits inside the wrapping <label>,
- * so the click handler stops propagation to avoid toggling the Quick Sign
- * switch when the user taps the icon.
- */
-const QuickSignInfoPopover: React.FC = () => {
-  const [open, setOpen] = useState(false)
-  const ref = useRef<HTMLDivElement>(null)
-
-  useEffect(() => {
-    if (!open) return
-    const onPointerDown = (e: PointerEvent) => {
-      const target = e.target as Node | null
-      if (!target || !ref.current?.contains(target)) setOpen(false)
-    }
-    const onScroll = () => setOpen(false)
-    // 12s is plenty of reading time without the popover lingering forever.
-    const autoHide = setTimeout(() => setOpen(false), 12000)
-    document.addEventListener('pointerdown', onPointerDown)
-    window.addEventListener('scroll', onScroll, true)
-    return () => {
-      document.removeEventListener('pointerdown', onPointerDown)
-      window.removeEventListener('scroll', onScroll, true)
-      clearTimeout(autoHide)
-    }
-  }, [open])
-
-  return (
-    <div ref={ref} className="relative inline-flex">
-      <button
-        type="button"
-        aria-label="How Quick Sign works"
-        onClick={(e) => {
-          e.preventDefault()
-          e.stopPropagation()
-          setOpen((v) => !v)
-        }}
-        onMouseEnter={() => setOpen(true)}
-        onMouseLeave={() => setOpen(false)}
-        className="flex items-center cursor-help"
-      >
-        <HiInformationCircle className="w-4 h-4 text-gray-400" />
-      </button>
-      {open && (
-        <div
-          // Style mirrors DepositInfoPopover for visual parity: dark
-          // bg-gray-900 outer card, the shared QuickSignHowItWorks
-          // component (also used in Settings + onboarding) renders its
-          // own padded content. Position above the icon so it doesn't
-          // overflow when the section sits near the bottom of the page.
-          className="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 z-50 w-[min(450px,90vw)] bg-gray-900 rounded-lg shadow-lg"
-          onClick={(e) => e.stopPropagation()}
-        >
-          <QuickSignHowItWorks isDark />
-        </div>
-      )}
-    </div>
-  )
-}
 
 /** Format a tiny USD amount with a deliberate round-DOWN at the last shown
  *  digit so $0.001 shows as "$0.0009" — visually smaller, never misleadingly
@@ -2119,72 +2058,22 @@ console.log("BALANCE:", balance)
                 ethAmountWei > 0, but the toggle itself doesn't need to wait. */}
             {((paymentMode === 'caw' && depositEnabled && depositAmountWei > 0n) ||
               paymentMode === 'eth') && (
-            <div className={`border rounded-xl p-4 space-y-3 mt-3 ${
-              isDark ? 'border-white/10 bg-[#0D0D0D]/85' : 'border-gray-200 bg-gray-50'
-            }`}>
-              {/* Override space-y-3 gap below this label to 5px */}
-              <label className={`flex items-center gap-3 [&+*]:!mt-[5px] ${hasExistingSessionForAddress ? 'cursor-default' : 'cursor-pointer'}`}>
-                {hasExistingSessionForAddress ? (
-                  // Already enabled for this owner address — Quick Sign is
-                  // delegated per address and the new profile inherits the
-                  // existing session, so there's nothing to toggle. Show a
-                  // checkmark instead of a switch.
-                  <HiCheckCircle className="w-6 h-6 text-yellow-500 flex-shrink-0" aria-label="Quick Sign already enabled" />
-                ) : (
-                  <button
-                    type="button"
-                    onClick={() => { setQuickSignEnabled(!quickSignEnabled); setQuickSignExpanded(true) }}
-                    className={`relative w-10 min-w-[40px] h-6 rounded-full transition-colors duration-200 cursor-pointer flex-shrink-0 ${
-                      quickSignEnabled ? 'bg-yellow-500' : 'bg-gray-600'
-                    }`}
-                  >
-                    <div className={`absolute top-0.5 w-5 h-5 rounded-full bg-white shadow transition-transform duration-200 ${
-                      quickSignEnabled ? 'translate-x-4' : 'translate-x-0.5'
-                    }`} />
-                  </button>
-                )}
-                <div className="flex-1">
-                  {/* Title row — plain span so a click bubbles to the
-                      wrapping <label> and toggles the switch (parity with
-                      the rest of the label). The (i) popover next to it
-                      stops propagation so it can open without flipping
-                      Quick Sign off. The pencil icon (edit params) also
-                      stops propagation for the same reason. */}
-                  <div className="flex items-center gap-1.5">
-                    <span className={`text-sm font-medium ${isDark ? 'text-white' : 'text-gray-900'}`}>Quick Sign — one-click actions</span>
-                    <QuickSignInfoPopover />
-                  </div>
-                  {hasExistingSessionForAddress ? (
-                    <p className="text-yellow-500/80 text-xs mt-0.5">
-                      Already enabled — Quick Sign works across all profiles on this wallet.
-                    </p>
-                  ) : (
-                    <>
-                      <p className="text-yellow-500/80 text-xs mt-0.5">
-                        Delegate funds to your device to skip wallet sigs
-                      </p>
-                      <p className="text-gray-500 text-xs mt-0.5">You can configure later in settings</p>
-                    </>
-                  )}
-                </div>
-              </label>
-              {quickSignEnabled && quickSignExpanded && (
-                // QuickSignOptions owns both states: a 3-column summary
-                // (spend limit / tip per action / expiry) when collapsed, and
-                // the full editable picker when its pencil is clicked.
-                <QuickSignOptions
-                  spendLimit={qsSpendLimitState}
-                  onSpendLimitChange={setQsSpendLimitState}
-                  duration={qsDuration}
-                  onDurationChange={setQsDuration}
-                  tipCeiling={qsTipCeilingState}
-                  onTipCeilingChange={setQsTipCeilingState}
-                  walletProtect={qsWalletProtect}
-                  onWalletProtectChange={setQsWalletProtect}
-                  themed
-                  isDark={isDark}
-                />
-              )}
+            <div className="mt-3">
+              <QuickSignCard
+                enabled={quickSignEnabled}
+                onEnabledChange={setQuickSignEnabled}
+                expanded={quickSignExpanded}
+                onExpandedChange={setQuickSignExpanded}
+                hasExistingSession={hasExistingSessionForAddress}
+                spendLimit={qsSpendLimitState}
+                onSpendLimitChange={setQsSpendLimitState}
+                duration={qsDuration}
+                onDurationChange={setQsDuration}
+                tipCeiling={qsTipCeilingState}
+                onTipCeilingChange={setQsTipCeilingState}
+                walletProtect={qsWalletProtect}
+                onWalletProtectChange={setQsWalletProtect}
+              />
             </div>
             )}
 

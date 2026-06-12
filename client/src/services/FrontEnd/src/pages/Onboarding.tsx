@@ -20,7 +20,9 @@
 import React, { useState, useCallback, useEffect, useMemo } from 'react'
 import { useSearchParams } from 'react-router-dom'
 import { useTheme } from '~/hooks/useTheme'
-import { registerSponsoredSession } from '~/hooks/useSessionKey'
+import { registerSponsoredSession, getDefaultSpendLimit, getDefaultTipCeiling, DEFAULT_SESSION_DURATION } from '~/hooks/useSessionKey'
+import { getTipTiers } from '~/api/actions'
+import { usePriceStore } from '~/store/tokenDataStore'
 import { cawCostForLength } from '~/utils/cawCostSchedule'
 import { useT } from '~/i18n/I18nProvider'
 import { useNavigate } from '~/utils/localizedRouter'
@@ -178,6 +180,19 @@ export default function Onboarding() {
   // While loading, giftInfo is null — UsernameStep disables Next.
   const [giftInfo, setGiftInfo] = useState<SponsorCodeInfo | null>(null)
   const [giftLoading, setGiftLoading] = useState(false)
+
+  // Quick Sign config — the SAME card as /usernames/new (QuickSignCard),
+  // rendered in the username step. Defaults mirror New.tsx. The user can tweak
+  // spend limit / tip-per-action / expiry here; the chosen values are threaded
+  // into registerSponsoredSession at post-mint auto-derive time (below) so the
+  // session honours them instead of silent defaults.
+  const [quickSignEnabled, setQuickSignEnabled] = useState(true)
+  const [quickSignExpanded, setQuickSignExpanded] = useState(true)
+  const [qsSpendLimit, setQsSpendLimit] = useState<bigint>(() => getDefaultSpendLimit())
+  const [qsDuration, setQsDuration] = useState<number>(DEFAULT_SESSION_DURATION)
+  const [qsTipCeiling, setQsTipCeiling] = useState<bigint>(() => getDefaultTipCeiling(getTipTiers().fast))
+  const [qsWalletProtect, setQsWalletProtect] = useState(false)
+  const cawPriceUsd = usePriceStore(s => s.priceMap['a-hunters-dream']) as number | undefined
 
   useEffect(() => {
     if (!codeValid || !normalizedCode) return
@@ -428,15 +443,29 @@ export default function Onboarding() {
               // post immediately without a separate Quick Sign ceremony, and
               // the stepper shows Quick Sign as done. Non-fatal: if it fails,
               // the user can still enable Quick Sign manually on the stepper.
+              //
+              // The session honours the params the user chose in the QuickSignCard
+              // (same card as /usernames/new) — spend limit / expiry / tip ceiling —
+              // instead of silent defaults. If the user toggled Quick Sign OFF, we
+              // skip derivation entirely (they can enable it later in settings).
               try {
-                // eslint-disable-next-line no-console
-                console.log('[signin:diag] auto-deriving Quick Sign session…')
-                await registerSponsoredSession({
-                  signMessage: result.signVerifyMessage,
-                  ownerAddress: ownerAddr,
-                })
-                // eslint-disable-next-line no-console
-                console.log('[signin:diag] Quick Sign session registered + persisted')
+                if (quickSignEnabled) {
+                  // eslint-disable-next-line no-console
+                  console.log('[signin:diag] auto-deriving Quick Sign session…')
+                  await registerSponsoredSession({
+                    signMessage: result.signVerifyMessage,
+                    ownerAddress: ownerAddr,
+                    spendLimit: qsSpendLimit,
+                    durationSeconds: qsDuration,
+                    tipCeiling: qsTipCeiling,
+                    cawPrice: cawPriceUsd,
+                  })
+                  // eslint-disable-next-line no-console
+                  console.log('[signin:diag] Quick Sign session registered + persisted')
+                } else {
+                  // eslint-disable-next-line no-console
+                  console.log('[signin:diag] Quick Sign disabled by user — skipping session derive')
+                }
               } catch (sessErr) {
                 // eslint-disable-next-line no-console
                 console.warn('[signin:diag] auto session register failed (non-fatal):', sessErr)
@@ -603,6 +632,19 @@ export default function Onboarding() {
               giftCaw={giftInfo?.valid ? giftInfo.giftCaw : undefined}
               minUsernameLength={giftInfo?.valid ? giftInfo.minUsernameLength : undefined}
               giftLoading={giftLoading}
+              cawPriceUsd={cawPriceUsd}
+              quickSignEnabled={quickSignEnabled}
+              onQuickSignEnabledChange={setQuickSignEnabled}
+              quickSignExpanded={quickSignExpanded}
+              onQuickSignExpandedChange={setQuickSignExpanded}
+              qsSpendLimit={qsSpendLimit}
+              onQsSpendLimitChange={setQsSpendLimit}
+              qsDuration={qsDuration}
+              onQsDurationChange={setQsDuration}
+              qsTipCeiling={qsTipCeiling}
+              onQsTipCeilingChange={setQsTipCeiling}
+              qsWalletProtect={qsWalletProtect}
+              onQsWalletProtectChange={setQsWalletProtect}
             />
           )}
 

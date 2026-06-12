@@ -26,6 +26,7 @@ import { usePriceStore } from '~/store/tokenDataStore'
 import { formatUsd } from '~/utils/numberFormat'
 import UsernamePreviewCard from '~/components/username/UsernamePreviewCard'
 import UsernameInputCard, { BoxedPricingTrigger } from '~/components/username/UsernameInputCard'
+import QuickSignCard from '~/components/username/QuickSignCard'
 
 const DEBOUNCE_MS = 500
 
@@ -67,6 +68,24 @@ export interface UsernameStepProps {
   minUsernameLength?: number
   /** True while the /api/sponsor/code fetch is in flight. Disables Next. */
   giftLoading?: boolean
+
+  // Quick Sign config — the SAME card as /usernames/new (QuickSignCard),
+  // rendered below the username form on this sponsored flow. State lives in the
+  // Onboarding parent so the chosen params can be threaded into the post-mint
+  // registerSponsoredSession. All optional: when omitted the card isn't shown.
+  cawPriceUsd?: number
+  quickSignEnabled?: boolean
+  onQuickSignEnabledChange?: (v: boolean) => void
+  quickSignExpanded?: boolean
+  onQuickSignExpandedChange?: (v: boolean) => void
+  qsSpendLimit?: bigint
+  onQsSpendLimitChange?: (v: bigint) => void
+  qsDuration?: number
+  onQsDurationChange?: (v: number) => void
+  qsTipCeiling?: bigint
+  onQsTipCeilingChange?: (v: bigint) => void
+  qsWalletProtect?: boolean
+  onQsWalletProtectChange?: (v: boolean) => void
 }
 
 export default function UsernameStep({
@@ -78,6 +97,18 @@ export default function UsernameStep({
   giftCaw,
   minUsernameLength,
   giftLoading = false,
+  quickSignEnabled,
+  onQuickSignEnabledChange,
+  quickSignExpanded,
+  onQuickSignExpandedChange,
+  qsSpendLimit,
+  onQsSpendLimitChange,
+  qsDuration,
+  onQsDurationChange,
+  qsTipCeiling,
+  onQsTipCeilingChange,
+  qsWalletProtect,
+  onQsWalletProtectChange,
 }: UsernameStepProps) {
   const { isDark } = useTheme()
   const t = useT()
@@ -322,6 +353,28 @@ export default function UsernameStep({
             You'll receive <span className="font-semibold">{formatWeiAsCaw(depositAmount)}</span> deposited to your profile.
           </span>
         </div>
+      )}
+
+      {/* Quick Sign — the SAME card as /usernames/new (QuickSignCard). Shown
+          only when the parent threads its QS state (sponsored onboarding flow).
+          The chosen spend limit / tip-per-action / expiry feed the post-mint
+          registerSponsoredSession in Onboarding.tsx. */}
+      {onQuickSignEnabledChange && onQuickSignExpandedChange &&
+        onQsSpendLimitChange && onQsDurationChange && onQsTipCeilingChange && onQsWalletProtectChange && (
+        <QuickSignCard
+          enabled={quickSignEnabled ?? true}
+          onEnabledChange={onQuickSignEnabledChange}
+          expanded={quickSignExpanded ?? true}
+          onExpandedChange={onQuickSignExpandedChange}
+          spendLimit={qsSpendLimit ?? 0n}
+          onSpendLimitChange={onQsSpendLimitChange}
+          duration={qsDuration ?? 0}
+          onDurationChange={onQsDurationChange}
+          tipCeiling={qsTipCeiling ?? 0n}
+          onTipCeilingChange={onQsTipCeilingChange}
+          walletProtect={qsWalletProtect ?? false}
+          onWalletProtectChange={onQsWalletProtectChange}
+        />
       )}
 
       <button
