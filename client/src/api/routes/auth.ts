@@ -1,4 +1,5 @@
 import { Router } from 'express'
+import { rateLimit } from 'express-rate-limit'
 import { ethers } from 'ethers'
 import { prisma } from '../../prismaClient'
 import { createSession, getSession, addAuthorization, deleteSession, consumeAuthSignatureOnce } from '../sessionStore'
@@ -10,6 +11,11 @@ import { extractSession, SESSION_COOKIE_NAME, sessionCookieOptions } from '../mi
 // (NftTransferWatcher + RawEventsGatherer) populate rows asynchronously.
 // The frontend retries on 202 via apiFetch + retryOnIndexing.
 import dmService from '../../services/DmService'
+import {
+  issuePasskeyChallenge,
+  consumePasskeyChallenge,
+  verifyPasskeyAssertionOnChain,
+} from '../util/passkeyVerify'
 
 const router = Router()
 
@@ -450,6 +456,156 @@ router.post('/logout', async (req, res) => {
   } catch (error) {
     console.error('POST /api/auth/logout error:', error)
     res.status(500).json({ error: 'Failed to logout' })
+  }
+})
+
+// Per-IP rate limits for the passkey sign-in ceremony (security finding #4):
+// the challenge endpoint is unauthenticated, and each verify triggers an L1
+// staticcall, so an unbounded flood is an RPC-quota DoS. P-256 is unforgeable,
+// so these are DoS limits, not credential-guess limits.
+const passkeyChallengeLimit = rateLimit({
+  windowMs: 5 * 60 * 1000,
+  max: 20, // 20 challenge requests / 5 min / IP
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { error: 'Too many passkey challenge requests. Try again shortly.' },
+})
+const passkeyVerifyLimit = rateLimit({
+  windowMs: 5 * 60 * 1000,
+  max: 15, // 15 verify attempts / 5 min / IP
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { error: 'Too many passkey sign-in attempts. Try again shortly.' },
+})
+
+/**
+ * POST /api/auth/verify-passkey/challenge
+ * Step 1 of passkey sign-in (Population B). Body: { tokenId }.
+ * The SERVER generates a random 32-byte challenge (security finding #2 — a
+ * client-chosen challenge would let an attacker pre-seed a captured assertion's
+ * challenge and replay it) and returns it. The client passes it verbatim into
+ * navigator.credentials.get. Single live challenge per tokenId, short TTL,
+ * single-use on verify.
+ */
+router.post('/verify-passkey/challenge', passkeyChallengeLimit, async (req, res) => {
+  try {
+    const id = Number(req.body?.tokenId)
+    if (!Number.isInteger(id) || id <= 0) {
+      res.status(400).json({ error: 'Invalid tokenId' })
+      return
+    }
+    const challenge = await issuePasskeyChallenge(id)
+    res.json({ challenge })
+  } catch (error) {
+    console.error('POST /api/auth/verify-passkey/challenge error:', error)
+    res.status(500).json({ error: 'Failed to issue passkey challenge' })
+  }
+})
+
+/**
+ * POST /api/auth/verify-passkey
+ * Step 2 of passkey sign-in. Body: { tokenId, challenge, signature }.
+ * Verifies the WebAuthn assertion ON-CHAIN against the profile owner's SmartEOA
+ * (ERC-1271 isValidSignature → EIP-7951 P-256 path), then issues a session for
+ * that tokenId. The `signature` is the ABI-encoded
+ * (authenticatorData, clientDataJSON, r, s) blob SmartEOA decodes.
+ */
+router.post('/verify-passkey', passkeyVerifyLimit, async (req, res) => {
+  try {
+    const { tokenId, challenge, signature } = req.body
+    const id = Number(tokenId)
+    if (!Number.isInteger(id) || id <= 0) {
+      res.status(400).json({ error: 'Invalid tokenId' })
+      return
+    }
+    if (typeof challenge !== 'string' || !/^0x[0-9a-fA-F]{64}$/.test(challenge)) {
+      res.status(400).json({ error: 'Invalid challenge' })
+      return
+    }
+    if (typeof signature !== 'string' || !/^0x[0-9a-fA-F]+$/.test(signature)) {
+      res.status(400).json({ error: 'Invalid signature' })
+      return
+    }
+
+    // Resolve the profile's CURRENT owner SmartEOA from the DB. The
+    // NftTransferWatcher keeps User.address current on every Transfer, so this
+    // reflects the live owner — verifying against a stale owner would let a
+    // previous owner's passkey sign in after a transfer.
+    const user = await prisma.user.findUnique({
+      where: { tokenId: id },
+      select: { address: true, tokenId: true },
+    })
+    if (!user || !user.address) {
+      // Not yet indexed (or no such profile). Hint a retry like /verify.
+      res.setHeader('Retry-After', '5')
+      res.status(202).json({ error: 'ownership not yet indexed', retryAfterSeconds: 5 })
+      return
+    }
+    const ownerAddress = user.address
+
+    // Consume the challenge BEFORE the on-chain call so a single challenge
+    // can't drive multiple verification attempts (atomic GETDEL — one shot).
+    const freshChallenge = await consumePasskeyChallenge(id, challenge)
+    if (!freshChallenge) {
+      res.status(400).json({ error: 'Challenge expired or not found. Request a new one.' })
+      return
+    }
+
+    // On-chain ERC-1271 check against the owner SmartEOA.
+    let valid: boolean
+    try {
+      valid = await verifyPasskeyAssertionOnChain(
+        ownerAddress,
+        challenge as `0x${string}`,
+        signature as `0x${string}`,
+      )
+    } catch (e) {
+      console.error('[Auth] verify-passkey on-chain check failed (infra):', e)
+      res.status(503).json({ error: 'Could not verify passkey right now. Please try again.' })
+      return
+    }
+    if (!valid) {
+      res.status(401).json({ error: 'Passkey signature did not validate for this profile.' })
+      return
+    }
+
+    // Stale-owner guard (security finding #5): the on-chain check used the DB
+    // owner address. If an NFT transfer landed between the read above and now
+    // (indexer mid-update), re-read and bail if the owner changed — otherwise a
+    // just-transferred-away owner's passkey could mint a session. Cheap indexed
+    // read; mismatch → 202 retry (the FE re-runs the whole ceremony).
+    const recheck = await prisma.user.findUnique({
+      where: { tokenId: id },
+      select: { address: true },
+    })
+    if (!recheck?.address || recheck.address.toLowerCase() !== ownerAddress.toLowerCase()) {
+      res.setHeader('Retry-After', '5')
+      res.status(202).json({ error: 'ownership changed during verification; retry', retryAfterSeconds: 5 })
+      return
+    }
+
+    // Valid — issue a session for this tokenId (same shape as /verify).
+    const cookieRePk = new RegExp(`(?:^|;\\s*)${SESSION_COOKIE_NAME.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}=([^;]+)`)
+    let sessionToken =
+      (req.headers.cookie?.match(cookieRePk)?.[1]) ||
+      (req.headers['x-session-token'] as string | undefined)
+    let session = sessionToken ? await getSession(sessionToken) : null
+    if (!session) {
+      const created = await createSession()
+      sessionToken = created.token
+      session = created.session
+    }
+    const updated = await addAuthorization(sessionToken!, ownerAddress.toLowerCase(), [id])
+    res.cookie(SESSION_COOKIE_NAME, sessionToken!, sessionCookieOptions())
+    res.json({
+      sessionToken,
+      authorizedTokenIds: updated?.authorizedTokenIds || [id],
+      authorizedAddresses: updated?.authorizedAddresses || [ownerAddress.toLowerCase()],
+      expiresAt: updated?.expiresAt || session.expiresAt,
+    })
+  } catch (error) {
+    console.error('POST /api/auth/verify-passkey error:', error)
+    res.status(500).json({ error: 'Failed to verify passkey' })
   }
 })
 
