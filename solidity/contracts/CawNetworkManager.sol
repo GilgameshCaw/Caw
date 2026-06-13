@@ -475,13 +475,19 @@ contract CawNetworkManager {
 
   event AuthorizedSponsorSet(uint32 indexed networkId, address indexed sponsor, bool authorized);
 
-  function addAuthorizedSponsor(uint32 networkId, address sponsor) external onlyNetworkOwnerNotFeeLocked(networkId) {
+  // L2-SPONSOR-1 (audit 2026-06-13): gate sponsor management on onlyNetworkOwner,
+  // NOT onlyNetworkOwnerNotFeeLocked. Sponsor management is an operational-security
+  // concern (rotate/revoke a compromised sponsor key) independent of fee policy.
+  // Fee-lock freezes fee VALUES + the fee address; it must not freeze the ability
+  // to revoke a leaked sponsor key, or a fee-locked network could never stop a
+  // compromised sponsor from minting fee-exempt forever.
+  function addAuthorizedSponsor(uint32 networkId, address sponsor) external onlyNetworkOwner(networkId) {
     require(sponsor != address(0), "zero sponsor");
     _authorizedSponsors[networkId][sponsor] = true;
     emit AuthorizedSponsorSet(networkId, sponsor, true);
   }
 
-  function removeAuthorizedSponsor(uint32 networkId, address sponsor) external onlyNetworkOwnerNotFeeLocked(networkId) {
+  function removeAuthorizedSponsor(uint32 networkId, address sponsor) external onlyNetworkOwner(networkId) {
     _authorizedSponsors[networkId][sponsor] = false;
     emit AuthorizedSponsorSet(networkId, sponsor, false);
   }

@@ -568,7 +568,17 @@ contract CawProfileLedger is
     uint256 outstanding = sponsorRepay[tokenId];
     swept = outstanding < amount ? outstanding : amount;
     if (swept > 0) {
+      // SPR-1 (audit 2026-06-13): conservation. The swept CAW moves from the
+      // user's spendable balance to the sponsor's — it stays inside the L2
+      // ledger, so `totalCaw` (the sum-of-balances total) MUST be unchanged.
+      // Credit the sponsor AND debit the user by the same `swept`, so the
+      // sum-of-balances invariant (sum(cawBalanceOf) == totalCaw) holds
+      // regardless of how the withdraw path nets the remaining amount. Without
+      // the user-side debit, the sponsor credit inflates the books by `swept`.
+      uint256 userBal = cawBalanceOf(tokenId);
+      require(userBal >= swept, "repay exceeds balance");
       sponsorRepay[tokenId] = outstanding - swept;
+      setCawBalance(tokenId, userBal - swept);
       uint32 sponsorId = repaySponsorTokenId[tokenId];
       setCawBalance(sponsorId, cawBalanceOf(sponsorId) + swept);
       emit SponsorRepaySwept(tokenId, sponsorId, swept, outstanding - swept);
@@ -838,8 +848,21 @@ contract CawProfileLedger is
     // captured pre-signed registerSession could re-register the just-revoked
     // key. Mirrors registerSessionFromActions' nonce bump.
     sessionNonce[msg.sender]++;
+    // TSN-1 (audit 2026-06-13): token-scoped sessions register against
+    // tokenSessionNonce[profileId], so revoking one must bump THAT nonce too —
+    // otherwise a pre-signed registerTokenScopedSession at the current nonce
+    // stays replayable after revocation. Read profileId before the delete.
+    _bumpTokenSessionNonce(msg.sender, sessionKey);
     delete sessions[msg.sender][sessionKey];
     emit SessionRevoked(msg.sender, sessionKey);
+  }
+
+  /// @dev If (owner, sessionKey) is a token-scoped session, bump its
+  ///      tokenSessionNonce so pre-signed registerTokenScopedSession messages at
+  ///      the current nonce are invalidated by revocation (TSN-1).
+  function _bumpTokenSessionNonce(address owner, address sessionKey) internal {
+    uint32 pid = sessions[owner][sessionKey].profileId;
+    if (pid != 0) tokenSessionNonce[pid]++;
   }
 
   /// @notice Register a session via an OTHER action (qs:) submitted by CawActions.
@@ -877,6 +900,7 @@ contract CawProfileLedger is
   function revokeSessionFromActions(address owner, address sessionKey) external {
     if (!(msg.sender == address(cawActions))) revert NotCa();
     sessionNonce[owner]++; // SES-1: invalidate pre-signed registerSession at current nonce
+    _bumpTokenSessionNonce(owner, sessionKey); // TSN-1: token-scoped nonce too
     delete sessions[owner][sessionKey];
     emit SessionRevoked(owner, sessionKey);
   }
@@ -908,6 +932,7 @@ contract CawProfileLedger is
     if (!(signer == sessionKey)) revert BadSig();
 
     sessionNonce[owner]++; // SES-1: invalidate pre-signed registerSession at current nonce
+    _bumpTokenSessionNonce(owner, sessionKey); // TSN-1: token-scoped nonce too
     delete sessions[owner][sessionKey];
     emit SessionRevoked(owner, sessionKey);
   }

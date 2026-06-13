@@ -634,6 +634,13 @@ contract SponsorRepayTest is Test {
         ledger.registerSponsorRepayFromL1(tokenId, sponsorId, repayAmt);
     }
 
+    // SPR-1: the user must hold spendable CAW for the sweep to debit (the sweep
+    // moves CAW from the user's balance to the sponsor's, conserving totalCaw).
+    function _seedBalance(uint32 tokenId, uint256 amount) internal {
+        vm.prank(address(mockCa));
+        ledger.addToBalance(tokenId, amount);
+    }
+
     function test_sponsorSweepPreview_belowOutstanding() public {
         uint32 tokenId = 20;
         uint256 outstanding = 1000e18;
@@ -681,6 +688,7 @@ contract SponsorRepayTest is Test {
         // Seed ownerOf for sponsor token (sponsorTokenId2) so balance is tracked.
         _seedLedgerOwner(sponsorTokenId2, address(0x9999));
         _seedRepay(userTokenId, sponsorTokenId2, outstanding);
+        _seedBalance(userTokenId, sweepAmt); // SPR-1: user funds the swept portion
 
         uint256 sponsorBalBefore = ledger.cawBalanceOf(sponsorTokenId2);
 
@@ -693,6 +701,7 @@ contract SponsorRepayTest is Test {
         assertEq(swept, sweepAmt,                                       "swept amount must equal sweepAmt");
         assertEq(ledger.sponsorRepay(userTokenId), outstanding - sweepAmt, "remaining repay must decrease");
         assertEq(ledger.cawBalanceOf(sponsorTokenId2), sponsorBalBefore + sweepAmt, "sponsor balance increased");
+        assertEq(ledger.cawBalanceOf(userTokenId), 0,                  "SPR-1: user debited by sweepAmt");
     }
 
     function test_sweepSponsorRepay_fullSweep() public {
@@ -702,12 +711,15 @@ contract SponsorRepayTest is Test {
 
         _seedLedgerOwner(sponsorTokenId3, address(0x8888));
         _seedRepay(userTokenId, sponsorTokenId3, outstanding);
+        _seedBalance(userTokenId, outstanding); // SPR-1: user funds the repay
 
         vm.prank(address(mockCa));
         uint256 swept = ledger.sweepSponsorRepay(userTokenId, outstanding);
 
         assertEq(swept, outstanding,                   "full sweep: swept == outstanding");
         assertEq(ledger.sponsorRepay(userTokenId), 0,  "full sweep: repay zeroed");
+        // SPR-1: user debited by swept (conservation — sweep moves CAW, doesn't mint).
+        assertEq(ledger.cawBalanceOf(userTokenId), 0,  "full sweep: user balance debited");
     }
 
     function test_sweepSponsorRepay_overSweep() public {
@@ -718,6 +730,7 @@ contract SponsorRepayTest is Test {
 
         _seedLedgerOwner(sponsorTokenId4, address(0x7777));
         _seedRepay(userTokenId, sponsorTokenId4, outstanding);
+        _seedBalance(userTokenId, outstanding); // SPR-1: user funds the (capped) sweep
 
         uint256 sponsorBalBefore = ledger.cawBalanceOf(sponsorTokenId4);
 
@@ -841,6 +854,7 @@ contract SponsorRepayTest is Test {
         // even after repay zeroed, so sponsor can still call forgive (emits event with 0).
 
         _seedRepay(userToken, sponsorToken, 100e18);
+        _seedBalance(userToken, 100e18); // SPR-1: user funds the sweep
 
         // Sweep fully to zero the obligation.
         vm.prank(address(mockCa));
