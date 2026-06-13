@@ -392,4 +392,81 @@ contract MarketplacePullPatternTest is Test {
         vm.prank(bidderA);
         marketplace.refundDefaultedAuction(listingId);
     }
+
+    // =====================================================================
+    // MP-4 (audit 2026-06-13): buyWithToken ERC20 pull pattern — a seller that
+    // the payment token blocklists can no longer make the listing unsellable.
+    // =====================================================================
+
+    function test_MP4_buyWithToken_blocklistedSeller_saleStillSucceeds() public {
+        BlocklistToken token = new BlocklistToken();
+        // Re-deploy marketplace with the token whitelisted; use a fresh tokenId
+        // (setUp already minted TOKEN_ID to the seller).
+        uint32 tid = 99;
+        address[] memory pts = new address[](1);
+        pts[0] = address(token);
+        marketplace = new CawProfileMarketplace(address(nft), 1, pts);
+        nft.mintTo(seller, tid);
+        vm.prank(seller);
+        nft.setApprovalForAll(address(marketplace), true);
+
+        uint256 price = 100e18;
+        token.mint(buyer, price);
+        vm.prank(buyer);
+        token.approve(address(marketplace), price);
+
+        vm.prank(seller);
+        marketplace.createListing(tid, CawProfileMarketplace.ListingType.FIXED,
+            address(token), price, 0, DURATION);
+        uint256 listingId = marketplace.nextListingId() - 1;
+
+        // Seller is blocklisted by the token (transfer to them reverts).
+        token.setBlocked(seller, true);
+
+        // The sale STILL succeeds (proceeds go to the pull ledger, not pushed).
+        vm.prank(buyer);
+        marketplace.buyWithToken(listingId, price);
+
+        assertFalse(_isActive(listingId), "MP-4: listing sold");
+        assertEq(nft.ownerOf(tid), buyer, "MP-4: buyer owns NFT");
+        assertEq(marketplace.pendingTokenPayouts(seller, address(token)), price,
+            "MP-4: proceeds queued to token pull ledger");
+
+        // Seller unblocks + pulls to a fresh address.
+        token.setBlocked(seller, false);
+        address fresh = address(0xF8E54);
+        vm.prank(seller);
+        marketplace.withdrawTokenPayouts(address(token), fresh);
+        assertEq(token.balanceOf(fresh), price, "MP-4: seller pulls proceeds");
+        assertEq(marketplace.pendingTokenPayouts(seller, address(token)), 0, "MP-4: ledger cleared");
+    }
+}
+
+/// @dev Minimal ERC20 that can blocklist an address (transfer to it reverts),
+///      modeling USDC/USDT freeze behavior for MP-3/4/5.
+contract BlocklistToken {
+    string public name = "Block";
+    string public symbol = "BLK";
+    uint8 public decimals = 18;
+    mapping(address => uint256) public balanceOf;
+    mapping(address => mapping(address => uint256)) public allowance;
+    mapping(address => bool) public blocked;
+
+    function setBlocked(address a, bool b) external { blocked[a] = b; }
+    function mint(address to, uint256 amt) external { balanceOf[to] += amt; }
+    function approve(address sp, uint256 amt) external returns (bool) { allowance[msg.sender][sp] = amt; return true; }
+
+    function transfer(address to, uint256 amt) public returns (bool) {
+        require(!blocked[to], "blocked");
+        balanceOf[msg.sender] -= amt;
+        balanceOf[to] += amt;
+        return true;
+    }
+    function transferFrom(address from, address to, uint256 amt) external returns (bool) {
+        require(!blocked[to], "blocked");
+        allowance[from][msg.sender] -= amt;
+        balanceOf[from] -= amt;
+        balanceOf[to] += amt;
+        return true;
+    }
 }

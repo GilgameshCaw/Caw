@@ -68,6 +68,12 @@ contract CawProfileMarketplace is ReentrancyGuard {
     mapping(address => mapping(uint256 => uint256)) public pendingReturns;
     // seller => amount owed (pull-pattern payouts — H-15)
     mapping(address => uint256) public pendingPayouts;
+    // MP-3/4/5 (audit 2026-06-13): per-token pull ledger for ERC20 payouts.
+    // recipient => token => amount. ERC20 settlements (buyWithToken, settleAuction,
+    // offer refunds) credit this instead of pushing directly, so a seller/offerer
+    // that a token contract blocklists (USDC/USDT freeze) can't DoS the sale /
+    // auction settlement / offer cleanup. They pull via withdrawTokenPayouts.
+    mapping(address => mapping(address => uint256)) public pendingTokenPayouts;
 
     mapping(uint256 => Offer) public offers;
     uint256 public nextOfferId = 1;
@@ -92,6 +98,9 @@ contract CawProfileMarketplace is ReentrancyGuard {
     // H-15: pull-pattern seller payouts
     event PayoutQueued(address indexed seller, uint256 amount);
     event PayoutWithdrawn(address indexed seller, address indexed recipient, uint256 amount);
+    // MP-3/4/5: ERC20 pull-pattern payout events.
+    event TokenPayoutQueued(address indexed seller, address indexed token, uint256 amount);
+    event TokenPayoutWithdrawn(address indexed seller, address indexed token, address indexed recipient, uint256 amount);
     // H-17: defaulted auction escape hatch
     event AuctionDefaulted(uint256 indexed listingId, address indexed bidder, uint256 amount);
 
@@ -254,8 +263,11 @@ contract CawProfileMarketplace is ReentrancyGuard {
         listing.active = false;
         listingByTokenId[listing.tokenId] = 0;
 
-        // Transfer ERC20 payment to seller
-        IERC20(listing.paymentToken).safeTransferFrom(msg.sender, listing.seller, price);
+        // MP-4 (audit 2026-06-13): pull buyer's ERC20 into the contract and credit
+        // the seller's pull ledger, rather than pushing directly to the seller. A
+        // blocklisted seller can no longer make the listing permanently unsellable.
+        IERC20(listing.paymentToken).safeTransferFrom(msg.sender, address(this), price);
+        pendingTokenPayouts[listing.seller][listing.paymentToken] += price;
 
         // Transfer NFT to buyer and sync L2 (msg.value covers LZ fee)
         cawProfile.transferAndSync{value: msg.value}(msg.sender, listing.tokenId, lzDestId, 0);
@@ -357,12 +369,15 @@ contract CawProfileMarketplace is ReentrancyGuard {
         listing.active = false;
         listingByTokenId[listing.tokenId] = 0;
 
-        // Queue or transfer payment to seller (ETH uses pull pattern — H-15)
+        // Queue payment to seller — pull pattern for BOTH ETH (H-15) and ERC20
+        // (MP-5): pushing the ERC20 directly would let a blocklisted seller block
+        // settlement entirely, locking the winner's NFT + the bidder's funds.
         if (listing.paymentToken == address(0)) {
             pendingPayouts[listing.seller] += listing.highestBid;
             emit PayoutQueued(listing.seller, listing.highestBid);
         } else {
-            IERC20(listing.paymentToken).safeTransfer(listing.seller, listing.highestBid);
+            pendingTokenPayouts[listing.seller][listing.paymentToken] += listing.highestBid;
+            emit TokenPayoutQueued(listing.seller, listing.paymentToken, listing.highestBid);
         }
 
         // Transfer NFT to winner and sync L2 (msg.value covers LZ fee)
@@ -488,6 +503,18 @@ contract CawProfileMarketplace is ReentrancyGuard {
         (bool sent,) = recipient.call{value: amount}("");
         require(sent, "ETH transfer failed");
         emit PayoutWithdrawn(msg.sender, recipient, amount);
+    }
+
+    /// @notice Withdraw ERC20 payouts owed to msg.sender for `token` (MP-3/4/5
+    ///         pull-pattern). Sends to `recipient` so a blocklisted seller can
+    ///         still route their proceeds to a fresh address.
+    function withdrawTokenPayouts(address token, address recipient) external nonReentrant {
+        require(recipient != address(0), "Zero address");
+        uint256 amount = pendingTokenPayouts[msg.sender][token];
+        require(amount > 0, "Nothing to withdraw");
+        pendingTokenPayouts[msg.sender][token] = 0;
+        IERC20(token).safeTransfer(recipient, amount);
+        emit TokenPayoutWithdrawn(msg.sender, token, recipient, amount);
     }
 
     // ============================================
@@ -652,7 +679,19 @@ contract CawProfileMarketplace is ReentrancyGuard {
                 emit PayoutQueued(recipient, offer.amount);
             }
         } else {
-            IERC20(offer.paymentToken).safeTransfer(recipient, offer.amount);
+            // MP-3 (audit 2026-06-13): ERC20 mirror of the ETH pull fallback.
+            // cancelOffer is permissionless post-expiry, so a blocklisted offerer
+            // must not be able to keep the offer active forever. Try a raw
+            // transfer; on revert/false, queue to the token pull ledger.
+            try IERC20(offer.paymentToken).transfer(recipient, offer.amount) returns (bool ok) {
+                if (!ok) {
+                    pendingTokenPayouts[recipient][offer.paymentToken] += offer.amount;
+                    emit TokenPayoutQueued(recipient, offer.paymentToken, offer.amount);
+                }
+            } catch {
+                pendingTokenPayouts[recipient][offer.paymentToken] += offer.amount;
+                emit TokenPayoutQueued(recipient, offer.paymentToken, offer.amount);
+            }
         }
     }
 
