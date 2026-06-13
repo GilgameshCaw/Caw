@@ -7,7 +7,6 @@ import { useWalletPopulation } from "~/hooks/useWalletPopulation";
 import { useAccount } from "wagmi";
 import { useConnectModalBridge as useConnectModal } from '~/hooks/useConnectModalBridge'
 import { HiOutlineX, HiOutlinePlus } from "react-icons/hi";
-import { BsWallet } from 'react-icons/bs';
 import { useTheme } from '~/hooks/useTheme'
 import type { ActionParams } from '~/api/actions'
 import { useT } from '~/i18n/I18nProvider'

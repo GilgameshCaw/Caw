@@ -1524,6 +1524,7 @@ const MessagesPage: React.FC = () => {
                   className={`relative z-[80] p-2 rounded-full transition-all duration-300 hover:bg-gray-500/20 cursor-pointer ${
                     isDark ? 'text-white' : 'text-black'
                   }`}
+                  aria-label={t('messages.back')}
                 >
                   <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
@@ -1660,6 +1661,7 @@ const MessagesPage: React.FC = () => {
                   className={`p-2 rounded-full transition-all duration-300 hover:bg-gray-500/20 cursor-pointer ${
                     isDark ? 'text-white' : 'text-black'
                   }`}
+                  aria-label={t('messages.options')}
                 >
                   <HiOutlineDotsHorizontal className="w-5 h-5" />
                 </button>
@@ -1740,6 +1742,7 @@ const MessagesPage: React.FC = () => {
                   className={`p-2 rounded-full transition-all duration-300 hover:bg-gray-500/20 cursor-pointer relative ${
                     isDark ? '' : ''
                   }`}
+                  aria-label={t('messages.settings')}
                 >
                   <HiOutlineCog className={`w-5 h-5 transition-colors duration-300 ${
                     isDark ? 'text-white' : 'text-black'
@@ -1756,6 +1759,7 @@ const MessagesPage: React.FC = () => {
                     className={`relative p-2 rounded-full transition-all duration-300 hover:bg-gray-500/20 cursor-pointer ${
                       isDark ? '' : ''
                     }`}
+                    aria-label={t('messages.new_message')}
                   >
                     <HiOutlineMail className={`w-5 h-5 transition-colors duration-300 ${
                       isDark ? 'text-white' : 'text-black'
@@ -2056,13 +2060,13 @@ const MessagesPage: React.FC = () => {
 
                         <div className="flex-1 min-w-0">
                           <div className="flex items-center space-x-2 mb-1">
-                            <h3 className={`text-base transition-colors duration-300 truncate ${
+                            <p className={`text-base transition-colors duration-300 truncate ${
                               conversation.unreadCount > 0
                                 ? `font-bold underline ${isDark ? 'text-white' : 'text-black'}`
                                 : `font-semibold ${isDark ? 'text-white' : 'text-black'}`
                             }`}>
                               {groupTitle}
-                            </h3>
+                            </p>
                             {conversation.unreadCount > 0 && (
                               <span className="px-2 py-0.5 text-xs font-medium bg-yellow-500 text-black rounded-full">
                                 {conversation.unreadCount}
@@ -2094,7 +2098,7 @@ const MessagesPage: React.FC = () => {
                         <span className={`text-sm transition-colors duration-300 ${
                           conversation.unreadCount > 0
                             ? (isDark ? 'text-yellow-400 font-medium' : 'text-yellow-600 font-medium')
-                            : 'text-gray-500'
+                            : (isDark ? 'text-gray-400' : 'text-gray-500')
                         }`}>
                           {conversation.lastMessageAt ? formatMessageTime(conversation.lastMessageAt) : ''}
                         </span>

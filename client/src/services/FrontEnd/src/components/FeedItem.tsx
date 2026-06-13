@@ -1285,6 +1285,7 @@ const FeedItem: React.FC<{ item: CawItem; isMainPost?: boolean; isReply?: boolea
               {/* Avatar */}
               <Link
                 to={`/users/${useItem.user.username}`}
+                aria-label={useItem.user.username}
                 className={`relative z-10 w-10 h-10 rounded-full cursor-pointer overflow-hidden border border-gray-700 ${inThread ? (isDark ? 'bg-black' : 'bg-white') : ''}`}
               >
                 <Avatar
@@ -1318,7 +1319,7 @@ const FeedItem: React.FC<{ item: CawItem; isMainPost?: boolean; isReply?: boolea
                             e.stopPropagation()
                             setTranslatedText(null)
                           }}
-                          className="inline-flex shrink-0 items-center gap-1 text-xs text-yellow-500/80 hover:text-yellow-500 transition-colors cursor-pointer"
+                          className="inline-flex shrink-0 items-center gap-1 text-xs text-yellow-500/80 hover:text-yellow-500 transition-colors cursor-pointer py-2"
                         >
                           <HiOutlineTranslate className="w-3.5 h-3.5" />
                           {t('post.show_original')}
@@ -1332,7 +1333,7 @@ const FeedItem: React.FC<{ item: CawItem; isMainPost?: boolean; isReply?: boolea
                           e.stopPropagation()
                           void handleMenuAction('translate')
                         }}
-                        className="mb-1 inline-flex items-center gap-1 text-xs text-yellow-500/80 hover:text-yellow-500 transition-colors cursor-pointer"
+                        className="mb-1 inline-flex items-center gap-1 text-xs text-yellow-500/80 hover:text-yellow-500 transition-colors cursor-pointer py-2"
                       >
                         <HiOutlineTranslate className="w-3.5 h-3.5" />
                         {t('post.translate')}
@@ -1345,7 +1346,7 @@ const FeedItem: React.FC<{ item: CawItem; isMainPost?: boolean; isReply?: boolea
                     <UserHoverCard username={useItem.user.username} portal={userHoverPortal}>
                       <Link
                         to={`/users/${useItem.user.username}`}
-                        className={`font-semibold transition-colors duration-300 cursor-pointer hover:underline ${
+                        className={`font-semibold transition-colors duration-300 cursor-pointer hover:underline py-1 ${
                           isDark ? 'text-white' : 'text-black'
                         }`}
                       >
@@ -1406,6 +1407,7 @@ const FeedItem: React.FC<{ item: CawItem; isMainPost?: boolean; isReply?: boolea
             {/* Three dots menu */}
             <div className="relative" ref={optionsMenuRef}>
               <Tooltip text={t('post.more_options')}><button
+                aria-label={t('post.more_options')}
                 onClick={(e) => {
                   e.preventDefault()
                   e.stopPropagation()
@@ -1716,6 +1718,7 @@ const FeedItem: React.FC<{ item: CawItem; isMainPost?: boolean; isReply?: boolea
             <div className={`flex items-center ${uiDensity === 'compact' ? 'gap-4' : 'space-x-6'}`}>
               {/* Comments/Replies */}
               <Tooltip text={replyPending ? t('post.processing') : t('post.reply')} disabled={item.status === 'FAILED'}><button
+                aria-label={t('post.reply')}
                 className={`flex items-center space-x-2 transition-colors duration-300 ${
                   (item.status === 'FAILED')
                     ? 'cursor-not-allowed opacity-50'
@@ -1737,6 +1740,7 @@ const FeedItem: React.FC<{ item: CawItem; isMainPost?: boolean; isReply?: boolea
               {/* Retweets */}
               <div className="relative">
                 <Tooltip text={recawPending ? t('post.processing') : t('post.recaw')} disabled={item.status === 'FAILED'}><button
+                  aria-label={t('post.recaw')}
                   className={`group flex items-center space-x-2 transition-colors duration-300 ${
                     (item.status === 'FAILED')
                       ? 'cursor-not-allowed opacity-50'
@@ -1929,6 +1933,7 @@ const FeedItem: React.FC<{ item: CawItem; isMainPost?: boolean; isReply?: boolea
                 }
                 disabled={item.status === 'FAILED'}
               ><button
+                aria-label={t('post.like')}
                 className={`flex items-center space-x-2 transition-colors duration-300 ${
                   (item.status === 'FAILED')
                     ? 'cursor-not-allowed opacity-50'
@@ -1969,6 +1974,7 @@ const FeedItem: React.FC<{ item: CawItem; isMainPost?: boolean; isReply?: boolea
 
               {/* Views */}
               <Tooltip text={t('post.views')}><button
+                aria-label={t('post.views')}
                 className={`flex items-center space-x-2 transition-colors duration-300 cursor-pointer ${
                   isDark ? 'text-gray-400' : 'text-gray-600'
                 }`}
@@ -1981,6 +1987,7 @@ const FeedItem: React.FC<{ item: CawItem; isMainPost?: boolean; isReply?: boolea
             <div className={`flex items-center ${uiDensity === 'compact' ? 'gap-3' : 'space-x-4'}`}>
               {/* Bookmark */}
               <Tooltip text={isBookmarked ? t('post.remove_bookmark') : t('post.save')} disabled={item.status === 'FAILED'}><button
+                aria-label={isBookmarked ? t('post.remove_bookmark') : t('post.save')}
                 onClick={handleBookmark}
                 disabled={item.status === 'FAILED'}
                 className={`flex items-center gap-1 transition-colors duration-300 ${
@@ -2007,6 +2014,7 @@ const FeedItem: React.FC<{ item: CawItem; isMainPost?: boolean; isReply?: boolea
                   since tipping yourself is a no-op. */}
               {useItem.user.tokenId !== (activeTokenId || activeToken?.tokenId) && (
               <Tooltip text={tipPending ? t('post.processing') : useItem.totalTipAmount ? t('post.tipped', { amount: (useItem.totalTipAmount).toLocaleString() }) : t('post.tip')} disabled={item.status === 'FAILED'}><button
+                aria-label={t('post.tip')}
                 onClick={(e) => {
                   e.preventDefault()
                   e.stopPropagation()
@@ -2032,6 +2040,7 @@ const FeedItem: React.FC<{ item: CawItem; isMainPost?: boolean; isReply?: boolea
 
               {/* Share */}
               <Tooltip text={t('post.share')} disabled={item.status === 'FAILED'}><button
+                aria-label={t('post.share')}
                 onClick={(e) => {
                   e.preventDefault()
                   e.stopPropagation()

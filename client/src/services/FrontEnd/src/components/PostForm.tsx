@@ -19,7 +19,6 @@ import { useTheme } from '~/hooks/useTheme'
 import { DesktopDatePicker, DesktopTimePicker } from '~/components/forms/DesktopDateTimePicker'
 import { getUserAvatar } from '~/utils/defaultAvatar'
 import { formatWalletError } from '~/utils/errorMessage'
-import { BsWallet } from 'react-icons/bs'
 import MediaUpload from './MediaUpload'
 import { useHasActiveSession } from '~/hooks/useHasActiveSession'
 import { usePendingPostsStore } from '~/store/pendingPostsStore'
@@ -2987,6 +2986,7 @@ const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess, placehol
             <div className="flex items-center space-x-4">
               {/* Media Upload */}
               <button
+                aria-label="Upload media"
                 onClick={() => fileInputRef.current?.click()}
                 className={`p-1 rounded-full transition-all duration-200 cursor-pointer ${
                   selectedMedia.length > 0
@@ -3048,6 +3048,7 @@ const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess, placehol
                     setEmojiPopover(null)
                   }
                 }}
+                aria-label="Emoji"
                 className={`p-1 rounded-full transition-all duration-200 cursor-pointer ${
                 text.trim()
                   ? (isDark
@@ -3664,6 +3665,7 @@ const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess, placehol
             }`}>
             {/* Media Upload */}
             <button
+              aria-label="Upload media"
               onClick={() => fileInputRef.current?.click()}
               className={`p-2 rounded-full transition-all duration-200 cursor-pointer ${
                 selectedMedia.length > 0
@@ -3782,6 +3784,7 @@ const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess, placehol
             {/* Emoji Picker */}
             <div className="relative">
               <button
+                aria-label="Emoji"
                 ref={emojiButtonRef}
                 type="button"
                 onClick={() => {
@@ -3887,6 +3890,7 @@ const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess, placehol
             {/* Schedule Post (not for replies/quotes) */}
             {!replyTo && !quote && (
               <button
+                aria-label="Schedule post"
                 onClick={() => setShowScheduler(!showScheduler)}
                 className={`p-2 rounded-full transition-all duration-200 cursor-pointer ${
                 text.trim()

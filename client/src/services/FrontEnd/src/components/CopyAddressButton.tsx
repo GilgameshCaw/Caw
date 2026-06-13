@@ -44,7 +44,7 @@ const CopyAddressButton: React.FC<CopyAddressButtonProps> = ({
 
   return (
     <Tooltip text={copied ? 'Copied!' : 'Click to copy full address'}>
-      <button onClick={handleClick} className={`${baseClasses} ${className}`}>
+      <button onClick={handleClick} className={`${baseClasses} ${className}`} aria-label="Copy address">
         {!iconOnly && formatAddress(address, shortFirst, shortLast)}
         {copied
           ? <HiCheck className="w-3.5 h-3.5 text-green-500" />
