@@ -4,7 +4,6 @@ import { useSignAndSubmitAction, getValidatorTip } from '~/api/actions'
 import { apiFetch } from '~/api/client'
 import { useSearchParams, useLocation } from 'react-router-dom'
 import { useNavigate } from '~/utils/localizedRouter'
-import { CgExternal } from "react-icons/cg"
 import { FormHeader } from "~/components/forms/FormHeader"
 import { SubmitButton } from "~/components/buttons/SubmitButton"
 import { Input } from "~/components/Input"
@@ -648,7 +647,7 @@ const Staking = () => {
           <div className="absolute right-4 top-1/2 transform -translate-y-1/2 flex items-center gap-2">
             <button
               onClick={() => setAmount(mockData.availableBalance.toString())}
-              className={`px-3 py-1 text-xs font-semibold rounded-full transition-all duration-300 cursor-pointer ${
+              className={`px-3 py-2 text-xs font-semibold rounded-full transition-all duration-300 cursor-pointer ${
               isDark ? 'bg-yellow-500/20 text-yellow-500 hover:bg-yellow-500/30' : 'bg-yellow-500/20 text-yellow-600 hover:bg-yellow-500/30'
             }`}>
               {t('staking.max')}
@@ -882,7 +881,7 @@ const Staking = () => {
           <div className="absolute right-4 top-1/2 transform -translate-y-1/2 flex items-center gap-2">
             <button
               onClick={() => setAmount(mockData.maxWithdrawAmount.toString())}
-              className={`px-3 py-1 text-xs font-semibold rounded-full transition-all duration-300 cursor-pointer ${
+              className={`px-3 py-2 text-xs font-semibold rounded-full transition-all duration-300 cursor-pointer ${
               isDark ? 'bg-yellow-500/20 text-yellow-500 hover:bg-yellow-500/30' : 'bg-yellow-500/20 text-yellow-600 hover:bg-yellow-500/30'
             }`}>
               {t('staking.max')}
@@ -954,11 +953,11 @@ const Staking = () => {
             }`} />
           </div>
           <div>
-            <h3 className={`font-semibold mb-2 transition-colors duration-300 ${
+            <h2 className={`font-semibold mb-2 transition-colors duration-300 ${
               isDark ? 'text-white' : 'text-black'
             }`}>
               {t('staking.info.requirements.title')}
-            </h3>
+            </h2>
             <p className={`text-sm transition-colors duration-300 ${
               isDark ? 'text-gray-400' : 'text-gray-600'
             }`}>
@@ -981,11 +980,11 @@ const Staking = () => {
             }`} />
           </div>
           <div>
-            <h3 className={`font-semibold mb-2 transition-colors duration-300 ${
+            <h2 className={`font-semibold mb-2 transition-colors duration-300 ${
               isDark ? 'text-white' : 'text-black'
             }`}>
               {t('staking.info.distribution.title')}
-            </h3>
+            </h2>
             <p className={`text-sm transition-colors duration-300 ${
               isDark ? 'text-gray-400' : 'text-gray-600'
             }`}>
@@ -1008,11 +1007,11 @@ const Staking = () => {
             }`} />
           </div>
           <div>
-            <h3 className={`font-semibold mb-2 transition-colors duration-300 ${
+            <h2 className={`font-semibold mb-2 transition-colors duration-300 ${
               isDark ? 'text-white' : 'text-black'
             }`}>
               {t('staking.info.realtime.title')}
-            </h3>
+            </h2>
             <p className={`text-sm transition-colors duration-300 ${
               isDark ? 'text-gray-400' : 'text-gray-600'
             }`}>
@@ -1082,11 +1081,11 @@ const Staking = () => {
         {/* Portfolio Overview */}
         <div className="mb-8 md:mb-12">
           <div className="mb-4 flex items-center justify-between">
-            <h3 className={`text-lg font-semibold transition-colors duration-300 ${
+            <h2 className={`text-lg font-semibold transition-colors duration-300 ${
               isDark ? 'text-white' : 'text-black'
             }`}>
               {t('staking.portfolio.title')}
-            </h3>
+            </h2>
 
             {/* Desktop-only Activity link — aligns with section title */}
             <button

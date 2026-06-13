@@ -1008,8 +1008,8 @@ export const Profile: React.FC = () => {
                       to={`/address/${profileData.address.toLowerCase()}`}
                       className={`text-xs font-mono transition-all duration-200 ${
                         isDark
-                          ? 'text-gray-500 hover:text-gray-300'
-                          : 'text-gray-400 hover:text-gray-600'
+                          ? 'text-gray-400 hover:text-gray-300'
+                          : 'text-gray-500 hover:text-gray-600'
                       }`}
                     >
                       {profileData.address.slice(0, 5)}...{profileData.address.slice(-4)}
@@ -1204,6 +1204,7 @@ export const Profile: React.FC = () => {
                     <button
                       onClick={() => setIsEditModalOpen(true)}
                       disabled={profileData?.profileUpdatePending || localProfileUpdatePending}
+                      aria-label={t('profile.edit')}
                       className={`px-4 py-2 rounded-full font-semibold border transition-all duration-200 ${
                         profileData?.profileUpdatePending || localProfileUpdatePending
                           ? 'opacity-60 cursor-not-allowed'
@@ -1238,6 +1239,7 @@ export const Profile: React.FC = () => {
                             ? 'border-white/60 text-white hover:bg-white/10'
                             : 'border-black/60 text-black hover:bg-black/10'
                         }`}
+                        aria-label={t('profile.more_options')}
                       >
                         <HiDotsHorizontal className="w-5 h-5" />
                       </button>

@@ -55,9 +55,12 @@ const LanguageSettings: React.FC = () => {
     void persist({ autoTranslate: checked })
   }
 
-  const Toggle: React.FC<{ checked: boolean; onChange: (checked: boolean) => void }> = ({ checked, onChange }) => (
+  const Toggle: React.FC<{ checked: boolean; onChange: (checked: boolean) => void; label?: string }> = ({ checked, onChange, label }) => (
     <button
       onClick={() => onChange(!checked)}
+      aria-label={label}
+      role="switch"
+      aria-checked={checked}
       className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors ${
         checked ? 'bg-yellow-500' : isDark ? 'bg-white/20' : 'bg-gray-300'
       }`}
@@ -78,6 +81,7 @@ const LanguageSettings: React.FC = () => {
             className={`p-2 rounded-full transition-colors cursor-pointer ${
               isDark ? 'hover:bg-white/10' : 'hover:bg-gray-100'
             }`}
+            aria-label={t('common.back')}
           >
             <HiArrowLeft className="w-5 h-5" />
           </Link>
@@ -93,7 +97,7 @@ const LanguageSettings: React.FC = () => {
 
         <section className="mb-8">
           <h2 className={`text-sm font-semibold mb-2 uppercase tracking-wide ${
-            isDark ? 'text-white/40' : 'text-gray-400'
+            isDark ? 'text-white/60' : 'text-gray-400'
           }`}>
             {t('language_settings.section.display')}
           </h2>
@@ -130,7 +134,7 @@ const LanguageSettings: React.FC = () => {
 
         <section className="mb-8">
           <h2 className={`text-sm font-semibold mb-2 uppercase tracking-wide ${
-            isDark ? 'text-white/40' : 'text-gray-400'
+            isDark ? 'text-white/60' : 'text-gray-400'
           }`}>
             {t('language_settings.section.translation')}
           </h2>
@@ -151,7 +155,7 @@ const LanguageSettings: React.FC = () => {
                 </p>
               </div>
             </div>
-            <Toggle checked={autoTranslate} onChange={onAutoTranslateChange} />
+            <Toggle checked={autoTranslate} onChange={onAutoTranslateChange} label={t('language_settings.auto_translate.title')} />
           </div>
         </section>
 

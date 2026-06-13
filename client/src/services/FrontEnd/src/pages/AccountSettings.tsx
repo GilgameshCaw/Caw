@@ -372,7 +372,7 @@ const ConnectedAccountsSection: React.FC<{ isDark: boolean; tokenId: number }> =
 
   return (
     <section className="mb-8">
-      <h2 className={`text-sm font-semibold mb-2 uppercase tracking-wide ${isDark ? 'text-white/40' : 'text-gray-400'}`}>
+      <h2 className={`text-sm font-semibold mb-2 uppercase tracking-wide ${isDark ? 'text-white/60' : 'text-gray-400'}`}>
         Connected Accounts
       </h2>
       <div className={`p-4 rounded-lg ${isDark ? 'bg-white/5 border border-white/10' : 'bg-gray-50 border border-gray-100'}`}>
@@ -435,7 +435,7 @@ const ConnectedAccountsSection: React.FC<{ isDark: boolean; tokenId: number }> =
             an X link. Hidden until then so the panel stays clean. */}
         {link && profiles.length > 0 && (
           <div className={`mt-4 pt-4 border-t ${isDark ? 'border-white/10' : 'border-gray-200'}`}>
-            <p className={`text-xs uppercase tracking-wide mb-2 ${isDark ? 'text-white/40' : 'text-gray-500'}`}>
+            <p className={`text-xs uppercase tracking-wide mb-2 ${isDark ? 'text-white/60' : 'text-gray-500'}`}>
               Show badge on
             </p>
             <ul className="space-y-1">
@@ -759,7 +759,7 @@ const AccountSettings: React.FC = () => {
           </p>
         </div>
       </div>
-      <div className="flex items-center gap-2">
+      <div className="flex items-center gap-3">
         {copyable && (
           <Tooltip text="Copy to clipboard">
             <button
@@ -767,6 +767,7 @@ const AccountSettings: React.FC = () => {
               className={`p-2 rounded-lg transition-colors ${
                 isDark ? 'hover:bg-white/10' : 'hover:bg-gray-100'
               }`}
+              aria-label={`Copy ${label}`}
             >
               {copiedField === label ? (
                 <HiCheck className="w-5 h-5 text-green-500" />
@@ -785,6 +786,7 @@ const AccountSettings: React.FC = () => {
               className={`p-2 rounded-lg transition-colors ${
                 isDark ? 'hover:bg-white/10' : 'hover:bg-gray-100'
               }`}
+              aria-label={`View ${label} on explorer`}
             >
               <HiExternalLink className={`w-5 h-5 ${isDark ? 'text-white/60' : 'text-gray-500'}`} />
             </a>
@@ -803,6 +805,7 @@ const AccountSettings: React.FC = () => {
             className={`p-2 rounded-full transition-colors cursor-pointer ${
               isDark ? 'hover:bg-white/10' : 'hover:bg-gray-100'
             }`}
+            aria-label={t('common.back')}
           >
             <HiArrowLeft className="w-5 h-5" />
           </Link>
@@ -821,7 +824,7 @@ const AccountSettings: React.FC = () => {
         {allTokens.length > 1 && (
           <section className="mb-8">
             <h2 className={`text-sm font-semibold mb-2 uppercase tracking-wide ${
-              isDark ? 'text-white/40' : 'text-gray-400'
+              isDark ? 'text-white/60' : 'text-gray-400'
             }`}>
               {t('account.section.all_usernames')} ({allTokens.length})
             </h2>
@@ -909,7 +912,7 @@ const AccountSettings: React.FC = () => {
         {isConnected && address && (
           <section className="mb-8">
             <h2 className={`text-sm font-semibold mb-2 uppercase tracking-wide ${
-              isDark ? 'text-white/40' : 'text-gray-400'
+              isDark ? 'text-white/60' : 'text-gray-400'
             }`}>
               {t('account.section.wallet')}
             </h2>
@@ -929,7 +932,7 @@ const AccountSettings: React.FC = () => {
         {activeToken && (
           <section className="mb-8">
             <h2 className={`text-sm font-semibold mb-2 uppercase tracking-wide ${
-              isDark ? 'text-white/40' : 'text-gray-400'
+              isDark ? 'text-white/60' : 'text-gray-400'
             }`}>
               {t('account.section.active_username')}
             </h2>
@@ -962,7 +965,7 @@ const AccountSettings: React.FC = () => {
         {/* Contract Info */}
         <section className="mb-8">
           <h2 className={`text-sm font-semibold mb-2 uppercase tracking-wide ${
-            isDark ? 'text-white/40' : 'text-gray-400'
+            isDark ? 'text-white/60' : 'text-gray-400'
           }`}>
             {t('account.section.contract')}
           </h2>
@@ -984,7 +987,7 @@ const AccountSettings: React.FC = () => {
                 <HiExternalLink className="w-4 h-4" />
               </a>
             </div>
-            <p className={`text-xs ${isDark ? 'text-white/40' : 'text-gray-400'}`}>
+            <p className={`text-xs ${isDark ? 'text-white/60' : 'text-gray-400'}`}>
               {t('account.contract.note')}
             </p>
           </div>
@@ -1007,7 +1010,7 @@ const AccountSettings: React.FC = () => {
               </p>
             </div>
             <svg
-              className={`w-5 h-5 ${isDark ? 'text-white/40' : 'text-gray-400'}`}
+              className={`w-5 h-5 ${isDark ? 'text-white/60' : 'text-gray-400'}`}
               fill="none"
               stroke="currentColor"
               viewBox="0 0 24 24"
@@ -1020,7 +1023,7 @@ const AccountSettings: React.FC = () => {
         {/* Browser Data */}
         <section className="mt-12 mb-8">
           <h2 className={`text-sm font-semibold mb-2 uppercase tracking-wide ${
-            isDark ? 'text-white/40' : 'text-gray-400'
+            isDark ? 'text-white/60' : 'text-gray-400'
           }`}>
             {t('account.section.browser_data')}
           </h2>
@@ -1075,7 +1078,7 @@ const AccountSettings: React.FC = () => {
                   {t('account.logout.description')}
                 </p>
               </div>
-              <svg className={`w-5 h-5 ${isDark ? 'text-white/40' : 'text-gray-400'}`} fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <svg className={`w-5 h-5 ${isDark ? 'text-white/60' : 'text-gray-400'}`} fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1" />
               </svg>
             </button>
@@ -1092,7 +1095,7 @@ const AccountSettings: React.FC = () => {
               <h3 className={`font-medium ${isDark ? 'text-red-400' : 'text-red-600'}`}>
                 {t('account.clear_data.title')}
               </h3>
-              <p className={`text-sm ${isDark ? 'text-red-400/60' : 'text-red-500/70'}`}>
+              <p className={`text-sm ${isDark ? 'text-red-400' : 'text-red-500/70'}`}>
                 {t('account.clear_data.description')}
               </p>
             </div>
@@ -1142,7 +1145,7 @@ const AccountSettings: React.FC = () => {
               </ul>
             </div>
 
-            <p className={`text-xs ${isDark ? 'text-white/40' : 'text-gray-400'}`}>
+            <p className={`text-xs ${isDark ? 'text-white/60' : 'text-gray-400'}`}>
               Your on-chain data (username, staked CAW, NFTs) is not affected.
             </p>
 
@@ -1203,7 +1206,7 @@ const AccountSettings: React.FC = () => {
               </ul>
             </div>
 
-            <p className={`text-xs ${isDark ? 'text-white/40' : 'text-gray-400'}`}>
+            <p className={`text-xs ${isDark ? 'text-white/60' : 'text-gray-400'}`}>
               Your muted/blocked lists, preferences, and other accounts are not affected.
             </p>
 

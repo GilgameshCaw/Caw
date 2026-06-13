@@ -147,11 +147,11 @@ export const SettingsPage: React.FC = () => {
                     </div>
                   )}
                   <div>
-                    <h3 className={`font-normal text-base transition-colors duration-300 ${
+                    <h2 className={`font-normal text-base transition-colors duration-300 ${
                       isDark ? 'text-white' : 'text-black'
                     }`}>
                       {item.title}
-                    </h3>
+                    </h2>
                     <p className={`text-sm transition-colors duration-300 ${
                       isDark ? 'text-white/50' : 'text-gray-500'
                     }`}>

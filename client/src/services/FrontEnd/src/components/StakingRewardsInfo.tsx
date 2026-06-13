@@ -37,11 +37,11 @@ const StakingRewardsInfo: React.FC<StakingRewardsInfoProps> = ({
         }`}
         aria-expanded={expanded}
       >
-        <h3 className={`text-base font-semibold transition-colors duration-300 ${
+        <h2 className={`text-base font-semibold transition-colors duration-300 ${
           dark ? 'text-white' : 'text-gray-900'
         }`}>
           {t('staking.rewards.heading')}
-        </h3>
+        </h2>
         <HiChevronDown
           className={`w-5 h-5 flex-shrink-0 transition-transform duration-300 ${
             dark ? 'text-gray-400' : 'text-gray-500'
@@ -74,7 +74,7 @@ const StakingRewardsInfo: React.FC<StakingRewardsInfoProps> = ({
               </li>
             ))}
           </ul>
-          <p className={`text-xs mt-3 ${dark ? 'text-gray-500' : 'text-gray-400'}`}>
+          <p className={`text-xs mt-3 ${dark ? 'text-gray-400' : 'text-gray-500'}`}>
             {t('staking.rewards.footer')}
           </p>
         </div>

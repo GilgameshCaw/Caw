@@ -225,6 +225,7 @@ const MutedContentPage: React.FC = () => {
             className={`p-2 rounded-full transition-colors cursor-pointer ${
               isDark ? 'hover:bg-white/10' : 'hover:bg-gray-100'
             }`}
+            aria-label={t('common.back')}
           >
             <HiArrowLeft className="w-5 h-5" />
           </Link>
@@ -274,7 +275,7 @@ const MutedContentPage: React.FC = () => {
             </span>
           </div>
           {preferences.mutedWords.length === 0 ? (
-            <p className={`text-sm py-4 ${isDark ? 'text-white/40' : 'text-gray-400'}`}>
+            <p className={`text-sm py-4 ${isDark ? 'text-white/60' : 'text-gray-400'}`}>
               {t('muted.empty.words')}
             </p>
           ) : (
@@ -313,7 +314,7 @@ const MutedContentPage: React.FC = () => {
             </span>
           </div>
           {preferences.mutedThreads.length === 0 ? (
-            <p className={`text-sm py-4 ${isDark ? 'text-white/40' : 'text-gray-400'}`}>
+            <p className={`text-sm py-4 ${isDark ? 'text-white/60' : 'text-gray-400'}`}>
               {t('muted.empty.threads')}
             </p>
           ) : (
@@ -384,7 +385,7 @@ const MutedContentPage: React.FC = () => {
             </span>
           </div>
           {preferences.hiddenPosts.length === 0 ? (
-            <p className={`text-sm py-4 ${isDark ? 'text-white/40' : 'text-gray-400'}`}>
+            <p className={`text-sm py-4 ${isDark ? 'text-white/60' : 'text-gray-400'}`}>
               No hidden posts. Posts you hide won't appear in your feed.
             </p>
           ) : (
@@ -621,7 +622,7 @@ const MutedContentPage: React.FC = () => {
             </span>
           </div>
           {preferences.mutedAccounts.length === 0 ? (
-            <p className={`text-sm py-4 ${isDark ? 'text-white/40' : 'text-gray-400'}`}>
+            <p className={`text-sm py-4 ${isDark ? 'text-white/60' : 'text-gray-400'}`}>
               No muted accounts. Posts from muted accounts won't appear in your feed.
             </p>
           ) : (
@@ -681,7 +682,7 @@ const MutedContentPage: React.FC = () => {
             </span>
           </div>
           {preferences.blockedAccounts.length === 0 ? (
-            <p className={`text-sm py-4 ${isDark ? 'text-white/40' : 'text-gray-400'}`}>
+            <p className={`text-sm py-4 ${isDark ? 'text-white/60' : 'text-gray-400'}`}>
               No blocked accounts. Posts and profiles from blocked accounts will be hidden from your view.
             </p>
           ) : (
