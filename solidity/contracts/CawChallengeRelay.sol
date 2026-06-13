@@ -110,6 +110,13 @@ contract CawChallengeRelay is OnlyOnce, OApp {
   }
 
   /// @notice Single-checkpoint convenience wrapper around relayChallengeBatch.
+  /// @dev CCR-NETWORKID-1 (audit 2026-06-13): the caller supplies `networkId`.
+  ///      If it does not match the target submission's networkId on the archive,
+  ///      _processChallenge there drops the challenge (emitting ChallengeDropped,
+  ///      reason 2) and resolveChallenge later reverts "No challenge delivered" —
+  ///      the LZ fee is spent for nothing. Read the submission's networkId from
+  ///      the archive (getSubmission) and pass that exact value. The relay cannot
+  ///      validate it here (the submission lives on the destination chain).
   function relayChallenge(
     uint32 destEid,
     uint256 submissionId,

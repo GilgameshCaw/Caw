@@ -105,6 +105,15 @@ contract CawActions {
   mapping(uint32 => uint256) public currentCawonceMap;
 
   /// @notice Tracks cumulative spending (whole CAW tokens) per session key (by owner address)
+  /// @dev SESSION-SPENT-STALE (audit 2026-06-13) — ACCEPTED, not cleared on revoke.
+  ///      sessionSpent lives here in CawActions; revocation happens in
+  ///      CawProfileLedger. If an owner revokes a key and then re-registers the
+  ///      SAME key address, the stale cumulative spend carries over, so the new
+  ///      session reaches its spendLimit early. This is self-inflicted (only the
+  ///      owner is affected) and avoidable: the FE generates a FRESH ephemeral key
+  ///      per session, never re-using a revoked address. Clearing it would require
+  ///      a new privileged Ledger→CawActions call on the action-spend hot path —
+  ///      adding attack surface to fix a self-DoS. Net: accept. Do not re-flag.
   mapping(address => mapping(address => uint256)) public sessionSpent;
 
   /// @notice Pushed-ratio cap state. Packed into one 256-bit slot.

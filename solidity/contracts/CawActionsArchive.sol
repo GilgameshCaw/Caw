@@ -73,7 +73,11 @@ contract CawActionsArchive is ReentrancyGuard, OnlyOnce, OApp {
   uint256 public constant MAX_CHECKPOINTS_PER_SUBMISSION = 256;
   /// @notice H-6 fix: cap pending submissions per validator so the slash loop
   ///         (which iterates validatorSubmissions[]) can never exceed L2 block
-  ///         gas. 16 pending × 256 checkpoints each = 4096 SSTORE worst case.
+  ///         gas. ARC-GAS-1 (audit 2026-06-13) correction: the worst case is
+  ///         16 pending × 256 checkpoints = 4096 checkpoints, and the slash loop
+  ///         writes TWO SSTOREs per checkpoint (checkpointClaimed = 0 AND
+  ///         checkpointClaimReopensAt), so ~8192 SSTOREs worst case — comfortably
+  ///         within an L2 block, but ~2× the previously-documented 4096.
   uint256 public constant MAX_PENDING_PER_VALIDATOR = 16;
 
   /// @notice ARC-FUTURE-1: max checkpoints a submission may reach past the
