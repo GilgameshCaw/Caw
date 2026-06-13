@@ -5,7 +5,6 @@ import { useTokenDataStore } from "~/store/tokenDataStore";
 import { useAccount } from "wagmi";
 import { useConnectModal } from "@rainbow-me/rainbowkit";
 import { HiOutlineX, HiOutlinePlus } from "react-icons/hi";
-import { BsWallet } from 'react-icons/bs';
 import { useTheme } from '~/hooks/useTheme'
 import type { ActionParams } from '~/api/actions'
 import { useT } from '~/i18n/I18nProvider'

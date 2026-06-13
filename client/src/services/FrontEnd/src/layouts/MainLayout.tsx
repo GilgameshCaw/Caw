@@ -294,6 +294,7 @@ const MainLayout = ({ children, hideSidebars: hideSidebarsProp }: MainLayoutProp
               clearInlineDrawerStyles()
               setIsMobileMenuOpen(prev => !prev)
             }}
+            aria-label={isMobileMenuOpen ? t('main_layout.close_menu') : t('main_layout.open_menu')}
             className={`absolute left-4 p-2 rounded-lg transition-colors duration-200 ${
               isDark ? 'text-white hover:bg-white/10' : 'text-black hover:bg-gray-100'
             }`}
@@ -525,18 +526,19 @@ const MainLayout = ({ children, hideSidebars: hideSidebarsProp }: MainLayoutProp
           }`}
         >
           {[
-            { to: '/home', icon: HiOutlineHome, match: '/home', badge: 0, isProfile: false },
-            { to: '/explore', icon: HiOutlineSearch, match: '/explore', badge: 0, isProfile: false },
-            { to: '/usernames', icon: HiOutlineColorSwatch, match: '/usernames', badge: offersUnreadCount, isProfile: false },
-            { to: '/notifications', icon: HiOutlineBell, match: '/notifications', badge: notifUnreadCount, isProfile: false },
-            { to: activeToken?.username ? `/users/${activeToken.username}` : '/welcome', icon: HiOutlineUser, match: activeToken?.username ? `/users/${activeToken.username}` : '/welcome', badge: 0, isProfile: true },
-          ].map(({ to, icon: Icon, match, badge, isProfile }) => {
+            { to: '/home', icon: HiOutlineHome, match: '/home', badge: 0, isProfile: false, label: t('nav.home') },
+            { to: '/explore', icon: HiOutlineSearch, match: '/explore', badge: 0, isProfile: false, label: t('nav.explore') },
+            { to: '/usernames', icon: HiOutlineColorSwatch, match: '/usernames', badge: offersUnreadCount, isProfile: false, label: t('nav.usernames') },
+            { to: '/notifications', icon: HiOutlineBell, match: '/notifications', badge: notifUnreadCount, isProfile: false, label: t('nav.notifications') },
+            { to: activeToken?.username ? `/users/${activeToken.username}` : '/welcome', icon: HiOutlineUser, match: activeToken?.username ? `/users/${activeToken.username}` : '/welcome', badge: 0, isProfile: true, label: t('nav.profile') },
+          ].map(({ to, icon: Icon, match, badge, isProfile, label }) => {
             const active = location.pathname === match || location.pathname.startsWith(match + '/')
             const showAvatar = isProfile && !!activeAvatarSrc
             return (
               <Link
                 key={to}
                 to={to}
+                aria-label={label}
                 onClick={(e) => {
                   // Tapping a tab while already on it scrolls the page
                   // back to top (Twitter/X behavior). Without this,
@@ -601,6 +603,7 @@ const MainLayout = ({ children, hideSidebars: hideSidebarsProp }: MainLayoutProp
       <Tooltip text={t('bug_report.title')} position="top">
         <button
           onClick={() => setShowBugReport(true)}
+          aria-label={t('bug_report.title')}
           className={`w-9 h-9 rounded-full flex items-center justify-center shadow-lg transition-all cursor-pointer opacity-60 hover:opacity-100 ${
             isDark
               ? 'bg-zinc-800 hover:bg-zinc-700 text-white/70'

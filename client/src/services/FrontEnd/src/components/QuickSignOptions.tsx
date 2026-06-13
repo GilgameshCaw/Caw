@@ -95,16 +95,16 @@ const QuickSignOptions: React.FC<QuickSignOptionsProps> = ({
     : 'text-sm font-medium text-gray-300'
 
   const descClass = themed
-    ? `text-xs mb-2 ${isDark ? 'text-white/30' : 'text-gray-400'}`
-    : 'text-xs mb-2 text-white/30'
+    ? `text-xs mb-2 ${isDark ? 'text-white/50' : 'text-gray-400'}`
+    : 'text-xs mb-2 text-white/50'
 
   const mutedClass = themed
     ? (isDark ? 'text-white/50' : 'text-gray-500')
     : 'text-white/50'
 
   const mutedLightClass = themed
-    ? (isDark ? 'text-white/30' : 'text-gray-400')
-    : 'text-white/30'
+    ? (isDark ? 'text-white/50' : 'text-gray-400')
+    : 'text-white/50'
 
   // Used for the <strong> highlights in the collapsed summary. White
   // works on the dark surface, but in light-mode the same hue blended

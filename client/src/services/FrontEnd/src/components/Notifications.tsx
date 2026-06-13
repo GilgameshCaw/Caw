@@ -601,7 +601,7 @@ const Notifications: React.FC = () => {
               <span className={`block text-xs mt-1.5 italic font-normal border-l-2 pl-2 ${
                 isDark ? 'text-white/70 border-white/20' : 'text-gray-700 border-gray-300'
               }`}>
-                {snippetLabel && <span className="not-italic opacity-60">{snippetLabel}: </span>}
+                {snippetLabel && <span className="not-italic opacity-70">{snippetLabel}: </span>}
                 "{snippet}"
               </span>
             )}
@@ -1076,6 +1076,7 @@ const Notifications: React.FC = () => {
                           to={`/users/${notification.actor.username}`}
                           onClick={e => e.stopPropagation()}
                           className="inline-block align-middle mr-1.5"
+                          aria-label={notification.actor.username}
                         >
                           <Avatar
                             src={getUserAvatar(notification.actor)}
@@ -1094,7 +1095,7 @@ const Notifications: React.FC = () => {
                     {getNotificationText(notification)}
                     <Tooltip text={formatFullDateTime(notification.createdAt)} className="inline-block">
                       <span
-                        className={`ml-2 whitespace-nowrap text-sm ${isDark ? 'text-white/55' : 'text-gray-500'}`}
+                        className={`ml-2 whitespace-nowrap text-sm ${isDark ? 'text-white/70' : 'text-gray-500'}`}
                       >
                         · {formatRelativeTime(notification.createdAt)}
                       </span>
@@ -1158,7 +1159,7 @@ const Notifications: React.FC = () => {
                     <button
                       onClick={(e) => handleRetryFailedAction(notification, e)}
                       disabled={isBusy}
-                      className={`flex-shrink-0 self-start mt-1 px-3 py-1 text-xs font-semibold rounded-full transition ${
+                      className={`flex-shrink-0 self-start mt-1 px-3 py-2 text-xs font-semibold rounded-full transition ${
                         isBusy
                           ? 'bg-gray-600 text-white/50 cursor-not-allowed'
                           : 'bg-yellow-500 hover:bg-yellow-600 text-black cursor-pointer'
@@ -1174,11 +1175,12 @@ const Notifications: React.FC = () => {
                     e.stopPropagation()
                     hideNotification(notification.id)
                   }}
-                  className={`p-1 rounded transition ${
+                  className={`p-2 rounded transition ${
                     isDark
                       ? 'hover:bg-white/10 text-white/40 hover:text-white'
                       : 'hover:bg-gray-200 text-gray-400 hover:text-gray-600'
                   }`}
+                  aria-label={t('notifications.dismiss')}
                 >
                   ×
                 </button>

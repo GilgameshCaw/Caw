@@ -411,7 +411,7 @@ const HighlightedTextarea: React.FC<HighlightedTextareaProps> = ({
       {!value && placeholder && (
         <div
           className={`absolute pointer-events-none ${textSizeClass} ${
-            isDark ? 'text-gray-500' : 'text-gray-600'
+            isDark ? 'text-gray-400' : 'text-gray-500'
           }`}
           style={{
             top: '2px',

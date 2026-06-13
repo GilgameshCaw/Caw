@@ -991,7 +991,7 @@ const Feed = forwardRef<FeedRef, Props>(({ filter, username, apiEndpoint, title 
       })(authoredPinVersion)}
 
       {loading && <div className="py-4 text-center text-gray-400">{t('feed.loading_more')}</div>}
-      {!hasMore && <div className="py-4 text-center text-gray-500">You've reached the end.</div>}
+      {!hasMore && <div className="py-4 text-center text-gray-400">You've reached the end.</div>}
     </div>
   )
 })

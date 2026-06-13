@@ -54,9 +54,12 @@ const NotificationSettings: React.FC = () => {
     }
   }
 
-  const Toggle: React.FC<{ checked: boolean; onChange: (checked: boolean) => void }> = ({ checked, onChange }) => (
+  const Toggle: React.FC<{ checked: boolean; onChange: (checked: boolean) => void; label?: string }> = ({ checked, onChange, label }) => (
     <button
       onClick={() => onChange(!checked)}
+      aria-label={label}
+      role="switch"
+      aria-checked={checked}
       className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors ${
         checked
           ? 'bg-yellow-500'
@@ -94,7 +97,7 @@ const NotificationSettings: React.FC = () => {
           </p>
         </div>
       </div>
-      <Toggle checked={checked} onChange={onChange} />
+      <Toggle checked={checked} onChange={onChange} label={title} />
     </div>
   )
 
@@ -107,6 +110,7 @@ const NotificationSettings: React.FC = () => {
             className={`p-2 rounded-full transition-colors cursor-pointer ${
               isDark ? 'hover:bg-white/10' : 'hover:bg-gray-100'
             }`}
+            aria-label={t('common.back')}
           >
             <HiArrowLeft className="w-5 h-5" />
           </Link>
@@ -130,7 +134,7 @@ const NotificationSettings: React.FC = () => {
         {/* Activity Section */}
         <section className="mb-8">
           <h2 className={`text-sm font-semibold mb-2 uppercase tracking-wide ${
-            isDark ? 'text-white/40' : 'text-gray-400'
+            isDark ? 'text-white/60' : 'text-gray-400'
           }`}>
             {t('notifications_settings.section.activity')}
           </h2>
@@ -171,7 +175,7 @@ const NotificationSettings: React.FC = () => {
         {/* People Section */}
         <section className="mb-8">
           <h2 className={`text-sm font-semibold mb-2 uppercase tracking-wide ${
-            isDark ? 'text-white/40' : 'text-gray-400'
+            isDark ? 'text-white/60' : 'text-gray-400'
           }`}>
             {t('notifications_settings.section.people')}
           </h2>
@@ -196,7 +200,7 @@ const NotificationSettings: React.FC = () => {
         {/* Display Section */}
         <section className="mb-8">
           <h2 className={`text-sm font-semibold mb-2 uppercase tracking-wide ${
-            isDark ? 'text-white/40' : 'text-gray-400'
+            isDark ? 'text-white/60' : 'text-gray-400'
           }`}>
             {t('notifications_settings.section.display')}
           </h2>
@@ -226,7 +230,7 @@ const NotificationSettings: React.FC = () => {
             </p>
           </div>
           <svg
-            className={`w-5 h-5 ${isDark ? 'text-white/40' : 'text-gray-400'}`}
+            className={`w-5 h-5 ${isDark ? 'text-white/60' : 'text-gray-400'}`}
             fill="none"
             stroke="currentColor"
             viewBox="0 0 24 24"

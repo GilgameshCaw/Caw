@@ -172,7 +172,7 @@ const SessionKeySettings: React.FC = () => {
         <div className="flex items-center gap-4 mb-6">
           <Link to="/settings" className={`p-2 rounded-full transition-colors ${
             isDark ? 'hover:bg-white/10 text-white' : 'hover:bg-gray-100 text-black'
-          }`}>
+          }`} aria-label={t('common.back')}>
             <HiArrowLeft className="w-5 h-5" />
           </Link>
           <h1 className={`text-xl font-bold ${isDark ? 'text-white' : 'text-black'}`}>
@@ -185,15 +185,18 @@ const SessionKeySettings: React.FC = () => {
           isDark ? 'border-white/10' : 'border-gray-100'
         }`}>
           <div>
-            <h3 className={`font-semibold ${isDark ? 'text-white' : 'text-black'}`}>
+            <h2 className={`font-semibold ${isDark ? 'text-white' : 'text-black'}`}>
               {t('session_key.enable_heading')}
-            </h3>
+            </h2>
             <p className={`text-sm mt-1 ${isDark ? 'text-white/50' : 'text-gray-500'}`}>
               {t('session_key.enable_subtitle')}
             </p>
           </div>
           <button
             onClick={handleToggle}
+            role="switch"
+            aria-checked={enabled}
+            aria-label={t('session_key.enable_heading')}
             className={`relative w-12 h-7 rounded-full transition-colors duration-200 cursor-pointer ${
               enabled ? 'bg-yellow-500' : isDark ? 'bg-gray-600' : 'bg-gray-300'
             }`}
