@@ -1095,7 +1095,28 @@ model SponsorCode {
   createdAt           DateTime            @default(now()) @db.Timestamptz(6)
   repayBps            Int                 @default(0)
   requireKycLevel     Int                 @default(0)
+  // Buyer's profile tokenId when this code was PAID for via the buy-a-code flow
+  // (null for admin-minted codes). Lets My-Invite-Codes credit the buyer.
+  purchasedByTokenId  Int?
   SponsorRedemption   SponsorRedemption[]
+}
+
+// Buyer-facing record of a PAID sponsor-invite code so the purchaser can see
+// the plaintext (encrypted-at-rest) + used/unused status. The redemption hash
+// lives on SponsorCode.codeHash; this table holds only the buyer's copy.
+model PurchasedInviteCode {
+  id                 Int      @id @default(autoincrement())
+  purchasedByTokenId Int // buyer's profile tokenId
+  senderId           Int // == purchasedByTokenId (the OTHER-action sender)
+  cawonce            Int // action nonce — idempotency key for the mint
+  codeHash           String // ties to SponsorCode.codeHash
+  codeCiphertext     String // AES-256-GCM(plaintext code) — never plaintext at rest
+  giftCawWei         String // gift portion funded by the buyer's tip (wei)
+  paidCawWei         String // total tip the buyer paid (wei)
+  createdAt          DateTime @default(now()) @db.Timestamptz(6)
+
+  @@unique([senderId, cawonce])
+  @@index([purchasedByTokenId])
 }
 
 model SponsorCodeAttempt {

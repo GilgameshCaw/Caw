@@ -11,7 +11,7 @@ import { Router } from 'express'
 import { z, ZodError } from 'zod'
 import { requireAdmin } from '../middleware/auth'
 import { prisma } from '../../prismaClient'
-import { generateShortCode, generateLongCode, hashCode } from '../../services/SponsorService/codes'
+import { createSponsorCode, SponsorCodeCollisionError } from '../../services/SponsorService/createSponsorCode'
 
 const router = Router()
 
@@ -68,63 +68,31 @@ router.post('/', async (req, res) => {
   const expiresInHours = body.expiresInHours ?? (body.tier === 'short' ? 24 : 30 * 24)
   const expiresAt = new Date(Date.now() + expiresInHours * 60 * 60 * 1000)
 
-  // Generate the raw code and hash it.
-  const rawCode = body.tier === 'short' ? generateShortCode() : generateLongCode()
-  let codeHash: string
+  // Generate + persist via the shared helper (handles hash + collision retry).
   try {
-    codeHash = hashCode(rawCode)
+    const { rawCode } = await createSponsorCode({
+      tier: body.tier,
+      budgetCapUsdCents: body.budgetCapUsdCents,
+      maxDepositCawWei: body.maxDepositCawWei,
+      expiresAt,
+      maxUses: body.maxUses,
+      minUsernameLength: body.minUsernameLength,
+      label: body.label ?? null,
+      createdBy: req.sessionData?.authorizedAddresses?.[0] ?? null,
+    })
+    // Return the raw code once — it is not stored on the SponsorCode row and
+    // cannot be recovered after this response.
+    return res.status(201).json({ code: rawCode })
   } catch (e) {
+    if (e instanceof SponsorCodeCollisionError) {
+      return res.status(500).json({ error: 'COLLISION', detail: 'Generated code collided twice — try again' })
+    }
+    // hashCode throws when SPONSOR_CODE_HMAC_SECRET is unset.
     return res.status(503).json({
       error: 'HASH_FAILED',
       detail: 'SPONSOR_CODE_HMAC_SECRET is not set — cannot hash code',
     })
   }
-
-  // Check for hash collision (astronomically unlikely, but guard it).
-  const existing = await prisma.sponsorCode.findUnique({ where: { codeHash } })
-  if (existing) {
-    // Regenerate once — if it collides again, fail gracefully.
-    const rawCode2 = body.tier === 'short' ? generateShortCode() : generateLongCode()
-    const codeHash2 = hashCode(rawCode2)
-    const existing2 = await prisma.sponsorCode.findUnique({ where: { codeHash: codeHash2 } })
-    if (existing2) {
-      return res.status(500).json({ error: 'COLLISION', detail: 'Generated code collided twice — try again' })
-    }
-    await prisma.sponsorCode.create({
-      data: {
-        codeHash: codeHash2,
-        tier: body.tier,
-        label: body.label ?? null,
-        budgetCapUsdCents: body.budgetCapUsdCents,
-        maxDepositCawWei: body.maxDepositCawWei,
-        maxUses: body.maxUses ?? (body.tier === 'long' ? 1 : null),
-        usesRemaining: body.maxUses ?? (body.tier === 'long' ? 1 : null),
-        minUsernameLength: body.minUsernameLength,
-        expiresAt,
-        createdBy: req.sessionData?.authorizedAddresses?.[0] ?? null,
-      },
-    })
-    return res.status(201).json({ code: rawCode2 })
-  }
-
-  await prisma.sponsorCode.create({
-    data: {
-      codeHash,
-      tier: body.tier,
-      label: body.label ?? null,
-      budgetCapUsdCents: body.budgetCapUsdCents,
-      maxDepositCawWei: body.maxDepositCawWei,
-      maxUses: body.maxUses ?? (body.tier === 'long' ? 1 : null),
-      usesRemaining: body.maxUses ?? (body.tier === 'long' ? 1 : null),
-      minUsernameLength: body.minUsernameLength,
-      expiresAt,
-      createdBy: req.sessionData?.authorizedAddresses?.[0] ?? null,
-    },
-  })
-
-  // Return the raw code once — it is not stored in the DB and cannot be
-  // recovered after this response.
-  return res.status(201).json({ code: rawCode })
 })
 
 // ─── GET /api/admin/sponsor-codes ────────────────────────────────────────────
