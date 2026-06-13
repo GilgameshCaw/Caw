@@ -76,6 +76,15 @@ contract CawActionsArchive is ReentrancyGuard, OnlyOnce, OApp {
   ///         gas. 16 pending × 256 checkpoints each = 4096 SSTORE worst case.
   uint256 public constant MAX_PENDING_PER_VALIDATOR = 16;
 
+  /// @notice ARC-FUTURE-1: max checkpoints a submission may reach past the
+  ///         highest finalized checkpoint for its network. Sized to comfortably
+  ///         exceed the full legit in-flight pipeline
+  ///         (MAX_CHECKPOINTS_PER_SUBMISSION * MAX_PENDING_PER_VALIDATOR = 4096
+  ///         per validator, ×4 headroom for multiple concurrent validators), so
+  ///         honest replication is never blocked. Any larger reach is a
+  ///         far-future jump and is rejected.
+  uint256 public constant LOOKAHEAD_WINDOW = 16_384;
+
   // ============================================
   // STATE
   // ============================================
@@ -107,6 +116,20 @@ contract CawActionsArchive is ReentrancyGuard, OnlyOnce, OApp {
 
   /// @notice networkId => checkpointId => submissionId that covers it
   mapping(uint32 => mapping(uint256 => uint256)) public checkpointClaimed;
+
+  // ── ARC-FUTURE-1: bounded-lookahead per network ─────────────────────────────
+  // Highest checkpoint id finalized so far for a network. A submission may not
+  // reach more than LOOKAHEAD_WINDOW checkpoints past this. Without the bound, an
+  // attacker could submit fabricated data for FAR-FUTURE checkpoints (e.g. cpId
+  // 10000 when the source has reached cpId 5): those slots have
+  // networkHashAtCheckpoint == 0 on the source, so relayChallenge reverts
+  // ("Checkpoint does not exist") and the fraud is un-challengeable for the whole
+  // 2-day window, then finalizes and permanently poisons the slots. Bounding the
+  // lookahead means a submission can only cover checkpoints the source will
+  // realistically have produced within the challenge window, keeping every
+  // submission challengeable. A small fabricated lookahead is still possible but
+  // is challengeable as soon as the source produces the real hash (in-window).
+  mapping(uint32 => uint256) public lastFinalizedCheckpoint;
 
   /// @notice networkId => checkpointId => earliest timestamp at which the checkpoint can be
   ///         re-claimed. Set to block.timestamp + CLAIM_COOLDOWN on every slash so attacker
@@ -251,6 +274,16 @@ contract CawActionsArchive is ReentrancyGuard, OnlyOnce, OApp {
     require(startCheckpointId > 0, "Invalid start");
     require(endCheckpointId >= startCheckpointId, "Invalid range");
 
+    // ARC-FUTURE-1: bound how far ahead of the finalized chain a submission may
+    // reach. LOOKAHEAD_WINDOW generously covers the full legit in-flight pipeline
+    // (every validator's pending submissions), so honest replication is never
+    // blocked, while a far-future jump (cpId 10000 when the chain is near 0) is
+    // rejected — closing the un-challengeable-future-checkpoint poisoning.
+    require(
+      endCheckpointId <= lastFinalizedCheckpoint[networkId] + LOOKAHEAD_WINDOW,
+      "Checkpoint too far ahead"
+    );
+
     uint256 numCheckpoints = endCheckpointId - startCheckpointId + 1;
     require(numCheckpoints <= MAX_CHECKPOINTS_PER_SUBMISSION, "Too many checkpoints");
 
@@ -339,6 +372,13 @@ contract CawActionsArchive is ReentrancyGuard, OnlyOnce, OApp {
 
     sub.status = Status.FINALIZED;
     pendingCount[sub.submitter]--;
+
+    // ARC-FUTURE-1: advance the network's finalized high-water mark so the
+    // lookahead bound tracks real progress. Submissions can finalize out of
+    // order, so only move it forward (max), never back.
+    if (sub.endCheckpointId > lastFinalizedCheckpoint[sub.networkId]) {
+      lastFinalizedCheckpoint[sub.networkId] = sub.endCheckpointId;
+    }
 
     // Prune from validatorSubmissions via swap-and-pop. Without this, a
     // validator with thousands of finalized submissions in their history
