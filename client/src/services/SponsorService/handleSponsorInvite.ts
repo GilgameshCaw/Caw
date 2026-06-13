@@ -102,6 +102,9 @@ export async function handleSponsorInviteAction(
 
   const expiresAt = new Date(Date.now() + CODE_EXPIRY_MS)
 
+  // Mint the SponsorCode INSIDE the same Tx2 transaction (pass tx) so it commits
+  // atomically with the PurchasedInviteCode row below — a rollback can't orphan
+  // an unretrievable code (H-1).
   const { rawCode, codeHash } = await createSponsorCode({
     tier: CODE_TIER,
     budgetCapUsdCents,
@@ -111,7 +114,7 @@ export async function handleSponsorInviteAction(
     minUsernameLength: minLen,
     label: `bought:${senderId}`,
     purchasedByTokenId: senderId,
-  })
+  }, tx as any)
 
   await tx.purchasedInviteCode.create({
     data: {

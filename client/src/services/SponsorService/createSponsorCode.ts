@@ -13,6 +13,20 @@
 import { prisma } from '../../prismaClient'
 import { generateShortCode, generateLongCode, hashCode } from './codes'
 
+/**
+ * Minimal client surface createSponsorCode needs — satisfied by both the global
+ * prisma and an interactive-transaction client (PrismaTransactionClient). When a
+ * tx is passed, the collision reads + the create run INSIDE that transaction so
+ * the SponsorCode row commits/rolls back atomically with the caller's other
+ * writes (e.g. PurchasedInviteCode). H-1 fix.
+ */
+type SponsorCodeClient = {
+  sponsorCode: {
+    findUnique: (args: any) => Promise<any>
+    create: (args: any) => Promise<any>
+  }
+}
+
 export interface CreateSponsorCodeOpts {
   tier: 'short' | 'long'
   budgetCapUsdCents: number
@@ -46,22 +60,28 @@ class SponsorCodeCollisionError extends Error {
  * The defaulting of maxUses/usesRemaining matches the prior admin-route logic:
  * long tier defaults to single-use, short tier to unlimited (null).
  */
-export async function createSponsorCode(opts: CreateSponsorCodeOpts): Promise<CreatedSponsorCode> {
+export async function createSponsorCode(
+  opts: CreateSponsorCodeOpts,
+  // Optional transaction client. When provided, all reads + the create run
+  // inside it so the SponsorCode commits atomically with the caller's other
+  // writes (H-1). Defaults to the global prisma for standalone callers.
+  client: SponsorCodeClient = prisma,
+): Promise<CreatedSponsorCode> {
   const gen = () => (opts.tier === 'short' ? generateShortCode() : generateLongCode())
   const defaultUses = opts.maxUses ?? (opts.tier === 'long' ? 1 : null)
 
   // Try once, then retry once on collision; fail loudly if it collides twice.
   let rawCode = gen()
   let codeHash = hashCode(rawCode)
-  if (await prisma.sponsorCode.findUnique({ where: { codeHash } })) {
+  if (await client.sponsorCode.findUnique({ where: { codeHash } })) {
     rawCode = gen()
     codeHash = hashCode(rawCode)
-    if (await prisma.sponsorCode.findUnique({ where: { codeHash } })) {
+    if (await client.sponsorCode.findUnique({ where: { codeHash } })) {
       throw new SponsorCodeCollisionError()
     }
   }
 
-  await prisma.sponsorCode.create({
+  await client.sponsorCode.create({
     data: {
       codeHash,
       tier: opts.tier,

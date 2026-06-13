@@ -29,6 +29,10 @@ const GAS_PRICE_WEI = 20_000_000_000n // 20 gwei
 // LZ relay leg the validator fronts for the cross-chain deposit. Best-effort
 // flat estimate (same order as the budget calc's lzFee assumption).
 const LZ_RELAY_WEI = 1_000_000_000_000_000n // 0.001 ETH
+// Reject prices older than this. A stale-low CAW price would let a buyer clear
+// the gas floor with too little CAW and inflate the gift budget (M-2). Mirrors
+// the contract's CAP_STALE_THRESHOLD intent.
+const MAX_PRICE_AGE_MS = 15 * 60 * 1000 // 15 minutes
 
 export interface InviteQuote {
   /** Minimum tip (whole CAW) that covers gas alone. Tip <= this => no code. */
@@ -64,6 +68,14 @@ export function quoteSponsorInviteCostCaw(): InviteQuote {
   const ethPrice = getEthPriceCache()
 
   if (!cawPrice || !ethPrice || cawPrice.cawPerEth <= 0n) {
+    return { gasFloorCaw: 0n, gasMarginCaw: 0n, cawUsdRate: 0, priceAvailable: false }
+  }
+
+  // Reject stale prices — minting the gift against a stale-low CAW price is the
+  // M-2 risk. Treat a too-old cache as unavailable so the handler skips the mint
+  // and the FE refuses to clamp the input.
+  const now = Date.now()
+  if (now - cawPrice.updatedAt > MAX_PRICE_AGE_MS || now - ethPrice.updatedAt > MAX_PRICE_AGE_MS) {
     return { gasFloorCaw: 0n, gasMarginCaw: 0n, cawUsdRate: 0, priceAvailable: false }
   }
 
