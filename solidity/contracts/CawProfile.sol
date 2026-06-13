@@ -383,10 +383,13 @@ contract CawProfile is
       (tokenIds, owners, stamps) = extractPendingTransferUpdates(lzDestId, owner, newId);
       bytes memory payload;
       if (sessionExtra.length == 0) {
-        payload = _bundleNoSession(cawNetworkId, newId, depositAmount, "", tokenIds, owners, stamps);
+        // SEAM-1/CPM-2 (audit 2026-06-13): pass `username` (not "") so the L2
+        // ledger records it, matching the mintAndAuth cross-chain path. Empty
+        // here left deposit-minted tokens with no username on L2.
+        payload = _bundleNoSession(cawNetworkId, newId, depositAmount, username, tokenIds, owners, stamps);
       } else {
         (address sk, uint64 ex, uint256 sl, uint64 tr) = _decodeSession(sessionExtra);
-        payload = abi.encodeWithSelector(_lzBundleSelector, cawNetworkId, newId, depositAmount, "", sk, ex, sl, tr, tokenIds, owners, stamps);
+        payload = abi.encodeWithSelector(_lzBundleSelector, cawNetworkId, newId, depositAmount, username, sk, ex, sl, tr, tokenIds, owners, stamps);
       }
       // Cross-chain repay registration is not yet supported. The Networks
       // using cross-chain L2 storage (Base, Arbitrum...) don't enable

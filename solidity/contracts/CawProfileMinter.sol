@@ -633,6 +633,10 @@ contract CawProfileMinter is Context {
   ) external payable sweepResidualEth {
     require(recipient.code.length > 0, "Direct submit required");
     require(repayAmount == 0 || repayAmount <= depositAmount * 2, "Repay cap");
+    // CPM-INFO-2 (audit 2026-06-13): a repay obligation with sponsorTokenId 0 is a
+    // degenerate no-op (repaySponsorTokenId 0 → forgiveSponsorRepay reverts Unauth,
+    // sweep credits token 0). Reject it so a repay always names a real sponsor.
+    require(repayAmount == 0 || sponsorTokenId != 0, "Repay needs sponsor");
     bytes32 structHash = keccak256(abi.encode(
       MINT_DEPOSIT_TYPEHASH,
       networkId,
@@ -760,7 +764,15 @@ contract CawProfileMinter is Context {
     // Route LZ fee refund to the token owner (the user), not tx.origin (sponsor server).
     // Audit fix 2026-05-22 (H-1: tx.origin as LZ refund in sponsored flows).
     CawProfile.setLzRefundTo(payable(owner));
+    // FEE-EXEMPT-1 (audit 2026-06-13): mirror mintAndDepositSponsored — if the
+    // resolved sponsor is authorized for this network, exempt the deposit fee for
+    // exactly this call. Keyed to the Minter-resolved sponsor, never tx.origin.
+    ICawNetworkManagerSponsorExempt nmd =
+      ICawNetworkManagerSponsorExempt(IMint(address(CawProfile)).networkManager());
+    bool depFeeExempt = nmd.isAuthorizedSponsor(networkId, depositSponsor);
+    if (depFeeExempt) nmd.flagDepositFeeExempt(networkId);
     CawProfile.depositFor{value: msg.value}(networkId, tokenId, amount, lzDestId, lzTokenAmount);
+    if (depFeeExempt) nmd.clearDepositFeeExempt();
     CawProfile.setLzRefundTo(payable(address(0)));
   }
 
