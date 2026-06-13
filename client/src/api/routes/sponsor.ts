@@ -33,6 +33,8 @@ import {
 } from '../middleware/validateSponsorCode'
 import { getCawPriceCache, getEthPriceCache } from '../../services/ChainSyncService'
 import { hashCode } from '../../services/SponsorService/codes'
+import { quoteSponsorInviteCostCaw } from '../../services/SponsorService/inviteQuote'
+import { getOwnValidatorTokenId } from '../../services/SponsorService/validatorIdentity'
 import { consumeXQualifiedToken } from './xSignup'
 
 const router = Router()
@@ -564,6 +566,29 @@ router.get('/code/:code', async (req, res) => {
     expiresAt: code.expiresAt.toISOString(),
     repayBps,
     sponsorTokenId,
+  })
+})
+
+// ─── GET /api/sponsor/invite-quote ───────────────────────────────────────────
+// Public pricing for the PAID buy-a-code flow. The FE uses this to clamp the
+// amount input (>= gasFloor) and render USD. The on-chain handler uses the same
+// helper to gate the tip. Amounts are WHOLE CAW (string) matching the on-chain
+// amounts[] convention.
+//
+// { gasFloorCaw, gasMarginCaw, cawUsdRate, priceAvailable, validatorTokenId? }
+//
+// validatorTokenId is THIS server's validator profile id — the FE must set it as
+// recipients[0] so this mirror is the one that mints. Resolved lazily; omitted
+// (null) until the validator identity is known.
+router.get('/invite-quote', async (_req, res) => {
+  const quote = quoteSponsorInviteCostCaw()
+  const validatorTokenId = await getOwnValidatorTokenId().catch(() => null)
+  return res.status(200).json({
+    gasFloorCaw: quote.gasFloorCaw.toString(),
+    gasMarginCaw: quote.gasMarginCaw.toString(),
+    cawUsdRate: quote.cawUsdRate,
+    priceAvailable: quote.priceAvailable,
+    validatorTokenId,
   })
 })
 
