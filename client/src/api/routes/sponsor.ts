@@ -35,6 +35,8 @@ import { getCawPriceCache, getEthPriceCache } from '../../services/ChainSyncServ
 import { hashCode } from '../../services/SponsorService/codes'
 import { quoteSponsorInviteCostCaw } from '../../services/SponsorService/inviteQuote'
 import { getOwnValidatorTokenId } from '../../services/SponsorService/validatorIdentity'
+import { decryptInviteCode } from '../../services/SponsorService/inviteCodeCrypto'
+import { requireAuth } from '../middleware/auth'
 import { consumeXQualifiedToken } from './xSignup'
 
 const router = Router()
@@ -590,6 +592,49 @@ router.get('/invite-quote', async (_req, res) => {
     priceAvailable: quote.priceAvailable,
     validatorTokenId,
   })
+})
+
+// ─── GET /api/sponsor/my-codes ───────────────────────────────────────────────
+// Wallet-session authed. Returns the invite codes the caller PURCHASED (across
+// all their authorized profiles), with the decrypted plaintext + used/unused
+// status. Used-status is derived from the linked SponsorCode.usesRemaining.
+//
+// Only this server (the minting mirror) holds the buyer's PurchasedInviteCode +
+// the decryption key, so codes appear on the mirror that processed the purchase.
+router.get('/my-codes', requireAuth({ anySession: true }), async (req, res) => {
+  const tokenIds = req.sessionData?.authorizedTokenIds ?? []
+  if (tokenIds.length === 0) return res.status(200).json({ codes: [] })
+
+  const purchased = await prisma.purchasedInviteCode.findMany({
+    where: { purchasedByTokenId: { in: tokenIds } },
+    orderBy: { createdAt: 'desc' },
+  })
+  if (purchased.length === 0) return res.status(200).json({ codes: [] })
+
+  // Pull the linked SponsorCode rows in one query for used/unused + expiry.
+  const hashes = purchased.map(p => p.codeHash)
+  const codes = await prisma.sponsorCode.findMany({ where: { codeHash: { in: hashes } } })
+  const byHash = new Map(codes.map(c => [c.codeHash, c]))
+
+  const out = purchased.map(p => {
+    const sc = byHash.get(p.codeHash)
+    // Decrypt best-effort; if the key rotated or the envelope is corrupt, omit
+    // the plaintext rather than 500 the whole list.
+    let code: string | null = null
+    try { code = decryptInviteCode(p.codeCiphertext) } catch { code = null }
+    const used = sc ? (sc.usesRemaining !== null && sc.usesRemaining <= 0) : false
+    return {
+      code,
+      used,
+      usesRemaining: sc?.usesRemaining ?? null,
+      giftCawWei: p.giftCawWei,
+      paidCawWei: p.paidCawWei,
+      createdAt: p.createdAt.toISOString(),
+      expiresAt: sc?.expiresAt ? sc.expiresAt.toISOString() : null,
+    }
+  })
+
+  return res.status(200).json({ codes: out })
 })
 
 export default router
