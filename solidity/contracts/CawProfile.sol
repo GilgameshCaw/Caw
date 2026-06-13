@@ -686,6 +686,25 @@ contract CawProfile is
   ///         flush entirely — those callers should send only the Network
   ///         withdraw fee as msg.value. _updateNewOwners handles both
   ///         no-peer and bypassLZ branches.
+  /// @dev WDFEE-1 (audit 2026-06-13) — ACCEPTED, not a fix. The withdraw fee is
+  ///      looked up from the caller-supplied `cawNetworkId`, which need not be the
+  ///      network the CAW was deposited through. This is a CONSEQUENCE of the
+  ///      deliberately network-agnostic balance model, not a bug: a token's L2
+  ///      balance (cawOwnership[tokenId]) and its withdrawable[tokenId] are keyed
+  ///      by TOKEN, not (token, network). A token can authenticate to many
+  ///      networks on the same L2 and spend the one shared balance across all of
+  ///      them — so no fee was ever "owed" to a specific network at withdraw time.
+  ///      A user picking a lower-fee network (or creating a 0-fee one) is doing
+  ///      nothing they couldn't already do by authenticating to any existing
+  ///      low-fee network. No principal is at risk (fee-revenue only), and the fee
+  ///      is the network owner's to set (they can make it 0). The cheap "require
+  ///      authenticated[cawNetworkId][tokenId]" guard is a TRAP: it breaks
+  ///      legitimate free-auth-network users (who never set the flag — see
+  ///      CawActions: authenticated OR allowFreeAuth), and the only fee-state proxy
+  ///      L1 has (authFee==0) is exactly true for the attacker's 0-fee network.
+  ///      The only real fix (pin the fee to the originating network, stored at
+  ///      setWithdrawable time) imposes an arbitrary restriction on an
+  ///      intentionally open model. Net: accept, do not re-flag.
   function withdrawTo(uint32 cawNetworkId, uint32 tokenId, address recipient, uint32 lzDestId, uint256 lzTokenAmount) public payable {
     // Withdraw gate check — delegated to Minter which stores per-tokenId
     // KYC level and mintedAt. If minter is set, the call reverts if the gate
