@@ -313,8 +313,37 @@ export function decodeDerSignature(der: Uint8Array): { r: Uint8Array; s: Uint8Ar
 
   return {
     r: normalizeSignatureComponent(rRaw),
-    s: normalizeSignatureComponent(sRaw),
+    // CRITICAL (low-s): WebAuthn authenticators (notably Apple Touch ID / iCloud
+    // Keychain) emit ECDSA signatures with a HIGH `s` value ~half the time. The
+    // EIP-7951 P-256 precompile at 0x0100 — which SmartEOA._verifyP256 calls —
+    // enforces the canonical 1 <= s <= n/2 and REJECTS high-s. Without flipping
+    // high-s to (n - s) here, ~50% of passkey-signed executeBatch / sponsored
+    // operations would fail on-chain intermittently with no clear cause. (s, n-s)
+    // are equivalent valid signatures, so this normalization is always safe.
+    s: toLowS(normalizeSignatureComponent(sRaw)),
   }
+}
+
+// P-256 (secp256r1) curve order n.
+const P256_N = 0xffffffff00000000ffffffffffffffffbce6faada7179e84f3b9cac2fc632551n
+const P256_N_HALF = P256_N >> 1n
+
+function bytes32ToBigInt(b: Uint8Array): bigint {
+  let v = 0n
+  for (const byte of b) v = (v << 8n) | BigInt(byte)
+  return v
+}
+
+function bigIntToBytes32(v: bigint): Uint8Array {
+  const out = new Uint8Array(32)
+  for (let i = 31; i >= 0; i--) { out[i] = Number(v & 0xffn); v >>= 8n }
+  return out
+}
+
+/** Return the canonical low-s form: if s > n/2, replace with n - s. */
+function toLowS(s32: Uint8Array): Uint8Array {
+  const s = bytes32ToBigInt(s32)
+  return s > P256_N_HALF ? bigIntToBytes32(P256_N - s) : s32
 }
 
 /**

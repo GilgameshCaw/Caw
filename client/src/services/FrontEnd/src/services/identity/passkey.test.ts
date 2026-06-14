@@ -105,6 +105,48 @@ describe('decodeDerSignature', () => {
 })
 
 // ---------------------------------------------------------------------------
+// Low-s normalization — the EIP-7951 P-256 precompile rejects high-s, and
+// WebAuthn authenticators emit high-s ~50% of the time. decodeDerSignature MUST
+// flip high-s to (n - s) so passkey-signed executeBatch/sponsored ops verify
+// on-chain. r is NEVER touched.
+// ---------------------------------------------------------------------------
+
+describe('decodeDerSignature low-s normalization', () => {
+  const P256_N = 0xffffffff00000000ffffffffffffffffbce6faada7179e84f3b9cac2fc632551n
+  const P256_N_HALF = P256_N >> 1n
+  const toBytes32 = (v: bigint): Uint8Array => {
+    const out = new Uint8Array(32)
+    for (let i = 31; i >= 0; i--) { out[i] = Number(v & 0xffn); v >>= 8n }
+    return out
+  }
+  const r32 = hexToBytes('aabbccdd'.repeat(8))
+
+  it('leaves a low-s value (s < n/2) untouched', () => {
+    const lowS = P256_N_HALF - 1000n
+    const der = encodeDer(r32, toBytes32(lowS))
+    const { r, s } = decodeDerSignature(der)
+    assert.equal(bytesToHex(r), bytesToHex(r32))        // r unchanged
+    assert.equal(bytesToHex(s), bytesToHex(toBytes32(lowS)))
+  })
+
+  it('flips a high-s value (s > n/2) to n - s', () => {
+    const highS = P256_N_HALF + 5000n
+    const der = encodeDer(r32, toBytes32(highS))
+    const { r, s } = decodeDerSignature(der)
+    assert.equal(bytesToHex(r), bytesToHex(r32))        // r still untouched
+    assert.equal(bytesToHex(s), bytesToHex(toBytes32(P256_N - highS)))
+    // and the result is now canonically low
+    assert.ok(BigInt('0x' + bytesToHex(s)) <= P256_N_HALF)
+  })
+
+  it('keeps s exactly at n/2 (boundary: not > n/2, so untouched)', () => {
+    const der = encodeDer(r32, toBytes32(P256_N_HALF))
+    const { s } = decodeDerSignature(der)
+    assert.equal(bytesToHex(s), bytesToHex(toBytes32(P256_N_HALF)))
+  })
+})
+
+// ---------------------------------------------------------------------------
 // Test 5: hexToBytes / bytesToHex round-trip
 // ---------------------------------------------------------------------------
 
