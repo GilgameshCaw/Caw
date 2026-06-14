@@ -19,4 +19,19 @@ interface ISmartEOA {
     ///         its own nonce sequence.  See SmartEOA.consumeNonce natspec for the
     ///         TOCTOU rationale.
     function consumeNonce(address verifyingContract, uint8 actionType) external;
+
+    /// @notice One call in an executeBatch.  `value` is forwarded as msg.value.
+    struct Call {
+        address to;
+        uint256 value;
+        bytes   data;
+    }
+
+    /// @notice Read the current executeBatch nonce (for building the next digest).
+    function executeNonceOf() external view returns (uint256);
+
+    /// @notice Execute a batch of calls atomically, authorized by a single passkey /
+    ///         ecdsaFallback signature over the full batch + nonce.  Anyone may submit;
+    ///         the signature binds every call so a submitter can't alter/redirect.
+    function executeBatch(Call[] calldata calls, uint256 nonce, bytes calldata sig) external payable;
 }

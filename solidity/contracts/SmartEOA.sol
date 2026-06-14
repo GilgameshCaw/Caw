@@ -68,6 +68,8 @@ contract SmartEOA {
     error ZeroAddress();
     error NotPermitted();
     error MinterCallFailed();
+    error ExecuteFailed(uint256 index);
+    error EmptyBatch();
 
     // =========================================================================
     // Events
@@ -79,6 +81,15 @@ contract SmartEOA {
     event PasskeyRemoved(bytes32 indexed pubkeyHash);
     event PasskeyCancelled(bytes32 indexed pubkeyHash);
     event EcdsaFallbackRotated(address indexed newFallback);
+    /// @notice Emitted once per executeBatch, carrying the consumed nonce + call count.
+    event BatchExecuted(uint256 indexed nonce, uint256 callCount);
+
+    /// @notice One call in an executeBatch.  `value` is forwarded as msg.value.
+    struct Call {
+        address to;
+        uint256 value;
+        bytes   data;
+    }
 
     // =========================================================================
     // Storage layout
@@ -128,6 +139,14 @@ contract SmartEOA {
     /// @dev Bound into `_managementDigest`; incremented at the end of every successful
     ///      management call. One counter suffices since management ops are serialized.
     uint256 private managementNonce;
+
+    /// @notice Monotonic counter for executeBatch signature anti-replay.
+    /// @dev APPENDED to the storage layout (new last slot) so existing per-EOA storage
+    ///      is never misread. Dedicated counter isolates fund-moving execute calls from
+    ///      the sponsor (verifyingContract,actionType) nonces and the managementNonce,
+    ///      so a withdraw can't be reordered against a passkey rotation. Bound into
+    ///      `_executeDigest`; incremented before the external calls (CEI).
+    uint256 private executeNonce;
 
     // =========================================================================
     // ERC-1271
@@ -468,6 +487,99 @@ contract SmartEOA {
     {
         if (msg.sender != verifyingContract) revert NotPermitted();
         unchecked { ++nonces[verifyingContract][actionType]; }
+    }
+
+    // =========================================================================
+    // executeBatch — self-custodial fund moves (passkey / ecdsaFallback authorized)
+    // =========================================================================
+
+    /// @notice Read the current executeBatch nonce.  The FE/relayer reads this to
+    ///         build the next execute digest.
+    function executeNonceOf() external view returns (uint256) {
+        return executeNonce;
+    }
+
+    /// @notice Execute a batch of calls atomically, authorized by a single signature
+    ///         from the user's passkey (WebAuthn) OR ecdsaFallback (secp256k1).
+    ///
+    /// @dev    THE TRUST MODEL.  Authorization rides entirely in `sig`: the digest
+    ///         binds the FULL batch (every call's to/value/data) + the nonce + this
+    ///         account + chainId.  So whoever SUBMITS the tx (the user, a relayer, the
+    ///         validator paying gas) can only run EXACTLY what the user signed — they
+    ///         cannot add, drop, reorder, or alter a call.  This is what makes the
+    ///         "anyone can submit; the validator relays for a signed CAW fee" model
+    ///         trustless: the fee transfer + the withdraw recipient are both signed
+    ///         calls, so a relayer can neither inflate the fee nor redirect the funds.
+    ///
+    ///         The relayer's protection (not this contract's job): a relayer should
+    ///         only submit batches it RECOGNIZES (withdraw/zap to known contracts,
+    ///         value-capped), because a malicious user could sign a batch whose
+    ///         `value` drains the relayer's ETH.  The contract is intentionally
+    ///         general; the off-chain relay endpoint is the policy gate.
+    ///
+    ///         CEI: nonce is incremented BEFORE the external calls, so a re-entrant
+    ///         call can't replay this batch (the digest's nonce is already consumed).
+    ///
+    /// @param calls  The calls to run, in order.  Each call's `value` is forwarded.
+    /// @param nonce  Must equal the current executeNonce (replay guard).
+    /// @param sig    65-byte secp256k1 (r||s||v) OR a WebAuthn assertion blob.
+    function executeBatch(Call[] calldata calls, uint256 nonce, bytes calldata sig)
+        external
+        payable
+    {
+        if (!initialized) revert NotInitialized();
+        if (calls.length == 0) revert EmptyBatch();
+        if (nonce != executeNonce) revert NotPermitted();
+
+        bytes32 digest = _executeDigest(calls, nonce);
+        bool ok = (sig.length == 65)
+            ? _verifySig65(digest, sig)
+            : (_verifyWebAuthnSafe(digest, sig) == ERC1271_MAGIC_VALUE);
+        if (!ok) revert InvalidCallerSig();
+
+        // CEI: consume the nonce before any external call.
+        unchecked { ++executeNonce; }
+
+        for (uint256 i = 0; i < calls.length; ) {
+            (bool success, ) = calls[i].to.call{value: calls[i].value}(calls[i].data);
+            if (!success) revert ExecuteFailed(i);
+            unchecked { ++i; }
+        }
+
+        emit BatchExecuted(nonce, calls.length);
+    }
+
+    /// @dev Account-specific, chain-specific, replay-protected digest over a batch.
+    ///      Same domain shape as `_managementDigest` (keccak256("SmartEOA" || chainId
+    ///      || address(this))), distinct opName "executeBatch" so a management sig can
+    ///      never be replayed as an execute sig (and vice-versa).  Binds every call's
+    ///      to/value/data plus the nonce.
+    function _executeDigest(Call[] calldata calls, uint256 nonce)
+        internal
+        view
+        returns (bytes32)
+    {
+        bytes32 domainSep = keccak256(abi.encodePacked(
+            "SmartEOA",
+            block.chainid,
+            address(this)
+        ));
+        // Hash the batch: each call's (to, value, keccak(data)), then the array.
+        bytes32[] memory callHashes = new bytes32[](calls.length);
+        for (uint256 i = 0; i < calls.length; ) {
+            callHashes[i] = keccak256(abi.encode(
+                calls[i].to,
+                calls[i].value,
+                keccak256(calls[i].data)
+            ));
+            unchecked { ++i; }
+        }
+        bytes32 structHash = keccak256(abi.encodePacked(
+            keccak256(bytes("executeBatch")),
+            keccak256(abi.encodePacked(callHashes)),
+            nonce
+        ));
+        return keccak256(abi.encodePacked("\x19\x01", domainSep, structHash));
     }
 
     // =========================================================================
