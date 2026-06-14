@@ -8,6 +8,9 @@ import "./OnlyOnce.sol";
 
 interface ICawActionsCheckpoints {
   function networkHashAtCheckpoint(uint32 networkId, uint256 checkpointId) external view returns (bytes32);
+  // ARC-FUTURE-1: live count of actions processed for a network on the source.
+  // The highest existing checkpoint is networkActionCount / CHECKPOINT_INTERVAL.
+  function networkActionCount(uint32 networkId) external view returns (uint256);
 }
 
 /**
@@ -35,6 +38,27 @@ contract CawChallengeRelay is OnlyOnce, OApp {
   uint128 public constant CHALLENGE_GAS_BASE = 60_000;
   /// @notice Per-checkpoint gas cost on the archive (two SSTOREs + event).
   uint128 public constant CHALLENGE_GAS_PER_CP = 55_000;
+
+  /// @notice Must match CawActions.CHECKPOINT_INTERVAL — used to derive the
+  ///         highest existing checkpoint from networkActionCount.
+  uint256 public constant CHECKPOINT_INTERVAL = 32;
+
+  /// @notice Gas for the archive's non-existence resolve (a single status read +
+  ///         slash loop; sized like one challenge cp's worth of work + base).
+  uint128 public constant NONEXIST_GAS = 200_000;
+
+  // ARC-FUTURE-1: message-type discriminator prefixed to every LZ payload so the
+  // archive can distinguish a normal fraud proof (MSG_CHALLENGE) from a
+  // proof-of-non-existence (MSG_NONEXISTENCE).
+  uint8 internal constant MSG_CHALLENGE    = 1;
+  uint8 internal constant MSG_NONEXISTENCE = 2;
+
+  event NonExistenceRelayed(
+    uint256 indexed submissionId,
+    uint32 indexed networkId,
+    uint256 sourceMaxCheckpoint,
+    uint32 destEid
+  );
 
   event ChallengeRelayed(
     uint256 indexed submissionId,
@@ -100,13 +124,38 @@ contract CawChallengeRelay is OnlyOnce, OApp {
       correctHashes[i] = h;
     }
 
-    bytes memory payload = abi.encode(submissionId, networkId, checkpointIds, correctHashes);
+    bytes memory payload = abi.encode(MSG_CHALLENGE, submissionId, networkId, checkpointIds, correctHashes);
     uint128 gasLimit = CHALLENGE_GAS_BASE + CHALLENGE_GAS_PER_CP * uint128(n);
     bytes memory options = OptionsBuilder.newOptions().addExecutorLzReceiveOption(gasLimit, 0);
 
     _lzSend(destEid, payload, options, MessagingFee(msg.value, 0), payable(msg.sender));
 
     emit ChallengeBatchRelayed(submissionId, networkId, checkpointIds, destEid);
+  }
+
+  /// @notice Proof-of-non-existence challenge (ARC-FUTURE-1). Reads the source's
+  ///         live networkActionCount and relays the highest checkpoint that
+  ///         actually exists. The archive slashes any PENDING submission whose
+  ///         endCheckpointId exceeds that height — closing the future-checkpoint
+  ///         poisoning vector for ALL networks, including low-volume ones whose
+  ///         source won't produce the fabricated checkpoints within the window.
+  ///         Anyone can call it; the height is read canonically from CawActions
+  ///         on this (source) chain. The archive verifies the submission really
+  ///         does over-reach before slashing, so a wrong submissionId is a no-op.
+  function relayNonExistence(
+    uint32 destEid,
+    uint256 submissionId,
+    uint32 networkId
+  ) external payable {
+    uint256 sourceMaxCheckpoint = cawActions.networkActionCount(networkId) / CHECKPOINT_INTERVAL;
+    // msg.sender is the reward recipient if the slash lands. The relayer must be
+    // able to receive ETH on the archive chain (the slash reverts otherwise).
+    bytes memory payload = abi.encode(MSG_NONEXISTENCE, submissionId, networkId, sourceMaxCheckpoint, msg.sender);
+    bytes memory options = OptionsBuilder.newOptions().addExecutorLzReceiveOption(NONEXIST_GAS, 0);
+
+    _lzSend(destEid, payload, options, MessagingFee(msg.value, 0), payable(msg.sender));
+
+    emit NonExistenceRelayed(submissionId, networkId, sourceMaxCheckpoint, destEid);
   }
 
   /// @notice Single-checkpoint convenience wrapper around relayChallengeBatch.
@@ -131,7 +180,7 @@ contract CawChallengeRelay is OnlyOnce, OApp {
     ids[0] = checkpointId;
     hashes[0] = correctHash;
 
-    bytes memory payload = abi.encode(submissionId, networkId, ids, hashes);
+    bytes memory payload = abi.encode(MSG_CHALLENGE, submissionId, networkId, ids, hashes);
     uint128 gasLimit = CHALLENGE_GAS_BASE + CHALLENGE_GAS_PER_CP;
     bytes memory options = OptionsBuilder.newOptions().addExecutorLzReceiveOption(gasLimit, 0);
 

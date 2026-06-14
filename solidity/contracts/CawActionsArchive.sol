@@ -89,6 +89,10 @@ contract CawActionsArchive is ReentrancyGuard, OnlyOnce, OApp {
   ///         far-future jump and is rejected.
   uint256 public constant LOOKAHEAD_WINDOW = 16_384;
 
+  // ARC-FUTURE-1: relay message-type tags (must match CawChallengeRelay).
+  uint8 internal constant MSG_CHALLENGE    = 1;
+  uint8 internal constant MSG_NONEXISTENCE = 2;
+
   // ============================================
   // STATE
   // ============================================
@@ -493,12 +497,17 @@ contract CawActionsArchive is ReentrancyGuard, OnlyOnce, OApp {
   function _processChallenge(bytes calldata payload) external {
     require(msg.sender == address(this), "only self");
 
-    // Payload is always the batch shape: (submissionId, networkId, cps[], hashes[]).
-    // Single-cp callers send arrays of length 1; the relay's two public
-    // entrypoints (relayChallenge / relayChallengeBatch) produce identical
-    // payloads, so there's one decode path here.
-    (uint256 submissionId, uint32 networkId, uint256[] memory cps, bytes32[] memory hashes) =
-      abi.decode(payload, (uint256, uint32, uint256[], bytes32[]));
+    // Every relay payload is prefixed with a message-type tag (ARC-FUTURE-1).
+    // MSG_CHALLENGE (1): normal fraud proof — (tag, submissionId, networkId, cps[], hashes[]).
+    // MSG_NONEXISTENCE (2): proof-of-non-existence — (tag, submissionId, networkId, sourceMaxCheckpoint, rewardTo).
+    uint8 msgType = abi.decode(payload, (uint8));
+    if (msgType == MSG_NONEXISTENCE) {
+      this._processNonExistence(payload);
+      return;
+    }
+
+    (, uint256 submissionId, uint32 networkId, uint256[] memory cps, bytes32[] memory hashes) =
+      abi.decode(payload, (uint8, uint256, uint32, uint256[], bytes32[]));
 
     Submission storage sub = submissions[submissionId];
     // CCR-1: signal each silent-drop so the challenger/monitors can detect+retry
@@ -516,6 +525,30 @@ contract CawActionsArchive is ReentrancyGuard, OnlyOnce, OApp {
       challengeDelivered[submissionId][cpId] = true;
       emit ChallengeHashDelivered(submissionId, cpId, hashes[i]);
     }
+  }
+
+  /// @dev Proof-of-non-existence (ARC-FUTURE-1). The relay read the source's live
+  ///      networkActionCount and relayed the highest checkpoint that actually
+  ///      exists (sourceMaxCheckpoint). If a PENDING submission for this network
+  ///      claims checkpoints PAST that height, those actions cannot exist yet on
+  ///      the source — the submission is fabricated future data — so slash it
+  ///      immediately (no challenge window needed; the source state is canonical).
+  ///      This closes the vector the bounded-lookahead can't: a low-volume network
+  ///      whose source won't produce the fabricated checkpoints within the 2-day
+  ///      window, leaving them un-challengeable until finalize.
+  function _processNonExistence(bytes calldata payload) external {
+    require(msg.sender == address(this), "only self");
+    (, uint256 submissionId, uint32 networkId, uint256 sourceMaxCheckpoint, address rewardTo) =
+      abi.decode(payload, (uint8, uint256, uint32, uint256, address));
+
+    Submission storage sub = submissions[submissionId];
+    if (sub.status != Status.PENDING) { emit ChallengeDropped(submissionId, 1); return; }
+    if (sub.networkId != networkId)   { emit ChallengeDropped(submissionId, 2); return; }
+    // Only slash if the submission genuinely over-reaches the source height. A
+    // submission entirely within the source's real progress is honest replication.
+    if (sub.endCheckpointId <= sourceMaxCheckpoint) { emit ChallengeDropped(submissionId, 4); return; }
+
+    _executeSlash(sub.submitter, submissionId, sub.endCheckpointId, rewardTo);
   }
 
   // ============================================
@@ -550,17 +583,27 @@ contract CawActionsArchive is ReentrancyGuard, OnlyOnce, OApp {
     // (cross-contract agent HIGH-1).
     require(msg.sender != validator, "Self-slash forbidden");
 
+    _executeSlash(validator, submissionId, checkpointId, msg.sender);
+  }
+
+  /// @dev Slash `validator`: zero their stake, invalidate ALL their pending
+  ///      submissions (releasing checkpoint claims with a cooldown), clear their
+  ///      history, and pay the slashed stake to `rewardTo`. Shared by
+  ///      resolveChallenge and _processNonExistence. `rewardTo` is the direct
+  ///      caller (resolveChallenge) or the relayer named in the LZ message
+  ///      (non-existence). If `rewardTo` can't receive ETH the whole slash
+  ///      reverts — callers must pass a payable address (resolveChallenge is
+  ///      called directly; the non-existence relayer chooses its own rewardTo).
+  function _executeSlash(address validator, uint256 submissionId, uint256 checkpointId, address rewardTo) internal {
     uint256 reward = stakes[validator];
     stakes[validator] = 0;
 
-    // Invalidate ALL pending submissions from this validator
     uint256[] storage subIds = validatorSubmissions[validator];
     for (uint256 i = 0; i < subIds.length; ) {
       uint256 sid = subIds[i];
       Submission storage s = submissions[sid];
       if (s.status == Status.PENDING) {
         s.status = Status.SLASHED;
-        // Release checkpoint claims and impose post-slash cooldown
         for (uint256 cp = s.startCheckpointId; cp <= s.endCheckpointId; ) {
           checkpointClaimed[s.networkId][cp] = 0;
           checkpointClaimReopensAt[s.networkId][cp] = uint64(block.timestamp + CLAIM_COOLDOWN);
@@ -570,18 +613,14 @@ contract CawActionsArchive is ReentrancyGuard, OnlyOnce, OApp {
       unchecked { ++i; }
     }
     pendingCount[validator] = 0;
-
-    // Clear the history array so a re-staking validator starts fresh. Without
-    // this, repeated slashes would re-scan a growing list each time.
     delete validatorSubmissions[validator];
 
-    // Pay the challenger
     if (reward > 0) {
-      (bool ok,) = msg.sender.call{value: reward}("");
+      (bool ok,) = rewardTo.call{value: reward}("");
       require(ok, "Transfer failed");
     }
 
-    emit ValidatorSlashed(validator, msg.sender, submissionId, checkpointId, reward);
+    emit ValidatorSlashed(validator, rewardTo, submissionId, checkpointId, reward);
   }
 
   // ============================================
