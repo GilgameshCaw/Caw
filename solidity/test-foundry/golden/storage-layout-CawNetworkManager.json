@@ -1,50 +1,86 @@
 [
   {
-    "label": "nextNetworkId",
+    "label": "cawProfile",
     "slot": "0",
     "offset": 0,
+    "type": "t_address"
+  },
+  {
+    "label": "_cawProfileSet",
+    "slot": "0",
+    "offset": 20,
+    "type": "t_bool"
+  },
+  {
+    "label": "minter",
+    "slot": "1",
+    "offset": 0,
+    "type": "t_address"
+  },
+  {
+    "label": "_minterSet",
+    "slot": "1",
+    "offset": 20,
+    "type": "t_bool"
+  },
+  {
+    "label": "_feeExemptNetworkPlusOne",
+    "slot": "1",
+    "offset": 21,
+    "type": "t_uint32"
+  },
+  {
+    "label": "nextNetworkId",
+    "slot": "1",
+    "offset": 25,
     "type": "t_uint32"
   },
   {
     "label": "networks",
-    "slot": "1",
+    "slot": "2",
     "offset": 0,
     "type": "t_mapping(t_uint32,t_struct(CawNetwork)_storage)"
   },
   {
     "label": "networkFeesLocked",
-    "slot": "2",
-    "offset": 0,
-    "type": "t_mapping(t_uint32,t_bool)"
-  },
-  {
-    "label": "networkOwnershipLocked",
     "slot": "3",
     "offset": 0,
     "type": "t_mapping(t_uint32,t_bool)"
   },
   {
-    "label": "networkGasOverride",
+    "label": "networkOwnershipLocked",
     "slot": "4",
+    "offset": 0,
+    "type": "t_mapping(t_uint32,t_bool)"
+  },
+  {
+    "label": "networkGasOverride",
+    "slot": "5",
     "offset": 0,
     "type": "t_mapping(t_uint32,t_mapping(t_bytes4,t_uint128))"
   },
   {
     "label": "nextInstanceId",
-    "slot": "5",
+    "slot": "6",
     "offset": 0,
     "type": "t_uint32"
   },
   {
     "label": "instanceOwner",
-    "slot": "6",
+    "slot": "7",
     "offset": 0,
     "type": "t_mapping(t_uint32,t_address)"
   },
   {
     "label": "instanceActive",
-    "slot": "7",
+    "slot": "8",
     "offset": 0,
     "type": "t_mapping(t_uint32,t_bool)"
+  },
+  {
+    "label": "_authorizedSponsors",
+    "slot": "9",
+    "offset": 0,
+    "type": "t_mapping(t_uint32,t_mapping(t_address,t_bool))"
   }
 ]

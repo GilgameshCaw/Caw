@@ -1,0 +1,164 @@
+[
+  {
+    "label": "_owner",
+    "slot": "0",
+    "offset": 0,
+    "type": "t_address"
+  },
+  {
+    "label": "_used",
+    "slot": "1",
+    "offset": 0,
+    "type": "t_mapping(t_bytes32,t_bool)"
+  },
+  {
+    "label": "peers",
+    "slot": "2",
+    "offset": 0,
+    "type": "t_mapping(t_uint32,t_bytes32)"
+  },
+  {
+    "label": "totalCaw",
+    "slot": "3",
+    "offset": 0,
+    "type": "t_uint256"
+  },
+  {
+    "label": "cawActions",
+    "slot": "4",
+    "offset": 0,
+    "type": "t_contract(ICawActions)12388"
+  },
+  {
+    "label": "erc1271Sibling",
+    "slot": "5",
+    "offset": 0,
+    "type": "t_address"
+  },
+  {
+    "label": "ownerOf",
+    "slot": "6",
+    "offset": 0,
+    "type": "t_mapping(t_uint256,t_address)"
+  },
+  {
+    "label": "usernames",
+    "slot": "7",
+    "offset": 0,
+    "type": "t_mapping(t_uint32,t_string_storage)"
+  },
+  {
+    "label": "authenticated",
+    "slot": "8",
+    "offset": 0,
+    "type": "t_mapping(t_uint32,t_mapping(t_uint32,t_bool))"
+  },
+  {
+    "label": "_allowFreeAuth",
+    "slot": "9",
+    "offset": 0,
+    "type": "t_mapping(t_uint32,t_bool)"
+  },
+  {
+    "label": "lastAllowFreeAuthSeq",
+    "slot": "10",
+    "offset": 0,
+    "type": "t_mapping(t_uint32,t_uint64)"
+  },
+  {
+    "label": "_tipTargetPacked",
+    "slot": "11",
+    "offset": 0,
+    "type": "t_mapping(t_uint32,t_uint256)"
+  },
+  {
+    "label": "cawOwnership",
+    "slot": "12",
+    "offset": 0,
+    "type": "t_mapping(t_uint32,t_uint256)"
+  },
+  {
+    "label": "rewardMultiplier",
+    "slot": "13",
+    "offset": 0,
+    "type": "t_uint256"
+  },
+  {
+    "label": "precision",
+    "slot": "14",
+    "offset": 0,
+    "type": "t_uint256"
+  },
+  {
+    "label": "fromLZ",
+    "slot": "15",
+    "offset": 0,
+    "type": "t_bool"
+  },
+  {
+    "label": "bypassLZ",
+    "slot": "15",
+    "offset": 1,
+    "type": "t_bool"
+  },
+  {
+    "label": "cawProfile",
+    "slot": "15",
+    "offset": 2,
+    "type": "t_contract(CawProfile)5546"
+  },
+  {
+    "label": "sessions",
+    "slot": "16",
+    "offset": 0,
+    "type": "t_mapping(t_address,t_mapping(t_address,t_struct(StoredSession)_storage))"
+  },
+  {
+    "label": "lastOwnerUpdateBlock",
+    "slot": "17",
+    "offset": 0,
+    "type": "t_mapping(t_uint32,t_uint64)"
+  },
+  {
+    "label": "ownerSessionEpoch",
+    "slot": "18",
+    "offset": 0,
+    "type": "t_mapping(t_address,t_uint32)"
+  },
+  {
+    "label": "tokenSessionEpoch",
+    "slot": "19",
+    "offset": 0,
+    "type": "t_mapping(t_uint32,t_uint32)"
+  },
+  {
+    "label": "sessionNonce",
+    "slot": "20",
+    "offset": 0,
+    "type": "t_mapping(t_address,t_uint256)"
+  },
+  {
+    "label": "tokenSessionNonce",
+    "slot": "21",
+    "offset": 0,
+    "type": "t_mapping(t_uint32,t_uint256)"
+  },
+  {
+    "label": "consumedSessionMessage",
+    "slot": "22",
+    "offset": 0,
+    "type": "t_mapping(t_bytes32,t_bool)"
+  },
+  {
+    "label": "sponsorRepay",
+    "slot": "23",
+    "offset": 0,
+    "type": "t_mapping(t_uint32,t_uint256)"
+  },
+  {
+    "label": "repaySponsorTokenId",
+    "slot": "24",
+    "offset": 0,
+    "type": "t_mapping(t_uint32,t_uint32)"
+  }
+]

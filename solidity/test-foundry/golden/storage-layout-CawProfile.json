@@ -60,16 +60,16 @@
     "type": "t_mapping(t_uint256,t_uint256)"
   },
   {
-    "label": "_owner",
+    "label": "_used",
     "slot": "10",
     "offset": 0,
-    "type": "t_address"
+    "type": "t_mapping(t_bytes32,t_bool)"
   },
   {
-    "label": "_used",
+    "label": "_owner",
     "slot": "11",
     "offset": 0,
-    "type": "t_mapping(t_bytes32,t_bool)"
+    "type": "t_address"
   },
   {
     "label": "peers",
@@ -78,67 +78,67 @@
     "type": "t_mapping(t_uint32,t_bytes32)"
   },
   {
-    "label": "uriGenerator",
-    "slot": "13",
-    "offset": 0,
-    "type": "t_contract(CawProfileURI)16412"
-  },
-  {
-    "label": "cawProfileLedger",
-    "slot": "14",
-    "offset": 0,
-    "type": "t_contract(CawProfileLedger)14351"
-  },
-  {
     "label": "totalCaw",
-    "slot": "15",
+    "slot": "13",
     "offset": 0,
     "type": "t_uint256"
   },
   {
-    "label": "minter",
-    "slot": "16",
-    "offset": 0,
-    "type": "t_address"
-  },
-  {
     "label": "mainnetLzId",
-    "slot": "16",
-    "offset": 20,
+    "slot": "14",
+    "offset": 0,
     "type": "t_uint32"
   },
   {
     "label": "usernames",
-    "slot": "17",
+    "slot": "15",
     "offset": 0,
     "type": "t_array(t_string_storage)dyn_storage"
   },
   {
     "label": "fromLZ",
-    "slot": "18",
+    "slot": "16",
     "offset": 0,
     "type": "t_bool"
   },
   {
     "label": "_lzRefundTo",
-    "slot": "18",
+    "slot": "16",
     "offset": 1,
     "type": "t_address_payable"
   },
   {
+    "label": "_lzSrcEid",
+    "slot": "16",
+    "offset": 21,
+    "type": "t_uint32"
+  },
+  {
+    "label": "cawDepositedByPeer",
+    "slot": "17",
+    "offset": 0,
+    "type": "t_mapping(t_uint32,t_uint256)"
+  },
+  {
     "label": "gasBaseFor",
-    "slot": "19",
+    "slot": "18",
     "offset": 0,
     "type": "t_mapping(t_bytes4,t_uint128)"
   },
   {
     "label": "authenticated",
-    "slot": "20",
+    "slot": "19",
     "offset": 0,
     "type": "t_mapping(t_uint32,t_mapping(t_uint32,t_bool))"
   },
   {
     "label": "allowFreeAuthSeq",
+    "slot": "20",
+    "offset": 0,
+    "type": "t_mapping(t_uint32,t_uint64)"
+  },
+  {
+    "label": "tipTargetSeq",
     "slot": "21",
     "offset": 0,
     "type": "t_mapping(t_uint32,t_uint64)"
@@ -174,44 +174,38 @@
     "type": "t_mapping(t_uint32,t_struct(UintSet)_storage)"
   },
   {
-    "label": "peerIds",
-    "slot": "27",
-    "offset": 0,
-    "type": "t_struct(UintSet)_storage"
-  },
-  {
     "label": "pendingTransfers",
-    "slot": "29",
+    "slot": "27",
     "offset": 0,
     "type": "t_mapping(t_uint32,t_mapping(t_uint256,t_uint32))"
   },
   {
     "label": "pendingTransferStart",
-    "slot": "30",
+    "slot": "28",
     "offset": 0,
     "type": "t_mapping(t_uint32,t_uint256)"
   },
   {
     "label": "pendingTransferEnd",
-    "slot": "31",
+    "slot": "29",
     "offset": 0,
     "type": "t_mapping(t_uint32,t_uint256)"
   },
   {
     "label": "networkManager",
-    "slot": "32",
+    "slot": "30",
     "offset": 0,
-    "type": "t_contract(CawNetworkManager)7152"
+    "type": "t_contract(CawNetworkManager)2412"
   },
   {
     "label": "buyAndBurn",
-    "slot": "33",
+    "slot": "31",
     "offset": 0,
-    "type": "t_contract(CawBuyAndBurn)5395"
+    "type": "t_contract(CawBuyAndBurn)262"
   },
   {
     "label": "accruedFees",
-    "slot": "34",
+    "slot": "32",
     "offset": 0,
     "type": "t_mapping(t_address,t_uint256)"
   }

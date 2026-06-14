@@ -36,20 +36,26 @@
     "type": "t_mapping(t_address,t_uint256)"
   },
   {
-    "label": "offers",
+    "label": "pendingTokenPayouts",
     "slot": "6",
+    "offset": 0,
+    "type": "t_mapping(t_address,t_mapping(t_address,t_uint256))"
+  },
+  {
+    "label": "offers",
+    "slot": "7",
     "offset": 0,
     "type": "t_mapping(t_uint256,t_struct(Offer)_storage)"
   },
   {
     "label": "nextOfferId",
-    "slot": "7",
+    "slot": "8",
     "offset": 0,
     "type": "t_uint256"
   },
   {
     "label": "nextListingId",
-    "slot": "8",
+    "slot": "9",
     "offset": 0,
     "type": "t_uint256"
   }

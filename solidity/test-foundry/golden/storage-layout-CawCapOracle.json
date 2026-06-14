@@ -16,5 +16,17 @@
     "slot": "1024",
     "offset": 8,
     "type": "t_uint64"
+  },
+  {
+    "label": "lastSuccessfulCapPushAt",
+    "slot": "1024",
+    "offset": 16,
+    "type": "t_uint64"
+  },
+  {
+    "label": "lastSuccessfulTipPushAt",
+    "slot": "1024",
+    "offset": 24,
+    "type": "t_uint64"
   }
 ]
