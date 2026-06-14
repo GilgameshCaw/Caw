@@ -11,6 +11,8 @@ import { useActiveToken, usePriceStore } from '~/store/tokenDataStore'
 import { useRootSigner } from '~/hooks/useRootSigner'
 import { encryptPrivateKey, getEncryptionSignMessage, setDecryptedKey } from '~/services/sessionKeyEncryption'
 import { cawActionsAbi } from '~/../../../abi/generated'
+import { getJSON } from '~/utils/safeStorage'
+import { IDENTITY_KIND_KEY, IDENTITY_KIND_PASSKEY } from '~/constants/passkeyStorage'
 
 export const DEFAULT_SESSION_DURATION = 180 * 24 * 60 * 60 // 6 months
 
@@ -347,6 +349,15 @@ export async function registerSponsoredSession(opts: {
     tipCeiling: tipCeiling.toString(),
   })
 
+  // Activate this owner so sessionForWallet() can find the session we just stored,
+  // and flip the global enable flag — deriving a session IS opting in. Without
+  // setEnabled, getActiveSession() short-circuits to null and the user shows as
+  // "not connected" / no Quick Sign despite a valid stored session. A Pop-B passkey
+  // user also has no wagmi `address`, so the normal setActiveWallet effect (keyed on
+  // the wagmi address) never fires for them. (#240)
+  useSessionKeyStore.getState().setActiveWallet(ownerAddress.toLowerCase())
+  useSessionKeyStore.getState().setEnabled(true)
+
   return { address: sessionAccount.address, expiry }
 }
 
@@ -460,12 +471,29 @@ export function useRevokeSession() {
  * Keeps the session store's active wallet in sync with the connected wallet.
  * Sessions are stored per-wallet, so switching wallets just changes which session is active —
  * switching back restores the original session without re-registration.
+ *
+ * Pop-B (passkey) users have no wagmi `address`, but they DO self-activate their
+ * owner address via registerSponsoredSession / PasskeySignIn (#240). So when there's
+ * no connected wagmi wallet AND this is a passkey install, keep an existing active
+ * session intact — otherwise we'd clobber a perfectly good passkey session and show
+ * "not connected." A normal wagmi user who disconnects still clears as before (their
+ * wallet IS their identity), since this browser isn't marked as a passkey install.
  */
 export function useSessionKeyWalletGuard() {
   const { address } = useAccount()
   const setActiveWallet = useSessionKeyStore(s => s.setActiveWallet)
 
   useEffect(() => {
-    setActiveWallet(address || null)
+    if (address) {
+      setActiveWallet(address)
+      return
+    }
+    // No wagmi wallet: only a passkey install preserves its self-activated session.
+    const isPasskeyInstall = getJSON<string | null>(IDENTITY_KIND_KEY, null) === IDENTITY_KIND_PASSKEY
+    if (isPasskeyInstall) {
+      const { activeWallet, sessions } = useSessionKeyStore.getState()
+      if (activeWallet && sessions[activeWallet]) return
+    }
+    setActiveWallet(null)
   }, [address, setActiveWallet])
 }

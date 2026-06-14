@@ -30,6 +30,7 @@ import { signWithPasskeyDiscoverable } from '~/services/identity/passkey'
 import { useIdentitySigning } from '~/components/identity/IdentitySigningProvider'
 import { useAuthStore } from '~/store/authStore'
 import { useTokenDataStore } from '~/store/tokenDataStore'
+import { useSessionKeyStore } from '~/store/sessionKeyStore'
 import { setJSON } from '~/utils/safeStorage'
 import { PASSKEY_CREDENTIAL_KEY, IDENTITY_KIND_KEY, IDENTITY_KIND_PASSKEY } from '~/constants/passkeyStorage'
 import type { TokenData } from '~/types'
@@ -119,6 +120,20 @@ export default function PasskeySignIn() {
       tds.setTokensForAddress(ownerAddr, [token])
       tds.setActiveTokenIdForAddress(ownerAddr, profile.tokenId)
       tds.setLastAddress(ownerAddr)
+
+      // Activate this address in the session-key store so an EXISTING Quick Sign
+      // session (registered at onboarding under this ownerAddress) is recognized.
+      // Without this, sessionForWallet() returns null because activeWallet is unset
+      // for a Pop-B passkey user (no wagmi address feeds the normal setActiveWallet
+      // effect), so the profile chooser shows "not connected" + no Quick Sign even
+      // though the session is present in storage. Re-enable too if a session exists
+      // for this owner, in case the global flag was toggled off elsewhere. (#240)
+      {
+        const sk = useSessionKeyStore.getState()
+        const ownerLc = ownerAddr.toLowerCase()
+        sk.setActiveWallet(ownerLc)
+        if (sk.sessions[ownerLc]) sk.setEnabled(true)
+      }
 
       setStep('success')
       navigate('/home', { replace: true })
