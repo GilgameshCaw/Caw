@@ -5,7 +5,7 @@
  *   1. The account-LINKING flow (/api/verify/x/*) — requires an authed CAW
  *      session, persists a wallet-scoped WalletXLink.
  *   2. The session-less SIGNUP gate (/api/verify/x/signup-*) — no session;
- *      verifies an X account is sybil-qualified (age>90d OR verified) and that
+ *      verifies an X account is sybil-qualified (X-VERIFIED only) and that
  *      its xUserId hasn't already been linked, then lets the sponsor mint
  *      proceed and burn the id.
  *
@@ -24,9 +24,9 @@ const redis = process.env.REDIS_URL
 // popup reads "authorize on X" and we don't depend on a redirect chain.
 export const X_AUTH_URL  = 'https://x.com/i/oauth2/authorize'
 export const X_TOKEN_URL = 'https://api.x.com/2/oauth2/token'
-// created_at + verified are needed by the signup sybil gate (age>90d OR
-// verified); public_metrics drives the follower badge bucket on the link flow.
-// Both consumers read from this one call — no extra paid endpoint.
+// `verified` drives the signup sybil gate (X-verified only); created_at is still
+// fetched for display/context (it no longer gates); public_metrics drives the
+// follower badge bucket on the link flow. All read from this one call.
 export const X_ME_URL =
   'https://api.x.com/2/users/me?user.fields=public_metrics,created_at,verified,verified_type'
 
@@ -184,12 +184,16 @@ export function bucketFollowers(count: number): number | null {
  * messages/open-sponsored-flow-design.md.
  */
 export const SPONSORED_MIN_ACCOUNT_AGE_MS = 90 * 24 * 60 * 60 * 1000
-export function isSponsoredQualified(p: Pick<XProfile, 'createdAt' | 'verified'>, nowMs: number): boolean {
-  if (p.verified) return true
-  if (!p.createdAt) return false
-  const created = Date.parse(p.createdAt)
-  if (Number.isNaN(created)) return false
-  return nowMs - created > SPONSORED_MIN_ACCOUNT_AGE_MS
+/**
+ * Sybil gate for a FREE sponsored mint. X-VERIFIED ONLY.
+ *
+ * Previously this also qualified accounts older than 90 days (age OR verified),
+ * but a 90-day-old throwaway is trivially farmed and didn't keep bots out, so
+ * the bar is now X-verification (paid blue check) only. `nowMs`/createdAt kept
+ * in the signature for callers, but age no longer qualifies on its own.
+ */
+export function isSponsoredQualified(p: Pick<XProfile, 'createdAt' | 'verified'>, _nowMs: number): boolean {
+  return p.verified === true
 }
 
 /**

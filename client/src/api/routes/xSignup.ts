@@ -5,7 +5,7 @@
  * which requires an authed CAW session and links X to an existing wallet, this
  * pair runs BEFORE any account exists. It:
  *   1. Runs the OAuth flow with NO requireAuth.
- *   2. Verifies the X account is sybil-qualified: age > 90d OR X-verified
+ *   2. Verifies the X account is sybil-qualified: X-VERIFIED only (paid blue check)
  *      (follower count is intentionally not a branch — purchased followers are
  *      cheap). See messages/open-sponsored-flow-design.md.
  *   3. Rejects if that xUserId is already linked to any CAW identity
@@ -176,7 +176,7 @@ router.get('/x/signup-callback', async (req, res) => {
       return respond({ ok: true, qualified: false, reason: 'x_account_already_used', xHandle: xProfile.xHandle })
     }
 
-    // Sybil qualification: age > 90d OR verified.
+    // Sybil qualification: X-verified only (90-day age path was dropped).
     if (!isSponsoredQualified(xProfile, Date.now())) {
       return respond({ ok: true, qualified: false, reason: 'not_qualified', xHandle: xProfile.xHandle })
     }
