@@ -95,6 +95,7 @@ const Moderation = lazyWithReload(() => import("./pages/Moderation"));
 const WelcomePage = lazyWithReload(() => import("./pages/WelcomePage"));
 const Marketplace = lazyWithReload(() => import("./pages/Marketplace"));
 const AddressTokens = lazyWithReload(() => import("./pages/AddressTokens"));
+const WalletPage = lazyWithReload(() => import("./pages/Wallet"));
 const OnboardingPage = lazyWithReload(() => import("./pages/Onboarding"));
 const OnrampOnboarding = lazyWithReload(() => import("./pages/OnrampOnboarding"));
 const CardCheckout = lazyWithReload(() => import("./pages/CardCheckout"));
@@ -122,6 +123,7 @@ export const layoutRoutes: RouteDef[] = [
   { path: "/explore", component: <AuthGate><ExplorePage /></AuthGate> },
   { path: "/pending", component: <AuthGate><PendingPage /></AuthGate> },
   { path: "/staking", component: <AuthGate><Staking /></AuthGate> },
+  { path: "/wallet", component: <AuthGate><WalletPage /></AuthGate> },
   { path: "/staking/activity", component: <AuthGate><CawActivity /></AuthGate> },
   { path: "/staking/unstake", component: <AuthGate><Staking /></AuthGate> },
   { path: "/staking/info", component: <AuthGate><Staking /></AuthGate> },
