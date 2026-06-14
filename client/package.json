@@ -82,6 +82,8 @@
   },
   "resolutions": {
     "protobufjs": "^7.5.5",
-    "jws": "^3.2.3"
+    "jws": "^3.2.3",
+    "socket.io-parser": "^4.2.6",
+    "path-to-regexp": "^8.4.2"
   }
 }
