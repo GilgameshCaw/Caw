@@ -512,6 +512,13 @@ export const cawActionsArchiveAbi = [
   {
     type: 'function',
     inputs: [],
+    name: 'LOOKAHEAD_WINDOW',
+    outputs: [{ name: '', internalType: 'uint256', type: 'uint256' }],
+    stateMutability: 'view',
+  },
+  {
+    type: 'function',
+    inputs: [],
     name: 'MAX_CHECKPOINTS_PER_SUBMISSION',
     outputs: [{ name: '', internalType: 'uint256', type: 'uint256' }],
     stateMutability: 'view',
@@ -534,6 +541,13 @@ export const cawActionsArchiveAbi = [
     type: 'function',
     inputs: [{ name: 'payload', internalType: 'bytes', type: 'bytes' }],
     name: '_processChallenge',
+    outputs: [],
+    stateMutability: 'nonpayable',
+  },
+  {
+    type: 'function',
+    inputs: [{ name: 'payload', internalType: 'bytes', type: 'bytes' }],
+    name: '_processNonExistence',
     outputs: [],
     stateMutability: 'nonpayable',
   },
@@ -594,6 +608,13 @@ export const cawActionsArchiveAbi = [
     name: 'checkpointClaimed',
     outputs: [{ name: '', internalType: 'uint256', type: 'uint256' }],
     stateMutability: 'view',
+  },
+  {
+    type: 'function',
+    inputs: [{ name: 'to', internalType: 'address', type: 'address' }],
+    name: 'claimReward',
+    outputs: [],
+    stateMutability: 'nonpayable',
   },
   {
     type: 'function',
@@ -685,6 +706,13 @@ export const cawActionsArchiveAbi = [
   },
   {
     type: 'function',
+    inputs: [{ name: '', internalType: 'uint32', type: 'uint32' }],
+    name: 'lastFinalizedCheckpoint',
+    outputs: [{ name: '', internalType: 'uint256', type: 'uint256' }],
+    stateMutability: 'view',
+  },
+  {
+    type: 'function',
     inputs: [
       {
         name: '_origin',
@@ -750,6 +778,13 @@ export const cawActionsArchiveAbi = [
     type: 'function',
     inputs: [{ name: '', internalType: 'address', type: 'address' }],
     name: 'pendingCount',
+    outputs: [{ name: '', internalType: 'uint256', type: 'uint256' }],
+    stateMutability: 'view',
+  },
+  {
+    type: 'function',
+    inputs: [{ name: '', internalType: 'address', type: 'address' }],
+    name: 'pendingReward',
     outputs: [{ name: '', internalType: 'uint256', type: 'uint256' }],
     stateMutability: 'view',
   },
@@ -1021,6 +1056,26 @@ export const cawActionsArchiveAbi = [
     anonymous: false,
     inputs: [
       {
+        name: 'challenger',
+        internalType: 'address',
+        type: 'address',
+        indexed: true,
+      },
+      { name: 'to', internalType: 'address', type: 'address', indexed: true },
+      {
+        name: 'amount',
+        internalType: 'uint256',
+        type: 'uint256',
+        indexed: false,
+      },
+    ],
+    name: 'RewardClaimed',
+  },
+  {
+    type: 'event',
+    anonymous: false,
+    inputs: [
+      {
         name: 'submissionId',
         internalType: 'uint256',
         type: 'uint256',
@@ -1187,6 +1242,20 @@ export const cawChallengeRelayAbi = [
     type: 'function',
     inputs: [],
     name: 'CHALLENGE_GAS_PER_CP',
+    outputs: [{ name: '', internalType: 'uint128', type: 'uint128' }],
+    stateMutability: 'view',
+  },
+  {
+    type: 'function',
+    inputs: [],
+    name: 'CHECKPOINT_INTERVAL',
+    outputs: [{ name: '', internalType: 'uint256', type: 'uint256' }],
+    stateMutability: 'view',
+  },
+  {
+    type: 'function',
+    inputs: [],
+    name: 'NONEXIST_GAS',
     outputs: [{ name: '', internalType: 'uint128', type: 'uint128' }],
     stateMutability: 'view',
   },
@@ -1382,6 +1451,17 @@ export const cawChallengeRelayAbi = [
   },
   {
     type: 'function',
+    inputs: [
+      { name: 'destEid', internalType: 'uint32', type: 'uint32' },
+      { name: 'submissionId', internalType: 'uint256', type: 'uint256' },
+      { name: 'networkId', internalType: 'uint32', type: 'uint32' },
+    ],
+    name: 'relayNonExistence',
+    outputs: [],
+    stateMutability: 'payable',
+  },
+  {
+    type: 'function',
     inputs: [],
     name: 'renounceOwnership',
     outputs: [],
@@ -1484,6 +1564,37 @@ export const cawChallengeRelayAbi = [
     anonymous: false,
     inputs: [
       {
+        name: 'submissionId',
+        internalType: 'uint256',
+        type: 'uint256',
+        indexed: true,
+      },
+      {
+        name: 'networkId',
+        internalType: 'uint32',
+        type: 'uint32',
+        indexed: true,
+      },
+      {
+        name: 'sourceMaxCheckpoint',
+        internalType: 'uint256',
+        type: 'uint256',
+        indexed: false,
+      },
+      {
+        name: 'destEid',
+        internalType: 'uint32',
+        type: 'uint32',
+        indexed: false,
+      },
+    ],
+    name: 'NonExistenceRelayed',
+  },
+  {
+    type: 'event',
+    anonymous: false,
+    inputs: [
+      {
         name: 'previousOwner',
         internalType: 'address',
         type: 'address',
@@ -1578,6 +1689,16 @@ export const cawNetworkManagerAbi = [
   },
   {
     type: 'function',
+    inputs: [
+      { name: 'networkId', internalType: 'uint32', type: 'uint32' },
+      { name: 'sponsor', internalType: 'address', type: 'address' },
+    ],
+    name: 'addAuthorizedSponsor',
+    outputs: [],
+    stateMutability: 'nonpayable',
+  },
+  {
+    type: 'function',
     inputs: [],
     name: 'buyAndBurnAddress',
     outputs: [{ name: '', internalType: 'address', type: 'address' }],
@@ -1602,6 +1723,13 @@ export const cawNetworkManagerAbi = [
   },
   {
     type: 'function',
+    inputs: [],
+    name: 'clearDepositFeeExempt',
+    outputs: [],
+    stateMutability: 'nonpayable',
+  },
+  {
+    type: 'function',
     inputs: [
       { name: 'name', internalType: 'string', type: 'string' },
       { name: 'feeAddress', internalType: 'address', type: 'address' },
@@ -1620,6 +1748,13 @@ export const cawNetworkManagerAbi = [
     type: 'function',
     inputs: [{ name: 'instanceId', internalType: 'uint32', type: 'uint32' }],
     name: 'deactivateInstance',
+    outputs: [],
+    stateMutability: 'nonpayable',
+  },
+  {
+    type: 'function',
+    inputs: [{ name: 'networkId', internalType: 'uint32', type: 'uint32' }],
+    name: 'flagDepositFeeExempt',
     outputs: [],
     stateMutability: 'nonpayable',
   },
@@ -1812,6 +1947,16 @@ export const cawNetworkManagerAbi = [
   },
   {
     type: 'function',
+    inputs: [
+      { name: 'networkId', internalType: 'uint32', type: 'uint32' },
+      { name: 'sponsor', internalType: 'address', type: 'address' },
+    ],
+    name: 'isAuthorizedSponsor',
+    outputs: [{ name: '', internalType: 'bool', type: 'bool' }],
+    stateMutability: 'view',
+  },
+  {
+    type: 'function',
     inputs: [{ name: 'networkId', internalType: 'uint32', type: 'uint32' }],
     name: 'lockNetworkFees',
     outputs: [],
@@ -1873,6 +2018,13 @@ export const cawNetworkManagerAbi = [
     name: 'lowerWithdrawFeeCeiling',
     outputs: [],
     stateMutability: 'nonpayable',
+  },
+  {
+    type: 'function',
+    inputs: [],
+    name: 'minter',
+    outputs: [{ name: '', internalType: 'address', type: 'address' }],
+    stateMutability: 'view',
   },
   {
     type: 'function',
@@ -1951,6 +2103,16 @@ export const cawNetworkManagerAbi = [
     type: 'function',
     inputs: [
       { name: 'networkId', internalType: 'uint32', type: 'uint32' },
+      { name: 'sponsor', internalType: 'address', type: 'address' },
+    ],
+    name: 'removeAuthorizedSponsor',
+    outputs: [],
+    stateMutability: 'nonpayable',
+  },
+  {
+    type: 'function',
+    inputs: [
+      { name: 'networkId', internalType: 'uint32', type: 'uint32' },
       { name: 'fee', internalType: 'uint256', type: 'uint256' },
     ],
     name: 'setAuthFee',
@@ -2020,6 +2182,13 @@ export const cawNetworkManagerAbi = [
   },
   {
     type: 'function',
+    inputs: [{ name: '_minter', internalType: 'address', type: 'address' }],
+    name: 'setMinter',
+    outputs: [],
+    stateMutability: 'nonpayable',
+  },
+  {
+    type: 'function',
     inputs: [
       { name: 'networkId', internalType: 'uint32', type: 'uint32' },
       { name: 'target', internalType: 'uint256', type: 'uint256' },
@@ -2073,6 +2242,31 @@ export const cawNetworkManagerAbi = [
       },
     ],
     name: 'AuthFeeCeilingLowered',
+  },
+  {
+    type: 'event',
+    anonymous: false,
+    inputs: [
+      {
+        name: 'networkId',
+        internalType: 'uint32',
+        type: 'uint32',
+        indexed: true,
+      },
+      {
+        name: 'sponsor',
+        internalType: 'address',
+        type: 'address',
+        indexed: true,
+      },
+      {
+        name: 'authorized',
+        internalType: 'bool',
+        type: 'bool',
+        indexed: false,
+      },
+    ],
+    name: 'AuthorizedSponsorSet',
   },
   {
     type: 'event',
@@ -4709,6 +4903,16 @@ export const cawProfileMarketplaceAbi = [
   },
   {
     type: 'function',
+    inputs: [
+      { name: '', internalType: 'address', type: 'address' },
+      { name: '', internalType: 'address', type: 'address' },
+    ],
+    name: 'pendingTokenPayouts',
+    outputs: [{ name: '', internalType: 'uint256', type: 'uint256' }],
+    stateMutability: 'view',
+  },
+  {
+    type: 'function',
     inputs: [{ name: 'listingId', internalType: 'uint256', type: 'uint256' }],
     name: 'placeBid',
     outputs: [],
@@ -4780,6 +4984,16 @@ export const cawProfileMarketplaceAbi = [
     type: 'function',
     inputs: [{ name: 'recipient', internalType: 'address', type: 'address' }],
     name: 'withdrawPayoutsTo',
+    outputs: [],
+    stateMutability: 'nonpayable',
+  },
+  {
+    type: 'function',
+    inputs: [
+      { name: 'token', internalType: 'address', type: 'address' },
+      { name: 'recipient', internalType: 'address', type: 'address' },
+    ],
+    name: 'withdrawTokenPayouts',
     outputs: [],
     stateMutability: 'nonpayable',
   },
@@ -5143,6 +5357,62 @@ export const cawProfileMarketplaceAbi = [
       },
     ],
     name: 'Sale',
+  },
+  {
+    type: 'event',
+    anonymous: false,
+    inputs: [
+      {
+        name: 'seller',
+        internalType: 'address',
+        type: 'address',
+        indexed: true,
+      },
+      {
+        name: 'token',
+        internalType: 'address',
+        type: 'address',
+        indexed: true,
+      },
+      {
+        name: 'amount',
+        internalType: 'uint256',
+        type: 'uint256',
+        indexed: false,
+      },
+    ],
+    name: 'TokenPayoutQueued',
+  },
+  {
+    type: 'event',
+    anonymous: false,
+    inputs: [
+      {
+        name: 'seller',
+        internalType: 'address',
+        type: 'address',
+        indexed: true,
+      },
+      {
+        name: 'token',
+        internalType: 'address',
+        type: 'address',
+        indexed: true,
+      },
+      {
+        name: 'recipient',
+        internalType: 'address',
+        type: 'address',
+        indexed: true,
+      },
+      {
+        name: 'amount',
+        internalType: 'uint256',
+        type: 'uint256',
+        indexed: false,
+      },
+    ],
+    name: 'TokenPayoutWithdrawn',
   },
 ] as const
 
@@ -5968,6 +6238,13 @@ export const civicKycVerifierAbi = [
 export const iCawActionsCheckpointsAbi = [
   {
     type: 'function',
+    inputs: [{ name: 'networkId', internalType: 'uint32', type: 'uint32' }],
+    name: 'networkActionCount',
+    outputs: [{ name: '', internalType: 'uint256', type: 'uint256' }],
+    stateMutability: 'view',
+  },
+  {
+    type: 'function',
     inputs: [
       { name: 'networkId', internalType: 'uint32', type: 'uint32' },
       { name: 'checkpointId', internalType: 'uint256', type: 'uint256' },
@@ -5988,6 +6265,37 @@ export const iCawFontDataAbi = [
     inputs: [],
     name: 'DATA',
     outputs: [{ name: '', internalType: 'bytes', type: 'bytes' }],
+    stateMutability: 'view',
+  },
+] as const
+
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+// ICawNetworkManagerSponsorExempt
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+export const iCawNetworkManagerSponsorExemptAbi = [
+  {
+    type: 'function',
+    inputs: [],
+    name: 'clearDepositFeeExempt',
+    outputs: [],
+    stateMutability: 'nonpayable',
+  },
+  {
+    type: 'function',
+    inputs: [{ name: 'networkId', internalType: 'uint32', type: 'uint32' }],
+    name: 'flagDepositFeeExempt',
+    outputs: [],
+    stateMutability: 'nonpayable',
+  },
+  {
+    type: 'function',
+    inputs: [
+      { name: 'networkId', internalType: 'uint32', type: 'uint32' },
+      { name: 'sponsor', internalType: 'address', type: 'address' },
+    ],
+    name: 'isAuthorizedSponsor',
+    outputs: [{ name: '', internalType: 'bool', type: 'bool' }],
     stateMutability: 'view',
   },
 ] as const
@@ -6597,48 +6905,6 @@ export const smartEoaAbi = [
   { type: 'receive', stateMutability: 'payable' },
   {
     type: 'function',
-    inputs: [
-      {
-        name: 'calls',
-        internalType: 'struct SmartEOA.Call[]',
-        type: 'tuple[]',
-        components: [
-          { name: 'to', internalType: 'address', type: 'address' },
-          { name: 'value', internalType: 'uint256', type: 'uint256' },
-          { name: 'data', internalType: 'bytes', type: 'bytes' },
-        ],
-      },
-      { name: 'nonce', internalType: 'uint256', type: 'uint256' },
-      { name: 'sig', internalType: 'bytes', type: 'bytes' },
-    ],
-    name: 'executeBatch',
-    outputs: [],
-    stateMutability: 'nonpayable',
-  },
-  {
-    type: 'function',
-    inputs: [],
-    name: 'executeNonceOf',
-    outputs: [{ name: '', internalType: 'uint256', type: 'uint256' }],
-    stateMutability: 'view',
-  },
-  {
-    type: 'event',
-    anonymous: false,
-    inputs: [
-      { name: 'nonce', internalType: 'uint256', type: 'uint256', indexed: true },
-      { name: 'callCount', internalType: 'uint256', type: 'uint256', indexed: false },
-    ],
-    name: 'BatchExecuted',
-  },
-  { type: 'error', inputs: [], name: 'EmptyBatch' },
-  {
-    type: 'error',
-    inputs: [{ name: 'index', internalType: 'uint256', type: 'uint256' }],
-    name: 'ExecuteFailed',
-  },
-  {
-    type: 'function',
     inputs: [{ name: 'sig', internalType: 'bytes', type: 'bytes' }],
     name: '_decodeWebAuthn',
     outputs: [
@@ -6689,6 +6955,33 @@ export const smartEoaAbi = [
     name: 'consumeNonce',
     outputs: [],
     stateMutability: 'nonpayable',
+  },
+  {
+    type: 'function',
+    inputs: [
+      {
+        name: 'calls',
+        internalType: 'struct SmartEOA.Call[]',
+        type: 'tuple[]',
+        components: [
+          { name: 'to', internalType: 'address', type: 'address' },
+          { name: 'value', internalType: 'uint256', type: 'uint256' },
+          { name: 'data', internalType: 'bytes', type: 'bytes' },
+        ],
+      },
+      { name: 'nonce', internalType: 'uint256', type: 'uint256' },
+      { name: 'sig', internalType: 'bytes', type: 'bytes' },
+    ],
+    name: 'executeBatch',
+    outputs: [],
+    stateMutability: 'nonpayable',
+  },
+  {
+    type: 'function',
+    inputs: [],
+    name: 'executeNonceOf',
+    outputs: [{ name: '', internalType: 'uint256', type: 'uint256' }],
+    stateMutability: 'view',
   },
   {
     type: 'function',
@@ -6753,6 +7046,25 @@ export const smartEoaAbi = [
     name: 'rotateEcdsaFallback',
     outputs: [],
     stateMutability: 'nonpayable',
+  },
+  {
+    type: 'event',
+    anonymous: false,
+    inputs: [
+      {
+        name: 'nonce',
+        internalType: 'uint256',
+        type: 'uint256',
+        indexed: true,
+      },
+      {
+        name: 'callCount',
+        internalType: 'uint256',
+        type: 'uint256',
+        indexed: false,
+      },
+    ],
+    name: 'BatchExecuted',
   },
   {
     type: 'event',
@@ -6839,6 +7151,12 @@ export const smartEoaAbi = [
     name: 'PasskeyRemoved',
   },
   { type: 'error', inputs: [], name: 'AlreadyInitialized' },
+  { type: 'error', inputs: [], name: 'EmptyBatch' },
+  {
+    type: 'error',
+    inputs: [{ name: 'index', internalType: 'uint256', type: 'uint256' }],
+    name: 'ExecuteFailed',
+  },
   { type: 'error', inputs: [], name: 'InvalidCallerSig' },
   { type: 'error', inputs: [], name: 'MinterCallFailed' },
   { type: 'error', inputs: [], name: 'NotInitialized' },
