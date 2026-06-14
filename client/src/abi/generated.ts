@@ -6597,6 +6597,48 @@ export const smartEoaAbi = [
   { type: 'receive', stateMutability: 'payable' },
   {
     type: 'function',
+    inputs: [
+      {
+        name: 'calls',
+        internalType: 'struct SmartEOA.Call[]',
+        type: 'tuple[]',
+        components: [
+          { name: 'to', internalType: 'address', type: 'address' },
+          { name: 'value', internalType: 'uint256', type: 'uint256' },
+          { name: 'data', internalType: 'bytes', type: 'bytes' },
+        ],
+      },
+      { name: 'nonce', internalType: 'uint256', type: 'uint256' },
+      { name: 'sig', internalType: 'bytes', type: 'bytes' },
+    ],
+    name: 'executeBatch',
+    outputs: [],
+    stateMutability: 'nonpayable',
+  },
+  {
+    type: 'function',
+    inputs: [],
+    name: 'executeNonceOf',
+    outputs: [{ name: '', internalType: 'uint256', type: 'uint256' }],
+    stateMutability: 'view',
+  },
+  {
+    type: 'event',
+    anonymous: false,
+    inputs: [
+      { name: 'nonce', internalType: 'uint256', type: 'uint256', indexed: true },
+      { name: 'callCount', internalType: 'uint256', type: 'uint256', indexed: false },
+    ],
+    name: 'BatchExecuted',
+  },
+  { type: 'error', inputs: [], name: 'EmptyBatch' },
+  {
+    type: 'error',
+    inputs: [{ name: 'index', internalType: 'uint256', type: 'uint256' }],
+    name: 'ExecuteFailed',
+  },
+  {
+    type: 'function',
     inputs: [{ name: 'sig', internalType: 'bytes', type: 'bytes' }],
     name: '_decodeWebAuthn',
     outputs: [

@@ -161,6 +161,9 @@ const MIN_TREASURY_ETH = BigInt('10000000000000000') // 0.01 ETH
 const GAS_LIMIT_BOOTSTRAP   = 1_200_000n
 const GAS_LIMIT_DEPOSIT     = 250_000n
 const GAS_LIMIT_AUTHENTICATE = 250_000n
+// executeBatch relay: a withdraw (L1 CAW transfer + LZ send) or a zap. Generous
+// ceiling covering the inner withdrawTo/depositZap + the ERC-1271 verify.
+const GAS_LIMIT_EXECUTE_BATCH = 800_000n
 
 // ─── Known revert reason selectors (keccak256 of the error string) ───────────
 // We match on lowercased substring of the revert reason since contracts may
@@ -787,6 +790,58 @@ export class SponsorService {
         },
       )
 
+      return { txHash: txResponse.hash }
+    } catch (err) {
+      return parseRevertError(err)
+    }
+  }
+
+  /**
+   * Relay a passkey-signed SmartEOA.executeBatch (the validator fronts gas + any
+   * ETH value, e.g. the withdraw's LZ fee). Authorization rides entirely in `sig`
+   * — the digest binds the full batch + nonce, so this server can only submit
+   * EXACTLY what the user signed; it cannot alter/redirect a call. The caller
+   * (the /api/sponsor/execute route) is responsible for the POLICY allow-list
+   * (which `to`/selectors are permitted) before invoking this — the contract is
+   * general, the route is the gate that protects this wallet's ETH.
+   *
+   * @param smartEoaAddress The user's EOA (7702-delegated to SmartEOA).
+   * @param calls           The signed Call[] (to, value, data).
+   * @param nonce           The signed executeNonce.
+   * @param sig             The passkey / ecdsaFallback signature over the batch.
+   * @param value           Total ETH msg.value to attach (sum of inner call values,
+   *                        e.g. the withdraw LZ fee). Capped at maxLzFeeWei.
+   */
+  async relayExecuteBatch(
+    smartEoaAddress: string,
+    calls: { to: string; value: bigint; data: string }[],
+    nonce: bigint,
+    sig: string,
+    value: bigint,
+  ): Promise<SponsorResult> {
+    try {
+      if (value > this.maxLzFeeWei) {
+        return {
+          error: 'LZ_FEE_TOO_LARGE',
+          detail: `value ${value} exceeds SPONSOR_MAX_LZ_FEE_WEI (${this.maxLzFeeWei})`,
+        }
+      }
+
+      const sponsorBalance = await this.provider.getBalance(this.wallet.address)
+      if (sponsorBalance < MIN_TREASURY_ETH) {
+        return {
+          error: 'TREASURY_LOW',
+          detail: `Sponsor ETH balance (${sponsorBalance}) below minimum (${MIN_TREASURY_ETH})`,
+        }
+      }
+
+      const smartEoa = new Contract(smartEoaAddress, smartEoaAbi as any, this.wallet)
+      const txResponse: ContractTransactionResponse = await smartEoa.executeBatch(
+        calls.map(c => [c.to, c.value, c.data]),
+        nonce,
+        sig,
+        { value, gasLimit: GAS_LIMIT_EXECUTE_BATCH },
+      )
       return { txHash: txResponse.hash }
     } catch (err) {
       return parseRevertError(err)

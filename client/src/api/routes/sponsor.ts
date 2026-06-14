@@ -460,6 +460,85 @@ router.post('/authenticate', async (req, res) => {
   return res.status(200).json(result)
 })
 
+// ─── POST /api/sponsor/execute ──────────────────────────────────────────────
+// Relay a passkey-signed SmartEOA.executeBatch (the validator fronts gas + the
+// withdraw's LZ fee, recovered via the CAW fee transfer the user signed into the
+// batch). Authorization is fully in `sig` — the server can only submit EXACTLY
+// what the user signed, so it can't redirect funds or inflate the fee.
+//
+// THE POLICY GATE (protects the validator's wallet): every call's `to` must be an
+// allow-listed CAW contract (CawProfile or Minter), and the total ETH value is
+// capped. A user could otherwise sign a batch whose `value` drains the validator;
+// the contract is general, this route is the gate.
+const EXECUTE_ALLOWED_TARGETS = new Set(
+  [process.env.CAW_NAMES_ADDRESS, process.env.CAW_NAMES_MINTER_ADDRESS]
+    .filter(Boolean)
+    .map(a => (a as string).toLowerCase()),
+)
+const ADDR_RE_EXEC = /^0x[0-9a-fA-F]{40}$/
+const HEX_RE = /^0x[0-9a-fA-F]*$/
+const ExecuteBodySchema = z.object({
+  smartEoaAddress: z.string().regex(ADDR_RE_EXEC),
+  calls: z.array(z.object({
+    to:    z.string().regex(ADDR_RE_EXEC),
+    value: z.string().regex(/^\d+$/),     // wei, decimal string
+    data:  z.string().regex(HEX_RE),
+  })).min(1).max(8),
+  nonce: z.string().regex(/^\d+$/),
+  sig:   z.string().regex(HEX_RE),
+})
+
+router.post('/execute', async (req, res) => {
+  const service = getSponsorService()
+  if (!service) {
+    return res.status(503).json({ error: 'SPONSOR_DISABLED', detail: 'Sponsored relay is not enabled on this node' })
+  }
+  const ip = clientIp(req)
+  // Reuse the deposit/auth limiter bucket (30/IP/day) — same risk class.
+  const allowed = await checkSponsorRateLimit(ip, 'authenticate')
+  if (!allowed) {
+    return res.status(429).json({ error: 'RATE_LIMITED', detail: `Execute limit is ${DEPOSIT_AUTH_RATE_LIMIT} per IP per day` })
+  }
+
+  let body: z.infer<typeof ExecuteBodySchema>
+  try {
+    body = ExecuteBodySchema.parse(req.body)
+  } catch (e) {
+    const detail = e instanceof ZodError ? e.issues.map(i => `${i.path.join('.')}: ${i.message}`).join(', ') : String(e)
+    return res.status(400).json({ error: 'VALIDATION', detail })
+  }
+
+  // Policy allow-list: every target must be a known CAW contract.
+  if (EXECUTE_ALLOWED_TARGETS.size === 0) {
+    return res.status(503).json({ error: 'RELAY_UNCONFIGURED', detail: 'No allow-listed targets configured' })
+  }
+  for (const c of body.calls) {
+    if (!EXECUTE_ALLOWED_TARGETS.has(c.to.toLowerCase())) {
+      return res.status(400).json({ error: 'TARGET_NOT_ALLOWED', detail: `Call target ${c.to} is not an allow-listed CAW contract` })
+    }
+  }
+
+  // Total ETH value the validator fronts (e.g. the withdraw LZ fee). Cap mirrors
+  // SponsorService.relayExecuteBatch's maxLzFeeWei check (re-checked there too).
+  let totalValue = 0n
+  try { totalValue = body.calls.reduce((acc, c) => acc + BigInt(c.value), 0n) } catch {
+    return res.status(400).json({ error: 'VALIDATION', detail: 'Invalid call value' })
+  }
+
+  const result = await service.relayExecuteBatch(
+    body.smartEoaAddress,
+    body.calls.map(c => ({ to: c.to, value: BigInt(c.value), data: c.data })),
+    BigInt(body.nonce),
+    body.sig,
+    totalValue,
+  )
+  if (isSponsorError(result)) {
+    const status = result.error === 'TREASURY_LOW' ? 503 : 400
+    return res.status(status).json(result)
+  }
+  return res.status(200).json(result)
+})
+
 // Named exports for test-only schema access (L-3 validation tests)
 export { BootstrapBodySchema }
 
