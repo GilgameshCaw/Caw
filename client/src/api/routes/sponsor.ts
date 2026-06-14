@@ -102,7 +102,13 @@ async function recordSponsorUse(ip: string, op: 'bootstrap' | 'deposit' | 'authe
       const ttl = await redis.ttl(key)
       if (ttl < 0) await redis.expire(key, RATE_WINDOW_SECONDS)
     }
-  } catch { /* fail open — don't break a successful mint over a counter */ }
+  } catch (err) {
+    // Best-effort: a Redis hiccup means this use won't count against the IP's
+    // daily quota — but the op already succeeded, so we never surface this to the
+    // user. Log it so a persistently-broken counter (quotas silently not
+    // enforced) is at least visible to the operator.
+    console.warn(`[sponsor] recordSponsorUse(${op}) failed; quota not incremented:`, (err as any)?.message ?? err)
+  }
 }
 
 /**
@@ -400,7 +406,7 @@ router.post('/bootstrap', async (req, res) => {
   // Account was actually CREATED — now (and only now) spend one IP quota slot.
   // Peek-only check above means failed/abandoned attempts never counted. Applies
   // to both the code-gated and X-gated paths. Fire-and-forget.
-  recordSponsorUse(ip, 'bootstrap').catch(() => {})
+  void recordSponsorUse(ip, 'bootstrap')   // fire-and-forget; handles its own errors
 
   // Commit the redemption audit row (code path only — X path has no codeHash).
   // Fire-and-forget so a DB hiccup doesn't break the user's UX.
@@ -452,7 +458,7 @@ router.post('/deposit', async (req, res) => {
     const status = result.error === 'TREASURY_LOW' ? 503 : 400
     return res.status(status).json(result)
   }
-  recordSponsorUse(ip, 'deposit').catch(() => {})  // count only on success
+  void recordSponsorUse(ip, 'deposit')   // count only on success; fire-and-forget
   return res.status(200).json(result)
 })
 
@@ -486,7 +492,7 @@ router.post('/authenticate', async (req, res) => {
     const status = result.error === 'TREASURY_LOW' ? 503 : 400
     return res.status(status).json(result)
   }
-  recordSponsorUse(ip, 'authenticate').catch(() => {})  // count only on success
+  void recordSponsorUse(ip, 'authenticate')   // count only on success; fire-and-forget
   return res.status(200).json(result)
 })
 
@@ -688,7 +694,7 @@ router.post('/execute', async (req, res) => {
     const status = result.error === 'TREASURY_LOW' ? 503 : 400
     return res.status(status).json(result)
   }
-  recordSponsorUse(ip, 'authenticate').catch(() => {})  // count only on success (shared bucket)
+  void recordSponsorUse(ip, 'authenticate')   // count only on success (shared bucket); fire-and-forget
   return res.status(200).json(result)
 })
 
