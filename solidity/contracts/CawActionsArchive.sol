@@ -596,18 +596,18 @@ contract CawActionsArchive is ReentrancyGuard, OnlyOnce, OApp {
 
   /// @dev Slash `validator`: zero their stake, invalidate ALL their pending
   ///      submissions (releasing checkpoint claims with a cooldown), clear their
-  ///      history, and pay the slashed stake to `rewardTo`. Shared by
-  ///      resolveChallenge and _processNonExistence. `rewardTo` is the direct
-  ///      caller (resolveChallenge) or the relayer named in the LZ message
-  ///      (non-existence). If `rewardTo` can't receive ETH the whole slash
-  ///      reverts — callers must pass a payable address (resolveChallenge is
-  ///      called directly; the non-existence relayer chooses its own rewardTo).
+  ///      history, and credit the slashed stake to `rewardTo` (pull-pattern;
+  ///      claimed via claimReward). Shared by resolveChallenge,
+  ///      slashIncoherentRoot, and _processNonExistence — every slash path
+  ///      routes through here. `rewardTo` is the direct caller (resolveChallenge
+  ///      / slashIncoherentRoot) or the relayer named in the LZ message
+  ///      (non-existence).
   function _executeSlash(address validator, uint256 submissionId, uint256 checkpointId, address rewardTo) internal {
     // ARC-NEX-1 (audit 2026-06-14): self-slash guard for ALL callers. Without it,
     // a fraudulent validator could self-relay a non-existence slash (rewardTo =
     // themselves) and recover their own stake — making fabricated submissions
-    // free. resolveChallenge/slashIncoherentRoot guard before calling here; the
-    // non-existence path did not, so the guard lives here to cover every caller.
+    // free. Every slash path (resolveChallenge, slashIncoherentRoot,
+    // _processNonExistence) routes through here, so the single guard covers all.
     require(rewardTo != validator, "Self-slash forbidden");
 
     uint256 reward = stakes[validator];
@@ -722,37 +722,15 @@ contract CawActionsArchive is ReentrancyGuard, OnlyOnce, OApp {
     bytes32 computedRoot = _buildMerkleRoot(startCp, cpHashes);
     require(computedRoot != sub.merkleRoot, "Root matches, no fraud");
 
-    // Same slash flow as resolveChallenge.
-    address validator = sub.submitter;
-    // Block self-slash — see resolveChallenge for the rationale.
-    require(msg.sender != validator, "Self-slash forbidden");
-    uint256 reward = stakes[validator];
-    stakes[validator] = 0;
-
-    uint256[] storage subIds = validatorSubmissions[validator];
-    for (uint256 i = 0; i < subIds.length; ) {
-      uint256 sid = subIds[i];
-      Submission storage s = submissions[sid];
-      if (s.status == Status.PENDING) {
-        s.status = Status.SLASHED;
-        // Release checkpoint claims and impose post-slash cooldown
-        for (uint256 cp = s.startCheckpointId; cp <= s.endCheckpointId; ) {
-          checkpointClaimed[s.networkId][cp] = 0;
-          checkpointClaimReopensAt[s.networkId][cp] = uint64(block.timestamp + CLAIM_COOLDOWN);
-          unchecked { ++cp; }
-        }
-      }
-      unchecked { ++i; }
-    }
-    pendingCount[validator] = 0;
-    delete validatorSubmissions[validator];
-
-    if (reward > 0) {
-      (bool ok,) = msg.sender.call{value: reward}("");
-      require(ok, "Transfer failed");
-    }
-
-    emit ValidatorSlashed(validator, msg.sender, submissionId, 0, reward);
+    // Route through the shared slash helper so the NONEXIST-1 pull-pattern (and
+    // the ARC-NEX-1 self-slash guard) apply uniformly across every slash path.
+    // The old inline copy pushed ETH to msg.sender and reverted the whole slash
+    // if the caller couldn't receive — a contract-wallet challenger could not
+    // land an incoherent-root slash at all (re-audit 2026-06-14, SIR-PUSH-1).
+    // _executeSlash credits pendingReward instead; the caller claims via
+    // claimReward. checkpointId is 0 here (incoherent-root fraud isn't scoped to
+    // a single checkpoint), matching the prior emitted value.
+    _executeSlash(sub.submitter, submissionId, 0, msg.sender);
   }
 
   /// @dev Compute the end offset of the action that starts at `pos` in

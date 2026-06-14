@@ -53,6 +53,25 @@ contract ArchiveHarness is CawActionsArchive {
         bytes memory payload = abi.encode(uint8(2), submissionId, networkId, sourceMaxCheckpoint, rewardTo);
         this._processChallenge(payload);
     }
+
+    // Direct access to the shared slash helper. slashIncoherentRoot now routes
+    // through _executeSlash (re-audit 2026-06-14, SIR-PUSH-1), so exercising the
+    // helper with a reverting rewardTo proves the incoherent-root slash path can
+    // no longer be DoS'd by a non-payable challenger.
+    function harnessExecuteSlash(address validator, uint256 submissionId, address rewardTo) external {
+        _executeSlash(validator, submissionId, 0, rewardTo);
+    }
+}
+
+/// @dev A reward recipient that reverts on raw ETH receipt — the kind of
+///      contract-wallet challenger that, under the old push-pattern
+///      slashIncoherentRoot, would have reverted the entire slash.
+contract RevertingReceiver {
+    receive() external payable { revert("no ETH"); }
+
+    function claim(CawActionsArchive archive, address to) external {
+        archive.claimReward(to);
+    }
 }
 
 contract ArchiveNonExistenceTest is Test {
@@ -129,5 +148,29 @@ contract ArchiveNonExistenceTest is Test {
         archive.harnessDeliverNonExistence(3, NETWORK_ID, 16, relayer);
         ( , , , , , , CawActionsArchive.Status status, ) = archive.submissions(3);
         assertEq(uint8(status), uint8(CawActionsArchive.Status.PENDING), "endCp == height is in-range");
+    }
+
+    // SIR-PUSH-1 regression (re-audit 2026-06-14): slashIncoherentRoot now routes
+    // through _executeSlash, so a challenger that reverts on ETH receipt no longer
+    // reverts the slash. The slash lands unconditionally and the reward is credited
+    // (pull) for later claim to a payable address — proving the incoherent-root
+    // path is no longer DoS-able by a contract-wallet challenger.
+    function test_slash_withRevertingRewardTo_stillLands() public {
+        RevertingReceiver challenger = new RevertingReceiver();
+        archive.harnessInjectSubmission(4, attacker, NETWORK_ID, 11, 266);
+
+        // Slash crediting the reverting challenger. Under the old push pattern this
+        // would have reverted; with the pull pattern it must succeed.
+        archive.harnessExecuteSlash(attacker, 4, address(challenger));
+
+        ( , , , , , , CawActionsArchive.Status status, ) = archive.submissions(4);
+        assertEq(uint8(status), uint8(CawActionsArchive.Status.SLASHED), "slash lands despite reverting rewardTo");
+        assertEq(archive.stakes(attacker), 0, "attacker stake zeroed");
+        assertEq(archive.pendingReward(address(challenger)), 0.05 ether, "reward credited to reverting challenger");
+
+        // The challenger reverts on its own address but can claim to a payable EOA.
+        challenger.claim(archive, relayer);
+        assertEq(relayer.balance, 0.05 ether, "reward claimed to a payable address");
+        assertEq(archive.pendingReward(address(challenger)), 0, "reward cleared after claim");
     }
 }
