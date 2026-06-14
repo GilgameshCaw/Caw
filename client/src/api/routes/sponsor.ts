@@ -54,6 +54,13 @@ const BOOTSTRAP_RATE_LIMIT     = 5    // accounts CREATED per IP per day
 const DEPOSIT_AUTH_RATE_LIMIT  = 30
 const RATE_WINDOW_SECONDS      = 24 * 60 * 60   // 24 hours
 
+// Ungated (no invite code, no X) zero-deposit signups. Independent counter +
+// independent opt-in so a flood of free-profile attempts can NEVER trip or
+// exhaust the invite-code path's quota/budget. Off unless the operator sets
+// SPONSOR_UNGATED_ENABLED=true. Lower cap than the gifted path on purpose.
+const UNGATED_ENABLED          = process.env.SPONSOR_UNGATED_ENABLED === 'true'
+const UNGATED_RATE_LIMIT       = Number(process.env.SPONSOR_UNGATED_RATE_LIMIT ?? 3)
+
 // Code-info: 30 lookups per IP per 10 minutes
 const CODE_INFO_RATE_LIMIT     = 30
 const CODE_INFO_WINDOW_SECONDS = 10 * 60         // 10 minutes
@@ -77,15 +84,22 @@ const GAS_LIMIT_BOOTSTRAP_BUDGET = 400_000n
  * the cap is rejected before any sig/sim work — but the peek doesn't consume.
  * Fails open on Redis error (same pattern as freeActionRateLimit.ts).
  */
-async function checkSponsorRateLimit(ip: string, op: 'bootstrap' | 'deposit' | 'authenticate'): Promise<boolean> {
-  const limit = op === 'bootstrap' ? BOOTSTRAP_RATE_LIMIT : DEPOSIT_AUTH_RATE_LIMIT
+async function checkSponsorRateLimit(ip: string, op: 'bootstrap' | 'deposit' | 'authenticate' | 'ungated'): Promise<boolean> {
+  const limit = op === 'bootstrap' ? BOOTSTRAP_RATE_LIMIT
+    : op === 'ungated' ? UNGATED_RATE_LIMIT
+    : DEPOSIT_AUTH_RATE_LIMIT
   const key = `sponsor:${op}:${ip}`
   try {
     const raw = await redis.get(key)
     const count = raw ? parseInt(raw, 10) : 0
     return count < limit
   } catch {
-    return true  // fail open on Redis unavailability
+    // Gated paths (bootstrap/deposit/authenticate) carry their own economic
+    // backstop — an invite code costs CAW, an X token is single-use — so they
+    // fail OPEN (a Redis blip shouldn't break a paid signup). The ungated free
+    // path has NO such backstop, so a Redis outage would otherwise be an
+    // unbounded free-mint hole that drains the sponsor; it fails CLOSED. (#229)
+    return op !== 'ungated'
   }
 }
 
@@ -93,7 +107,7 @@ async function checkSponsorRateLimit(ip: string, op: 'bootstrap' | 'deposit' | '
  * Record one successful sponsored op against an IP's daily quota. Call ONLY
  * after the account/op actually succeeded. Sets the 24h TTL on first use.
  */
-async function recordSponsorUse(ip: string, op: 'bootstrap' | 'deposit' | 'authenticate'): Promise<void> {
+async function recordSponsorUse(ip: string, op: 'bootstrap' | 'deposit' | 'authenticate' | 'ungated'): Promise<void> {
   const key = `sponsor:${op}:${ip}`
   try {
     const count = await redis.incr(key)
@@ -229,22 +243,7 @@ router.post('/bootstrap', async (req, res) => {
     return res.status(503).json({ error: 'SPONSOR_DISABLED', detail: 'Sponsored minting is not enabled on this node' })
   }
 
-  // Rate limit: PEEK-only here (checked before sig verification so an IP already
-  // at the daily cap is rejected cheaply). The slot is spent only on an actual
-  // account creation via recordSponsorUse() at the success path below — so a
-  // typo'd sig or an abandoned attempt no longer burns the user's quota. Tradeoff:
-  // an IP UNDER the cap can retry sig verification without consuming a slot; this
-  // is acceptable because invite codes are user-purchased (the buyer already paid
-  // CAW covering the validator's gas) and the real cost — the mint — only happens
-  // on success, which is exactly what's now counted.
   const ip = clientIp(req)
-  const allowed = await checkSponsorRateLimit(ip, 'bootstrap')
-  if (!allowed) {
-    return res.status(429).json({
-      error: 'RATE_LIMITED',
-      detail: `Bootstrap limit is ${BOOTSTRAP_RATE_LIMIT} per IP per day`,
-    })
-  }
 
   // Validate body
   let params: z.infer<typeof BootstrapBodySchema>
@@ -259,13 +258,40 @@ router.post('/bootstrap', async (req, res) => {
     return res.status(400).json({ error: 'VALIDATION', detail })
   }
 
-  // ── Gate: exactly one of (sponsor code) OR (X-qualified token) ─────────────
+  // ── Gate: a sponsor code, an X-qualified token, OR (if enabled) neither ─────
+  // Three valid shapes: (1) invite code → gifted deposit; (2) X-qualified token →
+  // gifted deposit; (3) UNGATED — no code, no X → a free zero-deposit profile,
+  // only when SPONSOR_UNGATED_ENABLED. "Both present" is always rejected (the
+  // FE never sends both; it signals a confused/forged request).
   const hasCode = typeof params.code === 'string' && params.code.length > 0
   const hasXToken = typeof params.xQualifiedToken === 'string' && params.xQualifiedToken.length > 0
-  if (hasCode === hasXToken) {
+  const isUngated = !hasCode && !hasXToken
+  if (hasCode && hasXToken) {
     return res.status(400).json({
       error: 'GATE_REQUIRED',
-      detail: 'Provide exactly one of: a sponsor `code`, or an `xQualifiedToken` from X signup.',
+      detail: 'Provide at most one of: a sponsor `code`, or an `xQualifiedToken` from X signup.',
+    })
+  }
+  if (isUngated && !UNGATED_ENABLED) {
+    return res.status(400).json({
+      error: 'GATE_REQUIRED',
+      detail: 'An invite code or X verification is required to create an account here.',
+    })
+  }
+
+  // Rate limit: PEEK-only here. The ungated (free) path uses an INDEPENDENT
+  // counter + cap so a flood of free signups can never trip or exhaust the
+  // invite-code path's quota. The slot is spent only on an actual account
+  // creation via recordSponsorUse() at the success path — abandoned/typo'd
+  // attempts never burn quota.
+  const rateOp = isUngated ? 'ungated' : 'bootstrap'
+  const allowed = await checkSponsorRateLimit(ip, rateOp)
+  if (!allowed) {
+    return res.status(429).json({
+      error: 'RATE_LIMITED',
+      detail: isUngated
+        ? `Free signup limit is ${UNGATED_RATE_LIMIT} per IP per day. Try an invite code.`
+        : `Bootstrap limit is ${BOOTSTRAP_RATE_LIMIT} per IP per day`,
     })
   }
 
@@ -314,6 +340,19 @@ router.post('/bootstrap', async (req, res) => {
       })
     }
     xGate = consumed
+  } else if (isUngated) {
+    // ── Ungated free signup (no code, no X) ─────────────────────────────────
+    // Reached only when SPONSOR_UNGATED_ENABLED (asserted above). The server
+    // fronts the burn-cost CAW + LZ gas for a ZERO-deposit profile: the user
+    // gets a name + NFT but no staked CAW (they fund it later via /wallet). We
+    // force depositAmountCAW=0 here so a forged large-deposit body can't make
+    // the validator front a gifted balance on the free path. repay/KYC stay 0.
+    if (params.depositAmountCAW !== 0n) {
+      return res.status(400).json({
+        error: 'UNGATED_DEPOSIT_FORBIDDEN',
+        detail: 'Free (ungated) signups must request a zero deposit. Fund your wallet after signup.',
+      })
+    }
   } else {
     // ── Sponsor-code gate ───────────────────────────────────────────────────
     const codeValidation = await validateSponsorCode(
@@ -371,6 +410,9 @@ router.post('/bootstrap', async (req, res) => {
     kycLevel,
     sponsorTokenId,
     repayAmount,
+    // Free-signup path: let the service accept the exact-zero deposit (the
+    // min-deposit floor is a gifted-path anti-dust guard, not relevant here).
+    allowZeroDeposit: isUngated,
   })
   if (isSponsorError(result)) {
     // Bootstrap failed — do NOT decrement usesRemaining (caller can retry).
@@ -405,9 +447,10 @@ router.post('/bootstrap', async (req, res) => {
   }
 
   // Account was actually CREATED — now (and only now) spend one IP quota slot.
-  // Peek-only check above means failed/abandoned attempts never counted. Applies
-  // to both the code-gated and X-gated paths. Fire-and-forget.
-  void recordSponsorUse(ip, 'bootstrap')   // fire-and-forget; handles its own errors
+  // Peek-only check above means failed/abandoned attempts never counted. Spend
+  // against the SAME counter we peeked (ungated → its independent counter, so a
+  // free signup never burns an invite-code slot and vice-versa). Fire-and-forget.
+  void recordSponsorUse(ip, rateOp)   // fire-and-forget; handles its own errors
 
   // Commit the redemption audit row (code path only — X path has no codeHash).
   // Fire-and-forget so a DB hiccup doesn't break the user's UX.

@@ -76,6 +76,11 @@ export interface BootstrapParams {
   kycLevel?: number
   sponsorTokenId?: number
   repayAmount?: bigint
+  // Ungated free signup (#229): when true the caller is the route's vetted
+  // zero-deposit path, so the minimum-deposit floor (which exists to stop
+  // dust-griefing on the GIFTED path) is bypassed for an exact-zero deposit.
+  // Has no effect unless depositAmountCAW === 0n.
+  allowZeroDeposit?: boolean
 }
 
 export interface DepositParams {
@@ -275,8 +280,11 @@ export class SponsorService {
 
       // ── Pre-flight checks ──────────────────────────────────────────────
 
-      // 1. Minimum deposit check
-      if (params.depositAmountCAW < this.minDepositCAW) {
+      // 1. Minimum deposit check. The floor stops dust-griefing on the GIFTED
+      //    path; the ungated free-signup path (#229) is an INTENTIONAL exact-zero
+      //    deposit, so it bypasses the floor when the route vouches for it.
+      const isZeroDepositOk = params.allowZeroDeposit === true && params.depositAmountCAW === 0n
+      if (!isZeroDepositOk && params.depositAmountCAW < this.minDepositCAW) {
         return {
           error: 'ZERO_DEPOSIT',
           detail: `depositAmountCAW ${params.depositAmountCAW} is below minimum ${this.minDepositCAW}`,

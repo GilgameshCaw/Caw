@@ -204,6 +204,15 @@ export default function Onboarding() {
     if (r?.ok && r.qualified && r.token) setXQualifiedToken(r.token)
   }, [xSignup.result])
 
+  // Ungated free-signup (#229): when the operator enables it (mirrors the
+  // server's SPONSOR_UNGATED_ENABLED), a user with no invite code and no X
+  // verification can still create a free, zero-deposit profile. The wall offers
+  // it as an explicit choice; choosing it lets the user past the gate, and the
+  // create step sends no code / no X token / zero deposit (already the default
+  // when neither gift source is present).
+  const ungatedEnabled = import.meta.env.VITE_SPONSOR_UNGATED_ENABLED === 'true'
+  const [ungatedChosen, setUngatedChosen] = useState(false)
+
   // ── Gift code fetch ────────────────────────────────────────────────────────
   // Fetched once on mount (when the code passes the loose format check).
   // While loading, giftInfo is null — UsernameStep disables Next.
@@ -551,7 +560,9 @@ export default function Onboarding() {
   // The flow is gated by EITHER a valid invite code OR a completed X-signup
   // verification (xQualifiedToken). Only block when neither is satisfied.
   const codeInvalid = !codeValid || (giftInfo !== null && !giftInfo.valid)
-  const gateBlocked = codeInvalid && !xQualifiedToken
+  // The flow is reachable via a valid invite code, a completed X verification,
+  // OR (when enabled) the user explicitly opting into a free ungated signup.
+  const gateBlocked = codeInvalid && !xQualifiedToken && !(ungatedEnabled && ungatedChosen)
   if (gateBlocked) {
     const xRejected = xSignup.result?.ok && xSignup.result.qualified === false
     const xRejectKey = xSignup.result?.reason === 'x_account_already_used'
@@ -590,6 +601,24 @@ export default function Onboarding() {
             >
               {xSignup.busy ? t('onboarding.x_gate.connecting') : t('onboarding.x_gate.cta')}
             </button>
+
+            {/* Ungated free-signup option (#229) — only when the operator enabled
+                it. Creates a free, zero-balance profile the user funds later. */}
+            {ungatedEnabled && (
+              <>
+                <p className={`mt-4 text-xs ${textFaint}`}>{t('onboarding.x_gate.or_free')}</p>
+                <button
+                  onClick={() => setUngatedChosen(true)}
+                  className={`mt-2 w-full px-4 py-3 rounded-xl text-sm font-semibold transition-colors cursor-pointer border ${
+                    isDark
+                      ? 'border-white/20 text-white hover:bg-white/10'
+                      : 'border-gray-300 text-gray-900 hover:bg-black/5'
+                  }`}
+                >
+                  {t('onboarding.x_gate.free_cta')}
+                </button>
+              </>
+            )}
 
             <button
               onClick={() => navigate('/')}
