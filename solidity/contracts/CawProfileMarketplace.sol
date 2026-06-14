@@ -617,12 +617,16 @@ contract CawProfileMarketplace is ReentrancyGuard {
             }
         }
 
-        // Queue or transfer payment to seller (ETH uses pull pattern — H-15)
+        // Queue payment to the seller — pull-pattern for BOTH ETH (H-15) and
+        // ERC20 (MP-AO-1, audit 2026-06-14): a blocklisted seller would otherwise
+        // make their own acceptOffer revert, but more importantly this keeps the
+        // ERC20 settlement consistent with buyWithToken/settleAuction/refund.
         if (offer.paymentToken == address(0)) {
             pendingPayouts[msg.sender] += offer.amount;
             emit PayoutQueued(msg.sender, offer.amount);
         } else {
-            IERC20(offer.paymentToken).safeTransfer(msg.sender, offer.amount);
+            pendingTokenPayouts[msg.sender][offer.paymentToken] += offer.amount;
+            emit TokenPayoutQueued(msg.sender, offer.paymentToken, offer.amount);
         }
 
         // Transfer NFT to offerer and sync L2 (msg.value covers LZ fee)
@@ -727,7 +731,12 @@ contract CawProfileMarketplace is ReentrancyGuard {
             pendingPayouts[bidder] += amount;
             emit PayoutQueued(bidder, amount);
         } else {
-            IERC20(listing.paymentToken).safeTransfer(bidder, amount);
+            // MP-RDA-1 (audit 2026-06-14): ERC20 pull-pattern too. Only the bidder
+            // can call this; a blocklisted bidder would otherwise have their refund
+            // safeTransfer revert forever, locking their funds. Credit the ledger;
+            // they pull via withdrawTokenPayouts to a non-blocklisted address.
+            pendingTokenPayouts[bidder][listing.paymentToken] += amount;
+            emit TokenPayoutQueued(bidder, listing.paymentToken, amount);
         }
 
         emit AuctionDefaulted(listingId, bidder, amount);

@@ -103,6 +103,13 @@ contract CawActionsArchive is ReentrancyGuard, OnlyOnce, OApp {
   /// @notice Validator stakes: address => staked ETH amount
   mapping(address => uint256) public stakes;
 
+  /// @notice Pull-pattern slash rewards (NONEXIST-1, audit 2026-06-14). The slash
+  ///         reward is CREDITED here, never pushed — a non-payable rewardTo (e.g.
+  ///         a fraudulent validator front-running the non-existence relay with a
+  ///         contract that reverts on receive) must not be able to revert the
+  ///         slash and keep the fraud un-slashable. Claim via claimReward.
+  mapping(address => uint256) public pendingReward;
+
   /// @notice Count of pending (unfinalized, unslashed) submissions per validator
   mapping(address => uint256) public pendingCount;
 
@@ -154,6 +161,7 @@ contract CawActionsArchive is ReentrancyGuard, OnlyOnce, OApp {
 
   event Deposited(address indexed validator, uint256 amount, uint256 totalStake);
   event Withdrawn(address indexed validator, uint256 amount, uint256 remaining);
+  event RewardClaimed(address indexed challenger, address indexed to, uint256 amount);
 
   event SubmissionCreated(
     uint256 indexed submissionId,
@@ -595,6 +603,13 @@ contract CawActionsArchive is ReentrancyGuard, OnlyOnce, OApp {
   ///      reverts — callers must pass a payable address (resolveChallenge is
   ///      called directly; the non-existence relayer chooses its own rewardTo).
   function _executeSlash(address validator, uint256 submissionId, uint256 checkpointId, address rewardTo) internal {
+    // ARC-NEX-1 (audit 2026-06-14): self-slash guard for ALL callers. Without it,
+    // a fraudulent validator could self-relay a non-existence slash (rewardTo =
+    // themselves) and recover their own stake — making fabricated submissions
+    // free. resolveChallenge/slashIncoherentRoot guard before calling here; the
+    // non-existence path did not, so the guard lives here to cover every caller.
+    require(rewardTo != validator, "Self-slash forbidden");
+
     uint256 reward = stakes[validator];
     stakes[validator] = 0;
 
@@ -615,12 +630,28 @@ contract CawActionsArchive is ReentrancyGuard, OnlyOnce, OApp {
     pendingCount[validator] = 0;
     delete validatorSubmissions[validator];
 
+    // NONEXIST-1 (audit 2026-06-14): credit the reward (pull), never push — a
+    // non-payable rewardTo must not be able to revert the slash and keep the
+    // fraud alive. The slash state transition is now unconditional; rewardTo
+    // claims via claimReward.
     if (reward > 0) {
-      (bool ok,) = rewardTo.call{value: reward}("");
-      require(ok, "Transfer failed");
+      pendingReward[rewardTo] += reward;
     }
 
     emit ValidatorSlashed(validator, rewardTo, submissionId, checkpointId, reward);
+  }
+
+  /// @notice Claim accrued slash rewards (pull-pattern, NONEXIST-1). Sent to
+  ///         `to` so a challenger/relayer can route around a blocklist or a
+  ///         contract that can't receive at its own address.
+  function claimReward(address to) external nonReentrant {
+    require(to != address(0), "Zero address");
+    uint256 amount = pendingReward[msg.sender];
+    require(amount > 0, "Nothing to claim");
+    pendingReward[msg.sender] = 0;
+    (bool ok,) = to.call{value: amount}("");
+    require(ok, "Transfer failed");
+    emit RewardClaimed(msg.sender, to, amount);
   }
 
   // ============================================

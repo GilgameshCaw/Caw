@@ -78,15 +78,36 @@ contract ArchiveNonExistenceTest is Test {
     function test_overReachingSubmission_isSlashed() public {
         archive.harnessInjectSubmission(1, attacker, NETWORK_ID, 11, 266);
 
-        uint256 relayerBalBefore = relayer.balance;
         // Source's real height = 16 (only checkpoints 1..16 exist).
         archive.harnessDeliverNonExistence(1, NETWORK_ID, 16, relayer);
 
-        // Slashed: status SLASHED, stake zeroed, relayer paid.
+        // Slashed: status SLASHED, stake zeroed, reward CREDITED to relayer (pull).
         ( , , , , , , CawActionsArchive.Status status, ) = archive.submissions(1);
         assertEq(uint8(status), uint8(CawActionsArchive.Status.SLASHED), "over-reaching submission slashed");
         assertEq(archive.stakes(attacker), 0, "attacker stake zeroed");
-        assertEq(relayer.balance, relayerBalBefore + 0.05 ether, "relayer paid the slashed stake");
+        // NONEXIST-1: reward is pull-pattern (credited, not pushed).
+        assertEq(archive.pendingReward(relayer), 0.05 ether, "relayer reward credited");
+
+        // Relayer claims to a fresh address.
+        uint256 relayerBalBefore = relayer.balance;
+        vm.prank(relayer);
+        archive.claimReward(relayer);
+        assertEq(relayer.balance, relayerBalBefore + 0.05 ether, "relayer claims the slashed stake");
+        assertEq(archive.pendingReward(relayer), 0, "reward cleared after claim");
+    }
+
+    // ARC-NEX-1: a fraudulent validator self-relaying their own non-existence
+    // slash (rewardTo = themselves) is rejected — they can't recover their stake.
+    function test_selfSlash_rejected() public {
+        archive.harnessInjectSubmission(9, attacker, NETWORK_ID, 11, 266);
+        // _executeSlash reverts "Self-slash forbidden"; _processChallenge runs it
+        // via this._processNonExistence, so the revert bubbles out of the harness call.
+        vm.expectRevert();
+        archive.harnessDeliverNonExistence(9, NETWORK_ID, 16, attacker);
+        // Submission untouched, stake intact.
+        ( , , , , , , CawActionsArchive.Status status, ) = archive.submissions(9);
+        assertEq(uint8(status), uint8(CawActionsArchive.Status.PENDING), "self-slash did not slash");
+        assertEq(archive.stakes(attacker), 0.05 ether, "stake intact after rejected self-slash");
     }
 
     // An HONEST submission entirely within the source's real height is NOT slashed
