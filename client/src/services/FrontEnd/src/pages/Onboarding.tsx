@@ -30,6 +30,7 @@ import { useNavigate } from '~/utils/localizedRouter'
 import UsernameStep from './onboarding/UsernameStep'
 import VaultPasswordStep from './onboarding/VaultPasswordStep'
 import PasskeyStep from './onboarding/PasskeyStep'
+import CreateAccountStep from './onboarding/CreateAccountStep'
 import BackupStep from './onboarding/BackupStep'
 import ConfirmStep from './onboarding/ConfirmStep'
 import BoidsBg from '~/components/BoidsBg3D'
@@ -55,6 +56,7 @@ type OnboardingStep =
   | 'username'
   | 'vault-password'
   | 'passkey'
+  | 'create-account' // the on-chain mint (#236 split this out of 'backup')
   | 'backup'
   | 'confirm'
 
@@ -101,6 +103,7 @@ const PROGRESS_STEPS: OnboardingStep[] = [
   'username',
   'vault-password',
   'passkey',
+  'create-account',
   'backup',
 ]
 
@@ -108,6 +111,7 @@ const ALL_STEPS: OnboardingStep[] = [
   'username',
   'vault-password',
   'passkey',
+  'create-account',
   'backup',
   'confirm',
 ]
@@ -123,6 +127,7 @@ const STEP_META: StepMeta[] = [
   { id: 'username',       icon: <HiAtSymbol className="w-4 h-4" />,     shortLabel: '@' },
   { id: 'vault-password', icon: <HiLockClosed className="w-4 h-4" />,   shortLabel: 'Vault' },
   { id: 'passkey',        icon: <HiFingerPrint className="w-4 h-4" />,  shortLabel: 'Key' },
+  { id: 'create-account', icon: <HiCheck className="w-4 h-4" />,        shortLabel: 'Create' },
   { id: 'backup',         icon: <HiCloudDownload className="w-4 h-4" />,shortLabel: 'Save' },
 ]
 
@@ -155,6 +160,7 @@ function stepLabel(step: OnboardingStep, t: (k: string) => string): string {
     case 'username':       return t('onboarding.step.username')
     case 'vault-password': return t('onboarding.step.vault_password')
     case 'passkey':        return t('onboarding.step.passkey')
+    case 'create-account': return t('onboarding.step.create_account')
     case 'backup':         return t('onboarding.step.backup')
     case 'confirm':        return t('onboarding.step.confirm')
   }
@@ -322,7 +328,14 @@ export default function Onboarding() {
 
   // PasskeyStep → advances to 'backup' after successful enrollment
   const handlePasskeyEnrolled = useCallback((passkey: PasskeyPubkey) => {
-    setState(s => ({ ...s, enrolledPasskey: passkey, step: 'backup' }))
+    setState(s => ({ ...s, enrolledPasskey: passkey, step: 'create-account' }))
+  }, [])
+
+  // CreateAccountStep → stash the freshly-minted wallet and advance to the
+  // recovery-file backup step. The post-mint sign-in does NOT fire here — it
+  // runs in handleBootstrapDone after the user finishes (or skips) backup.
+  const handleAccountCreated = useCallback((result: BootstrapResult) => {
+    setState(s => ({ ...s, bootstrapResult: result, step: 'backup' }))
   }, [])
 
   // BackupStep → advances to 'confirm' after successful bootstrap, then
@@ -754,9 +767,9 @@ export default function Onboarding() {
             </div>
           )}
 
-          {state.step === 'backup' && state.enrolledPasskey && (
+          {state.step === 'create-account' && state.enrolledPasskey && (
             <div className="max-w-[600px] mx-auto">
-              <BackupStep
+              <CreateAccountStep
                 code={normalizedCode}
                 xQualifiedToken={xQualifiedToken ?? undefined}
                 username={state.username}
@@ -765,9 +778,19 @@ export default function Onboarding() {
                 sponsorTokenId={repaySponsorTokenId}
                 vaultPassword={state.vaultPassword}
                 passkey={state.enrolledPasskey}
-                onNext={handleBootstrapDone}
+                onCreated={handleAccountCreated}
                 onUsernameTaken={handleUsernameTaken}
                 onBack={goBack}
+              />
+            </div>
+          )}
+
+          {state.step === 'backup' && state.bootstrapResult && (
+            <div className="max-w-[600px] mx-auto">
+              <BackupStep
+                bootstrapResult={state.bootstrapResult}
+                username={state.username}
+                onNext={handleBootstrapDone}
               />
             </div>
           )}

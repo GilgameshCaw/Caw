@@ -391,7 +391,7 @@ describe('PasskeyStep', () => {
 
 // ─── BackupStep / bootstrapNewUser error handling tests ────────────────────────
 
-describe('BackupStep error handling', () => {
+describe('CreateAccountStep error handling + backup → confirm flow', () => {
   beforeEach(() => {
     vi.clearAllMocks()
     vi.useFakeTimers()
@@ -421,7 +421,11 @@ describe('BackupStep error handling', () => {
     ecdsaAddress: '0xabc123' as `0x${string}`,
   }
 
-  async function navigateToBackupStep() {
+  // #236 split the flow: the on-chain mint now lives in CreateAccountStep, and
+  // BackupStep is the recovery-file step AFTER a successful mint. So mint errors
+  // (INSUFFICIENT_FUNDS / RATE_LIMITED / USERNAME_TAKEN) surface on the
+  // create-account step, and the backup step is only reached once mint succeeds.
+  async function navigateToCreateAccountStep() {
     render(React.createElement(Onboarding), { wrapper: makeWrapper() })
 
     // Username
@@ -444,17 +448,27 @@ describe('BackupStep error handling', () => {
     // Passkey
     mockEnrollPasskey.mockResolvedValueOnce(fakePubkey)
     await act(async () => { fireEvent.click(screen.getByText('onboarding.passkey.cta')) })
-    // Now on backup step
-    expect(screen.getByText('onboarding.backup.title')).toBeInTheDocument()
+    // Now on the create-account step
+    expect(screen.getByText('onboarding.create.title')).toBeInTheDocument()
   }
 
-  it('advances to confirm step on successful bootstrap', async () => {
+  it('advances through backup to confirm on successful bootstrap', async () => {
     mockBootstrapNewUser.mockResolvedValueOnce(fakeBootstrapResult)
     mockDownloadBackupBlob.mockReturnValue(undefined)
 
-    await navigateToBackupStep()
+    await navigateToCreateAccountStep()
+    // Create the account (mint) → lands on the backup step.
     await act(async () => {
-      fireEvent.click(screen.getByText('onboarding.backup.cta'))
+      fireEvent.click(screen.getByText('onboarding.create.cta_create'))
+    })
+    expect(screen.getByText('onboarding.backup.title')).toBeInTheDocument()
+
+    // Download the recovery file, then finish → confirm step.
+    await act(async () => {
+      fireEvent.click(screen.getByText('onboarding.backup.action_download'))
+    })
+    await act(async () => {
+      fireEvent.click(screen.getByText('onboarding.backup.done'))
     })
 
     expect(screen.getByText('onboarding.confirm.title')).toBeInTheDocument()
@@ -466,9 +480,9 @@ describe('BackupStep error handling', () => {
     err.code = 'INSUFFICIENT_FUNDS'
     mockBootstrapNewUser.mockRejectedValueOnce(err)
 
-    await navigateToBackupStep()
+    await navigateToCreateAccountStep()
     await act(async () => {
-      fireEvent.click(screen.getByText('onboarding.backup.cta'))
+      fireEvent.click(screen.getByText('onboarding.create.cta_create'))
     })
 
     expect(screen.getByText('onboarding.backup.error_no_funds')).toBeInTheDocument()
@@ -480,9 +494,9 @@ describe('BackupStep error handling', () => {
     err.code = 'RATE_LIMITED'
     mockBootstrapNewUser.mockRejectedValueOnce(err)
 
-    await navigateToBackupStep()
+    await navigateToCreateAccountStep()
     await act(async () => {
-      fireEvent.click(screen.getByText('onboarding.backup.cta'))
+      fireEvent.click(screen.getByText('onboarding.create.cta_create'))
     })
 
     expect(screen.getByText('onboarding.backup.error_rate_limited')).toBeInTheDocument()
@@ -492,9 +506,9 @@ describe('BackupStep error handling', () => {
   it('shows generic error with retry button for unknown errors', async () => {
     mockBootstrapNewUser.mockRejectedValueOnce(new Error('Network timeout'))
 
-    await navigateToBackupStep()
+    await navigateToCreateAccountStep()
     await act(async () => {
-      fireEvent.click(screen.getByText('onboarding.backup.cta'))
+      fireEvent.click(screen.getByText('onboarding.create.cta_create'))
     })
 
     // Generic error includes the error message
@@ -511,9 +525,9 @@ describe('BackupStep error handling', () => {
     err.code = 'USERNAME_TAKEN'
     mockBootstrapNewUser.mockRejectedValueOnce(err)
 
-    await navigateToBackupStep()
+    await navigateToCreateAccountStep()
     await act(async () => {
-      fireEvent.click(screen.getByText('onboarding.backup.cta'))
+      fireEvent.click(screen.getByText('onboarding.create.cta_create'))
     })
 
     // Should be back on username step
