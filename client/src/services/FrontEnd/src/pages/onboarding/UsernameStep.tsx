@@ -178,7 +178,13 @@ export default function UsernameStep({
     chainId: chains.l1.chainId,
     functionName: 'idByUsername',
     args: [debouncedUsername],
-    query: { enabled: isValidForRpc },
+    // staleTime: 0 — a username's availability changes the instant someone mints
+    // it (including the user's OWN just-failed mint attempt). With wagmi's default
+    // caching, idByUsername(name)=0 was cached as "available" and kept serving 0
+    // even after the name got taken, so the user got bounced back here with the
+    // name still showing "available" and the mint failing USERNAME_TAKEN forever.
+    // Forcing a fresh read makes the just-taken name correctly show as taken.
+    query: { enabled: isValidForRpc, staleTime: 0, gcTime: 0 },
   })
 
   // Sync availability to parent whenever the input or check result changes.
