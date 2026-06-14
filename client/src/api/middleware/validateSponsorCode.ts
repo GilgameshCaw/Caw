@@ -70,6 +70,7 @@ const keyIpAttempts      = (ip: string)                     => `sponsor:ipattemp
 
 export type CodeValidationErrorCode =
   | 'INVALID_CODE'
+  | 'CODE_RATE_LIMITED'
   | 'CODE_EXPIRED'
   | 'CODE_EXHAUSTED'
   | 'BUDGET_EXCEEDED'
@@ -393,11 +394,15 @@ export async function validateSponsorCode(
   // ── 5. Per-code per-IP rate limit (1/hour) ─────────────────────────────────
   const rateOk = await checkCodeRateLimit(codeHash, ip)
   if (!rateOk) {
-    // Not an "invalid code" — don't increment the ban counter.
+    // Not an "invalid code" — don't increment the ban counter. This is a throttle
+    // on attempt VOLUME, not a signal about the code's validity (you get throttled
+    // whether the code is good or bad), so it's safe to surface distinctly to the
+    // user as an actionable "wait an hour" rather than collapsing into the opaque
+    // "code rejected" bucket that the brute-force defense reserves for validity.
     await sleepToTarget(startMs)
     return {
       ok: false,
-      error: 'INVALID_CODE',
+      error: 'CODE_RATE_LIMITED',
       detail: 'Too many attempts with this code from your IP. Try again in an hour.',
     }
   }

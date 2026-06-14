@@ -71,6 +71,7 @@ type LoadingPhase = 'sponsor' | 'chain' | null
 type ErrorKind =
   | 'INSUFFICIENT_FUNDS'
   | 'RATE_LIMITED'
+  | 'CODE_RATE_LIMITED'
   | 'CODE_REJECTED'
   | 'generic'
   | null
@@ -320,7 +321,13 @@ export default function BackupStep({
         kind = 'INSUFFICIENT_FUNDS'
       } else if (errCode === 'RATE_LIMITED') {
         kind = 'RATE_LIMITED'
-        detail = (err as Error & { detail?: string })?.detail
+        detail = (err as Error & { detail?: string })?.detail ?? (err instanceof Error ? err.message : undefined)
+      } else if (errCode === 'CODE_RATE_LIMITED') {
+        // Throttle on attempt VOLUME, not code validity — safe to surface the
+        // actionable "try again in an hour" detail instead of the opaque
+        // "code rejected" bucket. The detail rides in the Error message. (#238)
+        kind = 'CODE_RATE_LIMITED'
+        detail = (err as Error & { detail?: string })?.detail ?? (err instanceof Error ? err.message : undefined)
       } else if (errCode && SPONSOR_CODE_ERROR_CODES.has(errCode)) {
         // Collapse all sponsor-code errors into one generic UI. Surfacing
         // the specific error (e.g. CODE_EXPIRED vs INVALID_CODE) would let
@@ -406,6 +413,9 @@ export default function BackupStep({
         msg = error.detail
           ? t('onboarding.backup.error_rate_limited_detail', { detail: error.detail })
           : t('onboarding.backup.error_rate_limited')
+        break
+      case 'CODE_RATE_LIMITED':
+        msg = error.detail || t('onboarding.backup.error_code_rate_limited')
         break
       case 'CODE_REJECTED':
         msg = t('onboarding.backup.error_code_rejected')

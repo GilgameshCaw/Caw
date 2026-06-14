@@ -326,6 +326,7 @@ router.post('/bootstrap', async (req, res) => {
       const statusMap: Record<string, number> = {
         INVALID_CODE_LOCKDOWN: 503,
         IP_BANNED: 403,
+        CODE_RATE_LIMITED: 429,
         BUDGET_EXCEEDED: 400,
         CODE_EXPIRED: 400,
         CODE_EXHAUSTED: 400,

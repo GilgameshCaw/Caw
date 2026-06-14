@@ -1628,6 +1628,7 @@
   "onboarding.backup.error_no_funds": "Sponsor temporarily out of CAW. Please try again later.",
   "onboarding.backup.error_rate_limited": "Too many signups from your IP. Please try again later.",
   "onboarding.backup.error_rate_limited_detail": "Too many signups from your IP. {{detail}}",
+  "onboarding.backup.error_code_rate_limited": "Too many attempts with this code from your IP. Please try again in an hour.",
   "onboarding.backup.error_code_rejected": "Your invite code couldn't be used right now. Try again later or with a different code.",
   "onboarding.backup.error_generic": "Something went wrong. Your information has been preserved — please try again.",
   "onboarding.backup.cta_create": "Create my account",
