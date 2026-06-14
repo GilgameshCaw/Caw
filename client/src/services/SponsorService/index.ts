@@ -249,6 +249,16 @@ export class SponsorService {
   // ── Public surface ──────────────────────────────────────────────────────
 
   /**
+   * The relayer's own address — the hot wallet that fronts gas + ETH value for
+   * every sponsored/relayed tx. This is the address a passkey-signed executeBatch
+   * must repay (in CAW) to cover the gas the relayer pays. It's a liquid EOA
+   * balance, not a profile tokenId, so the repaid CAW is immediately usable.
+   */
+  relayerAddress(): string {
+    return this.wallet.address
+  }
+
+  /**
    * Bootstrap a new Population B user in a single EIP-7702 type-4 tx.
    * The tx:
    *   1. Applies the 7702 auth tuple (delegates EOA → SmartEOA).

@@ -58,6 +58,51 @@ function ethWeiToWholeCaw(weiEth: bigint, cawPerEth: bigint): bigint {
   return (weiEth * cawPerEth) / (10n ** 36n)
 }
 
+// ─── executeBatch relay gas fee ──────────────────────────────────────────────
+// Gas the validator/sponsor fronts when relaying a passkey-signed executeBatch
+// (a self-custody withdraw or zap). The user must repay this in CAW inside the
+// signed batch (a CAW.transfer to the relayer), or relaying is an open subsidy.
+// Mirrors the GAS_LIMIT_EXECUTE_BATCH ceiling in SponsorService/index.ts.
+const GAS_LIMIT_EXECUTE_BATCH = 800_000n
+
+export interface ExecuteFeeQuote {
+  /** Minimum CAW (wei, 18-dec) the batch must transfer to the relayer to cover
+   *  the gas it fronts. 0n when prices are unavailable (caller must refuse). */
+  minFeeCawWei: bigint
+  /** True when live, non-stale prices backed the quote. */
+  priceAvailable: boolean
+}
+
+/**
+ * Minimum CAW (wei) an executeBatch must pay the relayer to cover the gas it
+ * fronts, priced from the cached CAW/ETH rate with the same 15-min staleness
+ * guard as the invite quote. Pure read; never throws. When prices are stale or
+ * unavailable, returns priceAvailable=false / 0n so the relay refuses rather
+ * than fronts gas for free (or, worse, prices it against a stale-low rate so a
+ * dust CAW transfer clears the floor).
+ *
+ * Returned in wei-CAW (18-dec) — matching an on-chain ERC-20 `transfer` amount,
+ * NOT whole CAW. cawPerEth is "CAW per 1 ETH scaled by 1e18", and gasWei is in
+ * wei-ETH, so (gasWei * cawPerEth) / 1e18 lands on wei-CAW directly.
+ */
+export function quoteExecuteGasFeeCaw(gasPriceWei?: bigint): ExecuteFeeQuote {
+  const cawPrice = getCawPriceCache()
+  const ethPrice = getEthPriceCache()
+
+  if (!cawPrice || !ethPrice || cawPrice.cawPerEth <= 0n) {
+    return { minFeeCawWei: 0n, priceAvailable: false }
+  }
+  const now = Date.now()
+  if (now - cawPrice.updatedAt > MAX_PRICE_AGE_MS || now - ethPrice.updatedAt > MAX_PRICE_AGE_MS) {
+    return { minFeeCawWei: 0n, priceAvailable: false }
+  }
+
+  const gasWei = (gasPriceWei ?? GAS_PRICE_WEI) * GAS_LIMIT_EXECUTE_BATCH
+  // wei-ETH * (CAW-per-ETH scaled 1e18) / 1e18 = wei-CAW.
+  const minFeeCawWei = (gasWei * cawPrice.cawPerEth) / (10n ** 18n)
+  return { minFeeCawWei, priceAvailable: true }
+}
+
 /**
  * Compute the invite-code pricing from cached chain prices. Pure read; never
  * throws. When prices are unavailable, returns priceAvailable=false with zero

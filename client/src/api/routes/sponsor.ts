@@ -33,7 +33,8 @@ import {
 } from '../middleware/validateSponsorCode'
 import { getCawPriceCache, getEthPriceCache } from '../../services/ChainSyncService'
 import { hashCode } from '../../services/SponsorService/codes'
-import { quoteSponsorInviteCostCaw } from '../../services/SponsorService/inviteQuote'
+import { quoteSponsorInviteCostCaw, quoteExecuteGasFeeCaw } from '../../services/SponsorService/inviteQuote'
+import { CAW_ADDRESS } from '../../abi/addresses'
 import { getOwnValidatorTokenId } from '../../services/SponsorService/validatorIdentity'
 import { decryptInviteCode } from '../../services/SponsorService/inviteCodeCrypto'
 import { requireAuth } from '../middleware/auth'
@@ -467,14 +468,20 @@ router.post('/authenticate', async (req, res) => {
 // what the user signed, so it can't redirect funds or inflate the fee.
 //
 // THE POLICY GATE (protects the validator's wallet): every call's `to` must be an
-// allow-listed CAW contract (CawProfile or Minter), and the total ETH value is
-// capped. A user could otherwise sign a batch whose `value` drains the validator;
-// the contract is general, this route is the gate.
+// allow-listed contract, the total ETH value is capped, AND the batch must repay
+// the relayer in CAW for the gas it fronts. A user could otherwise sign a batch
+// whose `value` drains the validator, or one that withdraws while paying nothing —
+// either way the relayer eats the cost. The contract is general; this route is the
+// gate. CAW_ADDRESS is allow-listed so the in-batch fee transfer (and any tip/
+// remainder splits of a withdraw) can target the CAW token itself.
 const EXECUTE_ALLOWED_TARGETS = new Set(
-  [process.env.CAW_NAMES_ADDRESS, process.env.CAW_NAMES_MINTER_ADDRESS]
+  [process.env.CAW_NAMES_ADDRESS, process.env.CAW_NAMES_MINTER_ADDRESS, CAW_ADDRESS]
     .filter(Boolean)
     .map(a => (a as string).toLowerCase()),
 )
+// ERC-20 transfer(address,uint256) selector — used to decode the relayer-fee call.
+const ERC20_TRANSFER_SELECTOR = '0xa9059cbb'
+const CAW_ADDRESS_LC = CAW_ADDRESS.toLowerCase()
 const ADDR_RE_EXEC = /^0x[0-9a-fA-F]{40}$/
 const HEX_RE = /^0x[0-9a-fA-F]*$/
 const ExecuteBodySchema = z.object({
@@ -487,6 +494,25 @@ const ExecuteBodySchema = z.object({
   nonce: z.string().regex(/^\d+$/),
   sig:   z.string().regex(HEX_RE),
 })
+
+/**
+ * Decode a `transfer(address to, uint256 amount)` calldata. Returns null if the
+ * calldata is not a well-formed ERC-20 transfer (wrong selector or length).
+ * calldata = 0xa9059cbb || 32-byte to (right-aligned) || 32-byte amount.
+ * 4 + 32 + 32 = 68 bytes = 138 hex chars incl. 0x.
+ */
+export function decodeErc20Transfer(data: string): { to: string; amount: bigint } | null {
+  const lc = data.toLowerCase()
+  if (!lc.startsWith(ERC20_TRANSFER_SELECTOR)) return null
+  if (lc.length !== 2 + 8 + 64 + 64) return null
+  const toWord = lc.slice(10, 74)              // 32 bytes
+  // address occupies the low 20 bytes; the high 12 bytes must be zero.
+  if (toWord.slice(0, 24) !== '0'.repeat(24)) return null
+  const to = '0x' + toWord.slice(24)
+  let amount: bigint
+  try { amount = BigInt('0x' + lc.slice(74, 138)) } catch { return null }
+  return { to, amount }
+}
 
 router.post('/execute', async (req, res) => {
   const service = getSponsorService()
@@ -508,7 +534,8 @@ router.post('/execute', async (req, res) => {
     return res.status(400).json({ error: 'VALIDATION', detail })
   }
 
-  // Policy allow-list: every target must be a known CAW contract.
+  // Policy allow-list: every target must be a known CAW contract (or the CAW
+  // token itself, for the fee transfer + withdraw splits).
   if (EXECUTE_ALLOWED_TARGETS.size === 0) {
     return res.status(503).json({ error: 'RELAY_UNCONFIGURED', detail: 'No allow-listed targets configured' })
   }
@@ -516,6 +543,39 @@ router.post('/execute', async (req, res) => {
     if (!EXECUTE_ALLOWED_TARGETS.has(c.to.toLowerCase())) {
       return res.status(400).json({ error: 'TARGET_NOT_ALLOWED', detail: `Call target ${c.to} is not an allow-listed CAW contract` })
     }
+  }
+
+  // ── FEE INVARIANT: the batch must repay the relayer in CAW for the gas it
+  //    fronts, or relaying is an open subsidy (and the whole "anyone submits,
+  //    submitter keeps the fee" model collapses). Sum every CAW.transfer in the
+  //    batch whose recipient is THIS relayer's hot wallet, and require the total
+  //    to meet the live gas quote. The fee + recipient are signature-bound, so a
+  //    relayer can't inflate the fee and the user can't fake it post-hoc.
+  const feeQuote = quoteExecuteGasFeeCaw()
+  if (!feeQuote.priceAvailable) {
+    // No live price → we can't price the gas → refuse rather than relay for free
+    // or against a stale-low rate (mirrors inviteQuote's M-2 staleness refusal).
+    return res.status(503).json({
+      error: 'PRICE_UNAVAILABLE',
+      detail: 'CAW/ETH price is unavailable or stale; cannot price the relay fee. Try again shortly.',
+    })
+  }
+  const relayer = service.relayerAddress().toLowerCase()
+  let feePaidCawWei = 0n
+  for (const c of body.calls) {
+    if (c.to.toLowerCase() !== CAW_ADDRESS_LC) continue
+    const decoded = decodeErc20Transfer(c.data)
+    if (decoded && decoded.to.toLowerCase() === relayer) {
+      feePaidCawWei += decoded.amount
+    }
+  }
+  if (feePaidCawWei < feeQuote.minFeeCawWei) {
+    return res.status(400).json({
+      error: 'FEE_TOO_LOW',
+      detail:
+        `Batch must transfer at least ${feeQuote.minFeeCawWei} CAW (wei) to the relayer ` +
+        `${relayer} to cover gas; batch pays ${feePaidCawWei}. Re-quote and re-sign.`,
+    })
   }
 
   // Total ETH value the validator fronts (e.g. the withdraw LZ fee). Cap mirrors
@@ -670,6 +730,23 @@ router.get('/invite-quote', async (_req, res) => {
     cawUsdRate: quote.cawUsdRate,
     priceAvailable: quote.priceAvailable,
     validatorTokenId,
+  })
+})
+
+// ─── GET /api/sponsor/execute-quote ──────────────────────────────────────────
+// Public. The CAW fee (wei) a passkey-wallet executeBatch must transfer to the
+// relayer to cover the gas it fronts, plus the relayer address to pay it to. The
+// FE reads this to build the fee call inside a withdraw/zap batch BEFORE signing.
+// The /execute relay re-derives the same quote authoritatively and rejects a
+// batch that underpays — this endpoint is a UX pre-flight, not a trust boundary.
+router.get('/execute-quote', async (_req, res) => {
+  const service = getSponsorService()
+  const quote = quoteExecuteGasFeeCaw()
+  return res.status(200).json({
+    relayer: service ? service.relayerAddress() : null,
+    minFeeCawWei: quote.minFeeCawWei.toString(),
+    priceAvailable: quote.priceAvailable,
+    cawAddress: CAW_ADDRESS,
   })
 })
 
