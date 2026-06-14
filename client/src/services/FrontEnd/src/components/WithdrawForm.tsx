@@ -46,6 +46,13 @@ interface WithdrawFormProps {
   tokenId: number | undefined
   /** withdrawable CAW in wei for this token (from L1 on-chain read) */
   withdrawableWei: bigint
+  /**
+   * The withdrawing wallet's L1 ETH balance in wei. Used ONLY to pre-warn Pop-B
+   * users that their passkey EOA can't cover the LZ native fee (the withdrawTo
+   * call carries `value: withdrawFee`, so the EOA must hold that ETH or the whole
+   * relayed batch reverts). Optional: when undefined the guard is skipped.
+   */
+  ethBalanceWei?: bigint
   /** Called after a successful L1 withdrawal so parents can refetch data */
   onSuccess?: () => void
   /** Called after a successful L1 withdrawal (same) — alias kept for Staking compat */
@@ -59,7 +66,7 @@ function isValidAddress(s: string): boolean {
   return /^0x[0-9a-fA-F]{40}$/.test(s) && isAddress(s)
 }
 
-export function WithdrawForm({ tokenId, withdrawableWei, onSuccess, onSuccessRefetch, className }: WithdrawFormProps) {
+export function WithdrawForm({ tokenId, withdrawableWei, ethBalanceWei, onSuccess, onSuccessRefetch, className }: WithdrawFormProps) {
   const t = useT()
   const { isDark } = useTheme()
   const ensureWallet = useEnsureWallet()
@@ -219,6 +226,17 @@ export function WithdrawForm({ tokenId, withdrawableWei, onSuccess, onSuccessRef
     ? Math.max(0, withdrawableCaw - (feeCawDisplay ?? 0))
     : withdrawableCaw
 
+  // Pop-B ETH-fee cliff: the withdrawTo call carries the LZ native fee as `value`,
+  // paid from the passkey EOA. A phone-first user typically holds no ETH, so the
+  // batch would revert. Pre-warn + block once we know the fee and the balance.
+  // Skip the guard until both the fee quote and the balance are known (avoid a
+  // false "needs ETH" flash before withdrawFee resolves).
+  const popBNeedsEth =
+    isPopB &&
+    withdrawFee > 0n &&
+    ethBalanceWei != null &&
+    ethBalanceWei < withdrawFee
+
   // Shared theme helpers (no hardcoded text-white per feedback_light_mode_contrast.md)
   const strongClass = isDark ? 'text-white' : 'text-black'
   const mutedClass = isDark ? 'text-gray-400' : 'text-gray-600'
@@ -303,15 +321,22 @@ export function WithdrawForm({ tokenId, withdrawableWei, onSuccess, onSuccessRef
             {t('withdraw.pricing_unavailable')}
           </p>
         )}
+
+        {/* Pop-B ETH-fee cliff: the EOA can't cover the LZ native fee */}
+        {popBNeedsEth && (
+          <p className="text-xs text-red-500 mt-2">
+            {t('withdraw.needs_eth_for_fee', { amount: lzFeeEth.toFixed(5) })}
+          </p>
+        )}
       </div>
 
       {/* Confirm step — anti-phishing panel */}
       {!confirmVisible ? (
         <button
           onClick={() => setConfirmVisible(true)}
-          disabled={!recipientValid || withdrawFee === 0n}
+          disabled={!recipientValid || withdrawFee === 0n || popBNeedsEth}
           className={`w-full py-3 px-4 rounded-full font-semibold transition-all duration-300 ${
-            !recipientValid || withdrawFee === 0n
+            !recipientValid || withdrawFee === 0n || popBNeedsEth
               ? isDark ? 'bg-gray-700 text-gray-400 cursor-not-allowed' : 'bg-gray-300 text-gray-600 cursor-not-allowed'
               : 'bg-yellow-500 hover:bg-yellow-600 text-black cursor-pointer'
           }`}
@@ -360,11 +385,13 @@ export function WithdrawForm({ tokenId, withdrawableWei, onSuccess, onSuccessRef
               disabled={
                 isPending ||
                 !recipientValid ||
+                popBNeedsEth ||
                 (isPopB && (!sponsorQuote || !sponsorQuote.priceAvailable || quoteLoading))
               }
               className={`flex-1 py-2 px-4 rounded-full text-sm font-semibold transition-all duration-300 ${
                 isPending ||
                 !recipientValid ||
+                popBNeedsEth ||
                 (isPopB && (!sponsorQuote || !sponsorQuote.priceAvailable || quoteLoading))
                   ? isDark ? 'bg-gray-700 text-gray-400 cursor-not-allowed' : 'bg-gray-300 text-gray-600 cursor-not-allowed'
                   : 'bg-yellow-500 hover:bg-yellow-600 text-black cursor-pointer'

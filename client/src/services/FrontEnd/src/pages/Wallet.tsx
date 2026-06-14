@@ -158,6 +158,7 @@ const Wallet = () => {
           <WithdrawForm
             tokenId={tokenId}
             withdrawableWei={effectiveWithdrawable}
+            ethBalanceWei={ethBalance?.value}
             onSuccess={handleWithdrawSuccess}
           />
         </div>
