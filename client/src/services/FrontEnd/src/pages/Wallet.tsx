@@ -10,7 +10,7 @@
 
 import React from 'react'
 import { useAccount, useBalance, useReadContract } from 'wagmi'
-import { erc20Abi, formatEther, formatUnits } from 'viem'
+import { erc20Abi, formatEther } from 'viem'
 import { CAW_ADDRESS, CAW_NAMES_ADDRESS } from '~/../../../abi/addresses'
 import { cawProfileAbi } from '~/../../../abi/generated'
 import { CLIENT_ID } from '~/api/actions'
@@ -172,10 +172,6 @@ const Wallet = () => {
           server's depositZap entry point). Pop-A depositZap is wired in Staking.tsx.
           Scaffold below is intentionally not implemented — see report for details. */}
       {/* <ZapSection population={population} address={displayAddress} /> */}
-
-      {/* CLIENT_ID kept for future zap integration */}
-      {void CLIENT_ID && null}
-      {void formatUnits && null}
     </div>
   )
 }

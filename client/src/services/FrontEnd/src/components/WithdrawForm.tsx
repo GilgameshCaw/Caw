@@ -196,7 +196,7 @@ export function WithdrawForm({ tokenId, withdrawableWei, onSuccess, onSuccessRef
       onSuccessRefetch?.()
     } catch (err) {
       console.error('[WithdrawForm] Pop-B withdraw error:', err)
-      handleError(err as Error, 'pop-b-withdraw')
+      handleError(err as never, 'pop-b-withdraw')
     } finally {
       setIsPending(false)
     }

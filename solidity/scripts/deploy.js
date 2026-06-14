@@ -2237,7 +2237,14 @@ class MultiChainDeployer {
       }
       console.log('\n   ⚠️  CawProfile redeploy detected — forcing full contract redeploy.');
       console.log('   ⚠️  You MUST reset the database after this deployment!');
-      console.log('   ⚠️  Run: cd client && npx prisma migrate reset\n');
+      // NOT `prisma migrate reset` — this project applies schema via `db push` /
+      // hand-rolled SQL, so the _prisma_migrations table is out of sync (reports
+      // most migrations "unapplied" though the schema is fully present). migrate
+      // reset would drop the DB then replay all migrations through the engine,
+      // several of which don't cleanly replay → half-built/broken schema. Use the
+      // project's own reset (db push --force-reset, which rebuilds from
+      // schema.prisma directly). See feedback_prisma_reset_use_db_push_force.
+      console.log('   ⚠️  Run: cd client && npm run prisma:reset   (= prisma db push --force-reset)\n');
     }
 
     console.log(`   Will redeploy: ${[...toRedeploy].join(', ')}`);
