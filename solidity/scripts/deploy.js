@@ -1289,6 +1289,66 @@ for (const L of L2_CHAIN_KEYS) {
 }
 
 // =============================================================================
+// Phase 7.9 — sponsor CAW approval for the Minter.
+// =============================================================================
+//
+// The SPONSORED bootstrap flow (mintAndDepositSponsored / depositForSponsored)
+// has the Minter pull CAW from the sponsor hot wallet via CAW.transferFrom().
+// On a FRESH deploy the Minter is a new address with ZERO allowance, so every
+// sponsored mint reverts (status 0, empty logs — "must approve spending of your
+// CAW"). The deployer key IS the sponsor hot wallet on testnet, so we approve
+// here once. Idempotent (skips if allowance already large); gated on the
+// deployer actually holding CAW so it's a no-op on envs where it doesn't.
+//
+// NOTE: mintAndDepositZap (the @cawai seed below) does NOT need this — it swaps
+// ETH→CAW inside the Minter and never transferFroms the sponsor. This approval
+// is purely for the Population-B sponsored bootstrap path.
+LINKING_STEPS.push({
+  name: '[Phase 7.9] Approve Minter to spend sponsor CAW (sponsored bootstrap)',
+  chain: 'L1',
+  phase: 7,
+  condition: (state) => !!state.addresses.CawProfileMinter && !!state.addresses.MintableCaw,
+  custom: async (state, deployer) => {
+    const minterAddr = state.addresses.CawProfileMinter;
+    const cawAddr = state.addresses.MintableCaw;
+    // Signers live per-chain in deployer.wallets[chainKey] (see getContract). The
+    // sponsor/deployer key on L1 funds the sponsored mints.
+    const l1ChainKey = deployer.getChainKey('L1');
+    const signer = deployer.wallets[l1ChainKey];
+    if (!signer) { console.log('   L1 signer unavailable — skipping Minter approval.'); return; }
+    const sponsor = await signer.getAddress();
+
+    const caw = new ethers.Contract(
+      cawAddr,
+      [
+        'function allowance(address,address) view returns (uint256)',
+        'function balanceOf(address) view returns (uint256)',
+        'function approve(address,uint256) returns (bool)',
+      ],
+      signer,
+    );
+
+    const bal = await caw.balanceOf(sponsor);
+    if (bal === 0n) {
+      console.log(`   Sponsor ${sponsor} holds 0 CAW — skipping Minter approval (no-op on this env).`);
+      return;
+    }
+
+    // Idempotency: skip if already approved for a large amount (> 1B CAW).
+    const allowance = await caw.allowance(sponsor, minterAddr);
+    const THRESHOLD = 1_000_000_000n * 10n ** 18n;
+    if (allowance >= THRESHOLD) {
+      console.log(`   Minter already approved (allowance ${ethers.formatUnits(allowance, 18)} CAW) — skipping.`);
+      return;
+    }
+
+    console.log(`   Approving Minter ${minterAddr} to spend sponsor ${sponsor}'s CAW (MaxUint256)…`);
+    const tx = await caw.approve(minterAddr, ethers.MaxUint256);
+    await tx.wait();
+    console.log(`   ✓ Sponsor→Minter CAW approval set (tx ${tx.hash}).`);
+  },
+});
+
 // Phase 8 — seeding: mint well-known bot/system profiles
 // =============================================================================
 //
