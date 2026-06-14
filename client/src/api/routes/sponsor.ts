@@ -50,7 +50,7 @@ const redis = process.env.REDIS_URL
 
 // ─── Rate limit helpers ──────────────────────────────────────────────────────
 
-const BOOTSTRAP_RATE_LIMIT     = 3
+const BOOTSTRAP_RATE_LIMIT     = 5    // accounts CREATED per IP per day
 const DEPOSIT_AUTH_RATE_LIMIT  = 30
 const RATE_WINDOW_SECONDS      = 24 * 60 * 60   // 24 hours
 
@@ -63,25 +63,46 @@ const CODE_INFO_WINDOW_SECONDS = 10 * 60         // 10 minutes
 const GAS_LIMIT_BOOTSTRAP_BUDGET = 400_000n
 
 /**
- * Increment-and-check by IP for the given operation.
- * Returns true if allowed, false if over limit.
+ * PEEK-ONLY per-IP limiter. Returns true if the IP is UNDER the limit, false if
+ * at/over. Does NOT increment — a failed/abandoned attempt must not consume a
+ * slot. The slot is only spent on actual success via recordSponsorUse() below.
+ *
+ * Rationale (updated): now that bootstrap invite codes are user-PURCHASED (each
+ * already cost the buyer CAW that covers the validator's gas), the IP gate is a
+ * coarse anti-flood backstop, not the primary economic control. So we (a) count
+ * only accounts actually CREATED, not every attempt — a typo'd sig no longer
+ * burns a slot — and (b) allow up to BOOTSTRAP_RATE_LIMIT creations/IP/day.
+ *
+ * Still checked BEFORE sig verification (peek is cheap) so a probing attacker at
+ * the cap is rejected before any sig/sim work — but the peek doesn't consume.
  * Fails open on Redis error (same pattern as freeActionRateLimit.ts).
  */
 async function checkSponsorRateLimit(ip: string, op: 'bootstrap' | 'deposit' | 'authenticate'): Promise<boolean> {
   const limit = op === 'bootstrap' ? BOOTSTRAP_RATE_LIMIT : DEPOSIT_AUTH_RATE_LIMIT
   const key = `sponsor:${op}:${ip}`
   try {
-    const count = await redis.incr(key)
-    if (count === 1) {
-      await redis.expire(key, RATE_WINDOW_SECONDS)
-    } else {
-      const ttl = await redis.ttl(key)
-      if (ttl < 0) await redis.expire(key, RATE_WINDOW_SECONDS)
-    }
-    return count <= limit
+    const raw = await redis.get(key)
+    const count = raw ? parseInt(raw, 10) : 0
+    return count < limit
   } catch {
     return true  // fail open on Redis unavailability
   }
+}
+
+/**
+ * Record one successful sponsored op against an IP's daily quota. Call ONLY
+ * after the account/op actually succeeded. Sets the 24h TTL on first use.
+ */
+async function recordSponsorUse(ip: string, op: 'bootstrap' | 'deposit' | 'authenticate'): Promise<void> {
+  const key = `sponsor:${op}:${ip}`
+  try {
+    const count = await redis.incr(key)
+    if (count === 1) await redis.expire(key, RATE_WINDOW_SECONDS)
+    else {
+      const ttl = await redis.ttl(key)
+      if (ttl < 0) await redis.expire(key, RATE_WINDOW_SECONDS)
+    }
+  } catch { /* fail open — don't break a successful mint over a counter */ }
 }
 
 /**
@@ -202,13 +223,14 @@ router.post('/bootstrap', async (req, res) => {
     return res.status(503).json({ error: 'SPONSOR_DISABLED', detail: 'Sponsored minting is not enabled on this node' })
   }
 
-  // Rate limit (L-1): intentionally checked BEFORE sig verification. This means
-  // a legitimate user with a typo'd sig will consume one quota slot on each
-  // failed attempt. The trade-off is deliberate: checking rate limits first
-  // prevents probing attacks where an adversary burns through sig verification
-  // CPU (or on-chain simulation budget) before the quota fires. A user who
-  // typo'd their sig gets a correct error on the next attempt (within their
-  // remaining quota) — acceptable UX for a 3/day operation.
+  // Rate limit: PEEK-only here (checked before sig verification so an IP already
+  // at the daily cap is rejected cheaply). The slot is spent only on an actual
+  // account creation via recordSponsorUse() at the success path below — so a
+  // typo'd sig or an abandoned attempt no longer burns the user's quota. Tradeoff:
+  // an IP UNDER the cap can retry sig verification without consuming a slot; this
+  // is acceptable because invite codes are user-purchased (the buyer already paid
+  // CAW covering the validator's gas) and the real cost — the mint — only happens
+  // on success, which is exactly what's now counted.
   const ip = clientIp(req)
   const allowed = await checkSponsorRateLimit(ip, 'bootstrap')
   if (!allowed) {
@@ -375,6 +397,11 @@ router.post('/bootstrap', async (req, res) => {
     }
   }
 
+  // Account was actually CREATED — now (and only now) spend one IP quota slot.
+  // Peek-only check above means failed/abandoned attempts never counted. Applies
+  // to both the code-gated and X-gated paths. Fire-and-forget.
+  recordSponsorUse(ip, 'bootstrap').catch(() => {})
+
   // Commit the redemption audit row (code path only — X path has no codeHash).
   // Fire-and-forget so a DB hiccup doesn't break the user's UX.
   if (codeHash) {
@@ -425,6 +452,7 @@ router.post('/deposit', async (req, res) => {
     const status = result.error === 'TREASURY_LOW' ? 503 : 400
     return res.status(status).json(result)
   }
+  recordSponsorUse(ip, 'deposit').catch(() => {})  // count only on success
   return res.status(200).json(result)
 })
 
@@ -458,6 +486,7 @@ router.post('/authenticate', async (req, res) => {
     const status = result.error === 'TREASURY_LOW' ? 503 : 400
     return res.status(status).json(result)
   }
+  recordSponsorUse(ip, 'authenticate').catch(() => {})  // count only on success
   return res.status(200).json(result)
 })
 
@@ -659,6 +688,7 @@ router.post('/execute', async (req, res) => {
     const status = result.error === 'TREASURY_LOW' ? 503 : 400
     return res.status(status).json(result)
   }
+  recordSponsorUse(ip, 'authenticate').catch(() => {})  // count only on success (shared bucket)
   return res.status(200).json(result)
 })
 
