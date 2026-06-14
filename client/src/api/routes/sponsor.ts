@@ -467,45 +467,46 @@ router.post('/authenticate', async (req, res) => {
 // batch). Authorization is fully in `sig` — the server can only submit EXACTLY
 // what the user signed, so it can't redirect funds or inflate the fee.
 //
-// THE POLICY GATE (protects the validator's wallet): every call's `to` must be an
-// allow-listed contract, the total ETH value is capped, AND the batch must repay
-// the relayer in CAW for the gas it fronts. A user could otherwise sign a batch
-// whose `value` drains the validator, or one that withdraws while paying nothing —
-// either way the relayer eats the cost. The contract is general; this route is the
-// gate. CAW_ADDRESS is allow-listed so the in-batch fee transfer (and any tip/
-// remainder splits of a withdraw) can target the CAW token itself.
-const EXECUTE_ALLOWED_TARGETS = new Set(
-  [process.env.CAW_NAMES_ADDRESS, process.env.CAW_NAMES_MINTER_ADDRESS, CAW_ADDRESS]
-    .filter(Boolean)
-    .map(a => (a as string).toLowerCase()),
-)
-// ERC-20 transfer(address,uint256) selector — used to decode the relayer-fee call.
-const ERC20_TRANSFER_SELECTOR = '0xa9059cbb'
+// THE POLICY GATE (protects the relayer's wallet). STRICT ALLOW-LIST, default-deny.
+//
+// History: this started as "allow-list targets + deny-list dangerous selectors".
+// That enumerate-the-bad model leaked repeatedly — SEAM-EXEC-1 (Minter sponsor
+// selectors drain relayer CAW via tx.origin), -2 (free LZ fee), -3 (approve/
+// transferFrom) were all holes that existed BECAUSE a target was broadly allowed
+// and we had to remember every bad selector on it. SEAM-EXEC-4 inverts it: the
+// relay accepts ONLY the exact (target, selector) pairs a self-custody withdraw
+// needs, and rejects everything else. A new drain vector can no longer appear
+// silently — it can only appear if someone explicitly ADDS the pair that enables
+// it. The endpoint is no longer a generic "exec"; it's a withdraw relay that
+// happens to use batches.
+//
+// What a Pop-B withdraw batch is (the ONLY shape we relay):
+//   1. CawProfile.withdrawTo(...)  — withdraw CAW to the user's OWN EOA
+//   2. CAW.transfer(relayer, fee)  — repay the relayer (gas + forwarded ETH)
+//   3. CAW.transfer(dest, rest)    — forward the net to the user's chosen address
+// Two selectors total. The Minter is NOT an allowed target, so SEAM-EXEC-1's
+// entire drain class is unreachable here (not merely denied).
+//
+// ADDING A CAPABILITY LATER (e.g. zap): add the exact (target, selector) pair
+// below AND, if that selector can make the relayer pay, extend the fee/shape
+// checks. depositZap lives on the MINTER (CAW_NAMES_MINTER_ADDRESS) and is
+// self-funded by the user's ETH value — but adding it means re-reviewing that
+// the relayer isn't left funding anything. Do NOT re-add the Minter as a broad
+// target; add the one selector.
+const SEL_WITHDRAW_TO   = '0xcdbafcd0' // CawProfile.withdrawTo(uint32,uint32,address,uint32,uint256)
+const SEL_CAW_TRANSFER  = '0xa9059cbb' // CAW.transfer(address,uint256)
 
-// SEAM-EXEC-1 (audit 2026-06-14): the Minter's THREE sponsor-funded entrypoints
-// resolve the CAW funder as tx.origin (= the relayer) when called by a contract
-// SmartEOA. If a user's executeBatch invokes one of these, the RELAYER's CAW
-// treasury funds the user's deposit/mint — a treasury drain. The /execute relay
-// is for SELF-custodial moves only, so these selectors are hard-denied on the
-// Minter target regardless of the target allow-list. Selectors verified against
-// CawProfileMinter.sol source 2026-06-14.
-const MINTER_DENIED_SELECTORS = new Set<string>([
-  '0x10bce300', // mintAndDepositSponsored(uint32,address,string,uint256,uint32,uint256,uint256,bytes,uint8,uint32,uint256)
-  '0x7c1bb516', // depositForSponsored(uint32,uint32,uint256,uint32,uint256,uint256,bytes)
-  '0xd7ca2446', // authenticateSponsored(uint32,uint32,uint32,uint256,uint256,bytes)
-])
-// SEAM-EXEC-3 (audit 2026-06-14): the CAW token is allow-listed so the batch can
-// transfer the relayer fee + the withdraw splits. The ONLY CAW op a self-custody
-// withdraw/zap needs is `transfer` (moving the EOA's own balance). approve +
-// transferFrom are NOT needed and only widen the surface — a withdraw batch that
-// approves an arbitrary spender, or pulls via transferFrom, has no legitimate use
-// here. Deny both on the CAW target; the fee-check loop only counts `transfer`.
-const CAW_DENIED_SELECTORS = new Set<string>([
-  '0x095ea7b3', // approve(address,uint256)
-  '0x23b872dd', // transferFrom(address,address,uint256)
-])
-const MINTER_ADDRESS_LC = (process.env.CAW_NAMES_MINTER_ADDRESS || '').toLowerCase()
+const CAW_NAMES_ADDRESS_LC = (process.env.CAW_NAMES_ADDRESS || '').toLowerCase()
 const CAW_ADDRESS_LC = CAW_ADDRESS.toLowerCase()
+
+// target (lowercased) → the exact selectors permitted on it. Anything not here
+// is rejected. Empty when the env target isn't configured (route 503s).
+const EXECUTE_ALLOWED: Record<string, Set<string>> = {}
+if (CAW_NAMES_ADDRESS_LC) EXECUTE_ALLOWED[CAW_NAMES_ADDRESS_LC] = new Set([SEL_WITHDRAW_TO])
+EXECUTE_ALLOWED[CAW_ADDRESS_LC] = new Set([SEL_CAW_TRANSFER])
+
+// ERC-20 transfer(address,uint256) selector — used to decode the relayer-fee call.
+const ERC20_TRANSFER_SELECTOR = SEL_CAW_TRANSFER
 const ADDR_RE_EXEC = /^0x[0-9a-fA-F]{40}$/
 const HEX_RE = /^0x[0-9a-fA-F]*$/
 const ExecuteBodySchema = z.object({
@@ -558,30 +559,47 @@ router.post('/execute', async (req, res) => {
     return res.status(400).json({ error: 'VALIDATION', detail })
   }
 
-  // Policy allow-list: every target must be a known CAW contract (or the CAW
-  // token itself, for the fee transfer + withdraw splits).
-  if (EXECUTE_ALLOWED_TARGETS.size === 0) {
-    return res.status(503).json({ error: 'RELAY_UNCONFIGURED', detail: 'No allow-listed targets configured' })
+  // STRICT ALLOW-LIST (SEAM-EXEC-4): every call must be an explicitly-permitted
+  // (target, selector) pair. Default-deny — anything not in EXECUTE_ALLOWED is
+  // rejected, so a new drain vector can't appear without an explicit code change.
+  if (Object.keys(EXECUTE_ALLOWED).length === 0) {
+    return res.status(503).json({ error: 'RELAY_UNCONFIGURED', detail: 'No allow-listed (target, selector) pairs configured' })
   }
+  const smartEoaLc = body.smartEoaAddress.toLowerCase()
   for (const c of body.calls) {
     const toLc = c.to.toLowerCase()
-    if (!EXECUTE_ALLOWED_TARGETS.has(toLc)) {
-      return res.status(400).json({ error: 'TARGET_NOT_ALLOWED', detail: `Call target ${c.to} is not an allow-listed CAW contract` })
+    const allowedSelectors = EXECUTE_ALLOWED[toLc]
+    if (!allowedSelectors) {
+      return res.status(400).json({ error: 'TARGET_NOT_ALLOWED', detail: `Call target ${c.to} is not allow-listed` })
     }
-    // Selector = first 4 bytes (10 hex chars incl 0x). Only a guard when calldata
-    // is long enough to carry one — shorter calldata can't match a denied selector
-    // and reverts on-chain anyway (no matching function). Explicit length check so
-    // the deny intent is unambiguous (SEAM-EXEC-1 I-1 hardening).
+    // Selector = first 4 bytes. Require full-length calldata so a malformed/short
+    // call can't slip past the selector check (it would revert on-chain anyway).
     const selector = (c.data || '').length >= 10 ? c.data.slice(0, 10).toLowerCase() : ''
-    // SEAM-EXEC-1: deny the Minter's sponsor-funded selectors — they'd fund the
-    // user's deposit/mint from the relayer's CAW treasury (tx.origin == relayer).
-    if (MINTER_ADDRESS_LC && toLc === MINTER_ADDRESS_LC && MINTER_DENIED_SELECTORS.has(selector)) {
-      return res.status(400).json({ error: 'SELECTOR_DENIED', detail: `Sponsor-funded Minter selector ${selector} is not allowed via the execute relay` })
+    if (!allowedSelectors.has(selector)) {
+      return res.status(400).json({ error: 'SELECTOR_NOT_ALLOWED', detail: `Selector ${selector || '(none)'} on ${c.to} is not allow-listed` })
     }
-    // SEAM-EXEC-3: deny approve/transferFrom on the CAW token — not needed for a
-    // self-custody withdraw/zap and only widens the surface.
-    if (toLc === CAW_ADDRESS_LC && CAW_DENIED_SELECTORS.has(selector)) {
-      return res.status(400).json({ error: 'SELECTOR_DENIED', detail: `CAW selector ${selector} is not allowed via the execute relay` })
+
+    // SHAPE CHECK on withdrawTo: the `recipient` (3rd arg, an address) MUST be the
+    // user's OWN SmartEOA. The relayer fronts the withdraw's ETH/LZ fee, so the
+    // proceeds must land on the EOA (where the in-batch CAW.transfer fee is paid
+    // from + verified). The user's chosen external destination is reached by the
+    // SUBSEQUENT CAW.transfer, never by withdrawTo itself — so the relayer never
+    // forwards value to an address it can't account for in the fee check.
+    if (toLc === CAW_NAMES_ADDRESS_LC && selector === SEL_WITHDRAW_TO) {
+      // withdrawTo(uint32,uint32,address,uint32,uint256): args start at byte 4.
+      // recipient is the 3rd 32-byte word: data[10 + 64*2 ...]. Low 20 bytes.
+      const recipientWord = c.data.slice(10 + 128, 10 + 192) // 3rd word, 64 hex chars
+      if (recipientWord.length !== 64 || recipientWord.slice(0, 24) !== '0'.repeat(24)) {
+        return res.status(400).json({ error: 'BAD_WITHDRAW_SHAPE', detail: 'withdrawTo recipient word is malformed' })
+      }
+      const recipient = '0x' + recipientWord.slice(24)
+      if (recipient.toLowerCase() !== smartEoaLc) {
+        return res.status(400).json({
+          error: 'WITHDRAW_RECIPIENT_NOT_SELF',
+          detail: `withdrawTo must withdraw to the signer's own EOA (${smartEoaLc}); ` +
+            `got ${recipient}. Send to an external address via the CAW.transfer leg.`,
+        })
+      }
     }
   }
 

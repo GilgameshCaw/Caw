@@ -135,46 +135,75 @@ describe('execute fee-gate decision (sum transfers to relayer)', () => {
   })
 })
 
-describe('execute selector-deny gate (SEAM-EXEC-1 + SEAM-EXEC-3)', () => {
-  // Mirrors the route's per-call deny predicate so the security-critical gate is
-  // covered without standing up the full express app.
-  const MINTER = '0x4444444444444444444444444444444444444444'
+describe('execute STRICT allow-list gate (SEAM-EXEC-4)', () => {
+  // Mirrors the route's strict-allow-list predicate: only (CawProfile, withdrawTo)
+  // and (CAW, transfer) are permitted; everything else is default-denied. Plus the
+  // withdrawTo-recipient-must-be-self shape check. No express app needed.
+  const PROFILE = '0x1111111111111111111111111111111111111111'
   const CAW = '0x56817dc696448135203c0556f702c6a953260411'
-  const MINTER_DENIED = new Set(['0x10bce300', '0x7c1bb516', '0xd7ca2446'])
-  const CAW_DENIED = new Set(['0x095ea7b3', '0x23b872dd']) // approve, transferFrom
+  const MINTER = '0x4444444444444444444444444444444444444444'
+  const SELF = '0x2222222222222222222222222222222222222222'
+  const EXTERNAL = '0x3333333333333333333333333333333333333333'
+  const SEL_WITHDRAW = '0xcdbafcd0'
+  const SEL_TRANSFER = '0xa9059cbb'
 
-  function isDenied(to: string, data: string): boolean {
-    const toLc = to.toLowerCase()
-    const selector = (data || '').length >= 10 ? data.slice(0, 10).toLowerCase() : ''
-    if (toLc === MINTER.toLowerCase() && MINTER_DENIED.has(selector)) return true
-    if (toLc === CAW.toLowerCase() && CAW_DENIED.has(selector)) return true
-    return false
+  const ALLOWED: Record<string, Set<string>> = {
+    [PROFILE.toLowerCase()]: new Set([SEL_WITHDRAW]),
+    [CAW.toLowerCase()]: new Set([SEL_TRANSFER]),
   }
 
-  it('denies mintAndDepositSponsored on the Minter (relayer-CAW drain)', () => {
-    expect(isDenied(MINTER, '0x10bce300' + '00'.repeat(32))).to.equal(true)
+  // Returns null if accepted, or an error code string if rejected — mirrors route.
+  function gate(to: string, data: string, smartEoa: string): string | null {
+    const toLc = to.toLowerCase()
+    const allowedSelectors = ALLOWED[toLc]
+    if (!allowedSelectors) return 'TARGET_NOT_ALLOWED'
+    const selector = (data || '').length >= 10 ? data.slice(0, 10).toLowerCase() : ''
+    if (!allowedSelectors.has(selector)) return 'SELECTOR_NOT_ALLOWED'
+    if (toLc === PROFILE.toLowerCase() && selector === SEL_WITHDRAW) {
+      const recipientWord = data.slice(10 + 128, 10 + 192)
+      if (recipientWord.length !== 64 || recipientWord.slice(0, 24) !== '0'.repeat(24)) return 'BAD_WITHDRAW_SHAPE'
+      const recipient = '0x' + recipientWord.slice(24)
+      if (recipient.toLowerCase() !== smartEoa.toLowerCase()) return 'WITHDRAW_RECIPIENT_NOT_SELF'
+    }
+    return null
+  }
+
+  // withdrawTo(uint32,uint32,address,uint32,uint256) calldata with given recipient.
+  function withdrawToData(recipient: string): string {
+    const w = (v: string) => v.replace(/^0x/, '').padStart(64, '0')
+    return SEL_WITHDRAW + w('1') + w('1') + w(recipient.toLowerCase()) + w('0') + w('0')
+  }
+  function transferData(to: string, amount: bigint): string {
+    const w = (v: string) => v.replace(/^0x/, '').padStart(64, '0')
+    return SEL_TRANSFER + w(to.toLowerCase()) + w(amount.toString(16))
+  }
+
+  it('ALLOWS withdrawTo on CawProfile when recipient is the signer EOA', () => {
+    expect(gate(PROFILE, withdrawToData(SELF), SELF)).to.equal(null)
   })
-  it('denies depositForSponsored + authenticateSponsored on the Minter', () => {
-    expect(isDenied(MINTER, '0x7c1bb516' + 'ab'.repeat(8))).to.equal(true)
-    expect(isDenied(MINTER, '0xd7ca2446' + 'ab'.repeat(8))).to.equal(true)
+  it('ALLOWS CAW.transfer (fee + external split)', () => {
+    expect(gate(CAW, transferData(SELF, 1000n), SELF)).to.equal(null)
+    expect(gate(CAW, transferData(EXTERNAL, 9_000_000n), SELF)).to.equal(null)
   })
-  it('denies approve + transferFrom on the CAW token (SEAM-EXEC-3)', () => {
-    expect(isDenied(CAW, '0x095ea7b3' + '00'.repeat(64))).to.equal(true)
-    expect(isDenied(CAW, '0x23b872dd' + '00'.repeat(96))).to.equal(true)
+  it('DENIES the Minter entirely — SEAM-EXEC-1 drain class is unreachable', () => {
+    expect(gate(MINTER, '0x10bce300' + '00'.repeat(32), SELF)).to.equal('TARGET_NOT_ALLOWED')
   })
-  it('ALLOWS a plain CAW.transfer (the fee + withdraw splits)', () => {
-    expect(isDenied(CAW, '0xa9059cbb' + '00'.repeat(64))).to.equal(false)
+  it('DENIES approve/transferFrom on CAW (selector not allow-listed)', () => {
+    expect(gate(CAW, '0x095ea7b3' + '00'.repeat(64), SELF)).to.equal('SELECTOR_NOT_ALLOWED')
+    expect(gate(CAW, '0x23b872dd' + '00'.repeat(96), SELF)).to.equal('SELECTOR_NOT_ALLOWED')
   })
-  it('allows withdrawTo on CawProfile (denies only apply to Minter/CAW selectors)', () => {
-    // A non-CAW, non-Minter target call is never selector-denied here.
-    expect(isDenied('0x9999999999999999999999999999999999999999', '0x10bce300')).to.equal(false)
+  it('DENIES an arbitrary target', () => {
+    expect(gate('0x9999999999999999999999999999999999999999', transferData(SELF, 1n), SELF)).to.equal('TARGET_NOT_ALLOWED')
   })
-  it('case-insensitively denies an upper-cased denied selector', () => {
-    expect(isDenied(CAW, '0x095EA7B3' + '00'.repeat(64))).to.equal(true)
+  it('DENIES withdrawTo to an EXTERNAL recipient (must be self)', () => {
+    expect(gate(PROFILE, withdrawToData(EXTERNAL), SELF)).to.equal('WITHDRAW_RECIPIENT_NOT_SELF')
   })
-  it('I-1: short/empty calldata to the Minter is not mis-classified as a denied selector', () => {
-    // slice(0,10) of '0x' would be '0x' — must NOT match a denied selector.
-    expect(isDenied(MINTER, '0x')).to.equal(false)
-    expect(isDenied(MINTER, '0x10bc')).to.equal(false) // truncated selector
+  it('DENIES short/empty calldata (no selector)', () => {
+    expect(gate(CAW, '0x', SELF)).to.equal('SELECTOR_NOT_ALLOWED')
+    expect(gate(PROFILE, '0xcdba', SELF)).to.equal('SELECTOR_NOT_ALLOWED')
+  })
+  it('is case-insensitive on selector + recipient', () => {
+    expect(gate(CAW, '0xA9059CBB' + '00'.repeat(64), SELF)).to.equal(null)
+    expect(gate(PROFILE, withdrawToData(SELF).toUpperCase().replace('0X', '0x'), SELF)).to.equal(null)
   })
 })
