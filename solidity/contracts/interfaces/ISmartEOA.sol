@@ -33,5 +33,5 @@ interface ISmartEOA {
     /// @notice Execute a batch of calls atomically, authorized by a single passkey /
     ///         ecdsaFallback signature over the full batch + nonce.  Anyone may submit;
     ///         the signature binds every call so a submitter can't alter/redirect.
-    function executeBatch(Call[] calldata calls, uint256 nonce, bytes calldata sig) external payable;
+    function executeBatch(Call[] calldata calls, uint256 nonce, bytes calldata sig) external;
 }

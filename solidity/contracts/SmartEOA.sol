@@ -525,7 +525,6 @@ contract SmartEOA {
     /// @param sig    65-byte secp256k1 (r||s||v) OR a WebAuthn assertion blob.
     function executeBatch(Call[] calldata calls, uint256 nonce, bytes calldata sig)
         external
-        payable
     {
         if (!initialized) revert NotInitialized();
         if (calls.length == 0) revert EmptyBatch();
@@ -559,8 +558,10 @@ contract SmartEOA {
         view
         returns (bytes32)
     {
-        bytes32 domainSep = keccak256(abi.encodePacked(
-            "SmartEOA",
+        // EIP-712-style domain (abi.encode, not encodePacked) — account-specific
+        // (address(this) is the EOA under 7702), chain-specific, audit-standard.
+        bytes32 domainSep = keccak256(abi.encode(
+            keccak256("SmartEOA"),
             block.chainid,
             address(this)
         ));
@@ -574,7 +575,7 @@ contract SmartEOA {
             ));
             unchecked { ++i; }
         }
-        bytes32 structHash = keccak256(abi.encodePacked(
+        bytes32 structHash = keccak256(abi.encode(
             keccak256(bytes("executeBatch")),
             keccak256(abi.encodePacked(callHashes)),
             nonce

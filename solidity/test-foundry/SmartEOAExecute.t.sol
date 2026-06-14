@@ -46,12 +46,12 @@ contract SmartEOAExecuteTest is Test {
         view
         returns (bytes32)
     {
-        bytes32 domainSep = keccak256(abi.encodePacked("SmartEOA", block.chainid, address(acct)));
+        bytes32 domainSep = keccak256(abi.encode(keccak256("SmartEOA"), block.chainid, address(acct)));
         bytes32[] memory callHashes = new bytes32[](calls.length);
         for (uint256 i = 0; i < calls.length; i++) {
             callHashes[i] = keccak256(abi.encode(calls[i].to, calls[i].value, keccak256(calls[i].data)));
         }
-        bytes32 structHash = keccak256(abi.encodePacked(
+        bytes32 structHash = keccak256(abi.encode(
             keccak256(bytes("executeBatch")),
             keccak256(abi.encodePacked(callHashes)),
             nonce
