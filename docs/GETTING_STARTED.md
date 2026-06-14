@@ -174,9 +174,21 @@ lsof -ti:4000 | xargs kill -9
 # Check PostgreSQL is running
 psql -U postgres -c "SELECT 1"
 
-# Reset database
-npx prisma migrate reset
+# Reset the database (drop everything + rebuild the schema from scratch).
+# IMPORTANT: use `prisma:reset`, NOT `prisma migrate reset`. This project applies
+# its schema via `prisma db push` (and the app runs `prisma db push` on every
+# boot), so the migrations/ history is NOT a reliable replay source — several
+# migrations were hand-applied and don't cleanly re-run through the migrate
+# engine. `prisma migrate reset` would drop the DB then fail mid-replay, leaving
+# a half-built schema. `prisma:reset` rebuilds directly from schema.prisma.
+cd client && npm run prisma:reset   # = prisma db push --force-reset
 ```
+
+> **Mirror operators:** after redeploying contracts (new addresses), you must
+> reset the DB so indexers re-genesis against the new contracts — run the same
+> `npm run prisma:reset`, then restart the server. The app re-pushes the schema
+> on boot, so a fresh checkout is self-healing; you only need an explicit reset
+> when wiping indexed state.
 
 ### Redis Connection Issues
 ```bash

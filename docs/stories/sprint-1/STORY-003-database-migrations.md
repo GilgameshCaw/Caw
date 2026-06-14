@@ -1,5 +1,12 @@
 # Story: Add Database Migration System
 
+> ⚠️ **HISTORICAL / NOT ADOPTED.** This proposed a `prisma migrate`-based system.
+> The project did NOT go this route — schema is managed via `prisma db push` (the
+> app runs `prisma db push` on boot; reset is `npm run prisma:reset` =
+> `db push --force-reset`). Do NOT run `prisma migrate reset` against a CAW DB; it
+> tries to replay non-replayable migrations and leaves a half-built schema. See
+> `docs/GETTING_STARTED.md` + `client/package.json` scripts for the real flow.
+
 ## Story ID: SPRINT1-003
 ## Priority: MEDIUM
 ## Estimated Points: 3
