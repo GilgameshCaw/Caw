@@ -33,6 +33,7 @@ import PasskeyStep from './onboarding/PasskeyStep'
 import BackupStep from './onboarding/BackupStep'
 import ConfirmStep from './onboarding/ConfirmStep'
 import BoidsBg from '~/components/BoidsBg3D'
+import cawLogo from '~/assets/images/caw-logo.png'
 import LanguageSwitcher from '~/components/LanguageSwitcher'
 import {
   HiAtSymbol,
@@ -50,6 +51,7 @@ import type { TokenData } from '~/types'
 import { baseSepolia } from 'wagmi/chains'
 
 type OnboardingStep =
+  | 'welcome'        // gifted-access splash; shown only when arriving with a valid invite code
   | 'username'
   | 'vault-password'
   | 'passkey'
@@ -149,6 +151,7 @@ function isPlausibleCodeFormat(raw: string | null): boolean {
 
 function stepLabel(step: OnboardingStep, t: (k: string) => string): string {
   switch (step) {
+    case 'welcome':        return ''  // splash — never rendered in the stepper
     case 'username':       return t('onboarding.step.username')
     case 'vault-password': return t('onboarding.step.vault_password')
     case 'passkey':        return t('onboarding.step.passkey')
@@ -161,7 +164,14 @@ export default function Onboarding() {
   const { isDark } = useTheme()
   const t = useT()
   const navigate = useNavigate()
-  const [state, setState] = useState<OnboardingState>(INITIAL_STATE)
+  // Initial step: the gifted-access 'welcome' splash when arriving with a plausible
+  // invite code, otherwise straight to 'username' (X-signup / code-entry paths).
+  const [state, setState] = useState<OnboardingState>(() => ({
+    ...INITIAL_STATE,
+    step: isPlausibleCodeFormat(new URLSearchParams(window.location.search).get('code'))
+      ? 'welcome'
+      : 'username',
+  }))
   const setSession = useAuthStore(s => s.setSession)
   // True while the post-mint /api/auth/verify sign-in is in flight (shown on
   // the confirm step so "Go to feed" waits for the session).
@@ -660,6 +670,38 @@ export default function Onboarding() {
           )}
 
           {/* Step content */}
+          {state.step === 'welcome' && (
+            <div className="max-w-[560px] mx-auto text-center pt-6">
+              <img
+                src={cawLogo}
+                alt="CAW"
+                className="w-20 h-20 mx-auto mb-6 drop-shadow-[0_0_24px_rgba(234,179,8,0.45)]"
+              />
+              <p className="text-yellow-500 text-sm font-semibold tracking-[0.2em] uppercase mb-3">
+                {t('onboarding.welcome.kicker')}
+              </p>
+              <h1 className={`text-3xl sm:text-4xl font-bold mb-4 ${textPrimary}`}>
+                {t('onboarding.welcome.title')}
+              </h1>
+              <p className={`text-base sm:text-lg mb-8 ${isDark ? 'text-white/70' : 'text-gray-600'}`}>
+                {t('onboarding.welcome.body')}
+              </p>
+
+              <div className={`rounded-xl border px-4 py-3 mb-8 text-sm ${
+                isDark ? 'border-yellow-500/25 bg-yellow-500/5 text-yellow-200/90' : 'border-yellow-300 bg-yellow-50 text-yellow-800'
+              }`}>
+                {t('onboarding.welcome.sponsored_note')}
+              </div>
+
+              <button
+                onClick={() => setState(s => ({ ...s, step: 'username' }))}
+                className="w-full sm:w-auto sm:min-w-[280px] py-3.5 px-8 rounded-full font-semibold text-base bg-yellow-500 text-black hover:bg-yellow-400 transition-colors cursor-pointer"
+              >
+                {t('onboarding.welcome.cta')}
+              </button>
+            </div>
+          )}
+
           {state.step === 'username' && (
             <UsernameStep
               username={state.username}
