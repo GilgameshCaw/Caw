@@ -494,6 +494,16 @@ const MINTER_DENIED_SELECTORS = new Set<string>([
   '0x7c1bb516', // depositForSponsored(uint32,uint32,uint256,uint32,uint256,uint256,bytes)
   '0xd7ca2446', // authenticateSponsored(uint32,uint32,uint32,uint256,uint256,bytes)
 ])
+// SEAM-EXEC-3 (audit 2026-06-14): the CAW token is allow-listed so the batch can
+// transfer the relayer fee + the withdraw splits. The ONLY CAW op a self-custody
+// withdraw/zap needs is `transfer` (moving the EOA's own balance). approve +
+// transferFrom are NOT needed and only widen the surface — a withdraw batch that
+// approves an arbitrary spender, or pulls via transferFrom, has no legitimate use
+// here. Deny both on the CAW target; the fee-check loop only counts `transfer`.
+const CAW_DENIED_SELECTORS = new Set<string>([
+  '0x095ea7b3', // approve(address,uint256)
+  '0x23b872dd', // transferFrom(address,address,uint256)
+])
 const MINTER_ADDRESS_LC = (process.env.CAW_NAMES_MINTER_ADDRESS || '').toLowerCase()
 const CAW_ADDRESS_LC = CAW_ADDRESS.toLowerCase()
 const ADDR_RE_EXEC = /^0x[0-9a-fA-F]{40}$/
@@ -554,28 +564,48 @@ router.post('/execute', async (req, res) => {
     return res.status(503).json({ error: 'RELAY_UNCONFIGURED', detail: 'No allow-listed targets configured' })
   }
   for (const c of body.calls) {
-    if (!EXECUTE_ALLOWED_TARGETS.has(c.to.toLowerCase())) {
+    const toLc = c.to.toLowerCase()
+    if (!EXECUTE_ALLOWED_TARGETS.has(toLc)) {
       return res.status(400).json({ error: 'TARGET_NOT_ALLOWED', detail: `Call target ${c.to} is not an allow-listed CAW contract` })
     }
+    // Selector = first 4 bytes (10 hex chars incl 0x). Only a guard when calldata
+    // is long enough to carry one — shorter calldata can't match a denied selector
+    // and reverts on-chain anyway (no matching function). Explicit length check so
+    // the deny intent is unambiguous (SEAM-EXEC-1 I-1 hardening).
+    const selector = (c.data || '').length >= 10 ? c.data.slice(0, 10).toLowerCase() : ''
     // SEAM-EXEC-1: deny the Minter's sponsor-funded selectors — they'd fund the
     // user's deposit/mint from the relayer's CAW treasury (tx.origin == relayer).
-    if (MINTER_ADDRESS_LC && c.to.toLowerCase() === MINTER_ADDRESS_LC) {
-      const selector = (c.data || '').slice(0, 10).toLowerCase()
-      if (MINTER_DENIED_SELECTORS.has(selector)) {
-        return res.status(400).json({ error: 'SELECTOR_DENIED', detail: `Sponsor-funded Minter selector ${selector} is not allowed via the execute relay` })
-      }
+    if (MINTER_ADDRESS_LC && toLc === MINTER_ADDRESS_LC && MINTER_DENIED_SELECTORS.has(selector)) {
+      return res.status(400).json({ error: 'SELECTOR_DENIED', detail: `Sponsor-funded Minter selector ${selector} is not allowed via the execute relay` })
+    }
+    // SEAM-EXEC-3: deny approve/transferFrom on the CAW token — not needed for a
+    // self-custody withdraw/zap and only widens the surface.
+    if (toLc === CAW_ADDRESS_LC && CAW_DENIED_SELECTORS.has(selector)) {
+      return res.status(400).json({ error: 'SELECTOR_DENIED', detail: `CAW selector ${selector} is not allowed via the execute relay` })
     }
   }
 
-  // ── FEE INVARIANT: the batch must repay the relayer in CAW for the gas it
-  //    fronts, or relaying is an open subsidy (and the whole "anyone submits,
-  //    submitter keeps the fee" model collapses). Sum every CAW.transfer in the
-  //    batch whose recipient is THIS relayer's hot wallet, and require the total
-  //    to meet the live gas quote. The fee + recipient are signature-bound, so a
-  //    relayer can't inflate the fee and the user can't fake it post-hoc.
-  const feeQuote = quoteExecuteGasFeeCaw()
+  // Total ETH value the relayer fronts as msg.value (e.g. the withdraw LZ fee).
+  // Computed BEFORE the fee check so the CAW fee floor can cover it (SEAM-EXEC-2).
+  // Cap mirrors SponsorService.relayExecuteBatch's maxLzFeeWei check (re-checked there).
+  let totalValue = 0n
+  try { totalValue = body.calls.reduce((acc, c) => acc + BigInt(c.value), 0n) } catch {
+    return res.status(400).json({ error: 'VALIDATION', detail: 'Invalid call value' })
+  }
+
+  // ── FEE INVARIANT: the batch must repay the relayer in CAW for what it fronts —
+  //    GAS to submit the tx PLUS the ETH `value` forwarded into the batch (the LZ
+  //    fee on a withdraw). Otherwise relaying is an open subsidy and the whole
+  //    "anyone submits, submitter keeps the fee" model collapses. Sum every
+  //    CAW.transfer in the batch whose recipient is THIS relayer's hot wallet, and
+  //    require the total to meet the live quote (gas + forwardedValue). The fee +
+  //    recipient are signature-bound, so a relayer can't inflate the fee and the
+  //    user can't fake it post-hoc.
+  //    SEAM-EXEC-2 (audit 2026-06-14): totalValue MUST be priced in — pricing only
+  //    gas let a withdraw get its LZ fee fronted for free.
+  const feeQuote = quoteExecuteGasFeeCaw(totalValue)
   if (!feeQuote.priceAvailable) {
-    // No live price → we can't price the gas → refuse rather than relay for free
+    // No live price → we can't price the cost → refuse rather than relay for free
     // or against a stale-low rate (mirrors inviteQuote's M-2 staleness refusal).
     return res.status(503).json({
       error: 'PRICE_UNAVAILABLE',
@@ -596,15 +626,8 @@ router.post('/execute', async (req, res) => {
       error: 'FEE_TOO_LOW',
       detail:
         `Batch must transfer at least ${feeQuote.minFeeCawWei} CAW (wei) to the relayer ` +
-        `${relayer} to cover gas; batch pays ${feePaidCawWei}. Re-quote and re-sign.`,
+        `${relayer} to cover gas + forwarded ETH; batch pays ${feePaidCawWei}. Re-quote and re-sign.`,
     })
-  }
-
-  // Total ETH value the validator fronts (e.g. the withdraw LZ fee). Cap mirrors
-  // SponsorService.relayExecuteBatch's maxLzFeeWei check (re-checked there too).
-  let totalValue = 0n
-  try { totalValue = body.calls.reduce((acc, c) => acc + BigInt(c.value), 0n) } catch {
-    return res.status(400).json({ error: 'VALIDATION', detail: 'Invalid call value' })
   }
 
   const result = await service.relayExecuteBatch(

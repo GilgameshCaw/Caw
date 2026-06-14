@@ -852,6 +852,20 @@ export class SponsorService {
         sig,
         { value, gasLimit: GAS_LIMIT_EXECUTE_BATCH },
       )
+
+      // SEAM-EXEC-1 I-3: wait for the receipt and CHECK STATUS before reporting
+      // success — mirrors sponsorBootstrap. executeBatch can be mined yet REVERT
+      // (stale nonce, bad sig, a failing inner call → ExecuteFailed). Returning the
+      // hash on broadcast alone made the FE show "withdrawal sent" for a tx that
+      // reverted and moved nothing. The relayer still ate the gas either way.
+      const receipt = await txResponse.wait()
+      if (!receipt || receipt.status !== 1) {
+        return {
+          error: 'TX_REVERTED',
+          detail: `executeBatch tx ${txResponse.hash} reverted on-chain (status ${receipt?.status ?? 'null'}). ` +
+            `Common causes: stale executeNonce, signature mismatch, or a failing inner call.`,
+        }
+      }
       return { txHash: txResponse.hash }
     } catch (err) {
       return parseRevertError(err)

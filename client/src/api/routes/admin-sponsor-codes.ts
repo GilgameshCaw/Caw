@@ -101,8 +101,10 @@ router.get('/', async (_req, res) => {
   const codes = await prisma.sponsorCode.findMany({
     orderBy: { createdAt: 'desc' },
     include: {
-      _count: { select: { redemptions: true } },
-      redemptions: {
+      // Relation is named SponsorRedemption in schema.prisma (the model name), not
+      // `redemptions`. Querying the wrong name was a tsc-breaking bug from e61e0ee8.
+      _count: { select: { SponsorRedemption: true } },
+      SponsorRedemption: {
         select: { totalUsdCents: true },
       },
     },
@@ -115,8 +117,8 @@ router.get('/', async (_req, res) => {
     label:               c.label,
     maxUses:             c.maxUses,
     usesRemaining:       c.usesRemaining,
-    totalRedemptions:    c._count.redemptions,
-    totalSpentUsdCents:  c.redemptions.reduce((sum: number, r: { totalUsdCents: number }) => sum + r.totalUsdCents, 0),
+    totalRedemptions:    c._count.SponsorRedemption,
+    totalSpentUsdCents:  c.SponsorRedemption.reduce((sum: number, r: { totalUsdCents: number }) => sum + r.totalUsdCents, 0),
     budgetCapUsdCents:   c.budgetCapUsdCents,
     expiresAt:           c.expiresAt,
     createdBy:           c.createdBy,

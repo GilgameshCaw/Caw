@@ -134,3 +134,47 @@ describe('execute fee-gate decision (sum transfers to relayer)', () => {
     expect(sumFeeToRelayer(calls)).to.equal(0n)  // < any positive minFee → FEE_TOO_LOW
   })
 })
+
+describe('execute selector-deny gate (SEAM-EXEC-1 + SEAM-EXEC-3)', () => {
+  // Mirrors the route's per-call deny predicate so the security-critical gate is
+  // covered without standing up the full express app.
+  const MINTER = '0x4444444444444444444444444444444444444444'
+  const CAW = '0x56817dc696448135203c0556f702c6a953260411'
+  const MINTER_DENIED = new Set(['0x10bce300', '0x7c1bb516', '0xd7ca2446'])
+  const CAW_DENIED = new Set(['0x095ea7b3', '0x23b872dd']) // approve, transferFrom
+
+  function isDenied(to: string, data: string): boolean {
+    const toLc = to.toLowerCase()
+    const selector = (data || '').length >= 10 ? data.slice(0, 10).toLowerCase() : ''
+    if (toLc === MINTER.toLowerCase() && MINTER_DENIED.has(selector)) return true
+    if (toLc === CAW.toLowerCase() && CAW_DENIED.has(selector)) return true
+    return false
+  }
+
+  it('denies mintAndDepositSponsored on the Minter (relayer-CAW drain)', () => {
+    expect(isDenied(MINTER, '0x10bce300' + '00'.repeat(32))).to.equal(true)
+  })
+  it('denies depositForSponsored + authenticateSponsored on the Minter', () => {
+    expect(isDenied(MINTER, '0x7c1bb516' + 'ab'.repeat(8))).to.equal(true)
+    expect(isDenied(MINTER, '0xd7ca2446' + 'ab'.repeat(8))).to.equal(true)
+  })
+  it('denies approve + transferFrom on the CAW token (SEAM-EXEC-3)', () => {
+    expect(isDenied(CAW, '0x095ea7b3' + '00'.repeat(64))).to.equal(true)
+    expect(isDenied(CAW, '0x23b872dd' + '00'.repeat(96))).to.equal(true)
+  })
+  it('ALLOWS a plain CAW.transfer (the fee + withdraw splits)', () => {
+    expect(isDenied(CAW, '0xa9059cbb' + '00'.repeat(64))).to.equal(false)
+  })
+  it('allows withdrawTo on CawProfile (denies only apply to Minter/CAW selectors)', () => {
+    // A non-CAW, non-Minter target call is never selector-denied here.
+    expect(isDenied('0x9999999999999999999999999999999999999999', '0x10bce300')).to.equal(false)
+  })
+  it('case-insensitively denies an upper-cased denied selector', () => {
+    expect(isDenied(CAW, '0x095EA7B3' + '00'.repeat(64))).to.equal(true)
+  })
+  it('I-1: short/empty calldata to the Minter is not mis-classified as a denied selector', () => {
+    // slice(0,10) of '0x' would be '0x' — must NOT match a denied selector.
+    expect(isDenied(MINTER, '0x')).to.equal(false)
+    expect(isDenied(MINTER, '0x10bc')).to.equal(false) // truncated selector
+  })
+})

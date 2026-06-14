@@ -74,18 +74,26 @@ export interface ExecuteFeeQuote {
 }
 
 /**
- * Minimum CAW (wei) an executeBatch must pay the relayer to cover the gas it
- * fronts, priced from the cached CAW/ETH rate with the same 15-min staleness
- * guard as the invite quote. Pure read; never throws. When prices are stale or
- * unavailable, returns priceAvailable=false / 0n so the relay refuses rather
- * than fronts gas for free (or, worse, prices it against a stale-low rate so a
- * dust CAW transfer clears the floor).
+ * Minimum CAW (wei) an executeBatch must pay the relayer to make it whole for
+ * what it fronts: the GAS to submit the tx PLUS any ETH `value` it forwards into
+ * the batch (e.g. the withdraw's LayerZero fee). Priced from the cached CAW/ETH
+ * rate with the same 15-min staleness guard as the invite quote. Pure read;
+ * never throws. When prices are stale or unavailable, returns
+ * priceAvailable=false / 0n so the relay refuses rather than fronts for free
+ * (or, worse, prices against a stale-low rate so a dust CAW transfer clears it).
+ *
+ * SEAM-EXEC-2 (audit 2026-06-14): `forwardedValueWei` MUST be included. The
+ * relayer attaches the batch's total inner call value as msg.value, so a withdraw
+ * batch makes the relayer front the LZ fee (up to maxLzFeeWei). Pricing only gas
+ * let a user relay a withdraw and get the LZ fee fronted for free — the exact
+ * "relaying must stay financially viable" property leaking. The route passes the
+ * batch's totalValue here so the CAW floor covers gas + forwarded ETH.
  *
  * Returned in wei-CAW (18-dec) — matching an on-chain ERC-20 `transfer` amount,
- * NOT whole CAW. cawPerEth is "CAW per 1 ETH scaled by 1e18", and gasWei is in
- * wei-ETH, so (gasWei * cawPerEth) / 1e18 lands on wei-CAW directly.
+ * NOT whole CAW. cawPerEth is "CAW per 1 ETH scaled by 1e18", and the ETH cost is
+ * in wei-ETH, so (ethCostWei * cawPerEth) / 1e18 lands on wei-CAW directly.
  */
-export function quoteExecuteGasFeeCaw(gasPriceWei?: bigint): ExecuteFeeQuote {
+export function quoteExecuteGasFeeCaw(forwardedValueWei: bigint = 0n, gasPriceWei?: bigint): ExecuteFeeQuote {
   const cawPrice = getCawPriceCache()
   const ethPrice = getEthPriceCache()
 
@@ -98,8 +106,11 @@ export function quoteExecuteGasFeeCaw(gasPriceWei?: bigint): ExecuteFeeQuote {
   }
 
   const gasWei = (gasPriceWei ?? GAS_PRICE_WEI) * GAS_LIMIT_EXECUTE_BATCH
+  // Relayer fronts gas AND the forwarded ETH value (the LZ fee on a withdraw).
+  // Both must be repaid in CAW or relaying is a subsidy.
+  const ethCostWei = gasWei + (forwardedValueWei > 0n ? forwardedValueWei : 0n)
   // wei-ETH * (CAW-per-ETH scaled 1e18) / 1e18 = wei-CAW.
-  const minFeeCawWei = (gasWei * cawPrice.cawPerEth) / (10n ** 18n)
+  const minFeeCawWei = (ethCostWei * cawPrice.cawPerEth) / (10n ** 18n)
   return { minFeeCawWei, priceAvailable: true }
 }
 
