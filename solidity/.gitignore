@@ -15,6 +15,16 @@ lib/forge-std/
 .env
 .env.local
 
+# Deploy-state backups — point-in-time snapshots holding STALE contract addresses.
+# The live `.deploy-state.json` IS tracked (the deploy writes new addresses into it
+# and they get committed); only the *.backup.json / pre-*.json snapshots are noise
+# that must never be committed (and must never be swept in by `git add -A`).
+.deploy-state.*.backup.json
+.deploy-state.*-pre-*.json
+.deploy-state.pre-*.json
+.deploy-state.v*.json
+.deploy-state.broken-*.json
+
 # IDE
 .idea/
 .vscode/
