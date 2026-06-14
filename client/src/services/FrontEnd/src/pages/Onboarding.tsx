@@ -426,22 +426,22 @@ export default function Onboarding() {
           const mintedTokenId =
             idx >= 0 ? data.authorizedTokenIds[idx] : data.authorizedTokenIds[0]
           if (mintedTokenId != null) {
-            // NOTE: /api/users/by-token returns the DB row shape — it does NOT
-            // carry the on-chain bigint fields TokenData declares
-            // (withdrawable / ownerBalance / stakedAmount). Casting the raw JSON
-            // to TokenData leaves those undefined, and any component doing
-            // `activeToken.stakedAmount > 0n` then throws "Cannot mix BigInt and
-            // other types" — crashing the feed + /welcome render. Build a
-            // properly-typed TokenData with real bigints (0n for a fresh mint;
-            // the on-chain refresh updates them once the deposit confirms).
-            const row = await apiFetch<{ username?: string; address?: string }>(
-              `/api/users/by-token/${mintedTokenId}`,
-            )
-            if (row?.username) {
+            // Build the active TokenData from data WE ALREADY HOLD — do NOT round-
+            // trip /api/users/by-token. That row may not be indexed yet on a fresh
+            // mint, and the OLD code only set the active token if that fetch
+            // returned a username; when it lagged, the active token was never set,
+            // so AuthGate (which gates purely on useActiveToken()?.username) bounced
+            // the user to /welcome right after a successful mint (#209). The
+            // username is exactly what the user just typed (state.username), and the
+            // owner is result.ecdsaAddress — no fetch needed. On-chain bigints are
+            // 0n for a fresh mint; the periodic on-chain refresh fills them in once
+            // the deposit confirms. (Real bigints, not undefined, so components doing
+            // `activeToken.stakedAmount > 0n` don't throw "Cannot mix BigInt".)
+            {
               const ownerAddr = result.ecdsaAddress as `0x${string}`
               const token: TokenData = {
                 tokenId: mintedTokenId,
-                username: row.username,
+                username: state.username,
                 address: ownerAddr,
                 owner: ownerAddr,
                 withdrawable: 0n,
@@ -454,7 +454,7 @@ export default function Onboarding() {
               tds.setActiveTokenIdForAddress(ownerAddr, mintedTokenId)
               tds.setLastAddress(ownerAddr)
               // eslint-disable-next-line no-console
-              console.log('[signin:diag] active profile set, navigating to onboarding stepper', {
+              console.log('[signin:diag] active profile set (from in-hand data), navigating', {
                 username: token.username,
                 tokenId: mintedTokenId,
               })

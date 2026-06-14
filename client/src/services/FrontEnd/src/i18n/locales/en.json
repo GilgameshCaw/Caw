@@ -1641,7 +1641,7 @@
   "onboarding.backup.email_unavailable": "Email backup isn't available right now — please download instead.",
   "onboarding.backup.action_download": "Download",
   "onboarding.backup.action_download_label": "Download recovery file to this device",
-  "onboarding.backup.action_host": "✓ Saved to this domain (passkey-protected)",
+  "onboarding.backup.action_host": "Saved to this domain (passkey-protected)",
   "onboarding.backup.action_saved": "Saved",
   "onboarding.backup.host_hint": "Recoverable with your passkey on a new device. Still needs your vault password.",
   "onboarding.backup.done": "Continue",
