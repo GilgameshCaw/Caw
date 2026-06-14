@@ -481,6 +481,20 @@ const EXECUTE_ALLOWED_TARGETS = new Set(
 )
 // ERC-20 transfer(address,uint256) selector — used to decode the relayer-fee call.
 const ERC20_TRANSFER_SELECTOR = '0xa9059cbb'
+
+// SEAM-EXEC-1 (audit 2026-06-14): the Minter's THREE sponsor-funded entrypoints
+// resolve the CAW funder as tx.origin (= the relayer) when called by a contract
+// SmartEOA. If a user's executeBatch invokes one of these, the RELAYER's CAW
+// treasury funds the user's deposit/mint — a treasury drain. The /execute relay
+// is for SELF-custodial moves only, so these selectors are hard-denied on the
+// Minter target regardless of the target allow-list. Selectors verified against
+// CawProfileMinter.sol source 2026-06-14.
+const MINTER_DENIED_SELECTORS = new Set<string>([
+  '0x10bce300', // mintAndDepositSponsored(uint32,address,string,uint256,uint32,uint256,uint256,bytes,uint8,uint32,uint256)
+  '0x7c1bb516', // depositForSponsored(uint32,uint32,uint256,uint32,uint256,uint256,bytes)
+  '0xd7ca2446', // authenticateSponsored(uint32,uint32,uint32,uint256,uint256,bytes)
+])
+const MINTER_ADDRESS_LC = (process.env.CAW_NAMES_MINTER_ADDRESS || '').toLowerCase()
 const CAW_ADDRESS_LC = CAW_ADDRESS.toLowerCase()
 const ADDR_RE_EXEC = /^0x[0-9a-fA-F]{40}$/
 const HEX_RE = /^0x[0-9a-fA-F]*$/
@@ -542,6 +556,14 @@ router.post('/execute', async (req, res) => {
   for (const c of body.calls) {
     if (!EXECUTE_ALLOWED_TARGETS.has(c.to.toLowerCase())) {
       return res.status(400).json({ error: 'TARGET_NOT_ALLOWED', detail: `Call target ${c.to} is not an allow-listed CAW contract` })
+    }
+    // SEAM-EXEC-1: deny the Minter's sponsor-funded selectors — they'd fund the
+    // user's deposit/mint from the relayer's CAW treasury (tx.origin == relayer).
+    if (MINTER_ADDRESS_LC && c.to.toLowerCase() === MINTER_ADDRESS_LC) {
+      const selector = (c.data || '').slice(0, 10).toLowerCase()
+      if (MINTER_DENIED_SELECTORS.has(selector)) {
+        return res.status(400).json({ error: 'SELECTOR_DENIED', detail: `Sponsor-funded Minter selector ${selector} is not allowed via the execute relay` })
+      }
     }
   }
 
