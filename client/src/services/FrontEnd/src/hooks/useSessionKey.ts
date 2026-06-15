@@ -6,11 +6,11 @@ import { useConnectModal } from '@rainbow-me/rainbowkit'
 import { baseSepolia } from 'wagmi/chains'
 import { apiFetch } from '~/api/client'
 import { useSessionKeyStore } from '~/store/sessionKeyStore'
-import { CAW_NAMES_L2_ADDRESS, CAW_ACTIONS_ADDRESS } from '~/../../../abi/addresses'
+import { CAW_NAMES_L2_ADDRESS } from '~/../../../abi/addresses'
 import { useActiveToken, usePriceStore } from '~/store/tokenDataStore'
 import { useRootSigner } from '~/hooks/useRootSigner'
 import { encryptPrivateKey, getEncryptionSignMessage, setDecryptedKey } from '~/services/sessionKeyEncryption'
-import { cawActionsAbi } from '~/../../../abi/generated'
+import { cawProfileLedgerAbi } from '~/../../../abi/generated'
 import { getJSON } from '~/utils/safeStorage'
 import { IDENTITY_KIND_KEY, IDENTITY_KIND_PASSKEY } from '~/constants/passkeyStorage'
 
@@ -382,9 +382,12 @@ export function useNetworkTipTargetAsCAW(networkId: number = 1): {
   const tipCeilingFallbackCaw: bigint =
     cawPrice > 0 ? BigInt(Math.max(1, Math.round(USD_FALLBACK / cawPrice))) : BigInt(1000)
 
+  // networkTipTargetWei lives on CawProfileLedger (deployed at CAW_NAMES_L2_ADDRESS),
+  // NOT on CawActions. Reading it off the wrong ABI/address silently fails and the
+  // hook would always fall through to the USD fallback below.
   const { data: tipTargetWei } = useReadContract({
-    address: CAW_ACTIONS_ADDRESS as `0x${string}`,
-    abi: cawActionsAbi,
+    address: CAW_NAMES_L2_ADDRESS as `0x${string}`,
+    abi: cawProfileLedgerAbi,
     functionName: 'networkTipTargetWei',
     args: [networkId],
     chainId: baseSepolia.id,

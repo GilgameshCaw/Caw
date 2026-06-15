@@ -8,7 +8,7 @@ import { useTheme } from '~/hooks/useTheme'
 import { useT } from '~/i18n/I18nProvider'
 import { useActiveToken, usePriceStore } from '~/store/tokenDataStore'
 import { useSessionKeyStore } from '~/store/sessionKeyStore'
-import { useCreateSession, useRevokeSession, getDefaultTipCeiling, DEFAULT_SPEND_LIMIT, DEFAULT_SESSION_DURATION } from '~/hooks/useSessionKey'
+import { useCreateSession, useRevokeSession, getDefaultTipCeiling, useNetworkTipTargetAsCAW, DEFAULT_SPEND_LIMIT, DEFAULT_SESSION_DURATION } from '~/hooks/useSessionKey'
 import { getTipTiers } from '~/api/actions'
 import { HiArrowLeft } from 'react-icons/hi'
 import QuickSignOptions from '~/components/QuickSignOptions'
@@ -49,7 +49,9 @@ const SessionKeySettings: React.FC = () => {
   const [spendLimitTouched, setSpendLimitTouched] = useState(false)
   const [duration, setDuration] = useState<number>(DEFAULT_SESSION_DURATION)
   const [tipCeiling, setTipCeiling] = useState<bigint>(() => getDefaultTipCeiling(getTipTiers().fast))
+  const [tipCeilingTouched, setTipCeilingTouched] = useState(false)
   const [walletProtect, setWalletProtect] = useState(false)
+  const { tipCeilingCaw: networkTipCaw, tipCeilingFallbackCaw } = useNetworkTipTargetAsCAW()
 
   // When CAW price loads (or changes), update the spend limit to ~$10 unless the user has
   // already manually picked a value.
@@ -59,6 +61,14 @@ const SessionKeySettings: React.FC = () => {
       setSpendLimit(BigInt(Math.round(10 / cawPrice)))
     }
   }, [cawPrice, spendLimitTouched])
+
+  // Re-peg the default tip ceiling to the Network's USD-denominated target once
+  // loaded (tracks CAW price), unless the user has manually picked a tip value.
+  useEffect(() => {
+    if (tipCeilingTouched) return
+    const networkDefault = networkTipCaw ?? tipCeilingFallbackCaw
+    setTipCeiling(networkDefault)
+  }, [networkTipCaw, tipCeilingFallbackCaw, tipCeilingTouched])
 
   // Wrap onSpendLimitChange so we mark "touched" when the user picks a preset
   const handleSpendLimitChange = useCallback((v: bigint) => {
@@ -320,7 +330,7 @@ const SessionKeySettings: React.FC = () => {
                         duration={duration}
                         onDurationChange={setDuration}
                         tipCeiling={tipCeiling}
-                        onTipCeilingChange={setTipCeiling}
+                        onTipCeilingChange={(v) => { setTipCeilingTouched(true); setTipCeiling(v) }}
                         walletProtect={walletProtect}
                         onWalletProtectChange={setWalletProtect}
                         themed

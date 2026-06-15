@@ -20,7 +20,7 @@
 import React, { useState, useCallback, useEffect, useMemo } from 'react'
 import { useSearchParams } from 'react-router-dom'
 import { useTheme } from '~/hooks/useTheme'
-import { registerSponsoredSession, getDefaultSpendLimit, getDefaultTipCeiling, DEFAULT_SESSION_DURATION } from '~/hooks/useSessionKey'
+import { registerSponsoredSession, getDefaultSpendLimit, getDefaultTipCeiling, useNetworkTipTargetAsCAW, DEFAULT_SESSION_DURATION } from '~/hooks/useSessionKey'
 import { useXSignupVerification } from '~/hooks/useXSignupVerification'
 import { getTipTiers } from '~/api/actions'
 import { usePriceStore } from '~/store/tokenDataStore'
@@ -229,8 +229,18 @@ export default function Onboarding() {
   const [qsSpendLimit, setQsSpendLimit] = useState<bigint>(() => getDefaultSpendLimit())
   const [qsDuration, setQsDuration] = useState<number>(DEFAULT_SESSION_DURATION)
   const [qsTipCeiling, setQsTipCeiling] = useState<bigint>(() => getDefaultTipCeiling(getTipTiers().fast))
+  const [qsTipCeilingTouched, setQsTipCeilingTouched] = useState(false)
   const [qsWalletProtect, setQsWalletProtect] = useState(false)
   const cawPriceUsd = usePriceStore(s => s.priceMap['a-hunters-dream']) as number | undefined
+  const { tipCeilingCaw: networkTipCaw, tipCeilingFallbackCaw } = useNetworkTipTargetAsCAW()
+
+  // Re-peg the default tip ceiling to the Network's USD-denominated target once
+  // loaded (tracks CAW price), unless the user has manually picked a tip value.
+  useEffect(() => {
+    if (qsTipCeilingTouched) return
+    const networkDefault = networkTipCaw ?? tipCeilingFallbackCaw
+    setQsTipCeiling(networkDefault)
+  }, [networkTipCaw, tipCeilingFallbackCaw, qsTipCeilingTouched])
 
   useEffect(() => {
     if (!codeValid || !normalizedCode) return
@@ -764,7 +774,7 @@ export default function Onboarding() {
               qsDuration={qsDuration}
               onQsDurationChange={setQsDuration}
               qsTipCeiling={qsTipCeiling}
-              onQsTipCeilingChange={setQsTipCeiling}
+              onQsTipCeilingChange={(v: bigint) => { setQsTipCeilingTouched(true); setQsTipCeiling(v) }}
               qsWalletProtect={qsWalletProtect}
               onQsWalletProtectChange={setQsWalletProtect}
             />

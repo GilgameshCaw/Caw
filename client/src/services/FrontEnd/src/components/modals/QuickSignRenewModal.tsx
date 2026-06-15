@@ -6,7 +6,7 @@ import { useTheme } from '~/hooks/useTheme'
 import { useT } from '~/i18n/I18nProvider'
 import { useSessionKeyStore } from '~/store/sessionKeyStore'
 import { useActiveToken } from '~/store/tokenDataStore'
-import { useCreateSession, getDefaultSpendLimit, getDefaultTipCeiling, DEFAULT_SESSION_DURATION } from '~/hooks/useSessionKey'
+import { useCreateSession, getDefaultSpendLimit, getDefaultTipCeiling, useNetworkTipTargetAsCAW, DEFAULT_SESSION_DURATION } from '~/hooks/useSessionKey'
 import { getTipTiers } from '~/api/actions'
 import { HiLightningBolt } from 'react-icons/hi'
 import QuickSignOptions from '~/components/QuickSignOptions'
@@ -54,6 +54,7 @@ const QuickSignRenewModal: React.FC = () => {
   const ensureWallet = useEnsureWallet()
   const chainId = useChainId()
   const activeToken = useActiveToken()
+  const { tipCeilingCaw: networkTipCaw, tipCeilingFallbackCaw } = useNetworkTipTargetAsCAW()
   const [loading, setLoading] = useState(false)
   const [status, setStatus] = useState('')
   const [error, setError] = useState<string | null>(null)
@@ -65,6 +66,17 @@ const QuickSignRenewModal: React.FC = () => {
   const wrongWallet = isConnected && activeToken && address
     ? activeToken.address.toLowerCase() !== address.toLowerCase()
     : false
+
+  // Re-peg the default tip ceiling to the Network's USD-denominated target once
+  // loaded, so it tracks the CAW price instead of the stale hardcoded fast tier.
+  // Mirrors QuickSignModal. Only while the modal is open and the user hasn't
+  // navigated away mid-renew.
+  React.useEffect(() => {
+    if (isOpen) {
+      const networkDefault = networkTipCaw ?? tipCeilingFallbackCaw
+      setTipCeiling(networkDefault)
+    }
+  }, [isOpen, networkTipCaw, tipCeilingFallbackCaw])
 
   // Clear stale errors when connection state changes
   React.useEffect(() => { setError(null) }, [isConnected, address, chainId])
