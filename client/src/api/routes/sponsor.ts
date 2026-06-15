@@ -870,6 +870,7 @@ router.get('/invite-quote', async (_req, res) => {
   return res.status(200).json({
     gasFloorCaw: quote.gasFloorCaw.toString(),
     gasMarginCaw: quote.gasMarginCaw.toString(),
+    maxGiftCaw: quote.maxGiftCaw.toString(),
     cawUsdRate: quote.cawUsdRate,
     priceAvailable: quote.priceAvailable,
     validatorTokenId,

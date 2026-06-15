@@ -23,6 +23,7 @@ import { formatUsd } from '~/utils/numberFormat'
 interface InviteQuote {
   gasFloorCaw: string
   gasMarginCaw: string
+  maxGiftCaw: string
   cawUsdRate: number
   priceAvailable: boolean
   validatorTokenId: number | null
@@ -80,10 +81,18 @@ export default function SponsorInviteSection() {
   // Gas floor + margin in whole CAW (from the quote) and their USD values.
   const gasFloorCaw = quote ? BigInt(quote.gasFloorCaw) : 0n
   const gasMarginCaw = quote ? BigInt(quote.gasMarginCaw) : 0n
+  // Per-code gift ceiling (whole CAW). The server rejects a tip whose gift would
+  // exceed this; clamp the input here so the buyer can't sign an over-cap action
+  // that would mint no code (and not be refunded).
+  const maxGiftCaw = quote ? BigInt(quote.maxGiftCaw) : 0n
   const rate = quote?.cawUsdRate ?? cawPrice // $/CAW
   const gasFloorUsd = Number(gasFloorCaw) * rate
   // Minimum the user may enter: gas floor, rounded up to the next cent.
   const minUsd = Math.max(0.01, Math.ceil(gasFloorUsd * 100) / 100)
+  // Maximum the user may enter: a tip whose gift hits the cap = maxGift + margin,
+  // in USD, rounded DOWN to the cent so the on-chain gift stays at or under the cap.
+  const maxTipCaw = maxGiftCaw + gasMarginCaw
+  const maxUsd = maxGiftCaw > 0n ? Math.floor(Number(maxTipCaw) * rate * 100) / 100 : Infinity
 
   const usdAmount = parseFloat(usdInput) || 0
   // Whole CAW the buyer will tip (their USD / price). The gift is this minus the
@@ -94,9 +103,12 @@ export default function SponsorInviteSection() {
 
   const priceReady = rate > 0 && quote?.priceAvailable !== false
   const aboveFloor = usdAmount >= minUsd && tipWholeCaw > 0
+  // Gift must not exceed the per-code cap (server enforces this; mirror it here).
+  const belowCap = maxGiftCaw === 0n || BigInt(giftWholeCaw) <= maxGiftCaw
   const canBuy =
     priceReady &&
     aboveFloor &&
+    belowCap &&
     !!activeTokenId &&
     quote?.validatorTokenId != null &&
     buyState === 'idle'
@@ -160,18 +172,26 @@ export default function SponsorInviteSection() {
               <input
                 type="number"
                 min={minUsd}
+                max={Number.isFinite(maxUsd) ? maxUsd : undefined}
                 step="0.01"
                 value={usdInput}
                 onChange={e => setUsdInput(e.target.value)}
-                onBlur={() => { if (usdAmount < minUsd) setUsdInput(minUsd.toFixed(2)) }}
+                onBlur={() => {
+                  if (usdAmount < minUsd) setUsdInput(minUsd.toFixed(2))
+                  else if (Number.isFinite(maxUsd) && usdAmount > maxUsd) setUsdInput(maxUsd.toFixed(2))
+                }}
                 className={`flex-1 px-3 py-2 rounded-xl border text-sm outline-none ${
                   isDark ? 'bg-white/5 border-white/20 text-white' : 'bg-white border-gray-300 text-gray-900'
-                } ${aboveFloor ? 'focus:border-yellow-500' : 'border-red-500'}`}
+                } ${aboveFloor && belowCap ? 'focus:border-yellow-500' : 'border-red-500'}`}
               />
             </div>
-            <p className={`text-xs mt-1 ${aboveFloor ? mutedClass : 'text-red-500'}`}>
-              Minimum ${minUsd.toFixed(2)} (covers gas). Of your ${formatUsd(usdAmount)},{' '}
-              <span className={strongClass}>${formatUsd(giftUsd)}</span> becomes the new user's gift.
+            <p className={`text-xs mt-1 ${aboveFloor && belowCap ? mutedClass : 'text-red-500'}`}>
+              {!belowCap ? (
+                <>Maximum ${Number.isFinite(maxUsd) ? maxUsd.toFixed(2) : '—'} per code.</>
+              ) : (
+                <>Minimum ${minUsd.toFixed(2)} (covers gas). Of your ${formatUsd(usdAmount)},{' '}
+                <span className={strongClass}>${formatUsd(giftUsd)}</span> becomes the new user's gift.</>
+              )}
             </p>
 
             <label className={`block text-sm font-medium mt-4 mb-1 ${strongClass}`}>Minimum username length</label>

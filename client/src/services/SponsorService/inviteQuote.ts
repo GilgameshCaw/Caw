@@ -56,11 +56,34 @@ function effectiveGasPriceWei(): bigint {
 // the contract's CAP_STALE_THRESHOLD intent.
 const MAX_PRICE_AGE_MS = 15 * 60 * 1000 // 15 minutes
 
+// Upper bound on a single code's gift (whole CAW). Without it, a buyer can tip an
+// arbitrarily large amount and mint ONE single-use code whose maxDepositCawWei is
+// unbounded — a redeemer then drains the whole gift into one new profile in a
+// single sponsored bootstrap, fronted from the validator's pool. A gift larger
+// than what one sponsored deposit can settle (SPONSOR_MAX_DEPOSIT_CAW, enforced
+// at the bootstrap path in SponsorService) is also un-redeemable in full, so we
+// cap the gift to the same ceiling. Defaults to 10M CAW to match SponsorService's
+// maxDepositCAW default; overridable via the same env var so the two stay aligned.
+export const MAX_INVITE_GIFT_CAW: bigint = (() => {
+  const raw = process.env.SPONSOR_MAX_DEPOSIT_CAW
+  if (raw) {
+    try {
+      const n = BigInt(raw)
+      if (n > 0n) return n
+    } catch { /* fall through to default */ }
+  }
+  return 10_000_000n // 10M whole CAW
+})()
+
 export interface InviteQuote {
   /** Minimum tip (whole CAW) that covers gas alone. Tip <= this => no code. */
   gasFloorCaw: bigint
   /** Tip overhead (whole CAW) deducted before the gift: gas + LZ relay. */
   gasMarginCaw: bigint
+  /** Maximum gift (whole CAW) a single code may carry. A tip whose gift would
+   *  exceed this is rejected by the handler (no code, no refund), so the FE
+   *  should clamp the input's upper bound to (maxGiftCaw + gasMarginCaw). */
+  maxGiftCaw: bigint
   /** USD per 1 whole CAW (float), for FE $ rendering. 0 when prices unknown. */
   cawUsdRate: number
   /** True when live prices were available; false => callers should treat the
@@ -146,7 +169,7 @@ export function quoteSponsorInviteCostCaw(): InviteQuote {
   const ethPrice = getEthPriceCache()
 
   if (!cawPrice || !ethPrice || cawPrice.cawPerEth <= 0n) {
-    return { gasFloorCaw: 0n, gasMarginCaw: 0n, cawUsdRate: 0, priceAvailable: false }
+    return { gasFloorCaw: 0n, gasMarginCaw: 0n, maxGiftCaw: MAX_INVITE_GIFT_CAW, cawUsdRate: 0, priceAvailable: false }
   }
 
   // Reject stale prices — minting the gift against a stale-low CAW price is the
@@ -154,7 +177,7 @@ export function quoteSponsorInviteCostCaw(): InviteQuote {
   // and the FE refuses to clamp the input.
   const now = Date.now()
   if (now - cawPrice.updatedAt > MAX_PRICE_AGE_MS || now - ethPrice.updatedAt > MAX_PRICE_AGE_MS) {
-    return { gasFloorCaw: 0n, gasMarginCaw: 0n, cawUsdRate: 0, priceAvailable: false }
+    return { gasFloorCaw: 0n, gasMarginCaw: 0n, maxGiftCaw: MAX_INVITE_GIFT_CAW, cawUsdRate: 0, priceAvailable: false }
   }
 
   const gasWei = effectiveGasPriceWei() * GAS_LIMIT_BOOTSTRAP
@@ -166,5 +189,5 @@ export function quoteSponsorInviteCostCaw(): InviteQuote {
   const usdPerEthFloat = Number(ethPrice.usdPerEth) / 1e6
   const cawUsdRate = ethPerCawFloat * usdPerEthFloat
 
-  return { gasFloorCaw, gasMarginCaw, cawUsdRate, priceAvailable: true }
+  return { gasFloorCaw, gasMarginCaw, maxGiftCaw: MAX_INVITE_GIFT_CAW, cawUsdRate, priceAvailable: true }
 }

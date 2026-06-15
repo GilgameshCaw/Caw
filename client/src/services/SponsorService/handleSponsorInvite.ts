@@ -13,7 +13,7 @@
 
 import type { PrismaTransactionClient } from '../ActionProcessor/types'
 import { getOwnValidatorTokenIdSync } from './validatorIdentity'
-import { quoteSponsorInviteCostCaw } from './inviteQuote'
+import { quoteSponsorInviteCostCaw, MAX_INVITE_GIFT_CAW } from './inviteQuote'
 import { createSponsorCode } from './createSponsorCode'
 import { encryptInviteCode, isInviteCodeCryptoConfigured } from './inviteCodeCrypto'
 
@@ -84,6 +84,22 @@ export async function handleSponsorInviteAction(
 
   // ── Gift budget = tip minus the gas+LZ margin (clamped >= 0). ─────────────
   const giftWholeCaw = tipWholeCaw > quote.gasMarginCaw ? tipWholeCaw - quote.gasMarginCaw : 0n
+
+  // ── Upper bound: reject an oversized gift. ────────────────────────────────
+  // A single code's gift is the maxDepositCawWei a redeemer can draw into one
+  // new profile in one sponsored bootstrap. Cap it at MAX_INVITE_GIFT_CAW (==
+  // SponsorService's per-deposit max) so an arbitrarily large tip can't mint a
+  // code that drains the validator pool in one redemption — and so a code can't
+  // promise more than a single deposit could ever honour. Over-cap: no code, no
+  // refund (same documented no-refund edge as the under-gas path). We REJECT
+  // rather than silently clamp so the buyer isn't charged for a gift larger than
+  // what they receive; the FE clamps the input to keep this unreachable in normal
+  // use, so reaching here means a hand-crafted action.
+  if (giftWholeCaw > MAX_INVITE_GIFT_CAW) {
+    console.warn(`[sponsor-invite] gift ${giftWholeCaw} CAW exceeds cap ${MAX_INVITE_GIFT_CAW}; no code (sender=${senderId} cawonce=${cawonce})`)
+    return
+  }
+
   const giftCawWei = giftWholeCaw * WEI
 
   // Min-username length the buyer requested (text field 2), floored at 8.
