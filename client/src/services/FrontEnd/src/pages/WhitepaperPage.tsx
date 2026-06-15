@@ -137,7 +137,7 @@ const WhitepaperPage: React.FC = () => {
   type TocParent = { id: string; label: string; depth: 1; children: TocChild[] }
   type TocItem = TocParent | { id: string; label: string; depth: 2 }
 
-  const { toc, sectionMdById, headingIdFor, resetRenderSlugger, initialId, parentById } = useMemo(() => {
+  const { toc, sectionMdById, searchSliceById, headingIdFor, resetRenderSlugger, initialId, parentById } = useMemo(() => {
     const lines = whitepaperMd.split('\n')
     const slugger = new GithubSlugger()
 
@@ -188,7 +188,17 @@ const WhitepaperPage: React.FC = () => {
 
     // Slice markdown per heading so clicking a TOC item swaps the right pane
     // instead of rendering the whole document at once.
+    //
+    // sectionMdById  — what we RENDER. An h1 slice spans the whole section
+    //                  (heading + all child h2s); an h2 slice is just the child.
+    // searchSliceById — what we SEARCH. Same as the render slice EXCEPT an h1
+    //                  with children only covers its PREAMBLE (h1 heading up to
+    //                  its first child h2). Children own their own text, so this
+    //                  stops parent results from duplicating child results;
+    //                  the parent only surfaces matches that appear before any
+    //                  subsection begins.
     const sectionMdById: Record<string, string> = {}
+    const searchSliceById: Record<string, string> = {}
     for (let idx = 0; idx < headings.length; idx++) {
       const h = headings[idx]
       // Skip doc title slice.
@@ -196,9 +206,11 @@ const WhitepaperPage: React.FC = () => {
 
       const start = h.line
       let end = lines.length
+      let firstChildLine = -1 // first h2 under this h1, if any
       for (let j = idx + 1; j < headings.length; j++) {
         const next = headings[j]
         if (h.depth === 1) {
+          if (next.depth === 2 && firstChildLine === -1) firstChildLine = next.line
           if (next.depth === 1) { end = next.line; break }
         } else {
           // h2 ends at next h1 OR next h2.
@@ -206,6 +218,9 @@ const WhitepaperPage: React.FC = () => {
         }
       }
       sectionMdById[h.id] = lines.slice(start, end).join('\n').trim() + '\n'
+      // Search slice: parents with children search only their preamble.
+      const searchEnd = h.depth === 1 && firstChildLine !== -1 ? firstChildLine : end
+      searchSliceById[h.id] = lines.slice(start, searchEnd).join('\n').trim() + '\n'
     }
 
     // Heading ids during render must match the ids we computed above. The
@@ -222,7 +237,7 @@ const WhitepaperPage: React.FC = () => {
     const foreword = headings.find(h => h.label.toLowerCase() === 'foreword')
     const initialId = foreword?.id ?? toc[0]?.id ?? ''
 
-    return { toc, sectionMdById, headingIdFor, resetRenderSlugger, initialId, parentById }
+    return { toc, sectionMdById, searchSliceById, headingIdFor, resetRenderSlugger, initialId, parentById }
   }, [])
 
   // The URL is the source of truth for the active section, so each section is
@@ -271,12 +286,14 @@ const WhitepaperPage: React.FC = () => {
     if (rawQuery.trim().length < 2) setScrollTarget(null)
   }, [rawQuery])
 
-  // Plaintext projection of every section, computed once. Keyed by section id.
+  // Plaintext projection of every section's SEARCH slice (parents = preamble
+  // only, so child matches aren't double-counted under the parent), computed
+  // once. Keyed by section id.
   const sectionPlainById = useMemo(() => {
     const out: Record<string, string> = {}
-    for (const id of Object.keys(sectionMdById)) out[id] = mdToPlain(sectionMdById[id])
+    for (const id of Object.keys(searchSliceById)) out[id] = mdToPlain(searchSliceById[id])
     return out
-  }, [sectionMdById])
+  }, [searchSliceById])
 
   // Label lookup (for showing the section title in results), in TOC order so
   // results read top-to-bottom like the document.
