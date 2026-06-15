@@ -27,10 +27,11 @@ const GAS_LIMIT_BOOTSTRAP = 400_000n
 // Conservative ceiling — a code minted against it is over-funded, never under.
 const GAS_PRICE_FALLBACK_WEI = 20_000_000_000n // 20 gwei
 // Safety multiplier on the live mainnet gas price: the code is redeemed LATER,
-// so quote a little above the current price to absorb a gas spike between buy
-// and redeem. 150% (×3/2 in bigint).
-const GAS_PRICE_SAFETY_NUM = 3n
-const GAS_PRICE_SAFETY_DEN = 2n
+// so quote a hair above the current price to absorb minor drift between buy and
+// redeem. 110% (×11/10 in bigint). Kept small on purpose — the quote already
+// tracks live gas, so a large pad just over-charges the buyer.
+const GAS_PRICE_SAFETY_NUM = 11n
+const GAS_PRICE_SAFETY_DEN = 10n
 // Treat a mainnet-gas cache older than this as unusable → fall back to the ceiling.
 const MAX_GAS_AGE_MS = 15 * 60 * 1000 // 15 minutes
 // LZ relay leg the validator fronts for the cross-chain deposit. Best-effort
