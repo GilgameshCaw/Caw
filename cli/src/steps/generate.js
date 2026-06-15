@@ -833,6 +833,15 @@ function buildPm2Config(nodeType, config, installDir) {
   // unprivileged (the typical CLI install path), this is a no-op.
   const runAsUser = config.runAsUser || process.env.SUDO_USER || (process.getuid && process.getuid() === 0 ? 'caw' : undefined)
 
+  // When pm2 drops privileges via per-app `user`, the child still inherits
+  // HOME from the pm2 daemon's environment (HOME=/root when pm2 boots under
+  // systemd as root). Yarn/npx then try to read/write /root/.config/yarn as
+  // the unprivileged user and hit EACCES, crash-looping the process. Pin HOME
+  // to the target user's home so config/cache paths resolve to a writable dir.
+  // Only meaningful when runAsUser is set; unprivileged installs already have
+  // a correct HOME. Reported by validator zinsanjp after f624662.
+  const userHome = runAsUser ? (runAsUser === 'root' ? '/root' : `/home/${runAsUser}`) : undefined
+
   // Multiple CAW installs share one pm2 daemon, so app names need to be
   // unique. Use the domain (or "default" for dirless installs) as a suffix
   // so `pm2 list` reads cleanly: caw-server-test1.caw.social,
@@ -854,7 +863,7 @@ function buildPm2Config(nodeType, config, installDir) {
       // PORT is referenced by the install-side port scan and is the single
       // source of truth for which port this install's API listens on.
       // config.json's Api.port should match (we set both from config.apiPort).
-      env: { NODE_ENV: 'production', PORT: String(apiPort) },
+      env: { NODE_ENV: 'production', PORT: String(apiPort), ...(userHome ? { HOME: userHome } : {}) },
       // 2G headroom: the single-process app runs the API + validator +
       // indexer + watchers in one Node, and the StakeLedger / Action /
       // CountManager in-memory caches legitimately sit around 1.2-1.5GB
@@ -883,7 +892,7 @@ function buildPm2Config(nodeType, config, installDir) {
       cwd: path.join(installDir, 'client/src/services/FrontEnd'),
       script: 'npx',
       args: 'vite --host 0.0.0.0',
-      env: { NODE_ENV: 'development' },
+      env: { NODE_ENV: 'development', ...(userHome ? { HOME: userHome } : {}) },
       error_file: path.join(installDir, 'logs/caw-frontend-error.log'),
       out_file: path.join(installDir, 'logs/caw-frontend-out.log'),
       merge_logs: true,
