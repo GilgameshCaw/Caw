@@ -260,8 +260,16 @@ const WhitepaperPage: React.FC = () => {
   // standalone section).
   const scrollToHeadingId = (activeId && parentById[activeId]) ? activeId : null
 
-  // Navigating to a section = pushing its slug to the URL (activeId follows).
-  const selectSection = (id: string) => navigate(`/help/whitepaper/${id}`)
+  // Push a section slug to the URL (activeId follows). The URL is the source of
+  // truth, so this is also what makes every section deep-linkable / shareable.
+  const navigateToSection = (id: string) => navigate(`/help/whitepaper/${id}`)
+
+  // TOC / plain navigation. Clears any pending search-match target so the
+  // section-scroll branch (not the match-scroll branch) handles this jump.
+  const selectSection = (id: string) => {
+    setScrollTarget(null)
+    navigateToSection(id)
+  }
 
   // --- Search state ------------------------------------------------------
   const [rawQuery, setRawQuery] = useState('')
@@ -331,9 +339,10 @@ const WhitepaperPage: React.FC = () => {
   const searching = query.length >= 2
 
   // Jump to a section + queue the right pane to scroll/highlight a given match.
+  // Navigates raw (does NOT clear scrollTarget — we just set it).
   const gotoMatch = (id: string, occ: number) => {
     setScrollTarget({ term: query, sectionId: id, occ, nonce: Date.now() })
-    if (id !== activeId) selectSection(id)
+    if (id !== activeId) navigateToSection(id)
     setMobileNavOpen(false)
   }
 
@@ -461,11 +470,14 @@ const WhitepaperPage: React.FC = () => {
       const pick = scoped.length ? scoped : marks
       const target = pick[Math.min(scrollTarget.occ, pick.length - 1)]
       if (target) {
-        target.scrollIntoView({ behavior: 'smooth', block: 'center' })
+        // rAF so the just-mounted markdown has laid out before we measure/scroll.
+        const raf = requestAnimationFrame(() =>
+          target.scrollIntoView({ behavior: 'smooth', block: 'center' })
+        )
         const ring = isDark ? 'ring-2 ring-yellow-300/70' : 'ring-2 ring-yellow-500/70'
         target.classList.add(...ring.split(' '))
         const t = setTimeout(() => target.classList.remove(...ring.split(' ')), 1600)
-        return () => { clearTimeout(t); clearHighlights(root) }
+        return () => { cancelAnimationFrame(raf); clearTimeout(t); clearHighlights(root) }
       }
     }
     // (b) Navigation to a new page/sub-section (no match click). Fire once per
@@ -476,8 +488,12 @@ const WhitepaperPage: React.FC = () => {
       const heading = scrollToHeadingId
         ? root.querySelector<HTMLElement>(`#${CSS.escape(scrollToHeadingId)}`)
         : null
-      if (heading) heading.scrollIntoView({ behavior: 'smooth', block: 'start' })
-      else root.scrollIntoView({ behavior: 'auto', block: 'start' })
+      // rAF so the just-mounted page has laid out before we scroll to the anchor.
+      const raf = requestAnimationFrame(() => {
+        if (heading) heading.scrollIntoView({ behavior: 'smooth', block: 'start' })
+        else root.scrollIntoView({ behavior: 'auto', block: 'start' })
+      })
+      return () => { cancelAnimationFrame(raf); clearHighlights(root) }
     }
 
     // `root` is captured at effect start; safe to use in cleanup (the node we marked).
@@ -515,7 +531,7 @@ const WhitepaperPage: React.FC = () => {
         const cls = level === 1
           ? 'mt-10 first:mt-0 text-2xl sm:text-3xl font-bold'
           : level === 2
-            ? 'mt-8 text-xl sm:text-2xl font-semibold'
+            ? 'mt-16 text-xl sm:text-2xl font-semibold'
             : 'mt-6 text-lg font-semibold'
         // If the heading carried a ==marker==, render our highlighted version;
         // otherwise pass children through untouched (preserves any inline md).
