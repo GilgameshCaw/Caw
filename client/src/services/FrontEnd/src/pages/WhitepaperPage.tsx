@@ -137,21 +137,29 @@ const WhitepaperPage: React.FC = () => {
   type TocParent = { id: string; label: string; depth: 1; children: TocChild[] }
   type TocItem = TocParent | { id: string; label: string; depth: 2 }
 
-  const { toc, sectionMdById, searchSliceById, headingIdFor, resetRenderSlugger, initialId, parentById } = useMemo(() => {
+  const { toc, sectionMdById, searchSliceById, headingIdsByPage, initialId, parentById } = useMemo(() => {
     const lines = whitepaperMd.split('\n')
+    // One slugger over EVERY heading (h1/h2/h3) in document order. Its output is
+    // the canonical id for each heading occurrence — used for the TOC, the
+    // section slices, AND the ids we render. We deliberately do NOT re-slug at
+    // render time (a stateful slugger there drifts, esp. under StrictMode's
+    // double-invoke, producing -1/-2 suffixes that break #anchor scroll).
     const slugger = new GithubSlugger()
 
-    // Extract h1/h2 headings with their line index.
+    // allHeadings holds h1/h2/h3 so we can map rendered headings → canonical ids
+    // by position. `headings` (h1/h2 only) drives the TOC + slices as before.
+    const allHeadings: Array<{ id: string; depth: 1 | 2 | 3; label: string; line: number }> = []
     const headings: Array<{ id: string; depth: 1 | 2; label: string; line: number }> = []
     for (let i = 0; i < lines.length; i++) {
-      const m = lines[i].match(/^(#{1,2})\s+(.+?)\s*$/)
+      const m = lines[i].match(/^(#{1,3})\s+(.+?)\s*$/)
       if (!m) continue
-      const depth = m[1].length as 1 | 2
+      const depth = m[1].length as 1 | 2 | 3
       // Strip ==highlight== markers so the TOC label + slug match the rendered
       // (marker-free) heading text and anchors stay stable.
       const label = m[2].replace(/\s+#+\s*$/, '').replace(/==/g, '').trim()
       const id = slugger.slug(label)
-      headings.push({ id, depth, label, line: i })
+      allHeadings.push({ id, depth, label, line: i })
+      if (depth <= 2) headings.push({ id, depth: depth as 1 | 2, label, line: i })
     }
 
     // Build nested TOC:
@@ -223,21 +231,32 @@ const WhitepaperPage: React.FC = () => {
       searchSliceById[h.id] = lines.slice(start, searchEnd).join('\n').trim() + '\n'
     }
 
-    // Heading ids during render must match the ids we computed above. The
-    // slugger is stateful (it disambiguates repeats with -1/-2 suffixes), so we
-    // RESET it at the start of every page render — otherwise navigating between
-    // sections accumulates suffixes and the rendered heading id drifts away from
-    // the slug we computed here (breaking #anchor scroll). `resetRenderSlugger`
-    // is called once per ReactMarkdown render below.
-    const renderSlugger = new GithubSlugger()
-    const resetRenderSlugger = (): null => { renderSlugger.reset(); return null }
-    const headingIdFor = (label: string) => renderSlugger.slug(label)
+    // For each rendered page (keyed by the page's heading id = renderId), the
+    // ORDERED list of canonical heading ids that fall inside that page's slice
+    // [start,end). The render path consumes this by position, so rendered ids are
+    // exactly the canonical ones — no render-time re-slugging, no drift.
+    const headingIdsByPage: Record<string, string[]> = {}
+    for (let idx = 0; idx < headings.length; idx++) {
+      const h = headings[idx]
+      if (h.depth === 1 && idx === 0) continue
+      if (h.depth === 2 && parentById[h.id]) continue // children render inside their parent's page
+      const start = h.line
+      let end = lines.length
+      for (let j = idx + 1; j < headings.length; j++) {
+        const next = headings[j]
+        if (h.depth === 1) { if (next.depth === 1) { end = next.line; break } }
+        else { if (next.depth === 1 || next.depth === 2) { end = next.line; break } }
+      }
+      headingIdsByPage[h.id] = allHeadings
+        .filter(ah => ah.line >= start && ah.line < end)
+        .map(ah => ah.id)
+    }
 
     // Default section: Foreword if present; otherwise first TOC item.
     const foreword = headings.find(h => h.label.toLowerCase() === 'foreword')
     const initialId = foreword?.id ?? toc[0]?.id ?? ''
 
-    return { toc, sectionMdById, searchSliceById, headingIdFor, resetRenderSlugger, initialId, parentById }
+    return { toc, sectionMdById, searchSliceById, headingIdsByPage, initialId, parentById }
   }, [])
 
   // The URL is the source of truth for the active section, so each section is
@@ -366,11 +385,47 @@ const WhitepaperPage: React.FC = () => {
 
   // --- Right-pane highlight + scroll -------------------------------------
   const mainRef = useRef<HTMLDivElement | null>(null)
+  // The actual scrollable element (the page's overflow-y-auto wrapper). We
+  // scroll THIS explicitly by computed offset rather than relying on
+  // scrollIntoView's ancestor-walking, which proved unreliable here.
+  const scrollContainerRef = useRef<HTMLDivElement | null>(null)
+
+  // Header clearance: the LandingHeader floats over the top ~4.75rem of the
+  // scroll area, so we offset scroll targets below it.
+  const HEADER_OFFSET = 88 // px (~5.5rem), matches headings' scroll-margin-top
+
+  // Scroll the container so `el` sits just below the floating header. Waits two
+  // animation frames so a freshly-mounted (and possibly still-reflowing) page
+  // has settled before we measure. `smooth` only when asked (instant on load).
+  const scrollContainerTo = (el: HTMLElement, smooth: boolean) => {
+    const doScroll = (behavior: ScrollBehavior) => {
+      const container = scrollContainerRef.current
+      if (!container) return
+      const top = el.getBoundingClientRect().top - container.getBoundingClientRect().top + container.scrollTop - HEADER_OFFSET
+      container.scrollTo({ top: Math.max(0, top), behavior })
+    }
+    // Two rAFs for the common case (page mounted, just needs a layout tick), then
+    // a couple of timed retries to cover a fresh hard-load where the long page is
+    // still reflowing past the first frames and an early scroll would land at 0.
+    let raf2 = 0
+    const raf1 = requestAnimationFrame(() => { raf2 = requestAnimationFrame(() => doScroll(smooth ? 'smooth' : 'auto')) })
+    const t1 = setTimeout(() => doScroll('auto'), 120)
+    const t2 = setTimeout(() => doScroll('auto'), 350)
+    return () => { cancelAnimationFrame(raf1); cancelAnimationFrame(raf2); clearTimeout(t1); clearTimeout(t2) }
+  }
   // Guards so incidental effect re-runs (theme toggle, typing) don't re-scroll:
   // the section auto-scroll fires once per distinct active section, and the
   // match-scroll fires once per distinct click (tracked by nonce).
   const lastScrolledSectionRef = useRef<string | null>(null)
   const lastScrolledMatchRef = useRef<number | null>(null)
+
+  // Reset the section guard on (re)mount so the scroll effect fires again. This
+  // matters for fresh page loads — incl. React StrictMode's dev mount/remount,
+  // where the first mount would otherwise mark the section as "scrolled" (often
+  // before the long page has laid out) and the remount would skip it.
+  useEffect(() => {
+    lastScrolledSectionRef.current = null
+  }, [])
 
   // The next heading element of equal-or-higher rank after `heading`, used to
   // bound one sub-section's content within a page that holds several. We treat
@@ -470,14 +525,11 @@ const WhitepaperPage: React.FC = () => {
       const pick = scoped.length ? scoped : marks
       const target = pick[Math.min(scrollTarget.occ, pick.length - 1)]
       if (target) {
-        // rAF so the just-mounted markdown has laid out before we measure/scroll.
-        const raf = requestAnimationFrame(() =>
-          target.scrollIntoView({ behavior: 'smooth', block: 'center' })
-        )
+        const cancelScroll = scrollContainerTo(target, true)
         const ring = isDark ? 'ring-2 ring-yellow-300/70' : 'ring-2 ring-yellow-500/70'
         target.classList.add(...ring.split(' '))
         const t = setTimeout(() => target.classList.remove(...ring.split(' ')), 1600)
-        return () => { cancelAnimationFrame(raf); clearTimeout(t); clearHighlights(root) }
+        return () => { cancelScroll(); clearTimeout(t); clearHighlights(root) }
       }
     }
     // (b) Navigation to a new page/sub-section (no match click). Fire once per
@@ -488,12 +540,12 @@ const WhitepaperPage: React.FC = () => {
       const heading = scrollToHeadingId
         ? root.querySelector<HTMLElement>(`#${CSS.escape(scrollToHeadingId)}`)
         : null
-      // rAF so the just-mounted page has laid out before we scroll to the anchor.
-      const raf = requestAnimationFrame(() => {
-        if (heading) heading.scrollIntoView({ behavior: 'smooth', block: 'start' })
-        else root.scrollIntoView({ behavior: 'auto', block: 'start' })
-      })
-      return () => { cancelAnimationFrame(raf); clearHighlights(root) }
+      if (heading) {
+        const cancelScroll = scrollContainerTo(heading, true)
+        return () => { cancelScroll(); clearHighlights(root) }
+      }
+      // Parent / standalone section — jump to the very top.
+      scrollContainerRef.current?.scrollTo({ top: 0, behavior: 'auto' })
     }
 
     // `root` is captured at effect start; safe to use in cleanup (the node we marked).
@@ -501,6 +553,26 @@ const WhitepaperPage: React.FC = () => {
     // Re-run when the rendered page changes, when the active sub-section changes,
     // when the term changes, or when a new occurrence is targeted (nonce).
   }, [renderId, activeId, scrollToHeadingId, query, searching, scrollTarget, isDark])
+
+  // Canonical heading ids for the page currently being rendered, consumed in
+  // document order by the heading renderer. A counter (reset just before each
+  // ReactMarkdown render) walks this list so the Nth rendered heading gets the
+  // Nth precomputed id — guaranteeing rendered ids === TOC/anchor ids with no
+  // render-time slugging (and thus no StrictMode -1 drift). If we ever run past
+  // the list (shouldn't happen), fall back to a positional id.
+  const pageHeadingIds = headingIdsByPage[renderId] ?? []
+  const headingCursorRef = useRef(0)
+  const resetHeadingCursor = (): null => { headingCursorRef.current = 0; return null }
+  // Read the live page list through a ref so mdComponents can stay memoized on
+  // [isDark] alone (the heading renderer pulls the current page's ids at render).
+  const pageHeadingIdsRef = useRef<string[]>(pageHeadingIds)
+  pageHeadingIdsRef.current = pageHeadingIds
+  const nextHeadingId = () => {
+    const i = headingCursorRef.current++
+    return pageHeadingIdsRef.current[i] ?? `wp-h-${i}`
+  }
+  const nextHeadingIdRef = useRef(nextHeadingId)
+  nextHeadingIdRef.current = nextHeadingId
 
   const mdComponents = useMemo(() => {
     const toText = (children: any): string => {
@@ -526,8 +598,7 @@ const WhitepaperPage: React.FC = () => {
     const Heading = (Tag: any, level: number) => {
       return ({ children, ...rest }: any) => {
         const raw = toText(children).trim()
-        const label = raw.replace(/==/g, '') // marker-free for slug/anchor
-        const id = headingIdFor(label)
+        const id = nextHeadingIdRef.current()
         const cls = level === 1
           ? 'mt-10 first:mt-0 text-2xl sm:text-3xl font-bold'
           : level === 2
@@ -632,7 +703,7 @@ const WhitepaperPage: React.FC = () => {
       th: ({ children }: any) => <th className={isDark ? 'text-left px-3 py-2 border-b border-white/10 font-semibold text-white/80' : 'text-left px-3 py-2 border-b border-black/10 font-semibold text-black/80'}>{children}</th>,
       td: ({ children }: any) => <td className={isDark ? 'px-3 py-2 border-b border-white/5 text-white/70' : 'px-3 py-2 border-b border-black/5 text-black/70'}>{children}</td>,
     }
-  }, [isDark, headingIdFor])
+  }, [isDark])
 
   const activeMd = renderId ? (sectionMdById[renderId] ?? '') : ''
 
@@ -668,7 +739,7 @@ const WhitepaperPage: React.FC = () => {
           picker as welcome / manifesto. Replaces the old /docs-style bar. */}
       <LandingHeader />
 
-      <div className="flex-1 overflow-y-auto">
+      <div ref={scrollContainerRef} className="flex-1 overflow-y-auto">
         {/* pt-20 clears the absolutely-positioned LandingHeader. */}
         <div className="max-w-6xl mx-auto px-4 sm:px-6 pt-20 pb-6 min-w-0">
         {/* Mobile TOC toggle — LandingHeader has no hamburger, so the
@@ -887,10 +958,11 @@ const WhitepaperPage: React.FC = () => {
         <main ref={mainRef} className={`min-w-0 ${isDark ? 'rounded-xl border border-white/10 bg-black/40 p-6' : 'rounded-xl border border-gray-200 bg-white/60 p-6'}`}>
           {activeMd ? (
             <>
-              {/* Reset the heading slugger so this page's anchor ids start clean
-                  (see resetRenderSlugger). Runs synchronously before the
-                  markdown children below are rendered. */}
-              {resetRenderSlugger()}
+              {/* Reset the heading-id cursor so this page's headings consume the
+                  precomputed canonical ids from position 0. Runs synchronously
+                  before the markdown children below are rendered (and re-runs
+                  ahead of each pass under StrictMode's double-invoke). */}
+              {resetHeadingCursor()}
               <ReactMarkdown remarkPlugins={[remarkGfm]} components={mdComponents as any}>
                 {activeMd}
               </ReactMarkdown>
