@@ -406,6 +406,20 @@ The sponsor's trust surface is deliberately narrow. The CAW it supplies is immed
 
 **`withdrawTo` is not sponsored, and this is intentional.** A sponsor submitting a withdrawal on behalf of a user would mean the sponsor can move user CAW back to L1 on a schedule the user does not control. The v5 design decision is that WITHDRAW is always a direct user action — signed by the passkey or the `ecdsaFallback` key, never routed through a sponsored entry point. This is a property of `CawProfileMinter.sol`; there is no admin override or future-upgrade path for it.
 
+### Onboarding without the chasm
+
+Every crypto application asks the newcomer to cross a chasm before they can do anything: install a wallet, write down a seed phrase, buy a gas token on an exchange, pass KYC, bridge funds. Each step is a wall, and the walls compound. The structural consequence is that crypto's growth has always been gated by *self-service* friction — the new user has to do all the hard parts themselves, alone, before they see any value.
+
+The sponsored-mint stack inverts this. Because authorization is a passkey and gas is fronted by a sponsor, the friction of onboarding can be **absorbed by someone other than the newcomer** — typically the person inviting them. A non-crypto user creates a CAW account the way they join any normal app: tap Face ID, pick a name. No seed phrase (the passkey *is* the key, held in the device's secure hardware), no gas (a sponsor relays the transaction), no exchange, no bridge. They never encounter crypto-the-scary-thing at all.
+
+There are three doors into the protocol, and a person who has never touched crypto can walk through any of them:
+
+1. **Gifted invite.** An existing user spends a small amount of CAW to mint a funded profile *for* a friend. The friend arrives to an account that is already alive — a name and a working balance — having done nothing but authenticate with their face. The cost to the inviter is a sliver of their own CAW plus a few cents of L2 gas; the cost to the newcomer is zero.
+2. **Proof-of-human.** A user who links a verified identity (e.g. a paid-blue-check X account, single-use per identity) receives a sponsored profile directly — free to them, with the sponsor covering the mint.
+3. **Free self-funded.** A user with neither an invite nor a linked identity can still mint a free, zero-balance profile and fund it whenever they choose — the same self-custodial `executeBatch` top-up path described in [§6.5](#65-the-passkey-path-eip-7702--webauthn).
+
+The first door is the important one. It turns onboarding from a solo gauntlet into a referral primitive: the cost of bringing a non-crypto person into the network falls to *a fraction of a dollar, paid by someone who already wants them there* — the same dynamic that grew every successful Web2 social network, now available without a custodian holding anyone's keys. The newcomer is self-custodial from the first second: the sponsor fronts gas and may gift CAW, but the profile, the passkey, and the funds are the user's alone, and `withdrawTo` is never something the sponsor can trigger.
+
 ## 6.8 ==Direct messages==
 
 DMs are end-to-end encrypted with ECIES (ECDH over the recipient's published encryption key, followed by AES-256-GCM with an HKDF-derived key). The encrypted payload is stored on the sender's and recipient's Mirrors; replication between Mirrors is via signed HTTP envelopes (the sender's wallet signs the envelope; peer Mirrors verify against the registered DM identity).
