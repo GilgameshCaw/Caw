@@ -31,6 +31,27 @@ The bot's *capabilities* are intentionally tiny:
   questions politely; cite sources when space allows; if you don't
   know, say so.
 
+### Pseudonymity and corpus safety
+
+This repository is pseudonymity-sensitive. To prevent the operator's
+identity leaking via the public bot:
+
+- **Embeddings are local.** The RAG index is built using
+  `Xenova/all-MiniLM-L6-v2` via `@xenova/transformers` — no text is
+  sent to a third-party embedding API. `CAW_AI_VOYAGE_API_KEY` has been
+  removed; only `CAW_AI_ANTHROPIC_API_KEY` (the reply LLM) is needed.
+- **Corpus = git-tracked current tree only.** `build-index.ts` sources
+  its file list from `git ls-files`. Untracked files (`.env`, local
+  scratch, `messages/`, deploy-state, the CLAUDE.md memory directory)
+  are structurally excluded — git does not know about them.
+- **Scrub + review gate.** Before any chunk is embedded, `scrub.ts`
+  checks it for pseudonymity patterns (the operator name, email
+  addresses, absolute home paths). Any match writes the chunk to
+  `rag/SCRUB_REVIEW.txt` and **halts the build with a non-zero exit**.
+  The index is not produced until all flagged chunks are resolved. Set
+  `SCRUB_REDACT_AND_CONTINUE=1` only after reviewing the file; this
+  replaces matches with `[REDACTED]` and continues rather than halting.
+
 ## Architecture
 
 ```
@@ -53,8 +74,7 @@ CawAI/
 |---|---|---|
 | `CAW_AI_PROFILE_TOKEN_ID` | Bot's profile tokenId | `7` |
 | `CAW_AI_DEPLOYER_PRIVATE_KEY` | Deployer wallet that owns the bot profile (hex) | `0x...` |
-| `CAW_AI_ANTHROPIC_API_KEY` | Claude API key | `sk-ant-...` |
-| `CAW_AI_VOYAGE_API_KEY` | Voyage AI key for RAG embeddings | `pa-...` |
+| `CAW_AI_ANTHROPIC_API_KEY` | Claude API key (reply LLM only; embeddings are local) | `sk-ant-...` |
 | `CAW_AI_API_URL` | Which mirror's API to poll | `https://test.caw.social` |
 | `CAW_AI_CAWACTIONS_ADDRESS` | L2 CawActions contract address | `0x...` |
 | `CAW_AI_CHAIN_ID` | L2 chain id (EIP-712 domain) | `84532` |
@@ -86,18 +106,20 @@ of the above.
 ## RAG index
 
 Built at deploy time by `npm run cawai:build-rag` (or equivalent).
-Walks:
-- `solidity/contracts/**/*.sol`
-- `docs/**/*.md`
-- `CLAUDE.md`
-- `messages/audit-*/**/*.md`
-- The orchestrator's memory directory if present in the deploy bundle
 
-Chunks files (token-aware, ~512 tokens per chunk with 64-token overlap),
-Embeds via Voyage AI (`voyage-3.5`, `input_type=document`). Requires
-`CAW_AI_VOYAGE_API_KEY`. Batches chunks in groups of 128. Stores as a
-single JSONL file — one record per line with `id`, `path`, `span`,
-`text`, and `embedding` fields. Bundle it with the service deploy.
+**Corpus**: every file tracked by `git ls-files` at the current HEAD
+with a `.sol`, `.md`, or `.txt` extension. Untracked files (`.env`,
+`messages/`, local scratch, deploy-state) are structurally excluded.
+
+Chunks files (token-aware, ~512 tokens per chunk with 64-token overlap).
+Embeds locally via `@xenova/transformers` (`Xenova/all-MiniLM-L6-v2`,
+384-dim). No external embedding API key required. Stores as a single
+JSONL file — one record per line with `id`, `path`, `span`, `text`, and
+`embedding` fields. Bundle it with the service deploy.
+
+Before embedding, every chunk is checked by `rag/scrub.ts` for
+pseudonymity patterns. Any match halts the build and writes
+`rag/SCRUB_REVIEW.txt` for human review.
 
 ## Why the budget cap
 

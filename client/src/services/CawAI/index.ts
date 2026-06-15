@@ -98,7 +98,7 @@ async function runOnce(
     // RAG retrieval finds contextually relevant chunks.
     let queryEmbedding: number[] = []
     try {
-      queryEmbedding = await embedQuery(m.cawText, cfg.voyageApiKey)
+      queryEmbedding = await embedQuery(m.cawText)
     } catch (e) {
       console.warn(`[CawAI] embed query failed for cawId=${m.cawId}: ${(e as Error).message} — proceeding with empty context`)
     }

@@ -11,12 +11,10 @@
 
 import type { CawAIConfig } from './config'
 import { SYSTEM_PROMPT, REPLY_INSTRUCTION } from './persona'
+import { embedTexts } from './rag/embed'
 
 const ANTHROPIC_URL = 'https://api.anthropic.com/v1/messages'
 const MODEL = 'claude-haiku-4-5-20251001' // cheap, fast, fits the budget
-
-const VOYAGE_EMBED_URL = 'https://api.voyageai.com/v1/embeddings'
-const VOYAGE_MODEL = 'voyage-3.5'
 
 export type GenerateInput = {
   userContent: string         // the @-mentioning caw text, untrusted
@@ -83,25 +81,17 @@ export async function generateReply(
 }
 
 /**
- * Embed a query string using Voyage AI for RAG retrieval.
- * Uses input_type='query' (vs 'document' used at index-build time).
+ * Embed a query string using the local sentence-transformers model for
+ * RAG retrieval. The embedding is produced by Xenova/all-MiniLM-L6-v2
+ * (384-dim, L2-normalized) — same model used at index-build time.
+ *
+ * The `cfg` parameter is retained for API symmetry; no remote key is
+ * needed since embeddings are generated locally.
  */
-export async function embedQuery(text: string, voyageApiKey: string): Promise<number[]> {
-  const res = await fetch(VOYAGE_EMBED_URL, {
-    method: 'POST',
-    headers: {
-      'Authorization': `Bearer ${voyageApiKey}`,
-      'content-type': 'application/json',
-    },
-    body: JSON.stringify({
-      input: [text],
-      model: VOYAGE_MODEL,
-      input_type: 'query',
-    }),
-  })
-  if (!res.ok) throw new Error(`voyage embed ${res.status}: ${await res.text()}`)
-  const { data } = await res.json() as { data: Array<{ embedding: number[] }> }
-  return data[0].embedding
+// eslint-disable-next-line @typescript-eslint/no-unused-vars
+export async function embedQuery(text: string, _cfg?: CawAIConfig): Promise<number[]> {
+  const vectors = await embedTexts([text], 'query')
+  return vectors[0]
 }
 
 // Hard character clamp applied to model output BEFORE posting. Never

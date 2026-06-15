@@ -140,3 +140,9 @@ solidity/test/zk-digest-fixtures.json
 # Local-only scratch — not part of the codebase.
 /visualizations/
 
+# CawAI RAG build artifacts (may contain scrub-flagged text — never commit)
+client/src/services/CawAI/rag/SCRUB_REVIEW.txt
+client/src/services/CawAI/rag/rag-index.jsonl
+**/cawai-scrub-review-*.txt
+**/cawai-rag-index.jsonl
+

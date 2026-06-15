@@ -21,10 +21,6 @@ const Schema = z.object({
   // the Node-side fetch call that hits api.anthropic.com.
   anthropicApiKey: z.string().min(10),
 
-  // Voyage AI key for RAG embeddings (build-index + query-time embed).
-  // Get one at dash.voyageai.com.
-  voyageApiKey: z.string().min(10),
-
   // The mirror this bot polls / posts through. Single-mirror by design
   // until the operator explicitly opts into multi-mirror.
   apiUrl: z.string().url(),
@@ -69,7 +65,6 @@ export function loadConfig(): CawAIConfig {
     profileTokenId:   process.env.CAW_AI_PROFILE_TOKEN_ID,
     deployerPrivateKey: process.env.CAW_AI_DEPLOYER_PRIVATE_KEY,
     anthropicApiKey:  process.env.CAW_AI_ANTHROPIC_API_KEY,
-    voyageApiKey:     process.env.CAW_AI_VOYAGE_API_KEY,
     apiUrl:           process.env.CAW_AI_API_URL,
     cawActionsAddress: process.env.CAW_AI_CAWACTIONS_ADDRESS,
     chainId:          process.env.CAW_AI_CHAIN_ID,
