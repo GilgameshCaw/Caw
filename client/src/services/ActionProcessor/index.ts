@@ -72,10 +72,19 @@ export const actionProcessorService: Service = {
         })
         if (backlog.length === 0) break
         const startOfChunk = lastId
-        for (const raw of backlog) {
+        for (let i = 0; i < backlog.length; i++) {
+          const raw = backlog[i]
           if (stopRequested) break
+          // Only verify the reward multiplier at a block boundary: when the
+          // next event in the backlog belongs to a different block (or this is
+          // the last event in the chunk). Verifying mid-block reads a chain
+          // value that already reflects later same-block events our running
+          // state hasn't applied yet → false-positive DIVERGENCE. (zinsanjp,
+          // cross-node confirmed.)
+          const next = backlog[i + 1]
+          const atBlockBoundary = !next || next.blockNumber !== raw.blockNumber
           try {
-            await handleRawEvent(raw)
+            await handleRawEvent(raw, /* skipVerify */ !atBlockBoundary)
             lastId = raw.id
           } catch (err) {
             if (err instanceof StaleTokenError) {
@@ -98,26 +107,62 @@ export const actionProcessorService: Service = {
 
       // now subscribe to the same "raws" channel your Gatherer is publishing
       await redis.subscribe('raws')
-      redis.on('message', async (_channel, msg) => {
+
+      // Serialize live event processing. ioredis fires the 'message' handler
+      // per message without awaiting the previous invocation, so a burst of
+      // messages would run handleRawEvent() concurrently — and they race on
+      // StakeLedger's shared in-memory s.multiplier (read-modify-write), which
+      // can corrupt the running ledger and reorder RewardMultiplierSnapshot
+      // rows. Chaining onto a single promise tail forces strict FIFO, one
+      // event in flight at a time. (zinsanjp Issue 2.)
+      let processChain: Promise<void> = Promise.resolve()
+
+      // Debounced block-boundary verify for the live path. Unlike the backlog,
+      // we can't peek the next event's block number, so we can't tell mid-block
+      // events from the last one. Instead we defer verifyMultiplier() until the
+      // event stream goes quiet for VERIFY_DEBOUNCE_MS — by which point every
+      // ActionsProcessed event sharing a block has been applied, and the chain
+      // value we read matches our fully-advanced running state. Same-block
+      // bursts arrive far closer together than this window. (zinsanjp Issue 1.)
+      const VERIFY_DEBOUNCE_MS = 750
+      let verifyTimer: NodeJS.Timeout | null = null
+      const scheduleVerify = () => {
+        if (verifyTimer) clearTimeout(verifyTimer)
+        verifyTimer = setTimeout(() => {
+          verifyTimer = null
+          if (!stopRequested) runVerifyMultiplier().catch(() => {})
+        }, VERIFY_DEBOUNCE_MS)
+      }
+
+      redis.on('message', (_channel, msg) => {
         const rawEventId = Number(msg)
         // ignore duplicates or out‑of‑order
-        if (rawEventId > lastId) {
+        if (rawEventId <= lastId) return
+        processChain = processChain.then(async () => {
+          // Re-check inside the serialized section: an earlier queued event
+          // (or a duplicate publish) may have already advanced lastId past us.
+          if (rawEventId <= lastId || stopRequested) return
           const raw = await prisma.rawEvent.findUnique({ where: { id: rawEventId } })
-          if (raw && !stopRequested) {
-            try {
-              await handleRawEvent(raw)
+          if (!raw || stopRequested) return
+          try {
+            // Defer the multiplier check to the debounced boundary, not per-event.
+            await handleRawEvent(raw, /* skipVerify */ true)
+            lastId = rawEventId
+            scheduleVerify()
+          } catch (err) {
+            if (err instanceof StaleTokenError) {
+              console.warn(`[ActionProcessor] Skipping stale event ${rawEventId}: ${(err as Error).message}`)
               lastId = rawEventId
-            } catch (err) {
-              if (err instanceof StaleTokenError) {
-                console.warn(`[ActionProcessor] Skipping stale event ${rawEventId}: ${(err as Error).message}`)
-                lastId = rawEventId
-              } else {
-                console.error(`[ActionProcessor] Failed to process event ${rawEventId}:`, err)
-                // Don't advance lastId — retry on next message/restart
-              }
+            } else {
+              console.error(`[ActionProcessor] Failed to process event ${rawEventId}:`, err)
+              // Don't advance lastId — retry on next message/restart
             }
           }
-        }
+        }).catch(err => {
+          // A rejection here would poison the chain tail for all subsequent
+          // events. Log and reset so the next message starts a clean link.
+          console.error('[ActionProcessor] Live event chain error:', err)
+        })
       })
 
     })()
@@ -140,7 +185,7 @@ export const actionProcessorService: Service = {
  * handleRawEvent
  * @description process one rawEvent into actions and domain rows
  */
-async function handleRawEvent(raw: { id: number, chainId: number, data: any, blockNumber: bigint, logIndex: number, transactionHash: string, topics: any, createdAt: Date }) {
+async function handleRawEvent(raw: { id: number, chainId: number, data: any, blockNumber: bigint, logIndex: number, transactionHash: string, topics: any, createdAt: Date }, skipVerify = false) {
   const list = Array.isArray(raw.data) ? raw.data : [raw.data];
   // ActionsProcessed event signature: (uint32 indexed networkId, uint32
   // indexed validatorId, uint16 actionCount, bytes32 batchHash). We only
@@ -166,6 +211,26 @@ async function handleRawEvent(raw: { id: number, chainId: number, data: any, blo
   // running state. Outside any DB tx — the RPC must not extend a tx
   // timeout. Best-effort: a transient RPC failure logs a warn and
   // skips the check; the daily reconciler is the deeper safety net.
+  //
+  // skipVerify defers the check to a block boundary. A single block can
+  // carry multiple ActionsProcessed events (separate RawEvents, distinct
+  // logIndex), and on-chain rewardMultiplier() already reflects EVERY
+  // action in the block. Verifying after each individual event would read
+  // a chain value that's ahead of our running s.multiplier and report a
+  // false-positive DIVERGENCE. The caller is responsible for invoking
+  // runVerifyMultiplier() once the block is fully drained.
+  if (skipVerify) return
+  await runVerifyMultiplier()
+}
+
+/**
+ * runVerifyMultiplier
+ * @description Best-effort wrapper around StakeLedger.verifyMultiplier that
+ * swallows transient RPC failures. Pulled out of handleRawEvent so the
+ * block-boundary call sites (backlog look-ahead + subscription debounce)
+ * can invoke it directly.
+ */
+async function runVerifyMultiplier(): Promise<void> {
   try {
     await verifyMultiplier()
   } catch (err) {
