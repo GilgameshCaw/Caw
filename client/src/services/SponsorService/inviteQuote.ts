@@ -17,18 +17,39 @@
 // redemption path is fee-free for authorized flows, so the only real cost is
 // gas + the LZ relay leg.
 
-import { getCawPriceCache, getEthPriceCache } from '../ChainSyncService'
+import { getCawPriceCache, getEthPriceCache, getGasPriceCache } from '../ChainSyncService'
 
 // Gas budget for the eventual sponsored mint (mirrors GAS_LIMIT_BOOTSTRAP_BUDGET
 // in api/routes/sponsor.ts). The buyer pre-pays this so the validator is
 // net-neutral when the code is later redeemed.
 const GAS_LIMIT_BOOTSTRAP = 400_000n
-// Conservative gas price for the estimate (mirrors the budget calc). Testnet
-// gas is free; on mainnet this is a realistic ceiling.
-const GAS_PRICE_WEI = 20_000_000_000n // 20 gwei
+// FALLBACK gas price used only when the live mainnet gas cache is unavailable.
+// Conservative ceiling — a code minted against it is over-funded, never under.
+const GAS_PRICE_FALLBACK_WEI = 20_000_000_000n // 20 gwei
+// Safety multiplier on the live mainnet gas price: the code is redeemed LATER,
+// so quote a little above the current price to absorb a gas spike between buy
+// and redeem. 150% (×3/2 in bigint).
+const GAS_PRICE_SAFETY_NUM = 3n
+const GAS_PRICE_SAFETY_DEN = 2n
+// Treat a mainnet-gas cache older than this as unusable → fall back to the ceiling.
+const MAX_GAS_AGE_MS = 15 * 60 * 1000 // 15 minutes
 // LZ relay leg the validator fronts for the cross-chain deposit. Best-effort
 // flat estimate (same order as the budget calc's lzFee assumption).
 const LZ_RELAY_WEI = 1_000_000_000_000_000n // 0.001 ETH
+
+/**
+ * The gas price to quote against: the LIVE mainnet gas price (× safety margin)
+ * when fresh, else the conservative fallback ceiling. The invite code pre-funds
+ * a FUTURE mainnet redemption, so mainnet gas — not the ~0 testnet base fee — is
+ * the correct basis. Never returns 0.
+ */
+function effectiveGasPriceWei(): bigint {
+  const cache = getGasPriceCache()
+  if (cache && cache.gasPriceWei > 0n && Date.now() - cache.updatedAt <= MAX_GAS_AGE_MS) {
+    return (cache.gasPriceWei * GAS_PRICE_SAFETY_NUM) / GAS_PRICE_SAFETY_DEN
+  }
+  return GAS_PRICE_FALLBACK_WEI
+}
 // Reject prices older than this. A stale-low CAW price would let a buyer clear
 // the gas floor with too little CAW and inflate the gift budget (M-2). Mirrors
 // the contract's CAP_STALE_THRESHOLD intent.
@@ -105,7 +126,7 @@ export function quoteExecuteGasFeeCaw(forwardedValueWei: bigint = 0n, gasPriceWe
     return { minFeeCawWei: 0n, priceAvailable: false }
   }
 
-  const gasWei = (gasPriceWei ?? GAS_PRICE_WEI) * GAS_LIMIT_EXECUTE_BATCH
+  const gasWei = (gasPriceWei ?? effectiveGasPriceWei()) * GAS_LIMIT_EXECUTE_BATCH
   // Relayer fronts gas AND the forwarded ETH value (the LZ fee on a withdraw).
   // Both must be repaid in CAW or relaying is a subsidy.
   const ethCostWei = gasWei + (forwardedValueWei > 0n ? forwardedValueWei : 0n)
@@ -135,7 +156,7 @@ export function quoteSponsorInviteCostCaw(): InviteQuote {
     return { gasFloorCaw: 0n, gasMarginCaw: 0n, cawUsdRate: 0, priceAvailable: false }
   }
 
-  const gasWei = GAS_PRICE_WEI * GAS_LIMIT_BOOTSTRAP
+  const gasWei = effectiveGasPriceWei() * GAS_LIMIT_BOOTSTRAP
   const gasFloorCaw = ethWeiToWholeCaw(gasWei, cawPrice.cawPerEth)
   const gasMarginCaw = ethWeiToWholeCaw(gasWei + LZ_RELAY_WEI, cawPrice.cawPerEth)
 

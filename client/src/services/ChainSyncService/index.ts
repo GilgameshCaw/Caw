@@ -64,6 +64,13 @@ interface CachedEthPrice {
   updatedAt: number      // Timestamp
 }
 
+interface CachedGasPrice {
+  gasPriceWei: bigint    // Mainnet L1 gas price (wei). The invite-code buyer
+                         // pre-funds a FUTURE mainnet redemption, so the quote
+                         // must reflect mainnet gas — not the ~0 testnet base fee.
+  updatedAt: number      // Timestamp
+}
+
 // ============================================================================
 // State
 // ============================================================================
@@ -79,6 +86,9 @@ const syncTasks: Map<string, SyncTask> = new Map()
 // In-memory price caches (also persisted to DB)
 let cawPriceCache: CachedCawPrice | null = null
 let ethPriceCache: CachedEthPrice | null = null
+// Mainnet L1 gas price — refreshed on the same price loop. Drives the invite
+// quote (and any other "what will redemption cost on mainnet" estimate).
+let gasPriceCache: CachedGasPrice | null = null
 // Sepolia CAW/WETH pool spot — the actual price the testnet zap charges.
 // On mainnet deploys this stays null (CAW_PAIR_ADDRESS != mainnet pair) and
 // consumers fall back to the mainnet cawPriceCache for everything.
@@ -376,10 +386,27 @@ async function syncEthPrice(): Promise<void> {
   }
 }
 
+async function syncMainnetGasPrice(): Promise<void> {
+  if (!mainnetProvider) return  // no mainnet RPC configured → leave cache null
+  try {
+    const feeData = await mainnetProvider.getFeeData()
+    // Prefer EIP-1559 maxFeePerGas (what a tx would actually be willing to pay);
+    // fall back to legacy gasPrice. Both are mainnet (chainId 1) since this is
+    // the mainnet provider.
+    const gasPriceWei = feeData.maxFeePerGas ?? feeData.gasPrice
+    if (gasPriceWei == null || gasPriceWei <= 0n) return
+    gasPriceCache = { gasPriceWei, updatedAt: Date.now() }
+    console.log(`[ChainSync:Prices] Mainnet gas = ${(Number(gasPriceWei) / 1e9).toFixed(3)} gwei`)
+  } catch (err: any) {
+    console.error('[ChainSync:Prices] Failed to fetch mainnet gas price:', err.message)
+  }
+}
+
 async function syncPrices(): Promise<void> {
   await syncCawPrice()
   await syncEthPrice()
   await syncSepoliaCawPrice()
+  await syncMainnetGasPrice()
 
   // Store price snapshots for historical tracking
   if (cawPriceCache && ethPriceCache) {
@@ -480,6 +507,13 @@ export function getCawPriceCache(): CachedCawPrice | null {
  */
 export function getEthPriceCache(): CachedEthPrice | null {
   return ethPriceCache
+}
+
+/** Mainnet L1 gas price cache (wei + updatedAt), or null when no mainnet RPC is
+ *  configured / no successful fetch yet. Consumers should apply their own
+ *  staleness policy and fall back to a conservative constant when null. */
+export function getGasPriceCache(): CachedGasPrice | null {
+  return gasPriceCache
 }
 
 /**
