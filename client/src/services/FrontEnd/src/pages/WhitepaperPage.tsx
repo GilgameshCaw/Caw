@@ -1,11 +1,11 @@
-import React, { useEffect, useMemo, useState } from 'react'
+import React, { useEffect, useMemo, useRef, useState } from 'react'
 import { useParams } from 'react-router-dom'
 import { useNavigate } from '~/utils/localizedRouter'
 import { useTheme } from '~/hooks/useTheme'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import GithubSlugger from 'github-slugger'
-import { HiChevronRight } from 'react-icons/hi'
+import { HiChevronRight, HiSearch, HiX } from 'react-icons/hi'
 
 // Source of truth: repo root docs/WHITEPAPER.md
 // Vite allows workspace-root file access via searchForWorkspaceRoot().
@@ -73,6 +73,61 @@ const REPO_FILES: Record<string, string> = {
   'solidity/contracts/sp1-vendor/SP1VerifierGroth16.sol': 'solidity/contracts/sp1-vendor/SP1VerifierGroth16.sol',
 }
 
+// --- Local whitepaper search ---------------------------------------------
+// Everything below runs client-side over the already-sliced section markdown;
+// there is no server round-trip. We project each section's markdown to a
+// plaintext-ish string for matching, find every occurrence of the query, and
+// emit a short snippet around each so the sidebar can quote the match in context.
+
+// Light markdown → text projection: drop the noisy markers (headings, emphasis,
+// code fences, list bullets, ==highlight==, link URLs) so matches and snippets
+// read as prose rather than raw md. Newlines collapse to spaces.
+const mdToPlain = (md: string): string =>
+  md
+    .replace(/```[\s\S]*?```/g, ' ')          // fenced code blocks
+    .replace(/`([^`]+)`/g, '$1')               // inline code
+    .replace(/!?\[([^\]]*)\]\([^)]*\)/g, '$1')  // links/images → label
+    .replace(/^#{1,6}\s+/gm, '')                // heading markers
+    .replace(/^\s*[-*+]\s+/gm, '')              // list bullets
+    .replace(/^\s*>\s?/gm, '')                  // blockquote markers
+    .replace(/^\s*---\s*$/gm, ' ')              // thematic breaks
+    .replace(/==/g, '')                         // highlight markers
+    .replace(/[*_]{1,3}/g, '')                  // bold/italic
+    .replace(/\s+/g, ' ')
+    .trim()
+
+const SNIPPET_RADIUS = 48 // chars of context on each side of a match
+
+type Occurrence = { index: number; snippet: string; matchStart: number; matchEnd: number }
+type SectionResult = { id: string; label: string; occurrences: Occurrence[] }
+
+// Find every (case-insensitive) occurrence of `q` in `text`, returning a snippet
+// window around each with the in-snippet offsets of the matched substring so the
+// renderer can bold just that span.
+const findOccurrences = (text: string, q: string): Occurrence[] => {
+  if (!q) return []
+  const hay = text.toLowerCase()
+  const needle = q.toLowerCase()
+  const out: Occurrence[] = []
+  let from = 0
+  while (true) {
+    const at = hay.indexOf(needle, from)
+    if (at === -1) break
+    let start = Math.max(0, at - SNIPPET_RADIUS)
+    let end = Math.min(text.length, at + needle.length + SNIPPET_RADIUS)
+    // Snap to word boundaries so we don't slice mid-word.
+    while (start > 0 && /\S/.test(text[start - 1])) start--
+    while (end < text.length && /\S/.test(text[end])) end++
+    const prefix = start > 0 ? '…' : ''
+    const suffix = end < text.length ? '…' : ''
+    const snippet = prefix + text.slice(start, end).trim() + suffix
+    const matchStart = prefix.length + (at - start)
+    out.push({ index: out.length, snippet, matchStart, matchEnd: matchStart + needle.length })
+    from = at + needle.length
+  }
+  return out
+}
+
 const WhitepaperPage: React.FC = () => {
   const { isDark } = useTheme()
 
@@ -82,7 +137,7 @@ const WhitepaperPage: React.FC = () => {
   type TocParent = { id: string; label: string; depth: 1; children: TocChild[] }
   type TocItem = TocParent | { id: string; label: string; depth: 2 }
 
-  const { toc, sectionMdById, headingIdFor, initialId, parentById } = useMemo(() => {
+  const { toc, sectionMdById, headingIdFor, resetRenderSlugger, initialId, parentById } = useMemo(() => {
     const lines = whitepaperMd.split('\n')
     const slugger = new GithubSlugger()
 
@@ -153,15 +208,21 @@ const WhitepaperPage: React.FC = () => {
       sectionMdById[h.id] = lines.slice(start, end).join('\n').trim() + '\n'
     }
 
-    // Heading ids during render must match the ids we computed above.
+    // Heading ids during render must match the ids we computed above. The
+    // slugger is stateful (it disambiguates repeats with -1/-2 suffixes), so we
+    // RESET it at the start of every page render — otherwise navigating between
+    // sections accumulates suffixes and the rendered heading id drifts away from
+    // the slug we computed here (breaking #anchor scroll). `resetRenderSlugger`
+    // is called once per ReactMarkdown render below.
     const renderSlugger = new GithubSlugger()
+    const resetRenderSlugger = (): null => { renderSlugger.reset(); return null }
     const headingIdFor = (label: string) => renderSlugger.slug(label)
 
     // Default section: Foreword if present; otherwise first TOC item.
     const foreword = headings.find(h => h.label.toLowerCase() === 'foreword')
     const initialId = foreword?.id ?? toc[0]?.id ?? ''
 
-    return { toc, sectionMdById, headingIdFor, initialId, parentById }
+    return { toc, sectionMdById, headingIdFor, resetRenderSlugger, initialId, parentById }
   }, [])
 
   // The URL is the source of truth for the active section, so each section is
@@ -173,8 +234,91 @@ const WhitepaperPage: React.FC = () => {
   // otherwise the default (Foreword / first). No separate state to drift.
   const activeId = (sectionId && sectionMdById[sectionId]) ? sectionId : initialId
 
+  // The PAGE we actually render is the active section's parent when the active
+  // section is a child (h2 under an h1). That way clicking 5.4 shows the whole
+  // of section 5 (5, 5.1, 5.2, …) and we just scroll to the 5.4 heading. A
+  // top-level section (or a child whose own h1 page we want) renders itself.
+  const renderId = (activeId && parentById[activeId]) ? parentById[activeId] : activeId
+
+  // When the active section is a child, this is the heading id to scroll to
+  // inside the rendered parent page; null means "render at the top" (parent /
+  // standalone section).
+  const scrollToHeadingId = (activeId && parentById[activeId]) ? activeId : null
+
   // Navigating to a section = pushing its slug to the URL (activeId follows).
   const selectSection = (id: string) => navigate(`/help/whitepaper/${id}`)
+
+  // --- Search state ------------------------------------------------------
+  const [rawQuery, setRawQuery] = useState('')
+  const [query, setQuery] = useState('') // debounced
+  // The match we want the right pane to scroll to + highlight after navigation.
+  // We anchor to the result's section heading and the Nth occurrence WITHIN that
+  // section (counting only marks between this heading and the next one), so it
+  // works whether the section renders standalone or inside its parent page.
+  // `nonce` forces the scroll effect to re-run when clicking the same occurrence
+  // twice (or another occurrence in the already-active section).
+  const [scrollTarget, setScrollTarget] = useState<{ term: string; sectionId: string; occ: number; nonce: number } | null>(null)
+
+  // Debounce typing so we don't recompute the whole index on every keystroke.
+  useEffect(() => {
+    const t = setTimeout(() => setQuery(rawQuery.trim()), 120)
+    return () => clearTimeout(t)
+  }, [rawQuery])
+
+  // Clearing the search drops any pending match-scroll so subsequent plain
+  // section navigation isn't blocked by a stale target.
+  useEffect(() => {
+    if (rawQuery.trim().length < 2) setScrollTarget(null)
+  }, [rawQuery])
+
+  // Plaintext projection of every section, computed once. Keyed by section id.
+  const sectionPlainById = useMemo(() => {
+    const out: Record<string, string> = {}
+    for (const id of Object.keys(sectionMdById)) out[id] = mdToPlain(sectionMdById[id])
+    return out
+  }, [sectionMdById])
+
+  // Label lookup (for showing the section title in results), in TOC order so
+  // results read top-to-bottom like the document.
+  const labelAndOrderById = useMemo(() => {
+    const order: Array<{ id: string; label: string }> = []
+    for (const item of toc) {
+      order.push({ id: item.id, label: item.label })
+      if ('children' in item) for (const c of item.children) order.push({ id: c.id, label: c.label })
+    }
+    return order
+  }, [toc])
+
+  // Per-section occurrences for the current query, in document order.
+  const results: SectionResult[] = useMemo(() => {
+    if (query.length < 2) return []
+    const out: SectionResult[] = []
+    for (const { id, label } of labelAndOrderById) {
+      const plain = sectionPlainById[id]
+      if (plain == null) continue
+      // Search the label too, so a query that only hits the title still surfaces
+      // the section (with no body snippet rows).
+      const occurrences = findOccurrences(plain, query)
+      const labelHit = label.toLowerCase().includes(query.toLowerCase())
+      if (occurrences.length === 0 && !labelHit) continue
+      out.push({ id, label, occurrences })
+    }
+    return out
+  }, [query, labelAndOrderById, sectionPlainById])
+
+  const totalMatches = useMemo(
+    () => results.reduce((n, r) => n + r.occurrences.length, 0),
+    [results]
+  )
+
+  const searching = query.length >= 2
+
+  // Jump to a section + queue the right pane to scroll/highlight a given match.
+  const gotoMatch = (id: string, occ: number) => {
+    setScrollTarget({ term: query, sectionId: id, occ, nonce: Date.now() })
+    if (id !== activeId) selectSection(id)
+    setMobileNavOpen(false)
+  }
 
   // Collapsible parents (dropdown-like). Default: expand the active section's parent.
   const [expandedParents, setExpandedParents] = useState<Record<string, boolean>>({})
@@ -193,6 +337,137 @@ const WhitepaperPage: React.FC = () => {
     if (!parent) return
     setExpandedParents(prev => (prev[parent] ? prev : { ...prev, [parent]: true }))
   }, [activeId, parentById, toc])
+
+  // --- Right-pane highlight + scroll -------------------------------------
+  const mainRef = useRef<HTMLDivElement | null>(null)
+  // Guards so incidental effect re-runs (theme toggle, typing) don't re-scroll:
+  // the section auto-scroll fires once per distinct active section, and the
+  // match-scroll fires once per distinct click (tracked by nonce).
+  const lastScrolledSectionRef = useRef<string | null>(null)
+  const lastScrolledMatchRef = useRef<number | null>(null)
+
+  // The next heading element of equal-or-higher rank after `heading`, used to
+  // bound one sub-section's content within a page that holds several. We treat
+  // any h1/h2/h3 as a boundary, which is fine because results only target h1/h2.
+  const nextHeadingAfter = (heading: HTMLElement): HTMLElement | null => {
+    const root = mainRef.current
+    if (!root) return null
+    const all = Array.from(root.querySelectorAll<HTMLElement>('h1, h2, h3'))
+    const idx = all.indexOf(heading)
+    return idx >= 0 && idx + 1 < all.length ? all[idx + 1] : null
+  }
+
+  // Strip any <mark data-wp-hl> wrappers we previously injected, restoring the
+  // original text nodes. Called before re-highlighting and on cleanup.
+  const clearHighlights = (root: HTMLElement) => {
+    const marks = root.querySelectorAll('mark[data-wp-hl]')
+    marks.forEach(m => {
+      const parent = m.parentNode
+      if (!parent) return
+      parent.replaceChild(document.createTextNode(m.textContent ?? ''), m)
+      parent.normalize() // merge adjacent text nodes back together
+    })
+  }
+
+  // After the rendered page settles, do two things over the DOM the markdown
+  // renderer produced (no md re-parse):
+  //   1. If there's a search term, wrap every occurrence in <mark>.
+  //   2. Scroll the right place into view — the targeted search match, else the
+  //      active sub-section heading (when we're showing a child inside its
+  //      parent page), else the top.
+  useEffect(() => {
+    const root = mainRef.current
+    if (!root) return
+    clearHighlights(root)
+
+    const term = scrollTarget?.term ?? (searching ? query : '')
+
+    // --- 1. Highlight every occurrence of the term, collecting the marks. -----
+    const marks: HTMLElement[] = []
+    if (term && term.length >= 2) {
+      const needle = term.toLowerCase()
+      const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT)
+      const textNodes: Text[] = []
+      while (walker.nextNode()) {
+        const node = walker.currentNode as Text
+        // Skip text already inside code/pre where splitting would corrupt layout.
+        if (node.parentElement?.closest('pre, code')) continue
+        if (node.nodeValue && node.nodeValue.toLowerCase().includes(needle)) textNodes.push(node)
+      }
+      for (const node of textNodes) {
+        const text = node.nodeValue ?? ''
+        const lower = text.toLowerCase()
+        const frag = document.createDocumentFragment()
+        let from = 0
+        let at = lower.indexOf(needle, from)
+        if (at === -1) continue
+        while (at !== -1) {
+          if (at > from) frag.appendChild(document.createTextNode(text.slice(from, at)))
+          const mark = document.createElement('mark')
+          mark.setAttribute('data-wp-hl', '')
+          mark.textContent = text.slice(at, at + needle.length)
+          mark.className = isDark
+            ? 'bg-yellow-400/30 text-yellow-200 rounded-sm'
+            : 'bg-yellow-300/70 text-black rounded-sm'
+          frag.appendChild(mark)
+          marks.push(mark)
+          from = at + needle.length
+          at = lower.indexOf(needle, from)
+        }
+        if (from < text.length) frag.appendChild(document.createTextNode(text.slice(from)))
+        node.parentNode?.replaceChild(frag, node)
+      }
+    }
+
+    // --- 2. Decide where to scroll. ------------------------------------------
+    // The effect re-runs on incidental changes too (theme toggle, typing in the
+    // search box), so we gate each scroll behind a ref that remembers what it
+    // last acted on — never yank the reader's scroll position on a re-render
+    // that didn't actually change the navigation/match target.
+
+    // (a) A search match was just clicked (scrollTarget carries a fresh nonce).
+    if (scrollTarget && scrollTarget.nonce !== lastScrolledMatchRef.current && marks.length) {
+      lastScrolledMatchRef.current = scrollTarget.nonce
+      // The result counts occurrences within its OWN section, but `marks` spans
+      // the whole rendered page (which may include sibling sub-sections).
+      // Restrict to marks between this heading and the next, then index in.
+      const heading = root.querySelector<HTMLElement>(`#${CSS.escape(scrollTarget.sectionId)}`)
+      let scoped = marks
+      if (heading) {
+        const stop = nextHeadingAfter(heading)
+        scoped = marks.filter(m => {
+          const after = heading.compareDocumentPosition(m) & Node.DOCUMENT_POSITION_FOLLOWING
+          const beforeStop = !stop || (stop.compareDocumentPosition(m) & Node.DOCUMENT_POSITION_PRECEDING)
+          return after && beforeStop
+        })
+      }
+      const pick = scoped.length ? scoped : marks
+      const target = pick[Math.min(scrollTarget.occ, pick.length - 1)]
+      if (target) {
+        target.scrollIntoView({ behavior: 'smooth', block: 'center' })
+        const ring = isDark ? 'ring-2 ring-yellow-300/70' : 'ring-2 ring-yellow-500/70'
+        target.classList.add(...ring.split(' '))
+        const t = setTimeout(() => target.classList.remove(...ring.split(' ')), 1600)
+        return () => { clearTimeout(t); clearHighlights(root) }
+      }
+    }
+    // (b) Navigation to a new page/sub-section (no match click). Fire once per
+    //     distinct active section: scroll to the sub-section heading, or to the
+    //     top for a parent / standalone section.
+    else if (!scrollTarget && activeId !== lastScrolledSectionRef.current) {
+      lastScrolledSectionRef.current = activeId
+      const heading = scrollToHeadingId
+        ? root.querySelector<HTMLElement>(`#${CSS.escape(scrollToHeadingId)}`)
+        : null
+      if (heading) heading.scrollIntoView({ behavior: 'smooth', block: 'start' })
+      else root.scrollIntoView({ behavior: 'auto', block: 'start' })
+    }
+
+    // `root` is captured at effect start; safe to use in cleanup (the node we marked).
+    return () => clearHighlights(root)
+    // Re-run when the rendered page changes, when the active sub-section changes,
+    // when the term changes, or when a new occurrence is targeted (nonce).
+  }, [renderId, activeId, scrollToHeadingId, query, searching, scrollTarget, isDark])
 
   const mdComponents = useMemo(() => {
     const toText = (children: any): string => {
@@ -228,7 +503,9 @@ const WhitepaperPage: React.FC = () => {
         // If the heading carried a ==marker==, render our highlighted version;
         // otherwise pass children through untouched (preserves any inline md).
         const content = raw.includes('==') ? renderHighlighted(raw) : children
-        return <Tag id={id} className={cls} {...rest}>{content}</Tag>
+        // scroll-margin-top so anchor scrolls (search jumps, sub-section nav)
+        // leave the heading clear of the ~4.75rem fixed LandingHeader.
+        return <Tag id={id} className={cls} style={{ scrollMarginTop: '5.5rem' }} {...rest}>{content}</Tag>
       }
     }
 
@@ -324,7 +601,24 @@ const WhitepaperPage: React.FC = () => {
     }
   }, [isDark, headingIdFor])
 
-  const activeMd = activeId ? (sectionMdById[activeId] ?? '') : ''
+  const activeMd = renderId ? (sectionMdById[renderId] ?? '') : ''
+
+  // Render a snippet string with the matched substring (given its offsets)
+  // emphasized — gold + bold, matching the doc's highlight idiom.
+  const renderSnippet = (occ: Occurrence) => {
+    const { snippet, matchStart, matchEnd } = occ
+    const before = snippet.slice(0, matchStart)
+    const hit = snippet.slice(matchStart, matchEnd)
+    const after = snippet.slice(matchEnd)
+    const hitCls = isDark ? 'font-semibold text-yellow-300' : 'font-semibold text-yellow-700'
+    return (
+      <>
+        {before}
+        <span className={hitCls}>{hit}</span>
+        {after}
+      </>
+    )
+  }
 
   return (
     <div className={isDark ? 'relative h-[100svh] bg-black text-white overflow-hidden flex flex-col' : 'relative h-[100svh] bg-white text-black overflow-hidden flex flex-col'}>
@@ -370,6 +664,100 @@ const WhitepaperPage: React.FC = () => {
             <div className={isDark ? 'text-xs uppercase tracking-wider text-white/50 px-2 py-2' : 'text-xs uppercase tracking-wider text-black/50 px-2 py-2'}>
               Whitepaper
             </div>
+
+            {/* Local search over the whitepaper. Filters the sidebar to matching
+                sections and quotes each occurrence; clicking jumps to it. */}
+            <div className="px-1 pb-2">
+              <div className={`relative flex items-center rounded-lg border ${
+                isDark ? 'border-white/10 bg-white/5 focus-within:border-white/25' : 'border-black/10 bg-black/5 focus-within:border-black/25'
+              }`}>
+                <HiSearch className={`absolute left-2.5 w-4 h-4 ${isDark ? 'text-white/40' : 'text-black/40'}`} aria-hidden />
+                <input
+                  type="search"
+                  value={rawQuery}
+                  onChange={e => setRawQuery(e.target.value)}
+                  onKeyDown={e => {
+                    if (e.key === 'Escape') setRawQuery('')
+                    // Enter jumps to the first match, if any.
+                    if (e.key === 'Enter' && results.length && results[0].occurrences.length) {
+                      gotoMatch(results[0].id, 0)
+                    } else if (e.key === 'Enter' && results.length) {
+                      selectSection(results[0].id); setMobileNavOpen(false)
+                    }
+                  }}
+                  placeholder="Search the whitepaper…"
+                  aria-label="Search the whitepaper"
+                  className={`w-full bg-transparent outline-none text-sm pl-8 pr-7 py-2 ${
+                    isDark ? 'text-white placeholder:text-white/40' : 'text-black placeholder:text-black/40'
+                  }`}
+                />
+                {rawQuery && (
+                  <button
+                    type="button"
+                    onClick={() => setRawQuery('')}
+                    aria-label="Clear search"
+                    className={`absolute right-1.5 p-1 rounded ${isDark ? 'text-white/50 hover:text-white hover:bg-white/10' : 'text-black/50 hover:text-black hover:bg-black/10'}`}
+                  >
+                    <HiX className="w-4 h-4" />
+                  </button>
+                )}
+              </div>
+              {searching && (
+                <div className={`px-1.5 pt-2 text-xs ${isDark ? 'text-white/45' : 'text-black/45'}`}>
+                  {totalMatches === 0
+                    ? `No matches for “${query}”`
+                    : `${totalMatches} match${totalMatches === 1 ? '' : 'es'} in ${results.length} section${results.length === 1 ? '' : 's'}`}
+                </div>
+              )}
+            </div>
+
+            {/* Results mode: a flat, document-ordered list of matching sections,
+                each with its occurrences quoted. Clicking jumps + highlights. */}
+            {searching ? (
+              <div className="flex flex-col gap-3 pt-1">
+                {results.map(r => (
+                  <div key={r.id}>
+                    <button
+                      type="button"
+                      onClick={() => { selectSection(r.id); setMobileNavOpen(false) }}
+                      className={`w-full text-left px-2 py-1.5 rounded-lg text-sm font-medium ${
+                        isDark
+                          ? `hover:bg-white/10 ${activeId === r.id ? 'bg-white/10 text-white' : 'text-white/85'}`
+                          : `hover:bg-black/10 ${activeId === r.id ? 'bg-black/10 text-black' : 'text-black/85'}`
+                      }`}
+                    >
+                      <span className="flex items-center justify-between gap-2">
+                        <span className="truncate">{r.label}</span>
+                        {r.occurrences.length > 0 && (
+                          <span className={`shrink-0 text-[11px] tabular-nums px-1.5 py-0.5 rounded-full ${
+                            isDark ? 'bg-white/10 text-white/60' : 'bg-black/10 text-black/55'
+                          }`}>
+                            {r.occurrences.length}
+                          </span>
+                        )}
+                      </span>
+                    </button>
+                    {/* Every occurrence as its own quoted row. */}
+                    <div className="mt-1 flex flex-col gap-1 pl-2">
+                      {r.occurrences.map(occ => (
+                        <button
+                          key={occ.index}
+                          type="button"
+                          onClick={() => gotoMatch(r.id, occ.index)}
+                          className={`group text-left text-xs leading-snug rounded-md px-2 py-1.5 border-l-2 ${
+                            isDark
+                              ? 'border-white/10 text-white/55 hover:border-yellow-300/60 hover:bg-white/5 hover:text-white/80'
+                              : 'border-black/10 text-black/55 hover:border-yellow-500/60 hover:bg-black/5 hover:text-black/80'
+                          }`}
+                        >
+                          {renderSnippet(occ)}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            ) : (
             <nav className="flex flex-col gap-1">
               {toc.map(item => {
                 // Parent section
@@ -458,15 +846,22 @@ const WhitepaperPage: React.FC = () => {
                 )
               })}
             </nav>
+            )}
           </div>
         </aside>
 
         {/* Content */}
-        <main className={`min-w-0 ${isDark ? 'rounded-xl border border-white/10 bg-black/40 p-6' : 'rounded-xl border border-gray-200 bg-white/60 p-6'}`}>
+        <main ref={mainRef} className={`min-w-0 ${isDark ? 'rounded-xl border border-white/10 bg-black/40 p-6' : 'rounded-xl border border-gray-200 bg-white/60 p-6'}`}>
           {activeMd ? (
-            <ReactMarkdown remarkPlugins={[remarkGfm]} components={mdComponents as any}>
-              {activeMd}
-            </ReactMarkdown>
+            <>
+              {/* Reset the heading slugger so this page's anchor ids start clean
+                  (see resetRenderSlugger). Runs synchronously before the
+                  markdown children below are rendered. */}
+              {resetRenderSlugger()}
+              <ReactMarkdown remarkPlugins={[remarkGfm]} components={mdComponents as any}>
+                {activeMd}
+              </ReactMarkdown>
+            </>
           ) : (
             <div className={isDark ? 'text-white/60' : 'text-black/60'}>
               No section selected.
