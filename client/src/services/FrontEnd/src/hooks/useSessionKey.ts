@@ -7,6 +7,7 @@ import { baseSepolia } from 'wagmi/chains'
 import { apiFetch } from '~/api/client'
 import { useSessionKeyStore } from '~/store/sessionKeyStore'
 import { CAW_NAMES_L2_ADDRESS } from '~/../../../abi/addresses'
+import { CLIENT_ID } from '~/api/actions'
 import { useActiveToken, usePriceStore } from '~/store/tokenDataStore'
 import { useRootSigner } from '~/hooks/useRootSigner'
 import { encryptPrivateKey, getEncryptionSignMessage, setDecryptedKey } from '~/services/sessionKeyEncryption'
@@ -362,15 +363,17 @@ export async function registerSponsoredSession(opts: {
 }
 
 /**
- * Reads the Network's on-chain tip target (denominated in CAW wei) from CawActions,
- * converts it to a USD amount using ETH price, then to whole CAW tokens using CAW price.
+ * Reads the Network's on-chain tip target (denominated in CAW wei) from
+ * CawProfileLedger, then converts it to whole CAW tokens. Defaults to this
+ * build's CLIENT_ID (VITE_NETWORK_ID) so multi-Network mirrors read their own
+ * target rather than hardcoding Network 1.
  *
  * Returns:
  *   - tipCeilingCaw: the converted amount in whole CAW (bigint), or undefined while loading
  *   - tipCeilingUsd: the USD equivalent (number), or 0 if prices unavailable
  *   - tipCeilingFallbackCaw: a $0.001-denominated fallback in whole CAW (always defined)
  */
-export function useNetworkTipTargetAsCAW(networkId: number = 1): {
+export function useNetworkTipTargetAsCAW(networkId: number = CLIENT_ID): {
   tipCeilingCaw: bigint | undefined
   tipCeilingUsd: number
   tipCeilingFallbackCaw: bigint
