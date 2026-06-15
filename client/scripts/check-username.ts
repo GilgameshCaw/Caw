@@ -4,12 +4,18 @@
 // Usage:
 //   cd client
 //   npx tsx scripts/check-username.ts gilgamesh gilga2
+//   CAW_ENV=mainnet npx tsx scripts/check-username.ts gilgamesh
 
 import 'dotenv/config'
 import { Contract } from 'ethers'
 import { makeJsonRpcProvider, getL1HttpRpcUrl } from '../src/utils/rpcProvider'
+import { getChainContracts, type Env } from '../src/abi/deployments'
 
-const MINTER = '0x8D65D141a60b1E1136Be62604783AADe8E7290D9' // testnet L1
+// Resolve the CawProfileMinter address from the canonical deployments table
+// instead of hardcoding it — so a redeploy that changes the address is picked
+// up automatically. Env defaults to testnet; override with CAW_ENV=mainnet.
+const ENV = (process.env.CAW_ENV as Env) || 'testnet'
+const MINTER = getChainContracts(ENV, 'L1').CawProfileMinter
 const ABI = [
   'function idByUsername(string) view returns (uint32)',
   'function usernames(uint256) view returns (string)',
@@ -21,7 +27,12 @@ async function main() {
     console.error('Usage: npx tsx scripts/check-username.ts <name> [<name> ...]')
     process.exit(1)
   }
+  if (!MINTER) {
+    console.error(`No CawProfileMinter address for env "${ENV}" in deployments.ts`)
+    process.exit(1)
+  }
 
+  console.error(`[env=${ENV}] CawProfileMinter=${MINTER}`)
   const provider = makeJsonRpcProvider(getL1HttpRpcUrl())
   const c = new Contract(MINTER, ABI, provider)
 
