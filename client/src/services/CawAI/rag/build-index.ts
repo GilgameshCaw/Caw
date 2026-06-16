@@ -218,18 +218,28 @@ async function main() {
   console.log(`[build-rag] done — index written to ${outPath}`)
 }
 
-// Naive line-based chunker producing ~512-token windows with ~64-token
-// overlap. 1 token ≈ 4 chars → 512 tokens ≈ 2048 chars ≈ ~20 lines.
-// 100-line window / 80-line step approximates the token window.
+// Line-based chunker with small, heavily-overlapping windows. Small chunks
+// keep each embedding vector focused on a single topic so a term-specific
+// query (e.g. "optimistic archive") matches the chunk that defines it rather
+// than being averaged out across 100 lines of unrelated content. The 50%
+// overlap guarantees any line — and any term spanning a window boundary —
+// appears whole in at least one chunk.
+//
+// ~18 lines ≈ 200-400 tokens of code/docs, comfortably under bge-base's
+// 512-token limit. Empty/whitespace-only windows are skipped so blank runs
+// between sections don't produce useless chunks.
 function chunkTokenAware(text: string) {
   const lines = text.split('\n')
   const out: { text: string; start: number; end: number }[] = []
-  const STEP = 80
-  const WIN  = 100
+  const WIN  = 18
+  const STEP = 9   // 50% overlap
   for (let i = 0; i < lines.length; i += STEP) {
     const slice = lines.slice(i, i + WIN)
     if (slice.length === 0) break
-    out.push({ text: slice.join('\n'), start: i + 1, end: i + slice.length })
+    const joined = slice.join('\n')
+    if (joined.trim().length === 0) continue   // skip blank windows
+    out.push({ text: joined, start: i + 1, end: i + slice.length })
+    if (i + WIN >= lines.length) break          // last window reached EOF
   }
   return out
 }

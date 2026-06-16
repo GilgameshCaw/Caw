@@ -7,13 +7,19 @@
 // HALT with a non-zero exit (see build-index.ts). The author's real
 // identity must never leak through a public bot indexing repo content.
 //
-// Patterns detected:
-//   - The operator's real name (hard rule from MEMORY.md) — the literal is
-//     never written in this source file; it is decoded at runtime from a
-//     base64 constant so a `git grep` of the repo stays clean. The scrub
-//     still matches the plaintext when it appears in a corpus chunk.
-//   - Email addresses (any, not just the known one)
-//   - Absolute home paths: /Users/<name>/... or /home/<name>/...
+// What's detected — and what is DELIBERATELY NOT:
+//   - The operator's real name (hard rule from MEMORY.md). This is the ONLY
+//     pseudonymity leak that matters: the real name, and any string embedding
+//     it (e.g. a real-name email or a /Users/<real-name>/ home path, both of
+//     which the name pattern catches anyway). The literal is never written in
+//     this source file — it is decoded at runtime from a base64 constant so a
+//     `git grep` of the repo stays clean. The scrub still matches the plaintext
+//     when it appears in a corpus chunk.
+//
+// NOT flagged (intentionally — these are the pseudonymous identity, not the
+// real one, and blocking them only caused false halts on doc placeholders):
+//   - Placeholder / pseudonymous emails (user@gmail.com, gilgamesh@…, etc.)
+//   - Generic home paths that don't contain the real name
 //
 // The `redacted` field replaces matches with [REDACTED] so a human
 // reviewer can read the surrounding context without re-leaking the
@@ -39,15 +45,13 @@ const NAME_ALTERNATION = ENCODED_NAME_TOKENS
   .sort((a, b) => b.length - a.length)
   .join('|')
 
-// Patterns that signal a pseudonymity leak.
-// Order matters only for readability; all are applied to every chunk.
+// The sole pattern that signals a pseudonymity leak: the operator's real name
+// (any case). Built from the decoded base64 tokens above. A real-name email or
+// /Users/<real-name>/ path is caught by this same pattern, so no separate
+// email/home-path rules are needed (and the broad versions only produced false
+// halts on placeholder/pseudonymous values).
 const PATTERNS: Array<{ label: string; re: RegExp }> = [
-  // The operator's real name (any case). Built from decoded tokens above.
-  { label: 'name',      re: new RegExp(NAME_ALTERNATION, 'gi') },
-  // Any email address
-  { label: 'email',     re: /[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}/g },
-  // Absolute home paths on macOS or Linux
-  { label: 'home-path', re: /\/(?:Users|home)\/[^/\s"'`]+/g },
+  { label: 'name', re: new RegExp(NAME_ALTERNATION, 'gi') },
 ]
 
 export function scrubChunk(text: string, _path: string): ScrubResult {
