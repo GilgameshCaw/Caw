@@ -193,10 +193,13 @@ export const bareRoutes: RouteDef[] = [
   { path: "/welcome", component: <CaptiveSplash /> },
   { path: "/welcome/:username", component: <WelcomePage /> },
   // Whitepaper is intentionally a bare route so it doesn't mount MainLayout
-  // (the social app chrome / network-specific flows). The optional :sectionId
-  // makes each section deep-linkable (/help/whitepaper/<section-slug>).
+  // (the social app chrome / network-specific flows). Sections are deep-linkable
+  // with clean, number-free slugs: top-level sections are one segment
+  // (/help/whitepaper/cryptography-identity), sub-sections nest under their
+  // parent (/help/whitepaper/cryptography-identity/quick-sign-session-keys).
   { path: "/help/whitepaper", component: <WhitepaperPage /> },
   { path: "/help/whitepaper/:sectionId", component: <WhitepaperPage /> },
+  { path: "/help/whitepaper/:sectionId/:subId", component: <WhitepaperPage /> },
   // The CAW Manifesto — landing-style page ported from caw-landing. Bare
   // route (no MainLayout), top-level path so it never collides with the
   // dynamic /welcome/:username route. Distinct from /help/manifesto, which

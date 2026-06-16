@@ -150,6 +150,21 @@ const WhitepaperPage: React.FC = () => {
     // by position. `headings` (h1/h2 only) drives the TOC + slices as before.
     const allHeadings: Array<{ id: string; depth: 1 | 2 | 3; label: string; line: number }> = []
     const headings: Array<{ id: string; depth: 1 | 2; label: string; line: number }> = []
+    // Strip a leading section enumerator ("6.", "6.1", "6.10", "3.3.1") from the
+    // text used to build the slug, so URLs/anchors read clean (cryptography-
+    // identity, quick-sign-session-keys) instead of number-prefixed. The DISPLAYED
+    // label keeps its number — only the slug source is stripped.
+    // Strip the leading enumerator and tidy separators so slugs read clean:
+    // turn "&" into "and" and collapse the double-dashes GithubSlugger would
+    // otherwise emit (e.g. "Cryptography & Identity" → cryptography-and-identity,
+    // not cryptography--identity).
+    const slugSource = (label: string) =>
+      label
+        .replace(/^\d+(?:\.\d+)*\.?\s+/, '')
+        .replace(/&/g, ' and ')
+        .replace(/[+()]/g, ' ') // drop +/parens so they don't leave double-dashes
+        .replace(/\s+/g, ' ')
+        .trim()
     for (let i = 0; i < lines.length; i++) {
       const m = lines[i].match(/^(#{1,3})\s+(.+?)\s*$/)
       if (!m) continue
@@ -157,7 +172,7 @@ const WhitepaperPage: React.FC = () => {
       // Strip ==highlight== markers so the TOC label + slug match the rendered
       // (marker-free) heading text and anchors stay stable.
       const label = m[2].replace(/\s+#+\s*$/, '').replace(/==/g, '').trim()
-      const id = slugger.slug(label)
+      const id = slugger.slug(slugSource(label))
       allHeadings.push({ id, depth, label, line: i })
       if (depth <= 2) headings.push({ id, depth: depth as 1 | 2, label, line: i })
     }
@@ -262,13 +277,31 @@ const WhitepaperPage: React.FC = () => {
   }, [])
 
   // The URL is the source of truth for the active section, so each section is
-  // deep-linkable and back/forward works. /help/whitepaper/<section-slug>.
-  const { sectionId } = useParams<{ sectionId?: string }>()
+  // deep-linkable and back/forward works. Clean, number-free slugs:
+  //   top-level:    /help/whitepaper/cryptography-identity
+  //   sub-section:  /help/whitepaper/cryptography-identity/quick-sign-session-keys
+  const { sectionId, subId } = useParams<{ sectionId?: string; subId?: string }>()
   const navigate = useNavigate()
 
-  // The active section resolves from the URL param when it's a known section,
-  // otherwise the default (Foreword / first). No separate state to drift.
-  const activeId = (sectionId && sectionMdById[sectionId]) ? sectionId : initialId
+  // Resolve the URL params to an internal section id.
+  // - With :subId, find the child whose slug is :subId AND whose parent's slug
+  //   is :sectionId (scoped, so identical child slugs under different parents
+  //   never collide).
+  // - With only :sectionId, it's the top-level/parent section with that slug.
+  // Falls back to the default section when nothing matches.
+  const activeId = useMemo(() => {
+    if (sectionId && subId) {
+      const child = Object.keys(sectionMdById).find(
+        id => id === subId && parentById[id] === sectionId
+      )
+      if (child) return child
+      // Unknown sub-section but a valid parent — land on the parent page.
+      if (sectionMdById[sectionId] && !parentById[sectionId]) return sectionId
+      return initialId
+    }
+    if (sectionId && sectionMdById[sectionId]) return sectionId
+    return initialId
+  }, [sectionId, subId, sectionMdById, parentById, initialId])
 
   // The PAGE we actually render is the active section's parent when the active
   // section is a child (h2 under an h1). That way clicking 5.4 shows the whole
@@ -281,9 +314,17 @@ const WhitepaperPage: React.FC = () => {
   // standalone section).
   const scrollToHeadingId = (activeId && parentById[activeId]) ? activeId : null
 
-  // Push a section slug to the URL (activeId follows). The URL is the source of
-  // truth, so this is also what makes every section deep-linkable / shareable.
-  const navigateToSection = (id: string) => navigate(`/help/whitepaper/${id}`)
+  // Internal id → URL path. Sub-sections nest under their parent slug; top-level
+  // sections are a single segment.
+  const urlFor = (id: string) => {
+    const parent = parentById[id]
+    const path = parent ? `${parent}/${id}` : id
+    return `/help/whitepaper/${path}`
+  }
+
+  // Push a section's URL (activeId follows). The URL is the source of truth, so
+  // this is also what makes every section deep-linkable / shareable.
+  const navigateToSection = (id: string) => navigate(urlFor(id))
 
   // TOC / plain navigation. Clears any pending search-match target so the
   // section-scroll branch (not the match-scroll branch) handles this jump.
@@ -370,13 +411,20 @@ const WhitepaperPage: React.FC = () => {
   // Collapsible parents (dropdown-like). Default: expand the active section's parent.
   const [expandedParents, setExpandedParents] = useState<Record<string, boolean>>({})
 
-  // If the URL has no (or an unknown) section, canonicalize to the default so the
-  // address bar always reflects what's shown.
+  // Canonicalize the address bar to the clean URL for whatever section is
+  // actually shown. Covers: bare /help/whitepaper, unknown slugs, and any old
+  // number-prefixed links — all snap to the resolved section's canonical path.
   useEffect(() => {
-    if (initialId && (!sectionId || !sectionMdById[sectionId])) {
-      navigate(`/help/whitepaper/${initialId}`, { replace: true })
+    if (!activeId) return
+    const canonical = urlFor(activeId)
+    // Compare against the current path's whitepaper portion (ignore locale prefix
+    // / query / hash, which navigate(...) preserves on its own).
+    const current = decodeURIComponent(window.location.pathname)
+    if (!current.endsWith(canonical)) {
+      navigate(canonical, { replace: true })
     }
-  }, [sectionId, initialId, sectionMdById, navigate])
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeId, sectionId, subId])
 
   useEffect(() => {
     if (!activeId) return
@@ -606,7 +654,15 @@ const WhitepaperPage: React.FC = () => {
   const idForHeading = (label: string): string => {
     const q = headingQueueRef.current.get(label)
     if (q && q.length) return q.shift() as string
-    return new GithubSlugger().slug(label)
+    // Fallback (heading not in precomputed list): mirror the clean-slug
+    // convention — strip the leading enumerator, "&" → "and", tidy spacing.
+    const clean = label
+      .replace(/^\d+(?:\.\d+)*\.?\s+/, '')
+      .replace(/&/g, ' and ')
+      .replace(/[+()]/g, ' ')
+      .replace(/\s+/g, ' ')
+      .trim()
+    return new GithubSlugger().slug(clean)
   }
   const idForHeadingRef = useRef(idForHeading)
   idForHeadingRef.current = idForHeading
