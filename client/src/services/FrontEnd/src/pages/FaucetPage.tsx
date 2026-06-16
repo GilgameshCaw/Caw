@@ -125,7 +125,7 @@ const FaucetPage: React.FC = () => {
         {/* Header */}
         <div className="flex items-center gap-4 mb-6">
           <Link
-            to="/help/resources"
+            to="/resources/links"
             className={`p-2 rounded-full transition-colors cursor-pointer ${
               isDark ? 'hover:bg-white/10' : 'hover:bg-gray-100'
             }`}

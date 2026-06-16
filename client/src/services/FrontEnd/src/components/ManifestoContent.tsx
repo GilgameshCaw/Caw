@@ -13,7 +13,7 @@ import dreamsImg from '~/assets/landing/dreams.png'
 
 // The manifesto body, extracted from ManifestoPage so it can be shared by both
 // the standalone /manifesto route (wrapped in LandingHeader/Footer) and the
-// in-app /help/manifesto tab (rendered below the Help tab bar). Renders NO page
+// in-app /resources/manifesto tab (rendered below the Help tab bar). Renders NO page
 // chrome of its own — just the <main> content.
 const ManifestoContent: React.FC = () => {
   const { isDark } = useTheme()
@@ -610,7 +610,7 @@ const ManifestoContent: React.FC = () => {
         {/* Deep-link to the verbatim manifesto inside the white paper. */}
         <section className="px-6 pb-16 text-center">
           <Link
-            to="/help/whitepaper/appendix-e--the-manifesto"
+            to="/resources/whitepaper/appendix-e-the-manifesto"
             className={`inline-flex items-center gap-2 text-sm font-semibold underline underline-offset-4 ${
               isDark ? 'text-yellow-400 hover:text-yellow-300' : 'text-yellow-700 hover:text-yellow-600'
             }`}

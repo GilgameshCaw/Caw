@@ -3,10 +3,10 @@ import LandingHeader from '~/components/landing/LandingHeader'
 import LandingFooter from '~/components/landing/LandingFooter'
 import ManifestoContent from '~/components/ManifestoContent'
 
-// The CAW Manifesto — a bare route at /manifesto (NOT /help/manifesto, which is
+// The CAW Manifesto — a bare route at /manifesto (NOT /resources/manifesto, which is
 // the in-app Help tab). This is the standalone, landing-style presentation:
 // shared LandingHeader/Footer around the reusable <ManifestoContent> body (the
-// same body the /help/manifesto tab embeds below its tab bar).
+// same body the /resources/manifesto tab embeds below its tab bar).
 const ManifestoPage: React.FC = () => {
   const { isDark } = useTheme()
 

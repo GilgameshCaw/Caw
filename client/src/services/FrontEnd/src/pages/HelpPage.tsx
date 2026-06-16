@@ -58,12 +58,12 @@ const HelpPage: React.FC<HelpPageProps> = ({ defaultTab }) => {
   const getActiveTab = (): TabType => {
     if (defaultTab) return defaultTab
     const path = location.pathname
-    if (path === '/help/faq' || path === '/help') return 'faq'
-    if (path === '/help/history') return 'history'
-    if (path === '/help/manifesto') return 'manifesto'
-    if (path === '/help/gettingstarted' || path === '/help/howto') return 'gettingstarted'
-    if (path === '/help/developers') return 'developers'
-    if (path === '/help/resources') return 'resources'
+    if (path === '/resources/faq' || path === '/resources') return 'faq'
+    if (path === '/resources/history') return 'history'
+    if (path === '/resources/manifesto') return 'manifesto'
+    if (path === '/resources/gettingstarted' || path === '/resources/howto') return 'gettingstarted'
+    if (path === '/resources/developers') return 'developers'
+    if (path === '/resources/links') return 'resources'
     return 'faq'
   }
 
@@ -71,12 +71,12 @@ const HelpPage: React.FC<HelpPageProps> = ({ defaultTab }) => {
 
   const handleTabClick = (tab: TabType) => {
     const routes: Record<TabType, string> = {
-      faq: '/help/faq',
-      history: '/help/history',
-      manifesto: '/help/manifesto',
-      gettingstarted: '/help/gettingstarted',
-      developers: '/help/developers',
-      resources: '/help/resources'
+      faq: '/resources/faq',
+      history: '/resources/history',
+      manifesto: '/resources/manifesto',
+      gettingstarted: '/resources/gettingstarted',
+      developers: '/resources/developers',
+      resources: '/resources/links'
     }
     navigate(routes[tab])
   }
@@ -93,13 +93,13 @@ const HelpPage: React.FC<HelpPageProps> = ({ defaultTab }) => {
       icon: <HiDocumentText className="w-6 h-6" />,
       title: t('help.resources.official.manifesto.title'),
       description: t('help.resources.official.manifesto.description'),
-      url: '/help/manifesto'
+      url: '/resources/manifesto'
     },
     {
       icon: <HiDocumentText className="w-6 h-6" />,
       title: t('help.resources.official.whitepaper.title'),
       description: t('help.resources.official.whitepaper.description'),
-      url: '/help/whitepaper'
+      url: '/resources/whitepaper'
     },
     {
       icon: <HiCode className="w-6 h-6" />,
@@ -451,7 +451,7 @@ const HelpPage: React.FC<HelpPageProps> = ({ defaultTab }) => {
                 </h3>
                 <p>
                   {t('help.history.scavenger_hunt.body_before_link')}
-                  <Link to="/help/manifesto" className={`underline ${isDark ? 'text-yellow-500 hover:text-yellow-400' : 'text-yellow-700 hover:text-yellow-600'}`}>{t('help.history.scavenger_hunt.link_text')}</Link>
+                  <Link to="/resources/manifesto" className={`underline ${isDark ? 'text-yellow-500 hover:text-yellow-400' : 'text-yellow-700 hover:text-yellow-600'}`}>{t('help.history.scavenger_hunt.link_text')}</Link>
                   {t('help.history.scavenger_hunt.body_after_link')}
                 </p>
 

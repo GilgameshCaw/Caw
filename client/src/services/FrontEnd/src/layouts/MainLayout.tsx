@@ -204,7 +204,7 @@ const MainLayout = ({ children, hideSidebars: hideSidebarsProp }: MainLayoutProp
     setIsDragging(false)
   }
 
-  // Captive mode: no username and on a public page like /help/*
+  // Captive mode: no username and on a public page like /resources/*
   const isCaptive = !activeToken?.username
   // hideSidebars resolution order (any one truthy wins):
   //   1. Imperative override via useLayoutStore — used for transient
@@ -213,14 +213,14 @@ const MainLayout = ({ children, hideSidebars: hideSidebarsProp }: MainLayoutProp
   //   2. The legacy prop (kept for back-compat with any straggling page
   //      that wraps with <MainLayout hideSidebars> — none today, but it
   //      costs nothing to keep working).
-  //   3. Captive + public-page heuristic (unauthenticated user on /help,
+  //   3. Captive + public-page heuristic (unauthenticated user on /resources,
   //      /usernames, or /faucet — show captive banner instead).
   // useMatches() / route handles aren't used here: <BrowserRouter> isn't
   // a data router, so useMatches throws. The override store covers the
   // one dynamic case we actually have.
   const hideChromeOverride = useLayoutStore(s => s.hideChromeOverride)
   const hideMobileNavOverride = useLayoutStore(s => s.hideMobileNavOverride)
-  const hideSidebars = hideChromeOverride || hideSidebarsProp || (isCaptive && (location.pathname.startsWith('/help') || location.pathname.startsWith('/usernames') || location.pathname.startsWith('/faucet')))
+  const hideSidebars = hideChromeOverride || hideSidebarsProp || (isCaptive && (location.pathname.startsWith('/resources') || location.pathname.startsWith('/usernames') || location.pathname.startsWith('/faucet')))
 
   // Publish the bottom-nav height as a CSS variable so pages with their own
   // fixed-bottom UI (e.g. DM composer in /messages/<id>) can sit above the
@@ -452,7 +452,7 @@ const MainLayout = ({ children, hideSidebars: hideSidebarsProp }: MainLayoutProp
       <Modals />
 
       {/* Captive top header — for unauthenticated users on public pages
-          (/help/*, /usernames/*, /faucet). Reuses LandingHeader so the
+          (/resources/*, /usernames/*, /faucet). Reuses LandingHeader so the
           chrome stays consistent with CaptiveSplash / ManifestoPage /
           WhitepaperPage. The action cluster (Wallet pill + primary CTA)
           rides on the right via rightExtra; LandingHeader handles the
@@ -466,7 +466,7 @@ const MainLayout = ({ children, hideSidebars: hideSidebarsProp }: MainLayoutProp
               <WalletAccountButton />
               {location.pathname.startsWith('/usernames') ? (
                 <Link
-                  to="/help/faq"
+                  to="/resources/faq"
                   className={`px-3 sm:px-4 py-1.5 font-semibold text-sm rounded-full border transition-all whitespace-nowrap ${
                     isDark
                       ? 'border-white/20 text-white/80 hover:bg-white/10'

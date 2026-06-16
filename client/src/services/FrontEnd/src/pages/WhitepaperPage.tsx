@@ -155,14 +155,15 @@ const WhitepaperPage: React.FC = () => {
     // identity, quick-sign-session-keys) instead of number-prefixed. The DISPLAYED
     // label keeps its number — only the slug source is stripped.
     // Strip the leading enumerator and tidy separators so slugs read clean:
-    // turn "&" into "and" and collapse the double-dashes GithubSlugger would
-    // otherwise emit (e.g. "Cryptography & Identity" → cryptography-and-identity,
-    // not cryptography--identity).
+    // "&" → "and", and drop chars GithubSlugger would otherwise turn into
+    // double-dashes (em/en-dashes, +, parens). e.g.
+    //   "Cryptography & Identity"     → cryptography-and-identity
+    //   "Appendix E — The Manifesto"  → appendix-e-the-manifesto
     const slugSource = (label: string) =>
       label
         .replace(/^\d+(?:\.\d+)*\.?\s+/, '')
         .replace(/&/g, ' and ')
-        .replace(/[+()]/g, ' ') // drop +/parens so they don't leave double-dashes
+        .replace(/[+()—–]/g, ' ')
         .replace(/\s+/g, ' ')
         .trim()
     for (let i = 0; i < lines.length; i++) {
@@ -278,8 +279,8 @@ const WhitepaperPage: React.FC = () => {
 
   // The URL is the source of truth for the active section, so each section is
   // deep-linkable and back/forward works. Clean, number-free slugs:
-  //   top-level:    /help/whitepaper/cryptography-identity
-  //   sub-section:  /help/whitepaper/cryptography-identity/quick-sign-session-keys
+  //   top-level:    /resources/whitepaper/cryptography-and-identity
+  //   sub-section:  /resources/whitepaper/cryptography-and-identity/quick-sign-session-keys
   const { sectionId, subId } = useParams<{ sectionId?: string; subId?: string }>()
   const navigate = useNavigate()
 
@@ -319,7 +320,7 @@ const WhitepaperPage: React.FC = () => {
   const urlFor = (id: string) => {
     const parent = parentById[id]
     const path = parent ? `${parent}/${id}` : id
-    return `/help/whitepaper/${path}`
+    return `/resources/whitepaper/${path}`
   }
 
   // Push a section's URL (activeId follows). The URL is the source of truth, so
@@ -412,7 +413,7 @@ const WhitepaperPage: React.FC = () => {
   const [expandedParents, setExpandedParents] = useState<Record<string, boolean>>({})
 
   // Canonicalize the address bar to the clean URL for whatever section is
-  // actually shown. Covers: bare /help/whitepaper, unknown slugs, and any old
+  // actually shown. Covers: bare /resources/whitepaper, unknown slugs, and any old
   // number-prefixed links — all snap to the resolved section's canonical path.
   useEffect(() => {
     if (!activeId) return
@@ -659,7 +660,7 @@ const WhitepaperPage: React.FC = () => {
     const clean = label
       .replace(/^\d+(?:\.\d+)*\.?\s+/, '')
       .replace(/&/g, ' and ')
-      .replace(/[+()]/g, ' ')
+      .replace(/[+()—–]/g, ' ')
       .replace(/\s+/g, ' ')
       .trim()
     return new GithubSlugger().slug(clean)

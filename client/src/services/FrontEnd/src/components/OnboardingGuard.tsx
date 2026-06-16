@@ -5,7 +5,7 @@ import { useActiveToken } from '~/store/tokenDataStore'
 import { apiFetch, retryOnIndexing } from '~/api/client'
 
 /** Pages that should NOT be redirected away from */
-const EXEMPT_PREFIXES = ['/welcome', '/usernames/new', '/help', '/faucet', '/admin']
+const EXEMPT_PREFIXES = ['/welcome', '/usernames/new', '/resources', '/faucet', '/admin']
 
 /**
  * Checks if the active user has incomplete onboarding and redirects to /welcome/:username.

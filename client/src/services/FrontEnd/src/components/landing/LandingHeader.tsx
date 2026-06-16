@@ -15,13 +15,13 @@ import cawLogo from '~/assets/images/caw-logo.png'
 // one list avoids the copies drifting apart when a link is added/removed.
 // Each entry carries either a `tKey` (i18n) or a plain `label`.
 export const RESOURCE_LINKS: { to: string; tKey?: string; label?: string }[] = [
-  { to: '/help/faq',        tKey: 'captive_splash.footer.faq' },
-  { to: '/manifesto',       tKey: 'captive_splash.footer.manifesto' },
-  { to: '/help/history',    tKey: 'captive_splash.footer.history' },
-  { to: '/help/howto',      tKey: 'captive_splash.footer.how_it_works' },
-  { to: '/help/developers', tKey: 'captive_splash.footer.developers' },
-  { to: '/help/resources',  tKey: 'captive_splash.footer.resources' },
-  { to: '/help/whitepaper', label: 'Whitepaper' },
+  { to: '/resources/faq',        tKey: 'captive_splash.footer.faq' },
+  { to: '/manifesto',            tKey: 'captive_splash.footer.manifesto' },
+  { to: '/resources/history',    tKey: 'captive_splash.footer.history' },
+  { to: '/resources/howto',      tKey: 'captive_splash.footer.how_it_works' },
+  { to: '/resources/developers', tKey: 'captive_splash.footer.developers' },
+  { to: '/resources/links',      tKey: 'captive_splash.footer.resources' },
+  { to: '/resources/whitepaper', label: 'Whitepaper' },
   { to: '/faucet',          tKey: 'captive_splash.footer.faucet' },
 ]
 

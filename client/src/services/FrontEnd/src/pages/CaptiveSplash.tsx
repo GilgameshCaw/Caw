@@ -173,7 +173,7 @@ export default function CaptiveSplash() {
           )}
 
           <Link
-            to="/help/faq"
+            to="/resources/faq"
             className={`px-5 sm:px-8 py-3 font-semibold text-base sm:text-lg rounded-full border transition-all whitespace-nowrap ${
               isDark
                 ? 'border-white/20 text-white/80 hover:bg-white/10'

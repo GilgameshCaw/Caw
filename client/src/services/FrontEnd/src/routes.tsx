@@ -157,14 +157,16 @@ export const layoutRoutes: RouteDef[] = [
   { path: "/settings/account", component: <AuthGate><AccountSettings /></AuthGate> },
   { path: "/settings/session-keys", component: <AuthGate><SessionKeySettings /></AuthGate> },
   { path: "/settings/ai-provider", component: <AuthGate><AIProviderSettings /></AuthGate> },
-  { path: "/help", component: <HelpPage /> },
-  { path: "/help/faq", component: <HelpPage defaultTab="faq" /> },
-  { path: "/help/history", component: <HelpPage defaultTab="history" /> },
-  { path: "/help/manifesto", component: <HelpPage defaultTab="manifesto" /> },
-  { path: "/help/howto", component: <HelpPage defaultTab="gettingstarted" /> },
-  { path: "/help/gettingstarted", component: <HelpPage defaultTab="gettingstarted" /> },
-  { path: "/help/developers", component: <HelpPage defaultTab="developers" /> },
-  { path: "/help/resources", component: <HelpPage defaultTab="resources" /> },
+  { path: "/resources", component: <HelpPage /> },
+  { path: "/resources/faq", component: <HelpPage defaultTab="faq" /> },
+  { path: "/resources/history", component: <HelpPage defaultTab="history" /> },
+  { path: "/resources/manifesto", component: <HelpPage defaultTab="manifesto" /> },
+  { path: "/resources/howto", component: <HelpPage defaultTab="gettingstarted" /> },
+  { path: "/resources/gettingstarted", component: <HelpPage defaultTab="gettingstarted" /> },
+  { path: "/resources/developers", component: <HelpPage defaultTab="developers" /> },
+  // The "resources" tab's URL segment is "links" so it doesn't become
+  // /resources/resources under the new base.
+  { path: "/resources/links", component: <HelpPage defaultTab="resources" /> },
   { path: "/bookmarks", component: <AuthGate><BookmarksPage /></AuthGate> },
   { path: "/scheduled", component: <AuthGate><ScheduledPage /></AuthGate> },
   // { path: "/gamefi", component: <GameFiPage /> },
@@ -195,14 +197,14 @@ export const bareRoutes: RouteDef[] = [
   // Whitepaper is intentionally a bare route so it doesn't mount MainLayout
   // (the social app chrome / network-specific flows). Sections are deep-linkable
   // with clean, number-free slugs: top-level sections are one segment
-  // (/help/whitepaper/cryptography-identity), sub-sections nest under their
-  // parent (/help/whitepaper/cryptography-identity/quick-sign-session-keys).
-  { path: "/help/whitepaper", component: <WhitepaperPage /> },
-  { path: "/help/whitepaper/:sectionId", component: <WhitepaperPage /> },
-  { path: "/help/whitepaper/:sectionId/:subId", component: <WhitepaperPage /> },
+  // (/resources/whitepaper/cryptography-and-identity), sub-sections nest under
+  // their parent (/resources/whitepaper/cryptography-and-identity/quick-sign-session-keys).
+  { path: "/resources/whitepaper", component: <WhitepaperPage /> },
+  { path: "/resources/whitepaper/:sectionId", component: <WhitepaperPage /> },
+  { path: "/resources/whitepaper/:sectionId/:subId", component: <WhitepaperPage /> },
   // The CAW Manifesto — landing-style page ported from caw-landing. Bare
   // route (no MainLayout), top-level path so it never collides with the
-  // dynamic /welcome/:username route. Distinct from /help/manifesto, which
+  // dynamic /welcome/:username route. Distinct from /resources/manifesto, which
   // stays the in-app Help tab.
   { path: "/manifesto", component: <ManifestoPage /> },
   { path: "/admin", component: <AdminGate><Admin /></AdminGate> },
