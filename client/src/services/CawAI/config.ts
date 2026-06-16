@@ -47,9 +47,11 @@ const Schema = z.object({
   // to the model. < 420 keeps replies fitting in a single CAW post.
   maxReplyChars: z.coerce.number().int().min(50).max(420).default(420),
 
-  // Visible marker appended to every reply so users can identify
-  // machine-generated content.
-  aiMarker: z.string().default(' — 🤖'),
+  // Optional marker appended to every reply. Default is empty: the bot
+  // discloses its AI nature through its wording (see persona rule 7) and uses
+  // 🌙 as a natural signature rather than a fixed appended badge. Set
+  // CAW_AI_MARKER to re-enable a fixed suffix if an operator wants one.
+  aiMarker: z.string().default(''),
 
   // Optional: S3 bucket + key for persisting the cursor in Lambda
   // deployments where /tmp is ephemeral per cold start. When absent

@@ -1,7 +1,7 @@
 // CawAI/rag/embed.ts
 //
 // Local embedding via @xenova/transformers (sentence-transformers-compatible).
-// Model: Xenova/all-MiniLM-L6-v2, 384-dim output.
+// Model: Xenova/bge-base-en-v1.5, 768-dim output.
 //
 // Replaces the Voyage AI embedding call. No third-party key required.
 // The pipeline is lazily loaded on first call and cached as a singleton

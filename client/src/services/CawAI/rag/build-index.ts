@@ -17,7 +17,7 @@
 // scrubChunk() before embedding; any flagged chunk halts the build.
 //
 // Embeddings are produced locally via @xenova/transformers
-// (Xenova/all-MiniLM-L6-v2, 384-dim). No Voyage API key required.
+// (Xenova/bge-base-en-v1.5, 768-dim). No Voyage API key required.
 //
 // SCRUB ESCAPE HATCH
 // Set SCRUB_REDACT_AND_CONTINUE=1 to replace flagged text with
@@ -53,6 +53,26 @@ const CORPUS_EXCLUDE = [
   /(^|\/)rag-index\.jsonl$/,
 ]
 
+// SENSITIVE-DOC exclusion. Unlike the scrub gate (which matches a single
+// string), some whole DOCUMENTS are sensitive in their entirety — security
+// audits, threat models, pentest notes, vuln findings, internal design notes.
+// The bot is public-facing: indexing these means anyone who asks a topically
+// related question ("how do tips work") can pull a chunk that names a file:line
+// auth bypass. Even a since-FIXED finding shouldn't be advertised to the world.
+// These patterns drop such files from the corpus by path. Err toward exclusion:
+// a missing internal doc costs the bot a little knowledge; an included one can
+// leak an exploit recipe.
+const SENSITIVE_DOC_EXCLUDE = [
+  /AUDIT/i,
+  /SECURITY/i,
+  /\bVULN/i,
+  /PENTEST/i,
+  /THREAT[_-]?MODEL/i,
+  /FINDINGS/i,
+  /INCIDENT/i,
+  /(^|\/)native\/docs\/.*NOTES/i,   // internal native-app design notes
+]
+
 type PendingChunk = {
   id: string
   path: string
@@ -67,7 +87,7 @@ async function main() {
 
   console.log(`[build-rag] repo root: ${repoRoot}`)
   console.log(`[build-rag] output:    ${outPath}`)
-  console.log(`[build-rag] embedding: Xenova/all-MiniLM-L6-v2 (local, no API key)`)
+  console.log(`[build-rag] embedding: Xenova/bge-base-en-v1.5 (local, no API key)`)
 
   // ----------------------------------------------------------------
   // 1. Enumerate corpus: git ls-files (current tree only, no history).
@@ -82,12 +102,20 @@ async function main() {
     process.exit(1)
   }
 
-  // Filter to only the extensions we embed, excluding our own RAG build
-  // artifacts (see CORPUS_EXCLUDE) so a stray tracked review/index file can
-  // never re-enter the corpus.
-  const eligible = gitFiles.filter(
+  // Filter to only the extensions we embed, excluding (a) our own RAG build
+  // artifacts (CORPUS_EXCLUDE) so a stray tracked review/index file can never
+  // re-enter the corpus, and (b) sensitive whole documents (SENSITIVE_DOC_EXCLUDE)
+  // — security audits, threat models, findings — that must never be retrievable
+  // by a public bot.
+  const extEligible = gitFiles.filter(
     f => EXTS.has(path.extname(f)) && !CORPUS_EXCLUDE.some(re => re.test(f)),
   )
+  const droppedSensitive = extEligible.filter(f => SENSITIVE_DOC_EXCLUDE.some(re => re.test(f)))
+  const eligible = extEligible.filter(f => !SENSITIVE_DOC_EXCLUDE.some(re => re.test(f)))
+  if (droppedSensitive.length > 0) {
+    console.log(`[build-rag] excluded ${droppedSensitive.length} sensitive doc(s) from corpus:`)
+    for (const f of droppedSensitive) console.log(`             - ${f}`)
+  }
   console.log(`[build-rag] git-tracked files: ${gitFiles.length} total, ${eligible.length} eligible (${[...EXTS].join('/')})`)
 
   // ----------------------------------------------------------------
@@ -189,7 +217,7 @@ async function main() {
   // ----------------------------------------------------------------
   // 4. Embed clean (or redacted) chunks using local model.
   // ----------------------------------------------------------------
-  console.log(`[build-rag] embedding ${cleanChunks.length} chunks via Xenova/all-MiniLM-L6-v2…`)
+  console.log(`[build-rag] embedding ${cleanChunks.length} chunks via Xenova/bge-base-en-v1.5…`)
 
   const out = await fs.open(outPath, 'w')
 

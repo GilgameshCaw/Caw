@@ -41,7 +41,7 @@ function testConfig(): CawAIConfig {
     anthropicApiKey,
     ragIndexPath: process.env.CAW_AI_RAG_INDEX_PATH || './rag-index.jsonl',
     maxReplyChars: Number(process.env.CAW_AI_MAX_REPLY_CHARS) || 420,
-    aiMarker: process.env.CAW_AI_MARKER || ' — 🤖',
+    aiMarker: process.env.CAW_AI_MARKER ?? '',
     // Unused by the reply path — placeholders so the typed object is complete.
     profileTokenId: 0,
     deployerPrivateKey: '0x' + '0'.repeat(64),

@@ -131,8 +131,10 @@ stops responding for the remainder of the day and resumes the next.
 
 ## Disclaimer
 
-Every reply ends with a visible AI marker (e.g. `— 🤖`). Users should
-always be able to identify a CawAI reply as machine-generated. The
-mainnet system prompt also includes an instruction to remind users
-periodically that responses are AI-generated and should be verified
+CawAI discloses its machine-generated nature through its wording rather than a
+fixed appended badge (the default `CAW_AI_MARKER` is empty). The system prompt
+instructs the bot to make its bot nature clear when relevant and to remind users
+periodically that responses are AI-generated and should be verified. It goes
+light on emoji; 🌙 is its favorite to drop in occasionally (never the 🤖 robot
+emoji). Operators who prefer a fixed suffix can set `CAW_AI_MARKER`
 against the source for any load-bearing claim.
