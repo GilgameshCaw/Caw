@@ -44,13 +44,19 @@ const MINTER_ADDRESS = '0xe6eF1c8705a28DF44FA5F04c8B282b545A454Fed';
 // mintAndDepositZap (no actual LayerZero message; deposit applied on L1).
 const LZ_DEST_ID = 40161;
 
-// Mint parameters — identical to Phase 8 in deploy.js lines 1389-1406.
+// Mint parameters.
+// The swap must yield at least costOfName('cawai') CAW. "cawai" is 5 chars →
+// burn cost = 200,000,000 CAW. The ETH→CAW rate depends on live pool reserves,
+// so SWAP_ETH_AMOUNT is tuned to the current testnet CAW/WETH pool: 0.005 ETH
+// only swaps to ~70M CAW (reverts "Swap output < burn cost"); ~0.03 ETH yields
+// ~370M CAW, covering the burn with surplus deposited into the profile.
+// Override via env for different pool conditions: MINT_SWAP_ETH / MINT_TX_VALUE.
 const NETWORK_ID      = 1;                          // Uruk (first registered network)
 const USERNAME        = 'cawai';
-const SWAP_ETH_AMOUNT = ethers.parseEther('0.005'); // ~$10 worth of CAW at ETH=$2000
+const SWAP_ETH_AMOUNT = ethers.parseEther(process.env.MINT_SWAP_ETH || '0.03');
 const MIN_CAW_OUT     = 0n;                         // no slippage guard; deployer is sole caller
 const LZ_TOKEN_AMOUNT = 0n;                         // no LZ fee for bypassLZ path
-const TX_VALUE        = ethers.parseEther('0.006'); // swap + LZ/storage buffer
+const TX_VALUE        = ethers.parseEther(process.env.MINT_TX_VALUE || '0.031'); // swap + LZ/storage buffer
 
 // Minimal ABI — only the two functions this script calls.
 const MINTER_ABI = [
