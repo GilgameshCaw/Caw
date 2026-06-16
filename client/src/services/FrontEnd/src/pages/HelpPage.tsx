@@ -58,13 +58,13 @@ const HelpPage: React.FC<HelpPageProps> = ({ defaultTab }) => {
   const getActiveTab = (): TabType => {
     if (defaultTab) return defaultTab
     const path = location.pathname
-    if (path === '/resources/faq' || path === '/resources') return 'faq'
+    if (path === '/resources') return 'resources'
+    if (path === '/resources/faq') return 'faq'
     if (path === '/resources/history') return 'history'
     if (path === '/resources/manifesto') return 'manifesto'
     if (path === '/resources/gettingstarted' || path === '/resources/howto') return 'gettingstarted'
     if (path === '/resources/developers') return 'developers'
-    if (path === '/resources/links') return 'resources'
-    return 'faq'
+    return 'resources'
   }
 
   const activeSection = getActiveTab()
@@ -76,7 +76,7 @@ const HelpPage: React.FC<HelpPageProps> = ({ defaultTab }) => {
       manifesto: '/resources/manifesto',
       gettingstarted: '/resources/gettingstarted',
       developers: '/resources/developers',
-      resources: '/resources/links'
+      resources: '/resources'
     }
     navigate(routes[tab])
   }
@@ -269,16 +269,31 @@ const HelpPage: React.FC<HelpPageProps> = ({ defaultTab }) => {
 
         {/* Tab Navigation - Desktop */}
         <div className={`hidden md:flex border-b mb-6 ${isDark ? 'border-white/10' : 'border-gray-200'}`}>
+          <TabButton tab="resources" label={t('help.tab.resources')} />
           <TabButton tab="faq" label={t('help.tab.faq')} />
           <TabButton tab="history" label={t('help.tab.history')} />
           <TabButton tab="manifesto" label={t('help.tab.manifesto')} />
           <TabButton tab="gettingstarted" label={t('help.tab.getting_started')} />
           <TabButton tab="developers" label={t('help.tab.developers')} />
-          <TabButton tab="resources" label={t('help.tab.resources')} />
         </div>
 
         {/* Tab Navigation - Mobile with dropdowns */}
         <div className={`md:hidden flex border-b mb-6 ${isDark ? 'border-white/10' : 'border-gray-200'}`} ref={dropdownRef}>
+          {/* Resources - standalone (first) */}
+          <button
+            onClick={() => handleTabClick('resources')}
+            className={`flex-1 px-2 py-3 text-sm font-medium transition-colors relative cursor-pointer ${
+              activeSection === 'resources'
+                ? isDark ? 'text-yellow-500' : 'text-yellow-600'
+                : isDark ? 'text-white/60 hover:text-white' : 'text-gray-500 hover:text-gray-900'
+            }`}
+          >
+            {t('help.tab.resources')}
+            {activeSection === 'resources' && (
+              <div className="absolute bottom-0 left-0 right-0 h-0.5 bg-yellow-500" />
+            )}
+          </button>
+
           {/* FAQ Dropdown */}
           <div className="relative flex-1">
             <button
@@ -382,20 +397,6 @@ const HelpPage: React.FC<HelpPageProps> = ({ defaultTab }) => {
             )}
           </button>
 
-          {/* Resources - standalone */}
-          <button
-            onClick={() => handleTabClick('resources')}
-            className={`flex-1 px-2 py-3 text-sm font-medium transition-colors relative cursor-pointer ${
-              activeSection === 'resources'
-                ? isDark ? 'text-yellow-500' : 'text-yellow-600'
-                : isDark ? 'text-white/60 hover:text-white' : 'text-gray-500 hover:text-gray-900'
-            }`}
-          >
-            {t('help.tab.resources')}
-            {activeSection === 'resources' && (
-              <div className="absolute bottom-0 left-0 right-0 h-0.5 bg-yellow-500" />
-            )}
-          </button>
         </div>
 
         {/* FAQ Section */}

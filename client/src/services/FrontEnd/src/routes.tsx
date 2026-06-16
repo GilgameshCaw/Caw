@@ -157,16 +157,14 @@ export const layoutRoutes: RouteDef[] = [
   { path: "/settings/account", component: <AuthGate><AccountSettings /></AuthGate> },
   { path: "/settings/session-keys", component: <AuthGate><SessionKeySettings /></AuthGate> },
   { path: "/settings/ai-provider", component: <AuthGate><AIProviderSettings /></AuthGate> },
-  { path: "/resources", component: <HelpPage /> },
+  // The base /resources IS the resources (links) tab — first in the tab bar.
+  { path: "/resources", component: <HelpPage defaultTab="resources" /> },
   { path: "/resources/faq", component: <HelpPage defaultTab="faq" /> },
   { path: "/resources/history", component: <HelpPage defaultTab="history" /> },
   { path: "/resources/manifesto", component: <HelpPage defaultTab="manifesto" /> },
   { path: "/resources/howto", component: <HelpPage defaultTab="gettingstarted" /> },
   { path: "/resources/gettingstarted", component: <HelpPage defaultTab="gettingstarted" /> },
   { path: "/resources/developers", component: <HelpPage defaultTab="developers" /> },
-  // The "resources" tab's URL segment is "links" so it doesn't become
-  // /resources/resources under the new base.
-  { path: "/resources/links", component: <HelpPage defaultTab="resources" /> },
   { path: "/bookmarks", component: <AuthGate><BookmarksPage /></AuthGate> },
   { path: "/scheduled", component: <AuthGate><ScheduledPage /></AuthGate> },
   // { path: "/gamefi", component: <GameFiPage /> },
