@@ -271,6 +271,42 @@ const MODEL_META: Record<string, ModelMeta> = {
     writable: false,
     label: 'Purchased Invite Codes',
   },
+  sponsorRedemption: {
+    defaultSort: 'redeemedAt',
+    searchFields: ['codeHash', 'recipient', 'txHash'],
+    listFields: ['id', 'codeHash', 'recipient', 'txHash', 'gasCostUsdCents', 'netFeesUsdCents', 'lzFeeUsdCents', 'depositUsdCents', 'totalUsdCents', 'redeemedAt'],
+    writable: false,
+    label: 'Sponsor Redemptions',
+  },
+  sponsorCodeAttempt: {
+    defaultSort: 'attemptedAt',
+    searchFields: ['ip'],
+    listFields: ['id', 'ip', 'attemptedAt'],
+    writable: false,
+    label: 'Sponsor Code Attempts',
+  },
+  sponsorRepay: {
+    defaultSort: 'registeredAt',
+    searchFields: ['txHashSet', 'txHashRegistered'],
+    // PK is `tokenId` (not `id`) — see resolveIdForLookup.
+    listFields: ['tokenId', 'sponsorTokenId', 'originalRepayAmount', 'currentRepayAmount', 'sponsoredDepositAmount', 'registeredAt', 'forgivenAt', 'lastSweepAmount', 'lastSweepAt'],
+    writable: false,
+    label: 'Sponsor Repays',
+  },
+  stripePurchase: {
+    defaultSort: 'createdAt',
+    searchFields: ['stripeSessionId', 'username', 'walletAddress', 'status', 'txHash'],
+    listFields: ['id', 'stripeSessionId', 'username', 'walletAddress', 'amountUsdCents', 'depositAmountCaw', 'networkId', 'txHash', 'status', 'createdAt', 'mintedAt'],
+    writable: false,
+    label: 'Stripe Purchases',
+  },
+  marketplacePayout: {
+    defaultSort: 'queuedAt',
+    searchFields: ['seller', 'recipient', 'status', 'queuedTxHash', 'withdrawnTxHash'],
+    listFields: ['id', 'seller', 'amount', 'status', 'queuedAt', 'queuedTxHash', 'withdrawnAt', 'withdrawnTxHash', 'recipient'],
+    writable: false,
+    label: 'Marketplace Payouts',
+  },
 }
 
 // Prisma delegate accessor (type-safe model name → prisma.model)
@@ -289,6 +325,7 @@ function resolveIdForLookup(model: string, id: string): { idField: string; idVal
   const idField =
     model === 'validatorSetting' || model === 'chainData' ? 'key'
     : model === 'sponsorCode' ? 'codeHash'
+    : model === 'sponsorRepay' ? 'tokenId'
     : 'id'
   let idValue: string | number = id
   if (idField === 'id' && /^-?\d+$/.test(id)) {
