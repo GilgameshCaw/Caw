@@ -86,11 +86,18 @@ export default function SponsorInviteSection() {
   // that would mint no code (and not be refunded).
   const maxGiftCaw = quote ? BigInt(quote.maxGiftCaw) : 0n
   const rate = quote?.cawUsdRate ?? cawPrice // $/CAW
-  const gasFloorUsd = Number(gasFloorCaw) * rate
-  // Minimum the user may enter: gas floor, rounded up to the next cent.
-  const minUsd = Math.max(0.01, Math.ceil(gasFloorUsd * 100) / 100)
-  // Maximum the user may enter: a tip whose gift hits the cap = maxGift + margin,
-  // in USD, rounded DOWN to the cent so the on-chain gift stays at or under the cap.
+  // Minimum the user may enter is the gas+LZ MARGIN (not just the gas floor):
+  // the gift is tip − margin, so anything at or below the margin gifts $0. Basing
+  // the minimum on the margin means the smallest valid entry actually produces a
+  // positive gift, instead of the old floor-based min that let a buyer pay and
+  // gift nothing. Round up to the next cent, then add one cent of headroom so the
+  // gift is strictly > 0 at the minimum.
+  const marginUsd = Number(gasMarginCaw) * rate
+  const minUsd = Math.max(0.01, Math.ceil(marginUsd * 100) / 100 + 0.01)
+  // Maximum the user may enter: a tip whose gift hits the per-code cap = maxGift +
+  // margin, in USD, rounded DOWN to the cent so the on-chain gift stays at or under
+  // the cap. (When mainnet gas is high the margin is large, so min can approach
+  // max; the maxGiftCaw cap is generous enough — 200M CAW — to keep a usable gap.)
   const maxTipCaw = maxGiftCaw + gasMarginCaw
   const maxUsd = maxGiftCaw > 0n ? Math.floor(Number(maxTipCaw) * rate * 100) / 100 : Infinity
 
@@ -189,7 +196,8 @@ export default function SponsorInviteSection() {
               {!belowCap ? (
                 <>Maximum ${Number.isFinite(maxUsd) ? maxUsd.toFixed(2) : '—'} per code.</>
               ) : (
-                <>Minimum ${minUsd.toFixed(2)} (covers gas). Of your ${formatUsd(usdAmount)},{' '}
+                <>Minimum ${minUsd.toFixed(2)} (covers gas + relay; anything above becomes
+                the gift). Of your ${formatUsd(usdAmount)},{' '}
                 <span className={strongClass}>${formatUsd(giftUsd)}</span> becomes the new user's gift.</>
               )}
             </p>
