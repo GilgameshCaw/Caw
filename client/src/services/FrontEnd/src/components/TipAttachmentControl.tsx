@@ -281,7 +281,7 @@ const SingleTipPicker: React.FC<PickerProps> = ({
           {t('post_form.tip.cancel', { defaultValue: 'Cancel' })}
         </button>
         <button type="button" onClick={handleAttach} disabled={!canAttach}
-          className={`flex-1 py-1.5 rounded-lg text-sm font-semibold cursor-pointer ${canAttach ? 'bg-yellow-500 text-black hover:bg-yellow-400' : 'bg-yellow-500/30 text-yellow-500/60 cursor-not-allowed'}`}>
+          className={`flex-1 py-1.5 rounded-lg text-sm font-semibold cursor-pointer ${canAttach ? 'bg-yellow-500 text-black hover:bg-yellow-400' : isDark ? 'bg-gray-700 text-gray-400 cursor-not-allowed' : 'bg-gray-300 text-gray-600 cursor-not-allowed'}`}>
           {attachLabel}
         </button>
       </div>

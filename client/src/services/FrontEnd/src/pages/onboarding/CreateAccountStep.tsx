@@ -463,7 +463,7 @@ export default function CreateAccountStep({
           className={`
             flex-1 py-3 rounded-full font-semibold text-sm transition-all
             ${isLoading
-              ? 'bg-yellow-500/50 text-black/60 cursor-not-allowed'
+              ? (isDark ? 'bg-gray-700 text-gray-400 cursor-not-allowed' : 'bg-gray-300 text-gray-600 cursor-not-allowed')
               : 'bg-yellow-500 text-black hover:bg-yellow-400 cursor-pointer'
             }
           `}

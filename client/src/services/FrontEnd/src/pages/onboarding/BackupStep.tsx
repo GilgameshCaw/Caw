@@ -223,7 +223,7 @@ export default function BackupStep({
             className={`shrink-0 px-4 py-2.5 rounded-xl font-semibold text-sm transition-all flex items-center gap-2 ${
               canSendEmail
                 ? 'bg-yellow-500 text-black hover:bg-yellow-400 cursor-pointer'
-                : 'bg-yellow-500/40 text-black/50 cursor-not-allowed'
+                : isDark ? 'bg-gray-700 text-gray-400 cursor-not-allowed' : 'bg-gray-300 text-gray-600 cursor-not-allowed'
             }`}
           >
             {emailSending && (

@@ -272,9 +272,9 @@ const TipModal: React.FC<TipModalProps> = ({
                         ? 'w-full px-3 py-1.5 bg-yellow-500 text-black font-semibold text-sm rounded-full hover:bg-yellow-400 disabled:opacity-50 disabled:cursor-not-allowed transition-all duration-200 shadow-lg hover:shadow-xl cursor-pointer'
                         : `w-full py-2.5 rounded-lg text-sm font-semibold transition-all duration-200 cursor-pointer ${
                             tipState === 'signing'
-                              ? 'bg-yellow-500/30 cursor-not-allowed text-black'
+                              ? (isDark ? 'bg-gray-700 text-gray-400 cursor-not-allowed' : 'bg-gray-300 text-gray-600 cursor-not-allowed')
                               : isDisabled
-                                ? 'bg-yellow-500/30 cursor-not-allowed text-yellow-500/50'
+                                ? (isDark ? 'bg-gray-700 text-gray-400 cursor-not-allowed' : 'bg-gray-300 text-gray-600 cursor-not-allowed')
                                 : 'bg-yellow-500 text-black hover:bg-yellow-400'
                           }`
                     }
