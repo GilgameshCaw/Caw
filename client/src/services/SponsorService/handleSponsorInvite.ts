@@ -13,7 +13,7 @@
 
 import type { PrismaTransactionClient } from '../ActionProcessor/types'
 import { getOwnValidatorTokenIdSync } from './validatorIdentity'
-import { quoteSponsorInviteCostCaw, MAX_INVITE_GIFT_CAW } from './inviteQuote'
+import { quoteSponsorInviteCostCaw, MAX_INVITE_GIFT_CAW, burnCostForLen } from './inviteQuote'
 import { createSponsorCode } from './createSponsorCode'
 import { encryptInviteCode, isInviteCodeCryptoConfigured } from './inviteCodeCrypto'
 
@@ -21,9 +21,10 @@ const WEI = 10n ** 18n
 // Long-tier codes; single-use; expire 30 days after purchase.
 const CODE_EXPIRY_MS = 30 * 24 * 60 * 60 * 1000
 const CODE_TIER = 'long' as const
-// The on-chain min username length the buyer can pick is clamped to >= 8 by the
-// FE; we re-clamp here as a server-side floor (never below 8 for bought codes).
-const MIN_USERNAME_FLOOR = 8
+// Floor for the buyer-chosen min username length. The FE offers 6/7/8+; we
+// re-clamp here so a forged-low value can't make the validator front a cheaper
+// burn than the gift was priced against.
+const MIN_USERNAME_FLOOR = 6
 
 /**
  * Process a "sponsor-invite:<giftCaw>:<minLen>" OTHER action. rawAction carries
@@ -82,8 +83,21 @@ export async function handleSponsorInviteAction(
     return
   }
 
-  // ── Gift budget = tip minus the gas+LZ margin (clamped >= 0). ─────────────
-  const giftWholeCaw = tipWholeCaw > quote.gasMarginCaw ? tipWholeCaw - quote.gasMarginCaw : 0n
+  // Min-username length the buyer requested (text field 2), floored at 6 (the
+  // shortest length the FE offers). Parsed here because the username BURN the
+  // sponsor fronts depends on it.
+  const minLen = (() => {
+    const parts = (rawAction.text ?? '').split(':')
+    const n = Number(parts[2])
+    return Number.isInteger(n) && n >= MIN_USERNAME_FLOOR ? n : MIN_USERNAME_FLOOR
+  })()
+
+  // ── Gift budget = tip minus OVERHEAD (gas+LZ margin + the username burn the
+  //    sponsor fronts for the shortest allowed name), clamped >= 0. Must match
+  //    the FE's overhead so the recorded gift equals what the buyer intended;
+  //    otherwise the validator over-fronts by the burn amount at redeem. ───────
+  const overheadCaw = quote.gasMarginCaw + burnCostForLen(minLen)
+  const giftWholeCaw = tipWholeCaw > overheadCaw ? tipWholeCaw - overheadCaw : 0n
 
   // ── Upper bound: reject an oversized gift. ────────────────────────────────
   // A single code's gift is the maxDepositCawWei a redeemer can draw into one
@@ -101,13 +115,6 @@ export async function handleSponsorInviteAction(
   }
 
   const giftCawWei = giftWholeCaw * WEI
-
-  // Min-username length the buyer requested (text field 2), floored at 8.
-  const minLen = (() => {
-    const parts = (rawAction.text ?? '').split(':')
-    const n = Number(parts[2])
-    return Number.isInteger(n) && n >= MIN_USERNAME_FLOOR ? n : MIN_USERNAME_FLOOR
-  })()
 
   // ── Mint the code + persist the buyer's encrypted copy. ───────────────────
   // budgetCapUsdCents is a USD ceiling on redemption cost; derive it from the

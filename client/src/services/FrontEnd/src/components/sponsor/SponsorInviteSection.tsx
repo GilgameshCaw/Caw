@@ -40,8 +40,19 @@ interface MyCode {
 }
 
 const MIN_USERNAME_LEN = 8
-// Minimum username length options offered to the buyer (all >= the 8 floor).
-const MIN_LEN_OPTIONS = [8, 10, 12]
+// Minimum-username-length options offered to the sponsor. A SHORTER allowed name
+// burns more CAW at mint (which the sponsor fronts), so each option raises the
+// minimum the sponsor must pay — see burnCostForLen.
+const MIN_LEN_OPTIONS = [6, 7, 8]
+
+// Burn cost (whole CAW) of the SHORTEST name a given min-length allows. Mirrors
+// CawProfileMinter.costOfName exactly: 6→20M, 7→10M, 8+→1M (shorter tiers exist
+// on-chain but aren't offered here — they cost far more than a sponsored gift).
+function burnCostForLen(minLen: number): bigint {
+  if (minLen <= 6) return 20_000_000n
+  if (minLen === 7) return 10_000_000n
+  return 1_000_000n // 8+
+}
 
 type BuyState = 'idle' | 'signing' | 'submitted'
 
@@ -55,6 +66,8 @@ export default function SponsorInviteSection() {
   const [quote, setQuote] = useState<InviteQuote | null>(null)
   const [codes, setCodes] = useState<MyCode[]>([])
   const [usdInput, setUsdInput] = useState('20')
+  // Default to the 8+ tier (cheapest burn) — most sponsors don't need to gift a
+  // short premium name.
   const [minLen, setMinLen] = useState(MIN_USERNAME_LEN)
   const [buyState, setBuyState] = useState<BuyState>('idle')
   const [error, setError] = useState<string | null>(null)
@@ -86,27 +99,32 @@ export default function SponsorInviteSection() {
   // that would mint no code (and not be refunded).
   const maxGiftCaw = quote ? BigInt(quote.maxGiftCaw) : 0n
   const rate = quote?.cawUsdRate ?? cawPrice // $/CAW
-  // Minimum the user may enter is the gas+LZ MARGIN (not just the gas floor):
-  // the gift is tip − margin, so anything at or below the margin gifts $0. Basing
-  // the minimum on the margin means the smallest valid entry actually produces a
-  // positive gift, instead of the old floor-based min that let a buyer pay and
-  // gift nothing. Round up to the next cent, then add one cent of headroom so the
-  // gift is strictly > 0 at the minimum.
-  const marginUsd = Number(gasMarginCaw) * rate
-  const minUsd = Math.max(0.01, Math.ceil(marginUsd * 100) / 100 + 0.01)
-  // Maximum the user may enter: a tip whose gift hits the per-code cap = maxGift +
-  // margin, in USD, rounded DOWN to the cent so the on-chain gift stays at or under
-  // the cap. (When mainnet gas is high the margin is large, so min can approach
-  // max; the maxGiftCaw cap is generous enough — 200M CAW — to keep a usable gap.)
-  const maxTipCaw = maxGiftCaw + gasMarginCaw
+  // The OVERHEAD the sponsor pays before any gift = gas + LZ relay (gasMarginCaw)
+  // PLUS the username BURN for the shortest name this code allows (the server
+  // fronts that burn at redeem). A shorter min-length → bigger burn → higher
+  // overhead → higher minimum. The gift is tip − overhead.
+  const burnCaw = burnCostForLen(minLen)
+  const overheadCaw = gasMarginCaw + burnCaw
+  // Minimum the sponsor may enter: the overhead, rounded up to the next cent, plus
+  // one cent of headroom so the smallest valid entry still produces a positive gift.
+  const overheadUsd = Number(overheadCaw) * rate
+  const minUsd = Math.max(0.01, Math.ceil(overheadUsd * 100) / 100 + 0.01)
+  // Maximum: a tip whose gift hits the per-code cap = maxGift + overhead, in USD,
+  // rounded DOWN to the cent so the on-chain gift stays at or under the cap.
+  const maxTipCaw = maxGiftCaw + overheadCaw
   const maxUsd = maxGiftCaw > 0n ? Math.floor(Number(maxTipCaw) * rate * 100) / 100 : Infinity
 
   const usdAmount = parseFloat(usdInput) || 0
-  // Whole CAW the buyer will tip (their USD / price). The gift is this minus the
-  // gas+LZ margin; we show that split so they know what the new user receives.
+  // Whole CAW the sponsor will tip (their USD / price). The gift the invitee
+  // receives is this minus the overhead (gas + relay + burn).
   const tipWholeCaw = rate > 0 ? Math.max(0, Math.round(usdAmount / rate)) : 0
-  const giftWholeCaw = Math.max(0, tipWholeCaw - Number(gasMarginCaw))
+  const giftWholeCaw = Math.max(0, tipWholeCaw - Number(overheadCaw))
   const giftUsd = giftWholeCaw * rate
+  // "Sponsors ~N actions": the gift divided by the validator's per-action tip
+  // (gasFloorCaw is the per-redeem gas floor in CAW; use it as the action-cost
+  // proxy). Shown so the sponsor sees what the gift buys the invitee.
+  const perActionCaw = gasFloorCaw > 0n ? Number(gasFloorCaw) : 0
+  const sponsoredActions = perActionCaw > 0 ? Math.floor(giftWholeCaw / perActionCaw) : 0
 
   const priceReady = rate > 0 && quote?.priceAvailable !== false
   const aboveFloor = usdAmount >= minUsd && tipWholeCaw > 0
@@ -163,10 +181,11 @@ export default function SponsorInviteSection() {
     <div className="space-y-6">
       {/* ── Buy a code ───────────────────────────────────────────────────── */}
       <div className={cardClass}>
-        <h3 className={`text-lg font-bold mb-1 ${strongClass}`}>Buy an invite code</h3>
+        <h3 className={`text-lg font-bold mb-1 ${strongClass}`}>Sponsor an invite code</h3>
         <p className={`text-sm mb-4 ${mutedClass}`}>
           Pay CAW to mint a sponsored invite code you can give to a friend. Your
-          payment covers the gas and the gift the new user receives.
+          payment covers the gas, their username, and network fees — anything above
+          is given to the invitee as a gift.
         </p>
 
         {!priceReady ? (
@@ -196,9 +215,11 @@ export default function SponsorInviteSection() {
               {!belowCap ? (
                 <>Maximum ${Number.isFinite(maxUsd) ? maxUsd.toFixed(2) : '—'} per code.</>
               ) : (
-                <>Minimum ${minUsd.toFixed(2)} (covers gas + relay; anything above becomes
-                the gift). Of your ${formatUsd(usdAmount)},{' '}
-                <span className={strongClass}>${formatUsd(giftUsd)}</span> becomes the new user's gift.</>
+                <>Minimum ${minUsd.toFixed(2)} (covers gas + username + network fees;
+                anything above is given as a gift to the invitee).
+                {giftUsd > 0 && (
+                  <> This sponsors ~{sponsoredActions.toLocaleString()} action{sponsoredActions === 1 ? '' : 's'} for them.</>
+                )}</>
               )}
             </p>
 
@@ -231,12 +252,12 @@ export default function SponsorInviteSection() {
               className={`mt-4 w-full py-3 rounded-full font-semibold text-sm transition-all ${
                 canBuy
                   ? 'bg-yellow-500 text-black hover:bg-yellow-400 cursor-pointer'
-                  : 'bg-yellow-500/30 text-black/40 cursor-not-allowed'
+                  : isDark ? 'bg-gray-700 text-gray-400 cursor-not-allowed' : 'bg-gray-300 text-gray-600 cursor-not-allowed'
               }`}
             >
               {buyState === 'signing' ? 'Signing…'
                 : buyState === 'submitted' ? 'Submitted — your code will appear below'
-                : `Buy for $${formatUsd(usdAmount)}`}
+                : `Sponsor for $${formatUsd(usdAmount)}`}
             </button>
             {!activeTokenId && (
               <p className={`text-xs mt-2 ${mutedClass}`}>Sign in with a profile to buy a code.</p>

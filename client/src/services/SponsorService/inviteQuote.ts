@@ -62,8 +62,10 @@ const MAX_PRICE_AGE_MS = 15 * 60 * 1000 // 15 minutes
 // single sponsored bootstrap, fronted from the validator's pool. A gift larger
 // than what one sponsored deposit can settle (SPONSOR_MAX_DEPOSIT_CAW, enforced
 // at the bootstrap path in SponsorService) is also un-redeemable in full, so we
-// cap the gift to the same ceiling. Defaults to 10M CAW to match SponsorService's
-// maxDepositCAW default; overridable via the same env var so the two stay aligned.
+// cap the gift to the same ceiling. Defaults to 50M CAW (was 10M) so the cap can
+// comfortably cover a 6-char username's 20M-CAW burn PLUS a real gift on top;
+// overridable via the same env var so it stays aligned with SponsorService's
+// maxDepositCAW.
 export const MAX_INVITE_GIFT_CAW: bigint = (() => {
   const raw = process.env.SPONSOR_MAX_DEPOSIT_CAW
   if (raw) {
@@ -72,8 +74,27 @@ export const MAX_INVITE_GIFT_CAW: bigint = (() => {
       if (n > 0n) return n
     } catch { /* fall through to default */ }
   }
-  return 10_000_000n // 10M whole CAW
+  return 50_000_000n // 50M whole CAW
 })()
+
+/**
+ * Username BURN cost (whole CAW) for the shortest name a given min-length allows.
+ * Mirrors CawProfileMinter.costOfName exactly. The sponsor fronts this burn at
+ * redeem, so it's part of the invite's overhead. Only 6/7/8+ are offered to
+ * sponsors (shorter names cost far more than a sponsored gift); a min-length
+ * below 6 still maps to its real burn for safety.
+ */
+export function burnCostForLen(minLen: number): bigint {
+  if (minLen <= 0) return 1_000_000n
+  if (minLen === 1) return 1_000_000_000_000n
+  if (minLen === 2) return 240_000_000_000n
+  if (minLen === 3) return 60_000_000_000n
+  if (minLen === 4) return 6_000_000_000n
+  if (minLen === 5) return 200_000_000n
+  if (minLen === 6) return 20_000_000n
+  if (minLen === 7) return 10_000_000n
+  return 1_000_000n // 8+
+}
 
 export interface InviteQuote {
   /** Minimum tip (whole CAW) that covers gas alone. Tip <= this => no code. */
