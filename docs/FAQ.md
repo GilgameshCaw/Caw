@@ -33,6 +33,24 @@ smart contracts). The **CAW token** is used to pay for actions and to mint
 identity. An **app** (frontend) is just one window into the protocol — there
 can be many, and they're interchangeable.
 
+### What makes CAW different from other crypto social projects?
+
+To be clear up front: CAW **is** built on blockchains — identity is an NFT on
+Ethereum mainnet, and every action is a transaction on an L2. The difference
+isn't "on-chain vs. not." It's *where the social data actually lives*.
+
+Many crypto-social projects are ordinary apps with a token bolted on: the posts,
+the social graph, and the feed live in the company's own database/servers, and
+the blockchain is used only for a token, a login, or to anchor a hash. If that
+company goes away, the social data can go with it.
+
+CAW puts the social data itself on-chain — the bytes of every post live in the
+transaction's calldata, secured by the same blockchains that secure Bitcoin and
+DeFi. There's no operator-owned database holding your posts hostage, no admin
+keys, and no single server whose disappearance loses your history. So the
+distinction is "fully on-chain, ownerless social data" vs. "an app that
+references a chain" — not a claim that CAW somehow isn't on a blockchain.
+
 ### Who runs CAW?
 
 No one, by design. CAW "began without a developer, without official socials,
@@ -63,12 +81,44 @@ gives short handles real value. Current burn tiers (from the minting contract):
 (1–4 character names cost dramatically more — they're rare.) The CAW you spend
 to mint is burned, not paid to any treasury.
 
+### Do I need a crypto wallet (like MetaMask) to use CAW?
+
+Not necessarily — there are two paths:
+
+1. **Passkey / biometric signup (no wallet needed).** Sign up with a device
+   passkey — Face ID, fingerprint, or your platform's WebAuthn passkey — the same
+   way you log into modern apps. No MetaMask, no seed phrase, no ETH to begin.
+2. **Bring your own wallet.** If you already use MetaMask, Ledger, or another
+   wallet, you can connect it and mint directly.
+
+So a wallet is *one* option, not a requirement.
+
+### What's a "sponsor," and is it always available?
+
+On the passkey path, a **sponsor** is a party that submits your first on-chain
+transaction and fronts the gas so a brand-new user with no ETH can get started.
+It's an onboarding bridge, not a permanent free ride: **sponsorship depends on a
+sponsor being available and willing**, and a given frontend may have limits,
+gates, or no sponsor at all. If no sponsorship is available, you'd fund the mint
+yourself (with your own wallet/ETH). Don't assume sponsored onboarding is
+guaranteed everywhere or forever — it's a convenience some frontends offer, not a
+protocol promise.
+
 ### Do I need ETH to use CAW?
 
-Not necessarily. There's a sponsored-mint path so that users who don't hold ETH
-(for example, phone-first signups) can still create a profile — a sponsor
-submits the transaction on their behalf. Once you have a profile, posting is
-paid in CAW.
+Not to get started, *if* sponsored onboarding is available — a sponsor covers the
+first on-chain step, so a new user with no ETH and no wallet can create a profile.
+Without a sponsor, you fund the mint yourself. Either way, ongoing actions are
+paid in CAW (see below), not ETH.
+
+### Is posting free?
+
+No — and it's worth being clear about this, because "free" is a common
+misconception. Using CAW costs **CAW tokens**: posts, likes, follows, and tips
+all spend a small amount of CAW (see the next question for where it goes). What
+the passkey/sponsored path removes is the need to hold **ETH for gas** and to
+manage a wallet — not the CAW cost of actions itself. The CAW cost is what keeps
+the network spam-resistant and funds the people who record your actions on-chain.
 
 ## Posting, costs, and economics
 
@@ -79,6 +129,23 @@ fixed in CAW, with an **ETH-denominated upper bound** so that if the CAW price
 spikes, actions never become absurdly expensive. Every CAW spent is either
 redistributed to other holders, paid to validators who do the work of recording
 actions, or burned. **There is no protocol treasury** — no company takes a cut.
+
+### Why do I have to pay to post? Isn't social media supposed to be free?
+
+On "free" platforms, you're the product: the company makes money from your data,
+attention, and feed placement. CAW's small per-action CAW cost does two things
+instead — it keeps spam in check (a cost-per-post is a natural spam brake), and
+it funds the validators who record your actions, rather than a company. At the
+**protocol** level there's no owner extracting value, no treasury, no ads baked
+in. Your identity and your words are yours, stored on-chain.
+
+One honest caveat: the **protocol** doesn't run ads or surveil you, but
+**frontends are independent and can do whatever they want** — a given frontend
+*could* show ads, track usage, or monetize however it chooses. What CAW
+guarantees is at the protocol layer (no owner, no censorship of the record, your
+identity is yours); it does not guarantee that every frontend will be
+ad-free or privacy-respecting. If you don't like a frontend's choices, you can
+use a different one — or run your own — without losing your account or posts.
 
 ### Are direct messages free?
 
@@ -92,6 +159,28 @@ The full text of your post lives forever in the **calldata** of a blockchain
 transaction on an L2. The blockchain that secures it is the same kind of chain
 that secures Bitcoin and DeFi — its durability is a property of the chain, not
 a promise from an operator.
+
+### What blockchain does CAW run on? Is it just Ethereum?
+
+CAW is **omnichain** — it's designed as a protocol that can run across many
+chains at once, not locked to any single one. The pieces fit together like this:
+
+- **Ethereum mainnet is the core gateway.** Your identity (the username NFT),
+  your CAW balances, and the registry all anchor here. Mainnet is the level you,
+  as a user, interact with — minting, depositing, withdrawing all settle to L1.
+- **Actions run on an L2**, and **each Network chooses its own L2** (and its own
+  archive chain). So "which L2" isn't a fixed property of CAW — it's a choice a
+  given Network makes. New chains can be added permissionlessly over time.
+- **Archive chains** keep long-term replicated copies, so history is durable in
+  more than one place.
+
+Two things worth underlining. First, **you generally don't need to hold gas on
+those other chains** — the design (sponsored onboarding + Quick Sign + the
+validator handling L2 traffic) means a user can sign up and post without ever
+holding ETH on the L2. Cross-chain messaging is handled under the hood (via
+LayerZero), not something you operate manually. Second, the specific chains a
+deployment uses (e.g. a particular L2 or archive) are that deployment's choices,
+not a hardcoded fact about CAW — the protocol is built to be chain-agnostic.
 
 ## Networks, mirrors, and frontends
 

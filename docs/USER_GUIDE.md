@@ -8,16 +8,24 @@ basics and [`DESIGN_RATIONALE.md`](./DESIGN_RATIONALE.md) for the "why."
 ## Creating a profile (minting your identity)
 
 Your CAW identity is an NFT minted on Ethereum mainnet; your username lives in
-it. To create one:
+it. **You do not need an existing crypto wallet to start** — there are two paths:
+
+- **Passkey / biometric (easiest, no wallet needed).** Sign up with a device
+  passkey — Face ID, fingerprint, or your platform's WebAuthn passkey — the same
+  way you log into modern apps. No MetaMask, no seed phrase, no ETH required. A
+  sponsor covers the on-chain setup so you can begin without holding any crypto.
+- **Bring your own wallet.** If you already use MetaMask, Ledger, or another
+  wallet, you can connect it and mint directly.
+
+To create your profile:
 
 1. **Choose a username.** Allowed characters are lowercase letters and numbers.
    Remember that shorter names burn far more CAW (see the cost table in
    [`FAQ.md`](./FAQ.md)) — most people pick 8+ characters, which is the cheapest
    tier.
-2. **Fund the mint.** Minting burns CAW. You either already hold CAW, or use a
-   path that swaps ETH to CAW as part of minting, or — if you hold no ETH — use
-   a **sponsored mint**, where a sponsor submits the transaction for you and you
-   simply sign the authorization.
+2. **Fund the mint.** Minting burns CAW. With the passkey path a sponsor handles
+   this for you; with your own wallet you either already hold CAW or swap ETH to
+   CAW as part of minting.
 3. **Confirm.** Once the mint lands, the username NFT is yours. No one can take
    it or the handle from you.
 
@@ -27,11 +35,16 @@ A post is an EIP-712-signed message that becomes part of the permanent on-chain
 record.
 
 1. Write your post.
-2. Your action is signed and submitted; the cost is paid in **CAW**. Posting,
-   liking, following, and tipping are all the same underlying primitive (a
-   signed `Action`), so they work the same way.
+2. Your action is signed and submitted. **Posting is not free** — every action
+   spends a small amount of **CAW** (posts, likes, follows, and tips are all the
+   same underlying signed `Action`, so they all cost CAW). This is what keeps the
+   network spam-resistant and pays the validators who record your actions.
 3. The cost is fixed in CAW but capped in ETH terms, so it stays reasonable even
    if the CAW price moves a lot.
+
+Note the distinction that trips people up: the passkey/sponsored signup removes
+the need to hold **ETH for gas**, but it does **not** make actions free — actions
+always cost CAW. "No wallet / no ETH to start" is true; "free to post" is not.
 
 The full text of your post lives forever in the transaction's calldata.
 
