@@ -73,19 +73,18 @@ function formatSpendLimitForMessage(spendLimit: bigint): string {
   return `${Math.ceil(n / 1_000_000)}M`
 }
 
-function formatTipCeilingForMessage(tipCeiling: bigint, cawPrice: number): string {
-  const cawStr = `${formatSpendLimitForMessage(tipCeiling)} CAW`
-  if (cawPrice > 0 && tipCeiling > 0n) {
-    const usd = Number(tipCeiling) * cawPrice
-    const usdStr = usd < 0.001
-      ? `~$${usd.toFixed(6)}`
-      : `~$${usd.toFixed(4)}`
-    return `${cawStr} (${usdStr})`
-  }
-  return cawStr
+// The tip line in the SIGNED message must be exactly "<n>[M|K|B] CAW" with
+// nothing after "CAW" — SessionMessageParser._parseTipRateValue rejects any
+// trailing text (e.g. a "(~$0.0010)" USD note) with BadParse(). Keep it to the
+// magnitude-suffixed CAW amount only; USD is shown in the UI, never signed.
+function formatTipCeilingForMessage(tipCeiling: bigint): string {
+  // 0 = opt-out. Emit the literal "0 CAW" the parser's opt-out branch expects —
+  // NOT "none" (the parser has no such token → BadParse) and not "0M CAW".
+  if (tipCeiling === 0n) return '0 CAW'
+  return `${formatSpendLimitForMessage(tipCeiling)} CAW`
 }
 
-function buildSessionMessage(sessionKeyAddress: string, spendLimit: bigint, expiryTimestamp: number, tipCeiling: bigint = 0n, cawPrice: number = 0): string {
+function buildSessionMessage(sessionKeyAddress: string, spendLimit: bigint, expiryTimestamp: number, tipCeiling: bigint = 0n): string {
   const d = new Date(expiryTimestamp * 1000)
   const day = d.getUTCDate()
   const month = MONTHS[d.getUTCMonth()]
@@ -101,7 +100,7 @@ function buildSessionMessage(sessionKeyAddress: string, spendLimit: bigint, expi
     `${formatSpendLimitForMessage(spendLimit)} CAW`,
     '',
     'Tip per action:',
-    tipCeiling === 0n ? 'none' : formatTipCeilingForMessage(tipCeiling, cawPrice),
+    formatTipCeilingForMessage(tipCeiling),
     '',
     'Expires:',
     `${day} ${month} ${year} ${hh}:${mm}:${ss} UTC`,
@@ -177,7 +176,7 @@ export function useCreateSession() {
     const privateKey = generatePrivateKey()
     const sessionAccount = privateKeyToAccount(privateKey)
 
-    const message = buildSessionMessage(sessionAccount.address, spendLimit, expiry, tipCeiling, cawPrice)
+    const message = buildSessionMessage(sessionAccount.address, spendLimit, expiry, tipCeiling)
 
     console.log('[QuickSign] message:', message)
 
@@ -308,7 +307,7 @@ export async function registerSponsoredSession(opts: {
   const privateKey = generatePrivateKey()
   const sessionAccount = privateKeyToAccount(privateKey)
 
-  const message = buildSessionMessage(sessionAccount.address, spendLimit, expiry, tipCeiling, cawPrice)
+  const message = buildSessionMessage(sessionAccount.address, spendLimit, expiry, tipCeiling)
   onProgress?.('Sign to authorize key...')
   const signature = await signMessage(message)
 

@@ -88,13 +88,25 @@ library SessionMessageParser {
   // Internal helpers (only called within parseSessionMessage chain)
   // -------------------------------------------------------------------------
 
-  /// @dev Parse a tip-rate line like "1000 CAW" or "0 CAW" → uint64 whole tokens.
+  /// @dev Parse a tip-rate line like "1000 CAW", "1M CAW", "0 CAW" → uint64 whole
+  ///      tokens. Accepts the same M/K/B magnitude suffix as the spend-limit line
+  ///      so the human-readable message can stay short (e.g. "1M CAW"); the FE
+  ///      writes the value with that suffix. Grammar: <digits>[M|K|B]<space>CAW
+  ///      with nothing after "CAW". 0 (opt-out) is explicitly allowed.
   function _parseTipRateValue(bytes memory line) internal pure returns (uint64) {
     if (line.length < 5) revert BadParse();
     uint256 number = 0;
     uint256 i = 0;
     while (i < line.length && line[i] >= 0x30 && line[i] <= 0x39) {
       number = number * 10 + (uint8(line[i]) - 0x30);
+      i++;
+    }
+    // Optional magnitude suffix (M/K/B), mirroring _parseSpendLimitValue. A 0
+    // value never carries a suffix ("0 CAW"), so this only fires for number > 0.
+    if (i < line.length && (line[i] == 'M' || line[i] == 'K' || line[i] == 'B')) {
+      if (line[i] == 'M') number = number * 1_000_000;
+      else if (line[i] == 'K') number = number * 1_000;
+      else number = number * 1_000_000_000;
       i++;
     }
     if (number > type(uint64).max) revert BadParse();
