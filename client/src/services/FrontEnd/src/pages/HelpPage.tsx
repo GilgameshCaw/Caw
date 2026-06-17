@@ -62,7 +62,7 @@ const HelpPage: React.FC<HelpPageProps> = ({ defaultTab }) => {
     if (path === '/resources/faq') return 'faq'
     if (path === '/resources/history') return 'history'
     if (path === '/resources/manifesto') return 'manifesto'
-    if (path === '/resources/gettingstarted' || path === '/resources/howto') return 'gettingstarted'
+    if (path === '/resources/getting-started' || path === '/resources/gettingstarted' || path === '/resources/howto') return 'gettingstarted'
     if (path === '/resources/developers') return 'developers'
     return 'resources'
   }
@@ -74,7 +74,7 @@ const HelpPage: React.FC<HelpPageProps> = ({ defaultTab }) => {
       faq: '/resources/faq',
       history: '/resources/history',
       manifesto: '/resources/manifesto',
-      gettingstarted: '/resources/gettingstarted',
+      gettingstarted: '/resources/getting-started',
       developers: '/resources/developers',
       resources: '/resources'
     }

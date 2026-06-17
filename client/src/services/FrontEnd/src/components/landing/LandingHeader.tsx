@@ -18,7 +18,7 @@ export const RESOURCE_LINKS: { to: string; tKey?: string; label?: string }[] = [
   { to: '/resources/faq',        tKey: 'captive_splash.footer.faq' },
   { to: '/manifesto',            tKey: 'captive_splash.footer.manifesto' },
   { to: '/resources/history',    tKey: 'captive_splash.footer.history' },
-  { to: '/resources/howto',      tKey: 'captive_splash.footer.how_it_works' },
+  { to: '/resources/getting-started', tKey: 'captive_splash.footer.how_it_works' },
   { to: '/resources/developers', tKey: 'captive_splash.footer.developers' },
   { to: '/resources',            tKey: 'captive_splash.footer.resources' },
   { to: '/resources/whitepaper', label: 'Whitepaper' },

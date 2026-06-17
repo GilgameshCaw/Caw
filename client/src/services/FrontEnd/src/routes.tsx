@@ -162,8 +162,10 @@ export const layoutRoutes: RouteDef[] = [
   { path: "/resources/faq", component: <HelpPage defaultTab="faq" /> },
   { path: "/resources/history", component: <HelpPage defaultTab="history" /> },
   { path: "/resources/manifesto", component: <HelpPage defaultTab="manifesto" /> },
-  { path: "/resources/howto", component: <HelpPage defaultTab="gettingstarted" /> },
+  { path: "/resources/getting-started", component: <HelpPage defaultTab="gettingstarted" /> },
+  // Legacy aliases that resolve to the same tab.
   { path: "/resources/gettingstarted", component: <HelpPage defaultTab="gettingstarted" /> },
+  { path: "/resources/howto", component: <HelpPage defaultTab="gettingstarted" /> },
   { path: "/resources/developers", component: <HelpPage defaultTab="developers" /> },
   { path: "/bookmarks", component: <AuthGate><BookmarksPage /></AuthGate> },
   { path: "/scheduled", component: <AuthGate><ScheduledPage /></AuthGate> },
