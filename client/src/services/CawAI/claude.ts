@@ -10,7 +10,7 @@
 // to a shell, filesystem, signing key, or external HTTP call.
 
 import type { CawAIConfig } from './config'
-import { SYSTEM_PROMPT, REPLY_INSTRUCTION } from './persona'
+import { SYSTEM_PROMPT, REPLY_INSTRUCTION, buildCitationGuidance } from './persona'
 import { embedTexts } from './rag/embed'
 
 const ANTHROPIC_URL = 'https://api.anthropic.com/v1/messages'
@@ -60,7 +60,9 @@ export async function generateReply(
     body: JSON.stringify({
       model: MODEL,
       max_tokens: 512,
-      system: SYSTEM_PROMPT,
+      // Citation links are appended dynamically so they reflect the configured
+      // site URL (no hardcoded domain in the static prompt).
+      system: `${SYSTEM_PROMPT}\n\n${buildCitationGuidance(cfg.siteUrl)}`,
       messages: [{ role: 'user', content: userMessage }],
     }),
   })
