@@ -201,4 +201,68 @@ describe('useWalletPopulation', () => {
     localStorage.removeItem('caw:identity-kind')
     useTokenDataStore.setState({ lastAddress: undefined })
   })
+
+  // Regression: a browser that once enrolled a passkey carries a browser-global
+  // 'caw:identity-kind=passkey' marker. With NO wagmi wallet connected, signing
+  // into a Pop-A profile (owned by a DIFFERENT, plain-EOA address than the
+  // passkey owner) must NOT classify as B — else the passkey-only Wallet link /
+  // backup-file signer leak onto a plain-wallet profile. Classification is
+  // per-PROFILE: only the profile owned by the passkey address is B.
+  it('returns none for a Pop-A profile active in a passkey-enrolled browser (mixed chooser)', async () => {
+    localStorage.setItem('caw:identity-kind', JSON.stringify('passkey'))
+    const passkeyOwner = '0xaaaa000000000000000000000000000000000000' as `0x${string}`
+    const popAOwner = '0xbbbb000000000000000000000000000000000000' as `0x${string}`
+    // lastAddress = the passkey owner; the ACTIVE token (id 7) is owned by the
+    // Pop-A address — a different owner in the same chooser.
+    useTokenDataStore.setState({
+      hasHydrated: true,
+      lastAddress: passkeyOwner,
+      activeTokenId: 7,
+      tokensByAddress: {
+        [passkeyOwner]: [{ tokenId: 1, owner: passkeyOwner, address: passkeyOwner, username: 'pk', withdrawable: 0n, ownerBalance: 0n, stakedAmount: 0n, cawonce: 0 }],
+        [popAOwner]: [{ tokenId: 7, owner: popAOwner, address: popAOwner, username: 'eoa', withdrawable: 0n, ownerBalance: 0n, stakedAmount: 0n, cawonce: 0 }],
+      },
+    })
+
+    mockUseAccount.mockReturnValue({ address: undefined, isConnected: false })
+    mockUsePublicClient.mockReturnValue(null)
+    mockUseRecoveryContext.mockReturnValue({
+      privateKey: null, address: null, isInRecoveryMode: false, setKey: vi.fn(), clearKey: vi.fn(),
+    })
+
+    const { result } = renderHook(() => useWalletPopulation(), { wrapper: makeWrapper() })
+
+    expect(result.current.population).toBe<WalletPopulation>('none')
+
+    localStorage.removeItem('caw:identity-kind')
+    useTokenDataStore.setState({ hasHydrated: false, lastAddress: undefined, activeTokenId: undefined, tokensByAddress: {} })
+  })
+
+  // Counterpart: when the ACTIVE profile IS owned by the passkey address, it
+  // still classifies as B (the sponsored Pop-B path is preserved).
+  it('returns B for a passkey profile active in a passkey-enrolled browser', async () => {
+    localStorage.setItem('caw:identity-kind', JSON.stringify('passkey'))
+    const passkeyOwner = '0xaaaa000000000000000000000000000000000000' as `0x${string}`
+    useTokenDataStore.setState({
+      hasHydrated: true,
+      lastAddress: passkeyOwner,
+      activeTokenId: 1,
+      tokensByAddress: {
+        [passkeyOwner]: [{ tokenId: 1, owner: passkeyOwner, address: passkeyOwner, username: 'pk', withdrawable: 0n, ownerBalance: 0n, stakedAmount: 0n, cawonce: 0 }],
+      },
+    })
+
+    mockUseAccount.mockReturnValue({ address: undefined, isConnected: false })
+    mockUsePublicClient.mockReturnValue(null)
+    mockUseRecoveryContext.mockReturnValue({
+      privateKey: null, address: null, isInRecoveryMode: false, setKey: vi.fn(), clearKey: vi.fn(),
+    })
+
+    const { result } = renderHook(() => useWalletPopulation(), { wrapper: makeWrapper() })
+
+    expect(result.current.population).toBe<WalletPopulation>('B')
+
+    localStorage.removeItem('caw:identity-kind')
+    useTokenDataStore.setState({ hasHydrated: false, lastAddress: undefined, activeTokenId: undefined, tokensByAddress: {} })
+  })
 })

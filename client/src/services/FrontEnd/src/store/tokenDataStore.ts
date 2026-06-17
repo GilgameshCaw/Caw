@@ -115,6 +115,32 @@ export const useActiveToken = () =>
   }
 );
 
+/**
+ * The OWNER ADDRESS of the currently-active token (the address key under which
+ * the active token lives in tokensByAddress), lowercased. undefined if no
+ * active token is resolvable yet.
+ *
+ * Used by useWalletPopulation to decide whether a no-wagmi-wallet session is a
+ * passkey (Population B) profile: a passkey profile is owned by the SmartEOA
+ * address persisted as `lastAddress`, whereas a Pop-A profile in the same
+ * chooser is owned by a different (real EOA) address. Matching the active
+ * token's owner against the passkey owner is per-PROFILE, so a browser that
+ * once enrolled a passkey no longer misclassifies a Pop-A profile as B.
+ */
+export const useActiveTokenOwnerAddress = (): string | undefined =>
+  useTokenDataStore(state => {
+    if (!state.hasHydrated) return undefined
+    const activeId = state.activeTokenId
+    // Find which owner address holds the active token id.
+    if (activeId !== undefined) {
+      for (const [addr, tokens] of Object.entries(state.tokensByAddress)) {
+        if (tokens.some(t => t.tokenId === activeId)) return addr.toLowerCase()
+      }
+    }
+    // No explicit active id: fall back to lastAddress (its default-token owner).
+    return state.lastAddress?.toLowerCase()
+  });
+
 export const useTokenDataStore = create<TokenDataStore>()(
   persist(
     (set, get) => ({

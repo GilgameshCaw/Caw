@@ -17,7 +17,7 @@ import type { Address } from 'viem'
 import { useAccount, usePublicClient } from 'wagmi'
 import { useQuery } from '@tanstack/react-query'
 import { useRecoveryContext } from '~/components/identity/RecoveryProvider'
-import { useTokenDataStore } from '~/store/tokenDataStore'
+import { useTokenDataStore, useActiveTokenOwnerAddress } from '~/store/tokenDataStore'
 import { getJSON } from '~/utils/safeStorage'
 import { IDENTITY_KIND_KEY, IDENTITY_KIND_PASSKEY } from '~/constants/passkeyStorage'
 
@@ -58,6 +58,12 @@ export function useWalletPopulation(): UseWalletPopulationReturn {
   // (set by Onboarding.tsx after a sponsored mint). Sponsored Population-B users
   // never connect a wagmi wallet, so without this they classify as 'none'.
   const lastAddress = useTokenDataStore(s => s.lastAddress) as Address | undefined
+  // The owner address of the currently-active PROFILE. A user can own a MIX of
+  // passkey (Pop-B) and plain-EOA (Pop-A) profiles in one chooser; we classify
+  // by which profile is active, not by a browser-global "ever enrolled a
+  // passkey" flag. A passkey profile is owned by the SmartEOA address persisted
+  // as lastAddress; a Pop-A profile is owned by a different (real EOA) address.
+  const activeOwner = useActiveTokenOwnerAddress()
 
   const { data: bytecode, isLoading } = useQuery({
     queryKey: ['wallet-bytecode', address],
@@ -91,16 +97,32 @@ export function useWalletPopulation(): UseWalletPopulationReturn {
     if (isConnected && !address) return 'none'
 
     // No wagmi wallet at all. A passkey install with a known owner address is a
-    // sponsored Population-B user (they never connect a wagmi wallet).
+    // sponsored Population-B user (they never connect a wagmi wallet) — BUT only
+    // if the ACTIVE profile is actually owned by that passkey address. The
+    // passkey-install flag is browser-global, so a browser that once enrolled a
+    // passkey would otherwise misclassify a Pop-A profile (a plain-EOA-owned
+    // token shown in the same chooser) as B and surface the passkey-only Wallet
+    // link / backup-file signer. Match the active profile's owner against the
+    // passkey owner (lastAddress) so the classification is per-PROFILE.
     if (!isConnected || !address) {
-      if (isPasskeyInstall && lastAddress) return 'B'
+      if (
+        isPasskeyInstall &&
+        lastAddress &&
+        // The active profile must belong to the passkey owner. If we can't yet
+        // resolve the active owner (pre-hydration), fall back to the old
+        // behaviour (treat as B) so a genuine sponsored Pop-B user isn't locked
+        // out on a cold load before the token store hydrates.
+        (activeOwner === undefined || activeOwner === lastAddress.toLowerCase())
+      ) {
+        return 'B'
+      }
       return 'none'
     }
     if (isLoading) return 'none'
     // bytecode from getCode is Hex | undefined; convert to string for classifier
     const code = bytecode === undefined ? undefined : (bytecode as string)
     return classifyBytecode(code)
-  }, [isConnected, address, isLoading, bytecode, recoveryCtx.isInRecoveryMode, isPasskeyInstall, lastAddress])
+  }, [isConnected, address, isLoading, bytecode, recoveryCtx.isInRecoveryMode, isPasskeyInstall, lastAddress, activeOwner])
 
   // When there's no wagmi wallet, surface the Pop-B owner address:
   // the recovered address (recovery mode) or the stored owner (passkey install).
