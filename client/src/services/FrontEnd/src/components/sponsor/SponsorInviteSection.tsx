@@ -25,6 +25,10 @@ interface InviteQuote {
   gasMarginCaw: string
   maxGiftCaw: string
   cawUsdRate: number
+  // Binding per-action cost in whole CAW = max(base tip, ETH-floor→CAW). Use
+  // THIS for "~N actions", not the FE base tip alone (which ignores the higher
+  // ETH-pegged floor and over-counts).
+  perActionCaw: string
   priceAvailable: boolean
   validatorTokenId: number | null
 }
@@ -69,7 +73,7 @@ export default function SponsorInviteSection() {
 
   const [quote, setQuote] = useState<InviteQuote | null>(null)
   const [codes, setCodes] = useState<MyCode[]>([])
-  const [usdInput, setUsdInput] = useState('20')
+  const [usdInput, setUsdInput] = useState('2.50')
   // Default to the 8+ tier (cheapest burn) — most sponsors don't need to gift a
   // short premium name.
   const [minLen, setMinLen] = useState(MIN_USERNAME_LEN)
@@ -134,12 +138,15 @@ export default function SponsorInviteSection() {
   const tipWholeCaw = rate > 0 ? Math.max(0, Math.round(usdAmount / rate)) : 0
   const giftWholeCaw = Math.max(0, tipWholeCaw - Number(overheadCaw))
   const giftUsd = giftWholeCaw * rate
-  // "Sponsors ~N actions": gift ÷ the per-action cost the invitee pays — the
-  // validator's base tip per action (~26k CAW ≈ $0.001). NOT gasFloorCaw (that's
-  // the one-time per-redeem L1 gas, ~hundreds of millions of CAW, which gave a
-  // nonsensical ~6). The tiny fixed protocol fee (post 5000 / like 2000 CAW) is
-  // negligible next to the tip, so the tip is the honest denominator.
-  const perActionCaw = Number(getCurrentMarketTip())
+  // "Sponsors ~N actions": gift ÷ the BINDING per-action cost the invitee pays.
+  // The server computes this as max(validator base tip, ETH-pegged min-tip floor
+  // → CAW) — the on-chain oracle charges whichever is higher per action. Using
+  // the FE base tip alone (getCurrentMarketTip) ignored the ETH floor and
+  // over-counted (e.g. "~9,833 actions" when the floor made each ~50x the base).
+  // Fall back to the FE base tip only if the quote hasn't loaded.
+  const perActionCaw = quote && Number(quote.perActionCaw) > 0
+    ? Number(quote.perActionCaw)
+    : Number(getCurrentMarketTip())
   const sponsoredActions = perActionCaw > 0 ? Math.floor(giftWholeCaw / perActionCaw) : 0
 
   const priceReady = rate > 0 && quote?.priceAvailable !== false
@@ -153,6 +160,31 @@ export default function SponsorInviteSection() {
     !!activeTokenId &&
     quote?.validatorTokenId != null &&
     buyState === 'idle'
+
+  // Diagnostic: which gate is keeping the Sponsor button disabled. Logged only
+  // when disabled so it doesn't spam. Each false flag is a reason it's blocked.
+  useEffect(() => {
+    if (canBuy) return
+    // eslint-disable-next-line no-console
+    console.debug('[invite] Sponsor button DISABLED — gates:', {
+      priceReady,
+      aboveFloor,
+      belowCap,
+      hasActiveToken: !!activeTokenId,
+      hasValidatorToken: quote?.validatorTokenId != null,
+      buyStateIdle: buyState === 'idle',
+      // raw inputs behind the gates
+      usdAmount, minUsd, maxUsd,
+      rate,
+      tipWholeCaw, giftWholeCaw,
+      overheadCaw: Number(overheadCaw),
+      maxGiftCaw: maxGiftCaw.toString(),
+      quoteLoaded: !!quote,
+      priceAvailable: quote?.priceAvailable,
+      validatorTokenId: quote?.validatorTokenId,
+      activeTokenId,
+    })
+  }, [canBuy, priceReady, aboveFloor, belowCap, activeTokenId, quote, buyState, usdAmount, minUsd, maxUsd, rate, tipWholeCaw, giftWholeCaw, overheadCaw, maxGiftCaw])
 
   const handleBuy = async () => {
     if (!canBuy || !quote?.validatorTokenId || !activeTokenId) return

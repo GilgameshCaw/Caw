@@ -874,6 +874,7 @@ router.get('/invite-quote', async (_req, res) => {
     gasMarginCaw: quote.gasMarginCaw.toString(),
     maxGiftCaw: quote.maxGiftCaw.toString(),
     cawUsdRate: quote.cawUsdRate,
+    perActionCaw: quote.perActionCaw.toString(),
     priceAvailable: quote.priceAvailable,
     validatorTokenId,
   })

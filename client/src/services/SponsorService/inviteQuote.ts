@@ -109,6 +109,12 @@ export interface InviteQuote {
   maxGiftCaw: bigint
   /** USD per 1 whole CAW (float), for FE $ rendering. 0 when prices unknown. */
   cawUsdRate: number
+  /** The BINDING per-action cost (whole CAW) the invitee will actually pay:
+   *  max(validator base tip in CAW, the validator's ETH-pegged min-tip floor
+   *  converted to CAW). The FE divides the gift by this to show "~N actions".
+   *  Using the base tip alone under-counts when the ETH floor is higher (the
+   *  on-chain oracle converts that floor to CAW at submission). 0 if unknown. */
+  perActionCaw: bigint
   /** True when live prices were available; false => callers should treat the
    *  quote as unavailable rather than mint against a zero floor. */
   priceAvailable: boolean
@@ -192,7 +198,7 @@ export function quoteSponsorInviteCostCaw(): InviteQuote {
   const ethPrice = getEthPriceCache()
 
   if (!cawPrice || !ethPrice || cawPrice.cawPerEth <= 0n) {
-    return { gasFloorCaw: 0n, gasMarginCaw: 0n, maxGiftCaw: MAX_INVITE_GIFT_CAW, cawUsdRate: 0, priceAvailable: false }
+    return { gasFloorCaw: 0n, gasMarginCaw: 0n, maxGiftCaw: MAX_INVITE_GIFT_CAW, cawUsdRate: 0, perActionCaw: 0n, priceAvailable: false }
   }
 
   // Reject stale prices — minting the gift against a stale-low CAW price is the
@@ -200,7 +206,7 @@ export function quoteSponsorInviteCostCaw(): InviteQuote {
   // and the FE refuses to clamp the input.
   const now = Date.now()
   if (now - cawPrice.updatedAt > MAX_PRICE_AGE_MS || now - ethPrice.updatedAt > MAX_PRICE_AGE_MS) {
-    return { gasFloorCaw: 0n, gasMarginCaw: 0n, maxGiftCaw: MAX_INVITE_GIFT_CAW, cawUsdRate: 0, priceAvailable: false }
+    return { gasFloorCaw: 0n, gasMarginCaw: 0n, maxGiftCaw: MAX_INVITE_GIFT_CAW, cawUsdRate: 0, perActionCaw: 0n, priceAvailable: false }
   }
 
   const gasWei = effectiveGasPriceWei() * GAS_LIMIT_BOOTSTRAP
@@ -212,5 +218,36 @@ export function quoteSponsorInviteCostCaw(): InviteQuote {
   const usdPerEthFloat = Number(ethPrice.usdPerEth) / 1e6
   const cawUsdRate = ethPerCawFloat * usdPerEthFloat
 
-  return { gasFloorCaw, gasMarginCaw, maxGiftCaw: MAX_INVITE_GIFT_CAW, cawUsdRate, priceAvailable: true }
+  const perActionCaw = perActionCostCaw(cawPrice.cawPerEth)
+
+  return { gasFloorCaw, gasMarginCaw, maxGiftCaw: MAX_INVITE_GIFT_CAW, cawUsdRate, perActionCaw, priceAvailable: true }
+}
+
+// Validator tip defaults — MIRROR validator-analytics.ts /tip-config so the
+// "~N actions" estimate matches what an action will actually cost. The DB
+// (validatorSetting) can override these at runtime; this pure quote uses the
+// env/static fallback, which is correct unless an operator hand-tunes the DB
+// rows (acceptable drift for an estimate).
+const DEFAULT_VALIDATOR_BASE_TIP_CAW = 1000n
+const DEFAULT_MIN_TIP_PER_ACTION_WEI = 450_000_000_000n // 4.5e11 wei ETH
+
+/**
+ * The BINDING per-action cost in whole CAW: the larger of (a) the validator's
+ * flat CAW base tip and (b) its ETH-pegged per-action floor converted to CAW.
+ * The on-chain cost oracle charges max(base, ETH-floor→CAW) per action, so the
+ * floor — when higher — is what the invitee actually pays. Using only the base
+ * tip over-counts the affordable actions (the bug behind "~9,833 actions" when
+ * the ETH floor made each action ~50x the 1000-CAW base tip).
+ */
+function perActionCostCaw(cawPerEth: bigint): bigint {
+  const baseTipCaw = (() => {
+    try { return BigInt(process.env.VALIDATOR_BASE_TIP || DEFAULT_VALIDATOR_BASE_TIP_CAW.toString()) }
+    catch { return DEFAULT_VALIDATOR_BASE_TIP_CAW }
+  })()
+  const minTipWei = (() => {
+    try { return BigInt(process.env.MIN_TIP_PER_ACTION_WEI || DEFAULT_MIN_TIP_PER_ACTION_WEI.toString()) }
+    catch { return DEFAULT_MIN_TIP_PER_ACTION_WEI }
+  })()
+  const floorCaw = ethWeiToWholeCaw(minTipWei, cawPerEth)
+  return baseTipCaw > floorCaw ? baseTipCaw : floorCaw
 }
