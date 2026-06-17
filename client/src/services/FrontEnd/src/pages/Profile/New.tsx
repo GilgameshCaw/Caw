@@ -801,12 +801,21 @@ console.log("BALANCE:", balance)
   // Total ETH msg.value for the ZAP tx: swap-input + LZ/storage fees.
   // Pad +2% for genuine LZ price-feed drift between quote read and
   // submit (multi-block delay). Excess refunds via _refundUnusedLzEth.
+  // Padded LZ native fee for the msg.value of every mint call. The on-chain
+  // quote (mintQuote/mintAndDepositQuote/…) is read a few blocks before the tx
+  // lands; LZ's DVN/executor price feed can tick the required fee UP in that
+  // gap, and EndpointV2._assertMessagingFee reverts on even a 1-wei shortfall
+  // (seen: a ~3 gwei drift failed a mint). Pad +10% to absorb it; the contract
+  // refunds the unused remainder via _refundUnusedLzEth, so over-paying is free.
+  const paddedNativeFee = useMemo(() => {
+    const nativeFee = (quote as { nativeFee?: bigint } | undefined)?.nativeFee ?? 0n
+    return (BigInt(nativeFee) * 110n) / 100n
+  }, [quote])
+
   const zapTxValue = useMemo(() => {
     if (paymentMode !== 'eth' || !quote) return 0n
-    const nativeFee = (quote as { nativeFee?: bigint }).nativeFee ?? 0n
-    const paddedFee = (BigInt(nativeFee) * 102n) / 100n
-    return ethAmountWei + paddedFee
-  }, [paymentMode, ethAmountWei, quote])
+    return ethAmountWei + paddedNativeFee
+  }, [paymentMode, ethAmountWei, quote, paddedNativeFee])
 
   const wrongChain = chainId !== chains.l1.chainId;
 
@@ -1006,7 +1015,7 @@ console.log("BALANCE:", balance)
 
   // hook into mint function (mint-only, no auth)
   const { call: mintOnly, status: mintOnlyStatus, gasCostEth: mintOnlyGas }: UseContractCallReturn = useContractCall({
-    value:        quote?.nativeFee || 0n,
+    value:        paddedNativeFee,
     functionName: 'mint',
     abi:      cawProfileMinterAbi,
     address: CAW_NAMES_MINTER_ADDRESS,
@@ -1021,7 +1030,7 @@ console.log("BALANCE:", balance)
 
   // hook into mintAndAuth function (mint + authenticate, no deposit)
   const { call: mintAndAuth, status: mintAndAuthStatus, gasCostEth: mintAndAuthGas }: UseContractCallReturn = useContractCall({
-    value:        quote?.nativeFee || 0n,
+    value:        paddedNativeFee,
     functionName: 'mintAndAuth',
     abi:      cawProfileMinterAbi,
     address: CAW_NAMES_MINTER_ADDRESS,
@@ -1036,7 +1045,7 @@ console.log("BALANCE:", balance)
 
   // hook into mintAndDeposit function
   const { call: mintAndDeposit, status: mintAndDepositStatus, gasCostEth: mintAndDepositGas, gasPriceWei: liveGasPriceWei }: UseContractCallReturn = useContractCall({
-    value:        quote?.nativeFee || 0n,
+    value:        paddedNativeFee,
     functionName: 'mintAndDeposit',
     abi:      cawProfileMinterAbi,
     address: CAW_NAMES_MINTER_ADDRESS,
@@ -1119,7 +1128,7 @@ console.log("BALANCE:", balance)
 
   // hook into mintAndDepositAndQuickSign — bundled flow with session leg.
   const { call: mintAndDepositAndQuickSign, status: bundledStatus, gasCostEth: bundledGas }: UseContractCallReturn = useContractCall({
-    value:        quote?.nativeFee || 0n,
+    value:        paddedNativeFee,
     functionName: 'mintAndDepositAndQuickSign',
     abi:      cawProfileMinterAbi,
     address: CAW_NAMES_MINTER_ADDRESS,
