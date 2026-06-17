@@ -1,6 +1,6 @@
 // services/SponsorService/handleSponsorInvite.ts
 //
-// Handler for the PAID buy-a-code OTHER subtype: "sponsor-invite:<giftCaw>:<minLen>".
+// Handler for the PAID buy-a-code OTHER subtype: "sp-i:<giftCaw>:<minLen>".
 //
 // A buyer signs an OTHER action that tips CAW to this server's sponsor/validator
 // profile (recipients[0] == our PLATFORM_SPONSOR_TOKEN_ID). The action is
@@ -16,6 +16,12 @@ import { getOwnValidatorTokenIdSync } from './validatorIdentity'
 import { quoteSponsorInviteCostCaw, MAX_INVITE_GIFT_CAW, burnCostForLen } from './inviteQuote'
 import { createSponsorCode } from './createSponsorCode'
 import { encryptInviteCode, isInviteCodeCryptoConfigured } from './inviteCodeCrypto'
+
+// On-chain action-text prefix for a paid invite-code purchase. Kept SHORT
+// ("sp-i:" not "sponsor-invite:") because action text is calldata the validator
+// pays for on every submission. The FE producer (SponsorInviteSection) and the
+// ActionProcessor dispatch both reference this exact string.
+export const INVITE_ACTION_PREFIX = 'sp-i:'
 
 const WEI = 10n ** 18n
 // Long-tier codes; single-use; expire 30 days after purchase.

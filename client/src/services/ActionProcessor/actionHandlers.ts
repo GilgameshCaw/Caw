@@ -9,7 +9,7 @@ import { parsePoll, parseVoteText, resolvePollImageUrl } from '../../tools/pollM
 import { markOrphansInImageData } from '../../api/util/orphanedMedia'
 import type { PrismaTransactionClient } from './types'
 import { recomputePinnedCount } from '../../utils/pinnedCount'
-import { handleSponsorInviteAction } from '../SponsorService/handleSponsorInvite'
+import { handleSponsorInviteAction, INVITE_ACTION_PREFIX } from '../SponsorService/handleSponsorInvite'
 
 /** Sentinel thrown by findCawId so callers (and the top-level
  *  handleRawAction error handler) can distinguish "indexer doesn't have
@@ -839,7 +839,7 @@ export async function handleOtherAction(
   // Check if this is a PAID sponsor-invite purchase (buy-a-code). The action
   // tips CAW to a validator's profile; only the tipped mirror mints the code.
   // Self-contained handler in SponsorService (gate + idempotent mint).
-  if (rawAction.text?.startsWith('sponsor-invite:')) {
+  if (rawAction.text?.startsWith(INVITE_ACTION_PREFIX)) {
     await handleSponsorInviteAction(tx, action, rawAction)
     return
   }

@@ -37,6 +37,8 @@ import { quoteSponsorInviteCostCaw, quoteExecuteGasFeeCaw } from '../../services
 import { CAW_ADDRESS } from '../../abi/addresses'
 import { getOwnValidatorTokenId } from '../../services/SponsorService/validatorIdentity'
 import { decryptInviteCode } from '../../services/SponsorService/inviteCodeCrypto'
+import { INVITE_ACTION_PREFIX } from '../../services/SponsorService/handleSponsorInvite'
+import { decompressActionText } from '../../utils/decompressActionText'
 import { requireAuth } from '../middleware/auth'
 import { consumeXQualifiedToken } from './xSignup'
 
@@ -926,6 +928,7 @@ router.get('/my-codes', requireAuth({ anySession: true }), async (req, res) => {
     return {
       code,
       used,
+      pending: false as boolean,
       usesRemaining: sc?.usesRemaining ?? null,
       giftCawWei: p.giftCawWei,
       paidCawWei: p.paidCawWei,
@@ -934,7 +937,57 @@ router.get('/my-codes', requireAuth({ anySession: true }), async (req, res) => {
     }
   })
 
-  return res.status(200).json({ codes: out })
+  // ── PENDING purchases (submitted on-chain, not yet indexed) ────────────────
+  // A bought code only gets a PurchasedInviteCode row AFTER the OTHER action is
+  // mined + indexed by ActionProcessor. Between submit and index (and across a
+  // page refresh, where the FE's in-memory "submitted" state is gone) the buyer
+  // would otherwise see nothing. Surface in-flight invite purchases from the
+  // caller's TxQueue so a freshly-bought code shows as "pending" immediately.
+  //
+  // TxQueue stores the action in `payload.data.text` as smltxt-compressed hex,
+  // so we decompress to test the "sp-i:" prefix. We exclude (senderId, cawonce)
+  // pairs that already have a PurchasedInviteCode (those are in `out` above).
+  const minted = new Set(purchased.map(p => `${p.senderId}:${p.cawonce}`))
+  let pendingOut: typeof out = []
+  try {
+    const inflight = await prisma.txQueue.findMany({
+      where: {
+        senderId: { in: tokenIds },
+        // In-flight TxQueue states (not yet indexed, not terminally failed).
+        status: { in: ['pending', 'queued', 'processing', 'submitting', 'awaiting_indexer', 'validated_by_peer', 'waiting_for_session', 'waiting_for_deposit'] },
+      },
+      select: { senderId: true, cawonce: true, payload: true, createdAt: true },
+      orderBy: { createdAt: 'desc' },
+      take: 100,
+    })
+    pendingOut = inflight.flatMap(tx => {
+      if (tx.cawonce == null || minted.has(`${tx.senderId}:${tx.cawonce}`)) return []
+      const text = decompressActionText((tx.payload as any)?.data?.text)
+      if (!text.startsWith(INVITE_ACTION_PREFIX)) return []
+      // text === "sp-i:<giftWholeCaw>:<minLen>" — surface the gift it will fund.
+      const parts = text.split(':')
+      const giftWhole = (() => { try { return BigInt(parts[1] ?? '0') } catch { return 0n } })()
+      const giftCawWei = (giftWhole * 10n ** 18n).toString()
+      return [{
+        code: null as string | null,
+        used: false as boolean,
+        pending: true as boolean,
+        usesRemaining: null as number | null,
+        giftCawWei,
+        // No on-chain tip recorded yet pre-index; paid == gift+overhead is
+        // unknown here, so report the gift portion the buyer will fund.
+        paidCawWei: giftCawWei,
+        createdAt: tx.createdAt.toISOString(),
+        expiresAt: null as string | null,
+      }]
+    })
+  } catch (e) {
+    // Pending discovery is best-effort; never fail the whole list on it.
+    console.warn('[my-codes] pending-purchase discovery failed:', e)
+  }
+
+  // Pending first (newest activity), then the minted codes.
+  return res.status(200).json({ codes: [...pendingOut, ...out] })
 })
 
 export default router

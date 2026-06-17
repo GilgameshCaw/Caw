@@ -253,6 +253,24 @@ const MODEL_META: Record<string, ModelMeta> = {
     writable: false,
     label: 'Messages',
   },
+  sponsorCode: {
+    defaultSort: 'createdAt',
+    searchFields: ['tier', 'label', 'createdBy'],
+    // codeHash is the @id; the raw plaintext code is never stored, so nothing
+    // sensitive is exposed by listing the hash + policy fields.
+    listFields: ['codeHash', 'tier', 'label', 'budgetCapUsdCents', 'maxDepositCawWei', 'maxUses', 'usesRemaining', 'minUsernameLength', 'purchasedByTokenId', 'expiresAt', 'createdAt'],
+    writable: false,
+    label: 'Sponsor Codes',
+  },
+  purchasedInviteCode: {
+    defaultSort: 'createdAt',
+    searchFields: ['codeHash'],
+    // codeCiphertext (the encrypted plaintext code) is deliberately OMITTED from
+    // listFields — it's the buyer's secret, retrievable only via /my-codes.
+    listFields: ['id', 'purchasedByTokenId', 'senderId', 'cawonce', 'codeHash', 'giftCawWei', 'paidCawWei', 'createdAt'],
+    writable: false,
+    label: 'Purchased Invite Codes',
+  },
 }
 
 // Prisma delegate accessor (type-safe model name → prisma.model)
@@ -261,14 +279,17 @@ function getDelegate(model: string): any {
 }
 
 // Resolve the (idField, idValue) pair for a model + url param.
-// validatorSetting + chainData use `key` as PK; everything else uses `id`.
-// Don't pre-coerce to Number unconditionally — some models (Message,
-// Conversation) use UUID String PKs, and Number("some-uuid") = NaN crashed
-// findUnique with a Prisma type error (the original "click on a single
-// message → 500" bug). Numeric-looking IDs coerce to Int; anything else
+// validatorSetting + chainData use `key` as PK; sponsorCode uses `codeHash`;
+// everything else uses `id`. Don't pre-coerce to Number unconditionally — some
+// models (Message, Conversation) use UUID String PKs, and Number("some-uuid")
+// = NaN crashed findUnique with a Prisma type error (the original "click on a
+// single message → 500" bug). Numeric-looking IDs coerce to Int; anything else
 // passes through as a string and Prisma rejects type mismatches cleanly.
 function resolveIdForLookup(model: string, id: string): { idField: string; idValue: string | number } {
-  const idField = model === 'validatorSetting' || model === 'chainData' ? 'key' : 'id'
+  const idField =
+    model === 'validatorSetting' || model === 'chainData' ? 'key'
+    : model === 'sponsorCode' ? 'codeHash'
+    : 'id'
   let idValue: string | number = id
   if (idField === 'id' && /^-?\d+$/.test(id)) {
     idValue = Number(id)

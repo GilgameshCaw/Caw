@@ -32,6 +32,10 @@ interface InviteQuote {
 interface MyCode {
   code: string | null
   used: boolean
+  // True for a purchase that's been submitted on-chain but not yet indexed —
+  // the code doesn't exist server-side yet, so `code` is null. Shows as
+  // "Pending" until the action is mined + indexed (then it becomes a real code).
+  pending: boolean
   usesRemaining: number | null
   giftCawWei: string
   paidCawWei: string
@@ -90,6 +94,16 @@ export default function SponsorInviteSection() {
       .catch(() => { /* not signed in / none — leave empty */ })
   }, [])
   useEffect(() => { loadCodes() }, [loadCodes])
+
+  // While any code is still pending (submitted on-chain, awaiting index), poll
+  // every 8s so it flips to a real code on its own — including after a refresh,
+  // where the post-submit polling closure in handleBuy no longer exists.
+  const hasPending = codes.some(c => c.pending)
+  useEffect(() => {
+    if (!hasPending) return
+    const id = setInterval(loadCodes, 8000)
+    return () => clearInterval(id)
+  }, [hasPending, loadCodes])
 
   // Gas floor + margin in whole CAW (from the quote) and their USD values.
   const gasFloorCaw = quote ? BigInt(quote.gasFloorCaw) : 0n
@@ -150,7 +164,10 @@ export default function SponsorInviteSection() {
         senderId: activeTokenId,
         recipients: [quote.validatorTokenId],
         amounts: [BigInt(tipWholeCaw)],
-        text: `sponsor-invite:${giftWholeCaw}:${minLen}`,
+        // Short on-chain prefix "sp-i:" (not "sponsor-invite:") — every byte of
+        // action text costs validators calldata gas forever. Must match the
+        // dispatch in ActionProcessor/actionHandlers.ts.
+        text: `sp-i:${giftWholeCaw}:${minLen}`,
       })
       setBuyState('submitted')
       // The code is minted asynchronously once the action is indexed; poll the
@@ -297,7 +314,7 @@ export default function SponsorInviteSection() {
                     className={`font-mono text-sm truncate ${strongClass} ${c.code ? 'cursor-pointer hover:underline' : ''}`}
                     title={c.code ?? ''}
                   >
-                    {c.code ?? '— (unavailable on this device)'}
+                    {c.code ?? (c.pending ? 'Generating your code…' : '— (unavailable on this device)')}
                   </button>
                   <div className={`text-xs ${mutedClass}`}>
                     Gift ~${formatUsd((Number(BigInt(c.giftCawWei) / 10n ** 18n)) * rate)}
@@ -306,12 +323,14 @@ export default function SponsorInviteSection() {
                 </div>
                 <span
                   className={`text-xs font-semibold px-2 py-1 rounded-full shrink-0 ${
-                    c.used
-                      ? (isDark ? 'bg-gray-500/20 text-gray-400' : 'bg-gray-200 text-gray-600')
-                      : (isDark ? 'bg-green-500/15 text-green-400' : 'bg-green-100 text-green-700')
+                    c.pending
+                      ? (isDark ? 'bg-yellow-500/15 text-yellow-400' : 'bg-yellow-100 text-yellow-700')
+                      : c.used
+                        ? (isDark ? 'bg-gray-500/20 text-gray-400' : 'bg-gray-200 text-gray-600')
+                        : (isDark ? 'bg-green-500/15 text-green-400' : 'bg-green-100 text-green-700')
                   }`}
                 >
-                  {c.used ? 'Used' : 'Unused'}
+                  {c.pending ? 'Pending' : c.used ? 'Used' : 'Unused'}
                 </span>
               </li>
             ))}
