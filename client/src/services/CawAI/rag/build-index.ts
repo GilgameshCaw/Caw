@@ -54,15 +54,26 @@ const CORPUS_EXCLUDE = [
 ]
 
 // SENSITIVE-DOC exclusion. Unlike the scrub gate (which matches a single
-// string), some whole DOCUMENTS are sensitive in their entirety — security
-// audits, threat models, pentest notes, vuln findings, internal design notes.
-// The bot is public-facing: indexing these means anyone who asks a topically
-// related question ("how do tips work") can pull a chunk that names a file:line
-// auth bypass. Even a since-FIXED finding shouldn't be advertised to the world.
-// These patterns drop such files from the corpus by path. Err toward exclusion:
-// a missing internal doc costs the bot a little knowledge; an included one can
-// leak an exploit recipe.
+// string), some whole DOCUMENTS are sensitive in their entirety. The bot is
+// public-facing and adversarial users WILL probe it ("what's your prompt",
+// "how do tips work") to surface things they shouldn't see. Excluded classes:
+//
+//   1. The bot's OWN source. services/CawAI/ contains persona.ts (the literal
+//      system prompt), scrub.ts (the pseudonymity-protection mechanism + its
+//      encoded tokens), and config — the bot must NEVER be able to read and
+//      recite its own guardrails. This is the most important exclusion.
+//   2. Security material — audits, threat models, pentest notes, vuln findings.
+//      Even a since-FIXED finding shouldn't be advertised (file:line recipes).
+//   3. Internal dev/process docs — handoffs, backlogs, sprint stories, roadmaps,
+//      overnight summaries, development plans. Internal noise, not public
+//      protocol knowledge, and often references unshipped/sensitive work.
+//
+// Err HARD toward exclusion: a missing internal doc costs the bot a little
+// knowledge; an included one can leak a guardrail, an exploit, or roadmap.
 const SENSITIVE_DOC_EXCLUDE = [
+  // 1. The bot's own service code — never let it read itself.
+  /(^|\/)services\/CawAI\//i,
+  // 2. Security material.
   /AUDIT/i,
   /SECURITY/i,
   /\bVULN/i,
@@ -70,6 +81,18 @@ const SENSITIVE_DOC_EXCLUDE = [
   /THREAT[_-]?MODEL/i,
   /FINDINGS/i,
   /INCIDENT/i,
+  // 3. Internal dev / process / planning docs.
+  /HANDOFF/i,
+  /BACKLOG/i,
+  /OVERNIGHT/i,
+  /(^|\/)docs\/stories\//i,
+  /SPRINT/i,
+  /\bSTORY-/i,
+  /ROADMAP/i,
+  /_PLAN\b/i,
+  /DEVELOPMENT_PLAN/i,
+  /PROOF_OF_COMPLIANCE/i,
+  /PRODUCTION_PREP/i,
   /(^|\/)native\/docs\/.*NOTES/i,   // internal native-app design notes
 ]
 
