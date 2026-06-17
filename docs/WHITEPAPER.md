@@ -504,6 +504,8 @@ CAW's economic structure has four participants: **users** (who spend CAW to act)
 
 There is no protocol treasury. There is no team allocation. There is no foundation. The token's distribution at deploy is the distribution.
 
+*(For the economic argument — why this structure is expected to perpetuate the token's value as the network is used — see the companion [`VALUE_THESIS.md`](./VALUE_THESIS.md). That document is an economic thesis, not part of this specification; it makes no on-chain claim and no price prediction.)*
+
 ## 7.1 Action ==costs and splits==
 
 The fixed CAW costs per action type, with their distribution rules:
