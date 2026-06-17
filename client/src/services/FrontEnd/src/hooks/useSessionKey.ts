@@ -73,18 +73,23 @@ function formatSpendLimitForMessage(spendLimit: bigint): string {
   return `${Math.ceil(n / 1_000_000)}M`
 }
 
-// The tip line in the SIGNED message must be exactly "<n>[M|K|B] CAW" with
-// nothing after "CAW" — SessionMessageParser._parseTipRateValue rejects any
-// trailing text (e.g. a "(~$0.0010)" USD note) with BadParse(). Keep it to the
-// magnitude-suffixed CAW amount only; USD is shown in the UI, never signed.
-function formatTipCeilingForMessage(tipCeiling: bigint): string {
-  // 0 = opt-out. Emit the literal "0 CAW" the parser's opt-out branch expects —
-  // NOT "none" (the parser has no such token → BadParse) and not "0M CAW".
+// Tip line for the SIGNED message. SessionMessageParser._parseTipRateValue reads
+// "<n>[M|K|B] CAW" and IGNORES an optional trailing " (...)" note, so we keep the
+// readable magnitude suffix AND a "(~$x)" USD estimate. Two hard rules the parser
+// enforces: 0 = opt-out must be the literal "0 CAW" (NOT "none", NOT "0M CAW"),
+// and any note must be wrapped in " (...)" ending the line (no bare trailing text).
+function formatTipCeilingForMessage(tipCeiling: bigint, cawPrice: number): string {
   if (tipCeiling === 0n) return '0 CAW'
-  return `${formatSpendLimitForMessage(tipCeiling)} CAW`
+  const cawStr = `${formatSpendLimitForMessage(tipCeiling)} CAW`
+  if (cawPrice > 0) {
+    const usd = Number(tipCeiling) * cawPrice
+    const usdStr = usd < 0.001 ? `~$${usd.toFixed(6)}` : `~$${usd.toFixed(4)}`
+    return `${cawStr} (${usdStr})`
+  }
+  return cawStr
 }
 
-function buildSessionMessage(sessionKeyAddress: string, spendLimit: bigint, expiryTimestamp: number, tipCeiling: bigint = 0n): string {
+function buildSessionMessage(sessionKeyAddress: string, spendLimit: bigint, expiryTimestamp: number, tipCeiling: bigint = 0n, cawPrice: number = 0): string {
   const d = new Date(expiryTimestamp * 1000)
   const day = d.getUTCDate()
   const month = MONTHS[d.getUTCMonth()]
@@ -100,7 +105,7 @@ function buildSessionMessage(sessionKeyAddress: string, spendLimit: bigint, expi
     `${formatSpendLimitForMessage(spendLimit)} CAW`,
     '',
     'Tip per action:',
-    formatTipCeilingForMessage(tipCeiling),
+    formatTipCeilingForMessage(tipCeiling, cawPrice),
     '',
     'Expires:',
     `${day} ${month} ${year} ${hh}:${mm}:${ss} UTC`,

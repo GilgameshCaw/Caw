@@ -78,16 +78,28 @@ contract SessionMessageParserTest is Test {
         assertEq(spend, 286_000_000);
     }
 
-    // ── Rejections: trailing text after CAW must BadParse (the original bug) ─
+    // ── A trailing " (...)" note is accepted and ignored (value unchanged) ───
 
-    function test_tip_rejects_trailing_usd() public {
-        vm.expectRevert(SessionMessageParser.BadParse.selector);
-        _parse(_msg("1M CAW (~$0.0010)"));
+    function test_tip_accepts_usd_note() public pure {
+        (, uint64 tip,,) = _parse(_msg("1M CAW (~$0.0010)"));
+        assertEq(tip, 1_000_000);
     }
+
+    function test_tip_accepts_usd_note_plain() public pure {
+        (, uint64 tip,,) = _parse(_msg("1000 CAW (~$0.000001)"));
+        assertEq(tip, 1000);
+    }
+
+    // ── Rejections: BARE trailing text (not wrapped in parens) must BadParse ──
 
     function test_tip_rejects_trailing_text_plain() public {
         vm.expectRevert(SessionMessageParser.BadParse.selector);
         _parse(_msg("1000 CAW extra"));
+    }
+
+    function test_tip_rejects_unclosed_paren() public {
+        vm.expectRevert(SessionMessageParser.BadParse.selector);
+        _parse(_msg("1M CAW (~$0.0010"));
     }
 
     function test_tip_rejects_none_literal() public {

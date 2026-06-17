@@ -88,11 +88,12 @@ library SessionMessageParser {
   // Internal helpers (only called within parseSessionMessage chain)
   // -------------------------------------------------------------------------
 
-  /// @dev Parse a tip-rate line like "1000 CAW", "1M CAW", "0 CAW" → uint64 whole
-  ///      tokens. Accepts the same M/K/B magnitude suffix as the spend-limit line
-  ///      so the human-readable message can stay short (e.g. "1M CAW"); the FE
-  ///      writes the value with that suffix. Grammar: <digits>[M|K|B]<space>CAW
-  ///      with nothing after "CAW". 0 (opt-out) is explicitly allowed.
+  /// @dev Parse a tip-rate line like "1000 CAW", "1M CAW", "0 CAW", or with a
+  ///      trailing human-readable note "1M CAW (~$0.0010)" → uint64 whole tokens.
+  ///      Accepts the same M/K/B magnitude suffix as the spend-limit line so the
+  ///      message can stay short, and IGNORES an optional " (...)" note after
+  ///      "CAW" (the FE shows a USD estimate there; it does not affect the value).
+  ///      Grammar: <digits>[M|K|B]<space>CAW[<space>(...)] . 0 (opt-out) allowed.
   function _parseTipRateValue(bytes memory line) internal pure returns (uint64) {
     if (line.length < 5) revert BadParse();
     uint256 number = 0;
@@ -110,12 +111,19 @@ library SessionMessageParser {
       i++;
     }
     if (number > type(uint64).max) revert BadParse();
-    // Allow 0 (opt-out) explicitly.
-    if (!(i < line.length && line[i] == 0x20)) revert BadParse();
-    if (!(
-      line.length - i - 1 == 3 &&
-      line[i+1] == 'C' && line[i+2] == 'A' && line[i+3] == 'W'
-    )) revert BadParse();
+    // Require "<space>CAW" at position i.
+    if (!(i + 3 < line.length && line[i] == 0x20 &&
+          line[i+1] == 'C' && line[i+2] == 'A' && line[i+3] == 'W')) revert BadParse();
+    uint256 end = i + 4; // first index after "CAW"
+    // Accept either end-of-line, or a trailing note " (...)" with '(' right after
+    // the space and ')' as the final byte. The note is decorative and ignored.
+    if (end != line.length) {
+      if (!(
+        end + 2 < line.length &&
+        line[end] == 0x20 && line[end+1] == '(' &&
+        line[line.length - 1] == ')'
+      )) revert BadParse();
+    }
     return uint64(number);
   }
 
