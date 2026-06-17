@@ -16,7 +16,7 @@ import { useState, useEffect, useCallback } from 'react'
 import { useTheme } from '~/hooks/useTheme'
 import { usePriceStore } from '~/store/tokenDataStore'
 import { useActiveToken } from '~/store/tokenDataStore'
-import { useSignAndSubmitAction } from '~/api/actions'
+import { useSignAndSubmitAction, getCurrentMarketTip } from '~/api/actions'
 import { apiFetch } from '~/api/client'
 import { formatUsd } from '~/utils/numberFormat'
 
@@ -120,10 +120,12 @@ export default function SponsorInviteSection() {
   const tipWholeCaw = rate > 0 ? Math.max(0, Math.round(usdAmount / rate)) : 0
   const giftWholeCaw = Math.max(0, tipWholeCaw - Number(overheadCaw))
   const giftUsd = giftWholeCaw * rate
-  // "Sponsors ~N actions": the gift divided by the validator's per-action tip
-  // (gasFloorCaw is the per-redeem gas floor in CAW; use it as the action-cost
-  // proxy). Shown so the sponsor sees what the gift buys the invitee.
-  const perActionCaw = gasFloorCaw > 0n ? Number(gasFloorCaw) : 0
+  // "Sponsors ~N actions": gift ÷ the per-action cost the invitee pays — the
+  // validator's base tip per action (~26k CAW ≈ $0.001). NOT gasFloorCaw (that's
+  // the one-time per-redeem L1 gas, ~hundreds of millions of CAW, which gave a
+  // nonsensical ~6). The tiny fixed protocol fee (post 5000 / like 2000 CAW) is
+  // negligible next to the tip, so the tip is the honest denominator.
+  const perActionCaw = Number(getCurrentMarketTip())
   const sponsoredActions = perActionCaw > 0 ? Math.floor(giftWholeCaw / perActionCaw) : 0
 
   const priceReady = rate > 0 && quote?.priceAvailable !== false
@@ -192,7 +194,12 @@ export default function SponsorInviteSection() {
           <p className={`text-sm ${mutedClass}`}>Loading price…</p>
         ) : (
           <>
-            <label className={`block text-sm font-medium mb-1 ${strongClass}`}>Amount (USD)</label>
+            <div className="flex items-baseline justify-between gap-2 mb-1">
+              <label className={`text-sm font-medium ${strongClass}`}>Amount (USD)</label>
+              <span className={`text-xs ${mutedClass}`}>
+                Minimum ${minUsd.toFixed(2)} (covers gas + username + network fees)
+              </span>
+            </div>
             <div className="flex items-center gap-2">
               <span className={mutedClass}>$</span>
               <input
@@ -211,17 +218,20 @@ export default function SponsorInviteSection() {
                 } ${aboveFloor && belowCap ? 'focus:border-yellow-500' : 'border-red-500'}`}
               />
             </div>
-            <p className={`text-xs mt-1 ${aboveFloor && belowCap ? mutedClass : 'text-red-500'}`}>
-              {!belowCap ? (
-                <>Maximum ${Number.isFinite(maxUsd) ? maxUsd.toFixed(2) : '—'} per code.</>
-              ) : (
-                <>Minimum ${minUsd.toFixed(2)} (covers gas + username + network fees;
-                anything above is given as a gift to the invitee).
-                {giftUsd > 0 && (
-                  <> This sponsors ~{sponsoredActions.toLocaleString()} action{sponsoredActions === 1 ? '' : 's'} for them.</>
-                )}</>
-              )}
-            </p>
+            {!belowCap ? (
+              <p className="text-xs mt-1 text-red-500">
+                Maximum ${Number.isFinite(maxUsd) ? maxUsd.toFixed(2) : '—'} per code.
+              </p>
+            ) : !aboveFloor ? (
+              <p className="text-xs mt-1 text-red-500">
+                Enter at least ${minUsd.toFixed(2)}.
+              </p>
+            ) : giftUsd > 0 ? (
+              <p className={`text-xs mt-1 ${mutedClass}`}>
+                ~${giftUsd.toFixed(2)} will be given as a gift to the user, which will
+                cover their first ~{sponsoredActions.toLocaleString()} action{sponsoredActions === 1 ? '' : 's'}.
+              </p>
+            ) : null}
 
             <label className={`block text-sm font-medium mt-4 mb-1 ${strongClass}`}>Minimum username length</label>
             <div className="flex gap-2">

@@ -56,22 +56,24 @@ function effectiveGasPriceWei(): bigint {
 // the contract's CAP_STALE_THRESHOLD intent.
 const MAX_PRICE_AGE_MS = 15 * 60 * 1000 // 15 minutes
 
-// Upper bound on a single code's gift (whole CAW). Without it, a buyer can tip an
-// arbitrarily large amount and mint ONE single-use code whose maxDepositCawWei is
-// unbounded — a redeemer then drains the whole gift into one new profile in a
+// Upper bound on a single code's gift, in WHOLE CAW. Without it, a buyer can tip
+// an arbitrarily large amount and mint ONE single-use code whose maxDepositCawWei
+// is unbounded — a redeemer then drains the whole gift into one new profile in a
 // single sponsored bootstrap, fronted from the validator's pool. A gift larger
-// than what one sponsored deposit can settle (SPONSOR_MAX_DEPOSIT_CAW, enforced
-// at the bootstrap path in SponsorService) is also un-redeemable in full, so we
-// cap the gift to the same ceiling. Defaults to 50M CAW (was 10M) so the cap can
-// comfortably cover a 6-char username's 20M-CAW burn PLUS a real gift on top;
-// overridable via the same env var so it stays aligned with SponsorService's
-// maxDepositCAW.
+// than what one sponsored deposit can settle is also un-redeemable in full, so we
+// cap the gift to the SAME ceiling SponsorService enforces.
+//
+// UNITS: SPONSOR_MAX_DEPOSIT_CAW is a WEI value (SponsorService reads it raw as
+// wei, default 10M*1e18). This quote works in WHOLE CAW, so we divide by 1e18.
+// (Reading it as whole CAW was a bug: it made the cap ~1e18× too large, so the
+// FE never enforced a maximum.) Default 50M whole CAW when the env is unset.
 export const MAX_INVITE_GIFT_CAW: bigint = (() => {
   const raw = process.env.SPONSOR_MAX_DEPOSIT_CAW
   if (raw) {
     try {
-      const n = BigInt(raw)
-      if (n > 0n) return n
+      const wei = BigInt(raw)
+      const whole = wei / (10n ** 18n)
+      if (whole > 0n) return whole
     } catch { /* fall through to default */ }
   }
   return 50_000_000n // 50M whole CAW
