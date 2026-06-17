@@ -21,6 +21,7 @@ import { useWalletPopulation } from '~/hooks/useWalletPopulation'
 import { useActiveToken, useTokenDataStore } from '~/store/tokenDataStore'
 import { formatUnitsCompact } from '~/utils'
 import { useT } from '~/i18n/I18nProvider'
+import { useNavigate } from '~/utils/localizedRouter'
 
 const Wallet = () => {
   const t = useT()
@@ -28,6 +29,18 @@ const Wallet = () => {
   const { address: wagmiAddress } = useAccount()
   const { address: popAddress, population } = useWalletPopulation()
   const refetchTokenData = useTokenDataStore(s => s.refetchTokenData)
+  const navigate = useNavigate()
+
+  // This page is for BIOMETRIC (passkey / Population B) users, who have no
+  // external wallet UI of their own — it's the only place they see balances and
+  // withdraw. Population A (plain EOA) and C (other smart wallets) manage funds
+  // in their own wallet + on /staking, so the page is redundant for them → send
+  // them to /staking. Only redirect on a CONFIRMED A/C, never on 'none' (still
+  // resolving bytecode), so a Pop-B user mid-load isn't bounced.
+  const redirectAway = population === 'A' || population === 'C'
+  React.useEffect(() => {
+    if (redirectAway) navigate('/staking', { replace: true })
+  }, [redirectAway, navigate])
 
   // Effective display address — Pop-B uses the EOA even without wagmi connection
   const displayAddress = popAddress ?? wagmiAddress
@@ -82,6 +95,12 @@ const Wallet = () => {
     isDark ? 'bg-black border-white/20' : 'bg-white border-gray-200'
   }`
 
+  // This page exists for BIOMETRIC (passkey / Population B) users, who have no
+  // external wallet UI of their own — it's the only place they can see balances
+  // Don't render the page for A/C while the redirect effect (above) fires —
+  // avoids a one-frame flash of the wallet UI before navigation.
+  if (redirectAway) return null
+
   return (
     <div className="max-w-2xl mx-auto px-6 py-4">
       {/* Header */}
@@ -89,13 +108,6 @@ const Wallet = () => {
         <h1 className={`text-2xl font-bold ${strongClass}`}>{t('wallet.title')}</h1>
         {displayAddress && (
           <p className={`text-xs font-mono mt-1 break-all ${mutedClass}`}>{displayAddress}</p>
-        )}
-        {population !== 'none' && (
-          <span className={`inline-block mt-2 text-xs px-2 py-0.5 rounded-full font-medium ${
-            isDark ? 'bg-white/10 text-gray-300' : 'bg-gray-100 text-gray-600'
-          }`}>
-            {t('wallet.population_label', { pop: population })}
-          </span>
         )}
       </div>
 
