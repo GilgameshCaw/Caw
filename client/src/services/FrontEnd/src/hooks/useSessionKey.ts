@@ -73,13 +73,24 @@ function formatSpendLimitForMessage(spendLimit: bigint): string {
   return `${Math.ceil(n / 1_000_000)}M`
 }
 
-// Tip line for the SIGNED message. SessionMessageParser._parseTipRateValue reads
-// "<n>[M|K|B] CAW" and IGNORES an optional trailing " (...)" note, so we keep the
-// readable magnitude suffix AND a "(~$x)" USD estimate. Two hard rules the parser
-// enforces: 0 = opt-out must be the literal "0 CAW" (NOT "none", NOT "0M CAW"),
-// and any note must be wrapped in " (...)" ending the line (no bare trailing text).
+// TEMPORARY (remove at the next testnet redeploy): the DEPLOYED SessionMessageParser
+// tip parser only accepts a PLAIN integer + " CAW" with nothing after — no M/K/B
+// suffix, no "(~$x)" note. The updated parser (committed, awaiting redeploy) adds
+// the suffix + tolerates the note. Until the parser is redeployed + relinked, the
+// FE MUST emit the legacy plain-integer form or registerSessionPersonal reverts
+// BadParse(). Flip to false (or delete this branch) once the new parser is live.
+const LEGACY_TIP_FORMAT = true
+
+// Tip line for the SIGNED message. New parser reads "<n>[M|K|B] CAW" and ignores a
+// trailing " (...)" note (readable: "1M CAW (~$0.0010)"). Legacy/deployed parser
+// reads ONLY "<n> CAW" (plain integer, no suffix, no note). 0 = opt-out must be
+// the literal "0 CAW" in both ("none"/"0M CAW" → BadParse).
 function formatTipCeilingForMessage(tipCeiling: bigint, cawPrice: number): string {
   if (tipCeiling === 0n) return '0 CAW'
+  if (LEGACY_TIP_FORMAT) {
+    // Plain whole-token integer the deployed parser accepts (e.g. "1000000 CAW").
+    return `${tipCeiling.toString()} CAW`
+  }
   const cawStr = `${formatSpendLimitForMessage(tipCeiling)} CAW`
   if (cawPrice > 0) {
     const usd = Number(tipCeiling) * cawPrice
