@@ -229,11 +229,11 @@ export async function configureMediaNginx(installDir) {
 
   // Derive the bucket-side prefix (per-install isolation). Mirror what the
   // backend's mediaStorage.ts does: fall back to FILEBASE_KEY_PREFIX, else
-  // hostname-of-publicUrl. publicUrl is SHORTURL_DOMAIN at runtime, but at
-  // CLI time we can read the same .env to get it.
+  // hostname-of-publicUrl. publicUrl resolves HOST_DOMAIN (then SHORTURL_DOMAIN)
+  // at runtime; at CLI time we read the same .env to get it.
   const prefixOverride = readEnvKey(envPath, 'FILEBASE_KEY_PREFIX')
-  const shortUrlDomain = readEnvKey(envPath, 'SHORTURL_DOMAIN')
-  const prefix = (prefixOverride || (shortUrlDomain ? hostnameOf(shortUrlDomain) : null) || '').replace(/^\/+|\/+$/g, '')
+  const hostDomain = readEnvKey(envPath, 'HOST_DOMAIN') || readEnvKey(envPath, 'SHORTURL_DOMAIN')
+  const prefix = (prefixOverride || (hostDomain ? hostnameOf(hostDomain) : null) || '').replace(/^\/+|\/+$/g, '')
 
   const cert = findCertFor(mediaHost)
   if (!cert) {

@@ -317,8 +317,8 @@ export function patchMainNginxConfig(installDir) {
   const envPath = path.join(installDir, 'client', '.env')
   if (!fs.existsSync(envPath)) return { status: 'no-config', reason: 'client/.env missing' }
   const envText = fs.readFileSync(envPath, 'utf8')
-  const m = /^SHORTURL_DOMAIN=(.+)$/m.exec(envText) || /^PUBLIC_URL=(.+)$/m.exec(envText)
-  if (!m) return { status: 'no-config', reason: 'SHORTURL_DOMAIN not set in client/.env' }
+  const m = /^HOST_DOMAIN=(.+)$/m.exec(envText) || /^SHORTURL_DOMAIN=(.+)$/m.exec(envText) || /^PUBLIC_URL=(.+)$/m.exec(envText)
+  if (!m) return { status: 'no-config', reason: 'HOST_DOMAIN not set in client/.env' }
   let domain
   try { domain = new URL(m[1].replace(/^["']|["']$/g, '').trim()).hostname }
   catch { return { status: 'no-config', reason: `SHORTURL_DOMAIN is not a valid URL: ${m[1]}` } }

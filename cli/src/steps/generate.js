@@ -440,11 +440,15 @@ function buildEnvVars(nodeType, config) {
   env.REDIS_URL = config.redisUrl || 'redis://127.0.0.1:6379'
   env.ELASTICSEARCH_NODE = config.elasticsearchNode || 'http://127.0.0.1:9200'
 
-  // Public origin for URLs the API hands back to the browser (uploaded image
-  // URLs, short links, etc). Without this, upload routes fall back to
-  // http://localhost:4000, which a browser served over HTTPS rejects as
-  // mixed content. publicUrl() in client/src/api/util/publicUrl.ts reads it.
-  if (config.domain) env.SHORTURL_DOMAIN = `https://${config.domain}`
+  // Canonical public origin for the install — used for URLs the API hands back
+  // to the browser (uploaded image URLs, og tags, short links) and the CawAI
+  // citation links. Without this, upload routes fall back to
+  // http://localhost:4000, which a browser served over HTTPS rejects as mixed
+  // content. publicUrl() in client/src/api/util/publicUrl.ts reads HOST_DOMAIN
+  // (then SHORTURL_DOMAIN as back-compat fallback). SHORTURL_DOMAIN is no longer
+  // written here by default — set it manually only for an external URL shortener
+  // on a different host, where it overrides HOST_DOMAIN for short links.
+  if (config.domain) env.HOST_DOMAIN = `https://${config.domain}`
 
   // Per-install Elasticsearch index prefix. install.sh derives it from the
   // domain so two installs don't collide on flat index names like "caws"

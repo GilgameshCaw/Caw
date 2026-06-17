@@ -54,10 +54,10 @@ const Schema = z.object({
   aiMarker: z.string().default(''),
 
   // Public website base URL the bot uses to build citation links
-  // (e.g. <siteUrl>/resources/whitepaper). No NEW required env var: reuses
-  // the existing SHORTURL_DOMAIN (which already holds the public site origin),
-  // with an optional CAW_AI_SITE_URL override and a safe default. No trailing
-  // slash — links are built as `${siteUrl}/resources/...`.
+  // (e.g. <siteUrl>/resources/whitepaper). No NEW required env var: prefers the
+  // canonical HOST_DOMAIN (shared install-wide origin), with an optional
+  // CAW_AI_SITE_URL override and SHORTURL_DOMAIN back-compat fallback. No
+  // trailing slash — links are built as `${siteUrl}/resources/...`.
   siteUrl: z.string().url().default('https://caw.social'),
 
   // Optional: S3 bucket + key for persisting the cursor in Lambda
@@ -82,10 +82,10 @@ export function loadConfig(): CawAIConfig {
     ragIndexPath:     process.env.CAW_AI_RAG_INDEX_PATH,
     maxReplyChars:    process.env.CAW_AI_MAX_REPLY_CHARS,
     aiMarker:         process.env.CAW_AI_MARKER,
-    // Site URL precedence: explicit CAW_AI_SITE_URL override → existing
-    // SHORTURL_DOMAIN (already the public site origin) → zod default. Strip any
+    // Site URL precedence: explicit CAW_AI_SITE_URL override → canonical
+    // HOST_DOMAIN → SHORTURL_DOMAIN (back-compat) → zod default. Strip any
     // trailing slash so link-building stays clean.
-    siteUrl:          (process.env.CAW_AI_SITE_URL || process.env.SHORTURL_DOMAIN || undefined)?.replace(/\/+$/, ''),
+    siteUrl:          (process.env.CAW_AI_SITE_URL || process.env.HOST_DOMAIN || process.env.SHORTURL_DOMAIN || undefined)?.replace(/\/+$/, ''),
     s3Bucket:         process.env.CAW_AI_S3_BUCKET,
     s3CursorKey:      process.env.CAW_AI_S3_CURSOR_KEY,
   })

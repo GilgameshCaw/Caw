@@ -42,7 +42,7 @@ function testConfig(): CawAIConfig {
     ragIndexPath: process.env.CAW_AI_RAG_INDEX_PATH || './rag-index.jsonl',
     maxReplyChars: Number(process.env.CAW_AI_MAX_REPLY_CHARS) || 420,
     aiMarker: process.env.CAW_AI_MARKER ?? '',
-    siteUrl: (process.env.CAW_AI_SITE_URL || process.env.SHORTURL_DOMAIN || 'https://caw.social').replace(/\/+$/, ''),
+    siteUrl: (process.env.CAW_AI_SITE_URL || process.env.HOST_DOMAIN || process.env.SHORTURL_DOMAIN || 'https://caw.social').replace(/\/+$/, ''),
     // Unused by the reply path — placeholders so the typed object is complete.
     profileTokenId: 0,
     deployerPrivateKey: '0x' + '0'.repeat(64),

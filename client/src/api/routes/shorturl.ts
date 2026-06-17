@@ -7,10 +7,12 @@ import { requireAuth } from '../middleware/auth'
 
 const router = Router()
 
-// Short URLs use the install's public URL — same env var (SHORTURL_DOMAIN)
-// also drives og:url / og:image absolute paths in the prerender layer.
+// Short URLs default to the install's public URL (HOST_DOMAIN via publicUrl()),
+// but SHORTURL_DOMAIN takes precedence when set — that's the override for an
+// external URL shortener on its own host (e.g. caw.is). Precedence:
+// SHORTURL_DOMAIN → HOST_DOMAIN (publicUrl) → dev default.
 function getShortUrlDomain(): string {
-  return publicUrl()
+  return process.env.SHORTURL_DOMAIN || publicUrl()
 }
 
 // Health check

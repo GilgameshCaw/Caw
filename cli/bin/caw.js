@@ -157,7 +157,7 @@ const EXPECTED_DROPS = new Set([
   // Re-derived from network/chain/networkId on every run; safe to drop.
   'L1_CHAIN_ID', 'L2_CHAIN_ID', 'NETWORK',
   // Re-derived from CAW_DOMAIN (shell env, not .env) on every run.
-  'SHORTURL_DOMAIN',
+  'HOST_DOMAIN', 'SHORTURL_DOMAIN',
   // Generated each install but the value doesn't matter (logger flags etc).
   'NODE_ENV',
   // Sponsor/Moonpay vars written by generate.js but not mapped through
@@ -639,7 +639,7 @@ program
       const config = {
         network: env.NETWORK || 'testnet',
         networkId: Number(env.NETWORK_ID || 1),
-        domain: env.SHORTURL_DOMAIN?.replace(/^https?:\/\//, ''),
+        domain: (env.HOST_DOMAIN || env.SHORTURL_DOMAIN)?.replace(/^https?:\/\//, ''),
         apiPort: Number(env.PORT) || 4000,
         redisUrl: env.REDIS_URL,
         validatorId: Number(env.VALIDATOR_ID) || 1,

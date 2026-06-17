@@ -6,7 +6,8 @@ import { startApi, stopApi } from '../../api/server'
 const Config = z.object({
   port:            z.number().int().positive().default(4000),
   allowedOrigins:  z.array(z.string().url()).optional(),
-  shortUrlDomain:  z.string().url().optional() // Domain for short URLs (e.g., https://caw.is)
+  hostDomain:      z.string().url().optional(), // Canonical public origin for the install
+  shortUrlDomain:  z.string().url().optional()  // Override for an external URL shortener (e.g. https://caw.is)
 })
 
 type Config = z.infer<typeof Config>
@@ -22,14 +23,19 @@ export const apiService: Service = {
   },
 
   start(cfg: unknown, ctx) {
-    const { port, allowedOrigins, shortUrlDomain } = Config.parse(cfg)
+    const { port, allowedOrigins, hostDomain, shortUrlDomain } = Config.parse(cfg)
 
     // inject allowedOrigins into process.env so server picks it up
     if (allowedOrigins) {
       process.env.ALLOWED_ORIGINS = allowedOrigins.join(',')
     }
 
-    // inject shortUrlDomain into process.env
+    // inject hostDomain (canonical public origin) into process.env
+    if (hostDomain) {
+      process.env.HOST_DOMAIN = hostDomain
+    }
+
+    // inject shortUrlDomain (external-shortener override) into process.env
     if (shortUrlDomain) {
       process.env.SHORTURL_DOMAIN = shortUrlDomain
     }
