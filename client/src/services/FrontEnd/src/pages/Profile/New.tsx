@@ -1471,7 +1471,15 @@ console.log("BALANCE:", balance)
   // a now-non-captive activeToken (the new mint just landed in the
   // store), briefly flashing the full sidebar/topbar before the route
   // settles to /welcome and MainLayout unmounts entirely.
-  const showMintingTakeover = !hasResetForm && (mintStatus === 'pending' || (mintStatus === 'success' && !mintSuccess))
+  // Keep the "creating profile…" takeover up through the ENTIRE success path —
+  // not just until mintSuccess flips. mintSuccess and the navigate() to
+  // /welcome/:username land in the same commit, but the router takes a frame (or
+  // more, while WelcomePage resolves the fresh token) to unmount /usernames/new.
+  // If the takeover dropped the instant mintSuccess flipped, the bare username
+  // form flashes on the still-mounted /usernames/new route until the route
+  // settles. Holding the takeover through `mintSuccess` covers that gap; this
+  // component unmounts on the route change, tearing the overlay down with it.
+  const showMintingTakeover = !hasResetForm && (mintStatus === 'pending' || mintStatus === 'success' || mintSuccess)
   const setHideChromeOverride = useLayoutStore(s => s.setHideChromeOverride)
   useEffect(() => {
     if (showMintingTakeover) {
