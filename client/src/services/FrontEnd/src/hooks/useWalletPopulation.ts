@@ -78,11 +78,21 @@ export function useWalletPopulation(): UseWalletPopulationReturn {
   const isPasskeyInstall = getJSON<string | null>(IDENTITY_KIND_KEY, null) === IDENTITY_KIND_PASSKEY
 
   const population = useMemo<WalletPopulation>(() => {
-    // No wagmi wallet connected. Two ways this is still Population B:
-    //   - recovery mode (signed in via backup file → secp256k1 ecdsaFallback)
-    //   - a passkey install with a known owner address (sponsored Pop-B user)
+    // Recovery mode (backup-file sign-in) is unambiguously Population B regardless
+    // of wallet state — the secp256k1 ecdsaFallback key is the active signer.
+    if (recoveryCtx.isInRecoveryMode) return 'B'
+
+    // A wagmi wallet is CONNECTED but its address isn't available yet — the wallet
+    // is locked or still initializing. This is a TRANSIENT wallet state, not a
+    // passkey user: do NOT fall through to the passkey-install branch (a stale
+    // "this browser enrolled a passkey" marker would otherwise misclassify a
+    // Population-A wallet user as B and route them to the backup-file signer).
+    // Return 'none'+loading so signing waits for the wallet to unlock.
+    if (isConnected && !address) return 'none'
+
+    // No wagmi wallet at all. A passkey install with a known owner address is a
+    // sponsored Population-B user (they never connect a wagmi wallet).
     if (!isConnected || !address) {
-      if (recoveryCtx.isInRecoveryMode) return 'B'
       if (isPasskeyInstall && lastAddress) return 'B'
       return 'none'
     }
@@ -102,7 +112,11 @@ export function useWalletPopulation(): UseWalletPopulationReturn {
 
   return {
     population,
-    loading: isConnected && !!address && isLoading,
+    // Loading while the bytecode query runs, OR while a connected wallet hasn't
+    // surfaced its address yet (locked/initializing) and we're not in recovery —
+    // callers should wait rather than treat the user as a final population.
+    loading: (isConnected && !!address && isLoading) ||
+             (isConnected && !address && !recoveryCtx.isInRecoveryMode),
     address: effectiveAddress,
   }
 }

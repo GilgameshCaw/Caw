@@ -11,6 +11,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { renderHook, waitFor } from '@testing-library/react'
 import { classifyBytecode, useWalletPopulation, type WalletPopulation } from './useWalletPopulation'
+import { useTokenDataStore } from '~/store/tokenDataStore'
 
 // ─── classifyBytecode unit tests (pure function, no mocks) ───────────────────
 
@@ -173,5 +174,31 @@ describe('useWalletPopulation', () => {
     expect(result.current.population).toBe<WalletPopulation>('B')
     expect(result.current.address).toBe(recoveryAddr)
     expect(result.current.loading).toBe(false)
+  })
+
+  // Regression: a CONNECTED wagmi wallet whose address isn't available yet
+  // (locked / initializing) must NOT classify as B even when this browser has a
+  // stale passkey-install marker + a stored owner address. Returning B here
+  // routed a Population-A wallet user to the backup-file signer ("needs your
+  // backup file") instead of waiting for the wallet to unlock.
+  it('returns none (loading) for a connected-but-locked wallet despite a passkey-install marker', async () => {
+    // Stale passkey marker + a stored owner address — the contamination source.
+    localStorage.setItem('caw:identity-kind', JSON.stringify('passkey'))
+    useTokenDataStore.setState({ lastAddress: '0x1111111111111111111111111111111111111111' as `0x${string}` })
+
+    // Connected, but no address surfaced yet (wallet locked / initializing).
+    mockUseAccount.mockReturnValue({ address: undefined, isConnected: true })
+    mockUsePublicClient.mockReturnValue({ getCode: vi.fn() })
+    mockUseRecoveryContext.mockReturnValue({
+      privateKey: null, address: null, isInRecoveryMode: false, setKey: vi.fn(), clearKey: vi.fn(),
+    })
+
+    const { result } = renderHook(() => useWalletPopulation(), { wrapper: makeWrapper() })
+
+    expect(result.current.population).toBe<WalletPopulation>('none')
+    expect(result.current.loading).toBe(true)
+
+    localStorage.removeItem('caw:identity-kind')
+    useTokenDataStore.setState({ lastAddress: undefined })
   })
 })
