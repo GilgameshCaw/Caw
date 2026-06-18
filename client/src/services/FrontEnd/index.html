@@ -131,8 +131,26 @@
           var r = e.reason;
           show('promise', (r && (r.stack || r.message)) || String(r));
         });
+        // Hang detector: if no error fired AND #root is still empty after 6s,
+        // the bundle either never executed or ran without mounting React. Report
+        // which, plus a UA string, so a black screen yields SOME signal even when
+        // nothing throws (iOS-WebKit silent failures don't trigger onerror).
+        window.__cawBootBeacon = 'html-parsed';
+        setTimeout(function () {
+          if (document.getElementById('boot-error')) return; // a real error already shown
+          var root = document.getElementById('root');
+          if (root && root.childElementCount > 0) return;     // React mounted fine
+          show('hang', 'No error thrown, but the app did not render within 6s.'
+            + '\nbeacon=' + window.__cawBootBeacon
+            + '\nrootChildren=' + (root ? root.childElementCount : 'no-root')
+            + '\nUA=' + navigator.userAgent);
+        }, 6000);
       })();
     </script>
+    <!-- Beacon: a separate module that runs BEFORE main.tsx. If main.tsx's own
+         import chain (instrument/polyfills/etc) throws on iOS WebKit, this still
+         flips the beacon so the hang report can say "bundle entry reached". -->
+    <script type="module">window.__cawBootBeacon = 'module-script-ran';</script>
     <script type="module" src="/src/main.tsx"></script>
   </body>
 </html>
