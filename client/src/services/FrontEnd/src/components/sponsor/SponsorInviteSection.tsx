@@ -73,6 +73,10 @@ export default function SponsorInviteSection() {
 
   const [quote, setQuote] = useState<InviteQuote | null>(null)
   const [codes, setCodes] = useState<MyCode[]>([])
+  // A locally-injected pending row shown the instant a purchase is signed, before
+  // the server's TxQueue row is queryable. Cleared once the server returns its own
+  // row (pending or minted) carrying the same gift. Keyed by giftCawWei.
+  const [optimisticPending, setOptimisticPending] = useState<MyCode | null>(null)
   const [usdInput, setUsdInput] = useState('2.50')
   // Default to the 8+ tier (cheapest burn) — most sponsors don't need to gift a
   // short premium name.
@@ -94,15 +98,27 @@ export default function SponsorInviteSection() {
 
   const loadCodes = useCallback(() => {
     apiFetch<{ codes: MyCode[] }>('/api/sponsor/my-codes')
-      .then(r => setCodes(r.codes ?? []))
+      .then(r => {
+        const list = r.codes ?? []
+        setCodes(list)
+        // Drop the optimistic placeholder once the server has its OWN row for the
+        // same gift (pending or minted) — otherwise the same purchase double-shows.
+        setOptimisticPending(prev =>
+          prev && list.some(c => c.giftCawWei === prev.giftCawWei) ? null : prev,
+        )
+      })
       .catch(() => { /* not signed in / none — leave empty */ })
   }, [])
   useEffect(() => { loadCodes() }, [loadCodes])
 
-  // While any code is still pending (submitted on-chain, awaiting index), poll
-  // every 8s so it flips to a real code on its own — including after a refresh,
-  // where the post-submit polling closure in handleBuy no longer exists.
-  const hasPending = codes.some(c => c.pending)
+  // The rendered list = server rows, plus the optimistic placeholder if it hasn't
+  // been superseded yet. Optimistic row first (it's the freshest action).
+  const displayCodes = optimisticPending ? [optimisticPending, ...codes] : codes
+
+  // While any code is still pending (submitted on-chain, awaiting index) — server
+  // row OR the optimistic placeholder — poll every 8s so it flips to a real code
+  // on its own, including after a refresh (where the post-submit poll is gone).
+  const hasPending = displayCodes.some(c => c.pending)
   useEffect(() => {
     if (!hasPending) return
     const id = setInterval(loadCodes, 8000)
@@ -202,13 +218,30 @@ export default function SponsorInviteSection() {
         text: `sp-i:${giftWholeCaw}:${minLen}`,
       })
       setBuyState('submitted')
-      // The code is minted asynchronously once the action is indexed; poll the
-      // list a few times so it appears without a manual refresh.
+      // Optimistically show a PENDING entry the instant we've signed — before the
+      // server's TxQueue row is even queryable — so the user never sees an empty
+      // list after a successful submit. The server-derived pending row (and then
+      // the real minted code) supersedes it on the next loadCodes() via dedup on
+      // giftCawWei. Cleared once a server row with the same gift shows up.
+      const optimisticGiftWei = (BigInt(giftWholeCaw) * 10n ** 18n).toString()
+      setOptimisticPending({
+        code: null,
+        used: false,
+        pending: true,
+        usesRemaining: null,
+        giftCawWei: optimisticGiftWei,
+        paidCawWei: optimisticGiftWei,
+        createdAt: new Date().toISOString(),
+        expiresAt: null,
+      })
+      // Refetch right away (server should have the TxQueue row by now), then keep
+      // polling so it advances pending → minted without a manual refresh.
+      loadCodes()
       let tries = 0
       const poll = setInterval(() => {
         tries++
         loadCodes()
-        if (tries >= 6) { clearInterval(poll); setBuyState('idle') }
+        if (tries >= 12) { clearInterval(poll); setBuyState('idle') }
       }, 5000)
     } catch (err: any) {
       console.error('[buy-invite] failed:', err)
@@ -331,11 +364,11 @@ export default function SponsorInviteSection() {
       {/* ── My codes ─────────────────────────────────────────────────────── */}
       <div className={cardClass}>
         <h3 className={`text-lg font-bold mb-3 ${strongClass}`}>My invite codes</h3>
-        {codes.length === 0 ? (
+        {displayCodes.length === 0 ? (
           <p className={`text-sm ${mutedClass}`}>You haven't bought any invite codes yet.</p>
         ) : (
           <ul className="space-y-2">
-            {codes.map((c, i) => (
+            {displayCodes.map((c, i) => (
               <li
                 key={i}
                 className={`flex items-center justify-between gap-3 px-3 py-2 rounded-xl ${
