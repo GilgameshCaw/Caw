@@ -233,10 +233,13 @@ export default function SponsorInviteSection() {
       {/* ── Buy a code ───────────────────────────────────────────────────── */}
       <div className={cardClass}>
         <h3 className={`text-lg font-bold mb-1 ${strongClass}`}>Sponsor an invite code</h3>
-        <p className={`text-sm mb-4 ${mutedClass}`}>
+        <p className={`text-sm mb-2 ${mutedClass}`}>
           Pay CAW to mint a sponsored invite code you can give to a friend. Your
           payment covers the gas, their username, and network fees — anything above
           is given to the invitee as a gift.
+        </p>
+        <p className={`text-sm mb-4 font-medium ${isDark ? 'text-yellow-400' : 'text-yellow-600'}`}>
+          This + a passkey lets your friends create an account even if they don't have a wallet.
         </p>
 
         {!priceReady ? (
