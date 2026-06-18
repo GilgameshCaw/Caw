@@ -72,6 +72,7 @@ const LanguageSettings = lazyWithReload(() => import("./pages/LanguageSettings")
 const AccountSettings = lazyWithReload(() => import("./pages/AccountSettings"));
 const SessionKeySettings = lazyWithReload(() => import("./pages/SessionKeySettings"));
 const AIProviderSettings = lazyWithReload(() => import("./pages/AIProviderSettings"));
+const InvitePage = lazyWithReload(() => import("./pages/Invite"));
 const HelpPage = lazyWithReload(() => import("./pages/HelpPage"));
 const WhitepaperPage = lazyWithReload(() => import("./pages/WhitepaperPage"));
 const ManifestoPage = lazyWithReload(() => import("./pages/ManifestoPage"));
@@ -157,6 +158,7 @@ export const layoutRoutes: RouteDef[] = [
   { path: "/settings/account", component: <AuthGate><AccountSettings /></AuthGate> },
   { path: "/settings/session-keys", component: <AuthGate><SessionKeySettings /></AuthGate> },
   { path: "/settings/ai-provider", component: <AuthGate><AIProviderSettings /></AuthGate> },
+  { path: "/invite", component: <AuthGate><InvitePage /></AuthGate> },
   // The base /resources IS the resources (links) tab — first in the tab bar.
   { path: "/resources", component: <HelpPage defaultTab="resources" /> },
   { path: "/resources/faq", component: <HelpPage defaultTab="faq" /> },

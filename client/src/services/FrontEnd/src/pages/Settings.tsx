@@ -1,7 +1,7 @@
 import { useTheme } from '~/hooks/useTheme'
 import { useState } from 'react'
 import { useNavigate } from '~/utils/localizedRouter'
-import { HiUser, HiBell, HiVolumeOff, HiLightningBolt, HiTranslate, HiOutlineShieldCheck, HiSparkles } from 'react-icons/hi'
+import { HiUser, HiBell, HiVolumeOff, HiLightningBolt, HiTranslate, HiOutlineShieldCheck, HiSparkles, HiGift } from 'react-icons/hi'
 import { useT } from '~/i18n/I18nProvider'
 import { useMyRole } from '~/hooks/useMyRole'
 
@@ -54,6 +54,14 @@ export const SettingsPage: React.FC = () => {
       icon: <HiSparkles className="w-5 h-5" />,
       hasArrow: true,
       onClick: () => navigate('/settings/ai-provider')
+    },
+    {
+      id: 'invite',
+      title: t('settings.invite.title'),
+      description: t('settings.invite.description'),
+      icon: <HiGift className="w-5 h-5" />,
+      hasArrow: true,
+      onClick: () => navigate('/invite')
     },
     {
       id: 'muted-content',

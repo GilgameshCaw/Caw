@@ -42,6 +42,8 @@
   "settings.quick_sign.description": "Sign once, then post without wallet popups",
   "settings.muted.title": "Muted Content",
   "settings.muted.description": "Manage muted words, accounts, and threads",
+  "settings.invite.title": "Invite friends",
+  "settings.invite.description": "Sponsor invite codes so friends can join — even without a wallet",
   "notifications_settings.title": "Notifications",
   "notifications_settings.subtitle": "Choose what you get notified about",
   "notifications_settings.local_storage_notice": "These preferences are stored in this browser only. In-app notifications will respect these settings.",

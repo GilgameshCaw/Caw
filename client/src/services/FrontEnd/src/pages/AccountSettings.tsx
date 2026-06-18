@@ -21,7 +21,6 @@ import { formatAddress } from '~/utils'
 import { ThumbtackIcon } from '~/components/icons/ThumbtackIcon'
 import { useT } from '~/i18n/I18nProvider'
 import { IdentitySection } from '~/components/identity/IdentitySection'
-import SponsorInviteSection from '~/components/sponsor/SponsorInviteSection'
 import { WithdrawLockStatus } from '~/components/WithdrawLockStatus'
 
 // 401s on the X verification flow are expected when the user's session
@@ -1003,17 +1002,9 @@ const AccountSettings: React.FC = () => {
         {/* Identity (Population B only — hidden for A and C) */}
         <IdentitySection username={activeToken?.username} />
 
-        {/* Buy / manage sponsored invite codes */}
-        {activeTokenId && (
-          <section className="mb-8">
-            <h2 className={`text-sm font-semibold mb-2 uppercase tracking-wide ${
-              isDark ? 'text-white/40' : 'text-gray-400'
-            }`}>
-              Invite codes
-            </h2>
-            <SponsorInviteSection />
-          </section>
-        )}
+        {/* Invite codes moved to the dedicated /invite page (Settings → Invite
+            friends). Invites are for all wallet types, so they get their own
+            shareable home rather than living under account settings. */}
 
         {/* Contract Info */}
         <section className="mb-8">
