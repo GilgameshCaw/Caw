@@ -102,6 +102,37 @@
         }
       } catch(e) {}
     </script>
+    <!-- TEMP DIAGNOSTIC (remove after debugging the iOS-Safari black screen):
+         paint the first uncaught error / unhandled rejection to the screen.
+         Runs before the module bundle, so it surfaces import-time crashes that
+         happen before React (and the Sentry ErrorBoundary) can mount. -->
+    <script>
+      (function () {
+        function show(label, msg) {
+          try {
+            var el = document.getElementById('boot-error');
+            if (!el) {
+              el = document.createElement('pre');
+              el.id = 'boot-error';
+              el.style.cssText = 'position:fixed;inset:0;z-index:99999;margin:0;padding:16px;'
+                + 'background:#1a0000;color:#ff8080;font:12px/1.4 monospace;white-space:pre-wrap;'
+                + 'word-break:break-word;overflow:auto;';
+              (document.body || document.documentElement).appendChild(el);
+            }
+            el.textContent += '[' + label + '] ' + msg + '\n\n';
+          } catch (_) {}
+        }
+        window.addEventListener('error', function (e) {
+          show('error', (e.message || e.error || 'unknown')
+            + (e.filename ? '\n  at ' + e.filename + ':' + e.lineno + ':' + e.colno : '')
+            + (e.error && e.error.stack ? '\n' + e.error.stack : ''));
+        });
+        window.addEventListener('unhandledrejection', function (e) {
+          var r = e.reason;
+          show('promise', (r && (r.stack || r.message)) || String(r));
+        });
+      })();
+    </script>
     <script type="module" src="/src/main.tsx"></script>
   </body>
 </html>

@@ -739,7 +739,7 @@ export default function Onboarding() {
                 {t('onboarding.welcome.body')}
               </p>
 
-              <div className={`rounded-xl border px-4 py-3 mb-8 text-sm ${
+              <div className={`rounded-xl border px-4 py-3 mb-8 text-sm whitespace-pre-line ${
                 isDark ? 'border-yellow-500/25 bg-yellow-500/5 text-yellow-200/90' : 'border-yellow-300 bg-yellow-50 text-yellow-800'
               }`}>
                 {t('onboarding.welcome.sponsored_note')}

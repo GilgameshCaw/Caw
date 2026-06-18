@@ -1571,7 +1571,7 @@
   "onboarding.welcome.kicker": "You've been invited",
   "onboarding.welcome.title": "You've been gifted access to CAW",
   "onboarding.welcome.body": "Someone paid to bring you into the uncensorable social network. Your spot is reserved — and funded.",
-  "onboarding.welcome.sponsored_note": "Your account is sponsored — creating a CAW profile normally costs CAW. This one's covered.",
+  "onboarding.welcome.sponsored_note": "Your account is sponsored — creating a CAW profile normally costs CAW.\nThis one's covered.",
   "onboarding.welcome.cta": "Choose your username →",
   "onboarding.step.username": "Username",
   "onboarding.step.deposit": "Deposit",
