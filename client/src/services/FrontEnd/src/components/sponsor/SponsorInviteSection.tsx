@@ -254,8 +254,13 @@ export default function SponsorInviteSection() {
     }
   }
 
+  // The full shareable invite link the buyer sends to a friend. Onboarding reads
+  // ?code=<CODE> from the URL (see Onboarding.tsx), so this is the only thing the
+  // recipient needs — no separate code entry.
+  const inviteLink = (code: string) => `${window.location.origin}/onboarding?code=${encodeURIComponent(code)}`
+
   const copy = (code: string, idx: number) => {
-    navigator.clipboard?.writeText(code).then(() => {
+    navigator.clipboard?.writeText(inviteLink(code)).then(() => {
       setCopiedIdx(idx)
       setTimeout(() => setCopiedIdx(null), 1500)
     }).catch(() => { /* clipboard blocked — user can select manually */ })
@@ -380,26 +385,51 @@ export default function SponsorInviteSection() {
                     type="button"
                     onClick={() => c.code && copy(c.code, i)}
                     className={`font-mono text-sm truncate ${strongClass} ${c.code ? 'cursor-pointer hover:underline' : ''}`}
-                    title={c.code ?? ''}
+                    title={c.code ? inviteLink(c.code) : ''}
                   >
                     {c.code ?? (c.pending ? 'Generating your code…' : '— (unavailable on this device)')}
                   </button>
                   <div className={`text-xs ${mutedClass}`}>
                     Gift ~${formatUsd((Number(BigInt(c.giftCawWei) / 10n ** 18n)) * rate)}
-                    {copiedIdx === i && <span className="text-green-500 ml-2">Copied!</span>}
+                    {copiedIdx === i && <span className="text-green-500 ml-2">Link copied!</span>}
                   </div>
                 </div>
-                <span
-                  className={`text-xs font-semibold px-2 py-1 rounded-full shrink-0 ${
-                    c.pending
-                      ? (isDark ? 'bg-yellow-500/15 text-yellow-400' : 'bg-yellow-100 text-yellow-700')
-                      : c.used
-                        ? (isDark ? 'bg-gray-500/20 text-gray-400' : 'bg-gray-200 text-gray-600')
-                        : (isDark ? 'bg-green-500/15 text-green-400' : 'bg-green-100 text-green-700')
-                  }`}
-                >
-                  {c.pending ? 'Pending' : c.used ? 'Used' : 'Unused'}
-                </span>
+                <div className="flex items-center gap-2 shrink-0">
+                  {c.code && (
+                    <button
+                      type="button"
+                      onClick={() => copy(c.code!, i)}
+                      title="Copy invite link"
+                      aria-label="Copy invite link"
+                      className={`p-1.5 rounded-lg transition-colors cursor-pointer ${
+                        copiedIdx === i
+                          ? 'text-green-500'
+                          : isDark ? 'text-white/60 hover:text-white hover:bg-white/10' : 'text-gray-500 hover:text-gray-900 hover:bg-black/5'
+                      }`}
+                    >
+                      {copiedIdx === i ? (
+                        <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+                        </svg>
+                      ) : (
+                        <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 5H6a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2v-2M8 5a2 2 0 002 2h2a2 2 0 002-2M8 5a2 2 0 012-2h2a2 2 0 012 2m0 0h2a2 2 0 012 2v3" />
+                        </svg>
+                      )}
+                    </button>
+                  )}
+                  <span
+                    className={`text-xs font-semibold px-2 py-1 rounded-full ${
+                      c.pending
+                        ? (isDark ? 'bg-yellow-500/15 text-yellow-400' : 'bg-yellow-100 text-yellow-700')
+                        : c.used
+                          ? (isDark ? 'bg-gray-500/20 text-gray-400' : 'bg-gray-200 text-gray-600')
+                          : (isDark ? 'bg-green-500/15 text-green-400' : 'bg-green-100 text-green-700')
+                    }`}
+                  >
+                    {c.pending ? 'Pending' : c.used ? 'Used' : 'Unused'}
+                  </span>
+                </div>
               </li>
             ))}
           </ul>
