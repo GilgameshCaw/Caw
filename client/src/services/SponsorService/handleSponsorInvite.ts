@@ -33,6 +33,18 @@ const CODE_TIER = 'long' as const
 const MIN_USERNAME_FLOOR = 6
 
 /**
+ * Whether THIS node is the designated minter for paid invite codes. A buy-a-code
+ * action reaches every mirror; only the node with SPONSOR_INVITE_MINTER_ENABLED
+ * set truthy mints. Default OFF so replica mirrors never double-mint. Set true on
+ * exactly one node per validator (typically the same node that runs the sponsor
+ * server / holds INVITE_CODE_ENC_KEY).
+ */
+function isInviteMinterEnabled(): boolean {
+  const raw = (process.env.SPONSOR_INVITE_MINTER_ENABLED ?? '').trim().toLowerCase()
+  return raw === '1' || raw === 'true' || raw === 'yes'
+}
+
+/**
  * Process a "sponsor-invite:<giftCaw>:<minLen>" OTHER action. rawAction carries
  * recipients[0] = the tip-target validator profile tokenId, amounts[0] = the tip
  * in WHOLE CAW. `action.senderId`/`action.cawonce` identify the buyer + nonce.
@@ -42,6 +54,19 @@ export async function handleSponsorInviteAction(
   action: { senderId: number; cawonce: number; validatorId?: number | null },
   rawAction: { text?: string; recipients?: any[]; amounts?: (string | bigint | number)[] },
 ): Promise<void> {
+  // ── Gate 0: this mirror must be the DESIGNATED MINTER. ────────────────────
+  // The buy-a-code action replicates to EVERY mirror, but a sponsor code may be
+  // minted exactly once — a code minted twice (e.g. on two mirrors that share a
+  // PurchasedInviteCode/SponsorCode store, or worse, two SEPARATE stores both
+  // configured with the same validator profile) would either collide or hand
+  // the buyer two different codes for one purchase. The `@@unique([senderId,
+  // cawonce])` constraint dedups WITHIN one database, but mirrors with separate
+  // databases can't see each other's rows, so we gate minting behind an explicit
+  // opt-in: only the node flagged SPONSOR_INVITE_MINTER_ENABLED mints. Default
+  // OFF → a replica mirror never mints, even if it shares the tipped validator
+  // id. The operator sets it true on exactly ONE node per validator.
+  if (!isInviteMinterEnabled()) return
+
   // ── Gate 1: this mirror must be the tipped validator. ─────────────────────
   const ownTokenId = getOwnValidatorTokenIdSync()
   const recipientTokenId = Number(rawAction.recipients?.[0])
@@ -67,7 +92,7 @@ export async function handleSponsorInviteAction(
   if (tipWholeCaw <= 0n) return
   const paidCawWei = tipWholeCaw * WEI
 
-  // ── Pricing gate: tip must clear the gas floor. ───────────────────────────
+  // ── Pricing gate: prices must be available. ───────────────────────────────
   const quote = quoteSponsorInviteCostCaw()
   if (!quote.priceAvailable) {
     // Without live prices we can't safely price the gift; skip rather than mint
@@ -76,13 +101,14 @@ export async function handleSponsorInviteAction(
     console.warn(`[sponsor-invite] prices unavailable; skipping mint for sender=${senderId} cawonce=${cawonce}`)
     return
   }
-  if (tipWholeCaw <= quote.gasFloorCaw) {
-    // Under-gas: no code. The buyer's My-Invite-Codes list shows nothing for
-    // this action, which the FE surfaces as "payment didn't cover gas." No
-    // refund (documented). Nothing persisted.
-    console.warn(`[sponsor-invite] tip ${tipWholeCaw} CAW below gas floor ${quote.gasFloorCaw}; no code (sender=${senderId})`)
-    return
-  }
+  // NOTE: we no longer REJECT an under-gas tip here. The gift floats with real
+  // costs — a tip that barely covers (or undershoots) overhead simply mints a
+  // code with a small (or zero) gift, instead of silently producing NO code.
+  // This removes the buy-time-vs-index-time gas-floor mismatch that could make a
+  // paid purchase yield nothing: gas moving between when the FE quoted and when
+  // this handler runs can't reject the mint anymore, it only shrinks the gift.
+  // The FE pads the tip with a ~15% gas buffer + tells the buyer the gift size
+  // fluctuates with gas, so a positive gift is the normal outcome.
 
   if (!isInviteCodeCryptoConfigured()) {
     console.error('[sponsor-invite] INVITE_CODE_ENC_KEY not set; cannot store buyer code — skipping mint')

@@ -137,8 +137,17 @@ export default function SponsorInviteSection() {
   // PLUS the username BURN for the shortest name this code allows (the server
   // fronts that burn at redeem). A shorter min-length → bigger burn → higher
   // overhead → higher minimum. The gift is tip − overhead.
+  //
+  // GAS BUFFER: pad the gas+LZ leg by 15% so the buyer slightly over-funds. The
+  // code is redeemed LATER at whatever gas costs then — the gift is settled
+  // against real costs at the friend's signup, not frozen now (see note below
+  // the form). The buffer keeps a modest gas rise from eating the whole gift.
+  // The burn leg is a fixed CAW amount, so it gets no buffer.
+  const GAS_BUFFER_NUM = 115
+  const GAS_BUFFER_DEN = 100
   const burnCaw = burnCostForLen(minLen)
-  const overheadCaw = gasMarginCaw + burnCaw
+  const bufferedGasMarginCaw = (gasMarginCaw * BigInt(GAS_BUFFER_NUM)) / BigInt(GAS_BUFFER_DEN)
+  const overheadCaw = bufferedGasMarginCaw + burnCaw
   // Minimum the sponsor may enter: the overhead, rounded up to the next cent, plus
   // one cent of headroom so the smallest valid entry still produces a positive gift.
   const overheadUsd = Number(overheadCaw) * rate
@@ -319,7 +328,10 @@ export default function SponsorInviteSection() {
             ) : giftUsd > 0 ? (
               <p className={`text-xs mt-1 ${mutedClass}`}>
                 ~${giftUsd.toFixed(2)} will be given as a gift to the user, which will
-                cover their first ~{sponsoredActions.toLocaleString()} action{sponsoredActions === 1 ? '' : 's'}.
+                cover their first ~{sponsoredActions.toLocaleString()} action{sponsoredActions === 1 ? '' : 's'}.{' '}
+                <span className={isDark ? 'text-white/40' : 'text-gray-400'}>
+                  The exact gift is settled when your friend signs up, so it may shift a little with gas prices.
+                </span>
               </p>
             ) : null}
 

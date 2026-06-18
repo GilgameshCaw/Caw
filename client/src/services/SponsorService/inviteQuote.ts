@@ -46,9 +46,21 @@ const LZ_RELAY_WEI = 1_000_000_000_000_000n // 0.001 ETH
  */
 function effectiveGasPriceWei(): bigint {
   const cache = getGasPriceCache()
-  if (cache && cache.gasPriceWei > 0n && Date.now() - cache.updatedAt <= MAX_GAS_AGE_MS) {
+  if (cache && cache.gasPriceWei > 0n) {
+    // Fresh cache: live mainnet gas × safety margin — the normal path.
+    if (Date.now() - cache.updatedAt <= MAX_GAS_AGE_MS) {
+      return (cache.gasPriceWei * GAS_PRICE_SAFETY_NUM) / GAS_PRICE_SAFETY_DEN
+    }
+    // STALE cache (sync lagging): prefer the last KNOWN gas price over the
+    // punitive 20-gwei fallback ceiling. The ceiling is ~orders of magnitude
+    // above quiet mainnet/testnet gas, and using it here made the buy-time and
+    // index-time gas floors diverge ~90× — the buyer paid against a low floor,
+    // then the handler re-quoted against the ceiling and rejected. A slightly
+    // stale real price is a far better estimate than a worst-case ceiling.
     return (cache.gasPriceWei * GAS_PRICE_SAFETY_NUM) / GAS_PRICE_SAFETY_DEN
   }
+  // No gas data at all (cold start, never synced): conservative ceiling so a
+  // code is over-funded rather than under. Rare.
   return GAS_PRICE_FALLBACK_WEI
 }
 // Reject prices older than this. A stale-low CAW price would let a buyer clear
