@@ -99,9 +99,32 @@ export async function embedQuery(text: string, _cfg?: CawAIConfig): Promise<numb
 // Hard character clamp applied to model output BEFORE posting. Never
 // trust the model to obey the system-prompt length rule — a
 // prompt-injected reply that's 5000 chars long would just get sliced.
+//
+// When it must truncate, it backs off to a clean boundary so it never cuts
+// mid-word ("...The cha…"): prefer the last sentence end, else the last word
+// break, within the available room. The hard cap is still absolute — the
+// result is always <= maxChars — so the security guarantee is unchanged.
 export function clampReply(text: string, maxChars: number, marker: string): string {
   const room = maxChars - marker.length
   let body = text.trim()
-  if (body.length > room) body = body.slice(0, room - 1).trimEnd() + '…'
+  if (body.length > room) {
+    // Reserve one char for the ellipsis.
+    const slice = body.slice(0, room - 1)
+    // Prefer a sentence boundary if one lands in the back portion of the slice
+    // (don't chop the reply in half for the sake of a period).
+    const sentenceEnd = Math.max(
+      slice.lastIndexOf('. '), slice.lastIndexOf('! '), slice.lastIndexOf('? '),
+    )
+    const wordEnd = slice.lastIndexOf(' ')
+    let cut: number
+    if (sentenceEnd >= room * 0.6) {
+      cut = sentenceEnd + 1               // include the punctuation, drop trailing space
+    } else if (wordEnd > 0) {
+      cut = wordEnd                       // last whole word
+    } else {
+      cut = slice.length                  // single very long token — hard slice
+    }
+    body = slice.slice(0, cut).trimEnd() + '…'
+  }
   return body + marker
 }
