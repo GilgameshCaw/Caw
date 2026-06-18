@@ -2461,8 +2461,37 @@ export const validatorService: Service = {
         }
         const subReason = subErr.message || lastRevertReason
         if (entries.length === 1) {
-          // Terminal: this single action is the reverter.
+          // Terminal: this single action is the reverter — but "reverter" here
+          // very often means "lost the cawonce race to a peer", i.e. the action
+          // already landed on-chain via another node. submitProcessActions does
+          // a real sendTransaction, whose CALL_EXCEPTION carries reason=null, so
+          // subReason is a generic ethers blob, NOT the clean "Cawonce already
+          // used" string. That meant this terminal branch skipped the
+          // resolveCawonceUsed rescue the simulation + per-network bisect paths
+          // both run — surfacing a false ACTION_FAILED for an action that
+          // actually succeeded. (nyaromesama: 428/428 "Bisected revert"
+          // failures on their node were false; every one existed on-chain.)
+          //
+          // Cross-check the Action table directly (resolveCawonceUsed is
+          // reason-string-agnostic — it looks up senderId+cawonce). If the
+          // action landed via a peer, mark it validated_by_peer; if the indexer
+          // just hasn't caught up, requeue as pending and recheck next tick;
+          // only a genuine no-such-action gets the Bisected revert failure.
           const entry = entries[0]
+          const data = (entry.payload as any).data
+          const resolution = await resolveCawonceUsed(data, entry.updatedAt, httpProvider)
+          if (resolution === 'done') {
+            await markTxQueueValidatedByPeer(entry.id, (entry as any).payload, (entry as any).signedTx)
+            verdictByEntryId.set(entry.id, { succeeded: true })
+            console.log(`[Validator/bisect]${indent} ↺ TxQueue #${entry.id} already landed via peer — validated_by_peer (no false failure)`)
+            return
+          }
+          if (resolution === 'awaiting_indexer') {
+            verdictByEntryId.set(entry.id, { pending: true })
+            console.log(`[Validator/bisect]${indent} … TxQueue #${entry.id} reverted but Action not yet indexed — deferring`)
+            return
+          }
+          // Genuinely failed: no Action row for this senderId+cawonce.
           verdictByEntryId.set(entry.id, { succeeded: false, reason: `Bisected revert: ${subReason}` })
           console.warn(`[Validator/bisect]${indent} ✗ isolated reverter: TxQueue #${entry.id} (${subReason.slice(0, 120)})`)
           return
