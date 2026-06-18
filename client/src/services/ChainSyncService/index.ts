@@ -542,6 +542,20 @@ export function isPriceFresh(maxAgeMs: number = 5 * 60 * 1000): boolean {
 /**
  * Load prices from database (for startup)
  */
+// A DB-persisted price younger than this is treated as fresh-on-boot: we stamp
+// the loaded cache with Date.now() so consumers (e.g. the invite quote's 15-min
+// staleness guard) can use it IMMEDIATELY after a restart, instead of rejecting
+// it the moment (boot time − DB write time) exceeds their window. The next live
+// sync overwrites it with a real fetch within minutes. A DB row OLDER than this
+// keeps its true (stale) timestamp so a genuinely-abandoned price still reads as
+// stale rather than being silently revived.
+const DB_PRICE_FRESH_ON_BOOT_MS = 24 * 60 * 60 * 1000 // 24h
+
+function bootStampedUpdatedAt(dbWrittenAtMs: number): number {
+  const ageMs = Date.now() - dbWrittenAtMs
+  return ageMs <= DB_PRICE_FRESH_ON_BOOT_MS ? Date.now() : dbWrittenAtMs
+}
+
 async function loadPricesFromDb(): Promise<void> {
   try {
     const cawData = await prisma.chainData.findUnique({
@@ -553,7 +567,7 @@ async function loadPricesFromDb(): Promise<void> {
       cawPriceCache = {
         cawPerEth: BigInt(value.cawPerEth),
         ethPerCaw: BigInt(value.ethPerCaw),
-        updatedAt: cawData.updatedAt.getTime()
+        updatedAt: bootStampedUpdatedAt(cawData.updatedAt.getTime())
       }
       console.log('[ChainSync:Prices] Loaded cached CAW price from database')
     }
@@ -571,7 +585,7 @@ async function loadPricesFromDb(): Promise<void> {
       ethPriceCache = {
         usdPerEth: BigInt(value.usdPerEth),
         ethPerUsd: BigInt(value.ethPerUsd),
-        updatedAt: ethData.updatedAt.getTime()
+        updatedAt: bootStampedUpdatedAt(ethData.updatedAt.getTime())
       }
       console.log('[ChainSync:Prices] Loaded cached ETH price from database')
     }
