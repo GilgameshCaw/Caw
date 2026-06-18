@@ -300,7 +300,7 @@ export default function SponsorInviteSection() {
               ))}
             </div>
             <p className={`text-xs mt-1 ${mutedClass}`}>
-              Shorter usernames cost more CAW to mint; a higher minimum protects the gift.
+              Lets your invitee claim a name this short or longer. Shorter names are rarer and cost more to mint.
             </p>
 
             {error && <p className="text-sm text-red-500 mt-3">{error}</p>}
