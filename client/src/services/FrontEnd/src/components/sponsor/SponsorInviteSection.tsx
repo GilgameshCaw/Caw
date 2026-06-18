@@ -47,20 +47,6 @@ interface MyCode {
   expiresAt: string | null
 }
 
-const MIN_USERNAME_LEN = 8
-// Minimum-username-length options offered to the sponsor. A SHORTER allowed name
-// burns more CAW at mint (which the sponsor fronts), so each option raises the
-// minimum the sponsor must pay — see burnCostForLen.
-const MIN_LEN_OPTIONS = [6, 7, 8]
-
-// Burn cost (whole CAW) of the SHORTEST name a given min-length allows. Mirrors
-// CawProfileMinter.costOfName exactly: 6→20M, 7→10M, 8+→1M (shorter tiers exist
-// on-chain but aren't offered here — they cost far more than a sponsored gift).
-function burnCostForLen(minLen: number): bigint {
-  if (minLen <= 6) return 20_000_000n
-  if (minLen === 7) return 10_000_000n
-  return 1_000_000n // 8+
-}
 
 type BuyState = 'idle' | 'signing' | 'submitted'
 
@@ -78,9 +64,6 @@ export default function SponsorInviteSection() {
   // row (pending or minted) carrying the same gift. Keyed by giftCawWei.
   const [optimisticPending, setOptimisticPending] = useState<MyCode | null>(null)
   const [usdInput, setUsdInput] = useState('2.50')
-  // Default to the 8+ tier (cheapest burn) — most sponsors don't need to gift a
-  // short premium name.
-  const [minLen, setMinLen] = useState(MIN_USERNAME_LEN)
   const [buyState, setBuyState] = useState<BuyState>('idle')
   const [error, setError] = useState<string | null>(null)
   const [copiedIdx, setCopiedIdx] = useState<number | null>(null)
@@ -143,11 +126,14 @@ export default function SponsorInviteSection() {
   // against real costs at the friend's signup, not frozen now (see note below
   // the form). The buffer keeps a modest gas rise from eating the whole gift.
   // The burn leg is a fixed CAW amount, so it gets no buffer.
+  // GIFT-AWARE pot: overhead is gas + LZ ONLY. The username BURN is NOT pre-paid
+  // by the sponsor — it comes out of the pot when the invitee picks a name at
+  // signup (a shorter, rarer name eats more of the pot, leaving a smaller
+  // deposit). So the sponsor just funds a pot; no min-username-length to choose.
   const GAS_BUFFER_NUM = 115
   const GAS_BUFFER_DEN = 100
-  const burnCaw = burnCostForLen(minLen)
   const bufferedGasMarginCaw = (gasMarginCaw * BigInt(GAS_BUFFER_NUM)) / BigInt(GAS_BUFFER_DEN)
-  const overheadCaw = bufferedGasMarginCaw + burnCaw
+  const overheadCaw = bufferedGasMarginCaw
   // Minimum the sponsor may enter: the overhead, rounded up to the next cent, plus
   // one cent of headroom so the smallest valid entry still produces a positive gift.
   const overheadUsd = Number(overheadCaw) * rate
@@ -223,8 +209,10 @@ export default function SponsorInviteSection() {
         amounts: [BigInt(tipWholeCaw)],
         // Short on-chain prefix "sp-i:" (not "sponsor-invite:") — every byte of
         // action text costs validators calldata gas forever. Must match the
-        // dispatch in ActionProcessor/actionHandlers.ts.
-        text: `sp-i:${giftWholeCaw}:${minLen}`,
+        // dispatch in ActionProcessor/actionHandlers.ts. Field 3 is the floor
+        // username length: the gift-aware handler ignores a sponsor-chosen value
+        // and derives the affordable floor from the pot, so we just send 6.
+        text: `sp-i:${giftWholeCaw}:6`,
       })
       setBuyState('submitted')
       // Optimistically show a PENDING entry the instant we've signed — before the
@@ -335,25 +323,10 @@ export default function SponsorInviteSection() {
               </p>
             ) : null}
 
-            <label className={`block text-sm font-medium mt-4 mb-1 ${strongClass}`}>Minimum username length</label>
-            <div className="flex gap-2">
-              {MIN_LEN_OPTIONS.map(n => (
-                <button
-                  key={n}
-                  type="button"
-                  onClick={() => setMinLen(n)}
-                  className={`flex-1 py-2 text-sm rounded-full border transition-colors cursor-pointer ${
-                    minLen === n
-                      ? 'border-yellow-500 text-yellow-500'
-                      : isDark ? 'border-white/10 text-gray-400 hover:text-white' : 'border-gray-300 text-gray-600 hover:text-gray-900'
-                  }`}
-                >
-                  {n}+ chars
-                </button>
-              ))}
-            </div>
-            <p className={`text-xs mt-1 ${mutedClass}`}>
-              Lets your invitee claim a name this short or longer. Shorter names are rarer and cost more to mint.
+            <p className={`text-xs mt-4 ${mutedClass}`}>
+              Your friend picks any username at signup. A shorter, rarer name costs
+              more to mint and leaves them a smaller deposit — they spend the gift
+              however they like.
             </p>
 
             {error && <p className="text-sm text-red-500 mt-3">{error}</p>}

@@ -31,6 +31,27 @@ const CODE_TIER = 'long' as const
 // re-clamp here so a forged-low value can't make the validator front a cheaper
 // burn than the gift was priced against.
 const MIN_USERNAME_FLOOR = 6
+// Longest username length the burn schedule distinguishes (8+ all cost the same,
+// the cheapest tier). Names longer than this cost the 8+ burn.
+const MAX_PRICED_USERNAME_LEN = 8
+
+/**
+ * The shortest username length a pot (whole CAW) can afford to mint — i.e. the
+ * smallest length in [MIN_USERNAME_FLOOR, MAX_PRICED_USERNAME_LEN] whose burn
+ * the pot still covers. Burn DECREASES as length increases (6 = 20M, 7 = 10M,
+ * 8+ = 1M), so we scan from the cheapest length down to the floor and return the
+ * shortest one still affordable. If the pot can't even cover the 8+ burn, we
+ * return MAX_PRICED_USERNAME_LEN (the redeem affordability check will then reject
+ * any name — a near-empty pot can't mint at all).
+ */
+function affordableMinUsernameLen(potWholeCaw: bigint): number {
+  let affordable = MAX_PRICED_USERNAME_LEN
+  for (let len = MAX_PRICED_USERNAME_LEN; len >= MIN_USERNAME_FLOOR; len--) {
+    if (potWholeCaw >= burnCostForLen(len)) affordable = len
+    else break
+  }
+  return affordable
+}
 
 /**
  * Process a "sponsor-invite:<giftCaw>:<minLen>" OTHER action. rawAction carries
@@ -99,21 +120,23 @@ export async function handleSponsorInviteAction(
   // fluctuates with gas, so a positive gift is the normal outcome.
   // (INVITE_CODE_ENC_KEY presence is the Gate 0 minter check at the top.)
 
-  // Min-username length the buyer requested (text field 2), floored at 6 (the
-  // shortest length the FE offers). Parsed here because the username BURN the
-  // sponsor fronts depends on it.
-  const minLen = (() => {
-    const parts = (rawAction.text ?? '').split(':')
-    const n = Number(parts[2])
-    return Number.isInteger(n) && n >= MIN_USERNAME_FLOOR ? n : MIN_USERNAME_FLOOR
-  })()
+  // ── GIFT-AWARE pot model ──────────────────────────────────────────────────
+  // The code carries a POT = tip − gas − LZ. The username BURN is NOT pre-paid
+  // by the sponsor; it comes out of the pot when the invitee redeems, against
+  // whatever name they pick. So a longer (cheaper) name leaves a bigger deposit,
+  // a shorter (rarer, pricier) name leaves a smaller one — the invitee spends
+  // the pot however they like. This is why the buyer no longer chooses a
+  // "minimum username length": any name the pot can afford is allowed.
+  const overheadCaw = quote.gasMarginCaw // gas + LZ only — NO burn here.
+  const potWholeCaw = tipWholeCaw > overheadCaw ? tipWholeCaw - overheadCaw : 0n
+  const giftWholeCaw = potWholeCaw
 
-  // ── Gift budget = tip minus OVERHEAD (gas+LZ margin + the username burn the
-  //    sponsor fronts for the shortest allowed name), clamped >= 0. Must match
-  //    the FE's overhead so the recorded gift equals what the buyer intended;
-  //    otherwise the validator over-fronts by the burn amount at redeem. ───────
-  const overheadCaw = quote.gasMarginCaw + burnCostForLen(minLen)
-  const giftWholeCaw = tipWholeCaw > overheadCaw ? tipWholeCaw - overheadCaw : 0n
+  // The shortest username this pot can mint = the smallest length whose burn the
+  // pot still covers (and never below the global floor). Stored as the code's
+  // minUsernameLength so the redeem-side gate ("name must be affordable") is a
+  // simple length check. Walk from the floor UP to the cheapest tier; the first
+  // length the pot can't afford sets the floor one above it.
+  const minLen = affordableMinUsernameLen(potWholeCaw)
 
   // ── Upper bound: reject an oversized gift. ────────────────────────────────
   // A single code's gift is the maxDepositCawWei a redeemer can draw into one

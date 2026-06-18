@@ -24,6 +24,7 @@
 import Redis from 'ioredis'
 import { prisma as _prismaDefault } from '../../prismaClient'
 import { hashCode } from '../../services/SponsorService/codes'
+import { burnCostForLen } from '../../services/SponsorService/inviteQuote'
 import type { SponsorErrorCode } from '../../services/SponsorService'
 
 // Allow tests to inject a mock Prisma client.
@@ -419,24 +420,30 @@ export async function validateSponsorCode(
     return { ok: false, error: 'CODE_EXHAUSTED', detail: 'This invite code has no uses remaining.' }
   }
 
-  // ── 8. Max deposit CAW check ───────────────────────────────────────────────
-  const maxDepositWei = BigInt(code.maxDepositCawWei)
+  // ── 8/9. GIFT-AWARE pot check (burn + deposit must fit the pot) ────────────
+  // The code's maxDepositCawWei is the POT (tip − gas − LZ). The username BURN
+  // for the redeemer's chosen name comes out of that pot; the staked deposit is
+  // whatever's left. So:  burn(name) + deposit ≤ pot.  A shorter (pricier) name
+  // leaves less for the deposit; a name the pot can't even mint is rejected.
+  // This replaces the old fixed "minimum username length" — any name the pot can
+  // afford is allowed (the sponsor funds a pot, the invitee spends it).
+  const potWei = BigInt(code.maxDepositCawWei)
+  const burnWei = burnCostForLen(params.username.length) * 10n ** 18n
+  if (burnWei > potWei) {
+    await sleepToTarget(startMs)
+    return {
+      ok: false,
+      error: 'USERNAME_TOO_SHORT',
+      detail: `A ${params.username.length}-character name costs more CAW to mint than this invite covers. Choose a longer name.`,
+    }
+  }
+  const maxDepositWei = potWei - burnWei // what's left for the stake after burn
   if (params.depositAmountCAW > maxDepositWei) {
     await sleepToTarget(startMs)
     return {
       ok: false,
       error: 'DEPOSIT_TOO_LARGE',
-      detail: `Requested deposit exceeds this code's maximum (${code.maxDepositCawWei} wei).`,
-    }
-  }
-
-  // ── 9. Username length check ──────────────────────────────────────────────
-  if (code.minUsernameLength > 0 && params.username.length < code.minUsernameLength) {
-    await sleepToTarget(startMs)
-    return {
-      ok: false,
-      error: 'USERNAME_TOO_SHORT',
-      detail: `Username must be at least ${code.minUsernameLength} characters for this invite code.`,
+      detail: `Requested deposit exceeds what this invite covers after the username mint cost (${maxDepositWei} wei).`,
     }
   }
 
