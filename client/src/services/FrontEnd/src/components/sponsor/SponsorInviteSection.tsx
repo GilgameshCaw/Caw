@@ -238,7 +238,7 @@ export default function SponsorInviteSection() {
           payment covers the gas, their username, and network fees — anything above
           is given to the invitee as a gift.{' '}
           <span className={isDark ? 'text-yellow-400' : 'text-yellow-600'}>
-            This + a passkey lets your friends create an account even if they don't have a wallet.
+            This lets your friends create an account even if they don't have a wallet.
           </span>
         </p>
 
