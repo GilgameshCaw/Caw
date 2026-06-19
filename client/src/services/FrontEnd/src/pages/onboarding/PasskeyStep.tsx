@@ -119,7 +119,7 @@ export default function PasskeyStep({ username, onNext, onBack }: PasskeyStepPro
         <p className={`text-sm font-medium ${strongClass}`}>
           {t('onboarding.passkey.how_it_works_title')}
         </p>
-        <ul className={`text-sm space-y-1 ${mutedClass} list-disc list-inside`}>
+        <ul className={`text-[13px] leading-snug space-y-1 ${mutedClass} list-disc list-inside`}>
           <li>{t('onboarding.passkey.how_1')}</li>
           <li>{t('onboarding.passkey.how_2')}</li>
           <li>{t('onboarding.passkey.how_3')}</li>

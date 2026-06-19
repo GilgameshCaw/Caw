@@ -18,6 +18,27 @@ import { encodeAbiParameters } from 'viem'
 // Types
 // ---------------------------------------------------------------------------
 
+/**
+ * Throw a precise error if WebAuthn can't run here. The usual cause on a phone
+ * is NOT "browser unsupported" (iOS Safari/Chrome all support passkeys) but a
+ * NON-SECURE ORIGIN: WebAuthn requires a secure context (https:// or
+ * localhost). Over plain http on a LAN IP (e.g. http://192.168.x.x:5274),
+ * `window.PublicKeyCredential` is undefined and the old message wrongly blamed
+ * the browser. Surface the real reason so test setups aren't mystifying.
+ */
+function assertWebAuthnAvailable(): void {
+  if (typeof window !== 'undefined' && window.isSecureContext === false) {
+    throw new Error(
+      'Passkeys require a secure connection (https). This page is served over ' +
+      'plain http, so the browser blocks WebAuthn. Use the https site (or ' +
+      'localhost / an https tunnel) to create a passkey.',
+    )
+  }
+  if (typeof window === 'undefined' || !window.PublicKeyCredential) {
+    throw new Error('WebAuthn (passkeys) is not available in this browser')
+  }
+}
+
 export type PasskeyPubkey = {
   /** 32-byte P-256 X coordinate as 0x-prefixed hex */
   pubkeyX: `0x${string}`
@@ -53,9 +74,7 @@ export async function enrollPasskey(opts: {
   userDisplayName: string
   challenge?: Uint8Array
 }): Promise<PasskeyPubkey> {
-  if (!window.PublicKeyCredential) {
-    throw new Error('WebAuthn not supported in this browser')
-  }
+  assertWebAuthnAvailable()
 
   const challenge = opts.challenge ?? crypto.getRandomValues(new Uint8Array(32))
 
@@ -145,9 +164,7 @@ export async function signWithPasskey(opts: {
   digest: `0x${string}`
   rpId: string
 }): Promise<PasskeySignResult> {
-  if (!window.PublicKeyCredential) {
-    throw new Error('WebAuthn not supported in this browser')
-  }
+  assertWebAuthnAvailable()
 
   // The digest IS the challenge. Strip the 0x prefix and convert to bytes.
   const digestBytes = hexToBytes(opts.digest.slice(2) as string)
@@ -226,9 +243,7 @@ export async function signWithPasskeyDiscoverable(opts: {
   digest: `0x${string}`
   rpId: string
 }): Promise<PasskeySignResult & { credentialId: string }> {
-  if (!window.PublicKeyCredential) {
-    throw new Error('WebAuthn not supported in this browser')
-  }
+  assertWebAuthnAvailable()
   const digestBytes = hexToBytes(opts.digest.slice(2) as string)
   if (digestBytes.length !== 32) {
     throw new Error('signWithPasskeyDiscoverable: digest must be exactly 32 bytes')
