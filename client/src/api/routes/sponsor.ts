@@ -33,7 +33,7 @@ import {
 } from '../middleware/validateSponsorCode'
 import { getCawPriceCache, getEthPriceCache } from '../../services/ChainSyncService'
 import { hashCode } from '../../services/SponsorService/codes'
-import { quoteSponsorInviteCostCaw, quoteExecuteGasFeeCaw, redeemGasCostCaw } from '../../services/SponsorService/inviteQuote'
+import { quoteSponsorInviteCostCaw, quoteExecuteGasFeeCaw, redeemGasCostCawLive } from '../../services/SponsorService/inviteQuote'
 import { CAW_ADDRESS } from '../../abi/addresses'
 import { getOwnValidatorTokenId } from '../../services/SponsorService/validatorIdentity'
 import { decryptInviteCode } from '../../services/SponsorService/inviteCodeCrypto'
@@ -847,8 +847,10 @@ router.get('/code/:code', async (req, res) => {
 
   // Live redeem-gas in whole CAW — the FE subtracts this (plus the name burn)
   // from giftCaw to PREVIEW the deposit. The server re-derives it authoritatively
-  // at bootstrap, so this is display-only. '0' when prices are unavailable.
-  const gasCaw = (redeemGasCostCaw() ?? 0n).toString()
+  // at bootstrap, so this is display-only. Uses the *Live variant so a cold gas
+  // cache fetches fresh rather than quoting the degraded floor. '0' when the CAW
+  // price is unavailable.
+  const gasCaw = ((await redeemGasCostCawLive()) ?? 0n).toString()
 
   return res.status(200).json({
     valid: true,

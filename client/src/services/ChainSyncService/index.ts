@@ -402,6 +402,34 @@ async function syncMainnetGasPrice(): Promise<void> {
   }
 }
 
+// Dedup concurrent on-demand refreshes: many redeems can land in the same tick,
+// and we don't want each one firing its own RPC. The first awaits the fetch; the
+// rest piggyback on the same in-flight promise.
+let gasPriceRefreshInFlight: Promise<CachedGasPrice | null> | null = null
+
+/**
+ * Return a FRESH mainnet gas-price cache, fetching on demand when the in-memory
+ * cache is missing or older than maxAgeMs. Unlike getGasPriceCache() (a pure
+ * read that can return null/stale), this guarantees a real RPC attempt before
+ * giving up — so a cold start never silently falls back to a constant ceiling.
+ * Returns null only when there's no mainnet provider configured OR the RPC fails;
+ * callers apply their own constant fallback for that genuinely-degraded case.
+ */
+export async function ensureFreshGasPriceCache(
+  maxAgeMs: number = 60 * 1000,
+): Promise<CachedGasPrice | null> {
+  if (gasPriceCache && Date.now() - gasPriceCache.updatedAt <= maxAgeMs) {
+    return gasPriceCache
+  }
+  if (!mainnetProvider) return gasPriceCache  // no RPC to refresh from
+  if (!gasPriceRefreshInFlight) {
+    gasPriceRefreshInFlight = syncMainnetGasPrice()
+      .then(() => gasPriceCache)
+      .finally(() => { gasPriceRefreshInFlight = null })
+  }
+  return gasPriceRefreshInFlight
+}
+
 async function syncPrices(): Promise<void> {
   await syncCawPrice()
   await syncEthPrice()

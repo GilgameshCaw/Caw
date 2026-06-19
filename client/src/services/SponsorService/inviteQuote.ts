@@ -17,15 +17,20 @@
 // redemption path is fee-free for authorized flows, so the only real cost is
 // gas + the LZ relay leg.
 
-import { getCawPriceCache, getEthPriceCache, getGasPriceCache } from '../ChainSyncService'
+import { getCawPriceCache, getEthPriceCache, getGasPriceCache, ensureFreshGasPriceCache } from '../ChainSyncService'
 
 // Gas budget for the eventual sponsored mint (mirrors GAS_LIMIT_BOOTSTRAP_BUDGET
 // in api/routes/sponsor.ts). The buyer pre-pays this so the validator is
 // net-neutral when the code is later redeemed.
 const GAS_LIMIT_BOOTSTRAP = 400_000n
-// FALLBACK gas price used only when the live mainnet gas cache is unavailable.
-// Conservative ceiling — a code minted against it is over-funded, never under.
-const GAS_PRICE_FALLBACK_WEI = 20_000_000_000n // 20 gwei
+// LAST-RESORT fallback gas price, used ONLY when there's no mainnet RPC AND the
+// on-demand fetch couldn't populate the cache (RPC down / not configured). The
+// hot path now refreshes live gas on demand (ensureFreshGasPriceCache) rather
+// than reaching for a constant, so this is a true degraded-mode floor — kept
+// modest (3 gwei ≈ quiet mainnet) so a price outage doesn't massively over-charge
+// a redeemer. It used to be 20 gwei, which over-deducted ~7× whenever the cache
+// was momentarily cold.
+const GAS_PRICE_FALLBACK_WEI = 3_000_000_000n // 3 gwei
 // Safety multiplier on the live mainnet gas price: the code is redeemed LATER,
 // so quote a hair above the current price to absorb minor drift between buy and
 // redeem. 110% (×11/10 in bigint). Kept small on purpose — the quote already
@@ -39,29 +44,33 @@ const MAX_GAS_AGE_MS = 15 * 60 * 1000 // 15 minutes
 const LZ_RELAY_WEI = 1_000_000_000_000_000n // 0.001 ETH
 
 /**
- * The gas price to quote against: the LIVE mainnet gas price (× safety margin)
- * when fresh, else the conservative fallback ceiling. The invite code pre-funds
- * a FUTURE mainnet redemption, so mainnet gas — not the ~0 testnet base fee — is
- * the correct basis. Never returns 0.
+ * Turn a (possibly null/stale) gas cache into an effective wei price: the cached
+ * mainnet gas × safety margin when present, else the modest degraded-mode floor.
+ * Shared by the sync (cache-read) and async (fetch-on-demand) entry points so
+ * both apply the SAME margin + fallback. Stale caches still use the last KNOWN
+ * price rather than the floor — a slightly stale real number beats a guess.
  */
-function effectiveGasPriceWei(): bigint {
-  const cache = getGasPriceCache()
+function applyGasMargin(cache: { gasPriceWei: bigint; updatedAt: number } | null): bigint {
   if (cache && cache.gasPriceWei > 0n) {
-    // Fresh cache: live mainnet gas × safety margin — the normal path.
-    if (Date.now() - cache.updatedAt <= MAX_GAS_AGE_MS) {
-      return (cache.gasPriceWei * GAS_PRICE_SAFETY_NUM) / GAS_PRICE_SAFETY_DEN
-    }
-    // STALE cache (sync lagging): prefer the last KNOWN gas price over the
-    // punitive 20-gwei fallback ceiling. The ceiling is ~orders of magnitude
-    // above quiet mainnet/testnet gas, and using it here made the buy-time and
-    // index-time gas floors diverge ~90× — the buyer paid against a low floor,
-    // then the handler re-quoted against the ceiling and rejected. A slightly
-    // stale real price is a far better estimate than a worst-case ceiling.
+    // Fresh OR stale: the last known real price × safety margin. (Stale is fine
+    // here — a recently-real number is a far better basis than the floor; the
+    // async entry point already tried to refresh before we got here.)
     return (cache.gasPriceWei * GAS_PRICE_SAFETY_NUM) / GAS_PRICE_SAFETY_DEN
   }
-  // No gas data at all (cold start, never synced): conservative ceiling so a
-  // code is over-funded rather than under. Rare.
+  // No gas data at all (no mainnet RPC + refresh failed): modest degraded floor
+  // so a price outage doesn't massively over- or under-charge. Rare.
   return GAS_PRICE_FALLBACK_WEI
+}
+
+/**
+ * The gas price to quote against (SYNC, cache-read only): the LIVE mainnet gas
+ * price (× safety margin) when cached, else the degraded floor. The invite code
+ * pre-funds a FUTURE mainnet redemption, so mainnet gas — not the ~0 testnet base
+ * fee — is the correct basis. Never returns 0. Prefer the *Live variants below on
+ * the hot redeem path so a cold cache triggers a real fetch instead of the floor.
+ */
+function effectiveGasPriceWei(): bigint {
+  return applyGasMargin(getGasPriceCache())
 }
 // Reject prices older than this. A stale-low CAW price would let a buyer clear
 // the gas floor with too little CAW and inflate the gift budget (M-2). Mirrors
@@ -252,6 +261,24 @@ export function redeemGasCostCaw(): bigint | null {
   const cawPrice = getCawPriceCache()
   if (!cawPrice || cawPrice.cawPerEth <= 0n) return null
   const gasWei = effectiveGasPriceWei() * GAS_LIMIT_BOOTSTRAP
+  return ethWeiToWholeCaw(gasWei, cawPrice.cawPerEth)
+}
+
+/**
+ * Async variant of redeemGasCostCaw() that REFRESHES the mainnet gas cache on
+ * demand when it's missing or stale, rather than falling back to the degraded
+ * constant. This is the variant the hot redeem/preview path should use: a cold
+ * cache (e.g. right after a server restart, before the 5-min price loop's first
+ * tick) triggers one real RPC fetch instead of silently quoting the floor.
+ * Concurrent calls dedupe onto a single in-flight fetch (ensureFreshGasPriceCache).
+ * Returns null only when the CAW price itself is unavailable (same as the sync
+ * version); a failed gas refresh degrades to the modest constant floor, not null.
+ */
+export async function redeemGasCostCawLive(): Promise<bigint | null> {
+  const cawPrice = getCawPriceCache()
+  if (!cawPrice || cawPrice.cawPerEth <= 0n) return null
+  const cache = await ensureFreshGasPriceCache(MAX_GAS_AGE_MS)
+  const gasWei = applyGasMargin(cache) * GAS_LIMIT_BOOTSTRAP
   return ethWeiToWholeCaw(gasWei, cawPrice.cawPerEth)
 }
 

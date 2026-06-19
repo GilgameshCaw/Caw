@@ -24,7 +24,7 @@
 import Redis from 'ioredis'
 import { prisma as _prismaDefault } from '../../prismaClient'
 import { hashCode } from '../../services/SponsorService/codes'
-import { burnCostForLen, redeemGasCostCaw } from '../../services/SponsorService/inviteQuote'
+import { burnCostForLen, redeemGasCostCawLive } from '../../services/SponsorService/inviteQuote'
 import type { SponsorErrorCode } from '../../services/SponsorService'
 
 // Allow tests to inject a mock Prisma client.
@@ -431,9 +431,11 @@ export async function validateSponsorCode(
   // pot can't cover (burn + gas) is rejected.
   const potWei = BigInt(code.maxDepositCawWei)
   const burnWei = burnCostForLen(params.username.length) * 10n ** 18n
-  // Live redeem-gas in wei-CAW. null (no prices) → treat as 0 so a price outage
-  // doesn't block redemption (the gift just isn't gas-reduced that moment).
-  const gasCaw = redeemGasCostCaw()
+  // Live redeem-gas in wei-CAW. Uses the *Live variant so a cold/stale gas cache
+  // triggers a real fetch instead of the degraded constant floor. null (no CAW
+  // price) → treat as 0 so a price outage doesn't block redemption (the gift just
+  // isn't gas-reduced that moment).
+  const gasCaw = await redeemGasCostCawLive()
   const gasWei = gasCaw !== null ? gasCaw * 10n ** 18n : 0n
   if (burnWei + gasWei > potWei) {
     await sleepToTarget(startMs)
