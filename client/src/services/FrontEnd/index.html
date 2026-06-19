@@ -88,8 +88,14 @@
     <meta name="twitter:image" content="__CAW_PUBLIC_URL__/api/og/image/default" />
   </head>
   <body style="background-color: #0A0A0A; color-scheme: dark; margin: 0">
-    <div id="theme-bg" style="position: fixed; inset: 0; z-index: 0; background-color: #0A0A0A"></div>
-    <div id="root" style="position: relative; z-index: 1"></div>
+    <!-- Full-viewport background color (covers iOS overscroll / rubber-band).
+         z-index:-1 keeps it BEHIND #root: on iOS, a fixed z-index:0 layer here
+         could mis-composite ABOVE the app's own fixed-position overlays (e.g.
+         the onboarding container) and paint black over the content. Negative z
+         puts it under root's stacking context so it can never cover the UI.
+         useTheme only updates its backgroundColor, never its position/z. -->
+    <div id="theme-bg" style="position: fixed; inset: 0; z-index: -1; background-color: #0A0A0A"></div>
+    <div id="root" style="position: relative; z-index: 0"></div>
     <script>
       try {
         var t = JSON.parse(localStorage.getItem('theme-storage') || '{}');
@@ -102,55 +108,6 @@
         }
       } catch(e) {}
     </script>
-    <!-- TEMP DIAGNOSTIC (remove after debugging the iOS-Safari black screen):
-         paint the first uncaught error / unhandled rejection to the screen.
-         Runs before the module bundle, so it surfaces import-time crashes that
-         happen before React (and the Sentry ErrorBoundary) can mount. -->
-    <script>
-      (function () {
-        function show(label, msg) {
-          try {
-            var el = document.getElementById('boot-error');
-            if (!el) {
-              el = document.createElement('pre');
-              el.id = 'boot-error';
-              el.style.cssText = 'position:fixed;inset:0;z-index:99999;margin:0;padding:16px;'
-                + 'background:#1a0000;color:#ff8080;font:12px/1.4 monospace;white-space:pre-wrap;'
-                + 'word-break:break-word;overflow:auto;';
-              (document.body || document.documentElement).appendChild(el);
-            }
-            el.textContent += '[' + label + '] ' + msg + '\n\n';
-          } catch (_) {}
-        }
-        window.addEventListener('error', function (e) {
-          show('error', (e.message || e.error || 'unknown')
-            + (e.filename ? '\n  at ' + e.filename + ':' + e.lineno + ':' + e.colno : '')
-            + (e.error && e.error.stack ? '\n' + e.error.stack : ''));
-        });
-        window.addEventListener('unhandledrejection', function (e) {
-          var r = e.reason;
-          show('promise', (r && (r.stack || r.message)) || String(r));
-        });
-        // Hang detector: if no error fired AND #root is still empty after 6s,
-        // the bundle either never executed or ran without mounting React. Report
-        // which, plus a UA string, so a black screen yields SOME signal even when
-        // nothing throws (iOS-WebKit silent failures don't trigger onerror).
-        window.__cawBootBeacon = 'html-parsed';
-        setTimeout(function () {
-          if (document.getElementById('boot-error')) return; // a real error already shown
-          var root = document.getElementById('root');
-          if (root && root.childElementCount > 0) return;     // React mounted fine
-          show('hang', 'No error thrown, but the app did not render within 6s.'
-            + '\nbeacon=' + window.__cawBootBeacon
-            + '\nrootChildren=' + (root ? root.childElementCount : 'no-root')
-            + '\nUA=' + navigator.userAgent);
-        }, 6000);
-      })();
-    </script>
-    <!-- Beacon: a separate module that runs BEFORE main.tsx. If main.tsx's own
-         import chain (instrument/polyfills/etc) throws on iOS WebKit, this still
-         flips the beacon so the hang report can say "bundle entry reached". -->
-    <script type="module">window.__cawBootBeacon = 'module-script-ran';</script>
     <script type="module" src="/src/main.tsx"></script>
   </body>
 </html>

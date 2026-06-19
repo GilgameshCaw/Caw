@@ -584,7 +584,7 @@ export default function Onboarding() {
         <div className="absolute top-3 right-3 z-[110]">
           <LanguageSwitcher />
         </div>
-        <div className="relative z-10 px-4 py-8 min-h-screen flex items-center justify-center" style={{ transform: 'translateZ(0)' }}>
+        <div className="relative z-10 px-4 py-8 min-h-screen flex items-center justify-center">
           <div className={`w-full max-w-md rounded-2xl border p-6 text-center ${
             isDark ? 'border-white/10 bg-black/60' : 'border-gray-200 bg-white/90'
           }`}>
@@ -655,7 +655,7 @@ export default function Onboarding() {
         <LanguageSwitcher />
       </div>
 
-      <div className="relative z-10 px-4 py-8 min-h-screen flex items-start justify-center" style={{ transform: 'translateZ(0)' }}>
+      <div className="relative z-10 px-4 py-8 min-h-screen flex items-start justify-center">
         <div className="w-full max-w-[800px]">
 
           {/* Slim segmented stepper — hidden on the confirm success screen */}
