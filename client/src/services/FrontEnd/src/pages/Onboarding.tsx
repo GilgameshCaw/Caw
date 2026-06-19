@@ -498,10 +498,39 @@ export default function Onboarding() {
               tds.setTokensForAddress(ownerAddr, [token])
               tds.setActiveTokenIdForAddress(ownerAddr, mintedTokenId)
               tds.setLastAddress(ownerAddr)
+
+              // Seed the OPTIMISTIC pending-deposit hint for the gifted deposit.
+              // The sponsored bootstrap already deposited derivedDepositAmount CAW
+              // (LZ-in-flight to L2), but the on-chain stake reads 0 for a minute
+              // or two. Without this hint the post-mint stepper shows the empty
+              // DEPOSIT form (nonsense for a gifted user) and treats stake as
+              // incomplete ("0 staked") until the chain refresh lands. The stepper
+              // + ProfileChooser read `caw:pendingDeposit:<tokenId>` and credit it
+              // against the stake gates immediately (depositPending → skip the
+              // deposit step, treat as staked, queue actions optimistically). Same
+              // key/shape New.tsx writes for the wallet-mint path; baseline 0 is
+              // correct (the tokenId didn't exist on L2 before this mint).
+              if (mintedTokenId != null && derivedDepositAmount > 0n) {
+                try {
+                  localStorage.setItem(
+                    `caw:pendingDeposit:${mintedTokenId}`,
+                    JSON.stringify({
+                      amount: derivedDepositAmount.toString(),
+                      txHash: result.txHash,
+                      at: Date.now(),
+                      stakedAtHintTime: '0',
+                    }),
+                  )
+                  window.dispatchEvent(
+                    new CustomEvent('caw:pendingDepositChanged', { detail: { tokenId: mintedTokenId } }),
+                  )
+                } catch { /* localStorage unavailable — stepper falls back to chain reads */ }
+              }
               // eslint-disable-next-line no-console
               console.log('[signin:diag] active profile set (from in-hand data), navigating', {
                 username: token.username,
                 tokenId: mintedTokenId,
+                pendingDeposit: derivedDepositAmount.toString(),
               })
 
               // Phase 3: auto-derive a Quick Sign session using the ecdsaFallback
@@ -558,7 +587,15 @@ export default function Onboarding() {
               // separate pendingDeposit hint is needed.)
               navigate(`/welcome/${mintedUsername}`, {
                 replace: true,
-                state: { mintedTokenId },
+                // pendingDeposit (the gifted amount) rides the nav state too —
+                // WelcomePage forwards it to PostMintOnboarding as a prop, the
+                // other input (besides the localStorage hint above) to
+                // depositPending. Both set → the stepper skips the deposit step
+                // and treats the gift as staked immediately.
+                state: {
+                  mintedTokenId,
+                  pendingDeposit: derivedDepositAmount > 0n ? derivedDepositAmount.toString() : null,
+                },
               })
             }
           }
