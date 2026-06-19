@@ -499,39 +499,42 @@ export default function Onboarding() {
                 tokenId: mintedTokenId,
               })
 
-              // Phase 3: auto-derive a Quick Sign session NOW, while the
-              // ecdsaFallback key is still in memory (the signVerifyMessage
-              // closure signs a 65-byte ECDSA personal_sign that
-              // registerSessionPersonal validates). After this, the user can
-              // post immediately without a separate Quick Sign ceremony, and
-              // the stepper shows Quick Sign as done. Non-fatal: if it fails,
-              // the user can still enable Quick Sign manually on the stepper.
+              // Phase 3: auto-derive a Quick Sign session using the ecdsaFallback
+              // key still in memory (the signVerifyMessage closure signs a 65-byte
+              // ECDSA personal_sign that registerSessionPersonal validates). After
+              // it lands the user can post without a separate Quick Sign ceremony,
+              // and the stepper shows Quick Sign as done.
               //
-              // The session honours the params the user chose in the QuickSignCard
-              // (same card as /usernames/new) — spend limit / expiry / tip ceiling —
-              // instead of silent defaults. If the user toggled Quick Sign OFF, we
-              // skip derivation entirely (they can enable it later in settings).
-              try {
-                if (quickSignEnabled) {
-                  // eslint-disable-next-line no-console
-                  console.log('[signin:diag] auto-deriving Quick Sign session…')
-                  await registerSponsoredSession({
-                    signMessage: result.signVerifyMessage,
-                    ownerAddress: ownerAddr,
-                    spendLimit: qsSpendLimit,
-                    durationSeconds: qsDuration,
-                    tipCeiling: qsTipCeiling,
-                    cawPrice: cawPriceUsd,
-                  })
-                  // eslint-disable-next-line no-console
-                  console.log('[signin:diag] Quick Sign session registered + persisted')
-                } else {
-                  // eslint-disable-next-line no-console
-                  console.log('[signin:diag] Quick Sign disabled by user — skipping session derive')
-                }
-              } catch (sessErr) {
+              // FIRE-AND-FORGET — do NOT await before navigating. registerSponsored-
+              // Session polls the on-chain session tx for up to ~240s; awaiting it
+              // here would freeze the user on "Signing you in…" for minutes before
+              // they reach the stepper. The session store is GLOBAL (not route-
+              // scoped) and registerSponsoredSession persists + setEnabled(true) on
+              // success, so the session activates correctly even though it resolves
+              // after navigation. The signVerifyMessage closure keeps the key alive
+              // for the duration. Non-fatal: on failure the user enables Quick Sign
+              // manually on the stepper. Honours the QuickSignCard params the user
+              // chose; skipped entirely if they toggled Quick Sign OFF.
+              if (quickSignEnabled) {
                 // eslint-disable-next-line no-console
-                console.warn('[signin:diag] auto session register failed (non-fatal):', sessErr)
+                console.log('[signin:diag] auto-deriving Quick Sign session (background)…')
+                void registerSponsoredSession({
+                  signMessage: result.signVerifyMessage,
+                  ownerAddress: ownerAddr,
+                  spendLimit: qsSpendLimit,
+                  durationSeconds: qsDuration,
+                  tipCeiling: qsTipCeiling,
+                  cawPrice: cawPriceUsd,
+                })
+                  // eslint-disable-next-line no-console
+                  .then(() => console.log('[signin:diag] Quick Sign session registered + persisted'))
+                  .catch(sessErr =>
+                    // eslint-disable-next-line no-console
+                    console.warn('[signin:diag] auto session register failed (non-fatal):', sessErr),
+                  )
+              } else {
+                // eslint-disable-next-line no-console
+                console.log('[signin:diag] Quick Sign disabled by user — skipping session derive')
               }
 
               // Land on the post-mint onboarding stepper (signed in), NOT the
