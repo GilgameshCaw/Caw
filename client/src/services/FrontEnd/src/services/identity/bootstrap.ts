@@ -145,6 +145,9 @@ export type BootstrapResult = {
   backupBlob: BackupBlob
   /** Ethereum address of the generated secp256k1 keypair (= ecdsaFallback in SmartEOA). */
   ecdsaAddress: `0x${string}`
+  /** The minted username — authoritative source for the post-mint /welcome nav
+   *  (the onboarding callback's closed-over `state.username` is stale/empty). */
+  username: string
   /**
    * One-shot signer for the post-mint /api/auth/verify sign-in. The minted
    * profile is owned by `ecdsaAddress`, and this closure signs a personal_sign
@@ -370,6 +373,12 @@ export async function bootstrapNewUser(opts: {
     txHash,
     backupBlob,
     ecdsaAddress: recoveredRecipient,
+    // Echo the minted username back so the post-mint sign-in navigates to the
+    // right /welcome/:username. The onboarding handler is a useCallback that
+    // closes over a STALE `state` (empty username at callback-creation time), so
+    // it must NOT read state.username — it reads result.username instead. (#209
+    // regression: empty username → navigate('/welcome/') → /home → splash.)
+    username,
     signVerifyMessage: (message: string) => verifyAccount.signMessage({ message }),
   }
 }

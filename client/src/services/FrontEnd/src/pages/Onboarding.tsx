@@ -479,9 +479,14 @@ export default function Onboarding() {
             // `activeToken.stakedAmount > 0n` don't throw "Cannot mix BigInt".)
             {
               const ownerAddr = result.ecdsaAddress as `0x${string}`
+              // Use result.username (the value bootstrap actually minted), NOT
+              // state.username — this handler is a useCallback closed over a STALE
+              // `state` whose username is still '' from initial render, which
+              // navigated to /welcome/ (empty) → /home → splash (#209 regression).
+              const mintedUsername = result.username
               const token: TokenData = {
                 tokenId: mintedTokenId,
-                username: state.username,
+                username: mintedUsername,
                 address: ownerAddr,
                 owner: ownerAddr,
                 withdrawable: 0n,
@@ -551,7 +556,7 @@ export default function Onboarding() {
               // store-set above can also lose a rehydration race; the state hand-
               // off doesn't. (Sponsored bootstrap already deposited, so no
               // separate pendingDeposit hint is needed.)
-              navigate(`/welcome/${token.username}`, {
+              navigate(`/welcome/${mintedUsername}`, {
                 replace: true,
                 state: { mintedTokenId },
               })

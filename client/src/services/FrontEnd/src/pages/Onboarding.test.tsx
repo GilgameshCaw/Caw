@@ -419,6 +419,7 @@ describe('CreateAccountStep error handling + backup → confirm flow', () => {
       pubkeyAddress: '0xabc123' as `0x${string}`,
     },
     ecdsaAddress: '0xabc123' as `0x${string}`,
+    username: 'testuser',
   }
 
   // #236 split the flow: the on-chain mint now lives in CreateAccountStep, and
