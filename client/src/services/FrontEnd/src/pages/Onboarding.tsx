@@ -538,7 +538,20 @@ export default function Onboarding() {
               // feed — same destination as the non-sponsored mint (New.tsx) and
               // OnboardingGuard. The stepper walks the user through deposit /
               // Quick Sign / follow before they hit the feed.
-              navigate(`/welcome/${token.username}`, { replace: true })
+              //
+              // CRITICAL: pass mintedTokenId in location.state, exactly like
+              // New.tsx does. WelcomePage's fresh-mint fast-path keys off
+              // location.state.mintedTokenId — without it, freshMintTokenId is
+              // undefined, the page falls into the slow indexer-dependent branch,
+              // and on any /ensure miss/timeout it navigate('/home') → AuthGate →
+              // the captive splash (the "signed me out" symptom). The bigint
+              // store-set above can also lose a rehydration race; the state hand-
+              // off doesn't. (Sponsored bootstrap already deposited, so no
+              // separate pendingDeposit hint is needed.)
+              navigate(`/welcome/${token.username}`, {
+                replace: true,
+                state: { mintedTokenId },
+              })
             }
           }
         } catch (e) {
