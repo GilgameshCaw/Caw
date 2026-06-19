@@ -59,7 +59,13 @@
       toolbar) sits above the keyboard instead of being covered by it.
       Older browsers ignore the unknown token.
     -->
-    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover, interactive-widget=resizes-content" />
+    <!-- maximum-scale=1 stops iOS Safari from auto-zooming when you focus an
+         input/textarea (it zooms into any field with font-size < 16px and then
+         won't reliably zoom back out, leaving the page stuck enlarged). Our
+         fields are already large enough to read, so the focus-zoom is pure
+         nuisance. This also disables manual pinch-zoom, which is the expected
+         behavior for an app-style UI. -->
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, viewport-fit=cover, interactive-widget=resizes-content" />
     <title>CAW — Decentralized &amp; Censorship Resistant</title>
 
     <!--
