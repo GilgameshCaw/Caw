@@ -34,18 +34,34 @@ const DEBOUNCE_MS = 500
 const USERNAME_REGEX = /^[a-z0-9_]{3,24}$/
 
 
+// Compact CAW formatter. Keeps ONE significant decimal (dropping a trailing
+// ".0") so the displayed number reflects the real value — e.g. 57.3M, not a
+// lossy "57M"/"100M" from rounding to whole units.
 function formatCawCompact(caw: number): string {
-  if (caw >= 1_000_000_000_000) return `${(caw / 1_000_000_000_000).toFixed(0)}T`
-  if (caw >= 1_000_000_000) return `${(caw / 1_000_000_000).toFixed(0)}B`
-  if (caw >= 1_000_000) return `${(caw / 1_000_000).toFixed(0)}M`
-  if (caw >= 1_000) return `${(caw / 1_000).toFixed(0)}K`
-  return caw.toString()
+  const fmt = (n: number, suffix: string) => {
+    const s = n.toFixed(1).replace(/\.0$/, '')
+    return `${s}${suffix}`
+  }
+  if (caw >= 1_000_000_000_000) return fmt(caw / 1_000_000_000_000, 'T')
+  if (caw >= 1_000_000_000) return fmt(caw / 1_000_000_000, 'B')
+  if (caw >= 1_000_000) return fmt(caw / 1_000_000, 'M')
+  if (caw >= 1_000) return fmt(caw / 1_000, 'K')
+  return Math.round(caw).toString()
 }
 
 /** Format a bigint wei amount as a compact CAW string (e.g. "1.2B CAW") */
 function formatWeiAsCaw(wei: bigint): string {
   const whole = Number(wei / 10n ** 18n)
   return `${formatCawCompact(whole)} CAW`
+}
+
+/** "$X.XX" USD value of a wei CAW amount, or '' when the price isn't loaded. */
+function formatWeiAsUsd(wei: bigint, cawPriceUsd?: number): string {
+  if (cawPriceUsd === undefined || cawPriceUsd <= 0) return ''
+  const whole = Number(wei / 10n ** 18n)
+  const usd = whole * cawPriceUsd
+  if (usd <= 0) return ''
+  return usd >= 0.01 ? `$${usd.toFixed(2)}` : `$${usd.toFixed(4)}`
 }
 
 export interface UsernameStepProps {
@@ -254,6 +270,7 @@ export default function UsernameStep({
         <div className={`rounded-xl p-4 text-sm ${isDark ? 'bg-yellow-500/10 border border-yellow-500/20' : 'bg-yellow-50 border border-yellow-200'}`}>
           <p className={`font-medium ${isDark ? 'text-yellow-400' : 'text-yellow-800'}`}>
             Your invite includes {formatWeiAsCaw(giftCaw)}
+            {formatWeiAsUsd(giftCaw, cawPriceUsd) && ` (${formatWeiAsUsd(giftCaw, cawPriceUsd)})`}
           </p>
           <p className={`mt-1 ${isDark ? 'text-yellow-300/70' : 'text-yellow-700'}`}>
             The username burn cost is deducted; the rest auto-deposits to your profile.
