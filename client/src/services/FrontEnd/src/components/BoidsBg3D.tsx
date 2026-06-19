@@ -779,6 +779,26 @@ function webglAvailable(): boolean {
   return _webglOk
 }
 
+// iOS / iPadOS detection. On iOS WebKit a WebGL <canvas> inside a position:fixed,
+// scrollable ancestor (which is exactly how the onboarding overlay is built)
+// corrupts compositing — the GL layer paints opaque GPU garbage (black, or random
+// blue flashes / squares) OVER the page content, even with the content forced to
+// its own layer. The boids are PURELY decorative, so we just don't render them on
+// iOS. (iPadOS 13+ reports as "MacIntel", so we also check touch points.)
+let _isIOS: boolean | null = null
+function isIOS(): boolean {
+  if (_isIOS !== null) return _isIOS
+  try {
+    const ua = navigator.userAgent || ''
+    const iOSUA = /iPad|iPhone|iPod/.test(ua)
+    const iPadOS = navigator.platform === 'MacIntel' && (navigator.maxTouchPoints || 0) > 1
+    _isIOS = iOSUA || iPadOS
+  } catch {
+    _isIOS = false
+  }
+  return _isIOS
+}
+
 class BgErrorBoundary extends Component<{ children: ReactNode }, { failed: boolean }> {
   constructor(props: { children: ReactNode }) {
     super(props)
@@ -805,9 +825,10 @@ export default function BoidsBg3D({
   isDark?: boolean
   className?: string
 }) {
-  // Bail out entirely when WebGL isn't usable — render nothing so the page
-  // behind this background shows normally (vs. a crashed black screen).
-  if (typeof window !== 'undefined' && !webglAvailable()) {
+  // Bail out entirely when WebGL isn't usable, OR on iOS where a fixed-position
+  // WebGL canvas corrupts compositing and blacks out / flashes over the page
+  // (decorative only — render nothing so the real UI shows). See isIOS() note.
+  if (typeof window !== 'undefined' && (!webglAvailable() || isIOS())) {
     return null
   }
   // Camera pulled back enough to see the full world box; slight downward tilt
