@@ -466,7 +466,23 @@ export async function validateSponsorCode(
     }
   }
   const maxDepositWei = potWei - burnWei - gasWei // stake left after burn + gas
-  if (params.depositAmountCAW > maxDepositWei) {
+  // GAS-DRIFT TOLERANCE. The deposit is EIP-712 SIGNED by the user (it's in the
+  // mintAndDepositSponsored digest), so the server can't clamp it — the FE-signed
+  // value must be accepted as-is. But the FE computed its deposit from a gas quote
+  // it fetched moments earlier (/code/:code), while we recompute live gas HERE;
+  // mainnet gas drifts between those two reads, and a momentarily-cold price cache
+  // can even hand the FE gas=0. If our live gas is HIGHER than the FE's, the
+  // FE-signed deposit legitimately exceeds maxDepositWei by up to ~one redeem-gas
+  // and we'd wrongly reject a perfectly-funded redemption (observed:
+  // "Requested deposit exceeds … network gas").
+  //
+  // Allow the signed deposit to exceed maxDepositWei by up to the gas amount we
+  // just charged. Worst case the validator fronts one redeem-gas of extra CAW
+  // (sub-cent on testnet, bounded) — strictly better than bouncing the user. The
+  // burn + gas ≤ pot solvency check above still holds, so the pot is never
+  // overdrawn beyond this bounded slack.
+  const depositToleranceWei = gasWei
+  if (params.depositAmountCAW > maxDepositWei + depositToleranceWei) {
     await sleepToTarget(startMs)
     return {
       ok: false,
