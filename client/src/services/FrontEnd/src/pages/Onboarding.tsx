@@ -124,7 +124,7 @@ interface StepMeta {
 
 // Icon size matches PostMintOnboarding (w-4 h-4 inside the label row)
 const STEP_META: StepMeta[] = [
-  { id: 'username',       icon: <HiAtSymbol className="w-4 h-4" />,     shortLabel: '@' },
+  { id: 'username',       icon: <HiAtSymbol className="w-4 h-4" />,     shortLabel: 'Name' },
   { id: 'vault-password', icon: <HiLockClosed className="w-4 h-4" />,   shortLabel: 'Vault' },
   { id: 'passkey',        icon: <HiFingerPrint className="w-4 h-4" />,  shortLabel: 'Key' },
   { id: 'create-account', icon: <HiCheck className="w-4 h-4" />,        shortLabel: 'Create' },
