@@ -581,7 +581,7 @@ export default function Onboarding() {
     return (
       <div
         className={`fixed inset-0 z-[100] overflow-y-auto overflow-x-hidden ${outerBg}`}
-        style={{ WebkitOverflowScrolling: 'touch', touchAction: 'pan-y' }}
+        style={{ WebkitOverflowScrolling: 'touch' }}
       >
         <BoidsBg isDark={isDark} />
         <div className="absolute top-3 right-3 z-[110]">
