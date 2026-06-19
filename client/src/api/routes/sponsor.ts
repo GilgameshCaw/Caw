@@ -978,8 +978,17 @@ router.get('/my-codes', requireAuth({ anySession: true }), async (req, res) => {
     const inflight = await prisma.txQueue.findMany({
       where: {
         senderId: { in: tokenIds },
-        // In-flight TxQueue states (not yet indexed, not terminally failed).
-        status: { in: ['pending', 'queued', 'processing', 'submitting', 'awaiting_indexer', 'validated_by_peer', 'waiting_for_session', 'waiting_for_deposit'] },
+        // In-flight states PLUS the post-mine "succeeded but not yet indexed"
+        // states ('completed'/'done'/'SUCCESS'). The OTHER action's TxQueue row
+        // flips to a terminal-success status the instant the tx mines, but the
+        // PurchasedInviteCode row isn't written until ActionProcessor INDEXES that
+        // action — a window of seconds. Without the success states here, a freshly
+        // -bought code DISAPPEARED entirely during that window (optimistic row
+        // gone, server row not yet present), then "reappeared" only when a later
+        // poll/another purchase coincided with the index landing. The `minted`
+        // set below de-dupes once the PurchasedInviteCode exists, so including
+        // these can't double-show. Terminal FAILED states stay excluded.
+        status: { in: ['pending', 'queued', 'processing', 'submitting', 'awaiting_indexer', 'validated_by_peer', 'waiting_for_session', 'waiting_for_deposit', 'completed', 'done', 'SUCCESS'] },
       },
       select: { senderId: true, cawonce: true, payload: true, createdAt: true },
       orderBy: { createdAt: 'desc' },
