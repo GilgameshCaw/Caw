@@ -87,14 +87,16 @@
     <meta name="twitter:description" content="" />
     <meta name="twitter:image" content="__CAW_PUBLIC_URL__/api/og/image/default" />
   </head>
+  <!-- The page background color lives on <html> (and <body>) — set here for the
+       pre-mount no-flash, then kept in sync by useTheme. This is what covers the
+       iOS overscroll / rubber-band area. We deliberately do NOT use a
+       position:fixed full-screen #theme-bg overlay: on iOS WebKit a fixed,
+       inset:0 layer mis-composites ABOVE the app's own fixed-position overlays
+       (e.g. the onboarding container) and paints black over the content — the
+       "onboarding is black on iPhone" bug. #theme-bg is kept (useTheme writes its
+       backgroundColor) but made non-fixed so it can never overlay the UI. -->
   <body style="background-color: #0A0A0A; color-scheme: dark; margin: 0">
-    <!-- Full-viewport background color (covers iOS overscroll / rubber-band).
-         z-index:-1 keeps it BEHIND #root: on iOS, a fixed z-index:0 layer here
-         could mis-composite ABOVE the app's own fixed-position overlays (e.g.
-         the onboarding container) and paint black over the content. Negative z
-         puts it under root's stacking context so it can never cover the UI.
-         useTheme only updates its backgroundColor, never its position/z. -->
-    <div id="theme-bg" style="position: fixed; inset: 0; z-index: -1; background-color: #0A0A0A"></div>
+    <div id="theme-bg" style="position: absolute; width: 0; height: 0; overflow: hidden; background-color: #0A0A0A"></div>
     <div id="root" style="position: relative; z-index: 0"></div>
     <script>
       try {
