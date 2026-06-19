@@ -247,10 +247,31 @@ async function banIp(ip: string): Promise<void> {
 }
 
 /**
- * Check the per-code per-IP rate limit (1 lookup per hour).
+ * Check the per-code per-IP rate limit (1 SUCCESSFUL redemption per hour).
+ * PEEK-ONLY: reads the counter but never increments it — a failed/abandoned
+ * attempt (bad gas, username taken, user backed out) must NOT consume the slot.
+ * The slot is spent only on actual account creation, via recordCodeUse() at the
+ * success path. (Mirrors the bootstrap-level recordSponsorUse pattern.)
  * Returns true if allowed (under limit), false if exceeded.
  */
 async function checkCodeRateLimit(codeHash: string, ip: string): Promise<boolean> {
+  try {
+    const redis = getRedis()
+    const key = keyCodeRate(codeHash, ip)
+    const raw = await redis.get(key)
+    const count = raw ? parseInt(raw, 10) : 0
+    return count < 1  // allow while under 1 SUCCESSFUL redemption this window
+  } catch {
+    return true  // fail open
+  }
+}
+
+/**
+ * Spend one per-code per-IP slot — call ONLY after an account is actually
+ * created. Increments the counter checkCodeRateLimit() peeks, with a 1-hour TTL
+ * on first use. Fire-and-forget; failure just means the slot isn't counted.
+ */
+export async function recordCodeUse(codeHash: string, ip: string): Promise<void> {
   try {
     const redis = getRedis()
     const key = keyCodeRate(codeHash, ip)
@@ -258,9 +279,8 @@ async function checkCodeRateLimit(codeHash: string, ip: string): Promise<boolean
     if (count === 1) {
       await redis.expire(key, CODE_RATE_WINDOW_SECONDS)
     }
-    return count <= 1  // 1 per hour
-  } catch {
-    return true  // fail open
+  } catch (err) {
+    console.warn('[validateSponsorCode] recordCodeUse failed; slot not counted:', (err as any)?.message ?? err)
   }
 }
 

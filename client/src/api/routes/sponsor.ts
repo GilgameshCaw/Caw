@@ -30,6 +30,7 @@ import {
   validateSponsorCode,
   commitRedemption,
   computeRedemptionBudget,
+  recordCodeUse,
 } from '../middleware/validateSponsorCode'
 import { getCawPriceCache, getEthPriceCache, ensureFreshGasPriceCache } from '../../services/ChainSyncService'
 import { hashCode } from '../../services/SponsorService/codes'
@@ -463,6 +464,11 @@ router.post('/bootstrap', async (req, res) => {
   // against the SAME counter we peeked (ungated → its independent counter, so a
   // free signup never burns an invite-code slot and vice-versa). Fire-and-forget.
   void recordSponsorUse(ip, rateOp)   // fire-and-forget; handles its own errors
+
+  // Likewise spend the per-CODE per-IP slot only on success. validateSponsorCode
+  // now PEEKS this counter (a failed gas/username/abandoned attempt no longer
+  // burns it); the actual increment happens here, once the account exists.
+  if (codeHash) void recordCodeUse(codeHash, ip)
 
   // Commit the redemption audit row (code path only — X path has no codeHash).
   // Fire-and-forget so a DB hiccup doesn't break the user's UX.
