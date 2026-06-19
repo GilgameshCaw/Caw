@@ -31,6 +31,7 @@ import StakingRewardsInfo from '~/components/StakingRewardsInfo'
 import { RepayStatus } from '~/components/RepayStatus'
 import { useSessionKeyStore } from '~/store/sessionKeyStore'
 import { useEnsureWallet } from '~/hooks/useEnsureWallet'
+import { useWalletPopulation } from '~/hooks/useWalletPopulation'
 import { CLIENT_ID } from '~/api/actions'
 import { useT } from '~/i18n/I18nProvider'
 import NetworkFeesPanel from '~/components/NetworkFeesPanel'
@@ -128,6 +129,13 @@ const Staking = () => {
   const { openConnectModal } = useConnectModal()
   const connections = useConnections()
   const signAndSubmit = useSignAndSubmitAction()
+  // Population-B (passkey) users have NO wagmi wallet — unstake is a plain L2
+  // action signed by their session key, so they must NOT be routed through
+  // ensureWallet (which would pop "Connect a Wallet"). isConnected stays false
+  // for them; this flag is the override that lets the unstake action sign
+  // directly via the QuickSign session.
+  const { population } = useWalletPopulation()
+  const isPasskeyUser = population === 'B'
 
   const wrongChainForStake = connections[0]?.chainId !== chains.l1.chainId
   const wrongChainForUnstake = connections[0]?.chainId !== chains.l1.chainId
@@ -690,12 +698,21 @@ const Staking = () => {
   // Handle withdraw button click (for pending withdrawals)
   const handleWithdraw = useCallback(async () => {
     if (!activeToken) return
-    console.log('[Staking] handleWithdraw called', { isConnected, isMainnet })
+    console.log('[Staking] handleWithdraw called', { isConnected, isPasskeyUser, isMainnet })
+    // "Complete Withdrawal" = the L1 withdrawTo finalize (pulls the now-credited
+    // withdrawable[] back to the holder). For passkey users that's the SmartEOA-
+    // relay path, which lives on /wallet (WithdrawForm + useSmartEoaExecute) — the
+    // wagmi `withdraw.call()` below can't run for them. Route them there instead
+    // of popping "Connect a Wallet".
+    if (isPasskeyUser) {
+      navigate('/wallet')
+      return
+    }
     await ensureWallet({ chainId: chains.l1.chainId }, async () => {
       console.log('[Staking] Executing withdraw')
       await withdraw.call()
     })
-  }, [activeToken, isConnected, isMainnet, withdraw, ensureWallet])
+  }, [activeToken, isConnected, isPasskeyUser, isMainnet, withdraw, ensureWallet, navigate])
 
   // Handle unstake initialization. EIP-712 signatures are chain-agnostic
   // (domain.chainId is hashed into the digest regardless of the wallet's
@@ -725,28 +742,37 @@ const Staking = () => {
       return
     }
     setIsWithdrawPending(true)
-    console.log('[Staking] handleUnstakeInit called', { isConnected, amount, isMainnet })
+    console.log('[Staking] handleUnstakeInit called', { isConnected, isPasskeyUser, amount, isMainnet })
+    // The actual sign-and-submit of the L2 'withdraw' (unstake) action. Identical
+    // for both populations — it's session-key signed, not a wallet tx.
+    const submitUnstake = async () => {
+      try {
+        console.log('[Staking] Submitting withdraw action (signing from current chain)')
+        await signAndSubmit({
+          senderId: activeToken.tokenId,
+          actionType: 'withdraw',
+          recipients: [activeToken.tokenId],
+          amounts: [BigInt(Math.floor(parseFloat(amount)))],
+        })
+        setAmount("")
+        console.log('[Staking] Refreshing pending withdrawals')
+        await fetchPendingWithdrawals()
+      } catch (err) {
+        console.error('[Staking] Withdraw init failed', err)
+      }
+    }
     try {
-      await ensureWallet(null, async () => {
-        try {
-          console.log('[Staking] Submitting withdraw action (signing from current chain)')
-          await signAndSubmit({
-            senderId: activeToken.tokenId,
-            actionType: 'withdraw',
-            recipients: [activeToken.tokenId],
-            amounts: [BigInt(Math.floor(parseFloat(amount)))],
-          })
-          setAmount("")
-          console.log('[Staking] Refreshing pending withdrawals')
-          await fetchPendingWithdrawals()
-        } catch (err) {
-          console.error('[Staking] Withdraw init failed', err)
-        }
-      })
+      if (isPasskeyUser) {
+        // Population-B: no wagmi wallet. ensureWallet would pop "Connect a Wallet";
+        // their QuickSign session signs the action directly. Sign straight through.
+        await submitUnstake()
+      } else {
+        await ensureWallet(null, submitUnstake)
+      }
     } finally {
       setIsWithdrawPending(false)
     }
-  }, [activeToken, isConnected, amount, isMainnet, signAndSubmit, fetchPendingWithdrawals, ensureWallet, isWithdrawPending])
+  }, [activeToken, isConnected, isPasskeyUser, amount, isMainnet, signAndSubmit, fetchPendingWithdrawals, ensureWallet, isWithdrawPending])
 
   const renderStakePanel = () => (
     <div className="space-y-6">
@@ -1213,12 +1239,13 @@ const Staking = () => {
         }`}
         disabled={
           isWithdrawPending ||
-          (isConnected && (
-            !isTokenOwner ||
-            !amount ||
-            parseFloat(amount) <= 0 ||
-            parseFloat(amount) > mockData.maxWithdrawAmount
-          ))
+          // Amount validity gates EVERYONE (passkey users have no wagmi
+          // connection, so the isConnected-gated owner check below is skipped
+          // for them — but they still must enter a valid, in-balance amount).
+          !amount ||
+          parseFloat(amount) <= 0 ||
+          parseFloat(amount) > mockData.maxWithdrawAmount ||
+          (isConnected && !isTokenOwner)
         }
       >
         {isSwitchingNetwork
