@@ -827,7 +827,12 @@ export default function BoidsBg3D({
           camera={{ position: [0, 2, 22], fov: 55 }}
           gl={{ alpha: true, antialias: false, powerPreference: 'low-power' }}
           dpr={[1, 1.5]}
-          style={{ background: 'transparent' }}
+          // pointerEvents:none all the way down: react-three-fiber's generated
+          // wrapper sets pointer-events:auto, which over a fixed full-screen
+          // canvas EATS touch events and blocks page scroll on iOS (the finger
+          // lands on the canvas layer, not the scroll container behind it). The
+          // boids are decorative and don't need pointer input here.
+          style={{ background: 'transparent', pointerEvents: 'none' }}
           onCreated={({ gl }) => {
             // Belt-and-suspenders: ensure no white flash on Safari
             gl.setClearColor(0x000000, 0)

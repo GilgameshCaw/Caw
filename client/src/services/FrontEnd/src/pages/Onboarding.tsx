@@ -579,7 +579,10 @@ export default function Onboarding() {
       ? 'onboarding.x_gate.already_used'
       : 'onboarding.x_gate.not_qualified'
     return (
-      <div className={`fixed inset-0 z-[100] overflow-y-auto overflow-x-hidden ${outerBg}`}>
+      <div
+        className={`fixed inset-0 z-[100] overflow-y-auto overflow-x-hidden ${outerBg}`}
+        style={{ WebkitOverflowScrolling: 'touch', touchAction: 'pan-y' }}
+      >
         <BoidsBg isDark={isDark} />
         <div className="absolute top-3 right-3 z-[110]">
           <LanguageSwitcher />
@@ -647,7 +650,10 @@ export default function Onboarding() {
   }
 
   return (
-    <div className={`fixed inset-0 z-[100] overflow-y-auto overflow-x-hidden ${outerBg}`}>
+    <div
+      className={`fixed inset-0 z-[100] overflow-y-auto overflow-x-hidden ${outerBg}`}
+      style={{ WebkitOverflowScrolling: 'touch', touchAction: 'pan-y' }}
+    >
       <BoidsBg isDark={isDark} />
 
       {/* Language picker — top-right, matches PostMintOnboarding */}
