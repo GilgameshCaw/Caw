@@ -455,15 +455,19 @@ export async function validateSponsorCode(
     }
   }
 
-  // ── 10. Budget cap check ──────────────────────────────────────────────────
-  if (budget && budget.totalUsdCents > code.budgetCapUsdCents) {
-    await sleepToTarget(startMs)
-    return {
-      ok: false,
-      error: 'BUDGET_EXCEEDED',
-      detail: `Estimated redemption cost ($${(budget.totalUsdCents / 100).toFixed(2)}) exceeds code budget cap ($${(code.budgetCapUsdCents / 100).toFixed(2)}).`,
-    }
-  }
+  // ── 10. (No budget-cap rejection.) ────────────────────────────────────────
+  // The old BUDGET_EXCEEDED gate compared "redemption cost ≤ gift value", but
+  // under gas-at-redeem that's both redundant and wrong:
+  //   • Solvency is already guaranteed by the burn + gas ≤ pot check (step 8/9):
+  //     the deposit shrinks to fit gas + burn, so the validator can never be
+  //     drained beyond the pot the buyer funded.
+  //   • Fixed cross-chain costs (LZ relay ~$1.69) structurally exceed a small
+  //     gift's USD value, so the old comparison rejected EVERY small invite
+  //     ($18.88 vs $0.57 in the wild). Those costs are paid in CAW out of the
+  //     pot, not on top of it.
+  // We still compute `budget` above for the redemption audit row; we just don't
+  // reject on it. Mainnet gas is quoted/deducted (handled in steps 8/9); the
+  // actual Sepolia tx silently pays its own ~0 gas.
 
   // All checks passed — success (no sleep needed, the DB round-trip takes ~10ms)
   return {

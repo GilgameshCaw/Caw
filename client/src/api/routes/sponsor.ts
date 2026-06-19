@@ -31,7 +31,7 @@ import {
   commitRedemption,
   computeRedemptionBudget,
 } from '../middleware/validateSponsorCode'
-import { getCawPriceCache, getEthPriceCache } from '../../services/ChainSyncService'
+import { getCawPriceCache, getEthPriceCache, ensureFreshGasPriceCache } from '../../services/ChainSyncService'
 import { hashCode } from '../../services/SponsorService/codes'
 import { quoteSponsorInviteCostCaw, quoteExecuteGasFeeCaw, redeemGasCostCawLive } from '../../services/SponsorService/inviteQuote'
 import { CAW_ADDRESS } from '../../abi/addresses'
@@ -316,11 +316,21 @@ router.post('/bootstrap', async (req, res) => {
     const ethUsdCents = Number(ethPrice.usdPerEth) / 1e4
     const ethPerCawFloat = Number(cawPrice.ethPerCaw) / 1e18
     const cawUsdCents = ethPerCawFloat * ethUsdCents
-    const gasPriceWei = 20_000_000_000n  // 20 gwei
+    // LIVE mainnet gas (× quote-side safety margin happens inside the cache value
+    // we apply below) — NOT a 20-gwei constant. The old constant overstated gas
+    // ~80× at quiet real prices and blew through the per-code budget cap on every
+    // redemption. We quote against mainnet gas by design (the code is priced as a
+    // future mainnet redemption); the actual Sepolia tx pays its own ~0 gas.
+    const gasCache = await ensureFreshGasPriceCache()
+    const gasPriceWei = gasCache?.gasPriceWei ?? 3_000_000_000n // 3 gwei degraded floor
     budget = computeRedemptionBudget({
       gasPriceWei,
       gasLimitBootstrap: GAS_LIMIT_BOOTSTRAP_BUDGET,
-      netFeesWei: 3_000_000_000_000_000n,  // 0.003 ETH
+      // On-chain network fees (mint/deposit/auth) are 0 post-Uruk; the actual tx
+      // recomputes them live from getMintFeeAndAddress. The old 0.003-ETH (~$5)
+      // constant was a pre-Uruk fiction that alone blew past any small gift's
+      // budget cap. Use 0 to match the deployed zero-fee reality.
+      netFeesWei: 0n,
       lzFeeWei: params.lzTokenAmount,
       depositAmountCAW: params.depositAmountCAW,
       ethUsdCents,
