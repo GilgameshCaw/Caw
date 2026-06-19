@@ -386,7 +386,7 @@ export async function registerSponsoredSession(opts: {
  * Returns:
  *   - tipCeilingCaw: the converted amount in whole CAW (bigint), or undefined while loading
  *   - tipCeilingUsd: the USD equivalent (number), or 0 if prices unavailable
- *   - tipCeilingFallbackCaw: a $0.001-denominated fallback in whole CAW (always defined)
+ *   - tipCeilingFallbackCaw: a $0.0009-denominated fallback in whole CAW (always defined)
  */
 export function useNetworkTipTargetAsCAW(networkId: number = CLIENT_ID): {
   tipCeilingCaw: bigint | undefined
@@ -395,8 +395,10 @@ export function useNetworkTipTargetAsCAW(networkId: number = CLIENT_ID): {
 } {
   const cawPrice = usePriceStore(s => s.priceMap['a-hunters-dream'] ?? 0)
 
-  // Fallback: $0.001 worth of CAW
-  const USD_FALLBACK = 0.001
+  // Fallback: $0.0009 worth of CAW — the recommended default per-action tip
+  // (matches the $0.0009 ★ preset in QuickSignOptions; accepted by the most
+  // validators).
+  const USD_FALLBACK = 0.0009
   const tipCeilingFallbackCaw: bigint =
     cawPrice > 0 ? BigInt(Math.max(1, Math.round(USD_FALLBACK / cawPrice))) : BigInt(1000)
 

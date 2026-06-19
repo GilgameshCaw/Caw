@@ -8,7 +8,6 @@ import { useValidatorMinTips, countAcceptingValidators } from '~/hooks/useValida
 
 /** Dollar-denominated spend limit presets */
 const DOLLAR_PRESETS = [
-  { label: '$5',    usd: 5 },
   { label: '$10',   usd: 10 },
   { label: '$25',   usd: 25 },
   { label: '$100',  usd: 100 },
@@ -411,14 +410,6 @@ const QuickSignOptions: React.FC<QuickSignOptionsProps> = ({
                 {p.label}{p.recommended ? ' ★' : ''}
               </button>
             ))}
-            <button
-              type="button"
-              onClick={() => { onTipCeilingChange(0n); setTipUsdInput('') }}
-              className={`rounded-lg text-sm font-medium transition-all cursor-pointer ${btnClass(isNoTip)}`}
-              style={{ padding: '5px 8px' }}
-            >
-              No tip
-            </button>
           </div>
           {isNoTip && (
             <p className="text-xs text-red-400 mt-1.5 text-left">
