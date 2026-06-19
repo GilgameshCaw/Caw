@@ -78,6 +78,14 @@ export interface UsernameStepProps {
    */
   giftCaw?: bigint
   /**
+   * Live redeem-gas the server deducts from the gift at signup, in WHOLE CAW.
+   * The deposit the user nets is giftCaw − burnCost − (gasCostCaw × 1e18), so we
+   * fold it into both the affordability gate and the shown deposit to stay
+   * byte-identical to Onboarding's signed derivedDepositAmount. 0 / undefined
+   * when prices are unavailable (gas just isn't deducted that moment).
+   */
+  gasCostCaw?: bigint
+  /**
    * Minimum username length enforced by this invite code.
    * Undefined means no server-enforced minimum (the format regex min of 3 applies).
    */
@@ -111,6 +119,7 @@ export default function UsernameStep({
   onAvailabilityChange,
   onNext,
   giftCaw,
+  gasCostCaw,
   minUsernameLength,
   giftLoading = false,
   quickSignEnabled,
@@ -151,13 +160,18 @@ export default function UsernameStep({
   // mint fails server-side. 1M CAW in wei.
   const MIN_DEPOSIT_WEI = 1_000_000n * 10n ** 18n
 
-  // Is the name too expensive? It's too expensive if the burn cost would leave
-  // less than the minimum deposit (i.e. burn > gift - MIN_DEPOSIT). This also
-  // covers the exact-spend case (burn === gift) — the user must keep enough to
-  // fund a real profile, never spend the whole gift on the name.
+  // Live redeem-gas (whole CAW → wei) the server also deducts from the gift at
+  // signup. Folded into both the affordability gate and the shown deposit so the
+  // FE preview matches Onboarding's signed derivedDepositAmount exactly.
+  const gasWei = useMemo(() => (gasCostCaw ?? 0n) * 10n ** 18n, [gasCostCaw])
+
+  // Is the name too expensive? It's too expensive if the burn cost PLUS gas would
+  // leave less than the minimum deposit (i.e. burn + gas > gift - MIN_DEPOSIT).
+  // This also covers the exact-spend case — the user must keep enough to fund a
+  // real profile, never spend the whole gift on the name + gas.
   const nameTooExpensive = useMemo(
-    () => giftCaw !== undefined && burnCostWei > giftCaw - MIN_DEPOSIT_WEI,
-    [giftCaw, burnCostWei],
+    () => giftCaw !== undefined && burnCostWei + gasWei > giftCaw - MIN_DEPOSIT_WEI,
+    [giftCaw, burnCostWei, gasWei],
   )
 
   // Is the name too short per the code's minimum?
@@ -170,9 +184,9 @@ export default function UsernameStep({
   // clear the deposit floor (nameTooExpensive already blocks Next in that case).
   const depositAmount = useMemo((): bigint | null => {
     if (giftCaw === undefined) return null
-    const remainder = giftCaw - burnCostWei
+    const remainder = giftCaw - burnCostWei - gasWei
     return remainder >= MIN_DEPOSIT_WEI ? remainder : null
-  }, [giftCaw, burnCostWei])
+  }, [giftCaw, burnCostWei, gasWei])
 
   // Debounced value used for the RPC call — avoids a query per keystroke
   const [debouncedUsername, setDebouncedUsername] = useState(username)
@@ -273,7 +287,7 @@ export default function UsernameStep({
             {formatWeiAsUsd(giftCaw, cawPriceUsd) && ` (${formatWeiAsUsd(giftCaw, cawPriceUsd)})`}
           </p>
           <p className={`mt-1 ${isDark ? 'text-yellow-300/70' : 'text-yellow-700'}`}>
-            The username burn cost is deducted; the rest auto-deposits to your profile.
+            The username cost and network fees are deducted; the rest auto-deposits to your profile.
           </p>
         </div>
       )}

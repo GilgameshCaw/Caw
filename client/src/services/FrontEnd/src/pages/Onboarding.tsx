@@ -74,7 +74,8 @@ interface OnboardingState {
 /** Gift code metadata fetched from /api/sponsor/code/:code */
 interface SponsorCodeInfo {
   valid: boolean
-  giftCaw?: bigint          // total CAW gifted, in wei
+  giftCaw?: bigint          // total CAW gifted (the pot), in wei
+  gasCaw?: bigint           // live redeem-gas the server deducts from the gift, in WHOLE CAW
   minUsernameLength?: number
   expiresAt?: string
   /**
@@ -249,6 +250,7 @@ export default function Onboarding() {
     apiFetch<{
       valid: boolean
       giftCaw?: string
+      gasCaw?: string
       minUsernameLength?: number
       expiresAt?: string
       repayBps?: number
@@ -260,6 +262,7 @@ export default function Onboarding() {
           setGiftInfo({
             valid: true,
             giftCaw: BigInt(json.giftCaw),
+            gasCaw: json.gasCaw ? BigInt(json.gasCaw) : 0n,
             minUsernameLength: json.minUsernameLength,
             expiresAt: json.expiresAt,
             repayBps: json.repayBps ?? 0,
@@ -280,12 +283,17 @@ export default function Onboarding() {
   }, [codeValid, normalizedCode])
 
   // ── Derived deposit amount ─────────────────────────────────────────────────
-  // giftCaw - (username burn cost in wei). Computed at render time from live
-  // username; never stored in state — always fresh from giftInfo.
+  // giftCaw − (username burn) − (live redeem gas). Gas is charged at REDEEM, so
+  // the preview subtracts the server-reported gasCaw too (server re-derives it
+  // authoritatively at bootstrap). Computed fresh from giftInfo + live username.
   const derivedDepositAmount = useMemo((): bigint => {
     if (!giftInfo?.valid || !giftInfo.giftCaw) return 0n
     const burnCostWei = BigInt(cawCostForLength(state.username.length)) * 10n ** 18n
-    const remainder = giftInfo.giftCaw - burnCostWei
+    // gasCaw arrives in WHOLE CAW (matches the server's redeemGasCostCaw()); the
+    // server converts it to wei the same way (× 1e18) at bootstrap, so convert
+    // here too to keep this preview byte-identical to the authoritative deduction.
+    const gasWei = (giftInfo.gasCaw ?? 0n) * 10n ** 18n
+    const remainder = giftInfo.giftCaw - burnCostWei - gasWei
     return remainder > 0n ? remainder : 0n
   }, [giftInfo, state.username])
 
@@ -768,6 +776,7 @@ export default function Onboarding() {
               onAvailabilityChange={handleAvailabilityChange}
               onNext={goNext}
               giftCaw={giftInfo?.valid ? giftInfo.giftCaw : undefined}
+              gasCostCaw={giftInfo?.valid ? giftInfo.gasCaw : undefined}
               minUsernameLength={giftInfo?.valid ? giftInfo.minUsernameLength : undefined}
               giftLoading={giftLoading}
               cawPriceUsd={cawPriceUsd}

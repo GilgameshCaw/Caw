@@ -126,17 +126,25 @@ export default function SponsorInviteSection() {
   // against real costs at the friend's signup, not frozen now (see note below
   // the form). The buffer keeps a modest gas rise from eating the whole gift.
   // The burn leg is a fixed CAW amount, so it gets no buffer.
-  // GIFT-AWARE pot: overhead is gas + LZ ONLY. The username BURN is NOT pre-paid
-  // by the sponsor — it comes out of the pot when the invitee picks a name at
-  // signup (a shorter, rarer name eats more of the pot, leaving a smaller
-  // deposit). So the sponsor just funds a pot; no min-username-length to choose.
+  // GIFT-AWARE pot, gas charged at REDEEM. The buyer funds a POT = tip − LZ. At
+  // the friend's signup the server deducts the LIVE gas + the chosen name's burn
+  // from the pot; the rest is the friend's deposit. So nothing here is "pre-paid"
+  // except the LZ relay leg. We still pad gas by 15% in the MINIMUM so a modest
+  // gas rise before redemption doesn't push the gift negative.
   const GAS_BUFFER_NUM = 115
   const GAS_BUFFER_DEN = 100
-  const bufferedGasMarginCaw = (gasMarginCaw * BigInt(GAS_BUFFER_NUM)) / BigInt(GAS_BUFFER_DEN)
-  const overheadCaw = bufferedGasMarginCaw
-  // Minimum the sponsor may enter: the overhead, rounded up to the next cent, plus
-  // one cent of headroom so the smallest valid entry still produces a positive gift.
-  const overheadUsd = Number(overheadCaw) * rate
+  // gasFloorCaw = the live redeem-gas estimate (whole CAW), padded for the min.
+  const redeemGasCaw = gasFloorCaw
+  const bufferedGasCaw = (redeemGasCaw * BigInt(GAS_BUFFER_NUM)) / BigInt(GAS_BUFFER_DEN)
+  // overheadCaw = what's taken off the TIP to get the pot (LZ only).
+  const overheadCaw = gasMarginCaw
+  // What the friend actually nets at redeem (display): pot − gas − burn(8+ floor).
+  // 8+ is the cheapest name; a shorter name nets them less. 1M = burn(8+).
+  const minBurnCaw = 1_000_000n
+  // Minimum tip the buyer may enter: must leave a positive gift after LZ + gas
+  // (buffered) + the cheapest burn, plus a cent of headroom.
+  const minPotCaw = overheadCaw + bufferedGasCaw + minBurnCaw
+  const overheadUsd = Number(minPotCaw) * rate
   const minUsd = Math.max(0.01, Math.ceil(overheadUsd * 100) / 100 + 0.01)
   // Maximum: a tip whose gift hits the per-code cap = maxGift + overhead, in USD,
   // rounded DOWN to the cent so the on-chain gift stays at or under the cap.
@@ -144,10 +152,14 @@ export default function SponsorInviteSection() {
   const maxUsd = maxGiftCaw > 0n ? Math.floor(Number(maxTipCaw) * rate * 100) / 100 : Infinity
 
   const usdAmount = parseFloat(usdInput) || 0
-  // Whole CAW the sponsor will tip (their USD / price). The gift the invitee
-  // receives is this minus the overhead (gas + relay + burn).
+  // Whole CAW the sponsor will tip (their USD / price). The on-chain POT is the
+  // tip minus the LZ relay leg; the invitee's actual gift is then the pot minus
+  // the LIVE redeem gas + their chosen name's burn, both settled at signup. For
+  // the buyer-facing "sponsors ~N actions" estimate we show the gift NET of the
+  // (current) gas + the cheapest 8+ burn — the realistic floor of what lands.
   const tipWholeCaw = rate > 0 ? Math.max(0, Math.round(usdAmount / rate)) : 0
-  const giftWholeCaw = Math.max(0, tipWholeCaw - Number(overheadCaw))
+  const potWholeCaw = Math.max(0, tipWholeCaw - Number(overheadCaw))
+  const giftWholeCaw = Math.max(0, potWholeCaw - Number(redeemGasCaw) - Number(minBurnCaw))
   const giftUsd = giftWholeCaw * rate
   // "Sponsors ~N actions": gift ÷ the BINDING per-action cost the invitee pays.
   // The server computes this as max(validator base tip, ETH-pegged min-tip floor
@@ -162,8 +174,9 @@ export default function SponsorInviteSection() {
 
   const priceReady = rate > 0 && quote?.priceAvailable !== false
   const aboveFloor = usdAmount >= minUsd && tipWholeCaw > 0
-  // Gift must not exceed the per-code cap (server enforces this; mirror it here).
-  const belowCap = maxGiftCaw === 0n || BigInt(giftWholeCaw) <= maxGiftCaw
+  // Pot must not exceed the per-code cap (server caps the POT = tip − LZ, which
+  // is what's stored as maxDepositCawWei; mirror that here, not the net gift).
+  const belowCap = maxGiftCaw === 0n || BigInt(potWholeCaw) <= maxGiftCaw
   const canBuy =
     priceReady &&
     aboveFloor &&

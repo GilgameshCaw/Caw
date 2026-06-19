@@ -38,16 +38,16 @@ const MAX_PRICED_USERNAME_LEN = 8
 /**
  * The shortest username length a pot (whole CAW) can afford to mint — i.e. the
  * smallest length in [MIN_USERNAME_FLOOR, MAX_PRICED_USERNAME_LEN] whose burn
- * the pot still covers. Burn DECREASES as length increases (6 = 20M, 7 = 10M,
- * 8+ = 1M), so we scan from the cheapest length down to the floor and return the
- * shortest one still affordable. If the pot can't even cover the 8+ burn, we
- * return MAX_PRICED_USERNAME_LEN (the redeem affordability check will then reject
- * any name — a near-empty pot can't mint at all).
+ * PLUS the redeem gas the pot still covers (burn(len) + gas ≤ pot). Burn
+ * DECREASES as length increases (6 = 20M, 7 = 10M, 8+ = 1M), so we scan from the
+ * cheapest length down to the floor and return the shortest still affordable. If
+ * the pot can't even cover the cheapest burn + gas, we return
+ * MAX_PRICED_USERNAME_LEN (the redeem affordability check then rejects any name).
  */
-function affordableMinUsernameLen(potWholeCaw: bigint): number {
+function affordableMinUsernameLen(potWholeCaw: bigint, gasWholeCaw: bigint): number {
   let affordable = MAX_PRICED_USERNAME_LEN
   for (let len = MAX_PRICED_USERNAME_LEN; len >= MIN_USERNAME_FLOOR; len--) {
-    if (potWholeCaw >= burnCostForLen(len)) affordable = len
+    if (potWholeCaw >= burnCostForLen(len) + gasWholeCaw) affordable = len
     else break
   }
   return affordable
@@ -120,23 +120,24 @@ export async function handleSponsorInviteAction(
   // fluctuates with gas, so a positive gift is the normal outcome.
   // (INVITE_CODE_ENC_KEY presence is the Gate 0 minter check at the top.)
 
-  // ── GIFT-AWARE pot model ──────────────────────────────────────────────────
-  // The code carries a POT = tip − gas − LZ. The username BURN is NOT pre-paid
-  // by the sponsor; it comes out of the pot when the invitee redeems, against
-  // whatever name they pick. So a longer (cheaper) name leaves a bigger deposit,
-  // a shorter (rarer, pricier) name leaves a smaller one — the invitee spends
-  // the pot however they like. This is why the buyer no longer chooses a
-  // "minimum username length": any name the pot can afford is allowed.
-  const overheadCaw = quote.gasMarginCaw // gas + LZ only — NO burn here.
+  // ── GIFT-AWARE pot model (gas charged at REDEEM) ──────────────────────────
+  // The code carries a POT = tip − LZ. Neither the username BURN nor the redeem
+  // GAS is pre-paid by the buyer — both come out of the pot when the invitee
+  // signs up, at the gas price that exists THEN (so the validator is made whole
+  // against gas it actually pays, not whenever the code was bought). At redeem:
+  //   deposit = pot − burn(name) − liveGas   (enforced in validateSponsorCode)
+  // A longer (cheaper) name + cheaper gas leaves a bigger deposit; the invitee
+  // spends the pot however they like. No buyer-chosen min-username-length.
+  const overheadCaw = quote.gasMarginCaw // LZ relay only — gas & burn deferred to redeem.
   const potWholeCaw = tipWholeCaw > overheadCaw ? tipWholeCaw - overheadCaw : 0n
   const giftWholeCaw = potWholeCaw
 
-  // The shortest username this pot can mint = the smallest length whose burn the
-  // pot still covers (and never below the global floor). Stored as the code's
-  // minUsernameLength so the redeem-side gate ("name must be affordable") is a
-  // simple length check. Walk from the floor UP to the cheapest tier; the first
-  // length the pot can't afford sets the floor one above it.
-  const minLen = affordableMinUsernameLen(potWholeCaw)
+  // The shortest username this pot can mint, accounting for the burn AND the
+  // (current) redeem gas the pot must also cover. Stored as the code's
+  // minUsernameLength so the redeem-side affordability gate is a simple length
+  // check. Uses the live gas estimate at mint time as a reasonable floor; the
+  // authoritative burn+gas check happens at redeem.
+  const minLen = affordableMinUsernameLen(potWholeCaw, quote.gasFloorCaw)
 
   // ── Upper bound: reject an oversized gift. ────────────────────────────────
   // A single code's gift is the maxDepositCawWei a redeemer can draw into one

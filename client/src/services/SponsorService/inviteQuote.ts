@@ -222,8 +222,13 @@ export function quoteSponsorInviteCostCaw(): InviteQuote {
   }
 
   const gasWei = effectiveGasPriceWei() * GAS_LIMIT_BOOTSTRAP
+  // gasFloorCaw = the LIVE redeem-gas estimate (whole CAW). Gas is now charged
+  // at REDEEM (deducted from the gift when the invitee signs up), not pre-paid
+  // by the buyer — so the validator is made whole against gas at the price that
+  // exists when the code is actually used, not when it was bought.
   const gasFloorCaw = ethWeiToWholeCaw(gasWei, cawPrice.cawPerEth)
-  const gasMarginCaw = ethWeiToWholeCaw(gasWei + LZ_RELAY_WEI, cawPrice.cawPerEth)
+  // Purchase-time overhead the buyer pre-pays is now LZ-relay ONLY (no gas).
+  const gasMarginCaw = ethWeiToWholeCaw(LZ_RELAY_WEI, cawPrice.cawPerEth)
 
   // USD per CAW: ethPerCaw (wei per 1 CAW) -> ETH -> USD via usdPerEth (scaled 1e6).
   const ethPerCawFloat = Number(cawPrice.ethPerCaw) / 1e18
@@ -233,6 +238,21 @@ export function quoteSponsorInviteCostCaw(): InviteQuote {
   const perActionCaw = perActionCostCaw(cawPrice.cawPerEth)
 
   return { gasFloorCaw, gasMarginCaw, maxGiftCaw: MAX_INVITE_GIFT_CAW, cawUsdRate, perActionCaw, priceAvailable: true }
+}
+
+/**
+ * The LIVE redeem-gas cost in WHOLE CAW (wei-CAW / 1e18 rounded), or null if
+ * prices are unavailable. This is what the sponsor server deducts from the gift
+ * at redeem (deposit = pot − burn − this), so the validator recovers the ETH gas
+ * it pays at the price that exists WHEN THE CODE IS USED. Computed server-side at
+ * the bootstrap path; the FE reads it (echoed in /validate-code) only to render a
+ * matching estimate — the server's value is authoritative.
+ */
+export function redeemGasCostCaw(): bigint | null {
+  const cawPrice = getCawPriceCache()
+  if (!cawPrice || cawPrice.cawPerEth <= 0n) return null
+  const gasWei = effectiveGasPriceWei() * GAS_LIMIT_BOOTSTRAP
+  return ethWeiToWholeCaw(gasWei, cawPrice.cawPerEth)
 }
 
 // Validator tip defaults — MIRROR validator-analytics.ts /tip-config so the

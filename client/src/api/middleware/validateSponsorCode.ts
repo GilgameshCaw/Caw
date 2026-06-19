@@ -24,7 +24,7 @@
 import Redis from 'ioredis'
 import { prisma as _prismaDefault } from '../../prismaClient'
 import { hashCode } from '../../services/SponsorService/codes'
-import { burnCostForLen } from '../../services/SponsorService/inviteQuote'
+import { burnCostForLen, redeemGasCostCaw } from '../../services/SponsorService/inviteQuote'
 import type { SponsorErrorCode } from '../../services/SponsorService'
 
 // Allow tests to inject a mock Prisma client.
@@ -420,30 +420,36 @@ export async function validateSponsorCode(
     return { ok: false, error: 'CODE_EXHAUSTED', detail: 'This invite code has no uses remaining.' }
   }
 
-  // ── 8/9. GIFT-AWARE pot check (burn + deposit must fit the pot) ────────────
-  // The code's maxDepositCawWei is the POT (tip − gas − LZ). The username BURN
-  // for the redeemer's chosen name comes out of that pot; the staked deposit is
-  // whatever's left. So:  burn(name) + deposit ≤ pot.  A shorter (pricier) name
-  // leaves less for the deposit; a name the pot can't even mint is rejected.
-  // This replaces the old fixed "minimum username length" — any name the pot can
-  // afford is allowed (the sponsor funds a pot, the invitee spends it).
+  // ── 8/9. GIFT-AWARE pot check (burn + LIVE GAS + deposit must fit the pot) ──
+  // The code's maxDepositCawWei is the POT (tip − LZ). Out of that pot, at REDEEM
+  // we pay: the username BURN for the chosen name, the LIVE redeem GAS (computed
+  // NOW, server-side — the validator recovers the ETH gas it's about to pay at
+  // the current price), and the rest is the staked deposit. So:
+  //     burn(name) + liveGas + deposit ≤ pot
+  // Gas is charged ONCE, here at redeem (it is NOT pre-paid by the buyer). A
+  // shorter (pricier) name or higher gas leaves less for the deposit; a name the
+  // pot can't cover (burn + gas) is rejected.
   const potWei = BigInt(code.maxDepositCawWei)
   const burnWei = burnCostForLen(params.username.length) * 10n ** 18n
-  if (burnWei > potWei) {
+  // Live redeem-gas in wei-CAW. null (no prices) → treat as 0 so a price outage
+  // doesn't block redemption (the gift just isn't gas-reduced that moment).
+  const gasCaw = redeemGasCostCaw()
+  const gasWei = gasCaw !== null ? gasCaw * 10n ** 18n : 0n
+  if (burnWei + gasWei > potWei) {
     await sleepToTarget(startMs)
     return {
       ok: false,
       error: 'USERNAME_TOO_SHORT',
-      detail: `A ${params.username.length}-character name costs more CAW to mint than this invite covers. Choose a longer name.`,
+      detail: `A ${params.username.length}-character name plus network gas costs more than this invite covers. Choose a longer name.`,
     }
   }
-  const maxDepositWei = potWei - burnWei // what's left for the stake after burn
+  const maxDepositWei = potWei - burnWei - gasWei // stake left after burn + gas
   if (params.depositAmountCAW > maxDepositWei) {
     await sleepToTarget(startMs)
     return {
       ok: false,
       error: 'DEPOSIT_TOO_LARGE',
-      detail: `Requested deposit exceeds what this invite covers after the username mint cost (${maxDepositWei} wei).`,
+      detail: `Requested deposit exceeds what this invite covers after the username mint cost and network gas (${maxDepositWei} wei).`,
     }
   }
 

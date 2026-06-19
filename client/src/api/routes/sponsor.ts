@@ -33,7 +33,7 @@ import {
 } from '../middleware/validateSponsorCode'
 import { getCawPriceCache, getEthPriceCache } from '../../services/ChainSyncService'
 import { hashCode } from '../../services/SponsorService/codes'
-import { quoteSponsorInviteCostCaw, quoteExecuteGasFeeCaw } from '../../services/SponsorService/inviteQuote'
+import { quoteSponsorInviteCostCaw, quoteExecuteGasFeeCaw, redeemGasCostCaw } from '../../services/SponsorService/inviteQuote'
 import { CAW_ADDRESS } from '../../abi/addresses'
 import { getOwnValidatorTokenId } from '../../services/SponsorService/validatorIdentity'
 import { decryptInviteCode } from '../../services/SponsorService/inviteCodeCrypto'
@@ -845,9 +845,15 @@ router.get('/code/:code', async (req, res) => {
       })()
     : 0
 
+  // Live redeem-gas in whole CAW — the FE subtracts this (plus the name burn)
+  // from giftCaw to PREVIEW the deposit. The server re-derives it authoritatively
+  // at bootstrap, so this is display-only. '0' when prices are unavailable.
+  const gasCaw = (redeemGasCostCaw() ?? 0n).toString()
+
   return res.status(200).json({
     valid: true,
     giftCaw: code.maxDepositCawWei,
+    gasCaw,
     minUsernameLength: code.minUsernameLength,
     expiresAt: code.expiresAt.toISOString(),
     repayBps,
