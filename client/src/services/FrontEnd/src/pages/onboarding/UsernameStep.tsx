@@ -351,12 +351,10 @@ export default function UsernameStep({
                     This name costs {formatCawCompact(cawCost)} CAW — your invite includes {formatWeiAsCaw(giftCaw)}. Try a longer name.
                   </p>
                 )}
-                {/* Gift gate: name too short per code minimum */}
-                {belowMinLength && minUsernameLength !== undefined && username.length > 0 && !isTyping && (
-                  <p className="text-xs text-red-500 mt-0.5">
-                    Your invite requires a username of at least {minUsernameLength} characters.
-                  </p>
-                )}
+                {/* Gift gate: name too short per code minimum. No separate copy —
+                    the "too expensive" line above already states the exact CAW the
+                    invite covers vs the name's cost, which is the actionable info.
+                    belowMinLength still gates Next / red state below. */}
               </div>
               <div className="text-right">
                 {!isTyping && usernameAvailable === true && !nameTooExpensive && !belowMinLength && (
