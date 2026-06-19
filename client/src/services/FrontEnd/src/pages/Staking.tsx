@@ -656,7 +656,15 @@ const Staking = () => {
   // rejected, or useContractCall bailed on a stale `disabled` ref) doesn't
   // leave the button stuck on "Approving…".
   const handleStake = useCallback(async () => {
-    console.log('[Staking] handleStake called', { isConnected, amount, wrongChainForStake, needsApproval, paymentMode })
+    console.log('[Staking] handleStake called', { isConnected, isPasskeyUser, amount, wrongChainForStake, needsApproval, paymentMode })
+    // Population-B (passkey) users have no wagmi wallet — depositing is the
+    // relayed approve+depositFor batch on /wallet (the connect-wallet flow below
+    // would dead-end on "Connect a Wallet"). Route them there. Mirrors the
+    // handleWithdraw → /wallet redirect.
+    if (isPasskeyUser) {
+      navigate('/wallet')
+      return
+    }
     try {
       await ensureWallet({ chainId: chains.l1.chainId }, async () => {
         if (paymentMode === 'eth') {
@@ -693,7 +701,7 @@ const Staking = () => {
       setIsApprovePending(false)
       setIsStakePending(false)
     }
-  }, [isConnected, wrongChainForStake, needsApproval, approve, stake, depositZap, amount, ensureWallet, refetchAllowance, paymentMode])
+  }, [isConnected, isPasskeyUser, navigate, wrongChainForStake, needsApproval, approve, stake, depositZap, amount, ensureWallet, refetchAllowance, paymentMode])
 
   // Handle withdraw button click (for pending withdrawals)
   const handleWithdraw = useCallback(async () => {

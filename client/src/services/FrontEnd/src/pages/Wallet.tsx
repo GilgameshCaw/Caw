@@ -16,6 +16,7 @@ import { cawProfileAbi } from '~/../../../abi/generated'
 import { CLIENT_ID } from '~/api/actions'
 import { chains } from '~/config/chains'
 import { WithdrawForm } from '~/components/WithdrawForm'
+import { TopUpForm } from '~/components/TopUpForm'
 import { useTheme } from '~/hooks/useTheme'
 import { useWalletPopulation } from '~/hooks/useWalletPopulation'
 import { useActiveToken, useTokenDataStore } from '~/store/tokenDataStore'
@@ -161,6 +162,25 @@ const Wallet = () => {
         </div>
       </div>
 
+      {/* Top-up (add funds) — passkey users only. The CAW path is trustless:
+          send CAW to your own EOA, then a relayed approve+depositFor sweeps it
+          into stake (the relayer never custodies the CAW). ETH (zap) top-up is a
+          follow-up gated on a Minter helper redeploy. */}
+      {activeToken && population === 'B' && (
+        <div className="mb-8">
+          <h2 className={`text-lg font-semibold mb-4 ${strongClass}`}>
+            {t('wallet.topup_section_title')}
+          </h2>
+          <TopUpForm
+            tokenId={tokenId}
+            eoaAddress={displayAddress}
+            cawBalanceWei={(cawBalance as bigint | undefined) ?? 0n}
+            ethBalanceWei={ethBalance?.value}
+            onSuccess={handleWithdrawSuccess}
+          />
+        </div>
+      )}
+
       {/* Withdrawal section */}
       {activeToken && (
         <div className="mb-8">
@@ -179,12 +199,6 @@ const Wallet = () => {
       {!activeToken && (
         <p className={`text-sm ${mutedClass}`}>{t('wallet.no_profile')}</p>
       )}
-
-      {/* TODO(pop-B zap): ETH→CAW top-up via depositZap for Pop-B is non-trivial
-          (requires relayed batch through useSmartEoaExecute matching the sponsor
-          server's depositZap entry point). Pop-A depositZap is wired in Staking.tsx.
-          Scaffold below is intentionally not implemented — see report for details. */}
-      {/* <ZapSection population={population} address={displayAddress} /> */}
     </div>
   )
 }

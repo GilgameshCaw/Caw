@@ -592,15 +592,27 @@ router.post('/authenticate', async (req, res) => {
 // target; add the one selector.
 const SEL_WITHDRAW_TO   = '0xcdbafcd0' // CawProfile.withdrawTo(uint32,uint32,address,uint32,uint256)
 const SEL_CAW_TRANSFER  = '0xa9059cbb' // CAW.transfer(address,uint256)
+const SEL_CAW_APPROVE   = '0x095ea7b3' // CAW.approve(address,uint256)
+const SEL_DEPOSIT_FOR   = '0xf19b53f8' // CawProfile.depositFor(uint32,uint32,uint256,uint32,uint256)
 
 const CAW_NAMES_ADDRESS_LC = (process.env.CAW_NAMES_ADDRESS || '').toLowerCase()
 const CAW_ADDRESS_LC = CAW_ADDRESS.toLowerCase()
 
 // target (lowercased) → the exact selectors permitted on it. Anything not here
 // is rejected. Empty when the env target isn't configured (route 503s).
+//
+// SEAM-EXEC withdraw selectors: withdrawTo (on CawProfile) + CAW.transfer.
+// DEPOSIT (top-up) selectors added 2026-06: CawProfile.depositFor (pull CAW from
+// the EOA into stake) + CAW.approve (so depositFor's transferFrom has allowance).
+// Both carry SHAPE CHECKS below (approve spender ∈ {CawProfile}; depositFor
+// tokenId owned-by-signer) so a relayed approve can't grant an attacker an
+// allowance and a relayed depositFor can't credit someone else's token. The
+// relayer stays whole: depositFor forwards only the LZ fee as value, priced into
+// the CAW fee leg by quoteExecuteGasFeeCaw(forwardedValue) — the user holds the
+// CAW they sent, so the fee leg is funded.
 const EXECUTE_ALLOWED: Record<string, Set<string>> = {}
-if (CAW_NAMES_ADDRESS_LC) EXECUTE_ALLOWED[CAW_NAMES_ADDRESS_LC] = new Set([SEL_WITHDRAW_TO])
-EXECUTE_ALLOWED[CAW_ADDRESS_LC] = new Set([SEL_CAW_TRANSFER])
+if (CAW_NAMES_ADDRESS_LC) EXECUTE_ALLOWED[CAW_NAMES_ADDRESS_LC] = new Set([SEL_WITHDRAW_TO, SEL_DEPOSIT_FOR])
+EXECUTE_ALLOWED[CAW_ADDRESS_LC] = new Set([SEL_CAW_TRANSFER, SEL_CAW_APPROVE])
 
 // ERC-20 transfer(address,uint256) selector — used to decode the relayer-fee call.
 const ERC20_TRANSFER_SELECTOR = SEL_CAW_TRANSFER
@@ -663,6 +675,67 @@ router.post('/execute', async (req, res) => {
     return res.status(503).json({ error: 'RELAY_UNCONFIGURED', detail: 'No allow-listed (target, selector) pairs configured' })
   }
   const smartEoaLc = body.smartEoaAddress.toLowerCase()
+
+  // For the DEPOSIT path: depositFor is permissionless on-chain, so a relayed
+  // depositFor MUST be constrained to a tokenId the SIGNER owns — otherwise a user
+  // could deposit-credit (and silently auth/subscribe) someone else's token (an
+  // economic GRIEF — they donate their own CAW to a token they don't own; never a
+  // theft, since the CAW is pulled from the signer's own EOA). Resolve the signer's
+  // owned tokenIds ONCE (only when a depositFor call is present, so the withdraw
+  // path takes no extra DB hit). Same owner→token lookup auth.ts uses.
+  //
+  // TRUST NOTE: this lookup keys on body.smartEoaAddress (the request field), NOT
+  // a sig-recovered address — so it is a REJECT-EARLY UX gate, not the trust
+  // boundary. The real enforcer is on-chain: SmartEOA.executeBatch verifies the
+  // passkey sig over the exact (to,value,data) batch, so an attacker passing a
+  // victim's smartEoaAddress can't produce a valid batch and the tx reverts. The
+  // DB gate just spares the user a doomed on-chain revert for the common case.
+  // A fresh-mint indexer lag yielding an empty set rejects the deposit (retry).
+  // Also capture the depositFor `amount` (3rd arg) so the approve shape-check can
+  // bind the approved amount to it — an approve in a deposit batch must grant
+  // EXACTLY the deposit amount, never an unbounded/standing allowance the sponsor
+  // helped establish (HIGH, security review 2026-06).
+  let ownedTokenIds: Set<number> | null = null
+  let depositForAmountWei: bigint | null = null
+  const hasDepositFor = body.calls.some(
+    c => c.to.toLowerCase() === CAW_NAMES_ADDRESS_LC && (c.data || '').slice(0, 10).toLowerCase() === SEL_DEPOSIT_FOR,
+  )
+  for (const c of body.calls) {
+    if (c.to.toLowerCase() === CAW_NAMES_ADDRESS_LC && (c.data || '').slice(0, 10).toLowerCase() === SEL_DEPOSIT_FOR) {
+      // depositFor(uint32,uint32,uint256 amount,...): amount = 3rd word.
+      const amtWord = (c.data || '').slice(10 + 128, 10 + 192)
+      if (amtWord.length === 64) {
+        try { depositForAmountWei = BigInt('0x' + amtWord) } catch { depositForAmountWei = null }
+      }
+    }
+  }
+  // Reject more than ONE depositFor per batch. Each depositFor fires a cross-chain
+  // LZ send (~100K+ gas); the relay's fee quote uses a fixed GAS_LIMIT_EXECUTE_BATCH
+  // (800K), so packing several depositFors could run the tx over the gas limit and
+  // revert AFTER the relayer paid gas but BEFORE the in-batch fee transfer ran —
+  // an under-priced grief. The intended deposit shape is exactly one (LOW, review).
+  if (body.calls.filter(
+    c => c.to.toLowerCase() === CAW_NAMES_ADDRESS_LC && (c.data || '').slice(0, 10).toLowerCase() === SEL_DEPOSIT_FOR,
+  ).length > 1) {
+    return res.status(400).json({ error: 'TOO_MANY_DEPOSITS', detail: 'At most one depositFor per batch.' })
+  }
+  if (hasDepositFor) {
+    let owners: { tokenId: number }[]
+    try {
+      owners = await prisma.user.findMany({
+        where: { address: { equals: body.smartEoaAddress, mode: 'insensitive' } },
+        select: { tokenId: true },
+      })
+    } catch (e) {
+      // DB outage — 503 (retryable) rather than silently fail-closed as "not
+      // owned", which would burn the user's rate-limit quota with a misleading
+      // reason and give the operator no signal.
+      console.error('[execute] owned-token lookup failed:', (e as any)?.message ?? e)
+      return res.status(503).json({ error: 'LOOKUP_UNAVAILABLE', detail: 'Ownership lookup is temporarily unavailable; retry shortly.' })
+    }
+    ownedTokenIds = new Set(owners.map(u => u.tokenId))
+  }
+
   for (const c of body.calls) {
     const toLc = c.to.toLowerCase()
     const allowedSelectors = EXECUTE_ALLOWED[toLc]
@@ -695,6 +768,68 @@ router.post('/execute', async (req, res) => {
           error: 'WITHDRAW_RECIPIENT_NOT_SELF',
           detail: `withdrawTo must withdraw to the signer's own EOA (${smartEoaLc}); ` +
             `got ${recipient}. Send to an external address via the CAW.transfer leg.`,
+        })
+      }
+    }
+
+    // SHAPE CHECK on CAW.approve: spender MUST be CawProfile AND the approved
+    // amount MUST equal the deposit amount in this same batch. Binding the spender
+    // stops a relayed approve handing an arbitrary address an allowance; binding
+    // the amount stops a relayed approve establishing an UNBOUNDED standing
+    // allowance (MaxUint256) on the EOA's CAW — the sponsor only ever helps grant
+    // exactly what this deposit pulls. An approve with no depositFor in the batch
+    // is rejected (it has no legitimate shape on this relay).
+    if (toLc === CAW_ADDRESS_LC && selector === SEL_CAW_APPROVE) {
+      const spenderWord = c.data.slice(10, 10 + 64) // 1st word
+      const amountWord = c.data.slice(10 + 64, 10 + 128) // 2nd word
+      if (spenderWord.length !== 64 || spenderWord.slice(0, 24) !== '0'.repeat(24) || amountWord.length !== 64) {
+        return res.status(400).json({ error: 'BAD_APPROVE_SHAPE', detail: 'approve spender/amount word is malformed' })
+      }
+      const spender = '0x' + spenderWord.slice(24)
+      if (spender.toLowerCase() !== CAW_NAMES_ADDRESS_LC) {
+        return res.status(400).json({
+          error: 'APPROVE_SPENDER_NOT_ALLOWED',
+          detail: `approve spender must be CawProfile (${CAW_NAMES_ADDRESS_LC}); got ${spender}.`,
+        })
+      }
+      let approveAmt: bigint
+      try { approveAmt = BigInt('0x' + amountWord) } catch {
+        return res.status(400).json({ error: 'BAD_APPROVE_SHAPE', detail: 'approve amount is not a number' })
+      }
+      if (depositForAmountWei === null || approveAmt !== depositForAmountWei) {
+        return res.status(400).json({
+          error: 'APPROVE_AMOUNT_MISMATCH',
+          detail: `approve amount must equal the deposit amount in the same batch ` +
+            `(${depositForAmountWei ?? 'none'}); got ${approveAmt}.`,
+        })
+      }
+    }
+
+    // SHAPE CHECK on depositFor: the `tokenId` (2nd arg, uint32) MUST be one the
+    // SIGNER owns. depositFor is permissionless on-chain, so without this a user
+    // could deposit-credit + silently auth someone else's token.
+    if (toLc === CAW_NAMES_ADDRESS_LC && selector === SEL_DEPOSIT_FOR) {
+      // depositFor(uint32 cawNetworkId, uint32 tokenId, ...): tokenId = 2nd word.
+      const tokenIdWord = c.data.slice(10 + 64, 10 + 128) // 2nd word, 64 hex chars
+      if (tokenIdWord.length !== 64) {
+        return res.status(400).json({ error: 'BAD_DEPOSIT_SHAPE', detail: 'depositFor tokenId word is malformed' })
+      }
+      let tokenIdRaw: bigint
+      try { tokenIdRaw = BigInt('0x' + tokenIdWord) } catch {
+        return res.status(400).json({ error: 'BAD_DEPOSIT_SHAPE', detail: 'depositFor tokenId is not a number' })
+      }
+      // Explicit uint32 bound BEFORE Number() so the Set lookup can't be fooled by
+      // a saturated float (a 256-bit word → Number → Infinity-ish never matches a
+      // real id, but make the guard intentional, not float-coincidental).
+      if (tokenIdRaw > 0xFFFFFFFFn) {
+        return res.status(400).json({ error: 'BAD_DEPOSIT_SHAPE', detail: 'depositFor tokenId exceeds uint32' })
+      }
+      const depTokenId = Number(tokenIdRaw)
+      if (!ownedTokenIds || !ownedTokenIds.has(depTokenId)) {
+        return res.status(400).json({
+          error: 'DEPOSIT_TOKEN_NOT_OWNED',
+          detail: `depositFor tokenId ${depTokenId} is not owned by the signer ${smartEoaLc} ` +
+            `(or not yet indexed). Refresh and retry.`,
         })
       }
     }
@@ -906,13 +1041,24 @@ router.get('/invite-quote', async (_req, res) => {
 
 // ─── GET /api/sponsor/execute-quote ──────────────────────────────────────────
 // Public. The CAW fee (wei) a passkey-wallet executeBatch must transfer to the
-// relayer to cover the gas it fronts, plus the relayer address to pay it to. The
-// FE reads this to build the fee call inside a withdraw/zap batch BEFORE signing.
-// The /execute relay re-derives the same quote authoritatively and rejects a
-// batch that underpays — this endpoint is a UX pre-flight, not a trust boundary.
-router.get('/execute-quote', async (_req, res) => {
+// relayer to cover the gas it fronts PLUS any ETH the relayer forwards as the
+// batch's msg.value, plus the relayer address to pay it to. The FE reads this to
+// build the fee call inside a withdraw/deposit batch BEFORE signing.
+//
+// `forwardedValueWei` (optional query): the total ETH the batch will forward as
+// value — e.g. a deposit's LZ fee. Withdraw forwards a tiny LZ fee; a deposit
+// forwards a real one, so the FE MUST pass it or the relayer under-recovers (the
+// /execute relay re-derives the SAME quote against the batch's actual totalValue
+// and rejects an underpaying batch, so this is a UX pre-flight, not a trust
+// boundary — but a too-low pre-flight just makes the user re-sign).
+router.get('/execute-quote', async (req, res) => {
   const service = getSponsorService()
-  const quote = quoteExecuteGasFeeCaw()
+  let forwardedValueWei = 0n
+  const raw = req.query.forwardedValueWei
+  if (typeof raw === 'string' && /^\d+$/.test(raw)) {
+    try { forwardedValueWei = BigInt(raw) } catch { forwardedValueWei = 0n }
+  }
+  const quote = quoteExecuteGasFeeCaw(forwardedValueWei)
   return res.status(200).json({
     relayer: service ? service.relayerAddress() : null,
     minFeeCawWei: quote.minFeeCawWei.toString(),
