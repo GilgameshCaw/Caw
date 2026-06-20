@@ -502,18 +502,95 @@ function IdentitySectionInner({
         open={addPasskeyOpen}
         onClose={() => { setAddPasskeyOpen(false); refetch() }}
         pendingPasskeys={pending}
-        onPropose={async () => {
-          // TODO: wire SmartEOA.addPasskey write via wagmi writeContract
-          // For Wave 3 the parent (AccountSettings) would need to provide this.
-          throw new Error('ProposePasskey: contract write not yet wired — requires wagmi writeContract integration (Wave 3 follow-up)')
+        onPropose={async (passkey) => {
+          // Relay SmartEOA.addPasskey(pubkeyX, pubkeyY, callerSig) via sponsor.
+          // selector 0x4f43be60; args (bytes32 pubkeyX, bytes32 pubkeyY, bytes callerSig).
+          // The contract bakes the 24h timelock in — validFrom = now + 24h — and the
+          // key auto-activates after the timelock with NO second on-chain tx.
+          if (!eoaAccount) throw new Error('No passkey wallet connected.')
+
+          const quote = await apiFetch<SponsorExecuteQuote>('/api/sponsor/execute-quote')
+          if (!quote.priceAvailable) {
+            throw new Error('CAW fee pricing is temporarily unavailable. Try again shortly.')
+          }
+          const feeCaw = BigInt(quote.minFeeCawWei)
+
+          // params = abi.encode(pubkeyX, pubkeyY) — TWO bytes32, matching
+          // the contract's _managementDigest("addPasskey", abi.encode(newPubkeyX, newPubkeyY)).
+          const params = encodeAbiParameters(
+            [{ type: 'bytes32' }, { type: 'bytes32' }],
+            [passkey.pubkeyX, passkey.pubkeyY],
+          ) as `0x${string}`
+          const mgmtSig = await signManagement('addPasskey', params)
+
+          const call1: ExecCall = {
+            to: eoaAccount,
+            value: 0n,
+            data: encodeFunctionData({
+              abi: smartEoaAbi,
+              functionName: 'addPasskey',
+              args: [passkey.pubkeyX, passkey.pubkeyY, mgmtSig],
+            }),
+          }
+          const call2: ExecCall = {
+            to: CAW_ADDRESS,
+            value: 0n,
+            data: encodeFunctionData({
+              abi: erc20Abi,
+              functionName: 'transfer',
+              args: [quote.relayer, feeCaw],
+            }),
+          }
+
+          const txHash = await smartEoaExecute([call1, call2])
+          return { txHash }
         }}
-        onFinalize={async () => {
-          // TODO: wire SmartEOA.finalizeAddPasskey
-          throw new Error('FinalizePasskey: not wired (Wave 3 follow-up)')
+        onFinalize={async (_pubkeyId) => {
+          // SmartEOA has NO finalizeAddPasskey / confirmPasskey function.
+          // addPasskey() enrolls the key in one call with validFrom = now + 24h;
+          // the key becomes active automatically after the timelock — no second tx needed.
+          // This callback is therefore a deliberate no-op: just close and refetch state.
+          setAddPasskeyOpen(false)
+          refetch()
         }}
-        onCancel={async () => {
-          // TODO: wire SmartEOA.cancelPendingPasskey
-          throw new Error('CancelPasskey: not wired (Wave 3 follow-up)')
+        onCancel={async (pubkeyId) => {
+          // Relay SmartEOA.cancelPendingPasskey(targetPubkeyHash, callerSig) via sponsor.
+          // selector 0x8713d23a; args (bytes32 targetPubkeyHash, bytes callerSig).
+          if (!eoaAccount) throw new Error('No passkey wallet connected.')
+
+          const quote = await apiFetch<SponsorExecuteQuote>('/api/sponsor/execute-quote')
+          if (!quote.priceAvailable) {
+            throw new Error('CAW fee pricing is temporarily unavailable. Try again shortly.')
+          }
+          const feeCaw = BigInt(quote.minFeeCawWei)
+
+          // params = abi.encode(targetPubkeyHash) — ONE bytes32.
+          const params = encodeAbiParameters(
+            [{ type: 'bytes32' }],
+            [pubkeyId],
+          ) as `0x${string}`
+          const mgmtSig = await signManagement('cancelPendingPasskey', params)
+
+          const call1: ExecCall = {
+            to: eoaAccount,
+            value: 0n,
+            data: encodeFunctionData({
+              abi: smartEoaAbi,
+              functionName: 'cancelPendingPasskey',
+              args: [pubkeyId, mgmtSig],
+            }),
+          }
+          const call2: ExecCall = {
+            to: CAW_ADDRESS,
+            value: 0n,
+            data: encodeFunctionData({
+              abi: erc20Abi,
+              functionName: 'transfer',
+              args: [quote.relayer, feeCaw],
+            }),
+          }
+
+          await smartEoaExecute([call1, call2])
         }}
         username={username}
       />

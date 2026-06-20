@@ -32,6 +32,26 @@ describe('buildManagementDigest — contract cross-check', () => {
     expect(digest).toBe('0x3c3bda1c59fdb2690008bfc81ef4ec5e8f2bc3a6dce8632fd32af141e62b05f3')
   })
 
+  it('matches the on-chain digest for a known addPasskey input (two bytes32 params)', () => {
+    // params = abi.encode(pubkeyX, pubkeyY) == encodeAbiParameters([bytes32,bytes32],...)
+    //   account = 0x...DeaDBeef, chainId 11155111, nonce 7
+    //   pubkeyX = 0x..1111, pubkeyY = 0x..2222
+    const account = '0x00000000000000000000000000000000DeaDBeef' as const
+    const px = ('0x' + '1111'.padStart(64, '0')) as `0x${string}`
+    const py = ('0x' + '2222'.padStart(64, '0')) as `0x${string}`
+    const params = encodeAbiParameters([{ type: 'bytes32' }, { type: 'bytes32' }], [px, py])
+    const digest = buildManagementDigest(account, 11155111, 'addPasskey', params, 7n)
+    expect(digest).toBe('0x628f51328a9d90311ac6febba1273286fdcffd45904304c202895366d3c82166')
+  })
+
+  it('matches the on-chain digest for a known cancelPendingPasskey input (one bytes32 param)', () => {
+    const account = '0x00000000000000000000000000000000DeaDBeef' as const
+    const hash = ('0x' + '3333'.padStart(64, '0')) as `0x${string}`
+    const params = encodeAbiParameters([{ type: 'bytes32' }], [hash])
+    const digest = buildManagementDigest(account, 11155111, 'cancelPendingPasskey', params, 7n)
+    expect(digest).toBe('0x0da1ef1a61cc3e39f453b49c5b1f6c5877fd17bcc59d8077190ad53494d688e6')
+  })
+
   it('changes when the nonce changes (replay-binding sanity)', () => {
     const account = '0x00000000000000000000000000000000DeaDBeef' as const
     const params = encodeAbiParameters([{ type: 'address' }], ['0x000000000000000000000000000000000000c0Fe'])
