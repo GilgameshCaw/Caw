@@ -983,6 +983,45 @@ router.post('/execute', async (req, res) => {
     return res.status(status).json(result)
   }
   void recordSponsorUse(ip, 'authenticate')   // count only on success (shared bucket); fire-and-forget
+
+  // ── RELAY ACCOUNTING: record gas SPENT vs fee RECEIVED so the operator can prove
+  //    the validator isn't losing money on the passkey relay. Fire-and-forget — a
+  //    write failure must NOT fail a relay that already landed on-chain.
+  void (async () => {
+    try {
+      const kind =
+        body.calls.some(c => (c.data || '').slice(0, 10).toLowerCase() === SEL_WITHDRAW_TO) ? 'withdraw'
+        : body.calls.some(isDepositZapCall) ? 'zap'
+        : body.calls.some(isDepositForCall) ? 'deposit'
+        : 'other'
+      // CAW/ETH rate snapshot (only meaningful for a CAW fee; ETH fee needs no rate).
+      // The price cache stores ethPerCaw in wei (ETH per 1 CAW). CAW-per-ETH = 1/that,
+      // scaled to wei: 1e36 / ethPerCaw. Lets the ledger value a CAW fee in ETH terms
+      // later (feeReceivedWei CAW × ethPerCaw / 1e18) without a historical price fetch.
+      const cawPx = getCawPriceCache()
+      let cawPerEthWei: string | null = null
+      if (usesCaw && cawPx?.ethPerCaw) {
+        try {
+          const ethPerCaw = BigInt(cawPx.ethPerCaw)
+          if (ethPerCaw > 0n) cawPerEthWei = ((10n ** 36n) / ethPerCaw).toString()
+        } catch { /* leave null */ }
+      }
+      await prisma.relayExecution.create({
+        data: {
+          txHash: result.txHash,
+          smartEoa: body.smartEoaAddress.toLowerCase(),
+          kind,
+          gasSpentWei: result.gasSpentWei ?? '0',
+          feeCurrency: usesEth ? 'ETH' : 'CAW',
+          feeReceivedWei: (usesEth ? feePaidEthWei : feePaidCawWei).toString(),
+          cawPerEthWei,
+        },
+      })
+    } catch (e) {
+      console.error('[execute] relay-accounting write failed (non-fatal):', (e as any)?.message ?? e)
+    }
+  })()
+
   return res.status(200).json(result)
 })
 

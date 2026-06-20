@@ -116,6 +116,7 @@ export type SponsorErrorCode =
   | 'TREASURY_LOW'
   | 'RECIPIENT_NOT_DELEGATED'
   | 'TX_REVERTED'
+  | 'SIMULATION_FAILED'
   | 'INTERNAL'
   // ── Sponsor-code gating errors (validateSponsorCode) ──────────────────────
   | 'INVALID_CODE'
@@ -140,6 +141,10 @@ export interface SponsorSuccess {
    *  Used by the X-gated open-signup flow to write the WalletXLink that burns
    *  the X account's free-mint eligibility. */
   recipient?: string
+  /** Actual ETH the relayer spent on gas for this tx (gasUsed × effective gas
+   *  price), in wei as a string. Populated by relayExecuteBatch from the receipt
+   *  so the route can record it for the validator-not-losing-money ledger. */
+  gasSpentWei?: string
 }
 
 export type SponsorResult = SponsorSuccess | SponsorError
@@ -185,6 +190,7 @@ const REVERT_SUBSTRINGS: Record<SponsorErrorCode, string[]> = {
   TREASURY_LOW:            [],    // generated locally, never from contract
   RECIPIENT_NOT_DELEGATED: ['direct submit required', 'not delegated', 'code.length'],
   TX_REVERTED:             [],    // fallback for unmatched reverts
+  SIMULATION_FAILED:       [],    // generated locally (pre-submit staticCall revert)
   INTERNAL:                [],    // internal service errors
   // ── Sponsor-code errors: never returned from on-chain reverts ────────────
   INVALID_CODE:            [],
@@ -864,11 +870,40 @@ export class SponsorService {
       // route's fee invariant verifies. Forwarding `value` here would brick every
       // batch carrying a real (non-zero) LZ fee — the latent bug this fixes.
       const smartEoa = new Contract(smartEoaAddress, smartEoaAbi as any, this.wallet)
+      const batchArg = calls.map(c => [c.to, c.value, c.data])
+
+      // PRE-SUBMIT SIMULATION: staticCall + estimateGas BEFORE broadcasting. A batch
+      // that would revert on-chain (stale nonce, bad sig, a failing inner call, an
+      // out-of-gas at the 800K limit) is caught here for FREE — the relayer pays NO
+      // gas on a doomed tx. Without this, executeBatch would be mined-and-reverted
+      // and the relayer ate the gas anyway (see the status check below, which now
+      // only catches the rare race where state changed between sim and mine).
+      // We also use the estimate as the real gasLimit (×1.25 headroom, capped at the
+      // 800K ceiling) so a heavier-than-expected zap doesn't OOG-revert.
+      let gasLimit = GAS_LIMIT_EXECUTE_BATCH
+      try {
+        await smartEoa.executeBatch.staticCall(batchArg, nonce, sig, { value: 0n })
+        const estimated = await smartEoa.executeBatch.estimateGas(batchArg, nonce, sig, { value: 0n })
+        const padded = (estimated * 125n) / 100n
+        gasLimit = padded > GAS_LIMIT_EXECUTE_BATCH ? GAS_LIMIT_EXECUTE_BATCH : padded
+      } catch (simErr) {
+        // The batch would revert. Surface WHY (decoded revert reason) and DO NOT
+        // submit — this is the "won't submit a failed tx" guarantee. No gas spent.
+        const parsed = parseRevertError(simErr)
+        return {
+          error: 'SIMULATION_FAILED',
+          detail:
+            `executeBatch would revert (simulated, not submitted — no gas spent): ` +
+            `${parsed.detail}. Common causes: stale executeNonce, signature mismatch, ` +
+            `a failing inner call, or the batch exceeding the ${GAS_LIMIT_EXECUTE_BATCH} gas ceiling.`,
+        }
+      }
+
       const txResponse: ContractTransactionResponse = await smartEoa.executeBatch(
-        calls.map(c => [c.to, c.value, c.data]),
+        batchArg,
         nonce,
         sig,
-        { value: 0n, gasLimit: GAS_LIMIT_EXECUTE_BATCH },
+        { value: 0n, gasLimit },
       )
 
       // SEAM-EXEC-1 I-3: wait for the receipt and CHECK STATUS before reporting
@@ -884,7 +919,17 @@ export class SponsorService {
             `Common causes: stale executeNonce, signature mismatch, or a failing inner call.`,
         }
       }
-      return { txHash: txResponse.hash }
+      // Actual gas the relayer spent = gasUsed × effective gas price. Returned so
+      // the route can record it against the fee received (the validator-not-losing-
+      // money ledger). Tolerate a missing/odd field shape — accounting is best-effort.
+      let gasSpentWei: string | undefined
+      try {
+        const eff = (receipt as any).gasPrice ?? (receipt as any).effectiveGasPrice
+        if (receipt.gasUsed != null && eff != null) {
+          gasSpentWei = (BigInt(receipt.gasUsed) * BigInt(eff)).toString()
+        }
+      } catch { /* best-effort */ }
+      return { txHash: txResponse.hash, gasSpentWei }
     } catch (err) {
       return parseRevertError(err)
     }

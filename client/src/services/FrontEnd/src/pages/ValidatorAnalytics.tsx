@@ -100,6 +100,30 @@ interface ReplicationTx {
   submitter: string | null
 }
 
+interface RelayRow {
+  txHash: string
+  smartEoa: string
+  kind: string
+  gasSpentWei: string
+  feeCurrency: 'CAW' | 'ETH'
+  feeReceivedWei: string
+  relayedAt: string
+}
+
+interface RelayAccounting {
+  sinceDays: number
+  count: number
+  gasSpentWei: string
+  receivedEthWei: string
+  receivedCawWei: string
+  receivedCawAsEthWei: string
+  totalReceivedEthWei: string
+  netEthWei: string
+  profitable: boolean
+  unvaluedCawRows: number
+  rows: RelayRow[]
+}
+
 interface ChartPoint {
   date: string
   dateKey?: string // ISO date key e.g. '2026-03-25' (for daily chart click-through)
@@ -162,6 +186,9 @@ const ValidatorAnalytics: React.FC = () => {
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
   const [activeTab, setActiveTab] = useState<'transactions' | 'replication'>('transactions')
+  const [relayAccounting, setRelayAccounting] = useState<RelayAccounting | null>(null)
+  const [relayLoading, setRelayLoading] = useState(false)
+  const [relayError, setRelayError] = useState('')
 
   // URL-syncing wrappers
   const setTimeRange = useCallback((r: TimeRange) => {
@@ -433,6 +460,24 @@ const ValidatorAnalytics: React.FC = () => {
     setHoveredHourBar(null)
     fetchData() // Re-fetch original data
   }
+
+  const fetchRelayAccounting = useCallback(async () => {
+    setRelayLoading(true)
+    setRelayError('')
+    try {
+      const data = await apiFetch('/api/admin/validator/relay-accounting?sinceDays=30&limit=100')
+      if (data.ok) setRelayAccounting(data as RelayAccounting)
+      else setRelayError('Relay accounting fetch failed')
+    } catch {
+      setRelayError('Failed to load relay accounting data')
+    } finally {
+      setRelayLoading(false)
+    }
+  }, [])
+
+  useEffect(() => {
+    fetchRelayAccounting()
+  }, [fetchRelayAccounting])
 
   const cardClass = `rounded-xl border p-4 ${isDark ? 'border-white/10 bg-white/5' : 'border-gray-200 bg-white'}`
   const labelClass = `text-xs ${isDark ? 'text-white/40' : 'text-gray-400'}`
@@ -1049,6 +1094,155 @@ const ValidatorAnalytics: React.FC = () => {
             )}
           </div>
         )}
+        {/* Passkey Relay — gas accounting */}
+        <div className={`${cardClass} mt-6`}>
+          <div className="flex items-center justify-between mb-4">
+            <h2 className={`text-sm font-semibold ${isDark ? 'text-white/60' : 'text-gray-500'}`}>
+              Passkey Relay (gas spent vs fee received) — last 30 days
+            </h2>
+            <button
+              onClick={fetchRelayAccounting}
+              className={`px-3 py-1 text-xs rounded-full transition-colors cursor-pointer ${
+                isDark ? 'bg-white/10 text-white/60 hover:bg-white/20' : 'bg-gray-200 text-gray-600 hover:bg-gray-300'
+              }`}
+            >
+              Refresh
+            </button>
+          </div>
+
+          {relayError && <p className="text-red-500 text-xs mb-3">{relayError}</p>}
+          {relayLoading && <p className={`text-xs mb-3 ${isDark ? 'text-white/40' : 'text-gray-400'}`}>Loading...</p>}
+
+          {relayAccounting && !relayLoading && (() => {
+            const ra = relayAccounting
+            const ethUsd = summary?.prices.ethUsd ?? 0
+            const netNeg = BigInt(ra.netEthWei) < 0n
+
+            return (
+              <>
+                {/* Three big stat cards */}
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-3 mb-4">
+                  {/* Gas Spent */}
+                  <div className={`rounded-lg border p-3 ${isDark ? 'border-white/10 bg-white/5' : 'border-gray-200 bg-gray-50'}`}>
+                    <div className={labelClass}>Gas Spent</div>
+                    <div className={valueClass}>{weiToUsd(ra.gasSpentWei, ethUsd)}</div>
+                    <div className={subClass}>{fmtEth(ra.gasSpentWei)} ETH</div>
+                  </div>
+
+                  {/* Fee Received */}
+                  <div className={`rounded-lg border p-3 ${isDark ? 'border-white/10 bg-white/5' : 'border-gray-200 bg-gray-50'}`}>
+                    <div className={labelClass}>Fee Received</div>
+                    <div className={valueClass}>{weiToUsd(ra.totalReceivedEthWei, ethUsd)}</div>
+                    <div className={subClass}>{fmtEth(ra.totalReceivedEthWei)} ETH</div>
+                    {BigInt(ra.receivedCawWei) > 0n && (
+                      <div className={`text-xs mt-1 ${isDark ? 'text-white/30' : 'text-gray-400'}`}>
+                        incl. {fmtCaw(ra.receivedCawWei)} CAW paid in CAW
+                      </div>
+                    )}
+                  </div>
+
+                  {/* Net */}
+                  <div className={`rounded-lg border p-3 ${isDark ? 'border-white/10 bg-white/5' : 'border-gray-200 bg-gray-50'}`}>
+                    <div className={labelClass}>Net</div>
+                    <div className={`text-lg font-bold ${netNeg ? 'text-red-500' : 'text-green-500'}`}>
+                      {weiToUsd(ra.netEthWei, ethUsd)}
+                    </div>
+                    <div className={subClass}>{fmtEth(ra.netEthWei)} ETH &middot; {ra.count} tx</div>
+                  </div>
+                </div>
+
+                {/* Unvalued CAW warning */}
+                {ra.unvaluedCawRows > 0 && (
+                  <p className={`text-xs mb-3 ${isDark ? 'text-white/30' : 'text-gray-400'}`}>
+                    {ra.unvaluedCawRows} CAW-fee tx not valued (no rate snapshot) — counted as $0 received, so net is conservative.
+                  </p>
+                )}
+
+                {/* Recent rows table */}
+                {ra.rows.length > 0 && (
+                  <div className="overflow-x-auto">
+                    <table className="w-full text-xs">
+                      <thead>
+                        <tr className={isDark ? 'text-white/40' : 'text-gray-400'}>
+                          <th className="text-left p-2">Time</th>
+                          <th className="text-left p-2">Kind</th>
+                          <th className="text-left p-2">Smart EOA</th>
+                          <th className="text-left p-2">Tx Hash</th>
+                          <th className="text-left p-2">Fee</th>
+                          <th className="text-right p-2">Gas (USD)</th>
+                          <th className="text-right p-2">Received</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {ra.rows.map((row, i) => {
+                          const relativeTime = (() => {
+                            const diff = Date.now() - new Date(row.relayedAt).getTime()
+                            const m = Math.floor(diff / 60000)
+                            if (m < 60) return `${m}m ago`
+                            const h = Math.floor(m / 60)
+                            if (h < 24) return `${h}h ago`
+                            return `${Math.floor(h / 24)}d ago`
+                          })()
+                          return (
+                            <tr key={i} className={`border-t ${isDark ? 'border-white/5' : 'border-gray-100'}`}>
+                              <td className="p-2 whitespace-nowrap">{relativeTime}</td>
+                              <td className="p-2">
+                                <span className={`px-1.5 py-0.5 rounded text-[9px] font-medium ${
+                                  row.kind === 'withdraw'
+                                    ? 'bg-yellow-500/20 text-yellow-400'
+                                    : row.kind === 'deposit'
+                                    ? 'bg-green-500/20 text-green-400'
+                                    : isDark ? 'bg-white/10 text-white/50' : 'bg-gray-100 text-gray-500'
+                                }`}>
+                                  {row.kind}
+                                </span>
+                              </td>
+                              <td className="p-2 font-mono">{truncHash(row.smartEoa)}</td>
+                              <td className="p-2">
+                                <a
+                                  href={`${BASESCAN}/tx/${row.txHash}`}
+                                  target="_blank"
+                                  rel="noopener noreferrer"
+                                  className="text-blue-500 hover:underline font-mono"
+                                >
+                                  {truncHash(row.txHash)}
+                                </a>
+                              </td>
+                              <td className="p-2">
+                                <span className={`px-1.5 py-0.5 rounded text-[9px] font-medium ${
+                                  row.feeCurrency === 'CAW'
+                                    ? 'bg-purple-500/20 text-purple-400'
+                                    : 'bg-blue-500/20 text-blue-400'
+                                }`}>
+                                  {row.feeCurrency}
+                                </span>
+                              </td>
+                              <td className="p-2 text-right font-mono">
+                                {weiToUsdPrecise(row.gasSpentWei, ethUsd)}
+                              </td>
+                              <td className="p-2 text-right font-mono">
+                                {row.feeCurrency === 'CAW'
+                                  ? `${fmtCaw(row.feeReceivedWei)} CAW`
+                                  : weiToUsdPrecise(row.feeReceivedWei, ethUsd)}
+                              </td>
+                            </tr>
+                          )
+                        })}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
+
+                {ra.rows.length === 0 && (
+                  <p className={`text-xs text-center py-4 ${isDark ? 'text-white/30' : 'text-gray-400'}`}>
+                    No relay transactions in the last 30 days.
+                  </p>
+                )}
+              </>
+            )
+          })()}
+        </div>
+
       </div>
     </div>
   )

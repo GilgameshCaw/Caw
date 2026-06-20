@@ -1161,6 +1161,31 @@ model SponsorRepay {
   @@index([sponsorTokenId])
 }
 
+// One row per relayed SmartEOA.executeBatch (passkey-wallet withdraw / deposit /
+// zap). Records what the relayer SPENT (gas, ETH) vs what it RECEIVED (the in-batch
+// fee leg, in CAW or ETH) so the operator can prove the validator isn't losing
+// money on the passkey relay. Written by POST /api/sponsor/execute on success;
+// read by GET /api/admin/validator/relay-accounting. All wei values are decimal
+// strings (bigints don't fit Int). feeCurrency is 'CAW' or 'ETH'.
+model RelayExecution {
+  id             Int      @id @default(autoincrement())
+  txHash         String   @unique
+  smartEoa       String
+  kind           String   // 'withdraw' | 'deposit' | 'zap' | 'other' (best-effort, from the batch shape)
+  gasSpentWei    String   // gasUsed × effectiveGasPrice — what the relayer paid
+  feeCurrency    String   // 'CAW' | 'ETH'
+  feeReceivedWei String   // the in-batch fee leg paid to the relayer
+  // Snapshot of the live CAW/ETH rate at relay time so the ledger can value a CAW
+  // fee in ETH terms later without re-fetching a historical price. Nullable: the
+  // ETH-fee path needs no CAW price, and a CAW-price outage shouldn't block the row.
+  cawPerEthWei   String?
+  relayedAt      DateTime @default(now()) @db.Timestamptz(6)
+
+  @@index([smartEoa])
+  @@index([relayedAt])
+  @@index([feeCurrency])
+}
+
 model StripePurchase {
   id               Int       @id @default(autoincrement())
   stripeSessionId  String    @unique

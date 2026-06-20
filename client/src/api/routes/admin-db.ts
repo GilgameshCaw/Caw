@@ -307,6 +307,13 @@ const MODEL_META: Record<string, ModelMeta> = {
     writable: false,
     label: 'Marketplace Payouts',
   },
+  relayExecution: {
+    defaultSort: 'relayedAt',
+    searchFields: ['txHash', 'smartEoa', 'kind', 'feeCurrency'],
+    listFields: ['id', 'txHash', 'smartEoa', 'kind', 'gasSpentWei', 'feeCurrency', 'feeReceivedWei', 'cawPerEthWei', 'relayedAt'],
+    writable: false,
+    label: 'Relay Executions',
+  },
 }
 
 // Prisma delegate accessor (type-safe model name → prisma.model)
