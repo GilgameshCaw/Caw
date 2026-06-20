@@ -33,6 +33,7 @@ import { useSmartEoaExecute, type ExecCall } from '~/hooks/useSmartEoaExecute'
 import { usePriceStore } from '~/store/tokenDataStore'
 import { handleError } from '~/utils'
 import { useT } from '~/i18n/I18nProvider'
+import ModalWrapper from '~/components/modals/ModalWrapper'
 
 interface SponsorExecuteQuote {
   relayer: Address
@@ -69,6 +70,7 @@ export function TopUpForm({ tokenId, eoaAddress, cawBalanceWei, ethBalanceWei, o
   const [quoteLoading, setQuoteLoading] = useState(false)
   const [copied, setCopied] = useState(false)
   const [qrDataUrl, setQrDataUrl] = useState<string | null>(null)
+  const [qrOpen, setQrOpen] = useState(false)
 
   const cawBalance = cawBalanceWei ?? 0n
   const cawBalanceTokens = Number(formatUnits(cawBalance, 18))
@@ -83,9 +85,11 @@ export function TopUpForm({ tokenId, eoaAddress, cawBalanceWei, ethBalanceWei, o
   }, [amount, cawBalance])
   const amountValid = amountWei > 0n && amountWei <= cawBalance
 
-  // Generate the deposit-address QR (mirror ShareProfileCard's dynamic import).
+  // Generate the deposit-address QR LAZILY — only once the user opens the QR
+  // modal (mirror ShareProfileCard's dynamic import). Keeps the qrcode chunk +
+  // the data-URL work off the default render.
   useEffect(() => {
-    if (!eoaAddress) { setQrDataUrl(null); return }
+    if (!qrOpen || !eoaAddress || qrDataUrl) return
     let cancelled = false
     ;(async () => {
       try {
@@ -101,7 +105,7 @@ export function TopUpForm({ tokenId, eoaAddress, cawBalanceWei, ethBalanceWei, o
       } catch { if (!cancelled) setQrDataUrl(null) }
     })()
     return () => { cancelled = true }
-  }, [eoaAddress])
+  }, [qrOpen, eoaAddress, qrDataUrl])
 
   // LZ deposit fee quote (same quoter Staking.tsx uses for the CAW deposit path).
   const { data: depositQuote } = useReadContract({
@@ -220,29 +224,66 @@ export function TopUpForm({ tokenId, eoaAddress, cawBalanceWei, ethBalanceWei, o
 
   return (
     <div className={`space-y-4 ${className ?? ''}`}>
-      {/* Deposit address + QR — "send CAW here" */}
+      {/* Deposit address — "send CAW here". QR is hidden behind an icon (modal). */}
       {eoaAddress && (
         <div className={panelClass}>
-          <p className={`text-sm font-medium ${mutedClass} mb-2`}>{t('topup.address_label')}</p>
-          <div className="flex items-center gap-3">
-            {qrDataUrl && (
-              <img src={qrDataUrl} alt="Deposit address QR" className="w-20 h-20 rounded bg-white p-1 flex-shrink-0" />
-            )}
-            <div className="min-w-0 flex-1">
-              <p className={`font-mono text-xs break-all ${strongClass}`}>{eoaAddress}</p>
-              <button
-                onClick={handleCopy}
-                className={`mt-2 text-xs font-medium px-3 py-1 rounded-full cursor-pointer transition-all duration-200 ${
-                  isDark ? 'bg-white/10 text-white hover:bg-white/20' : 'bg-gray-200 text-gray-800 hover:bg-gray-300'
-                }`}
-              >
-                {copied ? t('topup.copied') : t('topup.copy_address')}
-              </button>
-            </div>
+          <p className={`text-sm font-medium ${mutedClass} mb-1`}>{t('topup.address_label')}</p>
+          {/* Explain what this address IS — the wallet the user's passkey protects. */}
+          <p className={`text-xs ${mutedClass} mb-2`}>{t('topup.address_explainer')}</p>
+          <p className={`font-mono text-xs break-all ${strongClass}`}>{eoaAddress}</p>
+          <div className="flex items-center gap-2 mt-2">
+            <button
+              onClick={handleCopy}
+              className={`text-xs font-medium px-3 py-1 rounded-full cursor-pointer transition-all duration-200 ${
+                isDark ? 'bg-white/10 text-white hover:bg-white/20' : 'bg-gray-200 text-gray-800 hover:bg-gray-300'
+              }`}
+            >
+              {copied ? t('topup.copied') : t('topup.copy_address')}
+            </button>
+            <button
+              onClick={() => setQrOpen(true)}
+              aria-label={t('topup.show_qr')}
+              title={t('topup.show_qr')}
+              className={`flex items-center gap-1 text-xs font-medium px-3 py-1 rounded-full cursor-pointer transition-all duration-200 ${
+                isDark ? 'bg-white/10 text-white hover:bg-white/20' : 'bg-gray-200 text-gray-800 hover:bg-gray-300'
+              }`}
+            >
+              {/* QR-code glyph */}
+              <svg className="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <rect x="3" y="3" width="7" height="7" /><rect x="14" y="3" width="7" height="7" />
+                <rect x="3" y="14" width="7" height="7" /><line x1="14" y1="14" x2="14" y2="17" />
+                <line x1="17" y1="14" x2="21" y2="14" /><line x1="21" y1="17" x2="21" y2="21" /><line x1="14" y1="21" x2="17" y2="21" />
+              </svg>
+              {t('topup.show_qr')}
+            </button>
           </div>
           <p className={`text-xs ${mutedClass} mt-3`}>{t('topup.address_hint')}</p>
         </div>
       )}
+
+      {/* QR modal */}
+      <ModalWrapper isOpen={qrOpen} onClose={() => setQrOpen(false)} maxWidth="max-w-xs">
+        <div className="p-6 text-center">
+          <p className={`text-sm font-semibold ${strongClass} mb-1`}>{t('topup.address_label')}</p>
+          <p className={`text-xs ${mutedClass} mb-4`}>{t('topup.address_explainer')}</p>
+          {qrDataUrl ? (
+            <img src={qrDataUrl} alt="Deposit address QR" className="w-48 h-48 mx-auto rounded bg-white p-2" />
+          ) : (
+            <div className={`w-48 h-48 mx-auto rounded flex items-center justify-center ${isDark ? 'bg-white/5' : 'bg-gray-100'}`}>
+              <span className={`text-xs ${mutedClass}`}>{t('topup.generating_qr')}</span>
+            </div>
+          )}
+          <p className={`font-mono text-[11px] break-all mt-4 ${mutedClass}`}>{eoaAddress}</p>
+          <button
+            onClick={handleCopy}
+            className={`mt-3 text-xs font-medium px-4 py-1.5 rounded-full cursor-pointer transition-all duration-200 ${
+              isDark ? 'bg-white/10 text-white hover:bg-white/20' : 'bg-gray-200 text-gray-800 hover:bg-gray-300'
+            }`}
+          >
+            {copied ? t('topup.copied') : t('topup.copy_address')}
+          </button>
+        </div>
+      </ModalWrapper>
 
       {/* Amount to deposit (from the EOA's CAW balance) */}
       <div className="space-y-1">
