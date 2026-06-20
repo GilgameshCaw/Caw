@@ -39,6 +39,7 @@ import { collectL1Rpc, collectL2Rpc } from '../src/steps/rpcUrls.js'
 import { chainLabels } from '../src/steps/networkAndMode.js'
 import { collectValidatorConfig } from '../src/steps/validator.js'
 import { collectReplicationConfig } from '../src/steps/replication.js'
+import { collectEmailConfig } from '../src/steps/emailSetup.js'
 import { collectInfraEarly, collectInfraLate } from '../src/steps/infrastructure.js'
 import { collectOnboardingFeatures } from '../src/steps/onboardingFeatures.js'
 import { setNetwork as setAddressesNetwork } from '../src/addresses.js'
@@ -128,7 +129,12 @@ const ENV_TO_CAW = {
   // Publishable key lives in the FE .env, handled in preloadFromEnv below.
   STRIPE_SECRET_KEY: 'CAW_STRIPE_SECRET_KEY',
   STRIPE_WEBHOOK_SECRET: 'CAW_STRIPE_WEBHOOK_SECRET',
+  // Email transport for recovery-backup delivery. Preloading these skips
+  // the email-setup prompt on re-runs — avoids accidentally clearing a
+  // working RESEND_KEY by re-typing through the wizard.
   RESEND_KEY: 'CAW_RESEND_KEY',
+  RESEND_FROM: 'CAW_RESEND_FROM',
+  MAIL_FALLBACK_SENDMAIL: 'CAW_MAIL_FALLBACK_SENDMAIL',
   // VITE_PROJECT_ID lives in the FRONTEND .env, handled separately.
 }
 
@@ -394,7 +400,11 @@ program
         infura: l1RpcConfig._infura,
       })
 
-      // Step 8: Infrastructure phase 2 — DB / Redis / Elasticsearch / API
+      // Step 8: Recovery-backup email transport (optional). Runs before
+      // generate so the keys land in .env on the first write.
+      const emailConfig = await collectEmailConfig(false)
+
+      // Step 9: Infrastructure phase 2 — DB / Redis / Elasticsearch / API
       // port. None of these need on-chain state, so they happen after the
       // chain-aware steps to keep the natural flow.
       const infraLate = await collectInfraLate(nodeType)
@@ -418,6 +428,7 @@ program
         ...validatorConfig,
         ...replicationConfig,
         ...infraEarly,
+        ...emailConfig,
         ...infraLate,
         ...onboardingFeatures,
       }
