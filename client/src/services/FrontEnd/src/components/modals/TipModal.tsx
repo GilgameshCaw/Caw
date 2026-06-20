@@ -8,7 +8,6 @@ import { useConnectModal } from '@rainbow-me/rainbowkit'
 import InsufficientStakeModal from './InsufficientStakeModal'
 import ModalWrapper from './ModalWrapper'
 import ModalHeader from './ModalHeader'
-import Tooltip from '~/components/Tooltip'
 import { useHasActiveSession } from '~/hooks/useHasActiveSession'
 import { useT } from '~/i18n/I18nProvider'
 
@@ -263,23 +262,17 @@ const TipModal: React.FC<TipModalProps> = ({
               {/* Submit */}
               {(() => {
                 const isDisabled = !isValid || tipState === 'signing' || wrongWallet
-                const btn = (
+                return (
                   <button
                     onClick={handleSubmit}
                     disabled={isDisabled}
-                    className={
-                      wrongWallet
-                        ? 'w-full px-3 py-1.5 bg-yellow-500 text-black font-semibold text-sm rounded-full hover:bg-yellow-400 disabled:opacity-50 disabled:cursor-not-allowed transition-all duration-200 shadow-lg hover:shadow-xl cursor-pointer'
-                        : `w-full py-2.5 rounded-lg text-sm font-semibold transition-all duration-200 cursor-pointer ${
-                            tipState === 'signing'
-                              ? (isDark ? 'bg-gray-700 text-gray-400 cursor-not-allowed' : 'bg-gray-300 text-gray-600 cursor-not-allowed')
-                              : isDisabled
-                                ? (isDark ? 'bg-gray-700 text-gray-400 cursor-not-allowed' : 'bg-gray-300 text-gray-600 cursor-not-allowed')
-                                : 'bg-yellow-500 text-black hover:bg-yellow-400'
-                          }`
-                    }
+                    className={`w-full py-2.5 rounded-lg text-sm font-semibold transition-all duration-200 cursor-pointer ${
+                      isDisabled
+                        ? (isDark ? 'bg-gray-700 text-gray-400 cursor-not-allowed' : 'bg-gray-300 text-gray-600 cursor-not-allowed')
+                        : 'bg-yellow-500 text-black hover:bg-yellow-400'
+                    }`}
                   >
-                    {wrongWallet ? t('post_form.button.wrong_wallet') : !priceReady ? t('tip.button.loading_price') : tipState === 'signing' ? (
+                    {!priceReady ? t('tip.button.loading_price') : tipState === 'signing' ? (
                       <div className="flex items-center justify-center space-x-2">
                         <div className="w-4 h-4 border-2 border-black/30 border-t-black rounded-full animate-spin"></div>
                         <span>{t('messages.signin.signing')}</span>
@@ -289,10 +282,14 @@ const TipModal: React.FC<TipModalProps> = ({
                     )}
                   </button>
                 )
-                return wrongWallet
-                  ? <Tooltip text={t('post_form.error.wrong_wallet_tooltip')} className="cursor-not-allowed">{btn}</Tooltip>
-                  : btn
               })()}
+
+              {/* Wrong-wallet error: plain red text below the (disabled) Send button */}
+              {wrongWallet && (
+                <p className="mt-2 text-sm text-red-500 text-center">
+                  {t('post_form.error.wrong_wallet_tooltip')}
+                </p>
+              )}
             </>
           )}
         </div>
