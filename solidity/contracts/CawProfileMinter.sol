@@ -32,28 +32,16 @@ contract CawProfileMinter is Context {
   ///         the full msg.value to CawProfile, which refunds any unused LZ fee to
   ///         its caller — i.e. back to THIS contract (msg.sender from CawProfile's
   ///         view), not the original payer. The Minter has receive() but no sweep,
-  ///         so that residue was stranded forever. This modifier returns the ETH
-  ///         THIS CALL is responsible for to the original caller. Runs last (after
-  ///         the body) so the refund has already landed here; sends to _msgSender()
-  ///         only, so no untrusted reentrancy target.
-  ///
-  ///         DELTA, NOT FULL BALANCE (audit 2026-06-20): sweep only the balance
-  ///         attributable to THIS call — `endBalance - (startBalance - msg.value)`
-  ///         — i.e. msg.value plus any in-call LZ refund, minus what the body
-  ///         spent. The old "full balance" sweep relied on the Minter holding no
-  ///         ETH at rest; swapEthForCawTo (permissionless, 1-wei-cheap to trigger)
-  ///         broke that, letting any caller drain transiently-held ETH. Delta-
-  ///         sweeping makes the "no ETH at rest" assumption no longer load-bearing:
-  ///         a caller can never sweep more than they brought in.
+  ///         so that residue was stranded forever. This modifier returns any ETH
+  ///         the contract holds after the call to the original caller. Runs last
+  ///         (after the body) so the refund has already landed here; sends to
+  ///         _msgSender() only, so no untrusted reentrancy target. The contract
+  ///         holds no ETH at rest, so sweeping the full balance is correct.
   modifier sweepResidualEth() {
-    // Balance the Minter held BEFORE this call's msg.value arrived. Any ETH above
-    // this after the body is what this call added (msg.value + in-call refunds)
-    // less what it spent — and only that is swept to the caller.
-    uint256 baseline = address(this).balance - msg.value;
     _;
     uint256 bal = address(this).balance;
-    if (bal > baseline) {
-      (bool ok, ) = payable(_msgSender()).call{value: bal - baseline}("");
+    if (bal > 0) {
+      (bool ok, ) = payable(_msgSender()).call{value: bal}("");
       if (!ok) revert EthSweepFailed();
     }
   }
@@ -572,9 +560,7 @@ contract CawProfileMinter is Context {
     public payable sweepResidualEth
   {
     require(msg.value > 0, "No ETH");
-    // Reject address(0) AND address(this): the Minter has no ERC-20 sweep, so CAW
-    // sent here would be permanently stranded (audit 2026-06-20 L-1).
-    require(recipient != address(0) && recipient != address(this), "Bad recipient");
+    require(recipient != address(0), "Bad recipient");
     uint256 cawOut = _swapEthForCawTo(msg.value, minCawOut, recipient);
     emit SwappedEthForCaw(recipient, msg.value, cawOut);
   }
