@@ -104,6 +104,31 @@ export async function embedQuery(text: string, _cfg?: CawAIConfig): Promise<numb
 // mid-word ("...The cha…"): prefer the last sentence end, else the last word
 // break, within the available room. The hard cap is still absolute — the
 // result is always <= maxChars — so the security guarantee is unchanged.
+// -1 stays -1 (no match); otherwise return the index one past the matched
+// position so callers can treat every boundary as "cut here" uniformly.
+function after(idx: number): number {
+  return idx < 0 ? -1 : idx + 1
+}
+
+// Find the last occurrence of a multi-char terminator (e.g. '. ') and return
+// the index just past it — i.e. past the trailing space — so the cut keeps the
+// punctuation and drops the space. -1 if not found.
+function lastBoundaryAfter(s: string, token: string): number {
+  const idx = s.lastIndexOf(token)
+  return idx < 0 ? -1 : idx + token.length
+}
+
+// Don't cut between the two halves of a UTF-16 surrogate pair (emoji, rare
+// kanji in supplementary planes). If `cut` would land on a low surrogate,
+// step back one unit so the pair stays whole.
+function safeCodePointBoundary(s: string, cut: number): number {
+  if (cut > 0 && cut < s.length) {
+    const code = s.charCodeAt(cut)
+    if (code >= 0xDC00 && code <= 0xDFFF) return cut - 1
+  }
+  return cut
+}
+
 export function clampReply(text: string, maxChars: number, marker: string): string {
   const room = maxChars - marker.length
   let body = text.trim()
@@ -112,17 +137,41 @@ export function clampReply(text: string, maxChars: number, marker: string): stri
     const slice = body.slice(0, room - 1)
     // Prefer a sentence boundary if one lands in the back portion of the slice
     // (don't chop the reply in half for the sake of a period).
-    const sentenceEnd = Math.max(
-      slice.lastIndexOf('. '), slice.lastIndexOf('! '), slice.lastIndexOf('? '),
+    //
+    // Two punctuation families:
+    //  - Latin: '. ', '! ', '? ' — the terminator is followed by an ASCII
+    //    space, so the boundary is *after* the space (index + 2).
+    //  - CJK full-width: 。 ！ ？ — these never have a following half-width
+    //    space, so we match the character itself and cut *after* it (index + 1,
+    //    each is a single UTF-16 unit). Without this, Japanese text (no
+    //    trailing space, frequently no inter-word spaces at all) never matched
+    //    either boundary check and fell straight through to the hard slice,
+    //    cutting mid-token. (nyaromesama)
+    const latinSentenceEnd = Math.max(
+      lastBoundaryAfter(slice, '. '), lastBoundaryAfter(slice, '! '), lastBoundaryAfter(slice, '? '),
     )
+    const cjkSentenceEnd = Math.max(
+      after(slice.lastIndexOf('。')), after(slice.lastIndexOf('！')), after(slice.lastIndexOf('？')),
+    )
+    const sentenceEnd = Math.max(latinSentenceEnd, cjkSentenceEnd)
+    // Word/phrase boundary fallbacks, in descending preference:
+    //  - ASCII space (Latin word break)
+    //  - full-width comma 、 (CJK clause break — better than a raw char cut)
     const wordEnd = slice.lastIndexOf(' ')
+    const cjkCommaEnd = after(slice.lastIndexOf('、'))
     let cut: number
     if (sentenceEnd >= room * 0.6) {
-      cut = sentenceEnd + 1               // include the punctuation, drop trailing space
+      cut = sentenceEnd                   // boundary already points past the terminator
     } else if (wordEnd > 0) {
-      cut = wordEnd                       // last whole word
+      cut = wordEnd                       // last whole word (Latin)
+    } else if (cjkCommaEnd >= room * 0.6) {
+      cut = cjkCommaEnd                   // last CJK clause break
     } else {
-      cut = slice.length                  // single very long token — hard slice
+      // Space-less CJK with no usable punctuation: any character boundary is a
+      // natural break in Japanese, so the hard slice is acceptable — but make
+      // sure we don't sever a surrogate pair (emoji, rare kanji) and leave a
+      // lone half-code-unit.
+      cut = safeCodePointBoundary(slice, slice.length)
     }
     body = slice.slice(0, cut).trimEnd() + '…'
   }
