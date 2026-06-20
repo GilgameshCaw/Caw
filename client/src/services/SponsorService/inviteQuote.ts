@@ -168,6 +168,29 @@ export interface ExecuteFeeQuote {
   priceAvailable: boolean
 }
 
+export interface ExecuteGasFeeEth {
+  /** Minimum ETH (wei) the batch must transfer to the relayer to cover the gas it
+   *  fronts. Used by the ETH-repay path (pay-with-ETH zap), where the relayer is
+   *  repaid in ETH rather than CAW. Never null — gas is priced from the live
+   *  mainnet gas cache (× safety margin) with the degraded-floor fallback, same as
+   *  the invite quote; no CAW price needed, so this is always available. */
+  minFeeEthWei: bigint
+}
+
+/**
+ * The ETH (wei) the relayer must be repaid to cover the gas it fronts for an
+ * executeBatch. The relayer fronts ONLY gas now (executeBatch is non-payable; the
+ * EOA funds all inner-call value from its own balance — see relayExecuteBatch), so
+ * this is purely gas. Padded the same way the invite quote pads gas (live mainnet
+ * gas × safety margin, degraded floor on a cold cache). The pay-with-ETH batch
+ * repays this via a raw ETH transfer to the relayer; the route verifies that leg
+ * is ≥ this.
+ */
+export function quoteExecuteGasFeeEth(gasPriceWei?: bigint): ExecuteGasFeeEth {
+  const gp = gasPriceWei ?? effectiveGasPriceWei()
+  return { minFeeEthWei: gp * GAS_LIMIT_EXECUTE_BATCH }
+}
+
 /**
  * Minimum CAW (wei) an executeBatch must pay the relayer to make it whole for
  * what it fronts: the GAS to submit the tx PLUS any ETH `value` it forwards into

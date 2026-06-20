@@ -827,8 +827,10 @@ export class SponsorService {
    * @param calls           The signed Call[] (to, value, data).
    * @param nonce           The signed executeNonce.
    * @param sig             The passkey / ecdsaFallback signature over the batch.
-   * @param value           Total ETH msg.value to attach (sum of inner call values,
-   *                        e.g. the withdraw LZ fee). Capped at maxLzFeeWei.
+   * @param value           Total of the inner call values (e.g. the LZ fee a
+   *                        withdraw/deposit forwards). This is funded from the
+   *                        SmartEOA's OWN balance — NOT attached as msg.value (see
+   *                        below). Passed only for the maxLzFeeWei cap + diagnostics.
    */
   async relayExecuteBatch(
     smartEoaAddress: string,
@@ -853,12 +855,20 @@ export class SponsorService {
         }
       }
 
+      // CRITICAL: executeBatch is NON-PAYABLE (SmartEOA hardening 13e0a733) — it
+      // REVERTS on any msg.value at the ABI dispatcher (verified on-chain: a
+      // non-zero value reverts with empty data, before the body). Every inner
+      // call's `value` (LZ fees, swap ETH) is spent from the SmartEOA's OWN
+      // balance, which the user pre-funds. So we attach value: 0 here. The relayer
+      // fronts ONLY gas; it is repaid (in CAW or ETH) by an in-batch fee leg the
+      // route's fee invariant verifies. Forwarding `value` here would brick every
+      // batch carrying a real (non-zero) LZ fee — the latent bug this fixes.
       const smartEoa = new Contract(smartEoaAddress, smartEoaAbi as any, this.wallet)
       const txResponse: ContractTransactionResponse = await smartEoa.executeBatch(
         calls.map(c => [c.to, c.value, c.data]),
         nonce,
         sig,
-        { value, gasLimit: GAS_LIMIT_EXECUTE_BATCH },
+        { value: 0n, gasLimit: GAS_LIMIT_EXECUTE_BATCH },
       )
 
       // SEAM-EXEC-1 I-3: wait for the receipt and CHECK STATUS before reporting

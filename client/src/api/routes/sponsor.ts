@@ -34,7 +34,7 @@ import {
 } from '../middleware/validateSponsorCode'
 import { getCawPriceCache, getEthPriceCache, ensureFreshGasPriceCache } from '../../services/ChainSyncService'
 import { hashCode } from '../../services/SponsorService/codes'
-import { quoteSponsorInviteCostCaw, quoteExecuteGasFeeCaw, redeemGasCostCawLive } from '../../services/SponsorService/inviteQuote'
+import { quoteSponsorInviteCostCaw, quoteExecuteGasFeeCaw, quoteExecuteGasFeeEth, redeemGasCostCawLive } from '../../services/SponsorService/inviteQuote'
 import { CAW_ADDRESS } from '../../abi/addresses'
 import { getOwnValidatorTokenId } from '../../services/SponsorService/validatorIdentity'
 import { decryptInviteCode } from '../../services/SponsorService/inviteCodeCrypto'
@@ -594,8 +594,10 @@ const SEL_WITHDRAW_TO   = '0xcdbafcd0' // CawProfile.withdrawTo(uint32,uint32,ad
 const SEL_CAW_TRANSFER  = '0xa9059cbb' // CAW.transfer(address,uint256)
 const SEL_CAW_APPROVE   = '0x095ea7b3' // CAW.approve(address,uint256)
 const SEL_DEPOSIT_FOR   = '0xf19b53f8' // CawProfile.depositFor(uint32,uint32,uint256,uint32,uint256)
+const SEL_DEPOSIT_ZAP   = '0xafb344b1' // CawProfileMinter.depositZap(uint32,uint32,uint256,uint256,uint32,uint256)
 
 const CAW_NAMES_ADDRESS_LC = (process.env.CAW_NAMES_ADDRESS || '').toLowerCase()
+const CAW_NAMES_MINTER_ADDRESS_LC = (process.env.CAW_NAMES_MINTER_ADDRESS || '').toLowerCase()
 const CAW_ADDRESS_LC = CAW_ADDRESS.toLowerCase()
 
 // target (lowercased) → the exact selectors permitted on it. Anything not here
@@ -604,14 +606,15 @@ const CAW_ADDRESS_LC = CAW_ADDRESS.toLowerCase()
 // SEAM-EXEC withdraw selectors: withdrawTo (on CawProfile) + CAW.transfer.
 // DEPOSIT (top-up) selectors added 2026-06: CawProfile.depositFor (pull CAW from
 // the EOA into stake) + CAW.approve (so depositFor's transferFrom has allowance).
-// Both carry SHAPE CHECKS below (approve spender ∈ {CawProfile}; depositFor
-// tokenId owned-by-signer) so a relayed approve can't grant an attacker an
-// allowance and a relayed depositFor can't credit someone else's token. The
-// relayer stays whole: depositFor forwards only the LZ fee as value, priced into
-// the CAW fee leg by quoteExecuteGasFeeCaw(forwardedValue) — the user holds the
-// CAW they sent, so the fee leg is funded.
+// ZAP (pay-with-ETH) added 2026-06: CawProfileMinter.depositZap (swap the EOA's
+// ETH → CAW and deposit). All carry SHAPE CHECKS below (approve spender ∈
+// {CawProfile}; depositFor/depositZap tokenId owned-by-signer). The relayer fronts
+// ONLY gas (inner-call ETH is the EOA's own, executeBatch being non-payable), repaid
+// by an in-batch fee leg — CAW.transfer(relayer) OR a raw ETH transfer to the relayer
+// (the relayer target + empty-data case is allowed specially in the loop below).
 const EXECUTE_ALLOWED: Record<string, Set<string>> = {}
 if (CAW_NAMES_ADDRESS_LC) EXECUTE_ALLOWED[CAW_NAMES_ADDRESS_LC] = new Set([SEL_WITHDRAW_TO, SEL_DEPOSIT_FOR])
+if (CAW_NAMES_MINTER_ADDRESS_LC) EXECUTE_ALLOWED[CAW_NAMES_MINTER_ADDRESS_LC] = new Set([SEL_DEPOSIT_ZAP])
 EXECUTE_ALLOWED[CAW_ADDRESS_LC] = new Set([SEL_CAW_TRANSFER, SEL_CAW_APPROVE])
 
 // ERC-20 transfer(address,uint256) selector — used to decode the relayer-fee call.
@@ -697,11 +700,14 @@ router.post('/execute', async (req, res) => {
   // helped establish (HIGH, security review 2026-06).
   let ownedTokenIds: Set<number> | null = null
   let depositForAmountWei: bigint | null = null
-  const hasDepositFor = body.calls.some(
-    c => c.to.toLowerCase() === CAW_NAMES_ADDRESS_LC && (c.data || '').slice(0, 10).toLowerCase() === SEL_DEPOSIT_FOR,
-  )
+  const isDepositForCall = (c: { to: string; data: string }) =>
+    c.to.toLowerCase() === CAW_NAMES_ADDRESS_LC && (c.data || '').slice(0, 10).toLowerCase() === SEL_DEPOSIT_FOR
+  const isDepositZapCall = (c: { to: string; data: string }) =>
+    c.to.toLowerCase() === CAW_NAMES_MINTER_ADDRESS_LC && (c.data || '').slice(0, 10).toLowerCase() === SEL_DEPOSIT_ZAP
+  const hasDepositFor = body.calls.some(isDepositForCall)
+  const needsOwnershipCheck = hasDepositFor || body.calls.some(isDepositZapCall)
   for (const c of body.calls) {
-    if (c.to.toLowerCase() === CAW_NAMES_ADDRESS_LC && (c.data || '').slice(0, 10).toLowerCase() === SEL_DEPOSIT_FOR) {
+    if (isDepositForCall(c)) {
       // depositFor(uint32,uint32,uint256 amount,...): amount = 3rd word.
       const amtWord = (c.data || '').slice(10 + 128, 10 + 192)
       if (amtWord.length === 64) {
@@ -709,17 +715,31 @@ router.post('/execute', async (req, res) => {
       }
     }
   }
-  // Reject more than ONE depositFor per batch. Each depositFor fires a cross-chain
-  // LZ send (~100K+ gas); the relay's fee quote uses a fixed GAS_LIMIT_EXECUTE_BATCH
-  // (800K), so packing several depositFors could run the tx over the gas limit and
-  // revert AFTER the relayer paid gas but BEFORE the in-batch fee transfer ran —
-  // an under-priced grief. The intended deposit shape is exactly one (LOW, review).
-  if (body.calls.filter(
-    c => c.to.toLowerCase() === CAW_NAMES_ADDRESS_LC && (c.data || '').slice(0, 10).toLowerCase() === SEL_DEPOSIT_FOR,
-  ).length > 1) {
-    return res.status(400).json({ error: 'TOO_MANY_DEPOSITS', detail: 'At most one depositFor per batch.' })
+  // Reject more than ONE deposit (depositFor + depositZap combined) per batch. Each
+  // fires a cross-chain LZ send (~100K+ gas); the relay's fee quote uses a fixed
+  // GAS_LIMIT_EXECUTE_BATCH (800K), so packing several could run the tx over the gas
+  // limit and revert AFTER the relayer paid gas but BEFORE the fee leg ran — an
+  // under-priced grief. The intended shape is exactly one deposit (LOW, review).
+  if (body.calls.filter(c => isDepositForCall(c) || isDepositZapCall(c)).length > 1) {
+    return res.status(400).json({ error: 'TOO_MANY_DEPOSITS', detail: 'At most one deposit (depositFor or depositZap) per batch.' })
   }
-  if (hasDepositFor) {
+  // Reject more than ONE raw-ETH-to-relayer leg (to=relayer, empty calldata). That
+  // leg is the ETH-repay fee — the legit shape is exactly one. Extra zero/low-value
+  // no-op transfers to the relayer serve no purpose but each burns ~21K of the fixed
+  // 800K GAS_LIMIT_EXECUTE_BATCH; stuffing several could push the tx over the cap and
+  // revert AFTER the relayer paid gas but BEFORE the (last) fee leg ran — an
+  // under-priced grief, the same class as TOO_MANY_DEPOSITS (MEDIUM, ETH-repay review).
+  {
+    const relayerLcPre = service.relayerAddress().toLowerCase()
+    const relayerEmptyDataLegs = body.calls.filter(c => {
+      const d = (c.data || '0x').toLowerCase()
+      return c.to.toLowerCase() === relayerLcPre && (d === '0x' || d === '')
+    }).length
+    if (relayerEmptyDataLegs > 1) {
+      return res.status(400).json({ error: 'TOO_MANY_RELAYER_LEGS', detail: 'At most one ETH transfer to the relayer per batch.' })
+    }
+  }
+  if (needsOwnershipCheck) {
     let owners: { tokenId: number }[]
     try {
       owners = await prisma.user.findMany({
@@ -736,8 +756,24 @@ router.post('/execute', async (req, res) => {
     ownedTokenIds = new Set(owners.map(u => u.tokenId))
   }
 
+  // The relayer's hot wallet — needed both for the raw-ETH-fee-leg exception in the
+  // loop below AND the fee invariant after it.
+  const relayerLc = service.relayerAddress().toLowerCase()
+
   for (const c of body.calls) {
     const toLc = c.to.toLowerCase()
+    const data = (c.data || '0x').toLowerCase()
+
+    // EXCEPTION: a raw ETH transfer to the RELAYER (to=relayer, empty calldata) is
+    // the ETH-repay fee leg for the pay-with-ETH zap. It's not in EXECUTE_ALLOWED
+    // (the relayer address is dynamic), so allow it explicitly. It moves the EOA's
+    // own ETH to the relayer; the fee invariant below verifies the amount. Empty
+    // data only — a call to the relayer WITH calldata is not a plain transfer and
+    // is rejected by the allow-list (the relayer isn't an allow-listed target).
+    if (toLc === relayerLc && (data === '0x' || data === '')) {
+      continue
+    }
+
     const allowedSelectors = EXECUTE_ALLOWED[toLc]
     if (!allowedSelectors) {
       return res.status(400).json({ error: 'TARGET_NOT_ALLOWED', detail: `Call target ${c.to} is not allow-listed` })
@@ -833,51 +869,106 @@ router.post('/execute', async (req, res) => {
         })
       }
     }
+
+    // SHAPE CHECK on depositZap (pay-with-ETH): same owned-tokenId guard as
+    // depositFor — depositZap deposits to its `tokenId` arg (2nd word), so it must
+    // be the signer's own token (it's self-funded by the EOA's ETH, but a stranger's
+    // tokenId would credit/auth their profile from the signer's ETH).
+    if (toLc === CAW_NAMES_MINTER_ADDRESS_LC && selector === SEL_DEPOSIT_ZAP) {
+      // depositZap(uint32 cawNetworkId, uint32 tokenId, ...): tokenId = 2nd word.
+      const tokenIdWord = c.data.slice(10 + 64, 10 + 128)
+      if (tokenIdWord.length !== 64) {
+        return res.status(400).json({ error: 'BAD_DEPOSIT_SHAPE', detail: 'depositZap tokenId word is malformed' })
+      }
+      let zapTokenIdRaw: bigint
+      try { zapTokenIdRaw = BigInt('0x' + tokenIdWord) } catch {
+        return res.status(400).json({ error: 'BAD_DEPOSIT_SHAPE', detail: 'depositZap tokenId is not a number' })
+      }
+      if (zapTokenIdRaw > 0xFFFFFFFFn) {
+        return res.status(400).json({ error: 'BAD_DEPOSIT_SHAPE', detail: 'depositZap tokenId exceeds uint32' })
+      }
+      const zapTokenId = Number(zapTokenIdRaw)
+      if (!ownedTokenIds || !ownedTokenIds.has(zapTokenId)) {
+        return res.status(400).json({
+          error: 'DEPOSIT_TOKEN_NOT_OWNED',
+          detail: `depositZap tokenId ${zapTokenId} is not owned by the signer ${smartEoaLc} ` +
+            `(or not yet indexed). Refresh and retry.`,
+        })
+      }
+    }
   }
 
-  // Total ETH value the relayer fronts as msg.value (e.g. the withdraw LZ fee).
-  // Computed BEFORE the fee check so the CAW fee floor can cover it (SEAM-EXEC-2).
-  // Cap mirrors SponsorService.relayExecuteBatch's maxLzFeeWei check (re-checked there).
+  // Total of the inner call values (LZ fees, swap ETH). Funded from the SmartEOA's
+  // OWN balance (executeBatch is non-payable — see relayExecuteBatch), so this is
+  // NOT relayer-fronted. Kept only for the maxLzFeeWei sanity cap + diagnostics.
   let totalValue = 0n
   try { totalValue = body.calls.reduce((acc, c) => acc + BigInt(c.value), 0n) } catch {
     return res.status(400).json({ error: 'VALIDATION', detail: 'Invalid call value' })
   }
 
-  // ── FEE INVARIANT: the batch must repay the relayer in CAW for what it fronts —
-  //    GAS to submit the tx PLUS the ETH `value` forwarded into the batch (the LZ
-  //    fee on a withdraw). Otherwise relaying is an open subsidy and the whole
-  //    "anyone submits, submitter keeps the fee" model collapses. Sum every
-  //    CAW.transfer in the batch whose recipient is THIS relayer's hot wallet, and
-  //    require the total to meet the live quote (gas + forwardedValue). The fee +
-  //    recipient are signature-bound, so a relayer can't inflate the fee and the
-  //    user can't fake it post-hoc.
-  //    SEAM-EXEC-2 (audit 2026-06-14): totalValue MUST be priced in — pricing only
-  //    gas let a withdraw get its LZ fee fronted for free.
-  const feeQuote = quoteExecuteGasFeeCaw(totalValue)
-  if (!feeQuote.priceAvailable) {
-    // No live price → we can't price the cost → refuse rather than relay for free
-    // or against a stale-low rate (mirrors inviteQuote's M-2 staleness refusal).
-    return res.status(503).json({
-      error: 'PRICE_UNAVAILABLE',
-      detail: 'CAW/ETH price is unavailable or stale; cannot price the relay fee. Try again shortly.',
-    })
-  }
+  // ── FEE INVARIANT: repay the relayer for what it ACTUALLY fronts — which is now
+  //    GAS ONLY. (Inner-call ETH — LZ fee, swap ETH — comes from the EOA's own
+  //    balance, NOT relayer msg.value, since executeBatch is non-payable. So the
+  //    relayer never fronts forwarded value, and pricing it in would over-charge.)
+  //    The batch repays gas in ONE currency:
+  //      • CAW: an in-batch CAW.transfer(relayer, ≥ gas-in-CAW)  — withdraw / CAW-deposit.
+  //      • ETH: an in-batch raw ETH transfer to relayer (to=relayer, value≥gas, data=0x) — zap.
+  //    The fee/recipient are signature-bound, so the relayer can't inflate and the
+  //    user can't fake it. We accept whichever currency the batch uses and require
+  //    it to meet the live gas quote in that currency.
   const relayer = service.relayerAddress().toLowerCase()
+
+  // Sum CAW paid to the relayer (ERC-20 transfer legs to the relayer's hot wallet).
   let feePaidCawWei = 0n
   for (const c of body.calls) {
     if (c.to.toLowerCase() !== CAW_ADDRESS_LC) continue
     const decoded = decodeErc20Transfer(c.data)
-    if (decoded && decoded.to.toLowerCase() === relayer) {
-      feePaidCawWei += decoded.amount
+    if (decoded && decoded.to.toLowerCase() === relayer) feePaidCawWei += decoded.amount
+  }
+  // Sum ETH paid to the relayer (raw value transfers: to=relayer, empty/no calldata).
+  let feePaidEthWei = 0n
+  for (const c of body.calls) {
+    if (c.to.toLowerCase() !== relayer) continue
+    const data = (c.data || '0x').toLowerCase()
+    if (data === '0x' || data === '') {
+      try { feePaidEthWei += BigInt(c.value) } catch { /* ignore */ }
     }
   }
-  if (feePaidCawWei < feeQuote.minFeeCawWei) {
-    return res.status(400).json({
-      error: 'FEE_TOO_LOW',
-      detail:
-        `Batch must transfer at least ${feeQuote.minFeeCawWei} CAW (wei) to the relayer ` +
-        `${relayer} to cover gas + forwarded ETH; batch pays ${feePaidCawWei}. Re-quote and re-sign.`,
-    })
+
+  const usesCaw = feePaidCawWei > 0n
+  const usesEth = feePaidEthWei > 0n
+  if (usesCaw && usesEth) {
+    // One currency only — mixing could let a split underpay slip past either check.
+    return res.status(400).json({ error: 'MIXED_FEE_CURRENCY', detail: 'Repay the relayer in CAW or ETH, not both.' })
+  }
+
+  if (usesEth) {
+    // ETH-repay (pay-with-ETH zap). Gas priced in ETH; always available (no CAW price).
+    const ethQuote = quoteExecuteGasFeeEth()
+    if (feePaidEthWei < ethQuote.minFeeEthWei) {
+      return res.status(400).json({
+        error: 'FEE_TOO_LOW',
+        detail: `Batch must transfer at least ${ethQuote.minFeeEthWei} wei ETH to the relayer ` +
+          `${relayer} to cover gas; batch pays ${feePaidEthWei}. Re-quote and re-sign.`,
+      })
+    }
+  } else {
+    // CAW-repay (withdraw / CAW-deposit). Gas priced in CAW; forwardedValue is 0
+    // now (relayer no longer fronts it). Needs live CAW/ETH price.
+    const feeQuote = quoteExecuteGasFeeCaw(0n)
+    if (!feeQuote.priceAvailable) {
+      return res.status(503).json({
+        error: 'PRICE_UNAVAILABLE',
+        detail: 'CAW/ETH price is unavailable or stale; cannot price the relay fee. Try again shortly.',
+      })
+    }
+    if (feePaidCawWei < feeQuote.minFeeCawWei) {
+      return res.status(400).json({
+        error: 'FEE_TOO_LOW',
+        detail: `Batch must transfer at least ${feeQuote.minFeeCawWei} CAW (wei) to the relayer ` +
+          `${relayer} to cover gas; batch pays ${feePaidCawWei}. Re-quote and re-sign.`,
+      })
+    }
   }
 
   const result = await service.relayExecuteBatch(
@@ -1040,30 +1131,27 @@ router.get('/invite-quote', async (_req, res) => {
 })
 
 // ─── GET /api/sponsor/execute-quote ──────────────────────────────────────────
-// Public. The CAW fee (wei) a passkey-wallet executeBatch must transfer to the
-// relayer to cover the gas it fronts PLUS any ETH the relayer forwards as the
-// batch's msg.value, plus the relayer address to pay it to. The FE reads this to
-// build the fee call inside a withdraw/deposit batch BEFORE signing.
+// Public. The fee a passkey-wallet executeBatch must pay the relayer for the GAS
+// it fronts, in BOTH currencies, plus the relayer address to pay it to. The FE
+// reads this to build the fee leg inside a withdraw/deposit/zap batch BEFORE
+// signing, then repays in CAW (withdraw / CAW-deposit) OR ETH (pay-with-ETH zap).
 //
-// `forwardedValueWei` (optional query): the total ETH the batch will forward as
-// value — e.g. a deposit's LZ fee. Withdraw forwards a tiny LZ fee; a deposit
-// forwards a real one, so the FE MUST pass it or the relayer under-recovers (the
-// /execute relay re-derives the SAME quote against the batch's actual totalValue
-// and rejects an underpaying batch, so this is a UX pre-flight, not a trust
-// boundary — but a too-low pre-flight just makes the user re-sign).
-router.get('/execute-quote', async (req, res) => {
+// The relayer fronts ONLY gas — inner-call ETH (LZ fee, swap ETH) is the EOA's own
+// (executeBatch is non-payable). So there's no forwardedValue to price in anymore;
+// it's gas, full stop. The /execute relay re-derives the SAME quote and rejects an
+// underpaying batch, so this is a UX pre-flight, not a trust boundary.
+router.get('/execute-quote', async (_req, res) => {
   const service = getSponsorService()
-  let forwardedValueWei = 0n
-  const raw = req.query.forwardedValueWei
-  if (typeof raw === 'string' && /^\d+$/.test(raw)) {
-    try { forwardedValueWei = BigInt(raw) } catch { forwardedValueWei = 0n }
-  }
-  const quote = quoteExecuteGasFeeCaw(forwardedValueWei)
+  const cawQuote = quoteExecuteGasFeeCaw(0n)
+  const ethQuote = quoteExecuteGasFeeEth()
   return res.status(200).json({
     relayer: service ? service.relayerAddress() : null,
-    minFeeCawWei: quote.minFeeCawWei.toString(),
-    priceAvailable: quote.priceAvailable,
+    // CAW-repay fields (withdraw / CAW-deposit).
+    minFeeCawWei: cawQuote.minFeeCawWei.toString(),
+    priceAvailable: cawQuote.priceAvailable,
     cawAddress: CAW_ADDRESS,
+    // ETH-repay field (pay-with-ETH zap). Always available (gas-only, no CAW price).
+    minFeeEthWei: ethQuote.minFeeEthWei.toString(),
   })
 })
 
