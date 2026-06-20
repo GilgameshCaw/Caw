@@ -25,15 +25,7 @@ import { useState } from 'react'
 import { useNavigate } from '~/utils/localizedRouter'
 import { useTheme } from '~/hooks/useTheme'
 import { useT } from '~/i18n/I18nProvider'
-import { apiFetch, retryOnIndexing } from '~/api/client'
-import { signWithPasskeyDiscoverable } from '~/services/identity/passkey'
-import { useIdentitySigning } from '~/components/identity/IdentitySigningProvider'
-import { useAuthStore } from '~/store/authStore'
-import { useTokenDataStore } from '~/store/tokenDataStore'
-import { useSessionKeyStore } from '~/store/sessionKeyStore'
-import { setJSON } from '~/utils/safeStorage'
-import { PASSKEY_CREDENTIAL_KEY, IDENTITY_KIND_KEY, IDENTITY_KIND_PASSKEY } from '~/constants/passkeyStorage'
-import type { TokenData } from '~/types'
+import { usePasskeySignIn } from '~/hooks/usePasskeySignIn'
 
 type Step = 'username' | 'signing' | 'success'
 
@@ -41,111 +33,22 @@ export default function PasskeySignIn() {
   const t = useT()
   const { isDark } = useTheme()
   const navigate = useNavigate()
-  const setSession = useAuthStore(s => s.setSession)
-  const { startSigning, stopSigning } = useIdentitySigning()
+  const { signIn, busy, error } = usePasskeySignIn()
 
   const [step, setStep] = useState<Step>('username')
   const [username, setUsername] = useState('')
-  const [error, setError] = useState<string | null>(null)
-  const [busy, setBusy] = useState(false)
 
   const handleSignIn = async () => {
     const uname = username.trim().toLowerCase()
     if (!uname) return
-    setError(null)
-    setBusy(true)
     setStep('signing')
     try {
-      // 1. Resolve the profile.
-      const profile = await apiFetch<{ tokenId: number; address: string }>(
-        `/api/users/${encodeURIComponent(uname)}`,
-      )
-      if (!profile?.tokenId) {
-        throw new Error(t('passkey_signin.error.not_found'))
-      }
-
-      // 2. Server-issued challenge.
-      const { challenge } = await apiFetch<{ challenge: `0x${string}` }>(
-        '/api/auth/verify-passkey/challenge',
-        { method: 'POST', body: JSON.stringify({ tokenId: profile.tokenId }) },
-      )
-
-      // 3. Sign it with the device passkey (discoverable — no local credentialId).
-      startSigning(t('passkey_signin.prompt'))
-      let assertion
-      try {
-        const rpId = window.location.hostname
-        assertion = await signWithPasskeyDiscoverable({ digest: challenge, rpId })
-      } finally {
-        stopSigning()
-      }
-
-      // 4. Verify on-chain + get a session (retry while the mint indexes).
-      const data = await retryOnIndexing(() =>
-        apiFetch<{
-          sessionToken: string
-          authorizedTokenIds: number[]
-          authorizedAddresses: string[]
-          expiresAt: number
-        }>('/api/auth/verify-passkey', {
-          method: 'POST',
-          body: JSON.stringify({
-            tokenId: profile.tokenId,
-            challenge,
-            signature: assertion.sig,
-          }),
-        }),
-      )
-
-      // 5. Persist identity for next time + set session + active token.
-      setJSON(PASSKEY_CREDENTIAL_KEY, assertion.credentialId)
-      setJSON(IDENTITY_KIND_KEY, IDENTITY_KIND_PASSKEY)
-      setSession(data.sessionToken, data.authorizedTokenIds, data.authorizedAddresses, data.expiresAt)
-
-      // Inject the profile so AuthGate sees an active token (Pop-B has no wagmi
-      // wallet feeding tokenDataStore). Build a real-bigint TokenData (the API
-      // row has no on-chain bigints — see Onboarding.tsx for the same pattern).
-      const ownerAddr = (profile.address || data.authorizedAddresses[0]) as `0x${string}`
-      const token: TokenData = {
-        tokenId: profile.tokenId,
-        username: uname,
-        address: ownerAddr,
-        owner: ownerAddr,
-        withdrawable: 0n,
-        ownerBalance: 0n,
-        stakedAmount: 0n,
-        cawonce: 0,
-      }
-      const tds = useTokenDataStore.getState()
-      tds.setTokensForAddress(ownerAddr, [token])
-      tds.setActiveTokenIdForAddress(ownerAddr, profile.tokenId)
-      tds.setLastAddress(ownerAddr)
-
-      // Activate this address in the session-key store so an EXISTING Quick Sign
-      // session (registered at onboarding under this ownerAddress) is recognized.
-      // Without this, sessionForWallet() returns null because activeWallet is unset
-      // for a Pop-B passkey user (no wagmi address feeds the normal setActiveWallet
-      // effect), so the profile chooser shows "not connected" + no Quick Sign even
-      // though the session is present in storage. Re-enable too if a session exists
-      // for this owner, in case the global flag was toggled off elsewhere. (#240)
-      {
-        const sk = useSessionKeyStore.getState()
-        const ownerLc = ownerAddr.toLowerCase()
-        sk.setActiveWallet(ownerLc)
-        if (sk.sessions[ownerLc]) sk.setEnabled(true)
-      }
-
+      await signIn(uname)
       setStep('success')
       navigate('/home', { replace: true })
-    } catch (err: any) {
-      const raw = err?.message || ''
-      // WebAuthn DOMExceptions are user-cancellations most of the time; show a
-      // friendly message rather than the raw exception.
-      const isCancel = /NotAllowed|abort|cancel|denied/i.test(raw)
-      setError(isCancel ? t('passkey_signin.error.cancelled') : (raw || t('passkey_signin.error.generic')))
+    } catch {
+      // The hook surfaces a friendly `error`; return to the input step.
       setStep('username')
-    } finally {
-      setBusy(false)
     }
   }
 

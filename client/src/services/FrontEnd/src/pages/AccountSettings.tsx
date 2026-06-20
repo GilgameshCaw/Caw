@@ -22,6 +22,98 @@ import { ThumbtackIcon } from '~/components/icons/ThumbtackIcon'
 import { useT } from '~/i18n/I18nProvider'
 import { IdentitySection } from '~/components/identity/IdentitySection'
 import { WithdrawLockStatus } from '~/components/WithdrawLockStatus'
+import { usePasskeySignIn } from '~/hooks/usePasskeySignIn'
+
+/**
+ * "Add an existing passkey" — lets a user import another passkey-based profile
+ * into this browser WITHOUT going to the captive splash. Runs the same ceremony
+ * as PasskeySignIn (server challenge → WebAuthn assertion → on-chain verify →
+ * session). On success the hook injects the profile into tokenDataStore, so the
+ * All-Usernames list + profile chooser pick it up automatically.
+ */
+function AddPasskeyProfile() {
+  const t = useT()
+  const { isDark } = useTheme()
+  const { signIn, busy, error, clearError } = usePasskeySignIn()
+  const [open, setOpen] = useState(false)
+  const [username, setUsername] = useState('')
+  const [done, setDone] = useState<string | null>(null)
+
+  const submit = async () => {
+    const uname = username.trim().toLowerCase()
+    if (!uname || busy) return
+    try {
+      const res = await signIn(uname)
+      setDone(res.username)
+      setUsername('')
+      setOpen(false)
+    } catch { /* hook surfaces `error` */ }
+  }
+
+  const mutedClass = isDark ? 'text-white/50' : 'text-gray-500'
+  const inputClass = isDark
+    ? 'bg-white/5 border border-white/20 text-white placeholder-white/30 focus:border-yellow-500'
+    : 'bg-gray-50 border border-gray-300 text-gray-900 placeholder-gray-400 focus:border-yellow-500'
+
+  if (!open) {
+    return (
+      <div className="mt-3">
+        {done && (
+          <p className={`text-sm mb-2 ${isDark ? 'text-green-400' : 'text-green-600'}`}>
+            {t('account.add_passkey.added', { username: done })}
+          </p>
+        )}
+        <button
+          type="button"
+          onClick={() => { setDone(null); clearError(); setOpen(true) }}
+          className={`w-full flex items-center justify-center gap-2 p-4 rounded-lg border border-dashed transition-colors cursor-pointer ${
+            isDark ? 'border-white/15 text-white/60 hover:bg-white/5 hover:text-white/80' : 'border-gray-300 text-gray-500 hover:bg-gray-50 hover:text-gray-700'
+          }`}
+        >
+          <HiKey className="w-5 h-5" />
+          <span className="text-sm font-medium">{t('account.add_passkey.cta')}</span>
+        </button>
+      </div>
+    )
+  }
+
+  return (
+    <div className={`mt-3 p-4 rounded-lg ${isDark ? 'bg-white/5 border border-white/10' : 'bg-gray-50 border border-gray-200'}`}>
+      <p className={`text-sm font-medium mb-1 ${isDark ? 'text-white' : 'text-gray-900'}`}>{t('account.add_passkey.title')}</p>
+      <p className={`text-xs mb-3 ${mutedClass}`}>{t('account.add_passkey.subtitle')}</p>
+      <input
+        type="text"
+        value={username}
+        onChange={e => { setUsername(e.target.value.toLowerCase()); if (error) clearError() }}
+        onKeyDown={e => { if (e.key === 'Enter') void submit() }}
+        placeholder={t('passkey_signin.username_placeholder')}
+        autoFocus
+        autoComplete="username webauthn"
+        disabled={busy}
+        className={`w-full px-4 py-2.5 rounded-xl text-sm outline-none transition-colors ${inputClass}`}
+      />
+      {error && <p className="text-sm text-red-500 mt-2">{error}</p>}
+      <div className="flex gap-2 mt-3">
+        <button
+          type="button"
+          onClick={() => { setOpen(false); clearError() }}
+          disabled={busy}
+          className={`flex-1 py-2.5 text-sm rounded-xl transition-colors cursor-pointer ${isDark ? 'bg-white/10 text-white hover:bg-white/20' : 'bg-gray-200 text-gray-800 hover:bg-gray-300'}`}
+        >
+          {t('common.cancel')}
+        </button>
+        <button
+          type="button"
+          onClick={() => void submit()}
+          disabled={!username.trim() || busy}
+          className="flex-1 py-2.5 text-sm font-bold rounded-xl bg-yellow-500 text-black hover:bg-yellow-400 transition-all disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer"
+        >
+          {busy ? t('passkey_signin.signing') : t('account.add_passkey.confirm')}
+        </button>
+      </div>
+    </div>
+  )
+}
 
 // 401s on the X verification flow are expected when the user's session
 // has expired or never authenticated for the active token — apiFetch's
@@ -941,6 +1033,14 @@ const AccountSettings: React.FC = () => {
             </div>
           </section>
         )}
+
+        {/* Add an existing passkey — import another passkey profile into this
+            browser without going to the splash. Shown regardless of how many
+            profiles are already present (the All-Usernames section above only
+            renders with >1, but importing your FIRST extra passkey must work too). */}
+        <div className="mb-8">
+          <AddPasskeyProfile />
+        </div>
 
         {/* Wallet Section */}
         {isConnected && address && (
