@@ -597,9 +597,15 @@ const SEL_DEPOSIT_FOR   = '0xf19b53f8' // CawProfile.depositFor(uint32,uint32,ui
 const SEL_DEPOSIT_ZAP   = '0xafb344b1' // CawProfileMinter.depositZap(uint32,uint32,uint256,uint256,uint32,uint256)
 const SEL_ROTATE_ECDSA  = '0xd76393e7' // SmartEOA.rotateEcdsaFallback(address,bytes)
 const SEL_ADD_PASSKEY   = '0x4f43be60' // SmartEOA.addPasskey(bytes32,bytes32,bytes)
-// Self-management selectors: the ONLY SmartEOA self-targeted calls this relay permits.
-// initialize and executeBatch are explicitly excluded — they must never appear here.
-const SELF_MGMT_SELECTORS = new Set([SEL_ROTATE_ECDSA, SEL_ADD_PASSKEY])
+const SEL_CANCEL_PASSKEY = '0x8713d23a' // SmartEOA.cancelPendingPasskey(bytes32,bytes)
+// Self-management selectors: the ONLY SmartEOA self-targeted calls this relay
+// permits. Each is a key-lifecycle op authorized on-chain by the user's own
+// passkey/ecdsaFallback sig (the relay can't forge it). initialize and
+// executeBatch are explicitly excluded — they must never appear here.
+// removePasskey is intentionally NOT relayable: removing an active passkey is a
+// security-sensitive teardown, kept to a direct user tx so a relay can never be
+// in the loop for it.
+const SELF_MGMT_SELECTORS = new Set([SEL_ROTATE_ECDSA, SEL_ADD_PASSKEY, SEL_CANCEL_PASSKEY])
 
 const CAW_NAMES_ADDRESS_LC = (process.env.CAW_NAMES_ADDRESS || '').toLowerCase()
 const CAW_NAMES_MINTER_ADDRESS_LC = (process.env.CAW_NAMES_MINTER_ADDRESS || '').toLowerCase()
@@ -753,7 +759,7 @@ router.post('/execute', async (req, res) => {
     const sel2 = (c.data || '').length >= 10 ? c.data.slice(0, 10).toLowerCase() : ''
     return toLc2 === smartEoaLc && SELF_MGMT_SELECTORS.has(sel2)
   }).length > 1) {
-    return res.status(400).json({ error: 'TOO_MANY_SELF_MGMT', detail: 'At most one self-management call (rotateEcdsaFallback or addPasskey) per batch.' })
+    return res.status(400).json({ error: 'TOO_MANY_SELF_MGMT', detail: 'At most one self-management call (rotateEcdsaFallback, addPasskey, or cancelPendingPasskey) per batch.' })
   }
   if (needsOwnershipCheck) {
     let owners: { tokenId: number }[]
@@ -791,7 +797,7 @@ router.post('/execute', async (req, res) => {
     }
 
     // SELF-MANAGEMENT EXCEPTION: a call to the user's OWN SmartEOA invoking a
-    // permitted management selector (rotateEcdsaFallback or addPasskey). Target is
+    // permitted management selector (rotate / add-passkey / cancel-pending). Target is
     // dynamic (the signer's own EOA address, different per user), so it can't live
     // in the static EXECUTE_ALLOWED map — same pattern as the relayer-leg above.
     // The inner call carries its OWN passkey/management sig verified on-chain by
@@ -803,7 +809,7 @@ router.post('/execute', async (req, res) => {
     if (toLc === smartEoaLc) {
       const selector2 = (c.data || '').length >= 10 ? c.data.slice(0, 10).toLowerCase() : ''
       if (!SELF_MGMT_SELECTORS.has(selector2)) {
-        return res.status(400).json({ error: 'SELF_SELECTOR_NOT_ALLOWED', detail: `Only rotateEcdsaFallback / addPasskey may target your own SmartEOA (selector: ${selector2 || '(none)'})` })
+        return res.status(400).json({ error: 'SELF_SELECTOR_NOT_ALLOWED', detail: `Only rotateEcdsaFallback / addPasskey / cancelPendingPasskey may target your own SmartEOA (selector: ${selector2 || '(none)'})` })
       }
       continue
     }
