@@ -517,52 +517,13 @@ contract CawProfileMinter is Context {
   ///      output. Output lands in this contract; caller is responsible for
   ///      forwarding/approving it.
   function _swapEthForCaw(uint256 ethAmount, uint256 minCawOut) internal returns (uint256) {
-    return _swapEthForCawTo(ethAmount, minCawOut, address(this));
-  }
-
-  /// @dev Swap exact ETH for CAW and send output directly to `to`.
-  ///      Same path/deadline as _swapEthForCaw but the router recipient param
-  ///      is `to` rather than address(this). Used by swapEthForCawTo so the
-  ///      CAW bypasses the Minter and lands directly in the caller-specified
-  ///      address without an intermediate approve step.
-  function _swapEthForCawTo(uint256 ethAmount, uint256 minCawOut, address to) internal returns (uint256) {
     address[] memory path = new address[](2);
     path[0] = WETH;
     path[1] = address(CAW);
     uint256[] memory amounts = swapRouter.swapExactETHForTokens{value: ethAmount}(
-      minCawOut, path, to, block.timestamp + 600
+      minCawOut, path, address(this), block.timestamp + 600
     );
     return amounts[amounts.length - 1];
-  }
-
-  /// @notice Emitted by swapEthForCawTo when a swap completes.
-  event SwappedEthForCaw(address indexed recipient, uint256 ethIn, uint256 cawOut);
-
-  /// @notice Swap the full msg.value of ETH for CAW and send the output to
-  ///         `recipient`. This is a pure swap — it does NOT deposit to a CAW
-  ///         profile or fire a LayerZero message. The intended use is the
-  ///         passkey-wallet ("Population B") ETH top-up flow:
-  ///
-  ///           1. Relayer submits this call: ETH → CAW lands in the user's own EOA.
-  ///           2. Relayer submits a second call: depositFor() moves the CAW balance
-  ///              from the user's EOA into their profile via the normal CAW deposit path.
-  ///
-  ///         Separating the two operations keeps each tx simple and lets the
-  ///         user (or any caller) verify the swap output before the deposit.
-  ///         Any leftover ETH (e.g. a router rounding artefact) is swept back to
-  ///         msg.sender by the sweepResidualEth modifier.
-  ///
-  /// @param recipient  Address that receives the swapped CAW. Must not be address(0).
-  ///                   Typically the user's own EOA (before a subsequent depositFor call).
-  /// @param minCawOut  Slippage floor enforced by the Uniswap router. Reverts and
-  ///                   leaves msg.value unspent if the swap would return less.
-  function swapEthForCawTo(address recipient, uint256 minCawOut)
-    public payable sweepResidualEth
-  {
-    require(msg.value > 0, "No ETH");
-    require(recipient != address(0), "Bad recipient");
-    uint256 cawOut = _swapEthForCawTo(msg.value, minCawOut, recipient);
-    emit SwappedEthForCaw(recipient, msg.value, cawOut);
   }
 
   // ============================================
