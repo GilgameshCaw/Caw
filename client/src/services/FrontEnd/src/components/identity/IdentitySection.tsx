@@ -25,19 +25,34 @@
  *   matching passkey row.
  */
 
-import React, { useMemo, useState } from 'react'
+import { useCallback, useMemo, useState } from 'react'
+import { encodeAbiParameters } from 'viem'
+import type { Address } from 'viem'
 import { useAccount, usePublicClient } from 'wagmi'
 import { useQuery } from '@tanstack/react-query'
 import { HiKey, HiIdentification, HiPlus, HiRefresh, HiDownload, HiTrash } from 'react-icons/hi'
+import { erc20Abi, encodeFunctionData } from 'viem'
 import { useTheme } from '~/hooks/useTheme'
 import { useT } from '~/i18n/I18nProvider'
 import { useWalletPopulation } from '~/hooks/useWalletPopulation'
 import { getJSON } from '~/utils/safeStorage'
 import { PASSKEY_CREDENTIAL_KEY } from '~/constants/passkeyStorage'
+import { apiFetch } from '~/api/client'
+import { CAW_ADDRESS } from '~/../../../abi/addresses'
+import { smartEoaAbi } from '~/../../../abi/generated'
+import { useSmartEoaExecute, type ExecCall } from '~/hooks/useSmartEoaExecute'
+import { useSmartEoaManagement } from '~/hooks/useSmartEoaManagement'
 import AddPasskeyDialog, { type PendingPasskeyRow } from './AddPasskeyDialog'
 import RotateEcdsaFallbackDialog from './RotateEcdsaFallbackDialog'
 import ReDownloadBackupDialog from './ReDownloadBackupDialog'
 import RemovePasskeyDialog from './RemovePasskeyDialog'
+
+interface SponsorExecuteQuote {
+  relayer: Address
+  minFeeCawWei: string
+  priceAvailable: boolean
+  cawAddress: Address
+}
 
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -190,6 +205,10 @@ function IdentitySectionInner({
   inMemoryPrivateKey: Uint8Array | null
   username: string
 }): JSX.Element {
+  // Hooks for sponsor-relayed rotate.
+  const { execute: smartEoaExecute, account: eoaAccount } = useSmartEoaExecute()
+  const { signManagement } = useSmartEoaManagement()
+
   // Dialog open states.
   const [addPasskeyOpen, setAddPasskeyOpen] = useState(false)
   const [rotateOpen, setRotateOpen] = useState(false)
@@ -218,6 +237,60 @@ function IdentitySectionInner({
   const pending = passkeyState?.pending ?? []
   const ecdsaFallbackAddress = passkeyState?.ecdsaFallbackAddress
   const enrolledCount = enrolled.length
+
+  // Sponsor-relayed rotateEcdsaFallback via CAW fee repay.
+  //
+  // Batch: [rotateEcdsaFallback(newFallback, mgmtSig), CAW.transfer(relayer, feeCaw)]
+  // Order: rotate FIRST so the fee leg can be deducted from liquid CAW on the EOA.
+  //
+  // NOTE: the user must hold liquid CAW in their EOA (not just L2-deposited).
+  // If the EOA balance is zero the batch will revert on the fee transfer.
+  const handleRotate = useCallback(
+    async (newEcdsaAddress: `0x${string}`, _blobJson: string): Promise<void> => {
+      if (!eoaAccount) throw new Error('No passkey wallet connected.')
+
+      // 1. Fetch the execute fee quote.
+      const quote = await apiFetch<SponsorExecuteQuote>('/api/sponsor/execute-quote')
+      if (!quote.priceAvailable) {
+        throw new Error('CAW fee pricing is temporarily unavailable. Try again shortly.')
+      }
+      const feeCaw = BigInt(quote.minFeeCawWei)
+
+      // 2. Build the management sig for rotateEcdsaFallback.
+      //    params = abi.encode(newFallback) — matches contract's abi.encode(newFallback).
+      const params = encodeAbiParameters(
+        [{ type: 'address' }],
+        [newEcdsaAddress],
+      ) as `0x${string}`
+      const mgmtSig = await signManagement('rotateEcdsaFallback', params)
+
+      // 3. Build the batch.
+      //    Call 1: rotateEcdsaFallback (selector 0xd76393e7)
+      const call1: ExecCall = {
+        to: eoaAccount,
+        value: 0n,
+        data: encodeFunctionData({
+          abi: smartEoaAbi,
+          functionName: 'rotateEcdsaFallback',
+          args: [newEcdsaAddress, mgmtSig],
+        }),
+      }
+      //    Call 2: pay CAW fee to relayer
+      const call2: ExecCall = {
+        to: CAW_ADDRESS,
+        value: 0n,
+        data: encodeFunctionData({
+          abi: erc20Abi,
+          functionName: 'transfer',
+          args: [quote.relayer, feeCaw],
+        }),
+      }
+
+      // 4. Sign the batch with the passkey and POST to /api/sponsor/execute.
+      await smartEoaExecute([call1, call2])
+    },
+    [eoaAccount, signManagement, smartEoaExecute],
+  )
 
   const strongClass = isDark ? 'text-white' : 'text-gray-900'
   const mutedClass = isDark ? 'text-white/60' : 'text-gray-500'
@@ -450,12 +523,8 @@ function IdentitySectionInner({
         onClose={() => { setRotateOpen(false); refetch() }}
         walletAddress={walletAddress ?? '0x0000000000000000000000000000000000000000'}
         currentFallbackAddress={ecdsaFallbackAddress}
-        // Sponsor doesn't cover rotateEcdsaFallback in v5 — user must self-fund.
-        needsEthFunding={true}
-        onRotate={async () => {
-          // Unreachable when needsEthFunding=true, but satisfies the type.
-          throw new Error('RotateEcdsaFallback: not supported via sponsor (Wave 3 follow-up)')
-        }}
+        needsEthFunding={false}
+        onRotate={handleRotate}
         username={username}
       />
 
