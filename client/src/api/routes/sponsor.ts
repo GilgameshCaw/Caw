@@ -595,6 +595,11 @@ const SEL_CAW_TRANSFER  = '0xa9059cbb' // CAW.transfer(address,uint256)
 const SEL_CAW_APPROVE   = '0x095ea7b3' // CAW.approve(address,uint256)
 const SEL_DEPOSIT_FOR   = '0xf19b53f8' // CawProfile.depositFor(uint32,uint32,uint256,uint32,uint256)
 const SEL_DEPOSIT_ZAP   = '0xafb344b1' // CawProfileMinter.depositZap(uint32,uint32,uint256,uint256,uint32,uint256)
+const SEL_ROTATE_ECDSA  = '0xd76393e7' // SmartEOA.rotateEcdsaFallback(address,bytes)
+const SEL_ADD_PASSKEY   = '0x4f43be60' // SmartEOA.addPasskey(bytes32,bytes32,bytes)
+// Self-management selectors: the ONLY SmartEOA self-targeted calls this relay permits.
+// initialize and executeBatch are explicitly excluded — they must never appear here.
+const SELF_MGMT_SELECTORS = new Set([SEL_ROTATE_ECDSA, SEL_ADD_PASSKEY])
 
 const CAW_NAMES_ADDRESS_LC = (process.env.CAW_NAMES_ADDRESS || '').toLowerCase()
 const CAW_NAMES_MINTER_ADDRESS_LC = (process.env.CAW_NAMES_MINTER_ADDRESS || '').toLowerCase()
@@ -739,6 +744,17 @@ router.post('/execute', async (req, res) => {
       return res.status(400).json({ error: 'TOO_MANY_RELAYER_LEGS', detail: 'At most one ETH transfer to the relayer per batch.' })
     }
   }
+  // Reject more than ONE self-management call per batch (rotate / add-passkey). Each
+  // re-enters the user's SmartEOA with its own management sig; one-per-batch keeps the
+  // gas quote honest against the fixed GAS_LIMIT_EXECUTE_BATCH (800K) and the shape
+  // unambiguous — the same reasoning as TOO_MANY_DEPOSITS.
+  if (body.calls.filter(c => {
+    const toLc2 = c.to.toLowerCase()
+    const sel2 = (c.data || '').length >= 10 ? c.data.slice(0, 10).toLowerCase() : ''
+    return toLc2 === smartEoaLc && SELF_MGMT_SELECTORS.has(sel2)
+  }).length > 1) {
+    return res.status(400).json({ error: 'TOO_MANY_SELF_MGMT', detail: 'At most one self-management call (rotateEcdsaFallback or addPasskey) per batch.' })
+  }
   if (needsOwnershipCheck) {
     let owners: { tokenId: number }[]
     try {
@@ -771,6 +787,24 @@ router.post('/execute', async (req, res) => {
     // data only — a call to the relayer WITH calldata is not a plain transfer and
     // is rejected by the allow-list (the relayer isn't an allow-listed target).
     if (toLc === relayerLc && (data === '0x' || data === '')) {
+      continue
+    }
+
+    // SELF-MANAGEMENT EXCEPTION: a call to the user's OWN SmartEOA invoking a
+    // permitted management selector (rotateEcdsaFallback or addPasskey). Target is
+    // dynamic (the signer's own EOA address, different per user), so it can't live
+    // in the static EXECUTE_ALLOWED map — same pattern as the relayer-leg above.
+    // The inner call carries its OWN passkey/management sig verified on-chain by
+    // SmartEOA._verifyAnyActivePasskey; the relay forges neither the batch sig nor
+    // the management sig. This gate is a UX/early-reject layer only — the on-chain
+    // authorization is the real trust boundary. Default-deny: anything else
+    // self-targeted (initialize, executeBatch, arbitrary selectors) is rejected
+    // here; the per-batch TOO_MANY_SELF_MGMT cap is enforced before this loop.
+    if (toLc === smartEoaLc) {
+      const selector2 = (c.data || '').length >= 10 ? c.data.slice(0, 10).toLowerCase() : ''
+      if (!SELF_MGMT_SELECTORS.has(selector2)) {
+        return res.status(400).json({ error: 'SELF_SELECTOR_NOT_ALLOWED', detail: `Only rotateEcdsaFallback / addPasskey may target your own SmartEOA (selector: ${selector2 || '(none)'})` })
+      }
       continue
     }
 
