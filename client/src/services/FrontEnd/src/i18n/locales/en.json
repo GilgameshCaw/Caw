@@ -1667,6 +1667,7 @@
   "onboarding.backup.email_sent": "Sent — check your inbox",
   "onboarding.backup.email_sent_spam": "Sent — check your spam folder too",
   "onboarding.backup.email_unavailable": "Email backup isn't available right now — please download instead.",
+  "onboarding.backup.email_error": "Couldn't reach the server — try again in a moment, or download instead.",
   "onboarding.backup.action_download": "Download",
   "onboarding.backup.action_download_label": "Download recovery file to this device",
   "onboarding.backup.action_host": "Saved to this domain (passkey-protected)",

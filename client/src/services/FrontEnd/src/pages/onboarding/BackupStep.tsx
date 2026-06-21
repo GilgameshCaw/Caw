@@ -40,7 +40,10 @@ export default function BackupStep({
   const [didDownload, setDidDownload] = useState(false)
   const [recoveryEmail, setRecoveryEmail] = useState('')
   const [emailSending, setEmailSending] = useState(false)
-  const [emailResult, setEmailResult] = useState<'sent' | 'sent_spam' | 'unavailable' | null>(null)
+  // 'unavailable' = server reached but email genuinely not configured (emailed:false).
+  // 'error'       = couldn't reach the server (network blip / API restarting mid-deploy);
+  //                 transient and retryable, so we keep the Send button active for it.
+  const [emailResult, setEmailResult] = useState<'sent' | 'sent_spam' | 'unavailable' | 'error' | null>(null)
   const [didEmail, setDidEmail] = useState(false)
 
   // Host copy was stored automatically in CreateAccountStep before this step —
@@ -54,7 +57,13 @@ export default function BackupStep({
   const strongClass = isDark ? 'text-white' : 'text-gray-900'
 
   const emailFormatValid = recoveryEmail === '' || EMAIL_REGEX.test(recoveryEmail.trim())
-  const canSendEmail = recoveryEmail.trim() !== '' && EMAIL_REGEX.test(recoveryEmail.trim()) && !emailSending && emailResult === null
+  // Allow a retry after a transient 'error' (server unreachable) — but not after a
+  // terminal result (sent / genuinely unavailable).
+  const canSendEmail =
+    recoveryEmail.trim() !== '' &&
+    EMAIL_REGEX.test(recoveryEmail.trim()) &&
+    !emailSending &&
+    (emailResult === null || emailResult === 'error')
 
   // ── Phase 'backup' helpers ────────────────────────────────────────────────
 
@@ -69,7 +78,11 @@ export default function BackupStep({
     setEmailSending(true)
     setEmailResult(null)
     try {
-      const raw = await apiFetch('/api/wallet/blob', {
+      // apiFetch resolves to the ALREADY-PARSED JSON body (it calls res.json()
+      // internally) and THROWS on any non-2xx. So a 503 while the API is
+      // restarting mid-deploy lands in the catch below (→ transient 'error'),
+      // and a 200 gives us the parsed body directly — no second .json() call.
+      const json = await apiFetch('/api/wallet/blob', {
         method: 'POST',
         body: JSON.stringify({
           address: bootstrapResult.ecdsaAddress,
@@ -77,8 +90,7 @@ export default function BackupStep({
           username,
           email: recoveryEmail.trim(),
         }),
-      })
-      const json = await (raw as Response).json() as {
+      }) as {
         ok: boolean
         emailed: boolean
         usedFallback?: boolean
@@ -88,10 +100,14 @@ export default function BackupStep({
         setEmailResult(json.usedFallback ? 'sent_spam' : 'sent')
         setDidEmail(true)
       } else {
+        // Server reached, but it didn't send — email is genuinely not configured.
         setEmailResult('unavailable')
       }
     } catch {
-      setEmailResult('unavailable')
+      // Couldn't reach the server at all (network blip, or the API restarting
+      // during a deploy). Transient — surface a retryable error, NOT the terminal
+      // "unavailable" copy, so the user tries again instead of giving up.
+      setEmailResult('error')
     } finally {
       setEmailSending(false)
     }
@@ -243,6 +259,9 @@ export default function BackupStep({
         )}
         {emailResult === 'unavailable' && (
           <p className={`text-xs ${mutedClass}`}>{t('onboarding.backup.email_unavailable')}</p>
+        )}
+        {emailResult === 'error' && (
+          <p className="text-xs text-red-500">{t('onboarding.backup.email_error')}</p>
         )}
         <p className={`text-xs ${mutedClass}`}>{t('onboarding.backup.email_privacy')}</p>
       </div>
