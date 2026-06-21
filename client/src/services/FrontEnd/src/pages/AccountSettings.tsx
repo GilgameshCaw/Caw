@@ -1037,10 +1037,18 @@ const AccountSettings: React.FC = () => {
         {/* Add an existing passkey — import another passkey profile into this
             browser without going to the splash. Shown regardless of how many
             profiles are already present (the All-Usernames section above only
-            renders with >1, but importing your FIRST extra passkey must work too). */}
-        <div className="mb-8">
+            renders with >1, but importing your FIRST extra passkey must work too).
+            Has its OWN heading so it reads as a labelled section even when the
+            All-Usernames list above is hidden (single-account view) — otherwise
+            the dashed box floats with no context and users miss it. */}
+        <section className="mb-8">
+          <h2 className={`text-sm font-semibold mb-2 uppercase tracking-wide ${
+            isDark ? 'text-white/40' : 'text-gray-400'
+          }`}>
+            {t('account.section.add_account')}
+          </h2>
           <AddPasskeyProfile />
-        </div>
+        </section>
 
         {/* Wallet Section */}
         {isConnected && address && (

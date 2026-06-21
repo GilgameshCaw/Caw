@@ -438,6 +438,7 @@
   "account.title": "Account",
   "account.subtitle": "View your account details",
   "account.section.all_usernames": "All Usernames",
+  "account.section.add_account": "Add another account",
   "account.section.wallet": "Wallet",
   "account.section.active_username": "Active Username",
   "account.section.contract": "Contract Info",
