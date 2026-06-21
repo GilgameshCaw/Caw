@@ -20,6 +20,8 @@
  */
 
 import { useState, useCallback } from 'react'
+import { readContract } from '@wagmi/core'
+import { baseSepolia } from 'wagmi/chains'
 import { apiFetch, retryOnIndexing } from '~/api/client'
 import { signWithPasskeyDiscoverable } from '~/services/identity/passkey'
 import { useIdentitySigning } from '~/components/identity/IdentitySigningProvider'
@@ -27,6 +29,10 @@ import { useAuthStore } from '~/store/authStore'
 import { useTokenDataStore } from '~/store/tokenDataStore'
 import { useSessionKeyStore } from '~/store/sessionKeyStore'
 import { persistPasskeyIdentity } from '~/constants/passkeyStorage'
+import { wagmiConfig } from '~/config/Web3Provider'
+import { CAW_NAMES_L2_ADDRESS } from '~/../../../abi/addresses'
+import { cawProfileLedgerAbi } from '~/../../../abi/generated'
+import { hasCachedKeyPair, deriveKeyPair } from '~/services/DmCryptoService'
 import { useT } from '~/i18n/I18nProvider'
 import type { TokenData } from '~/types'
 
@@ -100,6 +106,35 @@ export function usePasskeySignIn(): UsePasskeySignIn {
       // Per-account passkey identity: credential keyed by tokenId, the passkey
       // marker keyed by owner address (see passkeyStorage.ts).
       persistPasskeyIdentity(profile.tokenId, ownerAddr, assertion.credentialId)
+
+      // Read the REAL staked CAW balance from the L2 ledger before we inject the
+      // active token. The old code injected stakedAmount:0n and relied on a
+      // later background refetch — but the very first action (e.g. follow) reads
+      // the store synchronously and saw 0, throwing a false "insufficient CAW"
+      // even when the account was funded via its invite. One direct read here
+      // (~1s) closes that race: the gate in api/actions.ts:1034 sees the true
+      // staked amount immediately. Non-fatal if it fails — fall back to 0n and
+      // let the background refetch fill it in (old behavior).
+      let stakedAmount = 0n
+      let cawonce = 0
+      try {
+        const l2 = await readContract(wagmiConfig, {
+          address: CAW_NAMES_L2_ADDRESS,
+          chainId: baseSepolia.id,
+          abi: cawProfileLedgerAbi,
+          functionName: 'getTokens',
+          args: [[profile.tokenId]],
+        })
+        const row = (l2 as readonly { tokenId: bigint; cawBalance: bigint; nextCawonce: bigint }[])
+          .find(r => BigInt(r.tokenId) === BigInt(profile.tokenId))
+        if (row) {
+          stakedAmount = row.cawBalance ?? 0n
+          cawonce = Number(row.nextCawonce ?? 0)
+        }
+      } catch {
+        // L2 read failed — keep zeros; useTokenDataUpdate will refetch shortly.
+      }
+
       const token: TokenData = {
         tokenId: profile.tokenId,
         username: uname,
@@ -107,8 +142,8 @@ export function usePasskeySignIn(): UsePasskeySignIn {
         owner: ownerAddr,
         withdrawable: 0n,
         ownerBalance: 0n,
-        stakedAmount: 0n,
-        cawonce: 0,
+        stakedAmount,
+        cawonce,
       }
       const tds = useTokenDataStore.getState()
       tds.setTokensForAddress(ownerAddr, [token])
@@ -122,6 +157,35 @@ export function usePasskeySignIn(): UsePasskeySignIn {
         sk.setActiveWallet(ownerLc)
         if (sk.sessions[ownerLc]) sk.setEnabled(true)
       }
+
+      // Prime the DM key from this device's localStorage cache if it's there.
+      // The DM key is SHA-256 over the secp256k1 recovery-key signature — a
+      // passkey assertion can't reproduce it (WebAuthn is non-deterministic).
+      // BUT on the device where the user onboarded, deriveKeyPair already
+      // persisted the key to `caw-dm-keys`, so it restores with NO signature.
+      // Without this prime, /messages showed "Enable DMs" and re-prompted for
+      // the vault password even though the key was sitting in localStorage.
+      // Fire-and-forget: a cache miss (new device / incognito) genuinely needs
+      // the vault password, which /messages will then ask for — expected.
+      void (async () => {
+        try {
+          if (!hasCachedKeyPair(profile.tokenId)) return
+          // signer is never invoked on a cache hit (deriveKeyPair restores from
+          // localStorage before requesting a signature) — pass a throwing stub.
+          const noSigner = (): Promise<string> => {
+            throw new Error('DM cache-prime should not need a signature')
+          }
+          const { publicKeyHex } = await deriveKeyPair(noSigner, profile.tokenId, uname)
+          // Make sure the server still has the identity registered (idempotent).
+          // No signature available here, so only re-assert via the public key —
+          // if the server lacks it, /messages' fresh-setup path covers it.
+          await apiFetch(`/api/dm/identity/${profile.tokenId}`).catch(() => null)
+          console.log('[passkey-signin:dm] DM key cache-primed for tokenId', profile.tokenId, 'pub', publicKeyHex?.slice(0, 10))
+        } catch {
+          // Cache miss or restore failure — /messages handles the vault-password
+          // path. Never fatal to sign-in.
+        }
+      })()
 
       return { tokenId: profile.tokenId, username: uname, address: ownerAddr }
     } catch (err: any) {
