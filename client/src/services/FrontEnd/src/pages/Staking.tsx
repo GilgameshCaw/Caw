@@ -39,6 +39,9 @@ import NetworkFeeModal from '~/components/NetworkFeeModal'
 import EthSpendInput from '~/components/EthSpendInput'
 import { useNetworkFees } from '~/hooks/useNetworkFees'
 import { HiInformationCircle } from 'react-icons/hi'
+import { WithdrawForm } from '~/components/WithdrawForm'
+import { TopUpForm } from '~/components/TopUpForm'
+import { DepositAddressBox } from '~/components/DepositAddressBox'
 
 type StakingTab = 'stake' | 'unstake' | 'info'
 
@@ -70,7 +73,6 @@ const Staking = () => {
   const [activeTab, setActiveTab] = useState<StakingTab>(getActiveTabFromPath())
   const [amount, setAmount] = useState<string>("")
   const [depositFee, setDepositFee] = useState<bigint>(0n)
-  const [withdrawFee, setWithdrawFee] = useState<bigint>(0n)
   const [showFeeModal, setShowFeeModal] = useState(false)
   const networkFees = useNetworkFees(CLIENT_ID)
   // Pay-with-ETH (ZAP) — contract swaps ETH→CAW via Uniswap V2 then deposits.
@@ -138,7 +140,6 @@ const Staking = () => {
   const isPasskeyUser = population === 'B'
 
   const wrongChainForStake = connections[0]?.chainId !== chains.l1.chainId
-  const wrongChainForUnstake = connections[0]?.chainId !== chains.l1.chainId
   const isMainnet = connections[0]?.chainId === chains.l1.chainId
 
   // Check if connected wallet owns the active token
@@ -166,6 +167,37 @@ const Staking = () => {
       enabled: !!tokenId && !!address
     }
   })
+
+  // Pop-B balance reads — the passkey EOA address comes from useWalletPopulation.
+  // These are only consumed in the portfolio cards gated to isPasskeyUser; for
+  // Pop-A the wallet app shows ETH/CAW, so we skip the reads for them.
+  const { address: popBAddress } = useWalletPopulation()
+  const popBDisplayAddress = isPasskeyUser ? popBAddress : undefined
+
+  const { data: popBEthBalance, refetch: refetchPopBEth } = useBalance({
+    address: popBDisplayAddress,
+    chainId: chains.l1.chainId,
+    query: { enabled: isPasskeyUser && !!popBDisplayAddress },
+  })
+
+  const { data: popBCawBalance, refetch: refetchPopBCaw } = useReadContract({
+    address: CAW_ADDRESS,
+    abi: erc20Abi,
+    chainId: chains.l1.chainId,
+    functionName: 'balanceOf',
+    args: [popBDisplayAddress!],
+    query: { enabled: isPasskeyUser && !!popBDisplayAddress },
+  })
+
+  // Shared refetch after a deposit or withdrawal success (wires WithdrawForm / TopUpForm callbacks)
+  const handleMoneyMovementSuccess = useCallback(() => {
+    refetchTokenData?.()
+    refetchBalance()
+    if (isPasskeyUser) {
+      refetchPopBEth()
+      refetchPopBCaw()
+    }
+  }, [refetchTokenData, refetchBalance, isPasskeyUser, refetchPopBEth, refetchPopBCaw])
 
   // Get deposit quote from CawProfileQuoter
   const { data: depositQuote } = useReadContract({
@@ -211,21 +243,6 @@ const Staking = () => {
   }, [slippageAutoSet, ethAmountWei, reserves.loaded, reserves.wethReserve])
   const zapQuote = useMinCawOut(ethAmountWei, reserves, slippageBps)
 
-  // Get withdraw quote from CawProfileQuoter
-  const { data: withdrawQuote } = useReadContract({
-    address: CAW_NAME_QUOTER_ADDRESS,
-    abi: cawProfileQuoterAbi,
-    chainId: chains.l1.chainId,
-    functionName: "withdrawQuote",
-    // lzDestId is the L2 the user's stake actually lives on. The quoter
-    // routes through the matching L2 peer to read withdrawFee + storage
-    // fee. Passing 0 reverts on the missing-peer guard.
-    args: [CLIENT_ID, chains.l2.layerZero, false],
-    query: {
-      enabled: !!tokenId && activeTab === 'unstake'
-    }
-  })
-
   // Update fees when quotes change. depositFee tracks the *current-mode* native
   // fee — CAW-mode uses depositQuote, ETH-mode uses depositZapQuote.
   useEffect(() => {
@@ -234,10 +251,6 @@ const Staking = () => {
   useEffect(() => {
     if (paymentMode === 'eth' && depositZapQuote?.nativeFee != null) setDepositFee(BigInt(depositZapQuote.nativeFee))
   }, [paymentMode, depositZapQuote])
-
-  useEffect(() => {
-    if (withdrawQuote?.nativeFee != null) setWithdrawFee(BigInt(withdrawQuote.nativeFee))
-  }, [withdrawQuote])
 
   // Fetch lastStakedAt timestamp from user profile
   useEffect(() => {
@@ -622,34 +635,6 @@ const Staking = () => {
     },
   })
 
-  // Withdraw CAW from L1. `withdrawTo` is the canonical entry point — it
-  // takes the recipient explicitly (msg.sender for self-withdraw) and an
-  // lzDestId so the L1 contract can opportunistically flush a queued owner
-  // update on the same L2 the user is withdrawing from. lzTokenAmount=0n
-  // means we pay LZ fees in native (ETH), not LZ token.
-  const withdraw = useContractCall({
-    address: CAW_NAMES_ADDRESS,
-    abi: cawProfileAbi,
-    functionName: "withdrawTo",
-    args: [CLIENT_ID, Number(tokenId ?? 0), (address ?? '0x0000000000000000000000000000000000000000') as `0x${string}`, chains.l2.layerZero, 0n],
-    disabled: !tokenId || withdrawFee === 0n || !address,
-    value: withdrawFee,
-    onPending: () => {
-      setIsWithdrawPending(true)
-    },
-    onSuccess: (hash) => {
-      console.log('[Staking] Withdraw successful:', hash)
-      setIsWithdrawPending(false)
-      // Refetch on-chain data to reflect updated balances
-      refetchTokenData?.()
-      refetchBalance()
-    },
-    onError: (err) => {
-      setIsWithdrawPending(false)
-      handleError(err, "withdraw")
-    },
-  })
-
   // Handle stake button click. ensureWallet may open the connect modal +
   // resolve only once the wallet is ready; the await below bridges that.
   // We always clear pending state in finally so a thrown error (e.g. user
@@ -657,14 +642,9 @@ const Staking = () => {
   // leave the button stuck on "Approving…".
   const handleStake = useCallback(async () => {
     console.log('[Staking] handleStake called', { isConnected, isPasskeyUser, amount, wrongChainForStake, needsApproval, paymentMode })
-    // Population-B (passkey) users have no wagmi wallet — depositing is the
-    // relayed approve+depositFor batch on /wallet (the connect-wallet flow below
-    // would dead-end on "Connect a Wallet"). Route them there. Mirrors the
-    // handleWithdraw → /wallet redirect.
-    if (isPasskeyUser) {
-      navigate('/wallet')
-      return
-    }
+    // Population-B (passkey) users deposit via TopUpForm rendered inline on this
+    // page — this handler is not called for them (the stake button is hidden).
+    if (isPasskeyUser) return
     try {
       await ensureWallet({ chainId: chains.l1.chainId }, async () => {
         if (paymentMode === 'eth') {
@@ -701,26 +681,7 @@ const Staking = () => {
       setIsApprovePending(false)
       setIsStakePending(false)
     }
-  }, [isConnected, isPasskeyUser, navigate, wrongChainForStake, needsApproval, approve, stake, depositZap, amount, ensureWallet, refetchAllowance, paymentMode])
-
-  // Handle withdraw button click (for pending withdrawals)
-  const handleWithdraw = useCallback(async () => {
-    if (!activeToken) return
-    console.log('[Staking] handleWithdraw called', { isConnected, isPasskeyUser, isMainnet })
-    // "Complete Withdrawal" = the L1 withdrawTo finalize (pulls the now-credited
-    // withdrawable[] back to the holder). For passkey users that's the SmartEOA-
-    // relay path, which lives on /wallet (WithdrawForm + useSmartEoaExecute) — the
-    // wagmi `withdraw.call()` below can't run for them. Route them there instead
-    // of popping "Connect a Wallet".
-    if (isPasskeyUser) {
-      navigate('/wallet')
-      return
-    }
-    await ensureWallet({ chainId: chains.l1.chainId }, async () => {
-      console.log('[Staking] Executing withdraw')
-      await withdraw.call()
-    })
-  }, [activeToken, isConnected, isPasskeyUser, isMainnet, withdraw, ensureWallet, navigate])
+  }, [isConnected, isPasskeyUser, wrongChainForStake, needsApproval, approve, stake, depositZap, amount, ensureWallet, refetchAllowance, paymentMode])
 
   // Handle unstake initialization. EIP-712 signatures are chain-agnostic
   // (domain.chainId is hashed into the digest regardless of the wallet's
@@ -803,225 +764,251 @@ const Staking = () => {
         const fiveMinutesAgo = now - (5 * 60 * 1000)
         const hasRecentStake = (recentStakeTime && recentStakeTime > fiveMinutesAgo) ||
                                (lastStakedAt && lastStakedAt.getTime() > fiveMinutesAgo)
-        return hasRecentStake && address && (
-          <LayerZeroStatus address={address} isDark={isDark} />
+        const statusAddress = isPasskeyUser ? popBDisplayAddress : address
+        return hasRecentStake && statusAddress && (
+          <LayerZeroStatus address={statusAddress} isDark={isDark} />
         )
       })()}
 
-      {/* Payment-mode toggle: pay with CAW (default) or pay with ETH (ZAP).
-          ETH-mode swaps via Uniswap V2 in the same tx and forwards CAW to
-          depositFor; slippage is enforced by minCawOut. */}
-      <div className={`flex items-center gap-2 rounded-full p-1 ${
-        isDark ? 'bg-white/[0.04] border border-white/10' : 'bg-black/[0.03] border border-gray-200'
-      }`}>
-        <button
-          type="button"
-          onClick={() => setPaymentMode('caw')}
-          className={`flex-1 py-2 text-sm font-medium rounded-full transition-colors cursor-pointer ${
-            paymentMode === 'caw' ? 'bg-yellow-500 text-black' : (isDark ? 'text-gray-400 hover:text-white' : 'text-gray-600 hover:text-gray-900')
-          }`}
-        >
-          Pay with CAW
-        </button>
-        <button
-          type="button"
-          onClick={() => setPaymentMode('eth')}
-          className={`flex-1 py-2 text-sm font-medium rounded-full transition-colors cursor-pointer ${
-            paymentMode === 'eth' ? 'bg-yellow-500 text-black' : (isDark ? 'text-gray-400 hover:text-white' : 'text-gray-600 hover:text-gray-900')
-          }`}
-        >
-          Pay with ETH
-        </button>
-      </div>
-      {paymentMode === 'eth' && (
-        <div className="text-right -mt-1">
-          <a
-            href="https://app.uniswap.org/#/swap?inputCurrency=ETH&outputCurrency=0xf3b9569F82B18aEf890De263B84189bd33EBe452"
-            target="_blank"
-            rel="noopener noreferrer"
-            className="text-xs text-yellow-500/70 hover:text-yellow-500 transition-colors"
-          >
-            Or use Uniswap directly &rarr;
-          </a>
-        </div>
-      )}
-
-      {/* ETH input (visible only in ETH mode). UI lives in EthSpendInput
-          (shared with /usernames/new). Slippage is auto-suggested from
-          reserves (suggestedSlippageBps in the effect above) and enforced
-          via minCawOut on the ZAP tx — no user-facing slider, since the
-          knob made the form harder to use without giving most users a
-          meaningful choice. The underlying slippageBps state is still
-          live and gates the tx, just not exposed in UI. */}
-      {paymentMode === 'eth' && (
-        <EthSpendInput
-          title="ETH to deposit"
-          subtitle=" - buys CAW and deposits it into your profile."
-          ethAmount={ethAmount}
-          setEthAmount={setEthAmount}
-          ethPrice={ethPrice}
-          quickPickDollars={[20, 50, 100, 300]}
-          expectedCawOut={zapQuote.expectedCawOut}
-          reservesLoaded={reserves.loaded}
-          ethBalanceWei={ethBalanceData?.value}
+      {/* Deposit address — visible to all populations.
+          Pop-B: "wallet your passkey protects"; Pop-A: "your connected wallet". */}
+      {(isPasskeyUser ? popBDisplayAddress : address) && (
+        <DepositAddressBox
+          address={(isPasskeyUser ? popBDisplayAddress : address)!}
+          population={population}
         />
       )}
 
-      {/* Amount to Stake (CAW mode only) */}
-      {paymentMode === 'caw' && (
-      <div className="space-y-2">
-        <label className={`text-sm font-medium transition-colors duration-300 ${
-          isDark ? 'text-gray-300' : 'text-gray-700'
-        }`}>
-          {t('staking.amount.deposit')}
-        </label>
-        {getPresetAmounts(mockData.availableBalance).length > 0 && (
-          <div className="flex flex-wrap gap-2 my-3">
-            {getPresetAmounts(mockData.availableBalance).map(preset => (
-              <button
-                key={preset}
-                onClick={() => setAmount(preset.toString())}
-                className={`px-3 py-1.5 rounded-lg text-sm font-medium transition-all duration-200 cursor-pointer ${
-                  parseFloat(amount) === preset
-                    ? 'bg-yellow-500 text-black'
-                    : isDark
-                      ? 'bg-white/10 text-white hover:bg-white/20'
-                      : 'bg-gray-100 text-gray-900 hover:bg-gray-200'
-                }`}
-              >
-                {formatPresetLabel(preset)}
-              </button>
-            ))}
-          </div>
-        )}
-        <div className="relative">
-          <input
-            type="number"
-            placeholder="0.0"
-            value={amount}
-            onChange={(e) => setAmount(e.target.value)}
-            className={`w-full px-4 py-3 pr-20 rounded-full border transition-all duration-300 ${
-              isDark ? 'bg-black border-white/20 text-white' : 'bg-gray-100 border-gray-300 text-black'
-            } focus:outline-none focus:ring-0`}
+      {/* Population-B: relayed TopUpForm (CAW tab + ETH tab).
+          Population-A: existing wagmi approve+deposit flow. */}
+      {isPasskeyUser ? (
+        activeToken && popBDisplayAddress && (
+          <TopUpForm
+            tokenId={tokenId}
+            eoaAddress={popBDisplayAddress}
+            cawBalanceWei={(popBCawBalance as bigint | undefined) ?? 0n}
+            ethBalanceWei={popBEthBalance?.value}
+            onSuccess={handleMoneyMovementSuccess}
           />
-          <div className="absolute right-4 top-1/2 transform -translate-y-1/2 flex items-center gap-2">
+        )
+      ) : (
+        <>
+          {/* Payment-mode toggle: pay with CAW (default) or pay with ETH (ZAP).
+              ETH-mode swaps via Uniswap V2 in the same tx and forwards CAW to
+              depositFor; slippage is enforced by minCawOut. */}
+          <div className={`flex items-center gap-2 rounded-full p-1 ${
+            isDark ? 'bg-white/[0.04] border border-white/10' : 'bg-black/[0.03] border border-gray-200'
+          }`}>
             <button
-              onClick={() => setAmount(mockData.availableBalance.toString())}
-              className={`px-3 py-1 text-xs font-semibold rounded-full transition-all duration-300 cursor-pointer ${
-              isDark ? 'bg-yellow-500/20 text-yellow-500 hover:bg-yellow-500/30' : 'bg-yellow-500/20 text-yellow-600 hover:bg-yellow-500/30'
-            }`}>
-              {t('staking.max')}
+              type="button"
+              onClick={() => setPaymentMode('caw')}
+              className={`flex-1 py-2 text-sm font-medium rounded-full transition-colors cursor-pointer ${
+                paymentMode === 'caw' ? 'bg-yellow-500 text-black' : (isDark ? 'text-gray-400 hover:text-white' : 'text-gray-600 hover:text-gray-900')
+              }`}
+            >
+              Pay with CAW
+            </button>
+            <button
+              type="button"
+              onClick={() => setPaymentMode('eth')}
+              className={`flex-1 py-2 text-sm font-medium rounded-full transition-colors cursor-pointer ${
+                paymentMode === 'eth' ? 'bg-yellow-500 text-black' : (isDark ? 'text-gray-400 hover:text-white' : 'text-gray-600 hover:text-gray-900')
+              }`}
+            >
+              Pay with ETH
             </button>
           </div>
-        </div>
-        <div className="flex items-center justify-between px-2">
-          <button
-            onClick={() => setAmount(mockData.availableBalance.toString())}
-            className={`text-xs transition-colors duration-300 cursor-pointer hover:underline ${
-              isDark ? 'text-gray-400 hover:text-white' : 'text-gray-600 hover:text-black'
-            }`}
-          >
-            {t('staking.available', { amount: mockData.availableBalance.toLocaleString('en-US', { maximumFractionDigits: 2 }) })}
-          </button>
-          {/* USD value of the entered CAW. Hidden when the user hasn't entered
-              anything yet or when the price feed hasn't loaded. Mirrors the
-              ProfileChooser balance/pending-delta convention. */}
-          {cawPrice > 0 && parseFloat(amount) > 0 && (
-            <span className={`text-xs font-mono ${isDark ? 'text-gray-400' : 'text-gray-600'}`}>
-              ≈ ${(parseFloat(amount) * cawPrice).toFixed(parseFloat(amount) * cawPrice < 0.01 ? 4 : 2)}
-            </span>
+          {paymentMode === 'eth' && (
+            <div className="text-right -mt-1">
+              <a
+                href="https://app.uniswap.org/#/swap?inputCurrency=ETH&outputCurrency=0xf3b9569F82B18aEf890De263B84189bd33EBe452"
+                target="_blank"
+                rel="noopener noreferrer"
+                className="text-xs text-yellow-500/70 hover:text-yellow-500 transition-colors"
+              >
+                Or use Uniswap directly &rarr;
+              </a>
+            </div>
           )}
-        </div>
-      </div>
-      )}
 
-      {/* Rolled-up Network fee row: deposit current + (i) opens the
-          per-action / withdraw / LZ breakdown matching the same modal
-          used during username creation. */}
-      <div className={`flex items-center justify-between rounded-lg border px-3 py-2 ${
-        isDark ? 'bg-[#171202]/40 border-white/15 text-gray-300' : 'bg-yellow-50 border-gray-200 text-gray-700'
-      }`}>
-        <span className="text-sm">Network fees</span>
-        <button
-          type="button"
-          aria-label="Network fee details"
-          onClick={() => setShowFeeModal(true)}
-          className="flex items-center gap-1 cursor-pointer text-gray-400 hover:text-yellow-500 transition-colors"
-        >
-          <span className="text-sm font-mono">
-            {ethPrice > 0 && depositFee > 0n
-              ? `~$${(Number(formatEther(depositFee)) * ethPrice).toFixed(4)}`
-              : 'See breakdown'}
-          </span>
-          <HiInformationCircle className="w-4 h-4" />
-        </button>
-      </div>
-      <NetworkFeeModal
-        isOpen={showFeeModal}
-        onClose={() => setShowFeeModal(false)}
-        networkId={CLIENT_ID}
-        ethPrice={ethPrice}
-        lzFeeWei={depositQuote?.nativeFee ?? 0n}
-        applicableStorageFeesWei={networkFees.depositFee ?? 0n}
-      />
+          {/* ETH input (visible only in ETH mode). UI lives in EthSpendInput
+              (shared with /usernames/new). Slippage is auto-suggested from
+              reserves (suggestedSlippageBps in the effect above) and enforced
+              via minCawOut on the ZAP tx — no user-facing slider, since the
+              knob made the form harder to use without giving most users a
+              meaningful choice. The underlying slippageBps state is still
+              live and gates the tx, just not exposed in UI. */}
+          {paymentMode === 'eth' && (
+            <EthSpendInput
+              title="ETH to deposit"
+              subtitle=" - buys CAW and deposits it into your profile."
+              ethAmount={ethAmount}
+              setEthAmount={setEthAmount}
+              ethPrice={ethPrice}
+              quickPickDollars={[20, 50, 100, 300]}
+              expectedCawOut={zapQuote.expectedCawOut}
+              reservesLoaded={reserves.loaded}
+              ethBalanceWei={ethBalanceData?.value}
+            />
+          )}
 
-      {/* Stake Button */}
-      <button
-        onClick={handleStake}
-        className={`w-full py-3 px-4 rounded-full font-semibold transition-all duration-300 ${
-          !isConnected
-            ? 'bg-yellow-500 hover:bg-yellow-600 text-black cursor-pointer'
-            : (!tokenId || (!isTokenOwner && !wrongChainForStake) || (!wrongChainForStake && (
-                paymentMode === 'eth'
-                  ? (ethAmountWei === 0n || depositFee === 0n)
-                  : (!amount || depositFee === 0n))))
-            ? (isDark ? 'bg-gray-700 text-gray-400 cursor-not-allowed' : 'bg-gray-300 text-gray-600 cursor-not-allowed')
-            : (isStakePending || isApprovePending)
-            ? 'bg-yellow-600 text-black cursor-not-allowed'
-            : 'bg-yellow-500 hover:bg-yellow-600 text-black cursor-pointer'
-        }`}
-        disabled={isConnected && (!tokenId || (!isTokenOwner && !wrongChainForStake) || (!wrongChainForStake && (
-          paymentMode === 'eth'
-            ? (ethAmountWei === 0n || depositFee === 0n || isStakePending || isApprovePending)
-            : (!amount || depositFee === 0n || isStakePending || isApprovePending))))}
-      >
-        {isSwitchingNetwork
-          ? t('staking.button.switching')
-          : !isTokenOwner && activeToken && isConnected && !wrongChainForStake
-          ? t('staking.button.wrong_address')
-          : isApprovePending
-          ? t('staking.button.approving')
-          : isStakePending
-          ? t('staking.button.depositing')
-          : (paymentMode === 'caw' && insufficientBalance)
-          ? t('staking.button.insufficient_balance')
-          : paymentMode === 'eth'
-          ? "Deposit (ETH)"
-          : t('staking.button.deposit')}
-      </button>
-
-      {stake.gasCostEth != null && (() => {
-        const totalEth = stake.gasCostEth + Number(formatEther(depositFee))
-        return (
-          <div className="text-sm text-gray-500 text-center mt-2">
-            est. gas+fees: {totalEth.toFixed(4)} ETH{ethPrice > 0 && ` (~$${(totalEth * ethPrice).toFixed(2)})`}
-            <span className="block text-xs mt-0.5 opacity-60">
-              {t('staking.fees.half')}
-            </span>
+          {/* Amount to Stake (CAW mode only) */}
+          {paymentMode === 'caw' && (
+          <div className="space-y-2">
+            <label className={`text-sm font-medium transition-colors duration-300 ${
+              isDark ? 'text-gray-300' : 'text-gray-700'
+            }`}>
+              {t('staking.amount.deposit')}
+            </label>
+            {getPresetAmounts(mockData.availableBalance).length > 0 && (
+              <div className="flex flex-wrap gap-2 my-3">
+                {getPresetAmounts(mockData.availableBalance).map(preset => (
+                  <button
+                    key={preset}
+                    onClick={() => setAmount(preset.toString())}
+                    className={`px-3 py-1.5 rounded-lg text-sm font-medium transition-all duration-200 cursor-pointer ${
+                      parseFloat(amount) === preset
+                        ? 'bg-yellow-500 text-black'
+                        : isDark
+                          ? 'bg-white/10 text-white hover:bg-white/20'
+                          : 'bg-gray-100 text-gray-900 hover:bg-gray-200'
+                    }`}
+                  >
+                    {formatPresetLabel(preset)}
+                  </button>
+                ))}
+              </div>
+            )}
+            <div className="relative">
+              <input
+                type="number"
+                placeholder="0.0"
+                value={amount}
+                onChange={(e) => setAmount(e.target.value)}
+                className={`w-full px-4 py-3 pr-20 rounded-full border transition-all duration-300 ${
+                  isDark ? 'bg-black border-white/20 text-white' : 'bg-gray-100 border-gray-300 text-black'
+                } focus:outline-none focus:ring-0`}
+              />
+              <div className="absolute right-4 top-1/2 transform -translate-y-1/2 flex items-center gap-2">
+                <button
+                  onClick={() => setAmount(mockData.availableBalance.toString())}
+                  className={`px-3 py-1 text-xs font-semibold rounded-full transition-all duration-300 cursor-pointer ${
+                  isDark ? 'bg-yellow-500/20 text-yellow-500 hover:bg-yellow-500/30' : 'bg-yellow-500/20 text-yellow-600 hover:bg-yellow-500/30'
+                }`}>
+                  {t('staking.max')}
+                </button>
+              </div>
+            </div>
+            <div className="flex items-center justify-between px-2">
+              <button
+                onClick={() => setAmount(mockData.availableBalance.toString())}
+                className={`text-xs transition-colors duration-300 cursor-pointer hover:underline ${
+                  isDark ? 'text-gray-400 hover:text-white' : 'text-gray-600 hover:text-black'
+                }`}
+              >
+                {t('staking.available', { amount: mockData.availableBalance.toLocaleString('en-US', { maximumFractionDigits: 2 }) })}
+              </button>
+              {/* USD value of the entered CAW. Hidden when the user hasn't entered
+                  anything yet or when the price feed hasn't loaded. Mirrors the
+                  ProfileChooser balance/pending-delta convention. */}
+              {cawPrice > 0 && parseFloat(amount) > 0 && (
+                <span className={`text-xs font-mono ${isDark ? 'text-gray-400' : 'text-gray-600'}`}>
+                  ≈ ${(parseFloat(amount) * cawPrice).toFixed(parseFloat(amount) * cawPrice < 0.01 ? 4 : 2)}
+                </span>
+              )}
+            </div>
           </div>
-        )
-      })()}
+          )}
 
-      <div className="text-center mt-4">
-        <a
-          href="https://app.uniswap.org/#/swap?inputCurrency=ETH&outputCurrency=0xf3b9569F82B18aEf890De263B84189bd33EBe452"
-          target="_blank"
-          rel="noopener noreferrer"
-          className="text-sm text-yellow-500/70 hover:text-yellow-500 transition-colors cursor-pointer"
-        >
-          {t('staking.need_more')}
-        </a>
-      </div>
+          {/* Rolled-up Network fee row: deposit current + (i) opens the
+              per-action / withdraw / LZ breakdown matching the same modal
+              used during username creation. */}
+          <div className={`flex items-center justify-between rounded-lg border px-3 py-2 ${
+            isDark ? 'bg-[#171202]/40 border-white/15 text-gray-300' : 'bg-yellow-50 border-gray-200 text-gray-700'
+          }`}>
+            <span className="text-sm">Network fees</span>
+            <button
+              type="button"
+              aria-label="Network fee details"
+              onClick={() => setShowFeeModal(true)}
+              className="flex items-center gap-1 cursor-pointer text-gray-400 hover:text-yellow-500 transition-colors"
+            >
+              <span className="text-sm font-mono">
+                {ethPrice > 0 && depositFee > 0n
+                  ? `~$${(Number(formatEther(depositFee)) * ethPrice).toFixed(4)}`
+                  : 'See breakdown'}
+              </span>
+              <HiInformationCircle className="w-4 h-4" />
+            </button>
+          </div>
+          <NetworkFeeModal
+            isOpen={showFeeModal}
+            onClose={() => setShowFeeModal(false)}
+            networkId={CLIENT_ID}
+            ethPrice={ethPrice}
+            lzFeeWei={depositQuote?.nativeFee ?? 0n}
+            applicableStorageFeesWei={networkFees.depositFee ?? 0n}
+          />
+
+          {/* Stake Button */}
+          <button
+            onClick={handleStake}
+            className={`w-full py-3 px-4 rounded-full font-semibold transition-all duration-300 ${
+              !isConnected
+                ? 'bg-yellow-500 hover:bg-yellow-600 text-black cursor-pointer'
+                : (!tokenId || (!isTokenOwner && !wrongChainForStake) || (!wrongChainForStake && (
+                    paymentMode === 'eth'
+                      ? (ethAmountWei === 0n || depositFee === 0n)
+                      : (!amount || depositFee === 0n))))
+                ? (isDark ? 'bg-gray-700 text-gray-400 cursor-not-allowed' : 'bg-gray-300 text-gray-600 cursor-not-allowed')
+                : (isStakePending || isApprovePending)
+                ? 'bg-yellow-600 text-black cursor-not-allowed'
+                : 'bg-yellow-500 hover:bg-yellow-600 text-black cursor-pointer'
+            }`}
+            disabled={isConnected && (!tokenId || (!isTokenOwner && !wrongChainForStake) || (!wrongChainForStake && (
+              paymentMode === 'eth'
+                ? (ethAmountWei === 0n || depositFee === 0n || isStakePending || isApprovePending)
+                : (!amount || depositFee === 0n || isStakePending || isApprovePending))))}
+          >
+            {isSwitchingNetwork
+              ? t('staking.button.switching')
+              : !isTokenOwner && activeToken && isConnected && !wrongChainForStake
+              ? t('staking.button.wrong_address')
+              : isApprovePending
+              ? t('staking.button.approving')
+              : isStakePending
+              ? t('staking.button.depositing')
+              : (paymentMode === 'caw' && insufficientBalance)
+              ? t('staking.button.insufficient_balance')
+              : paymentMode === 'eth'
+              ? "Deposit (ETH)"
+              : t('staking.button.deposit')}
+          </button>
+
+          {stake.gasCostEth != null && (() => {
+            const totalEth = stake.gasCostEth + Number(formatEther(depositFee))
+            return (
+              <div className="text-sm text-gray-500 text-center mt-2">
+                est. gas+fees: {totalEth.toFixed(4)} ETH{ethPrice > 0 && ` (~$${(totalEth * ethPrice).toFixed(2)})`}
+                <span className="block text-xs mt-0.5 opacity-60">
+                  {t('staking.fees.half')}
+                </span>
+              </div>
+            )
+          })()}
+
+          <div className="text-center mt-4">
+            <a
+              href="https://app.uniswap.org/#/swap?inputCurrency=ETH&outputCurrency=0xf3b9569F82B18aEf890De263B84189bd33EBe452"
+              target="_blank"
+              rel="noopener noreferrer"
+              className="text-sm text-yellow-500/70 hover:text-yellow-500 transition-colors cursor-pointer"
+            >
+              {t('staking.need_more')}
+            </a>
+          </div>
+        </>
+      )}
     </div>
   )
 
@@ -1040,77 +1027,16 @@ const Staking = () => {
         </p>
       </div>
 
-      {/* Ready for Withdrawal Section */}
-      {mockData.withdrawable > 0 && (
-        <div className={`p-4 rounded-lg border transition-all duration-300 ${
-          isDark ? 'bg-green-500/10 border-green-500/30' : 'bg-green-50 border-green-200'
-        }`}>
-          <div className="flex items-center justify-between gap-4">
-            {/* Left side: Info */}
-            <div className="flex-1">
-              <div className={`text-sm font-semibold transition-colors duration-300 ${
-                isDark ? 'text-green-200' : 'text-green-800'
-              }`}>
-                {t('staking.ready_withdrawal')}
-              </div>
-              <div className={`text-2xl font-bold transition-colors duration-300 mt-1 ${
-                isDark ? 'text-green-200' : 'text-green-800'
-              }`}>
-                {mockData.withdrawable.toLocaleString('en-US', { maximumFractionDigits: 2 })} CAW
-              </div>
-            </div>
-
-            {/* Right side: Button.
-                Disabled when:
-                - withdraw quote hasn't loaded yet (withdrawFee=0n means
-                  useReadContract returned undefined or 0; the call would
-                  bail with "Contract call is disabled"),
-                - the token isn't owned by the connected wallet,
-                - or a withdraw tx is already in flight. */}
-            <button
-              onClick={handleWithdraw}
-              className={`py-2 px-6 rounded-full text-sm font-semibold transition-all duration-300 cursor-pointer whitespace-nowrap bg-yellow-500 hover:bg-yellow-600 text-black ${
-                isDark
-                  ? 'disabled:bg-gray-700 disabled:text-gray-400 disabled:cursor-not-allowed disabled:hover:bg-gray-700'
-                  : 'disabled:bg-gray-300 disabled:text-gray-600 disabled:cursor-not-allowed disabled:hover:bg-gray-300'
-              }`}
-              disabled={
-                isConnected && (
-                  (!isTokenOwner && activeToken && !wrongChainForUnstake) ||
-                  withdraw.status === 'pending' ||
-                  isWithdrawPending ||
-                  withdrawFee === 0n
-                )
-              }
-              title={
-                withdrawFee === 0n
-                  ? 'Loading withdraw fee from L2 quoter…'
-                  : !isTokenOwner && activeToken && !wrongChainForUnstake
-                  ? 'Connected wallet does not own this profile token'
-                  : undefined
-              }
-            >
-              {isSwitchingNetwork
-                ? t('staking.button.switching')
-                : !isTokenOwner && activeToken && isConnected && !wrongChainForUnstake
-                ? t('staking.button.wrong_address')
-                : (withdraw.status === 'pending' || isWithdrawPending)
-                ? t('staking.button.withdrawing')
-                : t('staking.button.complete_withdrawal')}
-            </button>
-            {withdraw.gasCostEth != null && (() => {
-              const totalEth = withdraw.gasCostEth + Number(formatEther(withdrawFee))
-              return (
-                <div className="text-sm text-gray-500 text-center mt-2">
-                  est. gas+fees: {totalEth.toFixed(4)} ETH{ethPrice > 0 && ` (~$${(totalEth * ethPrice).toFixed(2)})`}
-                  <span className="block text-xs mt-0.5 opacity-60">
-                    {t('staking.fees.half')}
-                  </span>
-                </div>
-              )
-            })()}
-          </div>
-        </div>
+      {/* Complete Withdrawal — WithdrawForm handles both Pop-A (direct wagmi
+          withdrawTo) and Pop-B (SmartEOA relay batch) internally. It renders
+          nothing when withdrawableWei is 0n, so no extra guard needed here. */}
+      {activeToken && (
+        <WithdrawForm
+          tokenId={tokenId}
+          withdrawableWei={activeToken.withdrawable ?? 0n}
+          ethBalanceWei={isPasskeyUser ? popBEthBalance?.value : ethBalanceData?.value}
+          onSuccessRefetch={handleMoneyMovementSuccess}
+        />
       )}
 
       {/* LayerZero Status Link - Show if there are completed withdrawals updated within the last hour */}
@@ -1525,6 +1451,48 @@ const Staking = () => {
               </div>
             </div>
           </div>
+
+          {/* Pop-B additional balance cards: ETH + CAW wallet balance.
+              Pop-A users see these in their own wallet app; these are only
+              meaningful for passkey users who have no external wallet UI. */}
+          {isPasskeyUser && (
+            <div className="grid grid-cols-2 gap-4 mt-4">
+              <div className={`px-1 pb-1 rounded-lg border transition-all duration-300 flex flex-col items-center justify-between ${isDark ? 'bg-black' : 'bg-white'} ${
+                isDark ? 'border-white/20' : 'border-gray-300'
+              }`} style={{ paddingTop: '10px' }}>
+                <div className={`text-2xl font-bold transition-colors duration-300 text-center flex-1 flex items-center ${
+                  isDark ? 'text-white' : 'text-black'
+                }`}>
+                  {popBEthBalance
+                    ? `${parseFloat(formatEther(popBEthBalance.value)).toFixed(4)}`
+                    : '-'}
+                </div>
+                <div className={`text-sm transition-colors duration-300 text-center ${
+                  isDark ? 'text-gray-400' : 'text-gray-600'
+                }`}>
+                  {t('wallet.eth_balance')}
+                </div>
+              </div>
+
+              <div className={`px-1 pb-1 rounded-lg border transition-all duration-300 flex flex-col items-center justify-between ${isDark ? 'bg-black' : 'bg-white'} ${
+                isDark ? 'border-white/20' : 'border-gray-300'
+              }`} style={{ paddingTop: '10px' }}>
+                <div className={`text-2xl font-bold transition-colors duration-300 text-center flex-1 flex items-center ${
+                  isDark ? 'text-white' : 'text-black'
+                }`}>
+                  {popBCawBalance != null
+                    ? formatUnitsCompact(popBCawBalance as bigint, 18)
+                    : '-'}
+                </div>
+                <div className={`text-sm transition-colors duration-300 text-center ${
+                  isDark ? 'text-gray-400' : 'text-gray-600'
+                }`}>
+                  {t('wallet.caw_balance')}
+                </div>
+              </div>
+            </div>
+          )}
+
           {/* Activity link — opens day-by-day flow page. */}
           <div className="mt-3 flex justify-end md:hidden">
             <button

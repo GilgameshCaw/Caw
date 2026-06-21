@@ -36,7 +36,7 @@ import { usePriceStore } from '~/store/tokenDataStore'
 import { usePoolReserves, useMinCawOut, suggestedSlippageBps } from '~/hooks/useZapQuote'
 import { handleError } from '~/utils'
 import { useT } from '~/i18n/I18nProvider'
-import QRModal from '~/components/modals/QRModal'
+import { DepositAddressBox } from '~/components/DepositAddressBox'
 
 type TopUpTab = 'caw' | 'eth'
 
@@ -74,8 +74,6 @@ export function TopUpForm({ tokenId, eoaAddress, cawBalanceWei, ethBalanceWei, o
   const [confirmVisible, setConfirmVisible] = useState(false)
   const [sponsorQuote, setSponsorQuote] = useState<SponsorExecuteQuote | null>(null)
   const [quoteLoading, setQuoteLoading] = useState(false)
-  const [copied, setCopied] = useState(false)
-  const [qrOpen, setQrOpen] = useState(false)
 
   // ─── CAW-tab state ──────────────────────────────────────────────────────────
   const [amount, setAmount] = useState<string>('')
@@ -183,14 +181,6 @@ export function TopUpForm({ tokenId, eoaAddress, cawBalanceWei, ethBalanceWei, o
       .finally(() => { if (!cancelled) setQuoteLoading(false) })
     return () => { cancelled = true }
   }, [confirmVisible, activeTab, depositFee, ethAmountValid])
-
-  const handleCopy = useCallback(() => {
-    if (!eoaAddress) return
-    navigator.clipboard?.writeText(eoaAddress).then(() => {
-      setCopied(true)
-      setTimeout(() => setCopied(false), 1500)
-    }).catch(() => { /* clipboard unavailable */ })
-  }, [eoaAddress])
 
   // ─── CAW tab: build + relay the 3-call deposit batch ───────────────────────
   const handleDeposit = useCallback(async () => {
@@ -352,52 +342,7 @@ export function TopUpForm({ tokenId, eoaAddress, cawBalanceWei, ethBalanceWei, o
 
       {/* ── Deposit address (shown on both tabs) ───────────────────────────── */}
       {eoaAddress && (
-        <div className={panelClass}>
-          <p className={`text-sm font-medium ${mutedClass} mb-1`}>{t('topup.address_label')}</p>
-          {/* Explain what this address IS — the wallet the user's passkey protects. */}
-          <p className={`text-xs ${mutedClass} mb-2`}>{t('topup.address_explainer')}</p>
-          <p className={`font-mono text-xs break-all ${strongClass}`}>{eoaAddress}</p>
-          <div className="flex items-center gap-2 mt-2">
-            <button
-              onClick={handleCopy}
-              className={`text-xs font-medium px-3 py-1 rounded-full cursor-pointer transition-all duration-200 ${
-                isDark ? 'bg-white/10 text-white hover:bg-white/20' : 'bg-gray-200 text-gray-800 hover:bg-gray-300'
-              }`}
-            >
-              {copied ? t('topup.copied') : t('topup.copy_address')}
-            </button>
-            <button
-              onClick={() => setQrOpen(true)}
-              aria-label={t('topup.show_qr')}
-              title={t('topup.show_qr')}
-              className={`flex items-center gap-1 text-xs font-medium px-3 py-1 rounded-full cursor-pointer transition-all duration-200 ${
-                isDark ? 'bg-white/10 text-white hover:bg-white/20' : 'bg-gray-200 text-gray-800 hover:bg-gray-300'
-              }`}
-            >
-              {/* QR-code glyph */}
-              <svg className="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                <rect x="3" y="3" width="7" height="7" /><rect x="14" y="3" width="7" height="7" />
-                <rect x="3" y="14" width="7" height="7" /><line x1="14" y1="14" x2="14" y2="17" />
-                <line x1="17" y1="14" x2="21" y2="14" /><line x1="21" y1="17" x2="21" y2="21" /><line x1="14" y1="21" x2="17" y2="21" />
-              </svg>
-              {t('topup.show_qr')}
-            </button>
-          </div>
-          <p className={`text-xs ${mutedClass} mt-3`}>{t('topup.address_hint')}</p>
-        </div>
-      )}
-
-      {/* QR modal */}
-      {eoaAddress && (
-      <QRModal
-        isOpen={qrOpen}
-        onClose={() => setQrOpen(false)}
-        value={eoaAddress}
-        title={t('topup.address_label')}
-        subtitle={t('topup.address_explainer')}
-        caption={eoaAddress}
-        downloadName="caw-deposit-address"
-      />
+        <DepositAddressBox address={eoaAddress} population="B" />
       )}
 
       {/* ════════════════════════════════════════════════════════════════════ */}
