@@ -20,6 +20,10 @@ import {
   type SenderEnvelope,
 } from '~/services/DmCryptoService'
 import { useDmUnreadStore } from '~/store/dmUnreadStore'
+import { decryptBackupBlob, validateBackupBlobShape } from '~/services/identity/backupBlob'
+import { privateKeyToAccount } from 'viem/accounts'
+import { bytesToHex } from 'viem'
+import { useRecoveryContext } from '~/components/identity/RecoveryProvider'
 
 export type UiConversationStatus = 'ACCEPTED' | 'REQUEST' | 'BLOCKED'
 export type UiInbox = 'main' | 'requests'
@@ -123,6 +127,7 @@ export function useDmClient(tokenId?: number, username?: string) {
   const activeToken = useActiveToken()
   const { verify } = useVerifyWallet()
   const rootSigner = useRootSigner()
+  const recovery = useRecoveryContext()
 
   const [isInitialized, setIsInitialized] = useState(false)
   const [needsKeyDerivation, setNeedsKeyDerivation] = useState(false) // identity exists but keys not in memory
@@ -389,7 +394,96 @@ export function useDmClient(tokenId?: number, username?: string) {
     }
   }, [tokenId, loadConversations, refreshRequestCount])
 
-  const initializeClient = useCallback(async () => {
+  // Population-B, new-device path: prompt for vault password, fetch the
+  // server-hosted encrypted blob (passkey-gated challenge flow), decrypt it,
+  // and derive DM keys from the recovered recovery key. The caller passes a UI
+  // callback that shows a modal and resolves to the password string (or rejects
+  // on cancel). This function is intentionally NOT a useCallback — it's a
+  // helper called from within initializeClient's closure, which is already memoized.
+  const _deriveFromVaultPassword = async (
+    promptVaultPassword: () => Promise<string>,
+    ownerAddress: string,
+  ): Promise<{ privateKey: Uint8Array; publicKeyHex: string; rawSignature?: string; sigMessage?: string } | null> => {
+    if (!tokenId || !username) return null
+
+    // Step 1: Prompt vault password (shows modal before the passkey ceremony
+    // so the user understands what's about to happen).
+    let password: string
+    try {
+      password = await promptVaultPassword()
+    } catch {
+      // User cancelled the password prompt
+      return null
+    }
+
+    // Step 2: Fetch a server challenge for passkey-gated blob retrieval.
+    let challenge: `0x${string}`
+    try {
+      const challengeRes = await apiFetch<{ challenge: `0x${string}` }>('/api/wallet/blob/challenge', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ address: ownerAddress }),
+      })
+      challenge = challengeRes.challenge
+    } catch {
+      // Server blob unavailable (no blob stored, or network error) → caller
+      // falls through to the file-based backup path.
+      return null
+    }
+
+    // Step 3: Sign the challenge with the passkey (biometric prompt via
+    // IdentitySigningProvider). rootSigner.signDigest dispatches to WebAuthn
+    // on new devices where the recovery key isn't in memory.
+    let signature: `0x${string}`
+    try {
+      signature = await rootSigner.signDigest(challenge)
+    } catch {
+      // Passkey signing cancelled or failed — not a fatal error; let the
+      // caller fall back to the file-upload recovery path.
+      return null
+    }
+
+    // Step 4: Retrieve the blob (server validates the passkey assertion on-chain).
+    let blobJson: unknown
+    try {
+      const retrieveRes = await apiFetch<{ blob: string }>('/api/wallet/blob/retrieve', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ address: ownerAddress, challenge, signature }),
+      })
+      blobJson = JSON.parse(retrieveRes.blob)
+    } catch {
+      // Blob unavailable or passkey assertion rejected
+      return null
+    }
+    if (!validateBackupBlobShape(blobJson)) return null
+
+    // Step 5: Decrypt the blob with the vault password.
+    let recoveryKey: Uint8Array
+    try {
+      recoveryKey = await decryptBackupBlob(blobJson, password)
+    } catch {
+      throw new Error('Incorrect vault password. Try again, or use your backup file.')
+    }
+
+    // Step 6: Derive DM keys from the recovered secp256k1 key — deterministic,
+    // same result as onboarding priming and recovery-mode live derivation.
+    // Zero the recovery key bytes as soon as the DM key is derived so the raw
+    // recovery key doesn't linger in the JS heap longer than necessary (it's
+    // only needed to produce the one deterministic signature).
+    try {
+      const acct = privateKeyToAccount(bytesToHex(recoveryKey))
+      const dmSignMessage = (msg: string): Promise<string> =>
+        acct.signMessage({ message: msg }).then(sig => sig as string)
+      return await deriveKeyPair(dmSignMessage, tokenId, username)
+    } finally {
+      recoveryKey.fill(0)
+    }
+  }
+
+  const initializeClient = useCallback(async (
+    promptVaultPassword?: () => Promise<string>,
+  ) => {
     const isPasskey = rootSigner.kind === 'passkey'
     console.log('[DM] initializeClient called, walletClient:', !!walletClient, 'isPasskey:', isPasskey, 'tokenId:', tokenId)
     // Population A needs a wagmi walletClient; Population B signs via rootSigner
@@ -399,11 +493,6 @@ export function useDmClient(tokenId?: number, username?: string) {
       console.log('[DM] No signer or tokenId, throwing')
       setError(err)
       throw err
-    }
-    if (isPasskey) {
-      // Throws a clear "use your backup file" error if no signer is available
-      // on this device, instead of failing opaquely mid-derivation.
-      await rootSigner.ensureReady()
     }
 
     // Pre-flight: the connected wallet must own the active token. The
@@ -457,6 +546,87 @@ export function useDmClient(tokenId?: number, username?: string) {
         await loadConversations()
         return
       }
+    }
+
+    if (isPasskey) {
+      // Pop-B passkey user: check if we can proceed without the recovery key.
+      // If the DM cache was just cleared (stale) or never primed (new device),
+      // we need a signer. Prefer the recovery key (in-memory) → vault-password
+      // blob unwrap → existing "use your backup file" fallback.
+      if (!recovery.isInRecoveryMode) {
+        // No recovery key in memory. Try vault-password path if caller provides it.
+        if (promptVaultPassword && activeToken?.address) {
+          // Will throw with "Incorrect vault password" if password is wrong;
+          // returns null if server blob unavailable (fall through to file path).
+          const keyResult = await _deriveFromVaultPassword(promptVaultPassword, activeToken.address)
+          if (keyResult !== null) {
+            // Success — DM keys are now cached. Run the fresh-setup flow using
+            // the derived publicKey + rawSignature to call verify-dm and register
+            // identity (fresh setup only; needsKeyDerivation=true means the
+            // server already has this identity and we just needed to re-derive).
+            const { privateKey, publicKeyHex, rawSignature, sigMessage } = keyResult
+            privateKeyRef = privateKey
+            console.log('[DM] DM keys derived via vault-password blob unwrap')
+            setIsLoading(true)
+            setError(null)
+            try {
+              if (!needsKeyDerivation && rawSignature && sigMessage) {
+                // Fresh setup: call verify-dm for combined auth + DM key registration.
+                console.log('[DM] Fresh setup via vault-password path — calling verify-dm...')
+                const sessionToken = useAuthStore.getState().sessionToken
+                const data = await retryOnIndexing(() =>
+                  apiFetch<{
+                    sessionToken: string
+                    authorizedTokenIds: number[]
+                    authorizedAddresses: string[]
+                    expiresAt: number
+                  }>('/api/auth/verify-dm', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                      signature: rawSignature,
+                      message: sigMessage,
+                      userId: tokenId,
+                      publicKey: publicKeyHex,
+                    }),
+                  })
+                )
+                if (sessionToken && data.sessionToken === sessionToken) {
+                  useAuthStore.getState().addAuthorization(data.authorizedTokenIds, data.authorizedAddresses)
+                } else {
+                  useAuthStore.getState().setSession(
+                    data.sessionToken,
+                    data.authorizedTokenIds,
+                    data.authorizedAddresses,
+                    data.expiresAt,
+                  )
+                }
+              } else if (!useAuthStore.getState().isTokenAuthorized(tokenId)) {
+                // Server already has identity (needsKeyDerivation=true) — just
+                // need an auth session if missing. Use the generic verify flow.
+                const ok = await verify()
+                if (!ok) throw new Error('Wallet verification was cancelled or failed')
+              }
+              setIsInitialized(true)
+              setNeedsKeyDerivation(false)
+              await loadConversations()
+            } catch (err) {
+              console.error('[DM] initializeClient vault-password path error:', err)
+              setError(err as Error)
+              throw err
+            } finally {
+              setIsLoading(false)
+            }
+            return
+          }
+          // Server blob unavailable — fall through to rootSigner (will throw
+          // "use your backup file" which caller can present as file-fallback).
+        }
+        // Either no promptVaultPassword, or blob unavailable: require the
+        // recovery key (rootSigner.ensureReady throws with a clear message).
+        await rootSigner.ensureReady()
+      }
+      // Recovery key is in memory — proceed with rootSigner.signMessage below.
     }
 
     setIsLoading(true)
@@ -530,7 +700,7 @@ export function useDmClient(tokenId?: number, username?: string) {
     } finally {
       setIsLoading(false)
     }
-  }, [walletClient, tokenId, loadConversations, rootSigner])
+  }, [walletClient, tokenId, loadConversations, rootSigner, recovery.isInRecoveryMode, activeToken?.address, needsKeyDerivation, username])
 
   const startConversation = useCallback(async (peerUserId: number) => {
     if (!tokenId) throw new Error('Not initialized')

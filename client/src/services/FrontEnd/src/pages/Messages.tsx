@@ -169,6 +169,14 @@ const MessagesPage: React.FC = () => {
   // user taps a quoted preview. Cleared after the animation settles.
   const [highlightMessageId, setHighlightMessageId] = useState<string | null>(null)
   const [errorModal, setErrorModal] = useState<{ title: string; message: string } | null>(null)
+  // Vault-password prompt for Pop-B new-device DM key unwrap.
+  // resolve/reject are set by openVaultPasswordPrompt and cleared on close.
+  const [vaultPasswordPrompt, setVaultPasswordPrompt] = useState<{
+    resolve: (pw: string) => void
+    reject: () => void
+  } | null>(null)
+  const [vaultPasswordInput, setVaultPasswordInput] = useState('')
+  const [vaultPasswordError, setVaultPasswordError] = useState<string | null>(null)
   const [editingMessageId, setEditingMessageId] = useState<string | null>(null)
   const [editingContent, setEditingContent] = useState('')
   const [editHistoryMessageId, setEditHistoryMessageId] = useState<string | null>(null)
@@ -999,13 +1007,46 @@ const MessagesPage: React.FC = () => {
     return () => clearTimeout(timer)
   }, [newMessageSearch, isNewMessageModalOpen])
 
+  // Vault-password prompt for Pop-B new-device DM key unwrap.
+  // Returns a Promise that resolves with the entered password or rejects if cancelled.
+  const openVaultPasswordPrompt = (): Promise<string> =>
+    new Promise<string>((resolve, reject) => {
+      setVaultPasswordInput('')
+      setVaultPasswordError(null)
+      setVaultPasswordPrompt({ resolve, reject })
+    })
+
+  const handleVaultPasswordSubmit = () => {
+    if (!vaultPasswordPrompt) return
+    if (!vaultPasswordInput) {
+      setVaultPasswordError('Please enter your vault password.')
+      return
+    }
+    const { resolve } = vaultPasswordPrompt
+    setVaultPasswordPrompt(null)
+    resolve(vaultPasswordInput)
+    setVaultPasswordInput('')
+  }
+
+  const handleVaultPasswordCancel = () => {
+    if (!vaultPasswordPrompt) return
+    const { reject } = vaultPasswordPrompt
+    setVaultPasswordPrompt(null)
+    setVaultPasswordInput('')
+    setVaultPasswordError(null)
+    reject()
+  }
+
   // Handle DM registration
   const handleRegisterDm = async () => {
     if (!currentUser) return
 
     await ensureWallet(null, async () => {
       try {
-        await initializeClientRef.current()
+        // Pass vault-password prompt for Pop-B new-device DM key unwrap.
+        // Pop-A and cache-hit Pop-B paths never call this — it only fires
+        // when the recovery key is absent and the server blob is available.
+        await initializeClientRef.current(openVaultPasswordPrompt)
         setCurrentView('inbox')
 
         // If we have a target user from URL params, create conversation
@@ -1778,7 +1819,7 @@ const MessagesPage: React.FC = () => {
                 <p className={`mb-6 ${
                   isDark ? 'text-gray-400' : 'text-gray-600'
                 }`}>
-                  Sign a message to derive your encryption keys. This is a free, one-time setup per profile and per device/browser.
+                  Set up end-to-end encrypted messaging. This is a free, one-time setup per profile. On this device, your passkey or wallet will be used to authorize the setup.
                 </p>
                 {dmError && (
                   <div className="mb-4 flex justify-center">
@@ -3774,6 +3815,59 @@ const MessagesPage: React.FC = () => {
             </button>
           </div>
         )}
+      </ModalWrapper>
+
+      {/* Vault-password prompt — Pop-B new-device DM key unwrap.
+          Only shown when the user is on a new device (DM cache empty,
+          recovery key not in memory) and the server blob is reachable.
+          Same-device passkey users never see this (cache-hit). */}
+      <ModalWrapper isOpen={!!vaultPasswordPrompt} onClose={handleVaultPasswordCancel} usePortal>
+        <div className="p-6 space-y-4">
+          <div className="flex items-center gap-3 mb-2">
+            <div className={`p-2 rounded-full ${isDark ? 'bg-yellow-500/10' : 'bg-yellow-50'}`}>
+              <HiOutlineLockClosed className="w-5 h-5 text-yellow-500" />
+            </div>
+            <h3 className={`text-lg font-semibold ${isDark ? 'text-white' : 'text-gray-900'}`}>
+              Enable DMs on this device
+            </h3>
+          </div>
+          <p className={`text-sm ${isDark ? 'text-white/70' : 'text-gray-600'}`}>
+            Enter your vault password to unlock your DM encryption keys on this new device.
+            This is a one-time step — future visits will use your passkey automatically.
+          </p>
+          <input
+            type="password"
+            value={vaultPasswordInput}
+            onChange={e => { setVaultPasswordInput(e.target.value); setVaultPasswordError(null) }}
+            onKeyDown={e => { if (e.key === 'Enter') handleVaultPasswordSubmit() }}
+            placeholder="Vault password"
+            autoFocus
+            className={`w-full px-4 py-3 rounded-xl border text-sm outline-none transition-colors ${
+              isDark
+                ? 'bg-white/5 border-white/20 text-white placeholder-white/30 focus:border-yellow-500'
+                : 'bg-gray-50 border-gray-300 text-gray-900 placeholder-gray-400 focus:border-yellow-500'
+            }`}
+          />
+          {vaultPasswordError && (
+            <p className="text-sm text-red-500">{vaultPasswordError}</p>
+          )}
+          <div className="flex gap-3 pt-1">
+            <button
+              onClick={handleVaultPasswordCancel}
+              className={`flex-1 py-2.5 rounded-xl text-sm font-medium transition-colors cursor-pointer ${
+                isDark ? 'bg-white/10 text-white hover:bg-white/20' : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
+              }`}
+            >
+              Use backup file instead
+            </button>
+            <button
+              onClick={handleVaultPasswordSubmit}
+              className="flex-1 py-2.5 rounded-xl text-sm font-medium bg-yellow-500 hover:bg-yellow-600 text-black transition-colors cursor-pointer"
+            >
+              Unlock
+            </button>
+          </div>
+        </div>
       </ModalWrapper>
     </>
   )

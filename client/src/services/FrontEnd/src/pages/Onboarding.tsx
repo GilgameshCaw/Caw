@@ -52,6 +52,7 @@ import { useAuthStore } from '~/store/authStore'
 import { useTokenDataStore } from '~/store/tokenDataStore'
 import type { TokenData } from '~/types'
 import { baseSepolia } from 'wagmi/chains'
+import { deriveKeyPair } from '~/services/DmCryptoService'
 
 type OnboardingStep =
   | 'welcome'        // gifted-access splash; shown only when arriving with a valid invite code
@@ -536,6 +537,35 @@ export default function Onboarding() {
               if (enrolledCredentialId) {
                 persistPasskeyIdentity(mintedTokenId, ownerAddr, enrolledCredentialId)
               }
+
+              // Prime the DM key cache for this device using the recovery key
+              // that is still in memory right now (inside result.signVerifyMessage
+              // closure). This means the first /messages visit on THIS device will
+              // cache-hit deriveKeyPair and require NO signature — no backup file,
+              // no vault-password prompt, just the passkey gating the session.
+              // Fire-and-forget: cache miss → user sees the vault-password prompt
+              // on new devices (expected); a failure here is never fatal.
+              void (() => {
+                try {
+                  // result.signVerifyMessage already wraps the recovery key via
+                  // `viem privateKeyToAccount(...).signMessage`. We need a signer
+                  // that accepts (message: string) → Promise<string> with a 0x sig.
+                  // Re-derive the viem account the same way bootstrap.ts does —
+                  // keypair.privateKey is NOT exposed in BootstrapResult, but
+                  // result.ecdsaAddress lets us verify it resolves correctly.
+                  // We use result.signVerifyMessage as the sign function: it already
+                  // signs with the secp256k1 recovery key, which is what deriveKeyPair
+                  // needs. The returned sig is 0x-prefixed hex — matching DmCryptoService's
+                  // hexToBytes(signature) expectation.
+                  const dmSignMessage = (msg: string): Promise<string> =>
+                    result.signVerifyMessage(msg).then(sig => sig as string)
+                  deriveKeyPair(dmSignMessage, mintedTokenId, mintedUsername)
+                    .then(() => console.log('[onboarding:dm] DM key cache primed for tokenId', mintedTokenId))
+                    .catch(err => console.warn('[onboarding:dm] DM key cache prime failed (non-fatal):', err))
+                } catch (err) {
+                  console.warn('[onboarding:dm] DM key cache prime failed (non-fatal):', err)
+                }
+              })()
 
               // Seed the OPTIMISTIC pending-deposit hint for the gifted deposit.
               // The sponsored bootstrap already deposited derivedDepositAmount CAW

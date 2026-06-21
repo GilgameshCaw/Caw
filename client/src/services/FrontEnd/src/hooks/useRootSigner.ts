@@ -83,7 +83,7 @@ function hexToBytes(hex: string): Uint8Array {
 }
 
 const NO_RECOVERY_KEY_MSG =
-  'Signing this on a new device needs your backup file. Sign in with your backup file to continue.'
+  'Enter your vault password to enable DMs on this device, or sign in with your backup file as a fallback.'
 const NO_PASSKEY_MSG =
   'No passkey found on this device. Sign in with your backup file or use a device where your passkey is saved.'
 

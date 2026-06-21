@@ -213,21 +213,36 @@ export async function signSenderEnvelope(
 }
 
 /**
- * Clear cached keys (e.g., on disconnect)
+ * Clear cached DM keys.
+ *
+ * - clearKeyCache(tokenId): remove ONLY that profile's key (used by the
+ *   per-account logout path, which keeps other signed-in profiles intact).
+ * - clearKeyCache(): wipe EVERYTHING — in-memory AND the entire `caw-dm-keys`
+ *   localStorage blob. Used on wallet-address change / disconnect / clear-all,
+ *   where the previous user is leaving the device. SECURITY: the no-arg form
+ *   MUST purge localStorage. The persisted blob is a single-user cross-refresh
+ *   convenience, NOT a multi-profile store; leaving another tokenId's DM private
+ *   key in localStorage when a different user connects lets that user read it
+ *   straight out of DevTools (cross-profile DM key exposure on a shared
+ *   browser). Previously the no-arg form only cleared in-memory state.
  */
 export function clearKeyCache(tokenId?: number) {
   cachedPrivateKey = null
   cachedPublicKey = null
   cachedTokenId = null
   sharedSecretByPeer.clear()
-  // Clear from localStorage
-  if (tokenId !== undefined) {
-    try {
+  try {
+    if (tokenId !== undefined) {
+      // Remove just this profile's persisted key.
       const all = loadPersistedKeys()
       delete all[tokenId]
       localStorage.setItem(DM_KEYS_STORAGE_KEY, JSON.stringify(all))
-    } catch {}
-  }
+    } else {
+      // No tokenId → the user is leaving the device; purge ALL persisted DM
+      // keys so the next user can't read them out of localStorage.
+      localStorage.removeItem(DM_KEYS_STORAGE_KEY)
+    }
+  } catch { /* localStorage unavailable — in-memory already cleared */ }
 }
 
 /**
