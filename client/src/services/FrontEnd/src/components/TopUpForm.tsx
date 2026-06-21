@@ -36,7 +36,6 @@ import { usePriceStore } from '~/store/tokenDataStore'
 import { usePoolReserves, useMinCawOut, suggestedSlippageBps } from '~/hooks/useZapQuote'
 import { handleError } from '~/utils'
 import { useT } from '~/i18n/I18nProvider'
-import { DepositAddressBox } from '~/components/DepositAddressBox'
 
 type TopUpTab = 'caw' | 'eth'
 
@@ -340,10 +339,8 @@ export function TopUpForm({ tokenId, eoaAddress, cawBalanceWei, ethBalanceWei, o
         </button>
       </div>
 
-      {/* ── Deposit address (shown on both tabs) ───────────────────────────── */}
-      {eoaAddress && (
-        <DepositAddressBox address={eoaAddress} population="B" />
-      )}
+      {/* Deposit address is rendered once by the parent (Staking page), shown
+          above this form for all populations — not duplicated here. */}
 
       {/* ════════════════════════════════════════════════════════════════════ */}
       {/* CAW TAB                                                              */}
