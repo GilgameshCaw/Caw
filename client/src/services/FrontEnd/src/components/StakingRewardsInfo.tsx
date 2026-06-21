@@ -46,11 +46,13 @@ const StakingRewardsInfo: React.FC<StakingRewardsInfoProps> = ({
     tipUsdLabel = `~$${formatUsd(tipEth * ethPrice)}`
   }
 
+  // `cost` is the full form (e.g. "5,000 CAW"); `costShort` is the compact
+  // k-notation shown on small screens to save horizontal space (e.g. "5k CAW").
   const REWARDS = [
-    { action: t('staking.rewards.action.post'), cost: '5,000 CAW', parts: [t('staking.rewards.split.100_depositors')] },
-    { action: t('staking.rewards.action.like'), cost: '2,000 CAW', parts: [t('staking.rewards.split.80_poster'), t('staking.rewards.split.20_depositors')] },
-    { action: 'ReCAW', cost: '4,000 CAW', parts: [t('staking.rewards.split.50_poster'), t('staking.rewards.split.50_depositors')] },
-    { action: t('staking.rewards.action.follow'), cost: '30,000 CAW', parts: [t('staking.rewards.split.80_followed'), t('staking.rewards.split.20_depositors')] },
+    { action: t('staking.rewards.action.post'), cost: '5,000 CAW', costShort: '5k CAW', parts: [t('staking.rewards.split.100_depositors')] },
+    { action: t('staking.rewards.action.like'), cost: '2,000 CAW', costShort: '2k CAW', parts: [t('staking.rewards.split.80_poster'), t('staking.rewards.split.20_depositors')] },
+    { action: 'ReCAW', cost: '4,000 CAW', costShort: '4k CAW', parts: [t('staking.rewards.split.50_poster'), t('staking.rewards.split.50_depositors')] },
+    { action: t('staking.rewards.action.follow'), cost: '30,000 CAW', costShort: '30k CAW', parts: [t('staking.rewards.split.80_followed'), t('staking.rewards.split.20_depositors')] },
   ]
 
   return (
@@ -88,12 +90,16 @@ const StakingRewardsInfo: React.FC<StakingRewardsInfoProps> = ({
             {REWARDS.map(r => (
               <li key={r.action} className="flex justify-between items-start">
                 <span>
-                  <span className={`font-semibold ${dark ? 'text-yellow-300' : 'text-yellow-700'}`}>{r.action}:</span> {r.cost}
+                  <span className={`font-semibold ${dark ? 'text-yellow-300' : 'text-yellow-700'}`}>{r.action}:</span>{' '}
+                  {/* Compact "5k CAW" on small screens; full "5,000 CAW" on sm+ */}
+                  <span className="sm:hidden">{r.costShort}</span>
+                  <span className="hidden sm:inline">{r.cost}</span>
                 </span>
                 <span className={`text-xs ml-2 text-right ${dark ? 'text-yellow-500/70' : 'text-yellow-600'}`}>
                   {r.parts.map((part, i) => (
                     <React.Fragment key={i}>
-                      {i > 0 && <>,<br className="[@media(min-width:380px)]:hidden" /> </>}
+                      {/* On small screens break after the comma; inline on sm+ */}
+                      {i > 0 && <>,<br className="sm:hidden" /> </>}
                       {part}
                     </React.Fragment>
                   ))}
