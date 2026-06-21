@@ -1461,6 +1461,21 @@ export const validatorService: Service = {
         where: { status: 'pending' },
         orderBy: [{ createdAt: 'asc' }, { id: 'asc' }],
         take: 256,
+        select: {
+          id: true,
+          senderId: true,
+          cawonce: true,
+          payload: true,
+          signedTx: true,
+          status: true,
+          createdAt: true,
+          updatedAt: true,
+          batchId: true,
+          implicitTip: true,
+          signerKind: true,
+          pendingDepositTxHash: true,
+          pendingQuickSignTxHash: true,
+        },
       })
 
       // Cross-mirror redundancy pre-check. The FE fans out every signed
@@ -1523,6 +1538,14 @@ export const validatorService: Service = {
       // const above; rebind via a fresh let in this scope.
       const remainingCandidates = dedupedCandidates
 
+      // PARTITION: ERC-1271 (WebAuthn) rows must NEVER enter buildMultiActionData.
+      // buildMultiActionData slices signedTx as a fixed 65-byte r/s/v structure;
+      // feeding a >65-byte WebAuthn blob corrupts the packed sigs and the whole
+      // batch reverts on-chain. Separate them now and route to submitERC1271Actions.
+      const ecdsaCandidates = remainingCandidates.filter(e => (e as any).signerKind !== 'erc1271')
+      const erc1271RawCandidates = remainingCandidates.filter(e => (e as any).signerKind === 'erc1271')
+      console.log(`[Validator] MILESTONE: partition done — ${ecdsaCandidates.length} ECDSA, ${erc1271RawCandidates.length} ERC-1271 candidate(s)`)
+
       // Bound the batch by estimated calldata size. With packed format, each
       // action is ~25 bytes fixed + 65 bytes sig = 90 bytes + text + arrays.
       // Cap at 120KB to leave margin below the 128KB protocol tx size limit.
@@ -1553,11 +1576,19 @@ export const validatorService: Service = {
         const textLen = textHex.startsWith('0x') ? (textHex.length - 2) / 2 : textHex.length / 2
         const recipientsLen = Array.isArray(data?.recipients) ? data.recipients.length * 4 : 0
         const amountsLen = Array.isArray(data?.amounts) ? data.amounts.length * 8 : 0
-        return PER_ACTION_OVERHEAD + textLen + recipientsLen + amountsLen
+        // ERC-1271 rows carry a WebAuthn blob of variable length instead of the
+        // fixed 65-byte ECDSA sig. Use the actual blob byte-length so the 120KB
+        // cap estimate is accurate.
+        const sigOverhead = (entry as any).signerKind === 'erc1271' && entry.signedTx
+          ? (entry.signedTx.startsWith('0x') ? (entry.signedTx.length - 2) / 2 : entry.signedTx.length / 2)
+          : 65
+        return 25 + sigOverhead + textLen + recipientsLen + amountsLen
       }
 
-      for (let i = 0; i < remainingCandidates.length; i++) {
-        const entry = remainingCandidates[i]
+      // The size-bounding loop operates only on ECDSA candidates — ERC-1271 rows
+      // have already been partitioned out and will be submitted separately.
+      for (let i = 0; i < ecdsaCandidates.length; i++) {
+        const entry = ecdsaCandidates[i]
         const sz = entrySize(entry)
 
         if (bounded.length > 0 && runningSize + sz > MAX_BATCH_CALLDATA_BYTES) {
@@ -1569,9 +1600,9 @@ export const validatorService: Service = {
             // Drop the partial group from `bounded`.
             bounded.length = currentGroup.startIdx
             runningSize -= currentGroup.bytes
-            console.log(`[Validator] Rolling back partial batch group ${currentGroup.batchId} (${remainingCandidates.length - currentGroup.startIdx} rows) to next poll — calldata would overflow`)
+            console.log(`[Validator] Rolling back partial batch group ${currentGroup.batchId} (${ecdsaCandidates.length - currentGroup.startIdx} rows) to next poll — calldata would overflow`)
           } else {
-            console.log(`[Validator] Batch size limit reached at ${bounded.length} entries (~${runningSize} bytes). Deferring ${remainingCandidates.length - bounded.length} entries to next poll.`)
+            console.log(`[Validator] Batch size limit reached at ${bounded.length} entries (~${runningSize} bytes). Deferring ${ecdsaCandidates.length - bounded.length} entries to next poll.`)
           }
           break
         }
@@ -1592,7 +1623,7 @@ export const validatorService: Service = {
         runningSize += sz
       }
 
-      return bounded
+      return { entries: bounded, erc1271Candidates: erc1271RawCandidates }
     }
 
     /** natstat: split each raw signedTx into r, s, v and collect action payloads */
@@ -1681,6 +1712,172 @@ export const validatorService: Service = {
         // Packed format for the new contract
         packedActions: bytesToHex(packedBytes),
         packedSigs: bytesToHex(sigsBytes),
+      }
+    }
+
+    /**
+     * Pack ERC-1271 (WebAuthn) candidates for processActionsERC1271.
+     *
+     * Groups candidates by senderId (each sender has exactly one sig blob).
+     * Within each sender-group, actions are sorted by (createdAt, id) which
+     * is the same order they arrived in `candidates` — preserving cawonce
+     * ordering. Returns:
+     *   - packedActions: hex-encoded packed action bytes (sig-type-agnostic)
+     *   - sigs: one WebAuthn blob per sender-group (raw signedTx hex)
+     *   - rs: keccak256(sigs[g]) for each group g (enforced on-chain)
+     *   - actions: decoded action objects (for gas/quote estimation)
+     */
+    function buildERC1271ActionData(
+      erc1271Candidates: Array<{ payload: any; signedTx: string; id: number; senderId: number }>
+    ): { packedActions: string; sigs: string[]; rs: string[]; actions: any[] } {
+      // Sort by senderId so all per-sender groups are contiguous, preserving
+      // relative insertion order within each sender.
+      const sorted = [...erc1271Candidates].sort((a, b) => a.senderId - b.senderId)
+
+      const allActions: any[] = []
+      const sigs: string[] = []
+      const rs: string[] = []
+
+      let lastSenderId: number | null = null
+
+      for (const entry of sorted) {
+        const actionData = (entry.payload as any).data
+        const recipients = Array.isArray(actionData.recipients) ? actionData.recipients.map(Number) : []
+        const amounts = Array.isArray(actionData.amounts)
+          ? actionData.amounts.map((amt: any) => {
+              if (amt === null || amt === undefined || amt === '') return '0'
+              const strAmt = String(amt)
+              return (strAmt === 'NaN' || isNaN(Number(strAmt))) ? '0' : strAmt
+            })
+          : []
+
+        allActions.push({
+          ...actionData,
+          recipients,
+          amounts,
+        })
+
+        // Start a new sig group whenever the sender changes.
+        // Each sender contributes exactly one WebAuthn blob.
+        if (entry.senderId !== lastSenderId) {
+          const sigHex = entry.signedTx
+          sigs.push(sigHex)
+          rs.push(keccak256(sigHex))
+          lastSenderId = entry.senderId
+        }
+      }
+
+      const packedBytes = packActions(allActions.map(a => ({
+        actionType: Number(a.actionType),
+        senderId: Number(a.senderId),
+        receiverId: Number(a.receiverId || 0),
+        receiverCawonce: Number(a.receiverCawonce || 0),
+        networkId: Number(a.networkId),
+        cawonce: Number(a.cawonce),
+        recipients: (a.recipients || []).map(Number),
+        amounts: a.amounts.map((x: any) => BigInt(x)),
+        text: a.text || '0x',
+      })))
+
+      console.log('[Validator] MILESTONE: buildERC1271ActionData done —', allActions.length, 'action(s),', sigs.length, 'sig group(s)')
+      return { packedActions: bytesToHex(packedBytes), sigs, rs, actions: allActions }
+    }
+
+    /**
+     * Submit a batch of ERC-1271 actions to CawActionsERC1271.processActionsERC1271.
+     * Uses the existing _submitChain nonce-serialization machinery so ECDSA and
+     * ERC-1271 submissions don't race for the same nonce.
+     */
+    async function submitERC1271Actions(
+      validatorId: number,
+      erc1271Data: { packedActions: string; sigs: string[]; rs: string[]; actions: any[] },
+      quote: { nativeFee: bigint; withdrawFee: bigint; withdrawLzTokenAmount: bigint },
+    ): Promise<{ processed: Array<{ senderId: number; cawonce: number }>; receipt: any }> {
+      if (!CAW_ACTIONS_ERC1271_ADDRESS) {
+        throw new Error('[submitERC1271Actions] CAW_ACTIONS_ERC1271_ADDRESS not configured — cannot submit ERC-1271 batch')
+      }
+
+      const txData = packedIface.encodeFunctionData('processActionsERC1271', [
+        validatorId,
+        erc1271Data.packedActions,
+        erc1271Data.sigs,
+        erc1271Data.rs,
+        quote.withdrawFee,
+        quote.withdrawLzTokenAmount,
+      ])
+
+      // Serialize behind _submitChain so ECDSA submit (if any) gets its nonce first.
+      const prev = _submitChain
+      let releaseSlot: () => void = () => {}
+      _submitChain = new Promise<void>(resolve => { releaseSlot = resolve })
+      try {
+        await prev
+      } catch { /* prior failed — fine, continue */ }
+
+      try {
+        const feeData = await httpProvider.getFeeData()
+        const nonce = await httpProvider.getTransactionCount(signer.getAddress(), 'pending')
+
+        let rawGasLimit: bigint
+        try {
+          const estimated = await httpProvider.estimateGas({
+            to: CAW_ACTIONS_ERC1271_ADDRESS,
+            data: txData,
+            value: quote.nativeFee,
+            from: signer.getAddress(),
+          })
+          rawGasLimit = (estimated * 120n) / 100n
+        } catch (gasErr: any) {
+          // Formula fallback: same base as ECDSA path but no per-action ecrecover cost.
+          const actionCount = erc1271Data.actions.length
+          const withdrawCount = erc1271Data.actions.filter((a: any) =>
+            getActionType(a.actionType).toString() === 'WITHDRAW'
+          ).length
+          const withdrawBump = withdrawCount > 0 ? 250_000 + 50_000 * (withdrawCount - 1) : 0
+          rawGasLimit = BigInt(Math.ceil((100_000 + actionCount * 50_000 + withdrawBump) * 1.3))
+          console.warn(`[submitERC1271Actions] estimateGas failed (${gasErr?.shortMessage || gasErr?.message}), formula fallback: ${rawGasLimit}`)
+        }
+
+        // M-2: Derive chainId from the live provider (same pattern as ECDSA
+        // path via resolveChainIdFromProvider) instead of hardcoding 84532.
+        const chainId = await resolveChainIdFromProvider(httpProvider)
+        const tx = await signer.asEthersSigner().sendTransaction({
+          to: CAW_ACTIONS_ERC1271_ADDRESS,
+          data: txData,
+          value: quote.nativeFee,
+          nonce,
+          gasLimit: rawGasLimit,
+          maxFeePerGas: feeData.maxFeePerGas ?? 0n,
+          maxPriorityFeePerGas: feeData.maxPriorityFeePerGas ?? 0n,
+          chainId,
+          type: 2,
+        })
+        releaseSlot()
+        console.log(`[submitERC1271Actions] MILESTONE: submit path done — sent ${erc1271Data.actions.length} action(s), tx=${tx.hash}`)
+
+        const receipt = await tx.wait()
+
+        const evt = receipt?.logs
+          ?.map((log: any) => { try { return packedIface.parseLog(log) } catch { return null } })
+          ?.find((x: any) => x?.name === 'ActionsProcessed')
+
+        if (!evt) {
+          console.error('[submitERC1271Actions] ActionsProcessed event missing from receipt!')
+          throw new Error('ActionsProcessed event missing from ERC-1271 submission')
+        }
+
+        const packedHex = erc1271Data.packedActions
+        const packedBuf = new Uint8Array((packedHex.startsWith('0x') ? packedHex.slice(2) : packedHex).match(/.{2}/g)!.map((b: string) => parseInt(b, 16)))
+        const decoded = unpackActions(packedBuf)
+
+        const processed = decoded.map((a: any) => ({
+          senderId: Number(a.senderId),
+          cawonce: Number(a.cawonce),
+        }))
+        console.log(`[submitERC1271Actions] Confirmed in block ${receipt?.blockNumber} (${processed.length} action(s))`)
+        return { processed, receipt }
+      } finally {
+        releaseSlot()
       }
     }
 
@@ -2732,8 +2929,8 @@ console.log("succeededKeys", succeededKeys)
       // the WHERE clause guards that.
       const markedAsProcessing: number[] = []
       try {
-        const entries = await fetchPendingQueue()
-        if (!entries.length) return
+        const { entries, erc1271Candidates } = await fetchPendingQueue()
+        if (!entries.length && !erc1271Candidates.length) return
 
         // Priority lane: if any queued action has a tip >= priorityTip, skip the batch wait
         // and process immediately. This rewards users who tip generously with faster inclusion.
@@ -3620,6 +3817,142 @@ console.log("succeededKeys", succeededKeys)
         }
 
       }))
+
+      // ── ERC-1271 (WebAuthn) sub-path ──────────────────────────────────────
+      // Submit partitioned ERC-1271 candidates after the ECDSA batch.
+      // Sequential nonces are handled by _submitChain serializer shared with
+      // submitProcessActions — ECDSA batch consumes its slot first, then we
+      // acquire the next nonce here.
+      if (erc1271Candidates.length > 0 && CAW_ACTIONS_ERC1271_ADDRESS) {
+        console.log(`[Validator] Processing ${erc1271Candidates.length} ERC-1271 candidate(s)`)
+        // Mark ERC-1271 rows as 'processing' so concurrent poll cycles don't
+        // double-submit them. The outer catch block rolls them back to 'pending'
+        // on any unhandled error (same as the ECDSA path).
+        const erc1271Ids = erc1271Candidates.map(e => e.id)
+        await prisma.txQueue.updateMany({
+          where: { id: { in: erc1271Ids } },
+          data: { status: 'processing' },
+        })
+        markedAsProcessing.push(...erc1271Ids)
+
+        // H-2: Apply the same validateOtherActionCost + validateActionTip gates
+        // the ECDSA path runs. ERC-1271 rows bypass these checks otherwise,
+        // letting underpriced/invalid OTHER actions reach the chain.
+        const validatedERC1271: typeof erc1271Candidates = []
+        const underpricedERC1271: Array<{ entry: typeof erc1271Candidates[0]; reason: string }> = []
+        for (const entry of erc1271Candidates) {
+          const action = (entry.payload as any).data
+
+          const otherValidation = await validateOtherActionCost(action)
+          if (!otherValidation.valid && otherValidation.underpriced) {
+            underpricedERC1271.push({
+              entry,
+              reason: `Insufficient CAW for content: required ${otherValidation.requiredCaw} CAW`,
+            })
+            console.log(`[Validator] ERC-1271 entry ${entry.id} underpriced (content): required ${otherValidation.requiredCaw} CAW`)
+            continue
+          }
+
+          const stampedImplicit = (entry as any).implicitTip
+          const implicitTip = stampedImplicit != null ? BigInt(stampedImplicit) : null
+          const tipValidation = await validateActionTip(action, implicitTip)
+          if (!tipValidation.valid) {
+            underpricedERC1271.push({
+              entry,
+              reason: tipValidation.reason || 'Insufficient tip',
+            })
+            console.log(`[Validator] ERC-1271 entry ${entry.id} underpriced (tip): ${tipValidation.reason}`)
+            continue
+          }
+
+          validatedERC1271.push(entry)
+        }
+
+        if (underpricedERC1271.length > 0) {
+          await Promise.all(underpricedERC1271.map(({ entry, reason }) =>
+            prisma.txQueue.update({
+              where: { id: entry.id },
+              data: { status: 'underpriced', reason },
+            })
+          ))
+        }
+
+        if (validatedERC1271.length === 0) {
+          console.log('[Validator] No valid ERC-1271 entries after cost/tip validation')
+          // fall through; erc1271Bound will be empty, submitting nothing
+        }
+
+        // Size-bound the ERC-1271 batch (same 120KB cap, but each row's blob
+        // may be much larger than 65 bytes — entrySize already accounts for this).
+        const MAX_ERC1271_CALLDATA_BYTES = 120_000
+        const boundedERC1271 = validatedERC1271.slice() // copy; we may truncate
+        let erc1271Size = 500 // base ABI encode overhead
+        const erc1271Bound: typeof erc1271Candidates = []
+        for (const entry of boundedERC1271) {
+          const sigHex = entry.signedTx ?? ''
+          const blobBytes = sigHex.startsWith('0x') ? (sigHex.length - 2) / 2 : sigHex.length / 2
+          const data = (entry.payload as any)?.data
+          const textHex = typeof data?.text === 'string' ? data.text : ''
+          const textLen = textHex.startsWith('0x') ? (textHex.length - 2) / 2 : textHex.length / 2
+          const recipientsLen = Array.isArray(data?.recipients) ? data.recipients.length * 4 : 0
+          const amountsLen = Array.isArray(data?.amounts) ? data.amounts.length * 8 : 0
+          const sz = 25 + blobBytes + textLen + recipientsLen + amountsLen
+          if (erc1271Bound.length > 0 && erc1271Size + sz > MAX_ERC1271_CALLDATA_BYTES) {
+            console.log(`[Validator] ERC-1271 batch size limit reached at ${erc1271Bound.length} entries (~${erc1271Size} bytes). Deferring rest to next poll.`)
+            break
+          }
+          erc1271Bound.push(entry)
+          erc1271Size += sz
+        }
+
+        const erc1271Data = buildERC1271ActionData(erc1271Bound)
+        const erc1271Quote = await recalculateQuoteForActions({
+          actions: erc1271Data.actions,
+          v: [], r: [], s: [],
+          packedActions: erc1271Data.packedActions,
+          packedSigs: '0x',
+        })
+
+        let erc1271Finalized: Array<{ senderId: number; cawonce: number }> = []
+        let erc1271SubmitError: string | null = null
+        try {
+          const erc1271Result = await submitERC1271Actions(validatorId, erc1271Data, erc1271Quote)
+          erc1271Finalized = erc1271Result.processed
+        } catch (erc1271Err: any) {
+          erc1271SubmitError = erc1271Err.message || 'ERC-1271 submission failed'
+          console.error('[Validator] ERC-1271 submission failed:', erc1271SubmitError)
+          // L-1 known gap: unlike the ECDSA path there is NO bisect/recovery
+          // here. A single invalid action fails the whole sub-batch. If this
+          // becomes a reliability concern, add bisect similar to the ECDSA path
+          // (splitAndResubmit pattern). Tracked as a follow-up.
+        }
+
+        const erc1271FinalizedKeys = new Set(erc1271Finalized.map(f => `${f.senderId}-${f.cawonce}`))
+        await Promise.all(erc1271Bound.map(async (entry) => {
+          const data = (entry.payload as any).data
+          const key = `${data.senderId}-${data.cawonce}`
+          if (erc1271FinalizedKeys.has(key)) {
+            await prisma.txQueue.update({
+              where: { id: entry.id },
+              data: { status: 'done', reason: null },
+            })
+            // L-2: ERC-1271 rows are owner-equivalent (no session key in play).
+            // incrementSessionSpent tracks session-key spend caps and must NOT
+            // fire for these rows — the on-chain spend cap is authoritative.
+            // Only call it for session-key (non-erc1271) rows.
+            if ((entry as any).signerKind !== 'erc1271') {
+              await incrementSessionSpent(prisma as any, entry.payload as any, entry.signedTx)
+            }
+          } else {
+            const reason = erc1271SubmitError || 'ERC-1271 action not confirmed on chain'
+            await markTxQueueFailed(entry.id, reason, data.senderId, data)
+          }
+        }))
+      } else if (erc1271Candidates.length > 0 && !CAW_ACTIONS_ERC1271_ADDRESS) {
+        console.warn('[Validator] ERC-1271 candidates present but CAW_ACTIONS_ERC1271_ADDRESS not configured — deferring to next poll')
+      }
+      // ── End ERC-1271 sub-path ─────────────────────────────────────────────
+
       } catch (err: any) {
         console.error("[Validator] Poll loop error:", {
           message: err.message,

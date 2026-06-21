@@ -33,6 +33,50 @@ import { cawProfileLedgerAbi } from '../../abi/generated'
 import { CAW_NAMES_L2_ADDRESS } from '../../abi/addresses'
 import { packActions, getPackedActionSlices } from '../../utils/packActions'
 
+// Minimal ABI for ERC-1271 isValidSignature on SmartEOA
+const ERC1271_ABI = [
+  'function isValidSignature(bytes32 hash, bytes calldata signature) view returns (bytes4)',
+]
+const ERC1271_MAGIC = '0x1626ba7e'
+
+/**
+ * Return true when `sig` is a WebAuthn blob (> 65 bytes).
+ * A standard ECDSA sig is exactly 65 bytes (r[32] + s[32] + v[1]).
+ */
+function isWebAuthnBlob(sig: string): boolean {
+  const hex = sig.startsWith('0x') ? sig.slice(2) : sig
+  return hex.length / 2 > 65
+}
+
+/**
+ * Verify a WebAuthn sig blob against ownerAddress via ERC-1271 on-chain.
+ * Returns true on success, false on any failure (RPC error, wrong magic, timeout).
+ * Fail-closed: non-magic return → false.
+ */
+async function verifyERC1271Sig(
+  ownerAddress: string,
+  domain: any,
+  types: any,
+  data: any,
+  signature: string,
+): Promise<boolean> {
+  try {
+    const provider = await getReadProviderAsync()
+    const digest = ethers.TypedDataEncoder.hash(domain, { ActionData: types.ActionData }, data)
+    const contract = new Contract(ownerAddress, ERC1271_ABI, provider)
+    const result = await Promise.race<string>([
+      contract.isValidSignature(digest, signature) as Promise<string>,
+      new Promise<string>((_, reject) =>
+        setTimeout(() => reject(new Error('ERC-1271 isValidSignature timeout')), 3000)
+      ),
+    ])
+    return result?.toLowerCase() === ERC1271_MAGIC
+  } catch (err: any) {
+    console.warn('[Actions] ERC-1271 isValidSignature failed:', err?.shortMessage || err?.message || err)
+    return false
+  }
+}
+
 const router = Router()
 
 /**
@@ -124,6 +168,12 @@ async function getReadContractAsync(): Promise<Contract> {
   })()
   await _readProviderInitPromise
   return _readContract!
+}
+
+async function getReadProviderAsync(): Promise<JsonRpcProvider | WebSocketProvider> {
+  // Piggybacks on the same init promise that getReadContractAsync uses.
+  await getReadContractAsync()
+  return _readProvider!
 }
 
 function getReadContract(): Contract {
@@ -327,28 +377,44 @@ router.post('/', async (req, res) => {
 
     ownerAddress = sender.address.toLowerCase()
 
-    try {
-      // Log the exact shape we're verifying so we can diagnose signature
-      // mismatches (e.g. after the string→bytes text-field change). These
-      // logs are small and only fire in the signature-verification path.
-      console.log('[Actions] verifyTypedData:', {
-        chainId: domain?.chainId,
-        verifyingContract: domain?.verifyingContract,
-        textType: types?.ActionData?.find((f: any) => f.name === 'text')?.type,
-        textValue: typeof data?.text === 'string' ? `${data.text.slice(0, 20)}…(${data.text.length}ch)` : typeof data?.text,
-        actionType: data?.actionType,
-        senderId: data?.senderId,
-        cawonce: data?.cawonce,
-      })
-      recoveredAddress = ethers.verifyTypedData(
-        domain,
-        { ActionData: types.ActionData },
-        data,
-        signature
-      ).toLowerCase()
-    } catch (err: any) {
-      console.warn('[Actions] verifyTypedData threw:', err?.shortMessage || err?.message || err)
-      return res.status(400).json({ error: 'Invalid signature' })
+    // Detect WebAuthn (ERC-1271) blobs: sig > 65 bytes means it cannot be
+    // an ECDSA sig.  verifyTypedData would throw on these.
+    let isERC1271Action = false
+    if (isWebAuthnBlob(signature)) {
+      // Verify on-chain via SmartEOA.isValidSignature. Fail-closed.
+      const ok = await verifyERC1271Sig(ownerAddress, domain, types, data, signature)
+      if (!ok) {
+        console.warn('[Actions] ERC-1271 isValidSignature rejected WebAuthn blob for owner', ownerAddress)
+        return res.status(400).json({ error: 'Invalid signature' })
+      }
+      // ERC-1271 verified — treat as owner-equivalent for downstream checks.
+      recoveredAddress = ownerAddress
+      isERC1271Action = true
+      console.log('[Actions] ERC-1271 WebAuthn sig verified on-chain for owner', ownerAddress)
+    } else {
+      try {
+        // Log the exact shape we're verifying so we can diagnose signature
+        // mismatches (e.g. after the string→bytes text-field change). These
+        // logs are small and only fire in the signature-verification path.
+        console.log('[Actions] verifyTypedData:', {
+          chainId: domain?.chainId,
+          verifyingContract: domain?.verifyingContract,
+          textType: types?.ActionData?.find((f: any) => f.name === 'text')?.type,
+          textValue: typeof data?.text === 'string' ? `${data.text.slice(0, 20)}…(${data.text.length}ch)` : typeof data?.text,
+          actionType: data?.actionType,
+          senderId: data?.senderId,
+          cawonce: data?.cawonce,
+        })
+        recoveredAddress = ethers.verifyTypedData(
+          domain,
+          { ActionData: types.ActionData },
+          data,
+          signature
+        ).toLowerCase()
+      } catch (err: any) {
+        console.warn('[Actions] verifyTypedData threw:', err?.shortMessage || err?.message || err)
+        return res.status(400).json({ error: 'Invalid signature' })
+      }
     }
     mark('verifySig')
 
@@ -634,7 +700,7 @@ router.post('/', async (req, res) => {
             pendingQuickSignTxHash: parkAsWaitingForSession ? sanitizedPendingQuickSignTxHash : null,
             clientVersion: provenance.clientVersion,
             clientOrigin: provenance.clientOrigin,
-            signerKind: isOwner ? 'owner' : 'session',
+            signerKind: isERC1271Action ? 'erc1271' : (isOwner ? 'owner' : 'session'),
             // When parking for a pending session registration, perActionTipRate
             // is unknown (the session record hasn't landed on L2 yet). Set
             // implicitTip to null; the ValidatorService will re-read it from
@@ -1621,69 +1687,162 @@ router.post('/batch', async (req, res) => {
     //  - per-action path: verify the first action's sig and require every
     //    other to recover to the same signer (legacy shape).
     let firstSigner: string
+    // True when the batch sig (or first per-action sig) is a WebAuthn blob
+    // verified via ERC-1271 on-chain. Rows will be stored with signerKind='erc1271'.
+    let isERC1271Batch = false
     if (useBatchSig) {
-      // Build packed bytes for the whole group, then take per-action keccaks.
-      // packActions expects amounts/recipients pre-cleaned, so do that here.
-      const sanitizedActions = actions.map((a: any) => {
-        const amounts = Array.isArray(a.data.amounts) ? a.data.amounts.map((amt: any) => {
-          if (amt === null || amt === undefined || amt === '') return '0'
-          const strAmt = String(amt)
-          return (strAmt === 'NaN' || isNaN(Number(strAmt))) ? '0' : strAmt
-        }) : []
-        return {
-          actionType: Number(a.data.actionType),
-          senderId: Number(a.data.senderId),
-          receiverId: Number(a.data.receiverId || 0),
-          receiverCawonce: Number(a.data.receiverCawonce || 0),
-          networkId: Number(a.data.networkId),
-          cawonce: Number(a.data.cawonce),
-          recipients: (a.data.recipients || []).map(Number),
-          amounts: amounts.map((x: any) => BigInt(x)),
-          text: a.data.text || '0x',
+      if (isWebAuthnBlob(batchSig)) {
+        // ERC-1271 path: build the ActionBatch digest and verify on-chain.
+        const sanitizedActions = actions.map((a: any) => {
+          const amounts = Array.isArray(a.data.amounts) ? a.data.amounts.map((amt: any) => {
+            if (amt === null || amt === undefined || amt === '') return '0'
+            const strAmt = String(amt)
+            return (strAmt === 'NaN' || isNaN(Number(strAmt))) ? '0' : strAmt
+          }) : []
+          return {
+            actionType: Number(a.data.actionType),
+            senderId: Number(a.data.senderId),
+            receiverId: Number(a.data.receiverId || 0),
+            receiverCawonce: Number(a.data.receiverCawonce || 0),
+            networkId: Number(a.data.networkId),
+            cawonce: Number(a.data.cawonce),
+            recipients: (a.data.recipients || []).map(Number),
+            amounts: amounts.map((x: any) => BigInt(x)),
+            text: a.data.text || '0x',
+          }
+        })
+        const packed = packActions(sanitizedActions)
+        const slices = getPackedActionSlices(packed)
+        const perActionHashes: string[] = slices.map(s => ethers.keccak256(s))
+        const actionsHash = ethers.keccak256(ethers.solidityPacked(
+          Array(perActionHashes.length).fill('bytes32'),
+          perActionHashes,
+        ))
+        const batchMessage = {
+          senderId: Number(actions[0].data.senderId),
+          firstCawonce: Number(actions[0].data.cawonce),
+          actionCount: actions.length,
+          actionsHash,
         }
-      })
-      const packed = packActions(sanitizedActions)
-      const slices = getPackedActionSlices(packed)
-      const perActionHashes: string[] = slices.map(s => ethers.keccak256(s))
-      const actionsHash = ethers.keccak256(ethers.solidityPacked(
-        Array(perActionHashes.length).fill('bytes32'),
-        perActionHashes,
-      ))
-      const batchMessage = {
-        senderId: Number(actions[0].data.senderId),
-        firstCawonce: Number(actions[0].data.cawonce),
-        actionCount: actions.length,
-        actionsHash,
-      }
-      const batchTypeDef = {
-        ActionBatch: [
-          { name: 'senderId', type: 'uint32' },
-          { name: 'firstCawonce', type: 'uint32' },
-          { name: 'actionCount', type: 'uint32' },
-          { name: 'actionsHash', type: 'bytes32' },
-        ],
-      }
-      try {
-        firstSigner = ethers.verifyTypedData(
-          batchDomain,
-          batchTypeDef,
-          batchMessage,
-          batchSig,
-        ).toLowerCase()
-      } catch (err: any) {
-        console.warn('[Actions/batch] verifyTypedData (ActionBatch) threw:', err?.shortMessage || err?.message)
-        return res.status(400).json({ error: 'Invalid batch signature' })
+        const batchTypeDef = {
+          ActionBatch: [
+            { name: 'senderId', type: 'uint32' },
+            { name: 'firstCawonce', type: 'uint32' },
+            { name: 'actionCount', type: 'uint32' },
+            { name: 'actionsHash', type: 'bytes32' },
+          ],
+        }
+        const batchDigest = ethers.TypedDataEncoder.hash(batchDomain, batchTypeDef, batchMessage)
+        let erc1271Ok = false
+        try {
+          const provider = await getReadProviderAsync()
+          const contract = new Contract(ownerAddress, ERC1271_ABI, provider)
+          const result = await Promise.race<string>([
+            contract.isValidSignature(batchDigest, batchSig) as Promise<string>,
+            new Promise<string>((_, reject) =>
+              setTimeout(() => reject(new Error('ERC-1271 isValidSignature timeout')), 3000)
+            ),
+          ])
+          erc1271Ok = result?.toLowerCase() === ERC1271_MAGIC
+        } catch (err: any) {
+          console.warn('[Actions/batch] ERC-1271 isValidSignature failed:', err?.shortMessage || err?.message)
+        }
+        if (!erc1271Ok) {
+          return res.status(400).json({ error: 'Invalid batch signature' })
+        }
+        firstSigner = ownerAddress
+        isERC1271Batch = true
+        console.log('[Actions/batch] ERC-1271 WebAuthn batchSig verified on-chain for owner', ownerAddress)
+      } else {
+        // Build packed bytes for the whole group, then take per-action keccaks.
+        // packActions expects amounts/recipients pre-cleaned, so do that here.
+        const sanitizedActions = actions.map((a: any) => {
+          const amounts = Array.isArray(a.data.amounts) ? a.data.amounts.map((amt: any) => {
+            if (amt === null || amt === undefined || amt === '') return '0'
+            const strAmt = String(amt)
+            return (strAmt === 'NaN' || isNaN(Number(strAmt))) ? '0' : strAmt
+          }) : []
+          return {
+            actionType: Number(a.data.actionType),
+            senderId: Number(a.data.senderId),
+            receiverId: Number(a.data.receiverId || 0),
+            receiverCawonce: Number(a.data.receiverCawonce || 0),
+            networkId: Number(a.data.networkId),
+            cawonce: Number(a.data.cawonce),
+            recipients: (a.data.recipients || []).map(Number),
+            amounts: amounts.map((x: any) => BigInt(x)),
+            text: a.data.text || '0x',
+          }
+        })
+        const packed = packActions(sanitizedActions)
+        const slices = getPackedActionSlices(packed)
+        const perActionHashes: string[] = slices.map(s => ethers.keccak256(s))
+        const actionsHash = ethers.keccak256(ethers.solidityPacked(
+          Array(perActionHashes.length).fill('bytes32'),
+          perActionHashes,
+        ))
+        const batchMessage = {
+          senderId: Number(actions[0].data.senderId),
+          firstCawonce: Number(actions[0].data.cawonce),
+          actionCount: actions.length,
+          actionsHash,
+        }
+        const batchTypeDef = {
+          ActionBatch: [
+            { name: 'senderId', type: 'uint32' },
+            { name: 'firstCawonce', type: 'uint32' },
+            { name: 'actionCount', type: 'uint32' },
+            { name: 'actionsHash', type: 'bytes32' },
+          ],
+        }
+        try {
+          firstSigner = ethers.verifyTypedData(
+            batchDomain,
+            batchTypeDef,
+            batchMessage,
+            batchSig,
+          ).toLowerCase()
+        } catch (err: any) {
+          console.warn('[Actions/batch] verifyTypedData (ActionBatch) threw:', err?.shortMessage || err?.message)
+          return res.status(400).json({ error: 'Invalid batch signature' })
+        }
       }
     } else {
-      try {
-        firstSigner = ethers.verifyTypedData(
+      // Per-action sig path. Check if the first sig is a WebAuthn blob.
+      if (isWebAuthnBlob(actions[0].signature)) {
+        // L-3 DoS guard: each per-action ERC-1271 verification is a serial
+        // on-chain RPC call (~3 s each). Cap at 8 to bound worst-case latency.
+        // Larger Pop-B batches must use the batchSig path (one RPC call total).
+        const ERC1271_PER_ACTION_LIMIT = 8
+        if (actions.length > ERC1271_PER_ACTION_LIMIT) {
+          return res.status(400).json({
+            error: `ERC-1271 per-action batches limited to ${ERC1271_PER_ACTION_LIMIT} actions; use batch signature`,
+          })
+        }
+        const ok = await verifyERC1271Sig(
+          ownerAddress,
           actions[0].domain,
-          { ActionData: actions[0].types.ActionData },
+          actions[0].types,
           actions[0].data,
           actions[0].signature,
-        ).toLowerCase()
-      } catch {
-        return res.status(400).json({ error: 'Invalid signature on first action' })
+        )
+        if (!ok) {
+          return res.status(400).json({ error: 'Invalid signature on first action' })
+        }
+        firstSigner = ownerAddress
+        isERC1271Batch = true
+        console.log('[Actions/batch] ERC-1271 WebAuthn per-action sig verified on-chain for owner', ownerAddress)
+      } else {
+        try {
+          firstSigner = ethers.verifyTypedData(
+            actions[0].domain,
+            { ActionData: actions[0].types.ActionData },
+            actions[0].data,
+            actions[0].signature,
+          ).toLowerCase()
+        } catch {
+          return res.status(400).json({ error: 'Invalid signature on first action' })
+        }
       }
     }
 
@@ -1740,20 +1899,36 @@ router.post('/batch', async (req, res) => {
 
       if (!useBatchSig) {
         // Verify per-action signature
-        try {
-          const recovered = ethers.verifyTypedData(
-            a.domain,
-            { ActionData: a.types.ActionData },
-            a.data,
-            a.signature
-          ).toLowerCase()
-          if (recovered !== firstSigner) {
-            results.push({ index: i, error: 'Signer mismatch — all actions must share the same signer' })
+        if (isERC1271Batch) {
+          // H-1: Reject any action whose sig is NOT a WebAuthn blob. Allowing
+          // an ECDSA sig here would store the row as signerKind='erc1271' and
+          // route it to the wrong contract — silent fund/ordering corruption.
+          if (!isWebAuthnBlob(a.signature)) {
+            results.push({ index: i, error: 'Mixed sig types not allowed in ERC-1271 batch' })
             continue
           }
-        } catch {
-          results.push({ index: i, error: 'Invalid signature' })
-          continue
+          // All actions in this batch are ERC-1271 (WebAuthn). Verify each on-chain.
+          const ok = await verifyERC1271Sig(ownerAddress, a.domain, a.types, a.data, a.signature)
+          if (!ok) {
+            results.push({ index: i, error: 'Invalid signature' })
+            continue
+          }
+        } else {
+          try {
+            const recovered = ethers.verifyTypedData(
+              a.domain,
+              { ActionData: a.types.ActionData },
+              a.data,
+              a.signature
+            ).toLowerCase()
+            if (recovered !== firstSigner) {
+              results.push({ index: i, error: 'Signer mismatch — all actions must share the same signer' })
+              continue
+            }
+          } catch {
+            results.push({ index: i, error: 'Invalid signature' })
+            continue
+          }
         }
       }
 
@@ -1860,7 +2035,7 @@ router.post('/batch', async (req, res) => {
                 pendingQuickSignTxHash: batchParkAsWaitingForSession ? sanitizedPendingQuickSignTxHash : null,
                 clientVersion: provenance.clientVersion,
                 clientOrigin: provenance.clientOrigin,
-                signerKind: isOwner ? 'owner' : 'session',
+                signerKind: isERC1271Batch ? 'erc1271' : (isOwner ? 'owner' : 'session'),
                 // Stamp the session's per-action tip so the validator's
                 // empty-amounts tip check passes (mirrors single-action endpoint).
                 // Null when parked for a pending session register — DataCleaner

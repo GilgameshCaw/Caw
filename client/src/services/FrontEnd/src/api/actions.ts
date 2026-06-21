@@ -21,7 +21,9 @@ import { getActionTypeForModal } from '~/errors/InsufficientStakeError'
 import { useInsufficientStakeStore } from '~/store/insufficientStakeStore'
 import { useAuthStore } from '~/store/authStore'
 import { privateKeyToAccount } from 'viem/accounts'
-import { keccak256, concat } from 'viem'
+import { keccak256, concat, hashTypedData } from 'viem'
+import { useRootSigner } from '~/hooks/useRootSigner'
+import { useWalletPopulation } from '~/hooks/useWalletPopulation'
 import { packActions, getPackedActionSlices } from '~/../../../utils/packActions'
 import { useSessionKeyStore } from '~/store/sessionKeyStore'
 import { useHasActiveSession } from '~/hooks/useHasActiveSession'
@@ -882,6 +884,13 @@ export function useSignAndSubmitAction() {
   const { switchChainAsync } = useSwitchChain()
   const walletChainId = useChainId()
   const hasActiveSession = useHasActiveSession()
+  // Population-B (passkey) users have no wagmi wallet. Their ROOT signer (passkey
+  // / secp256k1 recovery key) signs actions that the session key can't — notably
+  // WITHDRAW (bit 6), which is deliberately excluded from the session scope. The
+  // validator routes the resulting sig (65-byte ECDSA or longer WebAuthn blob)
+  // to the right on-chain entry point by length.
+  const { population } = useWalletPopulation()
+  const rootSigner = useRootSigner()
 
   const { signTypedDataAsync } = useSignTypedData()
   const activeToken = useActiveToken();
@@ -1362,6 +1371,26 @@ export function useSignAndSubmitAction() {
           primaryType,
           message,
         })
+      } else if (population === 'B') {
+        // Population-B (passkey) ROOT-signer path. Used when the session key
+        // CAN'T sign this action — chiefly WITHDRAW (bit 6), excluded from the
+        // session scope by design so a leaked session key can never move staked
+        // funds. The user's passkey (or secp256k1 recovery key) signs the SAME
+        // EIP-712 action digest the session key would. The validator routes the
+        // result to the right on-chain entry point by signature length:
+        //   • 65-byte ECDSA (recovery key) → CawActions.processActions (ecrecover
+        //     → ERC-1271 fallback verifies the ecdsaFallback key).
+        //   • WebAuthn blob (passkey, >65 bytes) → CawActionsERC1271 sibling.
+        // There is NO wagmi wallet for these users; without this branch the flow
+        // would dead-end at the "Connect a Wallet" modal. Mirrors the digest
+        // computation viem's signTypedData does internally.
+        const digest = hashTypedData({
+          domain,
+          types:       { ActionData: TYPES.ActionData },
+          primaryType,
+          message,
+        })
+        signature = await rootSigner.signDigest(digest)
       } else {
         // Wallet signature. EIP-712 signatures are chain-agnostic: the
         // domain.chainId is hashed into the digest regardless of which
@@ -2034,8 +2063,19 @@ export function useSignAndSubmitAction() {
   }, [activeTokenId, activeToken?.owner])
 
   const signAndSubmit = async (params: ActionParams) => {
-    // Session key active for this token's owner — skip wallet checks entirely
+    // Session key active for this token's owner — skip wallet checks entirely.
     if (hasActiveSession) {
+      return await requestAndSubmit(params)
+    }
+
+    // Population-B (passkey) users have NO wagmi wallet, so the connect-modal /
+    // owner-address checks below never apply to them — they'd dead-end the flow.
+    // Route straight to requestAndSubmit, which signs with the passkey root
+    // signer (for actions the session key can't do, like WITHDRAW). This also
+    // sidesteps the stale `hasActiveSession` value: even when it reads false here
+    // (pre-hydration / a withdraw the session can't cover), Pop-B must never see
+    // the wagmi modal.
+    if (population === 'B') {
       return await requestAndSubmit(params)
     }
 
