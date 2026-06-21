@@ -52,6 +52,17 @@ describe('buildManagementDigest — contract cross-check', () => {
     expect(digest).toBe('0x0da1ef1a61cc3e39f453b49c5b1f6c5877fd17bcc59d8077190ad53494d688e6')
   })
 
+  it('matches the on-chain digest for a known removePasskey input (one bytes32 param)', () => {
+    // Shares params shape with cancel (one bytes32) but a distinct opName, so a
+    // distinct digest. Both the passkey-sig and recovery-key-sig paths build this
+    // same digest, so this golden covers removePasskey for either signer.
+    const account = '0x00000000000000000000000000000000DeaDBeef' as const
+    const hash = ('0x' + '3333'.padStart(64, '0')) as `0x${string}`
+    const params = encodeAbiParameters([{ type: 'bytes32' }], [hash])
+    const digest = buildManagementDigest(account, 11155111, 'removePasskey', params, 7n)
+    expect(digest).toBe('0x4f82746137d0fcaa579e6827310ccf49d9c92e540d87bf34d84e4061264a6100')
+  })
+
   it('changes when the nonce changes (replay-binding sanity)', () => {
     const account = '0x00000000000000000000000000000000DeaDBeef' as const
     const params = encodeAbiParameters([{ type: 'address' }], ['0x000000000000000000000000000000000000c0Fe'])

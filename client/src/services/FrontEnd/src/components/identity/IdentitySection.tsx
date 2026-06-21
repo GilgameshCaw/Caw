@@ -207,7 +207,7 @@ function IdentitySectionInner({
 }): JSX.Element {
   // Hooks for sponsor-relayed rotate.
   const { execute: smartEoaExecute, account: eoaAccount } = useSmartEoaExecute()
-  const { signManagement } = useSmartEoaManagement()
+  const { signManagement, signManagementWithRecoveryKey } = useSmartEoaManagement()
 
   // Dialog open states.
   const [addPasskeyOpen, setAddPasskeyOpen] = useState(false)
@@ -622,9 +622,55 @@ function IdentitySectionInner({
           ecdsaFallbackAddr={
             ecdsaFallbackAddress ?? '0x0000000000000000000000000000000000000000'
           }
-          onConfirm={async () => {
-            // TODO: wire SmartEOA.removePasskey via wagmi writeContract
-            throw new Error('RemovePasskey: contract write not yet wired (Wave 3 follow-up)')
+          onConfirm={async ({ unlocked }) => {
+            if (!eoaAccount) throw new Error('No passkey wallet connected.')
+
+            // 1. Fetch the execute fee quote.
+            const quote = await apiFetch<SponsorExecuteQuote>('/api/sponsor/execute-quote')
+            if (!quote.priceAvailable) {
+              throw new Error('CAW fee pricing is temporarily unavailable. Try again shortly.')
+            }
+            const feeCaw = BigInt(quote.minFeeCawWei)
+
+            // 2. ABI-encode the single bytes32 param (targetPubkeyHash).
+            const params = encodeAbiParameters(
+              [{ type: 'bytes32' }],
+              [removeTarget],
+            ) as `0x${string}`
+
+            // 3. Sign the management op with the appropriate key.
+            //    unlocked=true  → recovery key (secp256k1, 65-byte) → unconditional
+            //                     removal regardless of remaining passkey count.
+            //    unlocked=false → active passkey (WebAuthn) → co-signer removal
+            //                     (contract requires N>=2 and signer != target).
+            const mgmtSig = unlocked
+              ? await signManagementWithRecoveryKey('removePasskey', params)
+              : await signManagement('removePasskey', params)
+
+            // 4. Build the batch mirroring handleRotate exactly.
+            //    Call 1: SmartEOA.removePasskey(targetPubkeyHash, callerSig)
+            const call1: ExecCall = {
+              to: eoaAccount,
+              value: 0n,
+              data: encodeFunctionData({
+                abi: smartEoaAbi,
+                functionName: 'removePasskey',
+                args: [removeTarget, mgmtSig],
+              }),
+            }
+            //    Call 2: pay CAW fee to relayer
+            const call2: ExecCall = {
+              to: CAW_ADDRESS,
+              value: 0n,
+              data: encodeFunctionData({
+                abi: erc20Abi,
+                functionName: 'transfer',
+                args: [quote.relayer, feeCaw],
+              }),
+            }
+
+            // 5. Sign the batch with the passkey/recovery key and relay.
+            await smartEoaExecute([call1, call2])
           }}
         />
       )}

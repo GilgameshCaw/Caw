@@ -26,7 +26,9 @@ import {
 import { usePublicClient } from 'wagmi'
 import { useWalletPopulation } from '~/hooks/useWalletPopulation'
 import { useIdentitySigning } from '~/components/identity/IdentitySigningProvider'
+import { useRecoveryContext } from '~/components/identity/RecoveryProvider'
 import { signWithPasskey } from '~/services/identity/passkey'
+import { signDigestForOnChain } from '~/services/identity/secp256k1Key'
 import { smartEoaAbi } from '~/../../../abi/generated'
 import { getJSON } from '~/utils/safeStorage'
 import { PASSKEY_CREDENTIAL_KEY } from '~/constants/passkeyStorage'
@@ -91,6 +93,20 @@ export interface UseSmartEoaManagementResult {
    * @returns        WebAuthn sig blob accepted by the contract's callerSig arg.
    */
   signManagement: (opName: string, params: Hex) => Promise<Hex>
+  /**
+   * Build and sign a management digest using the in-memory secp256k1 recovery
+   * key (ecdsaFallback). Produces a 65-byte ECDSA sig, which the contract
+   * accepts on its _verifyEcdsaFallback path — enabling unconditional removal
+   * even when the passkey is compromised or absent on this device.
+   *
+   * Throws a user-facing error if the recovery key is not in memory (i.e.
+   * the user is not in recovery mode / has not loaded their backup file).
+   *
+   * @param opName   e.g. "removePasskey"
+   * @param params   ABI-encoded params (viem encodeAbiParameters output).
+   * @returns        65-byte secp256k1 sig hex.
+   */
+  signManagementWithRecoveryKey: (opName: string, params: Hex) => Promise<Hex>
   /** The user's EOA address, or undefined if not Population B. */
   account: Address | undefined
 }
@@ -99,13 +115,24 @@ export function useSmartEoaManagement(): UseSmartEoaManagementResult {
   const { address, population } = useWalletPopulation()
   const publicClient = usePublicClient({ chainId: chains.l1.chainId })
   const { startSigning, stopSigning } = useIdentitySigning()
+  const recovery = useRecoveryContext()
 
   const account = population === 'B' ? (address as Address | undefined) : undefined
+
+  /** Read the current managementNonce from the user's SmartEOA-delegated EOA. */
+  const readManagementNonce = useCallback(async (): Promise<bigint> => {
+    if (!account) throw new Error('No passkey wallet connected.')
+    if (!publicClient) throw new Error('No L1 client available.')
+    return (await publicClient.readContract({
+      address: account,
+      abi: smartEoaAbi,
+      functionName: 'managementNonceOf',
+    })) as bigint
+  }, [account, publicClient])
 
   const signManagement = useCallback(
     async (opName: string, params: Hex): Promise<Hex> => {
       if (!account) throw new Error('No passkey wallet connected.')
-      if (!publicClient) throw new Error('No L1 client available.')
 
       const credentialId = getJSON<string | null>(PASSKEY_CREDENTIAL_KEY, null)
       if (!credentialId) {
@@ -114,13 +141,7 @@ export function useSmartEoaManagement(): UseSmartEoaManagementResult {
         )
       }
 
-      // Read the current managementNonce from the user's SmartEOA-delegated EOA.
-      const nonce = (await publicClient.readContract({
-        address: account,
-        abi: smartEoaAbi,
-        functionName: 'managementNonceOf',
-      })) as bigint
-
+      const nonce = await readManagementNonce()
       const digest = buildManagementDigest(account, chains.l1.chainId, opName, params, nonce)
 
       // Must be a WebAuthn passkey sig — _verifyAnyActivePasskey rejects secp256k1.
@@ -133,8 +154,33 @@ export function useSmartEoaManagement(): UseSmartEoaManagementResult {
         stopSigning()
       }
     },
-    [account, publicClient, startSigning, stopSigning],
+    [account, readManagementNonce, startSigning, stopSigning],
   )
 
-  return { signManagement, account }
+  const signManagementWithRecoveryKey = useCallback(
+    async (opName: string, params: Hex): Promise<Hex> => {
+      if (!account) throw new Error('No passkey wallet connected.')
+      if (!recovery.privateKey) {
+        throw new Error(
+          'Your recovery key is not loaded. Load your backup file to authorise this operation.',
+        )
+      }
+
+      const nonce = await readManagementNonce()
+      const digest = buildManagementDigest(account, chains.l1.chainId, opName, params, nonce)
+
+      // secp256k1 path — accepted by the contract's _verifyEcdsaFallback branch,
+      // which does unconditional removal regardless of remaining passkey count.
+      const keyHex = recovery.privateKey
+      const keyBytes = new Uint8Array(
+        (keyHex.startsWith('0x') ? keyHex.slice(2) : keyHex)
+          .match(/.{2}/g)!
+          .map((b: string) => parseInt(b, 16)),
+      )
+      return signDigestForOnChain(keyBytes, digest)
+    },
+    [account, recovery.privateKey, readManagementNonce],
+  )
+
+  return { signManagement, signManagementWithRecoveryKey, account }
 }
