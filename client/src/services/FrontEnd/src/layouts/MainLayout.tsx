@@ -165,8 +165,17 @@ const MainLayout = ({ children, hideSidebars: hideSidebarsProp }: MainLayoutProp
       }
       s.dragging = true
       setIsDragging(true)
-      // Make sure the overlay is hit-testable while we drag open.
-      if (!s.fromOpen && !isMobileMenuOpen) setIsMobileMenuOpen(true)
+      // Do NOT set isMobileMenuOpen=true here. Setting it during a drag-open
+      // gesture causes the edge catcher div (rendered only when
+      // !isMobileMenuOpen, line 356) to unmount mid-gesture, tearing off its
+      // onTouchMove/onTouchEnd/onTouchCancel handlers. If the browser then
+      // fails to deliver touchend (e.g. iOS back-swipe gesture bleeds through
+      // as web-touch then is claimed by the OS), isMobileMenuOpen is left true
+      // with no way to reset — showing the X icon on first load with the drawer
+      // closed. The visual drag is handled by applyDrawerTransform (inline style)
+      // which overrides the class-based transform during isDragging, so the
+      // drawer tracks the finger correctly without the state flip. The state is
+      // committed exactly once: in onDrawerTouchEnd via setIsMobileMenuOpen(shouldOpen).
     }
 
     const now = performance.now()
