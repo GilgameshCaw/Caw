@@ -396,22 +396,17 @@ export default function SponsorInviteSection() {
                   </div>
                 </div>
                 <div className="flex items-center gap-2 shrink-0">
-                  {c.code && (
-                    <button
-                      type="button"
-                      onClick={() => setQrCode(c.code!)}
-                      title="Show QR code"
-                      aria-label="Show QR code"
-                      className={`p-1.5 rounded-lg transition-colors cursor-pointer ${
-                        isDark ? 'text-white/60 hover:text-white hover:bg-white/10' : 'text-gray-500 hover:text-gray-900 hover:bg-black/5'
-                      }`}
-                    >
-                      {/* QR glyph — custom inline SVG to match the row's icon convention */}
-                      <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4h6v6H4V4zm10 0h6v6h-6V4zM4 14h6v6H4v-6zm10 3h3m-3 3h6m0-6v3" />
-                      </svg>
-                    </button>
-                  )}
+                  <span
+                    className={`text-xs font-semibold px-2 py-1 rounded-full ${
+                      c.pending
+                        ? (isDark ? 'bg-yellow-500/15 text-yellow-400' : 'bg-yellow-100 text-yellow-700')
+                        : c.used
+                          ? (isDark ? 'bg-gray-500/20 text-gray-400' : 'bg-gray-200 text-gray-600')
+                          : (isDark ? 'bg-green-500/15 text-green-400' : 'bg-green-100 text-green-700')
+                    }`}
+                  >
+                    {c.pending ? 'Pending' : c.used ? 'Used' : 'Unused'}
+                  </span>
                   {c.code && (
                     <button
                       type="button"
@@ -435,17 +430,22 @@ export default function SponsorInviteSection() {
                       )}
                     </button>
                   )}
-                  <span
-                    className={`text-xs font-semibold px-2 py-1 rounded-full ${
-                      c.pending
-                        ? (isDark ? 'bg-yellow-500/15 text-yellow-400' : 'bg-yellow-100 text-yellow-700')
-                        : c.used
-                          ? (isDark ? 'bg-gray-500/20 text-gray-400' : 'bg-gray-200 text-gray-600')
-                          : (isDark ? 'bg-green-500/15 text-green-400' : 'bg-green-100 text-green-700')
-                    }`}
-                  >
-                    {c.pending ? 'Pending' : c.used ? 'Used' : 'Unused'}
-                  </span>
+                  {c.code && (
+                    <button
+                      type="button"
+                      onClick={() => setQrCode(c.code!)}
+                      title="Show QR code"
+                      aria-label="Show QR code"
+                      className={`p-1.5 rounded-lg transition-colors cursor-pointer ${
+                        isDark ? 'text-white/60 hover:text-white hover:bg-white/10' : 'text-gray-500 hover:text-gray-900 hover:bg-black/5'
+                      }`}
+                    >
+                      {/* QR glyph — custom inline SVG to match the row's icon convention */}
+                      <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4h6v6H4V4zm10 0h6v6h-6V4zM4 14h6v6H4v-6zm10 3h3m-3 3h6m0-6v3" />
+                      </svg>
+                    </button>
+                  )}
                 </div>
               </li>
             ))}
