@@ -1855,5 +1855,8 @@
   "topup.expected_caw_label": "You'll receive",
   "topup.relayer_fee_eth_label": "Network fee",
   "topup.eth_total_label": "Total ETH needed",
-  "topup.eth_insufficient": "Send at least {{amount}} ETH to your address first."
+  "topup.eth_insufficient": "Send at least {{amount}} ETH to your address first.",
+  "qr.copy": "Copy",
+  "qr.copied": "Copied!",
+  "qr.download": "Download"
 }

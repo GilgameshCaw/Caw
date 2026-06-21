@@ -3,6 +3,7 @@ import { useTheme } from '~/hooks/useTheme'
 import Avatar from '~/components/Avatar'
 import cawLogo from '~/assets/images/caw-logo.png'
 import { FlipCard } from './FlipCard'
+import StyledQR from '~/components/qr/StyledQR'
 
 export type ShareProfileCardProps = {
   username: string
@@ -17,34 +18,7 @@ export type ShareProfileCardProps = {
 
 export const ShareProfileCard: React.FC<ShareProfileCardProps> = ({ username, displayName, avatarSrc, avatarFallbackSrc, profilePath }) => {
   const { isDark } = useTheme()
-  const [qrDataUrl, setQrDataUrl] = React.useState<string | null>(null)
   const profileUrl = `${window.location.origin}${profilePath}`
-
-  React.useEffect(() => {
-    let cancelled = false
-    ;(async () => {
-      try {
-        const mod = await import('qrcode')
-        const toDataURL = (mod as any).toDataURL as ((text: string, opts: any) => Promise<string>) | undefined
-        if (!toDataURL) throw new Error('qrcode.toDataURL missing (bad import shape)')
-
-        const url = await toDataURL(profileUrl, {
-          margin: 1,
-          errorCorrectionLevel: 'M',
-          color: {
-            // Always black-on-white for scan reliability
-            dark: '#000000',
-            light: '#FFFFFF'
-          }
-        })
-        if (!cancelled) setQrDataUrl(url)
-      } catch (err) {
-        console.error('QR generation failed:', err)
-        if (!cancelled) setQrDataUrl(null)
-      }
-    })()
-    return () => { cancelled = true }
-  }, [profileUrl, isDark])
 
   return (
     <FlipCard
@@ -130,18 +104,8 @@ export const ShareProfileCard: React.FC<ShareProfileCardProps> = ({ username, di
               {displayName ?? `@${username}`}
             </p>
 
-            <div className="mt-4 rounded-lg overflow-hidden bg-transparent">
-              {qrDataUrl ? (
-                <img
-                  src={qrDataUrl}
-                  alt="Profile QR"
-                  className="w-[168px] h-[168px] block"
-                />
-              ) : (
-                <div className={['w-[168px] h-[168px] flex items-center justify-center text-sm font-medium', isDark ? 'text-white' : 'text-gray-800'].join(' ')}>
-                  Generating QR…
-                </div>
-              )}
+            <div className="mt-4 rounded-lg overflow-hidden bg-white p-1.5">
+              <StyledQR value={profileUrl} size={168} />
             </div>
           </div>
         </div>

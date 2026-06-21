@@ -14,6 +14,7 @@
 
 import { useState, useEffect, useCallback } from 'react'
 import { useTheme } from '~/hooks/useTheme'
+import QRModal from '~/components/modals/QRModal'
 import { usePriceStore } from '~/store/tokenDataStore'
 import { useActiveToken } from '~/store/tokenDataStore'
 import { useSignAndSubmitAction, getCurrentMarketTip } from '~/api/actions'
@@ -67,6 +68,8 @@ export default function SponsorInviteSection() {
   const [buyState, setBuyState] = useState<BuyState>('idle')
   const [error, setError] = useState<string | null>(null)
   const [copiedIdx, setCopiedIdx] = useState<number | null>(null)
+  // The invite code whose QR modal is currently open (null = closed).
+  const [qrCode, setQrCode] = useState<string | null>(null)
 
   const strongClass = isDark ? 'text-white' : 'text-gray-900'
   const mutedClass = isDark ? 'text-white/50' : 'text-gray-500'
@@ -396,6 +399,22 @@ export default function SponsorInviteSection() {
                   {c.code && (
                     <button
                       type="button"
+                      onClick={() => setQrCode(c.code!)}
+                      title="Show QR code"
+                      aria-label="Show QR code"
+                      className={`p-1.5 rounded-lg transition-colors cursor-pointer ${
+                        isDark ? 'text-white/60 hover:text-white hover:bg-white/10' : 'text-gray-500 hover:text-gray-900 hover:bg-black/5'
+                      }`}
+                    >
+                      {/* QR glyph — custom inline SVG to match the row's icon convention */}
+                      <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4h6v6H4V4zm10 0h6v6h-6V4zM4 14h6v6H4v-6zm10 3h3m-3 3h6m0-6v3" />
+                      </svg>
+                    </button>
+                  )}
+                  {c.code && (
+                    <button
+                      type="button"
                       onClick={() => copy(c.code!, i)}
                       title="Copy invite link"
                       aria-label="Copy invite link"
@@ -433,6 +452,18 @@ export default function SponsorInviteSection() {
           </ul>
         )}
       </div>
+
+      {qrCode && (
+        <QRModal
+          isOpen={!!qrCode}
+          onClose={() => setQrCode(null)}
+          value={inviteLink(qrCode)}
+          title="Invite QR"
+          subtitle="Scan to open the signup link with this invite."
+          caption={qrCode}
+          downloadName="caw-invite"
+        />
+      )}
     </div>
   )
 }
