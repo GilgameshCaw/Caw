@@ -69,8 +69,11 @@ const QuickSignInfoPopover: React.FC = () => {
         <HiInformationCircle className="w-4 h-4 text-gray-400" />
       </button>
       {open && (
+        // Mobile: right-anchor the popover (icon sits near the right edge, so
+        // centering a 90vw box over it clips the right side). sm+: center over
+        // the icon as before.
         <div
-          className="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 z-50 w-[min(450px,90vw)] bg-gray-900 rounded-lg shadow-lg"
+          className="absolute bottom-full right-0 mb-2 z-50 w-[min(450px,90vw)] bg-gray-900 rounded-lg shadow-lg sm:right-auto sm:left-1/2 sm:-translate-x-1/2"
           onClick={(e) => e.stopPropagation()}
         >
           <QuickSignHowItWorks isDark />

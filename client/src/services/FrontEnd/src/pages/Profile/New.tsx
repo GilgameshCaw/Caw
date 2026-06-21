@@ -141,7 +141,7 @@ const DepositInfoPopover: React.FC = () => {
       </button>
       {open && (
         <div
-          className="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 z-50 w-[min(450px,90vw)] bg-gray-900 rounded-lg shadow-lg"
+          className="absolute bottom-full right-0 mb-2 z-50 w-[min(450px,90vw)] bg-gray-900 rounded-lg shadow-lg sm:right-auto sm:left-1/2 sm:-translate-x-1/2"
           // Stop propagation here too — taps inside the info card shouldn't
           // toggle the deposit switch either.
           onClick={(e) => e.stopPropagation()}
@@ -212,7 +212,7 @@ const TipPerActionPopover: React.FC<{ isDark: boolean }> = ({ isDark }) => {
       </button>
       {open && (
         <div
-          className={`absolute bottom-full left-1/2 -translate-x-1/2 mb-2 z-50 w-[min(360px,90vw)] rounded-lg shadow-lg p-3 text-left text-xs ${
+          className={`absolute bottom-full right-0 mb-2 z-50 w-[min(360px,90vw)] rounded-lg shadow-lg p-3 text-left text-xs sm:right-auto sm:left-1/2 sm:-translate-x-1/2 ${
             isDark ? 'bg-gray-900 text-white/90' : 'bg-white text-gray-800 border border-gray-200'
           }`}
           onClick={(e) => e.stopPropagation()}
@@ -296,7 +296,7 @@ const AuthInfoPopover: React.FC = () => {
       </button>
       {open && (
         <div
-          className="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 z-50 w-[min(380px,90vw)] bg-gray-900 rounded-lg shadow-lg p-4 text-xs text-gray-200 space-y-2"
+          className="absolute bottom-full right-0 mb-2 z-50 w-[min(380px,90vw)] bg-gray-900 rounded-lg shadow-lg p-4 text-xs text-gray-200 space-y-2 sm:right-auto sm:left-1/2 sm:-translate-x-1/2"
           onClick={(e) => e.stopPropagation()}
         >
           <p>
