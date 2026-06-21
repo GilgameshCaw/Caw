@@ -22,6 +22,11 @@ const WelcomePage: React.FC = () => {
   // Check if user just minted+deposited (stake pending via LayerZero)
   // pendingDeposit is the wei amount as a string, or null
   const pendingDeposit = (location.state as any)?.pendingDeposit as string | null ?? null
+  // True when this is a sponsored/gifted mint. The sponsor already deposited the
+  // gift (or it netted ~0 after burn+gas), and a passkey user has no wallet to
+  // deposit from — so the stepper must SKIP the deposit step regardless of the
+  // pendingDeposit amount (which is null when the net rounds to 0).
+  const giftedMint = (location.state as any)?.giftedMint === true
 
   // tokenId decoded from the mint receipt and handed over by New.tsx on the
   // optimistic-mint navigation. Present ONLY on a fresh mint; undefined on a
@@ -330,6 +335,7 @@ const WelcomePage: React.FC = () => {
       tokenId={tokenId ?? 0}
       initialStep={initialStep}
       pendingDeposit={pendingDeposit}
+      giftedMint={giftedMint}
       onComplete={() => {
         // Mark onboarding complete (server side, and locally so future refreshes
         // bypass the stepper even if the server PATCH failed).

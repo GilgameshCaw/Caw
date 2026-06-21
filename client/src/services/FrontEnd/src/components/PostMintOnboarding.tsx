@@ -117,10 +117,15 @@ interface PostMintOnboardingProps {
   tokenId: number
   initialStep?: number
   pendingDeposit?: string | null  // wei amount as string, or null if no deposit
+  /** True for a sponsored/gifted mint — the deposit step is skipped entirely
+   *  (the gift was already deposited, and a passkey user has no wallet to
+   *  deposit from). Covers the gift-netted-to-0 case where pendingDeposit is
+   *  null but the user still must not see the Deposit form. */
+  giftedMint?: boolean
   onComplete: () => void
 }
 
-const PostMintOnboarding: React.FC<PostMintOnboardingProps> = ({ username, tokenId, initialStep = 0, pendingDeposit = null, onComplete }) => {
+const PostMintOnboarding: React.FC<PostMintOnboardingProps> = ({ username, tokenId, initialStep = 0, pendingDeposit = null, giftedMint = false, onComplete }) => {
   const { isDark } = useTheme()
   // Theme class helpers — reused across the many cards, text styles, and
   // sub-step indicators in this component. Keeping them here avoids threading
@@ -191,7 +196,9 @@ const PostMintOnboarding: React.FC<PostMintOnboardingProps> = ({ username, token
       window.removeEventListener('storage', refresh)
     }
   }, [readPendingHint, tokenId])
-  const depositPending = !!pendingDeposit || (pendingHintAmount !== null && pendingHintAmount > 0n)
+  // giftedMint forces deposit "satisfied" even when pendingDeposit is null (gift
+  // fully consumed by burn+gas) — a passkey user has no wallet to deposit from.
+  const depositPending = giftedMint || !!pendingDeposit || (pendingHintAmount !== null && pendingHintAmount > 0n)
   const pendingDepositAmount = pendingDeposit ? BigInt(pendingDeposit) : (pendingHintAmount ?? 0n)
   const [currentStep, setCurrentStep] = useState(initialStep)
   const [completedSteps, setCompletedSteps] = useState<Set<StepId>>(new Set())

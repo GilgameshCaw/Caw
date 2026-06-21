@@ -633,6 +633,14 @@ export default function Onboarding() {
                 state: {
                   mintedTokenId,
                   pendingDeposit: derivedDepositAmount > 0n ? derivedDepositAmount.toString() : null,
+                  // This is a GIFTED mint — the sponsor already deposited the
+                  // gift (or it was fully consumed by burn+gas). Either way a
+                  // passkey user has no wallet to deposit from, so the stepper
+                  // must skip the deposit step regardless of the net amount.
+                  // (pendingDeposit can be null when gift − burn − gas ≈ 0; this
+                  // flag covers that case so they don't land on an empty Deposit
+                  // form.)
+                  giftedMint: true,
                 },
               })
             }
