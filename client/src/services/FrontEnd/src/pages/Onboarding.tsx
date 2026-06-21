@@ -725,6 +725,15 @@ export default function Onboarding() {
                   // flag covers that case so they don't land on an empty Deposit
                   // form.)
                   giftedMint: true,
+                  // We just kicked off the Quick Sign session register above
+                  // (when quickSignEnabled). It resolves in the BACKGROUND
+                  // (~seconds), so hasActiveSession reads false on the stepper's
+                  // first render → it would land on the QS step and prompt, then
+                  // auto-advance once the session lands (the 3s flash). Signal
+                  // "QS already handled" so the stepper treats the QS step as
+                  // complete from frame 1 and never prompts. False when the user
+                  // toggled Quick Sign OFF — then they DO enable it manually.
+                  quickSignPending: quickSignEnabled,
                 },
               })
             }

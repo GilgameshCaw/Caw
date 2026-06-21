@@ -123,10 +123,15 @@ interface PostMintOnboardingProps {
    *  deposit from). Covers the gift-netted-to-0 case where pendingDeposit is
    *  null but the user still must not see the Deposit form. */
   giftedMint?: boolean
+  /** True when onboarding already started the Quick Sign session register in
+   *  the background. The session lands a few seconds after the stepper mounts,
+   *  so hasActiveSession reads false on first render → without this the QS step
+   *  would briefly prompt, then auto-advance. Treat QS as complete up-front. */
+  quickSignPending?: boolean
   onComplete: () => void
 }
 
-const PostMintOnboarding: React.FC<PostMintOnboardingProps> = ({ username, tokenId, initialStep = 0, pendingDeposit = null, giftedMint = false, onComplete }) => {
+const PostMintOnboarding: React.FC<PostMintOnboardingProps> = ({ username, tokenId, initialStep = 0, pendingDeposit = null, giftedMint = false, quickSignPending = false, onComplete }) => {
   const { isDark } = useTheme()
   // Theme class helpers — reused across the many cards, text styles, and
   // sub-step indicators in this component. Keeping them here avoids threading
@@ -561,7 +566,7 @@ const PostMintOnboarding: React.FC<PostMintOnboardingProps> = ({ username, token
 
   // Track which sub-steps already succeeded (persists across retries)
   const setupDmDone = dmComplete || !!dmAlreadyEnabled || dmSkipped
-  const setupQsDone = qsComplete || hasActiveSession
+  const setupQsDone = qsComplete || hasActiveSession || quickSignPending
 
   const handleCombinedSetup = async () => {
     const runSetup = async () => {
@@ -720,7 +725,7 @@ const PostMintOnboarding: React.FC<PostMintOnboardingProps> = ({ username, token
 
   useEffect(() => {
     const dmDone = dmComplete || !!dmAlreadyEnabled
-    const qsDone = qsComplete || hasActiveSession
+    const qsDone = qsComplete || hasActiveSession || quickSignPending
     const checks: Record<StepId, boolean> = {
       verify:    isProfileAuthorized,
       stake:     depositPending || stakeConfirmed || (typeof activeToken?.stakedAmount === 'bigint' && activeToken.stakedAmount > 0n),
@@ -751,7 +756,7 @@ const PostMintOnboarding: React.FC<PostMintOnboardingProps> = ({ username, token
   // Auto-advance past steps that are already completed (but not when user explicitly clicked a step)
   const isStakeComplete = depositPending || stakeConfirmed || (typeof activeToken?.stakedAmount === 'bigint' && activeToken.stakedAmount > 0n)
   const isDmsComplete = dmComplete || !!dmAlreadyEnabled
-  const isQsComplete = qsComplete || hasActiveSession
+  const isQsComplete = qsComplete || hasActiveSession || quickSignPending
   useEffect(() => {
     if (userNavigatedRef.current) {
       userNavigatedRef.current = false

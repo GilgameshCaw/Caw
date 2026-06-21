@@ -27,6 +27,11 @@ const WelcomePage: React.FC = () => {
   // deposit from — so the stepper must SKIP the deposit step regardless of the
   // pendingDeposit amount (which is null when the net rounds to 0).
   const giftedMint = (location.state as any)?.giftedMint === true
+  // True when onboarding already kicked off the Quick Sign session register
+  // (background). Lets the stepper treat the QS step as complete from the first
+  // render so it doesn't briefly prompt-then-auto-advance while the session
+  // finalises.
+  const quickSignPending = (location.state as any)?.quickSignPending === true
 
   // tokenId decoded from the mint receipt and handed over by New.tsx on the
   // optimistic-mint navigation. Present ONLY on a fresh mint; undefined on a
@@ -336,6 +341,7 @@ const WelcomePage: React.FC = () => {
       initialStep={initialStep}
       pendingDeposit={pendingDeposit}
       giftedMint={giftedMint}
+      quickSignPending={quickSignPending}
       onComplete={() => {
         // Mark onboarding complete (server side, and locally so future refreshes
         // bypass the stepper even if the server PATCH failed).
