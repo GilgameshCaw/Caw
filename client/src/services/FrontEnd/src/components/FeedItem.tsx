@@ -8,7 +8,7 @@ import { useQueryClient } from '@tanstack/react-query'
 import { createPortal } from 'react-dom'
 import { useSignAndSubmitAction } from '~/api/actions'
 import { useAccount, useChainId } from 'wagmi'
-import { useConnectModal } from '@rainbow-me/rainbowkit'
+import { useConnectModalBridge as useConnectModal } from '~/hooks/useConnectModalBridge'
 import {
   HiOutlineHeart,
   HiOutlineEye,

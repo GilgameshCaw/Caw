@@ -14,7 +14,7 @@ import { handleError, convertToText, formatUnitsCompact } from "~/utils";
 import useContractCall from "~/hooks/useContractCall";
 import useAllowance from "~/hooks/useAllowance";
 import { useAccount, useBalance, useConnections, useReadContract, useSwitchChain, useChainId } from "wagmi"
-import { useConnectModal } from "@rainbow-me/rainbowkit"
+import { useConnectModalBridge as useConnectModal } from '~/hooks/useConnectModalBridge'
 import { useActiveToken, useTokenDataStore, usePriceStore } from "~/store/tokenDataStore"
 import { cawProfileAbi, cawProfileLedgerAbi, cawProfileQuoterAbi, cawProfileMinterAbi } from "~/../../../abi/generated"
 import { CAW_ADDRESS, CAW_NAMES_ADDRESS, CAW_NAMES_L2_ADDRESS, CAW_NAME_QUOTER_ADDRESS, CAW_NAMES_MINTER_ADDRESS, CAW_PAIR_ADDRESS } from "~/../../../abi/addresses"

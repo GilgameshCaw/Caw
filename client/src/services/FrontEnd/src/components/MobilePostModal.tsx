@@ -3,7 +3,7 @@ import { useSignAndSubmitAction } from '~/api/actions'
 import { acquireScrollLock, releaseScrollLock } from '~/utils/scrollLock'
 import { useTokenDataStore } from "~/store/tokenDataStore";
 import { useAccount } from "wagmi";
-import { useConnectModal } from "@rainbow-me/rainbowkit";
+import { useConnectModalBridge as useConnectModal } from '~/hooks/useConnectModalBridge'
 import { HiOutlineX, HiOutlinePlus } from "react-icons/hi";
 import { BsWallet } from 'react-icons/bs';
 import { useTheme } from '~/hooks/useTheme'

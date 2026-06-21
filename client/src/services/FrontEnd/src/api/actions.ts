@@ -1,7 +1,7 @@
 import { useEffect, useState, useRef, useCallback } from "react";
 import { apiFetch, retryOnIndexing }              from './client'
 import { baseSepolia }           from 'wagmi/chains'
-import { useConnectModal } from '@rainbow-me/rainbowkit'
+import { useConnectModalBridge as useConnectModal } from '~/hooks/useConnectModalBridge'
 import { useSignTypedData, useAccount, useSwitchChain, useChainId } from 'wagmi'
 import { readContract } from '@wagmi/core'
 // EIP-712 typed-data field shape. Locally declared instead of imported

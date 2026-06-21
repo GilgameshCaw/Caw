@@ -1,6 +1,6 @@
 import { useRef, useEffect, useCallback } from 'react'
 import { useAccount, useSwitchChain, useChainId, useWalletClient } from 'wagmi'
-import { useConnectModal } from '@rainbow-me/rainbowkit'
+import { useConnectModalBridge as useConnectModal } from '~/hooks/useConnectModalBridge'
 
 /**
  * Hook that ensures a wallet is connected and on the correct chain before

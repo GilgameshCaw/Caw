@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useMemo, useCallback, useRef } from 'react'
 import Tooltip from '~/components/Tooltip'
 import { useAccount, useConnections, useSwitchChain, useReadContract } from 'wagmi'
-import { useConnectModal } from '@rainbow-me/rainbowkit'
+import { useConnectModalBridge as useConnectModal } from '~/hooks/useConnectModalBridge'
 import WalletAccountButton from '~/components/buttons/WalletAccountButton'
 import { useEnsureWallet } from '~/hooks/useEnsureWallet'
 import { useRootSigner } from '~/hooks/useRootSigner'

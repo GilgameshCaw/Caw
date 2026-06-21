@@ -1,7 +1,7 @@
 import React, { useEffect, useMemo, useState } from 'react'
 import { useAccount, useChainId, useSwitchChain, useWriteContract, useWaitForTransactionReceipt, useReadContract, useBalance } from 'wagmi'
 import { readContract } from '@wagmi/core'
-import { useConnectModal } from '@rainbow-me/rainbowkit'
+import { useConnectModalBridge as useConnectModal } from '~/hooks/useConnectModalBridge'
 import { formatEther, formatUnits, erc20Abi, maxUint256 } from 'viem'
 import ModalWrapper from './ModalWrapper'
 import { useTheme } from '~/hooks/useTheme'

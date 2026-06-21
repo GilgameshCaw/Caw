@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react'
 import { Link } from '~/utils/localizedRouter'
 import { useReadContract, useAccount, useConnections, useSwitchChain } from 'wagmi'
-import { useConnectModal } from '@rainbow-me/rainbowkit'
+import { useConnectModalBridge as useConnectModal } from '~/hooks/useConnectModalBridge'
 import { useEnsureWallet } from '~/hooks/useEnsureWallet'
 import { useRootSigner } from '~/hooks/useRootSigner'
 import { useTheme } from '~/hooks/useTheme'

@@ -20,7 +20,7 @@ import { useOffersUnreadStore } from "~/store/offersUnreadStore";
 import { useComposeDraftStore } from "~/store/composeDraftStore";
 import { useActiveToken } from "~/store/tokenDataStore";
 import { useLayoutStore } from "~/store/layoutStore";
-import { useConnectModal } from "@rainbow-me/rainbowkit";
+import { useConnectModalBridge as useConnectModal } from '~/hooks/useConnectModalBridge'
 import { useAccount } from "wagmi";
 import WalletAccountButton from "~/components/buttons/WalletAccountButton";
 import LandingHeader from "~/components/landing/LandingHeader";

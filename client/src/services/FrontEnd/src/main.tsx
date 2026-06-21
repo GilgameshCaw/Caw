@@ -17,7 +17,10 @@ import { createRoot } from "react-dom/client";
 import * as Sentry from '@sentry/react';
 
 import "./index.css";
-import "@rainbow-me/rainbowkit/styles.css";
+// @rainbow-me/rainbowkit/styles.css is imported inside the lazy
+// RainbowKitLayer chunk (config/RainbowKitLayer.tsx) so it stays off
+// the critical path. rainbowkit-overrides.css must stay here to avoid
+// FOUC when the layer mounts and injects the base RK styles.
 import "./rainbowkit-overrides.css";
 import App from "./App.tsx";
 import Web3Provider from "./config/Web3Provider";

@@ -1,6 +1,6 @@
 import React, { useState, useMemo } from 'react'
 import { useAccount, useChainId, useSwitchChain, useWriteContract, useWaitForTransactionReceipt, useReadContract } from 'wagmi'
-import { useConnectModal } from '@rainbow-me/rainbowkit'
+import { useConnectModalBridge as useConnectModal } from '~/hooks/useConnectModalBridge'
 import { parseEther, parseUnits } from 'viem'
 import ModalWrapper from './ModalWrapper'
 import ModalHeader from './ModalHeader'

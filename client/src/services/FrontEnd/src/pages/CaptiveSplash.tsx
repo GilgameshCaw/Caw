@@ -1,5 +1,5 @@
 import { Link, useNavigate } from '~/utils/localizedRouter'
-import { useConnectModal } from '@rainbow-me/rainbowkit'
+import { useConnectModalBridge as useConnectModal } from '~/hooks/useConnectModalBridge'
 import { useAccount } from 'wagmi'
 import { useActiveToken } from '~/store/tokenDataStore'
 import { useTheme } from '~/hooks/useTheme'

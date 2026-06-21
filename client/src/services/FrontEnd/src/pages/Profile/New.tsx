@@ -2,7 +2,7 @@
 import { SubmitButton } from "~/components/buttons/SubmitButton"
 import React, { useState, useCallback, useMemo, useEffect, useRef } from 'react'
 import { useReadContract, useAccount, useSwitchChain, useBalance, usePublicClient, useSignMessage } from 'wagmi'
-import { useConnectModal } from '@rainbow-me/rainbowkit'
+import { useConnectModalBridge as useConnectModal } from '~/hooks/useConnectModalBridge'
 import { generatePrivateKey, privateKeyToAccount } from 'viem/accounts'
 import useAllowance from "~/hooks/useAllowance";
 import { maxUint256, parseUnits, erc20Abi, formatEther, parseEther, parseEventLogs, keccak256, encodeAbiParameters, toHex, type StateOverride } from "viem";

@@ -2,7 +2,7 @@ import React, { useState, useMemo } from 'react'
 import { Link } from '~/utils/localizedRouter'
 import { useTheme } from '~/hooks/useTheme'
 import { useAccount } from "wagmi"
-import { useConnectModal } from "@rainbow-me/rainbowkit"
+import { useConnectModalBridge as useConnectModal } from '~/hooks/useConnectModalBridge'
 import { HiOutlineClock, HiOutlineTrash, HiOutlineCheck, HiOutlineXCircle, HiChevronDown, HiChevronRight, HiOutlineInformationCircle, HiOutlineEye, HiOutlinePhotograph, HiOutlineX } from "react-icons/hi"
 import { useActiveToken } from '~/store/tokenDataStore'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'

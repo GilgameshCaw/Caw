@@ -12,7 +12,7 @@ import { useSignAndSubmitAction, buildTypedData, TYPES, allocateCawonces } from 
 const MAX_THREAD_LENGTH = 64
 import { useTokenDataStore, useActiveToken } from "~/store/tokenDataStore";
 import { useAccount, useConnections, useSignTypedData } from "wagmi";
-import { useConnectModal } from "@rainbow-me/rainbowkit";
+import { useConnectModalBridge as useConnectModal } from '~/hooks/useConnectModalBridge'
 import type { ActionParams } from '~/api/actions'
 import type { CawItem } from '~/types'
 import { useTheme } from '~/hooks/useTheme'

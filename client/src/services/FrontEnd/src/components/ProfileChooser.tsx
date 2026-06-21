@@ -7,7 +7,7 @@ import UsernameSvg from "./UsernameSvg";
 import { Link } from '~/utils/localizedRouter'
 import { TokenData } from "~/types";
 import { useAccount } from "wagmi";
-import { useConnectModal } from '@rainbow-me/rainbowkit';
+import { useConnectModalBridge as useConnectModal } from '~/hooks/useConnectModalBridge'
 import { Address } from "viem";
 import { useTheme } from "~/hooks/useTheme";
 import { apiFetch } from "~/api/client";

@@ -147,22 +147,37 @@ export default defineConfig({
     },
     rollupOptions: {
       output: {
-        // Pull only @rainbow-me into its own named chunk. It's the
-        // single biggest vendor block (~1.8MB) and its dep graph
-        // (rainbowkit → wagmi/viem → react) is internally consistent,
-        // so Rollup correctly emits modulepreloads in the right order.
+        // Two-chunk strategy for lazy RK code-split.
         //
-        // Tried splitting react / wagmi / tanstack into their own
-        // chunks too — the cache-stability win was real, but Rollup
-        // doesn't always emit dep-order edges across manual chunk
-        // boundaries. tanstack would preload before react, then crash
-        // with "Cannot read properties of undefined (reading
-        // 'createContext')" because React.createContext was undefined
-        // at module-init time. Letting Rollup auto-chunk the rest
-        // keeps the order correct at the cost of a slightly less
-        // cache-friendly entry chunk.
+        // vendor-core: always-on deps (react, wagmi, viem, tanstack).
+        //   Loaded with the entry on every route including onboarding.
+        //   Kept as ONE chunk (not split further) to avoid the dep-order
+        //   crash: the previous attempt to split react/wagmi/tanstack into
+        //   SEPARATE named chunks caused Rollup to emit modulepreload edges
+        //   out-of-order (tanstack before react), crashing with
+        //   "Cannot read properties of undefined (reading 'createContext')".
+        //   A single combined chunk avoids that ordering problem.
+        //
+        // vendor-rainbowkit: lazy deps (@rainbow-me/*).
+        //   Only loaded when RainbowKitLayer lazy-mounts (first wallet-connect
+        //   click). NOT preloaded in index.html — browser never fetches it for
+        //   onboarding or feed-read-only sessions.
+        //   Previously: was pulled into the entry because wagmi symbols shared
+        //   between RK and the entry caused Rollup to put wagmi in vendor-rainbowkit
+        //   (and then entry needed wagmi → static import → eager preload).
+        //   Now: wagmi lives in vendor-core (not vendor-rainbowkit), so vendor-rainbowkit
+        //   is purely lazy and the entry has no static import of it.
         manualChunks(id) {
           if (id.includes('/@rainbow-me/')) return 'vendor-rainbowkit'
+          if (
+            id.includes('/node_modules/wagmi/') ||
+            id.includes('/node_modules/@wagmi/') ||
+            id.includes('/node_modules/viem/') ||
+            id.includes('/node_modules/react/') ||
+            id.includes('/node_modules/react-dom/') ||
+            id.includes('/node_modules/@tanstack/') ||
+            id.includes('/node_modules/zustand/')
+          ) return 'vendor-core'
           return undefined
         },
       },

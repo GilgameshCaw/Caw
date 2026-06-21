@@ -1,7 +1,7 @@
 import { useTheme } from '~/hooks/useTheme'
 import { useState, useEffect, useLayoutEffect, useRef, useMemo, useCallback } from 'react'
 import { useAccount } from 'wagmi'
-import { useConnectModal } from '@rainbow-me/rainbowkit'
+import { useConnectModalBridge as useConnectModal } from '~/hooks/useConnectModalBridge'
 import { useEnsureWallet } from '~/hooks/useEnsureWallet'
 import { formatWalletError } from '~/utils/errorMessage'
 import { useSearchParams, useParams } from 'react-router-dom'
