@@ -459,6 +459,55 @@ router.post('/bootstrap', async (req, res) => {
     }
   }
 
+  // Record the in-flight deposit so the account is spendable IMMEDIATELY,
+  // before the L1→L2 LayerZero bridge credits the stake on L2. mintAndDeposit
+  // takes the CAW on L1 and bridges it; until it lands (minutes), an L2
+  // getTokens() read returns stakedAmount 0. Without this, a freshly-invited
+  // user who signs in and tries to act (e.g. follow) hits "insufficient CAW"
+  // even though their invite funded them. by-token already returns
+  // pendingDepositAmount (users.ts), the action gate already credits it
+  // (actions.ts:1056), and it self-clears once the cached on-chain stake
+  // catches up (users.ts:387 + DataCleaner) — the only missing piece was
+  // writing it at mint. updateMany (not upsert) so we never race the indexer's
+  // row create: if the User row isn't indexed yet, this is a harmless no-op and
+  // the FE sign-in path covers the brief gap. Fire-and-forget; a DB hiccup must
+  // not fail an already-on-chain mint.
+  if (result.tokenId != null && params.depositAmountCAW > 0n) {
+    const creditTokenId = result.tokenId
+    const creditWei = params.depositAmountCAW.toString()
+    const creditPending = async (): Promise<number> => {
+      const r = await prisma.user.updateMany({
+        where: { tokenId: creditTokenId },
+        // Only set if not already credited — never stomp a larger/equal pending
+        // value (e.g. a concurrent top-up) and don't re-fire once the row has it.
+        data: { pendingDepositAmount: creditWei, lastStakedAt: new Date() },
+      })
+      return r.count
+    }
+    // The mint just landed on-chain; the indexer (NftTransferWatcher) may not
+    // have created the User row yet, so the immediate updateMany can no-op.
+    // Retry on a short backoff that covers the indexer's typical create latency
+    // (same window the FE by-token 202-retry uses). All fire-and-forget — a DB
+    // hiccup must never fail an already-on-chain mint.
+    void (async () => {
+      const delays = [0, 1500, 4000, 9000]
+      for (const d of delays) {
+        if (d > 0) await new Promise(r => setTimeout(r, d))
+        try {
+          const n = await creditPending()
+          if (n > 0) {
+            console.log(`[sponsor/bootstrap] credited pendingDepositAmount=${creditWei} for tokenId=${creditTokenId}`)
+            return
+          }
+        } catch (err) {
+          console.error('[sponsor/bootstrap] pendingDepositAmount write failed:', err)
+          return
+        }
+      }
+      console.warn(`[sponsor/bootstrap] pendingDepositAmount not credited for tokenId=${creditTokenId} — User row never appeared in retry window`)
+    })()
+  }
+
   // Account was actually CREATED — now (and only now) spend one IP quota slot.
   // Peek-only check above means failed/abandoned attempts never counted. Spend
   // against the SAME counter we peeked (ungated → its independent counter, so a
