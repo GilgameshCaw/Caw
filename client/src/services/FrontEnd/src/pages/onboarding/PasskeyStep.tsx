@@ -11,12 +11,11 @@
  * The user cannot advance past this step without a successful passkey.
  */
 
-import { useState } from 'react'
+import { useState, useMemo } from 'react'
 import { useTheme } from '~/hooks/useTheme'
 import { useT } from '~/i18n/I18nProvider'
 import { enrollPasskey, type PasskeyPubkey } from '~/services/identity/passkey'
-import { setJSON } from '~/utils/safeStorage'
-import { PASSKEY_CREDENTIAL_KEY, IDENTITY_KIND_KEY, IDENTITY_KIND_PASSKEY } from '~/constants/passkeyStorage'
+import { detectInAppBrowser } from '~/utils/inAppBrowser'
 
 export interface PasskeyStepProps {
   username: string
@@ -68,9 +67,27 @@ export default function PasskeyStep({ username, onNext, onBack }: PasskeyStepPro
 
   const [status, setStatus] = useState<Status>('idle')
   const [errorMsg, setErrorMsg] = useState<{ text: string; learnMoreUrl?: string } | null>(null)
+  const [copied, setCopied] = useState(false)
+
+  // Detect embedded app webviews (Telegram, Instagram, etc.). These frequently
+  // can't run passkey enrollment on iOS — warn before the user tries, and turn
+  // a post-failure error into the "open in your browser" copy instead of the
+  // misleading "prompt timed out" message.
+  const inApp = useMemo(() => detectInAppBrowser(), [])
 
   const mutedClass = isDark ? 'text-white/50' : 'text-gray-500'
   const strongClass = isDark ? 'text-white' : 'text-gray-900'
+
+  const handleCopyLink = async () => {
+    try {
+      await navigator.clipboard.writeText(window.location.href)
+      setCopied(true)
+      setTimeout(() => setCopied(false), 2000)
+    } catch {
+      // Clipboard API can be blocked in some webviews; fail silently — the user
+      // can still use the app's "open in browser" menu.
+    }
+  }
 
   const handleEnroll = async () => {
     setStatus('enrolling')
@@ -83,20 +100,24 @@ export default function PasskeyStep({ username, onNext, onBack }: PasskeyStepPro
         userName: username,
         userDisplayName: `@${username}`,
       })
-      // Persist the (non-secret) credentialId so a returning Pop-B user can
-      // re-invoke signWithPasskey() on this device after onboarding. Without
-      // this, IdentitySection / useRootSigner have no credentialId on reload
-      // and fall back to the wallet-connect path. See project_root_signer.
-      setJSON(PASSKEY_CREDENTIAL_KEY, pubkey.credentialId)
-      // Mark this browser as a passkey (Population B) install so a returning
-      // user with no wagmi wallet still classifies as 'B' in useWalletPopulation.
-      setJSON(IDENTITY_KIND_KEY, IDENTITY_KIND_PASSKEY)
-      // Success — advance immediately with the pubkey
+      // NOTE: the credentialId is NOT persisted here. At enroll time the account
+      // doesn't exist yet — there's no tokenId or owner address to scope it by,
+      // and the per-account keys require both. The credential is carried forward
+      // in onboarding state (enrolledPasskey) and persisted at mint-complete in
+      // Onboarding.tsx via persistPasskeyIdentity(mintedTokenId, ownerAddr, …),
+      // where tokenId + owner are known. Nothing reads the credential between
+      // enroll and mint (signing can't happen before the profile exists).
       onNext(pubkey)
     } catch (err: unknown) {
       const raw =
         err instanceof Error ? err.message : t('onboarding.passkey.error_generic')
-      setErrorMsg(humanizeWebAuthnError(raw))
+      // In an embedded webview the failure is almost always "this environment
+      // can't do WebAuthn", not a user timeout — surface the actionable copy.
+      setErrorMsg(
+        inApp.isInApp
+          ? { text: t('onboarding.passkey.error_inapp') }
+          : humanizeWebAuthnError(raw),
+      )
       setStatus('error')
     }
   }
@@ -126,6 +147,29 @@ export default function PasskeyStep({ username, onNext, onBack }: PasskeyStepPro
         </ul>
       </div>
 
+      {/* In-app browser pre-flight warning. Shown before the user tries, so
+          they can switch to Safari/Chrome instead of hitting a cryptic
+          failure. Amber (caution), not red (error) — passkey hasn't failed
+          yet, and on Android some webviews do work. */}
+      {inApp.isInApp && status !== 'error' && (
+        <div className={`rounded-xl p-4 border ${isDark ? 'bg-amber-500/10 border-amber-500/30' : 'bg-amber-50 border-amber-200'}`}>
+          <p className={`text-sm font-medium mb-1 ${isDark ? 'text-amber-300' : 'text-amber-800'}`}>
+            {t('onboarding.passkey.inapp_warning_title')}
+          </p>
+          <p className={`text-[13px] leading-snug ${isDark ? 'text-amber-200/80' : 'text-amber-700'}`}>
+            {inApp.isIOS
+              ? t('onboarding.passkey.inapp_warning_ios')
+              : t('onboarding.passkey.inapp_warning_generic')}
+          </p>
+          <button
+            onClick={handleCopyLink}
+            className={`mt-2 text-[13px] font-medium underline hover:opacity-80 cursor-pointer ${isDark ? 'text-amber-300' : 'text-amber-800'}`}
+          >
+            {copied ? t('onboarding.passkey.inapp_copied') : t('onboarding.passkey.inapp_copy_link')}
+          </button>
+        </div>
+      )}
+
       {/* Error message — text body, optional "Learn more" link rendered
           as a real hyperlink (not pasted inline). */}
       {status === 'error' && errorMsg && (
@@ -146,6 +190,14 @@ export default function PasskeyStep({ username, onNext, onBack }: PasskeyStepPro
               </>
             )}
           </p>
+          {inApp.isInApp && (
+            <button
+              onClick={handleCopyLink}
+              className={`mt-2 text-[13px] font-medium underline hover:opacity-80 cursor-pointer ${isDark ? 'text-red-300' : 'text-red-700'}`}
+            >
+              {copied ? t('onboarding.passkey.inapp_copied') : t('onboarding.passkey.inapp_copy_link')}
+            </button>
+          )}
         </div>
       )}
 
