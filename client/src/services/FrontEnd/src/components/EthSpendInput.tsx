@@ -3,7 +3,7 @@
  *
  * Shared "ETH to spend / ETH to deposit" card used on:
  *   - /usernames/new   (Profile/New.tsx — burns a username, deposits remainder)
- *   - /staking         (Staking.tsx deposit panel — full amount becomes deposit)
+ *   - /wallet         (Staking.tsx deposit panel — full amount becomes deposit)
  *
  * The two sites previously had ~100 lines of duplicated input + quick-picks +
  * USD readout + balance "use max" button. The only divergence is the

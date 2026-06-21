@@ -129,7 +129,7 @@ const Sidebar: React.FC<SidebarProps> = ({ onNavigate }) => {
   const activeToken = useActiveToken()
   const { isDark, toggle } = useTheme()
   // The /wallet page is biometric-only (Pop-B): plain-wallet (A) and other
-  // smart-wallet (C) users manage funds in their own wallet + on /staking, so
+  // smart-wallet (C) users manage funds in their own wallet + on /wallet, so
   // only show the Wallet link to passkey users. See Wallet.tsx for the page-side
   // gate that redirects A/C away.
   const { hasIdentity: dmEnabled } = useDmIdentity(activeToken?.tokenId)
@@ -322,14 +322,14 @@ const Sidebar: React.FC<SidebarProps> = ({ onNavigate }) => {
            </NavLink>
 
            <NavLink
-             to="/staking"
+             to="/wallet"
              onClick={guardClick}
              className={({ isActive }) =>
                `relative flex items-center gap-3 px-4 py-3.5 sm:gap-3 sm:px-3 sm:py-3.5 rounded-2xl transition-colors duration-200 min-w-0 ${getNavLinkClasses(isActive)}`
              }
            >
             <HiOutlineCube className="w-5 h-5 sm:w-6 sm:h-6 shrink-0" />
-            <span className="font-medium text-base sm:text-lg min-w-0 truncate">{t('nav.staking')}</span>
+            <span className="font-medium text-base sm:text-lg min-w-0 truncate">{t('nav.wallet')}</span>
            </NavLink>
 
            <NavLink

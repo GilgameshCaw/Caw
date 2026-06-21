@@ -122,10 +122,10 @@ export const layoutRoutes: RouteDef[] = [
   { path: "/home", component: <AuthGate><Main /></AuthGate> },
   { path: "/explore", component: <AuthGate><ExplorePage /></AuthGate> },
   { path: "/pending", component: <AuthGate><PendingPage /></AuthGate> },
-  { path: "/staking", component: <AuthGate><Staking /></AuthGate> },
-  { path: "/staking/activity", component: <AuthGate><CawActivity /></AuthGate> },
-  { path: "/staking/unstake", component: <AuthGate><Staking /></AuthGate> },
-  { path: "/staking/info", component: <AuthGate><Staking /></AuthGate> },
+  { path: "/wallet", component: <AuthGate><Staking /></AuthGate> },
+  { path: "/wallet/activity", component: <AuthGate><CawActivity /></AuthGate> },
+  { path: "/wallet/unstake", component: <AuthGate><Staking /></AuthGate> },
+  { path: "/wallet/info", component: <AuthGate><Staking /></AuthGate> },
   { path: "/usernames", component: <Marketplace /> },
   // /usernames/new doesn't pin handle.hideSidebars — captive users hit
   // the path-based hideSidebars in MainLayout, and the post-mint

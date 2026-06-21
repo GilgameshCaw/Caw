@@ -572,7 +572,7 @@ const MainLayout = ({ children, hideSidebars: hideSidebarsProp }: MainLayoutProp
       {!hideSidebars && !isCaptive && !hideMobileNavOverride && !(
         location.pathname.startsWith('/messages') ||
         location.pathname.startsWith('/usernames') ||
-        location.pathname.startsWith('/staking') ||
+        location.pathname.startsWith('/wallet') ||
         location.pathname.startsWith('/settings')
       ) && (
         <button

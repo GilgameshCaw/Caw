@@ -65,8 +65,8 @@ const Staking = () => {
 
   // Determine active tab from URL
   const getActiveTabFromPath = (): StakingTab => {
-    if (location.pathname === '/staking/unstake') return 'unstake'
-    if (location.pathname === '/staking/info') return 'info'
+    if (location.pathname === '/wallet/unstake') return 'unstake'
+    if (location.pathname === '/wallet/info') return 'info'
     return 'stake'
   }
 
@@ -1363,7 +1363,7 @@ const Staking = () => {
             {/* Desktop-only Activity link — aligns with section title */}
             <button
               type="button"
-              onClick={() => navigate('/staking/activity')}
+              onClick={() => navigate('/wallet/activity')}
               className="hidden md:inline-flex items-center px-3 py-1.5 bg-yellow-500 text-black font-semibold text-xs rounded-full hover:bg-yellow-400 transition-colors cursor-pointer"
             >
               {t('staking.view_activity')}
@@ -1497,7 +1497,7 @@ const Staking = () => {
           <div className="mt-3 flex justify-end md:hidden">
             <button
               type="button"
-              onClick={() => navigate('/staking/activity')}
+              onClick={() => navigate('/wallet/activity')}
               className={`text-xs font-medium transition-colors cursor-pointer ${
                 isDark ? 'text-yellow-500/80 hover:text-yellow-400' : 'text-yellow-700 hover:text-yellow-800'
               }`}
@@ -1520,7 +1520,7 @@ const Staking = () => {
           }`}>
             <div className="flex relative">
                                 <button
-                    onClick={() => navigate('/staking')}
+                    onClick={() => navigate('/wallet')}
                     className={`flex-1 min-w-0 py-2 px-2 sm:px-6 text-center font-medium text-base sm:text-lg transition-all duration-200 flex items-center justify-center gap-1 sm:gap-2 relative z-10 cursor-pointer ${
                       activeTab === 'stake'
                         ? `${isDark ? 'bg-white text-black' : 'bg-black text-white'} rounded-lg`
@@ -1532,7 +1532,7 @@ const Staking = () => {
                   </button>
 
                   <button
-                    onClick={() => navigate('/staking/unstake')}
+                    onClick={() => navigate('/wallet/unstake')}
                     className={`flex-1 min-w-0 py-2 px-2 sm:px-6 text-center font-medium text-base sm:text-lg transition-all duration-200 flex items-center justify-center gap-1 sm:gap-2 relative z-10 cursor-pointer ${
                       activeTab === 'unstake'
                         ? `${isDark ? 'bg-white text-black' : 'bg-black text-white'} rounded-lg`
@@ -1544,7 +1544,7 @@ const Staking = () => {
                   </button>
 
                   <button
-                    onClick={() => navigate('/staking/info')}
+                    onClick={() => navigate('/wallet/info')}
                     className={`flex-1 min-w-0 py-2 px-2 sm:px-6 text-center font-medium text-base sm:text-lg transition-all duration-200 flex items-center justify-center gap-1 sm:gap-2 relative z-10 cursor-pointer ${
                       activeTab === 'info'
                         ? `${isDark ? 'bg-white text-black' : 'bg-black text-white'} rounded-lg`

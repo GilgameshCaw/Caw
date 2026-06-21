@@ -659,7 +659,7 @@ export const CawPage: React.FC = () => {
                 (caws.ts → tipAgg). Total is the author's gross direct
                 credit from this caw's social interactions; staking
                 rewards aren't attributable to a single post and live on
-                /staking/activity. */}
+                /wallet/activity. */}
             {(() => {
               const likeCount = caw.likeCount ?? 0
               const recawCount = caw.recawCount ?? 0

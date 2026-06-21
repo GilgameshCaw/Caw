@@ -63,7 +63,7 @@ const InsufficientStakeModal: React.FC<InsufficientStakeModalProps> = ({
     if (onStake) {
       onStake()
     } else {
-      navigate('/staking')
+      navigate('/wallet')
     }
     onClose()
   }
