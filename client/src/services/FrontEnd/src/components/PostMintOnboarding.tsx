@@ -24,6 +24,7 @@ import { cawProfileAbi, cawProfileQuoterAbi } from '~/../../../abi/generated'
 import { chains } from '~/config/chains'
 import { handleError } from '~/utils'
 import { apiFetch, retryOnIndexing } from '~/api/client'
+import ModalWrapper from '~/components/modals/ModalWrapper'
 
 const persistOnboardingStep = (username: string, step: number) => {
   apiFetch(`/api/users/onboarding/${username}`, {
@@ -441,6 +442,44 @@ const PostMintOnboarding: React.FC<PostMintOnboardingProps> = ({ username, token
   const [dmComplete, setDmComplete] = useState(false)
   const [dmError, setDmError] = useState<string | null>(null)
 
+  // Vault-password prompt for Pop-B new-device DM key unwrap (fallback path).
+  // Shows when the onboarding-time auto-registration didn't complete (race,
+  // network hiccup) and the cache is empty on this device.
+  const [vaultPasswordPrompt, setVaultPasswordPrompt] = useState<{
+    resolve: (pw: string) => void
+    reject: () => void
+  } | null>(null)
+  const [vaultPasswordInput, setVaultPasswordInput] = useState('')
+  const [vaultPasswordError, setVaultPasswordError] = useState<string | null>(null)
+
+  const openVaultPasswordPrompt = (): Promise<string> =>
+    new Promise<string>((resolve, reject) => {
+      setVaultPasswordInput('')
+      setVaultPasswordError(null)
+      setVaultPasswordPrompt({ resolve, reject })
+    })
+
+  const handleVaultPasswordSubmit = () => {
+    if (!vaultPasswordPrompt) return
+    if (!vaultPasswordInput) {
+      setVaultPasswordError('Please enter your vault password.')
+      return
+    }
+    const { resolve } = vaultPasswordPrompt
+    setVaultPasswordPrompt(null)
+    resolve(vaultPasswordInput)
+    setVaultPasswordInput('')
+  }
+
+  const handleVaultPasswordCancel = () => {
+    if (!vaultPasswordPrompt) return
+    const { reject } = vaultPasswordPrompt
+    setVaultPasswordPrompt(null)
+    setVaultPasswordInput('')
+    setVaultPasswordError(null)
+    reject()
+  }
+
   // Auto-detect if DMs are already enabled (update local state for UI)
   useEffect(() => {
     if (dmAlreadyEnabled) setDmComplete(true)
@@ -449,7 +488,7 @@ const PostMintOnboarding: React.FC<PostMintOnboardingProps> = ({ username, token
   const handleEnableDms = async () => {
     setDmError(null)
     try {
-      await initDm()
+      await initDm(openVaultPasswordPrompt)
       setDmComplete(true)
       markComplete('dms')
       markComplete('verify')
@@ -533,7 +572,7 @@ const PostMintOnboarding: React.FC<PostMintOnboardingProps> = ({ username, token
     if (!setupDmDone) {
       setSetupSubStep('dms')
       try {
-        await initDmRef.current()
+        await initDmRef.current(openVaultPasswordPrompt)
         setDmComplete(true)
         markComplete('dms')
         markComplete('verify')
@@ -1434,6 +1473,59 @@ const PostMintOnboarding: React.FC<PostMintOnboardingProps> = ({ username, token
       </Tooltip>
       </div>
       <BugReportModal isOpen={showBugReport} onClose={() => setShowBugReport(false)} />
+
+      {/* Vault-password prompt — Pop-B new-device DM key unwrap (fallback).
+          Only visible when the onboarding-time auto-registration didn't complete
+          (race / network hiccup) and the DM cache is empty on this device.
+          Same pattern as Messages.tsx openVaultPasswordPrompt. */}
+      <ModalWrapper isOpen={!!vaultPasswordPrompt} onClose={handleVaultPasswordCancel} usePortal>
+        <div className="p-6 space-y-4">
+          <div className="flex items-center gap-3 mb-2">
+            <div className={`p-2 rounded-full ${isDark ? 'bg-yellow-500/10' : 'bg-yellow-50'}`}>
+              <HiOutlineLockClosed className={`w-5 h-5 text-yellow-500`} />
+            </div>
+            <h3 className={`text-lg font-semibold ${isDark ? 'text-white' : 'text-gray-900'}`}>
+              Enable DMs on this device
+            </h3>
+          </div>
+          <p className={`text-sm ${isDark ? 'text-white/70' : 'text-gray-600'}`}>
+            Enter your vault password to unlock your DM encryption keys on this device.
+            This is a one-time step — future visits will use your passkey automatically.
+          </p>
+          <input
+            type="password"
+            value={vaultPasswordInput}
+            onChange={e => { setVaultPasswordInput(e.target.value); setVaultPasswordError(null) }}
+            onKeyDown={e => { if (e.key === 'Enter') handleVaultPasswordSubmit() }}
+            placeholder="Vault password"
+            autoFocus
+            className={`w-full px-4 py-3 rounded-xl border text-sm outline-none transition-colors ${
+              isDark
+                ? 'bg-white/5 border-white/20 text-white placeholder-white/30 focus:border-yellow-500'
+                : 'bg-gray-50 border-gray-300 text-gray-900 placeholder-gray-400 focus:border-yellow-500'
+            }`}
+          />
+          {vaultPasswordError && (
+            <p className="text-sm text-red-500">{vaultPasswordError}</p>
+          )}
+          <div className="flex gap-3 pt-1">
+            <button
+              onClick={handleVaultPasswordCancel}
+              className={`flex-1 py-2.5 rounded-xl text-sm font-medium transition-colors cursor-pointer ${
+                isDark ? 'bg-white/10 text-white hover:bg-white/20' : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
+              }`}
+            >
+              Use backup file instead
+            </button>
+            <button
+              onClick={handleVaultPasswordSubmit}
+              className="flex-1 py-2.5 rounded-xl text-sm font-medium bg-yellow-500 hover:bg-yellow-600 text-black transition-colors cursor-pointer"
+            >
+              Unlock
+            </button>
+          </div>
+        </div>
+      </ModalWrapper>
     </div>
   )
 }

@@ -560,7 +560,61 @@ export default function Onboarding() {
                   const dmSignMessage = (msg: string): Promise<string> =>
                     result.signVerifyMessage(msg).then(sig => sig as string)
                   deriveKeyPair(dmSignMessage, mintedTokenId, mintedUsername)
-                    .then(() => console.log('[onboarding:dm] DM key cache primed for tokenId', mintedTokenId))
+                    .then(async ({ publicKeyHex, rawSignature, sigMessage }) => {
+                      console.log('[onboarding:dm] DM key cache primed for tokenId', mintedTokenId)
+                      // PRIMARY FIX: also REGISTER the DM identity with the server
+                      // now that the recovery key is still in memory. This means
+                      // the welcome stepper's useDmIdentity poll will find
+                      // hasIdentity:true immediately and auto-mark the DMs step
+                      // complete — no tap, no vault-password prompt for a user who
+                      // just finished onboarding on this device.
+                      //
+                      // rawSignature / sigMessage come from deriveKeyPair when it
+                      // had to call signMessage (fresh derive, not a cache restore).
+                      // They may be absent on a cache-hit — in that case we have
+                      // no signer material here, so fall through silently (the
+                      // stepper secondary fix covers that path).
+                      if (!rawSignature || !sigMessage) {
+                        console.log('[onboarding:dm] Cache hit during prime — skipping server registration (stepper will handle if needed)')
+                        return
+                      }
+                      try {
+                        const currentSession = useAuthStore.getState().sessionToken
+                        const data = await retryOnIndexing(() =>
+                          apiFetch<{
+                            sessionToken: string
+                            authorizedTokenIds: number[]
+                            authorizedAddresses: string[]
+                            expiresAt: number
+                          }>('/api/auth/verify-dm', {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({
+                              signature: rawSignature,
+                              message: sigMessage,
+                              userId: mintedTokenId,
+                              publicKey: publicKeyHex,
+                            }),
+                          })
+                        )
+                        // Update auth store — same merge logic as useDm initializeClient
+                        if (currentSession && data.sessionToken === currentSession) {
+                          useAuthStore.getState().addAuthorization(data.authorizedTokenIds, data.authorizedAddresses)
+                        } else {
+                          useAuthStore.getState().setSession(
+                            data.sessionToken,
+                            data.authorizedTokenIds,
+                            data.authorizedAddresses,
+                            data.expiresAt,
+                          )
+                        }
+                        console.log('[onboarding:dm] DM identity registered with server for tokenId', mintedTokenId)
+                      } catch (regErr) {
+                        // Non-fatal: stepper secondary fix (vault-password prompt)
+                        // covers the fallback if server registration fails here.
+                        console.warn('[onboarding:dm] DM server registration failed (non-fatal):', regErr)
+                      }
+                    })
                     .catch(err => console.warn('[onboarding:dm] DM key cache prime failed (non-fatal):', err))
                 } catch (err) {
                   console.warn('[onboarding:dm] DM key cache prime failed (non-fatal):', err)
