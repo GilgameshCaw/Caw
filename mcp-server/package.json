@@ -1,0 +1,51 @@
+{
+  "name": "@caw-protocol/mcp-server",
+  "version": "1.0.0",
+  "description": "MCP server for CAW Protocol — read and write social data tools for AI agents and developers",
+  "type": "module",
+  "bin": {
+    "caw-mcp": "./dist/index.js"
+  },
+  "main": "./dist/index.js",
+  "files": [
+    "dist",
+    "README.md"
+  ],
+  "keywords": [
+    "mcp",
+    "caw",
+    "social",
+    "sns",
+    "web3",
+    "ai-agent",
+    "model-context-protocol"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/nicefacer/Caw.git",
+    "directory": "mcp-server"
+  },
+  "homepage": "https://github.com/nicefacer/Caw/tree/master/mcp-server#readme",
+  "bugs": {
+    "url": "https://github.com/nicefacer/Caw/issues"
+  },
+  "scripts": {
+    "build": "tsc",
+    "dev": "tsx src/index.ts",
+    "start": "node dist/index.js"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.12.1",
+    "smltxt": "file:../smltxt",
+    "viem": "^2.53.1"
+  },
+  "devDependencies": {
+    "@types/node": "^20.17.32",
+    "tsx": "^4.11.0",
+    "typescript": "^5.4.5"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "license": "MIT"
+}
