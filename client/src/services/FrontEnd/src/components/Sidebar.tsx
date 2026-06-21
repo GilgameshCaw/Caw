@@ -387,19 +387,24 @@ const Sidebar: React.FC<SidebarProps> = ({ onNavigate }) => {
         )}
       </div>
 
-      <div className="pl-3 pr-0 mt-2 pb-[env(safe-area-inset-bottom)] sm:pl-4 sm:pr-0 sm:py-3 sm:mt-0 w-full shrink-0">
-        <ProfileChooser compact />
+      {/* Footer: on mobile the theme toggle shares the profile row (right-
+          aligned) so it isn't clipped by the safe-area at the bottom of the
+          drawer. On sm+ the toggle is hidden here (desktop has it elsewhere)
+          and ProfileChooser owns the row alone. */}
+      <div className="flex items-center pl-3 pr-2 mt-2 pb-[env(safe-area-inset-bottom)] sm:pl-4 sm:pr-0 sm:py-3 sm:mt-0 w-full shrink-0">
+        <div className="min-w-0 flex-1">
+          <ProfileChooser compact />
+        </div>
         {/* Theme toggle — mobile only (desktop has it elsewhere) */}
         <button
           type="button"
           onClick={toggle}
           aria-label={isDark ? t('theme.switch_to_light') : t('theme.switch_to_dark')}
-          className={`sm:hidden -ml-1 mt-1 mb-4 mr-3 flex items-center gap-2.5 pl-2 pr-3 py-2 rounded-2xl transition-colors duration-200 ${
+          className={`sm:hidden ml-2 flex-shrink-0 flex items-center justify-center w-11 h-11 rounded-full transition-colors duration-200 ${
             isDark ? 'text-gray-300 hover:text-white hover:bg-white/10' : 'text-gray-600 hover:text-black hover:bg-gray-200/50'
           }`}
         >
           {isDark ? <HiOutlineSun className="w-6 h-6" /> : <HiOutlineMoon className="w-6 h-6" />}
-          <span className="font-medium text-base">{isDark ? t('theme.light_mode') : t('theme.dark_mode')}</span>
         </button>
       </div>
     </div>
