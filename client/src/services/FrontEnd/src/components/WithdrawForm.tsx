@@ -92,6 +92,15 @@ export function WithdrawForm({ tokenId, withdrawableWei, ethBalanceWei, onSucces
   const recipient: string = recipientInput || defaultRecipient
   const recipientValid = isValidAddress(recipient)
 
+  // Safe address for eager calldata encoding. useContractCall (Pop-A) calls
+  // encodeFunctionData on EVERY render regardless of `disabled`, so a recipient
+  // of '' (no wagmi address yet — Pop-B, or Pop-A pre-connect) throws
+  // InvalidAddressError synchronously. Feed the zero address as a placeholder
+  // when the real one isn't valid yet; the `disabled` gate below still blocks
+  // any actual send until recipientValid is true.
+  const ZERO_ADDRESS = '0x0000000000000000000000000000000000000000' as Address
+  const recipientForEncode: Address = recipientValid ? (recipient as Address) : ZERO_ADDRESS
+
   // LZ fee quote (same quoter as Staking.tsx)
   const { data: withdrawQuote } = useReadContract({
     address: CAW_NAME_QUOTER_ADDRESS,
@@ -136,7 +145,7 @@ export function WithdrawForm({ tokenId, withdrawableWei, ethBalanceWei, onSucces
     // withdrawTo takes 5 args on the deployed CawProfile: the 4th is lzDestId
     // (the L2 the stake lives on) so L1 can opportunistically flush a queued
     // owner update; lzTokenAmount=0n pays LZ fees in native ETH.
-    args: [CLIENT_ID, Number(tokenId ?? 0), recipient as Address, chains.l2.layerZero, 0n],
+    args: [CLIENT_ID, Number(tokenId ?? 0), recipientForEncode, chains.l2.layerZero, 0n],
     disabled: !tokenId || withdrawFee === 0n || !recipientValid || withdrawable === 0n,
     value: withdrawFee,
     onPending: () => setIsPending(true),
