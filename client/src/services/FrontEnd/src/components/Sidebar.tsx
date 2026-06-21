@@ -7,7 +7,6 @@ import { fetchTxPage }          from '../api/txs'
 import { useTokenDataStore, useActiveToken, usePriceStore, usePriceSourceStore } from "~/store/tokenDataStore";
 import { useTheme } from "~/hooks/useTheme";
 import { useDmIdentity } from "~/hooks/useDmIdentity";
-import { useWalletPopulation } from "~/hooks/useWalletPopulation";
 import { useDmUnreadStore } from "~/store/dmUnreadStore";
 import { useNotificationUnreadStore } from "~/store/notificationUnreadStore";
 import { useOffersUnreadStore } from "~/store/offersUnreadStore";
@@ -17,7 +16,6 @@ import {
   HiOutlineHome, 
   HiOutlineClock, 
   HiOutlineCube,
-  HiOutlineCreditCard,
   HiOutlinePlus,
   HiOutlineSearch,
   HiOutlineBell,
@@ -134,8 +132,6 @@ const Sidebar: React.FC<SidebarProps> = ({ onNavigate }) => {
   // smart-wallet (C) users manage funds in their own wallet + on /staking, so
   // only show the Wallet link to passkey users. See Wallet.tsx for the page-side
   // gate that redirects A/C away.
-  const { population } = useWalletPopulation()
-  const showWalletLink = population === 'B'
   const { hasIdentity: dmEnabled } = useDmIdentity(activeToken?.tokenId)
   // Sidebar badge mirrors the drawer: count of CONVERSATIONS with unread
   // messages, not total unread messages. See dmUnreadStore for rationale.
@@ -335,19 +331,6 @@ const Sidebar: React.FC<SidebarProps> = ({ onNavigate }) => {
             <HiOutlineCube className="w-5 h-5 sm:w-6 sm:h-6 shrink-0" />
             <span className="font-medium text-base sm:text-lg min-w-0 truncate">{t('nav.staking')}</span>
            </NavLink>
-
-           {showWalletLink && (
-           <NavLink
-             to="/wallet"
-             onClick={guardClick}
-             className={({ isActive }) =>
-               `relative flex items-center gap-3 px-4 py-3.5 sm:gap-3 sm:px-3 sm:py-3.5 rounded-2xl transition-colors duration-200 min-w-0 ${getNavLinkClasses(isActive)}`
-             }
-           >
-            <HiOutlineCreditCard className="w-5 h-5 sm:w-6 sm:h-6 shrink-0" />
-            <span className="font-medium text-base sm:text-lg min-w-0 truncate">{t('nav.wallet')}</span>
-           </NavLink>
-           )}
 
            <NavLink
              to="/usernames"
