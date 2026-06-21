@@ -38,8 +38,8 @@ import { useRecoveryContext } from '~/components/identity/RecoveryProvider'
 import { useIdentitySigning } from '~/components/identity/IdentitySigningProvider'
 import { signWithPasskey } from '~/services/identity/passkey'
 import { signDigestForOnChain } from '~/services/identity/secp256k1Key'
-import { getJSON } from '~/utils/safeStorage'
-import { PASSKEY_CREDENTIAL_KEY } from '~/constants/passkeyStorage'
+import { getPasskeyCredential } from '~/constants/passkeyStorage'
+import { useActiveToken } from '~/store/tokenDataStore'
 
 // ─── Types ──────────────────────────────────────────────────────────────────
 
@@ -97,7 +97,9 @@ export function useRootSigner(): RootSigner {
   const { startSigning, stopSigning } = useIdentitySigning()
 
   const isPasskey = population === 'B'
-  const credentialId = getJSON<string | null>(PASSKEY_CREDENTIAL_KEY, null)
+  // Per-account: the passkey credential is keyed by the active profile's tokenId.
+  const activeToken = useActiveToken()
+  const credentialId = getPasskeyCredential(activeToken?.tokenId)
 
   const signMessage = useCallback(
     async (message: string): Promise<`0x${string}`> => {

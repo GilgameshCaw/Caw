@@ -35,8 +35,8 @@ import { erc20Abi, encodeFunctionData } from 'viem'
 import { useTheme } from '~/hooks/useTheme'
 import { useT } from '~/i18n/I18nProvider'
 import { useWalletPopulation } from '~/hooks/useWalletPopulation'
-import { getJSON } from '~/utils/safeStorage'
-import { PASSKEY_CREDENTIAL_KEY } from '~/constants/passkeyStorage'
+import { getPasskeyCredential } from '~/constants/passkeyStorage'
+import { useActiveToken } from '~/store/tokenDataStore'
 import { apiFetch } from '~/api/client'
 import { CAW_ADDRESS } from '~/../../../abi/addresses'
 import { smartEoaAbi } from '~/../../../abi/generated'
@@ -208,6 +208,7 @@ function IdentitySectionInner({
   // Hooks for sponsor-relayed rotate.
   const { execute: smartEoaExecute, account: eoaAccount } = useSmartEoaExecute()
   const { signManagement, signManagementWithRecoveryKey } = useSmartEoaManagement()
+  const activeToken = useActiveToken()
 
   // Dialog open states.
   const [addPasskeyOpen, setAddPasskeyOpen] = useState(false)
@@ -223,15 +224,15 @@ function IdentitySectionInner({
     staleTime: 5 * 60 * 1000,
   })
 
-  // Local credential ID badge. Read via getJSON to match the setJSON write in
-  // PasskeyStep (raw getItem would return a quote-wrapped string).
+  // Local credential ID badge — the passkey credential for the ACTIVE profile
+  // (per-account, keyed by tokenId; see passkeyStorage.ts).
   const localCredentialId = useMemo(() => {
     try {
-      return getJSON<string | null>(PASSKEY_CREDENTIAL_KEY, null)
+      return getPasskeyCredential(activeToken?.tokenId)
     } catch {
       return null
     }
-  }, [])
+  }, [activeToken?.tokenId])
 
   const enrolled = passkeyState?.enrolled ?? []
   const pending = passkeyState?.pending ?? []

@@ -12,8 +12,7 @@ import { useActiveToken, usePriceStore } from '~/store/tokenDataStore'
 import { useRootSigner } from '~/hooks/useRootSigner'
 import { encryptPrivateKey, getEncryptionSignMessage, setDecryptedKey } from '~/services/sessionKeyEncryption'
 import { cawProfileLedgerAbi } from '~/../../../abi/generated'
-import { getJSON } from '~/utils/safeStorage'
-import { IDENTITY_KIND_KEY, IDENTITY_KIND_PASSKEY } from '~/constants/passkeyStorage'
+import { isPasskeyAddress } from '~/constants/passkeyStorage'
 
 export const DEFAULT_SESSION_DURATION = 180 * 24 * 60 * 60 // 6 months
 
@@ -511,11 +510,12 @@ export function useSessionKeyWalletGuard() {
       setActiveWallet(address)
       return
     }
-    // No wagmi wallet: only a passkey install preserves its self-activated session.
-    const isPasskeyInstall = getJSON<string | null>(IDENTITY_KIND_KEY, null) === IDENTITY_KIND_PASSKEY
-    if (isPasskeyInstall) {
-      const { activeWallet, sessions } = useSessionKeyStore.getState()
-      if (activeWallet && sessions[activeWallet]) return
+    // No wagmi wallet: only a passkey account preserves its self-activated
+    // session. Check per-account (keyed by owner address) rather than a
+    // browser-global flag — the self-activated session's owner is activeWallet.
+    const { activeWallet, sessions } = useSessionKeyStore.getState()
+    if (activeWallet && sessions[activeWallet] && isPasskeyAddress(activeWallet)) {
+      return
     }
     setActiveWallet(null)
   }, [address, setActiveWallet])

@@ -30,8 +30,8 @@ import { useRecoveryContext } from '~/components/identity/RecoveryProvider'
 import { signWithPasskey } from '~/services/identity/passkey'
 import { signDigestForOnChain } from '~/services/identity/secp256k1Key'
 import { smartEoaAbi } from '~/../../../abi/generated'
-import { getJSON } from '~/utils/safeStorage'
-import { PASSKEY_CREDENTIAL_KEY } from '~/constants/passkeyStorage'
+import { getPasskeyCredential } from '~/constants/passkeyStorage'
+import { useActiveToken } from '~/store/tokenDataStore'
 import { chains } from '~/config/chains'
 
 // ---------------------------------------------------------------------------
@@ -116,6 +116,8 @@ export function useSmartEoaManagement(): UseSmartEoaManagementResult {
   const publicClient = usePublicClient({ chainId: chains.l1.chainId })
   const { startSigning, stopSigning } = useIdentitySigning()
   const recovery = useRecoveryContext()
+  // Per-account: the passkey credential is keyed by the active profile's tokenId.
+  const activeToken = useActiveToken()
 
   const account = population === 'B' ? (address as Address | undefined) : undefined
 
@@ -134,7 +136,7 @@ export function useSmartEoaManagement(): UseSmartEoaManagementResult {
     async (opName: string, params: Hex): Promise<Hex> => {
       if (!account) throw new Error('No passkey wallet connected.')
 
-      const credentialId = getJSON<string | null>(PASSKEY_CREDENTIAL_KEY, null)
+      const credentialId = getPasskeyCredential(activeToken?.tokenId)
       if (!credentialId) {
         throw new Error(
           'No passkey found on this device. Use the device where your passkey is enrolled.',
@@ -154,7 +156,7 @@ export function useSmartEoaManagement(): UseSmartEoaManagementResult {
         stopSigning()
       }
     },
-    [account, readManagementNonce, startSigning, stopSigning],
+    [account, activeToken?.tokenId, readManagementNonce, startSigning, stopSigning],
   )
 
   const signManagementWithRecoveryKey = useCallback(

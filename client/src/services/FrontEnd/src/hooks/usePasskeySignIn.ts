@@ -26,8 +26,7 @@ import { useIdentitySigning } from '~/components/identity/IdentitySigningProvide
 import { useAuthStore } from '~/store/authStore'
 import { useTokenDataStore } from '~/store/tokenDataStore'
 import { useSessionKeyStore } from '~/store/sessionKeyStore'
-import { setJSON } from '~/utils/safeStorage'
-import { PASSKEY_CREDENTIAL_KEY, IDENTITY_KIND_KEY, IDENTITY_KIND_PASSKEY } from '~/constants/passkeyStorage'
+import { persistPasskeyIdentity } from '~/constants/passkeyStorage'
 import { useT } from '~/i18n/I18nProvider'
 import type { TokenData } from '~/types'
 
@@ -95,11 +94,12 @@ export function usePasskeySignIn(): UsePasskeySignIn {
       )
 
       // 5. Persist identity + set session + inject the active token.
-      setJSON(PASSKEY_CREDENTIAL_KEY, assertion.credentialId)
-      setJSON(IDENTITY_KIND_KEY, IDENTITY_KIND_PASSKEY)
       setSession(data.sessionToken, data.authorizedTokenIds, data.authorizedAddresses, data.expiresAt)
 
       const ownerAddr = (profile.address || data.authorizedAddresses[0]) as `0x${string}`
+      // Per-account passkey identity: credential keyed by tokenId, the passkey
+      // marker keyed by owner address (see passkeyStorage.ts).
+      persistPasskeyIdentity(profile.tokenId, ownerAddr, assertion.credentialId)
       const token: TokenData = {
         tokenId: profile.tokenId,
         username: uname,

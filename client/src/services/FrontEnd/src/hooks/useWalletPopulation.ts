@@ -18,8 +18,7 @@ import { useAccount, usePublicClient } from 'wagmi'
 import { useQuery } from '@tanstack/react-query'
 import { useRecoveryContext } from '~/components/identity/RecoveryProvider'
 import { useTokenDataStore, useActiveTokenOwnerAddress } from '~/store/tokenDataStore'
-import { getJSON } from '~/utils/safeStorage'
-import { IDENTITY_KIND_KEY, IDENTITY_KIND_PASSKEY } from '~/constants/passkeyStorage'
+import { isPasskeyAddress } from '~/constants/passkeyStorage'
 
 export type WalletPopulation = 'A' | 'B' | 'C' | 'none'
 
@@ -81,7 +80,11 @@ export function useWalletPopulation(): UseWalletPopulationReturn {
   // enroll (PasskeyStep). Sponsored Pop-B users never connect a wagmi wallet, so
   // this flag — plus the stored owner address — is how we classify them on a
   // cold load. Recovery mode (backup-file sign-in) is the other Pop-B signal.
-  const isPasskeyInstall = getJSON<string | null>(IDENTITY_KIND_KEY, null) === IDENTITY_KIND_PASSKEY
+  // Per-account: is the active profile's owner a passkey account? Keyed by owner
+  // address (lastAddress), which survives the pre-hydration window when the
+  // active tokenId isn't resolved yet. No browser-global flag — so a different
+  // account on the same browser no longer bleeds into a passkey classification.
+  const isPasskeyInstall = isPasskeyAddress(lastAddress)
 
   const population = useMemo<WalletPopulation>(() => {
     // Recovery mode (backup-file sign-in) is unambiguously Population B regardless

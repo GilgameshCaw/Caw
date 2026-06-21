@@ -17,7 +17,7 @@
  * deducted from giftCaw; the remainder is auto-deposited. No deposit step.
  */
 
-import React, { useState, useCallback, useEffect, useMemo } from 'react'
+import React, { useState, useCallback, useEffect, useMemo, useRef } from 'react'
 import { useSearchParams } from 'react-router-dom'
 import { useTheme } from '~/hooks/useTheme'
 import { registerSponsoredSession, getDefaultSpendLimit, getDefaultTipCeiling, useNetworkTipTargetAsCAW, DEFAULT_SESSION_DURATION } from '~/hooks/useSessionKey'
@@ -44,6 +44,7 @@ import {
   HiCheck,
 } from 'react-icons/hi'
 import type { PasskeyPubkey } from '~/services/identity/passkey'
+import { persistPasskeyIdentity } from '~/constants/passkeyStorage'
 import type { BootstrapResult } from '~/services/identity/bootstrap'
 import { apiFetch, retryOnIndexing } from '~/api/client'
 import { useAuthStore } from '~/store/authStore'
@@ -183,6 +184,13 @@ export default function Onboarding() {
   // True while the post-mint /api/auth/verify sign-in is in flight (shown on
   // the confirm step so "Go to feed" waits for the session).
   const [signingIn, setSigningIn] = useState(false)
+
+  // Latest enrolled-passkey, mirrored into a ref so handleBootstrapDone (a
+  // useCallback deliberately closed over the INITIAL state to keep its identity
+  // stable — see the result.username note) can read the up-to-date credentialId
+  // when it persists per-account passkey identity at mint-complete.
+  const enrolledPasskeyRef = useRef<PasskeyPubkey | null>(null)
+  useEffect(() => { enrolledPasskeyRef.current = state.enrolledPasskey }, [state.enrolledPasskey])
 
   // Invite-code gate.
   const [searchParams] = useSearchParams()
@@ -498,6 +506,17 @@ export default function Onboarding() {
               tds.setTokensForAddress(ownerAddr, [token])
               tds.setActiveTokenIdForAddress(ownerAddr, mintedTokenId)
               tds.setLastAddress(ownerAddr)
+
+              // Persist per-account passkey identity now that the tokenId exists:
+              // credential keyed by tokenId, passkey marker keyed by owner address.
+              // The credentialId was captured at enroll (PasskeyStep) and carried
+              // in onboarding state; this is the first point the real tokenId is
+              // known. Read from the ref, not the stale closed-over state. See
+              // passkeyStorage.ts for why these are per-account.
+              const enrolledCredentialId = enrolledPasskeyRef.current?.credentialId
+              if (enrolledCredentialId) {
+                persistPasskeyIdentity(mintedTokenId, ownerAddr, enrolledCredentialId)
+              }
 
               // Seed the OPTIMISTIC pending-deposit hint for the gifted deposit.
               // The sponsored bootstrap already deposited derivedDepositAmount CAW

@@ -182,9 +182,11 @@ describe('useWalletPopulation', () => {
   // routed a Population-A wallet user to the backup-file signer ("needs your
   // backup file") instead of waiting for the wallet to unlock.
   it('returns none (loading) for a connected-but-locked wallet despite a passkey-install marker', async () => {
-    // Stale passkey marker + a stored owner address — the contamination source.
-    localStorage.setItem('caw:identity-kind', JSON.stringify('passkey'))
-    useTokenDataStore.setState({ lastAddress: '0x1111111111111111111111111111111111111111' as `0x${string}` })
+    // Stale passkey marker (now per-address) on the stored owner — the
+    // contamination source. A locked wallet must still not classify as B.
+    const lockedOwner = '0x1111111111111111111111111111111111111111'
+    localStorage.setItem(`caw:identity-kind:${lockedOwner}`, JSON.stringify('passkey'))
+    useTokenDataStore.setState({ lastAddress: lockedOwner as `0x${string}` })
 
     // Connected, but no address surfaced yet (wallet locked / initializing).
     mockUseAccount.mockReturnValue({ address: undefined, isConnected: true })
@@ -198,7 +200,7 @@ describe('useWalletPopulation', () => {
     expect(result.current.population).toBe<WalletPopulation>('none')
     expect(result.current.loading).toBe(true)
 
-    localStorage.removeItem('caw:identity-kind')
+    localStorage.removeItem(`caw:identity-kind:${lockedOwner}`)
     useTokenDataStore.setState({ lastAddress: undefined })
   })
 
@@ -209,9 +211,11 @@ describe('useWalletPopulation', () => {
   // backup-file signer leak onto a plain-wallet profile. Classification is
   // per-PROFILE: only the profile owned by the passkey address is B.
   it('returns none for a Pop-A profile active in a passkey-enrolled browser (mixed chooser)', async () => {
-    localStorage.setItem('caw:identity-kind', JSON.stringify('passkey'))
     const passkeyOwner = '0xaaaa000000000000000000000000000000000000' as `0x${string}`
     const popAOwner = '0xbbbb000000000000000000000000000000000000' as `0x${string}`
+    // Per-address passkey marker on the passkey owner (the active token below is
+    // owned by a DIFFERENT plain-EOA address, so it must NOT classify as B).
+    localStorage.setItem(`caw:identity-kind:${passkeyOwner}`, JSON.stringify('passkey'))
     // lastAddress = the passkey owner; the ACTIVE token (id 7) is owned by the
     // Pop-A address — a different owner in the same chooser.
     useTokenDataStore.setState({
@@ -234,15 +238,15 @@ describe('useWalletPopulation', () => {
 
     expect(result.current.population).toBe<WalletPopulation>('none')
 
-    localStorage.removeItem('caw:identity-kind')
+    localStorage.removeItem(`caw:identity-kind:${passkeyOwner}`)
     useTokenDataStore.setState({ hasHydrated: false, lastAddress: undefined, activeTokenId: undefined, tokensByAddress: {} })
   })
 
   // Counterpart: when the ACTIVE profile IS owned by the passkey address, it
   // still classifies as B (the sponsored Pop-B path is preserved).
   it('returns B for a passkey profile active in a passkey-enrolled browser', async () => {
-    localStorage.setItem('caw:identity-kind', JSON.stringify('passkey'))
     const passkeyOwner = '0xaaaa000000000000000000000000000000000000' as `0x${string}`
+    localStorage.setItem(`caw:identity-kind:${passkeyOwner}`, JSON.stringify('passkey'))
     useTokenDataStore.setState({
       hasHydrated: true,
       lastAddress: passkeyOwner,
@@ -262,7 +266,7 @@ describe('useWalletPopulation', () => {
 
     expect(result.current.population).toBe<WalletPopulation>('B')
 
-    localStorage.removeItem('caw:identity-kind')
+    localStorage.removeItem(`caw:identity-kind:${passkeyOwner}`)
     useTokenDataStore.setState({ hasHydrated: false, lastAddress: undefined, activeTokenId: undefined, tokensByAddress: {} })
   })
 })

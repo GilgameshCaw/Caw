@@ -33,6 +33,7 @@ import QuickSignModal from '~/components/modals/QuickSignModal'
 import QuickSignUnlock from '~/components/QuickSignUnlock'
 import ClientAuthModal from '~/components/modals/ClientAuthModal'
 import InsufficientStakeModal from '~/components/modals/InsufficientStakeModal'
+import { clearLegacyGlobalPasskeyKeys } from '~/constants/passkeyStorage'
 
 // Marketplace + transfer modals are opened from discrete user actions
 // (clicks on Buy / Place bid / Make offer / Transfer / etc.). The brief
@@ -104,6 +105,12 @@ function AppRoutes() {
 }
 
 function App() {
+  // One-time cutover: drop the old browser-global passkey keys so a stale
+  // global passkey flag/credential can never bleed into a different account
+  // (passkey identity is now per-account; see passkeyStorage.ts). No-op once
+  // the keys are gone.
+  useEffect(() => { clearLegacyGlobalPasskeyKeys() }, [])
+
   useCawonceSync();
   useTxQueueMonitor();
   useSessionKeyWalletGuard();
