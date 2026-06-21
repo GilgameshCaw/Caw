@@ -36,6 +36,7 @@ import ConfirmStep from './onboarding/ConfirmStep'
 import BoidsBg from '~/components/BoidsBg3D'
 import cawLogo from '~/assets/images/caw-logo.png'
 import LanguageSwitcher from '~/components/LanguageSwitcher'
+import { evaluatePasskeyGate } from '~/utils/inAppBrowser'
 import {
   HiAtSymbol,
   HiLockClosed,
@@ -180,6 +181,24 @@ export default function Onboarding() {
       ? 'welcome'
       : 'username',
   }))
+
+  // Passkey capability gate, evaluated once on mount. Population-B onboarding
+  // REQUIRES creating a WebAuthn passkey at the 'passkey' step; an iOS in-app
+  // webview (Telegram/IG/etc.) or a browser with no platform authenticator
+  // simply can't do it. Detecting that up-front lets us warn the user on the
+  // FIRST screen ("you've been invited") and disable the "Choose your username"
+  // CTA, instead of letting them fill in name + vault and hit a dead wall at
+  // step 3 with an opaque WebAuthn error.
+  const [passkeyGate, setPasskeyGate] = useState<{ blocked: boolean; messageKey: string | null }>(
+    { blocked: false, messageKey: null },
+  )
+  useEffect(() => {
+    let cancelled = false
+    evaluatePasskeyGate().then(g => {
+      if (!cancelled) setPasskeyGate({ blocked: g.blocked, messageKey: g.messageKey })
+    }).catch(() => { /* probe failed — don't block on an error */ })
+    return () => { cancelled = true }
+  }, [])
   const setSession = useAuthStore(s => s.setSession)
   // True while the post-mint /api/auth/verify sign-in is in flight (shown on
   // the confirm step so "Go to feed" waits for the session).
@@ -836,9 +855,25 @@ export default function Onboarding() {
                 {t('onboarding.welcome.sponsored_note')}
               </div>
 
+              {/* Passkey can't be created in this browser (iOS in-app webview /
+                  no platform authenticator). Tell the user how to fix it HERE,
+                  before they invest in picking a name, and disable the CTA. */}
+              {passkeyGate.blocked && passkeyGate.messageKey && (
+                <div className={`rounded-xl border px-4 py-3 mb-6 text-sm text-left ${
+                  isDark ? 'border-red-500/40 bg-red-500/10 text-red-300' : 'border-red-300 bg-red-50 text-red-700'
+                }`}>
+                  {t(passkeyGate.messageKey)}
+                </div>
+              )}
+
               <button
                 onClick={() => setState(s => ({ ...s, step: 'username' }))}
-                className="w-full sm:w-auto sm:min-w-[280px] py-3.5 px-8 rounded-full font-semibold text-base bg-yellow-500 text-black hover:bg-yellow-400 transition-colors cursor-pointer"
+                disabled={passkeyGate.blocked}
+                className={`w-full sm:w-auto sm:min-w-[280px] py-3.5 px-8 rounded-full font-semibold text-base transition-colors ${
+                  passkeyGate.blocked
+                    ? isDark ? 'bg-white/10 text-white/40 cursor-not-allowed' : 'bg-gray-200 text-gray-400 cursor-not-allowed'
+                    : 'bg-yellow-500 text-black hover:bg-yellow-400 cursor-pointer'
+                }`}
               >
                 {t('onboarding.welcome.cta')}
               </button>

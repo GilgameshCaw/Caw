@@ -118,3 +118,51 @@ export async function isPlatformAuthenticatorLikelyAvailable(): Promise<boolean>
     return false
   }
 }
+
+/** The reason passkey enrollment can't run here, mapped to a copy key. */
+export type PasskeyBlockReason =
+  | 'ios-webview'      // iOS in-app webview → must open in Safari
+  | 'unsupported'      // not an iOS webview, but no platform passkey support
+  | null               // good to go
+
+export interface PasskeyGate {
+  /** True when passkey enrollment should be blocked up-front. */
+  blocked: boolean
+  reason: PasskeyBlockReason
+  /** i18n key for the message to show. */
+  messageKey: string | null
+}
+
+/**
+ * Decide — as early as the FIRST onboarding step — whether this browser can
+ * enroll a passkey, and WHY not. Lets us block on step 1 instead of letting the
+ * user fill in name + vault only to hit a dead wall on the passkey step.
+ *
+ * Decision tree (matches the product copy):
+ *   - iOS in-app webview (Telegram/IG/etc.)  → 'ios-webview'  → "Open in Safari"
+ *   - any other context with no platform authenticator → 'unsupported'
+ *       → "passkey not supported on this browser; open your native browser or
+ *          use a different device"
+ *   - otherwise → not blocked.
+ *
+ * NOTE: an iOS in-app webview is blocked even if the capability probe reports
+ * "available" — those webviews lie (probe says yes, create() then rejects with
+ * the opaque NotAllowedError the user just saw). The webview signal wins on iOS.
+ */
+export async function evaluatePasskeyGate(): Promise<PasskeyGate> {
+  const info = detectInAppBrowser()
+
+  // iOS in-app webview: hard signal. Open-in-Safari is the only fix.
+  if (info.isInApp && info.isIOS) {
+    return { blocked: true, reason: 'ios-webview', messageKey: 'onboarding.passkey.gate_ios_webview' }
+  }
+
+  // Anything else: trust the capability probe. Covers non-iOS webviews,
+  // ancient browsers, and desktop contexts with no platform authenticator.
+  const ok = await isPlatformAuthenticatorLikelyAvailable()
+  if (!ok) {
+    return { blocked: true, reason: 'unsupported', messageKey: 'onboarding.passkey.gate_unsupported' }
+  }
+
+  return { blocked: false, reason: null, messageKey: null }
+}

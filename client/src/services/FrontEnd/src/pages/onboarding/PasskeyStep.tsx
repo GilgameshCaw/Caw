@@ -39,8 +39,19 @@ function humanizeWebAuthnError(raw: string): { text: string; learnMoreUrl?: stri
   if (!raw || raw.trim() === '') {
     return { text: GENERIC }
   }
-  // The browser throws `NotAllowedError: The operation either timed out
-  // or was not allowed. See: https://www.w3.org/TR/webauthn-2/...`
+  // NotAllowedError has two very different phrasings depending on the engine:
+  //   Chrome:  "The operation either timed out or was not allowed…"
+  //   WebKit:  "The request is not allowed by the user agent or the platform
+  //             in the current context, possibly because the user denied
+  //             permission." ← what an iOS in-app webview / Safari throws.
+  // The WebKit phrasing usually means the BROWSER blocked it (webview can't do
+  // WebAuthn), not that the user dismissed a prompt — so point them at opening
+  // in their real browser rather than "accept faster".
+  if (/not allowed by the user agent|denied permission|the platform in the current context/i.test(raw)) {
+    return {
+      text: "Your browser blocked the passkey prompt. This usually happens in an in-app browser (like the one inside Telegram, Instagram or X). Open this page in your phone's main browser — Safari or Chrome — and try again.",
+    }
+  }
   if (/timed out|was not allowed|NotAllowedError/i.test(raw)) {
     return {
       text: 'The passkey prompt was cancelled or timed out. Try again — when the prompt appears, accept it within a few seconds.',

@@ -1632,6 +1632,8 @@
   "onboarding.passkey.inapp_copy_link": "Copy link",
   "onboarding.passkey.inapp_copied": "Link copied",
   "onboarding.passkey.error_inapp": "This in-app browser can't create a passkey. Open this page in your phone's main browser (Safari or Chrome) and try again — your progress is saved.",
+  "onboarding.passkey.gate_ios_webview": "This in-app browser can't create a passkey on iPhone or iPad. Tap the ••• menu and choose \"Open in Safari\" to continue.",
+  "onboarding.passkey.gate_unsupported": "Passkeys aren't supported on this browser. Open this page in your phone's main browser, or use a different device, to continue.",
   "onboarding.backup.title": "Save your recovery file",
   "onboarding.backup.subtitle": "This creates your account and an encrypted recovery file. You'll back it up in the next step.",
   "onboarding.backup.warning_title": "Save this file immediately",
