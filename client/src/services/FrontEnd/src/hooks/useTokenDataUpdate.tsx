@@ -1,7 +1,7 @@
 // client/src/services/FrontEnd/src/hooks/useTokenDataUpdate.tsx
 
 import { useEffect, useCallback, useMemo } from "react"
-import { useAccount, useReadContract } from "wagmi"
+import { useAccount, useReadContract, useReadContracts } from "wagmi"
 import { Address } from "viem"
 import { baseSepolia, sepolia } from "wagmi/chains"
 import { CAW_NAMES_L2_ADDRESS, CAW_PROFILE_LENS_ADDRESS } from "~/../../../abi/addresses";
@@ -231,6 +231,122 @@ export default function useTokenDataUpdate() {
     setTokensForAddress(connectedAddress as Address, updated);
   }, [connectedTokens, connectedL2TokenData, connectedAddress, needsConnectedFetch, setTokensForAddress, connectedBalancesLoading])
 
+  // ── Keep ALL known accounts fresh (multi-passkey-account fix) ──────────────
+  // The single viewed/connected reads above only refresh the active profile's
+  // owner (lastAddress) plus a connected wagmi wallet. A Population-B user can
+  // hold several passkey accounts, each owned by a DIFFERENT secp256k1 address
+  // (every onboarding mints a fresh keypair — see bootstrap.ts). When they
+  // switch to a second account, lastAddress moves to it and the FIRST account's
+  // on-chain data would never refresh — and a cold-start with no wagmi wallet
+  // would only ever fetch lastAddress, so the other accounts silently vanish
+  // from the profile chooser ("the app forgot my other account").
+  //
+  // Fix: multicall CawProfileLens.tokens() for every owner address we already
+  // know about (the persisted tokensByAddress keys ∪ viewed ∪ connected), so a
+  // background refresh keeps each account populated regardless of which is
+  // active. This is read-only and additive: each address's row set is written
+  // back under its own key via setTokensForAddress.
+  const knownAddresses = useMemo(() => {
+    const set = new Set<string>()
+    for (const addr of Object.keys(tokensByAddress)) {
+      if (addr) set.add(addr.toLowerCase())
+    }
+    if (viewedAddress) set.add(viewedAddress)
+    if (connectedAddress) set.add(connectedAddress)
+    return Array.from(set) as Address[]
+    // tokensByAddress identity changes whenever any address's rows change; that
+    // is fine — the contract args below are memoized to the address list only.
+  }, [tokensByAddress, viewedAddress, connectedAddress])
+
+  // Stable key: only the sorted address list, so adding/removing an account
+  // refires the multicall but a rows-only update (same addresses) does not.
+  const knownAddressesKey = useMemo(
+    () => [...knownAddresses].sort().join(','),
+    [knownAddresses],
+  )
+
+  const { data: allL1Tokens, refetch: refetchAllL1 } = useReadContracts({
+    contracts: knownAddresses.map(addr => ({
+      address: CAW_PROFILE_LENS_ADDRESS,
+      chainId: sepolia.id,
+      abi: cawProfileLensAbi,
+      functionName: "tokens" as const,
+      args: [addr] as const,
+    })),
+    query: {
+      // Skip when there is 0 or 1 known address — the viewed/connected reads
+      // above already cover those, so the multicall would be pure overhead.
+      enabled: knownAddresses.length > 1,
+    },
+  })
+
+  // Flat list of every (addr, tokenId) across all known accounts, for the L2
+  // balance multicall. Memoized on the resolved data so it only recomputes when
+  // the underlying L1 rows actually change.
+  const allTokenIds = useMemo(() => {
+    if (!allL1Tokens) return [] as number[]
+    const ids: number[] = []
+    for (const res of allL1Tokens) {
+      if (res.status !== 'success' || !res.result) continue
+      for (const tok of res.result) ids.push(Number(tok.tokenId))
+    }
+    return ids
+  }, [allL1Tokens])
+
+  const allTokenIdsKey = useMemo(() => allTokenIds.join(','), [allTokenIds])
+
+  const { data: allL2Tokens, refetch: refetchAllL2 } = useReadContract({
+    address: CAW_NAMES_L2_ADDRESS,
+    chainId: baseSepolia.id,
+    abi: cawProfileLedgerAbi,
+    functionName: "getTokens",
+    args: [allTokenIds],
+    query: {
+      enabled: knownAddresses.length > 1 && allTokenIds.length > 0,
+    },
+  })
+
+  // Write each known address's refreshed rows back under its own key. Runs only
+  // for the multi-account case; the single-account path stays on the viewed/
+  // connected effects above (no behavior change for Pop-A / single-profile).
+  useEffect(() => {
+    if (knownAddresses.length <= 1 || !allL1Tokens) return
+    const l2 = allL2Tokens ?? []
+    allL1Tokens.forEach((res, i) => {
+      if (res.status !== 'success' || !res.result) return
+      const addr = knownAddresses[i]
+      if (!addr) return
+      const updated: TokenData[] = res.result.map(l1Token => {
+        const l1TokenIdBI = BigInt(l1Token.tokenId)
+        const l2Token = l2.find(item => BigInt(item.tokenId) === l1TokenIdBI)
+        const onChainCawonce = l2Token ? Number(l2Token.nextCawonce) : 0
+        const existingTokens = tokensByAddress[addr.toLowerCase() as Address] || []
+        const existingToken = existingTokens.find(t => t.tokenId === Number(l1Token.tokenId))
+        const cawonce = existingToken?.cawonce && existingToken.cawonce > onChainCawonce
+          ? existingToken.cawonce : onChainCawonce
+        return {
+          tokenId: Number(l1Token.tokenId),
+          username: l1Token.username,
+          withdrawable: l1Token.withdrawable,
+          ownerBalance: l1Token.ownerBalance,
+          address: addr,
+          owner: l1Token.owner!,
+          stakedAmount: l2Token?.cawBalance ?? 0n,
+          cawonce,
+        }
+      })
+      // Only write when the address actually has rows, so a transient empty
+      // result (RPC hiccup) can't wipe a known account out of the store.
+      if (updated.length > 0) {
+        setTokensForAddress(addr, updated)
+      }
+    })
+    // knownAddressesKey/allTokenIdsKey are the real triggers; the data objects
+    // are stable per-fetch. tokensByAddress intentionally omitted to avoid a
+    // write→re-render→write loop (we read it via closure for cawonce only).
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [allL1Tokens, allL2Tokens, knownAddressesKey, allTokenIdsKey, setTokensForAddress])
+
   const setCawonce = useTokenDataStore(s => s.setCawonce)
 
   // Second effect: Fetch min-cawonce only for the active token
@@ -269,7 +385,17 @@ export default function useTokenDataUpdate() {
       refetchConnected()
       refetchConnectedL2()
     }
-  }, [refetchL1, refetchL2, needsConnectedFetch, refetchConnected, refetchConnectedL2])
+    // Also refresh every other known account (multi-passkey-account fix) so a
+    // manual refetch — e.g. right after onboarding a second account or a
+    // profile switch — re-populates accounts other than the active one.
+    if (knownAddresses.length > 1) {
+      refetchAllL1()
+      if (allTokenIds.length > 0) refetchAllL2()
+    }
+  }, [
+    refetchL1, refetchL2, needsConnectedFetch, refetchConnected, refetchConnectedL2,
+    knownAddresses.length, refetchAllL1, refetchAllL2, allTokenIds.length,
+  ])
 
   useEffect(() => {
     setRefetchTokenData(refetch)

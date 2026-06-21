@@ -468,12 +468,30 @@ export default function Onboarding() {
           tokenIds: data?.authorizedTokenIds,
           addresses: data?.authorizedAddresses,
         })
-        setSession(
-          data.sessionToken,
-          data.authorizedTokenIds,
-          data.authorizedAddresses,
-          data.expiresAt,
-        )
+        // If the user already had a session (e.g. they're onboarding a SECOND
+        // passkey account while account #1 is still authorized), MERGE rather
+        // than replace — otherwise account #1 loses its UI authorization the
+        // moment account #2 lands. The server already accumulates token ids on
+        // the shared session cookie (auth.ts addAuthorization), so the new
+        // session token is the same; we just mirror that additive behavior
+        // client-side. Only on a fresh login (no prior session) do we replace.
+        // Mirrors the DM-register merge branch below.
+        {
+          const prevSession = useAuthStore.getState().sessionToken
+          if (prevSession && data.sessionToken === prevSession) {
+            useAuthStore.getState().addAuthorization(
+              data.authorizedTokenIds,
+              data.authorizedAddresses,
+            )
+          } else {
+            setSession(
+              data.sessionToken,
+              data.authorizedTokenIds,
+              data.authorizedAddresses,
+              data.expiresAt,
+            )
+          }
+        }
 
         // Make the FE recognize this profile as the ACTIVE logged-in profile.
         // A sponsored Population-B user has NO connected wagmi wallet, so the
