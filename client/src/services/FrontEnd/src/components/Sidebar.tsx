@@ -188,7 +188,7 @@ const Sidebar: React.FC<SidebarProps> = ({ onNavigate }) => {
   }
 
   return (
-    <div className={`flex flex-col h-screen h-[100dvh] sm:h-full sm:justify-between w-full sm:w-[200px] border-r-0.5 sm:border-r transition-all duration-300 ${
+    <div className={`flex flex-col h-full sm:justify-between w-full sm:w-[200px] border-r-0.5 sm:border-r transition-all duration-300 ${
       isDark 
         ? 'bg-black border-white/20' 
         : 'bg-white border-gray-300'

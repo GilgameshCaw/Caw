@@ -263,6 +263,38 @@ const MainLayout = ({ children, hideSidebars: hideSidebarsProp }: MainLayoutProp
     }
   }, [showBottomNav, hasInlineDraft])
 
+  // Publish the VISUAL viewport height as --visual-vh. Mobile Safari leaves its
+  // bottom URL bar EXPANDED until you scroll, but the drawer is position:fixed
+  // and can't be scrolled — so 100dvh/100vh overshoot and the URL bar overlays
+  // the bottom ~40px (clipping the profile chooser). visualViewport.height is
+  // the actual visible height excluding that bar, and it fires `resize` as the
+  // bar shows/hides. We pin the drawer panel to this instead of dvh. Chrome
+  // already collapses its bar so it never hit this; Safari needs the JS value.
+  useEffect(() => {
+    const root = document.documentElement
+    const vv = window.visualViewport
+    const sync = () => {
+      const h = vv?.height ?? window.innerHeight
+      root.style.setProperty('--visual-vh', `${h}px`)
+    }
+    sync()
+    if (vv) {
+      vv.addEventListener('resize', sync)
+      vv.addEventListener('scroll', sync)
+    }
+    window.addEventListener('resize', sync)
+    window.addEventListener('orientationchange', sync)
+    return () => {
+      if (vv) {
+        vv.removeEventListener('resize', sync)
+        vv.removeEventListener('scroll', sync)
+      }
+      window.removeEventListener('resize', sync)
+      window.removeEventListener('orientationchange', sync)
+      root.style.removeProperty('--visual-vh')
+    }
+  }, [])
+
   // Lock background scroll while the mobile drawer is open so the feed
   // behind the backdrop doesn't scroll under the finger. Reuses the same
   // refcounted lock as modals — handles iOS Safari (which ignores
@@ -386,16 +418,17 @@ const MainLayout = ({ children, hideSidebars: hideSidebarsProp }: MainLayoutProp
           >
             <div
               ref={drawerPanelRef}
-              // h-[100dvh] (with h-screen fallback) tracks the DYNAMIC viewport
-              // so the panel ends at the visible bottom on mobile Safari. Plain
-              // h-full resolved to 100vh, which extends behind Safari's bottom
-              // URL bar and clipped the profile/footer at the bottom.
-              className={`fixed left-0 top-0 h-screen h-[100dvh] w-80 max-w-[90vw] transform ${isDragging ? '' : 'transition-transform duration-300 ease-in-out'} ${
+              // Height pinned to the VISUAL viewport (--visual-vh, published from
+              // MainLayout) so the panel ends at the real visible bottom on
+              // mobile Safari, whose URL bar stays expanded over a fixed,
+              // unscrollable element. Falls back to 100dvh before the JS var is
+              // set (first paint) — h-screen behind it covers no-JS/old browsers.
+              className={`fixed left-0 top-0 h-screen w-80 max-w-[90vw] transform ${isDragging ? '' : 'transition-transform duration-300 ease-in-out'} ${
                 isMobileMenuOpen ? 'translate-x-0' : '-translate-x-full'
               } ${
                 isDark ? 'bg-black border-r border-white/20' : 'bg-white border-r border-gray-300'
               }`}
-              style={{ touchAction: 'pan-y' }}
+              style={{ height: 'var(--visual-vh, 100dvh)', touchAction: 'pan-y' }}
               onClick={(e) => e.stopPropagation()}
               onTouchStart={(e) => onDrawerTouchStart(e, true)}
               onTouchMove={onDrawerTouchMove}
