@@ -72,7 +72,24 @@ export default function useContractCall<
   const functionName = _functionName as string;
 
   const { address: account } = useAccount();
-  const data = encodeFunctionData({ abi, functionName, args });
+  // encodeFunctionData runs on EVERY render, unconditionally — it does not honor
+  // `disabled`. If any arg is a negative bigint (e.g. an unclamped
+  // stake/balance subtraction that went below zero), viem throws
+  // IntegerOutOfRangeError during render and the React ErrorBoundary nukes the
+  // whole page. Guard it: on an encode failure, fall back to empty calldata so
+  // gas-estimation stays disabled and the component renders. The real call()
+  // re-encodes via writeContractAsync, so a transient bad arg can't reach chain.
+  let data: `0x${string}`;
+  try {
+    data = encodeFunctionData({ abi, functionName, args });
+  } catch (encErr) {
+    console.warn(
+      `[useContractCall] ${functionName} arg-encode failed (rendering without estimate):`,
+      (encErr as Error)?.message?.slice(0, 160),
+      'args=', (args as readonly unknown[] | undefined)?.map(a => typeof a === 'bigint' ? a.toString() : a),
+    );
+    data = '0x';
+  }
 
   const { data: gasLimit, error: gasError } = useEstimateGas({
     account,
