@@ -128,6 +128,7 @@ export type SponsorErrorCode =
   | 'LZ_UNDERPAID'
   | 'TREASURY_LOW'
   | 'L2_DISABLED'
+  | 'ALREADY_DELEGATED_ELSEWHERE'
   | 'RECIPIENT_NOT_DELEGATED'
   | 'TX_REVERTED'
   | 'SIMULATION_FAILED'
@@ -206,6 +207,7 @@ const REVERT_SUBSTRINGS: Record<SponsorErrorCode, string[]> = {
   LZ_UNDERPAID:            ['lz fee', 'insufficient fee', 'lzsend'],
   TREASURY_LOW:            [],    // generated locally, never from contract
   L2_DISABLED:             [],    // generated locally, never from contract
+  ALREADY_DELEGATED_ELSEWHERE: [],  // generated locally, never from contract
   RECIPIENT_NOT_DELEGATED: ['direct submit required', 'not delegated', 'code.length'],
   TX_REVERTED:             [],    // fallback for unmatched reverts
   SIMULATION_FAILED:       [],    // generated locally (pre-submit staticCall revert)
@@ -760,14 +762,25 @@ export class SponsorService {
         return { error: 'BAD_SIG', detail: `Could not recover EOA from L2 auth tuple: ${e}` }
       }
 
-      // 2. Already delegated on L2? If the EOA has 0xef0100… delegation code AND
-      //    SmartEOA.isValidSignature is reachable (initialized), this is a no-op —
-      //    short-circuit so we don't burn gas on a tx whose initialize reverts
-      //    AlreadyInitialized. (Fresh EOA → empty code → proceed.)
-      const existingCode = await this.l2Provider.getCode(userEoaAddress)
+      // 2. Already delegated on L2? A 7702 delegation is exactly 23 bytes of code:
+      //    0xef0100 || <20-byte delegate address>. Only short-circuit to success
+      //    when the EOA is delegated to OUR SmartEOA — NOT for any non-empty code
+      //    (audit H-1: a different/hostile delegate would otherwise be reported as
+      //    success and the user silently stuck with the wrong verifier). If the EOA
+      //    has code that ISN'T a delegation to our SmartEOA, fail loudly rather
+      //    than re-delegate (we can't anyway — a 7702 re-point needs a fresh auth
+      //    tuple at the bumped nonce) or mask it.
+      const existingCode = (await this.l2Provider.getCode(userEoaAddress)).toLowerCase()
       if (existingCode && existingCode !== '0x') {
-        // Delegated already (or has code). Treat as success — nothing to do.
-        return { txHash: '', recipient: userEoaAddress }
+        const want = `0xef0100${this.smartEoaAddress.slice(2).toLowerCase()}`
+        if (existingCode === want) {
+          // Already delegated to our SmartEOA + initialized — no-op success.
+          return { txHash: '', recipient: userEoaAddress }
+        }
+        return {
+          error: 'ALREADY_DELEGATED_ELSEWHERE',
+          detail: `EOA ${userEoaAddress} is delegated to ${existingCode.slice(0, 48)} on L2, not our SmartEOA`,
+        }
       }
 
       // 3. Confirm FE-supplied nonce matches the EOA's current L2 nonce (a stale

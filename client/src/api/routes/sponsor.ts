@@ -55,6 +55,11 @@ const redis = process.env.REDIS_URL
 
 const BOOTSTRAP_RATE_LIMIT     = 5    // accounts CREATED per IP per day
 const DEPOSIT_AUTH_RATE_LIMIT  = 30
+// L2-delegation: one per new passkey account; a legit user needs ~1/day. Tight
+// cap (audit M-1) so the unauthenticated route can't be used to burn sponsor L2
+// gas at volume — the treasury-low guard is the hard backstop, this is the
+// first line. Separate bucket from 'deposit' so the two don't share a budget.
+const DELEGATE_L2_RATE_LIMIT   = 5
 const RATE_WINDOW_SECONDS      = 24 * 60 * 60   // 24 hours
 
 // Ungated (no invite code, no X) zero-deposit signups. Independent counter +
@@ -87,9 +92,10 @@ const GAS_LIMIT_BOOTSTRAP_BUDGET = 400_000n
  * the cap is rejected before any sig/sim work — but the peek doesn't consume.
  * Fails open on Redis error (same pattern as freeActionRateLimit.ts).
  */
-async function checkSponsorRateLimit(ip: string, op: 'bootstrap' | 'deposit' | 'authenticate' | 'ungated'): Promise<boolean> {
+async function checkSponsorRateLimit(ip: string, op: 'bootstrap' | 'deposit' | 'authenticate' | 'ungated' | 'delegate-l2'): Promise<boolean> {
   const limit = op === 'bootstrap' ? BOOTSTRAP_RATE_LIMIT
     : op === 'ungated' ? UNGATED_RATE_LIMIT
+    : op === 'delegate-l2' ? DELEGATE_L2_RATE_LIMIT
     : DEPOSIT_AUTH_RATE_LIMIT
   const key = `sponsor:${op}:${ip}`
   try {
@@ -110,7 +116,7 @@ async function checkSponsorRateLimit(ip: string, op: 'bootstrap' | 'deposit' | '
  * Record one successful sponsored op against an IP's daily quota. Call ONLY
  * after the account/op actually succeeded. Sets the 24h TTL on first use.
  */
-async function recordSponsorUse(ip: string, op: 'bootstrap' | 'deposit' | 'authenticate' | 'ungated'): Promise<void> {
+async function recordSponsorUse(ip: string, op: 'bootstrap' | 'deposit' | 'authenticate' | 'ungated' | 'delegate-l2'): Promise<void> {
   const key = `sponsor:${op}:${ip}`
   try {
     const count = await redis.incr(key)
@@ -599,11 +605,11 @@ router.post('/delegate-l2', async (req, res) => {
   }
 
   const ip = clientIp(req)
-  const allowed = await checkSponsorRateLimit(ip, 'deposit')
+  const allowed = await checkSponsorRateLimit(ip, 'delegate-l2')
   if (!allowed) {
     return res.status(429).json({
       error: 'RATE_LIMITED',
-      detail: `L2-delegation limit is ${DEPOSIT_AUTH_RATE_LIMIT} per IP per day`,
+      detail: `L2-delegation limit is ${DELEGATE_L2_RATE_LIMIT} per IP per day`,
     })
   }
 
@@ -619,10 +625,11 @@ router.post('/delegate-l2', async (req, res) => {
   if (isSponsorError(result)) {
     const status = result.error === 'TREASURY_LOW' ? 503
       : result.error === 'L2_DISABLED' ? 503
+      : result.error === 'ALREADY_DELEGATED_ELSEWHERE' ? 409
       : 400
     return res.status(status).json(result)
   }
-  void recordSponsorUse(ip, 'deposit')   // count only on success; fire-and-forget
+  void recordSponsorUse(ip, 'delegate-l2')   // count only on success; fire-and-forget
   return res.status(200).json(result)
 })
 
