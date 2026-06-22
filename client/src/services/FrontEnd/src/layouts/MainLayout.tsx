@@ -386,7 +386,11 @@ const MainLayout = ({ children, hideSidebars: hideSidebarsProp }: MainLayoutProp
           >
             <div
               ref={drawerPanelRef}
-              className={`fixed left-0 top-0 h-full w-80 max-w-[90vw] transform ${isDragging ? '' : 'transition-transform duration-300 ease-in-out'} ${
+              // h-[100dvh] (with h-screen fallback) tracks the DYNAMIC viewport
+              // so the panel ends at the visible bottom on mobile Safari. Plain
+              // h-full resolved to 100vh, which extends behind Safari's bottom
+              // URL bar and clipped the profile/footer at the bottom.
+              className={`fixed left-0 top-0 h-screen h-[100dvh] w-80 max-w-[90vw] transform ${isDragging ? '' : 'transition-transform duration-300 ease-in-out'} ${
                 isMobileMenuOpen ? 'translate-x-0' : '-translate-x-full'
               } ${
                 isDark ? 'bg-black border-r border-white/20' : 'bg-white border-r border-gray-300'
