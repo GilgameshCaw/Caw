@@ -79,8 +79,42 @@ no SmartEOA on L2 → revert → "could not decode result data" → InvalidSig.
   certainly not — staticcall can't cross chains — but worth a 5-min check before
   committing to per-chain delegation.)
 
-## Decision needed from user before building
-- CREATE2 vs per-chain SmartEOA address.
-- Is the sponsor funding an L2 signer acceptable (more ETH ops surface)?
-- Backfill existing accounts now, or accept that pre-this-change passkey accounts
-  must re-onboard / use Quick Sign until backfilled?
+## Decisions (LOCKED 2026-06-22)
+- **CREATE2 — same SmartEOA address on L1 and L2.** Caveat surfaced during
+  scoping: the EXISTING L1 SmartEOA (0x099d43F3…) was deployed via the deploy.js
+  nonce-prediction scheduler (deploy.js:600, no constructorArgs, immutable), NOT
+  CREATE2. To get the SAME address on both chains we must deploy SmartEOA via a
+  CREATE2 factory with a fixed salt — which means REDEPLOYING SmartEOA on L1 too
+  (new address) so both chains share the CREATE2 address, then repoint
+  SMART_EOA_ADDRESS + re-bootstrap. Since there are NO real accounts yet (only
+  test), a clean redeploy of SmartEOA on BOTH chains via CREATE2 is acceptable and
+  simplest. (Alternative if we wanted to keep the current L1 address: replay
+  deployer+nonce on L2 — fragile; rejected.)
+- **Sponsor/validator wallet funds L2 gas.** Same address cross-chain; the
+  existing sponsor key (= operator wallet) just needs ETH on Base Sepolia. No new
+  key/identity. SponsorService gets an L2 provider+wallet built from the SAME
+  sponsorPrivateKey. Add an L2 treasury-low guard.
+- **New accounts only — NO backfill.** No real users exist; the tester
+  re-onboards. Skip the client-side backfill flow entirely (drop old Phase 5).
+
+## Final phase plan (decisions applied)
+1. **CREATE2-deploy SmartEOA on BOTH L1 + L2** at the same address. Add a CREATE2
+   factory step to deploy.js (or a standalone script using the canonical
+   0x4e59… CREATE2 deployer that exists on both chains) with a fixed salt. Update
+   SMART_EOA_ADDRESS in abi/addresses.ts (single value, both chains). Verify the
+   address matches on L1 and L2 with eth_getCode.
+2. **Sponsor L2 leg.** SponsorService: add `l2Provider` + `l2Wallet` (same
+   sponsorPrivateKey) and `sponsorDelegateL2({ authTupleSigL2, pkX, pkY,
+   ecdsaFallback })` → type-4 tx on L2 calling
+   SmartEOA.initialize(pkX, pkY, ecdsaFallback, address(0), ""). Guards:
+   treasury-low (L2 balance), rate limit. New route POST /api/sponsor/delegate-l2.
+3. **FE second auth tuple.** In bootstrap.ts / Onboarding: after L1 bootstrap,
+   sign an EIP-7702 auth tuple for chainId=84532 (L2 nonce of the keypair = 0 on a
+   fresh EOA) with the in-memory secp256k1 key; POST to /api/sponsor/delegate-l2.
+4. **Onboarding orchestration.** L1 bootstrap (mint+deposit) → L2 delegate+enroll.
+   L2 leg is cheap (no mint); show status. Quick Sign stays as the optional
+   fast-path but is NO LONGER REQUIRED for passkey users to act.
+5. **Verify end-to-end.** Fresh passkey signup → unstake with NO Quick Sign
+   session → _checkERC1271 on L2 returns magic → action passes.
+
+(Old Phase 5 "backfill existing accounts" dropped per decision.)
