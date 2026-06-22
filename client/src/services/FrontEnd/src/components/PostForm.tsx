@@ -505,6 +505,16 @@ const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess, placehol
   // above the button.
   const gifButtonRef = useRef<HTMLButtonElement>(null)
   const emojiButtonRef = useRef<HTMLButtonElement>(null)
+  // Tracks whether a real IME composition session is open. We maintain our
+  // own ref instead of trusting e.nativeEvent.isComposing because Android
+  // WebView (Rabby, MetaMask Mobile, etc.) spuriously reports isComposing=true
+  // on every plain Latin keystroke — a known Gboard/SwiftKey quirk — which
+  // made handleTextChange skip every letter (#Rabby). Our ref is set only by
+  // the real compositionstart DOM event, so it correctly distinguishes "Gboard
+  // sent isComposing=true without a compositionstart" (plain typing → ref
+  // stays false → commit normally) from a genuine CJK session (compositionstart
+  // fired first → ref is true → defer commit to compositionEnd, preserving #322).
+  const isComposingRef = useRef(false)
   const [selectedMedia, setSelectedMedia] = useState<any[]>([])
   const [isDragOverTextarea, setIsDragOverTextarea] = useState(false)
   const [showGifPicker, setShowGifPicker] = useState(false)
@@ -828,8 +838,16 @@ const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess, placehol
     // controlled textarea and kills the IME candidate window mid-selection
     // (#322, reported by a JA user who couldn't type past ~140 JA chars).
     // The final composed value is committed via handleCompositionEnd below.
-    // Latin input has isComposing=false → handler runs normally, no change.
-    if ((e.nativeEvent as any).isComposing) return
+    //
+    // We use our own isComposingRef (set by handleCompositionStart, cleared by
+    // handleCompositionEnd) instead of e.nativeEvent.isComposing. Android
+    // WebView (Rabby, MetaMask Mobile) spuriously sets isComposing=true on
+    // every plain Latin keystroke without a matching compositionstart event,
+    // causing every letter to be silently dropped. Our ref is only true when
+    // we received a real compositionstart, so plain Latin typing in those
+    // browsers (no compositionstart → ref is false) commits immediately while
+    // genuine CJK sessions (compositionstart fired → ref is true) still defer.
+    if (isComposingRef.current) return
     const cursor = e.target.selectionStart
     // Single-mode → thread-mode transition: when this keystroke pushes the
     // text past POST_CHAR_LIMIT, the single textarea will unmount and the
@@ -843,15 +861,38 @@ const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess, placehol
     setCursorPosition(cursor)
   }
 
-  // IME commit — pushes the final composed text into state. Pairs with
-  // the isComposing skip in handleTextChange above (#322).
+  // IME session open — mark our own composition flag so handleTextChange
+  // can defer commit reliably, without trusting e.nativeEvent.isComposing
+  // (which Android WebView mis-reports for plain Latin typing).
+  const handleCompositionStart = () => {
+    isComposingRef.current = true
+  }
+
+  // IME commit for single-mode — clears our composition flag, then pushes
+  // the final composed text into state. Pairs with the isComposingRef skip
+  // in handleTextChange above (#322).
   const handleCompositionEnd = (e: React.CompositionEvent<HTMLTextAreaElement>) => {
+    isComposingRef.current = false
     const ta = e.currentTarget
     const cursor = ta.selectionStart
     pendingMasterCursorRef.current = cursor
     setText(ta.value)
     setCursorPosition(cursor)
   }
+
+  // IME commit for thread-mode chunk textareas. Each chunk has its own
+  // inline onChange that calls replaceChunk; we need a matching
+  // compositionEnd that does the same commit path instead of setText.
+  const makeChunkCompositionEnd = (i: number) =>
+    (e: React.CompositionEvent<HTMLTextAreaElement>) => {
+      isComposingRef.current = false
+      const ta = e.currentTarget
+      const localCursor = ta.selectionStart ?? 0
+      pendingMasterCursorRef.current = chunkBoundaries[i] + localCursor
+      replaceChunk(i, ta.value)
+      setActiveChunkIndex(i)
+      setActiveChunkCursor(localCursor)
+    }
 
   const handleTextClick = (e: React.MouseEvent<HTMLTextAreaElement>) => {
     setCursorPosition((e.target as HTMLTextAreaElement).selectionEnd ?? (e.target as HTMLTextAreaElement).selectionStart)
@@ -2625,6 +2666,7 @@ const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess, placehol
                       <HighlightedTextarea
                         value={slice}
                         onChange={(e) => {
+                          if (isComposingRef.current) return
                           const localCursor = e.target.selectionStart ?? 0
                           // Stash the cursor's master-text offset so the
                           // cursor-restore layoutEffect can translate it
@@ -2634,6 +2676,8 @@ const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess, placehol
                           setActiveChunkIndex(i)
                           setActiveChunkCursor(localCursor)
                         }}
+                        onCompositionStart={handleCompositionStart}
+                        onCompositionEnd={makeChunkCompositionEnd(i)}
                         onClick={(e) => {
                           setActiveChunkIndex(i)
                           setActiveChunkCursor((e.target as HTMLTextAreaElement).selectionStart ?? 0)
@@ -2685,6 +2729,7 @@ const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess, placehol
                   <HighlightedTextarea
                     value={text}
                     onChange={handleTextChange}
+                    onCompositionStart={handleCompositionStart}
                     onCompositionEnd={handleCompositionEnd}
                     onClick={handleTextClick}
                     onKeyUp={handleTextKeyUp}
@@ -3226,12 +3271,15 @@ const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess, placehol
                   <HighlightedTextarea
                     value={slice}
                     onChange={(e) => {
+                      if (isComposingRef.current) return
                       const localCursor = e.target.selectionStart ?? 0
                       pendingMasterCursorRef.current = chunkBoundaries[i] + localCursor
                       replaceChunk(i, e.target.value)
                       setActiveChunkIndex(i)
                       setActiveChunkCursor(localCursor)
                     }}
+                    onCompositionStart={handleCompositionStart}
+                    onCompositionEnd={makeChunkCompositionEnd(i)}
                     onClick={(e) => {
                       setActiveChunkIndex(i)
                       setActiveChunkCursor((e.target as HTMLTextAreaElement).selectionStart ?? 0)
@@ -3298,6 +3346,7 @@ const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess, placehol
               <HighlightedTextarea
                 value={text}
                 onChange={handleTextChange}
+                onCompositionStart={handleCompositionStart}
                 onCompositionEnd={handleCompositionEnd}
                 onClick={handleTextClick}
                 onKeyUp={handleTextKeyUp}

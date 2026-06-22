@@ -5,6 +5,11 @@ import { TAG_CHAR_CLASS, HASHTAG_SIGIL_CLASS, MENTION_SIGIL_CLASS } from '~/../.
 interface HighlightedTextareaProps {
   value: string
   onChange: (e: React.ChangeEvent<HTMLTextAreaElement>) => void
+  // Fired when an IME composition session begins. Used by PostForm to set
+  // its own isComposingRef so it can reliably skip onChange events during
+  // genuine CJK composition without trusting e.nativeEvent.isComposing,
+  // which Android WebView (Rabby, etc.) mis-reports for plain Latin typing.
+  onCompositionStart?: (e: React.CompositionEvent<HTMLTextAreaElement>) => void
   // Fired when an IME composition (CJK candidate selection) commits. The
   // textarea's normal onChange events are skipped by the parent while a
   // composition is open (#322); this is how the parent learns the final
@@ -52,6 +57,7 @@ interface HighlightedTextareaProps {
 const HighlightedTextarea: React.FC<HighlightedTextareaProps> = ({
   value,
   onChange,
+  onCompositionStart,
   onCompositionEnd,
   onClick,
   onKeyUp,
@@ -396,6 +402,7 @@ const HighlightedTextarea: React.FC<HighlightedTextareaProps> = ({
         placeholder={placeholder}
         value={value}
         onChange={onChange}
+        onCompositionStart={onCompositionStart}
         onCompositionEnd={onCompositionEnd}
         onClick={onClick}
         onKeyUp={onKeyUp}
