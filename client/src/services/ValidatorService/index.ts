@@ -3680,14 +3680,33 @@ console.log("succeededKeys", succeededKeys)
         }
 
         if (succeeded) {
-          await prisma.txQueue.update({
-            where: { id: entry.id },
-            data: { status: 'done', reason: null }
+          // Use updateMany with a status guard to prevent double-incrementing
+          // the session-key spend counter. The bisect recovery path may have
+          // already resolved this row via markTxQueueValidatedByPeer (which
+          // calls incrementSessionSpent) before populating recoveryByEntryId
+          // with { succeeded:true }. A plain update here would then call
+          // incrementSessionSpent a second time, producing a ~2× over-count
+          // that falsely blocks Quick Sign with 403 "Session key spend limit
+          // reached". The status guard ensures only the first writer fires
+          // the spend bump; concurrent bisect-resolved rows see count=0 and
+          // skip the increment. Matches the idempotency pattern in
+          // markTxQueueDone / markTxQueueValidatedByPeer.
+          const doneResult = await prisma.txQueue.updateMany({
+            where: {
+              id: entry.id,
+              status: { in: ['pending', 'processing', 'awaiting_indexer'] },
+            },
+            data: { status: 'done', reason: null },
           })
-          // Increment the session key's locally-tracked spent counter so the
-          // /api/actions fast-path spend-limit check stays accurate without
-          // a live sessionSpent() RPC call per submission.
-          await incrementSessionSpent(prisma as any, entry.payload as any, entry.signedTx)
+          if (doneResult.count === 1) {
+            // Increment the session key's locally-tracked spent counter so the
+            // /api/actions fast-path spend-limit check stays accurate without
+            // a live sessionSpent() RPC call per submission.
+            await incrementSessionSpent(prisma as any, entry.payload as any, entry.signedTx)
+          }
+          // count=0 means bisect already moved this row to 'done' or
+          // 'validated_by_peer' and already fired incrementSessionSpent —
+          // nothing to do here.
           txSuccess++
         } else {
           await markTxQueueFailed(entry.id, reason || 'Transaction failed', data.senderId, data)
