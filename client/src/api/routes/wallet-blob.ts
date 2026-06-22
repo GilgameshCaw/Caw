@@ -121,7 +121,14 @@ router.post('/blob', blobWriteLimit, async (req, res) => {
 
     let emailed = false
     let usedFallback = false
-    if (emailStr && isMailerConfigured()) {
+    // Report transport availability + per-send failure separately so the FE can
+    // tell "email isn't set up on this server" (→ tell the user to download)
+    // apart from "transport is up but THIS send failed" (→ let them retry).
+    // Without this split the FE showed the terminal "Email backup isn't
+    // available" copy for a transient send hiccup even though Resend was live.
+    const mailerConfigured = isMailerConfigured()
+    let emailError = false
+    if (emailStr && mailerConfigured) {
       const r = await sendRecoveryBackupEmail({
         to: emailStr,
         username: safeUsername,
@@ -130,11 +137,12 @@ router.post('/blob', blobWriteLimit, async (req, res) => {
       emailed = r.ok
       usedFallback = r.ok && isUsingSendmailFallback()
       if (!r.ok) {
+        emailError = true
         console.warn(`[wallet-blob] recovery email to ${maskEmail(emailStr)} failed (non-fatal):`, r.error)
       }
     }
 
-    res.json({ ok: true, emailed, usedFallback })
+    res.json({ ok: true, emailed, usedFallback, mailerConfigured, emailError })
   } catch (error) {
     console.error('POST /api/wallet/blob error:', error)
     res.status(500).json({ error: 'Failed to store backup' })

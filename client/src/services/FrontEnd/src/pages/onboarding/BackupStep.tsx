@@ -95,13 +95,19 @@ export default function BackupStep({
         emailed: boolean
         usedFallback?: boolean
         mailerConfigured?: boolean
+        emailError?: boolean
       }
       if (json.emailed) {
         setEmailResult(json.usedFallback ? 'sent_spam' : 'sent')
         setDidEmail(true)
-      } else {
-        // Server reached, but it didn't send — email is genuinely not configured.
+      } else if (json.mailerConfigured === false) {
+        // No mail transport on this server at all — terminal; tell them to download.
         setEmailResult('unavailable')
+      } else {
+        // Transport IS configured but THIS send failed (or older server that
+        // didn't report mailerConfigured) — treat as retryable rather than
+        // terminal, so a transient Resend hiccup doesn't dead-end the user.
+        setEmailResult('error')
       }
     } catch {
       // Couldn't reach the server at all (network blip, or the API restarting
