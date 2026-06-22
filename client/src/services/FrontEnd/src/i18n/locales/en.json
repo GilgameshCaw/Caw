@@ -1650,7 +1650,7 @@
   "onboarding.backup.repay_title": "This gift includes a repayment",
   "onboarding.backup.repay_body": "Your sponsor is fronting the network and bridge fees. When you first withdraw CAW, {{amount}} is repaid to your sponsor automatically before the rest reaches you. After that you owe nothing.",
   "onboarding.backup.cta": "Download recovery file",
-  "onboarding.backup.loading_sponsor": "Waiting for sponsor server…",
+  "onboarding.backup.loading_sponsor": "Creating your account on-chain — this usually takes 15–30 seconds. Hang tight…",
   "onboarding.backup.loading_chain": "Confirming on-chain…",
   "onboarding.backup.error_no_funds": "Sponsor temporarily out of CAW. Please try again later.",
   "onboarding.backup.error_rate_limited": "Too many signups from your IP. Please try again later.",
