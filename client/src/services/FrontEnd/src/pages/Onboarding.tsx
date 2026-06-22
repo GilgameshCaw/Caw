@@ -650,6 +650,17 @@ export default function Onboarding() {
               // deposit step, treat as staked, queue actions optimistically). Same
               // key/shape New.tsx writes for the wallet-mint path; baseline 0 is
               // correct (the tokenId didn't exist on L2 before this mint).
+              // [pendingDeposit:diag] Did we write the hint, and for what token/
+              // amount? If derivedDepositAmount is 0 here (gift − burn − gas ≈ 0,
+              // or giftInfo failed to load) the hint is skipped and the gifted
+              // user hits "insufficient CAW". Compare mintedTokenId here with the
+              // activeTokenId the gate logs at action time.
+              console.log('[pendingDeposit:diag] onboarding hint write', {
+                mintedTokenId,
+                derivedDepositAmount: derivedDepositAmount.toString(),
+                willWriteHint: mintedTokenId != null && derivedDepositAmount > 0n,
+                giftCaw: giftInfo?.giftCaw?.toString(),
+              })
               if (mintedTokenId != null && derivedDepositAmount > 0n) {
                 try {
                   localStorage.setItem(

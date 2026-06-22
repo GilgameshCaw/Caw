@@ -159,13 +159,29 @@ export const useTokenDataStore = create<TokenDataStore>()(
       },
       setHasHydrated: () => set({ hasHydrated: true }),
       setTokensForAddress: (addr, tokens) =>
-        set(state => ({
-          tokensByAddress: {
-
-            ...state.tokensByAddress,
-            [addr.toLowerCase() as Address]: tokens
+        set(state => {
+          // [multiAccount:diag] Detect the "second account clobbers first" report.
+          // setTokensForAddress is additive (spreads existing), so if account #1's
+          // address VANISHES across a setTokensForAddress for account #2, the
+          // clobber is upstream (account #1 was already gone from state). Log the
+          // before/after address sets so we can see exactly when #1 disappears.
+          const before = Object.keys(state.tokensByAddress)
+          const writing = addr.toLowerCase()
+          const after = before.includes(writing) ? before : [...before, writing]
+          console.log('[multiAccount:diag] setTokensForAddress', {
+            writingAddr: writing,
+            tokenIds: tokens.map(t => t.tokenId),
+            addressesBefore: before,
+            addressesAfter: after,
+            droppedAny: before.filter(a => a !== writing && !after.includes(a)),
+          })
+          return {
+            tokensByAddress: {
+              ...state.tokensByAddress,
+              [addr.toLowerCase() as Address]: tokens
+            }
           }
-        })),
+        }),
       removeAddress: (addressToRemove: Address) =>
         set(state => {
           const normalizedAddress = addressToRemove.toLowerCase() as Address
@@ -345,6 +361,16 @@ export const useTokenDataStore = create<TokenDataStore>()(
           // Keep the last one if there are duplicates
           normalizedActiveTokenIdByAddress[normalizedAddr] = tokenId as number
         }
+
+        // [multiAccount:diag] What addresses did localStorage actually hold at
+        // rehydrate? If account #1 is MISSING here, it was never persisted (the
+        // clobber happened before the persist write); if it's PRESENT here but
+        // gone from the UI, the clobber is post-rehydrate (a runtime overwrite).
+        console.log('[multiAccount:diag] persist merge (rehydrate)', {
+          persistedAddresses: Object.keys(normalizedTokensByAddress),
+          currentAddresses: Object.keys(currentState.tokensByAddress || {}),
+          persistedLastAddress: persistedState.lastAddress,
+        })
 
         return {
           ...currentState, // current provides defaults

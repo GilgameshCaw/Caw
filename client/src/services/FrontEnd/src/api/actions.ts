@@ -1049,6 +1049,21 @@ export function useSignAndSubmitAction() {
           try { localHintWei = BigInt(hint.amount) } catch {}
         }
       }
+      // [pendingDeposit:diag] Surface what the gate sees for this active token —
+      // diagnoses the gifted-Pop-B "insufficient CAW" report: the hint is keyed
+      // on activeTokenId here but written under mintedTokenId at onboarding, so a
+      // stale active-token (post-mint resolution lag) reads the wrong key. Also
+      // dumps every caw:pendingDeposit:* key so a key/tokenId mismatch is obvious.
+      try {
+        const allHintKeys = Object.keys(localStorage).filter(k => k.startsWith('caw:pendingDeposit:'))
+        console.log('[pendingDeposit:diag] gate read', {
+          activeTokenId,
+          hintKey: `caw:pendingDeposit:${activeTokenId}`,
+          hintFound: !!hintRaw,
+          localHintWei: localHintWei.toString(),
+          allPendingDepositKeys: allHintKeys,
+        })
+      } catch { /* ignore */ }
     } catch { /* ignore */ }
 
     let backendPendingWei = 0n
