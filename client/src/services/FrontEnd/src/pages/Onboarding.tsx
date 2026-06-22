@@ -405,6 +405,35 @@ export default function Onboarding() {
       vaultPasswordConfirm: '',
     }))
 
+    // L2 DELEGATION (Pop-B): delegate the EOA → SmartEOA on L2 + enroll the
+    // passkey, so the passkey ROOT signer can act on L2 (post/like/follow/withdraw)
+    // WITHOUT a forced Quick Sign session. bootstrap() already signed the L2 auth
+    // tuple (result.l2Delegation) while the secp256k1 key was in scope; we just
+    // POST it. Fire-and-forget: the L2 tx is cheap (no mint) and the user can act
+    // via Quick Sign in the gap; a failure is non-fatal and retriable. See
+    // docs/POPB_L2_DELEGATION_SCOPE.md.
+    if (result.l2Delegation) {
+      const d = result.l2Delegation
+      void (async () => {
+        try {
+          await apiFetch('/api/sponsor/delegate-l2', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              passkeyPubkeyX: d.passkeyPubkeyX,
+              passkeyPubkeyY: d.passkeyPubkeyY,
+              ecdsaFallbackAddr: d.ecdsaFallbackAddr,
+              authTupleNonce: d.authTupleNonce,
+              authTupleSignature: d.authTupleSignature,
+            }),
+          })
+          console.log('[signin:diag] L2 delegation submitted for', d.ecdsaFallbackAddr)
+        } catch (e) {
+          console.warn('[signin:diag] L2 delegation failed (non-fatal, Quick Sign covers the gap):', e)
+        }
+      })()
+    }
+
     // Post-mint sign-in. The minted profile is owned by result.ecdsaAddress;
     // sign the standard /api/auth/verify message with that key (held only in
     // the result's one-shot closure) — same flow as useVerifyWallet, but no

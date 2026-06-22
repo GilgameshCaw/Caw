@@ -259,6 +259,10 @@ export default function CreateAccountStep({
         minterAddress: CAW_NAMES_MINTER_ADDRESS as `0x${string}`,
         permitNonce: BOOTSTRAP_PERMIT_NONCE,
         lzTokenAmount: DEFAULT_LZ_TOKEN_AMOUNT,
+        // Sign the L2 7702 auth tuple too, so the passkey can act on L2 without a
+        // Quick Sign session (Pop-B L2 delegation — see POPB_L2_DELEGATION_SCOPE).
+        // Returned as result.l2Delegation; Onboarding POSTs it to delegate-l2.
+        l2ChainId: chains.l2.chainId,
         // Sponsor-Repay (Phase 2): fold the code-derived repay obligation into
         // the signed digest. kycLevel stays 0 (repay-only, no KYC gate). These
         // MUST match the server's code-derived values (it recomputes from the

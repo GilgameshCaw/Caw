@@ -156,6 +156,20 @@ export type BootstrapResult = {
    * closure (already in memory for the bootstrap) — let it GC after use.
    */
   signVerifyMessage: (message: string) => Promise<`0x${string}`>
+  /**
+   * L2 delegation payload (present only when bootstrap() was called with
+   * l2ChainId). The caller POSTs this to /api/sponsor/delegate-l2 to delegate the
+   * user's EOA → SmartEOA on L2 + enroll the passkey, so the passkey root signer
+   * can act on L2 without a Quick Sign session. Signed here while the secp256k1
+   * key was in scope; the raw key is NOT included.
+   */
+  l2Delegation?: {
+    passkeyPubkeyX: `0x${string}`
+    passkeyPubkeyY: `0x${string}`
+    ecdsaFallbackAddr: `0x${string}`
+    authTupleNonce: string
+    authTupleSignature: { yParity: number; r: `0x${string}`; s: `0x${string}` }
+  }
 }
 
 // ─── Public API ──────────────────────────────────────────────────────────────
@@ -198,6 +212,16 @@ export async function bootstrapNewUser(opts: {
   smartEoaAddress: `0x${string}`
   rpcProvider: BootstrapRpcProvider
   passkeySigner: PasskeyPermitSigner
+  /**
+   * L2 chain ID (e.g. Base Sepolia 84532). When provided, bootstrap ALSO signs a
+   * second EIP-7702 auth tuple committed to this chainId (with the L2 EOA nonce,
+   * which is 0 on a fresh keypair) and returns it as `l2Delegation`. The caller
+   * POSTs it to /api/sponsor/delegate-l2 so the user's EOA is delegated to
+   * SmartEOA on L2 too — required for the passkey root signer to do on-chain
+   * actions on L2 (CawActions ERC-1271-verifies on L2). See
+   * docs/POPB_L2_DELEGATION_SCOPE.md. Omitted → no L2 tuple (back-compat).
+   */
+  l2ChainId?: number
   sponsorApi: SponsorApiClient
   /**
    * CawProfileMinter address — the EIP-712 `verifyingContract`. Needed here
@@ -236,6 +260,7 @@ export async function bootstrapNewUser(opts: {
     minterAddress,
     permitNonce,
     lzTokenAmount,
+    l2ChainId,
     kycLevel = 0,
     sponsorTokenId = 0,
     repayAmount = 0n,
@@ -270,6 +295,34 @@ export async function bootstrapNewUser(opts: {
     contractAddress: smartEoaAddress,
     nonce: BigInt(nonce),
   })
+
+  // Step 4a2: Sign a SECOND auth tuple for L2 (Pop-B L2 delegation). The passkey
+  // root signer can only ERC-1271-verify on a chain where the EOA is delegated to
+  // SmartEOA; CawActions verifies actions on L2, so the EOA must be delegated on
+  // L2 too. We sign it here while keypair.privateKey is in scope. The L2 EOA nonce
+  // is 0 on a fresh keypair (it has never transacted on L2). Returned as
+  // `l2Delegation` for the caller to POST to /api/sponsor/delegate-l2 — no L2 tx
+  // happens here. Skipped when l2ChainId is omitted (back-compat).
+  let l2Delegation: BootstrapResult['l2Delegation'] = undefined
+  if (l2ChainId !== undefined && l2ChainId !== chainId) {
+    const l2Auth = await signAuthorizationTuple({
+      privateKey: keypair.privateKey,
+      chainId: l2ChainId,
+      contractAddress: smartEoaAddress,
+      nonce: 0n,   // fresh EOA: nonce 0 on L2 (never transacted there)
+    })
+    l2Delegation = {
+      passkeyPubkeyX,
+      passkeyPubkeyY,
+      ecdsaFallbackAddr: keypair.address,
+      authTupleNonce: '0',
+      authTupleSignature: {
+        yParity: l2Auth.signedAuthorization.yParity,
+        r: l2Auth.signedAuthorization.r,
+        s: l2Auth.signedAuthorization.s,
+      },
+    }
+  }
 
   // Step 4b: Build the EIP-712 permit digest the passkey will sign.
   // CRITICAL: `recipient` must be the delegated EOA the contract sees — which
@@ -380,5 +433,6 @@ export async function bootstrapNewUser(opts: {
     // regression: empty username → navigate('/welcome/') → /home → splash.)
     username,
     signVerifyMessage: (message: string) => verifyAccount.signMessage({ message }),
+    l2Delegation,
   }
 }
