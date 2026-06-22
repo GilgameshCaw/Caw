@@ -47,7 +47,12 @@ export function DepositAddressBox({ address, population, className }: DepositAdd
 
   return (
     <div className={`${panelClass} ${className ?? ''}`}>
-      <p className={`text-sm font-medium ${mutedClass} mb-2`}>{'Send CAW or ETH to this address'}</p>
+      <p className={`text-sm font-medium ${mutedClass} mb-1`}>{'Send CAW or ETH to this address'}</p>
+
+      {/* Passkey reassurance — Pop-B only. Sits just under the title. */}
+      {isPopB && (
+        <p className={`text-xs ${mutedClass} mb-2`}>{t('topup.address_explainer')}</p>
+      )}
 
       {/* Address + inline copy / QR icons on one line. */}
       <div className="flex items-center gap-2">
@@ -67,11 +72,6 @@ export function DepositAddressBox({ address, population, className }: DepositAdd
           </svg>
         </button>
       </div>
-
-      {/* Passkey reassurance — Pop-B only. */}
-      {isPopB && (
-        <p className={`text-xs ${mutedClass} mt-2`}>{t('topup.address_explainer')}</p>
-      )}
 
       <QRModal
         isOpen={qrOpen}
