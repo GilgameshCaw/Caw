@@ -26,6 +26,8 @@ export interface QRModalProps {
   caption?: string
   /** Filename (without extension) for the PNG download. Default 'caw-qr'. */
   downloadName?: string
+  /** Modal max-width (Tailwind class or arbitrary value). Default 'max-w-xs'. */
+  maxWidth?: string
 }
 
 const QR_SIZE = 208
@@ -38,6 +40,7 @@ export default function QRModal({
   subtitle,
   caption,
   downloadName = 'caw-qr',
+  maxWidth = 'max-w-xs',
 }: QRModalProps) {
   const { isDark } = useTheme()
   const t = useT()
@@ -62,7 +65,7 @@ export default function QRModal({
     : 'bg-gray-200 text-gray-800 hover:bg-gray-300'
 
   return (
-    <ModalWrapper isOpen={isOpen} onClose={onClose} maxWidth="max-w-xs">
+    <ModalWrapper isOpen={isOpen} onClose={onClose} maxWidth={maxWidth}>
       <div className="p-6 text-center">
         {title && <p className={`text-sm font-semibold mb-1 ${strong}`}>{title}</p>}
         {subtitle && <p className={`text-xs mb-4 ${muted}`}>{subtitle}</p>}

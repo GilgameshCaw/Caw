@@ -475,6 +475,7 @@ export default function SponsorInviteSection() {
           subtitle="Scan to open the signup link with this invite."
           caption={qrCode}
           downloadName="caw-invite"
+          maxWidth="max-w-[336px]"
         />
       )}
     </div>
