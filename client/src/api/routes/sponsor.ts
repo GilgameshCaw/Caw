@@ -573,6 +573,59 @@ router.post('/deposit', async (req, res) => {
   return res.status(200).json(result)
 })
 
+// ─── POST /api/sponsor/delegate-l2 ───────────────────────────────────────────
+// Delegate a passkey user's EOA to SmartEOA on L2 + enroll their passkey, so the
+// passkey ROOT signer can do on-chain actions on L2 without a Quick Sign session.
+// See docs/POPB_L2_DELEGATION_SCOPE.md. Cheap (no mint) — counts against the
+// deposit/auth IP rate bucket. No invite code required: the user already proved
+// EOA ownership via the 7702 auth tuple, and the only on-chain effect is
+// delegating THEIR OWN EOA + enrolling THEIR OWN passkey (no funds, no mint).
+
+const DelegateL2BodySchema = z.object({
+  passkeyPubkeyX:     hex32Schema as z.ZodType<`0x${string}`>,
+  passkeyPubkeyY:     hex32Schema as z.ZodType<`0x${string}`>,
+  ecdsaFallbackAddr:  (addressSchema.refine(
+    v => v.toLowerCase() !== '0x0000000000000000000000000000000000000000',
+    { message: 'ecdsaFallbackAddr cannot be zero address' },
+  ) as z.ZodType<`0x${string}`>),
+  authTupleSignature: authTupleSignatureSchema,
+  authTupleNonce:     bigintSchema,
+})
+
+router.post('/delegate-l2', async (req, res) => {
+  const service = getSponsorService()
+  if (!service) {
+    return res.status(503).json({ error: 'SPONSOR_DISABLED', detail: 'Sponsored minting is not enabled on this node' })
+  }
+
+  const ip = clientIp(req)
+  const allowed = await checkSponsorRateLimit(ip, 'deposit')
+  if (!allowed) {
+    return res.status(429).json({
+      error: 'RATE_LIMITED',
+      detail: `L2-delegation limit is ${DEPOSIT_AUTH_RATE_LIMIT} per IP per day`,
+    })
+  }
+
+  let params: z.infer<typeof DelegateL2BodySchema>
+  try {
+    params = DelegateL2BodySchema.parse(req.body)
+  } catch (e) {
+    const detail = e instanceof ZodError ? e.issues.map(i => `${i.path.join('.')}: ${i.message}`).join(', ') : String(e)
+    return res.status(400).json({ error: 'VALIDATION', detail })
+  }
+
+  const result = await service.sponsorDelegateL2(params)
+  if (isSponsorError(result)) {
+    const status = result.error === 'TREASURY_LOW' ? 503
+      : result.error === 'L2_DISABLED' ? 503
+      : 400
+    return res.status(status).json(result)
+  }
+  void recordSponsorUse(ip, 'deposit')   // count only on success; fire-and-forget
+  return res.status(200).json(result)
+})
+
 // ─── POST /api/sponsor/authenticate ─────────────────────────────────────────
 
 router.post('/authenticate', async (req, res) => {

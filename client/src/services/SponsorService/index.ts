@@ -33,6 +33,7 @@ import {
   toUtf8String,
   TypedDataEncoder,
   dataSlice,
+  ZeroAddress,
   id as ethersId,
   type Provider,
   type ContractTransactionResponse,
@@ -49,6 +50,18 @@ export interface AuthTupleSignature {
   yParity: number
   r: `0x${string}`
   s: `0x${string}`
+}
+
+/** Params for the L2 delegate-only leg (sponsorDelegateL2). Mirrors the auth-tuple
+ *  + passkey fields of BootstrapParams, minus everything mint/deposit-related. */
+export interface DelegateL2Params {
+  passkeyPubkeyX: `0x${string}`
+  passkeyPubkeyY: `0x${string}`
+  ecdsaFallbackAddr: `0x${string}`
+  /** 7702 auth tuple signed by the user's secp256k1 key, committed to L2 chainId. */
+  authTupleSignature: AuthTupleSignature
+  /** User's EOA nonce on L2 at sign time (0 on a fresh EOA). */
+  authTupleNonce: bigint
 }
 
 export interface BootstrapParams {
@@ -114,6 +127,7 @@ export type SponsorErrorCode =
   | 'LZ_QUOTE_FAILED'
   | 'LZ_UNDERPAID'
   | 'TREASURY_LOW'
+  | 'L2_DISABLED'
   | 'RECIPIENT_NOT_DELEGATED'
   | 'TX_REVERTED'
   | 'SIMULATION_FAILED'
@@ -171,6 +185,9 @@ const MIN_TREASURY_ETH = BigInt('10000000000000000') // 0.01 ETH
 const GAS_LIMIT_BOOTSTRAP   = 1_200_000n
 const GAS_LIMIT_DEPOSIT     = 250_000n
 const GAS_LIMIT_AUTHENTICATE = 250_000n
+// L2 delegate-only leg: 7702 delegation + SmartEOA.initialize standalone (enroll
+// one passkey, no mint, no external Minter call). Much lighter than bootstrap.
+const GAS_LIMIT_DELEGATE_L2 = 350_000n
 // executeBatch relay: a withdraw (L1 CAW transfer + LZ send) or a zap. Generous
 // ceiling covering the inner withdrawTo/depositZap + the ERC-1271 verify.
 const GAS_LIMIT_EXECUTE_BATCH = 800_000n
@@ -188,6 +205,7 @@ const REVERT_SUBSTRINGS: Record<SponsorErrorCode, string[]> = {
   LZ_QUOTE_FAILED:         [],    // generated locally, never from contract
   LZ_UNDERPAID:            ['lz fee', 'insufficient fee', 'lzsend'],
   TREASURY_LOW:            [],    // generated locally, never from contract
+  L2_DISABLED:             [],    // generated locally, never from contract
   RECIPIENT_NOT_DELEGATED: ['direct submit required', 'not delegated', 'code.length'],
   TX_REVERTED:             [],    // fallback for unmatched reverts
   SIMULATION_FAILED:       [],    // generated locally (pre-submit staticCall revert)
@@ -222,6 +240,12 @@ export interface SponsorServiceOpts {
   minterAddress: string
   cawProfileAddress: string
   smartEoaAddress: string
+  /** L2 provider URL — used for the L2 SmartEOA delegation leg (delegate-l2).
+   *  Optional: when unset, sponsorDelegateL2 is unavailable (the L2 leg is a no-op
+   *  and passkey users fall back to Quick Sign for L2 actions). */
+  l2ProviderUrl?: string
+  l2RpcSecret?: string
+  l2ChainId?: number
   /** Minimum CAW required for a bootstrap call (prevents dust-mint spam). */
   minDepositCAW?: bigint
   /** Maximum CAW allowed per bootstrap/deposit call (M-1 anti-drain cap). Default 10M CAW. */
@@ -241,6 +265,12 @@ export class SponsorService {
   private readonly maxLzFeeWei: bigint
   private readonly l1ChainId: number | undefined
 
+  // L2 leg (Pop-B passkey L2 delegation). Optional — only set when an L2 RPC is
+  // configured. Same sponsorPrivateKey → same operator address cross-chain.
+  private readonly l2Provider: Provider | null
+  private readonly l2Wallet: Wallet | null
+  private readonly l2ChainId: number | undefined
+
   // Lazily resolved from provider on first call; cached for subsequent calls.
   private resolvedChainId: number | null = null
 
@@ -255,6 +285,15 @@ export class SponsorService {
     this.maxDepositCAW = opts.maxDepositCAW ?? 10_000_000n * 10n ** 18n  // 10M CAW
     this.maxLzFeeWei = opts.maxLzFeeWei ?? 5_000_000_000_000_000n         // 0.005 ETH
     this.l1ChainId = opts.l1ChainId
+    if (opts.l2ProviderUrl) {
+      this.l2Provider = makeJsonRpcProvider(opts.l2ProviderUrl, opts.l2ChainId, opts.l2RpcSecret)
+      this.l2Wallet = new Wallet(opts.sponsorPrivateKey, this.l2Provider)
+      this.l2ChainId = opts.l2ChainId
+    } else {
+      this.l2Provider = null
+      this.l2Wallet = null
+      this.l2ChainId = undefined
+    }
   }
 
   // ── Public surface ──────────────────────────────────────────────────────
@@ -677,6 +716,134 @@ export class SponsorService {
   }
 
   /**
+   * Delegate a passkey user's EOA to SmartEOA on L2 + enroll the passkey, so
+   * the user's ROOT signer (passkey) can verify ERC-1271 on L2 — where CawActions
+   * verifies every action (CawActions._checkERC1271 staticcalls isValidSignature
+   * on the owner EOA on L2). Bootstrap only delegates on L1; without this L2 leg
+   * no passkey root-signed action (post/like/follow/withdraw) can pass on L2,
+   * forcing the user through a Quick Sign session. See
+   * docs/POPB_L2_DELEGATION_SCOPE.md.
+   *
+   * This is a LIGHTWEIGHT cousin of sponsorBootstrap: a type-4 tx on L2 whose
+   * authorizationList delegates the EOA → SmartEOA (same CREATE2 address as L1),
+   * and whose calldata is SmartEOA.initialize(pkX, pkY, fallback, address(0), "")
+   * — the STANDALONE enroll-only path (minterContract == address(0)) that enrolls
+   * the passkey and does NOT mint. value: 0 (no LZ, no deposit on this leg).
+   *
+   * The user must have signed an L2 auth tuple (chainId = L2) with their
+   * secp256k1 key. Idempotent-ish: if the EOA is already delegated on L2, the
+   * 7702 entry is a no-op nonce bump but initialize would revert AlreadyInitialized
+   * — so we pre-check delegation and short-circuit.
+   */
+  async sponsorDelegateL2(params: DelegateL2Params): Promise<SponsorResult> {
+    if (!this.l2Provider || !this.l2Wallet) {
+      return { error: 'L2_DISABLED', detail: 'L2 RPC not configured — set SPONSOR_L2_RPC_URL' }
+    }
+    try {
+      const l2ChainId = this.l2ChainId ?? Number((await this.l2Provider.getNetwork()).chainId)
+
+      // 1. Recover the user's EOA from their L2 auth tuple sig (committed to L2 chainId).
+      const authForRecovery = {
+        address: this.smartEoaAddress,
+        nonce: params.authTupleNonce,
+        chainId: BigInt(l2ChainId),
+      }
+      const sigComponents = {
+        yParity: params.authTupleSignature.yParity,
+        r: params.authTupleSignature.r,
+        s: params.authTupleSignature.s,
+      }
+      let userEoaAddress: string
+      try {
+        userEoaAddress = verifyAuthorization(authForRecovery, sigComponents as any)
+      } catch (e) {
+        return { error: 'BAD_SIG', detail: `Could not recover EOA from L2 auth tuple: ${e}` }
+      }
+
+      // 2. Already delegated on L2? If the EOA has 0xef0100… delegation code AND
+      //    SmartEOA.isValidSignature is reachable (initialized), this is a no-op —
+      //    short-circuit so we don't burn gas on a tx whose initialize reverts
+      //    AlreadyInitialized. (Fresh EOA → empty code → proceed.)
+      const existingCode = await this.l2Provider.getCode(userEoaAddress)
+      if (existingCode && existingCode !== '0x') {
+        // Delegated already (or has code). Treat as success — nothing to do.
+        return { txHash: '', recipient: userEoaAddress }
+      }
+
+      // 3. Confirm FE-supplied nonce matches the EOA's current L2 nonce (a stale
+      //    nonce silently drops the 7702 entry → un-delegated EOA, wasted gas).
+      const currentEoaNonce = await this.l2Provider.getTransactionCount(userEoaAddress, 'pending')
+      if (BigInt(currentEoaNonce) !== params.authTupleNonce) {
+        return {
+          error: 'NONCE_MISMATCH',
+          detail: `L2 authTupleNonce ${params.authTupleNonce} != EOA L2 nonce ${currentEoaNonce}`,
+        }
+      }
+
+      // 4. Treasury check on L2 (operator wallet, same address, needs ETH on L2).
+      const sponsorBalance = await this.l2Provider.getBalance(this.l2Wallet.address)
+      if (sponsorBalance < MIN_TREASURY_ETH) {
+        return {
+          error: 'TREASURY_LOW',
+          detail: `Sponsor L2 ETH balance (${sponsorBalance}) below minimum (${MIN_TREASURY_ETH})`,
+        }
+      }
+
+      // 5. Build SmartEOA.initialize(pkX, pkY, fallback, address(0), "") — the
+      //    standalone enroll-only path (no mint).
+      const smartEoaIface = new Interface(smartEoaAbi as any)
+      const initCalldata = smartEoaIface.encodeFunctionData('initialize', [
+        params.passkeyPubkeyX,
+        params.passkeyPubkeyY,
+        params.ecdsaFallbackAddr,
+        ZeroAddress,   // minterContract == 0 → standalone, no mint
+        '0x',          // empty mintCalldata
+      ])
+
+      // 6. Assemble + send the type-4 tx on L2.
+      const authEntry: Authorization = authorizationify({
+        address: this.smartEoaAddress,
+        nonce: params.authTupleNonce,
+        chainId: BigInt(l2ChainId),
+        signature: Signature.from({
+          r: sigComponents.r,
+          s: sigComponents.s,
+          yParity: sigComponents.yParity as 0 | 1,
+        }),
+      })
+
+      const sponsorNonce = await this.l2Provider.getTransactionCount(this.l2Wallet.address, 'pending')
+      const feeData = await this.l2Provider.getFeeData()
+
+      const tx = new Transaction()
+      tx.type = 4
+      tx.to = userEoaAddress
+      tx.data = initCalldata
+      tx.value = 0n
+      tx.nonce = sponsorNonce
+      tx.chainId = BigInt(l2ChainId)
+      tx.gasLimit = GAS_LIMIT_DELEGATE_L2
+      tx.maxFeePerGas = feeData.maxFeePerGas ?? (feeData.gasPrice ?? 2_000_000_000n)
+      tx.maxPriorityFeePerGas = feeData.maxPriorityFeePerGas ?? 1_000_000n
+      tx.authorizationList = [authEntry]
+
+      const signedTx = await this.l2Wallet.signTransaction(tx)
+      const txResponse = await this.l2Provider.broadcastTransaction(signedTx)
+      const receipt = await txResponse.wait()
+      if (!receipt || receipt.status !== 1) {
+        return {
+          error: 'TX_REVERTED',
+          detail: `L2 delegation tx ${txResponse.hash} reverted (status ${receipt?.status ?? 'null'})`,
+        }
+      }
+      console.log(`[SponsorService] L2-delegated + enrolled passkey for ${userEoaAddress} (tx ${txResponse.hash})`)
+      return { txHash: txResponse.hash, recipient: userEoaAddress }
+    } catch (err) {
+      return parseRevertError(err)
+    }
+  }
+
+  /**
    * Parse the freshly-minted profile tokenId from a bootstrap receipt by
    * matching the ERC-721 mint Transfer — Transfer(address(0), to, tokenId) —
    * emitted by the CawProfile NFT contract. Returns null if not found (the
@@ -997,6 +1164,16 @@ export function getSponsorService(): SponsorService | null {
   const maxLzFeeRaw = process.env.SPONSOR_MAX_LZ_FEE_WEI
   const maxLzFeeWei = maxLzFeeRaw ? BigInt(maxLzFeeRaw) : 5_000_000_000_000_000n  // 0.005 ETH
 
+  // L2 leg (Pop-B passkey L2 delegation) — optional. Same operator key signs on
+  // L2; it just needs ETH on L2. When unset, sponsorDelegateL2 returns L2_DISABLED
+  // and passkey users fall back to Quick Sign for L2 actions.
+  const l2ProviderUrl = process.env.SPONSOR_L2_RPC_URL || process.env.L2_RPC_URL_HTTP || undefined
+  const l2RpcSecret = process.env.L2_RPC_SECRET || undefined
+  const l2ChainId = process.env.L2_CHAIN_ID ? Number(process.env.L2_CHAIN_ID) : undefined
+  if (!l2ProviderUrl) {
+    console.warn('[SponsorService] No SPONSOR_L2_RPC_URL/L2_RPC_URL_HTTP — L2 passkey delegation disabled.')
+  }
+
   _instance = new SponsorService({
     l1ProviderUrl,
     l1RpcSecret,
@@ -1008,6 +1185,9 @@ export function getSponsorService(): SponsorService | null {
     minDepositCAW,
     maxDepositCAW,
     maxLzFeeWei,
+    l2ProviderUrl,
+    l2RpcSecret,
+    l2ChainId,
   })
 
   return _instance
