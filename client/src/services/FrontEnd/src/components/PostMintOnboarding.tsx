@@ -8,6 +8,7 @@ import { useRootSigner } from '~/hooks/useRootSigner'
 import { formatWalletError } from '~/utils/errorMessage'
 import { maxUint256, parseUnits, formatUnits, erc20Abi } from 'viem'
 import { useActiveToken, useTokenDataStore, usePriceStore } from '~/store/tokenDataStore'
+import { useUserByToken } from '~/hooks/useUserData'
 import { useVerifyWallet } from '~/hooks/useVerifyWallet'
 import { useAuthStore } from '~/store/authStore'
 import { useDmClient } from '~/hooks/useDm'
@@ -202,10 +203,25 @@ const PostMintOnboarding: React.FC<PostMintOnboardingProps> = ({ username, token
       window.removeEventListener('storage', refresh)
     }
   }, [readPendingHint, tokenId])
+  // Backend-authoritative pending deposit. The server records the in-flight
+  // gift deposit on the User row (sponsor bootstrap) and returns it here, so
+  // the follow gate sees it even when the localStorage hint is absent (e.g. the
+  // user signed in on a device that didn't write the hint). This mirrors what
+  // the home-feed action gate already credits (api/actions.ts by-token read) —
+  // without it, the stepper's follow step showed "need 30K" while the home feed
+  // correctly allowed the follow. Poll while a hint is live so it self-clears.
+  const { data: byTokenData } = useUserByToken(tokenId, 15_000)
+  const backendPendingAmount = (() => {
+    try { return byTokenData?.pendingDepositAmount ? BigInt(byTokenData.pendingDepositAmount) : 0n }
+    catch { return 0n }
+  })()
   // giftedMint forces deposit "satisfied" even when pendingDeposit is null (gift
   // fully consumed by burn+gas) — a passkey user has no wallet to deposit from.
-  const depositPending = giftedMint || !!pendingDeposit || (pendingHintAmount !== null && pendingHintAmount > 0n)
-  const pendingDepositAmount = pendingDeposit ? BigInt(pendingDeposit) : (pendingHintAmount ?? 0n)
+  const depositPending = giftedMint || !!pendingDeposit || (pendingHintAmount !== null && pendingHintAmount > 0n) || backendPendingAmount > 0n
+  // Use the LARGER of prop/localStorage hint and the backend value (avoids
+  // double-counting when both are in sync; covers the race where only one has).
+  const localPendingAmount = pendingDeposit ? BigInt(pendingDeposit) : (pendingHintAmount ?? 0n)
+  const pendingDepositAmount = localPendingAmount > backendPendingAmount ? localPendingAmount : backendPendingAmount
   const [currentStep, setCurrentStep] = useState(initialStep)
   const [completedSteps, setCompletedSteps] = useState<Set<StepId>>(new Set())
   const [skippedSteps, setSkippedSteps] = useState<Set<StepId>>(new Set())

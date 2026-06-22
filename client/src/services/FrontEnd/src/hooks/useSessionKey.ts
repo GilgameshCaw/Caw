@@ -339,6 +339,22 @@ export async function registerSponsoredSession(opts: {
       const status = await apiFetch<{ status: string; txHash?: string; error?: string }>(
         `/api/sessions/status/${result.requestId}`,
       )
+      // Capture the registration tx hash as soon as it's known and write the
+      // caw:pendingQuickSign hint. The session-reg tx confirms on L2 but takes a
+      // moment to PROPAGATE to the node the validator reads — so an action signed
+      // by this session in that gap (e.g. the stepper's profile-update right
+      // after Quick Sign) gets rejected with "SessionInvalid". The hint makes
+      // signAndSubmit forward pendingQuickSignTxHash so the validator HOLDS the
+      // action until it sees the session, instead of failing it (actions.ts
+      // reads caw:pendingQuickSign:<owner>). Mirrors the pendingDeposit hint.
+      if (status.txHash && /^0x[0-9a-fA-F]{64}$/.test(status.txHash)) {
+        try {
+          localStorage.setItem(
+            `caw:pendingQuickSign:${ownerAddress.toLowerCase()}`,
+            JSON.stringify({ txHash: status.txHash, submittedAt: Date.now() }),
+          )
+        } catch { /* localStorage unavailable — validator may reject in the gap */ }
+      }
       if (status.status === 'waiting_for_sync') onProgress?.('Waiting for L2 sync...')
       else if (status.status === 'submitting') onProgress?.('Registering on-chain...')
       else if (status.status === 'pending') onProgress?.('Confirming transaction...')
