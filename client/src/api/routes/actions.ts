@@ -1,7 +1,7 @@
 import { Router } from 'express'
 import { ethers, JsonRpcProvider, WebSocketProvider, Contract } from 'ethers'
 import { createHash } from 'crypto'
-import { makeVerifiedJsonRpcProvider, makeVerifiedWebSocketProvider, getL2HttpRpcUrl } from '../../utils/rpcProvider'
+import { makeVerifiedJsonRpcProvider, makeVerifiedWebSocketProvider, getL2HttpRpcUrl, getL1HttpRpcUrl } from '../../utils/rpcProvider'
 import SmlTxt from 'smltxt'
 import { prisma } from '../../prismaClient'
 
@@ -61,7 +61,16 @@ async function verifyERC1271Sig(
   signature: string,
 ): Promise<boolean> {
   try {
-    const provider = await getReadProviderAsync()
+    // Verify on the chain that matches the action's EIP-712 domain. WITHDRAW
+    // actions are L1-domain and the SmartEOA 7702 delegation lives on L1, so a
+    // withdraw's isValidSignature must be checked on the L1 provider. All other
+    // Pop-B actions are L2-domain (and the SmartEOA mirror is reachable there).
+    // Picking the wrong chain hits an address with no contract code →
+    // "could not decode result data" → false → spurious 400 Invalid signature.
+    const domainChainId = Number(domain?.chainId)
+    const provider = domainChainId === L1_CHAIN_ID
+      ? await getL1ReadProviderAsync()
+      : await getReadProviderAsync()
     const digest = ethers.TypedDataEncoder.hash(domain, { ActionData: types.ActionData }, data)
     const contract = new Contract(ownerAddress, ERC1271_ABI, provider)
     const result = await Promise.race<string>([
@@ -148,6 +157,29 @@ let _readContract: Contract | null = null
 
 // Read L2 chain ID from env; falls back to Base Sepolia (84532).
 const L2_CHAIN_ID = process.env.L2_CHAIN_ID ? Number(process.env.L2_CHAIN_ID) : 84532
+// Read L1 chain ID from env; falls back to Sepolia (11155111).
+const L1_CHAIN_ID = process.env.L1_CHAIN_ID ? Number(process.env.L1_CHAIN_ID) : 11155111
+
+// Lazy-initialized L1 read provider — used to verify ERC-1271 (passkey/SmartEOA
+// isValidSignature) for WITHDRAW actions, whose EIP-712 domain.chainId is L1.
+// The SmartEOA 7702 delegation lives on L1 (set at bootstrap), so verifying a
+// withdraw sig on the L2 provider hits an address with no code → "could not
+// decode result data" → false → spurious 400 Invalid signature.
+let _l1Provider: JsonRpcProvider | WebSocketProvider | null = null
+let _l1ProviderInitPromise: Promise<void> | null = null
+async function getL1ReadProviderAsync(): Promise<JsonRpcProvider | WebSocketProvider> {
+  if (_l1Provider) return _l1Provider
+  if (_l1ProviderInitPromise) { await _l1ProviderInitPromise; return _l1Provider! }
+  _l1ProviderInitPromise = (async () => {
+    const rpcUrl = getL1HttpRpcUrl()
+    if (!rpcUrl) throw new Error('L1 RPC not configured')
+    _l1Provider = rpcUrl.startsWith('wss://') || rpcUrl.startsWith('ws://')
+      ? await makeVerifiedWebSocketProvider(rpcUrl, L1_CHAIN_ID)
+      : await makeVerifiedJsonRpcProvider(rpcUrl, L1_CHAIN_ID)
+  })()
+  await _l1ProviderInitPromise
+  return _l1Provider!
+}
 
 // Lazy init guard: if provider construction is in flight, don't start a second.
 let _readProviderInitPromise: Promise<void> | null = null

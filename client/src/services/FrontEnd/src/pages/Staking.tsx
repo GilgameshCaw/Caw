@@ -1,5 +1,6 @@
 // src/services/FrontEnd/src/components/CawStakingForm.tsx
 import React, { useEffect, useState, useCallback, useMemo } from "react"
+import toast from 'react-hot-toast'
 import { useSignAndSubmitAction, getValidatorTip } from '~/api/actions'
 import { apiFetch } from '~/api/client'
 import { useSearchParams, useLocation } from 'react-router-dom'
@@ -728,6 +729,21 @@ const Staking = () => {
         await fetchPendingWithdrawals()
       } catch (err) {
         console.error('[Staking] Withdraw init failed', err)
+        // Surface the failure to the user — the unstake silently failed before
+        // (caught + console-only), so it looked like a successful submit. Map
+        // known opaque errors to readable copy; show the rest verbatim-ish.
+        const raw = err instanceof Error ? err.message : String(err)
+        let msg = 'Unstake failed. Please try again.'
+        if (/Invalid signature/i.test(raw)) {
+          msg = "Couldn't verify your passkey signature for this unstake. Please try again — if it keeps failing, sign out and back in with your passkey."
+        } else if (/rejected|denied|NotAllowed|cancel/i.test(raw)) {
+          msg = 'Unstake cancelled.'
+        } else if (/insufficient/i.test(raw)) {
+          msg = 'Not enough staked CAW to unstake that amount.'
+        } else if (raw && raw.length < 160) {
+          msg = `Unstake failed: ${raw}`
+        }
+        toast.error(msg)
       }
     }
     try {
