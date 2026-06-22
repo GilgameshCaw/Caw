@@ -1419,7 +1419,12 @@ const PostMintOnboarding: React.FC<PostMintOnboardingProps> = ({ username, token
                       key={user.tokenId}
                       className={`rounded-xl p-4 border transition-colors w-[calc(50%-6px)] sm:w-[calc(33.333%-8px)] md:w-[calc(25%-9px)] ${tc.cardMuted} ${tc.cardMutedHover} ${tc.userCardBorder}`}
                     >
-                      <a href={`/users/${user.username}`} onClick={(e) => { e.preventDefault(); onComplete?.(); window.location.href = `/users/${user.username}` }} className="block text-center cursor-pointer">
+                      {/* Non-clickable on the onboarding follow step: this page is
+                          for following, not navigating away. A profile link here
+                          let stray taps jump to /users/:username mid-onboarding
+                          (and on 2-col mobile the big tap target swallowed Follow
+                          taps). Plain content — only the FollowButton acts. */}
+                      <div className="block text-center">
                         <div className={`w-14 h-14 rounded-full mx-auto mb-2 overflow-hidden border ${tc.avatarBorder}`}>
                           <UserAvatar
                             user={user}
@@ -1435,7 +1440,7 @@ const PostMintOnboarding: React.FC<PostMintOnboardingProps> = ({ username, token
                         <p className={`text-xs mt-1 ${tc.textFaint}`}>
                           {formatCount(user.followerCount)} followers{user.likeCount > 0 ? ` · ${formatCount(user.likeCount)} likes` : ''}
                         </p>
-                      </a>
+                      </div>
                       <div className="mt-3 flex justify-center">
                         <FollowButton
                           targetUserId={user.tokenId}
