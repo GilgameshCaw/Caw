@@ -218,7 +218,7 @@ export default function SponsorInviteSection() {
     setError(null)
     setBuyState('signing')
     try {
-      await signAndSubmit({
+      const result = await signAndSubmit({
         actionType: 'other',
         senderId: activeTokenId,
         recipients: [quote.validatorTokenId],
@@ -230,6 +230,19 @@ export default function SponsorInviteSection() {
         // and derives the affordable floor from the pot, so we just send 6.
         text: `sp-i:${giftWholeCaw}:6`,
       })
+      // signAndSubmit returns null WITHOUT submitting when the wallet isn't
+      // connected (it buffers the action and opens the wagmi wallet-chooser) or
+      // the wrong wallet is connected. In that case no TxQueue row was created,
+      // so we must NOT show the optimistic "pending invite" row — otherwise
+      // closing the wallet-chooser leaves a phantom pending entry that vanishes
+      // on refresh. If the user then connects, actions.ts auto-resubmits the
+      // buffered action and the server-derived pending row shows up via
+      // loadCodes() polling on its own. Only proceed when a real submission
+      // happened (truthy response object).
+      if (!result) {
+        setBuyState('idle')
+        return
+      }
       setBuyState('submitted')
       // Optimistically show a PENDING entry the instant we've signed — before the
       // server's TxQueue row is even queryable — so the user never sees an empty
