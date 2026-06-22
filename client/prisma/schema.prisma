@@ -1116,7 +1116,9 @@ model PurchasedInviteCode {
   createdAt          DateTime @default(now()) @db.Timestamptz(6)
 
   @@unique([senderId, cawonce])
-  @@index([purchasedByTokenId])
+  // Composite serves the /my-codes query end-to-end: filter by buyer, sort by
+  // createdAt desc. Leading column still covers any plain purchasedByTokenId lookup.
+  @@index([purchasedByTokenId, createdAt(sort: Desc)])
 }
 
 model SponsorCodeAttempt {
@@ -1171,10 +1173,10 @@ model RelayExecution {
   id             Int      @id @default(autoincrement())
   txHash         String   @unique
   smartEoa       String
-  kind           String   // 'withdraw' | 'deposit' | 'zap' | 'other' (best-effort, from the batch shape)
-  gasSpentWei    String   // gasUsed × effectiveGasPrice — what the relayer paid
-  feeCurrency    String   // 'CAW' | 'ETH'
-  feeReceivedWei String   // the in-batch fee leg paid to the relayer
+  kind           String // 'withdraw' | 'deposit' | 'zap' | 'other' (best-effort, from the batch shape)
+  gasSpentWei    String // gasUsed × effectiveGasPrice — what the relayer paid
+  feeCurrency    String // 'CAW' | 'ETH'
+  feeReceivedWei String // the in-batch fee leg paid to the relayer
   // Snapshot of the live CAW/ETH rate at relay time so the ledger can value a CAW
   // fee in ETH terms later without re-fetching a historical price. Nullable: the
   // ETH-fee path needs no CAW price, and a CAW-price outage shouldn't block the row.
@@ -1328,9 +1330,9 @@ enum OfferStatus {
 /// the convenience copy; it dies with the server, so the durable backstop is
 /// the email/download copy. See project_root_signer_passkey_wallet.
 model WalletBlob {
-  address     String   @id // lowercase owner SmartEOA address
-  blob        String   // the BackupBlob JSON envelope (ciphertext only)
-  email       String?  // optional: address the durable backstop was emailed to
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
+  address   String   @id // lowercase owner SmartEOA address
+  blob      String // the BackupBlob JSON envelope (ciphertext only)
+  email     String? // optional: address the durable backstop was emailed to
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 }

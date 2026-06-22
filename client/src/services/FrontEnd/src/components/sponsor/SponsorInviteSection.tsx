@@ -60,6 +60,9 @@ export default function SponsorInviteSection() {
 
   const [quote, setQuote] = useState<InviteQuote | null>(null)
   const [codes, setCodes] = useState<MyCode[]>([])
+  // True until the first /my-codes fetch settles, so we show a loader instead of
+  // flashing the "no codes yet" empty state before the list has loaded.
+  const [loadingCodes, setLoadingCodes] = useState(true)
   // A locally-injected pending row shown the instant a purchase is signed, before
   // the server's TxQueue row is queryable. Cleared once the server returns its own
   // row (pending or minted) carrying the same gift. Keyed by giftCawWei.
@@ -94,6 +97,7 @@ export default function SponsorInviteSection() {
         )
       })
       .catch(() => { /* not signed in / none — leave empty */ })
+      .finally(() => setLoadingCodes(false))
   }, [])
   useEffect(() => { loadCodes() }, [loadCodes])
 
@@ -383,7 +387,14 @@ export default function SponsorInviteSection() {
       {/* ── My codes ─────────────────────────────────────────────────────── */}
       <div className={cardClass}>
         <h3 className={`text-lg font-bold mb-3 ${strongClass}`}>My invite codes</h3>
-        {displayCodes.length === 0 ? (
+        {loadingCodes && displayCodes.length === 0 ? (
+          <div className="flex items-center gap-2 py-1">
+            <div className={`w-4 h-4 rounded-full border-2 animate-spin ${
+              isDark ? 'border-white/20 border-t-white/70' : 'border-black/15 border-t-black/50'
+            }`} />
+            <span className={`text-sm ${mutedClass}`}>Loading your invite codes…</span>
+          </div>
+        ) : displayCodes.length === 0 ? (
           <p className={`text-sm ${mutedClass}`}>You haven't bought any invite codes yet.</p>
         ) : (
           <ul className="space-y-2">
