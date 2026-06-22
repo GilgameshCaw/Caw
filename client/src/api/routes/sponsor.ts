@@ -60,6 +60,11 @@ const DEPOSIT_AUTH_RATE_LIMIT  = 30
 // gas at volume — the treasury-low guard is the hard backstop, this is the
 // first line. Separate bucket from 'deposit' so the two don't share a budget.
 const DELEGATE_L2_RATE_LIMIT   = 5
+// Global daily ceiling on L2 delegations across ALL IPs (IP-rotation defense).
+// Sized well above legit daily passkey signups; tune via env at scale.
+const DELEGATE_L2_GLOBAL_DAILY = process.env.SPONSOR_DELEGATE_L2_GLOBAL_DAILY
+  ? Number(process.env.SPONSOR_DELEGATE_L2_GLOBAL_DAILY) : 500
+const DELEGATE_L2_GLOBAL_KEY   = 'sponsor:delegate-l2:global'
 const RATE_WINDOW_SECONDS      = 24 * 60 * 60   // 24 hours
 
 // Ungated (no invite code, no X) zero-deposit signups. Independent counter +
@@ -613,6 +618,27 @@ router.post('/delegate-l2', async (req, res) => {
     })
   }
 
+  // GLOBAL daily budget (audit M-1 hardening). The per-IP cap above doesn't stop
+  // an IP-rotating botnet from burning sponsor L2 gas. This is a single hard
+  // ceiling on TOTAL successful delegations/day across ALL IPs, sized to legit
+  // signup volume (DELEGATE_L2_GLOBAL_DAILY, default 500). The treasury-low guard
+  // in sponsorDelegateL2 remains the ultimate backstop; this caps the blast
+  // radius long before funds run low. Peek-only here (incremented on success).
+  try {
+    const globalRaw = await redis.get(DELEGATE_L2_GLOBAL_KEY)
+    const globalCount = globalRaw ? parseInt(globalRaw, 10) : 0
+    if (globalCount >= DELEGATE_L2_GLOBAL_DAILY) {
+      console.warn(`[sponsor/delegate-l2] GLOBAL daily cap hit (${globalCount}/${DELEGATE_L2_GLOBAL_DAILY}) — possible griefing`)
+      return res.status(429).json({
+        error: 'RATE_LIMITED',
+        detail: 'L2-delegation is temporarily at capacity. Quick Sign still works; try again later.',
+      })
+    }
+  } catch {
+    // Redis blip: fail OPEN for this guard (the per-IP cap + treasury floor still
+    // apply). A broken global counter shouldn't block all legit signups.
+  }
+
   let params: z.infer<typeof DelegateL2BodySchema>
   try {
     params = DelegateL2BodySchema.parse(req.body)
@@ -629,7 +655,14 @@ router.post('/delegate-l2', async (req, res) => {
       : 400
     return res.status(status).json(result)
   }
-  void recordSponsorUse(ip, 'delegate-l2')   // count only on success; fire-and-forget
+  void recordSponsorUse(ip, 'delegate-l2')   // per-IP count; fire-and-forget
+  // Bump the global daily counter on success (24h TTL on first use).
+  void (async () => {
+    try {
+      const n = await redis.incr(DELEGATE_L2_GLOBAL_KEY)
+      if (n === 1) await redis.expire(DELEGATE_L2_GLOBAL_KEY, RATE_WINDOW_SECONDS)
+    } catch { /* non-fatal — op already succeeded */ }
+  })()
   return res.status(200).json(result)
 })
 
@@ -1177,7 +1210,7 @@ router.post('/execute', async (req, res) => {
 })
 
 // Named exports for test-only schema access (L-3 validation tests)
-export { BootstrapBodySchema }
+export { BootstrapBodySchema, DelegateL2BodySchema }
 
 // ─── Sponsor Repay read-only status ──────────────────────────────────────────
 // Public DB read. Returns the on-chain repay obligation for a given recipient

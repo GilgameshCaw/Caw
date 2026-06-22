@@ -40,7 +40,7 @@ import {
   type TransactionReceipt,
   type Authorization,
 } from 'ethers'
-import { makeJsonRpcProvider } from '../../utils/rpcProvider'
+import { makeJsonRpcProvider, getL2HttpRpcUrl } from '../../utils/rpcProvider'
 import { cawProfileMinterAbi, smartEoaAbi, cawProfileAbi, cawNetworkManagerAbi } from '../../abi/generated'
 import { pokeIndexTokenId } from '../../api/util/indexerPoke'
 
@@ -1177,14 +1177,17 @@ export function getSponsorService(): SponsorService | null {
   const maxLzFeeRaw = process.env.SPONSOR_MAX_LZ_FEE_WEI
   const maxLzFeeWei = maxLzFeeRaw ? BigInt(maxLzFeeRaw) : 5_000_000_000_000_000n  // 0.005 ETH
 
-  // L2 leg (Pop-B passkey L2 delegation) — optional. Same operator key signs on
-  // L2; it just needs ETH on L2. When unset, sponsorDelegateL2 returns L2_DISABLED
-  // and passkey users fall back to Quick Sign for L2 actions.
-  const l2ProviderUrl = process.env.SPONSOR_L2_RPC_URL || process.env.L2_RPC_URL_HTTP || undefined
-  const l2RpcSecret = process.env.L2_RPC_SECRET || undefined
+  // L2 leg (Pop-B passkey L2 delegation). Reuses the SAME L2 RPC the rest of the
+  // node already uses (getL2HttpRpcUrl → L2_RPC_URL_HTTP / L2_RPC_URL) — no new
+  // env var. SPONSOR_L2_RPC_URL is an OPTIONAL override only (e.g. a dedicated
+  // write endpoint). Same operator key signs on L2; it just needs ETH there.
+  // If no L2 RPC is configured at all, sponsorDelegateL2 returns L2_DISABLED and
+  // passkey users fall back to Quick Sign — no crash.
+  const l2ProviderUrl = process.env.SPONSOR_L2_RPC_URL || getL2HttpRpcUrl() || undefined
+  const l2RpcSecret = process.env.SPONSOR_L2_RPC_URL ? (process.env.L2_RPC_SECRET || undefined) : undefined
   const l2ChainId = process.env.L2_CHAIN_ID ? Number(process.env.L2_CHAIN_ID) : undefined
   if (!l2ProviderUrl) {
-    console.warn('[SponsorService] No SPONSOR_L2_RPC_URL/L2_RPC_URL_HTTP — L2 passkey delegation disabled.')
+    console.warn('[SponsorService] No L2 RPC (L2_RPC_URL_HTTP / SPONSOR_L2_RPC_URL) — L2 passkey delegation disabled.')
   }
 
   _instance = new SponsorService({

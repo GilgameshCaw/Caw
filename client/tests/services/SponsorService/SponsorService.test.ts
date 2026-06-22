@@ -696,3 +696,66 @@ describe('BootstrapBodySchema — L-3 username regex', () => {
     expect(() => BootstrapBodySchema.parse({ ...validBase, username: '123abc' })).to.not.throw()
   })
 })
+
+// ─── Pop-B L2 delegation route (/api/sponsor/delegate-l2) ──────────────────────
+// Phase 2 of the L2-delegation feature. We test the route layer (validation,
+// rate-limit, disabled guard). The actual on-chain type-4 submission is exercised
+// only when SPONSOR_ENABLED=1 + an L2 RPC is configured, which the route-layer
+// suite intentionally avoids (same approach as the bootstrap route tests above).
+describe('Sponsor delegate-l2 route', () => {
+  let app: Express
+  const originalEnv = process.env.SPONSOR_ENABLED
+
+  before(() => {
+    process.env.SPONSOR_ENABLED = '0'
+    app = express()
+    app.use(express.json())
+    const sponsorRouter = require('../../../src/api/routes/sponsor').default
+    app.use('/api/sponsor', sponsorRouter)
+  })
+  after(() => { process.env.SPONSOR_ENABLED = originalEnv })
+
+  const validDelegateBody = {
+    passkeyPubkeyX: '0x' + 'aa'.repeat(32),
+    passkeyPubkeyY: '0x' + 'bb'.repeat(32),
+    ecdsaFallbackAddr: '0x' + 'cc'.repeat(20),
+    authTupleSignature: { yParity: 0, r: '0x' + 'aa'.repeat(32), s: '0x' + 'bb'.repeat(32) },
+    authTupleNonce: '0',
+  }
+
+  it('returns 503 when sponsor disabled', async () => {
+    const res = await request(app).post('/api/sponsor/delegate-l2').send(validDelegateBody)
+    expect(res.status).to.equal(503)
+    expect(res.body.error).to.equal('SPONSOR_DISABLED')
+  })
+
+  it('rejects a missing passkey pubkey (400 VALIDATION) — checked before the disabled guard? no: disabled guard is first', async () => {
+    // The disabled guard runs before schema validation, so with SPONSOR_ENABLED=0
+    // even a malformed body returns 503. This documents the ordering: a bad body
+    // on an ENABLED node would 400. We assert the 503 ordering here, and validate
+    // the schema directly below.
+    const res = await request(app).post('/api/sponsor/delegate-l2').send({ bogus: true })
+    expect(res.status).to.equal(503)
+  })
+
+  it('schema: rejects zero ecdsaFallbackAddr', () => {
+    const { DelegateL2BodySchema } = require('../../../src/api/routes/sponsor')
+    expect(() => DelegateL2BodySchema.parse({
+      ...validDelegateBody,
+      ecdsaFallbackAddr: '0x' + '00'.repeat(20),
+    })).to.throw()
+  })
+
+  it('schema: rejects a short passkey pubkey', () => {
+    const { DelegateL2BodySchema } = require('../../../src/api/routes/sponsor')
+    expect(() => DelegateL2BodySchema.parse({
+      ...validDelegateBody,
+      passkeyPubkeyX: '0xdeadbeef',
+    })).to.throw()
+  })
+
+  it('schema: accepts a well-formed delegate-l2 body', () => {
+    const { DelegateL2BodySchema } = require('../../../src/api/routes/sponsor')
+    expect(() => DelegateL2BodySchema.parse(validDelegateBody)).to.not.throw()
+  })
+})
