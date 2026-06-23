@@ -292,8 +292,30 @@ export async function apiFetch<T = any>(
     let errorData: any = {}
     try { errorData = await res.json() } catch {}
     if (errorData.error === 'AUTH_REQUIRED') {
-      // Session expired or missing server-side — clear stale client state
-      useAuthStore.getState().clearSession()
+      // [auth:diag] Pinpoint which request clears the session. The "like signs me
+      // in but generate-invite logs me out" report means SOME authed call 401s
+      // with AUTH_REQUIRED right after a successful sign-in. Log the offender.
+      const _before = useAuthStore.getState()
+      console.warn('[auth:diag] AUTH_REQUIRED', {
+        path,
+        method: (init?.method || 'GET').toUpperCase(),
+        retried: !!init?.[RETRY_FLAG],
+        skipAuthModal: !!init?.skipAuthModal,
+        hadSessionToken: !!_before.sessionToken,
+        authorizedTokenIds: _before.authorizedTokenIds,
+        serverMessage: errorData?.message,
+        willClear: !init?.skipAuthModal,
+      })
+      // Only clear client session state for "real" authed calls. A skipAuthModal
+      // request is a passive PROBE (e.g. /api/auth/refresh on mount, or a read like
+      // /api/sponsor/my-codes that we attempt opportunistically): a 401 there means
+      // "not authed for THIS read", NOT "your whole session is dead". Clearing on a
+      // probe wiped a perfectly good session — e.g. generate-invite's post-submit
+      // loadCodes() 401'd (wallet-session read) right after a Quick-Sign action and
+      // logged the user out. Probes must fail quietly.
+      if (!init?.skipAuthModal) {
+        useAuthStore.getState().clearSession()
+      }
     }
     const method = (init?.method || 'GET').toUpperCase()
     if (method !== 'GET' && !init?.skipAuthModal && (errorData.error === 'AUTH_REQUIRED' || errorData.error === 'TOKEN_NOT_AUTHORIZED')) {

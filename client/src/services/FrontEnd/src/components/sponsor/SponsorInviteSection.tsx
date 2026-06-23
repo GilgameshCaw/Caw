@@ -105,7 +105,10 @@ export default function SponsorInviteSection() {
   }, [])
 
   const loadCodes = useCallback(() => {
-    apiFetch<{ codes: MyCode[] }>('/api/sponsor/my-codes')
+    // skipAuthModal: this is an opportunistic read. A 401 here means "not authed for
+    // this read" — it must NOT clear the wallet session or pop the auth modal
+    // (that's what logged users out right after generating a code via Quick Sign).
+    apiFetch<{ codes: MyCode[] }>('/api/sponsor/my-codes', { skipAuthModal: true })
       .then(r => {
         const list = r.codes ?? []
         setCodes(list)
@@ -437,7 +440,7 @@ export default function SponsorInviteSection() {
             <span className={`text-sm ${mutedClass}`}>Loading your invite codes…</span>
           </div>
         ) : displayCodes.length === 0 ? (
-          <p className={`text-sm ${mutedClass}`}>You haven't bought any invite codes yet.</p>
+          <p className={`text-sm ${mutedClass}`}>You haven't generated any invite codes yet.</p>
         ) : (
           <ul className="space-y-2">
             {displayCodes.map((c, i) => (
