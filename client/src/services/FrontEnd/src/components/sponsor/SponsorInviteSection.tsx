@@ -21,6 +21,7 @@ import { useSignAndSubmitAction, getCurrentMarketTip } from '~/api/actions'
 import { apiFetch } from '~/api/client'
 import { formatUsd } from '~/utils/numberFormat'
 import { useWalletPopulation } from '~/hooks/useWalletPopulation'
+import { useAuthStore } from '~/store/authStore'
 import { useNavigate } from '~/utils/localizedRouter'
 // usePasskeySignIn intentionally NOT used here: when logged out we have no
 // username to run the ceremony with, so we route to /signin/passkey (which
@@ -62,10 +63,13 @@ export default function SponsorInviteSection() {
   const activeToken = useActiveToken()
   const activeTokenId = activeToken?.tokenId
   const signAndSubmit = useSignAndSubmitAction()
-  // Logged-in = there's an active profile. When false we show a sign-in CTA in the
-  // "My invite codes" card instead of the (empty) list — and route by population:
-  // Pop-B passkey users get the passkey sign-in page; everyone else, the choice splash.
-  const isLoggedIn = !!activeToken?.username
+  // "Signed in" here means AUTHED WITH THE SERVER for the active profile — not just
+  // having a profile in the chooser. /my-codes is an authed endpoint; an unauthed
+  // token 401s and we'd show a misleading "no codes yet". Same token-based check as
+  // the Messages page: the active token's id must be in the session's authorizedTokenIds.
+  // When false we show a sign-in CTA, routed by population.
+  const authorizedTokenIds = useAuthStore(s => s.authorizedTokenIds)
+  const isLoggedIn = activeToken?.tokenId !== undefined && authorizedTokenIds.includes(activeToken.tokenId)
   const { population } = useWalletPopulation()
   const isPasskeyUser = population === 'B'
   const navigate = useNavigate()
