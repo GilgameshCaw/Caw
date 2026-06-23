@@ -32,6 +32,8 @@ import {
 import { useActiveToken } from '~/store/tokenDataStore'
 import { useAuthStore } from '~/store/authStore'
 import { useVerifyWallet } from '~/hooks/useVerifyWallet'
+import { useWalletPopulation } from '~/hooks/useWalletPopulation'
+import { usePasskeySignIn } from '~/hooks/usePasskeySignIn'
 import {
   useDmClient,
   useDmMessages,
@@ -207,8 +209,16 @@ const MessagesPage: React.FC = () => {
 
   // Auth state
   const { verify, isVerifying, error: verifyError } = useVerifyWallet()
-  const authorizedAddresses = useAuthStore(s => s.authorizedAddresses)
-  const isWalletAuthorized = !!activeToken?.address && authorizedAddresses.includes(activeToken.address.toLowerCase())
+  const authorizedTokenIds = useAuthStore(s => s.authorizedTokenIds)
+  // Authorized = the ACTIVE PROFILE's tokenId is in the session — token-based, the
+  // same check the rest of the app uses (useDmClient, AuthGate semantics). The old
+  // address-based check (activeToken.address ∈ authorizedAddresses) broke Population-B
+  // passkey users: they have no wagmi address and their session is keyed by tokenId,
+  // so a fully-signed-in passkey user was wrongly sent to the "log in" gate.
+  const isProfileAuthorized = !!activeToken && authorizedTokenIds.includes(activeToken.tokenId)
+  const { population } = useWalletPopulation()
+  const isPasskeyUser = population === 'B'
+  const passkeySignIn = usePasskeySignIn()
 
   // Get wallet address from wagmi
   const { address } = useAccount()
@@ -917,12 +927,12 @@ const MessagesPage: React.FC = () => {
     if (!currentUser) return
     if (!identityLoading && !identity) {
       setCurrentView('setup')
-    } else if (identity && !isWalletAuthorized) {
+    } else if (identity && !isProfileAuthorized) {
       setCurrentView('signin')
     } else if (identity && (currentView === 'signin' || currentView === 'setup')) {
       setCurrentView('inbox')
     }
-  }, [currentUser, isWalletAuthorized, identity, identityLoading])
+  }, [currentUser, isProfileAuthorized, identity, identityLoading])
 
   // Load recent follows when new message modal opens.
   // One /api/dm/identity/batch call instead of one request per follow —
@@ -1762,21 +1772,33 @@ const MessagesPage: React.FC = () => {
                 <div className="w-11 h-11" style={{ backgroundColor: '#eab308', maskImage: 'url(/icons/crow-2.svg)', maskSize: 'contain', maskRepeat: 'no-repeat', maskPosition: 'center', WebkitMaskImage: 'url(/icons/crow-2.svg)', WebkitMaskSize: 'contain', WebkitMaskRepeat: 'no-repeat', WebkitMaskPosition: 'center' }} />
               </div>
               <h2 className={`text-xl font-bold mb-3 ${isDark ? 'text-white' : 'text-black'}`}>
-                {isWrongWallet ? t('messages.signin.wrong_wallet') : t('messages.signin.log_in')}
+                {!isPasskeyUser && isWrongWallet ? t('messages.signin.wrong_wallet') : t('messages.signin.log_in')}
               </h2>
               <p className={`mb-6 ${isDark ? 'text-gray-400' : 'text-gray-600'}`}>
-                {!address
+                {isPasskeyUser
+                  ? t('messages.signin.verify_passkey')
+                  : !address
                   ? t('messages.signin.connect_wallet')
                   : isWrongWallet
                   ? t('messages.signin.switch_wallet', { username: activeToken?.username || t('messages.signin.this_profile') })
                   : t('messages.signin.verify')}
               </p>
-              {verifyError && (
+              {(verifyError || passkeySignIn.error) && (
                 <div className="mb-4 p-3 rounded-lg bg-red-500/20 border border-red-500">
-                  <p className="text-red-500 text-sm">{verifyError}</p>
+                  <p className="text-red-500 text-sm">{passkeySignIn.error || verifyError}</p>
                 </div>
               )}
-              {!address ? (
+              {isPasskeyUser ? (
+                // Population-B: no wagmi wallet. Re-establish the session with the
+                // passkey for the active profile — never show "connect wallet".
+                <button
+                  onClick={() => { if (activeToken?.username) void passkeySignIn.signIn(activeToken.username).catch(() => {}) }}
+                  disabled={passkeySignIn.busy || !activeToken?.username}
+                  className={`px-6 py-3 rounded-full font-semibold bg-yellow-500 hover:bg-yellow-600 text-black transition-all duration-300 cursor-pointer ${passkeySignIn.busy || !activeToken?.username ? 'opacity-50 cursor-not-allowed' : ''}`}
+                >
+                  {passkeySignIn.busy ? t('messages.signin.signing') : t('messages.signin.button_passkey')}
+                </button>
+              ) : !address ? (
                 <ConnectButton />
               ) : (
                 <button
