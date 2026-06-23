@@ -320,7 +320,7 @@ const ProfileChooser: React.FC<{ compact?: boolean }> = ({ compact = false }) =>
     // If no wallet connected and no profiles exist, show "Sign In"
     if (!isConnected && !hasActiveSession && !hasAnyProfiles) {
       return (
-        <div className="mb-2 flex justify-center">
+        <div className="mb-2 flex justify-start">
           <button onClick={() => openConnectModal?.()} type="button" className="btn btn-connect cursor-pointer">
             {t('common.sign_in')}
           </button>
