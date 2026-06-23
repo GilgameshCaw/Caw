@@ -20,12 +20,9 @@ import { useActiveToken } from '~/store/tokenDataStore'
 import { useSignAndSubmitAction, getCurrentMarketTip } from '~/api/actions'
 import { apiFetch } from '~/api/client'
 import { formatUsd } from '~/utils/numberFormat'
-import { useWalletPopulation } from '~/hooks/useWalletPopulation'
 import { useAuthStore } from '~/store/authStore'
+import { useVerifyWallet } from '~/hooks/useVerifyWallet'
 import { useNavigate } from '~/utils/localizedRouter'
-// usePasskeySignIn intentionally NOT used here: when logged out we have no
-// username to run the ceremony with, so we route to /signin/passkey (which
-// prompts for it) rather than calling signIn() inline.
 
 interface InviteQuote {
   gasFloorCaw: string
@@ -69,9 +66,15 @@ export default function SponsorInviteSection() {
   // the Messages page: the active token's id must be in the session's authorizedTokenIds.
   // When false we show a sign-in CTA, routed by population.
   const authorizedTokenIds = useAuthStore(s => s.authorizedTokenIds)
+  // "Signed in" = AUTHED WITH THE SERVER for the active profile (token-based, same
+  // check as Messages) — not merely having a profile in the chooser. /my-codes is an
+  // authed endpoint; an unauthed token 401s and we'd show a misleading "no codes yet".
   const isLoggedIn = activeToken?.tokenId !== undefined && authorizedTokenIds.includes(activeToken.tokenId)
-  const { population } = useWalletPopulation()
-  const isPasskeyUser = population === 'B'
+  // Has a profile but isn't authed → authenticate IN PLACE (no navigation). verify()
+  // goes through useRootSigner, which already abstracts both populations: Pop-A signs
+  // with the wallet, Pop-B resolves the passkey/recovery key. This is the same flow a
+  // like/post triggers. Only when there's NO active profile do we send them to /welcome.
+  const { verify, isVerifying, error: verifyError } = useVerifyWallet()
   const navigate = useNavigate()
 
   const [quote, setQuote] = useState<InviteQuote | null>(null)
@@ -411,14 +414,19 @@ export default function SponsorInviteSection() {
         {!isLoggedIn ? (
           <div className="py-1">
             <p className={`text-sm mb-3 ${mutedClass}`}>Sign in to see the invite codes you've bought.</p>
+            {verifyError && <p className="text-sm text-red-500 mb-3">{verifyError}</p>}
             <button
               onClick={() => {
-                if (isPasskeyUser) { navigate('/signin/passkey') }
+                // Active profile present but not server-authed → authenticate IN PLACE
+                // (verify() handles both Pop-A wallet sig and Pop-B passkey via
+                // useRootSigner). No active profile at all → send to the sign-in splash.
+                if (activeToken) { void verify() }
                 else { navigate('/welcome') }
               }}
-              className="px-5 py-2 bg-yellow-500 hover:bg-yellow-400 text-black font-semibold text-sm rounded-full transition-colors cursor-pointer"
+              disabled={isVerifying}
+              className={`px-5 py-2 bg-yellow-500 hover:bg-yellow-400 text-black font-semibold text-sm rounded-full transition-colors cursor-pointer ${isVerifying ? 'opacity-50 cursor-not-allowed' : ''}`}
             >
-              {isPasskeyUser ? 'Sign in with passkey' : 'Sign in'}
+              {isVerifying ? 'Signing in…' : 'Sign in'}
             </button>
           </div>
         ) : loadingCodes && displayCodes.length === 0 ? (
