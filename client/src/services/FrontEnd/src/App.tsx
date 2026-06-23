@@ -168,6 +168,43 @@ function App() {
             data.authorizedAddresses ?? [],
             data.expiresAt ?? Date.now() + 86400_000,
           )
+
+          // Self-heal the profile chooser from the server session. The chooser
+          // (useActiveToken / tokensByAddress) is localStorage-backed; iOS
+          // Safari evicts that store aggressively, so a returning user whose
+          // accounts + passkeys are all intact can land on the /welcome "sign
+          // in" splash with an EMPTY store — looking signed-out. The HttpOnly
+          // session cookie survives that eviction, so /refresh still knows the
+          // authorized addresses + tokenIds. Seed a placeholder row per
+          // authorized address that isn't already in the store; useTokenDataUpdate's
+          // multicall then enriches each with the real username/balances (and
+          // expands any address that owns more than one tokenId). Without this,
+          // an empty store means knownAddresses is empty and the multicall never
+          // runs — nothing recovers the accounts. Additive: never overwrites a
+          // populated address.
+          const tds = useTokenDataStore.getState()
+          const addrs = data.authorizedAddresses ?? []
+          const ids = data.authorizedTokenIds ?? []
+          addrs.forEach((rawAddr, i) => {
+            const addr = rawAddr.toLowerCase() as `0x${string}`
+            const existing = tds.tokensByAddress[addr]
+            if (existing && existing.length > 0) return // already known — don't clobber
+            // Best-effort tokenId for the placeholder (the multicall replaces
+            // this with the full, correct per-address token list). Pair by index
+            // when arrays align; otherwise fall back to the first id.
+            const seedTokenId = ids[i] ?? ids[0]
+            if (seedTokenId == null) return
+            tds.setTokensForAddress(addr, [{
+              tokenId: seedTokenId,
+              username: '',            // filled by the multicall
+              address: addr,
+              owner: addr,
+              withdrawable: 0n,
+              ownerBalance: 0n,
+              stakedAmount: 0n,
+              cawonce: 0,
+            }])
+          })
         }
       })
       .catch(() => {

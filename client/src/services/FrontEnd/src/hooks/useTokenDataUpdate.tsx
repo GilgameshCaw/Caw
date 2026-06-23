@@ -274,9 +274,16 @@ export default function useTokenDataUpdate() {
       args: [addr] as const,
     })),
     query: {
-      // Skip when there is 0 or 1 known address — the viewed/connected reads
-      // above already cover those, so the multicall would be pure overhead.
-      enabled: knownAddresses.length > 1,
+      // Run whenever there's ≥1 known address. Previously this skipped the
+      // single-address case ("viewed/connected reads cover it") — but a Pop-B
+      // passkey profile has NO wagmi connection, so it's neither viewed nor
+      // connected. After a localStorage eviction the session self-heal (App.tsx)
+      // seeds ONE placeholder address with an empty username; if the multicall
+      // skipped length===1 it would never enrich it, so AuthGate (gates on
+      // username) keeps bouncing the user to /welcome. ≥1 covers that recovery.
+      // For a normal connected wallet this is at worst a redundant read; the
+      // writes are idempotent.
+      enabled: knownAddresses.length >= 1,
     },
   })
 
@@ -302,7 +309,7 @@ export default function useTokenDataUpdate() {
     functionName: "getTokens",
     args: [allTokenIds],
     query: {
-      enabled: knownAddresses.length > 1 && allTokenIds.length > 0,
+      enabled: knownAddresses.length >= 1 && allTokenIds.length > 0,
     },
   })
 
@@ -310,7 +317,7 @@ export default function useTokenDataUpdate() {
   // for the multi-account case; the single-account path stays on the viewed/
   // connected effects above (no behavior change for Pop-A / single-profile).
   useEffect(() => {
-    if (knownAddresses.length <= 1 || !allL1Tokens) return
+    if (knownAddresses.length < 1 || !allL1Tokens) return
     const l2 = allL2Tokens ?? []
     allL1Tokens.forEach((res, i) => {
       if (res.status !== 'success' || !res.result) return
