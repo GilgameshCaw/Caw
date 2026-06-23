@@ -20,6 +20,11 @@ import { useActiveToken } from '~/store/tokenDataStore'
 import { useSignAndSubmitAction, getCurrentMarketTip } from '~/api/actions'
 import { apiFetch } from '~/api/client'
 import { formatUsd } from '~/utils/numberFormat'
+import { useWalletPopulation } from '~/hooks/useWalletPopulation'
+import { useNavigate } from '~/utils/localizedRouter'
+// usePasskeySignIn intentionally NOT used here: when logged out we have no
+// username to run the ceremony with, so we route to /signin/passkey (which
+// prompts for it) rather than calling signIn() inline.
 
 interface InviteQuote {
   gasFloorCaw: string
@@ -57,6 +62,13 @@ export default function SponsorInviteSection() {
   const activeToken = useActiveToken()
   const activeTokenId = activeToken?.tokenId
   const signAndSubmit = useSignAndSubmitAction()
+  // Logged-in = there's an active profile. When false we show a sign-in CTA in the
+  // "My invite codes" card instead of the (empty) list — and route by population:
+  // Pop-B passkey users get the passkey sign-in page; everyone else, the choice splash.
+  const isLoggedIn = !!activeToken?.username
+  const { population } = useWalletPopulation()
+  const isPasskeyUser = population === 'B'
+  const navigate = useNavigate()
 
   const [quote, setQuote] = useState<InviteQuote | null>(null)
   const [codes, setCodes] = useState<MyCode[]>([])
@@ -99,7 +111,12 @@ export default function SponsorInviteSection() {
       .catch(() => { /* not signed in / none — leave empty */ })
       .finally(() => setLoadingCodes(false))
   }, [])
-  useEffect(() => { loadCodes() }, [loadCodes])
+  // Only fetch once signed in — a logged-out /my-codes call just 401s, and we show
+  // the sign-in CTA instead. Clear the loader so the CTA renders immediately.
+  useEffect(() => {
+    if (isLoggedIn) loadCodes()
+    else setLoadingCodes(false)
+  }, [loadCodes, isLoggedIn])
 
   // The rendered list = server rows, plus the optimistic placeholder if it hasn't
   // been superseded yet. Optimistic row first (it's the freshest action).
@@ -387,7 +404,20 @@ export default function SponsorInviteSection() {
       {/* ── My codes ─────────────────────────────────────────────────────── */}
       <div className={cardClass}>
         <h3 className={`text-lg font-bold mb-3 ${strongClass}`}>My invite codes</h3>
-        {loadingCodes && displayCodes.length === 0 ? (
+        {!isLoggedIn ? (
+          <div className="py-1">
+            <p className={`text-sm mb-3 ${mutedClass}`}>Sign in to see the invite codes you've bought.</p>
+            <button
+              onClick={() => {
+                if (isPasskeyUser) { navigate('/signin/passkey') }
+                else { navigate('/welcome') }
+              }}
+              className="px-5 py-2 bg-yellow-500 hover:bg-yellow-400 text-black font-semibold text-sm rounded-full transition-colors cursor-pointer"
+            >
+              {isPasskeyUser ? 'Sign in with passkey' : 'Sign in'}
+            </button>
+          </div>
+        ) : loadingCodes && displayCodes.length === 0 ? (
           <div className="flex items-center gap-2 py-1">
             <div className={`w-4 h-4 rounded-full border-2 animate-spin ${
               isDark ? 'border-white/20 border-t-white/70' : 'border-black/15 border-t-black/50'
