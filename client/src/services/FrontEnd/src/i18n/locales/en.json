@@ -589,6 +589,8 @@
   "signin_modal.title": "Sign in to continue",
   "signin_modal.default_message": "Connect your wallet and create a username to get started.",
   "signin_modal.create_profile": "Create Your Profile",
+  "signin_modal.sign_in_passkey": "Sign in with passkey",
+  "signin_modal.sign_in_wallet": "Sign in with wallet",
   "marketplace.button.switch_network": "Switch Network",
   "marketplace.button.confirm_in_wallet": "Confirm in wallet...",
   "marketplace.button.confirming": "Confirming...",

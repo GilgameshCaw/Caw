@@ -4,7 +4,7 @@ import { useTokenDataStore, useActiveToken, usePriceStore } from "~/store/tokenD
 import { formatAddress, formatUnitsCompact, convertToText } from "~/utils";
 import { formatUsd } from "~/utils/numberFormat";
 import UsernameSvg from "./UsernameSvg";
-import { Link } from '~/utils/localizedRouter'
+import { Link, useNavigate } from '~/utils/localizedRouter'
 import { TokenData } from "~/types";
 import { useAccount } from "wagmi";
 import { useConnectModalBridge as useConnectModal } from '~/hooks/useConnectModalBridge'
@@ -29,6 +29,7 @@ const ProfileChooser: React.FC<{ compact?: boolean }> = ({ compact = false }) =>
   const { isConnected, address } = useAccount();
   const { openConnectModal } = useConnectModal();
   const hasActiveSession = useHasActiveSession();
+  const navigate = useNavigate();
   const activeToken = useActiveToken()
   // Subscribe to the per-txQueue maps so we re-render on adds/removes;
   // the actual per-token sum is computed below with activeToken.tokenId.
@@ -321,7 +322,9 @@ const ProfileChooser: React.FC<{ compact?: boolean }> = ({ compact = false }) =>
     if (!isConnected && !hasActiveSession && !hasAnyProfiles) {
       return (
         <div className="mb-2 flex justify-start">
-          <button onClick={() => openConnectModal?.()} type="button" className="btn btn-connect cursor-pointer">
+          {/* Route to the sign-in CHOICE (passkey OR wallet) at /welcome, not the
+              wagmi-only connect modal — a passkey user has no wallet to connect. */}
+          <button onClick={() => navigate('/welcome')} type="button" className="btn btn-connect cursor-pointer">
             {t('common.sign_in')}
           </button>
         </div>

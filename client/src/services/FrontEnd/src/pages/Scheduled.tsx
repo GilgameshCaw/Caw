@@ -1,5 +1,5 @@
 import React, { useState, useMemo } from 'react'
-import { Link } from '~/utils/localizedRouter'
+import { Link, useNavigate } from '~/utils/localizedRouter'
 import { useTheme } from '~/hooks/useTheme'
 import { useAccount } from "wagmi"
 import { useConnectModalBridge as useConnectModal } from '~/hooks/useConnectModalBridge'
@@ -9,6 +9,8 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { apiFetch } from '~/api/client'
 import { useAuthStore } from '~/store/authStore'
 import { useVerifyWallet } from '~/hooks/useVerifyWallet'
+import { useWalletPopulation } from '~/hooks/useWalletPopulation'
+import { usePasskeySignIn } from '~/hooks/usePasskeySignIn'
 import { formatDistanceToNow, format, isPast } from 'date-fns'
 import ContentWithHashtags from '~/components/ContentWithHashtags'
 import { useT } from '~/i18n/I18nProvider'
@@ -159,10 +161,14 @@ const ScheduledPage: React.FC = () => {
   }
   const { isConnected } = useAccount()
   const { openConnectModal } = useConnectModal()
+  const navigate = useNavigate()
   const activeToken = useActiveToken()
   const queryClient = useQueryClient()
   const authorizedTokenIds = useAuthStore(s => s.authorizedTokenIds)
   const { verify, isVerifying, error: verifyError } = useVerifyWallet()
+  const { population } = useWalletPopulation()
+  const isPasskeyUser = population === 'B'
+  const passkeySignIn = usePasskeySignIn()
   const isAuthorized = activeToken?.tokenId !== undefined && authorizedTokenIds.includes(activeToken.tokenId)
 
   const { data: scheduledData, isLoading } = useQuery({
@@ -247,7 +253,7 @@ const ScheduledPage: React.FC = () => {
             </h2>
             <p className="mb-4">{t('scheduled.signin_prompt')}</p>
             <button
-              onClick={openConnectModal}
+              onClick={() => { if (isPasskeyUser) { navigate('/signin/passkey') } else { openConnectModal?.() } }}
               className="px-6 py-2 bg-yellow-500 hover:bg-yellow-400 text-black font-medium rounded-full transition-colors cursor-pointer"
             >
               {t('common.sign_in')}
@@ -266,18 +272,32 @@ const ScheduledPage: React.FC = () => {
               {t('scheduled.verify.title')}
             </h2>
             <p className="mb-4">{t('scheduled.verify.description')}</p>
-            {verifyError && (
-              <p className="mb-4 text-red-500 text-sm">{verifyError}</p>
+            {(verifyError || passkeySignIn.error) && (
+              <p className="mb-4 text-red-500 text-sm">{passkeySignIn.error || verifyError}</p>
             )}
-            <button
-              onClick={verify}
-              disabled={isVerifying}
-              className={`px-6 py-2 bg-yellow-500 hover:bg-yellow-400 text-black font-medium rounded-full transition-colors cursor-pointer ${
-                isVerifying ? 'opacity-50 cursor-not-allowed' : ''
-              }`}
-            >
-              {isVerifying ? t('messages.signin.signing') : t('scheduled.verify.button')}
-            </button>
+            {isPasskeyUser ? (
+              // Pop-B: re-establish the session with the passkey for the active
+              // profile — never the wallet verify() path (they have no wallet).
+              <button
+                onClick={() => { if (activeToken?.username) void passkeySignIn.signIn(activeToken.username).catch(() => {}) }}
+                disabled={passkeySignIn.busy || !activeToken?.username}
+                className={`px-6 py-2 bg-yellow-500 hover:bg-yellow-400 text-black font-medium rounded-full transition-colors cursor-pointer ${
+                  passkeySignIn.busy || !activeToken?.username ? 'opacity-50 cursor-not-allowed' : ''
+                }`}
+              >
+                {passkeySignIn.busy ? t('messages.signin.signing') : t('messages.signin.button_passkey')}
+              </button>
+            ) : (
+              <button
+                onClick={verify}
+                disabled={isVerifying}
+                className={`px-6 py-2 bg-yellow-500 hover:bg-yellow-400 text-black font-medium rounded-full transition-colors cursor-pointer ${
+                  isVerifying ? 'opacity-50 cursor-not-allowed' : ''
+                }`}
+              >
+                {isVerifying ? t('messages.signin.signing') : t('scheduled.verify.button')}
+              </button>
+            )}
           </div>
         </div>
     )

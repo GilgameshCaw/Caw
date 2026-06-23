@@ -48,14 +48,27 @@ export default function SignInModal({ isOpen: propIsOpen, onClose: propOnClose, 
 
         {!isConnected ? (
           <div className="space-y-3">
+            {/* Passkey sign-in: phone-first (Population B) users have no wallet.
+                Route to the dedicated passkey sign-in page (prompts for username
+                + runs the WebAuthn ceremony). Listed first — it's the lower-friction
+                path for most new users. */}
+            <button
+              onClick={() => {
+                onClose()
+                navigate('/signin/passkey')
+              }}
+              className="w-full py-3 bg-yellow-500 text-black font-semibold rounded-full hover:bg-yellow-400 transition-colors cursor-pointer"
+            >
+              {t('signin_modal.sign_in_passkey')}
+            </button>
             <button
               onClick={() => {
                 ensureWallet(null, async () => {})
                 onClose()
               }}
-              className="w-full py-3 bg-yellow-500 text-black font-semibold rounded-full hover:bg-yellow-400 transition-colors cursor-pointer"
+              className="w-full py-2.5 text-sm font-semibold rounded-full border border-yellow-500/40 text-yellow-500 hover:bg-yellow-500/10 transition-colors cursor-pointer"
             >
-              {t('common.sign_in')}
+              {t('signin_modal.sign_in_wallet')}
             </button>
             {/* Card-payment path. Stripe is preferred when configured (hosted
                 checkout, lower friction). Moonpay is the fallback for
