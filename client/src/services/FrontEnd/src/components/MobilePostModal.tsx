@@ -2,6 +2,7 @@ import React, { useEffect, useState } from 'react'
 import { useSignAndSubmitAction } from '~/api/actions'
 import { acquireScrollLock, releaseScrollLock } from '~/utils/scrollLock'
 import { useTokenDataStore } from "~/store/tokenDataStore";
+import { useHasActiveSession } from "~/hooks/useHasActiveSession";
 import { useAccount } from "wagmi";
 import { useConnectModalBridge as useConnectModal } from '~/hooks/useConnectModalBridge'
 import { HiOutlineX, HiOutlinePlus } from "react-icons/hi";
@@ -20,13 +21,17 @@ const MobilePostModal: React.FC<MobilePostModalProps> = ({ isOpen, onClose, onSu
   const t = useT()
   const [text, setText] = useState('')
   const { isConnected } = useAccount()
+  // Pop-B passkey users have no wagmi connection but post via their Quick Sign
+  // session. Treat an active session as "can post" too, or quick-post no-ops for them.
+  const hasActiveSession = useHasActiveSession()
+  const canAct = isConnected || hasActiveSession
   const { openConnectModal } = useConnectModal()
   const { isDark } = useTheme()
   const activeTokenId = useTokenDataStore(state => state.activeTokenId)
   const signAndSubmit = useSignAndSubmitAction()
 
   const handlePost = async () => {
-    if (!text.trim() || !activeTokenId || !isConnected) return
+    if (!text.trim() || !activeTokenId || !canAct) return
     
     try {
       const params: ActionParams = {
@@ -82,10 +87,10 @@ const MobilePostModal: React.FC<MobilePostModalProps> = ({ isOpen, onClose, onSu
         </h1>
         
         <button
-          onClick={isConnected ? handlePost : openConnectModal}
+          onClick={canAct ? handlePost : openConnectModal}
           className="px-5 py-2 bg-yellow-500 text-black font-semibold text-base rounded-full hover:bg-yellow-400 transition-all duration-200 shadow-lg hover:shadow-xl cursor-pointer"
         >
-          {isConnected ? 'Post' : 'Connect'}
+          {canAct ? 'Post' : 'Connect'}
         </button>
       </div>
 

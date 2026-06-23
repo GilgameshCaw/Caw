@@ -3,6 +3,7 @@ import React, { useState } from 'react'
 import { useSignAndSubmitAction } from '~/api/actions'
 import ModalHeader from './ModalHeader'
 import { useTokenDataStore } from "~/store/tokenDataStore"
+import { useHasActiveSession } from "~/hooks/useHasActiveSession"
 import { useAccount } from "wagmi"
 import ModalWrapper from './ModalWrapper'
 import { UserAvatar } from '~/components/Avatar'
@@ -23,6 +24,9 @@ export const MessageModal: React.FC<MessageModalProps> = ({ isOpen, recipient, o
   const [message, setMessage] = useState('')
   const [isLoading, setIsLoading] = useState(false)
   const { isConnected } = useAccount()
+  // Pop-B passkey users send via their Quick Sign session, not a wagmi wallet.
+  const hasActiveSession = useHasActiveSession()
+  const canAct = isConnected || hasActiveSession
   const activeTokenId = useTokenDataStore(state => state.activeTokenId)
   const signAndSubmit = useSignAndSubmitAction()
 
@@ -98,7 +102,7 @@ export const MessageModal: React.FC<MessageModalProps> = ({ isOpen, recipient, o
       <div className="mt-6">
         <button
           onClick={handleSendMessage}
-          disabled={isLoading || !isConnected}
+          disabled={isLoading || !canAct}
           className="w-full py-2 px-6 rounded-full font-semibold bg-yellow-500 hover:bg-yellow-600 text-black transition-all duration-200"
         >
           {isLoading ? t('message_modal.sending') : t('message_modal.send')}

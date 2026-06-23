@@ -269,8 +269,8 @@ const FeedItem: React.FC<{ item: CawItem; isMainPost?: boolean; isReply?: boolea
 
   // Auto-trigger like after wallet connection
   useEffect(() => {
-    // Skip if no pending action, not connected, or already submitting
-    if (!pendingLikeAction || !isConnected || !activeTokenId || !activeToken || isSubmittingLikeRef.current) return;
+    // Skip if no pending action, not authed (wallet OR passkey session), or already submitting
+    if (!pendingLikeAction || (!isConnected && !hasActiveSession) || !activeTokenId || !activeToken || isSubmittingLikeRef.current) return;
 
     // Check if connected to correct wallet
     if (activeToken.address.toLowerCase() !== address?.toLowerCase()) {
@@ -326,7 +326,7 @@ const FeedItem: React.FC<{ item: CawItem; isMainPost?: boolean; isReply?: boolea
       setBusyLike(false);
       isSubmittingLikeRef.current = false;
     });
-  }, [pendingLikeAction, isConnected, activeTokenId, activeToken, address, signAndSubmit, useItem.id])
+  }, [pendingLikeAction, isConnected, hasActiveSession, activeTokenId, activeToken, address, signAndSubmit, useItem.id])
 
   // Sync local pending states with item from polling — reset adjustments when server confirms.
   // For plain recaws, sync from the parent (stateSource) since actions target the original post.
