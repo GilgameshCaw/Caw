@@ -193,7 +193,11 @@ export function createApp() {
   // plaintext host, which is worse than not setting it. Audit fix 2026-05-23
   // (fe-headers H-2). To submit to the HSTS preload list:
   //   https://hstspreload.org
-  const isProduction = process.env.COOKIE_SECURE === 'true' || process.env.NODE_ENV === 'production'
+  // Secure-by-default (matches COOKIE_SECURE in auth.ts): treat every deploy as
+  // production unless COOKIE_SECURE=false is set for local HTTP dev. Safe because
+  // the actual HSTS emit below is ALSO gated on req.secure / x-forwarded-proto,
+  // so this never pins a plaintext localhost even when true.
+  const isProduction = process.env.COOKIE_SECURE !== 'false'
   const HSTS_VALUE = 'max-age=31536000; includeSubDomains; preload'
 
   app.use((req, res, next) => {

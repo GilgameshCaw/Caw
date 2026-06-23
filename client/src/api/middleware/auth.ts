@@ -27,17 +27,24 @@ if (!JWT_SECRET) {
   console.warn('[Auth] WARNING: JWT_SECRET not set. JWT authentication will reject all tokens.')
 }
 
-// Explicit opt-in for Secure cookie flag. Set COOKIE_SECURE=true in prod.env.
-// Gating on NODE_ENV is unreliable — operators often leave it unset on VPS,
-// which would silently send caw_session over plaintext HTTP on port 4000.
-// Hard-warn (not hard-fail) at boot so a missing flag surfaces in logs
-// immediately rather than being discovered during a security review.
-// Audit fix 2026-05-23 (fe-headers H-1).
-const COOKIE_SECURE = process.env.COOKIE_SECURE === 'true'
-if (!COOKIE_SECURE && process.env.NODE_ENV === 'production') {
+// Secure-by-DEFAULT. Cookies get the Secure flag (and the __Host- name prefix)
+// unless COOKIE_SECURE is explicitly set to "false" — which is ONLY correct for
+// local dev over plain HTTP, where the developer is watching and a broken cookie
+// surfaces immediately.
+//
+// History: this used to be opt-IN (COOKIE_SECURE === 'true', else insecure). The
+// reasoning was "operators leave NODE_ENV unset on VPS" — but that solved the
+// wrong failure mode. An HTTPS prod deploy that forgot the flag then silently
+// sent a non-Secure cookie, which iOS Safari evicts aggressively (observed
+// overnight) → users look logged-out. Defaulting to true flips the failure mode
+// to the safe direction: a missing flag is now secure, and the only thing that
+// needs the opt-out is local HTTP dev. (Original audit: 2026-05-23 fe-headers
+// H-1; corrected 2026-06-23 after the Pop-B overnight-logout regression.)
+const COOKIE_SECURE = process.env.COOKIE_SECURE !== 'false'
+if (!COOKIE_SECURE) {
   console.warn(
-    '[Auth] WARNING: COOKIE_SECURE is not set to "true" but NODE_ENV=production. ' +
-    'Session cookies will be sent without the Secure flag. Set COOKIE_SECURE=true in client/.env for production deploys.'
+    '[Auth] COOKIE_SECURE=false — session cookies sent WITHOUT the Secure flag. ' +
+    'This is only safe for local HTTP dev; never set it on an HTTPS deploy.'
   )
 }
 
@@ -58,8 +65,8 @@ if (!COOKIE_SECURE && process.env.NODE_ENV === 'production') {
 //
 // Dev caveat: the __Host- prefix REQUIRES Secure per the browser spec, so
 // browsers silently reject any __Host- Set-Cookie sent over plain HTTP.
-// Local dev runs HTTP (with COOKIE_SECURE unset), so we fall back to the
-// plain name there. Prod (HTTPS + COOKIE_SECURE=true) keeps the prefix.
+// Local dev runs HTTP and must set COOKIE_SECURE=false, which falls back to the
+// plain name. Every other deploy (unset → secure) keeps the __Host- prefix.
 export const SESSION_COOKIE_NAME = COOKIE_SECURE ? '__Host-caw_session' : 'caw_session'
 // 1 year — matches SESSION_TTL in sessionStore.ts so cookie and Redis entry
 // expire together.
@@ -82,10 +89,9 @@ export function sessionCookieOptions() {
   return {
     httpOnly: true,
     sameSite: 'lax' as const,
-    // Gate on explicit COOKIE_SECURE=true, not NODE_ENV. An operator running
-    // with NODE_ENV unset (or =development) on a prod VPS would otherwise get
-    // cookies sent without Secure over plain HTTP on port 4000. COOKIE_SECURE
-    // must be set to "true" in client/.env for production deploys.
+    // Secure-by-default (see COOKIE_SECURE above): on unless COOKIE_SECURE=false
+    // is set for local HTTP dev. A prod deploy that forgets the var is now secure
+    // by default instead of silently insecure.
     secure: COOKIE_SECURE,
     path: '/',
     maxAge: SESSION_COOKIE_MAX_AGE,
