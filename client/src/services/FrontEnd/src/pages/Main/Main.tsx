@@ -92,33 +92,10 @@ export const Main: React.FC = () => {
     return () => window.clearTimeout(id)
   }, [activeTab])
 
-  // Horizontal swipe on the feed body toggles between Following / For You,
-  // matching X's mobile gesture. Vertical scroll wins on commit (lock axis
-  // after the first 10px of movement) so reading isn't hijacked.
-  const swipeRef = useRef<{ x: number; y: number; locked: 'h' | 'v' | null } | null>(null)
-  const onFeedTouchStart = (e: React.TouchEvent) => {
-    if (e.touches.length !== 1) return
-    swipeRef.current = { x: e.touches[0].clientX, y: e.touches[0].clientY, locked: null }
-  }
-  const onFeedTouchMove = (e: React.TouchEvent) => {
-    const s = swipeRef.current
-    if (!s || s.locked === 'v') return
-    const dx = e.touches[0].clientX - s.x
-    const dy = e.touches[0].clientY - s.y
-    if (s.locked === null) {
-      if (Math.abs(dx) < 10 && Math.abs(dy) < 10) return
-      s.locked = Math.abs(dx) > Math.abs(dy) ? 'h' : 'v'
-    }
-  }
-  const onFeedTouchEnd = (e: React.TouchEvent) => {
-    const s = swipeRef.current
-    swipeRef.current = null
-    if (!s || s.locked !== 'h') return
-    const dx = e.changedTouches[0].clientX - s.x
-    if (Math.abs(dx) < 60) return
-    if (dx < 0 && activeTab === 'following') setActiveTab('foryou')
-    else if (dx > 0 && activeTab === 'foryou') setActiveTab('following')
-  }
+  // NOTE: feed-body swipe-to-switch-tabs was removed intentionally. Horizontally
+  // swipeable children (e.g. the suggested-users carousel) bubbled their swipe up
+  // to this handler and switched For You / Following unexpectedly. Tabs now change
+  // ONLY on a direct click of the Tabs control (onChange below).
 
   const mainTabs: TabItem<MainTab>[] = [
     { id: 'following', label: t('feed.tab.following') },
@@ -144,13 +121,7 @@ export const Main: React.FC = () => {
       <div className={`border-b ${isDark ? 'border-white/10' : 'border-gray-200'}`}>
         <PostForm onSuccess={() => feedRef.current?.refresh()} composeMode trackDraft autoFocus={false}/>
       </div>
-      <div
-        className="w-full overflow-x-hidden"
-        onTouchStart={onFeedTouchStart}
-        onTouchMove={onFeedTouchMove}
-        onTouchEnd={onFeedTouchEnd}
-        onTouchCancel={() => { swipeRef.current = null }}
-      >
+      <div className="w-full overflow-x-hidden">
         {/* key={activeTab} forces a fresh mount per tab so the CSS
             slide-in animation replays. The animation runs once via
             the keyframe applied as inline style — no JS frame loop. */}
