@@ -236,15 +236,25 @@ export function WithdrawForm({ tokenId, withdrawableWei, ethBalanceWei, onSucces
     : withdrawableCaw
 
   // Pop-B ETH-fee cliff: the withdrawTo call carries the LZ native fee as `value`,
-  // paid from the passkey EOA. A phone-first user typically holds no ETH, so the
-  // batch would revert. Pre-warn + block once we know the fee and the balance.
-  // Skip the guard until both the fee quote and the balance are known (avoid a
-  // false "needs ETH" flash before withdrawFee resolves).
+  // paid from the passkey EOA (executeBatch is NON-PAYABLE, so the relayer cannot
+  // forward this ETH — the EOA pre-funds it). A phone-first user typically holds no
+  // ETH, so the batch would revert. Pre-warn + block once fee + balance are known.
   const popBNeedsEth =
     isPopB &&
     withdrawFee > 0n &&
     ethBalanceWei != null &&
     ethBalanceWei < withdrawFee
+
+  // Pop-B CAW-fee cliff: the relayer fronts the gas and is repaid in CAW (feeCaw)
+  // from the withdrawal. If the withdrawable CAW can't cover that fee, the batch's
+  // repay leg would fail — warn + block. Only meaningful once the quote resolves.
+  const feeCawWei = sponsorQuote ? BigInt(sponsorQuote.minFeeCawWei) : 0n
+  const popBNeedsCaw =
+    isPopB &&
+    sponsorQuote != null &&
+    sponsorQuote.priceAvailable &&
+    feeCawWei > 0n &&
+    withdrawable < feeCawWei
 
   // Shared theme helpers (no hardcoded text-white per feedback_light_mode_contrast.md)
   const strongClass = isDark ? 'text-white' : 'text-black'
@@ -310,7 +320,10 @@ export function WithdrawForm({ tokenId, withdrawableWei, ethBalanceWei, onSucces
         {isPopB && feeCawDisplay != null && (
           <>
             <div className="flex justify-between items-center text-sm mt-2">
-              <span className={mutedClass}>{t('withdraw.relayer_fee_label')}</span>
+              <span className={mutedClass}>
+                {t('withdraw.relayer_fee_label')}{' '}
+                <span className="opacity-70">{t('withdraw.paid_in_caw')}</span>
+              </span>
               <span className={mutedClass}>
                 {feeCawDisplay.toLocaleString('en-US', { maximumFractionDigits: 2 })} CAW
               </span>
@@ -335,6 +348,15 @@ export function WithdrawForm({ tokenId, withdrawableWei, ethBalanceWei, onSucces
         {popBNeedsEth && (
           <p className="text-xs text-red-500 mt-2">
             {t('withdraw.needs_eth_for_fee', { amount: lzFeeEth.toFixed(5) })}
+          </p>
+        )}
+
+        {/* Pop-B CAW-fee cliff: not enough CAW to cover the relayer fee */}
+        {popBNeedsCaw && (
+          <p className="text-xs text-red-500 mt-2">
+            {t('withdraw.needs_caw_for_fee', {
+              amount: (feeCawDisplay ?? 0).toLocaleString('en-US', { maximumFractionDigits: 2 }),
+            })}
           </p>
         )}
       </div>
@@ -395,12 +417,14 @@ export function WithdrawForm({ tokenId, withdrawableWei, ethBalanceWei, onSucces
                 isPending ||
                 !recipientValid ||
                 popBNeedsEth ||
+                popBNeedsCaw ||
                 (isPopB && (!sponsorQuote || !sponsorQuote.priceAvailable || quoteLoading))
               }
               className={`flex-1 py-2 px-4 rounded-full text-sm font-semibold transition-all duration-300 ${
                 isPending ||
                 !recipientValid ||
                 popBNeedsEth ||
+                popBNeedsCaw ||
                 (isPopB && (!sponsorQuote || !sponsorQuote.priceAvailable || quoteLoading))
                   ? isDark ? 'bg-gray-700 text-gray-400 cursor-not-allowed' : 'bg-gray-300 text-gray-600 cursor-not-allowed'
                   : 'bg-yellow-500 hover:bg-yellow-600 text-black cursor-pointer'
