@@ -13,6 +13,12 @@ export function useHasActiveSession(): boolean {
 
   if (!enabled) return false
 
+  // Owner-keyed ONLY — do not fall back to activeWallet here. For Population A,
+  // activeWallet tracks the connected wagmi wallet, and a fallback would let a
+  // profile with no delegated session inherit the connected wallet's session
+  // under a different address (the exact cross-profile bug fixed in 10d15a91).
+  // The Pop-B onboarding "owner briefly diverges" case is handled in actions.ts
+  // (session resolution), gated on there being no connected wallet — see there.
   const ownerAddress = activeToken?.owner?.toLowerCase()
   if (!ownerAddress) return false
 

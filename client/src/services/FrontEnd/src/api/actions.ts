@@ -929,9 +929,17 @@ export function useSignAndSubmitAction() {
     const freshToken = Object.values(useTokenDataStore.getState().tokensByAddress)
       .flat().find(t => t.tokenId === activeTokenId)
     const tokenOwner = freshToken?.owner || activeToken?.owner
-    const activeSession0 = tokenOwner
-      ? sessionStore0.getActiveSessionForAddress(tokenOwner)
-      : sessionStore0.getActiveSession()
+    // Resolve the Quick Sign session. Owner-keyed FIRST (correct for multi-account:
+    // a profile only counts as "active" if ITS owner has a delegated session — see
+    // 10d15a91). The activeWallet fallback is gated on `!address`, i.e. Population-B
+    // (no connected wagmi wallet): there, onboarding sets activeWallet := the minted
+    // profile's owner and registers the session there, but the active token's `owner`
+    // can briefly diverge at the profile-setup step (multicall/self-heal re-read),
+    // making the owner-only lookup miss and re-prompt "Enable Quick Sign?" despite a
+    // live session. For Pop-A (connected wallet) we must NOT fall back, or a profile
+    // with no session would inherit the connected wallet's — the exact 10d15a91 bug.
+    const ownerSession0 = tokenOwner ? sessionStore0.getActiveSessionForAddress(tokenOwner) : null
+    const activeSession0 = ownerSession0 || (!address ? sessionStore0.getActiveSession() : null)
     const actionCode0 = ActionTypeMap[params.actionType]
     const canUseSession0 = activeSession0 &&
       actionCode0 !== 6 && // exclude WITHDRAW
