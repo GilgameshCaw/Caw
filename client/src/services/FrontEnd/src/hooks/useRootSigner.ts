@@ -32,6 +32,8 @@
 import { useCallback, useMemo } from 'react'
 import { hashMessage } from 'viem'
 import { useSignMessage } from 'wagmi'
+import { reconnect } from '@wagmi/core'
+import { wagmiConfig } from '~/config/wagmiConfig'
 import { useWalletPopulation } from '~/hooks/useWalletPopulation'
 import { useEnsureWallet } from '~/hooks/useEnsureWallet'
 import { useRecoveryContext } from '~/components/identity/RecoveryProvider'
@@ -105,7 +107,21 @@ export function useRootSigner(): RootSigner {
     async (message: string): Promise<`0x${string}`> => {
       if (!isPasskey) {
         // Population A — wagmi personal_sign.
-        return (await signMessageAsync({ message })) as `0x${string}`
+        try {
+          return (await signMessageAsync({ message })) as `0x${string}`
+        } catch (err: any) {
+          // "Connector not connected" — wagmi reports isConnected:true from cached
+          // state, but the wallet was LOCKED (or the in-memory connector handle went
+          // stale) when we tried to sign. Unlocking doesn't auto-refresh that handle.
+          // Reconnect the connector(s) and retry the sign once. (Don't swallow a real
+          // user-rejection — that throws a different error and falls through.)
+          const msg = String(err?.name || err?.message || '')
+          const isConnectorStale =
+            err?.name === 'ConnectorNotConnectedError' || /not connected/i.test(msg)
+          if (!isConnectorStale) throw err
+          await reconnect(wagmiConfig)
+          return (await signMessageAsync({ message })) as `0x${string}`
+        }
       }
       // Population B — personal_sign must come from the secp256k1 ecdsaFallback
       // key (server recovers it via ethers.verifyMessage). Only available in
