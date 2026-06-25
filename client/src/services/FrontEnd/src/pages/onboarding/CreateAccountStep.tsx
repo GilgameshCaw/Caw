@@ -473,7 +473,7 @@ export default function CreateAccountStep({
           `}
         >
           {isLoading
-            ? t('onboarding.backup.loading_sponsor')
+            ? t('onboarding.backup.loading_sponsor_short')
             : error.kind
               ? t('common.try_again')
               : t('onboarding.create.cta_create')}
