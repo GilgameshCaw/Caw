@@ -114,15 +114,10 @@ export const FollowButton: React.FC<FollowButtonProps> = ({
     </button>
   )
 
-  if (isPending && !isSigning) {
-    return (
-      <Tooltip text={t('follow.cancel_tooltip')} className="inline-block">
-        {button}
-      </Tooltip>
-    )
-  }
-
-  if (isSigning) {
+  // Pending state stays click-to-cancel (handled in handleFollowClick), but we no
+  // longer surface a "Tap to cancel" tooltip — it popped up distractingly the
+  // moment you clicked Follow. The bare button is returned instead.
+  if (isSigning || (isPending && !isSigning)) {
     return button
   }
 
