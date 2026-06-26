@@ -53,7 +53,10 @@ const redis = process.env.REDIS_URL
 
 // ─── Rate limit helpers ──────────────────────────────────────────────────────
 
-const BOOTSTRAP_RATE_LIMIT     = 5    // accounts CREATED per IP per day
+// Accounts CREATED per IP per day. Env-overridable so a testnet / QA host can
+// raise it without a code change (mainnet stays at the default 5). Only spent on
+// actual success (recordSponsorUse), so failed/abandoned attempts don't count.
+const BOOTSTRAP_RATE_LIMIT     = Number(process.env.SPONSOR_BOOTSTRAP_RATE_LIMIT ?? 5)
 const DEPOSIT_AUTH_RATE_LIMIT  = 30
 // L2-delegation: one per new passkey account; a legit user needs ~1/day. Tight
 // cap (audit M-1) so the unauthenticated route can't be used to burn sponsor L2
