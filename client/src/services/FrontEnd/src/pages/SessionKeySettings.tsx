@@ -199,7 +199,7 @@ const SessionKeySettings: React.FC = () => {
   }
 
   return (
-      <div className={`max-w-2xl mx-auto px-3 sm:px-6 py-4 ${isDark ? 'bg-black' : 'bg-white'}`}>
+      <div className={`max-w-2xl mx-auto px-3 sm:px-6 pt-4 pb-[calc(var(--bottom-nav-h,0px)+24px)] ${isDark ? 'bg-black' : 'bg-white'}`}>
         {/* Header */}
         <div className="flex items-center gap-4 mb-6">
           <Link to="/settings" className={`p-2 rounded-full transition-colors ${
@@ -346,7 +346,7 @@ const SessionKeySettings: React.FC = () => {
                       </div>
                     )}
 
-                    <div className="text-center mb-6">
+                    <div className="text-center">
                       {(() => {
                         const wrongWallet = isConnected && activeToken?.owner && address?.toLowerCase() !== activeToken.owner.toLowerCase()
                         return (
