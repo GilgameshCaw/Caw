@@ -1,4 +1,5 @@
 import { useCallback, useEffect } from 'react'
+import { hashMessage } from 'viem'
 import { generatePrivateKey, privateKeyToAccount } from 'viem/accounts'
 import { useSignMessage, useSwitchChain, useChainId, useAccount } from 'wagmi'
 import { useReadContract } from 'wagmi'
@@ -199,10 +200,19 @@ export function useCreateSession() {
 
     let signature: `0x${string}`
     try {
-      // rootSigner routes to wagmi (Pop A) or the ecdsaFallback key (Pop B
-      // recovery mode). Both produce a 65-byte ECDSA personal_sign that
-      // registerSessionPersonal validates on its ECDSA path.
-      signature = await rootSigner.signMessage(message)
+      if (isPasskey) {
+        // Population B — sign the EIP-191 digest with the passkey (WebAuthn blob)
+        // or the recovery key if present. hashMessage produces the same digest the
+        // contract recomputes inside registerSessionPersonal, so the ERC-1271 path
+        // (_challengeMatchesDigest) verifies correctly. signDigest prefers the
+        // recovery key when available (65-byte ECDSA, cheaper) and falls back to
+        // the WebAuthn assertion (>65 bytes, validated via SmartEOA.isValidSignature).
+        const digest = hashMessage(message) // EIP-191 personal_sign hash
+        signature = await rootSigner.signDigest(digest)
+      } else {
+        // Population A — wagmi personal_sign (65-byte ECDSA, ECDSA recovery path).
+        signature = await rootSigner.signMessage(message)
+      }
     } catch (err) {
       console.error('[QuickSign] signMessage failed:', err)
       throw err
