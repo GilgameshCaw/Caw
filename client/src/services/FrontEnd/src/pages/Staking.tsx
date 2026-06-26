@@ -224,6 +224,23 @@ const Staking = () => {
     }
   })
 
+  // Withdraw (claim) LZ native fee, in ETH wei. The L1 claim of unstaked CAW
+  // carries this LayerZero fee; for Pop-B it's repaid to the relayer in CAW. It's
+  // a FIXED network fee (not proportional), so on testnet it can exceed a tiny
+  // stake's value — which would strand the unstaked CAW in withdrawable limbo
+  // (you can't pay the claim fee). We read it here to gate the unstake upfront
+  // (see withdrawFeeCaw / unstakeBelowFee below). Mirrors WithdrawForm's quote.
+  const { data: withdrawClaimQuote } = useReadContract({
+    abi: cawProfileQuoterAbi,
+    chainId: chains.l1.chainId,
+    functionName: "withdrawQuote",
+    address: CAW_NAME_QUOTER_ADDRESS,
+    args: [CLIENT_ID, chains.l2.layerZero, false],
+    query: {
+      enabled: !!tokenId && activeTab === 'unstake'
+    }
+  })
+
   // ETH input + slippage math
   const ethAmountWei = useMemo(() => {
     if (paymentMode !== 'eth' || !ethAmount) return 0n
@@ -423,6 +440,22 @@ const Staking = () => {
   const ethPrice = usePriceStore(s => s.priceMap['ethereum'] ?? 0)
   const DOLLAR_PRESETS = [10, 25, 50, 100]
   const dollarToCaw = (dollars: number) => cawPrice > 0 ? Math.round(dollars / cawPrice) : 0
+
+  // Withdraw (claim) LZ fee expressed in WHOLE CAW. The claim's LZ native fee is
+  // priced in ETH; for Pop-B it's repaid to the relayer in CAW out of the
+  // withdrawable. It's a FIXED fee, so for a tiny stake it can EXCEED the amount
+  // being unstaked — which would strand that CAW (you could never afford to claim
+  // it). We compute it here to gate the unstake upfront. 0 when prices/quote
+  // aren't loaded (gate is then inert — fail-open, don't block on missing data).
+  const withdrawLzFeeEth = withdrawClaimQuote?.nativeFee != null
+    ? Number(formatEther(BigInt(withdrawClaimQuote.nativeFee)))
+    : 0
+  const withdrawFeeCaw = (cawPrice > 0 && ethPrice > 0 && withdrawLzFeeEth > 0)
+    ? (withdrawLzFeeEth * ethPrice) / cawPrice
+    : 0
+  // Block when the amount being unstaked can't cover its own claim fee. Only
+  // gates when we actually have a positive fee estimate (else inert).
+  const unstakeBelowFee = withdrawFeeCaw > 0 && parseFloat(amount || "0") > 0 && parseFloat(amount) < withdrawFeeCaw
 
   // Legacy helpers kept for compatibility
   const getPresetAmounts = (_maxBalance: number): number[] => DOLLAR_PRESETS.map(dollarToCaw).filter(v => v > 0)
@@ -709,6 +742,13 @@ const Staking = () => {
     // duplicate withdrawal. Mirror the stake side's `isStakePending` flag.
     if (isWithdrawPending) {
       console.log('[Staking] handleUnstakeInit: already pending, ignoring re-entry')
+      return
+    }
+    // Hard guard (button is also disabled): never let an unstake below its own
+    // claim fee through — it would strand the CAW in withdrawable limbo.
+    if (unstakeBelowFee) {
+      console.log('[Staking] handleUnstakeInit: amount below withdrawal fee, blocking')
+      toast.error(t('staking.button.below_withdraw_fee', { fee: withdrawFeeCaw.toLocaleString('en-US', { maximumFractionDigits: 0 }) }))
       return
     }
     setIsWithdrawPending(true)
@@ -1199,6 +1239,9 @@ const Staking = () => {
           !amount ||
           parseFloat(amount) <= 0 ||
           parseFloat(amount) > mockData.maxWithdrawAmount ||
+          // Block unstaking an amount smaller than its own claim fee — the CAW
+          // would be stranded in withdrawable limbo (can't afford to claim it).
+          unstakeBelowFee ||
           (isConnected && !isTokenOwner)
         }
       >
@@ -1210,6 +1253,8 @@ const Staking = () => {
           ? t('staking.button.enter_amount')
           : parseFloat(amount || "0") > mockData.maxWithdrawAmount
           ? t('staking.button.insufficient_staked')
+          : unstakeBelowFee
+          ? t('staking.button.below_withdraw_fee', { fee: withdrawFeeCaw.toLocaleString('en-US', { maximumFractionDigits: 0 }) })
           : t('staking.button.unstake')}
       </button>
     </div>

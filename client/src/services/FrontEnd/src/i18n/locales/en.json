@@ -364,6 +364,7 @@
   "staking.button.complete_withdrawal": "Complete Withdrawal",
   "staking.button.enter_amount": "Enter Amount",
   "staking.button.insufficient_staked": "Insufficient Staked",
+  "staking.button.below_withdraw_fee": "Amount below ~{{fee}} CAW withdrawal fee",
   "staking.button.unstake": "Unstake",
   "staking.activity.title": "CAW Activity",
   "staking.activity.subtitle": "Daily flow: rewards above, spend below. Click legend items to toggle.",
