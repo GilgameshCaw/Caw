@@ -21,12 +21,12 @@ const LanguageSettings: React.FC = () => {
   // Local mirror so the controls feel snappy. We write through to the API
   // on every change but render from this state until the refetch lands.
   const [preferredLanguage, setPreferredLanguage] = useState<string>('')
-  const [autoTranslate, setAutoTranslate] = useState<boolean>(false)
+  const [autoTranslate, setAutoTranslate] = useState<boolean>(true)
 
   useEffect(() => {
     if (!user) return
     setPreferredLanguage(user.preferredLanguage ?? '')
-    setAutoTranslate(!!user.autoTranslate)
+    setAutoTranslate(user.autoTranslate ?? true)
   }, [user?.preferredLanguage, user?.autoTranslate])
 
   const persist = async (patch: { preferredLanguage?: string | null; autoTranslate?: boolean }) => {

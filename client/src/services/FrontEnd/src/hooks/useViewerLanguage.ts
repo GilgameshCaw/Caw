@@ -14,6 +14,9 @@ export interface ViewerLanguage {
 //   2. localStorage caw:viewer-lang  (pre-mint or signed-out choice)
 //   3. browser locale via getTargetLanguage()
 //
+// autoTranslate defaults ON: null/undefined DB value (unset) → true.
+// Only an explicit false (user opted out) disables auto-translation.
+//
 // Listening to the custom event lets LanguageSwitcher push changes
 // without forcing every consumer to re-mount.
 export function useViewerLanguage(): ViewerLanguage {
@@ -34,6 +37,6 @@ export function useViewerLanguage(): ViewerLanguage {
   return {
     preferredLanguage:
       (user?.preferredLanguage as string | undefined) || stored || getTargetLanguage(),
-    autoTranslate: !!user?.autoTranslate,
+    autoTranslate: user?.autoTranslate ?? true,
   }
 }

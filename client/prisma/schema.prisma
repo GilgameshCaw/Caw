@@ -56,7 +56,7 @@ model User {
   lastViewedOffersAt      DateTime?
   xBadgeVisible           Boolean                     @default(true)
   preferredLanguage       String?
-  autoTranslate           Boolean                     @default(false)
+  autoTranslate           Boolean?
   pinnedCawCount          Int                         @default(0)
   role                    UserRole                    @default(USER)
   notificationTipRequired Int                         @default(0)
