@@ -1299,6 +1299,23 @@ export function useSignAndSubmitAction() {
       actionCode !== 6 && // exclude WITHDRAW
       (activeSession.scopeBitmap & (1 << actionCode)) !== 0
 
+    // [POPB-DBG][sign-path] The single most important diagnostic for symptoms 2 & 3:
+    // which path will sign this action, and WHY. If a Pop-B user expects Quick Sign
+    // but lands on the passkey path, `sessionFound`/`scopeOk`/`tokenOwner` tell us
+    // whether the session is missing, looked up under the wrong owner, or out-of-scope.
+    console.log('[POPB-DBG][sign-path]', {
+      actionType: params.actionType,
+      actionCode,
+      population,
+      tokenOwner: tokenOwner ?? 'none',
+      sessionFound: !!activeSession,
+      sessionOwner: activeSession ? '(matched tokenOwner)' : 'n/a',
+      enabledFlag: sessionStore.enabled,
+      scopeBitmap: activeSession?.scopeBitmap ?? null,
+      scopeOk: activeSession ? (activeSession.scopeBitmap & (1 << actionCode)) !== 0 : false,
+      willSignWith: canUseSession ? 'SESSION-KEY' : (population === 'B' ? 'PASSKEY/recovery' : 'WAGMI-WALLET'),
+    })
+
     // Determine the effective tip for THIS action.
     // - If signing with a session key and the session has a tipCeiling, cap the tip at it.
     //   A ceiling of 0 means "no tip" (opt-out — explicit user choice at session activation).
@@ -1413,7 +1430,17 @@ export function useSignAndSubmitAction() {
           primaryType,
           message,
         })
+        console.log('[POPB-DBG][passkey-sign] requesting rootSigner.signDigest', {
+          actionType: params.actionType, digest: digest.slice(0, 12) + '…',
+        })
         signature = await rootSigner.signDigest(digest)
+        // [POPB-DBG][passkey-sign] Confirms the WebAuthn/recovery ceremony RETURNED a
+        // signature (symptom 3 = "signs but nothing happens"). length>132 hex chars ⇒
+        // WebAuthn blob (→ ERC-1271 sibling); ~132 ⇒ 65-byte ECDSA recovery key.
+        console.log('[POPB-DBG][passkey-sign] signDigest returned', {
+          sigLen: signature.length,
+          kind: signature.length > 200 ? 'WebAuthn-blob' : 'ECDSA-65',
+        })
       } else {
         // Wallet signature. EIP-712 signatures are chain-agnostic: the
         // domain.chainId is hashed into the digest regardless of which
@@ -1502,6 +1529,16 @@ export function useSignAndSubmitAction() {
       // allocate-cawonce already gated on the sender row existing, but
       // possible if the User row was deleted between the two calls. Same
       // backoff schedule as allocate.
+      // [POPB-DBG][submit] What we're about to POST. pendingQuickSignTxHash present on a
+      // PASSKEY-signed action is suspicious — it means a QS hint lingered from a prior
+      // (maybe failed) registration and may make the validator expect a session that
+      // never landed (symptom 3 silent-fail candidate).
+      console.log('[POPB-DBG][submit] POST /api/actions', {
+        actionType: params.actionType,
+        sigLen: signature.length,
+        hasPendingDeposit: !!pendingDepositTxHash,
+        hasPendingQuickSign: !!pendingQuickSignTxHash,
+      })
       const response = await retryOnIndexing(() => apiFetch('/api/actions', {
         method: 'POST',
         body: JSON.stringify({
@@ -1515,6 +1552,14 @@ export function useSignAndSubmitAction() {
           ...(params.pollOptionImages && params.pollOptionImages.length > 0 ? { pollOptionImages: params.pollOptionImages } : {}),
         })
       }))
+      // [POPB-DBG][submit] Server accepted (no throw). Shows what came back — a 202
+      // (parked waiting_for_deposit) vs a real cawId tells us if the action LANDED or
+      // is silently queued (symptom 3).
+      console.log('[POPB-DBG][submit] /api/actions response', {
+        cawId: (response as any)?.cawId ?? null,
+        senderId: (response as any)?.senderId ?? null,
+        status: (response as any)?.status ?? '(ok)',
+      })
 
       // If the server returned auth data (passive auth), store it immediately
       if (response.auth) {

@@ -184,6 +184,21 @@ export default function useTokenDataUpdate() {
         ? existingToken.cawonce
         : onChainCawonce;
 
+      const nextStaked = l2Token?.cawBalance ?? 0n
+      // [POPB-DBG][zero-caw] Disambiguate WHY staked shows 0: L2 row missing (relay
+      // in flight, fell back to 0) vs L2 genuinely reports 0 vs real value — and flag
+      // when we're about to OVERWRITE a previously-nonzero staked with 0 (the "correct
+      // then flips to zero" symptom). Remove once the post-mint deposit display is solid.
+      const prevStaked = existingToken?.stakedAmount
+      if (nextStaked === 0n) {
+        console.log('[POPB-DBG][zero-caw] viewed-tokens write staked=0', {
+          tokenId: Number(l1Token.tokenId),
+          l2RowFound: !!l2Token,
+          reason: l2Token ? 'L2-reports-0' : 'L2-row-missing(relay-in-flight)',
+          prevStaked: prevStaked != null ? prevStaked.toString() : 'none',
+          overwritingNonZero: prevStaked != null && prevStaked > 0n,
+        })
+      }
       return {
         tokenId:      Number(l1Token.tokenId),
         username:     l1Token.username,
@@ -191,7 +206,7 @@ export default function useTokenDataUpdate() {
         ownerBalance: l1Token.ownerBalance,
         address: viewedAddress!,
         owner: l1Token.owner!,
-        stakedAmount: l2Token?.cawBalance ?? 0n,
+        stakedAmount: nextStaked,
         cawonce,
       }
     });

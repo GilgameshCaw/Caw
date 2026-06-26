@@ -367,6 +367,13 @@ router.post('/', async (req, res) => {
     // backoff; RawEventsGatherer's Mint listener (and NftTransferWatcher) will
     // populate the row.
     if (!sender?.address) {
+      // [POPB-DBG] Freshly-minted Pop-B sender not indexed yet → 202. If this loops
+      // for a new signup, the Mint indexer is lagging (symptom 1/3 server-side).
+      console.log('[POPB-DBG][server] 202 user-not-indexed', {
+        senderId: data.senderId, actionType: data.actionType,
+        hasPendingDeposit: sanitizedPendingDepositTxHash !== null,
+        hasPendingQuickSign: sanitizedPendingQuickSignTxHash !== null,
+      })
       pokeIndexTokenId(data.senderId)
       res.setHeader('Retry-After', '3')
       return res.status(202).json({
@@ -452,6 +459,13 @@ router.post('/', async (req, res) => {
           sessionCheck.reason === 'Session key not registered' &&
           sanitizedPendingQuickSignTxHash !== null
         ) {
+          // [POPB-DBG] Session not on L2 yet but client says it's in-flight → PARK as
+          // waiting_for_session (not rejected). If actions sit here forever, the QS
+          // registration tx never landed (symptom 2/3).
+          console.log('[POPB-DBG][server] PARK waiting_for_session', {
+            senderId: data.senderId, signer: recoveredAddress, owner: ownerAddress,
+            qsHint: sanitizedPendingQuickSignTxHash.slice(0, 12) + '…',
+          })
           parkAsWaitingForSession = true
         } else {
           console.warn(`[Actions] Rejected: signer ${recoveredAddress} not authorized for owner ${ownerAddress}: ${sessionCheck.reason}`)
