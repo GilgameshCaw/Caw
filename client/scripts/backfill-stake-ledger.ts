@@ -43,7 +43,7 @@ import { prisma } from '../src/prismaClient'
 import { CAW_ACTIONS_ADDRESS } from '../src/abi/addresses'
 import { ACTION_TYPE_NUM_TO_NAME, ACTION_COST, type FixedCostActionType } from '../src/utils/cawActionCosts'
 import { PRECISION } from '../src/services/StakeLedger/contractMath'
-import { getCawProfileL2 } from '../src/services/StakeLedger/cawProfileL2'
+import { getCawProfileLedger } from '../src/services/StakeLedger/cawProfileLedger'
 
 const args = new Set(process.argv.slice(2))
 const RESET = args.has('--reset')
@@ -275,7 +275,7 @@ async function seedFromChain() {
   logProgress('Seeding state from chain…')
   let contract
   try {
-    contract = getCawProfileL2()
+    contract = getCawProfileLedger()
   } catch (err: any) {
     console.error(`[backfill] No L2 RPC configured (${err?.message ?? err}). Skipping chain seed; live snapshotter will start from genesis assumptions and the per-event multiplier check will halt on first action.`)
     return
