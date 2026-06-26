@@ -47,10 +47,9 @@ interface WithdrawFormProps {
   /** withdrawable CAW in wei for this token (from L1 on-chain read) */
   withdrawableWei: bigint
   /**
-   * The withdrawing wallet's L1 ETH balance in wei. Used ONLY to pre-warn Pop-B
-   * users that their passkey EOA can't cover the LZ native fee (the withdrawTo
-   * call carries `value: withdrawFee`, so the EOA must hold that ETH or the whole
-   * relayed batch reverts). Optional: when undefined the guard is skipped.
+   * @deprecated No longer used for any guard. SmartEOA v2's executeBatch is payable,
+   * so the relayer forwards the LZ native fee as msg.value (repaid in CAW) — a Pop-B
+   * EOA needs ZERO ETH to withdraw. Kept optional for caller compatibility only.
    */
   ethBalanceWei?: bigint
   /** Called after a successful L1 withdrawal so parents can refetch data */
@@ -66,7 +65,7 @@ function isValidAddress(s: string): boolean {
   return /^0x[0-9a-fA-F]{40}$/.test(s) && isAddress(s)
 }
 
-export function WithdrawForm({ tokenId, withdrawableWei, ethBalanceWei, onSuccess, onSuccessRefetch, className }: WithdrawFormProps) {
+export function WithdrawForm({ tokenId, withdrawableWei, onSuccess, onSuccessRefetch, className }: WithdrawFormProps) {
   const t = useT()
   const { isDark } = useTheme()
   const ensureWallet = useEnsureWallet()
@@ -118,14 +117,22 @@ export function WithdrawForm({ tokenId, withdrawableWei, ethBalanceWei, onSucces
     if (withdrawQuote?.nativeFee != null) setWithdrawFee(BigInt(withdrawQuote.nativeFee))
   }, [withdrawQuote])
 
-  // Fetch sponsor quote when Pop-B and confirmation panel is visible
+  // Fetch sponsor quote when Pop-B and confirmation panel is visible. The relayer
+  // forwards the LZ fee (withdrawFee) as msg.value and is repaid gas + that value in
+  // CAW (SmartEOA v2 payable), so the quote MUST include it via forwardedValueWei —
+  // otherwise the signed CAW fee leg underpays the floor /execute enforces and the
+  // batch is rejected FEE_TOO_LOW. Wait for withdrawFee before quoting; refetch when
+  // it resolves (it loads async from withdrawQuote).
   useEffect(() => {
     if (!isPopB || !confirmVisible) return
+    if (withdrawFee === 0n) return // wait for the LZ fee before pricing the CAW leg
     let cancelled = false
     const fetchQuote = async () => {
       setQuoteLoading(true)
       try {
-        const data = await apiFetch<SponsorExecuteQuote>('/api/sponsor/execute-quote')
+        const data = await apiFetch<SponsorExecuteQuote>(
+          `/api/sponsor/execute-quote?forwardedValueWei=${withdrawFee.toString()}`,
+        )
         if (!cancelled) setSponsorQuote(data)
       } catch {
         if (!cancelled) setSponsorQuote(null)
@@ -135,7 +142,7 @@ export function WithdrawForm({ tokenId, withdrawableWei, ethBalanceWei, onSucces
     }
     fetchQuote()
     return () => { cancelled = true }
-  }, [isPopB, confirmVisible])
+  }, [isPopB, confirmVisible, withdrawFee])
 
   // Pop-A direct withdrawTo via useContractCall
   const withdrawPopA = useContractCall({
@@ -235,19 +242,14 @@ export function WithdrawForm({ tokenId, withdrawableWei, ethBalanceWei, onSucces
     ? Math.max(0, withdrawableCaw - (feeCawDisplay ?? 0))
     : withdrawableCaw
 
-  // Pop-B ETH-fee cliff: the withdrawTo call carries the LZ native fee as `value`,
-  // paid from the passkey EOA (executeBatch is NON-PAYABLE, so the relayer cannot
-  // forward this ETH — the EOA pre-funds it). A phone-first user typically holds no
-  // ETH, so the batch would revert. Pre-warn + block once fee + balance are known.
-  const popBNeedsEth =
-    isPopB &&
-    withdrawFee > 0n &&
-    ethBalanceWei != null &&
-    ethBalanceWei < withdrawFee
+  // (No Pop-B ETH-fee cliff anymore: SmartEOA v2's executeBatch is payable, so the
+  // relayer forwards the LZ native fee as msg.value and is repaid in CAW. A Pop-B EOA
+  // needs ZERO ETH to withdraw — the only constraint is the CAW-fee cliff below.)
 
-  // Pop-B CAW-fee cliff: the relayer fronts the gas and is repaid in CAW (feeCaw)
-  // from the withdrawal. If the withdrawable CAW can't cover that fee, the batch's
-  // repay leg would fail — warn + block. Only meaningful once the quote resolves.
+  // Pop-B CAW-fee cliff: the relayer fronts the gas AND forwards the LZ fee, repaid in
+  // CAW (feeCaw, which now includes that forwarded value). If the withdrawable CAW
+  // can't cover that fee, the batch's repay leg would fail — warn + block. Only
+  // meaningful once the quote resolves.
   const feeCawWei = sponsorQuote ? BigInt(sponsorQuote.minFeeCawWei) : 0n
   const popBNeedsCaw =
     isPopB &&
@@ -344,13 +346,6 @@ export function WithdrawForm({ tokenId, withdrawableWei, ethBalanceWei, onSucces
           </p>
         )}
 
-        {/* Pop-B ETH-fee cliff: the EOA can't cover the LZ native fee */}
-        {popBNeedsEth && (
-          <p className="text-xs text-red-500 mt-2">
-            {t('withdraw.needs_eth_for_fee', { amount: lzFeeEth.toFixed(5) })}
-          </p>
-        )}
-
         {/* Pop-B CAW-fee cliff: not enough CAW to cover the relayer fee */}
         {popBNeedsCaw && (
           <p className="text-xs text-red-500 mt-2">
@@ -365,9 +360,9 @@ export function WithdrawForm({ tokenId, withdrawableWei, ethBalanceWei, onSucces
       {!confirmVisible ? (
         <button
           onClick={() => setConfirmVisible(true)}
-          disabled={!recipientValid || withdrawFee === 0n || popBNeedsEth}
+          disabled={!recipientValid || withdrawFee === 0n}
           className={`w-full py-3 px-4 rounded-full font-semibold transition-all duration-300 ${
-            !recipientValid || withdrawFee === 0n || popBNeedsEth
+            !recipientValid || withdrawFee === 0n
               ? isDark ? 'bg-gray-700 text-gray-400 cursor-not-allowed' : 'bg-gray-300 text-gray-600 cursor-not-allowed'
               : 'bg-yellow-500 hover:bg-yellow-600 text-black cursor-pointer'
           }`}
@@ -416,14 +411,12 @@ export function WithdrawForm({ tokenId, withdrawableWei, ethBalanceWei, onSucces
               disabled={
                 isPending ||
                 !recipientValid ||
-                popBNeedsEth ||
                 popBNeedsCaw ||
                 (isPopB && (!sponsorQuote || !sponsorQuote.priceAvailable || quoteLoading))
               }
               className={`flex-1 py-2 px-4 rounded-full text-sm font-semibold transition-all duration-300 ${
                 isPending ||
                 !recipientValid ||
-                popBNeedsEth ||
                 popBNeedsCaw ||
                 (isPopB && (!sponsorQuote || !sponsorQuote.priceAvailable || quoteLoading))
                   ? isDark ? 'bg-gray-700 text-gray-400 cursor-not-allowed' : 'bg-gray-300 text-gray-600 cursor-not-allowed'

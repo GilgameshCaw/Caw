@@ -1014,9 +1014,16 @@ export class SponsorService {
    * @param nonce           The signed executeNonce.
    * @param sig             The passkey / ecdsaFallback signature over the batch.
    * @param value           Total of the inner call values (e.g. the LZ fee a
-   *                        withdraw/deposit forwards). This is funded from the
-   *                        SmartEOA's OWN balance — NOT attached as msg.value (see
-   *                        below). Passed only for the maxLzFeeWei cap + diagnostics.
+   *                        withdraw/deposit forwards). Also the maxLzFeeWei cap basis.
+   * @param forwardValue    Whether the relayer attaches `value` as msg.value (so the
+   *                        EOA need not pre-hold ETH — the zero-ETH Pop-B withdraw),
+   *                        or attaches 0 and lets the EOA self-fund inner value from
+   *                        its OWN balance (the ETH-zap, where the EOA holds the swap
+   *                        ETH on purpose). The CALLER decides via the fee-currency it
+   *                        verified: CAW-repay → forward (repaid gas+value in CAW);
+   *                        ETH-repay → don't (would double-fund the swap). executeBatch
+   *                        is payable and refunds `msg.value − Σforwarded` to the
+   *                        relayer, so an over-attach is returned, never stranded.
    */
   async relayExecuteBatch(
     smartEoaAddress: string,
@@ -1024,6 +1031,7 @@ export class SponsorService {
     nonce: bigint,
     sig: string,
     value: bigint,
+    forwardValue: boolean,
   ): Promise<SponsorResult> {
     try {
       if (value > this.maxLzFeeWei) {
@@ -1032,23 +1040,30 @@ export class SponsorService {
           detail: `value ${value} exceeds SPONSOR_MAX_LZ_FEE_WEI (${this.maxLzFeeWei})`,
         }
       }
+      // The msg.value the relayer attaches. CAW-repay batches forward the inner value
+      // (EOA may hold 0 ETH); ETH-repay zaps attach 0 (EOA self-funds the swap ETH).
+      const msgValue = forwardValue ? value : 0n
 
+      // The relayer must keep its floor AFTER attaching msgValue — forwarding the LZ
+      // fee spends real ETH on top of gas, so guard against draining below the floor.
       const sponsorBalance = await this.provider.getBalance(this.wallet.address)
-      if (sponsorBalance < MIN_TREASURY_ETH) {
+      if (sponsorBalance < MIN_TREASURY_ETH + msgValue) {
         return {
           error: 'TREASURY_LOW',
-          detail: `Sponsor ETH balance (${sponsorBalance}) below minimum (${MIN_TREASURY_ETH})`,
+          detail: `Sponsor ETH balance (${sponsorBalance}) below minimum (${MIN_TREASURY_ETH}) + forwarded value (${msgValue})`,
         }
       }
 
-      // CRITICAL: executeBatch is NON-PAYABLE (SmartEOA hardening 13e0a733) — it
-      // REVERTS on any msg.value at the ABI dispatcher (verified on-chain: a
-      // non-zero value reverts with empty data, before the body). Every inner
-      // call's `value` (LZ fees, swap ETH) is spent from the SmartEOA's OWN
-      // balance, which the user pre-funds. So we attach value: 0 here. The relayer
-      // fronts ONLY gas; it is repaid (in CAW or ETH) by an in-batch fee leg the
-      // route's fee invariant verifies. Forwarding `value` here would brick every
-      // batch carrying a real (non-zero) LZ fee — the latent bug this fixes.
+      // executeBatch is PAYABLE (SmartEOA v2). When forwardValue is set, the relayer
+      // attaches msg.value = `value` so a zero-ETH Pop-B EOA can fund its inner
+      // withdrawTo LZ fee without pre-holding ETH; the contract refunds
+      // `msg.value − Σforwarded` back to the relayer (against the SIGNED forwarded
+      // budget, NOT a balance delta — so it can never sweep the EOA's own ETH).
+      // The relayer is repaid gas + this forwarded value in CAW via the in-batch fee
+      // leg the route's fee invariant verifies (priced through quoteExecuteGasFeeCaw
+      // with the same forwarded value). ETH-repay zaps pass forwardValue=false →
+      // msg.value 0 → the EOA self-funds the swap ETH from its own balance, so we
+      // don't double-fund it.
       const smartEoa = new Contract(smartEoaAddress, smartEoaAbi as any, this.wallet)
       const batchArg = calls.map(c => [c.to, c.value, c.data])
 
@@ -1062,8 +1077,8 @@ export class SponsorService {
       // 800K ceiling) so a heavier-than-expected zap doesn't OOG-revert.
       let gasLimit = GAS_LIMIT_EXECUTE_BATCH
       try {
-        await smartEoa.executeBatch.staticCall(batchArg, nonce, sig, { value: 0n })
-        const estimated = await smartEoa.executeBatch.estimateGas(batchArg, nonce, sig, { value: 0n })
+        await smartEoa.executeBatch.staticCall(batchArg, nonce, sig, { value: msgValue })
+        const estimated = await smartEoa.executeBatch.estimateGas(batchArg, nonce, sig, { value: msgValue })
         const padded = (estimated * 125n) / 100n
         gasLimit = padded > GAS_LIMIT_EXECUTE_BATCH ? GAS_LIMIT_EXECUTE_BATCH : padded
       } catch (simErr) {
@@ -1083,7 +1098,7 @@ export class SponsorService {
         batchArg,
         nonce,
         sig,
-        { value: 0n, gasLimit },
+        { value: msgValue, gasLimit },
       )
 
       // SEAM-EXEC-1 I-3: wait for the receipt and CHECK STATUS before reporting

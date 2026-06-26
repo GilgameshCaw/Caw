@@ -1082,9 +1082,10 @@ router.post('/execute', async (req, res) => {
     }
   }
 
-  // Total of the inner call values (LZ fees, swap ETH). Funded from the SmartEOA's
-  // OWN balance (executeBatch is non-payable — see relayExecuteBatch), so this is
-  // NOT relayer-fronted. Kept only for the maxLzFeeWei sanity cap + diagnostics.
+  // Total of the inner call values (LZ fees, swap ETH). For CAW-repay batches the
+  // relayer forwards this as msg.value (the zero-ETH Pop-B withdraw), so it must be
+  // priced into the CAW fee below; for ETH-repay zaps the EOA self-funds it from its
+  // own balance and the relayer attaches 0. Also the maxLzFeeWei sanity cap basis.
   let totalValue = 0n
   try { totalValue = body.calls.reduce((acc, c) => acc + BigInt(c.value), 0n) } catch {
     return res.status(400).json({ error: 'VALIDATION', detail: 'Invalid call value' })
@@ -1137,9 +1138,11 @@ router.post('/execute', async (req, res) => {
       })
     }
   } else {
-    // CAW-repay (withdraw / CAW-deposit). Gas priced in CAW; forwardedValue is 0
-    // now (relayer no longer fronts it). Needs live CAW/ETH price.
-    const feeQuote = quoteExecuteGasFeeCaw(0n)
+    // CAW-repay (withdraw / CAW-deposit). The relayer forwards the inner value as
+    // msg.value (the zero-ETH Pop-B path), so it must be repaid gas + that value in
+    // CAW. Price the floor through quoteExecuteGasFeeCaw(totalValue) — the same
+    // forwarded value the relay will attach. Needs live CAW/ETH price.
+    const feeQuote = quoteExecuteGasFeeCaw(totalValue)
     if (!feeQuote.priceAvailable) {
       return res.status(503).json({
         error: 'PRICE_UNAVAILABLE',
@@ -1155,12 +1158,20 @@ router.post('/execute', async (req, res) => {
     }
   }
 
+  // forwardValue: the relayer attaches totalValue as msg.value ONLY for CAW-repay
+  // batches that actually carry inner value (the zero-ETH Pop-B withdraw, repaid
+  // gas+value in CAW above). ETH-repay zaps self-fund the swap ETH from the EOA's own
+  // balance, so forwarding would double-fund — exclude them. A zero-value CAW batch
+  // (plain deposit, no LZ fee) has nothing to forward, so forwardValue is false there
+  // too — it's a no-op either way, but this keeps the flag honest about intent.
+  const forwardValue = !usesEth && totalValue > 0n
   const result = await service.relayExecuteBatch(
     body.smartEoaAddress,
     body.calls.map(c => ({ to: c.to, value: BigInt(c.value), data: c.data })),
     BigInt(body.nonce),
     body.sig,
     totalValue,
+    forwardValue,
   )
   if (isSponsorError(result)) {
     const status = result.error === 'TREASURY_LOW' ? 503 : 400
@@ -1354,22 +1365,31 @@ router.get('/invite-quote', async (_req, res) => {
 })
 
 // ─── GET /api/sponsor/execute-quote ──────────────────────────────────────────
-// Public. The fee a passkey-wallet executeBatch must pay the relayer for the GAS
-// it fronts, in BOTH currencies, plus the relayer address to pay it to. The FE
-// reads this to build the fee leg inside a withdraw/deposit/zap batch BEFORE
-// signing, then repays in CAW (withdraw / CAW-deposit) OR ETH (pay-with-ETH zap).
+// Public. The fee a passkey-wallet executeBatch must pay the relayer, in BOTH
+// currencies, plus the relayer address to pay it to. The FE reads this to build the
+// fee leg inside a withdraw/deposit/zap batch BEFORE signing, then repays in CAW
+// (withdraw / CAW-deposit) OR ETH (pay-with-ETH zap).
 //
-// The relayer fronts ONLY gas — inner-call ETH (LZ fee, swap ETH) is the EOA's own
-// (executeBatch is non-payable). So there's no forwardedValue to price in anymore;
-// it's gas, full stop. The /execute relay re-derives the SAME quote and rejects an
-// underpaying batch, so this is a UX pre-flight, not a trust boundary.
-router.get('/execute-quote', async (_req, res) => {
+// For CAW-repay batches the relayer fronts gas AND forwards the inner value as
+// msg.value (the zero-ETH Pop-B withdraw's LZ fee — SmartEOA v2 is payable), so the
+// CAW fee must cover BOTH. The FE passes `?forwardedValueWei=<lzFee>` so the quoted
+// minFeeCawWei it signs against matches the floor the /execute relay enforces with
+// quoteExecuteGasFeeCaw(totalValue). Omit/0 → gas-only (e.g. a withdraw with no LZ
+// fee). The ETH-repay zap self-funds the swap ETH from the EOA, so its quote stays
+// gas-only. The relay re-derives the SAME floor and rejects an underpay, so this is
+// a UX pre-flight, not a trust boundary.
+router.get('/execute-quote', async (req, res) => {
   const service = getSponsorService()
-  const cawQuote = quoteExecuteGasFeeCaw(0n)
+  let forwardedValueWei = 0n
+  const raw = req.query.forwardedValueWei
+  if (typeof raw === 'string' && /^\d+$/.test(raw)) {
+    try { forwardedValueWei = BigInt(raw) } catch { forwardedValueWei = 0n }
+  }
+  const cawQuote = quoteExecuteGasFeeCaw(forwardedValueWei)
   const ethQuote = quoteExecuteGasFeeEth()
   return res.status(200).json({
     relayer: service ? service.relayerAddress() : null,
-    // CAW-repay fields (withdraw / CAW-deposit).
+    // CAW-repay fields (withdraw / CAW-deposit). Covers gas + forwardedValueWei.
     minFeeCawWei: cawQuote.minFeeCawWei.toString(),
     priceAvailable: cawQuote.priceAvailable,
     cawAddress: CAW_ADDRESS,
