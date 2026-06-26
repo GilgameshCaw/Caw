@@ -1,9 +1,9 @@
 import { Router } from 'express'
 import { randomUUID } from 'crypto'
 import { ethers, Contract, JsonRpcProvider, WebSocketProvider } from 'ethers'
-import { makeJsonRpcProvider, makeWebSocketProvider, getL2HttpRpcUrl } from '../../utils/rpcProvider'
+import { makeJsonRpcProvider, makeWebSocketProvider, getL2HttpRpcUrl, getL1HttpRpcUrl } from '../../utils/rpcProvider'
 import { getValidatorSigner, type ValidatorSigner } from '../../utils/signer'
-import { cawProfileLedgerAbi } from '../../abi/generated'
+import { cawProfileLedgerAbi, smartEoaAbi } from '../../abi/generated'
 import { CAW_NAMES_L2_ADDRESS } from '../../abi/addresses'
 import { prisma } from '../../prismaClient'
 // Tier 3 of the "RPC out of API request handlers" refactor (PROJECT_BACKLOG.md):
@@ -98,6 +98,40 @@ function getContract() {
   if (!_signer) throw new Error('Validator not configured')
   _contract = new Contract(CAW_NAMES_L2_ADDRESS, cawProfileLedgerAbi as any, _signer.asEthersSigner())
   return _contract
+}
+
+// Lazy-initialized L1 read-only provider for ERC-1271 verification of passkey sigs.
+// Separate from the L2 validator provider so a L1 read never wedges the L2 signer
+// (project_validator_provider_lifecycle.md).
+const L1_CHAIN_ID = process.env.L1_CHAIN_ID ? Number(process.env.L1_CHAIN_ID) : 11155111
+let _l1Provider: JsonRpcProvider | null = null
+function getL1ReadProvider(): JsonRpcProvider {
+  if (_l1Provider) return _l1Provider
+  const url = getL1HttpRpcUrl()
+  if (!url) throw new Error('L1 RPC not configured')
+  _l1Provider = makeJsonRpcProvider(url, L1_CHAIN_ID)
+  return _l1Provider
+}
+
+const ERC1271_MAGIC = '0x1626ba7e'
+
+/**
+ * Verify a WebAuthn / ERC-1271 signature against the claimed SmartEOA address
+ * on L1. digest is the EIP-191 personal_sign hash (ethers.hashMessage(message)).
+ * Returns true only if isValidSignature(digest, sigBlob) returns the magic value.
+ * Never throws on a bad sig — reverts / wrong-return map to false.
+ * Throws only on RPC infrastructure failure so the caller can 503.
+ */
+async function verifyErc1271OnL1(smartEoaAddress: string, digest: string, sigBlob: string): Promise<boolean> {
+  const contract = new Contract(smartEoaAddress, smartEoaAbi as any, getL1ReadProvider())
+  try {
+    const magic: string = await contract.isValidSignature(digest, sigBlob)
+    return typeof magic === 'string' && magic.toLowerCase() === ERC1271_MAGIC
+  } catch {
+    // SmartEOA reverts (or returns the wrong value) for an invalid assertion —
+    // treat as "not valid", not an infrastructure error.
+    return false
+  }
 }
 
 // requestCounter removed — using crypto.randomUUID()
@@ -319,12 +353,54 @@ router.post('/', async (req: any, res: any) => {
       return res.status(400).json({ error: 'Session expiry too far in the future (max 1 year)' })
     }
 
-    // Recover signer from personal_sign
+    // Resolve the signer address.
+    //
+    // Population A (plain EOA): signature is a 65-byte ECDSA personal_sign
+    //   (0x + 130 hex chars). ethers.verifyMessage recovers the address; signer
+    //   field in the body is ignored.
+    //
+    // Population B (passkey / WebAuthn): signature is a multi-field ABI-encoded
+    //   blob (authenticatorData, clientDataJSON, r, s) that is longer than 65 bytes.
+    //   ethers.verifyMessage throws on it. Instead:
+    //   1. Require the client-supplied `signer` (the SmartEOA owner address).
+    //   2. Verify the WebAuthn blob against that address via on-chain ERC-1271
+    //      isValidSignature(digest, sigBlob), where digest = EIP-191 hash of the
+    //      session message — the same digest registerSessionPersonal recomputes.
+    //   3. Only if the magic value is returned do we trust `signer`.
+    //   Signer spoofing: a caller who supplies a victim's SmartEOA address fails
+    //   step 2 (the victim's passkey didn't sign our digest) → 400. Safe.
+    //
+    // Replay protection: registerSessionPersonal tracks consumedSessionMessage[digest]
+    //   and reverts Replayed() on a second use of the same (message, sig) tuple, so
+    //   we do NOT need a server-issued single-use challenge here. The contract is the
+    //   replay guard; the off-chain ERC-1271 check is purely to avoid wasting gas on
+    //   a doomed tx and to prevent trusting an unverified client-supplied signer.
+    const { signer: rawSigner } = req.body as { signer?: string }
+    const isEcdsaSig = /^0x[0-9a-fA-F]{130}$/.test(signature as string) // exactly 65 bytes
     let recoveredAddress: string
-    try {
-      recoveredAddress = ethers.verifyMessage(message, signature).toLowerCase()
-    } catch {
-      return res.status(400).json({ error: 'Invalid signature' })
+    if (isEcdsaSig) {
+      try {
+        recoveredAddress = ethers.verifyMessage(message, signature).toLowerCase()
+      } catch {
+        return res.status(400).json({ error: 'Invalid signature' })
+      }
+    } else {
+      // WebAuthn / ERC-1271 path
+      if (!rawSigner || typeof rawSigner !== 'string' || !/^0x[0-9a-fA-F]{40}$/.test(rawSigner)) {
+        return res.status(400).json({ error: 'signer address required for passkey signatures' })
+      }
+      const digest = ethers.hashMessage(message) // EIP-191 personal_sign hash
+      let valid: boolean
+      try {
+        valid = await verifyErc1271OnL1(rawSigner, digest, signature)
+      } catch (rpcErr: any) {
+        console.error('[Sessions] L1 ERC-1271 check failed (RPC error):', rpcErr.message)
+        return res.status(503).json({ error: 'Signature verification temporarily unavailable. Please try again.' })
+      }
+      if (!valid) {
+        return res.status(400).json({ error: 'Invalid signature' })
+      }
+      recoveredAddress = rawSigner.toLowerCase()
     }
 
     // Rate limit by full recovered address (Redis-backed)

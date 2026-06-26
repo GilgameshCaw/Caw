@@ -221,9 +221,16 @@ export function useCreateSession() {
     console.log('[QuickSign] signature obtained, submitting to validator...')
     onProgress?.('Submitting...')
 
+    // For Population B (passkey / WebAuthn blob), include the claimed signer so
+    // the server can verify ERC-1271 against the correct SmartEOA address rather
+    // than attempting ethers.verifyMessage (ECDSA-only) on a non-ECDSA blob.
+    // Pop-A sends a 65-byte ECDSA sig; the server ignores `signer` and recovers
+    // the address via verifyMessage as before. Always include it for clarity.
+    const signerAddress = isPasskey ? (activeToken?.owner ?? rootSigner.address) : undefined
+
     const result = await apiFetch<{ requestId: string; status: string }>('/api/sessions', {
       method: 'POST',
-      body: JSON.stringify({ message, signature }),
+      body: JSON.stringify({ message, signature, ...(signerAddress ? { signer: signerAddress } : {}) }),
     })
 
     console.log('[QuickSign] Request created:', result.requestId)
