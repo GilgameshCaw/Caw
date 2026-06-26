@@ -74,7 +74,7 @@ export const deployments: Deployments = {
       CawProfileMinter: '0xe6eF1c8705a28DF44FA5F04c8B282b545A454Fed',
       CawProfileQuoter: '0xB5E6415EDffCe9480dB1188125cd45abe0Bd501F',
       CawProfileMarketplace: '0xD9b3dAf889D0e244de3B2137Eb78eb668455cA7D',
-      SmartEOA: '0xC7c0D7f7b1D26923c3b8592757A998D73FDfC573',
+      SmartEOA: '0x2e1B89a71E7dDebb01a36292ba705ac52FEBbBF0',
       CawProfileURI: '0x6Ed996BAA347F747aB5B0Dd377ACE963725bC783',
       CawFontDataA: '0x7b09b65253A887e6F820a84A7b5785Aedc3c2d5f',
       CawFontDataB: '0xd1989b417eF31a661fe417596aCaEcD1Af38d2F9',

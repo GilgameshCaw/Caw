@@ -6974,7 +6974,7 @@ export const smartEoaAbi = [
     ],
     name: 'executeBatch',
     outputs: [],
-    stateMutability: 'nonpayable',
+    stateMutability: 'payable',
   },
   {
     type: 'function',
