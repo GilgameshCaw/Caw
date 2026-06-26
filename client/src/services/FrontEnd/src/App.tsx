@@ -33,7 +33,9 @@ import QuickSignModal from '~/components/modals/QuickSignModal'
 import QuickSignUnlock from '~/components/QuickSignUnlock'
 import ClientAuthModal from '~/components/modals/ClientAuthModal'
 import InsufficientStakeModal from '~/components/modals/InsufficientStakeModal'
-import { clearLegacyGlobalPasskeyKeys } from '~/constants/passkeyStorage'
+import { clearLegacyGlobalPasskeyKeys, markPasskeyAddress, isPasskeyAddress } from '~/constants/passkeyStorage'
+import { getPublicClient } from '@wagmi/core'
+import { wagmiConfig } from '~/config/wagmiConfig'
 
 // Marketplace + transfer modals are opened from discrete user actions
 // (clicks on Buy / Place bid / Make offer / Transfer / etc.). The brief
@@ -204,6 +206,38 @@ function App() {
               stakedAmount: 0n,
               cawonce: 0,
             }])
+          })
+
+          // Restore Population-B classification after a localStorage wipe. The
+          // chooser seed above brings accounts back, but useWalletPopulation reads
+          // a SEPARATE local marker (caw:identity-kind:<addr>) + lastAddress to know
+          // an account is a passkey wallet. Both are wiped by Safari, so the user
+          // is misclassified as 'none' → "not connected" + the wagmi connect modal
+          // on like/post. The marker can't be recovered from the cookie alone, but
+          // it CAN be re-derived on-chain: a passkey wallet's owner EOA carries the
+          // EIP-7702 delegation code (0xef0100||impl). For each authorized address
+          // not already marked, check getCode; if delegated, re-mark it passkey and
+          // adopt it as lastAddress so cold-load classification returns 'B'.
+          const firstAddr = (addrs[0] ?? '').toLowerCase()
+          if (!tds.lastAddress && firstAddr) tds.setLastAddress(firstAddr)
+          const pubClient = getPublicClient(wagmiConfig)
+          addrs.forEach(rawAddr => {
+            const addr = rawAddr.toLowerCase() as `0x${string}`
+            if (isPasskeyAddress(addr)) return // already marked — nothing to do
+            if (!pubClient) return
+            pubClient.getCode({ address: addr })
+              .then((code: `0x${string}` | undefined) => {
+                if (cancelled) return
+                // EIP-7702 delegation designator: 0xef0100 + 20-byte impl = 23 bytes.
+                if (code && code.toLowerCase().startsWith('0xef0100')) {
+                  markPasskeyAddress(addr)
+                  // Make sure lastAddress points at a passkey owner so the cold-load
+                  // population branch (isPasskeyAddress(lastAddress)) resolves to 'B'.
+                  const s = useTokenDataStore.getState()
+                  if (!s.lastAddress || !isPasskeyAddress(s.lastAddress)) s.setLastAddress(addr)
+                }
+              })
+              .catch(() => { /* RPC hiccup — leave unmarked; non-fatal */ })
           })
         }
       })

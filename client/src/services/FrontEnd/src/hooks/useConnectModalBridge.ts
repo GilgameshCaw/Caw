@@ -1,5 +1,7 @@
 import { useCallback } from 'react'
 import { useConnectModalStore } from '~/store/connectModalStore'
+import { useWalletPopulation } from '~/hooks/useWalletPopulation'
+import { useNavigate } from '~/utils/localizedRouter'
 
 /**
  * Drop-in replacement for `useConnectModal` from @rainbow-me/rainbowkit.
@@ -19,10 +21,21 @@ import { useConnectModalStore } from '~/store/connectModalStore'
  */
 export function useConnectModalBridge(): { openConnectModal: (() => void) | undefined } {
   const requestOpen = useConnectModalStore(s => s.requestOpen)
+  const { population } = useWalletPopulation()
+  const navigate = useNavigate()
 
   const openConnectModal = useCallback(() => {
+    // SINGLE chokepoint: every openConnectModal() call in the app routes through
+    // here. A Population-B (passkey) user has NO wagmi wallet — opening the wagmi
+    // connect modal is wrong (and confusing) for them. Route to passkey sign-in
+    // instead. This guards every call site (like/recaw/reply/tip/poll/post/etc.)
+    // at once, so individual components don't each need a Pop-B branch.
+    if (population === 'B') {
+      navigate('/signin/passkey')
+      return
+    }
     requestOpen('connect')
-  }, [requestOpen])
+  }, [requestOpen, population, navigate])
 
   return { openConnectModal }
 }
