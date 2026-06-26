@@ -6,6 +6,7 @@ import { getValidatorSigner, type ValidatorSigner } from '../../utils/signer'
 import { cawProfileLedgerAbi, smartEoaAbi } from '../../abi/generated'
 import { CAW_NAMES_L2_ADDRESS } from '../../abi/addresses'
 import { prisma } from '../../prismaClient'
+import { sendSerialized } from '../../utils/walletQueue'
 // Tier 3 of the "RPC out of API request handlers" refactor (PROJECT_BACKLOG.md):
 // syncTokensOwnedByWallet is intentionally NOT imported. POST /api/sessions
 // reads ownership from the DB only; on a miss we return 202 and let the
@@ -190,23 +191,33 @@ async function processSessionRequest(
     // validation has an address to check; for plain EOA flows it's the same
     // address ecrecover would have produced.
 
-    // Pass an explicit gasLimit HINT (not a cap) to estimateGas. Infura's Base
-    // Sepolia endpoint rejects unbounded estimates with "intrinsic gas too high",
-    // which ethers surfaces as a generic `missing revert data` CALL_EXCEPTION
-    // that hides the real cause. A 2M hint comfortably covers the real cost
-    // (~265k measured) while satisfying Infura's need for a bounded estimate.
-    const estimated = await cawProfileLedger.registerSessionPersonal.estimateGas(
-      recoveredAddress, messageBytes, signature,
-      { gasLimit: 2_000_000 }
-    )
-    const gasLimit = (estimated * 120n) / 100n // +20% headroom
-
-    const tx = await cawProfileLedger.registerSessionPersonal(
-      recoveredAddress,
-      messageBytes,
-      signature,
-      { gasLimit }
-    )
+    // Serialize the broadcast through the shared-wallet queue. The validator
+    // signer doubles as the session registrar AND the sponsor relayer on a
+    // single-operator deploy, so two concurrent sends would grab the same
+    // pending nonce → REPLACEMENT_UNDERPRICED and the session-register tx is
+    // silently dropped (root cause of intermittent "Quick Sign failed" on
+    // test2). withWalletLock funnels sends one-at-a-time; sendSerialized adds a
+    // re-send retry if a collision still slips through. Estimate INSIDE the lock
+    // so a retry re-estimates against the fresh nonce/gas.
+    const signerAddress = _signer!.getAddress()
+    const tx = await sendSerialized(signerAddress, async () => {
+      // Pass an explicit gasLimit HINT (not a cap) to estimateGas. Infura's Base
+      // Sepolia endpoint rejects unbounded estimates with "intrinsic gas too
+      // high", which ethers surfaces as a generic `missing revert data`
+      // CALL_EXCEPTION that hides the real cause. A 2M hint comfortably covers
+      // the real cost (~265k measured) while satisfying Infura's bounded-estimate need.
+      const estimated = await cawProfileLedger.registerSessionPersonal.estimateGas(
+        recoveredAddress, messageBytes, signature,
+        { gasLimit: 2_000_000 }
+      )
+      const gasLimit = (estimated * 120n) / 100n // +20% headroom
+      return cawProfileLedger.registerSessionPersonal(
+        recoveredAddress,
+        messageBytes,
+        signature,
+        { gasLimit }
+      )
+    })
 
     // Parse values from message for DB pre-population. Line layout (post
     // perActionTipRate addition): 0 header, 1 sep, 2 spend label, 3 spend
@@ -500,12 +511,16 @@ async function processRevokeRequest(
     const sig = ethers.Signature.from(signature)
     await setSessionRequest(requestId, { status: 'submitting' })
 
-    const tx = await cawProfileLedger.revokeSessionBySig(
-      owner,
-      sessionKey,
-      sig.v,
-      sig.r,
-      sig.s,
+    // Serialize against the shared validator/sponsor wallet (see the register
+    // path above) so a concurrent send can't steal this revoke's nonce.
+    const tx = await sendSerialized(_signer!.getAddress(), () =>
+      cawProfileLedger.revokeSessionBySig(
+        owner,
+        sessionKey,
+        sig.v,
+        sig.r,
+        sig.s,
+      )
     )
     console.log(`[Sessions] Revocation tx submitted: ${tx.hash}`)
     await setSessionRequest(requestId, { status: 'pending', txHash: tx.hash })

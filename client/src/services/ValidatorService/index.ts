@@ -12,6 +12,7 @@ import { WebSocketProvider, JsonRpcProvider, Contract, Interface, keccak256, sol
 import { packActions, packSignatures, packGroupedSignatures, bytesToHex, getPackedActionSlices, unpackActions, unpackPerActionSigs } from '../../utils/packActions'
 import { buildCheckpointMerkleTree } from '../../utils/checkpointMerkle'
 import { tryClaimChallengeLock, releaseChallengeLock } from '../../utils/challengeLock'
+import { withWalletLock } from '../../utils/walletQueue'
 import { foldCheckpointHashes } from '../../utils/foldCheckpointHashes'
 import { scanLogsForward, scanLogsBackward } from '../../utils/chunkedLogs'
 import { decompressActionText } from '../../utils/decompressActionText'
@@ -1816,7 +1817,6 @@ export const validatorService: Service = {
 
       try {
         const feeData = await httpProvider.getFeeData()
-        const nonce = await httpProvider.getTransactionCount(signer.getAddress(), 'pending')
 
         let rawGasLimit: bigint
         try {
@@ -1841,16 +1841,28 @@ export const validatorService: Service = {
         // M-2: Derive chainId from the live provider (same pattern as ECDSA
         // path via resolveChainIdFromProvider) instead of hardcoding 84532.
         const chainId = await resolveChainIdFromProvider(httpProvider)
-        const tx = await signer.asEthersSigner().sendTransaction({
-          to: CAW_ACTIONS_ERC1271_ADDRESS,
-          data: txData,
-          value: quote.nativeFee,
-          nonce,
-          gasLimit: rawGasLimit,
-          maxFeePerGas: feeData.maxFeePerGas ?? 0n,
-          maxPriorityFeePerGas: feeData.maxPriorityFeePerGas ?? 0n,
-          chainId,
-          type: 2,
+        // Cross-module nonce lock: _submitChain serializes the validator's own
+        // ECDSA vs ERC-1271 submits, but the Quick-Sign session register/revoke
+        // (api/routes/sessions.ts) sends from the SAME wallet on a single-operator
+        // deploy and is NOT on _submitChain — concurrent sends collide on the
+        // pending nonce → REPLACEMENT_UNDERPRICED (drops the session-register tx).
+        // withWalletLock(address) is the shared queue both sides funnel through.
+        const tx = await withWalletLock(signer.getAddress(), async () => {
+          // Read the pending nonce INSIDE the lock so no other send (session
+          // register/revoke, ECDSA submit) can grab the same nonce between the
+          // read and the broadcast.
+          const nonce = await httpProvider.getTransactionCount(signer.getAddress(), 'pending')
+          return signer.asEthersSigner().sendTransaction({
+            to: CAW_ACTIONS_ERC1271_ADDRESS,
+            data: txData,
+            value: quote.nativeFee,
+            nonce,
+            gasLimit: rawGasLimit,
+            maxFeePerGas: feeData.maxFeePerGas ?? 0n,
+            maxPriorityFeePerGas: feeData.maxPriorityFeePerGas ?? 0n,
+            chainId,
+            type: 2,
+          })
         })
         releaseSlot()
         console.log(`[submitERC1271Actions] MILESTONE: submit path done — sent ${erc1271Data.actions.length} action(s), tx=${tx.hash}`)
@@ -2311,17 +2323,25 @@ export const validatorService: Service = {
         }
 
         // All params pre-populated so ethers makes exactly 1 RPC call (eth_sendRawTransaction)
-        const tx = await signer.asEthersSigner().sendTransaction({
-          to:    CAW_ACTIONS_ADDRESS,
-          data:  txData,
-          value: quote.nativeFee,
-          nonce,
-          gasLimit: rawGasLimit,
-          maxFeePerGas,
-          maxPriorityFeePerGas,
-          chainId: 84532,
-          type: 2,
-        })
+        // Funnel through the shared-wallet lock so this ECDSA submit can't race
+        // the Quick-Sign session register/revoke (sessions.ts) for the same
+        // nonce. _submitChain already orders ECDSA vs ERC-1271; withWalletLock
+        // extends that ordering across modules. The existing retry loop here
+        // (gasBumpPercent × retryCount on REPLACEMENT_UNDERPRICED) still covers
+        // the residual read-then-send window.
+        const tx = await withWalletLock(signer.getAddress(), () =>
+          signer.asEthersSigner().sendTransaction({
+            to:    CAW_ACTIONS_ADDRESS,
+            data:  txData,
+            value: quote.nativeFee,
+            nonce,
+            gasLimit: rawGasLimit,
+            maxFeePerGas,
+            maxPriorityFeePerGas,
+            chainId: 84532,
+            type: 2,
+          })
+        )
         // Submission is in the mempool — release the nonce-serialization
         // slot so the next caller can fetch its own nonce. We don't wait
         // for tx confirmation here, which would needlessly block parallel
