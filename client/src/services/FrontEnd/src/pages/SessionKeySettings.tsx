@@ -346,7 +346,7 @@ const SessionKeySettings: React.FC = () => {
                       </div>
                     )}
 
-                    <div className="text-center">
+                    <div className="text-center mb-6">
                       {(() => {
                         const wrongWallet = isConnected && activeToken?.owner && address?.toLowerCase() !== activeToken.owner.toLowerCase()
                         return (
