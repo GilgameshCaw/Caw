@@ -41,6 +41,7 @@ import {
   type Authorization,
 } from 'ethers'
 import { makeJsonRpcProvider, getL2HttpRpcUrl } from '../../utils/rpcProvider'
+import { withWalletLock } from '../../utils/walletQueue'
 import { cawProfileMinterAbi, smartEoaAbi, cawProfileAbi, cawNetworkManagerAbi } from '../../abi/generated'
 import { pokeIndexTokenId } from '../../api/util/indexerPoke'
 
@@ -825,23 +826,34 @@ export class SponsorService {
         }),
       })
 
-      const sponsorNonce = await this.l2Provider.getTransactionCount(this.l2Wallet.address, 'pending')
       const feeData = await this.l2Provider.getFeeData()
 
-      const tx = new Transaction()
-      tx.type = 4
-      tx.to = userEoaAddress
-      tx.data = initCalldata
-      tx.value = 0n
-      tx.nonce = sponsorNonce
-      tx.chainId = BigInt(l2ChainId)
-      tx.gasLimit = GAS_LIMIT_DELEGATE_L2
-      tx.maxFeePerGas = feeData.maxFeePerGas ?? (feeData.gasPrice ?? 2_000_000_000n)
-      tx.maxPriorityFeePerGas = feeData.maxPriorityFeePerGas ?? 1_000_000n
-      tx.authorizationList = [authEntry]
-
-      const signedTx = await this.l2Wallet.signTransaction(tx)
-      const txResponse = await this.l2Provider.broadcastTransaction(signedTx)
+      // Serialize through the shared-wallet lock: l2Wallet is the SAME key that
+      // signs validator L2 batches + Quick-Sign session registers, so a
+      // concurrent send would steal this type-4 delegation's nonce →
+      // REPLACEMENT_UNDERPRICED → the delegation silently drops and the EOA ends
+      // up delegated on L1 but NOT L2. That is exactly how a "fresh" account
+      // (token 34 on test2) reached an L1-only state that broke passkey withdraw
+      // (the ERC-1271 check runs on L2). Read the nonce INSIDE the lock so it
+      // can't go stale between read and broadcast.
+      const l2w = this.l2Wallet!
+      const l2p = this.l2Provider!
+      const txResponse = await withWalletLock(l2w.address, async () => {
+        const sponsorNonce = await l2p.getTransactionCount(l2w.address, 'pending')
+        const tx = new Transaction()
+        tx.type = 4
+        tx.to = userEoaAddress
+        tx.data = initCalldata
+        tx.value = 0n
+        tx.nonce = sponsorNonce
+        tx.chainId = BigInt(l2ChainId)
+        tx.gasLimit = GAS_LIMIT_DELEGATE_L2
+        tx.maxFeePerGas = feeData.maxFeePerGas ?? (feeData.gasPrice ?? 2_000_000_000n)
+        tx.maxPriorityFeePerGas = feeData.maxPriorityFeePerGas ?? 1_000_000n
+        tx.authorizationList = [authEntry]
+        const signedTx = await l2w.signTransaction(tx)
+        return l2p.broadcastTransaction(signedTx)
+      })
       const receipt = await txResponse.wait()
       if (!receipt || receipt.status !== 1) {
         return {

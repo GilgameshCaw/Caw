@@ -734,7 +734,11 @@ const Staking = () => {
         // known opaque errors to readable copy; show the rest verbatim-ish.
         const raw = err instanceof Error ? err.message : String(err)
         let msg = 'Unstake failed. Please try again.'
-        if (/Invalid signature/i.test(raw)) {
+        if (/L2_NOT_DELEGATED/i.test(raw)) {
+          // Distinct from a sig mismatch: the passkey wallet isn't activated on
+          // the action chain (L2 delegation never landed). Re-signing won't help.
+          msg = "Your passkey wallet isn't fully set up for withdrawals yet. Please finish wallet setup (or re-run onboarding) and try again."
+        } else if (/Invalid signature/i.test(raw)) {
           msg = "Couldn't verify your passkey signature for this unstake. Please try again — if it keeps failing, sign out and back in with your passkey."
         } else if (/rejected|denied|NotAllowed|cancel/i.test(raw)) {
           msg = 'Unstake cancelled.'

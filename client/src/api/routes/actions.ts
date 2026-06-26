@@ -53,15 +53,33 @@ function isWebAuthnBlob(sig: string): boolean {
  * Returns true on success, false on any failure (RPC error, wrong magic, timeout).
  * Fail-closed: non-magic return → false.
  */
+type Erc1271Result = 'ok' | 'bad_sig' | 'not_delegated'
+
+/**
+ * Verify a WebAuthn sig blob against ownerAddress via ERC-1271 on the L2.
+ * Returns:
+ *   'ok'            — isValidSignature returned the magic value.
+ *   'not_delegated' — the EOA has NO code on L2 (EIP-7702 L2 delegation never
+ *                     landed). isValidSignature returns 0x → "could not decode".
+ *                     This is a DISTINCT, ACTIONABLE failure: the account is
+ *                     L1-delegated but not L2, so passkey withdraw can't verify.
+ *                     Re-signing in won't help — the L2 delegation must be re-run.
+ *   'bad_sig'       — code exists but the signature didn't verify (real mismatch),
+ *                     or an RPC/timeout error (fail-closed).
+ */
 async function verifyERC1271Sig(
   ownerAddress: string,
   domain: any,
   types: any,
   data: any,
   signature: string,
-): Promise<boolean> {
+): Promise<Erc1271Result> {
   try {
     const provider = await getReadProviderAsync()
+    // Distinguish "no contract at address" (un-delegated on L2) from a genuine
+    // signature mismatch — they need very different user guidance.
+    const code = await provider.getCode(ownerAddress)
+    if (!code || code === '0x') return 'not_delegated'
     const digest = ethers.TypedDataEncoder.hash(domain, { ActionData: types.ActionData }, data)
     const contract = new Contract(ownerAddress, ERC1271_ABI, provider)
     const result = await Promise.race<string>([
@@ -70,10 +88,10 @@ async function verifyERC1271Sig(
         setTimeout(() => reject(new Error('ERC-1271 isValidSignature timeout')), 3000)
       ),
     ])
-    return result?.toLowerCase() === ERC1271_MAGIC
+    return result?.toLowerCase() === ERC1271_MAGIC ? 'ok' : 'bad_sig'
   } catch (err: any) {
     console.warn('[Actions] ERC-1271 isValidSignature failed:', err?.shortMessage || err?.message || err)
-    return false
+    return 'bad_sig'
   }
 }
 
@@ -389,8 +407,20 @@ router.post('/', async (req, res) => {
     let isERC1271Action = false
     if (isWebAuthnBlob(signature)) {
       // Verify on-chain via SmartEOA.isValidSignature. Fail-closed.
-      const ok = await verifyERC1271Sig(ownerAddress, domain, types, data, signature)
-      if (!ok) {
+      const erc1271 = await verifyERC1271Sig(ownerAddress, domain, types, data, signature)
+      if (erc1271 === 'not_delegated') {
+        // The EOA is NOT delegated on L2 (the L2 EIP-7702 leg never landed —
+        // typically a fresh account whose delegate-l2 tx dropped). Passkey
+        // verification CANNOT work until it's re-delegated; re-signing in won't
+        // help. Distinct code so the FE shows the right guidance / can trigger
+        // a re-delegation instead of "sign out and back in".
+        console.warn('[Actions] WebAuthn action from L2-UNDELEGATED owner', ownerAddress, '— needs L2 delegation')
+        return res.status(409).json({
+          error: 'L2_NOT_DELEGATED',
+          message: 'Your passkey wallet is not yet activated on the action chain. Please re-run wallet setup before withdrawing.',
+        })
+      }
+      if (erc1271 !== 'ok') {
         console.warn('[Actions] ERC-1271 isValidSignature rejected WebAuthn blob for owner', ownerAddress)
         return res.status(400).json({ error: 'Invalid signature' })
       }

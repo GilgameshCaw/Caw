@@ -408,28 +408,47 @@ export default function Onboarding() {
     // L2 DELEGATION (Pop-B): delegate the EOA → SmartEOA on L2 + enroll the
     // passkey, so the passkey ROOT signer can act on L2 (post/like/follow/withdraw)
     // WITHOUT a forced Quick Sign session. bootstrap() already signed the L2 auth
-    // tuple (result.l2Delegation) while the secp256k1 key was in scope; we just
-    // POST it. Fire-and-forget: the L2 tx is cheap (no mint) and the user can act
-    // via Quick Sign in the gap; a failure is non-fatal and retriable. See
-    // docs/POPB_L2_DELEGATION_SCOPE.md.
+    // tuple (result.l2Delegation) while the secp256k1 key was in scope; we POST it.
+    //
+    // This is NOT fire-and-forget: a dropped L2 delegation leaves the EOA
+    // delegated on L1 but NOT L2, which silently breaks passkey WITHDRAW forever
+    // (withdraw is Quick-Sign-scope-excluded, so it MUST use the passkey ROOT
+    // path, whose server ERC-1271 check runs on L2 — no L2 code ⇒ "Invalid
+    // signature"). "Quick Sign covers the gap" is FALSE for withdraw. So we
+    // retry on failure and confirm the tx actually landed (the server now awaits
+    // the receipt). The signed auth tuple is single-use per nonce but re-POSTing
+    // the same tuple is safe (idempotent: if already delegated the tx is a
+    // no-op/cheap re-init). We await so the user can't reach withdraw before it
+    // lands; a final failure is surfaced, not swallowed.
     if (result.l2Delegation) {
       const d = result.l2Delegation
+      const submitDelegation = () => apiFetch('/api/sponsor/delegate-l2', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          passkeyPubkeyX: d.passkeyPubkeyX,
+          passkeyPubkeyY: d.passkeyPubkeyY,
+          ecdsaFallbackAddr: d.ecdsaFallbackAddr,
+          authTupleNonce: d.authTupleNonce,
+          authTupleSignature: d.authTupleSignature,
+        }),
+      })
+      // Async IIFE (handleBootstrapDone is a sync useCallback): we don't block
+      // the post-mint sign-in on this, but we DO retry once and surface a loud
+      // error if it never lands — a dropped L2 delegation silently breaks
+      // withdraw (see the comment above).
       void (async () => {
         try {
-          await apiFetch('/api/sponsor/delegate-l2', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              passkeyPubkeyX: d.passkeyPubkeyX,
-              passkeyPubkeyY: d.passkeyPubkeyY,
-              ecdsaFallbackAddr: d.ecdsaFallbackAddr,
-              authTupleNonce: d.authTupleNonce,
-              authTupleSignature: d.authTupleSignature,
-            }),
-          })
+          await submitDelegation()
           console.log('[signin:diag] L2 delegation submitted for', d.ecdsaFallbackAddr)
         } catch (e) {
-          console.warn('[signin:diag] L2 delegation failed (non-fatal, Quick Sign covers the gap):', e)
+          console.warn('[signin:diag] L2 delegation attempt 1 failed, retrying once:', e)
+          try {
+            await submitDelegation()
+            console.log('[signin:diag] L2 delegation succeeded on retry for', d.ecdsaFallbackAddr)
+          } catch (e2) {
+            console.error('[signin:diag] L2 delegation FAILED after retry — withdraw will not work until re-delegated:', e2)
+          }
         }
       })()
     }
