@@ -77,6 +77,12 @@ interface OnboardingState {
 /** Gift code metadata fetched from /api/sponsor/code/:code */
 interface SponsorCodeInfo {
   valid: boolean
+  /**
+   * Why an invalid code is invalid, so onboarding can say "this code was already
+   * used" / "expired" instead of bouncing to the X-signup gate as if it never
+   * existed. Only set when valid === false. 'invalid' = unknown/bad/rate-limited.
+   */
+  reason?: 'used' | 'expired' | 'invalid'
   giftCaw?: bigint          // total CAW gifted (the pot), in wei
   gasCaw?: bigint           // live redeem-gas the server deducts from the gift, in WHOLE CAW
   minUsernameLength?: number
@@ -277,6 +283,7 @@ export default function Onboarding() {
     setGiftLoading(true)
     apiFetch<{
       valid: boolean
+      reason?: 'used' | 'expired' | 'invalid'
       giftCaw?: string
       gasCaw?: string
       minUsernameLength?: number
@@ -297,12 +304,13 @@ export default function Onboarding() {
             sponsorTokenId: json.sponsorTokenId ?? 0,
           })
         } else {
-          // Server says invalid — treat like bad code format.
-          setGiftInfo({ valid: false })
+          // Invalid — carry the server's reason so the stub can show "already
+          // used" / "expired" instead of the generic X-signup gate.
+          setGiftInfo({ valid: false, reason: json.reason ?? 'invalid' })
         }
       })
       .catch(() => {
-        if (!cancelled) setGiftInfo({ valid: false })
+        if (!cancelled) setGiftInfo({ valid: false, reason: 'invalid' })
       })
       .finally(() => {
         if (!cancelled) setGiftLoading(false)
@@ -873,6 +881,19 @@ export default function Onboarding() {
           <div className={`w-full max-w-md rounded-2xl border p-6 text-center ${
             isDark ? 'border-white/10 bg-black/60' : 'border-gray-200 bg-white/90'
           }`}>
+            {/* A code WAS provided but is used/expired (not just absent/malformed):
+                say so explicitly so the user understands their code is dead,
+                rather than implying they never had a valid one. They can still
+                fall through to X-signup / ungated below as an alternative. */}
+            {codeValid && giftInfo?.valid === false && (giftInfo.reason === 'used' || giftInfo.reason === 'expired') && (
+              <div className={`mb-4 rounded-lg border px-3 py-2 text-sm ${
+                isDark ? 'border-amber-500/30 bg-amber-500/10 text-amber-300' : 'border-amber-300 bg-amber-50 text-amber-800'
+              }`}>
+                {giftInfo.reason === 'used'
+                  ? t('onboarding.code.already_used')
+                  : t('onboarding.code.expired')}
+              </div>
+            )}
             <h2 className={`text-xl font-bold mb-2 ${textPrimary}`}>
               {t('onboarding.x_gate.title')}
             </h2>

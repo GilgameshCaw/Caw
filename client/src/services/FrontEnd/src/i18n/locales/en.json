@@ -1574,6 +1574,8 @@
   "onboarding.x_gate.not_qualified": "That X account isn't verified. Only X-verified accounts (paid blue check) qualify for a sponsored profile.",
   "onboarding.x_gate.already_used": "That X account has already been used to claim a sponsored account.",
   "onboarding.x_gate.error": "Couldn't verify with X. Please try again.",
+  "onboarding.code.already_used": "This invite code has already been used.",
+  "onboarding.code.expired": "This invite code has expired.",
   "common.close": "Close",
   "common.removing": "Removing…",
   "onboarding.title": "Create account",

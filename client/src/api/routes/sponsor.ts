@@ -1297,13 +1297,21 @@ router.get('/code/:code', async (req, res) => {
   }
 
   const now = new Date()
-  const isValid =
-    code !== null &&
-    code.expiresAt > now &&
-    (code.usesRemaining === null || code.usesRemaining > 0)
 
-  if (!isValid) {
-    return res.status(200).json({ valid: false })
+  // Distinguish WHY a code is invalid so the onboarding UI can tell the user
+  // "this code has already been used" / "expired" instead of silently bouncing
+  // them to the X-signup gate (which reads like the code was never valid). We
+  // only reveal used/expired for a code that ACTUALLY EXISTS — a non-existent
+  // or rate-limited lookup still returns the generic 'invalid' so this can't be
+  // used to enumerate which codes exist (the 30/IP/10min limit already bounds it).
+  if (code === null) {
+    return res.status(200).json({ valid: false, reason: 'invalid' })
+  }
+  if (code.usesRemaining !== null && code.usesRemaining <= 0) {
+    return res.status(200).json({ valid: false, reason: 'used' })
+  }
+  if (code.expiresAt <= now) {
+    return res.status(200).json({ valid: false, reason: 'expired' })
   }
 
   // Sponsor-Repay (Phase 2) disclosure. `repayBps` lets the FE compute the
