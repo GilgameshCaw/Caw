@@ -2967,8 +2967,17 @@ console.log("succeededKeys", succeededKeys)
 
         // Batch accumulation: wait for more actions unless the oldest has been waiting too long
         // OR a priority action is in the queue OR an admin forced the run.
+        //
+        // GUARD entries.length > 0: this branch handles the ECDSA `entries` batch.
+        // When the only pending work is ERC-1271 (passkey) candidates — tracked
+        // separately — `entries` is EMPTY here, and `entries[0].createdAt` threw
+        // "Cannot read properties of undefined (reading 'createdAt')", crashing
+        // the WHOLE poll loop every cycle so the ERC-1271 submit never ran (a
+        // passkey unstake sat pending forever — observed on test2 TxQueue 249).
+        // Empty ECDSA batch ⇒ nothing to wait on here; fall through to the
+        // ERC-1271 path below.
         const { minActionsPerBatch, maxWaitTime } = liveSettings
-        if (!hasPriority && !forced && entries.length < minActionsPerBatch) {
+        if (!hasPriority && !forced && entries.length > 0 && entries.length < minActionsPerBatch) {
           const oldestAge = Date.now() - new Date(entries[0].createdAt).getTime()
           if (oldestAge < maxWaitTime) {
             console.log(`[Validator] Waiting for more actions: ${entries.length}/${minActionsPerBatch} (oldest: ${Math.round(oldestAge / 1000)}s / ${Math.round(maxWaitTime / 1000)}s max)`)
@@ -3058,11 +3067,20 @@ console.log("succeededKeys", succeededKeys)
           }))
         }
 
-        // If no valid entries remain, return
-        if (!validatedEntries.length) {
+        // If no valid ECDSA entries remain, skip the ECDSA submit — but DON'T
+        // return if there are ERC-1271 (passkey) candidates: those are submitted
+        // by a separate path later in this cycle (submitERC1271Actions). Returning
+        // here when entries was empty/all-filtered but candidates existed left
+        // passkey actions (e.g. an unstake) pending forever.
+        if (!validatedEntries.length && !erc1271Candidates.length) {
           console.log("[Validator] No valid entries to process after filtering")
           return
         }
+
+        // Skip ECDSA processing entirely when there are no ECDSA entries — only
+        // ERC-1271 (passkey) work is pending this cycle. The ERC-1271 block
+        // below has its own guard and runs unconditionally after this span.
+        if (validatedEntries.length > 0) {
 
         // All actions in a batch must belong to the same client (enforced by CawActions.sol).
         // If we have multiple networks, split into per-network batches and process each separately.
@@ -3856,6 +3874,8 @@ console.log("succeededKeys", succeededKeys)
         }
 
       }))
+
+        } // end if (validatedEntries.length > 0) — ECDSA-only span
 
       // ── ERC-1271 (WebAuthn) sub-path ──────────────────────────────────────
       // Submit partitioned ERC-1271 candidates after the ECDSA batch.
