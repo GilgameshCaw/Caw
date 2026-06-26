@@ -5,7 +5,7 @@
  * Deploys SmartEOA at the SAME address on L1 (Sepolia) and L2 (Base Sepolia)
  * using the canonical CREATE2 factory: 0x4e59b44847b379578588920cA78FbF26c0B4956C
  *
- * Salt: keccak256("CAW.SmartEOA.v1")
+ * Salt: keccak256("CAW.SmartEOA.v2")
  * Result: deterministic address identical on both chains.
  *
  * USAGE:
@@ -64,9 +64,9 @@ const { ethers } = require('ethers');
 // Canonical CREATE2 factory — Nick's factory, present on Sepolia + Base Sepolia.
 const CREATE2_FACTORY = '0x4e59b44847b379578588920cA78FbF26c0B4956C';
 
-// Fixed salt: keccak256("CAW.SmartEOA.v1")
+// Fixed salt: keccak256("CAW.SmartEOA.v2")
 // Changing this constant = different address. DON'T change after first deploy.
-const SALT_PREIMAGE  = 'CAW.SmartEOA.v1';
+const SALT_PREIMAGE  = 'CAW.SmartEOA.v2';
 const SALT           = ethers.keccak256(ethers.toUtf8Bytes(SALT_PREIMAGE));
 
 // Expected deployer (same guard as deploy.js)

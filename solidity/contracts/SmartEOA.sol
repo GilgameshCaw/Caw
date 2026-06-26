@@ -511,10 +511,37 @@ contract SmartEOA {
     ///         trustless: the fee transfer + the withdraw recipient are both signed
     ///         calls, so a relayer can neither inflate the fee nor redirect the funds.
     ///
-    ///         The relayer's protection (not this contract's job): a relayer should
-    ///         only submit batches it RECOGNIZES (withdraw/zap to known contracts,
-    ///         value-capped), because a malicious user could sign a batch whose
-    ///         `value` drains the relayer's ETH.  The contract is intentionally
+    ///         `payable`: the function accepts msg.value so a relayer can front the
+    ///         native fee required by inner calls (e.g. the LayerZero native fee for
+    ///         the L1 withdrawTo path).  The relayer attaches exactly the LZ quote;
+    ///         the inner call consumes it.  The signed digest binds `value` per-call,
+    ///         so the relayer cannot alter how much ETH flows to any destination.
+    ///         Making this payable does NOT widen the auth surface: the digest is
+    ///         unchanged (msg.value is not a digest input), so existing sigs remain
+    ///         valid and the relayer can only run what the user signed.
+    ///
+    ///         LEFTOVER-ETH REFUND.  After the loop we refund only the UNSPENT portion
+    ///         of msg.value back to msg.sender (the relayer):
+    ///           refundable = msg.value - totalValueForwarded
+    ///         where totalValueForwarded is the sum of calls[i].value across the batch.
+    ///         This is immune to inbound ETH during the loop (LZ overpay refunds,
+    ///         DeFi redemptions, attacker-controlled callbacks): we NEVER sweep the
+    ///         balance delta, only what the relayer over-funded.  calls[i].value is
+    ///         signature-bound (in the digest), so totalValueForwarded cannot be
+    ///         inflated by the relayer.  Any ETH that flows INTO the account during
+    ///         execution (e.g. an LZ fee refund) stays in the user's account — it is
+    ///         NOT refunded to msg.sender.
+    ///
+    ///         Failed refund is intentionally non-fatal: if msg.sender cannot accept
+    ///         ETH, the unspent msg.value stays in the account (owned by the user).
+    ///         Reverting on refund failure would let a relayer grief a user's withdraw
+    ///         by using a rejecting contract as msg.sender.  The relayer bears the
+    ///         overpay risk.
+    ///
+    ///         The relayer's policy protection (not this contract's job): a relayer
+    ///         should only submit batches it RECOGNIZES (withdraw/zap to known
+    ///         contracts, value-capped), because a malicious user could sign a batch
+    ///         that drains the relayer's attached ETH.  The contract is intentionally
     ///         general; the off-chain relay endpoint is the policy gate.
     ///
     ///         CEI: nonce is incremented BEFORE the external calls, so a re-entrant
@@ -525,6 +552,7 @@ contract SmartEOA {
     /// @param sig    65-byte secp256k1 (r||s||v) OR a WebAuthn assertion blob.
     function executeBatch(Call[] calldata calls, uint256 nonce, bytes calldata sig)
         external
+        payable
     {
         if (!initialized) revert NotInitialized();
         if (calls.length == 0) revert EmptyBatch();
@@ -539,13 +567,31 @@ contract SmartEOA {
         // CEI: consume the nonce before any external call.
         unchecked { ++executeNonce; }
 
+        uint256 totalValueForwarded;
         for (uint256 i = 0; i < calls.length; ) {
+            totalValueForwarded += calls[i].value;
             (bool success, ) = calls[i].to.call{value: calls[i].value}(calls[i].data);
             if (!success) revert ExecuteFailed(i);
             unchecked { ++i; }
         }
 
         emit BatchExecuted(nonce, calls.length);
+
+        // Refund only the unspent portion of the relayer's attached msg.value.
+        // This is immune to inbound ETH during the loop (LZ refunds, redemptions,
+        // attacker callbacks): we never sweep the balance delta, only what the
+        // relayer over-funded.  calls[i].value is signature-bound so
+        // totalValueForwarded cannot be inflated by the relayer.
+        // Non-fatal: a failed send leaves unspent ETH in the account (user's ETH, not lost).
+        uint256 refundable = msg.value > totalValueForwarded
+            ? msg.value - totalValueForwarded
+            : 0;
+        if (refundable > 0) {
+            // slither-disable-next-line low-level-calls
+            (bool refundOk, ) = msg.sender.call{value: refundable}("");
+            // Intentionally ignore refundOk — see natspec above.
+            (refundOk);
+        }
     }
 
     /// @dev Account-specific, chain-specific, replay-protected digest over a batch.
