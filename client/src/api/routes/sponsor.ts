@@ -499,12 +499,17 @@ router.post('/bootstrap', async (req, res) => {
       return r.count
     }
     // The mint just landed on-chain; the indexer (NftTransferWatcher) may not
-    // have created the User row yet, so the immediate updateMany can no-op.
-    // Retry on a short backoff that covers the indexer's typical create latency
-    // (same window the FE by-token 202-retry uses). All fire-and-forget — a DB
-    // hiccup must never fail an already-on-chain mint.
+    // have created the User row yet, so the immediate updateMany can no-op. Retry
+    // on a backoff. We keep updateMany (NOT upsert) to avoid racing the indexer's
+    // authoritative row create with a partial row — but the OLD window (0/1.5/4/9
+    // = ~14.5s total) was too tight: the indexer create was observed at ~15s, so
+    // every retry no-op'd and the gifted user's stake never got its optimistic
+    // credit (token 39 on test2 → "0 staked / need 30k" for the full index lag).
+    // Extend the tail so the window comfortably covers real indexer-create latency
+    // (~40s total). All fire-and-forget — a DB hiccup must never fail an
+    // already-on-chain mint.
     void (async () => {
-      const delays = [0, 1500, 4000, 9000]
+      const delays = [0, 1500, 4000, 9000, 15000, 10000]
       for (const d of delays) {
         if (d > 0) await new Promise(r => setTimeout(r, d))
         try {
