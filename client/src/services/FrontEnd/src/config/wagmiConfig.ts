@@ -27,10 +27,17 @@ const L2_RPC = import.meta.env.VITE_L2_RPC_URL_FRONTEND
 // - `retryCount: 3` with `retryDelay: 1000` — retry 429s with a 1s base delay,
 //   doubled by viem's built-in exponential backoff. Infura gets 4 attempts
 //   over ~15s before failing for real instead of spamming.
+// - `timeout: 20_000` — viem's DEFAULT per-request timeout is 10s, but our backend
+//   /api/rpc proxy can legitimately take up to ~16s on a slow upstream (8s timeout
+//   + 200ms backoff + 8s one-shot retry). At the 10s default viem bailed
+//   mid-proxy-retry and surfaced "request took too long" even when the proxy would
+//   have succeeded (seen during a single-VPS testnet stall). 20s clears the proxy's
+//   worst case so a transient upstream blip doesn't fail the user's bootstrap.
 const transportOptions = {
   batch: { wait: 16 },
   retryCount: 3,
   retryDelay: 1_000,
+  timeout: 20_000,
 }
 
 // wagmi auto-polls eth_blockNumber to invalidate stale queries.
