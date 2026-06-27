@@ -65,6 +65,10 @@ const MainLayout = ({ children, hideSidebars: hideSidebarsProp }: MainLayoutProp
   // while the user actively scrolls so feed content can peek through.
   const [isScrolling, setIsScrolling] = useState(false)
   const scrollIdleTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
+  // True when the soft keyboard is open on mobile (detected via visualViewport
+  // shrinking well below the layout viewport). Used to slide the bottom nav /
+  // FAB off-screen so they don't float above the keyboard.
+  const [keyboardOpen, setKeyboardOpen] = useState(false)
   useEffect(() => {
     const onScroll = () => {
       setIsScrolling(true)
@@ -239,7 +243,7 @@ const MainLayout = ({ children, hideSidebars: hideSidebarsProp }: MainLayoutProp
   const showBottomNav = !hideSidebars && !isCaptive && !hideMobileNavOverride
   useEffect(() => {
     const root = document.documentElement
-    if (!showBottomNav || hasInlineDraft) {
+    if (!showBottomNav || hasInlineDraft || keyboardOpen) {
       root.style.setProperty('--bottom-nav-h', '0px')
       return () => { root.style.removeProperty('--bottom-nav-h') }
     }
@@ -261,7 +265,7 @@ const MainLayout = ({ children, hideSidebars: hideSidebarsProp }: MainLayoutProp
       window.removeEventListener('resize', sync)
       root.style.removeProperty('--bottom-nav-h')
     }
-  }, [showBottomNav, hasInlineDraft])
+  }, [showBottomNav, hasInlineDraft, keyboardOpen])
 
   // Publish the VISUAL viewport height as --visual-vh. Mobile Safari leaves its
   // bottom URL bar EXPANDED until you scroll, but the drawer is position:fixed
@@ -276,6 +280,11 @@ const MainLayout = ({ children, hideSidebars: hideSidebarsProp }: MainLayoutProp
     const sync = () => {
       const h = vv?.height ?? window.innerHeight
       root.style.setProperty('--visual-vh', `${h}px`)
+      // The soft keyboard shrinks the visual viewport while the layout
+      // viewport (innerHeight) stays full. Safari's collapsing URL bar only
+      // accounts for ~40-60px, so a 150px gap reliably means the keyboard is
+      // up. Hide the bottom nav / FAB so they don't sit above the keyboard.
+      if (vv) setKeyboardOpen(window.innerHeight - h > 150)
     }
     sync()
     if (vv) {
@@ -558,7 +567,7 @@ const MainLayout = ({ children, hideSidebars: hideSidebarsProp }: MainLayoutProp
           // in the nav (the FAB-vs-icon clearance for Android is solved by
           // raising the FAB itself — see the FAB's bottom-24 below, #287).
           className={`md:hidden fixed bottom-0 left-0 right-0 z-[55] flex items-center justify-around h-14 pt-[calc(env(safe-area-inset-bottom)/2)] pb-[env(safe-area-inset-bottom)] [height:calc(theme(height.14)+env(safe-area-inset-bottom))] border-t transition-all duration-200 ${
-            hasInlineDraft ? 'opacity-0 translate-y-full pointer-events-none' : isScrolling ? 'opacity-30 pointer-events-none' : 'opacity-100'
+            hasInlineDraft || keyboardOpen ? 'opacity-0 translate-y-full pointer-events-none' : isScrolling ? 'opacity-30 pointer-events-none' : 'opacity-100'
           } ${
             isDark ? 'bg-black border-white/10' : 'bg-white border-gray-200'
           }`}
@@ -628,7 +637,7 @@ const MainLayout = ({ children, hideSidebars: hideSidebarsProp }: MainLayoutProp
           // scrolling so the semi-transparent FAB doesn't intercept
           // taps meant for the post action row sitting behind it.
           className={`md:hidden fixed right-6 bottom-24 z-[60] w-12 h-12 rounded-full bg-yellow-500 hover:bg-yellow-400 active:bg-yellow-600 text-black flex items-center justify-center shadow-lg shadow-black/30 transition-all duration-200 cursor-pointer ${
-            hasInlineDraft ? 'opacity-0 translate-y-24 pointer-events-none' : isScrolling ? 'opacity-30 pointer-events-none' : 'opacity-100'
+            hasInlineDraft || keyboardOpen ? 'opacity-0 translate-y-24 pointer-events-none' : isScrolling ? 'opacity-30 pointer-events-none' : 'opacity-100'
           }`}
         >
           <HiOutlinePencilAlt className="w-7 h-7" />
