@@ -1317,24 +1317,26 @@ export function useSignAndSubmitAction() {
     })
 
     // Determine the effective tip for THIS action.
-    // - If signing with a session key and the session has a tipCeiling, cap the tip at it.
-    //   A ceiling of 0 means "no tip" (opt-out — explicit user choice at session activation).
-    // - If the user has an active session BUT this action can't use it (notably
-    //   withdraw, which is permanently scope-excluded), still apply the
-    //   session's tipCeiling. Without this, manual-sign withdraws bottom out
-    //   at the validator's static BASE_VALIDATOR_TIP (often 1000 CAW),
-    //   undertipping by 10–25× vs the per-action rate the same user pays on
-    //   their session-signed actions.
-    // - Otherwise (no session at all) use the current market tip.
+    // - Session-key signing: pay min(market base, ceiling) — the contract reads the
+    //   on-chain perActionTipRate, but for the FE-side spend preview we cap at the
+    //   ceiling. A ceiling of 0 means "no tip" (explicit opt-out at activation).
+    // - Out-of-scope action WITH an active session (notably WITHDRAW, permanently
+    //   scope-excluded so it takes the passkey path and carries its tip in
+    //   `amounts`): charge the session's per-action tip rate DIRECTLY — the exact
+    //   rate the user already agreed to and pays on every session-signed action —
+    //   NOT min(base, ceiling). The old min() bottomed the withdraw out at the
+    //   validator's static base (~1000 CAW), undertipping by 10–25× vs the user's
+    //   normal per-action rate. A withdraw should cost the same as any other action.
+    // - No session at all: current market tip.
     let effectiveTip: bigint
     if (canUseSession && activeSession.tipCeiling !== undefined) {
       const ceiling = BigInt(activeSession.tipCeiling || '0')
       effectiveTip = getValidatorTip(ceiling)
     } else if (activeSession && activeSession.tipCeiling !== undefined) {
-      // Out-of-scope session present (e.g. withdraw): honour the session's
-      // tipCeiling anyway so withdraw tips align with everything else.
-      const ceiling = BigInt(activeSession.tipCeiling || '0')
-      effectiveTip = getValidatorTip(ceiling)
+      // Out-of-scope session present (e.g. withdraw): charge the session's own
+      // per-action tip rate so the withdraw tip matches what the user pays on
+      // their session-signed actions — not the static base-tip floor.
+      effectiveTip = BigInt(activeSession.tipCeiling || '0')
     } else {
       effectiveTip = getValidatorTip()
     }
