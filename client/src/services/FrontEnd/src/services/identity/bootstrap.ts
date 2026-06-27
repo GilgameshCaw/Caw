@@ -149,6 +149,15 @@ export type BootstrapResult = {
    *  (the onboarding callback's closed-over `state.username` is stale/empty). */
   username: string
   /**
+   * The CAW amount actually deposited at bootstrap (raw token units, what was
+   * SIGNED + sent to the sponsor — the receipt confirmed it). Returned so the
+   * post-mint optimistic-credit hint is written from THIS authoritative value,
+   * not a re-derived `derivedDepositAmount` that can read 0 once `giftInfo` has
+   * gone stale in a later render. We know a gifted deposit landed; act on it
+   * optimistically and reconcile against chain in the background.
+   */
+  depositAmountCAW: bigint
+  /**
    * One-shot signer for the post-mint /api/auth/verify sign-in. The minted
    * profile is owned by `ecdsaAddress`, and this closure signs a personal_sign
    * message with that key so the onboarding can establish a session WITHOUT
@@ -432,6 +441,7 @@ export async function bootstrapNewUser(opts: {
     // it must NOT read state.username — it reads result.username instead. (#209
     // regression: empty username → navigate('/welcome/') → /home → splash.)
     username,
+    depositAmountCAW,
     signVerifyMessage: (message: string) => verifyAccount.signMessage({ message }),
     l2Delegation,
   }

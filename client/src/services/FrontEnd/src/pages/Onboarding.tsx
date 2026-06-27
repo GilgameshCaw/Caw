@@ -711,18 +711,28 @@ export default function Onboarding() {
               // or giftInfo failed to load) the hint is skipped and the gifted
               // user hits "insufficient CAW". Compare mintedTokenId here with the
               // activeTokenId the gate logs at action time.
+              // Use the deposit amount the bootstrap ACTUALLY signed + sent
+              // (result.depositAmountCAW), NOT the re-derived derivedDepositAmount
+              // — the latter reads 0 once giftInfo has gone stale in this later
+              // render, which is exactly what skipped the hint and left a gifted
+              // user staring at "0 staked / insufficient" through the L2 index lag.
+              // We KNOW the gift was deposited (the receipt confirmed it), so be
+              // optimistic: write the hint so the stake gates credit it instantly
+              // and reconcile against chain in the background.
+              const hintAmount = result.depositAmountCAW
               console.log('[pendingDeposit:diag] onboarding hint write', {
                 mintedTokenId,
+                hintAmount: hintAmount.toString(),
                 derivedDepositAmount: derivedDepositAmount.toString(),
-                willWriteHint: mintedTokenId != null && derivedDepositAmount > 0n,
+                willWriteHint: mintedTokenId != null && hintAmount > 0n,
                 giftCaw: giftInfo?.giftCaw?.toString(),
               })
-              if (mintedTokenId != null && derivedDepositAmount > 0n) {
+              if (mintedTokenId != null && hintAmount > 0n) {
                 try {
                   localStorage.setItem(
                     `caw:pendingDeposit:${mintedTokenId}`,
                     JSON.stringify({
-                      amount: derivedDepositAmount.toString(),
+                      amount: hintAmount.toString(),
                       txHash: result.txHash,
                       at: Date.now(),
                       stakedAtHintTime: '0',
