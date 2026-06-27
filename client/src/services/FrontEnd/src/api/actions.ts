@@ -1276,9 +1276,42 @@ export function useSignAndSubmitAction() {
     // Look up by token owner so Quick Sign works regardless of connected wallet.
     const actionCode = ActionTypeMap[params.actionType]
     const sessionStore = useSessionKeyStore.getState()
-    const activeSession = tokenOwner
+    let resolvedSession = tokenOwner
       ? sessionStore.getActiveSessionForAddress(tokenOwner)
       : sessionStore.getActiveSession()
+
+    // QS-registration race: right after a fresh signup/sign-in, Quick Sign is
+    // registered in the BACKGROUND — the caw:pendingQuickSign:<owner> hint is
+    // written when the reg tx is submitted, but the session only lands in the
+    // store after on-chain confirmation (a few seconds later). An action fired in
+    // that gap finds no session and falls to the passkey prompt — jarring, since
+    // the user just enabled Quick Sign and it "works a moment later". If a
+    // registration is in-flight for this owner and the action is session-eligible
+    // (not WITHDRAW, which is scope-excluded by design), briefly POLL the store
+    // for the session to land instead of prompting. Bounded so a genuinely-failed
+    // registration still falls through to the passkey path quickly.
+    if (!resolvedSession && tokenOwner && actionCode !== 6 && sessionStore.enabled) {
+      let pendingReg = false
+      try {
+        pendingReg = !!localStorage.getItem(`caw:pendingQuickSign:${tokenOwner.toLowerCase()}`)
+      } catch { /* localStorage unavailable — skip the wait */ }
+      if (pendingReg) {
+        const deadline = Date.now() + 8000 // QS reg confirms in ~3-6s; cap the wait
+        while (Date.now() < deadline) {
+          await new Promise(r => setTimeout(r, 400))
+          const s = useSessionKeyStore.getState().getActiveSessionForAddress(tokenOwner)
+          if (s) { resolvedSession = s; break }
+        }
+        console.log('[POPB-DBG][qs-race]', {
+          waited: true,
+          resolved: !!resolvedSession,
+          actionType: params.actionType,
+        })
+      }
+    }
+    // Snapshot into a const so downstream `.tipCeiling`/`.scopeBitmap`/`.privateKey`
+    // accesses narrow correctly (the `let` above can't be narrowed by TS).
+    const activeSession = resolvedSession
 
     // If Quick Sign is enabled but session expired, show renewal modal
     const rawSession = tokenOwner
