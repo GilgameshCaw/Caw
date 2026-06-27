@@ -13,7 +13,6 @@ import { useActiveToken, usePriceStore } from '~/store/tokenDataStore'
 import { useRootSigner } from '~/hooks/useRootSigner'
 import { encryptPrivateKey, getEncryptionSignMessage, setDecryptedKey } from '~/services/sessionKeyEncryption'
 import { cawProfileLedgerAbi } from '~/../../../abi/generated'
-import { isPasskeyAddress } from '~/constants/passkeyStorage'
 
 export const DEFAULT_SESSION_DURATION = 180 * 24 * 60 * 60 // 6 months
 
@@ -529,10 +528,14 @@ export function useRevokeSession() {
  *
  * Pop-B (passkey) users have no wagmi `address`, but they DO self-activate their
  * owner address via registerSponsoredSession / PasskeySignIn (#240). So when there's
- * no connected wagmi wallet AND this is a passkey install, keep an existing active
- * session intact — otherwise we'd clobber a perfectly good passkey session and show
- * "not connected." A normal wagmi user who disconnects still clears as before (their
- * wallet IS their identity), since this browser isn't marked as a passkey install.
+ * no connected wagmi wallet AND there is a stored session under activeWallet, we keep
+ * it unconditionally. A Pop-A user's session is keyed to their wagmi address and is
+ * only ever active while that wallet is connected; explicit disconnect flows in
+ * AccountSettings call clearSession() directly, so a stored-session-with-no-wallet
+ * is necessarily a self-activated passkey (Pop-B) session. The old isPasskeyAddress()
+ * marker gate was fragile: Safari ITP can evict the marker independently, and on cold
+ * start the async re-mark in App.tsx resolves hundreds of ms after this synchronous
+ * effect fires — causing spurious clears and "gone next day" / "after deploy" reports.
  */
 export function useSessionKeyWalletGuard() {
   const { address } = useAccount()
@@ -543,11 +546,13 @@ export function useSessionKeyWalletGuard() {
       setActiveWallet(address)
       return
     }
-    // No wagmi wallet: only a passkey account preserves its self-activated
-    // session. Check per-account (keyed by owner address) rather than a
-    // browser-global flag — the self-activated session's owner is activeWallet.
+    // No wagmi wallet. If there is a stored session under the current activeWallet,
+    // keep it — a session present with no connected wagmi address can only belong to
+    // a passkey (Pop-B) user whose self-activated wallet is their identity. Pop-A
+    // explicit disconnects go through AccountSettings which calls clearSession()
+    // directly; they never rely on this guard to remove session data.
     const { activeWallet, sessions } = useSessionKeyStore.getState()
-    if (activeWallet && sessions[activeWallet] && isPasskeyAddress(activeWallet)) {
+    if (activeWallet && sessions[activeWallet]) {
       return
     }
     setActiveWallet(null)
