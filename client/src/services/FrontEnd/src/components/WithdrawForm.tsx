@@ -17,6 +17,7 @@
  */
 
 import React, { useCallback, useEffect, useState } from 'react'
+import { HiInformationCircle } from 'react-icons/hi'
 import { formatEther, formatUnits, encodeFunctionData, erc20Abi, parseUnits, isAddress } from 'viem'
 import type { Address } from 'viem'
 import { useReadContract } from 'wagmi'
@@ -72,8 +73,10 @@ export function WithdrawForm({ tokenId, withdrawableWei, onSuccess, onSuccessRef
   const { population, address } = useWalletPopulation()
   const { execute: smartEoaExecute, account: eoaAccount } = useSmartEoaExecute()
   const ethPrice = usePriceStore(s => s.priceMap['ethereum'] ?? 0)
+  const cawPrice = usePriceStore(s => s.priceMap['a-hunters-dream'] ?? 0)
 
   const [withdrawFee, setWithdrawFee] = useState<bigint>(0n)
+  const [showFeeModal, setShowFeeModal] = useState(false)
   const [recipientInput, setRecipientInput] = useState<string>('')
   const [isPending, setIsPending] = useState(false)
   const [confirmVisible, setConfirmVisible] = useState(false)
@@ -307,10 +310,20 @@ export function WithdrawForm({ tokenId, withdrawableWei, onSuccess, onSuccessRef
           </span>
         </div>
 
-        {/* LZ network fee */}
+        {/* LZ network fee + info icon → fee breakdown modal */}
         {withdrawFee > 0n && (
           <div className="flex justify-between items-center text-sm mt-2">
-            <span className={mutedClass}>{t('withdraw.lz_fee_label')}</span>
+            <span className={`${mutedClass} flex items-center gap-1`}>
+              {t('withdraw.lz_fee_label')}
+              <button
+                type="button"
+                aria-label={t('withdraw.fee_details_aria')}
+                onClick={() => setShowFeeModal(true)}
+                className="flex items-center cursor-pointer text-gray-400 hover:text-yellow-500 transition-colors"
+              >
+                <HiInformationCircle className="w-4 h-4" />
+              </button>
+            </span>
             <span className={mutedClass}>
               {lzFeeEth.toFixed(5)} ETH
               {ethPrice > 0 && ` (~$${(lzFeeEth * ethPrice).toFixed(2)})`}
@@ -425,6 +438,69 @@ export function WithdrawForm({ tokenId, withdrawableWei, onSuccess, onSuccessRef
             >
               {isPending ? t('withdraw.confirming_button') : t('withdraw.confirm_button')}
             </button>
+          </div>
+        </div>
+      )}
+
+      {/* Withdrawal fee breakdown modal (mirrors the deposit NetworkFeeModal). */}
+      {showFeeModal && (
+        <div
+          className="fixed inset-0 z-[200] flex items-center justify-center p-4 bg-black/60"
+          onClick={() => setShowFeeModal(false)}
+        >
+          <div
+            className={`w-full max-w-sm rounded-2xl border p-5 ${isDark ? 'border-white/15 bg-[#0b0b0b]' : 'border-gray-200 bg-white'}`}
+            onClick={e => e.stopPropagation()}
+          >
+            <div className="flex items-center justify-between mb-3">
+              <h3 className={`text-base font-semibold ${strongClass}`}>{t('withdraw.fee_modal_title')}</h3>
+              <button
+                type="button"
+                aria-label={t('common.close')}
+                onClick={() => setShowFeeModal(false)}
+                className={`text-xl leading-none ${mutedClass} hover:opacity-70 cursor-pointer`}
+              >
+                ×
+              </button>
+            </div>
+
+            {/* LayerZero network fee (ETH) */}
+            <div className="flex justify-between items-start text-sm py-2">
+              <div className="pr-3">
+                <div className={strongClass}>{t('withdraw.fee_modal_lz_label')}</div>
+                <div className={`text-xs ${mutedClass}`}>{t('withdraw.fee_modal_lz_desc')}</div>
+              </div>
+              <div className={`text-right ${mutedClass} whitespace-nowrap`}>
+                {lzFeeEth.toFixed(5)} ETH
+                {ethPrice > 0 && <div className="text-xs">~${(lzFeeEth * ethPrice).toFixed(2)}</div>}
+              </div>
+            </div>
+
+            {/* Relayer fee (CAW) — Pop-B only */}
+            {isPopB && feeCawDisplay != null && (
+              <div className={`flex justify-between items-start text-sm py-2 border-t ${isDark ? 'border-white/10' : 'border-gray-100'}`}>
+                <div className="pr-3">
+                  <div className={strongClass}>{t('withdraw.fee_modal_relayer_label')}</div>
+                  <div className={`text-xs ${mutedClass}`}>{t('withdraw.fee_modal_relayer_desc')}</div>
+                </div>
+                <div className={`text-right ${mutedClass} whitespace-nowrap`}>
+                  {feeCawDisplay.toLocaleString('en-US', { maximumFractionDigits: 2 })} CAW
+                  {cawPrice > 0 && <div className="text-xs">~${(feeCawDisplay * cawPrice).toFixed(2)}</div>}
+                </div>
+              </div>
+            )}
+
+            {/* Net received */}
+            {isPopB && feeCawDisplay != null && (
+              <div className={`flex justify-between items-center text-sm pt-3 mt-1 border-t ${isDark ? 'border-white/20' : 'border-gray-200'}`}>
+                <span className={`font-medium ${strongClass}`}>{t('withdraw.net_label')}</span>
+                <span className={`font-semibold ${strongClass}`}>
+                  {netCawDisplay.toLocaleString('en-US', { maximumFractionDigits: 2 })} CAW
+                </span>
+              </div>
+            )}
+
+            <p className={`text-xs ${mutedClass} mt-4`}>{t('withdraw.fee_modal_footnote')}</p>
           </div>
         </div>
       )}

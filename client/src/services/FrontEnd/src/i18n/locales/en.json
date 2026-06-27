@@ -1837,6 +1837,13 @@
   "withdraw.cancel_button": "Cancel",
   "withdraw.confirm_button": "Confirm & sign",
   "withdraw.confirming_button": "Confirming…",
+  "withdraw.fee_details_aria": "View fee breakdown",
+  "withdraw.fee_modal_title": "Withdrawal fees",
+  "withdraw.fee_modal_lz_label": "Network fee",
+  "withdraw.fee_modal_lz_desc": "Paid in ETH to LayerZero to bridge your CAW from L2 back to L1.",
+  "withdraw.fee_modal_relayer_label": "Relayer fee",
+  "withdraw.fee_modal_relayer_desc": "Covers the gas and network fee the relayer fronts on your behalf. Deducted from your withdrawal in CAW.",
+  "withdraw.fee_modal_footnote": "Fees are quoted live and may shift slightly with network conditions before you confirm.",
 
   "wallet.title": "Wallet",
   "wallet.population_label": "Account type {{pop}}",
