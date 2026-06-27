@@ -457,16 +457,29 @@ const Staking = () => {
   // gates when we actually have a positive fee estimate (else inert).
   const unstakeBelowFee = withdrawFeeCaw > 0 && parseFloat(amount || "0") > 0 && parseFloat(amount) < withdrawFeeCaw
 
-  // Legacy helpers kept for compatibility
-  const getPresetAmounts = (_maxBalance: number): number[] => DOLLAR_PRESETS.map(dollarToCaw).filter(v => v > 0)
-  const formatPresetLabel = (value: number): string => {
-    const dollarIdx = DOLLAR_PRESETS.findIndex(d => dollarToCaw(d) === value)
-    if (dollarIdx >= 0) return `$${DOLLAR_PRESETS[dollarIdx]}`
-    if (value >= 1_000_000_000_000) return `${value / 1_000_000_000_000}T`
-    if (value >= 1_000_000_000) return `${value / 1_000_000_000}B`
-    if (value >= 1_000_000) return `${value / 1_000_000}M`
-    if (value >= 1_000) return `${value / 1_000}K`
-    return value.toString()
+  // Amount presets, capped to what the user actually has. Returns {value,label}.
+  //  - If the balance is worth ≥ $100 (and we have a price): show the $-presets,
+  //    but ONLY those the user can afford (don't offer a $50 button to someone
+  //    with $12 staked). Always include a "Max" button for the full balance.
+  //  - If the balance is worth < $100, or price is unavailable: show percentage
+  //    presets (10/25/50/100%) of the balance instead — meaningful at any size.
+  const PERCENT_PRESETS = [10, 25, 50, 100]
+  const getPresets = (balanceCaw: number): Array<{ value: number; label: string }> => {
+    if (balanceCaw <= 0) return []
+    const balanceUsd = cawPrice > 0 ? balanceCaw * cawPrice : 0
+    // Dollar mode only when we can price it AND the balance clears the smallest
+    // dollar preset (so at least one $-button is affordable).
+    if (cawPrice > 0 && balanceUsd >= 100) {
+      const affordable = DOLLAR_PRESETS
+        .filter(d => dollarToCaw(d) > 0 && dollarToCaw(d) <= balanceCaw)
+        .map(d => ({ value: dollarToCaw(d), label: `$${d}` }))
+      return affordable
+    }
+    // Percentage mode (small balance or no price).
+    return PERCENT_PRESETS.map(pct => ({
+      value: Math.floor((balanceCaw * pct) / 100),
+      label: `${pct}%`,
+    })).filter(p => p.value > 0)
   }
 
   // Use real data from activeToken if available
@@ -920,21 +933,21 @@ const Staking = () => {
             }`}>
               {t('staking.amount.deposit')}
             </label>
-            {getPresetAmounts(mockData.availableBalance).length > 0 && (
+            {getPresets(mockData.availableBalance).length > 0 && (
               <div className="flex flex-wrap gap-2 my-3">
-                {getPresetAmounts(mockData.availableBalance).map(preset => (
+                {getPresets(mockData.availableBalance).map(preset => (
                   <button
-                    key={preset}
-                    onClick={() => setAmount(preset.toString())}
+                    key={preset.label}
+                    onClick={() => setAmount(preset.value.toString())}
                     className={`px-3 py-1.5 rounded-lg text-sm font-medium transition-all duration-200 cursor-pointer ${
-                      parseFloat(amount) === preset
+                      parseFloat(amount) === preset.value
                         ? 'bg-yellow-500 text-black'
                         : isDark
                           ? 'bg-white/10 text-white hover:bg-white/20'
                           : 'bg-gray-100 text-gray-900 hover:bg-gray-200'
                     }`}
                   >
-                    {formatPresetLabel(preset)}
+                    {preset.label}
                   </button>
                 ))}
               </div>
@@ -1158,21 +1171,21 @@ const Staking = () => {
         }`}>
           {t('staking.amount.unstake')}
         </label>
-        {getPresetAmounts(mockData.stakedAmount).length > 0 && (
+        {getPresets(mockData.maxWithdrawAmount).length > 0 && (
           <div className="flex flex-wrap gap-2 my-3">
-            {getPresetAmounts(mockData.stakedAmount).map(preset => (
+            {getPresets(mockData.maxWithdrawAmount).map(preset => (
               <button
-                key={preset}
-                onClick={() => setAmount(preset.toString())}
+                key={preset.label}
+                onClick={() => setAmount(preset.value.toString())}
                 className={`px-3 py-1.5 rounded-lg text-sm font-medium transition-all duration-200 cursor-pointer ${
-                  parseFloat(amount) === preset
+                  parseFloat(amount) === preset.value
                     ? 'bg-yellow-500 text-black'
                     : isDark
                       ? 'bg-white/10 text-white hover:bg-white/20'
                       : 'bg-gray-100 text-gray-900 hover:bg-gray-200'
                 }`}
               >
-                {formatPresetLabel(preset)}
+                {preset.label}
               </button>
             ))}
           </div>
