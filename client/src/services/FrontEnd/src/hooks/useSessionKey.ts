@@ -141,6 +141,7 @@ export function useCreateSession() {
   const { openConnectModal } = useConnectModal()
   const chainId = useChainId()
   const setSession = useSessionKeyStore(s => s.setSession)
+  const setActiveWallet = useSessionKeyStore(s => s.setActiveWallet)
   const activeToken = useActiveToken()
   const cawPrice = usePriceStore(s => s.priceMap['a-hunters-dream'] ?? 0)
   const rootSigner = useRootSigner()
@@ -262,6 +263,16 @@ export function useCreateSession() {
       }
     }
 
+    // The owner address the session must be STORED + KEYED under. For Pop-A this
+    // is the connected wagmi wallet; for Pop-B (passkey, no wagmi) there is NO
+    // connectedAddress, so it's the active profile's owner — the same address the
+    // session was signed for (signerAddress above) and registered under on-chain.
+    // Using connectedAddress here for Pop-B stored the session under `undefined`,
+    // so getActiveSessionForAddress(activeToken.owner) missed and the UI stayed
+    // "not connected" despite a confirmed on-chain registration. Mirrors
+    // registerSponsoredSession (the onboarding path), which already keys by owner.
+    const effectiveOwner = (connectedAddress ?? activeToken?.owner)?.toLowerCase()
+
     // Store session locally after confirmation
     if (encryptWithWallet && connectedAddress) {
       onProgress?.('Encrypting session key...')
@@ -275,7 +286,7 @@ export function useCreateSession() {
       setSession({
         privateKey: '0xencrypted' as `0x${string}`, // placeholder — real key is in memory
         address: sessionAccount.address,
-        ownerAddress: connectedAddress?.toLowerCase(),
+        ownerAddress: effectiveOwner,
         expiry,
         scopeBitmap: DEFAULT_SCOPE,
         spendLimit: spendLimit.toString(),
@@ -287,7 +298,7 @@ export function useCreateSession() {
       setSession({
         privateKey,
         address: sessionAccount.address,
-        ownerAddress: connectedAddress?.toLowerCase(),
+        ownerAddress: effectiveOwner,
         expiry,
         scopeBitmap: DEFAULT_SCOPE,
         spendLimit: spendLimit.toString(),
@@ -295,8 +306,13 @@ export function useCreateSession() {
       })
     }
 
+    // Pop-B has no wagmi address, so the wagmi-keyed setActiveWallet effect never
+    // fires for them — set it explicitly so sessionForWallet()/getActiveSession()
+    // resolve the session we just stored. (Mirrors registerSponsoredSession, #240.)
+    if (effectiveOwner) setActiveWallet(effectiveOwner)
+
     return { address: sessionAccount.address, expiry }
-  }, [isConnected, connectedAddress, openConnectModal, chainId, signMessageAsync, switchChainAsync, setSession, activeToken, cawPrice, rootSigner])
+  }, [isConnected, connectedAddress, openConnectModal, chainId, signMessageAsync, switchChainAsync, setSession, setActiveWallet, activeToken, cawPrice, rootSigner])
 }
 
 /**
