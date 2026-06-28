@@ -37,7 +37,7 @@ import BoidsBg from '~/components/BoidsBg3D'
 import cawLogo from '~/assets/images/caw-logo.png'
 import LanguageSwitcher from '~/components/LanguageSwitcher'
 import { evaluatePasskeyGate } from '~/utils/inAppBrowser'
-import { isPrivateWindow } from '~/utils/privateMode'
+import { probePrivateWindow, type PrivateProbe } from '~/utils/privateMode'
 import {
   HiAtSymbol,
   HiLockClosed,
@@ -208,15 +208,17 @@ export default function Onboarding() {
     return () => { cancelled = true }
   }, [])
 
-  // Private/incognito windows can't keep the user logged in — the session,
-  // Quick Sign key, and passkey backup all need persistent storage that a
-  // private window wipes or partitions away. Warn (don't block) on the welcome
-  // step so the user can switch to a normal window before investing in signup.
-  const [privateWindow, setPrivateWindow] = useState(false)
+  // Private/incognito windows AND in-app webviews can't keep the user logged
+  // in — the session, Quick Sign key, and passkey backup all need persistent
+  // storage that those contexts wipe or partition away. We CAN'T reliably
+  // detect iOS Safari private mode (Apple closed every probe), so the advisory
+  // below is always shown; the probe only drives a stronger, detected warning
+  // (and the temporary on-device debug readout).
+  const [privateProbe, setPrivateProbe] = useState<PrivateProbe | null>(null)
   useEffect(() => {
     let cancelled = false
-    isPrivateWindow().then(p => {
-      if (!cancelled) setPrivateWindow(p)
+    probePrivateWindow().then(p => {
+      if (!cancelled) setPrivateProbe(p)
     }).catch(() => { /* detection is best-effort — never block on an error */ })
     return () => { cancelled = true }
   }, [])
@@ -1078,14 +1080,29 @@ export default function Onboarding() {
                 {t('onboarding.welcome.sponsored_note')}
               </div>
 
-              {/* Private/incognito window can't persist the session. Advisory
-                  (not a hard block) — the user may still proceed, but warn them
-                  up front that they'll be logged out. */}
-              {privateWindow && (
-                <div className={`rounded-xl border px-4 py-3 mb-6 text-sm text-left ${
-                  isDark ? 'border-amber-500/40 bg-amber-500/10 text-amber-300' : 'border-amber-300 bg-amber-50 text-amber-800'
+              {/* Persistence advisory. Private/incognito windows and in-app
+                  webviews can't keep the user logged in, and iOS Safari private
+                  mode is undetectable, so this is ALWAYS shown (advisory, never
+                  a hard block). If a probe positively detects private mode we
+                  upgrade to a stronger, red, "you are in one" message. */}
+              <div className={`rounded-xl border px-4 py-3 mb-6 text-sm text-left ${
+                privateProbe?.isPrivate
+                  ? (isDark ? 'border-red-500/40 bg-red-500/10 text-red-300' : 'border-red-300 bg-red-50 text-red-700')
+                  : (isDark ? 'border-amber-500/40 bg-amber-500/10 text-amber-300' : 'border-amber-300 bg-amber-50 text-amber-800')
+              }`}>
+                {privateProbe?.isPrivate
+                  ? t('onboarding.welcome.private_window_detected')
+                  : t('onboarding.welcome.persistence_advisory')}
+              </div>
+
+              {/* TEMP on-device debug readout — remove once iOS private-mode
+                  detection is confirmed/abandoned. Shows raw probe values so we
+                  can see what an iOS private window actually reports. */}
+              {privateProbe && (
+                <div className={`rounded-lg px-3 py-2 mb-6 text-[11px] font-mono text-left break-all ${
+                  isDark ? 'bg-white/5 text-white/50' : 'bg-gray-100 text-gray-500'
                 }`}>
-                  {t('onboarding.welcome.private_window_warning')}
+                  debug: private={String(privateProbe.isPrivate)} ls-broken={String(privateProbe.localStorageBroken)} idb-broken={String(privateProbe.indexedDbBroken)} quota={privateProbe.quotaMB == null ? 'n/a' : `${privateProbe.quotaMB}MB`} quota-private={String(privateProbe.quotaPrivate)}
                 </div>
               )}
 

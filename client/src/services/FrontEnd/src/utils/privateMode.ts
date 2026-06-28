@@ -96,26 +96,61 @@ function indexedDbBroken(): Promise<boolean> {
   })
 }
 
-/**
- * Returns true when the current window is *probably* private/incognito.
- *
- * A broken localStorage or IndexedDB is conclusive on its own. The quota
- * heuristic is softer, so we only let it flip the result when storage APIs
- * exist but report a suspiciously small quota. Any thrown error resolves to
- * false — we never want detection itself to block onboarding.
- */
-export async function isPrivateWindow(): Promise<boolean> {
-  try {
-    if (localStorageBroken()) return true
+/** Raw probe breakdown — surfaced for on-device debugging. */
+export interface PrivateProbe {
+  isPrivate: boolean
+  localStorageBroken: boolean
+  /** true = small quota (private signal), false = normal, null = unavailable. */
+  quotaPrivate: boolean | null
+  /** Raw quota in MB (rounded), or null when the API is unavailable. */
+  quotaMB: number | null
+  indexedDbBroken: boolean
+}
 
+/**
+ * Run all probes and return the full breakdown. A broken localStorage or
+ * IndexedDB is conclusive on its own; the quota heuristic is softer and only
+ * flips the result when storage APIs exist but report a suspiciously small
+ * quota. Any thrown error resolves to "not private" — we never want detection
+ * itself to block onboarding.
+ *
+ * Reality check: modern iOS Safari private mode defeats ALL of these (storage
+ * round-trips and reports a normal quota in-session). There is no reliable JS
+ * tell for it, which is why the UI also shows an always-on advisory.
+ */
+export async function probePrivateWindow(): Promise<PrivateProbe> {
+  try {
+    const lsBroken = localStorageBroken()
+    let quotaMB: number | null = null
+    if (navigator.storage?.estimate) {
+      try {
+        const { quota } = await navigator.storage.estimate()
+        if (typeof quota === 'number') quotaMB = Math.round(quota / (1024 * 1024))
+      } catch { /* leave null */ }
+    }
     const [quota, idb] = await Promise.all([
       quotaLooksPrivate(),
       indexedDbBroken(),
     ])
-    if (idb) return true
-    if (quota === true) return true
-    return false
+    return {
+      isPrivate: lsBroken || idb || quota === true,
+      localStorageBroken: lsBroken,
+      quotaPrivate: quota,
+      quotaMB,
+      indexedDbBroken: idb,
+    }
   } catch {
-    return false
+    return {
+      isPrivate: false,
+      localStorageBroken: false,
+      quotaPrivate: null,
+      quotaMB: null,
+      indexedDbBroken: false,
+    }
   }
+}
+
+/** Convenience boolean wrapper over {@link probePrivateWindow}. */
+export async function isPrivateWindow(): Promise<boolean> {
+  return (await probePrivateWindow()).isPrivate
 }
