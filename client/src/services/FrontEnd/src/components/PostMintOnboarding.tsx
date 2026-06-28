@@ -1346,7 +1346,27 @@ const PostMintOnboarding: React.FC<PostMintOnboardingProps> = ({ username, token
                 profileData={profileFormData}
                 isDark={isDark}
                 saveLabel="Save"
-                onSaved={() => goNext()}
+                onSaved={(updated) => {
+                  // Reflect the just-saved values back into the step's form state so
+                  // re-visiting the Profile step shows what the user entered (the
+                  // server row may lag behind the on-chain write, so we trust the
+                  // form's own returned values rather than re-fetching).
+                  if (updated) {
+                    setProfileFormData(prev => ({
+                      ...(prev ?? {}),
+                      displayName: updated.displayName ?? prev?.displayName ?? null,
+                      bio: updated.bio ?? prev?.bio ?? null,
+                      location: updated.location ?? prev?.location ?? null,
+                      website: updated.website ?? prev?.website ?? null,
+                      avatarUrl: updated.avatarUrl ?? prev?.avatarUrl ?? null,
+                      coverPhotoUrl: updated.coverPhotoUrl ?? prev?.coverPhotoUrl ?? null,
+                    }))
+                  }
+                  // Mark the step complete (checkmark at the top) before advancing —
+                  // saving the profile IS completing this step.
+                  markComplete('profile')
+                  goNext()
+                }}
                 onSkip={handleSkip}
                 skipLabel={`Skip — ${step.skipWarning}`}
                 scrollFieldsMaxHeight="max-h-[50vh]"
