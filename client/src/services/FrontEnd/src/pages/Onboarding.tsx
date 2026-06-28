@@ -37,13 +37,13 @@ import BoidsBg from '~/components/BoidsBg3D'
 import cawLogo from '~/assets/images/caw-logo.png'
 import LanguageSwitcher from '~/components/LanguageSwitcher'
 import { evaluatePasskeyGate } from '~/utils/inAppBrowser'
-import { probePrivateWindow, type PrivateProbe } from '~/utils/privateMode'
 import {
   HiAtSymbol,
   HiLockClosed,
   HiFingerPrint,
   HiCloudDownload,
   HiCheck,
+  HiInformationCircle,
 } from 'react-icons/hi'
 import type { PasskeyPubkey } from '~/services/identity/passkey'
 import { persistPasskeyIdentity } from '~/constants/passkeyStorage'
@@ -210,18 +210,23 @@ export default function Onboarding() {
 
   // Private/incognito windows AND in-app webviews can't keep the user logged
   // in — the session, Quick Sign key, and passkey backup all need persistent
-  // storage that those contexts wipe or partition away. We CAN'T reliably
-  // detect iOS Safari private mode (Apple closed every probe), so the advisory
-  // below is always shown; the probe only drives a stronger, detected warning
-  // (and the temporary on-device debug readout).
-  const [privateProbe, setPrivateProbe] = useState<PrivateProbe | null>(null)
+  // storage that those contexts wipe or partition away. iOS Safari private mode
+  // is undetectable by JS (Apple closed every probe), so rather than gate on a
+  // detection that silently misses the common case, we ALWAYS show the advisory
+  // below. (privateMode.ts's probe is kept for possible future use.)
+  // Tap-toggle popover for the browser-persistence explanation. The shared
+  // Tooltip is hover-only (won't open on a mobile tap), so we roll a small
+  // click-toggle here. Dismisses on any outside tap.
+  const [showBrowserInfo, setShowBrowserInfo] = useState(false)
+  const browserInfoRef = useRef<HTMLDivElement>(null)
   useEffect(() => {
-    let cancelled = false
-    probePrivateWindow().then(p => {
-      if (!cancelled) setPrivateProbe(p)
-    }).catch(() => { /* detection is best-effort — never block on an error */ })
-    return () => { cancelled = true }
-  }, [])
+    if (!showBrowserInfo) return
+    const onDown = (e: PointerEvent) => {
+      if (!browserInfoRef.current?.contains(e.target as Node)) setShowBrowserInfo(false)
+    }
+    document.addEventListener('pointerdown', onDown)
+    return () => document.removeEventListener('pointerdown', onDown)
+  }, [showBrowserInfo])
   const setSession = useAuthStore(s => s.setSession)
   // True while the post-mint /api/auth/verify sign-in is in flight (shown on
   // the confirm step so "Go to feed" waits for the session).
@@ -1067,7 +1072,7 @@ export default function Onboarding() {
               <p className="text-yellow-500 text-sm font-semibold tracking-[0.2em] uppercase mb-3">
                 {t('onboarding.welcome.kicker')}
               </p>
-              <h1 className={`text-3xl sm:text-4xl font-bold mb-4 ${textPrimary}`}>
+              <h1 className={`text-3xl sm:text-4xl font-bold mb-4 whitespace-pre-line ${textPrimary}`}>
                 {t('onboarding.welcome.title')}
               </h1>
               <p className={`text-base sm:text-lg mb-8 ${isDark ? 'text-white/70' : 'text-gray-600'}`}>
@@ -1081,30 +1086,29 @@ export default function Onboarding() {
               </div>
 
               {/* Persistence advisory. Private/incognito windows and in-app
-                  webviews can't keep the user logged in, and iOS Safari private
-                  mode is undetectable, so this is ALWAYS shown (advisory, never
-                  a hard block). If a probe positively detects private mode we
-                  upgrade to a stronger, red, "you are in one" message. */}
-              <div className={`rounded-xl border px-4 py-3 mb-6 text-sm text-left ${
-                privateProbe?.isPrivate
-                  ? (isDark ? 'border-red-500/40 bg-red-500/10 text-red-300' : 'border-red-300 bg-red-50 text-red-700')
-                  : (isDark ? 'border-amber-500/40 bg-amber-500/10 text-amber-300' : 'border-amber-300 bg-amber-50 text-amber-800')
-              }`}>
-                {privateProbe?.isPrivate
-                  ? t('onboarding.welcome.private_window_detected')
-                  : t('onboarding.welcome.persistence_advisory')}
+                  webviews can't keep the user logged in (iOS Safari private mode
+                  is undetectable, so we always show this). Compact grey line +
+                  info icon that taps open the full explanation. */}
+              <div ref={browserInfoRef} className="relative inline-flex items-center justify-center gap-1.5 mb-6">
+                <span className={`text-sm ${isDark ? 'text-white/50' : 'text-gray-500'}`}>
+                  {t('onboarding.welcome.browser_check_short')}
+                </span>
+                <button
+                  type="button"
+                  aria-label={t('onboarding.welcome.browser_check_aria')}
+                  onClick={() => setShowBrowserInfo(v => !v)}
+                  className={`flex items-center cursor-pointer transition-colors ${isDark ? 'text-white/40 hover:text-white/70' : 'text-gray-400 hover:text-gray-600'}`}
+                >
+                  <HiInformationCircle className="w-4 h-4" />
+                </button>
+                {showBrowserInfo && (
+                  <div className={`absolute top-full mt-2 left-1/2 -translate-x-1/2 z-20 w-[300px] max-w-[88vw] rounded-xl border px-4 py-3 text-sm text-left whitespace-pre-line shadow-lg ${
+                    isDark ? 'border-white/15 bg-[#161616] text-white/80' : 'border-gray-200 bg-white text-gray-700'
+                  }`}>
+                    {t('onboarding.welcome.browser_check_detail')}
+                  </div>
+                )}
               </div>
-
-              {/* TEMP on-device debug readout — remove once iOS private-mode
-                  detection is confirmed/abandoned. Shows raw probe values so we
-                  can see what an iOS private window actually reports. */}
-              {privateProbe && (
-                <div className={`rounded-lg px-3 py-2 mb-6 text-[11px] font-mono text-left break-all ${
-                  isDark ? 'bg-white/5 text-white/50' : 'bg-gray-100 text-gray-500'
-                }`}>
-                  debug: private={String(privateProbe.isPrivate)} ls-broken={String(privateProbe.localStorageBroken)} idb-broken={String(privateProbe.indexedDbBroken)} quota={privateProbe.quotaMB == null ? 'n/a' : `${privateProbe.quotaMB}MB`} quota-private={String(privateProbe.quotaPrivate)}
-                </div>
-              )}
 
               {/* Passkey can't be created in this browser (iOS in-app webview /
                   no platform authenticator). Tell the user how to fix it HERE,
