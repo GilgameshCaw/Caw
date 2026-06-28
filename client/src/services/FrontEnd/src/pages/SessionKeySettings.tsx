@@ -84,6 +84,16 @@ const SessionKeySettings: React.FC = () => {
   const isExpired = session ? session.expiry < Date.now() / 1000 : true
   const isActive = session && !isExpired
 
+  // The global `enabled` flag is shared across every account in this browser, so
+  // it can read true purely because ANOTHER account turned Quick Sign on. Derive
+  // a PER-ACCOUNT display state: this account is "enabled" only if it has its own
+  // session (active OR merely expired-but-present), OR the global intent is on AND
+  // no other account is the one holding that intent (i.e. there are no sessions at
+  // all → the flag reflects a fresh just-toggled intent, not a sibling account).
+  const hasOwnSession = !!session
+  const someOtherOwnerHasSession = Object.keys(sessions).some(a => a !== ownerAddr)
+  const displayEnabled = hasOwnSession || (enabled && !someOtherOwnerHasSession)
+
   // Read on-chain spent amount for this session key
   const ownerAddress = address || activeToken?.address
   const { data: onChainSpent } = useReadContract({
@@ -107,7 +117,12 @@ const SessionKeySettings: React.FC = () => {
   }, [onChainSpent, session?.address])
 
   const handleToggle = () => {
-    setEnabled(!enabled)
+    // Base the flip on the PER-ACCOUNT display state, not the shared global flag —
+    // otherwise, when this account shows OFF only because a sibling account set the
+    // global flag, the first tap would read `enabled === true` and turn it "off"
+    // (a no-op for this account). Flipping displayEnabled makes the toggle track
+    // what the user actually sees for THIS account.
+    setEnabled(!displayEnabled)
     setError(null)
   }
 
@@ -227,24 +242,24 @@ const SessionKeySettings: React.FC = () => {
           <button
             onClick={handleToggle}
             className={`relative w-12 h-7 rounded-full transition-colors duration-200 cursor-pointer ${
-              enabled ? 'bg-yellow-500' : isDark ? 'bg-gray-600' : 'bg-gray-300'
+              displayEnabled ? 'bg-yellow-500' : isDark ? 'bg-gray-600' : 'bg-gray-300'
             }`}
           >
             <div className={`absolute top-0.5 w-6 h-6 rounded-full bg-white shadow transition-transform duration-200 ${
-              enabled ? 'translate-x-5' : 'translate-x-0.5'
+              displayEnabled ? 'translate-x-5' : 'translate-x-0.5'
             }`} />
           </button>
         </div>
 
         {/* Security explanation */}
-        {enabled && (
+        {displayEnabled && (
           <div className="mt-4">
             <QuickSignHowItWorks isDark={isDark} />
           </div>
         )}
 
         {/* Session status */}
-        {enabled && (
+        {displayEnabled && (
           <div className="mt-6">
             {isActive ? (
               <div className={`rounded-lg p-4 ${isDark ? 'bg-white/5' : 'bg-gray-50 shadow-xl'}`}>

@@ -939,7 +939,19 @@ export function useSignAndSubmitAction() {
     // live session. For Pop-A (connected wallet) we must NOT fall back, or a profile
     // with no session would inherit the connected wallet's — the exact 10d15a91 bug.
     const ownerSession0 = tokenOwner ? sessionStore0.getActiveSessionForAddress(tokenOwner) : null
-    const activeSession0 = ownerSession0 || (!address ? sessionStore0.getActiveSession() : null)
+    // Pop-B (!address) fallback for the same-account owner-divergence race (see
+    // comment above): ONLY accept the activeWallet session when ITS ownerAddress
+    // matches tokenOwner. Without that guard, a Pop-B profile with NO session
+    // would silently inherit a DIFFERENT account's active session (the exact
+    // cross-account leak: signed in to a browser where another passkey account
+    // had Quick Sign on → actions ran unsigned under that account's key).
+    const fallbackSession0 = !address ? sessionStore0.getActiveSession() : null
+    const activeSession0 = ownerSession0 || (
+      fallbackSession0 && tokenOwner &&
+      fallbackSession0.ownerAddress?.toLowerCase() === tokenOwner.toLowerCase()
+        ? fallbackSession0
+        : null
+    )
     const actionCode0 = ActionTypeMap[params.actionType]
     const canUseSession0 = activeSession0 &&
       actionCode0 !== 6 && // exclude WITHDRAW
@@ -1276,9 +1288,14 @@ export function useSignAndSubmitAction() {
     // Look up by token owner so Quick Sign works regardless of connected wallet.
     const actionCode = ActionTypeMap[params.actionType]
     const sessionStore = useSessionKeyStore.getState()
+    // Owner-keyed resolution ONLY. If we can't identify the acting profile's
+    // owner we must NOT fall back to getActiveSession() (the store's activeWallet
+    // session) — that could belong to a DIFFERENT account in the same browser and
+    // would sign this action under the wrong key (cross-account leak). No owner =
+    // no session = fall through to the passkey / wallet path.
     let resolvedSession = tokenOwner
       ? sessionStore.getActiveSessionForAddress(tokenOwner)
-      : sessionStore.getActiveSession()
+      : null
 
     // QS-registration race: right after a fresh signup/sign-in, Quick Sign is
     // registered in the BACKGROUND — the caw:pendingQuickSign:<owner> hint is
@@ -1313,10 +1330,13 @@ export function useSignAndSubmitAction() {
     // accesses narrow correctly (the `let` above can't be narrowed by TS).
     const activeSession = resolvedSession
 
-    // If Quick Sign is enabled but session expired, show renewal modal
+    // If Quick Sign is enabled but session expired, show renewal modal.
+    // Owner-keyed ONLY — never fall back to getSession() (activeWallet), which can
+    // point at a DIFFERENT account whose `spent` would corrupt the spend-limit
+    // pre-check below (and whose expiry would mis-trigger the renewal modal).
     const rawSession = tokenOwner
       ? sessionStore.getSessionForAddress(tokenOwner)
-      : sessionStore.getSession()
+      : null
     if (sessionStore.enabled && !activeSession && rawSession) {
       return new Promise((resolve, reject) => {
         useQuickSignRenewStore.getState().show('expired', async () => {
