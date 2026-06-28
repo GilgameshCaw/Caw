@@ -2208,8 +2208,19 @@ export function useSignAndSubmitAction() {
       openConnectModal?.()
       return null
     } else if (activeToken?.owner?.toLowerCase() !== address?.toLowerCase()) {
-      console.error("That profile tokenId is not owned by your connected wallet")
-      return null
+      // Wrong wallet connected for the active profile. THROW (don't silently
+      // return null like the not-connected case above) so callers surface an
+      // actionable message instead of the action vanishing with nothing on
+      // screen. Marked so callers can show the message verbatim.
+      const ownerShort = activeToken?.owner
+        ? `${activeToken.owner.slice(0, 6)}…${activeToken.owner.slice(-4)}`
+        : 'another wallet'
+      const err = new Error(
+        `Wrong wallet connected. This profile is owned by ${ownerShort}. ` +
+        `Switch to that wallet and try again.`,
+      ) as Error & { code?: string }
+      err.code = 'WRONG_WALLET'
+      throw err
     } else {
       return await requestAndSubmit(params)
     }

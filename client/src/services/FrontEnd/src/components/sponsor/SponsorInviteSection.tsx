@@ -304,9 +304,11 @@ export default function SponsorInviteSection() {
       console.error('[buy-invite] failed:', err)
       setBuyState('idle')
       setError(
-        err?.message?.includes('rejected') || err?.message?.includes('denied')
-          ? 'Transaction rejected.'
-          : 'Could not submit. Please try again.',
+        err?.code === 'WRONG_WALLET'
+          ? err.message // actionable: "Wrong wallet connected. This profile is owned by 0x…"
+          : err?.message?.includes('rejected') || err?.message?.includes('denied')
+            ? 'Transaction rejected.'
+            : 'Could not submit. Please try again.',
       )
     }
   }
