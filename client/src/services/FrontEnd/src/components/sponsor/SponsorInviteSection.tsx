@@ -453,9 +453,9 @@ export default function SponsorInviteSection() {
                 <div className="min-w-0">
                   <button
                     type="button"
-                    onClick={() => c.code && copy(c.code, i)}
-                    className={`font-mono text-sm truncate ${strongClass} ${c.code ? 'cursor-pointer hover:underline' : ''}`}
-                    title={c.code ? inviteLink(c.code) : ''}
+                    onClick={() => c.code && !c.used && copy(c.code, i)}
+                    className={`font-mono text-sm truncate ${strongClass} ${c.code && !c.used ? 'cursor-pointer hover:underline' : ''} ${c.used ? 'line-through opacity-60' : ''}`}
+                    title={c.code && !c.used ? inviteLink(c.code) : ''}
                   >
                     {c.code ?? (c.pending ? 'Generating your code…' : '— (unavailable on this device)')}
                   </button>
@@ -476,7 +476,7 @@ export default function SponsorInviteSection() {
                   >
                     {c.pending ? 'Pending' : c.used ? 'Used' : 'Unused'}
                   </span>
-                  {c.code && (
+                  {c.code && !c.used && (
                     <button
                       type="button"
                       onClick={() => copy(c.code!, i)}
@@ -499,7 +499,7 @@ export default function SponsorInviteSection() {
                       )}
                     </button>
                   )}
-                  {c.code && (
+                  {c.code && !c.used && (
                     <button
                       type="button"
                       onClick={() => setQrCode(c.code!)}
