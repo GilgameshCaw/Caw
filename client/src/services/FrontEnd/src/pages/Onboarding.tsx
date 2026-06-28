@@ -287,6 +287,30 @@ export default function Onboarding() {
   const [qsTipCeiling, setQsTipCeiling] = useState<bigint>(() => getDefaultTipCeiling(getTipTiers().fast))
   const [qsTipCeilingTouched, setQsTipCeilingTouched] = useState(false)
   const [qsWalletProtect, setQsWalletProtect] = useState(false)
+
+  // Quick Sign config mirrored into a ref so handleBootstrapDone — a useCallback
+  // deliberately closed over the INITIAL render's state to keep its identity
+  // stable (see the enrolledPasskeyRef / result.username notes) — reads the
+  // user's LIVE choices at mint-complete instead of the first-render defaults.
+  // Without this, toggling Quick Sign OFF on the username step had NO effect:
+  // the gate read the stale captured `quickSignEnabled = true` and registered a
+  // session anyway. (Same trap for the spend-limit / tip / duration the user
+  // tweaked.)
+  const qsConfigRef = useRef({
+    enabled: quickSignEnabled,
+    spendLimit: qsSpendLimit,
+    duration: qsDuration,
+    tipCeiling: qsTipCeiling,
+  })
+  useEffect(() => {
+    qsConfigRef.current = {
+      enabled: quickSignEnabled,
+      spendLimit: qsSpendLimit,
+      duration: qsDuration,
+      tipCeiling: qsTipCeiling,
+    }
+  }, [quickSignEnabled, qsSpendLimit, qsDuration, qsTipCeiling])
+
   const cawPriceUsd = usePriceStore(s => s.priceMap['a-hunters-dream']) as number | undefined
   const { tipCeilingCaw: networkTipCaw, tipCeilingFallbackCaw } = useNetworkTipTargetAsCAW()
 
@@ -787,15 +811,22 @@ export default function Onboarding() {
               // for the duration. Non-fatal: on failure the user enables Quick Sign
               // manually on the stepper. Honours the QuickSignCard params the user
               // chose; skipped entirely if they toggled Quick Sign OFF.
-              if (quickSignEnabled) {
+              // Read the user's LIVE Quick Sign choices from the ref, NOT the
+              // captured state — this useCallback is closed over the first render
+              // (deps = [setSession]) so `quickSignEnabled` etc. would otherwise be
+              // the stale initial defaults (enabled=true), ignoring an opt-out made
+              // on the username step. (Root cause of "I turned QS off but token got
+              // a session anyway".)
+              const qsCfg = qsConfigRef.current
+              if (qsCfg.enabled) {
                 // eslint-disable-next-line no-console
                 console.log('[signin:diag] auto-deriving Quick Sign session (background)…')
                 void registerSponsoredSession({
                   signMessage: result.signVerifyMessage,
                   ownerAddress: ownerAddr,
-                  spendLimit: qsSpendLimit,
-                  durationSeconds: qsDuration,
-                  tipCeiling: qsTipCeiling,
+                  spendLimit: qsCfg.spendLimit,
+                  durationSeconds: qsCfg.duration,
+                  tipCeiling: qsCfg.tipCeiling,
                   cawPrice: cawPriceUsd,
                 })
                   // eslint-disable-next-line no-console
@@ -849,7 +880,7 @@ export default function Onboarding() {
                   // "QS already handled" so the stepper treats the QS step as
                   // complete from frame 1 and never prompts. False when the user
                   // toggled Quick Sign OFF — then they DO enable it manually.
-                  quickSignPending: quickSignEnabled,
+                  quickSignPending: qsConfigRef.current.enabled,
                 },
               })
             }
