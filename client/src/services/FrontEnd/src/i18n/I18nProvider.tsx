@@ -2,6 +2,7 @@ import React, { createContext, useContext, useEffect, useState, useMemo } from '
 import { useLocation } from 'react-router-dom'
 import { useViewerLanguage } from '~/hooks/useViewerLanguage'
 import { parseLocaleFromPath } from '~/utils/localePrefix'
+import { isRtlLanguage } from '~/constants/languages'
 import { Catalog, EN_CATALOG, loadCatalog, translate, TVars } from './index'
 
 interface I18nContextValue {
@@ -53,6 +54,17 @@ export const I18nProvider: React.FC<{ children: React.ReactNode }> = ({ children
       setLoadedLocale(activeLocale)
     })
     return () => { cancelled = true }
+  }, [activeLocale])
+
+  // Mirror the whole layout for RTL scripts (Hebrew, Arabic, Persian).
+  // Driven off activeLocale — not the loaded catalog — so direction flips
+  // immediately on switch rather than waiting on the catalog network load.
+  // Also set `lang` so the browser picks correct fonts / hyphenation.
+  useEffect(() => {
+    const rtl = isRtlLanguage(activeLocale)
+    const root = document.documentElement
+    root.dir = rtl ? 'rtl' : 'ltr'
+    root.lang = activeLocale
   }, [activeLocale])
 
   const value = useMemo<I18nContextValue>(() => ({

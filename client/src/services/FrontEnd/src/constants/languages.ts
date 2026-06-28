@@ -13,6 +13,9 @@ export interface Language {
   // Native-language label, shown in parens to help non-fluent users
   // recognize their language.
   native: string
+  // True for right-to-left scripts (Hebrew, Arabic, Persian). Drives the
+  // document `dir` attribute so the whole layout mirrors. Absent = LTR.
+  rtl?: boolean
 }
 
 export const LANGUAGES: Language[] = [
@@ -20,7 +23,7 @@ export const LANGUAGES: Language[] = [
   { code: 'es', name: 'Spanish',    native: 'Español'    },
   { code: 'zh', name: 'Chinese',    native: '中文'        },
   { code: 'hi', name: 'Hindi',      native: 'हिन्दी'      },
-  { code: 'ar', name: 'Arabic',     native: 'العربية'    },
+  { code: 'ar', name: 'Arabic',     native: 'العربية',   rtl: true },
   { code: 'pt', name: 'Portuguese', native: 'Português'  },
   { code: 'ru', name: 'Russian',    native: 'Русский'    },
   { code: 'ja', name: 'Japanese',   native: '日本語'       },
@@ -29,7 +32,7 @@ export const LANGUAGES: Language[] = [
   { code: 'ko', name: 'Korean',     native: '한국어'        },
   { code: 'it', name: 'Italian',    native: 'Italiano'   },
   { code: 'tr', name: 'Turkish',    native: 'Türkçe'     },
-  { code: 'fa', name: 'Persian',    native: 'فارسی'       },
+  { code: 'fa', name: 'Persian',    native: 'فارسی',      rtl: true },
   { code: 'pl', name: 'Polish',     native: 'Polski'     },
   { code: 'nl', name: 'Dutch',      native: 'Nederlands' },
   { code: 'vi', name: 'Vietnamese', native: 'Tiếng Việt' },
@@ -37,7 +40,7 @@ export const LANGUAGES: Language[] = [
   { code: 'id', name: 'Indonesian', native: 'Bahasa Indonesia' },
   { code: 'tl', name: 'Filipino',   native: 'Filipino'    },
   { code: 'uk', name: 'Ukrainian',  native: 'Українська'  },
-  { code: 'he', name: 'Hebrew',     native: 'עברית'       },
+  { code: 'he', name: 'Hebrew',     native: 'עברית',      rtl: true },
 ]
 
 const BY_CODE = new Map(LANGUAGES.map(l => [l.code, l]))
@@ -46,4 +49,10 @@ const BY_CODE = new Map(LANGUAGES.map(l => [l.code, l]))
 export function languageName(code: string | null | undefined): string {
   if (!code) return ''
   return BY_CODE.get(code)?.name ?? code.toUpperCase()
+}
+
+/** True when the language's script renders right-to-left. */
+export function isRtlLanguage(code: string | null | undefined): boolean {
+  if (!code) return false
+  return BY_CODE.get(code)?.rtl === true
 }
