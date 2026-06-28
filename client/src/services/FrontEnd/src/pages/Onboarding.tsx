@@ -37,6 +37,7 @@ import BoidsBg from '~/components/BoidsBg3D'
 import cawLogo from '~/assets/images/caw-logo.png'
 import LanguageSwitcher from '~/components/LanguageSwitcher'
 import { evaluatePasskeyGate } from '~/utils/inAppBrowser'
+import { isPrivateWindow } from '~/utils/privateMode'
 import {
   HiAtSymbol,
   HiLockClosed,
@@ -204,6 +205,19 @@ export default function Onboarding() {
     evaluatePasskeyGate().then(g => {
       if (!cancelled) setPasskeyGate({ blocked: g.blocked, messageKey: g.messageKey })
     }).catch(() => { /* probe failed — don't block on an error */ })
+    return () => { cancelled = true }
+  }, [])
+
+  // Private/incognito windows can't keep the user logged in — the session,
+  // Quick Sign key, and passkey backup all need persistent storage that a
+  // private window wipes or partitions away. Warn (don't block) on the welcome
+  // step so the user can switch to a normal window before investing in signup.
+  const [privateWindow, setPrivateWindow] = useState(false)
+  useEffect(() => {
+    let cancelled = false
+    isPrivateWindow().then(p => {
+      if (!cancelled) setPrivateWindow(p)
+    }).catch(() => { /* detection is best-effort — never block on an error */ })
     return () => { cancelled = true }
   }, [])
   const setSession = useAuthStore(s => s.setSession)
@@ -1063,6 +1077,17 @@ export default function Onboarding() {
               }`}>
                 {t('onboarding.welcome.sponsored_note')}
               </div>
+
+              {/* Private/incognito window can't persist the session. Advisory
+                  (not a hard block) — the user may still proceed, but warn them
+                  up front that they'll be logged out. */}
+              {privateWindow && (
+                <div className={`rounded-xl border px-4 py-3 mb-6 text-sm text-left ${
+                  isDark ? 'border-amber-500/40 bg-amber-500/10 text-amber-300' : 'border-amber-300 bg-amber-50 text-amber-800'
+                }`}>
+                  {t('onboarding.welcome.private_window_warning')}
+                </div>
+              )}
 
               {/* Passkey can't be created in this browser (iOS in-app webview /
                   no platform authenticator). Tell the user how to fix it HERE,
