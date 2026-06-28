@@ -18,7 +18,14 @@ interface QuickSignPromptState {
   onDismiss: (() => void) | null
   /** Skip the prompt for the next action (set after "Sign Manually") */
   skipOnce: boolean
+  /** When true the prompt is purely "enable Quick Sign to connect" — there is no
+   *  pending action to sign manually, so the "Sign Manually" CTA + "don't show
+   *  again" opt-out are hidden (they only make sense when an action is waiting). */
+  connectOnly: boolean
   show: (onContinue?: () => Promise<any> | void, onDismiss?: () => void) => void
+  /** Open the connect-only variant (e.g. the "not connected" link in the profile
+   *  chooser): single "Enable Quick Sign" CTA, no manual-sign path. */
+  showConnect: () => void
   close: () => void
 }
 
@@ -27,10 +34,12 @@ export const useQuickSignPromptStore = create<QuickSignPromptState>((set, get) =
   onContinue: null,
   onDismiss: null,
   skipOnce: false,
-  show: (onContinue, onDismiss) => set({ isOpen: true, onContinue: onContinue || null, onDismiss: onDismiss || null }),
+  connectOnly: false,
+  show: (onContinue, onDismiss) => set({ isOpen: true, connectOnly: false, onContinue: onContinue || null, onDismiss: onDismiss || null }),
+  showConnect: () => set({ isOpen: true, connectOnly: true, onContinue: null, onDismiss: null }),
   close: () => {
     const { onDismiss } = get()
-    set({ isOpen: false, onContinue: null, onDismiss: null })
+    set({ isOpen: false, connectOnly: false, onContinue: null, onDismiss: null })
     // If neither "Enable Quick Sign" nor "Sign Manually" was chosen,
     // fire onDismiss so the caller's promise can settle and reset UI state.
     if (onDismiss) onDismiss()
@@ -46,6 +55,10 @@ const QuickSignModal: React.FC<QuickSignModalProps> = (props) => {
   const prompt = useQuickSignPromptStore()
   const isOpen = props.isOpen ?? prompt.isOpen
   const onClose = props.onClose ?? prompt.close
+  // Connect-only: opened from the "not connected" link with NO pending action to
+  // sign. Drop the "Sign Manually" path + "don't show again" opt-out (both only
+  // apply when an action is waiting) and show a single full-width Enable CTA.
+  const connectOnly = prompt.connectOnly
   const { isDark } = useTheme()
   const t = useT()
   const setEnabled = useSessionKeyStore(s => s.setEnabled)
@@ -161,31 +174,34 @@ const QuickSignModal: React.FC<QuickSignModalProps> = (props) => {
           </div>
         )}
 
-        {/* Don't show again checkbox */}
-        <label className={`flex items-center justify-center gap-2 mb-5 cursor-pointer text-sm ${
-          isDark ? 'text-white/60' : 'text-gray-600'
-        }`}>
-          <button
-            type="button"
-            role="checkbox"
-            aria-checked={dontShowAgain}
-            onClick={() => setDontShowAgain(!dontShowAgain)}
-            className={`w-4 h-4 rounded flex-shrink-0 flex items-center justify-center transition-colors duration-150 ${
-              dontShowAgain
-                ? 'bg-yellow-500'
-                : isDark
-                  ? 'bg-black border border-white/30'
-                  : 'bg-white border border-gray-300'
-            }`}
-          >
-            {dontShowAgain && (
-              <svg className="w-3 h-3 text-black" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={3}>
-                <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
-              </svg>
-            )}
-          </button>
-          {t('common.dont_show_again')}
-        </label>
+        {/* Don't show again checkbox — only relevant to the manual-sign opt-out,
+            so hidden in connect-only mode. */}
+        {!connectOnly && (
+          <label className={`flex items-center justify-center gap-2 mb-5 cursor-pointer text-sm ${
+            isDark ? 'text-white/60' : 'text-gray-600'
+          }`}>
+            <button
+              type="button"
+              role="checkbox"
+              aria-checked={dontShowAgain}
+              onClick={() => setDontShowAgain(!dontShowAgain)}
+              className={`w-4 h-4 rounded flex-shrink-0 flex items-center justify-center transition-colors duration-150 ${
+                dontShowAgain
+                  ? 'bg-yellow-500'
+                  : isDark
+                    ? 'bg-black border border-white/30'
+                    : 'bg-white border border-gray-300'
+              }`}
+            >
+              {dontShowAgain && (
+                <svg className="w-3 h-3 text-black" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={3}>
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
+                </svg>
+              )}
+            </button>
+            {t('common.dont_show_again')}
+          </label>
+        )}
 
         <div className="flex gap-3">
           <button
@@ -195,17 +211,19 @@ const QuickSignModal: React.FC<QuickSignModalProps> = (props) => {
           >
             {loading ? (status || t('quick_sign.btn.activating')) : t('quick_sign.btn.enable')}
           </button>
-          <button
-            onClick={handleSkip}
-            disabled={loading}
-            className={`flex-1 py-3 rounded-full font-semibold transition-colors cursor-pointer ${
-              isDark
-                ? 'bg-white/10 text-white hover:bg-white/20'
-                : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
-            }`}
-          >
-            {t('quick_sign.btn.sign_manually')}
-          </button>
+          {!connectOnly && (
+            <button
+              onClick={handleSkip}
+              disabled={loading}
+              className={`flex-1 py-3 rounded-full font-semibold transition-colors cursor-pointer ${
+                isDark
+                  ? 'bg-white/10 text-white hover:bg-white/20'
+                  : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
+              }`}
+            >
+              {t('quick_sign.btn.sign_manually')}
+            </button>
+          )}
         </div>
 
         <p className={`text-xs text-center mt-3 ${isDark ? 'text-white/30' : 'text-gray-400'}`}>

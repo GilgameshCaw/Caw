@@ -606,7 +606,7 @@ const ProfileChooser: React.FC<{ compact?: boolean }> = ({ compact = false }) =>
                   if (e.key === 'Enter' || e.key === ' ') {
                     e.preventDefault()
                     e.stopPropagation()
-                    useQuickSignPromptStore.getState().show()
+                    useQuickSignPromptStore.getState().showConnect()
                   }
                 }}
                 className="underline hover:opacity-80 cursor-pointer"
