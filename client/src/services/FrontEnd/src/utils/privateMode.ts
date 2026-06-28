@@ -11,13 +11,27 @@
 // Detection is best-effort by nature: browsers actively work to defeat it.
 // Treat a `true` result as "warn the user", never as a hard gate.
 
-/** localStorage is unavailable or throws on write → strong private-mode signal. */
+/**
+ * localStorage is unavailable, throws, or doesn't round-trip → private-mode
+ * signal. We write a value AND read it back: some locked-down WebViews and old
+ * Safari private builds let setItem succeed but silently no-op, so the value
+ * doesn't persist even within the same page load. Catching that case needs the
+ * read-back, not just a try/catch around the write.
+ *
+ * NOTE: this does NOT catch modern iOS Safari 16+ private mode, where storage
+ * round-trips fine in-session and is only wiped on close (ephemeral, not
+ * broken). That case is covered — imperfectly — by the quota heuristic.
+ */
 function localStorageBroken(): boolean {
   try {
+    if (typeof localStorage === 'undefined') return true
     const k = '__caw_pm_probe__'
-    localStorage.setItem(k, '1')
+    const v = 'caw'
+    localStorage.setItem(k, v)
+    const readBack = localStorage.getItem(k)
     localStorage.removeItem(k)
-    return false
+    // Write succeeded but the value didn't stick → storage is a no-op shim.
+    return readBack !== v
   } catch {
     // QuotaExceededError / SecurityError on write — classic private-mode tell
     // (older Safari, locked-down WebViews).
