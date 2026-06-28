@@ -600,7 +600,7 @@ const ProfileChooser: React.FC<{ compact?: boolean }> = ({ compact = false }) =>
                 tabIndex={0}
                 onClick={(e) => {
                   e.stopPropagation()
-                  useQuickSignPromptStore.getState().show()
+                  useQuickSignPromptStore.getState().showConnect()
                 }}
                 onKeyDown={(e) => {
                   if (e.key === 'Enter' || e.key === ' ') {
