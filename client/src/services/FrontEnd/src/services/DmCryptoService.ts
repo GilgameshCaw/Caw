@@ -215,16 +215,21 @@ export async function signSenderEnvelope(
 /**
  * Clear cached DM keys.
  *
- * - clearKeyCache(tokenId): remove ONLY that profile's key (used by the
- *   per-account logout path, which keeps other signed-in profiles intact).
+ * - clearKeyCache(tokenId): remove ONLY that profile's persisted key (used by
+ *   the per-account "Log out" path, which keeps other signed-in profiles intact).
  * - clearKeyCache(): wipe EVERYTHING — in-memory AND the entire `caw-dm-keys`
- *   localStorage blob. Used on wallet-address change / disconnect / clear-all,
- *   where the previous user is leaving the device. SECURITY: the no-arg form
- *   MUST purge localStorage. The persisted blob is a single-user cross-refresh
- *   convenience, NOT a multi-profile store; leaving another tokenId's DM private
- *   key in localStorage when a different user connects lets that user read it
- *   straight out of DevTools (cross-profile DM key exposure on a shared
- *   browser). Previously the no-arg form only cleared in-memory state.
+ *   localStorage blob. Used ONLY by the explicit "Clear all data" path.
+ *
+ * POLICY (2026-06-28): the persisted localStorage blob is purged ONLY by these
+ * explicit user actions in /settings/account ("Log out" / "Clear all data"). It
+ * is NOT purged on wallet disconnect or account switch — a user with multiple
+ * wallets/passkeys must switch between profiles seamlessly with each keeping its
+ * DM keys, and Pop-B passkey users have no real wagmi address (wagmi flickers
+ * address↔undefined on cold start / bfcache reload), so purging on those
+ * transitions forced a vault-password re-prompt on every reload. StateProvider
+ * therefore calls clearInMemoryKeyCache() (NOT clearKeyCache) on disconnect /
+ * switch — that closes the F6 XSS-readable in-memory window while preserving the
+ * at-rest blob. A shared-device handoff is the user clicking "Log out".
  */
 export function clearKeyCache(tokenId?: number) {
   cachedPrivateKey = null
@@ -243,6 +248,26 @@ export function clearKeyCache(tokenId?: number) {
       localStorage.removeItem(DM_KEYS_STORAGE_KEY)
     }
   } catch { /* localStorage unavailable — in-memory already cleared */ }
+}
+
+/**
+ * Clear ONLY the in-memory DM key state (cachedPrivateKey, cachedPublicKey,
+ * cachedTokenId, sharedSecretByPeer). Does NOT touch localStorage.
+ *
+ * Use this on wallet DISCONNECT and account SWITCH (including spurious Pop-B
+ * wagmi flickers) where the security requirement is closing the XSS-readable
+ * in-memory window (F6 audit fix) but the persisted blob must survive so the
+ * user is not forced to re-derive (vault-password prompt) on the next reconnect
+ * or when switching back to a profile.
+ *
+ * The full clearKeyCache() (with localStorage purge) is reserved for the
+ * explicit "Log out" / "Clear all data" actions in /settings/account.
+ */
+export function clearInMemoryKeyCache() {
+  cachedPrivateKey = null
+  cachedPublicKey = null
+  cachedTokenId = null
+  sharedSecretByPeer.clear()
 }
 
 /**
