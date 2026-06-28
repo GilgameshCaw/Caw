@@ -650,18 +650,17 @@ const ProfileEditForm: React.FC<ProfileEditFormProps> = ({
       <div className="pt-4 border-t border-white/10">
         <div className="flex items-center justify-between gap-4">
           {/* On-chain toggle */}
-          <label className={`select-none ${hasOnChainChanges ? 'cursor-pointer' : 'cursor-not-allowed opacity-50'} ${compactFields ? 'flex flex-row items-center gap-2' : 'flex flex-col items-center'}`}>
+          <label className={`select-none cursor-pointer ${compactFields ? 'flex flex-row items-center gap-2' : 'flex flex-col items-center'}`}>
             <span className={`${compactFields ? '' : 'mb-1'} text-sm font-medium ${isDark ? 'text-gray-300' : 'text-gray-700'}`}>On-chain</span>
             <input
               type="checkbox"
-              checked={saveOnChain && hasOnChainChanges}
-              onChange={() => { if (hasOnChainChanges) setSaveOnChain(v => !v) }}
-              disabled={!hasOnChainChanges}
+              checked={saveOnChain}
+              onChange={() => setSaveOnChain(v => !v)}
               className="sr-only"
             />
             <div className={`relative w-11 h-[22px] flex items-center rounded-full border ${isDark ? 'border-gray-500' : 'border-gray-400'}`}>
-              <div className={`absolute inset-0 rounded-full transition-colors duration-200 ${saveOnChain && hasOnChainChanges ? 'bg-yellow-500' : 'bg-gray-300 dark:bg-gray-600'}`} />
-              <div className={`absolute w-[18px] h-[18px] bg-white rounded-full shadow-md transform transition-all duration-200 ${saveOnChain && hasOnChainChanges ? 'translate-x-[22px]' : 'translate-x-0.5'}`} />
+              <div className={`absolute inset-0 rounded-full transition-colors duration-200 ${saveOnChain ? 'bg-yellow-500' : 'bg-gray-300 dark:bg-gray-600'}`} />
+              <div className={`absolute w-[18px] h-[18px] bg-white rounded-full shadow-md transform transition-all duration-200 ${saveOnChain ? 'translate-x-[22px]' : 'translate-x-0.5'}`} />
             </div>
           </label>
 
