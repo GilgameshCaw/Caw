@@ -2,6 +2,9 @@
 import { Router } from 'express'
 import { prisma } from '../../prismaClient'
 import { ActionType } from '@prisma/client'
+import Redis from 'ioredis'
+import { JsonRpcProvider } from 'ethers'
+import { makeJsonRpcProvider, getL1HttpRpcUrl } from '../../utils/rpcProvider'
 // Tier 1 + Tier 2 of the "RPC out of API request handlers" refactor:
 // - findOrCreateUser is NOT imported. API endpoints read only from the DB;
 //   on a miss we return 202 and let the indexer (RawEventsGatherer +
@@ -15,6 +18,71 @@ import { getBlockedUserIds } from '../shared/blockUtils'
 import { requireAuth } from '../middleware/auth'
 import { markOrphan, markOrphanWithVariants } from '../util/orphanedMedia'
 import { isPlaceholderUser } from '../../services/UserService'
+
+// ---------------------------------------------------------------------------
+// isPasskey cache + L1 provider (lazy, reused across requests)
+// ---------------------------------------------------------------------------
+
+const _isPasskeyRedis = process.env.REDIS_URL
+  ? new Redis(process.env.REDIS_URL)
+  : new Redis({ port: 6379, host: '127.0.0.1' })
+
+const IS_PASSKEY_TTL = 3600 // 1 hour — 7702 delegation is effectively permanent
+
+const L1_CHAIN_ID_USERS = process.env.L1_CHAIN_ID ? Number(process.env.L1_CHAIN_ID) : 11155111
+let _usersL1Provider: JsonRpcProvider | null = null
+function getUsersL1Provider(): JsonRpcProvider {
+  if (_usersL1Provider) return _usersL1Provider
+  const url = getL1HttpRpcUrl()
+  if (!url) throw new Error('L1 RPC not configured')
+  _usersL1Provider = makeJsonRpcProvider(url, L1_CHAIN_ID_USERS)
+  return _usersL1Provider
+}
+
+// In-process fallback cache in case Redis is unavailable during the getCode call.
+const _isPasskeyMemCache = new Map<string, { value: boolean; at: number }>()
+
+/**
+ * Returns true when the owner EOA is EIP-7702-delegated to any SmartEOA
+ * implementation (code starts with 0xef0100 per EIP-7702 prefix).
+ * Fails open (returns true) on any RPC/cache error so passkey sign-in is
+ * never wrongly blocked by an infrastructure blip.
+ */
+async function resolveIsPasskey(ownerAddress: string): Promise<boolean> {
+  const key = `user:isPasskey:${ownerAddress.toLowerCase()}`
+  const nowMs = Date.now()
+
+  // 1. Try Redis
+  try {
+    const cached = await _isPasskeyRedis.get(key)
+    if (cached !== null) return cached === '1'
+  } catch {
+    // Redis miss → fall through to in-process cache then RPC
+  }
+
+  // 2. In-process cache
+  const mem = _isPasskeyMemCache.get(key)
+  if (mem && nowMs - mem.at < IS_PASSKEY_TTL * 1000) return mem.value
+
+  // 3. On-chain getCode
+  let result = true // fail-open default
+  try {
+    const code: string = await getUsersL1Provider().getCode(ownerAddress)
+    result = code.toLowerCase().startsWith('0xef0100')
+    // Populate caches
+    try {
+      await _isPasskeyRedis.set(key, result ? '1' : '0', 'EX', IS_PASSKEY_TTL)
+    } catch {
+      // Redis write failure is non-fatal
+    }
+    _isPasskeyMemCache.set(key, { value: result, at: nowMs })
+  } catch (e) {
+    console.warn('[users] resolveIsPasskey getCode failed, defaulting true:', e)
+  }
+  return result
+}
+
+// ---------------------------------------------------------------------------
 
 // Validation limits for profile fields (must match ActionProcessor)
 const PROFILE_FIELD_LIMITS: Record<string, number> = {
@@ -1153,6 +1221,11 @@ router.get('/:username', async (req, res) => {
       }
     }
 
+    // Resolve isPasskey from L1 getCode (cached; fails open to true)
+    const isPasskey = user.address
+      ? await resolveIsPasskey(user.address)
+      : true
+
     const response = {
       ...user,
       cawCount: Math.max(0, user.cawCount - replyCount) + (user.recawCount || 0),
@@ -1172,6 +1245,7 @@ router.get('/:username', async (req, res) => {
       xHandle,
       xFollowerBucket,
       xLinkedAt,
+      isPasskey,
     }
 
     return res.json(response)

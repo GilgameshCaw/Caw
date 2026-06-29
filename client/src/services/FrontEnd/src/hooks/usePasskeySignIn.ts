@@ -65,10 +65,19 @@ export function usePasskeySignIn(): UsePasskeySignIn {
     setBusy(true)
     try {
       // 1. Resolve the profile.
-      const profile = await apiFetch<{ tokenId: number; address: string }>(
+      const profile = await apiFetch<{ tokenId: number; address: string; isPasskey?: boolean }>(
         `/api/users/${encodeURIComponent(uname)}`,
       )
       if (!profile?.tokenId) throw new Error(t('passkey_signin.error.not_found'))
+
+      // Block Pop-A (plain wallet) accounts BEFORE the passkey prompt — they have
+      // no passkey to sign with, so let them know up front instead of after a
+      // confusing 401. isPasskey is server-computed (on-chain getCode); it
+      // fail-opens to true on a server read error, so a real passkey user is
+      // never wrongly blocked.
+      if (profile.isPasskey === false) {
+        throw new Error(t('passkey_signin.error.not_passkey'))
+      }
 
       // 2. Server-issued challenge.
       const { challenge } = await apiFetch<{ challenge: `0x${string}` }>(
