@@ -37,6 +37,8 @@ import { useT } from '~/i18n/I18nProvider'
 import { useWalletPopulation } from '~/hooks/useWalletPopulation'
 import { getPasskeyCredential } from '~/constants/passkeyStorage'
 import { useActiveToken } from '~/store/tokenDataStore'
+import { useQuickSignPromptStore } from '~/components/modals/QuickSignModal'
+import { useHasActiveSession } from '~/hooks/useHasActiveSession'
 import { apiFetch } from '~/api/client'
 import { CAW_ADDRESS } from '~/../../../abi/addresses'
 import { smartEoaAbi } from '~/../../../abi/generated'
@@ -209,6 +211,7 @@ function IdentitySectionInner({
   const { execute: smartEoaExecute, account: eoaAccount } = useSmartEoaExecute()
   const { signManagement, signManagementWithRecoveryKey } = useSmartEoaManagement()
   const activeToken = useActiveToken()
+  const hasActiveSession = useHasActiveSession()
 
   // Dialog open states.
   const [addPasskeyOpen, setAddPasskeyOpen] = useState(false)
@@ -550,9 +553,17 @@ function IdentitySectionInner({
           // SmartEOA has NO finalizeAddPasskey / confirmPasskey function.
           // addPasskey() enrolls the key in one call with validFrom = now + 24h;
           // the key becomes active automatically after the timelock — no second tx needed.
-          // This callback is therefore a deliberate no-op: just close and refetch state.
+          // This callback is therefore a deliberate no-op on-chain: just close and
+          // refetch state. As a convenience, nudge the user to enable Quick Sign
+          // right after — many add a passkey precisely so they can sign in/act on a
+          // new device, and Quick Sign is the next thing they'll want. Only prompt
+          // when there's no active session yet. (Slight delay so the dialog close
+          // animation finishes before the QS modal opens.)
           setAddPasskeyOpen(false)
           refetch()
+          if (!hasActiveSession) {
+            setTimeout(() => useQuickSignPromptStore.getState().showConnect(), 300)
+          }
         }}
         onCancel={async (pubkeyId) => {
           // Relay SmartEOA.cancelPendingPasskey(targetPubkeyHash, callerSig) via sponsor.
