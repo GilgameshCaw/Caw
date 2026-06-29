@@ -35,6 +35,9 @@ interface SessionKeyState {
   getSessionForAddress: (address: string) => SessionKeyEntry | null
   setSession: (entry: SessionKeyEntry) => void
   clearSession: () => void
+  /** Clear the Quick Sign session for a SPECIFIC owner address (per-wallet
+   *  sign-out), regardless of which wallet is active. */
+  clearSessionForAddress: (address: string) => void
   setActiveWallet: (address: string | null) => void
   setEnabled: (enabled: boolean) => void
   setHasSeenPrompt: (seen: boolean) => void
@@ -108,6 +111,22 @@ export const useSessionKeyStore = create<SessionKeyState>()(
         } else {
           set({ sessions: {}, enabled: false })
         }
+      },
+
+      clearSessionForAddress: (address: string) => {
+        const addr = address.toLowerCase()
+        clearDecryptedKey(addr)
+        set(state => {
+          const rest = { ...state.sessions }
+          delete rest[addr]
+          // Only flip the global enabled flag off if NO sessions remain — other
+          // accounts in this browser may still want Quick Sign on.
+          const noneLeft = Object.keys(rest).length === 0
+          const next: Partial<SessionKeyState> = { sessions: rest }
+          if (noneLeft) next.enabled = false
+          if (state.activeWallet === addr) next.activeWallet = null
+          return next as SessionKeyState
+        })
       },
 
       setActiveWallet: (address) => set({ activeWallet: address?.toLowerCase() || null }),

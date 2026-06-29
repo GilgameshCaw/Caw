@@ -18,6 +18,9 @@ import { useUserByUsername, useUserByToken } from '~/hooks/useUserData';
 import { getUserAvatar, getDefaultAvatarForUser } from '~/utils/defaultAvatar';
 import Avatar from '~/components/Avatar';
 import { useQuickSignPromptStore } from '~/components/modals/QuickSignModal';
+import { useSessionKeyStore } from '~/store/sessionKeyStore';
+import { clearKeyCache } from '~/services/DmCryptoService';
+import ModalWrapper from '~/components/modals/ModalWrapper';
 import { useFollowerCounts } from '~/hooks/useFollowerCounts';
 import { usePinnedProfilesStore } from '~/store/pinnedProfilesStore';
 import { ThumbtackIcon } from '~/components/icons/ThumbtackIcon';
@@ -365,6 +368,10 @@ const ProfileChooser: React.FC<{ compact?: boolean }> = ({ compact = false }) =>
     }
   };
 
+  // The wallet whose remove "X" was tapped — drives the remove-choice modal
+  // ("Sign out" vs "Hide for now"). null = modal closed.
+  const [removeModalAddress, setRemoveModalAddress] = useState<string | null>(null)
+
   const handleRemoveAddress = (addressToRemove: Address) => {
     const store = useTokenDataStore.getState()
     const normalized = addressToRemove.toLowerCase()
@@ -383,6 +390,24 @@ const ProfileChooser: React.FC<{ compact?: boolean }> = ({ compact = false }) =>
         }
       }
     }
+  };
+
+  // "Sign out": full teardown of this wallet's secrets on THIS device — clear
+  // the Quick Sign session key for this owner + the DM keys for every token it
+  // owns — then remove it from the chooser. "Hide for now" (= handleRemoveAddress)
+  // only drops it from the list; the keys persist so re-adding is frictionless.
+  const handleSignOutAddress = (addressToRemove: string) => {
+    const normalized = addressToRemove.toLowerCase()
+    // Clear DM keys for every token owned by this address.
+    const owned = useTokenDataStore.getState().tokensByAddress[normalized as Address] ?? []
+    for (const token of owned) {
+      try { clearKeyCache(token.tokenId) } catch { /* best-effort */ }
+    }
+    // Clear the Quick Sign session for this owner specifically.
+    try { useSessionKeyStore.getState().clearSessionForAddress(normalized) } catch { /* best-effort */ }
+    // Then drop it from the chooser (reuses the active-token reassignment logic).
+    handleRemoveAddress(addressToRemove as Address)
+    setRemoveModalAddress(null)
   };
 
   const handleSelectProfile = (token: TokenData) => {
@@ -668,7 +693,7 @@ const ProfileChooser: React.FC<{ compact?: boolean }> = ({ compact = false }) =>
                   </div>
                 ) : (
                   <button
-                    onClick={() => handleRemoveAddress(ownerAddress as Address)}
+                    onClick={(e) => { e.stopPropagation(); setRemoveModalAddress(ownerAddress) }}
                     className="hover:bg-[#ffffff33] cursor-pointer show-hover-parent w-[14px] px-0 ml-2 text-[8px] bg-[#ffffff22] rounded-xs"
                   >
                     X
@@ -858,6 +883,49 @@ const ProfileChooser: React.FC<{ compact?: boolean }> = ({ compact = false }) =>
         </ul>
 
       )}
+
+      {/* Remove-wallet choice: full sign-out (wipe this device's QS + DM keys)
+          vs hide-for-now (drop from the list, keep keys). */}
+      <ModalWrapper isOpen={!!removeModalAddress} onClose={() => setRemoveModalAddress(null)} usePortal maxWidth="max-w-sm">
+        <div className="p-6">
+          <h3 className={`text-base font-semibold mb-1 ${isDark ? 'text-white' : 'text-black'}`}>
+            {t('profile_chooser.remove_title')}
+          </h3>
+          <p className={`text-sm mb-1 font-mono break-all ${isDark ? 'text-white/50' : 'text-gray-500'}`}>
+            {removeModalAddress}
+          </p>
+          <p className={`text-sm mb-5 ${isDark ? 'text-white/60' : 'text-gray-600'}`}>
+            {t('profile_chooser.remove_body')}
+          </p>
+          <div className="space-y-2">
+            <button
+              type="button"
+              onClick={() => removeModalAddress && handleSignOutAddress(removeModalAddress)}
+              className="w-full py-2.5 rounded-full text-sm font-semibold bg-yellow-500 hover:bg-yellow-400 text-black transition-colors cursor-pointer"
+            >
+              {t('profile_chooser.remove_sign_out')}
+            </button>
+            <button
+              type="button"
+              onClick={() => { if (removeModalAddress) handleRemoveAddress(removeModalAddress as Address); setRemoveModalAddress(null) }}
+              className={`w-full py-2.5 rounded-full text-sm font-semibold transition-colors cursor-pointer ${
+                isDark ? 'bg-white/10 text-white hover:bg-white/20' : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
+              }`}
+            >
+              {t('profile_chooser.remove_hide')}
+            </button>
+            <button
+              type="button"
+              onClick={() => setRemoveModalAddress(null)}
+              className={`w-full py-2.5 rounded-full text-sm font-medium transition-colors cursor-pointer ${
+                isDark ? 'text-white/50 hover:text-white/80' : 'text-gray-400 hover:text-gray-600'
+              }`}
+            >
+              {t('common.cancel')}
+            </button>
+          </div>
+        </div>
+      </ModalWrapper>
 
     </div>
   );
