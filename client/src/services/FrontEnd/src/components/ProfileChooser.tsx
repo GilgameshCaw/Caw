@@ -594,7 +594,11 @@ const ProfileChooser: React.FC<{ compact?: boolean }> = ({ compact = false }) =>
             )
           })()}
           {notCurrentAddress && (
-            <div className="text-2xs text-error-dim">
+            // Pop-B (no wagmi wallet connected) just needs to activate Quick
+            // Sign — that's an inviting CTA, not an error, so show it yellow.
+            // A connected-but-WRONG wallet (Pop-A) is a genuine mismatch → keep
+            // it red.
+            <div className={`text-2xs ${isConnected ? 'text-error-dim' : 'text-yellow-500'}`}>
               <span
                 role="button"
                 tabIndex={0}
@@ -611,7 +615,7 @@ const ProfileChooser: React.FC<{ compact?: boolean }> = ({ compact = false }) =>
                 }}
                 className="underline hover:opacity-80 cursor-pointer"
               >
-                {isConnected ? "(Wrong Address)" : "not connected"}
+                {isConnected ? "(Wrong Address)" : "Activate Quick Sign"}
               </span>
             </div>
           )}
