@@ -18,6 +18,7 @@ import { apiFetch, API_HOST, AuthError } from '~/api/client'
 import { useFollowerCounts } from '~/hooks/useFollowerCounts'
 import { usePinnedProfilesStore } from '~/store/pinnedProfilesStore'
 import { formatAddress } from '~/utils'
+import { isPasskeyAddress } from '~/constants/passkeyStorage'
 import { ThumbtackIcon } from '~/components/icons/ThumbtackIcon'
 import { useT } from '~/i18n/I18nProvider'
 import { IdentitySection } from '~/components/identity/IdentitySection'
@@ -958,10 +959,18 @@ const AccountSettings: React.FC = () => {
             <div className="space-y-6">
               {tokensByWalletSorted.map(group => (
                 <div key={group.address}>
-                  <div className="flex items-center justify-between mb-2 px-1">
-                    <span className={`text-xs font-mono ${isDark ? 'text-white/50' : 'text-gray-500'}`}>
+                  <div className="flex items-center gap-1.5 mb-2 px-1">
+                    <Link
+                      to={`/address/${group.address}`}
+                      className={`text-xs font-mono hover:underline ${isDark ? 'text-white/50 hover:text-white/80' : 'text-gray-500 hover:text-gray-800'}`}
+                    >
                       {formatAddress(group.address)}
-                    </span>
+                    </Link>
+                    {isPasskeyAddress(group.address) && (
+                      <Tooltip text="Passkey wallet">
+                        <HiKey className={`w-3.5 h-3.5 ${isDark ? 'text-yellow-500/70' : 'text-yellow-600/80'}`} aria-label="Passkey wallet" />
+                      </Tooltip>
+                    )}
                   </div>
                   <div className="space-y-2">
                     {group.tokens.map(token => {
