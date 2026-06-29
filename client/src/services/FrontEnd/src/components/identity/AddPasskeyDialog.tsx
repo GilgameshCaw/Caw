@@ -99,6 +99,11 @@ function friendlyError(raw: string): string {
   if (/^(failed to fetch|load failed|network ?error)$/i.test(stripped)) {
     return 'Something went wrong'
   }
+  // WebAuthn NotAllowedError leaks a w3.org URL — backstop in case it reaches
+  // here (the handler normally treats it as a silent cancel).
+  if (/timed out or was not allowed/i.test(stripped)) {
+    return 'Passkey prompt was cancelled or timed out. Please try again.'
+  }
   return stripped || 'Something went wrong'
 }
 
@@ -163,8 +168,19 @@ export function AddPasskeyDialog({
       setPhase({ name: 'proposed', txHash })
     } catch (err: unknown) {
       const raw = err instanceof Error ? err.message : 'Failed to create passkey'
-      // User cancellation from the browser passkey sheet is not an error worth showing.
-      if (raw.toLowerCase().includes('cancel') || raw.toLowerCase().includes('abort')) {
+      // Dismissing the browser's passkey sheet throws a WebAuthn
+      // NotAllowedError ("The operation either timed out or was not allowed…").
+      // Treat that — plus explicit cancel/abort — as a silent no-op, not an
+      // error: the user backed out, just return to the form. Detect by the
+      // DOMException name (reliable) AND a couple of message substrings (some
+      // browsers wrap it).
+      const errName = (err as { name?: string })?.name ?? ''
+      const lower = raw.toLowerCase()
+      if (
+        errName === 'NotAllowedError' ||
+        lower.includes('cancel') || lower.includes('abort') ||
+        lower.includes('timed out or was not allowed')
+      ) {
         setPhase({ name: 'idle' })
         return
       }
