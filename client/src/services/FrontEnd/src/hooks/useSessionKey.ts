@@ -3,16 +3,21 @@ import { hashMessage } from 'viem'
 import { generatePrivateKey, privateKeyToAccount } from 'viem/accounts'
 import { useSignMessage, useSwitchChain, useChainId, useAccount } from 'wagmi'
 import { useReadContract } from 'wagmi'
+import { getPublicClient } from '@wagmi/core'
 import { useConnectModalBridge as useConnectModal } from '~/hooks/useConnectModalBridge'
 import { baseSepolia } from 'wagmi/chains'
 import { apiFetch } from '~/api/client'
 import { useSessionKeyStore } from '~/store/sessionKeyStore'
-import { CAW_NAMES_L2_ADDRESS } from '~/../../../abi/addresses'
+import { CAW_NAMES_L2_ADDRESS, SMART_EOA_ADDRESS } from '~/../../../abi/addresses'
 import { CLIENT_ID } from '~/api/actions'
 import { useActiveToken, usePriceStore } from '~/store/tokenDataStore'
 import { useRootSigner } from '~/hooks/useRootSigner'
 import { encryptPrivateKey, getEncryptionSignMessage, setDecryptedKey } from '~/services/sessionKeyEncryption'
 import { cawProfileLedgerAbi } from '~/../../../abi/generated'
+import { wagmiConfig } from '~/config/wagmiConfig'
+import { useRecoveryContext } from '~/components/identity/RecoveryProvider'
+import { signAuthorizationTuple } from '~/services/identity/eip7702'
+import { enrollPasskey } from '~/services/identity/passkey'
 
 export const DEFAULT_SESSION_DURATION = 180 * 24 * 60 * 60 // 6 months
 
@@ -145,6 +150,7 @@ export function useCreateSession() {
   const activeToken = useActiveToken()
   const cawPrice = usePriceStore(s => s.priceMap['a-hunters-dream'] ?? 0)
   const rootSigner = useRootSigner()
+  const recovery = useRecoveryContext()
 
   return useCallback(async (onProgress?: (status: string) => void, spendLimit: bigint = DEFAULT_SPEND_LIMIT, durationSeconds: number = DEFAULT_SESSION_DURATION, encryptWithWallet: boolean = false, tipCeiling: bigint = 0n) => {
     // Population B (passkey, no wagmi wallet) authorizes the session via the
@@ -182,6 +188,95 @@ export function useCreateSession() {
       // Passkey: throws a clear "use your backup file" error if no signer is
       // available on this device, instead of popping a wallet modal.
       await rootSigner.ensureReady()
+
+      // ── L2 delegation self-heal — RECOVERY MODE ONLY ─────────────────────
+      // Old accounts created before the L2-delegate leg (#261) have an
+      // L1-delegated SmartEOA but NO L2 delegation. CawProfileLedger.registerSession
+      // calls SmartEOA.isValidSignature on L2 to verify the passkey; with no code
+      // on L2 that call fails → BadSig(). We CAN'T rebuild the L2 delegation from a
+      // normal passkey session — it needs the secp256k1 ecdsaFallback key to sign a
+      // 7702 auth tuple (a passkey can't), and that key only lives in memory in
+      // RECOVERY MODE. So the self-heal runs ONLY when recovery.privateKey is
+      // present. A normal session NEVER probes L2 or demands a backup file (avoids
+      // a false "go find your backup" when the real failure is something else); if
+      // such an account is genuinely undelegated, registration fails with the
+      // normal error and the user can re-onboard. (Recovery mode already involves a
+      // deliberate backup-file flow, so the extra passkey prompt below is in-context.)
+      const ownerAddr = (activeToken?.owner ?? rootSigner.address) as `0x${string}` | undefined
+      if (recovery.privateKey && ownerAddr) {
+        const l2Client = getPublicClient(wagmiConfig, { chainId: baseSepolia.id })
+        const currentCode = l2Client ? await l2Client.getCode({ address: ownerAddr }) : undefined
+        const wantPrefix = (`0xef0100${SMART_EOA_ADDRESS.slice(2).toLowerCase()}`)
+        const isDelegated = typeof currentCode === 'string' &&
+          currentCode.toLowerCase() === wantPrefix
+
+        if (!isDelegated) {
+          onProgress?.('Setting up your account on L2…')
+
+          // ecdsaFallbackAddr = the secp256k1 key's address (= recovery.address).
+          const ecdsaFallbackAddr = recovery.address!
+
+          // The L2 SmartEOA.initialize needs a passkey pubkey, but the existing
+          // passkey's P-256 coordinates aren't stored locally (only the
+          // credentialId is) and recovery context only carries the secp256k1 key.
+          // The only client-side way to obtain X/Y is a WebAuthn ceremony, so we
+          // enroll here. On platforms with a synced passkey (iCloud / Google PM)
+          // this surfaces the existing key; otherwise a fresh credential is
+          // enrolled for L2 use. Acceptable: the user is already in a deliberate
+          // recovery flow. The secp256k1 ecdsaFallback (the recovery key) remains
+          // the anchor that the session-register ERC-1271 path validates against.
+          const rpId = typeof window !== 'undefined' ? window.location.hostname : 'app.caw.social'
+          const passkey = await enrollPasskey({
+            rpId,
+            userName: activeToken?.username ?? ecdsaFallbackAddr,
+            userDisplayName: activeToken?.username ?? ecdsaFallbackAddr,
+          })
+
+          // Get the L2 EOA nonce — must not hardcode 0; old accounts may have
+          // transacted on L2 (e.g. a previous delegate-l2 that didn't propagate).
+          const l2Nonce = l2Client
+            ? await l2Client.getTransactionCount({ address: ownerAddr })
+            : 0
+
+          // Build the L2 EIP-7702 auth tuple signed with the secp256k1 key.
+          const keyBytes = new Uint8Array(
+            recovery.privateKey.slice(2).match(/.{2}/g)!.map(h => parseInt(h, 16))
+          )
+          const authResult = await signAuthorizationTuple({
+            privateKey: keyBytes,
+            chainId: baseSepolia.id,
+            contractAddress: SMART_EOA_ADDRESS as `0x${string}`,
+            nonce: BigInt(l2Nonce),
+          })
+
+          // POST to sponsor — same body shape as Onboarding.tsx:478.
+          await apiFetch('/api/sponsor/delegate-l2', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              passkeyPubkeyX: passkey.pubkeyX,
+              passkeyPubkeyY: passkey.pubkeyY,
+              ecdsaFallbackAddr,
+              authTupleNonce: String(l2Nonce),
+              authTupleSignature: {
+                yParity: authResult.signedAuthorization.yParity,
+                r: authResult.signedAuthorization.r,
+                s: authResult.signedAuthorization.s,
+              },
+            }),
+          })
+
+          // Poll L2 getCode until delegation lands (max ~30 s, 10 × 3 s).
+          if (l2Client) {
+            for (let i = 0; i < 10; i++) {
+              await new Promise(r => setTimeout(r, 3000))
+              const code = await l2Client.getCode({ address: ownerAddr })
+              if (typeof code === 'string' && code.toLowerCase() === wantPrefix) break
+            }
+          }
+        }
+      }
+      // ── end L2 delegation self-heal ───────────────────────────────────────
     }
 
     onProgress?.('Generating session key...')
@@ -312,7 +407,7 @@ export function useCreateSession() {
     if (effectiveOwner) setActiveWallet(effectiveOwner)
 
     return { address: sessionAccount.address, expiry }
-  }, [isConnected, connectedAddress, openConnectModal, chainId, signMessageAsync, switchChainAsync, setSession, setActiveWallet, activeToken, cawPrice, rootSigner])
+  }, [isConnected, connectedAddress, openConnectModal, chainId, signMessageAsync, switchChainAsync, setSession, setActiveWallet, activeToken, cawPrice, rootSigner, recovery])
 }
 
 /**
