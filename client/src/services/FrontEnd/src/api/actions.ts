@@ -1512,9 +1512,18 @@ export function useSignAndSubmitAction() {
             message,
           })
         } catch (sigErr: unknown) {
-          // If the wallet rejected because of chain mismatch, switch and retry
-          const msg = sigErr instanceof Error ? sigErr.message : ''
-          const isChainMismatch = /chain.*mismatch|wrong.*chain|network.*mismatch|switch.*network/i.test(msg)
+          // If the wallet rejected because of chain mismatch, switch and retry.
+          // viem throws ChainMismatchError with message "The current chain of
+          // the wallet (id: …) does not match the target chain …" — match on
+          // the stable error NAME first (survives message-wording changes), and
+          // keep the legacy message substrings as a backstop. The earlier
+          // /chain.*mismatch/ regex did NOT match viem 2.31.3's message, so this
+          // recovery silently never fired for new wallet users on the wrong net.
+          const msg  = sigErr instanceof Error ? sigErr.message : ''
+          const name = (sigErr as { name?: string } | null)?.name ?? ''
+          const isChainMismatch =
+            name === 'ChainMismatchError' ||
+            /chain.*mismatch|wrong.*chain|network.*mismatch|switch.*network|does not match the target chain|chain of the wallet/i.test(msg)
           if (isChainMismatch && walletChainId !== baseSepolia.id) {
             await switchChainAsync({ chainId: baseSepolia.id })
             signature = await signTypedDataAsync({
