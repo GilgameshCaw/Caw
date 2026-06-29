@@ -505,6 +505,17 @@ const ProfileChooser: React.FC<{ compact?: boolean }> = ({ compact = false }) =>
         slice = [...slice.slice(0, MAX_PROFILES_PER_WALLET - 1), activeRow]
       }
     }
+    // A pin means "always show me this one" — never let a pinned profile fall
+    // outside the visible slice (it would silently vanish from the chooser even
+    // though the user explicitly pinned it). Append any pinned rows that the cap
+    // dropped. This can exceed MAX_PROFILES_PER_WALLET, which is intended: the
+    // user opted in per-pin.
+    const pinnedDropped = full.filter(
+      t => pinnedAt[t.tokenId] && !slice.some(s => s.tokenId === t.tokenId),
+    )
+    if (pinnedDropped.length > 0) {
+      slice = [...slice, ...pinnedDropped]
+    }
     limitedTokensByAddress[addrKey] = slice
     hiddenCountByAddress[addrKey] = Math.max(0, full.length - slice.length)
     const visibleIds = new Set(slice.map(t => t.tokenId))

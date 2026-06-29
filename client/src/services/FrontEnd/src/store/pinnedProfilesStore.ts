@@ -14,10 +14,15 @@ import { persist } from 'zustand/middleware'
 interface PinnedProfilesState {
   /** tokenId -> ISO timestamp string when it was pinned. */
   pinnedAt: Record<number, string>
+  /** tokenId -> lowercase owner address, captured at pin time. Lets the token
+   *  refresh (useTokenDataUpdate) keep a pinned profile FETCHED even when its
+   *  owner isn't the active address — so a pin actually keeps the profile in the
+   *  chooser, not just reorders it. */
+  pinnedOwner: Record<number, string>
 
-  pin: (tokenId: number) => void
+  pin: (tokenId: number, owner?: string) => void
   unpin: (tokenId: number) => void
-  togglePin: (tokenId: number) => void
+  togglePin: (tokenId: number, owner?: string) => void
   isPinned: (tokenId: number) => boolean
 }
 
@@ -25,20 +30,25 @@ export const usePinnedProfilesStore = create<PinnedProfilesState>()(
   persist(
     (set, get) => ({
       pinnedAt: {},
+      pinnedOwner: {},
 
-      pin: (tokenId) => set(state => ({
-        pinnedAt: { ...state.pinnedAt, [tokenId]: new Date().toISOString() }
+      pin: (tokenId, owner) => set(state => ({
+        pinnedAt: { ...state.pinnedAt, [tokenId]: new Date().toISOString() },
+        pinnedOwner: owner
+          ? { ...state.pinnedOwner, [tokenId]: owner.toLowerCase() }
+          : state.pinnedOwner,
       })),
 
       unpin: (tokenId) => set(state => {
-        const { [tokenId]: _, ...rest } = state.pinnedAt
-        return { pinnedAt: rest }
+        const { [tokenId]: _, ...restAt } = state.pinnedAt
+        const { [tokenId]: __, ...restOwner } = state.pinnedOwner
+        return { pinnedAt: restAt, pinnedOwner: restOwner }
       }),
 
-      togglePin: (tokenId) => {
+      togglePin: (tokenId, owner) => {
         const isPinned = !!get().pinnedAt[tokenId]
         if (isPinned) get().unpin(tokenId)
-        else get().pin(tokenId)
+        else get().pin(tokenId, owner)
       },
 
       isPinned: (tokenId) => !!get().pinnedAt[tokenId],

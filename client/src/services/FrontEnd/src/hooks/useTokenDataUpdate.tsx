@@ -7,6 +7,7 @@ import { baseSepolia, sepolia } from "wagmi/chains"
 import { CAW_NAMES_L2_ADDRESS, CAW_PROFILE_LENS_ADDRESS } from "~/../../../abi/addresses";
 import { cawProfileLensAbi, cawProfileLedgerAbi } from "~/../../../abi/generated"
 import { useTokenDataStore } from "~/store/tokenDataStore"
+import { usePinnedProfilesStore } from "~/store/pinnedProfilesStore"
 import TOKENS from "~/constants/tokens"
 // import { useQuery } from "@tanstack/react-query"
 import { TokenData } from "~/types";
@@ -24,6 +25,7 @@ export default function useTokenDataUpdate() {
   const { address } = useAccount()
   const setTokensForAddress = useTokenDataStore(s => s.setTokensForAddress)
   const tokensByAddress = useTokenDataStore(s => s.tokensByAddress)
+  const pinnedOwner = usePinnedProfilesStore(s => s.pinnedOwner)
   const activeTokenIdByAddress = useTokenDataStore(s => s.activeTokenIdByAddress)
 
   const setActiveTokenIdForAddress = useTokenDataStore(s => s.setActiveTokenIdForAddress)
@@ -268,10 +270,18 @@ export default function useTokenDataUpdate() {
     }
     if (viewedAddress) set.add(viewedAddress)
     if (connectedAddress) set.add(connectedAddress)
+    // Pinned profiles' owners — even when a pinned profile's owner is neither
+    // viewed nor connected nor currently in tokensByAddress, keep refreshing it
+    // so a pin actually keeps the profile in the chooser instead of letting it
+    // fall out when the user switches to another account. (The owner is captured
+    // at pin time; see pinnedProfilesStore.)
+    for (const owner of Object.values(pinnedOwner)) {
+      if (owner) set.add(owner.toLowerCase())
+    }
     return Array.from(set) as Address[]
     // tokensByAddress identity changes whenever any address's rows change; that
     // is fine — the contract args below are memoized to the address list only.
-  }, [tokensByAddress, viewedAddress, connectedAddress])
+  }, [tokensByAddress, viewedAddress, connectedAddress, pinnedOwner])
 
   // Stable key: only the sorted address list, so adding/removing an account
   // refires the multicall but a rows-only update (same addresses) does not.

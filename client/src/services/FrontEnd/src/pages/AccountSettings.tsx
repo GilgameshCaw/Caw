@@ -1020,7 +1020,7 @@ const AccountSettings: React.FC = () => {
                           )}
                           <button
                             type="button"
-                            onClick={() => togglePin(token.tokenId)}
+                            onClick={() => togglePin(token.tokenId, token.address)}
                             aria-label={isPinned ? 'Unpin profile' : 'Pin profile'}
                             aria-pressed={isPinned}
                             title={isPinned ? 'Unpin profile' : 'Pin profile to top of dropdown'}
