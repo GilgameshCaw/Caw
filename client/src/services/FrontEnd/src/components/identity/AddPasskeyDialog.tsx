@@ -91,6 +91,17 @@ function formatCountdown(seconds: number): string {
   return `Available in ${mins}m`
 }
 
+/** Turn a raw apiFetch/network error string into something a user should see.
+ *  - "API 404: User not found" → "User not found"  (strip the "API <code>:" prefix)
+ *  - "Failed to fetch" / "Load failed" (bare network error) → "Something went wrong" */
+function friendlyError(raw: string): string {
+  const stripped = raw.replace(/^API\s+\d+:\s*/i, '').trim()
+  if (/^(failed to fetch|load failed|network ?error)$/i.test(stripped)) {
+    return 'Something went wrong'
+  }
+  return stripped || 'Something went wrong'
+}
+
 // ─── Internal phase state ─────────────────────────────────────────────────────
 
 type Phase =
@@ -151,13 +162,16 @@ export function AddPasskeyDialog({
       const { txHash } = await onPropose(newPasskey)
       setPhase({ name: 'proposed', txHash })
     } catch (err: unknown) {
-      const message = err instanceof Error ? err.message : 'Failed to create passkey'
+      const raw = err instanceof Error ? err.message : 'Failed to create passkey'
       // User cancellation from the browser passkey sheet is not an error worth showing.
-      if (message.toLowerCase().includes('cancel') || message.toLowerCase().includes('abort')) {
+      if (raw.toLowerCase().includes('cancel') || raw.toLowerCase().includes('abort')) {
         setPhase({ name: 'idle' })
         return
       }
-      setPhase({ name: 'error', message })
+      // Friendly-ize raw apiFetch error strings ("API 404: User not found",
+      // "Failed to fetch") — strip the "API <code>:" prefix and map the bare
+      // network failure to a generic message.
+      setPhase({ name: 'error', message: friendlyError(raw) })
     }
   }, [rpId, username, onPropose])
 
@@ -170,7 +184,7 @@ export function AddPasskeyDialog({
       setFinalizingId(null)
       setPhase({
         name: 'error',
-        message: err instanceof Error ? err.message : 'Finalize failed',
+        message: friendlyError(err instanceof Error ? err.message : 'Finalize failed'),
       })
     }
   }, [onFinalize, onClose])
