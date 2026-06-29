@@ -1408,6 +1408,7 @@
   "passkey_signin.error.not_found": "No profile found for that username.",
   "passkey_signin.error.cancelled": "Passkey sign-in was cancelled.",
   "passkey_signin.error.generic": "Could not sign in with your passkey. Please try again.",
+  "passkey_signin.error.wrong_passkey": "That passkey doesn't match this account. Choose the passkey you set up for this username and try again.",
   "welcome_page.loading_profile": "Loading your profile...",
   "welcome_page.connecting_chain": "Connecting to blockchain...",
   "welcome_page.may_take_minute": "This may take up to a minute...",

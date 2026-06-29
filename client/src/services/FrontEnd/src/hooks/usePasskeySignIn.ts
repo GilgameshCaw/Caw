@@ -190,8 +190,22 @@ export function usePasskeySignIn(): UsePasskeySignIn {
       return { tokenId: profile.tokenId, username: uname, address: ownerAddr }
     } catch (err: any) {
       const raw = err?.message || ''
-      const isCancel = /NotAllowed|abort|cancel|denied/i.test(raw)
-      const msg = isCancel ? t('passkey_signin.error.cancelled') : (raw || t('passkey_signin.error.generic'))
+      let msg: string
+      if (/NotAllowed|abort|cancel|denied/i.test(raw)) {
+        // User dismissed the passkey sheet.
+        msg = t('passkey_signin.error.cancelled')
+      } else if (/^API\s+404/i.test(raw) || /not\s*found/i.test(raw)) {
+        // Username lookup miss.
+        msg = t('passkey_signin.error.not_found')
+      } else if (/^API\s+401/i.test(raw) || /unauthorized/i.test(raw)) {
+        // verify-passkey rejected the assertion — the chosen passkey doesn't
+        // belong to this account.
+        msg = t('passkey_signin.error.wrong_passkey')
+      } else {
+        msg = raw && !/^API\s+\d+:/i.test(raw)
+          ? raw
+          : t('passkey_signin.error.generic')
+      }
       setError(msg)
       throw err
     } finally {
