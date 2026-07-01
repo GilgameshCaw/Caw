@@ -459,15 +459,28 @@ const ProfileChooser: React.FC<{ compact?: boolean }> = ({ compact = false }) =>
   const limitedTokensByAddress: Record<string, TokenData[]> = {}
 
   // Step 1: pick which wallets to show (up to MAX_WALLETS), with the active
-  // token's wallet guaranteed and placed last.
+  // token's wallet guaranteed and placed last. Wallets that hold a PINNED profile
+  // are ALSO always included (a pin means "always show me this profile" — the
+  // per-wallet cap in Step 2 already exempts pins, but the profile's whole wallet
+  // must survive this wallet-level cap first, or the pinned profile vanishes).
   const allWalletKeys = Object.keys(visibleTokensByAddress)
-  const otherWalletKeys = allWalletKeys.filter(k => k !== activeOwnerKey)
-  const slotsForOthers = activeOwnerKey && allWalletKeys.includes(activeOwnerKey)
-    ? MAX_WALLETS - 1
-    : MAX_WALLETS
+  // Wallets containing at least one pinned token (excluding the active wallet,
+  // which is handled separately below).
+  const pinnedWalletKeys = allWalletKeys.filter(k =>
+    k !== activeOwnerKey &&
+    (visibleTokensByAddress[k as Address] || []).some(t => pinnedAt[t.tokenId]),
+  )
+  const otherWalletKeys = allWalletKeys.filter(k => k !== activeOwnerKey && !pinnedWalletKeys.includes(k))
+  const hasActiveWallet = !!(activeOwnerKey && allWalletKeys.includes(activeOwnerKey))
+  // Pinned wallets + active wallet are guaranteed; remaining slots (if any) go to
+  // other wallets. If pins alone exceed MAX_WALLETS we still show them all — an
+  // explicit pin outranks the cap.
+  const guaranteed = [...pinnedWalletKeys, ...(hasActiveWallet ? [activeOwnerKey!] : [])]
+  const remainingSlots = Math.max(0, MAX_WALLETS - guaranteed.length)
   const orderedWalletKeys = [
-    ...otherWalletKeys.slice(0, slotsForOthers),
-    ...(activeOwnerKey && allWalletKeys.includes(activeOwnerKey) ? [activeOwnerKey] : []),
+    ...otherWalletKeys.slice(0, remainingSlots),
+    ...pinnedWalletKeys,
+    ...(hasActiveWallet ? [activeOwnerKey!] : []),
   ]
 
   // Step 2: within each chosen wallet, sort by pinned-first (most-recently
