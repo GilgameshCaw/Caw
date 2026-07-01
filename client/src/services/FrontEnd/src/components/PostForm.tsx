@@ -2805,7 +2805,7 @@ const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess, placehol
                   isDark ? 'bg-yellow-500/10 border border-yellow-500/20' : 'bg-yellow-50 border border-yellow-200'
                 }`}>
                   <span className={isDark ? 'text-yellow-300' : 'text-yellow-800'}>
-                    @{s.username} {t('post_form.tip_gate.requires', { defaultValue: 'requires a' })} {s.required.toLocaleString()} CAW {t('post_form.tip_gate.tip', { defaultValue: 'tip to notify them' })}
+                    @{s.username} {t('post_form.tip_gate.requires')} {s.required.toLocaleString()} CAW {t('post_form.tip_gate.tip')}
                   </span>
                   <div className="flex items-center gap-1.5 flex-shrink-0">
                     <button
@@ -2823,7 +2823,7 @@ const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess, placehol
                       }}
                       className="px-2 py-0.5 rounded-md text-xs font-semibold bg-yellow-500 text-black hover:bg-yellow-400 cursor-pointer transition-colors"
                     >
-                      {t('post_form.tip_gate.add_tip', { defaultValue: 'Add tip' })}
+                      {t('post_form.tip_gate.add_tip')}
                     </button>
                     <button
                       type="button"

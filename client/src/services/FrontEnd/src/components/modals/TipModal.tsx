@@ -225,11 +225,11 @@ const TipModal: React.FC<TipModalProps> = ({
                   const insufficient = isValid && stakedAmount < totalCost
                   return (
                     <div className={`mt-1.5 text-xs flex justify-between ${insufficient ? 'text-error-dim' : themeTextMuted(isDark)}`}>
-                      <span>{t('tip.balance', { defaultValue: 'Balance' })}: {balanceCaw.toLocaleString()} CAW</span>
+                      <span>{t('tip.balance')}: {balanceCaw.toLocaleString()} CAW</span>
                       {isValid && (
                         <span>
                           {insufficient
-                            ? t('tip.insufficient', { defaultValue: 'Insufficient' })
+                            ? t('tip.insufficient')
                             : `${(balanceCaw - tipAmount - Number(validatorTip)).toLocaleString()} CAW left`}
                         </span>
                       )}

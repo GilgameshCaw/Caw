@@ -184,7 +184,7 @@ const SingleTipPicker: React.FC<PickerProps> = ({
       {/* Recipient picker */}
       <div className="space-y-1">
         <label className={`text-xs font-medium ${themeTextSecondary(isDark)}`}>
-          {t('post_form.tip.recipient', { defaultValue: 'Recipient' })}
+          {t('post_form.tip.recipient')}
         </label>
         {recipient ? (
           <div className={`flex items-center justify-between rounded-lg px-2 py-1.5 ${isDark ? 'bg-white/10' : 'bg-gray-100'}`}>
@@ -198,7 +198,7 @@ const SingleTipPicker: React.FC<PickerProps> = ({
             </div>
             <button type="button" onClick={() => { setRecipient(null); setShowSuggestions(true) }}
               className={`text-xs ${themeTextMuted(isDark)} hover:underline cursor-pointer flex-shrink-0 ml-2`}>
-              {t('post_form.tip.change', { defaultValue: 'Change' })}
+              {t('post_form.tip.change')}
             </button>
           </div>
         ) : (
@@ -206,7 +206,7 @@ const SingleTipPicker: React.FC<PickerProps> = ({
             <input type="text" value={recipientQuery}
               onChange={e => { setRecipientQuery(e.target.value); setShowSuggestions(true) }}
               onFocus={() => setShowSuggestions(true)}
-              placeholder={t('post_form.tip.recipient_placeholder', { defaultValue: 'Search by username…' })}
+              placeholder={t('post_form.tip.recipient_placeholder')}
               className={`w-full px-3 py-1.5 rounded-lg text-sm outline-none transition-colors ${
                 isDark
                   ? 'bg-white/10 text-white border border-white/20 focus:border-yellow-500/50 placeholder-gray-500'
@@ -263,22 +263,22 @@ const SingleTipPicker: React.FC<PickerProps> = ({
 
       {/* Cost preview */}
       <div className={`text-xs flex justify-between ${themeTextMuted(isDark)}`}>
-        <span>{t('post_form.tip.preview_label', { defaultValue: 'Approx.' })}</span>
+        <span>{t('post_form.tip.preview_label')}</span>
         <span>{priceReady ? `${tipAmountCaw.toLocaleString()} CAW` : '—'}</span>
       </div>
 
-      {!priceReady && <p className="text-xs text-yellow-500">{t('post_form.tip.loading_price', { defaultValue: 'Loading CAW price…' })}</p>}
+      {!priceReady && <p className="text-xs text-yellow-500">{t('post_form.tip.loading_price')}</p>}
       {priceReady && usdAmount > 0 && usdAmount < MIN_TIP_USD && (
-        <p className={`text-xs ${themeTextMuted(isDark)}`}>{t('post_form.tip.min', { defaultValue: `Minimum $${MIN_TIP_USD}.` })}</p>
+        <p className={`text-xs ${themeTextMuted(isDark)}`}>{t('post_form.tip.min', { min: MIN_TIP_USD })}</p>
       )}
       {!recipient && (
-        <p className={`text-xs ${themeTextMuted(isDark)}`}>{t('post_form.tip.need_recipient', { defaultValue: 'Pick a recipient — start with @username to find someone.' })}</p>
+        <p className={`text-xs ${themeTextMuted(isDark)}`}>{t('post_form.tip.need_recipient')}</p>
       )}
 
       <div className="flex gap-2 pt-1">
         <button type="button" onClick={onCancel}
           className={`flex-1 py-1.5 rounded-lg text-sm font-medium border cursor-pointer ${themeBorder(isDark)} ${isDark ? 'text-white hover:bg-white/5' : 'text-gray-900 hover:bg-gray-50'}`}>
-          {t('post_form.tip.cancel', { defaultValue: 'Cancel' })}
+          {t('post_form.tip.cancel')}
         </button>
         <button type="button" onClick={handleAttach} disabled={!canAttach}
           className={`flex-1 py-1.5 rounded-lg text-sm font-semibold cursor-pointer ${canAttach ? 'bg-yellow-500 text-black hover:bg-yellow-400' : isDark ? 'bg-gray-700 text-gray-400 cursor-not-allowed' : 'bg-gray-300 text-gray-600 cursor-not-allowed'}`}>
@@ -427,10 +427,8 @@ const TipAttachmentControl: React.FC<Props> = ({
 
   // The tooltip on the trigger summarises the attached total.
   const triggerAriaLabel = hasTips
-    ? t('post_form.tip.aria_attached_multi', {
-        defaultValue: `${values.length} tip${values.length > 1 ? 's' : ''} attached — total $${totalUsd}`,
-      })
-    : t('post_form.tip.aria', { defaultValue: 'Attach a tip' })
+    ? t('post_form.tip.aria_attached_multi', { count: values.length, total: totalUsd })
+    : t('post_form.tip.aria')
 
   // Already-tipped tokenIds (excluding the one being edited).
   const excludeForPicker = values
@@ -444,7 +442,7 @@ const TipAttachmentControl: React.FC<Props> = ({
         type="button"
         onClick={handleOpenToggle}
         disabled={disabled}
-        title={title || t('post_form.tip.tooltip', { defaultValue: 'Attach tips to your post' })}
+        title={title || t('post_form.tip.tooltip')}
         aria-label={triggerAriaLabel}
         className={`relative p-2 rounded-full transition-all duration-200 ${
           disabled ? 'opacity-30 cursor-not-allowed' : 'cursor-pointer'
@@ -513,21 +511,21 @@ const TipAttachmentControl: React.FC<Props> = ({
           <div className="flex items-center justify-between">
             <span className="text-sm font-semibold">
               {view === 'picker' && editingIdx === null && hasTips
-                ? t('post_form.tip.add_another_title', { defaultValue: 'Add another tip' })
+                ? t('post_form.tip.add_another_title')
                 : view === 'picker' && editingIdx !== null
-                  ? t('post_form.tip.edit_tip_title', { defaultValue: 'Edit tip' })
-                  : t('post_form.tip.title', { defaultValue: 'Tip alongside your post' })}
+                  ? t('post_form.tip.edit_tip_title')
+                  : t('post_form.tip.title')}
             </span>
             {view === 'list' && hasTips && (
               <button type="button" onClick={handleClearAll}
                 className={`text-xs ${themeTextMuted(isDark)} hover:underline cursor-pointer`}>
-                {t('post_form.tip.remove_all', { defaultValue: 'Remove all' })}
+                {t('post_form.tip.remove_all')}
               </button>
             )}
             {view === 'picker' && hasTips && (
               <button type="button" onClick={() => { setView('list'); setEditingIdx(null) }}
                 className={`text-xs ${themeTextMuted(isDark)} hover:underline cursor-pointer`}>
-                {t('post_form.tip.back', { defaultValue: '← Back' })}
+                {t('post_form.tip.back')}
               </button>
             )}
           </div>
@@ -548,7 +546,7 @@ const TipAttachmentControl: React.FC<Props> = ({
                       <button type="button"
                         onClick={() => { setEditingIdx(idx); setView('picker') }}
                         className={`text-xs ${themeTextMuted(isDark)} hover:underline cursor-pointer`}>
-                        {t('post_form.tip.edit', { defaultValue: 'Edit' })}
+                        {t('post_form.tip.edit')}
                       </button>
                       <button type="button" onClick={() => handleRemove(idx)}
                         aria-label={`Remove tip to @${tip.recipientUsername}`}
@@ -567,13 +565,13 @@ const TipAttachmentControl: React.FC<Props> = ({
                   className={`w-full py-1.5 rounded-lg text-sm font-medium border cursor-pointer ${themeBorder(isDark)} ${
                     isDark ? 'text-yellow-400 hover:bg-white/5' : 'text-yellow-600 hover:bg-gray-50'
                   }`}>
-                  {t('post_form.tip.add_another', { defaultValue: '+ Add another tip' })}
+                  {t('post_form.tip.add_another')}
                 </button>
               )}
 
               {values.length >= MAX_TIPS && (
                 <p className={`text-xs ${themeTextMuted(isDark)}`}>
-                  {t('post_form.tip.cap_reached', { defaultValue: `Maximum ${MAX_TIPS} tips per post.` })}
+                  {t('post_form.tip.cap_reached', { max: MAX_TIPS })}
                 </p>
               )}
 
@@ -581,7 +579,7 @@ const TipAttachmentControl: React.FC<Props> = ({
                 className={`w-full py-1.5 rounded-lg text-sm font-medium border cursor-pointer ${themeBorder(isDark)} ${
                   isDark ? 'text-white hover:bg-white/5' : 'text-gray-900 hover:bg-gray-50'
                 }`}>
-                {t('post_form.tip.done', { defaultValue: 'Done' })}
+                {t('post_form.tip.done')}
               </button>
             </>
           )}
@@ -603,8 +601,8 @@ const TipAttachmentControl: React.FC<Props> = ({
                 else setOpen(false)
               }}
               attachLabel={editingIdx !== null
-                ? t('post_form.tip.update', { defaultValue: 'Update' })
-                : t('post_form.tip.attach', { defaultValue: 'Attach' })}
+                ? t('post_form.tip.update')
+                : t('post_form.tip.attach')}
             />
           )}
         </div>,

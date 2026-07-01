@@ -263,7 +263,7 @@ const NotificationSettings: React.FC = () => {
             <h2 className={`text-sm font-semibold mb-2 uppercase tracking-wide ${
               isDark ? 'text-white/40' : 'text-gray-400'
             }`}>
-              {t('notifications_settings.section.tip_gate', { defaultValue: 'Mention tip floor' })}
+              {t('notifications_settings.section.tip_gate')}
             </h2>
 
             <div className={`rounded-xl border p-4 space-y-3 ${
@@ -275,19 +275,19 @@ const NotificationSettings: React.FC = () => {
                 </div>
                 <div className="flex-1">
                   <h3 className={`font-medium ${isDark ? 'text-white' : 'text-gray-900'}`}>
-                    {t('notifications_settings.tip_floor.title', { defaultValue: 'Require a tip to notify you' })}
+                    {t('notifications_settings.tip_floor.title')}
                   </h3>
                   <p className={`text-sm mt-0.5 ${isDark ? 'text-white/50' : 'text-gray-500'}`}>
                     {tipFloor === 0
-                      ? t('notifications_settings.tip_floor.disabled_hint', { defaultValue: 'Disabled — you receive all @mention notifications. Set a value above 0 to require a minimum CAW tip.' })
-                      : t('notifications_settings.tip_floor.enabled_hint', { defaultValue: `You only receive @mention notifications when the post tips you at least ${tipFloor.toLocaleString()} CAW. Set to 0 to disable.` })}
+                      ? t('notifications_settings.tip_floor.disabled_hint')
+                      : t('notifications_settings.tip_floor.enabled_hint', { amount: tipFloor.toLocaleString() })}
                   </p>
                 </div>
               </div>
 
               {tipFloorLoading ? (
                 <div className={`text-sm ${isDark ? 'text-white/40' : 'text-gray-400'}`}>
-                  {t('notifications_settings.tip_floor.loading', { defaultValue: 'Loading…' })}
+                  {t('notifications_settings.tip_floor.loading')}
                 </div>
               ) : (
                 <div className="flex items-center gap-2">
@@ -309,7 +309,7 @@ const NotificationSettings: React.FC = () => {
                     }`}
                   />
                   <span className={`text-sm ${isDark ? 'text-white/50' : 'text-gray-500'}`}>
-                    {t('notifications_settings.tip_floor.unit', { defaultValue: 'CAW' })}
+                    {t('notifications_settings.tip_floor.unit')}
                   </span>
                   <button
                     type="button"
@@ -324,10 +324,10 @@ const NotificationSettings: React.FC = () => {
                     }`}
                   >
                     {tipFloorSaved
-                      ? t('notifications_settings.tip_floor.saved', { defaultValue: 'Saved' })
+                      ? t('notifications_settings.tip_floor.saved')
                       : tipFloorSaving
-                        ? t('notifications_settings.tip_floor.saving', { defaultValue: 'Saving…' })
-                        : t('notifications_settings.tip_floor.save', { defaultValue: 'Save' })}
+                        ? t('notifications_settings.tip_floor.saving')
+                        : t('notifications_settings.tip_floor.save')}
                   </button>
                 </div>
               )}
