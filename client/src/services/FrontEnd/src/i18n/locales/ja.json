@@ -1053,6 +1053,7 @@
   "quick_sign_renew.title_limit": "Quick Signの利用上限に達しました",
   "quick_sign_renew.desc_expired": "Quick Signセッションの有効期限が切れました。Quick Signを継続して使うには再署名するか、このアクションをウォレットで手動署名してください。",
   "quick_sign_renew.desc_limit": "Quick Signセッションが利用上限に達しました。新しいセッションで再署名するか、このアクションをウォレットで手動署名してください。",
+  "quick_sign_renew.new_session_label": "Enable new quick sign session",
   "quick_sign_renew.connect_correct_wallet": "@{{username}}を所有するウォレットに接続してください",
   "quick_sign_renew.btn.reenable": "Quick Signを再有効化",
   "client_auth.title": "アカウントを有効化",

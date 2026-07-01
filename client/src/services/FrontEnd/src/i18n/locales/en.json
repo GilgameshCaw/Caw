@@ -221,7 +221,6 @@
   "post_form.tip.add_another": "+ Add another tip",
   "post_form.tip.cap_reached": "Maximum {{max}} tips per post.",
   "post_form.tip.done": "Done",
-  "post_form.tip.aria": "Attach a tip",
   "post_form.tip.aria_attached_multi_one": "{{count}} tip attached — total ${{total}}",
   "post_form.tip.aria_attached_multi_other": "{{count}} tips attached — total ${{total}}",
   "post_form.tip_gate.requires": "requires a",
@@ -1248,6 +1247,7 @@
   "quick_sign_renew.title_limit": "Quick Sign Spending Limit Reached",
   "quick_sign_renew.desc_expired": "Your Quick Sign session has expired. Re-sign to continue using Quick Sign, or sign this action manually with your wallet.",
   "quick_sign_renew.desc_limit": "Your Quick Sign session has reached its spending limit. Re-sign with a new session to continue, or sign this action manually with your wallet.",
+  "quick_sign_renew.new_session_label": "Enable new quick sign session",
   "quick_sign_renew.connect_correct_wallet": "Please connect to the wallet that owns @{{username}}",
   "quick_sign_renew.btn.reenable": "Re-enable Quick Sign",
   "network.fees_title": "Network fees",
@@ -1852,7 +1852,6 @@
   "landing.free_speech.open.after_link": " and built on open standards for interoperability and composability.",
   "landing.free_speech.censorship.title": "Censorship Resistance",
   "landing.free_speech.censorship.body": "Verifiable messages resilient to centralized takedowns.",
-
   "withdraw.no_withdrawable": "Nothing available to withdraw yet.",
   "withdraw.recipient_label": "Send to",
   "withdraw.recipient_default_hint": "Defaults to your own address — edit to send anywhere.",
@@ -1881,7 +1880,6 @@
   "withdraw.fee_modal_relayer_label": "Relayer fee",
   "withdraw.fee_modal_relayer_desc": "Covers the gas and network fee the relayer fronts on your behalf. Deducted from your withdrawal in CAW.",
   "withdraw.fee_modal_footnote": "Fees are quoted live and may shift slightly with network conditions before you confirm.",
-
   "wallet.title": "Wallet",
   "wallet.population_label": "Account type {{pop}}",
   "wallet.eth_balance": "ETH",

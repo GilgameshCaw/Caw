@@ -1053,6 +1053,7 @@
   "quick_sign_renew.title_limit": "Quick Sign 支出限额已达到",
   "quick_sign_renew.desc_expired": "你的 Quick Sign 会话已过期。重新签名以继续使用 Quick Sign，或使用钱包手动签署此操作。",
   "quick_sign_renew.desc_limit": "你的 Quick Sign 会话已达到支出限额。使用新会话重新签名以继续，或使用钱包手动签署此操作。",
+  "quick_sign_renew.new_session_label": "Enable new quick sign session",
   "quick_sign_renew.connect_correct_wallet": "请连接拥有 @{{username}} 的钱包",
   "quick_sign_renew.btn.reenable": "重新启用 Quick Sign",
   "client_auth.title": "激活你的账户",

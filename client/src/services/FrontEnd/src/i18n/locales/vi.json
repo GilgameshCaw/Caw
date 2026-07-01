@@ -1053,6 +1053,7 @@
   "quick_sign_renew.title_limit": "Đã đạt giới hạn chi tiêu của Quick Sign",
   "quick_sign_renew.desc_expired": "Phiên Quick Sign của bạn đã hết hạn. Ký lại để tiếp tục sử dụng Quick Sign, hoặc ký thủ công hành động này bằng ví của bạn.",
   "quick_sign_renew.desc_limit": "Phiên Quick Sign của bạn đã đạt giới hạn chi tiêu. Ký lại với phiên mới để tiếp tục, hoặc ký thủ công hành động này bằng ví của bạn.",
+  "quick_sign_renew.new_session_label": "Enable new quick sign session",
   "quick_sign_renew.connect_correct_wallet": "Vui lòng kết nối với ví sở hữu @{{username}}",
   "quick_sign_renew.btn.reenable": "Bật lại Quick Sign",
   "client_auth.title": "Kích hoạt tài khoản của bạn",

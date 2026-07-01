@@ -180,6 +180,12 @@ const QuickSignRenewModal: React.FC = () => {
           {description}
         </p>
 
+        {/* Clarify the params below describe the NEW session being enabled, not
+            the current (reached/expired) one — sits directly above the summary's
+            top divider with no gap. */}
+        <p className={`text-xs text-center mb-0 ${isDark ? 'text-gray-400' : 'text-gray-500'}`}>
+          {t('quick_sign_renew.new_session_label')}
+        </p>
         <div className="mb-4">
           <QuickSignOptions
             spendLimit={spendLimit}

@@ -1053,6 +1053,7 @@
   "quick_sign_renew.title_limit": "Quick Sign 사용 한도에 도달했습니다",
   "quick_sign_renew.desc_expired": "Quick Sign 세션이 만료되었습니다. Quick Sign을 계속 사용하려면 다시 서명하거나, 이 작업을 지갑으로 직접 서명하세요.",
   "quick_sign_renew.desc_limit": "Quick Sign 세션이 사용 한도에 도달했습니다. 새 세션으로 다시 서명하거나, 이 작업을 지갑으로 직접 서명하세요.",
+  "quick_sign_renew.new_session_label": "Enable new quick sign session",
   "quick_sign_renew.connect_correct_wallet": "@{{username}}을(를) 소유한 지갑에 연결해 주세요",
   "quick_sign_renew.btn.reenable": "Quick Sign 재활성화",
   "client_auth.title": "계정 활성화",

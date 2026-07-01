@@ -1053,6 +1053,7 @@
   "quick_sign_renew.title_limit": "Quick Sign ถึงขีดจำกัดการใช้จ่ายแล้ว",
   "quick_sign_renew.desc_expired": "เซสชัน Quick Sign ของคุณหมดอายุแล้ว ลงนามใหม่เพื่อใช้ Quick Sign ต่อ หรือเซ็นการกระทำนี้ด้วยวอลเล็ตของคุณด้วยตนเอง",
   "quick_sign_renew.desc_limit": "เซสชัน Quick Sign ของคุณถึงขีดจำกัดการใช้จ่ายแล้ว ลงนามใหม่ด้วยเซสชันใหม่เพื่อดำเนินการต่อ หรือเซ็นการกระทำนี้ด้วยวอลเล็ตของคุณด้วยตนเอง",
+  "quick_sign_renew.new_session_label": "Enable new quick sign session",
   "quick_sign_renew.connect_correct_wallet": "โปรดเชื่อมต่อกับวอลเล็ตที่เป็นเจ้าของ @{{username}}",
   "quick_sign_renew.btn.reenable": "เปิดใช้ Quick Sign อีกครั้ง",
   "client_auth.title": "เปิดใช้งานบัญชีของคุณ",

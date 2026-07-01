@@ -1053,6 +1053,7 @@
   "quick_sign_renew.title_limit": "Batas Pengeluaran Quick Sign Tercapai",
   "quick_sign_renew.desc_expired": "Sesi Quick Sign-mu sudah kedaluwarsa. Tanda tangani ulang untuk lanjut menggunakan Quick Sign, atau tanda tangani aksi ini secara manual dengan walletmu.",
   "quick_sign_renew.desc_limit": "Sesi Quick Sign-mu mencapai batas pengeluaran. Tanda tangani sesi baru untuk lanjut, atau tanda tangani aksi ini secara manual dengan walletmu.",
+  "quick_sign_renew.new_session_label": "Enable new quick sign session",
   "quick_sign_renew.connect_correct_wallet": "Silakan hubungkan ke wallet pemilik @{{username}}",
   "quick_sign_renew.btn.reenable": "Aktifkan Ulang Quick Sign",
   "client_auth.title": "Aktifkan Akunmu",

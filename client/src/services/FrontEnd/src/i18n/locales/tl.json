@@ -1052,6 +1052,7 @@
   "quick_sign_renew.title_limit": "Naabot na ang Spending Limit ng Quick Sign",
   "quick_sign_renew.desc_expired": "Nag-expire na ang Quick Sign session mo. Mag-re-sign para magpatuloy sa paggamit ng Quick Sign, o i-sign ang action na ito manually gamit ang wallet mo.",
   "quick_sign_renew.desc_limit": "Naabot na ng Quick Sign session mo ang spending limit nito. Mag-re-sign ng bagong session para magpatuloy, o i-sign ang action na ito manually gamit ang wallet mo.",
+  "quick_sign_renew.new_session_label": "Enable new quick sign session",
   "quick_sign_renew.connect_correct_wallet": "I-connect sa wallet na may-ari ng @{{username}}",
   "quick_sign_renew.btn.reenable": "I-re-enable ang Quick Sign",
   "client_auth.title": "I-activate ang Account Mo",

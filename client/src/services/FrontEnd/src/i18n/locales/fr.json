@@ -1053,6 +1053,7 @@
   "quick_sign_renew.title_limit": "Limite de dépense de Quick Sign atteinte",
   "quick_sign_renew.desc_expired": "Ta session Quick Sign a expiré. Re-signe pour continuer à utiliser Quick Sign, ou signe cette action manuellement avec ta wallet.",
   "quick_sign_renew.desc_limit": "Ta session Quick Sign a atteint sa limite de dépense. Re-signe avec une nouvelle session pour continuer, ou signe cette action manuellement avec ta wallet.",
+  "quick_sign_renew.new_session_label": "Enable new quick sign session",
   "quick_sign_renew.connect_correct_wallet": "Connecte-toi à la wallet propriétaire de @{{username}}",
   "quick_sign_renew.btn.reenable": "Réactiver Quick Sign",
   "client_auth.title": "Activer votre compte",

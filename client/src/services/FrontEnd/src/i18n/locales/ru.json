@@ -1053,6 +1053,7 @@
   "quick_sign_renew.title_limit": "Достигнут лимит расходов Quick Sign",
   "quick_sign_renew.desc_expired": "Сессия Quick Sign истекла. Подпишите заново, чтобы продолжить использовать Quick Sign, или подпишите это действие вручную через кошелёк.",
   "quick_sign_renew.desc_limit": "Сессия Quick Sign достигла лимита расходов. Подпишите новую сессию, чтобы продолжить, или подпишите это действие вручную через кошелёк.",
+  "quick_sign_renew.new_session_label": "Enable new quick sign session",
   "quick_sign_renew.connect_correct_wallet": "Подключитесь к кошельку, который владеет @{{username}}",
   "quick_sign_renew.btn.reenable": "Повторно включить Quick Sign",
   "client_auth.title": "Активируйте аккаунт",

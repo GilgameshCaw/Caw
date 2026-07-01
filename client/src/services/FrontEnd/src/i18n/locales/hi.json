@@ -1053,6 +1053,7 @@
   "quick_sign_renew.title_limit": "Quick Sign खर्च सीमा पूरी हो गई",
   "quick_sign_renew.desc_expired": "आपका Quick Sign सत्र समाप्त हो गया है। Quick Sign का उपयोग जारी रखने के लिए फिर से साइन करें, या यह कार्रवाई अपने वॉलेट से मैन्युअल रूप से साइन करें।",
   "quick_sign_renew.desc_limit": "आपका Quick Sign सत्र अपनी खर्च सीमा तक पहुँच गया है। जारी रखने के लिए नए सत्र के साथ फिर से साइन करें, या यह कार्रवाई अपने वॉलेट से मैन्युअल रूप से साइन करें।",
+  "quick_sign_renew.new_session_label": "Enable new quick sign session",
   "quick_sign_renew.connect_correct_wallet": "कृपया उस वॉलेट से कनेक्ट करें जिसके पास @{{username}} है",
   "quick_sign_renew.btn.reenable": "Quick Sign फिर से सक्षम करें",
   "client_auth.title": "अपना अकाउंट सक्रिय करें",

@@ -1053,6 +1053,7 @@
   "quick_sign_renew.title_limit": "הגעת למגבלת ההוצאה של Quick Sign",
   "quick_sign_renew.desc_expired": "תוקף הסשן של Quick Sign פג. חתום שוב כדי להמשיך להשתמש ב-Quick Sign, או חתום על פעולה זו ידנית עם הארנק שלך.",
   "quick_sign_renew.desc_limit": "הסשן של Quick Sign הגיע למגבלת ההוצאה. חתום שוב עם סשן חדש כדי להמשיך, או חתום על פעולה זו ידנית עם הארנק שלך.",
+  "quick_sign_renew.new_session_label": "Enable new quick sign session",
   "quick_sign_renew.connect_correct_wallet": "התחבר לארנק שמחזיק ב-@{{username}}",
   "quick_sign_renew.btn.reenable": "הפעל מחדש את Quick Sign",
   "client_auth.title": "הפעל את החשבון שלך",

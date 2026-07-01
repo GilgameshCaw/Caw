@@ -1053,6 +1053,7 @@
   "quick_sign_renew.title_limit": "Quick Sign uitgavelimiet bereikt",
   "quick_sign_renew.desc_expired": "Je Quick Sign-sessie is verlopen. Onderteken opnieuw om Quick Sign te blijven gebruiken, of onderteken deze actie handmatig met je wallet.",
   "quick_sign_renew.desc_limit": "Je Quick Sign-sessie heeft de uitgavelimiet bereikt. Onderteken opnieuw met een nieuwe sessie om door te gaan, of onderteken deze actie handmatig met je wallet.",
+  "quick_sign_renew.new_session_label": "Enable new quick sign session",
   "quick_sign_renew.connect_correct_wallet": "Verbind met de wallet die @{{username}} bezit",
   "quick_sign_renew.btn.reenable": "Quick Sign opnieuw inschakelen",
   "client_auth.title": "Activeer je account",

@@ -1052,6 +1052,7 @@
   "quick_sign_renew.title_limit": "محدودیت خرج Quick Sign رسیده",
   "quick_sign_renew.desc_expired": "نشست Quick Sign تو منقضی شده است. برای ادامه استفاده از Quick Sign دوباره امضا کن، یا این اقدام را به‌صورت دستی با ولتت امضا کن.",
   "quick_sign_renew.desc_limit": "نشست Quick Sign تو به محدودیت خرج رسیده است. با یک نشست جدید دوباره امضا کن تا ادامه دهی، یا این اقدام را به‌صورت دستی با ولتت امضا کن.",
+  "quick_sign_renew.new_session_label": "Enable new quick sign session",
   "quick_sign_renew.connect_correct_wallet": "لطفاً به ولتی که مالک @{{username}} است وصل شو",
   "quick_sign_renew.btn.reenable": "فعال‌سازی مجدد Quick Sign",
   "client_auth.title": "حسابت را فعال کن",

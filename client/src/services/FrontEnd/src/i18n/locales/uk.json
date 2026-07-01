@@ -1053,6 +1053,7 @@
   "quick_sign_renew.title_limit": "Досягнуто ліміт витрат Quick Sign",
   "quick_sign_renew.desc_expired": "Термін дії вашої сесії Quick Sign закінчився. Підпишіть ще раз, щоб продовжити користуватися Quick Sign, або підпишіть цю дію вручну гаманцем.",
   "quick_sign_renew.desc_limit": "Ваша сесія Quick Sign досягла ліміту витрат. Підпишіть нову сесію, щоб продовжити, або підпишіть цю дію вручну гаманцем.",
+  "quick_sign_renew.new_session_label": "Enable new quick sign session",
   "quick_sign_renew.connect_correct_wallet": "Підключіться до гаманця, якому належить @{{username}}",
   "quick_sign_renew.btn.reenable": "Увімкнути Quick Sign знову",
   "client_auth.title": "Активуйте свій акаунт",

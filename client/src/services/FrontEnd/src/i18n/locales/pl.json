@@ -1053,6 +1053,7 @@
   "quick_sign_renew.title_limit": "Osiągnięto limit wydatków Quick Sign",
   "quick_sign_renew.desc_expired": "Twoja sesja Quick Sign wygasła. Podpisz ponownie, aby dalej używać Quick Sign, albo podpisz tę akcję ręcznie portfelem.",
   "quick_sign_renew.desc_limit": "Twoja sesja Quick Sign osiągnęła limit wydatków. Podpisz ponownie z nową sesją, aby kontynuować, albo podpisz tę akcję ręcznie portfelem.",
+  "quick_sign_renew.new_session_label": "Enable new quick sign session",
   "quick_sign_renew.connect_correct_wallet": "Połącz portfel, który jest właścicielem @{{username}}",
   "quick_sign_renew.btn.reenable": "Włącz Quick Sign ponownie",
   "client_auth.title": "Aktywuj swoje konto",

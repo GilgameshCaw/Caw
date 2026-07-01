@@ -1053,6 +1053,7 @@
   "quick_sign_renew.title_limit": "تم الوصول إلى حد إنفاق Quick Sign",
   "quick_sign_renew.desc_expired": "انتهت صلاحية جلسة Quick Sign. أعد التوقيع لمتابعة استخدام Quick Sign، أو وقّع هذا الإجراء يدويًا باستخدام محفظتك.",
   "quick_sign_renew.desc_limit": "وصلت جلسة Quick Sign إلى حد الإنفاق. أعد التوقيع بجلسة جديدة للمتابعة، أو وقّع هذا الإجراء يدويًا باستخدام محفظتك.",
+  "quick_sign_renew.new_session_label": "Enable new quick sign session",
   "quick_sign_renew.connect_correct_wallet": "يرجى الاتصال بالمحفظة التي تملك @{{username}}",
   "quick_sign_renew.btn.reenable": "إعادة تفعيل Quick Sign",
   "client_auth.title": "تفعيل حسابك",
