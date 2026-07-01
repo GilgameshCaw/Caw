@@ -255,25 +255,27 @@ const CreateListingModal: React.FC = () => {
 
   // ── Population-B (passkey) relayed listing ──────────────────────────────────
   // One passkey signature → SmartEOA.executeBatch of [setApprovalForAll?,
-  // createListing, CAW.transfer(relayer, feeCaw)]. The relayer fronts L1 gas and
-  // is repaid in CAW from the same signed batch (quoteExecuteGasFeeCaw). No LZ
-  // fee (pure L1) → forwardedValue = 0. The user needs a little L1 CAW in their
-  // EOA to cover the fee leg — otherwise we show a top-up prompt.
+  // createListing, fee leg]. The relayer fronts L1 gas and is repaid in the same
+  // signed batch — in CAW (CAW.transfer(relayer)) OR ETH (raw transfer to the
+  // relayer), whichever the EOA can cover. No LZ fee (pure L1) → forwardedValue=0.
   const [popBPending, setPopBPending] = useState(false)
   const [popBSuccess, setPopBSuccess] = useState(false)
   const [popBError, setPopBError] = useState<string | null>(null)
   const [feeCawWei, setFeeCawWei] = useState<bigint | null>(null)
+  const [feeEthWei, setFeeEthWei] = useState<bigint | null>(null)
   const [eoaCawWei, setEoaCawWei] = useState<bigint | null>(null)
+  const [eoaEthWei, setEoaEthWei] = useState<bigint | null>(null)
 
-  // Fetch the CAW fee quote + the EOA's CAW balance when a Pop-B owner reaches
-  // the confirm step, so we can gate on "enough CAW to pay the relayer".
+  // Fetch both fee quotes (CAW + ETH) and both EOA balances when a Pop-B owner
+  // reaches the confirm step, so we can pick whichever currency the wallet can
+  // cover and gate on "enough of EITHER to pay the relayer".
   React.useEffect(() => {
     if (!isPopB || step !== 'confirm' || !isOwner || !eoaAccount || !l1Client) return
     let cancelled = false
     ;(async () => {
       try {
-        const [quote, bal] = await Promise.all([
-          apiFetch<{ relayer: string; minFeeCawWei: string; priceAvailable: boolean }>(
+        const [quote, cawBal, ethBal] = await Promise.all([
+          apiFetch<{ relayer: string; minFeeCawWei: string; priceAvailable: boolean; minFeeEthWei: string }>(
             `/api/sponsor/execute-quote?forwardedValueWei=0`,
           ),
           l1Client.readContract({
@@ -282,19 +284,27 @@ const CreateListingModal: React.FC = () => {
             functionName: 'balanceOf',
             args: [eoaAccount],
           }) as Promise<bigint>,
+          l1Client.getBalance({ address: eoaAccount }),
         ])
         if (cancelled) return
         setFeeCawWei(quote.priceAvailable ? BigInt(quote.minFeeCawWei) : null)
-        setEoaCawWei(bal)
+        setFeeEthWei(BigInt(quote.minFeeEthWei))
+        setEoaCawWei(cawBal)
+        setEoaEthWei(ethBal)
       } catch {
-        if (!cancelled) { setFeeCawWei(null); setEoaCawWei(null) }
+        if (!cancelled) { setFeeCawWei(null); setFeeEthWei(null); setEoaCawWei(null); setEoaEthWei(null) }
       }
     })()
     return () => { cancelled = true }
   }, [isPopB, step, isOwner, eoaAccount, l1Client])
 
-  const needsTopUp = feeCawWei != null && eoaCawWei != null && eoaCawWei < feeCawWei
+  // Can the EOA cover the fee in CAW? in ETH? Prefer CAW when available.
+  const canPayCaw = feeCawWei != null && eoaCawWei != null && eoaCawWei >= feeCawWei
+  const canPayEth = feeEthWei != null && eoaEthWei != null && eoaEthWei >= feeEthWei
+  const feeLoaded = feeEthWei != null && eoaEthWei != null // ETH quote is always available; gates "loaded"
+  const needsTopUp = feeLoaded && !canPayCaw && !canPayEth
   const feeCawDisplay = feeCawWei != null ? Number(formatUnits(feeCawWei, 18)) : null
+  const feeEthDisplay = feeEthWei != null ? Number(formatUnits(feeEthWei, 18)) : null
 
   const handlePopBList = useCallback(async () => {
     if (!isPopB || !eoaAccount || tokenId === null || !l1Client) return
@@ -302,27 +312,27 @@ const CreateListingModal: React.FC = () => {
     setPopBPending(true)
     try {
       // Fresh quote at submit time (price/gas can drift since the effect ran).
-      const quote = await apiFetch<{ relayer: string; minFeeCawWei: string; priceAvailable: boolean }>(
+      const quote = await apiFetch<{ relayer: string; minFeeCawWei: string; priceAvailable: boolean; minFeeEthWei: string }>(
         `/api/sponsor/execute-quote?forwardedValueWei=0`,
       )
-      if (!quote.priceAvailable) throw new Error(t('create_listing.error.quote'))
-      const feeCaw = BigInt(quote.minFeeCawWei)
+      const feeCaw = quote.priceAvailable ? BigInt(quote.minFeeCawWei) : null
+      const feeEth = BigInt(quote.minFeeEthWei)
 
-      // Hard pre-flight: the fee leg pays the relayer in CAW, so the EOA must
-      // hold at least feeCaw. Block here (not just via the disabled button) so a
-      // race where the gate data hadn't loaded can't submit a doomed batch that
-      // would only revert at relay simulation (SIMULATION_FAILED).
-      const balNow = (await l1Client.readContract({
-        address: CAW_ADDRESS as Address,
-        abi: erc20Abi,
-        functionName: 'balanceOf',
-        args: [eoaAccount],
-      })) as bigint
-      setEoaCawWei(balNow)
-      setFeeCawWei(feeCaw)
-      if (balNow < feeCaw) {
-        throw new Error('INSUFFICIENT_FEE_CAW')
-      }
+      // Pick the fee currency: prefer CAW when the EOA holds enough, else ETH.
+      // Hard pre-flight (not just the disabled button) so a race where the gate
+      // data hadn't loaded can't submit a doomed batch that would only revert at
+      // relay simulation (SIMULATION_FAILED).
+      const [cawBalNow, ethBalNow] = await Promise.all([
+        l1Client.readContract({
+          address: CAW_ADDRESS as Address, abi: erc20Abi, functionName: 'balanceOf', args: [eoaAccount],
+        }) as Promise<bigint>,
+        l1Client.getBalance({ address: eoaAccount }),
+      ])
+      setEoaCawWei(cawBalNow); setEoaEthWei(ethBalNow)
+      setFeeCawWei(feeCaw); setFeeEthWei(feeEth)
+      const payInCaw = feeCaw != null && cawBalNow >= feeCaw
+      const payInEth = ethBalNow >= feeEth
+      if (!payInCaw && !payInEth) throw new Error('INSUFFICIENT_FEE_CAW')
 
       const selectedToken = PAYMENT_OPTIONS.find(o => o.value === paymentToken)
       const decimals = selectedToken?.decimals ?? 18
@@ -363,16 +373,22 @@ const CreateListingModal: React.FC = () => {
           args: [tokenId, listingType, paymentToken as `0x${string}`, startPriceWei, endPriceWei, duration],
         }),
       })
-      // Fee leg: repay the relayer in CAW (gas only — no forwarded value).
-      calls.push({
-        to: CAW_ADDRESS as Address,
-        value: 0n,
-        data: encodeFunctionData({
-          abi: erc20Abi,
-          functionName: 'transfer',
-          args: [quote.relayer as Address, feeCaw],
-        }),
-      })
+      // Fee leg: repay the relayer (gas only, no forwarded value). Prefer CAW when
+      // the EOA holds enough; otherwise a raw ETH transfer to the relayer (the
+      // relay accepts either — CAW.transfer(relayer) OR to=relayer/empty-data/value).
+      if (payInCaw) {
+        calls.push({
+          to: CAW_ADDRESS as Address,
+          value: 0n,
+          data: encodeFunctionData({
+            abi: erc20Abi,
+            functionName: 'transfer',
+            args: [quote.relayer as Address, feeCaw!],
+          }),
+        })
+      } else {
+        calls.push({ to: quote.relayer as Address, value: feeEth, data: '0x' })
+      }
 
       await smartEoaExecute(calls)
       setPopBSuccess(true)
@@ -719,9 +735,13 @@ const CreateListingModal: React.FC = () => {
                 {popBError && (
                   <div className="p-3 rounded-lg bg-red-500/10 text-red-500 text-sm text-center">{popBError}</div>
                 )}
-                {feeCawDisplay != null && !popBSuccess && (
+                {feeLoaded && !popBSuccess && (
                   <p className={`text-xs text-center ${themeTextMuted(isDark)}`}>
-                    {t('create_listing.popb.fee', { amount: feeCawDisplay.toLocaleString(undefined, { maximumFractionDigits: 2 }) })}
+                    {canPayCaw && feeCawDisplay != null
+                      ? t('create_listing.popb.fee_caw', { amount: feeCawDisplay.toLocaleString(undefined, { maximumFractionDigits: 2 }) })
+                      : canPayEth && feeEthDisplay != null
+                        ? t('create_listing.popb.fee_eth', { amount: feeEthDisplay.toLocaleString(undefined, { maximumFractionDigits: 6 }) })
+                        : t('create_listing.popb.fee_either')}
                   </p>
                 )}
                 {needsTopUp && !popBSuccess && (
@@ -733,12 +753,12 @@ const CreateListingModal: React.FC = () => {
                 <div className="flex justify-center">
                   <button
                     onClick={handlePopBList}
-                    disabled={!isOwner || popBPending || popBSuccess || needsTopUp || feeCawWei == null || !startPrice || parseFloat(startPrice) <= 0 || (listingType === 1 && (!endPrice || parseFloat(endPrice) >= parseFloat(startPrice)))}
+                    disabled={!isOwner || popBPending || popBSuccess || needsTopUp || !feeLoaded || !startPrice || parseFloat(startPrice) <= 0 || (listingType === 1 && (!endPrice || parseFloat(endPrice) >= parseFloat(startPrice)))}
                     className="w-full px-4 py-2.5 rounded-lg text-sm font-medium bg-yellow-500 text-black hover:bg-yellow-400 transition cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
                   >
                     {popBSuccess ? t('marketplace.button.listed')
                       : popBPending ? t('marketplace.button.confirming')
-                      : feeCawWei == null ? t('marketplace.button.estimating_fee')
+                      : !feeLoaded ? t('marketplace.button.estimating_fee')
                       : t('create_listing.button.list')}
                   </button>
                 </div>
