@@ -12,7 +12,7 @@
  * whole CAW via the live price for the on-chain action.
  */
 
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect, useCallback, useRef } from 'react'
 import { useTheme } from '~/hooks/useTheme'
 import QRModal from '~/components/modals/QRModal'
 import { usePriceStore } from '~/store/tokenDataStore'
@@ -87,6 +87,9 @@ export default function SponsorInviteSection() {
   // row (pending or minted) carrying the same gift. Keyed by giftCawWei.
   const [optimisticPending, setOptimisticPending] = useState<MyCode | null>(null)
   const [usdInput, setUsdInput] = useState('2.50')
+  // True once the user has touched the amount field. Guards the auto-prefill
+  // effect below from overwriting a value the user typed themselves.
+  const userEditedAmount = useRef(false)
   const [buyState, setBuyState] = useState<BuyState>('idle')
   const [error, setError] = useState<string | null>(null)
   const [copiedIdx, setCopiedIdx] = useState<number | null>(null)
@@ -184,6 +187,19 @@ export default function SponsorInviteSection() {
   // rounded DOWN to the cent so the on-chain gift stays at or under the cap.
   const maxTipCaw = maxGiftCaw + overheadCaw
   const maxUsd = maxGiftCaw > 0n ? Math.floor(Number(maxTipCaw) * rate * 100) / 100 : Infinity
+
+  // Prefill the amount once the quote resolves: if fees push the real minimum
+  // above the default $2.50, seed the input with the minimum rounded UP to the
+  // nearest $0.50 ($3.14 → $3.50, $2.86 → $3.00) so it reads as a clean number
+  // instead of an odd fee-derived value. Only fires when the user hasn't yet
+  // touched the field, and only for a real (quote-loaded) minimum over $2.50.
+  // Clamp to maxUsd so a large rounded-up floor can't exceed the per-code cap.
+  useEffect(() => {
+    if (!quote || userEditedAmount.current) return
+    if (minUsd <= 2.5) return
+    const rounded = Math.min(Math.ceil(minUsd / 0.5) * 0.5, maxUsd)
+    setUsdInput(rounded.toFixed(2))
+  }, [quote, minUsd, maxUsd])
 
   const usdAmount = parseFloat(usdInput) || 0
   // Whole CAW the sponsor will tip (their USD / price). The on-chain POT is the
@@ -357,7 +373,7 @@ export default function SponsorInviteSection() {
                 max={Number.isFinite(maxUsd) ? maxUsd : undefined}
                 step="0.01"
                 value={usdInput}
-                onChange={e => setUsdInput(e.target.value)}
+                onChange={e => { userEditedAmount.current = true; setUsdInput(e.target.value) }}
                 onBlur={() => {
                   if (usdAmount < minUsd) setUsdInput(minUsd.toFixed(2))
                   else if (Number.isFinite(maxUsd) && usdAmount > maxUsd) setUsdInput(maxUsd.toFixed(2))
