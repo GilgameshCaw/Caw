@@ -10,6 +10,7 @@ import { useCreateSession, getDefaultSpendLimit, getDefaultTipCeiling, useNetwor
 import { getTipTiers } from '~/api/actions'
 import { HiLightningBolt } from 'react-icons/hi'
 import QuickSignOptions from '~/components/QuickSignOptions'
+import { useQuickSignPromptStore } from '~/components/modals/QuickSignModal'
 import Tooltip from '~/components/Tooltip'
 import { create } from 'zustand'
 
@@ -130,9 +131,15 @@ const QuickSignRenewModal: React.FC = () => {
     ensureWallet(null, async () => {
       if (wrongWallet) return
 
-      // Temporarily disable Quick Sign so the retry uses wallet signature,
-      // but don't clear the session — re-enable if the user cancels
-      setEnabled(false)
+      // Make the retry sign MANUALLY (wallet/passkey) for this one action.
+      // Previously this did setEnabled(false) to trick requestAndSubmit into
+      // skipping the session — but sessions are now resolved per-owner and no
+      // longer gated on the global `enabled` flag, so that no longer worked: the
+      // retry hit the "Enable Quick Sign?" prompt instead of just signing. Set
+      // skipOnce on the prompt store (the same one-shot bypass the QuickSign
+      // modal's "Sign Manually" uses) so the retry goes straight to wallet/
+      // passkey signing without re-prompting.
+      useQuickSignPromptStore.setState({ skipOnce: true })
       const retry = onRetry
       // "Sign manually" is also a deliberate retry, not a dismiss — clear
       // onCancel so close() doesn't reject the awaiting submit.
@@ -143,8 +150,9 @@ const QuickSignRenewModal: React.FC = () => {
           try {
             await retry()
           } catch {
-            // User cancelled or signature failed — re-enable Quick Sign
-            useSessionKeyStore.getState().setEnabled(true)
+            // User cancelled or signature failed — clear the one-shot bypass so a
+            // later action prompts normally again.
+            useQuickSignPromptStore.setState({ skipOnce: false })
           }
         }, 100)
       }
