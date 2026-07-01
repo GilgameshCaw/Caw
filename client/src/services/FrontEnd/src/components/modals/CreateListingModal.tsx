@@ -1,7 +1,12 @@
-import React, { useState, useMemo } from 'react'
-import { useAccount, useChainId, useSwitchChain, useWriteContract, useWaitForTransactionReceipt, useReadContract } from 'wagmi'
+import React, { useState, useMemo, useCallback } from 'react'
+import { useAccount, useChainId, useSwitchChain, useWriteContract, useWaitForTransactionReceipt, useReadContract, usePublicClient } from 'wagmi'
 import { useConnectModalBridge as useConnectModal } from '~/hooks/useConnectModalBridge'
-import { parseEther, parseUnits } from 'viem'
+import { parseEther, parseUnits, encodeFunctionData, erc20Abi, formatUnits, type Address } from 'viem'
+import { useWalletPopulation } from '~/hooks/useWalletPopulation'
+import { useSmartEoaExecute, type ExecCall } from '~/hooks/useSmartEoaExecute'
+import { apiFetch } from '~/api/client'
+import { useActiveToken } from '~/store/tokenDataStore'
+import { Link } from 'react-router-dom'
 import ModalWrapper from './ModalWrapper'
 import ModalHeader from './ModalHeader'
 import { useTheme } from '~/hooks/useTheme'
@@ -70,7 +75,20 @@ const CreateListingModal: React.FC = () => {
     }
     return null
   }, [tokensByAddress, tokenId])
-  const isOwner = !!address && !!tokenOwner && address.toLowerCase() === tokenOwner
+  // Population-B (passkey) users have no wagmi wallet, so the wagmi `address`
+  // check would always fail. They list via a relayed SmartEOA.executeBatch
+  // (approve + createListing + CAW/ETH fee leg) signed by their passkey.
+  const { population } = useWalletPopulation()
+  const isPopB = population === 'B'
+  const { execute: smartEoaExecute, account: eoaAccount } = useSmartEoaExecute()
+  const activeToken = useActiveToken()
+  const l1Client = usePublicClient({ chainId: chains.l1.chainId })
+  // Owner for Pop-B is the passkey EOA that owns this token. When listing your
+  // own active profile, activeToken.owner is the EOA.
+  const popBOwner = (isPopB ? (eoaAccount ?? activeToken?.owner)?.toLowerCase() : null) ?? null
+  const isOwner = isPopB
+    ? (!!popBOwner && !!tokenOwner && popBOwner === tokenOwner)
+    : (!!address && !!tokenOwner && address.toLowerCase() === tokenOwner)
 
   // Separate write hooks for approve and listing
   const { writeContract: writeApprove, data: approveHash, isPending: isApproving, error: approveError, reset: resetApprove } = useWriteContract()
@@ -234,6 +252,123 @@ const CreateListingModal: React.FC = () => {
       })
     })
   }
+
+  // ── Population-B (passkey) relayed listing ──────────────────────────────────
+  // One passkey signature → SmartEOA.executeBatch of [setApprovalForAll?,
+  // createListing, CAW.transfer(relayer, feeCaw)]. The relayer fronts L1 gas and
+  // is repaid in CAW from the same signed batch (quoteExecuteGasFeeCaw). No LZ
+  // fee (pure L1) → forwardedValue = 0. The user needs a little L1 CAW in their
+  // EOA to cover the fee leg — otherwise we show a top-up prompt.
+  const [popBPending, setPopBPending] = useState(false)
+  const [popBSuccess, setPopBSuccess] = useState(false)
+  const [popBError, setPopBError] = useState<string | null>(null)
+  const [feeCawWei, setFeeCawWei] = useState<bigint | null>(null)
+  const [eoaCawWei, setEoaCawWei] = useState<bigint | null>(null)
+
+  // Fetch the CAW fee quote + the EOA's CAW balance when a Pop-B owner reaches
+  // the confirm step, so we can gate on "enough CAW to pay the relayer".
+  React.useEffect(() => {
+    if (!isPopB || step !== 'confirm' || !isOwner || !eoaAccount || !l1Client) return
+    let cancelled = false
+    ;(async () => {
+      try {
+        const [quote, bal] = await Promise.all([
+          apiFetch<{ relayer: string; minFeeCawWei: string; priceAvailable: boolean }>(
+            `/api/sponsor/execute-quote?forwardedValueWei=0`,
+          ),
+          l1Client.readContract({
+            address: CAW_ADDRESS as Address,
+            abi: erc20Abi,
+            functionName: 'balanceOf',
+            args: [eoaAccount],
+          }) as Promise<bigint>,
+        ])
+        if (cancelled) return
+        setFeeCawWei(quote.priceAvailable ? BigInt(quote.minFeeCawWei) : null)
+        setEoaCawWei(bal)
+      } catch {
+        if (!cancelled) { setFeeCawWei(null); setEoaCawWei(null) }
+      }
+    })()
+    return () => { cancelled = true }
+  }, [isPopB, step, isOwner, eoaAccount, l1Client])
+
+  const needsTopUp = feeCawWei != null && eoaCawWei != null && eoaCawWei < feeCawWei
+  const feeCawDisplay = feeCawWei != null ? Number(formatUnits(feeCawWei, 18)) : null
+
+  const handlePopBList = useCallback(async () => {
+    if (!isPopB || !eoaAccount || tokenId === null || !l1Client) return
+    setPopBError(null)
+    setPopBPending(true)
+    try {
+      // Fresh quote at submit time (price/gas can drift since the effect ran).
+      const quote = await apiFetch<{ relayer: string; minFeeCawWei: string; priceAvailable: boolean }>(
+        `/api/sponsor/execute-quote?forwardedValueWei=0`,
+      )
+      if (!quote.priceAvailable) throw new Error(t('create_listing.error.quote'))
+      const feeCaw = BigInt(quote.minFeeCawWei)
+
+      const selectedToken = PAYMENT_OPTIONS.find(o => o.value === paymentToken)
+      const decimals = selectedToken?.decimals ?? 18
+      const duration = BigInt(parseInt(durationHours) * 3600)
+      const startPriceWei = paymentToken === '0x0000000000000000000000000000000000000000'
+        ? parseEther(startPrice) : parseUnits(startPrice, decimals)
+      const endPriceWei = listingType === 1
+        ? (paymentToken === '0x0000000000000000000000000000000000000000'
+            ? parseEther(endPrice) : parseUnits(endPrice, decimals))
+        : 0n
+
+      // Skip the approve call if the marketplace is already an operator for the EOA.
+      const alreadyApproved = (await l1Client.readContract({
+        address: CAW_NAMES_ADDRESS,
+        abi: cawProfileAbi,
+        functionName: 'isApprovedForAll',
+        args: [eoaAccount, CAW_NAME_MARKETPLACE_ADDRESS],
+      })) as boolean
+
+      const calls: ExecCall[] = []
+      if (!alreadyApproved) {
+        calls.push({
+          to: CAW_NAMES_ADDRESS,
+          value: 0n,
+          data: encodeFunctionData({
+            abi: cawProfileAbi,
+            functionName: 'setApprovalForAll',
+            args: [CAW_NAME_MARKETPLACE_ADDRESS, true],
+          }),
+        })
+      }
+      calls.push({
+        to: CAW_NAME_MARKETPLACE_ADDRESS,
+        value: 0n,
+        data: encodeFunctionData({
+          abi: cawProfileMarketplaceAbi,
+          functionName: 'createListing',
+          args: [tokenId, listingType, paymentToken as `0x${string}`, startPriceWei, endPriceWei, duration],
+        }),
+      })
+      // Fee leg: repay the relayer in CAW (gas only — no forwarded value).
+      calls.push({
+        to: CAW_ADDRESS as Address,
+        value: 0n,
+        data: encodeFunctionData({
+          abi: erc20Abi,
+          functionName: 'transfer',
+          args: [quote.relayer as Address, feeCaw],
+        }),
+      })
+
+      await smartEoaExecute(calls)
+      setPopBSuccess(true)
+      setTimeout(() => useMarketplaceStore.getState().triggerRefresh(), 3000)
+    } catch (err: any) {
+      const msg = err?.message || ''
+      const cancelled = /NotAllowed|abort|cancel|denied|rejected/i.test(msg)
+      setPopBError(cancelled ? t('profile.error.tx_rejected') : (msg || t('marketplace.error.tx_failed')))
+    } finally {
+      setPopBPending(false)
+    }
+  }, [isPopB, eoaAccount, tokenId, l1Client, paymentToken, durationHours, startPrice, endPrice, listingType, smartEoaExecute, t])
 
   const inputClass = `w-full px-3 py-2 rounded-lg text-sm border outline-none transition ${themeInput(isDark)} ${themeBorder(isDark)}`
 
@@ -547,6 +682,36 @@ const CreateListingModal: React.FC = () => {
               </div>
             )}
 
+            {/* ── Population-B (passkey) single-signature relayed listing ── */}
+            {isPopB ? (
+              <div className="space-y-3">
+                {popBError && (
+                  <div className="p-3 rounded-lg bg-red-500/10 text-red-500 text-sm text-center">{popBError}</div>
+                )}
+                {feeCawDisplay != null && !popBSuccess && (
+                  <p className={`text-xs text-center ${themeTextMuted(isDark)}`}>
+                    {t('create_listing.popb.fee', { amount: feeCawDisplay.toLocaleString(undefined, { maximumFractionDigits: 2 }) })}
+                  </p>
+                )}
+                {needsTopUp && !popBSuccess && (
+                  <div className={`p-3 rounded-lg text-sm text-center ${isDark ? 'bg-orange-500/10 text-orange-400' : 'bg-orange-50 text-orange-600'}`}>
+                    {t('create_listing.popb.topup')}{' '}
+                    <Link to="/staking" onClick={close} className="underline font-medium">{t('create_listing.popb.topup_link')}</Link>
+                  </div>
+                )}
+                <div className="flex justify-center">
+                  <button
+                    onClick={handlePopBList}
+                    disabled={!isOwner || popBPending || popBSuccess || needsTopUp || !startPrice || parseFloat(startPrice) <= 0 || (listingType === 1 && (!endPrice || parseFloat(endPrice) >= parseFloat(startPrice)))}
+                    className="w-full px-4 py-2.5 rounded-lg text-sm font-medium bg-yellow-500 text-black hover:bg-yellow-400 transition cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
+                  >
+                    {popBSuccess ? t('marketplace.button.listed')
+                      : popBPending ? t('marketplace.button.confirming')
+                      : t('create_listing.button.list')}
+                  </button>
+                </div>
+              </div>
+            ) : (<>
             {!isApproved && !isApproveSuccess && (
               <div className="flex justify-center">
                 <button
@@ -578,6 +743,7 @@ const CreateListingModal: React.FC = () => {
                 </button>
               </div>
             )}
+            </>)}
           </div>
         )}
       </div>
