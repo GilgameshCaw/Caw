@@ -308,6 +308,22 @@ const CreateListingModal: React.FC = () => {
       if (!quote.priceAvailable) throw new Error(t('create_listing.error.quote'))
       const feeCaw = BigInt(quote.minFeeCawWei)
 
+      // Hard pre-flight: the fee leg pays the relayer in CAW, so the EOA must
+      // hold at least feeCaw. Block here (not just via the disabled button) so a
+      // race where the gate data hadn't loaded can't submit a doomed batch that
+      // would only revert at relay simulation (SIMULATION_FAILED).
+      const balNow = (await l1Client.readContract({
+        address: CAW_ADDRESS as Address,
+        abi: erc20Abi,
+        functionName: 'balanceOf',
+        args: [eoaAccount],
+      })) as bigint
+      setEoaCawWei(balNow)
+      setFeeCawWei(feeCaw)
+      if (balNow < feeCaw) {
+        throw new Error('INSUFFICIENT_FEE_CAW')
+      }
+
       const selectedToken = PAYMENT_OPTIONS.find(o => o.value === paymentToken)
       const decimals = selectedToken?.decimals ?? 18
       const duration = BigInt(parseInt(durationHours) * 3600)
@@ -362,9 +378,24 @@ const CreateListingModal: React.FC = () => {
       setPopBSuccess(true)
       setTimeout(() => useMarketplaceStore.getState().triggerRefresh(), 3000)
     } catch (err: any) {
-      const msg = err?.message || ''
-      const cancelled = /NotAllowed|abort|cancel|denied|rejected/i.test(msg)
-      setPopBError(cancelled ? t('profile.error.tx_rejected') : (msg || t('marketplace.error.tx_failed')))
+      // Translate relay/wallet errors into plain words — never surface a raw
+      // "API 400: SIMULATION_FAILED" string. apiFetch throws "API <status>: <code>",
+      // so match on the code substring after stripping the prefix.
+      const raw = (err?.message || '').replace(/^API\s+\d+:\s*/i, '')
+      let friendly: string
+      if (/NotAllowed|abort|cancel|denied|rejected/i.test(raw)) {
+        friendly = t('profile.error.tx_rejected')
+      } else if (/SIMULATION_FAILED|INSUFFICIENT_FEE_CAW|insufficient|transfer amount exceeds balance|FEE_TOO_LOW/i.test(raw)) {
+        // Nearly always: the EOA can't cover the CAW fee leg (or lacks the NFT).
+        friendly = t('create_listing.error.insufficient_fee')
+      } else if (/LISTING_TOKEN_NOT_OWNED|not owned/i.test(raw)) {
+        friendly = t('create_listing.error.not_owned')
+      } else if (/RELAY_UNCONFIGURED|LOOKUP_UNAVAILABLE|temporarily/i.test(raw)) {
+        friendly = t('create_listing.error.relay_unavailable')
+      } else {
+        friendly = t('marketplace.error.tx_failed')
+      }
+      setPopBError(friendly)
     } finally {
       setPopBPending(false)
     }
@@ -702,11 +733,12 @@ const CreateListingModal: React.FC = () => {
                 <div className="flex justify-center">
                   <button
                     onClick={handlePopBList}
-                    disabled={!isOwner || popBPending || popBSuccess || needsTopUp || !startPrice || parseFloat(startPrice) <= 0 || (listingType === 1 && (!endPrice || parseFloat(endPrice) >= parseFloat(startPrice)))}
+                    disabled={!isOwner || popBPending || popBSuccess || needsTopUp || feeCawWei == null || !startPrice || parseFloat(startPrice) <= 0 || (listingType === 1 && (!endPrice || parseFloat(endPrice) >= parseFloat(startPrice)))}
                     className="w-full px-4 py-2.5 rounded-lg text-sm font-medium bg-yellow-500 text-black hover:bg-yellow-400 transition cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
                   >
                     {popBSuccess ? t('marketplace.button.listed')
                       : popBPending ? t('marketplace.button.confirming')
+                      : feeCawWei == null ? t('marketplace.button.estimating_fee')
                       : t('create_listing.button.list')}
                   </button>
                 </div>
