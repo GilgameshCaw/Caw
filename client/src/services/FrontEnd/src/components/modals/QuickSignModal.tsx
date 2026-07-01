@@ -79,7 +79,9 @@ const QuickSignModal: React.FC<QuickSignModalProps> = (props) => {
   useEffect(() => {
     if (isOpen) {
       setError(null)
-      if (cawPrice > 0) setSpendLimit(BigInt(Math.round(5 / cawPrice)))
+      // Reuse the shared default ($10 worth of CAW) so this matches the
+      // /settings/session-keys default — don't hardcode a divergent figure.
+      if (cawPrice > 0) setSpendLimit(getDefaultSpendLimit())
       // Use network's tip target if available; fall back to validator fast tier
       const networkDefault = networkTipCaw ?? tipCeilingFallbackCaw
       setTipCeiling(networkDefault)

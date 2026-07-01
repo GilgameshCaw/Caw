@@ -92,7 +92,15 @@ const SessionKeySettings: React.FC = () => {
   // all → the flag reflects a fresh just-toggled intent, not a sibling account).
   const hasOwnSession = !!session
   const someOtherOwnerHasSession = Object.keys(sessions).some(a => a !== ownerAddr)
-  const displayEnabled = hasOwnSession || (enabled && !someOtherOwnerHasSession)
+  // Local, PER-ACCOUNT reveal intent for the config panel. The toggle drives this
+  // directly instead of the shared global `enabled` flag: flipping the global flag
+  // couldn't move the display when a SIBLING account owned it
+  // (someOtherOwnerHasSession), so the toggle looked frozen. Seed it from the
+  // derived state and reset whenever the active account (ownerAddr) changes.
+  const derivedEnabled = hasOwnSession || (enabled && !someOtherOwnerHasSession)
+  const [revealIntent, setRevealIntent] = useState<boolean | null>(null)
+  useEffect(() => { setRevealIntent(null) }, [ownerAddr])
+  const displayEnabled = revealIntent ?? derivedEnabled
 
   // Read on-chain spent amount for this session key
   const ownerAddress = address || activeToken?.address
@@ -117,13 +125,22 @@ const SessionKeySettings: React.FC = () => {
   }, [onChainSpent, session?.address])
 
   const handleToggle = () => {
-    // Base the flip on the PER-ACCOUNT display state, not the shared global flag —
-    // otherwise, when this account shows OFF only because a sibling account set the
-    // global flag, the first tap would read `enabled === true` and turn it "off"
-    // (a no-op for this account). Flipping displayEnabled makes the toggle track
-    // what the user actually sees for THIS account.
-    setEnabled(!displayEnabled)
     setError(null)
+    const next = !displayEnabled
+    // Drive the PER-ACCOUNT reveal directly so the toggle always tracks. The old
+    // code flipped only the shared global `enabled` flag, which couldn't move the
+    // display when a sibling account owned it → the toggle looked frozen.
+    setRevealIntent(next)
+    if (next) {
+      // Turning ON: expose the activate panel. Also set the global intent so
+      // downstream action-signing treats sessions as usable.
+      setEnabled(true)
+    } else {
+      // Turning OFF: if THIS account has a session, revoke it (clears the key +
+      // flips the global flag off only when no sessions remain). If it has none,
+      // just collapse the panel.
+      if (hasOwnSession) void handleRevoke()
+    }
   }
 
   const handleActivate = async () => {
