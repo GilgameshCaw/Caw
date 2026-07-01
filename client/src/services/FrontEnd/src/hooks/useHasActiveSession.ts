@@ -7,18 +7,19 @@ import { useActiveToken } from '~/store/tokenDataStore'
  * lookup is owner-keyed — independent of whichever wallet is currently connected.
  */
 export function useHasActiveSession(): boolean {
-  const enabled = useSessionKeyStore(s => s.enabled)
   const sessions = useSessionKeyStore(s => s.sessions)
   const activeToken = useActiveToken()
 
-  // [POPB-DBG][qs-gate] Disambiguate WHY "Quick Sign not enabled": global enabled flag
-  // off vs no active token (data not loaded) vs no session stored for this owner vs
-  // expired. `reason` pinpoints which condition failed. Logs only on the false paths
-  // to keep render noise down. Remove once QS-after-onboarding is reliable.
-  if (!enabled) {
-    console.log('[POPB-DBG][qs-gate] false: enabled flag is OFF')
-    return false
-  }
+  // NOTE: intentionally does NOT gate on the shared global `enabled` boolean.
+  // Sessions are per-owner, but `enabled` is a single browser-wide flag that any
+  // account's revoke/clear flips off (clearSession/clearSessionForAddress set
+  // enabled:false). That produced a split-brain: /settings/session-keys showed an
+  // account as enabled (it keys on the stored session existing) while the chooser
+  // + action-signing here read the stale global flag as OFF and demanded wallet
+  // signing / "Activate Quick Sign". A stored, non-expired session for the active
+  // owner reliably means the user wants Quick Sign for THIS account — revoke
+  // DELETES the key (useRevokeSession → clearSession), so a lingering session is
+  // never a "disabled" state. Key on per-owner session presence + validity only.
 
   // Owner-keyed ONLY — do not fall back to activeWallet here. For Population A,
   // activeWallet tracks the connected wagmi wallet, and a fallback would let a

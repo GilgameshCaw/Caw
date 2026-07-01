@@ -172,7 +172,12 @@ export const useSessionKeyStore = create<SessionKeyState>()(
 
       getActiveSessionForAddress: (address: string) => {
         const state = get()
-        if (!state.enabled) return null
+        // Do NOT gate on the shared global `enabled` flag. Sessions are per-owner;
+        // `enabled` is browser-wide and any account's revoke/clear flips it off,
+        // which would make a legitimately-sessioned account fall back to wallet
+        // signing (the /settings-says-enabled-but-actions-open-wallet split-brain).
+        // Presence + non-expiry of THIS owner's session is the source of truth —
+        // revoke deletes the key, so a stored session always means "QS on here".
         const raw = state.sessions[address.toLowerCase()] || null
         if (!raw) return null
         if (raw.expiry < Date.now() / 1000) return null

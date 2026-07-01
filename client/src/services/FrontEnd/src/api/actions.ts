@@ -1316,7 +1316,7 @@ export function useSignAndSubmitAction() {
     // (not WITHDRAW, which is scope-excluded by design), briefly POLL the store
     // for the session to land instead of prompting. Bounded so a genuinely-failed
     // registration still falls through to the passkey path quickly.
-    if (!resolvedSession && tokenOwner && actionCode !== 6 && sessionStore.enabled) {
+    if (!resolvedSession && tokenOwner && actionCode !== 6) {
       let pendingReg = false
       try {
         pendingReg = !!localStorage.getItem(`caw:pendingQuickSign:${tokenOwner.toLowerCase()}`)
@@ -1346,7 +1346,10 @@ export function useSignAndSubmitAction() {
     const rawSession = tokenOwner
       ? sessionStore.getSessionForAddress(tokenOwner)
       : null
-    if (sessionStore.enabled && !activeSession && rawSession) {
+    // Expired-session renewal: key on the stored session being present+expired,
+    // not the shared global `enabled` flag (which a sibling account's clear can
+    // stale-flip off — the /settings-enabled-but-actions-open-wallet split-brain).
+    if (!activeSession && rawSession && rawSession.expiry <= Date.now() / 1000) {
       return new Promise((resolve, reject) => {
         useQuickSignRenewStore.getState().show('expired', async () => {
           try {
