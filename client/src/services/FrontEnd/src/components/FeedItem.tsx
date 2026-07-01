@@ -34,6 +34,8 @@ import Pencil from '~/assets/images/pencil.svg?react';
 import Bookmark from '~/assets/images/bookmark.svg?react';
 import Share from '~/assets/images/share.svg?react';
 import { useTokenDataStore } from '~/store/tokenDataStore'
+import { useAuthStore } from '~/store/authStore'
+import { useWalletPopulation } from '~/hooks/useWalletPopulation'
 import { translateTextDetailed, detectScript } from '~/utils/translate'
 import { useViewerLanguage } from '~/hooks/useViewerLanguage'
 import { useMyRole } from '~/hooks/useMyRole'
@@ -106,10 +108,21 @@ const FeedItem: React.FC<{ item: CawItem; isMainPost?: boolean; isReply?: boolea
 
   const activeTokenId     = useTokenDataStore(s => s.activeTokenId)
   const blockUser = useBlockedUsersStore(s => s.blockUser)
-  const isCaptive = !useTokenDataStore(s => {
+  // "Captive" = a preview viewer who isn't signed in and must sign in before
+  // acting. Keying this purely on "the active token has a username" was wrong for
+  // Population-B (passkey) users: right after sign-in / on a cold refresh the
+  // token-data store can hold a placeholder row with no username yet (it hydrates
+  // via a background multicall), so a genuinely signed-in passkey user was treated
+  // as captive and their like/repost/reply bounced to the "sign in with passkey"
+  // modal. The durable signed-in signal is the auth session (authorizedTokenIds,
+  // persisted), so treat the user as captive only when they have NEITHER a
+  // resolved username NOR an authorized session.
+  const hasUsername = useTokenDataStore(s => {
     const tokens = Object.values(s.tokensByAddress).flat()
-    return (tokens.find(t => t.tokenId === s.activeTokenId) || tokens[0])?.username
+    return !!(tokens.find(t => t.tokenId === s.activeTokenId) || tokens[0])?.username
   })
+  const hasAuthedProfile = useAuthStore(s => s.authorizedTokenIds.length > 0)
+  const isCaptive = !hasUsername && !hasAuthedProfile
   const activeToken = useTokenDataStore(s => {
     const tokens = Object.values(s.tokensByAddress).flat()
     return tokens.find(t => t.tokenId === s.activeTokenId) || tokens[0]
@@ -123,6 +136,10 @@ const FeedItem: React.FC<{ item: CawItem; isMainPost?: boolean; isReply?: boolea
   const chainId = useChainId()
   const { openConnectModal } = useConnectModal()
   const hasActiveSession = useHasActiveSession()
+  const { population } = useWalletPopulation()
+  // Population-B (passkey) users have no wagmi wallet; connect-modal branches must
+  // not gate them (they route through signAndSubmit's passkey/Quick-Sign path).
+  const isPopB = population === 'B'
   const { isDark } = useTheme()
   const qc = useQueryClient()
   const navigate = useNavigate()
@@ -395,8 +412,12 @@ const FeedItem: React.FC<{ item: CawItem; isMainPost?: boolean; isReply?: boolea
       return
     }
 
-    // If wallet not connected and no session key, open connect modal
-    if (!isConnected && !hasActiveSession) {
+    // If wallet not connected and no session key, open connect modal. EXEMPT
+    // Population-B (passkey) users: they have NO wagmi wallet, so isConnected is
+    // always false — this branch would pop the connect modal (or dead-end) instead
+    // of letting signAndSubmit route them to the passkey/Quick-Sign path. Fall
+    // through so the action reaches signAndSubmit below.
+    if (!isPopB && !isConnected && !hasActiveSession) {
       // Reset submitting ref for new action
       isSubmittingLikeRef.current = false;
       setPendingLikeAction({
@@ -612,8 +633,9 @@ const FeedItem: React.FC<{ item: CawItem; isMainPost?: boolean; isReply?: boolea
       return
     }
 
-    // If wallet not connected and no session key, open connect modal
-    if (!isConnected && !hasActiveSession) {
+    // If wallet not connected and no session key, open connect modal (Pop-B
+    // passkey users fall through to the passkey/Quick-Sign path — no wagmi wallet).
+    if (!isPopB && !isConnected && !hasActiveSession) {
       if (openConnectModal) {
         openConnectModal()
       }
