@@ -35,7 +35,7 @@ import {
 import { getCawPriceCache, getEthPriceCache, ensureFreshGasPriceCache } from '../../services/ChainSyncService'
 import { hashCode } from '../../services/SponsorService/codes'
 import { quoteSponsorInviteCostCaw, quoteExecuteGasFeeCaw, quoteExecuteGasFeeEth, redeemGasCostCawLive } from '../../services/SponsorService/inviteQuote'
-import { CAW_ADDRESS } from '../../abi/addresses'
+import { CAW_ADDRESS, CAW_NAME_MARKETPLACE_ADDRESS } from '../../abi/addresses'
 import { getOwnValidatorTokenId } from '../../services/SponsorService/validatorIdentity'
 import { decryptInviteCode } from '../../services/SponsorService/inviteCodeCrypto'
 import { INVITE_ACTION_PREFIX } from '../../services/SponsorService/handleSponsorInvite'
@@ -749,11 +749,15 @@ router.post('/authenticate', async (req, res) => {
 // self-funded by the user's ETH value — but adding it means re-reviewing that
 // the relayer isn't left funding anything. Do NOT re-add the Minter as a broad
 // target; add the one selector.
-const SEL_WITHDRAW_TO   = '0xcdbafcd0' // CawProfile.withdrawTo(uint32,uint32,address,uint32,uint256)
-const SEL_CAW_TRANSFER  = '0xa9059cbb' // CAW.transfer(address,uint256)
-const SEL_CAW_APPROVE   = '0x095ea7b3' // CAW.approve(address,uint256)
-const SEL_DEPOSIT_FOR   = '0xf19b53f8' // CawProfile.depositFor(uint32,uint32,uint256,uint32,uint256)
-const SEL_DEPOSIT_ZAP   = '0xafb344b1' // CawProfileMinter.depositZap(uint32,uint32,uint256,uint256,uint32,uint256)
+const SEL_WITHDRAW_TO        = '0xcdbafcd0' // CawProfile.withdrawTo(uint32,uint32,address,uint32,uint256)
+const SEL_CAW_TRANSFER       = '0xa9059cbb' // CAW.transfer(address,uint256)
+const SEL_CAW_APPROVE        = '0x095ea7b3' // CAW.approve(address,uint256)
+const SEL_DEPOSIT_FOR        = '0xf19b53f8' // CawProfile.depositFor(uint32,uint32,uint256,uint32,uint256)
+const SEL_DEPOSIT_ZAP        = '0xafb344b1' // CawProfileMinter.depositZap(uint32,uint32,uint256,uint256,uint32,uint256)
+// LISTING / TRANSFER selectors (Pop-B relay, 2026-07):
+const SEL_SET_APPROVAL_FOR_ALL = '0xa22cb465' // CawProfile.setApprovalForAll(address,bool)
+const SEL_CREATE_LISTING       = '0x56926d15' // CawProfileMarketplace.createListing(uint32,uint8,address,uint256,uint256,uint64)
+const SEL_TRANSFER_AND_SYNC    = '0x64086c9d' // CawProfile.transferAndSync(address,uint256,uint32,uint256)
 const SEL_ROTATE_ECDSA  = '0xd76393e7' // SmartEOA.rotateEcdsaFallback(address,bytes)
 const SEL_ADD_PASSKEY   = '0x4f43be60' // SmartEOA.addPasskey(bytes32,bytes32,bytes)
 const SEL_CANCEL_PASSKEY  = '0x8713d23a' // SmartEOA.cancelPendingPasskey(bytes32,bytes)
@@ -771,6 +775,7 @@ const SELF_MGMT_SELECTORS = new Set([SEL_ROTATE_ECDSA, SEL_ADD_PASSKEY, SEL_CANC
 const CAW_NAMES_ADDRESS_LC = (process.env.CAW_NAMES_ADDRESS || '').toLowerCase()
 const CAW_NAMES_MINTER_ADDRESS_LC = (process.env.CAW_NAMES_MINTER_ADDRESS || '').toLowerCase()
 const CAW_ADDRESS_LC = CAW_ADDRESS.toLowerCase()
+const CAW_NAME_MARKETPLACE_ADDRESS_LC = CAW_NAME_MARKETPLACE_ADDRESS.toLowerCase()
 
 // target (lowercased) → the exact selectors permitted on it. Anything not here
 // is rejected. Empty when the env target isn't configured (route 503s).
@@ -784,10 +789,14 @@ const CAW_ADDRESS_LC = CAW_ADDRESS.toLowerCase()
 // ONLY gas (inner-call ETH is the EOA's own, executeBatch being non-payable), repaid
 // by an in-batch fee leg — CAW.transfer(relayer) OR a raw ETH transfer to the relayer
 // (the relayer target + empty-data case is allowed specially in the loop below).
+// LISTING / TRANSFER selectors added 2026-07: CawProfile.setApprovalForAll (operator
+// must equal marketplace), CawProfileMarketplace.createListing (tokenId owned-by-signer),
+// CawProfile.transferAndSync (tokenId owned-by-signer; lzFee value already in quote).
 const EXECUTE_ALLOWED: Record<string, Set<string>> = {}
-if (CAW_NAMES_ADDRESS_LC) EXECUTE_ALLOWED[CAW_NAMES_ADDRESS_LC] = new Set([SEL_WITHDRAW_TO, SEL_DEPOSIT_FOR])
+if (CAW_NAMES_ADDRESS_LC) EXECUTE_ALLOWED[CAW_NAMES_ADDRESS_LC] = new Set([SEL_WITHDRAW_TO, SEL_DEPOSIT_FOR, SEL_SET_APPROVAL_FOR_ALL, SEL_TRANSFER_AND_SYNC])
 if (CAW_NAMES_MINTER_ADDRESS_LC) EXECUTE_ALLOWED[CAW_NAMES_MINTER_ADDRESS_LC] = new Set([SEL_DEPOSIT_ZAP])
 EXECUTE_ALLOWED[CAW_ADDRESS_LC] = new Set([SEL_CAW_TRANSFER, SEL_CAW_APPROVE])
+EXECUTE_ALLOWED[CAW_NAME_MARKETPLACE_ADDRESS_LC] = new Set([SEL_CREATE_LISTING])
 
 // ERC-20 transfer(address,uint256) selector — used to decode the relayer-fee call.
 const ERC20_TRANSFER_SELECTOR = SEL_CAW_TRANSFER
@@ -876,8 +885,13 @@ router.post('/execute', async (req, res) => {
     c.to.toLowerCase() === CAW_NAMES_ADDRESS_LC && (c.data || '').slice(0, 10).toLowerCase() === SEL_DEPOSIT_FOR
   const isDepositZapCall = (c: { to: string; data: string }) =>
     c.to.toLowerCase() === CAW_NAMES_MINTER_ADDRESS_LC && (c.data || '').slice(0, 10).toLowerCase() === SEL_DEPOSIT_ZAP
+  const isCreateListingCall = (c: { to: string; data: string }) =>
+    c.to.toLowerCase() === CAW_NAME_MARKETPLACE_ADDRESS_LC && (c.data || '').slice(0, 10).toLowerCase() === SEL_CREATE_LISTING
+  const isTransferAndSyncCall = (c: { to: string; data: string }) =>
+    c.to.toLowerCase() === CAW_NAMES_ADDRESS_LC && (c.data || '').slice(0, 10).toLowerCase() === SEL_TRANSFER_AND_SYNC
   const hasDepositFor = body.calls.some(isDepositForCall)
-  const needsOwnershipCheck = hasDepositFor || body.calls.some(isDepositZapCall)
+  const needsOwnershipCheck = hasDepositFor || body.calls.some(isDepositZapCall) ||
+    body.calls.some(isCreateListingCall) || body.calls.some(isTransferAndSyncCall)
   for (const c of body.calls) {
     if (isDepositForCall(c)) {
       // depositFor(uint32,uint32,uint256 amount,...): amount = 3rd word.
@@ -1093,6 +1107,87 @@ router.post('/execute', async (req, res) => {
         return res.status(400).json({
           error: 'DEPOSIT_TOKEN_NOT_OWNED',
           detail: `depositZap tokenId ${zapTokenId} is not owned by the signer ${smartEoaLc} ` +
+            `(or not yet indexed). Refresh and retry.`,
+        })
+      }
+    }
+
+    // SHAPE CHECK on setApprovalForAll: operator (arg0) MUST be the marketplace
+    // and approved (arg1) MUST be true. This prevents a relayed approve granting
+    // operator rights over the user's NFTs to any address other than the marketplace.
+    // setApprovalForAll(address operator, bool approved): 4 + 32 + 32 = 68 bytes.
+    if (toLc === CAW_NAMES_ADDRESS_LC && selector === SEL_SET_APPROVAL_FOR_ALL) {
+      const operatorWord = c.data.slice(10, 10 + 64)        // 1st word
+      const approvedWord = c.data.slice(10 + 64, 10 + 128)  // 2nd word
+      if (operatorWord.length !== 64 || operatorWord.slice(0, 24) !== '0'.repeat(24) ||
+          approvedWord.length !== 64) {
+        return res.status(400).json({ error: 'BAD_APPROVAL_SHAPE', detail: 'setApprovalForAll operator/approved word is malformed' })
+      }
+      const operator = '0x' + operatorWord.slice(24)
+      if (operator.toLowerCase() !== CAW_NAME_MARKETPLACE_ADDRESS_LC) {
+        return res.status(400).json({
+          error: 'APPROVE_OPERATOR_NOT_MARKETPLACE',
+          detail: `setApprovalForAll operator must be the marketplace (${CAW_NAME_MARKETPLACE_ADDRESS_LC}); got ${operator}.`,
+        })
+      }
+      // approved must be true (non-zero bool word)
+      const approvedVal = BigInt('0x' + approvedWord)
+      if (approvedVal !== 1n) {
+        return res.status(400).json({
+          error: 'APPROVE_MUST_BE_TRUE',
+          detail: 'setApprovalForAll approved must be true; revoking approval is not relayable.',
+        })
+      }
+    }
+
+    // SHAPE CHECK on createListing: tokenId (arg0, uint32) MUST be owned by the
+    // signer. createListing(uint32 tokenId, uint8 listingType, address paymentToken,
+    // uint256 startPrice, uint256 endPrice, uint64 duration): tokenId = 1st word.
+    if (toLc === CAW_NAME_MARKETPLACE_ADDRESS_LC && selector === SEL_CREATE_LISTING) {
+      const tokenIdWord = c.data.slice(10, 10 + 64) // 1st word
+      if (tokenIdWord.length !== 64) {
+        return res.status(400).json({ error: 'BAD_LISTING_SHAPE', detail: 'createListing tokenId word is malformed' })
+      }
+      let listingTokenIdRaw: bigint
+      try { listingTokenIdRaw = BigInt('0x' + tokenIdWord) } catch {
+        return res.status(400).json({ error: 'BAD_LISTING_SHAPE', detail: 'createListing tokenId is not a number' })
+      }
+      if (listingTokenIdRaw > 0xFFFFFFFFn) {
+        return res.status(400).json({ error: 'BAD_LISTING_SHAPE', detail: 'createListing tokenId exceeds uint32' })
+      }
+      const listingTokenId = Number(listingTokenIdRaw)
+      if (!ownedTokenIds || !ownedTokenIds.has(listingTokenId)) {
+        return res.status(400).json({
+          error: 'LISTING_TOKEN_NOT_OWNED',
+          detail: `createListing tokenId ${listingTokenId} is not owned by the signer ${smartEoaLc} ` +
+            `(or not yet indexed). Refresh and retry.`,
+        })
+      }
+    }
+
+    // SHAPE CHECK on transferAndSync: tokenId (arg1, uint256) MUST be owned by
+    // the signer. recipient (arg0) is user-chosen — allowed without constraint.
+    // transferAndSync(address to, uint256 tokenId, uint32 lzDestId, uint256 lzTokenAmount):
+    // tokenId = 2nd word.
+    if (toLc === CAW_NAMES_ADDRESS_LC && selector === SEL_TRANSFER_AND_SYNC) {
+      const tokenIdWord = c.data.slice(10 + 64, 10 + 128) // 2nd word
+      if (tokenIdWord.length !== 64) {
+        return res.status(400).json({ error: 'BAD_TRANSFER_SHAPE', detail: 'transferAndSync tokenId word is malformed' })
+      }
+      let transferTokenIdRaw: bigint
+      try { transferTokenIdRaw = BigInt('0x' + tokenIdWord) } catch {
+        return res.status(400).json({ error: 'BAD_TRANSFER_SHAPE', detail: 'transferAndSync tokenId is not a number' })
+      }
+      // CawProfile uses uint256 tokenId in ERC-721 but mints as sequential uint32;
+      // guard against absurd values while matching the deposit pattern.
+      if (transferTokenIdRaw > 0xFFFFFFFFn) {
+        return res.status(400).json({ error: 'BAD_TRANSFER_SHAPE', detail: 'transferAndSync tokenId exceeds uint32' })
+      }
+      const transferTokenId = Number(transferTokenIdRaw)
+      if (!ownedTokenIds || !ownedTokenIds.has(transferTokenId)) {
+        return res.status(400).json({
+          error: 'TRANSFER_TOKEN_NOT_OWNED',
+          detail: `transferAndSync tokenId ${transferTokenId} is not owned by the signer ${smartEoaLc} ` +
             `(or not yet indexed). Refresh and retry.`,
         })
       }
