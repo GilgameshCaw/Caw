@@ -16,7 +16,8 @@ const PRESET_USD_AMOUNTS = [1, 5, 10, 20]
 // Floor in USD (not CAW) so the gate matches the user-facing input
 // regardless of CAW price. Previously this was a CAW floor of 1, which
 // was effectively no floor at all when CAW was a fraction of a cent.
-const MIN_TIP_USD = 1
+// On-chain tips are whole-CAW amounts, so the minimum is 1 CAW (not a USD floor).
+const MIN_TIP_CAW = 1
 
 const formatUsd = (n: number): string =>
   n < 1 ? `$${n.toFixed(2)}` : `$${n.toLocaleString(undefined, { maximumFractionDigits: 2 })}`
@@ -90,7 +91,12 @@ const TipModal: React.FC<TipModalProps> = ({
   const tipAmount = usdToCaw(usdAmount, cawPrice)
   const validatorTip = getValidatorTip()
   const totalCost = BigInt(tipAmount + Number(validatorTip)) * 10n**18n
-  const isValid = priceReady && usdAmount >= MIN_TIP_USD && tipAmount > 0
+  // The tip is denominated on-chain in whole CAW, so the real floor is 1 CAW —
+  // NOT a $1 USD minimum (which blocked e.g. a $0.10 tip even though it's well
+  // over 1 CAW). Any USD amount that converts to ≥ 1 CAW is valid.
+  const isValid = priceReady && tipAmount >= MIN_TIP_CAW
+  // USD equivalent of the 1-CAW floor, for the number input's native min.
+  const minUsd = cawPrice > 0 ? MIN_TIP_CAW * cawPrice : 0
 
   const handleSubmit = async () => {
     if (!isValid) return
@@ -206,8 +212,8 @@ const TipModal: React.FC<TipModalProps> = ({
                   <span className={`absolute left-3 top-1/2 -translate-y-1/2 text-sm ${themeTextMuted(isDark)}`}>$</span>
                   <input
                     type="number"
-                    min={MIN_TIP_USD}
-                    step="1"
+                    min={minUsd}
+                    step="any"
                     value={usdInput}
                     onChange={e => {
                       setUsdInput(e.target.value)
