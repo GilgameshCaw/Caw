@@ -295,7 +295,14 @@ router.post(
       // committed.
       const flipped = await prisma.txQueue.updateMany({
         where: { id, status: 'pending' },
-        data: { status: 'cancelled', reason: 'Cancelled by sender' },
+        // Clear the signed action on cancel. On-chain replay is already
+        // impossible (each cawonce is single-use — a resubmitted signature is
+        // skipped, not executed), so this is defense-in-depth: it stops anyone
+        // with DB access from resurrecting an action the user explicitly took
+        // back. Matches the "no trace" intent of the optimistic-row deletion
+        // below. signedTx is non-null in the schema, so blank it rather than
+        // null it.
+        data: { status: 'cancelled', reason: 'Cancelled by sender', signedTx: '' },
       })
       if (flipped.count === 0) {
         return res.status(409).json({ error: 'too_late', message: 'Action already picked up by validator' })
