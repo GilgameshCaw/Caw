@@ -1,11 +1,13 @@
-import React, { useEffect, useMemo, useState } from 'react'
-import { useAccount, useChainId, useSwitchChain, useWriteContract, useWaitForTransactionReceipt, useReadContract, useBalance } from 'wagmi'
+import React, { useCallback, useEffect, useMemo, useState } from 'react'
+import { useAccount, useChainId, useSwitchChain, useWriteContract, useWaitForTransactionReceipt, useReadContract, useBalance, usePublicClient } from 'wagmi'
 import { useConnectModalBridge as useConnectModal } from '~/hooks/useConnectModalBridge'
-import { formatEther, formatUnits, parseEther, parseUnits, erc20Abi, maxUint256 } from 'viem'
+import { formatEther, formatUnits, parseEther, parseUnits, erc20Abi, maxUint256, encodeFunctionData, type Address } from 'viem'
 import ModalWrapper from './ModalWrapper'
 import { useTheme } from '~/hooks/useTheme'
 import { useT } from '~/i18n/I18nProvider'
 import { useEnsureWallet } from '~/hooks/useEnsureWallet'
+import { useWalletPopulation } from '~/hooks/useWalletPopulation'
+import { useSmartEoaExecute, type ExecCall } from '~/hooks/useSmartEoaExecute'
 import { themeTextMuted, themeBgSubtle } from '~/utils/theme'
 import { useMarketplaceStore } from '~/store/marketplaceStore'
 import { usePriceStore, useActiveToken } from '~/store/tokenDataStore'
@@ -49,9 +51,22 @@ const MakeOfferModal: React.FC = () => {
   const ethPrice = usePriceStore(s => s.priceMap['ethereum'] ?? 0)
   const cawPrice = usePriceStore(s => s.priceMap['a-hunters-dream'] ?? 0)
 
+  // Pop-B (passkey) users have no wagmi wallet — offers route through the sponsor
+  // relay (SmartEOA.executeBatch) instead of a direct writeContract. The offer
+  // value is self-funded from the EOA's own balance; the relayer fronts only gas.
+  const { population } = useWalletPopulation()
+  const isPopB = population === 'B'
+  const { execute: smartEoaExecute, account: eoaAccount } = useSmartEoaExecute()
+  const l1Client = usePublicClient({ chainId: chains.l1.chainId })
+
   const [selectedToken, setSelectedToken] = useState(PAYMENT_OPTIONS[0])
   const [amount, setAmount] = useState('')
   const [duration, setDuration] = useState(DURATION_OPTIONS[2]) // default 7 days
+  // Pop-B relay flow state (mirrors CreateListingModal's popB* state).
+  const [popBPending, setPopBPending] = useState(false)
+  const [popBSuccess, setPopBSuccess] = useState(false)
+  const [popBError, setPopBError] = useState<string | null>(null)
+  const [eoaBalanceWei, setEoaBalanceWei] = useState<bigint | null>(null)
 
   const isEth = selectedToken.value === '0x0000000000000000000000000000000000000000'
   const isOnL1 = chainId === chains.l1.chainId
@@ -84,8 +99,34 @@ const MakeOfferModal: React.FC = () => {
     query: { enabled: !!address && !isEth },
   })
 
-  const userBalance = isEth ? (ethBalance?.value ?? 0n) : (tokenBalance ?? 0n)
-  const insufficientBalance = isConnected && amountWei > 0n && amountWei > userBalance
+  // Balance shown + capped against: the Pop-B EOA's own balance (relay path funds
+  // the offer from there), else the wagmi wallet balance for Pop-A/C.
+  const wagmiBalance = isEth ? (ethBalance?.value ?? 0n) : (tokenBalance ?? 0n)
+  const userBalance = isPopB ? (eoaBalanceWei ?? 0n) : wagmiBalance
+  // Cap the offer at the funding balance. For Pop-B we always know the EOA balance
+  // (read below); for Pop-A/C we only trust it once connected.
+  const balanceKnown = isPopB ? eoaBalanceWei !== null : isConnected
+  const insufficientBalance = balanceKnown && amountWei > 0n && amountWei > userBalance
+
+  // Read the Pop-B EOA's balance for the selected token (native ETH or ERC20) so the
+  // balance display + cap work for passkey users, whose wagmi address is empty.
+  useEffect(() => {
+    if (!isPopB || !eoaAccount || !l1Client || !isOpen) { return }
+    let cancelled = false
+    const read = async () => {
+      try {
+        const bal = isEth
+          ? await l1Client.getBalance({ address: eoaAccount as Address })
+          : (await l1Client.readContract({
+              address: selectedToken.value as Address, abi: erc20Abi,
+              functionName: 'balanceOf', args: [eoaAccount as Address],
+            })) as bigint
+        if (!cancelled) setEoaBalanceWei(bal)
+      } catch { if (!cancelled) setEoaBalanceWei(null) }
+    }
+    read()
+    return () => { cancelled = true }
+  }, [isPopB, eoaAccount, l1Client, isEth, selectedToken.value, isOpen])
 
   // Check ERC20 allowance
   const { data: allowance, refetch: refetchAllowance } = useReadContract({
@@ -176,12 +217,120 @@ const MakeOfferModal: React.FC = () => {
     })
   }
 
+  // Pop-B (passkey) offer via the sponsor relay. The offer value self-funds from the
+  // EOA (createOfferETH{value} / ERC20 approve+transferFrom); the relayer fronts only
+  // gas, repaid by an in-batch CAW.transfer or raw-ETH fee leg. Mirrors
+  // CreateListingModal.handlePopBList.
+  const handlePopBOffer = useCallback(async () => {
+    if (!isPopB || !eoaAccount || tokenId === null || amountWei === 0n || !l1Client) return
+    setPopBError(null)
+    setPopBPending(true)
+    try {
+      // The offer value the relayer must NOT front (self-funded ETH only). ERC20
+      // offers pull tokens via approve+transferFrom → nothing forwarded either.
+      const forwardedValueWei = 0n
+      const quote = await apiFetch<{ relayer: string; minFeeCawWei: string; priceAvailable: boolean; minFeeEthWei: string }>(
+        `/api/sponsor/execute-quote?forwardedValueWei=${forwardedValueWei}`,
+      )
+      const feeCaw = quote.priceAvailable ? BigInt(quote.minFeeCawWei) : null
+      const feeEth = BigInt(quote.minFeeEthWei)
+
+      // Fresh balances at submit-time. The EOA must cover: the offer value (ETH offer
+      // only) + a gas fee leg (CAW preferred, else ETH). Hard pre-flight so a doomed
+      // batch never reaches relay simulation.
+      const [cawBalNow, ethBalNow, tokenBalNow] = await Promise.all([
+        l1Client.readContract({ address: CAW_ADDRESS as Address, abi: erc20Abi, functionName: 'balanceOf', args: [eoaAccount as Address] }) as Promise<bigint>,
+        l1Client.getBalance({ address: eoaAccount as Address }),
+        isEth ? Promise.resolve(0n) : l1Client.readContract({ address: selectedToken.value as Address, abi: erc20Abi, functionName: 'balanceOf', args: [eoaAccount as Address] }) as Promise<bigint>,
+      ])
+      setEoaBalanceWei(isEth ? ethBalNow : tokenBalNow)
+
+      // The offer funds themselves must be present in the EOA.
+      if (isEth) {
+        if (ethBalNow < amountWei) throw new Error('INSUFFICIENT_OFFER_FUNDS')
+      } else {
+        if (tokenBalNow < amountWei) throw new Error('INSUFFICIENT_OFFER_FUNDS')
+      }
+
+      // Gas fee currency: CAW when the EOA holds enough, else ETH. For an ETH offer the
+      // ETH fee leg must fit ALONGSIDE the offer value, so require ethBal ≥ offer+fee.
+      const payInCaw = feeCaw != null && cawBalNow >= feeCaw
+      const ethNeededForFee = feeEth + (isEth ? amountWei : 0n)
+      const payInEth = ethBalNow >= ethNeededForFee
+      if (!payInCaw && !payInEth) throw new Error('INSUFFICIENT_FEE_CAW')
+
+      const calls: ExecCall[] = []
+      // ERC20 offer: approve the marketplace to pull exactly the offer amount (bound
+      // amount — the relay rejects an unbounded/mismatched approve).
+      if (!isEth) {
+        calls.push({
+          to: selectedToken.value as Address,
+          value: 0n,
+          data: encodeFunctionData({ abi: erc20Abi, functionName: 'approve', args: [CAW_NAME_MARKETPLACE_ADDRESS, amountWei] }),
+        })
+        calls.push({
+          to: CAW_NAME_MARKETPLACE_ADDRESS,
+          value: 0n,
+          data: encodeFunctionData({
+            abi: cawProfileMarketplaceAbi, functionName: 'createOfferERC20',
+            args: [tokenId, selectedToken.value as `0x${string}`, amountWei, BigInt(duration.seconds)],
+          }),
+        })
+      } else {
+        calls.push({
+          to: CAW_NAME_MARKETPLACE_ADDRESS,
+          value: amountWei, // self-funded from the EOA's own ETH
+          data: encodeFunctionData({
+            abi: cawProfileMarketplaceAbi, functionName: 'createOfferETH',
+            args: [tokenId, BigInt(duration.seconds)],
+          }),
+        })
+      }
+      // Gas fee leg: repay the relayer.
+      if (payInCaw) {
+        calls.push({
+          to: CAW_ADDRESS as Address, value: 0n,
+          data: encodeFunctionData({ abi: erc20Abi, functionName: 'transfer', args: [quote.relayer as Address, feeCaw!] }),
+        })
+      } else {
+        calls.push({ to: quote.relayer as Address, value: feeEth, data: '0x' })
+      }
+
+      const relayTxHash = await smartEoaExecute(calls)
+      setPopBSuccess(true)
+      triggerRefresh()
+      // Notify the owner. The relay txHash is the on-chain tx that carries the offer,
+      // so the indexer-backed lookup resolves it the same as a direct-wallet offer.
+      if (activeToken?.tokenId && relayTxHash) {
+        apiFetch('/api/marketplace/offers/notify', {
+          method: 'POST',
+          body: JSON.stringify({ senderTokenId: activeToken.tokenId, txHash: relayTxHash }),
+        }).catch(err => console.warn('[MakeOfferModal] offer notify failed:', err))
+      }
+    } catch (err: any) {
+      const raw = (err?.message || '').replace(/^API\s+\d+:\s*/i, '')
+      let friendly: string
+      if (/NotAllowed|abort|cancel|denied|rejected/i.test(raw)) friendly = t('make_offer.tx_rejected')
+      else if (/INSUFFICIENT_OFFER_FUNDS/i.test(raw)) friendly = t('make_offer.insufficient_balance')
+      else if (/SIMULATION_FAILED|INSUFFICIENT_FEE_CAW|insufficient|FEE_TOO_LOW|transfer amount exceeds/i.test(raw)) friendly = t('make_offer.popb_insufficient_fee')
+      else if (/RELAY_UNCONFIGURED|LOOKUP_UNAVAILABLE|PRICE_UNAVAILABLE|temporarily/i.test(raw)) friendly = t('make_offer.relay_unavailable')
+      else friendly = t('make_offer.tx_failed')
+      setPopBError(friendly)
+    } finally {
+      setPopBPending(false)
+    }
+  }, [isPopB, eoaAccount, tokenId, amountWei, l1Client, isEth, selectedToken.value, duration.seconds, smartEoaExecute, triggerRefresh, activeToken?.tokenId, t])
+
   const handleClose = () => {
     resetApprove()
     resetOffer()
     setAmount('')
     setSelectedToken(PAYMENT_OPTIONS[0])
     setDuration(DURATION_OPTIONS[2])
+    setPopBError(null)
+    setPopBSuccess(false)
+    setPopBPending(false)
+    setEoaBalanceWei(null)
     close()
   }
 
@@ -195,9 +344,9 @@ const MakeOfferModal: React.FC = () => {
   }
 
   return (
-    <ModalWrapper isOpen={isOpen} onClose={handleClose} maxWidth={isSuccess ? 'max-w-[420px]' : 'max-w-[480px]'} usePortal zIndex={9999}>
+    <ModalWrapper isOpen={isOpen} onClose={handleClose} maxWidth={(isSuccess || popBSuccess) ? 'max-w-[420px]' : 'max-w-[480px]'} usePortal zIndex={9999}>
       <div className="p-6">
-        {isSuccess ? (
+        {(isSuccess || popBSuccess) ? (
           <div className="text-center py-6">
             <div className={`inline-flex items-center justify-center w-14 h-14 rounded-full mb-4 ${isDark ? 'bg-green-500/10' : 'bg-green-50'}`}>
               <svg className={`w-7 h-7 ${isDark ? 'text-green-400' : 'text-green-600'}`} fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -321,7 +470,7 @@ const MakeOfferModal: React.FC = () => {
             </div>
 
             {/* Balance info */}
-            {isConnected && (
+            {(isConnected || (isPopB && eoaBalanceWei !== null)) && (
               <div className={`p-3 rounded-xl ${themeBgSubtle(isDark)} text-sm mb-4`}>
                 <div className="flex justify-between">
                   <span className={themeTextMuted(isDark)}>{t('make_offer.your_balance')}</span>
@@ -339,40 +488,56 @@ const MakeOfferModal: React.FC = () => {
             )}
 
             {/* Errors */}
-            {(approveError || writeError) && (
+            {(approveError || writeError || popBError) && (
               <div className="mb-4 p-3 rounded-lg bg-red-500/10 text-red-500 text-sm text-center">
-                {(approveError || writeError)?.message?.includes('User rejected')
-                  ? t('make_offer.tx_rejected')
-                  : t('make_offer.tx_failed')}
+                {popBError
+                  ? popBError
+                  : (approveError || writeError)?.message?.includes('User rejected')
+                    ? t('make_offer.tx_rejected')
+                    : t('make_offer.tx_failed')}
               </div>
             )}
 
-            {/* Approve button (ERC20 only) */}
-            {needsApproval && !hasApproval && (
+            {/* Pop-B (passkey): single relay button — approve (ERC20) + createOffer +
+                fee leg are bundled into one signed batch, so no separate approve step. */}
+            {isPopB ? (
               <button
-                onClick={() => { if (approveError) resetApprove(); handleApprove() }}
-                disabled={isApproving || isApproveConfirming || isSwitchingChain}
-                className="w-full px-4 py-2.5 rounded-lg text-sm font-medium bg-yellow-500 text-black hover:bg-yellow-400 transition cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed mb-2"
-              >
-                {needsChainSwitch ? (isSwitchingChain ? t('make_offer.btn.switching') : t('make_offer.btn.switch_network'))
-                  : isApproving ? t('make_offer.btn.confirm_in_wallet')
-                  : isApproveConfirming ? t('make_offer.btn.approving')
-                  : t('make_offer.btn.approve_token', { token: selectedToken.label })}
-              </button>
-            )}
-
-            {/* Submit offer button */}
-            {(isEth || hasApproval) && (
-              <button
-                onClick={() => { if (writeError) resetOffer(); handleSubmitOffer() }}
-                disabled={isSubmitting || isWaitingForReceipt || isSwitchingChain || insufficientBalance || amountWei === 0n}
+                onClick={() => { setPopBError(null); handlePopBOffer() }}
+                disabled={popBPending || insufficientBalance || amountWei === 0n}
                 className="w-full px-4 py-2.5 rounded-lg text-sm font-medium bg-yellow-500 text-black hover:bg-yellow-400 transition cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:bg-yellow-500"
               >
-                {needsChainSwitch ? (isSwitchingChain ? t('make_offer.btn.switching') : t('make_offer.btn.switch_network'))
-                  : isSubmitting ? t('make_offer.btn.confirm_in_wallet')
-                  : isWaitingForReceipt ? t('make_offer.btn.submitting')
-                  : t('make_offer.btn.submit_offer')}
+                {popBPending ? t('make_offer.btn.submitting') : t('make_offer.btn.submit_offer')}
               </button>
+            ) : (
+              <>
+                {/* Approve button (ERC20 only) */}
+                {needsApproval && !hasApproval && (
+                  <button
+                    onClick={() => { if (approveError) resetApprove(); handleApprove() }}
+                    disabled={isApproving || isApproveConfirming || isSwitchingChain}
+                    className="w-full px-4 py-2.5 rounded-lg text-sm font-medium bg-yellow-500 text-black hover:bg-yellow-400 transition cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed mb-2"
+                  >
+                    {needsChainSwitch ? (isSwitchingChain ? t('make_offer.btn.switching') : t('make_offer.btn.switch_network'))
+                      : isApproving ? t('make_offer.btn.confirm_in_wallet')
+                      : isApproveConfirming ? t('make_offer.btn.approving')
+                      : t('make_offer.btn.approve_token', { token: selectedToken.label })}
+                  </button>
+                )}
+
+                {/* Submit offer button */}
+                {(isEth || hasApproval) && (
+                  <button
+                    onClick={() => { if (writeError) resetOffer(); handleSubmitOffer() }}
+                    disabled={isSubmitting || isWaitingForReceipt || isSwitchingChain || insufficientBalance || amountWei === 0n}
+                    className="w-full px-4 py-2.5 rounded-lg text-sm font-medium bg-yellow-500 text-black hover:bg-yellow-400 transition cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:bg-yellow-500"
+                  >
+                    {needsChainSwitch ? (isSwitchingChain ? t('make_offer.btn.switching') : t('make_offer.btn.switch_network'))
+                      : isSubmitting ? t('make_offer.btn.confirm_in_wallet')
+                      : isWaitingForReceipt ? t('make_offer.btn.submitting')
+                      : t('make_offer.btn.submit_offer')}
+                  </button>
+                )}
+              </>
             )}
           </>
         )}

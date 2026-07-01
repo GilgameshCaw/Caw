@@ -1932,5 +1932,7 @@
   "profile_chooser.remove_sign_out": "Wyloguj się",
   "profile_chooser.remove_hide": "Ukryj się na razie",
   "passkey_signin.error.wrong_passkey": "To hasło nie pasuje do tego konta. Wybierz hasło skonfigurowane dla tej nazwy użytkownika i spróbuj ponownie.",
-  "passkey_signin.error.not_passkey": "To konto loguje się za pomocą podłączonego portfela, a nie hasła. Zamiast tego użyj opcji „Połącz portfel”."
+  "passkey_signin.error.not_passkey": "To konto loguje się za pomocą podłączonego portfela, a nie hasła. Zamiast tego użyj opcji „Połącz portfel”.",
+  "make_offer.popb_insufficient_fee": "Twój portfel nie wystarczy na pokrycie oferty plus opłatę sieciową. Doładuj i spróbuj ponownie.",
+  "make_offer.relay_unavailable": "Usługa podpisywania jest chwilowo niedostępna. Spróbuj ponownie wkrótce."
 }

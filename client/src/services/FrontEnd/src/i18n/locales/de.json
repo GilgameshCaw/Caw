@@ -1932,5 +1932,7 @@
   "profile_chooser.remove_sign_out": "Abmelden",
   "profile_chooser.remove_hide": "Verstecke dich vorerst",
   "passkey_signin.error.wrong_passkey": "Dieser Hauptschlüssel stimmt nicht mit diesem Konto überein. Wählen Sie den Passkey, den Sie für diesen Benutzernamen eingerichtet haben, und versuchen Sie es erneut.",
-  "passkey_signin.error.not_passkey": "Dieses Konto meldet sich mit einer verbundenen Wallet an, nicht mit einem Hauptschlüssel. Verwenden Sie stattdessen die Option „Wallet verbinden“."
+  "passkey_signin.error.not_passkey": "Dieses Konto meldet sich mit einer verbundenen Wallet an, nicht mit einem Hauptschlüssel. Verwenden Sie stattdessen die Option „Wallet verbinden“.",
+  "make_offer.popb_insufficient_fee": "Ihr Geldbeutel reicht nicht aus, um das Angebot zuzüglich der Netzwerkgebühr zu decken. Füllen Sie auf und versuchen Sie es erneut.",
+  "make_offer.relay_unavailable": "Der Signierdienst ist vorübergehend nicht verfügbar. Bitte versuchen Sie es in Kürze noch einmal."
 }

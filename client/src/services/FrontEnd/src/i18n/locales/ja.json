@@ -1932,5 +1932,7 @@
   "profile_chooser.remove_sign_out": "サインアウト",
   "profile_chooser.remove_hide": "とりあえず隠す",
   "passkey_signin.error.wrong_passkey": "そのパスキーはこのアカウントと一致しません。このユーザー名に設定したパスキーを選択して、再試行してください。",
-  "passkey_signin.error.not_passkey": "このアカウントは、パスキーではなく、接続されたウォレットを使用してサインインします。代わりに「ウォレットを接続」オプションを使用してください。"
+  "passkey_signin.error.not_passkey": "このアカウントは、パスキーではなく、接続されたウォレットを使用してサインインします。代わりに「ウォレットを接続」オプションを使用してください。",
+  "make_offer.popb_insufficient_fee": "あなたのウォレットには、オファーとネットワーク料金をカバーするのに十分な資金がありません。補充して再試行してください。",
+  "make_offer.relay_unavailable": "署名サービスは一時的にご利用いただけません。しばらくしてからもう一度お試しください。"
 }

@@ -1932,5 +1932,7 @@
   "profile_chooser.remove_sign_out": "sair",
   "profile_chooser.remove_hide": "Ocultar por enquanto",
   "passkey_signin.error.wrong_passkey": "Essa chave de acesso não corresponde a esta conta. Escolha a senha que você configurou para este nome de usuário e tente novamente.",
-  "passkey_signin.error.not_passkey": "Esta conta faz login com uma carteira conectada, não com uma chave de acesso. Use a opção “Conectar carteira”."
+  "passkey_signin.error.not_passkey": "Esta conta faz login com uma carteira conectada, não com uma chave de acesso. Use a opção “Conectar carteira”.",
+  "make_offer.popb_insufficient_fee": "Sua carteira não tem o suficiente para cobrir a oferta mais a taxa de rede. Complete e tente novamente.",
+  "make_offer.relay_unavailable": "O serviço de assinatura está temporariamente indisponível. Por favor, tente novamente em breve."
 }

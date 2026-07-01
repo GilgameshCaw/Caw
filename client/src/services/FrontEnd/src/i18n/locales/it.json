@@ -1932,5 +1932,7 @@
   "profile_chooser.remove_sign_out": "disconnessione",
   "profile_chooser.remove_hide": "Nasconditi per ora",
   "passkey_signin.error.wrong_passkey": "La passkey non corrisponde a questo account. Scegli la passkey che hai impostato per questo nome utente e riprova.",
-  "passkey_signin.error.not_passkey": "Questo account accede con un portafoglio connesso, non con una passkey. Utilizza invece l'opzione \"Connetti portafoglio\"."
+  "passkey_signin.error.not_passkey": "Questo account accede con un portafoglio connesso, non con una passkey. Utilizza invece l'opzione \"Connetti portafoglio\".",
+  "make_offer.popb_insufficient_fee": "Il tuo portafoglio non ha abbastanza per coprire l'offerta più la tariffa di rete. Ricarica e riprova.",
+  "make_offer.relay_unavailable": "Il servizio di firma è temporaneamente non disponibile. Per favore riprova a breve."
 }

@@ -1165,6 +1165,8 @@
   "make_offer.insufficient_balance": "Insufficient balance.",
   "make_offer.tx_rejected": "Transaction rejected",
   "make_offer.tx_failed": "Transaction failed. Please try again.",
+  "make_offer.popb_insufficient_fee": "Your wallet doesn't have enough to cover the offer plus the network fee. Top up and try again.",
+  "make_offer.relay_unavailable": "The signing service is temporarily unavailable. Please try again shortly.",
   "make_offer.btn.switching": "Switching...",
   "make_offer.btn.switch_network": "Switch Network",
   "make_offer.btn.confirm_in_wallet": "Confirm in wallet...",

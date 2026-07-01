@@ -1931,5 +1931,7 @@
   "profile_chooser.remove_sign_out": "Mag-sign out",
   "profile_chooser.remove_hide": "Magtago muna",
   "passkey_signin.error.wrong_passkey": "Ang passkey na iyon ay hindi tumutugma sa account na ito. Piliin ang passkey na iyong na-set up para sa username na ito at subukang muli.",
-  "passkey_signin.error.not_passkey": "Nagsa-sign in ang account na ito gamit ang isang konektadong wallet, hindi isang passkey. Gamitin na lang ang opsyong “Kumonekta sa Wallet.”"
+  "passkey_signin.error.not_passkey": "Nagsa-sign in ang account na ito gamit ang isang konektadong wallet, hindi isang passkey. Gamitin na lang ang opsyong “Kumonekta sa Wallet.”",
+  "make_offer.popb_insufficient_fee": "Ang iyong wallet ay hindi sapat upang masakop ang alok at ang bayad sa network. Mag-top up at subukang muli.",
+  "make_offer.relay_unavailable": "Pansamantalang hindi available ang serbisyo sa pagpirma. Pakisubukang muli sa ilang sandali."
 }

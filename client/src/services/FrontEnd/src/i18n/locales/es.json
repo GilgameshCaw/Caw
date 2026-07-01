@@ -1383,5 +1383,7 @@
   "profile_chooser.remove_sign_out": "desconectar",
   "profile_chooser.remove_hide": "Ocultar por ahora",
   "passkey_signin.error.wrong_passkey": "Esa clave de acceso no coincide con esta cuenta. Elija la clave de acceso que configuró para este nombre de usuario e inténtelo nuevamente.",
-  "passkey_signin.error.not_passkey": "Esta cuenta inicia sesión con una billetera conectada, no con una clave de acceso. Utilice la opción \"Conectar billetera\" en su lugar."
+  "passkey_signin.error.not_passkey": "Esta cuenta inicia sesión con una billetera conectada, no con una clave de acceso. Utilice la opción \"Conectar billetera\" en su lugar.",
+  "make_offer.popb_insufficient_fee": "Tu billetera no tiene suficiente para cubrir la oferta más la tarifa de red. Recarga y vuelve a intentarlo.",
+  "make_offer.relay_unavailable": "El servicio de firma no está disponible temporalmente. Inténtelo de nuevo en breve."
 }

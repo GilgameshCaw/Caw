@@ -1932,5 +1932,7 @@
   "profile_chooser.remove_sign_out": "Meld u af",
   "profile_chooser.remove_hide": "Verberg je voorlopig",
   "passkey_signin.error.wrong_passkey": "Die toegangssleutel komt niet overeen met dit account. Kies de toegangscode die u voor deze gebruikersnaam heeft ingesteld en probeer het opnieuw.",
-  "passkey_signin.error.not_passkey": "Dit account logt in met een verbonden portemonnee, niet met een toegangssleutel. Gebruik in plaats daarvan de optie ‘Verbind Wallet’."
+  "passkey_signin.error.not_passkey": "Dit account logt in met een verbonden portemonnee, niet met een toegangssleutel. Gebruik in plaats daarvan de optie ‘Verbind Wallet’.",
+  "make_offer.popb_insufficient_fee": "Uw portemonnee heeft niet genoeg om het aanbod plus de netwerkkosten te dekken. Vul bij en probeer het opnieuw.",
+  "make_offer.relay_unavailable": "De ondertekenservice is tijdelijk niet beschikbaar. Probeer het binnenkort opnieuw."
 }

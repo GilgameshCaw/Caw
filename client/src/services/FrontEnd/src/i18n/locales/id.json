@@ -1932,5 +1932,7 @@
   "profile_chooser.remove_sign_out": "Keluar",
   "profile_chooser.remove_hide": "Sembunyikan untuk saat ini",
   "passkey_signin.error.wrong_passkey": "Kunci sandi itu tidak cocok dengan akun ini. Pilih kunci sandi yang Anda atur untuk nama pengguna ini dan coba lagi.",
-  "passkey_signin.error.not_passkey": "Akun ini masuk dengan dompet yang terhubung, bukan kunci sandi. Gunakan opsi “Hubungkan Dompet” sebagai gantinya."
+  "passkey_signin.error.not_passkey": "Akun ini masuk dengan dompet yang terhubung, bukan kunci sandi. Gunakan opsi “Hubungkan Dompet” sebagai gantinya.",
+  "make_offer.popb_insufficient_fee": "Dompet Anda tidak cukup untuk membayar penawaran ditambah biaya jaringan. Isi ulang dan coba lagi.",
+  "make_offer.relay_unavailable": "Layanan penandatanganan untuk sementara tidak tersedia. Silakan coba lagi sebentar lagi."
 }

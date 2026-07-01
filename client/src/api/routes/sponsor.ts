@@ -35,7 +35,7 @@ import {
 import { getCawPriceCache, getEthPriceCache, ensureFreshGasPriceCache } from '../../services/ChainSyncService'
 import { hashCode } from '../../services/SponsorService/codes'
 import { quoteSponsorInviteCostCaw, quoteExecuteGasFeeCaw, quoteExecuteGasFeeEth, redeemGasCostCawLive } from '../../services/SponsorService/inviteQuote'
-import { CAW_ADDRESS, CAW_NAME_MARKETPLACE_ADDRESS } from '../../abi/addresses'
+import { CAW_ADDRESS, CAW_NAME_MARKETPLACE_ADDRESS, WETH_ADDRESS, USDC_ADDRESS, USDT_ADDRESS } from '../../abi/addresses'
 import { getOwnValidatorTokenId } from '../../services/SponsorService/validatorIdentity'
 import { decryptInviteCode } from '../../services/SponsorService/inviteCodeCrypto'
 import { INVITE_ACTION_PREFIX } from '../../services/SponsorService/handleSponsorInvite'
@@ -758,6 +758,12 @@ const SEL_DEPOSIT_ZAP        = '0xafb344b1' // CawProfileMinter.depositZap(uint3
 const SEL_SET_APPROVAL_FOR_ALL = '0xa22cb465' // CawProfile.setApprovalForAll(address,bool)
 const SEL_CREATE_LISTING       = '0x56926d15' // CawProfileMarketplace.createListing(uint32,uint8,address,uint256,uint256,uint64)
 const SEL_TRANSFER_AND_SYNC    = '0x64086c9d' // CawProfile.transferAndSync(address,uint256,uint32,uint256)
+// OFFER selectors (Pop-B relay, 2026-07): buy-side bids on the marketplace. The
+// offer VALUE is self-funded by the EOA (executeBatch is payable → the EOA's own
+// ETH backs createOfferETH's msg.value; the relayer forwards nothing). ERC20 offers
+// carry an in-batch CAW.approve/ERC20.approve to the marketplace bound to the amount.
+const SEL_CREATE_OFFER_ETH     = '0x102b26e4' // CawProfileMarketplace.createOfferETH(uint32,uint64)
+const SEL_CREATE_OFFER_ERC20   = '0x525ab952' // CawProfileMarketplace.createOfferERC20(uint32,address,uint256,uint64)
 const SEL_ROTATE_ECDSA  = '0xd76393e7' // SmartEOA.rotateEcdsaFallback(address,bytes)
 const SEL_ADD_PASSKEY   = '0x4f43be60' // SmartEOA.addPasskey(bytes32,bytes32,bytes)
 const SEL_CANCEL_PASSKEY  = '0x8713d23a' // SmartEOA.cancelPendingPasskey(bytes32,bytes)
@@ -776,6 +782,13 @@ const CAW_NAMES_ADDRESS_LC = (process.env.CAW_NAMES_ADDRESS || '').toLowerCase()
 const CAW_NAMES_MINTER_ADDRESS_LC = (process.env.CAW_NAMES_MINTER_ADDRESS || '').toLowerCase()
 const CAW_ADDRESS_LC = CAW_ADDRESS.toLowerCase()
 const CAW_NAME_MARKETPLACE_ADDRESS_LC = CAW_NAME_MARKETPLACE_ADDRESS.toLowerCase()
+// Payment tokens an ERC20 offer may be denominated in (mirrors the FE's
+// PAYMENT_OPTIONS minus native ETH). An ERC20 offer batch carries an
+// approve(marketplace, amount) on ONE of these — the ONLY approve target other
+// than CawProfile the relay permits (bound to the offer amount, see shape check).
+const OFFER_PAYMENT_TOKENS_LC = new Set(
+  [WETH_ADDRESS, CAW_ADDRESS, USDC_ADDRESS, USDT_ADDRESS].map(a => a.toLowerCase()),
+)
 
 // target (lowercased) → the exact selectors permitted on it. Anything not here
 // is rejected. Empty when the env target isn't configured (route 503s).
@@ -796,7 +809,16 @@ const EXECUTE_ALLOWED: Record<string, Set<string>> = {}
 if (CAW_NAMES_ADDRESS_LC) EXECUTE_ALLOWED[CAW_NAMES_ADDRESS_LC] = new Set([SEL_WITHDRAW_TO, SEL_DEPOSIT_FOR, SEL_SET_APPROVAL_FOR_ALL, SEL_TRANSFER_AND_SYNC])
 if (CAW_NAMES_MINTER_ADDRESS_LC) EXECUTE_ALLOWED[CAW_NAMES_MINTER_ADDRESS_LC] = new Set([SEL_DEPOSIT_ZAP])
 EXECUTE_ALLOWED[CAW_ADDRESS_LC] = new Set([SEL_CAW_TRANSFER, SEL_CAW_APPROVE])
-EXECUTE_ALLOWED[CAW_NAME_MARKETPLACE_ADDRESS_LC] = new Set([SEL_CREATE_LISTING])
+EXECUTE_ALLOWED[CAW_NAME_MARKETPLACE_ADDRESS_LC] = new Set([SEL_CREATE_LISTING, SEL_CREATE_OFFER_ETH, SEL_CREATE_OFFER_ERC20])
+// Each ERC20 offer-payment token may only be `approve`d (spender=marketplace,
+// amount-bound in the shape check) — no transfer/other selectors on these targets.
+// CAW already permits approve above; add the non-CAW payment tokens here.
+for (const tokenLc of OFFER_PAYMENT_TOKENS_LC) {
+  if (tokenLc === CAW_ADDRESS_LC) continue // already has approve+transfer
+  const existing = EXECUTE_ALLOWED[tokenLc] ?? new Set<string>()
+  existing.add(SEL_CAW_APPROVE) // approve(address,uint256) — same selector for any ERC20
+  EXECUTE_ALLOWED[tokenLc] = existing
+}
 
 // ERC-20 transfer(address,uint256) selector — used to decode the relayer-fee call.
 const ERC20_TRANSFER_SELECTOR = SEL_CAW_TRANSFER
@@ -881,8 +903,16 @@ router.post('/execute', async (req, res) => {
   // helped establish (HIGH, security review 2026-06).
   let ownedTokenIds: Set<number> | null = null
   let depositForAmountWei: bigint | null = null
+  // For an ERC20 offer, the in-batch approve(marketplace, amount) must be bound to
+  // the createOfferERC20 amount arg. Pre-scan it here (like depositForAmountWei).
+  let offerErc20AmountWei: bigint | null = null
+  let offerErc20PaymentTokenLc: string | null = null
   const isDepositForCall = (c: { to: string; data: string }) =>
     c.to.toLowerCase() === CAW_NAMES_ADDRESS_LC && (c.data || '').slice(0, 10).toLowerCase() === SEL_DEPOSIT_FOR
+  const isCreateOfferErc20Call = (c: { to: string; data: string }) =>
+    c.to.toLowerCase() === CAW_NAME_MARKETPLACE_ADDRESS_LC && (c.data || '').slice(0, 10).toLowerCase() === SEL_CREATE_OFFER_ERC20
+  const isCreateOfferEthCall = (c: { to: string; data: string }) =>
+    c.to.toLowerCase() === CAW_NAME_MARKETPLACE_ADDRESS_LC && (c.data || '').slice(0, 10).toLowerCase() === SEL_CREATE_OFFER_ETH
   const isDepositZapCall = (c: { to: string; data: string }) =>
     c.to.toLowerCase() === CAW_NAMES_MINTER_ADDRESS_LC && (c.data || '').slice(0, 10).toLowerCase() === SEL_DEPOSIT_ZAP
   const isCreateListingCall = (c: { to: string; data: string }) =>
@@ -900,6 +930,40 @@ router.post('/execute', async (req, res) => {
         try { depositForAmountWei = BigInt('0x' + amtWord) } catch { depositForAmountWei = null }
       }
     }
+    if (isCreateOfferErc20Call(c)) {
+      // createOfferERC20(uint32 tokenId, address paymentToken, uint256 amount, uint64 duration):
+      // paymentToken = 2nd word, amount = 3rd word.
+      const tokenWord = (c.data || '').slice(10 + 64, 10 + 128)
+      const amtWord = (c.data || '').slice(10 + 128, 10 + 192)
+      if (tokenWord.length === 64 && tokenWord.slice(0, 24) === '0'.repeat(24)) {
+        offerErc20PaymentTokenLc = ('0x' + tokenWord.slice(24)).toLowerCase()
+      }
+      if (amtWord.length === 64) {
+        try { offerErc20AmountWei = BigInt('0x' + amtWord) } catch { offerErc20AmountWei = null }
+      }
+    }
+  }
+  // Reject more than ONE offer (ETH + ERC20 combined) per batch. For ERC20 the
+  // approve binding is 1:1 with the offer amount, so multiple would make the match
+  // ambiguous; for ETH (and in general) each extra offer call burns gas the
+  // single-offer fee quote didn't price for — packing several undershoots the
+  // relayer's real gas spend (gas-grief, same class as TOO_MANY_DEPOSITS).
+  if (body.calls.filter(c => isCreateOfferErc20Call(c) || isCreateOfferEthCall(c)).length > 1) {
+    return res.status(400).json({ error: 'TOO_MANY_OFFERS', detail: 'At most one offer (ETH or ERC20) per batch.' })
+  }
+  // Cap the ERC20 offer amount. The in-batch approve is bound to THIS amount, so an
+  // unbounded/maxUint256 offer would make the relay help establish an effectively
+  // unbounded STANDING allowance to the marketplace on the EOA's token — exactly what
+  // SEAM-EXEC-4's amount-binding exists to prevent. Any real offer is a concrete
+  // balance; 1e33 base units (≈ 1e15 tokens at 18 decimals, or 1e27 USDC/USDT) is far
+  // above any legitimate bid yet blocks the unbounded-allowance abuse.
+  const MAX_OFFER_AMOUNT_WEI = 10n ** 33n
+  if (offerErc20AmountWei !== null && offerErc20AmountWei > MAX_OFFER_AMOUNT_WEI) {
+    return res.status(400).json({
+      error: 'OFFER_AMOUNT_TOO_LARGE',
+      detail: `ERC20 offer amount exceeds the maximum (${MAX_OFFER_AMOUNT_WEI}). ` +
+        `An unbounded approve is not relayable.`,
+    })
   }
   // Reject more than ONE deposit (depositFor + depositZap combined) per batch. Each
   // fires a cross-chain LZ send (~100K+ gas); the relay's fee quote uses a fixed
@@ -1023,35 +1087,64 @@ router.post('/execute', async (req, res) => {
       }
     }
 
-    // SHAPE CHECK on CAW.approve: spender MUST be CawProfile AND the approved
-    // amount MUST equal the deposit amount in this same batch. Binding the spender
-    // stops a relayed approve handing an arbitrary address an allowance; binding
-    // the amount stops a relayed approve establishing an UNBOUNDED standing
-    // allowance (MaxUint256) on the EOA's CAW — the sponsor only ever helps grant
-    // exactly what this deposit pulls. An approve with no depositFor in the batch
-    // is rejected (it has no legitimate shape on this relay).
-    if (toLc === CAW_ADDRESS_LC && selector === SEL_CAW_APPROVE) {
+    // SHAPE CHECK on ERC20 approve — two legitimate shapes, both spender- AND
+    // amount-bound so the relay never helps establish an UNBOUNDED standing
+    // allowance (MaxUint256) on the EOA's tokens (HIGH, security review 2026-06):
+    //   (a) DEPOSIT: on CAW, spender MUST be CawProfile, amount == the batch's
+    //       depositFor amount.
+    //   (b) OFFER:   on an offer payment token, spender MUST be the marketplace,
+    //       amount == the batch's createOfferERC20 amount (same payment token).
+    // An approve matching neither shape (no depositFor and no createOfferERC20 in
+    // the batch) is rejected — it has no legitimate shape on this relay.
+    if (selector === SEL_CAW_APPROVE && (toLc === CAW_ADDRESS_LC || OFFER_PAYMENT_TOKENS_LC.has(toLc))) {
       const spenderWord = c.data.slice(10, 10 + 64) // 1st word
       const amountWord = c.data.slice(10 + 64, 10 + 128) // 2nd word
       if (spenderWord.length !== 64 || spenderWord.slice(0, 24) !== '0'.repeat(24) || amountWord.length !== 64) {
         return res.status(400).json({ error: 'BAD_APPROVE_SHAPE', detail: 'approve spender/amount word is malformed' })
       }
-      const spender = '0x' + spenderWord.slice(24)
-      if (spender.toLowerCase() !== CAW_NAMES_ADDRESS_LC) {
-        return res.status(400).json({
-          error: 'APPROVE_SPENDER_NOT_ALLOWED',
-          detail: `approve spender must be CawProfile (${CAW_NAMES_ADDRESS_LC}); got ${spender}.`,
-        })
-      }
+      const spender = ('0x' + spenderWord.slice(24)).toLowerCase()
       let approveAmt: bigint
       try { approveAmt = BigInt('0x' + amountWord) } catch {
         return res.status(400).json({ error: 'BAD_APPROVE_SHAPE', detail: 'approve amount is not a number' })
       }
-      if (depositForAmountWei === null || approveAmt !== depositForAmountWei) {
+      if (spender === CAW_NAMES_ADDRESS_LC) {
+        // Deposit shape: only valid on CAW, amount == depositFor amount.
+        if (toLc !== CAW_ADDRESS_LC) {
+          return res.status(400).json({ error: 'APPROVE_SPENDER_NOT_ALLOWED', detail: 'CawProfile approve is only valid on CAW.' })
+        }
+        if (depositForAmountWei === null || approveAmt !== depositForAmountWei) {
+          return res.status(400).json({
+            error: 'APPROVE_AMOUNT_MISMATCH',
+            detail: `approve amount must equal the deposit amount in the same batch ` +
+              `(${depositForAmountWei ?? 'none'}); got ${approveAmt}.`,
+          })
+        }
+      } else if (spender === CAW_NAME_MARKETPLACE_ADDRESS_LC) {
+        // Offer shape: the approve token MUST be the SAME payment token as the
+        // createOfferERC20 in this batch, and the amount MUST equal the offer amount.
+        if (offerErc20AmountWei === null || offerErc20PaymentTokenLc === null) {
+          return res.status(400).json({
+            error: 'APPROVE_NO_OFFER',
+            detail: 'marketplace approve requires a matching createOfferERC20 in the same batch.',
+          })
+        }
+        if (toLc !== offerErc20PaymentTokenLc) {
+          return res.status(400).json({
+            error: 'APPROVE_TOKEN_MISMATCH',
+            detail: `approve token (${toLc}) must equal the offer payment token (${offerErc20PaymentTokenLc}).`,
+          })
+        }
+        if (approveAmt !== offerErc20AmountWei) {
+          return res.status(400).json({
+            error: 'APPROVE_AMOUNT_MISMATCH',
+            detail: `approve amount must equal the offer amount in the same batch ` +
+              `(${offerErc20AmountWei}); got ${approveAmt}.`,
+          })
+        }
+      } else {
         return res.status(400).json({
-          error: 'APPROVE_AMOUNT_MISMATCH',
-          detail: `approve amount must equal the deposit amount in the same batch ` +
-            `(${depositForAmountWei ?? 'none'}); got ${approveAmt}.`,
+          error: 'APPROVE_SPENDER_NOT_ALLOWED',
+          detail: `approve spender must be CawProfile or the marketplace; got ${spender}.`,
         })
       }
     }
@@ -1165,6 +1258,50 @@ router.post('/execute', async (req, res) => {
       }
     }
 
+    // SHAPE CHECK on createOfferETH: tokenId (arg0, uint32) is the token being BID
+    // ON — NOT owned by the signer (you bid on someone else's token), so there is
+    // deliberately no ownership check. Just bound it to uint32. The offer value is
+    // carried as this call's msg.value (self-funded by the EOA — the relayer never
+    // fronts it). createOfferETH(uint32 tokenId, uint64 duration): tokenId = 1st word.
+    if (toLc === CAW_NAME_MARKETPLACE_ADDRESS_LC && selector === SEL_CREATE_OFFER_ETH) {
+      const tokenIdWord = c.data.slice(10, 10 + 64)
+      if (tokenIdWord.length !== 64) {
+        return res.status(400).json({ error: 'BAD_OFFER_SHAPE', detail: 'createOfferETH tokenId word is malformed' })
+      }
+      let offerTokenIdRaw: bigint
+      try { offerTokenIdRaw = BigInt('0x' + tokenIdWord) } catch {
+        return res.status(400).json({ error: 'BAD_OFFER_SHAPE', detail: 'createOfferETH tokenId is not a number' })
+      }
+      if (offerTokenIdRaw === 0n || offerTokenIdRaw > 0xFFFFFFFFn) {
+        return res.status(400).json({ error: 'BAD_OFFER_SHAPE', detail: 'createOfferETH tokenId out of range' })
+      }
+    }
+
+    // SHAPE CHECK on createOfferERC20: tokenId bound to uint32 (bid target, not
+    // owned — no ownership check); paymentToken MUST be an allowed offer token; the
+    // amount is bound to the in-batch approve above. The tokens are pulled from the
+    // EOA (approve+transferFrom) — the relayer fronts only gas.
+    // createOfferERC20(uint32 tokenId, address paymentToken, uint256 amount, uint64 duration).
+    if (toLc === CAW_NAME_MARKETPLACE_ADDRESS_LC && selector === SEL_CREATE_OFFER_ERC20) {
+      const tokenIdWord = c.data.slice(10, 10 + 64)
+      if (tokenIdWord.length !== 64) {
+        return res.status(400).json({ error: 'BAD_OFFER_SHAPE', detail: 'createOfferERC20 tokenId word is malformed' })
+      }
+      let offerTokenIdRaw: bigint
+      try { offerTokenIdRaw = BigInt('0x' + tokenIdWord) } catch {
+        return res.status(400).json({ error: 'BAD_OFFER_SHAPE', detail: 'createOfferERC20 tokenId is not a number' })
+      }
+      if (offerTokenIdRaw === 0n || offerTokenIdRaw > 0xFFFFFFFFn) {
+        return res.status(400).json({ error: 'BAD_OFFER_SHAPE', detail: 'createOfferERC20 tokenId out of range' })
+      }
+      if (offerErc20PaymentTokenLc === null || !OFFER_PAYMENT_TOKENS_LC.has(offerErc20PaymentTokenLc)) {
+        return res.status(400).json({
+          error: 'OFFER_TOKEN_NOT_ALLOWED',
+          detail: `createOfferERC20 paymentToken must be an allowed offer token; got ${offerErc20PaymentTokenLc}.`,
+        })
+      }
+    }
+
     // SHAPE CHECK on transferAndSync: tokenId (arg1, uint256) MUST be owned by
     // the signer. recipient (arg0) is user-chosen — allowed without constraint.
     // transferAndSync(address to, uint256 tokenId, uint32 lzDestId, uint256 lzTokenAmount):
@@ -1201,6 +1338,26 @@ router.post('/execute', async (req, res) => {
   let totalValue = 0n
   try { totalValue = body.calls.reduce((acc, c) => acc + BigInt(c.value), 0n) } catch {
     return res.status(400).json({ error: 'VALIDATION', detail: 'Invalid call value' })
+  }
+  // A createOfferETH call carries the offer amount as its OWN msg.value, funded by
+  // the EOA's own ETH — the relayer must NOT forward it (that would front the
+  // buyer's whole offer) and it must NOT be priced into the CAW fee. Split it out of
+  // the forwarded/priced total; only the remaining value (e.g. an LZ fee on a
+  // withdraw) is ever relayer-forwarded. executeBatch attaches the per-call value
+  // to each inner call from its own msg.value budget; when the relayer forwards less
+  // than the batch's total value, the shortfall is drawn from the EOA balance —
+  // which is exactly what self-funds the offer.
+  let selfFundedValueWei = 0n
+  for (const c of body.calls) {
+    if (c.to.toLowerCase() === CAW_NAME_MARKETPLACE_ADDRESS_LC &&
+        (c.data || '').slice(0, 10).toLowerCase() === SEL_CREATE_OFFER_ETH) {
+      try { selfFundedValueWei += BigInt(c.value) } catch { /* ignore */ }
+    }
+  }
+  // Value the relayer forwards / prices = total minus the self-funded offer value.
+  const forwardedTotalValue = totalValue - selfFundedValueWei
+  if (forwardedTotalValue < 0n) {
+    return res.status(400).json({ error: 'VALIDATION', detail: 'Self-funded value exceeds batch value.' })
   }
 
   // ── FEE INVARIANT: repay the relayer for what it ACTUALLY fronts — which is now
@@ -1252,9 +1409,10 @@ router.post('/execute', async (req, res) => {
   } else {
     // CAW-repay (withdraw / CAW-deposit). The relayer forwards the inner value as
     // msg.value (the zero-ETH Pop-B path), so it must be repaid gas + that value in
-    // CAW. Price the floor through quoteExecuteGasFeeCaw(totalValue) — the same
-    // forwarded value the relay will attach. Needs live CAW/ETH price.
-    const feeQuote = quoteExecuteGasFeeCaw(totalValue)
+    // CAW. Price the floor through quoteExecuteGasFeeCaw(forwardedTotalValue) — the
+    // same forwarded value the relay will attach (self-funded offer ETH excluded, as
+    // the EOA funds that, not the relayer). Needs live CAW/ETH price.
+    const feeQuote = quoteExecuteGasFeeCaw(forwardedTotalValue)
     if (!feeQuote.priceAvailable) {
       return res.status(503).json({
         error: 'PRICE_UNAVAILABLE',
@@ -1276,13 +1434,13 @@ router.post('/execute', async (req, res) => {
   // balance, so forwarding would double-fund — exclude them. A zero-value CAW batch
   // (plain deposit, no LZ fee) has nothing to forward, so forwardValue is false there
   // too — it's a no-op either way, but this keeps the flag honest about intent.
-  const forwardValue = !usesEth && totalValue > 0n
+  const forwardValue = !usesEth && forwardedTotalValue > 0n
   const result = await service.relayExecuteBatch(
     body.smartEoaAddress,
     body.calls.map(c => ({ to: c.to, value: BigInt(c.value), data: c.data })),
     BigInt(body.nonce),
     body.sig,
-    totalValue,
+    forwardedTotalValue,
     forwardValue,
   )
   if (isSponsorError(result)) {

@@ -1932,5 +1932,7 @@
   "profile_chooser.remove_sign_out": "登出",
   "profile_chooser.remove_hide": "暂时隐藏",
   "passkey_signin.error.wrong_passkey": "该密钥与该帐户不匹配。选择您为此用户名设置的密钥，然后重试。",
-  "passkey_signin.error.not_passkey": "此帐户使用连接的钱包而不是密钥登录。请改用“连接钱包”选项。"
+  "passkey_signin.error.not_passkey": "此帐户使用连接的钱包而不是密钥登录。请改用“连接钱包”选项。",
+  "make_offer.popb_insufficient_fee": "您的钱包不足以支付优惠加上网络费用。充值并重试。",
+  "make_offer.relay_unavailable": "暂时无法提供签名服务。请稍后重试。"
 }

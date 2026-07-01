@@ -1932,5 +1932,7 @@
   "profile_chooser.remove_sign_out": "Đăng xuất",
   "profile_chooser.remove_hide": "Ẩn bây giờ",
   "passkey_signin.error.wrong_passkey": "Mật mã đó không khớp với tài khoản này. Chọn mật mã bạn đã thiết lập cho tên người dùng này và thử lại.",
-  "passkey_signin.error.not_passkey": "Tài khoản này đăng nhập bằng ví được kết nối chứ không phải mật mã. Thay vào đó, hãy sử dụng tùy chọn “Kết nối ví”."
+  "passkey_signin.error.not_passkey": "Tài khoản này đăng nhập bằng ví được kết nối chứ không phải mật mã. Thay vào đó, hãy sử dụng tùy chọn “Kết nối ví”.",
+  "make_offer.popb_insufficient_fee": "Ví của bạn không đủ để chi trả cho ưu đãi cộng với phí mạng. Hãy nạp tiền và thử lại.",
+  "make_offer.relay_unavailable": "Dịch vụ ký kết tạm thời không khả dụng. Vui lòng thử lại trong thời gian ngắn."
 }

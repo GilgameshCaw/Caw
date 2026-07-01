@@ -1932,5 +1932,7 @@
   "profile_chooser.remove_sign_out": "se déconnecter",
   "profile_chooser.remove_hide": "Cacher pour l'instant",
   "passkey_signin.error.wrong_passkey": "Ce mot de passe ne correspond pas à ce compte. Choisissez le mot de passe que vous avez configuré pour ce nom d'utilisateur et réessayez.",
-  "passkey_signin.error.not_passkey": "Ce compte se connecte avec un portefeuille connecté, pas un mot de passe. Utilisez plutôt l’option « Connecter le portefeuille »."
+  "passkey_signin.error.not_passkey": "Ce compte se connecte avec un portefeuille connecté, pas un mot de passe. Utilisez plutôt l’option « Connecter le portefeuille ».",
+  "make_offer.popb_insufficient_fee": "Votre portefeuille n'a pas assez d'argent pour couvrir l'offre plus les frais de réseau. Rechargez et réessayez.",
+  "make_offer.relay_unavailable": "Le service de signature est temporairement indisponible. Veuillez réessayer sous peu."
 }

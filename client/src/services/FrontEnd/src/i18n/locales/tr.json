@@ -1932,5 +1932,7 @@
   "profile_chooser.remove_sign_out": "oturumu Kapat",
   "profile_chooser.remove_hide": "Şimdilik gizle",
   "passkey_signin.error.wrong_passkey": "Bu şifre bu hesapla eşleşmiyor. Bu kullanıcı adı için ayarladığınız şifreyi seçin ve tekrar deneyin.",
-  "passkey_signin.error.not_passkey": "Bu hesap, geçiş anahtarıyla değil, bağlı bir cüzdanla oturum açar. Bunun yerine “Cüzdanı Bağla” seçeneğini kullanın."
+  "passkey_signin.error.not_passkey": "Bu hesap, geçiş anahtarıyla değil, bağlı bir cüzdanla oturum açar. Bunun yerine “Cüzdanı Bağla” seçeneğini kullanın.",
+  "make_offer.popb_insufficient_fee": "Cüzdanınızda teklif artı ağ ücretini karşılamaya yetecek kadar para yok. Doldurun ve tekrar deneyin.",
+  "make_offer.relay_unavailable": "İmzalama hizmeti geçici olarak kullanılamıyor. Lütfen kısa süre sonra tekrar deneyin."
 }
