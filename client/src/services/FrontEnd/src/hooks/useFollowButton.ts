@@ -6,6 +6,7 @@ import { useBalanceChangeStore } from '~/store/balanceChangeStore'
 import { useAccount } from 'wagmi'
 import { apiFetch } from '~/api/client'
 import { useHasActiveSession } from '~/hooks/useHasActiveSession'
+import { useWalletPopulation } from '~/hooks/useWalletPopulation'
 import { useT } from '~/i18n/I18nProvider'
 
 export interface UseFollowButtonParams {
@@ -53,6 +54,8 @@ export function useFollowButton({
   const activeTokenId = useTokenDataStore(s => s.activeTokenId)
   const { address, isConnected } = useAccount()
   const hasActiveSession = useHasActiveSession()
+  const { population } = useWalletPopulation()
+  const isPopB = population === 'B'
   // When mounting into a pending server-state, `initialIsFollowing` from the
   // server reflects only successful FOLLOW rows. A pending UNFOLLOW reports
   // `isFollowing:false` even though the on-chain truth is still "following".
@@ -363,8 +366,16 @@ export function useFollowButton({
     // Clear any previous error
     setError(null)
 
-    // If no token OR wallet not connected (and no session key), trigger wallet connection
-    if (!effectiveTokenId || !activeToken || (!isConnected && !hasActiveSession)) {
+    // If no token OR wallet not connected (and no session key), trigger wallet
+    // connection. EXEMPT Population-B (passkey) users: they have NO wagmi wallet,
+    // so isConnected is always false and this branch would dead-end — it sets
+    // awaitingConnection and defers the real submit to a useEffect that only fires
+    // on wallet connect (which never happens for passkey users). Instead they fall
+    // through to signAndSubmit below, which routes to the passkey/manual-sign path
+    // (requestAndSubmit). This was the "sign manually → nothing happens, no
+    // txqueue" bug: the follow signed a placeholder (senderId 0) and never
+    // re-submitted the real action.
+    if (!isPopB && (!effectiveTokenId || !activeToken || (!isConnected && !hasActiveSession))) {
       const actionType = isFollowing ? 'unfollow' : 'follow'
       // Reset submitting ref for new action
       isSubmittingRef.current = false
@@ -383,6 +394,12 @@ export function useFollowButton({
       })
       return
     }
+
+    // No active profile to act as — can't proceed (guards the Pop-B fall-through
+    // above, where we intentionally skip the wallet-connect branch: a Pop-B user
+    // with no active token has nothing to sign for). effectiveTokenId is narrowed
+    // to a number past this point.
+    if (!effectiveTokenId || !activeToken) return
 
     // Mark that user has taken action (prevents prop sync from overriding)
     setHasUserAction(true)

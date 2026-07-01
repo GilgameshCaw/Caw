@@ -26,8 +26,14 @@ interface SessionKeyState {
   activeWallet: string | null
   /** User preference: use session keys or sign every action with wallet */
   enabled: boolean
-  /** Whether the user has been shown the Quick Sign prompt (after first stake) */
+  /** Whether the user has been shown the Quick Sign prompt (after first stake).
+   *  LEGACY / global — kept for migration. Prompt suppression is now per-owner
+   *  (dontPromptOwners) so a "don't show again" on one account never silences the
+   *  enable-Quick-Sign prompt for a DIFFERENT account that has no session. */
   hasSeenPrompt: boolean
+  /** Owner addresses (lowercase) for which the user chose "don't show again" on
+   *  the Quick Sign prompt. Per-owner so each account decides independently. */
+  dontPromptOwners: Record<string, true>
 
   /** Get the session for the active wallet */
   getSession: () => SessionKeyEntry | null
@@ -41,6 +47,10 @@ interface SessionKeyState {
   setActiveWallet: (address: string | null) => void
   setEnabled: (enabled: boolean) => void
   setHasSeenPrompt: (seen: boolean) => void
+  /** Mark "don't show the Quick Sign prompt again" for a specific owner address. */
+  setDontPromptForOwner: (address: string) => void
+  /** Whether the user opted out of the Quick Sign prompt for this owner address. */
+  isPromptSuppressedForOwner: (address: string) => boolean
   getActiveSession: () => SessionKeyEntry | null
   /** Get active (enabled + non-expired) session for a specific wallet address */
   getActiveSessionForAddress: (address: string) => SessionKeyEntry | null
@@ -80,6 +90,7 @@ export const useSessionKeyStore = create<SessionKeyState>()(
       activeWallet: null,
       enabled: false,
       hasSeenPrompt: false,
+      dontPromptOwners: {},
 
       getSession: () => sessionForWallet(get()),
 
@@ -134,6 +145,16 @@ export const useSessionKeyStore = create<SessionKeyState>()(
       setEnabled: (enabled) => set({ enabled }),
 
       setHasSeenPrompt: (seen) => set({ hasSeenPrompt: seen }),
+
+      setDontPromptForOwner: (address) => {
+        const addr = address.toLowerCase()
+        set(state => ({ dontPromptOwners: { ...state.dontPromptOwners, [addr]: true } }))
+      },
+
+      isPromptSuppressedForOwner: (address) => {
+        if (!address) return false
+        return !!get().dontPromptOwners[address.toLowerCase()]
+      },
 
       getActiveSession: () => {
         const state = get()
@@ -231,9 +252,19 @@ export const useSessionKeyStore = create<SessionKeyState>()(
           state = { ...state, sessions: pruned }
         }
 
+        // v4 → v5: introduce per-owner prompt suppression (dontPromptOwners).
+        // Deliberately DO NOT seed it from the legacy global hasSeenPrompt — that
+        // flag conflated "seen once" with "never prompt", which suppressed the
+        // enable-Quick-Sign prompt for accounts that had no session. Starting
+        // empty means each account is re-offered Quick Sign until it explicitly
+        // opts out, which is the intended behavior.
+        if (state && !state.dontPromptOwners) {
+          state = { ...state, dontPromptOwners: {} }
+        }
+
         return state
       },
-      version: 4,
+      version: 5,
     }
   )
 )

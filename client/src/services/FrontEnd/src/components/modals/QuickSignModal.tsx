@@ -4,7 +4,7 @@ import ModalWrapper from './ModalWrapper'
 import { useTheme } from '~/hooks/useTheme'
 import { useT } from '~/i18n/I18nProvider'
 import { useSessionKeyStore } from '~/store/sessionKeyStore'
-import { usePriceStore } from '~/store/tokenDataStore'
+import { usePriceStore, useTokenDataStore } from '~/store/tokenDataStore'
 import { useCreateSession, getDefaultSpendLimit, getDefaultTipCeiling, DEFAULT_SESSION_DURATION, useNetworkTipTargetAsCAW } from '~/hooks/useSessionKey'
 import { getTipTiers } from '~/api/actions'
 import { HiLightningBolt } from 'react-icons/hi'
@@ -63,7 +63,7 @@ const QuickSignModal: React.FC<QuickSignModalProps> = (props) => {
   const t = useT()
   const setEnabled = useSessionKeyStore(s => s.setEnabled)
   const createSession = useCreateSession()
-  const setHasSeenPrompt = useSessionKeyStore(s => s.setHasSeenPrompt)
+  const setDontPromptForOwner = useSessionKeyStore(s => s.setDontPromptForOwner)
   const cawPrice = usePriceStore(s => s.priceMap['a-hunters-dream'] ?? 0)
   const { tipCeilingCaw: networkTipCaw, tipCeilingFallbackCaw } = useNetworkTipTargetAsCAW()
   const [loading, setLoading] = useState(false)
@@ -114,8 +114,16 @@ const QuickSignModal: React.FC<QuickSignModalProps> = (props) => {
   }
 
   const handleSkip = () => {
-    // Only "don't show again" applies to manual signing — the user explicitly opts out
-    if (dontShowAgain) setHasSeenPrompt(true)
+    // Only "don't show again" applies to manual signing — the user explicitly opts
+    // out. Scope the opt-out to THIS account's owner so it never silences the
+    // prompt for a different account (per-owner suppression — see sessionKeyStore).
+    if (dontShowAgain) {
+      const tds = useTokenDataStore.getState()
+      const owner = Object.values(tds.tokensByAddress)
+        .flat()
+        .find(t => t.tokenId === tds.activeTokenId)?.owner
+      if (owner) setDontPromptForOwner(owner)
+    }
     const cont = prompt.onContinue
     // Set skipOnce so the retry doesn't re-trigger the prompt
     // Clear onDismiss before closing — this is a deliberate action, not a dismiss

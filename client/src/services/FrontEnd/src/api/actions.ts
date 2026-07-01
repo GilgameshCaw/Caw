@@ -972,8 +972,17 @@ export function useSignAndSubmitAction() {
     // through to wallet signing without a heads-up makes clicks feel unresponsive
     // — the user sees "Processing..." with no modal. Prompt them to re-enable
     // Quick Sign or sign manually explicitly.
-    const hasActiveSessions = Object.keys(sessionStore0.sessions).length > 0
-    const suppressPrompt = sessionStore0.hasSeenPrompt && hasActiveSessions
+    // Suppress the enable-Quick-Sign prompt ONLY when THIS account's owner has
+    // explicitly opted out ("don't show again" is per-owner). Previously this was
+    // `hasSeenPrompt && (any session exists in the browser)`, which silenced the
+    // prompt for an account with NO usable session as long as ANOTHER account had
+    // one and the prompt was seen once — so a passkey account with Quick Sign off
+    // neither prompted nor used Quick Sign, it jumped straight to manual passkey
+    // signing. Owner-scoped suppression fixes that: every account gets offered
+    // Quick Sign until it individually opts out.
+    const suppressPrompt = tokenOwner
+      ? sessionStore0.isPromptSuppressedForOwner(tokenOwner)
+      : false
     const actionEligibleForQuickSign = actionCode0 !== 6 // everything except WITHDRAW
     if (!canUseSession0 && !suppressPrompt && actionEligibleForQuickSign) {
       const { useQuickSignPromptStore } = await import('~/components/modals/QuickSignModal')
