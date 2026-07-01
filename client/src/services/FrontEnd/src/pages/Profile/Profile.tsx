@@ -38,6 +38,7 @@ import { CAW_NAME_MARKETPLACE_ADDRESS } from '~/../../../abi/addresses'
 import { cawProfileMarketplaceAbi } from '~/../../../abi/generated'
 import Tooltip from '~/components/Tooltip'
 import { useSignInModalStore } from '~/store/signInModalStore'
+import { useAuthStore } from '~/store/authStore'
 import ProfileEditForm from '~/components/ProfileEditForm'
 import ImageLightbox from '~/components/ImageLightbox'
 
@@ -133,7 +134,13 @@ export const Profile: React.FC = () => {
   const { isDark } = useTheme()
   const activeToken = useActiveToken()
   const showSignIn = useSignInModalStore(s => s.show)
-  const isCaptive = !activeToken?.username
+  // Captive = a not-signed-in preview viewer. Keying only on "active token has a
+  // username" wrongly flags a signed-in passkey (Pop-B) user whose token row
+  // hasn't hydrated its username yet (background multicall), bouncing their
+  // follow/tip/DM to the sign-in modal. The durable signed-in signal is the
+  // persisted auth session (authorizedTokenIds).
+  const hasAuthedProfile = useAuthStore(s => s.authorizedTokenIds.length > 0)
+  const isCaptive = !activeToken?.username && !hasAuthedProfile
   const { openModal } = useModalStore()
   const { isConnected, address } = useAccount()
   const currentChainId = useChainId()

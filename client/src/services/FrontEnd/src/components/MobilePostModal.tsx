@@ -3,6 +3,7 @@ import { useSignAndSubmitAction } from '~/api/actions'
 import { acquireScrollLock, releaseScrollLock } from '~/utils/scrollLock'
 import { useTokenDataStore } from "~/store/tokenDataStore";
 import { useHasActiveSession } from "~/hooks/useHasActiveSession";
+import { useWalletPopulation } from "~/hooks/useWalletPopulation";
 import { useAccount } from "wagmi";
 import { useConnectModalBridge as useConnectModal } from '~/hooks/useConnectModalBridge'
 import { HiOutlineX, HiOutlinePlus } from "react-icons/hi";
@@ -22,9 +23,12 @@ const MobilePostModal: React.FC<MobilePostModalProps> = ({ isOpen, onClose, onSu
   const [text, setText] = useState('')
   const { isConnected } = useAccount()
   // Pop-B passkey users have no wagmi connection but post via their Quick Sign
-  // session. Treat an active session as "can post" too, or quick-post no-ops for them.
+  // session OR their passkey (when Quick Sign is off). Treat any Pop-B user as
+  // "can post" — signAndSubmit routes them to the passkey/Quick-Sign path — else
+  // a Pop-B user with Quick Sign OFF would see a dead-end "Connect" button.
   const hasActiveSession = useHasActiveSession()
-  const canAct = isConnected || hasActiveSession
+  const { population } = useWalletPopulation()
+  const canAct = isConnected || hasActiveSession || population === 'B'
   const { openConnectModal } = useConnectModal()
   const { isDark } = useTheme()
   const activeTokenId = useTokenDataStore(state => state.activeTokenId)

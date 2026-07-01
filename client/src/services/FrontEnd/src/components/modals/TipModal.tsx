@@ -9,6 +9,7 @@ import InsufficientStakeModal from './InsufficientStakeModal'
 import ModalWrapper from './ModalWrapper'
 import ModalHeader from './ModalHeader'
 import { useHasActiveSession } from '~/hooks/useHasActiveSession'
+import { useWalletPopulation } from '~/hooks/useWalletPopulation'
 import { useT } from '~/i18n/I18nProvider'
 
 const PRESET_USD_AMOUNTS = [1, 5, 10, 20]
@@ -69,6 +70,8 @@ const TipModal: React.FC<TipModalProps> = ({
   const { isConnected, address } = useAccount()
   const { openConnectModal } = useConnectModal()
   const hasActiveSession = useHasActiveSession()
+  const { population } = useWalletPopulation()
+  const isPopB = population === 'B'
   const wrongWallet = isConnected && !hasActiveSession && activeToken?.owner && address
     ? activeToken.owner.toLowerCase() !== address.toLowerCase()
     : false
@@ -92,7 +95,10 @@ const TipModal: React.FC<TipModalProps> = ({
   const handleSubmit = async () => {
     if (!isValid) return
 
-    if (!isConnected && !hasActiveSession) {
+    // Pop-B (passkey) users have no wagmi wallet (isConnected always false) — the
+    // connect modal would dead-end them. Let them fall through to signAndSubmit's
+    // passkey/Quick-Sign path.
+    if (!isPopB && !isConnected && !hasActiveSession) {
       openConnectModal?.()
       return
     }

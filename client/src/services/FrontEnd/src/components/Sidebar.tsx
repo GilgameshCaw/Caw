@@ -33,6 +33,7 @@ import cawLogo from '~/assets/images/caw-logo.png'
 import { useInstanceStore } from '~/store/instanceStore'
 import { API_HOST } from '~/api/client'
 import { useSignInModalStore } from '~/store/signInModalStore'
+import { useAuthStore } from '~/store/authStore'
 import { useModalStore } from '~/store'
 import { useT } from '~/i18n/I18nProvider'
 
@@ -142,7 +143,11 @@ const Sidebar: React.FC<SidebarProps> = ({ onNavigate }) => {
   const location = useLocation()
   const showSignIn = useSignInModalStore(s => s.show)
   const openModal = useModalStore(s => s.openModal)
-  const isCaptive = !activeToken?.username
+  // Captive = not signed in. Username-only was wrong for signed-in passkey users
+  // whose token row hasn't hydrated a username yet — it bounced their sidebar
+  // Post / nav to the sign-in modal. Fall back to the persisted auth session.
+  const hasAuthedProfile = useAuthStore(s => s.authorizedTokenIds.length > 0)
+  const isCaptive = !activeToken?.username && !hasAuthedProfile
 
   // Intercept nav clicks for captive users — show sign-in modal instead of navigating.
   // Always call onNavigate (even when we preventDefault for the sign-in
