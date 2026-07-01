@@ -10,7 +10,7 @@ import { formatUsd } from '~/utils/numberFormat'
 import type { CawItem } from '~/types'
 
 const PRESET_USD_AMOUNTS = [1, 5, 10, 20]
-const MIN_TIP_USD = 1
+const MIN_TIP_CAW = 1
 /** Contract hard-cap: require(numRecipients <= 10). */
 const MAX_TIPS = 10
 
@@ -172,7 +172,9 @@ const SingleTipPicker: React.FC<PickerProps> = ({
 
   const usdAmount = parseFloat(usdInput) || 0
   const tipAmountCaw = usdToCaw(usdAmount, cawPrice)
-  const canAttach = priceReady && usdAmount >= MIN_TIP_USD && tipAmountCaw > 0 && !!recipient
+  // Tips are whole-CAW on-chain — floor is 1 CAW, not a $1 USD minimum.
+  const canAttach = priceReady && tipAmountCaw >= MIN_TIP_CAW && !!recipient
+  const minUsd = cawPrice > 0 ? MIN_TIP_CAW * cawPrice : 0
 
   const handleAttach = () => {
     if (!canAttach || !recipient) return
@@ -252,7 +254,7 @@ const SingleTipPicker: React.FC<PickerProps> = ({
       {/* Custom amount */}
       <div className="relative">
         <span className={`absolute left-3 top-1/2 -translate-y-1/2 text-sm ${themeTextMuted(isDark)}`}>$</span>
-        <input type="number" min={MIN_TIP_USD} step="1" value={usdInput} onChange={e => setUsdInput(e.target.value)} placeholder="0"
+        <input type="number" min={minUsd} step="any" value={usdInput} onChange={e => setUsdInput(e.target.value)} placeholder="0"
           className={`w-full pl-7 pr-3 py-1.5 rounded-lg text-sm outline-none transition-colors ${
             isDark
               ? 'bg-white/10 text-white border border-white/20 focus:border-yellow-500/50 placeholder-gray-500'
@@ -268,8 +270,8 @@ const SingleTipPicker: React.FC<PickerProps> = ({
       </div>
 
       {!priceReady && <p className="text-xs text-yellow-500">{t('post_form.tip.loading_price')}</p>}
-      {priceReady && usdAmount > 0 && usdAmount < MIN_TIP_USD && (
-        <p className={`text-xs ${themeTextMuted(isDark)}`}>{t('post_form.tip.min', { min: MIN_TIP_USD })}</p>
+      {priceReady && usdAmount > 0 && tipAmountCaw < MIN_TIP_CAW && (
+        <p className={`text-xs ${themeTextMuted(isDark)}`}>{t('post_form.tip.min_caw', { min: MIN_TIP_CAW })}</p>
       )}
       {!recipient && (
         <p className={`text-xs ${themeTextMuted(isDark)}`}>{t('post_form.tip.need_recipient')}</p>

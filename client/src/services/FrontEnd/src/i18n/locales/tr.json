@@ -1899,6 +1899,7 @@
   "notifications_settings.tip_floor.saving": "Kaydediliyor…",
   "notifications_settings.tip_floor.save": "Kaydetmek",
   "post_form.tip.min": "Minimum ${{min}}.",
+  "post_form.tip.min_caw": "Minimum {{min}} CAW.",
   "post_form.tip.add_another_title": "Başka bir ipucu ekle",
   "post_form.tip.edit_tip_title": "İpucunu düzenle",
   "post_form.tip.remove_all": "Tümünü kaldır",

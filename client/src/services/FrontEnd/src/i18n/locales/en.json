@@ -212,6 +212,7 @@
   "post_form.tip.loading_price": "Loading CAW price…",
   "post_form.tip.need_recipient": "Pick a recipient — start with @username to find someone.",
   "post_form.tip.min": "Minimum ${{min}}.",
+  "post_form.tip.min_caw": "Minimum {{min}} CAW.",
   "post_form.tip.add_another_title": "Add another tip",
   "post_form.tip.edit_tip_title": "Edit tip",
   "post_form.tip.remove_all": "Remove all",

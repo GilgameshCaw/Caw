@@ -1899,6 +1899,7 @@
   "notifications_settings.tip_floor.saving": "Сохранение…",
   "notifications_settings.tip_floor.save": "Сохранять",
   "post_form.tip.min": "Минимум ${{min}}.",
+  "post_form.tip.min_caw": "Minimum {{min}} CAW.",
   "post_form.tip.add_another_title": "Добавить еще один совет",
   "post_form.tip.edit_tip_title": "Изменить совет",
   "post_form.tip.remove_all": "Удалить все",

@@ -1350,6 +1350,7 @@
   "notifications_settings.tip_floor.saving": "Ahorro…",
   "notifications_settings.tip_floor.save": "Ahorrar",
   "post_form.tip.min": "Mínimo ${{min}}.",
+  "post_form.tip.min_caw": "Minimum {{min}} CAW.",
   "post_form.tip.add_another_title": "Añade otro consejo",
   "post_form.tip.edit_tip_title": "Editar consejo",
   "post_form.tip.remove_all": "Quitar todo",

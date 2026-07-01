@@ -1898,6 +1898,7 @@
   "notifications_settings.tip_floor.saving": "در حال ذخیره…",
   "notifications_settings.tip_floor.save": "ذخیره کنید",
   "post_form.tip.min": "حداقل {{min}} دلار.",
+  "post_form.tip.min_caw": "Minimum {{min}} CAW.",
   "post_form.tip.add_another_title": "یک نکته دیگر اضافه کنید",
   "post_form.tip.edit_tip_title": "ویرایش نکته",
   "post_form.tip.remove_all": "همه را حذف کنید",

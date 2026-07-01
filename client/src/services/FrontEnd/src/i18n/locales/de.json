@@ -1899,6 +1899,7 @@
   "notifications_settings.tip_floor.saving": "Sparen…",
   "notifications_settings.tip_floor.save": "Speichern",
   "post_form.tip.min": "Mindestens ${{min}}.",
+  "post_form.tip.min_caw": "Minimum {{min}} CAW.",
   "post_form.tip.add_another_title": "Fügen Sie einen weiteren Tipp hinzu",
   "post_form.tip.edit_tip_title": "Tipp bearbeiten",
   "post_form.tip.remove_all": "Alles entfernen",

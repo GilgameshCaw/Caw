@@ -1899,6 +1899,7 @@
   "notifications_settings.tip_floor.saving": "ประหยัด…",
   "notifications_settings.tip_floor.save": "บันทึก",
   "post_form.tip.min": "ขั้นต่ำ ${{min}}",
+  "post_form.tip.min_caw": "Minimum {{min}} CAW.",
   "post_form.tip.add_another_title": "เพิ่มเคล็ดลับอื่น",
   "post_form.tip.edit_tip_title": "แก้ไขเคล็ดลับ",
   "post_form.tip.remove_all": "ลบทั้งหมด",

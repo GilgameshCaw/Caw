@@ -1899,6 +1899,7 @@
   "notifications_settings.tip_floor.saving": "Salvando…",
   "notifications_settings.tip_floor.save": "Salvar",
   "post_form.tip.min": "Mínimo ${{min}}.",
+  "post_form.tip.min_caw": "Minimum {{min}} CAW.",
   "post_form.tip.add_another_title": "Adicione outra dica",
   "post_form.tip.edit_tip_title": "Editar dica",
   "post_form.tip.remove_all": "Remover tudo",

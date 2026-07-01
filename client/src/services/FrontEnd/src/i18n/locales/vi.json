@@ -1899,6 +1899,7 @@
   "notifications_settings.tip_floor.saving": "Đang lưu…",
   "notifications_settings.tip_floor.save": "Cứu",
   "post_form.tip.min": "Tối thiểu ${{min}}.",
+  "post_form.tip.min_caw": "Minimum {{min}} CAW.",
   "post_form.tip.add_another_title": "Thêm một mẹo khác",
   "post_form.tip.edit_tip_title": "Chỉnh sửa mẹo",
   "post_form.tip.remove_all": "Xóa tất cả",

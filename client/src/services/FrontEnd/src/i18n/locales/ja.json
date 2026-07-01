@@ -1899,6 +1899,7 @@
   "notifications_settings.tip_floor.saving": "保存中…",
   "notifications_settings.tip_floor.save": "保存",
   "post_form.tip.min": "最小 ${{min}}。",
+  "post_form.tip.min_caw": "Minimum {{min}} CAW.",
   "post_form.tip.add_another_title": "別のヒントを追加",
   "post_form.tip.edit_tip_title": "ヒントを編集する",
   "post_form.tip.remove_all": "すべて削除する",

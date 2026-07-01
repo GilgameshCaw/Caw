@@ -1898,6 +1898,7 @@
   "notifications_settings.tip_floor.saving": "Sine-save...",
   "notifications_settings.tip_floor.save": "I-save",
   "post_form.tip.min": "Pinakamababang ${{min}}.",
+  "post_form.tip.min_caw": "Minimum {{min}} CAW.",
   "post_form.tip.add_another_title": "Magdagdag ng isa pang tip",
   "post_form.tip.edit_tip_title": "I-edit ang tip",
   "post_form.tip.remove_all": "Alisin lahat",

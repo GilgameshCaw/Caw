@@ -1899,6 +1899,7 @@
   "notifications_settings.tip_floor.saving": "절약…",
   "notifications_settings.tip_floor.save": "구하다",
   "post_form.tip.min": "최소 ${{min}}.",
+  "post_form.tip.min_caw": "Minimum {{min}} CAW.",
   "post_form.tip.add_another_title": "다른 팁 추가",
   "post_form.tip.edit_tip_title": "팁 수정",
   "post_form.tip.remove_all": "모두 제거",
