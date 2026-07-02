@@ -814,6 +814,18 @@ const NON_PAYABLE_SELS = new Set([
   SEL_CREATE_LISTING, SEL_SET_APPROVAL_FOR_ALL, SEL_CAW_APPROVE, SEL_CAW_TRANSFER,
 ])
 
+// Payable selectors whose inner-call ETH is SELF-FUNDED by the EOA (the relayer
+// attaches nothing and it is excluded from forwardedTotalValue). Buy-side marketplace
+// value + the user's own cross-chain LZ fees.
+const SELF_FUNDED_MARKETPLACE_SELS = new Set([
+  SEL_CREATE_OFFER_ETH, SEL_BUY, SEL_BUY_WITH_TOKEN, SEL_PLACE_BID,
+  SEL_PLACE_BID_WITH_TOKEN, SEL_SETTLE_AUCTION, SEL_ACCEPT_OFFER,
+])
+const SELF_FUNDED_PROFILE_SELS = new Set([SEL_AUTHENTICATE, SEL_SYNC_TRANSFER, SEL_TRANSFER_AND_SYNC])
+// The ONLY payable selectors whose value the relayer legitimately FORWARDS (attaches as
+// msg.value) and prices into the CAW fee: withdrawTo's LZ fee and depositFor's deposit.
+const RELAYER_FORWARDED_PAYABLE_SELS = new Set([SEL_WITHDRAW_TO, SEL_DEPOSIT_FOR])
+
 const CAW_NAMES_ADDRESS_LC = (process.env.CAW_NAMES_ADDRESS || '').toLowerCase()
 const CAW_NAMES_MINTER_ADDRESS_LC = (process.env.CAW_NAMES_MINTER_ADDRESS || '').toLowerCase()
 const CAW_ADDRESS_LC = CAW_ADDRESS.toLowerCase()
@@ -859,6 +871,32 @@ for (const tokenLc of OFFER_PAYMENT_TOKENS_LC) {
   const existing = EXECUTE_ALLOWED[tokenLc] ?? new Set<string>()
   existing.add(SEL_CAW_APPROVE) // approve(address,uint256) — same selector for any ERC20
   EXECUTE_ALLOWED[tokenLc] = existing
+}
+
+// ── LOAD-TIME INVARIANT (full-file audit 2026-07-02) ──────────────────────────────
+// The single most dangerous class of bug as this allow-list grows is adding a PAYABLE
+// selector without classifying how its value is funded — an unclassified payable
+// selector's value lands in forwardedTotalValue and the relayer silently FRONTS it.
+// This assertion makes that a load-time crash instead of a fund-drain: every
+// allow-listed selector MUST be exactly one of {non-payable, self-funded,
+// relayer-forwarded}. When you add a selector, put it in the right bucket above or this
+// throws on boot. (The raw-ETH-fee leg to the relayer has empty calldata / no selector,
+// so it isn't in EXECUTE_ALLOWED and is out of scope here.)
+{
+  const classified = new Set<string>([
+    ...NON_PAYABLE_SELS, ...SELF_FUNDED_MARKETPLACE_SELS, ...SELF_FUNDED_PROFILE_SELS,
+    ...RELAYER_FORWARDED_PAYABLE_SELS, SEL_DEPOSIT_ZAP, // depositZap: payable, self-funded (EOA's ETH swapped)
+  ])
+  const allowed = new Set<string>()
+  for (const sels of Object.values(EXECUTE_ALLOWED)) for (const s of sels) allowed.add(s)
+  const unclassified = [...allowed].filter(s => !classified.has(s))
+  if (unclassified.length > 0) {
+    throw new Error(
+      `[sponsor/execute] FATAL: allow-listed selector(s) not classified for value-funding: ` +
+      `${unclassified.join(', ')}. Every allow-listed selector must be in NON_PAYABLE_SELS, ` +
+      `a SELF_FUNDED set, or RELAYER_FORWARDED_PAYABLE_SELS — else the relayer may front its value.`,
+    )
+  }
 }
 
 // ERC-20 transfer(address,uint256) selector — used to decode the relayer-fee call.
@@ -1031,6 +1069,18 @@ router.post('/execute', async (req, res) => {
     return res.status(400).json({
       error: 'OFFER_AMOUNT_TOO_LARGE',
       detail: `ERC20 marketplace spend exceeds the maximum (${MAX_OFFER_AMOUNT_WEI}). ` +
+        `An unbounded approve is not relayable.`,
+    })
+  }
+  // Same cap on the deposit amount. The deposit approve (approve(CAW, CawProfile, N))
+  // is amount-bound to depositForAmountWei, so capping the deposit amount also caps the
+  // approve — the relay never helps set an effectively-unbounded (maxUint256) standing
+  // allowance even on the user's OWN CAW to the trusted CawProfile. Symmetry with the
+  // marketplace cap; defense-in-depth (full-file audit 2026-07-02).
+  if (depositForAmountWei !== null && depositForAmountWei > MAX_OFFER_AMOUNT_WEI) {
+    return res.status(400).json({
+      error: 'DEPOSIT_AMOUNT_TOO_LARGE',
+      detail: `Deposit amount exceeds the maximum (${MAX_OFFER_AMOUNT_WEI}). ` +
         `An unbounded approve is not relayable.`,
     })
   }
@@ -1501,18 +1551,19 @@ router.post('/execute', async (req, res) => {
   // withdrawTo LZ fee (the zero-ETH Pop-B withdraw), repaid in CAW below.
   // executeBatch draws each call's value from the EOA balance when the relayer's
   // msg.value falls short — which is exactly what self-funds these.
-  const SELF_FUNDED_MARKETPLACE_SELS = new Set([
-    SEL_CREATE_OFFER_ETH, SEL_BUY, SEL_BUY_WITH_TOKEN, SEL_PLACE_BID,
-    SEL_PLACE_BID_WITH_TOKEN, SEL_SETTLE_AUCTION, SEL_ACCEPT_OFFER,
-  ])
-  const SELF_FUNDED_PROFILE_SELS = new Set([SEL_AUTHENTICATE, SEL_SYNC_TRANSFER, SEL_TRANSFER_AND_SYNC])
   let selfFundedValueWei = 0n
   for (const c of body.calls) {
     const toLcSf = c.to.toLowerCase()
     const selSf = (c.data || '').slice(0, 10).toLowerCase()
     const isSelfFunded =
       (toLcSf === CAW_NAME_MARKETPLACE_ADDRESS_LC && SELF_FUNDED_MARKETPLACE_SELS.has(selSf)) ||
-      (toLcSf === CAW_NAMES_ADDRESS_LC && SELF_FUNDED_PROFILE_SELS.has(selSf))
+      (toLcSf === CAW_NAMES_ADDRESS_LC && SELF_FUNDED_PROFILE_SELS.has(selSf)) ||
+      // depositZap (Minter) swaps the EOA's OWN ETH → CAW — self-funded, never
+      // relayer-forwarded. Today the zap path repays gas in ETH (usesEth=true →
+      // forwardValue=false), so this was masked; excluding it explicitly removes the
+      // reliance on that coincidence and keeps the CAW fee basis correct if a zap ever
+      // repays in CAW. (full-file audit 2026-07-02, INFO-4.)
+      (toLcSf === CAW_NAMES_MINTER_ADDRESS_LC && selSf === SEL_DEPOSIT_ZAP)
     if (isSelfFunded) {
       try { selfFundedValueWei += BigInt(c.value) } catch { /* ignore */ }
     }
