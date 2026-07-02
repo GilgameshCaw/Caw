@@ -29,8 +29,8 @@ import { pokeIndexTokenId } from '../util/indexerPoke'
 import { countManager } from '../../services/CountManager'
 import { parsePoll, parseVoteText } from '../../tools/pollMarker'
 import { getSession, addAuthorization, createSession } from '../sessionStore'
-import { cawProfileLedgerAbi } from '../../abi/generated'
-import { CAW_NAMES_L2_ADDRESS } from '../../abi/addresses'
+import { cawProfileLedgerAbi, cawActionsAbi } from '../../abi/generated'
+import { CAW_NAMES_L2_ADDRESS, CAW_ACTIONS_ADDRESS } from '../../abi/addresses'
 import { packActions, getPackedActionSlices } from '../../utils/packActions'
 
 // Minimal ABI for ERC-1271 isValidSignature on SmartEOA
@@ -199,6 +199,43 @@ function getReadContract(): Contract {
   throw new Error('getReadContract() called before provider was initialized — await getReadContractAsync() first')
 }
 
+// CawActions contract instance (holds sessionSpent). getReadContractAsync above
+// is bound to CawProfileLedger; sessionSpent lives on CawActions, so we need a
+// second instance on the same provider.
+let _cawActionsContract: Contract | null = null
+async function getCawActionsContract(): Promise<Contract> {
+  if (_cawActionsContract) return _cawActionsContract
+  const provider = await getReadProviderAsync()
+  _cawActionsContract = new Contract(CAW_ACTIONS_ADDRESS, cawActionsAbi as any, provider)
+  return _cawActionsContract
+}
+
+// Short TTL cache of on-chain sessionSpent(owner, sessionKey). This is the
+// cross-mirror source of truth for the spend-limit PRE-CHECK — the per-mirror DB
+// SessionKey.spent cache is NOT authoritative (each mirror only sees its own
+// submissions, and can double-count), so the gate must read chain, which every
+// mirror shares. A short TTL keeps this off the per-action hot path without
+// materially weakening the gate: the contract itself enforces the real limit
+// (CawActions reverts SessionLimitExceeded), so a slightly-stale read only risks
+// letting through an action that would revert on-chain — which the validator
+// handles as a skip, not a loss.
+const _sessionSpentCache = new Map<string, { value: bigint; at: number }>()
+const SESSION_SPENT_TTL_MS = 15_000
+async function getOnChainSessionSpent(owner: string, sessionKey: string): Promise<bigint | null> {
+  const key = `${owner.toLowerCase()}:${sessionKey.toLowerCase()}`
+  const cached = _sessionSpentCache.get(key)
+  if (cached && Date.now() - cached.at < SESSION_SPENT_TTL_MS) return cached.value
+  try {
+    const c = await getCawActionsContract()
+    const v = BigInt((await c.sessionSpent(owner, sessionKey)).toString())
+    _sessionSpentCache.set(key, { value: v, at: Date.now() })
+    return v
+  } catch (e) {
+    console.warn('[SessionSpend] on-chain sessionSpent read failed:', (e as any)?.message)
+    return null
+  }
+}
+
 interface SessionKeyCheck {
   valid: boolean
   reason?: string
@@ -242,41 +279,26 @@ async function checkSessionKeyOnChain(
     if (actionType !== undefined && actionType <= 7 && (row.scopeBitmap & (1 << actionType)) === 0) {
       return { valid: false, reason: 'Action type not in session scope' }
     }
-    // Spend limit check. The DB row.spent is a CACHE the validator increments
-    // per batch — but it can DRIFT ABOVE the real on-chain sessionSpent (e.g. a
-    // double-increment when the bisect/peer path and the main path both count a
-    // row), producing a false "limit reached" 403 while the user has budget on
-    // chain. So DON'T trust the cache to REJECT: when it says over-limit, verify
-    // against the authoritative on-chain sessionSpent before blocking, and
-    // self-heal the DB when the cache was inflated.
+    // Spend-limit PRE-CHECK. Basis = AUTHORITATIVE on-chain sessionSpent (the
+    // cross-mirror source of truth), NOT the per-mirror DB row.spent cache. The
+    // cache is per-server: each mirror only sees its OWN submissions and can
+    // double-count, so using it to reject falsely blocks a user who has budget on
+    // chain (and would be inconsistent across mirrors). Read chain (TTL-cached);
+    // only fall back to the DB cache if the read fails. The contract enforces the
+    // real limit regardless — this is early rejection only.
     const spendLimit = BigInt(row.spendLimit || '0')
     if (spendLimit > 0n) {
-      const cachedSpent = BigInt(row.spent || '0')
-      if (cachedSpent >= spendLimit) {
-        let onChainSpent: bigint | null = null
-        try {
-          const contract = await getReadContractAsync()
-          onChainSpent = BigInt((await contract.sessionSpent(owner, sessionAddr)).toString())
-        } catch (e) {
-          console.warn('[SessionSpend] on-chain sessionSpent read failed during limit check:', (e as any)?.message)
-        }
-        if (onChainSpent !== null) {
-          // Correct the drifted cache to the truth.
-          if (onChainSpent !== cachedSpent) {
-            prisma.sessionKey.update({
-              where: { ownerAddress_sessionAddress: { ownerAddress: owner, sessionAddress: sessionAddr } },
-              data: { spent: onChainSpent.toString() },
-            }).catch(() => {})
-          }
-          if (onChainSpent >= spendLimit) {
-            return { valid: false, reason: 'Session key spend limit reached' }
-          }
-          // Under limit on chain → allow (cache was inflated).
-        } else {
-          // Couldn't verify on chain — fall back to the cache to stay safe.
-          return { valid: false, reason: 'Session key spend limit reached' }
-        }
+      const onChainSpent = await getOnChainSessionSpent(owner, sessionAddr)
+      const spent = onChainSpent ?? BigInt(row.spent || '0')
+      // Keep the DB cache aligned to chain (best-effort) so the display hint
+      // agrees; the cache no longer gates, but other reads still show it.
+      if (onChainSpent !== null && onChainSpent !== BigInt(row.spent || '0')) {
+        prisma.sessionKey.update({
+          where: { ownerAddress_sessionAddress: { ownerAddress: owner, sessionAddress: sessionAddr } },
+          data: { spent: onChainSpent.toString() },
+        }).catch(() => {})
       }
+      if (spent >= spendLimit) return { valid: false, reason: 'Session key spend limit reached' }
     }
     return { valid: true, perActionTipRate: BigInt((row as any).perActionTipRate || '0') }
   }
