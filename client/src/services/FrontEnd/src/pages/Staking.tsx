@@ -143,8 +143,15 @@ const Staking = () => {
   const wrongChainForStake = connections[0]?.chainId !== chains.l1.chainId
   const isMainnet = connections[0]?.chainId === chains.l1.chainId
 
-  // Check if connected wallet owns the active token
-  const isTokenOwner = activeToken?.owner?.toLowerCase() === address?.toLowerCase()
+  // Check if the acting identity owns the active token. For Pop-A this is the
+  // connected wagmi wallet; for Pop-B (passkey) there is no wagmi wallet, so the
+  // active profile IS the user's own — they act via their SmartEOA / session, not
+  // a connected address. Treating a passkey user as "wrong address" (because
+  // wagmi `address` is undefined, or a stale injected connection lingers) is the
+  // "wrong address on my own profile" bug. Pop-B always owns their active token.
+  const isTokenOwner = isPasskeyUser
+    ? true
+    : activeToken?.owner?.toLowerCase() === address?.toLowerCase()
 
   console.log('[Staking] Current chainId:', chainId, 'Expected L1 chainId:', chains.l1.chainId)
   console.log('[Staking] Token owner check:', {
