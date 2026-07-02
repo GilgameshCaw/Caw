@@ -242,14 +242,41 @@ async function checkSessionKeyOnChain(
     if (actionType !== undefined && actionType <= 7 && (row.scopeBitmap & (1 << actionType)) === 0) {
       return { valid: false, reason: 'Action type not in session scope' }
     }
-    // Spend limit check against locally-tracked spent total.
-    // The validator updates row.spent after a successful batch, and the
-    // contract enforces the real limit — so a stale cache only under-counts
-    // (too permissive), never over-counts (too restrictive).
+    // Spend limit check. The DB row.spent is a CACHE the validator increments
+    // per batch — but it can DRIFT ABOVE the real on-chain sessionSpent (e.g. a
+    // double-increment when the bisect/peer path and the main path both count a
+    // row), producing a false "limit reached" 403 while the user has budget on
+    // chain. So DON'T trust the cache to REJECT: when it says over-limit, verify
+    // against the authoritative on-chain sessionSpent before blocking, and
+    // self-heal the DB when the cache was inflated.
     const spendLimit = BigInt(row.spendLimit || '0')
     if (spendLimit > 0n) {
-      const spent = BigInt(row.spent || '0')
-      if (spent >= spendLimit) return { valid: false, reason: 'Session key spend limit reached' }
+      const cachedSpent = BigInt(row.spent || '0')
+      if (cachedSpent >= spendLimit) {
+        let onChainSpent: bigint | null = null
+        try {
+          const contract = await getReadContractAsync()
+          onChainSpent = BigInt((await contract.sessionSpent(owner, sessionAddr)).toString())
+        } catch (e) {
+          console.warn('[SessionSpend] on-chain sessionSpent read failed during limit check:', (e as any)?.message)
+        }
+        if (onChainSpent !== null) {
+          // Correct the drifted cache to the truth.
+          if (onChainSpent !== cachedSpent) {
+            prisma.sessionKey.update({
+              where: { ownerAddress_sessionAddress: { ownerAddress: owner, sessionAddress: sessionAddr } },
+              data: { spent: onChainSpent.toString() },
+            }).catch(() => {})
+          }
+          if (onChainSpent >= spendLimit) {
+            return { valid: false, reason: 'Session key spend limit reached' }
+          }
+          // Under limit on chain → allow (cache was inflated).
+        } else {
+          // Couldn't verify on chain — fall back to the cache to stay safe.
+          return { valid: false, reason: 'Session key spend limit reached' }
+        }
+      }
     }
     return { valid: true, perActionTipRate: BigInt((row as any).perActionTipRate || '0') }
   }
