@@ -642,6 +642,11 @@ export type ActionParams = {
   /** Internal: incremented when re-entering after a cawonce collision so
    *  we cap auto-retries. Don't set this manually. */
   _cawonceRetryCount?: number
+  /** Force this ONE action to sign with the wallet/passkey (not the Quick Sign
+   *  session), bypassing the session + its spend-limit/renewal gates. Set by the
+   *  renew modal's "Sign Manually" so it doesn't loop back into the same
+   *  spend-limit check. */
+  forceManual?: boolean
 }
 
 /**
@@ -1360,7 +1365,8 @@ export function useSignAndSubmitAction() {
       })
     }
 
-    const canUseSession = activeSession &&
+    const canUseSession = !params.forceManual &&
+      activeSession &&
       actionCode !== 6 && // exclude WITHDRAW
       (activeSession.scopeBitmap & (1 << actionCode)) !== 0
 
@@ -1440,7 +1446,31 @@ export function useSignAndSubmitAction() {
     if (canUseSession) {
       const limit = BigInt(activeSession.spendLimit || '0')
       if (limit > 0n) {
-        const spent = BigInt(rawSession?.spent || '0')
+        // Use the AUTHORITATIVE on-chain sessionSpent as the basis, not the local
+        // `rawSession.spent` counter. The local counter (recordSpend) over-counts:
+        // it adds the full action value (tip + recipients) while the contract
+        // meters only actionCost — so after a few tip actions it balloons above the
+        // real on-chain spend and falsely trips the limit (user sees "limit
+        // reached" with plenty remaining). Read on-chain; fall back to the local
+        // value only if the read fails.
+        let spent = BigInt(rawSession?.spent || '0')
+        try {
+          const onChainSpent = await readContract(wagmiConfig, {
+            address: CAW_ACTIONS_ADDRESS,
+            abi: cawActionsAbi,
+            chainId: baseSepolia.id,
+            functionName: 'sessionSpent',
+            args: [tokenOwner as `0x${string}`, activeSession.address as `0x${string}`],
+          }) as bigint
+          spent = BigInt(onChainSpent)
+          // Sync the corrected value back into the store so the display + future
+          // fast-checks agree with chain.
+          const store = useSessionKeyStore.getState()
+          const cur = tokenOwner ? store.getSessionForAddress(tokenOwner) : null
+          if (cur) store.setSession({ ...cur, spent: spent.toString() })
+        } catch (e) {
+          console.warn('[QuickSign] on-chain sessionSpent read failed, using local counter:', e)
+        }
         const protocolCost = ACTION_COSTS[params.actionType] || 0n
         let extraAmountsWhole = 0n
         if ((params.actionType === 'other' || params.actionType === 'withdraw') &&
@@ -1455,12 +1485,20 @@ export function useSignAndSubmitAction() {
         console.log(`[QuickSign] Spend limit: ${limit}, spent: ${spent}, remaining: ${remaining}, actionCost: ${protocolCost}, extraAmounts: ${extraAmountsWhole}, tip: ${tipForCalc}, totalCost: ${totalCost}`)
         if (spent + totalCost > limit) {
           return new Promise((resolve, reject) => {
-            useQuickSignRenewStore.getState().show('spend_limit', async () => {
-              try {
-                const result = await requestAndSubmit(params)
-                resolve(result)
-              } catch (err) { reject(err) }
-            }, () => reject(new Error('Quick Sign renewal cancelled')))
+            useQuickSignRenewStore.getState().show(
+              'spend_limit',
+              // onRetry (Enable / renew): retry using the session.
+              async () => {
+                try { resolve(await requestAndSubmit(params)) } catch (err) { reject(err) }
+              },
+              () => reject(new Error('Quick Sign renewal cancelled')),
+              // onRetryManual (Sign Manually): force wallet signing for this one
+              // action so it bypasses the session + THIS spend-limit gate instead
+              // of looping back into it.
+              async () => {
+                try { resolve(await requestAndSubmit({ ...params, forceManual: true })) } catch (err) { reject(err) }
+              },
+            )
           })
         }
       }

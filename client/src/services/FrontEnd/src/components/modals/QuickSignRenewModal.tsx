@@ -19,13 +19,19 @@ type RenewReason = 'expired' | 'spend_limit'
 interface QuickSignRenewState {
   isOpen: boolean
   reason: RenewReason
-  /** Callback to retry the action (will use wallet signature since QS is disabled) */
+  /** Callback to retry the action, re-issuing/using the Quick Sign session
+   *  (fired by "Enable" / renew). */
   onRetry: (() => Promise<any> | void) | null
+  /** Callback to retry the action signing MANUALLY with the wallet/passkey,
+   *  bypassing the session + its spend-limit gate (fired by "Sign Manually").
+   *  Distinct from onRetry so Sign Manually doesn't loop back into the same
+   *  spend-limit check. Falls back to onRetry if the caller didn't provide it. */
+  onRetryManual: (() => Promise<any> | void) | null
   /** Fired when the modal is dismissed WITHOUT renewing/retrying. Lets the
    *  caller (signAndSubmit) reject its pending promise so the submit unwinds
    *  and the Post button resets from "Signing…" back to "Post". */
   onCancel: (() => void) | null
-  show: (reason: RenewReason, onRetry?: () => Promise<any> | void, onCancel?: () => void) => void
+  show: (reason: RenewReason, onRetry?: () => Promise<any> | void, onCancel?: () => void, onRetryManual?: () => Promise<any> | void) => void
   close: () => void
 }
 
@@ -33,14 +39,15 @@ export const useQuickSignRenewStore = create<QuickSignRenewState>((set, get) => 
   isOpen: false,
   reason: 'expired',
   onRetry: null,
+  onRetryManual: null,
   onCancel: null,
-  show: (reason, onRetry, onCancel) => set({ isOpen: true, reason, onRetry: onRetry || null, onCancel: onCancel || null }),
+  show: (reason, onRetry, onCancel, onRetryManual) => set({ isOpen: true, reason, onRetry: onRetry || null, onCancel: onCancel || null, onRetryManual: onRetryManual || null }),
   // Dismiss = cancel: fire onCancel once (so the awaiting submit rejects) and
   // clear both callbacks. handleRenew/handleSignManually null out onCancel
   // first when they take over, so this only fires on a genuine dismiss.
   close: () => {
     const { onCancel } = get()
-    set({ isOpen: false, onRetry: null, onCancel: null })
+    set({ isOpen: false, onRetry: null, onRetryManual: null, onCancel: null })
     if (onCancel) onCancel()
   },
 }))
@@ -131,16 +138,14 @@ const QuickSignRenewModal: React.FC = () => {
     ensureWallet(null, async () => {
       if (wrongWallet) return
 
-      // Make the retry sign MANUALLY (wallet/passkey) for this one action.
-      // Previously this did setEnabled(false) to trick requestAndSubmit into
-      // skipping the session — but sessions are now resolved per-owner and no
-      // longer gated on the global `enabled` flag, so that no longer worked: the
-      // retry hit the "Enable Quick Sign?" prompt instead of just signing. Set
-      // skipOnce on the prompt store (the same one-shot bypass the QuickSign
-      // modal's "Sign Manually" uses) so the retry goes straight to wallet/
-      // passkey signing without re-prompting.
+      // Retry via the MANUAL path (forceManual: true) so the action signs with
+      // the wallet/passkey and skips the session + its spend-limit/renewal gate —
+      // otherwise a spend_limit retry loops straight back into the same check.
+      // Also set skipOnce so the fall-through doesn't hit the enable-QS prompt.
+      // Fall back to onRetry if the caller didn't supply a manual variant.
       useQuickSignPromptStore.setState({ skipOnce: true })
-      const retry = onRetry
+      const { onRetryManual, onRetry: onRetryFallback } = useQuickSignRenewStore.getState()
+      const retry = onRetryManual || onRetryFallback
       // "Sign manually" is also a deliberate retry, not a dismiss — clear
       // onCancel so close() doesn't reject the awaiting submit.
       useQuickSignRenewStore.setState({ onCancel: null })
@@ -150,8 +155,6 @@ const QuickSignRenewModal: React.FC = () => {
           try {
             await retry()
           } catch {
-            // User cancelled or signature failed — clear the one-shot bypass so a
-            // later action prompts normally again.
             useQuickSignPromptStore.setState({ skipOnce: false })
           }
         }, 100)
