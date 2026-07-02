@@ -1933,5 +1933,18 @@
   "passkey_signin.error.wrong_passkey": "آن کلید عبور با این حساب مطابقت ندارد. کلید عبوری را که برای این نام کاربری تنظیم کرده اید انتخاب کنید و دوباره امتحان کنید.",
   "passkey_signin.error.not_passkey": "این حساب با یک کیف پول متصل به سیستم وارد می شود، نه با کلید عبور. به جای آن از گزینه «اتصال کیف پول» استفاده کنید.",
   "make_offer.popb_insufficient_fee": "کیف پول شما برای پوشش پیشنهاد به اضافه هزینه شبکه کافی نیست. شارژ کنید و دوباره امتحان کنید.",
-  "make_offer.relay_unavailable": "سرویس امضا به طور موقت در دسترس نیست. لطفاً به زودی دوباره امتحان کنید."
+  "make_offer.relay_unavailable": "سرویس امضا به طور موقت در دسترس نیست. لطفاً به زودی دوباره امتحان کنید.",
+  "buy_modal.popb_insufficient_fee": "CAW یا ETH ناکافی برای پوشش هزینه گاز رله.",
+  "buy_modal.popb_relay_unavailable": "رله به طور موقت در دسترس نیست. لطفا دوباره امتحان کنید.",
+  "bid_modal.popb_insufficient_fee": "CAW یا ETH ناکافی برای پوشش هزینه گاز رله.",
+  "bid_modal.popb_relay_unavailable": "رله به طور موقت در دسترس نیست. لطفا دوباره امتحان کنید.",
+  "make_offer.popb.wallet_label": "این پیشنهاد از کیف پول رمز عبور شما می آید",
+  "make_offer.popb.fund_empty": "این کیف پول خالی است. ابتدا {{token}} را به آن اضافه کنید، سپس می توانید یک پیشنهاد در این نمایه ارائه دهید.",
+  "make_offer.popb.fund_more": "برای ارائه این پیشنهاد، به {{token}} بیشتر در این کیف پول نیاز دارید. {{token}} را اضافه کنید و دوباره امتحان کنید.",
+  "make_offer.popb.fund_cta": "برای ارائه پیشنهاد، {{token}} را به کیف پول خود اضافه کنید",
+  "view_offers.popb_insufficient_fee": "CAW یا ETH ناکافی برای پوشش هزینه گاز رله.",
+  "view_offers.popb_relay_unavailable": "رله به طور موقت در دسترس نیست. لطفا دوباره امتحان کنید.",
+  "transfer_nft.popb_insufficient_fee": "CAW یا ETH ناکافی برای پوشش هزینه گاز رله.",
+  "sync_transfer.popb_insufficient_fee": "CAW یا ETH ناکافی برای پوشش هزینه گاز رله.",
+  "client_auth.popb_insufficient_fee": "CAW یا ETH ناکافی برای پوشش هزینه گاز رله."
 }

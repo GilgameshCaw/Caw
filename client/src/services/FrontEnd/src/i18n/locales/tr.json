@@ -1934,5 +1934,18 @@
   "passkey_signin.error.wrong_passkey": "Bu şifre bu hesapla eşleşmiyor. Bu kullanıcı adı için ayarladığınız şifreyi seçin ve tekrar deneyin.",
   "passkey_signin.error.not_passkey": "Bu hesap, geçiş anahtarıyla değil, bağlı bir cüzdanla oturum açar. Bunun yerine “Cüzdanı Bağla” seçeneğini kullanın.",
   "make_offer.popb_insufficient_fee": "Cüzdanınızda teklif artı ağ ücretini karşılamaya yetecek kadar para yok. Doldurun ve tekrar deneyin.",
-  "make_offer.relay_unavailable": "İmzalama hizmeti geçici olarak kullanılamıyor. Lütfen kısa süre sonra tekrar deneyin."
+  "make_offer.relay_unavailable": "İmzalama hizmeti geçici olarak kullanılamıyor. Lütfen kısa süre sonra tekrar deneyin.",
+  "buy_modal.popb_insufficient_fee": "Geçiş gazı ücretini karşılamak için yetersiz CAW veya ETH.",
+  "buy_modal.popb_relay_unavailable": "Röle geçici olarak kullanılamıyor. Lütfen tekrar deneyin.",
+  "bid_modal.popb_insufficient_fee": "Geçiş gazı ücretini karşılamak için yetersiz CAW veya ETH.",
+  "bid_modal.popb_relay_unavailable": "Röle geçici olarak kullanılamıyor. Lütfen tekrar deneyin.",
+  "make_offer.popb.wallet_label": "Bu teklif şifre cüzdanınızdan geliyor",
+  "make_offer.popb.fund_empty": "Bu cüzdan boş. Önce {{token}} ekleyin, ardından bu profilden teklif verebilirsiniz.",
+  "make_offer.popb.fund_more": "Bu teklifi yapabilmek için bu cüzdanda daha fazla {{token}}'ya ihtiyacınız var. {{token}} ekleyin ve tekrar deneyin.",
+  "make_offer.popb.fund_cta": "Teklif vermek için cüzdanınıza {{token}} ekleyin",
+  "view_offers.popb_insufficient_fee": "Geçiş gazı ücretini karşılamak için yetersiz CAW veya ETH.",
+  "view_offers.popb_relay_unavailable": "Röle geçici olarak kullanılamıyor. Lütfen tekrar deneyin.",
+  "transfer_nft.popb_insufficient_fee": "Geçiş gazı ücretini karşılamak için yetersiz CAW veya ETH.",
+  "sync_transfer.popb_insufficient_fee": "Geçiş gazı ücretini karşılamak için yetersiz CAW veya ETH.",
+  "client_auth.popb_insufficient_fee": "Geçiş gazı ücretini karşılamak için yetersiz CAW veya ETH."
 }

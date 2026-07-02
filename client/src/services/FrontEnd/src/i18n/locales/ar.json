@@ -1934,5 +1934,18 @@
   "passkey_signin.error.wrong_passkey": "مفتاح المرور هذا لا يطابق هذا الحساب. اختر مفتاح المرور الذي قمت بإعداده لاسم المستخدم هذا وحاول مرة أخرى.",
   "passkey_signin.error.not_passkey": "يقوم هذا الحساب بتسجيل الدخول باستخدام محفظة متصلة، وليس باستخدام مفتاح مرور. استخدم خيار \"Connect Wallet\" بدلاً من ذلك.",
   "make_offer.popb_insufficient_fee": "لا تحتوي محفظتك على ما يكفي لتغطية العرض بالإضافة إلى رسوم الشبكة. قم بتعبئة الرصيد وحاول مرة أخرى.",
-  "make_offer.relay_unavailable": "خدمة التوقيع غير متاحة مؤقتا. يرجى المحاولة مرة أخرى قريبا."
+  "make_offer.relay_unavailable": "خدمة التوقيع غير متاحة مؤقتا. يرجى المحاولة مرة أخرى قريبا.",
+  "buy_modal.popb_insufficient_fee": "عدم كفاية CAW أو ETH لتغطية رسوم غاز الترحيل.",
+  "buy_modal.popb_relay_unavailable": "التتابع غير متاح مؤقتا. يرجى المحاولة مرة أخرى.",
+  "bid_modal.popb_insufficient_fee": "عدم كفاية CAW أو ETH لتغطية رسوم غاز الترحيل.",
+  "bid_modal.popb_relay_unavailable": "التتابع غير متاح مؤقتا. يرجى المحاولة مرة أخرى.",
+  "make_offer.popb.wallet_label": "يأتي هذا العرض من محفظة مفتاح المرور الخاصة بك",
+  "make_offer.popb.fund_empty": "هذه المحفظة فارغة. أضف {{token}} إليها أولاً، ثم يمكنك تقديم عرض على هذا الملف الشخصي.",
+  "make_offer.popb.fund_more": "أنت بحاجة إلى المزيد من {{token}} في هذه المحفظة لتقديم هذا العرض. أضف {{token}} وحاول مرة أخرى.",
+  "make_offer.popb.fund_cta": "أضف {{token}} إلى محفظتك لتقديم عرض",
+  "view_offers.popb_insufficient_fee": "عدم كفاية CAW أو ETH لتغطية رسوم غاز الترحيل.",
+  "view_offers.popb_relay_unavailable": "التتابع غير متاح مؤقتا. يرجى المحاولة مرة أخرى.",
+  "transfer_nft.popb_insufficient_fee": "عدم كفاية CAW أو ETH لتغطية رسوم غاز الترحيل.",
+  "sync_transfer.popb_insufficient_fee": "عدم كفاية CAW أو ETH لتغطية رسوم غاز الترحيل.",
+  "client_auth.popb_insufficient_fee": "عدم كفاية CAW أو ETH لتغطية رسوم غاز الترحيل."
 }

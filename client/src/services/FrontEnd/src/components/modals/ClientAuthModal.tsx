@@ -1,17 +1,20 @@
-import React, { useEffect, useState } from 'react'
-import { useWriteContract, useReadContract } from 'wagmi'
+import React, { useCallback, useEffect, useState } from 'react'
+import { useWriteContract, useReadContract, usePublicClient } from 'wagmi'
 import ModalWrapper from './ModalWrapper'
 import { useClientAuthStore } from '~/store/clientAuthStore'
 import { useTheme } from '~/hooks/useTheme'
 import { useT } from '~/i18n/I18nProvider'
 import { useEnsureWallet } from '~/hooks/useEnsureWallet'
+import { useWalletPopulation } from '~/hooks/useWalletPopulation'
+import { useSmartEoaExecute, type ExecCall } from '~/hooks/useSmartEoaExecute'
 import { CLIENT_ID } from '~/api/actions'
 import { cawProfileAbi, cawProfileQuoterAbi } from '~/../../../abi/generated'
-import { CAW_NAMES_ADDRESS, CAW_NAME_QUOTER_ADDRESS } from '~/../../../abi/addresses'
+import { CAW_NAMES_ADDRESS, CAW_NAME_QUOTER_ADDRESS, CAW_ADDRESS } from '~/../../../abi/addresses'
 import { chains } from '~/config/chains'
-import { formatEther } from 'viem'
+import { formatEther, erc20Abi, encodeFunctionData, type Address } from 'viem'
 import { usePriceStore } from '~/store/tokenDataStore'
 import NetworkFeesPanel from '~/components/NetworkFeesPanel'
+import { apiFetch } from '~/api/client'
 
 const ClientAuthModal: React.FC = () => {
   const { isOpen, tokenId, close } = useClientAuthStore()
@@ -21,6 +24,11 @@ const ClientAuthModal: React.FC = () => {
   const { writeContractAsync } = useWriteContract()
   const [isPending, setIsPending] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  // Pop-B (passkey) relay path
+  const { population } = useWalletPopulation()
+  const isPopB = population === 'B'
+  const { execute: smartEoaExecute, account: eoaAccount } = useSmartEoaExecute()
+  const l1Client = usePublicClient({ chainId: chains.l1.chainId })
 
   // Reset transient state every time the modal opens — otherwise a stale
   // "Transaction rejected" from the previous open lingers when the user
@@ -49,6 +57,10 @@ const ClientAuthModal: React.FC = () => {
   const domainName = typeof window !== 'undefined' ? window.location.hostname : ''
 
   const handleAuth = async () => {
+    if (isPopB) {
+      handlePopBAuth()
+      return
+    }
     await ensureWallet({ chainId: chains.l1.chainId }, async () => {
       if (!tokenId) return
 
@@ -82,6 +94,57 @@ const ClientAuthModal: React.FC = () => {
       }
     })
   }
+
+  // Pop-B relay: authenticate (payable LZ fee self-funded) + fee leg.
+  const handlePopBAuth = useCallback(async () => {
+    if (!isPopB || !eoaAccount || !tokenId || !l1Client) return
+    setIsPending(true)
+    setError(null)
+    try {
+      const quote = await apiFetch<{ relayer: string; minFeeCawWei: string; priceAvailable: boolean; minFeeEthWei: string }>(
+        `/api/sponsor/execute-quote?forwardedValueWei=0`,
+      )
+      const feeCaw = quote.priceAvailable ? BigInt(quote.minFeeCawWei) : null
+      const feeEth = BigInt(quote.minFeeEthWei)
+
+      const [cawBalNow, ethBalNow] = await Promise.all([
+        l1Client.readContract({ address: CAW_ADDRESS as Address, abi: erc20Abi, functionName: 'balanceOf', args: [eoaAccount as Address] }) as Promise<bigint>,
+        l1Client.getBalance({ address: eoaAccount as Address }),
+      ])
+      const payInCaw = feeCaw != null && cawBalNow >= feeCaw
+      const payInEth = ethBalNow >= totalFee + feeEth
+      if (!payInCaw && !payInEth) throw new Error('INSUFFICIENT_FEE_CAW')
+
+      const calls: ExecCall[] = [
+        {
+          to: CAW_NAMES_ADDRESS,
+          value: totalFee, // self-funded LZ + auth fee
+          data: encodeFunctionData({
+            abi: cawProfileAbi,
+            functionName: 'authenticate',
+            args: [CLIENT_ID, tokenId, chains.l2.layerZero, 0n],
+          }),
+        },
+      ]
+      if (payInCaw) {
+        calls.push({ to: CAW_ADDRESS as Address, value: 0n, data: encodeFunctionData({ abi: erc20Abi, functionName: 'transfer', args: [quote.relayer as Address, feeCaw!] }) })
+      } else {
+        calls.push({ to: quote.relayer as Address, value: feeEth, data: '0x' })
+      }
+      await smartEoaExecute(calls)
+
+      const cb = useClientAuthStore.getState().onSuccess
+      useClientAuthStore.setState({ isOpen: false, tokenId: undefined, onSuccess: undefined, onCancel: undefined })
+      if (cb) setTimeout(cb, 3000)
+    } catch (err: any) {
+      const raw = (err?.message || '').replace(/^API\s+\d+:\s*/i, '')
+      if (/NotAllowed|abort|cancel|denied|rejected/i.test(raw)) setError(t('client_auth.error.tx_rejected'))
+      else if (/SIMULATION_FAILED|INSUFFICIENT_FEE_CAW|insufficient|FEE_TOO_LOW/i.test(raw)) setError(t('client_auth.popb_insufficient_fee'))
+      else setError(t('client_auth.error.tx_failed'))
+    } finally {
+      setIsPending(false)
+    }
+  }, [isPopB, eoaAccount, tokenId, l1Client, totalFee, smartEoaExecute, t])
 
   return (
     <ModalWrapper isOpen={isOpen} onClose={close} usePortal>

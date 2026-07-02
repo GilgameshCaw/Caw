@@ -1934,5 +1934,18 @@
   "passkey_signin.error.wrong_passkey": "La passkey non corrisponde a questo account. Scegli la passkey che hai impostato per questo nome utente e riprova.",
   "passkey_signin.error.not_passkey": "Questo account accede con un portafoglio connesso, non con una passkey. Utilizza invece l'opzione \"Connetti portafoglio\".",
   "make_offer.popb_insufficient_fee": "Il tuo portafoglio non ha abbastanza per coprire l'offerta più la tariffa di rete. Ricarica e riprova.",
-  "make_offer.relay_unavailable": "Il servizio di firma è temporaneamente non disponibile. Per favore riprova a breve."
+  "make_offer.relay_unavailable": "Il servizio di firma è temporaneamente non disponibile. Per favore riprova a breve.",
+  "buy_modal.popb_insufficient_fee": "CAW o ETH insufficienti per coprire la tariffa del gas di inoltro.",
+  "buy_modal.popb_relay_unavailable": "Relè temporaneamente non disponibile. Per favore riprova.",
+  "bid_modal.popb_insufficient_fee": "CAW o ETH insufficienti per coprire la tariffa del gas di inoltro.",
+  "bid_modal.popb_relay_unavailable": "Relè temporaneamente non disponibile. Per favore riprova.",
+  "make_offer.popb.wallet_label": "Questa offerta proviene dal tuo portafoglio passkey",
+  "make_offer.popb.fund_empty": "Questo portafoglio è vuoto. Aggiungi prima {{token}}, poi potrai fare un'offerta su questo profilo.",
+  "make_offer.popb.fund_more": "Hai bisogno di più {{token}} in questo portafoglio per fare questa offerta. Aggiungi {{token}} e riprova.",
+  "make_offer.popb.fund_cta": "Aggiungi {{token}} al tuo portafoglio per fare un'offerta",
+  "view_offers.popb_insufficient_fee": "CAW o ETH insufficienti per coprire la tariffa del gas di inoltro.",
+  "view_offers.popb_relay_unavailable": "Relè temporaneamente non disponibile. Per favore riprova.",
+  "transfer_nft.popb_insufficient_fee": "CAW o ETH insufficienti per coprire la tariffa del gas di inoltro.",
+  "sync_transfer.popb_insufficient_fee": "CAW o ETH insufficienti per coprire la tariffa del gas di inoltro.",
+  "client_auth.popb_insufficient_fee": "CAW o ETH insufficienti per coprire la tariffa del gas di inoltro."
 }

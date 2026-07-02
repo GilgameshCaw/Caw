@@ -1,8 +1,10 @@
-import React, { useState, useEffect } from 'react'
-import { useAccount, useChainId, useSwitchChain, useWriteContract, useWaitForTransactionReceipt } from 'wagmi'
+import React, { useCallback, useState, useEffect } from 'react'
+import { useAccount, useChainId, useSwitchChain, useWriteContract, useWaitForTransactionReceipt, usePublicClient } from 'wagmi'
 import { readContract } from '@wagmi/core'
-import { isAddress, formatEther } from 'viem'
+import { isAddress, formatEther, erc20Abi, encodeFunctionData, type Address } from 'viem'
 import { useEnsureWallet } from '~/hooks/useEnsureWallet'
+import { useWalletPopulation } from '~/hooks/useWalletPopulation'
+import { useSmartEoaExecute, type ExecCall } from '~/hooks/useSmartEoaExecute'
 import ModalWrapper from './ModalWrapper'
 import ModalHeader from './ModalHeader'
 import { useTheme } from '~/hooks/useTheme'
@@ -10,10 +12,11 @@ import { useT } from '~/i18n/I18nProvider'
 import { themeTextSecondary, themeTextMuted, themeBgSubtle, themeSecondaryButton } from '~/utils/theme'
 import { useTransferModalStore } from '~/store/transferModalStore'
 import { chains } from '~/config/chains'
-import { CAW_NAMES_ADDRESS, CAW_NAME_QUOTER_ADDRESS } from '~/../../../abi/addresses'
+import { CAW_NAMES_ADDRESS, CAW_NAME_QUOTER_ADDRESS, CAW_ADDRESS } from '~/../../../abi/addresses'
 import { cawProfileAbi, cawProfileQuoterAbi } from '~/../../../abi/generated'
 import { wagmiConfig } from '~/config/Web3Provider'
 import { usePriceStore } from '~/store/tokenDataStore'
+import { apiFetch } from '~/api/client'
 
 const TransferNFTModal: React.FC = () => {
   const { isDark } = useTheme()
@@ -26,6 +29,14 @@ const TransferNFTModal: React.FC = () => {
   const { writeContract, data: hash, isPending: isSubmitting, error: writeError, reset } = useWriteContract()
   const { isLoading: isConfirming, isSuccess } = useWaitForTransactionReceipt({ hash })
   const ethPrice = usePriceStore(s => s.priceMap['ethereum'] ?? 0)
+  // Pop-B (passkey) relay path
+  const { population } = useWalletPopulation()
+  const isPopB = population === 'B'
+  const { execute: smartEoaExecute, account: eoaAccount } = useSmartEoaExecute()
+  const l1Client = usePublicClient({ chainId: chains.l1.chainId })
+  const [popBPending, setPopBPending] = useState(false)
+  const [popBSuccess, setPopBSuccess] = useState(false)
+  const [popBError, setPopBError] = useState<string | null>(null)
 
   const [recipient, setRecipient] = useState('')
   const [inputError, setInputError] = useState<string | null>(null)
@@ -74,6 +85,9 @@ const TransferNFTModal: React.FC = () => {
     setRecipient('')
     setInputError(null)
     setLzFee(null)
+    setPopBError(null)
+    setPopBSuccess(false)
+    setPopBPending(false)
     reset()
     close()
   }
@@ -96,6 +110,10 @@ const TransferNFTModal: React.FC = () => {
   }
 
   const handleTransfer = async () => {
+    if (isPopB) {
+      handlePopBTransfer()
+      return
+    }
     await ensureWallet({ chainId: chains.l1.chainId }, async () => {
       if (!validateRecipient(recipient)) return
       if (!address || tokenId === null) return
@@ -115,7 +133,60 @@ const TransferNFTModal: React.FC = () => {
     })
   }
 
+  // Pop-B relay: transferAndSync (payable LZ fee self-funded) + fee leg.
+  const handlePopBTransfer = useCallback(async () => {
+    if (!isPopB || !eoaAccount || tokenId === null || !l1Client) return
+    if (!validateRecipient(recipient)) return
+    setPopBError(null)
+    setPopBPending(true)
+    try {
+      const quote = await apiFetch<{ relayer: string; minFeeCawWei: string; priceAvailable: boolean; minFeeEthWei: string }>(
+        `/api/sponsor/execute-quote?forwardedValueWei=0`,
+      )
+      const feeCaw = quote.priceAvailable ? BigInt(quote.minFeeCawWei) : null
+      const feeEth = BigInt(quote.minFeeEthWei)
+      const transferLzFee = lzFee ?? 0n
+
+      const [cawBalNow, ethBalNow] = await Promise.all([
+        l1Client.readContract({ address: CAW_ADDRESS as Address, abi: erc20Abi, functionName: 'balanceOf', args: [eoaAccount as Address] }) as Promise<bigint>,
+        l1Client.getBalance({ address: eoaAccount as Address }),
+      ])
+      const payInCaw = feeCaw != null && cawBalNow >= feeCaw
+      const payInEth = ethBalNow >= transferLzFee + feeEth
+      if (!payInCaw && !payInEth) throw new Error('INSUFFICIENT_FEE_CAW')
+
+      const calls: ExecCall[] = [
+        {
+          to: CAW_NAMES_ADDRESS,
+          value: transferLzFee, // self-funded LZ fee
+          data: encodeFunctionData({
+            abi: cawProfileAbi,
+            functionName: 'transferAndSync',
+            args: [recipient as Address, BigInt(tokenId), chains.l1.layerZero, 0n],
+          }),
+        },
+      ]
+      if (payInCaw) {
+        calls.push({ to: CAW_ADDRESS as Address, value: 0n, data: encodeFunctionData({ abi: erc20Abi, functionName: 'transfer', args: [quote.relayer as Address, feeCaw!] }) })
+      } else {
+        calls.push({ to: quote.relayer as Address, value: feeEth, data: '0x' })
+      }
+      await smartEoaExecute(calls)
+      setPopBSuccess(true)
+    } catch (err: any) {
+      const raw = (err?.message || '').replace(/^API\s+\d+:\s*/i, '')
+      if (/NotAllowed|abort|cancel|denied|rejected/i.test(raw)) setPopBError(t('transfer_nft.error.tx_rejected'))
+      else if (/SIMULATION_FAILED|INSUFFICIENT_FEE_CAW|insufficient|FEE_TOO_LOW/i.test(raw)) setPopBError(t('transfer_nft.popb_insufficient_fee'))
+      else if (/not the token owner/i.test(raw)) setPopBError(t('transfer_nft.error.not_owner'))
+      else setPopBError(t('transfer_nft.error.tx_failed'))
+    } finally {
+      setPopBPending(false)
+    }
+  }, [isPopB, eoaAccount, tokenId, l1Client, recipient, lzFee, smartEoaExecute, t])
+
   const getButtonText = () => {
+    if (popBPending) return t('transfer_nft.btn.confirm_in_wallet')
+    if (popBSuccess) return t('transfer_nft.btn.transferred')
     if (needsChainSwitch) return isSwitchingChain ? t('transfer_nft.btn.switching') : t('transfer_nft.btn.switch_network')
     if (isQuoting) return t('transfer_nft.btn.estimating_fee')
     if (isSubmitting) return t('transfer_nft.btn.confirm_in_wallet')
@@ -124,7 +195,7 @@ const TransferNFTModal: React.FC = () => {
     return t('transfer_nft.btn.transfer')
   }
 
-  const isButtonDisabled = isSubmitting || isConfirming || isSuccess || isSwitchingChain || isQuoting
+  const isButtonDisabled = isSubmitting || isConfirming || isSuccess || isSwitchingChain || isQuoting || popBPending || popBSuccess
 
   return (
     <ModalWrapper isOpen={isOpen} onClose={handleClose} maxWidth="max-w-md" usePortal zIndex={9999}>
@@ -174,17 +245,19 @@ const TransferNFTModal: React.FC = () => {
           </div>
         )}
 
-        {writeError && (
+        {(writeError || popBError) && (
           <div className="mb-4 p-3 rounded-lg bg-red-500/10 text-error-dim text-sm">
-            {writeError.message?.includes('User rejected')
-              ? t('transfer_nft.error.tx_rejected')
-              : writeError.message?.includes('caller is not the token owner')
-                ? t('transfer_nft.error.not_owner')
-                : t('transfer_nft.error.tx_failed')}
+            {popBError
+              ? popBError
+              : writeError?.message?.includes('User rejected')
+                ? t('transfer_nft.error.tx_rejected')
+                : writeError?.message?.includes('caller is not the token owner')
+                  ? t('transfer_nft.error.not_owner')
+                  : t('transfer_nft.error.tx_failed')}
           </div>
         )}
 
-        {isSuccess && (
+        {(isSuccess || popBSuccess) && (
           <div className={`mb-4 p-3 rounded-lg text-sm ${isDark ? 'bg-green-500/10 text-green-400' : 'bg-green-50 text-green-700'}`}>
             {t('transfer_nft.success', { username: username || '' })}
           </div>
@@ -197,7 +270,7 @@ const TransferNFTModal: React.FC = () => {
           >
             {isSuccess ? t('transfer_nft.btn.close') : t('transfer_nft.btn.cancel')}
           </button>
-          {!isSuccess && (
+          {!isSuccess && !popBSuccess && (
             <button
               onClick={handleTransfer}
               disabled={isButtonDisabled}

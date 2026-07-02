@@ -1934,5 +1934,18 @@
   "passkey_signin.error.wrong_passkey": "该密钥与该帐户不匹配。选择您为此用户名设置的密钥，然后重试。",
   "passkey_signin.error.not_passkey": "此帐户使用连接的钱包而不是密钥登录。请改用“连接钱包”选项。",
   "make_offer.popb_insufficient_fee": "您的钱包不足以支付优惠加上网络费用。充值并重试。",
-  "make_offer.relay_unavailable": "暂时无法提供签名服务。请稍后重试。"
+  "make_offer.relay_unavailable": "暂时无法提供签名服务。请稍后重试。",
+  "buy_modal.popb_insufficient_fee": "CAW 或 ETH 不足以支付中继 Gas 费用。",
+  "buy_modal.popb_relay_unavailable": "中继暂时不可用。请再试一次。",
+  "bid_modal.popb_insufficient_fee": "CAW 或 ETH 不足以支付中继 Gas 费用。",
+  "bid_modal.popb_relay_unavailable": "中继暂时不可用。请再试一次。",
+  "make_offer.popb.wallet_label": "此优惠来自您的密钥钱包",
+  "make_offer.popb.fund_empty": "这个钱包是空的。首先将 {{token}} 添加到其中，然后您可以对此配置文件进行报价。",
+  "make_offer.popb.fund_more": "您需要在此钱包中有更多 {{token}} 才能进行此优惠。添加 {{token}} 并重试。",
+  "make_offer.popb.fund_cta": "将 {{token}} 添加到您的钱包中以出价",
+  "view_offers.popb_insufficient_fee": "CAW 或 ETH 不足以支付中继 Gas 费用。",
+  "view_offers.popb_relay_unavailable": "中继暂时不可用。请再试一次。",
+  "transfer_nft.popb_insufficient_fee": "CAW 或 ETH 不足以支付中继 Gas 费用。",
+  "sync_transfer.popb_insufficient_fee": "CAW 或 ETH 不足以支付中继 Gas 费用。",
+  "client_auth.popb_insufficient_fee": "CAW 或 ETH 不足以支付中继 Gas 费用。"
 }

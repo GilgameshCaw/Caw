@@ -23,6 +23,7 @@ import { CAW_NAMES_MINTER_ADDRESS } from '~/../../../abi/addresses'
 import { cawProfileMinterAbi } from '~/../../../abi/generated'
 import { useSignAndSubmitAction } from '~/api/actions'
 import { useConnectModalBridge as useConnectModal } from '~/hooks/useConnectModalBridge'
+import { useWalletPopulation } from '~/hooks/useWalletPopulation'
 import { useNavigate } from '~/utils/localizedRouter'
 import { useTokenDataStore } from '~/store/tokenDataStore'
 import InsufficientStakeModal from '~/components/modals/InsufficientStakeModal'
@@ -143,6 +144,8 @@ export const Profile: React.FC = () => {
   const isCaptive = !activeToken?.username && !hasAuthedProfile
   const { openModal } = useModalStore()
   const { isConnected, address } = useAccount()
+  const { population } = useWalletPopulation()
+  const isPopB = population === 'B'
   const currentChainId = useChainId()
   const { switchChain, isPending: isSwitchingChain } = useSwitchChain()
   const signAndSubmit = useSignAndSubmitAction()
@@ -675,20 +678,25 @@ export const Profile: React.FC = () => {
 
   // Handle profile update submission
   const handleProfileUpdate = async () => {
-    // If wallet not connected, open connect modal
-    if (!isConnected) {
-      openConnectModal?.()
-      return
-    }
-
-    // Check if on correct chain, if not switch
-    if (!isOnCorrectChain) {
-      try {
-        await switchChain({ chainId: chains.l2.chainId })
-      } catch (err) {
-        console.error('Failed to switch chain:', err)
+    // Pop-B (passkey) users have no wagmi wallet/chain — skip the connect + chain-switch
+    // pre-gates (which would bounce them to /signin/passkey and never reach the signing
+    // path). signAndSubmit routes them through the passkey/Quick-Sign flow below.
+    if (!isPopB) {
+      // If wallet not connected, open connect modal
+      if (!isConnected) {
+        openConnectModal?.()
+        return
       }
-      return
+
+      // Check if on correct chain, if not switch
+      if (!isOnCorrectChain) {
+        try {
+          await switchChain({ chainId: chains.l2.chainId })
+        } catch (err) {
+          console.error('Failed to switch chain:', err)
+        }
+        return
+      }
     }
 
     // Check if user has an active token

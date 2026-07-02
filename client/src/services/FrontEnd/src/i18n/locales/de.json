@@ -1934,5 +1934,18 @@
   "passkey_signin.error.wrong_passkey": "Dieser Hauptschlüssel stimmt nicht mit diesem Konto überein. Wählen Sie den Passkey, den Sie für diesen Benutzernamen eingerichtet haben, und versuchen Sie es erneut.",
   "passkey_signin.error.not_passkey": "Dieses Konto meldet sich mit einer verbundenen Wallet an, nicht mit einem Hauptschlüssel. Verwenden Sie stattdessen die Option „Wallet verbinden“.",
   "make_offer.popb_insufficient_fee": "Ihr Geldbeutel reicht nicht aus, um das Angebot zuzüglich der Netzwerkgebühr zu decken. Füllen Sie auf und versuchen Sie es erneut.",
-  "make_offer.relay_unavailable": "Der Signierdienst ist vorübergehend nicht verfügbar. Bitte versuchen Sie es in Kürze noch einmal."
+  "make_offer.relay_unavailable": "Der Signierdienst ist vorübergehend nicht verfügbar. Bitte versuchen Sie es in Kürze noch einmal.",
+  "buy_modal.popb_insufficient_fee": "CAW oder ETH reichen nicht aus, um die Staffelgasgebühr zu decken.",
+  "buy_modal.popb_relay_unavailable": "Relais vorübergehend nicht verfügbar. Bitte versuchen Sie es erneut.",
+  "bid_modal.popb_insufficient_fee": "CAW oder ETH reichen nicht aus, um die Staffelgasgebühr zu decken.",
+  "bid_modal.popb_relay_unavailable": "Relais vorübergehend nicht verfügbar. Bitte versuchen Sie es erneut.",
+  "make_offer.popb.wallet_label": "Dieses Angebot kommt von Ihrem Passkey-Wallet",
+  "make_offer.popb.fund_empty": "Diese Brieftasche ist leer. Fügen Sie zuerst {{token}} hinzu, dann können Sie ein Angebot für dieses Profil abgeben.",
+  "make_offer.popb.fund_more": "Sie benötigen mehr {{token}} in dieser Wallet, um dieses Angebot machen zu können. Fügen Sie {{token}} hinzu und versuchen Sie es erneut.",
+  "make_offer.popb.fund_cta": "Fügen Sie {{token}} zu Ihrem Wallet hinzu, um ein Angebot abzugeben",
+  "view_offers.popb_insufficient_fee": "CAW oder ETH reichen nicht aus, um die Staffelgasgebühr zu decken.",
+  "view_offers.popb_relay_unavailable": "Relais vorübergehend nicht verfügbar. Bitte versuchen Sie es erneut.",
+  "transfer_nft.popb_insufficient_fee": "CAW oder ETH reichen nicht aus, um die Staffelgasgebühr zu decken.",
+  "sync_transfer.popb_insufficient_fee": "CAW oder ETH reichen nicht aus, um die Staffelgasgebühr zu decken.",
+  "client_auth.popb_insufficient_fee": "CAW oder ETH reichen nicht aus, um die Staffelgasgebühr zu decken."
 }

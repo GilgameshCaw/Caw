@@ -9,13 +9,16 @@ import { useEnsureWallet } from '~/hooks/useEnsureWallet'
 import { useWalletPopulation } from '~/hooks/useWalletPopulation'
 import { useSmartEoaExecute, type ExecCall } from '~/hooks/useSmartEoaExecute'
 import { themeTextMuted, themeBgSubtle } from '~/utils/theme'
+import { formatUsd } from '~/utils/numberFormat'
 import { useMarketplaceStore } from '~/store/marketplaceStore'
 import { usePriceStore, useActiveToken } from '~/store/tokenDataStore'
 import { apiFetch } from '~/api/client'
 import { chains } from '~/config/chains'
+import { sepolia } from 'wagmi/chains'
 import { CAW_NAME_MARKETPLACE_ADDRESS, WETH_ADDRESS, CAW_ADDRESS, USDC_ADDRESS, USDT_ADDRESS } from '~/../../../abi/addresses'
 import { cawProfileMarketplaceAbi } from '~/../../../abi/generated'
 import UsernameSvg from '~/components/UsernameSvg'
+import CopyAddressButton from '~/components/CopyAddressButton'
 
 const PAYMENT_OPTIONS = [
   { value: '0x0000000000000000000000000000000000000000', label: 'ETH', decimals: 18 },
@@ -107,6 +110,13 @@ const MakeOfferModal: React.FC = () => {
   // (read below); for Pop-A/C we only trust it once connected.
   const balanceKnown = isPopB ? eoaBalanceWei !== null : isConnected
   const insufficientBalance = balanceKnown && amountWei > 0n && amountWei > userBalance
+
+  // Pop-B funding state. These passkey wallets are usually EMPTY — the user has never
+  // touched crypto. When the wallet can't cover the selected token, the modal shifts
+  // its emphasis from "what offer?" to "fund your wallet first".
+  const eoaIsEmpty = isPopB && eoaBalanceWei !== null && eoaBalanceWei === 0n
+  const eoaNeedsFunding = isPopB && eoaBalanceWei !== null && (eoaIsEmpty || insufficientBalance)
+  const eoaExplorerUrl = eoaAccount ? `${sepolia.blockExplorers.default.url}/address/${eoaAccount}` : undefined
 
   // Read the Pop-B EOA's balance for the selected token (native ETH or ERC20) so the
   // balance display + cap work for passkey users, whose wagmi address is empty.
@@ -336,11 +346,32 @@ const MakeOfferModal: React.FC = () => {
 
   if (!isOpen || tokenId === null) return null
 
+  // Numeric balance in whole token units.
+  const balanceNum = (bal: bigint, dec: number): number =>
+    parseFloat(dec === 18 ? formatEther(bal) : formatUnits(bal, dec))
+
+  // Display balance per token: ETH/WETH show up to 6 decimals when > 0 (2 when
+  // exactly zero, so "0.00" reads cleanly); CAW shows no decimals; stablecoins 2.
   const fmtBalance = (bal: bigint, dec: number) => {
-    const num = parseFloat(dec === 18 ? formatEther(bal) : formatUnits(bal, dec))
-    if (dec <= 6) return num.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })
+    const num = balanceNum(bal, dec)
     if (selectedToken.label === 'CAW') return num.toLocaleString(undefined, { maximumFractionDigits: 0 })
-    return num.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 4 })
+    if (selectedToken.label === 'ETH' || selectedToken.label === 'WETH') {
+      return num > 0
+        ? num.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 6 })
+        : '0.00'
+    }
+    return num.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })
+  }
+
+  // USD value of a token balance, or null when no price is available.
+  const balanceUsd = (bal: bigint, dec: number): string | null => {
+    const num = balanceNum(bal, dec)
+    let rate = 0
+    if (selectedToken.label === 'ETH' || selectedToken.label === 'WETH') rate = ethPrice
+    else if (selectedToken.label === 'CAW') rate = cawPrice
+    else if (selectedToken.label === 'USDC' || selectedToken.label === 'USDT') rate = 1
+    if (!rate) return null
+    return formatUsd(num * rate)
   }
 
   return (
@@ -469,19 +500,64 @@ const MakeOfferModal: React.FC = () => {
               )}
             </div>
 
-            {/* Balance info */}
-            {(isConnected || (isPopB && eoaBalanceWei !== null)) && (
+            {/* Pop-B (passkey) wallet callout. These users are crypto-new; make it
+                explicit WHERE the offer comes from and that they must fund THAT wallet.
+                Emphasised (amber card) when the wallet can't cover the offer. */}
+            {isPopB && eoaAccount && (
+              <div className={`p-3 rounded-xl mb-4 text-sm border ${
+                eoaNeedsFunding
+                  ? (isDark ? 'bg-amber-500/10 border-amber-500/30' : 'bg-amber-50 border-amber-200')
+                  : (isDark ? 'bg-white/[0.04] border-white/10' : 'bg-black/[0.03] border-black/10')
+              }`}>
+                <div className={`${themeTextMuted(isDark)} mb-1`}>{t('make_offer.popb.wallet_label')}</div>
+                {/* Address on its own line — colored, linked to the explorer, copyable. */}
+                <div className="flex items-center gap-1 flex-wrap">
+                  <a
+                    href={eoaExplorerUrl} target="_blank" rel="noopener noreferrer"
+                    className={`font-mono text-xs break-all hover:underline ${isDark ? 'text-yellow-400' : 'text-yellow-700'}`}
+                  >
+                    {eoaAccount}
+                  </a>
+                  <CopyAddressButton address={eoaAccount} iconOnly />
+                </div>
+                {eoaBalanceWei !== null && (
+                  <div className="flex justify-between mt-2">
+                    <span className={themeTextMuted(isDark)}>{t('make_offer.your_balance')}</span>
+                    <span className={insufficientBalance ? (isDark ? 'text-red-400' : 'text-red-500') : (isDark ? 'text-white' : 'text-gray-900')}>
+                      {fmtBalance(userBalance, selectedToken.decimals)} {selectedToken.label}
+                      {balanceUsd(userBalance, selectedToken.decimals) && (
+                        <span className={themeTextMuted(isDark)}> ({balanceUsd(userBalance, selectedToken.decimals)})</span>
+                      )}
+                    </span>
+                  </div>
+                )}
+                {eoaNeedsFunding && (
+                  <p className={`mt-2 text-xs ${isDark ? 'text-amber-300' : 'text-amber-700'}`}>
+                    {eoaIsEmpty
+                      ? t('make_offer.popb.fund_empty', { token: selectedToken.label })
+                      : t('make_offer.popb.fund_more', { token: selectedToken.label })}
+                  </p>
+                )}
+              </div>
+            )}
+
+            {/* Pop-A/C balance info (wagmi wallet). */}
+            {!isPopB && isConnected && (
               <div className={`p-3 rounded-xl ${themeBgSubtle(isDark)} text-sm mb-4`}>
                 <div className="flex justify-between">
                   <span className={themeTextMuted(isDark)}>{t('make_offer.your_balance')}</span>
                   <span className={insufficientBalance ? (isDark ? 'text-red-400' : 'text-red-500') : (isDark ? 'text-white' : 'text-gray-900')}>
                     {fmtBalance(userBalance, selectedToken.decimals)} {selectedToken.label}
+                    {balanceUsd(userBalance, selectedToken.decimals) && (
+                      <span className={themeTextMuted(isDark)}> ({balanceUsd(userBalance, selectedToken.decimals)})</span>
+                    )}
                   </span>
                 </div>
               </div>
             )}
 
-            {insufficientBalance && (
+            {/* Non-Pop-B insufficient banner (Pop-B gets the funding callout above). */}
+            {insufficientBalance && !isPopB && (
               <div className={`text-xs mb-4 p-3 rounded-lg text-center ${isDark ? 'bg-red-500/10 text-red-400' : 'bg-red-50 text-red-500'}`}>
                 {t('make_offer.insufficient_balance')}
               </div>
@@ -503,10 +579,12 @@ const MakeOfferModal: React.FC = () => {
             {isPopB ? (
               <button
                 onClick={() => { setPopBError(null); handlePopBOffer() }}
-                disabled={popBPending || insufficientBalance || amountWei === 0n}
+                disabled={popBPending || insufficientBalance || amountWei === 0n || eoaNeedsFunding}
                 className="w-full px-4 py-2.5 rounded-lg text-sm font-medium bg-yellow-500 text-black hover:bg-yellow-400 transition cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:bg-yellow-500"
               >
-                {popBPending ? t('make_offer.btn.submitting') : t('make_offer.btn.submit_offer')}
+                {popBPending ? t('make_offer.btn.submitting')
+                  : eoaNeedsFunding ? t('make_offer.popb.fund_cta', { token: selectedToken.label })
+                  : t('make_offer.btn.submit_offer')}
               </button>
             ) : (
               <>

@@ -1385,5 +1385,18 @@
   "passkey_signin.error.wrong_passkey": "Esa clave de acceso no coincide con esta cuenta. Elija la clave de acceso que configuró para este nombre de usuario e inténtelo nuevamente.",
   "passkey_signin.error.not_passkey": "Esta cuenta inicia sesión con una billetera conectada, no con una clave de acceso. Utilice la opción \"Conectar billetera\" en su lugar.",
   "make_offer.popb_insufficient_fee": "Tu billetera no tiene suficiente para cubrir la oferta más la tarifa de red. Recarga y vuelve a intentarlo.",
-  "make_offer.relay_unavailable": "El servicio de firma no está disponible temporalmente. Inténtelo de nuevo en breve."
+  "make_offer.relay_unavailable": "El servicio de firma no está disponible temporalmente. Inténtelo de nuevo en breve.",
+  "buy_modal.popb_insufficient_fee": "CAW o ETH insuficientes para cubrir la tarifa de gas de relevo.",
+  "buy_modal.popb_relay_unavailable": "Relé no disponible temporalmente. Por favor inténtalo de nuevo.",
+  "bid_modal.popb_insufficient_fee": "CAW o ETH insuficientes para cubrir la tarifa de gas de relevo.",
+  "bid_modal.popb_relay_unavailable": "Relé no disponible temporalmente. Por favor inténtalo de nuevo.",
+  "make_offer.popb.wallet_label": "Esta oferta proviene de tu billetera de claves",
+  "make_offer.popb.fund_empty": "Esta billetera está vacía. Primero agregue {{token}} y luego podrá hacer una oferta en este perfil.",
+  "make_offer.popb.fund_more": "Necesitas más {{token}} en esta billetera para realizar esta oferta. Agregue {{token}} e inténtelo nuevamente.",
+  "make_offer.popb.fund_cta": "Agrega {{token}} a tu billetera para hacer una oferta",
+  "view_offers.popb_insufficient_fee": "CAW o ETH insuficientes para cubrir la tarifa de gas de relevo.",
+  "view_offers.popb_relay_unavailable": "Relé no disponible temporalmente. Por favor inténtalo de nuevo.",
+  "transfer_nft.popb_insufficient_fee": "CAW o ETH insuficientes para cubrir la tarifa de gas de relevo.",
+  "sync_transfer.popb_insufficient_fee": "CAW o ETH insuficientes para cubrir la tarifa de gas de relevo.",
+  "client_auth.popb_insufficient_fee": "CAW o ETH insuficientes para cubrir la tarifa de gas de relevo."
 }

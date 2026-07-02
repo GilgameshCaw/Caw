@@ -1934,5 +1934,18 @@
   "passkey_signin.error.wrong_passkey": "Essa chave de acesso não corresponde a esta conta. Escolha a senha que você configurou para este nome de usuário e tente novamente.",
   "passkey_signin.error.not_passkey": "Esta conta faz login com uma carteira conectada, não com uma chave de acesso. Use a opção “Conectar carteira”.",
   "make_offer.popb_insufficient_fee": "Sua carteira não tem o suficiente para cobrir a oferta mais a taxa de rede. Complete e tente novamente.",
-  "make_offer.relay_unavailable": "O serviço de assinatura está temporariamente indisponível. Por favor, tente novamente em breve."
+  "make_offer.relay_unavailable": "O serviço de assinatura está temporariamente indisponível. Por favor, tente novamente em breve.",
+  "buy_modal.popb_insufficient_fee": "CAW ou ETH insuficientes para cobrir a taxa de gás do relé.",
+  "buy_modal.popb_relay_unavailable": "Relé temporariamente indisponível. Por favor, tente novamente.",
+  "bid_modal.popb_insufficient_fee": "CAW ou ETH insuficientes para cobrir a taxa de gás do relé.",
+  "bid_modal.popb_relay_unavailable": "Relé temporariamente indisponível. Por favor, tente novamente.",
+  "make_offer.popb.wallet_label": "Esta oferta vem da sua carteira de senha",
+  "make_offer.popb.fund_empty": "Esta carteira está vazia. Adicione {{token}} primeiro e então você poderá fazer uma oferta neste perfil.",
+  "make_offer.popb.fund_more": "Você precisa de mais {{token}} nesta carteira para fazer esta oferta. Adicione {{token}} e tente novamente.",
+  "make_offer.popb.fund_cta": "Adicione {{token}} à sua carteira para fazer uma oferta",
+  "view_offers.popb_insufficient_fee": "CAW ou ETH insuficientes para cobrir a taxa de gás do relé.",
+  "view_offers.popb_relay_unavailable": "Relé temporariamente indisponível. Por favor, tente novamente.",
+  "transfer_nft.popb_insufficient_fee": "CAW ou ETH insuficientes para cobrir a taxa de gás do relé.",
+  "sync_transfer.popb_insufficient_fee": "CAW ou ETH insuficientes para cobrir a taxa de gás do relé.",
+  "client_auth.popb_insufficient_fee": "CAW ou ETH insuficientes para cobrir a taxa de gás do relé."
 }

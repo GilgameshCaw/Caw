@@ -1934,5 +1934,18 @@
   "passkey_signin.error.wrong_passkey": "המפתח הזה לא תואם לחשבון הזה. בחר את מפתח הסיסמה שהגדרת עבור שם משתמש זה ונסה שוב.",
   "passkey_signin.error.not_passkey": "חשבון זה נכנס באמצעות ארנק מחובר, לא מפתח סיסמה. השתמש באפשרות \"התחבר לארנק\" במקום זאת.",
   "make_offer.popb_insufficient_fee": "הארנק שלך לא מספיק כדי לכסות את ההצעה בתוספת עמלת הרשת. הטען ונסה שוב.",
-  "make_offer.relay_unavailable": "שירות החתימה אינו זמין באופן זמני. אנא נסה שוב בקרוב."
+  "make_offer.relay_unavailable": "שירות החתימה אינו זמין באופן זמני. אנא נסה שוב בקרוב.",
+  "buy_modal.popb_insufficient_fee": "אין מספיק CAW או ETH כדי לכסות את עמלת גז הממסר.",
+  "buy_modal.popb_relay_unavailable": "ממסר אינו זמין באופן זמני. אנא נסה שוב.",
+  "bid_modal.popb_insufficient_fee": "אין מספיק CAW או ETH כדי לכסות את עמלת גז הממסר.",
+  "bid_modal.popb_relay_unavailable": "ממסר אינו זמין באופן זמני. אנא נסה שוב.",
+  "make_offer.popb.wallet_label": "הצעה זו מגיעה מארנק המפתח שלך",
+  "make_offer.popb.fund_empty": "הארנק הזה ריק. הוסף אליו תחילה את {{token}}, ואז תוכל להציע הצעה בפרופיל זה.",
+  "make_offer.popb.fund_more": "אתה צריך עוד {{token}} בארנק הזה כדי להציע את ההצעה הזו. הוסף את {{token}} ונסה שוב.",
+  "make_offer.popb.fund_cta": "הוסף {{token}} לארנק שלך כדי להציע הצעה",
+  "view_offers.popb_insufficient_fee": "אין מספיק CAW או ETH כדי לכסות את עמלת גז הממסר.",
+  "view_offers.popb_relay_unavailable": "ממסר אינו זמין באופן זמני. אנא נסה שוב.",
+  "transfer_nft.popb_insufficient_fee": "אין מספיק CAW או ETH כדי לכסות את עמלת גז הממסר.",
+  "sync_transfer.popb_insufficient_fee": "אין מספיק CAW או ETH כדי לכסות את עמלת גז הממסר.",
+  "client_auth.popb_insufficient_fee": "אין מספיק CAW או ETH כדי לכסות את עמלת גז הממסר."
 }

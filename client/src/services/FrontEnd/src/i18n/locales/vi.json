@@ -1934,5 +1934,18 @@
   "passkey_signin.error.wrong_passkey": "Mật mã đó không khớp với tài khoản này. Chọn mật mã bạn đã thiết lập cho tên người dùng này và thử lại.",
   "passkey_signin.error.not_passkey": "Tài khoản này đăng nhập bằng ví được kết nối chứ không phải mật mã. Thay vào đó, hãy sử dụng tùy chọn “Kết nối ví”.",
   "make_offer.popb_insufficient_fee": "Ví của bạn không đủ để chi trả cho ưu đãi cộng với phí mạng. Hãy nạp tiền và thử lại.",
-  "make_offer.relay_unavailable": "Dịch vụ ký kết tạm thời không khả dụng. Vui lòng thử lại trong thời gian ngắn."
+  "make_offer.relay_unavailable": "Dịch vụ ký kết tạm thời không khả dụng. Vui lòng thử lại trong thời gian ngắn.",
+  "buy_modal.popb_insufficient_fee": "Không đủ CAW hoặc ETH để trả phí gas chuyển tiếp.",
+  "buy_modal.popb_relay_unavailable": "Rơle tạm thời không khả dụng. Vui lòng thử lại.",
+  "bid_modal.popb_insufficient_fee": "Không đủ CAW hoặc ETH để trả phí gas chuyển tiếp.",
+  "bid_modal.popb_relay_unavailable": "Rơle tạm thời không khả dụng. Vui lòng thử lại.",
+  "make_offer.popb.wallet_label": "Ưu đãi này đến từ ví mật mã của bạn",
+  "make_offer.popb.fund_empty": "Ví này trống rỗng. Trước tiên hãy thêm {{token}} vào đó, sau đó bạn có thể đưa ra lời đề nghị trên hồ sơ này.",
+  "make_offer.popb.fund_more": "Bạn cần thêm {{token}} trong ví này để thực hiện ưu đãi này. Thêm {{token}} và thử lại.",
+  "make_offer.popb.fund_cta": "Thêm {{token}} vào ví của bạn để đưa ra ưu đãi",
+  "view_offers.popb_insufficient_fee": "Không đủ CAW hoặc ETH để trả phí gas chuyển tiếp.",
+  "view_offers.popb_relay_unavailable": "Rơle tạm thời không khả dụng. Vui lòng thử lại.",
+  "transfer_nft.popb_insufficient_fee": "Không đủ CAW hoặc ETH để trả phí gas chuyển tiếp.",
+  "sync_transfer.popb_insufficient_fee": "Không đủ CAW hoặc ETH để trả phí gas chuyển tiếp.",
+  "client_auth.popb_insufficient_fee": "Không đủ CAW hoặc ETH để trả phí gas chuyển tiếp."
 }

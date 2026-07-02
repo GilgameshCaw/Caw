@@ -1933,5 +1933,18 @@
   "passkey_signin.error.wrong_passkey": "Ang passkey na iyon ay hindi tumutugma sa account na ito. Piliin ang passkey na iyong na-set up para sa username na ito at subukang muli.",
   "passkey_signin.error.not_passkey": "Nagsa-sign in ang account na ito gamit ang isang konektadong wallet, hindi isang passkey. Gamitin na lang ang opsyong “Kumonekta sa Wallet.”",
   "make_offer.popb_insufficient_fee": "Ang iyong wallet ay hindi sapat upang masakop ang alok at ang bayad sa network. Mag-top up at subukang muli.",
-  "make_offer.relay_unavailable": "Pansamantalang hindi available ang serbisyo sa pagpirma. Pakisubukang muli sa ilang sandali."
+  "make_offer.relay_unavailable": "Pansamantalang hindi available ang serbisyo sa pagpirma. Pakisubukang muli sa ilang sandali.",
+  "buy_modal.popb_insufficient_fee": "Hindi sapat ang CAW o ETH para mabayaran ang relay gas fee.",
+  "buy_modal.popb_relay_unavailable": "Pansamantalang hindi available ang relay. Pakisubukang muli.",
+  "bid_modal.popb_insufficient_fee": "Hindi sapat ang CAW o ETH para mabayaran ang relay gas fee.",
+  "bid_modal.popb_relay_unavailable": "Pansamantalang hindi available ang relay. Pakisubukang muli.",
+  "make_offer.popb.wallet_label": "Ang alok na ito ay mula sa iyong passkey wallet",
+  "make_offer.popb.fund_empty": "Walang laman ang wallet na ito. Idagdag muna ang {{token}} dito, pagkatapos ay maaari kang mag-alok sa profile na ito.",
+  "make_offer.popb.fund_more": "Kailangan mo ng higit pang {{token}} sa wallet na ito upang maisagawa ang alok na ito. Magdagdag ng {{token}} at subukang muli.",
+  "make_offer.popb.fund_cta": "Magdagdag ng {{token}} sa iyong wallet para mag-alok",
+  "view_offers.popb_insufficient_fee": "Hindi sapat ang CAW o ETH para mabayaran ang relay gas fee.",
+  "view_offers.popb_relay_unavailable": "Pansamantalang hindi available ang relay. Pakisubukang muli.",
+  "transfer_nft.popb_insufficient_fee": "Hindi sapat ang CAW o ETH para mabayaran ang relay gas fee.",
+  "sync_transfer.popb_insufficient_fee": "Hindi sapat ang CAW o ETH para mabayaran ang relay gas fee.",
+  "client_auth.popb_insufficient_fee": "Hindi sapat ang CAW o ETH para mabayaran ang relay gas fee."
 }

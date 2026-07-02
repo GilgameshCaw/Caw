@@ -1,13 +1,15 @@
-import React, { useEffect, useMemo, useState } from 'react'
-import { useWriteContract, useWaitForTransactionReceipt, useChainId, useSwitchChain, useAccount, useReadContract } from 'wagmi'
+import React, { useCallback, useEffect, useMemo, useState } from 'react'
+import { useWriteContract, useWaitForTransactionReceipt, useChainId, useSwitchChain, useAccount, useReadContract, usePublicClient } from 'wagmi'
 import { useTheme } from '~/hooks/useTheme'
 import { useEnsureWallet } from '~/hooks/useEnsureWallet'
+import { useWalletPopulation } from '~/hooks/useWalletPopulation'
+import { useSmartEoaExecute, type ExecCall } from '~/hooks/useSmartEoaExecute'
 import { themeTextSecondary, themeTextMuted, themeBorder } from '~/utils/theme'
 import { MarketplaceListing, MarketplaceBid, useMarketplaceStore } from '~/store/marketplaceStore'
-import { formatEther, formatUnits } from 'viem'
+import { formatEther, formatUnits, erc20Abi, encodeFunctionData, type Address } from 'viem'
 import { usePriceStore } from '~/store/tokenDataStore'
 import { apiFetch } from '~/api/client'
-import { CAW_NAME_MARKETPLACE_ADDRESS, CAW_NAME_QUOTER_ADDRESS } from '~/../../../abi/addresses'
+import { CAW_NAME_MARKETPLACE_ADDRESS, CAW_NAME_QUOTER_ADDRESS, CAW_ADDRESS } from '~/../../../abi/addresses'
 import { cawProfileMarketplaceAbi, cawProfileQuoterAbi } from '~/../../../abi/generated'
 import { chains } from '~/config/chains'
 import ProfileCard from './ProfileCard'
@@ -74,6 +76,16 @@ const ListingCard: React.FC<{ listing: MarketplaceListing; showCancel?: boolean 
   const chainId = useChainId()
   const { switchChain } = useSwitchChain()
   const ensureWallet = useEnsureWallet()
+  // Pop-B (passkey) relay path
+  const { population } = useWalletPopulation()
+  const isPopB = population === 'B'
+  const { execute: smartEoaExecute, account: eoaAccount } = useSmartEoaExecute()
+  const l1Client = usePublicClient({ chainId: chains.l1.chainId })
+  const [popBCancelPending, setPopBCancelPending] = useState(false)
+  const [popBCancelError, setPopBCancelError] = useState<string | null>(null)
+  const [popBSettlePending, setPopBSettlePending] = useState(false)
+  const [popBSettleSuccess, setPopBSettleSuccess] = useState(false)
+  const [popBSettleError, setPopBSettleError] = useState<string | null>(null)
 
   useEffect(() => {
     if (isCancelSuccess) {
@@ -83,6 +95,10 @@ const ListingCard: React.FC<{ listing: MarketplaceListing; showCancel?: boolean 
   }, [isCancelSuccess])
 
   const handleCancel = () => {
+    if (isPopB) {
+      handlePopBCancel()
+      return
+    }
     ensureWallet({ chainId: chains.l1.chainId }, async () => {
       writeCancel({
         address: CAW_NAME_MARKETPLACE_ADDRESS,
@@ -93,6 +109,49 @@ const ListingCard: React.FC<{ listing: MarketplaceListing; showCancel?: boolean 
       })
     })
   }
+
+  // Pop-B relay: cancelListing + fee leg.
+  const handlePopBCancel = useCallback(async () => {
+    if (!isPopB || !eoaAccount || !l1Client) return
+    setPopBCancelError(null)
+    setPopBCancelPending(true)
+    try {
+      const quote = await apiFetch<{ relayer: string; minFeeCawWei: string; priceAvailable: boolean; minFeeEthWei: string }>(
+        `/api/sponsor/execute-quote?forwardedValueWei=0`,
+      )
+      const feeCaw = quote.priceAvailable ? BigInt(quote.minFeeCawWei) : null
+      const feeEth = BigInt(quote.minFeeEthWei)
+      const [cawBalNow, ethBalNow] = await Promise.all([
+        l1Client.readContract({ address: CAW_ADDRESS as Address, abi: erc20Abi, functionName: 'balanceOf', args: [eoaAccount as Address] }) as Promise<bigint>,
+        l1Client.getBalance({ address: eoaAccount as Address }),
+      ])
+      const payInCaw = feeCaw != null && cawBalNow >= feeCaw
+      const payInEth = ethBalNow >= feeEth
+      if (!payInCaw && !payInEth) throw new Error('INSUFFICIENT_FEE_CAW')
+
+      const calls: ExecCall[] = [
+        {
+          to: CAW_NAME_MARKETPLACE_ADDRESS,
+          value: 0n,
+          data: encodeFunctionData({ abi: cawProfileMarketplaceAbi, functionName: 'cancelListing', args: [BigInt(listing.listingId)] }),
+        },
+      ]
+      if (payInCaw) {
+        calls.push({ to: CAW_ADDRESS as Address, value: 0n, data: encodeFunctionData({ abi: erc20Abi, functionName: 'transfer', args: [quote.relayer as Address, feeCaw!] }) })
+      } else {
+        calls.push({ to: quote.relayer as Address, value: feeEth, data: '0x' })
+      }
+      await smartEoaExecute(calls)
+      setShowCancelConfirm(false)
+      triggerRefresh()
+    } catch (err: any) {
+      const raw = (err?.message || '').replace(/^API\s+\d+:\s*/i, '')
+      if (/NotAllowed|abort|cancel|denied|rejected/i.test(raw)) setPopBCancelError('Transaction rejected')
+      else setPopBCancelError('Failed to cancel. Please try again.')
+    } finally {
+      setPopBCancelPending(false)
+    }
+  }, [isPopB, eoaAccount, l1Client, listing.listingId, smartEoaExecute, triggerRefresh])
 
   // Settle auction
   const { writeContract: writeSettle, data: settleHash, isPending: isSettling, error: settleError, reset: resetSettle } = useWriteContract()
@@ -130,8 +189,57 @@ const ListingCard: React.FC<{ listing: MarketplaceListing; showCancel?: boolean 
     if (isSettleSuccess) triggerRefresh()
   }, [isSettleSuccess])
 
+  // Pop-B relay: settleAuction (payable LZ fee self-funded) + fee leg.
+  const handlePopBSettle = useCallback(async () => {
+    if (!isPopB || !eoaAccount || !l1Client) return
+    setPopBSettleError(null)
+    setPopBSettlePending(true)
+    try {
+      const quote = await apiFetch<{ relayer: string; minFeeCawWei: string; priceAvailable: boolean; minFeeEthWei: string }>(
+        `/api/sponsor/execute-quote?forwardedValueWei=0`,
+      )
+      const feeCaw = quote.priceAvailable ? BigInt(quote.minFeeCawWei) : null
+      const feeEth = BigInt(quote.minFeeEthWei)
+      const [cawBalNow, ethBalNow] = await Promise.all([
+        l1Client.readContract({ address: CAW_ADDRESS as Address, abi: erc20Abi, functionName: 'balanceOf', args: [eoaAccount as Address] }) as Promise<bigint>,
+        l1Client.getBalance({ address: eoaAccount as Address }),
+      ])
+      const payInCaw = feeCaw != null && cawBalNow >= feeCaw
+      const ethNeeded = settleLzFee + (payInCaw ? 0n : feeEth)
+      if (ethBalNow < ethNeeded) throw new Error('INSUFFICIENT_FEE_CAW')
+      const payInEth = ethBalNow >= settleLzFee + feeEth
+      if (!payInCaw && !payInEth) throw new Error('INSUFFICIENT_FEE_CAW')
+
+      const calls: ExecCall[] = [
+        {
+          to: CAW_NAME_MARKETPLACE_ADDRESS,
+          value: settleLzFee, // self-funded LZ fee
+          data: encodeFunctionData({ abi: cawProfileMarketplaceAbi, functionName: 'settleAuction', args: [BigInt(listing.listingId)] }),
+        },
+      ]
+      if (payInCaw) {
+        calls.push({ to: CAW_ADDRESS as Address, value: 0n, data: encodeFunctionData({ abi: erc20Abi, functionName: 'transfer', args: [quote.relayer as Address, feeCaw!] }) })
+      } else {
+        calls.push({ to: quote.relayer as Address, value: feeEth, data: '0x' })
+      }
+      await smartEoaExecute(calls)
+      setPopBSettleSuccess(true)
+      triggerRefresh()
+    } catch (err: any) {
+      const raw = (err?.message || '').replace(/^API\s+\d+:\s*/i, '')
+      if (/NotAllowed|abort|cancel|denied|rejected/i.test(raw)) setPopBSettleError('Transaction rejected')
+      else setPopBSettleError('Failed to settle. Please try again.')
+    } finally {
+      setPopBSettlePending(false)
+    }
+  }, [isPopB, eoaAccount, l1Client, listing.listingId, settleLzFee, smartEoaExecute, triggerRefresh])
+
   const handleSettle = (e: React.MouseEvent) => {
     e.stopPropagation()
+    if (isPopB) {
+      handlePopBSettle()
+      return
+    }
     ensureWallet({ chainId: chains.l1.chainId }, async () => {
       writeSettle({
         address: CAW_NAME_MARKETPLACE_ADDRESS,
@@ -250,22 +358,22 @@ const ListingCard: React.FC<{ listing: MarketplaceListing; showCancel?: boolean 
           {/* Settle auction button */}
           {canSettle && (
             <div className="text-center">
-              {isSettleSuccess ? (
+              {(isSettleSuccess || popBSettleSuccess) ? (
                 <span className={`text-xs font-medium ${isDark ? 'text-green-400' : 'text-green-600'}`}>
                   Auction settled!
                 </span>
               ) : (
                 <button
                   onClick={handleSettle}
-                  disabled={isSettling || isSettleConfirming}
+                  disabled={isSettling || isSettleConfirming || popBSettlePending}
                   className="w-full px-4 py-2 rounded-lg text-sm font-medium bg-yellow-500 text-black hover:bg-yellow-400 transition cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
                 >
-                  {isSettling ? 'Confirm in wallet...' : isSettleConfirming ? 'Settling...' : 'Claim Username'}
+                  {(isSettling || popBSettlePending) ? 'Confirm in wallet...' : isSettleConfirming ? 'Settling...' : 'Claim Username'}
                 </button>
               )}
-              {settleError && (
+              {(settleError || popBSettleError) && (
                 <p className="text-xs text-red-400 mt-1">
-                  {settleError.message?.includes('User rejected') ? 'Transaction rejected' : 'Failed to settle'}
+                  {popBSettleError ?? (settleError?.message?.includes('User rejected') ? 'Transaction rejected' : 'Failed to settle')}
                 </p>
               )}
             </div>
@@ -299,9 +407,9 @@ const ListingCard: React.FC<{ listing: MarketplaceListing; showCancel?: boolean 
                   <span className="block mt-1 text-red-400">Cannot cancel — this auction has bids.</span>
                 )}
               </p>
-              {cancelError && (
+              {(cancelError || popBCancelError) && (
                 <div className="mb-3 p-2 rounded-lg bg-red-500/10 text-red-400 text-xs">
-                  {cancelError.message?.includes('User rejected') ? 'Transaction rejected' : 'Failed to cancel. Please try again.'}
+                  {popBCancelError ?? (cancelError?.message?.includes('User rejected') ? 'Transaction rejected' : 'Failed to cancel. Please try again.')}
                 </div>
               )}
               {isCancelSuccess ? (
@@ -309,17 +417,17 @@ const ListingCard: React.FC<{ listing: MarketplaceListing; showCancel?: boolean 
               ) : (
                 <div className="flex gap-3 justify-center">
                   <button
-                    onClick={() => { setShowCancelConfirm(false); resetCancel() }}
+                    onClick={() => { setShowCancelConfirm(false); resetCancel(); setPopBCancelError(null) }}
                     className={`px-4 py-2 rounded-lg text-sm transition cursor-pointer ${isDark ? 'bg-white/10 text-white hover:bg-white/20' : 'bg-gray-100 text-gray-700 hover:bg-gray-200'}`}
                   >
                     Keep
                   </button>
                   <button
                     onClick={handleCancel}
-                    disabled={isCancelling || isCancelConfirming || (listing.listingType === 'ENGLISH_AUCTION' && !!listing.highestBid && listing.highestBid !== '0')}
+                    disabled={isCancelling || isCancelConfirming || popBCancelPending || (listing.listingType === 'ENGLISH_AUCTION' && !!listing.highestBid && listing.highestBid !== '0')}
                     className="px-4 py-2 rounded-lg text-sm font-medium bg-red-500 text-white hover:bg-red-600 transition cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
                   >
-                    {isCancelling ? 'Confirm in wallet...' : isCancelConfirming ? 'Cancelling...' : 'Cancel Listing'}
+                    {(isCancelling || popBCancelPending) ? 'Confirm in wallet...' : isCancelConfirming ? 'Cancelling...' : 'Cancel Listing'}
                   </button>
                 </div>
               )}

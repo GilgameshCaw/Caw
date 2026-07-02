@@ -1,19 +1,21 @@
-import React, { useEffect, useState } from 'react'
+import React, { useCallback, useEffect, useState } from 'react'
 import { Link } from '~/utils/localizedRouter'
-import { useAccount, useChainId, useSwitchChain, useWriteContract, useWaitForTransactionReceipt, useReadContract } from 'wagmi'
+import { useAccount, useChainId, useSwitchChain, useWriteContract, useWaitForTransactionReceipt, useReadContract, usePublicClient } from 'wagmi'
 import { readContract } from '@wagmi/core'
 import { useConnectModalBridge as useConnectModal } from '~/hooks/useConnectModalBridge'
-import { formatEther, formatUnits } from 'viem'
+import { formatEther, formatUnits, erc20Abi, encodeFunctionData, type Address } from 'viem'
 import { formatAddress } from '~/utils'
 import ModalWrapper from './ModalWrapper'
 import { useTheme } from '~/hooks/useTheme'
 import { useT } from '~/i18n/I18nProvider'
 import { useEnsureWallet } from '~/hooks/useEnsureWallet'
+import { useWalletPopulation } from '~/hooks/useWalletPopulation'
+import { useSmartEoaExecute, type ExecCall } from '~/hooks/useSmartEoaExecute'
 import { themeTextMuted, themeBgSubtle, themeBorder } from '~/utils/theme'
 import { useMarketplaceStore, MarketplaceOffer } from '~/store/marketplaceStore'
 import { usePriceStore, useTokenDataStore, refetchTokenDataUntilChanged } from '~/store/tokenDataStore'
 import { chains } from '~/config/chains'
-import { CAW_NAME_MARKETPLACE_ADDRESS, CAW_NAMES_ADDRESS, CAW_NAME_QUOTER_ADDRESS } from '~/../../../abi/addresses'
+import { CAW_NAME_MARKETPLACE_ADDRESS, CAW_NAMES_ADDRESS, CAW_NAME_QUOTER_ADDRESS, CAW_ADDRESS } from '~/../../../abi/addresses'
 import { cawProfileMarketplaceAbi, cawProfileAbi, cawProfileQuoterAbi } from '~/../../../abi/generated'
 import UsernameSvg from '~/components/UsernameSvg'
 import LiveCountdown from '~/components/marketplace/LiveCountdown'
@@ -56,6 +58,14 @@ const ViewOffersModal: React.FC = () => {
   const isOnL1 = chainId === chains.l1.chainId
   const needsChainSwitch = isConnected && !isOnL1
 
+  // Pop-B (passkey) relay path
+  const { population } = useWalletPopulation()
+  const isPopB = population === 'B'
+  const { execute: smartEoaExecute, account: eoaAccount } = useSmartEoaExecute()
+  const l1Client = usePublicClient({ chainId: chains.l1.chainId })
+  const [popBPendingOfferId, setPopBPendingOfferId] = useState<number | null>(null)
+  const [popBOfferError, setPopBOfferError] = useState<string | null>(null)
+
   // Check if the current user owns this token
   // 1. Check if any of the user's known tokens match
   const ownsTokenLocally = useTokenDataStore(s => {
@@ -75,9 +85,10 @@ const ViewOffersModal: React.FC = () => {
     chainId: chains.l1.chainId,
     query: { enabled: !!tokenId && !ownsTokenLocally },
   })
-  const isOwner = isConnected && (
+  const isOwner = (isConnected || isPopB) && (
     ownsTokenLocally ||
-    (address && tokenOwner && address.toLowerCase() === (tokenOwner as string).toLowerCase())
+    (address && tokenOwner && address.toLowerCase() === (tokenOwner as string).toLowerCase()) ||
+    (isPopB && eoaAccount && tokenOwner && eoaAccount.toLowerCase() === (tokenOwner as string).toLowerCase())
   )
 
   // Check NFT approval for accepting offers
@@ -132,9 +143,11 @@ const ViewOffersModal: React.FC = () => {
       .finally(() => setLoading(false))
   }, [isOpen, tokenId])
 
-  // Quote LZ fee when owner is viewing
+  // Quote LZ fee when owner is viewing. For Pop-B the effective owner address
+  // is the EOA (eoaAccount), not the wagmi address (which is undefined for Pop-B).
+  const effectiveOwnerAddress = isPopB ? eoaAccount : address
   useEffect(() => {
-    if (!isOwner || !tokenId || !address) return
+    if (!isOwner || !tokenId || !effectiveOwnerAddress) return
     readContract(wagmiConfig, {
       address: CAW_NAME_QUOTER_ADDRESS,
       abi: cawProfileQuoterAbi,
@@ -142,12 +155,12 @@ const ViewOffersModal: React.FC = () => {
       // Phase 1: signature gained `lzDestId` as 3rd arg. Marketplace ops
       // run through the bypassLZ same-chain ledger — quote against the
       // L1 LayerZero eid to match the marketplace's immutable lzDestId.
-      args: [tokenId, address, chains.l1.layerZero, false],
+      args: [tokenId, effectiveOwnerAddress, chains.l1.layerZero, false],
       chainId: chains.l1.chainId,
     }).then((quote: any) => {
       setLzFee((quote.nativeFee * 120n) / 100n)
     }).catch(() => {})
-  }, [isOwner, tokenId, address])
+  }, [isOwner, tokenId, effectiveOwnerAddress])
 
   // Handle successful action
   useEffect(() => {
@@ -183,6 +196,76 @@ const ViewOffersModal: React.FC = () => {
     triggerRefresh()
     resetAction()
   }, [isActionSuccess])
+
+  // Pop-B relay path: [setApprovalForAll?] + acceptOffer + fee leg.
+  // The LZ fee (value=lzFee) self-funds from the EOA; relayer fronts only gas.
+  const handlePopBAcceptOffer = useCallback(async (offer: MarketplaceOffer) => {
+    if (!isPopB || !eoaAccount || !l1Client) return
+    setPopBOfferError(null)
+    setPopBPendingOfferId(offer.offerId)
+    try {
+      const quote = await apiFetch<{ relayer: string; minFeeCawWei: string; priceAvailable: boolean; minFeeEthWei: string }>(
+        `/api/sponsor/execute-quote?forwardedValueWei=0`,
+      )
+      const feeCaw = quote.priceAvailable ? BigInt(quote.minFeeCawWei) : null
+      const feeEth = BigInt(quote.minFeeEthWei)
+
+      const [cawBalNow, ethBalNow, alreadyApproved] = await Promise.all([
+        l1Client.readContract({ address: CAW_ADDRESS as Address, abi: erc20Abi, functionName: 'balanceOf', args: [eoaAccount as Address] }) as Promise<bigint>,
+        l1Client.getBalance({ address: eoaAccount as Address }),
+        l1Client.readContract({ address: CAW_NAMES_ADDRESS, abi: cawProfileAbi, functionName: 'isApprovedForAll', args: [eoaAccount as Address, CAW_NAME_MARKETPLACE_ADDRESS] }) as Promise<boolean>,
+      ])
+
+      const payInCaw = feeCaw != null && cawBalNow >= feeCaw
+      // acceptOffer's lzFee is self-funded in ETH from the EOA. When repaying gas in
+      // ETH too, the EOA must cover lzFee + feeEth; when repaying in CAW, just lzFee.
+      const payInEth = ethBalNow >= (payInCaw ? lzFee : lzFee + feeEth)
+      if (!payInCaw && !payInEth) throw new Error('INSUFFICIENT_FEE_CAW')
+
+      const calls: ExecCall[] = []
+      if (!alreadyApproved) {
+        calls.push({
+          to: CAW_NAMES_ADDRESS,
+          value: 0n,
+          data: encodeFunctionData({ abi: cawProfileAbi, functionName: 'setApprovalForAll', args: [CAW_NAME_MARKETPLACE_ADDRESS, true] }),
+        })
+      }
+      calls.push({
+        to: CAW_NAME_MARKETPLACE_ADDRESS,
+        value: lzFee, // self-funded LZ fee the seller pays
+        data: encodeFunctionData({ abi: cawProfileMarketplaceAbi, functionName: 'acceptOffer', args: [BigInt(offer.offerId)] }),
+      })
+      if (payInCaw) {
+        calls.push({
+          to: CAW_ADDRESS as Address, value: 0n,
+          data: encodeFunctionData({ abi: erc20Abi, functionName: 'transfer', args: [quote.relayer as Address, feeCaw!] }),
+        })
+      } else {
+        calls.push({ to: quote.relayer as Address, value: feeEth, data: '0x' })
+      }
+
+      const relayTxHash = await smartEoaExecute(calls)
+      // Mirror the wagmi success handler.
+      apiFetch(`/api/marketplace/offers/${offer.offerId}/accepted`, {
+        method: 'POST',
+        body: JSON.stringify({ txHash: relayTxHash, buyer: offer.offerer }),
+      }).catch(() => {})
+      useOffersUnreadStore.getState().optimisticDecrement()
+      refetchTokenDataUntilChanged()
+      setOffers(prev => prev.filter(o => o.offerId !== offer.offerId))
+      triggerRefresh()
+    } catch (err: any) {
+      const raw = (err?.message || '').replace(/^API\s+\d+:\s*/i, '')
+      let friendly: string
+      if (/NotAllowed|abort|cancel|denied|rejected/i.test(raw)) friendly = t('view_offers.tx_rejected')
+      else if (/SIMULATION_FAILED|INSUFFICIENT_FEE_CAW|insufficient|FEE_TOO_LOW|transfer amount exceeds/i.test(raw)) friendly = t('view_offers.popb_insufficient_fee')
+      else if (/RELAY_UNCONFIGURED|LOOKUP_UNAVAILABLE|temporarily/i.test(raw)) friendly = t('view_offers.popb_relay_unavailable')
+      else friendly = t('view_offers.tx_failed')
+      setPopBOfferError(friendly)
+    } finally {
+      setPopBPendingOfferId(null)
+    }
+  }, [isPopB, eoaAccount, l1Client, lzFee, smartEoaExecute, triggerRefresh, t])
 
   const handleApproveNFT = () => {
     ensureWallet({ chainId: chains.l1.chainId }, async () => {
@@ -229,6 +312,8 @@ const ViewOffersModal: React.FC = () => {
     resetAction()
     setActionOfferId(null)
     setActionType(null)
+    setPopBOfferError(null)
+    setPopBPendingOfferId(null)
     close()
   }
 
@@ -269,11 +354,13 @@ const ViewOffersModal: React.FC = () => {
         )}
 
         {/* Error display */}
-        {(actionError || approveError) && (
+        {(actionError || approveError || popBOfferError) && (
           <div className="mb-4 p-3 rounded-lg bg-red-500/10 text-red-500 text-sm text-center">
-            {(actionError || approveError)?.message?.includes('User rejected')
-              ? t('view_offers.tx_rejected')
-              : t('view_offers.tx_failed')}
+            {popBOfferError
+              ? popBOfferError
+              : (actionError || approveError)?.message?.includes('User rejected')
+                ? t('view_offers.tx_rejected')
+                : t('view_offers.tx_failed')}
           </div>
         )}
 
@@ -286,6 +373,8 @@ const ViewOffersModal: React.FC = () => {
           <div className="space-y-3 max-h-[400px] overflow-y-auto">
             {offers.map(offer => {
               const isActing = actionOfferId === offer.offerId && (isActionPending || isActionConfirming)
+
+              const isPopBActing = isPopB && popBPendingOfferId === offer.offerId
 
               return (
                 <div
@@ -338,6 +427,11 @@ const ViewOffersModal: React.FC = () => {
                       {/* Accept offer */}
                       <button
                         onClick={() => {
+                          if (isPopB) {
+                            setPopBOfferError(null)
+                            handlePopBAcceptOffer(offer)
+                            return
+                          }
                           ensureWallet({ chainId: chains.l1.chainId }, async () => {
                             if (actionError) resetAction()
                             if (!isApproved) {
@@ -350,10 +444,11 @@ const ViewOffersModal: React.FC = () => {
                             handleAcceptOffer(offer)
                           })
                         }}
-                        disabled={isActing || isSwitchingChain || isApproving || isApproveConfirming}
+                        disabled={isActing || isSwitchingChain || isApproving || isApproveConfirming || isPopBActing}
                         className="px-3 py-1.5 rounded-lg text-xs font-medium bg-yellow-500 text-black hover:bg-yellow-400 transition cursor-pointer disabled:opacity-50"
                       >
-                        {!isConnected ? t('view_offers.btn.connect')
+                        {isPopBActing ? t('view_offers.btn.accepting')
+                          : !isConnected && !isPopB ? t('view_offers.btn.connect')
                           : needsChainSwitch ? t('view_offers.btn.switch_network')
                           : isApproving || isApproveConfirming ? t('view_offers.btn.approving')
                           : isActing && actionType === 'accept' ? t('view_offers.btn.accepting')

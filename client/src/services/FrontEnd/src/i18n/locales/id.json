@@ -1934,5 +1934,18 @@
   "passkey_signin.error.wrong_passkey": "Kunci sandi itu tidak cocok dengan akun ini. Pilih kunci sandi yang Anda atur untuk nama pengguna ini dan coba lagi.",
   "passkey_signin.error.not_passkey": "Akun ini masuk dengan dompet yang terhubung, bukan kunci sandi. Gunakan opsi “Hubungkan Dompet” sebagai gantinya.",
   "make_offer.popb_insufficient_fee": "Dompet Anda tidak cukup untuk membayar penawaran ditambah biaya jaringan. Isi ulang dan coba lagi.",
-  "make_offer.relay_unavailable": "Layanan penandatanganan untuk sementara tidak tersedia. Silakan coba lagi sebentar lagi."
+  "make_offer.relay_unavailable": "Layanan penandatanganan untuk sementara tidak tersedia. Silakan coba lagi sebentar lagi.",
+  "buy_modal.popb_insufficient_fee": "CAW atau ETH tidak cukup untuk menutupi biaya gas relai.",
+  "buy_modal.popb_relay_unavailable": "Relai untuk sementara tidak tersedia. Silakan coba lagi.",
+  "bid_modal.popb_insufficient_fee": "CAW atau ETH tidak cukup untuk menutupi biaya gas relai.",
+  "bid_modal.popb_relay_unavailable": "Relai untuk sementara tidak tersedia. Silakan coba lagi.",
+  "make_offer.popb.wallet_label": "Penawaran ini berasal dari dompet kunci sandi Anda",
+  "make_offer.popb.fund_empty": "Dompet ini kosong. Tambahkan {{token}} terlebih dahulu, lalu Anda dapat membuat penawaran di profil ini.",
+  "make_offer.popb.fund_more": "Anda memerlukan lebih banyak {{token}} di dompet ini untuk membuat penawaran ini. Tambahkan {{token}} dan coba lagi.",
+  "make_offer.popb.fund_cta": "Tambahkan {{token}} ke dompet Anda untuk membuat penawaran",
+  "view_offers.popb_insufficient_fee": "CAW atau ETH tidak cukup untuk menutupi biaya gas relai.",
+  "view_offers.popb_relay_unavailable": "Relai untuk sementara tidak tersedia. Silakan coba lagi.",
+  "transfer_nft.popb_insufficient_fee": "CAW atau ETH tidak cukup untuk menutupi biaya gas relai.",
+  "sync_transfer.popb_insufficient_fee": "CAW atau ETH tidak cukup untuk menutupi biaya gas relai.",
+  "client_auth.popb_insufficient_fee": "CAW atau ETH tidak cukup untuk menutupi biaya gas relai."
 }

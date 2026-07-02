@@ -1934,5 +1934,18 @@
   "passkey_signin.error.wrong_passkey": "Ce mot de passe ne correspond pas à ce compte. Choisissez le mot de passe que vous avez configuré pour ce nom d'utilisateur et réessayez.",
   "passkey_signin.error.not_passkey": "Ce compte se connecte avec un portefeuille connecté, pas un mot de passe. Utilisez plutôt l’option « Connecter le portefeuille ».",
   "make_offer.popb_insufficient_fee": "Votre portefeuille n'a pas assez d'argent pour couvrir l'offre plus les frais de réseau. Rechargez et réessayez.",
-  "make_offer.relay_unavailable": "Le service de signature est temporairement indisponible. Veuillez réessayer sous peu."
+  "make_offer.relay_unavailable": "Le service de signature est temporairement indisponible. Veuillez réessayer sous peu.",
+  "buy_modal.popb_insufficient_fee": "CAW ou ETH insuffisant pour couvrir les frais de gaz de relais.",
+  "buy_modal.popb_relay_unavailable": "Relais temporairement indisponible. Veuillez réessayer.",
+  "bid_modal.popb_insufficient_fee": "CAW ou ETH insuffisant pour couvrir les frais de gaz de relais.",
+  "bid_modal.popb_relay_unavailable": "Relais temporairement indisponible. Veuillez réessayer.",
+  "make_offer.popb.wallet_label": "Cette offre provient de votre portefeuille de clés d'accès",
+  "make_offer.popb.fund_empty": "Ce portefeuille est vide. Ajoutez-y d’abord {{token}}, vous pourrez ensuite faire une offre sur ce profil.",
+  "make_offer.popb.fund_more": "Vous avez besoin de plus de {{token}} dans ce portefeuille pour faire cette offre. Ajoutez {{token}} et réessayez.",
+  "make_offer.popb.fund_cta": "Ajoutez {{token}} à votre portefeuille pour faire une offre",
+  "view_offers.popb_insufficient_fee": "CAW ou ETH insuffisant pour couvrir les frais de gaz de relais.",
+  "view_offers.popb_relay_unavailable": "Relais temporairement indisponible. Veuillez réessayer.",
+  "transfer_nft.popb_insufficient_fee": "CAW ou ETH insuffisant pour couvrir les frais de gaz de relais.",
+  "sync_transfer.popb_insufficient_fee": "CAW ou ETH insuffisant pour couvrir les frais de gaz de relais.",
+  "client_auth.popb_insufficient_fee": "CAW ou ETH insuffisant pour couvrir les frais de gaz de relais."
 }

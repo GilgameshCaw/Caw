@@ -1934,5 +1934,18 @@
   "passkey_signin.error.wrong_passkey": "そのパスキーはこのアカウントと一致しません。このユーザー名に設定したパスキーを選択して、再試行してください。",
   "passkey_signin.error.not_passkey": "このアカウントは、パスキーではなく、接続されたウォレットを使用してサインインします。代わりに「ウォレットを接続」オプションを使用してください。",
   "make_offer.popb_insufficient_fee": "あなたのウォレットには、オファーとネットワーク料金をカバーするのに十分な資金がありません。補充して再試行してください。",
-  "make_offer.relay_unavailable": "署名サービスは一時的にご利用いただけません。しばらくしてからもう一度お試しください。"
+  "make_offer.relay_unavailable": "署名サービスは一時的にご利用いただけません。しばらくしてからもう一度お試しください。",
+  "buy_modal.popb_insufficient_fee": "CAW または ETH がリレーガス料金をカバーするには不十分です。",
+  "buy_modal.popb_relay_unavailable": "リレーが一時的に利用できなくなりました。もう一度試してください。",
+  "bid_modal.popb_insufficient_fee": "CAW または ETH がリレーガス料金をカバーするには不十分です。",
+  "bid_modal.popb_relay_unavailable": "リレーが一時的に利用できなくなりました。もう一度試してください。",
+  "make_offer.popb.wallet_label": "この特典はあなたのパスキーウォレットから提供されます",
+  "make_offer.popb.fund_empty": "この財布は空です。最初に {{token}} を追加すると、このプロファイルでオファーを行うことができます。",
+  "make_offer.popb.fund_more": "このオファーを行うには、このウォレットにさらに {{token}} が必要です。 {{token}} を追加して再試行してください。",
+  "make_offer.popb.fund_cta": "オファーをするには、ウォレットに {{token}} を追加してください",
+  "view_offers.popb_insufficient_fee": "CAW または ETH がリレーガス料金をカバーするには不十分です。",
+  "view_offers.popb_relay_unavailable": "リレーが一時的に利用できなくなりました。もう一度試してください。",
+  "transfer_nft.popb_insufficient_fee": "CAW または ETH がリレーガス料金をカバーするには不十分です。",
+  "sync_transfer.popb_insufficient_fee": "CAW または ETH がリレーガス料金をカバーするには不十分です。",
+  "client_auth.popb_insufficient_fee": "CAW または ETH がリレーガス料金をカバーするには不十分です。"
 }

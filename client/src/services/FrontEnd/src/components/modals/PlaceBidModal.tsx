@@ -1,17 +1,19 @@
-import React, { useState, useEffect, useMemo } from 'react'
-import { useAccount, useChainId, useSwitchChain, useWriteContract, useWaitForTransactionReceipt, useReadContract, useBalance } from 'wagmi'
+import React, { useCallback, useState, useEffect, useMemo } from 'react'
+import { useAccount, useChainId, useSwitchChain, useWriteContract, useWaitForTransactionReceipt, useReadContract, useBalance, usePublicClient } from 'wagmi'
 import { useConnectModalBridge as useConnectModal } from '~/hooks/useConnectModalBridge'
-import { parseEther, parseUnits, formatEther, formatUnits, erc20Abi, maxUint256 } from 'viem'
+import { parseEther, parseUnits, formatEther, formatUnits, erc20Abi, maxUint256, encodeFunctionData, type Address } from 'viem'
 import ModalWrapper from './ModalWrapper'
 import { useTheme } from '~/hooks/useTheme'
 import { useT } from '~/i18n/I18nProvider'
 import { useEnsureWallet } from '~/hooks/useEnsureWallet'
+import { useWalletPopulation } from '~/hooks/useWalletPopulation'
+import { useSmartEoaExecute, type ExecCall } from '~/hooks/useSmartEoaExecute'
 import { themeTextSecondary, themeTextMuted, themeBgSubtle, themeInput, themeBorder } from '~/utils/theme'
 import { useMarketplaceStore, MarketplaceListing, MarketplaceBid } from '~/store/marketplaceStore'
 import { apiFetch } from '~/api/client'
 import { usePriceStore } from '~/store/tokenDataStore'
 import { chains } from '~/config/chains'
-import { CAW_NAME_MARKETPLACE_ADDRESS } from '~/../../../abi/addresses'
+import { CAW_NAME_MARKETPLACE_ADDRESS, CAW_ADDRESS } from '~/../../../abi/addresses'
 import { cawProfileMarketplaceAbi } from '~/../../../abi/generated'
 import LiveCountdown from '~/components/marketplace/LiveCountdown'
 
@@ -52,6 +54,14 @@ const PlaceBidModal: React.FC = () => {
   const chainId = useChainId()
   const { switchChain, isPending: isSwitchingChain } = useSwitchChain()
   const ensureWallet = useEnsureWallet()
+  // Pop-B (passkey) relay path
+  const { population } = useWalletPopulation()
+  const isPopB = population === 'B'
+  const { execute: smartEoaExecute, account: eoaAccount } = useSmartEoaExecute()
+  const l1Client = usePublicClient({ chainId: chains.l1.chainId })
+  const [popBPending, setPopBPending] = useState(false)
+  const [popBSuccess, setPopBSuccess] = useState(false)
+  const [popBError, setPopBError] = useState<string | null>(null)
   const ethPrice = usePriceStore(s => s.priceMap['ethereum'] ?? 0)
   const cawPrice = usePriceStore(s => s.priceMap['a-hunters-dream'] ?? 0)
 
@@ -135,7 +145,7 @@ const PlaceBidModal: React.FC = () => {
   }, [bidAmount, listing?.paymentToken])
 
   const insufficientBalance = isConnected && bidWei > 0n && bidWei > userBalance
-  const needsApproval = !isEth && listing && bidWei > 0n && (!allowance || allowance < bidWei)
+  const needsApproval = !isPopB && !isEth && listing && bidWei > 0n && (!allowance || allowance < bidWei)
   const hasApproval = isEth || (allowance && bidWei > 0n && allowance >= bidWei) || isApproveSuccess
 
   const usdDisplay = useMemo(() => {
@@ -158,8 +168,87 @@ const PlaceBidModal: React.FC = () => {
     setBidAmount('')
     resetApprove()
     resetBid()
+    setPopBError(null)
+    setPopBSuccess(false)
+    setPopBPending(false)
     close()
   }
+
+  // Pop-B relay path: approve (ERC20) + placeBid/placeBidWithToken + fee leg.
+  // The bid value self-funds from the EOA; relayer fronts only gas.
+  const handlePopBBid = useCallback(async () => {
+    if (!isPopB || !eoaAccount || !listing || !l1Client || !bidAmount || bidWei === 0n) return
+    setPopBError(null)
+    setPopBPending(true)
+    try {
+      const quote = await apiFetch<{ relayer: string; minFeeCawWei: string; priceAvailable: boolean; minFeeEthWei: string }>(
+        `/api/sponsor/execute-quote?forwardedValueWei=0`,
+      )
+      const feeCaw = quote.priceAvailable ? BigInt(quote.minFeeCawWei) : null
+      const feeEth = BigInt(quote.minFeeEthWei)
+
+      const [cawBalNow, ethBalNow, tokenBalNow] = await Promise.all([
+        l1Client.readContract({ address: CAW_ADDRESS as Address, abi: erc20Abi, functionName: 'balanceOf', args: [eoaAccount as Address] }) as Promise<bigint>,
+        l1Client.getBalance({ address: eoaAccount as Address }),
+        isEth ? Promise.resolve(0n) : l1Client.readContract({ address: listing.paymentAddress as Address, abi: erc20Abi, functionName: 'balanceOf', args: [eoaAccount as Address] }) as Promise<bigint>,
+      ])
+
+      // Pre-flight: EOA must hold enough for the bid.
+      if (isEth) {
+        if (ethBalNow < bidWei) throw new Error('INSUFFICIENT_BID_FUNDS')
+      } else {
+        if (tokenBalNow < bidWei) throw new Error('INSUFFICIENT_BID_FUNDS')
+      }
+
+      const payInCaw = feeCaw != null && cawBalNow >= feeCaw
+      const ethForFee = feeEth + (isEth ? bidWei : 0n)
+      const payInEth = ethBalNow >= ethForFee
+      if (!payInCaw && !payInEth) throw new Error('INSUFFICIENT_FEE_CAW')
+
+      const calls: ExecCall[] = []
+      if (isEth) {
+        calls.push({
+          to: CAW_NAME_MARKETPLACE_ADDRESS,
+          value: bidWei, // self-funded
+          data: encodeFunctionData({ abi: cawProfileMarketplaceAbi, functionName: 'placeBid', args: [BigInt(listing.listingId)] }),
+        })
+      } else {
+        calls.push({
+          to: listing.paymentAddress as Address,
+          value: 0n,
+          data: encodeFunctionData({ abi: erc20Abi, functionName: 'approve', args: [CAW_NAME_MARKETPLACE_ADDRESS, bidWei] }),
+        })
+        calls.push({
+          to: CAW_NAME_MARKETPLACE_ADDRESS,
+          value: 0n,
+          data: encodeFunctionData({ abi: cawProfileMarketplaceAbi, functionName: 'placeBidWithToken', args: [BigInt(listing.listingId), bidWei] }),
+        })
+      }
+      if (payInCaw) {
+        calls.push({
+          to: CAW_ADDRESS as Address, value: 0n,
+          data: encodeFunctionData({ abi: erc20Abi, functionName: 'transfer', args: [quote.relayer as Address, feeCaw!] }),
+        })
+      } else {
+        calls.push({ to: quote.relayer as Address, value: feeEth, data: '0x' })
+      }
+
+      await smartEoaExecute(calls)
+      setPopBSuccess(true)
+    } catch (err: any) {
+      const raw = (err?.message || '').replace(/^API\s+\d+:\s*/i, '')
+      let friendly: string
+      if (/NotAllowed|abort|cancel|denied|rejected/i.test(raw)) friendly = t('bid_modal.tx_rejected')
+      else if (/INSUFFICIENT_BID_FUNDS/i.test(raw)) friendly = t('bid_modal.insufficient_balance')
+      else if (/Bid too low/i.test(raw)) friendly = t('bid_modal.bid_too_low')
+      else if (/SIMULATION_FAILED|INSUFFICIENT_FEE_CAW|insufficient|FEE_TOO_LOW|transfer amount exceeds/i.test(raw)) friendly = t('bid_modal.popb_insufficient_fee')
+      else if (/RELAY_UNCONFIGURED|LOOKUP_UNAVAILABLE|temporarily/i.test(raw)) friendly = t('bid_modal.popb_relay_unavailable')
+      else friendly = t('bid_modal.tx_failed')
+      setPopBError(friendly)
+    } finally {
+      setPopBPending(false)
+    }
+  }, [isPopB, eoaAccount, listing, l1Client, isEth, bidAmount, bidWei, smartEoaExecute, t])
 
   const handleApprove = () => {
     ensureWallet({ chainId: chains.l1.chainId }, async () => {
@@ -219,7 +308,7 @@ const PlaceBidModal: React.FC = () => {
   return (
     <ModalWrapper isOpen={isOpen} onClose={handleClose} maxWidth="max-w-[480px]" usePortal zIndex={9999}>
       <div className="p-6">
-        {isSuccess ? (
+        {(isSuccess || popBSuccess) ? (
           <div className="text-center py-6">
             <div className={`inline-flex items-center justify-center w-14 h-14 rounded-full mb-4 ${isDark ? 'bg-green-500/10' : 'bg-green-50'}`}>
               <svg className={`w-7 h-7 ${isDark ? 'text-green-400' : 'text-green-600'}`} fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -421,42 +510,59 @@ const PlaceBidModal: React.FC = () => {
             )}
 
             {/* Errors */}
-            {(approveError || writeError) && (
+            {(approveError || writeError || popBError) && (
               <div className="mb-4 p-3 rounded-lg bg-red-500/10 text-error-dim text-sm text-center">
-                {(approveError || writeError)?.message?.includes('User rejected')
-                  ? t('bid_modal.tx_rejected')
-                  : (approveError || writeError)?.message?.includes('Bid too low')
-                    ? t('bid_modal.bid_too_low')
-                    : t('bid_modal.tx_failed')}
+                {popBError
+                  ? popBError
+                  : (approveError || writeError)?.message?.includes('User rejected')
+                    ? t('bid_modal.tx_rejected')
+                    : (approveError || writeError)?.message?.includes('Bid too low')
+                      ? t('bid_modal.bid_too_low')
+                      : t('bid_modal.tx_failed')}
               </div>
             )}
 
-            {/* Approve button (ERC20 only) */}
-            {!isEnded && needsApproval && !hasApproval && (
-              <button
-                onClick={() => { resetApprove(); handleApprove() }}
-                disabled={isApproving || isApproveConfirming || isSwitchingChain}
-                className="w-full px-4 py-2.5 rounded-lg text-sm font-medium bg-yellow-500 text-black hover:bg-yellow-400 transition cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
-              >
-                {needsChainSwitch ? (isSwitchingChain ? t('bid_modal.btn.switching') : t('bid_modal.btn.switch_network'))
-                  : isApproving ? t('bid_modal.btn.confirm_in_wallet')
-                  : isApproveConfirming ? t('bid_modal.btn.approving')
-                  : t('bid_modal.btn.approve_token', { token: listing.paymentToken })}
-              </button>
-            )}
+            {/* Pop-B (passkey): single relay button */}
+            {isPopB ? (
+              !isEnded && (
+                <button
+                  onClick={() => { setPopBError(null); handlePopBBid() }}
+                  disabled={popBPending || !bidAmount || parseFloat(bidAmount) <= 0 || bidWei < BigInt(minBid) || insufficientBalance}
+                  className="w-full px-4 py-2.5 rounded-lg text-sm font-medium bg-yellow-500 text-black hover:bg-yellow-400 transition cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
+                >
+                  {popBPending ? t('bid_modal.btn.confirming') : t('bid_modal.btn.place_bid')}
+                </button>
+              )
+            ) : (
+              <>
+                {/* Approve button (ERC20 only) */}
+                {!isEnded && needsApproval && !hasApproval && (
+                  <button
+                    onClick={() => { resetApprove(); handleApprove() }}
+                    disabled={isApproving || isApproveConfirming || isSwitchingChain}
+                    className="w-full px-4 py-2.5 rounded-lg text-sm font-medium bg-yellow-500 text-black hover:bg-yellow-400 transition cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
+                  >
+                    {needsChainSwitch ? (isSwitchingChain ? t('bid_modal.btn.switching') : t('bid_modal.btn.switch_network'))
+                      : isApproving ? t('bid_modal.btn.confirm_in_wallet')
+                      : isApproveConfirming ? t('bid_modal.btn.approving')
+                      : t('bid_modal.btn.approve_token', { token: listing.paymentToken })}
+                  </button>
+                )}
 
-            {/* Bid button */}
-            {!isEnded && (isEth || hasApproval) && (
-              <button
-                onClick={() => { resetBid(); handleBid() }}
-                disabled={isSubmitting || isConfirming || isSwitchingChain || !bidAmount || parseFloat(bidAmount) <= 0 || bidWei < BigInt(minBid) || insufficientBalance}
-                className="w-full px-4 py-2.5 rounded-lg text-sm font-medium bg-yellow-500 text-black hover:bg-yellow-400 transition cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
-              >
-                {needsChainSwitch ? (isSwitchingChain ? t('bid_modal.btn.switching') : t('bid_modal.btn.switch_network'))
-                  : isSubmitting ? t('bid_modal.btn.confirm_in_wallet')
-                  : isConfirming ? t('bid_modal.btn.confirming')
-                  : t('bid_modal.btn.place_bid')}
-              </button>
+                {/* Bid button */}
+                {!isEnded && (isEth || hasApproval) && (
+                  <button
+                    onClick={() => { resetBid(); handleBid() }}
+                    disabled={isSubmitting || isConfirming || isSwitchingChain || !bidAmount || parseFloat(bidAmount) <= 0 || bidWei < BigInt(minBid) || insufficientBalance}
+                    className="w-full px-4 py-2.5 rounded-lg text-sm font-medium bg-yellow-500 text-black hover:bg-yellow-400 transition cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
+                  >
+                    {needsChainSwitch ? (isSwitchingChain ? t('bid_modal.btn.switching') : t('bid_modal.btn.switch_network'))
+                      : isSubmitting ? t('bid_modal.btn.confirm_in_wallet')
+                      : isConfirming ? t('bid_modal.btn.confirming')
+                      : t('bid_modal.btn.place_bid')}
+                  </button>
+                )}
+              </>
             )}
           </>
         )}
