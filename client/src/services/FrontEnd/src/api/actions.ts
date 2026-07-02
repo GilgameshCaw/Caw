@@ -1453,7 +1453,9 @@ export function useSignAndSubmitAction() {
         // real on-chain spend and falsely trips the limit (user sees "limit
         // reached" with plenty remaining). Read on-chain; fall back to the local
         // value only if the read fails.
-        let spent = BigInt(rawSession?.spent || '0')
+        const localSpent = BigInt(rawSession?.spent || '0')
+        let spent = localSpent
+        let spentBasis = 'local'
         try {
           const onChainSpent = await readContract(wagmiConfig, {
             address: CAW_ACTIONS_ADDRESS,
@@ -1463,14 +1465,19 @@ export function useSignAndSubmitAction() {
             args: [tokenOwner as `0x${string}`, activeSession.address as `0x${string}`],
           }) as bigint
           spent = BigInt(onChainSpent)
+          spentBasis = 'on-chain'
           // Sync the corrected value back into the store so the display + future
           // fast-checks agree with chain.
           const store = useSessionKeyStore.getState()
           const cur = tokenOwner ? store.getSessionForAddress(tokenOwner) : null
           if (cur) store.setSession({ ...cur, spent: spent.toString() })
         } catch (e) {
-          console.warn('[QuickSign] on-chain sessionSpent read failed, using local counter:', e)
+          console.warn('[QuickSign] on-chain sessionSpent read FAILED — falling back to local counter (may over-count):', e)
         }
+        console.log('[QuickSign][spend-basis]', {
+          spentBasis, onChainOrLocalSpent: spent.toString(), localSpent: localSpent.toString(),
+          owner: tokenOwner, sessionKey: activeSession.address,
+        })
         const protocolCost = ACTION_COSTS[params.actionType] || 0n
         let extraAmountsWhole = 0n
         if ((params.actionType === 'other' || params.actionType === 'withdraw') &&
