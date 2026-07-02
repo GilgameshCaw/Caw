@@ -266,11 +266,15 @@ const CreateListingModal: React.FC = () => {
   const [eoaCawWei, setEoaCawWei] = useState<bigint | null>(null)
   const [eoaEthWei, setEoaEthWei] = useState<bigint | null>(null)
 
-  // Fetch both fee quotes (CAW + ETH) and both EOA balances when a Pop-B owner
-  // reaches the confirm step, so we can pick whichever currency the wallet can
-  // cover and gate on "enough of EITHER to pay the relayer".
+  // Fetch both fee quotes (CAW + ETH) and both EOA balances once a Pop-B owner is on
+  // the params step (where the relayed-listing button shows), so we can pick whichever
+  // currency the wallet can cover and gate on "enough of EITHER to pay the relayer".
   React.useEffect(() => {
-    if (!isPopB || step !== 'confirm' || !isOwner || !eoaAccount || !l1Client) return
+    // The Pop-B relayed-listing button renders on the 'params' step (there is no
+    // separate approve/confirm step for passkey users — it's one signed batch). Gate
+    // the fee quote on 'params', not a 'confirm' step the Pop-B flow never reaches —
+    // otherwise feeLoaded stays false and the button is stuck on "estimating fee".
+    if (!isPopB || step !== 'params' || !isOwner || !eoaAccount || !l1Client) return
     let cancelled = false
     ;(async () => {
       try {
