@@ -431,6 +431,89 @@ export async function refreshUserFromChain(tokenId: number): Promise<{ tokenId: 
 }
 
 /**
+ * Reconcile username drift on REAL (non-placeholder) User rows.
+ *
+ * Why this exists: `cleanupPlaceholderUsers` only repairs rows shaped like
+ * `address='' && username='user_<id>'`. But a real row with a real username can
+ * still go stale against chain — most notably after a `--clean --reset` testnet
+ * redeploy, which reassigns tokenIds to different profiles. The Transfer watcher
+ * re-syncs `User.address` on every Transfer but NEVER re-reads the username, so
+ * a row keeps its pre-reset name forever (e.g. tokenId 3 stuck as "gilgakey3"
+ * while chain says "gilgamesh"). The FE reads names live from the lens, but every
+ * DB-backed surface (search, /user/:tokenId, notifications, mentions) shows the
+ * stale name. This is the "my profile shows the wrong username / won't load"
+ * class of bug.
+ *
+ * Fix: a periodic, rate-limited sweep reads a rotating window of real rows,
+ * compares username + owner against L1 (usernames(tokenId-1) + ownerOf), and
+ * corrects any mismatch. Collision-safe: because a redeploy can SWAP names
+ * between tokenIds, we park every changing row at a unique temp username first,
+ * then set the final values, so the unique(username) constraint never trips
+ * mid-batch.
+ *
+ * Bounded per tick (RECONCILE_BATCH). A monotonically-advancing cursor
+ * (module-level) round-robins across the whole table over many ticks, so steady-
+ * state RPC cost is ~RECONCILE_BATCH reads/tick regardless of table size.
+ */
+let _reconcileCursor = 0
+export async function reconcileUsernameDrift(batchSize: number): Promise<{ checked: number; corrected: number }> {
+  // Skip synthetic/placeholder rows — those are owned by cleanupPlaceholderUsers.
+  const rows = await prisma.user.findMany({
+    where: {
+      address: { not: '' },
+      NOT: [{ username: { startsWith: 'user_' } }, { username: { startsWith: 'stale_' } }],
+      tokenId: { gt: _reconcileCursor },
+    },
+    orderBy: { tokenId: 'asc' },
+    take: batchSize,
+    select: { tokenId: true, username: true, address: true },
+  })
+  // Wrap the cursor when we reach the end so the sweep loops the table forever.
+  if (rows.length === 0) { _reconcileCursor = 0; return { checked: 0, corrected: 0 } }
+  _reconcileCursor = rows[rows.length - 1].tokenId
+
+  const { contract: l1Contract } = await getL1Provider()
+  const drift: Array<{ tokenId: number; newName: string | null; newOwner: string | null }> = []
+  for (const r of rows) {
+    let owner: string, username: string
+    try {
+      ;[owner, username] = await Promise.all([
+        l1Contract.ownerOf(r.tokenId),
+        l1Contract.usernames(r.tokenId - 1),
+      ])
+    } catch {
+      // Token missing on the live contract (pre-redeploy debris) or RPC blip —
+      // leave the row; the placeholder sweep / next tick handles genuine staleness.
+      continue
+    }
+    if (!username || username.trim() === '') continue
+    const cn = username.trim()
+    const co = owner.toLowerCase()
+    const nameDiff = cn !== r.username
+    const ownerDiff = co !== (r.address || '').toLowerCase()
+    if (nameDiff || ownerDiff) drift.push({ tokenId: r.tokenId, newName: nameDiff ? cn : null, newOwner: ownerDiff ? co : null })
+  }
+  if (drift.length === 0) return { checked: rows.length, corrected: 0 }
+
+  // Pass 1: park every name-changing row at a collision-proof temp value, so a
+  // name swapped BETWEEN two tokenIds (redeploy) can't hit unique(username).
+  for (const d of drift) if (d.newName) {
+    await prisma.user.update({ where: { tokenId: d.tokenId }, data: { username: `__reconcile_tmp_${d.tokenId}` } }).catch(() => {})
+  }
+  // Pass 2: set the final username + owner.
+  for (const d of drift) {
+    await prisma.user.update({
+      where: { tokenId: d.tokenId },
+      data: { ...(d.newName ? { username: d.newName } : {}), ...(d.newOwner ? { address: d.newOwner } : {}) },
+    }).catch((e: any) => console.warn(`[UserService] reconcileUsernameDrift: token ${d.tokenId} update failed:`, e?.message))
+    userCache.delete(d.tokenId)
+  }
+  console.log(`[UserService] reconcileUsernameDrift: corrected ${drift.length}/${rows.length} — ` +
+    drift.map(d => `#${d.tokenId}${d.newName ? `→"${d.newName}"` : ''}`).join(', '))
+  return { checked: rows.length, corrected: drift.length }
+}
+
+/**
  * syncTokensOwnedByWallet
  * Looks up tokens owned by a specific wallet via L1 balanceOf +
  * tokenOfOwnerByIndex. O(tokensOwned) instead of scanning every user row.

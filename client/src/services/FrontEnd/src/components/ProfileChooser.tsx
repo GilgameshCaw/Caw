@@ -411,6 +411,10 @@ const ProfileChooser: React.FC<{ compact?: boolean }> = ({ compact = false }) =>
   };
 
   const handleSelectProfile = (token: TokenData) => {
+    // Never activate a usernameless placeholder — it would make AuthGate bounce
+    // the session to /welcome. (Belt-and-suspenders; such tokens are already
+    // filtered out of the rendered list above.)
+    if (!token.username) return
     setActiveTokenId(token.tokenId)
     // Update lastAddress so useTokenDataUpdate refetches data for this token's owner
     if (token.address) {
@@ -430,8 +434,14 @@ const ProfileChooser: React.FC<{ compact?: boolean }> = ({ compact = false }) =>
     if (!normalizedTokensByAddress[normalizedAddr]) {
       normalizedTokensByAddress[normalizedAddr] = []
     }
-    // Add tokens if not already present (by tokenId)
+    // Add tokens if not already present (by tokenId). SKIP usernameless
+    // placeholder tokens: a token row seeded before its username hydrated (e.g.
+    // a self-heal placeholder, or a not-yet-indexed profile) has an empty
+    // username. It must NOT be a selectable chooser entry — selecting one makes
+    // it the active token, and AuthGate (which gates on activeToken.username)
+    // then bounces the whole session to /welcome. Only render real profiles.
     for (const token of tokens) {
+      if (!token.username) continue
       if (!normalizedTokensByAddress[normalizedAddr].some(t => t.tokenId === token.tokenId)) {
         normalizedTokensByAddress[normalizedAddr].push(token)
       }

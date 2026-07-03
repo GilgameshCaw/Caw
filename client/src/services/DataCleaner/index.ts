@@ -10,7 +10,7 @@ import { checkDomainObjectExists } from '../ActionProcessor/domainObjectChecks'
 import { processDomainEffects, resolveActionUsers } from '../ActionProcessor/domainProcessor'
 import { CawNotFoundError } from '../ActionProcessor/actionHandlers'
 import type { RawAction } from '../ActionProcessor/types'
-import { refreshUserFromChain, StaleTokenError } from '../UserService'
+import { refreshUserFromChain, reconcileUsernameDrift, StaleTokenError } from '../UserService'
 import { getNetworkId } from '../../utils/networkId'
 
 // Lazy-initialized L2 read provider for the pending-mint-deposit watcher.
@@ -877,6 +877,10 @@ async function cleanupOrphanActions() {
  * are debris from the pre-redeploy era and can't be repaired.
  */
 const PLACEHOLDER_REFRESH_MAX_PER_TICK = 50
+// Real-row username-drift reconcile: check this many rows per tick. Kept small
+// (2 L1 reads each) so the rotating cursor covers the table over time without
+// spiking RPC. On a small testnet it laps the whole table in a few ticks.
+const USERNAME_DRIFT_RECONCILE_PER_TICK = 25
 async function cleanupPlaceholderUsers() {
   try {
     // Postgres regex on (username) — uses the existing username unique
@@ -1248,6 +1252,14 @@ async function runDataCleanup() {
   // upsert paths created when the Mint event hadn't yet been indexed.
   // Bounded to 50 per tick so a backlog doesn't dominate the loop.
   await cleanupPlaceholderUsers()
+
+  // Reconcile username drift on REAL rows against chain (rotating window). Unlike
+  // the placeholder sweep above, this catches a real username that went stale —
+  // e.g. after a --clean --reset redeploy reassigned tokenIds, since the Transfer
+  // watcher re-syncs owner but never the username. Bounded per tick; a cursor
+  // round-robins the whole table over many ticks so RPC cost stays flat.
+  await reconcileUsernameDrift(USERNAME_DRIFT_RECONCILE_PER_TICK).catch(err =>
+    logger.error('Username-drift reconcile failed:', err?.message || err))
 
   // Clean up failed txqueue records and update associated caws
   await cleanupFailedTxQueue()
