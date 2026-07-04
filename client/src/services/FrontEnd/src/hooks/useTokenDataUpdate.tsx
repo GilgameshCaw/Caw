@@ -373,6 +373,26 @@ export default function useTokenDataUpdate() {
         setTokensForAddress(addr, updated)
       }
     })
+
+    // Self-heal a stale global activeTokenId. If it points at a tokenId that the
+    // fresh multicall no longer returns (e.g. the #447 ghost — a placeholder
+    // seeded from a stale server-session authorizedTokenId that doesn't exist
+    // on-chain), it would otherwise keep the session pinned to a usernameless
+    // token and bounce AuthGate to /welcome. Repoint it to the first REAL token.
+    {
+      const st = useTokenDataStore.getState()
+      if (st.activeTokenId !== undefined) {
+        const all = Object.values(st.tokensByAddress).flat()
+        const cur = all.find(t => t.tokenId === st.activeTokenId)
+        if (!cur || !cur.username) {
+          const firstNamed = all.find(t => !!t.username)
+          if (firstNamed) {
+            console.warn(`[TokenData] resetting stale/usernameless activeTokenId=${st.activeTokenId} → #${firstNamed.tokenId} ${firstNamed.username}`)
+            st.setActiveTokenId(firstNamed.tokenId)
+          }
+        }
+      }
+    }
     // knownAddressesKey/allTokenIdsKey are the real triggers; the data objects
     // are stable per-fetch. tokensByAddress intentionally omitted to avoid a
     // write→re-render→write loop (we read it via closure for cawonce only).

@@ -90,28 +90,43 @@ export const useActiveToken = () =>
 
     if (allTokens.length === 0) return undefined
 
-    // If there's a global activeTokenId, use that (allows viewing tokens from any address)
+    // Only ever treat a token with a real username as active. A usernameless
+    // placeholder (e.g. a partially-indexed row, or the "ghost" chooser entry)
+    // must NEVER win selection — activeToken feeds AuthGate, which gates on
+    // username and bounces the whole session to /welcome if the active token has
+    // none. This is the "clicked a blank profile → logged out of everything, real
+    // profiles still in the store" bug: a stale global activeTokenId pointed at a
+    // usernameless token. Prefer real tokens everywhere.
+    const named = allTokens.filter(t => !!t.username)
+    if (named.length === 0) return undefined
+
+    // If there's a global activeTokenId, use it — but only if it resolves to a
+    // NAMED token. A usernameless match falls through to real-token selection.
     if (state.activeTokenId !== undefined) {
-      const token = allTokens.find(t => t.tokenId === state.activeTokenId)
+      const token = named.find(t => t.tokenId === state.activeTokenId)
       if (token) return token
+      // else fall through (global id missing, or points at a usernameless ghost)
     }
 
     // Fallback: Try to use lastAddress to find a default token
     const address = state.lastAddress as Address | undefined
     if (!address) {
-      return allTokens[0]
+      return named[0]
     }
 
     // Normalize address comparison (case-insensitive)
     const normalizedAddress = address.toLowerCase()
-    const tokensForAddress = Object.entries(state.tokensByAddress)
-      .find(([addr]) => addr.toLowerCase() === normalizedAddress)?.[1] || []
+    const tokensForAddress = (Object.entries(state.tokensByAddress)
+      .find(([addr]) => addr.toLowerCase() === normalizedAddress)?.[1] || [])
+      .filter(t => !!t.username)
 
     const activeTokenIdForAddress = Object.entries(state.activeTokenIdByAddress)
       .find(([addr]) => addr.toLowerCase() === normalizedAddress)?.[1]
 
-    // Find the active token for this address, or default to first token
-    return tokensForAddress.find(t => t.tokenId === activeTokenIdForAddress) || tokensForAddress[0];
+    // Find the active token for this address, or default to first NAMED token
+    // for this address, or the first NAMED token anywhere (so a wallet whose own
+    // rows haven't hydrated yet still resolves to a real profile).
+    return tokensForAddress.find(t => t.tokenId === activeTokenIdForAddress) || tokensForAddress[0] || named[0];
   }
 );
 
