@@ -670,7 +670,10 @@ router.post('/', async (req, res) => {
       })
       if (dup) {
         console.log(`Duplicate submission for txQueue ${dup.id}, returning existing entry`)
-        return res.json({ txQueueId: dup.id, status: dup.status })
+        // Still hand back the passive-auth session we just minted from the
+        // verified signature — otherwise a resubmitted (deduped) action leaves a
+        // logged-out user logged out despite having just proven ownership.
+        return res.json({ txQueueId: dup.id, status: dup.status, ...(authResult ? { auth: authResult } : {}) })
       }
     }
 
@@ -757,6 +760,9 @@ router.post('/', async (req, res) => {
           status: recentSameContent.status,
           deduped: true,
           reason: 'identical content recently submitted by this sender',
+          // Preserve the passive-auth session minted from the verified signature
+          // so a deduped resubmit still logs a logged-out user back in.
+          ...(authResult ? { auth: authResult } : {}),
         })
       }
     }
