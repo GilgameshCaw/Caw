@@ -660,7 +660,18 @@ const AccountSettings: React.FC = () => {
   // sort by pinned-first (most-recent pin wins), then follower count desc.
   // Active token's wallet is placed FIRST so the user lands on their
   // current context, then sees other wallets below.
-  const allTokens = Object.values(tokensByAddress).flat()
+  // Drop usernameless placeholder rows (e.g. a stale #447 seeded by the passkey
+  // session self-heal for a tokenId that no longer exists on-chain). They render
+  // as a blank "@ / Token #NNN" ghost account and must not appear in the profile
+  // list. The chooser filters these the same way. Rebuild the by-wallet map from
+  // the named-only tokens so both allTokens AND the per-wallet grouping below
+  // exclude them, and an address left with zero named tokens disappears entirely.
+  const namedTokensByAddress: typeof tokensByAddress = {}
+  for (const [addr, toks] of Object.entries(tokensByAddress)) {
+    const named = (toks || []).filter(t => !!t.username)
+    if (named.length > 0) namedTokensByAddress[addr as `0x${string}`] = named
+  }
+  const allTokens = Object.values(namedTokensByAddress).flat()
   const followerCounts = useFollowerCounts(allTokens.map(t => t.tokenId))
 
   // Hydrate real avatars per tokenId. TokenData itself has no avatar
@@ -680,7 +691,7 @@ const AccountSettings: React.FC = () => {
   const togglePin = usePinnedProfilesStore(s => s.togglePin)
 
   const activeOwnerKey = activeToken?.address?.toLowerCase()
-  const walletKeys = Object.keys(tokensByAddress)
+  const walletKeys = Object.keys(namedTokensByAddress)
   const otherWallets = walletKeys.filter(k => k.toLowerCase() !== activeOwnerKey)
   const orderedWalletKeys = [
     ...(activeOwnerKey && walletKeys.some(k => k.toLowerCase() === activeOwnerKey)
@@ -691,7 +702,7 @@ const AccountSettings: React.FC = () => {
   const tokensByWalletSorted: Array<{ address: string; tokens: typeof allTokens }> = orderedWalletKeys
     .map(addr => ({
       address: addr,
-      tokens: (tokensByAddress[addr.toLowerCase() as `0x${string}`] || [])
+      tokens: (namedTokensByAddress[addr.toLowerCase() as `0x${string}`] || [])
         .slice()
         .sort((a, b) => {
           const ap = pinnedAt[a.tokenId]

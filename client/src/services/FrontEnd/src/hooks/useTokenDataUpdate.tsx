@@ -371,6 +371,18 @@ export default function useTokenDataUpdate() {
       // result (RPC hiccup) can't wipe a known account out of the store.
       if (updated.length > 0) {
         setTokensForAddress(addr, updated)
+      } else {
+        // Multicall SUCCEEDED but this address owns no profiles on-chain. If the
+        // store holds only usernameless placeholder rows for it (e.g. the #447
+        // ghost seeded from a stale session authorizedTokenId that doesn't exist
+        // on-chain), prune the address entirely so the blank "@ / Token #NNN"
+        // account stops rendering in the chooser / AccountSettings. We only prune
+        // when EVERY row is usernameless — a real named profile is never dropped
+        // by an empty multicall (that's the RPC-hiccup guard above).
+        const existing = tokensByAddress[addr.toLowerCase() as Address] || []
+        if (existing.length > 0 && existing.every(t => !t.username)) {
+          useTokenDataStore.getState().removeAddress(addr.toLowerCase() as Address)
+        }
       }
     })
 
