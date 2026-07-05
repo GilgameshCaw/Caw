@@ -1047,6 +1047,22 @@ const MessagesPage: React.FC = () => {
     reject()
   }
 
+  // "Use backup file instead" — for a user who can't complete the vault-password
+  // unlock (forgot it, or the server blob is unavailable). Close the prompt and
+  // send them to the dedicated /recovery flow, which accepts the .caw backup file
+  // + password and restores the recovery key. Previously this button just
+  // cancelled and dead-ended, leaving no path forward.
+  const handleUseBackupFile = () => {
+    if (vaultPasswordPrompt) {
+      const { reject } = vaultPasswordPrompt
+      setVaultPasswordPrompt(null)
+      setVaultPasswordInput('')
+      setVaultPasswordError(null)
+      reject()
+    }
+    navigate('/recovery')
+  }
+
   // Handle DM registration
   const handleRegisterDm = async () => {
     if (!currentUser) return
@@ -3899,7 +3915,7 @@ const MessagesPage: React.FC = () => {
           )}
           <div className="flex gap-3 pt-1">
             <button
-              onClick={handleVaultPasswordCancel}
+              onClick={handleUseBackupFile}
               className={`flex-1 py-2.5 rounded-xl text-sm font-medium transition-colors cursor-pointer ${
                 isDark ? 'bg-white/10 text-white hover:bg-white/20' : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
               }`}
@@ -3913,6 +3929,12 @@ const MessagesPage: React.FC = () => {
               Unlock
             </button>
           </div>
+          <button
+            onClick={handleVaultPasswordCancel}
+            className={`w-full text-center text-xs mt-1 ${isDark ? 'text-gray-500 hover:text-gray-300' : 'text-gray-400 hover:text-gray-600'} transition-colors cursor-pointer`}
+          >
+            Cancel
+          </button>
         </div>
       </ModalWrapper>
     </>
