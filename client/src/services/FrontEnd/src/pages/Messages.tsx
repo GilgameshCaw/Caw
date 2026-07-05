@@ -1019,10 +1019,10 @@ const MessagesPage: React.FC = () => {
 
   // Vault-password prompt for Pop-B new-device DM key unwrap.
   // Returns a Promise that resolves with the entered password or rejects if cancelled.
-  const openVaultPasswordPrompt = (): Promise<string> =>
+  const openVaultPasswordPrompt = (opts?: { error?: string }): Promise<string> =>
     new Promise<string>((resolve, reject) => {
       setVaultPasswordInput('')
-      setVaultPasswordError(null)
+      setVaultPasswordError(opts?.error ?? null)
       setVaultPasswordPrompt({ resolve, reject })
     })
 
@@ -1061,6 +1061,9 @@ const MessagesPage: React.FC = () => {
         // Pass vault-password prompt for Pop-B new-device DM key unwrap.
         // Pop-A and cache-hit Pop-B paths never call this — it only fires
         // when the recovery key is absent and the server blob is available.
+        // _deriveFromVaultPassword re-prompts inline on a wrong password (with
+        // the error shown), so we only reach the catch here on a genuine,
+        // non-recoverable failure.
         await initializeClientRef.current(openVaultPasswordPrompt)
         setCurrentView('inbox')
 
@@ -1077,9 +1080,13 @@ const MessagesPage: React.FC = () => {
               })
           }, 500)
         }
-      } catch (error) {
-        // Error is surfaced inline on the setup screen via `dmError` from
-        // useDmClient — no modal needed.
+      } catch (error: any) {
+        const msg = error?.message || String(error)
+        // User cancelled a prompt — silent, no error banner.
+        if (/cancel/i.test(msg) || error === undefined) return
+        // Surface the failure via the DM error banner (dmError from useDm feeds
+        // the setup-screen banner). Previously this was only console-logged so
+        // the user saw nothing after a failed unlock.
         console.error('Failed to enable DMs:', error)
       }
     }

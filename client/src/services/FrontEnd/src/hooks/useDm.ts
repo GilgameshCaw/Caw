@@ -401,13 +401,15 @@ export function useDmClient(tokenId?: number, username?: string) {
   // on cancel). This function is intentionally NOT a useCallback — it's a
   // helper called from within initializeClient's closure, which is already memoized.
   const _deriveFromVaultPassword = async (
-    promptVaultPassword: () => Promise<string>,
+    promptVaultPassword: (opts?: { error?: string }) => Promise<string>,
     ownerAddress: string,
   ): Promise<{ privateKey: Uint8Array; publicKeyHex: string; rawSignature?: string; sigMessage?: string } | null> => {
     if (!tokenId || !username) return null
 
     // Step 1: Prompt vault password (shows modal before the passkey ceremony
-    // so the user understands what's about to happen).
+    // so the user understands what's about to happen). On a WRONG password we
+    // re-prompt inline with the error shown, rather than failing the whole
+    // DM-enable flow — the user can retry without restarting.
     let password: string
     try {
       password = await promptVaultPassword()
@@ -458,13 +460,28 @@ export function useDmClient(tokenId?: number, username?: string) {
     }
     if (!validateBackupBlobShape(blobJson)) return null
 
-    // Step 5: Decrypt the blob with the vault password.
-    let recoveryKey: Uint8Array
-    try {
-      recoveryKey = await decryptBackupBlob(blobJson, password)
-    } catch {
-      throw new Error('Incorrect vault password. Try again, or use your backup file.')
+    // Step 5: Decrypt the blob with the vault password. On a wrong password,
+    // re-prompt inline (up to a few tries) with the error shown — the passkey
+    // ceremony + blob are already done, so a retry only re-asks for the password.
+    let recoveryKey: Uint8Array | null = null
+    const MAX_PW_TRIES = 4
+    for (let attempt = 0; attempt < MAX_PW_TRIES; attempt++) {
+      try {
+        recoveryKey = await decryptBackupBlob(blobJson, password)
+        break
+      } catch {
+        if (attempt === MAX_PW_TRIES - 1) {
+          throw new Error('Incorrect vault password. Try again, or use your backup file.')
+        }
+        // Re-prompt with the error shown so the user can retry.
+        try {
+          password = await promptVaultPassword({ error: 'Incorrect vault password. Please try again.' })
+        } catch {
+          return null // user cancelled the retry prompt
+        }
+      }
     }
+    if (!recoveryKey) return null
 
     // Step 6: Derive DM keys from the recovered secp256k1 key — deterministic,
     // same result as onboarding priming and recovery-mode live derivation.
