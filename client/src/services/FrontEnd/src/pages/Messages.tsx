@@ -1051,7 +1051,12 @@ const MessagesPage: React.FC = () => {
   const handleRegisterDm = async () => {
     if (!currentUser) return
 
-    await ensureWallet(null, async () => {
+    // The DM key derivation itself signs via the ROOT signer — a wagmi wallet for
+    // Pop-A, the passkey for Pop-B. So a passkey user must NOT go through
+    // ensureWallet: that opens the wallet-connect ("sign in with passkey") modal
+    // for a user who has no wagmi wallet, and never runs the DM init. Run the init
+    // directly for Pop-B; only Pop-A needs the connect-wallet gate.
+    const runInit = async () => {
       try {
         // Pass vault-password prompt for Pop-B new-device DM key unwrap.
         // Pop-A and cache-hit Pop-B paths never call this — it only fires
@@ -1077,7 +1082,13 @@ const MessagesPage: React.FC = () => {
         // useDmClient — no modal needed.
         console.error('Failed to enable DMs:', error)
       }
-    })
+    }
+
+    if (isPasskeyUser) {
+      await runInit()
+    } else {
+      await ensureWallet(null, runInit)
+    }
   }
 
   // Function to handle chat options menu actions
@@ -1885,9 +1896,13 @@ const MessagesPage: React.FC = () => {
             isDark ? 'bg-yellow-500/10 border-b border-yellow-500/30' : 'bg-yellow-50 border-b border-yellow-200'
           }`}>
             <p className={`text-sm ${isDark ? 'text-yellow-200' : 'text-yellow-800'}`}>
-              {!address ? t('messages.unlock.connect_wallet') : t('messages.unlock.sign_to_unlock')}
+              {/* Passkey users have no wagmi wallet, but their passkey CAN sign the
+                  DM key derivation. Never tell an already-signed-in Pop-B user to
+                  "connect a wallet" — show "sign to unlock" and let handleRegisterDm
+                  derive the key via the root (passkey) signer. */}
+              {!address && !isPasskeyUser ? t('messages.unlock.connect_wallet') : t('messages.unlock.sign_to_unlock')}
             </p>
-            {!address ? (
+            {!address && !isPasskeyUser ? (
               <ConnectButton />
             ) : (
               <button
@@ -3005,9 +3020,11 @@ const MessagesPage: React.FC = () => {
                   isDark ? 'bg-yellow-500/10 border-yellow-500/30' : 'bg-yellow-50 border-yellow-200'
                 }`}>
                   <p className={`text-sm ${isDark ? 'text-yellow-200' : 'text-yellow-800'}`}>
-                    {!address ? t('messages.unlock.connect_wallet') : t('messages.unlock.sign_to_unlock')}
+                    {/* Passkey (Pop-B) users sign the DM key with their passkey, not
+                        a wagmi wallet — never show "connect wallet" to them. */}
+                    {!address && !isPasskeyUser ? t('messages.unlock.connect_wallet') : t('messages.unlock.sign_to_unlock')}
                   </p>
-                  {!address ? (
+                  {!address && !isPasskeyUser ? (
                     <ConnectButton />
                   ) : (
                     <button
