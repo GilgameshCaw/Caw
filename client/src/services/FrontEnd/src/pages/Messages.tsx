@@ -179,6 +179,8 @@ const MessagesPage: React.FC = () => {
   } | null>(null)
   const [vaultPasswordInput, setVaultPasswordInput] = useState('')
   const [vaultPasswordError, setVaultPasswordError] = useState<string | null>(null)
+  const [showVaultPassword, setShowVaultPassword] = useState(false)
+  const [vaultPasswordVerifying, setVaultPasswordVerifying] = useState(false)
   const [editingMessageId, setEditingMessageId] = useState<string | null>(null)
   const [editingContent, setEditingContent] = useState('')
   const [editHistoryMessageId, setEditHistoryMessageId] = useState<string | null>(null)
@@ -1023,7 +1025,13 @@ const MessagesPage: React.FC = () => {
     new Promise<string>((resolve, reject) => {
       setVaultPasswordInput('')
       setVaultPasswordError(opts?.error ?? null)
+      setShowVaultPassword(false)
+      // On a retry (wrong password), the modal is already open — DON'T close and
+      // reopen it (that flashes the error text away during the modal transition).
+      // Just install the new resolver so the same open modal captures the next
+      // attempt, keeping the error visible.
       setVaultPasswordPrompt({ resolve, reject })
+      setVaultPasswordVerifying(false)
     })
 
   const handleVaultPasswordSubmit = () => {
@@ -1032,8 +1040,13 @@ const MessagesPage: React.FC = () => {
       setVaultPasswordError('Please enter your vault password.')
       return
     }
+    // Keep the modal OPEN and hand the password to the awaiting derive flow. If
+    // the password is wrong, that flow re-prompts (re-installs the resolver) with
+    // the error shown — the modal never closes, so the error doesn't flash away.
+    // The modal is closed only on success (setCurrentView('inbox')) or cancel.
     const { resolve } = vaultPasswordPrompt
-    setVaultPasswordPrompt(null)
+    setVaultPasswordError(null)
+    setVaultPasswordVerifying(true)
     resolve(vaultPasswordInput)
     setVaultPasswordInput('')
   }
@@ -1081,6 +1094,12 @@ const MessagesPage: React.FC = () => {
         // the error shown), so we only reach the catch here on a genuine,
         // non-recoverable failure.
         await initializeClientRef.current(openVaultPasswordPrompt)
+        // Success — close the vault-password modal (it stayed open across any
+        // wrong-password retries so the error never flashed away).
+        setVaultPasswordPrompt(null)
+        setVaultPasswordVerifying(false)
+        setVaultPasswordInput('')
+        setVaultPasswordError(null)
         setCurrentView('inbox')
 
         // If we have a target user from URL params, create conversation
@@ -1097,6 +1116,8 @@ const MessagesPage: React.FC = () => {
           }, 500)
         }
       } catch (error: any) {
+        // Genuine (non-recoverable) failure — close the modal and reset state.
+        setVaultPasswordVerifying(false)
         const msg = error?.message || String(error)
         // User cancelled a prompt — silent, no error banner.
         if (/cancel/i.test(msg) || error === undefined) return
@@ -3897,19 +3918,39 @@ const MessagesPage: React.FC = () => {
             Enter your vault password to unlock your DM encryption keys on this new device.
             This is a one-time step — future visits will use your passkey automatically.
           </p>
-          <input
-            type="password"
-            value={vaultPasswordInput}
-            onChange={e => { setVaultPasswordInput(e.target.value); setVaultPasswordError(null) }}
-            onKeyDown={e => { if (e.key === 'Enter') handleVaultPasswordSubmit() }}
-            placeholder="Vault password"
-            autoFocus
-            className={`w-full px-4 py-3 rounded-xl border text-sm outline-none transition-colors ${
-              isDark
-                ? 'bg-white/5 border-white/20 text-white placeholder-white/30 focus:border-yellow-500'
-                : 'bg-gray-50 border-gray-300 text-gray-900 placeholder-gray-400 focus:border-yellow-500'
-            }`}
-          />
+          <div className="relative">
+            <input
+              type={showVaultPassword ? 'text' : 'password'}
+              value={vaultPasswordInput}
+              onChange={e => { setVaultPasswordInput(e.target.value); setVaultPasswordError(null) }}
+              onKeyDown={e => { if (e.key === 'Enter') handleVaultPasswordSubmit() }}
+              placeholder="Vault password"
+              autoFocus
+              className={`w-full px-4 py-3 pr-11 rounded-xl border text-sm outline-none transition-colors ${
+                isDark
+                  ? 'bg-white/5 border-white/20 text-white placeholder-white/30 focus:border-yellow-500'
+                  : 'bg-gray-50 border-gray-300 text-gray-900 placeholder-gray-400 focus:border-yellow-500'
+              }`}
+            />
+            <button
+              type="button"
+              onClick={() => setShowVaultPassword(v => !v)}
+              className={`absolute right-3 top-1/2 -translate-y-1/2 cursor-pointer ${isDark ? 'text-white/40 hover:text-white/70' : 'text-gray-400 hover:text-gray-600'} transition-colors`}
+              aria-label={showVaultPassword ? 'Hide password' : 'Show password'}
+            >
+              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                {showVaultPassword ? (
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2}
+                    d="M13.875 18.825A10.05 10.05 0 0112 19c-4.478 0-8.268-2.943-9.543-7a9.97 9.97 0 011.563-3.029m5.858.908a3 3 0 114.243 4.243M9.878 9.878l4.242 4.242M9.88 9.88l-3.29-3.29m7.532 7.532l3.29 3.29M3 3l3.59 3.59m0 0A9.953 9.953 0 0112 5c4.478 0 8.268 2.943 9.543 7a10.025 10.025 0 01-4.132 5.411m0 0L21 21" />
+                ) : (
+                  <>
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z" />
+                  </>
+                )}
+              </svg>
+            </button>
+          </div>
           {vaultPasswordError && (
             <p className="text-sm text-red-500">{vaultPasswordError}</p>
           )}
@@ -3924,9 +3965,10 @@ const MessagesPage: React.FC = () => {
             </button>
             <button
               onClick={handleVaultPasswordSubmit}
-              className="flex-1 py-2.5 rounded-xl text-sm font-medium bg-yellow-500 hover:bg-yellow-600 text-black transition-colors cursor-pointer"
+              disabled={vaultPasswordVerifying}
+              className="flex-1 py-2.5 rounded-xl text-sm font-medium bg-yellow-500 hover:bg-yellow-600 text-black transition-colors cursor-pointer disabled:opacity-60 disabled:cursor-not-allowed"
             >
-              Unlock
+              {vaultPasswordVerifying ? 'Verifying…' : 'Unlock'}
             </button>
           </div>
           <button
