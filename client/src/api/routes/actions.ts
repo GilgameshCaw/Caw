@@ -29,6 +29,7 @@ import { pokeIndexTokenId } from '../util/indexerPoke'
 import { countManager } from '../../services/CountManager'
 import { parsePoll, parseVoteText } from '../../tools/pollMarker'
 import { getSession, addAuthorization, createSession } from '../sessionStore'
+import { SESSION_COOKIE_NAME, sessionCookieOptions } from '../middleware/auth'
 import { cawProfileLedgerAbi, cawActionsAbi } from '../../abi/generated'
 import { CAW_NAMES_L2_ADDRESS, CAW_ACTIONS_ADDRESS } from '../../abi/addresses'
 import { packActions, getPackedActionSlices } from '../../utils/packActions'
@@ -628,6 +629,16 @@ router.post('/', async (req, res) => {
       // races, etc.). Message + code is enough to triage. Audit fix
       // 2026-05-13.
       console.error('[Actions] ❌ PASSIVE AUTH FAILED:', err?.message || String(err), err?.code)
+    }
+    // Set the HttpOnly session cookie for the passive-auth session, mirroring the
+    // /api/auth/* login routes. WITHOUT this, passive auth only lived in the FE's
+    // in-memory store (sent as x-session-token) — but extractSession reads the
+    // COOKIE FIRST, so a stale cookie from an old login permanently shadowed the
+    // fresh header token: every follow-up request resolved the dead cookie session
+    // → getSession miss → 401, leaving the user "logged out" right after acting.
+    // Overwriting the cookie here makes the freshly-minted session authoritative.
+    if (authResult) {
+      res.cookie(SESSION_COOKIE_NAME, authResult.sessionToken, sessionCookieOptions())
     }
     mark('passiveAuth')
 

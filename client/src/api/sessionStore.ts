@@ -110,11 +110,12 @@ export async function addAuthorization(
     await pipeline.exec()
   }
 
-  // Preserve remaining TTL
+  // Preserve remaining TTL. If the key's TTL is somehow expired/missing
+  // (remainingTtl <= 0), re-set with the FULL TTL instead of skipping the write —
+  // otherwise the just-added authorizedTokenIds would not persist and the next
+  // request's getSession would return the empty pre-auth session → 401.
   const remainingTtl = await redis.ttl(KEY_PREFIX + token)
-  if (remainingTtl > 0) {
-    await redis.setex(KEY_PREFIX + token, remainingTtl, JSON.stringify(session))
-  }
+  await redis.setex(KEY_PREFIX + token, remainingTtl > 0 ? remainingTtl : SESSION_TTL, JSON.stringify(session))
 
   return session
 }

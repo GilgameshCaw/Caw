@@ -237,9 +237,9 @@ export async function extractSession(req: Request): Promise<void> {
   // x-session-token header for the migration window. Once the cookie has
   // been in production long enough that all live FE sessions are using it,
   // the header fallback can be removed.
-  const token =
-    readCookie(req, SESSION_COOKIE_NAME) ||
-    (req.headers['x-session-token'] as string | undefined)
+  const cookieToken = readCookie(req, SESSION_COOKIE_NAME)
+  const headerToken = req.headers['x-session-token'] as string | undefined
+  const token = cookieToken || headerToken
 
   if (!token) {
     req.sessionData = null
@@ -249,6 +249,19 @@ export async function extractSession(req: Request): Promise<void> {
 
   req.sessionToken = token
   req.sessionData = await getSession(token)
+
+  // Stale-cookie fallback: if the cookie's session is dead (expired/rotated) but
+  // the client ALSO sent a valid x-session-token header (passive-auth mints a
+  // fresh session and returns it in the body → the FE sends it as a header before
+  // the new cookie round-trips), don't 401 — resolve the header session instead.
+  // Without this, a stale cookie permanently shadows a valid header token.
+  if (!req.sessionData && headerToken && headerToken !== token) {
+    const headerSession = await getSession(headerToken)
+    if (headerSession) {
+      req.sessionToken = headerToken
+      req.sessionData = headerSession
+    }
+  }
 }
 
 interface RequireAuthFieldOpts {
