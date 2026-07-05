@@ -280,26 +280,33 @@ async function checkSessionKeyOnChain(
     if (actionType !== undefined && actionType <= 7 && (row.scopeBitmap & (1 << actionType)) === 0) {
       return { valid: false, reason: 'Action type not in session scope' }
     }
-    // Spend-limit PRE-CHECK. Basis = AUTHORITATIVE on-chain sessionSpent (the
-    // cross-mirror source of truth), NOT the per-mirror DB row.spent cache. The
-    // cache is per-server: each mirror only sees its OWN submissions and can
-    // double-count, so using it to reject falsely blocks a user who has budget on
-    // chain (and would be inconsistent across mirrors). Read chain (TTL-cached);
-    // only fall back to the DB cache if the read fails. The contract enforces the
-    // real limit regardless — this is early rejection only.
+    // Spend-limit PRE-CHECK. Fast path: the DB row.spent cache OVER-counts (never
+    // under-counts — it meters tip+recipients while the contract meters actionCost
+    // only; #259), so `dbSpent < limit` GUARANTEES the real on-chain spend is also
+    // under limit. In that common case we skip the on-chain read entirely — this
+    // is the hot per-action path and an RPC round-trip here added ~1.4s per action
+    // on testnet. Only when the (possibly-inflated) cache says at/over limit do we
+    // pay for the AUTHORITATIVE on-chain sessionSpent read to avoid a false reject
+    // (the cross-mirror correctness case). The contract enforces the real limit
+    // regardless — this is early rejection only.
     const spendLimit = BigInt(row.spendLimit || '0')
     if (spendLimit > 0n) {
-      const onChainSpent = await getOnChainSessionSpent(owner, sessionAddr)
-      const spent = onChainSpent ?? BigInt(row.spent || '0')
-      // Keep the DB cache aligned to chain (best-effort) so the display hint
-      // agrees; the cache no longer gates, but other reads still show it.
-      if (onChainSpent !== null && onChainSpent !== BigInt(row.spent || '0')) {
-        prisma.sessionKey.update({
-          where: { ownerAddress_sessionAddress: { ownerAddress: owner, sessionAddress: sessionAddr } },
-          data: { spent: onChainSpent.toString() },
-        }).catch(() => {})
+      const dbSpent = BigInt(row.spent || '0')
+      if (dbSpent >= spendLimit) {
+        // Cache says over-limit — could be a false positive from the over-count.
+        // Verify against chain (TTL-cached) before rejecting.
+        const onChainSpent = await getOnChainSessionSpent(owner, sessionAddr)
+        const spent = onChainSpent ?? dbSpent
+        if (onChainSpent !== null && onChainSpent !== dbSpent) {
+          // Realign the cache to chain so the display + fast-path agree.
+          prisma.sessionKey.update({
+            where: { ownerAddress_sessionAddress: { ownerAddress: owner, sessionAddress: sessionAddr } },
+            data: { spent: onChainSpent.toString() },
+          }).catch(() => {})
+        }
+        if (spent >= spendLimit) return { valid: false, reason: 'Session key spend limit reached' }
       }
-      if (spent >= spendLimit) return { valid: false, reason: 'Session key spend limit reached' }
+      // dbSpent < limit → definitely under the real limit; no on-chain read needed.
     }
     return { valid: true, perActionTipRate: BigInt((row as any).perActionTipRate || '0') }
   }
