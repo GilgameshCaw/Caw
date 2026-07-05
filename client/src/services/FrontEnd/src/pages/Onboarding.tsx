@@ -551,6 +551,13 @@ export default function Onboarding() {
         // ever misses (Redis blip), fall back to a budget that outlasts a full
         // NftTransferWatcher poll cycle (~60s) instead of the ~25s default —
         // otherwise we'd bounce the user to /welcome for a mint that's fine.
+        // Budget must OUTLAST the real mint→index latency, else we throw before
+        // the row lands and the user is left signed-OUT with a profile that only
+        // exists on-chain (they saw "signing you in…" for ~90s, then nothing, and
+        // the profile is absent from their local account list — it was minted but
+        // the FE never got to inject it). The sponsor pokes the indexer so it's
+        // usually ~1s, but a slow LZ relay + poll-cycle fallback can take a few
+        // minutes on testnet. ~12 attempts backing off to 20s ≈ up to ~3.5 min.
         const data = await retryOnIndexing(() =>
           apiFetch<{
             sessionToken: string
@@ -562,7 +569,7 @@ export default function Onboarding() {
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ message, signature }),
           }),
-          { maxAttempts: 8, maxDelayMs: 12_000 }
+          { maxAttempts: 12, maxDelayMs: 20_000 }
         )
         // eslint-disable-next-line no-console
         console.log('[signin:diag] verify SUCCESS, setting session', {
