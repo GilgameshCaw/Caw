@@ -1572,6 +1572,7 @@
   "passkey_signin.create_with_x": "Holen Sie sich ein gesponsertes Konto bei X",
   "passkey_signin.error.not_found": "Für diesen Benutzernamen wurde kein Profil gefunden.",
   "passkey_signin.error.cancelled": "Die Passkey-Anmeldung wurde abgebrochen.",
+  "passkey_signin.error.unsupported": "Passkeys werden in diesem Browser nicht unterstützt. Versuche einen anderen Browser oder melde dich mit deiner Wallet an.",
   "passkey_signin.error.generic": "Die Anmeldung mit Ihrem Passkey war nicht möglich. Bitte versuchen Sie es erneut.",
   "messages.context_menu.download_media": "Medien herunterladen",
   "common.back": "Zurück",

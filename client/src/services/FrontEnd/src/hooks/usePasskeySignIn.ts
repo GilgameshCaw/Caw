@@ -199,9 +199,17 @@ export function usePasskeySignIn(): UsePasskeySignIn {
       return { tokenId: profile.tokenId, username: uname, address: ownerAddr }
     } catch (err: any) {
       const raw = err?.message || ''
+      const name = err?.name || ''
       let msg: string
-      if (/NotAllowed|abort|cancel|denied/i.test(raw)) {
-        // User dismissed the passkey sheet.
+      if (/NotSupported|SecurityError/i.test(name) || typeof navigator === 'undefined' || !navigator.credentials?.get) {
+        // WebAuthn unavailable in this context (unsupported browser, insecure
+        // origin, or missing platform authenticator).
+        msg = t('passkey_signin.error.unsupported')
+      } else if (/NotAllowed/i.test(name) || /NotAllowed|abort|cancel|denied|timed out or was not allowed/i.test(raw)) {
+        // NotAllowedError: the user dismissed the passkey sheet OR the ceremony
+        // timed out. Match on err.NAME (reliable) as well as the message, since
+        // the raw W3C string ("The operation either timed out or was not
+        // allowed…") does not contain the substring "NotAllowed".
         msg = t('passkey_signin.error.cancelled')
       } else if (/^API\s+404/i.test(raw) || /not\s*found/i.test(raw)) {
         // Username lookup miss.

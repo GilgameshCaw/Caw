@@ -1572,6 +1572,7 @@
   "passkey_signin.create_with_x": "קבל חשבון ממומן עם X",
   "passkey_signin.error.not_found": "לא נמצא פרופיל עבור שם משתמש זה.",
   "passkey_signin.error.cancelled": "הכניסה למפתח סיסמה בוטלה.",
+  "passkey_signin.error.unsupported": "מפתחות גישה אינם נתמכים בדפדפן זה. נסה דפדפן אחר, או התחבר עם הארנק שלך.",
   "passkey_signin.error.generic": "לא ניתן להיכנס עם מפתח הסיסמה שלך. אנא נסה שוב.",
   "messages.context_menu.download_media": "הורד מדיה",
   "common.back": "בְּחֲזָרָה",

@@ -1572,6 +1572,7 @@
   "passkey_signin.create_with_x": "获得 X 的赞助帐户",
   "passkey_signin.error.not_found": "找不到该用户名的个人资料。",
   "passkey_signin.error.cancelled": "密码登录已取消。",
+  "passkey_signin.error.unsupported": "此浏览器不支持通行密钥。请尝试其他浏览器，或使用钱包登录。",
   "passkey_signin.error.generic": "无法使用您的密码登录。请再试一次。",
   "messages.context_menu.download_media": "下载媒体",
   "common.back": "后退",

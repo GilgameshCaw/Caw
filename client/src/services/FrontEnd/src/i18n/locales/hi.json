@@ -1572,6 +1572,7 @@
   "passkey_signin.create_with_x": "एक्स के साथ एक प्रायोजित खाता प्राप्त करें",
   "passkey_signin.error.not_found": "उस उपयोगकर्ता नाम के लिए कोई प्रोफ़ाइल नहीं मिली.",
   "passkey_signin.error.cancelled": "पासकी साइन-इन रद्द कर दिया गया।",
+  "passkey_signin.error.unsupported": "इस ब्राउज़र में पासकी समर्थित नहीं हैं। कोई दूसरा ब्राउज़र आज़माएँ, या अपने वॉलेट से साइन इन करें।",
   "passkey_signin.error.generic": "आपकी पासकी से साइन इन नहीं किया जा सका. कृपया पुन: प्रयास करें।",
   "messages.context_menu.download_media": "मीडिया डाउनलोड करें",
   "common.back": "पीछे",

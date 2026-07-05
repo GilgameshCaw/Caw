@@ -1572,6 +1572,7 @@
   "passkey_signin.create_with_x": "Dapatkan akun bersponsor dengan X",
   "passkey_signin.error.not_found": "Tidak ada profil yang ditemukan untuk nama pengguna itu.",
   "passkey_signin.error.cancelled": "Proses masuk dengan kunci sandi dibatalkan.",
+  "passkey_signin.error.unsupported": "Passkey tidak didukung di browser ini. Coba browser lain, atau masuk dengan dompet Anda.",
   "passkey_signin.error.generic": "Tidak dapat masuk dengan kunci sandi Anda. Silakan coba lagi.",
   "messages.context_menu.download_media": "Unduh media",
   "common.back": "Kembali",

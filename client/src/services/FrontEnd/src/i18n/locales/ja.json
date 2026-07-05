@@ -1572,6 +1572,7 @@
   "passkey_signin.create_with_x": "X でスポンサー付きアカウントを取得する",
   "passkey_signin.error.not_found": "そのユーザー名のプロファイルが見つかりませんでした。",
   "passkey_signin.error.cancelled": "パスキーサインインがキャンセルされました。",
+  "passkey_signin.error.unsupported": "このブラウザではパスキーがサポートされていません。別のブラウザを試すか、ウォレットでサインインしてください。",
   "passkey_signin.error.generic": "パスキーを使用してサインインできませんでした。もう一度試してください。",
   "messages.context_menu.download_media": "メディアをダウンロードする",
   "common.back": "戻る",

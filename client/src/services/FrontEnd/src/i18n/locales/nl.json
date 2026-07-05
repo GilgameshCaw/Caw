@@ -1572,6 +1572,7 @@
   "passkey_signin.create_with_x": "Ontvang een gesponsord account bij X",
   "passkey_signin.error.not_found": "Er is geen profiel gevonden voor die gebruikersnaam.",
   "passkey_signin.error.cancelled": "Inloggen met wachtwoord is geannuleerd.",
+  "passkey_signin.error.unsupported": "Passkeys worden niet ondersteund in deze browser. Probeer een andere browser of log in met je wallet.",
   "passkey_signin.error.generic": "Kan niet inloggen met uw toegangscode. Probeer het opnieuw.",
   "messages.context_menu.download_media": "Media downloaden",
   "common.back": "Rug",

@@ -1572,6 +1572,7 @@
   "passkey_signin.create_with_x": "احصل على حساب مدعوم مع X",
   "passkey_signin.error.not_found": "لم يتم العثور على ملف تعريف لاسم المستخدم هذا.",
   "passkey_signin.error.cancelled": "تم إلغاء تسجيل الدخول بمفتاح المرور.",
+  "passkey_signin.error.unsupported": "مفاتيح المرور غير مدعومة في هذا المتصفح. جرّب متصفحًا آخر، أو سجّل الدخول باستخدام محفظتك.",
   "passkey_signin.error.generic": "تعذر تسجيل الدخول باستخدام مفتاح المرور الخاص بك. يرجى المحاولة مرة أخرى.",
   "messages.context_menu.download_media": "تحميل الوسائط",
   "common.back": "خلف",

@@ -1572,6 +1572,7 @@
   "passkey_signin.create_with_x": "Obtenez un compte sponsorisé avec X",
   "passkey_signin.error.not_found": "Aucun profil trouvé pour ce nom d'utilisateur.",
   "passkey_signin.error.cancelled": "La connexion par mot de passe a été annulée.",
+  "passkey_signin.error.unsupported": "Les clés d’accès ne sont pas prises en charge par ce navigateur. Essayez un autre navigateur ou connectez-vous avec votre portefeuille.",
   "passkey_signin.error.generic": "Impossible de se connecter avec votre mot de passe. Veuillez réessayer.",
   "messages.context_menu.download_media": "Télécharger des médias",
   "common.back": "Dos",

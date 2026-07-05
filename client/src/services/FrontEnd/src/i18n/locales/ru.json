@@ -1572,6 +1572,7 @@
   "passkey_signin.create_with_x": "Получите спонсируемый аккаунт с X",
   "passkey_signin.error.not_found": "Профиль для этого имени пользователя не найден.",
   "passkey_signin.error.cancelled": "Вход с использованием пароля был отменен.",
+  "passkey_signin.error.unsupported": "Ключи доступа не поддерживаются в этом браузере. Попробуйте другой браузер или войдите с помощью кошелька.",
   "passkey_signin.error.generic": "Не удалось войти в систему с помощью пароля. Пожалуйста, попробуйте еще раз.",
   "messages.context_menu.download_media": "Скачать медиа",
   "common.back": "Назад",

@@ -1572,6 +1572,7 @@
   "passkey_signin.create_with_x": "Отримайте спонсорований обліковий запис у X",
   "passkey_signin.error.not_found": "Для цього імені користувача не знайдено профілю.",
   "passkey_signin.error.cancelled": "Вхід за допомогою ключа скасовано.",
+  "passkey_signin.error.unsupported": "Ключі доступу не підтримуються в цьому браузері. Спробуйте інший браузер або увійдіть за допомогою гаманця.",
   "passkey_signin.error.generic": "Не вдалося ввійти за допомогою ключа доступу. Спробуйте ще раз.",
   "messages.context_menu.download_media": "Завантажити медіа",
   "common.back": "Назад",

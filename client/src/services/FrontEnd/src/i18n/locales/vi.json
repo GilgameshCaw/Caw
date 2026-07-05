@@ -1572,6 +1572,7 @@
   "passkey_signin.create_with_x": "Nhận tài khoản được tài trợ với X",
   "passkey_signin.error.not_found": "Không tìm thấy hồ sơ nào cho tên người dùng đó.",
   "passkey_signin.error.cancelled": "Đăng nhập bằng mật mã đã bị hủy.",
+  "passkey_signin.error.unsupported": "Trình duyệt này không hỗ trợ passkey. Hãy thử trình duyệt khác hoặc đăng nhập bằng ví của bạn.",
   "passkey_signin.error.generic": "Không thể đăng nhập bằng mật mã của bạn. Vui lòng thử lại.",
   "messages.context_menu.download_media": "Tải xuống phương tiện",
   "common.back": "Mặt sau",

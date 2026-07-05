@@ -1398,5 +1398,6 @@
   "view_offers.popb_relay_unavailable": "Relé no disponible temporalmente. Por favor inténtalo de nuevo.",
   "transfer_nft.popb_insufficient_fee": "CAW o ETH insuficientes para cubrir la tarifa de gas de relevo.",
   "sync_transfer.popb_insufficient_fee": "CAW o ETH insuficientes para cubrir la tarifa de gas de relevo.",
-  "client_auth.popb_insufficient_fee": "CAW o ETH insuficientes para cubrir la tarifa de gas de relevo."
+  "client_auth.popb_insufficient_fee": "CAW o ETH insuficientes para cubrir la tarifa de gas de relevo.",
+  "passkey_signin.error.unsupported": "Las llaves de acceso no son compatibles con este navegador. Prueba con otro navegador o inicia sesión con tu billetera."
 }

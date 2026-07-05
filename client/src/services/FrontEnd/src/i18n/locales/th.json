@@ -1572,6 +1572,7 @@
   "passkey_signin.create_with_x": "รับบัญชีผู้สนับสนุนกับ X",
   "passkey_signin.error.not_found": "ไม่พบโปรไฟล์สำหรับชื่อผู้ใช้นั้น",
   "passkey_signin.error.cancelled": "การลงชื่อเข้าใช้รหัสผ่านถูกยกเลิก",
+  "passkey_signin.error.unsupported": "เบราว์เซอร์นี้ไม่รองรับพาสคีย์ ลองใช้เบราว์เซอร์อื่น หรือลงชื่อเข้าใช้ด้วยกระเป๋าเงินของคุณ",
   "passkey_signin.error.generic": "ไม่สามารถลงชื่อเข้าใช้ด้วยรหัสผ่านของคุณ โปรดลองอีกครั้ง",
   "messages.context_menu.download_media": "ดาวน์โหลดสื่อ",
   "common.back": "กลับ",

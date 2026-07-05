@@ -1572,6 +1572,7 @@
   "passkey_signin.create_with_x": "Ottieni un account sponsorizzato con X",
   "passkey_signin.error.not_found": "Nessun profilo trovato per quel nome utente.",
   "passkey_signin.error.cancelled": "L'accesso tramite passkey è stato annullato.",
+  "passkey_signin.error.unsupported": "Le passkey non sono supportate in questo browser. Prova un browser diverso o accedi con il tuo wallet.",
   "passkey_signin.error.generic": "Impossibile accedere con la passkey. Per favore riprova.",
   "messages.context_menu.download_media": "Scarica contenuti multimediali",
   "common.back": "Indietro",

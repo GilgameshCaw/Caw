@@ -1572,6 +1572,7 @@
   "passkey_signin.create_with_x": "Obtenha uma conta patrocinada com X",
   "passkey_signin.error.not_found": "Nenhum perfil encontrado para esse nome de usuário.",
   "passkey_signin.error.cancelled": "O login com chave de acesso foi cancelado.",
+  "passkey_signin.error.unsupported": "As chaves de acesso não são compatíveis com este navegador. Tente outro navegador ou entre com a sua carteira.",
   "passkey_signin.error.generic": "Não foi possível fazer login com sua senha. Por favor, tente novamente.",
   "messages.context_menu.download_media": "Baixar mídia",
   "common.back": "Voltar",

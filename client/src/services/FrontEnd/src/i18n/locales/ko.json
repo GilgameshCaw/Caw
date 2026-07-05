@@ -1572,6 +1572,7 @@
   "passkey_signin.create_with_x": "X로 후원 계정 받기",
   "passkey_signin.error.not_found": "해당 사용자 이름에 대한 프로필을 찾을 수 없습니다.",
   "passkey_signin.error.cancelled": "패스키 로그인이 취소되었습니다.",
+  "passkey_signin.error.unsupported": "이 브라우저에서는 패스키가 지원되지 않습니다. 다른 브라우저를 사용하거나 지갑으로 로그인하세요.",
   "passkey_signin.error.generic": "암호키로 로그인할 수 없습니다. 다시 시도해 주세요.",
   "messages.context_menu.download_media": "미디어 다운로드",
   "common.back": "뒤쪽에",

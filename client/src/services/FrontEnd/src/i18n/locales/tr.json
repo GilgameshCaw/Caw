@@ -1572,6 +1572,7 @@
   "passkey_signin.create_with_x": "X ile sponsorlu bir hesap edinin",
   "passkey_signin.error.not_found": "Bu kullanıcı adına ait profil bulunamadı.",
   "passkey_signin.error.cancelled": "Geçiş anahtarıyla oturum açma iptal edildi.",
+  "passkey_signin.error.unsupported": "Bu tarayıcıda geçiş anahtarları desteklenmiyor. Farklı bir tarayıcı deneyin veya cüzdanınızla giriş yapın.",
   "passkey_signin.error.generic": "Şifre anahtarınızla oturum açılamadı. Lütfen tekrar deneyin.",
   "messages.context_menu.download_media": "Medyayı indirin",
   "common.back": "Geri",

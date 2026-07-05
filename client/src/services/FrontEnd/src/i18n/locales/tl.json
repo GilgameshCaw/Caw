@@ -1571,6 +1571,7 @@
   "passkey_signin.create_with_x": "Kumuha ng naka-sponsor na account sa X",
   "passkey_signin.error.not_found": "Walang nakitang profile para sa username na iyon.",
   "passkey_signin.error.cancelled": "Kinansela ang pag-sign in sa passkey.",
+  "passkey_signin.error.unsupported": "Hindi suportado ang mga passkey sa browser na ito. Sumubok ng ibang browser, o mag-sign in gamit ang iyong wallet.",
   "passkey_signin.error.generic": "Hindi makapag-sign in gamit ang iyong passkey. Pakisubukang muli.",
   "messages.context_menu.download_media": "Mag-download ng media",
   "common.back": "Bumalik",

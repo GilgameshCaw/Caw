@@ -1572,6 +1572,7 @@
   "passkey_signin.create_with_x": "Zdobądź konto sponsorowane w X",
   "passkey_signin.error.not_found": "Nie znaleziono profilu dla tej nazwy użytkownika.",
   "passkey_signin.error.cancelled": "Logowanie za pomocą hasła zostało anulowane.",
+  "passkey_signin.error.unsupported": "Klucze dostępu nie są obsługiwane w tej przeglądarce. Wypróbuj inną przeglądarkę lub zaloguj się za pomocą portfela.",
   "passkey_signin.error.generic": "Nie można zalogować się przy użyciu hasła. Spróbuj ponownie.",
   "messages.context_menu.download_media": "Pobierz multimedia",
   "common.back": "Z powrotem",

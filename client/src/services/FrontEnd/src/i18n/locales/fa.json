@@ -1571,6 +1571,7 @@
   "passkey_signin.create_with_x": "یک حساب حمایتی با X دریافت کنید",
   "passkey_signin.error.not_found": "هیچ نمایه ای برای آن نام کاربری یافت نشد.",
   "passkey_signin.error.cancelled": "ورود با رمز عبور لغو شد.",
+  "passkey_signin.error.unsupported": "پس‌کی‌ها در این مرورگر پشتیبانی نمی‌شوند. مرورگر دیگری را امتحان کنید یا با کیف پول خود وارد شوید.",
   "passkey_signin.error.generic": "با رمز عبور شما وارد سیستم نشدم. لطفا دوباره امتحان کنید.",
   "messages.context_menu.download_media": "دانلود رسانه",
   "common.back": "برگشت",
