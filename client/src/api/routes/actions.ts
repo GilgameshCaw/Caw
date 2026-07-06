@@ -293,18 +293,29 @@ async function checkSessionKeyOnChain(
     if (spendLimit > 0n) {
       const dbSpent = BigInt(row.spent || '0')
       if (dbSpent >= spendLimit) {
-        // Cache says over-limit — could be a false positive from the over-count.
-        // Verify against chain (TTL-cached) before rejecting.
+        // Cache says over-limit — but row.spent is a PER-MIRROR cache that
+        // over-counts (meters tip+recipients vs the contract's actionCost) AND
+        // only sees this mirror's own submissions, so it is NOT a trustworthy
+        // basis for REJECTION (see #259 / commit e6b2836c). Verify against the
+        // AUTHORITATIVE cross-mirror on-chain sessionSpent before rejecting.
         const onChainSpent = await getOnChainSessionSpent(owner, sessionAddr)
-        const spent = onChainSpent ?? dbSpent
-        if (onChainSpent !== null && onChainSpent !== dbSpent) {
+        if (onChainSpent !== null) {
           // Realign the cache to chain so the display + fast-path agree.
-          prisma.sessionKey.update({
-            where: { ownerAddress_sessionAddress: { ownerAddress: owner, sessionAddress: sessionAddr } },
-            data: { spent: onChainSpent.toString() },
-          }).catch(() => {})
+          if (onChainSpent !== dbSpent) {
+            prisma.sessionKey.update({
+              where: { ownerAddress_sessionAddress: { ownerAddress: owner, sessionAddress: sessionAddr } },
+              data: { spent: onChainSpent.toString() },
+            }).catch(() => {})
+          }
+          // Only reject on an AUTHORITATIVE on-chain value that's actually over.
+          if (onChainSpent >= spendLimit) {
+            return { valid: false, reason: 'Session key spend limit reached' }
+          }
         }
-        if (spent >= spendLimit) return { valid: false, reason: 'Session key spend limit reached' }
+        // onChainSpent === null (RPC failed): do NOT reject on the unreliable
+        // per-mirror cache — that false-blocks a user who has budget on chain.
+        // This is early rejection only; the validator/contract enforces the real
+        // limit at settlement, so letting it through here is safe.
       }
       // dbSpent < limit → definitely under the real limit; no on-chain read needed.
     }

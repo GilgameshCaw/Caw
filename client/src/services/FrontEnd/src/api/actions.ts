@@ -1467,6 +1467,13 @@ export function useSignAndSubmitAction() {
         // over-count case the user actually hit).
         const localSpent = BigInt(rawSession?.spent || '0')
         let spent = localSpent
+        // `rawSession.spent` OVER-counts and is a false basis for REJECTION, so
+        // only ever reject on an AUTHORITATIVE on-chain value. If the local
+        // counter (inflated) says we'd exceed, read chain; if the read fails we
+        // must NOT trip the renew modal on the stale local counter — that
+        // false-blocks a user with budget on chain. The server + validator still
+        // enforce the real limit, so proceeding on read-failure is safe.
+        let haveAuthoritative = false
         if (localSpent + totalCost > limit) {
           try {
             const onChainSpent = await readContract(wagmiConfig, {
@@ -1477,15 +1484,17 @@ export function useSignAndSubmitAction() {
               args: [tokenOwner as `0x${string}`, activeSession.address as `0x${string}`],
             }) as bigint
             spent = BigInt(onChainSpent)
+            haveAuthoritative = true
             // Realign the store so the display + future fast-checks agree with chain.
             const store = useSessionKeyStore.getState()
             const cur = tokenOwner ? store.getSessionForAddress(tokenOwner) : null
             if (cur) store.setSession({ ...cur, spent: spent.toString() })
           } catch (e) {
-            console.warn('[QuickSign] on-chain sessionSpent read FAILED — falling back to local counter (may over-count):', e)
+            console.warn('[QuickSign] on-chain sessionSpent read FAILED — proceeding without a false limit reject (validator still enforces):', e)
           }
         }
-        if (spent + totalCost > limit) {
+        // Reject only when we have an authoritative on-chain basis that's over.
+        if (haveAuthoritative && spent + totalCost > limit) {
           return new Promise((resolve, reject) => {
             useQuickSignRenewStore.getState().show(
               'spend_limit',
