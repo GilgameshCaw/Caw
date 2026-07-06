@@ -1065,7 +1065,42 @@ export function useSignAndSubmitAction() {
     const freshActiveToken = freshTokenDataStore.activeTokenId !== undefined
       ? Object.values(freshTokenDataStore.tokensByAddress).flat().find(t => t.tokenId === freshTokenDataStore.activeTokenId)
       : undefined
-    const onChainStake = (freshActiveToken?.stakedAmount ?? activeToken?.stakedAmount) ?? 0n
+    let onChainStake = (freshActiveToken?.stakedAmount ?? activeToken?.stakedAmount) ?? 0n
+
+    // The store's stakedAmount comes from an L2 getTokens read that can be
+    // in-flight, transiently failed (RPC flake), or unpopulated on a fresh load
+    // — in which case it reads 0 and would spuriously trip the insufficient-stake
+    // gate even though the user has CAW staked on-chain (the "0 CAW deposited"
+    // symptom). When the store says 0, do ONE authoritative direct read before
+    // blocking. Cheap: only fires on the 0-path (real zero-stake or a read gap),
+    // never on the common case where the store already has a nonzero balance.
+    if (onChainStake === 0n && activeTokenId != null) {
+      try {
+        const rows = await readContract(wagmiConfig, {
+          address: CAW_NAMES_L2_ADDRESS,
+          abi: cawProfileLedgerAbi,
+          chainId: baseSepolia.id,
+          functionName: 'getTokens',
+          args: [[activeTokenId]],
+        }) as ReadonlyArray<{ tokenId: bigint; cawBalance: bigint }>
+        const row = rows?.find(r => Number(r.tokenId) === activeTokenId)
+        if (row && row.cawBalance > 0n) {
+          onChainStake = row.cawBalance
+          // Backfill the store so the display + subsequent checks agree.
+          const owner = (freshActiveToken?.address ?? activeToken?.address)?.toLowerCase() as `0x${string}` | undefined
+          if (owner) {
+            const store = useTokenDataStore.getState()
+            const rowsForOwner = store.tokensByAddress[owner] || []
+            const patched = rowsForOwner.map(t =>
+              t.tokenId === activeTokenId ? { ...t, stakedAmount: onChainStake } : t)
+            if (patched.length > 0) store.setTokensForAddress(owner, patched)
+          }
+          console.log('[StakeCheck] store said 0 — authoritative getTokens read recovered staked', onChainStake.toString())
+        }
+      } catch (e) {
+        console.warn('[StakeCheck] fallback getTokens read failed; proceeding with store value:', e)
+      }
+    }
 
     // Read pending deposit amount from localStorage (optimistic, written by
     // New.tsx / Staking.tsx / PostMintOnboarding.tsx on L1 tx success) and
