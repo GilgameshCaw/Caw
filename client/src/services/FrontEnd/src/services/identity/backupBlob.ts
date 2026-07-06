@@ -42,6 +42,25 @@ export type BackupBlob = {
   pubkeyAddress: `0x${string}` // derived Ethereum address for verification
 }
 
+/**
+ * PRF-wrapped backup blob: the SAME 32-byte secp256k1 recovery key, encrypted
+ * under a key derived from the passkey's WebAuthn PRF secret (see prf.ts) instead
+ * of a vault password. Lets a Face ID prompt alone unlock DMs on a supported
+ * browser — no password typing. Stored ALONGSIDE the password BackupBlob, never
+ * replacing it (the password blob + downloadable file remain the portable
+ * fallbacks). No KDF params are recorded: the AES key comes from HKDF over the
+ * PRF secret with a fixed salt derived from the owner address (prf.ts), so the
+ * only per-blob material is the AES-GCM iv. The `kdf: 'prf'` tag disambiguates it
+ * from the password blob at the storage/read boundary.
+ */
+export type PrfBackupBlob = {
+  version: 2
+  kdf: 'prf'
+  iv: `0x${string}`           // 12 bytes, AES-GCM nonce, hex
+  ciphertext: `0x${string}`   // encrypted 32-byte private key, hex
+  pubkeyAddress: `0x${string}` // derived Ethereum address for verification
+}
+
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
 function bytesToHex(bytes: Uint8Array): `0x${string}` {
@@ -182,6 +201,77 @@ export async function decryptBackupBlob(
   }
 
   return privateKey
+}
+
+/**
+ * Encrypt the 32-byte recovery key under a PRE-DERIVED AES-GCM CryptoKey
+ * (from prf.ts prfSecretToAesKey). Produces a PrfBackupBlob. Fresh 12-byte IV
+ * per call. The AES key never leaves the browser and is not stored.
+ */
+export async function encryptBackupBlobWithKey(
+  privateKey: Uint8Array,
+  aesKey: CryptoKey,
+  address: `0x${string}`,
+): Promise<PrfBackupBlob> {
+  requireSecureCrypto('PRF backup blob encryption')
+  if (privateKey.length !== 32) {
+    throw new Error(`Private key must be 32 bytes; got ${privateKey.length}`)
+  }
+  const iv = crypto.getRandomValues(new Uint8Array(12))
+  const ciphertextBuffer = await crypto.subtle.encrypt(
+    { name: 'AES-GCM', iv },
+    aesKey,
+    privateKey as BufferSource,
+  )
+  return {
+    version: 2,
+    kdf: 'prf',
+    iv: bytesToHex(iv),
+    ciphertext: bytesToHex(new Uint8Array(ciphertextBuffer)),
+    pubkeyAddress: address,
+  }
+}
+
+/**
+ * Decrypt a PrfBackupBlob back to the raw 32-byte recovery key using a
+ * PRE-DERIVED AES-GCM CryptoKey (from the passkey's PRF secret). Throws on tag
+ * mismatch (wrong/absent PRF secret or corrupted blob) — callers fall back to
+ * the vault-password path.
+ */
+export async function decryptBackupBlobWithKey(
+  blob: PrfBackupBlob,
+  aesKey: CryptoKey,
+): Promise<Uint8Array> {
+  requireSecureCrypto('PRF backup blob decryption')
+  if (blob.version !== 2 || blob.kdf !== 'prf') {
+    throw new Error('decryptBackupBlobWithKey: not a PRF (version 2) blob')
+  }
+  const iv = hexToBytes(blob.iv)
+  const ciphertext = hexToBytes(blob.ciphertext)
+  let decrypted: ArrayBuffer
+  try {
+    decrypted = await crypto.subtle.decrypt({ name: 'AES-GCM', iv }, aesKey, ciphertext as BufferSource)
+  } catch {
+    throw new Error('PRF unwrap failed (wrong passkey secret or corrupted blob).')
+  }
+  const privateKey = new Uint8Array(decrypted)
+  if (privateKey.length !== 32) {
+    throw new Error(`Decrypted PRF payload is ${privateKey.length} bytes; expected 32.`)
+  }
+  return privateKey
+}
+
+/** Shape guard for a PrfBackupBlob loaded from the server/storage. */
+export function validatePrfBackupBlobShape(obj: unknown): obj is PrfBackupBlob {
+  if (!obj || typeof obj !== 'object') return false
+  const b = obj as Record<string, unknown>
+  return (
+    b.version === 2 &&
+    b.kdf === 'prf' &&
+    typeof b.iv === 'string' &&
+    typeof b.ciphertext === 'string' &&
+    typeof b.pubkeyAddress === 'string'
+  )
 }
 
 /**

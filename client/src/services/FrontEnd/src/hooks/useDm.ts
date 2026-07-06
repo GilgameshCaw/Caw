@@ -20,7 +20,10 @@ import {
   type SenderEnvelope,
 } from '~/services/DmCryptoService'
 import { useDmUnreadStore } from '~/store/dmUnreadStore'
-import { decryptBackupBlob, validateBackupBlobShape } from '~/services/identity/backupBlob'
+import { decryptBackupBlob, validateBackupBlobShape, decryptBackupBlobWithKey, encryptBackupBlobWithKey, validatePrfBackupBlobShape } from '~/services/identity/backupBlob'
+import { signWithPasskey } from '~/services/identity/passkey'
+import { getPasskeyCredential } from '~/constants/passkeyStorage'
+import { buildPrfSalt, prfSecretToAesKey, prfCapableForCredential, markPrfCapable } from '~/services/identity/prf'
 import { privateKeyToAccount } from 'viem/accounts'
 import { bytesToHex } from 'viem'
 import { useRecoveryContext } from '~/components/identity/RecoveryProvider'
@@ -400,11 +403,114 @@ export function useDmClient(tokenId?: number, username?: string) {
   // callback that shows a modal and resolves to the password string (or rejects
   // on cancel). This function is intentionally NOT a useCallback — it's a
   // helper called from within initializeClient's closure, which is already memoized.
+  // PRF fast-unlock: a single Face ID prompt both gates blob retrieval AND yields
+  // the WebAuthn PRF secret, which unwraps the PRF-wrapped recovery key — NO vault
+  // password. Returns the derived DM keypair on success, or null to fall through
+  // to the password path (PRF unsupported here, no PRF blob enrolled yet, user
+  // cancelled, or any failure). Also OPPORTUNISTICALLY ENROLLS a PRF blob when the
+  // authenticator supports PRF but none is stored yet — but only if we already
+  // hold the recovery key (we don't here), so enrollment is done by the caller
+  // after a successful password unlock. See _maybeEnrollPrf.
+  const _tryPrfRecovery = async (
+    ownerAddress: string,
+  ): Promise<{ privateKey: Uint8Array; publicKeyHex: string } | null> => {
+    if (!tokenId || !username) return null
+    const credentialId = getPasskeyCredential(tokenId)
+    if (!credentialId) return null
+    // Skip the ceremony if we've previously proven this credential lacks PRF.
+    if (prfCapableForCredential(credentialId) === false) return null
+
+    try {
+      const rpId = typeof window !== 'undefined' ? window.location.hostname : ''
+      const salt = await buildPrfSalt(ownerAddress)
+
+      // One challenge + one passkey ceremony that ALSO evaluates PRF.
+      const { challenge } = await apiFetch<{ challenge: `0x${string}` }>('/api/wallet/blob/challenge', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ address: ownerAddress }),
+      })
+      const result = await signWithPasskey({ credentialId, digest: challenge, rpId, prfSalt: salt })
+      markPrfCapable(credentialId, !!result.prfSecret)
+      if (!result.prfSecret) return null // authenticator didn't return a PRF secret
+
+      const { prfBlob } = await apiFetch<{ blob: string; prfBlob: string | null }>(
+        '/api/wallet/blob/retrieve', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ address: ownerAddress, challenge, signature: result.sig }),
+        })
+      if (!prfBlob) return null // no PRF blob enrolled yet → password path (which enrolls one)
+
+      const parsed = JSON.parse(prfBlob)
+      if (!validatePrfBackupBlobShape(parsed)) return null
+
+      const aesKey = await prfSecretToAesKey(result.prfSecret)
+      let recoveryKey: Uint8Array | null = null
+      try {
+        recoveryKey = await decryptBackupBlobWithKey(parsed, aesKey)
+        const acct = privateKeyToAccount(bytesToHex(recoveryKey))
+        const dmSignMessage = (msg: string): Promise<string> =>
+          acct.signMessage({ message: msg }).then(sig => sig as string)
+        return await deriveKeyPair(dmSignMessage, tokenId, username)
+      } finally {
+        recoveryKey?.fill(0)
+      }
+    } catch (e) {
+      console.warn('[DM][prf] PRF recovery failed; falling back to vault password:', e)
+      return null
+    }
+  }
+
+  // After a successful PASSWORD unlock, if this authenticator supports PRF but no
+  // PRF blob is stored yet, wrap the recovery key under the PRF secret and upload
+  // it so the NEXT cold load skips the password (opportunistic migration). One
+  // extra Face ID prompt; fire-and-forget and fully non-fatal.
+  const _maybeEnrollPrf = async (ownerAddress: string, recoveryKey: Uint8Array): Promise<void> => {
+    if (!tokenId) return
+    const credentialId = getPasskeyCredential(tokenId)
+    if (!credentialId) return
+    if (prfCapableForCredential(credentialId) === false) return
+    try {
+      const rpId = typeof window !== 'undefined' ? window.location.hostname : ''
+      const salt = await buildPrfSalt(ownerAddress)
+      // Use a REAL server challenge as the WebAuthn challenge so the resulting
+      // assertion also authorizes the passkey-gated /blob/prf WRITE (which stops
+      // an attacker overwriting someone else's prfBlob). The same ceremony yields
+      // the PRF secret via the prfSalt extension — one Face ID, both jobs.
+      const { challenge } = await apiFetch<{ challenge: `0x${string}` }>('/api/wallet/blob/challenge', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ address: ownerAddress }),
+      })
+      const result = await signWithPasskey({ credentialId, digest: challenge, rpId, prfSalt: salt })
+      markPrfCapable(credentialId, !!result.prfSecret)
+      if (!result.prfSecret) return
+      const aesKey = await prfSecretToAesKey(result.prfSecret)
+      const addr = ownerAddress as `0x${string}`
+      const prfBlob = await encryptBackupBlobWithKey(recoveryKey, aesKey, addr)
+      await apiFetch('/api/wallet/blob/prf', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          address: ownerAddress,
+          prfBlob: JSON.stringify(prfBlob),
+          challenge,
+          signature: result.sig,
+        }),
+      })
+      console.log('[DM][prf] enrolled PRF blob — future cold loads skip the password')
+    } catch (e) {
+      console.warn('[DM][prf] PRF enrollment skipped (non-fatal):', e)
+    }
+  }
+
   const _deriveFromVaultPassword = async (
     promptVaultPassword: (opts?: { error?: string }) => Promise<string>,
     ownerAddress: string,
   ): Promise<{ privateKey: Uint8Array; publicKeyHex: string; rawSignature?: string; sigMessage?: string } | null> => {
     if (!tokenId || !username) return null
+
+    // Step 0: Try the PRF fast-unlock FIRST (one Face ID, no password). If it
+    // succeeds we're done; otherwise fall through to the vault-password flow.
+    const prfResult = await _tryPrfRecovery(ownerAddress)
+    if (prfResult) return prfResult
 
     // Step 1: Prompt vault password (shows modal before the passkey ceremony
     // so the user understands what's about to happen). On a WRONG password we
@@ -492,7 +598,12 @@ export function useDmClient(tokenId?: number, username?: string) {
       const acct = privateKeyToAccount(bytesToHex(recoveryKey))
       const dmSignMessage = (msg: string): Promise<string> =>
         acct.signMessage({ message: msg }).then(sig => sig as string)
-      return await deriveKeyPair(dmSignMessage, tokenId, username)
+      const derived = await deriveKeyPair(dmSignMessage, tokenId, username)
+      // Opportunistic PRF migration: now that we hold the recovery key (via the
+      // password), enrol a PRF blob so the NEXT cold load needs no password.
+      // Await it (one extra Face ID) BEFORE zeroing recoveryKey; non-fatal.
+      await _maybeEnrollPrf(ownerAddress, recoveryKey)
+      return derived
     } finally {
       recoveryKey.fill(0)
     }

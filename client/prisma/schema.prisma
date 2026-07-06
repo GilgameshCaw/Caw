@@ -1331,7 +1331,8 @@ enum OfferStatus {
 /// the email/download copy. See project_root_signer_passkey_wallet.
 model WalletBlob {
   address   String   @id // lowercase owner SmartEOA address
-  blob      String // the BackupBlob JSON envelope (ciphertext only)
+  blob      String // the password-encrypted BackupBlob JSON envelope (ciphertext only)
+  prfBlob   String? // optional PRF-wrapped PrfBackupBlob JSON (ciphertext only) — lets a passkey biometric unlock DMs with no vault password. Same recovery key, wrapped under the WebAuthn PRF secret. Server cannot decrypt either blob.
   email     String? // optional: address the durable backstop was emailed to
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt

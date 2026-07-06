@@ -150,6 +150,93 @@ router.post('/blob', blobWriteLimit, async (req, res) => {
 })
 
 /**
+ * POST /api/wallet/blob/prf
+ * Store (upsert) the PRF-wrapped backup blob for an owner address. Same trust
+ * model as /blob: ciphertext keyed by the owner's own address, no auth (storing
+ * grants no access — the server cannot decrypt it, and retrieval is
+ * passkey-gated). Requires the password blob row to already exist (the PRF blob
+ * is a fast-unlock ADDITION, never the sole copy). Body: { address, prfBlob }.
+ */
+router.post('/blob/prf', blobWriteLimit, async (req, res) => {
+  try {
+    const { address, prfBlob, challenge, signature } = req.body || {}
+    if (typeof address !== 'string' || !ADDR_RE.test(address)) {
+      res.status(400).json({ error: 'Invalid address' })
+      return
+    }
+    if (typeof prfBlob !== 'string' || prfBlob.length < 2 || prfBlob.length > 100_000) {
+      res.status(400).json({ error: 'Invalid prfBlob' })
+      return
+    }
+    // Passkey-gate the WRITE (not just the read): otherwise anyone could
+    // overwrite a victim's prfBlob with junk to permanently DoS their
+    // no-password fast-unlock (forcing password-only forever). The FE already
+    // runs a passkey ceremony to obtain the PRF secret at enrollment, so it has
+    // an assertion in hand — require it here, same shape as /blob/retrieve.
+    if (typeof challenge !== 'string' || !HEX32_RE.test(challenge)) {
+      res.status(400).json({ error: 'Invalid challenge' })
+      return
+    }
+    if (typeof signature !== 'string' || !/^0x[0-9a-fA-F]+$/.test(signature)) {
+      res.status(400).json({ error: 'Invalid signature' })
+      return
+    }
+    // Sanity: must be a PRF envelope (version 2, kdf 'prf', ciphertext present).
+    try {
+      const parsed = JSON.parse(prfBlob)
+      if (!parsed || parsed.version !== 2 || parsed.kdf !== 'prf' || typeof parsed.ciphertext !== 'string') {
+        res.status(400).json({ error: 'prfBlob is not a valid PRF backup envelope' })
+        return
+      }
+    } catch {
+      res.status(400).json({ error: 'prfBlob must be JSON' })
+      return
+    }
+
+    const addr = address.toLowerCase()
+    const user = await prisma.user.findFirst({
+      where: { address: { equals: address, mode: 'insensitive' } },
+      select: { tokenId: true, address: true },
+    })
+    if (!user) {
+      res.status(404).json({ error: 'No profile for that address' })
+      return
+    }
+    // Consume the challenge atomically (one-shot) before the on-chain verify.
+    const fresh = await consumePasskeyChallenge(user.tokenId, challenge)
+    if (!fresh) {
+      res.status(400).json({ error: 'Challenge expired or not found. Request a new one.' })
+      return
+    }
+    let valid: boolean
+    try {
+      valid = await verifyPasskeyAssertionOnChain(user.address, challenge as `0x${string}`, signature as `0x${string}`)
+    } catch (e) {
+      console.error('[wallet-blob] prf-write on-chain verify failed (infra):', e)
+      res.status(503).json({ error: 'Could not verify passkey right now. Please try again.' })
+      return
+    }
+    if (!valid) {
+      res.status(401).json({ error: 'Passkey signature did not validate for this account.' })
+      return
+    }
+
+    // Only attach to an existing row — the password blob must already be the
+    // durable copy. update() throws if the row is absent; treat that as 404.
+    try {
+      await prisma.walletBlob.update({ where: { address: addr }, data: { prfBlob } })
+    } catch {
+      res.status(404).json({ error: 'No backup stored for this account yet.' })
+      return
+    }
+    res.json({ ok: true })
+  } catch (error) {
+    console.error('POST /api/wallet/blob/prf error:', error)
+    res.status(500).json({ error: 'Failed to store PRF backup' })
+  }
+})
+
+/**
  * POST /api/wallet/blob/challenge
  * Issue a server-generated challenge for passkey-gated blob retrieval. The blob
  * is keyed by address, but the passkey is enrolled at the owner SmartEOA — so
@@ -237,7 +324,10 @@ router.post('/blob/retrieve', blobReadLimit, async (req, res) => {
       res.status(404).json({ error: 'No backup stored for this account.' })
       return
     }
-    res.json({ blob: row.blob })
+    // Return the PRF-wrapped blob too when present. Both are ciphertext keyed by
+    // address (the server can decrypt neither); the FE prefers the PRF blob for a
+    // no-password Face ID unlock and falls back to the password blob otherwise.
+    res.json({ blob: row.blob, prfBlob: row.prfBlob ?? null })
   } catch (error) {
     console.error('POST /api/wallet/blob/retrieve error:', error)
     res.status(500).json({ error: 'Failed to retrieve backup' })
