@@ -33,7 +33,7 @@ import UserHoverCard from './UserHoverCard';
 import Pencil from '~/assets/images/pencil.svg?react';
 import Bookmark from '~/assets/images/bookmark.svg?react';
 import Share from '~/assets/images/share.svg?react';
-import { useTokenDataStore } from '~/store/tokenDataStore'
+import { useTokenDataStore, useActiveToken } from '~/store/tokenDataStore'
 import { useAuthStore } from '~/store/authStore'
 import { useWalletPopulation } from '~/hooks/useWalletPopulation'
 import { translateTextDetailed, detectScript } from '~/utils/translate'
@@ -123,10 +123,16 @@ const FeedItem: React.FC<{ item: CawItem; isMainPost?: boolean; isReply?: boolea
   })
   const hasAuthedProfile = useAuthStore(s => s.authorizedTokenIds.length > 0)
   const isCaptive = !hasUsername && !hasAuthedProfile
-  const activeToken = useTokenDataStore(s => {
-    const tokens = Object.values(s.tokensByAddress).flat()
-    return tokens.find(t => t.tokenId === s.activeTokenId) || tokens[0]
-  })
+  // Use the CANONICAL active-token resolver, not a crude tokens[0] fallback.
+  // The old `find(activeTokenId) || tokens[0]` picked the FIRST token across ALL
+  // addresses when the global activeTokenId was unset — which selected the wrong
+  // account (e.g. gilgatest8 #1) while the profile chooser + signing layer used
+  // useActiveToken() and resolved a DIFFERENT account (gilgamesh #3). That made
+  // `senderId` diverge from the session owner → the action was built for #1 but
+  // signed with #3's Quick Sign key → server "Session key not registered for
+  // owner" (surfaced as a bogus expiry). useActiveToken() is named-filtered,
+  // ghost-safe, and shared with the signer, so both agree on the active token.
+  const activeToken = useActiveToken()
   // Active user's by-token data, used by the pin menu to read
   // pinnedCawCount for the 3/3 cap UX. React Query coalesces all
   // FeedItem instances onto a single request per active tokenId.
@@ -304,6 +310,11 @@ const FeedItem: React.FC<{ item: CawItem; isMainPost?: boolean; isReply?: boolea
     const actionData = pendingLikeAction;
     setPendingLikeAction(null);
 
+    // Use the canonical resolved active token, NOT the bare global activeTokenId
+    // (which can be stale / point at the wrong account → action built for the
+    // wrong senderId while signed by another account's session key).
+    const effectiveTokenId = activeToken?.tokenId ?? activeTokenId
+
     // Add optimistic like if liking
     let tempLikeId: string | undefined;
     const addOptimisticLike = useOptimisticLikesStore.getState().addOptimisticLike;
@@ -311,7 +322,7 @@ const FeedItem: React.FC<{ item: CawItem; isMainPost?: boolean; isReply?: boolea
 
     if (actionData.actionType === 'like') {
       tempLikeId = addOptimisticLike({
-        userId: activeTokenId,
+        userId: effectiveTokenId,
         cawId: useItem.id
       });
     }
@@ -321,7 +332,7 @@ const FeedItem: React.FC<{ item: CawItem; isMainPost?: boolean; isReply?: boolea
     // Submit the action
     signAndSubmit({
       actionType: actionData.actionType,
-      senderId: activeTokenId,
+      senderId: effectiveTokenId,
       receiverId: actionData.receiverId,
       receiverCawonce: actionData.receiverCawonce,
     }).then((response) => {
@@ -444,7 +455,7 @@ const FeedItem: React.FC<{ item: CawItem; isMainPost?: boolean; isReply?: boolea
     }
 
     // If no active token selected, return
-    const effectiveTokenId = activeTokenId || activeToken?.tokenId
+    const effectiveTokenId = activeToken?.tokenId ?? activeTokenId
     if (!effectiveTokenId || busyLike || likePending) {
       return
     }
@@ -504,7 +515,7 @@ const FeedItem: React.FC<{ item: CawItem; isMainPost?: boolean; isReply?: boolea
   // action will go through and surface as a confirmed like shortly.
   const handleCancelLike = async () => {
     if (!pendingLikeTxQueueId) return
-    const effectiveTokenId = activeTokenId || activeToken?.tokenId
+    const effectiveTokenId = activeToken?.tokenId ?? activeTokenId
     setBusyLike(true)
     // Snapshot the spend amount before we drop it so we can restore on a
     // 409 (validator already picked it up). Optimistically tear down the
@@ -563,7 +574,7 @@ const FeedItem: React.FC<{ item: CawItem; isMainPost?: boolean; isReply?: boolea
     event.preventDefault()
     event.stopPropagation()
 
-    const effectiveTokenId = activeTokenId || activeToken?.tokenId
+    const effectiveTokenId = activeToken?.tokenId ?? activeTokenId
     console.log('[FeedItem] Retry clicked:', { effectiveTokenId, isRetrying, content: useItem.content?.substring(0, 50) })
 
     if (!effectiveTokenId || !activeToken || isRetrying) {
@@ -655,7 +666,7 @@ const FeedItem: React.FC<{ item: CawItem; isMainPost?: boolean; isReply?: boolea
     }
 
     // If no active token selected, return
-    const effectiveTokenId = activeTokenId || activeToken?.tokenId
+    const effectiveTokenId = activeToken?.tokenId ?? activeTokenId
     if (!effectiveTokenId || busyRecaw) {
       return
     }
@@ -763,7 +774,7 @@ const FeedItem: React.FC<{ item: CawItem; isMainPost?: boolean; isReply?: boolea
     // pin rows, inflating the user's pinnedCawCount past the cap (e.g.
     // 4/3). One in-flight pin/unpin at a time.
     if (pinInFlightRef.current) return
-    const effectiveTokenId = activeTokenId || activeToken?.tokenId
+    const effectiveTokenId = activeToken?.tokenId ?? activeTokenId
     if (!effectiveTokenId) return
     const cawId = parseInt(useItem.id)
     const willBePinned = target === 'pin'
@@ -1012,7 +1023,7 @@ const FeedItem: React.FC<{ item: CawItem; isMainPost?: boolean; isReply?: boolea
           setShowMuteConfirmModal(true)
         } else {
           // Call API to mute thread (server-side for notifications)
-          const effectiveTokenId = activeTokenId || activeToken?.tokenId
+          const effectiveTokenId = activeToken?.tokenId ?? activeTokenId
           if (effectiveTokenId) {
             apiFetch(`/api/notifications/mute-thread/${useItem.id}`, {
               method: 'POST',
@@ -1041,7 +1052,7 @@ const FeedItem: React.FC<{ item: CawItem; isMainPost?: boolean; isReply?: boolea
         }
         break
       case 'mute-account': {
-        const effectiveTokenId = activeTokenId || activeToken?.tokenId
+        const effectiveTokenId = activeToken?.tokenId ?? activeTokenId
         if (shouldShowMuteConfirmModal()) {
           setMuteConfirmAction('mute-account')
           setShowMuteConfirmModal(true)
@@ -1732,7 +1743,7 @@ const FeedItem: React.FC<{ item: CawItem; isMainPost?: boolean; isReply?: boolea
                         }`}
                         onClick={async e => {
                           e.preventDefault(); e.stopPropagation(); setShowRecawMenu(false)
-                          const effectiveTokenId = activeTokenId || activeToken?.tokenId
+                          const effectiveTokenId = activeToken?.tokenId ?? activeTokenId
                           if (!effectiveTokenId) return
 
                           // Fast-path: the recaw is still pending (validator
@@ -2340,7 +2351,7 @@ const FeedItem: React.FC<{ item: CawItem; isMainPost?: boolean; isReply?: boolea
             }
             case 'mute-thread': {
               // Call API to mute thread (server-side for notifications)
-              const effectiveTokenId = activeTokenId || activeToken?.tokenId
+              const effectiveTokenId = activeToken?.tokenId ?? activeTokenId
               if (effectiveTokenId) {
                 apiFetch(`/api/notifications/mute-thread/${useItem.id}`, {
                   method: 'POST',
@@ -2417,7 +2428,7 @@ const FeedItem: React.FC<{ item: CawItem; isMainPost?: boolean; isReply?: boolea
         confirmText={t('post.delete_confirm.confirm')}
         destructive
         onConfirm={async () => {
-          const effectiveTokenId = activeTokenId || activeToken?.tokenId
+          const effectiveTokenId = activeToken?.tokenId ?? activeTokenId
           if (!effectiveTokenId || !useItem.cawonce) return
           // Optimistically hide before submitting so the deleter sees the
           // post disappear immediately. The on-chain hide takes 5–60s to
