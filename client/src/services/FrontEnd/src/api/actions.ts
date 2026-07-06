@@ -1950,7 +1950,25 @@ export function useSignAndSubmitAction() {
         })
       }
 
-      // Detect session key spend limit or expiry errors from the contract/validator
+      // Session-key OWNER MISMATCH is NOT an expiry — do NOT route it to the
+      // renew modal. "session key not registered" / "not authorized for owner"
+      // means the action was built for one account but signed by another
+      // account's session key (active-token vs session-owner cross-wiring — e.g.
+      // a like on account B signed by account A's Quick Sign key). Re-signing the
+      // same session fails identically, so the expired-renew loop is a dead end.
+      // Surface a truthful, non-looping error; the real fix is selecting the
+      // right profile (session belongs to a different owner).
+      if (errMsg.includes('not registered') || errMsg.includes('not authorized for owner')) {
+        throw new Error(
+          'This action was signed by a different profile\'s Quick Sign key. ' +
+          'Switch to the profile that owns this action (or re-enable Quick Sign ' +
+          'for it) and try again.',
+        )
+      }
+
+      // Detect session key spend limit or GENUINE expiry errors from the
+      // contract/validator. Note: the owner-mismatch case above is handled first
+      // so a bare "session" substring can't misfire it into the expired modal.
       if (canUseSession && (errMsg.includes('spend limit') || errMsg.includes('session') || errMsg.includes('expired'))) {
         const reason = errMsg.includes('spend') ? 'spend_limit' : 'expired'
         return new Promise((resolve, reject) => {
