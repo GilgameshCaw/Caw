@@ -46,6 +46,14 @@ export type PasskeyPubkey = {
   pubkeyY: `0x${string}`
   /** base64url credential ID for re-using the credential on get() */
   credentialId: string
+  /**
+   * Whether this credential reported PRF support at creation
+   * (`getClientExtensionResults().prf.enabled === true`). This is a HINT only:
+   * some authenticators report `enabled` only at get() time, so a false here
+   * doesn't prove PRF is unavailable — the real test is whether a later get()
+   * with a salt returns `prfSecret`. Persist it to pre-select the unlock path.
+   */
+  prfEnabled: boolean
 }
 
 export type PasskeySignResult = {
@@ -55,6 +63,57 @@ export type PasskeySignResult = {
   clientDataJSON: string
   r: `0x${string}`
   s: `0x${string}`
+  /**
+   * WebAuthn PRF extension output (32 bytes), present ONLY when a `prfSalt`
+   * was passed AND the authenticator+browser support the `prf` extension.
+   * This is a hardware-derived secret unique to (credential, salt); we use it
+   * to wrap/unwrap the DM recovery key so a Face ID prompt can unlock DMs
+   * with no vault password. `undefined` = PRF unsupported here → caller falls
+   * back to the password path. NEVER send this to the server.
+   */
+  prfSecret?: Uint8Array
+}
+
+// ---------------------------------------------------------------------------
+// PRF extension helpers
+// ---------------------------------------------------------------------------
+
+/**
+ * Build the `extensions` fragment for a get() that requests the PRF secret.
+ * Returns `{}` when no salt is given so callers can spread it unconditionally
+ * (`...prfGetExtension(opts.prfSalt)`) without changing signature-only behavior.
+ * The salt must be a stable per-user value (see prf.ts buildPrfSalt) so the
+ * derived secret is reproducible across sessions/devices.
+ */
+function prfGetExtension(
+  prfSalt?: Uint8Array,
+): { extensions?: AuthenticationExtensionsClientInputs } {
+  if (!prfSalt) return {}
+  return {
+    extensions: {
+      prf: { eval: { first: prfSalt as BufferSource } },
+    } as AuthenticationExtensionsClientInputs,
+  }
+}
+
+/**
+ * Pull the 32-byte PRF secret out of an assertion's client-extension results,
+ * or `undefined` if the authenticator/browser didn't return one (no PRF
+ * support, or no salt was requested). Never throws — a missing result means
+ * "fall back to the password path".
+ */
+function extractPrfSecret(assertion: PublicKeyCredential): Uint8Array | undefined {
+  try {
+    const ext = assertion.getClientExtensionResults() as {
+      prf?: { results?: { first?: ArrayBuffer } }
+    }
+    const first = ext?.prf?.results?.first
+    if (!first) return undefined
+    const bytes = new Uint8Array(first)
+    return bytes.length === 32 ? bytes : undefined
+  } catch {
+    return undefined
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -106,6 +165,12 @@ export async function enrollPasskey(opts: {
         userVerification: 'required',
       },
       attestation: 'none',
+      // Request the PRF extension at creation so a supporting authenticator
+      // enables it for this credential. We only PROBE eligibility here
+      // (`getClientExtensionResults().prf?.enabled`) — the actual 32-byte
+      // secret is only readable during get(), not create(). Harmless on
+      // authenticators that don't support prf (ignored).
+      extensions: { prf: {} } as AuthenticationExtensionsClientInputs,
     },
   })
 
@@ -137,10 +202,19 @@ export async function enrollPasskey(opts: {
 
   const credentialId = bufferToBase64url(pkCred.rawId)
 
+  // PRF eligibility hint (see PasskeyPubkey.prfEnabled). getClientExtensionResults
+  // may throw on ancient browsers; treat any failure as "unknown → false".
+  let prfEnabled = false
+  try {
+    const ext = pkCred.getClientExtensionResults() as { prf?: { enabled?: boolean } }
+    prfEnabled = ext?.prf?.enabled === true
+  } catch { /* not supported → false */ }
+
   return {
     pubkeyX: ('0x' + bytesToHex(x)) as `0x${string}`,
     pubkeyY: ('0x' + bytesToHex(y)) as `0x${string}`,
     credentialId,
+    prfEnabled,
   }
 }
 
@@ -163,6 +237,13 @@ export async function signWithPasskey(opts: {
   /** 32-byte EIP-712 digest as 0x-prefixed hex */
   digest: `0x${string}`
   rpId: string
+  /**
+   * Optional 32-byte PRF salt. When present, request the WebAuthn `prf`
+   * extension in this SAME assertion so a single Face ID prompt yields both
+   * the signature AND a hardware-derived secret (returned as
+   * `PasskeySignResult.prfSecret`). Omit for a normal signature-only ceremony.
+   */
+  prfSalt?: Uint8Array
 }): Promise<PasskeySignResult> {
   assertWebAuthnAvailable()
 
@@ -182,6 +263,7 @@ export async function signWithPasskey(opts: {
         { type: 'public-key', id: credIdBytes },
       ],
       userVerification: 'required',
+      ...prfGetExtension(opts.prfSalt),
     },
   })
 
@@ -191,6 +273,7 @@ export async function signWithPasskey(opts: {
 
   const pkAssertion = assertion as PublicKeyCredential
   const response = pkAssertion.response as AuthenticatorAssertionResponse
+  const prfSecret = extractPrfSecret(pkAssertion)
 
   const authData = new Uint8Array(response.authenticatorData)
   const clientDataJSONBytes = new Uint8Array(response.clientDataJSON)
@@ -228,6 +311,7 @@ export async function signWithPasskey(opts: {
     clientDataJSON: clientDataJSONStr,
     r: rHex,
     s: sHex,
+    prfSecret,
   }
 }
 
@@ -242,6 +326,8 @@ export async function signWithPasskey(opts: {
 export async function signWithPasskeyDiscoverable(opts: {
   digest: `0x${string}`
   rpId: string
+  /** See signWithPasskey.prfSalt — request the PRF secret in this same get(). */
+  prfSalt?: Uint8Array
 }): Promise<PasskeySignResult & { credentialId: string }> {
   assertWebAuthnAvailable()
   const digestBytes = hexToBytes(opts.digest.slice(2) as string)
@@ -257,6 +343,7 @@ export async function signWithPasskeyDiscoverable(opts: {
       // rpId. This is what makes "sign in on a new device" work with no local
       // credentialId.
       userVerification: 'required',
+      ...prfGetExtension(opts.prfSalt),
     },
   })
   if (!assertion || assertion.type !== 'public-key') {
@@ -265,6 +352,7 @@ export async function signWithPasskeyDiscoverable(opts: {
 
   const pkAssertion = assertion as PublicKeyCredential
   const response = pkAssertion.response as AuthenticatorAssertionResponse
+  const prfSecret = extractPrfSecret(pkAssertion)
   const authData = new Uint8Array(response.authenticatorData)
   const clientDataJSONBytes = new Uint8Array(response.clientDataJSON)
   const clientDataJSONStr = new TextDecoder().decode(clientDataJSONBytes)
@@ -284,6 +372,7 @@ export async function signWithPasskeyDiscoverable(opts: {
     clientDataJSON: clientDataJSONStr,
     r: rHex,
     s: sHex,
+    prfSecret,
     credentialId: bufferToBase64url(pkAssertion.rawId),
   }
 }

@@ -196,6 +196,21 @@ if (typeof window !== 'undefined' && localStorage.getItem('cawRpcDebug') === '1'
   console.log('[CAW RPC Debug] enabled — top callers visible at window.__cawRpcCounts')
 }
 
+// Phase-1 PRF viability probe (see services/identity/prf.ts). Always exposed so
+// it can be run on test2 (a production build) from the console:
+//   await __cawPrfProbe(<tokenId>, '<ownerAddress>')
+// Triggers one Face ID prompt and reports whether this browser+authenticator
+// returns a 32-byte WebAuthn PRF secret. Reads nothing sensitive; the probe
+// discards the secret. Lazy-imported so it adds nothing to the initial bundle.
+if (typeof window !== 'undefined') {
+  ;(window as any).__cawPrfProbe = async (tokenId: number | string, ownerAddress: string) => {
+    const { probePrf } = await import('./services/identity/prf')
+    const r = await probePrf(tokenId, ownerAddress)
+    console.log('[CAW PRF Probe]', r)
+    return r
+  }
+}
+
 createRoot(document.getElementById("root")!).render(
   <StrictMode>
     <Sentry.ErrorBoundary fallback={<ErrorFallback />}>
