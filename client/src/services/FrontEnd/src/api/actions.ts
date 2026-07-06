@@ -1378,9 +1378,18 @@ export function useSignAndSubmitAction() {
       actionType: params.actionType,
       actionCode,
       population,
+      activeTokenId,
+      // The token the action is being BUILT for (its owner) vs the session key's
+      // OWN owner + address. If these diverge, the action is targeting one
+      // account while signed by another account's Quick Sign key — the
+      // "session key not registered / not authorized for owner" reject that gets
+      // mislabeled as expiry. Print both so the mismatch is caught at sign time.
       tokenOwner: tokenOwner ?? 'none',
       sessionFound: !!activeSession,
-      sessionOwner: activeSession ? '(matched tokenOwner)' : 'n/a',
+      sessionKeyAddress: activeSession?.address ?? 'n/a',
+      rawSessionOwner: rawSession?.ownerAddress ?? 'n/a',
+      ownerMismatch: !!(rawSession?.ownerAddress && tokenOwner &&
+        rawSession.ownerAddress.toLowerCase() !== tokenOwner.toLowerCase()),
       enabledFlag: sessionStore.enabled,
       scopeBitmap: activeSession?.scopeBitmap ?? null,
       scopeOk: activeSession ? (activeSession.scopeBitmap & (1 << actionCode)) !== 0 : false,
