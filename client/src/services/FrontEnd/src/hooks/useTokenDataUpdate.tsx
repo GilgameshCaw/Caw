@@ -186,19 +186,21 @@ export default function useTokenDataUpdate() {
         ? existingToken.cawonce
         : onChainCawonce;
 
-      const nextStaked = l2Token?.cawBalance ?? 0n
-      // [POPB-DBG][zero-caw] Disambiguate WHY staked shows 0: L2 row missing (relay
-      // in flight, fell back to 0) vs L2 genuinely reports 0 vs real value — and flag
-      // when we're about to OVERWRITE a previously-nonzero staked with 0 (the "correct
-      // then flips to zero" symptom). Remove once the post-mint deposit display is solid.
+      // stakedAmount comes from the L2 lens (l2Token.cawBalance). CRITICAL: when
+      // the L2 row is MISSING from this read (relay-in-flight, an RPC gap, or a
+      // partial multicall), do NOT clobber a previously-known nonzero staked with
+      // 0 — that spuriously trips the "Insufficient CAW Deposited" gate (user has
+      // real CAW staked + active Quick Sign, yet the like is blocked because the
+      // store momentarily read 0). Only write 0 when L2 GENUINELY returns a row
+      // reporting cawBalance === 0. Missing row → preserve the prior value.
       const prevStaked = existingToken?.stakedAmount
-      if (nextStaked === 0n) {
-        console.log('[POPB-DBG][zero-caw] viewed-tokens write staked=0', {
+      const nextStaked = l2Token
+        ? l2Token.cawBalance
+        : (prevStaked ?? 0n)
+      if (!l2Token && prevStaked != null && prevStaked > 0n) {
+        console.log('[POPB-DBG][zero-caw] viewed-tokens L2 row missing — PRESERVING prior staked', {
           tokenId: Number(l1Token.tokenId),
-          l2RowFound: !!l2Token,
-          reason: l2Token ? 'L2-reports-0' : 'L2-row-missing(relay-in-flight)',
-          prevStaked: prevStaked != null ? prevStaked.toString() : 'none',
-          overwritingNonZero: prevStaked != null && prevStaked > 0n,
+          prevStaked: prevStaked.toString(),
         })
       }
       return {
@@ -240,7 +242,8 @@ export default function useTokenDataUpdate() {
         ownerBalance: l1Token.ownerBalance,
         address: connectedAddress!,
         owner: l1Token.owner!,
-        stakedAmount: l2Token?.cawBalance ?? 0n,
+        // Preserve prior staked when the L2 row is missing (see viewed branch).
+        stakedAmount: l2Token ? l2Token.cawBalance : (existingToken?.stakedAmount ?? 0n),
         cawonce,
       }
     });
@@ -363,7 +366,8 @@ export default function useTokenDataUpdate() {
           ownerBalance: l1Token.ownerBalance,
           address: addr,
           owner: l1Token.owner!,
-          stakedAmount: l2Token?.cawBalance ?? 0n,
+          // Preserve prior staked when the L2 row is missing (see viewed branch).
+          stakedAmount: l2Token ? l2Token.cawBalance : (existingToken?.stakedAmount ?? 0n),
           cawonce,
         }
       })
