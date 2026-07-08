@@ -17,7 +17,14 @@ import { cawProfileLedgerAbi } from '~/../../../abi/generated'
 import { wagmiConfig } from '~/config/wagmiConfig'
 import { useRecoveryContext } from '~/components/identity/RecoveryProvider'
 import { signAuthorizationTuple } from '~/services/identity/eip7702'
-import { enrollPasskey } from '~/services/identity/passkey'
+import { enrollPasskey, signWithPasskey, hexToBytes as passkeyHexToBytes } from '~/services/identity/passkey'
+import { getPasskeyCredential } from '~/constants/passkeyStorage'
+import { buildPrfSalt, markPrfCapable } from '~/services/identity/prf'
+import { wrapSessionKeyWithPrf, unwrapSessionKeyWithPrf, saveSessionRoamMeta } from '~/services/identity/sessionPrf'
+import { validatePrfBackupBlobShape } from '~/services/identity/backupBlob'
+import { readContract } from '@wagmi/core'
+import { CAW_ACTIONS_ADDRESS } from '~/../../../abi/addresses'
+import { cawActionsAbi } from '~/../../../abi/generated'
 
 export const DEFAULT_SESSION_DURATION = 180 * 24 * 60 * 60 // 6 months
 
@@ -406,8 +413,184 @@ export function useCreateSession() {
     // resolve the session we just stored. (Mirrors registerSponsoredSession, #240.)
     if (effectiveOwner) setActiveWallet(effectiveOwner)
 
+    // ROAMING (Bug E): for passkey (Pop-B) users, PRF-wrap the session key + upload
+    // it so this session can be restored on another device with a Face ID (no new
+    // on-chain registration). Best-effort + fire-and-forget — a failure just means
+    // this device's session doesn't roam (the user can re-create QS elsewhere).
+    // Pop-A (wallet) users already roam via their wallet, so skip them.
+    if (rootSigner.kind === 'passkey' && effectiveOwner) {
+      void (async () => {
+        try {
+          const credentialId = getPasskeyCredential(activeToken?.tokenId)
+          if (!credentialId) return
+          const rpId = typeof window !== 'undefined' ? window.location.hostname : ''
+          const salt = await buildPrfSalt(effectiveOwner)
+          const { challenge } = await apiFetch<{ challenge: `0x${string}` }>(
+            '/api/wallet/blob/challenge',
+            { method: 'POST', body: JSON.stringify({ address: effectiveOwner }) },
+          )
+          const sig = await signWithPasskey({ credentialId, digest: challenge, rpId, prfSalt: salt })
+          markPrfCapable(credentialId, !!sig.prfSecret)
+          if (!sig.prfSecret) return
+          const keyBytes = passkeyHexToBytes(privateKey.slice(2))
+          const sessionPrfBlob = await wrapSessionKeyWithPrf(keyBytes, sig.prfSecret, sessionAccount.address)
+          keyBytes.fill(0)
+          await apiFetch('/api/wallet/blob/prf', {
+            method: 'POST',
+            body: JSON.stringify({
+              address: effectiveOwner,
+              sessionPrfBlob: JSON.stringify(sessionPrfBlob),
+              challenge,
+              signature: sig.sig,
+            }),
+          })
+          // Non-secret metadata for same-device rebuilds; the new device re-reads
+          // the authoritative expiry/scope/limit/spent from on-chain at restore.
+          saveSessionRoamMeta(effectiveOwner, {
+            sessionAddress: sessionAccount.address,
+            ownerAddress: effectiveOwner,
+            expiry,
+            scopeBitmap: DEFAULT_SCOPE,
+            spendLimit: spendLimit.toString(),
+            tipCeiling: tipCeiling.toString(),
+          })
+          console.log('[QuickSign] session PRF-wrapped for roaming')
+        } catch (e) {
+          console.warn('[QuickSign] session roam-wrap skipped (non-fatal):', e)
+        }
+      })()
+    }
+
     return { address: sessionAccount.address, expiry }
   }, [isConnected, connectedAddress, openConnectModal, chainId, signMessageAsync, switchChainAsync, setSession, setActiveWallet, activeToken, cawPrice, rootSigner, recovery])
+}
+
+/**
+ * ROAMING (Bug E): restore a Quick Sign session on a NEW device via the passkey.
+ *
+ * When a passkey (Pop-B) user has no local session but a PRF-wrapped one exists
+ * server-side (uploaded at create-time on another device), one Face ID unwraps
+ * the SAME session key — whose on-chain registration is still valid — so QS works
+ * instantly with NO new registration tx.
+ *
+ * Flow: one passkey ceremony gets BOTH the blob-retrieval assertion AND the PRF
+ * secret → unwrap sessionPrfBlob → derive the session address → read the
+ * AUTHORITATIVE on-chain session (expiry/scope/spendLimit) + sessionSpent, seed
+ * the local `spent` counter from chain (so a device can't overspend the shared
+ * limit) → store. If the on-chain session is expired / not-found, return null
+ * (caller silently falls back to create-a-new-session).
+ *
+ * Returns the restored SessionKeyEntry address on success, or null.
+ */
+export function useRestoreRoamedSession() {
+  const setSession = useSessionKeyStore(s => s.setSession)
+  const setActiveWallet = useSessionKeyStore(s => s.setActiveWallet)
+  const rootSigner = useRootSigner()
+  const activeToken = useActiveToken()
+
+  return useCallback(async (ownerAddress: string): Promise<`0x${string}` | null> => {
+    if (rootSigner.kind !== 'passkey') return null
+    const owner = ownerAddress.toLowerCase()
+    const credentialId = getPasskeyCredential(activeToken?.tokenId)
+    if (!credentialId) return null
+
+    try {
+      const rpId = typeof window !== 'undefined' ? window.location.hostname : ''
+      const salt = await buildPrfSalt(owner)
+
+      // One challenge + one passkey ceremony that gates blob retrieval AND yields
+      // the PRF secret.
+      const { challenge } = await apiFetch<{ challenge: `0x${string}` }>(
+        '/api/wallet/blob/challenge',
+        { method: 'POST', body: JSON.stringify({ address: owner }) },
+      )
+      const sig = await signWithPasskey({ credentialId, digest: challenge, rpId, prfSalt: salt })
+      markPrfCapable(credentialId, !!sig.prfSecret)
+      if (!sig.prfSecret) return null
+
+      const { sessionPrfBlob } = await apiFetch<{ sessionPrfBlob: string | null }>(
+        '/api/wallet/blob/retrieve',
+        { method: 'POST', body: JSON.stringify({ address: owner, challenge, signature: sig.sig }) },
+      )
+      if (!sessionPrfBlob) return null
+
+      const parsed = JSON.parse(sessionPrfBlob)
+      if (!validatePrfBackupBlobShape(parsed)) return null
+
+      const keyBytes = await unwrapSessionKeyWithPrf(parsed, sig.prfSecret)
+      let sessionPrivKey: `0x${string}`
+      let sessionAddr: `0x${string}`
+      try {
+        let hex = '0x'
+        for (let i = 0; i < keyBytes.length; i++) hex += keyBytes[i].toString(16).padStart(2, '0')
+        sessionPrivKey = hex as `0x${string}`
+        sessionAddr = privateKeyToAccount(sessionPrivKey).address
+      } finally {
+        keyBytes.fill(0)
+      }
+
+      // AUTHORITATIVE on-chain read: is this session still registered + unexpired,
+      // and how much has been spent across ALL devices? The generated ABI only
+      // exposes sessionSpent, so the sessions() struct getter is provided inline
+      // (shape matches CawActions.sessions used server-side: {expiry, scopeBitmap,
+      // spendLimit, perActionTipRate}).
+      const sessionsAbiFragment = [{
+        type: 'function', stateMutability: 'view', name: 'sessions',
+        inputs: [{ name: 'owner', type: 'address' }, { name: 'sessionKey', type: 'address' }],
+        outputs: [
+          { name: 'expiry', type: 'uint256' },
+          { name: 'scopeBitmap', type: 'uint8' },
+          { name: 'spendLimit', type: 'uint256' },
+          { name: 'perActionTipRate', type: 'uint256' },
+        ],
+      }] as const
+      const [sessionRaw, spent] = await Promise.all([
+        readContract(wagmiConfig, {
+          address: CAW_ACTIONS_ADDRESS, abi: sessionsAbiFragment, chainId: baseSepolia.id,
+          functionName: 'sessions', args: [owner as `0x${string}`, sessionAddr],
+        }),
+        readContract(wagmiConfig, {
+          address: CAW_ACTIONS_ADDRESS, abi: cawActionsAbi, chainId: baseSepolia.id,
+          functionName: 'sessionSpent', args: [owner as `0x${string}`, sessionAddr],
+        }) as Promise<bigint>,
+      ])
+      const session = {
+        expiry: (sessionRaw as readonly [bigint, number, bigint, bigint])[0],
+        scopeBitmap: (sessionRaw as readonly [bigint, number, bigint, bigint])[1],
+        spendLimit: (sessionRaw as readonly [bigint, number, bigint, bigint])[2],
+        perActionTipRate: (sessionRaw as readonly [bigint, number, bigint, bigint])[3],
+      }
+      const expiry = Number(session.expiry)
+      const nowSec = Math.floor(Date.now() / 1000)
+      // Expired / not-registered → caller silently creates a new session.
+      if (expiry === 0 || expiry <= nowSec) return null
+
+      // Seed `spent` from on-chain sessionSpent (Q1) so this device sees what
+      // other devices already spent and can't overspend the shared on-chain limit.
+      setSession({
+        privateKey: sessionPrivKey,
+        address: sessionAddr,
+        ownerAddress: owner,
+        expiry,
+        scopeBitmap: Number(session.scopeBitmap),
+        spendLimit: session.spendLimit.toString(),
+        spent: spent.toString(),
+        tipCeiling: session.perActionTipRate.toString(),
+      })
+      setActiveWallet(owner)
+      saveSessionRoamMeta(owner, {
+        sessionAddress: sessionAddr, ownerAddress: owner, expiry,
+        scopeBitmap: Number(session.scopeBitmap),
+        spendLimit: session.spendLimit.toString(),
+        tipCeiling: session.perActionTipRate.toString(),
+      })
+      console.log('[QuickSign] roamed session restored from PRF blob')
+      return sessionAddr
+    } catch (e) {
+      console.warn('[QuickSign] roamed session restore failed (will create new):', e)
+      return null
+    }
+  }, [rootSigner, activeToken, setSession, setActiveWallet])
 }
 
 /**
