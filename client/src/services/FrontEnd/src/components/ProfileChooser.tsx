@@ -962,7 +962,7 @@ const ProfileChooser: React.FC<{ compact?: boolean }> = ({ compact = false }) =>
               }`}
             >
               <HiUsers className="w-4 h-4 flex-shrink-0" />
-              <span>
+              <span className="whitespace-nowrap">
                 {t('profile_chooser.manage_profiles')}
                 {hasMoreProfiles ? ` (${totalProfileCount})` : ''}
               </span>
