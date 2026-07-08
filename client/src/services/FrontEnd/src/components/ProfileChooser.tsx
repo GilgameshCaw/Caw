@@ -562,9 +562,46 @@ const ProfileChooser: React.FC<{ compact?: boolean }> = ({ compact = false }) =>
   // Net in-flight CAW delta for the active profile — drives the inline
   // "+X / -X pending" badge below the staked amount.
   const activeTid = activeToken?.tokenId
-  const pendingDep = pendingDepositWei ?? 0n
+
+  // A deposit must be counted in EXACTLY ONE surface: either the displayed staked
+  // balance (once it lands on L2) OR the "pending" badge — never both. The old
+  // code added `pendingDepositWei` to the pending badge unconditionally, so a
+  // freshly-invited user briefly saw the SAME deposit in their balance AND as
+  // "+$X pending" (double-count). Detect "already landed" the same way the
+  // clear-effect does — compare current staked vs the hint's captured baseline
+  // (`stakedAtHintTime`); if `staked − baseline` already covers ~the deposit,
+  // the balance reflects it → suppress it from the pending badge (and from the
+  // deposit-sourced incoming window, which the clear-effect injects at L229 and
+  // would otherwise re-light the badge for its 5–10s lifetime).
+  let depositAlreadyLanded = false
+  let landedDepositWei = 0n
+  if (activeTid != null) {
+    try {
+      const raw = localStorage.getItem(`caw:pendingDeposit:${activeTid}`)
+      if (raw) {
+        const parsed = JSON.parse(raw) as { amount?: string; stakedAtHintTime?: string }
+        const hintWei = parsed?.amount ? BigInt(parsed.amount) : 0n
+        const baseline = parsed?.stakedAtHintTime ? BigInt(parsed.stakedAtHintTime) : 0n
+        const staked = activeToken?.stakedAmount ?? 0n
+        const stakeDelta = staked > baseline ? staked - baseline : 0n
+        if (hintWei > 0n && stakeDelta >= (hintWei * 95n) / 100n) {
+          depositAlreadyLanded = true
+          landedDepositWei = hintWei
+        }
+      }
+    } catch { /* no hint / parse error → treat as not-landed */ }
+  }
+
+  // If the deposit already shows in the balance, don't ALSO show it as pending.
+  const pendingDep = depositAlreadyLanded ? 0n : (pendingDepositWei ?? 0n)
   const recentIncoming = activeTid == null ? 0n : balanceWindows.reduce(
-    (acc, w) => (w.delta > 0n && w.tokenId === activeTid) ? acc + w.delta : acc,
+    (acc, w) => {
+      if (w.delta <= 0n || w.tokenId !== activeTid) return acc
+      // Exclude the landed-deposit window: it's the same money the balance now
+      // shows, so counting it here would re-create the double-count.
+      if (depositAlreadyLanded && w.delta === landedDepositWei) return acc
+      return acc + w.delta
+    },
     0n,
   )
   let pendingSpendForActive = 0n
