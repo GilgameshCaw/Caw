@@ -545,6 +545,20 @@ const ProfileChooser: React.FC<{ compact?: boolean }> = ({ compact = false }) =>
     hiddenTokensByAddress[addrKey] = full.filter(t => !visibleIds.has(t.tokenId))
   }
 
+  // Total real profiles held by this browser (all wallets) vs. how many are
+  // actually rendered in the popover right now (capped wallets/profiles, plus
+  // any wallet the user has expanded via "+N more"). When the total exceeds
+  // what's shown, the footer surfaces the count — "Manage Profiles (N)" — so
+  // the user knows profiles exist beyond the visible slice.
+  const totalProfileCount = Object.values(normalizedTokensByAddress)
+    .reduce((sum, tokens) => sum + tokens.length, 0)
+  const shownProfileCount = orderedWalletKeys.reduce((sum, addrKey) => {
+    const shown = (limitedTokensByAddress[addrKey] || []).length
+    const extra = expandedAddresses.has(addrKey) ? (hiddenTokensByAddress[addrKey] || []).length : 0
+    return sum + shown + extra
+  }, 0)
+  const hasMoreProfiles = totalProfileCount > shownProfileCount
+
   // Net in-flight CAW delta for the active profile — drives the inline
   // "+X / -X pending" badge below the staked amount.
   const activeTid = activeToken?.tokenId
@@ -911,7 +925,10 @@ const ProfileChooser: React.FC<{ compact?: boolean }> = ({ compact = false }) =>
               }`}
             >
               <HiUsers className="w-4 h-4 flex-shrink-0" />
-              <span>{t('profile_chooser.manage_profiles')}</span>
+              <span>
+                {t('profile_chooser.manage_profiles')}
+                {hasMoreProfiles ? ` (${totalProfileCount})` : ''}
+              </span>
             </Link>
           </li>
         </ul>
