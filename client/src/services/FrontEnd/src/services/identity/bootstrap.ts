@@ -36,9 +36,12 @@ import { privateKeyToAccount } from 'viem/accounts'
 import { bytesToHex } from 'viem'
 import { recoverAuthorizationAddress } from 'viem/utils'
 import { generateSecp256k1Keypair } from './secp256k1Key'
-import { encryptBackupBlob, type BackupBlob } from './backupBlob'
+import { encryptBackupBlob, encryptBackupBlobWithKey, type BackupBlob } from './backupBlob'
 import { signAuthorizationTuple, type SignedAuthorizationTuple } from './eip7702'
 import { buildMintDepositPermitDigest } from './eip712Permits'
+import { buildPrfSalt, prfSecretToAesKey, markPrfCapable } from './prf'
+import { signWithPasskey } from './passkey'
+import { apiFetch } from '~/api/client'
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
@@ -165,6 +168,18 @@ export type BootstrapResult = {
    * closure (already in memory for the bootstrap) — let it GC after use.
    */
   signVerifyMessage: (message: string) => Promise<`0x${string}`>
+  /**
+   * Enrol the PRF blob AFTER the mint (Bug D). Closes over the recovery key (still
+   * in memory here) and, when called, wraps it under the passkey's PRF secret and
+   * uploads it — passkey-gated. Must be invoked only AFTER the profile is indexed
+   * + the SmartEOA delegation is live (post-mint sign-in), because /blob/prf's
+   * gate runs SmartEOA.isValidSignature on-chain, which can't succeed pre-mint.
+   * This makes the user's FIRST cold device Face-ID-only for DMs. Non-fatal: a
+   * failure just means the first cold device falls back to the password (which
+   * then enrols PRF as before). Takes the enrolled passkey credentialId (known to
+   * the caller at mint-complete). Returns true iff a PRF blob was uploaded.
+   */
+  enrollPrfAfterMint: (credentialId: string) => Promise<boolean>
   /**
    * L2 delegation payload (present only when bootstrap() was called with
    * l2ChainId). The caller POSTs this to /api/sponsor/delegate-l2 to delegate the
@@ -472,6 +487,38 @@ export async function bootstrapNewUser(opts: {
     username,
     depositAmountCAW,
     signVerifyMessage: (message: string) => verifyAccount.signMessage({ message }),
+    // Bug D: enrol the PRF blob after the mint (profile indexed + SmartEOA live).
+    // Closes over keypair.privateKey + recoveredRecipient (the owner). Passkey-
+    // gated write; the recovery key is wrapped under the PRF secret. Non-fatal.
+    enrollPrfAfterMint: async (credentialId: string): Promise<boolean> => {
+      try {
+        const owner = recoveredRecipient
+        const rpId = typeof window !== 'undefined' ? window.location.hostname : ''
+        const salt = await buildPrfSalt(owner)
+        const { challenge } = await apiFetch<{ challenge: `0x${string}` }>(
+          '/api/wallet/blob/challenge',
+          { method: 'POST', body: JSON.stringify({ address: owner }) },
+        )
+        const sig = await signWithPasskey({ credentialId, digest: challenge, rpId, prfSalt: salt })
+        markPrfCapable(credentialId, !!sig.prfSecret)
+        if (!sig.prfSecret) return false
+        const aesKey = await prfSecretToAesKey(sig.prfSecret)
+        const prfBlob = await encryptBackupBlobWithKey(keypair.privateKey, aesKey, owner)
+        await apiFetch('/api/wallet/blob/prf', {
+          method: 'POST',
+          body: JSON.stringify({
+            address: owner,
+            prfBlob: JSON.stringify(prfBlob),
+            challenge,
+            signature: sig.sig,
+          }),
+        })
+        return true
+      } catch (e) {
+        console.warn('[bootstrap] PRF enrol after mint skipped (non-fatal):', e)
+        return false
+      }
+    },
     l2Delegation,
   }
 }

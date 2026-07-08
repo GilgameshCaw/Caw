@@ -662,6 +662,14 @@ export default function Onboarding() {
               const enrolledCredentialId = enrolledPasskeyRef.current?.credentialId
               if (enrolledCredentialId) {
                 persistPasskeyIdentity(mintedTokenId, ownerAddr, enrolledCredentialId)
+
+                // Bug D: enrol the PRF blob now that the profile is INDEXED and the
+                // SmartEOA delegation is live (post-mint sign-in) — the passkey-
+                // gated /blob/prf write needs both. This makes the user's FIRST
+                // cold device Face-ID-only for DMs (no password-first). One extra
+                // Face ID; fire-and-forget and fully non-fatal (falls back to the
+                // password path, which enrols PRF on first unlock as before).
+                void result.enrollPrfAfterMint(enrolledCredentialId).catch(() => {})
               }
 
               // Prime the DM key cache for this device using the recovery key
