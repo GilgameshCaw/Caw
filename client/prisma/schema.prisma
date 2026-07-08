@@ -1134,6 +1134,14 @@ model SponsorRedemption {
   codeHash        String
   recipient       String
   txHash          String?
+  // Redemption lifecycle: 'reserved' = invite use decremented BEFORE the
+  // irreversible mint (so a lost response can never leave a free mint);
+  // 'finalized' = mint confirmed, txHash + budget filled; 'refunded' = mint
+  // failed, the reserved use was re-incremented. A 'reserved' row that never
+  // finalizes/refunds (server died between reserve and mint-result) is a
+  // straggler a sweep can reconcile against on-chain ownerOf. Default 'finalized'
+  // so pre-existing rows (written by the old commitRedemption) read correctly.
+  status          String      @default("finalized")
   gasCostUsdCents Int
   netFeesUsdCents Int
   lzFeeUsdCents   Int

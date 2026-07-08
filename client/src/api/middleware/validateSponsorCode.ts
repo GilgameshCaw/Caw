@@ -515,44 +515,88 @@ export async function validateSponsorCode(
 }
 
 /**
- * Commit a successful redemption atomically:
- *   1. Decrement usesRemaining (if not null).
- *   2. Insert SponsorRedemption row.
+ * RESERVE an invite use BEFORE the irreversible on-chain mint.
  *
- * Uses two independent Prisma writes per the two-tx split pattern
- * (feedback_two_tx_split_pattern.md): the fact row (SponsorCode update)
- * commits independently from the derived row (SponsorRedemption).
- * Both are best-effort; a failure here is logged but does NOT roll back
- * the already-submitted on-chain transaction.
+ * The mint (mintAndDepositSponsored) can't be rolled back, so if we only
+ * decremented usesRemaining + wrote the audit row AFTER the mint (the old
+ * commitRedemption), a lost response / crashed process in that gap left a FREE,
+ * un-audited mint (observed on test2: gilgakey33 minted, zero redemption rows,
+ * usesRemaining never decremented). Instead we reserve first: decrement the use
+ * and write a 'reserved' redemption row, THEN mint, THEN finalize (or refund on
+ * failure). A lost response after a successful mint therefore always leaves a
+ * decremented use + a redemption row — never a free mint. The only residue is a
+ * 'reserved' row whose mint outcome is unknown (server died mid-mint), which a
+ * sweep reconciles against on-chain ownerOf.
+ *
+ * Returns the redemption row id (for finalize/refund), or null if the reservation
+ * failed (caller should treat as CODE_EXHAUSTED and NOT mint). The decrement is
+ * guarded by usesRemaining {gt:0} so we never over-issue; if the code has no
+ * limit (usesRemaining null) the updateMany is a harmless no-op and we still
+ * create the row.
  */
-export async function commitRedemption(opts: {
+export async function reserveRedemption(opts: {
   codeHash: string
-  recipient: string
+  // The recipient (recovered user EOA) is only known post-mint (result.recipient),
+  // so it's optional at reserve time and filled in at finalize. '' until then.
+  recipient?: string
+}): Promise<number | null> {
+  try {
+    // Decrement first. For a limited code, {gt:0} guarantees we don't go negative;
+    // count===0 means it was already exhausted (a concurrent reserve won) → abort.
+    const code = await getPrisma().sponsorCode.findUnique({
+      where: { codeHash: opts.codeHash },
+      select: { usesRemaining: true },
+    })
+    if (code?.usesRemaining != null) {
+      const dec = await getPrisma().sponsorCode.updateMany({
+        where: { codeHash: opts.codeHash, usesRemaining: { gt: 0 } },
+        data: { usesRemaining: { decrement: 1 } },
+      })
+      if (dec.count === 0) {
+        console.warn('[validateSponsorCode] reserveRedemption: code exhausted at reserve time')
+        return null
+      }
+    }
+    const row = await getPrisma().sponsorRedemption.create({
+      data: {
+        codeHash: opts.codeHash,
+        recipient: opts.recipient ?? '',
+        txHash: null,
+        status: 'reserved',
+        gasCostUsdCents: 0,
+        netFeesUsdCents: 0,
+        lzFeeUsdCents: 0,
+        depositUsdCents: 0,
+        totalUsdCents: 0,
+      },
+      select: { id: true },
+    })
+    return row.id
+  } catch (err) {
+    console.error('[validateSponsorCode] reserveRedemption failed:', err)
+    return null
+  }
+}
+
+/**
+ * FINALIZE a reserved redemption after the mint confirmed: fill txHash + budget
+ * and mark 'finalized'. Best-effort — the use is already reserved and the mint is
+ * already on-chain, so a failure here only leaves a 'reserved' straggler with the
+ * correct decremented count (never a free mint).
+ */
+export async function finalizeRedemption(opts: {
+  redemptionId: number
+  recipient?: string
   txHash: string | null
   budget: RedemptionBudget
 }): Promise<void> {
-  // Tx 1: decrement usesRemaining if the code has a limit.
   try {
-    await getPrisma().sponsorCode.updateMany({
-      where: {
-        codeHash: opts.codeHash,
-        usesRemaining: { gt: 0 },
-      },
+    await getPrisma().sponsorRedemption.update({
+      where: { id: opts.redemptionId },
       data: {
-        usesRemaining: { decrement: 1 },
-      },
-    })
-  } catch (err) {
-    console.error('[validateSponsorCode] Failed to decrement usesRemaining:', err)
-  }
-
-  // Tx 2: insert redemption audit row.
-  try {
-    await getPrisma().sponsorRedemption.create({
-      data: {
-        codeHash: opts.codeHash,
-        recipient: opts.recipient,
+        ...(opts.recipient ? { recipient: opts.recipient } : {}),
         txHash: opts.txHash,
+        status: 'finalized',
         gasCostUsdCents: opts.budget.gasCostUsdCents,
         netFeesUsdCents: opts.budget.netFeesUsdCents,
         lzFeeUsdCents:   opts.budget.lzFeeUsdCents,
@@ -561,6 +605,35 @@ export async function commitRedemption(opts: {
       },
     })
   } catch (err) {
-    console.error('[validateSponsorCode] Failed to insert SponsorRedemption:', err)
+    console.error('[validateSponsorCode] finalizeRedemption failed:', err)
+  }
+}
+
+/**
+ * REFUND a reserved redemption when the mint FAILED: re-increment usesRemaining
+ * and mark the row 'refunded' (kept for audit, not deleted). Net effect: the code
+ * use is returned so the caller can retry, and no free mint occurred.
+ */
+export async function refundRedemption(opts: {
+  redemptionId: number
+  codeHash: string
+}): Promise<void> {
+  try {
+    const code = await getPrisma().sponsorCode.findUnique({
+      where: { codeHash: opts.codeHash },
+      select: { usesRemaining: true },
+    })
+    if (code?.usesRemaining != null) {
+      await getPrisma().sponsorCode.update({
+        where: { codeHash: opts.codeHash },
+        data: { usesRemaining: { increment: 1 } },
+      })
+    }
+    await getPrisma().sponsorRedemption.update({
+      where: { id: opts.redemptionId },
+      data: { status: 'refunded' },
+    })
+  } catch (err) {
+    console.error('[validateSponsorCode] refundRedemption failed:', err)
   }
 }

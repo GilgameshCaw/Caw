@@ -28,7 +28,9 @@ import {
 } from '../../services/SponsorService'
 import {
   validateSponsorCode,
-  commitRedemption,
+  reserveRedemption,
+  finalizeRedemption,
+  refundRedemption,
   computeRedemptionBudget,
   recordCodeUse,
 } from '../middleware/validateSponsorCode'
@@ -440,6 +442,24 @@ router.post('/bootstrap', async (req, res) => {
     })
   }
 
+  // ── RESERVE the invite use BEFORE the irreversible mint ─────────────────────
+  // The mint can't be rolled back, so if a lost response / crash happens after a
+  // successful mint but before we recorded the redemption (the old post-mint
+  // ordering), the result was a FREE, un-audited mint (observed on test2). Reserve
+  // first: decrement usesRemaining + write a 'reserved' redemption row. On mint
+  // failure we refund it; on success we finalize it. A code with no limit still
+  // gets a reserved row (harmless no-op decrement). X-path has no codeHash → no
+  // reservation (its spent-set is WalletXLink, handled post-mint below).
+  let redemptionId: number | null = null
+  if (codeHash) {
+    redemptionId = await reserveRedemption({ codeHash })
+    if (redemptionId === null) {
+      // Reservation failed = code exhausted at reserve time (raced to zero) or a
+      // DB error. Do NOT mint — that would be a free mint.
+      return res.status(400).json({ error: 'CODE_EXHAUSTED', detail: 'This invite code has no uses remaining.' })
+    }
+  }
+
   // ── Dispatch ──────────────────────────────────────────────────────────────
   const result = await service.sponsorBootstrap({
     ...params,
@@ -451,7 +471,11 @@ router.post('/bootstrap', async (req, res) => {
     allowZeroDeposit: isUngated,
   })
   if (isSponsorError(result)) {
-    // Bootstrap failed — do NOT decrement usesRemaining (caller can retry).
+    // Bootstrap failed — REFUND the reserved use so the caller can retry, and
+    // mark the reserved redemption row 'refunded' (kept for audit).
+    if (redemptionId !== null && codeHash) {
+      await refundRedemption({ redemptionId, codeHash })
+    }
     const status = result.error === 'TREASURY_LOW' ? 503 : 400
     return res.status(status).json(result)
   }
@@ -547,11 +571,13 @@ router.post('/bootstrap', async (req, res) => {
   // burns it); the actual increment happens here, once the account exists.
   if (codeHash) void recordCodeUse(codeHash, ip)
 
-  // Commit the redemption audit row (code path only — X path has no codeHash).
-  // Fire-and-forget so a DB hiccup doesn't break the user's UX.
-  if (codeHash) {
-    commitRedemption({
-      codeHash,
+  // FINALIZE the reserved redemption now that the mint confirmed — fill txHash +
+  // budget and mark 'finalized'. The use was already reserved (decremented) pre-
+  // mint, so a failure here only leaves a 'reserved' straggler with the correct
+  // count — never a free mint. Fire-and-forget so a DB hiccup doesn't break UX.
+  if (codeHash && redemptionId !== null) {
+    finalizeRedemption({
+      redemptionId,
       recipient: result.recipient ?? '',
       txHash: result.txHash,
       budget: budget ?? {
@@ -561,7 +587,7 @@ router.post('/bootstrap', async (req, res) => {
         depositUsdCents: 0,
         totalUsdCents: 0,
       },
-    }).catch(err => console.error('[sponsor] commitRedemption failed:', err))
+    }).catch(err => console.error('[sponsor] finalizeRedemption failed:', err))
   }
 
   return res.status(200).json(result)
