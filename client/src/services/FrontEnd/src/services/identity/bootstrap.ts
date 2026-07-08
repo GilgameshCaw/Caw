@@ -251,6 +251,22 @@ export async function bootstrapNewUser(opts: {
   kycLevel?: number
   sponsorTokenId?: number
   repayAmount?: bigint
+  /**
+   * DURABILITY HOOK — fires AFTER the encrypted backup blob is created but BEFORE
+   * the irreversible mint. The caller uses it to upload the ciphertext blob to the
+   * server (and enrol a PRF blob) so that if the mint response is LOST (e.g. a 502
+   * during a deploy), the profile is still RECOVERABLE — the recovery key survives
+   * in the pre-uploaded blob, restorable via /recovery. Without this, a lost
+   * response orphans the on-chain profile (its fresh-random key existed only in
+   * memory and is gone forever). Awaited; a throw here ABORTS before the mint (so
+   * we never mint a profile we couldn't first make recoverable). Non-fatal soft
+   * failures should be swallowed by the callback itself.
+   */
+  persistBeforeMint?: (info: {
+    ownerAddress: `0x${string}`
+    backupBlob: BackupBlob
+    recoveryPrivateKey: Uint8Array
+  }) => Promise<void>
 }): Promise<BootstrapResult> {
   const {
     code,
@@ -273,6 +289,7 @@ export async function bootstrapNewUser(opts: {
     kycLevel = 0,
     sponsorTokenId = 0,
     repayAmount = 0n,
+    persistBeforeMint,
   } = opts
 
   // Step 1: Generate the secp256k1 keypair.
@@ -412,6 +429,18 @@ export async function bootstrapNewUser(opts: {
     permitSig: passkeyAssertion.permitSig,
     clientDataJSON: passkeyAssertion.clientDataJSON,
     authenticatorData: passkeyAssertion.authenticatorData,
+  }
+
+  // DURABILITY: make the profile recoverable BEFORE the irreversible mint. Upload
+  // the ciphertext backup blob (and enrol PRF) keyed by the owner address, so a
+  // lost mint response doesn't orphan the profile — the recovery key survives on
+  // the server, restorable via /recovery. A throw here aborts before the mint.
+  if (persistBeforeMint) {
+    await persistBeforeMint({
+      ownerAddress: keypair.address,
+      backupBlob,
+      recoveryPrivateKey: keypair.privateKey,
+    })
   }
 
   const { txHash } = await sponsorApi.sponsorBootstrap(bootstrapParams)

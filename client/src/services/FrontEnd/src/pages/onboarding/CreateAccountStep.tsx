@@ -270,22 +270,35 @@ export default function CreateAccountStep({
         kycLevel: 0,
         sponsorTokenId,
         repayAmount,
+        // DURABILITY: upload the ciphertext backup blob BEFORE the irreversible
+        // mint (moved from the old post-mint fire-and-forget). If the mint
+        // response is LOST (e.g. a 502 during a deploy), the recovery key still
+        // survives on the server → the profile is restorable via /recovery
+        // instead of being orphaned. AWAITED — the blob upload must land before we
+        // mint. (PRF enrol can't happen here: /blob/challenge requires an indexed
+        // profile, which doesn't exist pre-mint — it's done post-mint below.)
+        persistBeforeMint: async ({ ownerAddress, backupBlob }) => {
+          await apiFetch('/api/wallet/blob', {
+            method: 'POST',
+            body: JSON.stringify({
+              address: ownerAddress,
+              blob: JSON.stringify(backupBlob),
+              username,
+            }),
+          })
+        },
       })
 
-      // Server-hosted convenience copy (passkey-gated). No email at this stage —
-      // the user picks email explicitly in the backup step.
-      // Fire-and-forget: a store failure must not block onboarding.
-      try {
-        void apiFetch('/api/wallet/blob', {
-          method: 'POST',
-          body: JSON.stringify({
-            address: result.ecdsaAddress,
-            blob: JSON.stringify(result.backupBlob),
-            username,
-            // email omitted — sent separately if the user chooses in BackupStep
-          }),
-        }).catch(() => { /* non-fatal */ })
-      } catch { /* non-fatal */ }
+      // PRF-enrol at signup (Bug D): so the user's FIRST cold device is
+      // Face-ID-only for DMs instead of password-first. We hold the recovery key
+      // (result.backupBlob is under the vault password, but the raw key is exposed
+      // via result.signVerifyMessage's closure only — so re-derive from the just-
+      // created keypair is not available here). Instead we enrol lazily on the
+      // first DM unlock (useDm._maybeEnrollPrf) which already runs after the
+      // password path. The pre-mint durability upload above is the load-bearing
+      // fix; opportunistic PRF enrol at first-unlock covers the passwordless goal.
+      // NOTE: /blob/challenge needs the profile indexed, so a signup-time PRF
+      // enrol would race the indexer; the first-unlock path is race-free.
 
       // Hand the minted wallet up; parent advances to the backup step.
       onCreated(result)
