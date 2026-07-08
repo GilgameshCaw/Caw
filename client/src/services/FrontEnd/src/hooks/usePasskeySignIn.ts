@@ -28,6 +28,7 @@ import { useIdentitySigning } from '~/components/identity/IdentitySigningProvide
 import { useAuthStore } from '~/store/authStore'
 import { useTokenDataStore } from '~/store/tokenDataStore'
 import { useSessionKeyStore } from '~/store/sessionKeyStore'
+import { useRestoreRoamedSession } from '~/hooks/useSessionKey'
 import { persistPasskeyIdentity } from '~/constants/passkeyStorage'
 import { wagmiConfig } from '~/config/Web3Provider'
 import { CAW_NAMES_L2_ADDRESS } from '~/../../../abi/addresses'
@@ -55,6 +56,7 @@ export function usePasskeySignIn(): UsePasskeySignIn {
   const t = useT()
   const setSession = useAuthStore(s => s.setSession)
   const { startSigning, stopSigning } = useIdentitySigning()
+  const restoreRoamedSession = useRestoreRoamedSession()
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
@@ -165,6 +167,21 @@ export function usePasskeySignIn(): UsePasskeySignIn {
         const ownerLc = ownerAddr.toLowerCase()
         sk.setActiveWallet(ownerLc)
         if (sk.sessions[ownerLc]) sk.setEnabled(true)
+        else {
+          // ROAMING (Bug E): this browser has NO local Quick Sign session for the
+          // account. If one was PRF-wrapped on another device, restore it now —
+          // one Face ID unwraps the SAME on-chain-registered session key so QS
+          // works here with no new registration tx. Fire-and-forget in the
+          // background so it doesn't block the sign-in from returning; it enables
+          // QS a moment later if a roamed session exists (else it's a silent
+          // no-op — the user can create a fresh session normally).
+          void (async () => {
+            try {
+              const restored = await restoreRoamedSession(ownerLc)
+              if (restored) useSessionKeyStore.getState().setEnabled(true)
+            } catch { /* non-fatal — user can create a fresh QS session */ }
+          })()
+        }
       }
 
       // Prime the DM key from this device's localStorage cache if it's there.
@@ -228,7 +245,7 @@ export function usePasskeySignIn(): UsePasskeySignIn {
     } finally {
       setBusy(false)
     }
-  }, [t, setSession, startSigning, stopSigning])
+  }, [t, setSession, startSigning, stopSigning, restoreRoamedSession])
 
   return { signIn, busy, error, clearError: () => setError(null) }
 }
