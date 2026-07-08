@@ -139,9 +139,11 @@ export type PrfProbeResult = {
   credentialFound: boolean
   /** true iff the get() actually returned a 32-byte PRF secret. */
   prfSecretReturned: boolean
-  /** first 8 hex chars of the derived secret, for a sanity eyeball. Never full. */
-  secretPrefix?: string
   error?: string
+  // NOTE: deliberately does NOT expose any bytes of the PRF secret. Even a
+  // prefix must never be returned or logged — console output is captured by
+  // Sentry breadcrumbs, which would exfiltrate secret material off-device and
+  // break the "the PRF secret never leaves the browser" guarantee.
 }
 
 /**
@@ -174,14 +176,15 @@ export async function probePrf(
     const digest = ('0x' + '11'.repeat(32)) as `0x${string}`
     const result = await signWithPasskey({ credentialId, digest, rpId, prfSalt: salt })
     const prfSecretReturned = !!result.prfSecret && result.prfSecret.length === 32
+    // Zero the probe's copy of the secret immediately — we only wanted the
+    // boolean. Never retain, return, or log any of its bytes (console output is
+    // captured by Sentry breadcrumbs).
+    result.prfSecret?.fill(0)
     markPrfCapable(credentialId, prfSecretReturned)
     return {
       environmentSupported,
       credentialFound: true,
       prfSecretReturned,
-      secretPrefix: prfSecretReturned
-        ? Array.from(result.prfSecret!.slice(0, 4)).map(b => b.toString(16).padStart(2, '0')).join('')
-        : undefined,
     }
   } catch (e) {
     return { environmentSupported, credentialFound: true, prfSecretReturned: false,
