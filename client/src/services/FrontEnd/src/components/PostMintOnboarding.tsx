@@ -224,6 +224,11 @@ const PostMintOnboarding: React.FC<PostMintOnboardingProps> = ({ username, token
   const pendingDepositAmount = localPendingAmount > backendPendingAmount ? localPendingAmount : backendPendingAmount
   const [currentStep, setCurrentStep] = useState(initialStep)
   const [completedSteps, setCompletedSteps] = useState<Set<StepId>>(new Set())
+  // Mirror of completedSteps for reads inside effects that must NOT depend on it
+  // (avoids re-running the state-check effect every time completion changes, which
+  // would loop). Kept in sync below.
+  const completedStepsRef = useRef<Set<StepId>>(completedSteps)
+  completedStepsRef.current = completedSteps
   const [skippedSteps, setSkippedSteps] = useState<Set<StepId>>(new Set())
   const userNavigatedRef = useRef(false)
   const [showBugReport, setShowBugReport] = useState(false)
@@ -752,21 +757,36 @@ const PostMintOnboarding: React.FC<PostMintOnboardingProps> = ({ username, token
       follow:    false, // no persistent side effect to check
     }
 
-    const completed = new Set<StepId>()
-    const skipped = new Set<StepId>()
-
-    for (let i = 0; i < STEPS.length; i++) {
-      const stepId = STEPS[i].id
-      if (checks[stepId]) {
-        completed.add(stepId)
-      } else if (i < currentStep) {
-        // User is past this step but it's not actually done
-        skipped.add(stepId)
+    // Steps with `checks[id] === false` have NO persistent side effect we can
+    // re-derive here (profile, follow) — their completion is set imperatively via
+    // markComplete() (e.g. saving a display name). MERGE with the existing state
+    // (don't wholesale-replace) so this effect — which fires on every dependency
+    // change — doesn't WIPE a manual completion. Without this, saving the profile
+    // marked it complete for one render, then any state change re-ran this effect
+    // and rebuilt the set with profile:false → the checkmark vanished instantly.
+    setCompletedSteps(prev => {
+      const completed = new Set<StepId>(prev)
+      for (let i = 0; i < STEPS.length; i++) {
+        const stepId = STEPS[i].id
+        if (checks[stepId]) completed.add(stepId)
       }
-    }
+      return completed
+    })
 
-    setCompletedSteps(completed)
-    setSkippedSteps(skipped)
+    // A step the user is PAST that is neither auto-done nor manually-completed is
+    // "skipped". Read manual completions from the ref so a saved profile/follow is
+    // never mislabelled skipped (it's complete).
+    setSkippedSteps(prevSkipped => {
+      const skipped = new Set<StepId>()
+      for (let i = 0; i < STEPS.length; i++) {
+        const stepId = STEPS[i].id
+        if (!checks[stepId] && !completedStepsRef.current.has(stepId) && i < currentStep) {
+          skipped.add(stepId)
+        }
+      }
+      return skipped.size === prevSkipped.size &&
+        [...skipped].every(s => prevSkipped.has(s)) ? prevSkipped : skipped
+    })
   }, [isProfileAuthorized, activeToken?.stakedAmount, dmAlreadyEnabled, dmComplete, hasActiveSession, qsComplete, stakeConfirmed, currentStep, depositPending])
 
   // Auto-advance past steps that are already completed (but not when user explicitly clicked a step)
