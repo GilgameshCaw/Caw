@@ -587,23 +587,19 @@ export function useRestoreRoamedSession() {
       }
 
       // AUTHORITATIVE on-chain read: is this session still registered + unexpired,
-      // and how much has been spent across ALL devices? The generated ABI only
-      // exposes sessionSpent, so the sessions() struct getter is provided inline
-      // (shape matches CawActions.sessions used server-side: {expiry, scopeBitmap,
-      // spendLimit, perActionTipRate}).
-      const sessionsAbiFragment = [{
-        type: 'function', stateMutability: 'view', name: 'sessions',
-        inputs: [{ name: 'owner', type: 'address' }, { name: 'sessionKey', type: 'address' }],
-        outputs: [
-          { name: 'expiry', type: 'uint256' },
-          { name: 'scopeBitmap', type: 'uint8' },
-          { name: 'spendLimit', type: 'uint256' },
-          { name: 'perActionTipRate', type: 'uint256' },
-        ],
-      }] as const
+      // and how much has been spent across ALL devices?
+      //
+      // TWO DIFFERENT CONTRACTS (this was the real roam bug):
+      //   - sessions(owner, key)  → CawProfileLedger (CAW_NAMES_L2_ADDRESS)
+      //   - sessionSpent(owner, key) → CawActions (CAW_ACTIONS_ADDRESS)
+      // The old code called sessions() on CAW_ACTIONS with a hand-rolled 4-field
+      // fragment — wrong contract AND wrong shape — so viem reverted
+      // (ContractFunctionRevertedError) and the restore silently "failed → create
+      // new". The server reads it the same split way (see actions.ts:203-204,329).
+      // Use the generated cawProfileLedgerAbi so the 6-field StoredSession decodes.
       const [sessionRaw, spent] = await Promise.all([
         readContract(wagmiConfig, {
-          address: CAW_ACTIONS_ADDRESS, abi: sessionsAbiFragment, chainId: baseSepolia.id,
+          address: CAW_NAMES_L2_ADDRESS, abi: cawProfileLedgerAbi, chainId: baseSepolia.id,
           functionName: 'sessions', args: [owner as `0x${string}`, sessionAddr],
         }),
         readContract(wagmiConfig, {
@@ -611,11 +607,17 @@ export function useRestoreRoamedSession() {
           functionName: 'sessionSpent', args: [owner as `0x${string}`, sessionAddr],
         }) as Promise<bigint>,
       ])
+      // All outputs are named, so viem returns an object; read by name to stay
+      // robust to future field additions/reordering.
+      const s = sessionRaw as unknown as {
+        expiry: bigint; scopeBitmap: number; epoch: number;
+        perActionTipRate: bigint; profileId: number; spendLimit: bigint;
+      }
       const session = {
-        expiry: (sessionRaw as readonly [bigint, number, bigint, bigint])[0],
-        scopeBitmap: (sessionRaw as readonly [bigint, number, bigint, bigint])[1],
-        spendLimit: (sessionRaw as readonly [bigint, number, bigint, bigint])[2],
-        perActionTipRate: (sessionRaw as readonly [bigint, number, bigint, bigint])[3],
+        expiry: BigInt(s.expiry),
+        scopeBitmap: s.scopeBitmap,
+        spendLimit: BigInt(s.spendLimit),
+        perActionTipRate: BigInt(s.perActionTipRate),
       }
       const expiry = Number(session.expiry)
       const nowSec = Math.floor(Date.now() / 1000)
