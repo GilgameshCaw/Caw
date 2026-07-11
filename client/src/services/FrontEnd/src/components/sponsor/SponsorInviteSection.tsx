@@ -14,6 +14,8 @@
 
 import { useState, useEffect, useCallback, useRef } from 'react'
 import { useTheme } from '~/hooks/useTheme'
+import { HiOutlineQuestionMarkCircle } from 'react-icons/hi'
+import Tooltip from '~/components/Tooltip'
 import QRModal from '~/components/modals/QRModal'
 import { usePriceStore } from '~/store/tokenDataStore'
 import { useActiveToken } from '~/store/tokenDataStore'
@@ -368,8 +370,26 @@ export default function SponsorInviteSection() {
           <>
             <div className="flex items-baseline justify-between gap-2 mb-1">
               <label className={`text-sm font-medium ${strongClass}`}>Amount (USD)</label>
-              <span className={`text-xs ${mutedClass}`}>
+              <span className={`text-xs ${mutedClass} inline-flex items-center gap-1`}>
                 Minimum ${minUsd.toFixed(2)} (covers gas + username + network fees)
+                {rate > 0 && (
+                  <Tooltip
+                    position="top"
+                    text={[
+                      `Redemption gas reserve (mainnet): $${(Number(redeemGasCaw) * rate).toFixed(2)}`,
+                      `Cross-chain (LayerZero) reserve: $${(Number(overheadCaw) * rate).toFixed(2)}`,
+                      `Username mint: $${(Number(minBurnCaw) * rate).toFixed(2)}`,
+                      '',
+                      "Reserves cover your friend's signup on mainnet;",
+                      'unused amount stays in their gift.',
+                    ].join('\n')}
+                  >
+                    <HiOutlineQuestionMarkCircle
+                      className={`w-3.5 h-3.5 cursor-help ${isDark ? 'text-white/40 hover:text-white/70' : 'text-gray-400 hover:text-gray-600'}`}
+                      aria-label="Fee breakdown"
+                    />
+                  </Tooltip>
+                )}
               </span>
             </div>
             <div className="flex items-center gap-2">
@@ -408,31 +428,11 @@ export default function SponsorInviteSection() {
               </p>
             ) : null}
 
-            {/* Honest fee breakdown: the ~$4 "gas/fees" isn't a spike — it's a
-                deliberate reserve for a FUTURE MAINNET redemption (gas priced on
-                mainnet, LZ cross-chain fee). Itemize it so it doesn't read as a
-                mystery. Testnet redemptions actually cost far less; the surplus is
-                a small validator margin. Amounts from the quote (whole CAW × rate). */}
-            {aboveFloor && belowCap && rate > 0 && (() => {
-              const gasUsd = Number(redeemGasCaw) * rate
-              const lzUsd = Number(overheadCaw) * rate
-              const nameUsd = Number(minBurnCaw) * rate
-              const row = (label: string, val: number) => (
-                <div className="flex items-baseline justify-between">
-                  <span>{label}</span><span>${val.toFixed(2)}</span>
-                </div>
-              )
-              return (
-                <div className={`text-2xs mt-2 space-y-0.5 ${isDark ? 'text-white/40' : 'text-gray-400'}`}>
-                  {row('Redemption gas reserve (mainnet)', gasUsd)}
-                  {row('Cross-chain (LayerZero) reserve', lzUsd)}
-                  {row('Username mint', nameUsd)}
-                  <div className="italic pt-0.5">
-                    Reserves cover your friend's signup on mainnet; unused amount stays in their gift.
-                  </div>
-                </div>
-              )
-            })()}
+            {/* Honest fee breakdown moved into the "?" tooltip next to the
+                "Minimum $X" label above — the ~$4 "gas/fees" isn't a spike, it's
+                a deliberate reserve for a FUTURE MAINNET redemption (mainnet gas +
+                LZ cross-chain), so it's available on demand without cluttering the
+                form. */}
 
             <p className={`text-xs mt-4 ${mutedClass}`}>
               Your friend picks any username at signup. A shorter, rarer name costs
