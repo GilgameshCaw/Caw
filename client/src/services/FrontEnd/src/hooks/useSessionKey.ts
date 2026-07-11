@@ -494,10 +494,20 @@ export function useRestoreRoamedSession() {
   // SESSION-AUTHED retrieve (the user is signed in). When absent, falls back to a
   // self-contained passkey-gated ceremony (own Face ID).
   return useCallback(async (ownerAddress: string, presetPrfSecret?: Uint8Array): Promise<`0x${string}` | null> => {
-    if (rootSigner.kind !== 'passkey') return null
     const owner = ownerAddress.toLowerCase()
+    // [QuickSign:roam] tagged diagnostics on EVERY exit — the roam restore used
+    // to no-op silently, so a "didn't bring Quick Sign" report had nothing to go
+    // on. Each branch logs WHY it stopped.
+    if (rootSigner.kind !== 'passkey') {
+      console.log('[QuickSign:roam] skip: rootSigner.kind is', rootSigner.kind, '(not passkey)')
+      return null
+    }
     const credentialId = getPasskeyCredential(activeToken?.tokenId)
-    if (!credentialId) return null
+    if (!credentialId) {
+      console.log('[QuickSign:roam] skip: no passkey credentialId for tokenId', activeToken?.tokenId, 'owner', owner)
+      return null
+    }
+    console.log('[QuickSign:roam] start: owner', owner, 'presetPrfSecret?', !!presetPrfSecret)
 
     try {
       const rpId = typeof window !== 'undefined' ? window.location.hostname : ''
@@ -512,6 +522,7 @@ export function useRestoreRoamedSession() {
           { method: 'POST', body: JSON.stringify({ address: owner }) },
         )
         sessionPrfBlob = r.sessionPrfBlob
+        console.log('[QuickSign:roam] session-authed retrieve → sessionPrfBlob present?', !!sessionPrfBlob)
       } else {
         // Fallback: own ceremony — one challenge + one passkey touch that gates
         // blob retrieval AND yields the PRF secret.
@@ -522,18 +533,28 @@ export function useRestoreRoamedSession() {
         )
         const sig = await signWithPasskey({ credentialId, digest: challenge, rpId, prfSalt: salt })
         markPrfCapable(credentialId, !!sig.prfSecret)
-        if (!sig.prfSecret) return null
+        if (!sig.prfSecret) {
+          console.log('[QuickSign:roam] skip: authenticator returned no PRF secret (ceremony path) — cannot unwrap')
+          return null
+        }
         prfSecret = sig.prfSecret
         const r = await apiFetch<{ sessionPrfBlob: string | null }>(
           '/api/wallet/blob/retrieve',
           { method: 'POST', body: JSON.stringify({ address: owner, challenge, signature: sig.sig }) },
         )
         sessionPrfBlob = r.sessionPrfBlob
+        console.log('[QuickSign:roam] ceremony retrieve → sessionPrfBlob present?', !!sessionPrfBlob)
       }
-      if (!sessionPrfBlob) return null
+      if (!sessionPrfBlob) {
+        console.log('[QuickSign:roam] no-op: server has NO sessionPrfBlob for', owner, '(source device never wrapped this session) → user must Activate Quick Sign')
+        return null
+      }
 
       const parsed = JSON.parse(sessionPrfBlob)
-      if (!validatePrfBackupBlobShape(parsed)) return null
+      if (!validatePrfBackupBlobShape(parsed)) {
+        console.warn('[QuickSign:roam] abort: sessionPrfBlob failed shape validation (corrupt?)')
+        return null
+      }
 
       const keyBytes = await unwrapSessionKeyWithPrf(parsed, prfSecret)
       let sessionPrivKey: `0x${string}`
@@ -581,7 +602,11 @@ export function useRestoreRoamedSession() {
       const expiry = Number(session.expiry)
       const nowSec = Math.floor(Date.now() / 1000)
       // Expired / not-registered → caller silently creates a new session.
-      if (expiry === 0 || expiry <= nowSec) return null
+      if (expiry === 0 || expiry <= nowSec) {
+        console.log('[QuickSign:roam] no-op: on-chain session expired/not-registered (sessionAddr', sessionAddr, 'expiry', expiry, 'now', nowSec, ') → user must Activate Quick Sign')
+        return null
+      }
+      console.log('[QuickSign:roam] on-chain session valid (sessionAddr', sessionAddr, 'expiry', expiry, ') — restoring')
 
       // Seed `spent` from on-chain sessionSpent (Q1) so this device sees what
       // other devices already spent and can't overspend the shared on-chain limit.
