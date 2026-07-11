@@ -758,6 +758,13 @@ const AccountSettings: React.FC = () => {
     clearKeyCache(activeTokenId)
     // Clear session key (wallet-level, but appropriate for logout)
     useSessionKeyStore.getState().clearSession()
+    // UNPIN this token FIRST. A pinned token is kept "fresh" by
+    // useTokenDataUpdate's pinnedOwner multicall, which re-adds it right after
+    // removeToken drops it — and the persisted pin rehydrates it on reload. So
+    // without unpinning, logging out of a PINNED account just flickers and the
+    // profile is back after refresh. (Same root cause as ProfileChooser's
+    // remove-address path.)
+    try { usePinnedProfilesStore.getState().unpin(activeTokenId) } catch { /* best-effort */ }
     // Remove this token from the profile chooser and deactivate it
     useTokenDataStore.getState().removeToken(activeTokenId)
     // Clear auth session
