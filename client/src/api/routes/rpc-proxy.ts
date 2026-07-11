@@ -5,6 +5,116 @@ import {
   getL2HttpRpcUrl,
 } from '../../utils/rpcProvider'
 import { originGate } from '../middleware/originGate'
+import * as ADDR from '../../abi/addresses'
+
+// ─────────────────────────────────────────────────────────────────
+// Method + target-contract allowlist
+// ─────────────────────────────────────────────────────────────────
+// The proxy is unauthenticated by design (it serves not-yet-signed-in users
+// browsing the app), and the origin gate only stops browsers — a script can
+// spoof the Origin header. So a scraper could use /api/rpc/* as a free personal
+// RPC against our paid Infura key. We tighten it HERE (not on the Infura side) so
+// every mirror inherits the same policy from the code and gets a clean JSON-RPC
+// error instead of an opaque upstream rejection.
+//
+// Two gates:
+//   1. METHOD allowlist — only the read/tx methods the FE actually uses. Blocks
+//      the expensive/abusable ones (debug_*, trace_*, eth_subscribe, admin_*,
+//      archive-heavy calls) outright.
+//   2. TARGET-CONTRACT allowlist — for address-targeting reads (eth_call,
+//      eth_getLogs, eth_getStorageAt, eth_getCode), the target must be one of
+//      OUR contracts (or a token/pool/router we read for prices). Calls to an
+//      UNKNOWN address are allowed-but-logged by default (so the operator sees
+//      scrape attempts) and BLOCKED when RPC_PROXY_STRICT=1 — EXCEPT that
+//      passkey/ERC-1271 reads legitimately target arbitrary user EOAs, which we
+//      can't enumerate, so unknown targets aren't hard-blocked without the flag.
+
+const ALLOWED_METHODS = new Set<string>([
+  // Reads
+  'eth_call', 'eth_getLogs', 'eth_getStorageAt', 'eth_getCode', 'eth_getBalance',
+  'eth_blockNumber', 'eth_chainId', 'net_version', 'eth_gasPrice',
+  'eth_getBlockByNumber', 'eth_getBlockByHash', 'eth_feeHistory',
+  'eth_maxPriorityFeePerGas', 'eth_getTransactionCount',
+  // Tx lifecycle (wallet flows)
+  'eth_estimateGas', 'eth_sendRawTransaction',
+  'eth_getTransactionReceipt', 'eth_getTransactionByHash',
+  // web3 handshake
+  'web3_clientVersion',
+])
+
+// Every contract we legitimately read through the proxy. Built from addresses.ts
+// so each mirror's own deploy is covered automatically; operators can append
+// extras via RPC_PROXY_EXTRA_CONTRACTS (comma-separated).
+const KNOWN_CONTRACTS: Set<string> = (() => {
+  const s = new Set<string>()
+  for (const [k, v] of Object.entries(ADDR)) {
+    if (typeof v === 'string' && /^0x[0-9a-fA-F]{40}$/.test(v) && k.endsWith('ADDRESS')) {
+      s.add(v.toLowerCase())
+    }
+  }
+  // Uniswap V2 router (mainnet price reads) — not in addresses.ts as an *_ADDRESS.
+  s.add('0x7a250d5630b4cf539739df2c5dacb4c659f2488d')
+  for (const raw of (process.env.RPC_PROXY_EXTRA_CONTRACTS || '').split(',')) {
+    const a = raw.trim().toLowerCase()
+    if (/^0x[0-9a-fA-F]{40}$/.test(a)) s.add(a)
+  }
+  return s
+})()
+
+const RPC_PROXY_STRICT = process.env.RPC_PROXY_STRICT === '1'
+
+// Pull the target address out of an address-targeting read's params.
+function targetAddressOf(method: string, params: unknown): string | null {
+  if (!Array.isArray(params) || params.length === 0) return null
+  const p0 = params[0] as any
+  if (method === 'eth_call' || method === 'eth_estimateGas') {
+    return typeof p0?.to === 'string' ? p0.to.toLowerCase() : null
+  }
+  if (method === 'eth_getStorageAt' || method === 'eth_getCode' || method === 'eth_getBalance') {
+    return typeof p0 === 'string' ? p0.toLowerCase() : null
+  }
+  if (method === 'eth_getLogs') {
+    const addr = p0?.address
+    if (typeof addr === 'string') return addr.toLowerCase()
+    if (Array.isArray(addr) && typeof addr[0] === 'string') return addr[0].toLowerCase()
+  }
+  return null
+}
+
+// Decide whether a single JSON-RPC call is permitted. Returns null if allowed,
+// or a JSON-RPC error body if blocked.
+function screenCall(call: any): any | null {
+  const { method, params, id } = call
+  if (!ALLOWED_METHODS.has(method)) {
+    // Soft by default so a method viem uses that we didn't list can't blank the
+    // app on deploy — log it (operator adds it to ALLOWED_METHODS or sees abuse)
+    // and only hard-block under RPC_PROXY_STRICT. Flip strict on once the live
+    // method set is confirmed from logs.
+    if (RPC_PROXY_STRICT) {
+      console.warn(`[rpc-proxy] STRICT blocked method: ${method}`)
+      return jsonRpcError(id, -32601, `Method not allowed: ${method}`)
+    }
+    console.warn(`[rpc-proxy] non-allowlisted method: ${method} (allowed; set RPC_PROXY_STRICT=1 to block)`)
+    return null
+  }
+  // Address-gated reads. eth_getBalance/eth_estimateGas target EOAs freely — no
+  // contract gate. eth_call/getLogs/getStorageAt/getCode target contracts.
+  if (method === 'eth_call' || method === 'eth_getLogs' ||
+      method === 'eth_getStorageAt' || method === 'eth_getCode') {
+    const to = targetAddressOf(method, params)
+    if (to && !KNOWN_CONTRACTS.has(to)) {
+      // Unknown target: could be a user EOA (passkey/ERC-1271 read — legit) or a
+      // scrape of some other contract. We can't cheaply tell without a getCode,
+      // so log it, and only hard-block under RPC_PROXY_STRICT (mainnet opt-in).
+      if (RPC_PROXY_STRICT) {
+        console.warn(`[rpc-proxy] STRICT blocked ${method} → unknown target ${to}`)
+        return jsonRpcError(id, -32601, 'Target contract not allowed')
+      }
+      console.warn(`[rpc-proxy] ${method} → non-allowlisted target ${to} (allowed; set RPC_PROXY_STRICT=1 to block)`)
+    }
+  }
+  return null
+}
 
 /**
  * FE → backend → upstream RPC proxy.
@@ -252,6 +362,12 @@ async function handleOne(chain: Chain, call: any): Promise<any> {
     }
   }
   const { method, params, id } = call
+
+  // Allowlist gate: block methods we don't serve + (optionally) reads targeting
+  // non-CAW contracts, so the proxy can't be used as a general-purpose RPC.
+  const blocked = screenCall(call)
+  if (blocked) return blocked
+
   const ttl = pickTtlMs(method, params)
   if (ttl == null) {
     // Non-cacheable: forward as-is.

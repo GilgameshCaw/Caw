@@ -158,6 +158,16 @@ L2_RPC_SECRET_FALLBACK=""
 L1_RPC_URL_HTTP_FALLBACK="https://eth-sepolia.publicnode.com"
 L1_RPC_SECRET_FALLBACK=""
 
+# RPC PROXY ABUSE GUARD — the /api/rpc/{l1,l2} proxy serves the FE without auth,
+# so a script (spoofing the Origin header) could use it as a free personal RPC
+# against your paid key. The proxy method + target-contract allowlist limits that
+# (src/api/routes/rpc-proxy.ts). By DEFAULT it's observe-only: it LOGS
+# non-allowlisted methods / non-CAW target contracts but still forwards them
+# (so a deploy can't break the app). Once you've watched the logs and confirmed
+# no legit traffic is flagged, set STRICT=1 to actually BLOCK them.
+RPC_PROXY_STRICT="0"                    # 1 = enforce the allowlists (recommended for mainnet)
+RPC_PROXY_EXTRA_CONTRACTS=""            # comma-separated extra contract addresses to allow as read targets
+
 # Validator (for signing transactions)
 VALIDATOR_PRIVATE_KEY="0x..."
 
