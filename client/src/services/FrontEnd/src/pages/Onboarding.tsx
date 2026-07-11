@@ -27,6 +27,7 @@ import { usePriceStore } from '~/store/tokenDataStore'
 import { cawCostForLength } from '~/utils/cawCostSchedule'
 import { useT } from '~/i18n/I18nProvider'
 import { useNavigate } from '~/utils/localizedRouter'
+import { useIdentitySigning } from '~/components/identity/IdentitySigningProvider'
 import UsernameStep from './onboarding/UsernameStep'
 import VaultPasswordStep from './onboarding/VaultPasswordStep'
 import PasskeyStep from './onboarding/PasskeyStep'
@@ -181,6 +182,7 @@ export default function Onboarding() {
   const { isDark } = useTheme()
   const t = useT()
   const navigate = useNavigate()
+  const { startSigning, stopSigning } = useIdentitySigning()
   // Initial step: the gifted-access 'welcome' splash when arriving with a plausible
   // invite code, otherwise straight to 'username' (X-signup / code-entry paths).
   const [state, setState] = useState<OnboardingState>(() => ({
@@ -666,10 +668,15 @@ export default function Onboarding() {
                 // Bug D: enrol the PRF blob now that the profile is INDEXED and the
                 // SmartEOA delegation is live (post-mint sign-in) — the passkey-
                 // gated /blob/prf write needs both. This makes the user's FIRST
-                // cold device Face-ID-only for DMs (no password-first). One extra
-                // Face ID; fire-and-forget and fully non-fatal (falls back to the
-                // password path, which enrols PRF on first unlock as before).
-                void result.enrollPrfAfterMint(enrolledCredentialId).catch(() => {})
+                // cold device Face-ID-only for DMs (no password-first). It fires its
+                // OWN passkey ceremony (the mint-permit ceremony can't be reused: its
+                // PRF salt is keyed by the post-mint owner address, unknown when the
+                // permit is signed — folding into one prompt is a tracked follow-up).
+                // So LABEL the overlay so the extra Face ID isn't a mystery.
+                startSigning('Enabling passwordless DM unlock…')
+                void result.enrollPrfAfterMint(enrolledCredentialId)
+                  .catch(() => {})
+                  .finally(() => stopSigning())
               }
 
               // Prime the DM key cache for this device using the recovery key
