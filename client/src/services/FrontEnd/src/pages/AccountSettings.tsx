@@ -8,6 +8,7 @@ import { clearKeyCache } from '~/services/DmCryptoService'
 import { useAccount, useDisconnect } from 'wagmi'
 import { useConnectModalBridge as useConnectModal } from '~/hooks/useConnectModalBridge'
 import { HiArrowLeft, HiClipboard, HiCheck, HiExternalLink, HiCurrencyDollar, HiUser, HiIdentification, HiKey, HiExclamation } from 'react-icons/hi'
+import { HiOutlineDocumentText } from 'react-icons/hi'
 import { formatCAWAmount } from '~/utils/numberFormat'
 import ModalWrapper from '~/components/modals/ModalWrapper'
 import Tooltip from '~/components/Tooltip'
@@ -1083,19 +1084,14 @@ const AccountSettings: React.FC = () => {
             </div>
             <Link
               to="/recovery"
-              className={`flex items-center gap-2 px-4 py-3 rounded-xl border transition-colors ${
-                isDark
-                  ? 'border-white/10 hover:bg-white/5 text-white'
-                  : 'border-gray-200 hover:bg-gray-50 text-gray-900'
+              // Match the "Add an existing passkey" button exactly: dashed border,
+              // muted weight/colour, centered contents — so it doesn't pop.
+              className={`w-full flex items-center justify-center gap-2 p-4 rounded-lg border border-dashed transition-colors cursor-pointer ${
+                isDark ? 'border-white/15 text-white/60 hover:bg-white/5 hover:text-white/80' : 'border-gray-300 text-gray-500 hover:bg-gray-50 hover:text-gray-700'
               }`}
             >
-              <HiKey className="w-5 h-5 flex-shrink-0" />
-              <span className="min-w-0">
-                <span className="block text-sm font-medium">{t('account.add_backup.cta')}</span>
-                <span className={`block text-xs ${isDark ? 'text-white/50' : 'text-gray-500'}`}>
-                  {t('account.add_backup.subtitle')}
-                </span>
-              </span>
+              <HiOutlineDocumentText className="w-5 h-5" />
+              <span className="text-sm font-medium">{t('account.add_backup.cta')}</span>
             </Link>
           </div>
         </section>
