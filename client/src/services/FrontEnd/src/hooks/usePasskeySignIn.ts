@@ -199,7 +199,10 @@ export function usePasskeySignIn(): UsePasskeySignIn {
             try {
               // Reuse the PRF secret captured in the sign-in touch (piggyback) so
               // this doesn't fire a second Face ID.
-              const restored = await restoreRoamedSession(ownerLc, signInPrfSecret)
+              // Pass profile.tokenId explicitly — during sign-in the store's
+              // active token hasn't switched to this account yet, so the restore
+              // must not rely on activeToken for the credential/passkey lookup.
+              const restored = await restoreRoamedSession(ownerLc, signInPrfSecret, profile.tokenId)
               if (restored) {
                 useSessionKeyStore.getState().setEnabled(true)
                 console.log('[QuickSign:roam] sign-in: session RESTORED + enabled for', ownerLc)

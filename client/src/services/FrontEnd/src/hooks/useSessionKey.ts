@@ -18,7 +18,7 @@ import { wagmiConfig } from '~/config/wagmiConfig'
 import { useRecoveryContext } from '~/components/identity/RecoveryProvider'
 import { signAuthorizationTuple } from '~/services/identity/eip7702'
 import { enrollPasskey, signWithPasskey, hexToBytes as passkeyHexToBytes } from '~/services/identity/passkey'
-import { getPasskeyCredential } from '~/constants/passkeyStorage'
+import { getPasskeyCredential, isPasskeyAddress } from '~/constants/passkeyStorage'
 import { buildPrfSalt, markPrfCapable } from '~/services/identity/prf'
 import { wrapSessionKeyWithPrf, unwrapSessionKeyWithPrf, saveSessionRoamMeta } from '~/services/identity/sessionPrf'
 import { validatePrfBackupBlobShape } from '~/services/identity/backupBlob'
@@ -493,21 +493,34 @@ export function useRestoreRoamedSession() {
   // restore reuses it — NO extra Face ID. The blob is then fetched via the
   // SESSION-AUTHED retrieve (the user is signed in). When absent, falls back to a
   // self-contained passkey-gated ceremony (own Face ID).
-  return useCallback(async (ownerAddress: string, presetPrfSecret?: Uint8Array): Promise<`0x${string}` | null> => {
+  return useCallback(async (ownerAddress: string, presetPrfSecret?: Uint8Array, tokenIdHint?: number): Promise<`0x${string}` | null> => {
     const owner = ownerAddress.toLowerCase()
     // [QuickSign:roam] tagged diagnostics on EVERY exit — the roam restore used
     // to no-op silently, so a "didn't bring Quick Sign" report had nothing to go
     // on. Each branch logs WHY it stopped.
-    if (rootSigner.kind !== 'passkey') {
-      console.log('[QuickSign:roam] skip: rootSigner.kind is', rootSigner.kind, '(not passkey)')
+    //
+    // Passkey gate: do NOT rely on rootSigner.kind — it reflects the GLOBALLY
+    // active population, which during passkey sign-in is still whatever wagmi
+    // wallet happens to be connected (a stray EOA → 'real'), because the roamed
+    // account isn't the active token yet. Gate instead on whether THIS OWNER is a
+    // known passkey address (persisted at sign-in). That's the account we're
+    // actually restoring for.
+    const ownerIsPasskey = rootSigner.kind === 'passkey' || isPasskeyAddress(owner)
+    if (!ownerIsPasskey) {
+      console.log('[QuickSign:roam] skip: owner is not a passkey account (rootSigner.kind', rootSigner.kind, ', isPasskeyAddress false) owner', owner)
       return null
     }
-    const credentialId = getPasskeyCredential(activeToken?.tokenId)
-    if (!credentialId) {
-      console.log('[QuickSign:roam] skip: no passkey credentialId for tokenId', activeToken?.tokenId, 'owner', owner)
+    // Credential is only needed for the FALLBACK (own-ceremony) path. When a
+    // presetPrfSecret is supplied (the sign-in piggyback), the fast path needs no
+    // passkey touch, so a missing credential must NOT abort. Prefer the explicit
+    // tokenIdHint (the account being signed into) over activeToken — during
+    // sign-in the active token hasn't switched to the roamed account yet.
+    const credentialId = getPasskeyCredential(tokenIdHint ?? activeToken?.tokenId)
+    if (!credentialId && !presetPrfSecret) {
+      console.log('[QuickSign:roam] skip: no passkey credentialId (tokenId', tokenIdHint ?? activeToken?.tokenId, ') and no preset PRF secret — cannot unwrap. owner', owner)
       return null
     }
-    console.log('[QuickSign:roam] start: owner', owner, 'presetPrfSecret?', !!presetPrfSecret)
+    console.log('[QuickSign:roam] start: owner', owner, 'presetPrfSecret?', !!presetPrfSecret, 'tokenIdHint', tokenIdHint)
 
     try {
       const rpId = typeof window !== 'undefined' ? window.location.hostname : ''
@@ -525,7 +538,12 @@ export function useRestoreRoamedSession() {
         console.log('[QuickSign:roam] session-authed retrieve → sessionPrfBlob present?', !!sessionPrfBlob)
       } else {
         // Fallback: own ceremony — one challenge + one passkey touch that gates
-        // blob retrieval AND yields the PRF secret.
+        // blob retrieval AND yields the PRF secret. Reaching here means
+        // !presetPrfSecret, so the earlier guard guarantees credentialId is set.
+        if (!credentialId) {
+          console.log('[QuickSign:roam] skip: fallback ceremony needs a credentialId but none found for owner', owner)
+          return null
+        }
         const salt = await buildPrfSalt(owner)
         const { challenge } = await apiFetch<{ challenge: `0x${string}` }>(
           '/api/wallet/blob/challenge',
