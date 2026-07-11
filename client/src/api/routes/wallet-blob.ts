@@ -219,28 +219,34 @@ router.post('/blob/prf', blobWriteLimit, async (req, res) => {
         res.status(401).json({ error: 'A passkey signature or an authorized session is required.' })
         return
       }
-      // First-write ONLY: refuse if the specific field already exists (overwrite
-      // must go through the passkey gate). Read the current row's fields.
+      // The row must already exist (the password blob is uploaded pre-mint).
       const existing = await prisma.walletBlob.findUnique({
         where: { address: addr },
-        select: { prfBlob: true, sessionPrfBlob: true },
+        select: { address: true },
       })
       if (!existing) {
         res.status(404).json({ error: 'No backup stored for this account yet.' })
         return
       }
-      if (prfBlob !== undefined && existing.prfBlob) {
-        res.status(409).json({ error: 'DM PRF blob already exists; overwrite requires a passkey signature.' })
-        return
-      }
-      if (sessionPrfBlob !== undefined && existing.sessionPrfBlob) {
-        res.status(409).json({ error: 'Session PRF blob already exists; overwrite requires a passkey signature.' })
-        return
-      }
+      // First-write ONLY, ATOMICALLY: the session path may NEVER overwrite an
+      // existing blob (overwrite must go through the passkey gate — that's the DoS
+      // the gate protects). Guard the write with `<field> IS NULL` inside a single
+      // updateMany so two concurrent first-writes can't both pass a separate
+      // existence check and last-writer-wins (audit 2026-07-11 MEDIUM/TOCTOU).
       const data: { prfBlob?: string; sessionPrfBlob?: string } = {}
-      if (prfBlob !== undefined) data.prfBlob = prfBlob
-      if (sessionPrfBlob !== undefined) data.sessionPrfBlob = sessionPrfBlob
-      await prisma.walletBlob.update({ where: { address: addr }, data })
+      const nullGuard: { prfBlob?: null; sessionPrfBlob?: null } = {}
+      if (prfBlob !== undefined) { data.prfBlob = prfBlob; nullGuard.prfBlob = null }
+      if (sessionPrfBlob !== undefined) { data.sessionPrfBlob = sessionPrfBlob; nullGuard.sessionPrfBlob = null }
+      const result = await prisma.walletBlob.updateMany({
+        where: { address: addr, ...nullGuard },
+        data,
+      })
+      if (result.count === 0) {
+        // The field(s) already exist → this is an overwrite attempt on the session
+        // path. Refuse; the client must use the passkey-gated path.
+        res.status(409).json({ error: 'PRF blob already exists; overwrite requires a passkey signature.' })
+        return
+      }
       res.json({ ok: true })
       return
     }

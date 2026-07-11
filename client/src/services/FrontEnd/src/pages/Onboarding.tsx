@@ -665,14 +665,14 @@ export default function Onboarding() {
               if (enrolledCredentialId) {
                 persistPasskeyIdentity(mintedTokenId, ownerAddr, enrolledCredentialId)
 
-                // Bug D: enrol the PRF blob now that the profile is INDEXED and the
-                // SmartEOA delegation is live (post-mint sign-in) — the passkey-
-                // gated /blob/prf write needs both. This makes the user's FIRST
-                // cold device Face-ID-only for DMs (no password-first). It fires its
-                // OWN passkey ceremony (the mint-permit ceremony can't be reused: its
-                // PRF salt is keyed by the post-mint owner address, unknown when the
-                // permit is signed — folding into one prompt is a tracked follow-up).
-                // So LABEL the overlay so the extra Face ID isn't a mystery.
+                // Bug D: enrol the DM-PRF blob now that the profile is INDEXED and
+                // the SmartEOA delegation is live. SINGLE-PROMPT: enrollPrfAfterMint
+                // normally reuses the PRF secret CAPTURED during the mint-permit
+                // passkey touch and writes via the session-authed first-write — NO
+                // extra Face ID. It only prompts in the FALLBACK case (authenticator
+                // lacks PRF, so it runs its own ceremony). The overlay covers that
+                // fallback; in the common (no-prompt) path it flashes briefly and
+                // clears — harmless. Fire-and-forget + non-fatal.
                 startSigning('Enabling passwordless DM unlock…')
                 void result.enrollPrfAfterMint(enrolledCredentialId)
                   .catch(() => {})
