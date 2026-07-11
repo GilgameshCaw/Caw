@@ -319,13 +319,20 @@ export default function SponsorInviteSection() {
     } catch (err: any) {
       console.error('[buy-invite] failed:', err)
       setBuyState('idle')
-      setError(
-        err?.code === 'WRONG_WALLET'
-          ? err.message // actionable: "Wrong wallet connected. This profile is owned by 0x…"
-          : err?.message?.includes('rejected') || err?.message?.includes('denied')
-            ? 'Transaction rejected.'
+      const msg = err?.message || ''
+      // User dismissed a modal without acting (Quick Sign renewal, wallet
+      // signature prompt): NOT an error — show nothing, they chose to back out.
+      // signAndSubmit rejects with "Quick Sign renewal cancelled" on dismiss.
+      const userCancelled = /cancelled|canceled|rejected|denied/i.test(msg) || err?.code === 4001
+      if (userCancelled) {
+        setError(msg.toLowerCase().includes('renewal cancelled') ? null : 'Transaction rejected.')
+      } else {
+        setError(
+          err?.code === 'WRONG_WALLET'
+            ? err.message // actionable: "Wrong wallet connected. This profile is owned by 0x…"
             : 'Could not submit. Please try again.',
-      )
+        )
+      }
     }
   }
 
@@ -407,8 +414,6 @@ export default function SponsorInviteSection() {
               however they like.
             </p>
 
-            {error && <p className="text-sm text-red-500 mt-3">{error}</p>}
-
             <button
               onClick={handleBuy}
               disabled={!canBuy}
@@ -422,6 +427,8 @@ export default function SponsorInviteSection() {
                 : buyState === 'submitted' ? 'Submitted — your code will appear below'
                 : `Sponsor for $${formatUsd(usdAmount)}`}
             </button>
+
+            {error && <p className="text-sm text-red-500 mt-3 text-center">{error}</p>}
             {!activeTokenId && (
               <p className={`text-xs mt-2 ${mutedClass}`}>Sign in with a profile to buy a code.</p>
             )}
