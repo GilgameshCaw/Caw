@@ -24,6 +24,9 @@ import { readContract } from '@wagmi/core'
 import { baseSepolia } from 'wagmi/chains'
 import { apiFetch, retryOnIndexing } from '~/api/client'
 import { signWithPasskeyDiscoverable } from '~/services/identity/passkey'
+import { buildPrfSalt, prfSecretToAesKey } from '~/services/identity/prf'
+import { decryptBackupBlobWithKey, validatePrfBackupBlobShape } from '~/services/identity/backupBlob'
+import { privateKeyToAccount } from 'viem/accounts'
 import { useIdentitySigning } from '~/components/identity/IdentitySigningProvider'
 import { useAuthStore } from '~/store/authStore'
 import { useTokenDataStore } from '~/store/tokenDataStore'
@@ -88,11 +91,19 @@ export function usePasskeySignIn(): UsePasskeySignIn {
       )
 
       // 3. Sign it with the device passkey (discoverable — no local credentialId).
+      // PIGGYBACK: request the PRF secret in this SAME touch (salt keyed by the
+      // owner address, known from `profile.address` above) so the DM-unlock +
+      // Quick-Sign-roam restores below can reuse it — no extra Face ID on a new
+      // browser. The secret is captured into a closure var, never sent anywhere.
       startSigning(t('passkey_signin.prompt'))
       let assertion
+      let signInPrfSecret: Uint8Array | undefined
       try {
         const rpId = window.location.hostname
-        assertion = await signWithPasskeyDiscoverable({ digest: challenge, rpId })
+        let signInPrfSalt: Uint8Array | undefined
+        try { signInPrfSalt = await buildPrfSalt(profile.address) } catch { /* non-secure ctx */ }
+        assertion = await signWithPasskeyDiscoverable({ digest: challenge, rpId, prfSalt: signInPrfSalt })
+        signInPrfSecret = assertion.prfSecret
       } finally {
         stopSigning()
       }
@@ -177,7 +188,9 @@ export function usePasskeySignIn(): UsePasskeySignIn {
           // no-op — the user can create a fresh session normally).
           void (async () => {
             try {
-              const restored = await restoreRoamedSession(ownerLc)
+              // Reuse the PRF secret captured in the sign-in touch (piggyback) so
+              // this doesn't fire a second Face ID.
+              const restored = await restoreRoamedSession(ownerLc, signInPrfSecret)
               if (restored) useSessionKeyStore.getState().setEnabled(true)
             } catch { /* non-fatal — user can create a fresh QS session */ }
           })()
@@ -208,8 +221,39 @@ export function usePasskeySignIn(): UsePasskeySignIn {
           await apiFetch(`/api/dm/identity/${profile.tokenId}`).catch(() => null)
           console.log('[passkey-signin:dm] DM key cache-primed for tokenId', profile.tokenId, 'pub', publicKeyHex?.slice(0, 10))
         } catch {
-          // Cache miss or restore failure — /messages handles the vault-password
-          // path. Never fatal to sign-in.
+          // Cache miss or restore failure — the PRF restore below (or /messages'
+          // vault-password path) covers it. Never fatal to sign-in.
+        }
+      })()
+
+      // DM PRF restore (piggyback): on a NEW browser the localStorage cache above
+      // misses, so unlock DMs by reusing the PRF secret CAPTURED in the sign-in
+      // touch — no extra Face ID, no vault password. Fetch the DM prfBlob via the
+      // session-authed retrieve, unwrap → recovery key → derive the DM key.
+      // Fire-and-forget; on any failure /messages falls back to the password path.
+      if (signInPrfSecret) void (async () => {
+        let recoveryKey: Uint8Array | null = null
+        try {
+          if (hasCachedKeyPair(profile.tokenId)) return // already primed above
+          const { prfBlob } = await apiFetch<{ prfBlob: string | null }>(
+            '/api/wallet/blob/retrieve',
+            { method: 'POST', body: JSON.stringify({ address: ownerAddr }) },
+          )
+          if (!prfBlob) return
+          const parsed = JSON.parse(prfBlob)
+          if (!validatePrfBackupBlobShape(parsed)) return
+          const aesKey = await prfSecretToAesKey(signInPrfSecret)
+          recoveryKey = await decryptBackupBlobWithKey(parsed, aesKey)
+          let hex = '0x'
+          for (let i = 0; i < recoveryKey.length; i++) hex += recoveryKey[i].toString(16).padStart(2, '0')
+          const acct = privateKeyToAccount(hex as `0x${string}`)
+          const dmSign = (m: string): Promise<string> => acct.signMessage({ message: m }).then(s => s as string)
+          await deriveKeyPair(dmSign, profile.tokenId, uname)
+          console.log('[passkey-signin:dm] DMs restored via PRF (no password) for tokenId', profile.tokenId)
+        } catch {
+          /* /messages vault-password path covers it */
+        } finally {
+          recoveryKey?.fill(0)
         }
       })()
 

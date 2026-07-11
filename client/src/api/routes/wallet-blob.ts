@@ -341,14 +341,6 @@ router.post('/blob/retrieve', blobReadLimit, async (req, res) => {
       res.status(400).json({ error: 'Invalid address' })
       return
     }
-    if (typeof challenge !== 'string' || !HEX32_RE.test(challenge)) {
-      res.status(400).json({ error: 'Invalid challenge' })
-      return
-    }
-    if (typeof signature !== 'string' || !/^0x[0-9a-fA-F]+$/.test(signature)) {
-      res.status(400).json({ error: 'Invalid signature' })
-      return
-    }
 
     const addr = address.toLowerCase()
     const user = await prisma.user.findFirst({
@@ -360,24 +352,52 @@ router.post('/blob/retrieve', blobReadLimit, async (req, res) => {
       return
     }
 
-    // Consume the challenge atomically (one-shot) before the on-chain call.
-    const fresh = await consumePasskeyChallenge(user.tokenId, challenge)
-    if (!fresh) {
-      res.status(400).json({ error: 'Challenge expired or not found. Request a new one.' })
-      return
-    }
+    // Two auth modes (same shape as POST /blob/prf):
+    //  (A) SESSION-AUTHED READ (no challenge/signature): a valid login session
+    //      authorized for THIS address. Used to reuse a PRF secret captured in a
+    //      PRECEDING passkey touch (sign-in) so DM-unlock + QS-roam restore with
+    //      no extra Face ID. The returned blobs are opaque ciphertext the server
+    //      can't decrypt, so a session read leaks nothing a signed-in owner
+    //      shouldn't have.
+    //  (B) PASSKEY-GATED READ (challenge+signature): unchanged.
+    const hasPasskeyProof = typeof challenge === 'string' && typeof signature === 'string'
 
-    let valid: boolean
-    try {
-      valid = await verifyPasskeyAssertionOnChain(user.address, challenge as `0x${string}`, signature as `0x${string}`)
-    } catch (e) {
-      console.error('[wallet-blob] on-chain verify failed (infra):', e)
-      res.status(503).json({ error: 'Could not verify passkey right now. Please try again.' })
-      return
-    }
-    if (!valid) {
-      res.status(401).json({ error: 'Passkey signature did not validate for this account.' })
-      return
+    if (!hasPasskeyProof) {
+      await extractSession(req)
+      const authedAddresses = (req.sessionData?.authorizedAddresses || []).map(a => a.toLowerCase())
+      const authedTokenIds = req.sessionData?.authorizedTokenIds || []
+      if (!(authedAddresses.includes(addr) || authedTokenIds.includes(user.tokenId))) {
+        res.status(401).json({ error: 'A passkey signature or an authorized session is required.' })
+        return
+      }
+      // fall through to the row read below
+    } else {
+      if (!HEX32_RE.test(challenge)) {
+        res.status(400).json({ error: 'Invalid challenge' })
+        return
+      }
+      if (!/^0x[0-9a-fA-F]+$/.test(signature)) {
+        res.status(400).json({ error: 'Invalid signature' })
+        return
+      }
+      // Consume the challenge atomically (one-shot) before the on-chain call.
+      const fresh = await consumePasskeyChallenge(user.tokenId, challenge)
+      if (!fresh) {
+        res.status(400).json({ error: 'Challenge expired or not found. Request a new one.' })
+        return
+      }
+      let valid: boolean
+      try {
+        valid = await verifyPasskeyAssertionOnChain(user.address, challenge as `0x${string}`, signature as `0x${string}`)
+      } catch (e) {
+        console.error('[wallet-blob] on-chain verify failed (infra):', e)
+        res.status(503).json({ error: 'Could not verify passkey right now. Please try again.' })
+        return
+      }
+      if (!valid) {
+        res.status(401).json({ error: 'Passkey signature did not validate for this account.' })
+        return
+      }
     }
 
     const row = await prisma.walletBlob.findUnique({ where: { address: addr } })

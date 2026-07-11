@@ -488,7 +488,12 @@ export function useRestoreRoamedSession() {
   const rootSigner = useRootSigner()
   const activeToken = useActiveToken()
 
-  return useCallback(async (ownerAddress: string): Promise<`0x${string}` | null> => {
+  // `presetPrfSecret`: when the caller already captured the PRF secret in a
+  // PRECEDING passkey touch (e.g. the sign-in ceremony), pass it here so QS roam
+  // restore reuses it — NO extra Face ID. The blob is then fetched via the
+  // SESSION-AUTHED retrieve (the user is signed in). When absent, falls back to a
+  // self-contained passkey-gated ceremony (own Face ID).
+  return useCallback(async (ownerAddress: string, presetPrfSecret?: Uint8Array): Promise<`0x${string}` | null> => {
     if (rootSigner.kind !== 'passkey') return null
     const owner = ownerAddress.toLowerCase()
     const credentialId = getPasskeyCredential(activeToken?.tokenId)
@@ -496,28 +501,41 @@ export function useRestoreRoamedSession() {
 
     try {
       const rpId = typeof window !== 'undefined' ? window.location.hostname : ''
-      const salt = await buildPrfSalt(owner)
 
-      // One challenge + one passkey ceremony that gates blob retrieval AND yields
-      // the PRF secret.
-      const { challenge } = await apiFetch<{ challenge: `0x${string}` }>(
-        '/api/wallet/blob/challenge',
-        { method: 'POST', body: JSON.stringify({ address: owner }) },
-      )
-      const sig = await signWithPasskey({ credentialId, digest: challenge, rpId, prfSalt: salt })
-      markPrfCapable(credentialId, !!sig.prfSecret)
-      if (!sig.prfSecret) return null
-
-      const { sessionPrfBlob } = await apiFetch<{ sessionPrfBlob: string | null }>(
-        '/api/wallet/blob/retrieve',
-        { method: 'POST', body: JSON.stringify({ address: owner, challenge, signature: sig.sig }) },
-      )
+      // Fast path: reuse a pre-captured PRF secret + a session-authed blob read
+      // (no passkey challenge/signature needed — the user is authenticated).
+      let prfSecret: Uint8Array | undefined = presetPrfSecret
+      let sessionPrfBlob: string | null = null
+      if (prfSecret) {
+        const r = await apiFetch<{ sessionPrfBlob: string | null }>(
+          '/api/wallet/blob/retrieve',
+          { method: 'POST', body: JSON.stringify({ address: owner }) },
+        )
+        sessionPrfBlob = r.sessionPrfBlob
+      } else {
+        // Fallback: own ceremony — one challenge + one passkey touch that gates
+        // blob retrieval AND yields the PRF secret.
+        const salt = await buildPrfSalt(owner)
+        const { challenge } = await apiFetch<{ challenge: `0x${string}` }>(
+          '/api/wallet/blob/challenge',
+          { method: 'POST', body: JSON.stringify({ address: owner }) },
+        )
+        const sig = await signWithPasskey({ credentialId, digest: challenge, rpId, prfSalt: salt })
+        markPrfCapable(credentialId, !!sig.prfSecret)
+        if (!sig.prfSecret) return null
+        prfSecret = sig.prfSecret
+        const r = await apiFetch<{ sessionPrfBlob: string | null }>(
+          '/api/wallet/blob/retrieve',
+          { method: 'POST', body: JSON.stringify({ address: owner, challenge, signature: sig.sig }) },
+        )
+        sessionPrfBlob = r.sessionPrfBlob
+      }
       if (!sessionPrfBlob) return null
 
       const parsed = JSON.parse(sessionPrfBlob)
       if (!validatePrfBackupBlobShape(parsed)) return null
 
-      const keyBytes = await unwrapSessionKeyWithPrf(parsed, sig.prfSecret)
+      const keyBytes = await unwrapSessionKeyWithPrf(parsed, prfSecret)
       let sessionPrivKey: `0x${string}`
       let sessionAddr: `0x${string}`
       try {
