@@ -99,6 +99,26 @@ export function useWalletPopulation(): UseWalletPopulationReturn {
     // Return 'none'+loading so signing waits for the wallet to unlock.
     if (isConnected && !address) return 'none'
 
+    // A wagmi wallet IS connected, but it does NOT own the active profile, and
+    // the active profile is owned by a known passkey (Pop-B) address. This is the
+    // "roamed to a new browser that happens to have an unrelated EOA connected"
+    // case: the connected wallet is incidental, the passkey account is the real
+    // signer for THIS profile. Without this, we'd classify by the connected
+    // wallet's bytecode (a plain EOA → 'A'), route DM/Quick-Sign through the wrong
+    // wallet, and the passkey account's roamed session/DM would never restore.
+    // Match the active profile's owner against the passkey owner (lastAddress) so
+    // this only fires when the passkey account is actually the active one.
+    if (
+      isConnected &&
+      address &&
+      isPasskeyInstall &&
+      lastAddress &&
+      activeOwner === lastAddress.toLowerCase() &&
+      address.toLowerCase() !== lastAddress.toLowerCase()
+    ) {
+      return 'B'
+    }
+
     // No wagmi wallet at all. A passkey install with a known owner address is a
     // sponsored Population-B user (they never connect a wagmi wallet) — BUT only
     // if the ACTIVE profile is actually owned by that passkey address. The
@@ -127,11 +147,24 @@ export function useWalletPopulation(): UseWalletPopulationReturn {
     return classifyBytecode(code)
   }, [isConnected, address, isLoading, bytecode, recoveryCtx.isInRecoveryMode, isPasskeyInstall, lastAddress, activeOwner])
 
-  // When there's no wagmi wallet, surface the Pop-B owner address:
-  // the recovered address (recovery mode) or the stored owner (passkey install).
+  // Surface the correct owner address for the active population.
+  //   - recovery mode: the recovered address.
+  //   - passkey profile active while a DIFFERENT wagmi wallet is connected (the
+  //     roamed-browser case above): the passkey owner, NOT the incidental wallet
+  //     — otherwise downstream owner checks (DM pre-flight, Quick Sign) compare
+  //     against the wrong address and abort with "wrong wallet".
+  //   - no wagmi wallet + passkey install: the stored passkey owner.
+  //   - otherwise: the connected wallet.
+  const activeProfileIsRoamedPasskey =
+    isConnected &&
+    !!address &&
+    isPasskeyInstall &&
+    !!lastAddress &&
+    activeOwner === lastAddress.toLowerCase() &&
+    address.toLowerCase() !== lastAddress.toLowerCase()
   const effectiveAddress = (!isConnected && recoveryCtx.isInRecoveryMode)
     ? (recoveryCtx.address ?? undefined)
-    : (!isConnected && isPasskeyInstall)
+    : (activeProfileIsRoamedPasskey || (!isConnected && isPasskeyInstall))
       ? lastAddress
       : address
 

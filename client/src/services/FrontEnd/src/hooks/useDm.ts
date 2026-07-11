@@ -629,7 +629,15 @@ export function useDmClient(tokenId?: number, username?: string) {
     // a request that was always going to fail. Surface the mismatch
     // upfront so the message is "switch wallet" rather than a confusing
     // signature failure.
+    //
+    // SKIP for passkey (Pop-B) accounts: the wagmi `connectedAddress` is
+    // irrelevant to a passkey profile — signing routes through rootSigner
+    // (WebAuthn/ecdsaFallback), not the connected wallet. On a browser the
+    // passkey account roamed into, an unrelated EOA may be connected via
+    // wagmi; comparing it against the passkey-owned token would falsely abort
+    // with "wrong wallet" even though the passkey is the correct signer.
     if (
+      !isPasskey &&
       connectedAddress &&
       activeToken?.address &&
       connectedAddress.toLowerCase() !== activeToken.address.toLowerCase()

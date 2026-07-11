@@ -269,4 +269,41 @@ describe('useWalletPopulation', () => {
     localStorage.removeItem(`caw:identity-kind:${passkeyOwner}`)
     useTokenDataStore.setState({ hasHydrated: false, lastAddress: undefined, activeTokenId: undefined, tokensByAddress: {} })
   })
+
+  // Regression: roamed to a new browser that happens to have an UNRELATED wagmi
+  // EOA connected. The passkey profile is active, but a different wallet is
+  // connected. Without the roamed-passkey branch we'd classify by the connected
+  // EOA's bytecode (plain → 'A'), route DM / Quick Sign through the wrong wallet
+  // ("wrong wallet — switch to …"), and the roamed session/DM would never
+  // restore. Must classify as B and surface the passkey owner, NOT the wallet.
+  it('returns B (+passkey owner address) for a passkey profile active while an unrelated EOA is connected', async () => {
+    const passkeyOwner = '0xaaaa000000000000000000000000000000000000' as `0x${string}`
+    const strayEoa = '0xf71338f3eaa483aa66125598b09ba1988e694a95' as `0x${string}`
+    localStorage.setItem(`caw:identity-kind:${passkeyOwner}`, JSON.stringify('passkey'))
+    useTokenDataStore.setState({
+      hasHydrated: true,
+      lastAddress: passkeyOwner,
+      activeTokenId: 1,
+      tokensByAddress: {
+        [passkeyOwner]: [{ tokenId: 1, owner: passkeyOwner, address: passkeyOwner, username: 'pk', withdrawable: 0n, ownerBalance: 0n, stakedAmount: 0n, cawonce: 0 }],
+      },
+    })
+
+    // A stray plain-EOA wallet is connected via wagmi (empty bytecode).
+    mockUseAccount.mockReturnValue({ address: strayEoa, isConnected: true })
+    mockUsePublicClient.mockReturnValue({ getCode: vi.fn().mockResolvedValue(undefined) })
+    mockUseRecoveryContext.mockReturnValue({
+      privateKey: null, address: null, isInRecoveryMode: false, setKey: vi.fn(), clearKey: vi.fn(),
+    })
+
+    const { result } = renderHook(() => useWalletPopulation(), { wrapper: makeWrapper() })
+
+    // Classifies as the passkey account, not the connected stray EOA.
+    expect(result.current.population).toBe<WalletPopulation>('B')
+    // And surfaces the passkey owner so downstream owner checks compare correctly.
+    expect(result.current.address).toBe(passkeyOwner)
+
+    localStorage.removeItem(`caw:identity-kind:${passkeyOwner}`)
+    useTokenDataStore.setState({ hasHydrated: false, lastAddress: undefined, activeTokenId: undefined, tokensByAddress: {} })
+  })
 })
