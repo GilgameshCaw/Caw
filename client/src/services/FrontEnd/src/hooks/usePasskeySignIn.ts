@@ -31,7 +31,7 @@ import { useIdentitySigning } from '~/components/identity/IdentitySigningProvide
 import { useAuthStore } from '~/store/authStore'
 import { useTokenDataStore } from '~/store/tokenDataStore'
 import { useSessionKeyStore } from '~/store/sessionKeyStore'
-import { useRestoreRoamedSession } from '~/hooks/useSessionKey'
+import { useRestoreRoamedSession, useWrapSessionForRoaming } from '~/hooks/useSessionKey'
 import { persistPasskeyIdentity } from '~/constants/passkeyStorage'
 import { wagmiConfig } from '~/config/Web3Provider'
 import { CAW_NAMES_L2_ADDRESS } from '~/../../../abi/addresses'
@@ -60,6 +60,7 @@ export function usePasskeySignIn(): UsePasskeySignIn {
   const setSession = useAuthStore(s => s.setSession)
   const { startSigning, stopSigning } = useIdentitySigning()
   const restoreRoamedSession = useRestoreRoamedSession()
+  const wrapSessionForRoaming = useWrapSessionForRoaming()
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
@@ -177,8 +178,15 @@ export function usePasskeySignIn(): UsePasskeySignIn {
         const sk = useSessionKeyStore.getState()
         const ownerLc = ownerAddr.toLowerCase()
         sk.setActiveWallet(ownerLc)
-        if (sk.sessions[ownerLc]) sk.setEnabled(true)
-        else {
+        if (sk.sessions[ownerLc]) {
+          sk.setEnabled(true)
+          // WRAP-ON-ACTIVATION: this browser HAS a local session, but a session
+          // created before the roaming code (or otherwise never wrapped) has no
+          // sessionPrfBlob on the server, so it can't roam to the NEXT browser.
+          // Opportunistically wrap+upload it using the PRF secret captured in the
+          // sign-in touch (no extra Face ID). No-op if it's already on the server.
+          void wrapSessionForRoaming(ownerLc, signInPrfSecret).catch(() => {})
+        } else {
           // ROAMING (Bug E): this browser has NO local Quick Sign session for the
           // account. If one was PRF-wrapped on another device, restore it now —
           // one Face ID unwraps the SAME on-chain-registered session key so QS
@@ -289,7 +297,7 @@ export function usePasskeySignIn(): UsePasskeySignIn {
     } finally {
       setBusy(false)
     }
-  }, [t, setSession, startSigning, stopSigning, restoreRoamedSession])
+  }, [t, setSession, startSigning, stopSigning, restoreRoamedSession, wrapSessionForRoaming])
 
   return { signIn, busy, error, clearError: () => setError(null) }
 }

@@ -615,6 +615,55 @@ export function useRestoreRoamedSession() {
 }
 
 /**
+ * WRAP-ON-ACTIVATION (roaming for PRE-EXISTING sessions): the wrap-on-create path
+ * only PRF-wraps a session at the moment it's created. A session created before
+ * that code existed — or on a device that just restored one — has NO sessionPrfBlob
+ * on the server, so it can't roam. This opportunistically wraps the CURRENT local
+ * session and uploads it IFF the server doesn't already have one.
+ *
+ * Reuses a PRF secret captured in a PRECEDING passkey touch (e.g. sign-in) + the
+ * session-authed first-write, so it costs NO extra Face ID. Returns true if it
+ * wrapped+uploaded, false if there was nothing to do / it failed (non-fatal).
+ */
+export function useWrapSessionForRoaming() {
+  const activeToken = useActiveToken()
+  const rootSigner = useRootSigner()
+  return useCallback(async (ownerAddress: string, presetPrfSecret?: Uint8Array): Promise<boolean> => {
+    if (rootSigner.kind !== 'passkey' || !presetPrfSecret) return false
+    const owner = ownerAddress.toLowerCase()
+    try {
+      // Only wrap if the server DOESN'T already have a session blob (session-authed
+      // read — no prompt). Avoids re-uploading every sign-in.
+      const { sessionPrfBlob } = await apiFetch<{ sessionPrfBlob: string | null }>(
+        '/api/wallet/blob/retrieve',
+        { method: 'POST', body: JSON.stringify({ address: owner }) },
+      )
+      if (sessionPrfBlob) return false // already roamable
+
+      const store = useSessionKeyStore.getState()
+      const session = store.getSessionForAddress(owner)
+      // Need the decrypted private key present + a real registered session address.
+      if (!session?.privateKey || session.privateKey.length < 4 || session.privateKey === '0xencrypted') return false
+      if (!session.address) return false
+
+      const keyBytes = passkeyHexToBytes(session.privateKey.slice(2))
+      const wrapped = await wrapSessionKeyWithPrf(keyBytes, presetPrfSecret, session.address)
+      keyBytes.fill(0)
+      // Session-authed first-write (no challenge/signature — the user is signed in).
+      await apiFetch('/api/wallet/blob/prf', {
+        method: 'POST',
+        body: JSON.stringify({ address: owner, sessionPrfBlob: JSON.stringify(wrapped) }),
+      })
+      console.log('[QuickSign] existing session wrapped for roaming (no prompt)')
+      return true
+    } catch (e) {
+      console.warn('[QuickSign] wrap-on-activation skipped (non-fatal):', e)
+      return false
+    }
+  }, [rootSigner, activeToken])
+}
+
+/**
  * Register a Quick Sign session WITHOUT a wagmi wallet — for the sponsored
  * Population-B onboarding flow, where the secp256k1 ecdsaFallback key is still
  * in memory (via the bootstrap `signVerifyMessage` closure) right after mint.
