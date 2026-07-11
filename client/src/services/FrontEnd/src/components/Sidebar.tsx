@@ -122,9 +122,18 @@ interface SidebarProps {
    *  drawer in MainLayout to close itself after navigation; desktop
    *  doesn't pass it because there's no drawer to close. */
   onNavigate?: () => void
+  /** True when rendered inside MainLayout's mobile drawer panel. The panel
+   *  already supplies its own width (w-80) + right border, so the Sidebar
+   *  must fill it (w-full) and drop its own `sm:w-[200px]`/`sm:border-r`.
+   *  Without this, at ≥sm widths (640–767px) the drawer is still open (it's
+   *  md:hidden) but the Sidebar collapses to 200px and paints a right border
+   *  120px short of the 320px panel edge — a phantom vertical line down the
+   *  middle of the menu. Desktop rail omits this (it wraps the Sidebar in its
+   *  own w-[200px] container and wants the sm rail styling). */
+  inDrawer?: boolean
 }
 
-const Sidebar: React.FC<SidebarProps> = ({ onNavigate }) => {
+const Sidebar: React.FC<SidebarProps> = ({ onNavigate, inDrawer = false }) => {
   const t = useT()
   const activeTokenId = useTokenDataStore(s => s.activeTokenId)
   const activeToken = useActiveToken()
@@ -193,14 +202,25 @@ const Sidebar: React.FC<SidebarProps> = ({ onNavigate }) => {
   }
 
   return (
-    <div className={`flex flex-col h-full sm:justify-between w-full sm:w-[200px] border-r-0.5 sm:border-r transition-all duration-300 ${
-      isDark 
-        ? 'bg-black border-white/20' 
+    <div className={`flex flex-col h-full sm:justify-between transition-all duration-300 ${
+      inDrawer
+        // Fill the drawer panel; it owns the width + right border.
+        ? 'w-full'
+        : 'w-full sm:w-[200px] border-r-0.5 sm:border-r'
+    } ${
+      isDark
+        ? 'bg-black border-white/20'
         : 'bg-white border-gray-300'
     }`}>
       <div className="flex flex-col flex-1 min-h-0">
-        {/* Logo Section - Hidden on mobile */}
-        <div className="hidden sm:block p-4">
+        {/* Logo Section - Hidden on the narrow mobile drawer (the mobile
+            header already shows the logo). At ≥sm the logo+ticker render at
+            the drawer top; while the drawer is still open there (it's
+            md:hidden, so 640–767px), the fixed mobile header (z-[9999])
+            overlays this row and clips the ticker. Pad the top past the
+            header height in the drawer so the ticker clears it. Desktop rail
+            (no fixed header over it) keeps the plain p-4. */}
+        <div className={`hidden sm:block p-4 ${inDrawer ? 'sm:pt-[var(--app-mobile-header-h)] md:pt-4' : ''}`}>
           <NavLink
             to="/home"
             onClick={guardClick}

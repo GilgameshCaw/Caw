@@ -444,7 +444,7 @@ const MainLayout = ({ children, hideSidebars: hideSidebarsProp }: MainLayoutProp
               onTouchEnd={onDrawerTouchEnd}
               onTouchCancel={onDrawerTouchEnd}
             >
-              <Sidebar onNavigate={() => setIsMobileMenuOpen(false)} />
+              <Sidebar inDrawer onNavigate={() => setIsMobileMenuOpen(false)} />
             </div>
           </div>
         </>
