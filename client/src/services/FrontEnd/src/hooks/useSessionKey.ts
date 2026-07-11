@@ -607,12 +607,14 @@ export function useRestoreRoamedSession() {
           functionName: 'sessionSpent', args: [owner as `0x${string}`, sessionAddr],
         }) as Promise<bigint>,
       ])
-      // The deployed sessions() getter returns the StoredSession struct as a
-      // POSITIONAL TUPLE (viem gives an array here, NOT a named object — reading
-      // `.expiry` yielded undefined → `BigInt(undefined)` threw and the restore
-      // fell through to "create new"). Field ORDER from the generated
-      // cawProfileLedgerAbi: [expiry, scopeBitmap, epoch, perActionTipRate,
-      // profileId, spendLimit]. Support both shapes to be safe.
+      // VERIFIED on-chain (Base Sepolia, deployed ledger 0x087C09…): viem returns
+      // this StoredSession as a POSITIONAL ARRAY, not a named object —
+      //   isArray: true, keys ['0'..'5'], res.expiry === undefined, res[0] === expiry
+      // Reading `.expiry` gave undefined → BigInt(undefined) threw → restore fell
+      // through to "create new" (the whole roam bug). Field ORDER (generated
+      // cawProfileLedgerAbi): [expiry, scopeBitmap, epoch, perActionTipRate,
+      // profileId, spendLimit]. `pick()` prefers the name (future-proof if viem
+      // ever returns an object) then falls back to the index.
       const raw = sessionRaw as any
       const pick = (name: string, idx: number) =>
         raw?.[name] !== undefined ? raw[name] : raw?.[idx]
