@@ -3,7 +3,7 @@
 
 import { prisma } from '../../prismaClient'
 import { JsonRpcProvider, Contract, verifyTypedData } from 'ethers'
-import { makeJsonRpcProvider, getL1HttpRpcUrl, getL2HttpRpcUrl, getEthMainnetHttpRpcUrl, redactRpcUrl, isConnectionError } from '../../utils/rpcProvider'
+import { makeVerifiedJsonRpcProvider, getL1HttpRpcUrl, getL2HttpRpcUrl, getEthMainnetHttpRpcUrl, redactRpcUrl, isConnectionError } from '../../utils/rpcProvider'
 import { cawNetworkManagerAbi } from '../../abi/generated'
 import { NETWORK_MANAGER_ADDRESS, CAW_NAMES_L2_ADDRESS, CAW_PAIR_ADDRESS, CAW_ADDRESS } from '../../abi/addresses'
 
@@ -102,7 +102,7 @@ let sepoliaCawPriceCache: CachedCawPrice | null = null
 // Provider Initialization
 // ============================================================================
 
-function initializeProviders(config: ChainSyncConfig) {
+async function initializeProviders(config: ChainSyncConfig) {
   // Retain the last config with a URL so rebuildProviders() can recreate the
   // singletons after a dead connection. Merge so a partial call (e.g.
   // forceSyncNetwork passing only l1RpcUrl) doesn't drop the L2/mainnet URLs.
@@ -113,22 +113,27 @@ function initializeProviders(config: ChainSyncConfig) {
     ethMainnetRpcUrl: redactRpcUrl(config.ethMainnetRpcUrl),
   })
 
+  // Probe chainId at construction (audit 2026-07-11) so a wrong-chain RPC —
+  // primary OR a rebuild after a dead connection — can't feed ChainSync bogus
+  // NetworkManager / SessionKey event data (syncL2Events writes SessionKey rows
+  // the off-chain session check trusts). makeVerifiedJsonRpcProvider throws only
+  // on a CONFIRMED mismatch; a transient probe timeout is tolerated (warn).
   if (!l1Provider && config.l1RpcUrl) {
     const l1Url = getL1HttpRpcUrl(config.l1RpcUrl)
-    console.log('[ChainSync] L1 provider URL:', l1Url.slice(0, 40) + '...')
-    l1Provider = makeJsonRpcProvider(l1Url, 11155111)
+    console.log('[ChainSync] L1 provider URL:', redactRpcUrl(l1Url))
+    l1Provider = await makeVerifiedJsonRpcProvider(l1Url, 11155111)
     networkManager = new Contract(NETWORK_MANAGER_ADDRESS, cawNetworkManagerAbi, l1Provider)
   }
 
   if (!l2Provider && config.l2RpcUrl) {
     const l2Url = getL2HttpRpcUrl(config.l2RpcUrl)
-    console.log('[ChainSync] L2 provider URL:', l2Url.slice(0, 40) + '...')
-    l2Provider = makeJsonRpcProvider(l2Url, 84532)
+    console.log('[ChainSync] L2 provider URL:', redactRpcUrl(l2Url))
+    l2Provider = await makeVerifiedJsonRpcProvider(l2Url, 84532)
   }
 
   if (!mainnetProvider && config.ethMainnetRpcUrl) {
     console.log('[ChainSync] Mainnet provider URL:', redactRpcUrl(config.ethMainnetRpcUrl))
-    mainnetProvider = makeJsonRpcProvider(config.ethMainnetRpcUrl, 1)
+    mainnetProvider = await makeVerifiedJsonRpcProvider(config.ethMainnetRpcUrl, 1)
     uniswapRouter = new Contract(UNISWAP_V2_ROUTER, UNISWAP_V2_ROUTER_ABI, mainnetProvider)
   }
 
@@ -166,7 +171,13 @@ function maybeRebuildProviders(err: unknown): void {
   mainnetProvider = null
   networkManager = null
   uniswapRouter = null
-  initializeProviders(lastProviderConfig)
+  // Fire-and-forget re-init: sync functions early-return while providers are null
+  // and pick them up once rebuilt. A confirmed wrong-chain RPC makes
+  // makeVerifiedJsonRpcProvider throw → the provider stays null (NOT trusted) and
+  // the next connection-error tick retries after the cooldown.
+  initializeProviders(lastProviderConfig).catch(e => {
+    console.error('[ChainSync] Provider rebuild failed (staying null until next retry):', (e as any)?.message || e)
+  })
 }
 
 // ============================================================================
@@ -670,7 +681,7 @@ async function loadPricesFromDb(): Promise<void> {
  * Force sync a specific network (V2: reads CawNetworkManager.getNetwork)
  */
 export async function forceSyncNetwork(networkId: number, l1RpcUrl: string): Promise<boolean> {
-  initializeProviders({ l1RpcUrl })
+  await initializeProviders({ l1RpcUrl })
   return syncNetwork(networkId)
 }
 
@@ -1235,8 +1246,14 @@ export const chainSyncService = {
       ethMainnetRpcUrl: redactRpcUrl(resolvedCfg.ethMainnetRpcUrl),
     })
 
-    // Initialize providers
-    initializeProviders(resolvedCfg)
+    // Initialize providers — this awaits chainId verification (a wrong-chain RPC
+    // throws rather than being silently trusted). start() must return synchronously
+    // per the Service interface, so we hold the init promise and surface it via
+    // `started` below. Registered tasks poll on intervals and early-return while
+    // providers are still null, so they self-defer until this resolves.
+    const providersReady = initializeProviders(resolvedCfg).catch(e => {
+      console.error('[ChainSync] Provider init failed (chainId verify or RPC down):', (e as any)?.message || e)
+    })
 
     // Load cached data from DB
     loadPricesFromDb()
@@ -1289,7 +1306,7 @@ export const chainSyncService = {
     syncTasks.forEach(task => startTask(task, ctx.heartbeat))
 
     return {
-      started: Promise.resolve(),
+      started: providersReady,
 
       async stop() {
         console.log('[ChainSync] Stopping service...')

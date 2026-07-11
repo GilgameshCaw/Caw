@@ -713,9 +713,16 @@ const RESILIENT_REBUILD_COOLDOWN_MS = 12_000
  * L*_RPC_URL_HTTP_FALLBACK) ethers' FallbackProvider also routes around a
  * degraded primary between rebuilds.
  *
- * On rebuild we re-run verifyChainId (fire-and-forget warn, same tolerance as
- * the makeVerified* factories) so a misconfigured fallback URL pointing at the
- * wrong chain is caught rather than silently trusted.
+ * TRUST BOUNDARY (audit 2026-07-11): on rebuild we VERIFY-BEFORE-PROMOTE. The
+ * candidate provider is chain-ID-probed BEFORE it becomes the one `get()` serves;
+ * `get()` keeps returning the OLD provider until the probe resolves. A *confirmed*
+ * chainId mismatch (e.g. a fallback URL pointing at the wrong chain) discards the
+ * candidate and keeps the old provider — so a wrong-chain provider is NEVER served
+ * to callers, even for one tick. This matters because DepositWatcher →
+ * StakeLedger.recordDeposit mutates an authoritative in-memory ledger from raw
+ * event data; a phantom Deposited from a wrong chain must not slip through. A
+ * probe TIMEOUT (transient, RPC slow-but-alive) still promotes — same tolerance
+ * makeVerifiedFallbackJsonRpcProvider accepts — so a slow RPC can't block healing.
  */
 export function makeResilientHttpProvider(
   urls: string[],
@@ -726,17 +733,33 @@ export function makeResilientHttpProvider(
   const label = opts?.label || `chain:${chainId}`
   let current = makeFallbackJsonRpcProvider(urls, chainId)
   let lastRebuildAt = 0
+  let rebuilding = false
 
   const rebuild = (reason: string) => {
     const now = Date.now()
+    if (rebuilding) return // a verify-before-promote is already in flight
     if (now - lastRebuildAt < RESILIENT_REBUILD_COOLDOWN_MS) return // cooldown — no storm
     lastRebuildAt = now
+    rebuilding = true
     console.warn(`[rpcProvider] resilient(${label}) rebuilding after connection error: ${reason}`)
-    try { (current as any)?.destroy?.() } catch { /* best effort */ }
-    current = makeFallbackJsonRpcProvider(urls, chainId)
-    // Fire-and-forget chain-ID re-probe on the rebuilt provider (catches a
-    // fallback URL that points at the wrong chain). Never throws into the caller.
-    verifyChainId(current as any, chainId, urls[0]).catch(() => { /* warned inside */ })
+    const candidate = makeFallbackJsonRpcProvider(urls, chainId)
+    // Probe the CANDIDATE's chainId before promoting it. verifyChainId throws
+    // ONLY on a confirmed mismatch; a probe timeout / transient failure resolves
+    // (warns) so we still promote a slow-but-alive RPC.
+    verifyChainId(candidate as any, chainId, urls[0])
+      .then(() => {
+        // Verified (or tolerated timeout) — promote, retiring the old provider.
+        const old = current
+        current = candidate
+        try { (old as any)?.destroy?.() } catch { /* best effort */ }
+      })
+      .catch((e) => {
+        // CONFIRMED wrong chain — discard the candidate, keep serving the old
+        // provider. Do NOT promote a wrong-chain provider under any circumstance.
+        console.error(`[rpcProvider] resilient(${label}) rebuild REJECTED — candidate failed chain-ID verification, keeping previous provider:`, (e as any)?.message || e)
+        try { (candidate as any)?.destroy?.() } catch { /* best effort */ }
+      })
+      .finally(() => { rebuilding = false })
   }
 
   return {

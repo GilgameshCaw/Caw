@@ -2,7 +2,7 @@
 import 'dotenv/config'
 import { z } from 'zod'
 import { ethers } from 'ethers'
-import { getL1HttpRpcUrl, getL1HttpRpcUrls, makeResilientHttpProvider, type ResilientProvider } from '../../utils/rpcProvider'
+import { getL1HttpRpcUrl, getL1HttpRpcUrls, makeResilientHttpProvider, makeVerifiedJsonRpcProvider, type ResilientProvider } from '../../utils/rpcProvider'
 import { Service } from '../../Service'
 import { prisma } from '../../prismaClient'
 import { CAW_NAME_MARKETPLACE_ADDRESS, CAW_NAMES_ADDRESS } from '../../abi/addresses'
@@ -85,6 +85,10 @@ export const marketplaceIndexerService: Service = {
       await prisma.$connect()
       console.log(`[MarketplaceIndexer] Started — marketplace=${marketplaceAddress}, cawProfile=${cawProfileAddress}, rpc=${rpcUrl.substring(0, 40)}...`)
 
+      // Probe chainId ONCE at startup before trusting this RPC — a primary RPC on
+      // the wrong chain would otherwise be silently trusted (audit 2026-07-11
+      // MEDIUM). The resilient handle below re-probes on every rebuild.
+      await makeVerifiedJsonRpcProvider(rpcUrl, 11155111)
       // Self-healing provider (2026-07-10 incident): a degraded L1 RPC rebuilds
       // itself instead of wedging the poll loop forever. provider + contracts are
       // re-derived from rpc.get() each tick; connection errors call reportError().

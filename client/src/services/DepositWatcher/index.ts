@@ -23,7 +23,7 @@ import 'dotenv/config'
 import { z } from 'zod'
 import { ethers } from 'ethers'
 import Redis from 'ioredis'
-import { getL1HttpRpcUrl, getL1HttpRpcUrls, makeResilientHttpProvider, redactRpcUrl, type ResilientProvider } from '../../utils/rpcProvider'
+import { getL1HttpRpcUrl, getL1HttpRpcUrls, makeResilientHttpProvider, makeVerifiedJsonRpcProvider, redactRpcUrl, type ResilientProvider } from '../../utils/rpcProvider'
 import { Service } from '../../Service'
 import { prisma } from '../../prismaClient'
 import { CAW_NAMES_ADDRESS } from '../../abi/addresses'
@@ -89,6 +89,11 @@ export const depositWatcherService: Service = {
       if (!rpcUrl) throw new Error('[DepositWatcher] No L1 RPC URL configured')
       await prisma.$connect()
 
+      // Probe chainId ONCE at startup before trusting this RPC — DepositWatcher
+      // feeds StakeLedger.recordDeposit (an authoritative in-memory ledger), so a
+      // primary RPC on the wrong chain must never be silently trusted (audit
+      // 2026-07-11 MEDIUM). The resilient handle below re-probes on every rebuild.
+      await makeVerifiedJsonRpcProvider(rpcUrl, cfg.chainId)
       // Self-healing provider (2026-07-10 incident): a degraded L1 RPC rebuilds
       // itself instead of wedging the poll loop. Re-derived from rpc.get() each tick.
       const rpc: ResilientProvider = makeResilientHttpProvider(
