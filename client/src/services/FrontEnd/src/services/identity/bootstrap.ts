@@ -116,10 +116,20 @@ export type SponsorApiClient = {
  *
  * Returns the three fields that bootstrap.ts includes in BootstrapParams.
  */
-export type PasskeyPermitSigner = (permitDigest: `0x${string}`) => Promise<{
+export type PasskeyPermitSigner = (
+  permitDigest: `0x${string}`,
+  /** When present, the ceremony ALSO requests the WebAuthn PRF secret with this
+   *  salt so onboarding can enrol the DM-PRF blob WITHOUT a second Face ID (the
+   *  same passkey touch signs the mint permit AND yields the PRF secret). */
+  prfSalt?: Uint8Array,
+) => Promise<{
   permitSig: `0x${string}`
   clientDataJSON: string
   authenticatorData: `0x${string}`
+  /** The 32-byte PRF secret, present only when `prfSalt` was passed AND the
+   *  authenticator supports PRF. Undefined otherwise (caller falls back to a
+   *  separate enrol ceremony). */
+  prfSecret?: Uint8Array
 }>
 
 /**
@@ -422,7 +432,17 @@ export async function bootstrapNewUser(opts: {
   // The passkey signer (Step 4d) produces an ABI-encoded WebAuthn assertion
   // over the permit digest. SmartEOA.isValidSignature dispatches to the
   // WebAuthn path when the blob is >= 224 bytes.
-  const passkeyAssertion = await passkeySigner(permitDigest)
+  //
+  // SINGLE-PROMPT DM-PRF ENROL: `recoveredRecipient` (the owner address the PRF
+  // salt is keyed by) is known HERE, before the ceremony — so we request the PRF
+  // secret in this SAME touch. The captured secret is carried out and used by
+  // enrollPrfAfterMint to wrap the DM recovery key with NO second Face ID. If the
+  // authenticator doesn't support PRF, prfSecret is undefined and enrol falls back
+  // to its own ceremony (unchanged behaviour).
+  let mintPermitPrfSalt: Uint8Array | undefined
+  try { mintPermitPrfSalt = await buildPrfSalt(recoveredRecipient) } catch { /* non-secure ctx — skip PRF capture */ }
+  const passkeyAssertion = await passkeySigner(permitDigest, mintPermitPrfSalt)
+  const capturedPrfSecret: Uint8Array | undefined = passkeyAssertion.prfSecret
 
   // Step 6: Assemble and submit the bootstrap params to the sponsor API.
   // The sponsor server builds the single type-0x04 tx:
@@ -488,11 +508,37 @@ export async function bootstrapNewUser(opts: {
     depositAmountCAW,
     signVerifyMessage: (message: string) => verifyAccount.signMessage({ message }),
     // Bug D: enrol the PRF blob after the mint (profile indexed + SmartEOA live).
-    // Closes over keypair.privateKey + recoveredRecipient (the owner). Passkey-
-    // gated write; the recovery key is wrapped under the PRF secret. Non-fatal.
+    // Closes over keypair.privateKey + recoveredRecipient (the owner) + the PRF
+    // secret CAPTURED during the mint-permit ceremony (capturedPrfSecret).
+    //
+    // SINGLE-PROMPT PATH (preferred): if we already hold the PRF secret from the
+    // mint-permit touch, wrap the recovery key with it and write via the
+    // SESSION-AUTHENTICATED first-write (the user is signed in post-mint) — NO
+    // second Face ID. FALLBACK: no captured secret (authenticator lacks PRF, or a
+    // non-secure ctx) → the old self-contained passkey-gated ceremony.
     enrollPrfAfterMint: async (credentialId: string): Promise<boolean> => {
+      const owner = recoveredRecipient
+      // Fast path: reuse the captured secret + session-authed first-write.
+      if (capturedPrfSecret) {
+        try {
+          markPrfCapable(credentialId, true)
+          const aesKey = await prfSecretToAesKey(capturedPrfSecret)
+          const prfBlob = await encryptBackupBlobWithKey(keypair.privateKey, aesKey, owner)
+          // No challenge/signature: the server accepts a FIRST prfBlob write when
+          // the caller's session (JWT) is authorized for this address's token AND
+          // no prfBlob exists yet. Overwrites still require the passkey gate.
+          await apiFetch('/api/wallet/blob/prf', {
+            method: 'POST',
+            body: JSON.stringify({ address: owner, prfBlob: JSON.stringify(prfBlob) }),
+          })
+          return true
+        } catch (e) {
+          console.warn('[bootstrap] single-prompt PRF enrol failed; falling back to ceremony:', e)
+          // fall through to the passkey-gated path
+        }
+      }
+      // Fallback: self-contained passkey-gated ceremony (own Face ID).
       try {
-        const owner = recoveredRecipient
         const rpId = typeof window !== 'undefined' ? window.location.hostname : ''
         const salt = await buildPrfSalt(owner)
         const { challenge } = await apiFetch<{ challenge: `0x${string}` }>(

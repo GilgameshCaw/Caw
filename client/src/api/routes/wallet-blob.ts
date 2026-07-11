@@ -22,6 +22,7 @@ import {
   isMailerConfigured,
   isUsingSendmailFallback,
 } from '../util/resendMailer'
+import { extractSession } from '../middleware/auth'
 
 const router = Router()
 
@@ -187,16 +188,6 @@ router.post('/blob/prf', blobWriteLimit, async (req, res) => {
       res.status(400).json({ error: 'sessionPrfBlob is not a valid PRF envelope' })
       return
     }
-    // Passkey-gate the WRITE (same shape as /blob/retrieve).
-    if (typeof challenge !== 'string' || !HEX32_RE.test(challenge)) {
-      res.status(400).json({ error: 'Invalid challenge' })
-      return
-    }
-    if (typeof signature !== 'string' || !/^0x[0-9a-fA-F]+$/.test(signature)) {
-      res.status(400).json({ error: 'Invalid signature' })
-      return
-    }
-
     const addr = address.toLowerCase()
     const user = await prisma.user.findFirst({
       where: { address: { equals: address, mode: 'insensitive' } },
@@ -204,6 +195,63 @@ router.post('/blob/prf', blobWriteLimit, async (req, res) => {
     })
     if (!user) {
       res.status(404).json({ error: 'No profile for that address' })
+      return
+    }
+
+    // Two authorization modes:
+    //  (A) SESSION-AUTHED FIRST-WRITE (no challenge/signature): the caller holds a
+    //      valid login session authorized for THIS address, AND the field(s) being
+    //      written don't exist yet. Used ONLY at onboarding to enrol the PRF blob
+    //      captured in the mint-permit passkey touch — no second Face ID. It CANNOT
+    //      overwrite an existing blob (that's the DoS the passkey gate protects),
+    //      and it's still authenticated (the user is logged in). Falls back to (B).
+    //  (B) PASSKEY-GATED WRITE (challenge+signature): required for any OVERWRITE and
+    //      whenever no session is present. Unchanged.
+    const hasPasskeyProof = typeof challenge === 'string' && typeof signature === 'string'
+
+    if (!hasPasskeyProof) {
+      // (A) session-authed first-write.
+      await extractSession(req)
+      const authedAddresses = (req.sessionData?.authorizedAddresses || []).map(a => a.toLowerCase())
+      const authedTokenIds = req.sessionData?.authorizedTokenIds || []
+      const sessionAuthorized = authedAddresses.includes(addr) || authedTokenIds.includes(user.tokenId)
+      if (!sessionAuthorized) {
+        res.status(401).json({ error: 'A passkey signature or an authorized session is required.' })
+        return
+      }
+      // First-write ONLY: refuse if the specific field already exists (overwrite
+      // must go through the passkey gate). Read the current row's fields.
+      const existing = await prisma.walletBlob.findUnique({
+        where: { address: addr },
+        select: { prfBlob: true, sessionPrfBlob: true },
+      })
+      if (!existing) {
+        res.status(404).json({ error: 'No backup stored for this account yet.' })
+        return
+      }
+      if (prfBlob !== undefined && existing.prfBlob) {
+        res.status(409).json({ error: 'DM PRF blob already exists; overwrite requires a passkey signature.' })
+        return
+      }
+      if (sessionPrfBlob !== undefined && existing.sessionPrfBlob) {
+        res.status(409).json({ error: 'Session PRF blob already exists; overwrite requires a passkey signature.' })
+        return
+      }
+      const data: { prfBlob?: string; sessionPrfBlob?: string } = {}
+      if (prfBlob !== undefined) data.prfBlob = prfBlob
+      if (sessionPrfBlob !== undefined) data.sessionPrfBlob = sessionPrfBlob
+      await prisma.walletBlob.update({ where: { address: addr }, data })
+      res.json({ ok: true })
+      return
+    }
+
+    // (B) Passkey-gate the WRITE (same shape as /blob/retrieve).
+    if (!HEX32_RE.test(challenge)) {
+      res.status(400).json({ error: 'Invalid challenge' })
+      return
+    }
+    if (!/^0x[0-9a-fA-F]+$/.test(signature)) {
+      res.status(400).json({ error: 'Invalid signature' })
       return
     }
     // Consume the challenge atomically (one-shot) before the on-chain verify.

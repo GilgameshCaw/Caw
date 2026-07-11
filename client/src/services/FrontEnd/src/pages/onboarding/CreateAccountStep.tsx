@@ -186,17 +186,22 @@ export default function CreateAccountStep({
 
       // Passkey signer adapter: wraps signWithPasskey() to match the
       // PasskeyPermitSigner callback shape expected by bootstrapNewUser().
-      const passkeySigner = async (digest: `0x${string}`) => {
+      const passkeySigner = async (digest: `0x${string}`, prfSalt?: Uint8Array) => {
         const rpId = typeof window !== 'undefined' ? window.location.hostname : 'app.caw.social'
+        // Pass prfSalt so this ONE ceremony (which signs the mint permit) ALSO
+        // yields the PRF secret — bootstrap uses it to enrol the DM-PRF blob with
+        // no second Face ID (single-prompt onboarding).
         const result = await signWithPasskey({
           credentialId: passkey.credentialId,
           digest,
           rpId,
+          prfSalt,
         })
         return {
           permitSig: result.sig,
           clientDataJSON: result.clientDataJSON,
           authenticatorData: result.authenticatorData,
+          prfSecret: result.prfSecret,
         }
       }
 
