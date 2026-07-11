@@ -157,8 +157,38 @@ export function useTxQueueMonitor() {
             // most of the time the user's session IS valid, the retry
             // just needs a fresh cawonce and the actions land cleanly.
             const isSessionFailure = reason.includes('session expired') ||
-              (reason.includes('session') && reason.includes('not found'))
-            const isSpendLimitFailure = reason.includes('spend limit')
+              (reason.includes('session') && reason.includes('not found')) ||
+              // V2 contract revert strings (ValidatorService selector map):
+              // "SessionInvalid — session key expired, unknown, or scope-mismatched",
+              // "OutOfScope — …", "WrongProfileForSession — …". Before, only the
+              // legacy "session expired"/"not found" wording matched, so a V2
+              // SessionInvalid failure was silently dropped (no renewal modal).
+              reason.includes('sessioninvalid') ||
+              reason.includes('session key expired') ||
+              reason.includes('outofscope') ||
+              reason.includes('wrongprofileforsession')
+            // The real revert string is "SessionLimitExceeded — session spend cap
+            // reached" — it says "spend CAP", so the old `includes('spend limit')`
+            // NEVER matched and the failure vanished as a silent pending-drop with
+            // no popup. Match the actual strings.
+            const isSpendLimitFailure = reason.includes('spend limit') ||
+              reason.includes('spend cap') ||
+              reason.includes('sessionlimitexceeded')
+            if (isSpendLimitFailure) {
+              // Reconcile the local spend counter: the on-chain cap is reached, so
+              // the local `spent` was clearly stale (it let this action through).
+              // Seed spent = spendLimit on the active session so the UI immediately
+              // knows it's tapped out and pre-checks future actions correctly
+              // (this is the "update local counters" the user asked for). The
+              // subsequent renewal modal is the recovery path.
+              try {
+                const sk = useSessionKeyStore.getState()
+                const active = sk.getActiveSession()
+                if (active?.spendLimit) {
+                  sk.setSession({ ...active, spent: active.spendLimit })
+                }
+              } catch { /* non-fatal — the modal still shows below */ }
+            }
             if (isSessionFailure || isSpendLimitFailure) {
               const sessionStore = useSessionKeyStore.getState()
               if (sessionStore.enabled) {
