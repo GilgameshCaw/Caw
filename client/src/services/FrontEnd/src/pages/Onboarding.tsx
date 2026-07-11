@@ -853,6 +853,13 @@ export default function Onboarding() {
                   durationSeconds: qsCfg.duration,
                   tipCeiling: qsCfg.tipCeiling,
                   cawPrice: cawPriceUsd,
+                  // PRF-wrap the freshly-created session for roaming, reusing the
+                  // mint-permit PRF secret (NO extra Face ID). Without this the
+                  // onboarding session has no server-side sessionPrfBlob, so signing
+                  // into the account on a new browser shows "Activate Quick Sign".
+                  onSessionCreated: async (privKeyHex, sessionAddr, meta) => {
+                    await result.wrapSessionForRoamingAfterMint(privKeyHex, sessionAddr, meta)
+                  },
                 })
                   // eslint-disable-next-line no-console
                   .then(() => console.log('[signin:diag] Quick Sign session registered + persisted'))

@@ -40,7 +40,8 @@ import { encryptBackupBlob, encryptBackupBlobWithKey, type BackupBlob } from './
 import { signAuthorizationTuple, type SignedAuthorizationTuple } from './eip7702'
 import { buildMintDepositPermitDigest } from './eip712Permits'
 import { buildPrfSalt, prfSecretToAesKey, markPrfCapable } from './prf'
-import { signWithPasskey } from './passkey'
+import { signWithPasskey, hexToBytes as passkeyHexToBytes } from './passkey'
+import { wrapSessionKeyWithPrf, saveSessionRoamMeta } from './sessionPrf'
 import { apiFetch } from '~/api/client'
 
 // ─── Types ───────────────────────────────────────────────────────────────────
@@ -197,6 +198,20 @@ export type BootstrapResult = {
    * Drive the overlay from this callback instead.
    */
   enrollPrfAfterMint: (credentialId: string, onCeremony?: () => void) => Promise<boolean>
+  /**
+   * PRF-wrap the just-created Quick Sign session key for ROAMING, reusing the PRF
+   * secret CAPTURED during the mint-permit passkey touch — NO extra Face ID. Call
+   * right after registerSponsoredSession creates the session at onboarding: pass
+   * the session's private key (0x-hex) + address. Without this, an onboarding
+   * session has no sessionPrfBlob on the server, so signing into the account on a
+   * NEW browser shows "Activate Quick Sign" (nothing to roam). Session-authed
+   * first-write; non-fatal. Returns true iff a sessionPrfBlob was uploaded.
+   */
+  wrapSessionForRoamingAfterMint: (
+    sessionPrivateKeyHex: `0x${string}`,
+    sessionAddress: `0x${string}`,
+    meta?: { expiry: number; scopeBitmap: number; spendLimit: string; tipCeiling: string },
+  ) => Promise<boolean>
   /**
    * L2 delegation payload (present only when bootstrap() was called with
    * l2ChainId). The caller POSTs this to /api/sponsor/delegate-l2 to delegate the
@@ -574,6 +589,56 @@ export async function bootstrapNewUser(opts: {
         return true
       } catch (e) {
         console.warn('[bootstrap] PRF enrol after mint skipped (non-fatal):', e)
+        return false
+      }
+    },
+    wrapSessionForRoamingAfterMint: async (
+      sessionPrivateKeyHex: `0x${string}`,
+      sessionAddress: `0x${string}`,
+      meta?: { expiry: number; scopeBitmap: number; spendLimit: string; tipCeiling: string },
+    ): Promise<boolean> => {
+      const owner = recoveredRecipient
+      // Only the fast path exists here: the PRF secret was captured at the
+      // mint-permit ceremony. No captured secret → skip (the session still works
+      // on THIS device; it just won't roam until a later passkey touch wraps it).
+      if (!capturedPrfSecret) return false
+      try {
+        // Session-authed first-write: skip if the server already has a session
+        // blob for this owner (avoids clobbering a previously-wrapped session).
+        const existing = await apiFetch<{ sessionPrfBlob: string | null }>(
+          '/api/wallet/blob/retrieve',
+          { method: 'POST', body: JSON.stringify({ address: owner }) },
+        ).catch(() => ({ sessionPrfBlob: null as string | null }))
+        if (existing.sessionPrfBlob) return false
+
+        const keyBytes = passkeyHexToBytes(sessionPrivateKeyHex.slice(2))
+        // Zeroize in finally so the raw key is wiped even if the wrap throws.
+        let sessionPrfBlob
+        try {
+          sessionPrfBlob = await wrapSessionKeyWithPrf(keyBytes, capturedPrfSecret, sessionAddress)
+        } finally {
+          keyBytes.fill(0)
+        }
+        await apiFetch('/api/wallet/blob/prf', {
+          method: 'POST',
+          body: JSON.stringify({ address: owner, sessionPrfBlob: JSON.stringify(sessionPrfBlob) }),
+        })
+        // Non-secret metadata so a same-device rebuild doesn't need on-chain reads;
+        // the new device re-reads authoritative expiry/scope/limit/spent on-chain.
+        if (meta) {
+          saveSessionRoamMeta(owner, {
+            sessionAddress,
+            ownerAddress: owner,
+            expiry: meta.expiry,
+            scopeBitmap: meta.scopeBitmap,
+            spendLimit: meta.spendLimit,
+            tipCeiling: meta.tipCeiling,
+          })
+        }
+        console.log('[bootstrap] onboarding session PRF-wrapped for roaming (no prompt)')
+        return true
+      } catch (e) {
+        console.warn('[bootstrap] session roam-wrap after mint skipped (non-fatal):', e)
         return false
       }
     },

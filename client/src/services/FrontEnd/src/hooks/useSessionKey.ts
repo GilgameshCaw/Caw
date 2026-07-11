@@ -687,6 +687,16 @@ export async function registerSponsoredSession(opts: {
   tipCeiling?: bigint
   cawPrice?: number
   onProgress?: (status: string) => void
+  // Invoked once, after the session is registered on-chain AND persisted locally,
+  // with the freshly-created session's private key + address and its non-secret
+  // metadata. The onboarding caller uses this to PRF-wrap the session for roaming
+  // (reusing the mint-permit PRF secret — no extra prompt) so the account's Quick
+  // Sign works on a new browser. Non-fatal: awaited but its rejection is swallowed.
+  onSessionCreated?: (
+    sessionPrivateKeyHex: `0x${string}`,
+    sessionAddress: `0x${string}`,
+    meta: { expiry: number; scopeBitmap: number; spendLimit: string; tipCeiling: string },
+  ) => Promise<void> | void
 }): Promise<{ address: `0x${string}`; expiry: number }> {
   const {
     signMessage,
@@ -696,6 +706,7 @@ export async function registerSponsoredSession(opts: {
     tipCeiling = 0n,
     cawPrice = 0,
     onProgress,
+    onSessionCreated,
   } = opts
 
   const expiry = Math.floor(Date.now() / 1000) + durationSeconds
@@ -768,6 +779,22 @@ export async function registerSponsoredSession(opts: {
   // the wagmi address) never fires for them. (#240)
   useSessionKeyStore.getState().setActiveWallet(ownerAddress.toLowerCase())
   useSessionKeyStore.getState().setEnabled(true)
+
+  // Hand the just-created session to the caller so it can PRF-wrap it for roaming
+  // (onboarding does this with the mint-permit PRF secret → no extra prompt).
+  // Non-fatal: the session already works on this device regardless.
+  if (onSessionCreated) {
+    try {
+      await onSessionCreated(privateKey, sessionAccount.address, {
+        expiry,
+        scopeBitmap: DEFAULT_SCOPE,
+        spendLimit: spendLimit.toString(),
+        tipCeiling: tipCeiling.toString(),
+      })
+    } catch (e) {
+      console.warn('[QuickSign] onSessionCreated (roam-wrap) failed (non-fatal):', e)
+    }
+  }
 
   return { address: sessionAccount.address, expiry }
 }
