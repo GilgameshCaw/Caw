@@ -301,6 +301,24 @@ export function getL1HttpRpcUrl(fallbackWsUrl?: string): string {
   )
 }
 
+/**
+ * L1 sibling of getL2HttpRpcUrls: primary L1 HTTP URL plus any operator-configured
+ * fallbacks (L1_RPC_URL_HTTP_FALLBACK comma list + positional L1_RPC_SECRET_FALLBACK).
+ * Feeds makeResilientHttpProvider / makeFallbackJsonRpcProvider so an indexer on L1
+ * (e.g. NftTransferWatcher) routes around a degraded primary. Returns [primary] at
+ * minimum. See the auto-heal note in docs/INFRASTRUCTURE.md.
+ */
+export function getL1HttpRpcUrls(fallbackWsUrl?: string): string[] {
+  const primary = getL1HttpRpcUrl(fallbackWsUrl)
+  const extraRaw = process.env.L1_RPC_URL_HTTP_FALLBACK || ''
+  const secretRaw = process.env.L1_RPC_SECRET_FALLBACK || ''
+  if (!extraRaw.trim()) return primary ? [primary] : []
+  const extras = extraRaw.split(',').map(s => s.trim()).filter(Boolean)
+  const secrets = secretRaw.split(',').map(s => s.trim())
+  const withAuth = extras.map((u, i) => withSecret(u, secrets[i] || undefined))
+  return primary ? [primary, ...withAuth] : withAuth
+}
+
 /** Mainnet RPC for Uniswap price feeds. Honors ETH_MAINNET_RPC_SECRET. */
 export function getEthMainnetHttpRpcUrl(fallback?: string): string {
   return withSecret(
@@ -634,4 +652,101 @@ export async function makeVerifiedWebSocketProvider(url: string, expectedChainId
   const provider = makeWebSocketProvider(url, expectedChainId, secret)
   await verifyChainId(provider, expectedChainId, url)
   return provider
+}
+
+// ============================================
+// RESILIENT PROVIDER (auto-heal on dead connection)
+// ============================================
+// Background: the 2026-07-10 incident wedged the node when Infura's HTTP/WS
+// endpoint degraded — every on-chain service that built a provider ONCE at
+// start() held that dead instance forever ("provider destroyed", "Connection is
+// closed", 30s timeouts) and only a pm2 restart cleared it. ValidatorService and
+// RawEventsGatherer already had bespoke rebuild-on-error logic; this generalizes
+// it so any service self-heals without a restart.
+
+/**
+ * Classify an error as a CONNECTION-class failure (dead socket / destroyed
+ * provider / cancelled in-flight request) — the signals a fresh provider fixes.
+ *
+ * DISJOINT from isRateLimitError(): a 429 / -32005 is the rate-limit circuit
+ * breaker's job (backoff, not rebuild). Rebuilding on a 429 would just spin fresh
+ * sockets into the same throttle. Keep the two error classes separate.
+ */
+export function isConnectionError(err: any): boolean {
+  const msg = (err?.message || err?.reason || err?.error?.message || '').toLowerCase()
+  const code = err?.code || err?.error?.code
+  if (code === 'UNSUPPORTED_OPERATION' || code === 'ECONNRESET' || code === 'ETIMEDOUT') return true
+  return (
+    msg.includes('provider destroyed') ||
+    msg.includes('cancelled request') ||
+    msg.includes('connection is closed') ||
+    msg.includes('socket hang up') ||
+    msg.includes('econnreset') ||
+    msg.includes('etimedout') ||
+    msg.includes('network is down') ||
+    msg.includes('failed to detect network')
+  )
+}
+
+/**
+ * A provider handle that ALWAYS returns a live provider and rebuilds itself in
+ * place when a connection-class error is reported. `get()` is a function call
+ * (never a captured variable) so callers can't pin a stale reference across a
+ * rebuild — the single structural fix for the incident.
+ */
+export type ResilientProvider = {
+  /** Always returns a LIVE provider. Call fresh at each use site, don't cache it. */
+  get(): AbstractProvider
+  /** Report a caught error; rebuilds the provider iff it's a connection failure. */
+  reportError(err: unknown): void
+  destroy(): void
+}
+
+/** Minimum ms between rebuilds of one ResilientProvider — guards against a dead
+ *  URL causing rebuild-per-tick reconnect storms. Independent of the rate-limit
+ *  backoff. */
+const RESILIENT_REBUILD_COOLDOWN_MS = 12_000
+
+/**
+ * Wrap makeFallbackJsonRpcProvider in a self-healing handle. With one URL it's a
+ * plain provider that rebuilds on connection death; with 2+ URLs (operator set
+ * L*_RPC_URL_HTTP_FALLBACK) ethers' FallbackProvider also routes around a
+ * degraded primary between rebuilds.
+ *
+ * On rebuild we re-run verifyChainId (fire-and-forget warn, same tolerance as
+ * the makeVerified* factories) so a misconfigured fallback URL pointing at the
+ * wrong chain is caught rather than silently trusted.
+ */
+export function makeResilientHttpProvider(
+  urls: string[],
+  chainId: number,
+  opts?: { label?: string },
+): ResilientProvider {
+  if (urls.length === 0) throw new Error('makeResilientHttpProvider: no URLs provided')
+  const label = opts?.label || `chain:${chainId}`
+  let current = makeFallbackJsonRpcProvider(urls, chainId)
+  let lastRebuildAt = 0
+
+  const rebuild = (reason: string) => {
+    const now = Date.now()
+    if (now - lastRebuildAt < RESILIENT_REBUILD_COOLDOWN_MS) return // cooldown — no storm
+    lastRebuildAt = now
+    console.warn(`[rpcProvider] resilient(${label}) rebuilding after connection error: ${reason}`)
+    try { (current as any)?.destroy?.() } catch { /* best effort */ }
+    current = makeFallbackJsonRpcProvider(urls, chainId)
+    // Fire-and-forget chain-ID re-probe on the rebuilt provider (catches a
+    // fallback URL that points at the wrong chain). Never throws into the caller.
+    verifyChainId(current as any, chainId, urls[0]).catch(() => { /* warned inside */ })
+  }
+
+  return {
+    get: () => current,
+    reportError: (err: unknown) => {
+      if (isConnectionError(err)) {
+        const reason = (err as any)?.message || (err as any)?.code || String(err)
+        rebuild(String(reason).slice(0, 120))
+      }
+    },
+    destroy: () => { try { (current as any)?.destroy?.() } catch { /* best effort */ } },
+  }
 }

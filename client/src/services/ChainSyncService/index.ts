@@ -3,7 +3,7 @@
 
 import { prisma } from '../../prismaClient'
 import { JsonRpcProvider, Contract, verifyTypedData } from 'ethers'
-import { makeJsonRpcProvider, getL1HttpRpcUrl, getL2HttpRpcUrl, getEthMainnetHttpRpcUrl, redactRpcUrl } from '../../utils/rpcProvider'
+import { makeJsonRpcProvider, getL1HttpRpcUrl, getL2HttpRpcUrl, getEthMainnetHttpRpcUrl, redactRpcUrl, isConnectionError } from '../../utils/rpcProvider'
 import { cawNetworkManagerAbi } from '../../abi/generated'
 import { NETWORK_MANAGER_ADDRESS, CAW_NAMES_L2_ADDRESS, CAW_PAIR_ADDRESS, CAW_ADDRESS } from '../../abi/addresses'
 
@@ -80,6 +80,10 @@ let l2Provider: JsonRpcProvider | null = null
 let mainnetProvider: JsonRpcProvider | null = null
 let networkManager: Contract | null = null
 let uniswapRouter: Contract | null = null
+// Last config passed to initializeProviders — retained so rebuildProviders() can
+// re-create the singletons after a dead-connection error (2026-07-10 auto-heal).
+let lastProviderConfig: ChainSyncConfig | null = null
+let lastProviderRebuildAt = 0
 
 const syncTasks: Map<string, SyncTask> = new Map()
 
@@ -99,6 +103,10 @@ let sepoliaCawPriceCache: CachedCawPrice | null = null
 // ============================================================================
 
 function initializeProviders(config: ChainSyncConfig) {
+  // Retain the last config with a URL so rebuildProviders() can recreate the
+  // singletons after a dead connection. Merge so a partial call (e.g.
+  // forceSyncNetwork passing only l1RpcUrl) doesn't drop the L2/mainnet URLs.
+  lastProviderConfig = { ...(lastProviderConfig || {}), ...config }
   console.log('[ChainSync] Initializing providers with config:', {
     l1RpcUrl: redactRpcUrl(config.l1RpcUrl),
     l2RpcUrl: redactRpcUrl(config.l2RpcUrl),
@@ -130,6 +138,35 @@ function initializeProviders(config: ChainSyncConfig) {
     mainnet: !!mainnetProvider,
     uniswapRouter: !!uniswapRouter,
   })
+}
+
+/**
+ * Auto-heal (2026-07-10 incident): rebuild the provider singletons after a
+ * dead-connection error. Nulls the module-level providers + dependent Contracts
+ * and re-runs initializeProviders() with the retained config, so subsequent sync
+ * calls run on FRESH sockets instead of a zombie one — without a pm2 restart.
+ *
+ * No-op unless `err` is a connection-class error (isConnectionError) and we're
+ * outside a 12s cooldown (guards against rebuild storms while an RPC is fully
+ * down). Rate-limit (429) errors are deliberately NOT handled here — that's the
+ * circuit breaker's job.
+ */
+function maybeRebuildProviders(err: unknown): void {
+  if (!isConnectionError(err) || !lastProviderConfig) return
+  const now = Date.now()
+  if (now - lastProviderRebuildAt < 12_000) return
+  lastProviderRebuildAt = now
+  console.warn('[ChainSync] Rebuilding providers after connection error:',
+    (err as any)?.message || (err as any)?.code || String(err))
+  try { l1Provider?.destroy?.() } catch { /* best effort */ }
+  try { l2Provider?.destroy?.() } catch { /* best effort */ }
+  try { mainnetProvider?.destroy?.() } catch { /* best effort */ }
+  l1Provider = null
+  l2Provider = null
+  mainnetProvider = null
+  networkManager = null
+  uniswapRouter = null
+  initializeProviders(lastProviderConfig)
 }
 
 // ============================================================================
@@ -193,6 +230,7 @@ async function syncNetwork(networkId: number): Promise<boolean> {
       return false
     }
     console.error(`[ChainSync:Clients] Error syncing network ${networkId}:`, err.message)
+    maybeRebuildProviders(err)
     return false
   }
 }
@@ -301,6 +339,7 @@ async function syncCawPrice(): Promise<void> {
     console.log(`[ChainSync:Prices] 1 ETH = ${cawPerEthFloat.toFixed(2)} CAW`)
   } catch (err: any) {
     console.error('[ChainSync:Prices] Failed to fetch CAW price:', err.message)
+    maybeRebuildProviders(err)
   }
 }
 
@@ -383,6 +422,7 @@ async function syncEthPrice(): Promise<void> {
     console.log(`[ChainSync:Prices] 1 ETH = $${usdPerEthFloat.toFixed(2)} USD`)
   } catch (err: any) {
     console.error('[ChainSync:Prices] Failed to fetch ETH price:', err.message)
+    maybeRebuildProviders(err)
   }
 }
 
@@ -884,6 +924,7 @@ async function syncL2Events(): Promise<void> {
       await setLastSyncedL2Block(toBlock)
     } catch (err: any) {
       console.error(`[ChainSync:L2Events] getLogs failed for range ${cursor}-${toBlock}:`, err.message?.slice(0, 200))
+      maybeRebuildProviders(err)
       // Break out — next tick will retry from the current cursor
       return
     }

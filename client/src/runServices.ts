@@ -148,9 +148,17 @@ type LoopState = {
   timeoutMs: number;
 };
 
+// Restart-rate alert (2026-07-10 auto-heal observability): if a service restarts
+// repeatedly in a short window it's almost always an RPC-provider-class failure
+// (the whole node crash-looped every ~180s during the incident). Surface one
+// loud, greppable line so on-call has an immediate signal instead of scrolling.
+const RESTART_ALERT_THRESHOLD = 3;
+const RESTART_ALERT_WINDOW_MS = 10 * 60_000;
+
 function runInstance(instance: InstanceReady): {stop(): Promise<void>} {
   let stopService = async () => {};
   let alive = true;
+  const restartTimestamps: number[] = [];
 
   (async () => {
     while (alive) {
@@ -260,6 +268,21 @@ function runInstance(instance: InstanceReady): {stop(): Promise<void>} {
         );
         if (crashReason.stack) {
           console.error(crashReason.stack);
+        }
+
+        // Restart-rate alert: prune old timestamps, then flag if this instance is
+        // crash-looping — the signature of an RPC-provider-class outage.
+        const nowTs = Date.now();
+        restartTimestamps.push(nowTs);
+        while (restartTimestamps.length && nowTs - restartTimestamps[0] > RESTART_ALERT_WINDOW_MS) {
+          restartTimestamps.shift();
+        }
+        if (restartTimestamps.length >= RESTART_ALERT_THRESHOLD) {
+          console.error(
+            `[runServices] ⚠️  ${instance.instance} restarted ${restartTimestamps.length}x in ` +
+            `${RESTART_ALERT_WINDOW_MS / 60_000}min — likely RPC-provider-class failure; ` +
+            `check L*_RPC_URL_HTTP_FALLBACK + provider health (see the 2026-07-10 auto-heal notes).`,
+          );
         }
 
         // Stop the dead service before restarting

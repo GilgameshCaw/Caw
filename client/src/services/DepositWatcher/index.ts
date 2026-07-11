@@ -23,7 +23,7 @@ import 'dotenv/config'
 import { z } from 'zod'
 import { ethers } from 'ethers'
 import Redis from 'ioredis'
-import { makeJsonRpcProvider, getL1HttpRpcUrl, redactRpcUrl } from '../../utils/rpcProvider'
+import { getL1HttpRpcUrl, getL1HttpRpcUrls, makeResilientHttpProvider, redactRpcUrl, type ResilientProvider } from '../../utils/rpcProvider'
 import { Service } from '../../Service'
 import { prisma } from '../../prismaClient'
 import { CAW_NAMES_ADDRESS } from '../../abi/addresses'
@@ -89,8 +89,13 @@ export const depositWatcherService: Service = {
       if (!rpcUrl) throw new Error('[DepositWatcher] No L1 RPC URL configured')
       await prisma.$connect()
 
-      const provider = makeJsonRpcProvider(rpcUrl, cfg.chainId)
-      const contract = new ethers.Contract(contractAddress, DEPOSITED_ABI, provider)
+      // Self-healing provider (2026-07-10 incident): a degraded L1 RPC rebuilds
+      // itself instead of wedging the poll loop. Re-derived from rpc.get() each tick.
+      const rpc: ResilientProvider = makeResilientHttpProvider(
+        getL1HttpRpcUrls(cfg.l1RpcUrl), cfg.chainId, { label: 'DepositWatcher/L1' },
+      )
+      let provider = rpc.get()
+      let contract = new ethers.Contract(contractAddress, DEPOSITED_ABI, provider)
       console.log(`[DepositWatcher] Started — clientId=${CAW_CLIENT_ID}, contract=${contractAddress}, chainId=${cfg.chainId}, rpc=${redactRpcUrl(rpcUrl)}`)
 
       const cpKey = checkpointKey(cfg.chainId, contractAddress)
@@ -116,6 +121,9 @@ export const depositWatcherService: Service = {
       const poll = async () => {
         if (!alive) return
         behindAfterPoll = false
+        // Re-derive from the resilient handle each tick (auto-heal on RPC death).
+        provider = rpc.get()
+        contract = new ethers.Contract(contractAddress, DEPOSITED_ABI, provider)
         try {
           const currentBlock = await provider.getBlockNumber()
           if (currentBlock > lastBlock) {
@@ -185,6 +193,7 @@ export const depositWatcherService: Service = {
           ctx.heartbeat('poll')
         } catch (err: any) {
           console.error('[DepositWatcher] Poll error:', err?.message || err)
+          rpc.reportError(err) // auto-heal on dead-connection errors
         } finally {
           if (!alive) return
           // Same catch-up cadence as NftTransferWatcher: 250ms when

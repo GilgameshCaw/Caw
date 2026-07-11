@@ -10,7 +10,7 @@ import 'dotenv/config'
 import { z } from 'zod'
 import { ethers } from 'ethers'
 import Redis from 'ioredis'
-import { makeVerifiedJsonRpcProvider, getL1HttpRpcUrl, redactRpcUrl } from '../../utils/rpcProvider'
+import { makeVerifiedJsonRpcProvider, getL1HttpRpcUrl, getL1HttpRpcUrls, makeResilientHttpProvider, redactRpcUrl, type ResilientProvider } from '../../utils/rpcProvider'
 import { Service } from '../../Service'
 import { prisma } from '../../prismaClient'
 import { CAW_NAMES_ADDRESS } from '../../abi/addresses'
@@ -260,8 +260,16 @@ export const nftTransferWatcherService: Service = {
       await prisma.$connect()
 
       const expectedL1ChainId = process.env.L1_CHAIN_ID ? Number(process.env.L1_CHAIN_ID) : cfg.chainId
-      const provider = await makeVerifiedJsonRpcProvider(rpcUrl, expectedL1ChainId)
-      const contract = new ethers.Contract(contractAddress, TRANSFER_ABI, provider)
+      // Probe once for a clear chainId error at startup, then run on a self-healing
+      // provider so a degraded L1 RPC rebuilds itself instead of wedging the poll
+      // loop forever (2026-07-10 incident). Provider + contract are re-derived from
+      // rpc.get() each tick; connection errors call rpc.reportError() to rebuild.
+      await makeVerifiedJsonRpcProvider(rpcUrl, expectedL1ChainId)
+      const rpc: ResilientProvider = makeResilientHttpProvider(
+        getL1HttpRpcUrls(cfg.l1RpcUrl), expectedL1ChainId, { label: 'NftTransferWatcher/L1' },
+      )
+      let provider = rpc.get()
+      let contract = new ethers.Contract(contractAddress, TRANSFER_ABI, provider)
       console.log(`[NftTransferWatcher] Started — contract=${contractAddress}, chainId=${expectedL1ChainId}, rpc=${redactRpcUrl(rpcUrl)}`)
 
       // Resolve start block from checkpoint, then configured startBlock, then
@@ -302,6 +310,10 @@ export const nftTransferWatcherService: Service = {
       const poll = async () => {
         if (!alive) return
         behindAfterPoll = false
+        // Re-derive from the resilient handle each tick so a mid-outage rebuild
+        // swaps in a live provider without restarting the service.
+        provider = rpc.get()
+        contract = new ethers.Contract(contractAddress, TRANSFER_ABI, provider)
         try {
           const currentBlock = await provider.getBlockNumber()
           if (currentBlock > lastBlock) {
@@ -429,6 +441,9 @@ export const nftTransferWatcherService: Service = {
           }
         } catch (err: any) {
           console.error('[NftTransferWatcher] Poll error:', err?.message || err)
+          // Auto-heal: if this was a dead-connection error, rebuild the provider
+          // so the next tick runs on a fresh socket instead of the zombie one.
+          rpc.reportError(err)
         } finally {
           // Drain quickly when behind: if the last poll hit the per-tick cap,
           // more blocks remain right now — schedule the next pass on a short

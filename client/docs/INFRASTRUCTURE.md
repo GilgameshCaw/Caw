@@ -143,6 +143,21 @@ L2_RPC_URL="wss://base-sepolia.infura.io/ws/v3/YOUR_API_KEY"
 L2_RPC_URL_HTTP="https://base-sepolia.infura.io/v3/YOUR_API_KEY"
 MAINNET_RPC_URL="https://sepolia.drpc.org"
 
+# RPC FAILOVER (auto-heal) — STRONGLY RECOMMENDED, esp. for mainnet.
+# When the primary HTTP RPC degrades, the on-chain indexer/validator services
+# rebuild their provider on connection death (self-heal, no restart) AND — if a
+# fallback is configured — fail over to it via ethers' FallbackProvider. Without
+# a fallback URL there is nothing to fail over to, so a single degraded provider
+# still hurts (rebuild helps, but reuses the same bad URL). Configure a SECOND
+# provider from a DIFFERENT vendor (Alchemy/QuickNode/publicnode) for real
+# resilience. Comma-separated lists; secrets positionally aligned (empty = none).
+# This was the root cause of the 2026-07-10 validator wedge — the primary
+# degraded and there was no fallback. See src/utils/rpcProvider.ts.
+L2_RPC_URL_HTTP_FALLBACK="https://base-sepolia.g.alchemy.com/v2/OTHER_KEY"
+L2_RPC_SECRET_FALLBACK=""
+L1_RPC_URL_HTTP_FALLBACK="https://eth-sepolia.publicnode.com"
+L1_RPC_SECRET_FALLBACK=""
+
 # Validator (for signing transactions)
 VALIDATOR_PRIVATE_KEY="0x..."
 

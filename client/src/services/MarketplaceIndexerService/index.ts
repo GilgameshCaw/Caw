@@ -2,7 +2,7 @@
 import 'dotenv/config'
 import { z } from 'zod'
 import { ethers } from 'ethers'
-import { makeJsonRpcProvider, getL1HttpRpcUrl } from '../../utils/rpcProvider'
+import { getL1HttpRpcUrl, getL1HttpRpcUrls, makeResilientHttpProvider, type ResilientProvider } from '../../utils/rpcProvider'
 import { Service } from '../../Service'
 import { prisma } from '../../prismaClient'
 import { CAW_NAME_MARKETPLACE_ADDRESS, CAW_NAMES_ADDRESS } from '../../abi/addresses'
@@ -85,9 +85,15 @@ export const marketplaceIndexerService: Service = {
       await prisma.$connect()
       console.log(`[MarketplaceIndexer] Started — marketplace=${marketplaceAddress}, cawProfile=${cawProfileAddress}, rpc=${rpcUrl.substring(0, 40)}...`)
 
-      const provider = makeJsonRpcProvider(rpcUrl, 11155111)
-      const marketplace = new ethers.Contract(marketplaceAddress, MARKETPLACE_ABI, provider)
-      const cawProfile = new ethers.Contract(cawProfileAddress, CAWNAME_TRANSFER_ABI, provider)
+      // Self-healing provider (2026-07-10 incident): a degraded L1 RPC rebuilds
+      // itself instead of wedging the poll loop forever. provider + contracts are
+      // re-derived from rpc.get() each tick; connection errors call reportError().
+      const rpc: ResilientProvider = makeResilientHttpProvider(
+        getL1HttpRpcUrls(cfg.l1RpcUrl), 11155111, { label: 'MarketplaceIndexer/L1' },
+      )
+      let provider = rpc.get()
+      let marketplace = new ethers.Contract(marketplaceAddress, MARKETPLACE_ABI, provider)
+      let cawProfile = new ethers.Contract(cawProfileAddress, CAWNAME_TRANSFER_ABI, provider)
 
       // Track last processed block
       let lastBlock = await getLastProcessedBlock()
@@ -140,6 +146,12 @@ export const marketplaceIndexerService: Service = {
 
       async function poll() {
         if (!alive) return
+        // Re-derive from the resilient handle each tick so a mid-outage rebuild
+        // swaps in a live provider without restarting the service. (interface-only
+        // objects like eventTopics are ABI-static and don't need rebuilding.)
+        provider = rpc.get()
+        marketplace = new ethers.Contract(marketplaceAddress, MARKETPLACE_ABI, provider)
+        cawProfile = new ethers.Contract(cawProfileAddress, CAWNAME_TRANSFER_ABI, provider)
         try {
           const currentBlock = await provider.getBlockNumber()
           if (currentBlock <= lastBlock) return
@@ -724,6 +736,8 @@ export const marketplaceIndexerService: Service = {
 
         } catch (err) {
           console.error('[MarketplaceIndexer] Poll error:', err)
+          // Auto-heal: rebuild the provider if this was a dead-connection error.
+          rpc.reportError(err)
         } finally {
           ctx.heartbeat('poll')
           if (alive) {

@@ -38,6 +38,26 @@ let l2LastAttempt = 0
 let l1LastAttempt = 0
 const MAX_RETRY_DELAY = 60000 // Max 60 seconds between retries
 
+/**
+ * Invalidate a WS provider singleton after its socket dies (2026-07-10 auto-heal).
+ * Nulls the provider + its paired Contract so the next getL1Provider()/
+ * getL2Provider() lazy-init rebuilds a fresh connection instead of handing back a
+ * zombie. Best-effort destroy; idempotent (safe to call on an already-null slot).
+ */
+function invalidateWsProvider(name: string) {
+  if (name === 'L1') {
+    if (l1Provider) console.warn('[UserService] L1 WS socket died — invalidating for lazy rebuild')
+    try { l1Provider?.destroy?.() } catch { /* best effort */ }
+    l1Provider = null
+    l1NameContract = null
+  } else {
+    if (l2Provider) console.warn('[UserService] L2 WS socket died — invalidating for lazy rebuild')
+    try { l2Provider?.destroy?.() } catch { /* best effort */ }
+    l2Provider = null
+    l2NameContract = null
+  }
+}
+
 // Helper to create WebSocket provider with error handling
 async function createWebSocketProvider(rpcUrl: string, name: string, secret?: string): Promise<WebSocketProvider> {
   return new Promise((resolve, reject) => {
@@ -62,7 +82,18 @@ async function createWebSocketProvider(rpcUrl: string, name: string, secret?: st
             settled = true
             clearTimeout(timeout)
             reject(error)
+          } else {
+            // Post-connect socket error — invalidate the singleton so the next
+            // getL1Provider()/getL2Provider() rebuilds instead of returning a
+            // zombie. Auto-heal for the 2026-07-10 "Connection is closed" wedge.
+            invalidateWsProvider(name)
           }
+        })
+        // A close AFTER we've resolved means the live socket died (Infura
+        // dropped it, network blip). ethers v6 WebSocketProvider does NOT
+        // auto-reconnect, so null the singleton for a lazy rebuild next call.
+        ws.on('close', () => {
+          if (settled) invalidateWsProvider(name)
         })
       }
 
