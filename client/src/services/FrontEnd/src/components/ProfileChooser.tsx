@@ -377,6 +377,26 @@ const ProfileChooser: React.FC<{ compact?: boolean }> = ({ compact = false }) =>
     const store = useTokenDataStore.getState()
     const normalized = addressToRemove.toLowerCase()
 
+    // Unpin every token owned by this address FIRST. A pinned owner is kept
+    // "fresh" by useTokenDataUpdate's background multicall (knownAddresses ∪
+    // pinnedOwner), which calls setTokensForAddress and RE-ADDS the wallet the
+    // moment after removeAddress drops it — so without this, removing/​signing
+    // out of a pinned profile only flickers: it vanishes, the next refresh
+    // re-adds it, and a page reload rehydrates the persisted pin. Collect the
+    // owned tokenIds from the live rows AND from pinnedOwner (covers a pin whose
+    // rows were already evicted) so the unpin is complete.
+    const pinStore = usePinnedProfilesStore.getState()
+    const ownedTokenIds = new Set<number>()
+    for (const t of (store.tokensByAddress[normalized as Address] || [])) {
+      ownedTokenIds.add(t.tokenId)
+    }
+    for (const [tokenIdStr, owner] of Object.entries(pinStore.pinnedOwner)) {
+      if (owner?.toLowerCase() === normalized) ownedTokenIds.add(Number(tokenIdStr))
+    }
+    for (const tokenId of ownedTokenIds) {
+      try { pinStore.unpin(tokenId) } catch { /* best-effort */ }
+    }
+
     removeAddress(addressToRemove);
 
     // If we removed the active address, switch to another one
@@ -983,7 +1003,7 @@ const ProfileChooser: React.FC<{ compact?: boolean }> = ({ compact = false }) =>
 
       {/* Remove-wallet choice: full sign-out (wipe this device's QS + DM keys)
           vs hide-for-now (drop from the list, keep keys). */}
-      <ModalWrapper isOpen={!!removeModalAddress} onClose={() => setRemoveModalAddress(null)} usePortal maxWidth="max-w-sm">
+      <ModalWrapper isOpen={!!removeModalAddress} onClose={() => setRemoveModalAddress(null)} usePortal maxWidth="max-w-md">
         <div className="p-6">
           <h3 className={`text-base font-semibold mb-1 ${isDark ? 'text-white' : 'text-black'}`}>
             {t('profile_chooser.remove_title')}
