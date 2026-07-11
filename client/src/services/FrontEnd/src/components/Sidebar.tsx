@@ -358,6 +358,17 @@ const Sidebar: React.FC<SidebarProps> = ({ onNavigate, inDrawer = false }) => {
            </NavLink>
 
            <NavLink
+             to="/invite"
+             onClick={guardClick}
+             className={({ isActive }) =>
+               `relative flex items-center gap-3 px-4 py-3.5 sm:gap-3 sm:px-3 sm:py-3.5 rounded-2xl transition-colors duration-200 min-w-0 ${getNavLinkClasses(isActive)}`
+             }
+           >
+            <HiOutlineUserAdd className="w-5 h-5 sm:w-6 sm:h-6 shrink-0" />
+            <span className="font-medium text-base sm:text-lg min-w-0 truncate">{t('nav.invite')}</span>
+           </NavLink>
+
+           <NavLink
              to="/usernames"
              onClick={() => onNavigate?.()}
              className={({ isActive }) =>
@@ -384,17 +395,6 @@ const Sidebar: React.FC<SidebarProps> = ({ onNavigate, inDrawer = false }) => {
            >
             <HiOutlineUser className="w-5 h-5 sm:w-6 sm:h-6 shrink-0" />
             <span className="font-medium text-base sm:text-lg min-w-0 truncate">{t('nav.profile')}</span>
-           </NavLink>
-
-           <NavLink
-             to="/invite"
-             onClick={guardClick}
-             className={({ isActive }) =>
-               `relative flex items-center gap-3 px-4 py-3.5 sm:gap-3 sm:px-3 sm:py-3.5 rounded-2xl transition-colors duration-200 min-w-0 ${getNavLinkClasses(isActive)}`
-             }
-           >
-            <HiOutlineUserAdd className="w-5 h-5 sm:w-6 sm:h-6 shrink-0" />
-            <span className="font-medium text-base sm:text-lg min-w-0 truncate">{t('nav.invite')}</span>
            </NavLink>
 
            <NavLink
