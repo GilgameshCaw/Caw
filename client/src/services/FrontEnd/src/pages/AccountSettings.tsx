@@ -1068,6 +1068,36 @@ const AccountSettings: React.FC = () => {
             {t('account.section.add_account')}
           </h2>
           <AddPasskeyProfile />
+
+          {/* Backup-file sign-in — the counterpart to "Add an existing passkey"
+              for when the user's passkey isn't on THIS device. Routes to the
+              existing /recovery flow (encrypted backup file + vault password →
+              recovery mode), which resolves the same secp256k1 owner key and
+              adds the profile to this browser. No new crypto: it's the same
+              flow the sign-in choice modal / Messages already link to. */}
+          <div className="mt-3">
+            <div className={`flex items-center gap-3 mb-3 text-xs uppercase tracking-wide ${isDark ? 'text-white/30' : 'text-gray-400'}`}>
+              <span className={`flex-1 h-px ${isDark ? 'bg-white/10' : 'bg-gray-200'}`} />
+              {t('account.add_backup.divider')}
+              <span className={`flex-1 h-px ${isDark ? 'bg-white/10' : 'bg-gray-200'}`} />
+            </div>
+            <Link
+              to="/recovery"
+              className={`flex items-center gap-2 px-4 py-3 rounded-xl border transition-colors ${
+                isDark
+                  ? 'border-white/10 hover:bg-white/5 text-white'
+                  : 'border-gray-200 hover:bg-gray-50 text-gray-900'
+              }`}
+            >
+              <HiKey className="w-5 h-5 flex-shrink-0" />
+              <span className="min-w-0">
+                <span className="block text-sm font-medium">{t('account.add_backup.cta')}</span>
+                <span className={`block text-xs ${isDark ? 'text-white/50' : 'text-gray-500'}`}>
+                  {t('account.add_backup.subtitle')}
+                </span>
+              </span>
+            </Link>
+          </div>
         </section>
 
         {/* Wallet Section */}
