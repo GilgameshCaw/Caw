@@ -607,17 +607,20 @@ export function useRestoreRoamedSession() {
           functionName: 'sessionSpent', args: [owner as `0x${string}`, sessionAddr],
         }) as Promise<bigint>,
       ])
-      // All outputs are named, so viem returns an object; read by name to stay
-      // robust to future field additions/reordering.
-      const s = sessionRaw as unknown as {
-        expiry: bigint; scopeBitmap: number; epoch: number;
-        perActionTipRate: bigint; profileId: number; spendLimit: bigint;
-      }
+      // The deployed sessions() getter returns the StoredSession struct as a
+      // POSITIONAL TUPLE (viem gives an array here, NOT a named object — reading
+      // `.expiry` yielded undefined → `BigInt(undefined)` threw and the restore
+      // fell through to "create new"). Field ORDER from the generated
+      // cawProfileLedgerAbi: [expiry, scopeBitmap, epoch, perActionTipRate,
+      // profileId, spendLimit]. Support both shapes to be safe.
+      const raw = sessionRaw as any
+      const pick = (name: string, idx: number) =>
+        raw?.[name] !== undefined ? raw[name] : raw?.[idx]
       const session = {
-        expiry: BigInt(s.expiry),
-        scopeBitmap: s.scopeBitmap,
-        spendLimit: BigInt(s.spendLimit),
-        perActionTipRate: BigInt(s.perActionTipRate),
+        expiry: BigInt(pick('expiry', 0) ?? 0),
+        scopeBitmap: Number(pick('scopeBitmap', 1) ?? 0),
+        spendLimit: BigInt(pick('spendLimit', 5) ?? 0),
+        perActionTipRate: BigInt(pick('perActionTipRate', 3) ?? 0),
       }
       const expiry = Number(session.expiry)
       const nowSec = Math.floor(Date.now() / 1000)
