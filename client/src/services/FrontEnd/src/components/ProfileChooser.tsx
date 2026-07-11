@@ -26,6 +26,7 @@ import { usePinnedProfilesStore } from '~/store/pinnedProfilesStore';
 import { ThumbtackIcon } from '~/components/icons/ThumbtackIcon';
 import { HiOutlinePlus, HiUsers } from 'react-icons/hi'
 import { useT } from '~/i18n/I18nProvider';
+import { isPasskeyAddress } from '~/constants/passkeyStorage';
 
 const ProfileChooser: React.FC<{ compact?: boolean }> = ({ compact = false }) => {
   const t = useT()
@@ -703,32 +704,40 @@ const ProfileChooser: React.FC<{ compact?: boolean }> = ({ compact = false }) =>
               <div className={`text-2xs ${colorClass}`}>{label} pending</div>
             )
           })()}
-          {notCurrentAddress && (
-            // Pop-B (no wagmi wallet connected) just needs to activate Quick
-            // Sign — that's an inviting CTA, not an error, so show it yellow.
-            // A connected-but-WRONG wallet (Pop-A) is a genuine mismatch → keep
-            // it red.
-            <div className={`text-2xs ${isConnected ? 'text-error-dim' : 'text-yellow-500'}`}>
-              <span
-                role="button"
-                tabIndex={0}
-                onClick={(e) => {
-                  e.stopPropagation()
-                  useQuickSignPromptStore.getState().showConnect()
-                }}
-                onKeyDown={(e) => {
-                  if (e.key === 'Enter' || e.key === ' ') {
-                    e.preventDefault()
+          {notCurrentAddress && (() => {
+            // "(Wrong Address)" is a Pop-A concept: a wagmi wallet IS connected but
+            // it's not the one that owns this profile. It must NEVER show for a
+            // PASSKEY (Pop-B) account — a passkey profile has no wagmi wallet, so a
+            // stale/auto-reconnected wagmi connection lingering in another browser
+            // tab made `isConnected` briefly true and mislabelled a passkey account
+            // "(Wrong Address)" until state settled. For a passkey account the CTA
+            // is always the inviting "Activate Quick Sign" (yellow), regardless of
+            // any unrelated wagmi connection.
+            const activeIsPasskey = isPasskeyAddress(activeToken?.owner)
+            const showWrongAddress = isConnected && !activeIsPasskey
+            return (
+              <div className={`text-2xs ${showWrongAddress ? 'text-error-dim' : 'text-yellow-500'}`}>
+                <span
+                  role="button"
+                  tabIndex={0}
+                  onClick={(e) => {
                     e.stopPropagation()
                     useQuickSignPromptStore.getState().showConnect()
-                  }
-                }}
-                className="underline hover:opacity-80 cursor-pointer"
-              >
-                {isConnected ? "(Wrong Address)" : "Activate Quick Sign"}
-              </span>
-            </div>
-          )}
+                  }}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter' || e.key === ' ') {
+                      e.preventDefault()
+                      e.stopPropagation()
+                      useQuickSignPromptStore.getState().showConnect()
+                    }
+                  }}
+                  className="underline hover:opacity-80 cursor-pointer"
+                >
+                  {showWrongAddress ? "(Wrong Address)" : "Activate Quick Sign"}
+                </span>
+              </div>
+            )
+          })()}
         </div>
 
       </button>
