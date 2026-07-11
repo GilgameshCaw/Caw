@@ -9,7 +9,14 @@ export interface SessionKeyEntry {
   expiry: number        // unix timestamp (seconds)
   scopeBitmap: number   // uint8 — bits 0-5 for CAW..UNFOLLOW
   spendLimit?: string   // whole CAW tokens as string (for JSON serialization), 0 = unlimited
-  spent?: string        // whole CAW tokens spent so far (tracked locally)
+  spent?: string        // whole CAW tokens spent so far (tracked locally; may under-count on a fresh/roamed device)
+  /** Unix ms of the last time `spent` was reconciled against on-chain sessionSpent.
+   *  The local counter can start stale-LOW (fresh device, roamed session, cleared
+   *  storage) → the submit fast-path would trust it and let an over-limit action
+   *  slip through to an on-chain SessionLimitExceeded. If this is missing/older
+   *  than a short TTL, the pre-check forces the authoritative read even on the
+   *  fast path. */
+  spentSyncedAt?: number
   /** Max validator tip per action (whole CAW tokens, string for JSON). 0 = no tip (opt-out).
    *  Locked at session activation to prevent validators from extracting more than the user agreed to. */
   tipCeiling?: string

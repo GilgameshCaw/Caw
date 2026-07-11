@@ -575,6 +575,9 @@ export function useRestoreRoamedSession() {
         scopeBitmap: Number(session.scopeBitmap),
         spendLimit: session.spendLimit.toString(),
         spent: spent.toString(),
+        // `spent` was just read from chain — stamp it so the submit-time
+        // fast-path trusts it (within TTL) instead of immediately re-reading.
+        spentSyncedAt: Date.now(),
         tipCeiling: session.perActionTipRate.toString(),
       })
       setActiveWallet(owner)

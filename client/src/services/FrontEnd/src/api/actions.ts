@@ -1511,14 +1511,24 @@ export function useSignAndSubmitAction() {
         // over-count case the user actually hit).
         const localSpent = BigInt(rawSession?.spent || '0')
         let spent = localSpent
-        // `rawSession.spent` OVER-counts and is a false basis for REJECTION, so
-        // only ever reject on an AUTHORITATIVE on-chain value. If the local
-        // counter (inflated) says we'd exceed, read chain; if the read fails we
-        // must NOT trip the renew modal on the stale local counter — that
-        // false-blocks a user with budget on chain. The server + validator still
-        // enforce the real limit, so proceeding on read-failure is safe.
+        // `rawSession.spent` OVER-counts (adds full tip+recipients while the
+        // contract meters actionCost only), so `local + cost <= limit` normally
+        // GUARANTEES the real on-chain spend fits — the fast path skips the RPC.
+        //
+        // BUT that guarantee only holds if the local counter is a true OVER-count.
+        // On a fresh/roamed device (or after cleared storage) it can start
+        // stale-LOW — then the fast path trusts a too-small number and lets an
+        // over-limit action slip through to an on-chain SessionLimitExceeded (the
+        // exact "shows pending then vanishes" bug). So force the AUTHORITATIVE
+        // read when EITHER the (inflated) local counter says we'd exceed, OR the
+        // counter hasn't been reconciled with chain within SPENT_SYNC_TTL_MS.
+        // This is the throttled periodic refresh — not a per-action RPC: once
+        // synced, subsequent actions within the TTL take the free fast path.
+        const SPENT_SYNC_TTL_MS = 2 * 60_000
+        const syncedAt = rawSession?.spentSyncedAt || 0
+        const spentStale = Date.now() - syncedAt > SPENT_SYNC_TTL_MS
         let haveAuthoritative = false
-        if (localSpent + totalCost > limit) {
+        if (localSpent + totalCost > limit || spentStale) {
           try {
             const onChainSpent = await readContract(wagmiConfig, {
               address: CAW_ACTIONS_ADDRESS,
@@ -1529,10 +1539,11 @@ export function useSignAndSubmitAction() {
             }) as bigint
             spent = BigInt(onChainSpent)
             haveAuthoritative = true
-            // Realign the store so the display + future fast-checks agree with chain.
+            // Realign the store so the display + future fast-checks agree with
+            // chain, and stamp the sync time so we don't re-read every action.
             const store = useSessionKeyStore.getState()
             const cur = tokenOwner ? store.getSessionForAddress(tokenOwner) : null
-            if (cur) store.setSession({ ...cur, spent: spent.toString() })
+            if (cur) store.setSession({ ...cur, spent: spent.toString(), spentSyncedAt: Date.now() })
           } catch (e) {
             console.warn('[QuickSign] on-chain sessionSpent read FAILED — proceeding without a false limit reject (validator still enforces):', e)
           }
