@@ -112,9 +112,9 @@ const QuickSignModal: React.FC<QuickSignModalProps> = (props) => {
         // no roamable session, so we fall through to createSession.
         restored = await restoreRoamedSession(ownerLc, undefined, activeToken?.tokenId)
       }
-      if (restored) {
-        console.log('[QuickSign:roam] Activate: restored roamed session', restored)
-      } else {
+      // Restored the roamed session (reused the same on-chain registration), or
+      // there was none → register a fresh one.
+      if (!restored) {
         await createSession((s) => setStatus(s), spendLimit, duration, walletProtect, tipCeiling)
       }
       // Don't set hasSeenPrompt here — enabling Quick Sign is the "happy path".

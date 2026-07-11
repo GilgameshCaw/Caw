@@ -495,10 +495,6 @@ export function useRestoreRoamedSession() {
   // self-contained passkey-gated ceremony (own Face ID).
   return useCallback(async (ownerAddress: string, presetPrfSecret?: Uint8Array, tokenIdHint?: number): Promise<`0x${string}` | null> => {
     const owner = ownerAddress.toLowerCase()
-    // [QuickSign:roam] tagged diagnostics on EVERY exit — the roam restore used
-    // to no-op silently, so a "didn't bring Quick Sign" report had nothing to go
-    // on. Each branch logs WHY it stopped.
-    //
     // Passkey gate: do NOT rely on rootSigner.kind — it reflects the GLOBALLY
     // active population, which during passkey sign-in is still whatever wagmi
     // wallet happens to be connected (a stray EOA → 'real'), because the roamed
@@ -506,21 +502,14 @@ export function useRestoreRoamedSession() {
     // known passkey address (persisted at sign-in). That's the account we're
     // actually restoring for.
     const ownerIsPasskey = rootSigner.kind === 'passkey' || isPasskeyAddress(owner)
-    if (!ownerIsPasskey) {
-      console.log('[QuickSign:roam] skip: owner is not a passkey account (rootSigner.kind', rootSigner.kind, ', isPasskeyAddress false) owner', owner)
-      return null
-    }
+    if (!ownerIsPasskey) return null
     // Credential is only needed for the FALLBACK (own-ceremony) path. When a
     // presetPrfSecret is supplied (the sign-in piggyback), the fast path needs no
     // passkey touch, so a missing credential must NOT abort. Prefer the explicit
     // tokenIdHint (the account being signed into) over activeToken — during
     // sign-in the active token hasn't switched to the roamed account yet.
     const credentialId = getPasskeyCredential(tokenIdHint ?? activeToken?.tokenId)
-    if (!credentialId && !presetPrfSecret) {
-      console.log('[QuickSign:roam] skip: no passkey credentialId (tokenId', tokenIdHint ?? activeToken?.tokenId, ') and no preset PRF secret — cannot unwrap. owner', owner)
-      return null
-    }
-    console.log('[QuickSign:roam] start: owner', owner, 'presetPrfSecret?', !!presetPrfSecret, 'tokenIdHint', tokenIdHint)
+    if (!credentialId && !presetPrfSecret) return null
 
     try {
       const rpId = typeof window !== 'undefined' ? window.location.hostname : ''
@@ -535,15 +524,11 @@ export function useRestoreRoamedSession() {
           { method: 'POST', body: JSON.stringify({ address: owner }) },
         )
         sessionPrfBlob = r.sessionPrfBlob
-        console.log('[QuickSign:roam] session-authed retrieve → sessionPrfBlob present?', !!sessionPrfBlob)
       } else {
         // Fallback: own ceremony — one challenge + one passkey touch that gates
         // blob retrieval AND yields the PRF secret. Reaching here means
         // !presetPrfSecret, so the earlier guard guarantees credentialId is set.
-        if (!credentialId) {
-          console.log('[QuickSign:roam] skip: fallback ceremony needs a credentialId but none found for owner', owner)
-          return null
-        }
+        if (!credentialId) return null
         const salt = await buildPrfSalt(owner)
         const { challenge } = await apiFetch<{ challenge: `0x${string}` }>(
           '/api/wallet/blob/challenge',
@@ -551,26 +536,21 @@ export function useRestoreRoamedSession() {
         )
         const sig = await signWithPasskey({ credentialId, digest: challenge, rpId, prfSalt: salt })
         markPrfCapable(credentialId, !!sig.prfSecret)
-        if (!sig.prfSecret) {
-          console.log('[QuickSign:roam] skip: authenticator returned no PRF secret (ceremony path) — cannot unwrap')
-          return null
-        }
+        if (!sig.prfSecret) return null
         prfSecret = sig.prfSecret
         const r = await apiFetch<{ sessionPrfBlob: string | null }>(
           '/api/wallet/blob/retrieve',
           { method: 'POST', body: JSON.stringify({ address: owner, challenge, signature: sig.sig }) },
         )
         sessionPrfBlob = r.sessionPrfBlob
-        console.log('[QuickSign:roam] ceremony retrieve → sessionPrfBlob present?', !!sessionPrfBlob)
       }
-      if (!sessionPrfBlob) {
-        console.log('[QuickSign:roam] no-op: server has NO sessionPrfBlob for', owner, '(source device never wrapped this session) → user must Activate Quick Sign')
-        return null
-      }
+      // No server-side blob → source device never wrapped this session; caller
+      // shows "Activate Quick Sign" (silent — expected for un-roamed sessions).
+      if (!sessionPrfBlob) return null
 
       const parsed = JSON.parse(sessionPrfBlob)
       if (!validatePrfBackupBlobShape(parsed)) {
-        console.warn('[QuickSign:roam] abort: sessionPrfBlob failed shape validation (corrupt?)')
+        console.warn('[QuickSign] roamed sessionPrfBlob failed shape validation (corrupt?)')
         return null
       }
 
@@ -627,11 +607,7 @@ export function useRestoreRoamedSession() {
       const expiry = Number(session.expiry)
       const nowSec = Math.floor(Date.now() / 1000)
       // Expired / not-registered → caller silently creates a new session.
-      if (expiry === 0 || expiry <= nowSec) {
-        console.log('[QuickSign:roam] no-op: on-chain session expired/not-registered (sessionAddr', sessionAddr, 'expiry', expiry, 'now', nowSec, ') → user must Activate Quick Sign')
-        return null
-      }
-      console.log('[QuickSign:roam] on-chain session valid (sessionAddr', sessionAddr, 'expiry', expiry, ') — restoring')
+      if (expiry === 0 || expiry <= nowSec) return null
 
       // Seed `spent` from on-chain sessionSpent (Q1) so this device sees what
       // other devices already spent and can't overspend the shared on-chain limit.

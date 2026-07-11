@@ -178,7 +178,6 @@ export function usePasskeySignIn(): UsePasskeySignIn {
         const sk = useSessionKeyStore.getState()
         const ownerLc = ownerAddr.toLowerCase()
         sk.setActiveWallet(ownerLc)
-        console.log('[QuickSign:roam] sign-in: local session for owner?', !!sk.sessions[ownerLc], '| prfSecret captured?', !!signInPrfSecret, '| owner', ownerLc)
         if (sk.sessions[ownerLc]) {
           sk.setEnabled(true)
           // WRAP-ON-ACTIVATION: this browser HAS a local session, but a session
@@ -203,15 +202,10 @@ export function usePasskeySignIn(): UsePasskeySignIn {
               // active token hasn't switched to this account yet, so the restore
               // must not rely on activeToken for the credential/passkey lookup.
               const restored = await restoreRoamedSession(ownerLc, signInPrfSecret, profile.tokenId)
-              if (restored) {
-                useSessionKeyStore.getState().setEnabled(true)
-                console.log('[QuickSign:roam] sign-in: session RESTORED + enabled for', ownerLc)
-              } else {
-                console.log('[QuickSign:roam] sign-in: no session restored (see [QuickSign:roam] logs above for why) — showing Activate Quick Sign')
-              }
+              if (restored) useSessionKeyStore.getState().setEnabled(true)
             } catch (e) {
               // non-fatal — user can create a fresh QS session
-              console.warn('[QuickSign:roam] sign-in: restore threw (non-fatal):', e)
+              console.warn('[QuickSign] sign-in roamed-session restore threw (non-fatal):', e)
             }
           })()
         }
