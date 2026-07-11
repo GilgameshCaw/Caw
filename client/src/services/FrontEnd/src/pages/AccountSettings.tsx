@@ -756,8 +756,15 @@ const AccountSettings: React.FC = () => {
     if (!activeTokenId) return
     // Clear DM keys for this account only
     clearKeyCache(activeTokenId)
-    // Clear session key (wallet-level, but appropriate for logout)
-    useSessionKeyStore.getState().clearSession()
+    // Clear the Quick Sign session for THIS account's owner ONLY. Do NOT use
+    // clearSession() — it keys off the store's `activeWallet` (or wipes ALL
+    // sessions when that's null), so logging out of account A could kill account
+    // B's live Quick Sign session (or every account's). clearSessionForAddress is
+    // surgical and leaves other accounts' sessions intact.
+    const ownerLc = activeToken?.address?.toLowerCase()
+    if (ownerLc) {
+      useSessionKeyStore.getState().clearSessionForAddress(ownerLc)
+    }
     // UNPIN this token FIRST. A pinned token is kept "fresh" by
     // useTokenDataUpdate's pinnedOwner multicall, which re-adds it right after
     // removeToken drops it — and the persisted pin rehydrates it on reload. So
