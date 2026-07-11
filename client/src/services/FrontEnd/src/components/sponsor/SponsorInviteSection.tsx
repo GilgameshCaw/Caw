@@ -408,6 +408,32 @@ export default function SponsorInviteSection() {
               </p>
             ) : null}
 
+            {/* Honest fee breakdown: the ~$4 "gas/fees" isn't a spike — it's a
+                deliberate reserve for a FUTURE MAINNET redemption (gas priced on
+                mainnet, LZ cross-chain fee). Itemize it so it doesn't read as a
+                mystery. Testnet redemptions actually cost far less; the surplus is
+                a small validator margin. Amounts from the quote (whole CAW × rate). */}
+            {aboveFloor && belowCap && rate > 0 && (() => {
+              const gasUsd = Number(redeemGasCaw) * rate
+              const lzUsd = Number(overheadCaw) * rate
+              const nameUsd = Number(minBurnCaw) * rate
+              const row = (label: string, val: number) => (
+                <div className="flex items-baseline justify-between">
+                  <span>{label}</span><span>${val.toFixed(2)}</span>
+                </div>
+              )
+              return (
+                <div className={`text-2xs mt-2 space-y-0.5 ${isDark ? 'text-white/40' : 'text-gray-400'}`}>
+                  {row('Redemption gas reserve (mainnet)', gasUsd)}
+                  {row('Cross-chain (LayerZero) reserve', lzUsd)}
+                  {row('Username mint', nameUsd)}
+                  <div className="italic pt-0.5">
+                    Reserves cover your friend's signup on mainnet; unused amount stays in their gift.
+                  </div>
+                </div>
+              )
+            })()}
+
             <p className={`text-xs mt-4 ${mutedClass}`}>
               Your friend picks any username at signup. A shorter, rarer name costs
               more to mint and leaves them a smaller deposit — they spend the gift
