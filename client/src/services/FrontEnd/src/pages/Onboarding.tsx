@@ -670,11 +670,14 @@ export default function Onboarding() {
                 // normally reuses the PRF secret CAPTURED during the mint-permit
                 // passkey touch and writes via the session-authed first-write — NO
                 // extra Face ID. It only prompts in the FALLBACK case (authenticator
-                // lacks PRF, so it runs its own ceremony). The overlay covers that
-                // fallback; in the common (no-prompt) path it flashes briefly and
-                // clears — harmless. Fire-and-forget + non-fatal.
-                startSigning('Enabling passwordless DM unlock…')
-                void result.enrollPrfAfterMint(enrolledCredentialId)
+                // lacks PRF, so it runs its own ceremony). Show the biometric overlay
+                // ONLY when that fallback actually runs — via the onCeremony callback
+                // — so the common no-prompt path doesn't flash a phantom fingerprint
+                // prompt that resolves itself. Fire-and-forget + non-fatal.
+                void result.enrollPrfAfterMint(
+                  enrolledCredentialId,
+                  () => startSigning('Enabling passwordless DM unlock…'),
+                )
                   .catch(() => {})
                   .finally(() => stopSigning())
               }

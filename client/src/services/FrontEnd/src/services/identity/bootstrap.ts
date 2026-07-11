@@ -188,8 +188,15 @@ export type BootstrapResult = {
    * failure just means the first cold device falls back to the password (which
    * then enrols PRF as before). Takes the enrolled passkey credentialId (known to
    * the caller at mint-complete). Returns true iff a PRF blob was uploaded.
+   *
+   * `onCeremony` fires ONLY when the fallback path is about to run its own
+   * passkey ceremony (a real Face ID). The common single-prompt path reuses the
+   * mint-permit PRF secret and never prompts, so the caller must NOT show a
+   * biometric overlay unconditionally (it would flash for a fraction of a second
+   * and confuse the user — they'd see a fingerprint prompt that resolves itself).
+   * Drive the overlay from this callback instead.
    */
-  enrollPrfAfterMint: (credentialId: string) => Promise<boolean>
+  enrollPrfAfterMint: (credentialId: string, onCeremony?: () => void) => Promise<boolean>
   /**
    * L2 delegation payload (present only when bootstrap() was called with
    * l2ChainId). The caller POSTs this to /api/sponsor/delegate-l2 to delegate the
@@ -516,9 +523,11 @@ export async function bootstrapNewUser(opts: {
     // SESSION-AUTHENTICATED first-write (the user is signed in post-mint) — NO
     // second Face ID. FALLBACK: no captured secret (authenticator lacks PRF, or a
     // non-secure ctx) → the old self-contained passkey-gated ceremony.
-    enrollPrfAfterMint: async (credentialId: string): Promise<boolean> => {
+    enrollPrfAfterMint: async (credentialId: string, onCeremony?: () => void): Promise<boolean> => {
       const owner = recoveredRecipient
-      // Fast path: reuse the captured secret + session-authed first-write.
+      // Fast path: reuse the captured secret + session-authed first-write. This
+      // path does NOT call signWithPasskey — no biometric prompt — so onCeremony
+      // is intentionally NOT invoked here.
       if (capturedPrfSecret) {
         try {
           markPrfCapable(credentialId, true)
@@ -537,7 +546,9 @@ export async function bootstrapNewUser(opts: {
           // fall through to the passkey-gated path
         }
       }
-      // Fallback: self-contained passkey-gated ceremony (own Face ID).
+      // Fallback: self-contained passkey-gated ceremony (own Face ID). This is
+      // the ONLY branch that actually prompts, so signal the caller to show the
+      // biometric overlay now (not before — see onCeremony docs).
       try {
         const rpId = typeof window !== 'undefined' ? window.location.hostname : ''
         const salt = await buildPrfSalt(owner)
@@ -545,6 +556,7 @@ export async function bootstrapNewUser(opts: {
           '/api/wallet/blob/challenge',
           { method: 'POST', body: JSON.stringify({ address: owner }) },
         )
+        onCeremony?.()
         const sig = await signWithPasskey({ credentialId, digest: challenge, rpId, prfSalt: salt })
         markPrfCapable(credentialId, !!sig.prfSecret)
         if (!sig.prfSecret) return false
