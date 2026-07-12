@@ -171,8 +171,8 @@ export default function Recovery() {
   // bounce to /welcome.
   //
   // The recovered key is only READ (never persisted) throughout.
-  const handleContinue = async () => {
-    if (!recovery.address) { navigate('/home'); return }
+  const handleContinue = async (dest: string = '/home') => {
+    if (!recovery.address) { navigate(dest); return }
     setError(null)
     setIsSigningIn(true)
     try {
@@ -230,7 +230,7 @@ export default function Recovery() {
       tds.setActiveTokenIdForAddress(owner as Address, tokens[0].tokenId)
       tds.setLastAddress(owner.toLowerCase())
 
-      navigate('/home')
+      navigate(dest)
     } catch (e) {
       console.warn('[recovery] sign-in failed:', e)
       setError(t('recovery.error.signin_failed'))
@@ -392,11 +392,25 @@ export default function Recovery() {
               <p className="text-sm text-red-500 text-center">{error}</p>
             )}
             <button
-              onClick={() => void handleContinue()}
+              onClick={() => void handleContinue('/home')}
               disabled={isSigningIn}
               className="w-full py-3 rounded-xl font-bold text-sm bg-yellow-500 text-black hover:bg-yellow-400 transition-all disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer"
             >
               {isSigningIn ? t('recovery.success.signing_in') : t('recovery.success.cta')}
+            </button>
+            {/* Optional: nudge to re-enroll a passkey so they don't need the
+                backup file next time. Signs them in first (same flow), then
+                lands on the Identity section which has the add-device ceremony.
+                (Enrolling a passkey has a 24h on-chain timelock, so we route to
+                the dedicated flow rather than block the recovery screen on it.) */}
+            <button
+              onClick={() => void handleContinue('/settings/account')}
+              disabled={isSigningIn}
+              className={`w-full py-2.5 text-sm rounded-xl transition-colors cursor-pointer disabled:opacity-50 ${
+                isDark ? 'text-white/60 hover:text-white/90' : 'text-gray-500 hover:text-gray-800'
+              }`}
+            >
+              {t('recovery.success.setup_passkey')}
             </button>
           </div>
         )}
