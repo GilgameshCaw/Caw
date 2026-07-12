@@ -433,6 +433,11 @@ const Notifications: React.FC = () => {
           }
         }
         if (plaintext.startsWith('p:') || plaintext.startsWith('profile-update:')) return { title: 'Profile update failed' }
+        // Sponsor invite code purchase (SponsorInviteSection signs an OTHER
+        // action with the short "sp-i:" prefix).
+        if (plaintext.startsWith('sp-i:')) return { title: 'Invite code purchase failed' }
+        // Hide/moderation OTHER-subtype.
+        if (plaintext.startsWith('hide:')) return { title: "Couldn't hide that post" }
         return { title: 'Action failed' }
       default:
         return { title: 'Action failed' }
