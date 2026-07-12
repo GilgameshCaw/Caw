@@ -146,3 +146,8 @@ client/src/services/CawAI/rag/rag-index.jsonl
 **/cawai-scrub-review-*.txt
 **/cawai-rag-index.jsonl
 
+.aider*
+
+# Per-machine deploy marker written by d2 (~/bin/deploy-test2.sh) after a
+# successful test2 deploy. Records the live SHA so live-vs-pending is knowable.
+.last-deploy-test2
