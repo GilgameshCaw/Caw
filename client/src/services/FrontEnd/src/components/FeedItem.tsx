@@ -295,8 +295,11 @@ const FeedItem: React.FC<{ item: CawItem; isMainPost?: boolean; isReply?: boolea
     // Skip if no pending action, not authed (wallet OR passkey session), or already submitting
     if (!pendingLikeAction || (!isConnected && !hasActiveSession) || !activeTokenId || !activeToken || isSubmittingLikeRef.current) return;
 
-    // Check if connected to correct wallet
-    if (activeToken.address.toLowerCase() !== address?.toLowerCase()) {
+    // Check if connected to correct wallet — Pop-A only. Pop-B (passkey) signs
+    // without a wallet, so a wagmi-address mismatch is expected and must NOT
+    // trip the "switch wallet" hint (this effect only runs for the Pop-A
+    // connect-modal flow anyway, since Pop-B never sets pendingLikeAction).
+    if (!isPopB && activeToken.address.toLowerCase() !== address?.toLowerCase()) {
       setPendingLikeAction(null); // Clear pending action
       setWrongWalletError(true);
       setTimeout(() => setWrongWalletError(false), 5000);
@@ -443,11 +446,26 @@ const FeedItem: React.FC<{ item: CawItem; isMainPost?: boolean; isReply?: boolea
     }
 
     if (!hasActiveSession) {
-      // signAndSubmit handles wallet connection and chain switching
-      // automatically. We only need a pre-flight check for the wrong-wallet
-      // case here so the user sees an immediate hint instead of a generic
-      // "wrong wallet" error mid-sign.
-      if (activeToken && address && activeToken.address.toLowerCase() !== address.toLowerCase()) {
+      // Pop-B (passkey) users don't sign with a wallet — the "switch to the
+      // correct wallet" hint is meaningless to them (their connected wagmi
+      // address, if any, is a stray EOA that never matches the profile owner).
+      // Offer Quick Sign instead. If they opted out ("don't show again" for this
+      // owner) fall straight through to signAndSubmit, which routes to the passkey
+      // path. Otherwise open the enable-Quick-Sign modal + retry the like.
+      if (isPopB) {
+        const owner = activeToken?.owner
+        const { useSessionKeyStore } = await import('~/store/sessionKeyStore')
+        const suppressed = owner ? useSessionKeyStore.getState().isPromptSuppressedForOwner(owner) : false
+        if (!suppressed) {
+          const { useQuickSignPromptStore } = await import('~/components/modals/QuickSignModal')
+          const noopEvt = { preventDefault() {}, stopPropagation() {} } as unknown as React.MouseEvent
+          useQuickSignPromptStore.getState().show(async () => { await handleLike(noopEvt) })
+          return
+        }
+        // suppressed → fall through to signAndSubmit (passkey path)
+      } else if (activeToken && address && activeToken.address.toLowerCase() !== address.toLowerCase()) {
+        // Pop-A: pre-flight the wrong-wallet case so the user sees an immediate
+        // hint instead of a generic "wrong wallet" error mid-sign.
         setWrongWalletError(true)
         setTimeout(() => setWrongWalletError(false), 5000) // Clear error after 5 seconds
         return
@@ -654,11 +672,23 @@ const FeedItem: React.FC<{ item: CawItem; isMainPost?: boolean; isReply?: boolea
     }
 
     if (!hasActiveSession) {
-      // signAndSubmit handles wallet connection and chain switching
-      // automatically. We only need a pre-flight check for the wrong-wallet
-      // case here so the user sees an immediate hint instead of a generic
-      // "wrong wallet" error mid-sign.
-      if (activeToken && address && activeToken.address.toLowerCase() !== address.toLowerCase()) {
+      // Pop-B (passkey) users don't sign with a wallet — see handleLike for the
+      // rationale. Offer Quick Sign; if opted out, fall through to the passkey
+      // path. Otherwise open the enable modal + retry the recaw.
+      if (isPopB) {
+        const owner = activeToken?.owner
+        const { useSessionKeyStore } = await import('~/store/sessionKeyStore')
+        const suppressed = owner ? useSessionKeyStore.getState().isPromptSuppressedForOwner(owner) : false
+        if (!suppressed) {
+          const { useQuickSignPromptStore } = await import('~/components/modals/QuickSignModal')
+          const noopEvt = { preventDefault() {}, stopPropagation() {} } as unknown as React.MouseEvent
+          useQuickSignPromptStore.getState().show(async () => { await handleRecaw(noopEvt) })
+          return
+        }
+        // suppressed → fall through to signAndSubmit (passkey path)
+      } else if (activeToken && address && activeToken.address.toLowerCase() !== address.toLowerCase()) {
+        // Pop-A: pre-flight the wrong-wallet case so the user sees an immediate
+        // hint instead of a generic "wrong wallet" error mid-sign.
         setWrongWalletError(true)
         setTimeout(() => setWrongWalletError(false), 5000) // Clear error after 5 seconds
         return

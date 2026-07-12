@@ -17,6 +17,7 @@ import { useTheme } from '~/hooks/useTheme'
 import { usePendingCawPolling, usePendingLikePolling, usePendingReplyPolling } from '~/hooks/usePendingPolling'
 import { chains } from '~/config/chains'
 import { useHasActiveSession } from '~/hooks/useHasActiveSession'
+import { useWalletPopulation } from '~/hooks/useWalletPopulation'
 import Tooltip from '~/components/Tooltip'
 
 import { formatTimeAgo } from '~/utils/formatTimeAgo'
@@ -39,6 +40,8 @@ const ReplyItem: React.FC<{ item: CawItem; onLikeStateChange?: (cawId: string, l
   const { address } = useAccount()
   const chainId = useChainId()
   const hasActiveSession = useHasActiveSession()
+  const { population } = useWalletPopulation()
+  const isPopB = population === 'B'
   const [busyLike, setBusyLike]     = useState(false)
   const [busyRecaw, setBusyRecaw]   = useState(false)
   const [isRecawed, setIsRecawed]   = useState(false)
@@ -97,11 +100,28 @@ const ReplyItem: React.FC<{ item: CawItem; onLikeStateChange?: (cawId: string, l
     // Chain switching is handled automatically by signAndSubmit — no
     // pre-flight modal needed.
 
-    // Check if connected to wrong wallet (skip if session key active)
-    if (!hasActiveSession && activeToken && address && activeToken.address.toLowerCase() !== address.toLowerCase()) {
-      setWrongWalletError(true)
-      setTimeout(() => setWrongWalletError(false), 5000) // Clear error after 5 seconds
-      return
+    if (!hasActiveSession) {
+      // Pop-B (passkey) users don't sign with a wallet — the "switch to the
+      // correct wallet" hint is meaningless to them. Offer Quick Sign instead;
+      // if they opted out ("don't show again" for this owner) fall through to the
+      // passkey path. Otherwise open the enable modal + retry the like.
+      if (isPopB) {
+        const owner = activeToken?.owner
+        const { useSessionKeyStore } = await import('~/store/sessionKeyStore')
+        const suppressed = owner ? useSessionKeyStore.getState().isPromptSuppressedForOwner(owner) : false
+        if (!suppressed) {
+          const { useQuickSignPromptStore } = await import('~/components/modals/QuickSignModal')
+          const noopEvt = { preventDefault() {}, stopPropagation() {} } as unknown as React.MouseEvent
+          useQuickSignPromptStore.getState().show(async () => { await handleLike(noopEvt) })
+          return
+        }
+        // suppressed → fall through to signAndSubmit (passkey path)
+      } else if (activeToken && address && activeToken.address.toLowerCase() !== address.toLowerCase()) {
+        // Pop-A: wrong-wallet pre-flight hint.
+        setWrongWalletError(true)
+        setTimeout(() => setWrongWalletError(false), 5000) // Clear error after 5 seconds
+        return
+      }
     }
 
     setBusyLike(true)
