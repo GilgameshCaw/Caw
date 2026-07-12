@@ -29,7 +29,6 @@ import { themeLayoutShell } from '~/utils/theme'
 import Avatar from '~/components/Avatar';
 import { getUserAvatar } from '~/utils/defaultAvatar';
 import { useTokenDataStore } from '~/store/tokenDataStore';
-import RecoveryBanner from '~/components/identity/RecoveryBanner';
 
 const BoidsBg = lazy(() => import('~/components/BoidsBg3D'))
 
@@ -476,7 +475,6 @@ const MainLayout = ({ children, hideSidebars: hideSidebarsProp }: MainLayoutProp
             top by 20 to clear it. pb is dropped — the captive UI is now
             top-anchored, not bottom-anchored. */}
         <div className={`flex-1 min-h-0 ${hideSidebars && isCaptive ? 'pt-20 relative z-10' : hideSidebars ? 'pb-24 relative z-10' : ''}`}>
-          <RecoveryBanner />
           {children}
         </div>
       </main>
