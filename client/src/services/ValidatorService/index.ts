@@ -4130,6 +4130,14 @@ console.log("succeededKeys", succeededKeys)
           '0xa58d8412': 'WithdrawZeroAmount',
           '0x682a6e7c': 'InvalidValidator',
           '0x4d94cda0': 'WrongProfileForSession — token-scoped session used on a different tokenId',
+          // CawProfileLedger errors that bubble up through spendAndDistribute /
+          // the session-spend path during processActions. These live on a
+          // DIFFERENT contract than the CawActions errors above, so they were
+          // missing here and surfaced as "Unknown revert 0x…".
+          '0xf4d678b8': 'InsufficientBalance — not enough staked CAW to cover this action',
+          '0x339bf9a6': 'NotCa — caller is not CawActions',
+          '0x59dc379f': 'NotTokenOwner',
+          '0xaabbee68': 'NoSession',
         }
         if (CAW_ACTIONS_ERRORS[selector]) return CAW_ACTIONS_ERRORS[selector]
       } catch {
