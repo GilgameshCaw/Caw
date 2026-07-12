@@ -1280,11 +1280,32 @@ export default function Onboarding() {
           )}
 
           {state.step === 'confirm' && state.bootstrapResult && (
-            <ConfirmStep
-              username={state.username}
-              txHash={state.bootstrapResult.txHash}
-              signingIn={signingIn}
-            />
+            signingIn ? (
+              // Happy path: the post-mint sign-in auto-navigates to /welcome the
+              // instant it resolves, so the styled ConfirmStep (tx-hash card +
+              // "Continue" button) would only FLASH for a few hundred ms before
+              // being replaced — reads as a glitch. Show a plain full-screen
+              // loader while signing in; ConfirmStep below is the fallback that
+              // only actually renders if sign-in finished but DIDN'T navigate
+              // (slow/failed — e.g. indexer lag), giving the user a manual button.
+              <div className="space-y-4 text-center py-8">
+                <span
+                  className={`inline-block w-8 h-8 rounded-full border-2 border-t-transparent animate-spin ${
+                    isDark ? 'border-white/30' : 'border-gray-400'
+                  }`}
+                  aria-hidden="true"
+                />
+                <p className={`text-sm ${isDark ? 'text-white/60' : 'text-gray-500'}`}>
+                  {t('onboarding.confirm.setting_up')}
+                </p>
+              </div>
+            ) : (
+              <ConfirmStep
+                username={state.username}
+                txHash={state.bootstrapResult.txHash}
+                signingIn={signingIn}
+              />
+            )
           )}
 
         </div>
