@@ -1138,12 +1138,37 @@ router.post('/execute', async (req, res) => {
   // re-enters the user's SmartEOA with its own management sig; one-per-batch keeps the
   // gas quote honest against the fixed GAS_LIMIT_EXECUTE_BATCH (800K) and the shape
   // unambiguous — the same reasoning as TOO_MANY_DEPOSITS.
-  if (body.calls.filter(c => {
-    const toLc2 = c.to.toLowerCase()
-    const sel2 = (c.data || '').length >= 10 ? c.data.slice(0, 10).toLowerCase() : ''
-    return toLc2 === smartEoaLc && SELF_MGMT_SELECTORS.has(sel2)
-  }).length > 1) {
-    return res.status(400).json({ error: 'TOO_MANY_SELF_MGMT', detail: 'At most one self-management call (rotateEcdsaFallback, addPasskey, cancelPendingPasskey, or removePasskey) per batch.' })
+  //
+  // EXCEPTION — recovery-mode passkey re-enroll: a user who lost their device signs in
+  // via their backup file and needs a passkey again, but SmartEOA.addPasskey only
+  // accepts the recovery-key (secp256k1) sig when the on-chain active passkey count is
+  // 0. So they must REMOVE their stale device passkey(s) FIRST, then addPasskey — all in
+  // one atomic executeBatch (the contract processes calls in order). The ONLY multi-self-
+  // mgmt shape we allow is therefore: a run of removePasskey calls followed by exactly
+  // ONE addPasskey, all self-targeted, nothing else. Bounded to keep gas under budget.
+  {
+    const selfMgmt = body.calls
+      .map(c => ({
+        self: c.to.toLowerCase() === smartEoaLc,
+        sel: (c.data || '').length >= 10 ? c.data.slice(0, 10).toLowerCase() : '',
+      }))
+      .filter(c => c.self && SELF_MGMT_SELECTORS.has(c.sel))
+
+    if (selfMgmt.length > 1) {
+      // Is it the sanctioned remove*→add recovery-enroll shape?
+      const removes = selfMgmt.filter(c => c.sel === SEL_REMOVE_PASSKEY).length
+      const adds = selfMgmt.filter(c => c.sel === SEL_ADD_PASSKEY).length
+      // Every self-mgmt call must be a remove or the single trailing add; the add (if
+      // present) must be the LAST self-mgmt call so it runs after all removals.
+      const onlyRemoveThenAdd =
+        adds === 1 &&
+        removes === selfMgmt.length - 1 &&
+        selfMgmt[selfMgmt.length - 1].sel === SEL_ADD_PASSKEY &&
+        removes <= 5 // contract convention caps enrolled passkeys well under this
+      if (!onlyRemoveThenAdd) {
+        return res.status(400).json({ error: 'TOO_MANY_SELF_MGMT', detail: 'At most one self-management call per batch, except a recovery re-enroll (removePasskey…×N then one addPasskey).' })
+      }
+    }
   }
   if (needsOwnershipCheck) {
     let owners: { tokenId: number }[]
