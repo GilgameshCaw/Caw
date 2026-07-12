@@ -106,7 +106,7 @@ export interface UseSmartEoaManagementResult {
    * @param params   ABI-encoded params (viem encodeAbiParameters output).
    * @returns        65-byte secp256k1 sig hex.
    */
-  signManagementWithRecoveryKey: (opName: string, params: Hex) => Promise<Hex>
+  signManagementWithRecoveryKey: (opName: string, params: Hex, nonceOffset?: number) => Promise<Hex>
   /** The user's EOA address, or undefined if not Population B. */
   account: Address | undefined
 }
@@ -159,8 +159,12 @@ export function useSmartEoaManagement(): UseSmartEoaManagementResult {
     [account, activeToken?.tokenId, readManagementNonce, startSigning, stopSigning],
   )
 
+  // `nonceOffset` lets a caller pre-sign a SEQUENCE of management ops that will
+  // execute in one executeBatch tx. The contract does `++managementNonce` after
+  // EACH management op (SmartEOA.sol), so op #k in the batch is verified against
+  // (currentNonce + k). Pass k as the offset. Default 0 = the single-op case.
   const signManagementWithRecoveryKey = useCallback(
-    async (opName: string, params: Hex): Promise<Hex> => {
+    async (opName: string, params: Hex, nonceOffset = 0): Promise<Hex> => {
       if (!account) throw new Error('No passkey wallet connected.')
       if (!recovery.privateKey) {
         throw new Error(
@@ -168,7 +172,7 @@ export function useSmartEoaManagement(): UseSmartEoaManagementResult {
         )
       }
 
-      const nonce = await readManagementNonce()
+      const nonce = (await readManagementNonce()) + BigInt(nonceOffset)
       const digest = buildManagementDigest(account, chains.l1.chainId, opName, params, nonce)
 
       // secp256k1 path — accepted by the contract's _verifyEcdsaFallback branch,

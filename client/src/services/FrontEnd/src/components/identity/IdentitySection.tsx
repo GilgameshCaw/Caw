@@ -25,10 +25,11 @@
  *   matching passkey row.
  */
 
-import { useCallback, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useSearchParams } from 'react-router-dom'
 import { encodeAbiParameters } from 'viem'
 import type { Address } from 'viem'
-import { useAccount, usePublicClient } from 'wagmi'
+import { usePublicClient } from 'wagmi'
 import { useQuery } from '@tanstack/react-query'
 import { HiKey, HiIdentification, HiPlus, HiRefresh, HiDownload, HiTrash } from 'react-icons/hi'
 import { erc20Abi, encodeFunctionData } from 'viem'
@@ -171,8 +172,13 @@ export function IdentitySection({
 }: IdentitySectionProps): JSX.Element | null {
   const { isDark } = useTheme()
   const t = useT()
-  const { address } = useAccount()
-  const { population } = useWalletPopulation()
+  // Source the account address from useWalletPopulation, NOT raw useAccount():
+  // in RECOVERY MODE there is no wagmi wallet connected, so useAccount().address
+  // is undefined and the whole Identity section (add-passkey, rotate, etc.) would
+  // render empty — which is exactly why a recovered user found "nowhere to set a
+  // passkey". useWalletPopulation returns the recovered/​passkey owner address for
+  // Population B whether or not a wagmi wallet is connected.
+  const { population, address } = useWalletPopulation()
   const publicClient = usePublicClient()
 
   // Only render for Population B (not while loading, not for A/C/none).
@@ -218,6 +224,19 @@ function IdentitySectionInner({
   const [rotateOpen, setRotateOpen] = useState(false)
   const [redownloadOpen, setRedownloadOpen] = useState(false)
   const [removeTarget, setRemoveTarget] = useState<`0x${string}` | null>(null)
+
+  // Deep-link: /settings/account?addPasskey=1 auto-opens the Add-Passkey dialog
+  // on arrival (used by the recovery banner so a recovered user is one click from
+  // enrolling). Consume the param once, then strip it so a refresh doesn't re-open.
+  const [searchParams, setSearchParams] = useSearchParams()
+  useEffect(() => {
+    if (searchParams.get('addPasskey') === '1') {
+      setAddPasskeyOpen(true)
+      const next = new URLSearchParams(searchParams)
+      next.delete('addPasskey')
+      setSearchParams(next, { replace: true })
+    }
+  }, [searchParams, setSearchParams])
 
   // Read passkey state from chain events.
   const { data: passkeyState, isLoading, refetch } = useQuery({
@@ -519,15 +538,52 @@ function IdentitySectionInner({
           }
           const feeCaw = BigInt(quote.minFeeCawWei)
 
+          // RECOVERY MODE: signed in via backup file, no passkey on this device.
+          // Two consequences vs the normal add-a-device flow:
+          //   1. Sign management ops with the RECOVERY KEY (secp256k1), not a
+          //      device passkey — signManagement() would throw "no passkey".
+          //   2. SmartEOA.addPasskey only accepts a recovery-key sig when the
+          //      on-chain ACTIVE passkey count is 0 (the bootstrap-recovery
+          //      branch). A user who lost their device still has that device's
+          //      stale passkey enrolled, so we must REMOVE the stale one(s) FIRST.
+          //      removePasskey + addPasskey run sequentially IN THE SAME batch tx,
+          //      so activeCount is already 0 by the time addPasskey executes.
+          const inRecovery = !!inMemoryPrivateKey
+          const calls: ExecCall[] = []
+
+          // Nonce sequencing: the contract does ++managementNonce after EACH
+          // management op, so op #k in the batch must be signed against
+          // (currentNonce + k). Track the running offset.
+          let nonceK = 0
+          if (inRecovery) {
+            // Remove every currently-enrolled (stale) passkey via the recovery key.
+            for (const p of passkeyState?.enrolled ?? []) {
+              const rmParams = encodeAbiParameters([{ type: 'bytes32' }], [p.pubkeyHash]) as `0x${string}`
+              const rmSig = await signManagementWithRecoveryKey('removePasskey', rmParams, nonceK)
+              calls.push({
+                to: eoaAccount,
+                value: 0n,
+                data: encodeFunctionData({
+                  abi: smartEoaAbi,
+                  functionName: 'removePasskey',
+                  args: [p.pubkeyHash, rmSig],
+                }),
+              })
+              nonceK++
+            }
+          }
+
           // params = abi.encode(pubkeyX, pubkeyY) — TWO bytes32, matching
           // the contract's _managementDigest("addPasskey", abi.encode(newPubkeyX, newPubkeyY)).
           const params = encodeAbiParameters(
             [{ type: 'bytes32' }, { type: 'bytes32' }],
             [passkey.pubkeyX, passkey.pubkeyY],
           ) as `0x${string}`
-          const mgmtSig = await signManagement('addPasskey', params)
+          const mgmtSig = inRecovery
+            ? await signManagementWithRecoveryKey('addPasskey', params, nonceK)
+            : await signManagement('addPasskey', params)
 
-          const call1: ExecCall = {
+          calls.push({
             to: eoaAccount,
             value: 0n,
             data: encodeFunctionData({
@@ -535,8 +591,8 @@ function IdentitySectionInner({
               functionName: 'addPasskey',
               args: [passkey.pubkeyX, passkey.pubkeyY, mgmtSig],
             }),
-          }
-          const call2: ExecCall = {
+          })
+          calls.push({
             to: CAW_ADDRESS,
             value: 0n,
             data: encodeFunctionData({
@@ -544,9 +600,9 @@ function IdentitySectionInner({
               functionName: 'transfer',
               args: [quote.relayer, feeCaw],
             }),
-          }
+          })
 
-          const txHash = await smartEoaExecute([call1, call2])
+          const txHash = await smartEoaExecute(calls)
           return { txHash }
         }}
         onFinalize={async (_pubkeyId) => {

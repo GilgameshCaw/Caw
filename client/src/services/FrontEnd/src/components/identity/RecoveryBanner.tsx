@@ -14,17 +14,22 @@ import { useT } from '~/i18n/I18nProvider'
 import { Link } from '~/utils/localizedRouter'
 import { useLocation } from 'react-router-dom'
 import { useRecoveryContext } from '~/components/identity/RecoveryProvider'
+import { useActiveToken } from '~/store/tokenDataStore'
+import { getPasskeyCredential } from '~/constants/passkeyStorage'
 
 export default function RecoveryBanner() {
   const { isInRecoveryMode } = useRecoveryContext()
   const { isDark } = useTheme()
   const location = useLocation()
+  const activeToken = useActiveToken()
   const t = useT()
 
   if (!isInRecoveryMode) return null
-  // Don't show on the account settings page — the banner links THERE, so showing
-  // it on that same page (with a "go to Identity settings" link back to itself)
-  // is pointless noise. The Identity section on that page already covers enroll.
+  // Only show if this device has NO passkey for the active profile yet — the
+  // banner nudges the user to CREATE one, so once they have one it's just noise.
+  if (getPasskeyCredential(activeToken?.tokenId)) return null
+  // Don't show on the account settings page — the banner links THERE (and opens
+  // the add-passkey dialog), so showing it on that same page is pointless.
   if (location.pathname.endsWith('/settings/account')) return null
 
   return (
@@ -41,7 +46,9 @@ export default function RecoveryBanner() {
       <span>
         {t('recovery.banner.message')}{' '}
         <Link
-          to="/settings/account"
+          // ?addPasskey=1 → AccountSettings auto-opens the Add-Passkey dialog so
+          // the enroll ceremony starts on arrival (one click from here).
+          to="/settings/account?addPasskey=1"
           className={`underline font-medium ${
             isDark ? 'text-yellow-300 hover:text-yellow-200' : 'text-yellow-800 hover:text-yellow-900'
           }`}
