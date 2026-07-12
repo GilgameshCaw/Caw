@@ -451,6 +451,60 @@ const Notifications: React.FC = () => {
     const cleaned = reasonMatch ? reasonMatch[1] : (raw || '')
 
     const lower = cleaned.toLowerCase()
+
+    // Contract error-NAME map (authoritative). The validator surfaces reverts as
+    // "ErrorName — operator note" (see ValidatorService CAW_ACTIONS_ERRORS). Match
+    // on the stable error name rather than the English note, so a user always gets
+    // plain language even when the note reads like a contract label. Ordered map:
+    // first name found in the reason wins. Anything not covered here falls through
+    // to the substring heuristics + generic fallback below.
+    const NAMED: [string, string][] = [
+      ['insufficientbalance', "You don't have enough deposited CAW for this action."],
+      ['sessionlimitexceeded', 'This Quick Sign session has hit its spending cap. Re-enable Quick Sign to reset it.'],
+      ['sessioninvalid',       'Your Quick Sign session is no longer valid. Re-enable Quick Sign and try again.'],
+      ['outofscope',           "Quick Sign isn't authorized for this kind of action. Re-enable it with the right permissions."],
+      ['wrongprofileforsession', 'That Quick Sign session belongs to a different profile. Switch profiles or re-enable Quick Sign.'],
+      ['nosession',            'No active Quick Sign session. Enable Quick Sign and try again.'],
+      ['usernotauth',          'This account isn’t set up on this network yet.'],
+      ['unknownowner',         'This account isn’t set up on this network yet.'],
+      ['nottokenowner',        "You don't own this profile."],
+      ['selffollow',           "You can't follow your own account."],
+      ['texttoolong',          'The post text was too long.'],
+      ['toomanyrecipients',    'Too many tip recipients on this action.'],
+      ['invalidactiontype',    'This action type isn’t supported.'],
+      ['withdrawzeroamount',   'Enter an amount greater than zero to withdraw.'],
+      ['nowithdrawfee',        'Withdrawals aren’t available right now. Please try again later.'],
+      // Signature / batch-integrity failures — the user can just retry; the detail
+      // is for operators, not them.
+      ['invalidsig',       'Signature validation failed on-chain. Try again.'],
+      ['batchsiginvalid',  'Signature validation failed on-chain. Try again.'],
+      ['signermismatch',   'Signature validation failed on-chain. Try again.'],
+      ['badsiggroupcount', 'Signature validation failed on-chain. Try again.'],
+      ['sigsincomplete',   'Signature validation failed on-chain. Try again.'],
+      // Cawonce / ordering — transient; a retry with a fresh cawonce fixes it.
+      ['cawonceused',            'Something went wrong while processing this action on-chain. Try again.'],
+      ['noncontiguouscawonces',  'Something went wrong while processing this action on-chain. Try again.'],
+      // Everything else in the table (validator/config/internal errors the user
+      // can neither cause nor fix) → generic.
+      ['notsibling', 'Something went wrong while processing this action on-chain.'],
+      ['onlyself', 'Something went wrong while processing this action on-chain.'],
+      ['notcaporacle', 'Something went wrong while processing this action on-chain.'],
+      ['noactions', 'Something went wrong while processing this action on-chain.'],
+      ['toomanyactions', 'Something went wrong while processing this action on-chain.'],
+      ['trailingbytes', 'Something went wrong while processing this action on-chain.'],
+      ['emptygroup', 'Something went wrong while processing this action on-chain.'],
+      ['groupoverflows', 'Something went wrong while processing this action on-chain.'],
+      ['mixednetworks', 'Something went wrong while processing this action on-chain.'],
+      ['mixedsenders', 'Something went wrong while processing this action on-chain.'],
+      ['zknotconfigured', 'Something went wrong while processing this action on-chain.'],
+      ['zksignersmismatch', 'Something went wrong while processing this action on-chain.'],
+      ['invalidvalidator', 'Something went wrong while processing this action on-chain.'],
+      ['notca', 'Something went wrong while processing this action on-chain.'],
+    ]
+    for (const [name, msg] of NAMED) {
+      if (lower.includes(name)) return msg
+    }
+
     if (lower.includes('insufficient')) return "You don't have enough deposited CAW for this action."
     if (lower.includes('not authenticated')) return 'Account not yet authenticated with this client.'
     if (lower.includes('cawonce') || lower.includes('conflict')) {
