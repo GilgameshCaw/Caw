@@ -23,6 +23,7 @@ import { isPasskeyAddress } from '~/constants/passkeyStorage'
 import { ThumbtackIcon } from '~/components/icons/ThumbtackIcon'
 import { useT } from '~/i18n/I18nProvider'
 import { IdentitySection } from '~/components/identity/IdentitySection'
+import RecoveryModal from '~/components/identity/RecoveryModal'
 import { WithdrawLockStatus } from '~/components/WithdrawLockStatus'
 import { usePasskeySignIn } from '~/hooks/usePasskeySignIn'
 
@@ -630,6 +631,7 @@ const AccountSettings: React.FC = () => {
   const { openConnectModal } = useConnectModal()
   const [copiedField, setCopiedField] = useState<string | null>(null)
   const [showClearDataModal, setShowClearDataModal] = useState(false)
+  const [showRecoveryModal, setShowRecoveryModal] = useState(false)
   const [showLogoutModal, setShowLogoutModal] = useState(false)
   // Marker so the effect below knows to surface the connect modal once
   // wagmi has flushed the disconnect. A plain setTimeout closure captures
@@ -1096,17 +1098,20 @@ const AccountSettings: React.FC = () => {
               {t('account.add_backup.divider')}
               <span className={`flex-1 h-px ${isDark ? 'bg-white/10' : 'bg-gray-200'}`} />
             </div>
-            <Link
-              to="/recovery"
+            <button
+              type="button"
+              onClick={() => setShowRecoveryModal(true)}
               // Match the "Add an existing passkey" button exactly: dashed border,
-              // muted weight/colour, centered contents — so it doesn't pop.
+              // muted weight/colour, centered contents — so it doesn't pop. Opens
+              // the recovery flow as a MODAL here (no full-page navigation away
+              // from settings); the home/deep-link entry still uses the page.
               className={`w-full flex items-center justify-center gap-2 p-4 rounded-lg border border-dashed transition-colors cursor-pointer ${
                 isDark ? 'border-white/15 text-white/60 hover:bg-white/5 hover:text-white/80' : 'border-gray-300 text-gray-500 hover:bg-gray-50 hover:text-gray-700'
               }`}
             >
               <HiOutlineDocumentText className="w-5 h-5" />
               <span className="text-sm font-medium">{t('account.add_backup.cta')}</span>
-            </Link>
+            </button>
           </div>
         </section>
 
@@ -1442,6 +1447,11 @@ const AccountSettings: React.FC = () => {
             </div>
           </div>
         </ModalWrapper>
+
+        {/* Backup-file sign-in as a MODAL (in-app entry — no navigation away
+            from settings). On success it signs the user in, closes, and — if
+            they chose "set up a passkey" — deep-links to the add-passkey dialog. */}
+        <RecoveryModal open={showRecoveryModal} onClose={() => setShowRecoveryModal(false)} />
       </div>
   )
 }
