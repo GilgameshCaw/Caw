@@ -2014,6 +2014,29 @@ export function useSignAndSubmitAction() {
       // Surface a truthful, non-looping error; the real fix is selecting the
       // right profile (session belongs to a different owner).
       if (errMsg.includes('not registered') || errMsg.includes('not authorized for owner')) {
+        // TWO distinct causes, and they need OPPOSITE handling:
+        //  (a) OWNER MISMATCH — the action's owner differs from the session key's
+        //      owner (cross-profile: like on account B signed by A's key). The
+        //      stored key is fine; the user just needs the right profile. Keep the
+        //      truthful non-looping message.
+        //  (b) DEAD/STALE KEY — the session belongs to the CORRECT owner but was
+        //      never registered on-chain (or was superseded), so `sessions()` reads
+        //      expiry 0. This is a corpse left in the local store by an earlier
+        //      enable attempt whose registration never landed; every retry re-signs
+        //      with the SAME dead key → identical 403 forever. EVICT it and route to
+        //      the re-enable prompt so a real session gets registered.
+        const ownerMismatch = !!(rawSession?.ownerAddress && tokenOwner &&
+          rawSession.ownerAddress.toLowerCase() !== tokenOwner.toLowerCase())
+        if (!ownerMismatch && tokenOwner) {
+          // Same owner but the key isn't registered — evict the corpse so we stop
+          // re-signing with it, then offer to re-enable (registers a fresh session).
+          try { useSessionKeyStore.getState().clearSessionForAddress(tokenOwner) } catch { /* best-effort */ }
+          return new Promise((resolve, reject) => {
+            useQuickSignRenewStore.getState().show('expired', async () => {
+              try { resolve(await requestAndSubmit(params)) } catch (err) { reject(err) }
+            }, () => reject(new Error('Quick Sign renewal cancelled')))
+          })
+        }
         throw new Error(
           'This action was signed by a different profile\'s Quick Sign key. ' +
           'Switch to the profile that owns this action (or re-enable Quick Sign ' +

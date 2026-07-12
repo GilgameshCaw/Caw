@@ -218,7 +218,7 @@ export function useCreateSession() {
           currentCode.toLowerCase() === wantPrefix
 
         if (!isDelegated) {
-          onProgress?.('Setting up your account on L2…')
+          onProgress?.('Submitting…')
 
           // ecdsaFallbackAddr = the secp256k1 key's address (= recovery.address).
           const ecdsaFallbackAddr = recovery.address!
@@ -432,6 +432,55 @@ export function useCreateSession() {
           const sig = await signWithPasskey({ credentialId, digest: challenge, rpId, prfSalt: salt })
           markPrfCapable(credentialId, !!sig.prfSecret)
           if (!sig.prfSecret) return
+
+          // MULTI-SESSION SAFETY (browser-2 clobber fix): the server holds ONE
+          // roam slot (sessionPrfBlob) per owner. Registering a session on-chain
+          // never revokes another device's session — every device keeps a valid
+          // on-chain session independently — but overwriting this single roam
+          // pointer would orphan whichever device it currently points at (that
+          // device could no longer RESTORE, and a stale re-restore would pull THIS
+          // device's key instead). So only claim the roam slot if it's empty or
+          // already DEAD (its session expired / was never registered on-chain).
+          // First device to wrap owns the shared roam pointer; a later deliberate
+          // session still works locally + on-chain, it just doesn't hijack roaming.
+          try {
+            const { sessionPrfBlob: existing } = await apiFetch<{ sessionPrfBlob: string | null }>(
+              '/api/wallet/blob/retrieve',
+              { method: 'POST', body: JSON.stringify({ address: effectiveOwner }) },
+            )
+            if (existing) {
+              const parsed = JSON.parse(existing)
+              if (validatePrfBackupBlobShape(parsed)) {
+                const existingBytes = await unwrapSessionKeyWithPrf(parsed, sig.prfSecret)
+                let existingAddr: `0x${string}` | null = null
+                try {
+                  let hex = '0x'
+                  for (let i = 0; i < existingBytes.length; i++) hex += existingBytes[i].toString(16).padStart(2, '0')
+                  existingAddr = privateKeyToAccount(hex as `0x${string}`).address
+                } finally {
+                  existingBytes.fill(0)
+                }
+                if (existingAddr && existingAddr.toLowerCase() !== sessionAccount.address.toLowerCase()) {
+                  const raw = await readContract(wagmiConfig, {
+                    address: CAW_NAMES_L2_ADDRESS, abi: cawProfileLedgerAbi, chainId: baseSepolia.id,
+                    functionName: 'sessions', args: [effectiveOwner as `0x${string}`, existingAddr],
+                  }) as any
+                  const existingExpiry = Number(BigInt((raw?.expiry ?? raw?.[0]) ?? 0))
+                  const stillLive = existingExpiry > Math.floor(Date.now() / 1000)
+                  if (stillLive) {
+                    // Another device's session still roamable — leave its slot alone.
+                    console.log('[QuickSign] roam slot held by a live session on another device; not overwriting')
+                    return
+                  }
+                }
+              }
+            }
+          } catch (e) {
+            // Non-fatal: if we can't read/parse the existing slot, fall through and
+            // claim it (better to have SOME roamable session than none).
+            console.warn('[QuickSign] roam-slot liveness check skipped (non-fatal):', e)
+          }
+
           const keyBytes = passkeyHexToBytes(privateKey.slice(2))
           const sessionPrfBlob = await wrapSessionKeyWithPrf(keyBytes, sig.prfSecret, sessionAccount.address)
           keyBytes.fill(0)
@@ -743,6 +792,37 @@ export async function registerSponsoredSession(opts: {
   onProgress?.('Sign to authorize key...')
   const signature = await signMessage(message)
 
+  // DURABILITY: persist the session key to the store IMMEDIATELY — before the
+  // ~240s registration poll below — so a reload / navigation during that window
+  // doesn't lose it. Onboarding fires this fire-and-forget and navigates to
+  // /welcome right away; the private key otherwise lives ONLY in this closure
+  // until the poll reaches `confirmed`, so leaving the page mid-poll (e.g. the
+  // user roams the backup file to another browser and comes back, forcing a
+  // re-sign-in) permanently loses the key even though the session may already be
+  // registered on-chain — and the account lands on the feed with Quick Sign OFF.
+  // Persisting up front makes the stored key survive that; if registration
+  // ultimately FAILS we delete it below so a dead key never lingers. (Extends
+  // feedback_persist_session_in_onSuccess: persist on CREATE, not just onSuccess.)
+  const ownerLc = ownerAddress.toLowerCase()
+  const persistLocal = () => {
+    useSessionKeyStore.getState().setSession({
+      privateKey,
+      address: sessionAccount.address,
+      ownerAddress: ownerLc,
+      expiry,
+      scopeBitmap: DEFAULT_SCOPE,
+      spendLimit: spendLimit.toString(),
+      tipCeiling: tipCeiling.toString(),
+      // pending: the key is stored so it survives a reload, but it is NOT yet
+      // registered on-chain — the action-signing getters skip pending sessions
+      // (signing with it 403s "Session key not registered"). Cleared on confirm.
+      pending: true,
+    })
+    useSessionKeyStore.getState().setActiveWallet(ownerLc)
+    useSessionKeyStore.getState().setEnabled(true)
+  }
+  persistLocal()
+
   onProgress?.('Submitting...')
   const result = await apiFetch<{ requestId: string; status: string }>('/api/sessions', {
     method: 'POST',
@@ -777,34 +857,41 @@ export async function registerSponsoredSession(opts: {
       else if (status.status === 'pending') onProgress?.('Confirming transaction...')
       else if (status.status === 'confirmed') break
       else if (status.status === 'failed') {
+        // Registration failed on-chain — remove the optimistically-persisted key
+        // so a dead session doesn't linger (it was never registered).
+        useSessionKeyStore.getState().clearSessionForAddress(ownerLc)
         throw new Error(status.error || 'Quick Sign registration failed. Please try again.')
       }
     } catch (e: any) {
-      if (e.message && !e.message.includes('API')) throw e
+      if (e.message && !e.message.includes('API')) {
+        useSessionKeyStore.getState().clearSessionForAddress(ownerLc)
+        throw e
+      }
       // Ignore transient polling errors.
     }
   }
 
-  // Persist immediately on success — before any navigation — so the in-memory
-  // session key isn't lost.
+  // The session key was already persisted up front (see persistLocal() above), so
+  // it survives a mid-poll reload/navigation. Re-stamp it here with spentSyncedAt
+  // now that registration confirmed — the on-chain session exists, so the submit
+  // fast-path can trust the local `spent` counter within its TTL. (#240: setEnabled
+  // + setActiveWallet were already done in persistLocal so a Pop-B passkey user —
+  // who has no wagmi address to drive the normal setActiveWallet effect — resolves
+  // getActiveSession() correctly.)
   useSessionKeyStore.getState().setSession({
     privateKey,
     address: sessionAccount.address,
-    ownerAddress: ownerAddress.toLowerCase(),
+    ownerAddress: ownerLc,
     expiry,
     scopeBitmap: DEFAULT_SCOPE,
     spendLimit: spendLimit.toString(),
     tipCeiling: tipCeiling.toString(),
+    spent: '0',
+    spentSyncedAt: Date.now(),
+    // Registration confirmed on-chain — clear the pending flag so the session is
+    // now usable for signing actions.
+    pending: false,
   })
-
-  // Activate this owner so sessionForWallet() can find the session we just stored,
-  // and flip the global enable flag — deriving a session IS opting in. Without
-  // setEnabled, getActiveSession() short-circuits to null and the user shows as
-  // "not connected" / no Quick Sign despite a valid stored session. A Pop-B passkey
-  // user also has no wagmi `address`, so the normal setActiveWallet effect (keyed on
-  // the wagmi address) never fires for them. (#240)
-  useSessionKeyStore.getState().setActiveWallet(ownerAddress.toLowerCase())
-  useSessionKeyStore.getState().setEnabled(true)
 
   // Hand the just-created session to the caller so it can PRF-wrap it for roaming
   // (onboarding does this with the mint-permit PRF secret → no extra prompt).

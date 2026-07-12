@@ -24,6 +24,14 @@ export interface SessionKeyEntry {
   encrypted?: boolean
   /** The encrypted ciphertext (stored in localStorage when encrypted=true) */
   encryptedKey?: string
+  /** True while the on-chain session registration is still in flight (the key was
+   *  persisted UP FRONT for durability — so it survives a reload during the ~240s
+   *  register poll — but is NOT yet registered on-chain). Signing an action with a
+   *  pending key gets a hard 403 "Session key not registered" from the server, so
+   *  the action-signing getters (getActiveSession*) MUST skip pending sessions.
+   *  Cleared once registration confirms. Presence-only checks (durability, restore,
+   *  the UI "is QS on" gate) still see the entry. */
+  pending?: boolean
 }
 
 interface SessionKeyState {
@@ -168,6 +176,9 @@ export const useSessionKeyStore = create<SessionKeyState>()(
         if (!state.enabled) return null
         const session = sessionForWallet(state)
         if (!session) return null
+        // Not usable for signing until on-chain registration confirms — signing
+        // with an unregistered key gets a hard 403 "Session key not registered".
+        if (session.pending) return null
         if (session.expiry < Date.now() / 1000) {
           state.clearSession()
           return null
@@ -187,6 +198,9 @@ export const useSessionKeyStore = create<SessionKeyState>()(
         // revoke deletes the key, so a stored session always means "QS on here".
         const raw = state.sessions[address.toLowerCase()] || null
         if (!raw) return null
+        // Registration still in flight — the key is persisted for durability but
+        // isn't on-chain yet, so signing with it 403s. Treat as not-yet-active.
+        if (raw.pending) return null
         if (raw.expiry < Date.now() / 1000) return null
         if (raw.encrypted) {
           const decryptedKey = getDecryptedKey(address)
