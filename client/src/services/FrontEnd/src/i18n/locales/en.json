@@ -1438,7 +1438,7 @@
   "recovery.subtitle": "Upload your encrypted recovery file and enter your vault password to sign in.",
   "recovery.back_to_signin": "Back to sign in",
   "recovery.file_select.cta": "Choose your recovery file",
-  "recovery.file_select.hint": ".json backup file",
+  "recovery.file_select.hint": "Click to browse or drag & drop your .json backup file",
   "recovery.password.prompt": "Enter your vault password to decrypt this backup.",
   "recovery.password.placeholder": "Vault password",
   "recovery.password.decrypt_cta": "Decrypt",

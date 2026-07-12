@@ -48,11 +48,9 @@ export default function Recovery() {
 
   // ── Step 1: file select ──────────────────────────────────────────────────
 
-  const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+  // Shared file → blob parser used by BOTH the file picker and drag-and-drop.
+  const processFile = (file: File) => {
     setError(null)
-    const file = e.target.files?.[0]
-    if (!file) return
-
     const reader = new FileReader()
     reader.onload = (evt) => {
       const text = evt.target?.result
@@ -78,6 +76,32 @@ export default function Recovery() {
       setError(t('recovery.error.not_valid_backup'))
     }
     reader.readAsText(file)
+  }
+
+  const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0]
+    if (file) processFile(file)
+  }
+
+  // Drag-and-drop onto the drop zone. `isDragging` drives a highlight; the
+  // window-level dragover/drop default must be prevented or the browser
+  // navigates away to open the dropped file.
+  const [isDragging, setIsDragging] = useState(false)
+
+  const handleDrop = (e: React.DragEvent) => {
+    e.preventDefault()
+    setIsDragging(false)
+    const file = e.dataTransfer.files?.[0]
+    if (file) processFile(file)
+  }
+  const handleDragOver = (e: React.DragEvent) => {
+    e.preventDefault()
+    e.dataTransfer.dropEffect = 'copy'
+    if (!isDragging) setIsDragging(true)
+  }
+  const handleDragLeave = (e: React.DragEvent) => {
+    e.preventDefault()
+    setIsDragging(false)
   }
 
   // ── Step 2: password + decrypt ───────────────────────────────────────────
@@ -159,12 +183,21 @@ export default function Recovery() {
         {/* Step: file-select */}
         {step === 'file-select' && (
           <div className="space-y-4">
-            <button
+            <div
+              role="button"
+              tabIndex={0}
               onClick={() => fileInputRef.current?.click()}
+              onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); fileInputRef.current?.click() } }}
+              onDrop={handleDrop}
+              onDragOver={handleDragOver}
+              onDragEnter={handleDragOver}
+              onDragLeave={handleDragLeave}
               className={`w-full py-10 rounded-xl border-2 border-dashed flex flex-col items-center gap-3 transition-all cursor-pointer ${
-                isDark
-                  ? 'border-white/20 hover:border-yellow-500/50 hover:bg-yellow-500/5'
-                  : 'border-gray-300 hover:border-yellow-500/50 hover:bg-yellow-50'
+                isDragging
+                  ? (isDark ? 'border-yellow-500 bg-yellow-500/10' : 'border-yellow-500 bg-yellow-50')
+                  : isDark
+                    ? 'border-white/20 hover:border-yellow-500/50 hover:bg-yellow-500/5'
+                    : 'border-gray-300 hover:border-yellow-500/50 hover:bg-yellow-50'
               }`}
             >
               <svg className={`w-8 h-8 ${mutedClass}`} fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -172,7 +205,7 @@ export default function Recovery() {
               </svg>
               <span className={`text-sm font-medium ${textClass}`}>{t('recovery.file_select.cta')}</span>
               <span className={`text-xs ${mutedClass}`}>{t('recovery.file_select.hint')}</span>
-            </button>
+            </div>
             <input
               ref={fileInputRef}
               type="file"
