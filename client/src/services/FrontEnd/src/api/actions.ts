@@ -2028,14 +2028,22 @@ export function useSignAndSubmitAction() {
         const ownerMismatch = !!(rawSession?.ownerAddress && tokenOwner &&
           rawSession.ownerAddress.toLowerCase() !== tokenOwner.toLowerCase())
         if (!ownerMismatch && tokenOwner) {
-          // Same owner but the key isn't registered — evict the corpse so we stop
-          // re-signing with it, then offer to re-enable (registers a fresh session).
+          // Same owner but the key isn't registered on-chain — a corpse left in
+          // the local store by an earlier enable attempt whose registration never
+          // landed. EVICT it (so we stop re-signing with it and the UI drops back
+          // to "Activate Quick Sign") and surface a clear, non-looping message.
+          //
+          // Do NOT auto-retry through the renew modal here: the retry would run
+          // with no session and silently fall back to a wallet popup (or, for a
+          // Pop-A wallet connected to a DIFFERENT account, do nothing useful),
+          // which reads as a confusing cascade (re-enable modal → chooser flip →
+          // wallet chooser). Let the user DELIBERATELY re-enable Quick Sign, which
+          // registers a fresh real key, then redo the action.
           try { useSessionKeyStore.getState().clearSessionForAddress(tokenOwner) } catch { /* best-effort */ }
-          return new Promise((resolve, reject) => {
-            useQuickSignRenewStore.getState().show('expired', async () => {
-              try { resolve(await requestAndSubmit(params)) } catch (err) { reject(err) }
-            }, () => reject(new Error('Quick Sign renewal cancelled')))
-          })
+          throw new Error(
+            'Your Quick Sign session is no longer valid. Re-enable Quick Sign for ' +
+            'this profile, then try again.',
+          )
         }
         throw new Error(
           'This action was signed by a different profile\'s Quick Sign key. ' +
