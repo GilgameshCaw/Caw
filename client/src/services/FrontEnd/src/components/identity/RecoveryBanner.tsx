@@ -12,14 +12,20 @@
 import { useTheme } from '~/hooks/useTheme'
 import { useT } from '~/i18n/I18nProvider'
 import { Link } from '~/utils/localizedRouter'
+import { useLocation } from 'react-router-dom'
 import { useRecoveryContext } from '~/components/identity/RecoveryProvider'
 
 export default function RecoveryBanner() {
   const { isInRecoveryMode } = useRecoveryContext()
   const { isDark } = useTheme()
+  const location = useLocation()
   const t = useT()
 
   if (!isInRecoveryMode) return null
+  // Don't show on the account settings page — the banner links THERE, so showing
+  // it on that same page (with a "go to Identity settings" link back to itself)
+  // is pointless noise. The Identity section on that page already covers enroll.
+  if (location.pathname.endsWith('/settings/account')) return null
 
   return (
     <div

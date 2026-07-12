@@ -19,10 +19,19 @@
 
 import { useRef, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
+import { readContract } from '@wagmi/core'
+import { sepolia, baseSepolia } from 'wagmi/chains'
 import { useTheme } from '~/hooks/useTheme'
 import { useT } from '~/i18n/I18nProvider'
 import { decryptBackupBlob, validateBackupBlobShape, type BackupBlob } from '~/services/identity/backupBlob'
 import { useRecoveryContext } from '~/components/identity/RecoveryProvider'
+import { useVerifyWallet } from '~/hooks/useVerifyWallet'
+import { useTokenDataStore } from '~/store/tokenDataStore'
+import { wagmiConfig } from '~/config/wagmiConfig'
+import { CAW_PROFILE_LENS_ADDRESS, CAW_NAMES_L2_ADDRESS } from '~/../../../abi/addresses'
+import { cawProfileLensAbi, cawProfileLedgerAbi } from '~/../../../abi/generated'
+import type { TokenData } from '~/types'
+import type { Address } from 'viem'
 import { privateKeyToAccount } from 'viem/accounts'
 
 // ─── State machine ────────────────────────────────────────────────────────────
@@ -36,6 +45,7 @@ export default function Recovery() {
   const { isDark } = useTheme()
   const navigate = useNavigate()
   const recovery = useRecoveryContext()
+  const { verify } = useVerifyWallet()
 
   const [step, setStep] = useState<RecoveryStep>('file-select')
   const [blob, setBlob] = useState<BackupBlob | null>(null)
@@ -43,6 +53,7 @@ export default function Recovery() {
   const [showPassword, setShowPassword] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [isDecrypting, setIsDecrypting] = useState(false)
+  const [isSigningIn, setIsSigningIn] = useState(false)
   const [derivedAddress, setDerivedAddress] = useState<`0x${string}` | null>(null)
 
   const fileInputRef = useRef<HTMLInputElement>(null)
@@ -141,10 +152,91 @@ export default function Recovery() {
     if (e.key === 'Enter') void handleDecrypt()
   }
 
-  // ── Step 3: success ──────────────────────────────────────────────────────
+  // ── Step 3: success → full sign-in ─────────────────────────────────────────
+  //
+  // The recovered secp256k1 key is now in memory (RecoveryProvider). To actually
+  // SIGN THE USER IN (so their profile shows up and is usable) we must, before
+  // navigating:
+  //   1. Establish an auth SESSION — useVerifyWallet().verify() signs a challenge
+  //      with the recovered key (rootSigner routes to the recovery key in
+  //      recovery mode) and POSTs /api/auth/verify, which returns + stores the JWT
+  //      session for every tokenId this address owns.
+  //   2. FETCH + INJECT the owner's tokens into the store. Recovery is
+  //      ADDRESS-scoped (the key may own several usernames): read
+  //      CawProfileLens.tokens(address) for the tokenId/username list, then
+  //      CawProfileLedger.getTokens([...]) for staked balance + cawonce. Inject
+  //      via setTokensForAddress and set lastAddress + an active token.
+  // AuthGate requires an active token with a username before /home, so this MUST
+  // complete synchronously here — the background refetch would race the nav and
+  // bounce to /welcome.
+  //
+  // The recovered key is only READ (never persisted) throughout.
+  const handleContinue = async () => {
+    if (!recovery.address) { navigate('/home'); return }
+    setError(null)
+    setIsSigningIn(true)
+    try {
+      // 1. Auth session (signs with the recovered key; stores the JWT).
+      const ok = await verify()
+      if (!ok) {
+        setError(t('recovery.error.signin_failed'))
+        return
+      }
 
-  const handleContinue = () => {
-    navigate('/home')
+      // 2. Fetch this address's tokens (L1 lens) → then L2 balances.
+      const owner = recovery.address
+      const rawTokens = await readContract(wagmiConfig, {
+        address: CAW_PROFILE_LENS_ADDRESS,
+        chainId: sepolia.id,
+        abi: cawProfileLensAbi,
+        functionName: 'tokens',
+        args: [owner],
+      })
+
+      if (!rawTokens || rawTokens.length === 0) {
+        setError(t('recovery.error.no_profile'))
+        return
+      }
+
+      // L2 staked balance + cawonce per token (best-effort; zeros on failure and
+      // the background refetch fills them in).
+      let l2Rows: readonly { tokenId: bigint; cawBalance: bigint; nextCawonce: bigint }[] = []
+      try {
+        l2Rows = await readContract(wagmiConfig, {
+          address: CAW_NAMES_L2_ADDRESS,
+          chainId: baseSepolia.id,
+          abi: cawProfileLedgerAbi,
+          functionName: 'getTokens',
+          args: [rawTokens.map(r => Number(r.tokenId))],
+        }) as typeof l2Rows
+      } catch { /* keep zeros */ }
+
+      const tokens: TokenData[] = rawTokens.map(r => {
+        const l2 = l2Rows.find(x => BigInt(x.tokenId) === BigInt(r.tokenId))
+        return {
+          tokenId: Number(r.tokenId),
+          username: r.username,
+          address: owner,
+          owner: r.owner ?? owner,
+          withdrawable: r.withdrawable ?? 0n,
+          ownerBalance: r.ownerBalance ?? 0n,
+          stakedAmount: l2?.cawBalance ?? 0n,
+          cawonce: Number(l2?.nextCawonce ?? 0),
+        }
+      })
+
+      const tds = useTokenDataStore.getState()
+      tds.setTokensForAddress(owner as Address, tokens)
+      tds.setActiveTokenIdForAddress(owner as Address, tokens[0].tokenId)
+      tds.setLastAddress(owner.toLowerCase())
+
+      navigate('/home')
+    } catch (e) {
+      console.warn('[recovery] sign-in failed:', e)
+      setError(t('recovery.error.signin_failed'))
+    } finally {
+      setIsSigningIn(false)
+    }
   }
 
   // ── Styles ───────────────────────────────────────────────────────────────
@@ -296,11 +388,15 @@ export default function Recovery() {
                 <p className={`text-xs font-mono break-all ${mutedClass}`}>{derivedAddress}</p>
               )}
             </div>
+            {error && (
+              <p className="text-sm text-red-500 text-center">{error}</p>
+            )}
             <button
-              onClick={handleContinue}
-              className="w-full py-3 rounded-xl font-bold text-sm bg-yellow-500 text-black hover:bg-yellow-400 transition-all cursor-pointer"
+              onClick={() => void handleContinue()}
+              disabled={isSigningIn}
+              className="w-full py-3 rounded-xl font-bold text-sm bg-yellow-500 text-black hover:bg-yellow-400 transition-all disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer"
             >
-              {t('recovery.success.cta')}
+              {isSigningIn ? t('recovery.success.signing_in') : t('recovery.success.cta')}
             </button>
           </div>
         )}
