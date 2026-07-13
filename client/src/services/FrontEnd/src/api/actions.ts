@@ -2054,22 +2054,23 @@ export function useSignAndSubmitAction() {
         const ownerMismatch = !!(rawSession?.ownerAddress && tokenOwner &&
           rawSession.ownerAddress.toLowerCase() !== tokenOwner.toLowerCase())
         if (!ownerMismatch && tokenOwner) {
-          // Same owner but the key isn't registered on-chain — a corpse left in
-          // the local store by an earlier enable attempt whose registration never
-          // landed. EVICT it (so we stop re-signing with it and the UI drops back
-          // to "Activate Quick Sign") and surface a clear, non-looping message.
-          //
-          // Do NOT auto-retry through the renew modal here: the retry would run
-          // with no session and silently fall back to a wallet popup (or, for a
-          // Pop-A wallet connected to a DIFFERENT account, do nothing useful),
-          // which reads as a confusing cascade (re-enable modal → chooser flip →
-          // wallet chooser). Let the user DELIBERATELY re-enable Quick Sign, which
-          // registers a fresh real key, then redo the action.
+          // Same owner, but the local session key isn't registered on-chain. This
+          // key is a GHOST: it was persisted to localStorage by an earlier enable
+          // attempt whose on-chain registration never actually landed (a failed /
+          // abandoned register-tx from the old persist-before-confirm path). It was
+          // never alive — nothing "died" — but every action re-signs with it and
+          // 403s forever. EVICT it, then open the Quick Sign enable prompt with THIS
+          // action as the retry: the user taps "Enable Quick Sign" (one Face ID /
+          // signature), a fresh REAL key registers, and the action auto-retries.
+          // No jargon, no "dead key", works on every page (feed, invite, etc.).
           try { useSessionKeyStore.getState().clearSessionForAddress(tokenOwner) } catch { /* best-effort */ }
-          throw new Error(
-            'Your Quick Sign session is no longer valid. Re-enable Quick Sign for ' +
-            'this profile, then try again.',
-          )
+          const { useQuickSignPromptStore: promptStoreForGhost } = await import('~/components/modals/QuickSignModal')
+          return new Promise((resolve, reject) => {
+            promptStoreForGhost.getState().show(
+              async () => { try { resolve(await requestAndSubmit(params)) } catch (e) { reject(e) } },
+              () => reject(new Error('Quick Sign renewal cancelled')),
+            )
+          })
         }
         throw new Error(
           'This action was signed by a different profile\'s Quick Sign key. ' +
