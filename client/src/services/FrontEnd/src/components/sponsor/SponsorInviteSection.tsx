@@ -229,10 +229,25 @@ export default function SponsorInviteSection() {
   // Pot must not exceed the per-code cap (server caps the POT = tip − LZ, which
   // is what's stored as maxDepositCawWei; mirror that here, not the net gift).
   const belowCap = maxGiftCaw === 0n || BigInt(potWholeCaw) <= maxGiftCaw
+
+  // BALANCE GATE: the invite is paid by tipping `tipWholeCaw` CAW out of the
+  // active profile's staked balance. Without this check the button let the user
+  // sign a purchase they couldn't afford, which then reverted on-chain with an
+  // opaque InsufficientBalance — no pre-flight warning. Compare the FULL cost
+  // (whole CAW) against the profile's staked balance (wei → whole).
+  const stakedWholeCaw = activeToken?.stakedAmount
+    ? Number(activeToken.stakedAmount / 10n ** 18n)
+    : 0
+  // Only enforce once we have a real cost to compare against (tipWholeCaw > 0);
+  // while the amount/quote is still loading we don't want a spurious block.
+  const hasEnoughCaw = tipWholeCaw <= 0 || stakedWholeCaw >= tipWholeCaw
+  const cawShortfall = Math.max(0, tipWholeCaw - stakedWholeCaw)
+
   const canBuy =
     priceReady &&
     aboveFloor &&
     belowCap &&
+    hasEnoughCaw &&
     !!activeTokenId &&
     quote?.validatorTokenId != null &&
     buyState === 'idle'
@@ -246,6 +261,8 @@ export default function SponsorInviteSection() {
       priceReady,
       aboveFloor,
       belowCap,
+      hasEnoughCaw,
+      stakedWholeCaw,
       hasActiveToken: !!activeTokenId,
       hasValidatorToken: quote?.validatorTokenId != null,
       buyStateIdle: buyState === 'idle',
@@ -260,7 +277,7 @@ export default function SponsorInviteSection() {
       validatorTokenId: quote?.validatorTokenId,
       activeTokenId,
     })
-  }, [canBuy, priceReady, aboveFloor, belowCap, activeTokenId, quote, buyState, usdAmount, minUsd, maxUsd, rate, tipWholeCaw, giftWholeCaw, overheadCaw, maxGiftCaw])
+  }, [canBuy, priceReady, aboveFloor, belowCap, hasEnoughCaw, stakedWholeCaw, activeTokenId, quote, buyState, usdAmount, minUsd, maxUsd, rate, tipWholeCaw, giftWholeCaw, overheadCaw, maxGiftCaw])
 
   const handleBuy = async () => {
     if (!canBuy || !quote?.validatorTokenId || !activeTokenId) return
@@ -417,6 +434,12 @@ export default function SponsorInviteSection() {
             ) : !aboveFloor ? (
               <p className="text-xs mt-1 text-red-500">
                 Enter at least ${minUsd.toFixed(2)}.
+              </p>
+            ) : !hasEnoughCaw ? (
+              <p className="text-xs mt-1 text-red-500">
+                Not enough CAW in this profile. This costs ~{tipWholeCaw.toLocaleString()} CAW
+                but you have {stakedWholeCaw.toLocaleString()}. Deposit at least{' '}
+                {cawShortfall.toLocaleString()} more CAW, then try again.
               </p>
             ) : giftUsd > 0 ? (
               <p className={`text-xs mt-1 ${mutedClass}`}>
