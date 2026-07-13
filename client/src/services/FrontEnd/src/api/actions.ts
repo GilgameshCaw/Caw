@@ -16,7 +16,7 @@ import { useActiveToken, useTokenDataStore } from "~/store/tokenDataStore";
 import { CAW_ACTIONS_ADDRESS, CAW_NAMES_L2_ADDRESS } from '~/../../../abi/addresses'
 import { cawActionsAbi, cawProfileLedgerAbi } from '~/../../../abi/generated'
 import { wagmiConfig } from '~/config/Web3Provider'
-import { hasMinimumStake, getRequiredStake, STAKING_REQUIREMENTS } from '~/constants/stakingRequirements'
+import { getRequiredStake } from '~/constants/stakingRequirements'
 import { getActionTypeForModal } from '~/errors/InsufficientStakeError'
 import { useInsufficientStakeStore } from '~/store/insufficientStakeStore'
 import { useAuthStore } from '~/store/authStore'
@@ -1158,15 +1158,41 @@ export function useSignAndSubmitAction() {
 
     console.log(`[StakeCheck] onChain=${onChainStake.toString()}, pendingDeposit=${pendingDepositWei.toString()}, pendingSpend=${pendingState.pendingSpend.toString()}, effectiveBudget=${effectiveStake.toString()}, pendingItems=${Object.keys(pendingState.pendingByTxQueue).length}`)
 
-    if (stakingKey && !hasMinimumStake(effectiveStake, stakingKey)) {
+    // REAL-COST STAKE GATE (DRY, covers ALL actions incl. variable-cost ones).
+    // The fixed STAKING_REQUIREMENTS floor is fine for fixed-cost actions (post,
+    // like, follow…), but VARIABLE-cost actions — tips and sponsor-invite
+    // purchases ('other' with big `amounts`) — can cost far more than any floor.
+    // A 147M-CAW invite sailed past the 5,000-CAW 'other' floor and only failed
+    // on-chain with an opaque InsufficientBalance. Compute the action's ACTUAL
+    // cost the same way the session-spend gate below does (protocol fee + summed
+    // amounts + validator tip, all whole CAW → wei) and require the budget to
+    // cover max(floor, realCost). This is the single choke point every action
+    // signs through, so it protects tip/invite/future variable-cost actions too.
+    const ACTION_PROTOCOL_COST_WHOLE: Record<string, bigint> = {
+      caw: 5000n, like: 2000n, recaw: 4000n, follow: 30000n,
+      unlike: 0n, unfollow: 0n, other: 0n, withdraw: 0n,
+    }
+    let realCostWhole = ACTION_PROTOCOL_COST_WHOLE[params.actionType] ?? 0n
+    // 'other' (tips, invites, votes, uploads) weaves the full spend into amounts.
+    if (params.actionType === 'other' && params.amounts && params.amounts.length > 0) {
+      for (const amt of params.amounts) {
+        try { realCostWhole += BigInt(amt as any) } catch { /* skip malformed */ }
+      }
+    } else {
+      // Fixed-cost actions still owe the validator tip on top of the protocol fee.
+      try { realCostWhole += getValidatorTip() } catch { /* tip unknown — floor still applies */ }
+    }
+    const realCostWei = realCostWhole * 10n ** 18n
+    // The floor still applies (e.g. an 'other' with no amounts shouldn't be free).
+    const floorWei = stakingKey ? getRequiredStake(stakingKey) : 0n
+    const requiredWei = realCostWei > floorWei ? realCostWei : floorWei
+
+    if (requiredWei > 0n && effectiveStake < requiredWei) {
       // Budget is insufficient even counting the pending deposit. Show the
-      // insufficient-stake modal with the real remaining budget so the user
-      // sees what they can/can't afford. If they still have budget for a
-      // cheaper action (e.g. a like at 2k CAW instead of a follow at 30k),
-      // the modal's "you have X remaining" messaging lets them pick one.
-      const requiredAmount = getRequiredStake(stakingKey)
+      // insufficient-stake modal with the REAL required amount (not just the
+      // floor) so the user sees the true cost and how far short they are.
       const actionTypeForModal = getActionTypeForModal(params.actionType)
-      useInsufficientStakeStore.getState().show(effectiveStake, requiredAmount, actionTypeForModal)
+      useInsufficientStakeStore.getState().show(effectiveStake, requiredWei, actionTypeForModal)
       return null
     }
 
