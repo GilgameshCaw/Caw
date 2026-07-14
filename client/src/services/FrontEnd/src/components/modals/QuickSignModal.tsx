@@ -4,9 +4,8 @@ import ModalWrapper from './ModalWrapper'
 import { useTheme } from '~/hooks/useTheme'
 import { useT } from '~/i18n/I18nProvider'
 import { useSessionKeyStore } from '~/store/sessionKeyStore'
-import { usePriceStore, useTokenDataStore, useActiveToken } from '~/store/tokenDataStore'
-import { useCreateSession, useRestoreRoamedSession, getDefaultSpendLimit, getDefaultTipCeiling, DEFAULT_SESSION_DURATION, useNetworkTipTargetAsCAW } from '~/hooks/useSessionKey'
-import { isPasskeyAddress } from '~/constants/passkeyStorage'
+import { usePriceStore, useTokenDataStore } from '~/store/tokenDataStore'
+import { useCreateSession, getDefaultSpendLimit, getDefaultTipCeiling, DEFAULT_SESSION_DURATION, useNetworkTipTargetAsCAW } from '~/hooks/useSessionKey'
 import { getTipTiers } from '~/api/actions'
 import { HiLightningBolt } from 'react-icons/hi'
 import QuickSignOptions from '~/components/QuickSignOptions'
@@ -64,8 +63,6 @@ const QuickSignModal: React.FC<QuickSignModalProps> = (props) => {
   const t = useT()
   const setEnabled = useSessionKeyStore(s => s.setEnabled)
   const createSession = useCreateSession()
-  const restoreRoamedSession = useRestoreRoamedSession()
-  const activeToken = useActiveToken()
   const setDontPromptForOwner = useSessionKeyStore(s => s.setDontPromptForOwner)
   const cawPrice = usePriceStore(s => s.priceMap['a-hunters-dream'] ?? 0)
   const { tipCeilingCaw: networkTipCaw, tipCeilingFallbackCaw } = useNetworkTipTargetAsCAW()
@@ -96,27 +93,13 @@ const QuickSignModal: React.FC<QuickSignModalProps> = (props) => {
     setError(null)
     try {
       setEnabled(true)
-      // ROAM-FIRST for passkey accounts: if this account has a PRF-wrapped
-      // session on the server (created + wrapped on another device), RESTORE it —
-      // one Face ID unwraps the SAME on-chain-registered session, so "Activate
-      // Quick Sign" brings the existing session over instead of registering a
-      // brand-new one (which is what made a roamed account look like it "lost"
-      // its session). Only when there's nothing to restore do we create fresh.
-      const ownerLc = activeToken?.owner?.toLowerCase()
-      let restored: `0x${string}` | null = null
-      if (ownerLc && isPasskeyAddress(ownerLc)) {
-        setStatus('Checking for your existing Quick Sign session…')
-        // No preset PRF secret here (this is a user-initiated click, not the
-        // sign-in piggyback) → restoreRoamedSession runs its own one-touch
-        // passkey ceremony to fetch + unwrap the blob. Non-fatal: null means
-        // no roamable session, so we fall through to createSession.
-        restored = await restoreRoamedSession(ownerLc, undefined, activeToken?.tokenId)
-      }
-      // Restored the roamed session (reused the same on-chain registration), or
-      // there was none → register a fresh one.
-      if (!restored) {
-        await createSession((s) => setStatus(s), spendLimit, duration, walletProtect, tipCeiling)
-      }
+      // Explicit "Activate Quick Sign" click → always register a FRESH session.
+      // We intentionally do NOT restore-first here: roaming an existing session
+      // across devices already happens automatically at sign-in (usePasskeySignIn),
+      // which covers the "first move of an account" case. When the user deliberately
+      // taps Activate, they want a working session now — creating one directly is
+      // simpler and avoids an extra passkey ceremony to probe for a roamable blob.
+      await createSession((s) => setStatus(s), spendLimit, duration, walletProtect, tipCeiling)
       // Don't set hasSeenPrompt here — enabling Quick Sign is the "happy path".
       // The prompt naturally won't show while Quick Sign is active.
       const cont = prompt.onContinue
