@@ -1952,8 +1952,19 @@ router.get('/execute-quote', async (req, res) => {
 // Only this server (the minting mirror) holds the buyer's PurchasedInviteCode +
 // the decryption key, so codes appear on the mirror that processed the purchase.
 router.get('/my-codes', requireAuth({ anySession: true }), async (req, res) => {
-  const tokenIds = req.sessionData?.authorizedTokenIds ?? []
-  if (tokenIds.length === 0) return res.status(200).json({ codes: [] })
+  const authorized = req.sessionData?.authorizedTokenIds ?? []
+  if (authorized.length === 0) return res.status(200).json({ codes: [] })
+
+  // Scope to the ACTIVE profile, not every profile the session authed. The FE
+  // sends the active tokenId in `x-user-id` (apiFetch); codes are bought
+  // per-profile (purchasedByTokenId), so listing across all of a user's
+  // profiles bled one profile's codes into another's view. Validate the header
+  // is actually one of THIS session's authorized tokens (never trust it raw),
+  // then filter to just that profile. Fall back to all-authorized only if no
+  // valid active token is supplied (keeps old clients working).
+  const requestedId = Number(req.headers['x-user-id'])
+  const activeTokenId = requestedId && authorized.includes(requestedId) ? requestedId : null
+  const tokenIds = activeTokenId != null ? [activeTokenId] : authorized
 
   const purchased = await prisma.purchasedInviteCode.findMany({
     where: { purchasedByTokenId: { in: tokenIds } },

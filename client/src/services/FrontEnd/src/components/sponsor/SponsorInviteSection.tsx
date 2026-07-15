@@ -128,10 +128,20 @@ export default function SponsorInviteSection() {
   }, [])
   // Only fetch once signed in — a logged-out /my-codes call just 401s, and we show
   // the sign-in CTA instead. Clear the loader so the CTA renders immediately.
+  // Re-run on activeTokenId change: codes are PROFILE-scoped (the server keys on
+  // the active tokenId via x-user-id), so switching profiles must refetch — and
+  // we clear the old list + optimistic row first so one profile's codes never
+  // flash under another's while the new fetch is in flight.
   useEffect(() => {
-    if (isLoggedIn) loadCodes()
-    else setLoadingCodes(false)
-  }, [loadCodes, isLoggedIn])
+    if (isLoggedIn) {
+      setCodes([])
+      setOptimisticPending(null)
+      setLoadingCodes(true)
+      loadCodes()
+    } else {
+      setLoadingCodes(false)
+    }
+  }, [loadCodes, isLoggedIn, activeTokenId])
 
   // The rendered list = server rows, plus the optimistic placeholder if it hasn't
   // been superseded yet. Optimistic row first (it's the freshest action).
