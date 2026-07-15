@@ -156,7 +156,9 @@ export const layoutRoutes: RouteDef[] = [
   { path: "/settings/account", component: <AuthGate><AccountSettings /></AuthGate> },
   { path: "/settings/session-keys", component: <AuthGate><SessionKeySettings /></AuthGate> },
   { path: "/settings/ai-provider", component: <AuthGate><AIProviderSettings /></AuthGate> },
-  { path: "/invite", component: <AuthGate><InvitePage /></AuthGate> },
+  { path: "/invite-codes", component: <AuthGate><InvitePage /></AuthGate> },
+  // Legacy path — redirect old bookmarks / shared links to the renamed route.
+  { path: "/invite", component: <Navigate to="/invite-codes" replace /> },
   // The base /resources IS the resources (links) tab — first in the tab bar.
   { path: "/resources", component: <HelpPage defaultTab="resources" /> },
   { path: "/resources/faq", component: <HelpPage defaultTab="faq" /> },

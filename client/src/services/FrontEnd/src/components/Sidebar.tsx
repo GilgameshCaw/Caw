@@ -358,7 +358,7 @@ const Sidebar: React.FC<SidebarProps> = ({ onNavigate, inDrawer = false }) => {
            </NavLink>
 
            <NavLink
-             to="/invite"
+             to="/invite-codes"
              onClick={guardClick}
              className={({ isActive }) =>
                `relative flex items-center gap-3 px-4 py-3.5 sm:gap-3 sm:px-3 sm:py-3.5 rounded-2xl transition-colors duration-200 min-w-0 ${getNavLinkClasses(isActive)}`

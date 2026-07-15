@@ -61,7 +61,7 @@ export const SettingsPage: React.FC = () => {
       description: t('settings.invite.description'),
       icon: <HiGift className="w-5 h-5" />,
       hasArrow: true,
-      onClick: () => navigate('/invite')
+      onClick: () => navigate('/invite-codes')
     },
     {
       id: 'muted-content',
