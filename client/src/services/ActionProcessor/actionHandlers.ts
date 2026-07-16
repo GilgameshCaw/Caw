@@ -350,9 +350,8 @@ export async function handleCawAction(
   // recawCount on the parent, but replies only affect commentCount
   // (handled separately below).
   const quoteOriginalCawId = (parentCawId && !isReplyNotQuote) ? parentCawId : null
-  const hadOptimisticCounts =
-    existingCaw?.status === 'PENDING' || existingCaw?.status === 'FAILED'
-  if (!hadOptimisticCounts) {
+  if (existingCaw == null) {
+    // First time this caw is seen (no prior row) — count it once.
     await countManager.onCawCreated(tx, {
       id: newCaw.id,
       userId: authorId,
@@ -360,13 +359,20 @@ export async function handleCawAction(
       originalCawId: quoteOriginalCawId,
       status: 'SUCCESS',
     })
-  } else {
+  } else if (existingCaw.status === 'PENDING' || existingCaw.status === 'FAILED') {
     // Optimistic counts already applied (PENDING) or were never rolled
-    // back on the sweep (FAILED) — just log the status transition.
-    await countManager.onStatusChanged(tx, 'caw', newCaw.id, existingCaw!.status, 'SUCCESS', {
+    // back on the sweep (FAILED) — reconcile the status transition.
+    await countManager.onStatusChanged(tx, 'caw', newCaw.id, existingCaw.status, 'SUCCESS', {
       userId: authorId, action: 'CAW', originalCawId: quoteOriginalCawId,
     })
   }
+  // else: existingCaw is already SUCCESS (or HIDDEN) — this is a REPROCESS of an
+  // already-counted caw (ActionProcessor backlog re-pass, e.g. after a restart).
+  // Counting it again is the cawCount-inflation bug: cawCount grew by +1 on every
+  // re-pass, drifting above the actual SUCCESS row count and inflating the
+  // Posts tab (reported + cross-node-confirmed by nyaromesama). Do NOT re-count,
+  // and don't emit a SUCCESS->SUCCESS onStatusChanged (not a real transition —
+  // it would only log a warning). No-op is correct.
 
   // Only bump comment count for actual replies, not quotes
   // Skip if the reply was pending — commentCount was already optimistically incremented
