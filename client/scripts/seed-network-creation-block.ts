@@ -31,17 +31,17 @@ async function main() {
     process.exit(1)
   }
 
-  const existing = await prisma.client.findUnique({ where: { id: networkId } })
+  const existing = await prisma.network.findUnique({ where: { id: networkId } })
 
   if (existing) {
     const previous = existing.creationBlock
-    await prisma.client.update({
+    await prisma.network.update({
       where: { id: networkId },
       data: { creationBlock: blockNumber },
     })
     console.log(`Updated networkId=${networkId} creationBlock: ${previous ?? '(null)'} → ${blockNumber}`)
   } else {
-    await prisma.client.create({
+    await prisma.network.create({
       data: {
         id: networkId,
         creationBlock: blockNumber,

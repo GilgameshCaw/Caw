@@ -495,14 +495,12 @@ export default function Onboarding() {
       void (async () => {
         try {
           await submitDelegation()
-          console.log('[signin:diag] L2 delegation submitted for', d.ecdsaFallbackAddr)
         } catch (e) {
-          console.warn('[signin:diag] L2 delegation attempt 1 failed, retrying once:', e)
+          console.warn('L2 delegation attempt 1 failed, retrying once:', e)
           try {
             await submitDelegation()
-            console.log('[signin:diag] L2 delegation succeeded on retry for', d.ecdsaFallbackAddr)
           } catch (e2) {
-            console.error('[signin:diag] L2 delegation FAILED after retry — withdraw will not work until re-delegated:', e2)
+            console.error('L2 delegation FAILED after retry — withdraw will not work until re-delegated:', e2)
           }
         }
       })()
@@ -515,17 +513,6 @@ export default function Onboarding() {
     // hardcoded chainId + unix-seconds timestamp) so the server's host/chain
     // binding matches. Best-effort: if it fails (e.g. indexer not caught up
     // after retries) we still let the user reach the confirm screen.
-    // TEMP DIAGNOSTIC (#209): trace every step of the post-mint sign-in so we
-    // can see in the console exactly where it fails (it currently dumps the user
-    // to /welcome with no session and no server-side verify request). Remove
-    // once the auto-sign-in is confirmed working.
-    // eslint-disable-next-line no-console
-    console.log('[signin:diag] handleBootstrapDone fired', {
-      hasResult: !!result,
-      ecdsaAddress: result?.ecdsaAddress,
-      hasSigner: typeof result?.signVerifyMessage === 'function',
-      txHash: result?.txHash,
-    })
     void (async () => {
       setSigningIn(true)
       try {
@@ -536,14 +523,7 @@ export default function Onboarding() {
           `Host: ${host}\n` +
           `ChainId: ${baseSepolia.id}\n` +
           `Timestamp: ${timestamp}`
-        // eslint-disable-next-line no-console
-        console.log('[signin:diag] about to sign verify message', { host, message })
         const signature = await result.signVerifyMessage(message)
-        // eslint-disable-next-line no-console
-        console.log('[signin:diag] signed OK, posting /api/auth/verify', {
-          sigPrefix: signature?.slice(0, 14),
-          expectedOwner: result?.ecdsaAddress,
-        })
         // /api/auth/verify returns 202 while the fresh mint isn't indexed yet;
         // retryOnIndexing backs off and re-tries the SAME (message, signature)
         // — safe because the server's one-time-sig guard runs after the 202
@@ -573,11 +553,6 @@ export default function Onboarding() {
           }),
           { maxAttempts: 12, maxDelayMs: 20_000 }
         )
-        // eslint-disable-next-line no-console
-        console.log('[signin:diag] verify SUCCESS, setting session', {
-          tokenIds: data?.authorizedTokenIds,
-          addresses: data?.authorizedAddresses,
-        })
         // If the user already had a session (e.g. they're onboarding a SECOND
         // passkey account while account #1 is still authorized), MERGE rather
         // than replace — otherwise account #1 loses its UI authorization the
@@ -813,12 +788,6 @@ export default function Onboarding() {
                   )
                 } catch { /* localStorage unavailable — stepper falls back to chain reads */ }
               }
-              // eslint-disable-next-line no-console
-              console.log('[signin:diag] active profile set (from in-hand data), navigating', {
-                username: token.username,
-                tokenId: mintedTokenId,
-                pendingDeposit: derivedDepositAmount.toString(),
-              })
 
               // Phase 3: auto-derive a Quick Sign session using the ecdsaFallback
               // key still in memory (the signVerifyMessage closure signs a 65-byte
@@ -844,8 +813,6 @@ export default function Onboarding() {
               // a session anyway".)
               const qsCfg = qsConfigRef.current
               if (qsCfg.enabled) {
-                // eslint-disable-next-line no-console
-                console.log('[signin:diag] auto-deriving Quick Sign session (background)…')
                 void registerSponsoredSession({
                   signMessage: result.signVerifyMessage,
                   ownerAddress: ownerAddr,
@@ -861,15 +828,9 @@ export default function Onboarding() {
                     await result.wrapSessionForRoamingAfterMint(privKeyHex, sessionAddr, meta)
                   },
                 })
-                  // eslint-disable-next-line no-console
-                  .then(() => console.log('[signin:diag] Quick Sign session registered + persisted'))
                   .catch(sessErr =>
-                    // eslint-disable-next-line no-console
-                    console.warn('[signin:diag] auto session register failed (non-fatal):', sessErr),
+                    console.warn('auto session register failed (non-fatal):', sessErr),
                   )
-              } else {
-                // eslint-disable-next-line no-console
-                console.log('[signin:diag] Quick Sign disabled by user — skipping session derive')
               }
 
               // Land on the post-mint onboarding stepper (signed in), NOT the
@@ -920,15 +881,13 @@ export default function Onboarding() {
         } catch (e) {
           // Non-fatal: session is set; the user can reach their profile via the
           // confirm screen's button. Log for diagnostics.
-          // eslint-disable-next-line no-console
-          console.warn('[signin:diag] active-token set failed (non-fatal):', e)
+          console.warn('active-token set failed (non-fatal):', e)
         }
       } catch (err) {
         // Non-fatal: the mint succeeded; the user can sign in later via the
         // passkey/recovery path. Log for diagnostics.
         console.warn('[onboarding] post-mint sign-in failed (mint OK):', err)
-        // eslint-disable-next-line no-console
-        console.warn('[signin:diag] FAILED detail', {
+        console.warn('FAILED detail', {
           name: (err as Error)?.name,
           message: (err as Error)?.message,
           stack: (err as Error)?.stack?.split('\n').slice(0, 4).join(' | '),
