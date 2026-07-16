@@ -217,6 +217,20 @@ export async function writeAddressesForNetwork(config, clientDir) {
   for (const [k, v] of Object.entries(staticConsts)) {
     lines.push(`export const ${k} = "${v}" as const;`)
   }
+  // Addresses that are load-bearing enough that a silent `undefined` produces a
+  // confusing runtime failure an operator can't easily diagnose. CAW_PROFILE_LENS
+  // is the canonical example: undefined → the FE's L1 profile read never fires →
+  // login gets stuck on /welcome ("create profile") even though the profile
+  // exists. These live in deployments.ts under L1, so an undefined here means the
+  // L1 block is missing the key (deployments.ts wasn't refreshed after a deploy
+  // that added the contract). Warn loudly at install time. (nyaromesama #7.3.)
+  const CRITICAL_CONSTS = new Set([
+    'CAW_NAMES_ADDRESS',       // CawProfile — L1 profile custody
+    'CAW_PROFILE_LENS_ADDRESS',// L1 profile read the FE gates login on
+    'CAW_NAMES_MINTER_ADDRESS',// sponsored mint
+    'CAW_ACTIONS_ADDRESS',     // L2 action submission
+    'CAW_NAMES_L2_ADDRESS',    // L2 ledger / session validation
+  ])
   for (const [k, v] of Object.entries(consts)) {
     if (v) {
       lines.push(`export const ${k} = "${v}" as const;`)
@@ -227,6 +241,9 @@ export async function writeAddressesForNetwork(config, clientDir) {
       // conditionally. Emitting `= undefined` keeps the import resolvable;
       // consumers already guard on a falsy address. (Fixes #196.)
       lines.push(`export const ${k} = undefined; // not deployed for ${env}/${chainKey}`)
+      if (CRITICAL_CONSTS.has(k)) {
+        console.log(warn(`  ⚠ ${k} resolved to undefined for ${env}/${chainKey} — this will break the FE at runtime. Check that deployments.ts has this key under the L1/${chainKey} block (refresh it from .deploy-state.json if a recent deploy added the contract).`))
+      }
     }
   }
   const out = lines.join('\n') + '\n'
