@@ -158,18 +158,39 @@ export default async function listenForRawEvents(
     : null
 
   const last = await config.rawEventsProvider.getLastProcessedEvent()
-  // On fresh DB: use configured startBlock, or current block (never scan from 0)
+  // Resolve the historical-scan start block.
+  //
+  // A configured startBlock (config.json override or Network.creationBlock) is a
+  // HARD FLOOR, even when the DB already has events. Previously `last` won
+  // unconditionally, so if any CawActions event landed ABOVE the configured
+  // startBlock before the historical scan ran (a live-poll/WS/peer event racing
+  // cold start), getLastProcessedEvent pinned the floor there and every earlier
+  // block was silently skipped — the DB looked "caught up" but was missing all
+  // history below the stray event. (zinsanjp/nyaromesama: fresh caw_v2 started
+  // ~137k blocks past the deploy block, capping Follow/Caw history.)
+  //
+  // Flooring at min(last, configured) is safe: the historical scan writes via
+  // upsert (update:{}), so re-covering an already-present range is a no-op — no
+  // double-processing, just gap-filling. So we never MISS history, and never
+  // re-process what's already there.
   let startBlock: number
-  if (last) {
+  if (config.startBlock !== undefined) {
+    startBlock = last ? Math.min(last.blockNumber, config.startBlock) : config.startBlock
+    if (last && config.startBlock < last.blockNumber) {
+      console.log(`[RawEventsGatherer] Flooring scan at configured startBlock ${config.startBlock} (last event at ${last.blockNumber} — filling history below it)`)
+    } else {
+      console.log(`[RawEventsGatherer] Starting from configured startBlock ${startBlock}`)
+    }
+  } else if (last) {
     startBlock = last.blockNumber
-  } else if (config.startBlock !== undefined) {
-    startBlock = config.startBlock
-    console.log(`[RawEventsGatherer] Fresh DB — starting from configured startBlock ${startBlock}`)
   } else {
     startBlock = await httpProvider.getBlockNumber()
     console.log(`[RawEventsGatherer] Fresh DB, no startBlock configured — starting from current block ${startBlock}`)
   }
-  let lastHash = last?.parentHash ?? 'genesis'
+  // parentHash chain seed: only trust `last`'s hash when we're actually
+  // resuming from it (no configured floor pulling us earlier); otherwise the
+  // historical walk re-derives the chain from the floor.
+  let lastHash = (config.startBlock === undefined && last) ? last.parentHash : 'genesis'
 
   function hashNext(prev: string, action: any): string {
     // JSON stringify with bigint→string replacer
