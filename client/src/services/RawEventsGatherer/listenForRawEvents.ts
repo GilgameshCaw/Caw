@@ -32,6 +32,13 @@ const PROCESS_ACTIONS_IFACE = new Interface([
 const txDataCache = new Map<string, string>()
 const TX_CACHE_MAX = 200
 
+// Max blocks per eth_getLogs window. Default 10K suits Infura/Alchemy, but many
+// public Base Sepolia RPCs cap eth_getLogs far lower (sepolia.base.org: 2000).
+// Operators on a capped RPC set L2_LOG_CHUNK_BLOCKS=1500 (or their RPC's limit)
+// to avoid "eth_getLogs range too large" errors + silently missed ranges.
+// (zinsanjp / nyaromesama co-located V2 bring-up.)
+const L2_LOG_CHUNK_BLOCKS = Number(process.env.L2_LOG_CHUNK_BLOCKS) || 10_000
+
 async function fetchPackedActionsFromTx(
   provider: { getTransaction: (h: string) => Promise<{ data?: string } | null> },
   txHash: string,
@@ -286,7 +293,7 @@ export default async function listenForRawEvents(
         startBlock,
         latest,
         {
-          chunkBlocks: 10_000,
+          chunkBlocks: L2_LOG_CHUNK_BLOCKS,
           // Don't cap windows here — historical sync MUST find every event,
           // and operators with multi-month gaps need an unbounded walk.
           // 10K * 100K = 1B blocks of headroom; nothing realistic hits that.
@@ -307,7 +314,7 @@ export default async function listenForRawEvents(
           startBlock,
           latest,
           {
-            chunkBlocks: 10_000,
+            chunkBlocks: L2_LOG_CHUNK_BLOCKS,
             maxWindows: 100_000,
             onProgress: (from, to, n) => {
               if (n > 0) console.log(`[RawEventsGatherer] Historical ERC-1271 chunk ${from}..${to}: ${n} events`)
@@ -564,8 +571,10 @@ export default async function listenForRawEvents(
   recordIndexerProgress(config.chainId, lastSyncedBlock)
 
   // Cap each poll's range so a service waking up far behind can't request
-  // millions of logs in one call. Steady state stays well under this.
-  const MAX_POLL_BLOCKS = 10_000
+  // millions of logs in one call. Shares the L2_LOG_CHUNK_BLOCKS knob so a
+  // capped-RPC operator bounds both the historical chunk and the per-poll
+  // range with one setting.
+  const MAX_POLL_BLOCKS = L2_LOG_CHUNK_BLOCKS
   // 30s default — actions are already shown in the feed optimistically as
   // soon as the user signs (PostForm's optimistic insert path), so the
   // indexer only sets the SUCCESS status flag a beat later. Stretching

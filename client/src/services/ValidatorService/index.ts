@@ -458,7 +458,11 @@ async function backstopCawonceFromCalldata(
   const targetSpan = Math.max(50, Math.ceil((rowAgeMs / NOMINAL_BLOCK_MS) * PAD))
   const fromBlock = Math.max(0, head - targetSpan)
 
-  const scanOpts = { fromBlock, toBlock: head, chunkBlocks: 10_000, maxWindows: 8 }
+  // chunkBlocks shares the RawEventsGatherer L2_LOG_CHUNK_BLOCKS knob so a
+  // capped-RPC operator (e.g. sepolia.base.org 2000-block eth_getLogs cap)
+  // bounds this scan too. Default 10K suits Infura/Alchemy.
+  const chunkBlocks = Number(process.env.L2_LOG_CHUNK_BLOCKS) || 10_000
+  const scanOpts = { fromBlock, toBlock: head, chunkBlocks, maxWindows: 8 }
   let logs
   try {
     logs = await scanLogsBackward(provider, CAW_ACTIONS_ADDRESS, [eventSig], scanOpts)

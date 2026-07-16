@@ -2,6 +2,17 @@ import { Client } from '@elastic/elasticsearch'
 import { prisma } from '../prismaClient'
 import { extractHashtagBodies, MENTION_REGEX, isValidTagBody } from '../tools/hashtagRegex'
 
+// Page sizes for syncAllData()'s cursor-paginated PostgreSQL -> Elasticsearch
+// backfill. Kept small enough that one page's worth of Prisma rows (plus
+// their `include`d relations) stays well under typical max_memory_restart
+// budgets even on nodes with hundreds of thousands of rows. Notification
+// rows carry two includes (actor + caw) and are heaviest, so they get the
+// smallest page. Env-overridable for operators tuning against their own
+// memory ceiling.
+const USER_SYNC_PAGE_SIZE = parseInt(process.env.ES_SYNC_USER_PAGE_SIZE || '1000', 10)
+const CAW_SYNC_PAGE_SIZE = parseInt(process.env.ES_SYNC_CAW_PAGE_SIZE || '500', 10)
+const NOTIFICATION_SYNC_PAGE_SIZE = parseInt(process.env.ES_SYNC_NOTIFICATION_PAGE_SIZE || '250', 10)
+
 interface CawDocument {
   id: number
   userId: number
@@ -632,7 +643,15 @@ class ElasticsearchService {
   }
 
   /**
-   * Sync all existing data from PostgreSQL to Elasticsearch
+   * Sync all existing data from PostgreSQL to Elasticsearch.
+   *
+   * Cursor-paginated (on `id`, never offset/skip) so peak memory is one page,
+   * not the whole table. On a populated node (~94k users, ~94k caws, ~405k
+   * notifications) an unbounded `findMany()` here exhausted the V8 heap
+   * before max_memory_restart fired, crashing mid-sync and re-triggering on
+   * every restart — a persistent crash loop where "Data sync completed"
+   * never printed. Notification rows are heaviest (actor + caw includes),
+   * hence the smaller page size.
    */
   async syncAllData(): Promise<void> {
     if (!this.isConnected) return
@@ -640,38 +659,118 @@ class ElasticsearchService {
     console.log('Starting full data sync to Elasticsearch...')
 
     try {
-      // Sync users
-      const users = await prisma.user.findMany()
-      for (const user of users) {
-        await this.indexUser(user)
-      }
-      console.log(`Synced ${users.length} users`)
+      const userCount = await this.syncUsersPaged()
+      console.log(`Synced ${userCount} users`)
 
-      // Sync caws
-      const caws = await prisma.caw.findMany({
-        include: { user: true }
-      })
-      for (const caw of caws) {
-        await this.indexCaw(caw)
-      }
-      console.log(`Synced ${caws.length} caws`)
+      const cawCount = await this.syncCawsPaged()
+      console.log(`Synced ${cawCount} caws`)
 
-      // Sync notifications
-      const notifications = await prisma.notification.findMany({
-        include: {
-          actor: true,
-          caw: true
-        }
-      })
-      for (const notification of notifications) {
-        await this.indexNotification(notification)
-      }
-      console.log(`Synced ${notifications.length} notifications`)
+      const notificationCount = await this.syncNotificationsPaged()
+      console.log(`Synced ${notificationCount} notifications`)
 
       console.log('Data sync completed')
     } catch (error) {
       console.error('Data sync failed:', error)
     }
+  }
+
+  /**
+   * Cursor-paginate through `User` rows, indexing each page before loading
+   * the next. Returns the total row count synced.
+   */
+  private async syncUsersPaged(): Promise<number> {
+    let cursor: number | undefined
+    let total = 0
+
+    while (true) {
+      const page = await prisma.user.findMany({
+        take: USER_SYNC_PAGE_SIZE,
+        ...(cursor !== undefined ? { skip: 1, cursor: { id: cursor } } : {}),
+        orderBy: { id: 'asc' }
+      })
+
+      if (page.length === 0) break
+
+      for (const user of page) {
+        await this.indexUser(user)
+      }
+
+      total += page.length
+      cursor = page[page.length - 1].id
+      console.log(`[Elasticsearch] synced ${total} users`)
+
+      if (page.length < USER_SYNC_PAGE_SIZE) break
+    }
+
+    return total
+  }
+
+  /**
+   * Cursor-paginate through `Caw` rows (with `user` include), indexing each
+   * page before loading the next.
+   */
+  private async syncCawsPaged(): Promise<number> {
+    let cursor: number | undefined
+    let total = 0
+
+    while (true) {
+      const page = await prisma.caw.findMany({
+        take: CAW_SYNC_PAGE_SIZE,
+        ...(cursor !== undefined ? { skip: 1, cursor: { id: cursor } } : {}),
+        orderBy: { id: 'asc' },
+        include: { user: true }
+      })
+
+      if (page.length === 0) break
+
+      for (const caw of page) {
+        await this.indexCaw(caw)
+      }
+
+      total += page.length
+      cursor = page[page.length - 1].id
+      console.log(`[Elasticsearch] synced ${total} caws`)
+
+      if (page.length < CAW_SYNC_PAGE_SIZE) break
+    }
+
+    return total
+  }
+
+  /**
+   * Cursor-paginate through `Notification` rows (with `actor` + `caw`
+   * includes — the heaviest of the three, hence the smaller page size),
+   * indexing each page before loading the next.
+   */
+  private async syncNotificationsPaged(): Promise<number> {
+    let cursor: number | undefined
+    let total = 0
+
+    while (true) {
+      const page = await prisma.notification.findMany({
+        take: NOTIFICATION_SYNC_PAGE_SIZE,
+        ...(cursor !== undefined ? { skip: 1, cursor: { id: cursor } } : {}),
+        orderBy: { id: 'asc' },
+        include: {
+          actor: true,
+          caw: true
+        }
+      })
+
+      if (page.length === 0) break
+
+      for (const notification of page) {
+        await this.indexNotification(notification)
+      }
+
+      total += page.length
+      cursor = page[page.length - 1].id
+      console.log(`[Elasticsearch] synced ${total} notifications`)
+
+      if (page.length < NOTIFICATION_SYNC_PAGE_SIZE) break
+    }
+
+    return total
   }
 
   /**
