@@ -11,6 +11,7 @@ import ora from 'ora'
 import { section, success, dim, brand, warn, err } from '../utils/ui.js'
 import { configureMediaNginx } from './mediaNginx.js'
 import { patchMainNginxConfig } from './nginx.js'
+import { reportConfigDrift } from './configDrift.js'
 
 // Subset of SQL keywords that indicate a destructive migration. We refuse
 // to auto-apply migrations whose .sql contains any of these without an
@@ -1092,6 +1093,17 @@ export async function runUpdate(installDir, opts = {}) {
   } catch (e) {
     console.log(warn(`  Nginx patch failed: ${e.message}`))
     console.log(warn('  Continuing with the rest of the update — fix and re-run later.'))
+  }
+
+  // Config-drift doctor check. Read-only — never rewrites .env, just warns
+  // when an address var (e.g. SMART_EOA_ADDRESS) has fallen out of sync with
+  // solidity/.deploy-state.json. Runs every update so the warning surfaces
+  // even when nothing else in this pull touched addresses (the drift can
+  // predate the current update, same rationale as verifySchema above).
+  try {
+    reportConfigDrift(installDir)
+  } catch (e) {
+    console.log(warn(`  Config-drift check failed (non-fatal): ${e.message}`))
   }
 
   if (appName && !opts.skipRestart) {

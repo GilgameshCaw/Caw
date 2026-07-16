@@ -48,6 +48,7 @@ import { runInstall, startServices } from '../src/steps/install.js'
 import { configureNginx } from '../src/steps/nginx.js'
 import { configureMediaNginx } from '../src/steps/mediaNginx.js'
 import { runUpdate, applyMigrations, buildFrontend, resolveInstallDir } from '../src/steps/update.js'
+import { reportConfigDrift } from '../src/steps/configDrift.js'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const ROOT_DIR = path.resolve(__dirname, '../..')
@@ -678,6 +679,21 @@ program
       console.log(success(`  Wrote ${configPath}. Restart services to pick up the new entries (pm2 restart all).`))
     } catch (e) {
       console.error('regen-config failed:', e.message)
+      process.exit(1)
+    }
+  })
+
+program
+  .command('doctor')
+  .description('Read-only config checks (e.g. client/.env address vars vs solidity/.deploy-state.json). Never writes files.')
+  .option('--dir <path>', 'Installation directory', ROOT_DIR)
+  .action((opts) => {
+    try {
+      const installDir = resolveInstallDir(opts, ROOT_DIR)
+      const result = reportConfigDrift(installDir)
+      if (result?.ran && result.mismatches?.length > 0) process.exitCode = 1
+    } catch (e) {
+      console.error('doctor failed:', e.message)
       process.exit(1)
     }
   })
