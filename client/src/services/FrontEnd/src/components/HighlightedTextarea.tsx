@@ -15,6 +15,12 @@ interface HighlightedTextareaProps {
   // composition is open (#322); this is how the parent learns the final
   // composed text. Optional — non-IME callers can ignore it.
   onCompositionEnd?: (e: React.CompositionEvent<HTMLTextAreaElement>) => void
+  // Fired on every intermediate IME candidate update DURING composition
+  // (i.e. between compositionstart and compositionend). Optional — used by
+  // PostForm to keep the visible highlight overlay in sync with in-progress
+  // CJK composition on iOS WebKit, where compositionend is unreliable (see
+  // handler comment in PostForm for the zinsanjp iOS report this fixes).
+  onCompositionUpdate?: (e: React.CompositionEvent<HTMLTextAreaElement>) => void
   onClick?: (e: React.MouseEvent<HTMLTextAreaElement>) => void
   onKeyUp?: (e: React.KeyboardEvent<HTMLTextAreaElement>) => void
   onKeyDown?: (e: React.KeyboardEvent<HTMLTextAreaElement>) => void
@@ -59,6 +65,7 @@ const HighlightedTextarea: React.FC<HighlightedTextareaProps> = ({
   onChange,
   onCompositionStart,
   onCompositionEnd,
+  onCompositionUpdate,
   onClick,
   onKeyUp,
   onKeyDown,
@@ -404,6 +411,7 @@ const HighlightedTextarea: React.FC<HighlightedTextareaProps> = ({
         onChange={onChange}
         onCompositionStart={onCompositionStart}
         onCompositionEnd={onCompositionEnd}
+        onCompositionUpdate={onCompositionUpdate}
         onClick={onClick}
         onKeyUp={onKeyUp}
         onKeyDown={onKeyDown}

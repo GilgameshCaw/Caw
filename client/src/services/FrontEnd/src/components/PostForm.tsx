@@ -894,6 +894,47 @@ const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess, placehol
       setActiveChunkCursor(localCursor)
     }
 
+  // iOS WebKit (reported by zinsanjp: on-screen JA IME in Chrome for iOS,
+  // which embeds WebKit) does not reliably fire `compositionend` — the
+  // composition can commit (candidate window closes) with no trailing
+  // compositionend event at all. handleTextChange above intentionally
+  // ignores onChange while isComposingRef is true (#322, to stop
+  // mid-composition re-renders from killing the native candidate window),
+  // and HighlightedTextarea's real glyphs are `color: transparent` — the
+  // ONLY visible text is the highlight-overlay <div>, which is driven by
+  // React `value` state, not the DOM. So when compositionend never fires,
+  // the composed text sits in the native (invisible) textarea value but
+  // React state — and therefore the visible overlay — never updates: the
+  // user sees a blinking cursor and nothing else, exactly as reported.
+  //
+  // `compositionupdate` fires on every intermediate IME candidate change
+  // and, unlike compositionend, is not known to be dropped on iOS WebKit.
+  // Committing state here keeps the overlay live during composition without
+  // touching the handleTextChange suppression at all (Android/desktop IME
+  // candidate-window behavior from #322 is unaffected). compositionend
+  // remains the authoritative final commit + cursor placement everywhere
+  // compositionend DOES fire normally.
+  const handleCompositionUpdate = (e: React.CompositionEvent<HTMLTextAreaElement>) => {
+    const ta = e.currentTarget
+    const cursor = ta.selectionStart
+    pendingMasterCursorRef.current = cursor
+    setText(ta.value)
+    setCursorPosition(cursor)
+  }
+
+  // Chunk-mode counterpart of handleCompositionUpdate above — same
+  // iOS-WebKit compositionend-unreliability fix, applied via the chunk's
+  // replaceChunk commit path instead of setText.
+  const makeChunkCompositionUpdate = (i: number) =>
+    (e: React.CompositionEvent<HTMLTextAreaElement>) => {
+      const ta = e.currentTarget
+      const localCursor = ta.selectionStart ?? 0
+      pendingMasterCursorRef.current = chunkBoundaries[i] + localCursor
+      replaceChunk(i, ta.value)
+      setActiveChunkIndex(i)
+      setActiveChunkCursor(localCursor)
+    }
+
   const handleTextClick = (e: React.MouseEvent<HTMLTextAreaElement>) => {
     setCursorPosition((e.target as HTMLTextAreaElement).selectionEnd ?? (e.target as HTMLTextAreaElement).selectionStart)
   }
@@ -2678,6 +2719,7 @@ const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess, placehol
                         }}
                         onCompositionStart={handleCompositionStart}
                         onCompositionEnd={makeChunkCompositionEnd(i)}
+                        onCompositionUpdate={makeChunkCompositionUpdate(i)}
                         onClick={(e) => {
                           setActiveChunkIndex(i)
                           setActiveChunkCursor((e.target as HTMLTextAreaElement).selectionStart ?? 0)
@@ -2731,6 +2773,7 @@ const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess, placehol
                     onChange={handleTextChange}
                     onCompositionStart={handleCompositionStart}
                     onCompositionEnd={handleCompositionEnd}
+                    onCompositionUpdate={handleCompositionUpdate}
                     onClick={handleTextClick}
                     onKeyUp={handleTextKeyUp}
                     onDragOver={handleTextareaDragOver}
@@ -3280,6 +3323,7 @@ const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess, placehol
                     }}
                     onCompositionStart={handleCompositionStart}
                     onCompositionEnd={makeChunkCompositionEnd(i)}
+                    onCompositionUpdate={makeChunkCompositionUpdate(i)}
                     onClick={(e) => {
                       setActiveChunkIndex(i)
                       setActiveChunkCursor((e.target as HTMLTextAreaElement).selectionStart ?? 0)
@@ -3348,6 +3392,7 @@ const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess, placehol
                 onChange={handleTextChange}
                 onCompositionStart={handleCompositionStart}
                 onCompositionEnd={handleCompositionEnd}
+                onCompositionUpdate={handleCompositionUpdate}
                 onClick={handleTextClick}
                 onKeyUp={handleTextKeyUp}
                 onDragOver={handleTextareaDragOver}
