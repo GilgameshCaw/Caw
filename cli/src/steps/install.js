@@ -309,6 +309,36 @@ export async function runInstall(nodeType, config, installDir) {
       console.log(warn('    3. Database name mismatch — check `docker compose logs postgres` for the actual init db.'))
       throw lastErr
     }
+
+    // `prisma db push` materializes plain columns/indexes from schema.prisma
+    // but does NOT create partial expression indexes (e.g. a UNIQUE index
+    // with a WHERE clause) — those only exist as hand-rolled migration.sql
+    // files, and db push never runs migrations. NotificationGroup's
+    // ON CONFLICT ("userId","type", COALESCE("targetKey",'')) WHERE "isRead"
+    // = false upsert (NotificationService.ts) needs exactly that index; a
+    // fresh install without it crash-loops on the first notification with
+    // 42P10 "no unique or exclusion constraint matching ON CONFLICT". Create
+    // it explicitly here, idempotently, so fresh installs match what the
+    // migration.sql would have done. Safe to re-run on every `caw install`.
+    const spinner4b = ora('Ensuring notification-group index...').start()
+    try {
+      execSync(
+        `psql "${config.dbUrl}" -v ON_ERROR_STOP=1 -c ` +
+        `"CREATE UNIQUE INDEX IF NOT EXISTS \\"NotificationGroup_open_bucket_key\\" ` +
+        `ON \\"NotificationGroup\\" (\\"userId\\", \\"type\\", (COALESCE(\\"targetKey\\", ''))) ` +
+        `WHERE \\"isRead\\" = false"`,
+        { stdio: 'pipe' }
+      )
+      spinner4b.succeed('Notification-group index ready')
+    } catch (e) {
+      // Don't fail the install over this — worst case the operator hits
+      // the 42P10 later and can run the same CREATE INDEX by hand (or the
+      // matching migration.sql). Most likely failure here is a duplicate
+      // open-group row from a very old broken build; that needs the full
+      // dedupe DO block from the migration, not just the index.
+      spinner4b.warn('Could not create notification-group index — re-run client/prisma/migrations/20260710000000_notification_group_partial_unique/migration.sql by hand')
+      console.log(warn(`  ${e.message?.split('\n')[0] || e}`))
+    }
   }
 
   // 5. Install pm2 globally if not present

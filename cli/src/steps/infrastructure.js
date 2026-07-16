@@ -352,8 +352,14 @@ export async function collectInfraLate(nodeType) {
 
   // API port — hardcoded with an env override (CAW_API_PORT) for the rare
   // case where 4000 is taken. We don't ask, because end-users never care
-  // and the answer is meaningless to anyone debugging.
-  const apiPort = Number(process.env.CAW_API_PORT) || 4000
+  // and the answer is meaningless to anyone debugging. But we DO check
+  // system-wide whether the default/override is already bound (e.g. a
+  // co-located second install on the same box) and walk forward to the
+  // next free port rather than silently writing a colliding config.json —
+  // the collision only surfaces later as a crash-looping second instance
+  // stepping on the first one's API.
+  const requestedApiPort = Number(process.env.CAW_API_PORT) || 4000
+  const apiPort = await pickFreeApiPort(requestedApiPort)
 
   return {
     useDocker,
@@ -825,6 +831,32 @@ async function probeTcp(host, port, timeoutMs = 500) {
     sock.once('error', () => finish(false))
     sock.connect(port, host)
   })
+}
+
+// Walk forward from `startPort` until we find one nothing on this box is
+// already listening on (127.0.0.1 — matches how the API actually binds by
+// default; see project_bind_host_per_nodetype). Handles the co-located
+// second-node case (V1 already on 4000) without requiring the operator to
+// know or set CAW_API_PORT themselves. Caps the search so a pathological
+// box (e.g. something scanning a huge port range) can't hang the installer.
+async function pickFreeApiPort(startPort, maxAttempts = 50) {
+  for (let i = 0; i < maxAttempts; i++) {
+    const candidate = startPort + i
+    // eslint-disable-next-line no-await-in-loop
+    const inUse = await probeTcp('127.0.0.1', candidate, 300)
+    if (!inUse) {
+      if (i > 0) {
+        warn(`Port ${startPort} is already in use on this host — using ${candidate} instead.`)
+        tipBlock([
+          `Another CAW instance (or something else) is already listening on ${startPort}.`,
+          `This install will use port ${candidate}. Set CAW_API_PORT to override.`,
+        ])
+      }
+      return candidate
+    }
+  }
+  warn(`Could not find a free port after ${maxAttempts} attempts starting at ${startPort}; using ${startPort} anyway.`)
+  return startPort
 }
 
 // Detect docker + compose. SigNoz is docker-only, so the auto-install option

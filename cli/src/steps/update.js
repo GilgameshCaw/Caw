@@ -836,13 +836,30 @@ async function withMemoryHeadroom(fn) {
 }
 
 export async function buildFrontend(installDir) {
+  // Ownership drift guard: the FE build runs as the unprivileged install
+  // user (runAsInstallUser), but root-owned files can accumulate in the
+  // FrontEnd tree between builds — e.g. a hand-run `sudo yarn ...`, an
+  // scp'd file, or (on a fresh install) the pre-chown `runInstall` build
+  // step. yarn/vite then hit EACCES trying to write node_modules/.vite,
+  // dist/, .vite-temp, etc. Re-chown the FrontEnd tree to the install user
+  // right before every build so drift never accumulates into a failure.
+  // No-op (and cheap) when not running as root or already correctly owned.
+  const isRoot = process.getuid && process.getuid() === 0
+  const installUser = process.env.SUDO_USER || 'caw'
+  const frontendDir = path.join(installDir, 'client', 'src', 'services', 'FrontEnd')
+  if (isRoot && installUser !== 'root' && fs.existsSync(frontendDir)) {
+    try {
+      execSync(`chown -R ${installUser}:${installUser} ${frontendDir}`, { stdio: 'pipe' })
+    } catch (e) {
+      console.log(warn(`  Could not chown ${frontendDir} to ${installUser} — build may hit EACCES: ${e.message?.split('\n')[0]}`))
+    }
+  }
+
   await withMemoryHeadroom(async () => {
     const sp = ora('Building frontend...').start()
     try {
       sp.stop()
-      runAsInstallUser(`yarn build`, {
-        cwd: path.join(installDir, 'client', 'src', 'services', 'FrontEnd'),
-      })
+      runAsInstallUser(`yarn build`, { cwd: frontendDir })
       console.log(success('  Frontend built — dist/ ready'))
     } catch (e) {
       sp.fail('Frontend build failed')
