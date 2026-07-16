@@ -54,6 +54,13 @@ not lost.
 
 ## Build (macOS arm64)
 
+> ⚠️ **Reproducibility gap:** no released `cargo-prove` toolchain currently
+> rebuilds the circuit into the vkey the deployed `CawActions` pins
+> (`0x00197b56…`). Building locally today yields a vkey the contract rejects,
+> so you cannot exercise the real ZK path. See
+> [`VKEY_REPRODUCIBILITY.md`](./VKEY_REPRODUCIBILITY.md) for the full analysis
+> and the exact toolchain info the deployer still needs to record.
+
 Prereqs:
 - Rust + Cargo
 - SP1 toolchain (`curl -L https://sp1up.succinct.xyz | bash` then `sp1up`)
