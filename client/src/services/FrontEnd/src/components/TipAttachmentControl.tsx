@@ -158,14 +158,27 @@ const SingleTipPicker: React.FC<PickerProps> = ({
       })
       return () => { cancelled = true }
     }
+    // Strip a leading '@' — users naturally type "@name" for a handle, but the
+    // search matches raw username text ('@name' matches nothing).
+    const term = q.replace(/^@+/, '').trim()
+    if (!term) { setRecipientSuggestions([]); return }
     let cancelled = false
     const timer = setTimeout(() => {
-      apiFetch<{ users: RecipientUser[] }>(`/api/users/search/${encodeURIComponent(q)}`)
+      apiFetch<{ users: RecipientUser[] }>(`/api/users/search/${encodeURIComponent(term)}`)
         .then(data => {
           if (cancelled) return
-          setRecipientSuggestions((data?.users ?? []).filter(u => !allExcluded.includes(u.tokenId)).slice(0, 8))
+          const raw = data?.users ?? []
+          const filtered = raw.filter(u => !allExcluded.includes(u.tokenId)).slice(0, 8)
+          // TEMP-DIAG (tip recipient search): if this logs raw>0 but filtered=0,
+          // everyone matched was excluded (self / already-tipped). If raw=0 the
+          // server found nothing. If this never logs, the request didn't fire.
+          console.log('[tip-search]', { term, raw: raw.length, filtered: filtered.length, excluded: allExcluded })
+          setRecipientSuggestions(filtered)
         })
-        .catch(() => { if (!cancelled) setRecipientSuggestions([]) })
+        .catch(e => {
+          console.warn('[tip-search] request failed:', e?.message || e)
+          if (!cancelled) setRecipientSuggestions([])
+        })
     }, 180)
     return () => { cancelled = true; clearTimeout(timer) }
   }, [recipientQuery, mentionUsernames, allExcluded])
