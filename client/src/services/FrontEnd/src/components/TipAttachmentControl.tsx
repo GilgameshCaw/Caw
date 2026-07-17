@@ -191,12 +191,13 @@ const SingleTipPicker: React.FC<PickerProps> = ({
         {recipient ? (
           <div className={`flex items-center justify-between rounded-lg px-2 py-1.5 ${isDark ? 'bg-white/10' : 'bg-gray-100'}`}>
             <div className="flex items-center gap-2 min-w-0">
-              <img src={getUserAvatar({ tokenId: recipient.tokenId, avatarUrl: recipient.avatarUrl })} alt={recipient.username} className="w-6 h-6 rounded-full" />
-              <span className="text-sm truncate">
-                {recipient.displayName ? (
-                  <><span className="font-medium">{recipient.displayName}</span>{' '}<span className={themeTextMuted(isDark)}>@{recipient.username}</span></>
-                ) : <>@{recipient.username}</>}
-              </span>
+              <img src={getUserAvatar({ tokenId: recipient.tokenId, avatarUrl: recipient.avatarUrl })} alt={recipient.username} className="w-6 h-6 rounded-full flex-shrink-0" />
+              <div className="min-w-0 leading-tight">
+                {recipient.displayName && (
+                  <div className="text-sm font-medium truncate">{recipient.displayName}</div>
+                )}
+                <div className={`text-xs truncate ${recipient.displayName ? themeTextMuted(isDark) : 'text-sm'}`}>@{recipient.username}</div>
+              </div>
             </div>
             <button type="button" onClick={() => { setRecipient(null); setShowSuggestions(true) }}
               className={`text-xs ${themeTextMuted(isDark)} hover:underline cursor-pointer flex-shrink-0 ml-2`}>
@@ -222,12 +223,13 @@ const SingleTipPicker: React.FC<PickerProps> = ({
                     <button type="button"
                       onClick={() => { setRecipient(u); setShowSuggestions(false); setRecipientQuery('') }}
                       className={`w-full flex items-center gap-2 px-2 py-1.5 text-left cursor-pointer ${isDark ? 'hover:bg-white/10' : 'hover:bg-gray-100'}`}>
-                      <img src={getUserAvatar({ tokenId: u.tokenId, avatarUrl: u.avatarUrl })} alt={u.username} className="w-6 h-6 rounded-full" />
-                      <span className="text-sm truncate">
-                        {u.displayName ? (
-                          <><span className="font-medium">{u.displayName}</span>{' '}<span className={themeTextMuted(isDark)}>@{u.username}</span></>
-                        ) : <>@{u.username}</>}
-                      </span>
+                      <img src={getUserAvatar({ tokenId: u.tokenId, avatarUrl: u.avatarUrl })} alt={u.username} className="w-6 h-6 rounded-full flex-shrink-0" />
+                      <div className="min-w-0 leading-tight">
+                        {u.displayName && (
+                          <div className="text-sm font-medium truncate">{u.displayName}</div>
+                        )}
+                        <div className={`text-xs truncate ${u.displayName ? themeTextMuted(isDark) : 'text-sm'}`}>@{u.username}</div>
+                      </div>
                     </button>
                   </li>
                 ))}
