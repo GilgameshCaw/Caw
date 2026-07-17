@@ -1478,13 +1478,18 @@ router.get('/search/:query', async (req, res) => {
       return res.json({ users: [] })
     }
 
-    // Search for users whose username starts with the query (case insensitive)
+    // Match the query anywhere in the username OR display name (case-insensitive
+    // CONTAINS, not just a username prefix). The old prefix-only username match
+    // meant a search for "mesh" never found "nyaromesh", and display names weren't
+    // searchable at all — which read as "can't find any users" when you didn't
+    // type the exact start of the handle. Prefix matches still rank first (below).
+    const q = query.toLowerCase()
     const users = await prisma.user.findMany({
       where: {
-        username: {
-          startsWith: query.toLowerCase(),
-          mode: 'insensitive'
-        }
+        OR: [
+          { username:    { contains: q, mode: 'insensitive' } },
+          { displayName: { contains: q, mode: 'insensitive' } },
+        ],
       },
       select: {
         tokenId: true,
@@ -1494,11 +1499,22 @@ router.get('/search/:query', async (req, res) => {
         defaultAvatarId: true,
         image: true,
       },
-      take: limit,
-      orderBy: {
-        username: 'asc'
-      }
+      // Over-fetch a little so the prefix-first re-rank below has room to work.
+      take: limit * 3,
     })
+
+    // Rank prefix matches (username or display name STARTS with the query) above
+    // mid-string matches, then alphabetically — so typing "gil" surfaces "gilga…"
+    // before "angil…". Trim back to the requested limit after ranking.
+    const startsPref = (u: { username: string; displayName: string | null }) =>
+      u.username.toLowerCase().startsWith(q) || (u.displayName?.toLowerCase().startsWith(q) ?? false)
+    users.sort((a, b) => {
+      const ap = startsPref(a) ? 0 : 1
+      const bp = startsPref(b) ? 0 : 1
+      if (ap !== bp) return ap - bp
+      return a.username.localeCompare(b.username)
+    })
+    users.splice(limit)
 
     // Filter out blocked users
     const currentUserId = Number(req.header('x-user-id')) || undefined
