@@ -362,15 +362,48 @@ const MyProfilesTab: React.FC = () => {
     const addresses = addressKey.split(',').filter(Boolean)
     if (addresses.length === 0) return
 
+    let cancelled = false
     setLoading(true)
-    Promise.all(
-      addresses.map(addr =>
-        apiFetch<{ listings: MarketplaceListing[]; total: number }>(`/api/marketplace/listings/seller/${addr}?status=ACTIVE`)
+
+    const fetchOnce = async () => {
+      const results = await Promise.all(
+        addresses.map(addr =>
+          apiFetch<{ listings: MarketplaceListing[]; total: number }>(`/api/marketplace/listings/seller/${addr}?status=ACTIVE`)
+        )
       )
-    )
-      .then(results => setMyListings(results.flatMap(r => r.listings)))
-      .catch(err => console.error('[MyProfiles] fetch error:', err))
-      .finally(() => setLoading(false))
+      return results.flatMap(r => r.listings)
+    }
+
+    // A just-created listing takes a moment to reach the DB (the marketplace
+    // indexer watches for the on-chain Listed event, then upserts). A single
+    // fetch right after listing usually races that write and comes back without
+    // the new row, so the token stays under "your usernames" with a stale
+    // "List for sale" button until a manual refresh. Poll a few times with
+    // backoff so the new listing appears on its own. We stop early once the set
+    // stops growing across two consecutive polls (steady state).
+    ;(async () => {
+      const delays = [0, 2000, 3000, 4000, 6000, 8000] // ~23s window
+      let prevCount = -1
+      for (let i = 0; i < delays.length; i++) {
+        if (cancelled) return
+        if (delays[i] > 0) await new Promise(r => setTimeout(r, delays[i]))
+        if (cancelled) return
+        try {
+          const listings = await fetchOnce()
+          if (cancelled) return
+          setMyListings(listings)
+          setLoading(false)
+          // Steady state: two polls in a row with the same count → stop early.
+          if (listings.length === prevCount) break
+          prevCount = listings.length
+        } catch (err) {
+          console.error('[MyProfiles] fetch error:', err)
+          setLoading(false)
+        }
+      }
+    })()
+
+    return () => { cancelled = true }
   }, [addressKey, refreshCounter])
 
   return (
