@@ -3,16 +3,17 @@ import { useAccount, useChainId, useSwitchChain, useWriteContract, useWaitForTra
 import { useConnectModalBridge as useConnectModal } from '~/hooks/useConnectModalBridge'
 import { parseEther, parseUnits, encodeFunctionData, erc20Abi, formatUnits, type Address } from 'viem'
 import { useWalletPopulation } from '~/hooks/useWalletPopulation'
-import { useSmartEoaExecute, type ExecCall } from '~/hooks/useSmartEoaExecute'
+import { buildExecuteDigest, type ExecCall } from '~/hooks/useSmartEoaExecute'
 import { apiFetch } from '~/api/client'
-import { useActiveToken } from '~/store/tokenDataStore'
-import { isPasskeyAddress } from '~/constants/passkeyStorage'
+import { isPasskeyAddress, getPasskeyCredential } from '~/constants/passkeyStorage'
+import { signWithPasskey } from '~/services/identity/passkey'
+import { smartEoaAbi } from '~/../../../abi/generated'
+import { useIdentitySigning } from '~/components/identity/IdentitySigningProvider'
 import { formatAddress } from '~/utils'
 import ModalWrapper from './ModalWrapper'
-import ModalHeader from './ModalHeader'
 import { useTheme } from '~/hooks/useTheme'
 import { useEnsureWallet } from '~/hooks/useEnsureWallet'
-import { themeTextSecondary, themeTextMuted, themeBgSubtle, themeSecondaryButton, themeInput, themeBorder } from '~/utils/theme'
+import { themeTextSecondary, themeTextMuted, themeInput, themeBorder } from '~/utils/theme'
 import ThemedListbox from '~/components/forms/ThemedListbox'
 import { useMarketplaceStore } from '~/store/marketplaceStore'
 import { usePriceStore, useTokenDataStore } from '~/store/tokenDataStore'
@@ -67,10 +68,9 @@ const CreateListingModal: React.FC = () => {
   const { address, isConnected } = useAccount()
   const { openConnectModal } = useConnectModal()
   const chainId = useChainId()
-  const { switchChain, isPending: isSwitchingChain } = useSwitchChain()
+  const { isPending: isSwitchingChain } = useSwitchChain()
   const ensureWallet = useEnsureWallet()
   const tokensByAddress = useTokenDataStore(s => s.tokensByAddress)
-  const setActiveTokenIdForAddress = useTokenDataStore(s => s.setActiveTokenIdForAddress)
   const tokenOwner = useMemo(() => {
     for (const [addr, tokens] of Object.entries(tokensByAddress)) {
       if (tokens.some(t => t.tokenId === tokenId)) return addr.toLowerCase()
@@ -82,24 +82,31 @@ const CreateListingModal: React.FC = () => {
   // (approve + createListing + CAW/ETH fee leg) signed by their passkey.
   const { population } = useWalletPopulation()
   const isPopB = population === 'B'
-  const { execute: smartEoaExecute, account: eoaAccount } = useSmartEoaExecute()
-  const activeToken = useActiveToken()
+  const { startSigning, stopSigning } = useIdentitySigning()
   const l1Client = usePublicClient({ chainId: chains.l1.chainId })
-  // Owner for Pop-B is the token's on-record owner (the passkey EOA). We can only
-  // SIGN as the ACTIVE passkey profile (eoaAccount = useWalletPopulation().address),
-  // so listing is only actionable when the token owner IS the active EOA.
-  const popBOwner = (isPopB ? (tokenOwner ?? eoaAccount ?? activeToken?.owner)?.toLowerCase() : null) ?? null
+
+  // Pop-B lists a token by relaying a SmartEOA.executeBatch signed by the token's
+  // OWN passkey — NOT the active profile. A passkey user can prove ownership of
+  // ANY of their profiles by doing a WebAuthn ceremony with that profile's
+  // credential (stored per-tokenId), so listing never requires switching the
+  // active profile. Target the LISTED token's owner EOA + credential throughout.
+  const listingOwner = (isPopB ? tokenOwner : null) as Address | null   // the token's on-record EOA
+  const listingCredential = isPopB && tokenId != null ? getPasskeyCredential(tokenId) : null
+  // eoaAccount = the account the relayed batch is signed FOR. For Pop-B it's the
+  // LISTED profile's EOA (we hold its passkey), not the active one.
+  const eoaAccount = listingOwner ?? undefined
+  const popBOwner = listingOwner ?? null
   // isOwner = "this session can sign the listing for this token".
-  //  - Pop-B: the active passkey EOA owns the token.
+  //  - Pop-B: we hold the passkey credential for the token's owner profile.
   //  - Pop-A: the connected wallet owns the token.
   const isOwner = isPopB
-    ? (!!eoaAccount && !!tokenOwner && eoaAccount.toLowerCase() === tokenOwner)
+    ? !!listingCredential
     : (!!address && !!tokenOwner && address.toLowerCase() === tokenOwner)
 
-  // Pop-B: the token belongs to a DIFFERENT passkey profile the user owns (not
-  // the active one). They can't sign for it here — they must SWITCH PROFILES
-  // (not wallets). Distinct from the "not a passkey I control at all" case.
-  const wrongProfile = isPopB && !isOwner && !!tokenOwner && isPasskeyAddress(tokenOwner)
+  // Pop-B: the token IS a passkey profile, but we DON'T hold its credential on
+  // this device (never enrolled here) → can't sign. (Distinct from the old
+  // "switch profiles" case, which we no longer need.)
+  const missingCredential = isPopB && !listingCredential && !!tokenOwner && isPasskeyAddress(tokenOwner)
 
   // Pop-A wallet states, kept DISTINCT so the button copy is truthful:
   //  - notConnected → no wallet at all → prompt "Connect wallet" (not "wrong wallet")
@@ -429,7 +436,31 @@ const CreateListingModal: React.FC = () => {
         calls.push({ to: quote.relayer as Address, value: feeEth, data: '0x' })
       }
 
-      await smartEoaExecute(calls)
+      // Sign + relay the batch AS THE LISTED PROFILE (eoaAccount = its EOA),
+      // using that profile's OWN passkey credential — not the active profile's.
+      if (!listingCredential) throw new Error('NO_PASSKEY_FOR_PROFILE')
+      const nonce = (await l1Client.readContract({
+        address: eoaAccount, abi: smartEoaAbi, functionName: 'executeNonceOf',
+      })) as bigint
+      const digest = buildExecuteDigest(eoaAccount, chains.l1.chainId, calls, nonce)
+      startSigning('Sign with your passkey to list this username')
+      let sig: `0x${string}`
+      try {
+        const rpId = typeof window !== 'undefined' ? window.location.hostname : ''
+        const r = await signWithPasskey({ credentialId: listingCredential, digest, rpId })
+        sig = r.sig
+      } finally {
+        stopSigning()
+      }
+      await apiFetch<{ txHash: string }>('/api/sponsor/execute', {
+        method: 'POST',
+        body: JSON.stringify({
+          smartEoaAddress: eoaAccount,
+          calls: calls.map(c => ({ to: c.to, value: c.value.toString(), data: c.data })),
+          nonce: nonce.toString(),
+          sig,
+        }),
+      })
       setPopBSuccess(true)
       setTimeout(() => useMarketplaceStore.getState().triggerRefresh(), 3000)
     } catch (err: any) {
@@ -454,7 +485,7 @@ const CreateListingModal: React.FC = () => {
     } finally {
       setPopBPending(false)
     }
-  }, [isPopB, eoaAccount, tokenId, l1Client, paymentToken, durationHours, startPrice, endPrice, listingType, smartEoaExecute, t])
+  }, [isPopB, eoaAccount, tokenId, l1Client, listingCredential, paymentToken, durationHours, startPrice, endPrice, listingType, startSigning, stopSigning, t])
 
   const inputClass = `w-full px-3 py-2 rounded-lg text-sm border outline-none transition ${themeInput(isDark)} ${themeBorder(isDark)}`
 
@@ -793,6 +824,11 @@ const CreateListingModal: React.FC = () => {
                         : t('create_listing.popb.fee_either')}
                   </p>
                 )}
+                {missingCredential && !popBSuccess && (
+                  <div className={`p-3 rounded-lg text-sm text-center ${isDark ? 'bg-orange-500/10 text-orange-400' : 'bg-orange-50 text-orange-600'}`}>
+                    {t('create_listing.popb.no_credential')}
+                  </div>
+                )}
                 {needsTopUp && !popBSuccess && (
                   <div className={`p-3 rounded-lg text-sm ${isDark ? 'bg-orange-500/10 text-orange-400' : 'bg-orange-50 text-orange-600'}`}>
                     <p className="text-center">{t('create_listing.popb.topup')}</p>
@@ -818,25 +854,18 @@ const CreateListingModal: React.FC = () => {
                 <div className="flex justify-center">
                   <button
                     onClick={() => {
-                      // Token owned by a DIFFERENT passkey profile the user owns →
-                      // switch the active profile to it (so eoaAccount becomes the
-                      // owner and we can sign), rather than hanging on "Estimating…".
-                      if (wrongProfile && tokenOwner && tokenId != null) {
-                        setActiveTokenIdForAddress(tokenOwner as Address, tokenId)
-                        return
-                      }
                       if (feeError) { setFeeRetry(n => n + 1); return }
                       handlePopBList()
                     }}
-                    disabled={(!isOwner && !wrongProfile) || popBPending || popBSuccess || needsTopUp || (!feeLoaded && !feeError && !wrongProfile) || !startPrice || parseFloat(startPrice) <= 0 || (listingType === 1 && (!endPrice || parseFloat(endPrice) >= parseFloat(startPrice)))}
+                    disabled={!isOwner || popBPending || popBSuccess || needsTopUp || (!feeLoaded && !feeError) || !startPrice || parseFloat(startPrice) <= 0 || (listingType === 1 && (!endPrice || parseFloat(endPrice) >= parseFloat(startPrice)))}
                     className="w-full px-4 py-2.5 rounded-lg text-sm font-medium bg-yellow-500 text-black hover:bg-yellow-400 transition cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
                   >
-                    {/* No "switch WALLET" state — a passkey user signs in-browser.
-                        wrongProfile = token owned by a different passkey profile
-                        they own → offer to switch PROFILES. needsTopUp handles
-                        insufficient CAW/ETH (shown above). */}
+                    {/* No "switch WALLET/PROFILE" state — a passkey user signs
+                        in-browser with the LISTED profile's own credential, whatever
+                        the active profile is. missingCredential (passkey not on this
+                        device) + needsTopUp are surfaced above the button. */}
                     {popBSuccess ? t('marketplace.button.listed')
-                      : wrongProfile ? t('create_listing.button.switch_profile')
+                      : missingCredential ? t('create_listing.button.list')
                       : popBPending ? t('marketplace.button.confirming')
                       : feeError ? t('create_listing.button.fee_retry')
                       : !feeLoaded ? t('marketplace.button.estimating_fee')
