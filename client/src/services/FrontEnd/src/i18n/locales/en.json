@@ -674,6 +674,7 @@
   "marketplace.tab.recent_sales": "Recent Sales",
   "marketplace.tab.my_profiles": "My Profiles",
   "marketplace.my_profiles.active_listings": "Your Active Listings ({{count}})",
+  "marketplace.my_profiles.listing_pending": "Listing…",
   "marketplace.my_profiles.your_usernames": "Your Usernames ({{count}})",
   "marketplace.my_offers.signin_required": "Sign in to see your offers",
   "marketplace.tab.my_offers": "My Offers",

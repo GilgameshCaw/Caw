@@ -103,6 +103,13 @@ interface MarketplaceStore {
   // Refresh trigger — increment to force re-fetch in components
   refreshCounter: number
   triggerRefresh: () => void
+  // Optimistic just-listed profiles, keyed by tokenId. Set the instant a listing
+  // tx is confirmed so the "mine" tab can move the profile into Active Listings
+  // with a "pending" badge immediately — before the marketplace indexer has
+  // written the real DB row. Cleared per-tokenId once the indexed listing arrives.
+  pendingListings: Record<number, { tokenId: number; username: string; listingType: number; startPrice: string; paymentToken: string; createdAt: number }>
+  addPendingListing: (l: { tokenId: number; username: string; listingType: number; startPrice: string; paymentToken: string }) => void
+  clearPendingListing: (tokenId: number) => void
 }
 
 const DEFAULT_FILTERS: MarketplaceFilters = {
@@ -154,4 +161,15 @@ export const useMarketplaceStore = create<MarketplaceStore>((set) => ({
 
   refreshCounter: 0,
   triggerRefresh: () => set(s => ({ refreshCounter: s.refreshCounter + 1 })),
+
+  pendingListings: {},
+  addPendingListing: (l) => set(s => ({
+    pendingListings: { ...s.pendingListings, [l.tokenId]: { ...l, createdAt: Date.now() } },
+  })),
+  clearPendingListing: (tokenId) => set(s => {
+    if (!(tokenId in s.pendingListings)) return {}
+    const next = { ...s.pendingListings }
+    delete next[tokenId]
+    return { pendingListings: next }
+  }),
 }))

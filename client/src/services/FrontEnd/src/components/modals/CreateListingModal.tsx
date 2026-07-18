@@ -142,8 +142,16 @@ const CreateListingModal: React.FC = () => {
 
   // Trigger marketplace refresh after successful listing
   React.useEffect(() => {
-    if (isSuccess) {
-      // Small delay to let the indexer pick it up
+    if (isSuccess && tokenId !== null) {
+      // Optimistically move the profile into "Active Listings" (pending badge)
+      // the instant the tx confirms, so the UI updates itself without waiting on
+      // the indexer or a manual refresh. The pending entry is replaced by the
+      // real indexed row once it lands (see MyProfilesTab).
+      useMarketplaceStore.getState().addPendingListing({
+        tokenId, username: username || `#${tokenId}`, listingType,
+        startPrice: startPrice || '0', paymentToken,
+      })
+      // Small delay to let the indexer pick it up, then reconcile.
       setTimeout(() => useMarketplaceStore.getState().triggerRefresh(), 3000)
     }
   }, [isSuccess])
@@ -513,6 +521,14 @@ const CreateListingModal: React.FC = () => {
         }),
       })
       setPopBSuccess(true)
+      // Optimistically show the profile under "Active Listings" (pending badge)
+      // right away — replaced by the real indexed row when it lands.
+      if (tokenId !== null) {
+        useMarketplaceStore.getState().addPendingListing({
+          tokenId, username: username || `#${tokenId}`, listingType,
+          startPrice: startPrice || '0', paymentToken,
+        })
+      }
       setTimeout(() => useMarketplaceStore.getState().triggerRefresh(), 3000)
     } catch (err: any) {
       // Translate relay/wallet errors into plain words — never surface a raw

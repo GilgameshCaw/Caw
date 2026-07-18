@@ -356,6 +356,26 @@ const MyProfilesTab: React.FC = () => {
   const [myListings, setMyListings] = useState<MarketplaceListing[]>([])
   const [loading, setLoading] = useState(false)
   const refreshCounter = useMarketplaceStore(s => s.refreshCounter)
+  const pendingListings = useMarketplaceStore(s => s.pendingListings)
+  const clearPendingListing = useMarketplaceStore(s => s.clearPendingListing)
+
+  // Drop any optimistic pending listing once the real indexed row for that
+  // tokenId has arrived (reconcile), OR after a 2-minute safety TTL so a
+  // never-indexed listing can't get stuck showing "pending" forever.
+  useEffect(() => {
+    const now = Date.now()
+    for (const p of Object.values(pendingListings)) {
+      const indexed = myListings.some(l => l.tokenId === p.tokenId)
+      if (indexed || now - p.createdAt > 120_000) clearPendingListing(p.tokenId)
+    }
+  }, [myListings, pendingListings, clearPendingListing])
+
+  // The pending listings still awaiting their indexed row — shown optimistically
+  // in the Active Listings section with a "pending" badge.
+  const pendingOnly = useMemo(
+    () => Object.values(pendingListings).filter(p => !myListings.some(l => l.tokenId === p.tokenId)),
+    [pendingListings, myListings]
+  )
 
   useEffect(() => {
     if (!addressKey) return
@@ -408,21 +428,38 @@ const MyProfilesTab: React.FC = () => {
 
   return (
     <>
-      {/* Active listings */}
-      {myListings.length > 0 && (
+      {/* Active listings (real indexed rows + optimistic pending ones) */}
+      {(myListings.length > 0 || pendingOnly.length > 0) && (
         <div className="mb-8">
           <h3 className={`text-sm font-medium mb-3 ${themeTextMuted(isDark)}`}>
-            {t('marketplace.my_profiles.active_listings', { count: myListings.length })}
+            {t('marketplace.my_profiles.active_listings', { count: myListings.length + pendingOnly.length })}
           </h3>
           <div className="grid grid-cols-1 min-[520px]:grid-cols-2 gap-4">
+            {/* Optimistic pending listings first — the profile the user JUST
+                listed, shown with a "pending" badge until the indexer catches up. */}
+            {pendingOnly.map(p => (
+              <ProfileCard key={`pending-${p.tokenId}`} username={p.username}>
+                <div className="flex items-center justify-center">
+                  <span className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-medium ${
+                    isDark ? 'bg-yellow-500/15 text-yellow-400' : 'bg-yellow-50 text-yellow-700'
+                  }`}>
+                    <span className="w-1.5 h-1.5 rounded-full bg-current animate-pulse" />
+                    {t('marketplace.my_profiles.listing_pending')}
+                  </span>
+                </div>
+              </ProfileCard>
+            ))}
             {myListings.map(l => <ListingCard key={l.id} listing={l} showCancel />)}
           </div>
         </div>
       )}
 
-      {/* Unlisted usernames */}
+      {/* Unlisted usernames — exclude both indexed AND optimistic-pending tokenIds */}
       {(() => {
-        const unlisted = allTokens.filter(t => !myListings.some(l => l.tokenId === t.tokenId))
+        const unlisted = allTokens.filter(t =>
+          !myListings.some(l => l.tokenId === t.tokenId) &&
+          !pendingOnly.some(p => p.tokenId === t.tokenId)
+        )
         return (
           <div className="mb-8">
             <h3 className={`text-sm font-medium mb-3 ${themeTextMuted(isDark)}`}>
