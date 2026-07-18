@@ -2,10 +2,9 @@ import React, { useState, useMemo, useCallback } from 'react'
 import { useAccount, useChainId, useSwitchChain, useWriteContract, useWaitForTransactionReceipt, useReadContract, usePublicClient } from 'wagmi'
 import { useConnectModalBridge as useConnectModal } from '~/hooks/useConnectModalBridge'
 import { parseEther, parseUnits, encodeFunctionData, erc20Abi, formatUnits, type Address } from 'viem'
-import { useWalletPopulation } from '~/hooks/useWalletPopulation'
 import { buildExecuteDigest, type ExecCall } from '~/hooks/useSmartEoaExecute'
 import { apiFetch } from '~/api/client'
-import { isPasskeyAddress, getPasskeyCredential } from '~/constants/passkeyStorage'
+import { getPasskeyCredential } from '~/constants/passkeyStorage'
 import { signWithPasskey } from '~/services/identity/passkey'
 import { smartEoaAbi } from '~/../../../abi/generated'
 import { useIdentitySigning } from '~/components/identity/IdentitySigningProvider'
@@ -80,41 +79,44 @@ const CreateListingModal: React.FC = () => {
   // Population-B (passkey) users have no wagmi wallet, so the wagmi `address`
   // check would always fail. They list via a relayed SmartEOA.executeBatch
   // (approve + createListing + CAW/ETH fee leg) signed by their passkey.
-  const { population } = useWalletPopulation()
-  const isPopB = population === 'B'
   const { startSigning, stopSigning } = useIdentitySigning()
   const l1Client = usePublicClient({ chainId: chains.l1.chainId })
 
-  // Pop-B lists a token by relaying a SmartEOA.executeBatch signed by the token's
-  // OWN passkey — NOT the active profile. A passkey user can prove ownership of
-  // ANY of their profiles by doing a WebAuthn ceremony with that profile's
-  // credential (stored per-tokenId), so listing never requires switching the
-  // active profile. Target the LISTED token's owner EOA + credential throughout.
-  const listingOwner = (isPopB ? tokenOwner : null) as Address | null   // the token's on-record EOA
-  const listingCredential = isPopB && tokenId != null ? getPasskeyCredential(tokenId) : null
-  // eoaAccount = the account the relayed batch is signed FOR. For Pop-B it's the
-  // LISTED profile's EOA (we hold its passkey), not the active one.
+  // Classification is PER-TOKEN, not per-connected-wallet. The ONLY thing that
+  // decides "can this browser sign the listing as a passkey" is whether we hold
+  // THIS token's WebAuthn credential in localStorage — the connected wagmi
+  // wallet / active profile is irrelevant. This covers the case where the user
+  // added a passkey profile's owner EOA to Rabby as a WATCH-ONLY address: that
+  // address can't sign, and we don't hold its credential either, so it must fall
+  // through to the plain wallet (Pop-A) path — which will (correctly) ask them to
+  // connect a wallet that can actually sign.
+  const listingCredential = tokenId != null ? getPasskeyCredential(tokenId) : null
+  // canRelayViaPasskey = we hold this token's passkey → list via the sponsor
+  // relay (SmartEOA.executeBatch signed by that passkey), whatever profile is
+  // active. This never requires switching the active profile.
+  const canRelayViaPasskey = !!listingCredential && !!tokenOwner
+  // eoaAccount = the account the relayed batch is signed FOR: the LISTED token's
+  // owner EOA (we hold its passkey), not the connected/active wallet.
+  const listingOwner = (canRelayViaPasskey ? tokenOwner : null) as Address | null
   const eoaAccount = listingOwner ?? undefined
   const popBOwner = listingOwner ?? null
   // isOwner = "this session can sign the listing for this token".
-  //  - Pop-B: we hold the passkey credential for the token's owner profile.
-  //  - Pop-A: the connected wallet owns the token.
-  const isOwner = isPopB
-    ? !!listingCredential
+  //  - Passkey path: we hold the token's credential in this browser.
+  //  - Wallet path:  the connected wallet owns the token.
+  const isOwner = canRelayViaPasskey
+    ? true
     : (!!address && !!tokenOwner && address.toLowerCase() === tokenOwner)
 
-  // Pop-B: the token IS a passkey profile, but we DON'T hold its credential on
-  // this device (never enrolled here) → can't sign. (Distinct from the old
-  // "switch profiles" case, which we no longer need.)
-  const missingCredential = isPopB && !listingCredential && !!tokenOwner && isPasskeyAddress(tokenOwner)
-
-  // Pop-A wallet states, kept DISTINCT so the button copy is truthful:
-  //  - notConnected → no wallet at all → prompt "Connect wallet" (not "wrong wallet")
+  // Wallet-path (Pop-A) states, kept DISTINCT so the button copy is truthful.
+  // The passkey path (canRelayViaPasskey) short-circuits ALL of these — a
+  // passkey holder never sees "connect / switch wallet".
+  //  - notConnected → no wallet at all → "Connect wallet"
   //  - wrongWallet  → a wallet IS connected but it's not the token owner →
-  //                   "switch to the right wallet" (and we must NOT fire a signature)
-  // (Pop-B has no wagmi wallet, so these are wallet-path only.)
-  const notConnected = !isPopB && !isConnected
-  const wrongWallet = !isPopB && isConnected && !isOwner
+  //                   "switch to the right wallet" (we must NOT fire a signature).
+  //    This is also where a watch-only passkey owner address lands: we don't hold
+  //    its credential, so it's treated exactly like any other non-signer wallet.
+  const notConnected = !canRelayViaPasskey && !isConnected
+  const wrongWallet = !canRelayViaPasskey && isConnected && !isOwner
 
   // Separate write hooks for approve and listing
   const { writeContract: writeApprove, data: approveHash, isPending: isApproving, error: approveError, reset: resetApprove } = useWriteContract()
@@ -315,7 +317,7 @@ const CreateListingModal: React.FC = () => {
     // separate approve/confirm step for passkey users — it's one signed batch). Gate
     // the fee quote on 'params', not a 'confirm' step the Pop-B flow never reaches —
     // otherwise feeLoaded stays false and the button is stuck on "estimating fee".
-    if (!isOpen || !isPopB || step !== 'params' || !isOwner || !eoaAccount || !l1Client) return
+    if (!isOpen || !canRelayViaPasskey || step !== 'params' || !isOwner || !eoaAccount || !l1Client) return
     let cancelled = false
     setFeeError(false)
     // Fetch the fee quote + BOTH owner-EOA balances. Re-runs whenever the modal
@@ -367,7 +369,7 @@ const CreateListingModal: React.FC = () => {
     // change when a top-up lands). Cleared on close / dep change / unmount.
     const iv = setInterval(() => { readBalances(false) }, 8000)
     return () => { cancelled = true; clearInterval(iv) }
-  }, [isOpen, isPopB, step, isOwner, eoaAccount, feeRetry, l1Client])
+  }, [isOpen, canRelayViaPasskey, step, isOwner, eoaAccount, feeRetry, l1Client])
 
   // Can the EOA cover the fee in CAW? in ETH? Prefer CAW when available.
   const canPayCaw = feeCawWei != null && eoaCawWei != null && eoaCawWei >= feeCawWei
@@ -378,7 +380,7 @@ const CreateListingModal: React.FC = () => {
   const feeEthDisplay = feeEthWei != null ? Number(formatUnits(feeEthWei, 18)) : null
 
   const handlePopBList = useCallback(async () => {
-    if (!isPopB || !eoaAccount || tokenId === null || !l1Client) return
+    if (!canRelayViaPasskey || !eoaAccount || tokenId === null || !l1Client) return
     setPopBError(null)
     setPopBPending(true)
     try {
@@ -510,7 +512,7 @@ const CreateListingModal: React.FC = () => {
     } finally {
       setPopBPending(false)
     }
-  }, [isPopB, eoaAccount, tokenId, l1Client, listingCredential, paymentToken, durationHours, startPrice, endPrice, listingType, startSigning, stopSigning, t])
+  }, [canRelayViaPasskey, eoaAccount, tokenId, l1Client, listingCredential, paymentToken, durationHours, startPrice, endPrice, listingType, startSigning, stopSigning, t])
 
   const inputClass = `w-full px-3 py-2 rounded-lg text-sm border outline-none transition ${themeInput(isDark)} ${themeBorder(isDark)}`
 
@@ -834,8 +836,11 @@ const CreateListingModal: React.FC = () => {
               </div>
             )}
 
-            {/* ── Population-B (passkey) single-signature relayed listing ── */}
-            {isPopB ? (
+            {/* ── Passkey (relayed, single-signature) listing — shown ONLY when
+                   we hold THIS token's credential in-browser. Otherwise the
+                   plain wallet path below runs (incl. watch-only passkey EOAs
+                   added to an external wallet, which can't sign). ── */}
+            {canRelayViaPasskey ? (
               <div className="space-y-3">
                 {popBError && (
                   <div className="p-3 rounded-lg bg-red-500/10 text-red-500 text-sm text-center">{popBError}</div>
@@ -848,11 +853,6 @@ const CreateListingModal: React.FC = () => {
                         ? t('create_listing.popb.fee_eth', { amount: feeEthDisplay.toLocaleString(undefined, { maximumFractionDigits: 6 }) })
                         : t('create_listing.popb.fee_either')}
                   </p>
-                )}
-                {missingCredential && !popBSuccess && (
-                  <div className={`p-3 rounded-lg text-sm text-center ${isDark ? 'bg-orange-500/10 text-orange-400' : 'bg-orange-50 text-orange-600'}`}>
-                    {t('create_listing.popb.no_credential')}
-                  </div>
                 )}
                 {needsTopUp && !popBSuccess && (
                   <div className={`p-3 rounded-lg text-sm ${isDark ? 'bg-orange-500/10 text-orange-400' : 'bg-orange-50 text-orange-600'}`}>
@@ -885,12 +885,11 @@ const CreateListingModal: React.FC = () => {
                     disabled={!isOwner || popBPending || popBSuccess || needsTopUp || (!feeLoaded && !feeError) || !startPrice || parseFloat(startPrice) <= 0 || (listingType === 1 && (!endPrice || parseFloat(endPrice) >= parseFloat(startPrice)))}
                     className="w-full px-4 py-2.5 rounded-lg text-sm font-medium bg-yellow-500 text-black hover:bg-yellow-400 transition cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
                   >
-                    {/* No "switch WALLET/PROFILE" state — a passkey user signs
-                        in-browser with the LISTED profile's own credential, whatever
-                        the active profile is. missingCredential (passkey not on this
-                        device) + needsTopUp are surfaced above the button. */}
+                    {/* No "switch WALLET/PROFILE" state — this branch only renders
+                        when we hold the LISTED profile's credential, so the user
+                        can always sign in-browser regardless of the active profile.
+                        needsTopUp (insufficient gas) is surfaced above the button. */}
                     {popBSuccess ? t('marketplace.button.listed')
-                      : missingCredential ? t('create_listing.button.list')
                       : popBPending ? t('marketplace.button.confirming')
                       : feeError ? t('create_listing.button.fee_retry')
                       : !feeLoaded ? t('marketplace.button.estimating_fee')
