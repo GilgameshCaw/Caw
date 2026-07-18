@@ -3,6 +3,7 @@ import { Address } from "viem";
 import { create } from "zustand";
 import { persist } from "zustand/middleware";
 import { TokenData } from "~/types";
+import { clearPasskeyCredential, clearPasskeyAddress, isPasskeyAddress } from "~/constants/passkeyStorage";
 
 
 
@@ -212,6 +213,12 @@ export const useTokenDataStore = create<TokenDataStore>()(
 
       removeToken: (tokenId: number) =>
         set(state => {
+          // Which address(es) held this token — needed to reconcile the passkey
+          // markers below (a Pop-B profile has its own dedicated owner EOA).
+          const owningAddrs = Object.entries(state.tokensByAddress)
+            .filter(([, tokens]) => tokens.some(t => t.tokenId === tokenId))
+            .map(([addr]) => addr.toLowerCase())
+
           const updatedTokensByAddress: Record<Address, TokenData[]> = {}
           for (const [addr, tokens] of Object.entries(state.tokensByAddress)) {
             const filtered = tokens.filter(t => t.tokenId !== tokenId)
@@ -219,8 +226,32 @@ export const useTokenDataStore = create<TokenDataStore>()(
               updatedTokensByAddress[addr as Address] = filtered
             }
           }
+
+          // Drop the per-address active pointer for any address that no longer
+          // holds any tokens after this removal.
+          const updatedActiveByAddress = { ...state.activeTokenIdByAddress }
+          for (const addr of owningAddrs) {
+            if (!updatedTokensByAddress[addr as Address]) {
+              delete updatedActiveByAddress[addr as Address]
+            }
+          }
+
+          // Forget the sold profile's passkey credential — it's useless once we
+          // don't control the owner EOA, and leaving it would keep the profile
+          // classified as ours (useWalletPopulation / listing gate). Also forget
+          // an owner-address marker once that address has NO remaining passkey
+          // profiles in the store.
+          clearPasskeyCredential(tokenId)
+          for (const addr of owningAddrs) {
+            const remaining = updatedTokensByAddress[addr as Address] || []
+            if (remaining.length === 0 && isPasskeyAddress(addr)) {
+              clearPasskeyAddress(addr)
+            }
+          }
+
           return {
             tokensByAddress: updatedTokensByAddress,
+            activeTokenIdByAddress: updatedActiveByAddress,
             activeTokenId: state.activeTokenId === tokenId ? undefined : state.activeTokenId,
           }
         }),

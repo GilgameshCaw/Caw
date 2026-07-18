@@ -351,6 +351,25 @@ export default function useTokenDataUpdate() {
       if (res.status !== 'success' || !res.result) return
       const addr = knownAddresses[i]
       if (!addr) return
+      // OWNERSHIP RECONCILE (source of truth = chain). This read SUCCEEDED, so
+      // its token set is authoritative for `addr`. Any NAMED token we still have
+      // stored under `addr` that is NOT in the fresh on-chain set has left this
+      // wallet (sold/transferred) — evict it everywhere (store rows + passkey
+      // credential + active pointers, via removeToken). We gate on success (not
+      // an errored/absent result) so a transient RPC failure can never wipe a
+      // real profile; the empty-result case keeps its existing all-usernameless
+      // guard below. Without this, a sold Pop-B profile lingered in the chooser /
+      // AccountSettings / sales "Switch" button until it was manually cleared.
+      {
+        const onChainIds = new Set(res.result.map(tk => Number(tk.tokenId)))
+        const storedRows = tokensByAddress[addr.toLowerCase() as Address] || []
+        for (const stored of storedRows) {
+          if (stored.username && !onChainIds.has(stored.tokenId)) {
+            console.warn(`[TokenData] ownership reconcile: #${stored.tokenId} @${stored.username} no longer owned by ${addr} — evicting`)
+            useTokenDataStore.getState().removeToken(stored.tokenId)
+          }
+        }
+      }
       const updated: TokenData[] = res.result.map(l1Token => {
         const l1TokenIdBI = BigInt(l1Token.tokenId)
         const l2Token = l2.find(item => BigInt(item.tokenId) === l1TokenIdBI)

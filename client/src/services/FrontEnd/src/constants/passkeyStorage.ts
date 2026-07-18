@@ -59,6 +59,22 @@ export function setPasskeyCredential(tokenId: number | string, credentialId: str
   setJSON(credentialKey(tokenId), credentialId)
 }
 
+/**
+ * Forget a profile's WebAuthn credential. Call when the profile is no longer
+ * owned by this browser's identity (sold/transferred away) — the credential is
+ * useless once we don't control the owner EOA, and leaving it would keep the
+ * profile classified as ours. Safe no-op if the key is absent.
+ */
+export function clearPasskeyCredential(tokenId: number | string): void {
+  try { localStorage.removeItem(credentialKey(tokenId)) } catch { /* storage unavailable */ }
+}
+
+/** Forget an owner address's "is a passkey account" marker. Call only once the
+ *  address holds NO remaining passkey profiles for this browser. */
+export function clearPasskeyAddress(address: string): void {
+  try { localStorage.removeItem(identityKindKey(address)) } catch { /* storage unavailable */ }
+}
+
 // ── Identity-kind marker (per owner address) ─────────────────────────────────
 
 /** True if the given owner address is marked as a passkey (Population-B) account. */
