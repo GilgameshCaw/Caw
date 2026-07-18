@@ -1966,11 +1966,33 @@ router.get('/my-codes', requireAuth({ anySession: true }), async (req, res) => {
   const activeTokenId = requestedId && authorized.includes(requestedId) ? requestedId : null
   const tokenIds = activeTokenId != null ? [activeTokenId] : authorized
 
+  // Pagination over the PERSISTED codes. A prolific buyer can hold thousands; we
+  // page the DB query (take/skip) so neither the query nor the payload is unbounded.
+  // Pending (in-flight, not-yet-indexed) rows are surfaced ONLY on the first page —
+  // they're the freshest activity and belong at the top; paging them makes no sense
+  // since they wink out of TxQueue the moment they index.
+  const DEFAULT_LIMIT = 20
+  const MAX_LIMIT = 100
+  const rawLimit = Number(req.query.limit)
+  const limit = Number.isFinite(rawLimit) && rawLimit > 0 ? Math.min(Math.floor(rawLimit), MAX_LIMIT) : DEFAULT_LIMIT
+  const rawOffset = Number(req.query.offset)
+  const offset = Number.isFinite(rawOffset) && rawOffset > 0 ? Math.floor(rawOffset) : 0
+  const isFirstPage = offset === 0
+
+  const where = { purchasedByTokenId: { in: tokenIds } }
+  const total = await prisma.purchasedInviteCode.count({ where })
+
   const purchased = await prisma.purchasedInviteCode.findMany({
-    where: { purchasedByTokenId: { in: tokenIds } },
+    where,
     orderBy: { createdAt: 'desc' },
+    take: limit,
+    skip: offset,
   })
-  if (purchased.length === 0) return res.status(200).json({ codes: [] })
+  // Empty page beyond the first (or genuinely no codes) — still report total/hasMore
+  // and (on the first page) any pending rows, so the FE can render page controls.
+  const emptyResponse = (pending: any[] = []) =>
+    res.status(200).json({ codes: pending, total, hasMore: offset + limit < total })
+  if (purchased.length === 0 && !isFirstPage) return emptyResponse()
 
   // Pull the linked SponsorCode rows in one query for used/unused + expiry.
   const hashes = purchased.map(p => p.codeHash)
@@ -2006,9 +2028,14 @@ router.get('/my-codes', requireAuth({ anySession: true }), async (req, res) => {
   // TxQueue stores the action in `payload.data.text` as smltxt-compressed hex,
   // so we decompress to test the "sp-i:" prefix. We exclude (senderId, cawonce)
   // pairs that already have a PurchasedInviteCode (those are in `out` above).
+  // Pending rows only on the first page (they're the newest activity, always at the
+  // top). `minted` dedups a pending TxQueue row against a persisted one: since both a
+  // pending purchase and its just-indexed PurchasedInviteCode sort newest-first, the
+  // indexed row is on page 1 too, so building `minted` from this page's rows is
+  // sufficient in practice.
   const minted = new Set(purchased.map(p => `${p.senderId}:${p.cawonce}`))
   let pendingOut: typeof out = []
-  try {
+  if (isFirstPage) try {
     const inflight = await prisma.txQueue.findMany({
       where: {
         senderId: { in: tokenIds },
@@ -2054,8 +2081,14 @@ router.get('/my-codes', requireAuth({ anySession: true }), async (req, res) => {
     console.warn('[my-codes] pending-purchase discovery failed:', e)
   }
 
-  // Pending first (newest activity), then the minted codes.
-  return res.status(200).json({ codes: [...pendingOut, ...out] })
+  // Pending first (newest activity), then this page of minted codes. `total`/`hasMore`
+  // reflect the PERSISTED codes only (pending rows aren't counted — they become
+  // persisted rows once indexed, at which point they're in `total`).
+  return res.status(200).json({
+    codes: [...pendingOut, ...out],
+    total,
+    hasMore: offset + limit < total,
+  })
 })
 
 export default router

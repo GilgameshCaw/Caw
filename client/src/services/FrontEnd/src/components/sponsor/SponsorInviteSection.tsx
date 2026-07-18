@@ -81,6 +81,13 @@ export default function SponsorInviteSection() {
 
   const [quote, setQuote] = useState<InviteQuote | null>(null)
   const [codes, setCodes] = useState<MyCode[]>([])
+  // Server-side pagination over the persisted codes (a prolific buyer can hold
+  // thousands). `offset` is the current page start; `total`/`hasMore` come from the
+  // server. Pending/optimistic rows only ride along on the first page (offset 0).
+  const PAGE_SIZE = 20
+  const [offset, setOffset] = useState(0)
+  const [total, setTotal] = useState(0)
+  const [hasMore, setHasMore] = useState(false)
   // True until the first /my-codes fetch settles, so we show a loader instead of
   // flashing the "no codes yet" empty state before the list has loaded.
   const [loadingCodes, setLoadingCodes] = useState(true)
@@ -109,19 +116,29 @@ export default function SponsorInviteSection() {
       .catch(() => setQuote(null))
   }, [])
 
-  const loadCodes = useCallback(() => {
+  // Load one page of codes at `pageOffset`. The optimistic-placeholder cleanup only
+  // runs on the first page (offset 0), where pending/optimistic rows live.
+  const loadCodes = useCallback((pageOffset: number) => {
     // skipAuthModal: this is an opportunistic read. A 401 here means "not authed for
     // this read" — it must NOT clear the wallet session or pop the auth modal
     // (that's what logged users out right after generating a code via Quick Sign).
-    apiFetch<{ codes: MyCode[] }>('/api/sponsor/my-codes', { skipAuthModal: true })
+    apiFetch<{ codes: MyCode[]; total: number; hasMore: boolean }>(
+      `/api/sponsor/my-codes?limit=${PAGE_SIZE}&offset=${pageOffset}`,
+      { skipAuthModal: true },
+    )
       .then(r => {
         const list = r.codes ?? []
         setCodes(list)
+        setTotal(r.total ?? list.length)
+        setHasMore(r.hasMore ?? false)
         // Drop the optimistic placeholder once the server has its OWN row for the
         // same gift (pending or minted) — otherwise the same purchase double-shows.
-        setOptimisticPending(prev =>
-          prev && list.some(c => c.giftCawWei === prev.giftCawWei) ? null : prev,
-        )
+        // Only relevant on the first page (where pending/optimistic rows appear).
+        if (pageOffset === 0) {
+          setOptimisticPending(prev =>
+            prev && list.some(c => c.giftCawWei === prev.giftCawWei) ? null : prev,
+          )
+        }
       })
       .catch(() => { /* not signed in / none — leave empty */ })
       .finally(() => setLoadingCodes(false))
@@ -136,16 +153,27 @@ export default function SponsorInviteSection() {
     if (isLoggedIn) {
       setCodes([])
       setOptimisticPending(null)
+      setOffset(0)
       setLoadingCodes(true)
-      loadCodes()
+      loadCodes(0)
     } else {
       setLoadingCodes(false)
     }
   }, [loadCodes, isLoggedIn, activeTokenId])
 
+  // Page navigation. Clearing the list + showing the loader avoids one page's rows
+  // flashing under another's page number while the fetch is in flight.
+  const goToPage = useCallback((nextOffset: number) => {
+    setOffset(nextOffset)
+    setCodes([])
+    setLoadingCodes(true)
+    loadCodes(nextOffset)
+  }, [loadCodes])
+
   // The rendered list = server rows, plus the optimistic placeholder if it hasn't
-  // been superseded yet. Optimistic row first (it's the freshest action).
-  const displayCodes = optimisticPending ? [optimisticPending, ...codes] : codes
+  // been superseded yet. Optimistic row first (it's the freshest action) and ONLY on
+  // page 1 — it represents a brand-new purchase, which is always newest.
+  const displayCodes = (optimisticPending && offset === 0) ? [optimisticPending, ...codes] : codes
 
   // While any code is still pending (submitted on-chain, awaiting index) — server
   // row OR the optimistic placeholder — poll every 8s so it flips to a real code
@@ -153,9 +181,12 @@ export default function SponsorInviteSection() {
   const hasPending = displayCodes.some(c => c.pending)
   useEffect(() => {
     if (!hasPending) return
-    const id = setInterval(loadCodes, 8000)
+    // Refetch the CURRENT page. Pending rows only surface on page 1, so a pending
+    // state normally means we're on page 1 anyway; polling `offset` keeps whichever
+    // page the user is on fresh without yanking them back to the top.
+    const id = setInterval(() => loadCodes(offset), 8000)
     return () => clearInterval(id)
-  }, [hasPending, loadCodes])
+  }, [hasPending, loadCodes, offset])
 
   // Gas floor + margin in whole CAW (from the quote) and their USD values.
   const gasFloorCaw = quote ? BigInt(quote.gasFloorCaw) : 0n
@@ -335,13 +366,15 @@ export default function SponsorInviteSection() {
         createdAt: new Date().toISOString(),
         expiresAt: null,
       })
-      // Refetch right away (server should have the TxQueue row by now), then keep
-      // polling so it advances pending → minted without a manual refresh.
-      loadCodes()
+      // A freshly-bought code is the newest → page 1. Snap back to the first page so
+      // the user actually sees it (and the optimistic/pending rows, which only ride
+      // page 1), then refetch + poll page 0 until it advances pending → minted.
+      setOffset(0)
+      loadCodes(0)
       let tries = 0
       const poll = setInterval(() => {
         tries++
-        loadCodes()
+        loadCodes(0)
         if (tries >= 12) { clearInterval(poll); setBuyState('idle') }
       }, 5000)
     } catch (err: any) {
@@ -597,6 +630,40 @@ export default function SponsorInviteSection() {
               </li>
             ))}
           </ul>
+        )}
+
+        {/* Pagination controls — only when the persisted codes span more than one
+            page. Pending/optimistic rows are extra on page 1 and don't affect paging. */}
+        {isLoggedIn && total > PAGE_SIZE && (
+          <div className="flex items-center justify-between gap-3 mt-3">
+            <button
+              type="button"
+              disabled={offset === 0 || loadingCodes}
+              onClick={() => goToPage(Math.max(0, offset - PAGE_SIZE))}
+              className={`px-3 py-1.5 text-sm rounded-lg transition-colors ${
+                offset === 0 || loadingCodes
+                  ? `${mutedClass} cursor-not-allowed opacity-50`
+                  : `cursor-pointer ${isDark ? 'text-white/80 hover:bg-white/10' : 'text-gray-700 hover:bg-black/5'}`
+              }`}
+            >
+              ← Prev
+            </button>
+            <span className={`text-xs ${mutedClass}`}>
+              Page {Math.floor(offset / PAGE_SIZE) + 1} of {Math.ceil(total / PAGE_SIZE)}
+            </span>
+            <button
+              type="button"
+              disabled={!hasMore || loadingCodes}
+              onClick={() => goToPage(offset + PAGE_SIZE)}
+              className={`px-3 py-1.5 text-sm rounded-lg transition-colors ${
+                !hasMore || loadingCodes
+                  ? `${mutedClass} cursor-not-allowed opacity-50`
+                  : `cursor-pointer ${isDark ? 'text-white/80 hover:bg-white/10' : 'text-gray-700 hover:bg-black/5'}`
+              }`}
+            >
+              Next →
+            </button>
+          </div>
         )}
       </div>
 
