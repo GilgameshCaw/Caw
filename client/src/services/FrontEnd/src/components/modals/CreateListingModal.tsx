@@ -10,6 +10,7 @@ import { smartEoaAbi } from '~/../../../abi/generated'
 import { useIdentitySigning } from '~/components/identity/IdentitySigningProvider'
 import { formatAddress } from '~/utils'
 import ModalWrapper from './ModalWrapper'
+import Tooltip from '~/components/Tooltip'
 import { useTheme } from '~/hooks/useTheme'
 import { useEnsureWallet } from '~/hooks/useEnsureWallet'
 import { themeTextSecondary, themeTextMuted, themeInput, themeBorder } from '~/utils/theme'
@@ -868,15 +869,6 @@ const CreateListingModal: React.FC = () => {
                 {popBError && (
                   <div className="p-3 rounded-lg bg-red-500/10 text-red-500 text-sm text-center">{popBError}</div>
                 )}
-                {feeLoaded && !popBSuccess && (
-                  <p className={`text-xs text-center ${themeTextMuted(isDark)}`}>
-                    {canPayCaw && feeCawDisplay != null
-                      ? t('create_listing.popb.fee_caw', { amount: feeCawDisplay.toLocaleString(undefined, { maximumFractionDigits: 2 }) })
-                      : canPayEth && feeEthDisplay != null
-                        ? t('create_listing.popb.fee_eth', { amount: feeEthDisplay.toLocaleString(undefined, { maximumFractionDigits: 6 }) })
-                        : t('create_listing.popb.fee_either')}
-                  </p>
-                )}
                 {needsTopUp && !popBSuccess && (
                   <div className={`p-3 rounded-lg text-sm ${isDark ? 'bg-orange-500/10 text-orange-400' : 'bg-orange-50 text-orange-600'}`}>
                     <p className="text-center whitespace-pre-line">{t('create_listing.popb.topup')}</p>
@@ -919,14 +911,36 @@ const CreateListingModal: React.FC = () => {
                       : t('create_listing.button.list')}
                   </button>
                 </div>
-                {/* Real gas estimate (USD), below the button. Priced against THIS
-                    batch via /execute-estimate, not the flat mainnet ceiling. */}
-                {feeLoaded && !popBSuccess && feeUsd != null && (
-                  <p className={`text-[11px] text-center ${themeTextMuted(isDark)}`}>
-                    {t('create_listing.popb.gas_estimate', {
-                      amount: feeUsd < 0.01 ? '<0.01' : feeUsd.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 }),
-                    })}
-                  </p>
+                {/* ONE fee line: the network gas for the on-chain listing tx, with a
+                    tooltip that breaks it down so it never reads as a marketplace fee
+                    (which is 0%). Priced against THIS batch via /execute-estimate. */}
+                {feeLoaded && !popBSuccess && (
+                  <div className="flex items-center justify-center gap-1">
+                    <span className={`text-[11px] ${themeTextMuted(isDark)}`}>
+                      {feeUsd != null
+                        ? t('create_listing.popb.gas_estimate', {
+                            amount: feeUsd < 0.01 ? '<0.01' : feeUsd.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 }),
+                          })
+                        : canPayCaw && feeCawDisplay != null
+                          ? t('create_listing.popb.gas_caw', { amount: feeCawDisplay.toLocaleString(undefined, { maximumFractionDigits: 2 }) })
+                          : feeEthDisplay != null
+                            ? t('create_listing.popb.gas_eth', { amount: feeEthDisplay.toLocaleString(undefined, { maximumFractionDigits: 6 }) })
+                            : ''}
+                    </span>
+                    <Tooltip
+                      position="top"
+                      text={t('create_listing.popb.gas_tooltip', {
+                        currency: canPayCaw ? 'CAW' : 'ETH',
+                        amount: canPayCaw && feeCawDisplay != null
+                          ? `${feeCawDisplay.toLocaleString(undefined, { maximumFractionDigits: 2 })} CAW`
+                          : feeEthDisplay != null
+                            ? `${feeEthDisplay.toLocaleString(undefined, { maximumFractionDigits: 6 })} ETH`
+                            : '',
+                      })}
+                    >
+                      <span className={`inline-flex h-3.5 w-3.5 items-center justify-center rounded-full border text-[9px] leading-none cursor-help ${isDark ? 'border-white/30 text-white/50' : 'border-black/30 text-black/40'}`}>?</span>
+                    </Tooltip>
+                  </div>
                 )}
               </div>
             ) : (<>
