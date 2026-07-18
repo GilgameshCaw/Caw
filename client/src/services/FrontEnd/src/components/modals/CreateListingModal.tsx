@@ -315,15 +315,18 @@ const CreateListingModal: React.FC = () => {
     // separate approve/confirm step for passkey users — it's one signed batch). Gate
     // the fee quote on 'params', not a 'confirm' step the Pop-B flow never reaches —
     // otherwise feeLoaded stays false and the button is stuck on "estimating fee".
-    if (!isPopB || step !== 'params' || !isOwner || !eoaAccount || !l1Client) return
+    if (!isOpen || !isPopB || step !== 'params' || !isOwner || !eoaAccount || !l1Client) return
     let cancelled = false
     setFeeError(false)
-    ;(async () => {
+    // Fetch the fee quote + BOTH owner-EOA balances. Re-runs whenever the modal
+    // opens (isOpen dep) so a fresh read replaces any stale balance from a prior
+    // open — e.g. the user sent ETH to the owner wallet, then reopened. Also
+    // re-reads the balances on a lightweight interval while the modal is open so
+    // a top-up that lands WHILE the modal is open clears the "send ETH here"
+    // prompt on its own, without a page refresh.
+    const readBalances = async (withQuote: boolean) => {
       try {
-        const [quote, cawBal, ethBal] = await Promise.all([
-          apiFetch<{ relayer: string; minFeeCawWei: string; priceAvailable: boolean; minFeeEthWei: string }>(
-            `/api/sponsor/execute-quote?forwardedValueWei=0`,
-          ),
+        const reads: Promise<any>[] = [
           l1Client.readContract({
             address: CAW_ADDRESS as Address,
             abi: erc20Abi,
@@ -331,18 +334,40 @@ const CreateListingModal: React.FC = () => {
             args: [eoaAccount],
           }) as Promise<bigint>,
           l1Client.getBalance({ address: eoaAccount }),
-        ])
+        ]
+        if (withQuote) {
+          reads.unshift(
+            apiFetch<{ relayer: string; minFeeCawWei: string; priceAvailable: boolean; minFeeEthWei: string }>(
+              `/api/sponsor/execute-quote?forwardedValueWei=0`,
+            ),
+          )
+        }
+        const res = await Promise.all(reads)
         if (cancelled) return
-        setFeeCawWei(quote.priceAvailable ? BigInt(quote.minFeeCawWei) : null)
-        setFeeEthWei(BigInt(quote.minFeeEthWei))
-        setEoaCawWei(cawBal)
-        setEoaEthWei(ethBal)
+        if (withQuote) {
+          const quote = res[0] as { minFeeCawWei: string; priceAvailable: boolean; minFeeEthWei: string }
+          setFeeCawWei(quote.priceAvailable ? BigInt(quote.minFeeCawWei) : null)
+          setFeeEthWei(BigInt(quote.minFeeEthWei))
+          setEoaCawWei(res[1] as bigint)
+          setEoaEthWei(res[2] as bigint)
+        } else {
+          setEoaCawWei(res[0] as bigint)
+          setEoaEthWei(res[1] as bigint)
+        }
       } catch {
-        if (!cancelled) { setFeeCawWei(null); setFeeEthWei(null); setEoaCawWei(null); setEoaEthWei(null); setFeeError(true) }
+        // Only surface the hard error state on the initial (with-quote) load —
+        // a transient poll failure shouldn't blow away a good quote.
+        if (!cancelled && withQuote) {
+          setFeeCawWei(null); setFeeEthWei(null); setEoaCawWei(null); setEoaEthWei(null); setFeeError(true)
+        }
       }
-    })()
-    return () => { cancelled = true }
-  }, [isPopB, step, isOwner, eoaAccount, feeRetry, l1Client])
+    }
+    readBalances(true)
+    // Poll balances every 8s while open (quote is stable enough; only balances
+    // change when a top-up lands). Cleared on close / dep change / unmount.
+    const iv = setInterval(() => { readBalances(false) }, 8000)
+    return () => { cancelled = true; clearInterval(iv) }
+  }, [isOpen, isPopB, step, isOwner, eoaAccount, feeRetry, l1Client])
 
   // Can the EOA cover the fee in CAW? in ETH? Prefer CAW when available.
   const canPayCaw = feeCawWei != null && eoaCawWei != null && eoaCawWei >= feeCawWei
