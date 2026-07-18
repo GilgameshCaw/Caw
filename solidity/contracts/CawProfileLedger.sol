@@ -206,6 +206,14 @@ contract CawProfileLedger is
   ///         Internal: no external getter needed — no caller reads this constant.
   uint256 internal constant MAX_SESSION_SPEND = 1_000_000_000 ether; // 1B CAW
 
+  /// @dev Max gas forwarded to capOracle.recordSample in _lzReceive. Bounds the
+  ///      oracle piggyback so a ratio-push (~165k worst case) can never starve
+  ///      the primary payload dispatch. Must be >= the oracle's worst-case push
+  ///      so the push CAN fire when the L1 budget allowed for it, and it must
+  ///      match the ORACLE_PUSH_GAS budget L1's gasLimitFor adds for a live
+  ///      sample. See docs/GAS_BUDGET_ORACLE_PIGGYBACK_FIX.md.
+  uint256 internal constant ORACLE_RECORD_GAS_CAP = 180_000;
+
   event OwnerSet(uint32 tokenId, address newOwner);
   event UsernameMinted(uint32 tokenId, address owner);
   event Authenticated(uint32 cawNetworkId, uint32 tokenId);
@@ -987,7 +995,19 @@ contract CawProfileLedger is
         cumulative := calldataload(payload.offset)
         priceTs    := shr(224, calldataload(add(payload.offset, 32)))
       }
-      try capOracle.recordSample(cumulative, priceTs) {} catch {
+      // Gas-cap the oracle piggyback. recordSample can synchronously push a new
+      // ratio into CawActions (~165k worst case) when the TWAP crosses its
+      // hysteresis threshold. That push runs BEFORE the primary dispatch below,
+      // so without a cap a push-coinciding message could consume the whole LZ
+      // budget and starve the ownership/session write — the transferAndSync OOG
+      // (zinsanjp). ORACLE_RECORD_GAS_CAP bounds what the oracle can take: the
+      // sample WRITE (cheap, happens first inside recordSample) always lands;
+      // if a push wouldn't fit, recordSample's own internal swallow-on-revert
+      // self-call drops just the push, and CawCapOracle.pushRatioIfStale (the
+      // existing permissionless keeper path) applies the ratio out-of-band.
+      // L1's gasLimitFor sizes the enforced budget to include this cap whenever
+      // a live sample rides along, so the push DOES fire when it should.
+      try capOracle.recordSample{gas: ORACLE_RECORD_GAS_CAP}(cumulative, priceTs) {} catch {
         // Oracle reverts (OOG, invariant break, etc.) must NOT block L1->L2 delivery.
         // A missed sample only makes the TWAP slightly less dense — safe; cap goes
         // dormant under STALE_THRESHOLD if too many samples are dropped.

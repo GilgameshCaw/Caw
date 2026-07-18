@@ -193,20 +193,30 @@ contract CawProfile is
     // lzDepositMintSession: covers all combinations (deposit+mint+auth+session+owners).
     // Worst case is the full bundle; lighter calls (auth-only, deposit-only) overpay
     // slightly but that's fine — gas budget is a ceiling, not a bill.
+    // Every L1->L2 message runs the CawCapOracle.recordSample piggyback on
+    // receipt BEFORE the handler dispatch. When a live price sample crosses the
+    // TWAP hysteresis, recordSample synchronously pushes a new ratio into
+    // CawActions — measured worst case ~165k gas (real CawCapOracle; see
+    // test-foundry/LzReceiveOracleOverhead.t.sol) — and if the budget doesn't
+    // cover it the whole message OOGs at the executor (CouldNotParseError 0x).
+    // That's what starved transferAndSync (zinsanjp): updateOwners' 40k base +
+    // 65k*1 = 105k couldn't fit the ~68k handler + the oracle push. The
+    // allowFreeAuth / setNetworkTipTarget 80k bases had the SAME latent gap —
+    // sized for the cheap sample-write (~35k), not the push.
+    //
+    // Fix: every selector that carries the piggyback now budgets 250k base —
+    // the same value the lzDepositMintSession bundle has always used and which
+    // has covered the oracle push in production. Over-budgeting the lighter
+    // selectors is a non-issue: a gas budget is a ceiling, not a bill, and on L2
+    // at sub-gwei even ~500k gas is a fraction of a cent. This is why no
+    // per-selector recovery-override is needed on these paths — the flat 250k is
+    // generously future-proofed against EVM/LZ repricing on an immutable deploy
+    // (and updateOwners couldn't use the override anyway: it sends with the
+    // networkId=0 sentinel, whose override slot is unsettable).
     gasBaseFor[_lzBundleSelector]                = 250_000;
-    gasBaseFor[_updateOwnersSelector]            =  40_000;
-    // _allowFreeAuth and _setNetworkTipTarget bodies are ~2 SSTOREs each
-    // (~25k), but every L1->L2 message also runs the piggybacked
-    // CawCapOracle.recordSample on receipt (SSTORE on samplesWritten +
-    // SSTORE on the ring-buffer slot + SampleRecorded event + try/catch
-    // frame ≈ 30-35k). The earlier 35k baseline covered the body but
-    // starved the piggyback, causing executor simulation reverts
-    // (CouldNotParseError 0x) on testnet 2026-05-28 — those messages
-    // never delivered. 80k absorbs piggyback + body + delegatecall
-    // overhead with headroom, while leaving the full 100k network-owner
-    // override room available on top for future EVM/L2 changes.
-    gasBaseFor[_allowFreeAuthSelector]           =  80_000;
-    gasBaseFor[_setNetworkTipTargetSelector]     =  80_000;
+    gasBaseFor[_updateOwnersSelector]            = 250_000;
+    gasBaseFor[_allowFreeAuthSelector]           = 250_000;
+    gasBaseFor[_setNetworkTipTargetSelector]     = 250_000;
 
     // Phase 7 ownership handover happens RIGHT HERE in the constructor —
     // the deployer EOA never holds owner authority on CawProfile post-

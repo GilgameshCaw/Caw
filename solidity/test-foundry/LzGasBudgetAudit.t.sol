@@ -143,6 +143,75 @@ contract DepositUpdateOwnersHarness {
 }
 
 // ---------------------------------------------------------------------------
+// Harness A2: updateOwners RE-TRANSFER path (existing owner → new owner)
+//
+// The `updateOwners` selector budget (base + 65k*n) must cover the WORST case:
+// an existing profile changing owners, NOT a fresh mint. On a re-transfer where
+// the token already has a non-zero owner, _setOwnerOf runs two EXTRA epoch-bump
+// SSTOREs (ownerSessionEpoch[prev]++, tokenSessionEpoch[tid]++) that the fresh
+// path skips (prev == address(0)). HarnessA / test_updateOwners_gasTable only
+// ever measures fresh tokenIds, so that branch never fires and the measured
+// cost is the mint path — understating the real transferAndSync cost by ~2 cold
+// SSTOREs per token. This harness mirrors ONLY the updateOwners loop (no deposit
+// writes) and exposes preseed() so the epoch-bump branch is actually exercised.
+// Reported by validator zinsanjp (transferAndSync L1→L2 sync failure).
+// ---------------------------------------------------------------------------
+contract UpdateOwnersReTransferHarness {
+    bool private fromLZ;
+
+    mapping(uint32 => address) public ownerOf;
+    mapping(uint32 => uint64)  public lastOwnerUpdateBlock;
+    mapping(address => uint32) public ownerSessionEpoch;
+    mapping(uint32 => uint32)  public tokenSessionEpoch;
+
+    uint256 public lastGasUsed;
+
+    /// @notice Seed an initial owner for each tokenId so a later transfer hits
+    ///         the `prev != address(0)` epoch-bump branch. NOT measured — this
+    ///         is the "profile already exists" setup, run before the timed call.
+    function preseed(uint32[] calldata tokenIds, address[] calldata owners, uint64 stamp) external {
+        for (uint256 i = 0; i < tokenIds.length; i++) {
+            lastOwnerUpdateBlock[tokenIds[i]] = stamp;
+            ownerOf[tokenIds[i]] = owners[i];
+        }
+    }
+
+    /// @notice Simulate updateOwners for n ownership updates — the pure
+    ///         _setOwnerOf loop, mirroring CawProfileLedger exactly. When the
+    ///         tokenIds were preseed()'d with different owners, the epoch-bump
+    ///         branch fires (the transferAndSync worst case).
+    function simulate(
+        uint32[] calldata updateTokenIds,
+        address[] calldata updateOwners,
+        uint64[] calldata stamps
+    ) external returns (uint256 gasUsed) {
+        uint256 gasBefore = gasleft();
+
+        fromLZ = true;                                           // SSTORE
+        for (uint256 i = 0; i < updateTokenIds.length; i++) {
+            uint32  tid      = updateTokenIds[i];
+            address newOwner = updateOwners[i];
+            uint64  stamp    = stamps[i];
+
+            if (stamp <= lastOwnerUpdateBlock[tid]) continue;    // SLOAD
+            lastOwnerUpdateBlock[tid] = stamp;                   // SSTORE (warm if preseeded)
+
+            address prev = ownerOf[tid];                         // SLOAD
+            if (prev != newOwner && prev != address(0)) {
+                ownerSessionEpoch[prev]++;                       // SSTORE z→nz: 22,100
+                tokenSessionEpoch[tid]++;                        // SSTORE z→nz: 22,100
+            }
+            ownerOf[tid] = newOwner;                             // SSTORE
+        }
+        fromLZ = false;                                          // SSTORE
+
+        uint256 gasAfter = gasleft();
+        gasUsed = gasBefore - gasAfter;
+        lastGasUsed = gasUsed;
+    }
+}
+
+// ---------------------------------------------------------------------------
 // Harness B: setWithdrawable (L2→L1, same harness as SetWithdrawableGas.t.sol)
 // ---------------------------------------------------------------------------
 contract SetWithdrawable2Harness {
@@ -235,6 +304,7 @@ contract ProcessChallengeHarness {
 // ---------------------------------------------------------------------------
 contract LzGasBudgetAuditTest is Test {
     DepositUpdateOwnersHarness harnessA;
+    UpdateOwnersReTransferHarness harnessA2;
     SetWithdrawable2Harness    harnessB;
     ProcessChallengeHarness    harnessC;
 
@@ -242,6 +312,7 @@ contract LzGasBudgetAuditTest is Test {
 
     function setUp() public {
         harnessA = new DepositUpdateOwnersHarness();
+        harnessA2 = new UpdateOwnersReTransferHarness();
         harnessB = new SetWithdrawable2Harness();
         harnessC = new ProcessChallengeHarness();
     }
@@ -432,10 +503,14 @@ contract LzGasBudgetAuditTest is Test {
 
     // -----------------------------------------------------------------------
     // updateOwners-only path (no deposit/auth)
-    // Formula: base=40_000 + 65_000 * n
+    // Formula: base=250_000 + 65_000 * n. Base bumped 40k -> 250k so it covers
+    // the _setOwnerOf handler PLUS the capOracle.recordSample worst-case push
+    // (~165k, see LzReceiveOracleOverhead.t.sol) that rides every L1->L2 message
+    // before the dispatch — the transferAndSync OOG (zinsanjp). 250k matches the
+    // lzDepositMintSession bundle base which has covered the push in production.
     // -----------------------------------------------------------------------
     function _budgetUpdateOwners(uint256 n) internal pure returns (uint256) {
-        return 40_000 + 65_000 * n;
+        return 250_000 + 65_000 * n;
     }
 
     function test_updateOwners_gasTable() public {
@@ -474,4 +549,54 @@ contract LzGasBudgetAuditTest is Test {
             console.log("  lz150=%d safe=%s", lz150, safe ? "YES" : "UNSAFE");
         }
     }
+
+    // -----------------------------------------------------------------------
+    // updateOwners RE-TRANSFER path (existing owner → new owner).
+    //
+    // This is the transferAndSync worst case that test_updateOwners_gasTable
+    // above misses: each token already has a non-zero owner, so _setOwnerOf runs
+    // the two epoch-bump SSTOREs. preseed() sets the initial owner (untimed),
+    // then simulate() measures the transfer to a DIFFERENT owner.
+    // -----------------------------------------------------------------------
+    function _measureUpdateOwnersReTransfer(uint256 n, uint256 baseTokenId) internal returns (uint256) {
+        uint32[]  memory tids      = new uint32[](n);
+        address[] memory oldOwners = new address[](n);
+        address[] memory newOwners = new address[](n);
+        uint64[]  memory stamps    = new uint64[](n);
+        for (uint256 i = 0; i < n; i++) {
+            tids[i]      = uint32(baseTokenId + i);
+            oldOwners[i] = vm.addr(baseTokenId + i + 1);          // initial owner
+            newOwners[i] = vm.addr(baseTokenId + i + 2_000_000);  // distinct new owner
+            stamps[i]    = 2;                                     // > preseed stamp (1)
+        }
+        // Untimed: establish the pre-existing owner (profile already exists).
+        harnessA2.preseed(tids, oldOwners, uint64(1));
+        // Timed: the actual L1→L2 ownership transfer.
+        return harnessA2.simulate(tids, newOwners, stamps);
+    }
+
+    function test_updateOwners_existingOwner_gasTable() public {
+        uint256[3] memory ns    = [uint256(1), 5, 10];
+        uint256[3] memory bases = [uint256(7_400_000), 7_500_000, 7_600_000];
+
+        console.log("=== updateOwners RE-TRANSFER gas (existing owner, epoch-bump branch) ===");
+        for (uint256 i = 0; i < ns.length; i++) {
+            uint256 n      = ns[i];
+            uint256 actual = _measureUpdateOwnersReTransfer(n, bases[i]);
+            uint256 budget = _budgetUpdateOwners(n);
+            uint256 lz150  = budget * 63 / 64;
+            bool safe = actual < lz150 && (lz150 - actual) > SAFETY;
+            console.log("n=%d actual=%d budget=%d", n, actual, budget);
+            console.log("  lz150=%d safe=%s", lz150, safe ? "YES" : "UNSAFE");
+        }
+    }
+
+    // NOTE: intentionally NO _isSafe asserts on the re-transfer path yet.
+    // Measurement shows the epoch-bump (existing-owner) branch is CHEAPER than
+    // the fresh-mint path in isolation — so it is not the source of the observed
+    // transferAndSync OOG. The real unbudgeted cost is the _lzReceive wrapper
+    // itself (capOracle.recordSample piggyback + delegatecall dispatch), which
+    // NEITHER harness models. Adding a hard safety assert here before that
+    // wrapper cost is accounted for would encode the wrong theory. See the
+    // _lzReceive analysis in the accompanying investigation notes.
 }
