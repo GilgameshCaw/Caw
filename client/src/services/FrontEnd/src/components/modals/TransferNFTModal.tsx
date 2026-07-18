@@ -208,8 +208,15 @@ const TransferNFTModal: React.FC = () => {
           }),
         },
       )
-      const feeCaw = quote.priceAvailable ? BigInt(quote.minFeeCawWei) : null
-      const feeEth = BigInt(quote.minFeeEthWei)
+      // Sign for the estimate + 15% HEADROOM. The relayer re-derives the fee
+      // floor from its OWN estimateExecuteFee at submit time; gas price drifts
+      // between our quote and that re-derivation, and the fee is signature-bound
+      // (can't be topped up after signing), so a bare estimate loses a race to a
+      // tick-up in gas → FEE_TOO_LOW. The buffer absorbs that drift; any surplus
+      // just makes the relayer whole. Kept modest — it's ~cents on a sub-dollar fee.
+      const withHeadroom = (v: bigint) => (v * 115n) / 100n
+      const feeCaw = quote.priceAvailable ? withHeadroom(BigInt(quote.minFeeCawWei)) : null
+      const feeEth = withHeadroom(BigInt(quote.minFeeEthWei))
 
       const [cawBalNow, ethBalNow] = await Promise.all([
         l1Client.readContract({ address: CAW_ADDRESS as Address, abi: erc20Abi, functionName: 'balanceOf', args: [eoaAccount as Address] }) as Promise<bigint>,
@@ -217,7 +224,7 @@ const TransferNFTModal: React.FC = () => {
       ])
       const payInCaw = feeCaw != null && cawBalNow >= feeCaw
       // ETH must cover the self-funded LZ fee (attached to the transfer call)
-      // PLUS the relayer's gas repayment leg.
+      // PLUS the relayer's gas repayment leg (buffered).
       const payInEth = ethBalNow >= transferLzFee + feeEth
       if (!payInCaw && !payInEth) throw new Error('INSUFFICIENT_FEE_CAW')
 

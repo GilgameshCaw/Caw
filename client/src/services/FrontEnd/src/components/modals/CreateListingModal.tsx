@@ -459,8 +459,14 @@ const CreateListingModal: React.FC = () => {
           }),
         },
       )
-      const feeCaw = quote.priceAvailable ? BigInt(quote.minFeeCawWei) : null
-      const feeEth = BigInt(quote.minFeeEthWei)
+      // Sign for the estimate + 15% HEADROOM. The relayer re-derives its fee
+      // floor from its OWN estimateExecuteFee at submit; gas drifts between our
+      // quote and that, and the fee is signature-bound (no top-up after signing),
+      // so a bare estimate loses a race to a gas tick-up → FEE_TOO_LOW. The buffer
+      // absorbs the drift; any surplus just makes the relayer whole.
+      const withHeadroom = (v: bigint) => (v * 115n) / 100n
+      const feeCaw = quote.priceAvailable ? withHeadroom(BigInt(quote.minFeeCawWei)) : null
+      const feeEth = withHeadroom(BigInt(quote.minFeeEthWei))
 
       // Hard pre-flight (not just the disabled button) so a race where the gate
       // data hadn't loaded can't submit a doomed batch that would only revert at
