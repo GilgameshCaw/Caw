@@ -804,9 +804,10 @@ const Staking = () => {
           msg = 'Unstake cancelled.'
         } else if (/insufficient/i.test(raw)) {
           msg = 'Not enough staked CAW to unstake that amount.'
-        } else if (raw && raw.length < 160) {
-          msg = `Unstake failed: ${raw}`
         }
+        // Anything unmatched keeps the friendly default ('Unstake failed. Please try
+        // again.') — never surface the raw ethers/RPC string (e.g. "provider
+        // destroyed … UNSUPPORTED_OPERATION"). The raw message stays in console.error.
         toast.error(msg)
       }
     }

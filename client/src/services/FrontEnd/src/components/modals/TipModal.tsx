@@ -11,6 +11,7 @@ import ModalHeader from './ModalHeader'
 import { useHasActiveSession } from '~/hooks/useHasActiveSession'
 import { useWalletPopulation } from '~/hooks/useWalletPopulation'
 import { useT } from '~/i18n/I18nProvider'
+import { formatWalletError } from '~/utils/errorMessage'
 
 const PRESET_USD_AMOUNTS = [1, 5, 10, 20]
 // Floor in USD (not CAW) so the gate matches the user-facing input
@@ -153,7 +154,11 @@ const TipModal: React.FC<TipModalProps> = ({
       if (err.message?.includes('rejected') || err.message?.includes('denied')) {
         setError(t('profile.error.tx_rejected'))
       } else {
-        setError(err.message?.split('\n')[0]?.slice(0, 100) || t('tip.error.failed'))
+        // Route through the shared humanizer so raw ethers/RPC noise (e.g. "provider
+        // destroyed … UNSUPPORTED_OPERATION") never reaches the user; fall back to the
+        // generic tip-failed copy if there's nothing meaningful.
+        const friendly = formatWalletError(err)
+        setError(friendly && friendly !== 'Something went wrong' ? friendly : t('tip.error.failed'))
       }
     }
   }

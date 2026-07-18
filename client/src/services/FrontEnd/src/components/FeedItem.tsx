@@ -913,7 +913,8 @@ const FeedItem: React.FC<{ item: CawItem; isMainPost?: boolean; isReply?: boolea
       window.dispatchEvent(new CustomEvent('caw-hidden', { detail: { id: useItem.id } }))
     } catch (err: any) {
       console.error('[Moderation] hide failed:', err)
-      window.alert('Failed to hide caw. ' + (err?.message ?? ''))
+      // Don't append the raw error to the alert — the full error stays in the console.
+      window.alert('Failed to hide caw. Please try again.')
     }
   }
 

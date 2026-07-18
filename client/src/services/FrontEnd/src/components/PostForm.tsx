@@ -18,6 +18,7 @@ import type { CawItem } from '~/types'
 import { useTheme } from '~/hooks/useTheme'
 import { DesktopDatePicker, DesktopTimePicker } from '~/components/forms/DesktopDateTimePicker'
 import { getUserAvatar } from '~/utils/defaultAvatar'
+import { formatWalletError } from '~/utils/errorMessage'
 import { BsWallet } from 'react-icons/bs'
 import MediaUpload from './MediaUpload'
 import { useHasActiveSession } from '~/hooks/useHasActiveSession'
@@ -1867,9 +1868,12 @@ const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess, placehol
         console.error('[PostForm] submit failed:', error)
         const raw = error?.message || 'Something went wrong while posting.'
         // apiFetch wraps server messages as "API <status>: <detail>" — strip
-        // the prefix so the toast reads like a normal sentence.
+        // the prefix so the toast reads like a normal sentence. Server validation
+        // messages are user-meaningful and pass through; but a raw ethers/RPC error
+        // (e.g. "provider destroyed … UNSUPPORTED_OPERATION") must not leak, so run
+        // the result through the shared humanizer, which rewrites that noise.
         const cleaned = raw.replace(/^API\s+\d+(?:\s+[A-Za-z ]+)?:\s*/, '')
-        toast.error(cleaned)
+        toast.error(formatWalletError(cleaned))
       }
     } finally {
       setIsSubmitting(false)

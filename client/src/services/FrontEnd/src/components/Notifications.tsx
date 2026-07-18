@@ -532,6 +532,17 @@ const Notifications: React.FC = () => {
     if (lower.includes('simulation') || lower.includes('internal error') || lower.includes('rpc')) {
       return 'Something went wrong while processing this action on-chain.'
     }
+    // Transient network / provider teardown (e.g. ethers "provider destroyed;
+    // cancelled request … UNSUPPORTED_OPERATION"). These are retryable hiccups, not
+    // a bad action — say so instead of dumping the raw ethers string.
+    if (
+      lower.includes('provider destroyed') || lower.includes('cancelled request') ||
+      lower.includes('unsupported_operation') || lower.includes('too many requests') ||
+      lower.includes('429') || lower.includes('rate limit') || lower.includes('timeout') ||
+      lower.includes('econnreset') || lower.includes('econnrefused') || lower.includes('enotfound')
+    ) {
+      return 'A temporary network issue interrupted this. Please try again.'
+    }
     // Catch raw JS/engine errors that aren't user-friendly
     if (lower.includes('cannot read properties') || lower.includes('typeerror') || lower.includes('referenceerror') || lower.includes('undefined')) {
       return 'Something went wrong.'
@@ -539,7 +550,13 @@ const Notifications: React.FC = () => {
     // Anything still wrapped in an ethers stack trace at this point is too
     // verbose to show — fall back to a generic message rather than dumping
     // calldata, addresses, or invocation blobs into the notification card.
-    if (cleaned.includes('CALL_EXCEPTION') || cleaned.includes('action="call"') || cleaned.length > 140) {
+    // The ethers markers (code=/version=/operation=) catch raw errors of ANY
+    // length, not just the long ones the >140 guard would.
+    if (
+      cleaned.includes('CALL_EXCEPTION') || cleaned.includes('action="call"') ||
+      cleaned.includes('code=') || cleaned.includes('version=') || cleaned.includes('operation="') ||
+      cleaned.length > 140
+    ) {
       return 'Something went wrong while processing this action on-chain.'
     }
     return cleaned || 'Something went wrong.'

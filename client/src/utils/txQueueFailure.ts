@@ -2,6 +2,7 @@ import { PrismaClient } from '@prisma/client'
 import { countManager } from '../services/CountManager'
 import { decompressActionText } from './decompressActionText'
 import { createNotificationWithGroup } from '../services/NotificationService'
+import { sanitizeFailureReason } from './sanitizeFailureReason'
 
 /**
  * THE single choke point for marking a TxQueue row as failed.
@@ -26,10 +27,17 @@ import { createNotificationWithGroup } from '../services/NotificationService'
 export async function markTxQueueFailed(
   prisma: PrismaClient,
   txQueueId: number,
-  reason: string,
+  rawReason: string,
   senderId: number,
   actionData: any
 ): Promise<void> {
+  // Keep the raw reason for internal branch checks (e.g. "Cawonce already used"),
+  // but store + surface a SANITIZED, user-friendly version so raw ethers/RPC noise
+  // like `provider destroyed; cancelled request (…UNSUPPORTED_OPERATION…)` never
+  // reaches the DB or a notification. This is the server-side choke point.
+  const rawForChecks = rawReason ?? ''
+  const reason = sanitizeFailureReason(rawReason)
+
   // Read the batchId BEFORE the update so we know whether this row is part
   // of a batched-sig group. When N rows share a batchId they all fail
   // together (one batch sig → one on-chain revert → N rows marked failed),
@@ -49,8 +57,9 @@ export async function markTxQueueFailed(
 
   // Don't notify for "Cawonce already used" — the action already succeeded
   // on-chain. This happens when the validator detects a revert but the tx
-  // actually landed, or when a retry collides with the original.
-  if (reason.includes('Cawonce already used')) return
+  // actually landed, or when a retry collides with the original. Check the RAW
+  // reason (the sanitized one rewrites this phrase).
+  if (rawForChecks.includes('Cawonce already used')) return
 
   // Batched failure: only the FIRST row in the group emits a notification.
   // Subsequent rows in the same batch silently fail (their state is still
