@@ -96,6 +96,13 @@ const CODE_INFO_WINDOW_SECONDS = 10 * 60         // 10 minutes
 // Used in the per-redemption budget computation.
 const GAS_LIMIT_BOOTSTRAP_BUDGET = 400_000n
 
+// Dust floor for the /execute fee invariant: the demanded fee is never allowed
+// below this many gas' worth (priced at the same execute-chain gas the estimate
+// used). Guards against a misfired estimate (all inner-call estimateGas calls fell
+// back / a cold RPC) letting a batch repay the relayer ~0. Well below any real
+// batch's true cost, so it never over-charges a legit listing/withdraw.
+const EXECUTE_DUST_FLOOR_GAS = 80_000n
+
 /**
  * PEEK-ONLY per-IP limiter. Returns true if the IP is UNDER the limit, false if
  * at/over. Does NOT increment — a failed/abandoned attempt must not consume a
@@ -940,6 +947,19 @@ const ExecuteBodySchema = z.object({
   sig:   z.string().regex(HEX_RE),
 })
 
+// Body for POST /api/sponsor/execute-estimate: the UNSIGNED batch (no nonce/sig),
+// plus the EOA the inner calls execute as (for estimateGas `from`) and the
+// forwarded ETH value the relayer would attach. UX pre-flight only; no state.
+const ExecuteEstimateBodySchema = z.object({
+  eoaAddress: z.string().regex(ADDR_RE_EXEC),
+  calls: z.array(z.object({
+    to:    z.string().regex(ADDR_RE_EXEC),
+    value: z.string().regex(/^\d+$/),     // wei, decimal string
+    data:  z.string().regex(HEX_RE),
+  })).min(1).max(8),
+  forwardedValueWei: z.string().regex(/^\d+$/).optional(),
+})
+
 /**
  * Decode a `transfer(address to, uint256 amount)` calldata. Returns null if the
  * calldata is not a well-formed ERC-20 transfer (wrong selector or length).
@@ -1664,33 +1684,55 @@ router.post('/execute', async (req, res) => {
     return res.status(400).json({ error: 'MIXED_FEE_CURRENCY', detail: 'Repay the relayer in CAW or ETH, not both.' })
   }
 
+  // FLOOR = the REAL gas of THIS batch (estimateGas per inner call at the execute
+  // chain's live gas price), not the fixed 800K × mainnet-gas ceiling. That ceiling
+  // is right for the invite/withdraw path but wildly over-charges a cheap L1 batch
+  // (a listing ~200K on a near-zero-basefee testnet), so a real ~0.002 ETH balance
+  // looked "insufficient". estimateExecuteFee caps at the SAME 800K ceiling, so the
+  // demanded floor is min(real, ceiling) — never MORE than today.
+  //
+  // GRIEF GUARD: the estimate is derived from live chain state (not client input),
+  // and we additionally clamp the demanded floor to be at least a small dust floor
+  // (DUST_GAS × execute-chain gp) so a pathological under-estimate can't let a batch
+  // repay ~0. relayExecuteBatch still meters real gas at submit and the relayer is
+  // repaid from THIS same fee leg, so worst case is a marginally-underpriced relay,
+  // never a free one.
+  const estimate = await service.estimateExecuteFee(
+    body.smartEoaAddress,
+    body.calls.map(c => ({ to: c.to, value: BigInt(c.value), data: c.data })),
+    forwardedTotalValue,
+  )
+  // Dust floor: never demand below ~80K gas' worth in the paid currency — a lower
+  // "estimate" is almost certainly a misfire (all inner calls failed to estimate and
+  // fell back below this, or a cold RPC). Priced at the SAME execute-chain gas the
+  // estimate used, so units line up.
+  const dustGasWei = EXECUTE_DUST_FLOOR_GAS * (estimate.gasEstimate > 0n ? (estimate.minFeeEthWei / estimate.gasEstimate) : 0n)
+
   if (usesEth) {
-    // ETH-repay (pay-with-ETH zap). Gas priced in ETH; always available (no CAW price).
-    const ethQuote = quoteExecuteGasFeeEth()
-    if (feePaidEthWei < ethQuote.minFeeEthWei) {
+    // ETH-repay (pay-with-ETH zap or listing). Always available (no CAW price).
+    const floorEthWei = estimate.minFeeEthWei > dustGasWei ? estimate.minFeeEthWei : dustGasWei
+    if (feePaidEthWei < floorEthWei) {
       return res.status(400).json({
         error: 'FEE_TOO_LOW',
-        detail: `Batch must transfer at least ${ethQuote.minFeeEthWei} wei ETH to the relayer ` +
+        detail: `Batch must transfer at least ${floorEthWei} wei ETH to the relayer ` +
           `${relayer} to cover gas; batch pays ${feePaidEthWei}. Re-quote and re-sign.`,
       })
     }
   } else {
-    // CAW-repay (withdraw / CAW-deposit). The relayer forwards the inner value as
-    // msg.value (the zero-ETH Pop-B path), so it must be repaid gas + that value in
-    // CAW. Price the floor through quoteExecuteGasFeeCaw(forwardedTotalValue) — the
-    // same forwarded value the relay will attach (self-funded offer ETH excluded, as
-    // the EOA funds that, not the relayer). Needs live CAW/ETH price.
-    const feeQuote = quoteExecuteGasFeeCaw(forwardedTotalValue)
-    if (!feeQuote.priceAvailable) {
+    // CAW-repay (withdraw / CAW-deposit / listing paid in CAW). The relayer forwards
+    // any inner value as msg.value (the zero-ETH Pop-B path), so it must be repaid
+    // gas + that value in CAW — estimateExecuteFee already folds forwardedTotalValue
+    // into minFeeCawWei. Needs live CAW/ETH price.
+    if (!estimate.priceAvailable) {
       return res.status(503).json({
         error: 'PRICE_UNAVAILABLE',
         detail: 'CAW/ETH price is unavailable or stale; cannot price the relay fee. Try again shortly.',
       })
     }
-    if (feePaidCawWei < feeQuote.minFeeCawWei) {
+    if (feePaidCawWei < estimate.minFeeCawWei) {
       return res.status(400).json({
         error: 'FEE_TOO_LOW',
-        detail: `Batch must transfer at least ${feeQuote.minFeeCawWei} CAW (wei) to the relayer ` +
+        detail: `Batch must transfer at least ${estimate.minFeeCawWei} CAW (wei) to the relayer ` +
           `${relayer} to cover gas; batch pays ${feePaidCawWei}. Re-quote and re-sign.`,
       })
     }
@@ -1941,6 +1983,66 @@ router.get('/execute-quote', async (req, res) => {
     cawAddress: CAW_ADDRESS,
     // ETH-repay field (pay-with-ETH zap). Always available (gas-only, no CAW price).
     minFeeEthWei: ethQuote.minFeeEthWei.toString(),
+  })
+})
+
+// ─── POST /api/sponsor/execute-estimate ──────────────────────────────────────
+// Public. Like /execute-quote, but priced against the REAL gas of a SPECIFIC
+// batch (estimateGas per inner call) at the EXECUTE CHAIN's live gas price,
+// instead of /execute-quote's fixed 800K-gas × mainnet-gas ceiling. That fixed
+// quote is correct for the invite-code path (pre-funding a FUTURE mainnet
+// redemption) but wildly over-quotes a cheap L1 batch (e.g. a marketplace
+// listing = approve + createListing, ~200K gas) when the execute chain is a
+// near-zero-basefee testnet — a real ~0.002 ETH balance looked "insufficient"
+// against an 800K × mainnet-gas quote.
+//
+// This is a UX/viability pre-flight, NOT the trust boundary: relayExecuteBatch
+// still does its own pre-submit staticCall+estimateGas at submit time and the
+// /execute route's fee floor is re-derived server-side from the SAME
+// estimateExecuteFee call against the actual signed batch (see below) — a
+// forged/low client-side estimate here cannot under-pay what /execute demands.
+router.post('/execute-estimate', async (req, res) => {
+  const service = getSponsorService()
+  if (!service) {
+    return res.status(503).json({ error: 'SPONSOR_DISABLED', detail: 'Sponsored relay is not enabled on this node' })
+  }
+  // Rate-limit: each request fans out to up to 8 estimateGas RPC calls, so cap it
+  // per-IP (shares the deposit/auth bucket) to bound RPC amplification. Read-only,
+  // so this is DoS hygiene, not a fund-safety gate.
+  const ip = clientIp(req)
+  const allowed = await checkSponsorRateLimit(ip, 'authenticate')
+  if (!allowed) {
+    return res.status(429).json({ error: 'RATE_LIMITED', detail: `Estimate limit is ${DEPOSIT_AUTH_RATE_LIMIT} per IP per day` })
+  }
+
+  let body: z.infer<typeof ExecuteEstimateBodySchema>
+  try {
+    body = ExecuteEstimateBodySchema.parse(req.body)
+  } catch (e) {
+    const detail = e instanceof ZodError ? e.issues.map(i => `${i.path.join('.')}: ${i.message}`).join(', ') : String(e)
+    return res.status(400).json({ error: 'VALIDATION', detail })
+  }
+
+  let forwardedValueWei = 0n
+  try { forwardedValueWei = BigInt(body.forwardedValueWei ?? '0') } catch {
+    return res.status(400).json({ error: 'VALIDATION', detail: 'Invalid forwardedValueWei' })
+  }
+
+  const estimate = await service.estimateExecuteFee(
+    body.eoaAddress,
+    body.calls.map(c => ({ to: c.to, value: BigInt(c.value), data: c.data })),
+    forwardedValueWei,
+  )
+
+  return res.status(200).json({
+    relayer: service.relayerAddress(),
+    minFeeEthWei: estimate.minFeeEthWei.toString(),
+    minFeeCawWei: estimate.minFeeCawWei.toString(),
+    priceAvailable: estimate.priceAvailable,
+    cawAddress: CAW_ADDRESS,
+    gasEstimate: estimate.gasEstimate.toString(),
+    feeEthUsd: estimate.feeEthUsd,
+    ethUsd: estimate.ethUsd,
   })
 })
 

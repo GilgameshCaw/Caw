@@ -308,6 +308,48 @@ const CreateListingModal: React.FC = () => {
   // re-runs the fetch effect.
   const [feeError, setFeeError] = useState(false)
   const [feeRetry, setFeeRetry] = useState(0)
+  // USD value of the estimated gas fee (from the real-estimate endpoint), shown
+  // under the submit button. null until the estimate resolves / when price is off.
+  const [feeUsd, setFeeUsd] = useState<number | null>(null)
+
+  // Build the LISTING calls (approve-if-needed + createListing) WITHOUT the fee
+  // leg. Shared by the gas-estimate effect (so the quote reflects THIS batch) and
+  // handlePopBList (which appends the fee leg before signing). Returns null when
+  // the params aren't valid yet (no price) so we don't estimate a garbage batch.
+  const buildListingCalls = useCallback(async (): Promise<ExecCall[] | null> => {
+    if (!eoaAccount || tokenId === null || !l1Client) return null
+    if (!startPrice || parseFloat(startPrice) <= 0) return null
+    const selectedToken = PAYMENT_OPTIONS.find(o => o.value === paymentToken)
+    const decimals = selectedToken?.decimals ?? 18
+    const duration = BigInt(parseInt(durationHours || '0') * 3600)
+    const isNativeEth = paymentToken === '0x0000000000000000000000000000000000000000'
+    let startPriceWei: bigint, endPriceWei: bigint
+    try {
+      startPriceWei = isNativeEth ? parseEther(startPrice) : parseUnits(startPrice, decimals)
+      endPriceWei = listingType === 1
+        ? (isNativeEth ? parseEther(endPrice || '0') : parseUnits(endPrice || '0', decimals))
+        : 0n
+    } catch { return null }
+    const alreadyApproved = (await l1Client.readContract({
+      address: CAW_NAMES_ADDRESS, abi: cawProfileAbi, functionName: 'isApprovedForAll',
+      args: [eoaAccount, CAW_NAME_MARKETPLACE_ADDRESS],
+    })) as boolean
+    const calls: ExecCall[] = []
+    if (!alreadyApproved) {
+      calls.push({
+        to: CAW_NAMES_ADDRESS, value: 0n,
+        data: encodeFunctionData({ abi: cawProfileAbi, functionName: 'setApprovalForAll', args: [CAW_NAME_MARKETPLACE_ADDRESS, true] }),
+      })
+    }
+    calls.push({
+      to: CAW_NAME_MARKETPLACE_ADDRESS, value: 0n,
+      data: encodeFunctionData({
+        abi: cawProfileMarketplaceAbi, functionName: 'createListing',
+        args: [tokenId, listingType, paymentToken as `0x${string}`, startPriceWei, endPriceWei, duration],
+      }),
+    })
+    return calls
+  }, [eoaAccount, tokenId, l1Client, startPrice, endPrice, paymentToken, durationHours, listingType])
 
   // Fetch both fee quotes (CAW + ETH) and both EOA balances once a Pop-B owner is on
   // the params step (where the relayed-listing button shows), so we can pick whichever
@@ -328,48 +370,55 @@ const CreateListingModal: React.FC = () => {
     // prompt on its own, without a page refresh.
     const readBalances = async (withQuote: boolean) => {
       try {
-        const reads: Promise<any>[] = [
+        // On the quote pass, price the fee against the REAL gas of THIS batch via
+        // /execute-estimate (estimateGas per inner call at the execute chain's live
+        // gas price) — NOT the fixed 800K × mainnet-gas ceiling, which over-quotes
+        // a cheap L1 listing so a real ~0.002 ETH balance looked "insufficient". If
+        // the calls can't be built yet (no price entered), fall back to the flat
+        // GET quote so the button still shows a number.
+        let quotePromise: Promise<{ minFeeCawWei: string; priceAvailable: boolean; minFeeEthWei: string; feeEthUsd?: number | null }> | null = null
+        if (withQuote) {
+          const calls = await buildListingCalls()
+          quotePromise = calls
+            ? apiFetch('/api/sponsor/execute-estimate', {
+                method: 'POST',
+                body: JSON.stringify({
+                  eoaAddress: eoaAccount,
+                  calls: calls.map(c => ({ to: c.to, value: c.value.toString(), data: c.data })),
+                  forwardedValueWei: '0',
+                }),
+              })
+            : apiFetch(`/api/sponsor/execute-quote?forwardedValueWei=0`)
+        }
+        const [quote, cawBal, ethBal] = await Promise.all([
+          quotePromise,
           l1Client.readContract({
-            address: CAW_ADDRESS as Address,
-            abi: erc20Abi,
-            functionName: 'balanceOf',
-            args: [eoaAccount],
+            address: CAW_ADDRESS as Address, abi: erc20Abi, functionName: 'balanceOf', args: [eoaAccount],
           }) as Promise<bigint>,
           l1Client.getBalance({ address: eoaAccount }),
-        ]
-        if (withQuote) {
-          reads.unshift(
-            apiFetch<{ relayer: string; minFeeCawWei: string; priceAvailable: boolean; minFeeEthWei: string }>(
-              `/api/sponsor/execute-quote?forwardedValueWei=0`,
-            ),
-          )
-        }
-        const res = await Promise.all(reads)
+        ])
         if (cancelled) return
-        if (withQuote) {
-          const quote = res[0] as { minFeeCawWei: string; priceAvailable: boolean; minFeeEthWei: string }
+        if (withQuote && quote) {
           setFeeCawWei(quote.priceAvailable ? BigInt(quote.minFeeCawWei) : null)
           setFeeEthWei(BigInt(quote.minFeeEthWei))
-          setEoaCawWei(res[1] as bigint)
-          setEoaEthWei(res[2] as bigint)
-        } else {
-          setEoaCawWei(res[0] as bigint)
-          setEoaEthWei(res[1] as bigint)
+          setFeeUsd(typeof quote.feeEthUsd === 'number' ? quote.feeEthUsd : null)
         }
+        setEoaCawWei(cawBal)
+        setEoaEthWei(ethBal)
       } catch {
         // Only surface the hard error state on the initial (with-quote) load —
         // a transient poll failure shouldn't blow away a good quote.
         if (!cancelled && withQuote) {
-          setFeeCawWei(null); setFeeEthWei(null); setEoaCawWei(null); setEoaEthWei(null); setFeeError(true)
+          setFeeCawWei(null); setFeeEthWei(null); setEoaCawWei(null); setEoaEthWei(null); setFeeUsd(null); setFeeError(true)
         }
       }
     }
     readBalances(true)
-    // Poll balances every 8s while open (quote is stable enough; only balances
-    // change when a top-up lands). Cleared on close / dep change / unmount.
+    // Poll balances every 8s while open (only balances change when a top-up lands;
+    // the estimate is stable). Cleared on close / dep change / unmount.
     const iv = setInterval(() => { readBalances(false) }, 8000)
     return () => { cancelled = true; clearInterval(iv) }
-  }, [isOpen, canRelayViaPasskey, step, isOwner, eoaAccount, feeRetry, l1Client])
+  }, [isOpen, canRelayViaPasskey, step, isOwner, eoaAccount, feeRetry, l1Client, buildListingCalls])
 
   // Can the EOA cover the fee in CAW? in ETH? Prefer CAW when available.
   const canPayCaw = feeCawWei != null && eoaCawWei != null && eoaCawWei >= feeCawWei
@@ -384,14 +433,26 @@ const CreateListingModal: React.FC = () => {
     setPopBError(null)
     setPopBPending(true)
     try {
-      // Fresh quote at submit time (price/gas can drift since the effect ran).
+      // Build the listing calls (approve-if-needed + createListing), then price the
+      // fee against the REAL gas of THIS batch via /execute-estimate (estimateGas at
+      // the execute chain's live gas price) — matching the floor the /execute relay
+      // re-derives from the same call. Fresh at submit time (gas can drift).
+      const listingCalls = await buildListingCalls()
+      if (!listingCalls) throw new Error('INVALID_PARAMS')
       const quote = await apiFetch<{ relayer: string; minFeeCawWei: string; priceAvailable: boolean; minFeeEthWei: string }>(
-        `/api/sponsor/execute-quote?forwardedValueWei=0`,
+        '/api/sponsor/execute-estimate',
+        {
+          method: 'POST',
+          body: JSON.stringify({
+            eoaAddress: eoaAccount,
+            calls: listingCalls.map(c => ({ to: c.to, value: c.value.toString(), data: c.data })),
+            forwardedValueWei: '0',
+          }),
+        },
       )
       const feeCaw = quote.priceAvailable ? BigInt(quote.minFeeCawWei) : null
       const feeEth = BigInt(quote.minFeeEthWei)
 
-      // Pick the fee currency: prefer CAW when the EOA holds enough, else ETH.
       // Hard pre-flight (not just the disabled button) so a race where the gate
       // data hadn't loaded can't submit a doomed batch that would only revert at
       // relay simulation (SIMULATION_FAILED).
@@ -407,45 +468,7 @@ const CreateListingModal: React.FC = () => {
       const payInEth = ethBalNow >= feeEth
       if (!payInCaw && !payInEth) throw new Error('INSUFFICIENT_FEE_CAW')
 
-      const selectedToken = PAYMENT_OPTIONS.find(o => o.value === paymentToken)
-      const decimals = selectedToken?.decimals ?? 18
-      const duration = BigInt(parseInt(durationHours) * 3600)
-      const startPriceWei = paymentToken === '0x0000000000000000000000000000000000000000'
-        ? parseEther(startPrice) : parseUnits(startPrice, decimals)
-      const endPriceWei = listingType === 1
-        ? (paymentToken === '0x0000000000000000000000000000000000000000'
-            ? parseEther(endPrice) : parseUnits(endPrice, decimals))
-        : 0n
-
-      // Skip the approve call if the marketplace is already an operator for the EOA.
-      const alreadyApproved = (await l1Client.readContract({
-        address: CAW_NAMES_ADDRESS,
-        abi: cawProfileAbi,
-        functionName: 'isApprovedForAll',
-        args: [eoaAccount, CAW_NAME_MARKETPLACE_ADDRESS],
-      })) as boolean
-
-      const calls: ExecCall[] = []
-      if (!alreadyApproved) {
-        calls.push({
-          to: CAW_NAMES_ADDRESS,
-          value: 0n,
-          data: encodeFunctionData({
-            abi: cawProfileAbi,
-            functionName: 'setApprovalForAll',
-            args: [CAW_NAME_MARKETPLACE_ADDRESS, true],
-          }),
-        })
-      }
-      calls.push({
-        to: CAW_NAME_MARKETPLACE_ADDRESS,
-        value: 0n,
-        data: encodeFunctionData({
-          abi: cawProfileMarketplaceAbi,
-          functionName: 'createListing',
-          args: [tokenId, listingType, paymentToken as `0x${string}`, startPriceWei, endPriceWei, duration],
-        }),
-      })
+      const calls: ExecCall[] = [...listingCalls]
       // Fee leg: repay the relayer (gas only, no forwarded value). Prefer CAW when
       // the EOA holds enough; otherwise a raw ETH transfer to the relayer (the
       // relay accepts either — CAW.transfer(relayer) OR to=relayer/empty-data/value).
@@ -512,7 +535,7 @@ const CreateListingModal: React.FC = () => {
     } finally {
       setPopBPending(false)
     }
-  }, [canRelayViaPasskey, eoaAccount, tokenId, l1Client, listingCredential, paymentToken, durationHours, startPrice, endPrice, listingType, startSigning, stopSigning, t])
+  }, [canRelayViaPasskey, eoaAccount, tokenId, l1Client, listingCredential, buildListingCalls, startSigning, stopSigning, t])
 
   const inputClass = `w-full px-3 py-2 rounded-lg text-sm border outline-none transition ${themeInput(isDark)} ${themeBorder(isDark)}`
 
@@ -896,6 +919,15 @@ const CreateListingModal: React.FC = () => {
                       : t('create_listing.button.list')}
                   </button>
                 </div>
+                {/* Real gas estimate (USD), below the button. Priced against THIS
+                    batch via /execute-estimate, not the flat mainnet ceiling. */}
+                {feeLoaded && !popBSuccess && feeUsd != null && (
+                  <p className={`text-[11px] text-center ${themeTextMuted(isDark)}`}>
+                    {t('create_listing.popb.gas_estimate', {
+                      amount: feeUsd < 0.01 ? '<0.01' : feeUsd.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 }),
+                    })}
+                  </p>
+                )}
               </div>
             ) : (<>
             {!isApproved && !isApproveSuccess && (

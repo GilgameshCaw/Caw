@@ -227,9 +227,19 @@ export function quoteExecuteGasFeeCaw(forwardedValueWei: bigint = 0n, gasPriceWe
   // Relayer fronts gas AND the forwarded ETH value (the LZ fee on a withdraw).
   // Both must be repaid in CAW or relaying is a subsidy.
   const ethCostWei = gasWei + (forwardedValueWei > 0n ? forwardedValueWei : 0n)
-  // wei-ETH * (CAW-per-ETH scaled 1e18) / 1e18 = wei-CAW.
-  const minFeeCawWei = (ethCostWei * cawPrice.cawPerEth) / (10n ** 18n)
+  const minFeeCawWei = weiEthToWeiCaw(ethCostWei, cawPrice.cawPerEth)
   return { minFeeCawWei, priceAvailable: true }
+}
+
+/**
+ * Convert a wei-ETH amount to wei-CAW (18-dec, matching an ERC-20 `transfer`
+ * amount) using the cached cawPerEth rate ("CAW per 1 ETH", scaled by 1e18).
+ * Shared by quoteExecuteGasFeeCaw and SponsorService.estimateExecuteFee so both
+ * price a CAW repay against the EXACT same formula.
+ */
+export function weiEthToWeiCaw(weiEth: bigint, cawPerEth: bigint): bigint {
+  // wei-ETH * (CAW-per-ETH scaled 1e18) / 1e18 = wei-CAW.
+  return (weiEth * cawPerEth) / (10n ** 18n)
 }
 
 /**

@@ -26,7 +26,6 @@ import {
   Transaction,
   Interface,
   Signature,
-  toBeHex,
   verifyAuthorization,
   authorizationify,
   AbiCoder,
@@ -44,6 +43,8 @@ import { makeJsonRpcProvider, getL2HttpRpcUrl } from '../../utils/rpcProvider'
 import { withWalletLock } from '../../utils/walletQueue'
 import { cawProfileMinterAbi, smartEoaAbi, cawProfileAbi, cawNetworkManagerAbi } from '../../abi/generated'
 import { pokeIndexTokenId } from '../../api/util/indexerPoke'
+import { getCawPriceCache, getEthPriceCache } from '../ChainSyncService'
+import { weiEthToWeiCaw } from './inviteQuote'
 
 // ─── Param types ────────────────────────────────────────────────────────────
 
@@ -191,8 +192,38 @@ const GAS_LIMIT_AUTHENTICATE = 250_000n
 // one passkey, no mint, no external Minter call). Much lighter than bootstrap.
 const GAS_LIMIT_DELEGATE_L2 = 350_000n
 // executeBatch relay: a withdraw (L1 CAW transfer + LZ send) or a zap. Generous
-// ceiling covering the inner withdrawTo/depositZap + the ERC-1271 verify.
+// ceiling covering the inner withdrawTo/depositZap + the ERC-1271 verify. Also
+// used as the UPPER CEILING for the per-batch estimate in estimateExecuteFee —
+// a pathological/griefed estimate can never demand more than this floor.
 const GAS_LIMIT_EXECUTE_BATCH = 800_000n
+
+// ── estimateExecuteFee tuning ────────────────────────────────────────────────
+// Fixed overhead NOT captured by summing each inner call's estimateGas: the
+// executeBatch wrapper itself (ERC-1271/WebAuthn sig verify, nonce bump, Call[]
+// dispatch loop) plus the in-batch fee leg (an ERC20 transfer or a raw ETH send
+// to the relayer). Both run inside the SAME tx as the inner calls but are not
+// part of `calls` when the FE asks for a quote (chicken/egg: the fee leg's
+// amount depends on the estimate).
+const EXECUTE_BATCH_WRAPPER_OVERHEAD_GAS = 40_000n
+const EXECUTE_FEE_LEG_OVERHEAD_GAS = 40_000n
+// Safety pad on the summed + overhead estimate — mirrors relayExecuteBatch's own
+// ×1.25 headroom on the real pre-submit estimate (index.ts, `padded` above).
+const EXECUTE_ESTIMATE_PAD_NUM = 125n
+const EXECUTE_ESTIMATE_PAD_DEN = 100n
+// Fallback per-call gas when an individual inner-call estimateGas throws (e.g. an
+// approve that's a no-op in isolation, or a call whose success depends on batch
+// ordering). Keyed by selector; anything unrecognised falls back to the most
+// conservative bucket (createListing-sized) so an unknown call never under-quotes.
+const FALLBACK_GAS_APPROVE = 55_000n
+const FALLBACK_GAS_TRANSFER = 45_000n
+const FALLBACK_GAS_MARKETPLACE = 220_000n
+const SEL_ERC20_APPROVE = '0x095ea7b3'   // approve(address,uint256)
+const SEL_ERC20_TRANSFER_FALLBACK = '0xa9059cbb' // transfer(address,uint256)
+// LAST-RESORT execute-chain gas price floor, used only when getFeeData() returns
+// nothing usable (no RPC / brand-new local chain). 3 gwei mirrors the mainnet
+// degraded floor in inviteQuote.ts — modest so an outage doesn't wildly over- or
+// under-charge.
+const EXECUTE_GAS_PRICE_FALLBACK_WEI = 3_000_000_000n
 
 // ─── Known revert reason selectors (keccak256 of the error string) ───────────
 // We match on lowercased substring of the revert reason since contracts may
@@ -1140,6 +1171,109 @@ export class SponsorService {
     } catch (err) {
       return parseRevertError(err)
     }
+  }
+
+  /**
+   * Estimate the REAL gas cost of a specific executeBatch call set, priced at the
+   * EXECUTE CHAIN's live gas price (not the mainnet cache quoteExecuteGasFeeEth/Caw
+   * use for invite-code pricing). Fixes the over-quote where a cheap ~200K-gas
+   * listing batch was priced against the fixed 800K ceiling × mainnet gas — wildly
+   * wrong when the execute chain is a near-zero-basefee testnet.
+   *
+   * Each inner call is estimated INDIVIDUALLY with `from = eoaAddress`, because
+   * inside executeBatch the inner calls run with msg.sender = the SmartEOA itself
+   * (Call.to/value/data dispatched via the EOA's own context), not the relayer. A
+   * per-call estimate that reverts in isolation (e.g. `approve` when an existing
+   * allowance already covers the spend, or a call whose validity depends on batch
+   * ordering) falls back to a conservative selector-keyed default rather than
+   * failing the whole quote — this is a UX estimate, not the trust boundary (the
+   * relay's own pre-submit staticCall+estimateGas in relayExecuteBatch is that).
+   *
+   * This is INTENTIONALLY GRIEFABLE in one direction only: a caller could shape
+   * `calls` to make the estimate LOW (e.g. pass calls that individually look
+   * cheap), but /execute always re-validates the ACTUAL signed batch and its own
+   * relayExecuteBatch simulation still meters real gas and the relayer is repaid
+   * from the fee leg checked against this same estimate — so the worst case is a
+   * marginally underpriced relay, not a free one (the sanity dust floor the caller
+   * applies on top of this bounds that further). It is not griefable HIGH: this
+   * method sums per-call estimates against live chain state and caps at the
+   * existing 800K ceiling, so it can never be tricked into UNDER-estimating below
+   * the dust floor the /execute route also enforces.
+   */
+  async estimateExecuteFee(
+    eoaAddress: string,
+    calls: { to: string; value: bigint; data: string }[],
+    forwardedValueWei: bigint = 0n,
+  ): Promise<{
+    gasEstimate: bigint
+    minFeeEthWei: bigint
+    minFeeCawWei: bigint
+    priceAvailable: boolean
+    ethUsd: number | null
+    feeEthUsd: number | null
+  }> {
+    const fallbackGasFor = (data: string): bigint => {
+      const sel = (data || '').slice(0, 10).toLowerCase()
+      if (sel === SEL_ERC20_APPROVE) return FALLBACK_GAS_APPROVE
+      if (sel === SEL_ERC20_TRANSFER_FALLBACK) return FALLBACK_GAS_TRANSFER
+      return FALLBACK_GAS_MARKETPLACE
+    }
+
+    let summedGas = 0n
+    for (const c of calls) {
+      try {
+        const est = await this.provider.estimateGas({
+          from: eoaAddress,
+          to: c.to,
+          data: c.data,
+          value: c.value,
+        })
+        summedGas += est
+      } catch (e) {
+        console.warn(
+          `[SponsorService.estimateExecuteFee] per-call estimateGas failed for to=${c.to} ` +
+          `data=${(c.data || '').slice(0, 10)}; falling back to a conservative default.`, e,
+        )
+        summedGas += fallbackGasFor(c.data)
+      }
+    }
+
+    // Wrapper overhead (sig verify + dispatch) + the in-batch fee leg itself.
+    const withOverhead = summedGas + EXECUTE_BATCH_WRAPPER_OVERHEAD_GAS + EXECUTE_FEE_LEG_OVERHEAD_GAS
+    const padded = (withOverhead * EXECUTE_ESTIMATE_PAD_NUM) / EXECUTE_ESTIMATE_PAD_DEN
+    const gasEstimate = padded > GAS_LIMIT_EXECUTE_BATCH ? GAS_LIMIT_EXECUTE_BATCH : padded
+
+    let gp: bigint
+    try {
+      const fd = await this.provider.getFeeData()
+      gp = fd.maxFeePerGas ?? fd.gasPrice ?? EXECUTE_GAS_PRICE_FALLBACK_WEI
+      if (gp <= 0n) gp = EXECUTE_GAS_PRICE_FALLBACK_WEI
+    } catch {
+      gp = EXECUTE_GAS_PRICE_FALLBACK_WEI
+    }
+
+    const minFeeEthWei = gasEstimate * gp
+
+    const cawPrice = getCawPriceCache()
+    const ethPrice = getEthPriceCache()
+    let minFeeCawWei = 0n
+    let priceAvailable = false
+    let ethUsd: number | null = null
+    let feeEthUsd: number | null = null
+    if (cawPrice && cawPrice.cawPerEth > 0n) {
+      // Same forwarded-value handling as quoteExecuteGasFeeCaw: the relayer also
+      // fronts any forwarded inner value (e.g. a withdraw's LZ fee) on CAW-repay
+      // batches, so that must be repaid in CAW too.
+      const ethCostWei = minFeeEthWei + (forwardedValueWei > 0n ? forwardedValueWei : 0n)
+      minFeeCawWei = weiEthToWeiCaw(ethCostWei, cawPrice.cawPerEth)
+      priceAvailable = true
+    }
+    if (ethPrice && ethPrice.usdPerEth > 0n) {
+      ethUsd = Number(ethPrice.usdPerEth) / 1e6
+      feeEthUsd = (Number(minFeeEthWei) / 1e18) * ethUsd
+    }
+
+    return { gasEstimate, minFeeEthWei, minFeeCawWei, priceAvailable, ethUsd, feeEthUsd }
   }
 
   // ── Helpers ─────────────────────────────────────────────────────────────
