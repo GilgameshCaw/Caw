@@ -63,8 +63,8 @@ depends on whether the path accepts a caller-supplied bitmap — see §2.
 
 | Enforcement | Contract | Test | Assertion |
 |---|---|---|---|
-| **revert** (wallet-scoped) | `CawProfileLedger.sol:741` — `if ((scopeBitmap & 0x40) != 0) revert NoWithdraw();` | `test-foundry/SessionRegisterFuzz.t.sol` — `testFuzz_WithdrawDelegationBlocked` (L200) | **L213** `vm.expectRevert(abi.encodeWithSelector(CawProfileLedger.NoWithdraw.selector));` |
-| **mask** (token-scoped) | `CawProfileLedger.sol:824` — `uint8 bm = scopeBitmap & 0xBF;` | `test/token-scoped-sessions-test.js` — test 9 (L554) — *blocked by #195* | **L563** `expect(Number(sess.scopeBitmap)).to.equal(0xBF, ...)` |
+| **revert** (wallet-scoped) | `CawProfileLedger.sol:749` — `if ((scopeBitmap & 0x40) != 0) revert NoWithdraw();` | `test-foundry/SessionRegisterFuzz.t.sol` — `testFuzz_WithdrawDelegationBlocked` (L200) | **L213** `vm.expectRevert(abi.encodeWithSelector(CawProfileLedger.NoWithdraw.selector));` |
+| **mask** (token-scoped) | `CawProfileLedger.sol:832` — `uint8 bm = scopeBitmap & 0xBF;` | `test/token-scoped-sessions-test.js` — test 9 (L554) — *blocked by #195* | **L563** `expect(Number(sess.scopeBitmap)).to.equal(0xBF, ...)` |
 
 The fuzz test sets bit 6 **plus arbitrary other bits**
 (`uint8 scope = 0x40 | (extraBits & 0xBF)`, L206) across the full fuzz domain, so
@@ -98,7 +98,7 @@ remains 5000. This proves the accumulator and its storage round trip, not a
 per-call bound.
 
 > **Integrator note.** `spendLimit == 0` is **unlimited**, not zero-spend —
-> documented at `CawProfileLedger.sol:726` and gated at `CawActions.sol:1380`
+> documented at `CawProfileLedger.sol:734` and gated at `CawActions.sol:1380`
 > (`if (ba.spendLimit > 0)`). It reads like the opposite of what it does.
 
 ---
@@ -109,7 +109,7 @@ Checked on two sides:
 
 | Side | Contract | Test | Assertion |
 |---|---|---|---|
-| **Register-time** | `CawProfileLedger.sol` `Expired()` (also `:800`, `:894` on trusted-caller paths) | `test-foundry/SessionRegisterFuzz.t.sol` — `testFuzz_RejectsExpired` (L84) | **L96** `vm.expectRevert(abi.encodeWithSelector(CawProfileLedger.Expired.selector));` |
+| **Register-time** | `CawProfileLedger.sol` `Expired()` (also `:808`, `:902` on trusted-caller paths) | `test-foundry/SessionRegisterFuzz.t.sol` — `testFuzz_RejectsExpired` (L84) | **L96** `vm.expectRevert(abi.encodeWithSelector(CawProfileLedger.Expired.selector));` |
 | **Use-time** | `CawActions.sol:569` — `if (s.expiry <= block.timestamp) revert SessionExpired();` | `test-foundry/SessionProfileScoping.t.sol` (L438) | **L483** `vm.expectRevert(CawActions.SessionExpired.selector);` |
 
 Expiry is the gate at every signature-recovery entry point — a session only
@@ -133,7 +133,7 @@ session to full owner authority. Audit fix M-1, 2026-05-08.
 
 Sessions are keyed on the **owner address** and carry the epoch they were
 registered at (`StoredSession.epoch`, `CawProfileLedger.sol:127`). On owner
-change, `_setOwnerOf` (`:676`) bumps **both** epochs (`:691-692`):
+change, `_setOwnerOf` (`:684`) bumps **both** epochs (`:699-700`):
 
 - `ownerSessionEpoch[prev]++` — invalidates **every** wallet-scoped session of
   the previous wallet, including for tokens it still owns
@@ -141,7 +141,7 @@ change, `_setOwnerOf` (`:676`) bumps **both** epochs (`:691-692`):
   that profileId
 
 `validSession` (`:175-183`) then returns a zeroed struct on epoch mismatch. This
-is the **CL-4** invariant; the rationale (`:682-687`) is the intermediate-holder
+is the **CL-4** invariant; the rationale (`:690-695`) is the intermediate-holder
 drain from `project_l1l2_ownership_desync` — an unordered LayerZero redelivery
 could re-stamp `ownerOf` back to a previous holder and reanimate sessions they
 registered during brief ownership.
@@ -168,7 +168,7 @@ Three surfaces, three defences:
 |---|---|---|---|
 | **EIP-712 register-by-sig** — nonce | `CawProfileLedger` `BadNonce()` | `test-foundry/SessionRegisterFuzz.t.sol` — `testFuzz_NonceReplayBlocked` (L133) | **L152** `vm.expectRevert(abi.encodeWithSelector(CawProfileLedger.BadNonce.selector));` (1000 runs) |
 | **Revoke → held pre-signed register** | revoke bumps `sessionNonce` | `test-foundry/SessionRegisterFuzz.t.sol` — `test_SES1_revoke_invalidates_presigned_register` (L106) | **L125** `vm.expectRevert(abi.encodeWithSelector(CawProfileLedger.BadNonce.selector));` |
-| **personal_sign register** — no nonce in the message, so the **digest** is consumed | `CawProfileLedger.sol:794-795` — `if (consumedSessionMessage[digest]) revert Replayed(); consumedSessionMessage[digest] = true;` (audit fix 2026-05-08) | `test/session-personal-replay-test.js` (L75) — *blocked by #195* | **L105** `expect(reason).to.match(/replay|replayed|0xf6c62c02/);` + state assertion **L109** |
+| **personal_sign register** — no nonce in the message, so the **digest** is consumed | `CawProfileLedger.sol:802-803` — `if (consumedSessionMessage[digest]) revert Replayed(); consumedSessionMessage[digest] = true;` (audit fix 2026-05-08) | `test/session-personal-replay-test.js` (L75) — *blocked by #195* | **L105** `expect(reason).to.match(/replay|replayed|0xf6c62c02/);` + state assertion **L109** |
 
 `0xf6c62c02` = `bytes4(keccak256("Replayed()"))`.
 
@@ -182,12 +182,12 @@ Two accept a caller-supplied `scopeBitmap`; four do not offer one and hard-code
 
 | Path | file:line | Accepts `scopeBitmap`? | Withdraw handling |
 |---|---|---|---|
-| `registerSession` (EIP-712) | `CawProfileLedger.sol:725` | **yes** | `:741` revert `NoWithdraw()` |
-| `registerTokenScopedSession` | `CawProfileLedger.sol:807` | **yes** | `:824` mask `& 0xBF` |
-| `lzDepositMintSession` | `CawProfileLedger.sol:424` | no | `:457` hard-coded `0xBF` |
-| `registerSessionFromL1` | `CawProfileLedger.sol:619` | no | `:626` hard-coded `0xBF` |
-| `registerSessionPersonal` | `CawProfileLedger.sol:777` | no — the parser returns `spendLimit, perActionTipRate, expiry, sessionKey` only (`:797`) | `:803` hard-coded `0xBF` |
-| `registerSessionFromActions` | `CawProfileLedger.sol:882` | no | `:895` hard-coded `0xBF` |
+| `registerSession` (EIP-712) | `CawProfileLedger.sol:733` | **yes** | `:749` revert `NoWithdraw()` |
+| `registerTokenScopedSession` | `CawProfileLedger.sol:815` | **yes** | `:832` mask `& 0xBF` |
+| `lzDepositMintSession` | `CawProfileLedger.sol:432` | no | `:465` hard-coded `0xBF` |
+| `registerSessionFromL1` | `CawProfileLedger.sol:627` | no | `:634` hard-coded `0xBF` |
+| `registerSessionPersonal` | `CawProfileLedger.sol:785` | no — the parser returns `spendLimit, perActionTipRate, expiry, sessionKey` only (`:805`) | `:811` hard-coded `0xBF` |
+| `registerSessionFromActions` | `CawProfileLedger.sol:890` | no | `:903` hard-coded `0xBF` |
 
 **No path drops a caller-supplied bitmap on the floor.** The four hard-coded
 paths do not expose a scope parameter, so `0xBF` is the documented contract, not
@@ -251,5 +251,5 @@ while its counterpart at `:1578` reverts with `SessionExpired()`. Tightening
 
 ---
 
-*Verified against `5ac4f02` plus the tests introduced alongside this document.
+*Verified against `d62fa219` plus the tests introduced alongside this document.
 Re-pin line numbers when the referenced files change.*
