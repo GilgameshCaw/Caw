@@ -90,6 +90,14 @@ const CreateListingModal: React.FC = () => {
     ? (!!popBOwner && !!tokenOwner && popBOwner === tokenOwner)
     : (!!address && !!tokenOwner && address.toLowerCase() === tokenOwner)
 
+  // Pop-A wallet states, kept DISTINCT so the button copy is truthful:
+  //  - notConnected → no wallet at all → prompt "Connect wallet" (not "wrong wallet")
+  //  - wrongWallet  → a wallet IS connected but it's not the token owner →
+  //                   "switch to the right wallet" (and we must NOT fire a signature)
+  // (Pop-B has no wagmi wallet, so these are wallet-path only.)
+  const notConnected = !isPopB && !isConnected
+  const wrongWallet = !isPopB && isConnected && !isOwner
+
   // Separate write hooks for approve and listing
   const { writeContract: writeApprove, data: approveHash, isPending: isApproving, error: approveError, reset: resetApprove } = useWriteContract()
   const { isLoading: isApproveConfirming, isSuccess: isApproveSuccess } = useWaitForTransactionReceipt({ hash: approveHash })
@@ -213,8 +221,16 @@ const CreateListingModal: React.FC = () => {
     close()
   }
 
+  // After a connect/chain-switch resolves, the connected account may NOT be the
+  // token owner (user connected the wrong wallet in Rabby/MetaMask). Re-check
+  // ownership at call time and bail BEFORE writing — otherwise ensureWallet's
+  // callback fired the approval/listing signature from the wrong account.
+  const connectedIsOwner = () =>
+    !!address && !!tokenOwner && address.toLowerCase() === tokenOwner
+
   const handleApprove = () => {
     ensureWallet({ chainId: chains.l1.chainId }, async () => {
+      if (!connectedIsOwner()) return // wrong wallet — button now shows "switch wallet"
       writeApprove({
         address: CAW_NAMES_ADDRESS,
         abi: cawProfileAbi,
@@ -227,6 +243,7 @@ const CreateListingModal: React.FC = () => {
 
   const handleCreateListing = () => {
     ensureWallet({ chainId: chains.l1.chainId }, async () => {
+      if (!connectedIsOwner()) return // wrong wallet — don't sign from the wrong account
       if (tokenId === null) return
 
       const duration = BigInt(parseInt(durationHours) * 3600)
@@ -547,6 +564,10 @@ const CreateListingModal: React.FC = () => {
                 <div className="flex items-end gap-2">
                   <label className={`text-sm font-medium ${themeTextSecondary(isDark)}`}>
                     {listingType === 0 ? t('create_listing.price') : listingType === 1 ? t('create_listing.start_price') : t('create_listing.minimum_bid')}
+                    {' '}
+                    <span className={themeTextMuted(isDark)}>
+                      ({PAYMENT_OPTIONS.find(o => o.value === paymentToken)?.label ?? 'ETH'})
+                    </span>
                   </label>
                   {mintCostUsd && (
                     <div className="relative">
@@ -562,11 +583,17 @@ const CreateListingModal: React.FC = () => {
                         </svg>
                       </button>
                       {showMintCostTip && (
-                        <div className={`absolute bottom-full left-1/2 -translate-x-1/2 mb-2 px-3 py-2 rounded-lg text-xs whitespace-nowrap z-50 ${
+                        // Anchor to the LEFT edge of the icon and grow rightward,
+                        // with a bounded width that wraps — the old centered
+                        // (left-1/2 -translate-x-1/2) + whitespace-nowrap tooltip
+                        // pushed its left half off the modal's left edge and got
+                        // clipped. This keeps it inside the modal regardless of
+                        // where the icon sits.
+                        <div className={`absolute bottom-full left-0 mb-2 px-3 py-2 rounded-lg text-xs w-max max-w-[220px] z-50 ${
                           isDark ? 'bg-gray-800 text-gray-200 border border-white/10' : 'bg-gray-900 text-white'
                         }`}>
                           Creating a {username?.length}-character username today costs {mintCostUsd}
-                          <div className={`absolute top-full left-1/2 -translate-x-1/2 w-2 h-2 rotate-45 ${
+                          <div className={`absolute top-full left-2 w-2 h-2 rotate-45 ${
                             isDark ? 'bg-gray-800 border-r border-b border-white/10' : 'bg-gray-900'
                           }`} />
                         </div>
@@ -788,11 +815,15 @@ const CreateListingModal: React.FC = () => {
             {!isApproved && !isApproveSuccess && (
               <div className="flex justify-center">
                 <button
-                  onClick={() => { resetApprove(); handleApprove() }}
-                  disabled={(isConnected && !isOwner) || isApproving || isApproveConfirming || isSwitchingChain}
+                  onClick={() => {
+                    if (notConnected) { openConnectModal?.(); return }
+                    resetApprove(); handleApprove()
+                  }}
+                  disabled={wrongWallet || isApproving || isApproveConfirming || isSwitchingChain}
                   className="w-full px-4 py-2.5 rounded-lg text-sm font-medium bg-yellow-500 text-black hover:bg-yellow-400 transition cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:bg-yellow-500"
                 >
-                  {!isOwner ? t('post_form.button.wrong_wallet')
+                  {notConnected ? t('marketplace.button.connect_wallet')
+                    : wrongWallet ? t('create_listing.button.switch_wallet')
                     : needsChainSwitch ? (isSwitchingChain ? t('staking.button.switching') : t('marketplace.button.switch_network'))
                     : isApproving ? t('marketplace.button.confirm_in_wallet')
                     : isApproveConfirming ? t('staking.button.approving')
@@ -804,11 +835,15 @@ const CreateListingModal: React.FC = () => {
             {(isApproved || isApproveSuccess) && (
               <div className="flex justify-center">
                 <button
-                  onClick={() => { resetListing(); handleCreateListing() }}
-                  disabled={(isConnected && !isOwner) || isSuccess || isSubmitting || isConfirming || isSwitchingChain || !startPrice || parseFloat(startPrice) <= 0 || (listingType === 1 && (!endPrice || parseFloat(endPrice) >= parseFloat(startPrice)))}
+                  onClick={() => {
+                    if (notConnected) { openConnectModal?.(); return }
+                    resetListing(); handleCreateListing()
+                  }}
+                  disabled={wrongWallet || isSuccess || isSubmitting || isConfirming || isSwitchingChain || !startPrice || parseFloat(startPrice) <= 0 || (listingType === 1 && (!endPrice || parseFloat(endPrice) >= parseFloat(startPrice)))}
                   className="w-full px-4 py-2.5 rounded-lg text-sm font-medium bg-yellow-500 text-black hover:bg-yellow-400 transition cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
                 >
-                  {!isOwner ? t('post_form.button.wrong_wallet')
+                  {notConnected ? t('marketplace.button.connect_wallet')
+                    : wrongWallet ? t('create_listing.button.switch_wallet')
                     : needsChainSwitch ? (isSwitchingChain ? t('staking.button.switching') : t('marketplace.button.switch_network'))
                     : isSubmitting ? t('marketplace.button.confirm_in_wallet')
                     : isConfirming ? t('marketplace.button.confirming')
