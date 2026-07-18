@@ -6,7 +6,7 @@ import { useWalletPopulation } from '~/hooks/useWalletPopulation'
 import { useSmartEoaExecute, type ExecCall } from '~/hooks/useSmartEoaExecute'
 import { apiFetch } from '~/api/client'
 import { useActiveToken } from '~/store/tokenDataStore'
-import { Link } from 'react-router-dom'
+import { formatAddress } from '~/utils'
 import ModalWrapper from './ModalWrapper'
 import ModalHeader from './ModalHeader'
 import { useTheme } from '~/hooks/useTheme'
@@ -120,6 +120,7 @@ const CreateListingModal: React.FC = () => {
   }, [isSuccess])
 
   const [step, setStep] = useState<ListingStep>('type')
+  const [copiedAddr, setCopiedAddr] = useState(false)
   const [listingType, setListingType] = useState(0)
   const [paymentToken, setPaymentToken] = useState(PAYMENT_OPTIONS[0].value)
   const [startPrice, setStartPrice] = useState('')
@@ -749,9 +750,25 @@ const CreateListingModal: React.FC = () => {
                   </p>
                 )}
                 {needsTopUp && !popBSuccess && (
-                  <div className={`p-3 rounded-lg text-sm text-center ${isDark ? 'bg-orange-500/10 text-orange-400' : 'bg-orange-50 text-orange-600'}`}>
-                    {t('create_listing.popb.topup')}{' '}
-                    <Link to="/staking" onClick={close} className="underline font-medium">{t('create_listing.popb.topup_link')}</Link>
+                  <div className={`p-3 rounded-lg text-sm ${isDark ? 'bg-orange-500/10 text-orange-400' : 'bg-orange-50 text-orange-600'}`}>
+                    <p className="text-center">{t('create_listing.popb.topup')}</p>
+                    {popBOwner && (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          navigator.clipboard?.writeText(popBOwner)
+                          setCopiedAddr(true)
+                          setTimeout(() => setCopiedAddr(false), 2000)
+                        }}
+                        title={popBOwner}
+                        className={`mt-2 w-full flex items-center justify-center gap-2 px-3 py-2 rounded-lg font-mono text-xs cursor-pointer transition-colors ${
+                          isDark ? 'bg-white/5 hover:bg-white/10' : 'bg-black/5 hover:bg-black/10'
+                        }`}
+                      >
+                        <span className="truncate">{formatAddress(popBOwner, 10, 8)}</span>
+                        <span className="flex-shrink-0 not-italic">{copiedAddr ? t('common.copied') : t('common.copy')}</span>
+                      </button>
+                    )}
                   </div>
                 )}
                 <div className="flex justify-center">
