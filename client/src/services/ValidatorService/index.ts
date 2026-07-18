@@ -3214,10 +3214,55 @@ console.log("succeededKeys", succeededKeys)
               }))
             } catch (err: any) {
               console.error(`[Validator] Network ${networkId} batch failed:`, err.message)
-              await Promise.all(subBatchEntries.map(async (entry) => {
-                const data = (entry.payload as any).data
-                await markTxQueueFailed(entry.id, err.message, data.senderId, data)
-              }))
+              // Classify RPC-transient errors the same way the single-network submission
+              // path does (index.ts ~3591). A shared-provider rebuild in a sibling loop
+              // can destroy the httpProvider mid-flight, cancelling this sub-batch's
+              // tx.wait() with "provider destroyed … UNSUPPORTED_OPERATION" — a transient
+              // client teardown, NOT a bad batch. Previously this catch had no
+              // classification and hard-failed every row on it (TxQueue 511-515). Instead:
+              // reset the rows to 'pending' so the next poll re-claims them, and rebuild
+              // the provider if it was destroyed so the retry gets a fresh one.
+              const errMsg = (err?.message || '').toLowerCase()
+              const isTransient =
+                err?.code === 'UNSUPPORTED_OPERATION' ||
+                err?.code === 'BAD_DATA' ||
+                err?.code === 'UNKNOWN_ERROR' ||
+                errMsg.includes('provider destroyed') ||
+                errMsg.includes('cancelled request') ||
+                errMsg.includes('too many requests') ||
+                errMsg.includes('429') ||
+                errMsg.includes('rate limit') ||
+                errMsg.includes('missing response') ||
+                errMsg.includes('internal error') ||
+                errMsg.includes('could not coalesce') ||
+                errMsg.includes('timeout') ||
+                errMsg.includes('enotfound') ||
+                errMsg.includes('econnrefused') ||
+                errMsg.includes('econnreset')
+              if (isTransient) {
+                console.log(`[Validator] Network ${networkId} transient RPC error — resetting ${subBatchEntries.length} entries to pending for retry:`, errMsg.slice(0, 150))
+                // Reset-to-pending is safe even if the tx actually LANDED (the
+                // confirmation poll was cancelled, so we don't know). The on-chain
+                // cawonce bitmap prevents any double-apply — a retry of an already-landed
+                // action is rejected at simulation as "Cawonce already used", which
+                // resolveCawonceUsed then reconciles to 'done' by matching the Action row
+                // (the legitimate same-cawonce-already-landed case). Genuinely-unlanded
+                // actions re-run. Same recovery posture as the single-network path.
+                await prisma.txQueue.updateMany({
+                  where: { id: { in: subBatchEntries.map(e => e.id) }, status: 'processing' },
+                  data: { status: 'pending' },
+                })
+                if (USE_WS) {
+                  await initializeConnection()
+                } else if (errMsg.includes('provider destroyed') || errMsg.includes('cancelled request') || err?.code === 'UNSUPPORTED_OPERATION') {
+                  rebuildHttpProvider(`multi-network transient: ${errMsg.slice(0, 80)}`)
+                }
+              } else {
+                await Promise.all(subBatchEntries.map(async (entry) => {
+                  const data = (entry.payload as any).data
+                  await markTxQueueFailed(entry.id, err.message, data.senderId, data)
+                }))
+              }
             }
           }
 
