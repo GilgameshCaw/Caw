@@ -645,6 +645,7 @@
   "create_listing.button.approve": "Approve Sale",
   "create_listing.button.list": "List for Sale",
   "create_listing.button.switch_wallet": "Switch to the owner's wallet",
+  "create_listing.button.switch_profile": "Switch to this profile to list",
   "create_listing.button.fee_retry": "Couldn't estimate gas — tap to retry",
   "create_listing.error.quote": "Couldn't price the listing fee right now. Please try again.",
   "create_listing.popb.fee_caw": "Listing fee: ~{{amount}} CAW (paid from your wallet to cover gas).",

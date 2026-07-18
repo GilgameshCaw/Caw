@@ -70,6 +70,7 @@ const CreateListingModal: React.FC = () => {
   const { switchChain, isPending: isSwitchingChain } = useSwitchChain()
   const ensureWallet = useEnsureWallet()
   const tokensByAddress = useTokenDataStore(s => s.tokensByAddress)
+  const setActiveTokenIdForAddress = useTokenDataStore(s => s.setActiveTokenIdForAddress)
   const tokenOwner = useMemo(() => {
     for (const [addr, tokens] of Object.entries(tokensByAddress)) {
       if (tokens.some(t => t.tokenId === tokenId)) return addr.toLowerCase()
@@ -84,18 +85,21 @@ const CreateListingModal: React.FC = () => {
   const { execute: smartEoaExecute, account: eoaAccount } = useSmartEoaExecute()
   const activeToken = useActiveToken()
   const l1Client = usePublicClient({ chainId: chains.l1.chainId })
-  // Owner for Pop-B is the passkey EOA that owns this token. When listing your
-  // own active profile, activeToken.owner is the EOA.
-  // For Pop-B the "owner" is the token's on-record owner IF it's a passkey
-  // address the browser controls (the user's key is in-browser). Keying only on
-  // the single active eoaAccount broke when eoaAccount was still resolving OR the
-  // listed token belonged to a DIFFERENT passkey profile the user also owns — it
-  // fell to isOwner=false, which mislabelled the button "switch wallet" (nonsense
-  // for a passkey user, who has no wallet to switch) and stalled the fee fetch.
+  // Owner for Pop-B is the token's on-record owner (the passkey EOA). We can only
+  // SIGN as the ACTIVE passkey profile (eoaAccount = useWalletPopulation().address),
+  // so listing is only actionable when the token owner IS the active EOA.
   const popBOwner = (isPopB ? (tokenOwner ?? eoaAccount ?? activeToken?.owner)?.toLowerCase() : null) ?? null
+  // isOwner = "this session can sign the listing for this token".
+  //  - Pop-B: the active passkey EOA owns the token.
+  //  - Pop-A: the connected wallet owns the token.
   const isOwner = isPopB
-    ? (!!tokenOwner && isPasskeyAddress(tokenOwner))
+    ? (!!eoaAccount && !!tokenOwner && eoaAccount.toLowerCase() === tokenOwner)
     : (!!address && !!tokenOwner && address.toLowerCase() === tokenOwner)
+
+  // Pop-B: the token belongs to a DIFFERENT passkey profile the user owns (not
+  // the active one). They can't sign for it here — they must SWITCH PROFILES
+  // (not wallets). Distinct from the "not a passkey I control at all" case.
+  const wrongProfile = isPopB && !isOwner && !!tokenOwner && isPasskeyAddress(tokenOwner)
 
   // Pop-A wallet states, kept DISTINCT so the button copy is truthful:
   //  - notConnected → no wallet at all → prompt "Connect wallet" (not "wrong wallet")
@@ -813,16 +817,26 @@ const CreateListingModal: React.FC = () => {
                 )}
                 <div className="flex justify-center">
                   <button
-                    onClick={() => { if (feeError) { setFeeRetry(n => n + 1); return } handlePopBList() }}
-                    disabled={!isOwner || popBPending || popBSuccess || needsTopUp || (!feeLoaded && !feeError) || !startPrice || parseFloat(startPrice) <= 0 || (listingType === 1 && (!endPrice || parseFloat(endPrice) >= parseFloat(startPrice)))}
+                    onClick={() => {
+                      // Token owned by a DIFFERENT passkey profile the user owns →
+                      // switch the active profile to it (so eoaAccount becomes the
+                      // owner and we can sign), rather than hanging on "Estimating…".
+                      if (wrongProfile && tokenOwner && tokenId != null) {
+                        setActiveTokenIdForAddress(tokenOwner as Address, tokenId)
+                        return
+                      }
+                      if (feeError) { setFeeRetry(n => n + 1); return }
+                      handlePopBList()
+                    }}
+                    disabled={(!isOwner && !wrongProfile) || popBPending || popBSuccess || needsTopUp || (!feeLoaded && !feeError && !wrongProfile) || !startPrice || parseFloat(startPrice) <= 0 || (listingType === 1 && (!endPrice || parseFloat(endPrice) >= parseFloat(startPrice)))}
                     className="w-full px-4 py-2.5 rounded-lg text-sm font-medium bg-yellow-500 text-black hover:bg-yellow-400 transition cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
                   >
-                    {/* NOTE: no "switch wallet" state here — a Pop-B (passkey)
-                        user signs in-browser with their key; there is no wallet
-                        to switch. isOwner being briefly false just means the EOA
-                        account is still resolving (falls through to "Estimating…").
-                        needsTopUp handles insufficient CAW/ETH (shown above). */}
+                    {/* No "switch WALLET" state — a passkey user signs in-browser.
+                        wrongProfile = token owned by a different passkey profile
+                        they own → offer to switch PROFILES. needsTopUp handles
+                        insufficient CAW/ETH (shown above). */}
                     {popBSuccess ? t('marketplace.button.listed')
+                      : wrongProfile ? t('create_listing.button.switch_profile')
                       : popBPending ? t('marketplace.button.confirming')
                       : feeError ? t('create_listing.button.fee_retry')
                       : !feeLoaded ? t('marketplace.button.estimating_fee')
