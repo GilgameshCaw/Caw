@@ -42,6 +42,24 @@ const TransferNFTModal: React.FC = () => {
   const [inputError, setInputError] = useState<string | null>(null)
   const [lzFee, setLzFee] = useState<bigint | null>(null)
   const [isQuoting, setIsQuoting] = useState(false)
+  // Pop-B relay gas estimate (real per-batch estimateGas via /execute-estimate),
+  // shown as a USD figure under the Transfer button. null until it resolves.
+  const [relayFeeUsd, setRelayFeeUsd] = useState<number | null>(null)
+
+  // Build the transfer batch's inner call (transferAndSync, self-funding its LZ
+  // fee) WITHOUT the fee leg — shared by the gas estimate and handlePopBTransfer.
+  const buildTransferCall = useCallback((): ExecCall | null => {
+    if (tokenId === null || !recipient || !isAddress(recipient)) return null
+    return {
+      to: CAW_NAMES_ADDRESS,
+      value: lzFee ?? 0n, // self-funded LZ fee
+      data: encodeFunctionData({
+        abi: cawProfileAbi,
+        functionName: 'transferAndSync',
+        args: [recipient as Address, BigInt(tokenId), chains.l1.layerZero, 0n],
+      }),
+    }
+  }, [tokenId, recipient, lzFee])
 
   const isOnL1 = chainId === chains.l1.chainId
   const needsChainSwitch = isConnected && !isOnL1
@@ -80,6 +98,37 @@ const TransferNFTModal: React.FC = () => {
 
     return () => { cancelled = true }
   }, [isOpen, recipient, tokenId])
+
+  // Pop-B: estimate the real relay gas for THIS transfer batch (via
+  // /execute-estimate — per-call estimateGas at the execute chain's live gas
+  // price, not the flat 800K × mainnet-gas ceiling that over-quotes) so we can
+  // show a USD figure under the button. Re-runs when the recipient / LZ fee
+  // settle. Non-fatal: on failure we just hide the estimate line.
+  useEffect(() => {
+    if (!isOpen || !isPopB || !eoaAccount) { setRelayFeeUsd(null); return }
+    const call = buildTransferCall()
+    if (!call) { setRelayFeeUsd(null); return }
+    let cancelled = false
+    ;(async () => {
+      try {
+        const est = await apiFetch<{ feeEthUsd?: number | null }>(
+          '/api/sponsor/execute-estimate',
+          {
+            method: 'POST',
+            body: JSON.stringify({
+              eoaAddress: eoaAccount,
+              calls: [{ to: call.to, value: call.value.toString(), data: call.data }],
+              forwardedValueWei: '0',
+            }),
+          },
+        )
+        if (!cancelled) setRelayFeeUsd(typeof est.feeEthUsd === 'number' ? est.feeEthUsd : null)
+      } catch {
+        if (!cancelled) setRelayFeeUsd(null)
+      }
+    })()
+    return () => { cancelled = true }
+  }, [isOpen, isPopB, eoaAccount, buildTransferCall])
 
   const handleClose = () => {
     setRecipient('')
@@ -140,32 +189,39 @@ const TransferNFTModal: React.FC = () => {
     setPopBError(null)
     setPopBPending(true)
     try {
+      const transferCall = buildTransferCall()
+      if (!transferCall) throw new Error('INVALID_PARAMS')
+      const transferLzFee = lzFee ?? 0n
+
+      // Price the relay fee against the REAL gas of THIS transfer batch via
+      // /execute-estimate (per-call estimateGas at the execute chain's live gas
+      // price) — NOT the flat 800K × mainnet-gas ceiling, which over-quoted and
+      // wrongly reported "insufficient" for a wallet that actually had enough.
       const quote = await apiFetch<{ relayer: string; minFeeCawWei: string; priceAvailable: boolean; minFeeEthWei: string }>(
-        `/api/sponsor/execute-quote?forwardedValueWei=0`,
+        '/api/sponsor/execute-estimate',
+        {
+          method: 'POST',
+          body: JSON.stringify({
+            eoaAddress: eoaAccount,
+            calls: [{ to: transferCall.to, value: transferCall.value.toString(), data: transferCall.data }],
+            forwardedValueWei: '0',
+          }),
+        },
       )
       const feeCaw = quote.priceAvailable ? BigInt(quote.minFeeCawWei) : null
       const feeEth = BigInt(quote.minFeeEthWei)
-      const transferLzFee = lzFee ?? 0n
 
       const [cawBalNow, ethBalNow] = await Promise.all([
         l1Client.readContract({ address: CAW_ADDRESS as Address, abi: erc20Abi, functionName: 'balanceOf', args: [eoaAccount as Address] }) as Promise<bigint>,
         l1Client.getBalance({ address: eoaAccount as Address }),
       ])
       const payInCaw = feeCaw != null && cawBalNow >= feeCaw
+      // ETH must cover the self-funded LZ fee (attached to the transfer call)
+      // PLUS the relayer's gas repayment leg.
       const payInEth = ethBalNow >= transferLzFee + feeEth
       if (!payInCaw && !payInEth) throw new Error('INSUFFICIENT_FEE_CAW')
 
-      const calls: ExecCall[] = [
-        {
-          to: CAW_NAMES_ADDRESS,
-          value: transferLzFee, // self-funded LZ fee
-          data: encodeFunctionData({
-            abi: cawProfileAbi,
-            functionName: 'transferAndSync',
-            args: [recipient as Address, BigInt(tokenId), chains.l1.layerZero, 0n],
-          }),
-        },
-      ]
+      const calls: ExecCall[] = [transferCall]
       if (payInCaw) {
         calls.push({ to: CAW_ADDRESS as Address, value: 0n, data: encodeFunctionData({ abi: erc20Abi, functionName: 'transfer', args: [quote.relayer as Address, feeCaw!] }) })
       } else {
@@ -182,7 +238,7 @@ const TransferNFTModal: React.FC = () => {
     } finally {
       setPopBPending(false)
     }
-  }, [isPopB, eoaAccount, tokenId, l1Client, recipient, lzFee, smartEoaExecute, t])
+  }, [isPopB, eoaAccount, tokenId, l1Client, recipient, lzFee, buildTransferCall, smartEoaExecute, t])
 
   const getButtonText = () => {
     if (popBPending) return t('transfer_nft.btn.confirm_in_wallet')
@@ -284,6 +340,16 @@ const TransferNFTModal: React.FC = () => {
             </button>
           )}
         </div>
+
+        {/* Pop-B: real relay gas estimate (USD) for this transfer, below the
+            button. Priced against THIS batch via /execute-estimate. */}
+        {isPopB && !isSuccess && !popBSuccess && relayFeeUsd != null && (
+          <p className={`mt-2 text-[11px] text-right ${themeTextMuted(isDark)}`}>
+            {t('transfer_nft.gas_estimate', {
+              amount: relayFeeUsd < 0.01 ? '<0.01' : relayFeeUsd.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 }),
+            })}
+          </p>
+        )}
       </div>
     </ModalWrapper>
   )

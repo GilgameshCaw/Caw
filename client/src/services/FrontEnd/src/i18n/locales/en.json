@@ -1229,6 +1229,7 @@
   "transfer_nft.btn.transferred": "Transferred!",
   "transfer_nft.btn.transfer": "Transfer",
   "transfer_nft.popb_insufficient_fee": "Insufficient CAW or ETH to cover the relay gas fee.",
+  "transfer_nft.gas_estimate": "Network gas: ~${{amount}}",
   "sync_transfer.title": "Sync Ownership",
   "sync_transfer.intro_token": " (Token #{{tokenId}}) was transferred to your wallet, but the L2 network hasn't been updated yet. To use this account, you need to sync ownership.",
   "sync_transfer.note": "This sends a cross-chain message to update your ownership on L2. It requires a small ETH transaction on Sepolia.",
