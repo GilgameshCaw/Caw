@@ -484,4 +484,254 @@ contract SessionProfileScopingTest is Test {
             actions.processActions(VALIDATOR_ID, packed, sigs, 0, 0);
         }
     }
+
+    // =======================================================================
+    // Item 8 / C41 — bound ② : a session key cannot spend over `spendLimit`
+    //
+    // Ported here from test/token-scoped-sessions-test.js:578 and
+    // test/session-tip-batched-test.js:495. Both are correct tests, but the
+    // Truffle runner cannot deploy CawProfileLedger at all (task #195, see
+    // test/helpers/link-libraries.js), so ② had no executable assertion.
+    // Foundry links SessionMessageParser from artifact metadata and is
+    // structurally immune to #195.
+    // =======================================================================
+
+    uint8 constant ACTION_CAW = 0; // ActionType.CAW — see CawActions.sol:83
+
+    /// @dev Pack a single CAW action. Same layout as _packUnfollow, actionType 0.
+    function _packCaw(
+        uint32 senderId,
+        uint32 receiverId,
+        uint32 networkId,
+        uint32 cawonce
+    ) internal pure returns (bytes memory) {
+        return abi.encodePacked(
+            uint16(1),      // actionCount
+            ACTION_CAW,     // actionType (uint8)
+            senderId,       // uint32
+            receiverId,     // uint32
+            uint32(0),      // receiverCawonce
+            networkId,      // uint32
+            cawonce,        // uint32
+            uint8(0),       // recipientCount
+            uint8(0),       // amountCount
+            uint16(0)       // textLength
+        );
+    }
+
+    /// @dev EIP-712 digest for a CAW action.
+    function _cawDigest(
+        uint32 senderId,
+        uint32 receiverId,
+        uint32 networkId,
+        uint32 cawonce
+    ) internal view returns (bytes32) {
+        bytes32 ACTIONDATA_TYPEHASH = keccak256(
+            "ActionData(uint8 actionType,uint32 senderId,uint32 receiverId,uint32 receiverCawonce,uint32 networkId,uint32 cawonce,uint32[] recipients,uint64[] amounts,bytes text)"
+        );
+        bytes32 recipHash = keccak256(abi.encodePacked(new uint32[](0)));
+        bytes32 amtHash   = keccak256(abi.encodePacked(new uint64[](0)));
+        bytes32 textHash  = keccak256(new bytes(0));
+
+        bytes32 structHash = keccak256(abi.encode(
+            ACTIONDATA_TYPEHASH,
+            uint256(ACTION_CAW),
+            uint256(senderId),
+            uint256(receiverId),
+            uint256(0),
+            uint256(networkId),
+            uint256(cawonce),
+            recipHash,
+            amtHash,
+            textHash
+        ));
+        return keccak256(abi.encodePacked("\x19\x01", actions.eip712DomainHash(), structHash));
+    }
+
+    /// @dev Build the packed calldata + sig for one CAW action WITHOUT making
+    ///      the submitting call. Kept separate from _doCaw because _cawDigest
+    ///      makes an external call (actions.eip712DomainHash()) and vm.expectRevert
+    ///      binds to the NEXT external call — so anything built after expectRevert
+    ///      would swallow it.
+    function _prepCaw(uint256 pk, uint32 cawonce)
+        internal
+        view
+        returns (bytes memory packed, bytes memory sigs)
+    {
+        bytes32 digest = _cawDigest(TOKEN_A, TOKEN_B, NETWORK_ID, cawonce);
+        (uint8 v, bytes32 r, bytes32 s) = vm.sign(pk, digest);
+        packed = _packCaw(TOKEN_A, TOKEN_B, NETWORK_ID, cawonce);
+        sigs   = _packSingleSig(v, r, s);
+    }
+
+    /// @dev Submit one CAW action from TOKEN_A signed by `pk`.
+    function _doCaw(uint256 pk, uint32 cawonce) internal {
+        (bytes memory packed, bytes memory sigs) = _prepCaw(pk, cawonce);
+        actions.processActions(VALIDATOR_ID, packed, sigs, 0, 0);
+    }
+
+    /// @notice ② A session key cannot spend over `spendLimit`.
+    ///
+    ///   CAW costs 5000 whole CAW (CawActions.sol:1313; cap oracle is dormant
+    ///   in this harness so the baseline applies unchanged). spendLimit = 7000
+    ///   means the FIRST caw succeeds (5000) and the SECOND crosses the bound
+    ///   (10000 > 7000).
+    ///
+    ///   This proves the ACCUMULATOR, not a per-call bound: `sessionSpent` is
+    ///   flushed to storage at group end (CawActions.sol:584) and re-loaded on
+    ///   the next call (:1382), so the two actions are separate transactions.
+    ///
+    ///   Enforcement: CawActions.sol:1386
+    ///     `if (ba.groupSpent > ba.spendLimit) revert SessionLimitExceeded();`
+    function test_sessionSpendLimit_cumulative() public {
+        // Fund TOKEN_A. owner == address(0) so deposit() skips _setOwnerOf and
+        // leaves ownership/epochs untouched (CawProfileLedger.sol:650).
+        ledger.deposit(NETWORK_ID, TOKEN_A, 1_000_000 ether, address(0));
+
+        uint64 expiry = uint64(block.timestamp + 7 days);
+        // scope 0xBF has bit 0 (CAW) set; spendLimit 7000 whole CAW; tipRate 0.
+        _registerWalletSession(sessionKey, OWNER_PK, expiry, 0xBF, 7000, 0);
+
+        // ---- Positive control: first CAW is under the limit ----
+        _doCaw(SESSION_PK, 1);
+        assertEq(
+            actions.sessionSpent(owner, sessionKey),
+            5000,
+            "first CAW must record exactly 5000 spent"
+        );
+
+        // ---- The bound: second CAW takes cumulative spend to 10000 > 7000 ----
+        // Build everything first — _prepCaw makes an external call, and
+        // vm.expectRevert binds to the next external call.
+        (bytes memory packed, bytes memory sigs) = _prepCaw(SESSION_PK, 2);
+        vm.expectRevert(CawActions.SessionLimitExceeded.selector);
+        actions.processActions(VALIDATOR_ID, packed, sigs, 0, 0);
+
+        // ---- The revert must not have accrued spend ----
+        assertEq(
+            actions.sessionSpent(owner, sessionKey),
+            5000,
+            "reverted action must not accrue spend"
+        );
+    }
+
+    /// @notice ② control: `spendLimit == 0` means UNLIMITED, not zero-spend.
+    ///   Documented at CawProfileLedger.sol:726 ("0 = unlimited") and gated at
+    ///   CawActions.sol:1380 `if (ba.spendLimit > 0)`. Pinning it so the
+    ///   documented semantics can't drift silently.
+    function test_sessionSpendLimit_zeroMeansUnlimited() public {
+        ledger.deposit(NETWORK_ID, TOKEN_A, 1_000_000 ether, address(0));
+
+        uint64 expiry = uint64(block.timestamp + 7 days);
+        _registerWalletSession(sessionKey, OWNER_PK, expiry, 0xBF, 0, 0);
+
+        // Three CAWs = 15000 spent. Would breach any finite limit; must pass.
+        _doCaw(SESSION_PK, 1);
+        _doCaw(SESSION_PK, 2);
+        _doCaw(SESSION_PK, 3);
+
+        // spendLimit==0 short-circuits before the accumulator is even loaded,
+        // so sessionSpent is never written.
+        assertEq(
+            actions.sessionSpent(owner, sessionKey),
+            0,
+            "spendLimit==0 must skip the accumulator entirely"
+        );
+    }
+
+    // =======================================================================
+    // Item 8 / C41 — bound ④ : a session key cannot survive transfer
+    //
+    // Ported from test/token-scoped-sessions-test.js:426 (token-scoped) and
+    // :447 (CL-4, wallet-scoped). Same #195 story as ② above.
+    //
+    // The Truffle originals drive the transfer from L1 via `transferAndSync`
+    // with an LZ mock mirroring to L2. That round trip isn't needed to prove
+    // the bound: the invalidation is the epoch bump in _setOwnerOf
+    // (CawProfileLedger.sol:691-692), reachable here through the external
+    // `setOwnerOf` (:664) because this test contract IS the L1 CawProfile and
+    // therefore passes `onlyOnMainnet`.
+    // =======================================================================
+
+    address constant NEW_OWNER = address(0xD00D);
+
+    /// @notice ④a Transferring a token invalidates the token-scoped session
+    ///   bound to that token, via `tokenSessionEpoch[tokenId]++`
+    ///   (CawProfileLedger.sol:692).
+    function test_transfer_invalidatesTokenScopedSession() public {
+        uint64 expiry = uint64(block.timestamp + 7 days);
+        _registerTokenSession(TOKEN_A, sessionKey2, OWNER_PK, expiry, 0xBF, 0, 0);
+
+        // ---- Positive control: the session is live and bound to TOKEN_A ----
+        assertGt(
+            ledger.validSession(owner, sessionKey2).expiry,
+            0,
+            "precondition: token-scoped session must be live before transfer"
+        );
+        assertEq(
+            ledger.validSession(owner, sessionKey2).profileId,
+            TOKEN_A,
+            "precondition: session must be bound to TOKEN_A"
+        );
+
+        // ---- Transfer. A strictly newer stamp is required or _setOwnerOf
+        //      silently skips (CawProfileLedger.sol:677). ----
+        ledger.setOwnerOf(TOKEN_A, NEW_OWNER, uint64(block.number + 1));
+
+        // ---- The bound ----
+        assertEq(
+            ledger.validSession(owner, sessionKey2).expiry,
+            0,
+            "token-scoped session must be invalidated after transfer"
+        );
+    }
+
+    /// @notice ④b CL-4: transferring ANY token invalidates EVERY wallet-scoped
+    ///   session of the transferring wallet, via `ownerSessionEpoch[prev]++`
+    ///   (CawProfileLedger.sol:691) — including for tokens the wallet still
+    ///   owns. Guards the intermediate-holder drain described at :682-687:
+    ///   an unordered LZ redelivery could re-stamp ownerOf back to prev and
+    ///   reanimate sessions registered during their brief ownership.
+    function test_transfer_invalidatesWalletScopedSession_CL4() public {
+        uint64 expiry = uint64(block.timestamp + 7 days);
+        _registerWalletSession(sessionKey, OWNER_PK, expiry, 0xBF, 0, 0);
+
+        // ---- Positive control: live, and demonstrably usable for TOKEN_B ----
+        assertGt(
+            ledger.validSession(owner, sessionKey).expiry,
+            0,
+            "precondition: wallet-scoped session must be live before transfer"
+        );
+        {
+            uint32 cawonce = 1;
+            (uint8 v, bytes32 r, bytes32 s) = _signAction(SESSION_PK, TOKEN_B, TOKEN_A, NETWORK_ID, cawonce);
+            actions.processActions(
+                VALIDATOR_ID,
+                _packUnfollow(TOKEN_B, TOKEN_A, NETWORK_ID, cawonce),
+                _packSingleSig(v, r, s),
+                0,
+                0
+            );
+        }
+
+        // ---- Transfer TOKEN_A away. owner STILL OWNS TOKEN_B. ----
+        ledger.setOwnerOf(TOKEN_A, NEW_OWNER, uint64(block.number + 1));
+
+        // ---- The bound: the wallet-scoped session is dead for TOKEN_B too ----
+        assertEq(
+            ledger.validSession(owner, sessionKey).expiry,
+            0,
+            "CL-4: every wallet-scoped session of the transferring wallet must be invalidated"
+        );
+
+        // ---- End-to-end: the dead key can no longer sign for TOKEN_B ----
+        // Build first — vm.expectRevert binds to the next external call and
+        // _signAction calls actions.eip712DomainHash().
+        uint32 cawonce2 = 2;
+        (uint8 v2, bytes32 r2, bytes32 s2) = _signAction(SESSION_PK, TOKEN_B, TOKEN_A, NETWORK_ID, cawonce2);
+        bytes memory packed2 = _packUnfollow(TOKEN_B, TOKEN_A, NETWORK_ID, cawonce2);
+        bytes memory sigs2   = _packSingleSig(v2, r2, s2);
+        vm.expectRevert(CawActions.SessionExpired.selector);
+        actions.processActions(VALIDATOR_ID, packed2, sigs2, 0, 0);
+    }
 }
