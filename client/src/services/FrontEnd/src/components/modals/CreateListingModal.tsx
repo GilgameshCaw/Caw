@@ -831,7 +831,7 @@ const CreateListingModal: React.FC = () => {
                 )}
                 {needsTopUp && !popBSuccess && (
                   <div className={`p-3 rounded-lg text-sm ${isDark ? 'bg-orange-500/10 text-orange-400' : 'bg-orange-50 text-orange-600'}`}>
-                    <p className="text-center">{t('create_listing.popb.topup')}</p>
+                    <p className="text-center whitespace-pre-line">{t('create_listing.popb.topup')}</p>
                     {popBOwner && (
                       <button
                         type="button"
