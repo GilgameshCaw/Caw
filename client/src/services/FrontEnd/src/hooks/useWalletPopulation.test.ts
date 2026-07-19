@@ -120,10 +120,22 @@ describe('useWalletPopulation', () => {
     expect(result.current.address).toBe(addr)
   })
 
-  it('returns B (7702 delegated) for address with EIP-7702 bytecode', async () => {
+  // A 7702-delegate address is only classified 'B' when THIS browser holds a
+  // passkey credential for it — bytecode alone is not sufficient (see the
+  // dedicated watch-only regression test below for the no-credential case).
+  it('returns B (7702 delegated) for address with EIP-7702 bytecode AND a stored passkey credential', async () => {
     const addr = '0xaAbBcCdDeEfF001122334455667788990011aabb' as `0x${string}`
     // 23-byte 7702 designator
     const code7702 = '0xef0100' + 'aAbBcCdDeEfF001122334455667788990011aabb'
+    localStorage.setItem('caw:passkey-credential-id:1', JSON.stringify('cred-1'))
+    useTokenDataStore.setState({
+      hasHydrated: true,
+      lastAddress: addr,
+      activeTokenId: 1,
+      tokensByAddress: {
+        [addr]: [{ tokenId: 1, owner: addr, address: addr, username: 'pk', withdrawable: 0n, ownerBalance: 0n, stakedAmount: 0n, cawonce: 0 }],
+      },
+    })
     mockUseAccount.mockReturnValue({ address: addr, isConnected: true })
     mockUsePublicClient.mockReturnValue({
       getCode: vi.fn().mockResolvedValue(code7702),
@@ -135,6 +147,9 @@ describe('useWalletPopulation', () => {
 
     await waitFor(() => expect(result.current.loading).toBe(false))
     expect(result.current.population).toBe<WalletPopulation>('B')
+
+    localStorage.removeItem('caw:passkey-credential-id:1')
+    useTokenDataStore.setState({ hasHydrated: false, lastAddress: undefined, activeTokenId: undefined, tokensByAddress: {} })
   })
 
   it('returns C (smart contract account) for address with non-7702 bytecode', async () => {
@@ -177,16 +192,21 @@ describe('useWalletPopulation', () => {
   })
 
   // Regression: a CONNECTED wagmi wallet whose address isn't available yet
-  // (locked / initializing) must NOT classify as B even when this browser has a
-  // stale passkey-install marker + a stored owner address. Returning B here
-  // routed a Population-A wallet user to the backup-file signer ("needs your
-  // backup file") instead of waiting for the wallet to unlock.
-  it('returns none (loading) for a connected-but-locked wallet despite a passkey-install marker', async () => {
-    // Stale passkey marker (now per-address) on the stored owner — the
-    // contamination source. A locked wallet must still not classify as B.
+  // (locked / initializing) must NOT classify as B even when this browser holds
+  // a passkey credential for the stored owner. Returning B here routed a
+  // Population-A wallet user to the backup-file signer ("needs your backup
+  // file") instead of waiting for the wallet to unlock.
+  it('returns none (loading) for a connected-but-locked wallet despite a stored passkey credential', async () => {
     const lockedOwner = '0x1111111111111111111111111111111111111111'
-    localStorage.setItem(`caw:identity-kind:${lockedOwner}`, JSON.stringify('passkey'))
-    useTokenDataStore.setState({ lastAddress: lockedOwner as `0x${string}` })
+    localStorage.setItem('caw:passkey-credential-id:1', JSON.stringify('cred-1'))
+    useTokenDataStore.setState({
+      hasHydrated: true,
+      lastAddress: lockedOwner as `0x${string}`,
+      activeTokenId: 1,
+      tokensByAddress: {
+        [lockedOwner]: [{ tokenId: 1, owner: lockedOwner as `0x${string}`, address: lockedOwner as `0x${string}`, username: 'pk', withdrawable: 0n, ownerBalance: 0n, stakedAmount: 0n, cawonce: 0 }],
+      },
+    })
 
     // Connected, but no address surfaced yet (wallet locked / initializing).
     mockUseAccount.mockReturnValue({ address: undefined, isConnected: true })
@@ -200,24 +220,20 @@ describe('useWalletPopulation', () => {
     expect(result.current.population).toBe<WalletPopulation>('none')
     expect(result.current.loading).toBe(true)
 
-    localStorage.removeItem(`caw:identity-kind:${lockedOwner}`)
-    useTokenDataStore.setState({ lastAddress: undefined })
+    localStorage.removeItem('caw:passkey-credential-id:1')
+    useTokenDataStore.setState({ hasHydrated: false, lastAddress: undefined, activeTokenId: undefined, tokensByAddress: {} })
   })
 
-  // Regression: a browser that once enrolled a passkey carries a browser-global
-  // 'caw:identity-kind=passkey' marker. With NO wagmi wallet connected, signing
-  // into a Pop-A profile (owned by a DIFFERENT, plain-EOA address than the
-  // passkey owner) must NOT classify as B — else the passkey-only Wallet link /
-  // backup-file signer leak onto a plain-wallet profile. Classification is
-  // per-PROFILE: only the profile owned by the passkey address is B.
-  it('returns none for a Pop-A profile active in a passkey-enrolled browser (mixed chooser)', async () => {
+  // Regression: a browser that holds a passkey credential for one address must
+  // NOT bleed that classification onto a DIFFERENT, plain-EOA-owned profile in
+  // the same chooser (mixed Pop-A/Pop-B chooser). Classification is per-PROFILE,
+  // gated on whether THIS browser can sign for the active profile's owner.
+  it('returns A for a Pop-A profile active in a browser that also holds an unrelated passkey credential', async () => {
     const passkeyOwner = '0xaaaa000000000000000000000000000000000000' as `0x${string}`
     const popAOwner = '0xbbbb000000000000000000000000000000000000' as `0x${string}`
-    // Per-address passkey marker on the passkey owner (the active token below is
-    // owned by a DIFFERENT plain-EOA address, so it must NOT classify as B).
-    localStorage.setItem(`caw:identity-kind:${passkeyOwner}`, JSON.stringify('passkey'))
-    // lastAddress = the passkey owner; the ACTIVE token (id 7) is owned by the
-    // Pop-A address — a different owner in the same chooser.
+    // Credential exists for the passkey owner's token (id 1) — but the ACTIVE
+    // token (id 7) is owned by a different, plain-EOA address with no credential.
+    localStorage.setItem('caw:passkey-credential-id:1', JSON.stringify('cred-1'))
     useTokenDataStore.setState({
       hasHydrated: true,
       lastAddress: passkeyOwner,
@@ -228,25 +244,29 @@ describe('useWalletPopulation', () => {
       },
     })
 
-    mockUseAccount.mockReturnValue({ address: undefined, isConnected: false })
-    mockUsePublicClient.mockReturnValue(null)
+    // The Pop-A wallet IS connected (plain EOA, no bytecode) — its own address
+    // classification falls through to bytecode since no credential covers it.
+    mockUseAccount.mockReturnValue({ address: popAOwner, isConnected: true })
+    mockUsePublicClient.mockReturnValue({ getCode: vi.fn().mockResolvedValue(undefined) })
     mockUseRecoveryContext.mockReturnValue({
       privateKey: null, address: null, isInRecoveryMode: false, setKey: vi.fn(), clearKey: vi.fn(),
     })
 
     const { result } = renderHook(() => useWalletPopulation(), { wrapper: makeWrapper() })
 
-    expect(result.current.population).toBe<WalletPopulation>('none')
+    await waitFor(() => expect(result.current.loading).toBe(false))
+    expect(result.current.population).toBe<WalletPopulation>('A')
 
-    localStorage.removeItem(`caw:identity-kind:${passkeyOwner}`)
+    localStorage.removeItem('caw:passkey-credential-id:1')
     useTokenDataStore.setState({ hasHydrated: false, lastAddress: undefined, activeTokenId: undefined, tokensByAddress: {} })
   })
 
-  // Counterpart: when the ACTIVE profile IS owned by the passkey address, it
-  // still classifies as B (the sponsored Pop-B path is preserved).
-  it('returns B for a passkey profile active in a passkey-enrolled browser', async () => {
+  // Counterpart: when the ACTIVE profile's owner has a stored passkey credential
+  // in this browser, it classifies as B (the sponsored Pop-B cold-load path is
+  // preserved — no wagmi wallet connected at all).
+  it('returns B for a passkey profile active with a stored credential, no wagmi wallet connected', async () => {
     const passkeyOwner = '0xaaaa000000000000000000000000000000000000' as `0x${string}`
-    localStorage.setItem(`caw:identity-kind:${passkeyOwner}`, JSON.stringify('passkey'))
+    localStorage.setItem('caw:passkey-credential-id:1', JSON.stringify('cred-1'))
     useTokenDataStore.setState({
       hasHydrated: true,
       lastAddress: passkeyOwner,
@@ -265,21 +285,22 @@ describe('useWalletPopulation', () => {
     const { result } = renderHook(() => useWalletPopulation(), { wrapper: makeWrapper() })
 
     expect(result.current.population).toBe<WalletPopulation>('B')
+    expect(result.current.address).toBe(passkeyOwner)
 
-    localStorage.removeItem(`caw:identity-kind:${passkeyOwner}`)
+    localStorage.removeItem('caw:passkey-credential-id:1')
     useTokenDataStore.setState({ hasHydrated: false, lastAddress: undefined, activeTokenId: undefined, tokensByAddress: {} })
   })
 
   // Regression: roamed to a new browser that happens to have an UNRELATED wagmi
-  // EOA connected. The passkey profile is active, but a different wallet is
-  // connected. Without the roamed-passkey branch we'd classify by the connected
-  // EOA's bytecode (plain → 'A'), route DM / Quick Sign through the wrong wallet
-  // ("wrong wallet — switch to …"), and the roamed session/DM would never
+  // EOA connected. The passkey profile is active (credential present), but a
+  // different wallet is connected. Without the credential-first branch we'd
+  // classify by the connected EOA's bytecode (plain → 'A'), route DM / Quick
+  // Sign through the wrong wallet, and the roamed session/DM would never
   // restore. Must classify as B and surface the passkey owner, NOT the wallet.
   it('returns B (+passkey owner address) for a passkey profile active while an unrelated EOA is connected', async () => {
     const passkeyOwner = '0xaaaa000000000000000000000000000000000000' as `0x${string}`
     const strayEoa = '0xf71338f3eaa483aa66125598b09ba1988e694a95' as `0x${string}`
-    localStorage.setItem(`caw:identity-kind:${passkeyOwner}`, JSON.stringify('passkey'))
+    localStorage.setItem('caw:passkey-credential-id:1', JSON.stringify('cred-1'))
     useTokenDataStore.setState({
       hasHydrated: true,
       lastAddress: passkeyOwner,
@@ -303,7 +324,79 @@ describe('useWalletPopulation', () => {
     // And surfaces the passkey owner so downstream owner checks compare correctly.
     expect(result.current.address).toBe(passkeyOwner)
 
-    localStorage.removeItem(`caw:identity-kind:${passkeyOwner}`)
+    localStorage.removeItem('caw:passkey-credential-id:1')
+    useTokenDataStore.setState({ hasHydrated: false, lastAddress: undefined, activeTokenId: undefined, tokensByAddress: {} })
+  })
+
+  // The scenario from the bug report: a profile is TRANSFERRED between two of
+  // the user's own passkey addresses (P1 -> P2), both of which have passkey
+  // credentials enrolled in THIS browser. The transferred profile keeps its own
+  // tokenId, so its credential survives the transfer and it must classify as B
+  // immediately — no re-enrollment, no dependency on a single "last passkey
+  // owner" marker.
+  it('returns B for a profile transferred between two passkey addresses this browser controls', async () => {
+    const p1 = '0xaaaa000000000000000000000000000000000000' as `0x${string}`
+    const p2 = '0xbbbb000000000000000000000000000000000000' as `0x${string}`
+    // Both addresses have credentials in this browser (tokenId 1 under P1,
+    // tokenId 99 transferred into P2).
+    localStorage.setItem('caw:passkey-credential-id:1', JSON.stringify('cred-p1'))
+    localStorage.setItem('caw:passkey-credential-id:99', JSON.stringify('cred-p2'))
+    useTokenDataStore.setState({
+      hasHydrated: true,
+      // lastAddress still points at P1 (stale/global) — must not matter.
+      lastAddress: p1,
+      activeTokenId: 99,
+      tokensByAddress: {
+        [p1]: [{ tokenId: 1, owner: p1, address: p1, username: 'pk1', withdrawable: 0n, ownerBalance: 0n, stakedAmount: 0n, cawonce: 0 }],
+        [p2]: [{ tokenId: 99, owner: p2, address: p2, username: 'pk2-transferred', withdrawable: 0n, ownerBalance: 0n, stakedAmount: 0n, cawonce: 0 }],
+      },
+    })
+
+    mockUseAccount.mockReturnValue({ address: undefined, isConnected: false })
+    mockUsePublicClient.mockReturnValue(null)
+    mockUseRecoveryContext.mockReturnValue({
+      privateKey: null, address: null, isInRecoveryMode: false, setKey: vi.fn(), clearKey: vi.fn(),
+    })
+
+    const { result } = renderHook(() => useWalletPopulation(), { wrapper: makeWrapper() })
+
+    expect(result.current.population).toBe<WalletPopulation>('B')
+    expect(result.current.address).toBe(p2)
+
+    localStorage.removeItem('caw:passkey-credential-id:1')
+    localStorage.removeItem('caw:passkey-credential-id:99')
+    useTokenDataStore.setState({ hasHydrated: false, lastAddress: undefined, activeTokenId: undefined, tokensByAddress: {} })
+  })
+
+  // Watch-only case: a passkey (7702) address added to another wallet as a
+  // VIEWER, with NO passkey credential enrolled in this browser. Even though
+  // the address is a genuine 7702 delegate on-chain (bytecode says 'B'), this
+  // browser cannot produce a signature for it — must classify as 'A', not 'B'.
+  it('returns A for a watch-only 7702 address with no local passkey credential', async () => {
+    const watchOnlyAddr = '0xaAbBcCdDeEfF001122334455667788990011aabb' as `0x${string}`
+    const code7702 = '0xef0100' + 'aAbBcCdDeEfF001122334455667788990011aabb'
+    useTokenDataStore.setState({
+      hasHydrated: true,
+      lastAddress: watchOnlyAddr,
+      activeTokenId: 5,
+      tokensByAddress: {
+        [watchOnlyAddr]: [{ tokenId: 5, owner: watchOnlyAddr, address: watchOnlyAddr, username: 'viewer', withdrawable: 0n, ownerBalance: 0n, stakedAmount: 0n, cawonce: 0 }],
+      },
+    })
+    // No credential stored for tokenId 5 — this browser never enrolled a passkey
+    // for this address, it was just added as a watch-only viewer.
+
+    mockUseAccount.mockReturnValue({ address: watchOnlyAddr, isConnected: true })
+    mockUsePublicClient.mockReturnValue({ getCode: vi.fn().mockResolvedValue(code7702) })
+    mockUseRecoveryContext.mockReturnValue({
+      privateKey: null, address: null, isInRecoveryMode: false, setKey: vi.fn(), clearKey: vi.fn(),
+    })
+
+    const { result } = renderHook(() => useWalletPopulation(), { wrapper: makeWrapper() })
+
+    await waitFor(() => expect(result.current.loading).toBe(false))
+    expect(result.current.population).toBe<WalletPopulation>('A')
+
     useTokenDataStore.setState({ hasHydrated: false, lastAddress: undefined, activeTokenId: undefined, tokensByAddress: {} })
   })
 })

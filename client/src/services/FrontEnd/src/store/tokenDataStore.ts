@@ -20,6 +20,11 @@ interface TokenDataStore {
   setTokensForAddress: (addr: Address, tokens: TokenData[]) => void;
   removeAddress: (addr: Address) => void;
   removeToken: (tokenId: number) => void;
+  /** Move a token from its current owner key to `toAddress` (a wallet the user
+   *  also controls) — used for a transfer to one of the user's OWN addresses so
+   *  the profile leaves the old owner and appears under the new owner instantly,
+   *  keeping its passkey credential. No-op if the token isn't held locally. */
+  moveTokenToAddress: (tokenId: number, toAddress: Address) => void;
   allTokens: () => TokenData[]
 
 
@@ -253,6 +258,43 @@ export const useTokenDataStore = create<TokenDataStore>()(
             tokensByAddress: updatedTokensByAddress,
             activeTokenIdByAddress: updatedActiveByAddress,
             activeTokenId: state.activeTokenId === tokenId ? undefined : state.activeTokenId,
+          }
+        }),
+
+      moveTokenToAddress: (tokenId: number, toAddress: Address) =>
+        set(state => {
+          const to = toAddress.toLowerCase() as Address
+          // Find the token row + its current owner key.
+          let moved: TokenData | undefined
+          let fromKey: string | undefined
+          for (const [addr, tokens] of Object.entries(state.tokensByAddress)) {
+            const found = tokens.find(t => t.tokenId === tokenId)
+            if (found) { moved = found; fromKey = addr.toLowerCase(); break }
+          }
+          if (!moved || !fromKey) return {}          // not held locally → no-op
+          if (fromKey === to) return {}              // already there → no-op
+
+          // Rebuild tokensByAddress: strip the token from its old key, append it
+          // (re-owned) under the destination key. Preserve the passkey credential
+          // (the user still controls the new owner) — do NOT clear it.
+          const next: Record<Address, TokenData[]> = {}
+          for (const [addr, tokens] of Object.entries(state.tokensByAddress)) {
+            const key = addr.toLowerCase() as Address
+            const kept = tokens.filter(t => t.tokenId !== tokenId)
+            if (kept.length > 0) next[key] = kept
+          }
+          const movedRow: TokenData = { ...moved, address: to, owner: to }
+          next[to] = [...(next[to] || []), movedRow]
+
+          // Old owner key emptied → drop its per-address active pointer.
+          const updatedActiveByAddress = { ...state.activeTokenIdByAddress }
+          if (!next[fromKey as Address]) delete updatedActiveByAddress[fromKey as Address]
+
+          return {
+            tokensByAddress: next,
+            activeTokenIdByAddress: updatedActiveByAddress,
+            // The active token id (if it was this one) stays valid — it just
+            // lives under a new owner key now, so leave activeTokenId as-is.
           }
         }),
 

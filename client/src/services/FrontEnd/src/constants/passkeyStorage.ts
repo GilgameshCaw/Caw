@@ -59,6 +59,37 @@ export function setPasskeyCredential(tokenId: number | string, credentialId: str
   setJSON(credentialKey(tokenId), credentialId)
 }
 
+/** True iff THIS browser holds a stored WebAuthn credential for the given tokenId. */
+export function hasPasskeyCredentialForToken(tokenId: number | string | undefined | null): boolean {
+  return getPasskeyCredential(tokenId) != null
+}
+
+/**
+ * True iff THIS browser holds a stored WebAuthn credential for ANY token owned by
+ * `address`. This is the authoritative "can this browser sign as a passkey for this
+ * address" test — it is per-ADDRESS (not per-profile-that-once-signed-in), so a
+ * profile that was just transferred IN to an address the user already controls in
+ * this browser is recognized immediately (it keeps its own tokenId, and the
+ * credential for that tokenId is unaffected by the transfer).
+ *
+ * Deliberately does NOT fall back to the identity-kind marker (`isPasskeyAddress`):
+ * that marker only records "this address is a passkey account", not "this browser
+ * can sign for it" — a watch-only wallet (e.g. a passkey address added to Rabby as
+ * a viewer) must NOT pass this test even though the address is a genuine 7702
+ * delegate on-chain.
+ */
+export function hasPasskeyCredentialForAddress(
+  address: string | undefined | null,
+  tokensByAddress: Record<string, { tokenId: number }[]>
+): boolean {
+  if (!address) return false
+  const normalized = address.toLowerCase()
+  const tokens = Object.entries(tokensByAddress)
+    .find(([addr]) => addr.toLowerCase() === normalized)?.[1]
+  if (!tokens || tokens.length === 0) return false
+  return tokens.some(t => hasPasskeyCredentialForToken(t.tokenId))
+}
+
 /**
  * Forget a profile's WebAuthn credential. Call when the profile is no longer
  * owned by this browser's identity (sold/transferred away) — the credential is

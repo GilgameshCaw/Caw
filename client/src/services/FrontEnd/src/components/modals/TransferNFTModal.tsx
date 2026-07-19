@@ -130,13 +130,26 @@ const TransferNFTModal: React.FC = () => {
     return () => { cancelled = true }
   }, [isOpen, isPopB, eoaAccount, buildTransferCall])
 
-  // Pop-A (wallet) transfer confirmed → optimistically evict the profile from
-  // local state right away (same as the Pop-B path does inline), so it leaves
-  // the chooser / AccountSettings / sales "Switch" button without a refresh.
+  // Optimistically settle the transfer in local state the instant it confirms,
+  // so no refresh is needed:
+  //  - Recipient is an address the user ALSO owns (already a key in
+  //    tokensByAddress) → MOVE the profile there (leaves the old owner, appears
+  //    under the new owner immediately, keeps its passkey credential).
+  //  - Otherwise (gave it to someone else) → REMOVE it (also clears the passkey
+  //    credential + markers).
+  const settleTransfer = useCallback((to: string) => {
+    if (tokenId === null) return
+    const store = useTokenDataStore.getState()
+    const toLc = to.toLowerCase()
+    const userOwnsRecipient = Object.keys(store.tokensByAddress).some(a => a.toLowerCase() === toLc)
+    if (userOwnsRecipient) store.moveTokenToAddress(tokenId, to as Address)
+    else store.removeToken(tokenId)
+  }, [tokenId])
+
+  // Pop-A (wallet) transfer confirmed → settle immediately.
   useEffect(() => {
-    if (isSuccess && tokenId !== null) {
-      useTokenDataStore.getState().removeToken(tokenId)
-    }
+    if (isSuccess && recipient) settleTransfer(recipient)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isSuccess])
 
   const handleClose = () => {
@@ -245,12 +258,10 @@ const TransferNFTModal: React.FC = () => {
       }
       await smartEoaExecute(calls)
       setPopBSuccess(true)
-      // Optimistically evict the transferred profile from local state the instant
-      // the tx confirms — the user initiated it, so it has left this wallet. Drops
-      // it from the chooser / AccountSettings / sales "Switch" button without
-      // waiting on the on-chain ownership reconcile (which only runs on reload).
-      // removeToken also clears the sold profile's passkey credential + markers.
-      if (tokenId !== null) useTokenDataStore.getState().removeToken(tokenId)
+      // Optimistically settle the transfer the instant it confirms — move to the
+      // recipient if the user also owns it (appears under the new owner right
+      // away, keeps the passkey credential), else remove it (clears credential).
+      settleTransfer(recipient)
     } catch (err: any) {
       const raw = (err?.message || '').replace(/^API\s+\d+:\s*/i, '')
       if (/NotAllowed|abort|cancel|denied|rejected/i.test(raw)) setPopBError(t('transfer_nft.error.tx_rejected'))
@@ -260,7 +271,7 @@ const TransferNFTModal: React.FC = () => {
     } finally {
       setPopBPending(false)
     }
-  }, [isPopB, eoaAccount, tokenId, l1Client, recipient, lzFee, buildTransferCall, smartEoaExecute, t])
+  }, [isPopB, eoaAccount, tokenId, l1Client, recipient, lzFee, buildTransferCall, settleTransfer, smartEoaExecute, t])
 
   const getButtonText = () => {
     // Passkey (Pop-B) users sign with their passkey, not a wallet popup.
