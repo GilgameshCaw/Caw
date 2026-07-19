@@ -91,6 +91,36 @@ export function hasPasskeyCredentialForAddress(
 }
 
 /**
+ * Resolve the WebAuthn credential this browser should use to sign for `tokenId`.
+ * Returns the token's OWN credential if present; otherwise falls back to a
+ * SIBLING profile's credential under the SAME owner address. This is correct
+ * because every profile owned by one SmartEOA is signed by the SAME passkey — so
+ * any sibling's credentialId is the right one. It also self-heals the case where
+ * a token's own credential pointer was dropped (e.g. a transfer between the
+ * user's own passkey addresses cleared it) as long as a sibling under the new
+ * owner still has one. Returns null only when NO token under the owner has a
+ * credential (genuinely not signable here).
+ */
+export function resolvePasskeyCredentialForToken(
+  tokenId: number | string | undefined | null,
+  tokensByAddress: Record<string, { tokenId: number }[]>
+): string | null {
+  const own = getPasskeyCredential(tokenId)
+  if (own) return own
+  if (tokenId === undefined || tokenId === null) return null
+  const idNum = Number(tokenId)
+  // Find the owner address of this token, then any sibling with a credential.
+  for (const tokens of Object.values(tokensByAddress)) {
+    if (!tokens.some(t => t.tokenId === idNum)) continue
+    for (const t of tokens) {
+      const sib = getPasskeyCredential(t.tokenId)
+      if (sib) return sib
+    }
+  }
+  return null
+}
+
+/**
  * Forget a profile's WebAuthn credential. Call when the profile is no longer
  * owned by this browser's identity (sold/transferred away) — the credential is
  * useless once we don't control the owner EOA, and leaving it would keep the

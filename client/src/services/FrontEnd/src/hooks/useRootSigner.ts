@@ -40,8 +40,8 @@ import { useRecoveryContext } from '~/components/identity/RecoveryProvider'
 import { useIdentitySigning } from '~/components/identity/IdentitySigningProvider'
 import { signWithPasskey } from '~/services/identity/passkey'
 import { signDigestForOnChain } from '~/services/identity/secp256k1Key'
-import { getPasskeyCredential } from '~/constants/passkeyStorage'
-import { useActiveToken } from '~/store/tokenDataStore'
+import { resolvePasskeyCredentialForToken } from '~/constants/passkeyStorage'
+import { useActiveToken, useTokenDataStore } from '~/store/tokenDataStore'
 
 // ─── Types ──────────────────────────────────────────────────────────────────
 
@@ -99,9 +99,14 @@ export function useRootSigner(): RootSigner {
   const { startSigning, stopSigning } = useIdentitySigning()
 
   const isPasskey = population === 'B'
-  // Per-account: the passkey credential is keyed by the active profile's tokenId.
+  // Per-account: the passkey credential is keyed by the active profile's tokenId,
+  // with a SIBLING fallback — every profile under one SmartEOA shares the same
+  // passkey, so if this token's own credential pointer is missing (e.g. a
+  // transfer between the user's own passkey addresses cleared it), any sibling
+  // under the same owner has the correct credentialId.
   const activeToken = useActiveToken()
-  const credentialId = getPasskeyCredential(activeToken?.tokenId)
+  const tokensByAddress = useTokenDataStore(s => s.tokensByAddress)
+  const credentialId = resolvePasskeyCredentialForToken(activeToken?.tokenId, tokensByAddress)
 
   const signMessage = useCallback(
     async (message: string): Promise<`0x${string}`> => {

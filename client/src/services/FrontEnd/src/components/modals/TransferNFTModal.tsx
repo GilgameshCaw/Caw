@@ -16,6 +16,7 @@ import { CAW_NAMES_ADDRESS, CAW_NAME_QUOTER_ADDRESS, CAW_ADDRESS } from '~/../..
 import { cawProfileAbi, cawProfileQuoterAbi } from '~/../../../abi/generated'
 import { wagmiConfig } from '~/config/Web3Provider'
 import { usePriceStore, useTokenDataStore } from '~/store/tokenDataStore'
+import { hasPasskeyCredentialForAddress, isPasskeyAddress } from '~/constants/passkeyStorage'
 import { apiFetch } from '~/api/client'
 
 const TransferNFTModal: React.FC = () => {
@@ -131,19 +132,30 @@ const TransferNFTModal: React.FC = () => {
   }, [isOpen, isPopB, eoaAccount, buildTransferCall])
 
   // Optimistically settle the transfer in local state the instant it confirms,
-  // so no refresh is needed:
-  //  - Recipient is an address the user ALSO owns (already a key in
-  //    tokensByAddress) → MOVE the profile there (leaves the old owner, appears
-  //    under the new owner immediately, keeps its passkey credential).
-  //  - Otherwise (gave it to someone else) → REMOVE it (also clears the passkey
-  //    credential + markers).
+  // so no refresh is needed. The critical rule: NEVER clear this token's passkey
+  // credential unless the recipient is provably NOT the user's own passkey
+  // address — clearing it wrongly (transfer to your OWN passkey address) makes
+  // the profile unsignable until re-enroll (observed live: #89 → 0x96944…).
+  //   - Recipient is one of the user's OWN addresses — either a known key in
+  //     tokensByAddress OR a passkey address this browser holds a credential/
+  //     marker for → MOVE the profile there (keeps its credential; appears under
+  //     the new owner immediately, even if that key didn't exist yet).
+  //   - Otherwise (a foreign address the user gave it to) → REMOVE it (also
+  //     clears the credential — it's useless once we don't control the owner).
   const settleTransfer = useCallback((to: string) => {
     if (tokenId === null) return
     const store = useTokenDataStore.getState()
     const toLc = to.toLowerCase()
-    const userOwnsRecipient = Object.keys(store.tokensByAddress).some(a => a.toLowerCase() === toLc)
-    if (userOwnsRecipient) store.moveTokenToAddress(tokenId, to as Address)
-    else store.removeToken(tokenId)
+    const isKnownOwnedKey = Object.keys(store.tokensByAddress).some(a => a.toLowerCase() === toLc)
+    // Recipient is one of the user's passkey addresses this browser can sign for:
+    // it holds a credential for some token there, or is marked a passkey account.
+    const isOwnPasskeyAddr =
+      hasPasskeyCredentialForAddress(toLc, store.tokensByAddress) || isPasskeyAddress(toLc)
+    if (isKnownOwnedKey || isOwnPasskeyAddr) {
+      store.moveTokenToAddress(tokenId, to as Address)
+    } else {
+      store.removeToken(tokenId)
+    }
   }, [tokenId])
 
   // Pop-A (wallet) transfer confirmed → settle immediately.
