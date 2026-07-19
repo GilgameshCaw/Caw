@@ -54,12 +54,29 @@ interface HighlightedTextareaProps {
    * ignored (no break before the first chunk). Empty / undefined = no breaks.
    */
   chunkBoundaries?: number[]
+  /**
+   * Parent-owned ref that we write the raw DOM `input` value+caret into during
+   * an IME composition. React suppresses its synthetic onChange mid-composition
+   * on Firefox, so the parent's onChange never sees the composed text; the
+   * native input event does fire, and this ref is how the parent reads it at
+   * compositionend. Stable ref → no listener churn.
+   */
+  composedValueRef?: React.MutableRefObject<{ value: string; caret: number } | null>
 }
 
 /**
  * Textarea with syntax highlighting for @mentions and #hashtags
  * Uses a mirror div technique: styled div behind transparent textarea
  */
+// Firefox (real Gecko) is the ONLY engine that aborts an IME composition when
+// React re-applies the controlled `value` mid-composition — there we drop the
+// textarea to uncontrolled for the duration of a composition. WebKit/Blink
+// (iOS Safari & Chrome, desktop Chrome) keep the controlled value fine, and
+// going uncontrolled there BREAKS their IME, so we must gate this to Gecko.
+// Firefox-for-iOS ("FxiOS") is WebKit, not Gecko, and correctly does NOT match.
+const IS_GECKO =
+  typeof navigator !== 'undefined' && /firefox/i.test(navigator.userAgent)
+
 const HighlightedTextarea: React.FC<HighlightedTextareaProps> = ({
   value,
   onChange,
@@ -81,7 +98,8 @@ const HighlightedTextarea: React.FC<HighlightedTextareaProps> = ({
   compact = false,
   denser = false,
   autoResize = false,
-  chunkBoundaries
+  chunkBoundaries,
+  composedValueRef
 }) => {
   const { isDark } = useTheme()
   // Each instance keeps its OWN ref to its OWN textarea — required so
@@ -100,6 +118,27 @@ const HighlightedTextarea: React.FC<HighlightedTextareaProps> = ({
   // height='0px' collapse trick. See the autoResize effect below.
   const mirrorRef = useRef<HTMLDivElement>(null)
   const [scrollTop, setScrollTop] = useState(0)
+  // True between compositionstart and compositionend (a live CJK/IME
+  // conversion). While true we reveal the textarea's OWN glyphs (color
+  // toggle below) and hide the highlight overlay, so the browser's native
+  // in-progress composition — the underlined 変換中 text and the candidate
+  // window — is directly visible. Without this the real glyphs are
+  // color:transparent and the only visible text is the overlay, which is
+  // driven by React `value`; during composition `value` is frozen (#322)
+  // so the composing text appears in NEITHER layer → invisible. Toggling
+  // visibility (NOT React state) fixes every IME engine without
+  // re-rendering the controlled textarea mid-composition, which itself
+  // ABORTS composition on Firefox (verified: setState here split か into
+  // "k"+"あ"). So we drive visibility with a ref + direct DOM style writes in
+  // the composition handlers — zero React re-render during a composition.
+  const composingRef = useRef(false)
+  // Also mirrored in React state — used ONLY to drop the controlled `value`
+  // prop (→ undefined) during composition so React stops writing value onto the
+  // node. Measured root cause: React re-applies value="" at compositionstart,
+  // which aborts the IME on Firefox and splits か into "k"+"あ". Going
+  // uncontrolled for the composition hands text ownership to the native IME;
+  // compositionend re-controls with the committed value.
+  const [isComposing, setIsComposing] = useState(false)
   // Bumped on window resize so the autoResize effect re-runs and remeasures
   // the mirror against the new viewport width. Without this, soft-wrap
   // changes on viewport-rotate / browser-resize / virtual-keyboard-show
@@ -309,6 +348,54 @@ const HighlightedTextarea: React.FC<HighlightedTextareaProps> = ({
     return () => cancelAnimationFrame(rafId)
   }, [value, chunkBoundaries, overlayHeight, fontSize, compact])
 
+  // Reveal the textarea's own glyphs + hide the highlight overlay DURING an IME
+  // composition, done with direct DOM writes (NOT setState) so nothing
+  // re-renders the controlled textarea mid-composition — a re-render there
+  // aborts composition on Firefox. The declarative styles stay static
+  // (transparent / opacity:1); React won't overwrite our imperative values on
+  // an unrelated re-render because it only writes style props that changed.
+  const handleCompositionStartInternal = (e: React.CompositionEvent<HTMLTextAreaElement>) => {
+    composingRef.current = true
+    setIsComposing(true)
+    const ta = internalRef.current
+    if (ta) {
+      const c = isDark ? 'white' : 'black'
+      ta.style.color = c
+      ta.style.webkitTextFillColor = c
+    }
+    if (highlightRef.current) highlightRef.current.style.opacity = '0'
+    onCompositionStart?.(e)
+  }
+  const handleCompositionEndInternal = (e: React.CompositionEvent<HTMLTextAreaElement>) => {
+    composingRef.current = false
+    setIsComposing(false)
+    const ta = internalRef.current
+    if (ta) {
+      ta.style.color = 'transparent'
+      ta.style.webkitTextFillColor = 'transparent'
+    }
+    if (highlightRef.current) highlightRef.current.style.opacity = '1'
+    onCompositionEnd?.(e)
+  }
+
+  // React suppresses its synthetic onChange during IME composition on Firefox,
+  // so the composed text never reaches the parent's onChange handler. The raw
+  // DOM `input` event DOES fire mid-composition with the correct running value.
+  // Capture it into the parent's ref so compositionend can commit the real
+  // value instead of the browser's stale ta.value. Gated by composingRef (a
+  // ref, so the listener needn't be re-bound on every composition).
+  useEffect(() => {
+    const el = internalRef.current
+    if (!el || !composedValueRef) return
+    const onNativeInput = () => {
+      if (composingRef.current) {
+        composedValueRef.current = { value: el.value, caret: el.selectionStart ?? el.value.length }
+      }
+    }
+    el.addEventListener('input', onNativeInput)
+    return () => el.removeEventListener('input', onNativeInput)
+  }, [composedValueRef])
+
   return (
     <div className="relative w-full">
       {/* Highlight layer - renders behind textarea */}
@@ -327,6 +414,10 @@ const HighlightedTextarea: React.FC<HighlightedTextareaProps> = ({
           // height, which lagged a layout pass on Safari iOS — lines 1-2
           // visually disappeared while line 3 was being typed.
           ...(autoResize && overlayHeight != null ? { height: overlayHeight } : { bottom: 0 }),
+          // Static base; toggled to 0 during composition via direct DOM write
+          // (see handleCompositionStartInternal) so the visible textarea glyphs
+          // aren't doubled by the overlay's stale render of `value`.
+          opacity: 1,
         }}
         aria-hidden="true"
       >
@@ -401,16 +492,22 @@ const HighlightedTextarea: React.FC<HighlightedTextareaProps> = ({
           lineHeight,
           overflow: autoResize ? 'hidden' : undefined,
           minHeight: autoResize ? minBoxHeight : undefined,
+          // Static transparent base (overlay is the visible text); toggled to a
+          // real color during composition via direct DOM write so the native
+          // IME 変換中 text shows, without a re-render that aborts Firefox.
           color: 'transparent',
           caretColor: isDark ? 'white' : 'black',
           WebkitTextFillColor: 'transparent',
         }}
         rows={rows}
         placeholder={placeholder}
-        value={value}
+        // Uncontrolled during composition ONLY on Firefox (see IS_GECKO): there
+        // React's mid-composition value write aborts the IME. On WebKit/Blink we
+        // keep it controlled — going uncontrolled there breaks their IME.
+        value={isComposing && IS_GECKO ? undefined : value}
         onChange={onChange}
-        onCompositionStart={onCompositionStart}
-        onCompositionEnd={onCompositionEnd}
+        onCompositionStart={handleCompositionStartInternal}
+        onCompositionEnd={handleCompositionEndInternal}
         onCompositionUpdate={onCompositionUpdate}
         onClick={onClick}
         onKeyUp={onKeyUp}

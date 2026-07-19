@@ -516,6 +516,13 @@ const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess, placehol
   // stays false → commit normally) from a genuine CJK session (compositionstart
   // fired first → ref is true → defer commit to compositionEnd, preserving #322).
   const isComposingRef = useRef(false)
+  // Firefox hands us e.currentTarget.value === "" at compositionend even though
+  // the composition succeeded — the composed text only appears on the `input`
+  // events fired DURING composition, which React then reverts on the controlled
+  // textarea. We stash the latest good value + caret from those input events so
+  // the compositionend handlers can commit it when ta.value is empty. Chrome and
+  // iOS keep ta.value populated at end, so this is an unused fallback there.
+  const lastComposedRef = useRef<{ value: string; caret: number } | null>(null)
   const [selectedMedia, setSelectedMedia] = useState<any[]>([])
   const [isDragOverTextarea, setIsDragOverTextarea] = useState(false)
   const [showGifPicker, setShowGifPicker] = useState(false)
@@ -848,7 +855,15 @@ const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess, placehol
     // we received a real compositionstart, so plain Latin typing in those
     // browsers (no compositionstart → ref is false) commits immediately while
     // genuine CJK sessions (compositionstart fired → ref is true) still defer.
-    if (isComposingRef.current) return
+    if (isComposingRef.current) {
+      // Capture the correct value+caret from this mid-composition input event
+      // so handleCompositionEnd can commit it even if the browser (Firefox)
+      // reports an empty ta.value at compositionend. Still return without
+      // committing to state now — a setState here re-renders the controlled
+      // textarea and kills the IME candidate window (#322).
+      lastComposedRef.current = { value: e.target.value, caret: e.target.selectionStart ?? e.target.value.length }
+      return
+    }
     const cursor = e.target.selectionStart
     // Single-mode → thread-mode transition: when this keystroke pushes the
     // text past POST_CHAR_LIMIT, the single textarea will unmount and the
@@ -867,6 +882,7 @@ const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess, placehol
   // (which Android WebView mis-reports for plain Latin typing).
   const handleCompositionStart = () => {
     isComposingRef.current = true
+    lastComposedRef.current = null
   }
 
   // IME commit for single-mode — clears our composition flag, then pushes
@@ -875,9 +891,16 @@ const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess, placehol
   const handleCompositionEnd = (e: React.CompositionEvent<HTMLTextAreaElement>) => {
     isComposingRef.current = false
     const ta = e.currentTarget
-    const cursor = ta.selectionStart
+    // Commit the value captured from the raw input event during composition —
+    // it's the running composed text (e.g. "あい"). Firefox's ta.value here is
+    // stale (lags one composition behind, e.g. "あ", dropping the new char), so
+    // captured wins; ta.value is only the fallback when nothing was captured.
+    const captured = lastComposedRef.current
+    lastComposedRef.current = null
+    const committed = captured?.value ?? ta.value
+    const cursor = captured?.caret ?? ta.selectionStart ?? committed.length
     pendingMasterCursorRef.current = cursor
-    setText(ta.value)
+    setText(committed)
     setCursorPosition(cursor)
   }
 
@@ -888,9 +911,14 @@ const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess, placehol
     (e: React.CompositionEvent<HTMLTextAreaElement>) => {
       isComposingRef.current = false
       const ta = e.currentTarget
-      const localCursor = ta.selectionStart ?? 0
+      // Same captured-value-wins logic as handleCompositionEnd (Firefox ta.value
+      // lags one composition behind).
+      const captured = lastComposedRef.current
+      lastComposedRef.current = null
+      const committed = captured?.value ?? ta.value
+      const localCursor = captured?.caret ?? ta.selectionStart ?? committed.length
       pendingMasterCursorRef.current = chunkBoundaries[i] + localCursor
-      replaceChunk(i, ta.value)
+      replaceChunk(i, committed)
       setActiveChunkIndex(i)
       setActiveChunkCursor(localCursor)
     }
@@ -917,6 +945,16 @@ const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess, placehol
   // compositionend DOES fire normally.
   const handleCompositionUpdate = (e: React.CompositionEvent<HTMLTextAreaElement>) => {
     const ta = e.currentTarget
+    // The live commit here exists only for iOS WebKit, which may not fire
+    // compositionend, and which DOES reflect the composing text in ta.value at
+    // this point. Firefox does NOT: ta.value still holds the pre-composition
+    // value (the composing char lands only on the `input` event). Detect that
+    // by comparing to committed state — if ta.value hasn't advanced past `text`,
+    // this is the Firefox lag and we must not touch state/cursor: doing so
+    // re-renders the controlled textarea mid-composition and Firefox aborts the
+    // composition (splitting e.g. か into a standalone "k" + "あ"). We fall
+    // through to handleCompositionEnd, which commits the captured value.
+    if (ta.value === text) return
     const cursor = ta.selectionStart
     pendingMasterCursorRef.current = cursor
     setText(ta.value)
@@ -929,6 +967,10 @@ const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess, placehol
   const makeChunkCompositionUpdate = (i: number) =>
     (e: React.CompositionEvent<HTMLTextAreaElement>) => {
       const ta = e.currentTarget
+      // Same iOS-only live-commit / Firefox-lag guard as handleCompositionUpdate.
+      // If the composing text (e.data) isn't reflected in ta.value yet, this is
+      // the Firefox lag — skip so we don't re-render + abort the composition.
+      if (!e.data || !ta.value.includes(e.data)) return
       const localCursor = ta.selectionStart ?? 0
       pendingMasterCursorRef.current = chunkBoundaries[i] + localCursor
       replaceChunk(i, ta.value)
@@ -2710,8 +2752,12 @@ const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess, placehol
                       >
                       <HighlightedTextarea
                         value={slice}
+                        composedValueRef={lastComposedRef}
                         onChange={(e) => {
-                          if (isComposingRef.current) return
+                          if (isComposingRef.current) {
+                            lastComposedRef.current = { value: e.target.value, caret: e.target.selectionStart ?? e.target.value.length }
+                            return
+                          }
                           const localCursor = e.target.selectionStart ?? 0
                           // Stash the cursor's master-text offset so the
                           // cursor-restore layoutEffect can translate it
@@ -2774,6 +2820,7 @@ const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess, placehol
                 <>
                   <HighlightedTextarea
                     value={text}
+                    composedValueRef={lastComposedRef}
                     onChange={handleTextChange}
                     onCompositionStart={handleCompositionStart}
                     onCompositionEnd={handleCompositionEnd}
@@ -3317,8 +3364,12 @@ const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess, placehol
                   >
                   <HighlightedTextarea
                     value={slice}
+                    composedValueRef={lastComposedRef}
                     onChange={(e) => {
-                      if (isComposingRef.current) return
+                      if (isComposingRef.current) {
+                        lastComposedRef.current = { value: e.target.value, caret: e.target.selectionStart ?? e.target.value.length }
+                        return
+                      }
                       const localCursor = e.target.selectionStart ?? 0
                       pendingMasterCursorRef.current = chunkBoundaries[i] + localCursor
                       replaceChunk(i, e.target.value)
@@ -3393,6 +3444,7 @@ const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess, placehol
             <>
               <HighlightedTextarea
                 value={text}
+                composedValueRef={lastComposedRef}
                 onChange={handleTextChange}
                 onCompositionStart={handleCompositionStart}
                 onCompositionEnd={handleCompositionEnd}
