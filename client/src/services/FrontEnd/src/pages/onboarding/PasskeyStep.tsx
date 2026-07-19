@@ -108,8 +108,11 @@ export default function PasskeyStep({ username, onNext, onBack }: PasskeyStepPro
       const rpId = typeof window !== 'undefined' ? window.location.hostname : 'app.caw.social'
       const pubkey = await enrollPasskey({
         rpId,
-        userName: username,
-        userDisplayName: `@${username}`,
+        userName: `${username}'s wallet`,
+        // The passkey signs for the WALLET (SmartEOA), which can own MANY
+        // profiles — not just @{username}. Name it after the wallet so the OS
+        // dialog stays accurate when signing for a sibling/transferred-in profile.
+        userDisplayName: `${username}'s wallet`,
       })
       // NOTE: the credentialId is NOT persisted here. At enroll time the account
       // doesn't exist yet — there's no tokenId or owner address to scope it by,

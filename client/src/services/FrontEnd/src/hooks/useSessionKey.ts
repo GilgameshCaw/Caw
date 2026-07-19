@@ -233,10 +233,12 @@ export function useCreateSession() {
           // recovery flow. The secp256k1 ecdsaFallback (the recovery key) remains
           // the anchor that the session-register ERC-1271 path validates against.
           const rpId = typeof window !== 'undefined' ? window.location.hostname : 'app.caw.social'
+          // Name after the WALLET (signs for all its profiles), not one profile.
+          const passkeyLabel = activeToken?.username ? `${activeToken.username}'s wallet` : ecdsaFallbackAddr
           const passkey = await enrollPasskey({
             rpId,
-            userName: activeToken?.username ?? ecdsaFallbackAddr,
-            userDisplayName: activeToken?.username ?? ecdsaFallbackAddr,
+            userName: passkeyLabel,
+            userDisplayName: passkeyLabel,
           })
 
           // Get the L2 EOA nonce — must not hardcode 0; old accounts may have

@@ -158,8 +158,9 @@ export function AddPasskeyDialog({
       const effectiveRpId = rpId ?? (typeof window !== 'undefined' ? window.location.hostname : 'app.caw.social')
       const newPasskey = await enrollPasskey({
         rpId: effectiveRpId,
-        userName: username,
-        userDisplayName: username,
+        // Name after the WALLET (signs for all its profiles), not one profile.
+        userName: `${username}'s wallet`,
+        userDisplayName: `${username}'s wallet`,
       })
 
       setPhase({ name: 'proposing', passkey: newPasskey })
