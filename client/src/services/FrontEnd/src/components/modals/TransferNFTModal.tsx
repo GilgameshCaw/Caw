@@ -15,7 +15,7 @@ import { chains } from '~/config/chains'
 import { CAW_NAMES_ADDRESS, CAW_NAME_QUOTER_ADDRESS, CAW_ADDRESS } from '~/../../../abi/addresses'
 import { cawProfileAbi, cawProfileQuoterAbi } from '~/../../../abi/generated'
 import { wagmiConfig } from '~/config/Web3Provider'
-import { usePriceStore } from '~/store/tokenDataStore'
+import { usePriceStore, useTokenDataStore } from '~/store/tokenDataStore'
 import { apiFetch } from '~/api/client'
 
 const TransferNFTModal: React.FC = () => {
@@ -130,6 +130,15 @@ const TransferNFTModal: React.FC = () => {
     return () => { cancelled = true }
   }, [isOpen, isPopB, eoaAccount, buildTransferCall])
 
+  // Pop-A (wallet) transfer confirmed → optimistically evict the profile from
+  // local state right away (same as the Pop-B path does inline), so it leaves
+  // the chooser / AccountSettings / sales "Switch" button without a refresh.
+  useEffect(() => {
+    if (isSuccess && tokenId !== null) {
+      useTokenDataStore.getState().removeToken(tokenId)
+    }
+  }, [isSuccess])
+
   const handleClose = () => {
     setRecipient('')
     setInputError(null)
@@ -236,6 +245,12 @@ const TransferNFTModal: React.FC = () => {
       }
       await smartEoaExecute(calls)
       setPopBSuccess(true)
+      // Optimistically evict the transferred profile from local state the instant
+      // the tx confirms — the user initiated it, so it has left this wallet. Drops
+      // it from the chooser / AccountSettings / sales "Switch" button without
+      // waiting on the on-chain ownership reconcile (which only runs on reload).
+      // removeToken also clears the sold profile's passkey credential + markers.
+      if (tokenId !== null) useTokenDataStore.getState().removeToken(tokenId)
     } catch (err: any) {
       const raw = (err?.message || '').replace(/^API\s+\d+:\s*/i, '')
       if (/NotAllowed|abort|cancel|denied|rejected/i.test(raw)) setPopBError(t('transfer_nft.error.tx_rejected'))
@@ -248,7 +263,8 @@ const TransferNFTModal: React.FC = () => {
   }, [isPopB, eoaAccount, tokenId, l1Client, recipient, lzFee, buildTransferCall, smartEoaExecute, t])
 
   const getButtonText = () => {
-    if (popBPending) return t('transfer_nft.btn.confirm_in_wallet')
+    // Passkey (Pop-B) users sign with their passkey, not a wallet popup.
+    if (popBPending) return t('transfer_nft.btn.confirm_with_passkey')
     if (popBSuccess) return t('transfer_nft.btn.transferred')
     if (needsChainSwitch) return isSwitchingChain ? t('transfer_nft.btn.switching') : t('transfer_nft.btn.switch_network')
     if (isQuoting) return t('transfer_nft.btn.estimating_fee')
