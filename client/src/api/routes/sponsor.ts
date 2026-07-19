@@ -2128,16 +2128,24 @@ router.get('/my-codes', requireAuth({ anySession: true }), async (req, res) => {
   // caller's TxQueue so a freshly-bought code shows as "pending" immediately.
   //
   // TxQueue stores the action in `payload.data.text` as smltxt-compressed hex,
-  // so we decompress to test the "sp-i:" prefix. We exclude (senderId, cawonce)
-  // pairs that already have a PurchasedInviteCode (those are in `out` above).
-  // Pending rows only on the first page (they're the newest activity, always at the
-  // top). `minted` dedups a pending TxQueue row against a persisted one: since both a
-  // pending purchase and its just-indexed PurchasedInviteCode sort newest-first, the
-  // indexed row is on page 1 too, so building `minted` from this page's rows is
-  // sufficient in practice.
-  const minted = new Set(purchased.map(p => `${p.senderId}:${p.cawonce}`))
+  // so we decompress to test the "sp-i:" prefix. Pending rows are surfaced only on
+  // the first page (newest activity, always at the top).
+  // Dedup key = every (senderId, cawonce) that ALREADY has a persisted
+  // PurchasedInviteCode for these tokenIds — a persisted row means the purchase
+  // is DONE, so its TxQueue row must NOT be surfaced as "pending". This MUST span
+  // ALL the caller's purchases, not just this page: with 20-per-page pagination
+  // and (here) 54 persisted codes vs 61 done invite-action TxQueue rows, deriving
+  // `minted` from only the current page's 20 rows left ~40 completed purchases
+  // wrongly re-rendered as "pending / generating your invite code". Query the
+  // full set of persisted cawonces (a tiny 2-column read) so the dedup is total.
+  let minted = new Set<string>()
   let pendingOut: typeof out = []
   if (isFirstPage) try {
+    const allPersisted = await prisma.purchasedInviteCode.findMany({
+      where: { purchasedByTokenId: { in: tokenIds } },
+      select: { senderId: true, cawonce: true },
+    })
+    minted = new Set(allPersisted.map(p => `${p.senderId}:${p.cawonce}`))
     const inflight = await prisma.txQueue.findMany({
       where: {
         senderId: { in: tokenIds },
