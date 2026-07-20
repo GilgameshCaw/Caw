@@ -351,16 +351,24 @@ export default function useTokenDataUpdate() {
       if (res.status !== 'success' || !res.result) return
       const addr = knownAddresses[i]
       if (!addr) return
-      // OWNERSHIP RECONCILE (source of truth = chain). This read SUCCEEDED, so
-      // its token set is authoritative for `addr`. Any NAMED token we still have
-      // stored under `addr` that is NOT in the fresh on-chain set has left this
-      // wallet (sold/transferred) — evict it everywhere (store rows + passkey
-      // credential + active pointers, via removeToken). We gate on success (not
-      // an errored/absent result) so a transient RPC failure can never wipe a
-      // real profile; the empty-result case keeps its existing all-usernameless
-      // guard below. Without this, a sold Pop-B profile lingered in the chooser /
-      // AccountSettings / sales "Switch" button until it was manually cleared.
-      {
+      // OWNERSHIP RECONCILE (source of truth = chain). A NAMED token we still
+      // have stored under `addr` that is NOT in the fresh on-chain set has left
+      // this wallet (sold/transferred) — evict it everywhere (store rows + passkey
+      // credential + active pointers, via removeToken).
+      //
+      // CRITICAL GUARD (regression fix): only evict when the on-chain result is
+      // NON-EMPTY for this address. A `success` + EMPTY result is NOT reliable
+      // proof of "owns nothing" — CawProfileLens.tokens() lags a FRESH MINT (the
+      // just-minted token isn't reflected on the Lens read for a few seconds), so
+      // a freshly-onboarded profile momentarily reads as empty. Evicting on an
+      // empty result wiped a brand-new account right after onboarding — dropping
+      // it from the chooser (active reverted to the prior profile) AND clearing
+      // its passkey credential (Quick Sign broke). A genuine SALE keeps the
+      // address's OTHER tokens, so the result is non-empty and the sold token is
+      // correctly still absent → evicted. When the address truly owns nothing,
+      // the empty-result branch below (all-usernameless prune / removeAddress)
+      // handles cleanup without nuking a named row on a lag artifact.
+      if (res.result.length > 0) {
         const onChainIds = new Set(res.result.map(tk => Number(tk.tokenId)))
         const storedRows = tokensByAddress[addr.toLowerCase() as Address] || []
         for (const stored of storedRows) {
