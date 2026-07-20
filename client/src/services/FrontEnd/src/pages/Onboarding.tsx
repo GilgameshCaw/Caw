@@ -831,6 +831,17 @@ export default function Onboarding() {
               // on the username step. (Root cause of "I turned QS off but token got
               // a session anyway".)
               const qsCfg = qsConfigRef.current
+              // DIAG: onboarding QS auto-register decision. A live signup showed
+              // sessionNonce=0 (never registered on-chain) despite the toggle left
+              // ON — these logs pin down whether qsCfg.enabled was read false
+              // (stale ref) or the register threw before POSTing /api/sessions.
+              console.log('[onboarding:qs] auto-register decision', {
+                enabled: qsCfg.enabled,
+                ownerAddr,
+                spendLimit: qsCfg.spendLimit?.toString?.() ?? String(qsCfg.spendLimit),
+                duration: qsCfg.duration,
+                hasSignFn: typeof result.signVerifyMessage === 'function',
+              })
               if (qsCfg.enabled) {
                 void registerSponsoredSession({
                   signMessage: result.signVerifyMessage,
@@ -839,6 +850,7 @@ export default function Onboarding() {
                   durationSeconds: qsCfg.duration,
                   tipCeiling: qsCfg.tipCeiling,
                   cawPrice: cawPriceUsd,
+                  onProgress: (s) => console.log('[onboarding:qs] register progress:', s),
                   // PRF-wrap the freshly-created session for roaming, reusing the
                   // mint-permit PRF secret (NO extra Face ID). Without this the
                   // onboarding session has no server-side sessionPrfBlob, so signing
@@ -847,8 +859,9 @@ export default function Onboarding() {
                     await result.wrapSessionForRoamingAfterMint(privKeyHex, sessionAddr, meta)
                   },
                 })
+                  .then(() => console.log('[onboarding:qs] auto-register RESOLVED for', ownerAddr))
                   .catch(sessErr =>
-                    console.warn('auto session register failed (non-fatal):', sessErr),
+                    console.warn('[onboarding:qs] auto session register FAILED (non-fatal):', sessErr),
                   )
               }
 
