@@ -627,6 +627,25 @@ export default function Onboarding() {
               }
               const tds = useTokenDataStore.getState()
               tds.setTokensForAddress(ownerAddr, [token])
+              // Make the newly-minted profile the GLOBAL active token, not just
+              // the per-address pick. setActiveTokenIdForAddress alone only
+              // mirrors into the global activeTokenId when `lastAddress` ALREADY
+              // equals ownerAddr at call time (tokenDataStore.ts ~339) — but when
+              // this user was previously signed in as a DIFFERENT profile,
+              // lastAddress still points at that old owner here, so the global
+              // pointer never moved and the app kept showing the old profile
+              // (setLastAddress no longer auto-snaps active — intentional, see
+              // its comment — so it can't fix this on its own either). Call
+              // setActiveTokenId directly: it resolves the owner from
+              // tokensByAddress (just populated by setTokensForAddress above, so
+              // the lookup hits) and unconditionally sets both the global
+              // activeTokenId AND activeTokenIdByAddress — no lastAddress-timing
+              // dependency. This account was JUST created by this user, so it
+              // should unambiguously become active regardless of what was active
+              // before. setLastAddress(ownerAddr) still runs (kept) so
+              // useTokenDataUpdate's viewedAddress/lastAddress-driven refresh
+              // targets the new owner too.
+              tds.setActiveTokenId(mintedTokenId)
               tds.setActiveTokenIdForAddress(ownerAddr, mintedTokenId)
               tds.setLastAddress(ownerAddr)
 
