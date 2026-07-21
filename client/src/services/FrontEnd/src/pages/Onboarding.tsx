@@ -545,6 +545,12 @@ export default function Onboarding() {
             sessionToken: string
             authorizedTokenIds: number[]
             authorizedAddresses: string[]
+            // recoveredTokenIds = the tokenId(s) owned by THIS just-verified
+            // owner specifically (server-scoped to recoveredAddress). Use this to
+            // resolve the minted profile — NOT authorizedTokenIds indexed by an
+            // authorizedAddresses position (those arrays are independent sets).
+            recoveredAddress?: string
+            recoveredTokenIds?: number[]
             expiresAt: number
           }>('/api/auth/verify', {
             method: 'POST',
@@ -589,13 +595,26 @@ export default function Onboarding() {
         // first authorized id (the session may carry several).
         try {
           const owner = (result.ecdsaAddress).toLowerCase()
-          // Find the minted tokenId: the authorized address that matches the
-          // profile owner, paired by index with authorizedTokenIds.
-          const idx = data.authorizedAddresses.findIndex(
-            a => a.toLowerCase() === owner,
-          )
-          const mintedTokenId =
-            idx >= 0 ? data.authorizedTokenIds[idx] : data.authorizedTokenIds[0]
+          // Resolve the minted tokenId AUTHORITATIVELY from the server's
+          // owner-scoped `recoveredTokenIds` (the tokenId(s) owned by THIS
+          // just-verified address). The old code paired authorizedTokenIds by an
+          // INDEX into authorizedAddresses — but those are independent
+          // append-only sets (one owner can contribute several tokenIds), so the
+          // pairing was invalid and, once the signed-in session already held >1
+          // token, resolved the mint to a PRE-EXISTING profile (landed on the
+          // wrong account, new profile never injected). A fresh sponsored EOA
+          // owns exactly one profile, so recoveredTokenIds[0] IS the mint. Fall
+          // back to the legacy positional read ONLY if the server didn't send the
+          // new field (older API), never to authorizedTokenIds[0].
+          let mintedTokenId: number | null = null
+          if (data.recoveredTokenIds && data.recoveredTokenIds.length > 0) {
+            // Server returns this owner's tokenIds newest-first, so [0] is the
+            // just-minted profile (a fresh sponsored EOA owns exactly one).
+            mintedTokenId = data.recoveredTokenIds[0]
+          } else {
+            const idx = data.authorizedAddresses.findIndex(a => a.toLowerCase() === owner)
+            mintedTokenId = idx >= 0 ? data.authorizedTokenIds[idx] : null
+          }
           if (mintedTokenId != null) {
             // Build the active TokenData from data WE ALREADY HOLD — do NOT round-
             // trip /api/users/by-token. That row may not be indexed yet on a fresh

@@ -162,7 +162,11 @@ router.post('/verify', async (req, res) => {
     // the first attempt poisons every retry → "Signature already used" 400.
     const users = await prisma.user.findMany({
       where: { address: { equals: recoveredAddress, mode: 'insensitive' } },
-      select: { tokenId: true }
+      select: { tokenId: true },
+      // Newest tokenId first so recoveredTokenIds[0] is deterministically the
+      // most-recently-minted profile for this owner (the FE reads the freshly
+      // minted one from the front of this list).
+      orderBy: { tokenId: 'desc' },
     })
     const tokenIds = users.map(u => u.tokenId)
 
@@ -221,6 +225,14 @@ router.post('/verify', async (req, res) => {
       sessionToken,
       authorizedTokenIds: updated?.authorizedTokenIds || tokenIds,
       authorizedAddresses: updated?.authorizedAddresses || [recoveredAddress],
+      // The tokenId(s) owned by the JUST-VERIFIED address specifically. The FE
+      // MUST use this to resolve the freshly-minted profile — the two
+      // authorized* arrays above are independent append-only sets (one address
+      // can contribute several tokenIds), so pairing authorizedTokenIds by an
+      // index into authorizedAddresses is invalid and silently resolved a mint
+      // to a PRE-EXISTING profile when the session already held >1 token.
+      recoveredAddress,
+      recoveredTokenIds: tokenIds,
       expiresAt: updated?.expiresAt || session.expiresAt
     })
   } catch (error) {
