@@ -3,6 +3,7 @@ import { useAccount, useChainId, useSwitchChain, useWriteContract, useWaitForTra
 import { readContract } from '@wagmi/core'
 import { isAddress, formatEther, formatUnits, erc20Abi, encodeFunctionData, type Address } from 'viem'
 import { useEnsureWallet } from '~/hooks/useEnsureWallet'
+import { useIdentitySigning } from '~/components/identity/IdentitySigningProvider'
 import { useWalletPopulation } from '~/hooks/useWalletPopulation'
 import { useSmartEoaExecute, type ExecCall } from '~/hooks/useSmartEoaExecute'
 import ModalWrapper from './ModalWrapper'
@@ -25,6 +26,7 @@ const TransferNFTModal: React.FC = () => {
   const { isOpen, tokenId, username, close } = useTransferModalStore()
   const { address, isConnected } = useAccount()
   const ensureWallet = useEnsureWallet()
+  const { isSigning } = useIdentitySigning()
   const chainId = useChainId()
   const { switchChain, isPending: isSwitchingChain } = useSwitchChain()
   const { writeContract, data: hash, isPending: isSubmitting, error: writeError, reset } = useWriteContract()
@@ -346,12 +348,17 @@ const TransferNFTModal: React.FC = () => {
     }
   }, [isPopB, eoaAccount, tokenId, l1Client, recipient, lzFee, gasCurrency, buildTransferCall, settleTransfer, smartEoaExecute, t])
 
+  // Pop-B: the gas fee/currency reads are still resolving for a valid recipient.
+  const popBEstimating = isPopB && !!recipient && isAddress(recipient) && !feesLoaded
+
   const getButtonText = () => {
-    // Passkey (Pop-B) users sign with their passkey, not a wallet popup.
-    if (popBPending) return t('transfer_nft.btn.confirm_with_passkey')
+    // Passkey (Pop-B): "Confirm with passkey…" only DURING the biometric ceremony
+    // (isSigning); once signed, the relay submits + mines (~30s), so show
+    // "Transferring…" instead of leaving the button on "Confirm with passkey".
+    if (popBPending) return isSigning ? t('transfer_nft.btn.confirm_with_passkey') : t('transfer_nft.btn.transferring')
     if (popBSuccess) return t('transfer_nft.btn.transferred')
     if (needsChainSwitch) return isSwitchingChain ? t('transfer_nft.btn.switching') : t('transfer_nft.btn.switch_network')
-    if (isQuoting) return t('transfer_nft.btn.estimating_fee')
+    if (isQuoting || popBEstimating) return t('transfer_nft.btn.estimating_fee')
     if (isSubmitting) return t('transfer_nft.btn.confirm_in_wallet')
     if (isConfirming) return t('transfer_nft.btn.confirming')
     if (isSuccess) return t('transfer_nft.btn.transferred')
@@ -359,9 +366,9 @@ const TransferNFTModal: React.FC = () => {
   }
 
   const isButtonDisabled = isSubmitting || isConfirming || isSuccess || isSwitchingChain || isQuoting || popBPending || popBSuccess ||
-    // Pop-B with neither CAW nor ETH to cover gas → don't let them submit a
-    // doomed transfer; the top-up note tells them what to send.
-    (isPopB && needsTopUp)
+    // Pop-B: wait for the fee/currency info before allowing submit, and block a
+    // doomed transfer when neither CAW nor ETH can cover gas (top-up note shown).
+    (isPopB && (popBEstimating || needsTopUp))
 
   return (
     <ModalWrapper isOpen={isOpen} onClose={handleClose} maxWidth="max-w-md" usePortal zIndex={9999}>
@@ -423,6 +430,16 @@ const TransferNFTModal: React.FC = () => {
           </div>
         )}
 
+        {/* Relay in flight (passkey signed, submitting + mining ~30s). Distinct
+            from the biometric ceremony (isSigning) so the user knows it's working,
+            not stuck, during the wait. */}
+        {popBPending && !isSigning && !popBSuccess && (
+          <div className={`mb-4 p-3 rounded-lg text-sm flex items-center gap-2 ${isDark ? 'bg-blue-500/10 text-blue-300' : 'bg-blue-50 text-blue-700'}`}>
+            <span className="inline-block w-3 h-3 rounded-full border-2 border-current border-t-transparent animate-spin" />
+            {t('transfer_nft.pending')}
+          </div>
+        )}
+
         {(isSuccess || popBSuccess) && (
           <div className={`mb-4 p-3 rounded-lg text-sm ${isDark ? 'bg-green-500/10 text-green-400' : 'bg-green-50 text-green-700'}`}>
             {t('transfer_nft.success', { username: username || '' })}
@@ -451,7 +468,9 @@ const TransferNFTModal: React.FC = () => {
           )}
         </div>
 
-        {/* Pop-B gas: which currency + (when both affordable) a toggle. */}
+        {/* Pop-B gas: which currency + (when both affordable) a toggle.
+            (While estimating, the button itself reads "Estimating network fee…"
+            and is disabled, so the "Paying gas in X" note never surprise-pops.) */}
         {isPopB && !isSuccess && !popBSuccess && feesLoaded && (
           <div className="mt-3 space-y-2">
             {/* Both affordable → let the user choose. */}
