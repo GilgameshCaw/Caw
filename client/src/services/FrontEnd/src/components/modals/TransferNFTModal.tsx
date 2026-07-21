@@ -1,7 +1,7 @@
 import React, { useCallback, useState, useEffect } from 'react'
 import { useAccount, useChainId, useSwitchChain, useWriteContract, useWaitForTransactionReceipt, usePublicClient } from 'wagmi'
 import { readContract } from '@wagmi/core'
-import { isAddress, formatEther, erc20Abi, encodeFunctionData, type Address } from 'viem'
+import { isAddress, formatEther, formatUnits, erc20Abi, encodeFunctionData, type Address } from 'viem'
 import { useEnsureWallet } from '~/hooks/useEnsureWallet'
 import { useWalletPopulation } from '~/hooks/useWalletPopulation'
 import { useSmartEoaExecute, type ExecCall } from '~/hooks/useSmartEoaExecute'
@@ -46,6 +46,16 @@ const TransferNFTModal: React.FC = () => {
   // Pop-B relay gas estimate (real per-batch estimateGas via /execute-estimate),
   // shown as a USD figure under the Transfer button. null until it resolves.
   const [relayFeeUsd, setRelayFeeUsd] = useState<number | null>(null)
+  // Reactive gas-currency affordability (Pop-B). The relayer can be repaid in
+  // CAW or ETH; we read both fees + both owner-EOA L1 balances up front so the
+  // modal can say WHICH currency it'll use (or offer a toggle when BOTH work),
+  // instead of silently picking one and only surfacing a vague "insufficient".
+  const [feeCawWei, setFeeCawWei] = useState<bigint | null>(null)   // null = CAW price unavailable
+  const [feeEthWei, setFeeEthWei] = useState<bigint | null>(null)
+  const [eoaCawWei, setEoaCawWei] = useState<bigint | null>(null)
+  const [eoaEthWei, setEoaEthWei] = useState<bigint | null>(null)
+  // User's explicit gas-currency choice, only honoured when BOTH are affordable.
+  const [gasCurrency, setGasCurrency] = useState<'CAW' | 'ETH' | null>(null)
 
   // Build the transfer batch's inner call (transferAndSync, self-funding its LZ
   // fee) WITHOUT the fee leg — shared by the gas estimate and handlePopBTransfer.
@@ -106,30 +116,40 @@ const TransferNFTModal: React.FC = () => {
   // show a USD figure under the button. Re-runs when the recipient / LZ fee
   // settle. Non-fatal: on failure we just hide the estimate line.
   useEffect(() => {
-    if (!isOpen || !isPopB || !eoaAccount) { setRelayFeeUsd(null); return }
+    const clear = () => { setRelayFeeUsd(null); setFeeCawWei(null); setFeeEthWei(null); setEoaCawWei(null); setEoaEthWei(null) }
+    if (!isOpen || !isPopB || !eoaAccount || !l1Client) { clear(); return }
     const call = buildTransferCall()
-    if (!call) { setRelayFeeUsd(null); return }
+    if (!call) { clear(); return }
     let cancelled = false
     ;(async () => {
       try {
-        const est = await apiFetch<{ feeEthUsd?: number | null }>(
-          '/api/sponsor/execute-estimate',
-          {
-            method: 'POST',
-            body: JSON.stringify({
-              eoaAddress: eoaAccount,
-              calls: [{ to: call.to, value: call.value.toString(), data: call.data }],
-              forwardedValueWei: '0',
-            }),
-          },
-        )
-        if (!cancelled) setRelayFeeUsd(typeof est.feeEthUsd === 'number' ? est.feeEthUsd : null)
+        const [est, cawBal, ethBal] = await Promise.all([
+          apiFetch<{ minFeeCawWei: string; priceAvailable: boolean; minFeeEthWei: string; feeEthUsd?: number | null }>(
+            '/api/sponsor/execute-estimate',
+            {
+              method: 'POST',
+              body: JSON.stringify({
+                eoaAddress: eoaAccount,
+                calls: [{ to: call.to, value: call.value.toString(), data: call.data }],
+                forwardedValueWei: '0',
+              }),
+            },
+          ),
+          l1Client.readContract({ address: CAW_ADDRESS as Address, abi: erc20Abi, functionName: 'balanceOf', args: [eoaAccount as Address] }) as Promise<bigint>,
+          l1Client.getBalance({ address: eoaAccount as Address }),
+        ])
+        if (cancelled) return
+        setRelayFeeUsd(typeof est.feeEthUsd === 'number' ? est.feeEthUsd : null)
+        setFeeCawWei(est.priceAvailable ? BigInt(est.minFeeCawWei) : null)
+        setFeeEthWei(BigInt(est.minFeeEthWei))
+        setEoaCawWei(cawBal)
+        setEoaEthWei(ethBal)
       } catch {
-        if (!cancelled) setRelayFeeUsd(null)
+        if (!cancelled) clear()
       }
     })()
     return () => { cancelled = true }
-  }, [isOpen, isPopB, eoaAccount, buildTransferCall])
+  }, [isOpen, isPopB, eoaAccount, l1Client, buildTransferCall])
 
   // Optimistically settle the transfer in local state the instant it confirms,
   // so no refresh is needed. The critical rule: NEVER clear this token's passkey
@@ -163,6 +183,24 @@ const TransferNFTModal: React.FC = () => {
     if (isSuccess && recipient) settleTransfer(recipient)
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isSuccess])
+
+  // ── Gas-currency affordability (Pop-B) ──────────────────────────────────────
+  // The ETH leg must also cover the self-funded LZ fee attached to transferAndSync
+  // (0 on the bypassLZ L1 path, but keep it honest). CAW covers only the relayer
+  // gas repayment.
+  const transferLzFee = lzFee ?? 0n
+  const canPayCaw = feeCawWei != null && eoaCawWei != null && eoaCawWei >= feeCawWei
+  const canPayEth = feeEthWei != null && eoaEthWei != null && eoaEthWei >= (transferLzFee + feeEthWei)
+  const feesLoaded = feeEthWei != null && eoaEthWei != null && eoaCawWei != null
+  // Resolved currency: honour the user's explicit pick ONLY when both are
+  // affordable; otherwise auto-pick whichever they can cover (prefer CAW).
+  const resolvedGasCurrency: 'CAW' | 'ETH' | null =
+    canPayCaw && canPayEth ? (gasCurrency ?? 'CAW')
+    : canPayCaw ? 'CAW'
+    : canPayEth ? 'ETH'
+    : null
+  const needsTopUp = feesLoaded && !canPayCaw && !canPayEth
+  const feeCawDisplay = feeCawWei != null ? Number(formatUnits(feeCawWei, 18)) : null
 
   const handleClose = () => {
     setRecipient('')
@@ -256,11 +294,12 @@ const TransferNFTModal: React.FC = () => {
         l1Client.readContract({ address: CAW_ADDRESS as Address, abi: erc20Abi, functionName: 'balanceOf', args: [eoaAccount as Address] }) as Promise<bigint>,
         l1Client.getBalance({ address: eoaAccount as Address }),
       ])
-      const payInCaw = feeCaw != null && cawBalNow >= feeCaw
-      // ETH must cover the self-funded LZ fee (attached to the transfer call)
-      // PLUS the relayer's gas repayment leg (buffered).
-      const payInEth = ethBalNow >= transferLzFee + feeEth
-      if (!payInCaw && !payInEth) throw new Error('INSUFFICIENT_FEE_CAW')
+      const affordCaw = feeCaw != null && cawBalNow >= feeCaw
+      const affordEth = ethBalNow >= transferLzFee + feeEth
+      if (!affordCaw && !affordEth) throw new Error('INSUFFICIENT_FEE_CAW')
+      // Honour the user's toggle when both work; else use whichever is affordable
+      // (prefer CAW). Matches resolvedGasCurrency shown in the UI.
+      const payInCaw = affordCaw && affordEth ? (gasCurrency ?? 'CAW') === 'CAW' : affordCaw
 
       const calls: ExecCall[] = [transferCall]
       if (payInCaw) {
@@ -283,7 +322,7 @@ const TransferNFTModal: React.FC = () => {
     } finally {
       setPopBPending(false)
     }
-  }, [isPopB, eoaAccount, tokenId, l1Client, recipient, lzFee, buildTransferCall, settleTransfer, smartEoaExecute, t])
+  }, [isPopB, eoaAccount, tokenId, l1Client, recipient, lzFee, gasCurrency, buildTransferCall, settleTransfer, smartEoaExecute, t])
 
   const getButtonText = () => {
     // Passkey (Pop-B) users sign with their passkey, not a wallet popup.
@@ -297,7 +336,10 @@ const TransferNFTModal: React.FC = () => {
     return t('transfer_nft.btn.transfer')
   }
 
-  const isButtonDisabled = isSubmitting || isConfirming || isSuccess || isSwitchingChain || isQuoting || popBPending || popBSuccess
+  const isButtonDisabled = isSubmitting || isConfirming || isSuccess || isSwitchingChain || isQuoting || popBPending || popBSuccess ||
+    // Pop-B with neither CAW nor ETH to cover gas → don't let them submit a
+    // doomed transfer; the top-up note tells them what to send.
+    (isPopB && needsTopUp)
 
   return (
     <ModalWrapper isOpen={isOpen} onClose={handleClose} maxWidth="max-w-md" usePortal zIndex={9999}>
@@ -387,14 +429,52 @@ const TransferNFTModal: React.FC = () => {
           )}
         </div>
 
-        {/* Pop-B: real relay gas estimate (USD) for this transfer, below the
-            button. Priced against THIS batch via /execute-estimate. */}
-        {isPopB && !isSuccess && !popBSuccess && relayFeeUsd != null && (
-          <p className={`mt-2 text-[11px] text-right ${themeTextMuted(isDark)}`}>
-            {t('transfer_nft.gas_estimate', {
-              amount: relayFeeUsd < 0.01 ? '<0.01' : relayFeeUsd.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 }),
-            })}
-          </p>
+        {/* Pop-B gas: which currency + (when both affordable) a toggle. */}
+        {isPopB && !isSuccess && !popBSuccess && feesLoaded && (
+          <div className="mt-3 space-y-2">
+            {/* Both affordable → let the user choose. */}
+            {canPayCaw && canPayEth && (
+              <div className="flex items-center justify-end gap-2">
+                <span className={`text-[11px] ${themeTextMuted(isDark)}`}>{t('transfer_nft.gas.pay_with')}</span>
+                {(['CAW', 'ETH'] as const).map(cur => {
+                  const active = resolvedGasCurrency === cur
+                  return (
+                    <button
+                      key={cur}
+                      type="button"
+                      onClick={() => setGasCurrency(cur)}
+                      className={`px-2.5 py-1 rounded-md text-[11px] font-medium transition cursor-pointer ${
+                        active
+                          ? 'bg-yellow-500 text-black'
+                          : isDark ? 'bg-white/5 text-white/60 hover:bg-white/10' : 'bg-black/5 text-black/60 hover:bg-black/10'
+                      }`}
+                    >
+                      {cur}
+                    </button>
+                  )
+                })}
+              </div>
+            )}
+            {/* Note which currency it will use + the amount. */}
+            {resolvedGasCurrency != null && (
+              <p className={`text-[11px] text-right ${themeTextMuted(isDark)}`}>
+                {resolvedGasCurrency === 'CAW' && feeCawDisplay != null
+                  ? t('transfer_nft.gas.paying_caw', { amount: feeCawDisplay.toLocaleString(undefined, { maximumFractionDigits: 2 }) })
+                  : relayFeeUsd != null
+                    ? t('transfer_nft.gas.paying_eth', { amount: relayFeeUsd < 0.01 ? '<0.01' : relayFeeUsd.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 }) })
+                    : t('transfer_nft.gas.paying_eth_generic')}
+              </p>
+            )}
+            {/* Neither affordable → specific top-up guidance (NOT a bare "insufficient"). */}
+            {needsTopUp && (
+              <div className={`p-2.5 rounded-lg text-[11px] ${isDark ? 'bg-orange-500/10 text-orange-400' : 'bg-orange-50 text-orange-600'}`}>
+                <p className="text-center whitespace-pre-line">{t('transfer_nft.gas.topup')}</p>
+                {eoaAccount && (
+                  <p className="mt-1 text-center font-mono break-all">{eoaAccount}</p>
+                )}
+              </div>
+            )}
+          </div>
         )}
       </div>
     </ModalWrapper>
