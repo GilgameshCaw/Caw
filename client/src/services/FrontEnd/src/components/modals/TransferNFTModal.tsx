@@ -17,6 +17,7 @@ import { CAW_NAMES_ADDRESS, CAW_NAME_QUOTER_ADDRESS, CAW_ADDRESS } from '~/../..
 import { cawProfileAbi, cawProfileQuoterAbi } from '~/../../../abi/generated'
 import { wagmiConfig } from '~/config/Web3Provider'
 import { usePriceStore, useTokenDataStore } from '~/store/tokenDataStore'
+import { useSessionKeyStore } from '~/store/sessionKeyStore'
 import { hasPasskeyCredentialForAddress, isPasskeyAddress } from '~/constants/passkeyStorage'
 import { apiFetch } from '~/api/client'
 
@@ -179,6 +180,16 @@ const TransferNFTModal: React.FC = () => {
     if (tokenId === null) return
     const store = useTokenDataStore.getState()
     const toLc = to.toLowerCase()
+    // Capture the profile's PRE-transfer owner: every transfer bumps the on-chain
+    // session epoch for the previous owner (CawProfileLedger._setOwnerOf →
+    // ownerSessionEpoch[prev]++ / tokenSessionEpoch[tokenId]++), so any Quick Sign
+    // session registered under that owner is now epoch-DEAD on-chain. If we leave
+    // it in the local session store, the FE keeps signing this profile's actions
+    // with a session that reverts InvalidSig at the validator. Clear it so QS
+    // resolves the NEW owner (re-register, or wallet-sign for a Pop-A owner)
+    // instead of signing-and-failing. Observed live: gilgakey56 (#94) → 0xf71338.
+    const prevOwner = Object.entries(store.tokensByAddress)
+      .find(([, toks]) => toks.some(t => t.tokenId === tokenId))?.[0]
     const isKnownOwnedKey = Object.keys(store.tokensByAddress).some(a => a.toLowerCase() === toLc)
     // Recipient is one of the user's passkey addresses this browser can sign for:
     // it holds a credential for some token there, or is marked a passkey account.
@@ -188,6 +199,14 @@ const TransferNFTModal: React.FC = () => {
       store.moveTokenToAddress(tokenId, to as Address)
     } else {
       store.removeToken(tokenId)
+    }
+    // Kill the old owner's (now epoch-invalidated) session UNCONDITIONALLY: the
+    // on-chain ownerSessionEpoch[prevOwner] bump invalidates ALL of that owner's
+    // wallet-scoped sessions on any transfer out, so every one is epoch-dead and
+    // would sign-and-fail. Clearing forces a correct re-register (the session key
+    // is ephemeral + on-chain-registered; losing the plaintext costs nothing).
+    if (prevOwner) {
+      useSessionKeyStore.getState().clearSessionForAddress(prevOwner)
     }
   }, [tokenId])
 
