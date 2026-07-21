@@ -18,6 +18,10 @@ import { useT } from '~/i18n/I18nProvider'
 const MIN_LENGTH = 12
 
 export interface VaultPasswordStepProps {
+  /** The chosen username — used only to label the credential in the browser's
+   *  password manager (a hidden username field), so a saved vault password reads
+   *  as "<username>'s CAW vault" instead of "no username". */
+  username: string
   vaultPassword: string
   vaultPasswordConfirm: string
   onPasswordChange: (value: string) => void
@@ -89,6 +93,7 @@ function scorePassword(pw: string): StrengthResult {
 }
 
 export default function VaultPasswordStep({
+  username,
   vaultPassword,
   vaultPasswordConfirm,
   onPasswordChange,
@@ -152,6 +157,25 @@ export default function VaultPasswordStep({
         </div>
       </div>
 
+      {/* Hidden username field so the browser password manager saves this vault
+          password labeled "<username>'s CAW vault" instead of "no username".
+          Chrome ties (site, username) → password; a readonly, visually-hidden
+          (NOT display:none — the PW manager ignores those) username input gives
+          the saved credential a friendly, recognizable name. autoComplete pairing
+          username + new-password is what triggers the save offer. */}
+      {username && (
+        <input
+          type="text"
+          name="username"
+          autoComplete="username"
+          readOnly
+          value={`${username}'s CAW vault`}
+          tabIndex={-1}
+          aria-hidden="true"
+          className="sr-only"
+        />
+      )}
+
       {/* Password input */}
       <div className="space-y-1">
         <label className={`block text-sm font-medium ${strongClass}`}>
@@ -163,7 +187,7 @@ export default function VaultPasswordStep({
             value={vaultPassword}
             onChange={e => onPasswordChange(e.target.value)}
             placeholder={t('onboarding.vault.password_placeholder')}
-            autoComplete="off"
+            autoComplete="new-password"
             className={`
               w-full px-4 py-3 pr-10 rounded-xl border text-sm transition-colors
               ${inputBg} ${strongClass} ${borderBase} ${borderFocus}
@@ -220,7 +244,7 @@ export default function VaultPasswordStep({
             value={vaultPasswordConfirm}
             onChange={e => onConfirmChange(e.target.value)}
             placeholder={t('onboarding.vault.confirm_placeholder')}
-            autoComplete="off"
+            autoComplete="new-password"
             className={`
               w-full px-4 py-3 pr-10 rounded-xl border text-sm transition-colors
               ${inputBg} ${strongClass}

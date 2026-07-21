@@ -366,6 +366,22 @@ export default function RecoveryFlow({ onSignedIn, onBack, variant = 'page' }: R
             )}
             {t('recovery.password.prompt')}
           </p>
+          {/* Hidden username so the browser password manager labels/retrieves
+              this vault password by the backup wallet's address (a stable
+              per-wallet key) rather than "no username". Readonly + visually
+              hidden (sr-only, NOT display:none, which the PW manager ignores). */}
+          {blob.pubkeyAddress && (
+            <input
+              type="text"
+              name="username"
+              autoComplete="username"
+              readOnly
+              value={`CAW vault ${blob.pubkeyAddress}`}
+              tabIndex={-1}
+              aria-hidden="true"
+              className="sr-only"
+            />
+          )}
           <div className="relative">
             <input
               type={showPassword ? 'text' : 'password'}
@@ -373,6 +389,7 @@ export default function RecoveryFlow({ onSignedIn, onBack, variant = 'page' }: R
               onChange={e => setPassword(e.target.value)}
               onKeyDown={handlePasswordKeyDown}
               placeholder={t('recovery.password.placeholder')}
+              autoComplete="current-password"
               autoFocus
               className={`w-full px-4 py-3 pr-11 rounded-xl text-sm outline-none transition-colors ${inputClass}`}
             />

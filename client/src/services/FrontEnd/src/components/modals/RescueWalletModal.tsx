@@ -135,9 +135,9 @@ export default function RescueWalletModal({ wallet, isOpen, onClose, onRescued }
             <button
               onClick={handleRescue}
               disabled={pending}
-              className={`px-4 py-2 rounded-lg text-sm font-medium transition cursor-pointer text-white ${
+              className={`px-4 py-2 rounded-lg text-sm font-medium transition cursor-pointer bg-yellow-500 text-black ${
                 pending ? 'opacity-50 cursor-not-allowed' : 'hover:opacity-90'
-              } bg-yellow-500 text-black`}
+              }`}
             >
               {pending ? t('rescue.btn.rescuing') : t('rescue.btn.rescue')}
             </button>

@@ -1241,6 +1241,7 @@ export default function Onboarding() {
           {state.step === 'vault-password' && (
             <div className="max-w-[600px] mx-auto">
               <VaultPasswordStep
+                username={state.username}
                 vaultPassword={state.vaultPassword}
                 vaultPasswordConfirm={state.vaultPasswordConfirm}
                 onPasswordChange={handlePasswordChange}
