@@ -19,7 +19,9 @@ import { apiFetch, API_HOST, AuthError } from '~/api/client'
 import { useFollowerCounts } from '~/hooks/useFollowerCounts'
 import { usePinnedProfilesStore } from '~/store/pinnedProfilesStore'
 import { formatAddress } from '~/utils'
-import { isPasskeyAddress } from '~/constants/passkeyStorage'
+import { isPasskeyAddress, forgetPasskeyWallet } from '~/constants/passkeyStorage'
+import { useProfilelessPasskeyWallets, type ProfilelessWallet } from '~/hooks/useProfilelessPasskeyWallets'
+import RescueWalletModal from '~/components/modals/RescueWalletModal'
 import { ThumbtackIcon } from '~/components/icons/ThumbtackIcon'
 import { useT } from '~/i18n/I18nProvider'
 import { IdentitySection } from '~/components/identity/IdentitySection'
@@ -633,6 +635,10 @@ const AccountSettings: React.FC = () => {
   const [showClearDataModal, setShowClearDataModal] = useState(false)
   const [showRecoveryModal, setShowRecoveryModal] = useState(false)
   const [showLogoutModal, setShowLogoutModal] = useState(false)
+  // Profile-less passkey wallets this browser controls that still hold funds —
+  // surfaced as rescue cards so their CAW/ETH isn't stranded (see the hook).
+  const { wallets: rescueWallets, refresh: refreshRescueWallets } = useProfilelessPasskeyWallets()
+  const [rescueTarget, setRescueTarget] = useState<ProfilelessWallet | null>(null)
   // Marker so the effect below knows to surface the connect modal once
   // wagmi has flushed the disconnect. A plain setTimeout closure captures
   // a stale openConnectModal that no-ops post-render.
@@ -1067,6 +1073,57 @@ const AccountSettings: React.FC = () => {
                   </div>
                 </div>
               ))}
+
+              {/* Profile-less passkey wallets (controlled by this browser or a
+                  loaded backup file) that still hold funds — offer to rescue the
+                  CAW/ETH stranded in them. These never appear in the grouping
+                  above because they own no profile. */}
+              {rescueWallets.map(w => (
+                <div key={`rescue-${w.address}`}>
+                  <div className="flex items-center gap-1.5 mb-2 px-1">
+                    <Link
+                      to={`/address/${w.address}`}
+                      className={`text-xs font-mono hover:underline ${isDark ? 'text-white/50 hover:text-white/80' : 'text-gray-500 hover:text-gray-800'}`}
+                    >
+                      {formatAddress(w.address)}
+                    </Link>
+                    <Tooltip text="Passkey wallet">
+                      <HiKey className={`w-3.5 h-3.5 ${isDark ? 'text-yellow-500/70' : 'text-yellow-600/80'}`} aria-label="Passkey wallet" />
+                    </Tooltip>
+                  </div>
+                  <div className={`flex items-center justify-between p-4 rounded-lg border ${isDark ? 'bg-orange-500/5 border-orange-500/20' : 'bg-orange-50 border-orange-200'}`}>
+                    <div>
+                      <p className={`font-medium ${isDark ? 'text-white' : 'text-gray-900'}`}>
+                        {t('account.rescue_card.title')}
+                      </p>
+                      <p className={`text-sm ${isDark ? 'text-white/50' : 'text-gray-500'}`}>
+                        {t('account.rescue_card.subtitle')}
+                        {w.usd > 0 && <span className="ml-1">· ~${w.usd < 0.01 ? '<0.01' : w.usd.toLocaleString(undefined, { maximumFractionDigits: 2 })}</span>}
+                      </p>
+                    </div>
+                    <div className="flex items-center gap-2 flex-shrink-0">
+                      <button
+                        type="button"
+                        onClick={() => {
+                          forgetPasskeyWallet(w.address)
+                          refreshRescueWallets()
+                        }}
+                        title={t('account.rescue_card.forget_title')}
+                        className={`px-2.5 py-1.5 rounded-lg text-xs transition cursor-pointer ${isDark ? 'text-white/40 hover:text-white/70 hover:bg-white/5' : 'text-gray-400 hover:text-gray-600 hover:bg-gray-100'}`}
+                      >
+                        {t('account.rescue_card.forget')}
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setRescueTarget(w)}
+                        className="px-3 py-1.5 rounded-lg text-sm font-medium bg-yellow-500 text-black hover:opacity-90 transition cursor-pointer"
+                      >
+                        {t('account.rescue_card.button')}
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              ))}
             </div>
           </section>
         )}
@@ -1319,6 +1376,16 @@ const AccountSettings: React.FC = () => {
             <HiExclamation className={`w-5 h-5 ${isDark ? 'text-red-400' : 'text-red-500'}`} />
           </button>
         </section>
+
+        {/* Rescue a profile-less passkey wallet's stranded CAW/ETH. */}
+        {rescueTarget && (
+          <RescueWalletModal
+            wallet={rescueTarget}
+            isOpen={!!rescueTarget}
+            onClose={() => setRescueTarget(null)}
+            onRescued={refreshRescueWallets}
+          />
+        )}
 
         {/* Clear Data Confirmation Modal */}
         <ModalWrapper isOpen={showClearDataModal} onClose={() => setShowClearDataModal(false)} maxWidth="max-w-sm">

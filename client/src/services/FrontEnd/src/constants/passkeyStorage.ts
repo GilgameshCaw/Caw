@@ -156,6 +156,58 @@ export function markPasskeyAddress(address: string): void {
 export function persistPasskeyIdentity(tokenId: number | string, ownerAddress: string, credentialId: string): void {
   setPasskeyCredential(tokenId, credentialId)
   markPasskeyAddress(ownerAddress)
+  rememberPasskeyWallet(ownerAddress)
+}
+
+// ── Durable "passkey wallets this browser controls" set ──────────────────────
+//
+// A SINGLE enumerable key holding every SmartEOA address this browser has ever
+// enrolled/minted a passkey wallet for. Unlike the per-address identity-kind
+// marker (which `removeToken` deletes when a wallet's last profile is
+// transferred away, so a funds-holding wallet vanishes from the UI with no
+// trace), this set is NEVER touched by profile eviction. It is the enumerable
+// source that lets AccountSettings surface a profile-LESS passkey wallet so the
+// user can rescue CAW/ETH stranded in it or mint a new profile back into it.
+//
+// It is removed ONLY by an explicit user action: `forgetPasskeyWallet(addr)`
+// ("remove this wallet, no trace") or `clearAllPasskeyWallets()` (the full
+// browser-data wipe). That deliberate-forget path is why we keep this separate
+// from `removeToken` rather than making removeToken preserve the marker.
+//
+// Non-secret: just addresses of 7702 delegates. Signing still requires the
+// passkey authenticator (device) or a loaded backup key.
+const PASSKEY_WALLETS_KEY = 'caw:passkey-wallets'
+
+/** All passkey-wallet addresses this browser knows it controls (lowercased). */
+export function listPasskeyWallets(): string[] {
+  const arr = getJSON<string[] | null>(PASSKEY_WALLETS_KEY, null)
+  if (!Array.isArray(arr)) return []
+  // Defensive: dedupe + normalize (older writes or hand-edits could vary case).
+  return Array.from(new Set(arr.map(a => String(a).toLowerCase())))
+}
+
+/** Record a passkey-wallet address as controlled by this browser (idempotent). */
+export function rememberPasskeyWallet(address: string): void {
+  if (!address) return
+  const lc = address.toLowerCase()
+  const current = listPasskeyWallets()
+  if (current.includes(lc)) return
+  setJSON(PASSKEY_WALLETS_KEY, [...current, lc])
+}
+
+/** Explicitly forget ONE passkey wallet (user chose "remove this wallet"). Also
+ *  clears its identity-kind marker so no trace of it remains. */
+export function forgetPasskeyWallet(address: string): void {
+  if (!address) return
+  const lc = address.toLowerCase()
+  const next = listPasskeyWallets().filter(a => a !== lc)
+  setJSON(PASSKEY_WALLETS_KEY, next)
+  clearPasskeyAddress(lc)
+}
+
+/** Wipe the entire known-wallets set (part of the full browser-data clear). */
+export function clearAllPasskeyWallets(): void {
+  try { localStorage.removeItem(PASSKEY_WALLETS_KEY) } catch { /* storage unavailable */ }
 }
 
 // ── One-time cutover: drop the old browser-global keys ───────────────────────

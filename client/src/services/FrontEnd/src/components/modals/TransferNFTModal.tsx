@@ -215,6 +215,26 @@ const TransferNFTModal: React.FC = () => {
   const needsTopUp = feesLoaded && !canPayCaw && !canPayEth
   const feeCawDisplay = feeCawWei != null ? Number(formatUnits(feeCawWei, 18)) : null
 
+  // Warn when transferring the wallet's LAST profile to a FOREIGN address while it
+  // still holds funds — after the transfer the wallet drops from the UI and its
+  // CAW/ETH becomes hard to reach (recoverable via AccountSettings/backup, but
+  // easy to forget). Only for passkey wallets, only when the recipient isn't one
+  // the user controls (moveTokenToAddress keeps those visible), and only above dust.
+  const strandsFunds = (() => {
+    if (!isPopB || !eoaAccount) return false
+    const store = useTokenDataStore.getState()
+    const owned = store.tokensByAddress[eoaAccount.toLowerCase() as Address] || []
+    const isLastProfile = owned.length <= 1
+    const hasFunds = (eoaCawWei != null && eoaCawWei > 0n) || (eoaEthWei != null && eoaEthWei > 0n)
+    // Skip the warning when the recipient is an address the user also controls.
+    const toLc = recipient.toLowerCase()
+    const toSelf =
+      Object.keys(store.tokensByAddress).some(a => a.toLowerCase() === toLc) ||
+      hasPasskeyCredentialForAddress(toLc, store.tokensByAddress) ||
+      isPasskeyAddress(toLc)
+    return isLastProfile && hasFunds && !toSelf && isAddress(recipient)
+  })()
+
   const handleClose = () => {
     setRecipient('')
     setInputError(null)
@@ -405,6 +425,13 @@ const TransferNFTModal: React.FC = () => {
             {inputError && (
               <p className="mt-1 text-xs text-error-dim">{inputError}</p>
             )}
+          </div>
+        )}
+
+        {/* Strands-funds warning: last profile → foreign address, wallet holds funds. */}
+        {!isSuccess && !popBSuccess && strandsFunds && (
+          <div className={`mb-4 p-3 rounded-lg text-xs ${isDark ? 'bg-orange-500/10 text-orange-300' : 'bg-orange-50 text-orange-700'}`}>
+            {t('transfer_nft.strands_warning')}
           </div>
         )}
 
