@@ -70,7 +70,15 @@ const TransferNFTModal: React.FC = () => {
       data: encodeFunctionData({
         abi: cawProfileAbi,
         functionName: 'transferAndSync',
-        args: [recipient as Address, BigInt(tokenId), chains.l1.layerZero, 0n],
+        // lzDestId = the destination chain whose pending-transfer queue to flush.
+        // That is the ACTION-PROCESSING L2 (chains.l2.layerZero, 40245) — the
+        // chain whose CawProfileLedger.ownerOf backs Quick Sign / action auth.
+        // Passing chains.l1.layerZero (40161 = mainnetLzId) flushes the ALWAYS-
+        // EMPTY L1 queue (see CawProfile.transferAndSync comment) and NEVER sends
+        // the L2 owner-sync → L2 ownership stays stale → transferred profiles fail
+        // Quick Sign with InvalidSig (contract checks the stale L2 owner). This is
+        // the whole point of transferAndSync: transfer AND sync the L2 in one call.
+        args: [recipient as Address, BigInt(tokenId), chains.l2.layerZero, 0n],
       }),
     }
   }, [tokenId, recipient, lzFee])
@@ -92,7 +100,10 @@ const TransferNFTModal: React.FC = () => {
       address: CAW_NAME_QUOTER_ADDRESS,
       abi: cawProfileQuoterAbi,
       functionName: 'syncTransferQuote',
-      args: [tokenId, recipient as `0x${string}`, chains.l1.layerZero, false],
+      // Quote the REAL L2 destination (40245) — must match the transferAndSync
+      // lzDestId above. Quoting chains.l1.layerZero (40161) returned ~0 (the L1
+      // bypass eid), which is why the sync silently no-op'd and its fee looked free.
+      args: [tokenId, recipient as `0x${string}`, chains.l2.layerZero, false],
       chainId: chains.l1.chainId
     })
       .then((quote: any) => {
@@ -221,7 +232,13 @@ const TransferNFTModal: React.FC = () => {
   // (0 on the bypassLZ L1 path, but keep it honest). CAW covers only the relayer
   // gas repayment.
   const transferLzFee = lzFee ?? 0n
-  const canPayCaw = feeCawWei != null && eoaCawWei != null && eoaCawWei >= feeCawWei
+  // The L2 owner-sync LZ fee is ALWAYS self-funded in ETH from the EOA (it's the
+  // `value` on transferAndSync), regardless of which currency repays the relayer.
+  // So a real (non-zero) LZ fee means the wallet MUST hold >= transferLzFee ETH
+  // even when paying gas in CAW — otherwise transferAndSync reverts (can't fund
+  // its own LZ value). Gate CAW affordability on that ETH floor too.
+  const canFundLz = eoaEthWei != null && eoaEthWei >= transferLzFee
+  const canPayCaw = feeCawWei != null && eoaCawWei != null && eoaCawWei >= feeCawWei && canFundLz
   const canPayEth = feeEthWei != null && eoaEthWei != null && eoaEthWei >= (transferLzFee + feeEthWei)
   const feesLoaded = feeEthWei != null && eoaEthWei != null && eoaCawWei != null
   // Resolved currency: honour the user's explicit pick ONLY when both are
@@ -292,14 +309,17 @@ const TransferNFTModal: React.FC = () => {
       if (!address || tokenId === null) return
 
       // Use transferAndSync to transfer + sync L2 ownership in one tx.
-      // lzDestId = L1's own LayerZero eid (mainnet/bypassLZ) — on a
-      // bypassLZ-co-deployment this is a no-op flush; cross-chain L2
-      // owner-sync happens later via syncTransfer(otherEid).
+      // lzDestId MUST be the ACTION-PROCESSING L2 (chains.l2.layerZero, 40245) —
+      // the chain whose CawProfileLedger.ownerOf backs Quick Sign. Passing
+      // chains.l1.layerZero (40161 = mainnetLzId) flushes the always-empty L1
+      // queue (no L2 sync → stale L2 owner → InvalidSig) AND — since the quote is
+      // now L2-priced — would send the real LZ fee as msg.value into that no-op
+      // branch, which does NOT refund it (silent ETH loss). Must match the L2 eid.
       writeContract({
         address: CAW_NAMES_ADDRESS,
         abi: cawProfileAbi,
         functionName: 'transferAndSync',
-        args: [recipient as `0x${string}`, BigInt(tokenId), chains.l1.layerZero, 0n],
+        args: [recipient as `0x${string}`, BigInt(tokenId), chains.l2.layerZero, 0n],
         value: lzFee ?? 0n,
         chainId: chains.l1.chainId
       })
@@ -357,7 +377,11 @@ const TransferNFTModal: React.FC = () => {
         l1Client.readContract({ address: CAW_ADDRESS as Address, abi: erc20Abi, functionName: 'balanceOf', args: [eoaAccount as Address] }) as Promise<bigint>,
         l1Client.getBalance({ address: eoaAccount as Address }),
       ])
-      const affordCaw = feeCaw != null && cawBalNow >= feeCaw
+      // The L2-sync LZ fee (transferLzFee) is self-funded in ETH as the call's
+      // msg.value REGARDLESS of gas currency — so even the CAW path needs
+      // ethBalNow >= transferLzFee, else transferAndSync reverts unfunded.
+      const canFundLzNow = ethBalNow >= transferLzFee
+      const affordCaw = feeCaw != null && cawBalNow >= feeCaw && canFundLzNow
       const affordEth = ethBalNow >= transferLzFee + feeEth
       if (!affordCaw && !affordEth) throw new Error('INSUFFICIENT_FEE_CAW')
       // Honour the user's toggle when both work; else use whichever is affordable
