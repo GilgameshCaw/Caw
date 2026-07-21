@@ -41,10 +41,12 @@ export interface RecoveryFlowProps {
    * success CTA the user picked:
    *   - 'setup-passkey' → the primary "set up a passkey on this device" action
    *   - 'skip'          → the secondary "just take me in" action
+   *   - 'rescue'        → the recovered key owns NO profile; go to Account
+   *                       settings to recover any CAW/ETH the wallet still holds
    * Page variant navigates; modal variant closes + optionally opens the passkey
    * dialog. If omitted, the flow does nothing after sign-in (caller-less usage).
    */
-  onSignedIn?: (intent: 'setup-passkey' | 'skip') => void
+  onSignedIn?: (intent: 'setup-passkey' | 'skip' | 'rescue') => void
   /**
    * Called when the user backs out BEFORE completing recovery (the modal's
    * "back to sign in" / close affordance). Page variant navigates to /welcome;
@@ -69,6 +71,11 @@ export default function RecoveryFlow({ onSignedIn, onBack, variant = 'page' }: R
   const [isDecrypting, setIsDecrypting] = useState(false)
   const [isSigningIn, setIsSigningIn] = useState(false)
   const [derivedAddress, setDerivedAddress] = useState<`0x${string}` | null>(null)
+  // Whether the recovered key owns a profile. null = not checked yet. Decides
+  // the success-step UI: a profile → "set up a passkey" (sign in); no profile →
+  // "recover funds" (the wallet was transferred out but may hold CAW/ETH). A
+  // passkey only makes sense for a profile, so we must not offer it otherwise.
+  const [ownsProfile, setOwnsProfile] = useState<boolean | null>(null)
 
   const fileInputRef = useRef<HTMLInputElement>(null)
 
@@ -145,6 +152,28 @@ export default function RecoveryFlow({ onSignedIn, onBack, variant = 'page' }: R
       setDerivedAddress(addr)
       recovery.setKey(hexKey)
       setStep('success')
+      // Determine profile ownership up front (fast on-chain read) so the success
+      // step shows the RIGHT action — "set up a passkey" vs "recover funds" —
+      // instead of always offering a passkey and then erroring for a profile-less
+      // wallet. Best-effort: on read failure default to the profile path (the old
+      // behavior), which self-corrects in handleContinue.
+      setOwnsProfile(null)
+      try {
+        const raw = await readContract(wagmiConfig, {
+          address: CAW_PROFILE_LENS_ADDRESS,
+          chainId: sepolia.id,
+          abi: cawProfileLensAbi,
+          functionName: 'tokens',
+          args: [addr],
+        })
+        setOwnsProfile(!!raw && raw.length > 0)
+        if (!raw || raw.length === 0) {
+          // Profile-less but key loaded → make the wallet reachable for rescue.
+          useTokenDataStore.getState().setLastAddress(addr.toLowerCase())
+        }
+      } catch {
+        setOwnsProfile(true) // read failed → assume profile; handleContinue re-checks
+      }
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : ''
       if (msg.includes('corrupted')) {
@@ -172,18 +201,22 @@ export default function RecoveryFlow({ onSignedIn, onBack, variant = 'page' }: R
   //      then CawProfileLedger.getTokens([...]) for staked balance + cawonce.
   // AuthGate requires an active token with a username before /home, so this MUST
   // complete before we hand control back. The recovered key is only READ.
+  // No-profile wallet: the key is loaded and lastAddress is set (at decrypt), so
+  // the rescue card in Account settings can act on it. Just route there.
+  const handleRescue = () => {
+    if (recovery.address) useTokenDataStore.getState().setLastAddress(recovery.address.toLowerCase())
+    onSignedIn?.('rescue')
+  }
+
   const handleContinue = async (intent: 'setup-passkey' | 'skip') => {
     if (!recovery.address) { onSignedIn?.(intent); return }
     setError(null)
     setIsSigningIn(true)
     try {
       const owner = recovery.address
-      // Read the owner's profiles FIRST (fast on-chain read, no indexer
-      // dependency). This must precede verify(): /api/auth/verify 202-loops for
-      // ~15s for an address the indexer has no tokens for, then fails with a
-      // generic error. A wallet whose only profile was transferred away owns
-      // nothing → that path stranded the user on a 15s hang. Checking tokens up
-      // front lets us branch cleanly.
+      // Profile ownership was already determined at decrypt (ownsProfile). Re-read
+      // defensively (cheap) in case it was the read-failure fallback, and to get
+      // the token rows we inject below.
       const rawTokens = await readContract(wagmiConfig, {
         address: CAW_PROFILE_LENS_ADDRESS,
         chainId: sepolia.id,
@@ -193,18 +226,13 @@ export default function RecoveryFlow({ onSignedIn, onBack, variant = 'page' }: R
       })
 
       if (!rawTokens || rawTokens.length === 0) {
-        // No profile — but the recovery key IS loaded (recovery.address set), so
-        // the wallet is still reachable for FUND RESCUE (its CAW/ETH surfaces as
-        // a rescue card in Account settings via recovery.address). Complete into
-        // recovery mode (set lastAddress so the rescue card targets this owner)
-        // instead of hard-failing, and tell the user what they can do.
-        useTokenDataStore.getState().setLastAddress(owner.toLowerCase())
-        setError(t('recovery.error.no_profile_can_rescue'))
+        // Defensive: the button for this case is "Recover funds", not this path —
+        // but if we got here, route to rescue instead of hanging on verify().
+        handleRescue()
         return
       }
 
-      // Has a profile → establish an auth session (skipped for the empty wallet
-      // above, which has nothing to authorize).
+      // Has a profile → establish an auth session.
       const ok = await verify()
       if (!ok) {
         setError(t('recovery.error.signin_failed'))
@@ -403,31 +431,61 @@ export default function RecoveryFlow({ onSignedIn, onBack, variant = 'page' }: R
               <p className={`text-xs font-mono break-all ${mutedClass}`}>{derivedAddress}</p>
             )}
           </div>
-          {/* Set up a passkey is the PRIMARY next action: after a backup-file
-              sign-in the whole point is to get a passkey on THIS device so the
-              user doesn't need the file again. */}
-          <p className={`text-sm ${mutedClass}`}>
-            {t('recovery.success.passkey_prompt')}
-          </p>
-          {error && (
-            <p className="text-sm text-red-500 text-center">{error}</p>
+
+          {ownsProfile === false ? (
+            /* No profile → this wallet was transferred out. A passkey only makes
+               sense for a profile, so DON'T offer "set up a passkey" — offer to
+               recover any funds it still holds instead. */
+            <>
+              <p className={`text-sm ${mutedClass}`}>
+                {t('recovery.no_profile.prompt')}
+              </p>
+              {error && <p className="text-sm text-red-500 text-center">{error}</p>}
+              <button
+                onClick={handleRescue}
+                className="w-full py-3 rounded-xl font-bold text-sm bg-yellow-500 text-black hover:bg-yellow-400 transition-all cursor-pointer"
+              >
+                {t('recovery.no_profile.recover_funds')}
+              </button>
+              {onBack && (
+                <button
+                  onClick={onBack}
+                  className={`w-full py-2.5 text-sm rounded-xl transition-colors cursor-pointer ${
+                    isDark ? 'text-white/50 hover:text-white/80' : 'text-gray-400 hover:text-gray-700'
+                  }`}
+                >
+                  {t('recovery.no_profile.done')}
+                </button>
+              )}
+            </>
+          ) : (
+            /* Has a profile (or ownership not yet resolved) → set up a passkey is
+               the PRIMARY next action so the user doesn't need the file again. */
+            <>
+              <p className={`text-sm ${mutedClass}`}>
+                {t('recovery.success.passkey_prompt')}
+              </p>
+              {error && <p className="text-sm text-red-500 text-center">{error}</p>}
+              <button
+                onClick={() => void handleContinue('setup-passkey')}
+                disabled={isSigningIn || ownsProfile === null}
+                className="w-full py-3 rounded-xl font-bold text-sm bg-yellow-500 text-black hover:bg-yellow-400 transition-all disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer"
+              >
+                {isSigningIn ? t('recovery.success.signing_in')
+                  : ownsProfile === null ? t('recovery.success.checking')
+                  : t('recovery.success.setup_passkey')}
+              </button>
+              <button
+                onClick={() => void handleContinue('skip')}
+                disabled={isSigningIn || ownsProfile === null}
+                className={`w-full py-2.5 text-sm rounded-xl transition-colors cursor-pointer disabled:opacity-50 ${
+                  isDark ? 'text-white/50 hover:text-white/80' : 'text-gray-400 hover:text-gray-700'
+                }`}
+              >
+                {t('recovery.success.skip_to_feed')}
+              </button>
+            </>
           )}
-          <button
-            onClick={() => void handleContinue('setup-passkey')}
-            disabled={isSigningIn}
-            className="w-full py-3 rounded-xl font-bold text-sm bg-yellow-500 text-black hover:bg-yellow-400 transition-all disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer"
-          >
-            {isSigningIn ? t('recovery.success.signing_in') : t('recovery.success.setup_passkey')}
-          </button>
-          <button
-            onClick={() => void handleContinue('skip')}
-            disabled={isSigningIn}
-            className={`w-full py-2.5 text-sm rounded-xl transition-colors cursor-pointer disabled:opacity-50 ${
-              isDark ? 'text-white/50 hover:text-white/80' : 'text-gray-400 hover:text-gray-700'
-            }`}
-          >
-            {t('recovery.success.skip_to_feed')}
-          </button>
         </div>
       )}
 

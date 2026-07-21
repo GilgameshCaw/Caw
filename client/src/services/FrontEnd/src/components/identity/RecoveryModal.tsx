@@ -42,6 +42,11 @@ export default function RecoveryModal({ open, onClose }: RecoveryModalProps) {
             // dialog — so this drops the just-recovered user straight into
             // getting a passkey on this device.
             navigate('/settings/account?addPasskey=1')
+          } else if (intent === 'rescue') {
+            // Profile-less wallet: land on Account settings where the rescue card
+            // (surfaced via the loaded recovery key's address) lets them sweep the
+            // stranded CAW/ETH out.
+            navigate('/settings/account')
           }
           // 'skip' → just close; the user stays on the page they opened it from.
         }}

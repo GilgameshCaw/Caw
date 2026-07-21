@@ -21,7 +21,9 @@ export default function Recovery() {
   return (
     <RecoveryFlow
       variant="page"
-      onSignedIn={(intent) => navigate(intent === 'setup-passkey' ? '/settings/account' : '/home')}
+      onSignedIn={(intent) =>
+        navigate(intent === 'setup-passkey' || intent === 'rescue' ? '/settings/account' : '/home')
+      }
       onBack={() => navigate('/welcome')}
     />
   )
