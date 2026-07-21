@@ -31,7 +31,7 @@ export default function RecoveryModal({ open, onClose }: RecoveryModalProps) {
       // RecoveryFlow's card supplies its own bg/border/padding, so neutralize
       // ModalWrapper's default card to avoid a double-card look.
       className="!bg-transparent !border-0"
-      backdropClass="bg-black/60"
+      backdropClass="bg-black/70"
     >
       <RecoveryFlow
         variant="modal"

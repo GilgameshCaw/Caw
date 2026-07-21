@@ -240,8 +240,15 @@ export default function RecoveryFlow({ onSignedIn, onBack, variant = 'page' }: R
 
   const textClass = isDark ? 'text-white' : 'text-black'
   const mutedClass = isDark ? 'text-white/60' : 'text-gray-500'
+  // The page variant floats the card over an opaque full-screen bg, so a
+  // translucent card reads fine there. The modal variant floats over a
+  // semi-transparent backdrop, so it needs an opaque card (matching our other
+  // ModalWrapper modals: bg-black in dark / bg-white in light) or the content
+  // behind the modal shows through.
   const cardClass = isDark
-    ? 'bg-white/5 border border-white/10'
+    ? variant === 'modal'
+      ? 'bg-black border border-yellow-500/30'
+      : 'bg-white/5 border border-white/10'
     : 'bg-white border border-gray-200 shadow-sm'
   const inputClass = isDark
     ? 'bg-white/5 border border-white/20 text-white placeholder-white/30 focus:border-yellow-500'
