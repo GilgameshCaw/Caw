@@ -1494,6 +1494,7 @@
   "recovery.error.decrypt_failed": "Password incorrect or file is corrupted.",
   "recovery.error.signin_failed": "Couldn't finish signing in. Please try again.",
   "recovery.error.no_profile": "This backup file's key doesn't own a CAW profile.",
+  "recovery.error.no_profile_can_rescue": "This wallet no longer owns a profile (it was transferred out). If it still holds CAW or ETH, open Account settings to recover those funds.",
   "recovery.banner.message": "Signed in via your backup file. Set up a passkey on this device so you don't need the file next time.",
   "recovery.banner.link_label": "Set up a passkey",
   "passkey_signin.title": "Sign in with your passkey",

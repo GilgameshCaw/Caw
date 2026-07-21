@@ -177,13 +177,13 @@ export default function RecoveryFlow({ onSignedIn, onBack, variant = 'page' }: R
     setError(null)
     setIsSigningIn(true)
     try {
-      const ok = await verify()
-      if (!ok) {
-        setError(t('recovery.error.signin_failed'))
-        return
-      }
-
       const owner = recovery.address
+      // Read the owner's profiles FIRST (fast on-chain read, no indexer
+      // dependency). This must precede verify(): /api/auth/verify 202-loops for
+      // ~15s for an address the indexer has no tokens for, then fails with a
+      // generic error. A wallet whose only profile was transferred away owns
+      // nothing → that path stranded the user on a 15s hang. Checking tokens up
+      // front lets us branch cleanly.
       const rawTokens = await readContract(wagmiConfig, {
         address: CAW_PROFILE_LENS_ADDRESS,
         chainId: sepolia.id,
@@ -193,7 +193,21 @@ export default function RecoveryFlow({ onSignedIn, onBack, variant = 'page' }: R
       })
 
       if (!rawTokens || rawTokens.length === 0) {
-        setError(t('recovery.error.no_profile'))
+        // No profile — but the recovery key IS loaded (recovery.address set), so
+        // the wallet is still reachable for FUND RESCUE (its CAW/ETH surfaces as
+        // a rescue card in Account settings via recovery.address). Complete into
+        // recovery mode (set lastAddress so the rescue card targets this owner)
+        // instead of hard-failing, and tell the user what they can do.
+        useTokenDataStore.getState().setLastAddress(owner.toLowerCase())
+        setError(t('recovery.error.no_profile_can_rescue'))
+        return
+      }
+
+      // Has a profile → establish an auth session (skipped for the empty wallet
+      // above, which has nothing to authorize).
+      const ok = await verify()
+      if (!ok) {
+        setError(t('recovery.error.signin_failed'))
         return
       }
 
