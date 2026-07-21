@@ -375,7 +375,17 @@ export default function SponsorInviteSection() {
       const poll = setInterval(() => {
         tries++
         loadCodes(0)
-        if (tries >= 12) { clearInterval(poll); setBuyState('idle') }
+        if (tries >= 12) {
+          clearInterval(poll)
+          setBuyState('idle')
+          // Backstop: drop any lingering optimistic placeholder once polling ends.
+          // The giftCawWei-keyed dedup in loadCodes can't distinguish two codes
+          // bought back-to-back with the SAME gift amount, so a stale optimistic
+          // "pending" row could otherwise persist even though both real codes are
+          // already indexed. By now the server row(s) are shown; the placeholder
+          // has served its purpose.
+          setOptimisticPending(null)
+        }
       }, 5000)
     } catch (err: any) {
       console.error('[buy-invite] failed:', err)
