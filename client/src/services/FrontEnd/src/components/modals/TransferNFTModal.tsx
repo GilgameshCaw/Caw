@@ -123,6 +123,14 @@ const TransferNFTModal: React.FC = () => {
     let cancelled = false
     ;(async () => {
       try {
+        // Estimate the FULL batch (transfer + a placeholder fee leg) so the
+        // displayed fee matches what handlePopBTransfer signs and the relay
+        // enforces — quoting only the transfer call under-counted the fee-leg gas.
+        const feeLegForEstimate = {
+          to: CAW_ADDRESS as Address,
+          value: '0',
+          data: encodeFunctionData({ abi: erc20Abi, functionName: 'transfer', args: [eoaAccount as Address, 1n] }),
+        }
         const [est, cawBal, ethBal] = await Promise.all([
           apiFetch<{ minFeeCawWei: string; priceAvailable: boolean; minFeeEthWei: string; feeEthUsd?: number | null }>(
             '/api/sponsor/execute-estimate',
@@ -130,7 +138,10 @@ const TransferNFTModal: React.FC = () => {
               method: 'POST',
               body: JSON.stringify({
                 eoaAddress: eoaAccount,
-                calls: [{ to: call.to, value: call.value.toString(), data: call.data }],
+                calls: [
+                  { to: call.to, value: call.value.toString(), data: call.data },
+                  feeLegForEstimate,
+                ],
                 forwardedValueWei: '0',
               }),
             },
@@ -265,17 +276,28 @@ const TransferNFTModal: React.FC = () => {
       if (!transferCall) throw new Error('INVALID_PARAMS')
       const transferLzFee = lzFee ?? 0n
 
-      // Price the relay fee against the REAL gas of THIS transfer batch via
-      // /execute-estimate (per-call estimateGas at the execute chain's live gas
-      // price) — NOT the flat 800K × mainnet-gas ceiling, which over-quoted and
-      // wrongly reported "insufficient" for a wallet that actually had enough.
+      // Price against the FULL batch we'll actually submit — the transfer PLUS a
+      // fee-leg call — so the FE-signed floor matches the floor the relay
+      // re-derives from body.calls at submit. Quoting only the transfer call
+      // under-estimated by the fee-leg's gas (~40K+), so the 15% headroom didn't
+      // cover it and the relay rejected FEE_TOO_LOW even with plenty of CAW. A
+      // placeholder CAW.transfer leg (amount irrelevant to gas) makes the
+      // estimate's call-set identical to the real batch.
+      const placeholderFeeLeg = {
+        to: CAW_ADDRESS as Address,
+        value: '0',
+        data: encodeFunctionData({ abi: erc20Abi, functionName: 'transfer', args: [eoaAccount as Address, 1n] }),
+      }
       const quote = await apiFetch<{ relayer: string; minFeeCawWei: string; priceAvailable: boolean; minFeeEthWei: string }>(
         '/api/sponsor/execute-estimate',
         {
           method: 'POST',
           body: JSON.stringify({
             eoaAddress: eoaAccount,
-            calls: [{ to: transferCall.to, value: transferCall.value.toString(), data: transferCall.data }],
+            calls: [
+              { to: transferCall.to, value: transferCall.value.toString(), data: transferCall.data },
+              placeholderFeeLeg,
+            ],
             forwardedValueWei: '0',
           }),
         },

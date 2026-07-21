@@ -360,6 +360,19 @@ const CreateListingModal: React.FC = () => {
     return calls
   }, [eoaAccount, tokenId, l1Client, startPrice, endPrice, paymentToken, durationHours, listingType])
 
+  // Placeholder CAW.transfer fee leg (amount irrelevant to gas) appended when
+  // ESTIMATING so the quoted floor matches the FULL batch the relay re-derives at
+  // submit (listing calls + fee leg). Quoting only the listing calls under-counted
+  // the fee-leg gas → the 15% headroom didn't cover it → relay rejected FEE_TOO_LOW.
+  const estimateFeeLeg = useCallback((): { to: string; value: string; data: string } | null => {
+    if (!eoaAccount) return null
+    return {
+      to: CAW_ADDRESS as string,
+      value: '0',
+      data: encodeFunctionData({ abi: erc20Abi, functionName: 'transfer', args: [eoaAccount, 1n] }),
+    }
+  }, [eoaAccount])
+
   // Fetch both fee quotes (CAW + ETH) and both EOA balances once a Pop-B owner is on
   // the params step (where the relayed-listing button shows), so we can pick whichever
   // currency the wallet can cover and gate on "enough of EITHER to pay the relayer".
@@ -393,7 +406,10 @@ const CreateListingModal: React.FC = () => {
                 method: 'POST',
                 body: JSON.stringify({
                   eoaAddress: eoaAccount,
-                  calls: calls.map(c => ({ to: c.to, value: c.value.toString(), data: c.data })),
+                  calls: [
+                    ...calls.map(c => ({ to: c.to, value: c.value.toString(), data: c.data })),
+                    ...(estimateFeeLeg() ? [estimateFeeLeg()!] : []),
+                  ],
                   forwardedValueWei: '0',
                 }),
               })
@@ -427,7 +443,7 @@ const CreateListingModal: React.FC = () => {
     // the estimate is stable). Cleared on close / dep change / unmount.
     const iv = setInterval(() => { readBalances(false) }, 8000)
     return () => { cancelled = true; clearInterval(iv) }
-  }, [isOpen, canRelayViaPasskey, step, isOwner, eoaAccount, feeRetry, l1Client, buildListingCalls])
+  }, [isOpen, canRelayViaPasskey, step, isOwner, eoaAccount, feeRetry, l1Client, buildListingCalls, estimateFeeLeg])
 
   // Can the EOA cover the fee in CAW? in ETH? Prefer CAW when available.
   const canPayCaw = feeCawWei != null && eoaCawWei != null && eoaCawWei >= feeCawWei
@@ -454,7 +470,10 @@ const CreateListingModal: React.FC = () => {
           method: 'POST',
           body: JSON.stringify({
             eoaAddress: eoaAccount,
-            calls: listingCalls.map(c => ({ to: c.to, value: c.value.toString(), data: c.data })),
+            calls: [
+              ...listingCalls.map(c => ({ to: c.to, value: c.value.toString(), data: c.data })),
+              ...(estimateFeeLeg() ? [estimateFeeLeg()!] : []),
+            ],
             forwardedValueWei: '0',
           }),
         },
@@ -558,7 +577,7 @@ const CreateListingModal: React.FC = () => {
     } finally {
       setPopBPending(false)
     }
-  }, [canRelayViaPasskey, eoaAccount, tokenId, l1Client, listingCredential, buildListingCalls, startSigning, stopSigning, t])
+  }, [canRelayViaPasskey, eoaAccount, tokenId, l1Client, listingCredential, buildListingCalls, estimateFeeLeg, startSigning, stopSigning, t])
 
   const inputClass = `w-full px-3 py-2 rounded-lg text-sm border outline-none transition ${themeInput(isDark)} ${themeBorder(isDark)}`
 
