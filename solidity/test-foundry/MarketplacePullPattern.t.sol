@@ -66,7 +66,7 @@ contract MarketplacePullPatternTest is Test {
         uint256 sellerBalBefore = seller.balance;
 
         vm.prank(buyer);
-        marketplace.buy{value: price}(listingId);
+        marketplace.buy{value: price}(listingId, 0);
 
         // Seller's wallet must NOT have increased — payment is queued.
         assertEq(seller.balance, sellerBalBefore, "H-15: seller balance should not change on buy");
@@ -89,7 +89,7 @@ contract MarketplacePullPatternTest is Test {
         uint256 listingId = marketplace.nextListingId() - 1;
 
         vm.prank(buyer);
-        marketplace.buy{value: price}(listingId);
+        marketplace.buy{value: price}(listingId, 0);
 
         uint256 sellerBalBefore = seller.balance;
         vm.prank(seller);
@@ -113,7 +113,7 @@ contract MarketplacePullPatternTest is Test {
         uint256 listingId = marketplace.nextListingId() - 1;
 
         vm.prank(buyer);
-        marketplace.buy{value: price}(listingId);
+        marketplace.buy{value: price}(listingId, 0);
 
         assertEq(marketplace.pendingPayouts(seller), price);
 
@@ -137,7 +137,7 @@ contract MarketplacePullPatternTest is Test {
         emit CawProfileMarketplace.PayoutQueued(seller, price);
 
         vm.prank(buyer);
-        marketplace.buy{value: price}(listingId);
+        marketplace.buy{value: price}(listingId, 0);
     }
 
     // =====================================================================
@@ -159,7 +159,7 @@ contract MarketplacePullPatternTest is Test {
         vm.warp(block.timestamp + DURATION + 1);
 
         uint256 sellerBalBefore = seller.balance;
-        marketplace.settleAuction(listingId);
+        marketplace.settleAuction(listingId, 0);
 
         // Seller's wallet unchanged immediately.
         assertEq(seller.balance, sellerBalBefore,
@@ -186,7 +186,7 @@ contract MarketplacePullPatternTest is Test {
         marketplace.placeBid{value: bid}(listingId);
 
         vm.warp(block.timestamp + DURATION + 1);
-        marketplace.settleAuction(listingId);
+        marketplace.settleAuction(listingId, 0);
 
         uint256 sellerBalBefore = seller.balance;
         vm.prank(seller);
@@ -211,7 +211,7 @@ contract MarketplacePullPatternTest is Test {
         uint256 sellerBalBefore = seller.balance;
 
         vm.prank(seller);
-        marketplace.acceptOffer(offerId);
+        marketplace.acceptOffer(offerId, 0);
 
         // Seller wallet unchanged.
         assertEq(seller.balance, sellerBalBefore,
@@ -365,7 +365,7 @@ contract MarketplacePullPatternTest is Test {
 
         // Listing is now inactive; settleAuction must revert.
         vm.expectRevert(bytes("Listing not active"));
-        marketplace.settleAuction(listingId);
+        marketplace.settleAuction(listingId, 0);
     }
 
     // =====================================================================
@@ -425,7 +425,7 @@ contract MarketplacePullPatternTest is Test {
 
         // The sale STILL succeeds (proceeds go to the pull ledger, not pushed).
         vm.prank(buyer);
-        marketplace.buyWithToken(listingId, price);
+        marketplace.buyWithToken(listingId, price, 0);
 
         assertFalse(_isActive(listingId), "MP-4: listing sold");
         assertEq(nft.ownerOf(tid), buyer, "MP-4: buyer owns NFT");

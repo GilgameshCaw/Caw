@@ -4706,7 +4706,10 @@ export const cawProfileMarketplaceAbi = [
   },
   {
     type: 'function',
-    inputs: [{ name: 'offerId', internalType: 'uint256', type: 'uint256' }],
+    inputs: [
+      { name: 'offerId', internalType: 'uint256', type: 'uint256' },
+      { name: 'lzDestId', internalType: 'uint32', type: 'uint32' },
+    ],
     name: 'acceptOffer',
     outputs: [],
     stateMutability: 'payable',
@@ -4720,7 +4723,10 @@ export const cawProfileMarketplaceAbi = [
   },
   {
     type: 'function',
-    inputs: [{ name: 'listingId', internalType: 'uint256', type: 'uint256' }],
+    inputs: [
+      { name: 'listingId', internalType: 'uint256', type: 'uint256' },
+      { name: 'lzDestId', internalType: 'uint32', type: 'uint32' },
+    ],
     name: 'buy',
     outputs: [],
     stateMutability: 'payable',
@@ -4730,6 +4736,7 @@ export const cawProfileMarketplaceAbi = [
     inputs: [
       { name: 'listingId', internalType: 'uint256', type: 'uint256' },
       { name: 'amount', internalType: 'uint256', type: 'uint256' },
+      { name: 'lzDestId', internalType: 'uint32', type: 'uint32' },
     ],
     name: 'buyWithToken',
     outputs: [],
@@ -4814,6 +4821,13 @@ export const cawProfileMarketplaceAbi = [
   },
   {
     type: 'function',
+    inputs: [],
+    name: 'defaultLzDestId',
+    outputs: [{ name: '', internalType: 'uint32', type: 'uint32' }],
+    stateMutability: 'view',
+  },
+  {
+    type: 'function',
     inputs: [{ name: 'listingId', internalType: 'uint256', type: 'uint256' }],
     name: 'getCurrentPrice',
     outputs: [{ name: '', internalType: 'uint256', type: 'uint256' }],
@@ -4847,13 +4861,6 @@ export const cawProfileMarketplaceAbi = [
       { name: 'highestBidder', internalType: 'address', type: 'address' },
       { name: 'active', internalType: 'bool', type: 'bool' },
     ],
-    stateMutability: 'view',
-  },
-  {
-    type: 'function',
-    inputs: [],
-    name: 'lzDestId',
-    outputs: [{ name: '', internalType: 'uint32', type: 'uint32' }],
     stateMutability: 'view',
   },
   {
@@ -4951,7 +4958,10 @@ export const cawProfileMarketplaceAbi = [
   },
   {
     type: 'function',
-    inputs: [{ name: 'listingId', internalType: 'uint256', type: 'uint256' }],
+    inputs: [
+      { name: 'listingId', internalType: 'uint256', type: 'uint256' },
+      { name: 'lzDestId', internalType: 'uint32', type: 'uint32' },
+    ],
     name: 'settleAuction',
     outputs: [],
     stateMutability: 'payable',

@@ -98,7 +98,10 @@ contract("CawProfileMarketplace", (accounts) => {
 
     // Deploy marketplace with the payment-token allowlist baked in.
     // The marketplace has no admin — allowed tokens are fixed at construction.
-    marketplace = await CawProfileMarketplace.new(cawProfiles.address, [paymentToken.address]);
+    // _lzDestId (dummyL2Eid) is now just the DEFAULT fallback used when a sale
+    // function's lzDestId param is 0 — each sale function also accepts an
+    // explicit per-call eid (see buy/buyWithToken/settleAuction/acceptOffer).
+    marketplace = await CawProfileMarketplace.new(cawProfiles.address, dummyL2Eid, [paymentToken.address]);
 
     // Mint CAW tokens for users
     const mintAmount = web3.utils.toWei("1000000000000", "ether"); // 1T CAW
@@ -160,7 +163,7 @@ contract("CawProfileMarketplace", (accounts) => {
       const price = web3.utils.toWei("1", "ether");
       const sellerBalBefore = BigInt(await web3.eth.getBalance(seller));
 
-      const tx = await marketplace.buy(1, { from: buyer, value: price });
+      const tx = await marketplace.buy(1, 0, { from: buyer, value: price });
 
       truffleAssert.eventEmitted(tx, 'Sale', (ev) => {
         return ev.buyer === buyer && ev.price.toString() === price;
@@ -202,7 +205,7 @@ contract("CawProfileMarketplace", (accounts) => {
       // Send price + a small LZ fee
       const totalValue = web3.utils.toWei("0.51", "ether");
 
-      await marketplace.buy(listingId, { from: buyer, value: totalValue });
+      await marketplace.buy(listingId, 0, { from: buyer, value: totalValue });
 
       // Verify NFT transferred
       assert.equal(await cawProfiles.ownerOf(tokenId1), buyer);
@@ -223,7 +226,7 @@ contract("CawProfileMarketplace", (accounts) => {
       await paymentToken.approve(marketplace.address, price, { from: buyer });
 
       const sellerBalBefore = BigInt((await paymentToken.balanceOf(seller)).toString());
-      await marketplace.buyWithToken(listingId, price, { from: buyer });
+      await marketplace.buyWithToken(listingId, price, 0, { from: buyer });
       const sellerBalAfter = BigInt((await paymentToken.balanceOf(seller)).toString());
 
       assert.equal((await cawProfiles.ownerOf(tokenId1)), buyer);
@@ -279,7 +282,7 @@ contract("CawProfileMarketplace", (accounts) => {
       // Send a bit more to account for time passing during tx
       const overpay = BigInt(price.toString()) + BigInt(web3.utils.toWei("0.1", "ether"));
 
-      await marketplace.buy(dutchListingId, { from: buyer, value: overpay.toString() });
+      await marketplace.buy(dutchListingId, 0, { from: buyer, value: overpay.toString() });
 
       assert.equal(await cawProfiles.ownerOf(tokenId1), buyer);
     });
@@ -304,7 +307,7 @@ contract("CawProfileMarketplace", (accounts) => {
       assert.equal(price.toString(), endPrice, "Should return floor price after expiry");
 
       // Buy at floor price
-      await marketplace.buy(lid, { from: buyer, value: endPrice });
+      await marketplace.buy(lid, 0, { from: buyer, value: endPrice });
       assert.equal(await cawProfiles.ownerOf(tokenId1), buyer);
     });
   });
@@ -390,7 +393,7 @@ contract("CawProfileMarketplace", (accounts) => {
 
     it("should not allow settling before auction ends", async () => {
       await expectRevert(
-        marketplace.settleAuction(auctionListingId),
+        marketplace.settleAuction(auctionListingId, 0),
         "Auction not ended"
       );
     });
@@ -404,7 +407,7 @@ contract("CawProfileMarketplace", (accounts) => {
       await time.increase(700);
 
       const sellerBalBefore = BigInt(await web3.eth.getBalance(seller));
-      const tx = await marketplace.settleAuction(auctionListingId, { from: accounts[5] }); // anyone can settle
+      const tx = await marketplace.settleAuction(auctionListingId, 0, { from: accounts[5] }); // anyone can settle
 
       truffleAssert.eventEmitted(tx, 'AuctionSettled');
 
@@ -614,7 +617,7 @@ contract("CawProfileMarketplace", (accounts) => {
 
       // Buy should fail because seller no longer owns the token
       await expectRevert.unspecified(
-        marketplace.buy(lid, { from: buyer, value: web3.utils.toWei("0.1", "ether") })
+        marketplace.buy(lid, 0, { from: buyer, value: web3.utils.toWei("0.1", "ether") })
       );
 
       // Transfer back for cleanup
@@ -655,7 +658,7 @@ contract("CawProfileMarketplace", (accounts) => {
       const lid = (await marketplace.nextListingId()).toNumber() - 1;
 
       await expectRevert(
-        marketplace.buy(lid, { from: buyer, value: web3.utils.toWei("0.1", "ether") }),
+        marketplace.buy(lid, 0, { from: buyer, value: web3.utils.toWei("0.1", "ether") }),
         "Use placeBid for auctions"
       );
 
@@ -675,7 +678,7 @@ contract("CawProfileMarketplace", (accounts) => {
 
       // settleAuction should fail with no bids
       await expectRevert(
-        marketplace.settleAuction(lid),
+        marketplace.settleAuction(lid, 0),
         "No bids"
       );
 
@@ -714,7 +717,7 @@ contract("CawProfileMarketplace", (accounts) => {
 
       // settleAuction should revert (seller doesn't own NFT)
       await expectRevert.unspecified(
-        marketplace.settleAuction(reclaimAuctionId)
+        marketplace.settleAuction(reclaimAuctionId, 0)
       );
 
       // Bidder reclaims their bid (pull pattern — credits pendingReturns).
@@ -760,7 +763,7 @@ contract("CawProfileMarketplace", (accounts) => {
 
       // Advance past auction end and settle normally
       await time.increase(3700);
-      await marketplace.settleAuction(lid);
+      await marketplace.settleAuction(lid, 0);
 
       // Transfer back
       await cawProfiles.transferFrom(bidder1, seller, tokenId2, { from: bidder1 });
@@ -853,7 +856,7 @@ contract("CawProfileMarketplace", (accounts) => {
       const offerId = (await marketplace.nextOfferId()).toNumber() - 1;
 
       const sellerBalBefore = BigInt(await web3.eth.getBalance(seller));
-      const tx = await marketplace.acceptOffer(offerId, { from: seller });
+      const tx = await marketplace.acceptOffer(offerId, 0, { from: seller });
 
       truffleAssert.eventEmitted(tx, 'OfferAccepted', (ev) => {
         return ev.seller === seller && ev.buyer === buyer;
@@ -894,7 +897,7 @@ contract("CawProfileMarketplace", (accounts) => {
       truffleAssert.eventEmitted(tx, 'OfferCreated');
 
       const sellerBalBefore = BigInt((await paymentToken.balanceOf(seller)).toString());
-      await marketplace.acceptOffer(offerId, { from: seller });
+      await marketplace.acceptOffer(offerId, 0, { from: seller });
       const sellerBalAfter = BigInt((await paymentToken.balanceOf(seller)).toString());
 
       assert.equal(await cawProfiles.ownerOf(tokenId2), buyer);
@@ -956,7 +959,7 @@ contract("CawProfileMarketplace", (accounts) => {
       await time.increase(120);
 
       await expectRevert(
-        marketplace.acceptOffer(offerId, { from: seller }),
+        marketplace.acceptOffer(offerId, 0, { from: seller }),
         "Offer expired"
       );
 
@@ -970,7 +973,7 @@ contract("CawProfileMarketplace", (accounts) => {
       const offerId = (await marketplace.nextOfferId()).toNumber() - 1;
 
       await expectRevert(
-        marketplace.acceptOffer(offerId, { from: accounts[6] }),
+        marketplace.acceptOffer(offerId, 0, { from: accounts[6] }),
         "Not token owner"
       );
 
@@ -993,7 +996,7 @@ contract("CawProfileMarketplace", (accounts) => {
       const offerId = (await marketplace.nextOfferId()).toNumber() - 1;
 
       // Accept offer — should also cancel the listing
-      const tx = await marketplace.acceptOffer(offerId, { from: seller });
+      const tx = await marketplace.acceptOffer(offerId, 0, { from: seller });
 
       truffleAssert.eventEmitted(tx, 'ListingCancelled', (ev) => {
         return ev.listingId.toString() === String(listingId);
@@ -1026,13 +1029,13 @@ contract("CawProfileMarketplace", (accounts) => {
 
       // Accepting should fail because auction has bids
       await expectRevert(
-        marketplace.acceptOffer(offerId, { from: seller }),
+        marketplace.acceptOffer(offerId, 0, { from: seller }),
         "Cannot accept offer while auction has bids"
       );
 
       // Cleanup: advance time, settle auction, cancel offer
       await time.increase(3700);
-      await marketplace.settleAuction(auctionId);
+      await marketplace.settleAuction(auctionId, 0);
       await marketplace.cancelOffer(offerId, { from: buyer });
 
       // Transfer back
@@ -1059,7 +1062,7 @@ contract("CawProfileMarketplace", (accounts) => {
     });
 
     it("can deploy with no extra tokens (ETH-only marketplace)", async () => {
-      const ethOnly = await CawProfileMarketplace.new(cawProfiles.address, []);
+      const ethOnly = await CawProfileMarketplace.new(cawProfiles.address, 40245, []);
       assert.equal(await ethOnly.allowedPaymentTokens('0x0000000000000000000000000000000000000000'), true);
       assert.equal(await ethOnly.allowedPaymentTokens(paymentToken.address), false);
     });

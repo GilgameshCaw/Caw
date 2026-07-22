@@ -457,8 +457,30 @@ contract CawProfile is
 
   function _refundUnusedLzEth(uint256 amount) internal {
     if (amount == 0) return;
-    (bool ok, ) = msg.sender.call{value: amount}("");
+    // Refund to the SAME address lzSend's overpay-refund uses (tx.origin, or the
+    // _lzRefundTo override) — NOT msg.sender. When transferAndSync is called by
+    // CawProfileMarketplace (msg.sender = the marketplace, a contract), refunding
+    // to msg.sender would strand the buyer's ETH in the marketplace; tx.origin is
+    // the EOA that actually funded msg.value. withdrawTo callers are EOAs where
+    // tx.origin == msg.sender, so this is unchanged for them.
+    address payable refundAddr = _lzRefundTo != address(0) ? _lzRefundTo : payable(tx.origin);
+    (bool ok, ) = refundAddr.call{value: amount}("");
     if (!(ok)) revert RefundFailed();
+  }
+
+  /// @dev Flush pending owner-updates for `lzDestId`, or refund the unused LZ ETH
+  ///      when no LZ message will fire (lzDestId == 0 / mainnetLzId / empty queue).
+  ///      Shared by withdrawTo + transferAndSync so the refund guard isn't
+  ///      duplicated (duplication grows bytecode at runs=1 — EIP-170 headroom).
+  function _flushOwnersOrRefund(uint32 lzDestId, uint256 lzEthAmount, uint256 lzTokenAmount) internal {
+    if (lzDestId != 0 && lzDestId != mainnetLzId && updatesNeededForPeer(lzDestId) > 0) {
+      _updateNewOwners(lzDestId, lzEthAmount, lzTokenAmount);
+    } else {
+      // bypassLZ direct call still benefits from a flush (keeps L2 in step) and
+      // costs only gas — no LZ ETH consumed; refund the unused ETH.
+      if (lzDestId == mainnetLzId) _updateNewOwners(lzDestId, 0, 0);
+      _refundUnusedLzEth(lzEthAmount);
+    }
   }
 
   /// @notice Withdraw accrued fees as CAW. Swaps the network's ETH fees + the matching protocol
@@ -737,21 +759,9 @@ contract CawProfile is
     uint256 lzEthAmount = msg.value - payFee(fee, feeAddress);
 
     CAW.transfer(recipient, raw);
-    // Opportunistic owner-update flush. lzSend's refund-on-overpay path
-    // returns excess LZ ETH to tx.origin — but only the LZ-firing branch
-    // of _updateNewOwners actually calls lzSend. On the early-return paths
-    // (lzDestId == 0, bypassLZ direct call, empty queue) the contract
-    // would otherwise strand lzEthAmount. Pre-check the queue and refund
-    // here when no LZ message will fire.
-    bool willFireLz = lzDestId != 0 && lzDestId != mainnetLzId && updatesNeededForPeer(lzDestId) > 0;
-    if (willFireLz) {
-      _updateNewOwners(lzDestId, lzEthAmount, lzTokenAmount);
-    } else {
-      // bypassLZ direct call still benefits from a flush (keeps L2 in step)
-      // and costs only gas — no LZ ETH consumed.
-      if (lzDestId == mainnetLzId) _updateNewOwners(lzDestId, 0, 0);
-      _refundUnusedLzEth(lzEthAmount);
-    }
+    // Opportunistic owner-update flush + refund of unused LZ ETH on the no-op
+    // branches (shared helper — see _flushOwnersOrRefund).
+    _flushOwnersOrRefund(lzDestId, lzEthAmount, lzTokenAmount);
     // Withdraw is observable via the ERC20 Transfer fired by CAW.transfer
     // above (from = address(this), to = recipient). No bespoke event
     // needed — see event-declarations comment near `Deposited`.
@@ -789,7 +799,14 @@ contract CawProfile is
     // synchronously by _afterTokenTransfer itself, so callers can safely pass
     // mainnetLzId here (this branch will be a no-op for mainnet because the
     // pending-transfer queue for mainnet stays empty).
-    _updateNewOwners(lzDestId, msg.value, lzTokenAmount);
+    //
+    // REFUND GUARD (shared _flushOwnersOrRefund): only the LZ-firing branch
+    // consumes msg.value via lzSend. On the no-op branches (lzDestId == 0 /
+    // mainnetLzId / empty queue) the forwarded msg.value would otherwise be
+    // STRANDED — refund it. lzDestId is now caller-supplied (the marketplace
+    // passes the token's L2 eid), so a caller could pass mainnetLzId + ETH; the
+    // refund goes to tx.origin (the funding EOA), not the marketplace contract.
+    _flushOwnersOrRefund(lzDestId, msg.value, lzTokenAmount);
   }
 
   /**

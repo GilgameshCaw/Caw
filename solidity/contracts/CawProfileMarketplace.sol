@@ -55,11 +55,20 @@ contract CawProfileMarketplace is ReentrancyGuard {
     }
 
     ICawProfileTransfer public immutable cawProfile;
-    /// @dev LZ eid passed to transferAndSync. Mainnet/bypassLZ eid is the natural
-    ///      choice: on bypassLZ deployments it's a no-op (queue stays empty for
-    ///      mainnet eid). Cross-chain L2 owner-sync happens later via
-    ///      syncTransfer(otherEid); buyer can call that per chain they care about.
-    uint32 public immutable lzDestId;
+    /// @dev Fallback LZ eid used by the 4 sale functions (buy, buyWithToken,
+    ///      settleAuction, acceptOffer) when the caller passes `lzDestId == 0`.
+    ///      Each sale function now takes `lzDestId` as a PARAMETER so the
+    ///      buyer/winner/accepter can sync the token's ownership to the L2 it
+    ///      actually lives on in the SAME tx (multi-L2 correct) — no separate
+    ///      syncTransfer leg needed. Passing 0 falls back to this immutable
+    ///      default so old integrations that don't care about a specific L2
+    ///      keep working unchanged. A caller-supplied eid can only affect
+    ///      their OWN purchase: transferAndSync's destination _setOwnerOf
+    ///      applies only to the correctly-queued transfer for that tokenId,
+    ///      so a wrong/unintended eid at worst wastes the caller's own LZ fee
+    ///      or reverts with NoPending — it cannot corrupt another token's
+    ///      ownership state.
+    uint32 public immutable defaultLzDestId;
 
     mapping(uint256 => Listing) public listings;
     mapping(uint32 => uint256) public listingByTokenId;  // tokenId => active listingId (1-indexed)
@@ -113,7 +122,7 @@ contract CawProfileMarketplace is ReentrancyGuard {
     constructor(address _cawProfile, uint32 _lzDestId, address[] memory _paymentTokens) {
         require(_cawProfile != address(0), "Invalid CawProfile address");
         cawProfile = ICawProfileTransfer(_cawProfile);
-        lzDestId = _lzDestId;
+        defaultLzDestId = _lzDestId;
 
         // ETH is always allowed.
         allowedPaymentTokens[address(0)] = true;
@@ -221,8 +230,13 @@ contract CawProfileMarketplace is ReentrancyGuard {
 
     /**
      * @notice Buy a listed NFT with ETH (fixed price or Dutch auction).
+     * @param listingId The listing to buy.
+     * @param lzDestId The LZ eid of the L2 the token's owner-record should be
+     *        synced to (the chain the buyer will actually use the profile on).
+     *        Pass 0 to fall back to the marketplace's `defaultLzDestId`.
+     *        Excess ETH (msg.value - price) funds the LZ send; see transferAndSync.
      */
-    function buy(uint256 listingId) external payable nonReentrant {
+    function buy(uint256 listingId, uint32 lzDestId) external payable nonReentrant {
         Listing storage listing = listings[listingId];
         require(listing.active, "Listing not active");
         require(listing.listingType != ListingType.ENGLISH_AUCTION, "Use placeBid for auctions");
@@ -242,15 +256,19 @@ contract CawProfileMarketplace is ReentrancyGuard {
 
         // Transfer NFT to buyer and sync L2 ownership (excess ETH covers LZ fee)
         uint256 lzFee = msg.value - price;
-        cawProfile.transferAndSync{value: lzFee}(msg.sender, listing.tokenId, lzDestId, 0);
+        cawProfile.transferAndSync{value: lzFee}(
+            msg.sender, listing.tokenId, lzDestId == 0 ? defaultLzDestId : lzDestId, 0
+        );
 
         emit Sale(listingId, listing.tokenId, msg.sender, price, address(0));
     }
 
     /**
      * @notice Buy a listed NFT with an ERC20 token (fixed price or Dutch auction).
+     * @param lzDestId The LZ eid to sync ownership to; 0 = use defaultLzDestId.
+     *        msg.value (all of it, since price is paid in the ERC20) funds the LZ send.
      */
-    function buyWithToken(uint256 listingId, uint256 amount) external payable nonReentrant {
+    function buyWithToken(uint256 listingId, uint256 amount, uint32 lzDestId) external payable nonReentrant {
         Listing storage listing = listings[listingId];
         require(listing.active, "Listing not active");
         require(listing.listingType != ListingType.ENGLISH_AUCTION, "Use placeBid for auctions");
@@ -270,7 +288,9 @@ contract CawProfileMarketplace is ReentrancyGuard {
         pendingTokenPayouts[listing.seller][listing.paymentToken] += price;
 
         // Transfer NFT to buyer and sync L2 (msg.value covers LZ fee)
-        cawProfile.transferAndSync{value: msg.value}(msg.sender, listing.tokenId, lzDestId, 0);
+        cawProfile.transferAndSync{value: msg.value}(
+            msg.sender, listing.tokenId, lzDestId == 0 ? defaultLzDestId : lzDestId, 0
+        );
 
         emit Sale(listingId, listing.tokenId, msg.sender, price, listing.paymentToken);
     }
@@ -358,8 +378,10 @@ contract CawProfileMarketplace is ReentrancyGuard {
 
     /**
      * @notice Settle a completed English auction. Anyone can call this.
+     * @param lzDestId The LZ eid to sync ownership to (the winner's L2 of
+     *        choice); 0 = use defaultLzDestId. msg.value funds the LZ send.
      */
-    function settleAuction(uint256 listingId) external payable nonReentrant {
+    function settleAuction(uint256 listingId, uint32 lzDestId) external payable nonReentrant {
         Listing storage listing = listings[listingId];
         require(listing.active, "Listing not active");
         require(listing.listingType == ListingType.ENGLISH_AUCTION, "Not an English auction");
@@ -381,7 +403,9 @@ contract CawProfileMarketplace is ReentrancyGuard {
         }
 
         // Transfer NFT to winner and sync L2 (msg.value covers LZ fee)
-        cawProfile.transferAndSync{value: msg.value}(listing.highestBidder, listing.tokenId, lzDestId, 0);
+        cawProfile.transferAndSync{value: msg.value}(
+            listing.highestBidder, listing.tokenId, lzDestId == 0 ? defaultLzDestId : lzDestId, 0
+        );
 
         emit AuctionSettled(listingId, listing.highestBidder, listing.highestBid);
     }
@@ -586,8 +610,10 @@ contract CawProfileMarketplace is ReentrancyGuard {
      * @notice Accept a buy offer. Caller must own the NFT and have approved the marketplace.
      *         If the token is currently listed, the listing is cancelled automatically.
      * @param offerId The offer to accept
+     * @param lzDestId The LZ eid to sync ownership to (the offerer's L2 of
+     *        choice); 0 = use defaultLzDestId. msg.value funds the LZ send.
      */
-    function acceptOffer(uint256 offerId) external payable nonReentrant {
+    function acceptOffer(uint256 offerId, uint32 lzDestId) external payable nonReentrant {
         Offer storage offer = offers[offerId];
         require(offer.active, "Offer not active");
         require(block.timestamp <= offer.expiry, "Offer expired");
@@ -630,7 +656,9 @@ contract CawProfileMarketplace is ReentrancyGuard {
         }
 
         // Transfer NFT to offerer and sync L2 (msg.value covers LZ fee)
-        cawProfile.transferAndSync{value: msg.value}(offer.offerer, tokenId, lzDestId, 0);
+        cawProfile.transferAndSync{value: msg.value}(
+            offer.offerer, tokenId, lzDestId == 0 ? defaultLzDestId : lzDestId, 0
+        );
 
         emit OfferAccepted(offerId, tokenId, msg.sender, offer.offerer, offer.amount, offer.paymentToken);
     }
