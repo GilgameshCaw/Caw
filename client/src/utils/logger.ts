@@ -133,7 +133,19 @@ if (!isBrowser && logStream) {
       msg.includes('could not coalesce error') || msg.includes('missing response for request') ||
       msg.includes('ERR_MODULE_NOT_FOUND')
 
-    if (isTransientNetwork || isTransientRpc) {
+    // Provider-lifecycle races: when a fallback/rebuilt RPC provider is destroyed
+    // (rotation, reconnect, or a sibling loop's cleanup) while an eth_call /
+    // network-detect is in flight, ethers throws "provider destroyed; cancelled
+    // request" with code UNSUPPORTED_OPERATION. This is NOT fatal — the validator
+    // catches it inline (rebuildHttpProvider) and retries; but a call that races
+    // the destroy at the network-detect layer can escape here. Treat it as
+    // transient so it doesn't crash-loop the whole process (was 31K+ restarts).
+    // See project_validator_shared_provider_destroy_race.
+    const isProviderLifecycle =
+      code === 'UNSUPPORTED_OPERATION' ||
+      msg.includes('provider destroyed') || msg.includes('cancelled request')
+
+    if (isTransientNetwork || isTransientRpc || isProviderLifecycle) {
       logger.error(`Uncaught transient error (non-fatal, services will retry): ${msg.slice(0, 200)}`)
       return
     }
