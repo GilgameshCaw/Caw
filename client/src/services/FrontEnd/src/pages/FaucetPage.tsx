@@ -2,9 +2,12 @@ import React, { useState } from 'react'
 import { Link } from '~/utils/localizedRouter'
 import { useTheme } from '~/hooks/useTheme'
 import { HiArrowLeft, HiRefresh } from 'react-icons/hi'
-import { useAccount, useWriteContract, useWaitForTransactionReceipt, useReadContract, useSwitchChain, useChainId } from 'wagmi'
-import { useConnectModalBridge as useConnectModal } from '~/hooks/useConnectModalBridge'
+import { useAccount, useWriteContract, useWaitForTransactionReceipt, useReadContract } from 'wagmi'
 import { useEnsureWallet } from '~/hooks/useEnsureWallet'
+import { useWalletPopulation } from '~/hooks/useWalletPopulation'
+import { useActiveToken } from '~/store/tokenDataStore'
+import { useSmartEoaExecute } from '~/hooks/useSmartEoaExecute'
+import { encodeFunctionData, type Address } from 'viem'
 import { CAW_ADDRESS } from '~/../../../abi/addresses'
 import { parseUnits, formatUnits } from 'viem'
 import { useT } from '~/i18n/I18nProvider'
@@ -41,16 +44,31 @@ const MINT_AMOUNTS = [
 const FaucetPage: React.FC = () => {
   const t = useT()
   const { isDark } = useTheme()
-  const { address, isConnected } = useAccount()
-  const { openConnectModal } = useConnectModal()
+  const { address: wagmiAddress, isConnected } = useAccount()
   const ensureWallet = useEnsureWallet()
-  const currentChainId = useChainId()
-  const { switchChain, isPending: isSwitching } = useSwitchChain()
   const [selectedAmount, setSelectedAmount] = useState(MINT_AMOUNTS[1].value)
   const [customAmount, setCustomAmount] = useState(MINT_AMOUNTS[1].value)
   const [useCustom, setUseCustom] = useState(false)
 
-  const isOnCorrectChain = currentChainId === chains.l1.chainId
+  // Population-aware target address: for Pop-A this is the wagmi wallet; for
+  // Pop-B there is no connected wagmi wallet, so we fall back to the active
+  // profile's owner EOA (the SmartEOA that actually holds the CAW balance).
+  const { population, address: populationAddress } = useWalletPopulation()
+  const activeToken = useActiveToken()
+  const isPopB = population === 'B'
+  const address = isPopB ? (populationAddress ?? activeToken?.owner) : wagmiAddress
+  // A Pop-B user with a resolvable owner address is already authed — never
+  // treat them as logged-out (see project_pending_caw_id_resolution.md-adjacent
+  // population handling patterns; do NOT gate Pop-B on wagmi isConnected).
+  const isLoggedIn = isPopB ? !!address : isConnected
+
+  // Pop-B mint goes through the sponsored relay (gasless) — the faucet is
+  // fee-exempt on /execute for a mint-only batch (testnet), since the user has
+  // no funds to repay yet. Signed by the passkey.
+  const { execute: smartEoaExecute, account: eoaAccount } = useSmartEoaExecute()
+  const [popBPending, setPopBPending] = useState(false)
+  const [popBSuccess, setPopBSuccess] = useState(false)
+  const [popBError, setPopBError] = useState<string | null>(null)
 
   const { writeContract, data: hash, isPending, error: writeError } = useWriteContract()
 
@@ -97,6 +115,7 @@ const FaucetPage: React.FC = () => {
   }
 
   const handleMint = async () => {
+    if (isPopB) return // Pop-B goes through handlePopBMint (relay), not wagmi.
     if (!address) return
 
     const amount = getMintAmount()
@@ -109,6 +128,37 @@ const FaucetPage: React.FC = () => {
       args: [address, parseUnits(amount, 18)],
       chainId: chains.l1.chainId,
     })
+  }
+
+  // Pop-B: relay a mint(self, amount) batch through the sponsor (fee-exempt on
+  // testnet — see sponsor.ts faucet branch). Gasless; signed by the passkey.
+  const handlePopBMint = async () => {
+    if (!eoaAccount) return
+    const amount = getMintAmount()
+    if (!isValidAmount(amount)) return
+    setPopBError(null)
+    setPopBSuccess(false)
+    setPopBPending(true)
+    try {
+      await smartEoaExecute([{
+        to: CAW_ADDRESS as Address,
+        value: 0n,
+        data: encodeFunctionData({
+          abi: mintableCawAbi,
+          functionName: 'mint',
+          args: [eoaAccount as Address, parseUnits(amount, 18)],
+        }),
+      }])
+      setPopBSuccess(true)
+      setTimeout(() => refetchBalance(), 3000)
+    } catch (err: any) {
+      const raw = (err?.message || '').replace(/^API\s+\d+:\s*/i, '')
+      if (/NotAllowed|abort|cancel|denied|rejected/i.test(raw)) setPopBError(t('faucet.error.rejected'))
+      else if (/FAUCET_RATE_LIMIT/i.test(raw)) setPopBError(t('faucet.error.rate_limit'))
+      else setPopBError(t('faucet.error.failed'))
+    } finally {
+      setPopBPending(false)
+    }
   }
 
   const formatBalance = (bal: bigint | undefined) => {
@@ -152,7 +202,7 @@ const FaucetPage: React.FC = () => {
         </div>
 
         {/* Balance */}
-        {isConnected && (
+        {isLoggedIn && (
           <div className={`p-4 rounded-xl mb-6 ${isDark ? 'bg-white/5' : 'bg-gray-50'}`}>
             <div className="flex items-center justify-between">
               <div>
@@ -247,12 +297,34 @@ const FaucetPage: React.FC = () => {
 
           {/* Mint Button */}
           <button
-            onClick={() => ensureWallet({ chainId: chains.l1.chainId }, async () => { handleMint() })}
-            disabled={isConnected && (isPending || isConfirming || !isValidAmount(getMintAmount()))}
+            onClick={() => {
+              if (isPopB) { void handlePopBMint(); return }
+              // Pop-A: ensureWallet connects/switches then mints via wagmi.
+              ensureWallet({ chainId: chains.l1.chainId }, async () => { handleMint() })
+            }}
+            disabled={
+              isPopB
+                ? (popBPending || !isValidAmount(getMintAmount()))
+                : (isConnected && (isPending || isConfirming || !isValidAmount(getMintAmount())))
+            }
             className="w-full py-3 px-4 bg-yellow-500 text-black font-semibold rounded-xl hover:bg-yellow-400 transition-colors disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer"
           >
-            {isPending ? t('marketplace.button.confirm_in_wallet') : isConfirming ? t('faucet.minting') : t('faucet.mint_button', { amount: getDisplayAmount() })}
+            {isPopB
+              ? (popBPending ? t('faucet.minting') : t('faucet.mint_button', { amount: getDisplayAmount() }))
+              : (isPending ? t('marketplace.button.confirm_in_wallet') : isConfirming ? t('faucet.minting') : t('faucet.mint_button', { amount: getDisplayAmount() }))}
           </button>
+
+          {/* Pop-B status */}
+          {isPopB && popBError && (
+            <div className={`mt-4 p-3 rounded-lg ${isDark ? 'bg-red-500/10 text-red-400' : 'bg-red-50 text-red-600'}`}>
+              <p className="text-sm">{popBError}</p>
+            </div>
+          )}
+          {isPopB && popBSuccess && (
+            <div className={`mt-4 p-3 rounded-lg ${isDark ? 'bg-green-500/10 text-green-400' : 'bg-green-50 text-green-600'}`}>
+              <p className="text-sm">{t('faucet.success', { amount: getDisplayAmount() })}</p>
+            </div>
+          )}
 
           {/* Status Messages */}
           {writeError && (

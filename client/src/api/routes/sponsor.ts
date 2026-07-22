@@ -74,6 +74,14 @@ const DEPOSIT_AUTH_RATE_LIMIT  = 30
 // gas at volume — the treasury-low guard is the hard backstop, this is the
 // first line. Separate bucket from 'deposit' so the two don't share a budget.
 const DELEGATE_L2_RATE_LIMIT   = 5
+// Testnet faucet: per-EOA mints/day (the relayer eats the gas, so bound it).
+const FAUCET_RATE_LIMIT        = Number(process.env.SPONSOR_FAUCET_RATE_LIMIT ?? 10)
+// Global daily faucet ceiling across ALL EOAs (EOA-creation defense — an attacker
+// with many delegated EOAs otherwise accumulates N×per-EOA free mints). Mirrors
+// DELEGATE_L2_GLOBAL_DAILY. Sized well above legit testnet faucet use.
+const FAUCET_GLOBAL_DAILY      = process.env.SPONSOR_FAUCET_GLOBAL_DAILY
+  ? Number(process.env.SPONSOR_FAUCET_GLOBAL_DAILY) : 1000
+const FAUCET_GLOBAL_KEY        = 'sponsor:faucet:global'
 // Global daily ceiling on L2 delegations across ALL IPs (IP-rotation defense).
 // Sized well above legit daily passkey signups; tune via env at scale.
 const DELEGATE_L2_GLOBAL_DAILY = process.env.SPONSOR_DELEGATE_L2_GLOBAL_DAILY
@@ -118,10 +126,11 @@ const EXECUTE_DUST_FLOOR_GAS = 80_000n
  * the cap is rejected before any sig/sim work — but the peek doesn't consume.
  * Fails open on Redis error (same pattern as freeActionRateLimit.ts).
  */
-async function checkSponsorRateLimit(ip: string, op: 'bootstrap' | 'deposit' | 'authenticate' | 'ungated' | 'delegate-l2'): Promise<boolean> {
+async function checkSponsorRateLimit(ip: string, op: 'bootstrap' | 'deposit' | 'authenticate' | 'ungated' | 'delegate-l2' | 'faucet'): Promise<boolean> {
   const limit = op === 'bootstrap' ? BOOTSTRAP_RATE_LIMIT
     : op === 'ungated' ? UNGATED_RATE_LIMIT
     : op === 'delegate-l2' ? DELEGATE_L2_RATE_LIMIT
+    : op === 'faucet' ? FAUCET_RATE_LIMIT
     : DEPOSIT_AUTH_RATE_LIMIT
   const key = `sponsor:${op}:${ip}`
   try {
@@ -132,9 +141,10 @@ async function checkSponsorRateLimit(ip: string, op: 'bootstrap' | 'deposit' | '
     // Gated paths (bootstrap/deposit/authenticate) carry their own economic
     // backstop — an invite code costs CAW, an X token is single-use — so they
     // fail OPEN (a Redis blip shouldn't break a paid signup). The ungated free
-    // path has NO such backstop, so a Redis outage would otherwise be an
-    // unbounded free-mint hole that drains the sponsor; it fails CLOSED. (#229)
-    return op !== 'ungated'
+    // path AND the testnet faucet have NO such backstop, so a Redis outage would
+    // otherwise be an unbounded free-mint hole that drains the relayer's gas;
+    // they fail CLOSED. (#229; faucet added 2026-07)
+    return op !== 'ungated' && op !== 'faucet'
   }
 }
 
@@ -142,7 +152,7 @@ async function checkSponsorRateLimit(ip: string, op: 'bootstrap' | 'deposit' | '
  * Record one successful sponsored op against an IP's daily quota. Call ONLY
  * after the account/op actually succeeded. Sets the 24h TTL on first use.
  */
-async function recordSponsorUse(ip: string, op: 'bootstrap' | 'deposit' | 'authenticate' | 'ungated' | 'delegate-l2'): Promise<void> {
+async function recordSponsorUse(ip: string, op: 'bootstrap' | 'deposit' | 'authenticate' | 'ungated' | 'delegate-l2' | 'faucet'): Promise<void> {
   const key = `sponsor:${op}:${ip}`
   try {
     const count = await redis.incr(key)
@@ -785,6 +795,7 @@ router.post('/authenticate', async (req, res) => {
 const SEL_WITHDRAW_TO        = '0xcdbafcd0' // CawProfile.withdrawTo(uint32,uint32,address,uint32,uint256)
 const SEL_CAW_TRANSFER       = '0xa9059cbb' // CAW.transfer(address,uint256)
 const SEL_CAW_APPROVE        = '0x095ea7b3' // CAW.approve(address,uint256)
+const SEL_CAW_MINT           = '0x40c10f19' // MintableCaw.mint(address,uint256) — TESTNET FAUCET ONLY
 const SEL_DEPOSIT_FOR        = '0xf19b53f8' // CawProfile.depositFor(uint32,uint32,uint256,uint32,uint256)
 const SEL_DEPOSIT_ZAP        = '0xafb344b1' // CawProfileMinter.depositZap(uint32,uint32,uint256,uint256,uint32,uint256)
 // LISTING / TRANSFER selectors (Pop-B relay, 2026-07):
@@ -845,6 +856,7 @@ const SELF_MGMT_SELECTORS = new Set([SEL_ROTATE_ECDSA, SEL_ADD_PASSKEY, SEL_CANC
 const NON_PAYABLE_SELS = new Set([
   SEL_CREATE_OFFER_ERC20, SEL_PLACE_BID_WITH_TOKEN, SEL_CANCEL_OFFER, SEL_CANCEL_LISTING,
   SEL_CREATE_LISTING, SEL_SET_APPROVAL_FOR_ALL, SEL_CAW_APPROVE, SEL_CAW_TRANSFER,
+  SEL_CAW_MINT, // MintableCaw.mint(address,uint256) — non-payable (testnet faucet)
 ])
 
 // Payable selectors whose inner-call ETH is SELF-FUNDED by the EOA (the relayer
@@ -891,6 +903,14 @@ const EXECUTE_ALLOWED: Record<string, Set<string>> = {}
 if (CAW_NAMES_ADDRESS_LC) EXECUTE_ALLOWED[CAW_NAMES_ADDRESS_LC] = new Set([SEL_WITHDRAW_TO, SEL_DEPOSIT_FOR, SEL_SET_APPROVAL_FOR_ALL, SEL_TRANSFER_AND_SYNC, SEL_SYNC_TRANSFER, SEL_AUTHENTICATE])
 if (CAW_NAMES_MINTER_ADDRESS_LC) EXECUTE_ALLOWED[CAW_NAMES_MINTER_ADDRESS_LC] = new Set([SEL_DEPOSIT_ZAP])
 EXECUTE_ALLOWED[CAW_ADDRESS_LC] = new Set([SEL_CAW_TRANSFER, SEL_CAW_APPROVE])
+// TESTNET FAUCET: allow Pop-B users to relay MintableCaw.mint(owner, amount) so
+// they can get test CAW without a wagmi wallet. HARD-GATED to testnet — the mint
+// selector is NEVER added on mainnet (real CAW has no faucet mint; relaying an
+// arbitrary mint would be catastrophic). Rate-limited at the route (faucet op).
+// The mint `to` is shape-checked to equal the signing EOA in the /execute loop.
+if ((process.env.NETWORK ?? 'testnet') !== 'mainnet') {
+  EXECUTE_ALLOWED[CAW_ADDRESS_LC].add(SEL_CAW_MINT)
+}
 EXECUTE_ALLOWED[CAW_NAME_MARKETPLACE_ADDRESS_LC] = new Set([
   SEL_CREATE_LISTING, SEL_CREATE_OFFER_ETH, SEL_CREATE_OFFER_ERC20,
   SEL_BUY, SEL_BUY_WITH_TOKEN, SEL_PLACE_BID, SEL_PLACE_BID_WITH_TOKEN,
@@ -1368,6 +1388,21 @@ router.post('/execute', async (req, res) => {
       }
     }
 
+    // SHAPE CHECK on the TESTNET faucet mint: mint(to, amount) — the `to` MUST be
+    // the signing EOA. The relay must only ever help a user faucet test CAW to
+    // THEMSELVES, never mint to an arbitrary address. (The selector is only
+    // allow-listed on testnet at all; this bounds it further.)
+    if (toLc === CAW_ADDRESS_LC && selector === SEL_CAW_MINT) {
+      const toWord = c.data.slice(10, 10 + 64) // 1st word = mint recipient
+      if (toWord.length !== 64 || toWord.slice(0, 24) !== '0'.repeat(24)) {
+        return res.status(400).json({ error: 'BAD_MINT_SHAPE', detail: 'mint recipient word is malformed' })
+      }
+      const mintTo = ('0x' + toWord.slice(24)).toLowerCase()
+      if (mintTo !== smartEoaLc) {
+        return res.status(400).json({ error: 'MINT_TO_NOT_SELF', detail: 'faucet mint recipient must be the signing wallet.' })
+      }
+    }
+
     // SHAPE CHECK on depositFor: the `tokenId` (2nd arg, uint32) MUST be one the
     // SIGNER owns. depositFor is permissionless on-chain, so without this a user
     // could deposit-credit + silently auth someone else's token.
@@ -1659,6 +1694,64 @@ router.post('/execute', async (req, res) => {
   //    user can't fake it. We accept whichever currency the batch uses and require
   //    it to meet the live gas quote in that currency.
   const relayer = service.relayerAddress().toLowerCase()
+
+  // ── TESTNET FAUCET fee exemption ─────────────────────────────────────────────
+  // A faucet user has no funds yet (that's why they're minting test CAW), so they
+  // can't repay the relayer. Exempt a batch that is EXCLUSIVELY a single testnet
+  // mint(self, amount) — the relayer eats the tiny gas. Bounded hard:
+  //   • testnet only (NETWORK != 'mainnet'),
+  //   • the batch is EXACTLY one call: CAW.mint on CAW_ADDRESS (nothing else rides
+  //     fee-free), and the mint `to` == the signer (enforced in the shape check
+  //     above), and
+  //   • per-EOA rate-limited so the relayer's gas can't be drained by mint spam.
+  const isFaucetOnlyBatch =
+    (process.env.NETWORK ?? 'testnet') !== 'mainnet' &&
+    body.calls.length === 1 &&
+    body.calls[0].to.toLowerCase() === CAW_ADDRESS_LC &&
+    (body.calls[0].data || '').slice(0, 10).toLowerCase() === SEL_CAW_MINT
+  if (isFaucetOnlyBatch) {
+    const faucetOk = await checkSponsorRateLimit(smartEoaLc, 'faucet')
+    if (!faucetOk) {
+      return res.status(429).json({ error: 'FAUCET_RATE_LIMIT', detail: 'Faucet limit reached for this wallet. Try again later.' })
+    }
+    // Global daily cap (EOA-creation defense) — peek here, incremented on success.
+    // Fails CLOSED on a Redis error (no economic backstop; relayer eats the gas).
+    try {
+      const gRaw = await redis.get(FAUCET_GLOBAL_KEY)
+      const gCount = gRaw ? parseInt(gRaw, 10) : 0
+      if (gCount >= FAUCET_GLOBAL_DAILY) {
+        console.warn(`[sponsor/faucet] GLOBAL daily cap hit (${gCount}/${FAUCET_GLOBAL_DAILY}) — possible griefing`)
+        return res.status(429).json({ error: 'FAUCET_RATE_LIMIT', detail: 'The faucet is temporarily at capacity. Try again later.' })
+      }
+    } catch {
+      return res.status(429).json({ error: 'FAUCET_RATE_LIMIT', detail: 'The faucet is temporarily unavailable. Try again later.' })
+    }
+    // Skip the fee-repay invariant below — relay the mint gas-free.
+    const result = await service.relayExecuteBatch(
+      body.smartEoaAddress,
+      body.calls.map(c => ({ to: c.to, value: BigInt(c.value), data: c.data })),
+      BigInt(body.nonce),
+      body.sig,
+      0n,    // forwardedTotalValue: a mint carries no value
+      false, // forwardValue
+    )
+    if (isSponsorError(result)) {
+      const status = result.error === 'TREASURY_LOW' ? 503 : 400
+      return res.status(status).json(result)
+    }
+    // Record against the per-EOA faucet bucket (same key the check reads) so the
+    // limit actually decrements. Keyed by the EOA, not IP — a faucet mint proves
+    // control of that wallet, and IP would over-restrict shared networks.
+    void recordSponsorUse(smartEoaLc, 'faucet')
+    // Bump the global daily counter on success (mirrors delegate-l2).
+    void (async () => {
+      try {
+        const n = await redis.incr(FAUCET_GLOBAL_KEY)
+        if (n === 1) await redis.expire(FAUCET_GLOBAL_KEY, RATE_WINDOW_SECONDS)
+      } catch { /* best-effort; the peek above already gated */ }
+    })()
+    return res.json(result)
+  }
 
   // Sum CAW paid to the relayer (ERC-20 transfer legs to the relayer's hot wallet).
   let feePaidCawWei = 0n
