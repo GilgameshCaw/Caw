@@ -16,16 +16,17 @@ import ProfileCard from '~/components/marketplace/ProfileCard'
 import RefundsBanner from '~/components/marketplace/RefundsBanner'
 import SalesProceedsBanner from '~/components/marketplace/SalesProceedsBanner'
 import { useAccount, useChainId, useSwitchChain, useWriteContract, useWaitForTransactionReceipt, useReadContract } from 'wagmi'
+import { readContract } from '@wagmi/core'
 import { useConnectModalBridge as useConnectModal } from '~/hooks/useConnectModalBridge'
 import { formatEther, formatUnits } from 'viem'
-import { CAW_NAME_MARKETPLACE_ADDRESS, CAW_NAMES_ADDRESS } from '~/../../../abi/addresses'
-import { cawProfileMarketplaceAbi, cawProfileAbi } from '~/../../../abi/generated'
+import { CAW_NAME_MARKETPLACE_ADDRESS, CAW_NAMES_ADDRESS, CAW_NAME_QUOTER_ADDRESS } from '~/../../../abi/addresses'
+import { cawProfileMarketplaceAbi, cawProfileAbi, cawProfileQuoterAbi } from '~/../../../abi/generated'
+import { wagmiConfig } from '~/config/Web3Provider'
 import { chains } from '~/config/chains'
 import UsernameSvg from '~/components/UsernameSvg'
 import { useT } from '~/i18n/I18nProvider'
 import { useOffersUnreadStore } from '~/store/offersUnreadStore'
 import { useSalesUnreadStore } from '~/store/salesUnreadStore'
-import { useSyncTransferStore } from '~/store/syncTransferStore'
 
 type Tab = 'listings' | 'sales' | 'mine' | 'offers'
 
@@ -578,22 +579,33 @@ const MyOffersTab: React.FC = () => {
   const isOnL1 = chainId === chains.l1.chainId
   const needsChainSwitch = isConnected && !isOnL1
 
-  // NOTE: acceptOffer's internal cawProfile.transferAndSync uses the
-  // marketplace's own IMMUTABLE lzDestId (chains.l1.layerZero / bypassLZ
-  // eid), which is a no-op flush — it never reaches the L2 (Base Sepolia)
-  // CawProfileLedger. This used to quote syncTransferQuote at that same eid
-  // (always nativeFee=0) and attach it as msg.value; that quote+value round
-  // trip was pointless, so acceptOffer is now called directly with no value.
-  // The REAL L2 sync happens as a separate syncTransfer(chains.l2.layerZero)
-  // leg, prompted via SyncTransferModal once the offer is accepted (below).
+  // acceptOffer now syncs L2 (Base Sepolia) ownership NATIVELY: it takes a
+  // `lzDestId` param and internally transferAndSync's to it in the same tx,
+  // self-funded by the accept call's own msg.value. Quote the real L2 sync
+  // fee fresh at accept time (no padding beyond the standard 1.10x — see
+  // BuyModal's identical pattern) and attach it as value.
   const quoteAndAccept = async (offer: MarketplaceOffer) => {
     if (!walletAddress) return
     setAcceptingId(offer.offerId)
+    let syncFee = 0n
+    try {
+      const quote: any = await readContract(wagmiConfig, {
+        address: CAW_NAME_QUOTER_ADDRESS,
+        abi: cawProfileQuoterAbi,
+        functionName: 'syncTransferQuote',
+        args: [0, '0x0000000000000000000000000000000000000000', chains.l2.layerZero, false],
+        chainId: chains.l1.chainId,
+      })
+      syncFee = (quote.nativeFee * 110n) / 100n
+    } catch (err) {
+      console.warn('[MyOffersTab] sync LZ fee quote failed:', err)
+    }
     writeAccept({
       address: CAW_NAME_MARKETPLACE_ADDRESS,
       abi: cawProfileMarketplaceAbi,
       functionName: 'acceptOffer',
-      args: [BigInt(offer.offerId)],
+      args: [BigInt(offer.offerId), chains.l2.layerZero],
+      value: syncFee,
       chainId: chains.l1.chainId,
     })
   }
@@ -659,12 +671,6 @@ const MyOffersTab: React.FC = () => {
       // server endpoint only flips offer status; User.address comes from
       // the indexer reading the L2 OfferAccepted event.
       refetchTokenDataUntilChanged()
-
-      // Prompt the accepter (this device) to sync L2 ownership. The token
-      // moved to offer.offerer, but syncTransfer is permissionless and
-      // flushes the whole pending queue for the L2 eid, so triggering it
-      // from here fixes this transfer (and any others still pending).
-      useSyncTransferStore.getState().show(offer.tokenId, offer.username)
     }
     setReceivedOffers(prev => prev.filter(o => o.offerId !== acceptingId))
     setAcceptingId(null)

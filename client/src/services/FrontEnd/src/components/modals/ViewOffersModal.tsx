@@ -22,7 +22,6 @@ import UsernameSvg from '~/components/UsernameSvg'
 import LiveCountdown from '~/components/marketplace/LiveCountdown'
 import { apiFetch } from '~/api/client'
 import { useOffersUnreadStore } from '~/store/offersUnreadStore'
-import { useSyncTransferStore } from '~/store/syncTransferStore'
 
 const DECIMALS: Record<string, number> = { USDC: 6, USDT: 6 }
 
@@ -110,22 +109,17 @@ const ViewOffersModal: React.FC = () => {
   const { writeContract: writeAction, data: actionHash, isPending: isActionPending, error: actionError, reset: resetAction } = useWriteContract()
   const { isLoading: isActionConfirming, isSuccess: isActionSuccess } = useWaitForTransactionReceipt({ hash: actionHash })
 
-  // NOTE: acceptOffer's internal cawProfile.transferAndSync uses the
-  // marketplace's own IMMUTABLE lzDestId (chains.l1.layerZero / bypassLZ
-  // eid), which is a no-op flush — it never reaches the L2 (Base Sepolia)
-  // CawProfileLedger. Quoting syncTransferQuote at that same eid always
-  // returns nativeFee=0, so no value needs to ride the accept tx. The REAL
-  // L2 sync happens as a separate syncTransfer(chains.l2.layerZero) leg —
-  // via SyncTransferModal for Pop-A (below), folded into the SAME relayed
-  // batch for Pop-B (handlePopBAcceptOffer).
-  const lzFee = 0n
+  // acceptOffer now syncs L2 (Base Sepolia) ownership NATIVELY: it takes a
+  // `lzDestId` param and internally transferAndSync's to it in the same tx,
+  // self-funded by the accept call's own msg.value. No separate
+  // SyncTransferModal / relayed syncTransfer leg is needed anymore.
   const [pendingAcceptAfterApprove, setPendingAcceptAfterApprove] = useState<MarketplaceOffer | null>(null)
 
-  // Pop-B only: quote the REAL L2 sync fee so it can ride the SAME relayed
-  // batch as acceptOffer. See BuyModal's identical pattern.
+  // Quote the real L2 sync fee (used by BOTH Pop-A's value and Pop-B's
+  // relayed value). See BuyModal's identical pattern.
   const [acceptSyncLzFee, setAcceptSyncLzFee] = useState<bigint | null>(null)
   useEffect(() => {
-    if (!isPopB || !isOpen || !isOwner) { setAcceptSyncLzFee(null); return }
+    if (!isOpen || !isOwner) { setAcceptSyncLzFee(null); return }
     let cancelled = false
     readContract(wagmiConfig, {
       address: CAW_NAME_QUOTER_ADDRESS,
@@ -141,7 +135,10 @@ const ViewOffersModal: React.FC = () => {
       if (!cancelled) setAcceptSyncLzFee(null)
     })
     return () => { cancelled = true }
-  }, [isPopB, isOpen, isOwner, tokenId])
+  }, [isOpen, isOwner, tokenId])
+
+  // The accept call's own msg.value now carries the native L2 sync fee.
+  const lzFee = acceptSyncLzFee ?? 0n
 
   // After approval, auto-trigger the queued accept
   useEffect(() => {
@@ -156,7 +153,7 @@ const ViewOffersModal: React.FC = () => {
         address: CAW_NAME_MARKETPLACE_ADDRESS,
         abi: cawProfileMarketplaceAbi,
         functionName: 'acceptOffer',
-        args: [BigInt(offer.offerId)],
+        args: [BigInt(offer.offerId), chains.l2.layerZero],
         value: lzFee,
         chainId: chains.l1.chainId,
       })
@@ -194,11 +191,6 @@ const ViewOffersModal: React.FC = () => {
       // Server only flips offer status here; User.address is updated
       // by MarketplaceIndexerService on the next L2 poll.
       refetchTokenDataUntilChanged()
-      // Prompt the accepter (this device) to sync L2 ownership — the token
-      // moved to offer.offerer, but syncTransfer is permissionless and
-      // flushes the whole pending queue for the L2 eid, so triggering it
-      // from here fixes this transfer (and any others still pending).
-      if (username) useSyncTransferStore.getState().show(tokenId ?? offer.tokenId, username)
     } else if (actionType === 'cancel') {
       apiFetch(`/api/marketplace/offers/${offer.offerId}/cancelled`, {
         method: 'POST',
@@ -213,16 +205,16 @@ const ViewOffersModal: React.FC = () => {
     resetAction()
   }, [isActionSuccess])
 
-  // Pop-B relay path: [setApprovalForAll?] + acceptOffer + syncTransfer(L2) +
-  // fee leg, all in ONE batch — one passkey prompt instead of accept + a
-  // follow-up SyncTransferModal confirmation (kept for Pop-A only).
+  // Pop-B relay path: [setApprovalForAll?] + acceptOffer (native L2 sync) +
+  // fee leg, all in ONE batch — one passkey prompt. No separate syncTransfer
+  // leg / follow-up SyncTransferModal confirmation needed anymore since
+  // acceptOffer now syncs L2 ownership natively in the same call.
   // The LZ fee (value=lzFee) self-funds from the EOA; relayer fronts only gas.
   const handlePopBAcceptOffer = useCallback(async (offer: MarketplaceOffer) => {
     if (!isPopB || !eoaAccount || !l1Client) return
     setPopBOfferError(null)
     setPopBPendingOfferId(offer.offerId)
     try {
-      const syncFee = acceptSyncLzFee ?? 0n
       const quote = await apiFetch<{ relayer: string; minFeeCawWei: string; priceAvailable: boolean; minFeeEthWei: string }>(
         `/api/sponsor/execute-quote?forwardedValueWei=0`,
       )
@@ -236,11 +228,10 @@ const ViewOffersModal: React.FC = () => {
       ])
 
       const payInCaw = feeCaw != null && cawBalNow >= feeCaw
-      // acceptOffer's lzFee is self-funded in ETH from the EOA, as is the
-      // appended syncTransfer's syncFee — regardless of gas-repay currency.
-      // When repaying gas in ETH too, the EOA must cover lzFee + syncFee +
-      // feeEth; when repaying in CAW, just lzFee + syncFee.
-      const payInEth = ethBalNow >= (payInCaw ? (lzFee + syncFee) : (lzFee + syncFee + feeEth))
+      // acceptOffer's lzFee (now the native L2 sync fee) is self-funded in ETH
+      // from the EOA regardless of gas-repay currency. When repaying gas in
+      // ETH too, the EOA must cover lzFee + feeEth; when repaying in CAW, just lzFee.
+      const payInEth = ethBalNow >= (payInCaw ? lzFee : (lzFee + feeEth))
       if (!payInCaw && !payInEth) throw new Error('INSUFFICIENT_FEE_CAW')
 
       const calls: ExecCall[] = []
@@ -253,15 +244,8 @@ const ViewOffersModal: React.FC = () => {
       }
       calls.push({
         to: CAW_NAME_MARKETPLACE_ADDRESS,
-        value: lzFee, // self-funded LZ fee the seller pays (no-op — see NOTE above)
-        data: encodeFunctionData({ abi: cawProfileMarketplaceAbi, functionName: 'acceptOffer', args: [BigInt(offer.offerId)] }),
-      })
-      // L2 owner-sync — runs right after acceptOffer so the profile has
-      // already transferred before the pending queue is flushed.
-      calls.push({
-        to: CAW_NAMES_ADDRESS,
-        value: syncFee,
-        data: encodeFunctionData({ abi: cawProfileAbi, functionName: 'syncTransfer', args: [chains.l2.layerZero, 0n] }),
+        value: lzFee, // self-funded: native L2 sync fee
+        data: encodeFunctionData({ abi: cawProfileMarketplaceAbi, functionName: 'acceptOffer', args: [BigInt(offer.offerId), chains.l2.layerZero] }),
       })
       if (payInCaw) {
         calls.push({
@@ -293,7 +277,7 @@ const ViewOffersModal: React.FC = () => {
     } finally {
       setPopBPendingOfferId(null)
     }
-  }, [isPopB, eoaAccount, l1Client, lzFee, acceptSyncLzFee, smartEoaExecute, triggerRefresh, t])
+  }, [isPopB, eoaAccount, l1Client, lzFee, smartEoaExecute, triggerRefresh, t])
 
   const handleApproveNFT = () => {
     ensureWallet({ chainId: chains.l1.chainId }, async () => {
@@ -315,7 +299,7 @@ const ViewOffersModal: React.FC = () => {
         address: CAW_NAME_MARKETPLACE_ADDRESS,
         abi: cawProfileMarketplaceAbi,
         functionName: 'acceptOffer',
-        args: [BigInt(offer.offerId)],
+        args: [BigInt(offer.offerId), chains.l2.layerZero],
         value: lzFee,
         chainId: chains.l1.chainId,
       })

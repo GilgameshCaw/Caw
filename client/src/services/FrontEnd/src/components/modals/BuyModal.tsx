@@ -12,14 +12,13 @@ import { themeTextSecondary, themeTextMuted, themeBgSubtle, themeBorder } from '
 import { useMarketplaceStore } from '~/store/marketplaceStore'
 import { usePriceStore, refetchTokenDataUntilChanged } from '~/store/tokenDataStore'
 import { chains } from '~/config/chains'
-import { CAW_NAME_MARKETPLACE_ADDRESS, CAW_ADDRESS, CAW_NAMES_ADDRESS, CAW_NAME_QUOTER_ADDRESS } from '~/../../../abi/addresses'
-import { cawProfileMarketplaceAbi, cawProfileAbi, cawProfileQuoterAbi } from '~/../../../abi/generated'
+import { CAW_NAME_MARKETPLACE_ADDRESS, CAW_ADDRESS, CAW_NAME_QUOTER_ADDRESS } from '~/../../../abi/addresses'
+import { cawProfileMarketplaceAbi, cawProfileQuoterAbi } from '~/../../../abi/generated'
 import { wagmiConfig } from '~/config/Web3Provider'
 import UsernameSvg from '~/components/UsernameSvg'
 import { apiFetch } from '~/api/client'
 import { formatNumberCompact } from '~/utils'
 import { useT } from '~/i18n/I18nProvider'
-import { useSyncTransferStore } from '~/store/syncTransferStore'
 
 const DECIMALS: Record<string, number> = { USDC: 6, USDT: 6 }
 
@@ -140,42 +139,20 @@ const BuyModal: React.FC = () => {
     })
   }, [isSuccess])
 
-  // Prompt the buyer to sync L2 (Base Sepolia) ownership once the buy confirms.
-  // The marketplace's internal transferAndSync uses its own IMMUTABLE lzDestId
-  // (chains.l1.layerZero / bypassLZ eid) which is a no-op flush for the L2 —
-  // it does NOT update CawProfileLedger. Without a separate syncTransfer(L2),
-  // the buyer's Quick Sign keeps failing InvalidSig against the stale L2 owner.
-  // SyncTransferModal already implements the correct quote+writeContract (Pop-A)
-  // / relayed (Pop-B) flow against chains.l2.layerZero — reuse it here instead
-  // of duplicating that logic.
-  // Pop-A only: Pop-B folds the L2 sync into the same relayed batch as the
-  // buy (see handlePopBBuy) instead of popping a second modal.
-  useEffect(() => {
-    if (!isSuccess || !listing) return
-    useSyncTransferStore.getState().show(listing.tokenId, listing.username)
-  }, [isSuccess])
-
-  // NOTE: the marketplace's internal transferAndSync is a no-op here (see
-  // above), so the sale tx itself needs NO LayerZero fee — the previous
-  // code quoted syncTransferQuote(chains.l1.layerZero) which always returns
-  // nativeFee=0 anyway (same eid as the immutable lzDestId), so this was
-  // never actually a wasted non-zero value in practice, but was also
-  // pointless. Kept as a literal 0n below rather than removed outright so a
-  // future lzDestId change can't silently reintroduce a silent fee mismatch
-  // without a corresponding review of this comment.
-  const lzFee = 0n
-
-  // Pop-B only: quote the REAL L2 (Base Sepolia) sync fee so it can ride the
-  // SAME relayed batch as the buy call — one passkey prompt instead of two.
-  // Pop-A keeps the separate SyncTransferModal flow (a second modal is
-  // acceptable there). Quote against tokenId=0 / address(0) like
-  // SyncTransferModal does (the transfer isn't queued yet at quote time —
-  // this just needs the L2 eid's current LZ price), and against
-  // chains.l2.layerZero specifically — NOT l1 — since this fee actually
-  // reaches CawProfileLedger (unlike the marketplace's own no-op lzDestId).
+  // The marketplace now syncs L2 (Base Sepolia) ownership NATIVELY: buy /
+  // buyWithToken take a `lzDestId` param and internally transferAndSync to
+  // it in the same tx, self-funded by the sale's own msg.value. No separate
+  // SyncTransferModal / relayed syncTransfer leg is needed anymore — the
+  // sale itself is the sync.
+  //
+  // Quote the real L2 sync fee (used by BOTH Pop-A's value and Pop-B's
+  // relayed value) against tokenId=0 / address(0) like SyncTransferModal
+  // used to (the transfer isn't queued yet at quote time — this just needs
+  // the L2 eid's current LZ price), and against chains.l2.layerZero
+  // specifically since that's the eid actually passed to the sale call now.
   const [syncLzFee, setSyncLzFee] = useState<bigint | null>(null)
   useEffect(() => {
-    if (!isPopB || !isOpen || !listing) { setSyncLzFee(null); return }
+    if (!isOpen || !listing) { setSyncLzFee(null); return }
     let cancelled = false
     readContract(wagmiConfig, {
       address: CAW_NAME_QUOTER_ADDRESS,
@@ -191,7 +168,13 @@ const BuyModal: React.FC = () => {
       if (!cancelled) setSyncLzFee(null)
     })
     return () => { cancelled = true }
-  }, [isPopB, isOpen, listing?.listingId])
+  }, [isOpen, listing?.listingId])
+
+  // The sale's own msg.value now carries the LZ sync fee (contract does
+  // msg.value - price = lzFee for an ETH buy, or msg.value = lzFee for
+  // buyWithToken). Fall back to 0n while the quote is loading so the UI
+  // doesn't flash a stale insufficientBalance state.
+  const lzFee = syncLzFee ?? 0n
 
   // Current price for Dutch auctions
   const currentPrice = useMemo(() => {
@@ -210,22 +193,31 @@ const BuyModal: React.FC = () => {
     return listing.startPrice
   }, [listing])
 
+  // For an ETH listing, the sale's msg.value is price + lzFee drawn from the
+  // SAME ETH balance — checked as a SUM, not independently (an ETH-listing
+  // buyer holding exactly `price` would otherwise pass this check and then
+  // fail on-chain once the native L2 sync fee is added). ERC20 listings check
+  // the token balance against price alone; lzFee is a separate ETH balance
+  // concern not modeled here (ethBalance isn't fetched for ERC20 listings).
+  const requiredBalance = isEth ? BigInt(currentPrice) + lzFee : BigInt(currentPrice)
+
   // Debug logging
   React.useEffect(() => {
     if (listing && address) {
       console.log('[BuyModal] Balance check:', {
         isEth,
         currentPrice,
+        lzFee: lzFee.toString(),
         userBalance: userBalance.toString(),
-        insufficientBalance: BigInt(currentPrice) > userBalance,
+        insufficientBalance: requiredBalance > userBalance,
         paymentToken: listing.paymentToken,
         chainId: chains.l1.chainId,
         connectedChainId: chainId
       })
     }
-  }, [listing, address, currentPrice, userBalance, chainId])
+  }, [listing, address, currentPrice, userBalance, chainId, lzFee, requiredBalance])
 
-  const insufficientBalance = isConnected && listing ? BigInt(currentPrice) > userBalance : false
+  const insufficientBalance = isConnected && listing ? requiredBalance > userBalance : false
   const needsApproval = !isPopB && !isEth && listing && (!allowance || allowance < BigInt(currentPrice))
   const hasApproval = isEth || (allowance && allowance >= BigInt(currentPrice)) || isApproveSuccess
 
@@ -264,21 +256,20 @@ const BuyModal: React.FC = () => {
     close()
   }
 
-  // Pop-B relay path: approve (ERC20) + buy/buyWithToken + syncTransfer(L2) +
-  // fee leg, all in ONE batch — one passkey prompt, one atomic tx. The L2
-  // owner-sync (syncLzFee) rides right after the sale call so Quick Sign
-  // works against the new owner immediately, instead of prompting a second
-  // SyncTransferModal confirmation (kept for Pop-A only).
-  // The purchase price (ETH or ERC20 token amount) + syncLzFee self-fund from
-  // the EOA; the relayer fronts only gas. forwardedValueWei=0 since no ETH
-  // from the relayer.
+  // Pop-B relay path: approve (ERC20) + buy/buyWithToken + fee leg, all in
+  // ONE batch — one passkey prompt, one atomic tx. The sale call itself
+  // (buy/buyWithToken with lzDestId=chains.l2.layerZero) now performs the L2
+  // owner-sync natively via its own self-funded msg.value — no separate
+  // syncTransfer leg / SyncTransferModal confirmation needed anymore.
+  // The purchase price (ETH or ERC20 token amount) + the sale's own LZ sync
+  // fee self-fund from the EOA; the relayer fronts only gas.
+  // forwardedValueWei=0 since no ETH from the relayer.
   const handlePopBBuy = useCallback(async () => {
     if (!isPopB || !eoaAccount || !listing || !l1Client) return
     setPopBError(null)
     setPopBPending(true)
     try {
       const price = BigInt(currentPrice)
-      const syncFee = syncLzFee ?? 0n
       const quote = await apiFetch<{ relayer: string; minFeeCawWei: string; priceAvailable: boolean; minFeeEthWei: string }>(
         `/api/sponsor/execute-quote?forwardedValueWei=0`,
       )
@@ -291,35 +282,23 @@ const BuyModal: React.FC = () => {
         isEth ? Promise.resolve(0n) : l1Client.readContract({ address: listing.paymentAddress as Address, abi: erc20Abi, functionName: 'balanceOf', args: [eoaAccount as Address] }) as Promise<bigint>,
       ])
 
-      // Append the L2 owner-sync into this batch. NoPending() edge: the sale's
-      // internal transferAndSync queues THIS token onto 40245 in the SAME tx for
-      // any profile subscribed to the app's L2 (mint/authenticate/deposit all
-      // subscribe it) — the normal case, where the appended syncTransfer finds a
-      // non-empty queue and succeeds. Only a stale/pre-L2 token NEVER subscribed to
-      // 40245 (which also couldn't Quick Sign pre-sale) would hit NoPending() and,
-      // since executeBatch is atomic, fail the purchase — caught by the relay's
-      // pre-submit sim (no funds lost). We can't cheaply pre-check (the pending
-      // getter is internal), so this narrow edge is accepted; the standalone Sync
-      // Transfer flow remains the fallback. See project_transferandsync_wrong_eid.
-      const includeSync = syncFee > 0n
-      const effectiveSyncFee = includeSync ? syncFee : 0n
-
       // Pre-flight: EOA must hold enough for the purchase price PLUS the self-funded
-      // sync LZ fee (both draw from the same ETH balance in the atomic batch — a
-      // separate check on each would pass while the SUM overflows the balance).
+      // sync LZ fee (both draw from the same ETH balance in the SAME sale call's
+      // msg.value — a separate check on each would pass while the SUM overflows
+      // the balance).
       if (isEth) {
-        if (ethBalNow < price + lzFee + effectiveSyncFee) throw new Error('INSUFFICIENT_PURCHASE_FUNDS')
+        if (ethBalNow < price + lzFee) throw new Error('INSUFFICIENT_PURCHASE_FUNDS')
       } else {
         if (tokenBalNow < price) throw new Error('INSUFFICIENT_PURCHASE_FUNDS')
         // ERC20 purchase still needs ETH for the self-funded sync fee.
-        if (ethBalNow < effectiveSyncFee) throw new Error('INSUFFICIENT_FEE_CAW')
+        if (ethBalNow < lzFee) throw new Error('INSUFFICIENT_FEE_CAW')
       }
 
       // Gas fee currency preference: CAW first, else ETH. The ETH-repay branch must
       // cover EVERYTHING the batch draws in ETH: purchase (if ETH listing) + sync fee
       // + relayer gas fee.
       const payInCaw = feeCaw != null && cawBalNow >= feeCaw
-      const ethForFee = feeEth + effectiveSyncFee + (isEth ? price + lzFee : 0n)
+      const ethForFee = feeEth + lzFee + (isEth ? price : 0n)
       const payInEth = ethBalNow >= ethForFee
       if (!payInCaw && !payInEth) throw new Error('INSUFFICIENT_FEE_CAW')
 
@@ -327,8 +306,8 @@ const BuyModal: React.FC = () => {
       if (isEth) {
         calls.push({
           to: CAW_NAME_MARKETPLACE_ADDRESS,
-          value: price + lzFee, // self-funded: purchase price + marketplace's (no-op) LZ fee
-          data: encodeFunctionData({ abi: cawProfileMarketplaceAbi, functionName: 'buy', args: [BigInt(listing.listingId)] }),
+          value: price + lzFee, // self-funded: purchase price + native L2 sync fee
+          data: encodeFunctionData({ abi: cawProfileMarketplaceAbi, functionName: 'buy', args: [BigInt(listing.listingId), chains.l2.layerZero] }),
         })
       } else {
         // ERC20: approve exact amount (relay rejects unbounded or mismatched).
@@ -339,19 +318,8 @@ const BuyModal: React.FC = () => {
         })
         calls.push({
           to: CAW_NAME_MARKETPLACE_ADDRESS,
-          value: lzFee, // marketplace's (no-op) LZ fee self-funded in ETH even for ERC20 listings
-          data: encodeFunctionData({ abi: cawProfileMarketplaceAbi, functionName: 'buyWithToken', args: [BigInt(listing.listingId), price] }),
-        })
-      }
-      // L2 owner-sync — runs right after the sale so the profile has already
-      // transferred before the pending queue is flushed. Self-funded LZ fee.
-      // Only appended when there's pending work for 40245 (includeSync), so a
-      // NoPending() revert can never take the purchase down (see gate above).
-      if (includeSync) {
-        calls.push({
-          to: CAW_NAMES_ADDRESS,
-          value: syncFee,
-          data: encodeFunctionData({ abi: cawProfileAbi, functionName: 'syncTransfer', args: [chains.l2.layerZero, 0n] }),
+          value: lzFee, // native L2 sync fee self-funded in ETH even for ERC20 listings
+          data: encodeFunctionData({ abi: cawProfileMarketplaceAbi, functionName: 'buyWithToken', args: [BigInt(listing.listingId), price, chains.l2.layerZero] }),
         })
       }
       // Gas fee leg: repay the relayer.
@@ -387,7 +355,7 @@ const BuyModal: React.FC = () => {
     } finally {
       setPopBPending(false)
     }
-  }, [isPopB, eoaAccount, listing, l1Client, isEth, currentPrice, lzFee, syncLzFee, smartEoaExecute, t])
+  }, [isPopB, eoaAccount, listing, l1Client, isEth, currentPrice, lzFee, smartEoaExecute, t])
 
   const handleApprove = () => {
     ensureWallet({ chainId: chains.l1.chainId }, async () => {
@@ -412,7 +380,7 @@ const BuyModal: React.FC = () => {
           address: CAW_NAME_MARKETPLACE_ADDRESS,
           abi: cawProfileMarketplaceAbi,
           functionName: 'buy',
-          args: [BigInt(listing.listingId)],
+          args: [BigInt(listing.listingId), chains.l2.layerZero],
           value: BigInt(currentPrice) + lzFee,
           chainId: chains.l1.chainId,
         })
@@ -421,7 +389,7 @@ const BuyModal: React.FC = () => {
           address: CAW_NAME_MARKETPLACE_ADDRESS,
           abi: cawProfileMarketplaceAbi,
           functionName: 'buyWithToken',
-          args: [BigInt(listing.listingId), BigInt(currentPrice)],
+          args: [BigInt(listing.listingId), BigInt(currentPrice), chains.l2.layerZero],
           value: lzFee,
           chainId: chains.l1.chainId,
         })

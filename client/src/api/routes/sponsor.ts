@@ -816,12 +816,15 @@ const SEL_CREATE_OFFER_ERC20   = '0x525ab952' // CawProfileMarketplace.createOff
 // ownership pre-check needed here (the pre-submit simulation also rejects an
 // unauthorized call before mining). Payable buy-side value (buy/bid/settle/accept)
 // is self-funded from the EOA and excluded from the relayer-forwarded total.
-const SEL_BUY                  = '0xd96a094a' // buy(uint256)
-const SEL_BUY_WITH_TOKEN       = '0x3089448a' // buyWithToken(uint256,uint256)
+// Sale selectors carry the L2-sync lzDestId param (new marketplace, c6e72240):
+// buy/buyWithToken/settleAuction/acceptOffer each gained a trailing uint32 lzDestId,
+// which CHANGES their 4-byte selector. placeBid* are unchanged (bids don't transfer).
+const SEL_BUY                  = '0xdf519f0b' // buy(uint256,uint32)
+const SEL_BUY_WITH_TOKEN       = '0x40a87da3' // buyWithToken(uint256,uint256,uint32)
 const SEL_PLACE_BID            = '0x9979ef45' // placeBid(uint256)
 const SEL_PLACE_BID_WITH_TOKEN = '0x1f55bbce' // placeBidWithToken(uint256,uint256)
-const SEL_SETTLE_AUCTION       = '0x2e993611' // settleAuction(uint256)
-const SEL_ACCEPT_OFFER         = '0xc815729d' // acceptOffer(uint256)
+const SEL_SETTLE_AUCTION       = '0x3121882f' // settleAuction(uint256,uint32)
+const SEL_ACCEPT_OFFER         = '0xc01de3b3' // acceptOffer(uint256,uint32)
 const SEL_CANCEL_OFFER         = '0xef706adf' // cancelOffer(uint256)
 const SEL_CANCEL_LISTING       = '0x305a67a8' // cancelListing(uint256)
 const SEL_SYNC_TRANSFER        = '0xcf2bbe65' // CawProfile.syncTransfer(uint32,uint256)
