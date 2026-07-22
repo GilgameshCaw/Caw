@@ -1,5 +1,6 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react'
-import { useWriteContract, useWaitForTransactionReceipt, useChainId, useSwitchChain, useAccount, useReadContract, usePublicClient } from 'wagmi'
+import { useWriteContract, useWaitForTransactionReceipt, useChainId, useSwitchChain, useAccount, usePublicClient } from 'wagmi'
+import { readContract } from '@wagmi/core'
 import { useTheme } from '~/hooks/useTheme'
 import { useEnsureWallet } from '~/hooks/useEnsureWallet'
 import { useWalletPopulation } from '~/hooks/useWalletPopulation'
@@ -9,12 +10,14 @@ import { MarketplaceListing, MarketplaceBid, useMarketplaceStore } from '~/store
 import { formatEther, formatUnits, erc20Abi, encodeFunctionData, type Address } from 'viem'
 import { usePriceStore } from '~/store/tokenDataStore'
 import { apiFetch } from '~/api/client'
-import { CAW_NAME_MARKETPLACE_ADDRESS, CAW_NAME_QUOTER_ADDRESS, CAW_ADDRESS } from '~/../../../abi/addresses'
-import { cawProfileMarketplaceAbi, cawProfileQuoterAbi } from '~/../../../abi/generated'
+import { CAW_NAME_MARKETPLACE_ADDRESS, CAW_ADDRESS, CAW_NAMES_ADDRESS, CAW_NAME_QUOTER_ADDRESS } from '~/../../../abi/addresses'
+import { cawProfileMarketplaceAbi, cawProfileAbi, cawProfileQuoterAbi } from '~/../../../abi/generated'
+import { wagmiConfig } from '~/config/Web3Provider'
 import { chains } from '~/config/chains'
 import ProfileCard from './ProfileCard'
 import LiveCountdown from './LiveCountdown'
 import ModalWrapper from '~/components/modals/ModalWrapper'
+import { useSyncTransferStore } from '~/store/syncTransferStore'
 
 const TYPE_BADGES: Record<string, { label: string; color: string; tip: string }> = {
   FIXED: { label: 'Fixed', color: 'bg-blue-500/20 text-blue-400', tip: 'Buy now at the listed price' },
@@ -156,7 +159,6 @@ const ListingCard: React.FC<{ listing: MarketplaceListing; showCancel?: boolean 
   // Settle auction
   const { writeContract: writeSettle, data: settleHash, isPending: isSettling, error: settleError, reset: resetSettle } = useWriteContract()
   const { isLoading: isSettleConfirming, isSuccess: isSettleSuccess } = useWaitForTransactionReceipt({ hash: settleHash })
-  const [settleLzFee, setSettleLzFee] = useState(0n)
   const { address } = useAccount()
 
   const isAuctionEnded = listing.listingType === 'ENGLISH_AUCTION' && listing.endTime && new Date(listing.endTime).getTime() <= Date.now()
@@ -164,37 +166,55 @@ const ListingCard: React.FC<{ listing: MarketplaceListing; showCancel?: boolean 
   const isWinner = hasBids && address && listing.highestBidder?.toLowerCase() === address.toLowerCase()
   const canSettle = isAuctionEnded && isWinner && !isSettleSuccess
 
-  // Quote LZ fee for settle. useReadContract (not imperative
-  // readContract) so the result lives in React Query's cache —
-  // multiple cards quoting the same (tokenId, highestBidder) pair
-  // share one eth_call, and re-renders don't refire the read.
-  const { data: settleQuoteData } = useReadContract({
-    address: CAW_NAME_QUOTER_ADDRESS,
-    abi: cawProfileQuoterAbi,
-    chainId: chains.l1.chainId,
-    functionName: 'syncTransferQuote',
-    // Phase 1: signature gained `lzDestId` as 3rd arg. Marketplace ops
-    // run through the bypassLZ same-chain ledger — quote against the
-    // L1 LayerZero eid to match the marketplace's immutable lzDestId.
-    args: [listing.tokenId, listing.highestBidder as `0x${string}`, chains.l1.layerZero, false],
-    query: { enabled: !!(canSettle && listing.highestBidder) },
-  })
-  useEffect(() => {
-    if (!settleQuoteData) return
-    const quote = settleQuoteData as any
-    setSettleLzFee((BigInt(quote.nativeFee ?? 0) * 120n) / 100n)
-  }, [settleQuoteData])
+  // NOTE: settleAuction's internal cawProfile.transferAndSync uses the
+  // marketplace's own IMMUTABLE lzDestId (chains.l1.layerZero / bypassLZ eid),
+  // which is a no-op flush — it never reaches the L2 (Base Sepolia)
+  // CawProfileLedger. Quoting syncTransferQuote at that same eid always
+  // returns nativeFee=0, so no value needs to ride the settle tx. The REAL
+  // L2 sync happens as a separate syncTransfer(chains.l2.layerZero) leg —
+  // via SyncTransferModal for Pop-A (below), folded into the SAME relayed
+  // batch for Pop-B (handlePopBSettle).
+  const settleLzFee = 0n
 
   useEffect(() => {
-    if (isSettleSuccess) triggerRefresh()
+    if (!isSettleSuccess) return
+    triggerRefresh()
+    // Pop-A only: prompt the auction winner to sync L2 ownership via the
+    // separate SyncTransferModal. Pop-B folds this into the relay batch.
+    useSyncTransferStore.getState().show(listing.tokenId, listing.username)
   }, [isSettleSuccess])
 
-  // Pop-B relay: settleAuction (payable LZ fee self-funded) + fee leg.
+  // Pop-B only: quote the REAL L2 sync fee so it can ride the SAME relayed
+  // batch as settleAuction. See BuyModal's identical pattern.
+  const [settleSyncLzFee, setSettleSyncLzFee] = useState<bigint | null>(null)
+  useEffect(() => {
+    if (!isPopB || !canSettle) { setSettleSyncLzFee(null); return }
+    let cancelled = false
+    readContract(wagmiConfig, {
+      address: CAW_NAME_QUOTER_ADDRESS,
+      abi: cawProfileQuoterAbi,
+      functionName: 'syncTransferQuote',
+      args: [0, '0x0000000000000000000000000000000000000000', chains.l2.layerZero, false],
+      chainId: chains.l1.chainId,
+    }).then((quote: any) => {
+      if (cancelled) return
+      setSettleSyncLzFee((quote.nativeFee * 110n) / 100n)
+    }).catch(err => {
+      console.warn('[ListingCard] settle sync LZ fee quote failed:', err)
+      if (!cancelled) setSettleSyncLzFee(null)
+    })
+    return () => { cancelled = true }
+  }, [isPopB, canSettle, listing.listingId])
+
+  // Pop-B relay: settleAuction (payable LZ fee self-funded) + syncTransfer(L2)
+  // + fee leg, all in ONE batch — one passkey prompt instead of settle +
+  // a follow-up SyncTransferModal confirmation.
   const handlePopBSettle = useCallback(async () => {
     if (!isPopB || !eoaAccount || !l1Client) return
     setPopBSettleError(null)
     setPopBSettlePending(true)
     try {
+      const syncFee = settleSyncLzFee ?? 0n
       const quote = await apiFetch<{ relayer: string; minFeeCawWei: string; priceAvailable: boolean; minFeeEthWei: string }>(
         `/api/sponsor/execute-quote?forwardedValueWei=0`,
       )
@@ -204,17 +224,28 @@ const ListingCard: React.FC<{ listing: MarketplaceListing; showCancel?: boolean 
         l1Client.readContract({ address: CAW_ADDRESS as Address, abi: erc20Abi, functionName: 'balanceOf', args: [eoaAccount as Address] }) as Promise<bigint>,
         l1Client.getBalance({ address: eoaAccount as Address }),
       ])
+      // The L2 syncTransfer's LZ fee is ALWAYS self-funded in ETH from the EOA
+      // regardless of gas-repay currency — a CAW-only settler still needs
+      // ethBalNow >= settleLzFee + syncFee, else the appended syncTransfer
+      // call reverts unfunded and takes the whole batch down with it.
       const payInCaw = feeCaw != null && cawBalNow >= feeCaw
-      const ethNeeded = settleLzFee + (payInCaw ? 0n : feeEth)
+      const ethNeeded = settleLzFee + syncFee + (payInCaw ? 0n : feeEth)
       if (ethBalNow < ethNeeded) throw new Error('INSUFFICIENT_FEE_CAW')
-      const payInEth = ethBalNow >= settleLzFee + feeEth
+      const payInEth = ethBalNow >= settleLzFee + syncFee + feeEth
       if (!payInCaw && !payInEth) throw new Error('INSUFFICIENT_FEE_CAW')
 
       const calls: ExecCall[] = [
         {
           to: CAW_NAME_MARKETPLACE_ADDRESS,
-          value: settleLzFee, // self-funded LZ fee
+          value: settleLzFee, // self-funded LZ fee (no-op — see NOTE above)
           data: encodeFunctionData({ abi: cawProfileMarketplaceAbi, functionName: 'settleAuction', args: [BigInt(listing.listingId)] }),
+        },
+        {
+          // L2 owner-sync — runs right after settlement so the profile has
+          // already transferred before the pending queue is flushed.
+          to: CAW_NAMES_ADDRESS,
+          value: syncFee,
+          data: encodeFunctionData({ abi: cawProfileAbi, functionName: 'syncTransfer', args: [chains.l2.layerZero, 0n] }),
         },
       ]
       if (payInCaw) {
@@ -232,7 +263,7 @@ const ListingCard: React.FC<{ listing: MarketplaceListing; showCancel?: boolean 
     } finally {
       setPopBSettlePending(false)
     }
-  }, [isPopB, eoaAccount, l1Client, listing.listingId, settleLzFee, smartEoaExecute, triggerRefresh])
+  }, [isPopB, eoaAccount, l1Client, listing.listingId, settleLzFee, settleSyncLzFee, smartEoaExecute, triggerRefresh])
 
   const handleSettle = (e: React.MouseEvent) => {
     e.stopPropagation()

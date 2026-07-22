@@ -16,17 +16,16 @@ import ProfileCard from '~/components/marketplace/ProfileCard'
 import RefundsBanner from '~/components/marketplace/RefundsBanner'
 import SalesProceedsBanner from '~/components/marketplace/SalesProceedsBanner'
 import { useAccount, useChainId, useSwitchChain, useWriteContract, useWaitForTransactionReceipt, useReadContract } from 'wagmi'
-import { readContract } from '@wagmi/core'
-import { wagmiConfig } from '~/config/Web3Provider'
 import { useConnectModalBridge as useConnectModal } from '~/hooks/useConnectModalBridge'
 import { formatEther, formatUnits } from 'viem'
-import { CAW_NAME_MARKETPLACE_ADDRESS, CAW_NAMES_ADDRESS, CAW_NAME_QUOTER_ADDRESS } from '~/../../../abi/addresses'
-import { cawProfileMarketplaceAbi, cawProfileAbi, cawProfileQuoterAbi } from '~/../../../abi/generated'
+import { CAW_NAME_MARKETPLACE_ADDRESS, CAW_NAMES_ADDRESS } from '~/../../../abi/addresses'
+import { cawProfileMarketplaceAbi, cawProfileAbi } from '~/../../../abi/generated'
 import { chains } from '~/config/chains'
 import UsernameSvg from '~/components/UsernameSvg'
 import { useT } from '~/i18n/I18nProvider'
 import { useOffersUnreadStore } from '~/store/offersUnreadStore'
 import { useSalesUnreadStore } from '~/store/salesUnreadStore'
+import { useSyncTransferStore } from '~/store/syncTransferStore'
 
 type Tab = 'listings' | 'sales' | 'mine' | 'offers'
 
@@ -564,7 +563,6 @@ const MyOffersTab: React.FC = () => {
   const { isLoading: isAcceptConfirming, isSuccess: isAcceptSuccess } = useWaitForTransactionReceipt({ hash: acceptHash })
   const [acceptingId, setAcceptingId] = useState<number | null>(null)
   const [pendingAcceptAfterApprove, setPendingAcceptAfterApprove] = useState<MarketplaceOffer | null>(null)
-  const [lzFee, setLzFee] = useState(0n)
   const [acceptFailureMessage, setAcceptFailureMessage] = useState<string | null>(null)
 
   // Check NFT approval
@@ -580,44 +578,24 @@ const MyOffersTab: React.FC = () => {
   const isOnL1 = chainId === chains.l1.chainId
   const needsChainSwitch = isConnected && !isOnL1
 
-  // Quote LZ fee fresh, immediately before signing
+  // NOTE: acceptOffer's internal cawProfile.transferAndSync uses the
+  // marketplace's own IMMUTABLE lzDestId (chains.l1.layerZero / bypassLZ
+  // eid), which is a no-op flush — it never reaches the L2 (Base Sepolia)
+  // CawProfileLedger. This used to quote syncTransferQuote at that same eid
+  // (always nativeFee=0) and attach it as msg.value; that quote+value round
+  // trip was pointless, so acceptOffer is now called directly with no value.
+  // The REAL L2 sync happens as a separate syncTransfer(chains.l2.layerZero)
+  // leg, prompted via SyncTransferModal once the offer is accepted (below).
   const quoteAndAccept = async (offer: MarketplaceOffer) => {
     if (!walletAddress) return
-    try {
-      const quote: any = await readContract(wagmiConfig, {
-        address: CAW_NAME_QUOTER_ADDRESS,
-        abi: cawProfileQuoterAbi,
-        functionName: 'syncTransferQuote',
-        // Phase 1: signature gained `lzDestId` as 3rd arg. Marketplace ops
-        // run through the bypassLZ same-chain ledger — quote against the
-        // L1 LayerZero eid to match the marketplace's immutable lzDestId.
-        args: [offer.tokenId, offer.offerer as `0x${string}`, chains.l1.layerZero, false],
-        chainId: chains.l1.chainId,
-      })
-      const exactFee = quote.nativeFee as bigint
-      setLzFee(exactFee)
-      setAcceptingId(offer.offerId)
-      writeAccept({
-        address: CAW_NAME_MARKETPLACE_ADDRESS,
-        abi: cawProfileMarketplaceAbi,
-        functionName: 'acceptOffer',
-        args: [BigInt(offer.offerId)],
-        value: exactFee,
-        chainId: chains.l1.chainId,
-      })
-    } catch (err: any) {
-      console.error('[Accept offer] LZ fee quote failed:', err)
-      setAcceptFailureMessage(t('marketplace.error.lz_fee_quote'))
-      // Report to backend for admin visibility
-      apiFetch('/api/marketplace/offers/report-failure', {
-        method: 'POST',
-        body: JSON.stringify({
-          offerId: offer.offerId,
-          stage: 'quote',
-          error: String(err?.message || err),
-        }),
-      }).catch(() => {})
-    }
+    setAcceptingId(offer.offerId)
+    writeAccept({
+      address: CAW_NAME_MARKETPLACE_ADDRESS,
+      abi: cawProfileMarketplaceAbi,
+      functionName: 'acceptOffer',
+      args: [BigInt(offer.offerId)],
+      chainId: chains.l1.chainId,
+    })
   }
 
   // Surface wagmi tx errors with a friendly message + report to backend
@@ -681,6 +659,12 @@ const MyOffersTab: React.FC = () => {
       // server endpoint only flips offer status; User.address comes from
       // the indexer reading the L2 OfferAccepted event.
       refetchTokenDataUntilChanged()
+
+      // Prompt the accepter (this device) to sync L2 ownership. The token
+      // moved to offer.offerer, but syncTransfer is permissionless and
+      // flushes the whole pending queue for the L2 eid, so triggering it
+      // from here fixes this transfer (and any others still pending).
+      useSyncTransferStore.getState().show(offer.tokenId, offer.username)
     }
     setReceivedOffers(prev => prev.filter(o => o.offerId !== acceptingId))
     setAcceptingId(null)
