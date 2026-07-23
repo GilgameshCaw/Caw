@@ -592,9 +592,15 @@ const CONTRACTS = {
       // CAW (per env) — added on top of the static list. Skip if not deployed.
       const caw = state.addresses.MintableCaw || state.addresses.CAW;
       if (caw) erc20Tokens.push(caw);
-      // _lzDestId: mainnet/bypassLZ eid. transferAndSync flushes only this chain.
-      // Cross-chain L2 owner-sync happens later via syncTransfer(otherEid).
-      return [state.addresses.CawProfile, CHAINS[chainKey].lzEid, erc20Tokens];
+      // _lzDestId → `defaultLzDestId`: the ACTION-PROCESSING L2's eid (the chain
+      // whose CawProfileLedger.ownerOf backs Quick Sign). The sale functions take
+      // an explicit lzDestId param now; this is only the fallback when a caller
+      // passes 0. It MUST be the real L2 eid — NOT the L1's own eid (the old
+      // no-op bypassLZ value, which left L2 ownership stale → buyers' Quick Sign
+      // broke). Resolve the sibling L2 eid the same way peers are wired (L1→L2).
+      const l2Key = chainKey.replace('L1', 'L2');
+      const defaultLzDestId = (CHAINS[l2Key] || CHAINS[chainKey]).lzEid;
+      return [state.addresses.CawProfile, defaultLzDestId, erc20Tokens];
     },
   },
   SmartEOA: {
