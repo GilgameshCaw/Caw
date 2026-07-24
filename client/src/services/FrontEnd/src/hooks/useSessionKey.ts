@@ -463,9 +463,13 @@ export function useCreateSession() {
                   existingBytes.fill(0)
                 }
                 if (existingAddr && existingAddr.toLowerCase() !== sessionAccount.address.toLowerCase()) {
+                  // validSession, NOT the raw sessions() getter: the raw mapping
+                  // still shows a non-zero expiry for an EPOCH-DEAD session (one
+                  // invalidated by a transfer's ownerSessionEpoch bump), which
+                  // would make us treat a dead slot as live and never reclaim it.
                   const raw = await readContract(wagmiConfig, {
                     address: CAW_NAMES_L2_ADDRESS, abi: cawProfileLedgerAbi, chainId: baseSepolia.id,
-                    functionName: 'sessions', args: [effectiveOwner as `0x${string}`, existingAddr],
+                    functionName: 'validSession', args: [effectiveOwner as `0x${string}`, existingAddr],
                   }) as any
                   const existingExpiry = Number(BigInt((raw?.expiry ?? raw?.[0]) ?? 0))
                   const stillLive = existingExpiry > Math.floor(Date.now() / 1000)
@@ -621,24 +625,31 @@ export function useRestoreRoamedSession() {
       // and how much has been spent across ALL devices?
       //
       // TWO DIFFERENT CONTRACTS (this was the real roam bug):
-      //   - sessions(owner, key)  → CawProfileLedger (CAW_NAMES_L2_ADDRESS)
+      //   - validSession(owner, key) → CawProfileLedger (CAW_NAMES_L2_ADDRESS)
       //   - sessionSpent(owner, key) → CawActions (CAW_ACTIONS_ADDRESS)
       // The old code called sessions() on CAW_ACTIONS with a hand-rolled 4-field
       // fragment — wrong contract AND wrong shape — so viem reverted
       // (ContractFunctionRevertedError) and the restore silently "failed → create
       // new". The server reads it the same split way (see actions.ts:203-204,329).
       // Use the generated cawProfileLedgerAbi so the 6-field StoredSession decodes.
+      //
+      // validSession, NOT the raw sessions() getter: validSession applies the
+      // epoch check (the same one CawActions._verifySignatureMem enforces), so an
+      // EPOCH-DEAD session (invalidated by a transfer) reads as expiry 0 here and
+      // we correctly fall through to "create new" — the raw getter still shows
+      // the stored expiry and would restore a key that sign-and-fails forever.
       const [sessionRaw, spent] = await Promise.all([
         readContract(wagmiConfig, {
           address: CAW_NAMES_L2_ADDRESS, abi: cawProfileLedgerAbi, chainId: baseSepolia.id,
-          functionName: 'sessions', args: [owner as `0x${string}`, sessionAddr],
+          functionName: 'validSession', args: [owner as `0x${string}`, sessionAddr],
         }),
         readContract(wagmiConfig, {
           address: CAW_ACTIONS_ADDRESS, abi: cawActionsAbi, chainId: baseSepolia.id,
           functionName: 'sessionSpent', args: [owner as `0x${string}`, sessionAddr],
         }) as Promise<bigint>,
       ])
-      // VERIFIED on-chain (Base Sepolia, deployed ledger 0x087C09…): viem returns
+      // VERIFIED on-chain (Base Sepolia, prior ledger 0x087C09…, via sessions();
+      // validSession returns the same StoredSession shape): viem may return
       // this StoredSession as a POSITIONAL ARRAY, not a named object —
       //   isArray: true, keys ['0'..'5'], res.expiry === undefined, res[0] === expiry
       // Reading `.expiry` gave undefined → BigInt(undefined) threw → restore fell
@@ -705,17 +716,14 @@ export function useRestoreRoamedSession() {
 export function useWrapSessionForRoaming() {
   const activeToken = useActiveToken()
   const rootSigner = useRootSigner()
-  return useCallback(async (ownerAddress: string, presetPrfSecret?: Uint8Array): Promise<boolean> => {
+  return useCallback(async (ownerAddress: string, presetPrfSecret?: Uint8Array, tokenIdHint?: number): Promise<boolean> => {
     if (rootSigner.kind !== 'passkey' || !presetPrfSecret) return false
     const owner = ownerAddress.toLowerCase()
     try {
-      // Only wrap if the server DOESN'T already have a session blob (session-authed
-      // read — no prompt). Avoids re-uploading every sign-in.
       const { sessionPrfBlob } = await apiFetch<{ sessionPrfBlob: string | null }>(
         '/api/wallet/blob/retrieve',
         { method: 'POST', body: JSON.stringify({ address: owner }) },
       )
-      if (sessionPrfBlob) return false // already roamable
 
       const store = useSessionKeyStore.getState()
       const session = store.getSessionForAddress(owner)
@@ -723,21 +731,153 @@ export function useWrapSessionForRoaming() {
       if (!session?.privateKey || session.privateKey.length < 4 || session.privateKey === '0xencrypted') return false
       if (!session.address) return false
 
+      // If the server already has a blob, DON'T just skip: it may wrap a DEAD key
+      // (revoked / expired / epoch-bumped by a transfer). A dead slot means roaming
+      // is silently broken — a new browser's restore unwraps a key the chain
+      // rejects — and nothing ever fixed it (the skip-if-exists here kept the
+      // corpse forever unless the user happened to re-register). Reclaim the slot
+      // IFF the wrapped key is provably dead AND this local session is live.
+      // A LIVE existing slot is left alone (multi-session roam-slot design: it may
+      // belong to another device; see useCreateSession's clobber guard).
+      let reclaimDeadSlot = false
+      if (sessionPrfBlob) {
+        try {
+          const parsed = JSON.parse(sessionPrfBlob)
+          if (!validatePrfBackupBlobShape(parsed)) return false
+          const wrappedBytes = await unwrapSessionKeyWithPrf(parsed, presetPrfSecret)
+          let wrappedAddr: `0x${string}`
+          try {
+            let hex = '0x'
+            for (let i = 0; i < wrappedBytes.length; i++) hex += wrappedBytes[i].toString(16).padStart(2, '0')
+            wrappedAddr = privateKeyToAccount(hex as `0x${string}`).address
+          } finally {
+            wrappedBytes.fill(0)
+          }
+          if (wrappedAddr.toLowerCase() === session.address.toLowerCase()) return false // blob already wraps THIS key
+          const raw = await readContract(wagmiConfig, {
+            address: CAW_NAMES_L2_ADDRESS, abi: cawProfileLedgerAbi, chainId: baseSepolia.id,
+            functionName: 'validSession', args: [owner as `0x${string}`, wrappedAddr],
+          }) as any
+          const wrappedExpiry = Number(BigInt((raw?.expiry ?? raw?.[0]) ?? 0))
+          if (wrappedExpiry > Math.floor(Date.now() / 1000)) return false // live slot — leave it alone
+          reclaimDeadSlot = true
+        } catch {
+          // Can't judge the existing blob (foreign passkey's wrap, parse failure,
+          // RPC error) — never overwrite what we can't prove dead.
+          return false
+        }
+      }
+
+      // Before uploading, make sure the LOCAL session is worth roaming to — wrapping
+      // a ghost (never-registered / already-dead) key would just move the corpse.
+      {
+        const raw = await readContract(wagmiConfig, {
+          address: CAW_NAMES_L2_ADDRESS, abi: cawProfileLedgerAbi, chainId: baseSepolia.id,
+          functionName: 'validSession', args: [owner as `0x${string}`, session.address],
+        }) as any
+        const localExpiry = Number(BigInt((raw?.expiry ?? raw?.[0]) ?? 0))
+        if (localExpiry <= Math.floor(Date.now() / 1000)) return false
+      }
+
+      if (!reclaimDeadSlot) {
+        // Empty slot: session-authed first-write (no challenge/signature — the user
+        // is signed in). The server's atomic null-guard rejects a concurrent claim.
+        const keyBytes = passkeyHexToBytes(session.privateKey.slice(2))
+        const wrapped = await wrapSessionKeyWithPrf(keyBytes, presetPrfSecret, session.address)
+        keyBytes.fill(0)
+        await apiFetch('/api/wallet/blob/prf', {
+          method: 'POST',
+          body: JSON.stringify({ address: owner, sessionPrfBlob: JSON.stringify(wrapped) }),
+        })
+        console.log('[QuickSign] existing session wrapped for roaming (no prompt)')
+        return true
+      }
+
+      // Dead slot: OVERWRITE requires the passkey-gated write (the session-authed
+      // path refuses overwrites by design — audited DoS protection). That costs one
+      // extra passkey touch, but only in this rare, otherwise-permanently-broken
+      // state, and it restores roaming for good. Ask for the PRF in the SAME touch
+      // and wrap under it — that ties the blob to the credential that a future
+      // fallback restore ceremony (getPasskeyCredential-driven) will use, instead
+      // of whichever credential happened to produce presetPrfSecret.
+      const credentialId = getPasskeyCredential(tokenIdHint ?? activeToken?.tokenId)
+      if (!credentialId) return false
+      const rpId = typeof window !== 'undefined' ? window.location.hostname : ''
+      const { challenge } = await apiFetch<{ challenge: `0x${string}` }>(
+        '/api/wallet/blob/challenge',
+        { method: 'POST', body: JSON.stringify({ address: owner }) },
+      )
+      const salt = await buildPrfSalt(owner)
+      const sig = await signWithPasskey({ credentialId, digest: challenge, rpId, prfSalt: salt })
+      markPrfCapable(credentialId, !!sig.prfSecret)
+      const wrapSecret = sig.prfSecret ?? presetPrfSecret
       const keyBytes = passkeyHexToBytes(session.privateKey.slice(2))
-      const wrapped = await wrapSessionKeyWithPrf(keyBytes, presetPrfSecret, session.address)
+      const wrapped = await wrapSessionKeyWithPrf(keyBytes, wrapSecret, session.address)
       keyBytes.fill(0)
-      // Session-authed first-write (no challenge/signature — the user is signed in).
       await apiFetch('/api/wallet/blob/prf', {
         method: 'POST',
-        body: JSON.stringify({ address: owner, sessionPrfBlob: JSON.stringify(wrapped) }),
+        body: JSON.stringify({
+          address: owner,
+          sessionPrfBlob: JSON.stringify(wrapped),
+          challenge,
+          signature: sig.sig,
+        }),
       })
-      console.log('[QuickSign] existing session wrapped for roaming (no prompt)')
+      console.log('[QuickSign] dead roam slot reclaimed — session re-wrapped for roaming')
       return true
     } catch (e) {
       console.warn('[QuickSign] wrap-on-activation skipped (non-fatal):', e)
       return false
     }
   }, [rootSigner, activeToken])
+}
+
+/**
+ * Clear an owner's locally-stored Quick Sign session ONLY if the chain confirms
+ * it is dead (validSession returns a zero/expired struct — covers expiry,
+ * revocation, AND the epoch bump a transfer-out applies).
+ *
+ * Used by the ownership reconcile in useTokenDataUpdate: an observed owner
+ * change USUALLY means the old owner's sessions are epoch-dead — but not always.
+ * A transfer whose L2 owner-sync never landed (the wrong-eid class) bumps NO
+ * epoch, so the session is still fully valid; clearing it unconditionally
+ * destroyed live keys that, for owners with no roam blob, were unrecoverable
+ * (2026-07-22 gilgakey48/50/52 incident). If the sync is merely IN FLIGHT, this
+ * keeps the session for now and the next reconcile pass clears it once the
+ * epoch bump lands (worst case: one sign-and-fail, which the 403 ghost-eviction
+ * path in actions.ts already recovers with a re-enable prompt).
+ *
+ * On an RPC failure we KEEP the session (sign-and-fail is recoverable; a wrongly
+ * destroyed key is not). The deliberate-transfer path (settleTransfer) still
+ * clears unconditionally — there the user just paid for the sync, the epoch bump
+ * is imminent, and waiting invites the exact InvalidSig loop ee258f92 fixed.
+ */
+export async function clearSessionIfOnChainDead(ownerAddress: string): Promise<void> {
+  const owner = ownerAddress.toLowerCase()
+  const store = useSessionKeyStore.getState()
+  const session = store.sessions[owner]
+  if (!session) return
+  if (!session.address) {
+    // No session-key address to validate against — can't check, match the old
+    // unconditional behavior for this malformed entry.
+    store.clearSessionForAddress(owner)
+    return
+  }
+  try {
+    const raw = await readContract(wagmiConfig, {
+      address: CAW_NAMES_L2_ADDRESS, abi: cawProfileLedgerAbi, chainId: baseSepolia.id,
+      functionName: 'validSession', args: [owner as `0x${string}`, session.address],
+    }) as any
+    const expiry = Number(BigInt((raw?.expiry ?? raw?.[0]) ?? 0))
+    if (expiry > Math.floor(Date.now() / 1000)) {
+      console.log(`[QuickSign] session for ${owner} still valid on-chain despite owner change — keeping (sync in flight or never bumped)`)
+      return
+    }
+    console.warn(`[QuickSign] session for ${owner} confirmed dead on-chain — clearing`)
+    store.clearSessionForAddress(owner)
+  } catch (e) {
+    console.warn('[QuickSign] on-chain session liveness check failed — keeping local session (will self-heal on 403 if dead):', e)
+  }
 }
 
 /**

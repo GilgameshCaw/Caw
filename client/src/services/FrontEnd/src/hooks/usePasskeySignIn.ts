@@ -185,7 +185,10 @@ export function usePasskeySignIn(): UsePasskeySignIn {
           // sessionPrfBlob on the server, so it can't roam to the NEXT browser.
           // Opportunistically wrap+upload it using the PRF secret captured in the
           // sign-in touch (no extra Face ID). No-op if it's already on the server.
-          void wrapSessionForRoaming(ownerLc, signInPrfSecret).catch(() => {})
+          // tokenId hint: during sign-in the store's active token hasn't switched
+          // to this account yet, so the dead-slot-reclaim path inside must not
+          // rely on activeToken for the credential lookup.
+          void wrapSessionForRoaming(ownerLc, signInPrfSecret, profile.tokenId).catch(() => {})
         } else {
           // ROAMING (Bug E): this browser has NO local Quick Sign session for the
           // account. If one was PRF-wrapped on another device, restore it now —

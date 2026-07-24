@@ -59,6 +59,9 @@ interface SessionKeyState {
   /** Clear the Quick Sign session for a SPECIFIC owner address (per-wallet
    *  sign-out), regardless of which wallet is active. */
   clearSessionForAddress: (address: string) => void
+  /** Wipe EVERY owner's session. Only for explicit destroy-everything flows
+   *  (Clear All Data / deploy-epoch reset) — never as a fallback. */
+  clearAllSessions: () => void
   setActiveWallet: (address: string | null) => void
   setEnabled: (enabled: boolean) => void
   setHasSeenPrompt: (seen: boolean) => void
@@ -135,8 +138,20 @@ export const useSessionKeyStore = create<SessionKeyState>()(
             return { sessions: rest, enabled: false }
           })
         } else {
-          set({ sessions: {}, enabled: false })
+          // No active wallet → nothing resolvable to clear. This used to fall back
+          // to wiping EVERY owner's session, which meant one revoke/disable click
+          // while activeWallet happened to be null (e.g. the wallet guard nulls it
+          // when no wagmi wallet is connected) silently destroyed all ~N accounts'
+          // session keys in the browser — keys that were still live on-chain and,
+          // for owners with no roam blob, unrecoverable. Deliberate full wipes must
+          // use clearAllSessions() explicitly.
+          console.warn('[SessionKeyStore] clearSession() with no active wallet — nothing cleared (use clearAllSessions() for a full wipe)')
         }
+      },
+
+      clearAllSessions: () => {
+        for (const addr of Object.keys(get().sessions)) clearDecryptedKey(addr)
+        set({ sessions: {}, enabled: false, activeWallet: null })
       },
 
       clearSessionForAddress: (address: string) => {

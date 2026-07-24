@@ -793,7 +793,9 @@ const AccountSettings: React.FC = () => {
     // tab unmounts cleanly before we wipe storage out from under it.
     try { useTokenDataStore.getState().removeActiveToken?.() } catch {}
     try { useAuthStore.getState().clearSession() } catch {}
-    try { useSessionKeyStore.getState().clearSession() } catch {}
+    // Clear All Data is an EXPLICIT destroy-everything flow — use the wipe-all
+    // action (clearSession() is per-active-wallet and no-ops when none is set).
+    try { useSessionKeyStore.getState().clearAllSessions() } catch {}
     try { clearKeyCache() } catch {}
 
     // Disconnect the wallet at the wagmi layer BEFORE wiping storage. If

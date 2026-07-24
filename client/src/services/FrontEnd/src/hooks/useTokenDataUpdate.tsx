@@ -7,7 +7,7 @@ import { baseSepolia, sepolia } from "wagmi/chains"
 import { CAW_NAMES_L2_ADDRESS, CAW_PROFILE_LENS_ADDRESS } from "~/../../../abi/addresses";
 import { cawProfileLensAbi, cawProfileLedgerAbi } from "~/../../../abi/generated"
 import { useTokenDataStore } from "~/store/tokenDataStore"
-import { useSessionKeyStore } from "~/store/sessionKeyStore"
+import { clearSessionIfOnChainDead } from "~/hooks/useSessionKey"
 import { usePinnedProfilesStore } from "~/store/pinnedProfilesStore"
 import TOKENS from "~/constants/tokens"
 // import { useQuery } from "@tanstack/react-query"
@@ -393,13 +393,17 @@ export default function useTokenDataUpdate() {
         // a transfer done elsewhere, or one that predates the settleTransfer fix).
         if (existingToken && l1Token.owner && existingToken.owner.toLowerCase() !== l1Token.owner.toLowerCase()) {
           const prevOwnerLc = existingToken.owner.toLowerCase()
-          // Clear UNCONDITIONALLY: the on-chain ownerSessionEpoch[prevOwner] bump
-          // invalidates ALL of the old owner's wallet-scoped sessions on any
-          // transfer out — not just this token's — so every one of prevOwner's
-          // sessions is now epoch-dead and would sign-and-fail. Keeping any is
-          // pure sign-and-fail; forcing a re-register is the correct outcome.
-          console.warn(`[TokenData] owner changed for #${l1Token.tokenId} (${prevOwnerLc} → ${l1Token.owner.toLowerCase()}) — clearing stale session`)
-          useSessionKeyStore.getState().clearSessionForAddress(prevOwnerLc)
+          // An owner change USUALLY means the on-chain ownerSessionEpoch[prevOwner]
+          // bump killed ALL of the old owner's wallet-scoped sessions — but not
+          // always: a transfer whose L2 owner-sync no-op'd or is still in flight
+          // bumps no epoch, and clearing then destroys a still-valid key (an owner
+          // holding SEVERAL profiles loses Quick Sign on all of them at once, and
+          // without a roam blob the key is unrecoverable). So verify against
+          // validSession() and clear only when the chain confirms the session is
+          // dead; a live-but-doomed session self-heals on the next reconcile pass
+          // (or via the 403 ghost-eviction path) once the epoch bump lands.
+          console.warn(`[TokenData] owner changed for #${l1Token.tokenId} (${prevOwnerLc} → ${l1Token.owner.toLowerCase()}) — checking session liveness on-chain`)
+          void clearSessionIfOnChainDead(prevOwnerLc)
         }
         const cawonce = existingToken?.cawonce && existingToken.cawonce > onChainCawonce
           ? existingToken.cawonce : onChainCawonce
