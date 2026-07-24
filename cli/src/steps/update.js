@@ -437,6 +437,14 @@ export async function applyCodeUpdate(installDir, prevHead, { rebuild = false } 
       sp.fail('yarn install (API) failed')
       throw e
     }
+    // A dependency reinstall restores sharp's prebuilt binaries, which crash on
+    // pre-x86-64-v2 vCPUs (image uploads then fail closed). Re-apply the
+    // source-built fallback where needed; instant no-op on normal hosts.
+    try {
+      runAsInstallUser(`node scripts/ensure-sharp.cjs`, { cwd: path.join(installDir, 'client') })
+    } catch (e) {
+      console.log(warn(`  sharp CPU-compat check failed (non-fatal): ${e.message?.split('\n')[0]}`))
+    }
   } else {
     console.log(dim('  API dependencies unchanged — skipping yarn install'))
   }

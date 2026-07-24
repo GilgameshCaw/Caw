@@ -144,6 +144,16 @@ export async function runInstall(nodeType, config, installDir) {
     throw e
   }
 
+  // sharp's prebuilt binaries require an x86-64-v2 CPU; on older vCPUs (some
+  // QEMU/VPS hosts) every image upload would be rejected fail-closed. This
+  // no-ops instantly on normal hosts and source-builds a compatible sharp on
+  // affected ones. Never fatal — without sharp the node still runs.
+  try {
+    await runStreamed('node', ['scripts/ensure-sharp.cjs'], { cwd: clientDir })
+  } catch (e) {
+    console.log(warn(`  sharp CPU-compat check failed (non-fatal): ${e.message?.split('\n')[0]}`))
+  }
+
   verifySignatures(clientDir, 'backend')
 
   // 3. Install frontend dependencies + (production) build

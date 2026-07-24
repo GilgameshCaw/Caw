@@ -13,6 +13,11 @@ import { reserveUpload, refundReservation } from '../util/uploadQuota'
 // and tolerate its absence. The server runs fine without it — only IMAGE
 // uploads are affected, and those FAIL CLOSED (rejected, not passed through)
 // so we never bypass the EXIF-stripping + dimension-bomb guards below.
+//
+// REMEDIATION for the pre-v2-CPU case: `node scripts/ensure-sharp.cjs` (run
+// automatically by `caw install` / `caw update`) source-builds a compatible
+// sharp against the distro libvips. If you see the fail-closed log line below
+// on a server, run that script — see its header for the full diagnosis.
 let sharpModule: typeof import('sharp') | null = null
 let sharpLoadAttempted = false
 let sharpLoadError: string | null = null
