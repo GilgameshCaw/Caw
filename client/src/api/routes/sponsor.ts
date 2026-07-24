@@ -37,7 +37,7 @@ import {
 import { getCawPriceCache, getEthPriceCache, ensureFreshGasPriceCache } from '../../services/ChainSyncService'
 import { hashCode } from '../../services/SponsorService/codes'
 import { quoteSponsorInviteCostCaw, quoteExecuteGasFeeCaw, quoteExecuteGasFeeEth, redeemGasCostCawLive } from '../../services/SponsorService/inviteQuote'
-import { CAW_ADDRESS, CAW_NAME_MARKETPLACE_ADDRESS, WETH_ADDRESS, USDC_ADDRESS, USDT_ADDRESS } from '../../abi/addresses'
+import { CAW_ADDRESS, CAW_NAME_MARKETPLACE_ADDRESS, CAW_NAMES_ADDRESS, CAW_NAMES_MINTER_ADDRESS, WETH_ADDRESS, USDC_ADDRESS, USDT_ADDRESS } from '../../abi/addresses'
 import { getOwnValidatorTokenId } from '../../services/SponsorService/validatorIdentity'
 import { decryptInviteCode } from '../../services/SponsorService/inviteCodeCrypto'
 import { INVITE_ACTION_PREFIX } from '../../services/SponsorService/handleSponsorInvite'
@@ -874,8 +874,12 @@ const SELF_FUNDED_PROFILE_SELS = new Set([SEL_AUTHENTICATE, SEL_SYNC_TRANSFER, S
 // msg.value) and prices into the CAW fee: withdrawTo's LZ fee and depositFor's deposit.
 const RELAYER_FORWARDED_PAYABLE_SELS = new Set([SEL_WITHDRAW_TO, SEL_DEPOSIT_FOR])
 
-const CAW_NAMES_ADDRESS_LC = (process.env.CAW_NAMES_ADDRESS || '').toLowerCase()
-const CAW_NAMES_MINTER_ADDRESS_LC = (process.env.CAW_NAMES_MINTER_ADDRESS || '').toLowerCase()
+// Source of truth = addresses.ts (deploy.js writes it), so a redeploy Just Works
+// without editing the VPS .env. env stays an OPTIONAL override for an operator who
+// deliberately pins a different address. (Was env-only — the top cause of the
+// stale-Minter USERNAME_TAKEN class of bug after a redeploy.)
+const CAW_NAMES_ADDRESS_LC = (process.env.CAW_NAMES_ADDRESS || CAW_NAMES_ADDRESS).toLowerCase()
+const CAW_NAMES_MINTER_ADDRESS_LC = (process.env.CAW_NAMES_MINTER_ADDRESS || CAW_NAMES_MINTER_ADDRESS).toLowerCase()
 const CAW_ADDRESS_LC = CAW_ADDRESS.toLowerCase()
 const CAW_NAME_MARKETPLACE_ADDRESS_LC = CAW_NAME_MARKETPLACE_ADDRESS.toLowerCase()
 // Payment tokens an ERC20 offer may be denominated in (mirrors the FE's

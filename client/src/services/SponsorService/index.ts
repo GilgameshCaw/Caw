@@ -42,6 +42,7 @@ import {
 import { makeJsonRpcProvider, getL2HttpRpcUrl } from '../../utils/rpcProvider'
 import { withWalletLock } from '../../utils/walletQueue'
 import { cawProfileMinterAbi, smartEoaAbi, cawProfileAbi, cawNetworkManagerAbi } from '../../abi/generated'
+import { CAW_NAMES_ADDRESS, CAW_NAMES_MINTER_ADDRESS, SMART_EOA_ADDRESS } from '../../abi/addresses'
 import { pokeIndexTokenId } from '../../api/util/indexerPoke'
 import { getCawPriceCache, getEthPriceCache } from '../ChainSyncService'
 import { weiEthToWeiCaw } from './inviteQuote'
@@ -1315,9 +1316,11 @@ export function getSponsorService(): SponsorService | null {
   const l1ProviderUrl = process.env.SPONSOR_L1_RPC_URL || process.env.L1_RPC_URL_HTTP || ''
   const l1RpcSecret = process.env.L1_RPC_SECRET || undefined
   const privateKey = process.env.SPONSOR_HOT_WALLET_PRIVATE_KEY
-  const minterAddress = process.env.CAW_NAMES_MINTER_ADDRESS || ''
-  const cawProfileAddress = process.env.CAW_NAMES_ADDRESS || ''
-  const smartEoaAddress = process.env.SMART_EOA_ADDRESS || ''
+  // Default to addresses.ts (deploy.js writes it) so a redeploy needs no .env
+  // edit; env remains an optional per-operator override.
+  const minterAddress = process.env.CAW_NAMES_MINTER_ADDRESS || CAW_NAMES_MINTER_ADDRESS
+  const cawProfileAddress = process.env.CAW_NAMES_ADDRESS || CAW_NAMES_ADDRESS
+  const smartEoaAddress = process.env.SMART_EOA_ADDRESS || SMART_EOA_ADDRESS
 
   if (!l1ProviderUrl || !privateKey || !minterAddress || !cawProfileAddress || !smartEoaAddress) {
     console.warn(

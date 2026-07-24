@@ -6,6 +6,10 @@
 
 import { z } from 'zod'
 import 'dotenv/config'
+// CAW_ACTIONS_ADDRESS in addresses.ts is the action-processing L2 CawActions —
+// the same contract CAW_AI_CAWACTIONS_ADDRESS points at. Default to it so a
+// redeploy needs no .env edit; env stays an optional override.
+import { CAW_ACTIONS_ADDRESS } from '../../abi/addresses'
 
 const Schema = z.object({
   // Bot identity on the protocol — any minted profile's tokenId.
@@ -75,7 +79,7 @@ export function loadConfig(): CawAIConfig {
     deployerPrivateKey: process.env.CAW_AI_DEPLOYER_PRIVATE_KEY,
     anthropicApiKey:  process.env.CAW_AI_ANTHROPIC_API_KEY,
     apiUrl:           process.env.CAW_AI_API_URL,
-    cawActionsAddress: process.env.CAW_AI_CAWACTIONS_ADDRESS,
+    cawActionsAddress: process.env.CAW_AI_CAWACTIONS_ADDRESS || CAW_ACTIONS_ADDRESS,
     chainId:          process.env.CAW_AI_CHAIN_ID,
     pollIntervalMs:   process.env.CAW_AI_POLL_INTERVAL_MS,
     dailyUsdBudget:   process.env.CAW_AI_DAILY_USD_BUDGET,
