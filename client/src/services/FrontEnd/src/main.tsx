@@ -1,5 +1,12 @@
 import './instrument';
 import './utils/polyfills';
+import { enforceDeployEpoch } from './utils/deployEpoch';
+// Deploy-epoch guard: if the contracts were redeployed (new tokenIds/addresses),
+// wipe stale local state + reload so returning browsers don't show dead profiles /
+// broken sessions / InvalidSig. ES imports hoist, so stores may hydrate stale on
+// THIS boot — the guard's reload discards that and re-boots against clean storage.
+// Runs as early as possible (top of module body, before createRoot).
+enforceDeployEpoch();
 import { installBfcacheGuard } from './utils/bfcacheGuard';
 import { StrictMode } from "react";
 
