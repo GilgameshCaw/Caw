@@ -17,6 +17,7 @@ if (typeof globalThis.File === 'undefined') {
 
 import { Sentry, sentryEnabled } from '../src/sentry'
 import runServices, { RunServicesConfig } from '../src/runServices'
+import { assertContractEpoch, ContractEpochMismatchError } from '../src/utils/contractEpochGuard'
 import fs from 'fs'
 import process from 'process'
 import 'reflect-metadata'
@@ -76,5 +77,21 @@ process.on('unhandledRejection', (reason: any, _promise) => {
   console.log('[Server] Continuing — watchdog will restart any stalled services')
 })
 
-runServices(config)
+// Refuse to start against a DB built for DIFFERENT contracts (stale after a
+// redeploy that reassigned tokenIds). Loud, explicit, actionable — see the guard.
+void (async () => {
+  try {
+    await assertContractEpoch()
+  } catch (err) {
+    if (err instanceof ContractEpochMismatchError) {
+      console.error(err.message)
+      logger.error('[contractEpoch] refusing to start — DB/contract mismatch')
+      process.exit(1)
+    }
+    // A DB-connection error here shouldn't hard-fail boot (dev without a DB up
+    // yet, etc.) — log and proceed; services have their own DB retry.
+    console.warn('[contractEpoch] check skipped (non-fatal):', (err as Error)?.message)
+  }
+  runServices(config)
+})()
 
