@@ -38,6 +38,13 @@ export interface ChunkedScanOptions {
    *  log "scanned X..Y, N logs". Don't do heavy work in here — it
    *  blocks the loop. */
   onProgress?: (fromBlock: number, toBlock: number, logsInWindow: number) => void
+  /** Backward scans only. When true, disables the "bail on first empty
+   *  window after finding events" heuristic and walks all the way down to
+   *  `floor` (opts.fromBlock). Use when the caller has a real floor (e.g. a
+   *  contract deploy block) and history is sparsely / multi-clustered —
+   *  the default early-bail mistakes an inter-cluster gap for the end of
+   *  history. Default false: existing callers keep the fast heuristic. */
+  exhaustToFloor?: boolean
 }
 
 const DEFAULT_CHUNK = 10_000
@@ -127,6 +134,7 @@ export async function scanLogsBackward(
   const maxWindows = opts.maxWindows ?? DEFAULT_MAX_WINDOWS_BACKWARD
   const head = opts.toBlock ?? await provider.getBlockNumber()
   const floor = opts.fromBlock ?? 0
+  const exhaustToFloor = opts.exhaustToFloor ?? false
   const logs: Log[] = []
   let foundAny = false
   let toBlock = head
@@ -150,7 +158,12 @@ export async function scanLogsBackward(
     if (windowLogs.length > 0) foundAny = true
     logs.push(...windowLogs)
     opts.onProgress?.(fromBlock, toBlock, windowLogs.length)
-    if (foundAny && windowLogs.length === 0) break
+    // Early-bail heuristic: once we've seen events, an empty window means
+    // "walked past the oldest cluster" — stop. Skipped when the caller
+    // passes exhaustToFloor, because with a real floor and sparse/multi-
+    // clustered history an empty window is just an inter-cluster gap, not
+    // the end. In that mode we only stop at the floor (below) or maxWindows.
+    if (!exhaustToFloor && foundAny && windowLogs.length === 0) break
     if (fromBlock === floor) break
     toBlock = fromBlock - 1
   }
