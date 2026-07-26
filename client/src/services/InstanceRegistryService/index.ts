@@ -23,7 +23,7 @@ import { Service } from '../../Service'
 import { Contract, AbstractProvider, Interface } from 'ethers'
 import { makeVerifiedJsonRpcProvider, getL1HttpRpcUrl } from '../../utils/rpcProvider'
 import { getValidatorSigner, type ValidatorSigner } from '../../utils/signer'
-import { scanLogsBackward } from '../../utils/chunkedLogs'
+import { scanLogsBackward, findContractDeployBlock } from '../../utils/chunkedLogs'
 import { cawNetworkManagerAbi } from '../../abi/generated'
 import { NETWORK_MANAGER_ADDRESS } from '../../abi/addresses'
 import { isSafePublicUrl } from '../../api/util/ssrfGuard'
@@ -167,9 +167,19 @@ async function applyToCache(
  * Backward scan because we want recent activity first — the cache
  * survives across calls so we don't need to re-pull the full history
  * every poll, but we DO need a deep enough back-walk on a cold start to
- * find the contract's deploy block. scanLogsBackward bails on the first
- * empty window after finding events, so a single full back-walk on
- * cold-start naturally limits to "the chunk containing the deploy."
+ * find every historical registration.
+ *
+ * On cold start we first binary-search the contract's deploy block
+ * (findContractDeployBlock, ~25 eth_getCode calls, once per process) and
+ * hand it to scanLogsBackward as an explicit floor with exhaustToFloor.
+ * The old default heuristic — bail on the first empty window after
+ * finding events — silently truncated discovery here: registrations are
+ * sparse and multi-clustered (register-race duplicates land in bursts
+ * separated by empty ranges), so an inter-cluster gap was being mistaken
+ * for the end of history, and the 20-window default ceiling (200K blocks)
+ * fell short of the real ~270K-block span. Both failure modes drop older
+ * peers from the cache, which in turn makes DmRelayService silently fail
+ * to route DMs to the missing instances.
  */
 // Highest block we've already scanned for instance-registry events.
 // Process-local cursor: on cold start we do a full backward scan to
@@ -206,10 +216,34 @@ async function refreshPeers(
   let actLogs: any[] = []
 
   if (isCold) {
-    // Cold start: walk backward to find historical events. The walker
-    // bails as soon as it hits an empty window AFTER finding events,
-    // so on a freshly-deployed contract this stops within a few chunks.
-    const allLogs = await scanLogsBackward(provider, clientManagerAddress, [allSigs])
+    // Cold start: walk backward across the ENTIRE registry history. We
+    // binary-search the contract's deploy block first and use it as an
+    // explicit floor, with exhaustToFloor so the walker doesn't stop at
+    // the first inter-cluster gap. This is a once-per-process cost
+    // (subsequent ticks take the warm incremental path below).
+    let deployBlock = 0
+    try {
+      deployBlock = await findContractDeployBlock(provider, clientManagerAddress, latestBlock)
+    } catch (err) {
+      // If code-probe fails (e.g. RPC won't serve historical eth_getCode),
+      // fall back to floor 0 — still correct, just scans more empty range.
+      console.warn(
+        `[InstanceRegistry] findContractDeployBlock failed, floor=0: ` +
+        `${err instanceof Error ? err.message : String(err)}`,
+      )
+    }
+    // Generous window ceiling: (head - deployBlock) / chunk, plus slack,
+    // so exhaustToFloor is what actually terminates us, not maxWindows.
+    const spanWindows = Math.ceil((latestBlock - deployBlock) / 10_000) + 5
+    console.log(
+      `[InstanceRegistry] cold-start scan: deployBlock=${deployBlock} ` +
+      `head=${latestBlock} span=${latestBlock - deployBlock} windows<=${spanWindows}`,
+    )
+    const allLogs = await scanLogsBackward(provider, clientManagerAddress, [allSigs], {
+      fromBlock: deployBlock,
+      exhaustToFloor: true,
+      maxWindows: spanWindows,
+    })
     for (const log of allLogs) {
       const t0 = (log.topics ?? [])[0]
       if (t0 === regSig) {
