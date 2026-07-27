@@ -34,7 +34,17 @@ Expected: **25 passed, 0 failed.**
 - `forge-std` is not vendored and there is no `.gitmodules`, so `forge test`
   fails at parse on a fresh clone until `forge install foundry-rs/forge-std` is
   run.
-- `npm install` requires `--legacy-peer-deps` (LayerZero peer conflict).
+- `npm install` needs `--legacy-peer-deps` (LayerZero adapter packages pull in
+  `@eth-optimism/contracts@0.6.0`, which declares `ethers@^5` as a required
+  peer, while this project is on ethers v6 — npm >= 7 treats the conflict as a
+  hard `ERESOLVE` error). A `solidity/.npmrc` carrying `legacy-peer-deps=true`
+  is shipped, so a bare `npm install` also completes cleanly on a fresh clone.
+  The skipped package (`@eth-optimism/contracts`) is imported by nothing in
+  `contracts/` or `test-foundry/`, so this has no effect on compilation or the
+  25/25 result. (`overrides` does not work here — silencing the ethers peer
+  surfaces the next LayerZero peer conflict; the flag is the practical fix.)
+- `via-IR` compilation can exceed ~2 GB RSS. On runners below ~4 GB RAM add a
+  temporary swap file, or `forge test` may be OOM-killed.
 
 ### Truffle counterparts
 
