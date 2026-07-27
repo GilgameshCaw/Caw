@@ -9,7 +9,7 @@
 import 'dotenv/config'
 import { Contract } from 'ethers'
 import { makeJsonRpcProvider, getL1HttpRpcUrl } from '../src/utils/rpcProvider'
-import { scanLogsBackward } from '../src/utils/chunkedLogs'
+import { scanLogsBackward, findContractDeployBlock } from '../src/utils/chunkedLogs'
 
 const CLIENT_MANAGER = '0xA5C515D35C291110090b6edc4278acdEf1424C7a' // testnet L1
 
@@ -32,9 +32,37 @@ async function main() {
 
   console.log(`Scanning backward from latest for clientId=${clientId}...`)
 
+  // Walk all the way to the NetworkManager deploy block so sparsely-
+  // scattered re-registrations can't truncate the scan (the same bug this
+  // script exists to diagnose). stopOnEmptyWindow:false + a floor at the
+  // deploy block; size maxWindows to span the whole range.
+  const head = await provider.getBlockNumber()
+  const deployBlock = await findContractDeployBlock(provider, CLIENT_MANAGER, head)
+  const neededWindows = Math.ceil(Math.max(0, head - deployBlock) / 10_000) + 2
+
+  // Track RPC failures so a persistently-failing scan reports "errored",
+  // NOT a silent "0 events found" that reads as an empty registry.
+  let scanErrored = false
+
   // Single backward scan covering all three event types, then split.
   const allTopics = [regTopic, updTopic, deacTopic]
-  const all = await scanLogsBackward(provider, CLIENT_MANAGER, [allTopics])
+  const all = await scanLogsBackward(provider, CLIENT_MANAGER, [allTopics], {
+    fromBlock: deployBlock,
+    stopOnEmptyWindow: false,
+    maxWindows: neededWindows,
+    onError: (from, to, err) => {
+      scanErrored = true
+      console.error(`  ! getLogs failed for ${from}..${to}: ${(err as any)?.message ?? err}`)
+    },
+  })
+  if (scanErrored) {
+    console.error(
+      `\nERROR: the log scan hit RPC failures — results below are INCOMPLETE and ` +
+      `must not be read as the full on-chain registry. Retry with a healthier RPC ` +
+      `(set L1_RPC_URL) before trusting the count.`,
+    )
+    process.exitCode = 1
+  }
   const clientIdTopicLc = clientIdTopic.toLowerCase()
   const regLogs = all.filter(l => l.topics[0] === regTopic && (l.topics[2] || '').toLowerCase() === clientIdTopicLc)
   const updLogs = all.filter(l => l.topics[0] === updTopic)

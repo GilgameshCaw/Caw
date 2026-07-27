@@ -40,6 +40,24 @@ export interface ChunkedScanOptions {
   onProgress?: (fromBlock: number, toBlock: number, logsInWindow: number) => void
 }
 
+export interface BackwardScanOptions extends ChunkedScanOptions {
+  /** Backward scan only. When true (the default) the walk stops at the
+   *  first empty window AFTER it has seen events — fast, correct when
+   *  history is clustered near the head (e.g. the validator's recent-
+   *  action backstop). Set FALSE when events may be sparsely scattered
+   *  across the whole range (e.g. the instance registry, whose entries
+   *  get re-registered at irregular blocks) — then the walk continues to
+   *  the floor unconditionally, so a gap between clusters can't truncate
+   *  it. Pair with `fromBlock` (the deploy block) to bound the walk. */
+  stopOnEmptyWindow?: boolean
+  /** Backward scan only. Fired with the underlying getLogs error each
+   *  time a window fails (after the one halving retry). Lets a caller
+   *  distinguish "scan hit RPC errors and may be incomplete" from
+   *  "genuinely zero events" — scanLogsBackward otherwise swallows the
+   *  failure and returns whatever it has (possibly []). */
+  onError?: (fromBlock: number, toBlock: number, err: unknown) => void
+}
+
 const DEFAULT_CHUNK = 10_000
 const DEFAULT_MAX_WINDOWS_FORWARD = 100
 const DEFAULT_MAX_WINDOWS_BACKWARD = 20
@@ -121,10 +139,11 @@ export async function scanLogsBackward(
   provider: AbstractProvider,
   addr: string,
   topics: (string | string[] | null)[],
-  opts: ChunkedScanOptions & { toBlock?: number; fromBlock?: number } = {},
+  opts: BackwardScanOptions & { toBlock?: number; fromBlock?: number } = {},
 ): Promise<Log[]> {
   const chunkBlocks = opts.chunkBlocks ?? DEFAULT_CHUNK
   const maxWindows = opts.maxWindows ?? DEFAULT_MAX_WINDOWS_BACKWARD
+  const stopOnEmptyWindow = opts.stopOnEmptyWindow ?? true
   const head = opts.toBlock ?? await provider.getBlockNumber()
   const floor = opts.fromBlock ?? 0
   const logs: Log[] = []
@@ -143,14 +162,21 @@ export async function scanLogsBackward(
       try {
         const halfStart = fromBlock + Math.floor((toBlock - fromBlock) / 2)
         windowLogs = await provider.getLogs({ address: addr, topics, fromBlock: halfStart, toBlock })
-      } catch {
+      } catch (err) {
+        // Surface the failure so callers can tell "incomplete due to RPC
+        // errors" from "genuinely empty" — otherwise we'd return whatever
+        // we have (possibly []) and the caller reads it as zero events.
+        opts.onError?.(fromBlock, toBlock, err)
         break
       }
     }
     if (windowLogs.length > 0) foundAny = true
     logs.push(...windowLogs)
     opts.onProgress?.(fromBlock, toBlock, windowLogs.length)
-    if (foundAny && windowLogs.length === 0) break
+    // Early-bail only when the caller opts into it (the default). Callers
+    // whose events are sparsely scattered set stopOnEmptyWindow=false so a
+    // gap between clusters can't truncate the walk before the floor.
+    if (stopOnEmptyWindow && foundAny && windowLogs.length === 0) break
     if (fromBlock === floor) break
     toBlock = fromBlock - 1
   }
