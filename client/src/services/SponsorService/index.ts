@@ -40,7 +40,7 @@ import {
   type Authorization,
 } from 'ethers'
 import { makeJsonRpcProvider, getL2HttpRpcUrl } from '../../utils/rpcProvider'
-import { withWalletLock } from '../../utils/walletQueue'
+import { withWalletLock, sendSerialized } from '../../utils/walletQueue'
 import { cawProfileMinterAbi, smartEoaAbi, cawProfileAbi, cawNetworkManagerAbi } from '../../abi/generated'
 import { CAW_NAMES_ADDRESS, CAW_NAMES_MINTER_ADDRESS, SMART_EOA_ADDRESS } from '../../abi/addresses'
 import { pokeIndexTokenId } from '../../api/util/indexerPoke'
@@ -581,7 +581,8 @@ export class SponsorService {
         }),
       })
 
-      const sponsorNonce = await this.provider.getTransactionCount(this.wallet.address, 'pending')
+      // Nonce is read inside the wallet lock at broadcast time (below), not here,
+      // so it can't go stale between read and send under concurrent requests.
       const feeData = await this.provider.getFeeData()
 
       // ── Quote the native LayerZero fee and set tx.value ─────────────────
@@ -694,27 +695,35 @@ export class SponsorService {
         }
       }
 
-      const tx = new Transaction()
-      tx.type = 4
-      tx.to = userEoaAddress
-      tx.data = initCalldata
-      // msg.value must cover the network mint+deposit+auth fees (charged in ETH
-      // by CawProfile.mintAndDeposit) PLUS the padded LZ fee (forwarded to the
-      // cross-chain send as msg.value - totalFeesPaid). The sponsor fronts both.
-      // lzTokenAmount (ZRO-token path) stays a calldata arg at 0; not in tx.value.
-      // Excess (the 20% LZ buffer) refunds to the user via the Minter's
-      // setLzRefundTo (audit H-1).
-      tx.value = networkFees + paddedFee
-      tx.nonce = sponsorNonce
-      tx.chainId = BigInt(chainId)
-      tx.gasLimit = GAS_LIMIT_BOOTSTRAP
-      tx.maxFeePerGas = feeData.maxFeePerGas ?? (feeData.gasPrice ?? 20_000_000_000n)
-      tx.maxPriorityFeePerGas = feeData.maxPriorityFeePerGas ?? 1_500_000_000n
-      tx.authorizationList = [authEntry]
+      // Serialize through the shared-wallet lock: this.wallet is the SAME key
+      // that signs deposit/authenticate/relay L1 sends, so a concurrent send
+      // would steal this bootstrap's nonce → REPLACEMENT_UNDERPRICED → the mint
+      // silently drops. Read the nonce INSIDE the lock so it can't go stale
+      // between read and broadcast (mirrors sponsorDelegateL2's L2 leg).
+      const txResponse = await withWalletLock(this.wallet.address, async () => {
+        const sponsorNonce = await this.provider.getTransactionCount(this.wallet.address, 'pending')
+        const tx = new Transaction()
+        tx.type = 4
+        tx.to = userEoaAddress
+        tx.data = initCalldata
+        // msg.value must cover the network mint+deposit+auth fees (charged in ETH
+        // by CawProfile.mintAndDeposit) PLUS the padded LZ fee (forwarded to the
+        // cross-chain send as msg.value - totalFeesPaid). The sponsor fronts both.
+        // lzTokenAmount (ZRO-token path) stays a calldata arg at 0; not in tx.value.
+        // Excess (the 20% LZ buffer) refunds to the user via the Minter's
+        // setLzRefundTo (audit H-1).
+        tx.value = networkFees + paddedFee
+        tx.nonce = sponsorNonce
+        tx.chainId = BigInt(chainId)
+        tx.gasLimit = GAS_LIMIT_BOOTSTRAP
+        tx.maxFeePerGas = feeData.maxFeePerGas ?? (feeData.gasPrice ?? 20_000_000_000n)
+        tx.maxPriorityFeePerGas = feeData.maxPriorityFeePerGas ?? 1_500_000_000n
+        tx.authorizationList = [authEntry]
 
-      // Sign with sponsor's key.
-      const signedTx = await this.wallet.signTransaction(tx)
-      const txResponse = await this.provider.broadcastTransaction(signedTx)
+        // Sign with sponsor's key.
+        const signedTx = await this.wallet.signTransaction(tx)
+        return this.provider.broadcastTransaction(signedTx)
+      })
 
       // Wait for the receipt and CHECK STATUS. The tx can be mined yet REVERT
       // (e.g. the sponsor wallet hasn't approved the Minter to spend its CAW →
@@ -975,18 +984,23 @@ export class SponsorService {
         this.wallet,
       )
 
-      const txResponse: ContractTransactionResponse = await minter.depositForSponsored(
-        params.networkId,
-        params.tokenId,
-        params.amount,
-        params.lzDestId,
-        params.lzTokenAmount,
-        params.permitNonce,
-        params.permitSig,
-        {
-          value: params.lzTokenAmount,
-          gasLimit: GAS_LIMIT_DEPOSIT,
-        },
+      // Serialize on the shared sponsor key: bootstrap/deposit/authenticate/relay
+      // all send from this.wallet, so a concurrent send would collide on the
+      // pending nonce → REPLACEMENT_UNDERPRICED → this deposit silently drops.
+      const txResponse = await sendSerialized(this.wallet.address, () =>
+        minter.depositForSponsored(
+          params.networkId,
+          params.tokenId,
+          params.amount,
+          params.lzDestId,
+          params.lzTokenAmount,
+          params.permitNonce,
+          params.permitSig,
+          {
+            value: params.lzTokenAmount,
+            gasLimit: GAS_LIMIT_DEPOSIT,
+          },
+        ) as Promise<ContractTransactionResponse>,
       )
 
       return { txHash: txResponse.hash }
@@ -1025,17 +1039,21 @@ export class SponsorService {
         this.wallet,
       )
 
-      const txResponse: ContractTransactionResponse = await minter.authenticateSponsored(
-        params.networkId,
-        params.tokenId,
-        params.lzDestId,
-        params.lzTokenAmount,
-        params.permitNonce,
-        params.permitSig,
-        {
-          value: params.lzTokenAmount,
-          gasLimit: GAS_LIMIT_AUTHENTICATE,
-        },
+      // Serialize on the shared sponsor key (see sponsorDeposit) so a concurrent
+      // send can't steal this authenticate's nonce → REPLACEMENT_UNDERPRICED.
+      const txResponse = await sendSerialized(this.wallet.address, () =>
+        minter.authenticateSponsored(
+          params.networkId,
+          params.tokenId,
+          params.lzDestId,
+          params.lzTokenAmount,
+          params.permitNonce,
+          params.permitSig,
+          {
+            value: params.lzTokenAmount,
+            gasLimit: GAS_LIMIT_AUTHENTICATE,
+          },
+        ) as Promise<ContractTransactionResponse>,
       )
 
       return { txHash: txResponse.hash }
@@ -1138,11 +1156,21 @@ export class SponsorService {
         }
       }
 
-      const txResponse: ContractTransactionResponse = await smartEoa.executeBatch(
-        batchArg,
-        nonce,
-        sig,
-        { value: msgValue, gasLimit },
+      // Serialize the broadcast on the shared sponsor key (see sponsorDeposit) so
+      // a concurrent send can't steal this batch's nonce → REPLACEMENT_UNDERPRICED.
+      // Only the broadcast is inside the lock — the staticCall/estimateGas
+      // simulation above is read-only and consumes no nonce, so it stays out to
+      // avoid holding the lock during simulation. A collision retry re-broadcasts,
+      // which is safe: the on-chain executeNonce makes a duplicate submit revert
+      // rather than double-execute, and the retry only fires after the prior tx
+      // settled.
+      const txResponse = await sendSerialized(this.wallet.address, () =>
+        smartEoa.executeBatch(
+          batchArg,
+          nonce,
+          sig,
+          { value: msgValue, gasLimit },
+        ) as Promise<ContractTransactionResponse>,
       )
 
       // SEAM-EXEC-1 I-3: wait for the receipt and CHECK STATUS before reporting
