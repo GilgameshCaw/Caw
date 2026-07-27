@@ -443,40 +443,38 @@ const HighlightedTextarea: React.FC<HighlightedTextareaProps> = ({
         {/* Zebra chunk backgrounds. Same measured boundary tops as the
             hairlines => fills line up with split points. Absolutely
             positioned in the highlight layer => rides existing opacity:0
-            during IME composition (no extra flicker). Even chunks filled. */}
-        {showZebra && breakTops.length > 0 && breakTops.map((b, i) => {
-          const prevTop = i === 0 ? 0 : breakTops[i - 1].top
-          if (i % 2 === 0) return null
-          return (
-            <span
-              key={`zebra-${i}`}
-              aria-hidden="true"
-              className="absolute left-0 right-0"
-              style={{
-                top: `${prevTop}px`,
-                height: `${b.top - prevTop}px`,
-                background: isDark
-                  ? `rgba(90,160,120,${zebraOpacity})`
-                  : `rgba(60,130,90,${zebraOpacity})`,
-                pointerEvents: 'none',
-              }}
-            />
-          )
-        })}
-        {showZebra && breakTops.length > 0 && (breakTops.length % 2 === 0) && (
-          <span
-            aria-hidden="true"
-            className="absolute left-0 right-0"
-            style={{
-              top: `${breakTops[breakTops.length - 1].top}px`,
-              bottom: 0,
-              background: isDark
-                ? `rgba(90,160,120,${zebraOpacity})`
-                : `rgba(60,130,90,${zebraOpacity})`,
-              pointerEvents: 'none',
-            }}
-          />
-        )}
+            during IME composition (no extra flicker).
+
+            Indexed by CHUNK, not boundary: N boundaries split the text into
+            N+1 chunks, where chunk c spans [top(c-1), top(c)] with 0 before
+            the first boundary and the box bottom after the last. Shade every
+            other chunk (odd-indexed) for a true alternating stripe — the
+            single rule covers the trailing chunk too, so no special case. */}
+        {showZebra && breakTops.length > 0 &&
+          Array.from({ length: breakTops.length + 1 }, (_, c) => {
+            if (c % 2 === 0) return null
+            const chunkTop = c === 0 ? 0 : breakTops[c - 1].top
+            const isLastChunk = c === breakTops.length
+            return (
+              <span
+                key={`zebra-${c}`}
+                aria-hidden="true"
+                className="absolute left-0 right-0"
+                style={{
+                  top: `${chunkTop}px`,
+                  // Last chunk runs to the box bottom (no boundary below it);
+                  // interior chunks stop at their next boundary.
+                  ...(isLastChunk
+                    ? { bottom: 0 }
+                    : { height: `${breakTops[c].top - chunkTop}px` }),
+                  background: isDark
+                    ? `rgba(90,160,120,${zebraOpacity})`
+                    : `rgba(60,130,90,${zebraOpacity})`,
+                  pointerEvents: 'none',
+                }}
+              />
+            )
+          })}
         {breakTops.map((b, i) => (
           <span
             key={`brkline-${i}`}
