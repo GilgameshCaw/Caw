@@ -71,10 +71,17 @@ interface HighlightedTextareaProps {
 // Firefox (real Gecko) is the ONLY engine that aborts an IME composition when
 // React re-applies the controlled `value` mid-composition — there we drop the
 // textarea to uncontrolled for the duration of a composition. WebKit/Blink
-// (iOS Safari & Chrome, desktop Chrome) keep the controlled value fine, and
-// going uncontrolled there BREAKS their IME, so we must gate this to Gecko.
+// keep the controlled value applied, but ONLY as long as the parent commits
+// every mid-composition onChange to state (see PostForm.handleTextChange):
+// if the parent skips those events instead, React's controlled-state restore
+// resets textarea.value back to the frozen prop after EVERY composition
+// keystroke on Blink — wiping the 変換中 text and killing the IME session,
+// which made Japanese input impossible on Chrome/Edge (measured on the live
+// bundle, 2026-07-30). Going uncontrolled on WebKit/Blink breaks their IME,
+// so the Gecko gate itself stays — exported because PostForm gates its
+// composition-freeze to Gecko with the same test.
 // Firefox-for-iOS ("FxiOS") is WebKit, not Gecko, and correctly does NOT match.
-const IS_GECKO =
+export const IS_GECKO =
   typeof navigator !== 'undefined' && /firefox/i.test(navigator.userAgent)
 
 const HighlightedTextarea: React.FC<HighlightedTextareaProps> = ({
