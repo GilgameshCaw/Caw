@@ -89,7 +89,7 @@ function gifSearchQuery(text: string): string {
     .filter(w => w.length > 1 && !stopWords.has(w))
   return words.slice(-5).join(' ')
 }
-import HighlightedTextarea from './HighlightedTextarea'
+import HighlightedTextarea, { IS_GECKO } from './HighlightedTextarea'
 import { useT } from '~/i18n/I18nProvider'
 import { acquireScrollLock, releaseScrollLock } from '~/utils/scrollLock'
 
@@ -855,7 +855,20 @@ const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess, placehol
     // we received a real compositionstart, so plain Latin typing in those
     // browsers (no compositionstart → ref is false) commits immediately while
     // genuine CJK sessions (compositionstart fired → ref is true) still defer.
-    if (isComposingRef.current) {
+    // The freeze is GECKO-ONLY. On Blink (Chrome/Edge/Brave/Android Chrome)
+    // skipping these events while the textarea stays controlled makes React's
+    // controlled-state restore reset textarea.value to the frozen prop after
+    // EVERY composition keystroke — the 変換中 text is wiped synchronously and
+    // the IME session dies, so Japanese input was impossible on Blink
+    // (measured on the live bundle, 2026-07-30). Committing each interim
+    // value is the standard React IME pattern: prop === DOM value after the
+    // re-render, so React writes nothing to the node and the candidate
+    // window survives. Same gate as the fix zinsanjp/nyaromesama field-
+    // verified on v2.nyaromesama.com (deployed 2026-07-25). On Gecko the
+    // freeze stays: there the textarea goes uncontrolled during composition
+    // (see IS_GECKO in HighlightedTextarea) and a mid-composition re-render
+    // aborts the IME instead.
+    if (isComposingRef.current && IS_GECKO) {
       // Capture the correct value+caret from this mid-composition input event
       // so handleCompositionEnd can commit it even if the browser (Firefox)
       // reports an empty ta.value at compositionend. Still return without
@@ -944,6 +957,15 @@ const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess, placehol
   // remains the authoritative final commit + cursor placement everywhere
   // compositionend DOES fire normally.
   const handleCompositionUpdate = (e: React.CompositionEvent<HTMLTextAreaElement>) => {
+    // Gecko keeps the composition-freeze (handleTextChange skips commits
+    // there), so committing interim text here would re-render the controlled
+    // textarea mid-composition and abort the IME — the exact failure this
+    // handler's Firefox-lag guard below also protects against. Bail early
+    // and let compositionend do the single commit. On Blink handleTextChange
+    // now commits every interim value anyway; on iOS WebKit (the engine this
+    // live commit exists for, since compositionend can be dropped there) the
+    // path below still runs.
+    if (IS_GECKO) return
     const ta = e.currentTarget
     // The live commit here exists only for iOS WebKit, which may not fire
     // compositionend, and which DOES reflect the composing text in ta.value at
@@ -2754,7 +2776,10 @@ const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess, placehol
                         value={slice}
                         composedValueRef={lastComposedRef}
                         onChange={(e) => {
-                          if (isComposingRef.current) {
+                          // Gecko-only freeze — same reasoning as
+                          // handleTextChange (Blink wipes the composing
+                          // text via controlled-state restore if skipped).
+                          if (isComposingRef.current && IS_GECKO) {
                             lastComposedRef.current = { value: e.target.value, caret: e.target.selectionStart ?? e.target.value.length }
                             return
                           }
@@ -3366,7 +3391,10 @@ const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess, placehol
                     value={slice}
                     composedValueRef={lastComposedRef}
                     onChange={(e) => {
-                      if (isComposingRef.current) {
+                      // Gecko-only freeze — same reasoning as
+                      // handleTextChange (Blink wipes the composing
+                      // text via controlled-state restore if skipped).
+                      if (isComposingRef.current && IS_GECKO) {
                         lastComposedRef.current = { value: e.target.value, caret: e.target.selectionStart ?? e.target.value.length }
                         return
                       }
