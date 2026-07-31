@@ -54,6 +54,12 @@ interface HighlightedTextareaProps {
    * ignored (no break before the first chunk). Empty / undefined = no breaks.
    */
   chunkBoundaries?: number[]
+  /** Zebra-stripe chunk backgrounds, reusing the same boundaries as the hairlines. */
+  showZebra?: boolean
+  /** Opacity of the zebra fill (0-1). Kept low so glyphs stay readable. */
+  zebraOpacity?: number
+  /** Draw an (n/N) badge at each chunk boundary. */
+  showChunkBadge?: boolean
   /**
    * Parent-owned ref that we write the raw DOM `input` value+caret into during
    * an IME composition. React suppresses its synthetic onChange mid-composition
@@ -106,6 +112,9 @@ const HighlightedTextarea: React.FC<HighlightedTextareaProps> = ({
   denser = false,
   autoResize = false,
   chunkBoundaries,
+  showZebra = false,
+  zebraOpacity = 0.20,
+  showChunkBadge = false,
   composedValueRef
 }) => {
   const { isDark } = useTheme()
@@ -335,7 +344,7 @@ const HighlightedTextarea: React.FC<HighlightedTextareaProps> = ({
 
   // Position the hairlines by measuring the marker spans' offsetTop. Runs
   // after every render that changes value or boundaries, plus on resize.
-  const [breakTops, setBreakTops] = useState<number[]>([])
+  const [breakTops, setBreakTops] = useState<{ top: number; left: number }[]>([])
   useEffect(() => {
     const el = highlightRef.current
     if (!el) { setBreakTops([]); return }
@@ -344,11 +353,14 @@ const HighlightedTextarea: React.FC<HighlightedTextareaProps> = ({
     // Measure on the next animation frame so layout has settled.
     let rafId = requestAnimationFrame(() => {
       const markers = el.querySelectorAll<HTMLElement>('[data-chunk-break]')
-      const tops: number[] = []
+      const tops: { top: number; left: number }[] = []
       markers.forEach(m => {
-        // offsetTop is relative to the nearest positioned ancestor — the
-        // highlight layer itself, which matches what we need.
-        tops.push(m.offsetTop)
+        // offsetTop/offsetLeft are relative to the nearest positioned
+        // ancestor — the highlight layer itself, which matches what we
+        // need. offsetLeft is the EXACT horizontal position of the split
+        // point within its line, so the hairline can start there instead
+        // of spanning the whole line (which made it a rough guide only).
+        tops.push({ top: m.offsetTop, left: m.offsetLeft })
       })
       setBreakTops(tops)
     })
@@ -435,17 +447,70 @@ const HighlightedTextarea: React.FC<HighlightedTextareaProps> = ({
             offsetTop is measured from each marker span above; we shift
             up by a hair so the line lands on the line's baseline gap
             instead of slicing through ascenders. */}
-        {breakTops.map((top, i) => (
+        {/* Zebra chunk backgrounds. Same measured boundary tops as the
+            hairlines => fills line up with split points. Absolutely
+            positioned in the highlight layer => rides existing opacity:0
+            during IME composition (no extra ちらつき). Even chunks filled. */}
+        {showZebra && breakTops.length > 0 && breakTops.map((b, i) => {
+          const prevTop = i === 0 ? 0 : breakTops[i - 1].top
+          if (i % 2 === 0) return null
+          return (
+            <span
+              key={`zebra-${i}`}
+              aria-hidden="true"
+              className="absolute left-0 right-0"
+              style={{
+                top: `${prevTop}px`,
+                height: `${b.top - prevTop}px`,
+                background: isDark
+                  ? `rgba(90,160,120,${zebraOpacity})`
+                  : `rgba(60,130,90,${zebraOpacity})`,
+                pointerEvents: 'none',
+              }}
+            />
+          )
+        })}
+        {showZebra && breakTops.length > 0 && (breakTops.length % 2 === 0) && (
+          <span
+            aria-hidden="true"
+            className="absolute left-0 right-0"
+            style={{
+              top: `${breakTops[breakTops.length - 1].top}px`,
+              bottom: 0,
+              background: isDark
+                ? `rgba(90,160,120,${zebraOpacity})`
+                : `rgba(60,130,90,${zebraOpacity})`,
+              pointerEvents: 'none',
+            }}
+          />
+        )}
+        {breakTops.map((b, i) => (
           <span
             key={`brkline-${i}`}
             aria-hidden="true"
-            className={`absolute left-2 right-2 ${isDark ? 'border-gray-600' : 'border-gray-300'}`}
+            className="absolute right-2"
             style={{
-              top: `${top - 1}px`,
-              borderTopWidth: 1,
+              left: `${b.left}px`,
+              top: `${b.top + 6}px`,
+              borderTop: '1px dashed #f0b1005e',
               height: 0,
             }}
           />
+        ))}
+        {showChunkBadge && breakTops.map((b, i) => (
+          <span
+            key={`brkbadge-${i}`}
+            aria-hidden="true"
+            className="absolute right-1 text-[10px] leading-none px-1 py-0.5 rounded"
+            style={{
+              top: `${b.top - 4}px`,
+              color: '#f0b100',
+              border: '1px solid #f0b1008a',
+              background: isDark ? 'rgba(0,0,0,0.35)' : 'rgba(255,255,255,0.6)',
+            }}
+          >
+            {`${i + 1}/${breakTops.length + 1}`}
+          </span>
         ))}
         {/* Add invisible character to maintain height when empty */}
         {!value && <span className="invisible">.</span>}

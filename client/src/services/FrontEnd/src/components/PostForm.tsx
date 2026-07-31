@@ -355,6 +355,7 @@ interface PostFormProps {
   autoFocus?: boolean;
 }
 
+
 const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess, placeholder, composeMode = false, trackDraft = false, autoFocus = true }) => {
   const { isConnected } = useAccount();
   const { openConnectModal } = useConnectModal();
@@ -523,6 +524,15 @@ const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess, placehol
   // the compositionend handlers can commit it when ta.value is empty. Chrome and
   // iOS keep ta.value populated at end, so this is an unused fallback there.
   const lastComposedRef = useRef<{ value: string; caret: number } | null>(null)
+  // Last known "stable" (not-mid-composition) text, used to freeze the
+  // isThreadMode decision on Gecko while a composition is in progress — see
+  // the isThreadMode computation below for why.
+  const preCompositionTextRef = useRef(text)
+  useEffect(() => {
+    if (!(isComposingRef.current && IS_GECKO)) {
+      preCompositionTextRef.current = text
+    }
+  })
   const [selectedMedia, setSelectedMedia] = useState<any[]>([])
   const [isDragOverTextarea, setIsDragOverTextarea] = useState(false)
   const [showGifPicker, setShowGifPicker] = useState(false)
@@ -913,6 +923,14 @@ const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess, placehol
     const committed = captured?.value ?? ta.value
     const cursor = captured?.caret ?? ta.selectionStart ?? committed.length
     pendingMasterCursorRef.current = cursor
+    // Composition commits don't go through onBeforeInput the way plain
+    // keystrokes do, so the chunk-growth layoutEffect's cursor-restore logic
+    // (which relies on preInputStateRef) would otherwise see a stale/null
+    // snapshot and fall back to "don't jump" — leaving the cursor wherever
+    // the browser happened to place it after a mid-composition chunk split.
+    // Supply the snapshot explicitly so composition commits get the same
+    // correct cursor-follow behavior as normal typing.
+    preInputStateRef.current = { chunkIdx: 0, preCursorPos: cursor, preSliceLen: committed.length }
     setText(committed)
     setCursorPosition(cursor)
   }
@@ -931,6 +949,9 @@ const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess, placehol
       const committed = captured?.value ?? ta.value
       const localCursor = captured?.caret ?? ta.selectionStart ?? committed.length
       pendingMasterCursorRef.current = chunkBoundaries[i] + localCursor
+      // Same reasoning as handleCompositionEnd above — give the chunk-growth
+      // layoutEffect a valid snapshot for composition-driven commits.
+      preInputStateRef.current = { chunkIdx: i, preCursorPos: localCursor, preSliceLen: committed.length }
       replaceChunk(i, committed)
       setActiveChunkIndex(i)
       setActiveChunkCursor(localCursor)
@@ -1990,7 +2011,26 @@ const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess, placehol
   const effectiveTextLength = textBytes + mediaCost + pollBytes
   // Thread mode is active when text overflows one post OR the user typed a
   // manual `---` break marker (which forces a split regardless of length).
-  const isThreadMode = effectiveTextLength > POST_CHAR_LIMIT
+  //
+  // On Gecko, freeze this decision at the last pre-composition text while a
+  // CJK composition is in progress — flipping isThreadMode mid-composition
+  // unmounts the active textarea, which can freeze Firefox's IME session
+  // entirely. Only Gecko gets the live multi-chunk view during composition;
+  // Blink/WebKit can't safely freeze this the same way (compositionend is
+  // unreliable there), so on those engines we avoid the situation entirely
+  // by staying in single-textarea mode until submit (see isThreadMode below)
+  // rather than trying to time a freeze/unfreeze around an unreliable event.
+  const textForThreadDecision = (isComposingRef.current && IS_GECKO) ? preCompositionTextRef.current : text
+  const effectiveTextLengthForThreadDecision = onChainByteLen(textForThreadDecision) + mediaCost + pollBytes
+  const trueIsThreadMode = effectiveTextLengthForThreadDecision > POST_CHAR_LIMIT
+  // Only Firefox (Gecko) shows the live multi-chunk split view during
+  // composition — its freeze mechanism above reliably resolves via
+  // compositionend. Chrome and iOS/WebKit stay in single-textarea mode
+  // regardless of length; the existing chunk-boundary/count logic still
+  // runs for the byte counter and "will be posted as N posts" messaging,
+  // and the actual split still happens correctly at submit time — only the
+  // RENDER PATH and composition handlers are affected.
+  const isThreadMode = IS_GECKO ? trueIsThreadMode : false
   const firstChunkMediaCost = (!isThreadMode || mediaPosition === 'start') ? mediaCost : 0
   const lastChunkMediaCost = (isThreadMode && mediaPosition === 'end') ? mediaCost : 0
   const { chunkCount, chunkBoundaries } = getChunkInfo(
@@ -2008,13 +2048,20 @@ const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess, placehol
   // In auto-split mode boundaries point to post-trimStart offsets so the raw
   // slice is also clean.
   // ---------------------------------------------------------------------------
+  // Sliced by trueIsThreadMode (not the render-affecting isThreadMode) so
+  // the char counter reflects the correct per-chunk remaining space even
+  // when we're forced into single-textarea rendering (Chrome/iOS) despite
+  // the text actually needing a thread. The chunk-mode RENDER path still
+  // only mounts when isThreadMode is true, so this doesn't reintroduce any
+  // multi-textarea composition risk — it's purely a data computation used
+  // by the char counter and the (already-disabled-when-forced) chunk JSX.
   const chunkSlices = useMemo((): string[] => {
-    if (!isThreadMode) return [text]
+    if (!trueIsThreadMode) return [text]
     return chunkBoundaries.map((start, i) => {
       const end = chunkBoundaries[i + 1] ?? text.length
       return text.slice(start, end)
     })
-  }, [text, chunkBoundaries, isThreadMode])
+  }, [text, chunkBoundaries, trueIsThreadMode])
 
   /** Replace chunk `i`'s content with `newValue` and patch the master `text`. */
   const replaceChunk = (i: number, newValue: string) => {
@@ -2630,15 +2677,29 @@ const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess, placehol
   const hasMediaOnlyChunk = mediaPosition === 'end' && chunkCount >= 2 && chunkBoundaries[chunkCount - 1] === text.length
   const maxCursorChunk = hasMediaOnlyChunk ? chunkCount - 2 : chunkCount - 1
   const currentChunkIndex = (() => {
-    if (!isThreadMode) return 0
-    // In thread mode with separate textareas, use the actively focused chunk.
-    return Math.min(activeChunkIndex, maxCursorChunk)
+    if (isThreadMode) {
+      // Real thread mode with separate textareas — use the actively focused chunk.
+      return Math.min(activeChunkIndex, maxCursorChunk)
+    }
+    if (trueIsThreadMode) {
+      // Forced single-textarea mode (Chrome/iOS) despite text needing a
+      // thread — derive which virtual chunk the cursor is in from
+      // cursorPosition + chunkBoundaries, so the counter shows remaining
+      // space for the actual chunk being typed into instead of going
+      // negative against the whole text.
+      let idx = 0
+      for (let i = 0; i < chunkBoundaries.length; i++) {
+        if (cursorPosition >= chunkBoundaries[i]) idx = i
+      }
+      return Math.min(idx, maxCursorChunk)
+    }
+    return 0
   })()
 
   // Calculate bytes remaining for the current chunk (uses on-chain byte lengths
   // so the counter reflects the actual space available after URL shortening)
   const calculateCharCount = () => {
-    if (!isThreadMode) {
+    if (!isThreadMode && !trueIsThreadMode) {
       return POST_CHAR_LIMIT - effectiveTextLength
     }
     // In thread mode, show remaining bytes for the focused chunk's stripped slice.
@@ -2749,7 +2810,7 @@ const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess, placehol
           <div className="flex items-center space-x-3 w-full">
             {/* Input — single textarea (single-post) or N textareas (thread mode) */}
             <div className="flex-1 min-w-0 relative">
-              {isThreadMode ? (
+              <div style={{ display: isThreadMode ? undefined : 'none' }}>
                 <div>
                   {chunkSlices.map((slice, i) => (
                     <React.Fragment key={i}>
@@ -2841,7 +2902,8 @@ const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess, placehol
                     textareaRef={{ current: chunkRefs.current[activeChunkIndex] ?? null }}
                   />
                 </div>
-              ) : (
+              </div>
+              <div style={{ display: isThreadMode ? 'none' : undefined }}>
                 <>
                   <HighlightedTextarea
                     value={text}
@@ -2855,6 +2917,17 @@ const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess, placehol
                     onDragOver={handleTextareaDragOver}
                     onDragLeave={handleTextareaDragLeave}
                     onDrop={handleTextareaDrop}
+                    // Purely visual split-position markers, reusing the
+                    // existing hairline-overlay mechanism in
+                    // HighlightedTextarea. Only relevant when we're forced
+                    // into single-textarea mode despite the text actually
+                    // needing a thread (trueIsThreadMode true, isThreadMode
+                    // false) — i.e. Chrome/iOS. Never touches the textarea
+                    // itself, so it carries none of the composition risk
+                    // that the real multi-textarea chunk UI had.
+                    chunkBoundaries={(!isThreadMode && trueIsThreadMode) ? chunkBoundaries : undefined}
+                    showZebra={(!isThreadMode && trueIsThreadMode)}
+                    showChunkBadge={(!isThreadMode && trueIsThreadMode)}
                     rows={replyTo ? 3 : 1}
                     placeholder={
                       replyTo
@@ -2875,7 +2948,7 @@ const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess, placehol
                     textareaRef={textareaRef}
                   />
                 </>
-              )}
+              </div>
               {/* Drag overlay */}
               {isDragOverTextarea && (
                 <div className="absolute inset-0 flex items-center justify-center bg-yellow-500/10 border-2 border-dashed border-yellow-500 rounded-lg pointer-events-none">
@@ -3346,7 +3419,7 @@ const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess, placehol
           onMouseUp={() => { threadSelDragging.current = false }}
         >
         <div className="relative">
-          {isThreadMode ? (
+          <div style={{ display: isThreadMode ? undefined : 'none' }}>
             <>
               {chunkSlices.map((slice, i) => (
                 <React.Fragment key={i}>
@@ -3468,7 +3541,8 @@ const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess, placehol
                 textareaRef={{ current: chunkRefs.current[activeChunkIndex] ?? null }}
               />
             </>
-          ) : (
+          </div>
+          <div style={{ display: isThreadMode ? 'none' : undefined }}>
             <>
               <HighlightedTextarea
                 value={text}
@@ -3482,6 +3556,9 @@ const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess, placehol
                 onDragOver={handleTextareaDragOver}
                 onDragLeave={handleTextareaDragLeave}
                 onDrop={handleTextareaDrop}
+                chunkBoundaries={(!isThreadMode && trueIsThreadMode) ? chunkBoundaries : undefined}
+                showZebra={(!isThreadMode && trueIsThreadMode)}
+                showChunkBadge={(!isThreadMode && trueIsThreadMode)}
                 rows={desktopRows}
                 placeholder={
                   replyTo
@@ -3502,7 +3579,7 @@ const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess, placehol
                 textareaRef={textareaRef}
               />
             </>
-          )}
+          </div>
           {/* Drag overlay */}
           {isDragOverTextarea && (
             <div className="top-[-3px] absolute inset-0 flex items-center justify-center bg-yellow-500/10 border-2 border-dashed border-yellow-500 rounded-lg pointer-events-none">
