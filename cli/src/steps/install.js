@@ -1,4 +1,5 @@
 import { execSync, exec, spawn } from 'child_process'
+import crypto from 'crypto'
 import fs from 'fs'
 import path from 'path'
 import ora from 'ora'
@@ -278,7 +279,11 @@ export async function startServices(nodeType, installDir) {
   // Chown the install dir to caw:caw so the running services have access.
   // Skip when not running as root (dev / non-sudo invocation).
   const runAsUser = process.env.SUDO_USER
-  if (runAsUser && process.getuid && process.getuid() === 0) {
+  // Non-null only when this install actually hands installDir to an
+  // unprivileged user. Anything root runs out of that tree afterwards has to
+  // drop to this user, or the boundary the chown creates isn't real.
+  const treeOwner = runAsUser && process.getuid && process.getuid() === 0 ? runAsUser : null
+  if (treeOwner) {
     const spinner0 = ora(`Chowning ${installDir} to ${runAsUser}...`).start()
     try {
       execSync(`chown -R ${runAsUser}:${runAsUser} ${installDir}`, { stdio: 'pipe' })
@@ -323,7 +328,7 @@ export async function startServices(nodeType, installDir) {
   // the Activity charts go flat. Frontend-only nodes don't run the
   // snapshotter, so skip there.
   if (nodeType !== 'frontend-only') {
-    setupStakeLedgerCron(installDir)
+    setupStakeLedgerCron(installDir, treeOwner)
   }
 
   console.log()
@@ -344,21 +349,36 @@ export async function startServices(nodeType, installDir) {
 
 /**
  * Install the StakeLedger drift-protection cron. Writes a wrapper script
- * into ${installDir}/scripts/ that re-anchors the snapshotter state from
+ * into /usr/local/lib/caw/ that re-anchors the snapshotter state from
  * chain, then adds a 3-hourly entry to root's crontab. Idempotent: a
  * second invocation overwrites the wrapper and replaces only the matching
  * crontab line (other entries are preserved).
  *
- * The wrapper is parameterized on installDir so multiple installs (e.g.
+ * The wrapper lives outside installDir because it runs from root's crontab,
+ * and the `chown -R` in startServices hands installDir to the unprivileged
+ * app user — a root-run script must not sit in a tree that user can write
+ * to. Its filename is still keyed on installDir so multiple installs (e.g.
  * staging + prod on the same VM) each manage their own cursor without
- * stomping each other.
+ * stomping each other, same as the old in-tree path.
+ *
+ * `treeOwner` is the user installDir was chowned to, or null if it stayed
+ * root-owned. Only `pm2 restart` needs root here; the seed step does not,
+ * and it executes code out of the chowned tree, so it drops to treeOwner.
  */
-function setupStakeLedgerCron(installDir) {
+function setupStakeLedgerCron(installDir, treeOwner) {
   const spinner = ora('Installing StakeLedger drift-protection cron...').start()
   try {
-    const scriptsDir = path.join(installDir, 'scripts')
-    fs.mkdirSync(scriptsDir, { recursive: true })
-    const scriptPath = path.join(scriptsDir, 'reseed-stake-ledger.sh')
+    const scriptsDir = '/usr/local/lib/caw'
+    fs.mkdirSync(scriptsDir, { recursive: true, mode: 0o755 })
+    // Keyed on installDir, like the old in-tree path was. The hash
+    // disambiguates paths that differ only in punctuation (/var/www/a.b and
+    // /var/www/a-b slug to the same string).
+    const slug = installDir.replace(/[^A-Za-z0-9]+/g, '-').replace(/^-+|-+$/g, '')
+    const tag = crypto.createHash('sha256').update(installDir).digest('hex').slice(0, 8)
+    const scriptPath = path.join(scriptsDir, `reseed-stake-ledger-${slug}-${tag}.sh`)
+    // Pre-move location. Dropped from the crontab and unlinked below so an
+    // upgrade doesn't leave two entries reseeding the same install.
+    const legacyPath = path.join(installDir, 'scripts', 'reseed-stake-ledger.sh')
 
     // Resolve the pm2 app name from the ecosystem file that generate.js
     // wrote earlier in this same install. Falls back to 'all' so the
@@ -372,6 +392,22 @@ function setupStakeLedgerCron(installDir) {
       const m = eco.match(/"name":\s*"(caw-server-[^"]+)"/)
       if (m) pm2Name = m[1]
     } catch {}
+
+    // Only `pm2 restart` needs root here: the pm2 daemon is root-owned
+    // because `pm2 start` ran under sudo earlier in this install. The seed
+    // step does not, and the code it runs (scripts/seed-stake-ledger.ts and
+    // the tsx it resolves from client/node_modules/) is owned by treeOwner
+    // after the chown — so drop to that user for it. runuser sets HOME,
+    // leaves npx/node resolvable, and inherits cwd, so the `cd` below still
+    // applies. Absolute path because root crontabs run with
+    // PATH=/usr/bin:/bin and runuser sits in /usr/sbin on Debian-derived
+    // distros; if it can't be resolved, `set -e` fails the run loudly rather
+    // than silently falling back to running the seed as root.
+    const runuserBin = ['/usr/sbin/runuser', '/sbin/runuser', '/usr/bin/runuser']
+      .find(p => fs.existsSync(p))
+    const seedCmd = treeOwner
+      ? `${runuserBin || 'runuser'} -u ${treeOwner} -- /usr/bin/env npx tsx scripts/seed-stake-ledger.ts`
+      : `/usr/bin/env npx tsx scripts/seed-stake-ledger.ts`
 
     const wrapper = `#!/usr/bin/env bash
 # Cron-driven StakeLedger re-anchor. Runs every 3h; reseeds chain state
@@ -392,16 +428,19 @@ mkdir -p "$LOG_DIR"
 LOG="$LOG_DIR/reseed-stake-ledger.log"
 {
   echo "==== $(date -u +%Y-%m-%dT%H:%M:%SZ) reseed start ===="
-  /usr/bin/env npx tsx scripts/seed-stake-ledger.ts
+  ${seedCmd}
   echo "-- restarting pm2 process: ${pm2Name}"
   /usr/bin/pm2 restart ${pm2Name}
   echo "==== $(date -u +%Y-%m-%dT%H:%M:%SZ) reseed done ===="
 } >> "$LOG" 2>&1
 `
     fs.writeFileSync(scriptPath, wrapper, { mode: 0o755 })
+    // The pre-move wrapper is no longer referenced by anything.
+    try { fs.unlinkSync(legacyPath) } catch {}
 
-    // Crontab: read existing lines (or empty), drop any prior entry for
-    // this exact script path (idempotent reinstall), append the new line.
+    // Crontab: read existing lines (or empty), drop any prior entry for this
+    // install — both the current script path and the pre-move one, so an
+    // upgrade doesn't leave two — then append the new line.
     let existing = ''
     try {
       existing = execSync('crontab -l 2>/dev/null', { stdio: ['pipe', 'pipe', 'pipe'] }).toString()
@@ -411,16 +450,19 @@ LOG="$LOG_DIR/reseed-stake-ledger.log"
     }
     const filtered = existing
       .split('\n')
-      .filter(line => !line.includes(scriptPath))
+      .filter(line => !line.includes(scriptPath) && !line.includes(legacyPath))
       .filter(line => line.length > 0)
     filtered.push(`0 */3 * * * ${scriptPath}`)
     const newCron = filtered.join('\n') + '\n'
     execSync('crontab -', { input: newCron, stdio: ['pipe', 'pipe', 'pipe'] })
 
     spinner.succeed(`Drift-protection cron installed (${scriptPath}, every 3h)`)
+    if (treeOwner && !runuserBin) {
+      spinner.warn(`  runuser not found — install util-linux, or this cron fails on its first run`)
+    }
   } catch (e) {
     spinner.warn(`Could not install StakeLedger cron — Activity charts may freeze on drift: ${e.message}`)
-    spinner.warn(`  To install manually later: see ${path.join(installDir, 'scripts', 'reseed-stake-ledger.sh')}`)
+    spinner.warn(`  To install manually later: see /usr/local/lib/caw/`)
   }
 }
 
