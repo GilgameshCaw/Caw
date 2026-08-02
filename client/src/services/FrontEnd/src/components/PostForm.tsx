@@ -517,6 +517,11 @@ const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess, placehol
   // stays false → commit normally) from a genuine CJK session (compositionstart
   // fired first → ref is true → defer commit to compositionEnd, preserving #322).
   const isComposingRef = useRef(false)
+  // Gecko orphan-composition watchdog (真因: 孤立compositionstartに対応する
+  // compositionendが来ずisComposingRef+ネイティブcompositionがtrue滞留→BS抑制)。
+  // タイマーhandle / 一時inputリスナーのcleanup / 監視対象textareaを保持。
+  const orphanCompTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const orphanInputCleanupRef = useRef<(() => void) | null>(null)
   // Firefox hands us e.currentTarget.value === "" at compositionend even though
   // the composition succeeded — the composed text only appears on the `input`
   // events fired DURING composition, which React then reverts on the controlled
@@ -903,9 +908,63 @@ const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess, placehol
   // IME session open — mark our own composition flag so handleTextChange
   // can defer commit reliably, without trusting e.nativeEvent.isComposing
   // (which Android WebView mis-reports for plain Latin typing).
+  // 番犬タイマー/一時リスナーを畳む共通cancel。正常変換のinput検出時、
+  // compositionend時、次のcompositionstart時、いずれからも安全に呼べる(冪等)。
+  const cancelOrphanWatchdog = () => {
+    if (orphanCompTimerRef.current !== null) {
+      clearTimeout(orphanCompTimerRef.current)
+      orphanCompTimerRef.current = null
+    }
+    if (orphanInputCleanupRef.current !== null) {
+      orphanInputCleanupRef.current()
+      orphanInputCleanupRef.current = null
+    }
+  }
+
   const handleCompositionStart = () => {
     isComposingRef.current = true
     lastComposedRef.current = null
+    // Gecko限定・多枠のみ番犬を仕掛ける。Blink/WebKitはこの多枠パスに来ない(#37)。
+    if (!IS_GECKO) return
+    cancelOrphanWatchdog() // 前回の取りこぼしがあれば先に畳む
+    // compstart時のactiveElementが発生枠(実測: activeEl===target一致)。
+    const el = document.activeElement as HTMLTextAreaElement | null
+    if (!el || el.tagName !== 'TEXTAREA') return
+    // 正常変換は必ずinputが続く(実測: data有りinput)。孤立はinputが来ない。
+    // ネイティブinputを直接聞く=React onChange経路の分岐に依存しない。
+    let sawInput = false
+    const onInput = () => { sawInput = true }
+    el.addEventListener('input', onInput, true)
+    orphanInputCleanupRef.current = () => {
+      el.removeEventListener('input', onInput, true)
+    }
+    orphanCompTimerRef.current = setTimeout(() => {
+      orphanCompTimerRef.current = null
+      // cleanupは最後に必ず呼ぶ(リスナー除去)。
+      const cleanup = orphanInputCleanupRef.current
+      orphanInputCleanupRef.current = null
+      if (cleanup) cleanup()
+      // input来た=正常変換=何もしない。
+      if (sawInput) return
+      // input無し & まだcomposing扱い=孤立確定。
+      if (!isComposingRef.current) return
+      isComposingRef.current = false
+      lastComposedRef.current = null
+      // ネイティブcompositionはblurで強制終了する(石板L17: フォーカス外すと復活の機序)。
+      // isComposingRef=falseだけではネイティブは解けない(実測: BS keydown native=true滞留)。
+      if (document.activeElement === el && el.tagName === 'TEXTAREA') {
+        const caret = el.selectionStart
+        const caretEnd = el.selectionEnd
+        el.blur()
+        el.focus({ preventScroll: true })
+        // caret復元(blur/focusで先頭に飛ぶ個体差を吸収)。
+        try {
+          if (caret !== null && caretEnd !== null) {
+            el.setSelectionRange(caret, caretEnd)
+          }
+        } catch { /* no-op */ }
+      }
+    }, 700)
   }
 
   // IME commit for single-mode — clears our composition flag, then pushes
@@ -913,6 +972,7 @@ const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess, placehol
   // in handleTextChange above (#322).
   const handleCompositionEnd = (e: React.CompositionEvent<HTMLTextAreaElement>) => {
     isComposingRef.current = false
+    cancelOrphanWatchdog() // 正常にendが来た=孤立ではない。番犬を畳む。
     const ta = e.currentTarget
     // Commit the value captured from the raw input event during composition —
     // it's the running composed text (e.g. "あい"). Firefox's ta.value here is
@@ -941,6 +1001,7 @@ const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess, placehol
   const makeChunkCompositionEnd = (i: number) =>
     (e: React.CompositionEvent<HTMLTextAreaElement>) => {
       isComposingRef.current = false
+      cancelOrphanWatchdog() // 正常にendが来た(多枠)=孤立ではない。番犬を畳む。
       const ta = e.currentTarget
       // Same captured-value-wins logic as handleCompositionEnd (Firefox ta.value
       // lags one composition behind).
