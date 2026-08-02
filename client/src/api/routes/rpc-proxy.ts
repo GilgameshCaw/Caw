@@ -54,6 +54,8 @@ const KNOWN_CONTRACTS: Set<string> = (() => {
   }
   // Uniswap V2 router (mainnet price reads) — not in addresses.ts as an *_ADDRESS.
   s.add('0x7a250d5630b4cf539739df2c5dacb4c659f2488d')
+  // Multicall3 (standard batching contract across EVM chains used by viem/wagmi)
+  s.add('0xca11bde05977b3631167028862be2a173976ca11')
   for (const raw of (process.env.RPC_PROXY_EXTRA_CONTRACTS || '').split(',')) {
     const a = raw.trim().toLowerCase()
     if (/^0x[0-9a-fA-F]{40}$/.test(a)) s.add(a)
