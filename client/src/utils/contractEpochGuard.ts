@@ -16,12 +16,21 @@
  * the first time we see a DB, and on every boot compare the stamp to the current
  * code's address:
  *   - no stamp  → fresh / just-reset DB → stamp it, proceed.
+ *                 EXCEPT when the DB already holds rows from a previous deployment.
+ *                 The stamp was introduced with this guard, so every database
+ *                 carried over from an older build has no stamp while still being
+ *                 keyed to the OLD contracts — the exact case this guard exists for.
+ *                 Stamping that would mark stale data as current, and every later
+ *                 boot would report OK: the guard disarms itself for that database.
+ *                 So: no stamp + prior rows → treat as a mismatch.
  *   - matches   → proceed normally.
  *   - MISMATCH  → the code points at NEW contracts but the DB is for OLD ones →
  *                 throw a loud, explicit error telling the dev to reset the DB.
  *
  * Bypass (only if you REALLY know the DB is compatible): set
- * ALLOW_CONTRACT_EPOCH_MISMATCH=1 — logs a warning and proceeds.
+ * ALLOW_CONTRACT_EPOCH_MISMATCH=1 — logs a warning and proceeds. This also covers
+ * the one benign unstamped case: a DB that was already rebuilt for the current
+ * contracts before this guard shipped. One boot with the flag stamps it for good.
  */
 
 import { PrismaClient } from '@prisma/client'
@@ -36,7 +45,13 @@ function currentEpoch(): string {
 }
 
 export class ContractEpochMismatchError extends Error {
-  constructor(public readonly dbEpoch: string, public readonly codeEpoch: string) {
+  /** dbEpoch === null → the DB has no stamp but does hold rows from a prior deployment. */
+  constructor(public readonly dbEpoch: string | null, public readonly codeEpoch: string) {
+    const dbLine = dbEpoch
+      ? `    DB was built for CawProfile: ${dbEpoch}\n`
+      : '    DB has NO epoch stamp, but already holds rows from a previous\n' +
+        '    deployment — it predates this guard, so it was built for the OLD\n' +
+        '    contracts. (A fresh or just-reset DB is empty.)\n'
     super(
       '\n\n' +
       '════════════════════════════════════════════════════════════════════\n' +
@@ -45,7 +60,7 @@ export class ContractEpochMismatchError extends Error {
       '  This code is wired to a DIFFERENT set of contracts than the data in\n' +
       '  the database was built for. The contracts were redeployed (tokenIds\n' +
       '  reassigned), so the existing DB rows are STALE and would misbehave.\n\n' +
-      `    DB was built for CawProfile: ${dbEpoch}\n` +
+      dbLine +
       `    Code now points at CawProfile: ${codeEpoch}\n\n` +
       '  ➜  Reset the database to use the new contracts:\n' +
       '        cd client && npm run prisma:reset\n' +
@@ -59,6 +74,24 @@ export class ContractEpochMismatchError extends Error {
 }
 
 /**
+ * True if this DB already holds rows keyed to a contract deployment.
+ *
+ * A database created by `prisma db push --force-reset` (the documented remedy) is
+ * empty. A database carried over from an older build is not — and it has no epoch
+ * stamp either, so "no stamp" on its own cannot mean "fresh" for anyone upgrading.
+ * The two cases are only distinguishable by looking at the data.
+ *
+ * Existence probes, not counts: this runs on every boot and must stay cheap.
+ */
+async function hasPriorDeploymentState(prisma: PrismaClient): Promise<boolean> {
+  const [user, action] = await Promise.all([
+    prisma.user.findFirst({ select: { id: true } }),
+    prisma.action.findFirst({ select: { id: true } }),
+  ])
+  return !!(user || action)
+}
+
+/**
  * Verify the DB's contract epoch matches this code, or throw
  * ContractEpochMismatchError. Stamps a fresh/reset DB with the current epoch.
  * Call ONCE at boot, before starting any service. Uses its own short-lived
@@ -66,12 +99,26 @@ export class ContractEpochMismatchError extends Error {
  */
 export async function assertContractEpoch(): Promise<void> {
   const codeEpoch = currentEpoch()
+  const bypass = process.env.ALLOW_CONTRACT_EPOCH_MISMATCH === '1'
   const prisma = new PrismaClient()
   try {
     const row = await prisma.chainData.findUnique({ where: { key: EPOCH_KEY } })
     const dbEpoch = row ? String((row.value as unknown) ?? '').toLowerCase() : null
 
     if (!dbEpoch) {
+      // No stamp. Two cases, and they must not be confused:
+      //   - a genuinely fresh / just-reset DB → nothing to invalidate → stamp, proceed.
+      //   - a DB carried over from a build that predates this guard → it still holds
+      //     rows keyed to the OLD contracts. Stamping it would mark stale data as
+      //     current and make every later boot report OK — the guard would disarm
+      //     itself for that database, which is worse than not having caught it once.
+      if (await hasPriorDeploymentState(prisma)) {
+        if (!bypass) throw new ContractEpochMismatchError(null, codeEpoch)
+        logger.warn(
+          '[contractEpoch] unstamped DB with rows from a previous deployment, bypassed ' +
+          '(ALLOW_CONTRACT_EPOCH_MISMATCH=1). Proceeding — you asserted the DB is compatible.',
+        )
+      }
       // Fresh or just-reset DB — stamp it and proceed.
       await prisma.chainData.upsert({
         where: { key: EPOCH_KEY },
@@ -88,7 +135,7 @@ export async function assertContractEpoch(): Promise<void> {
     }
 
     // Mismatch.
-    if (process.env.ALLOW_CONTRACT_EPOCH_MISMATCH === '1') {
+    if (bypass) {
       logger.warn(
         `[contractEpoch] MISMATCH bypassed (ALLOW_CONTRACT_EPOCH_MISMATCH=1): ` +
         `db=${dbEpoch} code=${codeEpoch}. Proceeding — you asserted the DB is compatible.`,
