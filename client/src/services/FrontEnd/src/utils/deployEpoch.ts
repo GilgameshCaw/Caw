@@ -21,9 +21,34 @@
 
 // 2026-07-24 testnet redeploy: CawProfile (250k lzReceive gas) + Marketplace
 // (lzDestId param) + full cascade + DB reset. New contracts from tokenId 0.
-export const DEPLOY_EPOCH = '2026-07-24-testnet-caw-cascade'
+// -r2: the first guard build skipped the wipe for pre-guard browsers (no epoch
+// key → treated as first-visit) and mis-stamped them. Bump so those browsers
+// re-evaluate and wipe. hasPriorDeploymentState() now covers the null case too.
+export const DEPLOY_EPOCH = '2026-07-24-testnet-caw-cascade-r2'
 
 const EPOCH_KEY = 'caw:deploy-epoch'
+
+// Storage keys that only exist if this browser has used a PRIOR deployment of the
+// app. The deploy-epoch key was introduced in the 2026-07-24 redeploy, so a
+// browser coming from an older build has NO epoch key but DOES have these — that
+// combination is a pre-guard stale browser, not a first-ever visitor, and it must
+// be wiped. A genuine first-ever visit has none of these.
+const PRIOR_STATE_KEYS = ['caw-token-data', 'caw-pinned-profiles', 'wagmi']
+const PRIOR_STATE_PREFIXES = ['caw:passkey-credential-id:', 'caw:pendingDeposit:']
+
+/** True if this browser holds CAW state from a build that predates the epoch guard. */
+function hasPriorDeploymentState(): boolean {
+  try {
+    for (const k of PRIOR_STATE_KEYS) {
+      if (localStorage.getItem(k) !== null) return true
+    }
+    for (let i = 0; i < localStorage.length; i++) {
+      const key = localStorage.key(i)
+      if (key && PRIOR_STATE_PREFIXES.some(p => key.startsWith(p))) return true
+    }
+  } catch { /* storage unavailable */ }
+  return false
+}
 
 /**
  * Run ONCE at app boot, before the app reads any cached state. If the stored
@@ -39,15 +64,20 @@ export function enforceDeployEpoch(): boolean {
   let stored: string | null = null
   try { stored = localStorage.getItem(EPOCH_KEY) } catch { return false /* storage unavailable */ }
 
-  // First-ever visit (no epoch) → just stamp it; nothing to reset.
-  if (stored === null) {
+  if (stored === DEPLOY_EPOCH) return false
+
+  // No epoch key. Two cases:
+  //   - a genuine first-ever visit → no prior CAW state → just stamp, nothing to reset.
+  //   - a browser from a build that PREDATES the epoch guard (this is the common case
+  //     right after the guard first ships) → it has old caw-token-data / wagmi / passkey
+  //     state keyed to the OLD contracts and MUST be wiped, exactly like an epoch change.
+  if (stored === null && !hasPriorDeploymentState()) {
     try { localStorage.setItem(EPOCH_KEY, DEPLOY_EPOCH) } catch { /* ignore */ }
     return false
   }
-  if (stored === DEPLOY_EPOCH) return false
 
-  // Epoch changed → the contracts were redeployed under this browser. Full reset.
-  console.warn(`[deployEpoch] contract redeploy detected (${stored} → ${DEPLOY_EPOCH}) — resetting local state`)
+  // Epoch changed (or a pre-guard stale browser) → wipe local state for the new contracts.
+  console.warn(`[deployEpoch] contract redeploy detected (${stored ?? 'pre-guard'} → ${DEPLOY_EPOCH}) — resetting local state`)
 
   try { localStorage.clear() } catch { /* ignore */ }
   try { sessionStorage.clear() } catch { /* ignore */ }
