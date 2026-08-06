@@ -2,7 +2,7 @@ import ParticleSystemManifesto from "./ParticleSystemManifesto";
 import { useEffect, useState } from "react";
 import { useT } from "~/i18n/I18nProvider";
 
-import freeSpeechImg from "~/assets/landing/freespeech.png";
+import freeSpeechImg from "~/assets/landing/freespeech.webp";
 
 export const FreeSpeech = () => {
   const tint = "#F9C337";

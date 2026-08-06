@@ -7,9 +7,9 @@ import ParticleSystemManifesto from '~/components/landing/ParticleSystemManifest
 // Image assets ported from caw-landing/public. Imported (not referenced by
 // public path) so Vite hashes + fingerprints them like the other landing
 // modules (see Features/FreeSpeech).
-import manifestoImg from '~/assets/landing/manifesto.png'
-import decentralizationImg from '~/assets/landing/decentralization.png'
-import dreamsImg from '~/assets/landing/dreams.png'
+import manifestoImg from '~/assets/landing/manifesto.webp'
+import decentralizationImg from '~/assets/landing/decentralization.webp'
+import dreamsImg from '~/assets/landing/dreams.webp'
 
 // The manifesto body, extracted from ManifestoPage so it can be shared by both
 // the standalone /manifesto route (wrapped in LandingHeader/Footer) and the

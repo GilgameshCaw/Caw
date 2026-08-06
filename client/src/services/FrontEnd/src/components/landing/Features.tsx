@@ -1,7 +1,7 @@
-import feature1 from "~/assets/landing/usernft.png";
-import feature2 from "~/assets/landing/caweconomy.png";
-import feature3 from "~/assets/landing/messaging.png";
-import feature4 from "~/assets/landing/Identity.png";
+import feature1 from "~/assets/landing/usernft.webp";
+import feature2 from "~/assets/landing/caweconomy.webp";
+import feature3 from "~/assets/landing/messaging.webp";
+import feature4 from "~/assets/landing/Identity.webp";
 import ParticleSystemManifesto from "./ParticleSystemManifesto";
 import { useState, useEffect, useMemo } from "react";
 import { useT } from "~/i18n/I18nProvider";

@@ -6,7 +6,6 @@ import { useTheme } from '~/hooks/useTheme'
 import { useT } from '~/i18n/I18nProvider'
 import { useState, useEffect, useRef, lazy, Suspense } from 'react'
 import { HiChevronDown } from 'react-icons/hi'
-import BoidsBg from '~/components/BoidsBg3D'
 import LanguageSwitcher from '~/components/LanguageSwitcher'
 import WalletAccountButton from '~/components/buttons/WalletAccountButton'
 import { SignInChoiceModal } from '~/components/identity/SignInChoiceModal'
@@ -14,6 +13,12 @@ import { useRecoveryContext } from '~/components/identity/RecoveryProvider'
 import LandingHeader from '~/components/landing/LandingHeader'
 import LandingFooter from '~/components/landing/LandingFooter'
 
+// Both 3D pieces pull in three.js (~vendor-three chunk). Lazy-load them so the
+// heavy WebGL bundle is fetched on-demand for the splash rather than sitting in
+// the always-on entry. BoidsBg is a purely decorative full-screen background;
+// its Suspense fallback is simply nothing (the page bg shows through) so there's
+// no layout shift while three.js streams in.
+const BoidsBg = lazy(() => import('~/components/BoidsBg3D'))
 const Caw3D = lazy(() => import('~/components/Caw3D'))
 const Features = lazy(() => import('~/components/landing/Features'))
 const Community = lazy(() => import('~/components/landing/Community'))
@@ -81,7 +86,11 @@ export default function CaptiveSplash() {
     <div
       className={`h-[100svh] overflow-y-auto overflow-x-hidden relative ${isDark ? 'bg-black text-white' : 'bg-white text-black'}`}
     >
-      <BoidsBg isDark={isDark} />
+      {/* Decorative 3D background — lazy (three.js). Fallback is nothing:
+          the page background shows through while the chunk streams in. */}
+      <Suspense fallback={null}>
+        <BoidsBg isDark={isDark} />
+      </Suspense>
       {/* Shared landing header — logo lockup + resource links + language
           picker. Same component used by ManifestoPage. Once the hero CTA
           has scrolled off-screen, surface a compact Sign-in / Create /

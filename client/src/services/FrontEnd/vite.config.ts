@@ -7,6 +7,7 @@ import react from "@vitejs/plugin-react-swc";
 import svgr from "vite-plugin-svgr";
 import commonjs from '@rollup/plugin-commonjs';
 import { VitePWA } from 'vite-plugin-pwa';
+import { visualizer } from 'rollup-plugin-visualizer';
 
 import tsconfigPaths from "vite-tsconfig-paths";
 
@@ -169,6 +170,14 @@ export default defineConfig({
         //   is purely lazy and the entry has no static import of it.
         manualChunks(id) {
           if (id.includes('/@rainbow-me/')) return 'vendor-rainbowkit'
+          // three.js + react-three — only used by the decorative splash 3D
+          // (BoidsBg3D / Caw3D), both lazy-loaded. Keep it in its own chunk so
+          // it's fetched on-demand for the splash and cached separately, never
+          // pulled into the always-on entry.
+          if (
+            id.includes('/node_modules/three/') ||
+            id.includes('/node_modules/@react-three/')
+          ) return 'vendor-three'
           if (
             id.includes('/node_modules/wagmi/') ||
             id.includes('/node_modules/@wagmi/') ||
@@ -232,6 +241,17 @@ export default defineConfig({
     react(),
     svgr(),
     tsconfigPaths(),
+    // Bundle-composition treemap — dev-only, gated on ANALYZE=1 so it never
+    // runs in a normal `npm run build`. Emits dist/bundle-stats.html.
+    //   ANALYZE=1 npm run build && open dist/bundle-stats.html
+    ...(process.env.ANALYZE
+      ? [visualizer({
+          filename: 'dist/bundle-stats.html',
+          template: 'treemap',
+          gzipSize: true,
+          brotliSize: true,
+        }) as Plugin]
+      : []),
     // PWA: makes the app installable ("Add to Home Screen" on Chrome
     // Android + desktop, plus richer iOS Safari install support).
     //

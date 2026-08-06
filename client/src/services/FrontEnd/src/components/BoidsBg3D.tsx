@@ -1,4 +1,4 @@
-import { useRef, useMemo, useEffect, useCallback, Component } from 'react'
+import { useRef, useMemo, useState, useEffect, useCallback, Component } from 'react'
 import type { ReactNode } from 'react'
 import { Canvas, useFrame, useThree } from '@react-three/fiber'
 import * as THREE from 'three'
@@ -764,6 +764,36 @@ function FlockScene({ isDark }: { isDark: boolean }) {
 // page renders this background, and a WebGL failure here blacked out the whole
 // fixed-position overlay.
 
+// Drive R3F's <Canvas frameloop> so the animation loop STOPS when it can't be
+// seen or shouldn't run — killing the idle GPU/CPU cost of a hidden/backgrounded
+// tab and respecting the user's reduced-motion preference.
+//   'always' → normal rAF render loop
+//   'never'  → loop paused (no rAF, no GPU work); flips back to 'always' on wake
+// prefers-reduced-motion pins it to 'never' permanently (birds hold still).
+function usePausableFrameloop(): 'always' | 'never' {
+  const reducedMotion =
+    typeof window !== 'undefined' &&
+    window.matchMedia?.('(prefers-reduced-motion: reduce)').matches
+
+  const [mode, setMode] = useState<'always' | 'never'>(() => {
+    if (reducedMotion) return 'never'
+    if (typeof document !== 'undefined' && document.hidden) return 'never'
+    return 'always'
+  })
+
+  useEffect(() => {
+    if (reducedMotion) {
+      setMode('never')
+      return
+    }
+    const onVis = () => setMode(document.hidden ? 'never' : 'always')
+    document.addEventListener('visibilitychange', onVis)
+    return () => document.removeEventListener('visibilitychange', onVis)
+  }, [reducedMotion])
+
+  return mode
+}
+
 let _webglOk: boolean | null = null
 function webglAvailable(): boolean {
   if (_webglOk !== null) return _webglOk
@@ -805,6 +835,11 @@ export default function BoidsBg3D({
   isDark?: boolean
   className?: string
 }) {
+  // Hooks must run unconditionally (before the WebGL early-return below), so
+  // call this up top. It pauses the render loop when the tab is hidden or the
+  // user prefers reduced motion.
+  const frameloop = usePausableFrameloop()
+
   // Bail out entirely when WebGL isn't usable — render nothing so the page
   // behind this background shows normally (vs. a crashed black screen).
   if (typeof window !== 'undefined' && !webglAvailable()) {
@@ -827,6 +862,9 @@ export default function BoidsBg3D({
           camera={{ position: [0, 2, 22], fov: 55 }}
           gl={{ alpha: true, antialias: false, powerPreference: 'low-power' }}
           dpr={[1, 1.5]}
+          // Pause the rAF render loop when hidden / reduced-motion (see
+          // usePausableFrameloop) so a backgrounded tab does zero GPU work.
+          frameloop={frameloop}
           // pointerEvents:none all the way down: react-three-fiber's generated
           // wrapper sets pointer-events:auto, which over a fixed full-screen
           // canvas EATS touch events and blocks page scroll on iOS (the finger

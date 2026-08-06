@@ -1,6 +1,6 @@
 import ParticleSystemManifesto from "./ParticleSystemManifesto";
 import { useEffect, useMemo, useState } from "react";
-import ethereumImg from "~/assets/landing/ethereum.png";
+import ethereumImg from "~/assets/landing/ethereum.webp";
 import { useT } from "~/i18n/I18nProvider";
 
 const RotatingWordCommunity = () => {

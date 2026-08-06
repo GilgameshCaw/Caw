@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import ParticleSystemManifesto from "./ParticleSystemManifesto";
 import { useT } from "~/i18n/I18nProvider";
 
-import cawmmunityImg from "~/assets/landing/cawmmunity.png";
+import cawmmunityImg from "~/assets/landing/cawmmunity.webp";
 
 const RotatingWordCawmmunity = () => {
   const tr = useT();
