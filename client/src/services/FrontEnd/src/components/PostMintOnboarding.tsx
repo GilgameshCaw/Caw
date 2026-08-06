@@ -268,7 +268,16 @@ const PostMintOnboarding: React.FC<PostMintOnboardingProps> = ({ username, token
   const refetchTokenData = useTokenDataStore(s => s.refetchTokenData)
 
   const wrongChainForStake = connections[0]?.chainId !== chains.l1.chainId
-  const isTokenOwner = activeToken?.owner?.toLowerCase() === address?.toLowerCase()
+  // The owner is only KNOWN once the row for THIS onboarding's token has landed
+  // in the store. Right after an optimistic fresh mint (New.tsx fast-path) the
+  // Lens/indexer lag means activeToken is undefined — or, worse, resolves to a
+  // stale DIFFERENT profile via useActiveToken's lastAddress fallback. Treating
+  // either state as "wrong wallet" showed a blank "please switch to ..." and
+  // disabled Set Up Account for the minting wallet itself. Gate only on a
+  // genuinely-known owner of THIS token; a wrong wallet that slips through the
+  // unknown window is still rejected at signing time (auth/server checks).
+  const knownOwner = activeToken?.tokenId === tokenId ? activeToken?.owner : undefined
+  const isTokenOwner = !knownOwner || knownOwner.toLowerCase() === address?.toLowerCase()
   const { allowance, refetch: refetchAllowance } = useAllowance(CAW_ADDRESS, CAW_NAMES_ADDRESS)
 
   const { data: balance, refetch: refetchBalance } = useReadContract({
@@ -1331,7 +1340,7 @@ const PostMintOnboarding: React.FC<PostMintOnboardingProps> = ({ username, token
 
                   {isConnected && !isTokenOwner && (
                     <p className="text-yellow-400 text-sm text-center">
-                      Wrong wallet — please switch to {activeToken?.owner?.slice(0, 6)}...{activeToken?.owner?.slice(-4)}
+                      Wrong wallet — please switch to {knownOwner?.slice(0, 6)}...{knownOwner?.slice(-4)}
                     </p>
                   )}
 
