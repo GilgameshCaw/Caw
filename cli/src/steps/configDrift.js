@@ -130,7 +130,7 @@ export function checkConfigDrift(installDir) {
   const deployStateAddresses = deployState?.addresses || {}
 
   const diff = diffConfigAddresses(envVars, deployStateAddresses)
-  return { ran: true, envPath, deployStatePath, ...diff }
+  return { ran: true, envPath, deployStatePath, envVars, ...diff }
 }
 
 /**
@@ -163,6 +163,18 @@ export function reportConfigDrift(installDir) {
 
   if (result.skipped.length > 0) {
     console.log(dim(`  Skipped ${result.skipped.length} var(s): ${result.skipped.map(s => s.envVar).join(', ')}`))
+  }
+
+  // ADMIN_TOKEN_IDS reminder — not an address, so it's outside the
+  // address-drift diff above, but it has the same footgun shape: it pins a
+  // tokenId as bootstrap-admin, and tokenIds REASSIGN on a contract
+  // redeploy. This CLI can't check on-chain ownership, so this is a
+  // read-only nudge, not a verified check.
+  const adminTokenIds = result.envVars?.ADMIN_TOKEN_IDS
+  if (adminTokenIds) {
+    console.log(warn(`  ⚠ ADMIN_TOKEN_IDS=${adminTokenIds} is set. This is a tokenId, which`))
+    console.log(warn('    REASSIGNS on a contract redeploy — verify it still points at your'))
+    console.log(dim('    admin\'s current tokenId (this check can\'t verify on-chain owners).'))
   }
 
   return result

@@ -18,6 +18,7 @@ if (typeof globalThis.File === 'undefined') {
 import { Sentry, sentryEnabled } from '../src/sentry'
 import runServices, { RunServicesConfig } from '../src/runServices'
 import { assertContractEpoch, ContractEpochMismatchError } from '../src/utils/contractEpochGuard'
+import { warnIfAdminTokenIdsStale } from '../src/utils/adminTokenIdGuard'
 import fs from 'fs'
 import process from 'process'
 import 'reflect-metadata'
@@ -92,6 +93,16 @@ void (async () => {
     // yet, etc.) — log and proceed; services have their own DB retry.
     console.warn('[contractEpoch] check skipped (non-fatal):', (err as Error)?.message)
   }
+
+  // Warn (never block boot) when ADMIN_TOKEN_IDS looks stale relative to the
+  // current DB — e.g. after a redeploy reassigned tokenIds. See the guard for
+  // the full privilege-drift story.
+  try {
+    await warnIfAdminTokenIdsStale()
+  } catch (err) {
+    console.warn('[adminTokenIdGuard] check skipped (non-fatal):', (err as Error)?.message)
+  }
+
   runServices(config)
 })()
 
