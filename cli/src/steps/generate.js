@@ -477,6 +477,11 @@ function buildEnvVars(nodeType, config) {
   if (config.l2RpcUrlHttp) env.L2_RPC_URL_HTTP = config.l2RpcUrlHttp
   if (config.l1RpcUrl) env.L1_RPC_URL = config.l1RpcUrl
   if (config.l1RpcUrlHttp) env.L1_RPC_URL_HTTP = config.l1RpcUrlHttp
+  // Optional fallback RPC URLs — routed through FallbackProvider
+  // (client/src/utils/rpcProvider.ts) when set. HTTP-only: the fallback
+  // exists for read/poll resilience, not for WSS event subscription.
+  if (config.l1RpcUrlHttpFallback) env.L1_RPC_URL_HTTP_FALLBACK = config.l1RpcUrlHttpFallback
+  if (config.l2RpcUrlHttpFallback) env.L2_RPC_URL_HTTP_FALLBACK = config.l2RpcUrlHttpFallback
   if (config.ethMainnetRpcUrl) env.ETH_MAINNET_RPC_URL = config.ethMainnetRpcUrl
   // Optional Infura-style API Key Secrets. Backend-only — embedded as
   // Basic Auth in the URL by rpcProvider.ts withSecret() so the same
