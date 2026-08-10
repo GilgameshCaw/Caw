@@ -1,8 +1,8 @@
 import { Router, Request, Response } from 'express'
 import { rateLimit } from 'express-rate-limit'
 import {
-  getL1HttpRpcUrl,
-  getL2HttpRpcUrl,
+  getL1HttpRpcUrls,
+  getL2HttpRpcUrls,
 } from '../../utils/rpcProvider'
 import { originGate } from '../middleware/originGate'
 import * as ADDR from '../../abi/addresses'
@@ -234,8 +234,7 @@ function pickTtlMs(method: string, params: unknown): number | null {
 // Upstream forwarder
 // ─────────────────────────────────────────────────────────────────
 
-function getUpstream(chain: Chain): { url: string; auth: string | null } {
-  const raw = chain === 'l1' ? getL1HttpRpcUrl() : getL2HttpRpcUrl()
+function parseUpstreamUrl(raw: string): { url: string; auth: string | null } {
   if (!raw) return { url: '', auth: null }
   // raw is like https://:SECRET@base-sepolia.infura.io/v3/PROJECTID
   // Pull the secret out and use Authorization: Basic instead.
@@ -256,6 +255,17 @@ function getUpstream(chain: Chain): { url: string; auth: string | null } {
   } catch {
     return { url: raw, auth: null }
   }
+}
+
+/**
+ * Primary + any operator-configured fallback URLs (L1_RPC_URL_HTTP_FALLBACK /
+ * L2_RPC_URL_HTTP_FALLBACK, comma-separated — see rpcProvider.ts). Always
+ * returns at least one entry when a primary is configured, possibly empty
+ * when it isn't (existing "RPC upstream not configured" behaviour).
+ */
+function getUpstreams(chain: Chain): { url: string; auth: string | null }[] {
+  const raws = chain === 'l1' ? getL1HttpRpcUrls() : getL2HttpRpcUrls()
+  return raws.map(parseUpstreamUrl).filter(u => u.url)
 }
 
 /**
@@ -295,11 +305,14 @@ function jsonRpcError(id: any, code: number, message: string): any {
   return { jsonrpc: '2.0', id: id ?? null, error: { code, message } }
 }
 
-async function forwardUpstream(chain: Chain, body: any): Promise<any> {
-  const { url, auth } = getUpstream(chain)
-  if (!url) {
-    return jsonRpcError((body as any)?.id, -32603, 'RPC upstream not configured')
-  }
+/**
+ * Single-upstream forward with a one-shot retry on transient failures
+ * (timeout / network error / 5xx / burst-throttle 401/429). Unchanged from
+ * the original single-URL implementation — just parameterized on which
+ * upstream to hit, so forwardUpstream() (below) can loop it across
+ * primary + fallback.
+ */
+async function forwardToOneUpstream(url: string, auth: string | null, body: any): Promise<any> {
   const headers: Record<string, string> = { 'Content-Type': 'application/json' }
   if (auth) headers.Authorization = auth
 
@@ -348,7 +361,35 @@ async function forwardUpstream(chain: Chain, body: any): Promise<any> {
     }
   }
   // Unreachable, but TS wants a return.
-  return jsonRpcError((body as any)?.id, -32603, 'RPC upstream exhausted')
+  return jsonRpcError((body as any)?.id, -32603, 'Upstream exhausted')
+}
+
+/**
+ * Forward across primary + any configured fallback upstreams
+ * (L1_RPC_URL_HTTP_FALLBACK / L2_RPC_URL_HTTP_FALLBACK — see rpcProvider.ts
+ * getL1HttpRpcUrls/getL2HttpRpcUrls). Tries each upstream in order (primary
+ * first); each already gets its own one-shot retry via
+ * forwardToOneUpstream(), so a single flaky upstream costs at most one
+ * extra ~200ms round trip before we move to the next one. Only the LAST
+ * upstream's error is returned if all of them fail — earlier failures are
+ * logged so an operator can see which upstream is degrading.
+ */
+async function forwardUpstream(chain: Chain, body: any): Promise<any> {
+  const upstreams = getUpstreams(chain)
+  if (upstreams.length === 0) {
+    return jsonRpcError((body as any)?.id, -32603, 'RPC upstream not configured')
+  }
+
+  let lastResult: any = null
+  for (let i = 0; i < upstreams.length; i++) {
+    const { url, auth } = upstreams[i]
+    lastResult = await forwardToOneUpstream(url, auth, body)
+    if (!lastResult?.error) return lastResult
+    if (i < upstreams.length - 1) {
+      console.warn(`[rpc-proxy] ${chain} upstream ${i + 1}/${upstreams.length} failed (${lastResult.error?.message || 'unknown'}), trying fallback`)
+    }
+  }
+  return lastResult
 }
 
 // ─────────────────────────────────────────────────────────────────
@@ -450,8 +491,8 @@ router.post('/l2', gate, proxyRateLimit, makeHandler('l2'))
 // Light health probe — confirms the proxy is wired without exposing
 // upstream URLs.
 router.get('/health', (_req, res) => {
-  const l1 = !!getL1HttpRpcUrl()
-  const l2 = !!getL2HttpRpcUrl()
+  const l1 = getUpstreams('l1').length > 0
+  const l2 = getUpstreams('l2').length > 0
   res.json({ l1: l1 ? 'configured' : 'missing', l2: l2 ? 'configured' : 'missing' })
 })
 

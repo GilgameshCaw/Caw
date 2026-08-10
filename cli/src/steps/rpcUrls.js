@@ -211,6 +211,42 @@ async function collectRpcPair(label, required, expectedChainId) {
     console.log()
   }
 
+  // Optional fallback URL. If the primary RPC goes down or gets rate-limited,
+  // the backend's FallbackProvider (client/src/utils/rpcProvider.ts) routes
+  // around it automatically — but only if L1_RPC_URL_HTTP_FALLBACK /
+  // L2_RPC_URL_HTTP_FALLBACK is set. We don't force this on every operator
+  // (a paid primary rarely needs it), but we do offer it, and default to
+  // "yes" when the primary itself looked like a public RPC (isPublicRpc
+  // above) since that's exactly the case the resilience machinery exists for.
+  let httpFallback = ''
+  const { addFallback } = await inquirer.prompt([{
+    type: 'confirm',
+    name: 'addFallback',
+    message: `Add a fallback ${label} RPC URL? ${dim('(automatic switch-over if the primary goes down or hits a rate limit)')}`,
+    default: isPublicRpc(http),
+  }])
+  if (addFallback) {
+    const { fallbackInput } = await inquirer.prompt([{
+      type: 'input',
+      name: 'fallbackInput',
+      message: `${label} Fallback HTTP RPC URL (https://):`,
+      validate: (input) => {
+        if (!input.trim()) return true // optional — Enter to skip
+        if (!input.startsWith('https://') && !input.startsWith('http://')) {
+          return 'URL must start with https:// or http://'
+        }
+        if (input.trim() === http) {
+          return 'Fallback URL is identical to the primary — pick a different provider'
+        }
+        return true
+      },
+    }])
+    httpFallback = fallbackInput.trim()
+    if (httpFallback && isPublicRpc(httpFallback)) {
+      console.log(dim(`  (Fallback is also a public RPC — fine as a second line of defense, but consider a paid provider for at least one of the two.)`))
+    }
+  }
+
   // Step 2: WSS URL (optional). When the HTTP URL is Infura, offer the
   // auto-derived WSS as a default; otherwise leave blank — most providers
   // either give you a separate WSS URL or don't expose one at all.
@@ -257,7 +293,7 @@ async function collectRpcPair(label, required, expectedChainId) {
   // override. We don't surface that as a prompt because for a normal node
   // install it's the wrong choice (leaks the key into the bundle and
   // bypasses the proxy's caching + origin gate).
-  return { wss: wss.trim(), http, secret, frontendHttp: '' }
+  return { wss: wss.trim(), http, secret, frontendHttp: '', httpFallback }
 }
 
 /**
@@ -436,6 +472,7 @@ export async function collectL1Rpc(nodeType, network = 'testnet') {
     // Optional separate URL for the browser bundle. Falls back to
     // l1RpcUrlHttp at write time when blank.
     l1RpcUrlHttpFrontend: l1.frontendHttp || '',
+    l1RpcUrlHttpFallback: l1.httpFallback || '',
   }
 
   // Mainnet price feeds — only validators need this (CAW/ETH price for tip
@@ -599,6 +636,7 @@ export async function collectL2Rpc(nodeType, storageChainLabel, network = 'testn
     l2RpcUrlHttp: l2.http,
     l2RpcSecret: l2.secret || '',
     l2RpcUrlHttpFrontend: l2.frontendHttp || '',
+    l2RpcUrlHttpFallback: l2.httpFallback || '',
   }
 }
 
