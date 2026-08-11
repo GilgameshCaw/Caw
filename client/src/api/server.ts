@@ -363,6 +363,21 @@ export function createApp() {
   // covered automatically. Audit fix 2026-05-23 (fe-headers H-3).
   app.use('/api/auth', (_req, res, next) => { res.set('Cache-Control', 'no-store'); next() })
   app.use('/api/auth', authRouter)
+  // Actions: per-IP rate limit to stop rapid-fire signature-flooding.
+  // /api/actions has no session/auth gate (auth is per-request EIP-712
+  // signature verification downstream), so hasValidSession-style skip
+  // logic (used on /api/upload) doesn't apply here — everything is
+  // treated the same and rate-limited per IP.
+  // Default is a rough first line of defense; tune via
+  // ACTIONS_RATE_LIMIT_PER_MIN once there's real traffic data — this
+  // has not been load-tested against production throughput.
+  app.use('/api/actions', rateLimit({
+    windowMs: 60 * 1000,
+    max: parseInt(process.env.ACTIONS_RATE_LIMIT_PER_MIN || '60', 10),
+    standardHeaders: true,
+    legacyHeaders: false,
+    message: { error: 'Too many action submissions. Please slow down.' },
+  }))
   app.use('/api/actions', actionsRouter)
   app.use('/api/caws', cawRouter)
   app.use('/api/txs',  txRouter)
