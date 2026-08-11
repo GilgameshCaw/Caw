@@ -478,6 +478,7 @@ else
   ALWAYS_PKGS=(
     curl ca-certificates gnupg git build-essential
     nginx ufw certbot python3-certbot-nginx
+    fail2ban
   )
 
   # Stateful services — only install the ones the user wants natively, and
