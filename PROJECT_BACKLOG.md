@@ -92,11 +92,11 @@ running, brute-force attempts get blocked after 5 failures for ~10
 minutes — bots move on. Default config covers SSH out of the box;
 nginx + postfix jails available with one-line additions.
 
-- [ ] **Add `fail2ban` to install.sh's `ALWAYS_PKGS` apt list** so every
+- [x] **Add `fail2ban` to install.sh's `ALWAYS_PKGS` apt list** so every
       CAW host gets it preinstalled. Default config (the systemd-journal
       backend on Ubuntu 22.04+) just works for SSH; we don't need to
       configure anything beyond `apt-get install -y fail2ban`.
-- [ ] Verify the systemd unit autostarts:
+- [x] Verify the systemd unit autostarts:
       `sudo systemctl status fail2ban`. Should be `active (running)` after
       install.
 
@@ -793,6 +793,7 @@ One-liner install: `curl -fsSL https://raw.githubusercontent.com/.../install.sh 
 ---
 
 ## Resolved (since previous backlog snapshots)
+- [x] **fail2ban added to install.sh `ALWAYS_PKGS`** — SSH brute-force protection installed by default on every host; default systemd-journal backend covers the sshd jail with no extra config (verified active on Ubuntu 24.04, banned 2 in-progress attempts on install)
 
 - [x] **`OnlyOnce` lockdown of all protocol-critical setters** (2026-04-24)
 - [x] **Old LZ replication path removed** (`CawActionsReplicator.sol` deleted, runtime callers gone, address removed from `client/src/abi/addresses.ts`; one stale test reference remains — see "Stale test cleanup")
