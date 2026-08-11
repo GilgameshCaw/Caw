@@ -27,6 +27,49 @@ const COLD_LIMIT_PER_HOUR = Number(process.env.DM_SEND_COLD_LIMIT_PER_HOUR) || 1
 const WARM_LIMIT_PER_HOUR = Number(process.env.DM_SEND_WARM_LIMIT_PER_HOUR) || 100
 const WINDOW_SECONDS = 60 * 60
 
+// Inbound relay cap, per PROJECT_BACKLOG.md's DDoS protection section:
+// "a peer hammering relayDmToPeers with spoofed identities can fill the
+// DB." checkDmRate() above is sender-side and does warm/cold DB lookups
+// (message/follow queries) — fine for a user hitting send, but wrong for
+// the receiver side of /api/dm/relay: those lookups would themselves
+// become a new load vector under a relay flood. This is deliberately
+// dumber: one Redis INCR per (recipientId), no DB reads, no warm/cold
+// distinction. It doesn't tell apart "one attacker" from "many senders
+// legitimately messaging the same popular account" — same tradeoff the
+// per-source-IP cap already makes, just on the other axis.
+//
+// 500/h, not 200/h as I first had it: sender-side warm senders alone can
+// do 100/h each (WARM_LIMIT_PER_HOUR above), so a cap much lower than a
+// small multiple of that would throttle a popular account getting
+// legitimate messages from just a handful of warm contacts. 500 leaves
+// room for ~5 concurrent warm senders at their individual ceiling before
+// this cap bites — still not validated against real usage, just checked
+// against the other limiter in this file so they're not contradictory.
+const INBOUND_RELAY_LIMIT_PER_HOUR = Number(process.env.DM_RELAY_INBOUND_LIMIT_PER_HOUR) || 500
+const KEY_INBOUND_RELAY = (recipientId: number) => `caw:dm:rate:relay-inbound:${recipientId}`
+
+/**
+ * Increment-and-check the inbound relay bucket for a recipient. Fail-open
+ * on Redis errors, matching checkDmRate()'s behavior — the per-source-IP
+ * cap in server.ts is the backstop if this path is unavailable.
+ */
+export async function checkInboundRelayRate(recipientId: number): Promise<{ allowed: boolean; resetSeconds?: number }> {
+  const key = KEY_INBOUND_RELAY(recipientId)
+  try {
+    const count = await redis.incr(key)
+    if (count === 1) {
+      await redis.expire(key, WINDOW_SECONDS)
+    }
+    if (count > INBOUND_RELAY_LIMIT_PER_HOUR) {
+      const ttl = await redis.ttl(key)
+      return { allowed: false, resetSeconds: ttl > 0 ? ttl : WINDOW_SECONDS }
+    }
+    return { allowed: true }
+  } catch {
+    return { allowed: true }
+  }
+}
+
 const KEY_COLD = (senderId: number, recipientId: number) =>
   `caw:dm:rate:cold:${senderId}:${recipientId}`
 const KEY_WARM = (senderId: number, recipientId: number) =>

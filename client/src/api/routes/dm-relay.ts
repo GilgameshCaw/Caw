@@ -28,6 +28,7 @@ import { getPeers } from '../../services/InstanceRegistryService'
 import { recoverAddressFromCanonical } from '../../services/InstanceRegistryService/envelopeCrypto'
 import { verifyDmSenderSig } from '../dmSenderSig'
 import { getNetworkId } from '../../utils/networkId'
+import { checkInboundRelayRate } from '../dmRateLimit'
 
 const router = Router()
 
@@ -121,6 +122,19 @@ router.post('/', async (req, res) => {
     if (conversationId !== expectedConvId) {
       console.warn(`[DM Relay] 400 invalid conversationId from ${remote} (sourceInstance=${sourceInstanceId}): got=${conversationId} expected=${expectedConvId} (sender=${senderId}, recipient=${recipientId})`)
       return res.status(400).json({ error: 'Invalid conversation ID format' })
+    }
+
+    // Per-recipient inbound cap — bounds how many relayed messages a
+    // single recipient can be flooded with per hour, independent of how
+    // many distinct source IPs/instances are involved (the per-source-IP
+    // cap in server.ts doesn't catch a distributed flood aimed at one
+    // recipient). See dmRateLimit.ts for why this is deliberately simpler
+    // than the sender-side warm/cold limiter.
+    const inboundCheck = await checkInboundRelayRate(Number(recipientId))
+    if (!inboundCheck.allowed) {
+      console.warn(`[DM Relay] 429 inbound cap hit for recipient=${recipientId} from ${remote} (sourceInstance=${sourceInstanceId})`)
+      res.set('Retry-After', String(inboundCheck.resetSeconds))
+      return res.status(429).json({ error: 'Too many messages for this recipient right now' })
     }
 
     // Look up the source instance's registered validator address from
