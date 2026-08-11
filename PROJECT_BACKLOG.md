@@ -169,48 +169,13 @@ constrains an RCE's exfiltration paths.
       Operators with custom RPC hosts will need a hook to add their own
       allows.
 
-### Withdrawals silently dropped when `withdrawFee == 0`
+### Withdrawals silently dropped when `withdrawFee == 0` — RESOLVED
 
-**Severity:** Low (no asset loss; user re-submits a withdraw and gets credited next time). **Discovered:** 2026-04-27. **Affected:** `processActions` and `safeProcessActions` in `solidity/contracts/CawActions.sol`.
+**Discovered:** 2026-04-27. **Affected:** `processActions` and `safeProcessActions` in `solidity/contracts/CawActions.sol`.
 
-When a batch contains WITHDRAW actions but the validator passes `withdrawFee == 0`, `_handleWithdrawals` runs (populating the in-storage `_pendingWithdrawIds` / `_pendingWithdrawAmounts`) but `_executeWithdrawals` is skipped — the LZ message to L1 is never sent. The user's `usedCawonce` bit is set, so the action *did* land, but the withdrawable balance never reaches L1. The pending storage arrays sit until the next batch with withdraws clobbers them.
-
-**Why it exists today:**
-
-Both call sites are gated:
-```solidity
-if (sc.withdrawCount > 0) {
-  _handleWithdrawals(...);
-}
-if (sc.withdrawCount > 0 && withdrawFee > 0) {
-  _executeWithdrawals(...);
-}
-```
-
-The split was original code (since `822a35d`, the packed-binary refactor) — it was never the case that `_handleWithdrawals` ran inside the same `if` as `_executeWithdrawals` in `processActions`. The asymmetry between `processActions` (split) and `safeProcessActions` (combined) was fixed in `55bcb17` by mirroring the split in `safeProcessActions`. **No on-chain behavior changed there** — `processActions` was already this shape.
-
-**The two real failure modes:**
-
-1. **bypassLZ mode (storage on Ethereum):** `withdrawFee` is *legitimately zero* — `CawProfileL2.setWithdrawable` short-circuits to call `cawProfile.setWithdrawable(...)` directly with no LZ involvement. Today, `_executeWithdrawals` is gated off and the user's withdraw is silently dropped despite zero fee being correct.
-2. **LZ mode (storage on Base/Arbitrum) with an under-funded validator:** validator forgets to compute `withdrawFee` via `withdrawQuote`, passes 0. Today: silent drop. With the gate removed: `lzSend` reverts the whole batch (LayerZero rejects underpriced messages). Failing loud is arguably better.
-
-**Proposed fix (one-liner):**
-
-Drop the `&& withdrawFee > 0` gate. `CawProfileL2.setWithdrawable` already handles bypassLZ correctly (no LZ fee needed). For LZ mode, an underpriced send will revert with a clear LayerZero error instead of silently dropping. Operators are forced to compute the quote correctly.
-
-**What we don't know yet (must verify before fixing):**
-- That LayerZero's `_lzSend` actually reverts with `msg.value == 0` rather than silently dropping. Documented behavior says it reverts; not yet confirmed against the LZ OApp source.
-- That no operator tooling intentionally calls `processActions` with `withdrawFee == 0` while expecting silent skipping. (Audit `client/src/services/ValidatorService/index.ts`'s tx-build path.)
-- That the stale `_pendingWithdrawIds` / `_pendingWithdrawAmounts` arrays don't leak into a later call's accounting. (Confirmed harmless on read because the next `_handleWithdrawals` overwrites with `=`-assignment, and `_executeWithdrawals` self-deletes after use — but worth re-checking with a unit test before the fix lands.)
-
-**Pre-fix checklist:**
-
-- [ ] Test: bypassLZ mode + WITHDRAW + `withdrawFee == 0`. Today: withdrawable balance NOT updated on L1. After fix: balance IS updated.
-- [ ] Test: LZ mode + WITHDRAW + `withdrawFee == 0`. Today: silent drop. After fix: tx reverts with LZ underpayment error.
-- [ ] Test: two consecutive batches, first with WITHDRAW + zero fee, second with no withdraws. Verify `_pendingWithdrawIds` / `_pendingWithdrawAmounts` aren't incorrectly applied to the second batch.
-- [ ] Audit `ValidatorService` to confirm `withdrawFee` is always quoted via `withdrawQuote` (or `0` only when bypassLZ). Today's silent-drop covers up any missing quote logic; the fix will surface it.
-
-**Why it's not blocking testnet launch:** the failure mode is at most "user re-submits a withdraw" — no funds are stuck and no signatures are wasted (the `usedCawonce` bit prevents replay, but the user can submit a fresh withdraw with a new cawonce). The risk of touching this without proper tests is higher than the risk of leaving it.
+**Resolved** (commit `267d15e3`, 2026-05-17): all three call sites (`_handleWithdrawals` + `_executeWithdrawals` pairs) now
+revert with `NoWithdrawFee()` when `withdrawFee == 0 && !cawProfile.bypassLZ()`, instead of silently skipping the LZ send.
+The failure is now an explicit revert, not a silent drop.
 
 ### LZ DVN 3-of-3 config — verify before mainnet
 
@@ -627,7 +592,7 @@ right scope before we ship.
 
 - [ ] **Validator-to-validator action gossip**. `relayDmToPeers` covers DMs but there's no equivalent for actions — the FE can fail over to a peer instance for *reading*, but action submission doesn't get gossiped between validators. Consequence: if a user submits to validator A and A goes down before broadcasting on chain, the action is lost; another validator can't pick it up. Add an `action-relay` route + service mirroring `DmRelayService`. Reuse the same on-chain registry + signed-payload pattern (`/api/dm/relay` already validates that the payload is signed by the sender's wallet, so no extra peer auth is needed). Dedup by `(senderId, cawonce)`.
 - [ ] **Action submission resilience inside the FE**. When the user posts and validator A 5xx's, we currently fail the post — we don't retry on the next host. Mirror the read-side failover for action submission too (`api/actions.ts`).
-- [ ] **Stale registry handling**. `useInstanceStore` and `DmRelayService` both query `InstanceRegistered` events from `fromBlock: 0` every refresh. Cache the last-scanned block per service so this scales as the registry grows.
+- [x] **Stale registry handling — RESOLVED.** `InstanceRegistryService` (which `DmRelayService` reads from) already caches `lastScannedBlock` and scans incrementally after the initial cold scan. `instanceStore.ts` (frontend) uses a 3-tier fallback (localStorage → API → chain) with cooldown, so the chain tier itself is rarely hit.
 
 ### Validator Profitability Modeling
 
@@ -678,7 +643,7 @@ right scope before we ship.
 
 ### Infrastructure
 
-- [ ] **CLI: fix `sudo -u caw -E` HOME bug.** `caw update` runs `sudo -u caw -E yarn install` which preserves `HOME=/root`, breaking yarn's RC lookup with EACCES on `/root/.config/yarn`. Switch `-E` to `-H` (sets HOME to target user's home dir) on every privileged drop in `cli/src/steps/update.js` and any other step that runs commands as the install user.
+- [x] **CLI: `sudo -u caw -E` HOME bug — RESOLVED.** `runAsInstallUser()` in `cli/src/steps/update.js` now runs `sudo -u ${installUser} -E env HOME=${home} ${cmd}` — keeps `-E` (needed for `DATABASE_URL` etc. to reach prisma) while overriding just `HOME`, which is a cleaner fix than the `-E`→`-H` swap originally proposed here.
 
 - [ ] **CORS audit: wildcard public-read endpoints, allowlist auth-gated ones.** `/api/shorturl/<code>` is now wildcarded (commit 138776a) but other public-read endpoints aren't. Audit every `/api/*` route and bucket as: (a) public-read (no auth, scrapable data — wildcard CORS), (b) auth-gated (requireAuth, cookies, or any state mutation — origin-allowlist from discovered-instances), or (c) admin-only (no CORS). Likely public-read candidates: `/api/users/by-token`, `/api/users/<username>`, `/api/feed`, `/api/caws/<id>`, `/api/hashtags/*`, `/api/search/*`. Auth-gated: `/api/dm/*`, `/api/auth/*`, `/api/upload/*`, `/api/users/me`, `/api/notifications/*`, `/api/bookmarks`. Never set `Access-Control-Allow-Credentials: true` with a `*` origin. Cross-node mirroring won't fully work (e.g. a feed rendering content from another node) until the public-read set has CORS.
 
@@ -692,7 +657,7 @@ right scope before we ship.
   - Don't touch this until there's a real driver (a client wanting to deploy to a non-Base storage chain). Indirection costs zero today; the abstraction is purely future-tense.
   - Same restructure unblocks the parallel "replication chain → archive contract address" map in `ValidatorService` (today there's one hardcoded `CAW_ACTIONS_ARCHIVE_ADDRESS`).
 
-- [ ] **Scope Elasticsearch indexes per install** — multi-install on shared ES cluster currently collides.
+- [x] **Scope Elasticsearch indexes per install — RESOLVED.** `ElasticsearchService.ts` derives `cawsIndex`/`usersIndex`/`notificationsIndex` from `ES_INDEX_PREFIX`, used consistently at every call site; no bare `'caws'`/`'users'`/`'notifications'` string remains anywhere else in `client/src`.
   - Today `ElasticsearchService.ts` creates flat indexes: `caws`, `users`, `notifications`. Two CAW installs pointing at the same ES cluster (the common case for testnet + mainnet on one VPS) write to the same indexes — search results mix content from both.
   - The CLI already writes `ES_INDEX_PREFIX` to `client/.env` (derived from the domain). Just nothing reads it yet.
   - **Sketch:** add a `prefixedIndex(name: string)` helper inside `ElasticsearchService` that returns `${process.env.ES_INDEX_PREFIX || ''}${name}` (with a separator if prefix is set). Replace every literal `'caws'` / `'users'` / `'notifications'` with the helper. Same for the search-time queries elsewhere (`search.ts`, `notifications.ts`, etc).
@@ -716,7 +681,7 @@ right scope before we ship.
   - **Sequencing:** the bucket-storage work (UX → image handling → step 5) is the first prerequisite. After that, the audit-and-Redis-ify pass is ~1-2 days. The singleton-lock work is another half-day. Validating the whole thing means standing up a second app host in staging behind nginx with `least_conn` upstream and exercising the full app — also ~half-day of operator-side work.
   - **Why now:** the changes are individually cheap; the cost balloons if we let in-memory state metastasize across more services. Doing the audit while the surface is still small is the leverage.
 
-- [ ] **RPC fallback support (primary + secondary)** — graceful degradation when the paid RPC is throttled or down.
+- [x] **RPC fallback support (primary + secondary) — RESOLVED.** Backend (`rpcProvider.ts`) already had `FallbackProvider` / `makeResilientHttpProvider`. CLI (`rpcUrls.js`) now prompts for an optional fallback URL and `generate.js` writes it to `.env`; the frontend RPC proxy (`rpc-proxy.ts`) now loops primary → fallback instead of calling the single-URL getter.
   - Today every backend service reads one URL from env (`L2_RPC_URL_HTTP`, `L1_RPC_URL`, etc.) with no failover. If the primary chokes, the indexer stalls and the validator stops submitting until someone restarts.
   - The CLI already detects-and-warns when the operator types a known public RPC, but we don't currently let them set a fallback to use as a safety net.
   - **Sketch of the work:**
