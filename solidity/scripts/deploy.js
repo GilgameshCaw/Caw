@@ -2884,7 +2884,8 @@ After deployment, ABIs are automatically regenerated for the frontend.
     console.log('\nContracts to deploy:');
     for (const phase of [1, 2, 3, 4, 5]) {
       const phaseContracts = Object.entries(CONTRACTS)
-        .filter(([key, c]) => c.phase === phase && !deployer.state.addresses[key]);
+        .filter(([key, c]) => c.phase === phase && !deployer.state.addresses[key])
+        .filter(([_, c]) => !c.condition || c.condition(deployer.state, deployer, deployer.env));
       if (phaseContracts.length > 0) {
         console.log(`  Phase ${phase}: ${phaseContracts.map(([k]) => k).join(', ')}`);
       }
