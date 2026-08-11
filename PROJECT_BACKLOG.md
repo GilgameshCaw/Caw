@@ -302,7 +302,7 @@ The CAW node has several distinct DDoS surfaces; rate-limit coverage is uneven. 
 
 - [ ] **DM endpoints (`/api/dm/*`)** — DMs are E2E encrypted so no content-scanning, but they're still inserts into Postgres. A peer hammering relayDmToPeers with spoofed identities can fill the DB. The existing `requireAuth` gate covers identity spoofing; add a per-recipient inbound rate limit to bound DB growth.
 
-- [ ] **L1 minter / deposit endpoints** — these proxy to expensive on-chain ops. A client repeating a failed mint transaction can pile up `txQueue` rows. Per-`senderId` cap on simultaneous in-flight `txQueue` entries.
+- [x] **L1 minter / deposit endpoints — RESOLVED.** `client/src/api/routes/actions.ts` (around L670-693) already caps simultaneous in-flight `txQueue` entries per-`senderId` at 10, for both `waiting_for_deposit` and `waiting_for_session` states. Introduced in `d9bc1e2c`, hardened in `f0e4e587`/`9695d9b7`.
 
 - [ ] **L7 / nginx layer** — install.sh's nginx server block doesn't set `limit_req_zone` or `limit_conn_zone`. Add reasonable defaults at the nginx layer (e.g. 50 req/s burst with a 100-conn cap per IP). nginx limits run before the Node app even sees the request, which protects from a stampede the Node event loop can't handle.
 
