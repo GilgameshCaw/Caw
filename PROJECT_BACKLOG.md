@@ -100,21 +100,21 @@ nginx + postfix jails available with one-line additions.
       `sudo systemctl status fail2ban`. Should be `active (running)` after
       install.
 
-#### .env file permissions on disk
+#### .env file permissions on disk — MOSTLY RESOLVED
 
-**Status:** Partially fixed in generate.js (writes new .env files at mode
-0600 / 0640). Existing installs from before this change still have the
-group/world-readable mode 0664 — operators should chmod manually.
+generate.js writes new .env files at the correct mode (0600 / 0640) and
+explicitly chmods after write to handle the "file already exists" case
+(Node's writeFileSync mode option is ignored when the target already
+exists). Verified on both live testnet installs — both client/.env
+files are -rw------- (0600).
 
-- [ ] **Document a one-time fix for existing installs:**
+- [ ] **Document a one-time fix for existing installs that predate this
+      change** (still relevant for any install created before generate.js
+      started setting the mode explicitly):
         ```
         sudo chmod 600 /var/www/<domain>/client/.env
         sudo chmod 640 /var/www/<domain>/client/src/services/FrontEnd/.env
         ```
-- [ ] Already wired: generate.js writes new files at the right mode +
-      explicitly chmods after write to handle the "file already exists"
-      case (Node's writeFileSync mode option is ignored when the target
-      already exists).
 
 #### Validator key off the API host (mainnet)
 
@@ -713,7 +713,7 @@ One-liner install: `curl -fsSL https://raw.githubusercontent.com/.../install.sh 
 
 **Still missing in Phase 1:**
 
-- [ ] Docker support — `docker-compose.yml` generation for PostgreSQL + Redis + app (optional)
+- [x] **Docker support (Postgres + Redis) — RESOLVED.** `generate.js` (`buildDockerCompose()`) generates `docker-compose.yml` for Postgres + Redis when `config.useDocker === 'docker'`; the infra-mode prompt in `infrastructure.js` and the Docker branch in `install.js` are both wired up. Note: the generated compose file covers Postgres + Redis only, not the app itself — Elasticsearch has a separate static `docker-compose.elasticsearch.yml`; the app process still runs under pm2 either way. Unclear whether an app-container mode was ever intended or if DB-only was always the plan; worth confirming.
 - [ ] pm2 startup-on-boot integration (`pm2 startup`)
 - [ ] Pros/cons guidance at each prompt — explain economics, replication tradeoffs, tip-amount tradeoffs
 
