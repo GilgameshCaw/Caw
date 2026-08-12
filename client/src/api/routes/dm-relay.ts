@@ -28,7 +28,7 @@ import { getPeers } from '../../services/InstanceRegistryService'
 import { recoverAddressFromCanonical } from '../../services/InstanceRegistryService/envelopeCrypto'
 import { verifyDmSenderSig } from '../dmSenderSig'
 import { getNetworkId } from '../../utils/networkId'
-import { checkInboundRelayRate } from '../dmRateLimit'
+import { peekInboundRelayRate, recordInboundRelayHit } from '../dmRateLimit'
 
 const router = Router()
 
@@ -130,10 +130,16 @@ router.post('/', async (req, res) => {
     // cap in server.ts doesn't catch a distributed flood aimed at one
     // recipient). See dmRateLimit.ts for why this is deliberately simpler
     // than the sender-side warm/cold limiter.
-    const inboundCheck = await checkInboundRelayRate(Number(recipientId))
-    if (!inboundCheck.allowed) {
+    //
+    // Read-only peek here — NOT the increment. Incrementing pre-auth
+    // would let an attacker who never signs correctly still burn through
+    // a victim's hourly budget with junk requests (found in review of
+    // #48 by tentencaw). The actual increment happens after signature
+    // verification succeeds, below.
+    const inboundPeek = await peekInboundRelayRate(Number(recipientId))
+    if (!inboundPeek.allowed) {
       console.warn(`[DM Relay] 429 inbound cap hit for recipient=${recipientId} from ${remote} (sourceInstance=${sourceInstanceId})`)
-      res.set('Retry-After', String(inboundCheck.resetSeconds))
+      res.set('Retry-After', String(inboundPeek.resetSeconds))
       return res.status(429).json({ error: 'Too many messages for this recipient right now' })
     }
 
@@ -165,6 +171,15 @@ router.post('/', async (req, res) => {
     if (recoveredAddr.toLowerCase() !== source.validatorAddress.toLowerCase()) {
       console.warn(`[DM Relay] 403 sig mismatch from ${remote} (sourceInstance=${sourceInstanceId}): recovered=${recoveredAddr} expected=${source.validatorAddress}`)
       return res.status(403).json({ error: 'Signature does not match source instance validator' })
+    }
+
+    // Signature verified — this request is authenticated. Only now does
+    // it count against the recipient's budget.
+    const inboundRecord = await recordInboundRelayHit(Number(recipientId))
+    if (!inboundRecord.allowed) {
+      console.warn(`[DM Relay] 429 inbound cap hit (post-auth) for recipient=${recipientId} from ${remote} (sourceInstance=${sourceInstanceId})`)
+      res.set('Retry-After', String(inboundRecord.resetSeconds))
+      return res.status(429).json({ error: 'Too many messages for this recipient right now' })
     }
 
     // Block check (either direction). If the recipient blocked the sender
