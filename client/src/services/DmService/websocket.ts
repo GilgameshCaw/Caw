@@ -17,34 +17,6 @@ interface SocketBuckets { typing: Bucket; markRead: Bucket }
 
 const eventBuckets = new Map<string, SocketBuckets>()
 
-// ---------------------------------------------------------------------------
-// Per-IP concurrent connection cap
-// ---------------------------------------------------------------------------
-// Socket.IO has per-event rate limiting (M-2, above) but nothing capping how
-// many sockets a single IP can hold open simultaneously. An unbounded
-// connection-flood exhausts file descriptors regardless of what each socket
-// does afterward. Cap concurrent connections per IP; reject the handshake
-// (not just close post-connect) so the flood never gets far enough to
-// consume a socket slot.
-//
-// Trusts x-forwarded-for's leftmost entry when present (nginx sits in front
-// in production and sets this); falls back to the raw handshake address
-// otherwise. Like the other rate-limit defaults added around the codebase,
-// this cap (10) is not load-tested against real usage patterns — a single
-// household/office NAT could plausibly have several legitimate users online
-// at once, so this may need to go up if that turns out to be common. Tune
-// via WS_MAX_CONNECTIONS_PER_IP.
-const MAX_CONNECTIONS_PER_IP = parseInt(process.env.WS_MAX_CONNECTIONS_PER_IP || '10', 10)
-const connectionsByIp = new Map<string, number>()
-
-function getClientIp(socket: Socket): string {
-  const forwarded = socket.handshake.headers['x-forwarded-for']
-  if (typeof forwarded === 'string' && forwarded.length > 0) {
-    return forwarded.split(',')[0].trim()
-  }
-  return socket.handshake.address
-}
-
 function makeBucket(maxTokens: number): Bucket {
   return { tokens: maxTokens, lastRefill: Date.now() }
 }
@@ -107,13 +79,13 @@ export class DmWebSocketService {
     // returning sessionToken in its JSON body. Audit fix 2026-05-14 (F1
     // follow-up).
     this.io.use(async (socket: AuthenticatedSocket, next) => {
+      // Concurrent-connection cap moved to nginx (limit_conn on
+      // /socket.io/, see cli/src/steps/nginx.js's ensureConnLimitZoneConf).
+      // The Map<ip, count> that used to live here counted only after
+      // successful auth and trusted a client-suppliable header for the
+      // key — nginx's limit_conn counts before this handler ever runs,
+      // keyed on the TCP peer it observed directly. (#45, tentencaw.)
       try {
-        const clientIp = getClientIp(socket)
-        const currentCount = connectionsByIp.get(clientIp) || 0
-        if (currentCount >= MAX_CONNECTIONS_PER_IP) {
-          return next(new Error('Too many connections from this address'))
-        }
-
         const cookieHeader = socket.handshake.headers.cookie || ''
         const cookieRe = new RegExp(`(?:^|;\\s*)${SESSION_COOKIE_NAME.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}=([^;]+)`)
         const cookieToken = cookieHeader.match(cookieRe)?.[1]
@@ -163,9 +135,8 @@ export class DmWebSocketService {
     this.io.on('connection', (socket: AuthenticatedSocket) => {
       console.log(`[DM-WS] User ${socket.username} (${socket.userId}) connected`)
 
-      const clientIp = getClientIp(socket)
-      connectionsByIp.set(clientIp, (connectionsByIp.get(clientIp) || 0) + 1)
-
+      // Slot already claimed in the auth middleware above — not re-counted
+      // here to avoid double-incrementing the same connection.
       socket.join(`user:${socket.userId}`)
       this.joinUserConversations(socket)
 
@@ -254,14 +225,6 @@ export class DmWebSocketService {
         // M-2: clean up rate-limit buckets
         eventBuckets.delete(socket.id)
 
-        // Release this connection's slot in the per-IP cap.
-        const ip = getClientIp(socket)
-        const remaining = (connectionsByIp.get(ip) || 1) - 1
-        if (remaining <= 0) {
-          connectionsByIp.delete(ip)
-        } else {
-          connectionsByIp.set(ip, remaining)
-        }
       })
     })
   }
