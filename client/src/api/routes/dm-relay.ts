@@ -134,7 +134,7 @@ router.post('/', async (req, res) => {
     // Read-only peek here — NOT the increment. Incrementing pre-auth
     // would let an attacker who never signs correctly still burn through
     // a victim's hourly budget with junk requests (found in review of
-    // #48 by tentencaw). The actual increment happens after signature
+    // #45 by tentencaw). The actual increment happens after signature
     // verification succeeds, below.
     const inboundPeek = await peekInboundRelayRate(Number(recipientId))
     if (!inboundPeek.allowed) {
@@ -174,7 +174,7 @@ router.post('/', async (req, res) => {
     }
 
     // Dedup, moved ahead of the inbound-budget increment (found in
-    // review of #48 by tentencaw): a legitimate retry of a message
+    // review of #45 by tentencaw): a legitimate retry of a message
     // that already landed shouldn't cost the recipient another slot
     // in their hourly budget. Message.relayId is partial-unique; the
     // same envelope arriving twice (legitimate retry, or a malicious
