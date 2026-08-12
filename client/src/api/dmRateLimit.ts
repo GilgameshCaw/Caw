@@ -42,9 +42,19 @@ const WINDOW_SECONDS = 60 * 60
 // do 100/h each (WARM_LIMIT_PER_HOUR above), so a cap much lower than a
 // small multiple of that would throttle a popular account getting
 // legitimate messages from just a handful of warm contacts. 500 leaves
-// room for ~5 concurrent warm senders at their individual ceiling before
-// this cap bites — still not validated against real usage, just checked
-// against the other limiter in this file so they're not contradictory.
+// headroom for that, in the loose sense — still not validated against
+// real usage, just checked against the other limiter so they're not
+// flatly contradictory.
+//
+// Correction (found in review of #48 by tentencaw): "room for ~5
+// concurrent warm senders" overstated the precision of that comparison.
+// KEY_WARM is scoped per-(senderId, recipientId) and only enforced by
+// the sender's home node; KEY_INBOUND_RELAY is scoped per-recipientId
+// and aggregates across every source instance relaying to them. Warm
+// senders on other instances aren't counted against this node's
+// WARM_LIMIT_PER_HOUR at all, so "5 senders at 100/h each" isn't a real
+// derivation of 500 — just a rough sanity check that 500 isn't obviously
+// too low relative to the other number in this file.
 const INBOUND_RELAY_LIMIT_PER_HOUR = Number(process.env.DM_RELAY_INBOUND_LIMIT_PER_HOUR) || 500
 const KEY_INBOUND_RELAY = (recipientId: number) => `caw:dm:rate:relay-inbound:${recipientId}`
 
@@ -76,7 +86,14 @@ export async function peekInboundRelayRate(recipientId: number): Promise<{ allow
       return { allowed: false, resetSeconds: ttl > 0 ? ttl : WINDOW_SECONDS }
     }
     return { allowed: true }
-  } catch {
+  } catch (err: any) {
+    // Fail-open, matching recordInboundRelayHit() and checkDmRate()
+    // above. Logged (found lacking in review of #48 by tentencaw) so a
+    // sustained Redis outage shows up somewhere other than "the limiter
+    // silently stopped limiting" — this fires on every peek during an
+    // outage, which is noisy, but the alternative (no signal at all)
+    // is worse for noticing the limiter is effectively off.
+    console.warn(`[DM Relay] peekInboundRelayRate failed open for recipient=${recipientId}: ${err?.message ?? err}`)
     return { allowed: true }
   }
 }
@@ -103,7 +120,8 @@ export async function recordInboundRelayHit(recipientId: number): Promise<{ allo
       return { allowed: false, resetSeconds: ttl > 0 ? ttl : WINDOW_SECONDS }
     }
     return { allowed: true }
-  } catch {
+  } catch (err: any) {
+    console.warn(`[DM Relay] recordInboundRelayHit failed open for recipient=${recipientId}: ${err?.message ?? err}`)
     return { allowed: true }
   }
 }

@@ -173,8 +173,25 @@ router.post('/', async (req, res) => {
       return res.status(403).json({ error: 'Signature does not match source instance validator' })
     }
 
-    // Signature verified — this request is authenticated. Only now does
-    // it count against the recipient's budget.
+    // Dedup, moved ahead of the inbound-budget increment (found in
+    // review of #48 by tentencaw): a legitimate retry of a message
+    // that already landed shouldn't cost the recipient another slot
+    // in their hourly budget. Message.relayId is partial-unique; the
+    // same envelope arriving twice (legitimate retry, or a malicious
+    // replay inside the 5-min window) hits the unique index and we
+    // 200-noop with the existing message id. The caller treats both
+    // the same way.
+    const existing = await prisma.message.findUnique({
+      where: { relayId },
+      select: { id: true },
+    })
+    if (existing) {
+      return res.json({ status: 'duplicate', messageId: existing.id })
+    }
+
+    // Signature verified and not a duplicate — this request is
+    // authenticated and novel. Only now does it count against the
+    // recipient's budget.
     const inboundRecord = await recordInboundRelayHit(Number(recipientId))
     if (!inboundRecord.allowed) {
       console.warn(`[DM Relay] 429 inbound cap hit (post-auth) for recipient=${recipientId} from ${remote} (sourceInstance=${sourceInstanceId})`)
@@ -220,18 +237,6 @@ router.post('/', async (req, res) => {
         })
         if (!follower) return res.status(403).json({ error: 'DM_PRIVACY', reason: 'FOLLOWING' })
       }
-    }
-
-    // Dedup. Message.relayId is partial-unique; the same envelope
-    // arriving twice (legitimate retry, or a malicious replay inside
-    // the 5-min window) hits the unique index and we 200-noop with
-    // the existing message id. The caller treats both the same way.
-    const existing = await prisma.message.findUnique({
-      where: { relayId },
-      select: { id: true },
-    })
-    if (existing) {
-      return res.json({ status: 'duplicate', messageId: existing.id })
     }
 
     // Determine the recipient's inbox status for this conversation:
