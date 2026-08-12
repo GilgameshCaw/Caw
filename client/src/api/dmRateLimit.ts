@@ -53,15 +53,53 @@ const KEY_INBOUND_RELAY = (recipientId: number) => `caw:dm:rate:relay-inbound:${
  * on Redis errors, matching checkDmRate()'s behavior — the per-source-IP
  * cap in server.ts is the backstop if this path is unavailable.
  */
-export async function checkInboundRelayRate(recipientId: number): Promise<{ allowed: boolean; resetSeconds?: number }> {
+/**
+ * Read-only check — does NOT increment. Safe to call before the request
+ * is authenticated: cheap (single Redis GET, no write), so it can't be
+ * used to cheaply exhaust a target recipient's budget the way calling
+ * checkInboundRelayRate() pre-auth could (found in review of #48 by
+ * tentencaw — an attacker who never bothers signing correctly could
+ * still burn through a victim's hourly budget with junk requests, since
+ * the increment happened before signature verification rejected them).
+ * Callers should peek before doing expensive work, then call
+ * recordInboundRelayHit() only after the request is fully verified.
+ */
+export async function peekInboundRelayRate(recipientId: number): Promise<{ allowed: boolean; resetSeconds?: number }> {
+  const key = KEY_INBOUND_RELAY(recipientId)
+  try {
+    const [count, ttl] = await Promise.all([
+      redis.get(key),
+      redis.ttl(key),
+    ])
+    const n = count ? Number(count) : 0
+    if (n > INBOUND_RELAY_LIMIT_PER_HOUR) {
+      return { allowed: false, resetSeconds: ttl > 0 ? ttl : WINDOW_SECONDS }
+    }
+    return { allowed: true }
+  } catch {
+    return { allowed: true }
+  }
+}
+
+/**
+ * Increment-and-check the inbound relay bucket for a recipient. Call
+ * only after the request has been fully authenticated — see
+ * peekInboundRelayRate() above for why. ttl < 0 (not just count === 1)
+ * re-arms the window on every call where the TTL is missing, so a prior
+ * expire() failure (e.g. a Redis blip between the incr and the expire)
+ * self-heals on the next hit instead of leaving the key permanently
+ * unexpiring — same pattern checkDmRate() uses above. (Also found in
+ * review of #48 by tentencaw.)
+ */
+export async function recordInboundRelayHit(recipientId: number): Promise<{ allowed: boolean; resetSeconds?: number }> {
   const key = KEY_INBOUND_RELAY(recipientId)
   try {
     const count = await redis.incr(key)
-    if (count === 1) {
+    const ttl = await redis.ttl(key)
+    if (ttl < 0) {
       await redis.expire(key, WINDOW_SECONDS)
     }
     if (count > INBOUND_RELAY_LIMIT_PER_HOUR) {
-      const ttl = await redis.ttl(key)
       return { allowed: false, resetSeconds: ttl > 0 ? ttl : WINDOW_SECONDS }
     }
     return { allowed: true }
