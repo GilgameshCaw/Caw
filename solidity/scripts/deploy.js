@@ -1198,6 +1198,95 @@ for (const L of L2_CHAIN_KEYS) {
   // NOTE: setL1Peer, setCawActions, setERC1271Sibling on CawProfileLedger_${L}
   // are now wired in its 7-arg constructor (nonce prediction). No phase-3 steps needed.
 
+  // Nonce-prediction correctness assertion (L2 sibling of the L1 assertion
+  // above — "Assert CawCapOracle_L1.cawActions == CawActions_L1"). Runs in
+  // phase 1, right after CawProfileLedger_<L> / CawCapOracle_<L> /
+  // CawActions_<L> / CawActionsERC1271_<L> all land (all four are phase 1
+  // on chain L), and well before phase 7 finalization/renounce. If the
+  // deploy scheduler or a partial `--contract` redeploy ever lets that
+  // four-contract nonce chain deploy non-contiguously, the immutables baked
+  // into the Ledger and/or CawCapOracle end up pointing at the wrong
+  // contract (or a stale leftover from a prior deploy generation) with NO
+  // setter to repair it post-deploy — this is exactly what bricked posting
+  // on testnet on 2026-07-24 (CawProfileLedger_L2.cawActions ended up wired
+  // to CawChallengeRelay_L2 instead of CawActions_L2, and CawCapOracle_L2's
+  // own cawActions immutable pointed at a completely orphaned address from
+  // an earlier deploy generation). Fail fast here so a mis-wired deploy
+  // aborts instead of shipping.
+  LINKING_STEPS.push({
+    name: `Assert CawProfileLedger_${L}.cawActions == CawActions_${L} (nonce-prediction check)`,
+    chain: L,
+    phase: 1,
+    custom: async (state, deployer) => {
+      const ledgerAddr = state.addresses[`CawProfileLedger_${L}`];
+      const actionsAddr = state.addresses[`CawActions_${L}`];
+      if (!ledgerAddr || !actionsAddr) {
+        throw new Error(`CawProfileLedger_${L} or CawActions_${L} not deployed — cannot assert nonce-prediction correctness`);
+      }
+      const ledger = deployer.getContract(`CawProfileLedger_${L}`);
+      if (!ledger) {
+        throw new Error(`CawProfileLedger_${L} contract handle missing`);
+      }
+      const storedCawActions = await ledger.cawActions();
+      if (storedCawActions.toLowerCase() !== actionsAddr.toLowerCase()) {
+        throw new Error(
+          `NONCE PREDICTION MISMATCH: CawProfileLedger_${L}.cawActions=${storedCawActions} ` +
+          `but CawActions_${L} deployed at ${actionsAddr}. ` +
+          `Posting will revert on every node (getTokens() calls cawActions.nextCawonce(), ` +
+          `which the wrong contract doesn't implement). Abort and redeploy the whole ` +
+          `Ledger/CapOracle/CawActions/ERC1271 chain for ${L} together — do not resume/patch in place.`
+        );
+      }
+      console.log(`   Assertion passed: CawProfileLedger_${L}.cawActions() == CawActions_${L} (${actionsAddr})`);
+
+      // Also assert the sibling immutables while we're here — same class of
+      // fragility, same "no setter to repair it" consequence.
+      const capOracleAddr = state.addresses[`CawCapOracle_${L}`];
+      const erc1271Addr = state.addresses[`CawActionsERC1271_${L}`];
+      if (capOracleAddr) {
+        const storedCapOracle = await ledger.capOracle();
+        if (storedCapOracle.toLowerCase() !== capOracleAddr.toLowerCase()) {
+          throw new Error(
+            `NONCE PREDICTION MISMATCH: CawProfileLedger_${L}.capOracle=${storedCapOracle} ` +
+            `but CawCapOracle_${L} deployed at ${capOracleAddr}.`
+          );
+        }
+        console.log(`   Assertion passed: CawProfileLedger_${L}.capOracle() == CawCapOracle_${L} (${capOracleAddr})`);
+
+        // CawCapOracle's OWN cawActions immutable is a second, independent
+        // prediction (its predictedSiblingKey, computed relative to its own
+        // deploy nonce) — the 2026-07-24 incident broke this one too, and
+        // differently (it pointed at a fully orphaned address, not even the
+        // relay). Check it directly against the CawCapOracle contract, not
+        // just transitively via the Ledger.
+        const capOracle = deployer.getContract(`CawCapOracle_${L}`);
+        if (capOracle) {
+          const oracleCawActions = await capOracle.cawActions();
+          if (oracleCawActions.toLowerCase() !== actionsAddr.toLowerCase()) {
+            throw new Error(
+              `NONCE PREDICTION MISMATCH: CawCapOracle_${L}.cawActions=${oracleCawActions} ` +
+              `but CawActions_${L} deployed at ${actionsAddr}. The cap-push mechanism is ` +
+              `broken (setCapRatio/setTipRatio calls go to the wrong contract) — abort and ` +
+              `redeploy the whole nonce chain for ${L} together.`
+            );
+          }
+          console.log(`   Assertion passed: CawCapOracle_${L}.cawActions() == CawActions_${L} (${actionsAddr})`);
+        }
+      }
+      if (erc1271Addr) {
+        const storedErc1271 = await ledger.erc1271Sibling();
+        if (storedErc1271.toLowerCase() !== erc1271Addr.toLowerCase()) {
+          throw new Error(
+            `NONCE PREDICTION MISMATCH: CawProfileLedger_${L}.erc1271Sibling=${storedErc1271} ` +
+            `but CawActionsERC1271_${L} deployed at ${erc1271Addr}.`
+          );
+        }
+        console.log(`   Assertion passed: CawProfileLedger_${L}.erc1271Sibling() == CawActionsERC1271_${L} (${erc1271Addr})`);
+      }
+    },
+    condition: (state) => state.addresses[`CawProfileLedger_${L}`] && state.addresses[`CawActions_${L}`],
+  });
+
   // Phase 5: full-mesh archive ↔ relay wiring. For every other L2 L':
   //   - On L (storage), CawChallengeRelay_L peers L'.lzEid → CawActionsArchive_L'.
   //   - On L' (archive), CawActionsArchive_L' peers L.lzEid → CawChallengeRelay_L.
@@ -1292,6 +1381,77 @@ for (const L of L2_CHAIN_KEYS) {
   // it ever ran). Removed 2026-06-05 alongside the RENOUNCE_ON_DEPLOY=mandatory
   // switch. CawActions has zero admin surface by construction; see
   // commit 2e408f07 (refactor(solidity): drop Ownable from CawActions).
+
+  // ---------------------------------------------------------------------------
+  // CROSS-CHAIN PEER READ-BACK ASSERTIONS (phase 7 — after L1 is deployed).
+  //
+  // The L1<->L2 CawProfile <-> CawProfileLedger peer link is set from PREDICTED
+  // addresses inside the constructors (both sides bake the other's address as an
+  // immutable + consume the per-eid OnlyOnce setPeer slot, then renounce owner).
+  // There is NO setter to repair a mis-predicted peer post-deploy: setPeer is
+  // OnlyOnce, the contracts are non-proxy, and owner is renounced. So a wrong
+  // prediction ships a permanently-broken peer that requires a FULL L1+L2
+  // redeploy to fix (verified by operators ten/tencawffee, Zin/cawnest,
+  // nyaromesama — the "new L2 ledger -> old L1 CawNames" break, 2026-08).
+  //
+  // The existing phase-1 nonce-prediction assert covers the L2 ledger's
+  // SAME-CHAIN immutables (cawActions / capOracle / erc1271) but CANNOT check
+  // the CROSS-CHAIN L1 peer at phase 1, because L1 CawProfile doesn't exist yet
+  // (it deploys in phase 2). These phase-7 asserts close that gap: they read the
+  // actual on-chain peers() from BOTH sides against the freshly-deployed
+  // addresses (state.addresses.CawProfile / CawProfileLedger_<L>, NOT the stale
+  // address book) and ABORT the deploy on any mismatch — so a mis-predicted peer
+  // fails loudly here instead of silently bricking posting/sync in production.
+
+  // L2 side: CawProfileLedger_<L>.peers(L1_eid) must be the NEW L1 CawProfile.
+  LINKING_STEPS.push({
+    name: `Assert CawProfileLedger_${L}.peers(L1) == CawProfile (cross-chain peer read-back)`,
+    chain: L,
+    phase: 7,
+    condition: (state) => state.addresses[`CawProfileLedger_${L}`] && state.addresses.CawProfile,
+    custom: async (state, deployer) => {
+      const ledger = deployer.getContract(`CawProfileLedger_${L}`);
+      if (!ledger) throw new Error(`CawProfileLedger_${L} handle missing — cannot verify L1 peer`);
+      const l1Eid = CHAINS[deployer.getChainKey('L1')].lzEid;
+      const expected = ethers.zeroPadValue(state.addresses.CawProfile, 32).toLowerCase();
+      const actual = (await ledger.peers(l1Eid)).toLowerCase();
+      if (actual !== expected) {
+        throw new Error(
+          `CROSS-CHAIN PEER MISMATCH: CawProfileLedger_${L}.peers(L1 eid ${l1Eid})=${actual} ` +
+          `but the L1 CawProfile deployed at ${state.addresses.CawProfile} (expected ${expected}). ` +
+          `The L2 ledger's L1 peer was baked from a STALE/mis-predicted L1 address. This is ` +
+          `unfixable in place (setPeer is OnlyOnce, non-proxy, owner renounced). ABORT and ` +
+          `redeploy the FULL L1+L2 cascade together — do not resume/patch.`
+        );
+      }
+      console.log(`   Assertion passed: CawProfileLedger_${L}.peers(L1)==CawProfile (${expected})`);
+    },
+  });
+
+  // L1 side (reverse): CawProfile.peers(L_eid) must be THIS L2's ledger.
+  LINKING_STEPS.push({
+    name: `Assert CawProfile.peers(${L}) == CawProfileLedger_${L} (cross-chain peer read-back)`,
+    chain: 'L1',
+    phase: 7,
+    condition: (state) => state.addresses.CawProfile && state.addresses[`CawProfileLedger_${L}`],
+    custom: async (state, deployer) => {
+      const profile = deployer.getContract('CawProfile');
+      if (!profile) throw new Error(`CawProfile handle missing — cannot verify ${L} peer`);
+      const lEid = CHAINS[deployer.getChainKey(L)].lzEid;
+      const expected = ethers.zeroPadValue(state.addresses[`CawProfileLedger_${L}`], 32).toLowerCase();
+      const actual = (await profile.peers(lEid)).toLowerCase();
+      if (actual !== expected) {
+        throw new Error(
+          `CROSS-CHAIN PEER MISMATCH: CawProfile.peers(${L} eid ${lEid})=${actual} ` +
+          `but CawProfileLedger_${L} deployed at ${state.addresses[`CawProfileLedger_${L}`]} (expected ${expected}). ` +
+          `The L1 profile's ${L}-ledger peer was baked from a stale/mis-predicted address. ` +
+          `Unfixable in place (OnlyOnce, non-proxy, owner renounced). ABORT and redeploy the ` +
+          `FULL L1+L2 cascade together.`
+        );
+      }
+      console.log(`   Assertion passed: CawProfile.peers(${L})==CawProfileLedger_${L} (${expected})`);
+    },
+  });
 }
 
 // =============================================================================
@@ -2285,17 +2445,91 @@ class MultiChainDeployer {
       }
     }
 
+    // Nonce-prediction-chain closure. `predictedSiblingKey` / `predictedSiblings`
+    // wire a FORWARD reference (contract A, deployed first, bakes in the future
+    // address of contract B, deployed later at a fixed nonce offset) as an
+    // immutable constructor arg with NO SETTER. That forward reference is
+    // invisible to the `dependencies` graph walked above (dependencies point
+    // the other way — B depends on A, not A on B), so the transitive-dependents
+    // closure can never expand backward from "B is being redeployed" to "A's
+    // baked-in prediction of B is now stale."
+    //
+    // Concretely: CawProfileLedger_<L> predicts CawCapOracle_<L> (nonce+1) and
+    // CawActions_<L> (nonce+2) at its own deploy time, assuming the four-
+    // contract chain [Ledger, CawCapOracle, CawActions, CawActionsERC1271]
+    // deploys with NOTHING else interleaved. If only a subset of that chain is
+    // in `toRedeploy` (e.g. CawProfile-cascade force-included Ledger + CawActions
+    // but not CawCapOracle), the missing member stays at its OLD address/nonce
+    // while its siblings redeploy fresh — collapsing or expanding the nonce gap
+    // and silently mis-wiring every immutable that depended on the old offsets.
+    // Root cause of the 2026-07-24 testnet brick: CawCapOracle_L2 was left
+    // behind by a CawProfile-cascade redeploy, shifting CawActions_L2 to
+    // Ledger's nonce+1 instead of the predicted +2, so the Ledger's cawActions
+    // immutable ended up wired to whatever landed at +2 instead (CawChallengeRelay_L2).
+    //
+    // Fix: whenever ANY contract that participates in a nonce-prediction chain
+    // (as predictor OR as a predicted sibling) is in `toRedeploy`, force EVERY
+    // other member of that same chain in too, so the whole chain always
+    // redeploys atomically and the baked-in offsets stay valid. Derived
+    // directly from the CONTRACTS table (predictedSiblingKey / predictedSiblings)
+    // instead of a hand-maintained list, so it cannot drift out of sync again.
+    {
+      // Build undirected adjacency: predictor <-> each predicted sibling.
+      const chainEdges = {};
+      const addEdge = (a, b) => {
+        (chainEdges[a] = chainEdges[a] || new Set()).add(b);
+        (chainEdges[b] = chainEdges[b] || new Set()).add(a);
+      };
+      for (const [key, config] of Object.entries(CONTRACTS)) {
+        if (config.predictedSiblingKey && CONTRACTS[config.predictedSiblingKey]) {
+          addEdge(key, config.predictedSiblingKey);
+        }
+        if (config.predictedSiblings) {
+          for (const { key: sibKey } of config.predictedSiblings) {
+            if (CONTRACTS[sibKey]) addEdge(key, sibKey);
+          }
+        }
+      }
+      // Flood-fill from every contract already in toRedeploy across chainEdges.
+      let chainChanged = true;
+      while (chainChanged) {
+        chainChanged = false;
+        for (const key of [...toRedeploy]) {
+          for (const neighbor of chainEdges[key] || []) {
+            if (!toRedeploy.has(neighbor)) {
+              toRedeploy.add(neighbor);
+              chainChanged = true;
+            }
+          }
+        }
+      }
+    }
+
     // If CawProfile (L1) is being redeployed, token IDs will change —
     // all CawProfileLedger and CawActions contracts must also be redeployed,
     // and the database must be reset (old actions reference stale token IDs).
-    const nameContracts = ['CawProfile', 'CawProfileLedger_L1', 'CawProfileLedger_L2', 'CawProfileLedger_L2b'];
+    // Derived from L2_CHAIN_KEYS (not hardcoded L2/L2b) so a third L2 doesn't
+    // silently fall outside this check.
+    const nameContracts = ['CawProfile', 'CawProfileLedger_L1', ...L2_CHAIN_KEYS.map(L => `CawProfileLedger_${L}`)];
     const isNameRedeploy = nameContracts.some(c => toRedeploy.has(c));
     if (isNameRedeploy) {
-      // Force-include all CawActions and related contracts
+      // Force-include all CawActions and related contracts.
+      //
+      // CawCapOracle_<L> and CawActionsERC1271_<L> are listed explicitly here
+      // (belt-and-suspenders) even though the nonce-prediction-chain closure
+      // above now also pulls them in automatically once CawProfileLedger_<L> /
+      // CawActions_<L> are added — this list documents intent for the one
+      // cascade site that has bitten us before (2026-07-24 incident:
+      // CawCapOracle_L2 was left off this list, stayed at its old address
+      // while its Ledger/CawActions siblings redeployed fresh, and both the
+      // Ledger's cawActions immutable AND CawCapOracle's own cawActions
+      // immutable ended up wired to stale/wrong addresses).
       const forceInclude = [
-        'CawProfileLedger_L1', 'CawProfileLedger_L2', 'CawProfileLedger_L2b',
-        'CawActions_L1', 'CawActions_L2', 'CawActions_L2b',
-        'CawActionsArchive_L2b', 'CawChallengeRelay_L2',
+        'CawProfileLedger_L1', 'CawCapOracle_L1', 'CawActions_L1', 'CawActionsERC1271_L1',
+        ...L2_CHAIN_KEYS.flatMap(L => [
+          `CawProfileLedger_${L}`, `CawCapOracle_${L}`, `CawActions_${L}`, `CawActionsERC1271_${L}`,
+          `CawActionsArchive_${L}`, `CawChallengeRelay_${L}`,
+        ]),
         'CawProfileMinter', 'CawProfileQuoter', 'CawProfileLens', 'CawProfileMarketplace',
       ];
       for (const key of forceInclude) {
