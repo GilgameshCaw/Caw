@@ -480,6 +480,14 @@ function buildEnvVars(nodeType, config) {
   // Optional fallback RPC URLs — routed through FallbackProvider
   // (client/src/utils/rpcProvider.ts) when set. HTTP-only: the fallback
   // exists for read/poll resilience, not for WSS event subscription.
+  //
+  // Only written here, at install time — an operator on an existing box
+  // doesn't get this from caw update; they'd add
+  // L1_RPC_URL_HTTP_FALLBACK / L2_RPC_URL_HTTP_FALLBACK to .env by hand.
+  // Less of a gap than the same shape elsewhere, since the variable
+  // names are documented here and the reading side (rpc-proxy.ts) has
+  // always been there — but worth knowing this isn't retrofitted onto
+  // existing installs automatically.
   if (config.l1RpcUrlHttpFallback) env.L1_RPC_URL_HTTP_FALLBACK = config.l1RpcUrlHttpFallback
   if (config.l2RpcUrlHttpFallback) env.L2_RPC_URL_HTTP_FALLBACK = config.l2RpcUrlHttpFallback
   if (config.ethMainnetRpcUrl) env.ETH_MAINNET_RPC_URL = config.ethMainnetRpcUrl

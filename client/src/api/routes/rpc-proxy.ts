@@ -369,10 +369,22 @@ async function forwardToOneUpstream(url: string, auth: string | null, body: any)
  * (L1_RPC_URL_HTTP_FALLBACK / L2_RPC_URL_HTTP_FALLBACK — see rpcProvider.ts
  * getL1HttpRpcUrls/getL2HttpRpcUrls). Tries each upstream in order (primary
  * first); each already gets its own one-shot retry via
- * forwardToOneUpstream(), so a single flaky upstream costs at most one
- * extra ~200ms round trip before we move to the next one. Only the LAST
- * upstream's error is returned if all of them fail — earlier failures are
- * logged so an operator can see which upstream is degrading.
+ * forwardToOneUpstream(). Only the LAST upstream's error is returned if
+ * all of them fail — earlier failures are logged so an operator can see
+ * which upstream is degrading.
+ *
+ * Cost of moving to the next upstream depends on how the current one
+ * failed. For a fast failure (401/429, where forwardToOneUpstream's
+ * retry returns immediately) the extra cost is ~200ms — the one-shot
+ * retry's delay, and that's the whole story. It does NOT hold for a
+ * hang: UPSTREAM_TIMEOUT_MS is 8000ms and the retry runs a second full
+ * attempt, so a hanging upstream costs ~8000ms + 200ms + 8000ms ≈ 16.2s
+ * before the loop advances. With one fallback configured, a browser
+ * request can wait ~32.4s total instead of ~16.2s. Hanging is also one
+ * of the shapes a rate-limited or overloaded provider takes — not a
+ * corner case unrelated to why this exists — so this slow path isn't
+ * rare. A shorter per-upstream timeout may be worth revisiting once
+ * more than one fallback is common.
  */
 async function forwardUpstream(chain: Chain, body: any): Promise<any> {
   const upstreams = getUpstreams(chain)
@@ -384,7 +396,29 @@ async function forwardUpstream(chain: Chain, body: any): Promise<any> {
   for (let i = 0; i < upstreams.length; i++) {
     const { url, auth } = upstreams[i]
     lastResult = await forwardToOneUpstream(url, auth, body)
-    if (!lastResult?.error) return lastResult
+    // Only advance on transport-layer failure, not on a legitimate
+    // JSON-RPC error the upstream answered correctly. forwardToOneUpstream
+    // returns res.json() verbatim on res.ok, so an upstream that responds
+    // HTTP 200 with a JSON-RPC error body (execution reverted, invalid
+    // params, "query returned more than 10000 results", ...) comes back
+    // with .error set too — that's the call failing, not the upstream.
+    // eth_call reverts aren't rare here; it's most of what this proxy
+    // carries, and Multicall3 batching means one browser action can
+    // bundle several. Without this check, each of those got re-sent to
+    // every configured upstream for an identical answer.
+    //
+    // Every error forwardToOneUpstream produces itself uses code -32603
+    // (Upstream HTTP ..., Upstream timeout ..., Upstream fetch failed:
+    // ..., Upstream exhausted, RPC upstream not configured) — gating on
+    // that narrows "every error" down to "errors that look like ours."
+    // Not airtight: an upstream can legitimately return -32603 itself
+    // (it's the JSON-RPC spec's own "Internal error"), in which case this
+    // would still fall through to the fallback for a same-shaped
+    // application error. Signalling transport failure out of band instead
+    // of encoding it as a JSON-RPC error would close that gap, at the
+    // cost of a larger change.
+    const isTransportError = lastResult?.error?.code === -32603
+    if (!lastResult?.error || !isTransportError) return lastResult
     if (i < upstreams.length - 1) {
       console.warn(`[rpc-proxy] ${chain} upstream ${i + 1}/${upstreams.length} failed (${lastResult.error?.message || 'unknown'}), trying fallback`)
     }
@@ -489,7 +523,11 @@ router.post('/l1', gate, proxyRateLimit, makeHandler('l1'))
 router.post('/l2', gate, proxyRateLimit, makeHandler('l2'))
 
 // Light health probe — confirms the proxy is wired without exposing
-// upstream URLs.
+// upstream URLs. Reports whether upstreams are CONFIGURED, not whether
+// they're actually REACHABLE — this was true before fallback support
+// too (!!getL1HttpRpcUrl() and this length check mean the same thing),
+// noting it here so it isn't mistaken for a liveness check now that
+// there's more than one upstream in play.
 router.get('/health', (_req, res) => {
   const l1 = getUpstreams('l1').length > 0
   const l2 = getUpstreams('l2').length > 0
