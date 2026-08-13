@@ -371,6 +371,14 @@ export function createApp() {
   // Default is a rough first line of defense; tune via
   // ACTIONS_RATE_LIMIT_PER_MIN once there's real traffic data — this
   // has not been load-tested against production throughput.
+  //
+  // This counts REQUESTS, not actions. /api/actions/batch (below,
+  // actions.ts ~L1715) accepts up to 64 actions per call, so the
+  // effective ceiling on submitted actions is ACTIONS_RATE_LIMIT_PER_MIN
+  // * 64 — ~3,840/min at the default, not 60/min. An operator planning
+  // around a specific actions/min figure should account for this
+  // multiplier; a single-action request and a 64-action batch request
+  // cost the limiter the same.
   app.use('/api/actions', rateLimit({
     windowMs: 60 * 1000,
     max: parseInt(process.env.ACTIONS_RATE_LIMIT_PER_MIN || '60', 10),
