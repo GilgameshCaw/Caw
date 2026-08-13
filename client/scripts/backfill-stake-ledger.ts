@@ -44,15 +44,16 @@ import { CAW_ACTIONS_ADDRESS } from '../src/abi/addresses'
 import { ACTION_TYPE_NUM_TO_NAME, ACTION_COST, type FixedCostActionType } from '../src/utils/cawActionCosts'
 import { PRECISION } from '../src/services/StakeLedger/contractMath'
 import { getCawProfileLedger } from '../src/services/StakeLedger/cawProfileLedger'
+import { getNetworkId } from '../src/utils/networkId'
 
 const args = new Set(process.argv.slice(2))
 const RESET = args.has('--reset')
 
 const CAW_CLIENT_ID = (() => {
-  const raw = process.env.CLIENT_ID
+  const raw = getNetworkId()
   const n = raw ? Number(raw) : NaN
   if (!Number.isFinite(n) || n <= 0) {
-    throw new Error('CLIENT_ID is required (set it in client/.env)')
+    throw new Error('NETWORK_ID (or legacy CLIENT_ID) is required (set it in client/.env)')
   }
   return n
 })()
