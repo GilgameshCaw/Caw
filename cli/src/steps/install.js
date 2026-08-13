@@ -3,7 +3,7 @@ import fs from 'fs'
 import path from 'path'
 import ora from 'ora'
 import { section, success, warn, err, dim, brand, tipBlock } from '../utils/ui.js'
-import { ensureCliSymlink } from './update.js'
+import { ensureCliSymlink, userHome } from './update.js'
 
 /**
  * Run a long command without freezing the spinner. execSync blocks the
@@ -213,11 +213,14 @@ export async function runInstall(nodeType, config, installDir) {
           // still leave HOME=/root, breaking yarn's config lookup the same
           // way update.js's runAsInstallUser() comment describes — use -H
           // plus an explicit env wrapper instead, passing NODE_OPTIONS
-          // through explicitly since -H alone would drop it.
+          // through explicitly since -H alone would drop it. userHome()
+          // (imported from update.js, same helper runAsInstallUser() uses)
+          // resolves the actual home dir via getent rather than assuming
+          // /home/<user> — falls back to that guess only if getent fails.
           await runStreamed('sudo', [
             '-u', buildAsUser, '-H', 'env',
             `NODE_OPTIONS=${buildEnv.NODE_OPTIONS}`,
-            `HOME=/home/${buildAsUser}`,
+            `HOME=${userHome(buildAsUser)}`,
             'yarn', 'build',
           ], { cwd: frontendDir, env: buildEnv })
         } else {
