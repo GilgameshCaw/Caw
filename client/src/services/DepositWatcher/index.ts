@@ -122,6 +122,15 @@ export const depositWatcherService: Service = {
       }
 
       let behindAfterPoll = false
+      // Consecutive record-failure count. Drives an exponential backoff on the
+      // retry cadence (see the anyFailed branch and the setTimeout in finally):
+      // a permanently-failing deposit must not hot-loop queryFilter+getBlock+
+      // findFirst at the catch-up rate. Reset to 0 on any fully-successful poll.
+      let consecutiveFailures = 0
+      // Cap for that backoff (15 min). Transient failures recover in 1-2 polls
+      // (60s → 2m), while a permanently-failing deposit settles to one retry
+      // per 15 min: 60s, 2m, 4m, 8m, 15m, 15m… — visible lag, not a hot loop.
+      const DEPOSIT_FAILURE_BACKOFF_CAP_MS = 15 * 60_000
 
       const poll = async () => {
         if (!alive) return
@@ -158,7 +167,11 @@ export const depositWatcherService: Service = {
             await Promise.all(uniqueBlocks.map(async bn => {
               try {
                 const block = await provider.getBlock(bn)
-                blockTsByNumber.set(bn, new Date(Number(block?.timestamp ?? 0) * 1000))
+                // getBlock can resolve to null (rather than throw) on some
+                // providers; Number(null?.timestamp ?? 0) * 1000 would silently
+                // stamp 1970-01-01 into the snapshot the activity chart reads.
+                // Treat null the same as the catch path below: approximate NOW.
+                blockTsByNumber.set(bn, block ? new Date(Number(block.timestamp) * 1000) : new Date())
               } catch {
                 // Provider hiccup → fall back to NOW; better an
                 // approximate timestamp than dropping the event.
@@ -202,10 +215,12 @@ export const depositWatcherService: Service = {
               // Hold the checkpoint so the failed block(s) are re-read next
               // poll. recordDeposit is idempotent (skips on existing
               // txHash+logIndex+reason), so already-recorded deposits in this
-              // range are no-ops on the retry. Poll again promptly rather than
-              // waiting the full interval.
-              behindAfterPoll = true
+              // range are no-ops on the retry. Count the failure so the retry
+              // cadence backs off (see finally) rather than hot-looping at the
+              // catch-up rate.
+              consecutiveFailures++
             } else {
+              consecutiveFailures = 0
               lastBlock = toBlock
               await redis.set(cpKey, String(lastBlock))
             }
@@ -216,10 +231,25 @@ export const depositWatcherService: Service = {
           rpc.reportError(err) // auto-heal on dead-connection errors
         } finally {
           if (!alive) return
-          // Same catch-up cadence as NftTransferWatcher: 250ms when
-          // we hit the per-poll cap (more blocks pending), full
-          // interval otherwise.
-          pollTimer = setTimeout(poll, behindAfterPoll ? 250 : cfg.pollIntervalMs)
+          // Poll cadence, in priority order:
+          //  1. a record failure held the checkpoint → back off exponentially
+          //     from the configured interval (capped) so a permanently-failing
+          //     deposit doesn't hot-loop and trip free-tier RPC rate limits.
+          //  2. hit the per-poll cap with more blocks pending → 250ms catch-up
+          //     (same as NftTransferWatcher).
+          //  3. otherwise → the full configured interval.
+          let nextPollMs: number
+          if (consecutiveFailures > 0) {
+            nextPollMs = Math.min(
+              cfg.pollIntervalMs * 2 ** (consecutiveFailures - 1),
+              DEPOSIT_FAILURE_BACKOFF_CAP_MS,
+            )
+          } else if (behindAfterPoll) {
+            nextPollMs = 250
+          } else {
+            nextPollMs = cfg.pollIntervalMs
+          }
+          pollTimer = setTimeout(poll, nextPollMs)
         }
       }
 
