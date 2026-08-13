@@ -210,7 +210,7 @@ function runAsInstallUser(cmd, opts = {}) {
  * the latter shouldn't happen for the install user but the fallback
  * keeps the CLI from crashing on exotic environments.
  */
-function userHome(user) {
+export function userHome(user) {
   try {
     const out = execSync(`getent passwd ${user}`, { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }).trim()
     const parts = out.split(':')
