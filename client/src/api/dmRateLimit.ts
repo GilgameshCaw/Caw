@@ -46,8 +46,8 @@ const WINDOW_SECONDS = 60 * 60
 // real usage, just checked against the other limiter so they're not
 // flatly contradictory.
 //
-// Correction (found in review of #45 by tentencaw): "room for ~5
-// concurrent warm senders" overstated the precision of that comparison.
+// Correction: "room for ~5 concurrent warm senders" overstated the
+// precision of that comparison.
 // KEY_WARM is scoped per-(senderId, recipientId) and only enforced by
 // the sender's home node; KEY_INBOUND_RELAY is scoped per-recipientId
 // and aggregates across every source instance relaying to them. Warm
@@ -67,8 +67,8 @@ const KEY_INBOUND_RELAY = (recipientId: number) => `caw:dm:rate:relay-inbound:${
  * Read-only check — does NOT increment. Safe to call before the request
  * is authenticated: cheap (single Redis GET, no write), so it can't be
  * used to cheaply exhaust a target recipient's budget the way calling
- * checkInboundRelayRate() pre-auth could (found in review of #45 by
- * tentencaw — an attacker who never bothers signing correctly could
+ * checkInboundRelayRate() pre-auth could — an attacker who never
+ * bothers signing correctly could
  * still burn through a victim's hourly budget with junk requests, since
  * the increment happened before signature verification rejected them).
  * Callers should peek before doing expensive work, then call
@@ -88,8 +88,7 @@ export async function peekInboundRelayRate(recipientId: number): Promise<{ allow
     return { allowed: true }
   } catch (err: any) {
     // Fail-open, matching recordInboundRelayHit() and checkDmRate()
-    // above. Logged (found lacking in review of #45 by tentencaw) so a
-    // sustained Redis outage shows up somewhere other than "the limiter
+    // above. Logged so a sustained Redis outage shows up somewhere other than "the limiter
     // silently stopped limiting" — this fires on every peek during an
     // outage, which is noisy, but the alternative (no signal at all)
     // is worse for noticing the limiter is effectively off.
@@ -105,8 +104,7 @@ export async function peekInboundRelayRate(recipientId: number): Promise<{ allow
  * re-arms the window on every call where the TTL is missing, so a prior
  * expire() failure (e.g. a Redis blip between the incr and the expire)
  * self-heals on the next hit instead of leaving the key permanently
- * unexpiring — same pattern checkDmRate() uses above. (Also found in
- * review of #45 by tentencaw.)
+ * unexpiring — same pattern checkDmRate() uses above.
  */
 export async function recordInboundRelayHit(recipientId: number): Promise<{ allowed: boolean; resetSeconds?: number }> {
   const key = KEY_INBOUND_RELAY(recipientId)
