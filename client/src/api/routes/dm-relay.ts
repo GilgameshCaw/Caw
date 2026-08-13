@@ -133,9 +133,8 @@ router.post('/', async (req, res) => {
     //
     // Read-only peek here — NOT the increment. Incrementing pre-auth
     // would let an attacker who never signs correctly still burn through
-    // a victim's hourly budget with junk requests (found in review of
-    // The actual increment happens after signature
-    // verification succeeds, below.
+    // a victim's hourly budget with junk requests. The actual increment
+    // happens after signature verification succeeds, below.
     const inboundPeek = await peekInboundRelayRate(Number(recipientId))
     if (!inboundPeek.allowed) {
       console.warn(`[DM Relay] 429 inbound cap hit for recipient=${recipientId} from ${remote} (sourceInstance=${sourceInstanceId})`)
@@ -173,10 +172,10 @@ router.post('/', async (req, res) => {
       return res.status(403).json({ error: 'Signature does not match source instance validator' })
     }
 
-    // Dedup, moved ahead of the inbound-budget increment (found in
-    // a legitimate retry of a message
-    // that already landed shouldn't cost the recipient another slot
-    // in their hourly budget. Message.relayId is partial-unique; the
+    // Dedup, moved ahead of the inbound-budget increment: a legitimate
+    // retry of a message that already landed shouldn't cost the
+    // recipient another slot in their hourly budget. Message.relayId is
+    // partial-unique; the
     // same envelope arriving twice (legitimate retry, or a malicious
     // replay inside the 5-min window) hits the unique index and we
     // 200-noop with the existing message id. The caller treats both
@@ -237,7 +236,12 @@ router.post('/', async (req, res) => {
     // messages that never land in their inbox.
     const inboundRecord = await recordInboundRelayHit(Number(recipientId))
     if (!inboundRecord.allowed) {
-      console.warn(`[DM Relay] 429 inbound cap hit for recipient=${recipientId} from ${remote} (sourceInstance=${sourceInstanceId})`)
+      // (authenticated) distinguishes this from the identically-worded
+      // peek rejection above: that one is a cheap early reject before
+      // signature verification runs, this one means an authenticated,
+      // deliverable message is what pushed the recipient over the cap
+      // — the signal that real traffic is hitting the limit.
+      console.warn(`[DM Relay] 429 inbound cap hit (authenticated) for recipient=${recipientId} from ${remote} (sourceInstance=${sourceInstanceId})`)
       res.set('Retry-After', String(inboundRecord.resetSeconds))
       return res.status(429).json({ error: 'Too many messages for this recipient right now' })
     }
