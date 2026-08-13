@@ -23,7 +23,7 @@
 //   npx tsx scripts/seed-stake-ledger.ts          # run for real
 //   npx tsx scripts/seed-stake-ledger.ts --dry    # show what we'd write
 //
-// Reads CLIENT_ID + L2_RPC_URL_HTTP / L2_RPC_URL from .env.
+// Reads NETWORK_ID (or legacy CLIENT_ID) + L2_RPC_URL_HTTP / L2_RPC_URL from .env.
 
 import 'dotenv/config'
 import { Contract } from 'ethers'
