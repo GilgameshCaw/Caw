@@ -166,6 +166,7 @@ export const depositWatcherService: Service = {
               }
             }))
 
+            let anyFailed = false
             for (const ev of events) {
               const args = (ev as ethers.EventLog).args
               if (!args) continue
@@ -188,12 +189,26 @@ export const depositWatcherService: Service = {
                   })
                 }, { timeout: 15_000 })
               } catch (err: any) {
+                // Swallow-and-advance was the bug: a failed deposit used to be
+                // warned and then lastBlock advanced past it, so the block was
+                // never re-read and the deposit was lost. Flag the failure so we
+                // hold the checkpoint and re-read this range next poll instead.
+                anyFailed = true
                 console.warn(`[DepositWatcher] Failed to record deposit tokenId=${tokenId} tx=${txHash}:`, err?.message)
               }
             }
 
-            lastBlock = toBlock
-            await redis.set(cpKey, String(lastBlock))
+            if (anyFailed) {
+              // Hold the checkpoint so the failed block(s) are re-read next
+              // poll. recordDeposit is idempotent (skips on existing
+              // txHash+logIndex+reason), so already-recorded deposits in this
+              // range are no-ops on the retry. Poll again promptly rather than
+              // waiting the full interval.
+              behindAfterPoll = true
+            } else {
+              lastBlock = toBlock
+              await redis.set(cpKey, String(lastBlock))
+            }
           }
           ctx.heartbeat('poll')
         } catch (err: any) {
