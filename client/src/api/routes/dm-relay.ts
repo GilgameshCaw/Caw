@@ -134,7 +134,7 @@ router.post('/', async (req, res) => {
     // Read-only peek here — NOT the increment. Incrementing pre-auth
     // would let an attacker who never signs correctly still burn through
     // a victim's hourly budget with junk requests (found in review of
-    // #45 by tentencaw). The actual increment happens after signature
+    // The actual increment happens after signature
     // verification succeeds, below.
     const inboundPeek = await peekInboundRelayRate(Number(recipientId))
     if (!inboundPeek.allowed) {
@@ -174,7 +174,7 @@ router.post('/', async (req, res) => {
     }
 
     // Dedup, moved ahead of the inbound-budget increment (found in
-    // review of #45 by tentencaw): a legitimate retry of a message
+    // a legitimate retry of a message
     // that already landed shouldn't cost the recipient another slot
     // in their hourly budget. Message.relayId is partial-unique; the
     // same envelope arriving twice (legitimate retry, or a malicious
@@ -187,16 +187,6 @@ router.post('/', async (req, res) => {
     })
     if (existing) {
       return res.json({ status: 'duplicate', messageId: existing.id })
-    }
-
-    // Signature verified and not a duplicate — this request is
-    // authenticated and novel. Only now does it count against the
-    // recipient's budget.
-    const inboundRecord = await recordInboundRelayHit(Number(recipientId))
-    if (!inboundRecord.allowed) {
-      console.warn(`[DM Relay] 429 inbound cap hit (post-auth) for recipient=${recipientId} from ${remote} (sourceInstance=${sourceInstanceId})`)
-      res.set('Retry-After', String(inboundRecord.resetSeconds))
-      return res.status(429).json({ error: 'Too many messages for this recipient right now' })
     }
 
     // Block check (either direction). If the recipient blocked the sender
@@ -237,6 +227,19 @@ router.post('/', async (req, res) => {
         })
         if (!follower) return res.status(403).json({ error: 'DM_PRIVACY', reason: 'FOLLOWING' })
       }
+    }
+
+    // Authenticated, not a duplicate, and not blocked/gated — this
+    // message will actually be delivered, so it's the right point to
+    // charge the recipient's inbound budget. Counting any earlier (e.g.
+    // right after signature verification) would let a blocked sender or
+    // a privacy-gated first-contact spend the recipient's budget on
+    // messages that never land in their inbox.
+    const inboundRecord = await recordInboundRelayHit(Number(recipientId))
+    if (!inboundRecord.allowed) {
+      console.warn(`[DM Relay] 429 inbound cap hit for recipient=${recipientId} from ${remote} (sourceInstance=${sourceInstanceId})`)
+      res.set('Retry-After', String(inboundRecord.resetSeconds))
+      return res.status(429).json({ error: 'Too many messages for this recipient right now' })
     }
 
     // Determine the recipient's inbox status for this conversation:
