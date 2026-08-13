@@ -28,14 +28,15 @@
 import 'dotenv/config'
 import { Contract } from 'ethers'
 import { makeJsonRpcProvider, getL2HttpRpcUrl, getL1HttpRpcUrl } from '../src/utils/rpcProvider'
-import { cawProfileL2Abi, cawProfileAbi } from '../src/abi/generated'
+import { cawProfileLedgerAbi, cawProfileAbi } from '../src/abi/generated'
 import { CAW_NAMES_L2_ADDRESS, CAW_NAMES_ADDRESS } from '../src/abi/addresses'
 import { prisma } from '../src/prismaClient'
+import { getNetworkId } from '../src/utils/networkId'
 
 function requireClientId(): number {
-  const raw = process.env.CLIENT_ID
+  const raw = getNetworkId()
   const n = raw ? Number(raw) : NaN
-  if (!Number.isFinite(n) || n <= 0) throw new Error('CLIENT_ID required')
+  if (!Number.isFinite(n) || n <= 0) throw new Error('NETWORK_ID (or legacy CLIENT_ID) required')
   return n
 }
 
@@ -46,7 +47,7 @@ async function main() {
   if (!rpcUrl) throw new Error('L2 RPC not configured (L2_RPC_URL_HTTP / L2_RPC_URL)')
 
   const l2Provider = makeJsonRpcProvider(rpcUrl, 84532)
-  const l2 = new Contract(CAW_NAMES_L2_ADDRESS, cawProfileL2Abi as any, l2Provider)
+  const l2 = new Contract(CAW_NAMES_L2_ADDRESS, cawProfileLedgerAbi as any, l2Provider)
 
   // L2's CawProfileL2 doesn't expose nextId/totalSupply (only L1 CawProfile
   // does — IDs are minted on L1, mirrored to L2). Read the count from L1.
@@ -141,9 +142,9 @@ async function main() {
   // double-count communal inflation. (Fresh installs: same cursor still
   // works, the indexer reads new events past the head as they arrive.)
   await prisma.stakeLedgerState.upsert({
-    where: { clientId },
+    where: { networkId: clientId },
     create: {
-      clientId,
+      networkId: clientId,
       multiplier: String(multiplier),
       totalCaw: String(totalCaw),
       lastBlock: BigInt(headBlock),

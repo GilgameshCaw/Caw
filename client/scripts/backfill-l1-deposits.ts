@@ -26,6 +26,7 @@ import { prisma } from '../src/prismaClient'
 import { CAW_NAMES_ADDRESS } from '../src/abi/addresses'
 import { makeJsonRpcProvider, getL1HttpRpcUrl } from '../src/utils/rpcProvider'
 import { scanLogsForward, findContractDeployBlock } from '../src/utils/chunkedLogs'
+import { getNetworkId } from '../src/utils/networkId'
 
 const args = process.argv.slice(2)
 const argFrom = args.indexOf('--from') >= 0 ? Number(args[args.indexOf('--from') + 1]) : undefined
@@ -33,10 +34,10 @@ const argTo = args.indexOf('--to') >= 0 ? Number(args[args.indexOf('--to') + 1])
 const argChunk = args.indexOf('--chunk') >= 0 ? Number(args[args.indexOf('--chunk') + 1]) : undefined
 
 const CAW_CLIENT_ID = (() => {
-  const raw = process.env.CLIENT_ID
+  const raw = getNetworkId()
   const n = raw ? Number(raw) : NaN
   if (!Number.isFinite(n) || n <= 0) {
-    throw new Error('CLIENT_ID is required (set it in client/.env)')
+    throw new Error('NETWORK_ID (or legacy CLIENT_ID) is required (set it in client/.env)')
   }
   return n
 })()
