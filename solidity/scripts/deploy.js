@@ -1038,6 +1038,7 @@ const LINKING_STEPS = [
     // wrong and the cap mechanism would be silently dead. Fail fast here so a
     // broken deploy is caught before it reaches the finalization phase.
     name: 'Assert CawCapOracle_L1.cawActions == CawActions_L1 (nonce-prediction check)',
+    critical: true,
     chain: 'L1',
     phase: 2,
     custom: async (state, deployer) => {
@@ -1215,6 +1216,7 @@ for (const L of L2_CHAIN_KEYS) {
   // aborts instead of shipping.
   LINKING_STEPS.push({
     name: `Assert CawProfileLedger_${L}.cawActions == CawActions_${L} (nonce-prediction check)`,
+    critical: true,
     chain: L,
     phase: 1,
     custom: async (state, deployer) => {
@@ -1406,6 +1408,7 @@ for (const L of L2_CHAIN_KEYS) {
   // L2 side: CawProfileLedger_<L>.peers(L1_eid) must be the NEW L1 CawProfile.
   LINKING_STEPS.push({
     name: `Assert CawProfileLedger_${L}.peers(L1) == CawProfile (cross-chain peer read-back)`,
+    critical: true,
     chain: L,
     phase: 7,
     condition: (state) => state.addresses[`CawProfileLedger_${L}`] && state.addresses.CawProfile,
@@ -1431,6 +1434,7 @@ for (const L of L2_CHAIN_KEYS) {
   // L1 side (reverse): CawProfile.peers(L_eid) must be THIS L2's ledger.
   LINKING_STEPS.push({
     name: `Assert CawProfile.peers(${L}) == CawProfileLedger_${L} (cross-chain peer read-back)`,
+    critical: true,
     chain: 'L1',
     phase: 7,
     condition: (state) => state.addresses.CawProfile && state.addresses[`CawProfileLedger_${L}`],
@@ -2246,18 +2250,25 @@ class MultiChainDeployer {
       }
 
       // Run each chain's steps sequentially, but all chains in parallel
-      await Promise.allSettled(
+      const linkResults = await Promise.allSettled(
         Object.entries(linksByChain).map(async ([chain, steps]) => {
           for (const step of steps) {
             try {
               await this.executeLink(step);
             } catch (e) {
               console.error(`Failed: ${step.name} - ${e.message}`);
-              // Continue with other steps on this chain
+              // Assertions marked `critical` abort the deploy instead of just logging.
+              if (step.critical) throw e;
+              // Otherwise continue with other steps on this chain
             }
           }
         })
       );
+      // Mirror the deploy path above: a rejected chain means a critical
+      // assertion threw. Surface it instead of shipping a broken cascade.
+      for (const r of linkResults) {
+        if (r.status === 'rejected') throw r.reason;
+      }
     }
   }
 
