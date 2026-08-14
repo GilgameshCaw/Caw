@@ -774,6 +774,14 @@ export const marketplaceIndexerService: Service = {
           // Process PayoutWithdrawn events (V2 H-15 pull-pattern)
           // Mark all pending rows for this seller as withdrawn. If the event
           // amount doesn't match the sum of pending rows, log a discrepancy.
+          //
+          // PayoutWithdrawn has no backfill path (unlike Deposited's manual
+          // backfill script or NftTransfer's auto-rescan), so a swallowed
+          // failure here strands the seller's pending payout rows as 'pending'
+          // permanently. Track failures and hold the checkpoint below so the
+          // range re-runs on the next poll — the same don't-advance-on-error
+          // behaviour the outer poll catch already relies on.
+          let payoutWithdrawnFailed = false
           for (const event of payoutsWithdrawn) {
             const ev = event as ethers.EventLog
             const seller    = String(ev.args[0]).toLowerCase()
@@ -812,12 +820,20 @@ export const marketplaceIndexerService: Service = {
                 console.warn(`[MarketplaceIndexer] PayoutWithdrawn: no pending rows found for seller=${seller.slice(0, 10)}... (bootstrapped past PayoutQueued?) tx=${ev.transactionHash.slice(0, 10)}...`)
               }
             } catch (err: any) {
+              payoutWithdrawnFailed = true
               console.error(`[MarketplaceIndexer] PayoutWithdrawn processing error for seller=${seller}:`, err.message?.slice(0, 200))
             }
           }
 
-          lastBlock = toBlock
-          await saveLastProcessedBlock(toBlock)
+          if (payoutWithdrawnFailed) {
+            console.warn(
+              `[MarketplaceIndexer] Holding checkpoint at block ${lastBlock} (not advancing to ${toBlock}): ` +
+              `one or more PayoutWithdrawn events failed to record; blocks ${fromBlock}..${toBlock} will be retried next poll.`
+            )
+          } else {
+            lastBlock = toBlock
+            await saveLastProcessedBlock(toBlock)
+          }
 
         } catch (err) {
           console.error('[MarketplaceIndexer] Poll error:', err)
