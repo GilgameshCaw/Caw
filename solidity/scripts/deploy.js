@@ -2531,6 +2531,13 @@ class MultiChainDeployer {
           `CawActionsArchive_${L}`, `CawChallengeRelay_${L}`,
         ]),
         'CawProfileMinter', 'CawProfileQuoter', 'CawProfileLens', 'CawProfileMarketplace',
+        // Setter-wired rather than constructor-wired: CawProfile is injected into
+        // these two by one-shot linking steps (setCawProfile), and neither declares
+        // CawProfile in its dependencies, so neither the dependents closure nor the
+        // nonce-chain closure above reaches them. Left out of a CawProfile cascade
+        // on 2026-08-04, both kept pointing at the old CawProfile with no setter
+        // left to repair it.
+        'CawNetworkManager', 'CawBuyAndBurn',
       ];
       for (const key of forceInclude) {
         if (CONTRACTS[key]) toRedeploy.add(key);
