@@ -177,6 +177,15 @@ constrains an RCE's exfiltration paths.
 revert with `NoWithdrawFee()` when `withdrawFee == 0 && !cawProfile.bypassLZ()`, instead of silently skipping the LZ send.
 The failure is now an explicit revert, not a silent drop.
 
+**Post-fix follow-up tasks** (carried forward, not resolved by the fix above):
+
+- [ ] Audit `ValidatorService` to confirm `withdrawFee` is always quoted via `withdrawQuote` (or `0` only when
+      `bypassLZ`). Before the fix, a validator that skipped the quote produced a silently dropped withdraw; after
+      it, the same validator reverts the whole batch. The fix makes this audit more load-bearing, not less.
+- [ ] Unit test: verify `_pendingWithdrawIds` / `_pendingWithdrawAmounts` storage cleanup across consecutive
+      batches. Confirmed harmless on read so far, but worth re-checking with a dedicated test now that the
+      revert path is live.
+
 ### LZ DVN 3-of-3 config — verify before mainnet
 
 **Status:** Implemented in `solidity/scripts/deploy.js` phase 6 (and `solidity/scripts/lz-dvn-config.js`). Runs automatically on mainnet deploys; testnet intentionally uses LZ defaults.
@@ -592,7 +601,8 @@ right scope before we ship.
 
 - [ ] **Validator-to-validator action gossip**. `relayDmToPeers` covers DMs but there's no equivalent for actions — the FE can fail over to a peer instance for *reading*, but action submission doesn't get gossiped between validators. Consequence: if a user submits to validator A and A goes down before broadcasting on chain, the action is lost; another validator can't pick it up. Add an `action-relay` route + service mirroring `DmRelayService`. Reuse the same on-chain registry + signed-payload pattern (`/api/dm/relay` already validates that the payload is signed by the sender's wallet, so no extra peer auth is needed). Dedup by `(senderId, cawonce)`.
 - [ ] **Action submission resilience inside the FE**. When the user posts and validator A 5xx's, we currently fail the post — we don't retry on the next host. Mirror the read-side failover for action submission too (`api/actions.ts`).
-- [x] **Stale registry handling — RESOLVED.** `InstanceRegistryService` (which `DmRelayService` reads from) already caches `lastScannedBlock` and scans incrementally after the initial cold scan. `instanceStore.ts` (frontend) uses a 3-tier fallback (localStorage → API → chain) with cooldown, so the chain tier itself is rarely hit.
+- [x] **Stale registry handling (backend) — RESOLVED.** `InstanceRegistryService` (which `DmRelayService` reads from) already caches `lastScannedBlock` and scans incrementally after the initial cold scan.
+- [ ] **Stale registry handling (frontend chain-tier cache).** `instanceStore.ts` uses a 3-tier fallback (localStorage → API → chain) with cooldown, so the chain tier is rarely hit — but when it is hit, it still walks backwards to genesis (computing `fromBlock` by subtracting a chunk from `toBlock` and looping until `fromBlock === 0n`). Cache the last-scanned block here too so the fallback tier itself scales as the registry grows, not just the cases that avoid it.
 
 ### Validator Profitability Modeling
 
@@ -681,7 +691,7 @@ right scope before we ship.
   - **Sequencing:** the bucket-storage work (UX → image handling → step 5) is the first prerequisite. After that, the audit-and-Redis-ify pass is ~1-2 days. The singleton-lock work is another half-day. Validating the whole thing means standing up a second app host in staging behind nginx with `least_conn` upstream and exercising the full app — also ~half-day of operator-side work.
   - **Why now:** the changes are individually cheap; the cost balloons if we let in-memory state metastasize across more services. Doing the audit while the surface is still small is the leverage.
 
-- [x] **RPC fallback support (primary + secondary) — RESOLVED.** Backend (`rpcProvider.ts`) already had `FallbackProvider` / `makeResilientHttpProvider`. CLI (`rpcUrls.js`) now prompts for an optional fallback URL and `generate.js` writes it to `.env`; the frontend RPC proxy (`rpc-proxy.ts`) now loops primary → fallback instead of calling the single-URL getter.
+- [x] **RPC fallback support (primary + secondary) — RESOLVED (backend); wiring in #41.** Backend (`rpcProvider.ts`) already implements `FallbackProvider` / `makeResilientHttpProvider`, reading `L1_RPC_URL_HTTP_FALLBACK` / `L2_RPC_URL_HTTP_FALLBACK` as comma-separated lists. As of this entry, the CLI (`rpcUrls.js`) does not yet prompt for a fallback URL, `generate.js` does not yet write either `*_HTTP_FALLBACK` variable, and the frontend RPC proxy (`rpc-proxy.ts`) still calls the singular `getL1HttpRpcUrl`/`getL2HttpRpcUrl` getters rather than the plural fallback-aware ones. #41 (`feat: wire up existing RPC fallback support`) completes this end-to-end integration — this entry describes the state once #41 lands, not the state without it.
   - Today every backend service reads one URL from env (`L2_RPC_URL_HTTP`, `L1_RPC_URL`, etc.) with no failover. If the primary chokes, the indexer stalls and the validator stops submitting until someone restarts.
   - The CLI already detects-and-warns when the operator types a known public RPC, but we don't currently let them set a fallback to use as a safety net.
   - **Sketch of the work:**
@@ -713,7 +723,8 @@ One-liner install: `curl -fsSL https://raw.githubusercontent.com/.../install.sh 
 
 **Still missing in Phase 1:**
 
-- [x] **Docker support (Postgres + Redis) — RESOLVED.** `generate.js` (`buildDockerCompose()`) generates `docker-compose.yml` for Postgres + Redis when `config.useDocker === 'docker'`; the infra-mode prompt in `infrastructure.js` and the Docker branch in `install.js` are both wired up. Note: the generated compose file covers Postgres + Redis only, not the app itself — Elasticsearch has a separate static `docker-compose.elasticsearch.yml`; the app process still runs under pm2 either way. Unclear whether an app-container mode was ever intended or if DB-only was always the plan; worth confirming.
+- [x] **Docker compose for database services (Postgres + Redis) — RESOLVED.** `generate.js` (`buildDockerCompose()`) generates `docker-compose.yml` for Postgres + Redis when `config.useDocker === 'docker'`; the infra-mode prompt in `infrastructure.js` and the Docker branch in `install.js` are both wired up. Elasticsearch has a separate static `docker-compose.elasticsearch.yml`.
+- [ ] **Docker containerization for the app service (optional).** The generated compose file covers Postgres + Redis only — the app process still runs directly under pm2, not in a container. Unclear whether an app-container mode was ever intended or DB-only was always the plan; evaluate whether containerizing the Node app itself is worth doing before checking this off.
 - [ ] pm2 startup-on-boot integration (`pm2 startup`)
 - [ ] Pros/cons guidance at each prompt — explain economics, replication tradeoffs, tip-amount tradeoffs
 
