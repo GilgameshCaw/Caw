@@ -2266,6 +2266,10 @@ class MultiChainDeployer {
       );
       // Mirror the deploy path above: a rejected chain means a critical
       // assertion threw. Surface it instead of shipping a broken cascade.
+      // This aborts AFTER every chain settles, not the moment one throws:
+      // allSettled is deliberate so assertions from every chain reach the
+      // log before the deploy stops. The reason surfaced is the first
+      // rejected chain in Object.entries order, not the earliest in time.
       for (const r of linkResults) {
         if (r.status === 'rejected') throw r.reason;
       }
