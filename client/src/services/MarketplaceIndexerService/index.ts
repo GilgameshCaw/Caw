@@ -672,6 +672,10 @@ export const marketplaceIndexerService: Service = {
             const ev = event as ethers.EventLog
             const seller = String(ev.args[0]).toLowerCase()
             const amount = BigInt(ev.args[1].toString())
+            // ethers v6 exposes the block-level log index as `index` (v5 was `logIndex`).
+            // Use null (not 0) as the "unknown" sentinel: 0 is a real index, and the
+            // partial unique on (queuedTxHash, queuedLogIndex) only covers non-null rows.
+            const queuedLogIndex = (ev as any).index ?? (ev as any).logIndex ?? null
             try {
               await prisma.marketplacePayout.create({
                 data: {
@@ -679,14 +683,22 @@ export const marketplaceIndexerService: Service = {
                   amount,
                   status: 'pending',
                   queuedTxHash: ev.transactionHash,
+                  queuedLogIndex,
                 },
               })
               console.log(`[MarketplaceIndexer] PayoutQueued: seller=${seller.slice(0, 10)}... amount=${amount.toString()} tx=${ev.transactionHash.slice(0, 10)}...`)
             } catch (err: any) {
-              // Idempotency: duplicate tx on re-index will hit unique-ish constraint.
-              // We don't have a unique constraint on queuedTxHash alone (one tx can
-              // queue multiple sellers), so log and continue rather than throw.
-              console.warn(`[MarketplaceIndexer] PayoutQueued insert error (may be re-index):`, err.message?.slice(0, 100))
+              // A single tx can queue multiple sellers, so queuedTxHash alone is not
+              // unique. Dedup is enforced by a partial unique index on
+              // (queuedTxHash, queuedLogIndex) WHERE queuedLogIndex IS NOT NULL, created
+              // out-of-band (db-push cannot express partial indexes). On block
+              // resync/replay Postgres raises unique_violation -> Prisma P2002; that is
+              // the expected idempotent no-op, not an error.
+              if (err?.code === 'P2002') {
+                console.debug(`[MarketplaceIndexer] PayoutQueued replay no-op tx=${ev.transactionHash.slice(0, 10)}... logIndex=${queuedLogIndex}`)
+              } else {
+                console.warn(`[MarketplaceIndexer] PayoutQueued insert error:`, err.message?.slice(0, 100))
+              }
             }
           }
 
