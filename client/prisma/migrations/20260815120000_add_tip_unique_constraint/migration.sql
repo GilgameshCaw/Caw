@@ -1,0 +1,24 @@
+-- Prevent duplicate Tip rows on block resync/replay.
+--
+-- handleCawAction/handleTipAction (ActionProcessor/actionHandlers.ts)
+-- looked up existing tips filtered on pending:true. Once a tip was
+-- confirmed (pending:false), a replayed/rescanned event no longer
+-- matched the lookup and fell through to create a fresh duplicate row.
+-- Confirmed on V1 production data: 12 duplicate rows, 347,312,728 CAW
+-- over-counted in tip totals (display-only impact — ValidatorService
+-- reward calculation does not read the Tip table).
+--
+-- This unique index is the DB-level backstop: even if the application
+-- logic is bypassed or two validators process the same event
+-- concurrently (TOCTOU on findFirst+create, verified independently),
+-- the second INSERT now fails with a unique-constraint violation
+-- instead of silently succeeding. actionHandlers.ts catches that
+-- violation (Prisma P2002) and treats it as a no-op.
+--
+-- Safe to apply on all currently-running V2 nodes: confirmed the Tip
+-- table has 0 rows on every node today (still recovering from the
+-- CawProfileLedger L1-peer wiring bug), so there is no existing
+-- duplicate data for this constraint to conflict with.
+
+-- CreateIndex
+CREATE UNIQUE INDEX "Tip_senderId_recipientId_cawonce_key" ON "Tip"("senderId", "recipientId", "cawonce");
