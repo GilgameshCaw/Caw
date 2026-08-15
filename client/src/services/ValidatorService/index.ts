@@ -4814,6 +4814,14 @@ console.log("succeededKeys", succeededKeys)
     // needs to run hourly — see the gate inside the loop body.
     let lastFinalizeRunAt = 0
 
+    // Concurrency guard for autoFinalizeSubmissions. The current call site
+    // awaits this function inline in the replication loop, so overlapping
+    // calls can't happen today — but that's a property of how the loop
+    // happens to be written, not something this function can rely on. Cheap
+    // insurance against a future refactor (e.g. firing it off without
+    // awaiting) causing two finalize passes to race on the same retry queue.
+    let isFinalizingSubmissions = false
+
     /**
      * Optimistic replication loop: submits checkpoint data directly to L2b
      * archive contract with stake-based security instead of LZ fees per batch.
@@ -5218,11 +5226,71 @@ console.log("succeededKeys", succeededKeys)
      * once, then write the checkpoint so subsequent ticks are cheap.
      */
     async function autoFinalizeSubmissions() {
+      if (isFinalizingSubmissions) return
+      isFinalizingSubmissions = true
       try {
         const { archiveRead: archive, archiveWrite: archiveW, l2bProvider: provider, l2bSubmitter: w } = await getL2bContracts()
 
         const latestBlock = await provider!.getBlockNumber()
         const checkpointKey = `optimistic-finalize:${w.getAddress().toLowerCase()}:last-block`
+        // Submissions that failed to finalize (transient RPC/gas error) go
+        // here instead of being dropped. Without this, the checkpoint below
+        // still advances unconditionally past their block — the only thing
+        // that changed is failures no longer strand the submission forever;
+        // they get retried here every cycle until they succeed, get resolved
+        // externally, or exhaust MAX_FINALIZE_RETRIES. Stored as a plain
+        // array (not JSON.stringify'd) since ChainData.value is a native
+        // Prisma Json column — same pattern as the checkpoint value above.
+        const retryKey = `optimistic-finalize:${w.getAddress().toLowerCase()}:pending-retry`
+        const MAX_FINALIZE_RETRIES = 10
+
+        interface RetryItem { id: number; retries: number }
+        const retryRecord = await prisma.chainData.findUnique({ where: { key: retryKey } })
+        const pendingRetries: RetryItem[] = Array.isArray(retryRecord?.value) ? retryRecord.value as any : []
+        const nextRetries: RetryItem[] = []
+
+        for (const item of pendingRetries) {
+          // getSubmission (read) and finalizeSubmission (write) are
+          // deliberately in separate try/catches. Both used to share one
+          // catch block, which meant an RPC hiccup on the read side spent a
+          // retry attempt identically to an actual finalize failure — during
+          // a provider outage, every pending submission would burn through
+          // MAX_FINALIZE_RETRIES on reads alone and dead-letter together,
+          // even though none of them had actually failed to finalize yet.
+          let sub: any
+          try {
+            sub = await archive.getSubmission(item.id)
+          } catch (readErr: any) {
+            // Couldn't even check status — leave retries untouched, try
+            // again next cycle. Don't count this against the submission.
+            nextRetries.push(item)
+            continue
+          }
+
+          const status = Number(sub[6])
+          if (status !== 0) continue // Finalized or slashed by someone else — drop from queue
+
+          const finalizedAt = Number(sub[5])
+          if (Math.floor(Date.now() / 1000) < finalizedAt) {
+            nextRetries.push(item) // Challenge period still active — keep waiting
+            continue
+          }
+
+          try {
+            console.log(`[OptimisticReplication] Retrying stranded submission ${item.id} (attempt ${item.retries + 1})...`)
+            const tx = await archiveW.finalizeSubmission(item.id)
+            await tx.wait()
+            console.log(`[OptimisticReplication] Finalized previously-stranded submission ${item.id}.`)
+          } catch (err: any) {
+            if (err?.reason?.includes('Not pending')) continue
+            if (item.retries + 1 >= MAX_FINALIZE_RETRIES) {
+              console.error(`[OptimisticReplication] Submission ${item.id} failed ${MAX_FINALIZE_RETRIES} times — dropping from retry queue. Last error: ${err?.shortMessage || err?.message}`)
+            } else {
+              nextRetries.push({ id: item.id, retries: item.retries + 1 })
+            }
+          }
+        }
+
         const cp = await prisma.chainData.findUnique({ where: { key: checkpointKey } })
         // ~12s/block on Arbitrum = ~28800 blocks/day. 4-day cold-start lookback.
         const cold = !cp
@@ -5231,54 +5299,80 @@ console.log("succeededKeys", succeededKeys)
           : Math.max(0, latestBlock - 28800 * 4)
         if (cold) console.log(`[OptimisticReplication] Cold-start finalize scan: ${fromBlock}..${latestBlock}`)
 
-        if (fromBlock > latestBlock) {
-          // No new blocks since last check. Common case — nothing to do.
-          return
-        }
+        if (fromBlock <= latestBlock) {
+          const events = await scanArchiveEvents(
+            archive,
+            provider,
+            archive.filters.SubmissionCreated(null, w.getAddress()),
+            fromBlock,
+            latestBlock,
+          )
 
-        const events = await scanArchiveEvents(
-          archive,
-          provider,
-          archive.filters.SubmissionCreated(null, w.getAddress()),
-          fromBlock,
-          latestBlock,
-        )
+          for (const ev of events) {
+            const args: any = ev.args
+            if (!args) continue
+            const submissionId = Number(args[0] || args.submissionId)
 
-        for (const ev of events) {
-          const args: any = ev.args
-          if (!args) continue
-          const submissionId = Number(args[0] || args.submissionId)
+            try {
+              const sub = await archive.getSubmission(submissionId)
+              const status = Number(sub[6]) // status enum: 0=PENDING, 1=FINALIZED, 2=SLASHED
+              if (status !== 0) continue // Not pending
 
-          try {
-            const sub = await archive.getSubmission(submissionId)
-            const status = Number(sub[6]) // status enum: 0=PENDING, 1=FINALIZED, 2=SLASHED
-            if (status !== 0) continue // Not pending
+              const finalizedAt = Number(sub[5])
+              const now = Math.floor(Date.now() / 1000)
+              if (now < finalizedAt) continue // Challenge period still active
 
-            const finalizedAt = Number(sub[5])
-            const now = Math.floor(Date.now() / 1000)
-            if (now < finalizedAt) continue // Challenge period still active
-
-            console.log(`[OptimisticReplication] Finalizing submission ${submissionId}...`)
-            const tx = await archiveW.finalizeSubmission(submissionId)
-            const receipt = await tx.wait()
-            console.log(`[OptimisticReplication] Finalized submission ${submissionId}. tx: ${receipt?.hash}`)
-          } catch (err: any) {
-            // Already finalized or slashed — not an error
-            if (err?.reason?.includes('Not pending')) continue
-            console.error(`[OptimisticReplication] Failed to finalize submission ${submissionId}: ${err?.shortMessage || err?.message}`)
+              console.log(`[OptimisticReplication] Finalizing submission ${submissionId}...`)
+              const tx = await archiveW.finalizeSubmission(submissionId)
+              const receipt = await tx.wait()
+              console.log(`[OptimisticReplication] Finalized submission ${submissionId}. tx: ${receipt?.hash}`)
+            } catch (err: any) {
+              // Already finalized or slashed — not an error
+              if (err?.reason?.includes('Not pending')) continue
+              console.error(`[OptimisticReplication] Failed to finalize submission ${submissionId}: ${err?.shortMessage || err?.message}`)
+              // Queue for retry instead of silently losing it — this is the
+              // fix for the stake-lock bug: a transient failure here used to
+              // mean this submission was never looked at again once the
+              // checkpoint (below) passed its block. Guard against a
+              // duplicate push: shouldn't happen since the checkpoint only
+              // moves forward (each submissionId's block is scanned once),
+              // but this loop's SubmissionCreated filter isn't proof against
+              // a future change reintroducing overlap, so check defensively.
+              if (!nextRetries.some(r => r.id === submissionId)) {
+                nextRetries.push({ id: submissionId, retries: 0 })
+              }
+            }
           }
         }
 
-        // Advance the checkpoint regardless of whether we found events. The
-        // next tick should resume from latestBlock+1 either way; failures
-        // above don't invalidate the scan range we already covered.
-        await prisma.chainData.upsert({
-          where: { key: checkpointKey },
-          create: { key: checkpointKey, value: latestBlock as any },
-          update: { value: latestBlock as any },
-        })
+        // The checkpoint always advances to latestBlock on every cycle,
+        // regardless of finalize failures above. This keeps the event scan
+        // window bounded to one cycle's worth of new blocks (never grows
+        // unbounded), so scanArchiveEvents/scanLogsForward's maxWindows cap
+        // is never at risk here — that's what the retry queue above is for.
+        //
+        // Both writes happen in one transaction: if the checkpoint advanced
+        // but this cycle's retry-queue update was lost (crash/OOM between
+        // the two), any newly-failed submission discovered this cycle would
+        // silently drop out of the retry queue forever — the exact bug this
+        // whole change exists to fix, just reintroduced at a lower
+        // probability. Committing them together closes that gap.
+        await prisma.$transaction([
+          prisma.chainData.upsert({
+            where: { key: checkpointKey },
+            create: { key: checkpointKey, value: latestBlock as any },
+            update: { value: latestBlock as any },
+          }),
+          prisma.chainData.upsert({
+            where: { key: retryKey },
+            create: { key: retryKey, value: nextRetries as any },
+            update: { value: nextRetries as any },
+          }),
+        ])
       } catch (err: any) {
         console.error(`[OptimisticReplication] Auto-finalize error: ${err?.shortMessage || err?.message}`)
+      } finally {
+        isFinalizingSubmissions = false
       }
     }
 
