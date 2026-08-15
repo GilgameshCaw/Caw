@@ -613,6 +613,7 @@ model Tip {
 
   @@index([senderId])
   @@index([senderId, recipientId, cawId])
+  @@unique([senderId, recipientId, cawonce])
   @@index([senderId, pending])
   @@index([recipientId])
   @@index([cawId])

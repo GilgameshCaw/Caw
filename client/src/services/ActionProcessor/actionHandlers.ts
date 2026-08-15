@@ -186,30 +186,53 @@ export async function handleCawAction(
       if (!recipientTokenId || !tipAmount) continue
       try {
         const recipientId = await findOrCreateUser(recipientTokenId)
+        // Look up by (senderId, recipientId, cawonce) WITHOUT filtering on
+        // pending — a resync/replay of an already-confirmed event must find
+        // the existing row and no-op, not fall through to create a
+        // duplicate. See PR discussion: filtering on pending:true here was
+        // the root cause of Tip rows doubling/tripling on rescan (confirmed
+        // 12 duplicate rows / 347,312,728 CAW over-counted on V1 prod).
         const existingTip = await tx.tip.findFirst({
-          where: { senderId: authorId, recipientId, cawonce: action.cawonce, pending: true },
+          where: { senderId: authorId, recipientId, cawonce: action.cawonce },
         })
+        let shouldNotify = false
         if (existingTip) {
-          await tx.tip.update({
-            where: { id: existingTip.id },
-            data: { pending: false, cawId: newCaw.id },
-          })
+          if (existingTip.pending) {
+            await tx.tip.update({
+              where: { id: existingTip.id },
+              data: { pending: false, cawId: newCaw.id },
+            })
+            shouldNotify = true
+          }
+          // else: already confirmed — this is a replay, no-op.
         } else {
-          await tx.tip.create({
-            data: {
-              senderId: authorId,
-              recipientId,
-              amount: tipAmount,
-              cawId: newCaw.id,
-              cawonce: action.cawonce,
-              pending: false,
-            },
-          })
+          try {
+            await tx.tip.create({
+              data: {
+                senderId: authorId,
+                recipientId,
+                amount: tipAmount,
+                cawId: newCaw.id,
+                cawonce: action.cawonce,
+                pending: false,
+              },
+            })
+            shouldNotify = true
+          } catch (createErr: any) {
+            // Unique constraint violation (senderId, recipientId, cawonce) —
+            // another validator's concurrent transaction won the race and
+            // created this row between our findFirst and create (TOCTOU).
+            // The row now exists either way, so this is a no-op, not a
+            // failure.
+            if (createErr?.code !== 'P2002') throw createErr
+          }
         }
-        try {
-          await NotificationService.createTipNotification(recipientId, authorId, newCaw.id, tipAmount, tx)
-        } catch (notifErr) {
-          console.error(`[handleCawAction] Failed to create embedded tip notification for recipient ${recipientId}:`, notifErr)
+        if (shouldNotify) {
+          try {
+            await NotificationService.createTipNotification(recipientId, authorId, newCaw.id, tipAmount, tx)
+          } catch (notifErr) {
+            console.error(`[handleCawAction] Failed to create embedded tip notification for recipient ${recipientId}:`, notifErr)
+          }
         }
       } catch (tipErr) {
         console.error(`[handleCawAction] Failed to process embedded tip for recipient ${recipientTokenId}:`, tipErr)
@@ -1162,46 +1185,64 @@ async function handleTipAction(
     }
   }
 
-  // Confirm pending tip or create new one (for actions from other validators)
+  // Confirm pending tip or create new one (for actions from other validators).
+  // Look up WITHOUT filtering on pending — a resync/replay of an
+  // already-confirmed event must find the existing row and no-op, not
+  // fall through to create a duplicate.
   const existingTip = await tx.tip.findFirst({
     where: {
       senderId,
       recipientId,
       cawonce: action.cawonce,
-      pending: true
     }
   })
 
+  let shouldNotify = false
   if (existingTip) {
-    await tx.tip.update({
-      where: { id: existingTip.id },
-      data: { pending: false, cawId }
-    })
-    console.log('[handleTipAction] Confirmed pending tip:', existingTip.id)
+    if (existingTip.pending) {
+      await tx.tip.update({
+        where: { id: existingTip.id },
+        data: { pending: false, cawId }
+      })
+      console.log('[handleTipAction] Confirmed pending tip:', existingTip.id)
+      shouldNotify = true
+    } else {
+      console.log('[handleTipAction] Tip already confirmed, treating as replay no-op:', existingTip.id)
+    }
   } else {
-    await tx.tip.create({
-      data: {
+    try {
+      await tx.tip.create({
+        data: {
+          senderId,
+          recipientId,
+          amount: Number(tipAmount),
+          cawId,
+          cawonce: action.cawonce,
+          pending: false
+        }
+      })
+      console.log('[handleTipAction] Created tip record:', {
         senderId,
         recipientId,
         amount: Number(tipAmount),
-        cawId,
-        cawonce: action.cawonce,
-        pending: false
-      }
-    })
-    console.log('[handleTipAction] Created tip record:', {
-      senderId,
-      recipientId,
-      amount: Number(tipAmount),
-      cawId
-    })
+        cawId
+      })
+      shouldNotify = true
+    } catch (createErr: any) {
+      // Unique constraint violation — another validator's concurrent
+      // transaction won the race (TOCTOU). Row exists either way.
+      if (createErr?.code !== 'P2002') throw createErr
+      console.log('[handleTipAction] Tip create raced with concurrent processor, treating as no-op')
+    }
   }
 
   // Create notification
-  try {
-    await NotificationService.createTipNotification(recipientId, senderId, cawId || undefined, Number(tipAmount), tx)
-  } catch (err) {
-    console.error('[handleTipAction] Failed to create tip notification:', err)
+  if (shouldNotify) {
+    try {
+      await NotificationService.createTipNotification(recipientId, senderId, cawId || undefined, Number(tipAmount), tx)
+    } catch (err) {
+      console.error('[handleTipAction] Failed to create tip notification:', err)
+    }
   }
 }
 
