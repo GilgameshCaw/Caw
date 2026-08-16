@@ -8,6 +8,13 @@ solc_version = "0.8.30"
 optimizer = true
 optimizer_runs = 1
 via_ir = true
+# Emit storage layout in the build output so `forge inspect <C> storageLayout`
+# works. Without this, forge 1.0.0-nightly's inspect returns "Could not get
+# storage layout", and StorageLayoutSnapshot.t.sol then silently PASSES (its
+# assertion only checks the output doesn't contain "MISMATCH", which an error
+# string doesn't) — a false green that hid the layout regression guard being
+# disabled. See scripts/check-storage-layout.js.
+extra_output = ["storageLayout"]
 # We don't want Foundry to compile the Truffle JS tests or scripts.
 # Match the Truffle/Hardhat target: only the contracts/ tree + the new test-foundry/ tree.
 auto_detect_remappings = false
