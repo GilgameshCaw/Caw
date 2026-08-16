@@ -199,7 +199,7 @@ contract CawProfile is
     // CawActions — measured worst case ~165k gas (real CawCapOracle; see
     // test-foundry/LzReceiveOracleOverhead.t.sol) — and if the budget doesn't
     // cover it the whole message OOGs at the executor (CouldNotParseError 0x).
-    // That's what starved transferAndSync (zinsanjp): updateOwners' 40k base +
+    // That's what starved transferAndSync (operator-reported): updateOwners' 40k base +
     // 65k*1 = 105k couldn't fit the ~68k handler + the oracle push. The
     // allowFreeAuth / setNetworkTipTarget 80k bases had the SAME latent gap —
     // sized for the cheap sample-write (~35k), not the push.

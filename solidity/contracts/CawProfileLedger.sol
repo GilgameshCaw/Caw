@@ -1000,7 +1000,7 @@ contract CawProfileLedger is
       // hysteresis threshold. That push runs BEFORE the primary dispatch below,
       // so without a cap a push-coinciding message could consume the whole LZ
       // budget and starve the ownership/session write — the transferAndSync OOG
-      // (zinsanjp). ORACLE_RECORD_GAS_CAP bounds what the oracle can take: the
+      // (operator-reported). ORACLE_RECORD_GAS_CAP bounds what the oracle can take: the
       // sample WRITE (cheap, happens first inside recordSample) always lands;
       // if a push wouldn't fit, recordSample's own internal swallow-on-revert
       // self-call drops just the push, and CawCapOracle.pushRatioIfStale (the
